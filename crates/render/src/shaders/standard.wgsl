@@ -92,23 +92,32 @@ fn brdf_ggx_multiscatter(l: vec3f, v: vec3f, n: vec3f, f0: vec3f, f90: f32, roug
     return single + fms * (ems_v * ems_l);
 }
 
-// The sun's shadow: a 3×3 grid of hardware-filtered compares one filter radius
-// apart, a smooth tent about four texels wide with no dither noise, after the
-// light-space normal offset and depth bias.
+// The sun's shadow: Castaño's optimized 5×5 PCF (The Witness), nine hardware-filtered
+// compares weighted into a smooth tent five texels wide, with no dither noise, its
+// taps spread by the filter radius. After the light-space normal offset and depth bias.
 fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
     let position = frame.shadow_matrix * vec4f(world + normal * frame.shadow.y, 1.0);
     let projected = position.xyz / position.w;
     let coord = vec3f(projected.x, 1.0 - projected.y, projected.z + frame.shadow.x);
-    let spacing = frame.shadow.w / frame.shadow.z;
+    let size = frame.shadow.z;
+    let texels = coord.xy * size;
+    let base = floor(texels + 0.5);
+    let st = texels + 0.5 - base;
+    let origin = (base - 0.5) / size;
+    let spread = frame.shadow.w / size;
+    let uw = vec3f(4.0 - 3.0 * st.x, 7.0, 1.0 + 3.0 * st.x);
+    let u = vec3f((3.0 - 2.0 * st.x) / uw.x - 2.0, (3.0 + st.x) / uw.y, st.x / uw.z + 2.0) * spread;
+    let vw = vec3f(4.0 - 3.0 * st.y, 7.0, 1.0 + 3.0 * st.y);
+    let v = vec3f((3.0 - 2.0 * st.y) / vw.x - 2.0, (3.0 + st.y) / vw.y, st.y / vw.z + 2.0) * spread;
     var sum = 0.0;
-    for (var y = -1; y <= 1; y++) {
-        for (var x = -1; x <= 1; x++) {
-            let offset = vec2f(f32(x), f32(y)) * spacing;
-            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, coord.xy + offset, coord.z);
+    for (var j = 0; j < 3; j++) {
+        for (var i = 0; i < 3; i++) {
+            let tap = origin + vec2f(u[i], v[j]);
+            sum += uw[i] * vw[j] * textureSampleCompareLevel(shadow_map, shadow_sampler, tap, coord.z);
         }
     }
     let inside = coord.x >= 0.0 && coord.x <= 1.0 && coord.y >= 0.0 && coord.y <= 1.0 && coord.z <= 1.0;
-    return select(1.0, sum / 9.0, inside);
+    return select(1.0, sum / 144.0, inside);
 }
 
 fn distance_attenuation(distance: f32, cutoff: f32, decay: f32) -> f32 {
@@ -164,7 +173,12 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
             // Past the cutoff the attenuation window is exactly zero: skip the BRDF.
             let cutoff = light.position.w;
             if cutoff <= 0.0 || distance < cutoff {
-                let color = light.color.rgb * distance_attenuation(distance, cutoff, light.color.w);
+                var color = light.color.rgb * distance_attenuation(distance, cutoff, light.color.w);
+                if atmosphere_on() {
+                    // Blasts flash brighter than Three's falloff alone, so fire visibly
+                    // lights the ground and hulls around it.
+                    color *= BLAST_LIGHT_GAIN;
+                }
                 add_direct_light(&reflected, offset / max(distance, 1e-6), color, v, n, diffuse, specular, roughness);
             }
         }
@@ -195,7 +209,12 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         let missing_energy = 1.0 - single_energy;
         let average_fresnel = specular + (1.0 - specular) * 0.047619;
         let multi = single * average_fresnel / (1.0 - missing_energy * average_fresnel) * missing_energy;
-        let radiance = environment_radiance(reflect(-v, n), roughness);
+        var radiance = environment_radiance(reflect(-v, n), roughness);
+        if atmosphere_on() {
+            // The drawn sky's bright horizon would wash glossy paint toward white at
+            // grazing angles: reflect a dimmer sky so team colours hold.
+            radiance *= ATMOSPHERE_REFLECTION;
+        }
         let scattered = single + multi;
         let kept = 1.0 - reflections * max(max(scattered.r, scattered.g), scattered.b);
         indirect = indirect * kept
@@ -220,7 +239,9 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
     var sky = mix(horizon, zenith, sqrt(clamp(up, 0.0, 1.0)));
     if atmosphere_on() {
         // The drawn sky itself, its gradient softened toward the fill for rough lobes.
-        let drawn = sky_gradient(vec3f(direction.x, max(up, 0.0), direction.z));
+        // Its bright horizon band stays out of the reflection: glossy hulls seen at
+        // a grazing angle would otherwise wash to white.
+        let drawn = sky_gradient(normalize(vec3f(direction.x, max(up, REFLECTED_SKY_FLOOR), direction.z)));
         sky = mix(drawn, zenith, lobe * 0.5);
     }
     let ground = frame.ground_color.rgb * RECIPROCAL_PI;
@@ -228,6 +249,12 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
     return mix(ground, sky, smoothstep(-horizon_width, horizon_width, up));
 }
 
+// Point lights' (blast flashes') extra strength with the atmosphere on.
+const BLAST_LIGHT_GAIN: f32 = 2.4;
+// Share of the drawn sky glossy finishes reflect.
+const ATMOSPHERE_REFLECTION: f32 = 0.45;
+// The lowest elevation of the drawn sky glossy finishes reflect.
+const REFLECTED_SKY_FLOOR: f32 = 0.22;
 // Half-width in direction Y of a mirror's horizon blend.
 const HORIZON_SHARPEST: f32 = 0.03;
 // Material roughness over which sky reflections fade out.

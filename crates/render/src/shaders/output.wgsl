@@ -2,9 +2,10 @@
 // resolved linear HDR frame into a half-size level, halves it down a short mip
 // chain and adds each level back up with a tent filter. The output pass adds the
 // bloom, darkens by the ambient occlusion, tone maps through Three r185's ACES
-// filmic curve, grades (lift, gamma, gain, saturation, contrast, vignette) and
-// encodes sRGB with a little dither against sky banding, into the (non-sRGB)
-// canvas texture. With everything neutral it is Three's plain ACES output.
+// filmic curve, grades (black point, lift, gamma, gain, split toning, a few tamed
+// hues, saturation, contrast, vignette) and encodes sRGB with a little dither
+// against sky banding, into the (non-sRGB) canvas texture. With everything neutral
+// it is Three's plain ACES output.
 
 struct Output {
     // x exposure; the HDR row of a fragment is y + z × its framebuffer row: 0 and 1
@@ -19,8 +20,16 @@ struct Output {
     gain: vec4f,
     // x bloom threshold, y its soft knee, z occlusion strength, w dither in 8-bit steps.
     effects: vec4f,
-    // x vibrance: extra saturation for muted colors that leaves vivid ones alone.
+    // x vibrance: extra saturation for muted colors that leaves vivid ones alone,
+    // y black point.
     tone: vec4f,
+    // How much x lime foliage turns toward a true green, y orange earth calms and
+    // z red hulls shed the pink the blue sky fill gives them, each 0..1.
+    hues: vec4f,
+    // Split toning: rgb the shadows' tint (unit luminance), w its strength.
+    shadows: vec4f,
+    // rgb the highlights' tint (unit luminance), w its strength.
+    highlights: vec4f,
 }
 
 @group(0) @binding(0) var source: texture_2d<f32>;
@@ -146,19 +155,71 @@ fn srgb_encode(color: vec3f) -> vec3f {
     return select(high, low, color <= vec3f(0.0031308));
 }
 
-// The grade on the tone-mapped display color: lift raises the blacks toward its
-// color, gain scales the whites, gamma bends the mids, then saturation (and vibrance
-// for muted colors) and contrast
-// around mid grey.
+// Hue of a color, 0..1 around the wheel (0 red, 1/3 green, 2/3 blue).
+fn hue_of(c: vec3f) -> f32 {
+    let high = max(max(c.r, c.g), c.b);
+    let chroma = high - min(min(c.r, c.g), c.b);
+    if chroma <= 1e-5 {
+        return 0.0;
+    }
+    var h: f32;
+    if high == c.r {
+        h = (c.g - c.b) / chroma;
+    } else if high == c.g {
+        h = (c.b - c.r) / chroma + 2.0;
+    } else {
+        h = (c.r - c.g) / chroma + 4.0;
+    }
+    return fract(h / 6.0 + 1.0);
+}
+
+// 1 within `width` / 2 of `center` around the hue wheel, fading to 0 at `width`.
+fn hue_band(hue: f32, center: f32, width: f32) -> f32 {
+    let d = abs(fract(hue - center + 0.5) - 0.5);
+    return 1.0 - smoothstep(width * 0.5, width, d);
+}
+
+// Hues the grade singles out: lime grass, orange earth and the pink a red hull
+// picks up from the blue sky fill.
+const LIME_HUE: f32 = 0.22;
+const EARTH_HUE: f32 = 0.088;
+const PINK_HUE: f32 = 0.955;
+// Display mid grey, the pivot of the contrast curve.
+const MID_GREY: f32 = 0.18;
+
+// The grade on the tone-mapped display color: gain scales the whites, the black point
+// holds the shadows down, lift and gamma bend them, split toning cools shadows and
+// warms highlights, a few hues are tamed, then saturation (and vibrance for muted
+// colors) and a contrast curve around mid grey that never clips the blacks.
 fn grade(color: vec3f) -> vec3f {
     let lift = output.lift.rgb;
-    var c = output.gain.rgb * (color + lift * (vec3f(1.0) - color));
+    var c = output.gain.rgb * color;
+    let black = output.tone.y;
+    c = max(c - black, vec3f(0.0)) / (1.0 - black);
+    c = c + lift * (vec3f(1.0) - c);
     c = pow(max(c, vec3f(0.0)), 1.0 / output.gamma.rgb);
+    let level = luminance(c);
+    let shade = (1.0 - smoothstep(0.0, 0.14, level)) * output.shadows.w;
+    let light = smoothstep(0.3, 0.9, level) * output.highlights.w;
+    c *= mix(vec3f(1.0), output.shadows.rgb, shade);
+    c *= mix(vec3f(1.0), output.highlights.rgb, light);
+    let hue = hue_of(c);
+    let high = max(max(c.r, c.g), c.b);
+    let chroma = high - min(min(c.r, c.g), c.b);
+    let vivid = smoothstep(0.05, 0.25, chroma / max(high, 1e-4));
+    // Lime turns toward a true green; orange earth toward tan; red stays red.
+    let lime = hue_band(hue, LIME_HUE, 0.075) * output.hues.x * vivid;
+    c.r *= 1.0 - 0.28 * lime;
+    c.g *= 1.0 + 0.06 * lime;
+    let earth = hue_band(hue, EARTH_HUE, 0.06) * output.hues.y
+        * smoothstep(0.2, 0.5, chroma / max(high, 1e-4));
+    let pink = hue_band(hue, PINK_HUE, 0.06) * output.hues.z * vivid;
+    c.b = mix(c.b, min(c.b, c.g * 1.05), pink);
     let grey = luminance(c);
-    let chroma = max(max(c.r, c.g), c.b) - min(min(c.r, c.g), c.b);
     let vibrance = 1.0 + output.tone.x * (1.0 - smoothstep(0.0, 0.6, chroma));
-    c = mix(vec3f(grey), c, output.lift.w * vibrance);
-    c = (c - 0.18) * output.gamma.w + 0.18;
+    let saturation = output.lift.w * vibrance * (1.0 - 0.32 * earth);
+    c = max(mix(vec3f(grey), c, saturation), vec3f(0.0));
+    c = MID_GREY * pow(c / MID_GREY, vec3f(output.gamma.w));
     return clamp(c, vec3f(0.0), vec3f(1.0));
 }
 
@@ -171,15 +232,20 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     var color = textureLoad(source, vec2i(i32(position.x), i32(row)), 0).rgb;
     let strength = output.effects.z;
     if strength > 0.0 {
-        // Four bilinear taps over the half-size occlusion: a 4×4 box that
-        // averages its 16 rotations of the sample pattern away.
-        let texel = 1.0 / vec2f(textureDimensions(occlusion));
+        // A 3×3 tent of bilinear taps on texel corners of the half-size occlusion:
+        // 6×6 texels in which every rotation of the 4×4 sample pattern carries the
+        // same weight, so the pattern averages away without a dotted residue.
+        let half_size = vec2f(textureDimensions(occlusion));
+        let corner = floor(pixel * 0.5 + 0.25);
         var ao = 0.0;
-        for (var i = 0; i < 4; i++) {
-            let offset = vec2f(f32(i & 1) * 2.0 - 1.0, f32(i >> 1u) * 2.0 - 1.0) * texel;
-            ao += textureSampleLevel(occlusion, linear_clamp, uv + offset, 0.0).r;
+        for (var j = -1; j <= 1; j++) {
+            for (var i = -1; i <= 1; i++) {
+                let at = (corner + vec2f(f32(i), f32(j)) * 2.0) / half_size;
+                let weight = f32((2 - abs(i)) * (2 - abs(j)));
+                ao += textureSampleLevel(occlusion, linear_clamp, at, 0.0).r * weight;
+            }
         }
-        color *= mix(1.0, ao * 0.25, strength);
+        color *= mix(1.0, ao / 16.0, strength);
     }
     let bloom_strength = output.settings.w;
     if bloom_strength > 0.0 {
@@ -189,7 +255,8 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let vignette = output.gain.w;
     if vignette > 0.0 {
         let centered = (uv - 0.5) * vec2f(size.x / size.y, 1.0);
-        display *= 1.0 - vignette * smoothstep(0.35, 1.05, length(centered));
+        let reach = length(centered);
+        display *= 1.0 - vignette * smoothstep(0.45, 1.15, reach) * smoothstep(0.45, 1.15, reach);
     }
     var encoded = srgb_encode(display);
     let dither = output.effects.w;

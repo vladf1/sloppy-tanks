@@ -3,7 +3,7 @@
 // (which cannot) a single-sample copy the resolve blits. Each pixel rebuilds its world position and normal from
 // the main view's depth, then tests eight points of a hemisphere a metre or so around
 // it against the depth buffer. The kernel's rotation follows a 4×4 Bayer pattern, so
-// the output pass's 4×4 box blur averages all sixteen rotations and leaves no noise.
+// the output pass's 6×6 tent, which weighs every rotation alike, leaves no noise.
 // Occlusion fades out with distance: it grounds tanks and props near the camera
 // and never greys the horizon.
 
@@ -87,8 +87,9 @@ fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
         // A spiral over the hemisphere: rising elevation, growing reach.
         let t = (f32(i) + 0.5) / f32(SAMPLES);
         let angle = rotation + f32(i) * 2.39996323;
-        let elevation = 0.15 + 0.75 * fract(t * 3.7 + 0.13);
-        let reach = radius * (0.2 + 0.8 * t * t);
+        // Mostly low over the surface, where walls and hulls beside it occlude.
+        let elevation = 0.1 + 0.6 * fract(t * 3.7 + 0.13);
+        let reach = radius * (0.25 + 0.75 * t);
         let spread = sqrt(1.0 - elevation * elevation);
         let offset = (tangent * cos(angle) * spread + bitangent * sin(angle) * spread + normal * elevation) * reach;
         let probe = center + offset;
@@ -100,8 +101,10 @@ fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
         let at = vec2i(vec2f((ndc.x * 0.5 + 0.5) * size.x, (0.5 - ndc.y * 0.5) * size.y));
         let scene = view_distance(depth_at(at, size_i));
         let gap = clip.w - scene;
+        // Behind the scene's surface: occluded, unless the surface stands so far in
+        // front that it is a different object (the range check).
         if gap > bias {
-            occluded += smoothstep(0.0, 1.0, radius / max(gap, 1e-3));
+            occluded += 1.0 - smoothstep(radius * 1.5, radius * 3.5, gap);
         }
     }
     let open = 1.0 - occluded / f32(SAMPLES);

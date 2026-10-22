@@ -42,8 +42,8 @@ use super::posing::{JointBasis, dvec3, euler_yxz, joint_world, lerp, quat, vec3}
 use super::preparation::Preparation;
 use super::suspension::{MotionInput, TankMotion};
 use super::theme::{
-    SHADOW_BIAS, SHADOW_MAP_SIZE, SHADOW_NORMAL_BIAS, SHADOW_RECEIVER_FLOOR, Theme, ThemeLook,
-    theme_look,
+    SHADOW_BIAS, SHADOW_FILTER_RADIUS, SHADOW_MAP_SIZE, SHADOW_NORMAL_BIAS, SHADOW_RECEIVER_FLOOR,
+    Theme, ThemeLook, theme_look,
 };
 use super::view_settings::{
     BAR_HEIGHT, CAMERA_FEEL, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT, RETICLE_HEIGHT, TANK_FEEL,
@@ -834,7 +834,7 @@ impl Presentation {
             camera: look.shadow,
             bias: SHADOW_BIAS,
             normal_bias: SHADOW_NORMAL_BIAS,
-            radius: 1.0,
+            radius: SHADOW_FILTER_RADIUS,
             receiver_floor: SHADOW_RECEIVER_FLOOR,
         });
     }
