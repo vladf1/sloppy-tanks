@@ -218,7 +218,7 @@ const YELLOW_GREEN_FROM: vec2f = vec2f(0.66, 0.84);
 const TRUE_GREEN_FROM: vec2f = vec2f(1.5, 2.2);
 // How much red, and how much of its missing blue, a yellow-green surface takes on.
 const YELLOW_GREEN_RED: f32 = 0.3;
-const YELLOW_GREEN_BLUE: f32 = 0.3;
+const YELLOW_GREEN_BLUE: f32 = 0.12;
 
 // Grass that has yellowed to an acid lime reads as a paint fill from the overhead
 // camera: on the ground it turns toward a natural sap green, a little less red and a

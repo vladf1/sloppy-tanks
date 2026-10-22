@@ -261,7 +261,7 @@ fn grade(color: vec3f) -> vec3f {
     let lime = hue_band(hue, LIME_HUE, 0.08) * output.hues.x * vivid;
     c.r *= 1.0 - 0.32 * lime;
     c.g *= 1.0 - 0.02 * lime;
-    c.b = mix(c.b, c.g * 0.4, 0.25 * lime);
+    c.b = mix(c.b, c.g * 0.3, 0.12 * lime);
     let earth = hue_band(hue, EARTH_HUE, 0.06) * output.hues.y
         * smoothstep(0.2, 0.5, chroma / max(high, 1e-4));
     // Broad foliage greens give up a little chroma, so meadows read lush, not neon.

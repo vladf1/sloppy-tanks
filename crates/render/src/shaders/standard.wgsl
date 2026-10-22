@@ -215,14 +215,26 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
                     decay *= FIRE_POOL_DECAY;
                     gain = BLAST_LIGHT_GAIN;
                 }
-                let color = light.color.rgb * (distance_attenuation(distance, cutoff, decay) * gain);
+                var color = light.color.rgb * (distance_attenuation(distance, cutoff, decay) * gain);
+                if atmosphere_on() {
+                    color = fire_light_hue(color);
+                }
                 add_direct_light(&reflected, offset / max(distance, 1e-6), color, v, n, diffuse, specular, roughness);
             }
         }
     }
-    let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
+    var hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
+    // How directly the sun reaches this point: cast and cloud shadow, and faces
+    // turned from it.
+    let in_sun = sunlit * smoothstep(0.0, 0.35, dot(n, frame.sun_direction.xyz));
     var shade_color = diffuse;
     if atmosphere_on() {
+        // Warm key, cool fill: the blue sky fill keeps its hue where it is the main
+        // light (shade), but under direct sun it adds only its brightness, so sunlit
+        // sand, concrete and grass keep their own warm albedo instead of drifting
+        // toward mauve or grey while shadows read clearly cool.
+        let fill_level = dot(hemisphere, vec3f(0.2126, 0.7152, 0.0722));
+        hemisphere = mix(hemisphere, vec3f(fill_level), FILL_NEUTRAL_IN_SUN * in_sun);
         // Painterly shade: what the sky fill alone lights keeps a richer version of
         // its own color, so grass shade stays green and earth shade warm brown
         // instead of every shadow settling into the same grey-blue.
@@ -237,8 +249,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // stays warm and luminous rather than sinking into one cold blue.
         let ground_tint = frame.ground_color.rgb / max(dot(frame.ground_color.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
         let sun_level = dot(frame.sun_color.rgb, vec3f(0.2126, 0.7152, 0.0722));
-        let lit = sunlit * smoothstep(0.0, 0.35, dot(n, frame.sun_direction.xyz));
-        let bounce = frame.ground.w * sun_level * (1.0 - lit) * (1.0 - 0.5 * max(n.y, 0.0));
+        let bounce = frame.ground.w * sun_level * (1.0 - in_sun) * (1.0 - 0.5 * max(n.y, 0.0));
         indirect += ground_tint * (bounce * RECIPROCAL_PI) * shade_color;
     }
     if atmosphere_on() {
@@ -305,12 +316,31 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
     return mix(ground, sky, smoothstep(-horizon_width, horizon_width, up));
 }
 
+// The share of the sky fill's blue a fully sunlit surface gives up (it keeps the
+// fill's brightness).
+const FILL_NEUTRAL_IN_SUN: f32 = 0.7;
 // Saturation of the sky fill's share of a surface's light (1 = its plain color).
 const SHADE_SATURATION: f32 = 1.3;
 // Point lights' (blast flashes') extra strength with the atmosphere on, and the
 // share of their decay exponent they keep (a wider pool).
 const BLAST_LIGHT_GAIN: f32 = 1.6;
-const FIRE_POOL_DECAY: f32 = 0.75;
+const FIRE_POOL_DECAY: f32 = 0.85;
+// Fire's own color at unit luminance, and how far a deep red-orange flash light turns
+// toward it: a pure red-orange pool over sunlit ground and blue-filled shade reads as a
+// pink screen tint rather than firelight.
+const FIRE_AMBER: vec3f = vec3f(1.0, 0.56, 0.24);
+const FIRE_AMBER_SHARE: f32 = 0.55;
+
+// The luminance a flash light's pool eases toward right beside it, against a sun of
+// about 3: firelight warms shade and the sunlit ground around a blast without washing
+// a near-camera muzzle flash or fireball across the frame.
+const FIRE_LIGHT_LIMIT: f32 = 1.2;
+
+fn fire_light_hue(color: vec3f) -> vec3f {
+    let level = dot(color, vec3f(0.2126, 0.7152, 0.0722));
+    let amber = FIRE_AMBER / dot(FIRE_AMBER, vec3f(0.2126, 0.7152, 0.0722));
+    return mix(color, amber * level, FIRE_AMBER_SHARE) / (1.0 + level / FIRE_LIGHT_LIMIT);
+}
 // Share of the drawn sky glossy finishes reflect.
 const ATMOSPHERE_REFLECTION: f32 = 0.45;
 // The lowest elevation of the drawn sky glossy finishes reflect.
