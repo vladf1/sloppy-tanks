@@ -496,7 +496,7 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
     // The shoulder: a weathered lip leaning back to the cap, then the cap's
     // outer ring, each column at its block's height.
     let lip_row = rows.len();
-    for (reach, rise, inset, wear) in [(0.95, 0.95, 0.0, 0.7), (1.0, 1.0, 0.3, 0.25)] {
+    for (reach, rise, inset, wear) in [(0.95, 0.95, 0.0, 0.7), (1.0, 1.0, 0.3, 0.12)] {
         for c in 0..columns {
             let block = block_of[c];
             let mut p = surface(c, reach);
@@ -577,9 +577,11 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
             let outer = points[ring + c];
             let q = outer + (center - outer) * CAP_INNER;
             let lift = if outcrop { h * CAP_SWELL * around } else { 0.0 };
+            // Wear stays near the cap ring's, so the top weathers evenly rather
+            // than showing a stamped inner patch.
             (
                 DVec3::new(q.x, (outer.y + peak.y) * 0.5 + lift, q.z),
-                around * 0.5,
+                0.12 + around * 0.1,
             )
         })
         .collect();
@@ -594,7 +596,7 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
         corner(inner_c, cap_layer, wear_c, shade, false);
         corner(inner_n, cap_layer, wear_n, shade, false);
         corner(points[ring + n], cap_layer, wears[ring + n], shade, false);
-        corner(peak, cap_layer, 0.1, shade, false);
+        corner(peak, cap_layer, 0.12, shade, false);
         corner(inner_n, cap_layer, wear_n, shade, false);
         corner(inner_c, cap_layer, wear_c, shade, false);
     }

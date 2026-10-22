@@ -208,9 +208,9 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (163.0 - r) * stony;
         g += (134.0 - g) * stony;
         b += (101.0 - b) * stony;
-        r += (161.0 - r) * road;
-        g += (144.0 - g) * road;
-        b += (119.0 - b) * road;
+        r += (152.0 - r) * road;
+        g += (135.0 - g) * road;
+        b += (111.0 - b) * road;
         r += (198.0 - r) * windrow * 0.55;
         g += (180.0 - g) * windrow * 0.55;
         b += (150.0 - b) * windrow * 0.55;
@@ -222,13 +222,29 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (168.0 - r) * working * 0.5;
         g += (150.0 - g) * working * 0.5;
         b += (124.0 - b) * working * 0.5;
+        // The loading floor between the stockpile and the excavator: trodden dark
+        // with crushed fines, cut by the loader's ruts running out east along the
+        // apron and fading as they go.
+        let loading = (1.0
+            - smoothstep(js_hypot(&[(x + 32.0) / 17.0, (z + 70.0) / 6.5]), 0.45, 1.0))
+            * working;
+        r += (142.0 - r) * loading * 0.55;
+        g += (126.0 - g) * loading * 0.55;
+        b += (104.0 - b) * loading * 0.55;
+        let haul = z - (-70.5 + 2.2 * (x * 0.085 + 0.6).sin());
+        let haul_fade = smoothstep(x, -58.0, -48.0) * (1.0 - smoothstep(x, -6.0, 6.0)) * working;
+        let haul_ruts = [-1.2, 1.2]
+            .into_iter()
+            .map(|lane| (-((haul - lane).abs() / 0.3).powi(2)).exp())
+            .fold(0.0, f64::max)
+            * haul_fade;
         // Iron-stained ochre ground where one slow field runs high and dark damp
         // hollows where it runs low, away from traffic.
         let stain = noise(table, x * 0.034 + 40.0, z * 0.034 - 17.0);
         let iron = smoothstep(stain + warp * 0.12, 0.6, 0.74) * off_road * (1.0 - worn_sand * 0.5);
-        r += (204.0 - r) * iron * 0.5;
-        g += (150.0 - g) * iron * 0.5;
-        b += (106.0 - b) * iron * 0.5;
+        r += (204.0 - r) * iron * 0.3;
+        g += (150.0 - g) * iron * 0.3;
+        b += (106.0 - b) * iron * 0.3;
         let damp =
             (1.0 - smoothstep(stain - bands * 0.08, 0.27, 0.41)) * (1.0 - worn_sand) * off_road;
         r += (152.0 - r) * damp * 0.6;
@@ -268,6 +284,8 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         let shade = (macro_field - 0.5) * 11.0 + (grit - 0.5) * 15.0 + fine + aggregate
             - rut * 26.0
             - tyres * 16.0
+            - haul_ruts * 20.0
+            - loading * 5.0
             + ripple
             + pebbles
             - damp * 4.0;

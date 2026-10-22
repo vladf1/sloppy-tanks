@@ -6,6 +6,8 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
+use glam::DVec3;
+
 use crate::geometry::math::{js_round, smoothstep};
 use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA, merge_geometries};
 use crate::scene::{Material, Node};
@@ -21,9 +23,9 @@ use super::model_primitives::{
     TEAM_COLORS, box_part, cylinder_part, put, rotated, shadow_receiver,
 };
 use super::quarry_benches::{
-    quarry_bench, quarry_butte, quarry_mesas, quarry_scree_spots, quarry_stockpile_geometry,
-    quarry_stockpile_reach, quarry_stockpile_spot, quarry_talus_geometry, quarry_talus_point,
-    quarry_talus_strips,
+    StockpileSpot, quarry_bench, quarry_butte, quarry_mesas, quarry_scree_spots,
+    quarry_stockpile_geometry, quarry_stockpile_reach, quarry_stockpile_spot,
+    quarry_talus_geometry, quarry_talus_point, quarry_talus_strips,
 };
 use super::quarry_machinery::{quarry_dump_truck, quarry_excavator};
 use super::quarry_ramp::{
@@ -36,6 +38,22 @@ use super::quarry_surfaces::{
     sandstone_rubble, sandstone_scatter, surface_height,
 };
 use super::quarry_terrain::{QUARRY_BANK_TOP, quarry_ground_drop, quarry_terrain, soil_uvs};
+
+/// Where a loose stone at x/z rests: on `heap` (world triangles) or the drawn
+/// ground, whichever is higher there.
+fn rest_height(heap: &[[DVec3; 3]], x: f64, z: f64) -> f64 {
+    let ground = 0.008 - quarry_ground_drop(x, z);
+    surface_height(heap, x, z).map_or(ground, |y| y.max(ground))
+}
+
+/// Spoil the excavator has dug, heaped under its bucket on the north apron.
+const DIG_HEAP: StockpileSpot = StockpileSpot {
+    x: -13.0,
+    z: -70.5,
+    radius: 3.3,
+    height: 1.9,
+    seed: 7.0,
+};
 
 /// The machinery apron floor, where the lowest cuts and their talus stand.
 const APRON: f64 = -1.8;
@@ -249,6 +267,7 @@ pub fn quarry_scenery() -> Node {
         let mut talus = quarry_talus_geometry(strip.x0, strip.x1, strip.seed);
         talus.rotate_y(strip.rot_y);
         talus.translate(strip.x, APRON, strip.z);
+        let slope = mesh_triangles(&talus);
         spoil_surface(&mut talus, 0.0);
         geology
             .children
@@ -274,10 +293,14 @@ pub fn quarry_scenery() -> Node {
             let rot_y = talus_rng.range(-PI, PI);
             let shade = talus_rng.range(0.74, 1.02);
             let run = (((along - strip.x0) / TALUS_RUN) as usize).min(runs - 1);
+            let (x, z) = (
+                strip.x + p.x * cos + p.z * sin,
+                strip.z - p.x * sin + p.z * cos,
+            );
             stones[run].push(RubbleStone {
-                x: strip.x + p.x * cos + p.z * sin,
-                y: APRON + p.y + size * 0.1,
-                z: strip.z - p.x * sin + p.z * cos,
+                x,
+                y: rest_height(&slope, x, z) + h * STONE_SEAT,
+                z,
                 w: size,
                 h,
                 d,
@@ -310,7 +333,7 @@ pub fn quarry_scenery() -> Node {
             let rot_y = talus_rng.range(-PI, PI);
             let shade = talus_rng.range(0.9, 1.15);
             let (x, z) = (pile.x + angle.cos() * reach, pile.z + angle.sin() * reach);
-            let under = surface_height(&heap, x, z).map_or(APRON, |y| y.max(APRON));
+            let under = rest_height(&heap, x, z);
             RubbleStone {
                 x,
                 y: under + h * STONE_SEAT,
@@ -324,6 +347,45 @@ pub fn quarry_scenery() -> Node {
         })
         .collect();
     geology.children.push(sandstone_scatter(&pile_stones));
+    // The face the excavator is working: a heap of freshly dug spoil under its
+    // bucket, with blasted blocks spilled round it (a stream of its own).
+    let mut dig_rng = Random::new(5521.0);
+    let mut dig = quarry_stockpile_geometry(&DIG_HEAP);
+    dig.translate(DIG_HEAP.x, APRON, DIG_HEAP.z);
+    let dug = mesh_triangles(&dig);
+    spoil_surface(&mut dig, 0.6);
+    geology
+        .children
+        .push(shadow_receiver(Arc::new(dig), spoil.clone()));
+    let dig_stones: Vec<RubbleStone> = (0..40)
+        .map(|i| {
+            let angle = dig_rng.range(0.0, PI * 2.0);
+            let t = dig_rng.range(0.3, 1.15);
+            let size = if i < 8 {
+                dig_rng.range(0.5, 0.95)
+            } else {
+                dig_rng.range(0.16, 0.45)
+            };
+            let reach = quarry_stockpile_reach(&DIG_HEAP, angle) * t;
+            let h = size * dig_rng.range(0.5, 0.8);
+            let (x, z) = (
+                DIG_HEAP.x + angle.cos() * reach,
+                DIG_HEAP.z + angle.sin() * reach,
+            );
+            let under = rest_height(&dug, x, z);
+            RubbleStone {
+                x,
+                y: under + h * STONE_SEAT,
+                z,
+                w: size,
+                h,
+                d: size * dig_rng.range(0.7, 1.1),
+                rot_y: dig_rng.range(-PI, PI),
+                shade: dig_rng.range(0.85, 1.08),
+            }
+        })
+        .collect();
+    geology.children.push(sandstone_scatter(&dig_stones));
     // Local rubble stays outside the boundary; it never advertises nonexistent cover.
     for i in 0..BOUNDARY_ROCKS {
         let side = if i % 2 == 1 { -1.0 } else { 1.0 };
@@ -351,10 +413,11 @@ pub fn quarry_scenery() -> Node {
         geology.children.extend(quarry_scree(&spot, &soil));
     }
     // The haul ramp gives the parked machinery a believable way out of the pit.
-    geology.children.push(shadow_receiver(
-        Arc::new(quarry_ramp_geometry()),
-        spoil.clone(),
-    ));
+    let ramp = quarry_ramp_geometry();
+    let deck = mesh_triangles(&ramp);
+    geology
+        .children
+        .push(shadow_receiver(Arc::new(ramp), spoil.clone()));
     for (i, boulder) in quarry_ramp_boulders().into_iter().enumerate() {
         let rock = sandstone_rock(
             boulder.size,
@@ -371,7 +434,7 @@ pub fn quarry_scenery() -> Node {
         .into_iter()
         .map(|chip| RubbleStone {
             x: chip.x,
-            y: quarry_ramp_height(chip.x, chip.z) + chip.size * 0.45 * STONE_SEAT,
+            y: rest_height(&deck, chip.x, chip.z) + chip.size * 0.45 * STONE_SEAT,
             z: chip.z,
             w: chip.size,
             h: chip.size * 0.45,

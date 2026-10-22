@@ -24,11 +24,15 @@ const BENCH_CREASE: f64 = PI / 4.0;
 /// Bed thickness range of the quarry faces, in metres.
 const BENCH_BED: (f64, f64) = (1.5, 2.6);
 /// Width of one column of a bench face, in metres.
-const BENCH_COLUMN: f64 = 2.6;
+const BENCH_COLUMN: f64 = 1.35;
 /// How far a bench bed juts out or recesses, in metres.
 const BENCH_RELIEF: f64 = 0.42;
 /// Columns per culled chunk of a face (about 35 m).
-const BENCH_CHUNK: usize = 16;
+const BENCH_CHUNK: usize = 26;
+/// Chance that a run of crest columns has broken away, and how far it drops,
+/// in metres: the skyline steps down in blocks instead of running ruler-straight.
+const CREST_BREAK: f64 = 0.4;
+const CREST_DROP: (f64, f64) = (0.5, 1.9);
 
 /// `quarryBench(length, height, depth, seed)`: a continuous blasted face with a
 /// safety berm along its crest and a shelf behind. The face is built bed by bed
@@ -50,11 +54,15 @@ pub fn quarry_bench(length: f64, height: f64, depth: f64, seed: f64) -> Node {
         berm: f64,
         joint: bool,
     }
-    let columns: Vec<Column> = (0..=segments)
+    let mut columns: Vec<Column> = (0..=segments)
         .map(|i| {
             let edge = i == 0 || i == segments;
             let x = (i as f64 / segments as f64 - 0.5) * length
-                + if edge { 0.0 } else { rng.range(-0.55, 0.55) };
+                + if edge {
+                    0.0
+                } else {
+                    rng.range(-0.4, 0.4) * BENCH_COLUMN
+                };
             let fracture = (x * 0.13 + seed).sin() * 0.5 + rng.range(-0.3, 0.3);
             let crown = 0.74
                 + 0.2 * (x * 0.05 + seed * 1.7).sin()
@@ -75,6 +83,19 @@ pub fn quarry_bench(length: f64, height: f64, depth: f64, seed: f64) -> Node {
             }
         })
         .collect();
+    // Blast-broken crest: runs of columns stand lower as a block, the edges of
+    // the break left square.
+    let mut i = 1;
+    while i < segments {
+        let run = 2 + (rng.next() * 5.0) as usize;
+        if rng.next() < CREST_BREAK {
+            let drop = rng.range(CREST_DROP.0, CREST_DROP.1);
+            for column in &mut columns[i..(i + run).min(segments)] {
+                column.top = (column.top - drop).max(height * 0.45);
+            }
+        }
+        i += run;
+    }
     let peak = columns.iter().map(|c| c.top).fold(0.0, f64::max);
     // Bench-wide beds, gently undulating along the face.
     let mut beds: Vec<(f64, f64, Bed)> = Vec::new();
@@ -543,11 +564,18 @@ pub fn quarry_mesas() -> Node {
             shift: DVec3,
             /// How deep the cliff's gullies cut into this ring, as a fraction.
             gullies: f64,
+            /// How far notches in the caprock lip drop this ring, in metres.
+            notches: f64,
         }
         // Rain gullies notch the cliffs between buttresses, at the same bearings
         // from tier to tier so they run down the whole face.
         let gully_count = rng.range(5.0, 9.0).floor();
         let gully_phase = rng.range(0.0, PI * 2.0);
+        // Caprock lips break back in notches between the gullies (a stream of
+        // their own, so the ring's layout keeps its draws).
+        let mut notch_rng = Random::new(70411.0 + m as f64 * 13.0);
+        let notch_count = notch_rng.range(9.0, 14.0).floor();
+        let notch_phase = notch_rng.range(0.0, PI * 2.0);
         let tiers = 1 + (rng.next() * 2.99) as usize;
         let layer_base = 300.0 + (m * 7) as f64;
         let mut shift = DVec3::ZERO;
@@ -559,6 +587,7 @@ pub fn quarry_mesas() -> Node {
             wear: 0.0,
             shift,
             gullies: 0.0,
+            notches: 0.0,
         }];
         let mut bottom = 0.0;
         for tier in 0..tiers {
@@ -579,6 +608,7 @@ pub fn quarry_mesas() -> Node {
                     wear: if t == 0.0 { -0.5 } else { 0.0 },
                     shift,
                     gullies: if t == 0.0 { 0.0 } else { 0.08 },
+                    notches: 0.0,
                 });
             }
             scale *= 0.8;
@@ -591,6 +621,7 @@ pub fn quarry_mesas() -> Node {
                     wear: if hard { 0.9 } else { 0.0 },
                     shift,
                     gullies: if hard { 0.1 } else { 0.16 },
+                    notches: if hard { span * cliff * 0.3 } else { 0.0 },
                 });
             }
             // A tread back to the next tier, off-centre.
@@ -605,6 +636,7 @@ pub fn quarry_mesas() -> Node {
                     wear: -0.4,
                     shift,
                     gullies: 0.05,
+                    notches: span * cliff * 0.12,
                 });
             }
             bottom = top;
@@ -619,7 +651,9 @@ pub fn quarry_mesas() -> Node {
                         let a = s as f64 / MESA_SIDES as f64 * PI * 2.0;
                         let notch = (0.5 + 0.5 * (a * gully_count + gully_phase).sin()).powi(4);
                         let scale = ring.scale * (1.0 - ring.gullies * notch);
-                        centre + ring.shift + DVec3::new(p.x * scale, ring.y, p.z * scale)
+                        let broken = (0.5 + 0.5 * (a * notch_count + notch_phase).sin()).powi(6);
+                        let y = ring.y - ring.notches * broken;
+                        centre + ring.shift + DVec3::new(p.x * scale, y, p.z * scale)
                     })
                     .collect()
             })
@@ -644,7 +678,8 @@ pub fn quarry_mesas() -> Node {
         }
         let top = ring_points.last().expect("mesa rings");
         let last = rings.last().expect("mesa rings");
-        let crown = centre + last.shift + DVec3::new(0.0, mesa.height + 0.6, 0.0);
+        // A flat, barely domed caprock top, not a cone.
+        let crown = centre + last.shift + DVec3::new(0.0, mesa.height + 0.2, 0.0);
         let layer = -last.layer;
         for s in 0..MESA_SIDES {
             let n = (s + 1) % MESA_SIDES;

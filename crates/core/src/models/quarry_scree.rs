@@ -11,7 +11,9 @@ use crate::scene::{Material, Node};
 
 use super::model_primitives::{shadow_receiver, shadowed};
 use super::quarry_benches::ScreeSpot;
-use super::quarry_surfaces::{RubbleStone, sandstone_material, scatter_mesh};
+use super::quarry_surfaces::{
+    RubbleStone, STONE_SEAT, mesh_triangles, sandstone_material, scatter_mesh, surface_height,
+};
 use super::quarry_terrain::{plain_soil_colors, quarry_ground_drop, soil_uvs};
 use crate::sim::math::Random;
 
@@ -84,6 +86,8 @@ const SCREE_STONES: f64 = 0.62;
 pub fn quarry_scree_rubble(spot: &ScreeSpot) -> Mesh {
     let mut rng = Random::new(spot.seed * 131.0 + 7.0);
     let count = (spot.length * spot.depth * SCREE_STONES).ceil() as usize;
+    // Stones rest on the drawn fan, or on the apron beyond its buried rim.
+    let fan = mesh_triangles(&quarry_scree_geometry(spot));
     let stones: Vec<RubbleStone> = (0..count)
         .map(|i| {
             let u = rng.range(-0.97, 0.97);
@@ -91,12 +95,14 @@ pub fn quarry_scree_rubble(spot: &ScreeSpot) -> Mesh {
             let point = scree_point(spot, u, t);
             let size = rng.range(0.14, 0.48) * (0.65 + t * 1.1);
             let large = if i % 11 == 0 { 1.8 } else { 1.0 };
+            let h = size * rng.range(0.45, 0.85);
+            let under = surface_height(&fan, point.x, point.z).map_or(0.0, |y| y.max(0.0));
             RubbleStone {
                 x: point.x,
-                y: point.y.max(0.0) + size * 0.15,
+                y: under + h * STONE_SEAT,
                 z: point.z,
                 w: size * large,
-                h: size * rng.range(0.45, 0.85),
+                h,
                 d: size * rng.range(0.65, 1.25) * large,
                 rot_y: rng.range(-PI, PI),
                 shade: rng.range(0.74, 1.08),

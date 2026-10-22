@@ -132,6 +132,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     );
     let bed_tint = mix(bed_color(rock_layer), srgb_hex(0xd8b48cu), select(0.0, 0.35, backdrop));
     var layered = select(bench_color, bed_tint, rocky);
+    // Sun-bleached caprock: flat tops weather to one pale cream whatever bed they
+    // expose, so no top reads as a stamped patch of the face's colors.
+    let bleached = quarry_smoothstep(0.7, 0.95, n.y) * select(0.0, 0.7, rocky && !backdrop);
+    layered = mix(layered, srgb_hex(0xdbc4a0u), bleached);
     layered *= 0.97 + lamina * 0.05;
     // Iron oxide: thin wavy liesegang bands in patches, muted, never a painted
     // stripe.
@@ -160,8 +164,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let cavity = clamp(-wear, 0.0, 1.0);
     let chipped = quarry_smoothstep(0.2, 0.8, lip * (0.6 + luma));
     rock = mix(rock, mix(rock, srgb_hex(0xf0e2c4u), 0.45) * 1.06, chipped * 0.5);
-    rock *= 1.0 - cavity * 0.45;
-    rock = mix(rock, rock * vec3f(1.0, 0.86, 0.74), cavity * 0.3);
+    rock *= 1.0 - cavity * 0.35;
+    rock = mix(rock, rock * vec3f(1.0, 0.9, 0.82), cavity * 0.15);
     // Pits hold shade under their overhanging lip; their rims are fresh stone.
     rock *= 1.0 - pits.cover * (0.3 + 0.35 * clamp(pits.lean.y * 1.5, 0.0, 1.0));
     rock *= 1.0 + pits.contact * 0.1;
@@ -171,10 +175,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let mottle = strata_noise(p.xz * 0.55 + rock_layer) * 0.6 + strata_noise(p.xz * 1.7) * 0.4;
     rock *= mix(1.0, 0.86 + mottle * 0.22, top);
     var joints = vec2f(0.0);
-    if rocky && top > 0.01 {
-        joints = quarry_cracks(p.xz + vec2f(rock_layer * 7.3, 0.0), 1.7, 3.2, footprint) * top;
+    // Joints open in patches of the caprock, not a uniform net over every top.
+    let jointed = quarry_smoothstep(0.38, 0.62, strata_noise(p.xz * 0.22 + rock_layer * 1.3));
+    if rocky && top * jointed > 0.01 {
+        joints = quarry_cracks(p.xz + vec2f(rock_layer * 7.3, 0.0), 2.3, 3.6, footprint) * top * jointed;
     }
-    rock = mix(rock, rock * vec3f(0.45, 0.4, 0.36), joints.x * 0.8);
+    rock = mix(rock, rock * vec3f(0.5, 0.44, 0.39), joints.x * 0.6);
     rock *= 1.0 + joints.y * 0.12;
     // Ledge undersides and undercuts sit in their own shade.
     let under = quarry_smoothstep(-0.05, -0.7, n.y);
@@ -195,11 +201,15 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // The distant mesas: dark, rust-stained caprock cliffs over pale talus, then
     // cooler and flatter with distance as the air between thickens.
     let cliff = quarry_smoothstep(0.75, 0.35, n.y) * select(0.0, 1.0, mesa);
-    rock = mix(rock * vec3f(1.04, 1.0, 0.95), rock * vec3f(0.84, 0.66, 0.52), cliff);
+    rock = mix(rock * vec3f(1.08, 1.02, 0.94), rock * vec3f(0.7, 0.54, 0.43), cliff);
     let far = quarry_smoothstep(140.0, 290.0, length(p.xz));
     // Aerial perspective: warm, lifted shadows near, cooling into the sky's haze
     // with distance, never grey card.
-    rock = mix(rock, mix(rock, vec3f(dot(rock, LUMA)), 0.18) * vec3f(0.97, 0.97, 1.03) + vec3f(0.03, 0.035, 0.05), far);
+    // Faces turned from the sun cool toward the sky's blue; lit faces keep their
+    // warmth, so the haze layers the distance instead of greying it.
+    let shaded_side = quarry_smoothstep(0.3, -0.4, dot(n, frame.sun_direction.xyz));
+    let distant = rock * mix(vec3f(1.02, 0.98, 0.93), vec3f(0.86, 0.9, 1.04), shaded_side) + vec3f(0.01, 0.014, 0.026);
+    rock = mix(rock, distant, far);
     // `quarry_ground_drop`: flat to the wall's outer face (62 m), down 1.8 m by 66 m.
     let floor_y = -min(max(max(abs(p.x), abs(p.z)) - 62.0, 0.0) * 0.45, 1.8);
     let lift = p.y - floor_y;

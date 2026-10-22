@@ -40,7 +40,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Mud plates only where the bake dried some; their crack depth joins the relief.
     var cracks = vec2f(0.0);
     if dried > 0.02 {
-        cracks = quarry_cracks(p, SOIL_PLATE_CELL, 1.0, footprint) * quarry_smoothstep(0.02, 0.4, dried);
+        // Toward the edge of a dried patch the plates grow and the cracks thin
+        // out to hairlines, so the crazing feathers into the sand.
+        let cell = SOIL_PLATE_CELL * mix(1.6, 1.0, quarry_smoothstep(0.1, 0.6, dried));
+        cracks = quarry_cracks(p, cell, mix(0.35, 1.0, quarry_smoothstep(0.15, 0.7, dried)), footprint)
+            * quarry_smoothstep(0.02, 0.55, dried);
     }
     let bake_height = dot(baked.rgb, LUMA);
     let height = near * mix(0.35, 1.6, stony) + bake_height * SOIL_BAKE_RELIEF
@@ -55,7 +59,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, color * grit.tint, grit.cover * 0.85);
     // Dried plates are paler and cooler; the cracks hold shade and moisture.
     color *= 1.0 + cracks.y * 0.12;
-    color = mix(color, color * vec3f(0.5, 0.45, 0.41), cracks.x * 0.75);
+    color = mix(color, color * vec3f(0.55, 0.5, 0.46), cracks.x * 0.65);
     (*s).color = color * f.vertex_color.rgb * material.color.rgb * f.tint.rgb;
     (*s).opacity = material.color.a * f.tint.a;
     (*s).normal = normal;
