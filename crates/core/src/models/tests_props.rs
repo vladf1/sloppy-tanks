@@ -235,7 +235,15 @@ fn cover_models_match_typescript() {
         if summary_with(&model, Precision::Exact).0.3 == case.exact {
             exact += 1;
         }
-        if actual != case.expected || parts != case.timber_parts || tree != case.tree {
+        // Living trees draw from the tree atlas (`tree_models::TREE_ATLAS`): their
+        // UVs and tints moved into it, so only their shape counts are compared.
+        let atlas_tree = case.kind == CoverKind::Tree && case.stage == 0;
+        let same = if atlas_tree {
+            (actual.0, actual.1, actual.2) == (case.expected.0, case.expected.1, case.expected.2)
+        } else {
+            actual == case.expected
+        };
+        if !same || parts != case.timber_parts || tree != case.tree {
             failures.push(format!(
                 "#{index} {:?} ({}, {}) stage {} background {}: {actual:?} vs {:?}, parts {parts:?} vs {:?}, tree {:?} vs {:?}, meshes {hashes:08x?}",
                 case.kind,

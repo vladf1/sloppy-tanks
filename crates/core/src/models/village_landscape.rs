@@ -134,7 +134,33 @@ pub fn valley_height_at(x: f64, z: f64, river: f64) -> f64 {
     let hill = smoothstep(edge, 66.0, 145.0)
         * (4.0 + 3.0 * (x * 0.047 + z * 0.028).sin() + 2.0 * (z * 0.069 - x * 0.021).sin());
     let bank = smoothstep(river, 4.9, 9.0);
-    lerp(-4.2, -0.85 + hill, bank)
+    lerp(-4.2, -0.85 + hill + knolls(x, z, edge, river), bank)
+}
+
+/// Landmarks set at fixed heights on the valley floor (x, z, radius in metres):
+/// the watermill, both footbridges and the log camp keep level ground.
+const LEVEL_FOOTINGS: [[f64; 3]; 4] = [
+    [-35.0, -69.0, 14.0],
+    [0.0, -82.0, 10.0],
+    [-85.0, 38.0, 10.0],
+    [-68.0, -24.0, 8.0],
+];
+
+/// Knolls and swales rolling the valley floor beyond the wall, a metre or two
+/// high: level at the wall's foot, along the creek and under the landmarks of
+/// [`LEVEL_FOOTINGS`], so nothing set on the old floor floats or sinks.
+fn knolls(x: f64, z: f64, edge: f64, river: f64) -> f64 {
+    let reach = smoothstep(edge, 63.0, 82.0) * smoothstep(river, 9.0, 18.0);
+    if reach <= 0.0 {
+        return 0.0;
+    }
+    let level = LEVEL_FOOTINGS
+        .iter()
+        .map(|&[cx, cz, radius]| smoothstep((x - cx).hypot(z - cz), radius, radius + 10.0))
+        .fold(1.0, f64::min);
+    let rolls = (lattice_noise(x * 0.045 + 3.1, z * 0.045 - 7.7) - 0.5) * 3.4
+        + (lattice_noise(x * 0.11 - 2.0, z * 0.11 + 5.0) - 0.5) * 1.1;
+    reach * level * rolls
 }
 
 /// `mountainRise(x, z)`: the northern range's height above the valley.
