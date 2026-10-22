@@ -272,8 +272,38 @@ fn grade(color: vec3f) -> vec3f {
     let vibrance = 1.0 + output.tone.x * (1.0 - smoothstep(0.0, 0.6, chroma));
     let saturation = output.lift.w * vibrance * (1.0 - 0.32 * earth) * (1.0 - MEADOW_CALM * meadow);
     c = max(mix(vec3f(grey), c, saturation), vec3f(0.0));
-    c = MID_GREY * pow(c / MID_GREY, vec3f(output.gamma.w));
-    return clamp(c, vec3f(0.0), vec3f(1.0));
+    c = contrast_curve(c, output.gamma.w);
+    return highlight_rolloff(c);
+}
+
+// Contrast around mid grey: a power curve below it, which never clips the blacks,
+// and above it a quadratic of the same slope at mid grey that lands exactly on
+// white, so the brightest sunlit faces keep their gradations instead of the power
+// curve pushing them past 1 into one flat colour.
+fn contrast_curve(c: vec3f, contrast: f32) -> vec3f {
+    let low = MID_GREY * pow(max(c, vec3f(0.0)) / MID_GREY, vec3f(contrast));
+    let x = clamp((c - MID_GREY) / (1.0 - MID_GREY), vec3f(0.0), vec3f(1.0));
+    let high = MID_GREY + (1.0 - MID_GREY) * x * (contrast - (contrast - 1.0) * x);
+    return select(high, low, c <= vec3f(MID_GREY));
+}
+
+// Where a graded colour's brightest channel starts to roll off, and the headroom its
+// shoulder eases into: a channel pushed up to about 1.1 still lands below white.
+const GRADE_SHOULDER: f32 = 0.86;
+const GRADE_HEADROOM: f32 = 0.3;
+
+// Gain and warm highlight toning can push one channel of a saturated colour past
+// white: a sunlit red hull would clip its red flat while green and blue climb on.
+// The whole colour scales down over a soft shoulder instead, so its hue and the
+// form shading between lit faces survive.
+fn highlight_rolloff(c: vec3f) -> vec3f {
+    let peak = max(max(c.r, c.g), c.b);
+    if peak <= GRADE_SHOULDER {
+        return max(c, vec3f(0.0));
+    }
+    let over = peak - GRADE_SHOULDER;
+    let eased = GRADE_SHOULDER + over * GRADE_HEADROOM / (over + GRADE_HEADROOM);
+    return clamp(c * (eased / peak), vec3f(0.0), vec3f(1.0));
 }
 
 @fragment

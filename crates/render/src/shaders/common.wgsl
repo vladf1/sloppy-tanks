@@ -348,13 +348,22 @@ fn horizon_ridges(color: vec3f, direction: vec3f, aa: f32) -> vec3f {
 fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
     let sun = frame.sun_direction.xyz;
     let toward_sun = max(dot(ray, sun), 0.0);
-    let glow = frame.sky_sun.rgb * (frame.haze_far.z * toward_sun * toward_sun * amount);
     // Away from the sun even thick haze keeps some of the cool aerial tint, so the
     // far layers step from warm to cool across the view rather than one milky white.
     let away = clamp(-dot(normalize(ray.xz + vec2f(1e-5)), normalize(sun.xz + vec2f(1e-5))), 0.0, 1.0);
     let thick = mix(sky_behind(ray), frame.aerial.rgb, HAZE_AWAY_COOL * away);
-    return mix(frame.aerial.rgb, thick, amount * amount) + glow;
+    let base = mix(frame.aerial.rgb, thick, amount * amount);
+    // Toward the sun the haze takes on the sun's own hue and brightens a little.
+    // The hue replaces the cool tint's rather than adding warm light over blue,
+    // which turned sunward hills lavender and pink.
+    let glow = frame.haze_far.z * toward_sun * toward_sun * amount;
+    let level = dot(base, vec3f(0.2126, 0.7152, 0.0722));
+    let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
+    return mix(base, sun_hue * level * (1.0 + HAZE_SUN_BRIGHTENING), clamp(glow, 0.0, 1.0));
 }
+
+// How much brighter than the cool haze the sunward glow is.
+const HAZE_SUN_BRIGHTENING: f32 = 0.35;
 
 // The share of the cool aerial tint thick haze keeps looking straight away from the sun.
 const HAZE_AWAY_COOL: f32 = 0.35;
