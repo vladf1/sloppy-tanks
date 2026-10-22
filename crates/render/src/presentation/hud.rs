@@ -209,10 +209,12 @@ mod tests {
         let fov = 45f64.to_radians();
         // Far cameras draw the bar at its authored size.
         assert_eq!(bar_scale(60.0, fov, 1.84, 900.0), 1.0);
-        // A close camera shrinks it to a smaller share of the view than a far one.
-        let near = bar_scale(11.8, fov, 1.84, 900.0);
-        assert!(near < 0.5, "{near}");
-        let share = 1.84 * near / (2.0 * 11.8 * (fov / 2.0).tan());
+        // A close camera shrinks it to a smaller share of the view than a far one (a
+        // wide lens, so the share stays above the `BAR_MIN_SCALE` floor).
+        let wide = 70f64.to_radians();
+        let near = bar_scale(11.8, wide, 1.84, 900.0);
+        assert!(near > BAR_MIN_SCALE && near < 0.5, "{near}");
+        let share = 1.84 * near / (2.0 * 11.8 * (wide / 2.0).tan());
         assert!((share - BAR_NEAR_SCREEN_SHARE).abs() < 1e-9);
         let mid = bar_scale(21.0, fov, 1.84, 900.0);
         let mid_share = 1.84 * mid / (2.0 * 21.0 * (fov / 2.0).tan());
