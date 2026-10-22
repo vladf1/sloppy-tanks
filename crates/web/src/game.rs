@@ -90,6 +90,7 @@ use sloppy_core::sim::round_recap::{
 };
 use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
+use sloppy_core::sim::types::{DamageCause, DamageSource};
 use sloppy_core::sim::veterancy::RANKS;
 use sloppy_core::sim::{
     CoverKind, FragmentShape, GameMode, Match, MatchPhase, RenderState, Shot, SimEventType,
@@ -133,7 +134,15 @@ pub mod frame_slot {
     pub const FIRST_PERSON: usize = 9;
     /// This frame's capped delta in seconds (the HUD advances its timers by it).
     pub const DT: usize = 10;
-    pub const LENGTH: usize = 11;
+    /// The drawn reticle's screen position (NDC, y up): the gun sight in first
+    /// person, the ground aim overhead; NaN while no reticle shows.
+    pub const RETICLE_X: usize = 11;
+    pub const RETICLE_Y: usize = 12;
+    /// The viewer's tank on screen (NDC, y up) for the damage ring; NaN in first
+    /// person or off screen.
+    pub const VIEWER_X: usize = 13;
+    pub const VIEWER_Y: usize = 14;
+    pub const LENGTH: usize = 15;
 }
 
 /// `Game.hud_json`: the page HUD's view of the match and the human's tank.
@@ -367,7 +376,13 @@ impl Game {
         self.accumulator = 0.0;
         // Animation frames queued before GO (behind a slow arena rebuild) carry older
         // timestamps; measuring from now keeps them from advancing the new round.
-        self.times.last_ms = Some(now_ms());
+        // Autoplay keeps its seeded timeline frame-exact whatever the page's load
+        // time instead: its first frame starts the round with a full catch-up.
+        self.times.last_ms = Some(if self.autoplay {
+            f64::NEG_INFINITY
+        } else {
+            now_ms()
+        });
     }
 
     pub fn resume(&mut self) {
@@ -405,15 +420,7 @@ impl Game {
     /// events to presentation, and draws. See [`frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
         let input = InputFrame::from_slice(input);
-        // Destroying an enemy holds the whole action (simulation, effects, camera)
-        // for a beat. Autoplay has no player to feel it and keeps the seeded
-        // timeline frame-exact.
         let dt = self.times.advance(now);
-        let dt = if self.autoplay {
-            dt
-        } else {
-            self.view.hit_stop_time(dt)
-        };
         let mut result = vec![0.0; frame_slot::LENGTH];
         if !self.active {
             result[frame_slot::PHASE] = phase_code(self.sim.match_state.phase);
@@ -500,6 +507,12 @@ impl Game {
         result[frame_slot::RENDER_MS] = self.times.render_ms as f32;
         result[frame_slot::FIRST_PERSON] = f32::from(u8::from(self.view.rig.first_person.enabled));
         result[frame_slot::DT] = dt as f32;
+        let (reticle_x, reticle_y) = self.view.reticle_ndc().unwrap_or((f32::NAN, f32::NAN));
+        result[frame_slot::RETICLE_X] = reticle_x;
+        result[frame_slot::RETICLE_Y] = reticle_y;
+        let (viewer_x, viewer_y) = self.view.viewer_ndc().unwrap_or((f32::NAN, f32::NAN));
+        result[frame_slot::VIEWER_X] = viewer_x;
+        result[frame_slot::VIEWER_Y] = viewer_y;
         self.frame_index += 1;
         Ok(result)
     }
@@ -797,13 +810,31 @@ impl Game {
         let tank = &mut self.sim.tanks[index];
         tank.protection = 0.0;
         tank.shield = 0.0;
-        let team = tank.team;
-        let enemy = self.sim.tanks.iter().find(|other| other.team != team);
-        let (owner, owner_team) = enemy.map_or((0, Team::from_index(team.index() + 1)), |other| {
-            (other.id, other.team)
-        });
+        let (team, body) = (tank.team, tank.body);
+        // The nearest living enemy fires a standard shell, so the kill reports its
+        // weapon and direction like a real one (the respawn card and feed show both).
+        let at = self.sim.body_translation(body).planar();
+        let enemy = self
+            .sim
+            .tanks
+            .iter()
+            .filter(|other| other.team != team && other.alive)
+            .map(|other| (other, self.sim.body_translation(other.body).planar()))
+            .min_by(|(_, a), (_, b)| {
+                (a.x - at.x)
+                    .hypot(a.z - at.z)
+                    .total_cmp(&(b.x - at.x).hypot(b.z - at.z))
+            });
+        let (owner, owner_team, origin) = enemy.map_or(
+            (0, Team::from_index(team.index() + 1), at),
+            |(other, position)| (other.id, other.team, position),
+        );
+        let source = DamageSource {
+            cause: DamageCause::Standard,
+            origin,
+        };
         self.sim
-            .damage_tank(index, 1e12, owner, owner_team, None, None);
+            .damage_tank(index, 1e12, owner, owner_team, None, Some(source));
     }
 
     /// Profiling setup: the seed, tank count and human team the next reset uses.

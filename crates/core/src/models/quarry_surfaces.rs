@@ -45,7 +45,10 @@ pub fn sandstone_material() -> Arc<Material> {
         .clone()
 }
 
-static ROCKS: Cache<([u64; 3], u32), Mesh> = Cache::new();
+/// Quarried rocks by size, variant and what they stand on.
+static ROCKS: Cache<([u64; 3], u32, RockSetting), Mesh> = Cache::new();
+/// Sand skirts of rocks by footprint and variant.
+static SKIRTS: Cache<([u64; 2], u32), Mesh> = Cache::new();
 
 /// Collision ring levels of `quarry_rock_shape`, toe to cap rim, and its sides.
 const SHAPE_LEVELS: [f64; 7] = [0.0, 0.07, 0.28, 0.44, 0.72, 0.88, 1.0];
@@ -168,21 +171,80 @@ fn course_rows(course: Course) -> [(f64, f64, f64); 4] {
 /// pieces lie at the toe with the scree, on a sand skirt shaded like the floor.
 /// `uv.x` names each bed for the shader's strata palette and `uv.y` carries the
 /// chipped-edge/cavity wear, plus `SAWN` on sawn faces.
-pub fn sandstone_rock(w: f64, h: f64, d: f64, variant: u32) -> Node {
-    let key = ([w, h, d].map(f64::to_bits), variant);
-    let mesh = ROCKS.get_or_insert(key, || quarried_rock(w, h, d, variant));
-    shadowed(mesh, sandstone_material())
+pub fn sandstone_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> Node {
+    shadowed(
+        sandstone_rock_mesh(w, h, d, variant, setting),
+        sandstone_material(),
+    )
 }
 
-fn quarried_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
+/// What a sandstone rock stands on, which decides where its scree rests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RockSetting {
+    /// Bare ground level with the rock's base.
+    Ground,
+    /// Its own sand skirt ([`sandstone_footing_height`]; cover rocks).
+    Drift,
+    /// Another rock: a slab with no scree or skirt, since stones shed around its
+    /// toe would hang in the air, and an undercut base ([`STACKED_UNDERCUT`]) so
+    /// that toe fits on the lower rock's cap while its upper beds jut out.
+    Stacked,
+}
+
+/// The toe outline of a [`sandstone_rock`], in the rock's own space: where it
+/// meets what it stands on.
+pub fn sandstone_rock_toe(
+    w: f64,
+    h: f64,
+    d: f64,
+    variant: u32,
+    setting: RockSetting,
+) -> Vec<DVec3> {
+    let mut grid = rock_grid(w, h, d, variant, setting);
+    grid.truncate(SHAPE_SIDES);
+    grid
+}
+
+/// The cached mesh of a [`sandstone_rock`].
+pub fn sandstone_rock_mesh(
+    w: f64,
+    h: f64,
+    d: f64,
+    variant: u32,
+    setting: RockSetting,
+) -> Arc<Mesh> {
+    let key = ([w, h, d].map(f64::to_bits), variant, setting);
+    ROCKS.get_or_insert(key, || quarried_rock(w, h, d, variant, setting))
+}
+
+/// How far a stacked slab's lowest collision rings are drawn in toward its axis,
+/// toe first: an undercut soft base under the jutting beds above.
+const STACKED_UNDERCUT: [f64; 4] = [0.64, 0.68, 0.88, 0.97];
+
+/// The collision shape's rings (`SHAPE_SIDES` points each, toe first) and its cap
+/// centre last; a stacked slab's lowest rings are undercut.
+fn rock_grid(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> Vec<DVec3> {
     let shape = quarry_rock_shape(w, h, d, variant);
-    let grid: Vec<DVec3> = shape
+    let mut grid: Vec<DVec3> = shape
         .positions
         .as_chunks::<3>()
         .0
         .iter()
         .map(|p| widen(*p))
         .collect();
+    if setting == RockSetting::Stacked {
+        for (ring, scale) in STACKED_UNDERCUT.into_iter().enumerate() {
+            for p in &mut grid[ring * SHAPE_SIDES..(ring + 1) * SHAPE_SIDES] {
+                p.x *= scale;
+                p.z *= scale;
+            }
+        }
+    }
+    grid
+}
+
+fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> Mesh {
+    let grid = rock_grid(w, h, d, variant, setting);
     let center = grid[grid.len() - 1];
     let mut rng = Random::new(812.0 + f64::from(variant) * 7.0 + 0.5);
     let outcrop = w.max(d) >= BOULDER_SPAN;
@@ -539,10 +601,13 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
     let cap = cap_start..cap_start + columns * 9;
     let mut geometry = Mesh::from_f64(&positions, &[], &uvs, None);
     geometry.colors = colors;
-    if outcrop {
-        // Scree and fallen blocks at the toe, then the sand skirt.
+    if outcrop && setting != RockSetting::Stacked {
+        // The sand skirt, then scree and fallen blocks resting on it.
+        let skirt = skirt_mesh(w, d, variant);
+        let banked = mesh_triangles(&skirt);
+        let rest = |x: f64, z: f64| surface_height(&banked, x, z).unwrap_or(0.0).max(0.0);
         let toe: Vec<DVec3> = (0..columns).map(|c| surface(c, 0.0)).collect();
-        let mut stones = scree_stones(&toe, &outward, h, &mut rng);
+        let mut stones = scree_stones(&toe, &outward, h, &rest, &mut rng);
         for c in 0..columns {
             let fell = chipped[c] > 0.0
                 || chipped.get(columns + c).is_some_and(|&bite| bite > 0.0)
@@ -550,12 +615,13 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
             if fell && rng.next() < 0.55 {
                 let size = rng.range(0.55, 1.0).min(h * 0.24);
                 let p = toe[c] + outward[c] * (size * 0.55 + rng.range(0.0, 0.4));
+                let height = size * rng.range(0.6, 0.85);
                 stones.push(RubbleStone {
                     x: p.x,
-                    y: size * 0.12,
+                    y: rest(p.x, p.z) + height * STONE_SEAT,
                     z: p.z,
                     w: size,
-                    h: size * rng.range(0.6, 0.85),
+                    h: height,
                     d: size * rng.range(0.7, 1.0),
                     rot_y: rng.range(-PI, PI),
                     shade: rng.range(0.85, 1.02),
@@ -566,7 +632,6 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
         geometry.positions.extend(&scree.positions);
         geometry.uvs.extend(&scree.uvs);
         geometry.colors.extend(&scree.colors);
-        let skirt = sand_skirt(&toe, &outward, &mut rng);
         geometry.positions.extend(&skirt.positions);
         geometry.uvs.extend(&skirt.uvs);
         geometry.colors.extend(&skirt.colors);
@@ -593,8 +658,15 @@ const SCREE_DENSITY: f64 = 1.3;
 
 /// Scree at an outcrop's toe: fallen blocks leaning on the face, then chips that
 /// thin out and shrink across the sand apron. Ankle-high, so it never reads as
-/// cover; the skirt half-buries the stones nearest the face.
-fn scree_stones(toe: &[DVec3], outward: &[DVec3], h: f64, rng: &mut Random) -> Vec<RubbleStone> {
+/// cover; the skirt half-buries the stones nearest the face. The shed stones
+/// rest on what `rest` (x, z) reads as the surface there.
+fn scree_stones(
+    toe: &[DVec3],
+    outward: &[DVec3],
+    h: f64,
+    rest: &impl Fn(f64, f64) -> f64,
+    rng: &mut Random,
+) -> Vec<RubbleStone> {
     let perimeter: f64 = (0..toe.len())
         .map(|c| toe[c].distance(toe[(c + 1) % toe.len()]))
         .sum();
@@ -618,12 +690,13 @@ fn scree_stones(toe: &[DVec3], outward: &[DVec3], h: f64, rng: &mut Random) -> V
                 rng.range(0.08, 0.3) * (0.55 + fade * 0.6)
             };
             let p = at + out * (reach + size * 0.35);
+            let height = size * rng.range(0.4, 0.75);
             RubbleStone {
                 x: p.x,
-                y: 0.03 + 0.08 * fade,
+                y: rest(p.x, p.z) + height * STONE_SEAT,
                 z: p.z,
                 w: size,
-                h: size * rng.range(0.4, 0.75),
+                h: height,
                 d: size * rng.range(0.6, 1.1),
                 rot_y: rng.range(-PI, PI),
                 shade: rng.range(0.72, 1.0),
@@ -634,7 +707,34 @@ fn scree_stones(toe: &[DVec3], outward: &[DVec3], h: f64, rng: &mut Random) -> V
 
 /// Sand banked against an outcrop's toe: a low skirt from the face out onto the
 /// floor, sinking just under it at its rim. The shader shades it as the floor
-/// (`uv.y` [`SKIRT`]), so it needs no blending and joins the rock's draw.
+/// (`uv.y` [`SKIRT`]), so it needs no blending and joins the rock's draw. It
+/// follows the collision toe, which depends on the footprint alone.
+fn skirt_mesh(w: f64, d: f64, variant: u32) -> Arc<Mesh> {
+    SKIRTS.get_or_insert(([w, d].map(f64::to_bits), variant), || {
+        let grid = rock_grid(w, 1.0, d, variant, RockSetting::Ground);
+        // Two columns per side of the outline, so the drift swells smoothly.
+        let toe: Vec<DVec3> = (0..SHAPE_SIDES * 2)
+            .map(|c| {
+                let (a, b) = (grid[c / 2], grid[(c / 2 + 1) % SHAPE_SIDES]);
+                a + (b - a) * (c % 2) as f64 * 0.5
+            })
+            .collect();
+        let outward: Vec<DVec3> = (0..toe.len())
+            .map(|c| {
+                let tangent = toe[(c + 1) % toe.len()] - toe[(c + toe.len() - 1) % toe.len()];
+                let n = DVec3::new(tangent.z, 0.0, -tangent.x).normalize_or_zero();
+                if n.dot(DVec3::new(toe[c].x, 0.0, toe[c].z)) < 0.0 {
+                    -n
+                } else {
+                    n
+                }
+            })
+            .collect();
+        let mut rng = Random::new(1907.0 + f64::from(variant) * 3.0);
+        sand_skirt(&toe, &outward, &mut rng)
+    })
+}
+
 fn sand_skirt(toe: &[DVec3], outward: &[DVec3], rng: &mut Random) -> Mesh {
     let columns = toe.len();
     let reach: Vec<f64> = (0..columns).map(|_| rng.range(0.7, 1.6)).collect();
@@ -679,6 +779,56 @@ fn sand_skirt(toe: &[DVec3], outward: &[DVec3], rng: &mut Random) -> Mesh {
     mesh.uvs = vec![[0.0, SKIRT as f32]; count];
     mesh.colors = vec![[1.0; 3]; count];
     mesh
+}
+
+/// A [`RubbleStone`]'s centre stands this many of its heights above the surface it
+/// rests on. Its squashed underside reaches 0.126 to 0.21 heights below the centre
+/// ([`stones_from`]), so every stone touches or sinks slightly into that surface.
+pub const STONE_SEAT: f64 = 0.12;
+
+/// The sand skirt of a cover rock (in the rock's space) at x/z, or the ground's
+/// level (0) beyond it: where loose stones around a cover rock rest.
+pub fn sandstone_footing_height(w: f64, d: f64, variant: u32, x: f64, z: f64) -> f64 {
+    surface_height(&mesh_triangles(&skirt_mesh(w, d, variant)), x, z)
+        .unwrap_or(0.0)
+        .max(0.0)
+}
+
+/// Every triangle of `mesh`, indexed or not, for [`surface_height`].
+pub fn mesh_triangles(mesh: &Mesh) -> Vec<[DVec3; 3]> {
+    let corner = |i: u32| widen(mesh.positions[i as usize]);
+    match &mesh.indices {
+        Some(indices) => indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| t.map(corner))
+            .collect(),
+        None => mesh
+            .positions
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| t.map(widen))
+            .collect(),
+    }
+}
+
+/// The highest point of `triangles` straight above or below x/z, if any.
+pub fn surface_height(triangles: &[[DVec3; 3]], x: f64, z: f64) -> Option<f64> {
+    triangles
+        .iter()
+        .filter_map(|&[a, b, c]| {
+            let det = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+            if det.abs() < 1e-12 {
+                return None;
+            }
+            let u = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / det;
+            let v = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / det;
+            (u >= 0.0 && v >= 0.0 && u + v <= 1.0)
+                .then_some(u * a.y + v * b.y + (1.0 - u - v) * c.y)
+        })
+        .reduce(f64::max)
 }
 
 /// One fragment of [`sandstone_rubble`], in world metres.
@@ -835,46 +985,4 @@ pub fn sand_drift_material() -> Arc<Material> {
 /// rock.
 pub fn sandstone_footing(_w: f64, _d: f64, _variant: u32) -> Node {
     Node::group("")
-}
-
-#[cfg(test)]
-mod tmp_rock_probe {
-    #[test]
-    fn probe() {
-        for [x, z, w, d, h] in [
-            [25.0, 12.0, 14.0, 8.0, 4.6],
-            [25.0, -12.0, 14.0, 8.0, 3.8],
-            [4.0, 28.0, 16.0, 9.0, 4.8],
-            [40.5, 37.0, 10.0, 12.0, 4.2],
-            [24.5, 37.0, 10.0, 12.0, 3.6],
-            [-10.0, 47.0, 13.0, 7.0, 3.4],
-        ] {
-            for side in [-1.0, 1.0] {
-                let v = crate::sim::quarry_rock_shape::quarry_rock_variant(side * x, side * z);
-                let m = super::quarried_rock(w, h, d, v);
-                let bad = m
-                    .positions
-                    .iter()
-                    .filter(|p| p.iter().any(|c| !c.is_finite()))
-                    .count();
-                let badn = m
-                    .normals
-                    .iter()
-                    .filter(|p| p.iter().any(|c| !c.is_finite()))
-                    .count();
-                let (mut lo, mut hi) = ([f32::MAX; 3], [f32::MIN; 3]);
-                for p in &m.positions {
-                    for i in 0..3 {
-                        lo[i] = lo[i].min(p[i]);
-                        hi[i] = hi[i].max(p[i]);
-                    }
-                }
-                println!(
-                    "v{v} kit {:?} tris {} nan {bad} nan_n {badn} lo {lo:?} hi {hi:?}",
-                    super::rock_kit(v),
-                    m.positions.len() / 3
-                );
-            }
-        }
-    }
 }

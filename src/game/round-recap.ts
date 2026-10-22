@@ -1,4 +1,4 @@
-import type { HudState, RecapMetric, RecapState } from "./engine-api";
+import type { HudState, RecapMetric, RecapState, ScoreboardRow } from "./engine-api";
 
 /** Each metric's label and, on hover, its explanation, so the report itself reads at a
  * glance. In report order; the engine computes the values, feats and personal bests. */
@@ -7,9 +7,9 @@ const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
   damage: { label: "Damage dealt", hint: "Enemy hull damage, no overkill" },
   bestLife: { label: "Best spree", hint: "Most kills in a single life" },
   rank: { label: "Top rank", hint: "Peak rank across all lives" },
-  busiestMinute: { label: "Kills in a minute", hint: "Most kills within any 60 seconds" },
+  busiestMinute: { label: "Busiest minute", hint: "Most kills within any 60 seconds" },
   longestLife: { label: "Longest life", hint: "Longest time alive, pauses excluded" },
-  multikill: { label: "Kills in 5 seconds", hint: "Most kills within any 5 seconds" },
+  multikill: { label: "Best multikill", hint: "Most kills within any 5 seconds" },
   clutchKills: { label: "Clutch kills", hint: "Kills at 25% hull or less" },
   revengeKills: { label: "Revenge kills", hint: "Kills on your last killer" },
   posthumousKills: { label: "Kills after wreck", hint: "Kills by a previous life's ordnance" },
@@ -17,13 +17,9 @@ const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
   coverDestroyed: { label: "Cover wrecked", hint: "Destructible objects you finished" },
   pickups: { label: "Pickups", hint: "Ammo and power-ups collected" },
 };
-const featuredMetrics: readonly RecapMetric[] = [
-  "kills",
-  "damage",
-  "longestLife",
-  "bestLife",
-  "rank",
-];
+/** The hero tile and the tiles beside it; peak rank shows on the hero tile with the
+ * tank, and the rest of the metrics list below only when they happened. */
+const featuredMetrics: readonly RecapMetric[] = ["kills", "damage", "bestLife", "longestLife"];
 
 /** How often the viewer's tank was wrecked this round, for the report's opening line. */
 export function wreckLine(deaths: number): string {
@@ -61,6 +57,13 @@ export function recapMarkup(
         : value.toLocaleString("en-US");
   const tile = (label: string, value: string, hint: string, footer = "", isRecord = false) =>
     `<div class="recap-stat${isRecord ? " is-record" : ""}" title="${hint}"><dt>${label}</dt><dd>${value}</dd>${footer ? `<span>${footer}</span>` : ""}</div>`;
+  // The hero tile carries the tank (drawn in by the page) and the peak rank it reached.
+  const rankName = format("rank", stats.rank);
+  const hero = (markup: string) =>
+    markup.replace(
+      /<\/div>$/,
+      `<em class="recap-rank" title="${METRICS.rank.hint}">${improved.has("rank") ? "★ " : ""}PEAK RANK · ${rankName.toUpperCase()}</em><i class="recap-tank" aria-hidden="true"></i></div>`,
+    );
   // A tile only mentions its record when it was beaten or is still out of reach.
   const recordFooter = (metric: RecapMetric) =>
     improved.has(metric)
@@ -71,7 +74,9 @@ export function recapMarkup(
   const hitRate = recap.shots ? `${Math.round((recap.directHits / recap.shots) * 100)}%` : "—";
   const extras: { label: string; value: string; hint: string; improved?: boolean }[] = [
     ...(Object.keys(METRICS) as RecapMetric[])
-      .filter((metric) => !featuredMetrics.includes(metric) && stats[metric] > 0)
+      .filter(
+        (metric) => !featuredMetrics.includes(metric) && metric !== "rank" && stats[metric] > 0,
+      )
       .map((metric) => ({
         ...METRICS[metric],
         value: format(metric, stats[metric]),
@@ -95,7 +100,6 @@ export function recapMarkup(
           },
         ]
       : []),
-    { label: "Time played", value: duration(hud.elapsed), hint: "Pauses excluded" },
   ];
   const bests = improved.size;
   // Records are kept per mode, map and difficulty; only mention them when something happened.
@@ -107,15 +111,16 @@ export function recapMarkup(
       : "";
   return `${recap.feats.length ? `<div class="recap-feats">${recap.feats.map((feat) => `<div title="${feat.detail}"><b>★ ${feat.title}</b> ${feat.detail}</div>`).join("")}</div>` : ""}
     <dl class="recap-stats">${featuredMetrics
-      .map((metric) =>
-        tile(
+      .map((metric, index) => {
+        const markup = tile(
           METRICS[metric].label,
           format(metric, stats[metric]),
           METRICS[metric].hint,
           recordFooter(metric),
           improved.has(metric),
-        ),
-      )
+        );
+        return index === 0 ? hero(markup) : markup;
+      })
       .join(
         "",
       )}${tile("Accuracy", hitRate, "Direct hits / projectiles fired, splash excluded", `${recap.directHits} / ${recap.shots} HITS`)}</dl>
@@ -126,4 +131,63 @@ export function recapMarkup(
       )
       .join("")}</dl>
     <p class="recap-note">${note}</p>`;
+}
+
+const HTML_ESCAPES: Record<string, string> = {
+  "&": "&amp;",
+  "<": "&lt;",
+  ">": "&gt;",
+  '"': "&quot;",
+  "'": "&#39;",
+};
+
+/** Player names are typed by players: shown as text, never as markup. */
+export function escapeHtml(text: string): string {
+  return text.replace(/[&<>"']/g, (char) => HTML_ESCAPES[char]);
+}
+
+/** The scoreboard's order: most kills first, then fewest wrecks, then by name. */
+function byScore(a: ScoreboardRow, b: ScoreboardRow): number {
+  return b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name);
+}
+
+/** The round's most valuable tank: the most kills, fewest wrecks breaking a tie; none
+ * before anyone scores. */
+export function mostValuable(rows: readonly ScoreboardRow[]): ScoreboardRow | null {
+  const best = [...rows].sort(byScore)[0];
+  return best && best.kills > 0 ? best : null;
+}
+
+/** The battle report's team scoreboard: each team's tanks by kills, with their wrecks,
+ * the viewer's row lit and the MVP marked. `teamNames` and `scores` are in team order. */
+export function scoreboardMarkup(
+  rows: readonly ScoreboardRow[],
+  viewerId: number,
+  teamNames: readonly string[],
+  scores: readonly number[],
+): string {
+  const mvp = mostValuable(rows);
+  const team = (index: 0 | 1) => {
+    const side = index === 0 ? "blue" : "red";
+    const members = rows.filter((row) => row.team === index).sort(byScore);
+    const lines = members
+      .map((row) => {
+        const classes = [row.id === viewerId ? "you" : "", row === mvp ? "mvp" : ""]
+          .filter(Boolean)
+          .join(" ");
+        const tag =
+          row === mvp
+            ? `<span class="board-tag mvp-tag">MVP</span>`
+            : row.id === viewerId
+              ? `<span class="board-tag">YOU</span>`
+              : "";
+        return `<li${classes ? ` class="${classes}"` : ""}><span class="board-name">${escapeHtml(row.name)}</span>${tag}<b>${row.kills}</b><small>${row.deaths}</small></li>`;
+      })
+      .join("");
+    return `<section class="board-team ${side}" aria-label="${teamLabel(teamNames[index])}"><header><b>${teamNames[index]}</b><span>${scores[index]}</span><i>K</i><i>D</i></header><ol>${lines}</ol></section>`;
+  };
+  const spotlight = mvp
+    ? `<div class="board-mvp ${mvp.team === 0 ? "blue" : "red"}"><span>★ MVP</span><b>${mvp.id === viewerId ? "YOU" : escapeHtml(mvp.name)}</b><small>${mvp.kills} kill${mvp.kills === 1 ? "" : "s"} · ${mvp.deaths} wreck${mvp.deaths === 1 ? "" : "s"}</small></div>`
+    : "";
+  return `<div class="results-board">${team(0)}${team(1)}${spotlight}</div>`;
 }

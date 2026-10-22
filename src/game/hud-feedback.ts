@@ -1,5 +1,5 @@
 import { AMMO_OPTIONS } from "./ammo-options";
-import type { DamageCause, EngineEvent, HumanState } from "./engine-api";
+import type { DamageCause, EngineEvent, HumanState, Team, VehicleKind } from "./engine-api";
 import { CAUSE_ICONS } from "./ui-markup";
 
 /** The kill feed shows this many of its newest rows. */
@@ -18,21 +18,39 @@ const DAMAGE_LABELS: Record<DamageCause, string> = {
   explosion: "Explosion",
 };
 
+/** The vehicles' names, as Battle Setup and the HUD show them. */
+export const VEHICLE_NAMES: Record<VehicleKind, string> = {
+  scout: "SKIPPER",
+  balanced: "BRUISER",
+  heavy: "BIG RIG",
+  humvee: "HUNTER",
+};
+
+/** A scoreboard row as the death report reads it; rooms may leave out the details. */
+interface KillerRow {
+  id: number;
+  name: string;
+  kills?: number;
+  team?: Team;
+  kind?: VehicleKind;
+}
+
 /** What wrecked the viewer's tank, for the respawn card: the killer's name (null for
- * the yard, a departed player or the viewer's own ordnance) and the weapon, when the
- * engine reported one. */
+ * the yard, a departed player or the viewer's own ordnance), what they drive and how
+ * many kills they have, and the weapon, when the engine reported one. */
 export interface DeathReport {
   killer: string | null;
   self: boolean;
   cause: DamageCause | null;
   /** The weapon's label, such as "Rocket blast", or null when it is unknown. */
   weapon: string | null;
+  /** The killer's vehicle name, team and kills, when the scoreboard knows them. */
+  killerVehicle?: string;
+  killerTeam?: Team;
+  killerKills?: number;
 }
 
-export function deathReport(
-  event: EngineEvent,
-  scoreboard: readonly { id: number; name: string }[],
-): DeathReport {
+export function deathReport(event: EngineEvent, scoreboard: readonly KillerRow[]): DeathReport {
   const self = event.owner !== undefined && event.owner === event.id;
   const killer = self ? undefined : scoreboard.find((tank) => tank.id === event.owner);
   const cause = event.damageSource?.cause ?? null;
@@ -41,6 +59,9 @@ export function deathReport(
     self,
     cause,
     weapon: cause ? DAMAGE_LABELS[cause] : null,
+    ...(killer?.kind ? { killerVehicle: VEHICLE_NAMES[killer.kind] } : {}),
+    ...(killer?.team !== undefined ? { killerTeam: killer.team } : {}),
+    ...(killer?.kills !== undefined ? { killerKills: killer.kills } : {}),
   };
 }
 
@@ -188,6 +209,67 @@ export function showFeed(feed: Element, rows: FeedRow[], dt: number): FeedRow[] 
     showFeedRow(node, row, index === 0);
   });
   return live;
+}
+
+/** A point on screen in normalized device coordinates (y up). */
+export interface ScreenPoint {
+  x: number;
+  y: number;
+}
+
+/** Where the damage ring sits: around the viewer's tank overhead, or opened out to the
+ * screen's edges round its middle in first person (or whenever the tank is off screen). */
+export function damageRingPlacement(viewer: ScreenPoint | null): {
+  left: string;
+  top: string;
+  edge: boolean;
+} {
+  if (!viewer) {
+    return { left: "50%", top: "50%", edge: true };
+  }
+  const percent = (value: number) => `${(Math.min(1, Math.max(0, value)) * 100).toFixed(2)}%`;
+  return { left: percent((viewer.x + 1) / 2), top: percent((1 - viewer.y) / 2), edge: false };
+}
+
+/** The point on the screen's edge (CSS percentages) toward a hit `angle` radians
+ * clockwise from straight up. */
+export function damageEdgePoint(angle: number): { x: string; y: string } {
+  const dx = Math.sin(angle);
+  const dy = -Math.cos(angle);
+  const reach = 0.5 / Math.max(Math.abs(dx), Math.abs(dy));
+  const percent = (value: number) => `${((0.5 + value * reach) * 100).toFixed(1)}%`;
+  return { x: percent(dx), y: percent(dy) };
+}
+
+/** Moves the damage ring onto the viewer (`damageRingPlacement`). */
+export function placeDamageRing(indicator: HTMLElement, viewer: ScreenPoint | null): void {
+  const { left, top, edge } = damageRingPlacement(viewer);
+  if (indicator.style.left !== left) {
+    indicator.style.left = left;
+  }
+  if (indicator.style.top !== top) {
+    indicator.style.top = top;
+  }
+  indicator.classList.toggle("edge", edge);
+}
+
+/** Turns the damage ring toward a hit (`angle`: clockwise screen radians) and pulses it. */
+export function showDamageRing(
+  indicator: HTMLElement,
+  angle: number,
+  viewer: ScreenPoint | null,
+): void {
+  placeDamageRing(indicator, viewer);
+  indicator.style.setProperty("--angle", `${angle}rad`);
+  // In first person the glow sits on the screen's edge toward the shot.
+  const { x, y } = damageEdgePoint(angle);
+  indicator.style.setProperty("--edge-x", x);
+  indicator.style.setProperty("--edge-y", y);
+  indicator.classList.remove("pulse");
+  // Commit the removal so a second hit restarts the pulse.
+  void indicator.offsetWidth;
+  indicator.classList.add("pulse");
+  indicator.hidden = false;
 }
 
 /** Writes `text` into the element `#id` under `root`, unless it already shows it. */

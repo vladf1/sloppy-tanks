@@ -112,10 +112,11 @@ impl Renderer {
             classes,
             builder,
             culls,
+            debug_off,
             ..
         } = self;
         for (_, pool) in pools.iter() {
-            if pool.count == 0 {
+            if pool.count == 0 || debug_off.pools.iter().any(|label| label == pool.label) {
                 continue;
             }
             let transparent = classes

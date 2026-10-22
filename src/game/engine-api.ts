@@ -39,6 +39,12 @@ export const FRAME = {
   renderMs: 8,
   firstPerson: 9,
   dt: 10,
+  /** The drawn reticle's screen position (NDC, y up); NaN while none shows. */
+  reticleX: 11,
+  reticleY: 12,
+  /** The viewer's tank on screen (NDC, y up); NaN in first person or off screen. */
+  viewerX: 13,
+  viewerY: 14,
 } as const;
 
 export const PHASES = ["ready", "playing", "paused", "results"] as const;
@@ -165,6 +171,11 @@ export interface ScoreboardRow {
   id: number;
   name: string;
   kills: number;
+  deaths: number;
+  team: Team;
+  kind: VehicleKind;
+  /** A player's tank rather than a bot's. */
+  human: boolean;
 }
 
 export type RecapMetric =

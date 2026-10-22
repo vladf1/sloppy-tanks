@@ -117,8 +117,8 @@ try {
   await finish("team", 17);
   assert.equal(await page.locator(".recap-note").innerText(), "", "first records are not news");
   assert.match(await page.locator(".recap-feats").innerText(), /ONE-TANK ARMY/);
-  assert.equal(await page.locator(".recap-stat").count(), 6);
-  assert.equal(await page.locator(".recap-detail").count(), 11);
+  assert.equal(await page.locator(".recap-stat").count(), 5);
+  assert.equal(await page.locator(".recap-detail").count(), 10);
   await resize(1280, 720);
   const fits = await page.evaluate(() => {
     const actions = document.querySelector(".results .menu-actions").getBoundingClientRect();
@@ -204,7 +204,7 @@ try {
   });
   await page.locator(".recap-stats").waitFor();
   assert.match(await page.locator(".results h2").innerText(), /TANK DESTROYED/);
-  assert.match(await page.locator(".recap-stat").nth(2).innerText(), /0:42/);
+  assert.match(await page.locator(".recap-stat").nth(3).innerText(), /0:42/);
   assert.equal(await recapKills(), "0", "a new round starts without kills");
   assert.equal(await page.locator(".recap-feats").count(), 0, "no filler when nothing was earned");
   await page.screenshot({ path: `${output}/battle-report-solo.png` });

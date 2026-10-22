@@ -159,7 +159,10 @@ fn mountain_rise(x: f64, z: f64) -> f64 {
         total += rise;
     }
     let crags = (x * 0.29 + z * 0.14).sin() * (z * 0.21 - x * 0.13).cos() * 2.4;
-    0.0f64.max(highest * 0.8 + total * 0.2 + crags * smoothstep(highest, 2.0, 12.0))
+    // Ridged noise raises sharp aretes and notches the crests, so the peaks
+    // stand as jagged rock rather than smooth cones.
+    let aretes = (ridges(x * 1.7 + 40.0, z * 1.7) - 0.3) * highest * 0.42;
+    0.0f64.max(highest * 0.8 + total * 0.2 + (crags + aretes) * smoothstep(highest, 2.0, 12.0))
         * smoothstep(-z, 112.0, 133.0)
 }
 
@@ -421,8 +424,17 @@ fn trunk_footing(x: f64, z: f64) -> Option<f64> {
         .map(|(dx, dz)| backdrop_ground(x + dx, z + dz));
     let low = around.iter().copied().fold(backdrop_ground(x, z), f64::min);
     let high = around.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    ((high - low) / (reach * 2.0) < 0.85).then_some(low - 0.3)
+    let slope = (high - low) / (reach * 2.0);
+    // Trees keep to ground they could root in; on a slope the trunk sinks
+    // deeper, so its downhill side never shows daylight under it.
+    (slope < MAX_TREE_SLOPE).then_some(low - 0.3 - slope * 0.5)
 }
+
+/// The steepest backdrop ground a tree grows on (rise over run).
+const MAX_TREE_SLOPE: f64 = 0.62;
+/// Trees farther than this from the arena's centre (on either axis) are only ever
+/// seen across the valley and grow at [`TreeDetail::Distant`].
+const DISTANT_TREES: f64 = 100.0;
 
 /// A position near (x, z) whose tree grows into a family `want` accepts: the
 /// family is seeded by position, so nudge it by a few centimetres at a time.
@@ -436,11 +448,13 @@ fn nudge_for_family(x: f64, z: f64, h: f64, want: impl Fn(u32) -> bool) -> (f64,
     (x, z)
 }
 
-/// Edge of the forest's batching cells: the renderer merges static scenery in
-/// cells of this size and culls each cell's draws together, so the forest is
-/// batched per cell rather than whole (a single forest batch sits in one cell
-/// and draws everywhere, even from the follow camera).
-const FOREST_CELL: f64 = 60.0;
+/// The forest's batching sectors: the renderer culls each merged batch whole,
+/// so the forest is batched by compass sector rather than whole (a single
+/// forest batch would draw everywhere, even from the follow camera), in a near
+/// ring along the wall, which the follow camera sees a sector or two of, and a
+/// far ring beyond [`DISTANT_TREES`], each in four draws (bark, birch bark,
+/// needles, leaves).
+const FOREST_SECTORS: f64 = 8.0;
 
 /// The background forest, one group of trees per batching cell.
 #[derive(Default)]
@@ -453,14 +467,18 @@ impl Forest {
         let Some(footing) = trunk_footing(shape.x, shape.z) else {
             return false;
         };
-        let mut tree = tree_model(&shape, TreeDetail::Background);
+        let distant = shape.x.abs().max(shape.z.abs()) > DISTANT_TREES;
+        let detail = if distant {
+            TreeDetail::Distant
+        } else {
+            TreeDetail::Background
+        };
+        let mut tree = tree_model(&shape, detail);
         tree.position.y = footing;
-        // Far woods, seldom near the camera, merge in cells twice as wide.
-        let far = shape.x.abs().max(shape.z.abs()) > FOREST_CELL * 2.0;
-        let cell = if far { FOREST_CELL * 2.0 } else { FOREST_CELL };
+        let turn = shape.z.atan2(shape.x) / std::f64::consts::TAU + 0.5;
         let key = (
-            (shape.x / cell).floor() as i64 + if far { 1000 } else { 0 },
-            (shape.z / cell).floor() as i64,
+            i64::from(distant),
+            (turn * FOREST_SECTORS).floor() as i64 % FOREST_SECTORS as i64,
         );
         adopt_children(self.cells.entry(key).or_default(), tree);
         true
@@ -492,7 +510,8 @@ fn forest_clearing(x: f64, z: f64, treeline: bool) -> bool {
         // The field hut north of the creek.
         || ((x + 41.0).abs() < 4.0 && (z + 99.0).abs() < 4.0)
         || farmed(x, z)
-        || mountain_rise(x, z) > 30.0
+        // The ranges' own canopy shading clothes the mountain faces.
+        || mountain_rise(x, z) > 9.0
 }
 
 /// One grove: its trees stand thickest and tallest in the middle, younger and
@@ -594,7 +613,9 @@ fn backdrop(group: &mut Node) {
         let pitch = rng.next();
         let yaw = rng.next() * 6.0;
         rock.set_rotation_euler(pitch, yaw, 0.0);
-        put(&mut rocks, rock, x, valley_height(x, z) + size * 0.06, z);
+        // On the drawn ground: the coarse terrain mesh cuts below `valley_height`
+        // across the steep creek bank, where a stone set on the true height hovers.
+        put(&mut rocks, rock, x, backdrop_ground(x, z) + size * 0.06, z);
     }
     // The forest grows in groves of every age, so the hills read as woods with
     // clearings and depth rather than ranks of one tree. Mountain groves are all
@@ -624,28 +645,30 @@ fn backdrop(group: &mut Node) {
             false,
         );
     }
-    // The foothill belt: two staggered rows of conifer stands along the
-    // mountains' feet, so the valley ends in a dark wood below the rock.
-    for row in 0..2 {
-        let z = -113.0 - f64::from(row) * 10.0;
-        let mut x = -178.0 + f64::from(row) * 7.0;
-        while x < 178.0 {
-            let radius = rng.range(6.0, 9.5);
-            let trees = (radius * radius * 0.1) as usize;
-            let age = rng.range(9.0, 14.0);
-            let centre = (x + rng.range(-3.0, 3.0), z + rng.range(-3.0, 3.0));
-            grove(
-                &mut forest,
-                &mut rng,
-                centre,
-                radius,
-                trees,
-                age,
-                1.0,
-                false,
-            );
-            x += rng.range(12.0, 17.0);
-        }
+    // The foothill wood: an uneven band of stands along the mountains' feet,
+    // deep in some stretches and thin in others, broken by meadow, mostly
+    // conifer with stands of aspen and birch, so the valley ends in a wood of
+    // many ages rather than a rank of one tree.
+    let mut x: f64 = -178.0;
+    while x < 178.0 {
+        let radius = rng.range(4.5, 11.0);
+        let depth = rng.next();
+        let z = -110.0 - depth * 20.0 + (x * 0.043).sin() * 4.0;
+        let trees = (radius * radius * rng.range(0.07, 0.13)) as usize;
+        let age = rng.range(7.0, 15.5);
+        let conifers = if rng.next() < 0.24 { 0.3 } else { 0.95 };
+        let centre = (x + rng.range(-3.0, 3.0), z);
+        grove(
+            &mut forest,
+            &mut rng,
+            centre,
+            radius,
+            trees,
+            age,
+            conifers,
+            false,
+        );
+        x += rng.range(6.0, 15.0);
     }
     // Stands on the creek's far bank and between the fields beyond it.
     for [x, z, radius] in NORTH_BANK {

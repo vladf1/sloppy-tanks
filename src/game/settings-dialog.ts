@@ -19,6 +19,37 @@ const TOUCH_MODES = [
 /** The HUD's corner button that opens the dialog. */
 export const SETTINGS_BUTTON = `<button id="settings-open" class="quiet" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10.23 4.61L10.8 1.87h2.4l.57 2.74 2.2.91 2.34-1.53 1.7 1.7-1.53 2.34.91 2.2 2.74.57v2.4l-2.74.57-.91 2.2 1.53 2.34-1.7 1.7-2.34-1.53-2.2.91-.57 2.74h-2.4l-.57-2.74-2.2-.91-2.34 1.53-1.7-1.7 1.53-2.34-.91-2.2-2.74-.57v-2.4l2.74-.57.91-2.2-1.53-2.34 1.7-1.7 2.34 1.53z" /><circle cx="12" cy="12" r="3.2" /></svg></button>`;
 
+/** Wires every `.dialog-tabs` tab list under `root`: a click or the arrow keys pick a
+ * tab, which shows its panel (`aria-controls`) and hides the others. */
+export function bindDialogTabs(root: ParentNode): void {
+  for (const list of root.querySelectorAll<HTMLElement>(".dialog-tabs")) {
+    const tabs = [...list.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    const select = (chosen: HTMLButtonElement) => {
+      for (const tab of tabs) {
+        const selected = tab === chosen;
+        tab.setAttribute("aria-selected", String(selected));
+        tab.tabIndex = selected ? 0 : -1;
+        const panel = document.getElementById(tab.getAttribute("aria-controls") ?? "");
+        if (panel) {
+          panel.hidden = !selected;
+        }
+      }
+    };
+    tabs.forEach((tab, index) => {
+      tab.addEventListener("click", () => select(tab));
+      tab.addEventListener("keydown", (event) => {
+        const step = event.key === "ArrowRight" ? 1 : event.key === "ArrowLeft" ? -1 : 0;
+        if (step) {
+          event.preventDefault();
+          const next = tabs[(index + step + tabs.length) % tabs.length];
+          select(next);
+          next.focus();
+        }
+      });
+    });
+  }
+}
+
 /** The saved sound level, shared by single player and rooms. */
 export function savedVolume(): number {
   const value = Number(savedPreference("volume") ?? DEFAULT_VOLUME);
@@ -35,6 +66,8 @@ export interface SettingsHandlers {
     get(): HudState["speedTuning"] | undefined;
     set(key: SpeedKey, value: number): void;
   };
+  /** The controls reference its Controls tab shows (`controlsMarkup`). */
+  controls?: string;
   /** Runs before the dialog shows and after it closes, so the battle can wait for it. */
   opened(): void;
   closed(): void;
@@ -47,23 +80,30 @@ function defaultMark(min: number, max: number, value: number): string {
   return `--default:${(((value - min) / (max - min)) * 100).toFixed(1)}%`;
 }
 
-function settingsMarkup(eyebrow: string, speeds: boolean): string {
+/** The scale under a slider: its ends and, at its place on the track, the default. */
+function sliderScale(min: number, max: number, value: number): string {
+  return `<span class="slider-scale" aria-hidden="true" style="${defaultMark(min, max, value)}"><i>${percent(min)}</i><i class="default">${percent(value)}</i><i>${percent(max)}</i></span>`;
+}
+
+function settingsMarkup(eyebrow: string, speeds: boolean, controls: string): string {
   const speedRows = (Object.keys(SPEED_LABELS) as SpeedKey[])
     .map(
       (key) =>
-        `<label class="setting-row" for="${key}"><span>${SPEED_LABELS[key]}<small>Default 100%</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}"><output id="${key}-value" for="${key}">100%</output></label>`,
+        `<label class="setting-row slider-row" for="${key}"><span>${SPEED_LABELS[key]}<small>Default 100%</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}"><output id="${key}-value" for="${key}">100%</output>${sliderScale(0.5, 2, 1)}</label>`,
     )
     .join("");
   // The dialog itself takes focus when it opens, so no control starts out ringed as if
   // the keyboard had chosen it; Tab moves to the first one.
   return `<dialog id="settings" class="settings" aria-labelledby="settings-title" tabindex="-1">
     <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${eyebrow}</span></div><div class="dialog-title"><h2 id="settings-title">SETTINGS</h2></div></header>
-    <div class="setting-group-label">GAME</div>
-    <div class="setting-rows">
+    <div class="dialog-tabs" role="tablist" aria-label="Settings"><button type="button" role="tab" id="settings-tab-game" aria-selected="true" aria-controls="settings-game">GAME</button>${controls ? `<button type="button" role="tab" id="settings-tab-controls" aria-selected="false" aria-controls="settings-controls" tabindex="-1">CONTROLS</button>` : ""}</div>
+    <div class="dialog-pane setting-rows" id="settings-game" role="tabpanel" aria-labelledby="settings-tab-game">
+    <div class="setting-group-label">AUDIO &amp; INPUT</div>
+    <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output>${sliderScale(0, 1, DEFAULT_VOLUME)}</label>
     <div class="setting-row"><span id="touch-mode-label">Touch controls<small>Auto shows them on touchscreens</small></span><div class="setting-choice" role="radiogroup" aria-labelledby="touch-mode-label">${TOUCH_MODES.map(([value, label]) => `<label><input type="radio" name="touch-mode-choice" value="${value}"><span>${label}</span></label>`).join("")}<select id="touch-mode" class="sr-only" tabindex="-1" aria-hidden="true">${TOUCH_MODES.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div></div>
-    <label class="setting-row" for="volume"><span>Sound</span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output></label>
-    ${speeds ? `<div class="setting-group-label">BATTLE SPEED<button class="chip-button speeds-reset" type="button" title="Both speeds back to 100%">RESET</button></div>${speedRows}` : ""}
+    ${speeds ? `<div class="setting-group-label"><span>BATTLE SPEED</span><button class="chip-button speeds-reset" type="button" title="Both speeds back to 100%">RESET TO 100%</button></div>${speedRows}` : ""}
     </div>
+    ${controls ? `<div class="dialog-pane" id="settings-controls" role="tabpanel" aria-labelledby="settings-tab-controls" hidden>${controls}</div>` : ""}
     <div class="menu-actions"><button class="primary settings-save" type="button">SAVE</button><button class="secondary settings-cancel" type="button">CANCEL</button></div>
   </dialog>`;
 }
@@ -81,8 +121,12 @@ export class SettingsDialog {
     eyebrow: string,
     private readonly handlers: SettingsHandlers,
   ) {
-    root.insertAdjacentHTML("beforeend", settingsMarkup(eyebrow, !!handlers.speeds));
+    root.insertAdjacentHTML(
+      "beforeend",
+      settingsMarkup(eyebrow, !!handlers.speeds, handlers.controls ?? ""),
+    );
     this.dialog = root.querySelector<HTMLDialogElement>("#settings")!;
+    bindDialogTabs(this.dialog);
     this.opener = root.querySelector<HTMLElement>("#settings-open");
     this.opener?.addEventListener("click", () => this.open());
     for (const type of ["keydown", "keyup"]) {

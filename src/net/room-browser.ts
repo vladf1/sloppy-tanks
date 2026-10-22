@@ -307,17 +307,16 @@ export class RoomBrowser {
           // the list to come back rather than send the player into a failure.
           this.create.disabled = true;
           // fetch() rejects with a TypeError when the server cannot be reached at all.
-          this.showStatus(
-            "error",
-            timedOut
-              ? "Room list timed out"
-              : error instanceof TypeError
-                ? "Can't reach the game server"
-                : error instanceof Error
-                  ? error.message
-                  : "Rooms unavailable",
-            "Trying again in a moment.",
-          );
+          // One place says it: the status well names the state and the reason, with the
+          // one retry; the empty list and the locked button only echo it visually.
+          const reason = timedOut
+            ? "The room list timed out"
+            : error instanceof TypeError
+              ? "Can't reach the game server"
+              : error instanceof Error
+                ? error.message
+                : "Rooms unavailable";
+          this.showStatus("error", "Rooms are offline", `${reason}. Retrying shortly.`);
         }
       } finally {
         clearTimeout(timeout);

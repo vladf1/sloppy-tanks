@@ -12,7 +12,10 @@ use crate::scene::Node;
 
 use super::batching::batch;
 use super::model_primitives::{shadow_receiver, shadowed};
-use super::quarry_surfaces::{Bed, bed_rows, sandstone_material, sandstone_rock};
+use super::quarry_surfaces::{
+    Bed, RockSetting, bed_rows, mesh_triangles, sandstone_material, sandstone_rock,
+    sandstone_rock_mesh, sandstone_rock_toe, surface_height,
+};
 use crate::sim::math::Random;
 
 /// Normals crease above this angle: ledges stay sharp, a bed's face stays soft.
@@ -402,15 +405,20 @@ pub fn quarry_scree_spots() -> [ScreeSpot; 6] {
     ]
 }
 
-/// w, h, d, dx, dy, dz per stacked slab.
-const BUTTE_SLABS: [[f64; 6]; 6] = [
-    [15.0, 3.2, 11.0, 0.0, 1.6, 0.0],
-    [12.5, 2.8, 9.5, 0.9, 4.6, -0.5],
-    [10.0, 2.6, 8.0, -0.7, 7.3, 0.6],
-    [7.6, 2.4, 6.2, 0.5, 9.9, -0.4],
-    [5.0, 2.2, 4.4, -0.4, 12.2, 0.3],
-    [3.4, 1.8, 3.0, 0.3, 14.0, -0.2],
+/// w, h, d, dx, dz per stacked slab, bottom to top. The bottom slab stands on the
+/// apron; each slab above is seated on the one below ([`seat_height`]).
+const BUTTE_SLABS: [[f64; 5]; 6] = [
+    [15.0, 4.5, 11.0, 0.0, 0.0],
+    [12.5, 3.9, 9.5, 0.9, -0.5],
+    [10.0, 3.6, 8.0, -0.7, 0.6],
+    [7.6, 3.4, 6.2, 0.5, -0.4],
+    [5.0, 3.1, 4.4, -0.4, 0.3],
+    [3.4, 2.5, 3.0, 0.3, -0.2],
 ];
+/// How far each butte slab's toe sinks into the slab under it, in metres.
+const BUTTE_SEAT: f64 = 0.08;
+/// Points sampled along each side of a slab's toe when seating it.
+const SEAT_SAMPLES: usize = 4;
 
 /// `quarryButte(scale, rotY)` (`quarry-sentinel-butte`) at `quarryButteSpot()`:
 /// stacked offset slabs with an eroded cap, merged into one batch so the landmark
@@ -418,15 +426,52 @@ const BUTTE_SLABS: [[f64; 6]; 6] = [
 /// boundary, the conveyor, the excavator swing and both northern scree collapses.
 pub fn quarry_butte() -> Node {
     let mut group = Node::group("quarry-sentinel-butte");
-    for (i, [w, h, d, dx, dy, dz]) in BUTTE_SLABS.into_iter().enumerate() {
-        let mut rock = sandstone_rock(w, h, d, 20 + i as u32);
-        rock.position = DVec3::new(dx, dy, dz);
+    let mut below: Vec<[DVec3; 3]> = Vec::new();
+    for (i, [w, h, d, dx, dz]) in BUTTE_SLABS.into_iter().enumerate() {
+        let variant = 20 + i as u32;
+        // Only the bottom slab stands on the ground and sheds scree onto it.
+        let setting = if i == 0 {
+            RockSetting::Ground
+        } else {
+            RockSetting::Stacked
+        };
+        let mut rock = sandstone_rock(w, h, d, variant, setting);
+        rock.position = DVec3::new(dx, 0.0, dz);
         rock.set_rotation_euler(0.0, 0.15 + i as f64 * 0.22, 0.0);
+        if i > 0 {
+            rock.position.y = seat_height(&below, &rock, w, h, d, variant);
+        }
+        let matrix = rock.local_matrix();
+        // The face without the bottom slab's scree, which the toe above never reaches.
+        below = mesh_triangles(&sandstone_rock_mesh(w, h, d, variant, RockSetting::Stacked))
+            .into_iter()
+            .map(|corners| corners.map(|p| matrix.transform_point3(p)))
+            .collect();
         group.children.push(rock);
     }
     batch(&mut group);
     group.position = DVec3::new(16.0, -1.8, -68.0);
     group
+}
+
+/// The height to place `slab` (already turned and moved across) so that its
+/// undercut toe sinks [`BUTTE_SEAT`] into the rock `below` (world triangles) where
+/// that rock is lowest under it: no gap shows between them. The few toe points
+/// beyond the rock below overhang it, like a caprock ledge.
+fn seat_height(below: &[[DVec3; 3]], slab: &Node, w: f64, h: f64, d: f64, variant: u32) -> f64 {
+    let toe = sandstone_rock_toe(w, h, d, variant, RockSetting::Stacked);
+    let matrix = slab.local_matrix();
+    let mut lowest = f64::INFINITY;
+    for (s, &a) in toe.iter().enumerate() {
+        let b = toe[(s + 1) % toe.len()];
+        for k in 0..SEAT_SAMPLES {
+            let p = matrix.transform_point3(a + (b - a) * (k as f64 / SEAT_SAMPLES as f64));
+            if let Some(top) = surface_height(below, p.x, p.z) {
+                lowest = lowest.min(top - p.y);
+            }
+        }
+    }
+    lowest - BUTTE_SEAT
 }
 
 /// Sides of a distant mesa's outline.

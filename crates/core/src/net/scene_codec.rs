@@ -24,6 +24,7 @@ use super::wire::{
 use crate::sim::crate_layout::CratePiece;
 use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use crate::sim::debris_physics::DebrisMaterial;
+use crate::sim::house_layout::HousePiece;
 use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
 use crate::sim::math::{Point3, Quat4, Vec2, json_number};
@@ -102,6 +103,17 @@ pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
     ("east-wall", TowerPiece::EastWall),
     ("roof", TowerPiece::Roof),
     ("ladder", TowerPiece::Ladder),
+];
+pub const HOUSE_PIECES: [(&str, HousePiece); 9] = [
+    ("front-wall", HousePiece::FrontWall),
+    ("back-wall", HousePiece::BackWall),
+    ("right-wall", HousePiece::RightWall),
+    ("left-wall", HousePiece::LeftWall),
+    ("right-roof", HousePiece::RightRoof),
+    ("left-roof", HousePiece::LeftRoof),
+    ("front-roof", HousePiece::FrontRoof),
+    ("back-roof", HousePiece::BackRoof),
+    ("chimney", HousePiece::Chimney),
 ];
 pub const CRATE_PIECES: [(&str, CratePiece); 10] = [
     ("wall", CratePiece::Wall),
@@ -236,6 +248,7 @@ const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
 const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
 const CRATE_NAMES: [&str; 10] = names(&CRATE_PIECES);
+const HOUSE_NAMES: [&str; 9] = names(&HOUSE_PIECES);
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
 const PICKUP_NAMES: [&str; 9] = names(&PICKUP_KINDS);
@@ -355,6 +368,8 @@ wire_fields!(
         PART = Field::new("part", FieldKind::Choice(&WRECK_NAMES)),
         TEAM = Field::new("team", COUNT),
         CRATE_PIECE = Field::new("cratePiece", FieldKind::Choice(&CRATE_NAMES)),
+        HOUSE_PIECE = Field::new("housePiece", FieldKind::Choice(&HOUSE_NAMES)),
+        HOUSE_ID = Field::new("houseId", COUNT),
     }
 );
 
@@ -831,6 +846,10 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
     }
     set_choice(record, TOWER_PIECE, &TOWER_PIECES, fragment.tower_piece);
     set_choice(record, CRATE_PIECE, &CRATE_PIECES, fragment.crate_piece);
+    set_choice(record, HOUSE_PIECE, &HOUSE_PIECES, fragment.house_piece);
+    if let Some(house) = fragment.house_id {
+        record.set_count(HOUSE_ID, u64::from(house));
+    }
     if let Some(tree) = fragment.tree_cover_id {
         record.set_count(TREE_COVER_ID, u64::from(tree));
     }
@@ -1332,6 +1351,8 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
             .map_err(|e| format!("timberPart: {e}"))?,
         tower_piece: fields.opt_choice(TOWER_PIECE, &TOWER_PIECES)?,
         crate_piece: fields.opt_choice(CRATE_PIECE, &CRATE_PIECES)?,
+        house_piece: fields.opt_choice(HOUSE_PIECE, &HOUSE_PIECES)?,
+        house_id: fields.opt_count32(HOUSE_ID)?,
         tree_cover_id: fields.opt_count32(TREE_COVER_ID)?,
         tree_center_y: fields.opt_fixed(TREE_CENTER_Y)?,
         created_at: fields.opt_fixed(CREATED_AT)?,
