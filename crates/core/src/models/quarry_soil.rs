@@ -9,6 +9,7 @@
 use std::sync::OnceLock;
 
 use crate::geometry::math::{js_hypot, lerp, smoothstep};
+use crate::sim::data::ARENA;
 use crate::sim::math::Random;
 use crate::sim::quarry_layout::quarry_layout;
 use crate::sim::types::CoverKind;
@@ -279,9 +280,12 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         let mut rut = 0.0;
         if distance < 9.5 {
             let edge = (noise(table, x * 0.42, z * 0.42) - 0.5) * 1.3;
-            road = 1.0 - smoothstep(distance + edge, 4.2, 5.5);
-            let w = (distance + edge * 0.7 - 6.1) / 0.8;
-            windrow = (-w * w).exp();
+            road = 1.0 - smoothstep(distance + edge, 4.3, 4.9);
+            // The grader's windrow: a ridge of pale spill along each shoulder,
+            // its crest broken where tyres have cut through it.
+            let w = (distance + edge * 0.7 - 6.0) / 0.95;
+            let breach = smoothstep(noise(table, x * 0.19 + 31.0, z * 0.19 - 8.0), 0.18, 0.3);
+            windrow = (-w * w).exp() * breach;
             // Two-lane dual-wheel haul tracks, pressed darker into the compacted bed.
             let inner = (distance - 0.8) / 0.26;
             let outer = (distance - 3.5) / 0.3;
@@ -309,19 +313,27 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         let (mut r, mut g, mut b) = (186.0, 165.0, 134.0);
         let off_road = 1.0 - road;
         let worn_sand = sand * (1.0 - wear * 0.55) * (1.0 - apron * 0.6);
-        r += (213.0 - r) * worn_sand;
-        g += (195.0 - g) * worn_sand;
-        b += (163.0 - b) * worn_sand;
+        r += (221.0 - r) * worn_sand;
+        g += (204.0 - g) * worn_sand;
+        b += (171.0 - b) * worn_sand;
         let stony = (rocky + fill * 0.7).min(1.0) * off_road;
-        r += (163.0 - r) * stony;
-        g += (134.0 - g) * stony;
-        b += (101.0 - b) * stony;
-        r += (146.0 - r) * road;
-        g += (129.0 - g) * road;
-        b += (106.0 - b) * road;
-        r += (198.0 - r) * windrow * 0.55;
-        g += (180.0 - g) * windrow * 0.55;
-        b += (150.0 - b) * windrow * 0.55;
+        r += (152.0 - r) * stony;
+        g += (124.0 - g) * stony;
+        b += (93.0 - b) * stony;
+        // The compacted bed: cooler, darker fines rolled smooth by the trucks,
+        // with tongues of sand blown across it between the wheel paths.
+        let blown = smoothstep(
+            noise(table, x * 0.06 + 17.0, z * 0.11 - 4.0) + warp * 0.2,
+            0.55,
+            0.78,
+        ) * (1.0 - rut * 1.5).max(0.0);
+        let packed = road * (1.0 - blown * 0.6);
+        r += (140.0 - r) * packed;
+        g += (127.0 - g) * packed;
+        b += (109.0 - b) * packed;
+        r += (201.0 - r) * windrow * 0.7;
+        g += (188.0 - g) * windrow * 0.7;
+        b += (163.0 - b) * windrow * 0.7;
         r += (171.0 - r) * wear * 0.45 * off_road;
         g += (151.0 - g) * wear * 0.45 * off_road;
         b += (122.0 - b) * wear * 0.45 * off_road;
@@ -438,6 +450,20 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             * (1.0 - apron)
             * off_road;
         let drift = 0.5f64.min(sample_accum(accum, x, z) * 0.55 + shoulder * 0.3);
+        // The foot of the block wall: a dark line where the stone meets the
+        // floor, then a band of chips knocked off the blocks.
+        let to_wall = ARENA - reach;
+        let wall_shade = if to_wall > -0.2 {
+            (1.0 - smoothstep(to_wall, 0.0, 0.9)) * (0.7 + 0.6 * noise(table, x * 1.3, z * 1.3))
+        } else {
+            0.0
+        };
+        let wall_scree = if to_wall > -0.2 {
+            (1.0 - smoothstep(to_wall, 0.5, 2.2))
+                * smoothstep(noise(table, x * 0.6 + 9.0, z * 0.6), 0.3, 0.6)
+        } else {
+            0.0
+        };
         r += (216.0 - r) * drift;
         g += (199.0 - g) * drift;
         b += (167.0 - b) * drift;
@@ -478,13 +504,13 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         b += (170.0 - b) * lee * 0.45;
         // Gravel shows through stony ground and spill; sand and traffic bury it.
         let gravel = 0.0f64.max(1.0f64.min(
-            0.5 + stony * 0.45 + windrow * 0.35 + gravel_bed * 0.5 + shed * 0.45
+            0.5 + stony * 0.45 + windrow * 0.85 + gravel_bed * 0.5 + shed * 0.45 + wall_scree * 0.7
                 - lee * 0.8
                 - worn_sand * 0.4
-                - road * 0.25
+                - road * 0.45
                 - drift * 0.5 * (1.0 - shed),
         ));
-        let occlusion = 1.0 - contact * 0.32;
+        let occlusion = 1.0 - contact * 0.32 - wall_shade.min(1.0) * 0.26;
         let (collar, cuttings, paint) = blast_pattern(x, z);
         r += (196.0 - r) * cuttings * 0.75;
         g += (188.0 - g) * cuttings * 0.75;
