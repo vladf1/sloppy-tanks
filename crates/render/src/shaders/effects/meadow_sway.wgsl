@@ -729,7 +729,12 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let footprint_y = length(dpdy(f.world));
     let footprint = sqrt(footprint_x * footprint_y) * 0.7 + max(footprint_x, footprint_y) * 0.3;
     let aa = footprint * 0.75;
-    let fine = 1.0 - smoothstep(0.02, 0.06, footprint);
+    // Graphics tiers without fine detail (`fine_detail`) draw the ground as a coarser
+    // pixel would: the pebbles, stones, grit and blooms, the turf's tussocks and the
+    // finest noise octaves give way to their averages. With it, `detail` is 1 and
+    // every weight below is what it always was.
+    let detail = select(0.0, 1.0, fine_detail());
+    let fine = (1.0 - smoothstep(0.02, 0.06, footprint)) * detail;
     // Detail a few centimetres across still reads from the gameplay camera.
     let mid = 1.0 - smoothstep(0.07, 0.16, footprint);
     // Detail a few decimetres across: the clumps of the turf's edge.
@@ -790,7 +795,10 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // Only near a tread (none reaches past 0.61 m), out of uniform control.
     var tread_break = 1.0;
     if tracks.r > 0.3 {
-        let crumble = vg_noise(p * 2.7 + 5.0);
+        var crumble = 0.5;
+        if detail > 0.0 {
+            crumble = vg_noise(p * 2.7 + 5.0);
+        }
         tread_distance += (crumble - 0.5) * 0.08;
         tread_break = smoothstep(0.32, 0.6, vg_noise(p * 0.42 + 19.0) * 0.8 + crumble * 0.2 + tracks.g * 0.5);
     }
@@ -832,7 +840,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let close_detail = mix(1.0, dot(dirt_close.rgb, VG_LUMA) / 0.36, fine);
     // The earth's crumb, a few millimetres to a few centimetres across, only
     // where a pixel is smaller than a centimetre.
-    let close_view = 1.0 - smoothstep(0.009, 0.02, footprint);
+    let close_view = (1.0 - smoothstep(0.009, 0.02, footprint)) * detail;
     var earth_crumb = 0.5;
     if close_view > 0.0 {
         let q = vec2f(p.x * 0.8 - p.y * 0.6, p.x * 0.6 + p.y * 0.8);
@@ -863,7 +871,10 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     var straw = 0.0;
     var bald = 1.0;
     if (worn > 0.004 && worn < 0.996) || trampled > 0.4 {
-        let wander = (vg_noise(p * 0.7 + 31.0) - 0.5) * 0.07 + (vg_noise(p * 1.9 + 9.0) - 0.5) * 0.035;
+        var wander = (vg_noise(p * 0.7 + 31.0) - 0.5) * 0.07;
+        if detail > 0.0 {
+            wander += (vg_noise(p * 1.9 + 9.0) - 0.5) * 0.035;
+        }
         breadth = max(
             smoothstep(0.34, 0.74, vg_noise(p * 0.035 + 5.0) * 0.8 + vg_noise(p * 0.12 + 2.0) * 0.2),
             smoothstep(0.3, 0.8, trampled) * 0.85,
@@ -880,8 +891,12 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // Clumps a stride across, tussocks a hand across where they still
         // show, and close up the grass tile's own blades; each scale fades to
         // its average before it could shimmer.
+        var tussock_lift = 0.16;
+        if detail > 0.0 {
+            tussock_lift = mix(0.16, vg_noise(p * 2.3 + 7.0) * 0.32, coarse);
+        }
         tuft_height = vg_noise(p * 0.85 + 29.0) * 0.5
-            + mix(0.16, vg_noise(p * 2.3 + 7.0) * 0.32, coarse)
+            + tussock_lift
             + clamp(grass_detail - 1.0, -0.5, 0.5) * 0.2 * fine + 0.09;
         // The earth along the edge stays damp where the roots hold the water,
         // fading out over a metre or two rather than drawn as a band.
@@ -899,7 +914,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let far_cover = smoothstep(-cover_aa, cover_aa, cover_drive);
     // Close up the turf is tussocks (`vg_turf`), thinning where the cover
     // above does, each lit on its sunward side with its own shade beside it.
-    let turf_view = 1.0 - smoothstep(0.014, 0.032, footprint);
+    let turf_view = (1.0 - smoothstep(0.014, 0.032, footprint)) * detail;
     var turf = VgTurf(0.0, 1.0, 0.0, 0.5, 0.0, 0.0);
     if turf_view > 0.0 && density > 0.0 {
         turf = vg_turf(p, VG_TURF_CELL, smoothstep(0.0, 1.0, far_cover * 0.6 + density * 0.4), aa, sun_flat);
@@ -977,7 +992,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // Close up the turf heaves into soft tussock lumps, its blades combed along
     // the bending wind and across it, lit where they lie toward the light;
     // both blend to their average once they shrink under a few pixels.
-    let clump_view = 1.0 - smoothstep(0.05, 0.13, footprint);
+    let clump_view = (1.0 - smoothstep(0.05, 0.13, footprint)) * detail;
     var comb = 0.5;
     if clump_view * (1.0 - dirt) > 0.0 {
         let wave = vg_noise(p * 0.45 + 13.0) * 2.4;
@@ -1088,7 +1103,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         let valley = 1.0 - inside;
         if valley > 0.0 {
             let rough = smoothstep(0.42, 0.68, vg_noise(p * 0.045 + 13.0) * 0.8 + meso * 0.2);
-            let dots_view = 1.0 - smoothstep(0.12, 0.35, footprint);
+            let dots_view = (1.0 - smoothstep(0.12, 0.35, footprint)) * detail;
             let dots = vg_scatter(p, rough * 0.85 * dots_view, 0.8, vec2f(0.3, 0.6), aa, 61.0);
             grass = mix(grass, grass * vec3f(0.84, 0.88, 0.8), rough * 0.55 * valley);
             grass = mix(grass, grass * vec3f(0.62, 0.7, 0.58), (dots.x * 0.65 + rough * 0.12 * (1.0 - dots_view)) * valley);
@@ -1188,7 +1203,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // Stones gather: shed in drifts along the shoulders and the ruts' berms,
     // washed out in patches, with bare earth between, never an even sprinkle.
     var stone_cluster = 0.0;
-    if dirt > 0.0 || verge > 0.0 || wet_bank > 0.0 {
+    if detail > 0.0 && (dirt > 0.0 || verge > 0.0 || wet_bank > 0.0) {
         stone_cluster = smoothstep(0.45, 0.8, vg_noise(p * 0.3 + 40.0) * 0.65 + vg_noise(p * 1.1 + 3.0) * 0.35 + berm * 0.25);
     }
     let pebble_density = ((0.1 + shoulder * 0.25 + (1.0 - packed) * 0.08) * dirt + verge * 0.6 + wet_bank * 0.4) * mix(0.15, 2.2, stone_cluster) * fine * (1.0 - rut) * unpaved;
@@ -1225,7 +1240,13 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         let along = vg_strip(p.x, p.y, material.params[1].xyz, widths.x, widths.y, extent);
         let across = vg_strip(p.y, p.x, material.params[2].xyz, widths.z, widths.w, extent);
         let lane = select(vec2f(across.y, p.x), vec2f(along.y, p.y), along.x > across.x);
-        let streaks = vg_noise(vec2f(lane.x * 6.0, lane.y * 0.09)) * 0.6 + vg_noise(vec2f(lane.x * 17.0, lane.y * 0.25)) * 0.4;
+        // Without fine detail the finer streaks keep their average.
+        var streaks = vg_noise(vec2f(lane.x * 6.0, lane.y * 0.09)) * 0.6;
+        if detail > 0.0 {
+            streaks += vg_noise(vec2f(lane.x * 17.0, lane.y * 0.25)) * 0.4;
+        } else {
+            streaks += 0.2;
+        }
         let dirt_tex = mix(vec3f(dirt_luma), dirt_near.rgb, 0.45);
         // Loose, darker and redder where little drives; packed pale and dusty
         // along the busy lines.
@@ -1248,11 +1269,21 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // Earth mottled at a stride and at hand scale: drier crumbs and darker
         // loam, and close up the tile's own crumbs and fine scratches dragged
         // along the lane.
-        let lump = vg_noise(p * 3.7 + 19.0);
-        let churn_light = smoothstep(0.25, 0.75, lump + (vg_noise(p * 3.7 + 19.0 + sun_flat * 0.06) - lump) * -4.0);
+        // The lumps, the hand-scale mottle and the churn below are fine detail;
+        // without it they keep their averages.
+        var lump = 0.5;
+        var churn_light = 0.5;
+        var mottle = 0.5;
+        var churn_fine = 0.5;
+        if detail > 0.0 {
+            lump = vg_noise(p * 3.7 + 19.0);
+            churn_light = smoothstep(0.25, 0.75, lump + (vg_noise(p * 3.7 + 19.0 + sun_flat * 0.06) - lump) * -4.0);
+            mottle = vg_noise(p * 3.1 + 5.0);
+            churn_fine = vg_noise(p * 8.3 - 4.0);
+        }
         let loam = vg_noise(p * 0.85 + 41.0);
         let stride = vg_noise(vec2f(p.x * 0.6 + p.y * 0.8, p.y * 0.6 - p.x * 0.8) * 0.33 + 3.0);
-        soil = soil * mix(0.88, 1.08, smoothstep(0.25, 0.75, loam)) * mix(0.86, 1.08, stride) * mix(1.0, mix(0.92, 1.06, vg_noise(p * 3.1 + 5.0)), mid);
+        soil = soil * mix(0.88, 1.08, smoothstep(0.25, 0.75, loam)) * mix(0.86, 1.08, stride) * mix(1.0, mix(0.92, 1.06, mottle), mid);
         // The tile's grain at full strength: earlier it was averaged nearly
         // flat and the roads read as a smear.
         soil = soil * clamp(1.0 + (dirt_detail / 0.8 - 1.0) * mix(1.5, 1.1, packed), 0.6, 1.4)
@@ -1265,8 +1296,10 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         if close_view > 0.0 {
             soil = soil * mix(1.0, mix(0.74, 1.16, smoothstep(0.2, 0.8, earth_crumb)), close_view * (1.0 - packed * 0.35));
         }
-        let scratch = vg_noise(vec2f(lane.x * 34.0, lane.y * 0.8)) * 0.6 + vg_noise(vec2f(lane.x * 71.0, lane.y * 1.7)) * 0.4;
-        soil = soil * mix(1.0, mix(0.9, 1.06, scratch), fine * packed);
+        if fine * packed > 0.0 {
+            let scratch = vg_noise(vec2f(lane.x * 34.0, lane.y * 0.8)) * 0.6 + vg_noise(vec2f(lane.x * 71.0, lane.y * 1.7)) * 0.4;
+            soil = soil * mix(1.0, mix(0.9, 1.06, scratch), fine * packed);
+        }
         // The dark, damp earth along the turf's edge, in the stretches that
         // keep it.
         soil = mix(soil, soil * vec3f(0.8, 0.77, 0.74), root_damp * 0.7);
@@ -1278,7 +1311,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // Sun-baked mud on the dry, packed lines crazes into plates; the cracks
         // fade out before they could shimmer.
         let baked = smoothstep(0.55, 0.72, vg_noise(p * 0.09 + 71.0)) * packed * (1.0 - damp) * dirt;
-        let crack_fade = 1.0 - smoothstep(0.012, 0.035, footprint);
+        let crack_fade = (1.0 - smoothstep(0.012, 0.035, footprint)) * detail;
         if baked * crack_fade > 0.0 {
             let crack_distance = vg_cracks(p * 2.7) / 2.7;
             let crack_aa = max(footprint * 0.6, 0.003);
@@ -1289,10 +1322,12 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         }
         soil = mix(soil, soil * vec3f(1.06, 1.05, 1.02), baked * 0.5);
         // Dark clods of turned earth in the loose ground.
-        clods = smoothstep(0.72, 0.8, vg_noise(p * 5.3 + 1.7)) * fine * (1.0 - packed * 0.7);
+        if fine > 0.0 {
+            clods = smoothstep(0.72, 0.8, vg_noise(p * 5.3 + 1.7)) * fine * (1.0 - packed * 0.7);
+        }
         // Churned soil: the loose ground lies in lumps and hollows a hand
         // across, which the low sun rakes; packed lanes are smoother.
-        churn = (lump * 0.6 + vg_noise(p * 8.3 - 4.0) * 0.4) * (1.0 - packed * 0.6) * mid;
+        churn = (lump * 0.6 + churn_fine * 0.4) * (1.0 - packed * 0.6) * mid;
         soil = mix(soil, soil * 0.68, clods * 0.6);
         soil = mix(soil, soil * vec3f(1.14, 1.11, 1.05), berm * 0.75);
         // Ruts: a worn-out tread is only pressed a little paler into the dirt;
@@ -1350,7 +1385,9 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         let dust = clamp(0.1 + quiet * 0.4 + (vg_noise(p * 0.4 + 17.0) - 0.5) * 0.3 + (1.0 - sett.crown) * 0.35, 0.0, 0.75) * (1.0 - lane * 0.5);
         stone = mix(stone, dust_tone, dust * 0.42);
         var joint = mix(vg_linear(0x3b2f23), vg_linear(0x3c4a24), quiet * 0.75);
-        joint = joint * mix(0.85, 1.15, vg_noise(p * 3.1 + 1.0));
+        if detail > 0.0 {
+            joint = joint * mix(0.85, 1.15, vg_noise(p * 3.1 + 1.0));
+        }
         // From the gameplay camera the joints are a darker grain, not a grid.
         joint = mix(stone * 0.78, joint, joint_view);
         // Past the single stones the paving keeps a grain of light and dark
@@ -1372,7 +1409,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // cast away from the sun.
     // Gravelly patches in the loose ground, where the topsoil washed off.
     let gravel_patch = smoothstep(0.5, 0.7, (1.0 - runoff) * 0.75 + swell * 0.3) * dirt * (1.0 - packed * 0.6);
-    let stone_density = ((0.02 + shoulder * 0.14 + (1.0 - packed) * 0.04 + road_berm * 0.15) * dirt + verge * 0.3 + gravel_patch * 0.3) * mix(0.1, 2.4, stone_cluster) * mid * (1.0 - rut) * unpaved;
+    let stone_density = ((0.02 + shoulder * 0.14 + (1.0 - packed) * 0.04 + road_berm * 0.15) * dirt + verge * 0.3 + gravel_patch * 0.3) * mix(0.1, 2.4, stone_cluster) * mid * detail * (1.0 - rut) * unpaved;
     let sun_shift = sun_flat * min(sun_run, 1.6);
     let stones = vg_scatter(p, stone_density, 0.9, vec2f(0.06, 0.13), aa, 57.0);
     let stone_shadow = vg_scatter(p + sun_shift * 0.1, stone_density, 0.9, vec2f(0.06, 0.13), aa * 2.0, 57.0).x * (1.0 - stones.x);
@@ -1606,10 +1643,16 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     // faces (the noise is stretched along y), broken outcrops on gentle ground.
     var weights = pow(abs(smooth_normal), vec3f(4.0));
     weights = weights / (weights.x + weights.y + weights.z);
-    let fine = 1.0 - smoothstep(0.35, 1.2, footprint);
-    let ribs_x = vg_ridged(vec2f(p.z * 0.085, p.y * 0.05)) * 0.75 + vg_ridged(vec2f(p.z * 0.23, p.y * 0.14) + 3.7) * 0.25 * fine;
-    let ribs_z = vg_ridged(vec2f(p.x * 0.085, p.y * 0.05) + 9.1) * 0.75 + vg_ridged(vec2f(p.x * 0.23, p.y * 0.14) + 5.3) * 0.25 * fine;
-    let outcrop = vg_ridged(p.xz * 0.06 + 1.3) * 0.75 + vg_ridged(p.xz * 0.17) * 0.25 * fine;
+    // The finer octave only where it shows, and with the tier's fine detail.
+    let fine = (1.0 - smoothstep(0.35, 1.2, footprint)) * select(0.0, 1.0, fine_detail());
+    var ribs_x = vg_ridged(vec2f(p.z * 0.085, p.y * 0.05)) * 0.75;
+    var ribs_z = vg_ridged(vec2f(p.x * 0.085, p.y * 0.05) + 9.1) * 0.75;
+    var outcrop = vg_ridged(p.xz * 0.06 + 1.3) * 0.75;
+    if fine > 0.0 {
+        ribs_x += vg_ridged(vec2f(p.z * 0.23, p.y * 0.14) + 3.7) * 0.25 * fine;
+        ribs_z += vg_ridged(vec2f(p.x * 0.23, p.y * 0.14) + 5.3) * 0.25 * fine;
+        outcrop += vg_ridged(p.xz * 0.17) * 0.25 * fine;
+    }
     let crag = ribs_x * weights.x + outcrop * weights.y + ribs_z * weights.z;
     let relief_fade = 1.0 - smoothstep(1.5, 4.0, footprint);
     // A touch of the mesh's own planes keeps the rock crisp without showing

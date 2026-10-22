@@ -87,7 +87,9 @@ const LOW_SHADOW_MAP: u32 = 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TierFeatures {
     /// Procedural detail a few pixels across: the ground's small hummocks over its
-    /// broad swells, and the clouds' finest octave.
+    /// broad swells, the clouds' finest octave, and on the village, harbor and quarry
+    /// grounds their scattered stones, grit and blooms, the turf's tussocks and the
+    /// finest noise octaves (`fine_detail` in the effect shaders).
     pub fine_detail: bool,
     /// The ambient occlusion pass and its taps in the output pass.
     pub occlusion: bool,
