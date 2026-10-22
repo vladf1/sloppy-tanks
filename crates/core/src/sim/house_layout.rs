@@ -222,8 +222,9 @@ const fn style(
 /// red and blue and from the grass and dirt: muted cream, sage, tan, ochre, slate
 /// and white walls with one accent each and trim a soft off-white that takes its
 /// shading, under roofs a clear step darker that carry an earthy colour of their
-/// own (moss, slate, cedar, teal, terracotta, ochre, barn-red steel and weathered
-/// silver-brown), so from overhead every roof stands off the ground by value and
+/// own (moss, blue-grey slate, dark slate, teal, terracotta, faded brick red,
+/// barn-red steel and weathered blue slate), never the brown of the dirt or the
+/// olive of the grass, so from overhead every roof stands off the ground by value and
 /// hue, no two neighbours match, and none reads as a team marker. Shingle paints
 /// sit over the shingle texture and its weathering, which darken them to about
 /// two fifths, so they are painted that much brighter than they read.
@@ -240,23 +241,23 @@ pub const HOUSE_STYLES: [HouseStyle; 8] = {
         style(Gable, Front, Shingles, Clapboard, [0xe8dcc0, 0xe6e0d4, 0x2f5040, 0x82996a], 1, false, Board, false, 0.6),
         // Soft red brick under a low slate-blue hip roof, navy door and louvres.
         style(Hip, Front, Shingles, Brick, [0xd9d0c6, 0xdfd7c6, 0x24385a, 0x8f98a2], 0, false, Louvred, false, 0.72),
-        // Sage side-gable with an oxblood door under a cross gable and weathered
-        // cedar shingles, a dormer lighting the back of the attic.
-        style(Gable, Eave, Shingles, Clapboard, [0xa3ae8e, 0xe3dbc8, 0x6a2a24, 0xc48b60], 3, true, Board, false, 0.6),
+        // Sage side-gable with an oxblood door under a cross gable and dark
+        // weathered slate, a dormer lighting the back of the attic.
+        style(Gable, Eave, Shingles, Clapboard, [0xa3ae8e, 0xe3dbc8, 0x6a2a24, 0x88857e], 3, true, Board, false, 0.6),
         // Weathered tan front gable with a shed porch over the door, under
         // weathered teal standing-seam steel.
         style(Gable, Front, Seams, Clapboard, [0xc4a882, 0xe2dacb, 0x2e2c2a, 0x4a706a], 0, false, None, true, 0.68),
         // Ochre hip cottage under faded terracotta shingles.
         style(Hip, Front, Shingles, Clapboard, [0xd2b26e, 0xe6e0d4, 0x5c3c22, 0xb87a62], 0, false, Board, false, 0.7),
         // Slate-grey side-gable with black louvres and a cross gable under
-        // lichen-ochre shingles.
-        style(Gable, Eave, Shingles, Clapboard, [0x9ea9b2, 0xe6e0d4, 0x232a28, 0xae9a6e], 0, true, Louvred, false, 0.62),
+        // faded brick-red shingles.
+        style(Gable, Eave, Shingles, Clapboard, [0x9ea9b2, 0xe6e0d4, 0x232a28, 0xd07a62], 0, true, Louvred, false, 0.62),
         // Chalk-white front gable with a porch, under weathered barn-red
         // standing-seam steel and black shutters.
         style(Gable, Front, Seams, Clapboard, [0xe6e2d8, 0xeae6dd, 0x1d2622, 0x7a4c40], 2, false, Board, true, 0.6),
-        // Sand clapboard side-gable with silver-brown shingles, green louvres and
-        // a cross gable.
-        style(Gable, Eave, Shingles, Clapboard, [0xd8c8a2, 0xe5dfd2, 0x2f4b3a, 0xb09c8a], 0, true, Louvred, false, 0.64),
+        // Sand clapboard side-gable with weathered blue-grey slate, green louvres
+        // and a cross gable.
+        style(Gable, Eave, Shingles, Clapboard, [0xd8c8a2, 0xe5dfd2, 0x2f4b3a, 0x939fa4], 0, true, Louvred, false, 0.64),
     ]
 };
 

@@ -103,10 +103,10 @@ function choiceRow(
   return `<div class="setting-row"><span id="${id}-label">${label}<small>${note}</small></span><div class="setting-choice" role="radiogroup" aria-labelledby="${id}-label">${choices.map(([value, text]) => `<label><input type="radio" name="${id}-choice" value="${value}"><span>${text}</span></label>`).join("")}<select id="${id}" class="sr-only" tabindex="-1" aria-hidden="true">${choices.map(([value, text]) => `<option value="${value}">${text}</option>`).join("")}</select></div></div>`;
 }
 
-/** The scale under a slider: what its ends mean in words, and a bare caret at the
- * default. The value itself reads once, in the box beside the slider. */
+/** The scale under a slider: what its ends mean in words. The value reads once, in the
+ * box beside the slider, and the default is a notch on the track itself. */
 function sliderScale(low: string, high: string, mark: string): string {
-  return `<span class="slider-scale" style="${mark}" aria-hidden="true"><i>${low}</i><b></b><i>${high}</i></span>`;
+  return `<span class="slider-scale" style="${mark}" aria-hidden="true"><i>${low}</i><i>${high}</i></span>`;
 }
 
 /** The corner X that every dialog with a way back carries. */

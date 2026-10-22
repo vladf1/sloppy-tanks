@@ -34,8 +34,12 @@ pub(super) const HULL_TOP_RISE: f64 = 0.06;
 const END_REACH: f64 = 0.022;
 /// Height of the lower hull's belly plate.
 const BELLY_Y: f64 = 0.07;
-/// Sides of the gun tube's turned sections.
+/// Sides of the gun's turned fittings (evacuator, muzzle brake), of the long painted
+/// tube and its clamp bands, whose silhouette and sheen run across the whole
+/// first-person view, and of the breech hidden in the turret.
 const GUN_SIDES: u32 = 10;
+const TUBE_SIDES: u32 = 14;
+const BREECH_SIDES: u32 = 6;
 /// The crew livery's variant number (see [`part::CREW_LIVERY`]).
 const CREW_LIVERY: u8 = part::CREW_LIVERY as u8;
 /// Turret-ring centre behind the hull centre, shared with the turret ring.
@@ -1184,10 +1188,27 @@ fn smoke_cluster(kit: &mut Kit, at: DVec3, side: f64, yaw: f64, rows: u32, cols:
 }
 
 /// A radio antenna: base and whip.
+/// An antenna whip's radius at its foot and tip.
+const ANTENNA_FOOT: f64 = 0.012;
+const ANTENNA_TIP: f64 = 0.0045;
+
 fn antenna(kit: &mut Kit, base: DVec3, height: f64) {
     let mount = p2(&[(0.04, 0.0), (0.04, 0.06), (0.018, 0.1), (0.0, 0.1)]);
     kit.turned(Coat::Dark, &mount, 6, pose(base, v(-PI / 2.0, 0.0, 0.0)));
-    kit.post(Coat::Dark, 0.007, height, base + v(0.0, 0.1, 0.0), 4);
+    // A tapered whip in gun metal, thick enough at its foot to hold a pixel or two
+    // from the hero camera rather than shimmering as a black hairline.
+    let whip = p2(&[
+        (0.0, 0.0),
+        (ANTENNA_FOOT, 0.0),
+        (ANTENNA_TIP, height),
+        (0.0, height),
+    ]);
+    kit.turned(
+        Coat::Gunmetal,
+        &whip,
+        4,
+        pose(base + v(0.0, 0.1, 0.0), v(-PI / 2.0, 0.0, 0.0)),
+    );
 }
 
 /// A lifting eye: a lug welded upright to the roof.
@@ -1939,7 +1960,7 @@ fn gun(kit: &mut Kit, c: &Chassis) {
     kit.turned(
         Coat::Steel,
         &p2(&[(0.0, 0.6), (r * 1.4, 0.6), (r * 1.4, 1.2), (sleeve, 1.32)]),
-        GUN_SIDES,
+        BREECH_SIDES,
         axis,
     );
     let (bands, evacuator): (&[f64], [f64; 2]) = if c.scout {
@@ -1960,7 +1981,7 @@ fn gun(kit: &mut Kit, c: &Chassis) {
         kit.turned(
             Coat::Paint,
             &p2(&[(sleeve, from), (sleeve, start)]),
-            GUN_SIDES,
+            TUBE_SIDES,
             axis,
         );
         if start - from > widest.0 {
@@ -1972,7 +1993,7 @@ fn gun(kit: &mut Kit, c: &Chassis) {
     kit.turned(
         Coat::Paint,
         &p2(&[(sleeve, from), (taper, sleeve_end)]),
-        GUN_SIDES,
+        TUBE_SIDES,
         axis,
     );
     // Class bands round the middle of the sleeve's longest run: one on the
@@ -1986,7 +2007,7 @@ fn gun(kit: &mut Kit, c: &Chassis) {
         kit.turned(
             Coat::Marking,
             &p2(&[(band, z), (band, z + ID_BAND_WIDTH)]),
-            GUN_SIDES,
+            TUBE_SIDES,
             axis,
         );
     }
@@ -1995,7 +2016,7 @@ fn gun(kit: &mut Kit, c: &Chassis) {
         kit.turned(
             Coat::Gunmetal,
             &p2(&[(sleeve, z), (band, z + 0.02), (sleeve, z + 0.04)]),
-            GUN_SIDES,
+            TUBE_SIDES,
             axis,
         );
     }

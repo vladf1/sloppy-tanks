@@ -335,8 +335,56 @@ const EFFECT_MARKS: Record<ActiveEffect["kind"], string> = {
   repair: "",
 };
 
-/** The effect chips in the tank panel's footer, rebuilt only when their text changes. Their
- * text, separators included, reads as `effectsLabel`. */
+/** Each effect's icon in its timer ring (`HUD_ICONS`). */
+const EFFECT_ICONS: Record<ActiveEffect["kind"], string> = {
+  spawn: "hud-shield",
+  shield: "hud-shield",
+  rapid: "hud-rapid",
+  boost: "hud-boost",
+  laser: "hud-target",
+  repair: "hud-repair",
+};
+
+/** Seconds left on each timed effect; untimed effects (self-repair) have none. */
+function effectSeconds(tank: HumanState, kind: ActiveEffect["kind"]): number | null {
+  switch (kind) {
+    case "spawn":
+      return tank.protection;
+    case "shield":
+      return tank.shield;
+    case "rapid":
+      return tank.rapid;
+    case "boost":
+      return tank.speed;
+    case "laser":
+      return tank.laser;
+    default:
+      return null;
+  }
+}
+
+/** The longest time seen on each effect since it was picked up, so its ring drains from
+ * full whatever the pickup's duration. */
+const effectLongest = new Map<ActiveEffect["kind"], number>();
+
+/** The share of an effect's time left, 1 for an untimed one, learning its full length
+ * from the longest time seen since it began. */
+export function effectShare(
+  longest: Map<ActiveEffect["kind"], number>,
+  kind: ActiveEffect["kind"],
+  seconds: number | null,
+): number {
+  if (seconds === null) {
+    return 1;
+  }
+  const full = Math.max(longest.get(kind) ?? 0, seconds);
+  longest.set(kind, full);
+  return full > 0 ? Math.min(1, seconds / full) : 1;
+}
+
+/** The effect chips docked on the tank panel, rebuilt only when their text changes: each
+ * a timer ring round its icon (stepping once a second with the countdown), its name and
+ * what is left. Their text, separators included, reads as `effectsLabel`. */
 function showEffects(root: ParentNode, tank: HumanState): void {
   const list = root.querySelector<HTMLElement>("#effects");
   if (!list) {
@@ -348,11 +396,26 @@ function showEffects(root: ParentNode, tank: HumanState): void {
     return;
   }
   list.dataset.key = key;
+  // An effect that ended forgets its length, so the next pickup's ring starts full.
+  for (const kind of effectLongest.keys()) {
+    if (!effects.some((effect) => effect.kind === kind)) {
+      effectLongest.delete(kind);
+    }
+  }
   list.replaceChildren(
     ...effects.flatMap(({ kind, name, detail }, index) => {
       const chip = document.createElement("span");
       chip.className = "effect";
       chip.dataset.kind = kind;
+      const share = effectShare(effectLongest, kind, effectSeconds(tank, kind));
+      chip.style.setProperty("--left", share.toFixed(3));
+      const ring = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      ring.setAttribute("class", "effect-ring");
+      ring.setAttribute("aria-hidden", "true");
+      const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+      use.setAttribute("href", `#${EFFECT_ICONS[kind]}`);
+      ring.append(use);
+      chip.append(ring);
       if (EFFECT_MARKS[kind]) {
         const mark = document.createElement("i");
         mark.textContent = EFFECT_MARKS[kind];

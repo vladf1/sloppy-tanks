@@ -610,6 +610,13 @@ const ROOF_HOLD: f64 = 0.9;
 /// fast (m/s) it starts down.
 const ROOF_GIVE: f64 = 0.2;
 const ROOF_GIVE_DROP: f32 = 0.5;
+/// How fast (m/s) the ridge slabs start down as the roof gives, ahead of the eave
+/// slabs held up on the walls: the ridge snaps and caves into the house first, so
+/// the roof comes down broken, not as one sheet that lands whole on the pile.
+const RIDGE_GIVE_DROP: f32 = 1.8;
+/// The twist (rad/s about its face's normal) a ridge slab takes as it is freed to
+/// turn, each strip the other way, so the broken ridge lies skewed, not straight.
+const RIDGE_SNAP_TWIST: f32 = 0.5;
 /// How fast the chimney topples off the roof, and how fast (m/s) it is carried
 /// into the wreck: gently, so its stack lands broken on the pile.
 const CHIMNEY_TIP: (f64, f64) = (2.0, 2.6);
@@ -1094,7 +1101,12 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
             let body = &mut simulation.world.bodies[fragment.body];
             if body.is_translation_locked() {
                 body.lock_translations(false, true);
-                body.set_linvel(Vector::Y * -ROOF_GIVE_DROP, true);
+                let drop = if piece.shard.is_multiple_of(2) {
+                    RIDGE_GIVE_DROP
+                } else {
+                    ROOF_GIVE_DROP
+                };
+                body.set_linvel(Vector::Y * -drop, true);
                 // Its eaves now rest on whatever stands under them.
                 for &collider in body.colliders() {
                     simulation.world.colliders[collider].set_enabled(true);
@@ -1116,7 +1128,19 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                 });
                 if let Some(normal) = normal {
                     let axis = normal.cross(Vector::Y);
-                    body.set_angvel(body.angvel() + axis * ROOF_SETTLE_SPIN, true);
+                    let twist = if !piece.shard.is_multiple_of(2) {
+                        0.0
+                    } else if (piece.shard / 2).is_multiple_of(2)
+                        == (piece.part == HousePart::RightRoof)
+                    {
+                        RIDGE_SNAP_TWIST
+                    } else {
+                        -RIDGE_SNAP_TWIST
+                    };
+                    body.set_angvel(
+                        body.angvel() + axis * ROOF_SETTLE_SPIN + normal * twist,
+                        true,
+                    );
                 }
             }
         }
