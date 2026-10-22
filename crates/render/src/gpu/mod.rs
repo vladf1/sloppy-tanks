@@ -369,6 +369,9 @@ struct FrameUniform {
     cloud_shade: [f32; 4],
     haze: [f32; 4],
     haze_shape: [f32; 4],
+    aerial: [f32; 4],
+    ridge: [f32; 4],
+    ridge_shape: [f32; 4],
 }
 
 /// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion and the grade. The
@@ -382,6 +385,9 @@ struct OutputUniform {
     gain: [f32; 4],
     effects: [f32; 4],
     tone: [f32; 4],
+    hues: [f32; 4],
+    shadows: [f32; 4],
+    highlights: [f32; 4],
 }
 
 /// WGSL `Occlusion` (`occlusion.wgsl`).
@@ -398,10 +404,13 @@ struct OcclusionUniform {
 const BLOOM_LEVELS: usize = 5;
 /// Ambient occlusion: the reach of its probes and the depth gap they ignore, in
 /// metres; where it fades out with view distance; and its contrast power.
-const OCCLUSION_RADIUS: f32 = 1.1;
+const OCCLUSION_RADIUS: f32 = 1.6;
 const OCCLUSION_BIAS: f32 = 0.05;
-const OCCLUSION_FADE: (f32, f32) = (70.0, 140.0);
-const OCCLUSION_POWER: f32 = 1.5;
+const OCCLUSION_FADE: (f32, f32) = (110.0, 200.0);
+const OCCLUSION_POWER: f32 = 2.0;
+/// The clouds' strength in the water's mirror: softer and calmer than overhead, as
+/// a rippled surface would blur them.
+const REFLECTED_CLOUDS: f32 = 0.45;
 /// Output dither amplitude in 8-bit steps, against banding in the sky gradient.
 const OUTPUT_DITHER: f32 = 1.0;
 
@@ -415,6 +424,13 @@ struct WaterUniform {
     shallow_color: [f32; 4],
     settings: [f32; 4],
     shore: [f32; 4],
+}
+
+/// A linear tint scaled to unit luminance, so it shifts hue without brightening.
+fn unit_luminance(color: u32) -> [f32; 3] {
+    let [r, g, b] = hex_to_linear(color);
+    let luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b).max(1e-4);
+    [r / luminance, g / luminance, b / luminance]
 }
 
 fn rgb4(rgb: [f32; 3], w: f32) -> [f32; 4] {
@@ -1807,7 +1823,15 @@ impl Renderer {
             cloud_lit: rgb4(sky(a.clouds.lit), a.clouds.coverage),
             cloud_shade: rgb4(sky(a.clouds.shade), a.clouds.shadow),
             haze: [a.haze.density, a.haze.falloff, a.haze.start, a.haze.max],
-            haze_shape: [a.haze.clear_half_size, a.haze.clear_fade, 0.0, 0.0],
+            haze_shape: [
+                a.haze.clear_half_size,
+                a.haze.clear_fade,
+                1.0,
+                self.camera().far,
+            ],
+            aerial: rgb4(sky(a.haze.aerial), a.haze.arena_share),
+            ridge: rgb4(sky(a.ridges.color), a.ridges.height),
+            ridge_shape: [a.ridges.features, a.ridges.mesa, a.ridges.gaps, 0.0],
             ..FrameUniform::zeroed()
         }
     }
@@ -1840,7 +1864,10 @@ impl Renderer {
                 },
                 if on { OUTPUT_DITHER } else { 0.0 },
             ],
-            tone: [grade.vibrance, 0.0, 0.0, 0.0],
+            tone: [grade.vibrance, grade.black, 0.0, 0.0],
+            hues: [grade.foliage, grade.earth, grade.red_hold, 0.0],
+            shadows: rgb4(unit_luminance(grade.shadow_tint), grade.shadow_toning),
+            highlights: rgb4(unit_luminance(grade.highlight_tint), grade.highlight_toning),
         }
     }
 
@@ -1903,7 +1930,10 @@ impl Renderer {
                 let eye = view.inverse().w_axis.truncate();
                 let size = water.settings.reflection_size.max(1);
                 let rays = camera.projection() * view;
-                self.frame_uniform(projection * view, view, eye, (size, size), rays)
+                let mut mirrored =
+                    self.frame_uniform(projection * view, view, eye, (size, size), rays);
+                mirrored.haze_shape[2] *= REFLECTED_CLOUDS;
+                mirrored
             }
             _ => main,
         };

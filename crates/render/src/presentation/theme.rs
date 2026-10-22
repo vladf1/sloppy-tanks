@@ -15,6 +15,9 @@ pub const SHADOW_DEPTH: f32 = 219.5;
 pub const SHADOW_MAP_SIZE: u32 = 2048;
 pub const SHADOW_BIAS: f32 = -0.0002;
 pub const SHADOW_NORMAL_BIAS: f32 = 0.05;
+/// Spread of the sun shadow's 5×5 filter in shadow-map texels: soft penumbrae
+/// about 40 cm wide.
+pub const SHADOW_FILTER_RADIUS: f32 = 1.35;
 /// No map shows a surface that receives the sun's shadow below this height (the
 /// deepest, the village creek bed, is under 5 m down), so the renderer skips
 /// casters whose shadows could only land outside the views.
@@ -73,6 +76,7 @@ pub struct Atmosphere {
     pub sun_radius: f32,
     pub clouds: Clouds,
     pub haze: Haze,
+    pub ridges: Ridges,
     /// Strength of the sky rim on grazing walls and hulls.
     pub rim: f32,
     pub bloom: Bloom,
@@ -105,10 +109,42 @@ pub struct Haze {
     pub start: f32,
     /// The most of a surface it hides, 0..1.
     pub max: f32,
-    /// Half-size in metres of the square around the arena centre it leaves clear,
-    /// and the width over which it fades in beyond that square.
+    /// Half-size in metres of the square around the arena centre it leaves mostly
+    /// clear, and the width over which it fades in beyond that square.
     pub clear_half_size: f32,
     pub clear_fade: f32,
+    /// The share of the haze that still settles inside that square: a hint of depth
+    /// toward the far side of the overview.
+    pub arena_share: f32,
+    /// The color thin haze shifts distant surfaces toward (aerial perspective),
+    /// times the sky intensity; thick haze becomes the sky itself.
+    pub aerial: u32,
+}
+
+/// Distant ranges drawn into the sky along the horizon, behind the scenery.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Ridges {
+    /// Their color before the haze, times the sky intensity.
+    pub color: u32,
+    /// Ray slope of the tallest peaks (0 = none).
+    pub height: f32,
+    /// Features around the horizon.
+    pub features: f32,
+    /// Flat mesa tops, 0..1.
+    pub mesa: f32,
+    /// Share of the horizon left open between them, 0..1: 0 a continuous range,
+    /// higher values scattered headlands and islands.
+    pub gaps: f32,
+}
+
+impl Ridges {
+    pub const NONE: Ridges = Ridges {
+        color: 0,
+        height: 0.0,
+        features: 0.0,
+        mesa: 0.0,
+        gaps: 0.0,
+    };
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -135,6 +171,19 @@ pub struct Grade {
     pub contrast: f32,
     /// Corner darkening, 0..1.
     pub vignette: f32,
+    /// Display level mapped to black: holds the black point down.
+    pub black: f32,
+    /// Split toning: the shadows' and highlights' tints (sRGB hex, applied at unit
+    /// luminance) and their strengths 0..1.
+    pub shadow_tint: u32,
+    pub shadow_toning: f32,
+    pub highlight_tint: u32,
+    pub highlight_toning: f32,
+    /// Lime foliage pulled toward a deeper green, and orange earth calmed, 0..1.
+    pub foliage: f32,
+    pub earth: f32,
+    /// How much red hulls shed the pink cast the blue sky fill gives them, 0..1.
+    pub red_hold: f32,
 }
 
 impl Grade {
@@ -146,6 +195,14 @@ impl Grade {
         vibrance: 0.0,
         contrast: 1.0,
         vignette: 0.0,
+        black: 0.0,
+        shadow_tint: 0xffffff,
+        shadow_toning: 0.0,
+        highlight_tint: 0xffffff,
+        highlight_toning: 0.0,
+        foliage: 0.0,
+        earth: 0.0,
+        red_hold: 0.0,
     };
 }
 
@@ -172,7 +229,10 @@ impl Default for Atmosphere {
                 max: 0.0,
                 clear_half_size: 0.0,
                 clear_fade: 0.0,
+                arena_share: 0.0,
+                aerial: 0,
             },
+            ridges: Ridges::NONE,
             rim: 0.0,
             bloom: Bloom {
                 strength: 0.0,
@@ -242,142 +302,188 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
         sun_color: pick(theme, 0xffd29a, 0xffe2bc, 0xffe4bc),
         sun_intensity: pick(theme, 4.0, 3.9, 4.0),
         sun_position,
-        fill_color: pick(theme, 0x9ebdf0, 0xa2c2ec, 0xa0c2f0),
-        fill_ground: pick(theme, 0x8a7b68, 0x6b7584, 0x857b68),
-        fill_intensity: pick(theme, 1.1, 1.3, 1.35),
+        fill_color: pick(theme, 0x8fb2f2, 0x98bbee, 0x94b8f2),
+        fill_ground: pick(theme, 0x9a7d5e, 0x7c7870, 0x8a7a5c),
+        fill_intensity: pick(theme, 1.35, 1.55, 1.6),
         shadow,
         atmosphere: theme_atmosphere(theme),
     }
 }
 
 /// Each map's sky, haze and grade: a crisp pine-village morning under a deep blue
-/// sky and fair-weather clouds, a salty harbor haze that softens the open water's
-/// horizon under a bright coastal sky, and a warm golden quarry under a dusty sky.
-/// The haze begins beyond the arena so every gameplay camera stays crisp; it only
-/// grounds the backdrop. Grades keep shadows cool and highlights warm.
+/// sky, fair-weather cumulus and far blue ranges; a salty harbor haze over a coastal
+/// sky with a low distant shore; and a warm golden quarry under a dusty sky with far
+/// mesas. The haze thickens with distance and thins with height, so the overhead
+/// cameras stay clean while the backdrop recedes in steps. Grades hold the black
+/// point, cool the shadows, warm the highlights and tame lime grass and orange earth.
 fn theme_atmosphere(theme: Theme) -> Atmosphere {
-    /// Clear of haze: the arena and its walls, then a fade over the near backdrop.
+    /// Mostly clear of haze: the arena and its walls, then a fade over the near backdrop.
     const HAZE_CLEAR_HALF_SIZE: f32 = ARENA as f32 + 8.0;
-    const HAZE_CLEAR_FADE: f32 = 50.0;
+    const HAZE_CLEAR_FADE: f32 = 60.0;
+    /// Bloom only what is hotter than sunlit white: emissives, fire and the sun.
+    const BLOOM: Bloom = Bloom {
+        strength: 0.22,
+        threshold: 1.45,
+        knee: 0.35,
+    };
     match theme {
         Theme::Village | Theme::Custom => Atmosphere {
             enabled: true,
-            zenith: 0x2468cf,
-            horizon: 0xcfe7f4,
+            zenith: 0x1c5bc4,
+            horizon: 0xb8d6ec,
             sky_intensity: 1.15,
             sun_glow: 0xfff0d2,
-            sun_glow_intensity: 1.2,
+            sun_glow_intensity: 1.25,
             sun_radius: 0.022,
             clouds: Clouds {
-                coverage: 0.5,
+                coverage: 0.56,
                 lit: 0xffffff,
-                shade: 0x9cb2cc,
-                shadow: 0.28,
+                shade: 0x8094b2,
+                shadow: 0.1,
             },
             haze: Haze {
-                density: 0.0026,
-                falloff: 0.03,
-                start: 40.0,
-                max: 0.7,
+                density: 0.0021,
+                falloff: 0.022,
+                start: 45.0,
+                max: 0.88,
                 clear_half_size: HAZE_CLEAR_HALF_SIZE,
                 clear_fade: HAZE_CLEAR_FADE,
+                arena_share: 0.3,
+                aerial: 0x9cb6d6,
             },
-            rim: 0.25,
-            bloom: Bloom {
-                strength: 0.16,
-                threshold: 1.0,
-                knee: 0.6,
+            ridges: Ridges {
+                color: 0x56739a,
+                height: 0.055,
+                features: 5.0,
+                mesa: 0.0,
+                gaps: 0.0,
             },
-            exposure: 1.07,
-            occlusion: 0.85,
+            rim: 0.3,
+            bloom: BLOOM,
+            exposure: 1.12,
+            occlusion: 0.9,
             grade: Grade {
-                lift: [0.0, 0.01, 0.012],
-                gamma: [1.0, 1.0, 1.0],
-                gain: [1.04, 1.01, 0.97],
+                lift: [0.0; 3],
+                gamma: [1.0; 3],
+                gain: [1.03, 1.0, 0.97],
                 saturation: 1.0,
-                vibrance: 0.4,
-                contrast: 1.06,
-                vignette: 0.2,
+                vibrance: 0.12,
+                contrast: 1.07,
+                vignette: 0.14,
+                black: 0.008,
+                shadow_tint: 0x86a2e0,
+                shadow_toning: 0.35,
+                highlight_tint: 0xfff0d0,
+                highlight_toning: 0.3,
+                foliage: 0.6,
+                earth: 0.45,
+                red_hold: 0.7,
             },
         },
         Theme::Harbor => Atmosphere {
             enabled: true,
-            zenith: 0x2f78cc,
-            horizon: 0xd3e6ec,
+            zenith: 0x2468c0,
+            horizon: 0xc0d8e6,
             sky_intensity: 1.15,
             sun_glow: 0xffe6c6,
-            sun_glow_intensity: 1.2,
+            sun_glow_intensity: 1.25,
             sun_radius: 0.022,
             clouds: Clouds {
-                coverage: 0.4,
+                coverage: 0.5,
                 lit: 0xfbfcfc,
-                shade: 0x93a9bb,
-                shadow: 0.28,
+                shade: 0x8499ae,
+                shadow: 0.1,
             },
             haze: Haze {
-                density: 0.0012,
-                falloff: 0.04,
-                start: 40.0,
-                max: 0.6,
+                density: 0.0017,
+                falloff: 0.03,
+                start: 45.0,
+                max: 0.9,
                 clear_half_size: HAZE_CLEAR_HALF_SIZE,
                 clear_fade: HAZE_CLEAR_FADE,
+                arena_share: 0.3,
+                aerial: 0xa4b9cc,
             },
-            rim: 0.25,
-            bloom: Bloom {
-                strength: 0.16,
-                threshold: 1.0,
-                knee: 0.6,
+            ridges: Ridges {
+                color: 0x8aa2b4,
+                height: 0.026,
+                features: 4.0,
+                mesa: 0.0,
+                gaps: 0.42,
             },
-            exposure: 1.04,
-            occlusion: 0.85,
+            rim: 0.3,
+            bloom: BLOOM,
+            exposure: 1.13,
+            occlusion: 0.9,
             grade: Grade {
-                lift: [0.0, 0.008, 0.014],
-                gamma: [1.0, 1.0, 1.0],
-                gain: [1.0, 1.0, 1.0],
-                saturation: 1.0,
-                vibrance: 0.3,
-                contrast: 1.06,
-                vignette: 0.2,
+                lift: [0.0; 3],
+                gamma: [1.0; 3],
+                gain: [1.04, 1.0, 0.95],
+                saturation: 1.04,
+                vibrance: 0.15,
+                contrast: 1.08,
+                vignette: 0.14,
+                black: 0.01,
+                shadow_tint: 0x86a2e0,
+                shadow_toning: 0.35,
+                highlight_tint: 0xfff0d4,
+                highlight_toning: 0.3,
+                foliage: 0.6,
+                earth: 0.3,
+                red_hold: 0.7,
             },
         },
         Theme::Quarry => Atmosphere {
             enabled: true,
-            zenith: 0x2f76c8,
-            horizon: 0xf4d9aa,
+            zenith: 0x3270bd,
+            horizon: 0xe6d0ab,
             sky_intensity: 1.1,
-            sun_glow: 0xffd08e,
-            sun_glow_intensity: 1.4,
+            sun_glow: 0xffcf8a,
+            sun_glow_intensity: 1.2,
             sun_radius: 0.024,
             clouds: Clouds {
-                coverage: 0.28,
-                lit: 0xfff6e6,
-                shade: 0xc4ab96,
-                shadow: 0.24,
+                coverage: 0.4,
+                lit: 0xfff4e2,
+                shade: 0xa8958f,
+                shadow: 0.08,
             },
             haze: Haze {
-                density: 0.004,
-                falloff: 0.035,
-                start: 40.0,
-                max: 0.78,
+                density: 0.0022,
+                falloff: 0.026,
+                start: 55.0,
+                max: 0.82,
                 clear_half_size: HAZE_CLEAR_HALF_SIZE,
                 clear_fade: HAZE_CLEAR_FADE,
+                arena_share: 0.25,
+                aerial: 0xc4ad92,
             },
-            rim: 0.22,
-            bloom: Bloom {
-                strength: 0.16,
-                threshold: 1.0,
-                knee: 0.6,
+            ridges: Ridges {
+                color: 0x9c7c66,
+                height: 0.045,
+                features: 4.0,
+                mesa: 1.0,
+                gaps: 0.0,
             },
-            exposure: 0.97,
-            occlusion: 0.85,
+            rim: 0.28,
+            bloom: BLOOM,
+            exposure: 1.04,
+            occlusion: 0.9,
             grade: Grade {
-                lift: [0.0, 0.008, 0.012],
-                gamma: [1.0, 1.0, 1.0],
-                gain: [1.05, 1.0, 0.92],
-                saturation: 1.0,
-                vibrance: 0.4,
-                contrast: 1.08,
-                vignette: 0.2,
+                lift: [0.0; 3],
+                gamma: [1.0; 3],
+                gain: [1.06, 1.02, 0.86],
+                saturation: 1.06,
+                vibrance: 0.3,
+                contrast: 1.07,
+                vignette: 0.14,
+                black: 0.01,
+                shadow_tint: 0x8a9ae0,
+                shadow_toning: 0.42,
+                highlight_tint: 0xffeaa8,
+                highlight_toning: 0.4,
+                foliage: 0.5,
+                earth: 0.0,
+                red_hold: 0.7,
             },
         },
     }
@@ -396,7 +502,7 @@ mod tests {
         let harbor = theme_look(Theme::Harbor);
         assert_eq!((harbor.fog_near, harbor.fog_far), (150.0, 260.0));
         let quarry = theme_look(Theme::Quarry);
-        assert_eq!(quarry.fill_intensity, 1.1);
+        assert_eq!(quarry.fill_intensity, 1.35);
         assert!(quarry.shadow.right - quarry.shadow.left > 136.0);
         assert_eq!(Theme::from_name("superstress"), Theme::Custom);
     }

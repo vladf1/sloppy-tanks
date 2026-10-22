@@ -42,8 +42,8 @@ use super::posing::{JointBasis, dvec3, euler_xyz, euler_yxz, joint_world, lerp, 
 use super::preparation::Preparation;
 use super::suspension::TankSuspension;
 use super::theme::{
-    SHADOW_BIAS, SHADOW_MAP_SIZE, SHADOW_NORMAL_BIAS, SHADOW_RECEIVER_FLOOR, Theme, ThemeLook,
-    theme_look,
+    SHADOW_BIAS, SHADOW_FILTER_RADIUS, SHADOW_MAP_SIZE, SHADOW_NORMAL_BIAS, SHADOW_RECEIVER_FLOOR,
+    Theme, ThemeLook, theme_look,
 };
 use super::view_settings::{BAR_HEIGHT, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT, RETICLE_HEIGHT};
 use crate::color::hex_to_linear;
@@ -774,7 +774,7 @@ impl Presentation {
             camera: look.shadow,
             bias: SHADOW_BIAS,
             normal_bias: SHADOW_NORMAL_BIAS,
-            radius: 1.0,
+            radius: SHADOW_FILTER_RADIUS,
             receiver_floor: SHADOW_RECEIVER_FLOOR,
         });
     }
