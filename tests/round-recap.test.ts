@@ -9,7 +9,7 @@ import {
   standingLine,
   teamLabel,
   teamPlace,
-  wreckLine,
+  countLine,
 } from "../src/game/round-recap";
 import type { RecapMetric, RecapState, ScoreboardRow } from "../src/game/engine-api";
 
@@ -53,7 +53,7 @@ test("a first round reports its values without record callouts", () => {
   assert.match(markup, /<dt>Damage dealt<\/dt><dd>1,234<\/dd>/);
   assert.match(markup, /<dt>Longest life<\/dt><dd>1:35<\/dd>/);
   // The kills tile measures the round against the best; the peak rank is a detail.
-  assert.match(markup, /recap-progress is-record">.*Equals your best/);
+  assert.match(markup, /recap-progress is-record">.*Equals your best · 3/);
   assert.match(markup, /<dt>Top rank<\/dt><dd>Elite<\/dd>/);
   assert.doesNotMatch(markup, /Time played/);
   assert.match(markup, /<dt>Accuracy<\/dt><dd>—<\/dd>/);
@@ -89,16 +89,35 @@ test("improved records are starred and unreached records show the best", () => {
 test("storage that refuses records says so", () => {
   const markup = recapMarkup(round, recap({ persisted: false, damageTaken: 250.4 }));
   assert.match(markup, /Personal bests couldn't be saved in this browser/);
-  assert.match(markup, /<dt>Damage taken<\/dt><dd>250<\/dd>/);
 });
 
-test("the report counts deaths in plain words and names the winning team plainly", () => {
-  assert.deepEqual([0, 1, 2, 5].map(wreckLine), [
-    "Never destroyed",
-    "Destroyed once",
-    "Destroyed twice",
-    "Destroyed 5 times",
-  ]);
+test("the report's details are highlights, not a ledger of every number", () => {
+  const stats = {
+    ...zero(),
+    kills: 2,
+    busiestMinute: 2,
+    multikill: 2,
+    pickups: 1,
+    revengeKills: 1,
+  };
+  const markup = recapMarkup(round, recap({ stats, best: stats, damageTaken: 100 }));
+  assert.match(markup, /<dt>Revenge kills<\/dt><dd>1<\/dd>/);
+  assert.doesNotMatch(markup, /Busiest minute|Best multikill|Pickups|Damage taken/);
+  const quiet = recapMarkup(round, recap({ stats: { ...zero(), kills: 1, pickups: 3 } }));
+  assert.match(quiet, /<dl class="recap-details" hidden>/);
+  const triple = recapMarkup(round, recap({ stats: { ...zero(), kills: 3, multikill: 3 } }));
+  assert.match(triple, /<dt>Best multikill<\/dt><dd>3<\/dd>/);
+});
+
+test("the report counts in plain words and names the winning team plainly", () => {
+  assert.deepEqual(
+    [
+      [0, "death"],
+      [1, "death"],
+      [2, "kill"],
+    ].map(([count, noun]) => countLine(count as number, noun as string)),
+    ["0 deaths", "1 death", "2 kills"],
+  );
   assert.equal(teamLabel("BLUE"), "Blue team");
 });
 

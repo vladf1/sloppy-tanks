@@ -305,12 +305,14 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             // The grader's line wanders in long, uneven runs with the odd bite
             // where a wheel has broken the shoulder, never a regular scallop that
             // reads as a cast shadow.
-            let edge = (noise(table, x * 0.11 + 5.0, z * 0.11 - 2.0) - 0.5) * 0.9
-                + (noise(table, x * 0.9, z * 0.9) - 0.5) * 0.25;
-            road = 1.0 - smoothstep(distance + edge, 4.45, 4.75);
-            // The bladed edge: a thin step of shade where the bed was cut down.
-            let cut = (distance + edge - 4.6) / 0.22;
-            road_edge = (-cut * cut).exp();
+            let edge = (noise(table, x * 0.11 + 5.0, z * 0.11 - 2.0) - 0.5) * 1.3
+                + (noise(table, x * 0.9, z * 0.9) - 0.5) * 0.5;
+            // The compacted bed frays into the loose sand over a metre or so,
+            // trodden in by the wheels that wander off it, not cut to a stencil.
+            road = 1.0 - smoothstep(distance + edge, 3.7, 5.0);
+            // The bladed edge: a faint, broken step of shade where the bed was cut.
+            let cut = (distance + edge - 4.5) / 0.35;
+            road_edge = (-cut * cut).exp() * 0.5;
             // The grader's windrow: a ridge of pale spill along each shoulder,
             // its crest broken where tyres have cut through it.
             let w = (distance + edge * 0.7 - 6.0) / 0.95;
@@ -360,9 +362,9 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             0.78,
         ) * (1.0 - rut * 1.5).max(0.0);
         let packed = road * (1.0 - blown * 0.6);
-        r += (176.0 - r) * packed;
-        g += (167.0 - g) * packed;
-        b += (151.0 - b) * packed;
+        r += (168.0 - r) * packed;
+        g += (149.0 - g) * packed;
+        b += (121.0 - b) * packed;
         r += (201.0 - r) * windrow * 0.7;
         g += (188.0 - g) * windrow * 0.7;
         b += (163.0 - b) * windrow * 0.7;
@@ -446,8 +448,16 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (204.0 - r) * iron * 0.3;
         g += (150.0 - g) * iron * 0.3;
         b += (106.0 - b) * iron * 0.3;
+        // Ruts hold the last of the water truck's damp in long dark patches,
+        // drying to cracked fines at their edges.
+        let rut_damp = if rut > 0.05 {
+            rut * smoothstep(noise(table, x * 0.13 + 71.0, z * 0.13 - 29.0), 0.58, 0.72)
+        } else {
+            0.0
+        };
         let damp =
-            (1.0 - smoothstep(stain - bands * 0.08, 0.27, 0.41)) * (1.0 - worn_sand) * off_road;
+            ((1.0 - smoothstep(stain - bands * 0.08, 0.27, 0.41)) * (1.0 - worn_sand) * off_road)
+                .max(rut_damp * 0.9);
         r += (156.0 - r) * damp * 0.28;
         g += (122.0 - g) * damp * 0.28;
         b += (96.0 - b) * damp * 0.28;
@@ -563,7 +573,8 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
                 + stand * 0.4
                 - lee * 0.8
                 - worn_sand * 0.4
-                - road * 0.05
+                + road * 0.22
+                + rut * 0.15
                 - drift * 0.5 * (1.0 - shed),
         ));
         // Under the wall line the joints between the blocks open onto shaded,

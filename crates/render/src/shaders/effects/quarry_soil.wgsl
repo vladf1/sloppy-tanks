@@ -21,7 +21,7 @@ const SOIL_BAKE_RELIEF = 2.6;
 // metres. Shading only: the floor stays the plane the tanks drive on, but the
 // low sun picks out a worked, wind-shaped ground.
 const SOIL_BASIN_SPAN = 46.0;
-const SOIL_BASIN_HEIGHT = 4.0;
+const SOIL_BASIN_HEIGHT = 2.2;
 const SOIL_SWELL_SPAN = 17.0;
 const SOIL_SWELL_HEIGHT = 1.1;
 const SOIL_HUMMOCK_SPAN = 6.5;
@@ -107,9 +107,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let gather = quarry_value(p / SOIL_SPILL_CELL) * 0.65 + quarry_value(p / (SOIL_SPILL_CELL * 0.37) + 7.0) * 0.35;
     // Drift sand buries the stones; they lie in the deflated ground between.
     let spill = quarry_smoothstep(0.54, 0.66, gather + stony * 0.25 + hollow * 0.3 - crest * 0.25 - drift_sand * 0.45);
-    let stones = quarry_pebbles(p, SOIL_STONE_CELL, (stony * stony * 0.3 + 0.05) * spill * 1.8, footprint, 3.0);
-    let grit = quarry_pebbles(p, SOIL_GRIT_CELL, (0.03 + stony * 0.4) * mix(0.4, 1.4, spill), footprint, 11.0);
-    let cobbles = quarry_pebbles(p, SOIL_COBBLE_CELL, (0.004 + stony * 0.1) * spill * 1.8, footprint, 23.0);
+    let stones = quarry_pebbles(p, SOIL_STONE_CELL, (stony * stony * 0.3 + 0.05) * spill * 1.8, footprint, 3.0, 0.75);
+    let grit = quarry_pebbles(p, SOIL_GRIT_CELL, (0.03 + stony * 0.4) * mix(0.4, 1.4, spill), footprint, 11.0, 0.6);
+    let cobbles = quarry_pebbles(p, SOIL_COBBLE_CELL, (0.004 + stony * 0.1) * spill * 1.8, footprint, 23.0, 0.85);
     // Mud plates only where the bake dried some; their crack depth joins the relief.
     var cracks = vec2f(0.0);
     if dried > 0.02 {
