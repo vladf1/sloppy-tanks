@@ -18,7 +18,7 @@ use crate::sim::house_layout::{PieceShape, RAFTER_DEPTH, Roof};
 use crate::sim::math::Random;
 
 /// How deep a wall's torn edge runs, from the siding back to the lining.
-const WALL_EDGE: f64 = 0.17;
+const WALL_EDGE: f64 = 0.2;
 /// How far above and below the deck top a roof's torn edge runs: the shingles,
 /// and the deck with a lath under it.
 const SHINGLE_EDGE: f64 = 0.05;
@@ -167,7 +167,7 @@ pub(super) fn wall_breaks(
         let facing = plane.s * n.x + plane.t * n.y;
         for (a, b) in outside_openings(a, b, openings) {
             kit.quad(
-                Surface::Wood,
+                Surface::Splinters,
                 [at(a, 0.0), at(b, 0.0), at(b, WALL_EDGE), at(a, WALL_EDGE)],
                 facing,
             );
@@ -197,7 +197,7 @@ pub(super) fn wall_breaks(
                     if rng.next() < 0.75 {
                         Surface::Siding
                     } else {
-                        Surface::Wood
+                        Surface::Splinters
                     },
                     DVec3::new(reach, rng.range(0.07, 0.13), 0.025),
                     frame,
@@ -240,7 +240,7 @@ pub(super) fn roof_breaks(
         let facing = plane.s * n.x + plane.t * n.y;
         let depth = roof.thick + DECK_EDGE;
         kit.quad(
-            Surface::Wood,
+            Surface::Splinters,
             [
                 at(a, SHINGLE_EDGE),
                 at(b, SHINGLE_EDGE),
@@ -260,7 +260,7 @@ pub(super) fn roof_breaks(
             let coat = if rng.next() < 0.6 {
                 Surface::Roof
             } else {
-                Surface::Wood
+                Surface::Splinters
             };
             kit.block(
                 coat,
