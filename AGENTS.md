@@ -12,8 +12,10 @@ turn this file into a second directory listing.
 - Trace the behavior from input or simulation state to presentation before
   editing. Make the smallest change that fixes the observed problem, and add
   a focused regression test when the behavior is testable without a browser:
-  a Rust unit test beside the code or a `crates/*/tests/` file for engine,
-  net and server behavior, `tests/*.test.ts` for the page shell.
+  a Rust unit test beside the code, a module of `crates/core/tests/integration/`
+  (one test binary; a new file directly under `tests/` would be another binary to
+  compile and link on every engine edit) for engine and net behavior, a
+  `crates/server/tests/` file for the server, `tests/*.test.ts` for the page shell.
 - Establish a reproducible failure or a matched before/after measurement
   before doing a broad refactor or performance change.
 - Keep tests fast and deterministic. Prefer fixed-step loops, scoped random
@@ -96,8 +98,9 @@ whether Kache was on when reporting build times.
 
 ```sh
 pnpm run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests
-pnpm run wasm                         # release Wasm into src/generated/engine/; rerun after Rust/WGSL edits
-cargo test -p sloppy-core --test navigation   # focused Rust test (add --release for seeded matches)
+pnpm run wasm                         # release WebGPU engine into src/generated/engine/; rerun after Rust/WGSL edits
+pnpm run wasm:webgl                   # the WebGL2 fallback engine; before trying ?webgl after an edit
+cargo test --workspace --test integration navigation::   # one area of the core tests (add --release for seeded matches)
 node --import tsx --test tests/foo.test.ts    # focused page-shell test
 pnpm run validate                     # seeded headless matches and reset checks
 pnpm run dev                          # browser work; use the printed URL
@@ -108,8 +111,14 @@ SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
 `artifacts/performance/simulation-results.json`. `pnpm run build` creates
 `dist/`; it is a build output, not a place to edit source behavior. Vite and
 `tsc` import the generated glue, so run `pnpm run wasm` before them; `build`,
-`build:dev` and `check` do. `tests/traffic-bots.test.ts` drives the built
-server binary (`pnpm run server:build`).
+`build:dev` and `check` do. `pnpm run wasm` leaves the WebGL2 engine
+(`src/generated/engine-webgl/`) alone unless its glue is missing or the engine's
+API changed, because building it doubles the compile work of every edit; the
+browser checks that play it rebuild it first, and `build` builds both
+(`pnpm run wasm:all`). Keep `--workspace` on focused cargo commands: `-p sloppy-core`
+alone resolves different dependency features and compiles Rapier and its stack a
+second time. `tests/traffic-bots.test.ts` drives the built server binary
+(`pnpm run server:build`).
 
 A successful Rust/TypeScript/build/test gate does not prove controls, menu
 transitions, rendering, or cleanup. Run `pnpm run check:browser` against the
@@ -182,8 +191,8 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   renderer's `CosmeticRandom` (`crates/render/src/effects/random.rs`), which must
   never influence combat, navigation, spawning, or seeded validation. The same
   seed must give the same match natively and in Wasm;
-  `crates/core/tests/initial_state.rs` and `examples/trace.rs` check construction
-  and per-tick parity.
+  `crates/core/tests/integration/initial_state.rs` and `examples/trace.rs` check
+  construction and per-tick parity.
 - Bot names deliberately use a separate round-derived stream
   (`shuffled_bot_names`) so they do not consume combat RNG. Keep that separation.
 - Projectile contacts are continuous and resolved earliest-first across all
@@ -273,7 +282,8 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   WebGL may simplify an effect, but must not give up a performance optimization
   such as a cache or batching: its devices are the weaker ones. Keep both
   building: `pnpm run rust:clippy` lints both, `scripts/webgl-check.mjs` plays the
-  fallback and `SLOPPY_WEBGL=1` runs any browser check on the WebGL engine.
+  fallback and `SLOPPY_WEBGL=1` runs any browser check on the WebGL engine (both
+  rebuild it first through `buildWebglEngine()` in `scripts/browser-helpers.mjs`).
   Shaders are handwritten WGSL; custom model effects register
   an `EffectDefinition`. The native `shader`/`registry` tests validate every
   variant with naga and translate it to WebGL's GLSL ES 3.00, but a browser can

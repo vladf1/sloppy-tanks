@@ -12,6 +12,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import {
+  buildWebglEngine,
   chooseMap,
   freezeLoop,
   gameUrl,
@@ -51,6 +52,7 @@ const ERROR_CHECK_DRAWS = 320;
  * mesh's own indices can be. */
 const ZERO_INDEX_UPLOAD_BYTES = 1024;
 mkdirSync(output, { recursive: true });
+buildWebglEngine();
 
 /** The game page with `search` in place of the URL's query. */
 const pageUrl = (search) => Object.assign(new URL(gameUrl), { search }).href;

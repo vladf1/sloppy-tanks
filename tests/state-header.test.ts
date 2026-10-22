@@ -51,7 +51,7 @@ test("a bot observes binary ticks of its own round and counts their bytes", () =
 });
 
 test("reads the headers of the Rust host's pinned binary messages", () => {
-  // `crates/core/tests/net_golden.rs` writes each binary message's header fields and
+  // `crates/core/tests/integration/net_golden.rs` writes each binary message's header fields and
   // header bytes from a scripted room, so the bots' reader and the encoder cannot drift.
   const fixture = JSON.parse(
     readFileSync(
