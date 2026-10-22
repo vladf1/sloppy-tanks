@@ -144,7 +144,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Sun-bleached caprock: flat tops weather to one pale cream whatever bed they
     // expose, so no top reads as a stamped patch of the face's colors.
     let bleached = quarry_smoothstep(0.7, 0.95, n.y) * select(0.0, 0.55, rocky && !backdrop);
-    layered = mix(layered, srgb_hex(0xdbc4a0u), bleached);
+    // Each outcrop's cap (its own bed number) weathers its own way: most bleach
+    // pale, some keep a honey tone, a few carry a darker iron crust, so the
+    // field of rocks never reads as one stamped model.
+    let cap_pick = quarry_hash(vec2f(floor(rock_layer), 3.0)).x;
+    var cap_tone = srgb_hex(0xdbc4a0u);
+    cap_tone = select(cap_tone, srgb_hex(0xd0aa7cu), cap_pick > 0.45);
+    cap_tone = select(cap_tone, srgb_hex(0xb07e56u), cap_pick > 0.78);
+    layered = mix(layered, cap_tone, bleached * select(1.0, 1.4, cap_pick > 0.45));
     layered *= 0.97 + lamina * (0.05 + 0.06 * close);
     // Iron oxide: thin wavy liesegang bands in patches, muted, never a painted
     // stripe.

@@ -88,16 +88,26 @@ fn rock_footprints() -> &'static [[f64; 5]] {
 const ROCK_CONTACT_REACH: f64 = 2.4;
 const ROCK_SHED_REACH: f64 = 3.6;
 
-/// Distance (metres) from x/z to the nearest rock footprint's edge, negative
-/// inside, capped at `reach`.
-fn rock_distance(x: f64, z: f64, reach: f64) -> f64 {
+/// The rocks whose footprints come within `reach` of the row at `z`: most rows
+/// meet none, so the per-pixel distance below rarely has anything to test.
+fn rocks_near_row(z: f64, reach: f64) -> Vec<[f64; 5]> {
+    rock_footprints()
+        .iter()
+        .filter(|&&[_, cz, _, half_d, _]| (z - cz).abs() < half_d + reach)
+        .copied()
+        .collect()
+}
+
+/// Distance (metres) from x/z to the nearest of `rocks`' footprint edges,
+/// negative inside, capped at `reach`.
+fn rock_distance(rocks: &[[f64; 5]], x: f64, z: f64, reach: f64) -> f64 {
     let mut best = reach;
-    for &[cx, cz, half_w, half_d, round] in rock_footprints() {
+    for &[cx, cz, half_w, half_d, round] in rocks {
         let qx = (x - cx).abs() - (half_w - round);
-        let qz = (z - cz).abs() - (half_d - round);
-        if qx > best + round || qz > best + round {
+        if qx > best + round {
             continue;
         }
+        let qz = (z - cz).abs() - (half_d - round);
         let d = js_hypot(&[qx.max(0.0), qz.max(0.0)]) + qx.max(qz).min(0.0) - round;
         best = best.min(d);
     }
@@ -189,6 +199,7 @@ pub fn bake_quarry_soil(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
 fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, out: &mut [u8]) {
     let size = QUARRY_SOIL_SIZE;
     let extent = EXTENT;
+    let rocks = rocks_near_row(z, ROCK_SHED_REACH);
     for col in 0..size {
         let x = (col as f64 / (size - 1) as f64 - 0.5) * extent;
         let macro_field = noise(table, x * 0.065, z * 0.065);
@@ -283,20 +294,31 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         // The apron's haul road rings the pit between the wall and the benches,
         // tying the trucks, the ramp and the loading floor together: a compacted
         // bed with two sets of dual-wheel ruts, wandering a little as it goes.
-        let ring_corner = 14.0;
-        let (rx, rz) = (
-            x.abs() - (HAUL_RING - ring_corner),
-            z.abs() - (HAUL_RING - ring_corner),
-        );
-        let ring = js_hypot(&[rx.max(0.0), rz.max(0.0)]) + rx.max(rz).min(0.0) - ring_corner
-            + 0.9 * (x * 0.05 + z * 0.037).sin();
-        let haul_bed = working * (1.0 - smoothstep(ring.abs(), 3.6, 5.0));
-        let ring_ruts = HAUL_RING_RUTS
-            .into_iter()
-            .map(|lane| (-((ring - lane) / 0.34).powi(2)).exp())
-            .fold(0.0, f64::max)
-            * haul_bed
-            * (0.8 + 0.3 * ((x - z) * 6.0).sin() * ((x + z) * 6.0).sin());
+        // Only the apron carries it, so the arena's pixels skip the work.
+        let (haul_bed, ring_ruts) = if working > 0.0 {
+            let ring_corner = 14.0;
+            let (rx, rz) = (
+                x.abs() - (HAUL_RING - ring_corner),
+                z.abs() - (HAUL_RING - ring_corner),
+            );
+            let ring = (rx.max(0.0).powi(2) + rz.max(0.0).powi(2)).sqrt() + rx.max(rz).min(0.0)
+                - ring_corner
+                + 0.9 * (x * 0.05 + z * 0.037).sin();
+            let haul_bed = working * (1.0 - smoothstep(ring.abs(), 3.6, 5.0));
+            let ruts = if haul_bed > 0.0 {
+                HAUL_RING_RUTS
+                    .into_iter()
+                    .map(|lane| (-((ring - lane) / 0.34).powi(2)).exp())
+                    .fold(0.0, f64::max)
+                    * haul_bed
+                    * (0.8 + 0.3 * ((x - z) * 6.0).sin() * ((x + z) * 6.0).sin())
+            } else {
+                0.0
+            };
+            (haul_bed, ruts)
+        } else {
+            (0.0, 0.0)
+        };
         r += (150.0 - r) * haul_bed * 0.5;
         g += (135.0 - g) * haul_bed * 0.5;
         b += (112.0 - b) * haul_bed * 0.5;
@@ -363,7 +385,11 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         b += (167.0 - b) * drift;
         // Shade pools at the rocks' feet, where the sky is half hidden, and the
         // stones they shed lie in a ring round them.
-        let rock_edge = rock_distance(x, z, ROCK_SHED_REACH);
+        let rock_edge = if rocks.is_empty() {
+            ROCK_SHED_REACH
+        } else {
+            rock_distance(&rocks, x, z, ROCK_SHED_REACH)
+        };
         // Under the rock itself (its caprock pans sample this bake) stays clear.
         let contact = (1.0 - smoothstep(rock_edge, -0.2, ROCK_CONTACT_REACH)).powi(2)
             * smoothstep(rock_edge, -1.6, -0.6);
@@ -375,7 +401,7 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
                 - road * 0.25
                 - drift * 0.5 * (1.0 - shed),
         ));
-        let occlusion = 1.0 - contact * 0.38;
+        let occlusion = 1.0 - contact * 0.32;
         let i = col * 4;
         out[i] = to_uint8_clamp((r + shade) * occlusion);
         out[i + 1] = to_uint8_clamp((g + shade) * occlusion);
