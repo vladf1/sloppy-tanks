@@ -47,7 +47,7 @@ const ATLAS_INSET: f64 = 0.02;
 /// The average sRGB colour of the atlas's plank faces. A member's tint is its
 /// paint divided by it, so the textured wood averages the paint it replaces:
 /// posts stay darker than beams, and beams keep their alternating tones.
-const PLANK_AVERAGE: u32 = 0xcaa378;
+const PLANK_AVERAGE: u32 = 0xbd9b74;
 /// The largest edge chamfer on a member, in metres.
 const MEMBER_BEVEL: f64 = 0.03;
 
@@ -324,14 +324,23 @@ pub fn timber_part_model(p: &TimberPart) -> Node {
         }
     }
     batch(&mut group);
-    weather_wood(&mut group, p.y);
+    weather_wood(&mut group, p.y, p.damage_seed);
     group
 }
 
 /// Weathers a batched member's wood in its vertex colours: worn, paler chamfers
 /// catch the light along every edge, and the wood darkens toward the ground
-/// where rain splashes it. `centre` is the member's height above the ground.
-fn weather_wood(group: &mut Node, centre: f64) {
+/// where rain splashes it, greening with moss at the very foot. Each member
+/// (`seed`) has its own age, so neighbouring boards differ in tone and some
+/// have gone silver. `centre` is the member's height above the ground.
+fn weather_wood(group: &mut Node, centre: f64, seed: i32) {
+    let mut rng = Random::new(f64::from(seed) * 1.37 + 11.0);
+    let tone = rng.range(0.84, 1.1);
+    let silvered = if rng.next() < 0.3 {
+        rng.range(0.3, 0.6)
+    } else {
+        0.0
+    };
     for child in &mut group.children {
         let Some(drawable) = &mut child.drawable else {
             continue;
@@ -353,10 +362,14 @@ fn weather_wood(group: &mut Node, centre: f64) {
         {
             let edge = normal.iter().filter(|n| n.abs() > 0.05).count() > 1;
             let height = centre + f64::from(position[1]);
-            let splash = 0.64 + 0.36 * smoothstep(height, 0.0, 0.75);
+            let splash = 0.6 + 0.4 * smoothstep(height, 0.0, 0.8);
+            let moss = 1.0 - smoothstep(height, 0.0, 0.3);
             let wear = if edge { EDGE_WEAR } else { 1.0 };
-            for c in color.iter_mut() {
-                *c = (f64::from(*c) * splash * wear) as f32;
+            let grey = (f64::from(color[0]) + f64::from(color[1]) + f64::from(color[2])) / 3.0;
+            for (k, c) in color.iter_mut().enumerate() {
+                let aged = f64::from(*c) * (1.0 - silvered) + grey * 0.92 * silvered;
+                let green = [0.86, 1.04, 0.8][k];
+                *c = (aged * tone * splash * wear * (1.0 + (green - 1.0) * moss * 0.6)) as f32;
             }
         }
     }

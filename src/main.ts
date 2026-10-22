@@ -70,6 +70,7 @@ function startTextureDownloads(options: GameOptions): void {
     ...(options.mapMode === "village"
       ? [
           "textures/ground/dry-grass.webp",
+          "textures/ground/village-ground.webp",
           "textures/trees/conifer-spray.webp",
           "textures/water/normals.webp",
           "textures/trees/birch.webp",
