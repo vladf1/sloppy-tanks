@@ -54,6 +54,8 @@ pub(super) fn fleet_livery(node: &mut Node, dust_top: f64) {
         node,
         &Livery {
             paint: &[PAINT, CAB_ROOF],
+            // The fleet keeps the satin enamel the quarry round was graded with.
+            matte: false,
             metal: &FLEET_METAL,
             signal: NO_SIGNAL,
             grime: Grime {
