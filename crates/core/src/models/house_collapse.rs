@@ -11,10 +11,10 @@ use std::sync::Arc;
 use glam::{DMat4, DVec2, DVec3};
 
 use super::building_kit::Surface;
-use super::tank_kit::{Kit, pose};
+use super::tank_kit::{Kit, pose, shift};
 use crate::geometry::{Mesh, narrow, widen};
 use crate::sim::house_fracture::{PartPlane, ShardRegion, clip_vertices};
-use crate::sim::house_layout::{PieceShape, RAFTER_DEPTH, Roof};
+use crate::sim::house_layout::{CHIMNEY, PieceShape, RAFTER_DEPTH, Roof};
 use crate::sim::math::Random;
 
 /// How deep a wall's torn edge runs, from the siding back to the lining.
@@ -281,6 +281,66 @@ pub(super) fn roof_breaks(
                 aim(root, tip),
             );
         }
+    }
+}
+
+/// Broken brickwork where the chimney snapped (`snap` high over the flue at
+/// `flue`): the cut course across the stack, on the stump's top or under the
+/// top's foot, with bricks knocked half out of it and a ragged course standing
+/// proud on two sides, so the break reads as masonry rather than a sawn post.
+pub(super) fn chimney_breaks(
+    kit: &mut Kit<Surface>,
+    shape: &PieceShape,
+    flue: DVec3,
+    snap: f64,
+    rng: &mut Random,
+) {
+    const BRICK: DVec3 = DVec3::new(0.22, 0.075, 0.11);
+    let half = CHIMNEY / 2.0;
+    // The stump's break faces up, the top's down.
+    let face = if shape.piece.shard == 0 { 1.0 } else { -1.0 };
+    let at = |x: f64, z: f64, lift: f64| DVec3::new(flue.x + x, snap + face * lift, flue.z + z);
+    kit.quad(
+        Surface::Brick,
+        [
+            at(-half, -half, 0.0),
+            at(half, -half, 0.0),
+            at(half, half, 0.0),
+            at(-half, half, 0.0),
+        ],
+        DVec3::Y * face,
+    );
+    // A course still standing along two sides, broken off at odd heights.
+    for side in [-1.0, 1.0] {
+        let x = side * (half - BRICK.z / 2.0);
+        for k in 0..3 {
+            if rng.next() < 0.3 {
+                continue;
+            }
+            let z = -half + BRICK.x / 2.0 + f64::from(k) * (CHIMNEY - BRICK.x) / 2.0;
+            let rise = rng.range(0.5, 1.0) * BRICK.y;
+            kit.block(
+                Surface::Brick,
+                DVec3::new(BRICK.z, rise, BRICK.x),
+                shift(at(x, z, rise / 2.0)),
+            );
+        }
+    }
+    // Bricks knocked half out of the cut.
+    for _ in 0..3 {
+        let (x, z) = (rng.range(-0.15, 0.15), rng.range(-0.15, 0.15));
+        kit.block(
+            Surface::Brick,
+            BRICK,
+            pose(
+                at(x, z, BRICK.y * 0.4),
+                DVec3::new(
+                    rng.range(-0.5, 0.5),
+                    rng.range(0.0, std::f64::consts::PI),
+                    rng.range(-0.5, 0.5),
+                ),
+            ),
+        );
     }
 }
 

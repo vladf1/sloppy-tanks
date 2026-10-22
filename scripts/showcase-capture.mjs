@@ -42,6 +42,8 @@ const WIDTH = Number(values.width);
 const HEIGHT = Number(values.height);
 const FRAMES = Number(values.frames);
 const SEED = Number(values.seed);
+/** Half-second waits for a death shot's victim to lose its spawn shield (6 s in all). */
+const SHIELDED_RETRIES = 12;
 const wanted = new Set(values.shots.split(",").filter(Boolean));
 const take = (shot) => wanted.size === 0 || wanted.has(shot);
 const out = path.resolve(values.out);
@@ -283,24 +285,44 @@ try {
         ["death", false],
         ["humvee-death", true],
       ]) {
-        const victim = await page.evaluate((humvee) => {
-          const { human, tanks } = window.sloppy.sim;
-          const enemies = tanks.filter(
-            (tank) => tank.alive && tank.team !== human.team && (tank.kind === "humvee") === humvee,
-          );
-          const near = (tank) => Math.hypot(tank.x - human.x, tank.z - human.z);
-          return enemies.sort((a, b) => near(a) - near(b))[0] ?? null;
-        }, humvee);
+        // A vehicle that has just respawned shrugs the blow off under its spawn shield
+        // (about 3 s), so the nearest one the damage actually destroys is watched, and
+        // the battle runs on half a second at a time until one is.
+        let victim = null;
+        for (let attempt = 0; attempt < SHIELDED_RETRIES && !victim; attempt++) {
+          if (attempt > 0) await play(page, 30);
+          const candidates = await page.evaluate((humvee) => {
+            const { human, tanks } = window.sloppy.sim;
+            const enemies = tanks.filter(
+              (tank) =>
+                tank.alive && tank.team !== human.team && (tank.kind === "humvee") === humvee,
+            );
+            const near = (tank) => Math.hypot(tank.x - human.x, tank.z - human.z);
+            return enemies.sort((a, b) => near(a) - near(b));
+          }, humvee);
+          for (const candidate of candidates) {
+            const destroyed = await page.evaluate((id) => {
+              const { human } = window.sloppy.sim;
+              const team = human.team === "red" || human.team === 1 ? 1 : 0;
+              window.sloppy.game.debug_damage_tank(id, 100000, human.id, team);
+              const after = window.sloppy.sim.tanks.find((tank) => tank.id === id);
+              return !after?.alive || after.hp <= 0;
+            }, candidate.id);
+            if (destroyed) {
+              // Where it stood when it died, for the watching camera.
+              victim = await page.evaluate(
+                (id) => window.sloppy.sim.tanks.find((tank) => tank.id === id),
+                candidate.id,
+              );
+              break;
+            }
+          }
+        }
         if (!victim) {
           console.log(`${map}-${name}: no victim`);
           continue;
         }
         const pose = [victim.x - 8, 8.5, victim.z - 8, victim.x, 0.8, victim.z];
-        await page.evaluate((id) => {
-          const { human } = window.sloppy.sim;
-          const team = human.team === "red" || human.team === 1 ? 1 : 0;
-          window.sloppy.game.debug_damage_tank(id, 100000, human.id, team);
-        }, victim.id);
         for (const [frame, count] of moments.entries()) {
           await play(page, count);
           await page.evaluate((pose) => window.engine.draw(pose), pose);
