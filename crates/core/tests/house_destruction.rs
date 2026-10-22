@@ -131,7 +131,11 @@ fn a_collapse_breaks_the_cottage_into_its_parts_and_leaves_a_heap_of_low_cover()
             );
             assert!((p.y - shape.center.y).abs() < 1e-4);
         } else {
-            assert_eq!(f.shape, Some(FragmentShape::Beam), "loose rafters");
+            assert_eq!(
+                f.shape,
+                Some(FragmentShape::Beam),
+                "loose rafters and boards"
+            );
         }
     }
     let heap = heaps(&s);
@@ -152,8 +156,14 @@ fn a_collapse_breaks_the_cottage_into_its_parts_and_leaves_a_heap_of_low_cover()
         let y = s.body_translation(f.body).y;
         assert!(y < design.h * 0.6, "{:?} came down ({y})", f.house_piece);
     }
-    // The pieces sink away within seconds, leaving the heap's body for the cottage's.
-    tick(&mut s, 1.5);
+    // The pieces lie on the heap a while, then sink into it, leaving the heap's body
+    // for the cottage's.
+    tick(&mut s, 5.0);
+    assert!(
+        s.fragments.iter().any(|f| f.house_piece.is_some()),
+        "the collapse stays to be seen"
+    );
+    tick(&mut s, 6.0);
     assert!(s.fragments.is_empty());
     assert_eq!(s.world.bodies.len(), bodies);
 }

@@ -64,6 +64,7 @@ mod building_kit;
 mod concrete_surfaces;
 mod ground_surfaces;
 mod harbor_surfaces;
+mod house_collapse;
 mod house_model;
 mod house_surfaces;
 mod quarry_surfaces;
