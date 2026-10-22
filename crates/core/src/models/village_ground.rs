@@ -374,17 +374,21 @@ impl ArenaPlan {
         // A wide ramp across the edge: the shader cuts it crisply in some
         // stretches and lets it crumble over a few metres in others.
         let mut dirt = smoothstep(road, -EDGE_RAMP, EDGE_RAMP);
-        // Grass survives in the quiet middle of a road, between and beside the
-        // wheel lines, in ragged islands and medians.
+        // Thin grass survives in the quiet middle of a road, between and
+        // beside the wheel lines, in sparse medians that the shader draws as
+        // thinning turf rather than lawn.
         let quiet = 1.0 - smoothstep(traffic, 0.1, 0.34);
-        let islands = smoothstep(fbm(x * 0.11 + 7.0, z * 0.11 - 3.0, 24), 0.38, 0.6);
+        let islands = smoothstep(fbm(x * 0.11 + 7.0, z * 0.11 - 3.0, 24), 0.44, 0.64);
         let survives = quiet * islands * smoothstep(road, 1.2, 2.8);
-        dirt *= 1.0 - survives * 0.8;
-        // Trampled grass: wide where tanks cut the corners, a soft verge elsewhere.
+        dirt *= 1.0 - survives * 0.52;
+        // Trampled grass: wide where tanks cut the corners, a narrow, lighter
+        // verge along the straight edges (a wide one ringed every lawn).
         let corner = smooth_max(along, across, rounding + CORNER_TRAMPLE) + wander;
         let patchy = 0.55 + 0.45 * fbm(x * 0.09, z * 0.09, 21);
+        let cut = (smoothstep(corner, -4.5, 0.2) - smoothstep(road, -4.5, 0.2)).max(0.0);
+        let verge = smoothstep(road, -1.6, 0.2) * 0.5;
         // Grass surviving in a road is sparse and beaten flat.
-        let mut trampled = (smoothstep(corner, -4.5, 0.2) * patchy).max(survives);
+        let mut trampled = ((cut * 2.2).min(1.0).max(verge) * patchy).max(survives);
 
         for (points, width) in SHORTCUTS {
             let distance =

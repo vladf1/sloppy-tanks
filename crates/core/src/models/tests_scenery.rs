@@ -402,11 +402,8 @@ fn scenery_matches_typescript() {
         // Pine Village was repainted the same way (tree atlas, shared matte paint,
         // knolls beyond the wall); `forest_normals_match_typescript_on_a_grid`
         // and the showcase budget bound it.
-        // The spawn plinths were repainted in weathered stone and team paint,
-        // with only the badge lit.
         if name.starts_with("harbor")
             || name.starts_with("container-")
-            || name.starts_with("pads")
             || name == "village"
             || name == "waterwheel"
         {
