@@ -16,7 +16,7 @@
 //! toppled chimney and an empty doorway; some cottages already have a window or
 //! two boarded over from earlier shelling. A collapsed cottage falls apart into
 //! the [`HousePart`]s it is built from ([`house_pieces`]), torn timber split pale
-//! along every break and dark plaster behind, and leaves a heap of thick broken
+//! along every break and plaster and lath behind, and leaves a heap of thick broken
 //! wall and roof under the ragged stub of its back wall and corners, and a burnt
 //! floor ([`house_heap`]).
 //!
@@ -103,6 +103,9 @@ const BULGE_BAND: f64 = 0.75;
 /// Patches of shingles a shelled roof has shed (by stage), their radius (m), and
 /// the loose shingles each sheds onto the roof and the ground.
 const SHED_PATCHES: [usize; 3] = [0, 3, 6];
+/// Patches torn bare on a fallen roof's slabs: the fall strips far more of it
+/// than shelling did, so the slabs read as a broken roof rather than one sheet.
+const FALLEN_SHED_PATCHES: usize = 12;
 const SHED_RADIUS: (f64, f64) = (0.4, 0.75);
 const SHED_SHINGLES: usize = 5;
 const ROOF_HOLE: (f64, f64) = (1.25, 1.15);
@@ -121,10 +124,11 @@ const STONE_AVERAGE: u32 = 0x6b6459;
 
 /// Old framing and decking a collapse lays bare: weathered, dusty timber, darker
 /// than the split ends ([`Surface::Splinters`]) that catch the light.
-const RAW_TIMBER: u32 = 0x5e4834;
-/// The plaster inside a cottage's walls, which a fallen panel shows: old,
-/// smoke-dulled distemper in the shadow of the wreck, never a pale card.
-const PLASTER: u32 = 0x544c43;
+const RAW_TIMBER: u32 = 0x7a5d42;
+/// The plaster inside a cottage's walls, which a fallen panel shows: old lime
+/// plaster, dulled by smoke and the dust of the fall but lit like any face, so a
+/// panel lying lining up reads as the inside of a room, never as a black card.
+const PLASTER: u32 = 0x92846f;
 /// Height of the gravel drip strip round a cottage's plinth.
 const DRIP_STRIP: f64 = 0.035;
 /// Flagstones in the path from a cottage's door toward its street.
@@ -138,7 +142,7 @@ const SPLASH_LIFT: f64 = 0.008;
 /// Wallpapers a fallen wall shows inside (sage, duck-egg, rose, buttercup), and
 /// how far they cover the plaster's own dull colour.
 const WALLPAPERS: [u32; 4] = [0x9fb48c, 0x8fb0be, 0xc89a8c, 0xd2bd7c];
-const WALLPAPER_TINT: f64 = 0.16;
+const WALLPAPER_TINT: f64 = 0.3;
 /// Foundation shrubs: their greens (the window boxes', so they share those
 /// draws), how many leafy lumps each is and how big (m) the main lump is.
 const SHRUB_LEAVES: [u32; 2] = [LEAVES, LEAVES_LIGHT];
@@ -277,8 +281,8 @@ fn cottage_material(
             ),
             _ => source.color.0,
         };
-        // The lining stays dark: the inside of a broken wall reads as a cavity
-        // behind the paint, not as more of it.
+        // The lining is already dust-dulled plaster: dusting it again would grey
+        // the inside of a room into the paint outside.
         return satin(if surface == Surface::Curtain {
             paint
         } else {
@@ -670,7 +674,11 @@ fn buckle(meshes: &mut KitMeshes<Surface>, design: &HouseDesign, roof: &Roof, st
 /// boards, on its side slopes clear of the chimney, dormers and any hole, with
 /// loose shingles lying about them and fallen into the yard.
 fn shed_shingles(parts: &mut Parts, design: &HouseDesign, roof: &Roof, stage: u32) {
-    let count = SHED_PATCHES[stage.min(2) as usize];
+    let count = if parts.split {
+        FALLEN_SHED_PATCHES
+    } else {
+        SHED_PATCHES[stage.min(2) as usize]
+    };
     let mut rng = Random::new(f64::from(design.variant) * 11.0 + 401.0);
     let flue = design.flue();
     let dormers = design.dormers();
@@ -1047,7 +1055,7 @@ fn hole_outline(hole: &Hole) -> Vec<DVec2> {
 
 /// Line a shell hole: torn timber round its edge, the dark room behind it and a few
 /// splintered boards bent out of the face.
-fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2]) {
+fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2], standing: bool) {
     let at = |p: DVec2, z: f64| frame.transform_point3(DVec3::new(p.x, p.y, z));
     let center = DVec2::new(hole.u, hole.y);
     for i in 0..outline.len() {
@@ -1059,11 +1067,20 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
             frame.transform_vector3(DVec3::new(inward.x, inward.y, 0.0)),
         );
     }
-    // Soot and splintered paint scorched round the hole, ragged on its outer edge.
+    // Soot and splintered paint scorched round the hole, flung out in spikes
+    // along the blast's tears rather than a round stain.
     let mut soot = Random::new(hole.seed + 9.0);
     let outer: Vec<DVec2> = outline
         .iter()
-        .map(|&p| center + (p - center) * soot.range(1.3, 1.85))
+        .enumerate()
+        .map(|(i, &p)| {
+            let reach = if i % 2 == 0 {
+                soot.range(1.45, 1.95)
+            } else {
+                soot.range(1.04, 1.2)
+            };
+            center + (p - center) * reach
+        })
         .collect();
     for i in 0..outline.len() {
         let j = (i + 1) % outline.len();
@@ -1078,17 +1095,21 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
             frame.transform_vector3(DVec3::Z),
         );
     }
-    let r = hole.radius * 1.2;
-    kit.quad(
-        Surface::Dark,
-        [
-            at(center + DVec2::new(-r, -r), -HOLE_BACK),
-            at(center + DVec2::new(r, -r), -HOLE_BACK),
-            at(center + DVec2::new(r, r), -HOLE_BACK),
-            at(center + DVec2::new(-r, r), -HOLE_BACK),
-        ],
-        frame.transform_vector3(DVec3::Z),
-    );
+    // The dark room behind, which a fallen panel no longer has: its hole shows
+    // whatever it lies on.
+    if standing {
+        let r = hole.radius * 1.2;
+        kit.quad(
+            Surface::Dark,
+            [
+                at(center + DVec2::new(-r, -r), -HOLE_BACK),
+                at(center + DVec2::new(r, -r), -HOLE_BACK),
+                at(center + DVec2::new(r, r), -HOLE_BACK),
+                at(center + DVec2::new(-r, r), -HOLE_BACK),
+            ],
+            frame.transform_vector3(DVec3::Z),
+        );
+    }
     let mut rng = Random::new(hole.seed + 5.0);
     // A stud of the frame behind the siding, snapped where the shell went through.
     let stud_u = hole.u + rng.range(-0.35, 0.35) * hole.radius;
@@ -1453,7 +1474,7 @@ fn build_house(
         let kit = parts.kit(piece);
         wall_with_breaches(kit, frame, &outline, &openings, REVEAL, &breaches);
         for (hole, outline) in holes.iter().zip(&breaches) {
-            line_hole(kit, frame, hole, outline);
+            line_hole(kit, frame, hole, outline, standing);
         }
         if !standing {
             // A falling wall shows its back: the painted lining and the cut edges.
@@ -1580,7 +1601,7 @@ fn build_house(
     }
     ridge_caps(parts, design, roof);
     gutters(parts, w, d, roof);
-    if standing && stage >= 1 {
+    if stage >= 1 {
         shed_shingles(parts, design, roof, stage);
     }
 

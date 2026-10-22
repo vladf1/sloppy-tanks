@@ -69,6 +69,16 @@ const HOUSE_BILLOWS: usize = 12;
 const HOUSE_FOOT: f64 = 2.7;
 const HOUSE_ROLL: f64 = 1.5;
 const HOUSE_PALL: usize = 3;
+/// The ground surge the roof drives out as it lands on the wreck: when it lands
+/// (s after the break) and over how long its slabs go on landing, its billows, how
+/// fast (per s) they roll out and how far (m) past the footprint, and how high
+/// (m) they climb as they thin. Lumpy and darker at the foot, it rises and thins
+/// over about a second and a half, so the pile shows through it.
+const SURGE_AT: (f64, f64) = (0.55, 0.35);
+const SURGE_BILLOWS: usize = 10;
+const SURGE_RATE: f64 = 2.6;
+const SURGE_REACH: f64 = 2.4;
+const SURGE_RISE: f64 = 1.1;
 /// Darker puffs of plaster and soot out of the pile as the roof lands on it.
 const HOUSE_CORE: usize = 3;
 /// Plaster and mortar dust, paler than the ground's.
@@ -2078,6 +2088,41 @@ impl ExplosionEffects {
     /// column of plaster dust rising slowly off the heap and drifting downwind.
     /// Everything settles over seconds; the wreck shows through from the first.
     fn house_dust(&mut self, b: &Blast, t: f64, lifetime: f64, dust: [f64; 3]) {
+        for j in 0..SURGE_BILLOWS {
+            let jf = j as f64;
+            let r1 = hash(b.phase * 0.71 + jf * 1.913);
+            let r2 = hash(b.phase * 1.37 + jf * 0.557);
+            let r3 = hash(b.phase * 2.29 + jf * 1.181);
+            let age = t - SURGE_AT.0 - r1 * SURGE_AT.1;
+            if age <= 0.0 {
+                continue;
+            }
+            // Spread round the footprint, bunched a little so the skirt is lumpy
+            // rather than an even ring.
+            let angle = b.phase * 0.9 + jf * TAU / SURGE_BILLOWS as f64 + (r2 - 0.5) * 0.9;
+            let roll = settle(age, SURGE_RATE * (0.8 + 0.4 * r3));
+            let reach = HOUSE_FOOT * (0.55 + 0.25 * r3) + SURGE_REACH * (0.6 + 0.4 * r2) * roll;
+            let size = 0.9 + 0.5 * r2 + 1.3 * roll;
+            let end = 2.0 + 0.8 * r3;
+            self.puff(Puff {
+                position: [
+                    b.x + angle.cos() * reach + WIND[0] * age * 0.3,
+                    0.15 + size * 0.3 + SURGE_RISE * settle(age, 0.9) * (0.5 + 0.5 * r1),
+                    b.z + angle.sin() * reach + WIND[1] * age * 0.3,
+                ],
+                size,
+                // Darker where it boils off the ground, paler as it climbs.
+                color: scaled(dust, 0.66 + 0.18 * r3 + 0.16 * settle(age, 1.2)),
+                opacity: (age / 0.08).min(1.0)
+                    * (0.4 + 0.14 * r1)
+                    * (1.0 - smoothstep(age, 0.5, end)),
+                seed: b.phase * 0.53 + jf * 0.173,
+                heat: 0.0,
+                erosion: smoothstep(age, 0.3, end) * 0.85,
+                softness: 0.5 + 0.2 * r1,
+                underglow: 0.0,
+            });
+        }
         for j in 0..HOUSE_BILLOWS {
             let jf = j as f64;
             let r1 = hash(b.phase * 1.31 + jf * 2.113);
