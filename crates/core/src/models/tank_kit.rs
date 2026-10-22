@@ -46,6 +46,8 @@ pub(super) enum Coat {
     Marking,
     /// Red tail-light lenses.
     TailLight,
+    /// Fluorescent team-colored air-recognition panel.
+    Signal,
 }
 
 fn finish_index<C: Finishes>(finish: C) -> usize {
@@ -74,6 +76,7 @@ impl Finishes for Coat {
         Coat::Wood,
         Coat::Marking,
         Coat::TailLight,
+        Coat::Signal,
     ];
 }
 

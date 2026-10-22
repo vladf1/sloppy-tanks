@@ -19,7 +19,7 @@ use super::tank_details::{
     Assembly, RING_Z, ROOF_RISE, assembly, gun_rise, muzzle_z, ring_radius, tube_radius,
 };
 use super::tank_kit::Coat;
-use super::tank_surfaces::{apply_tank_surface, vehicle_paint};
+use super::tank_surfaces::{Grime, Livery, apply_livery, vehicle_paint};
 use super::{Team, VehicleKind, part};
 use crate::geometry::math::scale_hex_color;
 use crate::geometry::{CylinderGeometry, Mesh, ring_geometry};
@@ -43,6 +43,20 @@ const GUNMETAL: u32 = 0x2b3134;
 const CANVAS: u32 = 0x4f5236;
 const WOOD: u32 = 0x6a4c30;
 const TAIL_LIGHT: u32 = 0x9a2016;
+/// Fluorescent air-recognition panels per team: brighter and more saturated than
+/// the service paint, so a tank's team reads from the overhead camera even under
+/// camouflage. Not the glowing `TEAM_COLORS`: the panel is lit cloth.
+const SIGNAL_PANEL: [u32; 2] = [0x1f8fff, 0xff3a2c];
+const SIGNAL_ROUGHNESS: f64 = 0.9;
+/// Dust bands: tracked hulls are dusty up to the fenders, the Humvee to its doors.
+const TRACKED_GRIME: Grime = Grime {
+    ground: -0.197,
+    dust_top: 0.56,
+};
+const HUMVEE_GRIME: Grime = Grime {
+    ground: -0.24,
+    dust_top: 0.8,
+};
 
 /// The darker variant of a team paint (`new THREE.Color(c).multiplyScalar(0.62)`).
 pub(crate) fn shade_of(color: u32) -> u32 {
@@ -90,12 +104,22 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
         let team_paint = vehicle_paint(team);
         let colors = [team_paint, shade_of(team_paint), STEEL];
         let mut root = if kind == VehicleKind::Humvee {
-            humvee_model(colors)
+            humvee_model(colors, SIGNAL_PANEL[team.index()])
         } else {
             tracked_model(kind, team, colors, open_turret_ring)
         };
+        let livery = Livery {
+            paint: &colors[..2],
+            metal: &[STEEL, GUNMETAL],
+            signal: SIGNAL_PANEL[team.index()],
+            grime: if kind == VehicleKind::Humvee {
+                HUMVEE_GRIME
+            } else {
+                TRACKED_GRIME
+            },
+        };
+        apply_livery(&mut root, &livery);
         root.scale = DVec3::splat(vehicle(kind).scale);
-        apply_tank_surface(&mut root, &colors);
         root
     })
 }
@@ -108,6 +132,7 @@ pub(super) struct Chassis {
     pub(super) color: u32,
     pub(super) shade: u32,
     pub(super) steel: u32,
+    pub(super) signal: u32,
     pub(super) overall_width: f64,
     pub(super) width: f64,
     pub(super) length: f64,
@@ -143,6 +168,7 @@ fn tracked_model(kind: VehicleKind, team: Team, colors: [u32; 3], open_turret_ri
         color,
         shade,
         steel,
+        signal: SIGNAL_PANEL[team.index()],
         overall_width,
         width: overall_width - 0.42,
         length,
@@ -168,6 +194,7 @@ fn coat_material(coat: Coat, c: &Chassis) -> Arc<Material> {
         Coat::Wood => material(WOOD, 0.0, 0.85),
         Coat::Marking => paint(MARKING_WHITE),
         Coat::TailLight => material(TAIL_LIGHT, 0.1, 0.35),
+        Coat::Signal => material(c.signal, 0.0, SIGNAL_ROUGHNESS),
     }
 }
 

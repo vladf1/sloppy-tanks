@@ -261,8 +261,10 @@ fn hull(kit: &mut Kit, c: &Chassis, open_ring: bool) {
     ring_guard(kit, c, &f);
     driver_station(kit, c, &f);
     engine_deck(kit, c, &f);
+    recognition_panel(kit, c, &f);
     rear_plate(kit, c, &f);
     front_fittings(kit, c, &f);
+    glacis_details(kit, c, &f);
 }
 
 /// Armored belly and bolted service covers, seen on overturned wrecks.
@@ -437,6 +439,112 @@ fn seam(kit: &mut Kit, y: f64, from: DVec2, to: DVec2) {
     );
 }
 
+/// Side of a square bolt head and how far it stands proud.
+const BOLT_SIZE: f64 = 0.024;
+const BOLT_HEIGHT: f64 = 0.01;
+
+/// A row of `count` painted bolt heads from `from` to `to` on a face whose
+/// outward normal is `normal`.
+fn bolt_row(kit: &mut Kit, from: DVec3, to: DVec3, count: u32, normal: DVec3) {
+    for i in 0..count {
+        let t = if count > 1 {
+            f64::from(i) / f64::from(count - 1)
+        } else {
+            0.5
+        };
+        let at = from.lerp(to, t);
+        kit.block(
+            Coat::Paint,
+            v(BOLT_SIZE, BOLT_SIZE, BOLT_HEIGHT * 2.0),
+            aim(at, at + normal),
+        );
+    }
+}
+
+/// A dark panel line on a flat face with outward `normal`, from `from` to `to`.
+fn panel_line(kit: &mut Kit, from: DVec3, to: DVec3, normal: DVec3) {
+    let normal = normal.normalize();
+    let across = (to - from).cross(normal).normalize() * 0.005;
+    let lift = normal * 0.0025;
+    kit.quad(
+        Coat::Dark,
+        [
+            from - across + lift,
+            to - across + lift,
+            to + across + lift,
+            from + across + lift,
+        ],
+        normal,
+    );
+}
+
+/// Welded and bolted glacis details: a bolt row along its top edge, the plate
+/// joints running down it and bolts along the nose.
+fn glacis_details(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
+    let normal = v(0.0, f.glacis_angle.cos(), f.glacis_angle.sin());
+    let w = f.upper_half_width;
+    let length = f.shape.glacis_run / f.glacis_angle.cos();
+    let at = |x: f64, s: f64| {
+        let (z, y) = f.glacis(s);
+        v(x, y, z)
+    };
+    let count = if c.scout { 9 } else { 11 };
+    bolt_row(kit, at(-w + 0.2, 0.05), at(w - 0.2, 0.05), count, normal);
+    for x in [-w * 0.42, w * 0.42] {
+        panel_line(kit, at(x, 0.1), at(x, length - 0.06), normal);
+    }
+    panel_line(
+        kit,
+        at(-w + 0.12, length * 0.55),
+        at(-w * 0.42, length * 0.55),
+        normal,
+    );
+    panel_line(
+        kit,
+        at(w * 0.42, length * 0.55),
+        at(w - 0.12, length * 0.55),
+        normal,
+    );
+}
+
+/// Bolts round the edge of a turret roof outline at `roof`, inset from its rim.
+fn roof_bolts(kit: &mut Kit, outline: &[DVec2], roof: f64, inset_by: f64, pitch: f64) {
+    let inner = inset(outline, inset_by);
+    let n = inner.len();
+    for i in 0..n {
+        let (a, b) = (inner[i], inner[(i + 1) % n]);
+        let length = a.distance(b);
+        let count = (length / pitch).floor() as u32;
+        if count < 1 {
+            continue;
+        }
+        // Leave the corner itself to the neighbouring edge.
+        let step = (b - a) / f64::from(count);
+        let from = a + step * 0.5;
+        let to = b - step * 0.5;
+        bolt_row(
+            kit,
+            v(from.x, roof, from.y),
+            v(to.x, roof, to.y),
+            count,
+            DVec3::Y,
+        );
+    }
+}
+
+/// Bolts round the gun on the mantlet face.
+fn mantlet_bolts(kit: &mut Kit, gun_y: f64, face_z: f64, size: DVec3) {
+    let (x, y) = (size.x / 2.0 - 0.045, size.y / 2.0 - 0.045);
+    for (bx, by) in [(-x, y), (x, y), (-x, -y), (x, -y), (-x, 0.0), (x, 0.0)] {
+        let at = v(bx, gun_y + by, face_z);
+        kit.block(
+            Coat::Steel,
+            v(0.03, 0.03, 0.02),
+            shift(at + v(0.0, 0.0, 0.005)),
+        );
+    }
+}
+
 fn engine_deck(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
     let half = f.half;
     let w = f.upper_half_width;
@@ -511,6 +619,55 @@ fn engine_deck(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
             DVec2::new(0.0, -half + 1.22),
             DVec2::new(0.0, -half + 1.6),
         );
+    }
+}
+
+/// A fluorescent air-recognition panel tied over the rear of the engine deck,
+/// slightly askew: a flat sheet lying on the grilles at the hull's top height
+/// whose edges drape down to the roof. It keeps the team readable from above
+/// under the camouflage.
+fn recognition_panel(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
+    let size = DVec2::new(c.pick(0.92, 1.1, 1.16), c.pick(0.4, 0.5, 0.5));
+    let center = DVec2::new(c.pick(-0.1, -0.12, 0.1), -f.half + c.pick(0.36, 0.42, 0.4));
+    let yaw = c.pick(0.05, -0.06, 0.04);
+    let (sin, cos) = yaw.sin_cos();
+    let rotate = |p: DVec2| DVec2::new(p.x * cos - p.y * sin, p.x * sin + p.y * cos);
+    let drape = 0.025;
+    let top = f.top - 0.001;
+    let low = f.roof + 0.004;
+    let corner = |sx: f64, sz: f64, grow: f64, y: f64| {
+        let p = center
+            + rotate(DVec2::new(
+                sx * (size.x / 2.0 + grow),
+                sz * (size.y / 2.0 + grow),
+            ));
+        v(p.x, y, p.y)
+    };
+    let signs = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)];
+    kit.quad(
+        Coat::Signal,
+        signs.map(|(sx, sz)| corner(sx, sz, 0.0, top)),
+        DVec3::Y,
+    );
+    for i in 0..4 {
+        let (a, b) = (signs[i], signs[(i + 1) % 4]);
+        let mid = DVec2::new(a.0 + b.0, a.1 + b.1) / 2.0;
+        let out = rotate(mid);
+        kit.quad(
+            Coat::Signal,
+            [
+                corner(a.0, a.1, 0.0, top),
+                corner(a.0, a.1, drape, low),
+                corner(b.0, b.1, drape, low),
+                corner(b.0, b.1, 0.0, top),
+            ],
+            v(out.x, 0.6, out.y),
+        );
+    }
+    // Tie-down cords at the corners.
+    for (sx, sz) in signs {
+        let at = corner(sx, sz, drape * 0.5, (top + low) / 2.0);
+        kit.block(Coat::Dark, v(0.03, top - low, 0.03), shift(at));
     }
 }
 
@@ -781,6 +938,7 @@ fn mantlet(kit: &mut Kit, gun_y: f64, face_z: f64, size: DVec3, tube: f64, coax_
         (tube * 1.3, 0.12),
     ]);
     kit.turned(Coat::Canvas, &boot, 12, shift(v(0.0, gun_y, face_z - 0.01)));
+    mantlet_bolts(kit, gun_y, face_z, size);
     let port = v(coax_x, gun_y + 0.035, face_z);
     kit.rod(
         Coat::Dark,
@@ -1044,6 +1202,7 @@ fn balanced_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
         ),
     ];
     kit.solid(Coat::Paint, &chamfered_levels(&levels, 0.03));
+    roof_bolts(kit, &levels[2].0, roof, 0.08, 0.17);
     mantlet(kit, gun_y, 1.13, v(0.46, 0.32, 0.2), 0.068, -0.17);
     // Gunner's primary sight doghouse (right front) with open ballistic doors.
     sight_head(
@@ -1136,6 +1295,7 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
         ),
     ];
     kit.solid(Coat::Paint, &chamfered_levels(&levels, 0.03));
+    roof_bolts(kit, &levels[2].0, roof, 0.08, 0.17);
     // Arrowhead wedges, their tops dipping toward the tips.
     for side in [-1.0, 1.0] {
         let outline: Vec<DVec2> = p2(&[
@@ -1280,6 +1440,7 @@ fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
         ),
     ];
     kit.solid(Coat::Paint, &chamfered_levels(&levels, 0.025));
+    roof_bolts(kit, &levels[2].0, roof, 0.07, 0.16);
     // Bolted side armor modules, leaning with the turret sides.
     for side in [-1.0, 1.0] {
         let lean = side * 0.06;
@@ -1337,20 +1498,110 @@ fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     }
 }
 
-/// Team insignia on the turret roof: a diamond for blue, twin bars for red.
+/// Team insignia on the turret roof (a diamond for blue, twin bars for red, big
+/// enough to read from the follow camera) and stencilled unit numbers on both
+/// turret sides.
 fn marking(kit: &mut Kit, c: &Chassis, team: Team) {
     let roof = c.deck + roof_rise(c);
     let y = roof + 0.003;
+    let z = c.pick(0.2, 0.18, 0.3);
     if team == Team::Blue {
         kit.block_at(
             Coat::Marking,
-            v(0.2, 0.006, 0.2),
-            v(0.0, y, 0.12),
+            v(0.24, 0.006, 0.24),
+            v(0.0, y, z),
             v(0.0, PI / 4.0, 0.0),
         );
     } else {
-        for x in [-0.07, 0.07] {
-            kit.block(Coat::Marking, v(0.06, 0.006, 0.24), shift(v(x, y, 0.12)));
+        for x in [-0.085, 0.085] {
+            kit.block(Coat::Marking, v(0.08, 0.006, 0.34), shift(v(x, y, z)));
+        }
+    }
+    let number = unit_number(c.kind, team);
+    let d = c.deck;
+    for side in [-1.0, 1.0] {
+        // On the turret's side stowage boxes (the scout's bolted side modules).
+        let (center, up) = if c.scout {
+            let lean = side * 0.06;
+            let module = pose(v(side * 0.865, d + 0.3, -0.42), v(0.0, 0.0, lean));
+            (
+                module.transform_point3(v(side * 0.039, 0.0, 0.15)),
+                module.transform_vector3(DVec3::Y),
+            )
+        } else if c.heavy {
+            (v(side * 1.054, d + 0.27, -1.18), DVec3::Y)
+        } else {
+            (v(side * 1.134, d + 0.3, -0.74), DVec3::Y)
+        };
+        let right = v(0.0, 0.0, -side);
+        stencil_number(kit, number, center, right, up, c.pick(0.13, 0.15, 0.16));
+    }
+}
+
+/// The unit number painted on a chassis of a team.
+fn unit_number(kind: VehicleKind, team: Team) -> &'static str {
+    match (kind, team) {
+        (VehicleKind::Scout, Team::Blue) => "17",
+        (VehicleKind::Heavy, Team::Blue) => "31",
+        (_, Team::Blue) => "24",
+        (VehicleKind::Scout, _) => "52",
+        (VehicleKind::Heavy, _) => "73",
+        _ => "68",
+    }
+}
+
+/// Lit segments of a stencilled digit: a, b, c, d, e, f, g (top, upper right,
+/// lower right, bottom, lower left, upper left, middle).
+fn digit_segments(digit: char) -> [bool; 7] {
+    let bits: u8 = match digit {
+        '0' => 0b0111111,
+        '1' => 0b0000110,
+        '2' => 0b1011011,
+        '3' => 0b1001111,
+        '4' => 0b1100110,
+        '5' => 0b1101101,
+        '6' => 0b1111101,
+        '7' => 0b0000111,
+        '8' => 0b1111111,
+        _ => 0b1101111,
+    };
+    std::array::from_fn(|i| bits & (1 << i) != 0)
+}
+
+/// Stencil numerals centred on `center` of a flat face: `right` runs along the
+/// text and `up` up the digits; they lie a few millimetres proud of the face.
+/// Segments stop short of each other, leaving the stencil's bridges.
+fn stencil_number(kit: &mut Kit, text: &str, center: DVec3, right: DVec3, up: DVec3, height: f64) {
+    let width = height * 0.56;
+    let stroke = height * 0.17;
+    let bridge = height * 0.07;
+    let pitch = width + height * 0.22;
+    let normal = right.cross(up).normalize();
+    let count = text.chars().count() as f64;
+    let start = -(pitch * (count - 1.0) + width) / 2.0;
+    let half = height / 2.0;
+    for (i, digit) in text.chars().enumerate() {
+        let left = start + pitch * i as f64;
+        let rect = |u0: f64, u1: f64, v0: f64, v1: f64| {
+            let at =
+                |u: f64, w: f64| center + right * (left + u) + up * (w - half) + normal * 0.004;
+            [at(u0, v0), at(u1, v0), at(u1, v1), at(u0, v1)]
+        };
+        let (w, h, t, g) = (width, height, stroke, bridge);
+        let mid = h / 2.0;
+        let segments = [
+            rect(g, w - g, h - t, h),
+            rect(w - t, w, mid + g / 2.0, h - g),
+            rect(w - t, w, g, mid - g / 2.0),
+            rect(g, w - g, 0.0, t),
+            rect(0.0, t, g, mid - g / 2.0),
+            rect(0.0, t, mid + g / 2.0, h - g),
+            rect(g, w - g, mid - t / 2.0, mid + t / 2.0),
+        ];
+        for (lit, corners) in digit_segments(digit).into_iter().zip(segments) {
+            if lit {
+                kit.quad(Coat::Marking, corners, normal);
+            }
         }
     }
 }
@@ -1382,7 +1633,7 @@ fn gun(kit: &mut Kit, c: &Chassis) {
         (&[1.72, 2.82, 3.28], [2.05, 2.47])
     };
     // Sleeve runs between clamp bands, around the evacuator.
-    let sleeve_end = muzzle - if c.scout { 0.4 } else { 0.24 };
+    let sleeve_end = muzzle - c.pick(0.4, 0.24, 0.5);
     let mut stops: Vec<(f64, f64)> = bands.iter().map(|&z| (z, z + 0.04)).collect();
     stops.push((evacuator[0], evacuator[1]));
     stops.sort_by(|a, b| a.0.total_cmp(&b.0));
@@ -1452,6 +1703,38 @@ fn gun(kit: &mut Kit, c: &Chassis) {
             GUN_SIDES,
             axis,
         );
+    } else if c.heavy {
+        // Two-chamber muzzle brake with side ports.
+        let body = r * 1.7;
+        let core = r * 1.12;
+        kit.turned(
+            Coat::Steel,
+            &p2(&[
+                (taper, sleeve_end),
+                (taper, muzzle - 0.44),
+                (body, muzzle - 0.42),
+                (body, muzzle - 0.3),
+                (core, muzzle - 0.3),
+                (core, muzzle - 0.2),
+                (body, muzzle - 0.2),
+                (body, muzzle - 0.03),
+                (r * 1.45, muzzle),
+                (bore, muzzle),
+                (bore, muzzle - 0.08),
+                (0.0, muzzle - 0.08),
+            ]),
+            GUN_SIDES,
+            axis,
+        );
+        for side in [-1.0, 1.0] {
+            for z in [muzzle - 0.36, muzzle - 0.115] {
+                kit.block(
+                    Coat::Dark,
+                    v(0.01, r * 1.3, 0.075),
+                    shift(v(side * (body - 0.002), gun_y, z)),
+                );
+            }
+        }
     } else {
         let collar = r * 1.1;
         kit.turned(
