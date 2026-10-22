@@ -24,6 +24,9 @@ pub const STANDARD_WGSL: &str = include_str!("shaders/standard.wgsl");
 pub const SHADOW_WGSL: &str = include_str!("shaders/shadow.wgsl");
 pub const WATER_WGSL: &str = include_str!("shaders/water.wgsl");
 pub const OUTPUT_WGSL: &str = include_str!("shaders/output.wgsl");
+pub const SKY_WGSL: &str = include_str!("shaders/sky.wgsl");
+/// Screen-space ambient occlusion, without its depth binding (`occlusion_source`).
+pub const OCCLUSION_WGSL: &str = include_str!("shaders/occlusion.wgsl");
 pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
 pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
@@ -371,6 +374,24 @@ pub fn water_source() -> String {
     fixed_source(WATER_WGSL, InstanceSource::BUILD)
 }
 
+/// The sky shader: frame declarations plus the sky template.
+pub fn sky_source() -> String {
+    fixed_source(SKY_WGSL, InstanceSource::BUILD)
+}
+
+/// The ambient occlusion shader reading the main view's `multisampled` depth
+/// (WebGPU) or the single-sample copy WebGL2 resolves.
+pub fn occlusion_source(multisampled: bool) -> String {
+    let depth = if multisampled {
+        "@group(0) @binding(0) var depth: texture_depth_multisampled_2d;\n\
+         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n"
+    } else {
+        "@group(0) @binding(0) var depth: texture_2d<f32>;\n\
+         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n"
+    };
+    format!("{depth}{OCCLUSION_WGSL}")
+}
+
 fn fixed_source(template: &str, source: InstanceSource) -> String {
     specialize::specialize(&format!("{}{template}", frame_wgsl(source)), &[])
 }
@@ -402,7 +423,10 @@ pub mod glsl {
         pub const SOURCE: u32 = 8;
         /// Uploads and texture setup; no program samples it.
         pub const UPLOAD: u32 = 9;
-        pub const COUNT: usize = 10;
+        /// Group 0 bindings 6 and 7 of the output program: bloom and occlusion.
+        pub const BLOOM: u32 = 10;
+        pub const OCCLUSION: u32 = 11;
+        pub const COUNT: usize = 12;
     }
 
     /// Uniform buffer binding points, fixed per `(group, binding)`.
@@ -423,6 +447,8 @@ pub mod glsl {
             (0, 1) => Some(unit::SHADOW_MAP),
             (0, 3) => Some(unit::DFG_LUT),
             (0, 5) => Some(unit::INSTANCES),
+            (0, 6) => Some(unit::BLOOM),
+            (0, 7) => Some(unit::OCCLUSION),
             (1, binding @ (1 | 3 | 5 | 7 | 9)) => Some(unit::MATERIAL + (binding - 1) / 2),
             _ => None,
         }
@@ -647,6 +673,8 @@ mod tests {
         translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
         translate_for_webgl("output", OUTPUT_WGSL);
         translate_for_webgl("mipmap", MIPMAP_WGSL);
+        translate_for_webgl("sky", &fixed_source(SKY_WGSL, texture));
+        translate_for_webgl("occlusion", &occlusion_source(false));
     }
 
     #[test]
@@ -656,6 +684,9 @@ mod tests {
         validate("shadow cutout", &shadow_cutout_source());
         validate("output", OUTPUT_WGSL);
         validate("mipmap", MIPMAP_WGSL);
+        validate("sky", &sky_source());
+        validate("occlusion", &occlusion_source(true));
+        validate("occlusion single-sample", &occlusion_source(false));
     }
 
     #[test]

@@ -1,8 +1,9 @@
 // Main-pass surface shader: Three r185 MeshStandardMaterial (LIT) or
 // MeshBasicMaterial, with map, emissive map, bump map, RGBA vertex colors, flat
 // shading, alpha test, fog, the sun's PCF shadow, hemisphere fill and up to four
-// point lights. Lighting, alpha test and shadow reception are variant constants;
-// the cheap per-material features are uniform branches (`material_has`).
+// point lights; with the atmosphere on, aerial haze, cloud shadows and a sky rim.
+// Lighting, alpha test and shadow reception are variant constants; the cheap
+// per-material features are uniform branches (`material_has`).
 // Lighting runs in world space; every dot and cross product Three evaluates in
 // view space is invariant under the view's rotation. Output is linear HDR; the
 // output pass tone maps the whole frame, as Three's frame-buffer target does.
@@ -91,23 +92,23 @@ fn brdf_ggx_multiscatter(l: vec3f, v: vec3f, n: vec3f, f0: vec3f, f90: f32, roug
     return single + fms * (ems_v * ems_l);
 }
 
-// r185 PCFShadowFilter: five hardware-filtered compares on a Vogel disk rotated by
-// interleaved gradient noise, with the light-space normal offset and depth bias.
-fn sun_shadow(world: vec3f, normal: vec3f, pixel: vec2f) -> f32 {
+// The sun's shadow: a 3×3 grid of hardware-filtered compares one filter radius
+// apart, a smooth tent about four texels wide with no dither noise, after the
+// light-space normal offset and depth bias.
+fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
     let position = frame.shadow_matrix * vec4f(world + normal * frame.shadow.y, 1.0);
     let projected = position.xyz / position.w;
     let coord = vec3f(projected.x, 1.0 - projected.y, projected.z + frame.shadow.x);
-    let phi = fract(52.9829189 * fract(dot(pixel, vec2f(0.06711056, 0.00583715)))) * 6.28318530718;
-    let radius = frame.shadow.w / frame.shadow.z;
+    let spacing = frame.shadow.w / frame.shadow.z;
     var sum = 0.0;
-    for (var i = 0; i < 5; i++) {
-        let r = sqrt((f32(i) + 0.5) / 5.0);
-        let theta = f32(i) * 2.399963229728653 + phi;
-        let offset = vec2f(cos(theta), sin(theta)) * r * radius;
-        sum += textureSampleCompareLevel(shadow_map, shadow_sampler, coord.xy + offset, coord.z);
+    for (var y = -1; y <= 1; y++) {
+        for (var x = -1; x <= 1; x++) {
+            let offset = vec2f(f32(x), f32(y)) * spacing;
+            sum += textureSampleCompareLevel(shadow_map, shadow_sampler, coord.xy + offset, coord.z);
+        }
     }
     let inside = coord.x >= 0.0 && coord.x <= 1.0 && coord.y >= 0.0 && coord.y <= 1.0 && coord.z <= 1.0;
-    return select(1.0, sum / 5.0, inside);
+    return select(1.0, sum / 9.0, inside);
 }
 
 fn distance_attenuation(distance: f32, cutoff: f32, decay: f32) -> f32 {
@@ -139,7 +140,7 @@ fn add_direct_light(
     (*out).specular += irradiance * brdf_ggx_multiscatter(l, v, n, specular, 1.0, roughness);
 }
 
-fn shade_standard(s: Surface, world: vec3f, v: vec3f, pixel: vec2f, geometry_roughness: f32) -> vec3f {
+fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -> vec3f {
     let n = s.normal;
     let roughness = min(max(s.roughness, 0.0525) + geometry_roughness, 1.0);
     let diffuse = s.color * (1.0 - s.metalness);
@@ -149,7 +150,10 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, pixel: vec2f, geometry_rou
     reflected.specular = vec3f(0.0);
     var sun = frame.sun_color.rgb;
     if RECEIVE_SHADOW {
-        sun *= sun_shadow(world, n, pixel);
+        sun *= sun_shadow(world, n);
+    }
+    if atmosphere_on() {
+        sun *= cloud_shadow(world);
     }
     add_direct_light(&reflected, frame.sun_direction.xyz, sun, v, n, diffuse, specular, roughness);
     for (var i = 0; i < 4; i++) {
@@ -167,6 +171,15 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, pixel: vec2f, geometry_rou
     }
     let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
     var indirect = hemisphere * diffuse * RECIPROCAL_PI;
+    if atmosphere_on() {
+        // Stylized sky rim: grazing walls and hull sides catch the bright horizon,
+        // most on the side turned from the sun, so silhouettes read on any ground.
+        let facing = 1.0 - clamp(dot(n, v), 0.0, 1.0);
+        let away = 0.55 + 0.45 * clamp(-dot(n.xz, normalize(frame.sun_direction.xz + vec2f(1e-4))), 0.0, 1.0);
+        let rim = facing * facing * facing * (1.0 - n.y * n.y) * away * frame.sky_sun.w;
+        let rim_color = frame.sky_horizon.rgb * 0.6 + frame.sky_sun.rgb * 0.4;
+        indirect += rim_color * diffuse * rim;
+    }
     // Only glossy finishes (vehicle paint and steel) reflect the sky; matte
     // terrain and buildings keep the hemisphere fill their themes were tuned with.
     let reflections = frame.sky_color.w * (1.0 - smoothstep(GLOSSY_UNTIL, MATTE_FROM, s.roughness));
@@ -204,7 +217,12 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
     if frame.fog_color.w > 0.5 {
         horizon = frame.fog_color.rgb;
     }
-    let sky = mix(horizon, zenith, sqrt(clamp(up, 0.0, 1.0)));
+    var sky = mix(horizon, zenith, sqrt(clamp(up, 0.0, 1.0)));
+    if atmosphere_on() {
+        // The drawn sky itself, its gradient softened toward the fill for rough lobes.
+        let drawn = sky_gradient(vec3f(direction.x, max(up, 0.0), direction.z));
+        sky = mix(drawn, zenith, lobe * 0.5);
+    }
     let ground = frame.ground_color.rgb * RECIPROCAL_PI;
     let horizon_width = HORIZON_SHARPEST + lobe;
     return mix(ground, sky, smoothstep(-horizon_width, horizon_width, up));
@@ -325,13 +343,10 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
 
     var color = surface.color;
     if LIT {
-        color = shade_standard(surface, input.world, view_direction, input.clip.xy, geometry_roughness);
+        color = shade_standard(surface, input.world, view_direction, geometry_roughness);
     }
     if material_has(MATERIAL_FOG) {
-        if frame.fog_color.w > 0.5 {
-            let depth = -(frame.view * vec4f(input.world, 1.0)).z;
-            color = mix(color, frame.fog_color.rgb, smoothstep(frame.fog_range.x, frame.fog_range.y, depth));
-        }
+        color = apply_fog(color, input.world);
     }
     return vec4f(color, alpha);
 }

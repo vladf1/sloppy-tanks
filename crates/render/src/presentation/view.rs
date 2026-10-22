@@ -767,6 +767,7 @@ impl Presentation {
         }
         let look = theme_look(theme);
         self.renderer.set_environment(environment(&look));
+        self.renderer.set_atmosphere(look.atmosphere);
         self.renderer.set_sun_shadow(SunShadow {
             enabled: true,
             map_size: SHADOW_MAP_SIZE,

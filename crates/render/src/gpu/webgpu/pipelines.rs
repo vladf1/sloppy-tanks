@@ -20,14 +20,14 @@ use std::collections::HashMap;
 use sloppy_core::scene::Side;
 
 use super::Gpu;
-use super::context::{DEPTH_FORMAT, HDR_FORMAT};
+use super::context::{DEPTH_FORMAT, HDR_FORMAT, OCCLUSION_FORMAT};
 use super::precompile::{Background, LayoutKind, PipelineSpec, Precompiler};
 use crate::effects::EffectRegistry;
 use crate::gpu::{FixedPipelines, SAMPLE_COUNT, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
-    BlendMode, Pass, PipelineKey, ShaderKey, shader_source, shadow_cutout_source,
-    shadow_merged_source, water_source,
+    BlendMode, OUTPUT_WGSL, Pass, PipelineKey, ShaderKey, occlusion_source, shader_source,
+    shadow_cutout_source, shadow_merged_source, sky_source, water_source,
 };
 use crate::shadow_merge::ShadowVertex;
 
@@ -130,6 +130,82 @@ fn output_spec(canvas_format: wgpu::TextureFormat) -> PipelineSpec {
         depth_stencil: None,
         multisample: Default::default(),
     }
+}
+
+/// The sky: a far-plane triangle drawn where the depth is still clear.
+fn sky_spec() -> PipelineSpec {
+    PipelineSpec {
+        label: "sky",
+        layout: LayoutKind::ShadowMerged,
+        vertex_entry: "vs_sky",
+        fragment_entry: Some("fs_sky"),
+        buffers: vec![],
+        targets: vec![Some(HDR_FORMAT.into())],
+        primitive: Default::default(),
+        depth_stencil: Some(depth_state(
+            false,
+            wgpu::CompareFunction::LessEqual,
+            Default::default(),
+        )),
+        multisample: wgpu::MultisampleState {
+            count: SAMPLE_COUNT,
+            ..Default::default()
+        },
+    }
+}
+
+/// A full-screen post pass into a single-sample target.
+fn post_spec(
+    label: &'static str,
+    layout: LayoutKind,
+    vertex_entry: &'static str,
+    fragment_entry: &'static str,
+    target: wgpu::ColorTargetState,
+) -> PipelineSpec {
+    PipelineSpec {
+        label,
+        layout,
+        vertex_entry,
+        fragment_entry: Some(fragment_entry),
+        buffers: vec![],
+        targets: vec![Some(target)],
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+    }
+}
+
+/// Bloom prefilter, downsample and upsample, the last adding onto its target.
+fn bloom_specs() -> [PipelineSpec; 3] {
+    let additive = wgpu::BlendComponent {
+        src_factor: wgpu::BlendFactor::One,
+        dst_factor: wgpu::BlendFactor::One,
+        operation: wgpu::BlendOperation::Add,
+    };
+    let add = wgpu::ColorTargetState {
+        format: HDR_FORMAT,
+        blend: Some(wgpu::BlendState {
+            color: additive,
+            alpha: additive,
+        }),
+        write_mask: wgpu::ColorWrites::ALL,
+    };
+    [
+        ("bloom prefilter", "fs_bloom_prefilter", HDR_FORMAT.into()),
+        ("bloom down", "fs_bloom_down", HDR_FORMAT.into()),
+        ("bloom up", "fs_bloom_up", add),
+    ]
+    .map(|(label, entry, target)| post_spec(label, LayoutKind::Bloom, "vs_post", entry, target))
+}
+
+fn occlusion_spec() -> PipelineSpec {
+    post_spec(
+        "ambient occlusion",
+        LayoutKind::Occlusion,
+        "vs_occlusion",
+        "fs_occlusion",
+        OCCLUSION_FORMAT.into(),
+    )
 }
 
 fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
@@ -252,7 +328,8 @@ pub(super) fn pipeline_layout(
 
 /// The fixed pipelines while they compile in the background.
 struct FixedJobs {
-    /// Water, output, then the merged casters in `shadow_merged_index` order.
+    /// Water, output, sky, the three bloom passes, occlusion, then the merged
+    /// casters in `shadow_merged_index` order.
     jobs: Vec<(PipelineSpec, String)>,
     compile: Background,
 }
@@ -265,6 +342,8 @@ pub struct Pipelines {
     surface_layout: wgpu::PipelineLayout,
     water_layout: wgpu::PipelineLayout,
     output_layout: wgpu::PipelineLayout,
+    bloom_layout: wgpu::PipelineLayout,
+    occlusion_layout: wgpu::PipelineLayout,
     merged_layout: wgpu::PipelineLayout,
     fixed_jobs: Option<FixedJobs>,
     fixed: Option<FixedPipelines<wgpu::RenderPipeline>>,
@@ -280,14 +359,18 @@ impl Pipelines {
             pipeline_layout(device, "surface", &[&layouts.frame, &layouts.material]);
         let water_layout = pipeline_layout(device, "water", &[&layouts.frame, &layouts.water]);
         let output_layout = pipeline_layout(device, "output", &[&layouts.output]);
+        let bloom_layout = pipeline_layout(device, "bloom", &[&layouts.bloom]);
+        let occlusion_layout = pipeline_layout(device, "occlusion", &[&layouts.occlusion]);
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
         let mut jobs = vec![
             (water_spec(), water_source()),
-            (
-                output_spec(canvas_format),
-                crate::shader::OUTPUT_WGSL.to_owned(),
-            ),
+            (output_spec(canvas_format), OUTPUT_WGSL.to_owned()),
+            (sky_spec(), sky_source()),
         ];
+        for spec in bloom_specs() {
+            jobs.push((spec, OUTPUT_WGSL.to_owned()));
+        }
+        jobs.push((occlusion_spec(), occlusion_source(true)));
         for (cutout, source) in [
             (false, shadow_merged_source()),
             (true, shadow_cutout_source()),
@@ -309,6 +392,8 @@ impl Pipelines {
             surface_layout,
             water_layout,
             output_layout,
+            bloom_layout,
+            occlusion_layout,
             merged_layout,
             fixed_jobs: Some(FixedJobs { jobs, compile }),
             fixed: None,
@@ -350,15 +435,26 @@ impl Pipelines {
             let layout = match spec.layout {
                 LayoutKind::Water => &self.water_layout,
                 LayoutKind::Output => &self.output_layout,
+                LayoutKind::Bloom => &self.bloom_layout,
+                LayoutKind::Occlusion => &self.occlusion_layout,
                 LayoutKind::ShadowMerged => &self.merged_layout,
                 LayoutKind::Surface => &self.surface_layout,
                 LayoutKind::Mipmap => unreachable!("the uploader owns the mipmap blits"),
             };
             spec.create(device, layout, &module(device, spec.label, source))
         });
+        let mut next = |what| created.next().expect(what);
+        let water = next("water pipeline");
+        let output = next("output pipeline");
+        let sky = next("sky pipeline");
+        let bloom = [(); 3].map(|_| next("bloom pipeline"));
+        let occlusion = next("occlusion pipeline");
         self.fixed = Some(FixedPipelines {
-            water: created.next().expect("water pipeline"),
-            output: created.next().expect("output pipeline"),
+            water,
+            output,
+            sky,
+            bloom,
+            occlusion,
             shadow_merged: created.collect(),
         });
     }
@@ -442,9 +538,9 @@ impl Pipelines {
         self.pipelines.len() + self.fixed.as_ref().map_or(0, FixedPipelines::count)
     }
 
-    /// Distinct shader sources, including the fixed water, output and merged shadow
-    /// ones.
+    /// Distinct shader sources, including the fixed water, output (with bloom), sky,
+    /// occlusion and merged shadow ones.
     pub fn module_count(&self) -> usize {
-        self.sources.len() + 4
+        self.sources.len() + 6
     }
 }

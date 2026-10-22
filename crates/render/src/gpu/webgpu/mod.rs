@@ -1,6 +1,6 @@
 //! The WebGPU backend: wgpu on the browser's WebGPU. Its frame encodes the sun
-//! shadow, water reflection and main view passes into one command buffer and the
-//! output pass into another.
+//! shadow, water reflection, main view, ambient occlusion and bloom passes into one
+//! command buffer and the output pass into another.
 
 mod context;
 mod instance_store;
@@ -21,11 +21,12 @@ pub use resources::{MaterialBinding, PageBuffers};
 pub use textures::{Sampler, Texture, TextureView, Uploader};
 
 use super::{
-    FrameUniform, INITIAL_SHADOW_BASES, MergedDraw, RenderStats, Scene, WaterUniform, lut,
+    BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw, OcclusionUniform, OutputUniform,
+    RenderStats, Scene, WaterUniform, lut,
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::mesh_pages::{MeshRange, NO_PAGE};
-use context::{ColorTarget, DEPTH_FORMAT, texture_2d};
+use context::{ColorTarget, DEPTH_FORMAT, HDR_FORMAT, OCCLUSION_FORMAT, texture_2d};
 use resources::uniform_buffer;
 
 /// Opaque draws group by mesh page before material. Every switch is a call Chrome
@@ -95,7 +96,8 @@ pub struct Frame {
     view_groups: FrameGroups,
     instance_records: InstanceStore,
     output_uniform: wgpu::Buffer,
-    output_group: wgpu::BindGroup,
+    occlusion_uniform: wgpu::Buffer,
+    post: PostTargets,
     shadow_base_buffer: wgpu::Buffer,
     shadow_base_capacity: u32,
     /// Set once the GPU has run everything submitted before the last
@@ -126,9 +128,23 @@ impl Frame {
             wgpu::util::TextureDataOrder::LayerMajor,
             bytemuck::cast_slice(&lut::DFG_LUT),
         );
-        let main_target = ColorTarget::new(device, "main view", width, height);
-        let output_uniform = uniform_buffer(device, "output", 16);
-        let output_group = output_group(gpu, &main_target, &output_uniform);
+        let main_target = ColorTarget::new(device, "main view", width, height, true);
+        let output_uniform = uniform_buffer(device, "output", size_of::<OutputUniform>() as u64);
+        let occlusion_uniform =
+            uniform_buffer(device, "occlusion", size_of::<OcclusionUniform>() as u64);
+        let linear_sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            label: Some("linear clamp"),
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let post = PostTargets::new(
+            gpu,
+            &main_target,
+            &output_uniform,
+            &occlusion_uniform,
+            &linear_sampler,
+        );
         let instance_records = InstanceStore::new(gpu, "instances", instances);
         let mut frame = Self {
             canvas,
@@ -145,19 +161,15 @@ impl Frame {
                 ..Default::default()
             }),
             lut_view: lut.create_view(&Default::default()),
-            linear_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
-                label: Some("linear clamp"),
-                mag_filter: wgpu::FilterMode::Linear,
-                min_filter: wgpu::FilterMode::Linear,
-                ..Default::default()
-            }),
+            linear_sampler,
             view_uniforms: [0, 1, 2]
                 .map(|_| uniform_buffer(device, "frame", size_of::<FrameUniform>() as u64)),
             // Replaced below, once the frame's own resources exist.
-            view_groups: FrameGroups(std::array::from_fn(|_| output_group.clone())),
+            view_groups: FrameGroups(std::array::from_fn(|_| post.output_group.clone())),
             instance_records,
             output_uniform,
-            output_group,
+            occlusion_uniform,
+            post,
             shadow_base_buffer: base_buffer(device, INITIAL_SHADOW_BASES),
             shadow_base_capacity: INITIAL_SHADOW_BASES,
             gpu_idle: Arc::new(AtomicBool::new(true)),
@@ -182,8 +194,14 @@ impl Frame {
         config.width = width;
         config.height = height;
         self.canvas.surface.configure(&gpu.device, config);
-        self.main_target = ColorTarget::new(&gpu.device, "main view", width, height);
-        self.output_group = output_group(gpu, &self.main_target, &self.output_uniform);
+        self.main_target = ColorTarget::new(&gpu.device, "main view", width, height, true);
+        self.post = PostTargets::new(
+            gpu,
+            &self.main_target,
+            &self.output_uniform,
+            &self.occlusion_uniform,
+            &self.linear_sampler,
+        );
     }
 
     /// Replace the shadow maps; the caller rebuilds the pools' frame groups.
@@ -272,13 +290,22 @@ impl Frame {
         }
     }
 
-    pub fn write_output(&self, gpu: &Gpu, exposure: f32) {
+    pub fn write_output(&self, gpu: &Gpu, mut uniform: OutputUniform) {
         // The canvas's rows run top-down like the HDR target's: row = 0 + 1 × y.
-        gpu.queue.write_buffer(
-            &self.output_uniform,
-            0,
-            bytemuck::bytes_of(&[exposure, 0.0, 1.0, 0.0]),
-        );
+        uniform.settings[1] = 0.0;
+        uniform.settings[2] = 1.0;
+        gpu.queue
+            .write_buffer(&self.output_uniform, 0, bytemuck::bytes_of(&uniform));
+    }
+
+    pub fn write_occlusion(&self, gpu: &Gpu, uniform: &OcclusionUniform) {
+        gpu.queue
+            .write_buffer(&self.occlusion_uniform, 0, bytemuck::bytes_of(uniform));
+    }
+
+    /// Bytes of the bloom levels and the occlusion target.
+    pub fn post_bytes(&self) -> u64 {
+        self.post.bytes
     }
 
     /// Upload this frame's merged shadow bases.
@@ -466,19 +493,27 @@ impl Frame {
             stats.shadow_triangles = stats.triangles;
         }
         if let (true, Some(water)) = (scene.reflection, scene.water) {
-            let mut pass = scene_pass(encoder, "water reflection", &water.gpu.target, clear);
+            let target = &water.gpu.target;
+            let mut pass = scene_pass(encoder, "water reflection", target, clear, false);
             pass.set_bind_group(0, &self.view_groups.0[REFLECTION_VIEW], &[]);
             let view = &scene.views[REFLECTION_VIEW];
-            let count = draws.encode(&mut pass, &view.opaque, REFLECTION_VIEW, stats)
-                + draws.encode(&mut pass, &view.transparent, REFLECTION_VIEW, stats);
+            let mut count = draws.encode(&mut pass, &view.opaque, REFLECTION_VIEW, stats);
+            if scene.sky {
+                count += draw_sky(&mut pass, scene, stats);
+            }
+            count += draws.encode(&mut pass, &view.transparent, REFLECTION_VIEW, stats);
             stats.reflection_draw_calls = count;
             stats.reflection_triangles = stats.triangles - stats.shadow_triangles;
         }
         {
-            let mut pass = scene_pass(encoder, "main view", &self.main_target, clear);
+            let target = &self.main_target;
+            let mut pass = scene_pass(encoder, "main view", target, clear, scene.occlusion);
             pass.set_bind_group(0, &self.view_groups.0[MAIN_VIEW], &[]);
             let view = &scene.views[MAIN_VIEW];
             draws.encode(&mut pass, &view.opaque, MAIN_VIEW, stats);
+            if scene.sky {
+                draw_sky(&mut pass, scene, stats);
+            }
             if let Some(water) = scene.water
                 && let range = scene.meshes.get(water.mesh).range
                 && !range.is_empty()
@@ -491,6 +526,49 @@ impl Frame {
                 stats.triangles += range.index_count as u64 / 3;
             }
             draws.encode(&mut pass, &view.transparent, MAIN_VIEW, stats);
+        }
+        let fixed = scene.pipelines.fixed();
+        if scene.occlusion {
+            let pipeline = &fixed.occlusion;
+            let post = &self.post;
+            post_draw(
+                encoder,
+                pipeline,
+                &post.occlusion_group,
+                &post.occlusion_view,
+                false,
+            );
+            stats.draw_calls += 1;
+        }
+        if scene.bloom {
+            let post = &self.post;
+            let [prefilter, down, up] = &fixed.bloom;
+            post_draw(
+                encoder,
+                prefilter,
+                &post.frame_group,
+                &post.bloom[0].1,
+                false,
+            );
+            for level in 1..BLOOM_LEVELS {
+                post_draw(
+                    encoder,
+                    down,
+                    &post.bloom_groups[level - 1],
+                    &post.bloom[level].1,
+                    false,
+                );
+            }
+            for level in (0..BLOOM_LEVELS - 1).rev() {
+                post_draw(
+                    encoder,
+                    up,
+                    &post.bloom_groups[level + 1],
+                    &post.bloom[level].1,
+                    true,
+                );
+            }
+            stats.draw_calls += 2 * BLOOM_LEVELS as u32 - 1;
         }
     }
 
@@ -519,27 +597,188 @@ impl Frame {
             multiview_mask: None,
         });
         pass.set_pipeline(&pipelines.fixed().output);
-        pass.set_bind_group(0, &self.output_group, &[]);
+        pass.set_bind_group(0, &self.post.output_group, &[]);
         pass.draw(0..3, 0..1);
         stats.draw_calls += 1;
     }
 }
 
-fn output_group(gpu: &Gpu, target: &ColorTarget, uniform: &wgpu::Buffer) -> wgpu::BindGroup {
-    gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
-        label: Some("output"),
-        layout: &gpu.layouts.output,
-        entries: &[
-            wgpu::BindGroupEntry {
-                binding: 0,
-                resource: wgpu::BindingResource::TextureView(&target.resolved_view),
+/// Draw the sky into a scene pass whose frame group is bound; returns the draw count.
+fn draw_sky(pass: &mut wgpu::RenderPass, scene: &Scene, stats: &mut RenderStats) -> u32 {
+    pass.set_pipeline(&scene.pipelines.fixed().sky);
+    pass.draw(0..3, 0..1);
+    stats.draw_calls += 1;
+    1
+}
+
+/// One full-screen post draw into `target`, replacing it or (`add`) blending onto it.
+fn post_draw(
+    encoder: &mut wgpu::CommandEncoder,
+    pipeline: &wgpu::RenderPipeline,
+    group: &wgpu::BindGroup,
+    target: &wgpu::TextureView,
+    add: bool,
+) {
+    let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+        label: Some("post"),
+        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+            view: target,
+            depth_slice: None,
+            resolve_target: None,
+            ops: wgpu::Operations {
+                load: if add {
+                    wgpu::LoadOp::Load
+                } else {
+                    wgpu::LoadOp::Clear(wgpu::Color::BLACK)
+                },
+                store: wgpu::StoreOp::Store,
             },
-            wgpu::BindGroupEntry {
-                binding: 1,
-                resource: uniform.as_entire_binding(),
-            },
-        ],
-    })
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    pass.set_pipeline(pipeline);
+    pass.set_bind_group(0, group, &[]);
+    pass.draw(0..3, 0..1);
+}
+
+/// The canvas-sized post-processing targets and the bind groups of every pass that
+/// reads the main view: the bloom levels (half size, then halving), the half-size
+/// ambient occlusion and the output. Rebuilt with the main target; dropping it
+/// destroys the textures.
+struct PostTargets {
+    bloom: Vec<(wgpu::Texture, wgpu::TextureView)>,
+    /// Bind groups reading each bloom level, and the resolved frame.
+    bloom_groups: Vec<wgpu::BindGroup>,
+    frame_group: wgpu::BindGroup,
+    occlusion: wgpu::Texture,
+    occlusion_view: wgpu::TextureView,
+    occlusion_group: wgpu::BindGroup,
+    output_group: wgpu::BindGroup,
+    bytes: u64,
+}
+
+impl PostTargets {
+    fn new(
+        gpu: &Gpu,
+        main: &ColorTarget,
+        output_uniform: &wgpu::Buffer,
+        occlusion_uniform: &wgpu::Buffer,
+        sampler: &wgpu::Sampler,
+    ) -> Self {
+        let device = &gpu.device;
+        let size = main.resolved.size();
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let target = |label, format, width: u32, height: u32| {
+            let texture = texture_2d(device, label, width.max(1), height.max(1), format, 1, usage);
+            let view = texture.create_view(&Default::default());
+            (texture, view)
+        };
+        let bloom: Vec<_> = (1..=BLOOM_LEVELS)
+            .map(|level| {
+                target(
+                    "bloom",
+                    HDR_FORMAT,
+                    size.width >> level,
+                    size.height >> level,
+                )
+            })
+            .collect();
+        let (occlusion, occlusion_view) = target(
+            "ambient occlusion",
+            OCCLUSION_FORMAT,
+            size.width / 2,
+            size.height / 2,
+        );
+        let bloom_group = |view: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("bloom"),
+                layout: &gpu.layouts.bloom,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: output_uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            })
+        };
+        let bloom_groups = bloom.iter().map(|(_, view)| bloom_group(view)).collect();
+        let frame_group = bloom_group(&main.resolved_view);
+        let occlusion_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("ambient occlusion"),
+            layout: &gpu.layouts.occlusion,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&main.depth_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: occlusion_uniform.as_entire_binding(),
+                },
+            ],
+        });
+        let output_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("output"),
+            layout: &gpu.layouts.output,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: wgpu::BindingResource::TextureView(&main.resolved_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: output_uniform.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: wgpu::BindingResource::Sampler(sampler),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 6,
+                    resource: wgpu::BindingResource::TextureView(&bloom[0].1),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 7,
+                    resource: wgpu::BindingResource::TextureView(&occlusion_view),
+                },
+            ],
+        });
+        let bytes = bloom
+            .iter()
+            .map(|(texture, _)| u64::from(texture.width() * texture.height()) * 8)
+            .sum::<u64>()
+            + u64::from(occlusion.width() * occlusion.height());
+        Self {
+            bloom,
+            bloom_groups,
+            frame_group,
+            occlusion,
+            occlusion_view,
+            occlusion_group,
+            output_group,
+            bytes,
+        }
+    }
+}
+
+impl Drop for PostTargets {
+    fn drop(&mut self) {
+        for (texture, _) in &self.bloom {
+            texture.destroy();
+        }
+        self.occlusion.destroy();
+    }
 }
 
 /// The water's uniform, reflection target and bind group (uniform, normals,
@@ -559,7 +798,7 @@ impl WaterGpu {
         sampler: Sampler,
     ) -> Self {
         let uniform = uniform_buffer(&gpu.device, "water", size_of::<WaterUniform>() as u64);
-        let target = ColorTarget::new(&gpu.device, "water reflection", size, size);
+        let target = ColorTarget::new(&gpu.device, "water reflection", size, size, false);
         let bind_group = Self::bind_group(gpu, frame, &uniform, &target, normals, &sampler);
         Self {
             uniform,
@@ -622,11 +861,13 @@ impl Drop for WaterGpu {
     }
 }
 
+/// A pass into a multisampled target; `keep_depth` stores the depth for a later pass.
 fn scene_pass<'a>(
     encoder: &'a mut wgpu::CommandEncoder,
     label: &str,
     target: &ColorTarget,
     clear: wgpu::Color,
+    keep_depth: bool,
 ) -> wgpu::RenderPass<'a> {
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
@@ -643,7 +884,11 @@ fn scene_pass<'a>(
             view: &target.depth_view,
             depth_ops: Some(wgpu::Operations {
                 load: wgpu::LoadOp::Clear(1.0),
-                store: wgpu::StoreOp::Discard,
+                store: if keep_depth {
+                    wgpu::StoreOp::Store
+                } else {
+                    wgpu::StoreOp::Discard
+                },
             }),
             stencil_ops: None,
         }),
