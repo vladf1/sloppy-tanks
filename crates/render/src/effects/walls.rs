@@ -10,6 +10,7 @@
 //! every billow toward their faces like a soft particle, so none is cut.
 
 use glam::Vec3;
+use sloppy_core::sim::house_layout::{HouseDesign, WallFinish};
 use sloppy_core::sim::{CoverKind, RenderState};
 
 use super::pool::PoolBuffer;
@@ -35,7 +36,14 @@ pub enum WallMaterial {
     Steel,
     /// Concrete, rock and masonry.
     Stone,
+    /// A cottage's painted siding over its framing and plaster: the model shows
+    /// each shell's hole, so a hit leaves no crater mark, and it bursts into
+    /// painted boards, splinters and pale plaster dust.
+    Siding,
 }
+
+/// A brick cottage's walls, for the chips a hit knocks off them.
+const BRICK: u32 = 0x8e5240;
 
 /// One solid cover's axis-aligned box (its navigation footprint): centre, half
 /// extents and height.
@@ -51,6 +59,21 @@ struct WallBox {
     material: Option<WallMaterial>,
     /// Its paint or stone, sRGB hex.
     color: u32,
+    /// A cottage's trim paint; the wall's color on other cover.
+    trim: u32,
+    /// A cottage's roof paint; the wall's color on other cover.
+    roof: u32,
+}
+
+/// A standing cottage's box and paints, for the boards its collapse blows out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HouseBox {
+    pub center: Vec3,
+    pub half_w: f32,
+    pub half_d: f32,
+    pub height: f32,
+    /// Siding, trim and roof paint, sRGB hex.
+    pub paints: [u32; 3],
 }
 
 /// Where a shell struck a wall: the point on its face, the face's outward normal
@@ -63,6 +86,8 @@ pub struct Strike {
     pub room: f32,
     /// The wall's paint or stone, sRGB hex.
     pub color: u32,
+    /// A cottage's trim paint; the wall's color on other cover.
+    pub trim: u32,
 }
 
 /// The current round's solid cover, refreshed every frame from the render state
@@ -83,13 +108,22 @@ impl Walls {
         for cover in state.covers.iter().filter(|cover| cover.alive) {
             let material = match cover.kind {
                 CoverKind::Container | CoverKind::Hedgehog => Some(WallMaterial::Steel),
-                CoverKind::Rock
-                | CoverKind::Concrete
-                | CoverKind::Teeth
-                | CoverKind::House
-                | CoverKind::Rubble => Some(WallMaterial::Stone),
+                CoverKind::Rock | CoverKind::Concrete | CoverKind::Teeth | CoverKind::Rubble => {
+                    Some(WallMaterial::Stone)
+                }
+                CoverKind::House => Some(WallMaterial::Siding),
                 CoverKind::Cargo | CoverKind::Timber => None,
                 _ => continue,
+            };
+            let (color, trim, roof) = if cover.kind == CoverKind::House {
+                let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
+                let walls = match design.style.walls {
+                    WallFinish::Clapboard => design.style.siding,
+                    WallFinish::Brick => BRICK,
+                };
+                (walls, design.style.trim, design.style.roof)
+            } else {
+                (cover.color, cover.color, cover.color)
             };
             self.boxes.push(WallBox {
                 x: cover.x,
@@ -98,7 +132,9 @@ impl Walls {
                 half_d: cover.d * 0.5,
                 height: cover.h,
                 material,
-                color: cover.color,
+                color,
+                trim,
+                roof,
             });
         }
     }
@@ -111,6 +147,24 @@ impl Walls {
     /// The walls the puff shader softens smoke against this frame.
     pub fn soft_boxes(&self) -> [[f32; 4]; 4] {
         self.soft
+    }
+
+    /// The standing cottage whose footprint holds `(x, z)`, as of the last sync.
+    pub fn house_at(&self, x: f64, z: f64) -> Option<HouseBox> {
+        self.boxes
+            .iter()
+            .find(|wall| {
+                wall.material == Some(WallMaterial::Siding)
+                    && (x - wall.x).abs() <= wall.half_w
+                    && (z - wall.z).abs() <= wall.half_d
+            })
+            .map(|wall| HouseBox {
+                center: Vec3::new(wall.x as f32, 0.0, wall.z as f32),
+                half_w: wall.half_w as f32,
+                half_d: wall.half_d as f32,
+                height: wall.height as f32,
+                paints: [wall.color, wall.trim, wall.roof],
+            })
     }
 
     /// The hard wall a shell struck at `(x, y, z)`: steel or stone, the nearest face
@@ -173,6 +227,7 @@ impl Walls {
                     normal,
                     room,
                     color: wall.color,
+                    trim: wall.trim,
                 },
             ));
         }
@@ -293,6 +348,8 @@ mod tests {
                 height: 2.6,
                 material: Some(WallMaterial::Steel),
                 color: 0x2f8a6a,
+                trim: 0x2f8a6a,
+                roof: 0x2f8a6a,
             }],
             ..Walls::default()
         }

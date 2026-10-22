@@ -78,8 +78,8 @@ use crate::mesh_pages::MeshRange;
 use crate::model::{
     InstanceData, ModelNode, PartMesh, PreparedModel, prepare_model, prepare_scenery,
 };
-use crate::presentation::theme::Grade;
 use crate::presentation::theme::SHADOW_DEPTH;
+use crate::presentation::theme::{Grade, Tone};
 use crate::quality::{Tier, TierFeatures};
 use crate::reflection_cull::{ReflectionMask, WaterFootprint};
 use crate::shader::{PipelineKey, ShaderKey};
@@ -397,6 +397,25 @@ struct OutputUniform {
     shadows: [f32; 4],
     highlights: [f32; 4],
     detail: [f32; 4],
+    curve: [f32; 4],
+}
+
+/// The filmic curve's terms for `output.wgsl` `filmic`: x its toe power, y the
+/// shoulder, zw the curve's b and c, which land scene mid grey on `tone.mid` and
+/// `tone.white` on 1 (all zero for ACES).
+fn tone_curve(tone: &Tone) -> [f32; 4] {
+    if tone.contrast <= 0.0 {
+        return [0.0; 4];
+    }
+    const SCENE_MID: f32 = 0.18;
+    let (a, d) = (tone.contrast, tone.shoulder);
+    let mid = SCENE_MID.powf(a);
+    let mid_shoulder = SCENE_MID.powf(a * d);
+    let white = tone.white.powf(a);
+    let white_shoulder = tone.white.powf(a * d);
+    let b = (white - mid / tone.mid) / (white_shoulder - mid_shoulder);
+    let c = white - white_shoulder * b;
+    [a, d, b, c]
 }
 
 /// WGSL `Occlusion` (`occlusion.wgsl`).
@@ -2093,6 +2112,11 @@ impl Renderer {
                 1.0 / height.max(1) as f32,
                 if upscale { 1.0 } else { 0.0 },
             ],
+            curve: if on {
+                tone_curve(&a.tone)
+            } else {
+                tone_curve(&Tone::ACES)
+            },
         }
     }
 

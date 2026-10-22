@@ -223,20 +223,22 @@
 .phone .touch-fire-ring::before {
   inset: 7px;
 }
-/* The stick's name on a small dark tag, legible on grass, sand or snow alike. */
-/* The stick's caption is a light label on its rim, not a plate of its own. */
+/* The stick's name on a small dark tag under its rim, legible on grass, sand or snow
+   alike, in the same glass as the fire hint's tag. */
 .touch-stick > span {
   position: absolute;
   left: 50%;
-  bottom: -8px;
+  bottom: -6px;
+  padding: 3px 10px 3px 12px;
+  border-radius: 999px;
+  background: #06102ac4;
+  box-shadow: inset 0 0 0 1px #9fd0ff33;
   color: #e6f0fa;
   text-align: center;
   font-size: 12px;
   font-weight: 800;
   letter-spacing: 2.4px;
-  text-shadow:
-    0 1px 2px #000,
-    0 0 6px #000a;
+  text-shadow: 0 1px 2px #000;
   transform: translateX(-50%);
 }
 .touch-stick.held .stick-base {
@@ -315,24 +317,34 @@
 /* On a tablet the zoom pair leaves the corner bar for the right edge, stacked just over
    the mine button as one cluster under the thumb, so the top keeps only view, pause and
    settings. */
+/* They are round keys in the mine button's own navy with a slim light rim, centred over
+   it, so the three read as one family of thumb buttons. */
 html:not(.phone) .touch-enabled .hud-actions > .touch-zoom {
   position: fixed;
-  right: calc(max(24px, env(safe-area-inset-right)) + 14px);
-  width: 48px;
-  min-height: 46px;
-  border: 1px solid var(--edge-strong);
-  background: linear-gradient(180deg, #13284aeb, #08142af2);
+  right: calc(max(24px, env(safe-area-inset-right)) + 12px);
+  display: grid;
+  place-items: center;
+  width: 52px;
+  min-width: 52px;
+  height: 52px;
+  min-height: 52px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background:
+    radial-gradient(ellipse 60% 40% at 50% 22%, #ffffff1f, transparent 70%),
+    radial-gradient(circle, #183460 0, #0b1a33 70%);
   box-shadow:
-    var(--sheen),
+    inset 0 0 0 2px #bfe2ff4d,
     0 6px 18px #0008;
+  color: #e9f2fb;
+  font: 800 24px/1 var(--font-ui);
 }
 html:not(.phone) .touch-enabled #zoom-in {
-  bottom: calc(max(28px, env(safe-area-inset-bottom)) + 182px);
-  border-radius: 12px 12px 0 0;
+  bottom: calc(max(28px, env(safe-area-inset-bottom)) + 196px);
 }
 html:not(.phone) .touch-enabled #zoom-out {
   bottom: calc(max(28px, env(safe-area-inset-bottom)) + 136px);
-  border-radius: 0 0 12px 12px;
 }
 html:not(.phone) .touch-enabled .hud-actions > .touch-zoom::before,
 html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-zoom)::before {
@@ -436,8 +448,12 @@ html:not(.phone) .touch-enabled #ammo-standard {
   grid-template-rows: minmax(0, 1fr) auto;
   justify-items: center;
 }
+/* The loaded round keeps its count (the standard shell's infinity) in its key's corner. */
 .touch-enabled .ammo-slot.selected b {
-  display: none;
+  position: absolute;
+  top: 4px;
+  right: 7px;
+  font-size: 15px;
 }
 .touch-enabled .ammo-slot.selected small {
   grid-area: 2 / 1;
@@ -547,12 +563,11 @@ html:not(.phone) .touch-enabled #ammo-standard {
   width: 150px;
   height: 150px;
 }
+/* The same light glass ring as a tablet's, a touch firmer at the rim for the smaller
+   size: the ground keeps showing through it. */
 .phone .stick-base {
   inset: 14px;
-  border-color: #dff0ff80;
-  background:
-    radial-gradient(circle, transparent 38%, #dff0ff26 39%, transparent 41%),
-    radial-gradient(circle at 50% 40%, #0c1d3be0, #07122af2 72%);
+  border-color: #dff0ff8c;
 }
 .phone .touch-drive {
   left: max(12px, env(safe-area-inset-left));

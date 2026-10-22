@@ -17,7 +17,8 @@
 //! - `debug_add_tank(team, kind) -> id`, `debug_add_cover(spec) -> id`.
 //! - `debug_damage_tank(id, amount, owner, ownerTeam)` and
 //!   `debug_damage_cover(id, amount)` go through the shared damage helpers; an owner
-//!   that is not a tank id credits nobody.
+//!   that is not a tank id credits nobody. `debug_damage_cover_at(id, amount, x, y,
+//!   z)` strikes the cover at a world point, as a shell's contact would.
 //! - `debug_set_sim(patch)`: `{ elapsed, gameMode, reinforcementDelay, match: {
 //!   phase, time, scores, winner }, combatRecord: {...} }`.
 //! - `debug_set_pickups(pickups)`, `debug_add_shot(shot)`, `debug_add_mine(x, z,
@@ -392,6 +393,23 @@ impl Game {
         }
         self.sim
             .damage_cover(index, amount, owner, team, Some(life), None);
+    }
+
+    /// Damage a cover as a human shell striking it at world `(x, y, z)` would.
+    pub fn debug_damage_cover_at(&mut self, id: u32, amount: f64, x: f64, y: f64, z: f64) {
+        let Some(index) = self.sim.covers.iter().position(|cover| cover.id == id) else {
+            return;
+        };
+        let human = self.sim.human();
+        let (owner, team, life) = (human.id, human.team, human.life);
+        self.sim.damage_cover(
+            index,
+            amount,
+            owner,
+            team,
+            Some(life),
+            Some(Point3::new(x, y, z)),
+        );
     }
 
     /// Add a cover and its navigation footprint; returns its id.

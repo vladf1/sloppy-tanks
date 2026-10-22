@@ -93,11 +93,18 @@ fn authored_layout() -> Vec<CoverDef> {
         for z in [-45.0, -9.0, 9.0, 45.0] {
             result.push(tree(s * 36.0, z, 5.8));
         }
-        for z in [-39.0, -13.0, 13.0, 39.0] {
-            result.push(CoverDef::house(s * 45.0, z, 5.0, 6.0, 4.6, 0xb87b4c));
+        // The row houses along the outer roads, each its own height on the
+        // street's common plot so the row reads as built over time: a two-storey
+        // house, a cottage, a low bungalow and a taller cottage (world width,
+        // depth and ridge height), mirrored between the teams' halves. Only the
+        // heights differ: every plot keeps the footprint the lanes were laid out
+        // round.
+        for (z, h) in [(-39.0, 6.8), (-13.0, 4.6), (13.0, 4.3), (39.0, 5.0)] {
+            result.push(CoverDef::house(s * 45.0, z, 5.0, 6.0, h, 0xb87b4c));
         }
-        for z in [-46.0, 46.0] {
-            result.push(CoverDef::house(s * 17.0, z, 7.0, 5.0, 5.2, 0xc78b50));
+        // The end-of-street pair: a two-storey house and a broad cottage.
+        for (z, h) in [(-46.0, 6.8), (46.0, 5.2)] {
+            result.push(CoverDef::house(s * 17.0, z, 7.0, 5.0, h, 0xc78b50));
         }
         for z in [-28.0, 28.0] {
             result.push(tree(s * 23.0, z, 6.0));

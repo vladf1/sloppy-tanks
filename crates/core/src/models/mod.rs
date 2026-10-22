@@ -169,6 +169,9 @@ pub mod part {
     /// the commander's number and a white command band, so the player's tank is
     /// never a clone of a bot team-mate. Bots wear the liveries before it.
     pub const CREW_LIVERY: usize = 3;
+    /// The soft occlusion band on the deck round a turret's foot (a turret part, so
+    /// it turns with it); wrecks leave it out.
+    pub const TURRET_OCCLUSION: &str = "turret-occlusion";
 }
 
 /// The side a vehicle, flag or spawn pad belongs to; indexes [`TEAM_COLORS`].

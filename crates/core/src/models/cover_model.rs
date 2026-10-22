@@ -11,12 +11,12 @@ use glam::DVec3;
 
 use super::barrel_surfaces::{LID_DROP, explosive_barrel};
 use super::building_kit::fieldstone_wall;
-use super::concrete_surfaces::concrete_wall;
+use super::concrete_surfaces::{concrete_barrier, concrete_wall};
 use super::crate_model::{CrateShape, cargo_crate};
 use super::harbor_models::{CargoShape, shipping_container};
 use super::harbor_surfaces::harbor_parapet;
 use super::house_model::{house, house_heap};
-use super::model_primitives::{box_part, cylinder_part, put};
+use super::model_primitives::{cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
 use super::quarry_surfaces::{
     RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
@@ -132,22 +132,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
             },
         ),
         CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
-        // An intact cottage shows no marks, so shells change its look only at a
-        // damage stage and it keeps its place in the static covers' draws until then.
-        CoverKind::House => house(
-            group,
-            c.x,
-            c.z,
-            c.w,
-            c.d,
-            c.h,
-            damage_stage,
-            if damage_stage == 0 {
-                &[]
-            } else {
-                &c.timber_hits
-            },
-        ),
+        // Every shell holes a cottage where it struck; an untouched one keeps its
+        // place in the static covers' draws.
+        CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, damage_stage, &c.timber_hits),
         CoverKind::Timber => {
             let parts = timber_parts(
                 &TimberWall {
@@ -193,42 +180,12 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
         CoverKind::Boundary if c.color == HARBOR_WALL_COLOR => {
             put(group, harbor_parapet(c.w, c.h, c.d), 0.0, c.h / 2.0, 0.0);
         }
-        CoverKind::Concrete | CoverKind::Boundary => {
-            let block = if c.kind == CoverKind::Boundary {
-                concrete_wall(c.w, c.h, c.d)
-            } else {
-                box_part(c.w, c.h, c.d, c.color, 0.16)
-            };
-            put(group, block, 0.0, c.h / 2.0, 0.0);
-            if c.kind == CoverKind::Concrete {
-                let along = c.w > c.d;
-                let marks = ((if along { c.w } else { c.d }) / 1.1).floor() as u32;
-                for i in 0..marks {
-                    let i = f64::from(i);
-                    let mark = box_part(
-                        if along { 0.55 } else { 0.035 },
-                        0.22,
-                        if along { 0.035 } else { 0.55 },
-                        0x499ac7,
-                        0.01,
-                    );
-                    put(
-                        group,
-                        mark,
-                        if along {
-                            -c.w / 2.0 + 0.6 + i * 1.1
-                        } else {
-                            c.w / 2.0 + 0.02
-                        },
-                        c.h * 0.7,
-                        if along {
-                            c.d / 2.0 + 0.02
-                        } else {
-                            -c.d / 2.0 + 0.6 + i * 1.1
-                        },
-                    );
-                }
-            }
+        // Harbor Havoc's precast barriers (the only concrete cover).
+        CoverKind::Concrete => {
+            put(group, concrete_barrier(c.w, c.h, c.d), 0.0, 0.0, 0.0);
+        }
+        CoverKind::Boundary => {
+            put(group, concrete_wall(c.w, c.h, c.d), 0.0, c.h / 2.0, 0.0);
         }
     }
     node

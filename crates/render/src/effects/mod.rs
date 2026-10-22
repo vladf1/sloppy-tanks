@@ -178,9 +178,36 @@ impl EffectSystems {
                 .add(event.x, event.z, event.color.unwrap_or(WHITE));
         }
         self.wood.event(event, &mut self.random);
+        if event.kind == SimEventType::Destroy
+            && event.cover_kind == Some(sloppy_core::sim::CoverKind::House)
+            && let Some(house) = self.particles.explosions.walls.house_at(event.x, event.z)
+        {
+            self.wood.house_burst(house, &mut self.random);
+        }
+        if let Some(strike) = self.siding_strike(event) {
+            self.wood.siding_hit(
+                strike.point,
+                strike.normal,
+                [strike.color, strike.trim],
+                &mut self.random,
+            );
+        }
         self.muzzle.event(event);
         self.wrecks.event(event, &mut self.random);
         self.particles.event(event, &mut self.random);
+    }
+
+    /// The cottage wall a shell's impact (naming no cover or height) struck.
+    fn siding_strike(&self, event: &SimEvent) -> Option<walls::Strike> {
+        (event.kind == SimEventType::Impact && event.cover_kind.is_none() && event.height.is_none())
+            .then(|| {
+                self.particles
+                    .explosions
+                    .walls
+                    .strike(event.x, 1.0, event.z)
+            })
+            .flatten()
+            .filter(|strike| strike.material == walls::WallMaterial::Siding)
     }
 
     /// Leaves shaken from `crown` by a tree hit or felling, once presentation knows

@@ -1015,10 +1015,11 @@ fn mantlet(kit: &mut Kit, gun_y: f64, face_z: f64, size: DVec3, tube: f64, coax_
     );
 }
 
-/// A boxy sight head with a glass window in front, optionally with its two
-/// armored doors swung open.
+/// A boxy sight head in the team paint (in the deep trim it read as a black hole
+/// from the commander's seat) with a glass window in front, optionally with its
+/// two armored doors swung open.
 fn sight_head(kit: &mut Kit, center: DVec3, size: DVec3, yaw: f64, doors: bool) {
-    kit.chamfer_block(Coat::Shade, size, 0.02, pose(center, v(0.0, yaw, 0.0)));
+    kit.chamfer_block(Coat::Paint, size, 0.02, pose(center, v(0.0, yaw, 0.0)));
     let face = size.z / 2.0;
     let window = v(size.x * 0.7, size.y * 0.42, 0.012);
     let glass_at = yawed(center, yaw, v(0.0, size.y * 0.06, face));
@@ -1166,7 +1167,10 @@ fn smoke_cluster(kit: &mut Kit, at: DVec3, side: f64, yaw: f64, rows: u32, cols:
         f64::from(rows) * pitch + 0.03,
         f64::from(cols) * pitch + 0.03,
     );
-    kit.block_at(Coat::Gunmetal, plate, at, v(0.0, yaw, 0.0));
+    // A mounting plate in the deep trim, tread-plated on top like the fenders: in
+    // gun metal the clusters read as two black boxes beside the gun from the
+    // commander's seat, and in the team paint as two flat slabs.
+    kit.block_at(Coat::Shade, plate, at, v(0.0, yaw, 0.0));
     let direction = DMat4::from_rotation_y(yaw)
         .transform_vector3(v(side * 0.55, 0.6, 0.6))
         .normalize();
@@ -1180,7 +1184,7 @@ fn smoke_cluster(kit: &mut Kit, at: DVec3, side: f64, yaw: f64, rows: u32, cols:
             let base = yawed(at, yaw, offset);
             let end = base + direction * 0.15;
             let tube = p2(&[(0.031, 0.0), (0.031, 0.15)]);
-            kit.turned(Coat::Gunmetal, &tube, 6, aim(base, end));
+            kit.turned(Coat::Paint, &tube, 6, aim(base, end));
             let cap = p2(&[(0.024, 0.146), (0.0, 0.146)]);
             kit.turned(Coat::Dark, &cap, 6, aim(base, end));
         }
@@ -1189,14 +1193,15 @@ fn smoke_cluster(kit: &mut Kit, at: DVec3, side: f64, yaw: f64, rows: u32, cols:
 
 /// A radio antenna: base and whip.
 /// An antenna whip's radius at its foot and tip.
-const ANTENNA_FOOT: f64 = 0.012;
-const ANTENNA_TIP: f64 = 0.0045;
+const ANTENNA_FOOT: f64 = 0.015;
+const ANTENNA_TIP: f64 = 0.004;
 
 fn antenna(kit: &mut Kit, base: DVec3, height: f64) {
     let mount = p2(&[(0.04, 0.0), (0.04, 0.06), (0.018, 0.1), (0.0, 0.1)]);
     kit.turned(Coat::Dark, &mount, 6, pose(base, v(-PI / 2.0, 0.0, 0.0)));
-    // A tapered whip in gun metal, thick enough at its foot to hold a pixel or two
-    // from the hero camera rather than shimmering as a black hairline.
+    // A short tapered whip in worn steel, thick enough at its foot to hold a pixel or
+    // two from the hero camera and light enough to read against the sky, rather than
+    // shimmering as a long black hairline.
     let whip = p2(&[
         (0.0, 0.0),
         (ANTENNA_FOOT, 0.0),
@@ -1204,17 +1209,18 @@ fn antenna(kit: &mut Kit, base: DVec3, height: f64) {
         (0.0, height),
     ]);
     kit.turned(
-        Coat::Gunmetal,
+        Coat::Steel,
         &whip,
         4,
         pose(base + v(0.0, 0.1, 0.0), v(-PI / 2.0, 0.0, 0.0)),
     );
 }
 
-/// A lifting eye: a lug welded upright to the roof.
+/// A lifting eye: a bare steel lug welded upright to the roof, worn bright by the
+/// crane's shackle.
 fn lifting_eye(kit: &mut Kit, at: DVec3) {
     kit.block(
-        Coat::Gunmetal,
+        Coat::Steel,
         v(0.07, 0.05, 0.018),
         shift(at + v(0.0, 0.02, 0.0)),
     );
@@ -1378,6 +1384,13 @@ fn turret_levels(c: &Chassis) -> [(Vec<DVec2>, f64); 3] {
     }
 }
 
+/// The turret armor's widest plan outline (before the class stretch), round which
+/// the deck darkens where it meets the turret.
+pub(super) fn turret_outline(c: &Chassis) -> Vec<DVec2> {
+    let [_, (widest, _), _] = turret_levels(c);
+    widest
+}
+
 /// The turret armor and its band in the deep trim.
 fn turret_armor(kit: &mut Kit, c: &Chassis, bevel: f64) -> [(Vec<DVec2>, f64); 3] {
     let levels = turret_levels(c);
@@ -1460,8 +1473,8 @@ fn balanced_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
         );
     }
     wind_sensor(kit, v(0.0, roof, -1.62), 0.3);
-    antenna(kit, v(0.62, roof, -1.62), 0.95);
-    antenna(kit, v(-0.62, roof, -1.62), 0.75);
+    antenna(kit, v(0.62, roof, -1.62), 0.62);
+    antenna(kit, v(-0.62, roof, -1.62), 0.5);
     for (x, z) in [(0.62, 0.55), (-0.62, 0.55), (0.66, -1.72), (-0.66, -1.72)] {
         lifting_eye(kit, v(x, roof, z));
     }
@@ -1628,8 +1641,8 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
         );
     }
     wind_sensor(kit, v(0.1, roof, -1.12), 0.26);
-    antenna(kit, v(0.56, roof, -1.36), 0.9);
-    antenna(kit, v(-0.56, roof, -1.36), 0.7);
+    antenna(kit, v(0.56, roof, -1.36), 0.6);
+    antenna(kit, v(-0.56, roof, -1.36), 0.48);
     for (x, z) in [(0.76, -0.3), (-0.76, -0.3), (0.66, -1.45), (-0.66, -1.45)] {
         lifting_eye(kit, v(x, roof, z));
     }
@@ -1700,8 +1713,8 @@ fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     );
     jerrycan(kit, v(-0.3, d + 0.165, -1.5), PI / 2.0);
     jerrycan(kit, v(-0.58, d + 0.165, -1.5), PI / 2.0);
-    antenna(kit, v(0.55, roof, -1.12), 0.8);
-    antenna(kit, v(-0.55, roof, -1.12), 0.65);
+    antenna(kit, v(0.55, roof, -1.12), 0.56);
+    antenna(kit, v(-0.55, roof, -1.12), 0.44);
     for (x, z) in [(0.46, 0.42), (-0.46, 0.42), (0.54, -1.18), (-0.54, -1.18)] {
         lifting_eye(kit, v(x, roof, z));
     }
@@ -1807,9 +1820,9 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
 /// across each arm; the diamond's half diagonal and stroke (metres at scale 1).
 const CHEVRON_HALF_WIDTH: f64 = 0.56;
 const CHEVRON_HALF_DEPTH: f64 = 0.36;
-const CHEVRON_STROKE: f64 = 0.17;
+const CHEVRON_STROKE: f64 = 0.21;
 const DIAMOND_RADIUS: f64 = 0.36;
-const DIAMOND_STROKE: f64 = 0.13;
+const DIAMOND_STROKE: f64 = 0.16;
 
 /// The team's emblem painted large across the turret roof in the markings' white,
 /// the same on every tank of a team: an open chevron pointing up the gun for red,

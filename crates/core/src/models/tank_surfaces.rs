@@ -27,19 +27,20 @@ use super::model_primitives::Cache;
 use super::tank_model::MARKING_WHITE;
 use super::{Team, part};
 use crate::geometry::math::hex_to_linear;
-use crate::geometry::{Attribute, Buckets, Mesh, VERTEX_ALPHA};
+use crate::geometry::{Attribute, Buckets, Mesh, VERTEX_ALPHA, node_bounds};
 use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 
-/// Service paint per team: a strong cobalt blue and a deep signal red, each one
-/// color without a camouflage, so a tank's side reads at a glance. Neither is a
-/// pure primary: the green and blue the red keeps (and the red and green the blue
-/// keeps) keep the red off magenta in the menu and off maroon from overhead. The
-/// blue stays bright enough not to fall to black in shade. In a round the paint
-/// shader holds their saturation back under the map's saturating grade.
-pub const VEHICLE_PAINT: [u32; 2] = [0x3864ae, 0x862b25];
+/// Service paint per team: a strong cobalt blue and a deep oxide red, each one
+/// color without a camouflage, so a tank's side reads at a glance. The red keeps
+/// its green and blue equal, so it neither drifts to magenta under the cards' white
+/// key nor to orange under a warm grade, and it stays deep enough that a sunlit
+/// deck reads as painted steel rather than bleaching to salmon. The blue stays
+/// bright enough not to fall to black in shade. In a round the paint shader holds
+/// their saturation back under the map's saturating grade.
+pub const VEHICLE_PAINT: [u32; 2] = [0x3864ae, 0x82201f];
 /// The Humvee's paint per team: the same team hue a step deeper and flatter, a
 /// soft-skinned truck's matte finish rather than the tanks' satin armor enamel.
-pub const HUMVEE_PAINT: [u32; 2] = [0x3a62a0, 0x7a2d26];
+pub const HUMVEE_PAINT: [u32; 2] = [0x3a62a0, 0x7e2224];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -79,6 +80,11 @@ const MATTE_PAINT_ROUGHNESS: f32 = 0.74;
 /// Bare steel and gun metal.
 const METAL_METALNESS: f32 = 0.55;
 const METAL_ROUGHNESS: f32 = 0.4;
+/// The vehicles' bare steel and gun metal: worn, oily and less mirror-like, with
+/// enough diffuse response that housings, lugs and machine guns in shade read as
+/// metal rather than as black boxes with a plastic highlight.
+const WORN_METAL_METALNESS: f32 = 0.35;
+const WORN_METAL_ROUGHNESS: f32 = 0.5;
 const METAL_BUMP_SCALE: f32 = 0.02;
 /// Rubber, canvas, wood, stencils and dark openings.
 const MATTE_ROUGHNESS: f32 = 0.85;
@@ -125,9 +131,9 @@ const UPRIGHT: f64 = 0.6;
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
 const RIM_STRENGTH: f32 = 0.6;
-const PAINT_FILL: f32 = 0.26;
+const PAINT_FILL: f32 = 0.55;
 /// Running gear sits in the hull's shadow: more fill, no rim.
-const GEAR_FILL: f32 = 1.1;
+const GEAR_FILL: f32 = 1.6;
 /// Bare steel where the paint chipped through (sRGB): bright enough to read as
 /// scuffed metal against either team's paint rather than as a dark fleck of dirt.
 const BARE_STEEL: u32 = 0x6e6a63;
@@ -147,18 +153,25 @@ struct PaintValues {
     /// foot and at its top edge.
     gradient_foot: f64,
     gradient_top: f64,
+    /// Bare metal in the vehicles' worn finish rather than the machines' polish.
+    worn_metal: bool,
+    /// The lowest value any plate takes: the stacked gradients never crush a lower
+    /// hull or a shaded rear plate below it.
+    floor: f64,
 }
 
 /// Tanks and the Humvee: a deep hull deck under a lighter turret and a strong
 /// light-to-dark gradient down each side, so the turret, the deck and the flanks
 /// part by value from the overhead camera and the boxy plates read as forms.
 const VEHICLE_VALUES: PaintValues = PaintValues {
-    hull: 0.9,
-    turret: 1.08,
-    deck_low: 0.62,
-    deck_high: 1.02,
-    gradient_foot: 0.74,
-    gradient_top: 1.08,
+    hull: 0.78,
+    turret: 1.06,
+    deck_low: 0.66,
+    deck_high: 1.04,
+    gradient_foot: 0.78,
+    gradient_top: 1.1,
+    worn_metal: true,
+    floor: 0.6,
 };
 /// Machines in the vehicles' worn finish (the quarry fleet) keep the gentler
 /// shading their map was graded with.
@@ -169,6 +182,8 @@ const MACHINE_VALUES: PaintValues = PaintValues {
     deck_high: 1.08,
     gradient_foot: 0.8,
     gradient_top: 1.04,
+    worn_metal: false,
+    floor: 0.0,
 };
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
@@ -178,6 +193,35 @@ const SIGNAL_GLOW: f32 = 0.0;
 const EDGE_MIN_LENGTH: f64 = 0.08;
 const EDGE_MAX_WIDTH: f64 = 0.05;
 const EDGE_FACING: f64 = 0.95;
+
+/// Soot over a gun's muzzle end: it starts this share of the gun's length back from
+/// the muzzle and covers the paint fully at the muzzle (the paint shader reads it
+/// from the vertex alpha, see [`paint_alpha`]); bare gun metal there darkens by
+/// `SOOT_ON_METAL`.
+const SOOT_REACH: f64 = 0.36;
+/// The share of that reach over which it thickens to full.
+const SOOT_FULL: f64 = 0.75;
+const SOOT_ON_METAL: f64 = 0.7;
+
+/// Where a gun's soot runs in model z: from its clean end to the muzzle.
+#[derive(Clone, Copy, Debug)]
+struct Soot {
+    from: f64,
+    to: f64,
+}
+
+impl Soot {
+    /// How sooted a model-space point is, 0 to 1.
+    fn at(soot: Option<Soot>, p: DVec3) -> f64 {
+        soot.map_or(0.0, |soot| {
+            smoothstep(
+                soot.from,
+                soot.from + (soot.to - soot.from) * SOOT_FULL,
+                p.z,
+            )
+        })
+    }
+}
 
 /// Where a vehicle meets the ground and how high its dusty band reaches, in model
 /// metres before the vehicle scale.
@@ -215,7 +259,10 @@ enum Finish {
         /// The Humvee's flat finish rather than the tanks' satin enamel.
         matte: bool,
     },
-    Metal,
+    /// Bare steel and gun metal, `worn` in the vehicles' finish.
+    Metal {
+        worn: bool,
+    },
     Matte,
     /// Recognition panels and turret bands in a team's signal color: matte, kept
     /// apart so wrecks can burn them off.
@@ -238,6 +285,7 @@ impl Finish {
 /// The shared material of a finish.
 fn finish_material(finish: Finish) -> Arc<Material> {
     static METAL: OnceLock<Arc<Material>> = OnceLock::new();
+    static WORN_METAL: OnceLock<Arc<Material>> = OnceLock::new();
     static MATTE: OnceLock<Arc<Material>> = OnceLock::new();
     match finish {
         Finish::Paint { paint, trim, matte } => {
@@ -256,15 +304,22 @@ fn finish_material(finish: Finish) -> Arc<Material> {
                 ..white_vertex_material(PAINT_METALNESS, roughness)
             });
         }
-        Finish::Metal => METAL.get_or_init(|| {
-            let wear = armor_wear_texture();
-            Arc::new(Material {
-                map: Some(wear.clone()),
-                bump_map: Some(wear),
-                bump_scale: METAL_BUMP_SCALE,
-                ..white_vertex_material(METAL_METALNESS, METAL_ROUGHNESS)
+        Finish::Metal { worn } => {
+            let (cell, metalness, roughness) = if worn {
+                (&WORN_METAL, WORN_METAL_METALNESS, WORN_METAL_ROUGHNESS)
+            } else {
+                (&METAL, METAL_METALNESS, METAL_ROUGHNESS)
+            };
+            cell.get_or_init(|| {
+                let wear = armor_wear_texture();
+                Arc::new(Material {
+                    map: Some(wear.clone()),
+                    bump_map: Some(wear),
+                    bump_scale: METAL_BUMP_SCALE,
+                    ..white_vertex_material(metalness, roughness)
+                })
             })
-        }),
+        }
         Finish::Matte => {
             MATTE.get_or_init(|| Arc::new(white_vertex_material(0.0, MATTE_ROUGHNESS)))
         }
@@ -487,7 +542,7 @@ impl Livery<'_> {
             } else if color == self.signal {
                 Finish::Signal(color)
             } else if self.metal.contains(&color) || material.metalness >= 0.45 {
-                Finish::Metal
+                Finish::Metal { worn: false }
             } else {
                 Finish::Matte
             },
@@ -526,7 +581,7 @@ fn apply_livery_shaded(root: &mut Node, livery: &Livery, values: &PaintValues) {
             DMat4::IDENTITY,
             livery,
             values,
-            values.hull,
+            (values.hull, None),
             &mut weathered_meshes,
         );
     }
@@ -537,15 +592,29 @@ fn apply_livery_shaded(root: &mut Node, livery: &Livery, values: &PaintValues) {
 /// the source mesh and material, and the world matrix row that gives height.
 /// The paint's value lift is part of the key: a turret part never shares a hull
 /// part's weathered mesh.
-type WeatherKey = (usize, usize, [i64; 5]);
+type WeatherKey = (usize, usize, [i64; 6]);
 
-fn weather_key(mesh: &Arc<Mesh>, material: &Arc<Material>, world: DMat4, lift: f64) -> WeatherKey {
+fn weather_key(
+    mesh: &Arc<Mesh>,
+    material: &Arc<Material>,
+    world: DMat4,
+    lift: f64,
+    sooted: bool,
+) -> WeatherKey {
     let row = world.row(1);
     let quantize = |value: f64| (value * 1e4).round() as i64;
     (
         Arc::as_ptr(mesh) as usize,
         Arc::as_ptr(material) as usize,
-        [row.x, row.y, row.z, row.w, lift].map(quantize),
+        [
+            row.x,
+            row.y,
+            row.z,
+            row.w,
+            lift,
+            f64::from(u8::from(sooted)),
+        ]
+        .map(quantize),
     )
 }
 
@@ -554,7 +623,7 @@ fn repaint(
     parent: DMat4,
     livery: &Livery,
     values: &PaintValues,
-    lift: f64,
+    (lift, soot): (f64, Option<Soot>),
     weathered_meshes: &mut HashMap<WeatherKey, (Arc<Mesh>, Arc<Material>)>,
 ) {
     let world = parent * node.local_matrix();
@@ -563,15 +632,39 @@ fn repaint(
     } else {
         lift
     };
+    // The gun points down model z: soot its muzzle end.
+    let soot = if node.name == part::BARREL {
+        let bounds = node_bounds(node, parent);
+        let length = bounds.max.z - bounds.min.z;
+        Some(Soot {
+            from: bounds.max.z - length * SOOT_REACH,
+            to: bounds.max.z,
+        })
+    } else {
+        soot
+    };
     if let Some(drawable) = &mut node.drawable
         && drawable.instances.is_none()
     {
-        let finish = livery.finish(&drawable.material);
+        let finish = livery
+            .finish(&drawable.material)
+            .map(|finish| match finish {
+                Finish::Metal { .. } => Finish::Metal {
+                    worn: values.worn_metal,
+                },
+                other => other,
+            });
         let regrimed = drawable.material.vertex_colors
             && !drawable.mesh.colors.is_empty()
             && is_opaque_standard(&drawable.material);
         if finish.is_some() || regrimed {
-            let key = weather_key(&drawable.mesh, &drawable.material, world, lift);
+            let key = weather_key(
+                &drawable.mesh,
+                &drawable.material,
+                world,
+                lift,
+                soot.is_some(),
+            );
             let (mesh, material) = weathered_meshes
                 .entry(key)
                 .or_insert_with(|| match finish {
@@ -583,7 +676,7 @@ fn repaint(
                             finish,
                             livery.grime,
                             values,
-                            lift,
+                            (lift, soot),
                         )),
                         finish_material(finish),
                     ),
@@ -595,7 +688,7 @@ fn repaint(
                             Finish::Matte,
                             livery.grime,
                             values,
-                            1.0,
+                            (1.0, soot),
                         )),
                         gear_material(&drawable.material),
                     ),
@@ -606,7 +699,7 @@ fn repaint(
         }
     }
     for child in &mut node.children {
-        repaint(child, world, livery, values, lift, weathered_meshes);
+        repaint(child, world, livery, values, (lift, soot), weathered_meshes);
     }
 }
 
@@ -699,11 +792,15 @@ fn band_height(p: DVec3, grime: Grime) -> f64 {
 }
 
 /// The vertex alpha the paint shader reads: 0.2 plus 0.3 x how low the vertex sits
-/// in the dusty band, raised by 0.4 on a chamfer strip. A chamfer flags whole
-/// triangles, so interpolation never mixes the two.
-fn paint_alpha(p: DVec3, grime: Grime, edge: bool) -> f32 {
+/// in the dusty band, less `SOOT_ALPHA` x how sooted it is (a gun's muzzle end,
+/// always far above the dust), raised by 0.4 on a chamfer strip. A chamfer flags
+/// whole triangles, so interpolation never mixes the two: the plain range
+/// [0.12, 0.5] stays below the chamfers' [0.52, 0.9].
+const SOOT_ALPHA: f64 = 0.08;
+
+fn paint_alpha(p: DVec3, grime: Grime, edge: bool, soot: f64) -> f32 {
     let flag = if edge { 0.4 } else { 0.0 };
-    (0.2 + flag + 0.3 * (1.0 - band_height(p, grime))) as f32
+    (0.2 + flag + 0.3 * (1.0 - band_height(p, grime)) - SOOT_ALPHA * soot) as f32
 }
 
 /// The paint value's code in the blue channel: trim in [0, 0.5), paint in
@@ -757,7 +854,7 @@ fn weathered(
     finish: Finish,
     grime: Grime,
     values: &PaintValues,
-    lift: f64,
+    (lift, soot): (f64, Option<Soot>),
 ) -> Mesh {
     let mut out = mesh.to_non_indexed();
     let count = out.positions.len();
@@ -817,6 +914,7 @@ fn weathered(
                     * deck_value(*point, face, grime, values)
                     * height_value(*point, grime)
                     * ground_shade(band_height(*point, grime), face);
+                let value = value.max(values.floor);
                 // Markings lie on their plate: their own outline marks no edge.
                 let [r, g] = if coat == Coat::Marking {
                     [NO_EDGES; 2]
@@ -826,7 +924,7 @@ fn weathered(
                 colors.push([r, g, coat_code(coat, value)]);
                 let (u, v) = paint_uv(*point, face);
                 out.uvs[index] = [u as f32, v as f32];
-                alphas.push(paint_alpha(*point, grime, chamfer));
+                alphas.push(paint_alpha(*point, grime, chamfer, Soot::at(soot, *point)));
             } else {
                 let (paint, dust_scale) = match base_linear {
                     Some(linear) => (linear, 1.0),
@@ -835,8 +933,9 @@ fn weathered(
                         DUST_ON_RUNNING_GEAR,
                     ),
                 };
+                let darken = 1.0 - SOOT_ON_METAL * Soot::at(soot, *point);
                 let color = grimed(paint, *point, face, grime, dust_scale);
-                colors.push(color.map(|c| c as f32));
+                colors.push(color.map(|c| (c * darken) as f32));
             }
         }
     }
