@@ -1146,8 +1146,13 @@ impl Presentation {
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
             .expect("tank model");
-        // Team-mates of one chassis wear different unit numbers and stowage.
-        let worn = tank.id as usize % liveries.len();
+        // Team-mates of one chassis wear different unit numbers and stowage; a
+        // human player's tank wears the crew livery.
+        let worn = if tank.human {
+            part::CREW_LIVERY
+        } else {
+            tank.id as usize % part::CREW_LIVERY
+        };
         for (index, joint) in liveries.into_iter().enumerate() {
             if let Some(joint) = joint {
                 self.renderer

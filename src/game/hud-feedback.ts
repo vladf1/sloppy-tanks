@@ -407,6 +407,16 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
     slot.setAttribute("aria-pressed", String(selected));
     slot.classList.toggle("selected", selected);
     slot.classList.toggle("empty", !slotState?.available);
+    if (selected) {
+      // The chosen round's name reads under the rack, in its colour, so the slots stay
+      // small and every one keeps its place.
+      const ammoName = root.querySelector<HTMLElement>("#ammo-name");
+      if (ammoName && ammoName.dataset.ammo !== weapon) {
+        ammoName.dataset.ammo = weapon;
+        ammoName.textContent = name;
+        ammoName.style.setProperty("--ammo-color", slot.style.getPropertyValue("--ammo-color"));
+      }
+    }
     const label = `${index + 1}: ${name}, ${count === "0" ? "empty, collect an ammo crate" : count === "∞" ? "unlimited" : count + " remaining"}${selected ? ", selected" : ""}`;
     if (slot.getAttribute("aria-label") !== label) {
       slot.setAttribute("aria-label", label);

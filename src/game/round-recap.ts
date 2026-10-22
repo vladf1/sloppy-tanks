@@ -37,6 +37,21 @@ export function teamLabel(name: string): string {
   return `${name.charAt(0)}${name.slice(1).toLowerCase()} team`;
 }
 
+/** Where a team battle stands for the viewer's `team`: who leads and by how much. */
+export function standingLine(
+  scores: readonly number[],
+  team: number,
+  names: readonly string[],
+): string {
+  const [blue, red] = scores;
+  if (blue === red) {
+    return `Level at ${blue} each`;
+  }
+  const leader = blue > red ? 0 : 1;
+  const margin = Math.abs(blue - red);
+  return `${leader === team ? "Your team" : teamLabel(names[leader])} leads by ${margin}`;
+}
+
 export function duration(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }
@@ -151,6 +166,20 @@ function byScore(a: ScoreboardRow, b: ScoreboardRow): number {
   return b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name);
 }
 
+/** Where the viewer stands on their own team's scoreboard (by kills, then fewest
+ * wrecks): 1-based place and the team's size, or null when the viewer is not listed. */
+export function teamPlace(
+  rows: readonly ScoreboardRow[],
+  viewerId: number,
+): { place: number; of: number } | null {
+  const viewer = rows.find((row) => row.id === viewerId);
+  if (!viewer) {
+    return null;
+  }
+  const team = rows.filter((row) => row.team === viewer.team).sort(byScore);
+  return { place: team.indexOf(viewer) + 1, of: team.length };
+}
+
 /** The round's most valuable tank: the most kills, fewest wrecks breaking a tie; none
  * before anyone scores. */
 export function mostValuable(rows: readonly ScoreboardRow[]): ScoreboardRow | null {
@@ -159,7 +188,8 @@ export function mostValuable(rows: readonly ScoreboardRow[]): ScoreboardRow | nu
 }
 
 /** The battle report's team scoreboard: each team's tanks by kills, with their wrecks,
- * the viewer's row lit and the MVP marked. `teamNames` and `scores` are in team order. */
+ * the viewer's row lit and the MVP tagged in its row (no second MVP line repeats it).
+ * `teamNames` and `scores` are in team order. */
 export function scoreboardMarkup(
   rows: readonly ScoreboardRow[],
   viewerId: number,
@@ -186,8 +216,5 @@ export function scoreboardMarkup(
       .join("");
     return `<section class="board-team ${side}" aria-label="${teamLabel(teamNames[index])}"><header><b>${teamNames[index]}</b><span>${scores[index]}</span><i>K</i><i>D</i></header><ol>${lines}</ol></section>`;
   };
-  const spotlight = mvp
-    ? `<div class="board-mvp ${mvp.team === 0 ? "blue" : "red"}"><span>★ MVP</span><b>${mvp.id === viewerId ? "YOU" : escapeHtml(mvp.name)}</b><small>${mvp.kills} kill${mvp.kills === 1 ? "" : "s"} · ${mvp.deaths} wreck${mvp.deaths === 1 ? "" : "s"}</small></div>`
-    : "";
-  return `<div class="results-board">${team(0)}${team(1)}${spotlight}</div>`;
+  return `<div class="results-board">${team(0)}${team(1)}</div>`;
 }
