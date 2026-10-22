@@ -51,10 +51,10 @@ pub const POT_MOUTH: f64 = 0.7;
 const GAP: f64 = 0.01;
 /// The collapse's rubble mound: how far its foot stays in from the walls' outside
 /// faces, how far further in its crown starts, and the crown's height. Its slopes
-/// are gentle enough (about 35 degrees) for a shard to rest on them.
+/// are gentle enough (under 40 degrees) for a shard to rest on them.
 pub const MOUND_INSET: f64 = 0.45;
-pub const MOUND_SLOPE_RUN: f64 = 1.45;
-pub const MOUND_HEIGHT: f64 = 1.0;
+pub const MOUND_SLOPE_RUN: f64 = 1.7;
+pub const MOUND_HEIGHT: f64 = 1.35;
 /// The least half width of the mound's crown.
 const MOUND_CROWN: f64 = 0.3;
 

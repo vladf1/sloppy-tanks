@@ -182,7 +182,7 @@ impl EffectSystems {
             && event.cover_kind == Some(sloppy_core::sim::CoverKind::House)
             && let Some(house) = self.particles.explosions.walls.house_at(event.x, event.z)
         {
-            self.wood.house_burst(house, &mut self.random);
+            self.wood.house_burst(house);
         }
         if let Some(strike) = self.siding_strike(event) {
             self.wood.siding_hit(

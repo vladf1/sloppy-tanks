@@ -30,7 +30,7 @@ const BRICK_TILE: f64 = 1.2;
 const STONE_TILE: f64 = 1.6;
 /// The average sRGB colour of the clapboard image: paint divided by it keeps
 /// the painted wall at the paint's colour on average.
-const CLAPBOARD_AVERAGE: u32 = 0xd7d3cc;
+pub(super) const CLAPBOARD_AVERAGE: u32 = 0xd7d3cc;
 /// Kit texture density of untextured finishes (it only shades flat paint).
 const PLAIN_UV_PER_METRE: f64 = 0.45;
 

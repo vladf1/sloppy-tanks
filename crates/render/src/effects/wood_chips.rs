@@ -128,10 +128,27 @@ const SIDING_PIECES: [usize; 2] = [11, 5];
 const SIDING_BOARDS: usize = 3;
 const SIDING_CONE: f64 = 1.4;
 const SIDING_SPEED: [f64; 2] = [1.2, 4.5];
+/// Seconds after a cottage gives way when its walls burst: once they have begun
+/// to buckle, not while it still stands whole. Cottages collapsing at once that
+/// wait for theirs at most.
+const HOUSE_BURST_DELAY: f64 = 0.3;
+const MAX_COLLAPSING: usize = 4;
 /// A collapsing cottage blows this many pieces out of its walls, this fast (m/s).
-const HOUSE_BURST_PIECES: usize = 52;
-/// The first of them are shingles shed off the eaves as the roof breaks up.
-const HOUSE_BURST_SHINGLES: usize = 16;
+const HOUSE_BURST_PIECES: usize = 40;
+/// The first of them are shingles shed off the eaves as the roof breaks up, the
+/// next heavy chunks of wall: siding still nailed to a scrap of sheathing.
+const HOUSE_BURST_SHINGLES: usize = 10;
+const HOUSE_BURST_CHUNKS: usize = 6;
+const WALL_CHUNK: Cut = Cut {
+    length: [0.6, 0.5],
+    width: [0.3, 0.2],
+    thickness: [0.06, 0.03],
+};
+/// How far a collapse's flying pieces are dulled toward its dust, so they read
+/// as dusty wood and plaster in the cloud rather than bright paint chips.
+const HOUSE_BURST_DUST: (u32, f32) = (0x7d7366, 0.5);
+/// Plaster and lath out of a collapsing cottage's walls, dulled by the fall.
+const HOUSE_PLASTER: [u32; 2] = [0xa99d89, 0x857a69];
 const SHINGLE: Cut = Cut {
     length: [0.26, 0.12],
     width: [0.16, 0.08],
@@ -381,6 +398,9 @@ pub struct WoodChips {
     pub straw_records: PoolBuffer,
     /// Pieces were added or removed since the records were written.
     changed: bool,
+    /// Collapsing cottages whose walls have yet to burst, and the seconds until
+    /// they do.
+    collapsing: Vec<(HouseBox, f64)>,
 }
 
 impl Default for WoodChips {
@@ -391,6 +411,7 @@ impl Default for WoodChips {
             wood_records: PoolBuffer::new(MAX_WOOD_CHIPS),
             straw_records: PoolBuffer::new(MAX_STRAW),
             changed: false,
+            collapsing: Vec::with_capacity(MAX_COLLAPSING),
         }
     }
 }
@@ -402,6 +423,7 @@ impl WoodChips {
         self.wood_records.clear();
         self.straw_records.clear();
         self.changed = false;
+        self.collapsing.clear();
     }
 
     /// Live wood pieces and straw fibres.
@@ -491,10 +513,18 @@ impl WoodChips {
         self.changed = true;
     }
 
-    /// A cottage giving way: its walls burst outward as they buckle, throwing
-    /// lengths of painted siding and trim, splinters of framing, lumps of plaster
-    /// and a scatter of roofing off the eaves out round its footprint.
-    pub fn house_burst(&mut self, house: HouseBox, random: &mut CosmeticRandom) {
+    /// A cottage giving way: once its walls have started to buckle
+    /// ([`HOUSE_BURST_DELAY`]), they burst outward.
+    pub fn house_burst(&mut self, house: HouseBox) {
+        if self.collapsing.len() < MAX_COLLAPSING {
+            self.collapsing.push((house, HOUSE_BURST_DELAY));
+        }
+    }
+
+    /// A buckling cottage's walls bursting: lengths of painted siding and trim,
+    /// chunks of wall, splinters of framing, lumps of plaster and a scatter of
+    /// roofing off the eaves thrown out round its footprint.
+    fn burst_house(&mut self, house: HouseBox, random: &mut CosmeticRandom) {
         let [paint, trim, roof] = house.paints;
         let center = house.center.as_dvec3();
         let (half_w, half_d) = (f64::from(house.half_w), f64::from(house.half_d));
@@ -512,26 +542,31 @@ impl WoodChips {
             let offset = (random.next_f64() * 2.0 - 1.0) * half * 0.9;
             let roll = random.next_f64();
             let eave = i < HOUSE_BURST_SHINGLES;
+            let chunk = !eave && i < HOUSE_BURST_SHINGLES + HOUSE_BURST_CHUNKS;
             let (cut, color) = if eave {
                 (SHINGLE, hex_to_linear(roof))
-            } else if roll < 0.3 {
+            } else if chunk {
+                (WALL_CHUNK, hex_to_linear(paint))
+            } else if roll < 0.35 {
                 (SIDING_BOARD, hex_to_linear(paint))
-            } else if roll < 0.42 {
+            } else if roll < 0.45 {
                 (BOARD, hex_to_linear(trim))
-            } else if roll < 0.7 {
+            } else if roll < 0.75 {
                 (
                     pick_cut(random, BURST_MIX),
                     wood_color(random, BURST_MIX, paint),
                 )
             } else {
-                let [pale, dark] = PLASTER.map(hex_to_linear);
+                let [pale, dark] = HOUSE_PLASTER.map(hex_to_linear);
                 let k = random.next_f64() as f32;
                 (
                     PLASTER_LUMP,
                     [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
                 )
             };
-            let color = shade(color, 0.78 + random.next_f64() * 0.25);
+            let dust = hex_to_linear(HOUSE_BURST_DUST.0);
+            let shaded = shade(color, 0.66 + random.next_f64() * 0.2);
+            let color = [0, 1, 2].map(|c| shaded[c] + (dust[c] - shaded[c]) * HOUSE_BURST_DUST.1);
             // Shingles slide off the eaves, over the walls; the rest burst out
             // of the walls themselves.
             let (height, beyond) = if eave {
@@ -738,6 +773,16 @@ impl WoodChips {
 
     /// Advance every piece and rewrite the records when anything moved.
     pub fn update(&mut self, dt: f64, random: &mut CosmeticRandom) {
+        let mut k = 0;
+        while k < self.collapsing.len() {
+            self.collapsing[k].1 -= dt;
+            if self.collapsing[k].1 <= 0.0 {
+                let (house, _) = self.collapsing.swap_remove(k);
+                self.burst_house(house, random);
+            } else {
+                k += 1;
+            }
+        }
         let step = dt.min(MAX_STEP);
         let mut moved = self.changed;
         for pieces in [&mut self.wood, &mut self.straw] {
@@ -1056,8 +1101,11 @@ mod tests {
             height: 4.6,
             paints: [0xe8dcc0, 0xe6e0d4, 0x82996a],
         };
-        chips.house_burst(house, &mut random);
-        assert_eq!(chips.len(), hit + HOUSE_BURST_PIECES);
+        let before = chips.len();
+        chips.house_burst(house);
+        assert_eq!(chips.len(), before);
+        chips.update(HOUSE_BURST_DELAY + 0.01, &mut random);
+        assert_eq!(chips.len(), before + HOUSE_BURST_PIECES);
     }
 
     #[test]

@@ -231,10 +231,13 @@ pub(super) fn wall_breaks(
             for i in 0..count {
                 let q = a + (b - a) * ((f64::from(i) + rng.range(0.25, 0.75)) / f64::from(count));
                 let reach = rng.range(0.06, 0.3);
-                // A clapboard torn off long, bent a little out of the face.
+                // A board torn off long inside the wall's thickness, between the
+                // siding and the lining: hidden while the cottage stands whole, so
+                // its facade shows the breaches and not every crack it will part
+                // along, and bristling from the torn edge once the shard falls.
                 let along = plane.s * n.x + plane.t * n.y;
                 let up = plane.s * -n.y + plane.t * n.x;
-                let center = at(q + n * reach / 2.0, 0.015) + out * rng.range(0.0, 0.04);
+                let center = at(q + n * reach / 2.0, rng.range(0.05, 0.15));
                 let frame = DMat4::from_cols(
                     along.extend(0.0),
                     up.extend(0.0),
@@ -243,9 +246,9 @@ pub(super) fn wall_breaks(
                 ) * pose(
                     DVec3::ZERO,
                     DVec3::new(
-                        rng.range(-0.3, 0.3),
-                        rng.range(-0.25, 0.25),
-                        rng.range(-0.2, 0.2),
+                        rng.range(-0.08, 0.08),
+                        rng.range(-0.08, 0.08),
+                        rng.range(-0.35, 0.35),
                     ),
                 );
                 kit.block(
@@ -309,13 +312,16 @@ pub(super) fn roof_breaks(
         for i in 0..count {
             let q = a + (b - a) * ((f64::from(i) + rng.range(0.25, 0.75)) / f64::from(count));
             let reach = rng.range(0.08, 0.32);
-            let tip = at(q + n * reach, 0.0);
-            let root = at(q, rng.range(-roof.thick, SHINGLE_EDGE * 0.5));
-            let droop = DVec3::Y * rng.range(-0.12, 0.02);
-            let coat = if rng.next() < 0.6 {
+            // Inside the deck, under the shingles, so the standing roof hides them
+            // until its slabs part.
+            let tip = at(q + n * reach, -0.035);
+            let root = at(q, rng.range(-roof.thick * 0.8, -0.03));
+            let droop = DVec3::Y * rng.range(-0.06, 0.0);
+            // Mostly broken shingles; the odd split board under them.
+            let coat = if rng.next() < 0.85 {
                 Surface::Roof
             } else {
-                Surface::Splinters
+                Surface::Wood
             };
             kit.block(
                 coat,
@@ -404,15 +410,15 @@ pub(super) fn chimney_breaks(
 /// (rad) the two halves of a wall shard and of a roof slab fold against each
 /// other along a break, how far its crack wanders off straight (m), and how far
 /// (m) the halves slip along it.
-const FOLD_WIDTH: f64 = 1.1;
-const REFOLD_WIDTH: f64 = 1.5;
-const WALL_FOLD: (f64, f64) = (0.2, 0.4);
-const ROOF_FOLD: (f64, f64) = (0.3, 0.52);
+const FOLD_WIDTH: f64 = 0.95;
+const REFOLD_WIDTH: f64 = 1.25;
+const WALL_FOLD: (f64, f64) = (0.1, 0.2);
+const ROOF_FOLD: (f64, f64) = (0.16, 0.3);
 const FOLD_WANDER: f64 = 0.18;
 const FOLD_SLIP: f64 = 0.04;
 /// Wall pieces taller than this (m) also break across, along a line wandering
 /// this far (m) off level at its knee.
-const ACROSS_HEIGHT: f64 = 1.3;
+const ACROSS_HEIGHT: f64 = 1.05;
 const ACROSS_WANDER: f64 = 0.2;
 
 /// A wall shard or broken roof slab cracked once more across itself and folded
@@ -496,42 +502,66 @@ fn fold_across(shape: &PieceShape, roof: &Roof, rng: &mut Random) -> Vec<(PieceS
             .collect();
         shape.region.intersect(&cells)
     });
-    // The hinge: along the break through the middle of the wall's thickness, or
-    // of the deck's under the shingles, at the knee.
-    let plane = &shape.plane;
-    let out = plane.s.cross(plane.t);
-    let at = plane.origin + plane.s * knee.x + plane.t * knee.y;
-    let pivot = if wall {
-        at - out * WALL_EDGE / 2.0
-    } else {
-        DVec3::new(at.x, roof.top(at.x, at.z) - roof.thick / 2.0, at.z)
-    };
-    let axis = plane.s;
-    // A wall buckles either way; a roof sags along its snapped rafters.
-    let sign = if !wall || rng.next() < 0.5 { -1.0 } else { 1.0 };
+    // The hinge: along the break on the wall's face, or on the roof's shingles, at
+    // the knee, so the two parts crease in behind it ([`crease`]).
+    let pivot = hinge(shape, roof, knee);
     let (low, high) = if wall { WALL_FOLD } else { ROOF_FOLD };
-    let angle = rng.range(low, high) * sign;
+    let angle = rng.range(low, high) / 2.0;
+    [below, above]
+        .into_iter()
+        .map(|region| {
+            let part = PieceShape {
+                region,
+                ..shape.clone()
+            };
+            let fold = crease(&part, roof, pivot, shape.plane.s, angle);
+            (part, fold)
+        })
+        .collect()
+}
+
+/// A point on a part's outer surface over its plane point `q`: a wall's face, or
+/// a roof's shingles.
+fn hinge(shape: &PieceShape, roof: &Roof, q: DVec2) -> DVec3 {
+    let plane = &shape.plane;
+    let p = plane.origin + plane.s * q.x + plane.t * q.y;
+    if shape.piece.part.is_roof() {
+        DVec3::new(p.x, roof.top(p.x, p.z) + SHINGLE_EDGE * 0.6, p.z)
+    } else {
+        p
+    }
+}
+
+/// The fold that turns one side of a break `angle` about the hinge line through
+/// `pivot` along `axis`, the way that carries it in behind the part's outer
+/// surface (into a wall, under a roof): the faces stay joined along the break
+/// and crease there, so a cottage standing in its shards shows its walls bowed
+/// and its roof sagging rather than every crack prised open, and the torn edges
+/// show only once the shards part.
+fn crease(part: &PieceShape, roof: &Roof, pivot: DVec3, axis: DVec3, angle: f64) -> DMat4 {
     let bend = |angle: f64| {
         DMat4::from_translation(pivot)
             * DMat4::from_axis_angle(axis, angle)
             * DMat4::from_translation(-pivot)
     };
-    vec![
-        (
-            PieceShape {
-                region: below,
-                ..shape.clone()
-            },
-            bend(-angle / 2.0),
-        ),
-        (
-            PieceShape {
-                region: above,
-                ..shape.clone()
-            },
-            bend(angle / 2.0),
-        ),
-    ]
+    let points = part.region.outline_points(&part.outline);
+    if points.is_empty() {
+        return DMat4::IDENTITY;
+    }
+    let middle = points.iter().copied().sum::<DVec2>() / points.len() as f64;
+    let at = hinge(part, roof, middle);
+    let plane = &part.plane;
+    let inward = if part.piece.part.is_roof() {
+        -DVec3::Y
+    } else {
+        -plane.s.cross(plane.t)
+    };
+    let fold = bend(angle);
+    if (fold.transform_point3(at) - at).dot(inward) >= 0.0 {
+        fold
+    } else {
+        bend(-angle)
+    }
 }
 
 /// One inner break of [`fold_shard`]: the shape's two halves and their folds, or
@@ -565,50 +595,25 @@ fn fold_once(
         ShardRegion::between(Some(&crack), None, None),
     ]
     .map(|side| shape.region.intersect(&side.cells));
-    // The hinge: the crack's line through the middle of the wall's or deck's
-    // thickness.
-    let plane = &shape.plane;
-    let out = plane.s.cross(plane.t);
-    let middle = |q: DVec2| {
-        let p = plane.origin + plane.s * q.x + plane.t * q.y;
-        if wall {
-            p - out * WALL_EDGE / 2.0
-        } else {
-            DVec3::new(p.x, roof.top(p.x, p.z) - roof.thick / 2.0, p.z)
-        }
-    };
-    let a = middle(DVec2::new(crack.at(lo.y), lo.y));
-    let b = middle(DVec2::new(crack.at(hi.y), hi.y));
+    // The hinge: the crack's line on the wall's face or the roof's shingles; each
+    // half creases in behind it, a wall panel buckling in and a roof slab's
+    // snapped rafters letting it sag, never tenting up like card.
+    let a = hinge(shape, roof, DVec2::new(crack.at(lo.y), lo.y));
+    let b = hinge(shape, roof, DVec2::new(crack.at(hi.y), hi.y));
     let axis = (b - a).normalize_or(DVec3::Y);
     let pivot = (a + b) / 2.0;
     let (low, high) = if wall { WALL_FOLD } else { ROOF_FOLD };
-    // A wall panel buckles either way; a roof slab's snapped rafters let it sag,
-    // its halves draping down off the crack over whatever it lies on, never
-    // tenting up like card.
-    let sign = if rng.next() < 0.5 || !wall { -1.0 } else { 1.0 };
-    let angle = rng.range(low, high) * sign;
+    let angle = rng.range(low, high) / 2.0;
     let slip = axis * rng.range(-FOLD_SLIP, FOLD_SLIP);
-    let bend = |angle: f64| {
-        DMat4::from_translation(pivot)
-            * DMat4::from_axis_angle(axis, angle)
-            * DMat4::from_translation(-pivot)
-    };
-    vec![
-        (
-            PieceShape {
-                region: left,
-                ..shape.clone()
-            },
-            bend(angle / 2.0),
-        ),
-        (
-            PieceShape {
-                region: right,
-                ..shape.clone()
-            },
-            DMat4::from_translation(slip) * bend(-angle / 2.0),
-        ),
-    ]
+    let [left, right] = [left, right].map(|region| PieceShape {
+        region,
+        ..shape.clone()
+    });
+    let (left_fold, right_fold) = (
+        crease(&left, roof, pivot, axis, angle),
+        DMat4::from_translation(slip) * crease(&right, roof, pivot, axis, angle),
+    );
+    vec![(left, left_fold), (right, right_fold)]
 }
 
 /// How much a collapse piece's paint varies across it (darkest, range): patches

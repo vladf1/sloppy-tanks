@@ -567,7 +567,7 @@ const STUB_LEAN: (f64, f64) = (0.12, 0.32);
 const STUB_LEAN_TIME: f64 = 0.3;
 const STUB_RELEASE: f64 = 3.5;
 /// The chance a gable wall's upper shard folds in under the roof's rake.
-const GABLE_FALLS_IN: f64 = 0.4;
+const GABLE_FALLS_IN: f64 = 0.8;
 
 /// How fast (m/s) an upper wall shard starts down as the wall under it gives way,
 /// and how fast it is carried clear of the stub under it falling in and out.
