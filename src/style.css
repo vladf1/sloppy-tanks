@@ -3248,7 +3248,8 @@ html:not(.phone) #toast[data-tone="death"] {
   min-height: 0;
 }
 /* An empty list says why, in the space the rooms would take: still scanning, nothing
-   open yet (so create one), or the server offline. */
+   open yet (so create one), or the server offline. It is as tall as its tallest state
+   (icon, line and hint), so the hint arriving with a state never grows Battle Setup. */
 .room-empty {
   display: none;
   flex: 1;
@@ -3256,7 +3257,7 @@ html:not(.phone) #toast[data-tone="death"] {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: 96px;
+  min-height: 112px;
   padding: 12px;
   color: #8eaac4;
   text-align: center;
