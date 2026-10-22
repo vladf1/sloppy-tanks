@@ -24,7 +24,7 @@ import { controlsMarkup, hudIcon, hudMarkup, menuMarkup } from "./ui-markup";
 import { fitPanels } from "./panel-fit";
 import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
-export const MENU_READY_STATUS = "Ready when you are";
+export const MENU_READY_STATUS = "Arena ready";
 /** Seconds the hit marker shows after the player's shell lands. */
 const HIT_MARKER_TIME = 0.28;
 /** Seconds the elimination banner shows after the player wrecks a tank. */
@@ -96,7 +96,7 @@ export class UI {
     }
     const hint = this.battleSetup.querySelector(".startup-hint");
     if (hint) {
-      hint.textContent = "Choose your next battlefield.";
+      hint.textContent = "";
     }
     const startButton = this.battleSetup.querySelector<HTMLButtonElement>("#start")!;
     startButton.disabled = false;

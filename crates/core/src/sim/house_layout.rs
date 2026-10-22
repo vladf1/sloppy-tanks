@@ -170,6 +170,9 @@ pub struct HouseStyle {
     /// the roof reads as a T from above.
     pub wing: bool,
     pub shutters: Shutters,
+    /// A front-gable cottage's door wall carries a full shed porch roof on
+    /// brackets instead of the small pedimented canopy.
+    pub porch: bool,
     /// Wall top (the eave line) as a fraction of the ridge height: lower walls
     /// under a steep attic roof, higher ones under a shallow one.
     pub eave: f64,
@@ -185,6 +188,7 @@ const fn style(
     dormers: u32,
     wing: bool,
     shutters: Shutters,
+    porch: bool,
     eave: f64,
 ) -> HouseStyle {
     HouseStyle {
@@ -199,15 +203,18 @@ const fn style(
         dormers,
         wing,
         shutters,
+        porch,
         eave,
     }
 }
 
 /// The village's house types, ordered so neighbours in the table differ in form,
 /// finish, colour and roof pitch; [`HouseDesign::facing`] picks one per cottage.
-/// The paints keep to one weathered coastal-village palette: chalky whites, cream,
-/// sage, ochre, slate blue and one oxblood, under charcoal, slate, cedar and
-/// rust-red roofs, so no two hues shout at each other across the green.
+/// The paints keep to one weathered village palette held apart from the teams'
+/// red and blue and from the grass and dirt: chalky whites, cream, putty, ochre,
+/// sage and a grey-green under roofs of charcoal, graphite, slate and pale
+/// weathered zinc, so from overhead every roof stands off the ground by value
+/// and none reads as a team marker.
 #[rustfmt::skip]
 pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use DoorWall::{Eave, Gable as Front};
@@ -217,22 +224,25 @@ pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use WallFinish::{Brick, Clapboard};
     [
         // Cream clapboard, bottle-green plank shutters, a steep charcoal roof and dormers.
-        style(Gable, Front, Shingles, Clapboard, [0xe6dcc6, 0xf6f2e8, 0x2f5040, 0x3b4048], 1, false, Board, 0.6),
+        style(Gable, Front, Shingles, Clapboard, [0xe6dcc6, 0xf6f2e8, 0x2f5040, 0x4a4f57], 1, false, Board, false, 0.6),
         // Soft red brick under a low slate hip roof, navy door and louvres.
-        style(Hip, Front, Shingles, Brick, [0xeadccc, 0xece4d2, 0x24385a, 0x5a626a], 0, false, Louvred, 0.72),
-        // Sage side-gable with an oxblood door under a cross gable and weathered
-        // cedar shingles, a dormer lighting the back of the attic.
-        style(Gable, Eave, Shingles, Clapboard, [0x9aa88a, 0xf1ead8, 0x6a2a24, 0x7a5a42], 3, true, Board, 0.6),
-        // Oxblood front gable under a dark standing-seam roof.
-        style(Gable, Front, Seams, Clapboard, [0x7d4a3e, 0xefe8da, 0x2e2c2a, 0x464c52], 0, false, None, 0.68),
-        // Ochre hip cottage, umber shingles.
-        style(Hip, Front, Shingles, Clapboard, [0xcfad6c, 0xf6f2e8, 0x5c3c22, 0x6a4a34], 0, false, Board, 0.7),
-        // Slate-blue side-gable with navy louvres and a cross gable under charcoal.
-        style(Gable, Eave, Shingles, Clapboard, [0x8098aa, 0xf6f2e8, 0x22314d, 0x3a3e44], 0, true, Louvred, 0.62),
-        // Chalk-white front gable under a rust-red standing-seam roof, black shutters.
-        style(Gable, Front, Seams, Clapboard, [0xeeebe3, 0xffffff, 0x1d2622, 0x7a4a3e], 2, false, Board, 0.6),
-        // Brick side-gable with mossy slate shingles, green louvres and a cross gable.
-        style(Gable, Eave, Shingles, Brick, [0xe2d0be, 0xe8dfca, 0x2f4b3a, 0x56604c], 0, true, Louvred, 0.64),
+        style(Hip, Front, Shingles, Brick, [0xd9d0c6, 0xece4d2, 0x24385a, 0x5a626a], 0, false, Louvred, false, 0.72),
+        // Sage side-gable with an oxblood door under a cross gable and dark slate
+        // shingles, a dormer lighting the back of the attic.
+        style(Gable, Eave, Shingles, Clapboard, [0x9fa98e, 0xf1ead8, 0x6a2a24, 0x4a535c], 3, true, Board, false, 0.6),
+        // Putty front gable with a shed porch over the door, under a pale
+        // weathered-zinc standing-seam roof.
+        style(Gable, Front, Seams, Clapboard, [0xb8a184, 0xefe8da, 0x2e2c2a, 0x7c8282], 0, false, None, true, 0.68),
+        // Ochre hip cottage under graphite shingles.
+        style(Hip, Front, Shingles, Clapboard, [0xcfad6c, 0xf6f2e8, 0x5c3c22, 0x585350], 0, false, Board, false, 0.7),
+        // Grey-green side-gable with black louvres and a cross gable under pale, weathered
+        // cedar shingles gone silver.
+        style(Gable, Eave, Shingles, Clapboard, [0x9db0a6, 0xf6f2e8, 0x232a28, 0x8a8276], 0, true, Louvred, false, 0.62),
+        // Chalk-white front gable with a porch, under a zinc standing-seam roof and
+        // black shutters.
+        style(Gable, Front, Seams, Clapboard, [0xeeebe3, 0xffffff, 0x1d2622, 0x7f8584], 2, false, Board, true, 0.6),
+        // Sand clapboard side-gable with graphite shingles, green louvres and a cross gable.
+        style(Gable, Eave, Shingles, Clapboard, [0xd8c8a2, 0xf3eee2, 0x2f4b3a, 0x55504c], 0, true, Louvred, false, 0.64),
     ]
 };
 
@@ -513,7 +523,7 @@ const STUB: (f64, f64) = (0.3, 0.72);
 /// Clearance between neighbouring shards' colliders across a crack.
 const CRACK_GAP: f64 = 0.02;
 /// Rafters hang this far under a roof deck; a slab's collider takes them in only
-/// inside the wall line, clear of the wall tops it rests on.
+/// inside the wall line, clear of the wall tops.
 pub const RAFTER_DEPTH: f64 = 0.16;
 const RAFTER_INSET: f64 = 0.45;
 
@@ -908,8 +918,15 @@ impl HouseDesign {
             }
         }
         let (xe, ze, rh) = (roof.eave_x, roof.rake_z, roof.ridge_half);
-        // A slab's collider: its deck and shingles, and the rafters under it inside
-        // the wall line.
+        // A slab's collider: its deck and shingles inside the walls, and the rafters
+        // under it inside the wall line. The eaves and rakes that overhang the walls
+        // stay out of it: resting on the wall tops, they would catch each wall shard
+        // tipping out from under the roof and hold it up as a post under a slab many
+        // times its weight. Clear of the walls, the slab drops between them.
+        let (inside_w, inside_d) = (
+            self.w / 2.0 - WALL_DEPTH - GAP,
+            self.d / 2.0 - WALL_DEPTH - GAP,
+        );
         let lift = |x: f64, z: f64, inside: bool| {
             let top = roof.top(x, z);
             let low = top - roof.thick + GAP;
@@ -955,20 +972,16 @@ impl HouseDesign {
                     right.map(|c| straight(c, false)).as_ref(),
                     None,
                 );
-                let points = core.outline_points(&outline);
+                let points = core.outline_points(&within(&outline, inside_d, inside_w));
                 // The rafters' reach, cut off at the wall line.
-                let rafters = core.outline_points(&[
-                    DVec2::new(-ze, 0.0),
-                    DVec2::new(ze, 0.0),
-                    DVec2::new(ze, wall_line),
-                    DVec2::new(-ze, wall_line),
-                ]);
+                let rafters = core.outline_points(&within(&outline, inside_d, wall_line));
                 let mut hull: Vec<DVec3> = points
                     .iter()
                     .flat_map(|q| lift(side * q.y, q.x, false))
                     .chain(rafters.iter().map(|q| lift(side * q.y, q.x, true)[1]))
                     .collect();
-                // The slab carrying the cross gable falls with it on top.
+                // The slab carrying the cross gable falls with it on top, the gable
+                // too held inside the wall it fronts.
                 if let Some(wing) = self.wing().filter(|_| side > 0.0) {
                     let (low, high) = points
                         .iter()
@@ -976,7 +989,11 @@ impl HouseDesign {
                             (l.min(q.x), h.max(q.x))
                         });
                     if (low..high).contains(&wing.z) {
-                        hull.extend(wing.hull(&roof));
+                        hull.extend(
+                            wing.hull(&roof)
+                                .into_iter()
+                                .map(|p| DVec3::new(p.x.min(inside_w), p.y, p.z)),
+                        );
                     }
                 }
                 pieces.push(PieceShape::new(
@@ -1030,7 +1047,7 @@ impl HouseDesign {
                         None,
                     );
                     let hull: Vec<DVec3> = core
-                        .outline_points(&outline)
+                        .outline_points(&within(&outline, inside_w, inside_d))
                         .iter()
                         .flat_map(|q| lift(q.x, end * q.y, false))
                         .collect();
@@ -1114,6 +1131,21 @@ impl HouseDesign {
     pub fn open_floor(&self) -> f64 {
         self.d - HOUSE_HEAP.inset - HOUSE_HEAP.depth
     }
+}
+
+/// The part of a roof slope's plan `outline` (convex; `s` along the slope from
+/// its middle, `t` out from the ridge) within `along` of the middle and `across`
+/// of the ridge.
+fn within(outline: &[DVec2], along: f64, across: f64) -> Vec<DVec2> {
+    let side = |a: DVec2, b: DVec2| Side::through(a, b, DVec2::ZERO, EdgeKind::Band);
+    let inside = ShardRegion {
+        cells: vec![vec![
+            side(DVec2::new(-along, 0.0), DVec2::new(-along, 1.0)),
+            side(DVec2::new(along, 0.0), DVec2::new(along, 1.0)),
+            side(DVec2::new(0.0, across), DVec2::new(1.0, across)),
+        ]],
+    };
+    inside.outline_points(outline)
 }
 
 /// A straight crack at the extreme of `crack` on its far side from the shard it
@@ -1244,6 +1276,25 @@ mod tests {
             for crack in design.roof_cracks(1.0) {
                 let z = crack.points[1].x;
                 assert!((z - wing.z).abs() > wing.half, "{z} {wing:?}");
+            }
+        }
+    }
+
+    /// No roof slab's collider reaches over a wall: a wall shard tipping out from
+    /// under an eave resting on its top would be held standing under the slab.
+    #[test]
+    fn roof_slab_colliders_stay_inside_the_walls() {
+        for (x, z, w, d, h) in village() {
+            let design = HouseDesign::of(x, z, w, d, h);
+            let (inside_w, inside_d) = (design.w / 2.0 - WALL_DEPTH, design.d / 2.0 - WALL_DEPTH);
+            for slab in design.pieces().iter().filter(|p| p.piece.part.is_roof()) {
+                for p in &slab.hull {
+                    assert!(
+                        p.x.abs() < inside_w && p.z.abs() < inside_d,
+                        "{x} {z} {:?} {p}",
+                        slab.piece
+                    );
+                }
             }
         }
     }

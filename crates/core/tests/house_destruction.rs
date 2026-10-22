@@ -310,3 +310,55 @@ fn every_cottage_collapse_comes_to_rest_with_its_walls_lying_down() {
     }
     assert!(standing.len() <= 3, "{standing:?}");
 }
+
+/// The roof pancakes onto the wreck: its slabs come down as they stood and lie
+/// shingles up on the pile, never flipped onto their rafters or left on edge.
+#[test]
+fn every_cottage_roof_comes_down_shingles_up() {
+    use sloppy_core::sim::house_layout::HousePart;
+    let village = village();
+    let mut flipped = Vec::new();
+    for house in houses(&village) {
+        let c = &village.covers[house];
+        let (x, z, w, d, h) = (c.x, c.z, c.w, c.d, c.h);
+        let mut s = Simulation::with_seed(731.0);
+        clear_arena(&mut s, &[]);
+        let house = s.add_cover(&CoverDef::house(x, z, w, d, h, 0xb87b4c));
+        s.nav.rebuild(&s.covers, None);
+        s.start();
+        s.world.step();
+        let pitch = HouseDesign::of(x, z, w, d, h).roof().pitch;
+        s.damage_cover(house, 100_000.0, 999, Team::Blue, None, None);
+        // Coming down, the slabs keep the roof's pitch.
+        tick(&mut s, 0.5);
+        for fragment in &s.fragments {
+            if fragment.house_piece.is_some_and(|p| p.part.is_roof()) {
+                let q = s.world.bodies[fragment.body].rotation();
+                let turn = HouseDesign::of(x, z, w, d, h).yaw() as f32;
+                let start = glam::Quat::from_rotation_y(turn);
+                assert!(
+                    q.dot(start).abs() > 0.999,
+                    "{x} {z}: the roof falls as it stood"
+                );
+            }
+        }
+        tick(&mut s, 3.5);
+        for fragment in &s.fragments {
+            let Some(piece) = fragment.house_piece.filter(|p| p.part.is_roof()) else {
+                continue;
+            };
+            let top = match piece.part {
+                HousePart::RightRoof => glam::Vec3::new(pitch as f32, 1.0, 0.0),
+                HousePart::LeftRoof => glam::Vec3::new(-pitch as f32, 1.0, 0.0),
+                HousePart::FrontRoof => glam::Vec3::new(0.0, 1.0, pitch as f32),
+                _ => glam::Vec3::new(0.0, 1.0, -pitch as f32),
+            }
+            .normalize();
+            let up = (*s.world.bodies[fragment.body].rotation() * top).y;
+            if up < 0.3 {
+                flipped.push(format!("{x} {z}: {} ({up:.2})", String::from(piece)));
+            }
+        }
+    }
+    assert!(flipped.len() <= 2, "{flipped:?}");
+}
