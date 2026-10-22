@@ -47,6 +47,8 @@ const STAINED_WOOD: u32 = 0x76512f;
 const LAMP_GLASS: u32 = 0xf1d18f;
 /// Timber freshly split where a building broke apart, paler than its stain.
 const SPLIT_TIMBER: u32 = 0xb48d5c;
+/// Blast soot on paint ([`Surface::Soot`]).
+const SOOT: u32 = 0x4d443b;
 
 /// The finishes of a building, in draw order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -85,6 +87,9 @@ pub(super) enum Surface {
     Curtain,
     /// Freshly broken timber: the torn edges and splinters of a collapse.
     Splinters,
+    /// Soot a shell's blast left on a wall round its hole: a warm char black,
+    /// lighter than an unlit opening so the hole itself still reads darker.
+    Soot,
 }
 
 impl Finishes for Surface {
@@ -106,6 +111,7 @@ impl Finishes for Surface {
         Surface::Lamp,
         Surface::Curtain,
         Surface::Splinters,
+        Surface::Soot,
     ];
 }
 
@@ -193,6 +199,7 @@ pub(super) fn surface_material(surface: Surface, palette: &Palette) -> Arc<Mater
         Surface::Wood => finish(STAINED_WOOD, MATTE),
         Surface::Curtain => finish(CURTAIN, MATTE),
         Surface::Splinters => finish(SPLIT_TIMBER, MATTE),
+        Surface::Soot => finish(SOOT, MATTE),
     }
 }
 

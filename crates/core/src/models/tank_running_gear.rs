@@ -42,7 +42,7 @@ const PANEL_SEAM: f64 = 0.014;
 /// Road wheel, idler and roller facets: enough to read round close up.
 const WHEEL_SIDES: u32 = 9;
 const ROLLER_SIDES: u32 = 10;
-const HUB_BOLTS: u32 = 5;
+const HUB_BOLTS: u32 = 4;
 
 /// Rubber pads and skirt edges: near black.
 const RUBBER: u32 = 0x202122;
@@ -56,9 +56,9 @@ const TRACK_STEEL: u32 = 0x4a4844;
 /// than the hull, so the running gear reads as its own material under the painted
 /// armor: a row of dark discs ringed by black rubber over the dark belt, each with
 /// a bright hub cap and bolt heads catching the light in its centre.
-const WHEEL_DISC: u32 = 0x404342;
-const HUB_STEEL: u32 = 0x7d7a73;
-const HUB_BOLT: u32 = 0x9c978d;
+const WHEEL_DISC: u32 = 0x4a4c48;
+const HUB_STEEL: u32 = 0x9a968c;
+const HUB_BOLT: u32 = 0xb8b2a6;
 /// The sprocket and return rollers: bare dark steel.
 const SPROCKET_STEEL: u32 = 0x55585a;
 /// Dirty track steel, wheels and rubber share one vertex-colored material, so a
@@ -1305,9 +1305,9 @@ mod tests {
 
     /// Triangles of every shown part but the recognition panels and turret bands,
     /// which burn away on wrecks, the embers wrecks add in their hatches, and the
-    /// live vehicle's contact shadow.
+    /// live vehicle's contact shadow and turret occlusion.
     fn triangles(node: &Node) -> usize {
-        if !node.visible || node.name == "contact-shadow" {
+        if !node.visible || node.name == "contact-shadow" || node.name == part::TURRET_OCCLUSION {
             return 0;
         }
         let own = node.drawable.as_ref().map_or(0, |drawable| {

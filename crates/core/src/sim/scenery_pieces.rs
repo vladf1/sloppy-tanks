@@ -613,10 +613,10 @@ const ROOF_GIVE_DROP: f32 = 0.5;
 /// How fast (m/s) the ridge slabs start down as the roof gives, ahead of the eave
 /// slabs held up on the walls: the ridge snaps and caves into the house first, so
 /// the roof comes down broken, not as one sheet that lands whole on the pile.
-const RIDGE_GIVE_DROP: f32 = 1.8;
+const RIDGE_GIVE_DROP: f32 = 2.4;
 /// The twist (rad/s about its face's normal) a ridge slab takes as it is freed to
 /// turn, each strip the other way, so the broken ridge lies skewed, not straight.
-const RIDGE_SNAP_TWIST: f32 = 0.5;
+const RIDGE_SNAP_TWIST: f32 = 0.65;
 /// How fast the chimney topples off the roof, and how fast (m/s) it is carried
 /// into the wreck: gently, so its stack lands broken on the pile.
 const CHIMNEY_TIP: (f64, f64) = (2.0, 2.6);

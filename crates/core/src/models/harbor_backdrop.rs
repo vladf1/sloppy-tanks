@@ -6,7 +6,7 @@
 //! simulation's random stream.
 //!
 //! The coast is split into quarter sectors, each merged into one mesh drawn with the
-//! apron effect's far-shore mode ([`ApronMode::Shore`]): it lights the vertex
+//! far-shore effect ([`ApronMode::Shore`], `HARBOR_SHORE`): it lights the vertex
 //! colors itself and hazes them by their distance from the eye, so the layers stay
 //! apart instead of drowning in the scene fog, and red warning lights on the
 //! cranes, masts and turbines shine through. A view draws only the sectors in
@@ -146,7 +146,7 @@ const SHORELINE_ROWS: usize = 3;
 const CRAG_ROWS: std::ops::RangeInclusive<usize> = 5..=7;
 /// Normals are smoothed across the coast's facets that meet at less than this
 /// angle, radians: rolling hills, with the quay walls and crags kept sharp.
-const COAST_CREASE: f64 = 0.7;
+const COAST_CREASE: f64 = 1.0;
 /// Bare rock showing through on the steepest ground.
 const ROCK: u32 = 0x7d786c;
 
@@ -169,9 +169,9 @@ fn shore_meshes() -> [Option<Node>; 4] {
             } else {
                 1.0
             };
-            let r = radius + offset + jitter * rough * if row < SHORELINE_ROWS { 0.6 } else { 4.0 };
-            let y = SEA_LEVEL + height + jitter * rough * ridge * 0.06;
-            let shade = 0.84 + hash(step as u32 * 16 + row as u32, 23) * 0.26;
+            let r = radius + offset + jitter * rough * if row < SHORELINE_ROWS { 0.6 } else { 2.2 };
+            let y = SEA_LEVEL + height + jitter * rough * ridge * 0.03;
+            let shade = 0.93 + hash(step as u32 * 16 + row as u32, 23) * 0.1;
             let craggy = CRAG_ROWS.contains(&row) && ridge > 22.0 && hash(step as u32, 29) > 0.55;
             let color = if craggy && quay_amount(theta) == 0.0 {
                 ROCK
@@ -269,8 +269,9 @@ fn ring_sectors(
 /// backdrop part keeps its uvs within 0..1): [`FACADE_FLAG`] draws a grid of
 /// windows over a tower's walls, [`STACK_FLAG`] the boxes of a container stack,
 /// each tier and bay its own line's color, and [`TERRAIN_FLAG`] the countryside
-/// (fields, woods and rock) over the green of the coast; the pines carry
-/// [`TREE_FLAG`] in their own mesh.
+/// (fields, woods and rock) over the green of the coast, [`TANK_FLAG`],
+/// [`SILO_FLAG`] and [`CLAD_FLAG`] the welded, slipformed and clad surfaces of the
+/// industry; the pines carry [`TREE_FLAG`] in their own mesh.
 fn flagged(mut part: Node, flag: f32) -> Node {
     if let Some(drawable) = &mut part.drawable {
         let mut mesh = (*drawable.mesh).clone();
@@ -287,6 +288,12 @@ const STACK_FLAG: f32 = 20.0;
 const TERRAIN_FLAG: f32 = 30.0;
 /// The far pines, lit mostly by the sky so the woods read as dark masses.
 const TREE_FLAG: f32 = 40.0;
+/// The tank farm's steel: welded courses, rust runs and a deep shaded side.
+const TANK_FLAG: f32 = 50.0;
+/// Slipformed concrete: rain-streaked bins rounded by a deep shaded side.
+const SILO_FLAG: f32 = 60.0;
+/// Profiled sheet cladding: ribbed walls dirtied at the foot.
+const CLAD_FLAG: f32 = 70.0;
 
 /// Ridge height of the mountain range at an angle, metres above the sea.
 fn range_height(theta: f64) -> f64 {
@@ -297,28 +304,32 @@ fn range_height(theta: f64) -> f64 {
 /// The blue mountain range behind the coast, in its four sectors: a foot, the
 /// ridge and the far slope, with darker gullies and paler crests.
 fn range_meshes() -> [Option<Node>; 4] {
-    const ROWS: [(f64, f64, u32); 4] = [
-        (0.0, 0.0, 0x56656c),
-        (0.45, 0.62, 0x4c5d68),
-        (0.7, 1.0, 0x667a86),
-        (1.0, 0.4, 0x5b6d79),
+    // Forest dark on the lower slopes, thinning to grey scree and a pale crest of
+    // bare rock that catches the sky, so each ridge reads against the one behind.
+    const ROWS: [(f64, f64, u32); 6] = [
+        (0.0, 0.0, 0x34493f),
+        (0.22, 0.3, 0x2f4a3e),
+        (0.42, 0.6, 0x3d5550),
+        (0.58, 0.84, 0x6f7f84),
+        (0.7, 1.0, 0x9aa6a8),
+        (1.0, 0.4, 0x5f707a),
     ];
     ring_sectors(
         ROWS.len(),
         |step, row| {
             let theta = step_angle(step);
             let (depth, fraction, color) = ROWS[row];
-            let jitter = hash(step as u32 * 4 + row as u32, 131) - 0.5;
-            let r = RANGE_RADIUS + depth * RANGE_DEPTH + jitter * 10.0;
-            let y = SEA_LEVEL - 4.0 + range_height(theta) * fraction * (1.0 + jitter * 0.25);
-            let shade = 0.85 + hash(step as u32 * 4 + row as u32, 137) * 0.3;
+            let jitter = hash(step as u32 * 8 + row as u32, 131) - 0.5;
+            let r = RANGE_RADIUS + depth * RANGE_DEPTH + jitter * 5.0;
+            let y = SEA_LEVEL - 4.0 + range_height(theta) * fraction * (1.0 + jitter * 0.12);
+            let shade = 0.93 + hash(step as u32 * 8 + row as u32, 137) * 0.12;
             (
                 [r * theta.cos(), y, r * theta.sin()],
                 scale_hex_color(color, shade),
             )
         },
         |theta, next| land_amount(theta) <= 0.0 && land_amount(next) <= 0.0,
-        0.0,
+        TERRAIN_FLAG,
     )
 }
 
@@ -397,53 +408,111 @@ fn profile_row(theta: f64, row: usize) -> (f64, f64, u32) {
 const CITY_PAINT: [u32; 7] = [
     0xdfe3e4, 0xb8c6cf, 0x8fa4b4, 0xe8ddc9, 0x9db8c4, 0x70869a, 0xc9b9a3,
 ];
+/// Curtain-wall glass of the newer towers: dark blue-greys that mirror the sky
+/// through the effect's panes, so the skyline is not one pale pastel block.
+const CITY_GLASS: [u32; 3] = [0x48606f, 0x5a6f78, 0x3d5161];
+/// Rooftop plant and parapets.
+const CITY_PLANT: u32 = 0x8d9393;
 
-/// Towers across the bay to the east, banded with floors of glazing.
+/// One tower: a podium, its shaft banded with floors of glazing, a set-back
+/// crown on the taller ones, rooftop plant and, on the tallest, a mast with an
+/// aircraft warning light. Founded below the slope so it never floats on the
+/// facets.
+fn city_tower(i: u32, seed: u32, height: f64, w: f64, d: f64) -> Node {
+    let glass = hash(i, seed + 21) > 0.62;
+    let color = if glass {
+        CITY_GLASS[(hash(i, seed + 23) * CITY_GLASS.len() as f64) as usize % CITY_GLASS.len()]
+    } else {
+        CITY_PAINT[(hash(i, seed + 17) * CITY_PAINT.len() as f64) as usize % CITY_PAINT.len()]
+    };
+    let mut tower = Node::group("");
+    let podium = (height * 0.22).clamp(3.0, 7.0);
+    put(
+        &mut tower,
+        box_part(
+            w * 1.25,
+            podium + FOOTING,
+            d * 1.2,
+            scale_hex_color(color, 0.8),
+            0.0,
+        ),
+        0.0,
+        (podium - FOOTING) / 2.0,
+        0.0,
+    );
+    // Its floors of windows are the far-shore effect's, drawn on the walls.
+    put(
+        &mut tower,
+        facade(box_part(w, height + FOOTING, d, color, 0.0)),
+        0.0,
+        (height - FOOTING) / 2.0,
+        0.0,
+    );
+    let mut roof = height;
+    if height > 18.0 && hash(i, seed + 29) > 0.35 {
+        let crown = height * (0.12 + 0.12 * hash(i, seed + 31));
+        put(
+            &mut tower,
+            facade(box_part(
+                w * 0.68,
+                crown,
+                d * 0.68,
+                scale_hex_color(color, 1.06),
+                0.0,
+            )),
+            w * 0.08,
+            height + crown / 2.0,
+            -d * 0.06,
+        );
+        roof += crown;
+    }
+    put(
+        &mut tower,
+        box_part(w * 0.36, 2.0, d * 0.4, CITY_PLANT, 0.0),
+        -w * 0.12,
+        roof + 1.0,
+        d * 0.1,
+    );
+    if roof > 26.0 {
+        put(
+            &mut tower,
+            box_part(0.35, 7.0, 0.35, 0xc9cccb, 0.0),
+            w * 0.18,
+            roof + 3.5,
+            0.0,
+        );
+        put(
+            &mut tower,
+            box_part(0.9, 0.9, 0.9, WARNING_LIGHT, 0.0),
+            w * 0.18,
+            roof + 7.2,
+            0.0,
+        );
+    }
+    tower
+}
+
+/// Towers across the bay to the east, banded with floors of glazing: a front row
+/// on the waterfront and a taller, hazier row behind it, highest round the
+/// centre, so the city reads as a skyline in depth rather than one cut-out row.
 fn city(sectors: &mut Sectors) {
-    for i in 0..44u32 {
-        let theta = -0.62 + 1.1 * hash(i, 3);
-        let inland = 10.0 + 50.0 * hash(i, 5);
-        let (x, y, z) = on_land(theta, inland);
-        let centre = 1.0 - (theta - (-0.05)).abs() / 0.6;
-        let height = 6.0 + hash(i, 7).powi(2) * 30.0 * (0.4 + 0.6 * centre.max(0.0));
-        let (w, d) = (5.0 + 5.0 * hash(i, 9), 5.0 + 5.0 * hash(i, 13));
-        let color = CITY_PAINT[(hash(i, 17) * CITY_PAINT.len() as f64) as usize % CITY_PAINT.len()];
-        let yaw = -theta + hash(i, 19) * 0.3;
-        let mut tower = Node::group("");
-        // Founded below the slope so no tower floats on the facets.
-        // Its floors of windows are the far-shore effect's, drawn on the walls.
-        put(
-            &mut tower,
-            facade(box_part(w, height + FOOTING, d, color, 0.0)),
-            0.0,
-            (height - FOOTING) / 2.0,
-            0.0,
-        );
-        put(
-            &mut tower,
-            box_part(w * 0.4, 2.4, d * 0.4, 0x9aa0a0, 0.0),
-            w * 0.15,
-            height + 1.2,
-            0.0,
-        );
-        // The tall ones carry a mast with an aircraft warning light.
-        if height > 22.0 {
-            put(
-                &mut tower,
-                box_part(0.35, 6.0, 0.35, 0xc9cccb, 0.0),
-                -w * 0.2,
-                height + 3.0,
-                0.0,
+    for (rows, seed, first_inland, reach, tallest) in
+        [(36u32, 3u32, 10.0, 40.0, 30.0), (28, 61, 55.0, 60.0, 46.0)]
+    {
+        for i in 0..rows {
+            let theta = -0.62 + 1.1 * hash(i, seed);
+            let inland = first_inland + reach * hash(i, seed + 2);
+            let (x, y, z) = on_land(theta, inland);
+            let centre = 1.0 - (theta - (-0.05)).abs() / 0.6;
+            let height = 6.0 + hash(i, seed + 4).powi(2) * tallest * (0.4 + 0.6 * centre.max(0.0));
+            let (w, d) = (
+                5.0 + 6.0 * hash(i, seed + 6),
+                5.0 + 6.0 * hash(i, seed + 10),
             );
-            put(
-                &mut tower,
-                box_part(0.9, 0.9, 0.9, WARNING_LIGHT, 0.0),
-                -w * 0.2,
-                height + 6.2,
-                0.0,
-            );
+            let yaw = -theta + hash(i, seed + 16) * 0.3;
+            let tower = city_tower(i, seed, height, w, d);
+            place_at(sectors, theta, rotated(tower, 0.0, yaw, 0.0), x, y - 0.5, z);
         }
-        place_at(sectors, theta, rotated(tower, 0.0, yaw, 0.0), x, y - 0.5, z);
     }
     // A low waterfront of sheds and offices in front of the towers.
     for i in 0..26u32 {
@@ -459,6 +528,123 @@ fn city(sectors: &mut Sectors) {
         );
         place_at(sectors, theta, shed, x, y + (h - FOOTING) / 2.0, z);
     }
+}
+
+/// A grain terminal on the western shore, the mid-ground skyline between the port
+/// and the hills: two staggered rows of slipformed silos, the tall headhouse at
+/// their end with the conveyor gallery along their tops, long sheds behind and a
+/// banded chimney.
+fn grain_terminal(sectors: &mut Sectors) {
+    const SILO_RADIUS: f64 = 3.1;
+    const SILO_HEIGHT: f64 = 19.0;
+    const SILO_STEP: f64 = 0.027;
+    const FIRST: f64 = 2.94;
+    // The bins stand on the low ground by the shore, their tops level along the
+    // gallery whatever the slope under each: the lowest foot sets the line.
+    let base = (0..2u32)
+        .flat_map(|row| {
+            (0..6u32).map(move |i| {
+                let theta = FIRST + SILO_STEP * (f64::from(i) + 0.5 * f64::from(row));
+                on_land(theta, 7.0 + 6.4 * f64::from(row)).1
+            })
+        })
+        .fold(f64::INFINITY, f64::min);
+    let top = base + SILO_HEIGHT;
+    for row in 0..2u32 {
+        let inland = 7.0 + 6.4 * f64::from(row);
+        for i in 0..6u32 {
+            let theta = FIRST + SILO_STEP * (f64::from(i) + 0.5 * f64::from(row));
+            let (x, y, z) = on_land(theta, inland);
+            let foot = y - FOOTING;
+            let silo = flagged(
+                cylinder_part(SILO_RADIUS, top - foot, 0xb5ad9b, 14),
+                SILO_FLAG,
+            );
+            place_at(sectors, theta, silo, x, (top + foot) / 2.0, z);
+            place_at(
+                sectors,
+                theta,
+                cylinder_part(SILO_RADIUS + 0.2, 0.7, 0x8f8c84, 14),
+                x,
+                top + 0.35,
+                z,
+            );
+        }
+    }
+    // The gallery along the front row's tops, to the headhouse.
+    let head_theta = FIRST - 0.03;
+    let (hx, hy, hz) = on_land(head_theta, 10.0);
+    let (ex, _, ez) = on_land(FIRST + SILO_STEP * 5.0, 7.0);
+    let mut works = Node::group("");
+    beam(
+        &mut works,
+        [hx, top + 2.2, hz],
+        [ex, top + 2.2, ez],
+        2.6,
+        0x9aa2a2,
+    );
+    let house = top + 10.0 - hy;
+    let headhouse = rotated(
+        facade(box_part(8.0, house + FOOTING, 9.0, 0xaaa391, 0.0)),
+        0.0,
+        -head_theta,
+        0.0,
+    );
+    put(&mut works, headhouse, hx, hy + (house - FOOTING) / 2.0, hz);
+    let cupola = rotated(
+        box_part(5.0, 3.0, 6.0, 0x7d8486, 0.0),
+        0.0,
+        -head_theta,
+        0.0,
+    );
+    put(&mut works, cupola, hx, top + 11.5, hz);
+    put(
+        &mut works,
+        box_part(1.0, 1.0, 1.0, WARNING_LIGHT, 0.0),
+        hx,
+        top + 13.5,
+        hz,
+    );
+    place(sectors, head_theta, works);
+    // Long sheds behind the silos, and the chimney of the mill.
+    for (i, (theta, inland, length)) in [(3.07, 22.0, 30.0), (2.88, 20.0, 32.0)]
+        .into_iter()
+        .enumerate()
+    {
+        let (x, y, z) = on_land(theta, inland);
+        let shed = rotated(
+            flagged(
+                box_part(length, 9.0 + FOOTING, 16.0, [0x7f9198, 0x9c8f78][i], 0.0),
+                CLAD_FLAG,
+            ),
+            0.0,
+            -theta + FRAC_PI_2,
+            0.0,
+        );
+        place_at(sectors, theta, shed, x, y + (9.0 - FOOTING) / 2.0, z);
+        let roof = rotated(
+            box_part(length + 0.6, 0.8, 16.6, 0x6f777a, 0.0),
+            0.0,
+            -theta + FRAC_PI_2,
+            0.0,
+        );
+        place_at(sectors, theta, roof, x, y + 9.4, z);
+    }
+    let theta = 2.86;
+    let (x, y, z) = on_land(theta, 30.0);
+    for band in 0..7 {
+        let color = if band % 2 == 0 { 0xe9e5dc } else { 0xb8453b };
+        let stack = cylinder_part(1.6 - f64::from(band) * 0.08, 6.0, color, 12);
+        place_at(sectors, theta, stack, x, y + 3.0 + f64::from(band) * 6.0, z);
+    }
+    place_at(
+        sectors,
+        theta,
+        box_part(1.0, 1.0, 1.0, WARNING_LIGHT, 0.0),
+        x,
+        y + 42.6,
+        z,
+    );
 }
 
 /// How far below its ground point a backdrop structure is founded, metres.
@@ -486,19 +672,15 @@ fn terminal(sectors: &mut Sectors) {
         );
         place_at(sectors, theta, stack, x, y + 1.3 * f64::from(levels), z);
     }
-    // Ship-to-shore cranes in a row along the berth, of two generations and
+    // Ship-to-shore cranes in a row along the berth, of three generations and
     // liveries, some working with their booms down over a ship and some idle with
-    // them raised: the terminal's silhouette.
-    for i in 0..6u32 {
+    // them raised at their own angles: the terminal's silhouette, never a row of
+    // clones.
+    for (i, &(livery, raise, tall)) in TERMINAL_CRANES.iter().enumerate() {
+        let i = i as u32;
         let theta = 0.56 + 0.105 * f64::from(i) + 0.03 * hash(i, 47);
         let (x, y, z) = on_land(theta, 3.0);
-        let (leg, trim) = CRANE_LIVERIES[(i as usize * 2 + 1) % CRANE_LIVERIES.len()];
-        let raise = if hash(i, 53) > 0.45 {
-            1.0 + 0.35 * hash(i, 59)
-        } else {
-            0.0
-        };
-        let tall = 1.0 + 0.25 * f64::from(i % 2);
+        let (leg, trim) = CRANE_LIVERIES[livery];
         let mut crane = terminal_crane(leg, trim, raise, tall);
         crane = rotated(crane, 0.0, FRAC_PI_2 - theta, 0.0);
         crane.scale = glam::DVec3::splat(0.72);
@@ -511,11 +693,26 @@ fn terminal(sectors: &mut Sectors) {
     place_at(sectors, theta, ship, x, SEA_LEVEL - 1.5, z);
 }
 
-/// Crane paint: legs and boom, and the machinery house trim.
-const CRANE_LIVERIES: [(u32, u32); 3] = [
+/// Crane paint: legs and boom, and the machinery house trim: the terminal's
+/// operators each run their own colours.
+const CRANE_LIVERIES: [(u32, u32); 4] = [
     (0xa8342c, 0xe5e2da),
     (0x2f5f8a, 0xe5e2da),
     (0xd9a63a, 0x3b4b54),
+    (0xd8d5ca, 0x2f5f8a),
+];
+
+/// The terminal's cranes along its berth: (livery, boom raise in radians, 0 for
+/// working with the boom down, and height). Each one stands apart: a working
+/// pair over the feeder, booms parked at different angles, an older short crane
+/// and the new tall ones.
+const TERMINAL_CRANES: [(usize, f64, f64); 6] = [
+    (0, 1.25, 1.0),
+    (1, 0.0, 1.12),
+    (2, 0.0, 0.92),
+    (3, 1.42, 1.3),
+    (0, 0.95, 1.05),
+    (1, 1.32, 1.22),
 ];
 
 /// A terminal's ship-to-shore crane in its own frame, the boom reaching toward
@@ -787,7 +984,10 @@ fn tank_farm(sectors: &mut Sectors) {
         // Each tank stands in its bund: a low concrete wall round a gravel floor.
         let bund = cylinder_part(radius + 2.2, 1.0 + FOOTING, 0x9d988a, 12);
         place_at(sectors, theta, bund, x, y + (1.0 - FOOTING) / 2.0, z);
-        let tank = cylinder_part(radius, height + FOOTING, 0xe6e4dc, 16);
+        let tank = flagged(
+            cylinder_part(radius, height + FOOTING, 0xd8d5ca, 16),
+            TANK_FLAG,
+        );
         place_at(
             sectors,
             theta,
@@ -833,40 +1033,93 @@ fn built_up(theta: f64) -> bool {
     (-0.75..0.52).contains(&theta) || (0.52..1.15).contains(&theta) || (1.3..1.95).contains(&theta)
 }
 
-/// A far pine: an open five-sided spire of unit radius and height standing on
-/// its base. Seen only from across the bay, it needs no base cap or more sides.
-fn pine_mesh() -> Arc<Mesh> {
-    static PINE: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
-    PINE.get_or_init(|| {
-        let mut positions = vec![0.0, 1.0, 0.0];
-        for i in 0..5 {
-            let a = TAU * f64::from(i) / 5.0;
-            positions.extend([a.cos(), 0.0, a.sin()]);
-        }
-        let indices = (0..5u32)
-            .flat_map(|i| [0, 1 + (i + 1) % 5, 1 + i])
-            .collect();
-        let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
-        soft_foliage_normals(&mut mesh);
-        mesh.uvs = vec![[0.0, TREE_FLAG]; mesh.positions.len()];
-        Arc::new(mesh)
-    })
-    .clone()
-}
+/// Crowns in a clump of far woods, as (x, z offset, height, radius, shoulder) in
+/// units of the clump's height: a leader and the shorter crowns crowding round
+/// it, their skirts overlapping so the clump reads as one massed canopy. The
+/// shoulder is the height of a crown's widest ring as a fraction of its own:
+/// low on a spruce's narrow spire, high on a broadleaf's rounded dome, so the
+/// woods' skyline is lumpy rather than a row of spikes.
+/// One crown of a clump: (x, z offset, height, radius, shoulder).
+type Crown = (f64, f64, f64, f64, f64);
+const CLUMPS: [[Crown; 4]; 3] = [
+    [
+        (0.0, 0.0, 1.0, 0.55, 0.5),
+        (0.55, 0.16, 0.78, 0.56, 0.62),
+        (-0.5, 0.26, 0.7, 0.54, 0.66),
+        (0.08, -0.5, 0.84, 0.52, 0.55),
+    ],
+    [
+        (0.0, 0.0, 0.92, 0.6, 0.62),
+        (-0.6, -0.12, 1.0, 0.5, 0.48),
+        (0.56, -0.24, 0.68, 0.54, 0.66),
+        (0.14, 0.52, 0.76, 0.56, 0.6),
+    ],
+    [
+        (0.0, 0.0, 1.0, 0.56, 0.56),
+        (0.58, 0.06, 0.86, 0.52, 0.5),
+        (-0.54, -0.1, 0.74, 0.58, 0.66),
+        (0.2, 0.56, 0.7, 0.54, 0.62),
+    ],
+];
+/// Sides round a far crown: seen only from across the bay, it needs no more.
+const CROWN_SIDES: u32 = 5;
 
-/// Normals pointing out from a point under a tree's middle, as stylised foliage
-/// is shaded: the crown darkens softly away from the light instead of splitting
-/// into a lit and a shaded facet that read as a paper cut-out across the bay.
-fn soft_foliage_normals(mesh: &mut Mesh) {
-    mesh.normals = mesh
-        .positions
-        .iter()
-        .map(|&[x, y, z]| {
-            let v = glam::Vec3::new(x, y + 0.6, z).normalize();
-            v.to_array()
-        })
-        .collect();
-    mesh.uvs = vec![[0.0, 0.0]; mesh.positions.len()];
+/// A clump of far woods, unit high: open crowns of a tip, a shoulder ring and a
+/// skirt (no base cap), their uv.x stepping from 0 at a crown's foot to its
+/// height at the tip so the far-shore effect shades the clump from a dark heart
+/// to sky-lit tops.
+fn pine_clump_mesh(variant: usize) -> Arc<Mesh> {
+    static CLUMP_MESHES: std::sync::OnceLock<Vec<Arc<Mesh>>> = std::sync::OnceLock::new();
+    CLUMP_MESHES.get_or_init(|| {
+        CLUMPS
+            .iter()
+            .map(|crowns| {
+                let (mut positions, mut normals, mut uvs, mut indices) =
+                    (Vec::new(), Vec::new(), Vec::new(), Vec::<u32>::new());
+                for (s, &(ox, oz, height, radius, shoulder)) in crowns.iter().enumerate() {
+                    let base = (positions.len() / 3) as u32;
+                    let twist = TAU * hash(s as u32, 233);
+                    let mut vertex = |x: f64, y: f64, z: f64, shade: f64| {
+                        positions.extend([ox + x, y, oz + z]);
+                        // Normals out from a point under the crown's middle, as
+                        // stylised foliage is shaded: the crown darkens softly away
+                        // from the light instead of splitting into a lit and a
+                        // shaded facet that read as a paper cut-out.
+                        let n = glam::DVec3::new(x, y + 0.6 * height, z).normalize();
+                        normals.extend([n.x, n.y, n.z]);
+                        uvs.extend([shade, f64::from(TREE_FLAG)]);
+                    };
+                    vertex(0.0, height, 0.0, height);
+                    let sides = CROWN_SIDES;
+                    for i in 0..sides {
+                        let a = twist + TAU * f64::from(i) / f64::from(sides);
+                        let lump = 0.85 + 0.3 * hash(s as u32 * 16 + i, 239);
+                        let shoulder_y = height * shoulder;
+                        vertex(
+                            radius * lump * a.cos(),
+                            shoulder_y,
+                            radius * lump * a.sin(),
+                            shoulder_y,
+                        );
+                    }
+                    for i in 0..sides {
+                        let a = twist + TAU * (f64::from(i) + 0.5) / f64::from(sides);
+                        vertex(radius * 0.7 * a.cos(), 0.0, radius * 0.7 * a.sin(), 0.0);
+                    }
+                    for i in 0..sides {
+                        let j = (i + 1) % sides;
+                        let (ring_i, ring_j) = (base + 1 + i, base + 1 + j);
+                        let (skirt, skirt_next) = (base + 1 + sides + i, base + 1 + sides + j);
+                        indices.extend([base, ring_j, ring_i]);
+                        indices.extend([ring_i, ring_j, skirt]);
+                        indices.extend([ring_j, skirt_next, skirt]);
+                    }
+                }
+                Arc::new(Mesh::from_f64(&positions, &normals, &uvs, Some(indices)))
+            })
+            .collect()
+    })[variant % CLUMPS.len()]
+    .clone()
 }
 
 /// The far-shore effect's `apron_hash(cell).x` (`harbor_apron.wgsl`), so trees can
@@ -908,49 +1161,62 @@ fn woods_depth(x: f64, z: f64) -> f64 {
         - 0.03
 }
 
-/// Trees in the woods the far-shore effect paints over the headlands: pines,
-/// tallest deep in the woods, as dark as the canopy painted round them, so their
-/// ragged tops rise out of the painted canopy along the ridges and the woods read
-/// as dark masses rather than single trees dotted over the grass.
+/// Trees in the woods the far-shore effect paints over the headlands: clumps of
+/// pines, tallest deep in the woods, as dark as the canopy painted round them, so
+/// their ragged tops rise out of the painted canopy along the ridges and the woods
+/// read as dark masses rather than single trees dotted over the grass.
 fn woods(sectors: &mut Sectors) {
     for i in 0..TREE_SITES {
         let theta = -PI + TAU * hash(i, 201);
+        // None on the slopes under the low sun: seen against it, the haze's
+        // glow turned every crown into a pale cut-out on the skyline.
+        let from_sun = (theta - SUN_AZIMUTH + PI).rem_euclid(TAU) - PI;
         if in_open_sea(theta)
             || built_up(theta)
             || land_amount(theta) < 0.6
             || (1.1..2.05).contains(&theta)
+            || from_sun.abs() < SUN_CLEARING
         {
             continue;
         }
-        let inland = 6.0 + 104.0 * hash(i, 203).powf(0.8);
+        // On the slopes facing the bay, up to just over the crest: woods on the
+        // skyline broke into a sawtooth against the sky.
+        let inland = 6.0 + 52.0 * hash(i, 203).powf(0.8);
         let (x, y, z) = on_land(theta, inland);
         let depth = woods_depth(x, z);
         if depth < WOODS_EDGE {
             continue;
         }
-        let deep = ((depth - WOODS_EDGE) / 0.12).min(1.0);
-        let height = (3.4 + 3.4 * hash(i, 207)) * (0.85 + 0.35 * deep);
-        let width = height * (0.3 + 0.1 * hash(i, 223));
+        let deep = ((depth - WOODS_EDGE) / 0.14).min(1.0);
+        let height = (4.6 + 4.4 * hash(i, 207)) * (0.8 + 0.45 * deep);
+        let width = height * (1.1 + 0.4 * hash(i, 223));
         let color = [0x1a2e1d, 0x1f3621, 0x223b22, 0x182a1b][(hash(i, 211) * 4.0) as usize % 4];
-        let mut part = Node::mesh(pine_mesh(), paint(color));
+        let mut part = Node::mesh(pine_clump_mesh((hash(i, 227) * 3.0) as usize), paint(color));
         part.scale = glam::DVec3::new(width, height, width);
+        let part = rotated(part, 0.0, TAU * hash(i, 229), 0.0);
         place_at(sectors, theta, part, x, y - 0.5, z);
     }
 }
-/// Points tried for a tree around the bay; only those in the painted woods grow one.
-const TREE_SITES: u32 = 3800;
+/// Points tried for a clump of trees around the bay; only those in the painted
+/// woods grow one.
+const TREE_SITES: u32 = 3000;
+/// Bearing of the harbor's afternoon sun round the bay (`theme_look`'s sun at
+/// x -48, z 36), and how far either side of it the headlands grow no trees.
+const SUN_AZIMUTH: f64 = 2.498;
+const SUN_CLEARING: f64 = 0.85;
 /// The [`woods_depth`] where trees start: just inside the painted woods' edge.
-const WOODS_EDGE: f64 = 0.5;
+const WOODS_EDGE: f64 = 0.47;
 
 /// The western headland's wind farm: (angle round the bay, metres inland, scale).
 /// A pair close together on the near ridge and two more spread further back, each
 /// its own size, so they read as a wind farm on the hills rather than a row of
 /// clones evenly spaced along the skyline.
+/// Kept small, so the harbor's own cranes stay the landmarks.
 const TURBINES: [(f64, f64, f64); 4] = [
-    (2.4, 50.0, 0.72),
-    (2.53, 66.0, 0.6),
-    (3.0, 78.0, 0.52),
-    (3.42, 60.0, 0.64),
+    (2.4, 50.0, 0.5),
+    (2.53, 66.0, 0.42),
+    (3.0, 78.0, 0.38),
+    (3.42, 60.0, 0.46),
 ];
 
 /// Wind turbines along the western headland ridge.
@@ -1109,6 +1375,7 @@ pub fn harbor_backdrop() -> Node {
     city(&mut sectors);
     terminal(&mut sectors);
     tank_farm(&mut sectors);
+    grain_terminal(&mut sectors);
     turbines(&mut sectors);
     woods(&mut sectors);
     breakwater(&mut sectors);
