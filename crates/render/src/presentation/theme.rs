@@ -269,7 +269,7 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
             sun_glow_intensity: 1.2,
             sun_radius: 0.022,
             clouds: Clouds {
-                coverage: 0.46,
+                coverage: 0.5,
                 lit: 0xffffff,
                 shade: 0x9cb2cc,
                 shadow: 0.28,
@@ -309,7 +309,7 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
             sun_glow_intensity: 1.2,
             sun_radius: 0.022,
             clouds: Clouds {
-                coverage: 0.5,
+                coverage: 0.4,
                 lit: 0xfbfcfc,
                 shade: 0x93a9bb,
                 shadow: 0.28,
