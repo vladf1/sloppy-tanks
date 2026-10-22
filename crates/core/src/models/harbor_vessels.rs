@@ -490,7 +490,8 @@ fn container_ship(color: u32, variant: usize) -> Node {
 const DECK_CRANE: u32 = 0xe2b443;
 
 const CRANE_GOLD: u32 = 0xe9b347;
-const CRANE_BLUE: u32 = 0x2f6c9c;
+/// The side berths' older pair, in a signal red that stands off the teal water.
+const CRANE_SIGNAL: u32 = 0xbd4a2e;
 /// Machinery house roof and the walkway grating around it.
 const ROOF_GREY: u32 = 0xb4b9b4;
 const GRATING: u32 = 0x5d676a;
@@ -876,8 +877,8 @@ const SHIPS: [(f64, f64, f64, f64, u32); 3] = [
     (77.0, 15.0, -FRAC_PI_2, 0.72, 0x9a6257),
 ];
 /// Crane positions (x, z, yaw, scale) and liveries: the main berth's pair in the
-/// terminal's gold, working at different reaches, and the older blue pair on the
-/// side berths.
+/// terminal's gold, working at different reaches, and the older signal-red pair on
+/// the side berths.
 const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
     (
         -40.0,
@@ -907,7 +908,7 @@ const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
         FRAC_PI_2,
         0.75,
         CraneLivery {
-            steel: CRANE_BLUE,
+            steel: CRANE_SIGNAL,
             trolley: -17.0,
             cargo: 0xd8d2c4,
         },
@@ -918,7 +919,7 @@ const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
         -FRAC_PI_2,
         0.75,
         CraneLivery {
-            steel: CRANE_BLUE,
+            steel: CRANE_SIGNAL,
             trolley: -12.0,
             cargo: 0x3f8f6a,
         },
