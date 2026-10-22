@@ -79,12 +79,12 @@ fn tank_dimensions_match_typescript() {
 fn vehicle_model_counts() {
     // (kind, team, meshes, vertices, triangles, hull, turret, barrel, track-group children)
     let expected = [
-        (VehicleKind::Scout, 0, 129, 21084, 7062, 110, 12, 6, 0),
-        (VehicleKind::Scout, 1, 129, 21126, 7076, 110, 12, 6, 0),
-        (VehicleKind::Balanced, 0, 146, 22944, 7682, 126, 12, 7, 0),
-        (VehicleKind::Balanced, 1, 146, 22938, 7680, 126, 12, 7, 0),
-        (VehicleKind::Heavy, 0, 133, 23328, 7810, 113, 12, 7, 0),
-        (VehicleKind::Heavy, 1, 133, 23238, 7780, 113, 12, 7, 0),
+        (VehicleKind::Scout, 0, 129, 21108, 7062, 110, 12, 6, 0),
+        (VehicleKind::Scout, 1, 129, 21150, 7076, 110, 12, 6, 0),
+        (VehicleKind::Balanced, 0, 146, 22968, 7682, 126, 12, 7, 0),
+        (VehicleKind::Balanced, 1, 146, 22962, 7680, 126, 12, 7, 0),
+        (VehicleKind::Heavy, 0, 133, 23352, 7810, 113, 12, 7, 0),
+        (VehicleKind::Heavy, 1, 133, 23262, 7780, 113, 12, 7, 0),
         (VehicleKind::Humvee, 0, 32, 32604, 10894, 12, 6, 4, 4),
         (VehicleKind::Humvee, 1, 32, 32580, 10886, 12, 6, 4, 4),
     ];
@@ -106,9 +106,9 @@ fn vehicle_model_counts() {
         assert!(model.find(part::MUZZLE).is_some());
     }
     let open = [
-        (VehicleKind::Scout, (132, 21598, 7280)),
-        (VehicleKind::Balanced, (149, 23458, 7900)),
-        (VehicleKind::Heavy, (136, 23842, 8028)),
+        (VehicleKind::Scout, (132, 21622, 7280)),
+        (VehicleKind::Balanced, (149, 23482, 7900)),
+        (VehicleKind::Heavy, (136, 23866, 8028)),
         (VehicleKind::Humvee, (32, 32604, 10894)),
     ];
     for (kind, expected) in open {
@@ -216,33 +216,33 @@ fn wreck_batches_match_golden() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (3288, 0xdce2fdb4, 1895.8762, 0xa9da9e3f, 0xc4d9630c),
+            (3360, 0x2aa83920, 1915.3177, 0xcf4cdb3f, 0xd53a1e8f),
             (3522, 0xe910d1f9, 2351.8751, 0x3502a7c6, 0x92381cb9),
             (594, 0x1fdb38d4, 274.3541, 0xdee32360, 0xcf36a52b),
-            (180, 0x88dc8d75, 40.8671, 0x76c795e5, 0xa23f056c),
+            (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0xc415b1ce),
             (288, 0xd47a0c0d, -11.9209, 0x94d4f49d, 0xabe5a09e),
             (4392, 0x4bdecb59, -17.7343, 0x1ed3cce5, 0x564f6348),
             (1344, 0x3d775bdd, 2.8138, 0xb6ce257d, 0x2add3aad),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0x010d3415),
+            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0x60027354),
             (468, 0x74e31910, -19.0127, 0x96734335, 0x3079eafc),
             (936, 0xb40fca71, -27.4347, 0xe9946e96, 0xbc244bd7),
             (348, 0x4b30ac35, -7.1422, 0xa2ea73b1, 0x1593f5ea),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (5436, 0xda42b3f8, 3748.4700, 0xfdf9f5e0, 0xe00721a6),
+            (5652, 0xcc267002, 3968.4489, 0x9b3a03eb, 0xadc44c94),
             (7062, 0xa9042686, 1448.6980, 0xa524e123, 0xb8555db8),
-            (2208, 0x01189d96, 3182.8268, 0x8c5cd272, 0x426b07be),
-            (540, 0xabdb0fb7, -64.5104, 0x54b5ab99, 0x4ee6d521),
+            (2064, 0xbac9cd24, 2976.5249, 0x2e1717d5, 0x73f3b426),
+            (468, 0x7e03c0cf, -37.4211, 0x2cea9759, 0xd7a68d7c),
             (3852, 0x85f249fd, 5.7848, 0xc66fb1b5, 0x96fe6237),
             (1344, 0x546c08d5, 1.5827, 0x10f8f7cd, 0x234753be),
             (384, 0x13c12cb7, 3.9914, 0x7f59b8e5, 0x9618c970),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
-            (480, 0x83d3ce01, -1.2731, 0x11ddcd3c, 0x5b34703b),
+            (600, 0x9bc2b8a9, 1.0451, 0xdbc48964, 0x2ad19f7a),
             (936, 0x42d872bf, 290.0387, 0xf6fa33ae, 0xb9eee0c3),
-            (300, 0x32eb4057, -4.8805, 0x5fe93231, 0xba882798),
+            (180, 0xec2d00af, 9.2942, 0xacf92475, 0x1f435be3),
         ]),
     ];
     for (kind, team, wreck_part, batches) in expected {

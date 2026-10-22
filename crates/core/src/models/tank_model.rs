@@ -40,7 +40,7 @@ pub(crate) const STEEL: u32 = 0x6f706c;
 /// color is the body and the deep trim frames it, so the paint reads as a designed
 /// two-tone livery and the trim still reads as its team rather than as a black
 /// outline round the hull.
-const TRIM: [u32; 2] = [0x1c2f57, 0x4a1a14];
+const TRIM: [u32; 2] = [0x223a6a, 0x58211a];
 /// Sight and vision-block glass: a deep blue-green tint that mirrors the sky.
 pub(super) const GLASS_TINT: u32 = 0x25505a;
 pub(crate) const MARKING_WHITE: u32 = 0xdce7ee;

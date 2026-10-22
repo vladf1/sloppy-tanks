@@ -22,9 +22,9 @@ use glam::{DVec2, DVec3};
 use super::super::Team;
 use super::super::model_primitives::{Cache, box_part, material, put, shadowed};
 use super::super::tank_kit::planar_uv;
-use super::super::tank_surfaces::{TRACK_BELT_PERIOD, track_belt_material, vehicle_glass};
+use super::super::tank_surfaces::{LAMP_LENS, TRACK_BELT_PERIOD, track_belt_material};
 use super::super::vertex_material;
-use super::{Chassis, GLASS_TINT, STENCIL};
+use super::{Chassis, STENCIL};
 use crate::geometry::Mesh;
 use crate::geometry::math::hex_to_linear;
 use crate::scene::{Material, Node};
@@ -1056,16 +1056,12 @@ fn armour_blocks(
     }
 }
 
-/// A lamp in a steel housing behind a three-bar brush guard. The lens is the
-/// sights' glass, so it mirrors the sky like a lamp's glass rather than reading as
-/// a flat white block (it shares the hull's glass draw).
+/// A lamp in a steel housing behind a three-bar brush guard. The livery paints the
+/// lens as a lamp: warm glass with a hot core falling off to its reflector ring.
 fn headlight(hull: &mut Node, c: &Chassis, side: f64) {
     let (x, y, z) = (side * 0.65, c.deck - 0.1, c.length / 2.0 - 0.07);
     put(hull, box_part(0.17, 0.12, 0.1, c.steel, 0.0), x, y, z);
-    let mut lens = box_part(0.12, 0.075, 0.012, 0, 0.0);
-    if let Some(drawable) = &mut lens.drawable {
-        drawable.material = vehicle_glass(GLASS_TINT);
-    }
+    let lens = box_part(0.12, 0.075, 0.012, LAMP_LENS, 0.0);
     put(hull, lens, x, y, z + 0.052);
     // A brush guard: two uprights under a top bar that reaches back to the housing.
     for dx in [-0.1, 0.1] {

@@ -66,6 +66,15 @@ const FOOTPRINTS: Record<(typeof PREVIEW_KINDS)[number], [number, number]> = {
   balanced: [1.95, 4.27],
   heavy: [2.14, 4.7],
 };
+/** Each chassis' turn on its card (radians about up, positive turns the nose toward
+ * the viewer): the Skipper swings in nose first like the scout it is, the Bruiser
+ * holds the standard three-quarter view and the Big Rig turns its long flank to
+ * the card, so the three read apart by pose as well as by silhouette. */
+const POSE_YAW: Record<(typeof PREVIEW_KINDS)[number], number> = {
+  scout: 0.2,
+  balanced: 0,
+  heavy: -0.16,
+};
 const GROUND_Y = -0.17;
 const SHADOW_GROW = 0.35;
 const SHADOW_BLUR = 11;
@@ -126,12 +135,15 @@ function project([x, y, z]: Vec3): [number, number] {
 function contactShadow(context: CanvasRenderingContext2D, kind: (typeof PREVIEW_KINDS)[number]) {
   const [width, length] = FOOTPRINTS[kind];
   const [hx, hz] = [width / 2 + SHADOW_GROW, length / 2 + SHADOW_GROW];
-  const corners: Vec3[] = [
-    [-hx, GROUND_Y, -hz],
-    [hx, GROUND_Y, -hz],
-    [hx, GROUND_Y, hz],
-    [-hx, GROUND_Y, hz],
-  ];
+  const [sin, cos] = [Math.sin(POSE_YAW[kind]), Math.cos(POSE_YAW[kind])];
+  const corners: Vec3[] = (
+    [
+      [-hx, -hz],
+      [hx, -hz],
+      [hx, hz],
+      [-hx, hz],
+    ] as const
+  ).map(([x, z]) => [x * cos + z * sin, GROUND_Y, -x * sin + z * cos]);
   context.save();
   context.filter = `blur(${SHADOW_BLUR}px)`;
   context.fillStyle = `rgba(0, 0, 0, ${SHADOW_OPACITY})`;
@@ -183,7 +195,7 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
     for (const team of [0, 1]) {
       for (const kind of PREVIEW_KINDS) {
         const name = `${team}-${kind}`;
-        lab.add_vehicle(name, kind, team, 0, 0, 0, 0);
+        lab.add_vehicle(name, kind, team, 0, 0, 0, POSE_YAW[kind]);
         names.push(name);
       }
     }

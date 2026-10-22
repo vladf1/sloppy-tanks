@@ -24,6 +24,7 @@ use std::sync::{Arc, OnceLock};
 use glam::{DMat4, DVec3};
 
 use super::model_primitives::Cache;
+use super::tank_model::MARKING_WHITE;
 use super::{Team, part};
 use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Attribute, Buckets, Mesh, VERTEX_ALPHA};
@@ -38,12 +39,17 @@ use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 pub const VEHICLE_PAINT: [u32; 2] = [0x3864ae, 0x862b25];
 /// The Humvee's paint per team: the same team hue a step deeper and flatter, a
 /// soft-skinned truck's matte finish rather than the tanks' satin armor enamel.
-pub const HUMVEE_PAINT: [u32; 2] = [0x34598f, 0x6e2e28];
+pub const HUMVEE_PAINT: [u32; 2] = [0x3a62a0, 0x7a2d26];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
     VEHICLE_PAINT[team.index()]
 }
+
+/// Lamp lenses (headlights of tanks and the Humvee): the livery paints them with
+/// the paint effect's lamp mode, a warm glass lens with a hot core that falls off
+/// toward a reflector ring, rather than a flat white or cyan square.
+pub const LAMP_LENS: u32 = 0xe8dcc0;
 
 /// The worn-metal image under `public/`, also used by the quarry's machinery.
 pub const ARMOR_WEAR_TEXTURE: &str = "textures/tanks/armor-wear.webp";
@@ -107,7 +113,7 @@ const GRADIENT_MIN_HEIGHT: f64 = 0.05;
 /// the dusty band to `DECK_HIGH` `DECK_RAMP` metres above it.
 const DECK_FACING: f64 = 0.5;
 const DECK_LOW: f64 = 0.6;
-const DECK_HIGH: f64 = 1.08;
+const DECK_HIGH: f64 = 1.12;
 const DECK_RAMP: f64 = 0.6;
 /// Every painted face darkens toward the ground: `HEIGHT_FOOT` at the ground
 /// line, full value `HEIGHT_SPAN` metres above it, so the hull reads lighter at the
@@ -124,17 +130,18 @@ const UPRIGHT: f64 = 0.6;
 /// the wear tile's. Running gear keeps its own vertex colors and takes only the fill.
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
-const RIM_STRENGTH: f32 = 0.55;
-const PAINT_FILL: f32 = 0.14;
+const RIM_STRENGTH: f32 = 0.6;
+const PAINT_FILL: f32 = 0.26;
 /// Running gear sits in the hull's shadow: more fill, no rim.
-const GEAR_FILL: f32 = 0.6;
-/// Bare steel where the paint chipped through (sRGB).
-const BARE_STEEL: u32 = 0x5c5852;
+const GEAR_FILL: f32 = 0.85;
+/// Bare steel where the paint chipped through (sRGB): bright enough to read as
+/// scuffed metal against either team's paint rather than as a dark fleck of dirt.
+const BARE_STEEL: u32 = 0x6e6a63;
 /// The paint's value on the turret and on the hull: the turret a step lighter, so
 /// it stands off the deck from the overhead camera and its facing reads at a
 /// glance, the hull a step deeper beneath it.
-const TURRET_VALUE: f64 = 1.06;
-const HULL_VALUE: f64 = 0.86;
+const TURRET_VALUE: f64 = 1.1;
+const HULL_VALUE: f64 = 0.84;
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
 const SIGNAL_GLOW: f32 = 0.0;
@@ -439,21 +446,24 @@ impl Livery<'_> {
         if material.roughness < GLOSSY_BELOW {
             return None;
         }
-        Some(if self.paint.contains(&color) {
-            // Trim shares the team paint's material: one painted material per
-            // team keeps a joint's paint in one draw.
-            Finish::Paint {
-                paint: self.paint[0],
-                trim: self.paint.get(1).copied().unwrap_or(self.paint[0]),
-                matte: self.matte,
-            }
-        } else if color == self.signal {
-            Finish::Signal(color)
-        } else if self.metal.contains(&color) || material.metalness >= 0.45 {
-            Finish::Metal
-        } else {
-            Finish::Matte
-        })
+        Some(
+            if self.paint.contains(&color) || color == MARKING_WHITE || color == LAMP_LENS {
+                // Trim, markings and lamp lenses share the team paint's material:
+                // one painted material per team keeps a joint's paint in one draw,
+                // and markings wear through to the paint under them.
+                Finish::Paint {
+                    paint: self.paint[0],
+                    trim: self.paint.get(1).copied().unwrap_or(self.paint[0]),
+                    matte: self.matte,
+                }
+            } else if color == self.signal {
+                Finish::Signal(color)
+            } else if self.metal.contains(&color) || material.metalness >= 0.45 {
+                Finish::Metal
+            } else {
+                Finish::Matte
+            },
+        )
     }
 }
 
@@ -664,8 +674,31 @@ fn paint_value_code(paint: bool, value: f64) -> f32 {
     (if paint { 0.5 + code } else { code }) as f32
 }
 
-/// Whether a code is the team paint (rather than trim), and its value.
+/// What a painted vertex wears: the team paint or trim (`paint_value_code`), the
+/// markings' white (the code plus 1) or a lamp lens (plus 2). Markings and lenses
+/// draw in the paint's own material, so they cost no draw of their own and wear
+/// with the paint: the white flakes to the team color under it and takes the dust.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Coat {
+    Paint,
+    Trim,
+    Marking,
+    Lamp,
+}
+
+fn coat_code(coat: Coat, value: f64) -> f32 {
+    match coat {
+        Coat::Paint => paint_value_code(true, value),
+        Coat::Trim => paint_value_code(false, value),
+        Coat::Marking => 1.0 + paint_value_code(true, value),
+        Coat::Lamp => 2.0 + paint_value_code(true, value),
+    }
+}
+
+/// Whether a code is the team paint (rather than trim; markings and lamps count as
+/// paint), and its value.
 fn paint_value_decoded(code: f32) -> (bool, f32) {
+    let code = code.fract();
     let paint = code >= 0.5;
     let fraction = if paint { code - 0.5 } else { code };
     (paint, fraction * 2.0 * VALUE_RANGE as f32)
@@ -714,9 +747,13 @@ fn weathered(
         None => (Vec::new(), Vec::new()),
     };
     let base_linear = base.map(hex_to_linear);
-    let is_trim = match finish {
-        Finish::Paint { trim, paint, .. } => base == Some(trim) && trim != paint,
-        _ => false,
+    let coat = match (finish, base) {
+        (_, Some(MARKING_WHITE)) => Coat::Marking,
+        (_, Some(LAMP_LENS)) => Coat::Lamp,
+        (Finish::Paint { trim, paint, .. }, Some(base)) if base == trim && trim != paint => {
+            Coat::Trim
+        }
+        _ => Coat::Paint,
     };
     for (t, &(p, face)) in faces.iter().enumerate() {
         let root = plates.as_ref().map_or(t, |plates| plates.roots[t]);
@@ -737,8 +774,13 @@ fn weathered(
                     * deck_value(*point, face, grime)
                     * height_value(*point, grime)
                     * ground_shade(band_height(*point, grime), face);
-                let [r, g] = edges[index];
-                colors.push([r, g, paint_value_code(!is_trim, value)]);
+                // Markings lie on their plate: their own outline marks no edge.
+                let [r, g] = if coat == Coat::Marking {
+                    [NO_EDGES; 2]
+                } else {
+                    edges[index]
+                };
+                colors.push([r, g, coat_code(coat, value)]);
                 let (u, v) = paint_uv(*point, face);
                 out.uvs[index] = [u as f32, v as f32];
                 alphas.push(paint_alpha(*point, grime, chamfer));
