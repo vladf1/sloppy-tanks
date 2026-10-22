@@ -121,10 +121,10 @@
   top: max(14px, env(safe-area-inset-top));
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 7px 14px 7px 8px;
+  gap: 9px;
+  padding: 5px 14px 5px 6px;
   border-radius: 999px;
-  background: #06102ae0;
+  background: #06102ab8;
   box-shadow:
     inset 0 0 0 1px #9fd0ff33,
     0 6px 16px #0007;
@@ -147,8 +147,8 @@
 .touch-fire-ring {
   position: relative;
   flex: none;
-  width: 34px;
-  height: 34px;
+  width: 28px;
+  height: 28px;
   border: 3px solid #fff;
   border-radius: 50%;
   box-shadow:
@@ -159,7 +159,7 @@
 .touch-fire-ring::before {
   content: "";
   position: absolute;
-  inset: 9px;
+  inset: 7px;
   border-radius: 50%;
   background: var(--gold);
   box-shadow: 0 0 0 2px #06102a99;
@@ -224,21 +224,19 @@
   inset: 7px;
 }
 /* The stick's name on a small dark tag, legible on grass, sand or snow alike. */
+/* The stick's caption is a light label on its rim, not a plate of its own. */
 .touch-stick > span {
   position: absolute;
   left: 50%;
-  bottom: -12px;
-  padding: 3px 10px 3px 12px;
-  border-radius: 6px;
-  background: #06102af0;
-  box-shadow:
-    inset 0 0 0 1px #9fd0ff40,
-    0 3px 8px #0008;
-  color: #fff;
+  bottom: -8px;
+  color: #e6f0fa;
   text-align: center;
-  font-size: 13px;
+  font-size: 12px;
   font-weight: 800;
-  letter-spacing: 2px;
+  letter-spacing: 2.4px;
+  text-shadow:
+    0 1px 2px #000,
+    0 0 6px #000a;
   transform: translateX(-50%);
 }
 .touch-stick.held .stick-base {
@@ -417,15 +415,12 @@ html:not(.phone) .touch-enabled .coral {
    enough for the longest name. */
 .touch-enabled .ammo-strip {
   width: 100%;
-  min-width: 440px;
+  min-width: 380px;
 }
 /* The standard shell, carried every life, keeps a double-width key, so the rack reads
    as the round in hand plus the four that crates bring, and its name always fits. */
 html:not(.phone) .touch-enabled #ammo-standard {
   flex-grow: 2;
-}
-html:not(.phone) .touch-enabled .ammo-rail-note {
-  left: calc((100% - 16px) / 3 + 4px);
 }
 .touch-enabled .ammo-slot,
 .touch-enabled .ammo-slot.selected {
