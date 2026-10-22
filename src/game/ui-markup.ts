@@ -79,7 +79,7 @@ export function hudMarkup(): string {
             `<button type="button" class="ammo-slot" id="ammo-${weapon}" data-ammo="${weapon}" aria-pressed="false" aria-description="${help}" title="${index + 1}: ${name} — ${help}" style="--ammo-color:#${color.toString(16).padStart(6, "0")}"><kbd>${index + 1}</kbd>${hudIcon(`hud-${weapon}`, "ammo-icon")}${hudIcon("hud-lock", "ammo-lock")}<small>${label}</small><b id="ammo-count-${weapon}">${weapon === "standard" ? "∞" : "0"}</b></button>`,
         ).join(
           "",
-        )}<span class="ammo-rail-note" aria-hidden="true">${hudIcon("hud-lock", "rail-lock")}<span><b>2–5 LOCKED</b><small>Grab ammo crates</small></span></span></div></div><div class="mine-slot" id="mine-slot" title="Mine (right click)"><span class="mine-dial">${hudIcon("hud-mine", "mine-icon")}<b id="mine-time"></b></span><kbd>RMB</kbd><span class="sr-only" id="mine">MINE READY</span></div><div id="effects" class="effects"></div></div>
+        )}</div></div><div class="mine-slot" id="mine-slot" title="Mine (right click)"><span class="mine-dial">${hudIcon("hud-mine", "mine-icon")}<b id="mine-time"></b></span><kbd>RMB</kbd><span class="sr-only" id="mine">MINE READY</span></div><div id="effects" class="effects"></div></div>
         <div class="hull-compass" aria-hidden="true"><span class="compass-dial"><i class="hull"></i><i class="gun"></i></span><span class="compass-copy"><b>FIRST PERSON</b><small class="compass-key"><kbd>V</kbd>overhead view</small></span></div>
         <div class="combat-notices"><div id="ammo-notice" role="status" aria-live="polite"></div></div>
         </div></div>
@@ -266,7 +266,7 @@ export function pauseStanding(hud: HudState): string {
     return standing;
   }
   const needed = Math.max(0, hud.scoreLimit - hud.match.scores[hud.humanTeam]);
-  return `${standing} · your team needs ${countLine(needed, "kill")} to win`;
+  return `${standing} · ${countLine(needed, "kill")} to win`;
 }
 
 export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
@@ -345,7 +345,7 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
         <header class="respawn-head">${wreckedByMarkup(death?.report ?? null)}
           <div class="respawn-timer" id="respawn-fill"><h2 id="respawn-title">RESPAWN IN</h2><div class="respawn-ring"><span id="respawn-count">3</span></div></div>
         </header>
-        <p class="respawn-pick">Choose your next tank<small>Click one · it rolls out when the timer ends</small></p>
+        <p class="respawn-pick">Choose your next tank<small>It rolls out when the timer ends</small></p>
         <p id="death-cause" class="sr-only" role="status"></p>
         </section>`;
   }
