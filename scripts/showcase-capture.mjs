@@ -1,14 +1,15 @@
 // Showcase stills for judging the game's look build against build: every standard map
 // after a seeded stretch of autoplay, through the follow camera (with HUD), a hero
-// close-up of the player's tank, a low vista, the overview, first person and a blast,
+// close-up of the player's tank, a low vista, the overview, first person, a blast and
+// a tank and a Humvee dying,
 // plus the interface: Battle Setup (both tabs), the settings dialog, respawn, pause and
 // the battle report, a tablet's touch HUD and the phone edition. The same seed and frame
 // count give the same battle on a build that leaves gameplay alone, so two builds'
 // stills line up shot for shot.
 //
 //   node scripts/showcase-capture.mjs --out artifacts/showcase/candidate [--maps village,quarry]
-//     [--shots follow,hero,vista,overview,action,strip,first-person,menu,respawn,settings,
-//      recap,tablet,phone] [--frames 900] [--seed 4242] [--webgl]
+//     [--shots follow,hero,vista,overview,action,strip,first-person,death,menu,respawn,
+//      settings,recap,tablet,phone] [--frames 900] [--seed 4242] [--webgl]
 //
 // It serves this checkout's `src/generated/engine/` through its own Vite dev server on a
 // free port (run `pnpm run wasm` first), so parallel checkouts never share a port.
@@ -245,6 +246,45 @@ try {
     await page.close();
   }
 
+  if (take("death")) {
+    // Deaths up close: on a fresh copy of each map's battle (so the other shots keep
+    // their state), the nearest enemy tank and then the nearest Humvee are destroyed
+    // through the shared damage path and watched from a fixed elevated three-quarter
+    // camera through eight moments, from the first flash to the burning wreck.
+    const moments = [2, 4, 6, 8, 12, 20, 40, 80];
+    for (const map of values.maps.split(",").filter(Boolean)) {
+      const page = await battlePage(context, map, FRAMES);
+      for (const [name, humvee] of [
+        ["death", false],
+        ["humvee-death", true],
+      ]) {
+        const victim = await page.evaluate((humvee) => {
+          const { human, tanks } = window.sloppy.sim;
+          const enemies = tanks.filter(
+            (tank) => tank.alive && tank.team !== human.team && (tank.kind === "humvee") === humvee,
+          );
+          const near = (tank) => Math.hypot(tank.x - human.x, tank.z - human.z);
+          return enemies.sort((a, b) => near(a) - near(b))[0] ?? null;
+        }, humvee);
+        if (!victim) {
+          console.log(`${map}-${name}: no victim`);
+          continue;
+        }
+        const pose = [victim.x - 8, 8.5, victim.z - 8, victim.x, 0.8, victim.z];
+        await page.evaluate((id) => {
+          const { human } = window.sloppy.sim;
+          const team = human.team === "red" || human.team === 1 ? 1 : 0;
+          window.sloppy.game.debug_damage_tank(id, 100000, human.id, team);
+        }, victim.id);
+        for (const [frame, count] of moments.entries()) {
+          await play(page, count);
+          await page.evaluate((pose) => window.engine.draw(pose), pose);
+          await shoot(page, map, `${name}-strip-${frame}`);
+        }
+      }
+      await page.close();
+    }
+  }
   if (take("tablet")) {
     // An iPad-sized touchscreen: the touch HUD (drive stick, mine and zoom buttons).
     const tablet = await deviceContext({ width: 1180, height: 820 }, { touch: true });
