@@ -21,7 +21,7 @@ use sloppy_core::scene::Side;
 
 use super::Gpu;
 use super::OCCLUSION_DEPTH_DOWNSCALE;
-use super::context::{DEPTH_FORMAT, HDR_FORMAT, OCCLUSION_FORMAT};
+use super::context::{DEPTH_FORMAT, HDR_FORMAT, OCCLUSION_FORMAT, SHADOW_DEPTH_FORMAT};
 use super::precompile::{Background, LayoutKind, PipelineSpec, Precompiler};
 use crate::effects::EffectRegistry;
 use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SAMPLE_COUNT, SHADOW_MERGED_SIDES};
@@ -82,12 +82,13 @@ fn blend_state(mode: BlendMode) -> Option<wgpu::BlendState> {
 }
 
 fn depth_state(
+    format: wgpu::TextureFormat,
     write: bool,
     compare: wgpu::CompareFunction,
     bias: wgpu::DepthBiasState,
 ) -> wgpu::DepthStencilState {
     wgpu::DepthStencilState {
-        format: DEPTH_FORMAT,
+        format,
         depth_write_enabled: Some(write),
         depth_compare: Some(compare),
         stencil: Default::default(),
@@ -108,6 +109,7 @@ fn water_spec() -> PipelineSpec {
             ..Default::default()
         },
         depth_stencil: Some(depth_state(
+            DEPTH_FORMAT,
             true,
             wgpu::CompareFunction::LessEqual,
             Default::default(),
@@ -155,6 +157,7 @@ fn sky_spec() -> PipelineSpec {
         targets: vec![Some(HDR_FORMAT.into())],
         primitive: Default::default(),
         depth_stencil: Some(depth_state(
+            DEPTH_FORMAT,
             false,
             wgpu::CompareFunction::LessEqual,
             Default::default(),
@@ -254,6 +257,7 @@ fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
             ..Default::default()
         },
         depth_stencil: Some(depth_state(
+            SHADOW_DEPTH_FORMAT,
             true,
             wgpu::CompareFunction::LessEqual,
             Default::default(),
@@ -287,6 +291,11 @@ fn surface_spec(key: &PipelineKey) -> PipelineSpec {
             ..Default::default()
         },
         depth_stencil: Some(depth_state(
+            if key.shadow_map {
+                SHADOW_DEPTH_FORMAT
+            } else {
+                DEPTH_FORMAT
+            },
             key.depth_write,
             if key.depth_test {
                 wgpu::CompareFunction::LessEqual

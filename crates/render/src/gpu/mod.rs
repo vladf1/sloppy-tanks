@@ -1221,12 +1221,9 @@ impl Renderer {
                     && !transparent
                     && source.depth_write
                     && source.depth_test)
-                    .then(|| PipelineKey {
-                        side: source.side,
-                        ..PipelineKey::shadow(
-                            ShaderKey::shadow(source, gpu.effect, false, &self.effects),
-                            source,
-                        )
+                    .then(|| {
+                        let shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
+                        PipelineKey::occlusion_depth(shader, source)
                     });
                 // Classes are created before their pipelines compile, and draw lists
                 // sort by these.

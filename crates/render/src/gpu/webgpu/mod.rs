@@ -27,7 +27,7 @@ use super::{
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::mesh_pages::{MeshRange, NO_PAGE};
-use context::{ColorTarget, DEPTH_FORMAT, OCCLUSION_FORMAT, texture_2d};
+use context::{ColorTarget, DEPTH_FORMAT, OCCLUSION_FORMAT, SHADOW_DEPTH_FORMAT, texture_2d};
 use resources::uniform_buffer;
 
 /// Opaque draws group by mesh page before material. Every switch is a call Chrome
@@ -53,7 +53,7 @@ fn depth_texture(device: &wgpu::Device, label: &str, size: u32) -> wgpu::Texture
         | wgpu::TextureUsages::TEXTURE_BINDING
         | wgpu::TextureUsages::COPY_SRC
         | wgpu::TextureUsages::COPY_DST;
-    texture_2d(device, label, size, size, DEPTH_FORMAT, 1, usage)
+    texture_2d(device, label, size, size, SHADOW_DEPTH_FORMAT, 1, usage)
 }
 
 /// A depth texture with its view; dropping it destroys the texture.

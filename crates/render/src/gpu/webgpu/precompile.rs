@@ -508,6 +508,7 @@ fn texture_format(format: wgpu::TextureFormat) -> Result<&'static str, String> {
         F::Rg11b10Ufloat => "rg11b10ufloat",
         F::R8Unorm => "r8unorm",
         F::Depth32Float => "depth32float",
+        F::Depth16Unorm => "depth16unorm",
         other => return Err(format!("texture format {other:?}")),
     })
 }

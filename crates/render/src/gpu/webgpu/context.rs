@@ -156,6 +156,11 @@ fn bloom_format(features: wgpu::Features) -> wgpu::TextureFormat {
 /// The ambient occlusion target.
 pub const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The sun's shadow maps. Their orthographic depth spans `SHADOW_DEPTH` (about 220 m)
+/// linearly, so 16 bits resolve 3.4 mm, a thirteenth of the shadow bias; half the bytes
+/// of a 32-bit float halve the maps' memory and the copy, load and store of the cached
+/// fixed scenery every frame.
+pub const SHADOW_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 
 /// A multisampled HDR color + depth target and its single-sample resolve.
 /// Used for the main view (the scene's size) and the water reflection (fixed size).

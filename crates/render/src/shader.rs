@@ -266,6 +266,9 @@ pub struct PipelineKey {
     pub depth_bias: DepthBias,
     /// The faces that are drawn (culling removes the others).
     pub side: Side,
+    /// A depth-only variant drawing into the sun's shadow map, rather than into
+    /// ambient occlusion's depth pass: their depth formats differ.
+    pub shadow_map: bool,
 }
 
 impl PipelineKey {
@@ -283,6 +286,7 @@ impl PipelineKey {
             depth_write: material.depth_write,
             depth_bias: DepthBias::of(material),
             side: material.side,
+            shadow_map: false,
         }
     }
 
@@ -296,6 +300,17 @@ impl PipelineKey {
             depth_write: true,
             depth_bias: DepthBias::default(),
             side: shadow_side(material),
+            shadow_map: true,
+        }
+    }
+
+    /// Ambient occlusion's depth pass draws an opaque material with its depth-only
+    /// shadow `shader`, but the faces the main view draws.
+    pub fn occlusion_depth(shader: ShaderKey, material: &Material) -> Self {
+        Self {
+            side: material.side,
+            shadow_map: false,
+            ..Self::shadow(shader, material)
         }
     }
 }
@@ -931,6 +946,26 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(PipelineKey::shadow(a, &red).side, Side::Back);
         assert_eq!(PipelineKey::shadow(b, &green).side, Side::Double);
+    }
+
+    #[test]
+    fn occlusion_depth_draws_the_main_views_faces_apart_from_the_shadow() {
+        let effects = EffectRegistry::default();
+        let wall = Material::standard(0x808080, 0.8, 0.0);
+        let shader = ShaderKey::shadow(&wall, 0, false, &effects);
+        let depth = PipelineKey::occlusion_depth(shader, &wall);
+        assert_eq!(depth.side, Side::Front);
+        assert_eq!(depth.shader.pass, Pass::Shadow);
+        // Its own pipeline even where the faces match: the depth formats differ.
+        let double = Material {
+            side: Side::Double,
+            ..wall.clone()
+        };
+        assert_eq!(PipelineKey::shadow(shader, &double).side, Side::Double);
+        assert_ne!(
+            PipelineKey::occlusion_depth(shader, &double),
+            PipelineKey::shadow(shader, &double)
+        );
     }
 
     #[test]
