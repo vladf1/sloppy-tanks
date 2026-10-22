@@ -155,6 +155,23 @@ impl ShardRegion {
         Self { cells }
     }
 
+    /// The region cut down to `other` (a union of convex cells too): every pair of
+    /// cells, one from each, as one cell bounded by the sides of both.
+    pub fn intersect(&self, other: &[Vec<Side>]) -> Self {
+        let cells = self
+            .cells
+            .iter()
+            .flat_map(|a| {
+                other.iter().map(move |b| {
+                    let mut cell = a.clone();
+                    cell.extend(b.iter().copied());
+                    cell
+                })
+            })
+            .collect();
+        Self { cells }
+    }
+
     /// Whether nothing cuts the part: the shard is all of it.
     pub fn is_whole(&self) -> bool {
         self.cells

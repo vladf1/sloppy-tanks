@@ -217,7 +217,9 @@ export class UI {
     const { actions } = this;
     this.overlay.querySelector("#start")?.addEventListener("click", () => actions.start());
     this.overlay.querySelector("#play-again")?.addEventListener("click", () => actions.start());
-    this.overlay.querySelector("#resume")?.addEventListener("click", () => actions.resume());
+    for (const resume of this.overlay.querySelectorAll("#resume, #pause-close")) {
+      resume.addEventListener("click", () => actions.resume());
+    }
     this.overlay
       .querySelector("#pause-settings")
       ?.addEventListener("click", () => this.settings.open());
@@ -426,6 +428,11 @@ export class UI {
         .querySelector(team === 0 ? ".mint" : ".coral")!
         .classList.toggle("yours", !solo && team === state.humanTeam);
     });
+    // The tank panel's glass takes a tint of your team (none in a solo run).
+    const side = solo ? "" : state.humanTeam === 0 ? "blue" : "red";
+    if ((this.hud.dataset.team ?? "") !== side) {
+      this.hud.dataset.team = side;
+    }
     scoreboard.classList.toggle("overtime", !state.endlessMatch && match.overtime);
     set(
       "objective",

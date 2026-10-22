@@ -34,7 +34,7 @@ use super::building_kit::{
     BRICK_TEXTURE, CASING, Glazing, Opening, Palette, Surface, door, opening_casing, shutter_width,
     shutters, surface_material, textured, uv_per_metre, wall_with_breaches, window,
 };
-use super::house_collapse::{clip_mesh, clip_meshes, roof_breaks, wall_breaks};
+use super::house_collapse::{chimney_breaks, clip_mesh, clip_meshes, roof_breaks, wall_breaks};
 use super::house_surfaces::{HouseSurface, house_material};
 use super::model_primitives::{Cache, material, put, shadowed};
 use super::tank_kit::{Kit, KitMeshes, aim, pose, shift};
@@ -128,6 +128,14 @@ const SHRUB_SIZE: (f64, f64) = (0.26, 0.36);
 const GRIME: (f32, f32) = (0.7, 0.3);
 /// Share of a cottage's side and back windows boarded over after shelling.
 const BOARDED_WINDOWS: f64 = 0.14;
+/// Thickness of the boards nailed over a shelled window.
+const PLANK: f64 = 0.05;
+/// Patches of plaster fallen off each collapsed wall's lining.
+const PLASTER_FALLS: usize = 6;
+/// A standing shingle roof's weathering (linear shade at the eave and at the
+/// ridge) and the light its ridge caps catch.
+const ROOF_WEATHER: (f64, f64) = (0.6, 1.0);
+const RIDGE_SHINE: f64 = 1.55;
 
 /// How much of a cottage a build makes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -281,6 +289,7 @@ fn add_cottage(
 }
 
 static GRIMED: Cache<(u32, bool), Material> = Cache::new();
+static WEATHERED_SHINGLES: Cache<u32, Material> = Cache::new();
 
 /// A standing cottage's walls, weathered darker toward the plinth where rain
 /// splashes and soil climbs: the siding material taking vertex colours that fall
@@ -439,7 +448,14 @@ fn cottage(
             grime(&mut roof_meshes, roof.ridge);
             add_weathered(&mut cottage, roof_meshes, palette, walls);
             if !roof_courses.positions.is_empty() {
-                cottage.children.push(shingles(roof_courses.mesh()));
+                let material = WEATHERED_SHINGLES.get_or_insert(palette.roof, || Material {
+                    vertex_colors: true,
+                    ..(*house_material(HouseSurface::Shingles, palette.roof)).clone()
+                });
+                cottage.children.push(shadowed(
+                    Arc::new(roof_courses.weathered_mesh(&roof)),
+                    material,
+                ));
             }
             for node in nodes.into_iter().flatten() {
                 cottage.children.push(node);
@@ -468,6 +484,14 @@ fn cottage(
                         wall_breaks(&mut breaks, shape, &openings[index], &mut rng);
                     } else if part.is_roof() && !whole {
                         roof_breaks(&mut breaks, shape, &roof, &mut rng);
+                    } else if part == HousePart::Chimney {
+                        chimney_breaks(
+                            &mut breaks,
+                            shape,
+                            design.flue(),
+                            design.chimney_snap(),
+                            &mut rng,
+                        );
                     }
                     add_cottage(&mut shard, breaks.finish_scaled(&uv), palette, walls, true);
                     if let Some(mesh) = &shingled {
@@ -485,9 +509,18 @@ fn cottage(
                     root.children.push(shard);
                     flatten(&mut root);
                     batch(&mut root);
-                    // Only the roof and chimney cast shadows as they fall: a wall
-                    // panel's shadow is lost under them, and each caster is a draw.
-                    if part.wall_index().is_some() {
+                    // Only the side slopes' ridge slabs and the chimney's top cast
+                    // shadows as they fall: they shade the wreck from overhead, the
+                    // smaller pieces' shadows are lost under them, and each caster
+                    // is a draw.
+                    let casts = match part {
+                        HousePart::RightRoof | HousePart::LeftRoof => {
+                            shape.piece.shard.is_multiple_of(2)
+                        }
+                        HousePart::Chimney => shape.piece.shard == 1,
+                        _ => false,
+                    };
+                    if !casts {
                         for child in &mut root.children {
                             if let Some(drawable) = &mut child.drawable {
                                 drawable.cast_shadow = false;
@@ -653,6 +686,39 @@ fn framing(
         DVec3::new(2.0 * half - 0.1, STUD.0, STUD.1),
         frame * shift(DVec3::new(0.0, top - STUD.0, z)),
     );
+}
+
+/// Where a fallen wall's plaster has come away from the lath behind it: a few
+/// ragged patches of bare, dusty lath on its lining between the openings, so a
+/// panel lying lining up reads as a broken wall rather than a clean board.
+fn plaster_falls(
+    kit: &mut Kit<Surface>,
+    frame: DMat4,
+    half: f64,
+    top: f64,
+    openings: &[Opening],
+    rng: &mut Random,
+) {
+    for _ in 0..PLASTER_FALLS {
+        let (w, h) = (rng.range(0.45, 0.95), rng.range(0.35, 0.7));
+        let u = rng.range(-half + w / 2.0 + 0.1, half - w / 2.0 - 0.1);
+        let y = rng.range(PLINTH + h / 2.0 + 0.1, top - h / 2.0 - 0.1);
+        let clear = openings.iter().all(|o| {
+            (u - o.u).abs() > (w + o.width) / 2.0 + 0.05
+                || y + h / 2.0 < o.y - 0.05
+                || y - h / 2.0 > o.top() + 0.05
+        });
+        let outline = jagged(rng, w, h);
+        if !clear {
+            continue;
+        }
+        kit.face_with_holes(
+            Surface::Wood,
+            &outline,
+            &[],
+            frame * pose(DVec3::new(u, y, -LINING - 0.006), DVec3::new(0.0, PI, 0.0)),
+        );
+    }
 }
 
 /// A polygon seen from behind its plane: mirrored across u, its winding kept.
@@ -961,12 +1027,19 @@ fn boarded_window(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed:
     let planks = 3;
     for k in 0..planks {
         let y = y0 + (y1 - y0) * (f64::from(k) + 0.5 + rng.range(-0.15, 0.15)) / f64::from(planks);
+        // Rough-sawn boards with their thickness, some fresh and pale, nailed
+        // across at odd angles.
+        let fresh = rng.next() < 0.5;
         kit.block(
-            Surface::Wood,
-            DVec3::new(w + 2.0 * CASING + rng.range(0.05, 0.2), 0.13, 0.025),
+            if fresh {
+                Surface::Splinters
+            } else {
+                Surface::Wood
+            },
+            DVec3::new(w + 2.0 * CASING + rng.range(0.05, 0.2), 0.15, PLANK),
             frame
                 * pose(
-                    DVec3::new(u + rng.range(-0.05, 0.05), y, 0.05),
+                    DVec3::new(u + rng.range(-0.05, 0.05), y, 0.03 + PLANK / 2.0),
                     DVec3::new(0.0, 0.0, rng.range(-0.22, 0.22)),
                 ),
         );
@@ -1116,6 +1189,7 @@ fn build_house(
                 frame * pose(DVec3::new(0.0, 0.0, -LINING), DVec3::new(0.0, PI, 0.0)),
             );
             framing(kit, frame, &outline, &openings, roof.wall);
+            plaster_falls(kit, frame, half, roof.wall, &openings, rng);
             let at = |p: DVec2, depth: f64| frame.transform_point3(DVec3::new(p.x, p.y, -depth));
             let center = outline.iter().copied().sum::<DVec2>() / outline.len() as f64;
             for i in 0..outline.len() {
@@ -2157,6 +2231,10 @@ struct Courses {
     positions: Vec<f64>,
     normals: Vec<f64>,
     uvs: Vec<f64>,
+    /// Whether each vertex is a ridge cap's, which a standing roof lights up.
+    caps: Vec<bool>,
+    /// Whether the quads being added now are ridge caps.
+    capping: bool,
 }
 
 impl Courses {
@@ -2174,7 +2252,34 @@ impl Courses {
             self.positions.extend(corners[i].to_array());
             self.normals.extend(normal.to_array());
             self.uvs.extend(uvs[i].to_array());
+            self.caps.push(self.capping);
         }
+    }
+
+    /// The courses of a standing roof, weathered by height: darker and dirtier
+    /// toward the eaves where water runs off, cleaner toward the ridge, and the
+    /// ridge caps catching the light, so from overhead the roof keeps its ridge
+    /// line and slopes instead of reading as one flat dark plane.
+    fn weathered_mesh(&self, roof: &Roof) -> Mesh {
+        let mut mesh = self.mesh();
+        let (eave, crest) = (roof.eave_y, roof.ridge + roof.thick);
+        mesh.colors = self
+            .positions
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .zip(&self.caps)
+            .map(|(p, &cap)| {
+                let shade = if cap {
+                    RIDGE_SHINE
+                } else {
+                    let up = ((p[1] - eave) / (crest - eave)).clamp(0.0, 1.0);
+                    ROOF_WEATHER.0 + (ROOF_WEATHER.1 - ROOF_WEATHER.0) * up
+                };
+                [shade as f32; 3]
+            })
+            .collect();
+        mesh
     }
 
     fn sag(&mut self, roof: &Roof) {
@@ -2370,8 +2475,9 @@ fn ridge_caps(parts: &mut Parts, design: &HouseDesign, roof: &Roof) {
     if shingles && roof.ridge_half > 0.01 {
         ridge_shingles(parts, roof);
     } else if roof.ridge_half > 0.01 {
+        // A galvanised ridge roll, catching the light along the crest.
         parts.kit(HousePart::RightRoof).block(
-            Surface::Roof,
+            Surface::Metal,
             DVec3::new(0.26, 0.07, 2.0 * roof.ridge_half + 0.04),
             shift(DVec3::new(0.0, crest + 0.03, 0.0)),
         );
@@ -2392,8 +2498,9 @@ fn ridge_caps(parts: &mut Parts, design: &HouseDesign, roof: &Roof) {
         } else {
             HousePart::BackRoof
         };
+        // Galvanised hip flashing: the hips stand out as lines from overhead.
         parts.kit(piece).block(
-            Surface::Roof,
+            Surface::Metal,
             DVec3::new(0.18, 0.05, length),
             aim(from, to) * DMat4::from_translation(DVec3::Z * (length / 2.0)),
         );
@@ -2421,6 +2528,7 @@ fn ridge_shingles(parts: &mut Parts, roof: &Roof) {
             } else {
                 HousePart::LeftRoof
             });
+            out.capping = true;
             let facing = DVec3::new(side * roof.pitch, 1.0, 0.0);
             out.quad(
                 [
@@ -2452,6 +2560,7 @@ fn ridge_shingles(parts: &mut Parts, roof: &Roof) {
                 ],
                 DVec3::Z,
             );
+            out.capping = false;
         }
     }
 }

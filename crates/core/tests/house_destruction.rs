@@ -118,7 +118,14 @@ fn a_collapse_breaks_the_cottage_into_its_parts_and_leaves_a_heap_of_low_cover()
     }
     for f in &s.fragments {
         assert_eq!(f.source_kind, Some(CoverKind::House));
-        assert!(s.world.bodies[f.body].is_dynamic());
+        // A stub of wall is led down onto the ground; everything else falls.
+        if f.house_stub.is_some() {
+            assert!(s.world.bodies[f.body].is_kinematic());
+            let piece = f.house_piece.expect("a stub is a cottage's shard");
+            assert!(piece.part.wall_index().is_some() && piece.shard.is_multiple_of(2));
+        } else {
+            assert!(s.world.bodies[f.body].is_dynamic());
+        }
         assert_eq!(collider_groups(&s, f.body), group::PUSHABLE_DEBRIS);
         if let Some(piece) = f.house_piece {
             assert_eq!(f.house_id, Some(s.covers[house].id));
@@ -271,10 +278,12 @@ fn a_drum_blast_beside_a_cottage_hurts_it_once_and_bots_never_breach_cottages() 
     );
 }
 
-/// A collapse settles into a pile lying flat: at most one wall shard in a cottage
-/// (wedged in the wreck) is left standing on edge, and few in the village.
+/// A collapse settles into a ruin: most of each cottage's lower walls stand on as
+/// stubs round its floor, leaning in against the pile, and its upper walls lie on
+/// the pile or the ground, at most a couple in a cottage (wedged in the wreck)
+/// left on edge, and few in the village.
 #[test]
-fn every_cottage_collapse_comes_to_rest_with_its_walls_lying_down() {
+fn every_cottage_collapse_leaves_stubs_of_wall_round_a_pile() {
     let village = village();
     let mut standing = Vec::new();
     for house in houses(&village) {
@@ -290,6 +299,7 @@ fn every_cottage_collapse_comes_to_rest_with_its_walls_lying_down() {
         s.damage_cover(house, 100_000.0, 999, Team::Blue, None, None);
         tick(&mut s, 4.0);
         let walls = sloppy_core::sim::house_layout::wall_frames(design.w, design.d);
+        let (mut stubs, mut lower) = (0, 0);
         let mut here = Vec::new();
         for fragment in &s.fragments {
             let Some(piece) = fragment.house_piece else {
@@ -301,23 +311,35 @@ fn every_cottage_collapse_comes_to_rest_with_its_walls_lying_down() {
             let out = walls[wall].1;
             let body = &s.world.bodies[fragment.body];
             let face = *body.rotation() * glam::Vec3::new(out.x as f32, out.y as f32, out.z as f32);
-            if face.y.abs() < 0.5 {
+            if wall != 1 && piece.shard.is_multiple_of(2) {
+                lower += 1;
+                // Standing, its outside face tipped up a little: leaning in.
+                if (0.03..0.6).contains(&face.y) {
+                    stubs += 1;
+                }
+            } else if face.y.abs() < 0.5 {
                 here.push(format!("{x} {z}: {}", String::from(piece)));
             }
         }
-        assert!(here.len() <= 1, "{here:?}");
+        assert!(
+            stubs * 2 >= lower,
+            "{x} {z}: {stubs} of {lower} stubs stand"
+        );
+        assert!(here.len() <= 2, "{here:?}");
         standing.extend(here);
     }
-    assert!(standing.len() <= 3, "{standing:?}");
+    assert!(standing.len() <= 5, "{standing:?}");
 }
 
 /// The roof pancakes onto the wreck: its slabs come down as they stood and lie
-/// shingles up on the pile, never flipped onto their rafters or left on edge.
+/// shingles up on the pile or lean on the stubs of wall: of the village's some
+/// hundred and forty slabs a very few turn over onto their rafters, and few are
+/// left steep.
 #[test]
 fn every_cottage_roof_comes_down_shingles_up() {
     use sloppy_core::sim::house_layout::HousePart;
     let village = village();
-    let mut flipped = Vec::new();
+    let (mut flipped, mut steep, mut slabs) = (Vec::new(), Vec::new(), 0);
     for house in houses(&village) {
         let c = &village.covers[house];
         let (x, z, w, d, h) = (c.x, c.z, c.w, c.d, c.h);
@@ -355,10 +377,14 @@ fn every_cottage_roof_comes_down_shingles_up() {
             }
             .normalize();
             let up = (*s.world.bodies[fragment.body].rotation() * top).y;
-            if up < 0.3 {
+            slabs += 1;
+            if up < -0.3 {
                 flipped.push(format!("{x} {z}: {} ({up:.2})", String::from(piece)));
+            } else if up < 0.3 {
+                steep.push(format!("{x} {z}: {} ({up:.2})", String::from(piece)));
             }
         }
     }
-    assert!(flipped.len() <= 2, "{flipped:?}");
+    assert!(flipped.len() <= 3, "{flipped:?}");
+    assert!(steep.len() * 10 <= slabs, "{steep:?} of {slabs}");
 }

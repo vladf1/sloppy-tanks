@@ -71,11 +71,12 @@ test("pause leaves the score to the header's plates and lists the battle's facts
   );
 });
 
-test("a battle ended early says who ended it and who was ahead", () => {
+test("a battle ended early is called ended, never won, and says who was ahead", () => {
   const early = menuMarkup(teamBattle({ phase: "results", endedEarly: true }), null);
-  assert.match(early, /<h2 id="results-title">VICTORY<\/h2>/);
-  assert.match(early, /class="ended-early">ENDED BY YOU</);
-  assert.match(early, /You ended the battle with your team 1 ahead · 1 death</);
+  assert.match(early, /<h2 id="results-title">BATTLE ENDED<\/h2>/);
+  assert.match(early, /data-outcome="ended"/);
+  assert.doesNotMatch(early, /VICTORY|ENDED BY YOU/);
+  assert.match(early, /Your team led by 1 when you ended it · 1 death</);
   const full = menuMarkup(teamBattle({ phase: "results" }), null);
   assert.doesNotMatch(full, /ENDED BY YOU/);
   assert.match(full, /Your team took the round by 1 · 1 death</);

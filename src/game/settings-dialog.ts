@@ -86,27 +86,31 @@ function defaultMark(min: number, max: number, value: number): string {
   return `--default:${(ratio * 100).toFixed(1)}%;--default-ratio:${ratio.toFixed(3)}`;
 }
 
-/** The scale under a slider: its range in numbers at the ends, and a caret marking the
+/** The scale under a slider: what its ends mean in words, and a bare caret at the
  * default. The value itself reads once, in the box beside the slider. */
-function sliderScale(min: number, max: number, mark: string): string {
-  return `<span class="slider-scale" style="${mark}" aria-hidden="true"><i>${percent(min)}</i><b>DEFAULT</b><i>${percent(max)}</i></span>`;
+function sliderScale(low: string, high: string, mark: string): string {
+  return `<span class="slider-scale" style="${mark}" aria-hidden="true"><i>${low}</i><b></b><i>${high}</i></span>`;
 }
+
+/** The corner X that every dialog with a way back carries. */
+export const CLOSE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"/></svg>`;
 
 function settingsMarkup(eyebrow: string, speeds: boolean, controls: string): string {
   const speedRows = (Object.keys(SPEED_LABELS) as SpeedKey[])
     .map(
       (key) =>
-        `<label class="setting-row slider-row" for="${key}"><span>${SPEED_LABELS[key]}<small>${SPEED_NOTES[key]}</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}" title="Default 100%"><output id="${key}-value" for="${key}">100%</output>${sliderScale(0.5, 2, defaultMark(0.5, 2, 1))}</label>`,
+        `<label class="setting-row slider-row" for="${key}"><span>${SPEED_LABELS[key]}<small>${SPEED_NOTES[key]}</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}" title="Default 100%"><output id="${key}-value" for="${key}">100%</output>${sliderScale("Slower", "Faster", defaultMark(0.5, 2, 1))}</label>`,
     )
     .join("");
   // The dialog itself takes focus when it opens, so no control starts out ringed as if
   // the keyboard had chosen it; Tab moves to the first one.
   return `<dialog id="settings" class="settings" aria-labelledby="settings-title" tabindex="-1">
+    <button class="dialog-close settings-close" type="button" aria-label="Close settings without saving" title="Close (Esc)">${CLOSE_ICON}</button>
     <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${eyebrow}</span></div><div class="dialog-title"><h2 id="settings-title">SETTINGS</h2></div></header>
     <div class="dialog-tabs" role="tablist" aria-label="Settings"><button type="button" role="tab" id="settings-tab-game" aria-selected="true" aria-controls="settings-game">GAME</button>${controls ? `<button type="button" role="tab" id="settings-tab-controls" aria-selected="false" aria-controls="settings-controls" tabindex="-1">CONTROLS</button>` : ""}</div>
     <div class="dialog-pane setting-rows" id="settings-game" role="tabpanel" aria-labelledby="settings-tab-game">
     <div class="setting-group-label"><span>SOUND &amp; INPUT</span></div>
-    <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output>${sliderScale(0, 1, defaultMark(0, 1, DEFAULT_VOLUME))}</label>
+    <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output>${sliderScale("Mute", "Loud", defaultMark(0, 1, DEFAULT_VOLUME))}</label>
     <div class="setting-row"><span id="touch-mode-label">Touch controls<small>Auto shows them on touchscreens</small></span><div class="setting-choice" role="radiogroup" aria-labelledby="touch-mode-label">${TOUCH_MODES.map(([value, label]) => `<label><input type="radio" name="touch-mode-choice" value="${value}"><span>${label}</span></label>`).join("")}<select id="touch-mode" class="sr-only" tabindex="-1" aria-hidden="true">${TOUCH_MODES.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div></div>
     ${speeds ? `<div class="setting-group-label"><span>BATTLE SPEED</span><button class="group-action speeds-reset" type="button" title="Both speeds back to 100%"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5" /></svg>Reset to 100%</button></div>${speedRows}` : ""}
     </div>
@@ -151,7 +155,9 @@ export class SettingsDialog {
         this.close();
       }
     });
-    this.dialog.querySelector(".settings-cancel")!.addEventListener("click", () => this.close());
+    for (const exit of this.dialog.querySelectorAll(".settings-cancel, .settings-close")) {
+      exit.addEventListener("click", () => this.close());
+    }
     this.dialog.querySelector(".settings-save")!.addEventListener("click", () => {
       this.save();
       this.close();
@@ -215,6 +221,10 @@ export class SettingsDialog {
     const reset = this.dialog.querySelector<HTMLButtonElement>(".speeds-reset");
     if (reset) {
       reset.disabled = Object.keys(SPEED_LABELS).every((key) => Number(this.value(key)) === 1);
+      // A disabled control says why it is out of reach.
+      reset.title = reset.disabled
+        ? "Both speeds are at their 100% default"
+        : "Both speeds back to 100%";
     }
   }
 

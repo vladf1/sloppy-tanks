@@ -107,6 +107,8 @@ pub fn tank_model(kind: VehicleKind, team: Team) -> Arc<Node> {
 /// well into the hull roof (used by hull-only wrecks whose turret flew off). Wrecks
 /// keep the team paint; presentation darkens them.
 pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool) -> Arc<Node> {
+    // The Humvee has no turret ring to open: both variants are one model, built once.
+    let open_turret_ring = open_turret_ring && kind != VehicleKind::Humvee;
     MODELS.get_or_insert((kind, team, open_turret_ring), || {
         // Team paint, trim and bare steel: the colors the worn finish recognises.
         let humvee = kind == VehicleKind::Humvee;

@@ -14,6 +14,7 @@ use std::f64::consts::{PI, TAU};
 
 use glam::{Mat4, Vec3};
 use sloppy_core::geometry::math::smoothstep;
+use sloppy_core::sim::render_state::RenderFragment;
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
 use super::Flash;
@@ -30,7 +31,7 @@ use crate::color::hex_to_linear;
 pub const MAX_EXPLOSIONS: usize = 40;
 /// A plain blast's lifetime; tank and drum blasts take their look's.
 pub const EXPLOSION_LIFETIME: f64 = 2.8;
-pub const PUFFS_PER_BLAST: usize = 30;
+pub const PUFFS_PER_BLAST: usize = 34;
 /// Scorches left on the ground at once; the oldest makes room.
 pub const MAX_SCORCHES: usize = 40;
 /// Marks shells leave on hard walls at once; the oldest makes room.
@@ -47,26 +48,36 @@ pub const DECAL_CAPACITY: usize = MAX_EXPLOSIONS * 2 + MAX_SCORCHES + MAX_WALL_M
 /// A scorch cools and then fades out over this many seconds.
 pub const SCORCH_LIFETIME: f64 = 45.0;
 /// A burnout's thin smoke outlasts a normal blast.
-const BURNOUT_LIFETIME: f64 = 2.7;
+const BURNOUT_LIFETIME: f64 = 3.6;
+/// A burnout's fireball against a cook-off's: the hull holds most of it in.
+const BURNOUT_FIRE_SCALE: f64 = 0.72;
 /// Billows of fire and smoke a burnout rolls up off the hull.
 const BURNOUT_BILLOWS: usize = 4;
 /// A dust collapse (timber) and a shell hit's puff.
-const COLLAPSE_LIFETIME: f64 = 2.2;
+const COLLAPSE_LIFETIME: f64 = 3.2;
+const COLLAPSE_DUST: f64 = 1.35;
 /// A cottage's collapse dust: how long it hangs, when its roof lands on the wreck
 /// (s after the break), how many billows the landing drives out in a ring round
-/// the footprint, how far (m) from its centre they start and roll out, and the
-/// puffs of the column rising off the heap.
-const HOUSE_DUST_LIFETIME: f64 = 6.0;
-const HOUSE_IMPACT: f64 = 0.6;
-const HOUSE_BILLOWS: usize = 16;
+/// the footprint, how far (m) from its centre they start and roll out, the puffs
+/// of the column rising off the heap and the dark billows over the pile.
+const HOUSE_DUST_LIFETIME: f64 = 8.0;
+const HOUSE_IMPACT: f64 = 0.55;
+const HOUSE_BILLOWS: usize = 18;
 const HOUSE_FOOT: f64 = 2.8;
-const HOUSE_ROLL: f64 = 3.0;
+const HOUSE_ROLL: f64 = 3.2;
 const HOUSE_PALL: usize = 4;
+/// Dark billows boiling up inside the footprint over the pile.
+const HOUSE_CORE: usize = 7;
 /// Plaster and mortar dust, paler than the ground's.
 const PLASTER_DUST: u32 = 0xb9ab95;
 const HIT_LIFETIME: f64 = 1.1;
 /// Grit off a wall hangs and settles longer than a hull's puff of smoke.
-const STONE_HIT_LIFETIME: f64 = 1.8;
+const STONE_HIT_LIFETIME: f64 = 3.0;
+/// A holed container smokes from its breach a while after the hit: how long,
+/// and the wisps cycling up out of it (s per trip).
+const SHEET_HIT_LIFETIME: f64 = 3.2;
+const BREACH_WISPS: usize = 3;
+const WISP_CYCLE: f64 = 1.4;
 /// Dust rings show for the first part of a blast only; the shockwave for less.
 const RING_SECONDS: f64 = 0.75;
 const SHOCK_SECONDS: f64 = 0.42;
@@ -122,13 +133,16 @@ const SMOKE_PUFFS: usize = 6;
 const HULL_SEAMS: f64 = 1.3;
 const HULL_SEAM_HEIGHT: f64 = 0.45;
 const HULL_HATCH_HEIGHT: f64 = 1.35;
+/// How high a vehicle's hatch lobes jet, as a share of the eruption's column: a
+/// burst out of the hatches, never a pillar standing on the hull.
+const HULL_COLUMN: f64 = 0.7;
 /// A blast on open ground bursts from a fist-sized heart low over the ground,
 /// its lobes bigger and closer packed than a vehicle's: one rolling ball with
 /// a broken rim rather than a ring of pops.
-const GROUND_SEAMS: f64 = 0.3;
-const GROUND_LOBES: [f64; 2] = [0.6, 1.55];
+const GROUND_SEAMS: f64 = 0.4;
+const GROUND_LOBES: [f64; 2] = [0.8, 1.35];
 /// How high a ground blast's middle jets, against a vehicle's.
-const GROUND_COLUMN: f64 = 0.5;
+const GROUND_COLUMN: f64 = 0.75;
 const GROUND_SEAM_HEIGHT: f64 = 0.3;
 const GROUND_HATCH_HEIGHT: f64 = 0.55;
 const SKIRT_PUFFS: usize = 7;
@@ -157,7 +171,12 @@ const FUEL_FLAMES: usize = 4;
 /// they use the puff slots a tank's turret jet would.
 const FUEL_BALLS: usize = 3;
 const FUEL_BALL_CYCLE: f64 = 0.9;
-const FUEL_FIRE: [f64; 2] = [0.25, 1.5];
+const FUEL_FIRE: [f64; 2] = [0.25, 2.6];
+/// The oily plume the burning fuel feeds: puffs cycling up it, a puff's trip
+/// (s) and the plume's height (m, times the blast's scale).
+const FUEL_PLUME: usize = 5;
+const FUEL_PLUME_CYCLE: f64 = 2.6;
+const FUEL_PLUME_HEIGHT: f64 = 5.5;
 /// A tank's cook-off jet: how long its tongue of flame roars up, and its color.
 const JET_SECONDS: f64 = 0.45;
 const JET_COLOR: [f32; 3] = [1.3, 1.1, 1.0];
@@ -167,15 +186,28 @@ const SHOCK_RING: f32 = 1.0;
 const SCORCH: f32 = 2.0;
 const STONE_MARK: f32 = 3.0;
 const STEEL_MARK: f32 = 4.0;
+const POWDER: f32 = 5.0;
+/// A concrete hit's powder stain: how far out from the face it lies and how
+/// wide it is (m).
+const POWDER_REACH: f64 = 0.55;
+const POWDER_SIZE: f64 = 2.0;
 /// Soot off a shell striking a steel wall.
 const STEEL_SOOT: u32 = 0x3d3a37;
 
 const SMOKE: u32 = 0x76787c;
-const TANK_SMOKE: u32 = 0x4c4d50;
+const TANK_SMOKE: u32 = 0x57534f;
 const DUST: u32 = 0xaa9273;
 /// A struck tank's oily smoke and a struck wall's grit.
 const HIT_SMOKE: u32 = 0x55524f;
 const GRIT: u32 = 0xb4ada2;
+/// Crushed concrete: a pale powder, paler than the wall's weathered skin.
+const CONCRETE_POWDER: u32 = 0xd9d5cc;
+/// A hit's white-hot point and its bloom (linear color and opacity): warm on
+/// steel, a cold white crack of light on concrete.
+const HIT_FLASH: [f32; 4] = [2.6, 1.7, 0.75, 1.0];
+const HIT_BLOOM: [f32; 4] = [1.8, 0.65, 0.14, 0.4];
+const STONE_FLASH: [f32; 4] = [2.5, 2.3, 2.0, 0.9];
+const STONE_BLOOM: [f32; 4] = [1.1, 0.95, 0.75, 0.2];
 
 /// Dust a heavy piece of debris kicks up where it lands: how long it hangs,
 /// the contact force (N) below which a landing raises none and at which it
@@ -184,22 +216,36 @@ const GRIT: u32 = 0xb4ada2;
 /// or any piece at all may raise dust again.
 const LANDING_LIFETIME: f64 = 1.7;
 const LANDING_FORCE: [f64; 2] = [140.0, 2500.0];
-const LANDING_HEIGHT: f64 = 1.8;
+const LANDING_HEIGHT: f64 = 2.4;
 const LANDING_REPEAT: f64 = 4.0;
 const LANDING_GAP: f64 = 0.06;
+/// A landing's dust skirt scale: [lightest, added for the hardest].
+const LANDING_DUST: [f64; 2] = [0.45, 0.85];
 /// The dust a felled tree's snap shakes up round its stump (a landing's scale).
 const TREE_SNAP_DUST: f64 = 0.55;
 /// Pieces remembered for `LANDING_REPEAT`.
 const LANDING_MEMORY: usize = 24;
+/// A felled trunk has landed once its axis tilts this low (its up's height),
+/// and dust bursts at these shares of its half-length from its middle (the
+/// crown end positive), at this scale. The last trunks that did are kept.
+const FELLED_TILT: f64 = 0.3;
+const FELLED_DUST: [f64; 3] = [-0.3, 0.45, 1.05];
+const FELLED_DUST_SCALE: f64 = 0.85;
+const FELLED_MEMORY: usize = 8;
+/// About where a trunk breaks off its stump (m).
+const TRUNK_STUMP: f64 = 0.4;
 
 /// Wood dust: a struck face's puff and a burst crate's cloud last this long.
 const WOOD_HIT_LIFETIME: f64 = 0.9;
-const WOOD_BURST_LIFETIME: f64 = 2.1;
+const WOOD_BURST_LIFETIME: f64 = 3.6;
 /// Warm sawdust rolling low, and the paler dust that rises and blows out.
 const SAWDUST: u32 = 0xbda483;
 const SAWDUST_LIGHT: u32 = 0xcfbc9d;
 /// A burst's ring spreads at this scale; its cloud scales with the crate's height.
 const WOOD_RING_SCALE: f64 = 0.6;
+/// Low billows of sawdust that settle round a burst crate and linger.
+const SETTLING_DUST: usize = 4;
+const SETTLING_BLOWN: f64 = 1.2;
 
 /// The dust a cargo crate raises.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -356,7 +402,7 @@ const TANK_BLASTS: [Look; 3] = [
         fire_spread: 1.12,
         fire_life: 0.56,
         fire_rise: 1.1,
-        smoke: 0x55514d,
+        smoke: 0x5c554e,
         smoke_size: 1.3,
         smoke_rise: 2.8,
         drift: 0.25,
@@ -367,7 +413,7 @@ const TANK_BLASTS: [Look; 3] = [
         fire_spread: 1.0,
         fire_life: 0.58,
         fire_rise: 1.4,
-        smoke: 0x53575b,
+        smoke: 0x5a5856,
         smoke_size: 1.22,
         smoke_rise: 3.1,
         drift: 1.2,
@@ -378,34 +424,34 @@ const TANK_BLASTS: [Look; 3] = [
 // over the drum's own size, and its oily smoke lingers.
 const BARREL_BLASTS: [Look; 3] = [
     Look {
-        lifetime: 4.6,
-        fire_size: 1.2,
-        fire_spread: 0.9,
-        fire_life: 0.6,
-        fire_rise: 1.4,
-        smoke: 0x2f2b28,
+        lifetime: 6.0,
+        fire_size: 1.02,
+        fire_spread: 0.76,
+        fire_life: 0.5,
+        fire_rise: 1.9,
+        smoke: 0x4d4844,
         smoke_size: 1.1,
         smoke_rise: 3.0,
         drift: 0.3,
     },
     Look {
-        lifetime: 4.6,
-        fire_size: 1.14,
-        fire_spread: 0.8,
-        fire_life: 0.56,
-        fire_rise: 1.6,
-        smoke: 0x2b2b2c,
+        lifetime: 6.0,
+        fire_size: 0.97,
+        fire_spread: 0.68,
+        fire_life: 0.5,
+        fire_rise: 2.1,
+        smoke: 0x4a4542,
         smoke_size: 1.05,
         smoke_rise: 3.2,
         drift: 1.3,
     },
     Look {
-        lifetime: 4.8,
-        fire_size: 1.16,
-        fire_spread: 0.85,
-        fire_life: 0.6,
-        fire_rise: 1.7,
-        smoke: 0x34302c,
+        lifetime: 6.0,
+        fire_size: 0.99,
+        fire_spread: 0.72,
+        fire_life: 0.5,
+        fire_rise: 2.2,
+        smoke: 0x524a44,
         smoke_size: 1.08,
         smoke_rise: 3.3,
         drift: 0.6,
@@ -451,7 +497,7 @@ struct WallMark {
 impl Blast {
     fn look(&self) -> Look {
         match self.kind {
-            Kind::Tank => TANK_BLASTS[self.variant],
+            Kind::Tank | Kind::Burnout => TANK_BLASTS[self.variant],
             Kind::Barrel => BARREL_BLASTS[self.variant],
             _ => BLAST,
         }
@@ -465,7 +511,8 @@ impl Blast {
             Kind::Collapse => COLLAPSE_LIFETIME,
             Kind::HouseFall => HOUSE_DUST_LIFETIME,
             Kind::Hit(Struck::Stone) => STONE_HIT_LIFETIME,
-            Kind::Hit(Struck::Steel | Struck::Sheet) => HIT_LIFETIME,
+            Kind::Hit(Struck::Steel) => HIT_LIFETIME,
+            Kind::Hit(Struck::Sheet) => SHEET_HIT_LIFETIME,
             Kind::Landing => LANDING_LIFETIME,
             Kind::Blast | Kind::Tank | Kind::Barrel => self.look().lifetime,
         }
@@ -491,8 +538,11 @@ struct Scorch {
     age: f64,
     diameter: f64,
     phase: f64,
-    /// The ground's dust, for the rim of dirt the blast threw out.
+    /// The ground's dust, for the rim of dirt the blast threw out; a powder
+    /// stain's own powder.
     dust: [f64; 3],
+    /// The decal's look: a blast's scorch, or the powder a concrete hit spills.
+    kind: f32,
 }
 
 fn linear(hex: u32) -> [f64; 3] {
@@ -663,6 +713,8 @@ pub struct ExplosionEffects {
     landings: [(u32, f64); LANDING_MEMORY],
     landing_cursor: usize,
     last_landing: f64,
+    felled: [u32; FELLED_MEMORY],
+    felled_cursor: usize,
 }
 
 impl Default for ExplosionEffects {
@@ -688,6 +740,8 @@ impl Default for ExplosionEffects {
             landings: [(0, f64::NEG_INFINITY); LANDING_MEMORY],
             landing_cursor: 0,
             last_landing: f64::NEG_INFINITY,
+            felled: [u32::MAX; FELLED_MEMORY],
+            felled_cursor: 0,
         }
     }
 }
@@ -716,9 +770,34 @@ impl ExplosionEffects {
         self.dust_skirt(
             event.x,
             event.z,
-            0.35 + 0.7 * strength.clamp(0.0, 1.0),
+            LANDING_DUST[0] + LANDING_DUST[1] * strength.clamp(0.0, 1.0),
             (f64::from(id) * 2.399).rem_euclid(TAU),
         );
+    }
+
+    /// A felled trunk slamming down: once it lies nearly flat, dust bursts up
+    /// along its length where the crown and the log strike the ground.
+    pub fn felled_trees(&mut self, fragments: &[RenderFragment]) {
+        for fragment in fragments {
+            let (Some(_), Some(center)) = (fragment.tree_cover_id, fragment.tree_center_y) else {
+                continue;
+            };
+            let r = fragment.rotation;
+            let up = glam::DQuat::from_xyzw(r.x, r.y, r.z, r.w).normalize() * glam::DVec3::Y;
+            if up.y > FELLED_TILT || self.felled.contains(&fragment.id) {
+                continue;
+            }
+            self.felled[self.felled_cursor] = fragment.id;
+            self.felled_cursor = (self.felled_cursor + 1) % FELLED_MEMORY;
+            let half = (center - TRUNK_STUMP).max(1.0);
+            let p = fragment.position;
+            for (j, along) in FELLED_DUST.into_iter().enumerate() {
+                let x = p.x + up.x * half * along;
+                let z = p.z + up.z * half * along;
+                let phase = (f64::from(fragment.id) * 1.7 + j as f64 * 2.399).rem_euclid(TAU);
+                self.dust_skirt(x, z, FELLED_DUST_SCALE * (0.8 + 0.25 * along), phase);
+            }
+        }
     }
 
     /// A skirt of the ground's dust rolling out low from `(x, z)` at `scale`.
@@ -837,6 +916,10 @@ impl ExplosionEffects {
         if barrel {
             blast.scale *= 0.74 + random.next_f64() * 0.1;
         }
+        // Timber and a tower going down raise more dust than a shell's pop.
+        if kind == Kind::Collapse {
+            blast.scale *= COLLAPSE_DUST;
+        }
         blast.phase = random.next_f64() * TAU;
         if fire {
             // A different eruption from the last one.
@@ -862,8 +945,12 @@ impl ExplosionEffects {
                 blast.y = f64::from(strike.point.y);
                 blast.direction = [f64::from(strike.normal.x), f64::from(strike.normal.z)];
                 // The dust is the wall's own: grey concrete grit, not the ground's.
-                blast.dust = mixed(linear(strike.color), linear(GRIT), 0.45);
-                wall_mark = Some((strike, blast.phase));
+                blast.dust = if strike.material == WallMaterial::Steel {
+                    mixed(linear(strike.color), linear(GRIT), 0.45)
+                } else {
+                    mixed(linear(strike.color), linear(CONCRETE_POWDER), 0.75)
+                };
+                wall_mark = Some((strike, blast.phase, blast.dust));
             }
         }
         if let Some(wood) = wood {
@@ -900,31 +987,49 @@ impl ExplosionEffects {
         }
         // Fiery blasts char the ground where they went off.
         let scorch = match kind {
-            Kind::Blast => Some(4.6),
-            Kind::Barrel => Some(5.6),
-            Kind::Tank => Some(6.2),
-            Kind::Burnout => Some(2.6),
+            Kind::Blast => Some(5.2),
+            Kind::Barrel => Some(6.2),
+            Kind::Tank => Some(7.4),
+            Kind::Burnout => Some(4.4),
             _ => None,
         };
         if let Some(diameter) = scorch {
             let (x, z, phase, dust) = (blast.x, blast.z, blast.phase, blast.dust);
             let diameter = diameter * blast.scale;
-            let y = self.pads.decal_height(x, z, diameter * 0.5, SCORCH_HEIGHT);
-            self.scorches[self.scorch_cursor] = Scorch {
-                x,
-                z,
-                y,
-                age: 0.0,
-                diameter,
-                phase,
-                dust,
-            };
-            self.scorch_cursor = (self.scorch_cursor + 1) % MAX_SCORCHES;
-            self.scorch_count = (self.scorch_count + 1).min(MAX_SCORCHES);
+            self.stain(x, z, diameter, phase, dust, SCORCH);
         }
-        if let Some((strike, phase)) = wall_mark {
+        if let Some((strike, phase, powder)) = wall_mark {
+            // Crushed concrete spills pale powder on the ground at the wall's foot.
+            if strike.material == WallMaterial::Stone {
+                let out = POWDER_REACH + 0.5 * hash(phase);
+                self.stain(
+                    f64::from(strike.point.x + strike.normal.x * out as f32),
+                    f64::from(strike.point.z + strike.normal.z * out as f32),
+                    POWDER_SIZE * (0.8 + 0.4 * hash(phase * 1.7)),
+                    phase,
+                    powder,
+                    POWDER,
+                );
+            }
             self.mark(strike, phase);
         }
+    }
+
+    /// Leave a ground decal that lasts: a scorch or a powder stain.
+    fn stain(&mut self, x: f64, z: f64, diameter: f64, phase: f64, dust: [f64; 3], kind: f32) {
+        let y = self.pads.decal_height(x, z, diameter * 0.5, SCORCH_HEIGHT);
+        self.scorches[self.scorch_cursor] = Scorch {
+            x,
+            z,
+            y,
+            age: 0.0,
+            diameter,
+            phase,
+            dust,
+            kind,
+        };
+        self.scorch_cursor = (self.scorch_cursor + 1) % MAX_SCORCHES;
+        self.scorch_count = (self.scorch_count + 1).min(MAX_SCORCHES);
     }
 
     pub fn reset(&mut self) {
@@ -934,6 +1039,8 @@ impl ExplosionEffects {
         self.cursor = 0;
         self.landings = [(0, f64::NEG_INFINITY); LANDING_MEMORY];
         self.last_landing = f64::NEG_INFINITY;
+        self.felled = [u32::MAX; FELLED_MEMORY];
+        self.felled_cursor = 0;
         self.tank_sequence = 0;
         self.barrel_sequence = 0;
         self.scorch_count = 0;
@@ -957,8 +1064,8 @@ impl ExplosionEffects {
                     LIGHT_HEIGHT * s + LIGHT_LIFT,
                 ),
                 Kind::Burnout => (
-                    BLAST_LIGHT * 0.5 * s * (-t * 4.0).exp(),
-                    1.2 * s + LIGHT_LIFT,
+                    BLAST_LIGHT * BURNOUT_FIRE_SCALE * s * blast.fire_light(t, &blast.look()),
+                    LIGHT_HEIGHT * s * BURNOUT_FIRE_SCALE + LIGHT_LIFT,
                 ),
                 Kind::Hit(_) => (HIT_LIGHT * (-t * 22.0).exp(), blast.y + 0.6),
                 _ => continue,
@@ -1034,7 +1141,7 @@ impl ExplosionEffects {
                 [
                     scorch.age as f32,
                     scorch.phase as f32,
-                    SCORCH,
+                    scorch.kind,
                     (strength * appear) as f32,
                 ],
             ));
@@ -1121,8 +1228,17 @@ impl ExplosionEffects {
             Kind::Wood(wood) => self.wood_dust(b, wood, t, lifetime),
             Kind::Hit(struck) => self.hit(b, struck, t, streaks),
             Kind::Burnout => {
+                // The ammunition goes inside the hull: a smaller fireball bursts
+                // out of its seams and hatches, lighting the ground, and the
+                // hull smokes on.
+                let mut inner = *b;
+                inner.scale *= BURNOUT_FIRE_SCALE;
+                self.ground_glow(&inner, t, &look, streaks);
+                self.skirt(&inner, t, b.dust);
+                self.fireball(&inner, t, &look, linear(TANK_SMOKE), streaks);
                 self.burnout(b, t);
                 self.burnout_flare(b, t, streaks);
+                self.ring(b, t, inner.scale);
             }
             Kind::Landing => self.skirt(b, t, scaled(b.dust, 1.05)),
             Kind::Collapse => {
@@ -1133,7 +1249,8 @@ impl ExplosionEffects {
                 self.ring(b, t, b.scale);
             }
             Kind::HouseFall => {
-                let dust = mixed(b.dust, linear(PLASTER_DUST), 0.4);
+                // Plaster and mortar off the walls, not the ground the cottage stood on.
+                let dust = mixed(b.dust, linear(PLASTER_DUST), 0.9);
                 self.skirt(b, t, dust);
                 self.house_dust(b, t, lifetime, dust);
                 if t > HOUSE_IMPACT {
@@ -1142,8 +1259,9 @@ impl ExplosionEffects {
             }
             Kind::Blast | Kind::Tank | Kind::Barrel => {
                 let smoke = linear(look.smoke);
+                // No sitting haze: the column carries the smoke up and away,
+                // and a broad faint disc over the ground read as a flat decal.
                 self.ground_glow(b, t, &look, streaks);
-                self.haze(b, t, lifetime, mixed(b.dust, smoke, 0.45));
                 self.skirt(b, t, b.dust);
                 self.column(b, t, lifetime, &look, smoke, true);
                 if b.kind == Kind::Tank {
@@ -1152,6 +1270,7 @@ impl ExplosionEffects {
                 if b.kind == Kind::Barrel {
                     fuel_fire(b, t, lifetime, streaks);
                     self.fuel_smoke(b, t, lifetime, smoke);
+                    self.fuel_plume(b, t, lifetime, smoke);
                 }
                 self.fireball(b, t, &look, smoke, streaks);
                 let s = b.scale;
@@ -1376,14 +1495,14 @@ impl ExplosionEffects {
         let s = b.scale;
         let shape = SHAPES[b.shape % SHAPES.len()];
         let cooling = COOLING / look.fire_life;
-        let vehicle = b.kind == Kind::Tank;
+        let vehicle = matches!(b.kind, Kind::Tank | Kind::Burnout);
         let (source, seam_height, hatch_height, [spread, lobe], column) = if vehicle {
             (
                 HULL_SEAMS,
                 HULL_SEAM_HEIGHT,
                 HULL_HATCH_HEIGHT,
                 [1.0, 1.0],
-                shape.column,
+                shape.column * HULL_COLUMN,
             )
         } else {
             (
@@ -1394,6 +1513,10 @@ impl ExplosionEffects {
                 shape.column * GROUND_COLUMN,
             )
         };
+        // Every blast its own build: some squat and wide, some tall and narrow.
+        let build = hash(b.phase * 4.13 + 0.37);
+        let spread = spread * (0.78 + 0.44 * build);
+        let column = column * (1.15 - 0.4 * build);
         for j in 0..FIRE_PUFFS {
             let jf = j as f64;
             let r1 = hash(b.phase * 0.53 + jf * 1.371);
@@ -1407,7 +1530,7 @@ impl ExplosionEffects {
             }
             let seam = j < shape.seams;
             // Most of the way out within a tenth of a second.
-            let out = settle(age, 13.0 + 9.0 * r2);
+            let out = settle(age, 22.0 + 10.0 * r2);
             let (angle, reach, height, size) = if seam {
                 let k = (jf + 0.5) / shape.seams as f64 - 0.5;
                 let angle =
@@ -1469,11 +1592,13 @@ impl ExplosionEffects {
             // Jets up the middle burst tall, lobes out of the seams wide; both
             // round out as they turn to soot.
             let burst = match (seam, vehicle) {
-                (true, _) => 0.8 + 0.15 * r4,
-                (false, true) => 1.25 + 0.45 * r4,
+                (true, true) => 0.8 + 0.15 * r4,
+                (true, false) => 1.0 + 0.2 * r4,
+                (false, true) => 1.05 + 0.25 * r4,
                 (false, false) => 1.0 + 0.2 * r4,
             };
-            let stretch = 1.0 + (burst - 1.0) * fire;
+            // Soot climbing on its own heat draws out into rising billows.
+            let stretch = 1.0 + (burst - 1.0) * fire + 0.4 * smoothstep(soot_age, 0.15, 1.2);
             push_stretched_puff(
                 &mut self.puffs,
                 Puff {
@@ -1525,13 +1650,19 @@ impl ExplosionEffects {
                 continue;
             }
             let heat = fire_heat(age, 4.5 + jf * 0.8);
+            // Each gout leans its own way, climbs its own height and swells to
+            // its own size, so the jet never reads as a stack of equal balls.
+            let r1 = hash(b.phase * 1.21 + jf * 0.917);
+            let r2 = hash(b.phase * 0.67 + jf * 1.733);
+            let lean = b.phase + jf * 2.399;
+            let off = (0.15 + 0.55 * r1) * jf.min(1.0);
             self.puff(Puff {
                 position: [
-                    b.x + b.phase.cos() * 0.2 * jf + WIND[0] * age * 0.6,
-                    (1.2 + 5.0 * settle(age, 3.0) * (1.0 - 0.22 * jf)) * s,
-                    b.z + b.phase.sin() * 0.2 * jf + WIND[1] * age * 0.6,
+                    b.x + lean.cos() * off + WIND[0] * age * 0.6,
+                    (1.2 + (3.2 + 3.0 * r2) * settle(age, 3.0) * (1.0 - 0.22 * jf)) * s,
+                    b.z + lean.sin() * off + WIND[1] * age * 0.6,
                 ],
-                size: (0.55 + 0.8 * age.sqrt()) * s,
+                size: (0.4 + 0.35 * r1 + (0.6 + 0.5 * r2) * age.sqrt()) * s,
                 color: scaled(smoke, 0.7),
                 opacity: (age / 0.04).min(1.0) * 0.95 * burning(heat),
                 seed: b.phase * 0.43 + jf * 0.5,
@@ -1546,6 +1677,45 @@ impl ExplosionEffects {
     /// The spilled fuel's body of fire: balls of flame rolling up off the pool
     /// that cool into oily black smoke, so the drum's spot keeps burning after
     /// the fireball (in the puff slots a tank's turret jet would use).
+    /// Black oily smoke the burning fuel feeds: a plume that climbs off the
+    /// puddle, leans on the wind and pales and spreads as it rises, for as
+    /// long as the fuel burns.
+    fn fuel_plume(&mut self, b: &Blast, t: f64, lifetime: f64, smoke: [f64; 3]) {
+        let fed = smoothstep(t, 0.5, 1.1) * (1.0 - smoothstep(t, FUEL_FIRE[1], lifetime));
+        if fed <= 0.01 {
+            return;
+        }
+        let s = b.scale;
+        for j in 0..FUEL_PLUME {
+            let jf = j as f64;
+            // One rate for every puff, each with its own phase.
+            let cycle = (t - 0.5) / FUEL_PLUME_CYCLE + jf / FUEL_PLUME as f64;
+            if cycle < 0.0 {
+                continue;
+            }
+            let a = cycle.fract();
+            let lap = cycle.floor();
+            let swirl = (lap * 2.3 + jf + b.phase * 3.0).sin() * (0.2 + 0.5 * a);
+            let lean = a * a * FUEL_PLUME_CYCLE * 0.8;
+            let size = (0.7 + 2.1 * a.powf(0.8)) * s;
+            self.puff(Puff {
+                position: [
+                    b.x + WIND[0] * lean + swirl,
+                    (0.6 + FUEL_PLUME_HEIGHT * a.powf(0.85)) * s,
+                    b.z + WIND[1] * lean - swirl * 0.6,
+                ],
+                size,
+                color: scaled(smoke, 0.5 + 0.6 * a),
+                opacity: fed * smoothstep(a, 0.0, 0.12) * (1.0 - smoothstep(a, 0.35, 1.0)) * 0.7,
+                seed: b.phase * 0.61 + lap * 0.37 + jf * 0.19,
+                heat: 0.0,
+                erosion: smoothstep(a, 0.3, 1.0) * 0.8,
+                softness: 0.12 + 0.3 * a,
+                underglow: fed * (1.0 - a).powi(4) * 0.5,
+            });
+        }
+    }
+
     fn fuel_smoke(&mut self, b: &Blast, t: f64, lifetime: f64, smoke: [f64; 3]) {
         let fire = smoothstep(t, FUEL_FIRE[0], FUEL_FIRE[0] + 0.25)
             * (1.0 - smoothstep(t, FUEL_FIRE[1], lifetime * 0.95));
@@ -1682,29 +1852,37 @@ impl ExplosionEffects {
             Struck::Stone => (0.12, 1.8),
             Struck::Steel => (0.09, 1.0),
         };
+        // Concrete flashes white and bursts into powder; only steel burns.
+        let (core, bloom) = if struck == Struck::Stone {
+            (STONE_FLASH, STONE_BLOOM)
+        } else {
+            (HIT_FLASH, HIT_BLOOM)
+        };
         if t < flash_seconds {
             let k = t / flash_seconds;
             let fade = (1.0 - k) as f32;
+            let [r, g, bl, a] = core;
             glow(
                 streaks,
                 at,
                 ((0.45 + 0.3 * k) * flare) as f32,
-                [2.6, 1.7, 0.75, fade],
+                [r, g, bl, fade * a],
             );
+            let [r, g, bl, a] = bloom;
             glow(
                 streaks,
                 at,
                 ((1.6 + 0.8 * k) * flare) as f32,
-                [1.8, 0.65, 0.14, fade * fade * 0.4],
+                [r, g, bl, fade * fade * a],
             );
         }
         let (color, softness, rise) = match struck {
             Struck::Steel => (linear(HIT_SMOKE), 0.2, 1.5),
             Struck::Sheet => (linear(STEEL_SOOT), 0.3, 1.2),
-            Struck::Stone => (b.dust, 0.45, 0.8),
+            Struck::Stone => (b.dust, 0.85, 0.8),
         };
         let heat = fire_heat(t, 9.0);
-        if burning(heat) > 0.0 {
+        if struck != Struck::Stone && burning(heat) > 0.0 {
             // A wall's burst blows out of its face, not back into it.
             let [ox, oz] = if wall { b.direction } else { [0.0; 2] };
             let size = (0.4 + 0.8 * t.sqrt()) * if wall { 1.5 } else { 1.0 };
@@ -1730,6 +1908,9 @@ impl ExplosionEffects {
         } else {
             HIT_LIFETIME
         };
+        if struck == Struck::Sheet {
+            self.breach_smoke(b, t, y);
+        }
         // A wall blows its grit or soot out of the face it struck, each billow
         // its own distance and size; a hull's smoke just rolls.
         let [bx, bz] = if wall { b.direction } else { [0.0; 2] };
@@ -1779,6 +1960,38 @@ impl ExplosionEffects {
                 } else {
                     0.0
                 },
+            });
+        }
+    }
+
+    /// Thin smoke curling out of a container's breach as its scorched paint
+    /// smoulders: wisps that rise along the face and drift off on the wind.
+    fn breach_smoke(&mut self, b: &Blast, t: f64, y: f64) {
+        let fade = smoothstep(t, 0.25, 0.6) * (1.0 - smoothstep(t, 1.6, SHEET_HIT_LIFETIME));
+        if fade <= 0.01 {
+            return;
+        }
+        let [bx, bz] = b.direction;
+        let soot = linear(STEEL_SOOT);
+        for j in 0..BREACH_WISPS {
+            let jf = j as f64;
+            // One rate for every wisp, each with its own phase.
+            let a = (t / WISP_CYCLE + jf / BREACH_WISPS as f64).fract();
+            let size = 0.25 + 0.7 * a;
+            self.puff(Puff {
+                position: [
+                    b.x + bx * (0.15 + size * 0.5) + WIND[0] * a * 1.2,
+                    y + 0.1 + 1.6 * a,
+                    b.z + bz * (0.15 + size * 0.5) + WIND[1] * a * 1.2,
+                ],
+                size,
+                color: scaled(soot, 0.9 + 0.5 * a),
+                opacity: fade * smoothstep(a, 0.0, 0.15) * (1.0 - smoothstep(a, 0.3, 1.0)) * 0.55,
+                seed: b.phase * 0.83 + jf * 0.29,
+                heat: 0.0,
+                erosion: smoothstep(a, 0.2, 1.0) * 0.8,
+                softness: 0.5,
+                underglow: 0.0,
             });
         }
     }
@@ -1855,43 +2068,76 @@ impl ExplosionEffects {
         ));
     }
 
-    /// The dust a falling cottage drives out as its roof comes down: one ring of
+    /// The dust a falling cottage drives out as its roof comes down: a skirt of
     /// low billows born round the footprint as the roof lands, rolling outward
-    /// along the ground and spreading as they thin, and a column of plaster dust
-    /// rising slowly off the heap and drifting downwind. No veil over the scene:
-    /// the wreck shows through it from the first second.
+    /// along the ground and spreading as they thin, a darker billow of plaster
+    /// and soot boiling up inside the footprint and hanging over the pile, and a
+    /// column of plaster dust rising slowly off the heap and drifting downwind.
+    /// Everything settles over seconds; the wreck shows through from the first.
     fn house_dust(&mut self, b: &Blast, t: f64, lifetime: f64, dust: [f64; 3]) {
         for j in 0..HOUSE_BILLOWS {
             let jf = j as f64;
             let r1 = hash(b.phase * 1.31 + jf * 2.113);
             let r2 = hash(b.phase * 0.77 + jf * 0.919);
             let r3 = hash(b.phase * 2.03 + jf * 1.447);
-            let age = t - HOUSE_IMPACT - r1 * 0.25;
+            let age = t - HOUSE_IMPACT - r1 * 0.3;
             if age <= 0.0 {
                 continue;
             }
             // Even steps round the ring with a little jitter, so the front reads as
             // one rolling wave rather than scattered blobs.
             let angle = b.phase + jf * TAU / HOUSE_BILLOWS as f64 + (r2 - 0.5) * 0.3;
-            let roll = settle(age, 1.1 + 0.4 * r2);
-            let reach = HOUSE_FOOT * (0.9 + 0.2 * r3) + HOUSE_ROLL * roll;
-            let size = 0.9 + 0.3 * r2 + 1.5 * roll;
-            let end = 3.2 + 1.2 * r3;
+            let roll = settle(age, 0.9 + 0.4 * r2);
+            let reach = HOUSE_FOOT * (0.85 + 0.25 * r3) + HOUSE_ROLL * roll;
+            let size = 0.9 + 0.35 * r2 + 1.5 * roll;
+            let end = 5.8 + 1.6 * r3;
             self.puff(Puff {
                 position: [
                     b.x + angle.cos() * reach + WIND[0] * age * 0.3,
-                    0.15 + size * 0.24,
+                    0.12 + size * 0.2,
                     b.z + angle.sin() * reach + WIND[1] * age * 0.3,
                 ],
                 size,
-                color: scaled(dust, 0.86 + 0.22 * r3),
-                opacity: (age / 0.15).min(1.0)
-                    * (0.3 + 0.1 * r1)
-                    * (1.0 - smoothstep(age, 0.9, end)),
+                color: scaled(dust, 0.84 + 0.22 * r3),
+                opacity: (age / 0.12).min(1.0)
+                    * (0.26 + 0.1 * r1)
+                    * (1.0 - smoothstep(age, 1.6, end)),
                 seed: b.phase * 0.43 + jf * 0.191,
                 heat: 0.0,
+                erosion: smoothstep(age, 0.5, end) * 0.8,
+                softness: 0.55 + 0.25 * r1,
+                underglow: 0.0,
+            });
+        }
+        for j in 0..HOUSE_CORE {
+            let jf = j as f64;
+            let r1 = hash(b.phase * 0.83 + jf * 1.771);
+            let r2 = hash(b.phase * 1.57 + jf * 0.613);
+            let r3 = hash(b.phase * 2.41 + jf * 2.293);
+            // Born as the walls fold and the roof lands, over the pile.
+            let age = t - HOUSE_IMPACT * (0.4 + 0.7 * r1);
+            if age <= 0.0 {
+                continue;
+            }
+            let angle = b.phase * 1.7 + jf * TAU / HOUSE_CORE as f64 + (r2 - 0.5) * 0.6;
+            let spread = HOUSE_FOOT * (0.3 + 0.45 * r3) + 0.9 * settle(age, 0.8);
+            let size = 1.0 + 0.4 * r2 + 0.9 * settle(age, 0.7);
+            let end = 5.2 + 1.4 * r3;
+            self.puff(Puff {
+                position: [
+                    b.x + angle.cos() * spread + WIND[0] * age * 0.35,
+                    0.35 + size * 0.25 + 0.6 * settle(age, 0.5) * r1,
+                    b.z + angle.sin() * spread + WIND[1] * age * 0.35,
+                ],
+                size,
+                color: scaled(dust, 0.62 + 0.14 * r2),
+                opacity: (age / 0.2).min(1.0)
+                    * (0.24 + 0.08 * r3)
+                    * (1.0 - smoothstep(age, 1.5, end)),
+                seed: b.phase * 0.61 + jf * 0.237,
+                heat: 0.0,
                 erosion: smoothstep(age, 0.4, end) * 0.85,
-                softness: 0.6 + 0.25 * r1,
+                softness: 0.5 + 0.2 * r1,
                 underglow: 0.0,
             });
         }
@@ -1909,12 +2155,12 @@ impl ExplosionEffects {
             self.puff(Puff {
                 position: [
                     b.x + angle.cos() * spread + WIND[0] * age * 0.6,
-                    0.8 + 0.5 * age + 0.4 * r2,
+                    1.0 + 0.5 * age + 0.4 * r2,
                     b.z + angle.sin() * spread + WIND[1] * age * 0.6,
                 ],
-                size: 1.3 + 0.7 * age + 0.5 * r2,
-                color: scaled(dust, 0.95 + 0.15 * r1),
-                opacity: (age / 0.35).min(1.0) * 0.16 * (1.0 - smoothstep(age, 1.2, end)),
+                size: 1.5 + 0.7 * age + 0.5 * r2,
+                color: scaled(dust, 0.92 + 0.15 * r1),
+                opacity: (age / 0.35).min(1.0) * 0.2 * (1.0 - smoothstep(age, 1.2, end)),
                 seed: b.phase * 0.29 + jf * 0.311,
                 heat: 0.0,
                 erosion: smoothstep(age, 0.6, end) * 0.85,
@@ -2026,6 +2272,37 @@ impl ExplosionEffects {
                         heat: 0.0,
                         erosion,
                         softness: 0.6,
+                        underglow: 0.0,
+                    });
+                }
+                // ...and a low ring of it settles on the ground round the wreck,
+                // lingering and drifting off on the wind.
+                for j in 0..SETTLING_DUST {
+                    let jf = j as f64;
+                    let age = t - 0.25 - jf * 0.06;
+                    if age <= 0.0 {
+                        continue;
+                    }
+                    let angle = b.phase + 0.7 + jf * TAU / SETTLING_DUST as f64;
+                    let roll = (1.4 + 1.2 * settle(age, 1.4)) * s;
+                    let size = (1.0 + 0.55 * age.sqrt()) * s;
+                    // Its ring is blown on along the shot like the rest of the cloud.
+                    let blown = (SETTLING_BLOWN + 0.4 * age) * s;
+                    self.puff(Puff {
+                        position: [
+                            b.x + angle.cos() * roll + dx * blown + WIND[0] * age * 0.35,
+                            0.25 * s + size * 0.3,
+                            b.z + angle.sin() * roll + dz * blown + WIND[1] * age * 0.35,
+                        ],
+                        size,
+                        color: scaled(linear(SAWDUST), 0.92 + 0.04 * jf),
+                        opacity: (age / 0.3).min(1.0)
+                            * 0.3
+                            * (1.0 - smoothstep(t, lifetime * 0.55, lifetime)),
+                        seed: b.phase * 0.33 + jf * 0.29,
+                        heat: 0.0,
+                        erosion: smoothstep(t, lifetime * 0.35, lifetime) * 0.8,
+                        softness: 0.8,
                         underglow: 0.0,
                     });
                 }
@@ -2340,7 +2617,11 @@ mod tests {
         effects.event(&SimEvent::at(SimEventType::Ricochet, 3.0, 0.0), &mut random);
         effects.update(0.02, &mut streaks);
         assert_eq!(streaks.len(), 4, "each a hot point and its bloom");
-        assert_eq!(effects.puffs.len(), 2, "each a burst of fire");
+        assert_eq!(
+            effects.puffs.len(),
+            1,
+            "steel bursts into fire; stone only into powder"
+        );
         assert_eq!(
             rings_of(&effects.rings, DUST_RING),
             1,
@@ -2378,7 +2659,11 @@ mod tests {
 
         effects.event(&cargo(SimEventType::Destroy, 2.4), &mut random);
         update(&mut effects, 0.3);
-        assert_eq!(effects.puffs.len(), 8);
+        assert_eq!(
+            effects.puffs.len(),
+            8 + 1,
+            "and the first of the settling dust"
+        );
         assert_eq!(effects.rings.len(), 1);
         let drift = |effects: &ExplosionEffects| {
             let puffs = effects.puffs.records();
@@ -2386,7 +2671,11 @@ mod tests {
         };
         assert!(drift(&effects) > 0.3, "the dust blows on along the shot");
         update(&mut effects, 1.15);
-        assert_eq!(effects.puffs.len(), 8, "the cloud lingers");
+        assert_eq!(
+            effects.puffs.len(),
+            8 + SETTLING_DUST,
+            "the cloud lingers and settles round the wreck"
+        );
         assert!(drift(&effects) > 0.6);
         update(&mut effects, WOOD_BURST_LIFETIME);
         assert_eq!(effects.puffs.len(), 0);
