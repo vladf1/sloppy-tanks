@@ -146,7 +146,6 @@ pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
             },
             ApronMode::Shore => Material {
                 vertex_colors: true,
-                flat_shading: true,
                 fog: false,
                 effect,
                 extra_textures,
@@ -223,7 +222,7 @@ fn visible_faces(mesh: Mesh, [w, h, d]: [f64; 3]) -> Mesh {
         ..Mesh::default()
     };
     let mut remap = vec![u32::MAX; mesh.positions.len()];
-    for triangle in indices.chunks_exact(3) {
+    for triangle in indices.as_chunks::<3>().0 {
         if !keep(mesh.normals[triangle[0] as usize]) {
             continue;
         }

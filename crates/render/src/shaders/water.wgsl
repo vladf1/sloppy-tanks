@@ -123,7 +123,9 @@ fn harbor_shore(p: vec2f, t: f32) -> vec3f {
         let breadth = select(hull.z, hull.w, along_x);
         if d < out.x {
             out.x = d;
-            out.y = 0.25 + 0.95 * smoothstep(0.55, 1.0, abs(along) / reach);
+            // Moored, so the bow and stern only lap a little harder than the
+            // flat sides: no bow wave.
+            out.y = 0.2 + 0.55 * smoothstep(0.6, 1.0, abs(along) / reach);
         }
         let past = abs(along) - reach;
         let bend = (water_noise(vec2f(along * 0.08, 7.0)) - 0.5) * 3.0;

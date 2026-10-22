@@ -76,9 +76,10 @@ const APRON_FIXTURES = array<vec4f, 18>(
     vec4f(-43.0, 0.0, 0.6, 5.0),
     vec4f(43.0, 0.0, 0.6, 5.0),
 );
-// Far shore haze: metres of air that hide half of a color, and how much less
-// haze the high ground gets.
-const SHORE_HAZE_DISTANCE = 420.0;
+// Far shore haze: metres of air that hide half of a color beyond the first
+// clear stretch, and how much less haze the high ground gets.
+const SHORE_HAZE_DISTANCE = 520.0;
+const SHORE_HAZE_CLEAR = 90.0;
 const SHORE_HAZE_LIFT = 0.25;
 // A far-shore vertex painted exactly this red is a warning light, and how
 // brightly it shines.
@@ -86,6 +87,18 @@ const SHORE_LIGHT = vec3f(1.0, 0.0, 0.0);
 const SHORE_LIGHT_GLOW = vec3f(2.4, 0.06, 0.03);
 // Window pitch on the far city's towers: across the face and floor to floor, metres.
 const SHORE_WINDOW = vec2f(2.6, 3.4);
+// The headlands' countryside: a field's size along and across its furrows,
+// metres; the linear paint of its crops (lush, ripe, ploughed and hay), of the
+// woods' shaded canopy and of bare rock.
+const SHORE_FIELD = vec2f(52.0, 30.0);
+const SHORE_CROPS = array<vec3f, 4>(
+    vec3f(0.07, 0.15, 0.035),
+    vec3f(0.36, 0.29, 0.1),
+    vec3f(0.13, 0.08, 0.045),
+    vec3f(0.24, 0.25, 0.1),
+);
+const SHORE_FOREST = vec3f(0.024, 0.064, 0.022);
+const SHORE_ROCK = vec3f(0.2, 0.19, 0.165);
 // Linear paint of the far terminal's boxes (`harbor_backdrop::BOX_PAINT`).
 const SHORE_BOXES = array<vec3f, 6>(
     vec3f(0.58, 0.16, 0.044),
@@ -105,6 +118,10 @@ const PAD_LIGHT_FLAG = 10.0;
 // Cover containers each stand inside one cell of this grid (`harbor_layout`), so
 // a box takes one shade of its line's color from its cell.
 const CONTAINER_CELL = 20.0;
+// Height of a cover container (`harbor_layout`), metres, and the linear color of
+// the rust that weeps from its roof rail and blooms on its roof.
+const CONTAINER_HEIGHT = 3.6;
+const CONTAINER_RUST = vec3f(0.2, 0.072, 0.026);
 
 fn apron_hash(cell: vec2f) -> vec4f {
     var p = fract(cell.xyxy * vec4f(0.1031, 0.1030, 0.0973, 0.1099));
@@ -203,8 +220,49 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         var paint = apron_hue((*s).color, (variant.x - 0.5) * 0.85);
         let fade = smoothstep(0.45, 1.0, variant.y);
         paint = mix(paint, vec3f(dot(paint, APRON_LUMA)) * 1.2 + vec3f(0.025), fade * 0.45);
-        (*s).color = paint * mix(0.82, 1.08, variant.z);
-        (*s).roughness = mix((*s).roughness, 0.78, fade);
+        paint = paint * mix(0.82, 1.08, variant.z);
+        var roughness = mix((*s).roughness, 0.78, fade);
+        // Then the yard's weather, in world space so no two boxes wear alike: rust
+        // weeping down the walls from the roof rail in runs of their own length,
+        // road dirt splashed up from the floor, and on the roofs rust blooms where
+        // the paint has gone, rain water dried into dark rings in the middle and
+        // rust eating in from the edges, where the spreaders and castings bite.
+        let n = (*s).normal;
+        let y = f.world.y;
+        let along = select(f.world.x, f.world.z, abs(n.x) > abs(n.z));
+        let run_noise = apron_noise(vec2f(along * 2.3, 3.0 + variant.w * 40.0));
+        let run_length = 0.5 + 2.6 * apron_noise(vec2f(along * 0.9, 11.0 + variant.x * 20.0));
+        let wobble = apron_noise(vec2f(along * 7.0, y * 1.7)) * 0.35;
+        let weep = smoothstep(0.58, 0.82, run_noise + wobble * 0.3)
+            * smoothstep(CONTAINER_HEIGHT - 0.2 - run_length, CONTAINER_HEIGHT - 0.25, y + wobble)
+            * (0.55 + 0.45 * variant.y);
+        let splash = (1.0 - smoothstep(0.15, 0.7 + apron_noise(vec2f(along * 1.1, 5.0)) * 0.7, y))
+            * (0.6 + 0.4 * apron_noise(vec2f(along * 4.0, y * 6.0)));
+        if n.y > 0.5 {
+            var edge = 1e3;
+            for (var i = 0; i < APRON_CONTAINERS; i++) {
+                edge = min(edge, abs(apron_box_distance(f.world.xz, APRON_FIXTURES[i])));
+            }
+            let bloom_noise = apron_noise(f.world.xz * 0.85 + variant.xy * 30.0) * 0.65
+                + apron_noise(f.world.xz * 3.3) * 0.35;
+            let bloom = smoothstep(0.74, 0.84, bloom_noise + (1.0 - smoothstep(0.05, 0.45, edge)) * 0.3);
+            let pooled = apron_noise(f.world.xz * 0.38 + 9.0);
+            let ring = smoothstep(0.5, 0.56, pooled) * (1.0 - smoothstep(0.6, 0.66, pooled));
+            let dried = smoothstep(0.55, 0.62, pooled);
+            paint = mix(paint, paint * vec3f(1.1, 1.08, 1.04) + vec3f(0.02), 0.25);
+            paint = paint * (1.0 - ring * 0.14) * mix(1.0, 0.9, dried);
+            // Rust bleeds out of each bloom as a brown stain before the paint goes.
+            let halo = smoothstep(0.6, 0.76, bloom_noise);
+            paint = mix(paint, paint * vec3f(0.78, 0.66, 0.55), halo * 0.5);
+            paint = mix(paint, CONTAINER_RUST * mix(0.7, 1.2, apron_noise(f.world.xz * 6.0)), bloom * 0.75);
+            roughness = mix(roughness, 0.92, bloom);
+        } else if abs(n.y) < 0.5 {
+            paint = mix(paint, CONTAINER_RUST * mix(0.8, 1.15, run_noise), weep * 0.7);
+            paint = mix(paint, paint * vec3f(0.55, 0.5, 0.44), splash * 0.6);
+            roughness = mix(roughness, 0.9, max(weep, splash) * 0.7);
+        }
+        (*s).color = paint;
+        (*s).roughness = roughness;
         return;
     }
     let wall = mode > 4.5 && mode < 6.5;
@@ -387,14 +445,50 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let box_paint = SHORE_BOXES[u32(apron_hash(box_cell + vec2f(11.0, 5.0)).x * 6.0) % 6u];
         let seam = max(smoothstep(0.86, 0.95, abs(fract(f.world.y / 2.6) - 0.5) * 2.0),
             smoothstep(0.9, 0.97, abs(fract(across / 6.1) - 0.5) * 2.0));
-        let stack = select(0.0, 1.0, f.uv.y > 15.0);
+        let stack = select(0.0, 1.0, f.uv.y > 15.0 && f.uv.y < 25.0);
         albedo = mix(albedo, box_paint * select(0.8, 1.0, walls) * (1.0 - seam * 0.6), stack);
+        // Countryside on the headlands' green (flagged by its uv, and only where
+        // the painted ground is green, not the beach, the rock or the quays): broad
+        // dry and lush grass, a patchwork of fields with hedgerows on the gentle
+        // ground, woods in the hollows and up the slopes with their crowns catching
+        // the light, and bare rock in strata where it is steep.
+        let ground = f.world.xz;
+        let slope = 1.0 - n.y;
+        let terrain = select(0.0, 1.0, f.uv.y > 25.0)
+            * smoothstep(0.004, 0.03, f.vertex_color.g - f.vertex_color.r);
+        let shore_footprint = length(fwidth(f.world));
+        let dry = apron_noise(ground / 61.0) * 0.6 + apron_noise(ground / 23.0 + 5.0) * 0.4;
+        let woods = apron_noise(ground / 34.0 + 11.0) * 0.65 + apron_noise(ground / 11.0 + 3.0) * 0.35;
+        // The woods' edge is ragged by the crowns along it, never a smooth blob.
+        let crown_noise = apron_noise(ground / 4.2) * 0.6 + apron_noise(ground / 1.6 + 7.0) * 0.4;
+        let woods_edge = woods + slope * 0.3 - 0.06 + (crown_noise - 0.5) * 0.07;
+        let woods_aa = max(fwidth(woods_edge), 1e-4);
+        let forest = smoothstep(0.5 - woods_aa, 0.5 + woods_aa, woods_edge);
+        let crowns = mix(0.5, crown_noise, 1.0 - smoothstep(1.5, 5.0, shore_footprint));
+        var land = f.vertex_color.rgb * mix(vec3f(0.9, 1.02, 0.86), vec3f(1.45, 1.22, 0.62), smoothstep(0.42, 0.78, dry));
+        let field_at = vec2f(ground.x * 0.83 - ground.y * 0.56, ground.x * 0.56 + ground.y * 0.83) / SHORE_FIELD;
+        let field = apron_hash(floor(field_at) + vec2f(7.0, 19.0));
+        let field_to_edge = (0.5 - abs(fract(field_at) - 0.5)) * SHORE_FIELD;
+        let field_edge = min(field_to_edge.x, field_to_edge.y);
+        let fields = step(0.3, field.x) * smoothstep(0.16, 0.1, slope) * (1.0 - forest);
+        let crop = SHORE_CROPS[u32(field.y * 4.0) % 4u] * mix(0.85, 1.12, field.z)
+            * mix(0.92, 1.06, apron_noise(field_at * vec2f(40.0, 3.0)));
+        let hedge = 1.0 - smoothstep(0.6, 1.6 + shore_footprint, field_edge);
+        land = mix(land, crop, fields * 0.9);
+        land = mix(land, SHORE_FOREST * 1.3, hedge * fields);
+        // Crowns: deep shade between them, and sunlit tops a warmer green.
+        let crown_lit = smoothstep(0.25, 0.75, crowns);
+        land = mix(land, SHORE_FOREST * mix(vec3f(0.45), vec3f(2.1, 2.0, 1.5), crown_lit), forest);
+        let rock = smoothstep(0.3, 0.46, slope + (apron_noise(ground / 7.0) - 0.5) * 0.25) * (1.0 - forest * 0.6);
+        let strata = 0.82 + 0.18 * sin(f.world.y * 1.6 + apron_noise(ground / 9.0) * 3.0);
+        land = mix(land, SHORE_ROCK * strata, rock);
+        albedo = mix(albedo, land, terrain);
         let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
         let sun = max(dot(n, frame.sun_direction.xyz), 0.0) * frame.sun_color.rgb;
         let lit = albedo * (sun + hemisphere) * 0.3183099;
         let distance = length(frame.camera_position.xyz - f.world);
         let lift = smoothstep(0.0, 60.0, f.world.y) * SHORE_HAZE_LIFT;
-        let haze = (1.0 - exp2(-distance / SHORE_HAZE_DISTANCE)) * (1.0 - lift);
+        let haze = (1.0 - exp2(-max(distance - SHORE_HAZE_CLEAR, 0.0) / SHORE_HAZE_DISTANCE)) * (1.0 - lift);
         var horizon = frame.sky_color.rgb * 0.3183099;
         if frame.fog_color.w > 0.5 {
             horizon = frame.fog_color.rgb;
@@ -637,16 +731,16 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let patch_hash = apron_hash(patch_cell + vec2f(3.0, 11.0));
         let patch_size = vec2f(2.0, 1.4) + patch_hash.zw * vec2f(3.5, 3.0);
         let patch_at = vec2f(0.6) + patch_hash.xy * (vec2f(APRON_PATCH_CELL) - patch_size - 1.2);
-        let ragged = (apron_noise(p * 1.3 + patch_hash.zw * 17.0) - 0.5) * 0.5
-            + (apron_noise(p * 4.1 + 7.0) - 0.5) * 0.12;
+        // Saw-cut square, so only a little raggedness where the tar seal ran.
+        let ragged = (apron_noise(p * 4.1 + 7.0) - 0.5) * 0.07;
         let inside = min(
             min(patch_local.x - patch_at.x, patch_at.x + patch_size.x - patch_local.x),
             min(patch_local.y - patch_at.y, patch_at.y + patch_size.y - patch_local.y),
         ) + ragged;
         let has_patch = step(0.93, patch_hash.x * 0.6 + patch_hash.w * 0.6);
         let patched = clamp(inside / patch_aa + 0.5, 0.0, 1.0) * has_patch;
-        let seal = (1.0 - smoothstep(0.0, 0.05, abs(inside))) * has_patch
-            * smoothstep(0.35, 0.55, apron_noise(p * 1.1 + 3.0));
+        let seal = (1.0 - smoothstep(0.02, 0.09, abs(inside))) * has_patch
+            * mix(0.55, 1.0, apron_noise(p * 1.1 + 3.0));
         let hairline_fade = 1.0 - smoothstep(0.03, 0.09, footprint);
         let crack = (1.0 - smoothstep(0.0, crack_width * 1.1 + 0.004, abs(crack_noise - 0.5)))
             * smoothstep(0.7, 0.8, apron_noise(p / 6.0 + 2.0)) * (1.0 - patched) * mix(0.35, 1.0, hairline_fade);
@@ -665,9 +759,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let oxidised = clamp(worn * (1.0 - traffic.x * 0.7) + (section.y - 0.5) * 0.6, 0.0, 1.0);
         var base = material.color.rgb * f.tint.rgb * mix(0.9, 1.06, grain_luma * 0.5) * mix(0.88, 1.1, section.x)
             * mix(vec3f(0.92), vec3f(1.3, 1.26, 1.2), oxidised) * mix(1.0, 1.2, ravel);
-        // A patch is the lane's own mix laid later: a shade blacker and less
-        // oxidised, so it reads as a repair rather than a dark slab stuck on.
-        base = mix(base, mix(base, material.color.rgb * mix(0.92, 1.04, grain_luma * 0.5), 0.45) * 0.94, patched);
+        // A patch is fresh mix laid later: blacker, unoxidised binder that still
+        // takes the lane's grime and wheel wear, edged by its tar seal.
+        let fresh = material.color.rgb * vec3f(0.7, 0.7, 0.69) * mix(0.92, 1.04, grain_luma * 0.5) * mix(0.94, 1.04, section.x);
+        base = mix(base, fresh, patched);
         let stone_weight = mix(mix(0.32, 0.65, ravel), 0.12, patched);
         color = base * (1.0 + aggregate * stone_weight + stones * stone_weight * 0.7) * grime;
         color = color * mix(1.0, 0.8, tyre * (0.35 + traffic.x * 0.65));

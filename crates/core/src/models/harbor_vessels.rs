@@ -537,7 +537,8 @@ fn gantry_crane(livery: CraneLivery) -> Node {
     // The plinth reaches below the waterline so its face takes the tide band.
     put(
         g,
-        apron_box(14.0, 3.4, 9.0, 0xa9aba2, ApronMode::QuayWall),
+        // The quays' own concrete, so plinths and quay walls share one material.
+        apron_box(14.0, 3.4, 9.0, 0x9c9e94, ApronMode::QuayWall),
         0.0,
         -1.65,
         0.0,

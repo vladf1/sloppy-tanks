@@ -260,6 +260,34 @@ fn warehouse() -> Node {
     shed
 }
 
+/// A group with its nested groups' parts moved up into it, transforms baked, so
+/// [`batch`] sees every part as a direct child.
+fn flattened(group: Node) -> Node {
+    fn gather(parent: &mut Node, group: Node) {
+        let mut moved = Node::group("");
+        adopt_children(&mut moved, group);
+        for child in moved.children {
+            if child.drawable.is_none() {
+                gather(parent, child);
+            } else {
+                parent.children.push(child);
+            }
+        }
+    }
+    let mut flat = Node::group("");
+    flat.position = group.position;
+    flat.rotation = group.rotation;
+    flat.scale = group.scale;
+    for child in group.children {
+        if child.drawable.is_none() {
+            gather(&mut flat, child);
+        } else {
+            flat.children.push(child);
+        }
+    }
+    flat
+}
+
 /// Length of the outer quays the transit sheds and their yards stand on.
 const OUTER_QUAY_LENGTH: f64 = 132.0;
 
@@ -1322,9 +1350,9 @@ impl HarborScenery {
                 -2.0,
                 0.0,
             );
-            // Batched so its cladding bakes into vertex colors and shares the
-            // container paint's one material with the rest of its cell.
-            let mut shed = warehouse();
+            // Flattened and batched so its cladding bakes into vertex colors and
+            // shares the container paint's one material with the rest of its cell.
+            let mut shed = flattened(warehouse());
             batch(&mut shed);
             let shed = rotated(shed, 0.0, if x < 0.0 { 0.0 } else { PI }, 0.0);
             put(&mut details, shed, x, WAREHOUSE_FLOOR, 0.0);
