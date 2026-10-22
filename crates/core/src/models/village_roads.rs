@@ -44,6 +44,19 @@ pub fn village_roads() -> [VillageRoad; 6] {
     ]
 }
 
+/// The village square's two paved streets round the arena's centre, as half
+/// extents in metres: the main street, then the cross street. The ground shader
+/// (`meadow_sway.wgsl`, `VG_SQUARE_MAIN` and `VG_SQUARE_CROSS`) lays its setts
+/// and kerb on the same outline.
+pub const VILLAGE_SQUARE: [[f64; 2]; 2] = [[7.4, 26.0], [20.5, 4.4]];
+
+/// Whether (x, z) lies on the village square or within `margin` metres of it.
+pub fn in_village_square(x: f64, z: f64, margin: f64) -> bool {
+    VILLAGE_SQUARE
+        .iter()
+        .any(|[hx, hz]| x.abs() < hx + margin && z.abs() < hz + margin)
+}
+
 /// `isVillageDirt`: dust starts on the solid dirt, leaving the grass-blended
 /// shoulders quiet.
 pub fn is_village_dirt(x: f64, z: f64) -> bool {
