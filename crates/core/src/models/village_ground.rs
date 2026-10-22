@@ -13,7 +13,7 @@
 //!   door paths and the drip line round each cottage) ramping over
 //!   [`EDGE_RAMP`] m either side of the edge, g trampled grass, b garden beds (0.5
 //!   a vegetable plot, 1 a flower bed), a open ground (1, lower in the contact
-//!   shade at the foot of walls, cottages, timber, trees and drums);
+//!   shade at the foot of walls, cottages, timber and trees);
 //! - second, the valley out to ±[`VALLEY_PLAN_HALF`] m: r farm lanes, the
 //!   farmyard and the creek's sandy banks, g crop fields, b each field's crop and
 //!   row direction ([`field_code`]), a dryness (0 at the water's edge);
@@ -56,6 +56,12 @@ const CORNER_ROUNDING: [f64; 2] = [3.0, 16.0];
 const EDGE_RAMP: f64 = 2.4;
 /// Extra rounding of the trampled grass where tanks cut the corners.
 const CORNER_TRAMPLE: f64 = 6.0;
+/// Widths of the trampled verge along a road's edge, in metres: where little
+/// drives past and where the traffic runs right along the turf.
+const VERGE_WIDTH: [f64; 2] = [1.8, 4.8];
+/// Plan pixels (0.25 m) over which the traffic is averaged to set the verge's
+/// width, so the wear reaches from the busy lanes onto the turf beside them.
+const VERGE_TRAFFIC_BLUR: usize = 18;
 
 pub(super) fn hash(ix: i64, iz: i64, seed: u64) -> f64 {
     let mut h = (ix as u64)
@@ -346,11 +352,12 @@ impl ArenaPlan {
             let half = DVec2::new(c.w / 2.0, c.d / 2.0);
             match c.kind {
                 CoverKind::Tree => trees.push(centre),
-                CoverKind::House => shades.push((centre, half, 1.1, 0.55)),
-                CoverKind::Timber => shades.push((centre, half, 0.7, 0.5)),
+                CoverKind::House => shades.push((centre, half, 1.7, 0.6)),
+                CoverKind::Timber => shades.push((centre, half, 0.6, 0.4)),
                 CoverKind::Boundary => shades.push((centre, half, 1.4, 0.45)),
-                CoverKind::Drum => shades.push((centre, half * 0.45, 0.55, 0.45)),
-                CoverKind::Tower => shades.push((centre, half * 0.8, 1.6, 0.3)),
+                // Drums and towers are left out: they break, and a contact
+                // shade baked under them would lie on the ground without a
+                // caster; their own shadows ground them.
                 _ => {}
             }
         }
@@ -364,8 +371,8 @@ impl ArenaPlan {
     }
 
     /// (dirt, trampled grass, garden, open ground) at (x, z), given how much
-    /// traffic packed the ground there.
-    fn sample(&self, x: f64, z: f64, traffic: f64) -> [f64; 4] {
+    /// traffic packed the ground there and how busy the lanes nearby are.
+    fn sample(&self, x: f64, z: f64, traffic: f64, nearby: f64) -> [f64; 4] {
         let p = DVec2::new(x, z);
         let (along, across) = road_families(x, z);
         let wander = edge_wander(x, z);
@@ -380,11 +387,22 @@ impl ArenaPlan {
         let islands = smoothstep(fbm(x * 0.11 + 7.0, z * 0.11 - 3.0, 24), 0.38, 0.6);
         let survives = quiet * islands * smoothstep(road, 1.2, 2.8);
         dirt *= 1.0 - survives * 0.8;
-        // Trampled grass: wide where tanks cut the corners, a soft verge elsewhere.
+        // Trampled grass: wide where tanks cut the corners and where the
+        // traffic runs along the turf, a narrow verge beside quiet stretches,
+        // and broken into scuffs rather than one even band.
         let corner = smooth_max(along, across, rounding + CORNER_TRAMPLE) + wander;
-        let patchy = 0.55 + 0.45 * fbm(x * 0.09, z * 0.09, 21);
+        let busy = smoothstep(nearby, 0.04, 0.32);
+        let [quiet_verge, busy_verge] = VERGE_WIDTH;
+        let verge = quiet_verge + (busy_verge - quiet_verge) * busy;
+        let patchy = smoothstep(
+            fbm(x * 0.09, z * 0.09, 21) * 0.7 + noise(x * 0.4, z * 0.4, 22) * 0.3,
+            0.28,
+            0.62,
+        );
+        let cut = (smoothstep(corner, -4.5, 0.2) - smoothstep(road, -4.5, 0.2)).max(0.0);
+        let beside = smoothstep(road, -verge, 0.2);
         // Grass surviving in a road is sparse and beaten flat.
-        let mut trampled = (smoothstep(corner, -4.5, 0.2) * patchy).max(survives);
+        let mut trampled = ((cut * 1.6).min(1.0).max(beside) * patchy).max(survives);
 
         for (points, width) in SHORTCUTS {
             let distance =
@@ -445,8 +463,8 @@ impl ArenaPlan {
         for &tree in &self.trees {
             let distance = (p - tree).length();
             // Needle litter and a soft contact shade round each trunk.
-            trampled = trampled.max((1.0 - smoothstep(distance, 1.2, 3.2)) * 0.7);
-            shade = shade.max((1.0 - smoothstep(distance, 0.6, 2.4)) * 0.5);
+            trampled = trampled.max((1.0 - smoothstep(distance, 1.2, 3.4)) * 0.8);
+            shade = shade.max((1.0 - smoothstep(distance, 0.5, 2.8)) * 0.55);
         }
         for pickup in PICKUP_LAYOUT {
             let distance = (p - DVec2::new(pickup.x, pickup.z)).length();
@@ -646,6 +664,25 @@ fn valley_sample(x: f64, z: f64) -> [f64; 4] {
     [dirt * (1.0 - planted), planted, code, dry]
 }
 
+/// A square grid of `size` rows averaged over `radius` cells each way (edges
+/// clamped), one axis at a time.
+fn box_blur(values: &[f64], size: usize, radius: usize) -> Vec<f64> {
+    let pass = |source: &[f64], step: usize, stride: usize| {
+        let mut out = vec![0.0; source.len()];
+        for line in 0..size {
+            for i in 0..size {
+                let lo = i.saturating_sub(radius);
+                let hi = (i + radius).min(size - 1);
+                let sum: f64 = (lo..=hi).map(|k| source[line * stride + k * step]).sum();
+                out[line * stride + i * step] = sum / (hi - lo + 1) as f64;
+            }
+        }
+        out
+    };
+    let rows = pass(values, 1, size);
+    pass(&rows, size, 1)
+}
+
 /// `value` in [0, 1] rounded to `levels` steps.
 fn quantize(value: f64, levels: f64) -> f64 {
     (value.clamp(0.0, 1.0) * levels).round() / levels
@@ -658,6 +695,7 @@ pub fn bake_village_ground() -> Vec<u8> {
     let size = GROUND_PLAN_SIZE;
     let plan = ArenaPlan::new();
     let tracks = bake_tracks();
+    let nearby = box_blur(&tracks.traffic, size, VERGE_TRAFFIC_BLUR);
     let mut pixels = vec![0u8; size * PLAN_SQUARES * size * 4];
     let byte = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     for row in 0..size {
@@ -665,7 +703,12 @@ pub fn bake_village_ground() -> Vec<u8> {
         for column in 0..size {
             let s = (column as f64 + 0.5) / size as f64 * 2.0 - 1.0;
             let at = row * size + column;
-            let arena = plan.sample(s * ARENA_PLAN_HALF, t * ARENA_PLAN_HALF, tracks.traffic[at]);
+            let arena = plan.sample(
+                s * ARENA_PLAN_HALF,
+                t * ARENA_PLAN_HALF,
+                tracks.traffic[at],
+                nearby[at],
+            );
             let valley = valley_sample(s * VALLEY_PLAN_HALF, t * VALLEY_PLAN_HALF);
             // Coarser steps than a byte where the shader needs no more keep the
             // lossless WebP small: 1.6 cm steps of tread distance, 16 freshnesses.

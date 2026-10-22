@@ -145,7 +145,7 @@ try {
   assert.equal(await page.locator("#network-respawn-count").textContent(), "Respawn in 3");
   assert.equal(
     await page.locator("#network-death-cause").textContent(),
-    "Rival <b>literal</b> killed you with a rocket blast.",
+    "Rival <b>literal</b> destroyed you with a rocket blast.",
   );
   assert.equal(await page.locator("#network-death-cause b, #toast b, #feed b").count(), 0);
   assert.equal(
