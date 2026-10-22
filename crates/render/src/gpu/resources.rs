@@ -513,7 +513,7 @@ impl MaterialStore {
         }
         let effect = match &material.effect {
             Effect::None => 0,
-            Effect::Custom { name, .. } => effects.id(name).unwrap_or_else(|| {
+            Effect::Custom { name, params } => effects.id_for(name, params).unwrap_or_else(|| {
                 if !self.warned.contains(name) {
                     self.warned.push(name);
                     web_sys::console::warn_1(

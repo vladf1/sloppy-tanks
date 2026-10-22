@@ -1,6 +1,8 @@
-// Pine Village meadow (`effects_scenery::MEADOW_SWAY`). One effect serves three
-// village materials, told apart by params[0].x (a uniform, so the branches stay
-// in uniform control flow):
+// Pine Village meadow (`effects_scenery::MEADOW_SWAY`). One effect name serves
+// three village materials, told apart by params[0].x; each mode is its own
+// registered definition (`effects::registry`, `MEADOW_MODES`) whose hooks call
+// this file's functions for that mode alone, so a pipeline holds only its mode's
+// code:
 //
 // 0: the meadow tufts (`village_vegetation.rs`) sway in the wind after the
 //    instance transform (tufts are instanced at world placements, so this is
@@ -22,7 +24,7 @@
 //    crowns thins into separate trees at a ragged treeline, and crisp snow
 //    fills the gentler faces and gullies above the snowline, in world space;
 //    the low meadows keep their vertex colours.
-fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
+fn vg_tuft_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     if material.params[0].x > 0.5 {
         return;
     }
@@ -1740,29 +1742,24 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     (*s).roughness = mix(0.94, 0.6, snow);
 }
 
-fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
-    if material.params[0].x < 0.5 {
-        // Tufts light like the turf they grow from from either side of a blade:
-        // a back face keeps its upward normal instead of turning black.
-        (*s).normal = (*s).normal * select(1.0, -1.0, (*s).normal.y < 0.0);
-        // Each tuft takes most of its colour from the meadow it stands in,
-        // keeping its own shade and the root-to-tip ramp of its blades.
-        let shade = dot(f.tint.rgb, VG_LUMA) / VG_TUFT_LUMA;
-        let lawn = vg_lawn_tone(f.instance_data.xy);
-        let turf = lawn.rgb * f.vertex_color.rgb * shade;
-        var tuft = mix((*s).color, turf * material.color.rgb, 0.65);
-        // Some clumps have gone to seed or dried at their tips, a few are a
-        // fresh, bluer green: the tips (bright vertex colour) take it most.
-        let pick = vg_hash(f.instance_data.xy * 0.731 + 11.0);
-        let tip = smoothstep(0.7, 1.1, f.vertex_color.g);
-        // Tufts on the dry crests have gone to seed more often.
-        let seeded = smoothstep(0.72 - lawn.w * 0.35, 0.9 - lawn.w * 0.3, pick) * tip;
-        tuft = mix(tuft, vg_linear(0x9c9160) * shade * f.vertex_color.rgb, seeded * 0.55);
-        tuft = mix(tuft, tuft * vec3f(0.86, 0.98, 1.02), smoothstep(0.25, 0.08, pick) * 0.6);
-        (*s).color = tuft;
-    } else if material.params[0].x > 1.5 {
-        village_ranges(s, f);
-    } else if material.params[0].x > 0.5 {
-        village_ground(s, f);
-    }
+// The tufts' surface (mode 0).
+fn vg_tuft_surface(s: ptr<function, Surface>, f: EffectFragment) {
+    // Tufts light like the turf they grow from from either side of a blade:
+    // a back face keeps its upward normal instead of turning black.
+    (*s).normal = (*s).normal * select(1.0, -1.0, (*s).normal.y < 0.0);
+    // Each tuft takes most of its colour from the meadow it stands in,
+    // keeping its own shade and the root-to-tip ramp of its blades.
+    let shade = dot(f.tint.rgb, VG_LUMA) / VG_TUFT_LUMA;
+    let lawn = vg_lawn_tone(f.instance_data.xy);
+    let turf = lawn.rgb * f.vertex_color.rgb * shade;
+    var tuft = mix((*s).color, turf * material.color.rgb, 0.65);
+    // Some clumps have gone to seed or dried at their tips, a few are a
+    // fresh, bluer green: the tips (bright vertex colour) take it most.
+    let pick = vg_hash(f.instance_data.xy * 0.731 + 11.0);
+    let tip = smoothstep(0.7, 1.1, f.vertex_color.g);
+    // Tufts on the dry crests have gone to seed more often.
+    let seeded = smoothstep(0.72 - lawn.w * 0.35, 0.9 - lawn.w * 0.3, pick) * tip;
+    tuft = mix(tuft, vg_linear(0x9c9160) * shade * f.vertex_color.rgb, seeded * 0.55);
+    tuft = mix(tuft, tuft * vec3f(0.86, 0.98, 1.02), smoothstep(0.25, 0.08, pick) * 0.6);
+    (*s).color = tuft;
 }

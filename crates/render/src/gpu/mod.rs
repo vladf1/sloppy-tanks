@@ -2476,7 +2476,7 @@ impl Renderer {
             .debug_off
             .effects
             .iter()
-            .filter_map(|name| self.effects.id(name))
+            .flat_map(|name| self.effects.ids_named(name))
             .collect();
         let names = &self.debug_off.effects;
         let skip = |key: &PipelineKey| {
