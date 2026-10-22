@@ -252,13 +252,16 @@ html:is(.phone, .home-screen-app) {
   align-items: stretch;
   filter: drop-shadow(0 6px 12px #0008);
 }
+/* Wide enough for a three-digit score beside either team's name (first to 100) or the
+   solo plates' KILLS and ACTIVE; a wider number grows the plate rather than running
+   under the clock. */
 .team {
   position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 10px;
-  width: 132px;
+  min-width: 156px;
   padding: 6px 18px 11px 24px;
   color: #fff;
   text-shadow: 0 2px 3px #0006;
@@ -288,7 +291,16 @@ html:is(.phone, .home-screen-app) {
     linear-gradient(180deg, #ffffff33, transparent 46%), linear-gradient(180deg, #ff5367, #b01b33);
   clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%);
 }
-/* Your side's plate says so: a small YOU tag beside its name. */
+/* Your side's plate says so: a small YOU tag under its name, so it never takes the
+   score's room. */
+.team.yours small {
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 3px;
+}
+.coral.yours small {
+  align-items: flex-end;
+}
 .team.yours small::after {
   content: "YOU";
   padding: 2px 4px 1px;
@@ -298,9 +310,6 @@ html:is(.phone, .home-screen-app) {
   font-size: 8.5px;
   letter-spacing: 1px;
   text-shadow: none;
-}
-.coral.yours small::after {
-  order: -1;
 }
 .team-progress {
   position: absolute;
@@ -469,20 +478,21 @@ body:has(#settings[open]) .hud-actions {
   gap: 12px;
 }
 /* The tank panel: hull on the left, the ammunition rack on the right, on dark glass that
-   reads over sand, snow or sky alike. It is as wide as what it holds: rounds not carried
-   fold down to small greyed keys, so an empty rack never dominates the corner. */
+   reads over sand, snow or sky alike. It keeps one compact size whatever is carried or
+   active: a round not carried keeps its slot, greyed and locked, and active power-ups
+   float above the panel instead of widening it. */
 .combat-status {
   position: relative;
   display: grid;
-  grid-template-columns: 172px auto;
+  grid-template-columns: 124px auto;
   align-items: stretch;
-  gap: 0 14px;
+  gap: 0 10px;
   width: max-content;
   flex-shrink: 0;
   max-width: 100%;
-  padding: 11px 12px 10px 14px;
+  padding: 8px 10px 8px 12px;
   border: 1px solid var(--edge);
-  border-radius: 14px;
+  border-radius: 12px;
   background: var(--glass-hud);
   box-shadow:
     var(--sheen),
@@ -530,7 +540,7 @@ body:has(#settings[open]) .hud-actions {
 }
 #vehicle-name {
   color: #fff;
-  font: 800 12px/1.2 var(--font-ui);
+  font: 800 11px/1.2 var(--font-ui);
   letter-spacing: 1.6px;
 }
 #rank {
@@ -551,10 +561,10 @@ body:has(#settings[open]) .hud-actions {
   display: flex;
   align-items: baseline;
   gap: 5px;
-  margin-top: 3px;
+  margin-top: 2px;
 }
 .hull-readout b {
-  font: 400 38px/1 var(--font-display);
+  font: 400 30px/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-shadow: 0 2px 6px #0007;
   transition: color 0.2s;
@@ -583,8 +593,8 @@ body:has(#settings[open]) .hud-actions {
   --hull: #5fe39a;
   --hull-hot: #c8ffdc;
   position: relative;
-  height: 10px;
-  margin-top: 6px;
+  height: 8px;
+  margin-top: 5px;
   overflow: hidden;
   border-radius: 3px;
   background:
@@ -630,15 +640,14 @@ body:has(#settings[open]) .hud-actions {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding-left: 14px;
+  padding-left: 10px;
   border-left: 1px solid #ffffff17;
 }
-/* Each round has its own colour and silhouette; the chosen one rises from the rack. A
-   round not carried folds down to its key and a greyed icon. */
+/* Each round has its own colour and silhouette; the chosen one lights up in place. A
+   round not carried keeps its slot with its key and a greyed icon. */
 .ammo-strip {
   display: flex;
-  gap: 5px;
-  padding-top: 5px;
+  gap: 4px;
 }
 .ammo-slot {
   position: relative;
@@ -647,9 +656,9 @@ body:has(#settings[open]) .hud-actions {
   grid-template-rows: auto auto auto;
   align-items: center;
   flex: none;
-  width: 76px;
-  min-height: 62px;
-  padding: 5px 5px 4px;
+  width: 58px;
+  min-height: 46px;
+  padding: 4px 4px 3px;
   overflow: hidden;
   border: 1px solid #ffffff1c;
   border-radius: 8px;
@@ -658,8 +667,6 @@ body:has(#settings[open]) .hud-actions {
   font-variant-numeric: tabular-nums;
   text-align: center;
   transition:
-    width 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.1),
-    transform 0.14s,
     box-shadow 0.14s,
     border-color 0.14s;
 }
@@ -676,22 +683,22 @@ body:has(#settings[open]) .hud-actions {
 .ammo-icon {
   grid-area: 1 / 2;
   justify-self: end;
-  width: 22px;
-  height: 22px;
+  width: 18px;
+  height: 18px;
   fill: var(--ammo-color);
   filter: drop-shadow(0 0 3px #0009);
 }
 .ammo-slot b {
   grid-area: 2 / 1 / 3 / -1;
-  font: 400 21px/1.05 var(--font-display);
+  font: 400 18px/1.05 var(--font-display);
   text-shadow: 0 1px 3px #0008;
 }
 .ammo-slot small {
   grid-area: 3 / 1 / 4 / -1;
   overflow: hidden;
   color: var(--text-dim);
-  font: 800 8.5px/1.3 var(--font-ui);
-  letter-spacing: 0.3px;
+  font: 800 7.5px/1.3 var(--font-ui);
+  letter-spacing: 0.2px;
   text-overflow: clip;
   white-space: nowrap;
 }
@@ -706,8 +713,7 @@ body:has(#settings[open]) .hud-actions {
     linear-gradient(180deg, #1a3863, #0a1830);
   box-shadow:
     0 0 0 1px var(--ammo-color),
-    0 6px 18px color-mix(in srgb, var(--ammo-color) 40%, transparent);
-  transform: translateY(-5px);
+    0 0 14px color-mix(in srgb, var(--ammo-color) 40%, transparent);
 }
 .ammo-slot.selected::before {
   height: 3px;
@@ -719,14 +725,13 @@ body:has(#settings[open]) .hud-actions {
 .ammo-slot.selected .ammo-icon {
   filter: drop-shadow(0 0 5px var(--ammo-color));
 }
-/* The footer under the rack: the mine's state on the left, active power-ups as chips on
-   the right. One line high whatever is active, so the panel never changes height. */
+/* The footer under the rack: the mine's state. Active power-ups hang above the panel. */
 .panel-foot {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 20px;
-  margin-top: 7px;
+  height: 16px;
+  margin-top: 5px;
 }
 .mine-line {
   display: flex;
@@ -734,15 +739,15 @@ body:has(#settings[open]) .hud-actions {
   align-items: center;
   gap: 6px;
   color: #d9e8f6;
-  font: 800 10px/1.2 var(--font-ui);
-  letter-spacing: 1.2px;
+  font: 800 9px/1.2 var(--font-ui);
+  letter-spacing: 1.1px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
 .mine-icon {
   flex: none;
-  width: 14px;
-  height: 14px;
+  width: 12px;
+  height: 12px;
   fill: var(--gold);
   filter: drop-shadow(0 0 4px #ffcf3888);
 }
@@ -753,14 +758,20 @@ body:has(#settings[open]) .hud-actions {
   fill: #6d84a0;
   filter: none;
 }
+/* Active power-ups: a row of chips above the panel's right end, growing leftward and then
+   upward, so any number of them leaves the panel's size alone. */
 .effects {
+  position: absolute;
+  right: -10px;
+  bottom: calc(100% + 16px);
   display: flex;
-  flex: 1;
+  flex-wrap: wrap-reverse;
   justify-content: flex-end;
-  gap: 5px;
-  min-width: 0;
-  overflow: hidden;
+  gap: 4px;
+  width: max-content;
+  max-width: calc(100% + 10px);
   white-space: nowrap;
+  pointer-events: none;
 }
 .effect {
   --effect: #6fe6ff;
@@ -772,7 +783,9 @@ body:has(#settings[open]) .hud-actions {
   padding: 0 8px 0 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--effect) 18%, #06122a);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--effect) 55%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--effect) 55%, transparent),
+    0 4px 10px #0008;
   color: #fff;
   font: 700 10px/1 var(--font-ui);
   font-variant-numeric: tabular-nums;
@@ -1916,20 +1929,20 @@ html:not(.phone) #toast[data-tone="death"] {
 .ammo-slot kbd {
   grid-area: 1 / 1;
   justify-self: start;
-  min-width: 15px;
-  padding: 1px 4px;
+  min-width: 14px;
+  padding: 1px 3px;
   border-radius: 3px;
   background: #ffffff14;
   color: #d4e4f3;
-  font: 800 9px/1.3 var(--font-ui);
+  font: 800 8px/1.3 var(--font-ui);
 }
-/* A round not carried: its key over a small greyed icon, the count and name left out. */
+/* A round not carried keeps its slot: its key over a greyed icon, the count and name left
+   out, so loading it never resizes the rack. */
 .ammo-slot.empty {
   grid-template-columns: 1fr;
   justify-items: center;
   align-content: space-evenly;
-  width: 36px;
-  padding: 5px 2px;
+  padding: 4px 2px;
   border-color: #ffffff0d;
   background: #050d1c99;
   color: #7f93a8;
@@ -1945,8 +1958,8 @@ html:not(.phone) #toast[data-tone="death"] {
 .ammo-slot.empty .ammo-icon {
   grid-area: auto;
   justify-self: center;
-  width: 18px;
-  height: 18px;
+  width: 16px;
+  height: 16px;
   fill: #50657e;
   filter: none;
 }
@@ -1969,7 +1982,6 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .ammo-slot:hover:not(:disabled, .selected) {
   border-color: #ffffff40;
-  transform: translateY(-2px);
 }
 .ammo-slot:focus-visible {
   outline: 3px solid var(--gold);

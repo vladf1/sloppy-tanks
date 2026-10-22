@@ -92,9 +92,11 @@ fn brdf_ggx_multiscatter(l: vec3f, v: vec3f, n: vec3f, f0: vec3f, f90: f32, roug
     return single + fms * (ems_v * ems_l);
 }
 
-// The sun's shadow: Castaño's optimized 5×5 PCF (The Witness), nine hardware-filtered
-// compares weighted into a smooth tent five texels wide, with no dither noise, its
-// taps spread by the filter radius. After the light-space normal offset and depth bias.
+// The sun's shadow: Castaño's optimized PCF (The Witness), hardware-filtered
+// compares weighted into a smooth tent with no dither noise, after the light-space
+// normal offset and depth bias. Its taps sit exactly where the hardware's bilinear
+// weights complete the tent, so the penumbra glides without stepping as things move:
+// 7×7 texels from 16 taps, or 5×5 from 9 on the lighter WebGL build.
 fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
     let position = frame.shadow_matrix * vec4f(world + normal * frame.shadow.y, 1.0);
     let projected = position.xyz / position.w;
@@ -104,20 +106,48 @@ fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
     let base = floor(texels + 0.5);
     let st = texels + 0.5 - base;
     let origin = (base - 0.5) / size;
-    let spread = frame.shadow.w / size;
-    let uw = vec3f(4.0 - 3.0 * st.x, 7.0, 1.0 + 3.0 * st.x);
-    let u = vec3f((3.0 - 2.0 * st.x) / uw.x - 2.0, (3.0 + st.x) / uw.y, st.x / uw.z + 2.0) * spread;
-    let vw = vec3f(4.0 - 3.0 * st.y, 7.0, 1.0 + 3.0 * st.y);
-    let v = vec3f((3.0 - 2.0 * st.y) / vw.x - 2.0, (3.0 + st.y) / vw.y, st.y / vw.z + 2.0) * spread;
+    // The filter radius spreads the taps; at 1 they are exact.
+    let texel = frame.shadow.w / size;
     var sum = 0.0;
-    for (var j = 0; j < 3; j++) {
-        for (var i = 0; i < 3; i++) {
-            let tap = origin + vec2f(u[i], v[j]);
-            sum += uw[i] * vw[j] * textureSampleCompareLevel(shadow_map, shadow_sampler, tap, coord.z);
+    if LITE {
+        let uw = vec3f(4.0 - 3.0 * st.x, 7.0, 1.0 + 3.0 * st.x);
+        let u = vec3f((3.0 - 2.0 * st.x) / uw.x - 2.0, (3.0 + st.x) / uw.y, st.x / uw.z + 2.0) * texel;
+        let vw = vec3f(4.0 - 3.0 * st.y, 7.0, 1.0 + 3.0 * st.y);
+        let v = vec3f((3.0 - 2.0 * st.y) / vw.x - 2.0, (3.0 + st.y) / vw.y, st.y / vw.z + 2.0) * texel;
+        for (var j = 0; j < 3; j++) {
+            for (var i = 0; i < 3; i++) {
+                let tap = origin + vec2f(u[i], v[j]);
+                sum += uw[i] * vw[j] * textureSampleCompareLevel(shadow_map, shadow_sampler, tap, coord.z);
+            }
         }
+        sum /= 144.0;
+    } else {
+        let s = st.x;
+        let t = st.y;
+        let uw = vec4f(5.0 * s - 6.0, 11.0 * s - 28.0, -(11.0 * s + 17.0), -(5.0 * s + 1.0));
+        let u = vec4f(
+            (4.0 * s - 5.0) / uw.x - 3.0,
+            (4.0 * s - 16.0) / uw.y - 1.0,
+            -(7.0 * s + 5.0) / uw.z + 1.0,
+            -s / uw.w + 3.0,
+        ) * texel;
+        let vw = vec4f(5.0 * t - 6.0, 11.0 * t - 28.0, -(11.0 * t + 17.0), -(5.0 * t + 1.0));
+        let v = vec4f(
+            (4.0 * t - 5.0) / vw.x - 3.0,
+            (4.0 * t - 16.0) / vw.y - 1.0,
+            -(7.0 * t + 5.0) / vw.z + 1.0,
+            -t / vw.w + 3.0,
+        ) * texel;
+        for (var j = 0; j < 4; j++) {
+            for (var i = 0; i < 4; i++) {
+                let tap = origin + vec2f(u[i], v[j]);
+                sum += uw[i] * vw[j] * textureSampleCompareLevel(shadow_map, shadow_sampler, tap, coord.z);
+            }
+        }
+        sum /= 2704.0;
     }
     let inside = coord.x >= 0.0 && coord.x <= 1.0 && coord.y >= 0.0 && coord.y <= 1.0 && coord.z <= 1.0;
-    return select(1.0, sum / 144.0, inside);
+    return select(1.0, sum, inside);
 }
 
 fn distance_attenuation(distance: f32, cutoff: f32, decay: f32) -> f32 {
@@ -157,13 +187,14 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     var reflected: Reflected;
     reflected.diffuse = vec3f(0.0);
     reflected.specular = vec3f(0.0);
-    var sun = frame.sun_color.rgb;
+    var sunlit = 1.0;
     if RECEIVE_SHADOW {
-        sun *= sun_shadow(world, n);
+        sunlit = sun_shadow(world, n);
     }
     if atmosphere_on() {
-        sun *= cloud_shadow(world);
+        sunlit *= cloud_shadow(world);
     }
+    let sun = frame.sun_color.rgb * sunlit;
     add_direct_light(&reflected, frame.sun_direction.xyz, sun, v, n, diffuse, specular, roughness);
     for (var i = 0; i < 4; i++) {
         let light = frame.point_lights[i];
@@ -184,7 +215,26 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         }
     }
     let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
-    var indirect = hemisphere * diffuse * RECIPROCAL_PI;
+    var shade_color = diffuse;
+    if atmosphere_on() {
+        // Painterly shade: what the sky fill alone lights keeps a richer version of
+        // its own color, so grass shade stays green and earth shade warm brown
+        // instead of every shadow settling into the same grey-blue.
+        let grey = dot(diffuse, vec3f(0.2126, 0.7152, 0.0722));
+        shade_color = max(mix(vec3f(grey), diffuse, SHADE_SATURATION), vec3f(0.0));
+    }
+    var indirect = hemisphere * shade_color * RECIPROCAL_PI;
+    if atmosphere_on() && frame.ground.w > 0.0 {
+        // Warm bounce from the sunlit ground around: what the sun does not reach
+        // directly (cast shadow, cloud shadow or a face turned away) still catches
+        // some of its light off the ground, most on walls and hull sides, so shade
+        // stays warm and luminous rather than sinking into one cold blue.
+        let ground_tint = frame.ground_color.rgb / max(dot(frame.ground_color.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
+        let sun_level = dot(frame.sun_color.rgb, vec3f(0.2126, 0.7152, 0.0722));
+        let lit = sunlit * smoothstep(0.0, 0.35, dot(n, frame.sun_direction.xyz));
+        let bounce = frame.ground.w * sun_level * (1.0 - lit) * (1.0 - 0.5 * max(n.y, 0.0));
+        indirect += ground_tint * (bounce * RECIPROCAL_PI) * shade_color;
+    }
     if atmosphere_on() {
         // Stylized sky rim: grazing walls and hull sides catch the bright horizon,
         // most on the side turned from the sun, so silhouettes read on any ground.
@@ -249,8 +299,10 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
     return mix(ground, sky, smoothstep(-horizon_width, horizon_width, up));
 }
 
+// Saturation of the sky fill's share of a surface's light (1 = its plain color).
+const SHADE_SATURATION: f32 = 1.3;
 // Point lights' (blast flashes') extra strength with the atmosphere on.
-const BLAST_LIGHT_GAIN: f32 = 2.4;
+const BLAST_LIGHT_GAIN: f32 = 1.6;
 // Share of the drawn sky glossy finishes reflect.
 const ATMOSPHERE_REFLECTION: f32 = 0.45;
 // The lowest elevation of the drawn sky glossy finishes reflect.
@@ -351,6 +403,13 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     fragment.tint = input.tint;
     effect_surface(&surface, fragment);
     let alpha_width = fwidth(surface.opacity);
+    if LIT {
+        if atmosphere_on() {
+            let ground = ground_macro(input.world, surface.normal, surface.roughness);
+            surface.normal = ground.normal;
+            surface.color = apply_ground_macro(surface.color, ground);
+        }
+    }
 
     // Three writes alpha 1 for opaque materials; here they draw with blending off,
     // and nothing reads the HDR target's alpha (the output and water passes read

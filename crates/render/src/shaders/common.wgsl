@@ -70,6 +70,15 @@ struct Frame {
     // x their features around the horizon, y flat mesa tops 0..1, z the share of the
     // horizon left open between them 0..1.
     ridge_shape: vec4f,
+    // x haze per metre that does not thin with height (the long-range aerial
+    // perspective that softens far peaks as much as their feet), y the distance from
+    // the eye where it begins, z how strongly haze toward the sun glows with its color,
+    // w the most the low mist beyond the arena hides at ground level.
+    haze_far: vec4f,
+    // Ground macro variation (`ground_macro`): x the slope of its painted-in relief,
+    // y how much its albedo varies, z how far its dry crests bleach, w the share of
+    // the sun that bounces back into cast shadows from the sunlit ground around them.
+    ground: vec4f,
 }
 
 // Per drawn instance: world transform, tint (rgb multiplies the base color, a is
@@ -129,6 +138,79 @@ fn value_noise(p: vec2f) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+// Value noise and its gradient per unit of `p`, from the same four lattice taps:
+// x the value, yz its slope.
+fn value_noise_gradient(p: vec2f) -> vec3f {
+    let cell = vec2i(floor(p));
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let du = 6.0 * f * (1.0 - f);
+    let a = lattice_hash(cell);
+    let b = lattice_hash(cell + vec2i(1, 0));
+    let c = lattice_hash(cell + vec2i(0, 1));
+    let d = lattice_hash(cell + vec2i(1, 1));
+    let k = a - b - c + d;
+    let value = a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y;
+    return vec3f(value, du * vec2f(b - a + k * u.y, c - a + k * u.x));
+}
+
+// The ground's macro variation: broad swells and finer hummocks per metre, and
+// their heights in metres before `ground.x` scales them.
+const SWELL_SCALE: f32 = 0.045;
+const SWELL_HEIGHT: f32 = 1.3;
+const HUMMOCK_SCALE: f32 = 0.16;
+const HUMMOCK_HEIGHT: f32 = 0.22;
+
+struct GroundMacro {
+    normal: vec3f,
+    // -1 in the hollows to 1 on the crests, scaled by `ground.y`.
+    tone: f32,
+    // How far the crests bleach, 0..`ground.z`.
+    dry: f32,
+}
+
+// Large flat ground reads as one ironed sheet from the overhead camera. Rough
+// surfaces facing up take a gentle rolling relief, painted into their normal only
+// (collision, navigation and shadows keep the flat plane), and broad albedo patches
+// whose drier crests lighten and warm while hollows stay darker and richer, so a
+// field breaks into light and shade masses. Its weight is zero on walls, glossy
+// paint and steep faces, which skip the noise.
+fn ground_macro(world: vec3f, normal: vec3f, roughness: f32) -> GroundMacro {
+    var result: GroundMacro;
+    result.normal = normal;
+    result.tone = 0.0;
+    result.dry = 0.0;
+    let weight = smoothstep(0.8, 0.95, normal.y) * smoothstep(0.55, 0.7, roughness);
+    if weight <= 0.0 || (frame.ground.x <= 0.0 && frame.ground.y <= 0.0) {
+        return result;
+    }
+    let swell = value_noise_gradient(world.xz * SWELL_SCALE + vec2f(13.7, -5.3));
+    // WebGL's weaker devices keep the broad swells only.
+    var hummock = vec3f(0.5, 0.0, 0.0);
+    if !LITE {
+        hummock = value_noise_gradient(world.xz * HUMMOCK_SCALE + vec2f(-2.9, 8.1));
+    }
+    let slope = (swell.yz * (SWELL_SCALE * SWELL_HEIGHT) + hummock.yz * (HUMMOCK_SCALE * HUMMOCK_HEIGHT))
+        * (frame.ground.x * weight);
+    result.normal = normalize(normal - vec3f(slope.x, 0.0, slope.y));
+    // -1 in the hollows to 1 on the crests.
+    let height = (swell.x - 0.5) * 1.4 + (hummock.x - 0.5) * 0.6;
+    result.tone = clamp(height, -1.0, 1.0) * frame.ground.y * weight;
+    result.dry = clamp(height, 0.0, 1.0) * frame.ground.z * weight;
+    return result;
+}
+
+// A surface color with its ground variation: the crests' sun-bleached color fades
+// toward a pale straw grey, so dry grass yellows no further toward lime and bare
+// earth no further toward orange, and the whole patch lightens or darkens.
+fn apply_ground_macro(color: vec3f, ground: GroundMacro) -> vec3f {
+    let bleached = vec3f(dot(color, vec3f(0.2126, 0.7152, 0.0722))) * BLEACHED_TINT;
+    return mix(color, bleached, ground.dry) * (1.0 + ground.tone);
+}
+
+// The tint of bleached crests at unit luminance: a faint straw.
+const BLEACHED_TINT: vec3f = vec3f(1.06, 1.0, 0.86);
+
 // Sky brightness rises toward the horizon by this power of (1 - up).
 const SKY_HORIZON_EXPONENT: f32 = 3.2;
 
@@ -164,6 +246,59 @@ fn ridge_profile(azimuth: vec2f, offset: vec2f) -> f32 {
     return max(h - gaps, 0.0) / (1.0 - gaps);
 }
 
+// How much of the haze behind a range settles over its foot, the azimuth step over
+// which a range's slope is measured, and how strongly that slope turns its faces
+// toward or away from the sun.
+const RIDGE_FOOT_HAZE: f32 = 0.7;
+const RIDGE_SLOPE_STEP: f32 = 0.004;
+const RIDGE_FACE_LIGHT: f32 = 0.22;
+// Ray slope over which the faces fade in above the horizon.
+const RIDGE_SHADE_FADE: f32 = 0.004;
+// Mesa strata: bands per range height and how much their value alternates.
+const RIDGE_STRATA: f32 = 4.0;
+const RIDGE_STRATA_CONTRAST: f32 = 0.07;
+
+// One range of the horizon backdrop over `color`: a silhouette whose faces turned
+// toward the sun catch light and those turned away fall into shade, banded into
+// strata where it is a mesa, its crest crisp and its foot melting into the haze.
+fn ridge_layer(color: vec3f, direction: vec3f, heading: vec2f, offset: vec2f, scale: f32, share: f32, aa: f32) -> vec3f {
+    let height = frame.ridge.w * scale;
+    let top = height * ridge_profile(heading, offset);
+    // Low headlands fade in with their height, so where a range ends its haze-thick
+    // foot leaves no hard edge down to the horizon.
+    let cover = (1.0 - smoothstep(top - aa, top + aa, direction.y)) * smoothstep(0.0, height * 0.3, top);
+    if cover <= 0.0 {
+        return color;
+    }
+    let rise = clamp(direction.y / max(top, 1e-4), 0.0, 1.0);
+    // Faces and strata show only above the horizon, where the range itself is seen.
+    // Rays below it (hazed surfaces fading into the sky behind them, most of an
+    // overhead frame's pixels) take the plain ridge color at the hazy foot, with no
+    // extra noise taps.
+    var shade = 1.0;
+    let shown = smoothstep(0.0, RIDGE_SHADE_FADE, direction.y);
+    if shown > 0.0 {
+        // The range's slope along the horizon: a face falling away to one side
+        // faces that way, lit when the sun stands on that side.
+        let c = cos(RIDGE_SLOPE_STEP);
+        let s = sin(RIDGE_SLOPE_STEP);
+        let left = vec2f(heading.x * c - heading.y * s, heading.x * s + heading.y * c);
+        let right = vec2f(heading.x * c + heading.y * s, -heading.x * s + heading.y * c);
+        let slope = (ridge_profile(right, offset) - ridge_profile(left, offset)) * height / (2.0 * RIDGE_SLOPE_STEP);
+        let side = vec2f(-heading.y, heading.x);
+        let sun = frame.sun_direction.xyz;
+        let toward_sun = dot(side, sun.xz) * clamp(slope * 6.0, -1.0, 1.0) - dot(heading, sun.xz) * 0.35;
+        let strata = sin(rise * RIDGE_STRATA * 6.2831853 * max(top / max(height, 1e-4), 0.3));
+        let lit = (1.0 + RIDGE_FACE_LIGHT * clamp(toward_sun, -1.0, 1.0))
+            * (1.0 + RIDGE_STRATA_CONTRAST * frame.ridge_shape.y * smoothstep(-0.2, 0.6, strata));
+        shade = mix(1.0, lit, shown);
+    }
+    // The air thickens toward the foot, while the crest stays crisp.
+    let foot = 1.0 - rise;
+    let ridge = mix(frame.ridge.rgb * shade, color, RIDGE_FOOT_HAZE * foot * foot);
+    return mix(color, mix(color, ridge, share), cover);
+}
+
 // Distant ranges along the horizon in two layers, the far one paler: a backdrop that
 // recedes into the haze where the scenery's own hills end.
 fn horizon_ridges(color: vec3f, direction: vec3f, aa: f32) -> vec3f {
@@ -172,30 +307,35 @@ fn horizon_ridges(color: vec3f, direction: vec3f, aa: f32) -> vec3f {
         return color;
     }
     let heading = normalize(direction.xz + vec2f(1e-5));
-    // Low headlands fade in with their height, so where a range ends its haze-thick
-    // foot leaves no hard edge down to the horizon.
-    let rise = height * 0.3;
-    var result = color;
-    let far_top = height * ridge_profile(heading, vec2f(0.0, 0.0));
-    let far_cover = (1.0 - smoothstep(far_top - aa, far_top + aa, direction.y)) * smoothstep(0.0, rise, far_top);
-    // The air thickens toward each range's foot.
-    let far_foot = 1.0 - clamp(direction.y / max(far_top, 1e-4), 0.0, 1.0);
-    let far_color = mix(frame.ridge.rgb, color, 0.35 * far_foot);
-    result = mix(result, mix(color, far_color, FAR_RIDGE_SHARE), far_cover);
-    let near_top = height * NEAR_RIDGE_SCALE * ridge_profile(heading, vec2f(31.7, -12.4));
-    let near_cover = (1.0 - smoothstep(near_top - aa, near_top + aa, direction.y)) * smoothstep(0.0, rise, near_top);
-    let near_foot = 1.0 - clamp(direction.y / max(near_top, 1e-4), 0.0, 1.0);
-    let near_color = mix(frame.ridge.rgb, color, 0.3 * near_foot);
-    result = mix(result, mix(color, near_color, NEAR_RIDGE_SHARE), near_cover);
-    return result;
+    let far = ridge_layer(color, direction, heading, vec2f(0.0, 0.0), 1.0, FAR_RIDGE_SHARE, aa);
+    return ridge_layer(far, direction, heading, vec2f(31.7, -12.4), NEAR_RIDGE_SCALE, NEAR_RIDGE_SHARE, aa);
 }
 
 // The colour haze takes on along `ray`: thin haze shifts surfaces toward the cool
 // aerial tint, thick haze becomes the sky behind them (with the sun's warm forward
 // scatter from `sky_gradient`), so silhouettes recede in steps rather than bleach.
+// Looking toward the sun the haze glows warm, away from it it stays cool.
 fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
-    return mix(frame.aerial.rgb, sky_behind(ray), amount * amount);
+    let sun = frame.sun_direction.xyz;
+    let toward_sun = max(dot(ray, sun), 0.0);
+    let glow = frame.sky_sun.rgb * (frame.haze_far.z * toward_sun * toward_sun * amount);
+    // Away from the sun even thick haze keeps some of the cool aerial tint, so the
+    // far layers step from warm to cool across the view rather than one milky white.
+    let away = clamp(-dot(normalize(ray.xz + vec2f(1e-5)), normalize(sun.xz + vec2f(1e-5))), 0.0, 1.0);
+    let thick = mix(sky_behind(ray), frame.aerial.rgb, HAZE_AWAY_COOL * away);
+    return mix(frame.aerial.rgb, thick, amount * amount) + glow;
 }
+
+// The share of the cool aerial tint thick haze keeps looking straight away from the sun.
+const HAZE_AWAY_COOL: f32 = 0.35;
+// Ray slopes (downward) over which haze thins for a camera looking steeply down: such a
+// ray crosses the low haze layer in a few metres, so the overhead and overview cameras
+// see the play space and its surroundings clean while near-level views get the depth.
+const STEEP_RAY_HAZY: f32 = 0.2;
+const STEEP_RAY_CLEAR: f32 = 0.5;
+// The share of the haze that still lies over the far ground in an overhead view: a
+// hint of air over the sea and far fields, never a veil.
+const STEEP_RAY_RESIDUAL: f32 = 0.3;
 
 // The sky as drawn behind a surface along `ray`, distant ranges included (no clouds
 // or sun disc), so surfaces that melt into it leave no lighter patch across them.
@@ -203,11 +343,24 @@ fn sky_behind(ray: vec3f) -> vec3f {
     return horizon_ridges(sky_gradient(ray), ray, FADED_RIDGE_EDGE);
 }
 
-// Exponential height haze integrated from where it begins to the surface (aerial
-// perspective): dense near the ground, thin up high, so a camera looking down from
-// above stays clean while the backdrop recedes. Inside the arena square only a share
-// settles; toward the far plane every surface melts into the sky, so nothing the far
-// plane clips draws a hard horizon. Off, Three's linear fog.
+// The far haze layer thins up a slope at this share of the near layer's falloff, to
+// this share of its density on the highest crests.
+const FAR_HAZE_THINNING: f32 = 1.0;
+const FAR_HAZE_CREST_SHARE: f32 = 0.3;
+// Height in metres over which the low mist beyond the arena thins by e.
+const MIST_HEIGHT: f32 = 14.0;
+// Shares of the far plane's distance over which surfaces melt into the sky.
+const FAR_FADE_START: f32 = 0.84;
+const FAR_FADE_END: f32 = 0.98;
+
+// Aerial perspective in two layers. Exponential height haze, integrated from where
+// it begins to the surface, lies dense in the valleys and thin up high, so a camera
+// looking down from above stays clean. Beyond `haze_far.y` a thinner haze that does
+// not fall off with height takes over, so distant peaks fade as a whole into the
+// horizon instead of standing hard against it while their feet wash out. Inside the
+// arena square only a share of the height haze settles and none of the far haze;
+// toward the far plane every surface melts into the sky, so nothing the far plane
+// clips draws a hard horizon. Off, Three's linear fog.
 fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
     if atmosphere_on() {
         let eye = frame.camera_position.xyz;
@@ -228,12 +381,30 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
         let begin_height = eye.y + ray.y * start;
         let depth = frame.haze.x * exp(-falloff * max(begin_height, 0.0)) * column;
         let outside = length(max(abs(world.xz) - frame.haze_shape.x, vec2f(0.0)));
-        let backdrop = mix(frame.aerial.w, 1.0, smoothstep(0.0, frame.haze_shape.y, outside));
-        let amount = min(1.0 - exp(-depth), frame.haze.w) * backdrop;
+        let beyond = smoothstep(0.0, frame.haze_shape.y, outside);
+        let backdrop = mix(frame.aerial.w, 1.0, beyond);
+        // The far layer eases in over its first stretch, so it never draws a line.
+        let far_travel = max(distance - frame.haze_far.y, 0.0);
+        // It still thins a little up the slopes, so a far range keeps hazy feet under
+        // clearer crests and reads as a landform rather than one flat card.
+        let crest = exp(-max(world.y, 0.0) * frame.haze.y * FAR_HAZE_THINNING);
+        let far_depth = frame.haze_far.x * far_travel * far_travel / (far_travel + 40.0)
+            * mix(FAR_HAZE_CREST_SHARE, 1.0, crest);
+        let level = mix(1.0, STEEP_RAY_RESIDUAL, smoothstep(STEEP_RAY_HAZY, STEEP_RAY_CLEAR, -ray.y));
+        let near_amount = min(1.0 - exp(-depth), frame.haze.w) * backdrop * level;
+        let far_amount = (1.0 - exp(-far_depth)) * beyond * level;
+        // Low mist settles in the valleys beyond the arena, thick at the ground and
+        // gone a few storeys up, so distant hills stand out of it with clear crests.
+        let mist = frame.haze_far.w * exp(-max(world.y, 0.0) / MIST_HEIGHT) * beyond * level
+            * smoothstep(frame.haze_far.y * 0.7, frame.haze_far.y * 1.4, distance);
+        let clear = (1.0 - near_amount) * (1.0 - far_amount) * (1.0 - mist);
+        let amount = min(1.0 - clear, frame.haze.w);
         var hazed = mix(color, haze_tint(ray, amount), amount);
         let far = frame.haze_shape.w;
         if far > 0.0 {
-            let fade = smoothstep(far * 0.72, far * 0.97, distance);
+            // Late and short, so the far mesas and ranges keep their own form and
+            // only what the far plane is about to clip melts away.
+            let fade = smoothstep(far * FAR_FADE_START, far * FAR_FADE_END, distance);
             if fade > 0.0 {
                 hazed = mix(hazed, sky_behind(ray), fade);
             }
@@ -248,8 +419,11 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
 }
 
 // Ground-scale cloud shadow features per metre, and their drift in metres per second.
-const CLOUD_SHADOW_SCALE: f32 = 0.016;
+const CLOUD_SHADOW_SCALE: f32 = 0.02;
 const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
+// Where the shadow noise starts and completes a cloud, above the coverage.
+const CLOUD_SHADOW_LOW: f32 = 1.0;
+const CLOUD_SHADOW_HIGH: f32 = 1.3;
 
 // The share of sunlight that passing clouds let through at `world`: soft patches,
 // projected along the sun so tall things and the ground beneath agree.
@@ -263,6 +437,8 @@ fn cloud_shadow(world: vec3f) -> f32 {
     let p = (ground + CLOUD_SHADOW_DRIFT * frame.camera_position.w) * CLOUD_SHADOW_SCALE;
     let n = value_noise(p) * 0.68 + value_noise(p * 2.13 + vec2f(17.3, -4.1)) * 0.32;
     let coverage = frame.cloud_lit.w;
-    let cover = smoothstep(1.0 - coverage, 1.4 - coverage, n);
+    // Broad patches: about the sky's own share of the ground lies under a cloud, so
+    // the field reads in large light and shade masses rather than one flat sheet.
+    let cover = smoothstep(CLOUD_SHADOW_LOW - coverage, CLOUD_SHADOW_HIGH - coverage, n);
     return 1.0 - strength * cover;
 }

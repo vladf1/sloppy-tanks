@@ -33,11 +33,44 @@ pub struct GpuMesh {
     /// Where its vertices and absolute indices live in the mesh pages.
     pub range: MeshRange,
     pub bounds: Sphere,
+    /// Every vertex lies in one plane (a ring, a decal, a billboard card): no view
+    /// sees one of its faces behind another.
+    pub planar: bool,
     /// The caller's mesh for shared entries; `None` for model-owned merges.
     source: Option<Arc<Mesh>>,
     /// Live draw classes using this mesh.
     pub users: u32,
 }
+
+/// Whether `points` all lie in one plane, within a hair of their extent.
+fn planar(points: impl Iterator<Item = Vec3> + Clone) -> bool {
+    let mut all = points.clone();
+    let Some(origin) = all.next() else {
+        return true;
+    };
+    let Some(far) = points.clone().max_by(|a, b| {
+        a.distance_squared(origin)
+            .total_cmp(&b.distance_squared(origin))
+    }) else {
+        return true;
+    };
+    let axis = far - origin;
+    let Some(normal) = points
+        .clone()
+        .map(|p| axis.cross(p - origin))
+        .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
+        .and_then(|n| n.try_normalize())
+    else {
+        return true;
+    };
+    let tolerance = axis.length() * PLANAR_TOLERANCE;
+    points
+        .into_iter()
+        .all(|p| normal.dot(p - origin).abs() <= tolerance)
+}
+
+/// How far, as a share of its extent, a vertex may sit off a planar mesh's plane.
+const PLANAR_TOLERANCE: f32 = 1e-4;
 
 impl GpuMesh {
     /// A shared mesh that nothing draws and no caller holds.
@@ -262,6 +295,7 @@ impl MeshStore {
         let (index, _) = self.slots.insert(GpuMesh {
             range,
             bounds: Sphere::from_points(mesh.positions.iter().map(|p| Vec3::from(*p))),
+            planar: planar(mesh.positions.iter().map(|p| Vec3::from(*p))),
             source: Some(mesh.clone()),
             users: 0,
         });
@@ -282,6 +316,7 @@ impl MeshStore {
         let (index, _) = self.slots.insert(GpuMesh {
             range,
             bounds: data.bounds,
+            planar: planar(data.vertices.iter().map(|v| Vec3::from(v.position))),
             source: None,
             users: 0,
         });
