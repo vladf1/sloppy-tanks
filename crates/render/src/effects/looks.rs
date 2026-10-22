@@ -258,7 +258,12 @@ pub fn pool_descs() -> Vec<PoolDesc> {
         ..PoolDesc::new(
             "blast puffs",
             plane_geometry(2.0, 2.0),
-            soft_billboard(PUFF.name),
+            // Smoke takes the scene's aerial haze, so a distant plume recedes into
+            // the air instead of standing as ink against it.
+            Material {
+                fog: true,
+                ..soft_billboard(PUFF.name)
+            },
             PUFF_CAPACITY,
         )
     });

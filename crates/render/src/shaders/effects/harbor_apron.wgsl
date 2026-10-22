@@ -197,8 +197,16 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         if frame.fog_color.w > 0.5 {
             horizon = frame.fog_color.rgb;
         }
+        var hazed = mix(lit, horizon, haze);
+        if atmosphere_on() {
+            // The scene's low sea mist: thick at the waterline and thinning up the
+            // slopes, so the headlands rise out of it with clear green crests.
+            let ray = (f.world - frame.camera_position.xyz) / max(distance, 1e-4);
+            let mist = frame.haze_far.w * exp(-max(f.world.y, 0.0) / MIST_HEIGHT);
+            hazed = mix(hazed, haze_tint(ray, mist), mist);
+        }
         let light = select(0.0, 1.0, all(abs(albedo - SHORE_LIGHT) < vec3f(0.01)));
-        (*s).emissive = mix(mix(lit, horizon, haze), SHORE_LIGHT_GLOW, light);
+        (*s).emissive = mix(hazed, SHORE_LIGHT_GLOW, light);
         (*s).color = vec3f(0.0);
         (*s).roughness = 1.0;
         (*s).metalness = 0.0;
