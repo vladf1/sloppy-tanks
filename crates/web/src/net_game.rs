@@ -446,12 +446,12 @@ impl NetGame {
         if input.toggle_view {
             self.toggle_first_person();
         }
-        let active = self.client.active_input();
-        self.commands.queue(&input, active, now);
         // Skipped while the GPU still runs earlier frames, a frame only takes its input.
         // Rooms run at the timestamp itself, which the network client's clocks share.
         let in_flight = self.view.renderer.frames_in_flight();
         if self.pacing.frame_time(now, in_flight).is_none() {
+            let active = self.client.active_input();
+            self.commands.queue(&input, active, now);
             if active && self.view.rig.first_person.enabled {
                 self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
             }
@@ -468,6 +468,8 @@ impl NetGame {
             self.show_baseline(baseline, now)?;
         }
         let update_start = now_ms();
+        let active = self.client.active_input();
+        self.commands.queue(&input, active, now);
         let local = if active {
             self.local_input(&input, dt)
         } else {
