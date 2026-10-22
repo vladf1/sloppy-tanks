@@ -52,7 +52,7 @@ const SCRUB_KEEP_OUT: [[f64; 4]; 7] = [
 
 /// Candidate spots tried for work-floor pebbles; the gravel density keeps a few
 /// thousand of them.
-const PEBBLE_TRIES: usize = 16_000;
+const PEBBLE_TRIES: usize = 6_000;
 
 /// Centimetre pebbles sown where the baked soil reads gravelly, so the work floor
 /// has real grit at the follow camera. Spawn pads stay clean. Its own stream

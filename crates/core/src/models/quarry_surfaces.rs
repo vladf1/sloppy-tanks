@@ -54,9 +54,9 @@ static FOOTINGS: Cache<([u64; 2], u32), Mesh> = Cache::new();
 const SHAPE_LEVELS: [f64; 7] = [0.0, 0.07, 0.28, 0.44, 0.72, 0.88, 1.0];
 const SHAPE_SIDES: usize = 16;
 /// Target thickness of one sediment bed, in metres.
-const BED_THICKNESS: f64 = 0.42;
+const BED_THICKNESS: f64 = 0.5;
 /// Target width of one column of the eroded face, in metres.
-const COLUMN_WIDTH: f64 = 0.8;
+const COLUMN_WIDTH: f64 = 1.3;
 
 /// The face beds climb to this fraction of the collision levels; the shoulder
 /// above steps back in terraces.
@@ -411,7 +411,7 @@ fn eroded_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
     if outcrop {
         // Scree shed by the face lies around the toe in the same draw.
         let toe: Vec<DVec3> = (0..columns).map(|c| surface(c, 0.0)).collect();
-        let scree = stone_mesh(&scree_stones(&toe, &outward, h, &mut rng));
+        let scree = chip_mesh(&scree_stones(&toe, &outward, h, &mut rng));
         geometry.positions.extend(&scree.positions);
         geometry.uvs.extend(&scree.uvs);
         geometry.colors.extend(&scree.colors);
@@ -432,7 +432,7 @@ fn eroded_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
 const CAP_SOFTEN: f32 = 0.7;
 
 /// Stones per metre of an outcrop's toe.
-const SCREE_DENSITY: f64 = 2.2;
+const SCREE_DENSITY: f64 = 1.5;
 
 /// Scree at an outcrop's toe: fallen blocks leaning on the face, then chips that
 /// thin out and shrink across the sand apron. Ankle-high, so it never reads as
@@ -514,9 +514,16 @@ pub fn sandstone_rubble(stones: &[RubbleStone]) -> Node {
 /// `sandstone_rubble` for gravel a few pixels wide: 8-triangle chips that
 /// receive shadows but cast none.
 pub fn sandstone_pebbles(stones: &[RubbleStone]) -> Node {
+    shadow_receiver(Arc::new(chip_mesh(stones)), sandstone_material())
+}
+
+/// The merged 8-triangle chips of [`sandstone_pebbles`] and outcrop scree.
+fn chip_mesh(stones: &[RubbleStone]) -> Mesh {
     static CHIP: OnceLock<Mesh> = OnceLock::new();
-    let chip = CHIP.get_or_init(|| octahedron_geometry(0.5, 0).to_non_indexed());
-    shadow_receiver(Arc::new(stones_from(chip, stones)), sandstone_material())
+    stones_from(
+        CHIP.get_or_init(|| octahedron_geometry(0.5, 0).to_non_indexed()),
+        stones,
+    )
 }
 
 /// The merged, flat-faceted stones of [`sandstone_rubble`].

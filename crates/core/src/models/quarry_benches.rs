@@ -19,7 +19,9 @@ use crate::sim::math::Random;
 const BENCH_CREASE: f64 = PI / 4.0;
 
 /// Bed thickness range of the quarry faces, in metres.
-const BENCH_BED: (f64, f64) = (0.75, 1.6);
+const BENCH_BED: (f64, f64) = (1.5, 2.6);
+/// Width of one column of a bench face, in metres.
+const BENCH_COLUMN: f64 = 2.6;
 /// How far a bench bed juts out or recesses, in metres.
 const BENCH_RELIEF: f64 = 0.42;
 /// Columns per culled chunk of a face (about 35 m).
@@ -33,7 +35,7 @@ const BENCH_CHUNK: usize = 16;
 /// backdrop's colors), `uv.y` the wear. Built in chunks the renderer culls apart.
 pub fn quarry_bench(length: f64, height: f64, depth: f64, seed: f64) -> Node {
     let mut rng = Random::new(seed);
-    let segments = (length / 2.2).ceil() as usize;
+    let segments = (length / BENCH_COLUMN).ceil() as usize;
     // Each wall reads differently: overall lean plus long swells along its length.
     let lean = 1.0 + 0.1 * (seed * 2.3).sin() + 0.06 * (seed * 5.1).sin();
     struct Column {
