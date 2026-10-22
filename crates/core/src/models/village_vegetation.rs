@@ -13,7 +13,7 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3};
 
 use crate::geometry::math::{compose, hex_to_linear, quat_from_euler, quat_from_euler_yxz};
-use crate::geometry::{Attribute, Mesh, icosahedron_geometry};
+use crate::geometry::{Attribute, Mesh};
 use crate::scene::{Effect, Instance, Material, Node, Side};
 use crate::sim::arena::{PICKUP_LAYOUT, arena_layout, spawn_positions};
 use crate::sim::data::ARENA;
@@ -28,7 +28,7 @@ use super::village_roads::{in_village_square, village_roads};
 use crate::sim::math::Random;
 
 /// Instance capacities of the tuft and flower meshes.
-pub const MEADOW_TUFTS: usize = 16000;
+pub const MEADOW_TUFTS: usize = 12000;
 pub const MEADOW_FLOWERS: usize = 3200;
 /// Candidate placements tried in the open meadow before the tuft capacity fills.
 const MEADOW_CANDIDATES: usize = 4500;
@@ -62,23 +62,6 @@ const ROOT_LIFT: f64 = 0.02;
 const SQUARE_CLEARANCE: f64 = 0.3;
 /// Candidate drifts of tufts tried across the arena lawns.
 const LAWN_DRIFTS: usize = 2500;
-/// Candidate beds of long grass tried across the arena lawns, and the most
-/// tufts they hold between them.
-const GRASS_BED_CANDIDATES: usize = 1400;
-const GRASS_BED_TUFTS: usize = 3600;
-/// Tufts per square metre in the heart of a bed of long grass.
-const GRASS_BED_DENSITY: f64 = 4.2;
-/// Tints of the beds: deep green, fresh green, sun-dried and seeding.
-const GRASS_BED_TINTS: [[f32; 3]; 4] = [
-    [0.86, 0.97, 0.9],
-    [1.0, 1.04, 0.9],
-    [1.14, 1.06, 0.78],
-    [1.22, 1.1, 0.72],
-];
-/// Edge of the square cells the arena's tufts are drawn in, metres: each cell
-/// is its own instanced draw, so the views that see only part of the arena
-/// skip the rest. The valley's tufts are one more draw.
-const TUFT_CELL: f64 = 60.0;
 
 /// Eight tapering blades fanned wide around the tuft, some long and arching
 /// out, some short and upright, so it reads as a clump from overhead as well as
@@ -122,79 +105,6 @@ fn tuft_geometry() -> Mesh {
     let mut geometry = Mesh::from_f64(&positions, &normals, &[], None);
     geometry.colors = colors;
     geometry
-}
-
-/// A low shrub about two units across and one high: three overlapping leafy
-/// lobes, their outlines lumpy, dark and cool underneath and lit warm on top,
-/// with normals rounded outward and up so the bush shades as one soft mass.
-fn bush_geometry() -> Mesh {
-    let lobe = icosahedron_geometry(1.0, 0).to_non_indexed();
-    let lobes = [
-        (DVec3::new(0.0, 0.62, 0.0), DVec3::new(0.78, 0.62, 0.78)),
-        (DVec3::new(0.48, 0.42, 0.22), DVec3::new(0.56, 0.46, 0.6)),
-        (DVec3::new(-0.38, 0.4, -0.3), DVec3::new(0.6, 0.44, 0.54)),
-    ];
-    let mut positions = Vec::with_capacity(lobe.positions.len() * 9);
-    let mut normals = Vec::with_capacity(lobe.positions.len() * 9);
-    let mut colors = Vec::with_capacity(lobe.positions.len() * 3);
-    for (k, (centre, size)) in lobes.iter().enumerate() {
-        for p in &lobe.positions {
-            let unit = DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
-            // Lumps: each vertex pushed in or out by its own amount.
-            let lump = 1.0
-                + 0.16
-                    * ((unit.x * 7.3 + unit.z * 5.1 + k as f64 * 2.7).sin()
-                        * (unit.y * 6.1 + 1.3).cos());
-            let local = unit * *size * lump;
-            let point = *centre + local;
-            positions.extend([point.x, point.y.max(0.0), point.z]);
-            let n = (unit + DVec3::Y * 0.55).normalize();
-            normals.extend([n.x, n.y, n.z]);
-            let shade = (0.5 + point.y.max(0.0) * 0.55).min(1.12) as f32;
-            colors.push([shade * 0.95, shade, shade * 0.9]);
-        }
-    }
-    let mut geometry = Mesh::from_f64(&positions, &normals, &[], None);
-    geometry.colors = colors;
-    geometry
-}
-
-/// Tints of the bushes at the foot of the arena's trees.
-const BUSH_COLORS: [u32; 3] = [0x3f6a2d, 0x4f7b33, 0x5d7c37];
-/// How far from a tree's centre its bushes grow, metres: inside its trunk's
-/// footprint (2.6 m across), so no tank drives through one.
-const BUSH_REACH: [f64; 2] = [0.5, 1.05];
-
-/// Bushes at the foot of every arena tree, three to five of them crowding round
-/// the trunk, so each tree stands in its own thicket rather than on a lawn like
-/// a lollipop.
-fn tree_bushes() -> Vec<Instance> {
-    let mut rng = Random::new(40517.0);
-    let mut bushes = Vec::new();
-    for tree in arena_layout().iter().filter(|c| c.kind == CoverKind::Tree) {
-        let count = 3 + (rng.next() * 3.0) as usize;
-        let start = rng.range(0.0, PI * 2.0);
-        for k in 0..count {
-            let angle = start + k as f64 * PI * 2.0 / count as f64 + rng.range(-0.4, 0.4);
-            let reach = rng.range(BUSH_REACH[0], BUSH_REACH[1]);
-            let size = rng.range(0.32, 0.55) * (1.15 - reach * 0.25);
-            let tint = BUSH_COLORS[(rng.next() * 3.0) as usize % 3];
-            let value = rng.range(0.85, 1.08) as f32;
-            bushes.push(Instance {
-                matrix: compose(
-                    DVec3::new(
-                        tree.x + angle.cos() * reach,
-                        0.0,
-                        tree.z + angle.sin() * reach,
-                    ),
-                    quat_from_euler(0.0, rng.next() * TUFT_TURN, 0.0),
-                    DVec3::new(size, size * rng.range(0.8, 1.15), size),
-                ),
-                color: instance_color(tint).map(|c| c.map(|v| v * value)),
-            });
-        }
-    }
-    bushes
 }
 
 /// A five-petal bloom facing up with a raised heart, about a unit across; the
@@ -349,18 +259,6 @@ impl Clearings {
             discs.extend(spawn_positions(team, 1.0).map(|s| [s.x, s.z, 3.4]));
         }
         Self { boxes, discs }
-    }
-
-    /// Metres from (x, z) to the nearest cover footprint (0 inside one).
-    fn cover_distance(&self, x: f64, z: f64) -> f64 {
-        self.boxes
-            .iter()
-            .map(|[cx, cz, hw, hd]| {
-                let dx = ((x - cx).abs() - hw).max(0.0);
-                let dz = ((z - cz).abs() - hd).max(0.0);
-                (dx * dx + dz * dz).sqrt()
-            })
-            .fold(f64::INFINITY, f64::min)
     }
 
     fn blocks(&self, x: f64, z: f64) -> bool {
@@ -571,73 +469,6 @@ fn lawn_drifts(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
     }
 }
 
-/// Beds of long grass the mowers never reach: dense patches one to a few metres
-/// across, tallest in their hearts and thinning to their rims, gathered at the
-/// foot of fences and walls, round the lawns' corners and through the long-grass
-/// stands, each bed its own green or straw. They keep off the worn shortcuts, so
-/// the lawns read as meadow with tussocky beds rather than an even scatter of
-/// blades.
-fn grass_beds(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
-    let reach = ARENA - 2.0;
-    let open = |x: f64, z: f64| {
-        road_wear(x, z) < -1.3
-            && !clearings.blocks(x, z)
-            && !SHORTCUTS
-                .iter()
-                .any(|(points, width)| polyline_distance(DVec2::new(x, z), points) < width + 1.2)
-    };
-    let start = meadow.tufts.len();
-    for _ in 0..GRASS_BED_CANDIDATES {
-        if meadow.tufts.len() - start >= GRASS_BED_TUFTS {
-            break;
-        }
-        let (x, z) = (rng.range(-reach, reach), rng.range(-reach, reach));
-        if !open(x, z) {
-            continue;
-        }
-        // Beds gather by the cover and the wall, in the long-grass stands and
-        // far from the roads; elsewhere only now and then.
-        let sheltered = 1.0 - (clearings.cover_distance(x, z) / 3.5).min(1.0);
-        let by_wall = 1.0 - ((ARENA - x.abs().max(z.abs())) / 4.0).clamp(0.0, 1.0);
-        let stand = (long_grass(x, z) + 0.2).clamp(0.0, 1.0);
-        let deep = ((-road_wear(x, z) - 4.0) / 8.0).clamp(0.0, 1.0);
-        let want = 0.12 + sheltered.max(by_wall) * 0.7 + stand * 0.45 + deep * 0.25;
-        if rng.next() > want {
-            continue;
-        }
-        let radius = rng.range(0.7, 1.4) + sheltered.max(by_wall) * rng.range(0.0, 1.0);
-        let count = (PI * radius * radius * GRASS_BED_DENSITY * rng.range(0.7, 1.1)) as usize;
-        let tint = GRASS_BED_TINTS[(rng.next() * 4.0) as usize % 4];
-        let tall = rng.range(0.85, 1.2);
-        for _ in 0..count {
-            if meadow.tufts.len() >= MEADOW_TUFTS {
-                return;
-            }
-            let angle = rng.range(0.0, PI * 2.0);
-            let out = rng.next().sqrt();
-            // A bed is never a disc: stretched one way and lobed.
-            let lobe = 1.0 + 0.3 * (angle * 3.0 + radius * 5.0).sin();
-            let (tx, tz) = (
-                x + angle.cos() * out * radius * lobe * 1.25,
-                z + angle.sin() * out * radius * lobe * 0.8,
-            );
-            if !open(tx, tz) {
-                continue;
-            }
-            let size = rng.range(0.4, 0.68) * tall * (1.0 - out * 0.4);
-            let value = rng.range(0.84, 1.06) as f32;
-            meadow.tuft(rng, tx, ROOT_LIFT, tz, size, None);
-            if let Some(last) = meadow.tufts.last_mut()
-                && let Some(color) = &mut last.color
-            {
-                for (c, t) in color.iter_mut().zip(tint) {
-                    *c *= t * value;
-                }
-            }
-        }
-    }
-}
-
 /// How far past a road's painted edge the verge's tufts spill onto the dirt (m):
 /// a fringe hugging the turf's lip, not confetti across the road.
 const SPILL_REACH: f64 = 0.6;
@@ -829,7 +660,6 @@ pub fn village_vegetation() -> Node {
     understory(&mut meadow, &mut rng, &clearings);
     long_stands(&mut meadow, &mut rng, &clearings);
     lawn_drifts(&mut meadow, &mut rng, &clearings);
-    grass_beds(&mut meadow, &mut rng, &clearings);
     let Meadow {
         tufts,
         origins,
@@ -849,29 +679,16 @@ pub fn village_vegetation() -> Node {
         vertex_colors: true,
         ..Material::standard(0xffffff, 0.0, 0.8)
     });
-    // One instanced draw per cell of tufts (with their wind origins), so a
-    // view culls the cells it cannot see; one each for the flowers and the
-    // heads of greens in the cottage plots.
-    for (cell_tufts, cell_origins) in tuft_cells(tufts, origins) {
-        let mut tuft_mesh = tuft_geometry();
-        tuft_mesh.set_attribute(Attribute::instance(WIND_ORIGIN, 2, cell_origins));
-        group
-            .children
-            .push(meadow_node(Arc::new(tuft_mesh), grass.clone(), cell_tufts));
-    }
+    // One instanced draw each: the tufts (with their wind origins), the
+    // flowers and the heads of greens in the cottage plots.
+    let mut tuft_mesh = tuft_geometry();
+    tuft_mesh.set_attribute(Attribute::instance(WIND_ORIGIN, 2, origins));
+    group
+        .children
+        .push(meadow_node(Arc::new(tuft_mesh), grass, tufts));
     group
         .children
         .push(meadow_node(Arc::new(bloom_geometry()), blooms, flowers));
-    let leaves = Arc::new(Material {
-        vertex_colors: true,
-        ..Material::standard(0xffffff, 0.0, 0.85)
-    });
-    let mut bushes = meadow_node(Arc::new(bush_geometry()), leaves, tree_bushes());
-    // The bushes stand a hand or two high: their shade grounds them.
-    if let Some(drawable) = bushes.drawable.as_mut() {
-        drawable.cast_shadow = true;
-    }
-    group.children.push(bushes);
     let greens = Arc::new(Material {
         side: Side::Double,
         vertex_colors: true,
@@ -883,28 +700,6 @@ pub fn village_vegetation() -> Node {
         vegetable_beds(),
     ));
     group
-}
-
-/// The tufts sorted into the arena's square cells of [`TUFT_CELL`] and the
-/// valley, each with its wind origins.
-fn tuft_cells(tufts: Vec<Instance>, origins: Vec<f32>) -> Vec<(Vec<Instance>, Vec<f32>)> {
-    let across = (2.0 * ARENA / TUFT_CELL).ceil() as usize;
-    let mut cells: Vec<(Vec<Instance>, Vec<f32>)> =
-        vec![(Vec::new(), Vec::new()); across * across + 1];
-    for (tuft, origin) in tufts.into_iter().zip(origins.as_chunks::<2>().0) {
-        let (x, z) = (f64::from(origin[0]), f64::from(origin[1]));
-        let cell = if x.abs() < ARENA && z.abs() < ARENA {
-            let column = (((x + ARENA) / TUFT_CELL) as usize).min(across - 1);
-            let row = (((z + ARENA) / TUFT_CELL) as usize).min(across - 1);
-            row * across + column
-        } else {
-            across * across
-        };
-        cells[cell].0.push(tuft);
-        cells[cell].1.extend_from_slice(origin);
-    }
-    cells.retain(|(cell, _)| !cell.is_empty());
-    cells
 }
 
 /// One instanced mesh of the meadow.
