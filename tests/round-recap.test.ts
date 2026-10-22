@@ -2,8 +2,14 @@
 // `crates/core/tests/round_recap.rs`; this checks how the battle report shows them.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { recapMarkup, teamLabel, wreckLine } from "../src/game/round-recap";
-import type { RecapMetric, RecapState } from "../src/game/engine-api";
+import {
+  mostValuable,
+  recapMarkup,
+  scoreboardMarkup,
+  teamLabel,
+  wreckLine,
+} from "../src/game/round-recap";
+import type { RecapMetric, RecapState, ScoreboardRow } from "../src/game/engine-api";
 
 const zero = (): Record<RecapMetric, number> => ({
   kills: 0,
@@ -44,8 +50,9 @@ test("a first round reports its values without record callouts", () => {
   assert.match(markup, /<dt>Kills<\/dt><dd>3<\/dd>/);
   assert.match(markup, /<dt>Damage dealt<\/dt><dd>1,234<\/dd>/);
   assert.match(markup, /<dt>Longest life<\/dt><dd>1:35<\/dd>/);
-  assert.match(markup, /<dt>Top rank<\/dt><dd>Elite<\/dd>/);
-  assert.match(markup, /<dt>Time played<\/dt><dd>2:05<\/dd>/);
+  // Peak rank rides on the kills tile; time played is not a stat worth a cell.
+  assert.match(markup, /PEAK RANK · ELITE/);
+  assert.doesNotMatch(markup, /Top rank|Time played/);
   assert.match(markup, /<dt>Accuracy<\/dt><dd>—<\/dd>/);
   assert.doesNotMatch(markup, /NEW BEST|BEST |recap-feats/);
   assert.match(markup, /<p class="recap-note"><\/p>/);
@@ -90,4 +97,35 @@ test("the report counts wrecks in words and names the winning team plainly", () 
     "Wrecked 5 times",
   ]);
   assert.equal(teamLabel("BLUE"), "Blue team");
+});
+
+const row = (id: number, name: string, team: 0 | 1, kills: number, deaths: number) =>
+  ({ id, name, team, kills, deaths, kind: "balanced", human: id === 1 }) as ScoreboardRow;
+
+test("the scoreboard lists each team by kills, lights the viewer and crowns one MVP", () => {
+  const rows = [
+    row(1, "You", 1, 2, 1),
+    row(2, "Ace", 0, 2, 0),
+    row(3, "Bob <b>", 0, 0, 2),
+    row(4, "Cat", 1, 3, 4),
+  ];
+  // Most kills wins; fewer wrecks breaks a tie.
+  assert.equal(mostValuable(rows)?.name, "Cat");
+  assert.equal(mostValuable([row(5, "A", 0, 1, 2), row(6, "B", 1, 1, 0)])?.name, "B");
+  assert.equal(mostValuable([row(5, "A", 0, 0, 0)]), null);
+  const markup = scoreboardMarkup(rows, 1, ["BLUE", "RED"], [2, 5]);
+  assert.match(markup, /<header><b>BLUE<\/b><span>2<\/span>/);
+  assert.match(
+    markup,
+    /Ace<\/span><b>2<\/b><small>0<\/small><\/li><li><span class="board-name">Bob &lt;b&gt;/,
+  );
+  assert.match(
+    markup,
+    /<li class="mvp"><span class="board-name">Cat<\/span><span class="board-tag mvp-tag">MVP/,
+  );
+  assert.match(
+    markup,
+    /<li class="you"><span class="board-name">You<\/span><span class="board-tag">YOU/,
+  );
+  assert.match(markup, /board-mvp red"><span>★ MVP<\/span><b>Cat<\/b><small>3 kills · 4 wrecks/);
 });

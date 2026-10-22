@@ -58,6 +58,11 @@ impl VillageScenery {
     }
 }
 
+/// Where the village sign's gate stands behind the north wall, and the height of
+/// its posts' tops (m).
+const SIGN_GATE_Z: f64 = -66.5;
+const SIGN_GATE_TOP: f64 = 3.6;
+
 /// Stepping stones and a timber sign link the village road to its old footbridge.
 fn approach_details() -> Node {
     let mut details = Node::group("");
@@ -78,21 +83,25 @@ fn approach_details() -> Node {
             z,
         );
     }
+    // The gate stands well back from the boundary wall and tall enough that its
+    // sign clears the wall from the overhead camera.
+    let ground = valley_height(0.0, SIGN_GATE_Z);
+    let post = SIGN_GATE_TOP - ground;
     for x in [-4.4, 4.4] {
         put(
             &mut details,
-            box_part(0.26, 3.2, 0.26, 0x715534, 0.0),
+            box_part(0.26, post, 0.26, 0x715534, 0.0),
             x,
-            0.75,
-            -64.5,
+            ground + post / 2.0,
+            SIGN_GATE_Z,
         );
     }
     put(
         &mut details,
         box_part(9.2, 0.22, 0.34, 0x80613d, 0.0),
         0.0,
-        2.35,
-        -64.5,
+        SIGN_GATE_TOP - 0.15,
+        SIGN_GATE_Z,
     );
     // Small hanging sign is a landmark, not an in-game overlay.
     let sign = Node::mesh(
@@ -102,7 +111,13 @@ fn approach_details() -> Node {
             ..Material::standard(0xffffff, 0.0, 1.0)
         }),
     );
-    put(&mut details, sign, 0.0, 1.55, -64.4);
+    put(
+        &mut details,
+        sign,
+        0.0,
+        SIGN_GATE_TOP - 0.85,
+        SIGN_GATE_Z + 0.1,
+    );
     batch(&mut details);
     details
 }

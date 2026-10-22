@@ -100,6 +100,13 @@ pub const TRACK_MARK: EffectDefinition = effect(
     include_str!("../shaders/effects/track_mark.wgsl"),
 );
 
+/// Lit debris chips with a per-instance glow for hot clods. `instance_data` =
+/// (glow rgb linear, unused). No params.
+pub const DEBRIS_CHIP: EffectDefinition = effect(
+    "debris-chip",
+    include_str!("../shaders/effects/debris_chip.wgsl"),
+);
+
 /// Soft dust billboards (`effect-materials.ts` `dustMaterial`): track dust and
 /// quarry wisps. Instance tint is the linear color and opacity. No params.
 pub const DUST: EffectDefinition = effect("dust", include_str!("../shaders/effects/dust.wgsl"));
@@ -177,7 +184,7 @@ pub const VEHICLE_PAINT: EffectDefinition = effect(
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 16] = [
+pub const BUILTIN_EFFECTS: [EffectDefinition; 17] = [
     WAVE,
     PULSE,
     PUFF,
@@ -194,6 +201,7 @@ pub const BUILTIN_EFFECTS: [EffectDefinition; 16] = [
     SAND_DRIFT,
     HARBOR_APRON,
     VEHICLE_PAINT,
+    DEBRIS_CHIP,
 ];
 
 /// The renderer's effect table. Index 0 means no effect; effect `i` has id `i + 1`.

@@ -26,7 +26,8 @@ use super::batching::{batch, paint_mesh};
 use super::effects_scenery::FOLIAGE;
 use super::model_primitives::{Cache, shadowed, span_between};
 use crate::geometry::math::{
-    multiply_hex, quat_from_euler, quat_from_euler_yxz, quat_rotate_z, smoothstep, transform_point,
+    hex_to_linear, lerp_color, multiply_hex, quat_from_euler, quat_from_euler_yxz, quat_rotate_z,
+    smoothstep, transform_point,
 };
 use crate::geometry::{CylinderGeometry, Mesh, node_bounds};
 use crate::scene::{Color, Effect, Material, Node, Side, TextureRef};
@@ -66,7 +67,18 @@ pub enum TreeDetail {
     /// A cover tree: stump, boughs that shed, batched crown.
     Full,
     /// Distant scenery: fewer tiers, clumps and cards, no stump or bark limbs.
+    /// Each tree's colour lives in its vertex colours, so a whole forest cell
+    /// draws in four materials (bark, birch bark, needles, leaves).
     Background,
+    /// Far woods on the ranges' feet and the valley's rim: a background tree
+    /// with fewer whorls, clumps and cards, seen only across the valley.
+    Distant,
+}
+
+impl TreeDetail {
+    fn background(self) -> bool {
+        self != TreeDetail::Full
+    }
 }
 
 /// What a tree's crown sheds when it is hit or felled, for presentation's falling
@@ -123,15 +135,26 @@ impl TreeSurface {
 /// Foliage below this texture alpha is cut out.
 const FOLIAGE_CUTOFF: f32 = 0.35;
 
-/// Shared tree materials by surface, color, and whether foliage sways.
-static SURFACES: Cache<(TreeSurface, u32, bool), Material> = Cache::new();
+/// Shared tree materials by surface, color, whether foliage sways and whether
+/// vertex colours carry the tint (background trees).
+static SURFACES: Cache<(TreeSurface, u32, bool, bool), Material> = Cache::new();
 static GEOMETRY: Cache<TreeGeometry, Mesh> = Cache::new();
 
 /// `surface(kind, color)`: shared textured tree materials. Foliage cards are
 /// alpha-tested, drawn from both sides with alpha to coverage and shaded by their
 /// vertex colors; `sway` gives them the [`FOLIAGE`] effect.
 fn surface(kind: TreeSurface, color: u32, sway: bool) -> Arc<Material> {
-    SURFACES.get_or_insert((kind, color, sway), || {
+    surface_with(kind, color, sway, false)
+}
+
+/// A background tree's white material: its tint, and every tree's own variation,
+/// are in the mesh's vertex colours, so trees of every family merge per cell.
+fn tinted_surface(kind: TreeSurface) -> Arc<Material> {
+    surface_with(kind, 0xffffff, false, true)
+}
+
+fn surface_with(kind: TreeSurface, color: u32, sway: bool, tinted: bool) -> Arc<Material> {
+    SURFACES.get_or_insert((kind, color, sway, tinted), || {
         let map = TextureRef {
             anisotropy: 4,
             ..TextureRef::file(kind.texture())
@@ -151,7 +174,7 @@ fn surface(kind: TreeSurface, color: u32, sway: bool) -> Arc<Material> {
             alpha_test: if foliage { FOLIAGE_CUTOFF } else { 0.0 },
             alpha_to_coverage: foliage,
             side: if foliage { Side::Double } else { Side::Front },
-            vertex_colors: foliage,
+            vertex_colors: foliage || tinted,
             effect: if sway {
                 Effect::Custom {
                     name: FOLIAGE,
@@ -339,6 +362,49 @@ const GOLDEN_ANGLE: f64 = 2.39996;
 const OAK_CELLS: [[f64; 4]; 2] = [[0.0, 0.5, 0.5, 1.0], [0.5, 0.5, 1.0, 1.0]];
 const OVATE_CELLS: [[f64; 4]; 2] = [[0.0, 0.0, 0.5, 0.5], [0.5, 0.0, 1.0, 0.5]];
 
+/// A unit hash of a tree's seed, for its own colour: kept off the tree's random
+/// stream, so its shape stays the one the simulation sized.
+fn seed_unit(seed: u32, salt: u32) -> f64 {
+    let mut h = seed.wrapping_mul(0x9e37_79b9) ^ salt.wrapping_mul(0x85eb_ca6b);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2c1b_3c6d);
+    h ^= h >> 12;
+    h = h.wrapping_mul(0x297a_2d39);
+    h ^= h >> 15;
+    f64::from(h) / 4_294_967_296.0
+}
+
+/// Late-summer colour turning in some broadleaves: aspen and birch gold, oak russet.
+const TURNING_GOLD: u32 = 0xf0c85a;
+const TURNING_RUSSET: u32 = 0xd8955a;
+
+/// A background tree's linear foliage and bark tints: its family's colours, each
+/// tree a little lighter or darker, warmer or cooler than its neighbours, spruce
+/// bluer, and a few broadleaves already turning, so a wood reads as many trees.
+fn background_tints(seed: u32, family: u32) -> ([f64; 3], [f64; 3]) {
+    let leaf = hex_to_linear(LEAF_COLORS[family as usize]);
+    let value = 0.8 + seed_unit(seed, 1) * 0.32;
+    let warm = (seed_unit(seed, 2) - 0.45) * 0.16 + if family == 1 { -0.05 } else { 0.0 };
+    let mut leaf = [
+        leaf[0] * value * (1.0 + warm),
+        leaf[1] * value,
+        leaf[2] * value * (1.0 - warm * 1.5),
+    ];
+    let turning = seed_unit(seed, 3);
+    if family >= 4 && turning < 0.16 {
+        leaf = lerp_color(leaf, hex_to_linear(TURNING_GOLD), 0.4 + turning * 2.5);
+    } else if family == 3 && turning < 0.07 {
+        leaf = lerp_color(leaf, hex_to_linear(TURNING_RUSSET), 0.35 + turning * 3.0);
+    }
+    let bark = if family >= 4 {
+        hex_to_linear(BIRCH_COLORS[family as usize - 4])
+    } else {
+        hex_to_linear(BARK_COLORS[family as usize])
+    };
+    let shade = 0.85 + seed_unit(seed, 4) * 0.25;
+    (leaf, bark.map(|c| c * shade))
+}
+
 /// The average sRGB color of a family's foliage.
 fn foliage_color(family: u32) -> u32 {
     let green = if family < 3 { SPRAY_GREEN } else { SPRIG_GREEN };
@@ -416,7 +482,7 @@ fn card_tint(rng: &mut Random) -> [f64; 3] {
 /// The foliage mesh of `cards`, shaded as part of `shape`: normals lean out of the
 /// crown and out of each card's clump, vertex colors carry the card's tint dimmed
 /// by the skylight its position receives.
-fn foliage_mesh(cards: &[&Card], shape: &CrownShape) -> Mesh {
+fn foliage_mesh(cards: &[&Card], shape: &CrownShape, tint: [f64; 3]) -> Mesh {
     let mut positions = Vec::with_capacity(cards.len() * 18);
     let mut normals = Vec::with_capacity(cards.len() * 18);
     let mut uvs = Vec::with_capacity(cards.len() * 12);
@@ -436,7 +502,7 @@ fn foliage_mesh(cards: &[&Card], shape: &CrownShape) -> Mesh {
             positions.extend_from_slice(&[p.x, p.y, p.z]);
             normals.extend_from_slice(&[normal.x, normal.y, normal.z]);
             uvs.extend_from_slice(&corner_uvs[index]);
-            colors.push(card.tint.map(|channel| (channel * light) as f32));
+            colors.push([0, 1, 2].map(|k| (card.tint[k] * tint[k] * light) as f32));
         }
     }
     let mut mesh = Mesh::from_f64(&positions, &normals, &uvs, None);
@@ -457,7 +523,7 @@ impl Crown {
     /// group (full detail only). Returns the index of the bough among the crown's
     /// children, or `None` for the crown itself.
     fn branch_parent(&mut self, stage: u32) -> Option<usize> {
-        if self.detail == TreeDetail::Background || stage == 0 {
+        if self.detail.background() || stage == 0 {
             return None;
         }
         let name = if stage == 1 {
@@ -485,8 +551,14 @@ impl Crown {
     fn spray(&mut self, bough: Option<usize>, transform: DMat4, rng: &mut Random) {
         let clump = transform_point(&transform, DVec3::new(0.0, 0.0, 0.5));
         let tint = card_tint(rng);
-        for card in 0..3u32 {
-            let angle = (f64::from(card) * PI) / 3.0;
+        // Distant sprays cross two cards instead of three.
+        let crossed = if self.detail == TreeDetail::Distant {
+            2
+        } else {
+            3
+        };
+        for card in 0..crossed {
+            let angle = (f64::from(card) * PI) / f64::from(crossed);
             let corner = |x: f64, z: f64| {
                 transform_point(&transform, DVec3::new(x * angle.cos(), x * angle.sin(), z))
             };
@@ -508,7 +580,7 @@ impl Crown {
     }
 
     /// Build each parent's foliage mesh from its cards, shaded as `shape`.
-    fn grow_foliage(&mut self, material: &Arc<Material>, shape: &CrownShape) {
+    fn grow_foliage(&mut self, material: &Arc<Material>, shape: &CrownShape, tint: [f64; 3]) {
         let cards = std::mem::take(&mut self.cards);
         let mut parents: Vec<Option<usize>> = Vec::new();
         for (parent, _) in &cards {
@@ -522,7 +594,7 @@ impl Crown {
                 .filter(|(p, _)| *p == parent)
                 .map(|(_, card)| card)
                 .collect();
-            let mut mesh = foliage_mesh(&mine, shape);
+            let mut mesh = foliage_mesh(&mine, shape, tint);
             if parent.is_some() {
                 // A shed bough lands any way up: half its shading bulges from its
                 // own middle, so whichever side faces the sky is lit.
@@ -612,20 +684,34 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
     let full = detail == TreeDetail::Full;
     let conifer = family < 3;
     let pale = family == 4 || family == 5;
-    let bark = if pale {
-        surface(TreeSurface::Birch, BIRCH_COLORS[family as usize - 4], false)
+    let bark_surface = if pale {
+        TreeSurface::Birch
     } else {
-        surface(TreeSurface::Bark, BARK_COLORS[family as usize], false)
+        TreeSurface::Bark
     };
-    let foliage = surface(
-        if conifer {
-            TreeSurface::ConiferSpray
+    let foliage_surface = if conifer {
+        TreeSurface::ConiferSpray
+    } else {
+        TreeSurface::LeafSprigs
+    };
+    let (bark, foliage, tints) = if full {
+        let bark_color = if pale {
+            BIRCH_COLORS[family as usize - 4]
         } else {
-            TreeSurface::LeafSprigs
-        },
-        LEAF_COLORS[family as usize],
-        full,
-    );
+            BARK_COLORS[family as usize]
+        };
+        (
+            surface(bark_surface, bark_color, false),
+            surface(foliage_surface, LEAF_COLORS[family as usize], true),
+            None,
+        )
+    } else {
+        (
+            tinted_surface(bark_surface),
+            tinted_surface(foliage_surface),
+            Some(background_tints(seed, family)),
+        )
+    };
     let rings = surface(TreeSurface::Rings, RINGS_COLOR, false);
     let mut group = Node {
         position: DVec3::new(c.x, 0.0, c.z),
@@ -700,6 +786,13 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
         } else {
             TreeGeometry::BroadleafStem
         });
+        if let Some((_, bark_tint)) = tints {
+            // The tinted trunk is the tree's own: background trees merge per cell.
+            let mut mesh = (*drawable.mesh).clone();
+            let color = bark_tint.map(|c| c as f32);
+            mesh.colors = vec![color; mesh.positions.len()];
+            drawable.mesh = Arc::new(mesh);
+        }
     }
     if full {
         // The torn underside of the trunk: hidden in the stump while the tree
@@ -722,7 +815,7 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
             &mut crown, c, &mut rng, &bark, family, twist, height, radius, lean_x, lean_z,
         )
     };
-    crown.grow_foliage(&foliage, &shape);
+    crown.grow_foliage(&foliage, &shape, tints.map_or([1.0; 3], |(leaf, _)| leaf));
     let mut crown = crown.node;
     if full {
         let offset = group.position;
@@ -768,7 +861,11 @@ fn add_conifer_crown(
     lean_z: f64,
 ) -> CrownShape {
     let full = crown.detail == TreeDetail::Full;
-    let tiers = if full { 8 } else { 6 };
+    let tiers = match crown.detail {
+        TreeDetail::Full => 8,
+        TreeDetail::Background => 6,
+        TreeDetail::Distant => 5,
+    };
     let arms = 6;
     // Pines carry a looser, higher crown; spruce and fir retain their lower boughs.
     let base = match family {
@@ -778,10 +875,11 @@ fn add_conifer_crown(
     };
     // Background forests keep their boughs lower and fuller, so the hills read
     // as dense woods rather than rows of bare poles.
-    let (base, fullness) = if full {
-        (base, 1.0)
-    } else {
-        (base * 0.6, 1.12)
+    let (base, fullness) = match crown.detail {
+        TreeDetail::Full => (base, 1.0),
+        TreeDetail::Background => (base * 0.6, 1.12),
+        // Far stands show as full, dark cones down to the ground.
+        TreeDetail::Distant => (base * 0.45, 1.22),
     };
     let width = c.w * (if family == 2 { 0.44 } else { 0.5 }) * fullness;
     for i in 0..tiers {
@@ -916,7 +1014,11 @@ fn add_broadleaf_crown(
         }
         let size = c.w * (if oak { 0.3 } else { 0.27 }) * rng.range(0.84, 1.09) * fullness;
         // Overlapping clumps of sprigs give the crown an irregular, branching silhouette.
-        let clumps = if full { 4 } else { 3 };
+        let clumps = match crown.detail {
+            TreeDetail::Full => 4,
+            TreeDetail::Background => 3,
+            TreeDetail::Distant => 2,
+        };
         for j in 0..clumps {
             let angle = a + f64::from(j) * GOLDEN_ANGLE;
             let reach = if j == 0 { 0.0 } else { size * 0.55 };
@@ -947,7 +1049,11 @@ fn add_broadleaf_crown(
                 size * rng.range(0.55, 0.85),
                 size * rng.range(0.45, 0.65),
             );
-            let cards = if full { 9 } else { 5 };
+            let cards = match crown.detail {
+                TreeDetail::Full => 9,
+                TreeDetail::Background => 5,
+                TreeDetail::Distant => 5,
+            };
             let phase = rng.range(0.0, PI * 2.0);
             let card_size = size * if oak { 1.35 } else { 1.28 };
             for k in 0..cards {

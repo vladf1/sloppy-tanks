@@ -7,6 +7,7 @@ import { showFatalError, startupErrorMessage } from "./game/startup-error";
 import { debugPage, isExtraLevel, mapOption } from "./game/map-options";
 import { showExtraLevels } from "./game/map-picker";
 import { isPhone } from "./game/phone-mode";
+import { fitPanels, keepPanelsFitted } from "./game/panel-fit";
 import type { RoomSelection } from "./net/pending-join";
 import { isPlayerKind } from "./net/room-protocol";
 import "./style.css";
@@ -21,6 +22,8 @@ const startupOverlay = document.querySelector<HTMLElement>("#startup-overlay");
 if (startupOverlay && debugPage(location.search)) {
   showExtraLevels(startupOverlay);
 }
+keepPanelsFitted();
+fitPanels();
 const joiningSetup = document.querySelector<HTMLElement>("#startup-overlay .start");
 if (linkedRoom && setupView?.joining && joiningSetup) {
   startMultiplayer(JoinScreen.resume(joiningSetup, { ...setupView, room: linkedRoom }));
