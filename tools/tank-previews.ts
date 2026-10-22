@@ -4,8 +4,10 @@
 // `tools/tank-surface-check.html` shows them at card and gameplay scale.
 //
 // The lighting is a garage card's: a dim warm hemisphere fill over a dark floor, a
-// warm, shadow-casting key light from the front left (out of the decks' specular
-// reflection, which would wash them pink) and a lowered exposure that keeps the
+// warm, shadow-casting key light low from the front, over the side the card shows
+// (low enough that the side plates, not the decks, take its full strength: a deck
+// lit by the key and the sky together washed the turret roof coral; and out of the
+// decks' specular reflection, which would wash them pink) and a lowered exposure that keeps the
 // red paint below ACES's shoulder (it turns bright red pink), and a strong, near
 // white rim light from behind on the right that lifts the side the card shows off
 // the navy card and edges the silhouette (a distant point light without falloff,
@@ -71,8 +73,8 @@ const SHADOW_OPACITY = 0.82;
 
 const SCENE = {
   background: 0x000000,
-  hemisphere: { sky: 0xfff2e4, ground: 0x3a3f47, intensity: 0.6 },
-  sun: { color: 0xfff1de, intensity: 3.4, position: [-3, 7, 5], target: [0, 0, 0] },
+  hemisphere: { sky: 0xf4ece4, ground: 0x4a5462, intensity: 0.5 },
+  sun: { color: 0xfff1de, intensity: 3.1, position: [5, 4.5, 5], target: [0, 0, 0] },
   // The key casts shadows, so the turret, mantlet and stowage shade the deck and
   // the skirts shade the running gear: the card tanks read as solid models.
   shadow: {
@@ -85,13 +87,13 @@ const SCENE = {
     normalBias: 0.02,
   },
   pointLight: {
-    color: 0xe6ecff,
-    intensity: 7,
+    color: 0xd6e3ff,
+    intensity: 11,
     distance: 0,
     decay: 0,
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
   },
-  exposure: 0.82,
+  exposure: 0.72,
   // The game's sky reflection, so card paint and steel shade as they do in a round.
   reflections: 1,
   camera: camera(),

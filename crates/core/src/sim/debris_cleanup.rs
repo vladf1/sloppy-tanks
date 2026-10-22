@@ -8,6 +8,9 @@ use super::types::Fragment;
 pub const DEBRIS_CLEANUP_SECONDS: f64 = 1.0;
 /// Pieces this near a player are kept in preference to distant ones.
 const NEARBY_DISTANCE: f64 = 25.0;
+/// A kill's wreck is the battle's history: the pool gives up every chip, plank
+/// and scrap before it takes a hull or turret away.
+const WRECK_PRIORITY: f64 = 4.0;
 
 pub fn debris_moving(simulation: &Simulation, fragment: &Fragment) -> bool {
     let body = &simulation.world.bodies[fragment.body];
@@ -57,6 +60,10 @@ impl CleanupScores {
             0.0
         } + if debris_moving(simulation, fragment) {
             1.0
+        } else {
+            0.0
+        } + if fragment.wreck.is_some() {
+            WRECK_PRIORITY
         } else {
             0.0
         };

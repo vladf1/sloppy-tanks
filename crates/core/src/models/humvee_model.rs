@@ -13,9 +13,9 @@
 use std::sync::{Arc, OnceLock};
 
 use super::model_primitives::{material, paint, put, shadowed};
-use super::tank_model::LENS_ROUGHNESS;
+use super::tank_model::{LENS_ROUGHNESS, STENCIL};
 use super::tank_surfaces::vehicle_glass;
-use super::{VehicleKind, part};
+use super::{Team, VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
 
@@ -24,6 +24,7 @@ mod kit;
 mod turret;
 mod wheel;
 
+use body::hood_insignia;
 use kit::Role;
 
 /// The body shell and wheelbase are stretched by this factor along z.
@@ -47,7 +48,7 @@ const RUBBER: u32 = 0x2d3031;
 const GLASS: u32 = 0x1f3a40;
 const GAP: u32 = 0x101416;
 const CANVAS: u32 = 0x4f4a38;
-const HEADLAMP: u32 = 0xe5ddbc;
+const HEADLAMP: u32 = 0x8f918b;
 const AMBER: u32 = 0xdf923b;
 const RED_LAMP: u32 = 0x931e16;
 /// Rubber, seals and canvas are matte.
@@ -88,7 +89,8 @@ impl Palette {
             Role::Gap => material(GAP, 0.0, MATTE_ROUGHNESS),
             Role::Canvas => material(CANVAS, 0.0, MATTE_ROUGHNESS),
             Role::Glass => vehicle_glass(GLASS),
-            // Lamps draw with the matte fittings: three draws fewer per Humvee.
+            // Lamps draw with the matte fittings: three draws fewer per Humvee. The
+            // headlamp lenses are an unlit grey glass rather than white blocks.
             Role::Headlamp => material(HEADLAMP, 0.0, LENS_ROUGHNESS),
             Role::Amber => material(AMBER, 0.0, LENS_ROUGHNESS),
             Role::Red => material(RED_LAMP, 0.0, LENS_ROUGHNESS),
@@ -104,8 +106,8 @@ impl Palette {
 }
 
 /// `humveeModel(team, false)` in `colors` (paint, shade, steel), before the
-/// vehicle scale and worn finish.
-pub(super) fn humvee_model(colors: [u32; 3]) -> Node {
+/// vehicle scale and worn finish, with the team's insignia on the hood.
+pub(super) fn humvee_model(team: Team, colors: [u32; 3]) -> Node {
     let [base, shade, steel] = colors;
     let palette = Palette { base, shade, steel };
     let shared = assemblies();
@@ -134,6 +136,10 @@ pub(super) fn humvee_model(colors: [u32; 3]) -> Node {
     }
     hull.children.push(track_group);
     hull.children.extend(palette.parts(&shared.body));
+    hull.children.push(shadowed(
+        Arc::new(hood_insignia(team)),
+        material(STENCIL, 0.0, MATTE_ROUGHNESS),
+    ));
     root.children.push(hull);
     root.children.push(turret(&palette));
     root
