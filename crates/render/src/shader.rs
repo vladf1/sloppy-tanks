@@ -382,12 +382,13 @@ pub fn sky_source() -> String {
     fixed_source(SKY_WGSL, InstanceSource::BUILD)
 }
 
-/// The ambient occlusion shader reading the main view's `multisampled` depth
-/// (WebGPU) or the single-sample copy WebGL2 resolves.
-pub fn occlusion_source(multisampled: bool) -> String {
-    // Only the WebGL build reads a single-sample copy; it probes six points, not eight.
-    let depth = if multisampled {
-        "@group(0) @binding(0) var depth: texture_depth_multisampled_2d;\n\
+/// The ambient occlusion shader, `scale` depth texels per occlusion texel along each
+/// axis. WebGPU reads the depth texture of its own depth pass (`depth_pass`); WebGL2
+/// reads the full-size single-sample copy its resolve blits, as floats, and probes six
+/// points rather than eight on its weaker devices.
+pub fn occlusion_source(depth_pass: bool, scale: u32) -> String {
+    let depth = if depth_pass {
+        "@group(0) @binding(0) var depth: texture_depth_2d;\n\
          fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
          const SAMPLES: i32 = 8;\n"
     } else {
@@ -395,7 +396,8 @@ pub fn occlusion_source(multisampled: bool) -> String {
          fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n\
          const SAMPLES: i32 = 6;\n"
     };
-    specialize::specialize(&format!("{depth}{OCCLUSION_WGSL}"), &[])
+    let scale = format!("const OCCLUSION_SCALE: i32 = {scale};\n");
+    specialize::specialize(&format!("{depth}{scale}{OCCLUSION_WGSL}"), &[])
 }
 
 /// The output and bloom shader, its loops unrolled like every other shader's.
@@ -685,7 +687,7 @@ mod tests {
         translate_for_webgl("output", &output_source());
         translate_for_webgl("mipmap", MIPMAP_WGSL);
         translate_for_webgl("sky", &fixed_source(SKY_WGSL, texture));
-        translate_for_webgl("occlusion", &occlusion_source(false));
+        translate_for_webgl("occlusion", &occlusion_source(false, 4));
     }
 
     #[test]
@@ -696,8 +698,11 @@ mod tests {
         validate("output", &output_source());
         validate("mipmap", MIPMAP_WGSL);
         validate("sky", &sky_source());
-        validate("occlusion", &occlusion_source(true));
-        validate("occlusion single-sample", &occlusion_source(false));
+        validate("occlusion", &occlusion_source(true, 2));
+        validate(
+            "occlusion from the resolved copy",
+            &occlusion_source(false, 4),
+        );
     }
 
     /// WebKit guards every WGSL loop with a volatile counter that keeps Metal from
@@ -713,7 +718,7 @@ mod tests {
             ("water".to_owned(), water_source()),
             ("sky".to_owned(), sky_source()),
             ("output".to_owned(), output_source()),
-            ("occlusion".to_owned(), occlusion_source(true)),
+            ("occlusion".to_owned(), occlusion_source(true, 2)),
             ("shadow merged".to_owned(), shadow_merged_source()),
             ("shadow cutout".to_owned(), shadow_cutout_source()),
         ];

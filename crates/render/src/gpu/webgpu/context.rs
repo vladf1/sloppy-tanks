@@ -141,9 +141,9 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// A multisampled HDR color + depth target and its single-sample resolve.
 /// Used for the main view (the scene's size) and the water reflection (fixed size).
-/// The multisampled color is resolved and discarded within its pass, so it is
-/// transient where the browser allows; so is the depth unless a later pass reads it.
-/// Dropping it destroys its textures.
+/// The multisampled color is resolved and its depth discarded within the pass (ambient
+/// occlusion draws a depth of its own), so both are transient where the browser
+/// allows. Dropping it destroys its textures.
 pub struct ColorTarget {
     pub color: wgpu::Texture,
     pub color_view: wgpu::TextureView,
@@ -180,20 +180,13 @@ pub(super) fn texture_2d(
 }
 
 impl ColorTarget {
-    /// With `sampled_depth` a later pass reads the multisampled depth (the main
-    /// view's ambient occlusion).
-    pub fn new(gpu: &Gpu, label: &str, width: u32, height: u32, sampled_depth: bool) -> Self {
+    pub fn new(gpu: &Gpu, label: &str, width: u32, height: u32) -> Self {
         let texture = |format, samples, usage| {
             texture_2d(&gpu.device, label, width, height, format, samples, usage)
         };
         let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let color = texture(HDR_FORMAT, SAMPLE_COUNT, attachment | gpu.transient);
-        let depth_usage = if sampled_depth {
-            attachment | wgpu::TextureUsages::TEXTURE_BINDING
-        } else {
-            attachment | gpu.transient
-        };
-        let depth = texture(DEPTH_FORMAT, SAMPLE_COUNT, depth_usage);
+        let depth = texture(DEPTH_FORMAT, SAMPLE_COUNT, attachment | gpu.transient);
         let resolved = texture(
             HDR_FORMAT,
             1,

@@ -20,10 +20,11 @@ use std::collections::HashMap;
 use sloppy_core::scene::Side;
 
 use super::Gpu;
+use super::OCCLUSION_DEPTH_DOWNSCALE;
 use super::context::{DEPTH_FORMAT, HDR_FORMAT, OCCLUSION_FORMAT};
 use super::precompile::{Background, LayoutKind, PipelineSpec, Precompiler};
 use crate::effects::EffectRegistry;
-use crate::gpu::{FixedPipelines, SAMPLE_COUNT, SHADOW_MERGED_SIDES};
+use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SAMPLE_COUNT, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
     BlendMode, Pass, PipelineKey, ShaderKey, occlusion_source, output_source, shader_source,
@@ -115,6 +116,17 @@ fn water_spec() -> PipelineSpec {
             count: SAMPLE_COUNT,
             ..Default::default()
         },
+    }
+}
+
+/// The water surface's depth alone, for the occlusion depth pass.
+fn water_depth_spec() -> PipelineSpec {
+    PipelineSpec {
+        label: "water depth",
+        fragment_entry: None,
+        targets: vec![],
+        multisample: Default::default(),
+        ..water_spec()
     }
 }
 
@@ -328,8 +340,8 @@ pub(super) fn pipeline_layout(
 
 /// The fixed pipelines while they compile in the background.
 struct FixedJobs {
-    /// Water, output, sky, the three bloom passes, occlusion, then the merged
-    /// casters in `shadow_merged_index` order.
+    /// Water, output, sky, the three bloom passes, occlusion, the water's depth,
+    /// then the merged casters in `shadow_merged_index` order.
     jobs: Vec<(PipelineSpec, String)>,
     compile: Background,
 }
@@ -347,6 +359,8 @@ pub struct Pipelines {
     merged_layout: wgpu::PipelineLayout,
     fixed_jobs: Option<FixedJobs>,
     fixed: Option<FixedPipelines<wgpu::RenderPipeline>>,
+    /// The water surface in the occlusion depth pass, made with the fixed pipelines.
+    water_depth: Option<wgpu::RenderPipeline>,
 }
 
 impl Pipelines {
@@ -370,7 +384,9 @@ impl Pipelines {
         for spec in bloom_specs() {
             jobs.push((spec, output_source()));
         }
-        jobs.push((occlusion_spec(), occlusion_source(true)));
+        let scale = OCCLUSION_DOWNSCALE / OCCLUSION_DEPTH_DOWNSCALE;
+        jobs.push((occlusion_spec(), occlusion_source(true, scale)));
+        jobs.push((water_depth_spec(), water_source()));
         for (cutout, source) in [
             (false, shadow_merged_source()),
             (true, shadow_cutout_source()),
@@ -397,6 +413,7 @@ impl Pipelines {
             merged_layout,
             fixed_jobs: Some(FixedJobs { jobs, compile }),
             fixed: None,
+            water_depth: None,
         }
     }
 
@@ -449,6 +466,7 @@ impl Pipelines {
         let sky = next("sky pipeline");
         let bloom = [(); 3].map(|_| next("bloom pipeline"));
         let occlusion = next("occlusion pipeline");
+        self.water_depth = Some(next("water depth pipeline"));
         self.fixed = Some(FixedPipelines {
             water,
             output,
@@ -462,6 +480,13 @@ impl Pipelines {
     /// The fixed pipelines; draws first make sure of them ([`Self::ensure_fixed`]).
     pub fn fixed(&self) -> &FixedPipelines<wgpu::RenderPipeline> {
         self.fixed
+            .as_ref()
+            .expect("fixed pipelines are created before drawing")
+    }
+
+    /// The water surface's depth-only pipeline; made with [`Self::fixed`].
+    pub fn water_depth(&self) -> &wgpu::RenderPipeline {
+        self.water_depth
             .as_ref()
             .expect("fixed pipelines are created before drawing")
     }
@@ -535,7 +560,9 @@ impl Pipelines {
 
     /// Pipelines including the fixed water, output and merged shadow ones.
     pub fn count(&self) -> usize {
-        self.pipelines.len() + self.fixed.as_ref().map_or(0, FixedPipelines::count)
+        self.pipelines.len()
+            + self.fixed.as_ref().map_or(0, FixedPipelines::count)
+            + usize::from(self.water_depth.is_some())
     }
 
     /// Distinct shader sources, including the fixed water, output (with bloom), sky,

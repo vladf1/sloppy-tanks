@@ -53,8 +53,8 @@ impl Tier {
     /// What this tier draws. Today's full picture is High; each cheaper tier drops
     /// the optional features whose cost scales with the pixels they cover and that
     /// the eye misses least from the overhead camera. Medium drops the procedural
-    /// detail a few pixels across and the ambient occlusion pass (with the
-    /// multisampled depth it stores and the output's taps); Low also drops bloom and
+    /// detail a few pixels across and the ambient occlusion pass (with its depth
+    /// pass and the output's taps); Low also drops bloom and
     /// halves the sun shadow map.
     pub const fn features(self) -> TierFeatures {
         match self {
