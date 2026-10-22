@@ -353,6 +353,10 @@ These come from playing the game and are easy to undo with "more juice":
   painted band or a wisp of signal smoke. No science fiction: no holograms,
   neon panels, light beams or pillars, glowing pads or energy rings (they
   looked like "some science fiction movie or game").
+- The kill feed is the kill confirmation. No banners or pop-ups over the
+  field and no hit markers at the aim: an "ELIMINATED" banner under the score
+  covered the fight on desktop, and ticks that turned red on a kill read as a
+  broken cursor.
 
 ## Maps, extra levels, and authored data
 
