@@ -60,8 +60,6 @@ pub enum LayoutKind {
     Output,
     Bloom,
     Occlusion,
-    /// The occlusion pass reading a single-sampled depth (no MSAA).
-    SingleSampleOcclusion,
     /// Frame group only: depth-only merged shadow casters and the sky.
     ShadowMerged,
     Mipmap,
@@ -71,7 +69,7 @@ impl LayoutKind {
     pub fn groups(self) -> &'static [&'static [wgpu::BindGroupLayoutEntry]] {
         use super::resources::{
             BLOOM_ENTRIES, FRAME_ENTRIES, MATERIAL_ENTRIES, MIPMAP_SOURCE_ENTRIES,
-            OCCLUSION_ENTRIES, OUTPUT_ENTRIES, SINGLE_SAMPLE_OCCLUSION_ENTRIES, TEXTURED_ENTRIES,
+            OCCLUSION_ENTRIES, OUTPUT_ENTRIES, TEXTURED_ENTRIES,
         };
         match self {
             LayoutKind::Surface => &[FRAME_ENTRIES, MATERIAL_ENTRIES],
@@ -79,7 +77,6 @@ impl LayoutKind {
             LayoutKind::Output => &[OUTPUT_ENTRIES],
             LayoutKind::Bloom => &[BLOOM_ENTRIES],
             LayoutKind::Occlusion => &[OCCLUSION_ENTRIES],
-            LayoutKind::SingleSampleOcclusion => &[SINGLE_SAMPLE_OCCLUSION_ENTRIES],
             LayoutKind::ShadowMerged => &[FRAME_ENTRIES],
             LayoutKind::Mipmap => &[MIPMAP_SOURCE_ENTRIES],
         }
@@ -508,8 +505,10 @@ fn texture_format(format: wgpu::TextureFormat) -> Result<&'static str, String> {
         F::Rgba8UnormSrgb => "rgba8unorm-srgb",
         F::Bgra8Unorm => "bgra8unorm",
         F::Rgba16Float => "rgba16float",
+        F::Rg11b10Ufloat => "rg11b10ufloat",
         F::R8Unorm => "r8unorm",
         F::Depth32Float => "depth32float",
+        F::Depth16Unorm => "depth16unorm",
         other => return Err(format!("texture format {other:?}")),
     })
 }

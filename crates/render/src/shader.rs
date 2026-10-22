@@ -266,6 +266,9 @@ pub struct PipelineKey {
     pub depth_bias: DepthBias,
     /// The faces that are drawn (culling removes the others).
     pub side: Side,
+    /// A depth-only variant drawing into the sun's shadow map, rather than into
+    /// ambient occlusion's depth pass: their depth formats differ.
+    pub shadow_map: bool,
 }
 
 impl PipelineKey {
@@ -283,6 +286,7 @@ impl PipelineKey {
             depth_write: material.depth_write,
             depth_bias: DepthBias::of(material),
             side: material.side,
+            shadow_map: false,
         }
     }
 
@@ -296,6 +300,17 @@ impl PipelineKey {
             depth_write: true,
             depth_bias: DepthBias::default(),
             side: shadow_side(material),
+            shadow_map: true,
+        }
+    }
+
+    /// Ambient occlusion's depth pass draws an opaque material with its depth-only
+    /// shadow `shader`, but the faces the main view draws.
+    pub fn occlusion_depth(shader: ShaderKey, material: &Material) -> Self {
+        Self {
+            side: material.side,
+            shadow_map: false,
+            ..Self::shadow(shader, material)
         }
     }
 }
@@ -383,37 +398,22 @@ pub fn sky_source() -> String {
     fixed_source(SKY_WGSL, InstanceSource::BUILD)
 }
 
-/// The ambient occlusion shader reading the main view's `multisampled` depth
-/// (WebGPU) or the single-sample copy WebGL2 resolves.
-/// How the occlusion pass reads the main view's depth: WebGPU's multisampled depth,
-/// its single-sampled one without MSAA, or the float copy WebGL2's resolve blits.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum OcclusionDepth {
-    Multisampled,
-    SingleSampled,
-    WebglCopy,
-}
-
-pub fn occlusion_source(depth: OcclusionDepth) -> String {
-    let depth = match depth {
-        OcclusionDepth::Multisampled => {
-            "@group(0) @binding(0) var depth: texture_depth_multisampled_2d;\n\
-             fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
-             const SAMPLES: i32 = 8;\n"
-        }
-        OcclusionDepth::SingleSampled => {
-            "@group(0) @binding(0) var depth: texture_depth_2d;\n\
-             fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
-             const SAMPLES: i32 = 8;\n"
-        }
-        // WebGL's weaker devices probe six points, not eight.
-        OcclusionDepth::WebglCopy => {
-            "@group(0) @binding(0) var depth: texture_2d<f32>;\n\
-             fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n\
-             const SAMPLES: i32 = 6;\n"
-        }
+/// The ambient occlusion shader, `scale` depth texels per occlusion texel along each
+/// axis. WebGPU reads the depth texture of its own depth pass (`depth_pass`); WebGL2
+/// reads the full-size single-sample copy its resolve blits, as floats, and probes six
+/// points rather than eight on its weaker devices.
+pub fn occlusion_source(depth_pass: bool, scale: u32) -> String {
+    let depth = if depth_pass {
+        "@group(0) @binding(0) var depth: texture_depth_2d;\n\
+         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
+         const SAMPLES: i32 = 8;\n"
+    } else {
+        "@group(0) @binding(0) var depth: texture_2d<f32>;\n\
+         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n\
+         const SAMPLES: i32 = 6;\n"
     };
-    specialize::specialize(&format!("{depth}{OCCLUSION_WGSL}"), &[])
+    let scale = format!("const OCCLUSION_SCALE: i32 = {scale};\n");
+    specialize::specialize(&format!("{depth}{scale}{OCCLUSION_WGSL}"), &[])
 }
 
 /// The output and bloom shader, its loops unrolled like every other shader's.
@@ -703,7 +703,7 @@ mod tests {
         translate_for_webgl("output", &output_source());
         translate_for_webgl("mipmap", MIPMAP_WGSL);
         translate_for_webgl("sky", &fixed_source(SKY_WGSL, texture));
-        translate_for_webgl("occlusion", &occlusion_source(OcclusionDepth::WebglCopy));
+        translate_for_webgl("occlusion", &occlusion_source(false, 4));
     }
 
     #[test]
@@ -714,14 +714,10 @@ mod tests {
         validate("output", &output_source());
         validate("mipmap", MIPMAP_WGSL);
         validate("sky", &sky_source());
-        validate("occlusion", &occlusion_source(OcclusionDepth::Multisampled));
+        validate("occlusion", &occlusion_source(true, 2));
         validate(
-            "occlusion single-sample",
-            &occlusion_source(OcclusionDepth::SingleSampled),
-        );
-        validate(
-            "occlusion copy",
-            &occlusion_source(OcclusionDepth::WebglCopy),
+            "occlusion from the resolved copy",
+            &occlusion_source(false, 4),
         );
     }
 
@@ -738,14 +734,7 @@ mod tests {
             ("water".to_owned(), water_source()),
             ("sky".to_owned(), sky_source()),
             ("output".to_owned(), output_source()),
-            (
-                "occlusion".to_owned(),
-                occlusion_source(OcclusionDepth::Multisampled),
-            ),
-            (
-                "occlusion single-sample".to_owned(),
-                occlusion_source(OcclusionDepth::SingleSampled),
-            ),
+            ("occlusion".to_owned(), occlusion_source(true, 2)),
             ("shadow merged".to_owned(), shadow_merged_source()),
             ("shadow cutout".to_owned(), shadow_cutout_source()),
         ];
@@ -958,6 +947,26 @@ mod tests {
         assert_eq!(a, b);
         assert_eq!(PipelineKey::shadow(a, &red).side, Side::Back);
         assert_eq!(PipelineKey::shadow(b, &green).side, Side::Double);
+    }
+
+    #[test]
+    fn occlusion_depth_draws_the_main_views_faces_apart_from_the_shadow() {
+        let effects = EffectRegistry::default();
+        let wall = Material::standard(0x808080, 0.8, 0.0);
+        let shader = ShaderKey::shadow(&wall, 0, false, &effects);
+        let depth = PipelineKey::occlusion_depth(shader, &wall);
+        assert_eq!(depth.side, Side::Front);
+        assert_eq!(depth.shader.pass, Pass::Shadow);
+        // Its own pipeline even where the faces match: the depth formats differ.
+        let double = Material {
+            side: Side::Double,
+            ..wall.clone()
+        };
+        assert_eq!(PipelineKey::shadow(shader, &double).side, Side::Double);
+        assert_ne!(
+            PipelineKey::occlusion_depth(shader, &double),
+            PipelineKey::shadow(shader, &double)
+        );
     }
 
     #[test]

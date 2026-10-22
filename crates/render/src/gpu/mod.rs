@@ -318,6 +318,8 @@ pub struct RenderStats {
     pub reflection_draw_calls: u32,
     pub shadow_triangles: u64,
     pub reflection_triangles: u64,
+    /// Ambient occlusion's depth pass (`OCCLUSION_DEPTH_PASS`).
+    pub occlusion_triangles: u64,
     pub main_triangles: u64,
     /// Instance records written this frame.
     pub instance_records: u32,
@@ -485,9 +487,14 @@ struct ClassEntry {
     /// faces, like Three's two-pass `DoubleSide` transparency.
     back_key: Option<PipelineKey>,
     shadow_key: PipelineKey,
+    /// An opaque class that writes depth draws into ambient occlusion's depth pass
+    /// (backends with `OCCLUSION_DEPTH_PASS`) with its depth-only shadow shader, but
+    /// the faces the main view draws.
+    depth_key: Option<PipelineKey>,
     main: Option<u32>,
     back: Option<u32>,
     shadow: Option<u32>,
+    depth: Option<u32>,
     /// Parts using this class that cast shadows.
     casters: u32,
     users: u32,
@@ -495,8 +502,11 @@ struct ClassEntry {
 
 impl ClassEntry {
     /// Its pipeline slots and the keys that fill them: main always, back for
-    /// two-pass transparency, shadow while a part casts.
-    fn pipeline_slots(&mut self) -> [(&mut Option<u32>, Option<&PipelineKey>); 3] {
+    /// two-pass transparency, shadow while a part casts, depth for ambient
+    /// occlusion. Warm-up draws occlusion whatever the quality tier, and Auto may
+    /// raise the tier to one with occlusion mid-round, so its depth variants are
+    /// prepared with the rest.
+    fn pipeline_slots(&mut self) -> [(&mut Option<u32>, Option<&PipelineKey>); 4] {
         [
             (&mut self.main, Some(&self.main_key)),
             (&mut self.back, self.back_key.as_ref()),
@@ -504,6 +514,7 @@ impl ClassEntry {
                 &mut self.shadow,
                 (self.casters > 0).then_some(&self.shadow_key),
             ),
+            (&mut self.depth, self.depth_key.as_ref()),
         ]
     }
 }
@@ -1219,6 +1230,15 @@ impl Renderer {
                     main_key(source)
                 };
                 let shadow = PipelineKey::shadow(shadow_shader, source);
+                // Without the shadow's dither, which only fades a caster's shadow.
+                let depth_key = (backend::OCCLUSION_DEPTH_PASS
+                    && !transparent
+                    && source.depth_write
+                    && source.depth_test)
+                    .then(|| {
+                        let shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
+                        PipelineKey::occlusion_depth(shader, source)
+                    });
                 // Classes are created before their pipelines compile, and draw lists
                 // sort by these.
                 let ranks = [main, shadow].map(|key| pipeline_rank(&mut self.ranks, &key));
@@ -1228,9 +1248,11 @@ impl Renderer {
                     main_key: main,
                     back_key: two_pass.then(|| main_key(&face(Side::Back))),
                     shadow_key: shadow,
+                    depth_key,
                     main: None,
                     back: None,
                     shadow: None,
+                    depth: None,
                     casters: 0,
                     users: 0,
                 };
@@ -2072,6 +2094,11 @@ impl Renderer {
         self.atmosphere.enabled && self.atmosphere.bloom.strength > 0.0 && self.features.bloom
     }
 
+    /// Whether this frame draws ambient occlusion.
+    fn occlusion_drawn(&self) -> bool {
+        self.occlusion_on() && !self.debug_off.occlusion
+    }
+
     fn occlusion_uniform(&self) -> OcclusionUniform {
         let camera = self.camera();
         let view_projection = camera.view_projection();
@@ -2517,6 +2544,17 @@ impl Renderer {
         if self.pipelines.ensure_fixed(gpu) {
             self.stats.late_pipelines += 1;
         }
+        if self.occlusion_drawn() {
+            for draw in &self.views[MAIN_VIEW].opaque {
+                let class = self.classes.at_mut(draw.class).expect("live class");
+                if let (Some(key), None) = (&class.depth_key, class.depth) {
+                    if self.pipelines.find(key).is_none() {
+                        self.stats.late_pipelines += 1;
+                    }
+                    class.depth = Some(self.pipelines.ensure(gpu, &self.effects, key));
+                }
+            }
+        }
         for (view, draws) in self.views.iter().enumerate() {
             for draw in draws.opaque.iter().chain(&draws.transparent) {
                 let class = self.classes.at_mut(draw.class).expect("live class");
@@ -2615,21 +2653,24 @@ impl Renderer {
             // Warm-up draws every pass, so their pipelines are ready either way.
             sky: warm_up || (self.atmosphere.enabled && !self.debug_off.sky),
             bloom: warm_up || (self.bloom_on() && !self.debug_off.bloom),
-            occlusion: warm_up || (self.occlusion_on() && !self.debug_off.occlusion),
+            occlusion: warm_up || self.occlusion_drawn(),
         };
         let stats = &mut self.stats;
         stats.draw_calls = 0;
         stats.triangles = 0;
         stats.reflection_draw_calls = 0;
         stats.reflection_triangles = 0;
+        stats.occlusion_triangles = 0;
         let result = if warm_up {
             self.frame.warm_up(&self.gpu, &scene, stats);
             Ok(())
         } else {
             self.frame.draw(&self.gpu, &scene, stats)
         };
-        stats.main_triangles =
-            stats.triangles - stats.shadow_triangles - stats.reflection_triangles;
+        stats.main_triangles = stats.triangles
+            - stats.shadow_triangles
+            - stats.reflection_triangles
+            - stats.occlusion_triangles;
         if copy_static {
             self.static_shadow_dirty = false;
         }

@@ -32,6 +32,10 @@ use context::{block, unit};
 use resources::SHADOW_BASE_LOCATION;
 use textures::{linear_sampler, storage, texel_storage};
 
+/// Ambient occlusion reads the depth copy the main view's resolve blits; WebGL2 has
+/// no depth pass of its own for it.
+pub const OCCLUSION_DEPTH_PASS: bool = false;
+
 /// Frames between `getError` checks: the call waits for the GPU process.
 const ERROR_CHECK_FRAMES: u32 = 300;
 

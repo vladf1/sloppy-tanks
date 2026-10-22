@@ -1,6 +1,7 @@
 //! The WebGPU backend: wgpu on the browser's WebGPU. Its frame encodes the sun
-//! shadow, water reflection, main view, ambient occlusion and bloom passes into one
-//! command buffer and the output pass into another.
+//! shadow, water reflection, main view, ambient occlusion (its depth, then the
+//! occlusion) and bloom passes into one command buffer and the output pass into
+//! another.
 
 mod context;
 mod instance_store;
@@ -26,7 +27,7 @@ use super::{
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::mesh_pages::{MeshRange, NO_PAGE};
-use context::{ColorTarget, DEPTH_FORMAT, HDR_FORMAT, OCCLUSION_FORMAT, texture_2d};
+use context::{ColorTarget, DEPTH_FORMAT, OCCLUSION_FORMAT, SHADOW_DEPTH_FORMAT, texture_2d};
 use resources::uniform_buffer;
 
 /// Opaque draws group by mesh page before material. Every switch is a call Chrome
@@ -36,12 +37,23 @@ use resources::uniform_buffer;
 /// 6-18%), and neither changed the main thread measurably.
 pub const DRAW_GROUPING: Grouping = Grouping::PageFirst;
 
+/// Ambient occlusion reads a depth of its own: a depth-only pass of the main view's
+/// opaque draws at `OCCLUSION_DEPTH_DOWNSCALE`. WebGPU cannot resolve a multisampled
+/// depth, and reading the main view's would store all four samples every frame
+/// (16 bytes a pixel) and keep them in memory, where they now never leave tile memory.
+pub const OCCLUSION_DEPTH_PASS: bool = true;
+/// The occlusion depth is the main view's size divided by this. Half size keeps the
+/// normals occlusion rebuilds and the depth its probes test close to the full-size
+/// depth's, for a quarter of the pixels.
+const OCCLUSION_DEPTH_DOWNSCALE: u32 = 2;
+
+/// A square shadow map, which frames copy between (the cached fixed scenery).
 fn depth_texture(device: &wgpu::Device, label: &str, size: u32) -> wgpu::Texture {
     let usage = wgpu::TextureUsages::RENDER_ATTACHMENT
         | wgpu::TextureUsages::TEXTURE_BINDING
         | wgpu::TextureUsages::COPY_SRC
         | wgpu::TextureUsages::COPY_DST;
-    texture_2d(device, label, size, size, DEPTH_FORMAT, 1, usage)
+    texture_2d(device, label, size, size, SHADOW_DEPTH_FORMAT, 1, usage)
 }
 
 /// A depth texture with its view; dropping it destroys the texture.
@@ -52,7 +64,10 @@ struct DepthMap {
 
 impl DepthMap {
     fn new(device: &wgpu::Device, label: &str, size: u32) -> Self {
-        let texture = depth_texture(device, label, size);
+        Self::of(depth_texture(device, label, size))
+    }
+
+    fn of(texture: wgpu::Texture) -> Self {
         Self {
             view: texture.create_view(&Default::default()),
             texture,
@@ -148,7 +163,7 @@ impl Frame {
             wgpu::util::TextureDataOrder::LayerMajor,
             bytemuck::cast_slice(&lut::DFG_LUT),
         );
-        let main_target = ColorTarget::new(gpu, "main view", width, height, true);
+        let main_target = ColorTarget::new(gpu, "main view", width, height);
         let output_uniform = uniform_buffer(device, "output", size_of::<OutputUniform>() as u64);
         let occlusion_uniform =
             uniform_buffer(device, "occlusion", size_of::<OcclusionUniform>() as u64);
@@ -225,7 +240,7 @@ impl Frame {
             return;
         }
         let (width, height) = scene;
-        self.main_target = ColorTarget::new(gpu, "main view", width, height, true);
+        self.main_target = ColorTarget::new(gpu, "main view", width, height);
         self.post = PostTargets::new(
             gpu,
             &self.main_target,
@@ -508,7 +523,13 @@ impl Frame {
                 multiview_mask: None,
             });
             pass.set_bind_group(0, &self.view_groups.0[SHADOW_VIEW], &[]);
-            static_count += draws.encode(&mut pass, scene.static_shadow_draws, SHADOW_VIEW, stats);
+            static_count += draws.encode(
+                &mut pass,
+                scene.static_shadow_draws,
+                SHADOW_VIEW,
+                Shadow,
+                stats,
+            );
             static_count += draws.encode_merged(
                 &mut pass,
                 scene.static_merged_draws,
@@ -549,6 +570,7 @@ impl Frame {
                 &mut pass,
                 &scene.views[SHADOW_VIEW].opaque,
                 SHADOW_VIEW,
+                Shadow,
                 stats,
             );
             count += draws.encode_merged(
@@ -562,23 +584,23 @@ impl Frame {
         }
         if let (true, Some(water)) = (scene.reflection, scene.water) {
             let target = &water.gpu.target;
-            let mut pass = scene_pass(encoder, "water reflection", target, clear, false);
+            let mut pass = scene_pass(encoder, "water reflection", target, clear);
             pass.set_bind_group(0, &self.view_groups.0[REFLECTION_VIEW], &[]);
             let view = &scene.views[REFLECTION_VIEW];
-            let mut count = draws.encode(&mut pass, &view.opaque, REFLECTION_VIEW, stats);
+            let mut count = draws.encode(&mut pass, &view.opaque, REFLECTION_VIEW, Lit, stats);
             if scene.sky {
                 count += draw_sky(&mut pass, scene, stats);
             }
-            count += draws.encode(&mut pass, &view.transparent, REFLECTION_VIEW, stats);
+            count += draws.encode(&mut pass, &view.transparent, REFLECTION_VIEW, Lit, stats);
             stats.reflection_draw_calls = count;
             stats.reflection_triangles = stats.triangles - stats.shadow_triangles;
         }
         {
             let target = &self.main_target;
-            let mut pass = scene_pass(encoder, "main view", target, clear, scene.occlusion);
+            let mut pass = scene_pass(encoder, "main view", target, clear);
             pass.set_bind_group(0, &self.view_groups.0[MAIN_VIEW], &[]);
             let view = &scene.views[MAIN_VIEW];
-            draws.encode(&mut pass, &view.opaque, MAIN_VIEW, stats);
+            draws.encode(&mut pass, &view.opaque, MAIN_VIEW, Lit, stats);
             if scene.sky {
                 draw_sky(&mut pass, scene, stats);
             }
@@ -593,14 +615,16 @@ impl Frame {
                 stats.draw_calls += 1;
                 stats.triangles += range.index_count as u64 / 3;
             }
-            draws.encode(&mut pass, &view.transparent, MAIN_VIEW, stats);
+            draws.encode(&mut pass, &view.transparent, MAIN_VIEW, Lit, stats);
         }
         let fixed = scene.pipelines.fixed();
         if scene.occlusion {
+            self.encode_occlusion_depth(encoder, &draws, stats);
             let pipeline = &fixed.occlusion;
             let post = &self.post;
             post_draw(
                 encoder,
+                "ambient occlusion",
                 pipeline,
                 &post.occlusion_group,
                 &post.occlusion_view,
@@ -613,6 +637,7 @@ impl Frame {
             let [prefilter, down, up] = &fixed.bloom;
             post_draw(
                 encoder,
+                "bloom",
                 prefilter,
                 &post.frame_group,
                 &post.bloom[0].1,
@@ -621,6 +646,7 @@ impl Frame {
             for level in 1..BLOOM_LEVELS {
                 post_draw(
                     encoder,
+                    "bloom",
                     down,
                     &post.bloom_groups[level - 1],
                     &post.bloom[level].1,
@@ -630,6 +656,7 @@ impl Frame {
             for level in (0..BLOOM_LEVELS - 1).rev() {
                 post_draw(
                     encoder,
+                    "bloom",
                     up,
                     &post.bloom_groups[level + 1],
                     &post.bloom[level].1,
@@ -638,6 +665,54 @@ impl Frame {
             }
             stats.draw_calls += 2 * BLOOM_LEVELS as u32 - 1;
         }
+    }
+
+    /// The main view's opaque draws and the water surface, depth only, into the
+    /// occlusion depth: the main view's frame group and instance records, at
+    /// `OCCLUSION_DEPTH_DOWNSCALE`.
+    fn encode_occlusion_depth(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        draws: &DrawContext,
+        stats: &mut RenderStats,
+    ) {
+        let scene = draws.scene;
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("occlusion depth"),
+            color_attachments: &[],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &self.post.occlusion_depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(1.0),
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        });
+        let triangles = stats.triangles;
+        pass.set_bind_group(0, &self.view_groups.0[MAIN_VIEW], &[]);
+        draws.encode(
+            &mut pass,
+            &scene.views[MAIN_VIEW].opaque,
+            MAIN_VIEW,
+            Depth,
+            stats,
+        );
+        if let Some(water) = scene.water
+            && let range = scene.meshes.get(water.mesh).range
+            && !range.is_empty()
+        {
+            pass.set_pipeline(scene.pipelines.water_depth());
+            pass.set_bind_group(1, &water.gpu.bind_group, &[]);
+            BoundPages::default().bind(&mut pass, scene.meshes, range);
+            pass.draw_indexed(range.indices(), 0, 0..1);
+            stats.draw_calls += 1;
+            stats.triangles += range.index_count as u64 / 3;
+        }
+        stats.occlusion_triangles = stats.triangles - triangles;
     }
 
     /// Draw `main_target` into `output` through the output transform.
@@ -682,13 +757,14 @@ fn draw_sky(pass: &mut wgpu::RenderPass, scene: &Scene, stats: &mut RenderStats)
 /// One full-screen post draw into `target`, replacing it or (`add`) blending onto it.
 fn post_draw(
     encoder: &mut wgpu::CommandEncoder,
+    label: &str,
     pipeline: &wgpu::RenderPipeline,
     group: &wgpu::BindGroup,
     target: &wgpu::TextureView,
     add: bool,
 ) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("post"),
+        label: Some(label),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: target,
             depth_slice: None,
@@ -714,8 +790,8 @@ fn post_draw(
 
 /// The post-processing targets sized from the main view and the bind groups of every
 /// pass that reads it: the bloom levels (quarter size, then halving), the quarter-size
-/// ambient occlusion and the output. Rebuilt with the main target; dropping it
-/// destroys the textures.
+/// ambient occlusion with its depth and the output. Rebuilt with the main target;
+/// dropping it destroys the textures.
 struct PostTargets {
     bloom: Vec<(wgpu::Texture, wgpu::TextureView)>,
     /// Bind groups reading each bloom level, and the resolved frame.
@@ -723,6 +799,7 @@ struct PostTargets {
     frame_group: wgpu::BindGroup,
     occlusion: wgpu::Texture,
     occlusion_view: wgpu::TextureView,
+    occlusion_depth: DepthMap,
     occlusion_group: wgpu::BindGroup,
     output_group: wgpu::BindGroup,
     bytes: u64,
@@ -748,7 +825,7 @@ impl PostTargets {
             .map(|level| {
                 target(
                     "bloom",
-                    HDR_FORMAT,
+                    gpu.bloom_format,
                     size.width >> level,
                     size.height >> level,
                 )
@@ -760,6 +837,15 @@ impl PostTargets {
             size.width / OCCLUSION_DOWNSCALE,
             size.height / OCCLUSION_DOWNSCALE,
         );
+        let occlusion_depth = DepthMap::of(texture_2d(
+            device,
+            "occlusion depth",
+            (size.width / OCCLUSION_DEPTH_DOWNSCALE).max(1),
+            (size.height / OCCLUSION_DEPTH_DOWNSCALE).max(1),
+            DEPTH_FORMAT,
+            1,
+            usage,
+        ));
         let bloom_group = |view: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {
                 label: Some("bloom"),
@@ -788,7 +874,7 @@ impl PostTargets {
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: wgpu::BindingResource::TextureView(&main.depth_view),
+                    resource: wgpu::BindingResource::TextureView(&occlusion_depth.view),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
@@ -826,13 +912,15 @@ impl PostTargets {
             .iter()
             .map(|(texture, _)| context::texture_bytes(texture))
             .sum::<u64>()
-            + context::texture_bytes(&occlusion);
+            + context::texture_bytes(&occlusion)
+            + context::texture_bytes(&occlusion_depth.texture);
         Self {
             bloom,
             bloom_groups,
             frame_group,
             occlusion,
             occlusion_view,
+            occlusion_depth,
             occlusion_group,
             output_group,
             bytes,
@@ -866,7 +954,7 @@ impl WaterGpu {
         sampler: Sampler,
     ) -> Self {
         let uniform = uniform_buffer(&gpu.device, "water", size_of::<WaterUniform>() as u64);
-        let target = ColorTarget::new(gpu, "water reflection", size, size, false);
+        let target = ColorTarget::new(gpu, "water reflection", size, size);
         let bind_group = Self::bind_group(gpu, frame, &uniform, &target, normals, &sampler);
         Self {
             uniform,
@@ -934,14 +1022,12 @@ impl Drop for WaterGpu {
     }
 }
 
-/// A pass into a scene target, resolved when multisampled; `keep_depth` stores the
-/// depth for a later pass.
+/// A pass into a scene target, which keeps only its color, resolved when multisampled.
 fn scene_pass<'a>(
     encoder: &'a mut wgpu::CommandEncoder,
     label: &str,
     target: &ColorTarget,
     clear: wgpu::Color,
-    keep_depth: bool,
 ) -> wgpu::RenderPass<'a> {
     let resolve_target = target.resolve_target();
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -965,11 +1051,7 @@ fn scene_pass<'a>(
             view: &target.depth_view,
             depth_ops: Some(wgpu::Operations {
                 load: wgpu::LoadOp::Clear(1.0),
-                store: if keep_depth {
-                    wgpu::StoreOp::Store
-                } else {
-                    wgpu::StoreOp::Discard
-                },
+                store: wgpu::StoreOp::Discard,
             }),
             stencil_ops: None,
         }),
@@ -1021,6 +1103,19 @@ struct DrawContext<'a> {
     frame_groups: &'a FrameGroups,
 }
 
+/// Which of a class's pipelines a pass draws it with.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Variant {
+    /// Lit color: `main`, after `back` for two-pass transparency.
+    Lit,
+    /// The sun shadow's `shadow`.
+    Shadow,
+    /// The occlusion depth pass's `depth`.
+    Depth,
+}
+
+use Variant::{Depth, Lit, Shadow};
+
 impl DrawContext<'_> {
     /// Encode merged shadow draws. Returns the draw count. The caller binds the
     /// shadow view's frame group.
@@ -1062,18 +1157,18 @@ impl DrawContext<'_> {
         count
     }
 
-    /// Encode draws, skipping redundant state changes. Returns the draw count.
-    /// The caller binds the view's frame group; pool draws swap in their own
-    /// instance buffer and the frame group is restored afterwards.
+    /// Encode draws with the `variant` pipelines, skipping redundant state changes.
+    /// Returns the draw count. The caller binds the view's frame group; pool draws
+    /// swap in their own instance buffer and the frame group is restored afterwards.
     fn encode(
         &self,
         pass: &mut wgpu::RenderPass,
         draws: &[Draw],
         view: usize,
+        variant: Variant,
         stats: &mut RenderStats,
     ) -> u32 {
         let scene = self.scene;
-        let shadow = view == SHADOW_VIEW;
         let mut last_pipeline = u32::MAX;
         let mut last_material = u32::MAX;
         let mut pages = BoundPages::default();
@@ -1099,10 +1194,14 @@ impl DrawContext<'_> {
                 pass.set_bind_group(0, group, &[]);
                 bound_pool = class.key.pool;
             }
-            let Some(pipeline) = (if shadow { class.shadow } else { class.main }) else {
+            let (pipeline, back) = match variant {
+                Lit => (class.main, class.back),
+                Shadow => (class.shadow, None),
+                Depth => (class.depth, None),
+            };
+            let Some(pipeline) = pipeline else {
                 continue;
             };
-            let back = if shadow { None } else { class.back };
             if class.key.material != last_material {
                 pass.set_bind_group(
                     1,
