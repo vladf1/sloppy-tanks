@@ -20,7 +20,7 @@ use super::tank_details::{
 };
 use super::tank_kit::Coat;
 use super::tank_surfaces::{
-    Grime, Livery, apply_livery, ember_material, vehicle_glass, vehicle_paint,
+    Grime, HUMVEE_PAINT, Livery, apply_livery, ember_material, vehicle_glass, vehicle_paint,
 };
 use super::{Team, VehicleKind, part};
 use crate::geometry::{Attribute, CylinderGeometry, Mesh, VERTEX_ALPHA, ring_geometry};
@@ -43,7 +43,7 @@ pub(crate) const STEEL: u32 = 0x6f706c;
 const TRIM: [u32; 2] = [0x1c2f57, 0x4a1a14];
 /// Sight and vision-block glass: a deep blue-green tint that mirrors the sky.
 pub(super) const GLASS_TINT: u32 = 0x25505a;
-const MARKING_WHITE: u32 = 0xdce7ee;
+pub(crate) const MARKING_WHITE: u32 = 0xdce7ee;
 /// Tactical signs (the roof and skirt insignia): a faded, mid-value stencil
 /// paint, so a sign reads as a worn marking on the plate rather than as the
 /// brightest thing on the vehicle or a hole in its roof from overhead.
@@ -111,7 +111,13 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
     let open_turret_ring = open_turret_ring && kind != VehicleKind::Humvee;
     MODELS.get_or_insert((kind, team, open_turret_ring), || {
         // Team paint, trim and bare steel: the colors the worn finish recognises.
-        let colors = [vehicle_paint(team), TRIM[team.index()], STEEL];
+        let humvee = kind == VehicleKind::Humvee;
+        let body = if humvee {
+            HUMVEE_PAINT[team.index()]
+        } else {
+            vehicle_paint(team)
+        };
+        let colors = [body, TRIM[team.index()], STEEL];
         let mut root = if kind == VehicleKind::Humvee {
             humvee_model(team, colors)
         } else {
@@ -119,6 +125,7 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
         };
         let livery = Livery {
             paint: &colors[..2],
+            matte: humvee,
             metal: &[STEEL, GUNMETAL],
             signal: SIGNAL_PANEL[team.index()],
             grime: if kind == VehicleKind::Humvee {
