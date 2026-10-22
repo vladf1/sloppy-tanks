@@ -162,14 +162,20 @@ pub struct HouseStyle {
     /// Door and shutter paint.
     pub accent: u32,
     pub roof: u32,
-    /// Dormer plan on a gable roof: 0 none, 1 a pair on one slope, 2 one each side.
+    /// Dormer plan on a gable roof: 0 none, 1 a pair on one slope, 2 one each side,
+    /// 3 one on the back slope.
     pub dormers: u32,
+    /// A cross gable over the door of a side-gable cottage: its wall rises past the
+    /// eave into a gable of its own whose roof runs back into the main slope, so
+    /// the roof reads as a T from above.
+    pub wing: bool,
     pub shutters: Shutters,
     /// Wall top (the eave line) as a fraction of the ridge height: lower walls
     /// under a steep attic roof, higher ones under a shallow one.
     pub eave: f64,
 }
 
+#[allow(clippy::too_many_arguments)]
 const fn style(
     form: RoofForm,
     door: DoorWall,
@@ -177,6 +183,7 @@ const fn style(
     walls: WallFinish,
     [siding, trim, accent, roof]: [u32; 4],
     dormers: u32,
+    wing: bool,
     shutters: Shutters,
     eave: f64,
 ) -> HouseStyle {
@@ -190,6 +197,7 @@ const fn style(
         accent,
         roof,
         dormers,
+        wing,
         shutters,
         eave,
     }
@@ -209,21 +217,22 @@ pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use WallFinish::{Brick, Clapboard};
     [
         // Cream clapboard, bottle-green plank shutters, a steep charcoal roof and dormers.
-        style(Gable, Front, Shingles, Clapboard, [0xe6dcc6, 0xf6f2e8, 0x2f5040, 0x3b4048], 1, Board, 0.6),
+        style(Gable, Front, Shingles, Clapboard, [0xe6dcc6, 0xf6f2e8, 0x2f5040, 0x3b4048], 1, false, Board, 0.6),
         // Soft red brick under a low slate hip roof, navy door and louvres.
-        style(Hip, Front, Shingles, Brick, [0xeadccc, 0xece4d2, 0x24385a, 0x5a626a], 0, Louvred, 0.72),
-        // Sage side-gable with an oxblood door under weathered cedar shingles.
-        style(Gable, Eave, Shingles, Clapboard, [0x9aa88a, 0xf1ead8, 0x6a2a24, 0x7a5a42], 2, Board, 0.62),
+        style(Hip, Front, Shingles, Brick, [0xeadccc, 0xece4d2, 0x24385a, 0x5a626a], 0, false, Louvred, 0.72),
+        // Sage side-gable with an oxblood door under a cross gable and weathered
+        // cedar shingles, a dormer lighting the back of the attic.
+        style(Gable, Eave, Shingles, Clapboard, [0x9aa88a, 0xf1ead8, 0x6a2a24, 0x7a5a42], 3, true, Board, 0.6),
         // Oxblood front gable under a dark standing-seam roof.
-        style(Gable, Front, Seams, Clapboard, [0x7d4a3e, 0xefe8da, 0x2e2c2a, 0x464c52], 0, None, 0.68),
+        style(Gable, Front, Seams, Clapboard, [0x7d4a3e, 0xefe8da, 0x2e2c2a, 0x464c52], 0, false, None, 0.68),
         // Ochre hip cottage, umber shingles.
-        style(Hip, Front, Shingles, Clapboard, [0xcfad6c, 0xf6f2e8, 0x5c3c22, 0x6a4a34], 0, Board, 0.7),
-        // Slate-blue side-gable with navy louvres under charcoal.
-        style(Gable, Eave, Shingles, Clapboard, [0x8098aa, 0xf6f2e8, 0x22314d, 0x3a3e44], 0, Louvred, 0.66),
+        style(Hip, Front, Shingles, Clapboard, [0xcfad6c, 0xf6f2e8, 0x5c3c22, 0x6a4a34], 0, false, Board, 0.7),
+        // Slate-blue side-gable with navy louvres and a cross gable under charcoal.
+        style(Gable, Eave, Shingles, Clapboard, [0x8098aa, 0xf6f2e8, 0x22314d, 0x3a3e44], 0, true, Louvred, 0.62),
         // Chalk-white front gable under a rust-red standing-seam roof, black shutters.
-        style(Gable, Front, Seams, Clapboard, [0xeeebe3, 0xffffff, 0x1d2622, 0x7a4a3e], 2, Board, 0.6),
-        // Brick side-gable with mossy slate shingles and green louvres.
-        style(Gable, Eave, Shingles, Brick, [0xe2d0be, 0xe8dfca, 0x2f4b3a, 0x56604c], 0, Louvred, 0.7),
+        style(Gable, Front, Seams, Clapboard, [0xeeebe3, 0xffffff, 0x1d2622, 0x7a4a3e], 2, false, Board, 0.6),
+        // Brick side-gable with mossy slate shingles, green louvres and a cross gable.
+        style(Gable, Eave, Shingles, Brick, [0xe2d0be, 0xe8dfca, 0x2f4b3a, 0x56604c], 0, true, Louvred, 0.64),
     ]
 };
 
@@ -508,6 +517,54 @@ const CRACK_GAP: f64 = 0.02;
 pub const RAFTER_DEPTH: f64 = 0.16;
 const RAFTER_INSET: f64 = 0.45;
 
+/// Widest half width (m) of a cross gable, and how far its ridge stays under the
+/// main ridge.
+const WING_HALF: f64 = 1.3;
+const WING_BELOW_RIDGE: f64 = 0.32;
+/// How far a cross gable's roof overhangs its face and its side walls.
+pub const WING_OVERHANG: f64 = 0.25;
+
+/// A side-gable cottage's cross gable on its right (+x) slope, in the build frame:
+/// its middle along the ridge and half width, its face's plane (x), the height its
+/// face starts at, the face's wall height below its gable and the gable's rise.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Wing {
+    pub z: f64,
+    pub half: f64,
+    pub face: f64,
+    pub base: f64,
+    pub wall: f64,
+    pub peak: f64,
+}
+
+impl Wing {
+    /// Height of its ridge, under the roof deck's top.
+    pub fn crest(&self) -> f64 {
+        self.base + self.wall + self.peak
+    }
+
+    /// How far in from its face its ridge runs before it meets the main slope.
+    pub fn ridge_end(&self, roof: &Roof) -> f64 {
+        ((roof.ridge + roof.thick - self.crest()) / roof.pitch).max(0.05)
+    }
+
+    /// Hull points of the gable over a roof slab's collider.
+    fn hull(&self, roof: &Roof) -> Vec<DVec3> {
+        let front = self.face + WING_OVERHANG;
+        let back = self.ridge_end(roof);
+        let eave = self.base + self.wall;
+        let reach = self.half + WING_OVERHANG;
+        vec![
+            DVec3::new(front, self.crest(), self.z),
+            DVec3::new(back, self.crest(), self.z),
+            DVec3::new(front, eave, self.z - reach),
+            DVec3::new(front, eave, self.z + reach),
+            DVec3::new(self.face, self.base, self.z - self.half),
+            DVec3::new(self.face, self.base, self.z + self.half),
+        ]
+    }
+}
+
 /// The walls as (outside-face centre, outward normal, along-wall direction, half
 /// length): front (+z), back, right (+x) and left, the order the model builds them.
 /// The along direction is the wall frame's +x seen from outside.
@@ -651,8 +708,42 @@ impl HouseDesign {
         match self.style.dormers {
             1 => vec![(1.0, -d * 0.2), (1.0, d * 0.2)],
             2 => vec![(1.0, d * 0.08), (-1.0, -d * 0.08)],
+            3 => vec![(-1.0, 0.0)],
             _ => Vec::new(),
         }
+    }
+
+    /// A side-gable cottage's cross gable over its door: (z along the ridge, half
+    /// width), on the right (+x) slope over the door wall. It centres on the door
+    /// unless the chimney stands there, when it moves along clear of the stack.
+    pub fn wing(&self) -> Option<Wing> {
+        let roof = self.roof();
+        if !self.style.wing || roof.form != RoofForm::Gable || self.door_wall != 2 {
+            return None;
+        }
+        let half = (self.d * 0.21).clamp(1.0, WING_HALF);
+        let flue = self.flue();
+        let clear = half + CHIMNEY / 2.0 + 0.25;
+        let z = if flue.x > 0.0 && flue.z.abs() < clear {
+            flue.z - flue.z.signum() * clear
+        } else {
+            0.0
+        };
+        if z.abs() + half > self.d / 2.0 - 0.6 {
+            return None;
+        }
+        let base = roof.wall - 0.02;
+        let peak = half * roof.pitch;
+        let crest = roof.ridge - WING_BELOW_RIDGE;
+        let wall = crest - base - peak;
+        (wall > 0.25).then_some(Wing {
+            z,
+            half,
+            face: self.w / 2.0,
+            base,
+            wall,
+            peak,
+        })
     }
 
     /// A part's own crack stream, so each part breaks the same way whatever the
@@ -714,14 +805,20 @@ impl HouseDesign {
             .map(|(_, z)| z)
             .collect();
         let ridge = roof.ridge_half.max(0.8);
+        // Dormers and a cross gable on this slope, as (z, half width).
+        let mut keep: Vec<(f64, f64)> = dormers.iter().map(|&z| (z, 0.62)).collect();
+        if let Some(wing) = self.wing().filter(|_| side > 0.0) {
+            keep.push((wing.z, wing.half + 0.2));
+        }
         [rng.range(-0.35, 0.35)]
             .into_iter()
             .map(|offset| {
                 let mut z = offset * ridge;
-                // Past a dormer rather than through it.
-                if let Some(d) = dormers.iter().find(|d| (z - **d).abs() < 0.9) {
-                    let away = if z >= *d { 1.0 } else { -1.0 };
-                    z = d + away * 0.95;
+                // Past a dormer or the cross gable rather than through it.
+                if let Some(&(d, half)) = keep.iter().find(|(d, half)| (z - d).abs() < half + 0.28)
+                {
+                    let away = if z >= d { 1.0 } else { -1.0 };
+                    z = d + away * (half + 0.33);
                 }
                 let spread = (roof.rake_z / ridge - 1.0).max(0.0) * 0.6 + 0.15;
                 let mut points = vec![DVec2::new(z, -50.0)];
@@ -866,11 +963,22 @@ impl HouseDesign {
                     DVec2::new(ze, wall_line),
                     DVec2::new(-ze, wall_line),
                 ]);
-                let hull = points
+                let mut hull: Vec<DVec3> = points
                     .iter()
                     .flat_map(|q| lift(side * q.y, q.x, false))
                     .chain(rafters.iter().map(|q| lift(side * q.y, q.x, true)[1]))
                     .collect();
+                // The slab carrying the cross gable falls with it on top.
+                if let Some(wing) = self.wing().filter(|_| side > 0.0) {
+                    let (low, high) = points
+                        .iter()
+                        .fold((f64::INFINITY, f64::NEG_INFINITY), |(l, h), q| {
+                            (l.min(q.x), h.max(q.x))
+                        });
+                    if (low..high).contains(&wing.z) {
+                        hull.extend(wing.hull(&roof));
+                    }
+                }
                 pieces.push(PieceShape::new(
                     HousePiece::new(part, shard as u8),
                     plane,
@@ -1125,6 +1233,19 @@ mod tests {
         assert!(designs.iter().any(|d| d.door_wall == 2));
         assert!(designs.iter().any(|d| d.style.walls == WallFinish::Brick));
         assert!(designs.iter().any(|d| d.style.cover == RoofCover::Seams));
+        // Side-gable cottages raise a cross gable over the door, and the roof's
+        // crack runs clear of it.
+        let wings: Vec<&HouseDesign> = designs.iter().filter(|d| d.wing().is_some()).collect();
+        assert!(wings.len() >= 3, "{}", wings.len());
+        for design in wings {
+            let wing = design.wing().expect("wing");
+            assert!(wing.crest() < design.h, "under the main ridge");
+            assert!(wing.z.abs() + wing.half < design.d / 2.0);
+            for crack in design.roof_cracks(1.0) {
+                let z = crack.points[1].x;
+                assert!((z - wing.z).abs() > wing.half, "{z} {wing:?}");
+            }
+        }
     }
 
     #[test]

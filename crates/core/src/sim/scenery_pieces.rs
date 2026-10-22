@@ -5,7 +5,7 @@
 use std::f64::consts::PI;
 
 use glam::DVec3;
-use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder};
+use rapier3d::prelude::{ColliderBuilder, RigidBodyBuilder, Vector};
 
 use super::crate_layout::{CrateBreak, CratePiece, CrateSection, crate_sections};
 use super::data::group;
@@ -535,10 +535,10 @@ fn topple_tower(simulation: &mut Simulation, breakup: &mut Breakup) {
 /// How fast (rad/s) a cottage's wall shards start to tip over their sills, and the
 /// chance a shard falls in onto the floor rather than out: likelier on the wall the
 /// shot struck, less likely on the wall facing away from it.
-const WALL_TIP: (f64, f64) = (0.8, 1.5);
-const FALLS_IN: f64 = 0.45;
-const STRUCK_FALLS_IN: f64 = 0.75;
-const FAR_FALLS_IN: f64 = 0.2;
+const WALL_TIP: (f64, f64) = (1.1, 1.8);
+const FALLS_IN: f64 = 0.55;
+const STRUCK_FALLS_IN: f64 = 0.8;
+const FAR_FALLS_IN: f64 = 0.35;
 /// Sideways drift (m/s) and twist (rad/s) that keep neighbouring shards from
 /// falling as one sheet, and how fast the plinth's loss lets the walls drop.
 const WALL_DRIFT: f64 = 0.35;
@@ -578,6 +578,17 @@ const SETTLE_AFTER: f64 = 1.6;
 const SETTLED_DAMPING: (f32, f32) = (4.0, 6.0);
 const SETTLED_SPEED: (f32, f32) = (0.6, 0.8);
 const LYING: f32 = 0.9;
+/// A shard still standing on edge once the collapse has come down, slowed and
+/// propped on the wreck, is tipped over to lie on the pile: the window after the
+/// settle in which it is (s), how close to level its face's normal must come to
+/// count as standing, and how fast (rad/s, m/s) it is tipped over the way it
+/// leans, or away from the footprint's middle onto open ground.
+const TOPPLE_WINDOW: (f64, f64) = (1.0, 4.2);
+const STANDING: f32 = 0.55;
+const TOPPLE_SPIN: f32 = 1.5;
+const TOPPLE_SHOVE: f32 = 0.5;
+/// How far a standing shard's top must lean (sine of the angle) to fall that way.
+const LEANING: f32 = 0.08;
 const LOOSE_LIFE: f64 = 2.5;
 
 /// Bring a cottage down along the cracks it is pre-fractured with: the roof gives
@@ -780,20 +791,78 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
 pub fn settle_house_pieces(simulation: &mut Simulation) {
     let full = HOUSE_PIECE_LIFE + DEBRIS_CLEANUP_SECONDS;
     for fragment in &simulation.fragments {
-        if fragment.house_piece.is_none() || full - fragment.life < SETTLE_AFTER {
+        let Some(piece) = fragment.house_piece else {
+            continue;
+        };
+        let age = full - fragment.life;
+        if age < TOPPLE_WINDOW.0 {
             continue;
         }
         let body = &mut simulation.world.bodies[fragment.body];
         if body.is_sleeping() {
             continue;
         }
-        let slow = body.translation().y < LYING
-            && body.linvel().length() < SETTLED_SPEED.0
-            && body.angvel().length() < SETTLED_SPEED.1;
+        let still =
+            body.linvel().length() < SETTLED_SPEED.0 && body.angvel().length() < SETTLED_SPEED.1;
+        if still && age < TOPPLE_WINDOW.1 && piece.part != HousePart::Chimney {
+            let house = fragment.house_id.and_then(|id| {
+                simulation
+                    .covers
+                    .iter()
+                    .find(|cover| cover.id == id)
+                    .map(|cover| (cover.x, cover.z, shard_normal(cover, piece.part)))
+            });
+            if let Some((x, z, local)) = house {
+                // The shard's body keeps the build frame's axes turned by its pose.
+                let normal = *body.rotation() * local;
+                if normal.y.abs() < STANDING {
+                    let p = body.translation();
+                    let flat = Vector::new(normal.x, 0.0, normal.z).normalize();
+                    let away = Vector::new(p.x - x as f32, 0.0, p.z - z as f32);
+                    // It falls the way it already leans; one balanced on edge
+                    // falls outward.
+                    let lean = (*body.rotation() * Vector::Y).dot(flat);
+                    let fall = if lean.abs() > LEANING {
+                        flat * lean.signum()
+                    } else if flat.dot(away) >= 0.0 {
+                        flat
+                    } else {
+                        -flat
+                    };
+                    let axis = Vector::Y.cross(fall);
+                    body.set_angvel(axis * TOPPLE_SPIN, true);
+                    body.set_linvel(fall * TOPPLE_SHOVE, true);
+                    continue;
+                }
+            }
+        }
+        if age < SETTLE_AFTER {
+            continue;
+        }
+        let slow = body.translation().y < LYING && still;
         let (linear, angular) = if slow { SETTLED_DAMPING } else { SHARD_DAMPING };
         if body.linear_damping() != linear {
             body.set_linear_damping(linear);
             body.set_angular_damping(angular);
         }
     }
+}
+
+/// The outward normal of a cottage part's face in its build frame: a wall's
+/// outside, a roof slope's top.
+fn shard_normal(cover: &Cover, part: HousePart) -> Vector {
+    let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
+    let pitch = design.roof().pitch;
+    let n = match part.wall_index() {
+        Some(index) => wall_frames(design.w, design.d)[index].1,
+        None => match part {
+            HousePart::RightRoof => DVec3::new(pitch, 1.0, 0.0),
+            HousePart::LeftRoof => DVec3::new(-pitch, 1.0, 0.0),
+            HousePart::FrontRoof => DVec3::new(0.0, 1.0, pitch),
+            HousePart::BackRoof => DVec3::new(0.0, 1.0, -pitch),
+            _ => DVec3::Y,
+        },
+    }
+    .normalize();
+    vector(n.x, n.y, n.z)
 }

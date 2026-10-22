@@ -270,3 +270,38 @@ fn a_drum_blast_beside_a_cottage_hurts_it_once_and_bots_never_breach_cottages() 
         "{standing} of 14 cottages stand after a minute"
     );
 }
+
+#[test]
+fn every_cottage_collapse_comes_to_rest_with_no_shard_left_standing_on_edge() {
+    let village = village();
+    for house in houses(&village) {
+        let c = &village.covers[house];
+        let (x, z, w, d, h) = (c.x, c.z, c.w, c.d, c.h);
+        let mut s = Simulation::with_seed(731.0);
+        clear_arena(&mut s, &[]);
+        let house = s.add_cover(&CoverDef::house(x, z, w, d, h, 0xb87b4c));
+        s.nav.rebuild(&s.covers, None);
+        s.start();
+        s.world.step();
+        let design = HouseDesign::of(x, z, w, d, h);
+        s.damage_cover(house, 100_000.0, 999, Team::Blue, None, None);
+        tick(&mut s, 4.0);
+        let walls = sloppy_core::sim::house_layout::wall_frames(design.w, design.d);
+        for fragment in &s.fragments {
+            let Some(piece) = fragment.house_piece else {
+                continue;
+            };
+            let Some(wall) = piece.part.wall_index() else {
+                continue;
+            };
+            let out = walls[wall].1;
+            let body = &s.world.bodies[fragment.body];
+            let face = *body.rotation() * glam::Vec3::new(out.x as f32, out.y as f32, out.z as f32);
+            assert!(
+                face.y.abs() > 0.5,
+                "{x} {z}: {} still stands on edge",
+                String::from(piece)
+            );
+        }
+    }
+}

@@ -826,7 +826,7 @@ impl ExplosionEffects {
                 self.ring(b, t, b.scale);
             }
             Kind::HouseFall => {
-                let dust = mixed(b.dust, linear(PLASTER_DUST), 0.55);
+                let dust = mixed(b.dust, linear(PLASTER_DUST), 0.4);
                 self.haze(b, t, lifetime, dust);
                 self.skirt(b, t, dust);
                 self.house_dust(b, t, lifetime, dust);
@@ -1410,7 +1410,7 @@ impl ExplosionEffects {
                 ],
                 size,
                 color: scaled(dust, 0.82 + 0.3 * r3),
-                opacity: (age / 0.12).min(1.0) * (0.42 + 0.18 * r1) * fade,
+                opacity: (age / 0.12).min(1.0) * (0.34 + 0.16 * r1) * fade,
                 seed: b.phase * 0.43 + jf * 0.191,
                 heat: 0.0,
                 erosion: smoothstep(t, lifetime * 0.35, lifetime) * 0.85,
@@ -1431,12 +1431,12 @@ impl ExplosionEffects {
             self.puff(Puff {
                 position: [
                     b.x + angle.cos() * spread + WIND[0] * age * 0.55,
-                    1.6 + 0.45 * age + 0.6 * r2,
+                    1.2 + 0.35 * age + 0.5 * r2,
                     b.z + angle.sin() * spread + WIND[1] * age * 0.55,
                 ],
                 size: 2.2 + 0.9 * age.sqrt() + r2,
                 color: scaled(dust, 0.9 + 0.2 * r1),
-                opacity: (age / 0.4).min(1.0) * 0.16 * fade,
+                opacity: (age / 0.4).min(1.0) * 0.11 * fade,
                 seed: b.phase * 0.29 + jf * 0.311,
                 heat: 0.0,
                 erosion: smoothstep(t, lifetime * 0.3, lifetime) * 0.8,

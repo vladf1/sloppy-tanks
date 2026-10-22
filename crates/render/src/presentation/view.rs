@@ -2400,6 +2400,11 @@ impl Presentation {
             self.renderer.remove_instance(instance);
             self.renderer.remove_model(model);
         }
+        let standing = |house: u32| state.covers.iter().any(|c| c.id == house && c.alive);
+        for (model, instance) in self.settled.rebuilt(standing) {
+            self.renderer.remove_instance(instance);
+            self.renderer.remove_model(model);
+        }
         // Pieces drawn so far this frame, per shape.
         let mut pieces = [0_usize; DEBRIS_SHAPES.len()];
         for fragment in &state.fragments {
@@ -2505,6 +2510,15 @@ impl Presentation {
                 {
                     self.settled.built(rebuild.house, (model, instance));
                 }
+            }
+        }
+        for (house, node) in self.settled.remains() {
+            let model = self.renderer.add_model(&node, Lifetime::Round);
+            if let Some(instance) =
+                self.renderer
+                    .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
+            {
+                self.settled.remains_built(house, (model, instance));
             }
         }
         for (&id, view) in &self.fragments {
