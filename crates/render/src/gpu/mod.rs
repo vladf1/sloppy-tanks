@@ -431,7 +431,7 @@ const OUTPUT_DITHER: f32 = 1.0;
 /// beyond the gamut desaturate rather than clip, and where the brightest channel's
 /// shoulder begins.
 const GAMUT_LIFT: f32 = 0.15;
-const GAMUT_SHOULDER: f32 = 0.8;
+const GAMUT_SHOULDER: f32 = 0.75;
 /// How quickly a bright bloom saturates: its share halves at this reciprocal luminance.
 const BLOOM_LIMIT: f32 = 0.4;
 

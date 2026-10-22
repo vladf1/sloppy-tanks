@@ -204,12 +204,18 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
             // Past the cutoff the attenuation window is exactly zero: skip the BRDF.
             let cutoff = light.position.w;
             if cutoff <= 0.0 || distance < cutoff {
-                var color = light.color.rgb * distance_attenuation(distance, cutoff, light.color.w);
+                var decay = light.color.w;
+                var gain = 1.0;
                 if atmosphere_on() {
-                    // Blasts flash brighter than Three's falloff alone, so fire visibly
-                    // lights the ground and hulls around it.
-                    color *= BLAST_LIGHT_GAIN;
+                    // Fire lights a wide, soft pool rather than a hot spot under
+                    // itself: a gentler falloff than Three's inverse square (the
+                    // cutoff window still ends it), and brighter overall, so blasts
+                    // and burning wrecks visibly light the ground, walls and hulls
+                    // around them in daylight.
+                    decay *= FIRE_POOL_DECAY;
+                    gain = BLAST_LIGHT_GAIN;
                 }
+                let color = light.color.rgb * (distance_attenuation(distance, cutoff, decay) * gain);
                 add_direct_light(&reflected, offset / max(distance, 1e-6), color, v, n, diffuse, specular, roughness);
             }
         }
@@ -301,8 +307,10 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
 
 // Saturation of the sky fill's share of a surface's light (1 = its plain color).
 const SHADE_SATURATION: f32 = 1.3;
-// Point lights' (blast flashes') extra strength with the atmosphere on.
+// Point lights' (blast flashes') extra strength with the atmosphere on, and the
+// share of their decay exponent they keep (a wider pool).
 const BLAST_LIGHT_GAIN: f32 = 1.6;
+const FIRE_POOL_DECAY: f32 = 0.75;
 // Share of the drawn sky glossy finishes reflect.
 const ATMOSPHERE_REFLECTION: f32 = 0.45;
 // The lowest elevation of the drawn sky glossy finishes reflect.

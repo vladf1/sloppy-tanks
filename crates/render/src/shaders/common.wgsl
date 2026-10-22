@@ -167,6 +167,8 @@ struct GroundMacro {
     tone: f32,
     // How far the crests bleach, 0..`ground.z`.
     dry: f32,
+    // 1 on open, rough ground facing up, 0 on walls, paint and steep faces.
+    weight: f32,
 }
 
 // Large flat ground reads as one ironed sheet from the overhead camera. Rough
@@ -181,6 +183,7 @@ fn ground_macro(world: vec3f, normal: vec3f, roughness: f32) -> GroundMacro {
     result.tone = 0.0;
     result.dry = 0.0;
     let weight = smoothstep(0.8, 0.95, normal.y) * smoothstep(0.55, 0.7, roughness);
+    result.weight = weight;
     if weight <= 0.0 || (frame.ground.x <= 0.0 && frame.ground.y <= 0.0) {
         return result;
     }
@@ -205,7 +208,34 @@ fn ground_macro(world: vec3f, normal: vec3f, roughness: f32) -> GroundMacro {
 // earth no further toward orange, and the whole patch lightens or darkens.
 fn apply_ground_macro(color: vec3f, ground: GroundMacro) -> vec3f {
     let bleached = vec3f(dot(color, vec3f(0.2126, 0.7152, 0.0722))) * BLEACHED_TINT;
-    return mix(color, bleached, ground.dry) * (1.0 + ground.tone);
+    return mix(calm_yellow_green(color, ground.weight), bleached, ground.dry) * (1.0 + ground.tone);
+}
+
+// Green over red (linear albedo) where ground turns from earth to the acid
+// yellow-green of a lime meadow edge, and where it is a true green again; earth,
+// sand and hazard paint stay below the first.
+const YELLOW_GREEN_FROM: vec2f = vec2f(0.66, 0.84);
+const TRUE_GREEN_FROM: vec2f = vec2f(1.5, 2.2);
+// How much red, and how much of its missing blue, a yellow-green surface takes on.
+const YELLOW_GREEN_RED: f32 = 0.3;
+const YELLOW_GREEN_BLUE: f32 = 0.3;
+
+// Grass that has yellowed to an acid lime reads as a paint fill from the overhead
+// camera: on the ground it turns toward a natural sap green, a little less red and a
+// touch of blue, before the macro tone and bleach. Muted colours keep their hue.
+fn calm_yellow_green(color: vec3f, weight: f32) -> vec3f {
+    if weight <= 0.0 {
+        return color;
+    }
+    let ratio = color.g / max(color.r, 1e-4);
+    let vivid = 1.0 - color.b / max(color.g, 1e-4);
+    let yellow = smoothstep(YELLOW_GREEN_FROM.x, YELLOW_GREEN_FROM.y, ratio)
+        * (1.0 - smoothstep(TRUE_GREEN_FROM.x, TRUE_GREEN_FROM.y, ratio))
+        * smoothstep(0.45, 0.7, vivid) * weight;
+    var c = color;
+    c.r *= 1.0 - YELLOW_GREEN_RED * yellow;
+    c.b = mix(c.b, c.g * 0.35, YELLOW_GREEN_BLUE * yellow);
+    return c;
 }
 
 // The tint of bleached crests at unit luminance: a faint straw.
@@ -419,7 +449,7 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
 }
 
 // Ground-scale cloud shadow features per metre, and their drift in metres per second.
-const CLOUD_SHADOW_SCALE: f32 = 0.02;
+const CLOUD_SHADOW_SCALE: f32 = 0.03;
 const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
 // Where the shadow noise starts and completes a cloud, above the coverage.
 const CLOUD_SHADOW_LOW: f32 = 1.0;

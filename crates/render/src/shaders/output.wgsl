@@ -227,6 +227,8 @@ const OCCLUSION_SHADE_LEVEL: f32 = 0.08;
 const OCCLUSION_LIT_LEVEL: f32 = 0.45;
 const OCCLUSION_IN_SUN: f32 = 0.45;
 const OCCLUSION_HUE: vec3f = vec3f(0.85, 1.0, 1.2);
+// The least light occlusion leaves anywhere.
+const OCCLUSION_FLOOR: f32 = 0.45;
 // Display mid grey, the pivot of the contrast curve.
 const MID_GREY: f32 = 0.18;
 
@@ -317,7 +319,9 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         // a soft contact shade rather than on a dark decal. What it removes is the
         // cool sky's share most, so creases deepen warm, never into blue or black.
         let lit = smoothstep(OCCLUSION_SHADE_LEVEL, OCCLUSION_LIT_LEVEL, luminance(color));
-        let open = mix(1.0, ao / 16.0, strength * mix(1.0, OCCLUSION_IN_SUN, lit));
+        // It never takes more than part of the light: contact shade stays a soft,
+        // coloured shade under a hull, never a black pool.
+        let open = max(mix(1.0, ao / 16.0, strength * mix(1.0, OCCLUSION_IN_SUN, lit)), OCCLUSION_FLOOR);
         color *= pow(vec3f(open), OCCLUSION_HUE);
     }
     let bloom_strength = output.settings.w;
