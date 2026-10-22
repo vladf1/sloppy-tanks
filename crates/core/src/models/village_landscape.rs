@@ -134,7 +134,31 @@ pub fn valley_height_at(x: f64, z: f64, river: f64) -> f64 {
     let hill = smoothstep(edge, 66.0, 145.0)
         * (4.0 + 3.0 * (x * 0.047 + z * 0.028).sin() + 2.0 * (z * 0.069 - x * 0.021).sin());
     let bank = smoothstep(river, 4.9, 9.0);
-    lerp(-4.2, -0.85 + hill + knolls(x, z, edge, river), bank)
+    lerp(
+        -4.2,
+        -0.85 + hill + knolls(x, z, edge, river) + glacis(x, z, edge),
+        bank,
+    )
+}
+
+/// How high the earth banks up against the outside of the perimeter wall, and
+/// the edge distances (m from the centre) over which it falls to the valley.
+const GLACIS_RISE: f64 = 0.72;
+const GLACIS_REACH: [f64; 2] = [62.0, 75.0];
+
+/// The valley floor banks up against the outside of the wall nearly to the
+/// arena's level, so the wall stands dug into an earth bank instead of on a
+/// raised table; level under the landmarks of [`LEVEL_FOOTINGS`].
+fn glacis(x: f64, z: f64, edge: f64) -> f64 {
+    let [foot, toe] = GLACIS_REACH;
+    if edge >= toe {
+        return 0.0;
+    }
+    let level = LEVEL_FOOTINGS
+        .iter()
+        .map(|&[cx, cz, radius]| smoothstep((x - cx).hypot(z - cz), radius, radius + 10.0))
+        .fold(1.0, f64::min);
+    (1.0 - smoothstep(edge, foot, toe)) * GLACIS_RISE * level
 }
 
 /// Landmarks set at fixed heights on the valley floor (x, z, radius in metres):

@@ -14,6 +14,7 @@ use super::building_kit::fieldstone_wall;
 use super::concrete_surfaces::concrete_wall;
 use super::crate_model::{CrateShape, cargo_crate};
 use super::harbor_models::{CargoShape, shipping_container};
+use super::harbor_surfaces::harbor_parapet;
 use super::house_model::{house, house_heap};
 use super::model_primitives::{box_part, cylinder_part, put};
 use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
@@ -39,6 +40,9 @@ use crate::sim::types::CoverKind;
 const VILLAGE_WALL_COLOR: u32 = 0xa68c68;
 /// Dusty Dig's boundary colour (`sim::quarry_layout`): its walls are cut sandstone blocks.
 const QUARRY_WALL_COLOR: u32 = 0xd2bd99;
+/// Harbor Havoc's boundary colour (`sim::harbor_layout`): its walls are the sea
+/// wall's parapet.
+const HARBOR_WALL_COLOR: u32 = 0x879698;
 
 /// The cover fields the models read (`Pick<Cover, "kind" | "x" | ... >`).
 #[derive(Clone, Debug, PartialEq)]
@@ -185,6 +189,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
         }
         CoverKind::Boundary if c.color == QUARRY_WALL_COLOR => {
             put(group, cut_stone_wall(c.w, c.h, c.d), 0.0, 0.0, 0.0);
+        }
+        CoverKind::Boundary if c.color == HARBOR_WALL_COLOR => {
+            put(group, harbor_parapet(c.w, c.h, c.d), 0.0, c.h / 2.0, 0.0);
         }
         CoverKind::Concrete | CoverKind::Boundary => {
             let block = if c.kind == CoverKind::Boundary {
