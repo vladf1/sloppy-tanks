@@ -373,6 +373,7 @@ struct FrameUniform {
     ridge: [f32; 4],
     ridge_shape: [f32; 4],
     haze_far: [f32; 4],
+    ground: [f32; 4],
 }
 
 /// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion and the grade. The
@@ -410,12 +411,17 @@ struct OcclusionUniform {
 /// `BLOOM_FIRST_SHIFT + n`.
 const BLOOM_LEVELS: usize = 3;
 const BLOOM_FIRST_SHIFT: usize = 2;
+/// The ambient occlusion target is the canvas size divided by this. Occlusion is soft,
+/// low-frequency shade and the output pass spreads it over a tent six texels wide, so a
+/// quarter-size target looks the same as a half-size one at a quarter of the probes
+/// (about 1 ms less GPU time at 3840×2160).
+const OCCLUSION_DOWNSCALE: u32 = 4;
 /// Ambient occlusion: the reach of its probes and the depth gap they ignore, in
 /// metres; where it fades out with view distance; and its contrast power.
 const OCCLUSION_RADIUS: f32 = 1.6;
 const OCCLUSION_BIAS: f32 = 0.05;
 const OCCLUSION_FADE: (f32, f32) = (110.0, 200.0);
-const OCCLUSION_POWER: f32 = 2.0;
+const OCCLUSION_POWER: f32 = 1.6;
 /// The clouds' strength in the water's mirror: faint, as a rippled surface seen
 /// from above would blur them into the sky's tone rather than mirror their contrast.
 const REFLECTED_CLOUDS: f32 = 0.22;
@@ -838,6 +844,8 @@ pub struct DebugOff {
     pub lights: bool,
     /// The whole atmosphere: sky, haze, cloud shadows, bloom, occlusion and grade.
     pub atmosphere: bool,
+    /// The ground's macro relief, tone and bounce (`ground_macro`).
+    pub ground: bool,
     /// Custom effects whose draws the main view skips; "lit" and "unlit" name
     /// the plain standard and basic materials, "shadowed" every receiver.
     pub effects: Vec<String>,
@@ -1877,6 +1885,16 @@ impl Renderer {
                 a.haze.sun_scatter,
                 a.haze.mist,
             ],
+            ground: if self.debug_off.ground {
+                [0.0; 4]
+            } else {
+                [
+                    a.ground.relief,
+                    a.ground.tone,
+                    a.ground.dry_bleach,
+                    a.ground.bounce,
+                ]
+            },
             ..FrameUniform::zeroed()
         }
     }
