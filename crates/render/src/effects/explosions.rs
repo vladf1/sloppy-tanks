@@ -2181,7 +2181,11 @@ impl ExplosionEffects {
                         if ground { 0.58 } else { 0.8 } + 0.14 * r3 + 0.12 * settle(age, 1.2),
                     ),
                     opacity: (age / 0.08).min(1.0)
-                        * if ground { 0.36 + 0.1 * r1 } else { 0.22 + 0.08 * r1 }
+                        * if ground {
+                            0.36 + 0.1 * r1
+                        } else {
+                            0.22 + 0.08 * r1
+                        }
                         * (1.0 - smoothstep(age, 0.6, end)),
                     seed: b.phase * 0.53 + jf * 0.173,
                     heat: 0.0,

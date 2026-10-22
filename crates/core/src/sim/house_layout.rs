@@ -30,6 +30,11 @@ const WRECKED: f64 = 0.45;
 
 /// Height of the fieldstone plinth (two 21 cm steps up to the door).
 pub const PLINTH: f64 = 0.42;
+/// Houses this tall to the ridge or taller have two floors, a second row of
+/// windows over the first and a belt course between them, and their eaves sit
+/// this far up the ridge height whatever their type's attic.
+pub const TWO_STOREY: f64 = 6.2;
+const TWO_STOREY_EAVE: f64 = 0.7;
 /// Horizontal roof overhang past the eave walls and past the gable walls.
 pub const EAVE_OVERHANG: f64 = 0.4;
 pub const RAKE_OVERHANG: f64 = 0.3;
@@ -696,7 +701,17 @@ impl HouseDesign {
     }
 
     pub fn roof(&self) -> Roof {
-        Roof::new(self.style.form, self.w, self.d, self.h, self.style.eave)
+        let eave = if self.storeys() == 2 {
+            TWO_STOREY_EAVE
+        } else {
+            self.style.eave
+        };
+        Roof::new(self.style.form, self.w, self.d, self.h, eave)
+    }
+
+    /// Floors under the roof: two on a house at least [`TWO_STOREY`] tall.
+    pub fn storeys(&self) -> u32 {
+        if self.h >= TWO_STOREY { 2 } else { 1 }
     }
 
     /// A build-frame offset carried into the world (about the cottage's centre).
@@ -1504,17 +1519,37 @@ mod tests {
     use super::*;
 
     fn village() -> Vec<(f64, f64, f64, f64, f64)> {
-        let mut houses = Vec::new();
-        for s in [-1.0, 1.0] {
-            for z in [-39.0, -13.0, 13.0, 39.0] {
-                houses.push((s * 45.0, z, 5.0, 6.0, 4.6));
+        crate::sim::arena::arena_layout()
+            .into_iter()
+            .filter(|c| c.kind == crate::sim::types::CoverKind::House)
+            .map(|c| (c.x, c.z, c.w, c.d, c.h))
+            .collect()
+    }
+
+    /// The row mixes one- and two-storey houses, mirrored between the teams'
+    /// halves, and a two-storey house's walls are tall enough for both floors.
+    #[test]
+    fn the_village_mixes_storeys_mirrored_between_the_halves() {
+        let houses = village();
+        let mut two = 0;
+        for &(x, z, w, d, h) in &houses {
+            assert!(
+                houses.contains(&(-x, z, w, d, h)),
+                "{x} {z} has a mirror image"
+            );
+            let design = HouseDesign::of(x, z, w, d, h);
+            if design.storeys() == 2 {
+                two += 1;
+                assert!(design.roof().wall - PLINTH > 4.0, "{x} {z}");
             }
-            for z in [-46.0, 46.0] {
-                houses.push((s * 17.0, z, 7.0, 5.0, 5.2));
-            }
-            houses.push((s * 24.0, 0.0, 5.0, 7.0, 4.9));
         }
-        houses
+        assert!(
+            (2..houses.len() / 2).contains(&two),
+            "{two} two-storey houses"
+        );
+        let heights: std::collections::BTreeSet<u64> =
+            houses.iter().map(|&(.., h)| h.to_bits()).collect();
+        assert!(heights.len() >= 4, "the row's ridges differ");
     }
 
     #[test]

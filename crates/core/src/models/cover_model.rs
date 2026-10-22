@@ -134,16 +134,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
         CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
         // Every shell holes a cottage where it struck; an untouched one keeps its
         // place in the static covers' draws.
-        CoverKind::House => house(
-            group,
-            c.x,
-            c.z,
-            c.w,
-            c.d,
-            c.h,
-            damage_stage,
-            &c.timber_hits,
-        ),
+        CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, damage_stage, &c.timber_hits),
         CoverKind::Timber => {
             let parts = timber_parts(
                 &TimberWall {

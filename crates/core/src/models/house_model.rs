@@ -145,7 +145,7 @@ const RAW_TIMBER: u32 = 0x7a5d42;
 /// The plaster inside a cottage's walls, which a fallen panel shows: old lime
 /// plaster, dulled by smoke and the dust of the fall but lit like any face, so a
 /// panel lying lining up reads as the inside of a room, never as a black card.
-const PLASTER: u32 = 0x92846f;
+const PLASTER: u32 = 0x87795f;
 /// Height of the gravel drip strip round a cottage's plinth.
 const DRIP_STRIP: f64 = 0.035;
 /// Flagstones in the path from a cottage's door toward its street.
@@ -159,7 +159,7 @@ const SPLASH_LIFT: f64 = 0.008;
 /// Wallpapers a fallen wall shows inside (sage, duck-egg, rose, buttercup), and
 /// how far they cover the plaster's own dull colour.
 const WALLPAPERS: [u32; 4] = [0x9fb48c, 0x8fb0be, 0xc89a8c, 0xd2bd7c];
-const WALLPAPER_TINT: f64 = 0.3;
+const WALLPAPER_TINT: f64 = 0.24;
 /// Foundation shrubs: their greens (the window boxes', so they share those
 /// draws), how many leafy lumps each is and how big (m) the main lump is.
 const SHRUB_LEAVES: [u32; 2] = [LEAVES, LEAVES_LIGHT];
@@ -177,7 +177,7 @@ const PLANK: f64 = 0.05;
 /// covers their paint.
 const COLLAPSE_DUST: (u32, f64) = (0xa89a84, 0.24);
 /// Patches of plaster fallen off each collapsed wall's lining.
-const PLASTER_FALLS: usize = 6;
+const PLASTER_FALLS: usize = 9;
 /// A standing shingle roof's weathering (linear shade at the eave and at the
 /// ridge) and the light its ridge caps catch.
 const ROOF_WEATHER: (f64, f64) = (0.74, 1.0);
@@ -761,10 +761,13 @@ fn shed_shingles(parts: &mut Parts, design: &HouseDesign, roof: &Roof, stage: u3
             &[],
             frame * shift(DVec3::new(rng.range(-0.15, 0.15), 0.0, 0.005)),
         );
-        // Shingles torn half loose round the edge, curled up off the deck.
-        for k in 0..SHED_SHINGLES {
-            let angle =
-                (f64::from(k as u32) + rng.range(0.0, 0.6)) * PI * 2.0 / SHED_SHINGLES as f64;
+        // Shingles torn half loose round the edge, curled up off the deck,
+        // showing their weathered undersides: a fallen roof's patches keep only
+        // a couple each, so its slabs do not read as scattered with confetti.
+        let curls = if parts.split { 2 } else { SHED_SHINGLES };
+        let kit = parts.kit(piece);
+        for k in 0..curls {
+            let angle = (f64::from(k as u32) + rng.range(0.0, 0.6)) * PI * 2.0 / curls as f64;
             let at = DVec3::new(angle.cos() * r * 1.3, angle.sin() * r * 0.85, 0.03);
             kit.block(
                 Surface::Wood,
@@ -881,6 +884,30 @@ fn window_opening(u: f64, roof: &Roof) -> Opening {
     }
 }
 
+/// A two-storey house's belt course between its floors: its height (m) and how
+/// far over the ground-floor windows' heads it runs, and how far over it the
+/// upper windows' sills sit and the tallest they get.
+const BELT: f64 = 0.12;
+const BELT_OVER: f64 = 0.3;
+const UPPER_SILL: f64 = 0.35;
+const UPPER_WINDOW: f64 = 1.2;
+
+/// Where a two-storey house's belt course runs (its middle).
+fn belt_line(roof: &Roof) -> f64 {
+    window_opening(0.0, roof).top() + BELT_OVER
+}
+
+/// An upper-floor window over `u`, between the belt course and the eave.
+fn upper_window(u: f64, roof: &Roof) -> Opening {
+    let y = belt_line(roof) + UPPER_SILL;
+    Opening {
+        u,
+        y,
+        width: WINDOW_WIDTH,
+        height: (roof.wall - 0.35 - y).min(UPPER_WINDOW),
+    }
+}
+
 /// The widest shutter that fits beside a window: clear of the corner boards, the
 /// door casing (`inner_limit`) and the neighbouring window's shutter.
 fn shutter_room(opening: &Opening, half: f64, inner_limit: f64, alone: bool) -> f64 {
@@ -913,7 +940,7 @@ fn framing(
     top: f64,
 ) {
     const STUD: (f64, f64) = (0.09, 0.06);
-    const SPACING: f64 = 0.6;
+    const SPACING: f64 = 0.45;
     let half = outline.iter().map(|p| p.x.abs()).fold(0.0, f64::max);
     let z = -LINING - STUD.1 / 2.0;
     let count = (2.0 * half / SPACING).floor() as i32;
@@ -936,6 +963,34 @@ fn framing(
         DVec3::new(2.0 * half - 0.1, STUD.0, STUD.1),
         frame * shift(DVec3::new(0.0, top - STUD.0, z)),
     );
+    // Rails across the studs under the sills and, in a two-storey wall, where the
+    // upper floor's joists bore, broken by the openings they meet: a fallen
+    // wall's back reads as a frame of timber rather than a board.
+    let mut rails = vec![PLINTH + 0.72];
+    if top - PLINTH > 3.6 {
+        rails.push(PLINTH + (top - PLINTH) * 0.5);
+    }
+    for y in rails {
+        let mut runs = vec![(-half + 0.05, half - 0.05)];
+        for o in openings
+            .iter()
+            .filter(|o| o.y - 0.05 < y && o.top() + 0.05 > y)
+        {
+            let (a, b) = (o.u - o.width / 2.0 - 0.05, o.u + o.width / 2.0 + 0.05);
+            runs = runs
+                .into_iter()
+                .flat_map(|(from, to)| [(from, to.min(a)), (from.max(b), to)])
+                .filter(|(from, to)| to - from > 0.2)
+                .collect();
+        }
+        for (from, to) in runs {
+            kit.block(
+                Surface::Wood,
+                DVec3::new(to - from, STUD.0, STUD.1),
+                frame * shift(DVec3::new((from + to) / 2.0, y, z - STUD.1 * 0.5)),
+            );
+        }
+    }
 }
 
 /// Where a fallen wall's plaster has come away from the lath behind it: a few
@@ -1101,17 +1156,22 @@ fn window_soot(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, seed: f6
             let from = (p - center).normalize_or_zero();
             let up = from.y.max(0.0);
             let flare = if i % 2 == 0 {
-                rng.range(0.35, 0.8)
+                rng.range(0.08, 0.16)
             } else {
-                rng.range(0.08, 0.2)
+                rng.range(0.05, 0.1)
             };
             p + from * rng.range(0.04, 0.1) + DVec2::Y * up * flare
         })
         .collect();
     for i in 0..inner.len() - 1 {
         kit.quad(
-            Surface::Dark,
-            [at(inner[i]), at(inner[i + 1]), at(outer[i + 1]), at(outer[i])],
+            Surface::Soot,
+            [
+                at(inner[i]),
+                at(inner[i + 1]),
+                at(outer[i + 1]),
+                at(outer[i]),
+            ],
             frame.transform_vector3(DVec3::Z),
         );
     }
@@ -1206,7 +1266,12 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
         let facing = frame.transform_vector3(DVec3::new(inward.x, inward.y, 0.0));
         kit.quad(
             Surface::Splinters,
-            [at(a, 0.0), at(b, 0.0), at(b, -SPLIT_FACE), at(a, -SPLIT_FACE)],
+            [
+                at(a, 0.0),
+                at(b, 0.0),
+                at(b, -SPLIT_FACE),
+                at(a, -SPLIT_FACE),
+            ],
             facing,
         );
         kit.quad(
@@ -1229,18 +1294,18 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
         .map(|(i, &p)| {
             let from = p - center;
             let up = (from.y / from.length().max(1e-6)).max(0.0);
-            let flare = if i % 3 == 0 {
-                soot.range(0.9, 1.6)
+            let flare = if i % 2 == 0 {
+                soot.range(0.3, 0.6)
             } else {
-                soot.range(0.2, 0.45)
+                soot.range(0.1, 0.25)
             };
-            center + from * (soot.range(1.1, 1.25) + up * flare)
+            center + from * (soot.range(1.12, 1.3) + up * flare)
         })
         .collect();
     for i in 0..outline.len() {
         let j = (i + 1) % outline.len();
         kit.quad(
-            Surface::Dark,
+            Surface::Soot,
             [
                 at(outline[i], 0.006),
                 at(outline[j], 0.006),
@@ -1272,13 +1337,13 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
     let rows = torn_courses(&mut steps, hole.u, hole.y, hole.radius, hole.course);
     for (k, &(y0, y1, left, right)) in rows.iter().enumerate() {
         for (end, side) in [(right, -1.0), (left, 1.0)] {
-            if (k + usize::from(side > 0.0)) % 2 == 1 && rng.next() < 0.6 {
+            if (k + usize::from(side > 0.0)) % 2 == 1 || rng.next() < 0.4 {
                 continue;
             }
             let length = rng.range(0.08, 0.2);
             let height = (y1 - y0) * rng.range(0.4, 0.75);
             kit.block(
-                Surface::Siding,
+                Surface::Splinters,
                 DVec3::new(length, height, 0.022),
                 frame
                     * pose(
@@ -1292,43 +1357,28 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
             );
         }
     }
-    // The studs behind the siding, raw where the shell stripped them: whole ones
-    // across the hole and the one it struck snapped, its ends bent apart.
+    // The stud behind the siding that the shell struck, snapped, its raw ends
+    // bent apart: only that one shows, as more would fill a hole that has to read
+    // dark from the battlefield's height.
     let first = ((hole.u - hole.radius * 0.8) / STUD_SPACING).ceil() as i32;
     let last = ((hole.u + hole.radius * 0.8) / STUD_SPACING).floor() as i32;
-    let snapped = if last >= first {
-        first + (rng.next() * f64::from(last - first + 1)) as i32
-    } else {
-        i32::MIN
-    };
-    for stud in first..=last {
+    if last >= first {
+        let stud = first + (rng.next() * f64::from(last - first + 1)) as i32;
         let u = f64::from(stud) * STUD_SPACING;
-        // Only the struck stud and its neighbour show: more would fill the hole.
-        if (stud - snapped).abs() > 1 || (stud != snapped && stud % 2 == 0) {
-            continue;
-        }
-        if stud == snapped {
-            for (end, lean) in [(1.0, rng.range(-0.3, 0.3)), (-1.0, rng.range(-0.3, 0.3))] {
-                let reach = hole.radius * rng.range(0.6, 0.95);
-                kit.block(
-                    Surface::Wood,
-                    DVec3::new(0.09, reach * 1.6, 0.05),
-                    frame
-                        * pose(
-                            DVec3::new(u, hole.y + end * hole.radius * 1.1, -HOLE_EDGE * 0.6),
-                            DVec3::new(lean * 0.6, 0.0, lean),
-                        ),
-                );
-            }
-        } else {
+        for (end, lean) in [(1.0, rng.range(-0.3, 0.3)), (-1.0, rng.range(-0.3, 0.3))] {
+            let reach = hole.radius * rng.range(0.6, 0.95);
             kit.block(
-                Surface::Wood,
-                DVec3::new(0.09, hole.radius * 2.4, 0.05),
-                frame * shift(DVec3::new(u, hole.y, -HOLE_EDGE * 0.6)),
+                Surface::Splinters,
+                DVec3::new(0.09, reach * 1.6, 0.05),
+                frame
+                    * pose(
+                        DVec3::new(u, hole.y + end * hole.radius * 1.1, -HOLE_EDGE * 0.6),
+                        DVec3::new(lean * 0.6, 0.0, lean),
+                    ),
             );
         }
     }
-    for k in 0..3 {
+    for k in 0..2 {
         let p = outline[(k * 7 + 2) % outline.len()];
         let inward = (center - p).normalize_or_zero();
         let length = rng.range(0.22, 0.42);
@@ -1450,8 +1500,8 @@ fn stripped_patches(
     patches
 }
 
-/// The sheathing a stripped patch shows: weathered boards laid on the diagonal
-/// behind the torn siding, the siding's cut edge round them.
+/// The sheathing a stripped patch shows: weathered boards behind the torn
+/// siding, the siding's split edge round them.
 fn line_stripped(kit: &mut Kit<Surface>, frame: DMat4, outline: &[DVec2]) {
     let at = |p: DVec2, z: f64| frame.transform_point3(DVec3::new(p.x, p.y, z));
     let center = outline.iter().copied().sum::<DVec2>() / outline.len() as f64;
@@ -1470,32 +1520,6 @@ fn line_stripped(kit: &mut Kit<Surface>, frame: DMat4, outline: &[DVec2]) {
         &[],
         frame * shift(DVec3::new(0.0, 0.0, -SHEATHING)),
     );
-    // Gaps between the diagonal sheathing boards.
-    let (min, max) = outline.iter().fold(
-        (DVec2::INFINITY, DVec2::NEG_INFINITY),
-        |(lo, hi), &p| (lo.min(p), hi.max(p)),
-    );
-    let mut s = min.x - (max.y - min.y);
-    while s < max.x {
-        let (a, b) = (
-            DVec2::new(s.max(min.x), min.y + (s.max(min.x) - s)),
-            DVec2::new((s + (max.y - min.y)).min(max.x), min.y + ((s + (max.y - min.y)).min(max.x) - s)),
-        );
-        if (b - a).length() > 0.15 {
-            let across = DVec2::new(-0.012, 0.012);
-            kit.quad(
-                Surface::Dark,
-                [
-                    at(a - across, -SHEATHING + 0.004),
-                    at(b - across, -SHEATHING + 0.004),
-                    at(b + across, -SHEATHING + 0.004),
-                    at(a + across, -SHEATHING + 0.004),
-                ],
-                frame.transform_vector3(DVec3::Z),
-            );
-        }
-        s += 0.28;
-    }
 }
 
 /// A pair of plank shutters hung open beside a window: boards under two battens
@@ -1782,10 +1806,23 @@ fn build_house(
             outline.push(DVec2::new(0.0, roof.ridge));
         }
         outline.push(DVec2::new(-half, roof.wall));
-        let windows: Vec<Opening> = window_positions(role, half)
+        let mut windows: Vec<Opening> = window_positions(role, half)
             .into_iter()
             .map(|u| window_opening(u, roof))
             .collect();
+        // The ground floor's windows, which carry window boxes and share a wall's
+        // shutters among themselves.
+        let ground_floor = windows.len();
+        let two_storey = design.storeys() == 2;
+        if two_storey {
+            // The upper floor lights each ground-floor window's bay and the
+            // stair over the door.
+            let mut above: Vec<f64> = windows.iter().map(|o| o.u).collect();
+            if role.door {
+                above.push(0.0);
+            }
+            windows.extend(above.into_iter().map(|u| upper_window(u, roof)));
+        }
         let mut openings = windows.clone();
         if role.door {
             openings.push(door_opening);
@@ -1811,6 +1848,10 @@ fn build_house(
             .collect();
         if role.door {
             keepouts.push([-0.8, PLINTH, 0.8, door_opening.top() + 0.75]);
+        }
+        if two_storey {
+            let belt = belt_line(roof);
+            keepouts.push([-half, belt - BELT, half, belt + BELT]);
         }
         let (holes, blasted) = wall_holes(
             design,
@@ -1877,9 +1918,9 @@ fn build_house(
         for (i, opening) in windows.iter().enumerate() {
             let seed = f64::from(design.variant) * 3.0 + (index * 5 + i) as f64;
             let blown = blasted.contains(&i);
-            let broken = blown
-                || stage >= 2
-                || (stage == 1 && Random::new(seed).next() < BROKEN_WINDOWS);
+            let upper = i >= ground_floor;
+            let broken =
+                blown || stage >= 2 || (stage == 1 && Random::new(seed).next() < BROKEN_WINDOWS);
             let boarded = !role.door && Random::new(seed + 0.7).next() < BOARDED_WINDOWS;
             if blown {
                 window_soot(kit, frame, opening, seed);
@@ -1888,11 +1929,14 @@ fn build_house(
                 broken_window(kit, frame, opening, seed);
             } else if boarded {
                 boarded_window(kit, frame, opening, seed);
+            } else if upper {
+                // Bedroom casements upstairs: one sash of four lites.
+                window(kit, frame, opening, Glazing { double_hung: false }, REVEAL);
             } else {
                 window(kit, frame, opening, glazing, REVEAL);
             }
             let inner_limit = if role.door { door_edge } else { 0.0 };
-            let room = shutter_room(opening, half, inner_limit, windows.len() == 1);
+            let room = shutter_room(opening, half, inner_limit, ground_floor == 1);
             // A wrecked cottage has lost some of its shutters, and a hole beside a
             // window takes its shutters with it.
             let reach = opening.width / 2.0 + CASING + 0.01 + room;
@@ -1905,16 +1949,26 @@ fn build_house(
             // Shutters dress the street front and the sides; the back of the
             // cottage, behind its door, makes do without.
             let back = role.planted && !role.door;
-            if room > 0.0 && !lost && !back {
+            // The upper floor's windows go without: shutters on both floors
+            // cost more triangles than the second row of windows itself.
+            if room > 0.0 && !lost && !back && !upper {
                 match design.style.shutters {
                     Shutters::Louvred => shutters(kit, frame, opening, room),
                     Shutters::Board => board_shutters(kit, frame, opening, room),
                     Shutters::None => {}
                 }
             }
-            if role.planted {
+            if role.planted && !upper {
                 window_box(kit, frame, opening);
             }
+        }
+        if two_storey {
+            // The belt course between the floors, broken by the door's porch.
+            kit.block(
+                Surface::Trim,
+                DVec3::new(2.0 * half, BELT, TRIM_PROUD * 1.5),
+                frame * shift(DVec3::new(0.0, belt_line(roof), TRIM_PROUD * 0.75)),
+            );
         }
         if role.door {
             if stage >= 2 {
@@ -4059,15 +4113,45 @@ fn furniture(kit: &mut Kit<Surface>, kind: usize, placement: DMat4) {
     match kind % 6 {
         0 => {
             // Bed: frame, ticking mattress, headboard and footboard.
-            part(kit, Surface::Wood, DVec3::new(1.0, 0.22, 1.95), DVec3::new(0.0, 0.2, 0.0));
-            part(kit, Surface::Trim, DVec3::new(0.92, 0.16, 1.82), DVec3::new(0.0, 0.38, 0.02));
-            part(kit, Surface::Curtain, DVec3::new(0.8, 0.08, 0.5), DVec3::new(0.0, 0.49, -0.6));
-            part(kit, Surface::Wood, DVec3::new(1.04, 0.85, 0.07), DVec3::new(0.0, 0.42, -0.99));
-            part(kit, Surface::Wood, DVec3::new(1.04, 0.5, 0.07), DVec3::new(0.0, 0.25, 0.99));
+            part(
+                kit,
+                Surface::Wood,
+                DVec3::new(1.0, 0.22, 1.95),
+                DVec3::new(0.0, 0.2, 0.0),
+            );
+            part(
+                kit,
+                Surface::Trim,
+                DVec3::new(0.92, 0.16, 1.82),
+                DVec3::new(0.0, 0.38, 0.02),
+            );
+            part(
+                kit,
+                Surface::Curtain,
+                DVec3::new(0.8, 0.08, 0.5),
+                DVec3::new(0.0, 0.49, -0.6),
+            );
+            part(
+                kit,
+                Surface::Wood,
+                DVec3::new(1.04, 0.85, 0.07),
+                DVec3::new(0.0, 0.42, -0.99),
+            );
+            part(
+                kit,
+                Surface::Wood,
+                DVec3::new(1.04, 0.5, 0.07),
+                DVec3::new(0.0, 0.25, 0.99),
+            );
         }
         1 => {
             // Kitchen table upside down, legs in the air, one snapped short.
-            part(kit, Surface::Wood, DVec3::new(1.2, 0.05, 0.75), DVec3::new(0.0, 0.025, 0.0));
+            part(
+                kit,
+                Surface::Wood,
+                DVec3::new(1.2, 0.05, 0.75),
+                DVec3::new(0.0, 0.025, 0.0),
+            );
             for (k, (x, z)) in [(-0.52, -0.3), (0.52, -0.3), (-0.52, 0.3), (0.52, 0.3)]
                 .into_iter()
                 .enumerate()
@@ -4083,22 +4167,57 @@ fn furniture(kit: &mut Kit<Surface>, kind: usize, placement: DMat4) {
         }
         2 => {
             // Enamelled bath on its side walls, open to the sky.
-            part(kit, Surface::Trim, DVec3::new(0.72, 0.08, 1.5), DVec3::new(0.0, 0.12, 0.0));
+            part(
+                kit,
+                Surface::Trim,
+                DVec3::new(0.72, 0.08, 1.5),
+                DVec3::new(0.0, 0.12, 0.0),
+            );
             for x in [-0.33, 0.33] {
-                part(kit, Surface::Trim, DVec3::new(0.08, 0.5, 1.5), DVec3::new(x, 0.33, 0.0));
+                part(
+                    kit,
+                    Surface::Trim,
+                    DVec3::new(0.08, 0.5, 1.5),
+                    DVec3::new(x, 0.33, 0.0),
+                );
             }
             for z in [-0.71, 0.71] {
-                part(kit, Surface::Trim, DVec3::new(0.72, 0.5, 0.08), DVec3::new(0.0, 0.33, z));
+                part(
+                    kit,
+                    Surface::Trim,
+                    DVec3::new(0.72, 0.5, 0.08),
+                    DVec3::new(0.0, 0.33, z),
+                );
             }
             for (x, z) in [(-0.28, -0.6), (0.28, -0.6), (-0.28, 0.6), (0.28, 0.6)] {
-                part(kit, Surface::Iron, DVec3::new(0.08, 0.1, 0.08), DVec3::new(x, 0.04, z));
+                part(
+                    kit,
+                    Surface::Iron,
+                    DVec3::new(0.08, 0.1, 0.08),
+                    DVec3::new(x, 0.04, z),
+                );
             }
         }
         3 => {
             // Cast-iron stove with its flue pipe knocked askew.
-            part(kit, Surface::Iron, DVec3::new(0.7, 0.75, 0.55), DVec3::new(0.0, 0.375, 0.0));
-            part(kit, Surface::Metal, DVec3::new(0.74, 0.04, 0.58), DVec3::new(0.0, 0.77, 0.0));
-            part(kit, Surface::Dark, DVec3::new(0.3, 0.22, 0.02), DVec3::new(0.0, 0.4, 0.28));
+            part(
+                kit,
+                Surface::Iron,
+                DVec3::new(0.7, 0.75, 0.55),
+                DVec3::new(0.0, 0.375, 0.0),
+            );
+            part(
+                kit,
+                Surface::Metal,
+                DVec3::new(0.74, 0.04, 0.58),
+                DVec3::new(0.0, 0.77, 0.0),
+            );
+            part(
+                kit,
+                Surface::Dark,
+                DVec3::new(0.3, 0.22, 0.02),
+                DVec3::new(0.0, 0.4, 0.28),
+            );
             kit.block(
                 Surface::Iron,
                 DVec3::new(0.13, 0.9, 0.13),
@@ -4107,19 +4226,49 @@ fn furniture(kit: &mut Kit<Surface>, kind: usize, placement: DMat4) {
         }
         4 => {
             // A panelled door flat on its face-up side, its knob and panels.
-            part(kit, Surface::Accent, DVec3::new(0.9, 0.05, 2.0), DVec3::new(0.0, 0.025, 0.0));
+            part(
+                kit,
+                Surface::Accent,
+                DVec3::new(0.9, 0.05, 2.0),
+                DVec3::new(0.0, 0.025, 0.0),
+            );
             for z in [-0.5, 0.45] {
-                part(kit, Surface::Trim, DVec3::new(0.6, 0.02, 0.7), DVec3::new(0.0, 0.06, z));
+                part(
+                    kit,
+                    Surface::Trim,
+                    DVec3::new(0.6, 0.02, 0.7),
+                    DVec3::new(0.0, 0.06, z),
+                );
             }
-            part(kit, Surface::Brass, DVec3::new(0.07, 0.07, 0.07), DVec3::new(0.34, 0.08, 0.05));
+            part(
+                kit,
+                Surface::Brass,
+                DVec3::new(0.07, 0.07, 0.07),
+                DVec3::new(0.34, 0.08, 0.05),
+            );
         }
         _ => {
             // Chest of drawers with a drawer spilled out.
-            part(kit, Surface::Wood, DVec3::new(0.95, 0.9, 0.48), DVec3::new(0.0, 0.45, 0.0));
+            part(
+                kit,
+                Surface::Wood,
+                DVec3::new(0.95, 0.9, 0.48),
+                DVec3::new(0.0, 0.45, 0.0),
+            );
             for y in [0.22, 0.48, 0.74] {
-                part(kit, Surface::Dark, DVec3::new(0.86, 0.02, 0.01), DVec3::new(0.0, y + 0.12, 0.245));
+                part(
+                    kit,
+                    Surface::Dark,
+                    DVec3::new(0.86, 0.02, 0.01),
+                    DVec3::new(0.0, y + 0.12, 0.245),
+                );
             }
-            part(kit, Surface::Splinters, DVec3::new(0.8, 0.2, 0.42), DVec3::new(0.1, 0.1, 0.6));
+            part(
+                kit,
+                Surface::Splinters,
+                DVec3::new(0.8, 0.2, 0.42),
+                DVec3::new(0.1, 0.1, 0.6),
+            );
         }
     }
 }
@@ -4478,21 +4627,17 @@ mod tests {
     }
 
     fn village() -> Vec<(f64, f64, f64, f64, f64)> {
-        let mut houses = Vec::new();
-        for s in [-1.0, 1.0] {
-            for z in [-39.0, -13.0, 13.0, 39.0] {
-                houses.push((s * 45.0, z, 5.0, 6.0, 4.6));
-            }
-            for z in [-46.0, 46.0] {
-                houses.push((s * 17.0, z, 7.0, 5.0, 5.2));
-            }
-            houses.push((s * 24.0, 0.0, 5.0, 7.0, 4.9));
-        }
-        houses
+        crate::sim::arena::arena_layout()
+            .into_iter()
+            .filter(|c| c.kind == crate::sim::types::CoverKind::House)
+            .map(|c| (c.x, c.z, c.w, c.d, c.h))
+            .collect()
     }
 
-    /// Variety and damage never cost more than the one cottage design did (about
-    /// 6,400 to 6,700 triangles).
+    /// Variety never costs more than the one cottage design did (about 6,400
+    /// triangles), a second floor's windows and belt course about half again, and
+    /// each damage stage's breaches, studs and stripped siding at most 1,200 more
+    /// (only struck houses carry them).
     #[test]
     fn cottages_stay_within_the_former_triangle_budget() {
         let hits: Vec<TimberHit> = (0..6)
@@ -4513,7 +4658,12 @@ mod tests {
                     "{x} {z} {:?} stage {stage}: {count}",
                     HouseDesign::of(x, z, w, d, h).style.form
                 );
-                if count > 6_400 + 400 * stage as usize {
+                let floors = if h >= crate::sim::house_layout::TWO_STOREY {
+                    9_000
+                } else {
+                    6_400
+                };
+                if count > floors + 1_200 * stage as usize {
                     over.push(format!("{x} {z} stage {stage}: {count}"));
                 }
             }

@@ -83,10 +83,9 @@ impl Walls {
         for cover in state.covers.iter().filter(|cover| cover.alive) {
             let material = match cover.kind {
                 CoverKind::Container | CoverKind::Hedgehog => Some(WallMaterial::Steel),
-                CoverKind::Rock
-                | CoverKind::Concrete
-                | CoverKind::Teeth
-                | CoverKind::Rubble => Some(WallMaterial::Stone),
+                CoverKind::Rock | CoverKind::Concrete | CoverKind::Teeth | CoverKind::Rubble => {
+                    Some(WallMaterial::Stone)
+                }
                 // A cottage's model shows each shell's hole, torn through its siding,
                 // so a hit marks it as timber does rather than with a stone crater.
                 CoverKind::Cargo | CoverKind::Timber | CoverKind::House => None,
