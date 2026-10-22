@@ -227,8 +227,14 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
 .touch-enabled .ammo-strip {
   justify-content: center;
 }
-/* Touch has no mine key line; the footer shows only while a power-up is active. */
-.touch-enabled .panel-foot:has(.effects:empty) {
+/* Touch has no mine key line and names no round under the rack (the lit slot shows it):
+   the footer folds away and only anchors the power-up chips above the panel, so the
+   panel keeps its size whatever is active. */
+.touch-enabled .panel-foot {
+  height: 0;
+  margin: 0;
+}
+.touch-enabled .ammo-name {
   display: none;
 }
 .touch-enabled .status {
@@ -243,9 +249,6 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
 .touch-enabled .hull-readout b {
   font-size: 30px;
 }
-.touch-enabled .hull-readout span:last-child {
-  display: none;
-}
 .touch-enabled .hull-bar {
   margin-top: 0;
 }
@@ -253,19 +256,20 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
   padding-left: 0;
   border-left: 0;
 }
+/* The rack spans the panel's width, so it ends where the hull bar does. */
+.touch-enabled .ammo-strip {
+  width: 100%;
+}
 .touch-enabled .ammo-slot {
-  grid-template-columns: minmax(0, 1fr);
-  justify-items: center;
+  flex: 1 1 0;
+  width: auto;
   min-width: 48px;
-  min-height: 60px;
+  height: 54px;
   touch-action: manipulation;
 }
 .touch-enabled .ammo-slot .ammo-icon {
-  grid-area: 1 / 1;
-  justify-self: center;
-}
-.touch-enabled .ammo-slot small {
-  letter-spacing: 0.2px;
+  width: 22px;
+  height: 22px;
 }
 .touch-enabled .ammo-slot kbd,
 .touch-enabled .mine-line {
@@ -316,7 +320,7 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
   }
   .touch-enabled .ammo-slot {
     min-width: 0;
-    min-height: 48px;
+    height: 48px;
   }
 }
 
@@ -333,15 +337,7 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
     gap: 3px;
   }
   .touch-enabled .ammo-slot {
-    min-height: 48px;
-    padding: 3px 1px;
-  }
-  .touch-enabled .ammo-slot small {
-    font-size: 8px;
-    letter-spacing: 0;
-  }
-  .touch-enabled .ammo-slot b {
-    font-size: 18px;
+    height: 50px;
   }
 }
 

@@ -10,9 +10,6 @@ export class TouchControls {
   private readonly layer: HTMLElement;
   private readonly mine: HTMLButtonElement;
   private readonly stick: HTMLElement;
-  private readonly fireHint: HTMLElement;
-  /** The fire hint stays until the player first touches the arena. */
-  private arenaTouched = false;
   private origin = { x: 0, y: 0 };
   private enabled = false;
   /** The cooldown a mine started with: the button fills over the engine's reload,
@@ -30,13 +27,11 @@ export class TouchControls {
       `<div class="touch-controls" hidden>
       <div class="touch-stick touch-drive" role="group" aria-label="Drive joystick"><div class="stick-base"><i class="stick-knob"></i></div><span>DRIVE</span></div>
       <button class="touch-mine" type="button" aria-label="Drop mine"><svg class="touch-mine-icon" aria-hidden="true" focusable="false"><use href="#hud-mine" /></svg><small>MINE</small></button>
-      <p class="touch-fire-hint" aria-hidden="true"><svg viewBox="0 0 24 24" focusable="false"><circle cx="12" cy="9" r="3" /><circle cx="12" cy="9" r="7" /><path d="M12 12v9" /></svg>Touch the arena to aim and fire</p>
       </div>`,
     );
     this.layer = root.querySelector(".touch-controls")!;
     this.mine = this.layer.querySelector(".touch-mine")!;
     this.stick = this.layer.querySelector(".touch-drive")!;
-    this.fireHint = this.layer.querySelector(".touch-fire-hint")!;
     this.bindStick();
     const canvas = root.querySelector<HTMLCanvasElement>("#game");
     if (canvas) {
@@ -136,8 +131,6 @@ export class TouchControls {
     canvas.addEventListener("pointerdown", (event) => {
       // Only the finger that owns the shot aims; a second one cannot pull the turret.
       if (touching(event) && this.controls.touch.begin("arena", event.pointerId)) {
-        this.arenaTouched = true;
-        this.fireHint.hidden = true;
         lastX = event.clientX;
         this.controls.aimAt(event.clientX, event.clientY);
       }
@@ -171,7 +164,6 @@ export class TouchControls {
     }
     const playing = this.controls.active();
     this.layer.hidden = !playing;
-    this.fireHint.hidden = this.arenaTouched;
     const cooldown = this.mineCooldown();
     this.mineReload = cooldown > 0 ? Math.max(this.mineReload, cooldown) : 0;
     this.mine.disabled = !playing || cooldown > 0;

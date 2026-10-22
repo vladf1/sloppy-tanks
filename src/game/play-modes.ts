@@ -88,6 +88,16 @@ function bindTabs(setup: HTMLElement, initial: PlayMode, change: (mode: PlayMode
     }
   };
   showPlayMode(setup, initial);
+  // An offline room list offers single player instead; its link opens that tab.
+  for (const link of setup.querySelectorAll<HTMLButtonElement>("[data-open-play]")) {
+    const tab = tabs.find((candidate) => candidate.dataset.play === link.dataset.openPlay);
+    link.addEventListener("click", () => {
+      if (tab) {
+        open(tab);
+        tab.focus();
+      }
+    });
+  }
   for (const tab of tabs) {
     tab.addEventListener("click", () => open(tab));
     tab.addEventListener("keydown", (event) => {

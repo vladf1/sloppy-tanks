@@ -123,7 +123,7 @@
   <div class="setup-tray">
     <div class="setup-section tank-setting" role="group" aria-labelledby="tank-label">
       <div class="setup-label">
-        <span id="tank-label">TANK</span><small>Same tank in both modes</small
+        <span id="tank-label">YOUR TANK</span
         ><small class="home-screen-tip">Play full screen: Share → Add to Home Screen</small>
       </div>
       <!-- Frame each sprite around its visible bounds, not its transparent canvas: one
@@ -466,17 +466,19 @@
               </div>
             </div>
             <div id="room-list"></div>
-            <div class="room-empty" aria-hidden="true">
-              <svg viewBox="0 0 48 48" focusable="false">
+            <div class="room-empty">
+              <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
                 <circle cx="24" cy="24" r="18" />
                 <circle cx="24" cy="24" r="10" />
                 <path d="M24 24 37 11" />
               </svg>
               <b class="when-loading">Scanning for open rooms…</b>
               <b class="when-ready">No open rooms right now</b>
-              <b class="when-error">Open rooms will show up here</b>
+              <b class="when-error">Battle the bots while we reconnect</b>
               <small class="when-ready">Be the first: create a room and invite friends.</small>
-              <small class="when-error">Single player still works while we reconnect.</small>
+              <button class="chip-button when-error" type="button" data-open-play="single">
+                PLAY SINGLE PLAYER
+              </button>
             </div>
           </div>
         </div>
