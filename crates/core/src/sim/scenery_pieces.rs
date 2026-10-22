@@ -535,10 +535,10 @@ fn topple_tower(simulation: &mut Simulation, breakup: &mut Breakup) {
 /// How fast (rad/s) a cottage's wall shards start to tip over their sills, and the
 /// chance a shard falls in onto the floor rather than out: likelier on the wall the
 /// shot struck, less likely on the wall facing away from it.
-const WALL_TIP: (f64, f64) = (1.1, 1.8);
-const FALLS_IN: f64 = 0.55;
-const STRUCK_FALLS_IN: f64 = 0.8;
-const FAR_FALLS_IN: f64 = 0.35;
+const WALL_TIP: (f64, f64) = (1.4, 2.2);
+const FALLS_IN: f64 = 0.25;
+const STRUCK_FALLS_IN: f64 = 0.5;
+const FAR_FALLS_IN: f64 = 0.1;
 /// Sideways drift (m/s) and twist (rad/s) that keep neighbouring shards from
 /// falling as one sheet, and how fast the plinth's loss lets the walls drop.
 const WALL_DRIFT: f64 = 0.35;
@@ -548,11 +548,13 @@ const WALL_DROP: f64 = 0.5;
 /// how fast they drop: slowly enough that the roof comes down onto the wreck
 /// still lying roughly as it stood, rather than flipping up on edge.
 const ROOF_FOLD: (f64, f64) = (0.12, 0.35);
-const ROOF_DROP: (f64, f64) = (0.8, 1.6);
+const ROOF_DROP: (f64, f64) = (1.4, 2.4);
 /// Damping that settles the heavy shards into the pile instead of tumbling.
 const SHARD_DAMPING: (f32, f32) = (0.3, 0.9);
-/// How fast the chimney topples off the roof.
+/// How fast the chimney topples off the roof, and how fast (m/s) it is carried
+/// over the eave: gently enough that its stack lands on the wreck's edge.
 const CHIMNEY_TIP: (f64, f64) = (1.1, 1.7);
+const CHIMNEY_THROW: f64 = 0.6;
 /// How far the blast carries every piece along its direction (m/s).
 const BLAST_CARRY: f64 = 0.7;
 /// Rafters thrown loose from the roof: count, section and stain.
@@ -583,12 +585,16 @@ const LYING: f32 = 0.9;
 /// settle in which it is (s), how close to level its face's normal must come to
 /// count as standing, and how fast (rad/s, m/s) it is tipped over the way it
 /// leans, or away from the footprint's middle onto open ground.
-const TOPPLE_WINDOW: (f64, f64) = (1.0, 4.2);
+const TOPPLE_WINDOW: (f64, f64) = (1.0, 3.7);
 const STANDING: f32 = 0.55;
-const TOPPLE_SPIN: f32 = 1.5;
-const TOPPLE_SHOVE: f32 = 0.5;
-/// How far a standing shard's top must lean (sine of the angle) to fall that way.
+const TOPPLE_SPIN: f32 = 2.0;
+const TOPPLE_SHOVE: f32 = 0.7;
+/// How far a standing shard's top must lean (sine of the angle) to fall that way,
+/// and how many times one is tipped before it is left as it rests.
 const LEANING: f32 = 0.08;
+const TOPPLES: u8 = 4;
+/// A little lift (m/s) with each tip, to clear what the shard's foot is caught on.
+const TOPPLE_LIFT: f32 = 0.6;
 const LOOSE_LIFE: f64 = 2.5;
 
 /// Bring a cottage down along the cracks it is pre-fractured with: the roof gives
@@ -684,7 +690,7 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
             let toward = if kick.is_some() { fall } else { away };
             let tip = rng.range(CHIMNEY_TIP.0, CHIMNEY_TIP.1);
             (
-                toward * 1.4 - DVec3::Y * 0.4,
+                toward * CHIMNEY_THROW - DVec3::Y * 0.4,
                 DVec3::Y.cross(toward) * tip + DVec3::Y * rng.range(-0.4, 0.4),
             )
         };
@@ -790,7 +796,7 @@ fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
 /// throws it about again.
 pub fn settle_house_pieces(simulation: &mut Simulation) {
     let full = HOUSE_PIECE_LIFE + DEBRIS_CLEANUP_SECONDS;
-    for fragment in &simulation.fragments {
+    for fragment in &mut simulation.fragments {
         let Some(piece) = fragment.house_piece else {
             continue;
         };
@@ -804,7 +810,11 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
         }
         let still =
             body.linvel().length() < SETTLED_SPEED.0 && body.angvel().length() < SETTLED_SPEED.1;
-        if still && age < TOPPLE_WINDOW.1 && piece.part != HousePart::Chimney {
+        if still
+            && age < TOPPLE_WINDOW.1
+            && fragment.house_topples < TOPPLES
+            && piece.part != HousePart::Chimney
+        {
             let house = fragment.house_id.and_then(|id| {
                 simulation
                     .covers
@@ -829,9 +839,21 @@ pub fn settle_house_pieces(simulation: &mut Simulation) {
                     } else {
                         -flat
                     };
+                    // Later tries alternate sides, harder, in case it was blocked;
+                    // past them it is left as it rests.
+                    let fall = if fragment.house_topples % 2 == 0 {
+                        fall
+                    } else {
+                        -fall
+                    };
+                    let effort = 1.0 + f32::from(fragment.house_topples / 2);
+                    fragment.house_topples += 1;
                     let axis = Vector::Y.cross(fall);
-                    body.set_angvel(axis * TOPPLE_SPIN, true);
-                    body.set_linvel(fall * TOPPLE_SHOVE, true);
+                    body.set_angvel(axis * TOPPLE_SPIN * effort, true);
+                    body.set_linvel(
+                        (fall * TOPPLE_SHOVE + Vector::Y * TOPPLE_LIFT) * effort,
+                        true,
+                    );
                     continue;
                 }
             }

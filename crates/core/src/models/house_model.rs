@@ -113,9 +113,9 @@ const PATH_STONES: usize = 4;
 /// how far they cover the plaster's own dull colour.
 const WALLPAPERS: [u32; 4] = [0x9fb48c, 0x8fb0be, 0xc89a8c, 0xd2bd7c];
 const WALLPAPER_TINT: f64 = 0.75;
-/// Foundation shrubs: their greens, how many leafy lumps each is and how big
-/// (m) the main lump is.
-const SHRUB_LEAVES: [u32; 3] = [0x2e5532, LEAVES, LEAVES_LIGHT];
+/// Foundation shrubs: their greens (the window boxes', so they share those
+/// draws), how many leafy lumps each is and how big (m) the main lump is.
+const SHRUB_LEAVES: [u32; 2] = [LEAVES, LEAVES_LIGHT];
 const SHRUB_LUMPS: usize = 3;
 const SHRUB_SIZE: (f64, f64) = (0.26, 0.36);
 /// Weathering up a standing cottage's walls: how dark the siding is at the plinth

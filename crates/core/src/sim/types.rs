@@ -656,6 +656,8 @@ pub struct Fragment {
     /// cover id (its model is built from the cover).
     pub house_piece: Option<HousePiece>,
     pub house_id: Option<u32>,
+    /// How often a cottage shard left standing on edge has been tipped over.
+    pub house_topples: u8,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,

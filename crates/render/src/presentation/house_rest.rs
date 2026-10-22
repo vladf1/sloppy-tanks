@@ -28,8 +28,8 @@ const REMAINS_LIFT: f32 = 0.015;
 
 /// Seconds a shard keeps still before it joins its cottage's merge, and the least
 /// time between rebuilding a merge to take in more.
-const STILL_SECONDS: f64 = 0.35;
-const REBUILD_GAP: f64 = 0.6;
+const STILL_SECONDS: f64 = 0.12;
+const REBUILD_GAP: f64 = 0.4;
 /// Movement (m, and quaternion difference) a still shard may show between frames.
 const STILL_DISTANCE: f32 = 0.004;
 const STILL_TURN: f32 = 0.004;
