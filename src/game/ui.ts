@@ -328,12 +328,23 @@ export class UI {
       }
     }
   }
+  /** Seats the hit marker on the reticle. It follows the reticle while it shows, so a
+   * marker never hangs where the aim was when the shell landed. */
+  private placeHitMarker(marker: HTMLElement): void {
+    const aim = this.aimPoint();
+    const left = aim ? `${(((aim.x + 1) / 2) * 100).toFixed(2)}%` : "50%";
+    const top = aim ? `${(((1 - aim.y) / 2) * 100).toFixed(2)}%` : "50%";
+    if (marker.style.left !== left) {
+      marker.style.left = left;
+    }
+    if (marker.style.top !== top) {
+      marker.style.top = top;
+    }
+  }
   /** The hit marker at the player's aim: four ticks that snap out, red on a kill. */
   private showHitMarker(kill: boolean): void {
     const marker = this.hud.querySelector<HTMLElement>("#hit-marker")!;
-    const aim = this.aimPoint();
-    marker.style.left = aim ? `${((aim.x + 1) / 2) * 100}%` : "50%";
-    marker.style.top = aim ? `${((1 - aim.y) / 2) * 100}%` : "50%";
+    this.placeHitMarker(marker);
     marker.classList.remove("visible");
     void marker.offsetWidth;
     marker.classList.toggle("kill", kill);
@@ -366,8 +377,11 @@ export class UI {
     // A wrecked tank aims at nothing: its hit marker and kill banner go with it, and the
     // tank panel steps aside for the respawn card.
     this.hud.classList.toggle("dead", dead && match.phase !== "ready");
+    const hitMarker = this.hud.querySelector<HTMLElement>("#hit-marker")!;
     if (this.hitTime <= 0 || !playing || dead) {
-      this.hud.querySelector("#hit-marker")!.classList.remove("visible");
+      hitMarker.classList.remove("visible");
+    } else {
+      this.placeHitMarker(hitMarker);
     }
     if (this.killBannerTime <= 0 || !playing || dead) {
       this.hud.querySelector("#kill-banner")!.classList.remove("visible");

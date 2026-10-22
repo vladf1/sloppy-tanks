@@ -49,17 +49,20 @@ const HUB_BOLTS: u32 = 5;
 
 const HEADLIGHT: u32 = 0xd9e6df;
 /// Rubber pads and skirt edges: near black.
-const RUBBER: u32 = 0x262728;
-/// Road wheel tyres: a charcoal sidewall and a lighter, scuffed tread band, so
-/// each wheel reads as a rubber-tyred wheel against the dark of the track.
-const TYRE_SIDEWALL: u32 = 0x323438;
-const TYRE_TREAD: u32 = 0x47484b;
-/// Track shoes and their end connectors and guide horns: worn steel, the
-/// connectors and horn faces polished bright where the wheels and ground rub.
-const TRACK_STEEL: u32 = 0x4f4e4a;
-const TRACK_CONNECTOR: u32 = 0x828079;
-/// Road wheel discs wear the team paint, as on the real vehicles; a steel hub
-/// cap and bright bolt heads sit in their centre.
+const RUBBER: u32 = 0x1c1d1e;
+/// Road wheel tyres: a black rubber sidewall and a barely lighter, scuffed tread
+/// band, so each wheel reads as a rubber-tyred wheel round its steel disc.
+const TYRE_SIDEWALL: u32 = 0x1f2021;
+const TYRE_TREAD: u32 = 0x2b2c2d;
+/// Track shoes and their end connectors and guide horns: dark worn steel, the
+/// connectors and horn faces a little brighter where the wheels and ground rub,
+/// never bright enough to read as white teeth.
+const TRACK_STEEL: u32 = 0x3d3c39;
+const TRACK_CONNECTOR: u32 = 0x4b4a46;
+/// Road wheel discs: dark gun-grey steel rather than the team paint, so the
+/// running gear reads as rubber and steel beneath the painted hull; a lighter
+/// hub cap and bright bolt heads sit in their centre.
+const WHEEL_STEEL: u32 = 0x464a49;
 const HUB_STEEL: u32 = 0x6c6c66;
 const HUB_BOLT: u32 = 0x8d8a82;
 /// The sprocket and return rollers: bare dark steel.
@@ -134,7 +137,9 @@ fn gear_layout(c: &Chassis) -> GearLayout {
             track_width: 0.42,
             link_thickness: 0.065,
             link_pitch: 0.22,
-            road_wheels: 6,
+            // Seven stations of the biggest wheels: the heavy's running gear reads
+            // as long and heavy as its hull.
+            road_wheels: 7,
             wheel_radius: 0.235,
             wheel_span: [-1.6, 1.45],
             sprocket_radius: 0.24,
@@ -188,7 +193,7 @@ pub(super) fn running_gear(hull: &mut Node, track_group: &mut Node, c: &Chassis,
     // The outer face of every wheel sits just inside the end connectors.
     let wheel_face = track_x + side * (gear.track_width / 2.0 - link.connector_width - 0.004);
     let wheel_width = gear.track_width - link.connector_width - 0.03;
-    let wheel = wheel_mesh(gear.wheel_radius, wheel_width, c.color);
+    let wheel = wheel_mesh(gear.wheel_radius, wheel_width, WHEEL_STEEL);
     let steel = material(SPROCKET_STEEL, 0.55, 0.45);
     let rubber = track_material();
     let wheel_y = wheel_height(&gear);
@@ -592,7 +597,10 @@ fn link_mesh(link: &LinkShape, detail: LinkDetail) -> Arc<Mesh> {
             RUBBER,
             TRACK_STEEL,
         ];
-        for i in 0..profile.len() {
+        // A ground-run link's running surface faces the wheels and the skirt,
+        // which hide it from every camera; links wrapping a hub show theirs.
+        let first = usize::from(detail == LinkDetail::Ground);
+        for i in first..profile.len() {
             let (a, c) = (profile[i], profile[(i + 1) % profile.len()]);
             let p = |x: f64, q: DVec2| DVec3::new(x, q.y, q.x);
             b.quad([p(x0, a), p(x0, c), p(x1, c), p(x1, a)], colors[i]);
@@ -668,7 +676,7 @@ static WHEELS: Cache<([u64; 2], u32), Mesh> = Cache::new();
 
 /// A twin road wheel about the x axis with its outer face at x = 0 and the pair
 /// reaching back to -`width`, vertex-colored and drawn with the track: a raised
-/// steel hub cap ringed by bright bolts, a web in the team's `paint` dished in
+/// steel hub cap ringed by bright bolts, a web in `paint` dished in
 /// toward the rim, and a rubber tyre whose sidewall rolls over into a lighter,
 /// scuffed tread band.
 fn wheel_mesh(radius: f64, width: f64, paint: u32) -> Arc<Mesh> {
@@ -795,11 +803,12 @@ const UNCOLORED: u32 = 0xffffff;
 // Fender, skirts, headlight.
 
 /// The track guard along the hull edge, spanning the full track reach. Its outer
-/// edge is the hull's widest point.
+/// edge is the hull's widest point. It wears the deep trim, so from overhead the
+/// team-painted hull and turret sit between two dark strips over the tracks.
 fn fender(hull: &mut Node, c: &Chassis, reach: f64, side: f64) {
     let x = side * (c.overall_width / 2.0 - FENDER_WIDTH / 2.0);
     let y = c.deck + 0.035 - FENDER_THICKNESS / 2.0;
-    let plate = box_part(FENDER_WIDTH, FENDER_THICKNESS, reach * 2.0, c.color, 0.0);
+    let plate = box_part(FENDER_WIDTH, FENDER_THICKNESS, reach * 2.0, c.shade, 0.0);
     put(hull, plate, x, y, 0.0);
 }
 
@@ -932,7 +941,7 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
 
 /// The skirt insignia's height as a share of the skirt's, and how far it stands
 /// proud of the panel (still inside the fender edge).
-const INSIGNIA_HEIGHT: f64 = 0.62;
+const INSIGNIA_HEIGHT: f64 = 0.78;
 const INSIGNIA_PROUD: f64 = 0.003;
 
 static INSIGNIA: Cache<(Team, [u64; 2]), Mesh> = Cache::new();
@@ -1351,9 +1360,10 @@ mod tests {
     use crate::scene::Node;
 
     /// Triangles of every shown part but the recognition panels and turret bands,
-    /// which burn away on wrecks, and the embers wrecks add in their hatches.
+    /// which burn away on wrecks, the embers wrecks add in their hatches, and the
+    /// live vehicle's contact shadow.
     fn triangles(node: &Node) -> usize {
-        if !node.visible {
+        if !node.visible || node.name == "contact-shadow" {
             return 0;
         }
         let own = node.drawable.as_ref().map_or(0, |drawable| {
