@@ -29,7 +29,7 @@ use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
 use sloppy_core::sim::{
     CoverKind, FragmentShape, MatchPhase, PickupKind, RenderState, SimEvent, SimEventType, Team,
-    VehicleKind, WreckPart,
+    VehicleKind, Weapon, WreckPart,
 };
 
 use super::PRESENTATION_EFFECTS;
@@ -38,14 +38,16 @@ use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::hud::{health_bar_state, protection_meters, spawn_pulse};
 use super::model_catalog::{self, CoverModel, SceneryMover, SceneryWater, TreeParts, cover_key};
 use super::models::{self as own, joint};
-use super::posing::{JointBasis, dvec3, euler_xyz, euler_yxz, joint_world, lerp, quat, vec3};
+use super::posing::{JointBasis, dvec3, euler_yxz, joint_world, lerp, quat, vec3};
 use super::preparation::Preparation;
-use super::suspension::TankSuspension;
+use super::suspension::{MotionInput, TankMotion};
 use super::theme::{
     SHADOW_BIAS, SHADOW_MAP_SIZE, SHADOW_NORMAL_BIAS, SHADOW_RECEIVER_FLOOR, Theme, ThemeLook,
     theme_look,
 };
-use super::view_settings::{BAR_HEIGHT, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT, RETICLE_HEIGHT};
+use super::view_settings::{
+    BAR_HEIGHT, CAMERA_FEEL, FEEDBACK, FIRST_PERSON, PLAYER_BAR_HEIGHT, RETICLE_HEIGHT, TANK_FEEL,
+};
 use crate::color::hex_to_linear;
 use crate::effects::leaves::Crown as LeafCrown;
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
@@ -57,15 +59,10 @@ use crate::gpu::{
 
 mod inspect;
 
-/// Hit shake: render-only recoil when a tank takes damage.
-const HIT_SHAKE: [f64; 4] = [0.12, 0.09, 0.035, 0.045];
 /// A dead tank's model hides; the live model rides this far below the body.
 const TANK_MODEL_DROP: f64 = 0.4;
-/// Barrel travel at full recoil.
-const RECOIL_TRAVEL: f64 = 0.2;
-/// Track tread scroll: metres of scroll per metre driven, and its wrap length.
-const TRACK_SCROLL: f64 = 0.4;
-const TRACK_PERIOD: f64 = 0.25;
+/// A rocket shot shakes the shooter's camera this much more than a shell.
+const ROCKET_CAMERA_SCALE: f64 = 1.6;
 /// Pickup gems bob and spin above their pads.
 const GEM_HEIGHT: f64 = 1.2;
 const GEM_BOB: f64 = 0.18;
@@ -316,7 +313,9 @@ struct TankView {
     team: Team,
     instance: InstanceId,
     bar: InstanceId,
-    suspension: Option<TankSuspension>,
+    /// Drawn-pose motion (suspension, hit shove and flash, treads); `None` while
+    /// destroyed, so a respawn starts level.
+    motion: Option<TankMotion>,
     /// Joint overrides this frame (for the first-person eye).
     pose: Vec<Option<Mat4>>,
     world: Mat4,
@@ -526,7 +525,11 @@ pub struct Presentation {
     pad_decks: SpawnPadDecks,
     pickup_effects: VecDeque<PickupEffect>,
     branches: VecDeque<FallingBranch>,
-    hit_until: HashMap<u32, f64>,
+    /// Seconds of kill hit-stop still to play; single player's loop slows its
+    /// clock while it lasts.
+    pub hit_stop: f64,
+    /// The followed tank, for events that shake the camera.
+    viewer_id: Option<u32>,
     hit_confirm_until: f64,
     spawn_cue: f64,
     player_was_alive: bool,
@@ -595,7 +598,8 @@ impl Presentation {
             pad_decks: SpawnPadDecks::default(),
             pickup_effects: VecDeque::new(),
             branches: VecDeque::new(),
-            hit_until: HashMap::new(),
+            hit_stop: 0.0,
+            viewer_id: None,
             hit_confirm_until: 0.0,
             spawn_cue: 0.0,
             player_was_alive: false,
@@ -799,7 +803,8 @@ impl Presentation {
         self.sample_models.clear();
         self.renderer.reset_round();
         self.apply_theme(state);
-        self.hit_until.clear();
+        self.hit_stop = 0.0;
+        self.rig.settle();
         self.hit_confirm_until = 0.0;
         self.player_was_alive = false;
         self.effects.reset(&mut self.renderer);
@@ -965,7 +970,7 @@ impl Presentation {
                 team: tank.team,
                 instance,
                 bar,
-                suspension: None,
+                motion: None,
                 pose: vec![None; joints],
                 world: Mat4::IDENTITY,
             },
@@ -1258,20 +1263,79 @@ impl Presentation {
         if player_hit {
             self.hit_confirm_until = self.time + FEEDBACK.hit_confirmation_seconds;
         }
-        if matches!(event.kind, SimEventType::Death | SimEventType::Respawn)
-            && let Some(id) = event.id
-        {
-            self.hit_until.remove(&id);
-        }
-        if event.kind == SimEventType::Hurt
-            && let Some(id) = event.id.filter(|_| event.size.unwrap_or(0.0) > 0.0)
-        {
-            self.hit_until
-                .insert(id, self.time + FEEDBACK.recoil_seconds);
-        }
+        self.feel_event(event, player_hit);
         if matches!(event.kind, SimEventType::Pickup | SimEventType::Promotion) {
             self.add_pickup_effect(event);
         }
+    }
+
+    /// Weight for the battle's knocks: a shot rocks its tank back, a hit shoves
+    /// and flashes its victim, and the viewer's camera feels its own shots, hits
+    /// and every blast by distance. Destroying an enemy holds the action a moment.
+    fn feel_event(&mut self, event: &SimEvent, player_hit: bool) {
+        let viewer = event.id.is_some() && event.id == self.viewer_id;
+        match event.kind {
+            SimEventType::Shot => {
+                let rocket = event.weapon == Some(Weapon::Rocket);
+                if let Some(view) = event.id.and_then(|id| self.tanks.get_mut(&id)) {
+                    view.motion
+                        .get_or_insert_with(TankMotion::default)
+                        .pending_fire = if rocket {
+                        TANK_FEEL.rocket_rock
+                    } else {
+                        TANK_FEEL.fire_rock
+                    };
+                }
+                if viewer {
+                    let scale = if rocket { ROCKET_CAMERA_SCALE } else { 1.0 };
+                    let follow = self.rig.follow;
+                    self.rig
+                        .fired(event.x - follow.x, event.z - follow.z, scale);
+                }
+            }
+            SimEventType::Hurt => {
+                let damage = event.size.unwrap_or(0.0);
+                let origin = event
+                    .damage_source
+                    .map(|source| (source.origin.x, source.origin.z));
+                if let Some(view) = event.id.and_then(|id| self.tanks.get_mut(&id)) {
+                    view.motion.get_or_insert_with(TankMotion::default).hit(
+                        (event.x, event.z),
+                        origin,
+                        damage,
+                    );
+                }
+                if viewer {
+                    let (dx, dz) = origin.map_or((0.0, 0.0), |(x, z)| (event.x - x, event.z - z));
+                    self.rig.hurt(dx, dz, damage);
+                }
+            }
+            SimEventType::Explosion => {
+                self.rig.blast(event.x, event.z, event.size.unwrap_or(2.0));
+            }
+            SimEventType::Death => {
+                self.rig.blast(event.x, event.z, event.size.unwrap_or(3.0));
+                if viewer {
+                    self.rig.shake.add_trauma(CAMERA_FEEL.death_trauma);
+                }
+                if player_hit {
+                    self.rig.shake.add_trauma(CAMERA_FEEL.kill_trauma);
+                    self.hit_stop = FEEDBACK.hit_stop_seconds;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Scale a frame's real time by the kill hit-stop, counting it down. Only the
+    /// single-player loop calls this: a room's clock belongs to the server.
+    pub fn hit_stop_time(&mut self, dt: f64) -> f64 {
+        if self.hit_stop <= 0.0 {
+            return dt;
+        }
+        let held = dt.min(self.hit_stop);
+        self.hit_stop -= held;
+        dt - held * (1.0 - FEEDBACK.hit_stop_time_scale)
     }
 
     /// A shell hit shudders a tree's crown and shakes leaves loose; a felled tree
@@ -1476,6 +1540,7 @@ impl Presentation {
                 alive: tank.alive,
                 previous: DVec3::new(tank.previous.x, 0.0, tank.previous.z),
                 position: dvec3(tank.position),
+                velocity: DVec3::new(tank.velocity.x, 0.0, tank.velocity.z),
                 aim: tank.aim,
             },
             None => ViewerPose::default(),
@@ -1484,6 +1549,7 @@ impl Presentation {
 
     fn update_camera(&mut self, state: &RenderState, alpha: f64, dt: f64, overview: bool) {
         let has_model = self.tanks.contains_key(&state.viewer_id);
+        self.viewer_id = Some(state.viewer_id);
         self.rig
             .update(&Self::viewer_pose(state), alpha, dt, overview, has_model);
     }
@@ -1611,44 +1677,37 @@ impl Presentation {
                 ),
             );
             if !tank.alive {
-                self.hit_until.remove(&tank.id);
-                view.suspension = None;
+                view.motion = None;
                 view.world = Mat4::ZERO;
                 continue;
             }
             let position = tank.position;
-            let mut x = lerp(tank.previous.x, position.x, alpha);
-            let y = position.y - TANK_MODEL_DROP;
-            let mut z = lerp(tank.previous.z, position.z, alpha);
-            let hit_remaining =
-                (self.hit_until.get(&tank.id).copied().unwrap_or(0.0) - self.time).max(0.0);
-            let hit_fade = hit_remaining / FEEDBACK.recoil_seconds;
-            let hit_age = FEEDBACK.recoil_seconds - hit_remaining;
-            // Render-only recoil: physics, steering and the camera keep the true pose.
-            x += (hit_age * 70.0).cos() * HIT_SHAKE[0] * hit_fade;
-            z += (hit_age * 55.0).sin() * HIT_SHAKE[1] * hit_fade;
-            let tilt_x = (hit_age * 60.0).sin() * HIT_SHAKE[2] * hit_fade;
-            let tilt_z = (hit_age * 65.0).cos() * HIT_SHAKE[3] * hit_fade;
-            if hit_remaining == 0.0 {
-                self.hit_until.remove(&tank.id);
-            }
-            let velocity = tank.velocity;
-            let suspension = view.suspension.get_or_insert_with(TankSuspension::default);
-            suspension.update(
-                velocity.x,
-                velocity.z,
-                tank.heading,
-                state.elapsed,
+            let aim = if seated { look_yaw } else { tank.aim };
+            let motion = view.motion.get_or_insert_with(TankMotion::default);
+            motion.update(
+                &MotionInput {
+                    vx: tank.velocity.x,
+                    vz: tank.velocity.z,
+                    heading: tank.heading,
+                    aim,
+                    time: state.elapsed,
+                },
                 if playing { dt } else { 0.0 },
             );
+            // Render-only weight: physics, steering and the camera keep the true pose.
+            let x = lerp(tank.previous.x, position.x, alpha) + motion.shove.x;
+            let y = position.y - TANK_MODEL_DROP;
+            let z = lerp(tank.previous.z, position.z, alpha) + motion.shove.z;
+            let suspension = motion.suspension;
             let scale = vehicle(tank.kind).scale as f32;
             let world = Mat4::from_scale_rotation_translation(
                 Vec3::splat(scale),
-                euler_xyz(tilt_x as f32, 0.0, tilt_z as f32),
+                Quat::IDENTITY,
                 Vec3::new(x as f32, y as f32, z as f32),
             );
             view.world = world;
             renderer.set_transform(view.instance, world);
+            renderer.set_tint(view.instance, motion.tint());
             // The turret rides the hull's tilted ring, then turns to its own aim;
             // the barrel inherits the tilt and keeps its recoil.
             let (hull, turret, barrel, track) =
@@ -1658,20 +1717,26 @@ impl Presentation {
                 tank.heading as f32,
                 suspension.roll.angle as f32,
             );
-            let aim = if seated { look_yaw } else { tank.aim };
             let turret_rotation =
                 hull_rotation * Quat::from_rotation_y((aim - tank.heading) as f32);
             let hull_pose = hull.with_rotation(hull_rotation);
             let turret_pose = turret.with_rotation(turret_rotation);
-            let barrel_pose = barrel.with_position(Vec3::new(
-                barrel.position.x,
-                barrel.position.y,
-                -(tank.recoil * RECOIL_TRAVEL) as f32,
-            ));
+            // The gun slams back, holds a beat and runs out again, its muzzle
+            // climbing with the kick.
+            let recoil = smoothstep(tank.recoil, 0.0, 1.0);
+            let barrel_pose = barrel.pose(
+                Vec3::new(
+                    barrel.position.x,
+                    barrel.position.y,
+                    barrel.position.z - (recoil * TANK_FEEL.recoil_travel) as f32,
+                ),
+                barrel.rotation * Quat::from_rotation_x(-(recoil * TANK_FEEL.recoil_climb) as f32),
+                barrel.scale,
+            );
             let scroll = if tank.kind == VehicleKind::Humvee {
                 0.0
             } else {
-                (self.time * velocity.x.hypot(velocity.z) * TRACK_SCROLL) % TRACK_PERIOD
+                motion.tread_scroll()
             };
             let track_pose =
                 track.with_position(Vec3::new(track.position.x, track.position.y, scroll as f32));

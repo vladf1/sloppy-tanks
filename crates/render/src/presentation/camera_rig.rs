@@ -3,6 +3,11 @@
 //! view, and first person with its flight between the overhead pose and the
 //! turret eye. Also the picking that turns the pointer into an aim point, the
 //! wreck landing bounds, and the listener direction for stereo panning.
+//!
+//! The follow camera has weight: its focus rides a critically damped spring that
+//! leads the tank toward its aim and travel, and it eases back at speed. Shots,
+//! hits and blasts shake and kick only the drawn camera; the overhead pose that
+//! aiming and wreck landing read stays steady.
 
 use glam::{DVec3, Mat3, Mat4, Quat, Vec2, Vec3};
 use sloppy_core::geometry::math::smoothstep;
@@ -13,12 +18,20 @@ use sloppy_core::sim::simulation::WreckView;
 
 use super::first_person::{FirstPersonLook, seat_flight, seat_turn};
 use super::posing::{euler_yxz, lerp};
-use super::view_settings::{AIM_PLANE_HEIGHT, CAMERA, FIRST_PERSON, first_person_eye};
+use super::view_settings::{AIM_PLANE_HEIGHT, CAMERA, CAMERA_FEEL, FIRST_PERSON, first_person_eye};
 use crate::camera::PerspectiveCamera;
 
-/// Overhead camera offset per metre of zoom: up and back toward the player.
-const OVERHEAD_HEIGHT: f64 = 0.93;
-const OVERHEAD_BACK: f64 = 0.72;
+/// Overhead camera offset per metre of zoom: up and back toward the player, at
+/// about 47 degrees, low enough to show the sides of tanks and houses.
+const OVERHEAD_HEIGHT: f64 = 0.76;
+const OVERHEAD_BACK: f64 = 0.7;
+/// The overview looks down more steeply, to frame the whole arena. Wrecks land
+/// inside the same steady framing centred on the tank (`landing`), so the
+/// camera's lead, lag and shake never reach the simulation.
+const OVERVIEW_HEIGHT: f64 = 0.93;
+const OVERVIEW_BACK: f64 = 0.72;
+/// Independent shake channels sample the noise this far apart in time.
+const SHAKE_CHANNEL_SPACING: f64 = 37.1;
 /// The followed point sits this high on the tank.
 const FOLLOW_HEIGHT: f64 = 0.7;
 /// The overview frames the whole arena from this far.
@@ -35,16 +48,98 @@ pub struct ViewerPose {
     pub previous: DVec3,
     /// Current body position.
     pub position: DVec3,
+    /// Planar body velocity (m/s).
+    pub velocity: DVec3,
     pub aim: f64,
+}
+
+/// Trauma shake plus a sprung kick offset, applied to the drawn camera only.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CameraShake {
+    /// 0..1; the shake grows with its square.
+    pub trauma: f64,
+    clock: f64,
+    offset: DVec3,
+    velocity: DVec3,
+}
+
+/// Smooth noise in -1..1: two incommensurate sines.
+fn shake_noise(t: f64) -> f64 {
+    0.62 * (t * std::f64::consts::TAU).sin() + 0.38 * (t * 2.31 * std::f64::consts::TAU + 1.3).sin()
+}
+
+impl CameraShake {
+    pub fn add_trauma(&mut self, amount: f64) {
+        self.trauma = (self.trauma + amount.max(0.0)).min(1.0);
+    }
+
+    /// Push the camera with velocity `kick` (m/s, world).
+    pub fn kick(&mut self, kick: DVec3) {
+        self.velocity += kick;
+    }
+
+    fn step(&mut self, dt: f64) {
+        self.trauma = (self.trauma - CAMERA_FEEL.trauma_decay * dt).max(0.0);
+        self.clock += dt;
+        let (frequency, damping) = (CAMERA_FEEL.kick_frequency, CAMERA_FEEL.kick_damping);
+        let mut remaining = dt.min(0.1);
+        while remaining > 0.0 {
+            let h = remaining.min(1.0 / 240.0);
+            let pull =
+                -frequency * frequency * self.offset - 2.0 * damping * frequency * self.velocity;
+            self.velocity += pull * h;
+            self.offset += self.velocity * h;
+            remaining -= h;
+        }
+        let max = CAMERA_FEEL.max_kick_offset;
+        if self.offset.length() > max {
+            self.offset = self.offset.normalize() * max;
+        }
+    }
+
+    /// The shake's view-space rotation (yaw, pitch, roll) and world offset, scaled.
+    fn sample(&self, scale: f64) -> (Quat, Vec3) {
+        let shake = self.trauma * self.trauma * scale;
+        let t = self.clock * CAMERA_FEEL.shake_frequency;
+        let [yaw, pitch, roll] = CAMERA_FEEL.shake_angles;
+        let channel = |index: f64| shake_noise(t + index * SHAKE_CHANNEL_SPACING);
+        let rotation = Quat::from_rotation_y((yaw * shake * channel(0.0)) as f32)
+            * Quat::from_rotation_x((pitch * shake * channel(1.0)) as f32)
+            * Quat::from_rotation_z((roll * shake * channel(2.0)) as f32);
+        (rotation, (self.offset * scale).as_vec3())
+    }
+}
+
+/// One step of an exact critically damped spring toward `target`.
+fn follow_spring(position: &mut DVec3, velocity: &mut DVec3, target: DVec3, omega: f64, dt: f64) {
+    let offset = *position - target;
+    let impulse = (*velocity + offset * omega) * dt;
+    let decay = (-omega * dt).exp();
+    *position = target + (offset + impulse) * decay;
+    *velocity = (*velocity - impulse * omega) * decay;
 }
 
 pub struct CameraRig {
     pub zoom: f64,
     /// The interpolated followed point (tank position at `FOLLOW_HEIGHT`).
     pub follow: DVec3,
+    /// What the overhead camera looks at: the followed point with its lead, on a
+    /// spring (`None` until the first follow).
+    focus: Option<DVec3>,
+    focus_velocity: DVec3,
+    /// The eased speed fraction (0..1) that pulls the camera back.
+    speed_zoom: f64,
+    pub shake: CameraShake,
+    /// This frame's shake, applied wherever the drawn camera is placed.
+    shake_rotation: Quat,
+    shake_offset: Vec3,
+    /// The hull tilt the seated view rides.
+    seat_tilt: Quat,
     /// The overhead pose, kept in first person too: aiming and wreck landing
     /// zones follow it.
     pub overhead: PerspectiveCamera,
+    /// The steady tank-centred frame the wreck landing bounds are measured in.
+    landing: PerspectiveCamera,
     /// The drawn camera.
     pub camera: PerspectiveCamera,
     pub first_person: FirstPersonLook,
@@ -83,7 +178,15 @@ impl Default for CameraRig {
         Self {
             zoom: CAMERA.default_zoom,
             follow: DVec3::ZERO,
+            focus: None,
+            focus_velocity: DVec3::ZERO,
+            speed_zoom: 0.0,
+            shake: CameraShake::default(),
+            shake_rotation: Quat::IDENTITY,
+            shake_offset: Vec3::ZERO,
+            seat_tilt: Quat::IDENTITY,
             overhead: camera,
+            landing: camera,
             camera,
             first_person: FirstPersonLook::default(),
             in_first_person: false,
@@ -115,6 +218,7 @@ fn look_rotation(camera: &PerspectiveCamera) -> Quat {
 impl CameraRig {
     pub fn set_aspect(&mut self, aspect: f32) {
         self.overhead.aspect = aspect;
+        self.landing.aspect = aspect;
         self.camera.aspect = aspect;
     }
 
@@ -168,9 +272,31 @@ impl CameraRig {
                 lerp(viewer.previous.z, position.z, alpha),
             )
         };
-        let zoom = if overview { OVERVIEW_ZOOM } else { self.zoom };
-        let eye = self.follow + DVec3::new(0.0, zoom * OVERHEAD_HEIGHT, zoom * OVERHEAD_BACK);
-        self.overhead.look_at(eye.as_vec3(), self.follow.as_vec3());
+        let focus = self.weighted_focus(viewer, overview, dt);
+        let zoom = if overview {
+            OVERVIEW_ZOOM
+        } else {
+            self.zoom * (1.0 + CAMERA_FEEL.speed_zoom * self.speed_zoom)
+        };
+        let (height, back) = if overview {
+            (OVERVIEW_HEIGHT, OVERVIEW_BACK)
+        } else {
+            (OVERHEAD_HEIGHT, OVERHEAD_BACK)
+        };
+        let eye = focus + DVec3::new(0.0, zoom * height, zoom * back);
+        self.overhead.look_at(eye.as_vec3(), focus.as_vec3());
+        let landing_zoom = if overview { OVERVIEW_ZOOM } else { self.zoom };
+        let landing_eye = self.follow
+            + DVec3::new(
+                0.0,
+                landing_zoom * OVERVIEW_HEIGHT,
+                landing_zoom * OVERVIEW_BACK,
+            );
+        self.landing
+            .look_at(landing_eye.as_vec3(), self.follow.as_vec3());
+        self.shake.step(dt);
+        let shake_scale = lerp(1.0, CAMERA_FEEL.first_person_shake, self.seat_blend);
+        (self.shake_rotation, self.shake_offset) = self.shake.sample(shake_scale);
         // Destroyed in first person, the player keeps the seat's view; one who
         // switches to first person while destroyed waits for the respawn.
         let seated_while_destroyed = !viewer.alive && self.held_eye.is_some();
@@ -193,11 +319,15 @@ impl CameraRig {
             0.0
         };
         self.in_first_person = self.seat_blend == 1.0;
-        self.camera.fov_y_degrees = lerp(
-            CAMERA.field_of_view,
-            FIRST_PERSON.field_of_view,
-            seat_flight(self.seat_blend),
-        ) as f32;
+        let flight = seat_flight(self.seat_blend);
+        // Speed widens a live seat's view; a destroyed one shows the plain lens.
+        let speed_fov = if viewer.alive {
+            CAMERA_FEEL.first_person_speed_fov * self.speed_zoom
+        } else {
+            0.0
+        };
+        let seated_fov = FIRST_PERSON.field_of_view + speed_fov;
+        self.camera.fov_y_degrees = lerp(CAMERA.field_of_view, seated_fov, flight) as f32;
         if self.seat_blend > 0.0 {
             // In flight the camera keeps the overhead gaze on the tank, then turns
             // to the turret. Its position arrives in `place_eye`.
@@ -237,14 +367,13 @@ impl CameraRig {
                 _ => self.orient(self.overhead.position),
             }
         } else {
-            self.camera.position = self.overhead.position;
-            self.camera.target = self.overhead.target;
-            self.camera.up = Vec3::Y;
             self.rotation = look_rotation(&self.overhead);
+            self.seat_tilt = Quat::IDENTITY;
+            self.orient(self.overhead.position);
             self.listener_right = (1.0, 0.0);
         }
         for (corner, (x, y)) in self.corners.iter_mut().zip(WRECK_PROBES) {
-            if let Some(hit) = self.overhead.pick_ground(Vec2::new(x, y), 0.0) {
+            if let Some(hit) = self.landing.pick_ground(Vec2::new(x, y), 0.0) {
                 *corner = hit;
             }
         }
@@ -257,10 +386,112 @@ impl CameraRig {
         };
     }
 
+    /// The overhead focus: the interpolated tank, led toward its aim and travel,
+    /// on a spring. A far jump snaps.
+    fn weighted_focus(&mut self, viewer: &ViewerPose, overview: bool, dt: f64) -> DVec3 {
+        let speed = viewer.velocity.x.hypot(viewer.velocity.z);
+        let speed_target = if viewer.alive && !overview {
+            (speed / CAMERA_FEEL.full_speed).min(1.0)
+        } else {
+            0.0
+        };
+        self.speed_zoom +=
+            (speed_target - self.speed_zoom) * (1.0 - (-CAMERA_FEEL.speed_zoom_rate * dt).exp());
+        // The overview leaves the spring where it was, so a glance at the arena
+        // returns to the same framing (or snaps when the tank moved far meanwhile).
+        if overview {
+            return self.follow;
+        }
+        let omega = CAMERA_FEEL.follow_frequency;
+        let mut target = self.follow;
+        if viewer.alive {
+            // The view leans toward the aim in proportion to its reach: a pointer
+            // near the tank leaves it centred. A fraction below one keeps the lead
+            // from chasing the pointer it moves.
+            let aim = DVec3::new(viewer.aim.sin(), 0.0, viewer.aim.cos());
+            let reach = f64::from(self.aim_point.x - self.follow.x as f32)
+                .hypot(f64::from(self.aim_point.z - self.follow.z as f32));
+            let lead = (reach * CAMERA_FEEL.aim_look_ahead)
+                .min(CAMERA_FEEL.max_aim_look_ahead * self.zoom);
+            let travel = DVec3::new(viewer.velocity.x, 0.0, viewer.velocity.z);
+            let ahead = travel * CAMERA_FEEL.travel_look_ahead_seconds;
+            let ahead = ahead.clamp_length_max(CAMERA_FEEL.max_travel_look_ahead);
+            // The spring trails a steady target by 2v/ω; leading by as much keeps a
+            // cruising tank centred while starts, stops and turns carry weight.
+            target += aim * lead + ahead + travel * (2.0 / omega);
+        }
+        let focus = match self.focus {
+            Some(focus) if focus.distance(target) < CAMERA_FEEL.snap_distance => {
+                let mut focus = focus;
+                follow_spring(&mut focus, &mut self.focus_velocity, target, omega, dt);
+                focus
+            }
+            _ => {
+                self.focus_velocity = DVec3::ZERO;
+                target
+            }
+        };
+        self.focus = Some(focus);
+        focus
+    }
+
+    /// Place the drawn camera at `position` facing `rotation`, with this frame's
+    /// shake and, when seated, the hull's tilt.
     fn orient(&mut self, position: Vec3) {
-        self.camera.position = position;
-        self.camera.target = position + self.rotation * Vec3::NEG_Z;
-        self.camera.up = self.rotation * Vec3::Y;
+        let rotation = self.seat_tilt * self.rotation * self.shake_rotation;
+        self.camera.position = position + self.shake_offset;
+        self.camera.target = self.camera.position + rotation * Vec3::NEG_Z;
+        self.camera.up = rotation * Vec3::Y;
+    }
+
+    /// A new round: the next follow snaps to the tank, with no shake left over.
+    pub fn settle(&mut self) {
+        self.focus = None;
+        self.focus_velocity = DVec3::ZERO;
+        self.speed_zoom = 0.0;
+        self.shake = CameraShake::default();
+    }
+
+    /// The viewer fired toward world direction `(dx, dz)`; rockets pass `scale` > 1.
+    pub fn fired(&mut self, dx: f64, dz: f64, scale: f64) {
+        let length = dx.hypot(dz).max(1e-6);
+        self.shake.add_trauma(CAMERA_FEEL.fire_trauma * scale);
+        let kick = CAMERA_FEEL.fire_kick * scale / length;
+        self.shake.kick(DVec3::new(-dx * kick, 0.0, -dz * kick));
+    }
+
+    /// The viewer took `damage`, pushed along world `(dx, dz)` (zero when unknown).
+    pub fn hurt(&mut self, dx: f64, dz: f64, damage: f64) {
+        self.shake.add_trauma(
+            (damage * CAMERA_FEEL.hurt_trauma_per_damage).min(CAMERA_FEEL.max_hurt_trauma),
+        );
+        let length = dx.hypot(dz);
+        if length > 1e-6 {
+            let kick = CAMERA_FEEL.hurt_kick / length;
+            self.shake.kick(DVec3::new(dx * kick, 0.0, dz * kick));
+        }
+    }
+
+    /// A blast of `radius` at `(x, z)`: trauma and a kick down and away, fading
+    /// with its distance from the followed point.
+    pub fn blast(&mut self, x: f64, z: f64, radius: f64) {
+        let (dx, dz) = (self.follow.x - x, self.follow.z - z);
+        let distance = dx.hypot(dz);
+        let reach = CAMERA_FEEL.blast_reach + radius;
+        if distance >= reach {
+            return;
+        }
+        let falloff = (1.0 - distance / reach).powi(2);
+        self.shake
+            .add_trauma(CAMERA_FEEL.blast_trauma_per_radius * radius * falloff);
+        let away = if distance > 1e-3 {
+            DVec3::new(dx / distance, 0.0, dz / distance)
+        } else {
+            DVec3::ZERO
+        };
+        let kick = CAMERA_FEEL.blast_kick * falloff * (radius / 3.0).min(2.0);
+        self.shake
+            .kick((away * 0.6 + DVec3::new(0.0, -1.0, 0.0)) * kick);
     }
 
     /// Seat the first-person camera in the posed turret (`turret` is its world
@@ -273,6 +504,11 @@ impl CameraRig {
         let eye = first_person_eye(kind);
         let eye = turret.transform_point3(Vec3::new(0.0, eye.height as f32, eye.forward as f32));
         let flight = seat_flight(self.seat_blend) as f32;
+        // The seated view rides part of the hull's pitch and roll: the turret's up
+        // axis leans with the suspension.
+        let up = turret.y_axis.truncate().normalize_or(Vec3::Y);
+        let share = (CAMERA_FEEL.first_person_tilt * f64::from(flight)) as f32;
+        self.seat_tilt = Quat::IDENTITY.slerp(Quat::from_rotation_arc(Vec3::Y, up), share);
         self.orient(self.overhead.position.lerp(eye, flight));
         self.held_eye = Some(eye);
         Some(eye)
@@ -333,6 +569,7 @@ mod tests {
             alive: true,
             previous: DVec3::new(x, 0.0, z),
             position: DVec3::new(x, 0.65, z),
+            velocity: DVec3::ZERO,
             aim: 0.0,
         }
     }
@@ -341,15 +578,32 @@ mod tests {
     fn overhead_camera_follows_the_tank_and_aims_at_the_pointer() {
         let mut rig = CameraRig::default();
         rig.set_aspect(1440.0 / 900.0);
+        // A pointer resting on the tank leaves the view centred on it.
+        rig.aim_point = Vec3::new(10.0, 1.0, -5.0);
         rig.update(&viewer(10.0, -5.0), 1.0, 0.0, false, true);
-        let expected = Vec3::new(10.0, 0.7 + 34.0 * 0.93, -5.0 + 34.0 * 0.72);
-        assert!(rig.camera.position.distance(expected) < 1e-4);
+        let expected = Vec3::new(
+            10.0,
+            0.7 + 34.0 * OVERHEAD_HEIGHT as f32,
+            -5.0 + 34.0 * OVERHEAD_BACK as f32,
+        );
+        assert!(
+            rig.camera.position.distance(expected) < 1e-4,
+            "{:?}",
+            rig.camera.position
+        );
         // The screen centre aims near the tank (the aim plane is above the follow point).
         let aim = rig.aim(Vec2::ZERO);
         assert!(
             (aim.x - 10.0).abs() < 1e-3 && (aim.z + 5.0).abs() < 0.5,
             "{aim:?}"
         );
+        // A far pointer leads the view toward the aim (+Z at aim 0), within its cap.
+        let mut led = CameraRig::default();
+        led.set_aspect(1440.0 / 900.0);
+        led.aim_point = Vec3::new(10.0, 1.0, 25.0);
+        led.update(&viewer(10.0, -5.0), 1.0, 0.0, false, true);
+        let lead = led.overhead.target.z - rig.overhead.target.z;
+        assert!(lead > 1.0 && f64::from(lead) <= CAMERA_FEEL.max_aim_look_ahead * 34.0 + 1e-4);
         // Screen up aims away from the camera (-Z).
         assert!(rig.aim(Vec2::new(0.0, 0.8)).z < -10.0);
         let view = rig.wreck_view;
@@ -424,6 +678,33 @@ mod tests {
         rig.update(&dead, 1.0, 0.5, false, true);
         assert!(!rig.seat_wanted);
         assert_eq!(rig.seat_blend, 0.0);
+    }
+
+    #[test]
+    fn the_focus_carries_weight_and_shake_spares_the_aim() {
+        let mut rig = CameraRig::default();
+        rig.set_aspect(1.6);
+        rig.update(&viewer(0.0, 0.0), 1.0, 0.0, false, true);
+        let start = rig.overhead.position;
+        // A sudden step trails, then settles on the new focus.
+        rig.update(&viewer(3.0, 0.0), 1.0, 1.0 / 60.0, false, true);
+        let moved = rig.overhead.position.x - start.x;
+        assert!(moved > 0.0 && moved < 3.0, "{moved}");
+        for _ in 0..120 {
+            rig.update(&viewer(3.0, 0.0), 1.0, 1.0 / 60.0, false, true);
+        }
+        assert!((rig.overhead.position.x - start.x - 3.0).abs() < 1e-3);
+        // A blast shakes the drawn camera but not the overhead pose aiming reads.
+        let steady = rig.overhead.position;
+        rig.blast(3.0, 4.0, 6.0);
+        rig.update(&viewer(3.0, 0.0), 1.0, 1.0 / 60.0, false, true);
+        assert!(rig.shake.trauma > 0.0);
+        assert!(rig.overhead.position.distance(steady) < 1e-4);
+        assert!(rig.camera.position.distance(steady) > 1e-3);
+        // Far blasts do nothing.
+        let mut calm = CameraRig::default();
+        calm.blast(200.0, 0.0, 6.0);
+        assert_eq!(calm.shake.trauma, 0.0);
     }
 
     #[test]

@@ -139,7 +139,7 @@ impl Presentation {
                     )
                 },
             );
-            let suspension = view.suspension.unwrap_or_default();
+            let suspension = view.motion.unwrap_or_default().suspension;
             inspection.tanks.push(TankInspection {
                 id,
                 shown: model.visible && view.world.w_axis.w != 0.0,
