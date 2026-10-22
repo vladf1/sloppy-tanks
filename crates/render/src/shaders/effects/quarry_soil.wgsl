@@ -136,9 +136,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, color * drift_tint, drift_sand * 0.8);
     color *= 1.0 - (cobbles.shadow * 0.5 + stones.shadow * 0.42 + grit.shadow * 0.25);
     color *= 1.0 - (cobbles.contact * 0.12 + stones.contact * 0.1 + grit.contact * 0.06);
-    color = mix(color, color * cobbles.tint, cobbles.cover);
-    color = mix(color, color * stones.tint, stones.cover);
+    // Stones are rounded and half buried: a lit crown, darkening down to the
+    // rim where they sink into the soil, never a flat coin.
+    color = mix(color, color * cobbles.tint * 0.92, cobbles.cover);
+    color = mix(color, color * stones.tint * 0.94, stones.cover);
     color = mix(color, color * grit.tint, grit.cover * 0.85);
+    color *= 1.0 - (cobbles.rim * 0.34 + stones.rim * 0.3 + grit.rim * 0.12);
     // Dried plates are paler and cooler; the cracks hold shade and moisture.
     color *= 1.0 + cracks.y * 0.12;
     color = mix(color, color * vec3f(0.55, 0.5, 0.46), cracks.x * 0.65);

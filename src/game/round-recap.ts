@@ -3,7 +3,7 @@ import type { HudState, RecapMetric, RecapState, ScoreboardRow } from "./engine-
 /** Each metric's label and, on hover, its explanation, so the report itself reads at a
  * glance. In report order; the engine computes the values, feats and personal bests. */
 const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
-  kills: { label: "Kills", hint: "Enemy tanks wrecked" },
+  kills: { label: "Kills", hint: "Enemy tanks destroyed" },
   damage: { label: "Damage dealt", hint: "Enemy hull damage, no overkill" },
   bestLife: { label: "Best spree", hint: "Most kills in a single life" },
   rank: { label: "Top rank", hint: "Peak rank across all lives" },
@@ -12,24 +12,24 @@ const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
   multikill: { label: "Best multikill", hint: "Most kills within any 5 seconds" },
   clutchKills: { label: "Clutch kills", hint: "Kills at 25% hull or less" },
   revengeKills: { label: "Revenge kills", hint: "Kills on your last killer" },
-  posthumousKills: { label: "Kills after wreck", hint: "Kills by a previous life's ordnance" },
+  posthumousKills: { label: "Kills after death", hint: "Kills by a previous life's ordnance" },
   mineKills: { label: "Mine kills", hint: "Kills from mine explosions" },
-  coverDestroyed: { label: "Cover wrecked", hint: "Destructible objects you finished" },
+  coverDestroyed: { label: "Cover destroyed", hint: "Destructible objects you finished" },
   pickups: { label: "Pickups", hint: "Ammo and power-ups collected" },
 };
 /** The hero tile and the tiles beside it; peak rank shows on the hero tile with the
  * tank, and the rest of the metrics list below only when they happened. */
 const featuredMetrics: readonly RecapMetric[] = ["kills", "damage", "bestLife", "longestLife"];
 
-/** How often the viewer's tank was wrecked this round, for the report's opening line. */
+/** How often the viewer's tank was destroyed this round, for the report's opening line. */
 export function wreckLine(deaths: number): string {
   return deaths <= 0
-    ? "Never wrecked"
+    ? "Never destroyed"
     : deaths === 1
-      ? "Wrecked once"
+      ? "Destroyed once"
       : deaths === 2
-        ? "Wrecked twice"
-        : `Wrecked ${deaths} times`;
+        ? "Destroyed twice"
+        : `Destroyed ${deaths} times`;
 }
 
 /** "BLUE" as the report says it: "Blue team". */

@@ -615,8 +615,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         streak_x = dot(textureSample(extra_texture0, extra_sampler0, vec2f(p.y / 1.9, p.x / 60.0) + 0.5).rgb, APRON_LUMA);
         crack_noise = apron_noise(p / 3.1 + 13.0) + apron_noise(p * 0.9) * 0.18;
         crack_width = max(fwidth(crack_noise), 1e-4);
-        craze = min(abs(apron_noise(p * 2.3 + 5.0) - 0.5), abs(apron_noise(turned * 2.9 + 9.0) - 0.5));
-        craze_width = max(fwidth(craze), 1e-4);
+        // Only the asphalt lanes craze.
+        if mode > 0.5 {
+            craze = min(abs(apron_noise(p * 2.3 + 5.0) - 0.5), abs(apron_noise(turned * 2.9 + 9.0) - 0.5));
+            craze_width = max(fwidth(craze), 1e-4);
+        }
     }
     let slab_uv = p / APRON_SLAB;
     let cell = floor(slab_uv);
@@ -894,9 +897,15 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // Spalled corners: a chunk broken out where four slabs meet.
         let corner_cell = round(slab_uv);
         let corner_hash = apron_hash(corner_cell + vec2f(61.0, 3.0));
-        let corner_d = length((slab_uv - corner_cell) * APRON_SLAB) + (apron_noise(p * 5.0) - 0.5) * 0.12;
+        // The noise moves a break's rim at most 0.06 m, so a corner without a break,
+        // or farther than that past its rim, has none.
+        let corner_reach = length((slab_uv - corner_cell) * APRON_SLAB);
         let spall_radius = 0.08 + 0.3 * corner_hash.x;
-        let spall = (1.0 - smoothstep(spall_radius - aa, spall_radius + aa, corner_d)) * step(0.55, corner_hash.y);
+        var spall = 0.0;
+        if corner_hash.y >= 0.55 && corner_reach - 0.07 < spall_radius + aa {
+            let corner_d = corner_reach + (apron_noise(p * 5.0) - 0.5) * 0.12;
+            spall = (1.0 - smoothstep(spall_radius - aa, spall_radius + aa, corner_d)) * step(0.55, corner_hash.y);
+        }
         // Hairline shrinkage cracks across some slabs, darker where dirt fills them.
         var hairline = (1.0 - smoothstep(0.0, crack_width * 1.2 + 0.003, abs(crack_noise - 0.5)))
             * (1.0 - smoothstep(0.03, 0.09, footprint))
@@ -931,19 +940,30 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let ghost_along_x = ghost_hash.x > 0.5;
         let ghost_run = select(ghost_local.y, ghost_local.x, ghost_along_x);
         let ghost_across = select(ghost_local.x, ghost_local.y, ghost_along_x) - (ghost_hash.y - 0.5) * 6.0;
-        let ghost = (1.0 - smoothstep(0.07, 0.09, abs(ghost_across))) * step(abs(ghost_run), 1.5 + 3.0 * ghost_hash.z)
-            * step(0.62, ghost_hash.w) * smoothstep(0.3, 0.6, apron_noise(p * 1.3 + 4.0) + grain_luma * 0.2);
+        // Each layer below takes its noise only where the rest of its weight is
+        // non-zero, multiplied in the same order, so a skipped pixel keeps the zero
+        // it had.
+        let ghost_line = (1.0 - smoothstep(0.07, 0.09, abs(ghost_across))) * step(abs(ghost_run), 1.5 + 3.0 * ghost_hash.z)
+            * step(0.62, ghost_hash.w);
+        var ghost = 0.0;
+        if ghost_line != 0.0 {
+            ghost = ghost_line * smoothstep(0.3, 0.6, apron_noise(p * 1.3 + 4.0) + grain_luma * 0.2);
+        }
 
         // Old stains, weathered pale at their heart and dark at their tide line.
         let old_cell = floor(p / APRON_OLD_STAIN_CELL);
         let old_hash = apron_hash(old_cell + vec2f(71.0, 13.0));
         let old_at = (old_cell + 0.25 + 0.5 * old_hash.xy) * APRON_OLD_STAIN_CELL;
         let old_dir = vec2f(cos(old_hash.w * 6.283), sin(old_hash.w * 6.283));
-        let old_shape = apron_blotch(p, old_at, old_dir, 1.0 + 1.8 * fract(old_hash.z * 3.7), 1.4 + 2.6 * old_hash.z,
-            (apron_noise(p * 0.7 + old_hash.xy * 30.0) - 0.5) * 0.9 + (grain_luma - 1.0) * 0.15);
         let has_old = step(fract(old_hash.x * 7.3 + old_hash.y * 3.1), 0.55);
-        let old_stain = (1.0 - smoothstep(0.55, 1.0, old_shape)) * has_old;
-        let old_line = smoothstep(0.75, 0.92, old_shape) * (1.0 - smoothstep(0.92, 1.05, old_shape)) * has_old;
+        var old_stain = 0.0;
+        var old_line = 0.0;
+        if has_old != 0.0 {
+            let old_shape = apron_blotch(p, old_at, old_dir, 1.0 + 1.8 * fract(old_hash.z * 3.7), 1.4 + 2.6 * old_hash.z,
+                (apron_noise(p * 0.7 + old_hash.xy * 30.0) - 0.5) * 0.9 + (grain_luma - 1.0) * 0.15);
+            old_stain = (1.0 - smoothstep(0.55, 1.0, old_shape)) * has_old;
+            old_line = smoothstep(0.75, 0.92, old_shape) * (1.0 - smoothstep(0.92, 1.05, old_shape)) * has_old;
+        }
         // What it was: rust washed off steel, an old diesel spill or lime leached
         // out of the concrete.
         let old_kind = fract(old_hash.y * 5.3 + old_hash.w * 2.1);
@@ -1010,8 +1030,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let scuff_dir = vec2f(cos(scuff_hash.w * 6.283), sin(scuff_hash.w * 6.283));
         let scuff_span = smoothstep(0.45, 0.9, dot(scuff_rel / max(scuff_d, 1e-3), scuff_dir));
         let scuff_track = exp(-pow((scuff_d - scuff_radius) / 0.13, 2.0)) + exp(-pow((scuff_d - scuff_radius - 1.7) / 0.13, 2.0));
-        let scuff = scuff_track * scuff_span * step(0.62, fract(scuff_hash.z * 5.7))
-            * smoothstep(0.3, 0.7, apron_noise(vec2f(scuff_d * 4.0, atan2(scuff_rel.y, scuff_rel.x) * 9.0)) + grain_luma * 0.3);
+        let scuff_arc = scuff_track * scuff_span * step(0.62, fract(scuff_hash.z * 5.7));
+        var scuff = 0.0;
+        if scuff_arc != 0.0 {
+            scuff = scuff_arc
+                * smoothstep(0.3, 0.7, apron_noise(vec2f(scuff_d * 4.0, atan2(scuff_rel.y, scuff_rel.x) * 9.0)) + grain_luma * 0.3);
+        }
 
         // Fresh oil: a spill in some cells (more of them beside the containers,
         // where handlers park), dark and still wet at its core with a thin-film
@@ -1050,12 +1074,19 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let track_centre = (track_cell + 0.3 + 0.4 * track_hash.x) * APRON_TRACK_CELL;
         let track_off = abs(abs(track_across - track_centre) - (1.5 + 0.5 * track_hash.y));
         let track_path = exp(-pow(track_off / (0.3 + 0.25 * track_hash.z), 2.0));
-        let track_run_noise = apron_noise(vec2f(track_run / 13.0, track_cell * 3.1 + 0.5));
-        let tracks = track_path * smoothstep(0.3, 0.6, track_run_noise) * step(0.25, track_hash.w)
-            * (0.55 + 0.45 * smoothstep(0.7, 1.4, streak)) * smoothstep(1.0, 2.5, fixture);
+        let track_clear = smoothstep(1.0, 2.5, fixture);
+        var tracks = 0.0;
+        if track_path != 0.0 && track_hash.w >= 0.25 && track_clear != 0.0 {
+            let track_run_noise = apron_noise(vec2f(track_run / 13.0, track_cell * 3.1 + 0.5));
+            tracks = track_path * smoothstep(0.3, 0.6, track_run_noise) * step(0.25, track_hash.w)
+                * (0.55 + 0.45 * smoothstep(0.7, 1.4, streak)) * track_clear;
+        }
         // Salt bloom from the spray along the foot of the boundary wall.
-        let salt = (1.0 - smoothstep(0.0, 2.2 + mottle * 2.0, -outside - 0.8))
-            * smoothstep(0.45, 0.7, apron_noise(p * 0.9 + 17.0) + (grain_luma - 1.0) * 0.3);
+        let salt_reach = 1.0 - smoothstep(0.0, 2.2 + mottle * 2.0, -outside - 0.8);
+        var salt = 0.0;
+        if salt_reach != 0.0 {
+            salt = salt_reach * smoothstep(0.45, 0.7, apron_noise(p * 0.9 + 17.0) + (grain_luma - 1.0) * 0.3);
+        }
 
         color = material.color.rgb * f.tint.rgb * grain * tone * hue * pour * grime;
         color = mix(color, color * vec3f(1.08, 1.07, 1.03) + vec3f(0.012), ghost * 0.55);
@@ -1128,24 +1159,32 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let patch_hash = apron_hash(patch_cell + vec2f(3.0, 11.0));
         let patch_size = vec2f(2.0, 1.4) + patch_hash.zw * vec2f(3.5, 3.0);
         let patch_at = vec2f(0.6) + patch_hash.xy * (vec2f(APRON_PATCH_CELL) - patch_size - 1.2);
-        // Saw-cut square, so only a little raggedness where the tar seal ran.
-        let ragged = (apron_noise(p * 4.1 + 7.0) - 0.5) * 0.07;
-        let inside = min(
-            min(patch_local.x - patch_at.x, patch_at.x + patch_size.x - patch_local.x),
-            min(patch_local.y - patch_at.y, patch_at.y + patch_size.y - patch_local.y),
-        ) + ragged;
         let has_patch = step(0.93, patch_hash.x * 0.6 + patch_hash.w * 0.6);
-        let patched = clamp(inside / patch_aa + 0.5, 0.0, 1.0) * has_patch;
-        let seal = (1.0 - smoothstep(0.015, 0.06 + footprint, abs(inside))) * has_patch
-            * mix(0.3, 1.0, apron_noise(p * 1.1 + 3.0)) * (1.0 - smoothstep(0.05, 0.25, footprint));
+        // A cell without a patch needs neither its edge nor its seal.
+        var patched = 0.0;
+        var seal = 0.0;
+        if has_patch != 0.0 {
+            // Saw-cut square, so only a little raggedness where the tar seal ran.
+            let ragged = (apron_noise(p * 4.1 + 7.0) - 0.5) * 0.07;
+            let inside = min(
+                min(patch_local.x - patch_at.x, patch_at.x + patch_size.x - patch_local.x),
+                min(patch_local.y - patch_at.y, patch_at.y + patch_size.y - patch_local.y),
+            ) + ragged;
+            patched = clamp(inside / patch_aa + 0.5, 0.0, 1.0) * has_patch;
+            seal = (1.0 - smoothstep(0.015, 0.06 + footprint, abs(inside))) * has_patch
+                * mix(0.3, 1.0, apron_noise(p * 1.1 + 3.0)) * (1.0 - smoothstep(0.05, 0.25, footprint));
+        }
         let hairline_fade = 1.0 - smoothstep(0.03, 0.09, footprint);
         let crack_line = (1.0 - smoothstep(0.0, crack_width * 1.1 + 0.004, abs(crack_noise - 0.5))) * (1.0 - patched);
         var crack = 0.0;
         if crack_line > 0.0 {
             crack = crack_line * smoothstep(0.7, 0.8, apron_noise(p / 6.0 + 2.0)) * mix(0.35, 1.0, hairline_fade);
         }
-        let crazing = (1.0 - smoothstep(0.0, craze_width + 0.006, craze))
-            * smoothstep(0.66, 0.78, apron_noise(p / 5.0 + 41.0)) * traffic.x * (1.0 - patched) * hairline_fade;
+        let craze_line = 1.0 - smoothstep(0.0, craze_width + 0.006, craze);
+        var crazing = 0.0;
+        if craze_line != 0.0 && traffic.x != 0.0 && patched != 1.0 && hairline_fade != 0.0 {
+            crazing = craze_line * smoothstep(0.66, 0.78, apron_noise(p / 5.0 + 41.0)) * traffic.x * (1.0 - patched) * hairline_fade;
+        }
         // The joint's wobble moves it at most 0.03 m, so beyond 0.085 m of the lane's
         // centre it is gone.
         var centre_joint = 0.0;
@@ -1168,8 +1207,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // takes the lane's grime and wheel wear, edged by its tar seal.
         // Only a few shades blacker than the lane round it, with its own fine
         // aggregate, so it reads as a repair rather than a hole in the texture.
-        let fresh = base * vec3f(0.9, 0.9, 0.91) * mix(0.95, 1.04, apron_noise(p * 0.7 + 5.0));
-        base = mix(base, fresh, patched * mix(0.6, 1.0, patch_hash.z));
+        let fresh_weight = patched * mix(0.6, 1.0, patch_hash.z);
+        if fresh_weight != 0.0 {
+            let fresh = base * vec3f(0.9, 0.9, 0.91) * mix(0.95, 1.04, apron_noise(p * 0.7 + 5.0));
+            base = mix(base, fresh, fresh_weight);
+        }
         let stone_weight = mix(mix(0.32, 0.65, ravel), 0.12, patched);
         color = base * (1.0 + aggregate * stone_weight + stones * stone_weight * 0.7) * grime;
         color = color * mix(1.0, 0.8, tyre * (0.35 + traffic.x * 0.65));
@@ -1223,8 +1265,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         color = mix(color, vec3f(chroma) * vec3f(1.02, 1.0, 0.95), age * 0.25);
         let dirt = clamp(apron_noise(p / 4.0 + 2.0) * 0.6 + age * 0.4 + traffic * 0.4 - 0.25, 0.0, 1.0);
         color = mix(color, color * vec3f(0.6, 0.58, 0.53), dirt * 0.6);
-        let rubber = traffic * smoothstep(0.4, 0.7, apron_noise(p * vec2f(0.4, 3.0) + 9.0));
-        color = mix(color, color * vec3f(0.45, 0.44, 0.43), rubber * 0.5);
+        var rubber = 0.0;
+        if traffic != 0.0 {
+            rubber = traffic * smoothstep(0.4, 0.7, apron_noise(p * vec2f(0.4, 3.0) + 9.0));
+            color = mix(color, color * vec3f(0.45, 0.44, 0.43), rubber * 0.5);
+        }
         color = color * mix(0.8, 1.04, clamp(fine - 0.3, 0.0, 1.0)) * mix(0.93, 1.02, mottle);
         // Rain lies on the apron's paint, not on the wall tops above it.
         color = color * (1.0 - contact * 0.4);
