@@ -80,16 +80,11 @@ function defaultMark(min: number, max: number, value: number): string {
   return `--default:${(((value - min) / (max - min)) * 100).toFixed(1)}%`;
 }
 
-/** The scale under a slider: its ends and, at its place on the track, the default. */
-function sliderScale(min: number, max: number, value: number): string {
-  return `<span class="slider-scale" aria-hidden="true" style="${defaultMark(min, max, value)}"><i>${percent(min)}</i><i class="default">${percent(value)}</i><i>${percent(max)}</i></span>`;
-}
-
 function settingsMarkup(eyebrow: string, speeds: boolean, controls: string): string {
   const speedRows = (Object.keys(SPEED_LABELS) as SpeedKey[])
     .map(
       (key) =>
-        `<label class="setting-row slider-row" for="${key}"><span>${SPEED_LABELS[key]}<small>Default 100%</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}"><output id="${key}-value" for="${key}">100%</output>${sliderScale(0.5, 2, 1)}</label>`,
+        `<label class="setting-row slider-row" for="${key}"><span>${SPEED_LABELS[key]}<small>Default 100%</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}"><output id="${key}-value" for="${key}">100%</output></label>`,
     )
     .join("");
   // The dialog itself takes focus when it opens, so no control starts out ringed as if
@@ -98,10 +93,11 @@ function settingsMarkup(eyebrow: string, speeds: boolean, controls: string): str
     <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${eyebrow}</span></div><div class="dialog-title"><h2 id="settings-title">SETTINGS</h2></div></header>
     <div class="dialog-tabs" role="tablist" aria-label="Settings"><button type="button" role="tab" id="settings-tab-game" aria-selected="true" aria-controls="settings-game">GAME</button>${controls ? `<button type="button" role="tab" id="settings-tab-controls" aria-selected="false" aria-controls="settings-controls" tabindex="-1">CONTROLS</button>` : ""}</div>
     <div class="dialog-pane setting-rows" id="settings-game" role="tabpanel" aria-labelledby="settings-tab-game">
-    <div class="setting-group-label">AUDIO &amp; INPUT</div>
-    <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output>${sliderScale(0, 1, DEFAULT_VOLUME)}</label>
+    <div class="setting-group-label"><span>AUDIO</span></div>
+    <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output></label>
+    <div class="setting-group-label"><span>INPUT</span></div>
     <div class="setting-row"><span id="touch-mode-label">Touch controls<small>Auto shows them on touchscreens</small></span><div class="setting-choice" role="radiogroup" aria-labelledby="touch-mode-label">${TOUCH_MODES.map(([value, label]) => `<label><input type="radio" name="touch-mode-choice" value="${value}"><span>${label}</span></label>`).join("")}<select id="touch-mode" class="sr-only" tabindex="-1" aria-hidden="true">${TOUCH_MODES.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div></div>
-    ${speeds ? `<div class="setting-group-label"><span>BATTLE SPEED</span><button class="chip-button speeds-reset" type="button" title="Both speeds back to 100%">RESET TO 100%</button></div>${speedRows}` : ""}
+    ${speeds ? `<div class="setting-group-label"><span>BATTLE SPEED</span><button class="group-action speeds-reset" type="button" title="Both speeds back to 100%"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5" /></svg>Reset both</button></div>${speedRows}` : ""}
     </div>
     ${controls ? `<div class="dialog-pane" id="settings-controls" role="tabpanel" aria-labelledby="settings-tab-controls" hidden>${controls}</div>` : ""}
     <div class="menu-actions"><button class="primary settings-save" type="button">SAVE</button><button class="secondary settings-cancel" type="button">CANCEL</button></div>
@@ -199,6 +195,15 @@ export class SettingsDialog {
       // The track fills up to the thumb in the brand gold (`--fill`, 0–100%).
       const [min, max] = [Number(input.min), Number(input.max)];
       input.style.setProperty("--fill", `${((value - min) / (max - min)) * 100}%`);
+    }
+    this.showResetState();
+  }
+
+  /** Reset is offered only while a speed differs from its default. */
+  private showResetState(): void {
+    const reset = this.dialog.querySelector<HTMLButtonElement>(".speeds-reset");
+    if (reset) {
+      reset.disabled = Object.keys(SPEED_LABELS).every((key) => Number(this.value(key)) === 1);
     }
   }
 

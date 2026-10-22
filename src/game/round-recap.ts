@@ -37,6 +37,21 @@ export function teamLabel(name: string): string {
   return `${name.charAt(0)}${name.slice(1).toLowerCase()} team`;
 }
 
+/** Where a team battle stands for the viewer's `team`: who leads and by how much. */
+export function standingLine(
+  scores: readonly number[],
+  team: number,
+  names: readonly string[],
+): string {
+  const [blue, red] = scores;
+  if (blue === red) {
+    return `Level at ${blue} each`;
+  }
+  const leader = blue > red ? 0 : 1;
+  const margin = Math.abs(blue - red);
+  return `${leader === team ? "Your team" : teamLabel(names[leader])} leads by ${margin}`;
+}
+
 export function duration(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }

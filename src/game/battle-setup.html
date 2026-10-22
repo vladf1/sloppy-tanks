@@ -118,7 +118,7 @@
   </div>
   <div class="setup-section tank-setting" role="group" aria-labelledby="tank-label">
     <div class="setup-label">
-      <span id="tank-label">TANK</span><small>Yours in single player and multiplayer</small
+      <span id="tank-label">TANK</span><small>Same tank in both modes</small
       ><small class="home-screen-tip">Play full screen: Share → Add to Home Screen</small>
     </div>
     <!-- Frame each sprite around its visible bounds, not its transparent canvas: one
@@ -318,22 +318,54 @@
           <div class="segmented">
             <label class="segment"
               ><input type="radio" name="difficulty" value="easy" /><span
-                ><b>Easy</b><small>Forgiving enemies · 10% less enemy damage</small></span
+                ><b>Easy</b><small>Gentler bots · 10% less damage taken</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="normal" checked /><span
-                ><b>Normal</b><small>The original combat balance</small></span
+                ><b>Normal</b><small>The standard combat balance</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="hard" /><span
-                ><b>Hard</b><small>Sharper enemies · 15% more enemy damage</small></span
+                ><b>Hard</b><small>Sharper bots · 15% more damage taken</small></span
               ></label
             >
           </div>
         </div>
         <!-- A phone plays one format at one difficulty; it says which above GO. -->
         <p class="phone-briefing">
+          <svg
+            class="briefing-tank blue-tank"
+            viewBox="75.5 31 560 300"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <svg width="640" height="400" overflow="hidden">
+              <image
+                href="%BASE_URL%previews/tanks.webp"
+                x="-640"
+                y="0"
+                width="1920"
+                height="800"
+              />
+            </svg>
+          </svg>
           <b>Team Battle</b><span>6 vs 6 · Easy bots · First to 100</span>
+          <svg
+            class="briefing-tank red-tank"
+            viewBox="58.5 32.5 560 300"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <svg width="640" height="400" overflow="hidden">
+              <image
+                href="%BASE_URL%previews/tanks.webp"
+                x="-1280"
+                y="-400"
+                width="1920"
+                height="800"
+              />
+            </svg>
+          </svg>
         </p>
         <div class="startup-progress">
           <div class="startup-progress-copy">
@@ -430,7 +462,7 @@
               </svg>
               <b class="when-loading">Scanning for open rooms…</b>
               <b class="when-ready">No open rooms right now</b>
-              <b class="when-error">Rooms are offline</b>
+              <b class="when-error">Open rooms will show up here</b>
               <small class="when-ready">Be the first: create a room and invite friends.</small>
               <small class="when-error">Single player still works while we reconnect.</small>
             </div>

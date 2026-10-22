@@ -6,6 +6,7 @@ import {
   mostValuable,
   recapMarkup,
   scoreboardMarkup,
+  standingLine,
   teamLabel,
   wreckLine,
 } from "../src/game/round-recap";
@@ -128,4 +129,11 @@ test("the scoreboard lists each team by kills, lights the viewer and crowns one 
     /<li class="you"><span class="board-name">You<\/span><span class="board-tag">YOU/,
   );
   assert.match(markup, /board-mvp red"><span>★ MVP<\/span><b>Cat<\/b><small>3 kills · 4 wrecks/);
+});
+
+test("pause names who leads and by how much, from the viewer's side", () => {
+  const names = ["BLUE", "RED"];
+  assert.equal(standingLine([3, 4], 1, names), "Your team leads by 1");
+  assert.equal(standingLine([7, 2], 1, names), "Blue team leads by 5");
+  assert.equal(standingLine([2, 2], 0, names), "Level at 2 each");
 });

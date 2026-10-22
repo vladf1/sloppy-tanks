@@ -3,6 +3,7 @@ import {
   escapeHtml,
   recapMarkup,
   scoreboardMarkup,
+  standingLine,
   teamLabel,
   wreckLine,
 } from "./round-recap";
@@ -235,7 +236,7 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
   if (phase === "paused") {
     return `
       <section class="menu compact pause-menu" aria-labelledby="pause-title">
-        <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span></div><div class="dialog-title"><h2 id="pause-title">PAUSED</h2>${solo ? "" : scoreMarkup(hud.match.scores, "Score", hud.teamNames)}</div><p class="dialog-lede">The battle waits until you resume.</p></header>
+        <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span></div><div class="dialog-title"><h2 id="pause-title">PAUSED</h2>${solo ? "" : scoreMarkup(hud.match.scores, "Score", hud.teamNames)}</div><p class="dialog-lede">${solo ? "The battle waits until you resume." : standingLine(hud.match.scores, hud.humanTeam, hud.teamNames)}</p></header>
         <div class="dialog-tabs" role="tablist" aria-label="Pause"><button type="button" role="tab" id="pause-tab-battle" aria-selected="true" aria-controls="pause-battle">BATTLE</button><button type="button" role="tab" id="pause-tab-controls" aria-selected="false" aria-controls="pause-controls" tabindex="-1">CONTROLS</button></div>
         <div class="dialog-pane" id="pause-battle" role="tabpanel" aria-labelledby="pause-tab-battle">${pauseOverviewMarkup(hud)}</div>
         <div class="dialog-pane" id="pause-controls" role="tabpanel" aria-labelledby="pause-tab-controls" hidden>${controlsMarkup()}</div>
@@ -263,17 +264,18 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
     } else {
       outcome = teamOutcome(scores, team, hud.match.winner, endedEarly);
       title = OUTCOME_TITLES[outcome as keyof typeof OUTCOME_TITLES];
-      // The plates carry the numbers; the sentence names who was ahead, so the two never
-      // read in different orders.
+      // The plates carry the scores; the sentence names who was ahead and by how much,
+      // never the scores in a second order.
       const leader = leadingTeam(scores);
       const sideName = (index: number) =>
         index === team ? "Your team" : teamLabel(hud.teamNames[index]);
       const winner = hud.match.winner ?? 0;
+      const margin = Math.abs(scores[0] - scores[1]);
       const result = endedEarly
         ? leader === null
           ? "Level when the battle ended"
-          : `${sideName(leader)} led when the battle ended`
-        : `${sideName(winner)} took the round${hud.match.overtime ? " in overtime" : ""}`;
+          : `${sideName(leader)} led by ${margin} when the battle ended`
+        : `${sideName(winner)} took the round${hud.match.overtime ? " in overtime" : margin ? ` by ${margin}` : ""}`;
       lede = `${result} · ${wreckLine(viewer.deaths)}`;
     }
     return `<section class="menu compact results" data-outcome="${outcome}" data-team="${side}" aria-labelledby="results-title">
@@ -288,7 +290,7 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
     return `
       <section class="menu respawn" aria-labelledby="respawn-title">
         <header class="respawn-head">${wreckedByMarkup(death?.report ?? null)}
-          <div class="respawn-timer"><h2 id="respawn-title"><small>BACK IN THE FIGHT</small>RESPAWN IN</h2><div class="respawn-ring" id="respawn-fill"><span id="respawn-count">3</span></div></div>
+          <div class="respawn-timer"><h2 id="respawn-title">RESPAWN IN</h2><div class="respawn-ring" id="respawn-fill"><span id="respawn-count">3</span></div></div>
         </header>
         <p class="respawn-pick">Pick your next tank<small>It rolls out when the timer ends</small></p>
         <p id="death-cause" class="sr-only" role="status"></p>
