@@ -11,6 +11,8 @@ pub struct Layouts {
     pub material: wgpu::BindGroupLayout,
     pub water: wgpu::BindGroupLayout,
     pub output: wgpu::BindGroupLayout,
+    pub bloom: wgpu::BindGroupLayout,
+    pub occlusion: wgpu::BindGroupLayout,
 }
 
 const fn texture_entry(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
@@ -96,8 +98,37 @@ pub const TEXTURED_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     sampler_entry(4, Filtering),
 ];
 
-pub const OUTPUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
-    &[texture_entry(0, false), uniform_entry(1)];
+/// The resolved frame, the output uniform, a linear sampler, the bloom and the
+/// ambient occlusion.
+pub const OUTPUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    texture_entry(0, true),
+    uniform_entry(1),
+    sampler_entry(2, Filtering),
+    texture_entry(6, true),
+    texture_entry(7, true),
+];
+
+/// A bloom pass's source level, the output uniform and a linear sampler.
+pub const BLOOM_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    texture_entry(0, true),
+    uniform_entry(1),
+    sampler_entry(2, Filtering),
+];
+
+/// The main view's multisampled depth and the occlusion uniform.
+pub const OCCLUSION_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
+    wgpu::BindGroupLayoutEntry {
+        binding: 0,
+        visibility: wgpu::ShaderStages::FRAGMENT,
+        ty: wgpu::BindingType::Texture {
+            sample_type: wgpu::TextureSampleType::Depth,
+            view_dimension: wgpu::TextureViewDimension::D2,
+            multisampled: true,
+        },
+        count: None,
+    },
+    uniform_entry(1),
+];
 
 /// The mipmap blit's source level and sampler.
 pub const MIPMAP_SOURCE_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
@@ -131,6 +162,8 @@ impl Layouts {
             material: layout("material", MATERIAL_ENTRIES),
             water: layout("water", TEXTURED_ENTRIES),
             output: layout("output", OUTPUT_ENTRIES),
+            bloom: layout("bloom", BLOOM_ENTRIES),
+            occlusion: layout("occlusion", OCCLUSION_ENTRIES),
         }
     }
 }

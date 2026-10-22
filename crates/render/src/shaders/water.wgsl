@@ -148,9 +148,5 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         let foam = (1.0 - smoothstep(0.12, 0.85, wash)) * smoothstep(0.46, 0.64, breakup);
         color = mix(albedo, vec3f(0.54, 0.67, 0.61), foam * 0.5);
     }
-    if frame.fog_color.w > 0.5 {
-        let depth = -(frame.view * vec4f(input.world, 1.0)).z;
-        color = mix(color, frame.fog_color.rgb, smoothstep(frame.fog_range.x, frame.fog_range.y, depth));
-    }
-    return vec4f(color, 1.0);
+    return vec4f(apply_fog(color, input.world), 1.0);
 }

@@ -52,6 +52,7 @@ use webgl as backend;
 #[cfg(not(feature = "webgl"))]
 use webgpu as backend;
 
+pub use crate::presentation::theme::Atmosphere;
 pub use context::GRAPHICS_API;
 pub use inspect::InstanceState;
 pub use pools::PoolId;
@@ -77,6 +78,7 @@ use crate::mesh_pages::MeshRange;
 use crate::model::{
     InstanceData, ModelNode, PartMesh, PreparedModel, prepare_model, prepare_scenery,
 };
+use crate::presentation::theme::Grade;
 use crate::presentation::theme::SHADOW_DEPTH;
 use crate::reflection_cull::{ReflectionMask, WaterFootprint};
 use crate::shader::{PipelineKey, ShaderKey};
@@ -359,7 +361,49 @@ struct FrameUniform {
     camera_right: [f32; 4],
     camera_up: [f32; 4],
     point_lights: [[f32; 8]; MAX_POINT_LIGHTS],
+    sky_rays: [f32; 16],
+    sky_zenith: [f32; 4],
+    sky_horizon: [f32; 4],
+    sky_sun: [f32; 4],
+    cloud_lit: [f32; 4],
+    cloud_shade: [f32; 4],
+    haze: [f32; 4],
+    haze_shape: [f32; 4],
 }
+
+/// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion and the grade. The
+/// backend fills in the row mapping (`settings.y`, `settings.z`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct OutputUniform {
+    settings: [f32; 4],
+    lift: [f32; 4],
+    gamma: [f32; 4],
+    gain: [f32; 4],
+    effects: [f32; 4],
+    tone: [f32; 4],
+}
+
+/// WGSL `Occlusion` (`occlusion.wgsl`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct OcclusionUniform {
+    view_projection: [f32; 16],
+    inverse_view_projection: [f32; 16],
+    settings: [f32; 4],
+    depth_terms: [f32; 4],
+}
+
+/// Levels of the bloom chain, from half the canvas size down.
+const BLOOM_LEVELS: usize = 5;
+/// Ambient occlusion: the reach of its probes and the depth gap they ignore, in
+/// metres; where it fades out with view distance; and its contrast power.
+const OCCLUSION_RADIUS: f32 = 1.1;
+const OCCLUSION_BIAS: f32 = 0.05;
+const OCCLUSION_FADE: (f32, f32) = (70.0, 140.0);
+const OCCLUSION_POWER: f32 = 1.5;
+/// Output dither amplitude in 8-bit steps, against banding in the sky gradient.
+const OUTPUT_DITHER: f32 = 1.0;
 
 /// WGSL `Water`.
 #[repr(C)]
@@ -458,6 +502,12 @@ fn shadow_merged_index(side: Side, cutout: bool) -> usize {
 struct FixedPipelines<P> {
     water: P,
     output: P,
+    /// The far-plane sky of the main view and the reflection.
+    sky: P,
+    /// Bloom prefilter, downsample and additive upsample.
+    bloom: [P; 3],
+    /// Screen-space ambient occlusion.
+    occlusion: P,
     /// Merged casters, depth-only then alpha-tested, indexed by
     /// `shadow_merged_index`.
     shadow_merged: Vec<P>,
@@ -465,7 +515,7 @@ struct FixedPipelines<P> {
 
 impl<P> FixedPipelines<P> {
     fn count(&self) -> usize {
-        2 + self.shadow_merged.len()
+        7 + self.shadow_merged.len()
     }
 }
 
@@ -723,6 +773,7 @@ pub struct Renderer {
     static_dirty: bool,
 
     environment: Environment,
+    atmosphere: Atmosphere,
     sun_shadow: SunShadow,
     point_lights: [Option<PointLight>; MAX_POINT_LIGHTS],
     camera: PerspectiveCamera,
@@ -764,6 +815,11 @@ struct Scene<'a> {
     /// Start the sun shadow from the cached fixed-scenery shadow instead of clearing it.
     copy_static: bool,
     reflection: bool,
+    /// Draw the sky behind the main view and the reflection.
+    sky: bool,
+    /// Run the bloom chain, and the ambient occlusion pass.
+    bloom: bool,
+    occlusion: bool,
 }
 
 impl Renderer {
@@ -804,6 +860,7 @@ impl Renderer {
             static_records: vec![InstanceRecord::IDENTITY],
             static_dirty: true,
             environment: Environment::default(),
+            atmosphere: Atmosphere::default(),
             sun_shadow,
             point_lights: [None; MAX_POINT_LIGHTS],
             camera: PerspectiveCamera::new(43.0, 0.1, 320.0),
@@ -859,6 +916,15 @@ impl Renderer {
 
     pub fn environment(&self) -> &Environment {
         &self.environment
+    }
+
+    /// The sky, haze, bloom, occlusion and grade (off by default).
+    pub fn set_atmosphere(&mut self, atmosphere: Atmosphere) {
+        self.atmosphere = atmosphere;
+    }
+
+    pub fn atmosphere(&self) -> &Atmosphere {
+        &self.atmosphere
     }
 
     pub fn set_sun_shadow(&mut self, shadow: SunShadow) {
@@ -1643,12 +1709,15 @@ impl Renderer {
             .write(&self.gpu, 0, &self.static_records);
     }
 
+    /// A view's uniform; `sky_rays` is its plain view projection, which the sky
+    /// inverts for view rays (the mirror's oblique one would bend them).
     fn frame_uniform(
         &self,
         view_projection: Mat4,
         view: Mat4,
         eye: Vec3,
         size: (u32, u32),
+        sky_rays: Mat4,
     ) -> FrameUniform {
         let env = &self.environment;
         let shadow = self.shadow_camera();
@@ -1716,6 +1785,85 @@ impl Renderer {
             camera_right: rgb4(world.x_axis.truncate().into(), 0.0),
             camera_up: rgb4(world.y_axis.truncate().into(), 0.0),
             point_lights,
+            ..self.atmosphere_uniform(sky_rays)
+        }
+    }
+
+    /// The atmosphere's fields of a view uniform, all zero while it is off.
+    fn atmosphere_uniform(&self, sky_rays: Mat4) -> FrameUniform {
+        let a = &self.atmosphere;
+        if !a.enabled {
+            return FrameUniform::zeroed();
+        }
+        let sky = |color| hex_to_linear_scaled(color, a.sky_intensity);
+        FrameUniform {
+            sky_rays: sky_rays.inverse().to_cols_array(),
+            sky_zenith: rgb4(sky(a.zenith), 1.0),
+            sky_horizon: rgb4(sky(a.horizon), a.sun_radius.cos()),
+            sky_sun: rgb4(
+                hex_to_linear_scaled(a.sun_glow, a.sun_glow_intensity),
+                a.rim,
+            ),
+            cloud_lit: rgb4(sky(a.clouds.lit), a.clouds.coverage),
+            cloud_shade: rgb4(sky(a.clouds.shade), a.clouds.shadow),
+            haze: [a.haze.density, a.haze.falloff, a.haze.start, a.haze.max],
+            haze_shape: [a.haze.clear_half_size, a.haze.clear_fade, 0.0, 0.0],
+            ..FrameUniform::zeroed()
+        }
+    }
+
+    /// The output pass's exposure, bloom, occlusion and grade.
+    fn output_uniform(&self) -> OutputUniform {
+        let a = &self.atmosphere;
+        let on = a.enabled;
+        let grade = if on { a.grade } else { Grade::NEUTRAL };
+        let [lr, lg, lb] = grade.lift;
+        let [gr, gg, gb] = grade.gamma;
+        let [nr, ng, nb] = grade.gain;
+        OutputUniform {
+            settings: [
+                self.environment.exposure * if on { a.exposure } else { 1.0 },
+                0.0,
+                1.0,
+                if on { a.bloom.strength } else { 0.0 },
+            ],
+            lift: [lr, lg, lb, grade.saturation],
+            gamma: [gr, gg, gb, grade.contrast],
+            gain: [nr, ng, nb, grade.vignette],
+            effects: [
+                a.bloom.threshold,
+                a.bloom.knee,
+                if self.occlusion_on() {
+                    a.occlusion
+                } else {
+                    0.0
+                },
+                if on { OUTPUT_DITHER } else { 0.0 },
+            ],
+            tone: [grade.vibrance, 0.0, 0.0, 0.0],
+        }
+    }
+
+    fn occlusion_on(&self) -> bool {
+        self.atmosphere.enabled && self.atmosphere.occlusion > 0.0
+    }
+
+    fn occlusion_uniform(&self) -> OcclusionUniform {
+        let camera = self.camera();
+        let view_projection = camera.view_projection();
+        // View distance from depth for Three's perspective in WebGPU depth:
+        // depth = r + r·near / -z with r = far / (near - far).
+        let r = camera.far / (camera.near - camera.far);
+        OcclusionUniform {
+            view_projection: view_projection.to_cols_array(),
+            inverse_view_projection: view_projection.inverse().to_cols_array(),
+            settings: [
+                OCCLUSION_RADIUS,
+                OCCLUSION_BIAS,
+                OCCLUSION_FADE.0,
+                OCCLUSION_FADE.1,
+            ],
+            depth_terms: [r * camera.near, r, OCCLUSION_POWER, 0.0],
         }
     }
 
@@ -1740,6 +1888,7 @@ impl Renderer {
             camera.view(),
             camera.position,
             size,
+            camera.view_projection(),
         );
         let shadow_camera = self.shadow_camera();
         let shadow = self.frame_uniform(
@@ -1747,12 +1896,14 @@ impl Renderer {
             shadow_camera.view(),
             shadow_camera.position,
             (self.sun_shadow.map_size, self.sun_shadow.map_size),
+            shadow_camera.view_projection(),
         );
         let reflection = match (self.mirror(), &self.water) {
             (Some((view, projection)), Some(water)) => {
                 let eye = view.inverse().w_axis.truncate();
                 let size = water.settings.reflection_size.max(1);
-                self.frame_uniform(projection * view, view, eye, (size, size))
+                let rays = camera.projection() * view;
+                self.frame_uniform(projection * view, view, eye, (size, size), rays)
             }
             _ => main,
         };
@@ -1760,8 +1911,11 @@ impl Renderer {
         views[REFLECTION_VIEW] = reflection;
         views[SHADOW_VIEW] = shadow;
         self.frame.write_views(&self.gpu, &views);
-        self.frame
-            .write_output(&self.gpu, self.environment.exposure);
+        self.frame.write_output(&self.gpu, self.output_uniform());
+        if self.occlusion_on() {
+            self.frame
+                .write_occlusion(&self.gpu, &self.occlusion_uniform());
+        }
         if let Some(water) = &self.water {
             let s = &water.settings;
             let shore = match s.shore {
@@ -2190,6 +2344,10 @@ impl Renderer {
             rebuild_static: copy_static && self.static_shadow_dirty,
             copy_static,
             reflection,
+            // Warm-up draws every pass, so their pipelines are ready either way.
+            sky: warm_up || self.atmosphere.enabled,
+            bloom: warm_up || (self.atmosphere.enabled && self.atmosphere.bloom.strength > 0.0),
+            occlusion: warm_up || self.occlusion_on(),
         };
         let stats = &mut self.stats;
         stats.draw_calls = 0;
@@ -2226,12 +2384,12 @@ impl Renderer {
         let (pools, pool_instances) = self.pool_totals();
         stats.pools = pools;
         stats.pool_instances = pool_instances;
-        // Mesh pages, material uniforms, 3 view uniforms, instance buffer, output
-        // and water uniforms, and a record store per pool.
+        // Mesh pages, material uniforms, 3 view uniforms, instance buffer, output,
+        // occlusion and water uniforms, and a record store per pool.
         stats.buffers = (self.meshes.buffers()
             + self.materials.count()
             + VIEW_COUNT
-            + 2
+            + 3
             + self.water.is_some() as usize
             + pools as usize) as u32;
         let shadow = self.sun_shadow.map_size as u64;
@@ -2245,6 +2403,7 @@ impl Renderer {
                 target_bytes(size, size, self.gpu.samples)
             })
             + shadow * shadow * 4 * shadow_maps
+            + self.frame.post_bytes()
             + u64::from(self.frame.instances().capacity()) * RECORD_SIZE
             + self.pool_bytes()
             + width as u64 * height as u64 * 4;

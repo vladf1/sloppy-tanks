@@ -20,7 +20,8 @@ use crate::effects::EffectRegistry;
 use crate::gpu::{FixedPipelines, SHADOW_MERGED_SIDES};
 use crate::shader::glsl::{self, Binding, block_point, texture_unit};
 use crate::shader::{
-    PipelineKey, ShaderKey, shader_source, shadow_cutout_source, shadow_merged_source, water_source,
+    BlendMode, OUTPUT_WGSL, PipelineKey, ShaderKey, occlusion_source, shader_source,
+    shadow_cutout_source, shadow_merged_source, sky_source, water_source,
 };
 
 /// The fragment stage of programs whose WGSL has none (depth-only casters).
@@ -219,8 +220,9 @@ fn depth_raster(side: Side) -> Raster {
     }
 }
 
-/// The water, output, merged and cutout caster programs, in that order.
-const FIXED_PROGRAMS: usize = 4;
+/// The water, output, sky, three bloom, ambient occlusion, merged and cutout caster
+/// programs, in that order.
+const FIXED_PROGRAMS: usize = 9;
 
 pub struct Pipelines {
     programs: Vec<Program>,
@@ -235,17 +237,30 @@ pub struct Pipelines {
 }
 
 impl Pipelines {
-    /// Start linking the fixed water, output and merged shadow programs; they are
-    /// used once linked ([`Self::fixed_ready`]) while the page builds the arena.
+    /// Start linking the fixed water, output, sky, bloom, occlusion and merged shadow
+    /// programs; they are used once linked ([`Self::fixed_ready`]) while the page
+    /// builds the arena.
     pub fn new(gpu: &Gpu) -> Self {
+        let bloom = |label, entry| Linking::start(gpu, label, OUTPUT_WGSL, "vs_post", Some(entry));
         let jobs = [
             Linking::start(gpu, "water", &water_source(), "vs_water", Some("fs_water")),
             Linking::start(
                 gpu,
                 "output",
-                crate::shader::OUTPUT_WGSL,
+                OUTPUT_WGSL,
                 "vs_fullscreen",
                 Some("fs_output"),
+            ),
+            Linking::start(gpu, "sky", &sky_source(), "vs_sky", Some("fs_sky")),
+            bloom("bloom prefilter", "fs_bloom_prefilter"),
+            bloom("bloom down", "fs_bloom_down"),
+            bloom("bloom up", "fs_bloom_up"),
+            Linking::start(
+                gpu,
+                "ambient occlusion",
+                &occlusion_source(false),
+                "vs_occlusion",
+                Some("fs_occlusion"),
             ),
             Linking::start(
                 gpu,
@@ -299,7 +314,17 @@ impl Pipelines {
         let Some(jobs) = self.fixed_jobs.take() else {
             return;
         };
-        let [water, output, merged, cutout] = jobs.map(|job| {
+        let [
+            water,
+            output,
+            sky,
+            prefilter,
+            down,
+            up,
+            occlusion,
+            merged,
+            cutout,
+        ] = jobs.map(|job| {
             self.programs.push(job.finish(gpu));
             self.programs.len() as u32 - 1
         });
@@ -319,6 +344,35 @@ impl Pipelines {
             },
             output: Pipeline {
                 program: output,
+                raster: Raster::PLAIN,
+            },
+            // Depth-tested on the far plane without writing: only clear pixels.
+            sky: Pipeline {
+                program: sky,
+                raster: Raster {
+                    depth_func: Some(glow::LEQUAL),
+                    ..Raster::PLAIN
+                },
+            },
+            bloom: [
+                Pipeline {
+                    program: prefilter,
+                    raster: Raster::PLAIN,
+                },
+                Pipeline {
+                    program: down,
+                    raster: Raster::PLAIN,
+                },
+                Pipeline {
+                    program: up,
+                    raster: Raster {
+                        blend: BlendMode::Additive,
+                        ..Raster::PLAIN
+                    },
+                },
+            ],
+            occlusion: Pipeline {
+                program: occlusion,
                 raster: Raster::PLAIN,
             },
             shadow_merged,
@@ -425,8 +479,8 @@ impl Pipelines {
         self.pipelines.len() + self.fixed.as_ref().map_or(0, FixedPipelines::count)
     }
 
-    /// Distinct shader sources, including the fixed water, output and merged shadow
-    /// ones.
+    /// Distinct shader sources, including the fixed water, output, sky, bloom and
+    /// merged shadow ones.
     pub fn module_count(&self) -> usize {
         self.by_shader.len() + self.linking.len() + FIXED_PROGRAMS
     }

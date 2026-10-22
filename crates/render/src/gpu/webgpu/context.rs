@@ -92,6 +92,8 @@ impl Gpu {
 }
 
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+/// The ambient occlusion target.
+pub const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// A multisampled HDR color + depth target and its single-sample resolve.
@@ -133,13 +135,26 @@ pub(super) fn texture_2d(
 }
 
 impl ColorTarget {
-    pub fn new(device: &wgpu::Device, label: &str, width: u32, height: u32) -> Self {
+    /// With `sampled_depth` a later pass reads the multisampled depth (the main
+    /// view's ambient occlusion).
+    pub fn new(
+        device: &wgpu::Device,
+        label: &str,
+        width: u32,
+        height: u32,
+        sampled_depth: bool,
+    ) -> Self {
         let texture = |format, samples, usage| {
             texture_2d(device, label, width, height, format, samples, usage)
         };
         let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let color = texture(HDR_FORMAT, SAMPLE_COUNT, attachment);
-        let depth = texture(DEPTH_FORMAT, SAMPLE_COUNT, attachment);
+        let depth_usage = if sampled_depth {
+            attachment | wgpu::TextureUsages::TEXTURE_BINDING
+        } else {
+            attachment
+        };
+        let depth = texture(DEPTH_FORMAT, SAMPLE_COUNT, depth_usage);
         let resolved = texture(
             HDR_FORMAT,
             1,
