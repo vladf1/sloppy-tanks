@@ -32,6 +32,9 @@ pub struct CoverPose {
 /// Seconds a scenery piece stays solid before its fade, and its hard deadline.
 const PIECE_LIFE: f64 = 9.5;
 const PIECE_DEADLINE: f64 = 18.0;
+/// A felled trunk's start: sideways speed (m/s) at its centre and the tipping
+/// speed (rad/s) it leaves the stump with.
+const TREE_FELL: (f64, f64) = (0.7, 1.1);
 /// Draws the old fragment path consumed per piece: 3 placement/size and 8 body/lifetime.
 const LEGACY_DRAWS_PER_PIECE: usize = 11;
 
@@ -331,11 +334,13 @@ pub fn break_scenery(
                     .restitution(0.05),
                 Some(trunk_body),
             );
-            // A small sideways lean initiates a gravity-driven fall instead of a launch.
+            // The snap starts the trunk leaning so gravity fells it within a second
+            // or so, rather than launching it or letting it balance on the stump.
             let angle = breakup.rng.range(0.0, PI * 2.0);
+            let (push, tip) = TREE_FELL;
             let rigid_body = &mut simulation.world.bodies[trunk_body];
-            rigid_body.set_linvel(vector(angle.sin() * 0.45, 0.0, angle.cos() * 0.45), true);
-            rigid_body.set_angvel(vector(angle.cos() * 0.65, 0.0, -angle.sin() * 0.65), true);
+            rigid_body.set_linvel(vector(angle.sin() * push, 0.0, angle.cos() * push), true);
+            rigid_body.set_angvel(vector(angle.cos() * tip, 0.0, -angle.sin() * tip), true);
             breakup.piece(
                 simulation,
                 FragmentShape::Beam,
