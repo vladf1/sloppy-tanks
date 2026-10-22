@@ -16,6 +16,7 @@ use sloppy_core::sim::{CoverKind, SimEvent, SimEventType};
 
 use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
+use super::walls::HouseBox;
 use crate::color::hex_to_linear;
 
 pub const MAX_WOOD_CHIPS: usize = 512;
@@ -117,6 +118,38 @@ const CHIP: Cut = Cut {
     length: [0.06, 0.06],
     width: [0.05, 0.05],
     thickness: [0.02, 0.014],
+};
+
+/// A shell through a cottage's wall tears out [minimum, random span] pieces: the
+/// first few lengths of painted siding, then painted shards, splinters of its
+/// framing, lumps of plaster and a trim board or two, thrown out of the face in a
+/// cone this wide (radians), fast enough that a few clear the yard.
+const SIDING_PIECES: [usize; 2] = [11, 5];
+const SIDING_BOARDS: usize = 3;
+const SIDING_CONE: f64 = 1.4;
+const SIDING_SPEED: [f64; 2] = [1.2, 4.5];
+/// A collapsing cottage blows this many pieces out of its walls, this fast (m/s).
+const HOUSE_BURST_PIECES: usize = 52;
+/// The first of them are shingles shed off the eaves as the roof breaks up.
+const HOUSE_BURST_SHINGLES: usize = 16;
+const SHINGLE: Cut = Cut {
+    length: [0.26, 0.12],
+    width: [0.16, 0.08],
+    thickness: [0.018, 0.01],
+};
+const HOUSE_BURST_SPEED: [f64; 2] = [1.0, 4.0];
+/// Plaster and lath from inside the wall: pale lumps, thicker than wood chips.
+const PLASTER_LUMP: Cut = Cut {
+    length: [0.1, 0.12],
+    width: [0.08, 0.1],
+    thickness: [0.05, 0.04],
+};
+const PLASTER: [u32; 2] = [0xcfc4b0, 0xb7aa94];
+/// A torn length of painted clapboard, wider and longer than a crate's board.
+const SIDING_BOARD: Cut = Cut {
+    length: [0.45, 0.5],
+    width: [0.14, 0.05],
+    thickness: [0.03, 0.012],
 };
 
 /// Which pieces a hit or burst is made of: slivers below `slivers`, shards below
@@ -399,6 +432,129 @@ impl WoodChips {
             }
             _ => {}
         }
+    }
+
+    /// A shell's hit on a cottage at `point`, out of the face with `normal`: lengths
+    /// and shards of its painted siding (`paint`), a trim board (`trim`), splinters
+    /// of fresh framing and pale plaster from inside the wall, thrown out of the
+    /// face and dropping at its foot.
+    pub fn siding_hit(
+        &mut self,
+        point: Vec3,
+        normal: Vec3,
+        [paint, trim]: [u32; 2],
+        random: &mut CosmeticRandom,
+    ) {
+        let out = horizontal(f64::from(normal.x), f64::from(normal.z)).unwrap_or([1.0, 0.0]);
+        let along = turned(out, FRAC_PI_2);
+        let count = SIDING_PIECES[0] + (random.next_f64() * SIDING_PIECES[1] as f64) as usize;
+        for i in 0..count {
+            let roll = random.next_f64();
+            let (cut, color) = if i < SIDING_BOARDS {
+                (SIDING_BOARD, hex_to_linear(paint))
+            } else if i == SIDING_BOARDS {
+                (BOARD, hex_to_linear(trim))
+            } else if roll < 0.35 {
+                (SHARD, hex_to_linear(paint))
+            } else if roll < 0.6 {
+                (
+                    pick_cut(random, HIT_MIX),
+                    wood_color(random, HIT_MIX, paint),
+                )
+            } else {
+                let [pale, dark] = PLASTER.map(hex_to_linear);
+                let k = random.next_f64() as f32;
+                (
+                    PLASTER_LUMP,
+                    [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
+                )
+            };
+            let color = shade(color, 0.82 + random.next_f64() * 0.22);
+            let direction = turned(out, (random.next_f64() - 0.5) * SIDING_CONE);
+            let elevation = 0.1 + random.next_f64() * 0.8;
+            // Most drop at the wall's foot; a few fly out across the yard.
+            let speed = between(random, SIDING_SPEED) * (0.4 + 0.6 * random.next_f64().powi(2));
+            let offset = (random.next_f64() - 0.5) * 0.6;
+            let position = DVec3::new(
+                f64::from(point.x) + out[0] * 0.1 + along[0] * offset,
+                f64::from(point.y) + (random.next_f64() - 0.5) * 0.5,
+                f64::from(point.z) + out[1] * 0.1 + along[1] * offset,
+            );
+            let velocity = DVec3::new(
+                direction[0] * speed * elevation.cos(),
+                speed * elevation.sin(),
+                direction[1] * speed * elevation.cos(),
+            );
+            let piece = wood_piece(random, cut, position, velocity, color);
+            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
+        }
+        self.changed = true;
+    }
+
+    /// A cottage giving way: its walls burst outward as they buckle, throwing
+    /// lengths of painted siding and trim, splinters of framing, lumps of plaster
+    /// and a scatter of roofing off the eaves out round its footprint.
+    pub fn house_burst(&mut self, house: HouseBox, random: &mut CosmeticRandom) {
+        let [paint, trim, roof] = house.paints;
+        let center = house.center.as_dvec3();
+        let (half_w, half_d) = (f64::from(house.half_w), f64::from(house.half_d));
+        let wall_top = f64::from(house.height) * 0.6;
+        for i in 0..HOUSE_BURST_PIECES {
+            // Round the four walls in turn, each piece from its own place along one.
+            let side = i % 4;
+            let (out, half, reach) = match side {
+                0 => ([1.0, 0.0], half_d, half_w),
+                1 => ([-1.0, 0.0], half_d, half_w),
+                2 => ([0.0, 1.0], half_w, half_d),
+                _ => ([0.0, -1.0], half_w, half_d),
+            };
+            let along = turned(out, FRAC_PI_2);
+            let offset = (random.next_f64() * 2.0 - 1.0) * half * 0.9;
+            let roll = random.next_f64();
+            let eave = i < HOUSE_BURST_SHINGLES;
+            let (cut, color) = if eave {
+                (SHINGLE, hex_to_linear(roof))
+            } else if roll < 0.3 {
+                (SIDING_BOARD, hex_to_linear(paint))
+            } else if roll < 0.42 {
+                (BOARD, hex_to_linear(trim))
+            } else if roll < 0.7 {
+                (
+                    pick_cut(random, BURST_MIX),
+                    wood_color(random, BURST_MIX, paint),
+                )
+            } else {
+                let [pale, dark] = PLASTER.map(hex_to_linear);
+                let k = random.next_f64() as f32;
+                (
+                    PLASTER_LUMP,
+                    [0, 1, 2].map(|c| pale[c] + (dark[c] - pale[c]) * k),
+                )
+            };
+            let color = shade(color, 0.78 + random.next_f64() * 0.25);
+            // Shingles slide off the eaves, over the walls; the rest burst out
+            // of the walls themselves.
+            let (height, beyond) = if eave {
+                (wall_top + 0.1 + random.next_f64() * 0.3, 0.45)
+            } else {
+                (0.5 + random.next_f64() * (wall_top - 0.5), 0.15)
+            };
+            let position = DVec3::new(
+                center.x + out[0] * (reach + beyond) + along[0] * offset,
+                height,
+                center.z + out[1] * (reach + beyond) + along[1] * offset,
+            );
+            let direction = turned(out, (random.next_f64() - 0.5) * 1.2);
+            let speed = between(random, HOUSE_BURST_SPEED);
+            let velocity = DVec3::new(
+                direction[0] * speed,
+                0.5 + random.next_f64() * 2.5,
+                direction[1] * speed,
+            );
+            let piece = wood_piece(random, cut, position, velocity, color);
+            push(&mut self.wood, MAX_WOOD_CHIPS, piece);
+        }
+        self.changed = true;
     }
 
     /// A loose board a shell flew through bursts into splinters and chips across its
@@ -873,6 +1029,35 @@ mod tests {
         let straw = chips.straw().count();
         let most = STRAW_TUFTS * (STRAW_FIBRES[0] + STRAW_FIBRES[1] - 1);
         assert!((STRAW_TUFTS * STRAW_FIBRES[0]..=most).contains(&straw));
+    }
+
+    #[test]
+    fn a_cottage_throws_its_own_paint_out_of_the_struck_face_and_lands_it() {
+        let mut random = CosmeticRandom::seeded(9);
+        let mut chips = WoodChips::default();
+        let paints = [0xe8dcc0, 0x2f5040];
+        chips.siding_hit(Vec3::new(3.0, 1.0, 0.0), Vec3::X, paints, &mut random);
+        let hit = chips.len();
+        assert!((SIDING_PIECES[0]..SIDING_PIECES[0] + SIDING_PIECES[1]).contains(&hit));
+        // The first lengths are the wall's siding, the next its trim.
+        let siding = hex_to_linear(paints[0]);
+        let wood: Vec<&Piece> = chips.wood().collect();
+        for piece in &wood[..SIDING_BOARDS] {
+            assert!((0..3).all(|c| piece.color[c] <= siding[c] * 1.05));
+        }
+        // They burst out of the face, not back into the wall.
+        assert!(wood.iter().all(|piece| piece.velocity.x > -1e-9));
+        run(&mut chips, &mut random, 3.0);
+        assert!(chips.wood().all(Piece::landed));
+        let house = HouseBox {
+            center: Vec3::ZERO,
+            half_w: 2.5,
+            half_d: 3.0,
+            height: 4.6,
+            paints: [0xe8dcc0, 0xe6e0d4, 0x82996a],
+        };
+        chips.house_burst(house, &mut random);
+        assert_eq!(chips.len(), hit + HOUSE_BURST_PIECES);
     }
 
     #[test]
