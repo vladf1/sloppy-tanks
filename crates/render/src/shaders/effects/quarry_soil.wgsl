@@ -13,6 +13,8 @@ const SOIL_COBBLE_CELL = 0.9;
 const SOIL_STONE_CELL = 0.42;
 const SOIL_GRIT_CELL = 0.15;
 const SOIL_PLATE_CELL = 0.55;
+// How far loose stones' tints settle toward the soil's own colour (1 all the way).
+const SOIL_STONE_DUST = 0.4;
 // Size of the patches loose stone gathers in, metres.
 const SOIL_SPILL_CELL = 5.5;
 // Relief of the bake's own shading (ruts, windrows, ripples), as bump scale.
@@ -124,7 +126,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         - cracks.x * 0.04 + cracks.y * 0.03;
     var normal = derivative_bump(height, 1.0, f.world, (*s).normal, f.front_facing);
     normal = normalize(normal - vec3f(relief.slope.x, 0.0, relief.slope.y) * level);
-    let lean = cobbles.lean + stones.lean + grit.lean * 0.7;
+    let lean = (cobbles.lean + stones.lean + grit.lean * 0.7) * 0.6;
     normal = normalize(normal + vec3f(lean.x, 0.0, lean.y));
     var color = baked.rgb * mix(1.0, detail, mix(0.55, 1.5, stony));
     // Hollows hold damp, darker fines; crests are bleached, paler sand.
@@ -134,14 +136,15 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // the slip faces hold a cooler, softer sand.
     let drift_tint = mix(vec3f(1.04, 1.02, 0.98), vec3f(1.1, 1.07, 1.01), relief.drift);
     color = mix(color, color * drift_tint, drift_sand * 0.8);
-    color *= 1.0 - (cobbles.shadow * 0.5 + stones.shadow * 0.42 + grit.shadow * 0.25);
+    color *= 1.0 - (cobbles.shadow * 0.36 + stones.shadow * 0.3 + grit.shadow * 0.2);
     color *= 1.0 - (cobbles.contact * 0.12 + stones.contact * 0.1 + grit.contact * 0.06);
-    // Stones are rounded and half buried: a lit crown, darkening down to the
-    // rim where they sink into the soil, never a flat coin.
-    color = mix(color, color * cobbles.tint * 0.92, cobbles.cover);
-    color = mix(color, color * stones.tint * 0.94, stones.cover);
-    color = mix(color, color * grit.tint, grit.cover * 0.85);
-    color *= 1.0 - (cobbles.rim * 0.34 + stones.rim * 0.3 + grit.rim * 0.12);
+    // Stones are the floor's own rock under its dust: their tints pulled toward
+    // the soil so they sit in its value range, a lit crown settling into a
+    // shaded rim where they sink in, never dark chips or chocolate domes.
+    color = mix(color, color * mix(cobbles.tint, vec3f(1.0), SOIL_STONE_DUST) * 0.96, cobbles.cover);
+    color = mix(color, color * mix(stones.tint, vec3f(1.0), SOIL_STONE_DUST), stones.cover);
+    color = mix(color, color * mix(grit.tint, vec3f(1.0), SOIL_STONE_DUST), grit.cover * 0.85);
+    color *= 1.0 - (cobbles.rim * 0.2 + stones.rim * 0.18 + grit.rim * 0.08);
     // Dried plates are paler and cooler; the cracks hold shade and moisture.
     color *= 1.0 + cracks.y * 0.12;
     color = mix(color, color * vec3f(0.55, 0.5, 0.46), cracks.x * 0.65);
