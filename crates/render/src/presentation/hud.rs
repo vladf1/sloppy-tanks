@@ -24,11 +24,12 @@ pub struct HealthBar {
 }
 
 /// The healthy, damaged and critical fills, the page HUD's hull bar colours
-/// (`style.css`), so every bar reads one value one way: green, amber, red. A bar never
+/// (`style.css`), so every bar reads one value one way: green, orange, red. The damaged
+/// tone is orange rather than gold, so it never reads as the gold of a selection. A bar never
 /// wears its team's colour, where a full red-team hull would read as critical; the
 /// team shows in the pointer under the bar and in the tank's own paint.
 pub const HEALTHY_COLOR: u32 = 0x5fe39a;
-pub const WARNING_COLOR: u32 = 0xffc23a;
+pub const WARNING_COLOR: u32 = 0xff9a3c;
 pub const CRITICAL_COLOR: u32 = 0xff4d5e;
 
 /// V-Tanks' fill thresholds, shared by the overhead bar and the player HUD.
