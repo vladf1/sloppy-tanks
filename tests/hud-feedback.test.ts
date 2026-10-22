@@ -33,7 +33,10 @@ const scoreboard = [
 ];
 
 test("death feedback explains another player's weapon, self damage, and environmental damage", () => {
-  assert.equal(deathCause(death, scoreboard), "Bob <b>literal</b> killed you with a rocket blast.");
+  assert.equal(
+    deathCause(death, scoreboard),
+    "Bob <b>literal</b> destroyed you with a rocket blast.",
+  );
   assert.equal(
     deathCause({ ...death, owner: death.id }, scoreboard),
     "You destroyed yourself with a rocket blast.",

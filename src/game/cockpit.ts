@@ -13,7 +13,7 @@ export class Cockpit {
   constructor(root: HTMLElement, toggleView: () => void) {
     this.hud = root.querySelector("#hud")!;
     this.toggle = root.querySelector("#view-mode")!;
-    this.hull = root.querySelector("#cockpit .hull")!;
+    this.hull = root.querySelector(".hull-compass .hull")!;
     this.aimHint = root.querySelector("#cockpit .aim-hint")!;
     bindPress(this.toggle, () => {
       toggleView();

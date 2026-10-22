@@ -82,14 +82,26 @@ const percent = (value: number) => `${Math.round(value * 100)}%`;
 
 /** Where a slider's default sits along its track, for the tick that marks it. */
 function defaultMark(min: number, max: number, value: number): string {
-  return `--default:${(((value - min) / (max - min)) * 100).toFixed(1)}%`;
+  const ratio = (value - min) / (max - min);
+  return `--default:${(ratio * 100).toFixed(1)}%;--default-ratio:${ratio.toFixed(3)}`;
 }
+
+/** The scale under a slider: what its ends mean, and a caret at the default value. */
+function sliderScale(low: string, high: string, mark: string, label: string): string {
+  return `<span class="slider-scale" style="${mark}" aria-hidden="true"><i>${low}</i><b>${label}</b><i>${high}</i></span>`;
+}
+
+/** Small marks beside the settings' group headings. */
+const GROUP_ICONS = {
+  sound: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 9h4l5-4.5v15L8 15H4z"/><path class="stroke" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12"/></svg>`,
+  speed: `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path class="stroke" d="M4.2 17a8.5 8.5 0 1 1 15.6 0"/><path d="m11 13.6 5.6-5.8 1 1-4.8 6.4a2 2 0 1 1-1.8-1.6z"/></svg>`,
+};
 
 function settingsMarkup(eyebrow: string, speeds: boolean, controls: string): string {
   const speedRows = (Object.keys(SPEED_LABELS) as SpeedKey[])
     .map(
       (key) =>
-        `<label class="setting-row slider-row" for="${key}"><span>${SPEED_LABELS[key]}<small>${SPEED_NOTES[key]}</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}" title="Default 100%"><output id="${key}-value" for="${key}">100%</output></label>`,
+        `<label class="setting-row slider-row" for="${key}"><span>${SPEED_LABELS[key]}<small>${SPEED_NOTES[key]}</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}" title="Default 100%"><output id="${key}-value" for="${key}">100%</output>${sliderScale("Slower", "Faster", defaultMark(0.5, 2, 1), "100%")}</label>`,
     )
     .join("");
   // The dialog itself takes focus when it opens, so no control starts out ringed as if
@@ -98,10 +110,10 @@ function settingsMarkup(eyebrow: string, speeds: boolean, controls: string): str
     <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${eyebrow}</span></div><div class="dialog-title"><h2 id="settings-title">SETTINGS</h2></div></header>
     <div class="dialog-tabs" role="tablist" aria-label="Settings"><button type="button" role="tab" id="settings-tab-game" aria-selected="true" aria-controls="settings-game">GAME</button>${controls ? `<button type="button" role="tab" id="settings-tab-controls" aria-selected="false" aria-controls="settings-controls" tabindex="-1">CONTROLS</button>` : ""}</div>
     <div class="dialog-pane setting-rows" id="settings-game" role="tabpanel" aria-labelledby="settings-tab-game">
-    <div class="setting-group-label"><span>SOUND &amp; INPUT</span></div>
-    <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output></label>
+    <div class="setting-group-label"><span>${GROUP_ICONS.sound}SOUND &amp; INPUT</span></div>
+    <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output>${sliderScale("Mute", "Loud", defaultMark(0, 1, DEFAULT_VOLUME), percent(DEFAULT_VOLUME))}</label>
     <div class="setting-row"><span id="touch-mode-label">Touch controls<small>Auto shows them on touchscreens</small></span><div class="setting-choice" role="radiogroup" aria-labelledby="touch-mode-label">${TOUCH_MODES.map(([value, label]) => `<label><input type="radio" name="touch-mode-choice" value="${value}"><span>${label}</span></label>`).join("")}<select id="touch-mode" class="sr-only" tabindex="-1" aria-hidden="true">${TOUCH_MODES.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div></div>
-    ${speeds ? `<div class="setting-group-label"><span>BATTLE SPEED</span><button class="group-action speeds-reset" type="button" title="Both speeds back to 100%"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5" /></svg>Reset to 100%</button></div>${speedRows}` : ""}
+    ${speeds ? `<div class="setting-group-label"><span>${GROUP_ICONS.speed}BATTLE SPEED</span><button class="group-action speeds-reset" type="button" title="Both speeds back to 100%"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5" /></svg>Reset to 100%</button></div>${speedRows}` : ""}
     </div>
     ${controls ? `<div class="dialog-pane" id="settings-controls" role="tabpanel" aria-labelledby="settings-tab-controls" hidden>${controls}</div>` : ""}
     <div class="menu-actions"><button class="primary settings-save" type="button">SAVE</button><button class="secondary settings-cancel" type="button">CANCEL</button></div>

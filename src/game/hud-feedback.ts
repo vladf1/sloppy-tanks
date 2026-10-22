@@ -3,7 +3,7 @@ import type { DamageCause, EngineEvent, HumanState, Team, VehicleKind } from "./
 import { CAUSE_ICONS } from "./ui-markup";
 
 /** The kill feed shows this many of its newest rows. */
-export const FEED_ROWS = 4;
+export const FEED_ROWS = 3;
 
 const DAMAGE_LABELS: Record<DamageCause, string> = {
   standard: "Standard shell",
@@ -77,7 +77,7 @@ export function deathCause(
     return weapon ? `You destroyed yourself with ${weapon}.` : "You destroyed yourself.";
   }
   if (killer) {
-    return weapon ? `${killer} killed you with ${weapon}.` : `${killer} destroyed you.`;
+    return weapon ? `${killer} destroyed you with ${weapon}.` : `${killer} destroyed you.`;
   }
   return weapon ? `You were destroyed by ${weapon}.` : "You were destroyed.";
 }
@@ -422,16 +422,33 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
       slot.setAttribute("aria-label", label);
     }
   });
-  setText(
-    root,
-    "mine",
-    tank.mineCooldown > 0 ? `MINE ${tank.mineCooldown.toFixed(1)}s` : "MINE READY · RMB",
-  );
-  root.querySelector(".mine-line")?.classList.toggle("cooling", tank.mineCooldown > 0);
+  showMine(root, tank.mineCooldown);
   showEffects(root, tank);
   root
     .querySelector(".status")!
     .classList.toggle("critical-health", tank.alive && tank.healthRatio < 0.25);
+}
+
+/** The longest mine cooldown seen, so the mine dial drains from full whatever the rules. */
+let mineCooldownTotal = 0;
+
+/** The mine socket: armed, or a dial that refills while the seconds count down. */
+function showMine(root: ParentNode, cooldown: number): void {
+  const cooling = cooldown > 0;
+  mineCooldownTotal = cooling ? Math.max(mineCooldownTotal, cooldown) : mineCooldownTotal;
+  setText(root, "mine", cooling ? `Mine re-arming, ${Math.ceil(cooldown)} seconds` : "Mine ready");
+  setText(root, "mine-time", cooling ? String(Math.ceil(cooldown)) : "");
+  const slot = root.querySelector<HTMLElement>(".mine-slot");
+  if (!slot) {
+    return;
+  }
+  slot.classList.toggle("cooling", cooling);
+  const armed = cooling && mineCooldownTotal > 0 ? 1 - cooldown / mineCooldownTotal : 1;
+  const value = armed.toFixed(2);
+  const dial = slot.querySelector<HTMLElement>(".mine-dial");
+  if (dial && dial.style.getPropertyValue("--armed") !== value) {
+    dial.style.setProperty("--armed", value);
+  }
 }
 
 /** The active effects as one line of text, for screen readers and logs. */
