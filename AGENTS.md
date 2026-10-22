@@ -305,6 +305,9 @@ These come from playing the game and are easy to undo with "more juice":
   The player's own shots, kills, other tanks dying and explosions leave it
   still: no shake, tilt, kick, zoom punch or pull toward the blast (they gave
   the player vertigo). Tanks themselves may rock and recoil.
+- The follow camera keeps the original battlefield view (about 52 degrees,
+  default zoom 34) and never closes in for a fight: a lower, closer camera hid
+  the field around the tank and made every difficulty play harder.
 - Effects follow what their object is doing: a wreck burns only once its hull
   rests, smoke rises and drifts without trembling, and nothing reads as a flat
   cut-out card. Judge effects frame to frame, not from one still.
