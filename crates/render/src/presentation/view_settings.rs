@@ -17,7 +17,7 @@ pub const CAMERA: Camera = Camera {
     field_of_view: 43.0,
     near: 0.1,
     far: 320.0,
-    default_zoom: 31.0,
+    default_zoom: 34.0,
     min_zoom: 17.0,
     max_zoom: 52.0,
     max_pixel_ratio: 1.5,
@@ -53,7 +53,8 @@ pub struct CameraFeel {
     /// The follow camera frames at `calm_framing` of the chosen zoom. With an
     /// enemy near it frames the duel instead: as tight as `combat_framing` and as
     /// wide as `duel_framing`, whatever keeps that enemy inside `duel_frame`. It
-    /// eases there at `framing_rate` per second.
+    /// eases there at `framing_rate` per second. It never closes in for a fight:
+    /// seeing less of the field made the game play harder.
     pub calm_framing: f64,
     pub combat_framing: f64,
     pub duel_framing: f64,
@@ -121,9 +122,9 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     max_travel_look_ahead: 2.0,
     snap_distance: 14.0,
     lead_frequency: 3.2,
-    calm_framing: 0.88,
-    combat_framing: 0.72,
-    duel_framing: 0.96,
+    calm_framing: 1.0,
+    combat_framing: 1.0,
+    duel_framing: 1.12,
     framing_rate: 1.6,
     player_frame: [-0.14, 0.14, -0.2, 0.22],
     player_guard: [-0.38, 0.38, -0.38, 0.3],
@@ -303,7 +304,7 @@ pub struct FirstPerson {
 }
 
 pub const FIRST_PERSON: FirstPerson = FirstPerson {
-    field_of_view: 52.0,
+    field_of_view: 58.0,
     eye_side: 0.3,
     eye_drop: 0.05,
     eye_ahead: -0.1,

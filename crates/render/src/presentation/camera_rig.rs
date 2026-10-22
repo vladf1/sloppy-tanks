@@ -22,9 +22,10 @@ use super::view_settings::{AIM_PLANE_HEIGHT, CAMERA, CAMERA_FEEL, FIRST_PERSON, 
 use crate::camera::PerspectiveCamera;
 
 /// Overhead camera offset per metre of zoom: up and back toward the player, at
-/// about 44 degrees, low enough to show the sides of tanks and houses.
-const OVERHEAD_HEIGHT: f64 = 0.72;
-const OVERHEAD_BACK: f64 = 0.74;
+/// about 52 degrees. A lower, closer camera hid the field around the tank and
+/// made every difficulty play harder, so this is the original view.
+const OVERHEAD_HEIGHT: f64 = 0.93;
+const OVERHEAD_BACK: f64 = 0.72;
 /// The overview looks down more steeply, to frame the whole arena. Wrecks land
 /// inside the same steady framing centred on the tank (`landing`), so the
 /// camera's lead, lag and shake never reach the simulation.
