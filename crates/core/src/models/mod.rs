@@ -64,6 +64,7 @@ mod building_kit;
 mod concrete_surfaces;
 mod ground_surfaces;
 mod harbor_surfaces;
+mod house_collapse;
 mod house_model;
 mod house_surfaces;
 mod quarry_surfaces;
@@ -114,8 +115,7 @@ pub use flags::{FLAG_CLOTH_NODE, flags_model};
 pub use house_model::house_pieces;
 pub use pickup_visuals::{
     PALLET_HEIGHT, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, PICKUP_PAINT_CELL, SMOKE_MARKER,
-    atlas_cell_uv, pickup_cube, pickup_icon, pickup_material, pickup_paint, pickup_pallet,
-    pickup_tile_offset,
+    atlas_cell_uv, pickup_cube, pickup_material, pickup_paint, pickup_pallet, pickup_tile_offset,
 };
 pub use timber_model::{timber_debris_model, timber_part_model};
 pub use tower_model::tower_piece_model;

@@ -182,14 +182,14 @@ fn hood(kit: &mut Kit) {
             );
         kit.torus(Role::Steel, 0.03, 0.009, eye);
     }
-    // A fluorescent air-recognition panel strapped across the hood's crown,
-    // slightly askew, with its tie-down straps over the edges.
+    // An olive canvas tarp folded across the hood's crown, slightly askew, with
+    // its tie-down straps over the edges.
     let z = 1.47;
     let panel = place(
         [0.04, hood_y(HOOD_CROWN, z) + 0.005, z],
         [-HOOD_SLOPE, 0.05, 0.0],
     );
-    kit.block(Role::Signal, [0.96, 0.008, 0.66], panel);
+    kit.block(Role::Canvas, [0.92, 0.035, 0.62], panel);
     for x in [-0.36, 0.36] {
         kit.block(Role::Gap, [0.035, 0.012, 0.7], panel * at([x, 0.002, 0.0]));
     }

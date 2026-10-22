@@ -4,8 +4,9 @@
 // `tools/tank-surface-check.html` shows them at card and gameplay scale.
 //
 // The lighting is a garage card's: a dim warm hemisphere fill over a dark floor, a
-// warm key light from the front left and a lowered exposure that keeps the red paint
-// below ACES's shoulder (it turns bright red pink), and a strong cool rim light from
+// warm, shadow-casting key light from the front left (out of the decks' specular
+// reflection, which would wash them pale) and a lowered exposure that keeps the
+// red paint below ACES's shoulder (it turns bright red pink), and a strong cool rim light from
 // behind that edges the silhouette (a distant point light without falloff, which
 // lights like a directional one), ACES tone mapping and a 7 m wide orthographic view
 // from (8, 6, 6). The renderer has no orthographic camera, so a 0.6° perspective
@@ -62,21 +63,23 @@ const FOOTPRINTS: Record<(typeof PREVIEW_KINDS)[number], [number, number]> = {
 };
 const GROUND_Y = -0.17;
 const SHADOW_GROW = 0.35;
-const SHADOW_BLUR = 14;
-const SHADOW_OPACITY = 0.62;
+const SHADOW_BLUR = 11;
+const SHADOW_OPACITY = 0.82;
 
 const SCENE = {
   background: 0x000000,
   hemisphere: { sky: 0xfff2e4, ground: 0x2c3036, intensity: 0.85 },
   sun: { color: 0xfff1de, intensity: 3.4, position: [-3, 7, 5], target: [0, 0, 0] },
+  // The key casts shadows, so the turret, mantlet and stowage shade the deck and
+  // the skirts shade the running gear: the card tanks read as solid models.
   shadow: {
-    enabled: false,
-    mapSize: 512,
-    half: 5,
+    enabled: true,
+    mapSize: 2048,
+    half: 3.6,
     near: 0.5,
     depth: 20,
-    bias: 0,
-    normalBias: 0,
+    bias: -0.0002,
+    normalBias: 0.02,
   },
   pointLight: {
     color: 0xb4dcff,

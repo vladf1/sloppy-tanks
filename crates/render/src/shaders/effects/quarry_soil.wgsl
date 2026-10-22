@@ -106,8 +106,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Stones wash into the hollows and the ruts; the crests are winnowed sand.
     let gather = quarry_value(p / SOIL_SPILL_CELL) * 0.65 + quarry_value(p / (SOIL_SPILL_CELL * 0.37) + 7.0) * 0.35;
     // Drift sand buries the stones; they lie in the deflated ground between.
-    let spill = quarry_smoothstep(0.42, 0.7, gather + stony * 0.25 + hollow * 0.3 - crest * 0.25 - drift_sand * 0.45);
-    let stones = quarry_pebbles(p, SOIL_STONE_CELL, (stony * stony * 0.3 + 0.04) * spill * 1.6, footprint, 3.0);
+    let spill = quarry_smoothstep(0.5, 0.7, gather + stony * 0.25 + hollow * 0.3 - crest * 0.25 - drift_sand * 0.45);
+    let stones = quarry_pebbles(p, SOIL_STONE_CELL, (stony * stony * 0.3 + 0.05) * spill * 1.8, footprint, 3.0);
     let grit = quarry_pebbles(p, SOIL_GRIT_CELL, (0.03 + stony * 0.4) * mix(0.4, 1.4, spill), footprint, 11.0);
     let cobbles = quarry_pebbles(p, SOIL_COBBLE_CELL, (0.004 + stony * 0.1) * spill * 1.8, footprint, 23.0);
     // Mud plates only where the bake dried some; their crack depth joins the relief.
