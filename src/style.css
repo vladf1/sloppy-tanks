@@ -486,7 +486,7 @@ body:has(#settings[open]) .hud-actions {
   display: grid;
   grid-template-columns: 124px auto;
   align-items: stretch;
-  gap: 0 12px;
+  gap: 0 10px;
   width: max-content;
   flex-shrink: 0;
   max-width: 100%;
@@ -640,7 +640,7 @@ body:has(#settings[open]) .hud-actions {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding-left: 12px;
+  padding-left: 10px;
   border-left: 1px solid #ffffff17;
 }
 /* Each round has its own colour and silhouette; the chosen one lights up in place. A
