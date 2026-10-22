@@ -882,12 +882,16 @@ body:has(#settings[open]) .hud-actions {
   filter: drop-shadow(0 1px 1px #000);
 }
 #feed .feed-new {
+  transform-origin: right center;
   animation: feed-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.15);
 }
-/* Entrances move but never fade in: a row is legible from its first frame. */
+/* Entrances grow from the row's right edge with a flash and never fade in: a row is
+   legible from its first frame, and never slides past the screen edge where it would
+   read as cut off. */
 @keyframes feed-in {
   from {
-    transform: translateX(28px);
+    transform: scale(0.9);
+    filter: brightness(1.8);
   }
 }
 /* Spoken by screen readers, not drawn: the killer is already on screen in the toast. */
@@ -913,14 +917,16 @@ body:has(#settings[open]) .hud-actions {
   color: var(--gold-hot);
 }
 #feed .own-kill-new {
+  transform-origin: right center;
   animation: own-kill-pop 0.6s cubic-bezier(0.2, 1.4, 0.4, 1);
 }
 @keyframes own-kill-pop {
   0% {
-    transform: translateX(30px) scale(0.92);
+    transform: scale(0.86);
+    filter: brightness(2);
   }
   45% {
-    transform: translateX(0) scale(1.06);
+    transform: scale(1.05);
   }
   100% {
     transform: none;
@@ -2039,23 +2045,45 @@ html:not(.phone) #toast[data-tone="death"] {
   box-shadow: 0 0 6px #ffcf38aa;
 }
 
+/* Incoming damage: a glowing arc on a ring round the middle of the screen, turned toward
+   the shot, with a small pointer at its peak. It belongs to a living tank; the wreck's
+   camera looks elsewhere, so the arc goes with the respawn card. */
 #damage-direction {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 200px;
-  height: 200px;
+  width: min(46vh, 380px);
+  height: min(46vh, 380px);
   pointer-events: none;
 }
 #damage-direction i {
   position: absolute;
-  left: calc(50% - 30px);
-  top: 0;
-  width: 60px;
-  height: 22px;
-  background: linear-gradient(180deg, #ff6b5a, #e0162e);
-  clip-path: polygon(50% 0, 100% 100%, 50% 62%, 0 100%);
-  filter: drop-shadow(0 0 6px #ff2a3a);
+  inset: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle closest-side,
+    transparent 84%,
+    #ff455acc 90%,
+    #ff2a3a66 95%,
+    transparent 100%
+  );
+  mask: conic-gradient(from -30deg, #000 0deg, #000 60deg, transparent 60deg);
+  -webkit-mask: conic-gradient(from -30deg, #000 0deg, #000 60deg, transparent 60deg);
+  filter: drop-shadow(0 0 8px #ff2a3a);
+}
+#damage-direction::after {
+  content: "";
+  position: absolute;
+  left: calc(50% - 11px);
+  top: -14px;
+  width: 22px;
+  height: 12px;
+  background: linear-gradient(180deg, #ff8a7a, #e0162e);
+  clip-path: polygon(50% 0, 100% 100%, 0 100%);
+  filter: drop-shadow(0 0 4px #ff2a3a);
+}
+#hud.dead #damage-direction {
+  display: none;
 }
 /* Battle setup: one dialog for single player and multiplayer, a pane of glass over a
    dusk battlefield. Sections are labelled rows on a three-column grid that the tank
@@ -3152,6 +3180,10 @@ html:not(.phone) #toast[data-tone="death"] {
   align-items: center;
   gap: 8px;
 }
+/* The heading's dash is a flex item here: the gap spaces it like the other labels'. */
+.setup-label > .rooms-heading::before {
+  margin-right: 0;
+}
 /* A small round arrow beside the count. Negative margins keep it from making the
    label row taller than its neighbours. */
 .icon-button {
@@ -3293,7 +3325,8 @@ html:not(.phone) #toast[data-tone="death"] {
   animation: room-scan 1.6s linear infinite;
 }
 #multiplayer-panel:has(.room-status[data-state="error"]) .room-empty svg {
-  stroke: #ff8a7e;
+  stroke: #ffc23a;
+  opacity: 0.75;
 }
 @keyframes room-scan {
   to {
@@ -3540,12 +3573,16 @@ html:not(.phone) #toast[data-tone="death"] {
   mask: radial-gradient(circle, transparent 5.5px, #000 6px 9px, transparent 9.5px);
   animation: room-scan 0.9s linear infinite;
 }
+/* Offline is a state the game recovers from by itself, not an alarm: amber, with the
+   retry beside it. */
 .room-status[data-state="error"] {
-  background: linear-gradient(90deg, #3a0f1a, #1a1226);
-  box-shadow: inset 0 0 0 1px #ff6f5e66;
+  background: linear-gradient(90deg, #2c2110, #0c1a31 70%);
+  box-shadow:
+    inset 0 0 0 1px #ffc23a40,
+    inset 3px 0 0 #ffc23a;
 }
 .room-status[data-state="error"] .room-status-icon {
-  background: #ff8a7e;
+  background: #ffc23a;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20'%3E%3Cpath fill-rule='evenodd' d='M10 1 19.5 18h-19zm-1 6v5h2V7zm0 6.5V15h2v-1.5z'/%3E%3C/svg%3E")
     center / contain no-repeat;
 }
@@ -3565,7 +3602,8 @@ html:not(.phone) #toast[data-tone="death"] {
   display: none;
 }
 .room-status[data-state="error"] #rooms-message {
-  color: #ffc2ba;
+  color: #ffe2a8;
+  font-weight: 700;
 }
 #retry-rooms {
   display: none;
@@ -3652,8 +3690,10 @@ html:not(.phone) #toast[data-tone="death"] {
 [data-tip]:has(input:focus-visible)::after {
   opacity: 1;
 }
+/* The key strip keeps clear of the build line in the panel's corner on both sides, so
+   it stays centred and never runs into it at narrower widths; it wraps instead. */
 .start .menu-footer {
-  padding-top: 10px;
+  padding: 10px 92px 0;
   border-top: 1px solid #8bb9dc1f;
 }
 .start .menu-help {
@@ -3679,6 +3719,9 @@ html:not(.phone) #toast[data-tone="death"] {
     position: static;
     justify-self: end;
     margin-top: -6px;
+  }
+  .start .menu-footer {
+    padding-inline: 0;
   }
 }
 .phone .start .menu-build {
@@ -3859,12 +3902,13 @@ html:not(.phone) #toast[data-tone="death"] {
   gap: 8px;
   margin: 0;
 }
+/* Label, value and footnote rows line up across tiles, with or without a footnote. */
 .recap-stat {
   position: relative;
-  display: flex;
-  flex-direction: column;
-  justify-content: center;
-  padding: 11px 6px 10px;
+  display: grid;
+  grid-template-rows: auto auto 13px;
+  align-content: center;
+  padding: 11px 6px 8px;
   overflow: hidden;
   border: 1px solid #a6dfff21;
   border-radius: 10px;
@@ -3877,6 +3921,7 @@ html:not(.phone) #toast[data-tone="death"] {
   animation: tile-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
 }
 .recap-stat:first-child {
+  display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: flex-start;
@@ -4551,6 +4596,13 @@ html.phone,
   }
   .phone .start .tank-preview {
     height: 92px;
+  }
+  /* The turntable sits under the tank, clear of the hull and speed lines below it. */
+  .phone .start .vehicle::before {
+    top: 38%;
+    height: 24%;
+    left: 8%;
+    right: 8%;
   }
   .phone .menu.start .phone-briefing {
     display: grid;

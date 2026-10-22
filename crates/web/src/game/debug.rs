@@ -522,6 +522,10 @@ impl Game {
             // shake roll.
             pose.up = glam::Vec3::Y;
             self.view.renderer.set_camera(pose);
+            // Tank bars face, size and hide for the pose, not the follow camera.
+            let rotation = glam::Quat::from_mat4(&pose.view().inverse());
+            self.view
+                .place_bars(&self.state.covers, &pose, rotation, f64::INFINITY);
             self.view
                 .renderer
                 .render(self.view.time as f32)
