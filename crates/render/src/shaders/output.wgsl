@@ -175,7 +175,7 @@ fn aces_filmic(color: vec3f, exposure: f32) -> vec3f {
 // colours return to the per-channel curve, and its share at full.
 const HUE_KEEP_FROM: f32 = 0.45;
 const HUE_KEEP_FULL: f32 = 0.85;
-const HUE_KEEP_HOT: vec2f = vec2f(1.6, 3.0);
+const HUE_KEEP_HOT: vec2f = vec2f(2.4, 4.5);
 const HUE_KEEP: f32 = 0.7;
 
 // ACES's output matrix pushes saturated colors out of gamut: a red hull lands with

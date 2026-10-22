@@ -316,8 +316,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         let up = n.y * 0.5 + 0.5;
         let dome = up * up * (SKY_DOME_FORM + (1.0 - SKY_DOME_FORM) * up);
         let sun_side = dot(n.xz, normalize(frame.sun_direction.xz + vec2f(1e-4))) * (1.0 - abs(n.y));
-        hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, dome)
-            * (1.0 + SKY_SUN_SIDE * sun_side) * SKY_FORM_GAIN;
+        hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, dome) * (1.0 + SKY_SUN_SIDE * sun_side);
         // Warm key, cool fill: the blue sky fill keeps its hue where it is the main
         // light (shade), but under direct sun it adds only its brightness, so sunlit
         // sand, concrete and grass keep their own warm albedo instead of drifting
@@ -408,8 +407,8 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
     return mix(ground, sky, smoothstep(-horizon_width, horizon_width, up));
 }
 
-// The clear-coat sun glint on satin paint (`shade_standard`): its strength and the
-// coat's roughness.
+// The clear-coat sun glint on satin paint (`shade_standard`): its strength, the
+// coat's roughness and its Fresnel at grazing angles.
 const PAINT_GLINT: f32 = 0.45;
 const PAINT_GLINT_ROUGHNESS: f32 = 0.22;
 const PAINT_GLINT_F90: f32 = 0.3;
@@ -417,10 +416,9 @@ const PAINT_GLINT_F90: f32 = 0.3;
 // up² × (k + (1 - k) × up) for up = n.y / 2 + 1/2, which keeps decks and roofs at the
 // full sky and undersides at the ground but gives walls and hull flanks a third of
 // the sky rather than half. Faces toward the sun's quarter of the sky take this much
-// more fill, those turned away this much less, and the gain scales the whole fill.
+// more fill, and those turned away this much less.
 const SKY_DOME_FORM: f32 = 1.6;
 const SKY_SUN_SIDE: f32 = 0.22;
-const SKY_FORM_GAIN: f32 = 1.0;
 // Bounce off the sunlit ground comes from below: walls and hull flanks take it in
 // full, undersides more and decks and roofs little.
 const BOUNCE_FROM_BELOW: f32 = 0.8;
