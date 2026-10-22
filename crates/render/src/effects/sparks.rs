@@ -20,15 +20,20 @@ const EMBER_DRAG: f32 = 2.2;
 const BOUNCE: f32 = 0.3;
 const LANDED_LIFE: f32 = 0.09;
 const GROUND: f32 = 0.05;
-/// A streak is as long as this many seconds of its flight, within these bounds (m).
-const STRETCH_SECONDS: f32 = 0.05;
-const STRETCH: [f32; 2] = [0.07, 1.5];
+/// A streak is as long as some seconds of its flight (each spark draws its own
+/// from this range, so a burst never reads as equal spokes), within these
+/// bounds (m).
+const STRETCH_SECONDS: [f32; 2] = [0.018, 0.07];
+const STRETCH: [f32; 2] = [0.06, 1.3];
 
 /// The streak shader's kinds (`streak.wgsl`).
 const KIND_STREAK: f32 = 0.0;
 const KIND_GLOW: f32 = 1.0;
 const KIND_TONGUE: f32 = 2.0;
 const KIND_TRACER: f32 = 3.0;
+/// A licking flame, with its seed in the kind's fraction (0..0.49).
+const KIND_FLAME: f32 = 4.0;
+const KIND_GROUND_GLOW: f32 = 5.0;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Spark {
@@ -43,6 +48,14 @@ pub struct Spark {
     flicker: f32,
     /// Linear HDR color at birth; it cools toward deep red as the spark dies.
     color: [f32; 3],
+    /// Seconds of flight its streak stretches over.
+    stretch: f32,
+    /// Seconds before it leaves the fire, unseen until then.
+    delay: f32,
+    /// Where it was thrown from and how far out the fire hides it (m), so a
+    /// blast's sparks streak out of its fireball instead of across it.
+    origin: Vec3,
+    hide: f32,
 }
 
 /// How a burst of sparks flies: count, speed range (m/s), upward bias, life range
@@ -57,18 +70,27 @@ pub struct Burst {
     pub color: [f32; 3],
     /// Downward acceleration (m/s²); negative makes buoyant embers.
     pub gravity: f32,
+    /// Sparks leave from anywhere within this radius of the origin (m)...
+    pub scatter: f32,
+    /// ...over this many seconds.
+    pub stagger: f32,
+    /// The fire they leave hides them within this radius (m).
+    pub hide: f32,
 }
 
 /// A blast's hot sparks: fast yellow-orange streaks that leave the fireball and
 /// arc down under gravity.
 pub const BLAST_SPARKS: Burst = Burst {
-    count: 22,
-    speed: [9.0, 24.0],
-    lift: 0.9,
-    life: [0.5, 1.1],
-    width: 0.13,
-    color: [4.6, 1.75, 0.32],
-    gravity: 13.0,
+    count: 20,
+    speed: [6.0, 22.0],
+    lift: 1.0,
+    life: [0.35, 1.2],
+    width: 0.12,
+    color: [3.4, 1.15, 0.2],
+    gravity: 14.0,
+    scatter: 0.9,
+    stagger: 0.14,
+    hide: 3.0,
 };
 /// Embers carried up on a fire's heat, flickering as they die.
 pub const EMBERS: Burst = Burst {
@@ -77,8 +99,11 @@ pub const EMBERS: Burst = Burst {
     lift: 1.4,
     life: [0.9, 2.0],
     width: 0.08,
-    color: [4.2, 1.25, 0.2],
+    color: [3.6, 0.95, 0.14],
     gravity: -1.8,
+    scatter: 0.6,
+    stagger: 0.3,
+    hide: 0.0,
 };
 /// A shell striking steel: a bright, quick spray glancing off the armour.
 pub const METAL_SPARKS: Burst = Burst {
@@ -86,9 +111,12 @@ pub const METAL_SPARKS: Burst = Burst {
     speed: [7.0, 15.0],
     lift: 0.45,
     life: [0.2, 0.42],
-    width: 0.075,
-    color: [4.2, 1.7, 0.35],
+    width: 0.07,
+    color: [3.6, 1.4, 0.3],
     gravity: 13.0,
+    scatter: 0.1,
+    stagger: 0.03,
+    hide: 0.0,
 };
 /// A shell striking stone or concrete.
 pub const STONE_SPARKS: Burst = Burst {
@@ -97,8 +125,11 @@ pub const STONE_SPARKS: Burst = Burst {
     lift: 0.5,
     life: [0.15, 0.32],
     width: 0.055,
-    color: [4.6, 2.3, 0.6],
+    color: [3.8, 1.8, 0.45],
     gravity: 13.0,
+    scatter: 0.1,
+    stagger: 0.03,
+    hide: 0.0,
 };
 /// A muzzle's burning propellant flecks.
 pub const MUZZLE_SPARKS: Burst = Burst {
@@ -107,8 +138,11 @@ pub const MUZZLE_SPARKS: Burst = Burst {
     lift: 0.2,
     life: [0.1, 0.22],
     width: 0.045,
-    color: [4.4, 1.9, 0.4],
+    color: [4.0, 1.6, 0.35],
     gravity: 13.0,
+    scatter: 0.05,
+    stagger: 0.02,
+    hide: 0.0,
 };
 
 #[derive(Clone, Debug)]
@@ -172,15 +206,22 @@ impl Sparks {
             } else {
                 0.0
             };
+            let stretch = STRETCH_SECONDS[0] + (STRETCH_SECONDS[1] - STRETCH_SECONDS[0]) * next();
+            let delay = burst.stagger * next() * next();
+            let offset = around * burst.scatter * next().sqrt();
             self.sparks.push(Spark {
-                position: origin,
+                position: origin + offset,
                 velocity: heading.normalize_or(Vec3::Y) * speed,
                 life,
                 max: life,
-                width: burst.width * (0.7 + next() * 0.6),
+                width: burst.width * (0.6 + next() * 0.8),
                 gravity: burst.gravity,
                 flicker,
                 color: burst.color.map(|c| c * shade),
+                stretch,
+                delay,
+                origin,
+                hide: burst.hide,
             });
         }
     }
@@ -192,6 +233,10 @@ impl Sparks {
         let spark_drag = (-SPARK_DRAG * dt).exp();
         let ember_drag = (-EMBER_DRAG * dt).exp();
         self.sparks.retain_mut(|spark| {
+            if spark.delay > 0.0 {
+                spark.delay -= dt;
+                return true;
+            }
             spark.life -= dt;
             if spark.life <= 0.0 {
                 return false;
@@ -216,10 +261,12 @@ impl Sparks {
             true
         });
         self.records.clear();
-        for spark in &self.sparks {
+        for spark in self.sparks.iter().filter(|spark| spark.delay <= 0.0) {
             let fade = spark.life / spark.max;
             let speed = spark.velocity.length();
-            let length = (speed * STRETCH_SECONDS).clamp(STRETCH[0], STRETCH[1]);
+            // A spark's trail grows over its first moments in the air.
+            let flown = ((spark.max - spark.life) / spark.stretch).min(1.0);
+            let length = (speed * spark.stretch * flown).clamp(STRETCH[0], STRETCH[1]);
             let direction = spark.velocity / speed.max(1e-4);
             // Hot sparks cool to orange and deep red as they die; embers flicker.
             let cool = [1.0, 0.4 + 0.6 * fade, 0.1 + 0.9 * fade * fade];
@@ -229,13 +276,21 @@ impl Sparks {
                 1.0
             };
             let color = [0, 1, 2].map(|i| spark.color[i] * cool[i] * flicker);
+            let out = if spark.hide > 0.0 {
+                let t = (((spark.position - spark.origin).length() - spark.hide * 0.5)
+                    / (spark.hide * 0.5))
+                    .clamp(0.0, 1.0);
+                t * t * (3.0 - 2.0 * t)
+            } else {
+                1.0
+            };
             streak(
                 &mut self.records,
                 spark.position - direction * (length * 0.5),
                 direction,
                 spark.width * (0.5 + 0.5 * fade),
                 length,
-                [color[0], color[1], color[2], fade.sqrt()],
+                [color[0], color[1], color[2], fade.sqrt() * out],
             );
         }
     }
@@ -294,6 +349,43 @@ pub fn glow(records: &mut PoolBuffer, center: Vec3, diameter: f32, tint: [f32; 4
     records.push(record(world, tint, [0.0, 0.0, 0.0, KIND_GLOW]))
 }
 
+/// A licking flame from `base`, `length` metres along `direction`: yellow at its
+/// root, burning out through orange to deep red licks at its tip. `seed` (0..1)
+/// sets its licks apart from its neighbours'.
+pub fn flame(
+    records: &mut PoolBuffer,
+    base: Vec3,
+    direction: Vec3,
+    width: f32,
+    length: f32,
+    seed: f32,
+    tint: [f32; 4],
+) -> bool {
+    let world =
+        Mat4::from_scale_rotation_translation(Vec3::new(width, length, 1.0), Quat::IDENTITY, base);
+    records.push(record(
+        world,
+        tint,
+        [
+            direction.x,
+            direction.y,
+            direction.z,
+            KIND_FLAME + seed.fract().abs() * 0.49,
+        ],
+    ))
+}
+
+/// Firelight on the ground: an additive glow `diameter` metres across lying
+/// flat at `center`, brightest under the fire.
+pub fn ground_glow(records: &mut PoolBuffer, center: Vec3, diameter: f32, tint: [f32; 4]) -> bool {
+    let world = Mat4::from_scale_rotation_translation(
+        Vec3::new(diameter, diameter, 1.0),
+        Quat::IDENTITY,
+        center,
+    );
+    records.push(record(world, tint, [0.0, 1.0, 0.0, KIND_GROUND_GLOW]))
+}
+
 /// A flame tongue from `base`, `length` metres along `direction`. The shader's
 /// raggedness reads `seed` from the direction's x, so it is passed through.
 pub fn tongue(
@@ -325,8 +417,11 @@ mod tests {
             sparks.burst(Vec3::Y, Vec3::ZERO, 1.0, &BLAST_SPARKS, &mut random);
         }
         assert_eq!(sparks.len(), MAX_SPARKS);
-        sparks.update(1.0 / 60.0);
-        assert_eq!(sparks.records.len(), MAX_SPARKS);
+        // Staggered sparks leave the fire over its first moments.
+        for _ in 0..12 {
+            sparks.update(1.0 / 60.0);
+        }
+        assert!(sparks.records.len() > MAX_SPARKS * 3 / 4);
         assert!(sparks.records.records().iter().all(|r| {
             r.world_rows.as_flattened().iter().all(|v| v.is_finite())
                 && r.translation().y >= GROUND - STRETCH[1]

@@ -25,18 +25,18 @@ fn wreck_noise(p: vec2f) -> f32 {
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let brightness = select(material.params[0].x, f.instance_data.x, f.instance_data.y > 0.5);
     // 0 at the moment of death, 1 once the fire has done its work.
-    let charred = smoothstep(0.78, 0.3, brightness);
+    let charred = smoothstep(0.82, 0.45, brightness);
     let p = f.world.xz * 1.1 + vec2f(f.world.y * 0.9, -f.world.y * 0.6);
     let soot = wreck_noise(p) * 0.6 + wreck_noise(p * 2.7) * 0.4;
     let low = 1.0 - smoothstep(0.3, 1.6, f.world.y);
     // Patches where the paint survived, scorched brown at their edges.
-    let paint = smoothstep(0.66, 0.8, soot + 0.08 * (1.0 - low));
+    let paint = smoothstep(0.7, 0.84, soot + 0.08 * (1.0 - low));
     let scorched = smoothstep(0.42, 0.6, soot) * (1.0 - paint);
     let steel = vec3f(0.035, 0.032, 0.03) * (0.75 + 0.5 * soot);
     let burnt_paint = mix(steel, vec3f(0.11, 0.06, 0.035), scorched);
     let kept = (*s).color * (0.32 + 0.2 * soot);
     let char_color = mix(burnt_paint, kept, paint * 0.8);
-    (*s).color = mix((*s).color * (0.86 + 0.2 * soot - 0.12 * low), char_color, charred * 0.92);
+    (*s).color = mix((*s).color * (0.86 + 0.2 * soot - 0.12 * low), char_color, charred * 0.96);
     (*s).color *= mix(1.0, 0.85 + 0.15 * brightness / 0.8, 1.0 - charred);
     (*s).emissive *= brightness;
     // Seams and low panels smoulder: thin bright cracks that breathe.

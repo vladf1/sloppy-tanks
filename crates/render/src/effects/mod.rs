@@ -216,7 +216,6 @@ impl EffectSystems {
             state,
             dt,
             &mut particles.explosions.puffs,
-            &mut particles.explosions.rings,
             &mut particles.sparks,
             &mut self.random,
         );

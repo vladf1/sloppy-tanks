@@ -20,7 +20,7 @@ use super::Flash;
 use super::ground::Ground;
 use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
-use super::sparks::{glow, streak, tongue};
+use super::sparks::{flame, glow, ground_glow};
 use super::spawn_pad_decks::SpawnPadDecks;
 use super::wood_chips::{CRATE_HEIGHT, HIT_HEIGHT};
 use crate::color::hex_to_linear;
@@ -31,12 +31,11 @@ pub const EXPLOSION_LIFETIME: f64 = 2.8;
 pub const PUFFS_PER_BLAST: usize = 30;
 /// Scorches left on the ground at once; the oldest makes room.
 pub const MAX_SCORCHES: usize = 40;
-/// Ground decals a frame may hold: a dust ring, a shockwave and a fire glow per
-/// blast, every scorch, and a burning wreck's glow.
-pub const DECAL_CAPACITY: usize =
-    MAX_EXPLOSIONS * 3 + MAX_SCORCHES + super::wreck_fire::MAX_BURNING_WRECKS;
+/// Ground decals a frame may hold: a dust ring and a shockwave per blast, and
+/// every scorch.
+pub const DECAL_CAPACITY: usize = MAX_EXPLOSIONS * 2 + MAX_SCORCHES;
 /// A scorch cools and then fades out over this many seconds.
-pub const SCORCH_LIFETIME: f64 = 26.0;
+pub const SCORCH_LIFETIME: f64 = 45.0;
 /// A burnout's thin smoke outlasts a normal blast.
 const BURNOUT_LIFETIME: f64 = 2.7;
 /// A dust collapse (timber) and a shell hit's puff.
@@ -55,47 +54,55 @@ const SHOCK_START: f64 = 0.6;
 const SHOCK_SPREAD: f64 = 5.4;
 /// The flash core: how long it burns (s), its diameter (m, times the scale) and
 /// the wider orange bloom around it.
-const FLASH_SECONDS: f64 = 0.13;
-const FLASH_SIZE: f64 = 2.6;
-const FLASH_COLOR: [f32; 3] = [4.2, 2.9, 1.5];
-const BLOOM_SECONDS: f64 = 0.22;
-const BLOOM_SIZE: f64 = 6.0;
-const BLOOM_COLOR: [f32; 3] = [3.0, 1.1, 0.22];
+/// Kept small and below white so it never blows out a hull beside it.
+const FLASH_SECONDS: f64 = 0.1;
+const FLASH_SIZE: f64 = 2.0;
+const FLASH_COLOR: [f32; 3] = [2.6, 1.6, 0.6];
+const BLOOM_SECONDS: f64 = 0.2;
+const BLOOM_SIZE: f64 = 5.0;
+const BLOOM_COLOR: [f32; 3] = [1.8, 0.62, 0.12];
 /// Puffs are slightly flattened.
 const PUFF_HEIGHT: f64 = 0.9;
 /// The hottest a fireball puff starts (the puff shader's heat).
 const FIRE_HEAT: f64 = 1.5;
 /// Heat falls by this factor of e over a look's `fire_life`.
-const COOLING: f64 = 3.0;
+const COOLING: f64 = 2.8;
+/// Upward acceleration of a blast's soot once its fire is out (m/s²).
+const SOOT_BUOYANCY: f64 = 5.0;
+/// A blast's soot thins away over this many seconds once its fire is out.
+const SOOT_SECONDS: f64 = 1.3;
 /// A fire puff burns out (thins to nothing from its rim) as its heat falls
 /// through this range.
 const BURN_OUT: [f64; 2] = [0.1, 0.42];
-const FIRE_PUFFS: usize = 8;
-const SMOKE_PUFFS: usize = 9;
-const SKIRT_PUFFS: usize = 9;
+const FIRE_PUFFS: usize = 9;
+const SMOKE_PUFFS: usize = 7;
+const SKIRT_PUFFS: usize = 7;
 /// The wind every blast's and wreck's smoke drifts on (m/s).
 pub const WIND: [f64; 2] = [0.9, -0.35];
 /// The light a blast throws on everything around it: peak intensity (times its
 /// scale squared), reach (m) and height over the blast (m, times its scale).
-const BLAST_LIGHT: f64 = 34.0;
+const BLAST_LIGHT: f64 = 70.0;
 pub const BLAST_LIGHT_DISTANCE: f32 = 15.0;
-const LIGHT_HEIGHT: f64 = 2.4;
+/// The light hangs high over the fire, so a hull beside or under it is lit
+/// warm, not blown out.
+const LIGHT_HEIGHT: f64 = 3.0;
+const LIGHT_LIFT: f64 = 0.8;
 /// A shell hit's brief light.
-const HIT_LIGHT: f64 = 12.0;
+const HIT_LIGHT: f64 = 26.0;
 /// The light's color at the white flash and through the fire.
 const FLASH_LIGHT_COLOR: u32 = 0xffd6a0;
 const FIRE_LIGHT_COLOR: u32 = 0xff8436;
-/// The fire's glow on the ground: diameter (m, times the scale) and HDR color.
-const GROUND_GLOW_SIZE: f64 = 8.0;
-const GROUND_GLOW_COLOR: [f32; 3] = [2.6, 0.95, 0.22];
+/// The fire's additive light on the ground: diameter (m, times the scale) and
+/// HDR color.
+const GROUND_GLOW_SIZE: f64 = 11.0;
+const GROUND_GLOW_COLOR: [f32; 3] = [1.1, 0.42, 0.09];
 /// A tank's cook-off jet: how long its tongue of flame roars up, and its color.
 const JET_SECONDS: f64 = 0.45;
-const JET_COLOR: [f32; 3] = [4.2, 1.6, 0.3];
+const JET_COLOR: [f32; 3] = [1.3, 1.1, 1.0];
 /// The decal shader's kinds (`blast_ring.wgsl`).
 const DUST_RING: f32 = 0.0;
 const SHOCK_RING: f32 = 1.0;
 const SCORCH: f32 = 2.0;
-pub(super) const GROUND_GLOW: f32 = 3.0;
 
 const SMOKE: u32 = 0x76787c;
 const TANK_SMOKE: u32 = 0x5c5e62;
@@ -166,9 +173,9 @@ struct Look {
 
 const BLAST: Look = Look {
     lifetime: EXPLOSION_LIFETIME,
-    fire_size: 1.32,
-    fire_spread: 1.15,
-    fire_life: 0.62,
+    fire_size: 1.05,
+    fire_spread: 1.05,
+    fire_life: 0.55,
     fire_rise: 1.3,
     smoke: SMOKE,
     smoke_size: 1.0,
@@ -221,8 +228,8 @@ const TANK_BLASTS: [Look; 3] = [
 const BARREL_BLASTS: [Look; 3] = [
     Look {
         lifetime: 2.6,
-        fire_size: 1.05,
-        fire_spread: 1.15,
+        fire_size: 1.15,
+        fire_spread: 1.2,
         fire_life: 0.8,
         fire_rise: 0.9,
         smoke: 0x5e5852,
@@ -233,8 +240,8 @@ const BARREL_BLASTS: [Look; 3] = [
     },
     Look {
         lifetime: 2.6,
-        fire_size: 0.92,
-        fire_spread: 0.85,
+        fire_size: 1.02,
+        fire_spread: 0.95,
         fire_life: 0.72,
         fire_rise: 1.3,
         smoke: 0x5c5c5e,
@@ -245,8 +252,8 @@ const BARREL_BLASTS: [Look; 3] = [
     },
     Look {
         lifetime: 2.8,
-        fire_size: 0.95,
-        fire_spread: 0.9,
+        fire_size: 1.05,
+        fire_spread: 1.0,
         fire_life: 0.8,
         fire_rise: 1.5,
         smoke: 0x625e5a,
@@ -520,9 +527,9 @@ impl ExplosionEffects {
         // Kills are the hero blasts; ordnance stays compact so the scale reads
         // from a shell's interception up to a drum.
         blast.scale = if tank {
-            (size / 3.0) * (1.15 + random.next_f64() * 0.25)
+            (size / 3.0) * (1.1 + random.next_f64() * 0.25)
         } else {
-            (0.42 + 0.1 * size).clamp(0.55, 1.2)
+            (size / 4.6).clamp(0.6, 1.35)
         };
         if barrel {
             blast.scale *= 0.88 + random.next_f64() * 0.25;
@@ -566,8 +573,8 @@ impl ExplosionEffects {
         }
         // Fiery blasts char the ground where they went off.
         let scorch = match kind {
-            Kind::Blast | Kind::Barrel => Some(4.2),
-            Kind::Tank => Some(5.0),
+            Kind::Blast | Kind::Barrel => Some(4.6),
+            Kind::Tank => Some(5.4),
             Kind::Burnout => Some(2.6),
             _ => None,
         };
@@ -610,10 +617,13 @@ impl ExplosionEffects {
             let s = blast.scale;
             let (intensity, height) = match blast.kind {
                 Kind::Blast | Kind::Tank | Kind::Barrel => (
-                    BLAST_LIGHT * s * s * blast.fire_light(t, &blast.look()),
-                    LIGHT_HEIGHT * s,
+                    BLAST_LIGHT * s * blast.fire_light(t, &blast.look()),
+                    LIGHT_HEIGHT * s + LIGHT_LIFT,
                 ),
-                Kind::Burnout => (BLAST_LIGHT * 0.25 * s * s * (-t * 5.0).exp(), 1.2 * s),
+                Kind::Burnout => (
+                    BLAST_LIGHT * 0.25 * s * (-t * 5.0).exp(),
+                    1.2 * s + LIGHT_LIFT,
+                ),
                 Kind::Hit(_) => (HIT_LIGHT * (-t * 22.0).exp(), blast.y + 0.6),
                 _ => continue,
             };
@@ -721,7 +731,7 @@ impl ExplosionEffects {
             }
             Kind::Blast | Kind::Tank | Kind::Barrel => {
                 let smoke = linear(look.smoke);
-                self.ground_glow(b, t, &look);
+                self.ground_glow(b, t, &look, streaks);
                 self.haze(b, t, lifetime, mixed(b.dust, smoke, 0.45));
                 self.skirt(b, t, b.dust);
                 self.column(b, t, lifetime, &look, smoke, true);
@@ -748,7 +758,7 @@ impl ExplosionEffects {
                         streaks,
                         center,
                         (FLASH_SIZE * s * (0.7 + 0.5 * k)) as f32,
-                        [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.9) as f32],
+                        [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.7) as f32],
                     );
                 }
                 self.shock(b, t, b.scale);
@@ -758,8 +768,8 @@ impl ExplosionEffects {
     }
 
     /// The fire's light on the ground around it: a flash, then a flickering
-    /// glow that dies as the fireball burns out. Drawn under the smoke.
-    fn ground_glow(&mut self, b: &Blast, t: f64, look: &Look) {
+    /// glow that dies as the fireball burns out, added onto the ground.
+    fn ground_glow(&self, b: &Blast, t: f64, look: &Look, streaks: &mut PoolBuffer) {
         let strength = b.fire_light(t, look);
         if strength <= 0.01 {
             return;
@@ -769,21 +779,15 @@ impl ExplosionEffects {
             (GROUND_GLOW_SIZE * s * look.fire_size * (0.75 + 0.35 * settle(t, 8.0))) as f32;
         let y = self
             .pads
-            .decal_height(b.x, b.z, f64::from(diameter) * 0.5, RING_HEIGHT + 0.008)
+            .decal_height(b.x, b.z, f64::from(diameter) * 0.5, RING_HEIGHT + 0.03)
             as f32;
-        let world = Mat4::from_translation(Vec3::new(b.x as f32, y, b.z as f32))
-            * Mat4::from_scale(Vec3::new(diameter, 1.0, diameter));
         let [r, g, bl] = GROUND_GLOW_COLOR;
-        self.rings.push(record(
-            world,
-            [r, g, bl, 1.0],
-            [
-                t as f32,
-                b.phase as f32,
-                GROUND_GLOW,
-                strength.min(1.0) as f32,
-            ],
-        ));
+        ground_glow(
+            streaks,
+            Vec3::new(b.x as f32, y, b.z as f32),
+            diameter,
+            [r, g, bl, strength.min(1.2) as f32],
+        );
     }
 
     /// A broad, faint haze that settles over the blast and lingers, drifting.
@@ -829,8 +833,9 @@ impl ExplosionEffects {
             if age <= 0.0 {
                 continue;
             }
-            let angle = b.phase + jf * TAU / SKIRT_PUFFS as f64 + (r2 - 0.5) * 0.55;
-            let reach = (0.5 + (2.4 + 1.8 * r3) * settle(age, 3.0 + 3.0 * r2)) * s;
+            // Uneven gaps and reaches: a burst of billows, not a stamped ring.
+            let angle = b.phase + jf * 2.399 + (r2 - 0.5) * 1.1;
+            let reach = (0.5 + (1.8 + 2.4 * r3) * settle(age, 3.0 + 3.0 * r2)) * s;
             let size = (0.45 + 0.35 * r1 + (0.8 + 0.6 * r2) * age.sqrt()) * s;
             let end = 1.1 + 0.8 * r3;
             self.puff(Puff {
@@ -840,9 +845,9 @@ impl ExplosionEffects {
                     b.z + angle.sin() * reach + WIND[1] * age * 0.5,
                 ],
                 size,
-                color: scaled(color, 0.88 + 0.22 * r2),
+                color: scaled(color, 0.8 + 0.25 * r2),
                 opacity: (age / 0.05).min(1.0)
-                    * (0.3 + 0.22 * r3)
+                    * (0.36 + 0.24 * r3)
                     * (1.0 - smoothstep(age, 0.25, end))
                     * (0.9 * s / size).clamp(0.35, 1.0),
                 seed: b.phase * 0.53 + jf * 0.137,
@@ -887,7 +892,9 @@ impl ExplosionEffects {
             let angle = b.phase + jf * 2.399;
             let spread = (0.25 + 0.95 * settle(age, 1.6)) * s * (0.55 + 0.6 * r3);
             let rise = look.smoke_rise * s.sqrt() * (0.7 + 0.5 * r2);
-            let y = (1.2 + 0.5 * r1) * s + rise * settle(age, 0.8) / 0.8 + 0.3 * age;
+            let y = (1.3 + 0.5 * r1) * s
+                + rise * settle(age, 0.8) / 0.8
+                + 0.5 * SOOT_BUOYANCY * 0.5 * age * age;
             let carry = age * (0.6 + 0.3 * y);
             let size = (0.55 + 1.4 * age.sqrt()) * s * look.smoke_size * (0.8 + 0.4 * r2);
             // The same smoke spread over a bigger billow is thinner.
@@ -905,23 +912,24 @@ impl ExplosionEffects {
                         + b.phase.sin() * age * look.drift * 0.4,
                 ],
                 size,
-                color: scaled(smoke, 0.85 + 0.3 * r3),
+                color: scaled(smoke, 0.95 + 0.3 * r3),
                 opacity: (age / 0.2).min(1.0)
-                    * 0.82
+                    * 0.62
                     * thin
-                    * (1.0 - smoothstep(age, life * 0.35, life)),
+                    * (1.0 - smoothstep(age, life * 0.3, life * 0.85)),
                 seed: b.phase * 0.71 + jf * 0.173,
                 heat: 0.0,
                 erosion: smoothstep(age, life * 0.25, life) * 0.85,
-                softness: 0.12 + 0.15 * r1,
+                softness: 0.18 + 0.2 * r1,
                 underglow: fire * (1.0 - smoothstep(age, 0.2, 1.4)),
             });
         }
     }
 
     /// The fireball: boiling puffs flung out and up, white hot at first, cooling
-    /// through yellow and orange and burning out from their rims; the smoke is
-    /// the column's.
+    /// from their rims through orange and deep red into the soot they carry. The
+    /// soot then climbs on its own heat, faster as it goes, swells, pales and
+    /// thins on the wind, so a blast leaves a rising cloud, never a sitting blob.
     fn fireball(&mut self, b: &Blast, t: f64, look: &Look, smoke: [f64; 3]) {
         let s = b.scale;
         let cooling = COOLING / look.fire_life;
@@ -931,39 +939,69 @@ impl ExplosionEffects {
             let r2 = hash(b.phase * 1.91 + jf * 0.713);
             let r3 = hash(b.phase * 2.71 + jf * 2.239);
             let late = look.double_burst && j >= 5;
-            let age = t - r1 * 0.035 - if late { 0.24 } else { 0.0 };
+            // A few outer lobes cool fast into a dark shell of smoke curling
+            // round the fire, so the fireball has value contrast from its start.
+            let shell = j > 0 && r3 > 0.62;
+            let age = t - r1 * 0.035 - if late { 0.22 } else { 0.0 };
             if age <= 0.0 {
                 continue;
             }
-            let out = settle(age, 7.0 + 5.0 * r2);
-            let angle = b.phase + jf * TAU / (FIRE_PUFFS - 1) as f64 + (r3 - 0.5) * 0.8;
+            let out = settle(age, 8.0 + 4.0 * r2);
+            // Golden-angle placement keeps the lobes from lining up in a ring.
+            let angle = b.phase + jf * 2.399 + (r3 - 0.5) * 0.6;
             let reach = if j == 0 {
                 0.1
             } else {
-                (0.25 + (0.85 + 0.55 * r2) * out) * look.fire_spread
+                (0.3 + (0.95 + 0.5 * r2) * out) * look.fire_spread * if shell { 1.2 } else { 1.0 }
             } * s;
-            let lift = (0.5 + 0.55 * r3 + look.fire_rise * age) * s;
-            let size = (0.6 + 1.4 * out + 0.3 * age)
+            // Soot rises on its own heat, gathering speed once the fire is out.
+            let soot_age = (age - look.fire_life * 0.5).max(0.0);
+            let climb = 0.5 * SOOT_BUOYANCY * soot_age * soot_age * (0.8 + 0.4 * r2);
+            let lift = (0.55 + 0.5 * r3 + look.fire_rise * age) * s + climb * s.sqrt();
+            let size = (0.75 + 1.3 * out + 0.55 * age)
                 * s
                 * look.fire_size
-                * if j == 0 { 1.25 } else { 0.7 + 0.45 * r1 };
-            let heat =
-                fire_heat(age, cooling * (0.85 + 0.35 * r3)) * if j == 0 { 1.1 } else { 1.0 };
-            let burn = burning(heat);
+                * if j == 0 { 1.3 } else { 0.72 + 0.4 * r1 };
+            let heat = fire_heat(age, cooling * if shell { 2.6 } else { 0.75 + 0.4 * r3 })
+                * if j == 0 { 1.1 } else { 1.0 };
+            // Fresh soot is dark; as it climbs and spreads it pales toward the
+            // column's grey.
+            let pale = smoothstep(
+                age,
+                look.fire_life * 0.8,
+                look.fire_life * 0.8 + SOOT_SECONDS,
+            );
+            let carry = soot_age * soot_age * 0.5;
             self.puff(Puff {
                 position: [
-                    b.x + angle.cos() * reach + b.phase.cos() * age * look.drift * 0.5,
+                    b.x + angle.cos() * reach
+                        + b.phase.cos() * age * look.drift * 0.5
+                        + WIND[0] * carry,
                     lift,
-                    b.z + angle.sin() * reach + b.phase.sin() * age * look.drift * 0.5,
+                    b.z + angle.sin() * reach
+                        + b.phase.sin() * age * look.drift * 0.5
+                        + WIND[1] * carry,
                 ],
                 size,
-                color: scaled(smoke, 0.55),
-                opacity: (age / 0.025).min(1.0) * 0.95 * burn,
+                color: scaled(smoke, 0.5 + 0.55 * pale),
+                opacity: (age / 0.025).min(1.0)
+                    * 0.97
+                    * (1.0
+                        - smoothstep(
+                            age,
+                            look.fire_life * 0.85,
+                            look.fire_life * 0.85 + SOOT_SECONDS,
+                        ))
+                    * (1.0 - 0.35 * pale),
                 seed: b.phase * 0.29 + jf * 0.311,
                 heat,
-                erosion: (1.0 - smoothstep(heat, 0.3, 1.2)) * 0.8,
-                softness: 0.0,
-                underglow: 0.0,
+                erosion: smoothstep(
+                    age,
+                    look.fire_life * 0.7,
+                    look.fire_life * 0.85 + SOOT_SECONDS,
+                ) * 0.85,
+                softness: pale * 0.35,
+                underglow: (heat / 0.5).min(1.0) * 0.8,
             });
         }
     }
@@ -975,14 +1013,23 @@ impl ExplosionEffects {
         if t < JET_SECONDS {
             let k = t / JET_SECONDS;
             let [r, g, bl] = JET_COLOR;
-            tongue(
-                streaks,
-                Vec3::new(b.x as f32, (0.9 * s) as f32, b.z as f32),
-                Vec3::new(WIND[0] as f32 * 0.1, 1.0, WIND[1] as f32 * 0.1).normalize(),
-                (1.1 * s * (1.0 - 0.4 * k)) as f32,
-                ((2.0 + 3.5 * settle(t, 9.0)) * s) as f32,
-                [r, g, bl, ((1.0 - k) * (1.0 - k)) as f32],
-            );
+            for i in 0..2 {
+                let lean = (b.phase + i as f64 * 2.1).cos() as f32 * 0.15;
+                flame(
+                    streaks,
+                    Vec3::new(b.x as f32, (0.8 * s) as f32, b.z as f32),
+                    Vec3::new(
+                        WIND[0] as f32 * 0.1 + lean,
+                        1.0,
+                        WIND[1] as f32 * 0.1 - lean,
+                    )
+                    .normalize(),
+                    (1.5 * s * (1.0 - 0.3 * k)) as f32 * (1.0 - 0.3 * i as f32),
+                    ((2.4 + 3.2 * settle(t, 9.0)) * s) as f32 * (1.0 - 0.25 * i as f32),
+                    (b.phase * 0.37 + i as f64 * 0.41) as f32,
+                    [r, g, bl, ((1.0 - k) * (1.0 - k).sqrt()) as f32],
+                );
+            }
         }
         for j in 0..3 {
             let jf = j as f64;
@@ -1055,33 +1102,18 @@ impl ExplosionEffects {
     fn hit(&mut self, b: &Blast, struck: Struck, t: f64, streaks: &mut PoolBuffer) {
         let y = b.y.max(0.3);
         let at = Vec3::new(b.x as f32, y as f32, b.z as f32);
-        if t < 0.1 {
-            let k = t / 0.1;
+        // A small hot point in a warm bloom, kept below white so the struck
+        // hull keeps its silhouette; the sparks carry the rest.
+        if t < 0.09 {
+            let k = t / 0.09;
             let fade = (1.0 - k) as f32;
-            glow(streaks, at, (0.6 + 0.4 * k) as f32, [4.4, 2.9, 1.4, fade]);
+            glow(streaks, at, (0.45 + 0.3 * k) as f32, [2.6, 1.7, 0.75, fade]);
             glow(
                 streaks,
                 at,
-                (2.2 + 1.0 * k) as f32,
-                [3.0, 1.15, 0.25, fade * fade * 0.45],
+                (1.6 + 0.8 * k) as f32,
+                [1.8, 0.65, 0.14, fade * fade * 0.35],
             );
-            // Glints thrown out of the hit in a ragged star.
-            for i in 0..4 {
-                let fi = i as f64;
-                let angle = b.phase + fi * TAU / 4.0 + (hash(b.phase + fi) - 0.5) * 0.9;
-                let up = 0.25 + 0.5 * hash(b.phase * 3.0 + fi);
-                let direction =
-                    Vec3::new(angle.cos() as f32, up as f32, angle.sin() as f32).normalize();
-                let length = ((0.5 + 0.7 * hash(b.phase * 5.0 + fi)) * (0.6 + 0.9 * k)) as f32;
-                streak(
-                    streaks,
-                    at + direction * (length * 0.5 + 0.1),
-                    direction,
-                    0.08,
-                    length,
-                    [4.0, 1.6, 0.32, fade],
-                );
-            }
         }
         let (color, softness, rise) = match struck {
             Struck::Steel => (linear(HIT_SMOKE), 0.2, 1.5),
@@ -1283,9 +1315,10 @@ impl ExplosionEffects {
 
 /// Puffs between the camera and the player's tank thin out to this share of
 /// their opacity, so a blast's smoke never hides the player.
-const SEE_THROUGH: f32 = 0.06;
-/// The sight line is kept clear this wide around its axis (m): about a hull.
-const SIGHT_RADIUS: f32 = 2.0;
+const SEE_THROUGH: f32 = 0.08;
+/// The sight line is kept clear this wide around its axis (m): a hull and the
+/// ground around it.
+const SIGHT_RADIUS: f32 = 3.0;
 
 /// Thin every puff in `puffs` that covers the sight line from `eye` to `target`
 /// (the player's tank), most where the line passes through its middle.
@@ -1301,7 +1334,7 @@ pub fn clear_sight_line(puffs: &mut PoolBuffer, eye: Vec3, target: Vec3) {
         let miss = center.distance(eye + sight * along);
         // The card spans its scale either side of the centre.
         let radius = Vec3::from_slice(&puff.world_rows[0][..3]).length();
-        let t = ((miss - SIGHT_RADIUS) / (radius * 0.9)).clamp(0.0, 1.0);
+        let t = ((miss - SIGHT_RADIUS) / radius).clamp(0.0, 1.0);
         let clear = t * t * (3.0 - 2.0 * t);
         puff.tint[3] *= SEE_THROUGH + (1.0 - SEE_THROUGH) * clear;
     }
@@ -1379,27 +1412,23 @@ mod tests {
             &mut random,
         );
         effects.update(0.06, &mut streaks);
-        assert_eq!(streaks.len(), 2, "the flash core and its bloom");
+        assert_eq!(
+            streaks.len(),
+            3,
+            "the flash core, its bloom and the fire's light on the ground"
+        );
         assert!(heat(&effects.puffs) > 1.0, "a white-hot fireball");
         assert_eq!(rings_of(&effects.rings, SHOCK_RING), 1);
         assert_eq!(rings_of(&effects.rings, DUST_RING), 1);
         assert_eq!(rings_of(&effects.rings, SCORCH), 1);
-        assert_eq!(
-            rings_of(&effects.rings, GROUND_GLOW),
-            1,
-            "the fire lights the ground"
-        );
         let mut lights = [Flash::default(); 3];
         effects.lights(&mut lights);
         assert!(lights.iter().any(|light| light.intensity > 10.0));
-        update(&mut effects, 0.6);
+        streaks.clear();
+        effects.update(0.6, &mut streaks);
         assert!(heat(&effects.puffs) < 0.3, "the fire has cooled into smoke");
         assert_eq!(rings_of(&effects.rings, SHOCK_RING), 0);
-        assert_eq!(
-            rings_of(&effects.rings, GROUND_GLOW),
-            0,
-            "the fire has burnt out"
-        );
+        assert!(streaks.is_empty(), "the fire has burnt out");
         assert!(effects.puffs.len() > 10);
         // The smoke has risen well clear of the ground on the fire's heat.
         let top = (0..effects.puffs.len())
@@ -1588,11 +1617,7 @@ mod tests {
         effects.event(&steel, &mut random);
         effects.event(&SimEvent::at(SimEventType::Ricochet, 3.0, 0.0), &mut random);
         effects.update(0.02, &mut streaks);
-        assert_eq!(
-            streaks.len(),
-            12,
-            "each a hot point, its bloom and four glints"
-        );
+        assert_eq!(streaks.len(), 4, "each a hot point and its bloom");
         assert_eq!(effects.puffs.len(), 2, "each a burst of fire");
         assert!(effects.rings.is_empty() && effects.scorches() == 0);
         update(&mut effects, HIT_LIFETIME);

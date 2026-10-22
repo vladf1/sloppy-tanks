@@ -28,7 +28,7 @@ const MAX_PENDING: usize = 64;
 /// The flame lasts a few frames; the smoke longer.
 const FLAME_SECONDS: f64 = 0.07;
 const SMOKE_SECONDS: f64 = 1.2;
-const GUNSMOKE: u32 = 0xdcdcdc;
+const GUNSMOKE: u32 = 0xc8c4bc;
 /// The flame star's points around the bore (rad from the barrel's line).
 const STAR_ANGLES: [f32; 4] = [-1.15, -0.55, 0.55, 1.15];
 /// The muzzle light's peak intensity (times the shot size) and reach.
@@ -36,7 +36,7 @@ pub const MUZZLE_LIGHT: f32 = 28.0;
 pub const MUZZLE_LIGHT_DISTANCE: f32 = 10.0;
 /// The light dies this fast (1/s).
 const LIGHT_DECAY: f64 = 32.0;
-const FLAME_COLOR: [f32; 3] = [4.8, 2.2, 0.55];
+const FLAME_COLOR: [f32; 3] = [3.6, 1.6, 0.38];
 
 #[derive(Clone, Copy, Debug)]
 struct Pending {
@@ -233,14 +233,14 @@ fn draw(flash: &Muzzle, sparks: &mut Sparks, puffs: &mut PoolBuffer) {
         glow(
             streaks,
             base + forward * 0.3,
-            (1.2 + 0.4 * k) * s,
-            [4.6, 3.6, 2.2, fade],
+            (1.0 + 0.4 * k) * s,
+            [3.0, 2.1, 1.0, fade],
         );
         glow(
             streaks,
             base + forward * 0.4,
-            (3.4 + 1.2 * k) * s,
-            [3.0, 1.2, 0.25, fade * 0.4],
+            (3.0 + 1.2 * k) * s,
+            [2.0, 0.8, 0.15, fade * 0.35],
         );
     }
     let smoke = hex_to_linear(GUNSMOKE);
@@ -261,7 +261,7 @@ fn draw(flash: &Muzzle, sparks: &mut Sparks, puffs: &mut PoolBuffer) {
                     + Vec3::Y * (t * (0.45 + 0.1 * jf))
                     + wind * t,
                 (0.3 + 0.12 * jf + (0.6 + 0.15 * jf) * t.sqrt()) * s,
-                smoke,
+                smoke.map(|c| c * (1.04 - 0.07 * jf)),
                 0.62 - jf * 0.08,
                 0.25,
             ),
