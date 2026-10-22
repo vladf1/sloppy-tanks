@@ -5,7 +5,7 @@ use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon_for, has_ammo_for
 use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
-use sloppy_core::sim::{AmmoInventory, Tank, VehicleKind, Weapon};
+use sloppy_core::sim::{AmmoInventory, Tank, Team, VehicleKind, Weapon};
 use sloppy_render::presentation::hud::health_bar_state;
 
 fn hud_ammo(
@@ -30,7 +30,7 @@ fn self_repair_active(alive: bool, repair: f64, hp: f64, max_hp: f64, since_comb
 pub fn human_json(tank: &RenderTank, elapsed: f64) -> HudHuman {
     let rank = rank_index(tank.xp);
     let stats = &RANKS[rank];
-    let health = health_bar_state(tank.hp, tank.max_hp, tank.team);
+    let health = health_bar_state(tank.hp, tank.max_hp);
     let equipped = equipped_weapon_for(tank.kind, &tank.ammo, tank.selected_ammo);
     let ammo = hud_ammo(tank.kind, &tank.ammo, equipped);
     let self_repair = self_repair_active(
@@ -85,11 +85,19 @@ impl Serialize for Scoreboard<'_> {
                 id: tank.id,
                 name: &tank.name,
                 kills: tank.kills,
+                deaths: tank.deaths,
+                team: tank.team,
+                kind: tank.kind,
+                human: tank.human,
             })),
             Self::Simulated(tanks) => serializer.collect_seq(tanks.iter().map(|tank| HudScore {
                 id: tank.id,
                 name: &tank.name,
                 kills: tank.kills,
+                deaths: tank.deaths,
+                team: tank.team,
+                kind: tank.kind,
+                human: tank.human,
             })),
         }
     }
@@ -140,6 +148,11 @@ struct HudScore<'a> {
     id: u32,
     name: &'a str,
     kills: u32,
+    deaths: u32,
+    team: Team,
+    kind: VehicleKind,
+    /// A player's tank rather than a bot's, which the battle report marks.
+    human: bool,
 }
 
 #[cfg(test)]
@@ -242,7 +255,15 @@ mod tests {
         let value: serde_json::Value = serde_json::from_str(&text).unwrap();
         assert_eq!(
             value[0],
-            json!({ "id": 7, "name": tanks[0].name, "kills": 12 })
+            json!({
+                "id": 7,
+                "name": tanks[0].name,
+                "kills": 12,
+                "deaths": 3,
+                "team": 1,
+                "kind": "humvee",
+                "human": true
+            })
         );
         assert_eq!(value[1]["id"], json!(2));
         assert_eq!(

@@ -103,6 +103,7 @@ impl CanvasSize {
         let width = (f64::from(self.css.x) * ratio).round().max(1.0) as u32;
         let height = (f64::from(self.css.y) * ratio).round().max(1.0) as u32;
         view.resize(width, height);
+        view.css_height = f64::from(self.css.y);
     }
 }
 

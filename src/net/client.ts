@@ -42,6 +42,8 @@ const FRAME = {
   dt: 10,
   drawn: 11,
   pointerFree: 12,
+  viewerX: 13,
+  viewerY: 14,
 } as const;
 /** The dev-build page parameter that shows the transport delay sliders. */
 const LATENCY_SLIDER_PARAM = "latencySlider";
@@ -520,6 +522,8 @@ export async function startMultiplayer(
     controls.holdPointer(result[FRAME.firstPerson] === 1, result[FRAME.pointerFree] === 1);
     pump();
     if (result[FRAME.drawn]) {
+      const viewerX = result[FRAME.viewerX];
+      ui.viewerPoint = Number.isFinite(viewerX) ? { x: viewerX, y: result[FRAME.viewerY] } : null;
       hudDt += result[FRAME.dt];
       if (result[FRAME.hudDue]) {
         hud = (JSON.parse(game.hud_json()) as Hud | null) ?? hud;

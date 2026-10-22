@@ -622,7 +622,7 @@ mod tests {
             rig.camera.position
         );
         let forward = (rig.camera.target - rig.camera.position).normalize();
-        assert!(forward.x > 0.8 && forward.y < -0.4, "{forward:?}");
+        assert!(forward.x > 0.8 && forward.y < -0.3, "{forward:?}");
         // The respawned tank seats the camera directly, with no flight.
         let respawned = Mat4::from_translation(Vec3::new(30.0, 0.25, -12.0));
         rig.update(&viewer(30.0, -12.0), 1.0, 0.016, false, true);

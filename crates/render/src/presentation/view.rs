@@ -576,6 +576,12 @@ pub struct Presentation {
     /// Phones aim overhead by touching the arena and draw no overhead reticle; the
     /// first-person gun sight stays.
     pub hide_reticle: bool,
+    /// The view's height in CSS pixels (0 until the page says), which keeps the
+    /// overhead bars readable on a phone's short screen.
+    pub css_height: f64,
+    /// Bars step aside while the battle waits behind a menu (pause, settings, the
+    /// report), so none floats crisp over the dialog's blur.
+    bars_hidden: bool,
     theme: Option<Theme>,
     library: Library,
     reticle: ReticleModel,
@@ -652,6 +658,8 @@ impl Presentation {
             crosshair: Mat4::IDENTITY,
             reticle_size: 1.0,
             hide_reticle: false,
+            css_height: 0.0,
+            bars_hidden: false,
             theme: None,
             library: Library::default(),
             reticle,
@@ -709,21 +717,31 @@ impl Presentation {
         let eye = camera.position;
         let fov_y = f64::from(camera.fov_y_degrees).to_radians();
         for view in self.tanks.values_mut() {
+            if self.bars_hidden {
+                self.renderer.set_visible(view.bar, false);
+                continue;
+            }
             let shown = view.bar_shown && !sight_blocked(eye, view.bar_anchor, covers);
-            view.bar_fade = if view.bar_shown {
+            let fade = if view.bar_shown {
                 approach(view.bar_fade, f64::from(u8::from(shown)), BAR_FADE_RATE, dt)
             } else {
                 0.0
             };
-            self.renderer.set_visible(view.bar, view.bar_fade > 0.02);
-            self.renderer.set_opacity(view.bar, view.bar_fade as f32);
-            if view.bar_fade <= 0.02 {
+            // An infinite step is a fixed pose's redraw: it shows its own occlusion but
+            // leaves the follow camera's fade where it was.
+            if dt.is_finite() {
+                view.bar_fade = fade;
+            }
+            self.renderer.set_visible(view.bar, fade > 0.02);
+            self.renderer.set_opacity(view.bar, fade as f32);
+            if fade <= 0.02 {
                 continue;
             }
             let size = bar_scale(
                 f64::from(view.bar_anchor.distance(eye)),
                 fov_y,
                 own::BAR_RIM_WIDTH,
+                self.css_height,
             ) as f32;
             self.renderer.set_transform(
                 view.bar,
@@ -732,13 +750,29 @@ impl Presentation {
         }
     }
 
-    /// Where the first-person gun sight sits on screen (NDC, y up), so the page's hit
-    /// marker lands on it; `None` overhead, where the marker follows the pointer.
-    pub fn first_person_reticle_ndc(&self) -> Option<(f32, f32)> {
-        self.rig.in_first_person.then(|| {
+    /// Where the drawn reticle sits on screen (NDC, y up), so the page's hit marker
+    /// lands on it: the gun sight in first person, the aim on the ground overhead.
+    /// `None` while no reticle shows.
+    pub fn reticle_ndc(&self) -> Option<(f32, f32)> {
+        self.crosshair_visible.then(|| {
             let point = self.rig.camera.project(self.crosshair.w_axis.truncate());
             (point.x, point.y)
         })
+    }
+
+    /// Where the viewer's tank sits on screen (NDC, y up), so the page's damage ring
+    /// wraps it; `None` in first person or when it is off screen.
+    pub fn viewer_ndc(&self) -> Option<(f32, f32)> {
+        if self.rig.seat_blend > 0.0 {
+            return None;
+        }
+        let follow = self.rig.follow;
+        let point = self
+            .rig
+            .camera
+            .project(Vec3::new(follow.x as f32, 1.0, follow.z as f32));
+        (point.z > 0.0 && point.z < 1.0 && point.x.abs() < 1.0 && point.y.abs() < 1.0)
+            .then_some((point.x, point.y))
     }
 
     pub fn wreck_view(&self) -> WreckView {
@@ -1623,6 +1657,7 @@ impl Presentation {
         self.update_tanks(state, alpha, dt);
         self.place_first_person_eye(state);
         // Bars face and size for the final camera, seated in the turret or overhead.
+        self.bars_hidden = state.match_state.phase != MatchPhase::Playing;
         let camera = self.rig.camera;
         self.place_bars(&state.covers, &camera, self.rig.rotation, dt);
         self.update_branches(dt);
@@ -1888,7 +1923,7 @@ impl Presentation {
                 renderer.set_node_transform(view.instance, joint, Some(pose));
             }
             view.bar_anchor = Vec3::new(x as f32, bar_height, z as f32);
-            let health = health_bar_state(tank.hp, tank.max_hp, tank.team);
+            let health = health_bar_state(tank.hp, tank.max_hp);
             let trail = view
                 .trail
                 .get_or_insert_with(|| BarTrail::new(health.ratio, state.elapsed))
