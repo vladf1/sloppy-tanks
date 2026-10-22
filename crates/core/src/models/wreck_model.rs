@@ -16,7 +16,7 @@ use glam::{DMat4, DQuat, DVec3};
 use super::batching::batch;
 use super::model_primitives::Cache;
 use super::tank_model::{WreckPose, tank_model_variant, wreck_pose};
-use super::tank_surfaces::{is_camouflaged, is_signal_panel, scorched_paint_material};
+use super::tank_surfaces::{is_camouflaged, is_signal_panel, scorched_paint_material, unpaint};
 use super::{Team, VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::geometry::math::{compose, decompose, hex_to_linear};
@@ -94,6 +94,7 @@ fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
         {
             let mut mesh = (*drawable.mesh).clone();
             if is_camouflaged(&drawable.material) {
+                unpaint(&mut mesh, &drawable.material);
                 burn_paint(&mut mesh);
                 drawable.material = scorched_paint_material();
             } else {
