@@ -9,7 +9,7 @@ use super::pipelines::pipeline_layout;
 use super::precompile::{Background, LayoutKind, PipelineSpec};
 use super::resources::MIPMAP_SOURCE_ENTRIES;
 use crate::gpu::textures::{Pixels, SamplerKey, TextureKey};
-use crate::shader::MIPMAP_WGSL;
+use crate::shader::{MIPMAP_WGSL, StageSources};
 
 /// An uploaded texture with its mip chain; dropping it destroys it.
 pub struct Texture {
@@ -45,8 +45,9 @@ fn mipmap_spec(format: wgpu::TextureFormat) -> PipelineSpec {
 pub struct Uploader {
     layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
-    /// The sRGB and linear blit specs while they compile in the background.
-    pending: Option<(PipelineSpec, PipelineSpec, Background)>,
+    /// The sRGB and linear blit specs and their stages while they compile in the
+    /// background.
+    pending: Option<(PipelineSpec, PipelineSpec, StageSources, Background)>,
     /// The sRGB and linear blit pipelines.
     pipelines: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     sampler: wgpu::Sampler,
@@ -65,7 +66,8 @@ impl Uploader {
         let pipeline_layout = pipeline_layout(device, "mipmap", &[&layout]);
         let srgb = mipmap_spec(wgpu::TextureFormat::Rgba8UnormSrgb);
         let linear = mipmap_spec(wgpu::TextureFormat::Rgba8Unorm);
-        let compile = Background::start(device, &[(&srgb, MIPMAP_WGSL), (&linear, MIPMAP_WGSL)]);
+        let stages = srgb.stages(MIPMAP_WGSL);
+        let compile = Background::start(device, &[(&srgb, &stages), (&linear, &stages)]);
         let placeholder = texture_2d(
             device,
             "white placeholder",
@@ -86,7 +88,7 @@ impl Uploader {
             placeholder.size(),
         );
         Self {
-            pending: Some((srgb, linear, compile)),
+            pending: Some((srgb, linear, stages, compile)),
             pipelines: None,
             pipeline_layout,
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
@@ -104,16 +106,12 @@ impl Uploader {
     /// until then.
     pub fn ready(&mut self, gpu: &Gpu) -> bool {
         let device = &gpu.device;
-        if let Some((srgb, linear, compile)) = &self.pending
+        if let Some((srgb, linear, stages, compile)) = &self.pending
             && compile.done()
         {
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mipmap blit"),
-                source: wgpu::ShaderSource::Wgsl(MIPMAP_WGSL.into()),
-            });
             self.pipelines = Some((
-                srgb.create(device, &self.pipeline_layout, &module),
-                linear.create(device, &self.pipeline_layout, &module),
+                srgb.create(device, &self.pipeline_layout, stages),
+                linear.create(device, &self.pipeline_layout, stages),
             ));
             self.pending = None;
         }

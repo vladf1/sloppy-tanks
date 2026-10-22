@@ -412,22 +412,43 @@ html:not(.phone) .touch-enabled .coral {
   padding-left: 0;
   border-left: 0;
 }
-/* The rack spans the panel's width, so it ends where the hull bar does: the loaded round
-   takes what the narrow keys leave, each key still a full thumb wide. */
+/* The rack spans the panel's width in five equal thumb-wide keys, so every round is the
+   same target; the loaded one is lit and names itself inside its own key, which is wide
+   enough for the longest name. */
 .touch-enabled .ammo-strip {
   width: 100%;
+  min-width: 440px;
 }
-.touch-enabled .ammo-slot {
-  width: 50px;
-  min-height: 50px;
-  padding: 6px 2px;
+/* The standard shell, carried every life, keeps a double-width key, so the rack reads
+   as the round in hand plus the four that crates bring, and its name always fits. */
+html:not(.phone) .touch-enabled #ammo-standard {
+  flex-grow: 2;
+}
+html:not(.phone) .touch-enabled .ammo-rail-note {
+  left: calc((100% - 16px) / 3 + 4px);
+}
+.touch-enabled .ammo-slot,
+.touch-enabled .ammo-slot.selected {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  min-height: 54px;
+  padding: 6px 4px 5px;
   touch-action: manipulation;
 }
 .touch-enabled .ammo-slot.selected {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 128px;
-  padding: 6px 10px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  justify-items: center;
+}
+.touch-enabled .ammo-slot.selected b {
+  display: none;
+}
+.touch-enabled .ammo-slot.selected small {
+  grid-area: 2 / 1;
+  justify-self: center;
+  font-size: 12px;
+  letter-spacing: 0.3px;
 }
 .touch-enabled .ammo-slot .ammo-icon {
   width: 22px;
@@ -467,9 +488,20 @@ html:not(.phone) .touch-enabled .coral {
     left: 14px;
     transform: none;
   }
-  /* The score takes the corner here: the coach mark hangs under it. */
-  html:not(.phone) .touch-fire-hint {
-    top: calc(max(14px, env(safe-area-inset-top)) + 84px);
+}
+/* An upright tablet's rack shares the gap between the thumbs: its keys narrow with it
+   and the loaded round's name takes a tighter setting. */
+@media (max-width: 900px) {
+  .touch-enabled .ammo-strip {
+    min-width: 0;
+  }
+  .touch-enabled .ammo-slot,
+  .touch-enabled .ammo-slot.selected {
+    padding-inline: 2px;
+  }
+  .touch-enabled .ammo-slot.selected small {
+    font-size: 11px;
+    letter-spacing: 0;
   }
 }
 /* Narrow or short screens tighten the weapon HUD to fit beside the stick. */
@@ -486,12 +518,16 @@ html:not(.phone) .touch-enabled .coral {
   .touch-enabled .ammo-strip {
     gap: 2px;
   }
-  .touch-enabled .ammo-slot {
-    width: 44px;
-    min-height: 46px;
+  .touch-enabled .ammo-strip {
+    min-width: 0;
   }
+  .touch-enabled .ammo-slot,
   .touch-enabled .ammo-slot.selected {
-    min-width: 108px;
+    min-height: 48px;
+  }
+  .touch-enabled .ammo-slot.selected small {
+    font-size: 11px;
+    letter-spacing: 0;
   }
 }
 

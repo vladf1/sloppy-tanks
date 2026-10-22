@@ -323,7 +323,7 @@ export class RoomBrowser {
           this.showStatus(
             "error",
             "Rooms are offline",
-            `${reason}. Trying again every ${REFRESH_MS / 1000} seconds.`,
+            `${reason} · trying again every ${REFRESH_MS / 1000} s`,
           );
         }
       } finally {

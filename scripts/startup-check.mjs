@@ -383,6 +383,78 @@ try {
   );
   results[`layout${viewport.width}`] = "stable inline menu; no horizontal overflow";
   await layout.context.close();
+
+  // Across desktop and tablet sizes the build line stays on screen and clear of every
+  // control and the key strip, and Multiplayer keeps Battle Setup's size (offline here:
+  // the room list's error state is its largest).
+  const sizes = [
+    [1024, 768],
+    [1100, 700],
+    [1180, 820],
+    [1239, 770],
+    [1280, 600],
+    [1280, 720],
+    [1366, 768],
+    [1600, 900],
+    [1920, 1080],
+  ];
+  const sizeContext = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const sized = await sizeContext.newPage();
+  sized.on("pageerror", (error) => errors.push(error.message));
+  await sized.goto(url);
+  await menuReady(sized);
+  const measure = () =>
+    sized.evaluate(() => {
+      const build = document.querySelector(".start .menu-build").getBoundingClientRect();
+      const shown = (element) => {
+        const rect = element.getBoundingClientRect();
+        return (
+          rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== "hidden"
+        );
+      };
+      const overlaps = [
+        ...document.querySelectorAll(".start :is(button, input, label, .key-hint, .setup-panels)"),
+      ]
+        .filter(shown)
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return (
+            Math.min(build.right, rect.right) - Math.max(build.left, rect.left) > 0.5 &&
+            Math.min(build.bottom, rect.bottom) - Math.max(build.top, rect.top) > 0.5
+          );
+        })
+        .map((element) => element.id || element.className);
+      return {
+        overlaps,
+        onScreen: build.top >= 0 && build.bottom <= innerHeight && build.right <= innerWidth,
+        height: Math.round(document.querySelector(".menu.start").getBoundingClientRect().height),
+      };
+    });
+  for (const [width, height] of sizes) {
+    await sized.setViewportSize({ width, height });
+    const single = await sized.locator("#tab-single").boundingBox();
+    await sized.mouse.click(single.x + single.width / 2, single.y + single.height / 2);
+    await sized.waitForFunction(() => document.querySelector(".start").dataset.play === "single");
+    await sized.waitForTimeout(150);
+    const solo = await measure();
+    const tab = await sized.locator("#tab-multiplayer").boundingBox();
+    await sized.mouse.click(tab.x + tab.width / 2, tab.y + tab.height / 2);
+    await sized.waitForFunction(
+      () => document.querySelector(".start").dataset.play === "multiplayer",
+    );
+    await sized.waitForTimeout(150);
+    const rooms = await measure();
+    for (const [name, state] of [
+      ["single player", solo],
+      ["multiplayer", rooms],
+    ]) {
+      assert.deepEqual(state.overlaps, [], `${width}x${height} ${name}: the build line overlaps`);
+      assert.ok(state.onScreen, `${width}x${height} ${name}: the build line is off screen`);
+    }
+    assert.equal(rooms.height, solo.height, `${width}x${height}: Multiplayer resizes Battle Setup`);
+  }
+  results.buildLine = `clear and on screen at ${sizes.length} sizes; tabs keep one size`;
+  await sizeContext.close();
   assert.deepEqual(errors, []);
   writeFileSync(`${output}/checks.json`, JSON.stringify({ ...results, errors }, null, 2));
   console.log(JSON.stringify(results));

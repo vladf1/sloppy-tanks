@@ -14,7 +14,7 @@ use std::sync::{Arc, OnceLock};
 
 use super::model_primitives::{material, paint, put, shadowed};
 use super::tank_model::{LENS_ROUGHNESS, MARKING_WHITE};
-use super::tank_surfaces::vehicle_glass;
+use super::tank_surfaces::{LAMP_LENS, vehicle_glass};
 use super::{Team, VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
@@ -48,7 +48,6 @@ const RUBBER: u32 = 0x2d3031;
 const GLASS: u32 = 0x1f3a40;
 const GAP: u32 = 0x101416;
 const CANVAS: u32 = 0x4f4a38;
-const HEADLAMP: u32 = 0x8f918b;
 const AMBER: u32 = 0xdf923b;
 const RED_LAMP: u32 = 0x931e16;
 /// Rubber, seals and canvas are matte.
@@ -89,9 +88,10 @@ impl Palette {
             Role::Gap => material(GAP, 0.0, MATTE_ROUGHNESS),
             Role::Canvas => material(CANVAS, 0.0, MATTE_ROUGHNESS),
             Role::Glass => vehicle_glass(GLASS),
-            // Lamps draw with the matte fittings: three draws fewer per Humvee. The
-            // headlamp lenses are an unlit grey glass rather than white blocks.
-            Role::Headlamp => material(HEADLAMP, 0.0, LENS_ROUGHNESS),
+            // The marker lamps draw with the matte fittings; the livery paints the
+            // headlamp lenses as lamps (warm glass, a hot core falling off to the
+            // reflector) in the paint's own draw.
+            Role::Headlamp => material(LAMP_LENS, 0.0, LENS_ROUGHNESS),
             Role::Amber => material(AMBER, 0.0, LENS_ROUGHNESS),
             Role::Red => material(RED_LAMP, 0.0, LENS_ROUGHNESS),
         }
