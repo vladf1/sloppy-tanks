@@ -455,21 +455,25 @@ pub fn spawn_pulse() -> Node {
     root
 }
 
-/// The supply drop's ground marking, sprayed in the kind's colour around its
-/// pallet: a ragged circle (its radii), faded while the pickup is being restocked,
+/// The supply drop's ground marking, sprayed in the kind's paint round its pallet:
+/// a thin hand-sprayed circle (its radii, just clear of the pallet's corners, so
+/// neighbouring drops barely touch), darkened while the pickup is being restocked,
 /// and outside it a ring of tick marks (radii, count, the gap between ticks as a
 /// share of one, and how faint a tick still to fill is) sprayed in one by one until
-/// the supply returns. Paint on the ground, lit like it, never glowing.
-const MARKING_RADII: [f64; 2] = [1.22, 1.46];
-const MARKING_SEGMENTS: u32 = 48;
-const MARKING_FADED: u32 = 0x7a7a7a;
-const REFILL_RADII: [f64; 2] = [1.52, 1.7];
+/// the supply returns. Paint on the ground, lit and shadowed like it, its ragged
+/// edges anti-aliased by alpha to coverage, never glowing.
+const MARKING_RADII: [f64; 2] = [1.04, 1.18];
+const MARKING_SEGMENTS: u32 = 64;
+/// The spent ring's darkening of the kind's paint (linear).
+const MARKING_FADED: u32 = 0x5a5a5a;
+const MARKING_CUTOFF: f32 = 0.35;
+const REFILL_RADII: [f64; 2] = [1.22, 1.32];
 pub const REFILL_TICKS: u32 = 24;
-const REFILL_GAP: f32 = 0.34;
-const REFILL_FAINT: f32 = 0.22;
+const REFILL_GAP: f32 = 0.42;
+const REFILL_FAINT: f32 = 0.18;
 /// How high the paint lies over the ground; a depth bias keeps it there.
 const MARKING_HEIGHT: f64 = 0.012;
-const PAINT_ROUGHNESS: f32 = 0.9;
+const PAINT_ROUGHNESS: f32 = 0.95;
 
 /// The pallet under every pickup, shared by every kind: planks and a spent smoke
 /// grenade (`sloppy_core::models::pickup_pallet`).
@@ -479,22 +483,20 @@ pub fn pickup_base() -> Node {
     root
 }
 
-/// The sprayed circle: segments of the atlas's paint cell bent round the pallet,
-/// mirrored along the way so no seam shows, its ragged edges cut by alpha.
+/// The sprayed circle: the atlas's paint cell bent once round the pallet; the
+/// generator paints it seamless across the cell, its strokes, gaps and overspray in
+/// alpha.
 fn marking_geometry() -> Mesh {
     let [inner, outer] = MARKING_RADII;
     let mut mesh = Mesh::default();
-    let columns = MARKING_SEGMENTS + 1;
-    for step in 0..columns {
-        let angle = std::f64::consts::TAU * f64::from(step) / f64::from(MARKING_SEGMENTS);
-        let (sin, cos) = angle.sin_cos();
-        // Each segment spans the cell, there and back again, so no seam shows.
-        let u = f64::from(step % 2);
+    for step in 0..=MARKING_SEGMENTS {
+        let along = f64::from(step) / f64::from(MARKING_SEGMENTS);
+        let (sin, cos) = (std::f64::consts::TAU * along).sin_cos();
         for (radius, v) in [(inner, 0.0), (outer, 1.0)] {
             mesh.positions
                 .push([(radius * cos) as f32, 0.0, (radius * sin) as f32]);
             mesh.normals.push([0.0, 1.0, 0.0]);
-            let [u, v] = atlas_cell_uv(PICKUP_PAINT_CELL, u, v);
+            let [u, v] = atlas_cell_uv(PICKUP_PAINT_CELL, along, v);
             mesh.uvs.push([u as f32, v as f32]);
         }
     }
@@ -525,8 +527,8 @@ fn ground_paint(color: u32) -> Material {
     }
 }
 
-/// A supply drop's marking: the sprayed circle, full or faded while the pickup is
-/// restocked, and the refill ticks shown while it is
+/// A supply drop's marking: the sprayed circle, full or darkened while the pickup
+/// is restocked, and the refill ticks shown while it is
 /// (`instance_data.x`: ticks sprayed, its fraction the next tick's coverage).
 pub fn pickup_rim() -> Node {
     let mut root = Node::group("pickup-rim");
@@ -542,7 +544,8 @@ pub fn pickup_rim() -> Node {
     ] {
         let material = Material {
             map: Some(atlas.clone()),
-            alpha_test: 0.5,
+            alpha_test: MARKING_CUTOFF,
+            alpha_to_coverage: true,
             ..ground_paint(color)
         };
         let mut ring = named(
