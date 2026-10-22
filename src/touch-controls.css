@@ -111,13 +111,14 @@
     0 0 16px #6fd2ff99,
     0 6px 14px #000a;
 }
-/* How to aim and fire: a tag on the right edge, out of the arena's middle, with a
-   target ring that breathes. It leaves at the first touch on the arena, or by itself
-   after the opening seconds. */
+/* How to aim and fire: a coach mark in the top-left corner, the one corner no HUD and no
+   thumb uses, so it never hides a target, the arena's middle or the stick, with a target
+   ring that breathes. It leaves at the first touch on the arena, or by itself after the
+   opening seconds. */
 .touch-fire-hint {
   position: absolute;
-  right: max(16px, env(safe-area-inset-right));
-  top: 38%;
+  left: max(24px, env(safe-area-inset-left));
+  top: max(14px, env(safe-area-inset-top));
   display: flex;
   align-items: center;
   gap: 10px;
@@ -203,23 +204,39 @@
     animation: none;
   }
 }
-/* A phone's arena is short: the tag sits under the corner buttons' row. */
+/* A phone's corner is tighter: the tag sits level with the score pill. */
 .phone .touch-fire-hint {
-  top: auto;
-  bottom: max(16px, env(safe-area-inset-bottom));
+  left: max(10px, env(safe-area-inset-left));
+  top: max(6px, env(safe-area-inset-top));
+  padding: 5px 12px 5px 6px;
+}
+/* Held upright, the score pill spans the top; the tag sits under it, at the left. */
+@media (orientation: portrait) {
+  .phone .touch-fire-hint {
+    top: calc(max(6px, env(safe-area-inset-top)) + 96px);
+  }
+}
+.phone .touch-fire-ring {
+  width: 28px;
+  height: 28px;
+}
+.phone .touch-fire-ring::before {
+  inset: 7px;
 }
 /* The stick's name on a small dark tag, legible on grass, sand or snow alike. */
 .touch-stick > span {
   position: absolute;
   left: 50%;
-  bottom: -9px;
-  padding: 2px 8px 2px 10px;
-  border-radius: 999px;
-  background: #06102ad9;
-  box-shadow: inset 0 0 0 1px #9fd0ff2e;
-  color: #e9f2fb;
+  bottom: -12px;
+  padding: 3px 10px 3px 12px;
+  border-radius: 6px;
+  background: #06102af0;
+  box-shadow:
+    inset 0 0 0 1px #9fd0ff40,
+    0 3px 8px #0008;
+  color: #fff;
   text-align: center;
-  font-size: 10px;
+  font-size: 13px;
   font-weight: 800;
   letter-spacing: 2px;
   transform: translateX(-50%);
@@ -248,14 +265,15 @@
   border: 0;
   border-radius: 50%;
   color: var(--gold-hot);
+  /* A navy key with a slim gold rim: armed, it reads as ready without outshining the
+     loaded round, and its rim refills as it re-arms. */
   background:
     radial-gradient(ellipse 60% 40% at 50% 22%, #ffffff1f, transparent 70%),
-    radial-gradient(circle, #183460 0, #0b1a33 56%, transparent 57.5%),
+    radial-gradient(circle, #183460 0, #0b1a33 64%, transparent 65.5%),
     conic-gradient(var(--gold) var(--mine-ready, 100%), #ffffff1f 0);
   box-shadow:
     inset 0 0 0 1px #0006,
-    0 6px 18px #0008,
-    0 0 18px #ffcf3833;
+    0 6px 18px #0008;
   pointer-events: auto;
   touch-action: none;
   transition: transform 0.1s;
@@ -264,20 +282,21 @@
   transform: scale(0.94);
 }
 .touch-mine-icon {
-  width: 28px;
-  height: 28px;
-  fill: var(--gold);
-  filter: drop-shadow(0 0 5px #ffcf3866);
+  width: 26px;
+  height: 26px;
+  fill: var(--gold-hot);
+  filter: drop-shadow(0 1px 2px #0009);
 }
 .touch-mine small {
-  font-size: 9.5px;
+  color: #e9f2fb;
+  font-size: 12px;
   font-weight: 800;
-  letter-spacing: 1.5px;
+  letter-spacing: 1.4px;
 }
 .touch-mine:disabled {
   color: #a1b4c6;
   background:
-    radial-gradient(circle, #13294a 0 58%, transparent 59%),
+    radial-gradient(circle, #13294a 0 64%, transparent 65.5%),
     conic-gradient(var(--gold) var(--mine-ready, 100%), #ffffff1f 0);
   box-shadow:
     inset 0 0 0 1px #bfe2ff44,
@@ -332,6 +351,19 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
   right: max(14px, env(safe-area-inset-right));
   top: max(14px, env(safe-area-inset-top));
 }
+/* A tablet's score keeps a margin from the top edge, level with the corner buttons, and
+   rounds its outer corners like them. */
+html:not(.phone) .touch-enabled .scoreboard {
+  top: max(14px, env(safe-area-inset-top));
+}
+html:not(.phone) .touch-enabled .mint {
+  border-radius: 10px 0 0 10px;
+  clip-path: none;
+}
+html:not(.phone) .touch-enabled .coral {
+  border-radius: 0 10px 10px 0;
+  clip-path: none;
+}
 .touch-enabled .hud-actions button {
   min-width: 48px;
   min-height: 46px;
@@ -361,16 +393,6 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
 .touch-enabled .ammo-strip {
   justify-content: center;
 }
-/* Touch has no mine key line and names no round under the rack (the lit slot shows it):
-   the footer folds away and only anchors the power-up chips above the panel, so the
-   panel keeps its size whatever is active. */
-.touch-enabled .panel-foot {
-  height: 0;
-  margin: 0;
-}
-.touch-enabled .ammo-name {
-  display: none;
-}
 .touch-enabled .status {
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
@@ -390,42 +412,29 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
   padding-left: 0;
   border-left: 0;
 }
-/* The rack spans the panel's width, so it ends where the hull bar does. */
+/* The rack spans the panel's width, so it ends where the hull bar does: the loaded round
+   takes what the narrow keys leave, each key still a full thumb wide. */
 .touch-enabled .ammo-strip {
   width: 100%;
 }
 .touch-enabled .ammo-slot {
-  flex: 1 1 0;
-  width: auto;
-  min-width: 48px;
-  height: 50px;
+  width: 50px;
+  min-height: 50px;
+  padding: 6px 2px;
   touch-action: manipulation;
+}
+.touch-enabled .ammo-slot.selected {
+  flex: 1 1 auto;
+  width: auto;
+  min-width: 128px;
+  padding: 6px 10px;
 }
 .touch-enabled .ammo-slot .ammo-icon {
   width: 22px;
   height: 22px;
 }
-/* The lit slot names its round on an accent line under the icon, its count moving to
-   the corner, so a touch player reads what is loaded without a footer under the rack. */
-.touch-enabled .ammo-slot.selected small {
-  display: block;
-  grid-area: 2 / 1;
-  max-width: 100%;
-  overflow: hidden;
-  color: #fff;
-  font: 800 9.5px/1.2 var(--font-ui);
-  letter-spacing: 0.8px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.touch-enabled .ammo-slot.selected b {
-  /* Out of the grid's row, so its corner is the slot's, not the row's. */
-  grid-area: auto;
-  position: absolute;
-  top: 2px;
-  right: 5px;
-  color: var(--ammo-color);
-  font-size: 17px;
+.touch-enabled .ammo-slot:not(.selected) b {
+  font-size: 13px;
 }
 .touch-enabled .ammo-slot kbd {
   display: none;
@@ -458,6 +467,10 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
     left: 14px;
     transform: none;
   }
+  /* The score takes the corner here: the coach mark hangs under it. */
+  html:not(.phone) .touch-fire-hint {
+    top: calc(max(14px, env(safe-area-inset-top)) + 84px);
+  }
 }
 /* Narrow or short screens tighten the weapon HUD to fit beside the stick. */
 @media (max-width: 760px), (max-height: 600px) {
@@ -474,8 +487,11 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
     gap: 2px;
   }
   .touch-enabled .ammo-slot {
-    min-width: 0;
-    height: 48px;
+    width: 44px;
+    min-height: 46px;
+  }
+  .touch-enabled .ammo-slot.selected {
+    min-width: 108px;
   }
 }
 
@@ -490,9 +506,6 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
   }
   .touch-enabled .ammo-strip {
     gap: 3px;
-  }
-  .touch-enabled .ammo-slot {
-    height: 50px;
   }
 }
 

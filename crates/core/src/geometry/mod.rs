@@ -28,6 +28,7 @@
 //! | `Box3.setFromObject(object)`            | [`node_bounds`], [`Aabb`]                    |
 
 mod bounds;
+mod buckets;
 mod curve3;
 mod extrude;
 pub mod math;
@@ -38,6 +39,7 @@ mod shape;
 mod triangulate;
 
 pub use bounds::{Aabb, node_bounds};
+pub(crate) use buckets::Buckets;
 pub use curve3::CatmullRomCurve3;
 pub use extrude::{ExtrudeOptions, extrude_geometry, shape_geometry};
 pub use mesh::{Attribute, Mesh, VERTEX_ALPHA, merge_geometries, narrow, widen};

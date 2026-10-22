@@ -166,6 +166,9 @@ export function showFeedRow(
   row.dataset.names = key;
   row.classList.toggle("own-kill", ownKill);
   row.classList.toggle("own-death", ownDeath);
+  // The plate's ends take the killer's and the victim's team colours.
+  row.dataset.from = sides[0] ?? "neutral";
+  row.dataset.to = sides[1] ?? "neutral";
   row.classList.remove("own-kill-new", "feed-new");
   if (entering) {
     // Reading offsetWidth commits the removal so a reused row restarts the animation.
@@ -183,6 +186,7 @@ export function showFeedRow(
   names.slice(1).forEach((victim, index) => {
     const mark = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     mark.setAttribute("class", "feed-weapon");
+    mark.dataset.cause = cause ?? "wreck";
     const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
     use.setAttribute("href", `#${feedIcon(cause)}`);
     mark.append(use);
@@ -371,6 +375,8 @@ function showEffects(root: ParentNode, tank: HumanState): void {
 export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled: boolean): void {
   setText(root, "hp", String(Math.max(0, Math.ceil(tank.hp))));
   setText(root, "vehicle-name", tank.vehicleName);
+  // The phone's hull pill names the tank too.
+  setText(root, "hull-pill-name", tank.vehicleName);
   setText(root, "rank", tank.rankName.toUpperCase());
   const rank = root.querySelector<HTMLElement>("#rank")!;
   rank.dataset.rank = String(tank.rank);
@@ -405,18 +411,10 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
     const slot = root.querySelector<HTMLButtonElement>(`#ammo-${weapon}`)!;
     slot.disabled = slotsDisabled;
     slot.setAttribute("aria-pressed", String(selected));
+    // The loaded round's slot widens to name it while the others narrow, so the rack, and
+    // the panel with it, keeps one width whichever round is loaded.
     slot.classList.toggle("selected", selected);
     slot.classList.toggle("empty", !slotState?.available);
-    if (selected) {
-      // The chosen round's name reads under the rack, in its colour, so the slots stay
-      // small and every one keeps its place.
-      const ammoName = root.querySelector<HTMLElement>("#ammo-name");
-      if (ammoName && ammoName.dataset.ammo !== weapon) {
-        ammoName.dataset.ammo = weapon;
-        ammoName.textContent = name;
-        ammoName.style.setProperty("--ammo-color", slot.style.getPropertyValue("--ammo-color"));
-      }
-    }
     const label = `${index + 1}: ${name}, ${count === "0" ? "empty, collect an ammo crate" : count === "∞" ? "unlimited" : count + " remaining"}${selected ? ", selected" : ""}`;
     if (slot.getAttribute("aria-label") !== label) {
       slot.setAttribute("aria-label", label);

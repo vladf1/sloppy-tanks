@@ -92,11 +92,8 @@ try {
     }));
     await click(page, "#end-battle");
     await page.locator(".recap-stats").waitFor();
-    // A team battle ended early goes to the side ahead (or a draw); a solo run just ends.
-    assert.match(
-      await page.locator(".results h2").innerText(),
-      mode === "team" ? /^(VICTORY|DEFEAT|DRAW)$/ : /^BATTLE ENDED$/,
-    );
+    // A battle ended early is called ended, never won or lost: the limit decided nothing.
+    assert.match(await page.locator(".results h2").innerText(), /^BATTLE ENDED$/);
     assert.deepEqual(
       await page.evaluate(() => ({
         elapsed: window.sloppy.sim.elapsed,
@@ -118,7 +115,8 @@ try {
   assert.equal(await page.locator(".recap-note").innerText(), "", "first records are not news");
   assert.match(await page.locator(".recap-feats").innerText(), /ONE-TANK ARMY/);
   assert.equal(await page.locator(".recap-stat").count(), 5);
-  assert.equal(await page.locator(".recap-detail").count(), 11);
+  // The details are highlights, at most three of them, never the whole ledger.
+  assert.equal(await page.locator(".recap-detail").count(), 3);
   await resize(1280, 720);
   const fits = await page.evaluate(() => {
     const actions = document.querySelector(".results .menu-actions").getBoundingClientRect();

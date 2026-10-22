@@ -10,11 +10,12 @@ use glam::DVec3;
 use crate::geometry::{Mesh, icosahedron_geometry, plane_geometry, widen};
 use crate::scene::{Material, Node, Side, TextureRef};
 
+use super::batching::batch;
 use super::effects_scenery::QUARRY_SIGN_TEXTURE;
 use super::harbor_surfaces::{steel_beam, steel_box};
 use super::model_primitives::adopt_children;
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
-use super::quarry_machinery::{PAINT, weather_paint};
+use super::quarry_machinery::{PAINT, site_livery};
 use super::quarry_terrain::quarry_ground_drop;
 use crate::geometry::math::hex_to_linear;
 use crate::sim::math::Random;
@@ -200,7 +201,8 @@ fn wheel_loader(group: &mut Node, x: f64, z: f64, yaw: f64) {
             tooth_z,
         );
     }
-    weather_paint(&mut loader);
+    site_livery(&mut loader, 1.9);
+    batch(&mut loader);
     loader.set_rotation_euler(0.0, yaw, 0.0);
     loader.position = DVec3::new(x, -1.79, z);
     adopt_children(group, loader);
@@ -331,7 +333,7 @@ fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
     }
     put(
         &mut rig,
-        steel_box(0.75, 0.9, 0.8, 0x4e7d7c),
+        steel_box(0.75, 0.9, 0.8, 0x4c5f5a),
         mast_x + 0.5,
         7.2,
         0.55,
@@ -370,7 +372,8 @@ fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
         0x343431,
     );
     drill_rig_details(&mut rig, mast_x);
-    weather_paint(&mut rig);
+    site_livery(&mut rig, 2.3);
+    batch(&mut rig);
     rig.set_rotation_euler(0.0, yaw, 0.0);
     rig.position = DVec3::new(x, -1.79, z);
     adopt_children(group, rig);

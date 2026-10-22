@@ -34,7 +34,9 @@ impl RenderLab {
         asset_base: String,
     ) -> Result<RenderLab, JsValue> {
         console_error_panic_hook::set_once();
-        let renderer = Renderer::new(canvas, asset_base).await.map_err(js_error)?;
+        let renderer = Renderer::new(canvas, asset_base, true)
+            .await
+            .map_err(js_error)?;
         Ok(RenderLab {
             renderer,
             objects: Vec::new(),

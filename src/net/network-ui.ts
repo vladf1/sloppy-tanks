@@ -71,6 +71,9 @@ export interface NetworkActions {
   /** The touch preference Settings shows, and the one they save. */
   touchMode(): string;
   setTouchMode(mode: string): void;
+  /** The Graphics setting Settings shows, and the one they save. */
+  graphics(): string;
+  setGraphics(setting: string): void;
 }
 /** The heading of each connection end, and the retry it offers besides Battle Setup. */
 const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
@@ -193,6 +196,8 @@ export class NetworkUI {
     new SettingsDialog(root, "MULTIPLAYER", {
       touchMode: () => this.actions.touchMode(),
       setTouchMode: (mode) => this.actions.setTouchMode(mode),
+      graphics: () => this.actions.graphics(),
+      setGraphics: (setting) => this.actions.setGraphics(setting),
       setVolume: (value) => this.actions.volume(value),
       controls: controlsMarkup(),
       opened: () => {

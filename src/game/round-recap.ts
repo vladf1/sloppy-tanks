@@ -21,15 +21,24 @@ const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
  * tank, and the rest of the metrics list below only when they happened. */
 const featuredMetrics: readonly RecapMetric[] = ["kills", "damage", "bestLife", "longestLife"];
 
-/** How often the viewer's tank was destroyed this round, for the report's opening line. */
-export function wreckLine(deaths: number): string {
-  return deaths <= 0
-    ? "Never destroyed"
-    : deaths === 1
-      ? "Destroyed once"
-      : deaths === 2
-        ? "Destroyed twice"
-        : `Destroyed ${deaths} times`;
+/** The report's details are its highlights, not a ledger: the metrics worth a line when
+ * they happened, at most `MAX_DETAILS` of them, and any other metric only when it set a
+ * new personal best. A multikill counts from three kills. */
+const NOTABLE_METRICS: readonly RecapMetric[] = [
+  "rank",
+  "multikill",
+  "clutchKills",
+  "revengeKills",
+  "posthumousKills",
+  "mineKills",
+  "coverDestroyed",
+];
+const NOTABLE_MULTIKILL = 3;
+const MAX_DETAILS = 3;
+
+/** "1 kill", "0 deaths", "3 kills": a count and its noun, one vocabulary across the menus. */
+export function countLine(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
 /** "BLUE" as the report says it: "Blue team". */
@@ -87,33 +96,20 @@ export function recapMarkup(
         ? `BEST ${format(metric, best[metric])}`
         : "";
   const hitRate = recap.shots ? `${Math.round((recap.directHits / recap.shots) * 100)}%` : "—";
-  const extras: { label: string; value: string; hint: string; improved?: boolean }[] = [
-    ...(Object.keys(METRICS) as RecapMetric[])
-      .filter((metric) => !featuredMetrics.includes(metric) && stats[metric] > 0)
-      .map((metric) => ({
-        ...METRICS[metric],
-        value: format(metric, stats[metric]),
-        improved: improved.has(metric),
-      })),
-    ...(recap.damageTaken >= 1
-      ? [
-          {
-            label: "Damage taken",
-            value: Math.round(recap.damageTaken).toLocaleString("en-US"),
-            hint: "Hull lost across all lives",
-          },
-        ]
-      : []),
-    ...(recap.shieldAbsorbed >= 1
-      ? [
-          {
-            label: "Shield absorbed",
-            value: Math.round(recap.shieldAbsorbed).toLocaleString("en-US"),
-            hint: "Damage your shields soaked up",
-          },
-        ]
-      : []),
-  ];
+  const notable = (metric: RecapMetric) =>
+    improved.has(metric) ||
+    (NOTABLE_METRICS.includes(metric) &&
+      stats[metric] >= (metric === "multikill" ? NOTABLE_MULTIKILL : 1));
+  const extras = (Object.keys(METRICS) as RecapMetric[])
+    .filter((metric) => !featuredMetrics.includes(metric) && stats[metric] > 0 && notable(metric))
+    .map((metric) => ({
+      ...METRICS[metric],
+      value: format(metric, stats[metric]),
+      improved: improved.has(metric),
+    }))
+    // New bests lead; the rest keep the report's order.
+    .sort((a, b) => Number(b.improved) - Number(a.improved))
+    .slice(0, MAX_DETAILS);
   const bests = improved.size;
   // Records are kept per mode, map and difficulty; only mention them when something happened.
   const difficulty = hud.difficulty[0].toUpperCase() + hud.difficulty.slice(1);
@@ -137,7 +133,7 @@ export function recapMarkup(
       .join(
         "",
       )}${tile("Accuracy", hitRate, "Direct hits / projectiles fired, splash excluded", `${recap.directHits} / ${recap.shots} HITS`)}</dl>
-    <dl class="recap-details">${extras
+    <dl class="recap-details"${extras.length ? "" : " hidden"}>${extras
       .map(
         (extra) =>
           `<div class="recap-detail${extra.improved ? " is-record" : ""}" title="${extra.hint}${extra.improved ? " · new personal best" : ""}"><dt>${extra.label}</dt><dd>${extra.improved ? "★ " : ""}${extra.value}</dd></div>`,
@@ -150,14 +146,17 @@ export function recapMarkup(
 export function bestProgress(kills: number, best: number, improved: boolean): string {
   const bar = (share: number) =>
     `<i class="recap-meter" style="--share:${Math.min(1, Math.max(0, share)).toFixed(3)}"></i>`;
+  // A meter only measures a gap: a record or a tie is named in gold, with no bar that
+  // fills toward nothing.
   if (improved) {
-    return `<em class="recap-progress is-record">${bar(1)}<b>★ NEW PERSONAL BEST</b></em>`;
+    return `<em class="recap-progress is-record"><b>★ NEW PERSONAL BEST</b></em>`;
   }
   if (best > kills) {
     return `<em class="recap-progress">${bar(kills / best)}<b>${best - kills} short of your best · ${best}</b></em>`;
   }
   if (kills > 0) {
-    return `<em class="recap-progress is-record">${bar(1)}<b>Equals your best</b></em>`;
+    // The kills beside it already say the number: the line only names the record.
+    return `<em class="recap-progress is-record"><b>★ Ties your personal best</b></em>`;
   }
   return `<em class="recap-progress">${bar(0)}<b>No kills this round</b></em>`;
 }
@@ -222,7 +221,7 @@ export function scoreboardMarkup(
         const tag =
           row === mvp
             ? `<span class="board-tag mvp-tag">MVP</span>`
-            : row.id === viewerId
+            : row.id === viewerId && row.name !== "YOU"
               ? `<span class="board-tag">YOU</span>`
               : "";
         return `<li${classes ? ` class="${classes}"` : ""}><span class="board-name">${escapeHtml(row.name)}</span>${tag}<b>${row.kills}</b><small>${row.deaths}</small></li>`;

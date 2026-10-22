@@ -5,11 +5,10 @@ use std::f64::consts::PI;
 use std::sync::Arc;
 
 use super::concrete_surfaces::concrete_material;
-use super::harbor_surfaces::steel_box;
 use super::model_primitives::{
-    Cache, adopt_children, cylinder_part, material, put, rotated, shadowed,
+    Cache, adopt_children, box_part, cylinder_part, material, put, rotated, shadowed,
 };
-use super::quarry_surfaces::{SAWN, sandstone_material};
+use super::quarry_surfaces::{SAWN, SKIRT, sandstone_material};
 use glam::DVec3;
 
 use crate::geometry::math::hex_to_linear;
@@ -20,7 +19,7 @@ use crate::sim::quarry_barrier_shapes::{
     HEDGEHOG_BEAMS, dragon_tooth_point, dragon_tooth_profile, dragon_tooth_variant,
 };
 
-const TOOTH_CONCRETE: u32 = 0xd2d2c9;
+const TOOTH_CONCRETE: u32 = 0xe4ddcc;
 const TOOTH_SOIL: u32 = 0x8b816c;
 const LIFTING_STEEL: u32 = 0x625447;
 const TOOTH_BUMP_SCALE: f32 = 0.055;
@@ -115,11 +114,27 @@ pub fn dragon_tooth(group: &mut Node, w: f64, h: f64, d: f64, x: f64, z: f64) {
     }
 }
 
-const WEB: u32 = 0x726454;
-const FLANGE: u32 = 0x625b50;
+/// Dusty, rust-bloomed mill steel: pale enough that the sun on its flanges
+/// separates a hedgehog from its shadow instead of drawing a black glyph.
+const WEB: u32 = 0x9a8670;
+const FLANGE: u32 = 0x8a7660;
 const BOLT: u32 = 0x999083;
 /// Height of the beams' crossing point above the ground in the unscaled model.
 const HEDGEHOG_CENTER_Y: f64 = 1.3;
+/// The hedgehog's weathered mill steel: dust has killed the sheen.
+const HEDGEHOG_METALNESS: f64 = 0.2;
+const HEDGEHOG_ROUGHNESS: f64 = 0.82;
+
+/// One plate of a hedgehog: a plain box of dusty steel. The harbor's tiled steel
+/// bumps by box UVs that go degenerate on the long tilted members, turning whole
+/// flanges black.
+fn hedgehog_plate(w: f64, h: f64, d: f64, color: u32) -> Node {
+    let mut plate = box_part(w, h, d, color, 0.0);
+    if let Some(drawable) = &mut plate.drawable {
+        drawable.material = material(color, HEDGEHOG_METALNESS, HEDGEHOG_ROUGHNESS);
+    }
+    plate
+}
 
 /// `steelHedgehog(group)`: three crossed I-sections with real flange depth and bolted
 /// connecting plates, in a 2.9 x 2.7 x 3.2 m frame that the cover scales to its size.
@@ -129,9 +144,9 @@ pub fn steel_hedgehog(group: &mut Node) {
         assembly.position.y = HEDGEHOG_CENTER_Y;
         assembly
             .children
-            .push(steel_box(0.12, beam.length, 0.44, WEB));
+            .push(hedgehog_plate(0.12, beam.length, 0.44, WEB));
         for x in [-0.22, 0.22] {
-            let flange = steel_box(0.1, beam.length, 0.52, FLANGE);
+            let flange = hedgehog_plate(0.1, beam.length, 0.52, FLANGE);
             put(&mut assembly, flange, x, 0.0, 0.0);
         }
         // Bake assemblies into the cover's batch without separate draw calls.
@@ -140,7 +155,7 @@ pub fn steel_hedgehog(group: &mut Node) {
     for z in [-0.29, 0.29] {
         put(
             group,
-            steel_box(0.64, 0.64, 0.08, FLANGE),
+            hedgehog_plate(0.64, 0.64, 0.08, FLANGE),
             0.0,
             HEDGEHOG_CENTER_Y,
             z,
@@ -164,16 +179,17 @@ const BLOCK_ARRIS: (f64, f64) = (0.02, 0.05);
 /// First bed number of the wall's blocks in the sandstone shader's palette.
 const BLOCK_LAYER: f64 = 100.0;
 /// Weathered tints of the wall's stone: buff, iron-stained, grey-brown, pale,
-/// rust-crusted and dark weathered. Darker than the floor's sand on the whole
-/// so the boundary keeps its line. Cool-leaning, so the warm sandstone shading
+/// rust-crusted and weathered grey. One value band, a little darker than the
+/// floor's sand so the boundary keeps its line: blocks differ by hue and wear,
+/// never by a near-black outlier. Cool-leaning, so the warm sandstone shading
 /// settles to buff and grey-brown stone rather than orange.
 const BLOCK_TINTS: [[f32; 3]; 6] = [
     [0.86, 0.86, 0.9],
-    [0.95, 0.84, 0.77],
-    [0.7, 0.71, 0.77],
-    [1.12, 1.09, 1.04],
-    [0.83, 0.67, 0.58],
-    [0.5, 0.49, 0.53],
+    [0.94, 0.85, 0.79],
+    [0.8, 0.8, 0.84],
+    [1.0, 0.97, 0.93],
+    [0.9, 0.77, 0.69],
+    [0.76, 0.75, 0.79],
 ];
 /// Vertex shade of a block's faces against its top, which faces the sky, and
 /// of a face's foot, where the drift and the sky's shade darken it.
@@ -340,7 +356,7 @@ impl Block {
         let height = top - self.base;
         let spall_drop = rng.range(0.15, 0.32) * height.min(1.2);
         let tint_pick = rng.next();
-        let value = rng.range(0.86, 1.1) as f32;
+        let value = rng.range(0.92, 1.06) as f32;
         let tint = BLOCK_TINTS[(tint_pick * BLOCK_TINTS.len() as f64) as usize].map(|c| c * value);
         let face_tint = tint.map(|c| c * FACE_SHADE);
         let foot_tint = tint.map(|c| c * FOOT_SHADE);
@@ -569,5 +585,49 @@ fn cut_stone_geometry(w: f64, h: f64, d: f64) -> Mesh {
             }
         }
     }
+    joint_drifts(&mut faces, &spans, thickness, length, &world);
     faces.mesh()
+}
+
+/// How far a joint's sand drift runs along the wall, out from its face and up
+/// it, metres (ranges).
+const DRIFT_ALONG: (f64, f64) = (0.45, 0.95);
+const DRIFT_OUT: (f64, f64) = (0.45, 0.95);
+const DRIFT_HEIGHT: (f64, f64) = (0.18, 0.45);
+
+/// Wind-blown sand banked into the joints between the blocks, on both faces of
+/// the wall: a low wedge against the stone, shaded as the floor's own sand (the
+/// sandstone shader's skirt). Visual only; the collider stays the wall's box. A
+/// stream of its own, so the blocks keep their layout.
+fn joint_drifts(
+    faces: &mut Faces,
+    spans: &[(f64, f64)],
+    thickness: f64,
+    length: f64,
+    world: &dyn Fn(f64, f64, f64) -> DVec3,
+) {
+    let mut rng = Random::new(9011.0 + length.round());
+    let sand = [0.97f32, 0.97, 0.97];
+    for &(joint, _) in spans.iter().skip(1) {
+        for side in [-1.0, 1.0] {
+            if rng.next() < 0.25 {
+                continue;
+            }
+            let face = side * thickness / 2.0;
+            let along = rng.range(DRIFT_ALONG.0, DRIFT_ALONG.1);
+            let out = rng.range(DRIFT_OUT.0, DRIFT_OUT.1);
+            let height = rng.range(DRIFT_HEIGHT.0, DRIFT_HEIGHT.1);
+            let lean = rng.range(-0.25, 0.25);
+            let inner = face - side * 0.12;
+            let left = world(joint - along, 0.0, inner);
+            let right = world(joint + along * rng.range(0.7, 1.2), 0.0, inner);
+            let toe = world(joint + lean, 0.0, face + side * out);
+            let crest = world(joint + lean * 0.3, height, inner);
+            let facing = world(0.0, 1.0, side) - world(0.0, 0.0, 0.0);
+            for corners in [[left, crest, toe], [crest, right, toe]] {
+                let corners = corners.map(|p| (p, SKIRT, sand));
+                faces.polygon(&corners, BLOCK_LAYER, facing);
+            }
+        }
+    }
 }

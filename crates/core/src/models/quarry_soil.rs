@@ -9,10 +9,11 @@
 use std::sync::OnceLock;
 
 use crate::geometry::math::{js_hypot, lerp, smoothstep};
+use crate::sim::arena::spawn_positions;
 use crate::sim::data::ARENA;
 use crate::sim::math::Random;
 use crate::sim::quarry_layout::quarry_layout;
-use crate::sim::types::CoverKind;
+use crate::sim::types::{CoverKind, Team};
 
 use super::quarry_terrain::QUARRY_BANK_TOP;
 
@@ -146,6 +147,34 @@ fn machine_stand(x: f64, z: f64) -> f64 {
         .fold(0.0, f64::max)
 }
 
+/// Radius of a spawn pad's gravel disc (`quarry_spawn_pad_pieces`), and how far
+/// the ground trodden round it reaches past that, metres.
+const PAD_RADIUS: f64 = 2.6;
+const PAD_APRON: f64 = 3.2;
+
+/// How the ground round the nearest spawn pad is marked at (x, z): (contact,
+/// apron), each 0..1. A shade hugs the disc's edge so the pad sits in the ground,
+/// and the tracks of every tank that has rolled off it tread a darker, gravelly
+/// apron round it.
+fn spawn_pad_ground(x: f64, z: f64) -> (f64, f64) {
+    let pads = spawn_positions(Team::Red, 1.0);
+    let across = x.abs() - pads[0].x.abs();
+    if across.abs() > PAD_RADIUS + PAD_APRON {
+        return (0.0, 0.0);
+    }
+    let along = pads
+        .iter()
+        .map(|pad| (z - pad.z).abs())
+        .fold(f64::INFINITY, f64::min);
+    let edge = js_hypot(&[across, along]) - PAD_RADIUS;
+    if edge > PAD_APRON {
+        return (0.0, 0.0);
+    }
+    let contact = smoothstep(edge, -0.15, 0.05) * (1.0 - smoothstep(edge, 0.05, 0.7));
+    let apron = 1.0 - smoothstep(edge, 0.3, PAD_APRON);
+    (contact, apron)
+}
+
 /// Distance of the apron's haul road from the arena's centre lines, metres.
 const HAUL_RING: f64 = 71.6;
 /// The haul road's ruts across it: two lanes of dual-wheel tracks, metres.
@@ -195,9 +224,70 @@ fn blast_pattern(x: f64, z: f64) -> (f64, f64, f64) {
     (0.0, 0.0, 0.0)
 }
 
+/// Half width of a tyre rut's pressed trough, and how far out from a rut's
+/// centre the sand it pushed aside crests, metres.
+const RUT_HALF: f64 = 0.2;
+const RUT_BERM: f64 = 0.4;
+
+/// A tyre rut `offset` metres from its centre line: (trough, berm), each 0..1.
+/// The wheel presses a trough and shoves the loose sand into a low, paler ridge
+/// along each side of it, so a rut reads by its lit lips as well as its shade.
+fn rut_profile(offset: f64) -> (f64, f64) {
+    let trough = (-(offset / RUT_HALF).powi(2)).exp();
+    let berm = (-((offset.abs() - RUT_BERM) / 0.13).powi(2)).exp() * (1.0 - trough);
+    (trough, berm)
+}
+
+/// How fresh a rut is along its length at (x, z), 0.3..1: recent passes cut
+/// deep, older ones have half filled with blown sand.
+fn rut_age(table: &[f32], x: f64, z: f64, salt: f64) -> f64 {
+    0.3 + 0.7
+        * smoothstep(
+            noise(table, x * 0.045 + salt, z * 0.045 - salt * 0.7),
+            0.3,
+            0.7,
+        )
+}
+
+/// Half width of a haul road's wheel path: the band every truck's dual wheels
+/// wear dark and smooth, metres.
+const WHEEL_PATH_HALF: f64 = 0.55;
+/// How many times wider a wheel path spreads where traffic turns and bunches
+/// (the loop's corners, the crossing's junctions).
+const WHEEL_PATH_SPREAD: f64 = 0.75;
+
+/// A haul road's wheel path `offset` metres from its centre: (band, treads),
+/// each 0..1. The band is the darker, compacted strip; inside it the latest
+/// passes press a few braided tyre lines that wander a little against each
+/// other, so the path has direction close up without combing the whole road.
+fn wheel_path(table: &[f32], x: f64, z: f64, offset: f64, salt: f64, spread: f64) -> (f64, f64) {
+    let half = WHEEL_PATH_HALF * (1.0 + spread * WHEEL_PATH_SPREAD);
+    if offset.abs() > half * 2.2 {
+        return (0.0, 0.0);
+    }
+    let band = (-(offset / half).powi(6)).exp();
+    let mut treads: f64 = 0.0;
+    for k in 0..3 {
+        let k = k as f64;
+        let drift =
+            (noise(table, x * 0.05 + salt + k * 5.3, z * 0.05 - salt - k * 3.1) - 0.5) * half * 1.4;
+        let line = (offset - drift) / 0.12;
+        treads = treads.max((-line * line).exp() * (1.0 - k * 0.22));
+    }
+    (band, treads * band.sqrt())
+}
+
+/// Where haul traffic turns and bunches at (x, z), 0..1: round the loop's four
+/// corners and where the crossing meets it, the paths spread and wear deepest.
+fn traffic_bunching(x: f64, z: f64) -> f64 {
+    let corner = smoothstep(x.abs(), 36.0, 46.0) * smoothstep(z.abs(), 36.0, 46.0);
+    let junction = (-((x.abs() - 51.0).powi(2) + z * z) / 90.0).exp();
+    corner.max(junction)
+}
+
 /// Loader tyre tracks across the open floor at (x, z): two wandering paths,
-/// each a pair of ruts 1.9 m apart, 0..1 with a pressed tread.
-fn loader_tracks(x: f64, z: f64) -> f64 {
+/// each a pair of ruts 1.9 m apart, as (trough, berm) with a pressed tread.
+fn loader_tracks(table: &[f32], x: f64, z: f64) -> (f64, f64) {
     // Each path is a gentle curve across the yard: the point's offset from it
     // over the curve's local stretch approximates the distance.
     let paths = [
@@ -220,12 +310,17 @@ fn loader_tracks(x: f64, z: f64) -> f64 {
     let tread = 0.75 + 0.25 * ((x + z) * 7.0).sin();
     paths
         .into_iter()
-        .map(|(offset, slope, strength)| {
+        .enumerate()
+        .map(|(k, (offset, slope, strength))| {
             let across = offset / (1.0 + slope * slope).sqrt();
-            let rut = ((across.abs() - 0.95) / 0.28).powi(2);
-            (-rut).exp() * tread * strength
+            if (across.abs() - 0.95).abs() > RUT_BERM + 0.4 {
+                return (0.0, 0.0);
+            }
+            let (trough, berm) = rut_profile(across.abs() - 0.95);
+            let age = rut_age(table, x, z, 13.0 + k as f64 * 7.0) * strength;
+            (trough * tread * age, berm * age)
         })
-        .fold(0.0, f64::max)
+        .fold((0.0, 0.0), |a, b| (a.0.max(b.0), a.1.max(b.1)))
 }
 
 /// A per-pixel hash in [0, 1) for pebbles: a pure function of the pixel, so it
@@ -288,7 +383,7 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         let warp = (x * 0.021 + 1.7).sin() * (z * 0.023 - 0.6).sin();
         let bands = (x * 0.045 + z * 0.031 + 1.2).sin() * (z * 0.052 - x * 0.013 + 0.4).sin();
         let sand = smoothstep(macro_field + warp * 0.18 + bands * 0.1, 0.54, 0.68);
-        let rocky = 1.0 - smoothstep(macro_field - warp * 0.15, 0.27, 0.45);
+        let rocky = 1.0 - smoothstep(macro_field - warp * 0.15, 0.31, 0.43);
         // Rounded outer haul loop and a gently wandering east/west crossing: a
         // graded, compacted bed with crisp shoulders and a windrow of loose spill.
         let qx = x.abs() - 39.0;
@@ -300,29 +395,40 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         let mut road = 0.0;
         let mut windrow = 0.0;
         let mut rut = 0.0;
+        let mut treads = 0.0;
         let mut road_edge = 0.0;
+        let mut shoulder_gravel = 0.0;
         if distance < 9.5 {
             // The grader's line wanders in long, uneven runs with the odd bite
             // where a wheel has broken the shoulder, never a regular scallop that
             // reads as a cast shadow.
-            let edge = (noise(table, x * 0.11 + 5.0, z * 0.11 - 2.0) - 0.5) * 0.9
-                + (noise(table, x * 0.9, z * 0.9) - 0.5) * 0.25;
-            road = 1.0 - smoothstep(distance + edge, 4.45, 4.75);
-            // The bladed edge: a thin step of shade where the bed was cut down.
-            let cut = (distance + edge - 4.6) / 0.22;
-            road_edge = (-cut * cut).exp();
-            // The grader's windrow: a ridge of pale spill along each shoulder,
-            // its crest broken where tyres have cut through it.
-            let w = (distance + edge * 0.7 - 6.0) / 0.95;
+            let edge = (noise(table, x * 0.11 + 5.0, z * 0.11 - 2.0) - 0.5) * 1.3
+                + (noise(table, x * 0.9, z * 0.9) - 0.5) * 0.5;
+            // The compacted bed ends at the grader's cut: a defined edge that
+            // wanders in long runs, frayed only where wheels have strayed over it.
+            road = 1.0 - smoothstep(distance + edge, 4.2, 4.65);
+            // The bladed edge: a thin, broken step of shade where the bed was cut.
+            let cut = (distance + edge - 4.5) / 0.22;
+            road_edge = (-cut * cut).exp() * 0.6;
+            // A shoulder of crushed stone the grader left outside the cut, then
+            // its windrow: a ridge of pale spill, its crest broken where tyres
+            // have cut through it.
+            shoulder_gravel = smoothstep(distance + edge, 4.4, 4.8)
+                * (1.0 - smoothstep(distance + edge * 0.7, 5.6, 6.6));
+            let w = (distance + edge * 0.7 - 6.0) / 0.8;
             let breach = smoothstep(noise(table, x * 0.19 + 31.0, z * 0.19 - 8.0), 0.18, 0.3);
             windrow = (-w * w).exp() * breach;
-            // Two-lane dual-wheel haul tracks, pressed darker into the compacted bed.
-            let inner = (distance - 0.8) / 0.26;
-            let outer = (distance - 3.5) / 0.3;
-            rut = (-inner * inner).exp().max((-outer * outer).exp() * 0.8) * road;
-            // Chevron lugs pressed into the ruts by the haul tyres.
-            let lugs = ((x + z) * 9.0).sin() * ((x - z) * 9.0).sin();
-            rut *= 0.8 + 0.35 * lugs;
+            // Two lanes, each with the two wheel paths every truck runs in: broad
+            // dark compacted bands carrying the road's direction, spreading and
+            // wearing deepest where traffic turns and bunches.
+            let spread = traffic_bunching(x, z);
+            let (inner, inner_treads) = wheel_path(table, x, z, distance - 0.85, 3.0, spread);
+            let (outer, outer_treads) = wheel_path(table, x, z, distance - 3.35, 9.0, spread);
+            let inner_age = rut_age(table, x, z, 3.0);
+            let outer_age = rut_age(table, x, z, 9.0) * 0.9;
+            let bunched = 0.8 + 0.35 * spread;
+            rut = (inner * inner_age).max(outer * outer_age) * road * bunched;
+            treads = (inner_treads * inner_age).max(outer_treads * outer_age) * road;
         }
         // Trampled work floor: one broad central apron plus two midfield patches
         // between the rock shoulders. Fixed smooth shapes, no extra noise.
@@ -343,13 +449,15 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         let (mut r, mut g, mut b) = (186.0, 165.0, 134.0);
         let off_road = 1.0 - road;
         let worn_sand = sand * (1.0 - wear * 0.55) * (1.0 - apron * 0.6);
-        r += (213.0 - r) * worn_sand;
-        g += (196.0 - g) * worn_sand;
-        b += (164.0 - b) * worn_sand;
+        r += (212.0 - r) * worn_sand;
+        g += (192.0 - g) * worn_sand;
+        b += (156.0 - b) * worn_sand;
+        // Spoil: darker, redder crushed rock, so the floor zones by value as well
+        // as by grain: pale loose sand, the mid haul roads, dark spoil.
         let stony = (rocky + fill * 0.7).min(1.0) * off_road;
-        r += (160.0 - r) * stony;
-        g += (136.0 - g) * stony;
-        b += (107.0 - b) * stony;
+        r += (150.0 - r) * stony;
+        g += (123.0 - g) * stony;
+        b += (95.0 - b) * stony;
         // The compacted bed: grey crushed-stone fines rolled smooth by the
         // trucks, near the sand's own value so the road reads by its cooler colour,
         // its gravel and its ruts rather than as a shadow across the lane, with
@@ -358,11 +466,20 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             noise(table, x * 0.06 + 17.0, z * 0.11 - 4.0) + warp * 0.2,
             0.55,
             0.78,
-        ) * (1.0 - rut * 1.5).max(0.0);
-        let packed = road * (1.0 - blown * 0.6);
-        r += (176.0 - r) * packed;
-        g += (167.0 - g) * packed;
-        b += (151.0 - b) * packed;
+        ) * (1.0 - rut * 1.6).max(0.0);
+        let packed = road * (1.0 - blown * 0.4);
+        r += (160.0 - r) * packed;
+        g += (146.0 - g) * packed;
+        b += (126.0 - b) * packed;
+        // The wheel paths: rolled harder and darker still, a cooler grey where
+        // the fines have been ground and the water truck's damp lingers.
+        r += (134.0 - r) * rut * 0.45;
+        g += (124.0 - g) * rut * 0.45;
+        b += (110.0 - b) * rut * 0.45;
+        // The crushed-stone shoulder: grey-buff grit a shade off the bed.
+        r += (172.0 - r) * shoulder_gravel * 0.6;
+        g += (158.0 - g) * shoulder_gravel * 0.6;
+        b += (136.0 - b) * shoulder_gravel * 0.6;
         r += (201.0 - r) * windrow * 0.7;
         g += (188.0 - g) * windrow * 0.7;
         b += (163.0 - b) * windrow * 0.7;
@@ -446,8 +563,16 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (204.0 - r) * iron * 0.3;
         g += (150.0 - g) * iron * 0.3;
         b += (106.0 - b) * iron * 0.3;
+        // Ruts hold the last of the water truck's damp in long dark patches,
+        // drying to cracked fines at their edges.
+        let rut_damp = if rut > 0.05 {
+            rut * smoothstep(noise(table, x * 0.13 + 71.0, z * 0.13 - 29.0), 0.58, 0.72)
+        } else {
+            0.0
+        };
         let damp =
-            (1.0 - smoothstep(stain - bands * 0.08, 0.27, 0.41)) * (1.0 - worn_sand) * off_road;
+            ((1.0 - smoothstep(stain - bands * 0.08, 0.27, 0.41)) * (1.0 - worn_sand) * off_road)
+                .max(rut_damp * 0.9);
         r += (156.0 - r) * damp * 0.28;
         g += (122.0 - g) * damp * 0.28;
         b += (96.0 - b) * damp * 0.28;
@@ -460,10 +585,20 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         b += (132.0 - b) * gravel_bed * 0.45;
         // Twin tyre ruts of loaders that cut across the open floor between the
         // haul roads, wandering, fading where sand has blown over them.
-        let tyres = loader_tracks(x, z) * off_road * (1.0 - worn_sand * 0.6) * (1.0 - apron);
-        r += (146.0 - r) * tyres * 0.6;
-        g += (124.0 - g) * tyres * 0.6;
-        b += (98.0 - b) * tyres * 0.6;
+        let (tyres, tyre_berm) = if apron < 1.0 {
+            let (trough, berm) = loader_tracks(table, x, z);
+            let keep = off_road * (1.0 - worn_sand * 0.6) * (1.0 - apron);
+            (trough * keep, berm * keep)
+        } else {
+            (0.0, 0.0)
+        };
+        r += (150.0 - r) * tyres * 0.4;
+        g += (132.0 - g) * tyres * 0.4;
+        b += (108.0 - b) * tyres * 0.4;
+        // The sand a wheel shoved aside is loose and dry: a touch paler.
+        r += (210.0 - r) * tyre_berm * 0.15;
+        g += (194.0 - g) * tyre_berm * 0.15;
+        b += (162.0 - b) * tyre_berm * 0.15;
         // Loose stone gathers in clusters a few metres across, with clean sand
         // between them, instead of an even sprinkle.
         let clump = noise(table, x * 0.31 + 23.0, z * 0.31 - 9.0);
@@ -481,14 +616,16 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
                 * worn_sand
                 * off_road
                 * patch
-                * 7.0
+                * 3.5
         } else {
             0.0
         };
         let shade = (macro_field - 0.5) * 11.0 + (grit - 0.5) * 15.0 + fine + aggregate
-            - rut * 30.0
-            - road_edge * 14.0
-            - tyres * 16.0
+            - rut * 12.0
+            - treads * 20.0
+            - road_edge * 16.0
+            - tyres * 13.0
+            + tyre_berm * 4.0
             - haul_ruts * 20.0
             - ring_ruts * 18.0
             - loading * 5.0
@@ -518,6 +655,10 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (216.0 - r) * drift;
         g += (199.0 - g) * drift;
         b += (167.0 - b) * drift;
+        let (pad_contact, pad_apron) = spawn_pad_ground(x, z);
+        r += (154.0 - r) * pad_apron * 0.55;
+        g += (136.0 - g) * pad_apron * 0.55;
+        b += (111.0 - b) * pad_apron * 0.55;
         // Shade pools at the rocks' feet, where the sky is half hidden, and the
         // stones they shed lie in a ring round them.
         let (rock_edge, shade_edge, lee_edge) = if rocks.is_empty() {
@@ -557,13 +698,16 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         let gravel = 0.0f64.max(1.0f64.min(
             0.5 + stony * 0.45
                 + windrow * 0.85
+                + shoulder_gravel * 0.6
                 + gravel_bed * 0.5
                 + shed * 0.45
                 + wall_scree * 0.7
+                + pad_apron * 0.35
                 + stand * 0.4
                 - lee * 0.8
                 - worn_sand * 0.4
-                - road * 0.05
+                + road * 0.22
+                + rut * 0.15
                 - drift * 0.5 * (1.0 - shed),
         ));
         // Under the wall line the joints between the blocks open onto shaded,
@@ -571,7 +715,11 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         // floating on bright sand.
         let under_wall = smoothstep(reach, ARENA - 0.15, ARENA + 0.1)
             * (1.0 - smoothstep(reach, QUARRY_BANK_TOP - 0.1, QUARRY_BANK_TOP + 0.15));
-        let occlusion = 1.0 - contact * 0.32 - wall_shade.min(1.0) * 0.26 - under_wall * 0.55;
+        let occlusion = 1.0
+            - contact * 0.32
+            - wall_shade.min(1.0) * 0.26
+            - under_wall * 0.55
+            - pad_contact * 0.3;
         let (collar, cuttings, paint) = blast_pattern(x, z);
         r += (196.0 - r) * cuttings * 0.75;
         g += (188.0 - g) * cuttings * 0.75;

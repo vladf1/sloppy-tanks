@@ -634,11 +634,23 @@ impl LoadHeap {
         }
     }
 
-    /// Cells within `radius` of x/z, with their distance.
+    /// Cells within `radius` of x/z, with their distance, in row order.
     fn cells(&self, x: f64, z: f64, radius: f64) -> Vec<(usize, f64)> {
+        // Only cells whose centre lies within `radius` along both axes can be
+        // within it (a distance is never shorter than either offset): the span of
+        // those, a cell wider each way, instead of the whole bed.
+        let span = |centre: f64, start: f64, count: usize| {
+            let first = ((centre - radius - start) / LOAD_CELL - 1.5)
+                .floor()
+                .max(0.0);
+            let last = ((centre + radius - start) / LOAD_CELL + 0.5)
+                .ceil()
+                .max(0.0);
+            (first as usize).min(count)..(last as usize).min(count)
+        };
         let mut cells = Vec::new();
-        for row in 0..self.rows {
-            for column in 0..self.columns {
+        for row in span(z, -self.half, self.rows) {
+            for column in span(x, self.x0, self.columns) {
                 let cx = self.x0 + (column as f64 + 0.5) * LOAD_CELL;
                 let cz = -self.half + (row as f64 + 0.5) * LOAD_CELL;
                 let distance = (cx - x).hypot(cz - z);
@@ -946,11 +958,11 @@ fn boundary_dressing(equipment: &mut Node) {
         }
         for x in stakes.into_iter().filter(|x| x.abs() < 58.5) {
             let lean = 0.05 * (x * 2.3 + side).sin() + stake_rng.range(-0.06, 0.06);
-            let stake = rotated(box_part(0.13, 1.8, 0.13, 0xb6aea0, 0.0), 0.0, 0.0, lean);
+            let stake = rotated(box_part(0.13, 1.8, 0.13, 0x8d7856, 0.0), 0.0, 0.0, lean);
             put(equipment, stake, x, 0.8, side * (QUARRY_BANK_TOP + 0.2));
             // A strip of sun-faded flagging tape tied below the stake's head,
             // hanging off the wind side rather than a painted cap.
-            let tape = rotated(box_part(0.03, 0.42, 0.11, 0xc4845c, 0.0), 0.0, 0.0, 0.35);
+            let tape = rotated(box_part(0.03, 0.42, 0.11, 0xd8602e, 0.0), 0.0, 0.0, 0.35);
             put(
                 equipment,
                 tape,

@@ -246,52 +246,7 @@ fn tug_loop_place(p: vec2f, lane: vec4f) -> vec2f {
 fn tug_wakes(p: vec2f, time: f32) -> vec3f {
     var out = vec3f(0.0);
     for (var i = 0; i < 2; i++) {
-        let lane = TUGS[i];
-        let perimeter = 2.0 * (2.0 * lane.y + WATER_PI * lane.z);
-        let boat = (lane.w + time * TUG_SPEED) % perimeter;
-        let place = tug_loop_place(p, lane);
-        let across = abs(place.y);
-        if across > 26.0 {
-            continue;
-        }
-        // Metres behind the tug's middle along its loop, and ahead of it.
-        let behind = ((boat - place.x) % perimeter + perimeter) % perimeter;
-        let ahead = perimeter - behind;
-        if ahead < TUG_HALF_LENGTH + 1.0 {
-            // Bow wave: a collar of white water pushed off the stem and shoulders.
-            let shoulder = TUG_HALF_BEAM * (1.0 - smoothstep(TUG_HALF_LENGTH - 2.5, TUG_HALF_LENGTH + 0.3, ahead));
-            let collar = exp(-pow((across - shoulder - 0.35) / 0.4, 2.0));
-            out.x = max(out.x, collar * 0.9);
-            out.y = out.y + collar;
-        }
-        let age = behind / TUG_SPEED;
-        if age < WAKE_SECONDS {
-            let fade = exp(-age / 7.0);
-            // From the bow, the arms spread at the Kelvin angle.
-            let from_bow = behind + TUG_HALF_LENGTH;
-            let arm = TUG_HALF_BEAM + from_bow * KELVIN_SLOPE;
-            let arm_width = 0.35 + age * 0.06;
-            let arm_line = exp(-pow((across - arm) / arm_width, 2.0)) * fade;
-            let inside = 1.0 - smoothstep(arm * 0.55, arm, across);
-            let transverse = (0.5 + 0.5 * cos(from_bow * 1.4)) * inside * fade;
-            // Propeller wash: white and churned off the stern, widening and
-            // settling into a glassy scar whose edges the swell breaks up and
-            // bends, so it never reads as a band with straight sides.
-            let stern = smoothstep(TUG_HALF_LENGTH - 1.0, TUG_HALF_LENGTH + 1.0, behind);
-            let wander = (water_noise(vec2f(behind * 0.09, f32(i) * 7.0)) - 0.5) * (0.6 + age * 0.12);
-            let ragged = water_noise(vec2f(behind * 0.45, across * 0.6 + f32(i) * 3.0));
-            let wash_width = (1.2 + age * 0.22) * (0.7 + 0.6 * ragged);
-            let off_axis = abs(place.y + wander);
-            let wash = (1.0 - smoothstep(wash_width * 0.3, wash_width, off_axis)) * exp(-age / 4.5) * stern;
-            let scar = (1.0 - smoothstep(wash_width * 0.4, wash_width * 1.2, off_axis)) * exp(-age / 9.0) * stern
-                * smoothstep(0.25, 0.6, ragged + 0.2);
-            // The arms break white only close behind the boat; further back they
-            // are ridges that roughen the surface.
-            let arm_foam = arm_line * 0.6 * smoothstep(1.0, 4.0, from_bow) * exp(-age / 2.5);
-            out.x = max(out.x, max(wash, arm_foam));
-            out.y = out.y + arm_line + transverse * 0.45;
-            out.z = max(out.z, max(wash, scar * 0.5));
-        }
+        add_tug_wake(&out, p, time, i);
     }
     return out;
 }
@@ -315,6 +270,59 @@ fn water_shadow(world: vec3f) -> f32 {
     }
     let inside = coord.x >= 0.0 && coord.x <= 1.0 && coord.y >= 0.0 && coord.y <= 1.0 && coord.z <= 1.0;
     return select(1.0, sum * 0.25, inside);
+}
+
+// Tug `i`'s wake added to `tug_wakes`'s `out` (a function of its own, so the loop
+// over the tugs needs no `continue` and unrolls).
+fn add_tug_wake(wakes: ptr<function, vec3f>, p: vec2f, time: f32, i: i32) {
+    var out = *wakes;
+    let lane = TUGS[i];
+    let perimeter = 2.0 * (2.0 * lane.y + WATER_PI * lane.z);
+    let boat = (lane.w + time * TUG_SPEED) % perimeter;
+    let place = tug_loop_place(p, lane);
+    let across = abs(place.y);
+    if across > 26.0 {
+        return;
+    }
+    // Metres behind the tug's middle along its loop, and ahead of it.
+    let behind = ((boat - place.x) % perimeter + perimeter) % perimeter;
+    let ahead = perimeter - behind;
+    if ahead < TUG_HALF_LENGTH + 1.0 {
+        // Bow wave: a collar of white water pushed off the stem and shoulders.
+        let shoulder = TUG_HALF_BEAM * (1.0 - smoothstep(TUG_HALF_LENGTH - 2.5, TUG_HALF_LENGTH + 0.3, ahead));
+        let collar = exp(-pow((across - shoulder - 0.35) / 0.4, 2.0));
+        out.x = max(out.x, collar * 0.9);
+        out.y = out.y + collar;
+    }
+    let age = behind / TUG_SPEED;
+    if age < WAKE_SECONDS {
+        let fade = exp(-age / 7.0);
+        // From the bow, the arms spread at the Kelvin angle.
+        let from_bow = behind + TUG_HALF_LENGTH;
+        let arm = TUG_HALF_BEAM + from_bow * KELVIN_SLOPE;
+        let arm_width = 0.35 + age * 0.06;
+        let arm_line = exp(-pow((across - arm) / arm_width, 2.0)) * fade;
+        let inside = 1.0 - smoothstep(arm * 0.55, arm, across);
+        let transverse = (0.5 + 0.5 * cos(from_bow * 1.4)) * inside * fade;
+        // Propeller wash: white and churned off the stern, widening and
+        // settling into a glassy scar whose edges the swell breaks up and
+        // bends, so it never reads as a band with straight sides.
+        let stern = smoothstep(TUG_HALF_LENGTH - 1.0, TUG_HALF_LENGTH + 1.0, behind);
+        let wander = (water_noise(vec2f(behind * 0.09, f32(i) * 7.0)) - 0.5) * (0.6 + age * 0.12);
+        let ragged = water_noise(vec2f(behind * 0.45, across * 0.6 + f32(i) * 3.0));
+        let wash_width = (1.2 + age * 0.22) * (0.7 + 0.6 * ragged);
+        let off_axis = abs(place.y + wander);
+        let wash = (1.0 - smoothstep(wash_width * 0.3, wash_width, off_axis)) * exp(-age / 4.5) * stern;
+        let scar = (1.0 - smoothstep(wash_width * 0.4, wash_width * 1.2, off_axis)) * exp(-age / 9.0) * stern
+            * smoothstep(0.25, 0.6, ragged + 0.2);
+        // The arms break white only close behind the boat; further back they
+        // are ridges that roughen the surface.
+        let arm_foam = arm_line * 0.6 * smoothstep(1.0, 4.0, from_bow) * exp(-age / 2.5);
+        out.x = max(out.x, max(wash, arm_foam));
+        out.y = out.y + arm_line + transverse * 0.45;
+        out.z = max(out.z, max(wash, scar * 0.5));
+    }
+    *wakes = out;
 }
 
 @vertex
