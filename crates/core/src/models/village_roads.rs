@@ -1,9 +1,10 @@
-//! Port of `village-roads.ts`: the Pine Village road strips, shared by the road
-//! meshes and surface effects (track dust) so their boundaries stay aligned.
+//! Port of `village-roads.ts`: the Pine Village road strips, shared by the ground
+//! shader and surface effects (track dust) so their boundaries stay aligned.
 
 use crate::sim::data::ARENA;
 
-/// Width of the feathered alpha shoulder along every road edge, in metres.
+/// How far inside a road edge the solid dirt starts, in metres: the ground shader
+/// frays the edge into grass for about this far.
 pub const ROAD_SHOULDER: f64 = 0.7;
 
 /// One road strip: centre, footprint and the height its mesh floats at.
@@ -50,4 +51,13 @@ pub fn is_village_dirt(x: f64, z: f64) -> bool {
         (x - road.x).abs() <= road.w / 2.0 - ROAD_SHOULDER
             && (z - road.z).abs() <= road.d / 2.0 - ROAD_SHOULDER
     })
+}
+
+/// Signed metres from (x, z) into the nearest road strip: positive on the road,
+/// negative on the grass beside it. Vegetation keeps to the grass with it.
+pub fn road_inside(x: f64, z: f64) -> f64 {
+    village_roads()
+        .iter()
+        .map(|road| (road.w / 2.0 - (x - road.x).abs()).min(road.d / 2.0 - (z - road.z).abs()))
+        .fold(f64::NEG_INFINITY, f64::max)
 }

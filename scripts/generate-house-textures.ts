@@ -189,31 +189,55 @@ async function save(name: string, paint: (u: number, v: number) => number[]) {
 }
 
 // Asphalt shingles: 6 tabs per course, keyways offset half a tab on alternate
-// courses, granule speckle and blended tab tones.
+// courses, granule speckle and blended tab tones: some tabs weathered paler,
+// some newer and darker, a little warmer or cooler, with rain streaks and
+// lichen spots across the courses.
 {
   const courses = 8;
   const tabs = 6;
   const rng = new Random(4441);
-  const tones = Array.from({ length: courses * tabs }, () => rng.range(0.86, 1.08));
+  const tones = Array.from({ length: courses * tabs }, () => {
+    const roll = rng.next();
+    // A few replacement tabs stand out darker, a few bleached ones paler.
+    return roll < 0.1
+      ? rng.range(0.66, 0.76)
+      : roll > 0.9
+        ? rng.range(1.08, 1.16)
+        : rng.range(0.84, 1.04);
+  });
+  const warmth = Array.from({ length: courses * tabs }, () => rng.range(-0.03, 0.04));
+  const butts = Array.from({ length: courses * tabs }, () => rng.range(0.018, 0.034));
   const granules = lattice(41, true);
   const streaks = lattice(42, true);
+  const lichen = lattice(43, true);
   await save("shingles", (u, v) => {
     const row = Math.floor(v * courses);
     const t = v * courses - row;
     const shifted = u * tabs + (row % 2) * 0.5;
     const tab = Math.floor(shifted);
     const s = shifted - tab;
-    let shade = tones[row * tabs + (((tab % tabs) + tabs) % tabs)];
-    // Butt edge: a dark sliver of the end face, then a bright lip.
-    shade *= t < 0.025 ? 0.55 : 1 + 0.08 * (1 - smooth(0.025, 0.08, t));
+    const index = row * tabs + (((tab % tabs) + tabs) % tabs);
+    let shade = tones[index];
+    // Butt edge: a dark sliver of the end face, then a bright lip; worn tab
+    // corners round the butt off at the keyways.
+    const corner = 1 - smooth(0.0, 0.08, Math.min(s, 1 - s));
+    const butt = butts[index] + corner * 0.03;
+    shade *= t < butt ? 0.5 : 1 + 0.1 * (1 - smooth(butt, butt + 0.06, t));
     // The next course's butt shades the bottom of this row.
-    shade *= mix(1, 0.58, smooth(0.78, 1, t));
+    shade *= mix(1, 0.52, smooth(0.76, 1, t));
     // Keyways between tabs run from the butt up over half the exposure.
     const slot = Math.min(s, 1 - s) * (size / tabs);
-    if (t < 0.6) shade *= mix(0.42, 1, smooth(1.2, 3.5, slot));
+    if (t < 0.6) shade *= mix(0.36, 1, smooth(1.2, 3.5, slot));
     const speck = granules(u * 170, v * 170, 170);
-    shade *= 0.92 + 0.16 * speck;
-    shade *= 1 + (tileable(streaks, u, v, 4) - 0.5) * 0.12;
-    return [214, 210, 204].map((c) => c * shade);
+    shade *= 0.88 + 0.24 * speck;
+    // Rain streaks run down the roof (across the courses).
+    const rain = fbm(streaks, u * 48, v * 3, 48, 3);
+    shade *= 1 - smooth(0.55, 0.8, rain) * 0.16;
+    shade *= 1 + (tileable(streaks, u, v, 4) - 0.5) * 0.14;
+    const warm = warmth[index];
+    const base = [214 * (1 + warm), 210, 204 * (1 - warm * 1.4)].map((c) => c * shade);
+    // Pale lichen rosettes on the older tabs.
+    const spot = smooth(0.64, 0.72, tileable(lichen, u, v, 24, 3)) * (t > butt ? 1 : 0);
+    return base.map((c, i) => mix(c, [196, 204, 150][i] * shade, spot * 0.55));
   });
 }

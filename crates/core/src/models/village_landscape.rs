@@ -9,9 +9,10 @@ use std::sync::{Arc, OnceLock};
 use glam::DVec3;
 
 use crate::geometry::{CatmullRomCurve3, Mesh, icosahedron_geometry, plane_geometry_segments};
-use crate::scene::{Material, Node};
+use crate::scene::{Effect, Material, Node};
 
 use super::batching::batch;
+use super::effects_scenery::MEADOW_SWAY;
 use super::ground_surfaces::ground_uvs;
 use super::model_primitives::{adopt_children, put, shadow_receiver};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
@@ -122,6 +123,109 @@ fn mountain_rise(x: f64, z: f64) -> f64 {
         * smoothstep(-z, 112.0, 133.0)
 }
 
+/// Half size of the valley terrain square ([`village_landscape`]).
+const VALLEY_HALF: f64 = 170.0;
+/// Half size of the distant ranges around it, inside the camera's far plane.
+const RANGES_HALF: f64 = 300.0;
+/// Grid spacing of the distant ranges in metres.
+const RANGES_CELL: f64 = 6.0;
+
+/// A smooth lattice noise in [0, 1] for the distant ranges' shapes and colours.
+fn lattice_noise(x: f64, z: f64) -> f64 {
+    let hash = |ix: f64, iz: f64| {
+        let h = (ix * 127.1 + iz * 311.7).sin() * 43758.5453;
+        h - h.floor()
+    };
+    let (ix, iz) = (x.floor(), z.floor());
+    let (fx, fz) = (x - ix, z - iz);
+    let (ux, uz) = (fx * fx * (3.0 - 2.0 * fx), fz * fz * (3.0 - 2.0 * fz));
+    let a = lerp(hash(ix, iz), hash(ix + 1.0, iz), ux);
+    let b = lerp(hash(ix, iz + 1.0), hash(ix + 1.0, iz + 1.0), ux);
+    lerp(a, b, uz)
+}
+
+/// Ridged peaks of the distant ranges: sharp crests, broad valleys.
+fn ridges(x: f64, z: f64) -> f64 {
+    let mut total = 0.0;
+    let mut amplitude = 0.6;
+    let mut frequency = 0.011;
+    for _ in 0..4 {
+        let n = lattice_noise(x * frequency + 13.7, z * frequency - 4.1);
+        total += (1.0 - (n * 2.0 - 1.0).abs()).powi(2) * amplitude;
+        amplitude *= 0.45;
+        frequency *= 2.1;
+    }
+    total
+}
+
+/// `farRise(x, z)`: how far the distant ranges stand above the valley's hills,
+/// rising from nothing at the valley's edge to snowy peaks.
+fn far_rise(x: f64, z: f64) -> f64 {
+    let edge = x.abs().max(z.abs());
+    let rise = smoothstep(edge, VALLEY_HALF - 8.0, VALLEY_HALF + 70.0);
+    rise * (10.0 + 62.0 * ridges(x, z)) + rise * rise * 8.0 * lattice_noise(x * 0.05, z * 0.05)
+}
+
+/// Slope colours of the mountains: forest below, scree and rock above it, snow
+/// on the peaks, each band broken by noise so no contour line shows.
+fn range_color(x: f64, y: f64, z: f64) -> [f64; 3] {
+    let n = lattice_noise(x * 0.09, z * 0.09);
+    let forest = lerp_color(hex_to_linear(0x3f5f3b), hex_to_linear(0x56774a), n);
+    let meadow = hex_to_linear(0x6f9150);
+    let rock = lerp_color(hex_to_linear(0x7d8682), hex_to_linear(0x9a9a8e), n);
+    let snow = hex_to_linear(0xeef1ea);
+    let mut color = lerp_color(meadow, forest, smoothstep(y, 4.0, 12.0));
+    let treeline = 30.0 + n * 10.0;
+    color = lerp_color(color, rock, smoothstep(y, treeline, treeline + 8.0));
+    let snowline = 50.0 + (x * 0.031 + z * 0.027).sin() * 6.0 + n * 6.0;
+    lerp_color(color, snow, smoothstep(y, snowline, snowline + 5.0))
+}
+
+/// The distant ranges ringing the valley: a grid out to [`RANGES_HALF`] that
+/// continues the valley's hills into forested slopes and snowy peaks. Where it
+/// lies under the valley terrain or the northern ridge it sinks below them, so
+/// the nearer surfaces always win.
+fn far_ranges() -> Mesh {
+    let cells = (RANGES_HALF * 2.0 / RANGES_CELL) as usize;
+    let row = cells + 1;
+    let under = |x: f64, z: f64| {
+        (x.abs() < VALLEY_HALF && z.abs() < VALLEY_HALF)
+            || (x.abs() < 180.0 && (-207.0..-112.0).contains(&z))
+    };
+    let mut positions = Vec::with_capacity(row * row * 3);
+    let mut colors = Vec::with_capacity(row * row);
+    for j in 0..row {
+        for i in 0..row {
+            let x = -RANGES_HALF + i as f64 * RANGES_CELL;
+            let z = -RANGES_HALF + j as f64 * RANGES_CELL;
+            let mut y = valley_height(x, z) + mountain_rise(x, z) + far_rise(x, z);
+            colors.push(range_color(x, y, z).map(|c| c as f32));
+            if under(x, z) {
+                y -= 1.5;
+            }
+            positions.extend([x, y, z]);
+        }
+    }
+    let inside = |x: f64, z: f64| under(x, z) && under(x + RANGES_CELL, z + RANGES_CELL);
+    let mut indices = Vec::new();
+    for j in 0..cells {
+        for i in 0..cells {
+            let x = -RANGES_HALF + i as f64 * RANGES_CELL;
+            let z = -RANGES_HALF + j as f64 * RANGES_CELL;
+            if inside(x, z) && under(x + RANGES_CELL, z) && under(x, z + RANGES_CELL) {
+                continue;
+            }
+            let a = (j * row + i) as u32;
+            let (b, c, d) = (a + 1, a + row as u32, a + row as u32 + 1);
+            indices.extend([a, c, b, b, c, d]);
+        }
+    }
+    let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
+    mesh.colors = colors;
+    mesh.compute_vertex_normals();
+    mesh
+}
+
 /// `streamGeometry()`: a ribbon along the creek in local XY (the water node turns
 /// it onto its horizontal mirror plane), UV x across and y along the stream.
 fn stream_geometry() -> Mesh {
@@ -157,14 +261,16 @@ pub fn village_landscape(grass: Arc<Material>) -> Node {
     let mut group = Node::group("pine-valley-landscape");
     let mut geometry = plane_geometry_segments(340.0, 340.0, 112, 112);
     geometry.rotate_x(-std::f64::consts::FRAC_PI_2);
-    let bank = hex_to_linear(0x8c967f);
+    // Vertex colours multiply the ground shader's grass: broad patches, and a
+    // muddy, sparser bank along the creek.
+    let bank = [0.92, 0.74, 0.55];
     let mut colors = Vec::with_capacity(geometry.positions.len());
     for p in &mut geometry.positions {
         let (x, z) = (f64::from(p[0]), f64::from(p[2]));
         let river = creek_distance(x, z);
         p[1] = valley_height_at(x, z, river) as f32;
         let patch = 0.5 + 0.25 * (x * 0.064 + z * 0.03).sin() + 0.25 * (z * 0.1 - x * 0.05).sin();
-        let mut color = [0.48 + patch * 0.35, 0.64 + patch * 0.3, 0.34 + patch * 0.26];
+        let mut color = [0.8 + patch * 0.16, 0.86 + patch * 0.12, 0.84 + patch * 0.14];
         if river < 8.0 {
             color = lerp_color(color, bank, (8.0 - river) / 8.0);
         }
@@ -238,9 +344,20 @@ fn backdrop(group: &mut Node) {
         rock.set_rotation_euler(pitch, yaw, 0.0);
         put(&mut rocks, rock, x, valley_height(x, z) + size * 0.08, z);
     }
-    for _ in 0..420 {
-        let x = rng.range(-148.0, 148.0);
-        let z = rng.range(-145.0, 105.0);
+    // Most of the forest grows in groves, so the hills read as woods with
+    // clearings rather than evenly sprinkled trees.
+    let groves: Vec<(f64, f64)> = (0..46)
+        .map(|_| (rng.range(-150.0, 150.0), rng.range(-145.0, 105.0)))
+        .collect();
+    for i in 0..420 {
+        let (x, z) = if i % 10 < 7 {
+            let (gx, gz) = groves[i % groves.len()];
+            let angle = rng.range(0.0, std::f64::consts::TAU);
+            let reach = rng.range(0.0, 1.0).sqrt() * 13.0;
+            (gx + angle.cos() * reach, gz + angle.sin() * reach)
+        } else {
+            (rng.range(-148.0, 148.0), rng.range(-145.0, 105.0))
+        };
         if (x.abs() < 69.0 && z > -99.0)
             || (z > 57.0 && x.abs() < 98.0)
             || creek_distance(x, z) < 11.0
@@ -255,8 +372,8 @@ fn backdrop(group: &mut Node) {
         if mountain_rise(x, z) > 22.0 {
             continue;
         }
-        let height = rng.range(6.0, 13.0);
-        let span = rng.range(3.3, 5.6);
+        let height = rng.range(6.5, 13.5);
+        let span = rng.range(4.4, 6.8);
         plant_tree(
             &mut forest,
             TreeShape {
@@ -285,35 +402,51 @@ fn backdrop(group: &mut Node) {
     let mut ridge = plane_geometry_segments(360.0, 95.0, 90, 26);
     ridge.rotate_x(-std::f64::consts::FRAC_PI_2);
     ridge.translate(0.0, 0.0, -159.5);
-    let (rock_color, snow, grass) = (
-        hex_to_linear(0x82948a),
-        hex_to_linear(0xe7eadb),
-        hex_to_linear(0x768d63),
-    );
     let mut shades = Vec::with_capacity(ridge.positions.len());
     for p in &mut ridge.positions {
         let (x, z) = (f64::from(p[0]), f64::from(p[2]));
         let y = valley_height(x, z) + mountain_rise(x, z);
         p[1] = y as f32;
-        let snowline = 30.0 + (x * 0.095 + z * 0.08).sin() * 5.0;
-        let mut color = lerp_color(rock_color, snow, smoothstep(y, snowline, snowline + 6.0));
-        if y < 15.0 {
-            color = lerp_color(color, grass, (15.0 - y) / 15.0);
-        }
-        shades.push(color.map(|c| c as f32));
+        shades.push(range_color(x, y, z).map(|c| c as f32));
     }
     ridge.colors = shades;
     ridge.compute_vertex_normals();
-    let mut mountains = Node::mesh(
-        Arc::new(ridge),
-        Arc::new(Material {
-            vertex_colors: true,
-            flat_shading: true,
-            ..Material::standard(0xffffff, 0.0, 1.0)
-        }),
-    );
+    // The meadow effect's range mode adds conifer stands, strata, crags and
+    // settled snow to the vertex-coloured bands.
+    let ranges = Arc::new(Material {
+        vertex_colors: true,
+        effect: Effect::Custom {
+            name: MEADOW_SWAY,
+            params: vec![2.0],
+        },
+        ..Material::standard(0xffffff, 0.0, 1.0)
+    });
+    let mut mountains = Node::mesh(Arc::new(ridge), ranges.clone());
     mountains.name = "pine-mountain-ridge".into();
     group.children.push(mountains);
+    group
+        .children
+        .push(Node::mesh(Arc::new(far_ranges()), ranges));
+    // Forest on the southern hills, beyond the overview's foreground.
+    for _ in 0..260 {
+        let x = rng.range(-165.0, 165.0);
+        let z = rng.range(74.0, 165.0);
+        if creek_distance(x, z) < 11.0 || (x.abs() < 40.0 && z < 92.0) {
+            continue;
+        }
+        let height = rng.range(7.0, 14.0);
+        let span = rng.range(3.6, 6.0);
+        plant_tree(
+            &mut forest,
+            TreeShape {
+                x,
+                z,
+                w: span,
+                d: span,
+                h: height,
+            },
+        );
+    }
     batch(&mut rocks);
     batch(&mut forest);
     group.children.push(rocks);

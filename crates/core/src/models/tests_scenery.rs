@@ -398,16 +398,17 @@ fn scenery_matches_typescript() {
     );
 }
 
-/// Normals of the background forest batches on a 1/65536 grid, printed by the
-/// same Node script (`Math.round(n * 65536) >>> 0`, FNV-1a).
+/// Normals of the background forest batches on a 1/65536 grid
+/// (`Math.round(n * 65536) >>> 0`, FNV-1a), as the Pine Village art pass left
+/// them.
 const FOREST_NORMALS: [u32; 8] = [
-    0xf598fba9, 0xfba8767a, 0xc929b2f3, 0xd55434e8, 0xe17bc1d0, 0x2636dec2, 0x7d7e3200, 0xe0290598,
+    0x4bed3b87, 0xb863b709, 0xa94fb015, 0x9000c822, 0xc14f62f6, 0xd2fda532, 0x6afa23fe, 0x1fe510a0,
 ];
 
 #[test]
 fn forest_normals_match_typescript_on_a_grid() {
     let village = VillageScenery::new();
-    let forest = &village.root.children[4].children[4];
+    let forest = &village.root.children[4].children[5];
     let hashes: Vec<u32> =
         forest
             .children
@@ -639,42 +640,45 @@ fn materials_carry_three_features() {
     assert_eq!(alpha.map(<[f32]>::len), Some(48));
 }
 
-/// Printed by the reference script (see the module docs), compacted.
+/// Printed by the reference script (see the module docs), compacted. The
+/// `village` section is the Rust output of the Pine Village art pass that
+/// re-authored its ground, boundary walls, backdrop and forest after the port.
 #[rustfmt::skip]
 const EXPECTED: &str = r#"
 # village
 r|pine-village-scenery|1|9|=
 r.0|-|1|0|0,-0.8,0|0,0,0,1|1,1,1|V=324|I=-1|P=e793c4f9|N=04279eb5|U=29c6023d|C=c0134d31|A=-|X=-|M=5f0fd04f|F=1,1,0,1
-r.1|-|1|0|0,0.008,0|0,0,0,1|1,1,1|V=2401|I=13824|P=da6a05a7|N=6b6c5f6d|U=39dcbecd|C=7004e728|A=-|X=-|M=d9006d5a|F=0,1,0,1
+r.1|-|1|0|0,0.008,0|0,0,0,1|1,1,1|V=2401|I=13824|P=da6a05a7|N=6b6c5f6d|U=39dcbecd|C=5651af37|A=-|X=-|M=d5f93363|F=0,1,0,1
 r.2|-|1|1|=
-r.2.0|-|1|0|=|V=324|I=-1|P=fc34780b|N=0304f5b5|U=55914565|C=b104f5b5|A=8c200615|X=-|M=cfd9e356|F=0,1,-1,1
-r.3|-|1|3|=
-r.3.0|spawn-pads|1|4|=
-r.3.0.0|-|1|0|=|V=14400|I=-1|P=baa5d0e5|N=9de8fa65|U=a13b5035|C=008df045|A=-|X=-|M=c3d0892e|F=1,1,0,1
-r.3.0.1|-|1|0|=|V=4620|I=-1|P=d05dcf47|N=68402dbd|U=f9864bd5|C=69c9f195|A=-|X=-|M=bf17ee3c|F=1,1,0,1
-r.3.0.2|-|1|0|=|V=32400|I=-1|P=06cd4685|N=8e0ad905|U=c4155b65|C=ce6e67c5|A=-|X=-|M=5f0fd04f|F=1,1,0,1
-r.3.0.3|-|1|0|=|V=4620|I=-1|P=9fa5f5e7|N=c84f2335|U=f9864bd5|C=4366ccc1|A=-|X=-|M=d33b7c4a|F=1,1,0,1
-r.3.1|-|1|0|=|V=37584|I=-1|P=ba8f569d|N=7541dc05|U=a9362ec5|C=46caf485|A=-|X=-|M=bf17ee3c|F=1,1,0,1
-r.3.2|-|1|0|=|V=37584|I=-1|P=731dfa3d|N=7541dc05|U=a9362ec5|C=34b889f5|A=-|X=-|M=d33b7c4a|F=1,1,0,1
-r.4|pine-valley-landscape|1|5|=
-r.4.0|-|1|0|=|V=12769|I=75264|P=e64f13b9|N=3f8186ec|U=365fd62d|C=0a5a31ee|A=-|X=-|M=d9006d5a|F=0,1,0,1
-r.4.1|village-creek|1|1|0,-2.65,0|-0.707106781,0,0,0.707106781|1,1,1|V=322|I=960|P=0884e83d|N=1b97729d|U=be71afd5|C=-|A=-|X=-|M=d4dd116a|F=0,0,0,1
-r.4.1.0|-|1|0|=
-r.4.2|pine-mountain-ridge|1|0|=|V=2457|I=14040|P=8eda18c3|N=d77fd824|U=4a0d61cb|C=642c7cec|A=-|X=-|M=851883b1|F=0,0,0,1
-r.4.3|-|1|1|=
-r.4.3.0|-|1|0|=|V=8400|I=-1|P=72061a56|N=14a64e51|U=99ef87a5|C=43c19091|A=-|X=-|M=4083e32b|F=1,1,0,1
-r.4.4|-|1|8|=
-r.4.4.0|-|1|0|=|V=3552|I=-1|P=68aa23ae|N=40849877|U=423180c5|C=e4f0b505|A=-|X=-|M=c69807ea|F=1,1,0,1
-r.4.4.1|-|1|0|=|V=23940|I=-1|P=449b8ada|N=cdf944c5|U=4381ed65|C=44072bb1|A=-|X=-|M=2be7cafb|F=1,1,0,1
-r.4.4.2|-|1|0|=|V=6828|I=-1|P=8ff3cba5|N=25afdf19|U=1672d8b5|C=de7c3805|A=-|X=-|M=411c49e7|F=1,1,0,1
-r.4.4.3|-|1|0|=|V=28980|I=-1|P=8c318c61|N=56fe8059|U=9b63dce5|C=0c32cf85|A=-|X=-|M=dd529ec4|F=1,1,0,1
-r.4.4.4|-|1|0|=|V=30960|I=-1|P=02962604|N=391bd473|U=7c1abf45|C=3ea1a48f|A=-|X=-|M=c21f48a0|F=1,1,0,1
-r.4.4.5|-|1|0|=|V=29412|I=-1|P=0d67c0d3|N=a6659d4a|U=c54bbc65|C=8fc5df7b|A=-|X=-|M=5e58daa5|F=1,1,0,1
-r.4.4.6|-|1|0|=|V=24768|I=-1|P=b031bd7b|N=319eab17|U=e2c96bc5|C=937f9723|A=-|X=-|M=ff64dbb2|F=1,1,0,1
-r.4.4.7|-|1|0|=|V=22680|I=-1|P=311f51e8|N=ff7eae7e|U=d89df385|C=c7350f5d|A=-|X=-|M=d2f282e8|F=1,1,0,1
+r.2.0|spawn-pads|1|4|=
+r.2.0.0|-|1|0|=|V=14400|I=-1|P=baa5d0e5|N=9de8fa65|U=a13b5035|C=008df045|A=-|X=-|M=c3d0892e|F=1,1,0,1
+r.2.0.1|-|1|0|=|V=4620|I=-1|P=d05dcf47|N=68402dbd|U=f9864bd5|C=69c9f195|A=-|X=-|M=bf17ee3c|F=1,1,0,1
+r.2.0.2|-|1|0|=|V=32400|I=-1|P=06cd4685|N=8e0ad905|U=c4155b65|C=ce6e67c5|A=-|X=-|M=5f0fd04f|F=1,1,0,1
+r.2.0.3|-|1|0|=|V=4620|I=-1|P=9fa5f5e7|N=c84f2335|U=f9864bd5|C=4366ccc1|A=-|X=-|M=d33b7c4a|F=1,1,0,1
+r.3|-|1|4|=
+r.3.0|-|1|0|=|V=6912|I=-1|P=ff189315|N=c916bc35|U=5d5e22c5|C=-|A=-|X=-|M=9b6457e0|F=1,1,0,1
+r.3.1|-|1|0|=|V=1440|I=-1|P=5757d755|N=0f558125|U=a977ec05|C=-|A=-|X=-|M=5d24fa8b|F=1,1,0,1
+r.3.2|-|1|0|=|V=1440|I=-1|P=db9831f5|N=0f558125|U=26fcc1b5|C=-|A=-|X=-|M=c7181185|F=1,1,0,1
+r.3.3|-|1|0|=|V=840|I=-1|P=719e9b09|N=92726fa5|U=-|C=55e50889|A=-|X=-|M=c37f9530|F=1,1,0,1
+r.4|pine-valley-landscape|1|6|=
+r.4.0|-|1|0|=|V=12769|I=75264|P=e64f13b9|N=3f8186ec|U=365fd62d|C=c32bf8b3|A=-|X=-|M=d5f93363|F=0,1,0,1
+r.4.1|village-creek|1|0|0,-2.65,0|-0.707106781,0,0,0.707106781|1,1,1|V=322|I=960|P=0884e83d|N=1b97729d|U=be71afd5|C=-|A=-|X=-|M=d4dd116a|F=0,0,0,1
+r.4.2|pine-mountain-ridge|1|0|=|V=2457|I=14040|P=8eda18c3|N=d77fd824|U=4a0d61cb|C=d8b59c9e|A=-|X=-|M=e19d6c00|F=0,0,0,1
+r.4.3|-|1|0|=|V=10201|I=38988|P=cc90eb52|N=6d6ccf07|U=-|C=94317875|A=-|X=-|M=e19d6c00|F=0,0,0,1
+r.4.4|-|1|1|=
+r.4.4.0|-|1|0|=|V=8400|I=-1|P=72061a56|N=14a64e51|U=99ef87a5|C=43c19091|A=-|X=-|M=4083e32b|F=1,1,0,1
+r.4.5|-|1|8|=
+r.4.5.0|-|1|0|=|V=13986|I=-1|P=0c742961|N=5e8450c9|U=868d9d9d|C=2031c205|A=-|X=-|M=411c49e7|F=1,1,0,1
+r.4.5.1|-|1|0|=|V=68886|I=-1|P=31d0651b|N=fd8b2911|U=51b0a935|C=f7d8cbb2|A=-|X=-|M=5e58daa5|F=1,1,0,1
+r.4.5.2|-|1|0|=|V=8064|I=-1|P=c5d7414c|N=cc96f52b|U=673469c5|C=003e8a65|A=-|X=-|M=c69807ea|F=1,1,0,1
+r.4.5.3|-|1|0|=|V=49140|I=-1|P=cb028aee|N=e7ac9c6a|U=f45c1ae5|C=cd0d6f5d|A=-|X=-|M=d2f282e8|F=1,1,0,1
+r.4.5.4|-|1|0|=|V=56700|I=-1|P=d89e4d90|N=8dbc5c5a|U=a0619a25|C=4e5b796a|A=-|X=-|M=2be7cafb|F=1,1,0,1
+r.4.5.5|-|1|0|=|V=52632|I=-1|P=25590ac2|N=8c420f72|U=83e57b85|C=4dc64441|A=-|X=-|M=c21f48a0|F=1,1,0,1
+r.4.5.6|-|1|0|=|V=68112|I=-1|P=a545715e|N=e59413de|U=21a2f445|C=27fda35e|A=-|X=-|M=ff64dbb2|F=1,1,0,1
+r.4.5.7|-|1|0|=|V=48510|I=-1|P=af5ce800|N=16b7d2b6|U=65495775|C=116ab29b|A=-|X=-|M=dd529ec4|F=1,1,0,1
 r.5|village-meadow|1|2|=
-r.5.0|-|1|0|=|V=12|I=-1|P=c84148df|N=8f2c550b|U=-|C=-|A=-|X=windOrigin:2:b0e57cfa|M=543eda4f|F=0,1,0,1|INST=1948,3337f077,819444d3
-r.5.1|-|1|0|=|V=24|I=-1|P=8fefde65|N=ea4d8f85|U=3b55ff85|C=-|A=-|X=-|M=23d1a285|F=0,1,0,1|INST=601,116d27e5,c5dc1e08
+r.5.0|-|1|0|=|V=27|I=-1|P=1d9e1424|N=433300f9|U=-|C=df26c380|A=-|X=windOrigin:2:9719be19|M=3ac9b326|F=0,1,0,1|INST=5598,0527e61e,2cebcf0f
+r.5.1|-|1|0|=|V=45|I=-1|P=091be9fe|N=37a17a27|U=-|C=e321dee6|A=-|X=-|M=679821f5|F=0,1,0,1|INST=967,1e1a3f19,acc4b39b
 r.6|village-chimney-smoke|1|0|=|V=4|I=6|P=463c62b5|N=9d3c62b5|U=d6e17165|C=-|A=-|X=phase:1:a6f6753d;smokeOrigin:3:20e0d2c5|M=f5df665b|F=0,0,0,0|INST=0,-,-
 r.7|-|1|4|=
 r.7.0|pine-watermill|1|2|-35,-0.25,-69|0,0,0,1|1,1,1
