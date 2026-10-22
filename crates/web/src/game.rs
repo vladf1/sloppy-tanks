@@ -145,7 +145,10 @@ pub mod frame_slot {
     /// person or off screen.
     pub const VIEWER_X: usize = 13;
     pub const VIEWER_Y: usize = 14;
-    pub const LENGTH: usize = 15;
+    /// 1 when the frame ran; 0 when it was skipped while the GPU still ran earlier
+    /// frames (`framesInFlight`), and the other slots repeat the last frame's.
+    pub const RAN: usize = 15;
+    pub const LENGTH: usize = 16;
 }
 
 /// `Game.hud_json`: the page HUD's view of the match and the human's tank.
@@ -440,6 +443,7 @@ impl Game {
         };
         let dt = self.times.advance(now);
         let mut result = vec![0.0; frame_slot::LENGTH];
+        result[frame_slot::RAN] = 1.0;
         if !self.active {
             result[frame_slot::PHASE] = phase_code(self.sim.match_state.phase);
             self.last_result.clone_from(&result);
@@ -549,6 +553,7 @@ impl Game {
             self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
         }
         let mut result = self.last_result.clone();
+        result[frame_slot::RAN] = 0.0;
         result[frame_slot::EVENTS] = self.events.len() as f32;
         result[frame_slot::HUD_DUE] = 0.0;
         result[frame_slot::SIM_MS] = 0.0;

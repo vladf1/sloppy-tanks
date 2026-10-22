@@ -45,6 +45,9 @@ export const FRAME = {
   /** The viewer's tank on screen (NDC, y up); NaN in first person or off screen. */
   viewerX: 13,
   viewerY: 14,
+  /** 0 when the engine skipped the frame while the GPU still ran earlier ones
+   * (`framesInFlight`); the other slots then repeat the last frame's. */
+  ran: 15,
 } as const;
 
 /** The engine config's `framesInFlight` for this browser: how many frames may still be

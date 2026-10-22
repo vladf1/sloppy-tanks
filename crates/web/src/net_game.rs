@@ -82,12 +82,12 @@ use crate::stats::presentation_stats;
 /// Notices waiting for `take_notices`; a hidden HUD must not grow this without bound.
 const MAX_PENDING_NOTICES: usize = 256;
 
-/// Slots of `frame`'s result. Slots 2-4, 6-10 and 13-14 are `Game.frame`'s, except that
+/// Slots of `frame`'s result. Slots 2-4, 6-10 and 13-15 are `Game.frame`'s, except that
 /// `SIM_MS` times interpolation, input and event routing, and `HUD_DUE` needs a drawn
 /// frame and is also due while events wait. Slots 0, 1 and 5 stay 0.
 pub mod net_frame_slot {
     pub use crate::game::frame_slot::{
-        COCKPIT, DT, EVENTS, FIRST_PERSON, HUD_DUE, HULL_ANGLE, RENDER_MS, SIM_MS, VIEWER_X,
+        COCKPIT, DT, EVENTS, FIRST_PERSON, HUD_DUE, HULL_ANGLE, RAN, RENDER_MS, SIM_MS, VIEWER_X,
         VIEWER_Y,
     };
     /// 1 when the arena drew this frame.
@@ -95,7 +95,7 @@ pub mod net_frame_slot {
     /// 1 when the page should free a captured pointer: a menu, a drop or no battle.
     /// A death keeps it captured for the respawn.
     pub const POINTER_FREE: usize = 12;
-    pub const LENGTH: usize = 15;
+    pub const LENGTH: usize = 16;
 }
 
 /// `NetGame.create`'s room settings besides the view configuration
@@ -456,6 +456,7 @@ impl NetGame {
                 self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
             }
             let mut result = self.last_result.clone();
+            result[net_frame_slot::RAN] = 0.0;
             result[net_frame_slot::EVENTS] = self.events.len() as f32;
             result[net_frame_slot::HUD_DUE] = 0.0;
             result[net_frame_slot::SIM_MS] = 0.0;
@@ -798,6 +799,7 @@ impl NetGame {
         result[slot::FIRST_PERSON] = flag(self.view.rig.first_person.enabled);
         result[slot::DT] = dt as f32;
         result[slot::DRAWN] = flag(drawn);
+        result[slot::RAN] = 1.0;
         result[slot::POINTER_FREE] =
             flag(!drawn || !self.client.connected || menu || phase != RoomPhase::Playing);
         let (viewer_x, viewer_y) = self.view.viewer_ndc().unwrap_or((f32::NAN, f32::NAN));

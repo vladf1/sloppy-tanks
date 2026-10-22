@@ -44,6 +44,7 @@ const FRAME = {
   pointerFree: 12,
   viewerX: 13,
   viewerY: 14,
+  ran: 15,
 } as const;
 /** The dev-build page parameter that shows the transport delay sliders. */
 const LATENCY_SLIDER_PARAM = "latencySlider";
@@ -537,7 +538,10 @@ export async function startMultiplayer(
         result[FRAME.hullAngle],
         controls.aimWaitsForClick,
       );
-      stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      // Frames the engine skipped while the GPU caught up are not shown frames.
+      if (result[FRAME.ran]) {
+        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      }
     } else if (result[FRAME.events] > 0) {
       game.drain_events();
     }
