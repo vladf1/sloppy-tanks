@@ -131,6 +131,8 @@ const VG_KERB_STONE = 0.68;
 const VG_KERB_RISE = 0.07;
 // Radius of the rings of setts at the heart of the crossing (m).
 const VG_ROSETTE = 4.1;
+// Sett rows between the dark courses that panel the streets.
+const VG_PANEL_ROWS = 17.0;
 
 // The square's outline near `p`: x metres inside it (negative outside), y the
 // coordinate along the nearest stretch of kerb, zw that stretch's outward
@@ -317,7 +319,16 @@ fn vg_setts(p: vec2f, aa: f32) -> VgSett {
     var slope = top.zw * mix(0.4, 0.7, proud) + local * mix(0.6, 1.0, proud) + tilt;
     slope = select(slope, slope.yx, arm);
     let height = top.x * mix(0.45, 1.0, proud) * mix(0.75, 1.0, top.y);
-    return VgSett(top.x, slope, top.y, pick, height, 0.0, 0.0);
+    // Every few paces a double course of dark whinstone crosses the street,
+    // bowing with the rows, so the paving reads in panels from any height
+    // rather than as one slab.
+    // Measured in rows from the course's middle, anti-aliased along its edge.
+    let rows_out = q.y / VG_SETT.y - 1.0;
+    let from_band = abs(rows_out - VG_PANEL_ROWS * round(rows_out / VG_PANEL_ROWS));
+    let band_aa = max(joint_aa / VG_SETT.y, 0.02);
+    // Half the rosette's border course in weight: a panel line, not a road marking.
+    let band = (1.0 - smoothstep(1.0 - band_aa, 1.0 + band_aa, from_band)) * 0.45;
+    return VgSett(top.x, slope, top.y, pick, height, 0.0, band);
 }
 
 // One road family's nearest strip: (signed metres inside it, offset across it,
@@ -530,7 +541,7 @@ fn vg_lawn_tone(p: vec2f) -> vec4f {
     tone = mix(tone, tone * vec3f(0.9, 0.99, 1.08), smoothstep(0.5, 0.8, patches) * 0.3 * (1.0 - dry));
     // A touch less saturated than a lawn, and lighter and darker over tens of
     // metres, so a meadow never reads as one flat green slab.
-    tone = mix(vec3f(dot(tone, VG_LUMA)), tone, 0.8);
+    tone = mix(vec3f(dot(tone, VG_LUMA)), tone, 0.7);
     return vec4f(tone * mix(0.82, 1.1, patches) * mix(0.84, 1.12, broad), dry);
 }
 
@@ -585,7 +596,7 @@ fn vg_turf(p: vec2f, cell: f32, fullness: f32, aa: f32, sun_flat: vec2f) -> VgTu
     let present = select(0.0, 1.0, fract(pick * 7.7) < fullness * fullness * 1.1 - 0.04);
     let radius = mix(0.6, 1.0, fullness) * mix(0.82, 1.14, fract(pick * 3.1));
     let reach_out = radius * mix(0.42, 1.0, fan);
-    let pixel = aa / cell;
+    let pixel = aa * 1.6 / cell;
     let cover = (1.0 - smoothstep(reach_out - pixel, reach_out + pixel, first)) * present;
     let past = smoothstep(reach_out - pixel, reach_out + 0.3, first);
     let shadow = present * (1.0 - cover) * smoothstep(0.1, -0.55, towards) * (1.0 - past);
@@ -794,13 +805,20 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     var tread_distance = (1.0 - tracks.r) * VG_TREAD_REACH;
     // Only near a tread (none reaches past 0.61 m), out of uniform control.
     var tread_break = 1.0;
+    // How deep a tread bit along its run: a tank sinks into soft stretches and
+    // skims hard ones, so even a fresh rut darkens and fades over a few metres
+    // instead of printing the same mark end to end.
+    var tread_bite = 1.0;
     if tracks.r > 0.3 {
         var crumble = 0.5;
         if detail > 0.0 {
             crumble = vg_noise(p * 2.7 + 5.0);
         }
-        tread_distance += (crumble - 0.5) * 0.08;
-        tread_break = smoothstep(0.32, 0.6, vg_noise(p * 0.42 + 19.0) * 0.8 + crumble * 0.2 + tracks.g * 0.5);
+        let soft_ground = vg_noise(p * 0.16 + 47.0);
+        // The tread widens where it sank and narrows where it skimmed.
+        tread_distance += (crumble - 0.5) * 0.08 - (soft_ground - 0.5) * 0.1;
+        tread_break = smoothstep(0.32, 0.6, vg_noise(p * 0.42 + 19.0) * 0.8 + crumble * 0.2 + tracks.g * 0.35);
+        tread_bite = mix(0.35, 1.0, smoothstep(0.25, 0.7, soft_ground));
     }
     let fresh = tracks.g * inside;
     let traffic = tracks.b * inside;
@@ -811,7 +829,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let tread_berm = smoothstep(VG_TREAD_HALF - 0.02, VG_TREAD_HALF + 0.08, tread_distance)
         * (1.0 - smoothstep(VG_TREAD_HALF + 0.1, VG_TREAD_HALF + 0.34, tread_distance)) * tread_break;
     // Old treads blur into the packed dirt; fresh ones keep sharp walls.
-    let rut = tread_bed * smoothstep(0.05, 0.6, fresh);
+    let rut = tread_bed * smoothstep(0.05, 0.6, fresh) * tread_bite;
     // The same rut where the sun's ray over this point enters it: the rut's
     // sunward wall shades its floor.
     let tread_sun = 1.0 - smoothstep(VG_TREAD_HALF - tread_aa, VG_TREAD_HALF + tread_aa, (1.0 - tracks_sun.r) * VG_TREAD_REACH);
@@ -821,7 +839,8 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // its centreline so the two halves meet without a seam.
     let tread_across = normalize(vec2f(tracks_x - tracks.r, tracks_z - tracks.r) + vec2f(1e-5, 0.0));
     let tread_along = dot(p, vec2f(-tread_across.y, tread_across.x));
-    let cleat_fade = (1.0 - smoothstep(0.025, 0.07, footprint)) * smoothstep(0.2, 0.6, fresh);
+    // Gone before the bars shrink to a few pixels, where they print as dotted lines.
+    let cleat_fade = (1.0 - smoothstep(0.012, 0.03, footprint)) * smoothstep(0.2, 0.6, fresh);
     let cleat = smoothstep(0.1, 0.6, cos(tread_along * 28.56)) * rut * cleat_fade;
 
     // ---- Textures: two scales of each tile, turned against each other, and a
@@ -861,7 +880,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // edge, so the noise runs only where the plan ramps or the grass is
     // trampled; elsewhere the values are the edge's own averages.
     var lawn_side = 0.5 - worn;
-    var spread = 0.03;
+    var spread = 0.08;
     var density = select(0.0, 1.0, worn < 0.5);
     // The turf's own height over the earth, 0 to 1 about 0.5.
     var tuft_height = 0.5;
@@ -880,7 +899,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
             smoothstep(0.3, 0.8, trampled) * 0.85,
         );
         lawn_side = 0.5 - worn - wander;
-        spread = mix(0.03, 0.34, breadth);
+        spread = mix(0.08, 0.36, breadth);
         density = smoothstep(-spread, spread, lawn_side);
         // Trampled ground goes bald in scuffed patches; the noise lifts it at
         // most 0.35, so ground trampled less than 0.4 never does.
@@ -905,16 +924,19 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     }
     let clump_relief = mix(0.25, 0.75, breadth);
     let cover_drive = (density - 0.5) * 1.2 + (tuft_height - 0.5) * clump_relief;
-    // One pixel of blend: the turf's edge is drawn, not smeared.
+    // The turf meets the earth over a hand or two, its blend drawn by the
+    // tussocks' own height so the edge wanders in and out with them rather than
+    // following one cut line; never under a pixel, which would dither.
     let cover_aa = max(fwidth(cover_drive) * 0.8, 0.012);
+    let cover_soft = max(cover_aa * 1.5, mix(0.1, 0.2, breadth));
     // The same edge where the sun's ray over this point meets the turf's rim:
     // only the plan moves over the lip's run. The turf stands a hand high and
     // shades the earth below its rim.
     let lip_drive = (smoothstep(-spread, spread, lawn_side + worn - worn_sun) * bald - 0.5) * 1.2 + (tuft_height - 0.5) * clump_relief;
-    let far_cover = smoothstep(-cover_aa, cover_aa, cover_drive);
+    let far_cover = smoothstep(-cover_soft, cover_soft, cover_drive);
     // Close up the turf is tussocks (`vg_turf`), thinning where the cover
     // above does, each lit on its sunward side with its own shade beside it.
-    let turf_view = (1.0 - smoothstep(0.014, 0.032, footprint)) * detail;
+    let turf_view = (1.0 - smoothstep(0.01, 0.024, footprint)) * detail;
     var turf = VgTurf(0.0, 1.0, 0.0, 0.5, 0.0, 0.0);
     if turf_view > 0.0 && density > 0.0 {
         turf = vg_turf(p, VG_TURF_CELL, smoothstep(0.0, 1.0, far_cover * 0.6 + density * 0.4), aa, sun_flat);
@@ -935,8 +957,8 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let soft_dirt = max(max(1.0 - smoothstep(-0.3, 0.3, cover_drive), rut), mud_rim);
     // The dirt just outside each clump lies in its shade: the tussock's own
     // close up, the turf's rim toward the sun far off.
-    let rim_shade = smoothstep(-cover_aa, cover_aa, lip_drive) * (1.0 - far_cover);
-    let clump_shade = max(turf.shadow * turf_view, rim_shade * 0.6 * (1.0 - turf_view)) * dirt * (1.0 - rut);
+    let rim_shade = smoothstep(-cover_soft, cover_soft, lip_drive) * (1.0 - far_cover);
+    let clump_shade = max(turf.shadow * turf_view, rim_shade * 0.45 * (1.0 - turf_view)) * dirt * (1.0 - rut);
     // Thinning turf near its edge: the earth shows between the blades in some
     // stretches, the tips dry to straw in others.
     let thin = (1.0 - density) * (1.0 - dirt);
@@ -945,7 +967,9 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // They lie in drifts where the edge crumbled, not one to every stride.
     let spill = smoothstep(-spread - 0.08, -spread * 0.5, lawn_side) * (1.0 - smoothstep(0.3, 0.8, traffic)) * dirt * (1.0 - rut)
         * smoothstep(0.45, 0.7, tuft_height) * breadth * 1.6;
-    let tussocks = vg_tussock(p, spill * 0.25 * fine, 2.6, vec2f(0.05, 0.12), aa, 47.0);
+    // Only near enough that each clump is several pixels across: smaller, they
+    // dither the edge into specks.
+    let tussocks = vg_tussock(p, spill * 0.25 * fine * (1.0 - smoothstep(0.012, 0.022, footprint)), 2.6, vec2f(0.05, 0.12), aa, 47.0);
     let wear = smoothstep(0.0, 0.9, max(worn, trampled * 0.85));
     // A gravel drip line along the foot of the perimeter wall (none past 1.35 m,
     // where even the noise's 0.25 m reach leaves it at full distance).
@@ -1029,14 +1053,17 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // turf's value and turns khaki rather than yellow, so it never glows
         // as a lime halo, and its scuffs are fine enough to read as texture,
         // not as stains.
-        let walk_drive = max(trampled * 0.9, smoothstep(0.15, 0.7, worn) * 0.35);
+        // Only some stretches of the turf's last metres are grazed and walked
+        // pale; others run lush right up to the earth, so no halo rings a lawn.
+        let verge_gate = smoothstep(0.42, 0.72, vg_noise(p * 0.05 + 19.0) * 0.75 + vg_noise(p * 0.19 + 4.0) * 0.25);
+        let walk_drive = max(trampled * 0.9, smoothstep(0.15, 0.7, worn) * 0.35 * verge_gate);
         var walked = 0.0;
         if walk_drive > 0.0 {
             let scuff = vg_noise(p * 1.1 + 31.0) * 0.6 + mix(0.2, clamp(grass_detail - 0.5, 0.0, 1.0) * 0.4, mid);
             walked = smoothstep(0.35, 0.7, walk_drive + (scuff - 0.5) * 0.8);
             let flat_luma = dot(grass, VG_LUMA);
             let khaki = vec3f(flat_luma) * vec3f(1.12, 1.02, 0.7) * mix(0.95, 1.1, scuff);
-            grass = mix(grass, khaki, walked * 0.5);
+            grass = mix(grass, khaki, walked * 0.4);
         }
         let blades = mix(0.84, 1.16, clamp((grass_detail - 0.55) * 0.9, 0.0, 1.0));
         grass = grass * blades;
@@ -1082,15 +1109,15 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // tint stays faint there.
         let thinning = thin * (1.0 - turf_view * 0.75);
         grass = mix(grass, mix(grass, VG_ROOT_EARTH, 0.45), thinning * (1.0 - straw * 0.5) * 0.55);
-        grass = mix(grass, vec3f(dot(grass, VG_LUMA)) * vec3f(1.15, 1.0, 0.68), thin * straw * 0.3);
+        grass = mix(grass, vec3f(dot(grass, VG_LUMA)) * vec3f(1.1, 1.0, 0.72), thin * straw * 0.15);
         // The verge: the last metre or two of turf before the earth is grazed
         // short, walked and sun-dried, paler and browner in drifts, so every
         // lawn grades into its road instead of stopping at a line.
-        let verge_band = (1.0 - smoothstep(0.02, 0.34, lawn_side)) * inside;
+        let verge_band = (1.0 - smoothstep(0.02, mix(0.06, 0.4, verge_gate), lawn_side)) * inside * mix(0.2, 1.0, verge_gate);
         if verge_band > 0.0 {
             let verge_mottle = mix(0.45, 1.0, smoothstep(0.25, 0.75, vg_noise(p * 0.7 + 13.0)));
-            let verge_tone = mix(vec3f(dot(grass, VG_LUMA)) * vec3f(1.2, 1.06, 0.68), VG_ROOT_EARTH * 2.6, 0.3);
-            grass = mix(grass, verge_tone, verge_band * verge_mottle * 0.55);
+            let verge_tone = mix(vec3f(dot(grass, VG_LUMA)) * vec3f(1.12, 1.04, 0.72), VG_ROOT_EARTH * 2.4, 0.45);
+            grass = mix(grass, verge_tone, verge_band * verge_mottle * 0.45);
         }
         // At the foot of what stands on the turf (cottages, walls, timber,
         // trunks) the grass thins, darkens and browns over litter and bare
@@ -1263,6 +1290,14 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         soil = soil * mix(1.0, mix(0.9, 1.06, region), packed);
         soil = mix(soil, soil * vec3f(1.1, 0.95, 0.82), smoothstep(0.58, 0.85, region) * 0.75);
         soil = mix(soil, soil * vec3f(0.92, 0.95, 1.0), smoothstep(0.42, 0.15, region) * 0.8);
+        // The lie of the land shows in the earth from any height: darker, richer
+        // loam down in the hollows where the rain settles, paler sun-dried dust
+        // over the crests.
+        let lie = smoothstep(-0.9, 0.9, swell);
+        soil = soil * mix(vec3f(0.82, 0.79, 0.76), vec3f(1.1, 1.07, 1.02), lie);
+        // Clay shows through in broad drifts, redder where the loam is thin.
+        let clay = smoothstep(0.55, 0.78, vg_noise(vec2f(p.x * 0.6 - p.y * 0.8, p.x * 0.8 + p.y * 0.6) * 0.03 + 27.0));
+        soil = mix(soil, soil * vec3f(1.1, 0.92, 0.8), clay * 0.5 * (1.0 - packed * 0.5));
         // The shoulders: loose earth the treads pushed off the lanes, heaped
         // in a low berm along the turf, darker and lumpier than the lanes.
         soil = mix(soil, soil * vec3f(0.88, 0.84, 0.8), road_berm * 0.55);
@@ -1379,8 +1414,11 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // Each stone weathered its own way: some darkened by oil and soot,
         // some bleached; grime gathers in broad stains along the lanes.
         stone = stone * mix(1.0, mix(0.72, 1.12, fract(pick.y * 7.9 + pick.x * 2.3)), joint_view);
-        let grime = smoothstep(0.5, 0.8, vg_noise(p * 0.3 + 61.0) * 0.8 + batch * 0.2) * (0.4 + lane * 0.6);
-        stone = mix(stone, stone * vec3f(0.72, 0.7, 0.68), grime * 0.55);
+        // Grime only where the traffic runs: the lanes are rubbed darker down
+        // their middles, a few stains where engines stood among them.
+        let grime = smoothstep(0.45, 0.8, vg_noise(p * 0.3 + 61.0) * 0.6 + lane * 0.4) * lane;
+        stone = mix(stone, stone * vec3f(0.78, 0.76, 0.74), grime * 0.4);
+        stone = mix(stone, stone * vec3f(0.88, 0.87, 0.86), lane * 0.3);
         let dust_tone = mix(vec3f(dot(soil, VG_LUMA)), soil, 0.6) * 1.15;
         let dust = clamp(0.1 + quiet * 0.4 + (vg_noise(p * 0.4 + 17.0) - 0.5) * 0.3 + (1.0 - sett.crown) * 0.35, 0.0, 0.75) * (1.0 - lane * 0.5);
         stone = mix(stone, dust_tone, dust * 0.42);
@@ -1462,6 +1500,10 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
 
     // ---- Combine colour, height and finish.
     var color = mix(grass, soil, dirt);
+    // Where the turf thins into the earth the blades' bases and the damp soil
+    // between them sit in their own shade: the blend darkens rather than
+    // averaging green and brown into a pale olive halo.
+    color = color * (1.0 - dirt * (1.0 - dirt) * 0.7);
     color = mix(color, paving, paved);
     color = mix(color, color * vec3f(0.56, 0.56, 0.62), kerb_shade * 0.55 * (1.0 - paved));
     // Tussocks on the dirt: the turf's colour, lit at their tips and dark at
@@ -1469,6 +1511,9 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let spilled_tone = mix(soil, grass, 0.7) * mix(0.62, 1.05, smoothstep(0.1, 0.9, tussocks.y)) * mix(0.9, 1.08, tussocks.z);
     color = mix(color, spilled_tone, tussocks.x * (1.0 - paved));
     color = mix(color, gravel_tone, verge * 0.85);
+    // Washed-out crests show their gravel from any height, not only as the
+    // single stones that fade out with distance.
+    color = mix(color, mix(color, gravel_tone * 0.92, 0.5), gravel_patch * (1.0 - paved) * 0.55);
     color = mix(color, color * 0.66, grit.x * 0.55);
     color = mix(color, color * vec3f(0.55, 0.55, 0.62), gravel_shadow * 0.75);
     let chip_tone = mix(mix(vg_linear(0x5f594f), vg_linear(0x887f71), gravel.z), color, 0.45) * mix(0.7, 1.12, smoothstep(0.0, 0.8, gravel.y / 0.025));
@@ -1486,9 +1531,12 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // Weeds where the loose ground meets the turf and along the wall's foot,
     // never out on the open road: small rosettes, dark at the heart.
     let weed_edge = min(smoothstep(-0.2, -0.04, lawn_side) + verge, 1.0);
-    let weed_density = dirt * (1.0 - packed) * (1.0 - smoothstep(0.0, 0.3, rut + fresh * 0.5)) * weed_edge * 0.25 * fine * unpaved;
+    // Only where a rosette spans several pixels: smaller, their dark hearts
+    // speckle the turf's edge.
+    let weed_view = 1.0 - smoothstep(0.012, 0.024, footprint);
+    let weed_density = dirt * (1.0 - packed) * (1.0 - smoothstep(0.0, 0.3, rut + fresh * 0.5)) * weed_edge * 0.25 * fine * unpaved * weed_view;
     let weeds = vg_rosette(p, weed_density, 1.25, vec2f(0.07, 0.13), aa, 91.0);
-    let weed_leaf = mix(vg_linear(0x4f6230), vg_linear(0x6f7a42), weeds.z) * mix(0.5, 0.95, smoothstep(0.05, 0.8, weeds.y));
+    let weed_leaf = mix(vg_linear(0x4f6230), vg_linear(0x6f7a42), weeds.z) * mix(0.68, 0.98, smoothstep(0.05, 0.8, weeds.y));
     color = mix(color, weed_leaf, weeds.x * (1.0 - flower_bed) * (1.0 - puddle));
     color = mix(color, bloom_color, blooms.x * (1.0 - dirt) * (1.0 - flower_bed) * (1.0 - paved));
     color = mix(color, veg, veg_plot);
@@ -1583,7 +1631,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // mounds and, close up, the ruts' walls. Visual only; the floor stays flat.
     let rut_wall = (1.0 - smoothstep(VG_TREAD_HALF - 0.07, VG_TREAD_HALF + 0.05, tread_distance)) * tread_break
         * smoothstep(0.05, 0.6, fresh) * (1.0 - smoothstep(0.03, 0.08, footprint)) * (1.0 - paved);
-    let land = swell * 0.9 + bank * inside * 0.6 + mounds + road_berm * 0.08 - rut_wall * 0.035;
+    let land = swell * 1.25 + bank * inside * 0.6 + mounds + road_berm * 0.08 - rut_wall * 0.035;
     var tilt = vg_slope(land, f.world, (*s).normal, f.front_facing);
     // Each sett's worn crown and its tilt, from its own shape (its slope runs
     // downhill).
@@ -1676,17 +1724,25 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     let bedding = sin(p.y * 0.9 + vg_noise(p.xz * 0.05) * 6.0) * 0.5 + 0.5;
     // Painted value groups: the relief splits into crisp lit ribs and shaded
     // gullies, with a soft step between, rather than a smooth airbrush.
-    let rock_value = crag * 0.85 + tone * 0.3;
+    let rock_value = crag * 0.9 + tone * 0.15;
     let rock_aa = max(fwidth(rock_value), 0.02);
     let rock_step = smoothstep(0.45 - rock_aa, 0.45 + rock_aa, rock_value) * 0.6 + smoothstep(0.7 - rock_aa, 0.7 + rock_aa, rock_value) * 0.4;
-    var rock = mix(vg_linear(0x6f6b62), vg_linear(0xaca390), mix(smoothstep(0.15, 0.75, rock_value), rock_step, 0.4));
+    // Mostly the light models the rock (`crag_normal`); the colour keeps only a
+    // gentle value step between ribs and gullies, so the faces never break into
+    // spots.
+    var rock = mix(vg_linear(0x7b766b), vg_linear(0xa69d8b), mix(smoothstep(0.1, 0.8, rock_value), rock_step, 0.15));
     rock = rock * mix(0.96, 1.03, bedding * fine);
     rock = mix(rock, rock * vec3f(0.8, 0.84, 0.9), (1.0 - smoothstep(0.04, 0.4, crag)) * 0.25 * (1.0 - weights.y * 0.6));
     rock = mix(rock, vg_linear(0x5b684f), (1.0 - smoothstep(14.0, 30.0, p.y + crag * 6.0)) * 0.55);
 
     // Derivatives first, ahead of the woods' loop.
-    let snow_drive = (p.y - snowline) / 4.0 + (up - 0.55) * 2.6 + (0.45 - crag) * 2.2 + (tone - 0.5) * 1.6;
-    let snow_aa = max(fwidth(snow_drive), 0.04);
+    // Snow lies by height and slope: whole fields on the gentle upper faces,
+    // tongues down the gullies between the ribs (the relief runs down the fall
+    // line on steep faces), the steepest rock and the ribs' crests blown bare.
+    // No blotchy noise of its own, so it never spots the rock like a hide.
+    let gully = (0.5 - crag) * (1.0 - weights.y * 0.7);
+    let snow_drive = (p.y - snowline) / 3.5 + (up - 0.55) * 1.6 + gully * 1.1;
+    let snow_aa = clamp(fwidth(snow_drive), 0.04, 0.35);
 
     // Forest: a painted matte of conifer woods. Each stand is a dark mass of
     // crowns under a serrated edge of tree tips, with more ranks of tips
@@ -1695,13 +1751,23 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     // of single trees that would streak on a slope seen edge-on or shimmer far
     // off. The wood opens into glades, breaks up at a ragged treeline, keeps
     // off the cliffs and leaves grassy avalanche chutes down some gullies.
-    let slope_ok = smoothstep(0.5, 0.62, up + crag * 0.06);
-    let chute = smoothstep(0.62, 0.75, vg_noise(vec2f(p.x * 0.02 + p.z * 0.02, 3.0)))
-        * (1.0 - smoothstep(0.1, 0.22, crag)) * (1.0 - weights.y);
+    // The wood clothes every face below the treeline but the cliffs, so the
+    // ranges read in clean painted bands (wood, rock, snow) with a crisp edge
+    // where a cliff breaks through, never a soft slope mask fogging the face.
+    let slope_drive = up + crag * 0.1;
+    let slope_aa = clamp(fwidth(slope_drive), 0.01, 0.08);
+    let slope_ok = smoothstep(0.4 - slope_aa, 0.4 + slope_aa, slope_drive);
+    // Avalanche chutes: a few clean grassy lanes down the deepest gullies,
+    // crisp-edged like the wood they cut through.
+    let chute_drive = vg_noise(vec2f(p.x * 0.02 + p.z * 0.02, 3.0)) - crag * 0.5;
+    let chute_aa = clamp(fwidth(chute_drive), 0.01, 0.08);
+    let chute = smoothstep(0.62 - chute_aa, 0.62 + chute_aa, chute_drive) * (1.0 - weights.y);
     let stand = slope_ok * (1.0 - chute * 0.9);
     let stands = vg_fbm(p.xz * 0.012 + 50.0);
+    // Glades open only on gentle ground, where they hold grass: on a steep face
+    // a gap in the wood would show bare rock as a pale blot.
     let glade = smoothstep(0.31, 0.24, vg_noise(p.xz * 0.022 + 3.1) * 0.75 + vg_noise(p.xz * 0.07 + 1.7) * 0.25
-        + smoothstep(14.0, 40.0, p.y) * 0.07);
+        + smoothstep(14.0, 40.0, p.y) * 0.07) * smoothstep(0.66, 0.78, up);
     // The tips run along whichever horizontal axis the face lies across.
     let face_dir = normalize(smooth_normal.xz + vec2f(1e-4, 0.0));
     let along_z = smoothstep(0.35, 0.65, abs(face_dir.x));
@@ -1741,9 +1807,10 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     canopy = canopy * rank_tone * mix(0.94, 1.05, stands) * height_tint;
     let larch_drift = smoothstep(0.7, 0.86, vg_noise(p.xz * 0.06 + 3.0));
     canopy = mix(canopy, vg_linear(0x66803a) * height_tint * mix(0.7, 1.05, tip_light), larch_drift * 0.3);
-    // Rock breaks through the wood on the sharpest ribs.
-    let rock_through = smoothstep(0.66, 0.78, crag + (tone - 0.5) * 0.3) * (1.0 - weights.y * 0.5);
-    let forest = stand * below * (1.0 - glade) * (1.0 - rock_through);
+    // Rock breaks through the wood only where the face turns to cliff
+    // (`slope_ok`): the ridged relief's crest lines would cut pale worms
+    // through the canopy.
+    let forest = stand * below * (1.0 - glade);
     var color = rock;
     color = mix(color, canopy, forest);
     // Alpine grass above the wood, in its glades and down the chutes.
@@ -1751,13 +1818,13 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
         * (1.0 - forest);
     // Muted and tawny, so the high pastures never read as bright green
     // blotches on the rock.
-    color = mix(color, vg_linear(0x6c7a4c) * mix(0.88, 1.06, tone), pasture * 0.5 * smoothstep(0.6, 0.85, up));
+    color = mix(color, vg_linear(0x6c7a4c) * mix(0.88, 1.06, tone), pasture * max(0.5 * smoothstep(0.6, 0.85, up), max(chute, glade) * 0.85));
     // The wood lights as a soft mass of crowns over the face.
     var normal = normalize(mix(crag_normal, normalize(smooth_normal + vec3f(0.0, 0.35, 0.0)), forest));
 
     // Snow: crisp fields above the snowline on the gentler faces, fingers of it
     // down the gullies, the steep ribs blown bare.
-    let snow = smoothstep(-snow_aa, snow_aa, snow_drive) * smoothstep(snowline - 16.0, snowline - 6.0, p.y);
+    let snow = smoothstep(-snow_aa, snow_aa, snow_drive) * smoothstep(max(snowline - 14.0, treeline + 6.0), max(snowline - 6.0, treeline + 13.0), p.y);
     let snow_light = mix(vg_linear(0xbfcde0), vg_linear(0xf5f7f5), smoothstep(0.3, 0.85, up));
     color = mix(color, snow_light, snow);
     normal = normalize(mix(normal, normalize(mix(crag_normal, smooth_normal, 0.5)), snow));

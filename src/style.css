@@ -25,12 +25,12 @@
   --text-dim: #a9c0d8;
   --text-label: #8ed4ff;
   /* The frame language of the battle's interface: armour plates of dark steel glass with
-     their top-left and bottom-right corners cut off (the score plates' slant), a steel
-     hairline round the cut, and a strip of hazard tape where a plate is fixed. */
+     their top-left and bottom-right corners cut off (the score plates' slant) and a
+     steel hairline round the cut. No tape or stripes: the cut is the signature. */
   --plate-edge: #a6d3ff4d;
-  --plate-fill: linear-gradient(180deg, #152c51f2 0, #0b1a33f5 55%, #07122af7);
-  --hazard-gold: repeating-linear-gradient(-45deg, #ffcf38 0 4px, #10151d 4px 8px);
-  --hazard-red: repeating-linear-gradient(-45deg, #ff4d5e 0 4px, #1a0a10 4px 8px);
+  --plate-fill: linear-gradient(180deg, #142a4ef8 0, #0a1830fb 55%, #060f24fc);
+  /* The hull's damaged tone: orange, apart from the gold of what is selected. */
+  --hull-damaged: #ff9a3c;
   font-family: var(--font-ui);
   color: var(--text);
   background: #55bde9;
@@ -591,7 +591,7 @@ body:has(#settings[open]) .hud-actions {
 }
 #vehicle-name {
   color: #fff;
-  font: 800 12px/1.2 var(--font-ui);
+  font: 800 13px/1.2 var(--font-ui);
   letter-spacing: 1.4px;
 }
 #rank {
@@ -621,14 +621,14 @@ body:has(#settings[open]) .hud-actions {
   text-shadow: 0 2px 6px #0007;
 }
 .hull-readout[data-tone="damaged"] b {
-  color: #ffd56a;
+  color: #ffb877;
 }
 .hull-readout[data-tone="critical"] b {
   color: #ff7c86;
 }
 .hull-readout span {
-  color: var(--text-dim);
-  font: 700 13px/1 var(--font-ui);
+  color: #c4d5e7;
+  font: 700 14px/1 var(--font-ui);
   font-variant-numeric: tabular-nums;
 }
 .hull-icon {
@@ -641,7 +641,7 @@ body:has(#settings[open]) .hud-actions {
   filter: drop-shadow(0 1px 2px #0009);
 }
 .hull-readout[data-tone="damaged"] .hull-icon {
-  fill: #ffc23a;
+  fill: var(--hull-damaged);
 }
 .hull-readout[data-tone="critical"] .hull-icon {
   fill: #ff4d5e;
@@ -664,8 +664,8 @@ body:has(#settings[open]) .hud-actions {
   box-shadow: inset 0 1px 2px #000c;
 }
 .hull-bar[data-tone="damaged"] {
-  --hull: #ffc23a;
-  --hull-hot: #ffeaa6;
+  --hull: var(--hull-damaged);
+  --hull-hot: #ffd3a8;
 }
 .hull-bar[data-tone="critical"] {
   --hull: #ff4d5e;
@@ -913,35 +913,40 @@ body:has(#settings[open]) .hud-actions {
   pointer-events: none;
 }
 /* Each tab is a trapezoid cut at the plates' angle, standing on the panel's top edge
-   like a tab of the same steel. */
+   in the panel's own steel: a timer ring round the power-up's icon that drains with its
+   countdown, then its name and the seconds left. */
 .effect {
   --effect: #6fe6ff;
+  --left: 1;
   display: inline-flex;
   align-items: center;
   gap: 6px;
   flex: none;
-  height: 25px;
-  padding: 1px 16px 0 15px;
+  height: 30px;
+  padding: 2px 16px 0 12px;
   border: 0;
-  clip-path: polygon(8px 0, calc(100% - 8px) 0, 100% 100%, 0 100%);
+  clip-path: polygon(9px 0, calc(100% - 9px) 0, 100% 100%, 0 100%);
   background:
-    linear-gradient(180deg, color-mix(in srgb, var(--effect) 24%, transparent), transparent 80%),
-    #142b51;
+    linear-gradient(180deg, color-mix(in srgb, var(--effect) 20%, transparent), transparent 85%),
+    #12284b;
   box-shadow:
     inset 0 2px color-mix(in srgb, var(--effect) 85%, transparent),
-    inset 0 -1px #142b51;
+    inset 0 -1px #12284b;
   color: #fff;
-  font: 700 12px/1 var(--font-ui);
+  font: 700 13px/1 var(--font-ui);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.4px;
 }
-.effect::before {
-  content: "";
-  width: 6px;
-  height: 6px;
+.effect-ring {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  padding: 5px;
   border-radius: 50%;
-  background: var(--effect);
-  box-shadow: 0 0 6px var(--effect);
+  background:
+    radial-gradient(circle, #071228 0 57%, transparent 59%),
+    conic-gradient(var(--effect) calc(var(--left) * 1turn), #ffffff24 0);
+  fill: var(--effect);
 }
 .effect i {
   display: none;
@@ -1019,44 +1024,21 @@ body:has(#settings[open]) .hud-actions {
 /* Each row is as wide as its names, never wider than the column: a long name ends in an
    ellipsis instead of pushing the plate past the screen edge. */
 #feed > div {
-  --from: transparent;
-  --to: transparent;
-  --rail: #9fd0ff38;
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 7px;
   max-width: 100%;
-  height: 30px;
-  padding: 0 17px 0 19px;
-  /* A slanted plate, cut at the score plates' angle. It is opaque, so a row reads the
-     same over grass, concrete or bright sky, and its ends are tinted by the killer's and
-     the victim's teams. */
-  clip-path: polygon(10px 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--from) 30%, transparent),
-      transparent 34%,
-      transparent 66%,
-      color-mix(in srgb, var(--to) 30%, transparent)
-    ),
-    linear-gradient(180deg, #0d1c38f8, #050d1ef8);
+  height: 29px;
+  padding: 0 13px 0 19px;
+  /* Cut at the score plates' angle on the left only: the right edge stands square on the
+     toolbar's column, so the feed and the buttons above it share one edge. The plate is
+     one opaque steel tone; the names carry the teams. */
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%);
+  background: linear-gradient(180deg, #11244af8, #08122af8);
   box-shadow:
-    inset 0 1px var(--rail),
+    inset 0 1px #9fd0ff2e,
     inset 0 -1px #00000080;
   text-shadow: 0 1px 2px #000c;
-}
-#feed > div[data-from="blue"] {
-  --from: var(--blue);
-}
-#feed > div[data-from="red"] {
-  --from: var(--red);
-}
-#feed > div[data-to="blue"] {
-  --to: var(--blue);
-}
-#feed > div[data-to="red"] {
-  --to: var(--red);
 }
 #feed .feed-name {
   min-width: 0;
@@ -1072,44 +1054,40 @@ body:has(#settings[open]) .hud-actions {
   opacity: 0.8;
 }
 #feed .feed-name.blue {
-  color: #86ceff;
+  color: #8fd0ff;
 }
 #feed .feed-name.red {
-  color: #ff919c;
+  color: #ff9aa4;
 }
 #feed .feed-name.neutral {
   color: #e8dcc4;
 }
-/* The weapon between the names, large enough to tell apart and in its round's colour,
-   the same colour as its slot in the rack. */
+/* The weapon between the names, large enough to tell apart, in one quiet tone so the
+   names lead the row. */
 #feed .feed-weapon {
   flex: none;
-  width: 22px;
-  height: 22px;
-  fill: #e9f1fa;
+  width: 20px;
+  height: 20px;
+  fill: #d6e3f1;
   filter: drop-shadow(0 1px 1px #000);
-}
-#feed .feed-weapon[data-cause="standard"] {
-  fill: #ffdf00;
-}
-#feed .feed-weapon[data-cause="spread"] {
-  fill: #ff7ae0;
-}
-#feed .feed-weapon:is([data-cause="rocket"], [data-cause="tow"]) {
-  fill: #ff7a3c;
-}
-#feed .feed-weapon[data-cause="ricochet"] {
-  fill: #c3b2ff;
-}
-#feed .feed-weapon[data-cause="piercing"] {
-  fill: #54e6dc;
-}
-#feed .feed-weapon:is([data-cause="mine"], [data-cause="drum"]) {
-  fill: #ffb547;
 }
 #feed .feed-new {
   transform-origin: right center;
-  animation: feed-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+  animation:
+    feed-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.15),
+    feed-recent 3.2s ease-out;
+}
+/* The newest row holds a lit edge and a brighter plate for a few seconds, so the eye
+   finds what just happened before it settles in with the rest. */
+@keyframes feed-recent {
+  0%,
+  45% {
+    background: linear-gradient(180deg, #23417af8, #10204af8);
+    box-shadow:
+      inset 3px 0 #ffffffd9,
+      inset 0 1px #cfe8ff66,
+      inset 0 -1px #00000080;
+  }
 }
 /* Entrances grow from the row's right edge with a flash and never fade in: a row is
    legible from its first frame, and never slides past the screen edge where it would
@@ -1131,34 +1109,66 @@ body:has(#settings[open]) .hud-actions {
   clip-path: inset(50%);
   white-space: nowrap;
 }
-/* The viewer's own rows: a gold rim and edge; the viewer's name is gold. */
-/* The viewer's lines keep the neutral plate with a crisp gold rim and edge (a warm fill
-   reads muddy over concrete and grass), and fade less with age than the rest. */
-/* Only the newest of the viewer's lines carries the full gold rim; older ones keep just
-   the gold edge, so one highlight leads the feed at a time. */
+/* The kill feed is the game's only kill confirmation, so the viewer's own rows are the
+   one loud thing in it: a solid gold plate for a kill, a red one for the viewer's own
+   wreck, with dark names and icon on it, while every other row stays steel. */
 #feed :is(.own-kill, .own-death) {
-  --rail: #ffcf3899;
-}
-#feed :is(.own-kill, .own-death):not(:is(.own-kill, .own-death) ~ *) {
-  background:
-    linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--from) 30%, transparent),
-      transparent 34%,
-      #ffcf3829 70%,
-      #ffcf384d
-    ),
-    linear-gradient(180deg, #13213ef8, #070f22f8);
+  height: 31px;
+  background: linear-gradient(180deg, #ffe07a, #f5b828 55%, #e39a12);
   box-shadow:
-    inset 0 2px var(--gold),
-    inset 0 -2px #ffcf3880;
+    inset 0 1px #fff6c8,
+    inset 0 -2px #a8680a,
+    0 2px 10px #0008;
+  text-shadow: none;
+}
+#feed > div:is(.own-kill, .own-death) .feed-name.feed-name {
+  color: #142039;
+  opacity: 1;
+}
+#feed :is(.own-kill, .own-death) .feed-weapon {
+  fill: #142039;
+  filter: none;
+  opacity: 1;
+}
+#feed .own-death {
+  background: linear-gradient(180deg, #ff7683, #e23a4c 55%, #b9222f);
+  box-shadow:
+    inset 0 1px #ffc4ca,
+    inset 0 -2px #7d1520,
+    0 2px 10px #0008;
+}
+#feed > div.own-death .feed-name.feed-name {
+  color: #fff;
+  text-shadow: 0 1px 1px #5a0c14;
+}
+#feed .own-death .feed-weapon {
+  fill: #fff;
 }
 #feed .feed-name.you {
-  color: var(--gold-hot);
+  font-weight: 900;
+}
+#feed .feed-name.you.blue {
+  color: #c4e6ff;
+}
+#feed .feed-name.you.red {
+  color: #ffc4ca;
 }
 #feed .own-kill-new {
   transform-origin: right center;
-  animation: own-kill-pop 0.6s cubic-bezier(0.2, 1.4, 0.4, 1);
+  animation:
+    own-kill-pop 0.6s cubic-bezier(0.2, 1.4, 0.4, 1),
+    own-kill-recent 3.2s ease-out;
+}
+/* A fresh own row flashes white along its plate, then settles to its gold. */
+@keyframes own-kill-recent {
+  0%,
+  30% {
+    box-shadow:
+      inset 0 1px #fff,
+      inset 0 -2px #a8680a,
+      0 0 0 2px #fff8,
+      0 0 18px #ffd65a99;
+  }
 }
 @keyframes own-kill-pop {
   0% {
@@ -1280,34 +1290,9 @@ body:has(#settings[open]) .hud-actions {
   inset: 0;
   --plate-tint: inherit;
 }
-/* The tank panel is the plate bolted to the screen: hazard tape along its top edge
-   after the cut, and the glass faintly tinted by your team from its lower corner. */
+/* The tank panel's glass is faintly tinted by your team from its lower corner. */
 .combat-status {
   --cut: 12px;
-}
-.combat-status::before {
-  background:
-    var(--hazard-gold) calc(var(--cut) + 6px) 0 / 52px 3px no-repeat,
-    linear-gradient(
-        135deg,
-        transparent calc(var(--cut) * 0.7071 - 0.5px),
-        var(--plate-edge) 0 calc(var(--cut) * 0.7071 + 1px),
-        transparent 0
-      )
-      0 0 / calc(var(--cut) + 2px) calc(var(--cut) + 2px) no-repeat,
-    linear-gradient(
-        315deg,
-        transparent calc(var(--cut) * 0.7071 - 0.5px),
-        var(--plate-edge) 0 calc(var(--cut) * 0.7071 + 1px),
-        transparent 0
-      )
-      100% 100% / calc(var(--cut) + 2px) calc(var(--cut) + 2px) no-repeat,
-    radial-gradient(
-      ellipse 70% 130% at 0 100%,
-      color-mix(in srgb, var(--plate-tint) 22%, transparent),
-      transparent 70%
-    ),
-    var(--plate-fill);
 }
 #hud[data-team="blue"] .combat-status {
   --plate-tint: var(--blue);
@@ -1337,21 +1322,6 @@ body:has(#settings[open]) .hud-actions {
 }
 .hud-actions {
   --cut: 9px;
-}
-/* The score plates sit on hazard tape: a strip under the clock ties the score to the
-   panel and the dialogs. */
-.clock {
-  position: relative;
-}
-.clock::after {
-  content: "";
-  position: absolute;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  height: 3px;
-  background: var(--hazard-gold);
-  opacity: 0.9;
 }
 #overlay,
 #startup-overlay {
@@ -1499,12 +1469,10 @@ body:has(#settings[open]) .hud-actions {
     0 0 0 1px #0006;
 }
 /* In battle, every dialog is an armour plate like the HUD's: the top-left and
-   bottom-right corners cut, a steel hairline round the cut, and hazard tape along the
-   foot of the plate by its cut corner (red on the respawn card). Battle Setup keeps its
+   bottom-right corners cut and a steel hairline round the cut. Battle Setup keeps its
    own frame: its backdrop lives inside it and a clip would cut the backdrop off. */
 :is(.menu:not(.start), .settings) {
-  --cut: 18px;
-  --tape: var(--hazard-gold);
+  --cut: 14px;
   border: 0;
   border-radius: 0;
   clip-path: polygon(
@@ -1516,7 +1484,6 @@ body:has(#settings[open]) .hud-actions {
     0 var(--cut)
   );
   background:
-    var(--tape) right calc(var(--cut) + 8px) bottom 0 / 132px 4px no-repeat,
     linear-gradient(
         135deg,
         transparent calc(var(--cut) * 0.7071 - 0.5px),
@@ -1536,9 +1503,6 @@ body:has(#settings[open]) .hud-actions {
     inset 0 0 0 1px var(--plate-edge),
     inset 0 2px #ffffff1c,
     inset 0 -2px #0000004d;
-}
-.menu.respawn {
-  --tape: var(--hazard-red);
 }
 /* The corner X: a small steel key in the plate's top-right corner, the way back
    alongside Esc. */
@@ -1889,6 +1853,15 @@ h2 {
   gap: 7px;
   white-space: nowrap;
 }
+/* Battle Setup's legend: each control a chip of its own, keys then what they do. */
+.start .key-hint {
+  padding: 3px 11px 3px 3px;
+  border-radius: 8px;
+  background: #091830;
+  box-shadow: inset 0 0 0 1px #9fd0ff1c;
+  color: #dbe8f4;
+  font-size: 13px;
+}
 .key-hint .keys {
   display: inline-flex;
   gap: 3px;
@@ -2008,14 +1981,15 @@ h2 {
   backdrop-filter: none;
   place-items: end center;
   pointer-events: none;
-  padding-bottom: max(40px, calc(env(safe-area-inset-bottom) + 24px));
+  /* A little over the HUD's bottom line, so the card's foot is plainly whole. */
+  padding-bottom: max(32px, calc(env(safe-area-inset-bottom) + 20px));
 }
 /* The card is there at once, legible from its first frame; a red glint runs along its
    top edge as it lands. */
 .menu.respawn {
   pointer-events: auto;
-  max-width: 720px;
-  padding: 14px 18px 16px;
+  max-width: 680px;
+  padding: 14px 18px 14px;
   overflow: hidden;
   animation: respawn-rise 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.08);
 }
@@ -2090,6 +2064,8 @@ h2 {
   gap: 6px;
   margin-top: 3px;
 }
+/* Plain facts in one quiet chip style, in the words a player would say them: the
+   weapon's own mark carries the red, never the whole chip. */
 .wrecked-weapon,
 .killer-tag {
   display: inline-flex;
@@ -2097,23 +2073,22 @@ h2 {
   gap: 6px;
   height: 25px;
   padding: 0 10px;
+  border: 1px solid #9fd0ff2e;
   border-radius: 7px;
+  background: #0a1830cc;
+  color: #dbe8f4;
   font-size: 12px;
   font-weight: 800;
-  letter-spacing: 0.8px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   white-space: nowrap;
 }
 .wrecked-weapon {
   padding-left: 6px;
-  border: 1px solid #ff6f5e66;
-  background: #ff4d5e2e;
-  color: #ffe1e4;
+  color: #fff;
 }
-.killer-tag {
-  border: 1px solid #9fd0ff2e;
-  background: #0a1830cc;
-  color: #cfe1f2;
+.wrecked-weapon .wrecked-icon {
+  fill: #ff7c88;
 }
 .wrecked-icon,
 .killer-tag-icon {
@@ -2128,9 +2103,7 @@ h2 {
   opacity: 0.8;
 }
 /* The countdown is the card's focal point: a gold digit in a ring that drains as the
-   respawn nears, with a quiet caption naming it. */
-/* The caption stands over a draining bar that reaches back toward the killer's name, so
-   the countdown spans the header instead of leaving a gap between the two. */
+   respawn nears, with its caption beside it. The ring is the one timer on the card. */
 .respawn-timer {
   display: flex;
   align-items: center;
@@ -2142,26 +2115,12 @@ h2 {
 /* The ring carries the count; its caption is a quiet label, so the killer's name stays
    the card's one headline. */
 .respawn-timer h2 {
-  display: grid;
-  justify-items: end;
-  flex: 0 1 220px;
-  min-width: 0;
   margin: 0;
-  color: #cfe0ef;
+  color: #c4d5e7;
   font: 800 13px/1.2 var(--font-ui);
   letter-spacing: 2.4px;
+  text-align: right;
   text-shadow: 0 1px 3px #000a;
-}
-.respawn-timer h2::after {
-  content: "";
-  justify-self: stretch;
-  height: 4px;
-  margin-top: 7px;
-  border-radius: 2px;
-  background:
-    linear-gradient(90deg, transparent calc((1 - var(--left, 1)) * 100%), var(--gold) 0) no-repeat,
-    #ffffff17;
-  box-shadow: 0 0 8px #ffcf3833;
 }
 .respawn-timer h2 small {
   margin-bottom: 4px;
@@ -2176,8 +2135,8 @@ h2 {
   display: grid;
   flex: none;
   place-items: center;
-  width: 92px;
-  height: 92px;
+  width: 80px;
+  height: 80px;
   animation: respawn-beat 1s cubic-bezier(0.2, 0.8, 0.3, 1) infinite;
   border-radius: 50%;
   background: conic-gradient(var(--gold) calc(var(--left, 1) * 360deg), #ffffff1a 0);
@@ -2205,7 +2164,7 @@ h2 {
 #respawn-count {
   position: relative;
   color: var(--gold-hot);
-  font: 400 60px/1 var(--font-display);
+  font: 400 52px/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-shadow:
     0 2px 0 #7a5a00,
@@ -2231,11 +2190,12 @@ h2 {
 .respawn .vehicles {
   gap: 10px;
 }
+/* The tanks fill their cards: the choice is the tank, so it is the biggest thing in it. */
 .respawn .tank-preview {
   grid-column: 1 / -1;
-  height: 100px;
-  margin: -6px 0 2px;
-  transform: scale(1.18);
+  height: 88px;
+  margin: -6px 0 -2px;
+  transform: scale(calc(var(--scale, 1) * 1.4));
 }
 /* Name and class share the top line, leaving the card's height to the tank. */
 .respawn .vehicle {
@@ -2308,7 +2268,7 @@ html:not(.phone) #toast[data-tone="death"] {
   left: 5px;
   top: 3px;
   color: #e6f0fa;
-  font: 800 12px/1.1 var(--font-ui);
+  font: 800 13px/1.1 var(--font-ui);
   text-shadow: 0 1px 2px #000;
 }
 .ammo-slot:not(.selected) kbd {
@@ -2333,7 +2293,60 @@ html:not(.phone) #toast[data-tone="death"] {
   display: none;
 }
 .ammo-slot.empty kbd {
-  color: #9db1c6;
+  color: #b4c6d8;
+}
+/* While only the standard shell is carried (the opening of every life), the four empty
+   sockets read as one locked stub: their keys and silhouettes step back behind one lock
+   and one line on what opens them. The sockets keep their places and the rack its
+   width, so the first crate lights a socket without moving anything. */
+.ammo-strip {
+  position: relative;
+}
+.ammo-rail-note {
+  position: absolute;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 104px;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  padding: 0 6px;
+  border-radius: 7px;
+  background: repeating-linear-gradient(135deg, #ffffff07 0 6px, transparent 6px 12px), #040b18b0;
+  box-shadow: inset 0 0 0 1px #9fd0ff1f;
+  color: #c4d5e7;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.ammo-strip:has(#ammo-standard.selected):not(:has(.ammo-slot:not(.selected, .empty)))
+  .ammo-rail-note {
+  display: flex;
+}
+.ammo-strip:has(#ammo-standard.selected):not(:has(.ammo-slot:not(.selected, .empty)))
+  .ammo-slot.empty
+  > * {
+  visibility: hidden;
+}
+.rail-lock {
+  flex: none;
+  width: 15px;
+  height: 15px;
+  fill: #9fb6cf;
+}
+.ammo-rail-note > span {
+  display: grid;
+  gap: 2px;
+}
+.ammo-rail-note b {
+  color: #e6f0fa;
+  font: 800 12px/1 var(--font-ui);
+  letter-spacing: 1px;
+}
+.ammo-rail-note small {
+  color: #b4c6d8;
+  font: 600 11px/1.1 var(--font-ui);
 }
 .ammo-slot.empty .ammo-icon {
   fill: #5a7392;
@@ -2449,10 +2462,9 @@ html:not(.phone) #toast[data-tone="death"] {
   display: none;
   flex: none;
   align-items: center;
-  gap: 10px;
   align-self: stretch;
   margin-left: -12px;
-  padding: 8px 14px 8px 12px;
+  padding: 6px 18px 6px 14px;
   border: 1px solid var(--edge);
   border-left: 0;
   border-radius: 0 12px 12px 0;
@@ -2522,46 +2534,34 @@ html:not(.phone) #toast[data-tone="death"] {
   background: var(--gold);
   box-shadow: 0 0 0 2px #0b1a33;
 }
-/* The words say what the view is and how to leave it, then fold away after a few
-   seconds, leaving only the dial: a lesson, not a permanent caption. */
+/* Beside the dial, what the view is and the key back to the overhead one. */
 .compass-copy {
   display: grid;
-  gap: 4px;
-  max-width: 160px;
-  overflow: hidden;
+  gap: 5px;
+  margin-left: 10px;
   white-space: nowrap;
-}
-#hud.first-person .compass-copy {
-  animation: compass-copy-out 0.45s ease 4s forwards;
-}
-@keyframes compass-copy-out {
-  to {
-    max-width: 0;
-    margin-left: -10px;
-    opacity: 0;
-  }
 }
 .compass-copy b {
   color: var(--gold-hot);
-  font: 800 12px/1.1 var(--font-ui);
+  font: 800 13px/1.1 var(--font-ui);
   letter-spacing: 1.2px;
 }
-.compass-copy small {
+.compass-key {
   display: flex;
   align-items: center;
-  gap: 5px;
-  color: var(--text-dim);
+  gap: 6px;
+  color: #c4d5e7;
   font: 700 12px/1.1 var(--font-ui);
 }
 .compass-key kbd {
-  min-width: 18px;
-  padding: 1px 4px 0;
+  min-width: 20px;
+  padding: 2px 5px 1px;
   border: 1px solid #8bb9dc4d;
   border-radius: 4px;
   background: linear-gradient(180deg, #34588c, #1b3358);
   box-shadow: 0 1px 0 #050c18;
   color: #fff;
-  font: 800 11px/13px var(--font-ui);
+  font: 800 12px/13px var(--font-ui);
   text-align: center;
 }
 .touch-enabled .compass-key {
@@ -3040,11 +3040,19 @@ html:not(.phone) #toast[data-tone="death"] {
   box-shadow: 0 0 8px #ffcf3855;
 }
 .setup-label small {
-  color: #a9c3d8;
-  font: 400 12px/1.2 var(--font-ui);
+  color: #c9dbeb;
+  font: 400 13px/1.2 var(--font-ui);
   letter-spacing: 0;
   text-align: right;
   text-shadow: none;
+}
+/* A class has a full name and, for a phone's narrow card, one word. */
+.vehicle .class-short,
+.phone .menu.start .vehicle .class-full {
+  display: none;
+}
+.phone .menu.start .vehicle .class-short {
+  display: inline;
 }
 /* The tank cards are little showrooms: a spotlight on each tank, a lit turntable under
    it, and its hull and speed as bars. The chosen tank glows gold. */
@@ -3445,9 +3453,14 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .battle-choice .choice-card:has(input[value="solo"]) {
   --scene:
-    radial-gradient(ellipse 46% 40% at 50% 62%, #ffd6863d, transparent 72%),
-    radial-gradient(ellipse 70% 70% at 60% 35%, #b8203647, transparent 70%),
+    radial-gradient(ellipse 46% 40% at 50% 62%, #ffd68652, transparent 72%),
+    radial-gradient(ellipse 70% 70% at 60% 35%, #d0283f5c, transparent 70%),
+    radial-gradient(ellipse 80% 60% at 20% 0%, #3ea6ff2e, transparent 70%),
     linear-gradient(180deg, transparent 55%, #050c1a99);
+}
+/* An unchosen poster answers the pointer with a light rim, so it reads as a choice. */
+.start .battle-choice .choice-card:not(:has(input:checked)):hover {
+  box-shadow: inset 0 0 0 2px #cfe8ff59;
 }
 .battle-choice .choice-icon {
   display: none;
@@ -3518,22 +3531,22 @@ html:not(.phone) #toast[data-tone="death"] {
   transform: translateX(-50%);
 }
 .solo-art .enemy-tank {
-  height: 42%;
+  height: 36%;
   filter: brightness(0.72) saturate(0.85) drop-shadow(0 6px 6px #0008);
 }
 /* The enemy line stands wholly inside the poster: no tank is sliced by its border. */
 .solo-art .enemy-1 {
-  left: 3%;
-  top: 6%;
+  left: 7%;
+  top: 8%;
 }
 .solo-art .enemy-2 {
-  left: 36%;
+  left: 37%;
   top: 0;
-  height: 34%;
+  height: 30%;
 }
 .solo-art .enemy-3 {
-  right: 3%;
-  top: 8%;
+  right: 7%;
+  top: 10%;
 }
 .solo-art .hero-tank {
   left: 0;
@@ -3551,8 +3564,7 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 /* The format not chosen steps back a little, never so far that it reads as disabled. */
 .battle-choice .choice-card:not(:has(input:checked)) .mode-art {
-  opacity: 0.85;
-  filter: saturate(0.85);
+  opacity: 0.94;
 }
 /* Solo Assault waits while an extra level fixes the battle format. */
 .choice-card:has(input:disabled) {
@@ -3732,14 +3744,15 @@ html:not(.phone) #toast[data-tone="death"] {
   padding: 5px 72px 5px 16px;
   text-align: left;
 }
-/* The meter stands at the card's right, large enough to rank the levels across the
-   column at a glance, where the line beside it would otherwise leave the card empty. */
+/* The meter stands at the card's right and ranks the levels by its count of bars alone,
+   in one quiet steel tone: it supports the card's title, never outshouts it. The chosen
+   level's bars take the selection's gold. */
 .difficulty-setting .segment::after {
   content: "";
   position: absolute;
-  right: 22px;
+  right: 20px;
   top: calc(50% - 12px);
-  transform: scale(1.35);
+  transform: scale(1.05);
   transform-origin: 100% 50%;
   width: 28px;
   height: 24px;
@@ -3750,17 +3763,36 @@ html:not(.phone) #toast[data-tone="death"] {
     linear-gradient(var(--pip3, #ffffff1f), var(--pip3, #ffffff1f)) 21px 100% / 7px 24px no-repeat;
   filter: drop-shadow(0 1px 2px #0008);
 }
+/* Each level's bars wear its risk (green, gold, red), brightest on the chosen one. */
 .difficulty-setting .segment:has(input[value="easy"]) {
-  --pip1: #6fe39a;
+  --pip-on: #5fe39a99;
 }
 .difficulty-setting .segment:has(input[value="normal"]) {
-  --pip1: var(--gold);
-  --pip2: var(--gold);
+  --pip-on: #ffcf3899;
 }
 .difficulty-setting .segment:has(input[value="hard"]) {
-  --pip1: var(--red);
-  --pip2: var(--red);
-  --pip3: var(--red);
+  --pip-on: #ff5d6c99;
+}
+.difficulty-setting .segment:has(input[value="easy"]:checked) {
+  --pip-on: #5fe39a;
+}
+.difficulty-setting .segment:has(input[value="normal"]:checked) {
+  --pip-on: var(--gold);
+}
+.difficulty-setting .segment:has(input[value="hard"]:checked) {
+  --pip-on: #ff5d6c;
+}
+.difficulty-setting .segment:has(input[value="easy"]) {
+  --pip1: var(--pip-on);
+}
+.difficulty-setting .segment:has(input[value="normal"]) {
+  --pip1: var(--pip-on);
+  --pip2: var(--pip-on);
+}
+.difficulty-setting .segment:has(input[value="hard"]) {
+  --pip1: var(--pip-on);
+  --pip2: var(--pip-on);
+  --pip3: var(--pip-on);
 }
 .difficulty-setting .segment b {
   font-size: 16px;
@@ -3944,6 +3976,30 @@ html:not(.phone) #toast[data-tone="death"] {
 .setup-label label {
   cursor: pointer;
 }
+/* The name is a field to type in, and says so: a pencil at its right, a brighter edge
+   under the pointer and the gold ring while typing. */
+.start #player-name {
+  padding-right: 40px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill='%2390b4d4' d='M15.2 4.4l4.4 4.4L9 19.4l-5.3.9.9-5.3zm1.4-1.4 1.5-1.5a1.3 1.3 0 0 1 1.8 0l2.6 2.6a1.3 1.3 0 0 1 0 1.8L21 7.4z'/%3E%3C/svg%3E")
+      right 13px center / 16px 16px no-repeat,
+    var(--well);
+  cursor: text;
+}
+.start #player-name:hover {
+  border-color: #92b4cf66;
+}
+.start #player-name:focus {
+  border-color: var(--accent);
+}
+/* The map row's note sits right after its heading, read as one line with it, and never
+   makes the row taller than the heading alone (the tabs keep one size). */
+.map-choice .setup-label {
+  justify-content: flex-start;
+}
+.map-choice .setup-label small {
+  line-height: 1;
+}
 #room-count {
   display: inline-block;
   min-width: 20px;
@@ -4047,6 +4103,16 @@ html:not(.phone) #toast[data-tone="death"] {
   gap: 4px;
   min-height: 0;
 }
+/* Beside the other tab the room well takes the height single player's choices give the
+   shared cell and never asks for more: its content (a long list, the offline state's
+   action) scrolls inside it, so opening Multiplayer or a change of server state never
+   makes Battle Setup taller. */
+@media (min-width: 601px) {
+  html:not(.phone) .start .room-list-body {
+    contain: size;
+    overflow: hidden;
+  }
+}
 /* Taller screens show more rooms; the tray grows, and the single-player tab with it. */
 #room-list {
   display: grid;
@@ -4071,7 +4137,8 @@ html:not(.phone) #toast[data-tone="death"] {
   align-items: center;
   justify-content: center;
   gap: 4px;
-  min-height: 112px;
+  /* Taller than its tallest state (icon, line and hint), so no state sizes it. */
+  min-height: 150px;
   padding: 12px;
   color: #8eaac4;
   text-align: center;
@@ -4080,9 +4147,10 @@ html:not(.phone) #toast[data-tone="death"] {
   display: flex;
 }
 .room-empty svg {
-  width: 54px;
-  height: 54px;
-  margin-bottom: 8px;
+  flex: none;
+  width: 42px;
+  height: 42px;
+  margin-bottom: 4px;
   fill: none;
   stroke: #5f86ad;
   stroke-width: 2;
@@ -4093,7 +4161,30 @@ html:not(.phone) #toast[data-tone="death"] {
   font-size: 16px;
 }
 .room-empty small {
+  color: #b9cde0;
   font-size: 13px;
+}
+/* Offline, the empty list holds the one thing still playable: a full-size key to single
+   player, so the state is a way forward rather than a void. */
+.room-empty .offline-action {
+  display: none;
+  min-width: 220px;
+  min-height: 40px;
+  margin-top: 8px;
+  padding: 0 22px;
+  border: 1px solid #ffcf38;
+  border-radius: 10px;
+  background: linear-gradient(180deg, #ffcf3826, #ffcf380d);
+  color: var(--gold-hot);
+  font: 400 20px/1 var(--font-display);
+  letter-spacing: 1.6px;
+}
+.room-empty .offline-action:hover {
+  background: linear-gradient(180deg, #ffcf3840, #ffcf381a);
+}
+.room-empty .offline-action:focus-visible {
+  outline: 3px solid var(--gold);
+  outline-offset: 2px;
 }
 /* The hint and the offline action share one height, so the list never grows between
    states. */
@@ -4113,31 +4204,29 @@ html:not(.phone) #toast[data-tone="death"] {
 #multiplayer-panel:has(.room-status[data-state="error"]) .room-empty .when-error {
   display: block;
 }
+#multiplayer-panel:has(.room-status[data-state="error"]) .room-empty .offline-action {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
 #multiplayer-panel:has(.room-status[data-state="loading"]) .room-empty svg {
   animation: room-scan 1.6s linear infinite;
 }
 #multiplayer-panel:has(.room-status[data-state="error"]) .room-empty svg {
-  opacity: 0.45;
-}
-/* Offline, the empty list offers the mode that still works. */
-#multiplayer-panel:has(.room-status[data-state="error"]) .room-empty .chip-button.when-error {
-  display: inline-flex;
+  width: 44px;
+  height: 44px;
+  stroke: #ffc23a;
+  opacity: 0.8;
 }
 #multiplayer-panel:has(.room-status[data-state="error"]) :is(#room-count, #refresh-rooms) {
   visibility: hidden;
 }
-/* Offline, the status well below says why; the empty list offers the bots, and the
-   new room with its rules stays in place but stands down until rooms are back: greyed,
-   still legible, and the list keeps its height. */
+/* Offline is one state in one place: the status well under the list says it, with the
+   one thing to do meanwhile (battle the bots); the list is a quiet empty radar, and the
+   new room steps out until rooms are back, leaving its place so the list keeps its
+   height. */
 #multiplayer-panel:has(.room-status[data-state="error"]) .new-room {
-  opacity: 0.45;
-  filter: grayscale(1);
-  pointer-events: none;
-  box-shadow: none;
-}
-#multiplayer-panel:has(.room-status[data-state="error"]) .new-room input[type="radio"] {
-  background: #050d1c;
-  box-shadow: inset 0 0 0 1.5px #8bb9dc40;
+  visibility: hidden;
 }
 @keyframes room-scan {
   to {
@@ -4393,10 +4482,10 @@ html:not(.phone) #toast[data-tone="death"] {
 /* Offline is a state the game recovers from by itself, not an alarm: amber, with the
    retry beside it. */
 .room-status[data-state="error"] {
-  background: linear-gradient(90deg, #ffc23a24, #ffc23a08 60%), #0c1a31;
+  background: linear-gradient(90deg, #ffc23a17, transparent 55%), #0a1a33;
   box-shadow:
     inset 3px 0 #ffc23a,
-    inset 0 0 0 1px #ffc23a4d;
+    inset 0 0 0 1px #9fd0ff14;
 }
 .room-status[data-state="error"] .room-status-icon {
   background: #ffc23a;
@@ -4422,6 +4511,8 @@ html:not(.phone) #toast[data-tone="death"] {
   color: #ffe2a8;
   font-weight: 700;
 }
+/* The server is retried by itself every few seconds, and offline the well offers a
+   retry at once; the mode that still works waits in the empty list above it. */
 #retry-rooms {
   display: none;
   flex: none;
@@ -4463,30 +4554,36 @@ html:not(.phone) #toast[data-tone="death"] {
   text-shadow: none;
   cursor: not-allowed;
 }
-/* Offline, Create Room wears a lock and says what it waits for; the status well beside
-   it gives the reason. */
+/* Offline, Create Room stands down behind a lock and says why under its name. */
 #multiplayer-panel:has(.room-status[data-state="error"]) #create-room {
-  background: #0a1830;
+  display: grid;
+  grid-template-columns: auto auto;
+  align-items: center;
+  justify-content: center;
+  row-gap: 4px;
+  background: #081428;
+  box-shadow: inset 0 0 0 1px #b7d7ed1f;
+  color: #8ea4ba;
 }
+/* The reason replaces the button's shine sweep, so it sits in the grid, not over it. */
 #multiplayer-panel:has(.room-status[data-state="error"]) #create-room::after {
-  content: "WAITING FOR THE SERVER";
-  display: block;
-  margin-top: 6px;
+  content: "Waits for the game server";
   position: static;
   width: auto;
-  height: auto;
   background: none;
-  color: #a9bdd2;
-  font: 800 12px/1 var(--font-ui);
-  letter-spacing: 1.4px;
   transform: none;
+  color: #b9cde0;
+  font: 700 12px/1 var(--font-ui);
+  letter-spacing: 0.6px;
+  text-align: left;
 }
 #multiplayer-panel:has(.room-status[data-state="error"]) #create-room::before {
-  content: none;
-  display: inline-block;
-  width: 18px;
-  height: 18px;
-  margin: 0 10px -1px 0;
+  content: "";
+  flex: none;
+  width: 20px;
+  height: 20px;
+  grid-row: span 2;
+  margin-right: 12px;
   background: currentColor;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2.5a5 5 0 0 1 5 5V10h1.2c.9 0 1.6.7 1.6 1.6v8.3c0 .9-.7 1.6-1.6 1.6H5.8c-.9 0-1.6-.7-1.6-1.6v-8.3c0-.9.7-1.6 1.6-1.6H7V7.5a5 5 0 0 1 5-5zm0 2.6a2.4 2.4 0 0 0-2.4 2.4V10h4.8V7.5A2.4 2.4 0 0 0 12 5.1z'/%3E%3C/svg%3E")
     center / contain no-repeat;
@@ -4545,20 +4642,23 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .start .menu-help {
   margin: 0;
-  column-gap: 16px;
+  column-gap: 8px;
   color: #c3d6e6;
   font-size: 12.5px;
   line-height: 1.65;
 }
-/* The build line closes the panel at its bottom-right, under the key strip. */
+/* The build line has a slim row of its own at the panel's foot, right-aligned under the
+   key strip, so the two never meet at any width; tucked into the panel's bottom padding,
+   it stays on screen whenever the panel does. */
 .start .menu-build {
+  grid-column: 1 / -1;
   justify-self: end;
-  margin-top: -6px;
-  color: #8fa9c2;
-  font-size: 10.5px;
+  margin: calc(4px - var(--setup-gap)) 2px -4px 0;
+  color: #b4c8db;
+  font-size: 11.5px;
   font-weight: 600;
+  line-height: 14px;
   letter-spacing: 0.3px;
-  opacity: 0.55;
   pointer-events: none;
 }
 /* Short laptop screens keep the whole setup in view; the pause menu lists controls too. */
@@ -4567,14 +4667,10 @@ html:not(.phone) #toast[data-tone="death"] {
     padding-inline: 0;
   }
 }
-/* A phone keeps every row for the choices: the build line sits in the panel's bottom
-   padding, under the tray's corner. */
+/* A phone's build line ends the sheet under GO, clear of the logo and every choice. */
 .phone .start .menu-build {
-  position: absolute;
-  right: 18px;
-  bottom: 9px;
-  margin: 0;
-  font-size: 9.5px;
+  margin: -4px 4px 0 0;
+  font-size: 11px;
 }
 /* Held sideways, the panels drop the empty row their hidden formats and room list
    would take, so the status well and the action sit right under the map. */
@@ -4662,10 +4758,10 @@ html:not(.phone) #toast[data-tone="death"] {
   }
 }
 
-/* Big screens: the garage. The screen's title runs across the top; under it, your tank
-   stands on a sheet of its own beside the folder tabs and their tray. The garage's
-   heading sits level with the tabs and its sheet level with the tray, two equal sheets
-   side by side, so the tank plainly belongs to neither tab: the tabs switch only what
+/* Big screens: the garage. The logo heads the left column and the folder tabs stand
+   beside it on the top edge, so no empty title band sits over the choices. The tray
+   hangs from its tabs down the right column; your tank has its own sheet under the logo,
+   outside the folder, so it plainly belongs to neither tab: the tabs switch only what
    their tray holds (the map, then the mode's own choices and its action). */
 @media (min-width: 1240px) {
   html:not(.phone) .menu.start {
@@ -4688,7 +4784,13 @@ html:not(.phone) #toast[data-tone="death"] {
     justify-content: flex-start;
     padding: 0 0 16px 4px;
   }
-  html:not(.phone) .start .setup-top .setup-heading {
+  html:not(.phone) .start .setup-top:has(.play-tabs) .setup-header {
+    grid-area: 1 / 1 / 2 / 2;
+    align-self: end;
+    padding: 0 0 10px 6px;
+  }
+  /* Without tabs (a site with no game server) the title takes the top row. */
+  html:not(.phone) .start .setup-top:not(:has(.play-tabs)) .setup-heading {
     position: static;
     width: auto;
     height: auto;
@@ -4698,7 +4800,7 @@ html:not(.phone) #toast[data-tone="death"] {
     clip-path: none;
   }
   html:not(.phone) .start .play-tabs {
-    grid-area: 2 / 2;
+    grid-area: 1 / 2;
     align-self: end;
   }
   html:not(.phone) .start .tank-setting {
@@ -4707,7 +4809,7 @@ html:not(.phone) #toast[data-tone="death"] {
     grid-template-rows: subgrid;
   }
   html:not(.phone) .start .setup-panels {
-    grid-area: 3 / 2;
+    grid-area: 2 / 2 / 4 / 3;
     padding: 14px;
     border: 1px solid var(--tray-edge);
     border-radius: 0 16px 16px 16px;
@@ -4726,6 +4828,7 @@ html:not(.phone) #toast[data-tone="death"] {
   }
   html:not(.phone) .start .menu-build {
     grid-area: 5 / 1 / 6 / -1;
+    margin-top: 4px;
   }
   html:not(.phone) .start .menu-footer {
     margin-top: 14px;
@@ -4834,6 +4937,56 @@ html:not(.phone) #toast[data-tone="death"] {
   }
   html:not(.phone) .start .tank-setting .vehicle .spec {
     padding-top: 4px;
+  }
+}
+/* An upright tablet's three tank cards are narrow: the class takes its one-word name on
+   a line of its own under the tank's name, and the stats keep to one line each. */
+@media (max-width: 900px) {
+  html:not(.phone) .start .tank-setting .vehicle {
+    grid-template-columns: minmax(0, 1fr);
+    row-gap: 4px;
+  }
+  html:not(.phone) .start .tank-setting .vehicle small {
+    justify-self: start;
+  }
+  html:not(.phone) .start .vehicle .class-full {
+    display: none;
+  }
+  html:not(.phone) .start .vehicle .class-short {
+    display: inline;
+  }
+  html:not(.phone) .start .tank-setting .vehicle .spec {
+    font-size: 10.5px;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+}
+/* Mid-size screens (a laptop window, a tablet) stack the garage over the tray, which
+   leaves the battle posters tall and narrow: the art keeps a poster's scale there too,
+   so no tank outgrows its poster or runs into the VS badge. */
+@media (min-width: 601px) and (max-width: 1239px) {
+  html:not(.phone) .start .solo-art {
+    top: auto;
+    bottom: calc(62px + max(0px, (100% - 220px) / 2));
+    height: min(calc(100% - 68px), 152px);
+  }
+  html:not(.phone) .start .team-art .mode-tank {
+    width: 62%;
+    height: auto;
+  }
+  html:not(.phone) .start .team-art .blue-tank {
+    left: 2%;
+    bottom: 6%;
+  }
+  html:not(.phone) .start .team-art .red-tank {
+    top: 8%;
+    right: 2%;
+    bottom: auto;
+  }
+  html:not(.phone) .start .team-art .versus {
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
   }
 }
 /* Wide screens fill more of the width, and the garage's tanks grow with it. */
@@ -4956,13 +5109,15 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 /* A win is celebrated in gold whichever side won it: the light, the edge stripe and the
    rule. A loss or a draw keeps the side's own colour. */
-.results[data-outcome="won"] .results-banner {
+.results:is([data-outcome="won"], [data-outcome="ended-ahead"]) .results-banner {
   --team: #ffb21c;
   --team-deep: #8a5a00;
 }
 .results[data-outcome="lost"] .results-banner,
 .results[data-outcome="draw"] .results-banner,
-.results[data-outcome="ended"] .results-banner {
+.results[data-outcome="ended"] .results-banner,
+.results[data-outcome="ended-behind"] .results-banner,
+.results[data-outcome="ended-even"] .results-banner {
   background:
     linear-gradient(
       100deg,
@@ -4981,7 +5136,7 @@ html:not(.phone) #toast[data-tone="death"] {
   height: 2px;
   background: linear-gradient(90deg, var(--team), transparent 70%);
 }
-.results[data-outcome="won"] .results-banner::after {
+.results:is([data-outcome="won"], [data-outcome="ended-ahead"]) .results-banner::after {
   height: 3px;
   background: linear-gradient(90deg, var(--gold-hot), var(--gold) 45%, transparent 90%);
 }
@@ -4993,6 +5148,16 @@ html:not(.phone) #toast[data-tone="death"] {
 .results .dialog-eyebrow {
   justify-content: flex-start;
   align-items: center;
+}
+.early-tag {
+  margin-left: 12px;
+  padding: 3px 8px 2px;
+  border: 1px solid #ffcf3899;
+  border-radius: 4px;
+  background: #ffcf381f;
+  color: var(--gold-hot);
+  font: 800 12px/1.2 var(--font-ui);
+  letter-spacing: 1.6px;
 }
 .ended-early {
   padding: 3px 7px 2px;
@@ -5007,7 +5172,12 @@ html:not(.phone) #toast[data-tone="death"] {
   font-size: 72px;
   letter-spacing: 2px;
 }
-.results[data-outcome="won"] .results-banner::before {
+/* Ending a battle ahead earns the same rays, fainter: a lead is a result worth a
+   moment, though not a crown. */
+.results[data-outcome="ended-ahead"] .results-banner::before {
+  opacity: 0.6;
+}
+.results:is([data-outcome="won"], [data-outcome="ended-ahead"]) .results-banner::before {
   content: "";
   position: absolute;
   left: -160px;
@@ -5037,7 +5207,7 @@ html:not(.phone) #toast[data-tone="death"] {
     transform: scale(1.35);
   }
 }
-.results[data-outcome="won"] .dialog-title h2 {
+.results:is([data-outcome="won"], [data-outcome="ended-ahead"]) .dialog-title h2 {
   background: linear-gradient(180deg, #fff 20%, var(--gold-hot) 60%, var(--gold-deep));
   -webkit-background-clip: text;
   background-clip: text;
@@ -5045,11 +5215,13 @@ html:not(.phone) #toast[data-tone="death"] {
   text-shadow: none;
   filter: drop-shadow(0 4px 14px #0009);
 }
-.results[data-outcome="lost"] .dialog-title h2 {
+.results:is([data-outcome="lost"], [data-outcome="ended-behind"]) .dialog-title h2 {
   color: #ff8a96;
   text-shadow: 0 3px 14px #000a;
 }
-.results[data-outcome="lost"][data-team="blue"] .dialog-title h2 {
+.results:is([data-outcome="lost"], [data-outcome="ended-behind"])[data-team="blue"]
+  .dialog-title
+  h2 {
   color: #9cc6ef;
 }
 .results .dialog-lede {
@@ -5092,10 +5264,10 @@ html:not(.phone) #toast[data-tone="death"] {
 .board-team header,
 .board-team li {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto 22px 22px;
+  grid-template-columns: minmax(0, 1fr) auto 26px 26px;
   align-items: center;
   gap: 6px;
-  padding: 0 10px;
+  padding: 0 12px;
 }
 .board-team header {
   height: 34px;
@@ -5133,9 +5305,9 @@ html:not(.phone) #toast[data-tone="death"] {
   flex: 1 0 auto;
   height: auto;
   min-height: 30px;
-  color: #c9dbea;
-  font-size: 13px;
-  font-weight: 600;
+  color: #dbe8f4;
+  font-size: 14px;
+  font-weight: 700;
 }
 .board-team li:nth-child(even) {
   background: #ffffff06;
@@ -5150,13 +5322,13 @@ html:not(.phone) #toast[data-tone="death"] {
    a disabled value. */
 .board-team li b {
   color: #fff;
-  font: 400 19px/1 var(--font-display);
+  font: 400 21px/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.5px;
 }
 .board-team li small {
-  color: #aeb8c4;
-  font: 400 19px/1 var(--font-display);
+  color: #b9c4d0;
+  font: 400 21px/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   letter-spacing: 0.5px;
 }
@@ -5169,12 +5341,17 @@ html:not(.phone) #toast[data-tone="death"] {
   letter-spacing: 0.5px;
 }
 .board-team li.you {
-  background: linear-gradient(90deg, #ffcf3847, #ffcf3814);
+  background: linear-gradient(90deg, #ffcf3875 0, #ffcf3838 55%, #ffcf3826);
   box-shadow:
-    inset 4px 0 var(--gold),
-    inset 0 0 0 1px #ffcf3866;
-  color: var(--gold-hot);
+    inset 5px 0 var(--gold),
+    inset 0 1px #ffe58a99,
+    inset 0 -1px #ffcf3880;
+  color: #fff;
   font-weight: 800;
+}
+.board-team li.you .board-name {
+  color: var(--gold-hot);
+  text-shadow: 0 1px 2px #000a;
 }
 .board-team li.you .board-tag {
   background: var(--gold);
@@ -5196,8 +5373,8 @@ html:not(.phone) #toast[data-tone="death"] {
   font-style: normal;
 }
 .recap-progress b {
-  color: #cfe0ef;
-  font: 800 12px/1.2 var(--font-ui);
+  color: #dbe8f4;
+  font: 800 13px/1.2 var(--font-ui);
   letter-spacing: 1px;
   text-transform: uppercase;
 }
@@ -5229,10 +5406,10 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .recap-tank {
   position: absolute;
-  right: -6px;
-  bottom: -14px;
-  width: 210px;
-  height: 112px;
+  right: -8px;
+  bottom: -20px;
+  width: 300px;
+  height: 158px;
   pointer-events: none;
 }
 .recap-tank svg {
@@ -5304,7 +5481,7 @@ html:not(.phone) #toast[data-tone="death"] {
   gap: 4px 14px;
   flex-wrap: wrap;
   min-height: 104px;
-  padding: 12px 220px 12px 18px;
+  padding: 12px 270px 12px 18px;
   border-color: #ffcf3855;
   background:
     radial-gradient(ellipse 70% 90% at 0 50%, #ffcf3826, transparent 70%),
@@ -5315,13 +5492,13 @@ html:not(.phone) #toast[data-tone="death"] {
   order: -1;
   margin: 0;
   color: var(--gold-hot);
-  font-size: 70px;
+  font-size: 84px;
   line-height: 0.9;
   text-shadow: 0 0 22px #ffcf3855;
 }
 .recap-stat:first-child dt {
   color: #fff;
-  font-size: 12px;
+  font-size: 16px;
   letter-spacing: 3px;
 }
 .recap-stat:first-child > span {
@@ -5501,6 +5678,10 @@ html:not(.phone) #toast[data-tone="death"] {
   flex: 1 1 160px;
   margin: 0;
 }
+/* The main action is the widest key in its row, not only the brightest. */
+.menu-actions .primary {
+  flex-grow: 1.8;
+}
 @media (max-width: 960px) {
   .results-body.with-board {
     grid-template-columns: 1fr;
@@ -5566,7 +5747,7 @@ body:has(#settings[open]) #overlay > .menu {
 .setting-row > span small {
   display: block;
   margin-top: 3px;
-  color: #9dbbd2;
+  color: #b7cde1;
   font-size: 12px;
   font-weight: 500;
 }
@@ -5662,7 +5843,7 @@ body:has(#settings[open]) #overlay > .menu {
   background:
     var(--default-tick),
     linear-gradient(90deg, var(--gold-deep), var(--gold)) 0 0 / var(--fill) 100% no-repeat,
-    #ffffff1a;
+    #5d7898;
   box-shadow: inset 0 1px 2px #0008;
 }
 .setting-row input[type="range"]::-moz-range-track {
@@ -5671,7 +5852,7 @@ body:has(#settings[open]) #overlay > .menu {
   background:
     var(--default-tick),
     linear-gradient(90deg, var(--gold-deep), var(--gold)) 0 0 / var(--fill) 100% no-repeat,
-    #ffffff1a;
+    #5d7898;
 }
 .setting-row input[type="range"]::-webkit-slider-thumb {
   width: 18px;
@@ -5715,7 +5896,7 @@ body:has(#settings[open]) #overlay > .menu {
   row-gap: 0;
   padding: 8px 0 6px;
 }
-/* Under the track: what its ends mean, and a gold caret naming the default. */
+/* Under the track: what its ends mean. */
 .slider-scale {
   position: relative;
   grid-column: 2;
@@ -5724,32 +5905,12 @@ body:has(#settings[open]) #overlay > .menu {
   justify-content: space-between;
   height: 16px;
   margin-top: 1px;
-  color: #7f9bb5;
+  color: #9cb6cd;
   font: 700 12px/16px var(--font-ui);
   letter-spacing: 0.3px;
 }
 .slider-scale i {
   font-style: normal;
-}
-.slider-scale b {
-  position: absolute;
-  top: 0;
-  /* The thumb's centre travels 9 px inside each end of the track. */
-  left: calc(9px + (100% - 18px) * var(--default-ratio, 0.5));
-  padding-top: 3px;
-  color: #ffdf8a;
-  font-weight: 800;
-  transform: translateX(-50%);
-}
-.slider-scale b::before {
-  content: "";
-  position: absolute;
-  left: 50%;
-  top: -2px;
-  border: 4px solid transparent;
-  border-bottom: 5px solid var(--gold);
-  border-top: 0;
-  transform: translateX(-50%);
 }
 .slider-row > span:first-child {
   grid-row: 1 / 3;
@@ -5757,21 +5918,26 @@ body:has(#settings[open]) #overlay > .menu {
 .slider-row :is(input[type="range"], output) {
   grid-row: 1;
 }
+/* The value reads as a readout beside its track, not a field to type in. */
 .slider-row output {
-  padding: 7px 0 6px;
-  border-radius: 8px;
-  background: #050d1ccc;
-  box-shadow: inset 0 0 0 1px #9fd0ff1f;
-  font-size: 15px;
-  text-align: center;
+  padding: 0;
+  background: none;
+  color: var(--gold-hot);
+  font: 400 24px/1 var(--font-display);
+  letter-spacing: 0.5px;
+  text-align: right;
 }
+/* A section's heading over a hairline, with its own action (if any) at the row's end,
+   over the values it resets. */
 .setting-group-label {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 12px;
-  min-height: 28px;
-  margin-top: 12px;
+  gap: 14px;
+  min-height: 30px;
+  margin-top: 14px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid #9fd0ff1a;
   color: var(--text-label);
   font-size: 12px;
   font-weight: 800;
@@ -5796,7 +5962,7 @@ body:has(#settings[open]) #overlay > .menu {
   stroke-width: 2;
   stroke-linecap: round;
 }
-/* A section's own action sits at the end of its heading, quiet until it is needed. */
+/* A section's own action follows its heading, quiet until it is needed. */
 .group-action {
   display: inline-flex;
   align-items: center;
@@ -6047,7 +6213,8 @@ html.phone,
 .phone .touch-enabled .hud-actions {
   top: max(6px, env(safe-area-inset-top));
   left: auto;
-  right: max(8px, env(safe-area-inset-right));
+  /* Clear of a landscape phone's rounded corner and notch, never flush to the glass. */
+  right: max(20px, calc(env(safe-area-inset-right) + 8px));
   gap: 0;
   padding: 2px;
 }
@@ -6064,6 +6231,18 @@ html.phone,
 .phone .hud-actions > .quiet .hud-icon {
   width: 18px;
   height: 18px;
+}
+/* Pause is its own key at the bar's end: a recessed steel cap a step apart from zoom and
+   view, so a thumb aiming for the view never stops the battle. */
+@media (orientation: landscape) {
+  .phone .hud-actions > #pause {
+    margin-left: 8px;
+    border-radius: 8px;
+    background: linear-gradient(180deg, #0b1a33, #050d1c);
+    box-shadow:
+      inset 0 0 0 1px #9fd0ff33,
+      inset 0 2px 4px #0009;
+  }
 }
 .phone .hud-actions > .touch-zoom {
   color: #c9d9ea;
@@ -6090,13 +6269,16 @@ html.phone,
     0 100%,
     0 var(--cut)
   );
-  background:
-    var(--hazard-gold) calc(var(--cut) + 4px) 0 / 36px 3px no-repeat,
-    var(--plate-fill);
+  background: var(--plate-fill);
   box-shadow:
     inset 0 0 0 1px var(--plate-edge),
     inset 0 -2px #00000066;
   transform: translateX(-50%);
+}
+/* Mid-battle the phone pill is the hull alone: the tank's name was chosen in Battle
+   Setup and only spent the pill's width. */
+.phone #hull-pill small {
+  display: none;
 }
 #hull-pill small {
   margin-right: 2px;
@@ -6114,7 +6296,7 @@ html.phone,
 }
 /* The pill's cross takes the hull's state from its bar, as the tank panel's does. */
 #hull-pill:has(.hull-bar[data-tone="damaged"]) .hull-pill-icon {
-  fill: #ffc23a;
+  fill: var(--hull-damaged);
 }
 #hull-pill:has(.hull-bar[data-tone="critical"]) .hull-pill-icon {
   fill: #ff4d5e;
@@ -6192,27 +6374,33 @@ html.phone,
   .phone .menu.start .vehicle strong {
     font-size: 17px;
   }
-  /* A narrow card has no room for a pill round the longest class name: the class is a
-     line of type in its colour that may wrap, and every card keeps two lines for it so
-     the tanks stay level. */
+  /* A narrow card names its class in one word on one line, in a small tag tinted by
+     the class's colour, so every card keeps the same rows and the tanks stay level. */
   .phone .menu.start .vehicle small,
   .phone .menu.start .vehicle.selected small {
     display: block;
-    justify-self: stretch;
-    min-height: 2.3em;
-    padding: 0;
-    background: none;
-    color: var(--class);
+    justify-self: start;
+    max-width: 100%;
+    padding: 3px 7px 2px;
+    border-radius: 4px;
+    background: #ffffff10;
+    box-shadow: inset 0 0 0 1px #ffffff1a;
+    color: #dbe8f4;
     font-size: 11px;
     font-weight: 800;
-    letter-spacing: 0.4px;
-    line-height: 1.15;
-    text-align: left;
-    white-space: normal;
+    letter-spacing: 0.6px;
+    line-height: 1.2;
+    white-space: nowrap;
   }
-  /* No room for the class dot beside the longest class name. */
+  /* Only a small dot carries the class's colour, so the tags stay quieter than the
+     chosen card's gold ring. */
   .phone .menu.start .vehicle small::before {
-    display: none;
+    display: inline-block;
+    width: 5px;
+    height: 5px;
+    margin-right: 5px;
+    background: var(--class);
+    vertical-align: 1px;
   }
   /* Narrow cards: the heavy tank stays inside its card. */
   .phone .menu.start .vehicle[data-kind="heavy"] {
@@ -6287,14 +6475,14 @@ html.phone,
   }
   /* The tanks fill their cards on a phone instead of sitting small on the turntable. */
   .phone .start .vehicle .tank-preview {
-    transform: scale(calc(var(--scale, 1) * 1.3));
+    transform: scale(calc(var(--scale, 1) * 1.45)) translateY(-3px);
   }
-  /* The turntable sits under the tank, clear of the hull and speed lines below it. */
+  /* The turntable sits close under the tank, clear of the hull and speed lines below. */
   .phone .start .vehicle::before {
-    top: 38%;
-    height: 24%;
-    left: 8%;
-    right: 8%;
+    top: 40%;
+    height: 20%;
+    left: 12%;
+    right: 12%;
   }
   /* The format's briefing: a blue and a red tank face off across its name. */
   .phone .menu.start .phone-briefing {
@@ -6681,20 +6869,17 @@ html.phone,
   background: #9fd0ff14;
   box-shadow: 0 0 0 1px #9fd0ff14;
 }
-/* Each fact is a caption over its value, centred in its cell: read as one unit and
-   filling the cell, never a value stranded at one edge. */
+/* Each fact is a caption over its value, set flush left like the dialog's header above
+   it, so the panel keeps one alignment from title to tiles. */
 .pause-facts > div {
   display: grid;
   align-content: center;
-  justify-items: center;
+  justify-items: start;
   gap: 6px;
   min-height: 72px;
-  padding: 12px 16px;
+  padding: 12px 18px;
   background: #060f1fe6;
-  text-align: center;
-}
-.pause-facts dd {
-  justify-content: center;
+  text-align: left;
 }
 .pause-objective + .pause-facts {
   margin-top: 10px;
@@ -6716,8 +6901,8 @@ html.phone,
   letter-spacing: 0.4px;
 }
 .pause-facts dd small {
-  color: #a9c0d8;
-  font: 600 12.5px/1.2 var(--font-ui);
+  color: #c4d5e7;
+  font: 600 13px/1.2 var(--font-ui);
   letter-spacing: 0;
 }
 /* Where the battle stands, under the title as plain text with a small dot in its tone:
@@ -6746,18 +6931,4 @@ html.phone,
 .dialog-standing[data-tone="behind"]::before {
   background: #ff4d5e;
   box-shadow: 0 0 8px #ff4d5e;
-}
-
-/* With room to spare, the build line sits in the panel's bottom padding at its right
-   corner, under the key strip's row rather than beside it, so the two never meet and
-   the header stays the logo's. */
-@media (min-width: 1240px) and (min-height: 771px) {
-  html:not(.phone) .start .menu-build {
-    position: absolute;
-    /* A grid area would be its containing block; the panel's corner is. */
-    grid-area: auto;
-    right: 26px;
-    bottom: 8px;
-    margin: 0;
-  }
 }

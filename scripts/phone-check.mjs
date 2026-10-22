@@ -85,7 +85,8 @@ try {
       // The nerd stats link is for ?debug pages only (checked at the end).
       "#nerd-stats",
       ".touch-mine",
-      "#label0",
+      // Team names stay hidden; only your side keeps its label, as the YOU tab.
+      ".scoreboard .team:not(.yours) small",
       "#objective",
       ".bottom",
       ".brand",

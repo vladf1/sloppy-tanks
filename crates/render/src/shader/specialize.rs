@@ -480,6 +480,147 @@ fn prune_functions(code: &str) -> String {
     out
 }
 
+/// A module-scope item: a declaration with its attributes, or a directive.
+struct Item<'a> {
+    text: &'a str,
+    /// The name it declares; directives (`enable`, `diagnostic`) declare none.
+    name: Option<&'a str>,
+    /// Whether it is a `@vertex`, `@fragment` or `@compute` function.
+    entry: bool,
+}
+
+/// The module-scope items of `code` in order, and the text after the last one.
+fn module_items(code: &str) -> (Vec<Item<'_>>, &str) {
+    let bytes = code.as_bytes();
+    let mut items = Vec::new();
+    let mut depth = 0;
+    let mut start = 0;
+    for (i, &byte) in bytes.iter().enumerate() {
+        let end = match byte {
+            b'{' => {
+                depth += 1;
+                false
+            }
+            b'}' => {
+                depth -= 1;
+                depth == 0
+            }
+            b';' => depth == 0,
+            _ => false,
+        };
+        if end {
+            items.push(item(&code[start..=i]));
+            start = i + 1;
+        }
+    }
+    (items, &code[start..])
+}
+
+fn item(text: &str) -> Item<'_> {
+    let bytes = text.as_bytes();
+    let mut i = skip_space(bytes, 0);
+    let mut entry = false;
+    // Attributes: `@name` and an optional parenthesized argument list.
+    while bytes.get(i) == Some(&b'@') {
+        let end = ident_end(bytes, i + 1);
+        entry |= matches!(&text[i + 1..end], "vertex" | "fragment" | "compute");
+        i = skip_space(bytes, end);
+        if bytes.get(i) == Some(&b'(') {
+            i += bytes[i..]
+                .iter()
+                .position(|&b| b == b')')
+                .map_or(0, |at| at + 1);
+            i = skip_space(bytes, i);
+        }
+    }
+    let keyword_end = ident_end(bytes, i);
+    let declares = matches!(
+        &text[i..keyword_end],
+        "fn" | "struct" | "const" | "var" | "override" | "alias"
+    );
+    let mut at = skip_space(bytes, keyword_end);
+    if &text[i..keyword_end] == "var" && bytes.get(at) == Some(&b'<') {
+        at = skip_space(
+            bytes,
+            at + bytes[at..].iter().position(|&b| b == b'>').unwrap_or(0) + 1,
+        );
+    }
+    let name = declares.then(|| &text[at..ident_end(bytes, at)]);
+    Item { text, name, entry }
+}
+
+/// The identifiers `text` mentions, numeric literal suffixes (`1u`, `2e3`) aside.
+fn identifiers(text: &str) -> impl Iterator<Item = &str> {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    std::iter::from_fn(move || {
+        while i < bytes.len() {
+            let start = i;
+            if bytes[i].is_ascii_digit() {
+                // A number with whatever suffix or exponent it carries.
+                while i < bytes.len() && (is_ident(bytes[i]) || bytes[i] == b'.') {
+                    i += 1;
+                }
+            } else if is_ident(bytes[i]) {
+                i = ident_end(bytes, i);
+                return Some(&text[start..i]);
+            } else {
+                i += 1;
+            }
+        }
+        None
+    })
+}
+
+/// `code` with `entry` as its only entry point and nothing that entry point does not
+/// reach: no other entry points and none of the functions, structs, constants,
+/// bindings or aliases only they use.
+///
+/// WebKit compiles each stage of each pipeline into a Metal library of its own (about
+/// 0.1 s apiece on a cold shader cache, one at a time), from a translation of the
+/// whole module it is given. Metal caches libraries by their source, so stages with
+/// the same code share one compile only when their modules are the same text: the
+/// vertex stage of most surface variants is, once their fragment code is gone.
+pub fn entry_point_source(code: &str, entry: &str) -> String {
+    let code = strip_comments(code);
+    let (items, tail) = module_items(&code);
+    let mut by_name: HashMap<&str, usize> = HashMap::new();
+    for (index, item) in items.iter().enumerate() {
+        if let Some(name) = item.name {
+            by_name.insert(name, index);
+        }
+    }
+    let mut kept: Vec<bool> = items
+        .iter()
+        .map(|item| item.name.is_none() || (item.entry && item.name == Some(entry)))
+        .collect();
+    assert!(
+        items
+            .iter()
+            .any(|item| item.entry && item.name == Some(entry)),
+        "no entry point {entry}"
+    );
+    let mut pending: Vec<usize> = (0..items.len()).filter(|&i| kept[i]).collect();
+    while let Some(index) = pending.pop() {
+        for word in identifiers(items[index].text) {
+            if let Some(&used) = by_name.get(word)
+                && !items[used].entry
+                && !std::mem::replace(&mut kept[used], true)
+            {
+                pending.push(used);
+            }
+        }
+    }
+    let mut out = String::with_capacity(code.len());
+    for (item, kept) in items.iter().zip(kept) {
+        if kept {
+            out.push_str(item.text);
+        }
+    }
+    out.push_str(tail);
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -585,6 +726,25 @@ mod tests {
         let unrolled = unroll_loops(code);
         assert_eq!(unrolled.matches("for (").count(), 1);
         assert!(unrolled.contains("let k = 0;") && unrolled.contains("let k = 1;"));
+    }
+
+    #[test]
+    fn an_entry_point_source_keeps_only_what_that_entry_reaches() {
+        let code = "enable f16;\nconst SCALE: f32 = 2.0;\nconst TINT = vec3f(1.0);\nalias Color = vec4f;\nstruct Out {\n    @builtin(position) clip: vec4f,\n    @location(0) uv: vec2f,\n}\n@group(0) @binding(0) var<uniform> scale: vec4f;\n@group(0) @binding(1) var tint_texture: texture_2d<f32>;\nfn place(p: vec2f) -> vec4f { return vec4f(p * SCALE, 0.0, 1.0) * scale; }\nfn shade(uv: vec2f) -> Color { return textureLoad(tint_texture, vec2i(uv), 0) * vec4f(TINT, 1.0); }\n@vertex\nfn vs(@location(0) p: vec2f) -> Out { return Out(place(p), p * 1e2); }\n@fragment\nfn fs(input: Out) -> @location(0) Color { return shade(input.uv); }\n";
+        let vertex = entry_point_source(code, "vs");
+        assert_eq!(
+            vertex,
+            "enable f16;\nconst SCALE: f32 = 2.0;\nstruct Out {\n    @builtin(position) clip: vec4f,\n    @location(0) uv: vec2f,\n}\n@group(0) @binding(0) var<uniform> scale: vec4f;\nfn place(p: vec2f) -> vec4f { return vec4f(p * SCALE, 0.0, 1.0) * scale; }\n@vertex\nfn vs(@location(0) p: vec2f) -> Out { return Out(place(p), p * 1e2); }\n"
+        );
+        let fragment = entry_point_source(code, "fs");
+        assert!(fragment.contains("alias Color") && fragment.contains("var tint_texture"));
+        assert!(fragment.contains("const TINT") && fragment.contains("struct Out"));
+        assert!(
+            !fragment.contains("SCALE")
+                && !fragment.contains("fn vs(")
+                && !fragment.contains("fn place(")
+        );
+        assert!(!fragment.contains("var<uniform> scale"));
     }
 
     #[test]
