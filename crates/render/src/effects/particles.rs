@@ -384,10 +384,12 @@ impl ParticleEffects {
                 || event.kind == T::Ricochet;
         if stone_hit {
             let strike = self.wall_strike(event);
-            if strike.is_some_and(|strike| strike.material == WallMaterial::Steel) {
-                self.flakes(event, strike, random);
-            } else {
-                self.spall(event, strike, random);
+            match strike.map(|strike| strike.material) {
+                Some(WallMaterial::Steel) => self.flakes(event, strike, random),
+                // A cottage's painted boards and plaster are lit wood
+                // (`wood_chips.rs`).
+                Some(WallMaterial::Siding) => {}
+                _ => self.spall(event, strike, random),
             }
         }
         false
@@ -559,7 +561,7 @@ impl ParticleEffects {
                     (None, Some(strike)) => {
                         let burst = match strike.material {
                             WallMaterial::Steel => &SHEET_SPARKS,
-                            WallMaterial::Stone => &STONE_SPARKS,
+                            WallMaterial::Stone | WallMaterial::Siding => &STONE_SPARKS,
                         };
                         let out = strike.normal + Vec3::Y * 0.35;
                         self.sparks.burst(strike.point, out, 0.8, burst, random);

@@ -332,18 +332,22 @@ impl Meadow {
         open: &dyn Fn(f64, f64) -> bool,
         ground: &dyn Fn(f64, f64) -> f64,
     ) {
+        // Some clumps crowd tight round one big heart, others sprawl; the
+        // outer members are smaller and each its own size, so no two clumps
+        // print alike.
+        let sprawl = CLUMP_REACH * rng.range(0.55, 1.7);
         for k in 0..members {
             let (tx, tz) = if k == 0 {
                 (x, z)
             } else {
                 let angle = rng.range(0.0, PI * 2.0);
-                let reach = rng.range(0.4, 1.0) * CLUMP_REACH;
+                let reach = rng.range(0.3, 1.0) * sprawl;
                 (x + angle.cos() * reach, z + angle.sin() * reach)
             };
             if k > 0 && !open(tx, tz) {
                 continue;
             }
-            let falloff = 1.0 - (k as f64).min(3.0) * 0.14;
+            let falloff = if k == 0 { 1.0 } else { rng.range(0.4, 0.92) };
             let y = ground(tx, tz);
             self.tuft(rng, tx, y, tz, size * falloff, bloom.filter(|_| k == 0));
         }
@@ -616,7 +620,15 @@ pub fn village_vegetation() -> Node {
         if !inside && (river < 7.0 || (x.abs() < 65.0 && z.abs() < 65.0)) {
             continue;
         }
-        if (x * 0.24).sin() * (z * 0.18).cos() + rng.next() < 0.1 {
+        // Grass gathers in drifts over the slow lie of the land, on lines that
+        // neither follow the axes nor repeat: thick in some stretches, sparse
+        // and grazed in others.
+        let gathering = (((x * 0.17 + z * 0.06).sin() * (z * 0.13 - x * 0.05 + 1.1).cos()
+            + (x * 0.41 - z * 0.33).sin() * 0.35)
+            * 0.4
+            + 0.5)
+            .clamp(0.0, 1.0);
+        if gathering + rng.next() * 0.9 < 0.82 {
             continue;
         }
         let height = if inside {
@@ -633,11 +645,13 @@ pub fn village_vegetation() -> Node {
             rng.range(0.2, 0.44)
         };
         let bloom = (!reed && candidate % 3 == 0).then_some(FLOWER_COLORS[candidate % 4]);
-        // Tufts gather in clumps where a slow pattern lets them, and stand
-        // alone elsewhere.
-        let gathering = ((x * 0.29).sin() * (z * 0.23 + 1.1).cos() * 0.5 + 0.5).powf(1.5);
-        // Out in the valley the clumps are too far to tell apart.
-        let reach = if inside { 1.0 + gathering * 3.0 } else { 1.4 };
+        // Tufts gather in big clumps in the drifts and stand alone or in
+        // twos elsewhere. Out in the valley the clumps are too far to tell apart.
+        let reach = if inside {
+            1.0 + gathering.powf(1.5) * 4.6
+        } else {
+            1.4
+        };
         let members = 1 + (rng.next() * reach) as usize;
         let open = |tx: f64, tz: f64| {
             if inside {

@@ -92,8 +92,12 @@ try {
     }));
     await click(page, "#end-battle");
     await page.locator(".recap-stats").waitFor();
-    // A battle ended early is called ended, never won or lost: the limit decided nothing.
-    assert.match(await page.locator(".results h2").innerText(), /^BATTLE ENDED$/);
+    // A battle ended early is called by where the team stood, never won or lost: the
+    // limit decided nothing.
+    assert.match(
+      await page.locator(".results h2").innerText(),
+      mode === "team" ? /^(LEAD HELD|CUT SHORT|STALEMATE)$/ : /^BATTLE ENDED$/,
+    );
     assert.deepEqual(
       await page.evaluate(() => ({
         elapsed: window.sloppy.sim.elapsed,

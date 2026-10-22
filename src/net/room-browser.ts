@@ -61,6 +61,8 @@ export class RoomBrowser {
   private loading = false;
   private finished = false;
   private timer?: ReturnType<typeof setTimeout>;
+  /** Ticks the offline status's countdown to the next try once a second. */
+  private countdown?: ReturnType<typeof setInterval>;
   private controller?: AbortController;
   private readonly leave = () => this.close();
   /** Phones show no room list: they join the busiest open room, or create one. */
@@ -140,6 +142,7 @@ export class RoomBrowser {
     this.shown = false;
     this.lockMap();
     clearTimeout(this.timer);
+    this.stopCountdown();
     this.controller?.abort();
   }
 
@@ -266,6 +269,7 @@ export class RoomBrowser {
     if (!this.shown || this.loading) {
       return;
     }
+    this.stopCountdown();
     let delay = REFRESH_MS;
     if (!document.hidden) {
       this.loading = true;
@@ -320,11 +324,7 @@ export class RoomBrowser {
               : error instanceof Error
                 ? error.message
                 : "Rooms unavailable";
-          this.showStatus(
-            "error",
-            "Rooms are offline",
-            `${reason}. Trying again every ${REFRESH_MS / 1000} seconds.`,
-          );
+          this.showRetryCountdown(reason, REFRESH_MS);
         }
       } finally {
         clearTimeout(timeout);
@@ -336,6 +336,27 @@ export class RoomBrowser {
     if (this.shown) {
       this.timer = setTimeout(() => void this.poll(), delay);
     }
+  }
+
+  /** The offline status: the list itself says the rooms are offline, so the well counts
+   * down to the next try in whole seconds, beside its button to try now. */
+  private showRetryCountdown(reason: string, delayMs: number): void {
+    const retryAt = performance.now() + delayMs;
+    const tick = () => {
+      const seconds = Math.max(1, Math.ceil((retryAt - performance.now()) / 1000));
+      this.showStatus(
+        "error",
+        "Reconnecting to the game server",
+        `${reason} · next try in ${seconds} s`,
+      );
+    };
+    tick();
+    this.countdown = setInterval(tick, 1000);
+  }
+
+  private stopCountdown(): void {
+    clearInterval(this.countdown);
+    this.countdown = undefined;
   }
 
   /** Select the linked room if it can take a player; otherwise say why not. */

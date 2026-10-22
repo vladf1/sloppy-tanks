@@ -378,6 +378,32 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
     specialize::specialize(&code, &flags)
 }
 
+/// One pipeline's stages as the WebGPU backend compiles them: each stage its own
+/// module holding only its entry point and the code that reaches
+/// (`specialize::entry_point_source`), so variants whose stage code is the same give
+/// the browser the same text and WebKit compiles that stage once.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StageSources {
+    pub vertex: String,
+    pub fragment: Option<String>,
+}
+
+impl StageSources {
+    /// The stages of `code` for `vertex_entry` and, if any, `fragment_entry`.
+    pub fn of(code: &str, vertex_entry: &str, fragment_entry: Option<&str>) -> Self {
+        Self {
+            vertex: specialize::entry_point_source(code, vertex_entry),
+            fragment: fragment_entry.map(|entry| specialize::entry_point_source(code, entry)),
+        }
+    }
+
+    /// A surface or shadow variant's stages.
+    pub fn variant(key: &ShaderKey, effects: &EffectRegistry) -> Self {
+        let (vertex, fragment) = key.entry_points();
+        Self::of(&shader_source(key, effects), vertex, fragment)
+    }
+}
+
 /// The merged shadow-caster shader (`shadow_merge.rs`).
 pub fn shadow_merged_source() -> String {
     fixed_source(SHADOW_MERGED_WGSL, InstanceSource::BUILD)
@@ -628,10 +654,23 @@ pub(crate) mod webgl_check {
         translate_for_webgl(&format!("{label} {key:?}"), &code);
     }
 
-    /// Validate a variant as this build assembles it, then translate its WebGL build.
+    /// Validate a variant as this build assembles it, and each of its WebGPU stages
+    /// alone, then translate its WebGL build.
     pub fn check_variant(label: &str, key: &ShaderKey, effects: &EffectRegistry) {
         validate(&format!("{label} {key:?}"), &shader_source(key, effects));
+        validate_stages(
+            &format!("{label} {key:?}"),
+            &StageSources::variant(key, effects),
+        );
         translate_variant(label, key, effects);
+    }
+
+    /// Validate each stage module of a pipeline on its own.
+    pub fn validate_stages(label: &str, stages: &StageSources) {
+        validate(&format!("{label} vertex"), &stages.vertex);
+        if let Some(fragment) = &stages.fragment {
+            validate(&format!("{label} fragment"), fragment);
+        }
     }
 
     /// Check effect `id` for both builds in the variants its materials use: basic
@@ -719,6 +758,116 @@ mod tests {
             "occlusion from the resolved copy",
             &occlusion_source(false, 4),
         );
+        // The WebGPU pipelines' stages, each a module of its own.
+        let fixed = [
+            (water_source(), "vs_water", Some("fs_water")),
+            (water_source(), "vs_water", None),
+            (output_source(), "vs_fullscreen", Some("fs_output")),
+            (output_source(), "vs_post", Some("fs_bloom_prefilter")),
+            (output_source(), "vs_post", Some("fs_bloom_down")),
+            (output_source(), "vs_post", Some("fs_bloom_up")),
+            (sky_source(), "vs_sky", Some("fs_sky")),
+            (
+                occlusion_source(true, 2),
+                "vs_occlusion",
+                Some("fs_occlusion"),
+            ),
+            (shadow_merged_source(), "vs_shadow_merged", None),
+            (
+                shadow_cutout_source(),
+                "vs_shadow_cutout",
+                Some("fs_shadow_cutout"),
+            ),
+            (MIPMAP_WGSL.to_owned(), "vs_blit", Some("fs_blit")),
+        ];
+        for (code, vertex, fragment) in fixed {
+            let stages = StageSources::of(&code, vertex, fragment);
+            webgl_check::validate_stages(vertex, &stages);
+        }
+    }
+
+    /// The WebGPU layouts show textures to the fragment stage alone (`resources.rs`
+    /// says why), so a vertex stage, effects' vertex code included, samples none.
+    #[test]
+    fn no_vertex_stage_samples_a_texture() {
+        let mut effects = EffectRegistry::default();
+        for effect in crate::presentation::PRESENTATION_EFFECTS {
+            effects.register(effect);
+        }
+        let count =
+            crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
+        for effect in 0..=count as u16 {
+            let mut keys: Vec<ShaderKey> = [(false, false), (true, true)]
+                .into_iter()
+                .map(|(lit, alpha_test)| ShaderKey {
+                    lit,
+                    alpha_test,
+                    receive_shadow: lit,
+                    effect,
+                    ..ShaderKey::default()
+                })
+                .collect();
+            keys.push(ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test: true,
+                shadow_fade: true,
+                effect,
+                ..ShaderKey::default()
+            });
+            for key in keys {
+                let vertex = StageSources::variant(&key, &effects).vertex;
+                assert!(
+                    !vertex.contains("texture") && !vertex.contains("sampler"),
+                    "the vertex stage of {key:?} samples a texture"
+                );
+            }
+        }
+    }
+
+    /// WebKit compiles every stage of every pipeline from its own module, so variants
+    /// share a stage's compile only when its module text is the same: without the
+    /// fragment code, every surface variant without a vertex effect has one vertex
+    /// stage, and every caster without one has one too.
+    #[test]
+    fn variants_share_the_stages_they_run_alike() {
+        let effects = EffectRegistry::default();
+        let mut vertex = std::collections::HashSet::new();
+        let mut fragment = std::collections::HashSet::new();
+        for bits in 0..(1u32 << 4) {
+            let bit = |i: u32| bits & (1 << i) != 0;
+            let key = ShaderKey {
+                lit: bit(0),
+                alpha_test: bit(1),
+                alpha_to_coverage: bit(1) && bit(2),
+                receive_shadow: bit(0) && bit(3),
+                ..ShaderKey::default()
+            };
+            let stages = StageSources::variant(&key, &effects);
+            assert!(!stages.vertex.contains("@fragment"));
+            let fs = stages.fragment.expect("a surface has a fragment stage");
+            assert!(!fs.contains("@vertex") && !fs.contains("fn vs_main("));
+            vertex.insert(stages.vertex);
+            fragment.insert(fs);
+        }
+        assert_eq!(
+            vertex.len(),
+            1,
+            "one vertex stage for every surface variant"
+        );
+        assert!(fragment.len() > 1);
+        let casters: std::collections::HashSet<_> = [(false, false), (true, false), (true, true)]
+            .into_iter()
+            .map(|(alpha_test, shadow_fade)| {
+                let key = ShaderKey {
+                    pass: Pass::Shadow,
+                    alpha_test,
+                    shadow_fade,
+                    ..ShaderKey::default()
+                };
+                StageSources::variant(&key, &effects).vertex
+            })
+            .collect();
+        assert_eq!(casters.len(), 1, "one vertex stage for every caster");
     }
 
     /// WebKit guards every WGSL loop with a volatile counter that keeps Metal from
