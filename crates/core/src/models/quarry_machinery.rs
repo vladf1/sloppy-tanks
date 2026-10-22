@@ -7,13 +7,16 @@ use std::sync::Arc;
 
 use glam::DVec3;
 
-use crate::scene::{Material, Node};
+use crate::scene::{Effect, Material, Node};
 
-use super::batching::batch;
+use super::batching::{batch, vertex_material};
 use super::harbor_surfaces::{steel_beam, steel_box};
-use super::model_primitives::{Cache, box_part, cylinder_part, material, put, rotated};
-use super::tank_surfaces::armor_wear_texture;
-use crate::geometry::math::{hex_to_linear, normalize, quat_from_unit_vectors, smoothstep};
+use super::model_primitives::{
+    CYLINDER_METALNESS, DEFAULT_METALNESS, DEFAULT_ROUGHNESS, box_part, cylinder_part, material,
+    put, rotated,
+};
+use super::tank_surfaces::{Grime, Livery, apply_livery};
+use crate::geometry::math::{normalize, quat_from_unit_vectors};
 
 // Sun-faded industrial yellow, dusty steel, rusty red and one muted teal accent.
 pub(super) const PAINT: u32 = 0xc69a4b;
@@ -25,8 +28,6 @@ const TEAL: u32 = 0x4e7d7c;
 const DUST: u32 = 0xc9b78d;
 /// The cab roof's pale paint, weathered like the fleet yellow.
 const CAB_ROOF: u32 = 0xd2c6a2;
-/// Caked quarry dust baked over the lower machine and its upward faces.
-const GRIME: u32 = 0x9c8566;
 
 /// `accent(w, h, d, color, metal, rough)`: a weathered accent box (rust eats light,
 /// dust film kills reflections).
@@ -38,36 +39,54 @@ fn accent(w: f64, h: f64, d: f64, color: u32, metal: f64, rough: f64) -> Node {
     mesh
 }
 
-static FLEET_PAINT: Cache<u32, Material> = Cache::new();
+/// No part of a machine wears a recognition panel.
+const NO_SIGNAL: u32 = 0x010203;
+/// Bare and polished steel the fleet's worn finish keeps metallic.
+const FLEET_METAL: [u32; 4] = [STEEL, 0x9a9a92, 0xb8b8af, 0x5a564c];
 
-/// The scratched panel atlas over the fleet colors, with its own material cache
-/// so the fleet's paint can weather independently of harbor props.
-fn fleet_paint(color: u32) -> Arc<Material> {
-    FLEET_PAINT.get_or_insert(color, || {
-        let wear = armor_wear_texture();
-        Material {
-            map: Some(wear.clone()),
-            bump_map: Some(wear),
-            bump_scale: 0.045,
-            ..Material::standard(if color == PAINT { 0xd3a33f } else { color }, 0.18, 0.84)
-        }
-    })
+/// The fleet's worn paint: the vehicles' weathered finish over a whole machine
+/// (in its own frame, standing at y 0), so its yellow chips to bare steel along
+/// its edges, catches a bevel highlight on every boxy form, darkens in its
+/// recesses and dusts over from the ground up to `dust_top`, rather than one flat
+/// yellow.
+pub(super) fn fleet_livery(node: &mut Node, dust_top: f64) {
+    apply_livery(
+        node,
+        &Livery {
+            paint: &[PAINT, CAB_ROOF],
+            metal: &FLEET_METAL,
+            signal: NO_SIGNAL,
+            grime: Grime {
+                ground: 0.0,
+                dust_top,
+            },
+        },
+    );
 }
 
-/// `weatherPaint(group)`: every standard-shaded fleet-yellow or cab-roof part in
-/// the assembly (nested groups included) takes the weathered paint.
-pub(super) fn weather_paint(node: &mut Node) {
+/// The fleet's worn paint on a machine parked in the apron's equipment batch
+/// (the wheel loader, the drill rig): its matte and bare-metal parts take the
+/// batch's own plain and steel finishes, so the livery adds only its paint to
+/// the batch's draws, not a matte and a metal draw of its own.
+pub(super) fn site_livery(node: &mut Node, dust_top: f64) {
+    fleet_livery(node, dust_top);
+    let plain = vertex_material(&material(0xffffff, DEFAULT_METALNESS, DEFAULT_ROUGHNESS));
+    let steel = vertex_material(&material(0xffffff, CYLINDER_METALNESS, DEFAULT_ROUGHNESS));
+    share_finishes(node, &plain, &steel);
+}
+
+fn share_finishes(node: &mut Node, plain: &Arc<Material>, steel: &Arc<Material>) {
     if let Some(drawable) = &mut node.drawable {
-        let color = drawable.material.color.0;
-        if drawable.material.effect == crate::scene::Effect::None
-            && drawable.material.shading == crate::scene::Shading::Standard
-            && (color == PAINT || color == CAB_ROOF)
-        {
-            drawable.material = fleet_paint(color);
+        let finish = &drawable.material;
+        let livery_finish = finish.vertex_colors && finish.effect == Effect::None;
+        if livery_finish && finish.map.is_none() && finish.metalness == 0.0 {
+            drawable.material = plain.clone();
+        } else if livery_finish && finish.map.is_some() {
+            drawable.material = steel.clone();
         }
     }
     for child in &mut node.children {
-        weather_paint(child);
+        share_finishes(child, plain, steel);
     }
 }
 
@@ -255,13 +274,12 @@ pub fn quarry_excavator() -> Node {
     let bucket = rotated(bucket, 0.0, 0.0, -0.22);
     put(&mut group, bucket, 11.5, 0.6, 0.9);
     excavator_details(&mut group);
-    weather_paint(&mut group);
+    fleet_livery(&mut group, 2.8);
     // The bucket group sits before the details appended after it.
     if let Some(bucket) = group.children.iter_mut().find(|c| c.drawable.is_none()) {
         batch(bucket);
     }
     batch(&mut group);
-    grime(&mut group, 2.2);
     group
 }
 
@@ -430,9 +448,8 @@ pub fn quarry_dump_truck() -> Node {
     );
     truck_details(&mut group);
     // Same sun-faded fleet yellow as the excavator, not steel-tinted brown.
-    weather_paint(&mut group);
+    fleet_livery(&mut group, 3.0);
     batch(&mut group);
-    grime(&mut group, 2.4);
     group
 }
 
@@ -561,36 +578,5 @@ fn truck_details(group: &mut Node) {
     for x in [-1.75, -0.55] {
         let strap = rotated(cylinder_part(0.53, 0.08, 0x3b3a35, 12), 0.0, 0.0, FRAC_PI_2);
         put(group, strap, x, 1.35, -2.3);
-    }
-}
-
-/// Bake dust and grime into a batched assembly's vertex paint: caked dust low on
-/// the machine, a dust film on every upward face. `soil_line` is the height the
-/// splashed dirt reaches, in the assembly's frame.
-pub(super) fn grime(group: &mut Node, soil_line: f64) {
-    let dust = hex_to_linear(GRIME);
-    for child in &mut group.children {
-        let Some(drawable) = &mut child.drawable else {
-            continue;
-        };
-        if drawable.mesh.colors.is_empty() {
-            continue;
-        }
-        let mut mesh = (*drawable.mesh).clone();
-        for ((color, p), n) in mesh
-            .colors
-            .iter_mut()
-            .zip(&mesh.positions)
-            .zip(&mesh.normals)
-        {
-            let y = f64::from(p[1]);
-            let low = 1.0 - smoothstep(y, 0.0, soil_line);
-            let up = smoothstep(f64::from(n[1]), 0.55, 0.95);
-            let amount = (low * 0.7 + up * 0.32).min(0.8);
-            for k in 0..3 {
-                color[k] = (f64::from(color[k]) * (1.0 - amount) + dust[k] * amount) as f32;
-            }
-        }
-        drawable.mesh = Arc::new(mesh);
     }
 }
