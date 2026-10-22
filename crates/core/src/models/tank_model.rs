@@ -19,11 +19,12 @@ use super::tank_details::{
     Assembly, RING_Z, ROOF_RISE, assembly, gun_rise, hatch_tops, muzzle_z, ring_radius, tube_radius,
 };
 use super::tank_kit::Coat;
-use super::tank_surfaces::{Grime, Livery, apply_livery, ember_material, vehicle_paint};
+use super::tank_surfaces::{
+    Grime, Livery, apply_livery, ember_material, vehicle_glass, vehicle_paint,
+};
 use super::{Team, VehicleKind, part};
-use crate::geometry::math::scale_hex_color;
-use crate::geometry::{CylinderGeometry, Mesh, ring_geometry};
-use crate::scene::{Material, Node};
+use crate::geometry::{Attribute, CylinderGeometry, Mesh, VERTEX_ALPHA, ring_geometry};
+use crate::scene::{Material, Node, Shading};
 use crate::sim::data::vehicle;
 
 #[path = "tank_running_gear.rs"]
@@ -34,9 +35,14 @@ use running_gear::running_gear;
 /// reads as metal beside either team's paint rather than as a blue trim.
 pub(crate) const DARK: u32 = 0x13232c;
 pub(crate) const STEEL: u32 = 0x6f706c;
-/// Shade paint is team paint darkened in linear space by this factor.
-pub(crate) const SHADE_FACTOR: f64 = 0.62;
-const GLASS_TINT: u32 = 0x8adeec;
+/// The trim every vehicle wears with its team paint: a deep, greyed shade of the
+/// team color on the lower hull, mantlet, gun fittings, add-on armor and frames.
+/// The team color is the body and the deep trim frames it, so the paint reads as
+/// a designed two-tone livery, each class's add-on armor stands out as armor
+/// rather than as dark openings, and the trim still reads as its team.
+const TRIM: [u32; 2] = [0x1d3762, 0x5a201f];
+/// Sight and vision-block glass: a deep blue-green tint that mirrors the sky.
+const GLASS_TINT: u32 = 0x1d3b42;
 const MARKING_WHITE: u32 = 0xdce7ee;
 /// Machine guns, muzzle brakes, clamp bands and cable: dark gun metal.
 const GUNMETAL: u32 = 0x2c2e2f;
@@ -44,25 +50,22 @@ const GUNMETAL: u32 = 0x2c2e2f;
 const CANVAS: u32 = 0x4f5236;
 const WOOD: u32 = 0x6a4c30;
 const TAIL_LIGHT: u32 = 0x9a2016;
-/// Fluorescent air-recognition panels per team: brighter and more saturated than
-/// the service paint, so a tank's team reads from the overhead camera even under
-/// camouflage. Not the glowing `TEAM_COLORS`: the panel is lit cloth.
+/// Lamp lenses: just rough enough for the livery to draw them with the matte
+/// fittings.
+pub(super) const LENS_ROUGHNESS: f64 = 0.45;
+/// The livery's recognition color per team, kept matte and burnt off wrecks. No
+/// part wears it today: the deep team paint reads from overhead by itself, and a
+/// flat fluorescent sheet read as a missing texture.
 const SIGNAL_PANEL: [u32; 2] = [0x1f8fff, 0xf0281c];
-const SIGNAL_ROUGHNESS: f64 = 0.9;
 /// Dust bands: tracked hulls are dusty up to the fenders, the Humvee to its doors.
 const TRACKED_GRIME: Grime = Grime {
     ground: -0.197,
-    dust_top: 0.56,
+    dust_top: 0.66,
 };
 const HUMVEE_GRIME: Grime = Grime {
     ground: -0.24,
     dust_top: 0.8,
 };
-
-/// The darker variant of a team paint (`new THREE.Color(c).multiplyScalar(0.62)`).
-pub(crate) fn shade_of(color: u32) -> u32 {
-    scale_hex_color(color, SHADE_FACTOR)
-}
 
 static MODELS: Cache<(VehicleKind, Team, bool), Node> = Cache::new();
 
@@ -101,11 +104,10 @@ pub fn tank_model(kind: VehicleKind, team: Team) -> Arc<Node> {
 /// keep the team paint; presentation darkens them.
 pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool) -> Arc<Node> {
     MODELS.get_or_insert((kind, team, open_turret_ring), || {
-        // Team paint, its shade and bare steel: the colors the worn finish recognises.
-        let team_paint = vehicle_paint(team);
-        let colors = [team_paint, shade_of(team_paint), STEEL];
+        // Team paint, trim and bare steel: the colors the worn finish recognises.
+        let colors = [vehicle_paint(team), TRIM[team.index()], STEEL];
         let mut root = if kind == VehicleKind::Humvee {
-            humvee_model(colors, SIGNAL_PANEL[team.index()])
+            humvee_model(colors)
         } else {
             tracked_model(kind, team, colors, open_turret_ring)
         };
@@ -120,20 +122,120 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
             },
         };
         apply_livery(&mut root, &livery);
+        root.children.push(contact_shadow(kind));
         root.scale = DVec3::splat(vehicle(kind).scale);
         root
     })
 }
 
+/// The soft contact shadow every vehicle sits on: a dark pool on the ground under
+/// it, darkest beneath the hull and fading out a little beyond its tracks or
+/// wheels, so it rests on the ground under any sun rather than hovering over its
+/// cast shadow. Not part of the hull (whose bounds are its hit box) nor of a wreck.
+const CONTACT_SHADOW_REACH: f64 = 0.32;
+/// Its darkness under the hull (alpha over the ground) and how far in from its edge
+/// (a share of its half extent) it reaches that darkness.
+const CONTACT_SHADOW_DARKNESS: f32 = 0.6;
+const CONTACT_SHADOW_CORE: f64 = 0.72;
+/// Height above the ground line, so it never fights the ground's depth.
+const CONTACT_SHADOW_LIFT: f64 = 0.012;
+
+fn contact_shadow(kind: VehicleKind) -> Node {
+    let (half_width, half_length, ground) = if kind == VehicleKind::Humvee {
+        (1.06, 2.27, HUMVEE_GRIME.ground)
+    } else {
+        let c = chassis(kind, Team::Blue, [0; 3]);
+        let reach = c.length * 1.235 / 2.46 + 0.0175;
+        (c.overall_width / 2.0, reach, TRACKED_GRIME.ground)
+    };
+    let mut node = Node::mesh(contact_shadow_mesh(), contact_shadow_material());
+    node.position = DVec3::new(0.0, ground + CONTACT_SHADOW_LIFT, 0.0);
+    node.scale = DVec3::new(
+        half_width + CONTACT_SHADOW_REACH,
+        1.0,
+        half_length + CONTACT_SHADOW_REACH,
+    );
+    node.name = "contact-shadow".into();
+    node
+}
+
+/// A unit rounded square facing up: full darkness inside `CONTACT_SHADOW_CORE`,
+/// fading to none at its rounded rim. Shared by every vehicle (each scales it to
+/// its footprint), so all of them draw in one call.
+fn contact_shadow_mesh() -> Arc<Mesh> {
+    static MESH: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
+    MESH.get_or_init(|| {
+        const ARC: usize = 3;
+        const ROUND: f64 = 0.16;
+        let mut positions = Vec::new();
+        let mut alpha = Vec::new();
+        for (extent, round, strength) in [
+            (CONTACT_SHADOW_CORE, 0.0, CONTACT_SHADOW_DARKNESS),
+            (1.0, ROUND, 0.0),
+        ] {
+            for (corner, (sx, sz)) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
+                .into_iter()
+                .enumerate()
+            {
+                for k in 0..ARC {
+                    let angle = (corner as f64 + k as f64 / (ARC - 1) as f64) * PI / 2.0;
+                    let x = sx * (extent - round) + round * angle.cos();
+                    let z = sz * (extent - round) + round * angle.sin();
+                    positions.extend([x, 0.0, z]);
+                    alpha.push(strength);
+                }
+            }
+        }
+        let ring = (4 * ARC) as u32;
+        // The core: a fan over its corners; then the band out to the rim.
+        let mut indices: Vec<u32> = (1..ring - 1).flat_map(|i| [0, i + 1, i]).collect();
+        for i in 0..ring {
+            let j = (i + 1) % ring;
+            indices.extend([i, j, ring + j, i, ring + j, ring + i]);
+        }
+        let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
+        mesh.compute_vertex_normals();
+        if mesh.normals.iter().map(|n| n[1]).sum::<f32>() < 0.0
+            && let Some(indices) = &mut mesh.indices
+        {
+            for triangle in indices.as_chunks_mut::<3>().0 {
+                triangle.swap(1, 2);
+            }
+            mesh.compute_vertex_normals();
+        }
+        mesh.colors = vec![[0.0, 0.0, 0.0]; mesh.positions.len()];
+        mesh.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
+        Arc::new(mesh)
+    })
+    .clone()
+}
+
+/// Unlit black, blended over the ground by the mesh's vertex alpha.
+fn contact_shadow_material() -> Arc<Material> {
+    static MATERIAL: std::sync::OnceLock<Arc<Material>> = std::sync::OnceLock::new();
+    MATERIAL
+        .get_or_init(|| {
+            Arc::new(Material {
+                shading: Shading::Basic,
+                vertex_colors: true,
+                transparent: true,
+                depth_write: false,
+                polygon_offset: Some((-1.0, -4.0)),
+                ..Material::standard(0x000000, 0.0, 1.0)
+            })
+        })
+        .clone()
+}
+
 /// Chassis measurements shared by the hull and turret builders.
 pub(super) struct Chassis {
     pub(super) kind: VehicleKind,
+    pub(super) team: Team,
     pub(super) scout: bool,
     pub(super) heavy: bool,
     pub(super) color: u32,
     pub(super) shade: u32,
     pub(super) steel: u32,
-    pub(super) signal: u32,
     pub(super) overall_width: f64,
     pub(super) width: f64,
     pub(super) length: f64,
@@ -163,12 +265,12 @@ fn chassis(kind: VehicleKind, team: Team, colors: [u32; 3]) -> Chassis {
     };
     Chassis {
         kind,
+        team,
         scout: kind == VehicleKind::Scout,
         heavy: kind == VehicleKind::Heavy,
         color,
         shade,
         steel,
-        signal: SIGNAL_PANEL[team.index()],
         overall_width,
         width: overall_width - 0.42,
         length,
@@ -195,12 +297,13 @@ fn coat_material(coat: Coat, c: &Chassis) -> Arc<Material> {
         Coat::Steel => paint(c.steel),
         Coat::Dark => paint(DARK),
         Coat::Gunmetal => material(GUNMETAL, 0.55, 0.45),
-        Coat::Glass => material(GLASS_TINT, 0.3, 0.12),
+        Coat::Glass => vehicle_glass(GLASS_TINT),
         Coat::Canvas => material(CANVAS, 0.0, 0.92),
         Coat::Wood => material(WOOD, 0.0, 0.85),
         Coat::Marking => paint(MARKING_WHITE),
-        Coat::TailLight => material(TAIL_LIGHT, 0.1, 0.35),
-        Coat::Signal => material(c.signal, 0.0, SIGNAL_ROUGHNESS),
+        // Lenses a few centimetres across draw with the matte fittings (one
+        // draw fewer per hull) rather than in a glossy material of their own.
+        Coat::TailLight => material(TAIL_LIGHT, 0.0, LENS_ROUGHNESS),
     }
 }
 

@@ -66,6 +66,24 @@ fn quarry_value(p: vec2f) -> f32 {
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
+// Smooth value noise with its gradient: (value, d/dx, d/dy) on a unit lattice.
+fn quarry_value_grad(p: vec2f) -> vec3f {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let du = 6.0 * f * (1.0 - f);
+    let a = quarry_hash(i).x;
+    let b = quarry_hash(i + vec2f(1.0, 0.0)).x;
+    let c = quarry_hash(i + vec2f(0.0, 1.0)).x;
+    let d = quarry_hash(i + vec2f(1.0, 1.0)).x;
+    let k = a - b - c + d;
+    return vec3f(
+        a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y,
+        du.x * ((b - a) + k * u.y),
+        du.y * ((c - a) + k * u.x),
+    );
+}
+
 // The world-space metres one pixel spans on a surface: computed in uniform
 // control flow, before any branch, and passed to the detail layers that fade
 // out before they shrink below a pixel and shimmer.
@@ -74,12 +92,16 @@ fn quarry_footprint(world: vec3f) -> f32 {
 }
 
 struct QuarryPebbles {
-    // Coverage of a stone (0..1), the contact shade around it, the horizontal
-    // lean of its domed surface's normal (world x/z) and its tint over the soil.
+    // Coverage of a stone (0..1), the contact shade around it, the shadow it
+    // casts away from the sun, the horizontal lean of its domed surface's normal
+    // (world x/z) and its tint over the soil.
     cover: f32,
     contact: f32,
+    shadow: f32,
     lean: vec2f,
     tint: vec3f,
+    // How far toward its buried rim a covered pixel lies (0 crown, 1 rim).
+    rim: f32,
 }
 
 // One layer of loose stones on a `cell` metre lattice: at most one stone per
@@ -90,8 +112,21 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     let g = p / cell;
     let id = floor(g);
     let h = quarry_hash(id + salt);
+    // Mostly small stones, the odd big one: a long tail of sizes.
+    let radius = mix(0.08, 0.36, h.y * h.y * h.y);
+    let pixel = footprint / (radius * cell);
+    var out: QuarryPebbles;
+    // An empty cell, or a stone faded under a pixel, covers and shades nothing
+    // and leans no normal; its tint is then never seen.
+    if h.x > density || pixel >= 0.7 {
+        out.cover = 0.0;
+        out.contact = 0.0;
+        out.shadow = 0.0;
+        out.lean = vec2f(0.0);
+        out.tint = vec3f(1.0);
+        return out;
+    }
     let k = quarry_hash(id - salt * 1.7);
-    let radius = mix(0.12, 0.3, h.y * h.y);
     let stretch = 1.0 + 0.5 * k.w;
     let center = id + 0.5 + (h.zw - 0.5) * (1.0 - 2.0 * radius * stretch);
     // Flattened, turned ovals rather than coins, each a little lumpy.
@@ -101,15 +136,24 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     let local = vec2f(dot(d0, axis) / stretch, dot(d0, side)) / radius;
     let lump = 1.0 + 0.1 * sin(local.x * 2.7 + local.y * 1.3 + k.z * 6.0);
     let r = length(local) / lump;
-    let pixel = footprint / (radius * cell);
     let present = step(h.x, density) * (1.0 - quarry_smoothstep(0.25, 0.7, pixel));
     let edge = max(pixel, 0.12);
-    var out: QuarryPebbles;
     out.cover = (1.0 - quarry_smoothstep(1.0 - edge, 1.0, r)) * present;
     out.contact = quarry_smoothstep(1.55, 1.0, r) * (1.0 - out.cover) * present;
+    // The ground a stone's height shades: its outline seen from the sun, a low
+    // sun stretching it out across the soil.
+    let sun = frame.sun_direction.xyz;
+    let reach = radius * 0.55 * min(length(sun.xz) / max(sun.y, 0.15), 3.0);
+    let lit = d0 + normalize(sun.xz + vec2f(0.0001, 0.0)) * reach;
+    let lit_local = vec2f(dot(lit, axis) / stretch, dot(lit, side)) / radius;
+    let blocked = 1.0 - quarry_smoothstep(0.75, 1.05, length(lit_local) / lump);
+    out.shadow = blocked * (1.0 - out.cover) * present;
     // A low dome: the normal leans out from the centre, steepest at the rim.
     let dome = local / max(length(local), 0.001) * quarry_smoothstep(0.1, 1.0, r) * 0.8;
     out.lean = (dome.x * axis + dome.y * side) * out.cover;
+    // The rim sinks into shade on the side turned from the sun.
+    let from_sun = dot(d0 / max(length(d0), 0.0001), -normalize(sun.xz + vec2f(0.0001, 0.0)));
+    out.rim = quarry_smoothstep(0.35, 1.0, r) * out.cover * (0.3 + 0.7 * clamp(from_sun * 0.6 + 0.5, 0.0, 1.0));
     // Pale limestone, the soil's own stone, cool grey grit, iron-stained, dark chert.
     var t = vec3f(1.18, 1.14, 1.08);
     t = select(t, vec3f(0.98, 0.93, 0.86), k.y > 0.3);
@@ -120,16 +164,45 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     return out;
 }
 
+// Flat facets struck off a stone face, on a `cell` metre jittered lattice: xy
+// the tilt of the facet the point lies on (each facet a plane of its own, so
+// the face shades as chipped planes rather than a smooth swell), z how near
+// the point lies to the ridge between two facets (1 on it).
+fn quarry_facets(p: vec2f, cell: f32) -> vec3f {
+    let g = p / cell;
+    let id = floor(g);
+    var f1 = 8.0;
+    var f2 = 8.0;
+    var tilt = vec2f(0.0);
+    for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+            let o = vec2f(f32(i), f32(j));
+            let h = quarry_hash(id + o + 113.0);
+            let d = length(id + o + 0.1 + h.xy * 0.8 - g);
+            if d < f1 {
+                f2 = f1;
+                f1 = d;
+                tilt = h.zw * 2.0 - 1.0;
+            } else if d < f2 {
+                f2 = d;
+            }
+        }
+    }
+    return vec3f(tilt, 1.0 - quarry_smoothstep(0.0, 0.08, f2 - f1));
+}
+
 // Plates cracked apart on a `cell` metre jittered lattice (dried mud, jointed
 // caprock): x is the crack line (1 inside a crack about `width` metres wide), y
-// the curled or rounded, paler plate rim beside it.
-fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec2f {
+// the curled or rounded, paler plate rim beside it, z a hash in [0, 1) of the
+// plate the point lies on.
+fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec3f {
     // A gentle warp curves the plate edges so the network never reads as tiles.
     let g0 = p / cell;
     let g = g0 + 0.22 * sin(g0.yx * vec2f(2.3, 1.9) + vec2f(1.7, 0.4));
     let id = floor(g);
     var f1 = 8.0;
     var f2 = 8.0;
+    var plate = 0.0;
     for (var j = -1; j <= 1; j++) {
         for (var i = -1; i <= 1; i++) {
             let o = vec2f(f32(i), f32(j));
@@ -138,6 +211,7 @@ fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec2f
             if d < f1 {
                 f2 = f1;
                 f1 = d;
+                plate = h.z;
             } else if d < f2 {
                 f2 = d;
             }
@@ -150,5 +224,5 @@ fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec2f
     let visible = width / max(width, footprint);
     let crack = (1.0 - quarry_smoothstep(width - soft, width + soft, edge)) * visible;
     let rim = quarry_smoothstep(width * 2.0 + 0.06, width, edge) * (1.0 - crack);
-    return vec2f(crack, rim);
+    return vec3f(crack, rim, plate);
 }

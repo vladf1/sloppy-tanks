@@ -3,7 +3,7 @@ import type { HudState, RecapMetric, RecapState, ScoreboardRow } from "./engine-
 /** Each metric's label and, on hover, its explanation, so the report itself reads at a
  * glance. In report order; the engine computes the values, feats and personal bests. */
 const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
-  kills: { label: "Kills", hint: "Enemy tanks wrecked" },
+  kills: { label: "Kills", hint: "Enemy tanks destroyed" },
   damage: { label: "Damage dealt", hint: "Enemy hull damage, no overkill" },
   bestLife: { label: "Best spree", hint: "Most kills in a single life" },
   rank: { label: "Top rank", hint: "Peak rank across all lives" },
@@ -12,29 +12,44 @@ const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
   multikill: { label: "Best multikill", hint: "Most kills within any 5 seconds" },
   clutchKills: { label: "Clutch kills", hint: "Kills at 25% hull or less" },
   revengeKills: { label: "Revenge kills", hint: "Kills on your last killer" },
-  posthumousKills: { label: "Kills after wreck", hint: "Kills by a previous life's ordnance" },
+  posthumousKills: { label: "Grave kills", hint: "Kills by a previous life's ordnance" },
   mineKills: { label: "Mine kills", hint: "Kills from mine explosions" },
-  coverDestroyed: { label: "Cover wrecked", hint: "Destructible objects you finished" },
+  coverDestroyed: { label: "Cover razed", hint: "Destructible objects you finished" },
   pickups: { label: "Pickups", hint: "Ammo and power-ups collected" },
 };
 /** The hero tile and the tiles beside it; peak rank shows on the hero tile with the
  * tank, and the rest of the metrics list below only when they happened. */
 const featuredMetrics: readonly RecapMetric[] = ["kills", "damage", "bestLife", "longestLife"];
 
-/** How often the viewer's tank was wrecked this round, for the report's opening line. */
+/** How often the viewer's tank was destroyed this round, for the report's opening line. */
 export function wreckLine(deaths: number): string {
   return deaths <= 0
-    ? "Never wrecked"
+    ? "Never destroyed"
     : deaths === 1
-      ? "Wrecked once"
+      ? "Destroyed once"
       : deaths === 2
-        ? "Wrecked twice"
-        : `Wrecked ${deaths} times`;
+        ? "Destroyed twice"
+        : `Destroyed ${deaths} times`;
 }
 
 /** "BLUE" as the report says it: "Blue team". */
 export function teamLabel(name: string): string {
   return `${name.charAt(0)}${name.slice(1).toLowerCase()} team`;
+}
+
+/** Where a team battle stands for the viewer's `team`: who leads and by how much. */
+export function standingLine(
+  scores: readonly number[],
+  team: number,
+  names: readonly string[],
+): string {
+  const [blue, red] = scores;
+  if (blue === red) {
+    return `Level at ${blue} each`;
+  }
+  const leader = blue > red ? 0 : 1;
+  const margin = Math.abs(blue - red);
+  return `${leader === team ? "Your team" : teamLabel(names[leader])} leads by ${margin}`;
 }
 
 export function duration(seconds: number): string {
@@ -57,12 +72,12 @@ export function recapMarkup(
         : value.toLocaleString("en-US");
   const tile = (label: string, value: string, hint: string, footer = "", isRecord = false) =>
     `<div class="recap-stat${isRecord ? " is-record" : ""}" title="${hint}"><dt>${label}</dt><dd>${value}</dd>${footer ? `<span>${footer}</span>` : ""}</div>`;
-  // The hero tile carries the tank (drawn in by the page) and the peak rank it reached.
-  const rankName = format("rank", stats.rank);
+  // The hero tile carries the tank (drawn in by the page) and the kills measured
+  // against the personal best: a bar that fills toward it, gold once it is beaten.
   const hero = (markup: string) =>
     markup.replace(
-      /<\/div>$/,
-      `<em class="recap-rank" title="${METRICS.rank.hint}">${improved.has("rank") ? "★ " : ""}PEAK RANK · ${rankName.toUpperCase()}</em><i class="recap-tank" aria-hidden="true"></i></div>`,
+      /(<span>[^<]*<\/span>)?<\/div>$/,
+      `${bestProgress(stats.kills, best.kills, improved.has("kills"))}<i class="recap-tank" aria-hidden="true"></i></div>`,
     );
   // A tile only mentions its record when it was beaten or is still out of reach.
   const recordFooter = (metric: RecapMetric) =>
@@ -74,9 +89,7 @@ export function recapMarkup(
   const hitRate = recap.shots ? `${Math.round((recap.directHits / recap.shots) * 100)}%` : "—";
   const extras: { label: string; value: string; hint: string; improved?: boolean }[] = [
     ...(Object.keys(METRICS) as RecapMetric[])
-      .filter(
-        (metric) => !featuredMetrics.includes(metric) && metric !== "rank" && stats[metric] > 0,
-      )
+      .filter((metric) => !featuredMetrics.includes(metric) && stats[metric] > 0)
       .map((metric) => ({
         ...METRICS[metric],
         value: format(metric, stats[metric]),
@@ -133,6 +146,22 @@ export function recapMarkup(
     <p class="recap-note">${note}</p>`;
 }
 
+/** The hero tile's measure of the round's kills against the personal best. */
+export function bestProgress(kills: number, best: number, improved: boolean): string {
+  const bar = (share: number) =>
+    `<i class="recap-meter" style="--share:${Math.min(1, Math.max(0, share)).toFixed(3)}"></i>`;
+  if (improved) {
+    return `<em class="recap-progress is-record">${bar(1)}<b>★ NEW PERSONAL BEST</b></em>`;
+  }
+  if (best > kills) {
+    return `<em class="recap-progress">${bar(kills / best)}<b>${best - kills} short of your best · ${best}</b></em>`;
+  }
+  if (kills > 0) {
+    return `<em class="recap-progress is-record">${bar(1)}<b>Equals your best</b></em>`;
+  }
+  return `<em class="recap-progress">${bar(0)}<b>No kills this round</b></em>`;
+}
+
 const HTML_ESCAPES: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
@@ -151,6 +180,20 @@ function byScore(a: ScoreboardRow, b: ScoreboardRow): number {
   return b.kills - a.kills || a.deaths - b.deaths || a.name.localeCompare(b.name);
 }
 
+/** Where the viewer stands on their own team's scoreboard (by kills, then fewest
+ * wrecks): 1-based place and the team's size, or null when the viewer is not listed. */
+export function teamPlace(
+  rows: readonly ScoreboardRow[],
+  viewerId: number,
+): { place: number; of: number } | null {
+  const viewer = rows.find((row) => row.id === viewerId);
+  if (!viewer) {
+    return null;
+  }
+  const team = rows.filter((row) => row.team === viewer.team).sort(byScore);
+  return { place: team.indexOf(viewer) + 1, of: team.length };
+}
+
 /** The round's most valuable tank: the most kills, fewest wrecks breaking a tie; none
  * before anyone scores. */
 export function mostValuable(rows: readonly ScoreboardRow[]): ScoreboardRow | null {
@@ -159,7 +202,8 @@ export function mostValuable(rows: readonly ScoreboardRow[]): ScoreboardRow | nu
 }
 
 /** The battle report's team scoreboard: each team's tanks by kills, with their wrecks,
- * the viewer's row lit and the MVP marked. `teamNames` and `scores` are in team order. */
+ * the viewer's row lit and the MVP tagged in its row (no second MVP line repeats it).
+ * `teamNames` and `scores` are in team order. */
 export function scoreboardMarkup(
   rows: readonly ScoreboardRow[],
   viewerId: number,
@@ -184,10 +228,7 @@ export function scoreboardMarkup(
         return `<li${classes ? ` class="${classes}"` : ""}><span class="board-name">${escapeHtml(row.name)}</span>${tag}<b>${row.kills}</b><small>${row.deaths}</small></li>`;
       })
       .join("");
-    return `<section class="board-team ${side}" aria-label="${teamLabel(teamNames[index])}"><header><b>${teamNames[index]}</b><span>${scores[index]}</span><i>K</i><i>D</i></header><ol>${lines}</ol></section>`;
+    return `<section class="board-team ${side}" aria-label="${teamLabel(teamNames[index])}, ${scores[index]}"><header><b>${teamNames[index]}</b><span></span><i>K</i><i>D</i></header><ol>${lines}</ol></section>`;
   };
-  const spotlight = mvp
-    ? `<div class="board-mvp ${mvp.team === 0 ? "blue" : "red"}"><span>★ MVP</span><b>${mvp.id === viewerId ? "YOU" : escapeHtml(mvp.name)}</b><small>${mvp.kills} kill${mvp.kills === 1 ? "" : "s"} · ${mvp.deaths} wreck${mvp.deaths === 1 ? "" : "s"}</small></div>`
-    : "";
-  return `<div class="results-board">${team(0)}${team(1)}${spotlight}</div>`;
+  return `<div class="results-board">${team(0)}${team(1)}</div>`;
 }

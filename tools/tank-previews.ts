@@ -3,11 +3,16 @@
 // chassis. `scripts/generate-previews.mjs` packs them into `public/previews/tanks.webp`;
 // `tools/tank-surface-check.html` shows them at card and gameplay scale.
 //
-// The lighting and framing follow the former Three.js card renderer's: a hemisphere
-// light, a bright warm key light from the front left and a strong cool rim light from
-// behind (a distant point light without falloff, which lights like a directional one),
-// ACES tone mapping and a 7 m wide orthographic view from (8, 6, 6). The renderer has no
-// orthographic camera, so a 0.6° perspective camera 400 m away frames the same view.
+// The lighting is a garage card's: a dim warm hemisphere fill over a dark floor, a
+// warm, shadow-casting key light from the front left (out of the decks' specular
+// reflection, which would wash them pink) and a lowered exposure that keeps the
+// red paint below ACES's shoulder (it turns bright red pink), and a strong, near
+// white rim light from behind on the right that lifts the side the card shows off
+// the navy card and edges the silhouette (a distant point light without falloff,
+// which lights like a directional one; a rim from the left or above lands in the
+// decks' specular and washes them pink), ACES tone mapping and a 7 m wide
+// orthographic view from (8, 6, 6). The renderer has no orthographic camera, so a 0.6° perspective
+// camera 400 m away frames the same view.
 // Transparency comes from difference matting: each tank is drawn over black and over
 // white, and the two frames give every pixel's coverage and its unblended color. A soft
 // contact shadow, the tracks' footprint projected through the same view and blurred, is
@@ -18,9 +23,10 @@ import { loadLabsEngine, prepareLab } from "./labs-engine";
 export const PREVIEW_WIDTH = 640;
 export const PREVIEW_HEIGHT = 400;
 export const PREVIEW_KINDS = ["scout", "balanced", "heavy"] as const;
-/** Each preview renders at this multiple of its size and is downsampled, so the
- * tank's edges stay smooth on the cards' dark background. */
-const SUPERSAMPLE = 2;
+/** Each preview renders at this multiple of its size. One: the paint's edge wear
+ * resolves by on-screen size, and drawn finer than the card shows it, every edge
+ * would chip into a pale outline. */
+const SUPERSAMPLE = 1;
 const PREPARE_BUDGET = 8;
 /** Half the orthographic view's height (metres), and its look-at pose. */
 const HALF_HEIGHT = 2.1875;
@@ -60,30 +66,32 @@ const FOOTPRINTS: Record<(typeof PREVIEW_KINDS)[number], [number, number]> = {
 };
 const GROUND_Y = -0.17;
 const SHADOW_GROW = 0.35;
-const SHADOW_BLUR = 14;
-const SHADOW_OPACITY = 0.62;
+const SHADOW_BLUR = 11;
+const SHADOW_OPACITY = 0.82;
 
 const SCENE = {
   background: 0x000000,
-  hemisphere: { sky: 0xdcedff, ground: 0x4c6075, intensity: 2.2 },
-  sun: { color: 0xfff0d2, intensity: 4.3, position: [-3, 7, 5], target: [0, 0, 0] },
+  hemisphere: { sky: 0xfff2e4, ground: 0x3a3f47, intensity: 0.6 },
+  sun: { color: 0xfff1de, intensity: 3.4, position: [-3, 7, 5], target: [0, 0, 0] },
+  // The key casts shadows, so the turret, mantlet and stowage shade the deck and
+  // the skirts shade the running gear: the card tanks read as solid models.
   shadow: {
-    enabled: false,
-    mapSize: 512,
-    half: 5,
+    enabled: true,
+    mapSize: 2048,
+    half: 3.6,
     near: 0.5,
     depth: 20,
-    bias: 0,
-    normalBias: 0,
+    bias: -0.0002,
+    normalBias: 0.02,
   },
   pointLight: {
-    color: 0x9fd6ff,
-    intensity: 3.6,
+    color: 0xe6ecff,
+    intensity: 7,
     distance: 0,
     decay: 0,
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
   },
-  exposure: 1,
+  exposure: 0.82,
   // The game's sky reflection, so card paint and steel shade as they do in a round.
   reflections: 1,
   camera: camera(),

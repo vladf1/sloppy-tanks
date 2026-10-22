@@ -72,79 +72,14 @@
     <div class="backdrop-floor"></div>
     <div class="backdrop-embers"><i></i><i></i></div>
   </div>
-  <header class="setup-header">
-    <div class="setup-brand" aria-hidden="true"><b>SLOPPY</b><b>TANKS</b></div>
-    <div class="setup-heading"><h1 id="setup-title">BATTLE SETUP</h1></div>
-  </header>
-  <div class="setup-section tank-setting" role="group" aria-labelledby="tank-label">
-    <div class="setup-label">
-      <span id="tank-label">TANK</span><small>Yours in single player and multiplayer</small
-      ><small class="home-screen-tip">Play full screen: Share → Add to Home Screen</small>
-    </div>
-    <!-- Frame each sprite around its visible bounds, not its transparent canvas: one
-         560×300 window centred on each tank keeps the chassis sizes comparable. -->
-    <div class="vehicles">
-      <button class="vehicle" data-kind="scout" aria-pressed="false">
-        <strong>SKIPPER</strong><small>Light scout</small>
-        <svg
-          class="tank-preview"
-          viewBox="64 38 560 300"
-          preserveAspectRatio="xMidYMid meet"
-          role="img"
-          aria-label="SKIPPER tank"
-          focusable="false"
-        >
-          <svg width="640" height="400" overflow="hidden">
-            <image href="%BASE_URL%previews/tanks.webp" x="0" y="0" width="1920" height="800" />
-          </svg>
-        </svg>
-        <div class="spec">
-          <span style="--v: 0.57">80 HIT POINTS</span><span style="--v: 1">40 KM/H</span>
-        </div>
-      </button>
-      <button class="vehicle selected" data-kind="balanced" aria-pressed="true">
-        <strong>BRUISER</strong><small>Balanced tank</small>
-        <svg
-          class="tank-preview"
-          viewBox="75.5 31 560 300"
-          preserveAspectRatio="xMidYMid meet"
-          role="img"
-          aria-label="BRUISER tank"
-          focusable="false"
-        >
-          <svg width="640" height="400" overflow="hidden">
-            <image href="%BASE_URL%previews/tanks.webp" x="-640" y="0" width="1920" height="800" />
-          </svg>
-        </svg>
-        <div class="spec">
-          <span style="--v: 0.71">100 HIT POINTS</span><span style="--v: 0.8">32 KM/H</span>
-        </div>
-      </button>
-      <button class="vehicle" data-kind="heavy" aria-pressed="false">
-        <strong>BIG RIG</strong><small>Heavy tank</small>
-        <svg
-          class="tank-preview"
-          viewBox="58.5 32.5 560 300"
-          preserveAspectRatio="xMidYMid meet"
-          role="img"
-          aria-label="BIG RIG tank"
-          focusable="false"
-        >
-          <svg width="640" height="400" overflow="hidden">
-            <image href="%BASE_URL%previews/tanks.webp" x="-1280" y="0" width="1920" height="800" />
-          </svg>
-        </svg>
-        <div class="spec">
-          <span style="--v: 1">140 HIT POINTS</span><span style="--v: 0.6">24 KM/H</span>
-        </div>
-      </button>
-    </div>
-  </div>
-  <!-- The tank above the tabs is shared by both modes and never moves; the tabs sit on
-       the tray they switch. The map heads the tray for both tabs: single player plays
-       it and a new room plays it, while an open room keeps its own. Both panels share
-       one grid cell and end in the same row: a status well and the one yellow action. -->
-  <div class="setup-tray">
+  <!-- The first row: the logo and the folder tabs for single player and multiplayer,
+       attached to the tray below that they switch. The title shows only where there is
+       no multiplayer tab. -->
+  <div class="setup-top">
+    <header class="setup-header">
+      <div class="setup-brand" aria-hidden="true"><b>SLOPPY</b><b>TANKS</b></div>
+      <div class="setup-heading"><h1 id="setup-title">BATTLE SETUP</h1></div>
+    </header>
     <div class="play-tabs" role="tablist" aria-label="How to play">
       <button
         id="tab-single"
@@ -179,6 +114,88 @@
         </svg>
         <span><b>Multiplayer</b><small>Online rooms with friends</small></span>
       </button>
+    </div>
+  </div>
+  <!-- The tray is the chosen tab's folder: the tank, shared by both modes, then the map,
+       which single player plays and a new room plays (an open room keeps its own), then
+       the mode's own panel. Both panels share one grid cell and end in the same row: a
+       status well and the one yellow action. -->
+  <div class="setup-tray">
+    <div class="setup-section tank-setting" role="group" aria-labelledby="tank-label">
+      <div class="setup-label">
+        <span id="tank-label">YOUR TANK</span
+        ><small class="home-screen-tip">Play full screen: Share → Add to Home Screen</small>
+      </div>
+      <!-- Frame each sprite around its visible bounds, not its transparent canvas: one
+           560×300 window centred on each tank keeps the chassis sizes comparable. -->
+      <div class="vehicles">
+        <button class="vehicle" data-kind="scout" aria-pressed="false">
+          <strong>SKIPPER</strong><small>Light scout</small>
+          <svg
+            class="tank-preview"
+            viewBox="64 38 560 300"
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label="SKIPPER tank"
+            focusable="false"
+          >
+            <svg width="640" height="400" overflow="hidden">
+              <image href="%BASE_URL%previews/tanks.webp" x="0" y="0" width="1920" height="800" />
+            </svg>
+          </svg>
+          <div class="spec">
+            <span style="--v: 0.57">80 HIT POINTS</span><span style="--v: 1">40 KM/H</span>
+          </div>
+        </button>
+        <button class="vehicle selected" data-kind="balanced" aria-pressed="true">
+          <strong>BRUISER</strong><small>Balanced tank</small>
+          <svg
+            class="tank-preview"
+            viewBox="75.5 31 560 300"
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label="BRUISER tank"
+            focusable="false"
+          >
+            <svg width="640" height="400" overflow="hidden">
+              <image
+                href="%BASE_URL%previews/tanks.webp"
+                x="-640"
+                y="0"
+                width="1920"
+                height="800"
+              />
+            </svg>
+          </svg>
+          <div class="spec">
+            <span style="--v: 0.71">100 HIT POINTS</span><span style="--v: 0.8">32 KM/H</span>
+          </div>
+        </button>
+        <button class="vehicle" data-kind="heavy" aria-pressed="false">
+          <strong>BIG RIG</strong><small>Heavy tank</small>
+          <svg
+            class="tank-preview"
+            viewBox="58.5 32.5 560 300"
+            preserveAspectRatio="xMidYMid meet"
+            role="img"
+            aria-label="BIG RIG tank"
+            focusable="false"
+          >
+            <svg width="640" height="400" overflow="hidden">
+              <image
+                href="%BASE_URL%previews/tanks.webp"
+                x="-1280"
+                y="0"
+                width="1920"
+                height="800"
+              />
+            </svg>
+          </svg>
+          <div class="spec">
+            <span style="--v: 1">140 HIT POINTS</span><span style="--v: 0.6">24 KM/H</span>
+          </div>
+        </button>
+      </div>
     </div>
     <div class="setup-panels">
       <div class="setup-section map-choice">
@@ -313,22 +330,54 @@
           <div class="segmented">
             <label class="segment"
               ><input type="radio" name="difficulty" value="easy" /><span
-                ><b>Easy</b><small>Forgiving enemies · 10% less enemy damage</small></span
+                ><b>Easy</b><small>Gentler bots · 10% less damage to you</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="normal" checked /><span
-                ><b>Normal</b><small>The original combat balance</small></span
+                ><b>Normal</b><small>The standard combat balance</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="hard" /><span
-                ><b>Hard</b><small>Sharper enemies · 15% more enemy damage</small></span
+                ><b>Hard</b><small>Sharper bots · 15% more damage to you</small></span
               ></label
             >
           </div>
         </div>
         <!-- A phone plays one format at one difficulty; it says which above GO. -->
         <p class="phone-briefing">
-          <b>Team Battle</b><span>6 vs 6 · Easy bots · First to 100</span>
+          <svg
+            class="briefing-tank blue-tank"
+            viewBox="75.5 31 560 300"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <svg width="640" height="400" overflow="hidden">
+              <image
+                href="%BASE_URL%previews/tanks.webp"
+                x="-640"
+                y="0"
+                width="1920"
+                height="800"
+              />
+            </svg>
+          </svg>
+          <b>Team Battle</b><span>6 vs 6 · Easy bots<br />First to 100</span>
+          <svg
+            class="briefing-tank red-tank"
+            viewBox="58.5 32.5 560 300"
+            aria-hidden="true"
+            focusable="false"
+          >
+            <svg width="640" height="400" overflow="hidden">
+              <image
+                href="%BASE_URL%previews/tanks.webp"
+                x="-1280"
+                y="-400"
+                width="1920"
+                height="800"
+              />
+            </svg>
+          </svg>
         </p>
         <div class="startup-progress">
           <div class="startup-progress-copy">
@@ -417,17 +466,19 @@
               </div>
             </div>
             <div id="room-list"></div>
-            <div class="room-empty" aria-hidden="true">
-              <svg viewBox="0 0 48 48" focusable="false">
+            <div class="room-empty">
+              <svg viewBox="0 0 48 48" aria-hidden="true" focusable="false">
                 <circle cx="24" cy="24" r="18" />
                 <circle cx="24" cy="24" r="10" />
                 <path d="M24 24 37 11" />
               </svg>
               <b class="when-loading">Scanning for open rooms…</b>
               <b class="when-ready">No open rooms right now</b>
-              <b class="when-error">Rooms are offline</b>
+              <b class="when-error">Battle the bots while we reconnect</b>
               <small class="when-ready">Be the first: create a room and invite friends.</small>
-              <small class="when-error">Single player still works while we reconnect.</small>
+              <button class="chip-button when-error" type="button" data-open-play="single">
+                PLAY SINGLE PLAYER
+              </button>
             </div>
           </div>
         </div>
@@ -450,12 +501,16 @@
             <div class="segmented">
               <label class="segment team-auto"
                 ><input type="radio" name="playerTeam" value="auto" checked /><span
-                  >Auto</span
+                  ><b>Auto</b><small>Joins the side with fewer players</small></span
                 ></label
               ><label class="segment team-blue"
-                ><input type="radio" name="playerTeam" value="0" /><span>Blue</span></label
+                ><input type="radio" name="playerTeam" value="0" /><span
+                  ><b>Blue</b><small>Always the blue team</small></span
+                ></label
               ><label class="segment team-red"
-                ><input type="radio" name="playerTeam" value="1" /><span>Red</span></label
+                ><input type="radio" name="playerTeam" value="1" /><span
+                  ><b>Red</b><small>Always the red team</small></span
+                ></label
               >
             </div>
           </div>
@@ -496,10 +551,6 @@
       <span class="key-hint"
         ><span class="keys"><kbd>Right click</kbd></span
         >Mine</span
-      >
-      <span class="key-hint"
-        ><span class="keys"><kbd>Q</kbd><kbd>E</kbd></span
-        >Ammo</span
       >
       <span class="key-hint"
         ><span class="keys"><kbd>Esc</kbd></span

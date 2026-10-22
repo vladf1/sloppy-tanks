@@ -347,7 +347,9 @@ pub fn timber_debris_model(p: &TimberPart) -> Node {
             let half_b = size[across_b] * rng.range(0.12, 0.22);
             let ca = rng.range(-0.5, 0.5) * size[across_a] * 0.7;
             let cb = rng.range(-0.5, 0.5) * size[across_b] * 0.7;
-            let reach = rng.range(0.05, 0.2) + size[along] * 0.02;
+            // Long, ragged slivers, so a snapped end reads as torn wood from the
+            // overhead camera rather than a sawn cut.
+            let reach = rng.range(0.12, 0.38) + size[along] * 0.03;
             let lean = [rng.range(-0.4, 0.4), rng.range(-0.4, 0.4)];
             // Base corners sunk just inside the end face, and the tip out past it.
             let face = end * (size[along] / 2.0 - 0.01);
@@ -392,7 +394,7 @@ pub fn timber_debris_model(p: &TimberPart) -> Node {
 
 /// Splinters jutting from each snapped end of a fallen member, and their fresh,
 /// pale wood.
-const SPLINTERS_PER_END: usize = 6;
+const SPLINTERS_PER_END: usize = 8;
 const SPLINTER_COLOR: u32 = 0xd2ad78;
 
 /// Weathers a batched member's wood in its vertex colours: worn, paler chamfers

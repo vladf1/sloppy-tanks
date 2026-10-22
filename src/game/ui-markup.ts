@@ -3,7 +3,9 @@ import {
   escapeHtml,
   recapMarkup,
   scoreboardMarkup,
+  standingLine,
   teamLabel,
+  teamPlace,
   wreckLine,
 } from "./round-recap";
 import { AMMO_OPTIONS } from "./ammo-options";
@@ -30,6 +32,7 @@ const HUD_ICONS = `<svg class="icon-sprite" aria-hidden="true" focusable="false"
 <symbol id="hud-pause" viewBox="0 0 24 24"><path d="M6.5 4h4v16h-4zM13.5 4h4v16h-4z"/></symbol>
 <symbol id="hud-target" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" d="M12 4.5a7.5 7.5 0 1 1 0 15 7.5 7.5 0 0 1 0-15zM12 1v6M12 17v6M1 12h6M17 12h6"/></symbol>
 <symbol id="hud-shield" viewBox="0 0 24 24"><path d="M12 1.8 21 5v6.4c0 5.4-3.7 9.4-9 11-5.3-1.6-9-5.6-9-11V5z"/></symbol>
+<symbol id="hud-hull" viewBox="0 0 24 24"><path d="M5.2 14.6h13.6a2.7 2.7 0 0 1 0 5.4H5.2a2.7 2.7 0 0 1 0-5.4zM2.6 10.8h18.8l-1.8 3H4.4zM7.4 6.6h6.8l1.4 3.6H6.4zM14.8 7.6h7.6v1.8h-7.6z"/></symbol>
 <symbol id="hud-lock" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2.5a5 5 0 0 1 5 5V10h1.2c.9 0 1.6.7 1.6 1.6v8.3c0 .9-.7 1.6-1.6 1.6H5.8c-.9 0-1.6-.7-1.6-1.6v-8.3c0-.9.7-1.6 1.6-1.6H7V7.5a5 5 0 0 1 5-5zm0 2.6a2.4 2.4 0 0 0-2.4 2.4V10h4.8V7.5A2.4 2.4 0 0 0 12 5.1zm0 8.2a1.7 1.7 0 0 0-.9 3.1v2h1.8v-2a1.7 1.7 0 0 0-.9-3.1z"/></symbol>
 <symbol id="hud-skull" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2c5 0 8.5 3.4 8.5 8.1 0 2.6-1.1 4.5-3 5.6V19a1.5 1.5 0 0 1-1.5 1.5h-1.2V18h-1.6v2.5h-2.4V18H9.2v2.5H8A1.5 1.5 0 0 1 6.5 19v-3.3c-1.9-1.1-3-3-3-5.6C3.5 5.4 7 2 12 2zM8.6 9.2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6.8 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 13.4l-1.3 2.3h2.6z"/></symbol>
 </svg>`;
@@ -60,7 +63,7 @@ const HULL_BAR = `<div class="hull-bar" data-tone="healthy"><i class="hull-ghost
 export function hudMarkup(): string {
   return `<div id="hud">${HUD_ICONS}
         <div id="damage-vignette" aria-hidden="true"></div>
-        <div id="cockpit" aria-hidden="true"><div class="periscope-frame"><i></i><i></i><i></i><i></i></div><div class="hull-compass"><i class="hull"></i><i class="gun"></i></div><p class="aim-hint" hidden>Click to aim · Esc for menu</p></div>
+        <div id="cockpit" aria-hidden="true"><p class="aim-hint" hidden>Click to aim · Esc for menu</p></div>
         <div class="scoreboard"><div class="team mint"><small id="label0">BLUE</small><b id="score0">0</b><i class="team-progress"><i id="progress0"></i></i></div>
         <div class="clock"><b id="time">5:00</b><small id="objective"></small></div>
         <div class="team coral"><small id="label1">RED</small><b id="score1">0</b><i class="team-progress"><i id="progress1"></i></i></div></div>
@@ -68,14 +71,15 @@ export function hudMarkup(): string {
         <div id="feed"></div><div id="toast"></div><div id="damage-direction" role="img" aria-label="Incoming damage" hidden><i></i></div>
         <div id="hit-marker" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
         <div id="kill-banner" aria-hidden="true"><i class="kill-flare"></i>${hudIcon("hud-skull", "kill-icon")}<span><small>ELIMINATED</small><b></b></span></div>
-        <div id="hull-pill" aria-hidden="true">${hudIcon("hud-shield", "hull-pill-icon")}<b id="hull-pill-hp">100</b>${HULL_BAR}</div>
-        <div class="bottom"><div class="combat-status"><div class="status"><header class="tank-label"><small id="vehicle-name">BRUISER</small><b id="rank">ROOKIE</b></header><div class="hull-readout" data-tone="healthy"><b id="hp">100</b><span class="hull-max" id="hp-max">/ 100</span><span>HULL</span></div>${HULL_BAR}</div>
+        <div id="hull-pill" aria-hidden="true">${hudIcon("hud-hull", "hull-pill-icon")}<b id="hull-pill-hp">100</b>${HULL_BAR}</div>
+        <div class="bottom"><div class="combat-status"><div class="status"><header class="tank-label"><small id="vehicle-name">BRUISER</small><b id="rank">ROOKIE</b></header><div class="hull-readout" data-tone="healthy" title="Hull">${hudIcon("hud-hull", "hull-icon")}<b id="hp">100</b><span class="hull-max" id="hp-max">/ 100</span></div>${HULL_BAR}</div>
         <div class="weapon"><div class="ammo-strip" role="group" aria-label="Ammunition">${AMMO_OPTIONS.map(
           ({ weapon, label, name, color, help }, index) =>
             `<button type="button" class="ammo-slot" id="ammo-${weapon}" data-ammo="${weapon}" aria-pressed="false" aria-description="${help}" title="${index + 1}: ${name} — ${help}" style="--ammo-color:#${color.toString(16).padStart(6, "0")}"><kbd>${index + 1}</kbd>${hudIcon(`hud-${weapon}`, "ammo-icon")}${hudIcon("hud-lock", "ammo-lock")}<small>${label}</small><b id="ammo-count-${weapon}">${weapon === "standard" ? "∞" : "0"}</b></button>`,
         ).join(
           "",
-        )}</div><div class="panel-foot"><div class="mine-line">${hudIcon("hud-mine", "mine-icon")}<span id="mine">MINE READY · RMB</span></div><div id="effects" class="effects"></div></div></div></div>
+        )}</div><div class="panel-foot"><span class="ammo-name" id="ammo-name">STANDARD</span></div></div><div class="mine-slot" id="mine-slot" title="Mine (right click)"><span class="mine-dial">${hudIcon("hud-mine", "mine-icon")}<b id="mine-time"></b></span><kbd>RMB</kbd><span class="sr-only" id="mine">MINE READY</span></div><div id="effects" class="effects"></div></div>
+        <div class="hull-compass" aria-hidden="true"><i class="hull"></i><i class="gun"></i></div>
         <div class="combat-notices"><div id="ammo-notice" role="status" aria-live="polite"></div></div>
         </div></div>
         <div id="overlay"></div>`;
@@ -131,9 +135,16 @@ export function controlsMarkup(): string {
 
 /** Who wrecked the viewer, for the respawn card: the killer's name in their team's
  * colour, and tags for the weapon, the tank they drive and their kills so far. */
+/** 1st, 2nd, 3rd, 4th … 11th, 12th, 13th, 21st. */
+export function ordinal(value: number): string {
+  const tens = value % 100;
+  const suffix = tens >= 11 && tens <= 13 ? "TH" : (["TH", "ST", "ND", "RD"][value % 10] ?? "TH");
+  return `${value}${suffix}`;
+}
+
 function wreckedByMarkup(death: DeathReport | null): string {
   if (!death) {
-    return `<div class="wrecked-by"><small>TANK DESTROYED</small><b>WRECKED</b></div>`;
+    return `<div class="wrecked-by"><small>YOUR TANK</small><b>DESTROYED</b></div>`;
   }
   const icon = death.cause ? CAUSE_ICONS[death.cause] : undefined;
   const tags = [
@@ -144,14 +155,14 @@ function wreckedByMarkup(death: DeathReport | null): string {
       ? `<span class="killer-tag">${death.killerVehicle}</span>`
       : "",
     death.killerKills && !death.self
-      ? `<span class="killer-tag">${death.killerKills} KILL${death.killerKills === 1 ? "" : "S"}</span>`
+      ? `<span class="killer-tag">${hudIcon("hud-skull", "killer-tag-icon")}${death.killerKills} KILL${death.killerKills === 1 ? "" : "S"}</span>`
       : "",
   ].join("");
   const [label, name] = death.self
     ? ["OWN GOAL", "YOU"]
     : death.killer
-      ? ["WRECKED BY", escapeHtml(death.killer)]
-      : ["WRECKED BY", "THE YARD"];
+      ? ["DESTROYED BY", escapeHtml(death.killer)]
+      : ["DESTROYED BY", "THE YARD"];
   const side = death.killerTeam === 0 ? " side-blue" : death.killerTeam === 1 ? " side-red" : "";
   return `<div class="wrecked-by${death.self ? " self" : ""}${side}"><small>${label}</small><b>${name}</b>${tags ? `<div class="wrecked-tags">${tags}</div>` : ""}</div>`;
 }
@@ -182,6 +193,15 @@ export function teamOutcome(
   return leader === null ? "draw" : leader === team ? "won" : "lost";
 }
 
+/** Whether the viewer's team is ahead, behind or level, for the standing line's colour. */
+export function standingTone(
+  scores: readonly number[],
+  team: number,
+): "ahead" | "behind" | "level" {
+  const leader = leadingTeam(scores);
+  return leader === null ? "level" : leader === team ? "ahead" : "behind";
+}
+
 function leadingTeam(scores: readonly number[]): number | null {
   return scores[0] === scores[1] ? null : scores[0] > scores[1] ? 0 : 1;
 }
@@ -203,8 +223,8 @@ const ACTION_ICONS = {
   setup: actionIcon("M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"),
 };
 
-/** Pause's first tab: where the battle stands. Each team's progress to the score limit
- * (or a solo run's tally), the clock, and the viewer's tank and round so far. */
+/** Pause's first tab: where the battle stands. A solo run's tally, then the clock and
+ * the viewer's tank and round so far. */
 function pauseOverviewMarkup(hud: HudState): string {
   const viewer = hud.human;
   const solo = hud.gameMode === "solo";
@@ -213,18 +233,15 @@ function pauseOverviewMarkup(hud: HudState): string {
     : hud.match.overtime
       ? "Overtime · next kill wins"
       : `${duration(Math.ceil(hud.match.time))} left`;
+  // A team battle's score is on the header's plates already; the body adds only facts.
   const objective = solo
     ? `<div class="pause-objective solo"><div><b>${viewer.kills}</b><small>KILLS</small></div><div><b>${hud.activeEnemies}</b><small>ENEMIES ACTIVE</small></div><div><b>1</b><small>LIFE</small></div></div>`
-    : `<div class="pause-objective">${[0, 1]
-        .map((index) => {
-          const score = hud.match.scores[index];
-          const share = hud.endlessMatch ? 0 : Math.min(1, score / Math.max(1, hud.scoreLimit));
-          return `<div class="objective-team ${index === 0 ? "blue" : "red"}${index === hud.humanTeam ? " yours" : ""}"><span>${hud.teamNames[index]}${index === hud.humanTeam ? "<em>YOU</em>" : ""}</span><b>${score}${hud.endlessMatch ? "" : `<small> / ${hud.scoreLimit}</small>`}</b><i style="--share:${share.toFixed(3)}"></i></div>`;
-        })
-        .join("")}</div>`;
-  const deaths = viewer.deaths;
+    : "";
+  const place = solo ? null : teamPlace(hud.scoreboard, viewer.id);
+  const fact = (label: string, value: string, note = "") =>
+    `<div><dt>${label}</dt><dd>${value}${note ? `<small>${note}</small>` : ""}</dd></div>`;
   return `${objective}
-    <dl class="pause-facts"><div><dt>Objective</dt><dd>${solo ? "Survive · one life" : hud.endlessMatch ? "Endless battle" : `First to ${hud.scoreLimit}`}</dd></div><div><dt>Clock</dt><dd>${clock}</dd></div><div><dt>Your tank</dt><dd>${escapeHtml(viewer.vehicleName)} · ${escapeHtml(viewer.rankName)}</dd></div><div><dt>Your round</dt><dd>${viewer.kills} kill${viewer.kills === 1 ? "" : "s"} · ${deaths} wreck${deaths === 1 ? "" : "s"}</dd></div></dl>`;
+    <dl class="pause-facts">${fact("Objective", solo ? "Survive" : hud.endlessMatch ? "Endless battle" : `First to ${hud.scoreLimit}`, solo ? "One life" : "")}${fact("Clock", clock)}${fact("Difficulty", hud.difficulty[0].toUpperCase() + hud.difficulty.slice(1))}${fact("Your tank", escapeHtml(viewer.vehicleName), escapeHtml(viewer.rankName))}${fact("Your kills", String(viewer.kills), wreckLine(viewer.deaths))}${place ? fact("In your team", `${ordinal(place.place).toLowerCase()} of ${place.of}`, "by kills") : fact("Bots", String(hud.activeEnemies), "active")}</dl>`;
 }
 
 export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
@@ -235,7 +252,7 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
   if (phase === "paused") {
     return `
       <section class="menu compact pause-menu" aria-labelledby="pause-title">
-        <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span></div><div class="dialog-title"><h2 id="pause-title">PAUSED</h2>${solo ? "" : scoreMarkup(hud.match.scores, "Score", hud.teamNames)}</div><p class="dialog-lede">The battle waits until you resume.</p></header>
+        <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span></div><div class="dialog-title"><h2 id="pause-title">PAUSED</h2>${solo ? "" : scoreMarkup(hud.match.scores, "Score", hud.teamNames)}</div>${solo ? `<p class="dialog-lede">The battle waits until you resume.</p>` : `<p class="dialog-standing" data-tone="${standingTone(hud.match.scores, hud.humanTeam)}">${standingLine(hud.match.scores, hud.humanTeam, hud.teamNames)}</p>`}</header>
         <div class="dialog-tabs" role="tablist" aria-label="Pause"><button type="button" role="tab" id="pause-tab-battle" aria-selected="true" aria-controls="pause-battle">BATTLE</button><button type="button" role="tab" id="pause-tab-controls" aria-selected="false" aria-controls="pause-controls" tabindex="-1">CONTROLS</button></div>
         <div class="dialog-pane" id="pause-battle" role="tabpanel" aria-labelledby="pause-tab-battle">${pauseOverviewMarkup(hud)}</div>
         <div class="dialog-pane" id="pause-controls" role="tabpanel" aria-labelledby="pause-tab-controls" hidden>${controlsMarkup()}</div>
@@ -263,21 +280,22 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
     } else {
       outcome = teamOutcome(scores, team, hud.match.winner, endedEarly);
       title = OUTCOME_TITLES[outcome as keyof typeof OUTCOME_TITLES];
-      // The plates carry the numbers; the sentence names who was ahead, so the two never
-      // read in different orders.
+      // The plates carry the scores; the sentence names who was ahead and by how much,
+      // never the scores in a second order.
       const leader = leadingTeam(scores);
       const sideName = (index: number) =>
         index === team ? "Your team" : teamLabel(hud.teamNames[index]);
       const winner = hud.match.winner ?? 0;
+      const margin = Math.abs(scores[0] - scores[1]);
       const result = endedEarly
         ? leader === null
           ? "Level when the battle ended"
-          : `${sideName(leader)} led when the battle ended`
-        : `${sideName(winner)} took the round${hud.match.overtime ? " in overtime" : ""}`;
+          : `${sideName(leader)} led by ${margin} when the battle ended`
+        : `${sideName(winner)} took the round${hud.match.overtime ? " in overtime" : margin ? ` by ${margin}` : ""}`;
       lede = `${result} · ${wreckLine(viewer.deaths)}`;
     }
     return `<section class="menu compact results" data-outcome="${outcome}" data-team="${side}" aria-labelledby="results-title">
-      <header class="dialog-head results-banner"><div class="dialog-eyebrow"><span class="eyebrow">${endedEarly ? "ENDED EARLY" : solo ? mode : "ROUND COMPLETE"} · ${hud.mapName.toUpperCase()}</span></div>
+      <header class="dialog-head results-banner"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span>${endedEarly ? `<span class="ended-early">ENDED EARLY</span>` : ""}</div>
       <div class="dialog-title"><h2 id="results-title">${title}</h2>${solo ? "" : scoreMarkup(scores, "Final score", hud.teamNames)}</div>
       <p class="dialog-lede">${lede}</p></header>
       <div class="results-body${solo ? "" : " with-board"}"><div class="results-you">${hud.recap ? recapMarkup(hud, hud.recap) : ""}</div>${solo ? "" : scoreboardMarkup(hud.scoreboard, viewer.id, hud.teamNames, scores)}</div>
@@ -288,9 +306,9 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
     return `
       <section class="menu respawn" aria-labelledby="respawn-title">
         <header class="respawn-head">${wreckedByMarkup(death?.report ?? null)}
-          <div class="respawn-timer"><h2 id="respawn-title"><small>BACK IN THE FIGHT</small>RESPAWN IN</h2><div class="respawn-ring" id="respawn-fill"><span id="respawn-count">3</span></div></div>
+          <div class="respawn-timer"><h2 id="respawn-title">RESPAWN IN</h2><div class="respawn-ring" id="respawn-fill"><span id="respawn-count">3</span></div></div>
         </header>
-        <p class="respawn-pick">Pick your next tank<small>It rolls out when the timer ends</small></p>
+        <p class="respawn-pick">Choose your next tank<small>Click one · it rolls out when the timer ends</small></p>
         <p id="death-cause" class="sr-only" role="status"></p>
         </section>`;
   }
