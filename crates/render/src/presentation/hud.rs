@@ -83,7 +83,13 @@ pub fn protection_meters(
 /// it under this size, and a low or close camera (hero shots, the turret seat)
 /// shrinks it in the world so it reads as a compact tag over the hull, never a slab
 /// or a signboard across the sky.
-pub const BAR_MAX_SCREEN_SHARE: f64 = 0.07;
+pub const BAR_MAX_SCREEN_SHARE: f64 = 0.055;
+/// A tank this close to the lens (the turret seat, a hero shot) gets a smaller share
+/// still, easing up to the full share by `BAR_FAR_DISTANCE`: a near tank fills the view
+/// by itself, and its tag should stay a tag.
+const BAR_NEAR_SCREEN_SHARE: f64 = 0.035;
+const BAR_NEAR_DISTANCE: f64 = 12.0;
+const BAR_FAR_DISTANCE: f64 = 30.0;
 /// It never shrinks below this, so a tank right under the lens keeps a readable bar.
 const BAR_MIN_SCALE: f64 = 0.2;
 /// A view shorter than this many CSS pixels (a phone) draws its bars larger, up to
@@ -97,7 +103,11 @@ const BAR_MAX_BOOST: f64 = 1.8;
 /// tall (0 when unknown).
 pub fn bar_scale(distance: f64, fov_y: f64, rim_width: f64, css_height: f64) -> f64 {
     let view_height = 2.0 * distance * (fov_y / 2.0).tan();
-    let cap = BAR_MAX_SCREEN_SHARE * view_height / rim_width;
+    let far =
+        ((distance - BAR_NEAR_DISTANCE) / (BAR_FAR_DISTANCE - BAR_NEAR_DISTANCE)).clamp(0.0, 1.0);
+    let far = far * far * (3.0 - 2.0 * far);
+    let share = BAR_NEAR_SCREEN_SHARE + (BAR_MAX_SCREEN_SHARE - BAR_NEAR_SCREEN_SHARE) * far;
+    let cap = share * view_height / rim_width;
     let boost = if css_height > 0.0 {
         (BAR_REFERENCE_CSS_HEIGHT / css_height).clamp(1.0, BAR_MAX_BOOST)
     } else {
@@ -199,11 +209,14 @@ mod tests {
         let fov = 45f64.to_radians();
         // Far cameras draw the bar at its authored size.
         assert_eq!(bar_scale(60.0, fov, 1.84, 900.0), 1.0);
-        // A close camera shrinks it to the same share of the view.
-        let near = bar_scale(8.0, fov, 1.84, 900.0);
+        // A close camera shrinks it to a smaller share of the view than a far one.
+        let near = bar_scale(11.8, fov, 1.84, 900.0);
         assert!(near < 0.5, "{near}");
-        let share = 1.84 * near / (2.0 * 8.0 * (fov / 2.0).tan());
-        assert!((share - BAR_MAX_SCREEN_SHARE).abs() < 1e-9);
+        let share = 1.84 * near / (2.0 * 11.8 * (fov / 2.0).tan());
+        assert!((share - BAR_NEAR_SCREEN_SHARE).abs() < 1e-9);
+        let mid = bar_scale(21.0, fov, 1.84, 900.0);
+        let mid_share = 1.84 * mid / (2.0 * 21.0 * (fov / 2.0).tan());
+        assert!(mid_share > BAR_NEAR_SCREEN_SHARE && mid_share < BAR_MAX_SCREEN_SHARE);
         assert_eq!(bar_scale(0.01, fov, 1.84, 900.0), BAR_MIN_SCALE);
         // A phone's short view grows it, within a bound.
         assert_eq!(bar_scale(60.0, fov, 1.84, 400.0), BAR_MAX_BOOST);
