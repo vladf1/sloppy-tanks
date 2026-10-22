@@ -6430,8 +6430,8 @@ html.phone,
   border: 0;
   border-bottom: 2px solid transparent;
   background: none;
-  color: #b8d2e6;
-  font: 800 12px/1 var(--font-ui);
+  color: #c6dcee;
+  font: 800 13px/1 var(--font-ui);
   letter-spacing: 1.6px;
   cursor: pointer;
 }
