@@ -399,7 +399,14 @@ fn scenery_matches_typescript() {
     for (name, lines) in &actual {
         // Harbor Havoc's scenery and containers were redrawn after the port; the
         // harbor budget tests bound them instead.
-        if name.starts_with("harbor") || name.starts_with("container-") {
+        // Pine Village was repainted the same way (tree atlas, shared matte paint,
+        // knolls beyond the wall); `forest_normals_match_typescript_on_a_grid`
+        // and the showcase budget bound it.
+        if name.starts_with("harbor")
+            || name.starts_with("container-")
+            || name == "village"
+            || name == "waterwheel"
+        {
             continue;
         }
         let Some((_, reference)) = expected.iter().find(|(n, _)| n == name) else {
@@ -439,8 +446,9 @@ fn scenery_matches_typescript() {
 
 /// Normals of the background forest batches on a 1/65536 grid
 /// (`Math.round(n * 65536) >>> 0`, FNV-1a): how many batches the cells hold and
-/// the FNV-1a of their hashes in order, as the Pine Village art pass left them.
-const FOREST_NORMALS: (usize, u32) = (63, 0x7ca5_3554);
+/// the FNV-1a of their hashes in order, as the Pine Village art pass left them
+/// (one atlas batch per cell and compass sector).
+const FOREST_NORMALS: (usize, u32) = (16, 0x22ca_7d78);
 
 #[test]
 fn forest_normals_match_typescript_on_a_grid() {
