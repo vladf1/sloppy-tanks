@@ -41,9 +41,10 @@ pub struct CameraFeel {
     pub threat_range: f64,
     /// The focus sits this fraction of the zoom up the screen from the tank.
     pub frame_ahead: f64,
-    /// A big blast close by draws the view this fraction of the way toward it,
-    /// letting go over `blast_look_seconds`.
+    /// A big blast close by draws the view this fraction of the way toward it, up
+    /// to `max_blast_look_ahead` of the zoom, letting go over `blast_look_seconds`.
     pub blast_look_ahead: f64,
+    pub max_blast_look_ahead: f64,
     pub blast_look_seconds: f64,
     /// All of the leads together stay within this fraction of the zoom.
     pub max_look_ahead: f64,
@@ -52,6 +53,17 @@ pub struct CameraFeel {
     pub max_travel_look_ahead: f64,
     /// A focus this far from its target (a respawn, leaving the overview) snaps.
     pub snap_distance: f64,
+    /// The leads ride their own critically damped spring of this frequency (rad/s).
+    pub lead_frequency: f64,
+    /// The follow camera frames at `calm_framing` of the chosen zoom, closing to
+    /// `combat_framing` as the nearest enemy nears: the frame wants
+    /// `framing_per_metre` of zoom per metre to it plus `framing_margin`, and eases
+    /// there at `framing_rate` per second.
+    pub calm_framing: f64,
+    pub combat_framing: f64,
+    pub framing_per_metre: f64,
+    pub framing_margin: f64,
+    pub framing_rate: f64,
     /// At `full_speed` (m/s) the camera eases back by this fraction of the zoom,
     /// approaching it at `speed_zoom_rate` per second.
     pub speed_zoom: f64,
@@ -67,6 +79,16 @@ pub struct CameraFeel {
     pub kick_frequency: f64,
     pub kick_damping: f64,
     pub max_kick_offset: f64,
+    /// Knocks also tip the horizon on a spring of this frequency (rad/s) and
+    /// damping ratio, within `max_roll` (rad): the viewer's shot, a kill, a hit at
+    /// full strength and a blast close by, as angular speeds (rad/s).
+    pub roll_frequency: f64,
+    pub roll_damping: f64,
+    pub max_roll: f64,
+    pub fire_roll: f64,
+    pub kill_roll: f64,
+    pub hurt_roll: f64,
+    pub blast_roll: f64,
     /// The viewer's own shot: trauma and backward kick speed (m/s); rockets scale both.
     pub fire_trauma: f64,
     pub fire_kick: f64,
@@ -88,8 +110,8 @@ pub struct CameraFeel {
     pub kill_punch_in: f64,
     pub punch_attack: f64,
     pub punch_release: f64,
-    /// Any tank destroyed nearby pulls the camera in by up to this share of a
-    /// kill's dolly, fading over `blast_reach`.
+    /// Any tank destroyed nearby pulls the camera in and knocks the horizon by up
+    /// to this share of a kill's, fading over `blast_reach`.
     pub nearby_death_punch: f64,
     /// A big blast close by pulls it in by up to this share.
     pub blast_punch: f64,
@@ -112,22 +134,31 @@ pub struct CameraFeel {
     pub first_person_bob: f64,
     pub first_person_sway_roll: f64,
     pub first_person_shudder: f64,
+    /// Share of that shudder the idling engine keeps.
+    pub first_person_idle_rumble: f64,
 }
 
 pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     follow_frequency: 7.5,
     aim_look_ahead: 0.32,
-    max_aim_look_ahead: 0.17,
-    threat_look_ahead: 0.28,
-    max_threat_look_ahead: 0.16,
+    max_aim_look_ahead: 0.2,
+    threat_look_ahead: 0.5,
+    max_threat_look_ahead: 0.3,
     threat_range: 30.0,
-    frame_ahead: 0.05,
+    frame_ahead: 0.02,
     blast_look_ahead: 0.35,
+    max_blast_look_ahead: 0.1,
     blast_look_seconds: 1.4,
-    max_look_ahead: 0.26,
+    max_look_ahead: 0.34,
     travel_look_ahead_seconds: 0.14,
     max_travel_look_ahead: 2.0,
     snap_distance: 14.0,
+    lead_frequency: 3.2,
+    calm_framing: 0.78,
+    combat_framing: 0.64,
+    framing_per_metre: 1.15,
+    framing_margin: 6.0,
+    framing_rate: 1.2,
     speed_zoom: 0.06,
     full_speed: 8.0,
     speed_zoom_rate: 2.5,
@@ -137,6 +168,13 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     kick_frequency: 15.0,
     kick_damping: 0.55,
     max_kick_offset: 0.9,
+    roll_frequency: 10.0,
+    roll_damping: 0.38,
+    max_roll: 0.07,
+    fire_roll: 0.12,
+    kill_roll: 0.9,
+    hurt_roll: 0.32,
+    blast_roll: 0.5,
     fire_trauma: 0.14,
     fire_kick: 3.2,
     hurt_trauma_per_damage: 0.011,
@@ -150,7 +188,7 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     kill_punch_in: 0.13,
     punch_attack: 28.0,
     punch_release: 2.4,
-    nearby_death_punch: 0.45,
+    nearby_death_punch: 0.55,
     blast_punch: 0.3,
     fire_fov_kick: 1.6,
     fov_kick_release: 9.0,
@@ -161,7 +199,8 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     first_person_bob_metres: 3.2,
     first_person_bob: 0.045,
     first_person_sway_roll: 0.016,
-    first_person_shudder: 0.006,
+    first_person_shudder: 0.008,
+    first_person_idle_rumble: 0.3,
 };
 
 pub struct Feedback {
@@ -175,6 +214,8 @@ pub struct Feedback {
     /// (single player only: a room's clock belongs to the server).
     pub hit_stop_seconds: f64,
     pub hit_stop_time_scale: f64,
+    /// The viewer's hits on an enemy hold it for this long.
+    pub hit_confirm_stop_seconds: f64,
 }
 
 pub const FEEDBACK: Feedback = Feedback {
@@ -186,6 +227,7 @@ pub const FEEDBACK: Feedback = Feedback {
     flash_decay: 12.0,
     hit_stop_seconds: 0.07,
     hit_stop_time_scale: 0.06,
+    hit_confirm_stop_seconds: 0.035,
 };
 
 /// How tanks carry their weight on screen (render-only; physics keeps the true pose).
@@ -214,6 +256,12 @@ pub struct TankFeel {
     pub max_flash: f64,
     pub flash_decay: f64,
     pub flash_color: [f64; 3],
+    /// The drawn gun slams back over `recoil_slam` seconds, holds for
+    /// `recoil_hold` and runs out again over `recoil_return`, however quickly the
+    /// simulation's own recoil recovers.
+    pub recoil_slam: f64,
+    pub recoil_hold: f64,
+    pub recoil_return: f64,
     /// Top-run tread scroll (model units per metre driven) and its wrap length
     /// (the top run's link pitch).
     pub track_scroll: f64,
@@ -221,21 +269,24 @@ pub struct TankFeel {
 }
 
 pub const TANK_FEEL: TankFeel = TankFeel {
-    recoil_travel: 0.34,
-    recoil_climb: 0.07,
-    fire_rock: 0.75,
-    rocket_rock: 1.0,
+    recoil_travel: 0.5,
+    recoil_climb: 0.09,
+    fire_rock: 1.1,
+    rocket_rock: 1.45,
     fire_shove: 2.0,
-    hit_rock_per_damage: 0.022,
-    max_hit_rock: 1.2,
-    hit_shove_per_damage: 0.07,
-    max_hit_shove: 3.5,
+    hit_rock_per_damage: 0.03,
+    max_hit_rock: 1.5,
+    hit_shove_per_damage: 0.09,
+    max_hit_shove: 4.0,
     shove_frequency: 16.0,
     shove_damping: 0.5,
     flash_per_damage: 0.03,
     max_flash: 1.0,
     flash_decay: 13.0,
     flash_color: [2.2, 2.0, 1.8],
+    recoil_slam: 0.035,
+    recoil_hold: 0.06,
+    recoil_return: 0.42,
     track_scroll: 0.5,
     track_period: 0.25,
 };
@@ -251,6 +302,12 @@ pub struct Eye {
 /// The camera mounted on the player's turret.
 pub struct FirstPerson {
     pub field_of_view: f64,
+    /// The eye sits this far left of the gun's axis (so the barrel runs in from the
+    /// lower right, clear of the weapon panel), this much below and ahead of the
+    /// vehicle's eye (model units).
+    pub eye_side: f64,
+    pub eye_drop: f64,
+    pub eye_ahead: f64,
     /// A slight downward tilt shows the ground ahead without hiding the horizon.
     pub pitch: f64,
     pub mouse_radians_per_pixel: f64,
@@ -278,7 +335,10 @@ pub struct FirstPerson {
 }
 
 pub const FIRST_PERSON: FirstPerson = FirstPerson {
-    field_of_view: 58.0,
+    field_of_view: 52.0,
+    eye_side: 0.62,
+    eye_drop: 0.05,
+    eye_ahead: 0.15,
     pitch: -0.07,
     mouse_radians_per_pixel: 0.0032,
     touch_turn_radians_per_second: 2.4,
@@ -317,6 +377,9 @@ pub const fn first_person_eye(kind: VehicleKind) -> Eye {
 
 /// Overhead, the reticle lies just above the aiming plane (`reticle.ts`).
 pub const RETICLE_HEIGHT: f64 = 1.05;
+/// Its size at the default zoom; it scales with the drawn zoom to keep its size
+/// on screen, a little smaller than the target tank so the hit stays visible.
+pub const OVERHEAD_RETICLE_SCALE: f64 = 0.9;
 /// The overhead aiming plane (`presentation.ts` `groundPlane`).
 pub const AIM_PLANE_HEIGHT: f64 = 1.0;
 /// Tank bars float above the hull; the player's sits higher.
