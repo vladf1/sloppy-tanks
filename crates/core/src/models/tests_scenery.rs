@@ -521,7 +521,6 @@ fn scenery_textures_per_theme() {
             "textures/harbor/container.webp",
             "generated:harbor-container-liveries",
             "generated:harbor-labels",
-            "textures/houses/siding.webp",
         ]
     );
     assert_eq!(

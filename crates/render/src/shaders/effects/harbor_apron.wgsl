@@ -637,12 +637,13 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let patch_hash = apron_hash(patch_cell + vec2f(3.0, 11.0));
         let patch_size = vec2f(2.0, 1.4) + patch_hash.zw * vec2f(3.5, 3.0);
         let patch_at = vec2f(0.6) + patch_hash.xy * (vec2f(APRON_PATCH_CELL) - patch_size - 1.2);
-        let ragged = (apron_noise(p * 1.6 + patch_hash.zw * 17.0) - 0.5) * 0.25;
+        let ragged = (apron_noise(p * 1.3 + patch_hash.zw * 17.0) - 0.5) * 0.5
+            + (apron_noise(p * 4.1 + 7.0) - 0.5) * 0.12;
         let inside = min(
             min(patch_local.x - patch_at.x, patch_at.x + patch_size.x - patch_local.x),
             min(patch_local.y - patch_at.y, patch_at.y + patch_size.y - patch_local.y),
         ) + ragged;
-        let has_patch = step(0.86, patch_hash.x * 0.6 + patch_hash.w * 0.6);
+        let has_patch = step(0.93, patch_hash.x * 0.6 + patch_hash.w * 0.6);
         let patched = clamp(inside / patch_aa + 0.5, 0.0, 1.0) * has_patch;
         let seal = (1.0 - smoothstep(0.0, 0.05, abs(inside))) * has_patch
             * smoothstep(0.35, 0.55, apron_noise(p * 1.1 + 3.0));
@@ -664,7 +665,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let oxidised = clamp(worn * (1.0 - traffic.x * 0.7) + (section.y - 0.5) * 0.6, 0.0, 1.0);
         var base = material.color.rgb * f.tint.rgb * mix(0.9, 1.06, grain_luma * 0.5) * mix(0.88, 1.1, section.x)
             * mix(vec3f(0.92), vec3f(1.3, 1.26, 1.2), oxidised) * mix(1.0, 1.2, ravel);
-        base = mix(base, material.color.rgb * vec3f(0.86, 0.87, 0.9) * mix(0.92, 1.04, grain_luma * 0.5), patched);
+        // A patch is the lane's own mix laid later: a shade blacker and less
+        // oxidised, so it reads as a repair rather than a dark slab stuck on.
+        base = mix(base, mix(base, material.color.rgb * mix(0.92, 1.04, grain_luma * 0.5), 0.45) * 0.94, patched);
         let stone_weight = mix(mix(0.32, 0.65, ravel), 0.12, patched);
         color = base * (1.0 + aggregate * stone_weight + stones * stone_weight * 0.7) * grime;
         color = color * mix(1.0, 0.8, tyre * (0.35 + traffic.x * 0.65));
@@ -697,8 +700,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let traffic_x = apron_traffic(offsets.y, offsets.w);
         let traffic = max(max(traffic_z.x, traffic_x.x), max(traffic_z.y, traffic_x.y) * 0.6);
         let age = apron_noise(p / 13.0 + 31.0);
-        let flakes = apron_noise(p * 1.7) * 0.55 + apron_noise(p * 0.6 + 3.0) * 0.3 + (grain_luma - 1.0) * 0.12;
-        let threshold = 0.1 + smoothstep(0.55, 0.9, age) * 0.22 + traffic * 0.2;
+        let flakes = apron_noise(p * 1.1) * 0.55 + apron_noise(p * 0.45 + 3.0) * 0.35 + (grain_luma - 1.0) * 0.08;
+        let on_apron = 1.0 - step(0.0, outside);
+        // The wall tops see no wheels: their paint only weathers in old patches.
+        let threshold = (0.1 + smoothstep(0.55, 0.9, age) * 0.22 + traffic * 0.2) * mix(0.3, 1.0, on_apron);
         let flake_aa = max(fwidth(flakes), 0.01);
         let worn = smoothstep(threshold - flake_aa, threshold + flake_aa, flakes);
         if mode < 3.5 {
@@ -712,7 +717,6 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         color = mix(color, color * vec3f(0.45, 0.44, 0.43), rubber * 0.5);
         color = color * mix(0.8, 1.04, clamp(fine - 0.3, 0.0, 1.0)) * mix(0.93, 1.02, mottle);
         // Rain lies on the apron's paint, not on the wall tops above it.
-        let on_apron = 1.0 - step(0.0, outside);
         color = color * (1.0 - contact * 0.4);
         color = color * mix(1.0, 0.85, damp * on_apron);
         roughness = mix(roughness, 0.35, puddle * on_apron);

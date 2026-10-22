@@ -1,5 +1,6 @@
 //! Port of `harbor-vessels.ts`: moored container ships and quay gantry cranes
-//! beyond the harbor wall. Ships bob and crane loads sway; see [`harbor_fleet`].
+//! beyond the harbor wall, and the tugs working the side channels. Crane loads sway
+//! and the tugs run their loops; see [`harbor_fleet`].
 
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
@@ -1052,14 +1053,11 @@ pub fn harbor_fleet() -> Node {
     group
 }
 
-/// `HarborFleet.update(time)`: ships bob and roll slightly, crane loads sway.
+/// `HarborFleet.update(time)`: crane loads sway and the tugs run their loops. The
+/// moored ships lie still: their bob was a few centimetres no camera could see, and
+/// holding them lets the renderer bake them into the static scenery, so a view of
+/// the basin no longer draws every ship part again, nor shadows nor reflects it.
 pub fn update_harbor_fleet(fleet: &mut Node, time: f64) {
-    for (i, &(_, _, yaw, _, _)) in SHIPS.iter().enumerate() {
-        let ship = &mut fleet.children[i];
-        let i = i as f64;
-        ship.position.y = (time * 0.55 + i * 2.0).sin() * 0.07;
-        ship.set_rotation_euler((time * 0.42 + i).sin() * 0.0018, yaw, 0.0);
-    }
     for i in 0..CRANES.len() {
         let crane = &mut fleet.children[SHIPS.len() + i];
         let load = crane.children.last_mut().expect("crane load");

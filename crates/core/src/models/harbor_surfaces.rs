@@ -192,12 +192,53 @@ pub fn apron_box(w: f64, h: f64, d: f64, color: u32, mode: ApronMode) -> Node {
 /// marking into one draw.
 pub fn marking(w: f64, h: f64, d: f64, color: u32) -> Node {
     let mesh = MARKINGS.get_or_insert(([w, h, d].map(f64::to_bits), color), || {
-        let mut geometry = box_geometry(w, h, d);
+        let mut geometry = visible_faces(box_geometry(w, h, d), [w, h, d]);
         let [r, g, b] = hex_to_linear(color);
         geometry.colors = vec![[r as f32, g as f32, b as f32]; geometry.positions.len()];
         geometry
     });
     shadow_receiver(mesh, apron_material(ApronMode::Marking, 0xffffff))
+}
+
+/// A box's faces that can be seen once it lies on the apron or a wall top: never
+/// its underside, nor an edge face under a twentieth of its broadest face (a
+/// stripe's 2 cm sides, a kerb band's top). Hundreds of hazard stripes then cost
+/// two triangles each instead of twelve, in every pass that draws them.
+fn visible_faces(mesh: Mesh, [w, h, d]: [f64; 3]) -> Mesh {
+    const EDGE_FACE: f64 = 0.05;
+    let broadest = (w * h).max(w * d).max(h * d);
+    let keep = |normal: [f32; 3]| {
+        let area = if normal[0].abs() > 0.5 {
+            h * d
+        } else if normal[1].abs() > 0.5 {
+            w * d
+        } else {
+            w * h
+        };
+        normal[1] > -0.5 && area >= broadest * EDGE_FACE
+    };
+    let indices = mesh.indices.clone().unwrap_or_default();
+    let mut out = Mesh {
+        indices: Some(Vec::new()),
+        ..Mesh::default()
+    };
+    let mut remap = vec![u32::MAX; mesh.positions.len()];
+    for triangle in indices.chunks_exact(3) {
+        if !keep(mesh.normals[triangle[0] as usize]) {
+            continue;
+        }
+        for &index in triangle {
+            let index = index as usize;
+            if remap[index] == u32::MAX {
+                remap[index] = out.positions.len() as u32;
+                out.positions.push(mesh.positions[index]);
+                out.normals.push(mesh.normals[index]);
+                out.uvs.push(mesh.uvs[index]);
+            }
+            out.indices.as_mut().expect("indexed").push(remap[index]);
+        }
+    }
+    out
 }
 
 /// A painted lane arrow flat on the apron, pointing along +z from its centre: a

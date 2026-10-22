@@ -19,7 +19,6 @@ use super::harbor_models::{CargoShape, cladding, ship_container};
 use super::harbor_surfaces::{apron_box, apron_material, arrow_marking, marking};
 use super::harbor_vessels::{harbor_fleet, update_harbor_fleet};
 use super::harbor_water::harbor_water;
-use super::house_surfaces::siding_box;
 use super::model_primitives::{
     Cache, DEFAULT_BOX_RADIUS, TEAM_COLORS, adopt_children, beam, box_part, cylinder_part, paint,
     put, rotated, shadow_receiver,
@@ -838,7 +837,7 @@ fn pallet_stack(details: &mut Node, x: f64, z: f64, levels: u32) {
         for plank in 0..5 {
             put(
                 details,
-                siding_box(1.2, 0.04, 0.2, 0xb89764),
+                box_part(1.2, 0.04, 0.2, 0xb89764, 0.0),
                 x,
                 0.14 + level * 0.16,
                 z - 0.5 + f64::from(plank) * 0.25,
@@ -847,7 +846,7 @@ fn pallet_stack(details: &mut Node, x: f64, z: f64, levels: u32) {
         for dx in [-0.5, 0.0, 0.5] {
             put(
                 details,
-                siding_box(0.12, 0.1, 1.2, 0x96764e),
+                box_part(0.12, 0.1, 1.2, 0x96764e, 0.0),
                 x + dx,
                 0.07 + level * 0.16,
                 z,
@@ -1323,9 +1322,11 @@ impl HarborScenery {
                 -2.0,
                 0.0,
             );
-            // Left unbatched: the renderer merges its paint with the rest of its
-            // cell's, and culls it with that cell.
-            let shed = rotated(warehouse(), 0.0, if x < 0.0 { 0.0 } else { PI }, 0.0);
+            // Batched so its cladding bakes into vertex colors and shares the
+            // container paint's one material with the rest of its cell.
+            let mut shed = warehouse();
+            batch(&mut shed);
+            let shed = rotated(shed, 0.0, if x < 0.0 { 0.0 } else { PI }, 0.0);
             put(&mut details, shed, x, WAREHOUSE_FLOOR, 0.0);
         }
         quay_dressing(&mut details, &mut beacons);

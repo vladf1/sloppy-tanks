@@ -220,18 +220,14 @@ fn animated_paths(scenery: &Scenery) -> Vec<Vec<usize>> {
             .map(|(path, _)| vec![path])
             .unwrap_or_default(),
         Scenery::Harbor(_) => {
-            // `HarborScenery::update`: the fleet's ships bob and roll, each crane's
-            // load (its last child) sways, each tug (its lane's last child) runs
-            // its loop, and the beacon group blinks.
+            // `HarborScenery::update`: each crane's load (its last child) sways,
+            // each tug (its lane's last child) runs its loop, and the beacon group
+            // blinks. The moored ships lie still and bake with the static scenery.
             let fleet_index = 1;
             let fleet = &root.children[fleet_index];
             let mut paths = Vec::new();
-            for (index, child) in fleet.children.iter().enumerate() {
-                if index < SHIP_COUNT {
-                    paths.push(vec![fleet_index, index]);
-                } else {
-                    paths.push(vec![fleet_index, index, child.children.len() - 1]);
-                }
+            for (index, child) in fleet.children.iter().enumerate().skip(SHIP_COUNT) {
+                paths.push(vec![fleet_index, index, child.children.len() - 1]);
             }
             paths.push(vec![root.children.len() - 1]);
             paths
@@ -379,8 +375,8 @@ mod tests {
         assert!(village.root.find(WATERWHEEL).is_none());
         let harbor = scenery(Theme::Harbor).expect("harbor");
         assert!(matches!(harbor.water, Some(SceneryWater::Harbor(_))));
-        // Three ships, four crane loads, two tugs and the beacons.
-        assert_eq!(harbor.movers.len(), 10);
+        // Four crane loads, two tugs and the beacons; the moored ships are static.
+        assert_eq!(harbor.movers.len(), 7);
         let quarry = scenery(Theme::Quarry).expect("quarry");
         assert!(quarry.movers.is_empty() && quarry.water.is_none());
         assert!(scenery(Theme::Custom).is_none());

@@ -147,25 +147,19 @@ fn shore_mesh(from: usize, to: usize) -> Option<Node> {
         let theta = -PI + TAU * step as f64 / SEGMENTS as f64;
         let radius = shore_radius(theta);
         let ridge = ridge_height(theta);
-        for (row, &(offset, fraction, lift, color)) in PROFILE.iter().enumerate() {
+        for row in 0..PROFILE.len() {
+            let (offset, height, color) = profile_row(theta, row);
             let jitter = hash(step as u32 * 8 + row as u32, 11) - 0.5;
-            // The waterline rows stay in step so the surf and beach read as bands.
-            let r = radius + offset + jitter * if row < 3 { 0.6 } else { 4.0 };
-            let y = SEA_LEVEL
-                + (ridge * fraction + lift) * land_amount(theta).max(0.2)
-                + jitter * ridge * 0.08;
+            // The waterline rows stay in step so the surf and beach (or the quay
+            // wall) read as bands.
+            // The quay's rows run true; the hills behind it keep their roughness.
+            let rough = if row < 5 { 1.0 - quay_amount(theta) } else { 1.0 };
+            let r = radius + offset + jitter * rough * if row < 3 { 0.6 } else { 4.0 };
+            let y = SEA_LEVEL + height + jitter * rough * ridge * 0.08;
             positions.extend([r * theta.cos(), y, r * theta.sin()]);
             let shade = 0.82 + hash(step as u32 * 8 + row as u32, 23) * 0.3;
             let craggy = (row == 4 || row == 5) && ridge > 22.0 && hash(step as u32, 29) > 0.55;
-            // Built-up shore is a concrete quay rather than a beach.
-            let quayside = row == 2 && built_up(theta);
-            let color = if craggy {
-                ROCK
-            } else if quayside {
-                0xa9a89f
-            } else {
-                color
-            };
+            let color = if craggy && quay_amount(theta) == 0.0 { ROCK } else { color };
             let [cr, cg, cb] = hex_to_linear(scale_hex_color(color, shade));
             colors.push([cr as f32, cg as f32, cb as f32]);
         }
@@ -280,18 +274,62 @@ fn range_mesh(from: usize, to: usize) -> Option<Node> {
 /// height.
 fn on_land(theta: f64, inland: f64) -> (f64, f64, f64) {
     let r = shore_radius(theta) + inland;
-    let ridge = ridge_height(theta);
-    let height = PROFILE
+    let rows: [(f64, f64); 7] = std::array::from_fn(|row| {
+        let (offset, height, _) = profile_row(theta, row);
+        (offset, height)
+    });
+    let height = rows
         .windows(2)
         .find(|pair| inland <= pair[1].0)
-        .map_or(0.55 * ridge, |pair| {
+        .map_or(rows[6].1, |pair| {
             let (a, b) = (pair[0], pair[1]);
             let t = ((inland - a.0) / (b.0 - a.0)).clamp(0.0, 1.0);
-            let ya = ridge * a.1 + a.2;
-            let yb = ridge * b.1 + b.2;
-            ya + (yb - ya) * t
+            a.1 + (b.1 - a.1) * t
         });
     (r * theta.cos(), SEA_LEVEL + height, r * theta.sin())
+}
+
+/// The city's and the terminal's waterfront, east across the bay, as an angle
+/// range: a concrete quay with a sheer wall instead of a beach.
+const WATERFRONT: (f64, f64) = (-0.72, 1.16);
+
+/// How much of the waterfront's quay stands at this angle: 1 along it, easing to
+/// the natural shore over a tenth of a radian at each end.
+fn quay_amount(theta: f64) -> f64 {
+    let inside = (theta - WATERFRONT.0).min(WATERFRONT.1 - theta);
+    let t = (inside / 0.1).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+/// Height of the waterfront's deck above the sea, metres.
+const QUAY_DECK: f64 = 2.8;
+
+/// The waterfront's profile, row for row with [`PROFILE`]: the wall's foot under
+/// water, its dark wet face and fender line, a pale coping, the deck the cranes and
+/// stacks stand on, then the hills behind. (offset, ridge fraction, extra height,
+/// color) as in [`PROFILE`].
+const QUAY_PROFILE: [(f64, f64, f64, u32); 7] = [
+    (-3.0, 0.0, -1.2, 0x3f4547),
+    (-2.8, 0.0, QUAY_DECK - 0.5, 0x2c3133),
+    (-2.6, 0.0, QUAY_DECK, 0xd2d0c6),
+    (6.0, 0.0, QUAY_DECK, 0xa9a89f),
+    (46.0, 0.0, QUAY_DECK, 0x9d9c94),
+    (62.0, 1.0, 0.0, 0x3f5e3a),
+    (110.0, 0.55, 0.0, 0x58704f),
+];
+
+/// Row `row` of the coast's profile at an angle: metres past the shoreline, height
+/// above the sea and color, the natural shore blended into the waterfront's quay.
+fn profile_row(theta: f64, row: usize) -> (f64, f64, u32) {
+    let ridge = ridge_height(theta);
+    let natural = PROFILE[row];
+    let quay = QUAY_PROFILE[row];
+    let q = quay_amount(theta);
+    let land = land_amount(theta).max(0.2);
+    let height = |(_, fraction, lift, _): (f64, f64, f64, u32)| (ridge * fraction + lift) * land;
+    let offset = natural.0 + (quay.0 - natural.0) * q;
+    let y = height(natural) + (height(quay) - height(natural)) * q;
+    (offset, y, if q > 0.5 { quay.3 } else { natural.3 })
 }
 
 const CITY_PAINT: [u32; 7] = [
