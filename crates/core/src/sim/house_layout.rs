@@ -170,6 +170,9 @@ pub struct HouseStyle {
     /// the roof reads as a T from above.
     pub wing: bool,
     pub shutters: Shutters,
+    /// A front-gable cottage's door wall carries a full shed porch roof on
+    /// brackets instead of the small pedimented canopy.
+    pub porch: bool,
     /// Wall top (the eave line) as a fraction of the ridge height: lower walls
     /// under a steep attic roof, higher ones under a shallow one.
     pub eave: f64,
@@ -185,6 +188,7 @@ const fn style(
     dormers: u32,
     wing: bool,
     shutters: Shutters,
+    porch: bool,
     eave: f64,
 ) -> HouseStyle {
     HouseStyle {
@@ -199,15 +203,18 @@ const fn style(
         dormers,
         wing,
         shutters,
+        porch,
         eave,
     }
 }
 
 /// The village's house types, ordered so neighbours in the table differ in form,
 /// finish, colour and roof pitch; [`HouseDesign::facing`] picks one per cottage.
-/// The paints keep to one weathered coastal-village palette: chalky whites, cream,
-/// sage, ochre, slate blue and one oxblood, under charcoal, slate, cedar and
-/// rust-red roofs, so no two hues shout at each other across the green.
+/// The paints keep to one weathered village palette held apart from the teams'
+/// red and blue and from the grass and dirt: chalky whites, cream, putty, ochre,
+/// sage and a grey-green under roofs of charcoal, graphite, slate and pale
+/// weathered zinc, so from overhead every roof stands off the ground by value
+/// and none reads as a team marker.
 #[rustfmt::skip]
 pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use DoorWall::{Eave, Gable as Front};
@@ -217,22 +224,25 @@ pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use WallFinish::{Brick, Clapboard};
     [
         // Cream clapboard, bottle-green plank shutters, a steep charcoal roof and dormers.
-        style(Gable, Front, Shingles, Clapboard, [0xe6dcc6, 0xf6f2e8, 0x2f5040, 0x3b4048], 1, false, Board, 0.6),
+        style(Gable, Front, Shingles, Clapboard, [0xe6dcc6, 0xf6f2e8, 0x2f5040, 0x4a4f57], 1, false, Board, false, 0.6),
         // Soft red brick under a low slate hip roof, navy door and louvres.
-        style(Hip, Front, Shingles, Brick, [0xeadccc, 0xece4d2, 0x24385a, 0x5a626a], 0, false, Louvred, 0.72),
-        // Sage side-gable with an oxblood door under a cross gable and weathered
-        // cedar shingles, a dormer lighting the back of the attic.
-        style(Gable, Eave, Shingles, Clapboard, [0x9aa88a, 0xf1ead8, 0x6a2a24, 0x7a5a42], 3, true, Board, 0.6),
-        // Oxblood front gable under a dark standing-seam roof.
-        style(Gable, Front, Seams, Clapboard, [0x7d4a3e, 0xefe8da, 0x2e2c2a, 0x464c52], 0, false, None, 0.68),
-        // Ochre hip cottage, umber shingles.
-        style(Hip, Front, Shingles, Clapboard, [0xcfad6c, 0xf6f2e8, 0x5c3c22, 0x6a4a34], 0, false, Board, 0.7),
-        // Slate-blue side-gable with navy louvres and a cross gable under charcoal.
-        style(Gable, Eave, Shingles, Clapboard, [0x8098aa, 0xf6f2e8, 0x22314d, 0x3a3e44], 0, true, Louvred, 0.62),
-        // Chalk-white front gable under a rust-red standing-seam roof, black shutters.
-        style(Gable, Front, Seams, Clapboard, [0xeeebe3, 0xffffff, 0x1d2622, 0x7a4a3e], 2, false, Board, 0.6),
-        // Brick side-gable with mossy slate shingles, green louvres and a cross gable.
-        style(Gable, Eave, Shingles, Brick, [0xe2d0be, 0xe8dfca, 0x2f4b3a, 0x56604c], 0, true, Louvred, 0.64),
+        style(Hip, Front, Shingles, Brick, [0xd9d0c6, 0xece4d2, 0x24385a, 0x5a626a], 0, false, Louvred, false, 0.72),
+        // Sage side-gable with an oxblood door under a cross gable and dark slate
+        // shingles, a dormer lighting the back of the attic.
+        style(Gable, Eave, Shingles, Clapboard, [0x9fa98e, 0xf1ead8, 0x6a2a24, 0x4a535c], 3, true, Board, false, 0.6),
+        // Putty front gable with a shed porch over the door, under a pale
+        // weathered-zinc standing-seam roof.
+        style(Gable, Front, Seams, Clapboard, [0xb8a184, 0xefe8da, 0x2e2c2a, 0x7c8282], 0, false, None, true, 0.68),
+        // Ochre hip cottage under graphite shingles.
+        style(Hip, Front, Shingles, Clapboard, [0xcfad6c, 0xf6f2e8, 0x5c3c22, 0x585350], 0, false, Board, false, 0.7),
+        // Grey-green side-gable with black louvres and a cross gable under pale, weathered
+        // cedar shingles gone silver.
+        style(Gable, Eave, Shingles, Clapboard, [0x9db0a6, 0xf6f2e8, 0x232a28, 0x8a8276], 0, true, Louvred, false, 0.62),
+        // Chalk-white front gable with a porch, under a zinc standing-seam roof and
+        // black shutters.
+        style(Gable, Front, Seams, Clapboard, [0xeeebe3, 0xffffff, 0x1d2622, 0x7f8584], 2, false, Board, true, 0.6),
+        // Sand clapboard side-gable with graphite shingles, green louvres and a cross gable.
+        style(Gable, Eave, Shingles, Clapboard, [0xd8c8a2, 0xf3eee2, 0x2f4b3a, 0x55504c], 0, true, Louvred, false, 0.64),
     ]
 };
 
