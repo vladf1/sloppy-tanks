@@ -69,8 +69,6 @@ export function hudMarkup(): string {
         <div class="team coral"><small id="label1">RED</small><b id="score1">0</b><i class="team-progress"><i id="progress1"></i></i></div></div>
         <div class="hud-actions"><button id="view-mode" class="quiet" type="button" aria-label="First-person view" title="First-person view (V)" aria-pressed="false">${hudIcon("hud-eye")}</button><button id="fullscreen" class="quiet" type="button" aria-label="Enter fullscreen" title="Enter fullscreen" aria-pressed="false">${hudIcon("hud-expand")}</button><button id="pause" class="quiet" type="button" aria-label="Pause" title="Pause (Esc)">${hudIcon("hud-pause")}</button>${SETTINGS_BUTTON}</div>
         <div id="feed"></div><div id="toast"></div><div id="damage-direction" role="img" aria-label="Incoming damage" hidden><i></i></div>
-        <div id="hit-marker" aria-hidden="true"><i></i><i></i><i></i><i></i></div>
-        <div id="kill-banner" aria-hidden="true"><i class="kill-flare"></i>${hudIcon("hud-skull", "kill-icon")}<span><small>ELIMINATED</small><b></b></span></div>
         <div id="hull-pill" aria-hidden="true"><small id="hull-pill-name"></small>${hudIcon("hud-hull", "hull-pill-icon")}<b id="hull-pill-hp">100</b>${HULL_BAR}</div>
         <div class="bottom"><div class="combat-status"><div class="status"><header class="tank-label"><small id="vehicle-name">BRUISER</small><b id="rank">ROOKIE</b></header><div class="hull-readout" data-tone="healthy" title="Hull">${hudIcon("hud-hull", "hull-icon")}<b id="hp">100</b><span class="hull-max" id="hp-max">/ 100</span></div>${HULL_BAR}</div>
         <div class="weapon"><div class="ammo-strip" role="group" aria-label="Ammunition">${AMMO_OPTIONS.map(

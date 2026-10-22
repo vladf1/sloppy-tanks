@@ -141,10 +141,7 @@ pub mod frame_slot {
     pub const FIRST_PERSON: usize = 9;
     /// This frame's capped delta in seconds (the HUD advances its timers by it).
     pub const DT: usize = 10;
-    /// The drawn reticle's screen position (NDC, y up): the gun sight in first
-    /// person, the ground aim overhead; NaN while no reticle shows.
-    pub const RETICLE_X: usize = 11;
-    pub const RETICLE_Y: usize = 12;
+    // Slots 11 and 12 are the room page's own (`net_frame_slot`).
     /// The viewer's tank on screen (NDC, y up) for the damage ring; NaN in first
     /// person or off screen.
     pub const VIEWER_X: usize = 13;
@@ -539,9 +536,6 @@ impl Game {
         result[frame_slot::RENDER_MS] = self.times.render_ms as f32;
         result[frame_slot::FIRST_PERSON] = f32::from(u8::from(self.view.rig.first_person.enabled));
         result[frame_slot::DT] = dt as f32;
-        let (reticle_x, reticle_y) = self.view.reticle_ndc().unwrap_or((f32::NAN, f32::NAN));
-        result[frame_slot::RETICLE_X] = reticle_x;
-        result[frame_slot::RETICLE_Y] = reticle_y;
         let (viewer_x, viewer_y) = self.view.viewer_ndc().unwrap_or((f32::NAN, f32::NAN));
         result[frame_slot::VIEWER_X] = viewer_x;
         result[frame_slot::VIEWER_Y] = viewer_y;

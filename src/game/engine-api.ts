@@ -39,9 +39,6 @@ export const FRAME = {
   renderMs: 8,
   firstPerson: 9,
   dt: 10,
-  /** The drawn reticle's screen position (NDC, y up); NaN while none shows. */
-  reticleX: 11,
-  reticleY: 12,
   /** The viewer's tank on screen (NDC, y up); NaN in first person or off screen. */
   viewerX: 13,
   viewerY: 14,

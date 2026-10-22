@@ -794,16 +794,6 @@ impl Presentation {
         }
     }
 
-    /// Where the drawn reticle sits on screen (NDC, y up), so the page's hit marker
-    /// lands on it: the gun sight in first person, the aim on the ground overhead.
-    /// `None` while no reticle shows.
-    pub fn reticle_ndc(&self) -> Option<(f32, f32)> {
-        self.crosshair_visible.then(|| {
-            let point = self.rig.camera.project(self.crosshair.w_axis.truncate());
-            (point.x, point.y)
-        })
-    }
-
     /// Where the viewer's tank sits on screen (NDC, y up), so the page's damage ring
     /// wraps it; `None` in first person or when it is off screen.
     pub fn viewer_ndc(&self) -> Option<(f32, f32)> {
