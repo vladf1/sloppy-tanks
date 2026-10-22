@@ -1252,10 +1252,14 @@ fn rolled_tarp(kit: &mut Kit, from: DVec3, to: DVec3, radius: f64) {
     kit.rod(Coat::Canvas, radius, from, to, 7);
 }
 
+/// Rails and posts of a stowage rack: thick enough that a rail stays a solid line
+/// a couple of pixels wide at the hero camera instead of a stair-stepped wire.
+const RACK_RAIL: f64 = 0.046;
+
 /// An open stowage rack: floor and top rails round three sides, with posts.
 /// `z_front` is where its side rails start, `z_back` its rear rail.
 fn stowage_rack(kit: &mut Kit, half_x: f64, z_front: f64, z_back: f64, floor: f64, top: f64) {
-    let rail = 0.028;
+    let rail = RACK_RAIL;
     let corners = [
         v(half_x, 0.0, z_front),
         v(half_x, 0.0, z_back),
@@ -1419,14 +1423,6 @@ fn balanced_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     for side in [-1.0, 1.0] {
         cavity_cover(kit, roof, side);
     }
-    // Bustle blow-out panels.
-    for side in [-1.0, 1.0] {
-        kit.block(
-            Coat::Shade,
-            v(0.58, 0.008, 0.46),
-            shift(v(side * 0.36, roof + 0.002, -1.42)),
-        );
-    }
     // Bustle rack and its load: bags, rolled tarp, water cans and an ammo box.
     stowage_rack(kit, 0.96, -1.3, -2.18, d + 0.2, d + 0.5);
     bag(kit, v(0.5, d + 0.205, -2.02), v(0.5, 0.26, 0.26), 0.05);
@@ -1511,7 +1507,9 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
             let slope = (0.1 / 1.3_f64).atan();
             let tile = pose(v(x, top(z) + 0.01, z), v(-slope, side * 0.5, 0.0));
             kit.chamfer_block(Coat::Shade, v(0.2, 0.025, 0.26), 0.008, tile);
-            for (bx, bz) in [(-0.06, -0.09), (0.06, -0.09), (-0.06, 0.09), (0.06, 0.09)] {
+            // Two bolts on a diagonal: a tile reads as bolted on from any camera
+            // that can see its bolts at all.
+            for (bx, bz) in [(-0.06, -0.09), (0.06, 0.09)] {
                 kit.block(
                     Coat::Steel,
                     v(0.022, 0.012, 0.022),
@@ -1628,7 +1626,7 @@ fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
         let module = pose(v(side * SCOUT_MODULE_X, d + 0.3, -0.42), v(0.0, 0.0, lean));
         kit.chamfer_block(Coat::Shade, v(0.07, 0.26, 0.86), 0.02, module);
         for row in [-0.07, 0.07] {
-            for z in [-0.3, 0.0, 0.3] {
+            for z in [-0.3, 0.3] {
                 kit.block(
                     Coat::Steel,
                     v(0.012, 0.024, 0.024),
@@ -1742,14 +1740,10 @@ fn extra_stowage(kit: &mut Kit, c: &Chassis, variant: u8) {
     }
 }
 
-/// The team's tactical sign, small and stencilled in faded paint on the turret
-/// roof, the same on every tank of a team (a diamond for blue, a forward-pointing
-/// arrowhead for red, like the skirts' sign), so team and facing still read from
-/// the overhead camera without relying on hue alone, while the turret roof keeps
-/// its shape (a large white sign read as a hole in it). Stencilled
-/// unit numbers on both turret sides, the turret band and the livery's extra
-/// stowage. The crew livery (the one a human player's tank wears) paints its band
-/// white: the command tank's mark. The gun's white bands give the class.
+/// The team's roof emblem ([`roof_emblem`]), stencilled unit numbers on both
+/// turret sides, the turret band and the livery's extra stowage. The crew livery
+/// (the one a human player's tank wears) paints its band white: the command
+/// tank's mark. The gun's white bands give the class.
 fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
     extra_stowage(kit, c, variant);
     if variant == CREW_LIVERY {
@@ -1762,19 +1756,7 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
             Coat::Marking,
         );
     }
-    let roof = c.deck + roof_rise(c);
-    let length = c.pick(0.34, 0.4, 0.42);
-    let half_width = c.pick(0.16, 0.19, 0.2);
-    let centre = DVec2::new(0.0, c.pick(0.34, 0.42, 0.34));
-    let outline: Vec<DVec2> = if team == Team::Blue {
-        p2(&[(0.0, 0.5), (-1.0, 0.0), (0.0, -0.5), (1.0, 0.0)])
-    } else {
-        p2(&[(0.0, 0.5), (-1.0, -0.5), (0.0, -0.32), (1.0, -0.5)])
-    }
-    .into_iter()
-    .map(|p| centre + DVec2::new(p.x * half_width, p.y * length))
-    .collect();
-    roof_sign(kit, Coat::Stencil, &outline, roof + 0.003);
+    roof_emblem(kit, c, team, c.deck + roof_rise(c) + 0.003);
     let number = unit_number(c.kind, team, variant);
     let d = c.deck;
     for side in [-1.0, 1.0] {
@@ -1797,6 +1779,61 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
         };
         let right = v(0.0, 0.0, -side);
         stencil_number(kit, number, center, right, up, c.pick(0.2, 0.24, 0.27));
+    }
+}
+
+/// The roof emblem's chevron: half its width and half its depth, and the stroke
+/// across each arm; the diamond's half diagonal and stroke (metres at scale 1).
+const CHEVRON_HALF_WIDTH: f64 = 0.56;
+const CHEVRON_HALF_DEPTH: f64 = 0.36;
+const CHEVRON_STROKE: f64 = 0.17;
+const DIAMOND_RADIUS: f64 = 0.36;
+const DIAMOND_STROKE: f64 = 0.13;
+
+/// The team's emblem painted large across the turret roof in the markings' white,
+/// the same on every tank of a team: an open chevron pointing up the gun for red,
+/// a diamond outline for blue (the skirts' signs, drawn bold). From the overhead
+/// camera it carries team and turret facing without relying on hue, and as open
+/// strokes rather than a filled sheet it reads as paint on the roof, not a hole in
+/// it. It fills the bustle roof behind the hatches, the roof's one open field,
+/// placed per class (centre z and scale) between the rear weld and the roof's
+/// back edge.
+fn roof_emblem(kit: &mut Kit, c: &Chassis, team: Team, y: f64) {
+    let (centre_z, scale) = (c.pick(-1.13, -1.48, -1.3), c.pick(0.66, 0.95, 0.7));
+    let at = |x: f64, z: f64| DVec2::new(x * scale, centre_z + z * scale);
+    if team == Team::Blue {
+        let corners = |r: f64| [at(0.0, r), at(r, 0.0), at(0.0, -r), at(-r, 0.0)];
+        let outer = corners(DIAMOND_RADIUS);
+        let inner = corners(DIAMOND_RADIUS - DIAMOND_STROKE * std::f64::consts::SQRT_2);
+        for k in 0..4 {
+            let next = (k + 1) % 4;
+            roof_sign(
+                kit,
+                Coat::Marking,
+                &[outer[k], outer[next], inner[next], inner[k]],
+                y,
+            );
+        }
+    } else {
+        let (w, h, stroke) = (CHEVRON_HALF_WIDTH, CHEVRON_HALF_DEPTH, CHEVRON_STROKE);
+        let arm = (w * w + 4.0 * h * h).sqrt();
+        // The inner edges run parallel to the outer ones a stroke inside; the arms'
+        // ends are cut square to the gun.
+        let inner_apex = h - stroke * arm / w;
+        let inner_end = w - stroke * arm / (2.0 * h);
+        roof_sign(
+            kit,
+            Coat::Marking,
+            &[
+                at(0.0, inner_apex),
+                at(-inner_end, -h),
+                at(-w, -h),
+                at(0.0, h),
+                at(w, -h),
+                at(inner_end, -h),
+            ],
+            y,
+        );
     }
 }
 

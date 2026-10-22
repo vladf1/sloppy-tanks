@@ -29,14 +29,16 @@ use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Attribute, Buckets, Mesh, VERTEX_ALPHA};
 use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 
-/// Service paint per team: a strong cobalt blue and a deep warm signal red, each
-/// one color without a camouflage, so a tank's side reads at a glance. Neither is
-/// a pure primary: the green and blue the red keeps (and the red and green the
-/// blue keeps) leave the grade room to show a lighter roof over darker sides
-/// instead of clipping every face to one flat slab, and keep the red off magenta
-/// in the menu and off maroon from overhead. The blue stays bright enough not to
-/// fall to black in shade.
-pub const VEHICLE_PAINT: [u32; 2] = [0x3462b8, 0x8a2c26];
+/// Service paint per team: a strong cobalt blue and a deep signal red, each one
+/// color without a camouflage, so a tank's side reads at a glance. Neither is a
+/// pure primary: the green and blue the red keeps (and the red and green the blue
+/// keeps) keep the red off magenta in the menu and off maroon from overhead. The
+/// blue stays bright enough not to fall to black in shade. In a round the paint
+/// shader holds their saturation back under the map's saturating grade.
+pub const VEHICLE_PAINT: [u32; 2] = [0x3864ae, 0x862b25];
+/// The Humvee's paint per team: the same team hue a step deeper and flatter, a
+/// soft-skinned truck's matte finish rather than the tanks' satin armor enamel.
+pub const HUMVEE_PAINT: [u32; 2] = [0x34598f, 0x6e2e28];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -65,6 +67,9 @@ const PAINT_REPEAT: f32 = 1.1;
 /// enough that the sky's sheen never washes the color out.
 const PAINT_METALNESS: f32 = 0.08;
 const PAINT_ROUGHNESS: f32 = 0.56;
+/// The Humvee's flat truck paint (the shader shifts all its paint roughness by
+/// the difference from `PAINT_ROUGHNESS`).
+const MATTE_PAINT_ROUGHNESS: f32 = 0.74;
 /// Bare steel and gun metal.
 const METAL_METALNESS: f32 = 0.55;
 const METAL_ROUGHNESS: f32 = 0.4;
@@ -120,16 +125,16 @@ const UPRIGHT: f64 = 0.6;
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
 const RIM_STRENGTH: f32 = 0.55;
-const PAINT_FILL: f32 = 0.11;
+const PAINT_FILL: f32 = 0.14;
 /// Running gear sits in the hull's shadow: more fill, no rim.
-const GEAR_FILL: f32 = 0.45;
+const GEAR_FILL: f32 = 0.6;
 /// Bare steel where the paint chipped through (sRGB).
 const BARE_STEEL: u32 = 0x5c5852;
 /// The paint's value on the turret and on the hull: the turret a step lighter, so
 /// it stands off the deck from the overhead camera and its facing reads at a
 /// glance, the hull a step deeper beneath it.
-const TURRET_VALUE: f64 = 1.04;
-const HULL_VALUE: f64 = 0.84;
+const TURRET_VALUE: f64 = 1.06;
+const HULL_VALUE: f64 = 0.86;
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
 const SIGNAL_GLOW: f32 = 0.0;
@@ -172,6 +177,8 @@ enum Finish {
     Paint {
         paint: u32,
         trim: u32,
+        /// The Humvee's flat finish rather than the tanks' satin enamel.
+        matte: bool,
     },
     Metal,
     Matte,
@@ -198,15 +205,20 @@ fn finish_material(finish: Finish) -> Arc<Material> {
     static METAL: OnceLock<Arc<Material>> = OnceLock::new();
     static MATTE: OnceLock<Arc<Material>> = OnceLock::new();
     match finish {
-        Finish::Paint { paint, trim } => {
-            static PAINTS: Cache<(u32, u32), Material> = Cache::new();
-            return PAINTS.get_or_insert((paint, trim), || Material {
+        Finish::Paint { paint, trim, matte } => {
+            static PAINTS: Cache<(u32, u32, bool), Material> = Cache::new();
+            let roughness = if matte {
+                MATTE_PAINT_ROUGHNESS
+            } else {
+                PAINT_ROUGHNESS
+            };
+            return PAINTS.get_or_insert((paint, trim, matte), || Material {
                 effect: Effect::Custom {
                     name: VEHICLE_PAINT_EFFECT,
                     params: paint_params(paint, trim),
                 },
                 extra_textures: vec![(PAINT_WEAR_TILE, paint_wear_tile())],
-                ..white_vertex_material(PAINT_METALNESS, PAINT_ROUGHNESS)
+                ..white_vertex_material(PAINT_METALNESS, roughness)
             });
         }
         Finish::Metal => METAL.get_or_init(|| {
@@ -410,6 +422,8 @@ pub fn is_signal_panel(material: &Arc<Material>) -> bool {
 /// colors that are bare metal, its recognition panel's color and its grime band.
 pub struct Livery<'a> {
     pub paint: &'a [u32],
+    /// Flat truck paint (the Humvee) rather than satin armor enamel.
+    pub matte: bool,
     pub metal: &'a [u32],
     pub signal: u32,
     pub grime: Grime,
@@ -431,6 +445,7 @@ impl Livery<'_> {
             Finish::Paint {
                 paint: self.paint[0],
                 trim: self.paint.get(1).copied().unwrap_or(self.paint[0]),
+                matte: self.matte,
             }
         } else if color == self.signal {
             Finish::Signal(color)
@@ -700,7 +715,7 @@ fn weathered(
     };
     let base_linear = base.map(hex_to_linear);
     let is_trim = match finish {
-        Finish::Paint { trim, paint } => base == Some(trim) && trim != paint,
+        Finish::Paint { trim, paint, .. } => base == Some(trim) && trim != paint,
         _ => false,
     };
     for (t, &(p, face)) in faces.iter().enumerate() {

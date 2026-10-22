@@ -92,11 +92,8 @@ try {
     }));
     await click(page, "#end-battle");
     await page.locator(".recap-stats").waitFor();
-    // A team battle ended early goes to the side ahead (or a draw); a solo run just ends.
-    assert.match(
-      await page.locator(".results h2").innerText(),
-      mode === "team" ? /^(VICTORY|DEFEAT|DRAW)$/ : /^BATTLE ENDED$/,
-    );
+    // A battle ended early is called ended, never won or lost: the limit decided nothing.
+    assert.match(await page.locator(".results h2").innerText(), /^BATTLE ENDED$/);
     assert.deepEqual(
       await page.evaluate(() => ({
         elapsed: window.sloppy.sim.elapsed,
