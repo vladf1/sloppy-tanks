@@ -26,6 +26,11 @@
 // the side turned from the sun, so it never crushes to black in shade, and a rim in
 // its team's hue at grazing angles, so a vehicle's side reads at range in any grade.
 // Running gear (params[3].w 0) keeps its own colors and takes only the fill.
+// The track belt (params[3].w 3, `track_belt_material`) draws its links from its
+// UVs: u counts links round the loop, v's integer part is the face (0 ground face,
+// 1 running face, 2 outer edge, 3 inner edge) and its fraction the position across
+// it. The links scroll by instance_data.x model units of travel (params[0].x links
+// per unit); wrecks (instance_data.y 1) keep theirs still.
 // Glass (params[3].w 2, `vehicle_glass`) is a dark tint that mirrors the sky
 // toward grazing angles, so windows and sights read as glass from any camera
 // rather than as flat painted or glowing panels.
@@ -33,7 +38,8 @@
 // params[0] = (team paint rgb linear, rim strength), or the glass tint;
 // params[1] = (trim rgb linear, fill strength);
 // params[2] = (rim hue rgb linear, wear tile repeat);
-// params[3] = (bare steel rgb linear, 1 painted armor, 0 running gear or 2 glass).
+// params[3] = (bare steel rgb linear, 1 painted armor, 0 running gear, 2 glass or
+// 3 track belt).
 
 const VEHICLE_EDGE_MARGIN: f32 = 0.04;
 const VEHICLE_EDGE_SPAN: f32 = 0.92;
@@ -85,7 +91,7 @@ const VEHICLE_GRIME_STRENGTH: f32 = 0.8;
 // Upright plates are satin, so their sides catch the sky as painted steel does;
 // decks are flat-finished (and stay under the ground relief's roughness, which
 // would otherwise texture them in world space as they drive).
-const VEHICLE_PAINT_ROUGHNESS: f32 = 0.5;
+const VEHICLE_PAINT_ROUGHNESS: f32 = 0.44;
 const VEHICLE_DECK_ROUGHNESS: f32 = 0.64;
 const VEHICLE_SHEEN_BREAKUP: f32 = 0.1;
 const VEHICLE_DIRT_ROUGHNESS: f32 = 0.92;
@@ -115,8 +121,8 @@ const VEHICLE_SEAM_PIXEL_TO: f32 = 0.028;
 // Non-skid coating on decks: a grain this many cells per metre, varying the paint
 // by this much either way, resolved only close up (the turret roof seen from the
 // commander's hatch).
-const VEHICLE_GRAIN_CELLS: f32 = 85.0;
-const VEHICLE_GRAIN_VALUE: f32 = 0.26;
+const VEHICLE_GRAIN_CELLS: f32 = 55.0;
+const VEHICLE_GRAIN_VALUE: f32 = 0.34;
 const VEHICLE_GRAIN_PIXEL_FROM: f32 = 0.003;
 const VEHICLE_GRAIN_PIXEL_TO: f32 = 0.009;
 // Dust settled on decks: a thin film over broad upward plates (patchy at this many
@@ -124,7 +130,7 @@ const VEHICLE_GRAIN_PIXEL_TO: f32 = 0.009;
 // than these sizes), drifted thicker into recesses, in the map's ground color where
 // the atmosphere is on.
 const VEHICLE_DECK_DUST_CELLS: f32 = 1.6;
-const VEHICLE_DECK_DUST_FILM: f32 = 0.32;
+const VEHICLE_DECK_DUST_FILM: f32 = 0.55;
 const VEHICLE_DECK_DUST_DRIFT: f32 = 0.6;
 const VEHICLE_DECK_DUST_MIN_PLATE: f32 = 0.25;
 const VEHICLE_DECK_DUST_PIXEL_FROM: f32 = 0.012;
@@ -134,7 +140,7 @@ const VEHICLE_CHIP_EXPOSURE: f32 = 0.5;
 // Soft, sun-faded variation across the paint, this many cells per metre and this
 // much either way: broad enough never to read as speckle.
 const VEHICLE_FADE_CELLS: f32 = 2.4;
-const VEHICLE_FADE_VALUE: f32 = 0.06;
+const VEHICLE_FADE_VALUE: f32 = 0.09;
 
 struct VehicleEdges {
     // 1 on a convex edge, fading out over the chip reach.
@@ -183,7 +189,7 @@ fn vehicle_channel(c: f32, gradient: vec3f, bevel_width: f32, e: ptr<function, V
 // Glass: how much of the sky it mirrors head-on and at grazing angles, and a soft
 // diagonal sheen band (along the world's x + z, this many per metre, this wide)
 // that slides across windows as the vehicle turns, as a real reflection does.
-const VEHICLE_GLASS_FACING: f32 = 0.1;
+const VEHICLE_GLASS_FACING: f32 = 0.16;
 const VEHICLE_GLASS_GRAZING: f32 = 0.7;
 const VEHICLE_GLASS_ROUGHNESS: f32 = 0.08;
 const VEHICLE_GLASS_SHEEN: f32 = 0.7;
@@ -227,6 +233,102 @@ fn vehicle_fill(n: vec3f) -> vec3f {
     return hemisphere * (0.3 + 0.7 * away);
 }
 
+// The track belt: dark worn steel shoes with rubber pads on the ground face, a
+// polished path where the twin road wheels run either side of the guide horns on
+// the running face, and bright end connectors bridging each joint on the edges.
+// Joints are dark gaps; the pattern fades to its average where a link is only a
+// few pixels long, so a distant track never shimmers.
+const BELT_STEEL: vec3f = vec3f(0.062, 0.059, 0.054);
+const BELT_POLISHED: vec3f = vec3f(0.2, 0.19, 0.172);
+const BELT_RUBBER: vec3f = vec3f(0.016, 0.016, 0.017);
+const BELT_GAP: f32 = 0.25;
+// Links per pixel over which the pattern fades out.
+const BELT_PIXEL_FROM: f32 = 0.16;
+const BELT_PIXEL_TO: f32 = 0.42;
+// How far the pads' and connectors' sloped ends tilt the normal.
+const BELT_RELIEF: f32 = 0.55;
+// Dust caked on the ground face and climbing the edges.
+const BELT_DUST_GROUND: f32 = 0.26;
+const BELT_DUST_EDGE: f32 = 0.14;
+
+fn belt_band(x: f32, low: f32, high: f32, soft: f32) -> f32 {
+    return smoothstep(low - soft, low + soft, x) * (1.0 - smoothstep(high - soft, high + soft, x));
+}
+
+// The map's dust (`VEHICLE_DUST` tinted by its ground light in a round).
+fn vehicle_dust() -> vec3f {
+    let luma = vec3f(0.2126, 0.7152, 0.0722);
+    let ground = frame.ground_color.rgb;
+    let ground_level = dot(ground, luma);
+    let local_dust = ground * (dot(VEHICLE_DUST, luma) / max(ground_level, 1e-4));
+    let local_share = select(0.0, VEHICLE_DUST_LOCAL, atmosphere_on() && ground_level > 1e-4);
+    return mix(VEHICLE_DUST, local_dust, local_share);
+}
+
+fn vehicle_belt(s: ptr<function, Surface>, f: EffectFragment, tangent: vec3f, links_per_pixel: f32) {
+    let still = f.instance_data.y > 0.5;
+    let scroll = select(f.instance_data.x, 0.0, still) * material.params[0].x;
+    let face = floor(f.uv.y);
+    let across = fract(f.uv.y);
+    let phase = fract(f.uv.x + scroll);
+    let resolved = 1.0 - smoothstep(BELT_PIXEL_FROM, BELT_PIXEL_TO, links_per_pixel);
+    let soft = clamp(links_per_pixel * 0.75, 0.015, 0.2);
+    // The joint between links: a dark gap at phase 0.
+    let joint = 1.0 - belt_band(phase, 0.06, 0.94, soft);
+    var color = BELT_STEEL;
+    var average = BELT_STEEL;
+    var roughness = 0.62;
+    var metalness = 0.4;
+    var relief = 0.0;
+    var dust = 0.0;
+    if face < 0.5 {
+        // Ground face: a rubber pad on each shoe between the end connectors.
+        let pad = belt_band(phase, 0.16, 0.84, soft) * belt_band(across, 0.1, 0.9, soft);
+        let connector = belt_band(phase, 0.0, 0.18, soft) + belt_band(phase, 0.82, 1.0, soft);
+        let ends = 1.0 - belt_band(across, 0.1, 0.9, soft);
+        color = mix(BELT_STEEL, BELT_RUBBER, pad);
+        color = mix(color, BELT_POLISHED * 0.8, connector * ends);
+        average = mix(BELT_STEEL, BELT_RUBBER, 0.55);
+        roughness = mix(0.6, 0.9, pad);
+        metalness = 0.4 * (1.0 - pad);
+        relief = belt_band(phase, 0.1, 0.22, soft) - belt_band(phase, 0.78, 0.9, soft);
+        dust = BELT_DUST_GROUND * (0.6 + 0.4 * pad);
+    } else if face < 1.5 {
+        // Running face: two polished wheel paths, the guide horns between them.
+        let paths = belt_band(across, 0.12, 0.4, soft) + belt_band(across, 0.6, 0.88, soft);
+        let horn = belt_band(across, 0.44, 0.56, soft) * belt_band(phase, 0.3, 0.7, soft);
+        color = mix(BELT_STEEL, BELT_POLISHED, paths * 0.85);
+        color = mix(color, BELT_POLISHED * 1.15, horn);
+        average = mix(BELT_STEEL, BELT_POLISHED, 0.5);
+        roughness = mix(0.62, 0.38, max(paths, horn));
+        metalness = mix(0.4, 0.7, max(paths, horn));
+    } else {
+        // Edges: the rubber pad along the ground side, the shoe above it and the
+        // end connector bridging each joint across the shoe.
+        let pad = 1.0 - smoothstep(0.32 - soft, 0.32 + soft, across);
+        let outer = face < 2.5;
+        let connector = (belt_band(phase, 0.0, 0.2, soft) + belt_band(phase, 0.8, 1.0, soft))
+            * belt_band(across, 0.22, 0.82, soft) * select(0.4, 1.0, outer);
+        color = mix(BELT_STEEL, BELT_RUBBER, pad);
+        color = mix(color, BELT_POLISHED, connector);
+        average = mix(mix(BELT_STEEL, BELT_RUBBER, 0.32), BELT_POLISHED, select(0.12, 0.3, outer));
+        roughness = mix(mix(0.62, 0.9, pad), 0.42, connector);
+        metalness = mix(0.4 * (1.0 - pad), 0.65, connector);
+        relief = (belt_band(phase, 0.76, 0.84, soft) - belt_band(phase, 0.16, 0.24, soft)) * select(0.0, 1.0, outer);
+        dust = BELT_DUST_EDGE * (1.0 - smoothstep(0.0, 0.7, across));
+    }
+    color = mix(color, color * BELT_GAP, joint);
+    color = mix(average, color, resolved) * f.vertex_color.rgb * f.tint.rgb;
+    let grime = select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on());
+    color = mix(color, vehicle_dust() * 0.7, dust * grime);
+    let normal = normalize((*s).normal - tangent * relief * BELT_RELIEF * resolved);
+    (*s).color = color;
+    (*s).normal = normal;
+    (*s).roughness = mix(roughness, VEHICLE_DIRT_ROUGHNESS, dust * grime);
+    (*s).metalness = metalness * (1.0 - dust * grime);
+    (*s).emissive += color * vehicle_fill(normal) * material.params[1].w;
+}
+
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Derivatives and the tile sample first, in uniform control flow.
     let tile = textureSample(extra_texture0, extra_sampler0, f.uv * material.params[2].w);
@@ -234,7 +336,18 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let dpy = dpdy(f.world);
     let dcx = dpdx(f.vertex_color.rg);
     let dcy = dpdy(f.vertex_color.rg);
+    let dux = dpdx(f.uv.x);
+    let duy = dpdy(f.uv.x);
     (*s).opacity = f.tint.a;
+    if material.params[3].w > 2.5 {
+        // The belt's tangent: the world direction in which its link count grows.
+        let n = cross(dpx, dpy);
+        let det = dot(dpx, cross(dpy, n));
+        let gradient = (cross(dpy, n) * dux + cross(n, dpx) * duy) * select(0.0, 1.0 / det, abs(det) > 1e-30);
+        let tangent = gradient / max(length(gradient), 1e-6);
+        vehicle_belt(s, f, tangent, max(abs(dux), abs(duy)));
+        return;
+    }
     if material.params[3].w > 1.5 {
         vehicle_glass(s, f);
         return;
@@ -332,18 +445,18 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let streak = smoothstep(0.58, 0.92, column) * smoothstep(0.35, 0.75, run) * upright * streak_resolved;
     color = mix(color, color * VEHICLE_GRIME, streak * VEHICLE_STREAK_DARKEN / (1.0 - VEHICLE_GRIME.g));
 
-    // Dust and mud thrown up by the tracks: a broken, splashed line.
-    // Studio scenes (the menu cards) keep a lighter dusting: a tank fresh from the
-    // depot, its band grounding it without banding the card in tan.
+    // Dust and mud thrown up by the tracks, following the hull's shape rather than
+    // a flat line: a splashed band along the lowest plates, drifts in the recesses
+    // and on the ledges low on the hull (fender tops, skirt lips), and clean paint
+    // on the open upright panels above. Studio scenes (the menu cards) keep a
+    // lighter dusting: a tank fresh from the depot.
     let dust_strength = select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on()) * VEHICLE_DUST_STRENGTH;
-    let dusty = smoothstep(0.16, 0.52, low + (grime - 0.5) * 0.6) * dust_strength;
-    let muddy = smoothstep(0.6, 0.84, low + (grime - 0.5) * 0.45) * VEHICLE_MUD_STRENGTH;
-    let luma = vec3f(0.2126, 0.7152, 0.0722);
-    let ground = frame.ground_color.rgb;
-    let ground_level = dot(ground, luma);
-    let local_dust = ground * (dot(VEHICLE_DUST, luma) / max(ground_level, 1e-4));
-    let local_share = select(0.0, VEHICLE_DUST_LOCAL, atmosphere_on() && ground_level > 1e-4);
-    let dust = mix(VEHICLE_DUST, local_dust, local_share);
+    let ledge = smoothstep(0.55, 0.85, (*s).normal.y) * smoothstep(0.3, 0.7, low);
+    let band = smoothstep(0.4, 0.78, low + (grime - 0.5) * 0.3);
+    let drifted = edges.recess * smoothstep(0.08, 0.5, low) * (0.6 + 0.8 * grime);
+    let dusty = clamp(max(band, max(drifted, ledge * (0.35 + 0.5 * grime))), 0.0, 1.0) * dust_strength;
+    let muddy = smoothstep(0.74, 0.94, low + (grime - 0.5) * 0.3) * VEHICLE_MUD_STRENGTH;
+    let dust = vehicle_dust();
     color = mix(color, dust * (0.8 + 0.4 * grime), dusty);
     color = mix(color, VEHICLE_MUD, muddy);
     // Dust settled on the decks: a patchy film on broad plates, drifted into
@@ -356,7 +469,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let film = VEHICLE_DECK_DUST_FILM * broad * select(0.0, 1.0, atmosphere_on())
         * (1.0 - smoothstep(VEHICLE_DECK_DUST_PIXEL_FROM, VEHICLE_DECK_DUST_PIXEL_TO, pixel));
     let settled = deck * (1.0 - chamfer) * (1.0 - bevel)
-        * smoothstep(0.38, 0.62, patches + recess * 0.3)
+        * smoothstep(0.3, 0.7, patches + recess * 0.3)
         * (film + VEHICLE_DECK_DUST_DRIFT * recess);
     color = mix(color, dust * (0.95 + 0.3 * grime), settled);
     let dirt = max(max(dusty, muddy), settled * 0.8);

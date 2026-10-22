@@ -1,12 +1,11 @@
 //! Running gear of the three tracked chassis: dished twin road wheels, a toothed
-//! drive sprocket, the idler, return rollers, a track of individual links,
-//! fenders, bolted side skirts and guarded headlights.
+//! drive sprocket, the idler, return rollers, a continuous track belt, fenders,
+//! bolted side skirts and guarded headlights.
 //!
 //! Everything is laid out in the hull's y/z plane per side. The track follows a
 //! belt path: the convex hull of the end road wheels, the sprocket and the idler.
-//! Links on the top run go into `track-group`, which the renderer slides along z
-//! by up to one [`TOP_RUN_PITCH`] as the tank drives; every other link is fixed to
-//! the hull, so the ground run never slides off the wheels.
+//! The belt is one mesh per side whose links the paint shader draws and scrolls
+//! with the tank's travel, so nothing moves in the model itself.
 //!
 //! Hit boxes are measured from the hull bounds (track group included), so the gear
 //! keeps the former envelope exactly: fenders span the overall width and reach
@@ -23,6 +22,7 @@ use glam::{DVec2, DVec3};
 use super::super::Team;
 use super::super::model_primitives::{Cache, box_part, material, put, shadowed};
 use super::super::tank_kit::planar_uv;
+use super::super::tank_surfaces::{TRACK_BELT_PERIOD, track_belt_material};
 use super::super::vertex_material;
 use super::{Chassis, MARKING_WHITE};
 use crate::geometry::Mesh;
@@ -31,9 +31,6 @@ use crate::scene::{Material, Node};
 
 /// Bottom of the ground-run pads in hull space: the hull's lowest point.
 const TRACK_GROUND: f64 = -0.197;
-/// Slide of the top run per wrap of the renderer's tread scroll (its
-/// `TRACK_PERIOD`): top-run links repeat at this pitch so the wrap is seamless.
-const TOP_RUN_PITCH: f64 = 0.25;
 /// Fender plate thickness; its top stays where the former fender's was.
 const FENDER_THICKNESS: f64 = 0.05;
 const FENDER_WIDTH: f64 = 0.46;
@@ -54,17 +51,13 @@ const RUBBER: u32 = 0x202122;
 /// so each wheel reads as a rubber tyre round its painted disc.
 const TYRE_SIDEWALL: u32 = 0x232425;
 const TYRE_TREAD: u32 = 0x37383a;
-/// Track shoes and their end connectors and guide horns: dark worn steel, the
-/// connectors and horn faces polished brighter where the wheels and ground rub,
-/// so the track shows its link rhythm under the skirts without reading as white
-/// teeth.
+/// Dark worn track steel: the vertex-colored running gear's base color.
 const TRACK_STEEL: u32 = 0x4a4844;
-const TRACK_CONNECTOR: u32 = 0x77736a;
-/// Road wheel discs wear the team paint a shade deeper, as real road wheels are
-/// painted with the hull: the row of wheels reads as painted discs on black
-/// rubber over the track, and as the vehicle's team even below the skirts. A
-/// steel hub cap and lighter bolt heads sit in their centre.
-const WHEEL_PAINT_VALUE: f64 = 0.8;
+/// Road wheel discs: bare cast steel rather than the team paint, so the running
+/// gear reads as its own material under the painted armor, a row of grey discs
+/// ringed by black rubber over the dark belt. A brighter hub cap and bolt heads
+/// sit in their centre.
+const WHEEL_DISC: u32 = 0x5d605f;
 const HUB_STEEL: u32 = 0x5f5c56;
 const HUB_BOLT: u32 = 0x7f7b73;
 /// The sprocket and return rollers: bare dark steel.
@@ -183,9 +176,9 @@ fn track_reach(length: f64) -> f64 {
     length * 1.235 / 2.46 + 0.0175
 }
 
-/// Wheels, sprocket, idler, rollers, track links, fender, skirt and headlight on
-/// one side (`side` is -1 left, +1 right). Top-run links go into `track_group`.
-pub(super) fn running_gear(hull: &mut Node, track_group: &mut Node, c: &Chassis, side: f64) {
+/// Wheels, sprocket, idler, rollers, track belt, fender, skirt and headlight on
+/// one side (`side` is -1 left, +1 right).
+pub(super) fn running_gear(hull: &mut Node, c: &Chassis, side: f64) {
     let gear = gear_layout(c);
     let track_x = side * (c.overall_width / 2.0 - gear.track_inset);
     let reach = track_reach(c.length);
@@ -195,11 +188,7 @@ pub(super) fn running_gear(hull: &mut Node, track_group: &mut Node, c: &Chassis,
     // The outer face of every wheel sits just inside the end connectors.
     let wheel_face = track_x + side * (gear.track_width / 2.0 - link.connector_width - 0.004);
     let wheel_width = gear.track_width - link.connector_width - 0.03;
-    let wheel = wheel_mesh(
-        gear.wheel_radius,
-        wheel_width,
-        scaled_hex(c.color, WHEEL_PAINT_VALUE),
-    );
+    let wheel = wheel_mesh(gear.wheel_radius, wheel_width, WHEEL_DISC);
     let steel = material(SPROCKET_STEEL, 0.55, 0.45);
     let rubber = track_material();
     let wheel_y = wheel_height(&gear);
@@ -226,18 +215,10 @@ pub(super) fn running_gear(hull: &mut Node, track_group: &mut Node, c: &Chassis,
         roller.set_rotation_euler(0.0, if side < 0.0 { PI } else { 0.0 }, 0.0);
         put(hull, roller, wheel_face, y, z);
     }
-    track_links(hull, track_group, &gear, &link, &path, track_x, side);
+    track_belt(hull, &gear, &link, &path, track_x, side);
     fender(hull, c, reach, side);
     skirt(hull, c, &gear, &path, side);
     headlight(hull, c, side);
-}
-
-/// An sRGB color with each channel scaled by `factor`.
-fn scaled_hex(hex: u32, factor: f64) -> u32 {
-    [16, 8, 0].into_iter().fold(0, |out, shift| {
-        let channel = f64::from((hex >> shift) & 0xff) * factor;
-        out | ((channel.round().clamp(0.0, 255.0) as u32) << shift)
-    })
 }
 
 fn wheel_height(gear: &GearLayout) -> f64 {
@@ -335,23 +316,6 @@ impl Piece {
             Piece::Arc { radius, sweep, .. } => radius * sweep,
         }
     }
-
-    /// Point on the path at `s`.
-    fn at(&self, s: f64) -> DVec2 {
-        match *self {
-            Piece::Line { from, to } => from + (to - from).normalize() * s,
-            Piece::Arc {
-                centre,
-                radius,
-                from,
-                ..
-            } => {
-                let angle = from + s / radius;
-                let (sin, cos) = angle.sin_cos();
-                centre + DVec2::new(cos, sin) * radius
-            }
-        }
-    }
 }
 
 /// The track's pin line (the joints, mid-way through the links) in (z, y),
@@ -371,19 +335,6 @@ impl BeltPath {
     fn top_run_surface(&self, z: f64, link: &LinkShape) -> f64 {
         let [from, to] = self.top_run;
         from.y + (to.y - from.y) * (z - from.x) / (to.x - from.x) - link.thickness / 2.0
-    }
-
-    /// The pin-line point `s` along the fixed run, and the piece it lies on.
-    fn fixed_at(&self, mut s: f64) -> (DVec2, Piece) {
-        let mut piece = self.fixed[0];
-        for candidate in &self.fixed {
-            piece = *candidate;
-            if s <= candidate.length() {
-                break;
-            }
-            s -= candidate.length();
-        }
-        (piece.at(s.clamp(0.0, piece.length())), piece)
     }
 }
 
@@ -474,208 +425,172 @@ fn belt_path(gear: &GearLayout, reach: f64, link: &LinkShape) -> BeltPath {
     }
 }
 
-/// Fixed links evenly around the belt (bare links on the ground, horned links
-/// where the track wraps the hubs), and the top run's scrolling links.
-fn track_links(
+/// The track as one continuous belt per side, following the pin line round the
+/// wheels: its ground face, the running face the wheels roll on and both edges.
+/// The links, pads, end connectors and guide horns are drawn by the paint shader's
+/// belt mode from the belt's UVs, and slide round the loop with the tank's travel
+/// (`TRACK_BELT_PERIOD`), so the track reads as a closed, moving belt rather than
+/// a row of separate blocks, for a few hundred triangles a side.
+fn track_belt(
     hull: &mut Node,
-    track_group: &mut Node,
     gear: &GearLayout,
     link: &LinkShape,
     path: &BeltPath,
     track_x: f64,
     side: f64,
 ) {
-    let material = track_material();
-    let ground = link_mesh(link, LinkDetail::Ground);
-    let wrapped = link_mesh(link, LinkDetail::Wrapped);
-    let total: f64 = path.fixed.iter().map(Piece::length).sum();
-    let count = (total / link.pitch).round().max(1.0);
-    let spacing = total / count;
-    let wheel_y = wheel_height(gear);
-    for k in 0..count as u32 {
-        // Each link is the chord between two pins.
-        let (back, _) = path.fixed_at(f64::from(k) * spacing);
-        let (ahead, _) = path.fixed_at(f64::from(k + 1) * spacing);
-        let (_, piece) = path.fixed_at((f64::from(k) + 0.5) * spacing);
-        let direction = (ahead - back).normalize();
-        let inward = DVec2::new(-direction.y, direction.x);
-        let surface = (back + ahead) / 2.0 + inward * (link.thickness / 2.0);
-        // Links curling around a hub carry visible guide horns; the rest are
-        // hidden between the twin road wheels.
-        let around_hub = matches!(piece, Piece::Arc { centre, .. } if centre.y > wheel_y + 0.01);
-        let mesh = if around_hub { &wrapped } else { &ground };
-        let node = placed_link(mesh, &material, surface, direction, side);
-        put(hull, node.0, track_x, node.1.y, node.1.x);
-    }
-    // The top run scrolls forward by up to one pitch: start at its rear end and
-    // stop a pitch short of the front so the run never slides into the hub.
-    let top = link_mesh(link, LinkDetail::TopRun);
-    let [from, to] = path.top_run;
-    let length = from.distance(to);
-    let direction = (to - from).normalize();
-    let inward = DVec2::new(-direction.y, direction.x);
-    let mut d = link.reach() + 0.01;
-    while d + TOP_RUN_PITCH + link.reach() <= length {
-        let point = to - direction * d + inward * (link.thickness / 2.0);
-        let node = placed_link(&top, &material, point, direction, side);
-        put(track_group, node.0, track_x, node.1.y, node.1.x);
-        d += TOP_RUN_PITCH;
-    }
+    let links_per_period = (TRACK_BELT_PERIOD / gear.link_pitch).round();
+    let mesh = belt_mesh(gear, link, path, side, TRACK_BELT_PERIOD / links_per_period);
+    let belt = shadowed(
+        mesh,
+        track_belt_material(links_per_period / TRACK_BELT_PERIOD),
+    );
+    // The mesh is built up from the ground line, so its lowest point stands
+    // exactly on it: the hull bounds (its hit box) are measured from the belt.
+    put(hull, belt, track_x, TRACK_GROUND, 0.0);
 }
 
-/// A link at a running-surface point, turned to the travel direction and mirrored
-/// on the left side; returns the node and its (z, y) position, nudged up where
-/// the track bends onto the ground run. The hull bounds measure each part by its
-/// transformed bounding box, so that box's corners must stay above the ground.
-fn placed_link(
-    mesh: &Arc<Mesh>,
-    material: &Arc<Material>,
-    point: DVec2,
-    direction: DVec2,
+/// Arc segments per full turn where the belt wraps a hub.
+const BELT_ARC_SEGMENTS: f64 = 22.0;
+
+/// The faces of the belt, as the integer part of its v coordinate.
+const BELT_GROUND_FACE: f64 = 0.0;
+const BELT_RUNNING_FACE: f64 = 1.0;
+const BELT_OUTER_EDGE: f64 = 2.0;
+const BELT_INNER_EDGE: f64 = 3.0;
+/// v stays this far inside a face's unit range, so interpolation never crosses
+/// into the next face's code.
+const BELT_V_MARGIN: f64 = 0.02;
+
+static BELTS: Cache<([u64; 4], [i64; 2]), Mesh> = Cache::new();
+
+/// The belt mesh of one side in hull space (y, z; x about the track centre line):
+/// u counts links along the loop (a whole number of them round it, each
+/// `pitch` long within a few per cent), v the face and the position across it.
+fn belt_mesh(
+    gear: &GearLayout,
+    link: &LinkShape,
+    path: &BeltPath,
     side: f64,
-) -> (Node, DVec2) {
-    // Link y points into the loop (left of travel), z along travel.
-    let inward = DVec2::new(-direction.y, direction.x);
-    // Mirrored links (turned half round y) lead with their other end.
-    let along = direction * side.signum();
-    let bounds = mesh.bounding_box();
-    let lowest = [bounds.min, bounds.max]
-        .iter()
-        .flat_map(|a| [bounds.min, bounds.max].map(|b| DVec2::new(a.z, b.y)))
-        .map(|corner| (point + along * corner.x + inward * corner.y).y)
-        .fold(f64::INFINITY, f64::min);
-    let mut position = point;
-    if lowest < TRACK_GROUND {
-        position.y += TRACK_GROUND - lowest;
-    }
-    let pitch = (-direction.y).atan2(direction.x);
-    let mut node = shadowed(mesh.clone(), material.clone());
-    node.set_rotation_euler(pitch, if side < 0.0 { PI } else { 0.0 }, 0.0);
-    (node, position)
-}
-
-#[derive(Clone, Copy, Hash, PartialEq, Eq)]
-enum LinkDetail {
-    /// Shoe with rubber pad and outer end connector.
-    Ground,
-    /// Also the inner edge and the centre guide horn, seen where the track wraps.
-    Wrapped,
-    /// Hidden under the fender: pad face, shoe ends and outer edge only.
-    TopRun,
-}
-
-static LINKS: Cache<([u64; 3], LinkDetail), Mesh> = Cache::new();
-
-/// One track link as a vertex-colored mesh in link space: x across the track
-/// (end connector at +x), y toward the wheels with the running surface at 0, z
-/// along travel. Steel shoe, rubber pad with chamfered ends, connector bridging
-/// the joint ahead.
-fn link_mesh(link: &LinkShape, detail: LinkDetail) -> Arc<Mesh> {
-    let key = [link.pitch, link.thickness, link.width].map(f64::to_bits);
-    LINKS.get_or_insert((key, detail), || {
-        let mut b = MeshBuilder::default();
-        let t = link.thickness;
-        let half = link.shoe / 2.0;
-        let x0 = -link.width / 2.0;
-        let x1 = link.width / 2.0 - link.connector_width;
-        if detail == LinkDetail::TopRun {
-            b.box_faces(
-                [x0, -t, -half],
-                [x1, 0.0, half],
-                Faces {
-                    bottom: Some(RUBBER),
-                    front: Some(TRACK_STEEL),
-                    back: Some(TRACK_STEEL),
-                    right: Some(TRACK_STEEL),
-                    ..Faces::NONE
-                },
+    pitch: f64,
+) -> Arc<Mesh> {
+    let key = [gear.link_pitch, gear.track_width, gear.wheel_radius, pitch].map(f64::to_bits);
+    BELTS.get_or_insert((key, [side as i64, i64::from(gear.road_wheels)]), || {
+        let mut pieces = path.fixed.clone();
+        pieces.push(Piece::Line {
+            from: path.top_run[0],
+            to: path.top_run[1],
+        });
+        // Pin points round the loop with their inward normals and distance.
+        let mut points: Vec<(DVec2, DVec2, f64)> = Vec::new();
+        let mut travelled = 0.0;
+        for piece in &pieces {
+            match *piece {
+                Piece::Line { from, to } => {
+                    let along = (to - from).normalize();
+                    points.push((from, DVec2::new(-along.y, along.x), travelled));
+                }
+                Piece::Arc {
+                    centre,
+                    radius,
+                    from,
+                    sweep,
+                } => {
+                    let steps = (sweep / TAU * BELT_ARC_SEGMENTS).ceil().max(1.0) as u32;
+                    for j in 0..steps {
+                        let angle = from + sweep * f64::from(j) / f64::from(steps);
+                        let outward = DVec2::new(angle.cos(), angle.sin());
+                        points.push((
+                            centre + outward * radius,
+                            -outward,
+                            travelled + radius * sweep * f64::from(j) / f64::from(steps),
+                        ));
+                    }
+                }
+            }
+            travelled += piece.length();
+        }
+        let (first, normal, _) = points[0];
+        points.push((first, normal, travelled));
+        let links = (travelled / pitch).round().max(1.0);
+        let half = link.thickness / 2.0;
+        let (x_out, x_in) = (side * link.width / 2.0, -side * link.width / 2.0);
+        let at = |x: f64, q: DVec2| DVec3::new(x, (q.y - TRACK_GROUND).max(0.0), q.x);
+        let mut mesh = Mesh::default();
+        let mut quad = |corners: [DVec3; 4], normals: [DVec3; 4], uvs: [[f64; 2]; 4]| {
+            let facing = normals.iter().copied().sum::<DVec3>();
+            let order = if (corners[1] - corners[0])
+                .cross(corners[2] - corners[0])
+                .dot(facing)
+                < 0.0
+            {
+                [0, 2, 1, 0, 3, 2]
+            } else {
+                [0, 1, 2, 0, 2, 3]
+            };
+            for k in order {
+                mesh.positions.push(corners[k].as_vec3().to_array());
+                mesh.normals.push(normals[k].as_vec3().to_array());
+                mesh.uvs.push(uvs[k].map(|value| value as f32));
+                mesh.colors.push([1.0; 3]);
+            }
+        };
+        let (low, high) = (BELT_V_MARGIN, 1.0 - BELT_V_MARGIN);
+        for pair in points.windows(2) {
+            let [(p0, n0, s0), (p1, n1, s1)] = [pair[0], pair[1]];
+            let (u0, u1) = (s0 / travelled * links, s1 / travelled * links);
+            let (outer0, outer1) = (p0 - n0 * half, p1 - n1 * half);
+            let (inner0, inner1) = (p0 + n0 * half, p1 + n1 * half);
+            let normal = |n: DVec2| DVec3::new(0.0, n.y, n.x);
+            // Ground face, then the running face the wheels roll on.
+            let ground = BELT_GROUND_FACE;
+            quad(
+                [
+                    at(x_in, outer0),
+                    at(x_out, outer0),
+                    at(x_out, outer1),
+                    at(x_in, outer1),
+                ],
+                [normal(-n0), normal(-n0), normal(-n1), normal(-n1)],
+                [
+                    [u0, ground + low],
+                    [u0, ground + high],
+                    [u1, ground + high],
+                    [u1, ground + low],
+                ],
             );
-            return b.finish();
-        }
-        // Profile in (z, y): shoe above, pad with chamfered ends below.
-        let steel_y = -link.thickness * 0.55;
-        let chamfer = link.shoe * 0.16;
-        let profile = [
-            DVec2::new(-half, 0.0),
-            DVec2::new(half, 0.0),
-            DVec2::new(half, steel_y),
-            DVec2::new(half - chamfer, -t),
-            DVec2::new(-half + chamfer, -t),
-            DVec2::new(-half, steel_y),
-        ];
-        let colors = [
-            TRACK_STEEL,
-            TRACK_STEEL,
-            RUBBER,
-            RUBBER,
-            RUBBER,
-            TRACK_STEEL,
-        ];
-        // A ground-run link's running surface faces the wheels and the skirt,
-        // which hide it from every camera; links wrapping a hub show theirs.
-        let first = usize::from(detail == LinkDetail::Ground);
-        for i in first..profile.len() {
-            let (a, c) = (profile[i], profile[(i + 1) % profile.len()]);
-            let p = |x: f64, q: DVec2| DVec3::new(x, q.y, q.x);
-            b.quad([p(x0, a), p(x0, c), p(x1, c), p(x1, a)], colors[i]);
-        }
-        let mut caps = vec![(x1, 1.0)];
-        if detail == LinkDetail::Wrapped {
-            caps.push((x0, -1.0));
-        }
-        for (x, facing) in caps {
-            let p = |q: DVec2| DVec3::new(x, q.y, q.x);
-            let [a, bb, c, d, e, f] = profile;
-            b.oriented_quad([p(a), p(bb), p(c), p(f)], DVec3::X * facing, TRACK_STEEL);
-            b.oriented_quad([p(f), p(c), p(d), p(e)], DVec3::X * facing, RUBBER);
-        }
-        let [c0, c1] = link.connector_span();
-        b.box_faces(
-            [x1, -0.8 * t, c0],
-            [link.width / 2.0, 0.1 * t, c1],
-            Faces {
-                left: None,
-                ..Faces::all(TRACK_CONNECTOR)
-            },
-        );
-        if detail == LinkDetail::Wrapped {
-            // Centre guide horn: a ridge standing into the wheels.
-            let (w, base, height) = (0.022, half * 0.55, t * 1.1);
-            let corner = |x: f64, z: f64, y: f64| DVec3::new(x, y, z);
-            for x in [-w, w] as [f64; 2] {
-                let facing = DVec3::X * x.signum();
-                b.oriented_tri(
+            let running = BELT_RUNNING_FACE;
+            quad(
+                [
+                    at(x_in, inner0),
+                    at(x_out, inner0),
+                    at(x_out, inner1),
+                    at(x_in, inner1),
+                ],
+                [normal(n0), normal(n0), normal(n1), normal(n1)],
+                [
+                    [u0, running + low],
+                    [u0, running + high],
+                    [u1, running + high],
+                    [u1, running + low],
+                ],
+            );
+            // Both edges, v running from the ground face to the running face.
+            for (x, face) in [(x_out, BELT_OUTER_EDGE), (x_in, BELT_INNER_EDGE)] {
+                let outward = DVec3::X * x.signum();
+                quad(
+                    [at(x, outer0), at(x, outer1), at(x, inner1), at(x, inner0)],
+                    [outward; 4],
                     [
-                        corner(x, -base, 0.0),
-                        corner(x, base, 0.0),
-                        corner(x, 0.0, height),
+                        [u0, face + low],
+                        [u1, face + low],
+                        [u1, face + high],
+                        [u0, face + high],
                     ],
-                    facing,
-                    TRACK_STEEL,
                 );
             }
-            b.oriented_quad(
-                [
-                    corner(-w, base, 0.0),
-                    corner(w, base, 0.0),
-                    corner(w, 0.0, height),
-                    corner(-w, 0.0, height),
-                ],
-                DVec3::new(0.0, base, height).normalize(),
-                TRACK_CONNECTOR,
-            );
-            b.oriented_quad(
-                [
-                    corner(-w, -base, 0.0),
-                    corner(w, -base, 0.0),
-                    corner(w, 0.0, height),
-                    corner(-w, 0.0, height),
-                ],
-                DVec3::new(0.0, base, -height).normalize(),
-                TRACK_CONNECTOR,
-            );
         }
-        b.finish()
+        mesh
     })
 }
 
@@ -1187,15 +1102,6 @@ struct Faces {
 }
 
 impl Faces {
-    const NONE: Faces = Faces {
-        left: None,
-        right: None,
-        bottom: None,
-        top: None,
-        back: None,
-        front: None,
-    };
-
     fn all(color: u32) -> Faces {
         Faces {
             left: Some(color),
@@ -1254,14 +1160,6 @@ impl MeshBuilder {
         let [a, b, c, d] = corners;
         self.oriented_tri([a, b, c], facing, color);
         self.oriented_tri([a, c, d], facing, color);
-    }
-
-    /// A planar quad facing away from the shape it bounds: the corner order's own
-    /// winding (counterclockwise seen from outside) decides.
-    fn quad(&mut self, corners: [DVec3; 4], color: u32) {
-        let [a, b, c, _] = corners;
-        let facing = (b - a).cross(c - a);
-        self.oriented_quad(corners, facing, color);
     }
 
     /// The chosen faces of the axis-aligned box from `min` to `max`.
@@ -1405,7 +1303,6 @@ mod tests {
     use glam::DMat4;
 
     use super::super::tank_model;
-    use super::TOP_RUN_PITCH;
     use crate::geometry::node_bounds;
     use crate::models::tank_surfaces::{ember_material, is_signal_panel};
     use crate::models::{Team, VehicleKind, WreckPart, part, wreck_model};
@@ -1442,19 +1339,37 @@ mod tests {
         }
     }
 
-    /// The renderer slides the top run forward by up to one scroll period; over
-    /// the whole slide it must stay within the track's reach (the fender ends).
+    /// The belt scrolls in its shader, so nothing in the model moves: the tread
+    /// group stays empty and the belt rests on the ground inside the track's reach.
     #[test]
-    fn top_run_stays_on_the_track_while_scrolling() {
+    fn belt_rests_on_the_ground_within_the_track_reach() {
         for kind in VehicleKind::PLAYABLE {
             let model = tank_model(kind, Team::Blue);
             let hull = model.find(part::HULL).unwrap();
-            let reach = node_bounds(hull, DMat4::IDENTITY).max.z;
-            let track = hull.find(part::TRACK_GROUP).unwrap();
-            assert!(track.children.len() > 10, "{kind:?} has a top run");
-            let run = node_bounds(track, DMat4::IDENTITY);
-            assert!(run.min.z > -reach, "{kind:?} rear end");
-            assert!(run.max.z + TOP_RUN_PITCH < reach, "{kind:?} front end");
+            let bounds = node_bounds(hull, DMat4::IDENTITY);
+            assert!(hull.find(part::TRACK_GROUP).unwrap().children.is_empty());
+            let belts: Vec<_> = hull
+                .children
+                .iter()
+                .filter(|child| {
+                    child.drawable.as_ref().is_some_and(|drawable| {
+                        matches!(&drawable.material.effect,
+                            crate::scene::Effect::Custom { params, .. } if params[15] == 3.0)
+                    })
+                })
+                .collect();
+            assert_eq!(belts.len(), 2, "{kind:?} has a belt a side");
+            for belt in belts {
+                let own = node_bounds(belt, DMat4::IDENTITY);
+                assert!(
+                    (own.min.y - super::TRACK_GROUND).abs() < 1e-6,
+                    "{kind:?} rests"
+                );
+                assert!(
+                    own.min.z >= bounds.min.z && own.max.z <= bounds.max.z,
+                    "{kind:?}"
+                );
+            }
         }
     }
 }

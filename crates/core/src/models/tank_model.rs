@@ -2,8 +2,8 @@
 //! balanced tank, Type 99-like heavy) and the dispatch to the Humvee.
 //!
 //! Tree: `root` (named by kind, scaled by the vehicle scale) holds `hull` and
-//! `turret`. The hull holds the tracks group `track-group` (top treads that scroll)
-//! and every fixed hull part; the turret holds `barrel`, whose bore mesh is
+//! `turret`. The hull holds an empty `track-group` (the Humvee's wheels) and every
+//! hull part, its track belts among them; the turret holds `barrel`, whose bore mesh is
 //! `muzzle`. See [`super::part`] for the names.
 
 use std::f64::consts::PI;
@@ -40,9 +40,9 @@ pub(crate) const STEEL: u32 = 0x6f706c;
 /// The team color is the body and the deep trim frames it, so the paint reads as
 /// a designed two-tone livery, each class's add-on armor stands out as armor
 /// rather than as dark openings, and the trim still reads as its team.
-const TRIM: [u32; 2] = [0x1d3762, 0x5a201f];
+const TRIM: [u32; 2] = [0x1d3762, 0x561619];
 /// Sight and vision-block glass: a deep blue-green tint that mirrors the sky.
-const GLASS_TINT: u32 = 0x1d3b42;
+const GLASS_TINT: u32 = 0x25505a;
 const MARKING_WHITE: u32 = 0xdce7ee;
 /// Machine guns, muzzle brakes, clamp bands and cable: dark gun metal.
 const GUNMETAL: u32 = 0x2c2e2f;
@@ -107,7 +107,7 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
         // Team paint, trim and bare steel: the colors the worn finish recognises.
         let colors = [vehicle_paint(team), TRIM[team.index()], STEEL];
         let mut root = if kind == VehicleKind::Humvee {
-            humvee_model(colors)
+            humvee_model(team, colors)
         } else {
             tracked_model(kind, team, colors, open_turret_ring)
         };
@@ -135,7 +135,7 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
 const CONTACT_SHADOW_REACH: f64 = 0.32;
 /// Its darkness under the hull (alpha over the ground) and how far in from its edge
 /// (a share of its half extent) it reaches that darkness.
-const CONTACT_SHADOW_DARKNESS: f32 = 0.6;
+const CONTACT_SHADOW_DARKNESS: f32 = 0.72;
 const CONTACT_SHADOW_CORE: f64 = 0.72;
 /// Height above the ground line, so it never fights the ground's depth.
 const CONTACT_SHADOW_LIFT: f64 = 0.012;
@@ -330,12 +330,12 @@ fn hull(c: &Chassis, open_turret_ring: bool) -> Node {
         let opening = if c.scout { 0.5 } else { 0.65 };
         turret_ring_well(&mut hull, c.deck, opening, ring_radius(c));
     }
-    let track_group_index = hull.children.len();
-    let mut track_group = Node::group(part::TRACK_GROUP);
+    // The renderer still poses the (empty) tread group the Humvee shares; the
+    // belt scrolls in its shader.
+    hull.children.push(Node::group(part::TRACK_GROUP));
     for side in [-1.0, 1.0] {
-        running_gear(&mut hull, &mut track_group, c, side);
+        running_gear(&mut hull, c, side);
     }
-    hull.children.insert(track_group_index, track_group);
     hull
 }
 

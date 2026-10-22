@@ -15,7 +15,7 @@ use std::sync::{Arc, OnceLock};
 use super::model_primitives::{material, paint, put, shadowed};
 use super::tank_model::LENS_ROUGHNESS;
 use super::tank_surfaces::vehicle_glass;
-use super::{VehicleKind, part};
+use super::{Team, VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
 
@@ -24,6 +24,7 @@ mod kit;
 mod turret;
 mod wheel;
 
+use body::hood_insignia;
 use kit::Role;
 
 /// The body shell and wheelbase are stretched by this factor along z.
@@ -50,6 +51,8 @@ const CANVAS: u32 = 0x4f4a38;
 const HEADLAMP: u32 = 0xe5ddbc;
 const AMBER: u32 = 0xdf923b;
 const RED_LAMP: u32 = 0x931e16;
+/// The hood insignia's white, the tanks' marking white.
+const INSIGNIA_WHITE: u32 = 0xdce7ee;
 /// Rubber, seals and canvas are matte.
 const MATTE_ROUGHNESS: f64 = 0.92;
 
@@ -104,8 +107,8 @@ impl Palette {
 }
 
 /// `humveeModel(team, false)` in `colors` (paint, shade, steel), before the
-/// vehicle scale and worn finish.
-pub(super) fn humvee_model(colors: [u32; 3]) -> Node {
+/// vehicle scale and worn finish, with the team's insignia on the hood.
+pub(super) fn humvee_model(team: Team, colors: [u32; 3]) -> Node {
     let [base, shade, steel] = colors;
     let palette = Palette { base, shade, steel };
     let shared = assemblies();
@@ -134,6 +137,10 @@ pub(super) fn humvee_model(colors: [u32; 3]) -> Node {
     }
     hull.children.push(track_group);
     hull.children.extend(palette.parts(&shared.body));
+    hull.children.push(shadowed(
+        Arc::new(hood_insignia(team)),
+        material(INSIGNIA_WHITE, 0.0, MATTE_ROUGHNESS),
+    ));
     root.children.push(hull);
     root.children.push(turret(&palette));
     root

@@ -1943,13 +1943,28 @@ impl Presentation {
                 barrel.rotation * Quat::from_rotation_x(-(recoil * TANK_FEEL.recoil_climb) as f32),
                 barrel.scale,
             );
-            let scroll = if tank.kind == VehicleKind::Humvee {
-                0.0
+            let track_pose = if tank.kind == VehicleKind::Humvee {
+                // The wheels stay planted while the body rocks on its springs: the
+                // wheel group takes back the hull's pitch and roll.
+                track.with_rotation(
+                    track.rotation
+                        * euler_yxz(
+                            (suspension.pitch.angle + shudder_pitch) as f32,
+                            0.0,
+                            (suspension.roll.angle + shudder_roll) as f32,
+                        )
+                        .inverse(),
+                )
             } else {
-                motion.tread_scroll()
+                // The belts scroll in their shader (instance data x).
+                renderer
+                    .set_instance_data(view.instance, [motion.belt_scroll() as f32, 0.0, 0.0, 0.0]);
+                track.with_position(Vec3::new(
+                    track.position.x,
+                    track.position.y,
+                    motion.tread_scroll() as f32,
+                ))
             };
-            let track_pose =
-                track.with_position(Vec3::new(track.position.x, track.position.y, scroll as f32));
             for (joint, pose) in [
                 (hull.index, hull_pose),
                 (turret.index, turret_pose),

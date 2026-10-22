@@ -85,8 +85,8 @@ const SCENE = {
     normalBias: 0.02,
   },
   pointLight: {
-    color: 0xe6ecff,
-    intensity: 7,
+    color: 0xd6e3ff,
+    intensity: 11,
     distance: 0,
     decay: 0,
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
