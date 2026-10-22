@@ -407,7 +407,7 @@ pub(super) fn chimney_breaks(
 const FOLD_WIDTH: f64 = 1.1;
 const REFOLD_WIDTH: f64 = 1.5;
 const WALL_FOLD: (f64, f64) = (0.2, 0.4);
-const ROOF_FOLD: (f64, f64) = (0.2, 0.38);
+const ROOF_FOLD: (f64, f64) = (0.3, 0.52);
 const FOLD_WANDER: f64 = 0.18;
 const FOLD_SLIP: f64 = 0.04;
 
@@ -482,7 +482,10 @@ fn fold_once(
     let axis = (b - a).normalize_or(DVec3::Y);
     let pivot = (a + b) / 2.0;
     let (low, high) = if wall { WALL_FOLD } else { ROOF_FOLD };
-    let sign = if rng.next() < 0.5 { 1.0 } else { -1.0 };
+    // A wall panel buckles either way; a roof slab's snapped rafters let it sag,
+    // its halves draping down off the crack over whatever it lies on, never
+    // tenting up like card.
+    let sign = if rng.next() < 0.5 || !wall { -1.0 } else { 1.0 };
     let angle = rng.range(low, high) * sign;
     let slip = axis * rng.range(-FOLD_SLIP, FOLD_SLIP);
     let bend = |angle: f64| {
