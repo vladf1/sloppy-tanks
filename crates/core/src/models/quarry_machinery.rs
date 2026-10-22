@@ -16,7 +16,7 @@ use super::tank_surfaces::armor_wear_texture;
 use crate::geometry::math::{hex_to_linear, normalize, quat_from_unit_vectors, smoothstep};
 
 // Sun-faded industrial yellow, dusty steel, rusty red and one muted teal accent.
-const PAINT: u32 = 0xc69a4b;
+pub(super) const PAINT: u32 = 0xc69a4b;
 const STEEL: u32 = 0x5a564c;
 const RUBBER: u32 = 0x343431;
 const GLASS: u32 = 0x526c72;
@@ -56,7 +56,7 @@ fn fleet_paint(color: u32) -> Arc<Material> {
 
 /// `weatherPaint(group)`: every standard-shaded fleet-yellow or cab-roof part in
 /// the assembly (nested groups included) takes the weathered paint.
-fn weather_paint(node: &mut Node) {
+pub(super) fn weather_paint(node: &mut Node) {
     if let Some(drawable) = &mut node.drawable {
         let color = drawable.material.color.0;
         if drawable.material.effect == crate::scene::Effect::None

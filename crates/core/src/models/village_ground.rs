@@ -135,8 +135,11 @@ fn road_families(x: f64, z: f64) -> (f64, f64) {
 /// few places swell into broad bites where traffic spilled onto the grass.
 fn edge_wander(x: f64, z: f64) -> f64 {
     let swell = 1.0 + 1.7 * smoothstep(noise(x * 0.027 + 4.0, z * 0.027 - 2.0, 14), 0.52, 0.86);
-    ((fbm(x * 0.05, z * 0.05, 11) - 0.45) * 3.4 + (noise(x * 0.023, z * 0.023, 13) - 0.4) * 2.2)
+    ((fbm(x * 0.05, z * 0.05, 11) - 0.45) * 3.8 + (noise(x * 0.023, z * 0.023, 13) - 0.4) * 2.4)
         * swell
+        // Whole lawns differ: some worn well back from their roads, others
+        // reaching out over the shoulders.
+        + (noise(x * 0.012 + 2.3, z * 0.012 - 1.1, 16) - 0.45) * 3.2
         + (noise(x * 0.23, z * 0.23, 12) - 0.5) * 0.7
 }
 
@@ -374,9 +377,9 @@ impl ArenaPlan {
         // Grass survives in the quiet middle of a road, between and beside the
         // wheel lines, in ragged islands and medians.
         let quiet = 1.0 - smoothstep(traffic, 0.1, 0.34);
-        let islands = smoothstep(fbm(x * 0.11 + 7.0, z * 0.11 - 3.0, 24), 0.42, 0.62);
+        let islands = smoothstep(fbm(x * 0.11 + 7.0, z * 0.11 - 3.0, 24), 0.38, 0.6);
         let survives = quiet * islands * smoothstep(road, 1.2, 2.8);
-        dirt *= 1.0 - survives * 0.65;
+        dirt *= 1.0 - survives * 0.8;
         // Trampled grass: wide where tanks cut the corners, a soft verge elsewhere.
         let corner = smooth_max(along, across, rounding + CORNER_TRAMPLE) + wander;
         let patchy = 0.55 + 0.45 * fbm(x * 0.09, z * 0.09, 21);
@@ -452,6 +455,16 @@ impl ArenaPlan {
         [dirt, trampled.min(1.0), garden, 1.0 - shade]
     }
 }
+
+/// The cottages' vegetable plots: centre and half extents in world metres. The
+/// ground paints their soil and rows; the vegetation grows heads along them.
+pub fn vegetable_plots() -> Vec<(DVec2, DVec2)> {
+    ArenaPlan::new().plots
+}
+
+/// Metres between the vegetable rows the ground paints (`veg_row` in
+/// `meadow_sway.wgsl`, `sin(x * 11.4)`); the rows run north-south.
+pub const VEGETABLE_ROW: f64 = std::f64::consts::TAU / 11.4;
 
 /// A crop field outside the wall: centre, full size, row direction (radians from
 /// +x) and crop (0 ripe wheat, 1 young rows, 2 ploughed, 3 mown hay).
