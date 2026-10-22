@@ -9,9 +9,9 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, PALLET_HEIGHT, TreeShape, aged_wreck_material, cover_damage_stage,
-    crate_piece_model, create_arena_floor, create_spawn_pads, flags_model, house_pieces, part,
-    pickup_cube, pickup_glyph_offset, pickup_signal, pickup_tile_offset, tank_model,
+    FLAG_CLOTH_NODE, LID_SIZE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape, aged_wreck_material,
+    cover_damage_stage, crate_piece_model, create_arena_floor, create_spawn_pads, flags_model,
+    house_pieces, part, pickup_cube, pickup_lid, pickup_signal, pickup_tile_offset, tank_model,
     timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage,
     tree_part, wreck_brightness, wreck_model,
 };
@@ -21,6 +21,7 @@ use sloppy_core::sim::crate_layout::{CratePiece, crate_section_looks};
 use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, pickup, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::house_layout::HousePiece;
+use sloppy_core::sim::math::Point3;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
@@ -56,7 +57,7 @@ use super::view_settings::{
 use crate::camera::PerspectiveCamera;
 use crate::color::hex_to_linear;
 use crate::effects::leaves::Crown as LeafCrown;
-use crate::effects::pickups::supply_turn;
+use crate::effects::pickups::{supply_turn, supply_wear};
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 use crate::effects::{CosmeticRandom, Effects};
 use crate::gpu::{
@@ -68,23 +69,43 @@ mod inspect;
 
 /// A dead tank's model hides; the live model rides this far below the body.
 const TANK_MODEL_DROP: f64 = 0.4;
-/// A collected supply is handed up off its pallet and stowed on the rear deck of the
-/// tank that took it: it is lifted from the hull's top over the pallet and carried
-/// in a low arc back onto the deck, where it lands with a thump that rocks the hull
-/// and squashes it a little, rides there strapped down for a moment as the tank
-/// drives on, then is taken into the stowage bin and fades. How long the carry
-/// takes, how high it arcs, its size as it is lifted and as it is stowed, how long it
-/// rides and how long it takes to fade; the thump's rock (rad/s) and squash.
-const SUPPLY_CARRY_SECONDS: f64 = 0.32;
-const SUPPLY_CARRY_ARC: f64 = 0.4;
-const SUPPLY_LIFT_SCALE: f64 = 0.5;
-const SUPPLY_STOW_SCALE: f64 = 0.4;
-const SUPPLY_RIDE_SECONDS: f64 = 0.95;
-const SUPPLY_FADE_SECONDS: f64 = 0.25;
-const SUPPLY_THUMP_ROCK: f64 = 0.8;
-const SUPPLY_THUMP_SQUASH: f64 = 0.18;
-/// Where on the rear deck it rides: this far in from the hull's back edge.
-const SUPPLY_DECK_INSET: f64 = 0.55;
+/// A tank takes a supply by driving over it: the crate is crushed under the hull,
+/// its pallet broken flat, and its painted lid is thrown out from under the hull's
+/// edge (`LID_CLEARANCE` outside the hull's footprint, `LID_START` high) at
+/// `LID_THROW` (outward, upward; m/s), flipping end over end `LID_FLIPS` times to
+/// land face up, bouncing once (`LID_BOUNCE`: height, seconds) and sliding on a
+/// little (`LID_SLIDE` of its throw), then lies `LID_REST_SECONDS` and sinks away
+/// over `LID_SINK_SECONDS`.
+const LID_CLEARANCE: f64 = 1.1;
+const LID_START: f64 = 0.3;
+const LID_THROW: [f64; 2] = [4.2, 2.6];
+const LID_GRAVITY: f64 = 9.8;
+const LID_FLIPS: f64 = 1.0;
+const LID_BOUNCE: [f64; 2] = [0.1, 0.16];
+const LID_SLIDE: f64 = 0.12;
+const LID_REST_SECONDS: f64 = 1.3;
+const LID_SINK_SECONDS: f64 = 0.45;
+/// The broken pallet's wood the crushing throws out with the lid: how much
+/// (`SimEvent::size` of a shattered board) and its colour.
+const CRUSH_SPLINTERS: f64 = 1.7;
+const CRUSH_WOOD: u32 = 0x9c7a52;
+/// The bump of the crate crushed under the hull rocks it (rad/s).
+const CRUSH_ROCK: f64 = 0.7;
+/// A tank driving onto a stocked crate presses it down under its hull before it is
+/// close enough to take it: from when the crate's centre is `PRESS_REACH` outside
+/// the hull's footprint until it is `PRESS_DEPTH` inside it, down to `PRESS_FLOOR`
+/// of its height, bulging out by `PRESS_BULGE`.
+const PRESS_REACH: f64 = 0.85;
+const PRESS_DEPTH: f64 = 0.1;
+const PRESS_FLOOR: f64 = 0.3;
+const PRESS_BULGE: f64 = 0.12;
+/// Tanks further than this from a crate (origin to its centre) cannot reach it.
+const TANK_PRESS_RANGE: f32 = 5.5;
+/// A restocked supply is dropped onto its fresh pallet from `RESTOCK_DROP` metres,
+/// falling for `RESTOCK_FALL` seconds and squashing by `RESTOCK_SQUASH` as it lands.
+const RESTOCK_DROP: f64 = 2.4;
+const RESTOCK_FALL: f64 = 0.36;
+const RESTOCK_SQUASH: f64 = 0.16;
 /// Felling boughs (`tree-debris.ts`). Their leaves catch the air: linear drag per
 /// second slows the fall and the tumble. Landed, they lie until the debris cleanup
 /// sinks them out of sight.
@@ -183,16 +204,15 @@ struct BarModel {
     spawn_fill: JointBasis,
 }
 
-/// A pickup kind's supply item, stocked on its pallet or swung onto a tank.
+/// A pickup kind's supply item, stocked on its pallet.
 struct PickupModel {
     gem: ModelId,
 }
 
-/// What every supply drop shares: the pallet and the ground marking the instance
-/// tint paints in the kind's colour.
+/// What every supply drop shares: the pallet, and the lid a crushed crate throws.
 struct PadModels {
     base: ModelId,
-    rim: ModelId,
+    lid: ModelId,
 }
 
 struct MineModel {
@@ -369,12 +389,12 @@ impl Library {
         })
     }
 
-    /// The pallet and marking every supply drop shares; instance tints paint the
-    /// marking by kind.
+    /// The pallet and the lid every supply drop shares; instance data paints them
+    /// by kind.
     fn pickup_pad(&mut self, renderer: &mut Renderer) -> &PadModels {
         self.pickup_pad.get_or_insert_with(|| PadModels {
             base: renderer.add_model(&own::pickup_base(), Lifetime::Shared),
-            rim: renderer.add_model(&own::pickup_rim(), Lifetime::Shared),
+            lid: renderer.add_model(&pickup_lid(), Lifetime::Shared),
         })
     }
 }
@@ -488,36 +508,31 @@ struct FragmentView {
 
 struct PickupView {
     base: InstanceId,
-    rim: InstanceId,
     gem: InstanceId,
-    /// The marking's stencil offset for the kind (`pickup_glyph_offset`), and the
-    /// kind's atlas tile, which paints the pallet's smoke grenade.
-    glyph: [f32; 2],
+    /// The kind's atlas tile, and this drop's weathering (instance data `w`).
     tile: [f32; 2],
-    /// Whether the views show the supply stocked (None: not yet set).
+    wear: f32,
+    /// Where the item stands on its pallet at rest.
+    rest: Mat4,
+    /// Whether the views show the supply stocked (None: not yet set), when it was
+    /// last restocked (for the drop onto its pallet) and whether the item is posed
+    /// away from rest (dropping or pressed under a hull).
     shown: Option<bool>,
+    restocked: f64,
+    posed: bool,
+    /// How far the supply has restocked (0..1, 1 while stocked).
+    progress: f32,
 }
 
-/// A collected supply carried off its pallet onto the rear deck of the tank that
-/// took it.
-struct PickupRise {
+/// The lid a crushed crate throws out from under the tank that took it.
+struct ThrownLid {
     instance: InstanceId,
-    /// The tank it goes to.
-    tank: Option<u32>,
-    /// The pallet it left, and its turn there.
-    x: f64,
-    z: f64,
-    turn: f64,
-    /// Where it rides on the deck (world), the hull's heading and its rear (unit,
-    /// world), last seen; kept for a tank gone before the load fades.
-    deck: Vec3,
-    heading: f64,
-    rear: Vec3,
-    /// The height it is lifted from: the hull's top.
-    lift: f32,
+    /// Where it leaves the hull's edge (ground level), the unit direction it is
+    /// thrown (world, level), its heading on landing and its age.
+    from: Vec3,
+    out: Vec3,
+    yaw: f32,
     age: f64,
-    /// It has landed and thumped the hull.
-    landed: bool,
 }
 
 struct MineView {
@@ -637,7 +652,7 @@ pub struct Presentation {
     /// last filled.
     chimneys: Vec<(u32, bool)>,
     pickups: HashMap<u32, PickupView>,
-    pickup_rises: VecDeque<PickupRise>,
+    thrown_lids: VecDeque<ThrownLid>,
     mines: HashMap<u32, MineView>,
     /// The spawn pads mines may lie on, for their drawn height.
     pad_decks: SpawnPadDecks,
@@ -714,7 +729,7 @@ impl Presentation {
             settled: SettledShards::default(),
             chimneys: Vec::new(),
             pickups: HashMap::new(),
-            pickup_rises: VecDeque::with_capacity(FEEDBACK.max_pickup_effects),
+            thrown_lids: VecDeque::with_capacity(FEEDBACK.max_pickup_effects),
             mines: HashMap::new(),
             pad_decks: SpawnPadDecks::default(),
             branches: VecDeque::new(),
@@ -995,7 +1010,7 @@ impl Presentation {
         // Round models go with the round.
         self.settled.clear();
         self.pickups.clear();
-        self.pickup_rises.clear();
+        self.thrown_lids.clear();
         self.mines.clear();
         self.branches.clear();
         self.sample_models.clear();
@@ -1433,51 +1448,44 @@ impl Presentation {
 
     fn add_pickup(&mut self, id: u32, kind: PickupKind, x: f64, z: f64) {
         let gem_model = self.library.pickup(&mut self.renderer, kind).gem;
-        let (base_model, rim_model) = {
-            let pad = self.library.pickup_pad(&mut self.renderer);
-            (pad.base, pad.rim)
-        };
+        let base_model = self.library.pickup_pad(&mut self.renderer).base;
         let turn = Quat::from_rotation_y(supply_turn(id) as f32);
         let ground = Vec3::new(x as f32, 0.0, z as f32);
+        let scale = Vec3::splat(SUPPLY_SCALE as f32);
+        let rest = Mat4::from_scale_rotation_translation(
+            scale,
+            turn,
+            ground + Vec3::Y * (PALLET_HEIGHT * SUPPLY_SCALE) as f32,
+        );
         let renderer = &mut self.renderer;
         let base = renderer
             .add_instance(
                 base_model,
-                Mat4::from_rotation_translation(turn, ground),
+                Mat4::from_scale_rotation_translation(scale, turn, ground),
                 Lifetime::Round,
             )
             .expect("pallet model");
-        let rim = renderer
-            .add_instance(
-                rim_model,
-                Mat4::from_rotation_translation(turn, ground),
-                Lifetime::Round,
-            )
-            .expect("marking model");
         let gem = renderer
-            .add_instance(
-                gem_model,
-                Mat4::from_rotation_translation(turn, ground + Vec3::Y * PALLET_HEIGHT as f32),
-                Lifetime::Round,
-            )
+            .add_instance(gem_model, rest, Lifetime::Round)
             .expect("supply model");
-        renderer.set_tint(rim, hex_to_linear(pickup_signal(kind)));
-        let glyph = pickup_glyph_offset(kind);
-        renderer.set_instance_data(rim, [1.0, glyph[0], glyph[1], 0.0]);
         let [u, v] = pickup_tile_offset(kind);
-        renderer.set_instance_data(gem, [u, v, 0.0, 0.0]);
-        // The pallet's smoke grenade wears the kind's paint too; its bundle shows
+        let wear = supply_wear(id);
+        renderer.set_instance_data(gem, [u, v, 1.0, wear]);
+        // The pallet's smoke grenade wears the kind's paint too; it shows crushed
         // until the supply is known to be stocked.
-        renderer.set_instance_data(base, [u, v, 0.0, 0.0]);
+        renderer.set_instance_data(base, [u, v, 0.0, wear]);
         self.pickups.insert(
             id,
             PickupView {
                 base,
-                rim,
                 gem,
-                glyph,
                 tile: [u, v],
+                wear,
+                rest,
                 shown: None,
+                restocked: f64::NEG_INFINITY,
+                posed: false,
+                progress: 1.0,
             },
         );
     }
@@ -1496,7 +1504,7 @@ impl Presentation {
         }
         self.effects.systems.event(event);
         if event.kind == SimEventType::Pickup {
-            self.add_pickup_rise(event);
+            self.crush_supply(event);
         }
         if event.cover_kind == Some(CoverKind::Tree) {
             self.tree_event(event);
@@ -1702,7 +1710,7 @@ impl Presentation {
         self.update_branches(dt);
         self.update_covers(state);
         self.update_pickups(state);
-        self.update_pickup_rises(state, dt);
+        self.update_thrown_lids(dt);
         self.update_fragments(state);
         self.warm_section();
         self.update_mines(state);
@@ -2252,29 +2260,39 @@ impl Presentation {
             .extend(state.pickups.iter().map(|pickup| pickup.id));
         for (_, view) in self.pickups.extract_if(|id, _| !self.live.contains(id)) {
             self.renderer.remove_instance(view.base);
-            self.renderer.remove_instance(view.rim);
             self.renderer.remove_instance(view.gem);
         }
         for supply in &state.pickups {
             if !self.pickups.contains_key(&supply.id) {
                 self.add_pickup(supply.id, supply.kind, supply.x, supply.z);
             }
+            let press = if supply.available {
+                self.hull_press(supply.x, supply.z)
+            } else {
+                0.0
+            };
             let view = self.pickups.get_mut(&supply.id).expect("pickup view");
             let renderer = &mut self.renderer;
             let stocked = supply.available;
-            let [gu, gv] = view.glyph;
             renderer.set_opacity(view.gem, opacity);
             if view.shown != Some(stocked) {
+                // A supply seen coming back is dropped onto its fresh pallet.
+                if stocked && view.shown == Some(false) {
+                    view.restocked = state.elapsed;
+                    self.effects
+                        .systems
+                        .pickups
+                        .land(supply.x, supply.z, RESTOCK_FALL);
+                }
                 view.shown = Some(stocked);
                 renderer.set_visible(view.gem, stocked);
-                // The empty pallet is bundled under canvas until the supply returns.
+                // The pallet lies crushed until the supply returns.
                 let [tu, tv] = view.tile;
-                renderer.set_instance_data(view.base, [tu, tv, f32::from(stocked), 0.0]);
-                if stocked {
-                    renderer.set_instance_data(view.rim, [1.0, gu, gv, 0.0]);
-                }
+                renderer.set_instance_data(view.base, [tu, tv, f32::from(stocked), view.wear]);
             }
-            if !stocked {
+            view.progress = if stocked {
+                1.0
+            } else {
                 let fallback = if supply.kind == PickupKind::Laser {
                     LASER_DEFENSE.initial_delay
                 } else {
@@ -2286,29 +2304,116 @@ impl Presentation {
                     fallback
                 };
                 // Short of 1, which marks a stocked drop.
-                let progress = (1.0 - supply.cooldown / duration).clamp(0.0, 0.995) as f32;
-                renderer.set_instance_data(view.rim, [progress, gu, gv, 0.0]);
+                (1.0 - supply.cooldown / duration).clamp(0.0, 0.995) as f32
+            };
+            if !stocked {
+                continue;
+            }
+            // Dropped in from above, landing with a squash; or pressed down under
+            // a hull driving onto it.
+            let since = state.elapsed - view.restocked;
+            let fall = since / RESTOCK_FALL;
+            let (drop, squash) = if fall < 1.0 {
+                (RESTOCK_DROP * (1.0 - fall * fall), 0.0)
+            } else {
+                let landed = since - RESTOCK_FALL;
+                let squash = RESTOCK_SQUASH
+                    * (-landed * 12.0).exp()
+                    * (landed * std::f64::consts::TAU * 2.5).cos();
+                (0.0, if landed < 0.6 { squash } else { 0.0 })
+            };
+            let height = (1.0 - squash) * (1.0 - press * (1.0 - PRESS_FLOOR));
+            let width = 1.0 + squash * 0.5 + press * PRESS_BULGE;
+            if drop > 0.0 || height != 1.0 || width != 1.0 {
+                let pose = Mat4::from_translation(Vec3::Y * drop as f32)
+                    * view.rest
+                    * Mat4::from_scale(Vec3::new(width as f32, height as f32, width as f32));
+                renderer.set_transform(view.gem, pose);
+                view.posed = true;
+            } else if view.posed {
+                renderer.set_transform(view.gem, view.rest);
+                view.posed = false;
             }
         }
     }
 
-    /// Swing the collected supply off its pallet onto the tank that took it. The
+    /// How far a hull driving onto the stocked crate at (x, z) presses it down
+    /// (0..1): by how deep the crate's centre lies inside the footprint of the
+    /// nearest live tank's hull, as drawn.
+    fn hull_press(&self, x: f64, z: f64) -> f64 {
+        let at = Vec3::new(x as f32, 0.0, z as f32);
+        let mut press = 0.0_f64;
+        for view in self.tanks.values() {
+            if view.world == Mat4::ZERO
+                || view.world.w_axis.truncate().distance(at) > TANK_PRESS_RANGE
+            {
+                continue;
+            }
+            let hull = tank_hull(view.kind);
+            let local = view.world.inverse().transform_point3(at);
+            let outside = (f64::from(local.x) - hull.center.x).abs() - hull.size.x / 2.0;
+            let outside =
+                outside.max((f64::from(local.z) - hull.center.z).abs() - hull.size.z / 2.0);
+            press = press.max(1.0 - smoothstep(outside, -PRESS_DEPTH, PRESS_REACH));
+        }
+        press
+    }
+
+    /// A tank drove over a supply and took it: the crate is crushed under its
+    /// hull, the pallet breaks flat (`update_pickups`), and the crate's painted lid
+    /// is thrown out from under the hull's edge with the broken pallet's splinters,
+    /// a burst of the crushed smoke grenade's colour and the ground's dust. The
     /// event names the kind only by its colour, which is unique per kind, the
     /// pallet by where it stands and the tank by its id.
-    fn add_pickup_rise(&mut self, event: &SimEvent) {
+    fn crush_supply(&mut self, event: &SimEvent) {
         let Some(kind) = PickupKind::ALL
             .into_iter()
             .find(|&kind| Some(pickup(kind).color) == event.color)
         else {
             return;
         };
-        if self.pickup_rises.len() >= FEEDBACK.max_pickup_effects
-            && let Some(oldest) = self.pickup_rises.pop_front()
+        let crate_at = Vec3::new(event.x as f32, 0.0, event.z as f32);
+        let (from, out) = event
+            .id
+            .and_then(|id| self.hull_exit(id, crate_at))
+            .unwrap_or((crate_at, Vec3::X));
+        let (wx, wz) = (f64::from(from.x), f64::from(from.z));
+        // The broken pallet's splinters burst out with the lid.
+        let mut splinters = SimEvent::at(SimEventType::Shatter, wx, wz);
+        splinters.cover_kind = Some(CoverKind::Cargo);
+        splinters.size = Some(CRUSH_SPLINTERS);
+        splinters.height = Some(LID_START);
+        splinters.color = Some(CRUSH_WOOD);
+        splinters.from = Some(Point3::new(
+            wx - f64::from(out.x),
+            LID_START,
+            wz - f64::from(out.z),
+        ));
+        let systems = &mut self.effects.systems;
+        systems.wood.event(&splinters, &mut systems.random);
+        // The hull rides up over the crate and rocks back off it.
+        if let Some(motion) = event
+            .id
+            .and_then(|id| self.tanks.get_mut(&id))
+            .and_then(|view| view.motion.as_mut())
+        {
+            motion
+                .pending_hit
+                .get_or_insert((-f64::from(out.x), -f64::from(out.z), CRUSH_ROCK));
+        }
+        systems.pickups.collect(
+            event.x,
+            event.z,
+            [wx, wz],
+            [f64::from(out.x), f64::from(out.z)],
+            pickup_signal(kind),
+        );
+        if self.thrown_lids.len() >= FEEDBACK.max_pickup_effects
+            && let Some(oldest) = self.thrown_lids.pop_front()
         {
             self.renderer.remove_instance(oldest.instance);
         }
-        // The stocked supply's own model, so the swing adds no draw of its own.
-        let model = self.library.pickup(&mut self.renderer, kind).gem;
+        let model = self.library.pickup_pad(&mut self.renderer).lid;
         let Some(instance) =
             self.renderer
                 .add_instance(model, Mat4::from_scale(Vec3::ZERO), Lifetime::Round)
@@ -2316,140 +2421,104 @@ impl Presentation {
             return;
         };
         let [u, v] = pickup_tile_offset(kind);
-        self.renderer.set_instance_data(instance, [u, v, 0.0, 0.0]);
-        let turn = self
-            .pickups
-            .iter()
-            .find(|(_, view)| {
-                self.renderer.instance_state(view.base).is_some_and(|base| {
-                    let at = base.world.w_axis;
-                    (f64::from(at.x) - event.x).hypot(f64::from(at.z) - event.z) < 0.01
-                })
-            })
-            .map_or(0.0, |(&id, _)| supply_turn(id));
-        // The ground beat: a low burst of the kind's smoke and the ground's dust
-        // rolls out over the drop, and its grenade gives a last puff.
-        self.effects
-            .systems
-            .pickups
-            .collect(event.x, event.z, turn, pickup_signal(kind));
-        let pallet = Vec3::new(event.x as f32, PALLET_HEIGHT as f32, event.z as f32);
-        self.pickup_rises.push_back(PickupRise {
+        let wear = supply_wear(event.x.to_bits() as u32 ^ event.z.to_bits() as u32);
+        self.renderer.set_instance_data(instance, [u, v, 1.0, wear]);
+        let yaw = out.x.atan2(out.z) + (wear - 0.5) * 0.9;
+        self.thrown_lids.push_back(ThrownLid {
             instance,
-            tank: event.id,
-            x: event.x,
-            z: event.z,
-            turn,
-            deck: pallet,
-            heading: turn,
-            rear: Vec3::ZERO,
-            lift: pallet.y,
+            from,
+            out,
+            yaw,
             age: 0.0,
-            landed: false,
         });
     }
 
-    /// Where a supply rides on a tank's rear deck (world), the hull's heading, the
-    /// unit direction to its rear and the height of the hull's top over the pallet,
-    /// from the drawn tank; `None` once the tank is gone or destroyed.
-    fn supply_deck(&self, state: &RenderState, id: u32) -> Option<(Vec3, f64, Vec3, f32)> {
+    /// Where a crate at `at` (ground level, world) is thrown out from under the
+    /// drawn hull of tank `id`, and the level unit direction it goes: away from the
+    /// hull's centre, `LID_CLEARANCE` past the edge of its footprint. `None` once
+    /// the tank is gone.
+    fn hull_exit(&self, id: u32, at: Vec3) -> Option<(Vec3, Vec3)> {
         let view = self
             .tanks
             .get(&id)
             .filter(|view| view.world != Mat4::ZERO)?;
-        let tank = state.tanks.iter().find(|tank| tank.id == id)?;
-        let hull = tank_hull(tank.kind);
-        // The model's front is the side its gun points out of at rest.
-        let front = if tank_visual_muzzle(tank.kind).z < 0.0 {
-            -1.0
-        } else {
-            1.0
-        };
-        let top = hull.center.y + hull.size.y / 2.0;
-        let back = hull.center.z - front * (hull.size.z / 2.0 - SUPPLY_DECK_INSET);
-        let deck =
-            view.world
-                .transform_point3(Vec3::new(hull.center.x as f32, top as f32, back as f32));
-        let ahead = view
-            .world
-            .transform_vector3(Vec3::new(0.0, 0.0, front as f32));
-        let rear = Vec3::new(-ahead.x, 0.0, -ahead.z).normalize_or_zero();
-        let heading = f64::from(ahead.x).atan2(f64::from(ahead.z));
-        Some((deck, heading, rear, view.world.w_axis.y + top as f32))
+        let hull = tank_hull(view.kind);
+        let local = view.world.inverse().transform_point3(at);
+        let center = Vec3::new(hull.center.x as f32, 0.0, hull.center.z as f32);
+        let mut away = Vec3::new(local.x - center.x, 0.0, local.z - center.z);
+        if away.length() < 0.05 {
+            away = Vec3::X;
+        }
+        let away = away.normalize();
+        let half = [
+            hull.size.x as f32 / 2.0 + LID_CLEARANCE as f32,
+            hull.size.z as f32 / 2.0 + LID_CLEARANCE as f32,
+        ];
+        // How far along `away` the crate's point leaves the widened footprint.
+        let mut reach = f32::MAX;
+        for (offset, direction, half) in [
+            (local.x - center.x, away.x, half[0]),
+            (local.z - center.z, away.z, half[1]),
+        ] {
+            if direction.abs() > 1e-4 {
+                reach = reach.min((half * direction.signum() - offset) / direction);
+            }
+        }
+        let exit = Vec3::new(local.x, 0.0, local.z) + away * reach.max(0.0);
+        let mut from = view.world.transform_point3(exit);
+        from.y = 0.0;
+        let mut out = view.world.transform_vector3(away);
+        out.y = 0.0;
+        Some((from, out.try_normalize().unwrap_or(Vec3::X)))
     }
 
-    fn update_pickup_rises(&mut self, state: &RenderState, dt: f64) {
-        let mut rises = std::mem::take(&mut self.pickup_rises);
-        let total = SUPPLY_CARRY_SECONDS + SUPPLY_RIDE_SECONDS + SUPPLY_FADE_SECONDS;
-        rises.retain_mut(|rise| {
-            rise.age += dt;
-            if rise.age >= total {
-                self.renderer.remove_instance(rise.instance);
+    /// Fly, land, settle and sink every thrown lid.
+    fn update_thrown_lids(&mut self, dt: f64) {
+        let scale = SUPPLY_SCALE as f32;
+        let rest = (LID_SIZE[1] / 2.0 + 0.04) * SUPPLY_SCALE;
+        let [throw, lift] = LID_THROW;
+        // When it lands: its fall from `LID_START` to resting height.
+        let flight =
+            (lift + (lift * lift + 2.0 * LID_GRAVITY * (LID_START - rest)).sqrt()) / LID_GRAVITY;
+        let total = flight + LID_BOUNCE[1] + LID_REST_SECONDS + LID_SINK_SECONDS;
+        let mut lids = std::mem::take(&mut self.thrown_lids);
+        lids.retain_mut(|lid| {
+            lid.age += dt;
+            if lid.age >= total {
+                self.renderer.remove_instance(lid.instance);
                 return false;
             }
-            if let Some((deck, heading, rear, lift)) =
-                rise.tank.and_then(|id| self.supply_deck(state, id))
-            {
-                (rise.deck, rise.heading, rise.rear) = (deck, heading, rear);
-                // Lifted from the hull's top, so it never shows inside the hull.
-                if rise.age <= dt {
-                    rise.lift = lift;
-                }
-            }
-            let carry = (rise.age / SUPPLY_CARRY_SECONDS).min(1.0);
-            if carry >= 1.0 && !rise.landed {
-                rise.landed = true;
-                // The load lands on the rear deck: the hull rocks back under it.
-                if let Some(motion) = rise
-                    .tank
-                    .and_then(|id| self.tanks.get_mut(&id))
-                    .and_then(|view| view.motion.as_mut())
-                {
-                    motion.pending_hit.get_or_insert((
-                        f64::from(rise.rear.x),
-                        f64::from(rise.rear.z),
-                        SUPPLY_THUMP_ROCK,
-                    ));
-                }
-            }
-            // Carried in a low, eased arc from over the pallet back onto the deck.
-            let along = smoothstep(carry, 0.0, 1.0) as f32;
-            let start = Vec3::new(rise.x as f32, rise.lift, rise.z as f32);
-            let mut at = start.lerp(rise.deck, along);
-            let up = carry as f32;
-            at.y += SUPPLY_CARRY_ARC as f32 * 4.0 * up * (1.0 - up);
-            let size =
-                SUPPLY_LIFT_SCALE + (SUPPLY_STOW_SCALE - SUPPLY_LIFT_SCALE) * f64::from(along);
-            // Landed, it squashes once and settles, then is taken in and fades.
-            let since = rise.age - SUPPLY_CARRY_SECONDS;
-            let squash = if since > 0.0 {
-                SUPPLY_THUMP_SQUASH
-                    * (-since * 14.0).exp()
-                    * (since * std::f64::consts::TAU * 3.0).cos()
+            let t = lid.age;
+            let (along, height, flip) = if t < flight {
+                (
+                    throw * t,
+                    LID_START + lift * t - LID_GRAVITY * t * t / 2.0,
+                    std::f64::consts::TAU * LID_FLIPS * t / flight,
+                )
             } else {
-                0.0
+                let landed = t - flight;
+                let hop = (landed / LID_BOUNCE[1]).min(1.0);
+                let slide = 1.0 - (-landed * 7.0).exp();
+                (
+                    throw * (flight + LID_SLIDE * slide),
+                    rest + LID_BOUNCE[0] * 4.0 * hop * (1.0 - hop),
+                    0.0,
+                )
             };
-            let fade = ((since - SUPPLY_RIDE_SECONDS) / SUPPLY_FADE_SECONDS).clamp(0.0, 1.0);
-            let height = size * (1.0 - squash) * (1.0 - 0.15 * fade);
-            let width = size * (1.0 + squash * 0.5) * (1.0 - 0.15 * fade);
-            // It turns from its pallet to lie square across the deck.
-            let mut yaw = rise.heading - rise.turn;
-            yaw = (yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
-                - std::f64::consts::PI;
-            let yaw = rise.turn + yaw * smoothstep(carry, 0.1, 1.0);
-            self.renderer
-                .set_opacity(rise.instance, (1.0 - fade * fade) as f32);
+            let sink = ((t - total + LID_SINK_SECONDS) / LID_SINK_SECONDS).clamp(0.0, 1.0);
+            let at =
+                lid.from + lid.out * along as f32 + Vec3::Y * (height - sink * rest * 2.5) as f32;
+            // Flipped end over end about the level axis across its throw.
+            let across = Vec3::new(-lid.out.z, 0.0, lid.out.x);
+            let rotation =
+                Quat::from_axis_angle(across, flip as f32) * Quat::from_rotation_y(lid.yaw);
             self.renderer.set_transform(
-                rise.instance,
-                Mat4::from_scale_rotation_translation(
-                    Vec3::new(width as f32, height.max(0.0) as f32, width as f32),
-                    Quat::from_rotation_y(yaw as f32),
-                    at,
-                ),
+                lid.instance,
+                Mat4::from_scale_rotation_translation(Vec3::splat(scale), rotation, at),
             );
             true
         });
-        self.pickup_rises = rises;
+        self.thrown_lids = lids;
     }
 
     fn update_fragments(&mut self, state: &RenderState) {

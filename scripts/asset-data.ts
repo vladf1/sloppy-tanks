@@ -37,27 +37,23 @@ export const PICKUP_COLORS = {
 export type PickupKind = SpecialAmmo | "rapid" | "shield" | "speed" | "repair" | "laser";
 
 // The pickup atlas: one painted tile per kind in a 3x3 block; the pallet's bare
-// planks, the ground's spray paint and swatches of steel, rubber and webbing in the
-// fourth column; cartridge brass and the drop's tarp below the block. The engine maps
-// UVs with the same layout (`pickup_visuals.rs`).
+// planks and swatches of steel, rubber and webbing in the fourth column; cartridge
+// brass, the drop's tarp and a crushed pallet's broken boards below the block. The
+// engine maps UVs with the same layout (`pickup_visuals.rs`).
 export const PICKUP_ATLAS_PATH = "textures/pickups/atlas.webp";
 export const PICKUP_ICON_SIZE = 256;
 export const PICKUP_ATLAS_PADDING = 16;
 export const PICKUP_ATLAS_STRIDE = PICKUP_ICON_SIZE + PICKUP_ATLAS_PADDING * 2;
 export const PICKUP_ATLAS_SIZE = PICKUP_ATLAS_STRIDE * 4;
 export const PICKUP_PALLET_CELL = [3, 0] as const;
-export const PICKUP_PAINT_CELL = [3, 1] as const;
 export const PICKUP_SWATCH_CELL = [3, 2] as const;
 export const PICKUP_BRASS_CELL = [0, 3] as const;
 export const PICKUP_TARP_CELL = [1, 3] as const;
-/** The nine stencils an emptied pallet shows, a 3x3 block in one cell laid out like
- * the kind tiles (`pickup_glyph_offset` in `pickup_visuals.rs`). */
-export const PICKUP_GLYPH_CELL = [2, 3] as const;
-/** The canvas a restocking drop's empty pallet is bundled under. */
-export const PICKUP_BUNDLE_CELL = [3, 3] as const;
-/** The surface each kind's supply shows: pine crates, olive drab tubes, ammo cans
- * and a ribbed olive medical chest, black fibre shell canisters, rolled armour
- * steel, the jerry can's pressed steel and a tan transit case. */
+/** The broken boards of a crushed pallet, one board to a row like the planks. */
+export const PICKUP_CRUSHED_CELL = [3, 3] as const;
+/** The surface each kind's supply shows under its paint: pine crates, olive drab
+ * tubes, ammo cans, jerry cans and a ribbed olive tool chest, black fibre shell
+ * canisters, rolled armour steel and a tan transit case. */
 export const PICKUP_SURFACES = {
   spread: "planks",
   rocket: "olive",
@@ -72,19 +68,19 @@ export const PICKUP_SURFACES = {
   PickupKind,
   "planks" | "olive" | "fibre" | "can" | "steel" | "jerry" | "drab" | "tan"
 >;
-/** Each kind's colour as supply paint (`pickup_paint` in `pickup_visuals.rs`): the
- * band round its load and the stripe its stencil is sprayed across, its signal colour
- * knocked back toward faded enamel. */
+/** Each kind's paint (`pickup_paint` in `pickup_visuals.rs`): the big painted
+ * block on its load, nine hues and a pale grey, worn enamel rather than toy
+ * colours. */
 export const PICKUP_PAINTS = {
-  spread: 0xae3328,
-  rocket: 0xc0642a,
-  ricochet: 0x7656a8,
-  piercing: 0x3a8c80,
-  rapid: 0xc8962e,
-  shield: 0x3e68b0,
-  speed: 0xb4a03c,
-  repair: 0x4a9450,
-  laser: 0xd8d8d0,
+  spread: 0xa83270,
+  rocket: 0xb02c22,
+  ricochet: 0x643f9e,
+  piercing: 0x1e8a80,
+  rapid: 0xcc6a1a,
+  shield: 0x2e5aa8,
+  speed: 0xd0b62a,
+  repair: 0x3a8c3a,
+  laser: 0xbdbab0,
 } as const satisfies Record<PickupKind, number>;
 export const PICKUP_ATLAS_TILES = {
   spread: [0, 0],

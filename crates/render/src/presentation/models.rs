@@ -1,5 +1,5 @@
 //! Models presentation owns: world-space HUD (tank bars, reticle, player ring
-//! and spawn pulse), pickup pallets and their ground markings, mines and debris
+//! and spawn pulse), pickup pallets, mines and debris
 //! pieces. Ports of `tank-bars.ts`, `reticle.ts` and the model parts of
 //! `presentation.ts`; pickup gems, flags, pads, floors and scenery come from
 //! `sloppy_core::models`.
@@ -17,12 +17,10 @@ use sloppy_core::geometry::{
     ring_geometry, rounded_box_geometry, shape_geometry, tetrahedron_geometry,
 };
 use sloppy_core::models::{
-    BUNDLE_TOP, BUNDLE_TOP_SIZE, BarrelScrap, DEFAULT_BOX_RADIUS, PICKUP_ATLAS_PATH,
-    PICKUP_GLYPH_CELL, PICKUP_GLYPH_REGION, PICKUP_PAINT_CELL, TEAM_COLORS, atlas_cell_uv,
-    barrel_scrap_geometry, cylinder_part, paint, pickup_pallet, put, shadowed, siding_box,
-    trunk_fragment,
+    BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint,
+    pickup_pallet, put, shadowed, siding_box, trunk_fragment,
 };
-use sloppy_core::scene::{Effect, Material, Node, Side, TextureRef};
+use sloppy_core::scene::{Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
@@ -44,16 +42,12 @@ pub mod joint {
     pub const RETICLE_READY: &str = "reticle-ready";
     pub const RETICLE_RELOADING: &str = "reticle-reloading";
     pub const RETICLE_CONFIRMED: &str = "reticle-confirmed";
-    /// A supply drop's marking: its sprayed circle and the stencil an emptied
-    /// pallet shows.
-    pub const PICKUP_MARKING: &str = "pickup-marking";
     /// The blinking cap of a mine.
     pub const MINE_LIGHT: &str = "mine-light";
 }
 
 /// Custom effects presentation registers (WGSL beside this file).
 pub const FLAG_CLOTH_EFFECT: &str = sloppy_core::models::effects_props::FLAG_CLOTH;
-pub const PICKUP_MARKING_EFFECT: &str = "pickup-marking";
 
 pub const SPAWN_PROTECTION_COLOR: u32 = 0xffdf86;
 /// The hull fill's full width and height; the track and rim frame it.
@@ -461,147 +455,11 @@ pub fn spawn_pulse() -> Node {
     root
 }
 
-/// The supply drop's ground marking, sprayed in the kind's signal colour: one wide,
-/// broken, hand-sprayed circle round the pallet (its radii, passing under the
-/// sheet's corners) over a dark primer edge that reads on sand and asphalt alike,
-/// and the kind's stencil sprayed across the canvas bundled over a restocking drop's
-/// empty pallet, folded away while the supply is stocked. While the supply is
-/// restocked the circle's paint is faded and fresh paint sweeps round it until the
-/// supply returns. Paint on the ground, lit and shadowed like it, its ragged edges
-/// anti-aliased by alpha to coverage, never glowing.
-const MARKING_RADII: [f64; 2] = [0.98, 1.32];
-const MARKING_SEGMENTS: u32 = 64;
-const MARKING_CUTOFF: f32 = 0.35;
-/// How far the faded paint of a restocking drop is greyed and darkened, and how far
-/// dust greys even fresh paint.
-const MARKING_FADED: [f32; 2] = [0.7, 0.78];
-const MARKING_DUST: f32 = 0.22;
-/// How high the paint lies over the ground; a depth bias keeps it there.
-const MARKING_HEIGHT: f64 = 0.012;
-/// The stencil on the bundle: its size (x, z), its centre's offset along x (clear
-/// of the fold thrown back over the bundle's left end) and how far it lies over the
-/// canvas and the straps across it.
-const BUNDLE_STENCIL: [f64; 2] = [1.0, 0.76];
-const BUNDLE_STENCIL_SHIFT: f64 = 0.08;
-const BUNDLE_STENCIL_LIFT: f64 = 0.016;
-const PAINT_ROUGHNESS: f32 = 0.95;
-
 /// The pallet under every pickup, shared by every kind: planks, a tarp and the
 /// smoke grenade (`sloppy_core::models::pickup_pallet`).
 pub fn pickup_base() -> Node {
     let mut root = Node::group("pickup");
     root.children.push(pickup_pallet());
-    root
-}
-
-/// The marking's mesh, about the drop's centre at paint height: the sprayed circle,
-/// the atlas's paint cell bent once round the pallet (the generator paints it
-/// seamless across the cell, its strokes and overspray in alpha), and the deck
-/// stencil, mapped to the first kind's stencil in the glyph cell.
-fn marking_geometry() -> Mesh {
-    let [inner, outer] = MARKING_RADII;
-    let mut mesh = Mesh::default();
-    for step in 0..=MARKING_SEGMENTS {
-        let along = f64::from(step) / f64::from(MARKING_SEGMENTS);
-        let (sin, cos) = (std::f64::consts::TAU * along).sin_cos();
-        for (radius, v) in [(inner, 0.0), (outer, 1.0)] {
-            mesh.positions
-                .push([(radius * cos) as f32, 0.0, (radius * sin) as f32]);
-            mesh.normals.push([0.0, 1.0, 0.0]);
-            let [u, v] = atlas_cell_uv(PICKUP_PAINT_CELL, along, v);
-            mesh.uvs.push([u as f32, v as f32]);
-        }
-    }
-    let mut indices = Vec::new();
-    for step in 0..MARKING_SEGMENTS {
-        let a = step * 2;
-        indices.extend([a, a + 2, a + 1, a + 2, a + 3, a + 1]);
-    }
-    // The bundle's stencil, its top edge toward -z (up the screen from the camera).
-    let [w, d] = BUNDLE_STENCIL;
-    debug_assert!(w / 2.0 + BUNDLE_STENCIL_SHIFT < BUNDLE_TOP_SIZE[0] / 2.0);
-    debug_assert!(d < BUNDLE_TOP_SIZE[1]);
-    let y = (BUNDLE_TOP + BUNDLE_STENCIL_LIFT - MARKING_HEIGHT) as f32;
-    let [u0, v0, u1, v1] = PICKUP_GLYPH_REGION;
-    let first = mesh.positions.len() as u32;
-    for (x, z, u, v) in [
-        (-w / 2.0, d / 2.0, u0, v0),
-        (w / 2.0, d / 2.0, u1, v0),
-        (w / 2.0, -d / 2.0, u1, v1),
-        (-w / 2.0, -d / 2.0, u0, v1),
-    ] {
-        mesh.positions
-            .push([(x + BUNDLE_STENCIL_SHIFT) as f32, y, z as f32]);
-        mesh.normals.push([0.0, 1.0, 0.0]);
-        let [u, v] = atlas_cell_uv(PICKUP_GLYPH_CELL, u, v);
-        mesh.uvs.push([u as f32, v as f32]);
-    }
-    indices.extend([first, first + 1, first + 2, first, first + 2, first + 3]);
-    mesh.indices = Some(indices);
-    mesh
-}
-
-/// A part that takes shadows but casts none, as paint on the ground does.
-fn shadow_receiver(mesh: Arc<Mesh>, material: Arc<Material>) -> Node {
-    let mut node = Node::mesh(mesh, material);
-    if let Some(drawable) = &mut node.drawable {
-        drawable.receive_shadow = true;
-    }
-    node
-}
-
-/// Matte paint on the ground, white so the instance tint is the kind's colour,
-/// lying a little proud of whatever it is sprayed on.
-fn ground_paint(color: u32) -> Material {
-    Material {
-        polygon_offset: Some((-1.0, -4.0)),
-        ..Material::standard(color, 0.0, PAINT_ROUGHNESS)
-    }
-}
-
-/// A supply drop's marking, one draw for every drop: `instance_data.x` is how much
-/// of the circle is freshly sprayed (1 while stocked, which folds the bundle's
-/// stencil away), `yz` moves the bundle's stencil to the kind's
-/// (`pickup_glyph_offset`).
-pub fn pickup_rim() -> Node {
-    let mut root = Node::group("pickup-rim");
-    let atlas = TextureRef {
-        wrap: sloppy_core::scene::Wrap::Clamp,
-        anisotropy: 4,
-        ..TextureRef::file(PICKUP_ATLAS_PATH)
-    };
-    let [paint_u0, _] = atlas_cell_uv(PICKUP_PAINT_CELL, 0.0, 0.0);
-    let [paint_u1, _] = atlas_cell_uv(PICKUP_PAINT_CELL, 1.0, 0.0);
-    let [glyph_u1, _] = atlas_cell_uv(PICKUP_GLYPH_CELL, 1.0, 0.0);
-    let material = Material {
-        map: Some(atlas),
-        alpha_test: MARKING_CUTOFF,
-        alpha_to_coverage: true,
-        effect: Effect::Custom {
-            name: PICKUP_MARKING_EFFECT,
-            params: vec![
-                paint_u0 as f32,
-                (paint_u1 - paint_u0) as f32,
-                // Anything left of this is the glyph cell's.
-                ((glyph_u1 + paint_u0) / 2.0) as f32,
-                0.0,
-                MARKING_FADED[0],
-                MARKING_FADED[1],
-                MARKING_DUST,
-                0.0,
-            ],
-        },
-        ..ground_paint(0xffffff)
-    };
-    root.children.push(named(
-        at(
-            shadow_receiver(arc(marking_geometry()), Arc::new(material)),
-            0.0,
-            MARKING_HEIGHT,
-            0.0,
-        ),
-        joint::PICKUP_MARKING,
-    ));
     root
 }
 
@@ -692,9 +550,6 @@ mod tests {
         let mut found = Vec::new();
         names(&reticle(), &mut found);
         assert!(found.iter().any(|n| n == joint::RETICLE_CONFIRMED));
-        let mut found = Vec::new();
-        names(&pickup_rim(), &mut found);
-        assert!(found.iter().any(|n| n == joint::PICKUP_MARKING));
     }
 
     #[test]

@@ -40,18 +40,12 @@ pub const FLAG_CLOTH: EffectDefinition = effect(
     include_str!("shaders/flag_cloth.wgsl"),
 );
 
-/// A supply drop's marking: the kind's deck stencil and the circle re-sprayed while
-/// it restocks.
-pub const PICKUP_MARKING: EffectDefinition = effect(
-    models::PICKUP_MARKING_EFFECT,
-    include_str!("shaders/pickup_marking.wgsl"),
-);
-
-/// Every pickup kind of a shape from one mesh: the instance picks the atlas tile.
+/// Every pickup kind of a shape from one mesh: the instance picks the atlas tile,
+/// shows its pallet whole or crushed and weathers it a little differently.
 pub const PICKUP_FACE: EffectDefinition = effect(
     sloppy_core::models::PICKUP_FACE_EFFECT,
     include_str!("shaders/pickup_face.wgsl"),
 );
 
 /// Effects presentation registers before building its models.
-pub const PRESENTATION_EFFECTS: [EffectDefinition; 3] = [FLAG_CLOTH, PICKUP_MARKING, PICKUP_FACE];
+pub const PRESENTATION_EFFECTS: [EffectDefinition; 2] = [FLAG_CLOTH, PICKUP_FACE];

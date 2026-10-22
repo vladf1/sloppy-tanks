@@ -1,22 +1,23 @@
 //! Supply drop smoke (`presentation.ts` `pickupEffect`, reworked as military
-//! supply): one narrow column of signal smoke from the grenade at the back corner of
-//! every stocked pallet, in the kind's signal colour (`pickup_signal`). It leaves the
-//! grenade as a dense, saturated jet, climbs straight, then is sheared over by the
-//! one wind every plume shares, away from the overhead camera, widening a little,
-//! greying and fraying into wisps as it thins, so it marks its own crate without
-//! hiding a neighbour. A restocked drop's grenade is lit again and its column grows
-//! from it; an empty drop's spent grenade gives off a faint grey wisp. When a supply
-//! is taken its grenade is snuffed: no more smoke leaves it and what it gave off
-//! thins away within a breath, while a low thump of the ground's dust rolls out from
-//! under the tank. A promotion pops a short burst of its colour over the tank.
-//! Everything is smoke in the shared puff pool, drawn like the blasts' puffs: no
-//! light, beams or rings.
+//! supply): one thin, restrained wisp of signal smoke from the grenade at the back
+//! corner of every stocked pallet, only a hint of the kind's colour
+//! (`pickup_signal`) low down, greying as it climbs and is sheared over by the one
+//! wind every wisp shares, away from the overhead camera, so a field of drops reads
+//! as kit marked for collection rather than a rainbow. A restocked drop's grenade
+//! is lit again and its wisp grows from it; an empty drop gives off nothing. When a
+//! tank drives over a supply its grenade is crushed: no more smoke leaves it, what
+//! it gave off thins away within a breath, and a burst of its colour and the
+//! ground's dust squirts out from under the hull where the crate's lid is thrown,
+//! with a low ring of dust round the hull. A restocked crate landing on its pallet
+//! raises a little dust. A promotion pops a short burst of its colour over the
+//! tank. Everything is smoke in the shared puff pool, drawn like the blasts' puffs:
+//! no light, beams or rings.
 
 use std::collections::VecDeque;
 use std::f64::consts::TAU;
 
 use glam::Vec3;
-use sloppy_core::models::{SMOKE_MARKER, pickup_signal};
+use sloppy_core::models::{SMOKE_MARKER, SUPPLY_SCALE, pickup_signal};
 use sloppy_core::sim::RenderState;
 
 use super::explosions::smoke_puff;
@@ -31,83 +32,93 @@ pub const PICKUP_SECONDS: f64 = POP_SECONDS;
 
 /// A supply's turn on its pallet (rad): fixed per pickup and within
 /// `SUPPLY_TURN` of square, so drops do not stand in ranks yet never swing into a
-/// neighbour; shared by the pallet, its marking, the item and its smoke. Cosmetic
-/// only.
+/// neighbour; shared by the pallet, the item and its smoke. Cosmetic only.
 pub fn supply_turn(id: u32) -> f64 {
     (hash(f64::from(id) + 0.5) - 0.5) * 2.0 * SUPPLY_TURN
 }
 
+/// A drop's weathering (0..1, the `pickup-face` effect's instance `w`): how its
+/// pallet's boards and its paint differ from the next drop's, and whether its
+/// pallet has lost a board. Cosmetic only.
+pub fn supply_wear(id: u32) -> f32 {
+    hash(f64::from(id) * 1.37 + 4.1) as f32
+}
+
 const SUPPLY_TURN: f64 = 0.3;
 
-/// The column: puffs in it, seconds each takes to climb it, how high it climbs
-/// (each within `SIGNAL_RISE_SPREAD` of it, so a row of drops is not a fence) and how
-/// its climb slows (the jet leaves the grenade fast and loses its push), the puff
-/// size at the grenade and at the top (capped, so a column never spreads over the
-/// next drop) and how soon it widens, how far the wind has sheared it over by the top
-/// and how late in the climb the shear takes hold, and its opacity at the grenade.
-const SIGNAL_PUFFS: usize = 26;
-const SIGNAL_CYCLE: f64 = 3.4;
-const SIGNAL_RISE: f64 = 2.9;
-const SIGNAL_RISE_SPREAD: f64 = 0.14;
+/// The wisp: puffs in it, seconds each takes to climb it, how high it climbs (each
+/// within `SIGNAL_RISE_SPREAD` of it, so a row of drops is not a fence) and how its
+/// climb slows (the jet leaves the grenade fast and loses its push), the puff size
+/// at the grenade and at the top and how soon it widens, how far the wind has
+/// sheared it over by the top and how late in the climb the shear takes hold, and
+/// its opacity at the grenade.
+const SIGNAL_PUFFS: usize = 16;
+const SIGNAL_CYCLE: f64 = 3.2;
+const SIGNAL_RISE: f64 = 2.2;
+const SIGNAL_RISE_SPREAD: f64 = 0.16;
 const SIGNAL_SLOWING: f64 = 1.5;
-const SIGNAL_SIZE: [f64; 2] = [0.15, 0.52];
+const SIGNAL_SIZE: [f64; 2] = [0.1, 0.36];
 const SIGNAL_WIDENING: f64 = 0.8;
-const SIGNAL_SHEAR: f64 = 1.5;
-const SIGNAL_SHEAR_ONSET: f64 = 1.8;
-const SIGNAL_OPACITY: f64 = 1.0;
-/// The column's colour along its climb: the full signal colour while it is dense,
-/// then greying and lightening as it dilutes (from where in the climb, and how
-/// much by the top).
-const SIGNAL_GREYING_FROM: f64 = 0.3;
-const SIGNAL_GREYING: f32 = 0.6;
-/// How the column frays: the puffs' erosion at the grenade and at the top (taking
-/// hold past the middle of the climb, so the column stays dense and smooth low
-/// down), and how far the wisps it breaks into stray across the wind by the top.
-const SIGNAL_EROSION: [f64; 2] = [0.0, 0.7];
-const SIGNAL_STRAY: f64 = 0.3;
-/// Signal smoke is dense and bright: its albedo is lifted past the blasts' grey
-/// smoke so a column keeps its hue on its shaded side.
-const SIGNAL_BRIGHTNESS: f32 = 1.4;
-/// How far the colour is paled toward white, so a column facing away from the sun
-/// keeps its hue rather than turning to soot.
-const SIGNAL_PALE: f32 = 0.1;
-/// The one wind every column is sheared by: away from the overhead camera (which
-/// sits toward +z) and a little across, so a column trails up the screen behind its
+const SIGNAL_SHEAR: f64 = 1.1;
+const SIGNAL_SHEAR_ONSET: f64 = 1.7;
+const SIGNAL_OPACITY: f64 = 0.62;
+/// The wisp's colour along its climb: its signal colour already half thinned to
+/// smoke's pale grey at the grenade, and all but grey by the top.
+const SIGNAL_GREYING: [f32; 2] = [0.5, 0.88];
+const SMOKE_GREY: [f32; 3] = [0.6, 0.59, 0.56];
+/// How the wisp frays: the puffs' erosion at the grenade and at the top (taking
+/// hold past the middle of the climb), and how far the wisps it breaks into stray
+/// across the wind by the top.
+const SIGNAL_EROSION: [f64; 2] = [0.1, 0.75];
+const SIGNAL_STRAY: f64 = 0.22;
+/// The one wind every wisp is sheared by: away from the overhead camera (which
+/// sits toward +z) and a little across, so a wisp trails up the screen behind its
 /// own crate rather than over its neighbours.
 const SIGNAL_WIND: [f64; 2] = [0.36, -0.93];
-/// The column meanders: how far it wanders across the wind by the top, at one rate
-/// for every column (rad/s of emission time, so neighbouring puffs follow one
+/// The wisp meanders: how far it wanders across the wind by the top, at one rate
+/// for every wisp (rad/s of emission time, so neighbouring puffs follow one
 /// another), each at its own phase.
-const SIGNAL_MEANDER: f64 = 0.12;
+const SIGNAL_MEANDER: f64 = 0.1;
 const SIGNAL_MEANDER_RATE: f64 = 0.8;
-/// The grenade gushes: one rate for every column (rad/s of emission time, so a puff
+/// The grenade gushes: one rate for every wisp (rad/s of emission time, so a puff
 /// keeps its share as it climbs), each at its own phase, and how much density and
 /// size the lulls lose.
 const SIGNAL_GUSH_RATE: f64 = 2.3;
 const SIGNAL_GUSH: f64 = 0.2;
-/// Once the supply is taken the grenade is snuffed: the column it gave off thins
+/// Once the supply is taken the grenade is crushed: the wisp it gave off thins
 /// away over this long.
-const SNUFF_SECONDS: f64 = 0.6;
-/// The spent grenade on an empty drop: a faint grey wisp (puffs, seconds to climb,
-/// height, size at the grenade and the top, opacity, its grey).
-const WISP_PUFFS: usize = 7;
-const WISP_CYCLE: f64 = 3.0;
-const WISP_RISE: f64 = 1.3;
-const WISP_SIZE: [f64; 2] = [0.08, 0.3];
-const WISP_OPACITY: f64 = 0.3;
-const WISP_COLOR: [f32; 3] = [0.5, 0.49, 0.46];
-/// The collection's thump, gone in `COLLECT_SECONDS`: the ground's dust pushed out
-/// low from under the tank that drove over the pallet (puffs, start and end reach,
-/// height, start and end size, opacity), and the snuffed grenade's last puff of its
-/// colour (size, rise).
-const COLLECT_SECONDS: f64 = 0.8;
-const COLLECT_PUFFS: usize = 12;
-const COLLECT_REACH: [f64; 2] = [1.3, 2.4];
-const COLLECT_HEIGHT: [f64; 2] = [0.12, 0.3];
-const COLLECT_SIZE: [f64; 2] = [0.32, 0.62];
-const COLLECT_OPACITY: f64 = 0.32;
-const LAST_PUFF_SIZE: [f64; 2] = [0.14, 0.34];
-const LAST_PUFF_RISE: f64 = 0.6;
+const SNUFF_SECONDS: f64 = 0.45;
+/// The crushing, gone in `CRUSH_SECONDS`: the ground's dust squirting out from
+/// under the hull where the lid is thrown, fanned `CRUSH_FAN` either side of the
+/// throw (puffs, start and end reach, height, start and end size, opacity, how far
+/// the dust is lightened toward a pale haze), a low ring of it rolling out round
+/// the crushed crate from under the whole hull (puffs, start and end reach,
+/// opacity), and the crushed grenade's colour bursting out with the lid (puffs,
+/// start and end reach, rise, start and end size, opacity, greying).
+const CRUSH_SECONDS: f64 = 0.9;
+const CRUSH_FAN: f64 = 1.3;
+const SQUIRT_PUFFS: usize = 9;
+const SQUIRT_REACH: [f64; 2] = [0.15, 1.9];
+const SQUIRT_HEIGHT: [f64; 2] = [0.18, 0.45];
+const SQUIRT_SIZE: [f64; 2] = [0.34, 0.85];
+const SQUIRT_OPACITY: f64 = 0.75;
+const DUST_LIGHTEN: f32 = 0.4;
+const RING_PUFFS: usize = 10;
+const RING_REACH: [f64; 2] = [1.6, 3.1];
+const RING_OPACITY: f64 = 0.4;
+const BURST_PUFFS: usize = 5;
+const BURST_REACH: [f64; 2] = [0.1, 1.1];
+const BURST_RISE: [f64; 2] = [0.35, 1.5];
+const BURST_SIZE: [f64; 2] = [0.3, 0.95];
+const BURST_OPACITY: f64 = 0.92;
+const BURST_GREYING: f32 = 0.12;
+/// A restocked crate landing on its pallet: a ring of dust puffed out from under it
+/// (puffs, start and end reach, size, opacity, seconds).
+const LANDING_PUFFS: usize = 8;
+const LANDING_REACH: [f64; 2] = [0.8, 1.7];
+const LANDING_SIZE: [f64; 2] = [0.3, 0.6];
+const LANDING_OPACITY: f64 = 0.38;
+const LANDING_SECONDS: f64 = 0.6;
 /// A promotion's pop: a burst of its colour over the tank, puffs rolling out
 /// (height, count, start and end reach, rise, start and end size, opacity) round a
 /// core, gone in `POP_SECONDS`.
@@ -135,6 +146,10 @@ fn pale(color: [f32; 3], amount: f32) -> [f32; 3] {
     color.map(|c| c + (1.0 - c) * amount)
 }
 
+fn mix(a: [f32; 3], b: [f32; 3], t: f32) -> [f32; 3] {
+    [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
+}
+
 /// Toward a light grey of the colour's own luminance: diluted smoke.
 fn greyed(color: [f32; 3], amount: f32) -> [f32; 3] {
     let [r, g, b] = color;
@@ -145,7 +160,7 @@ fn greyed(color: [f32; 3], amount: f32) -> [f32; 3] {
 /// Where a drop's grenade stands (its top, world), from the pallet's turn.
 fn grenade(x: f64, z: f64, turn: f64) -> Vec3 {
     let (sin, cos) = turn.sin_cos();
-    let [mx, top, mz] = SMOKE_MARKER;
+    let [mx, top, mz] = SMOKE_MARKER.map(|v| v * SUPPLY_SCALE);
     Vec3::new(
         (x + mx * cos + mz * sin) as f32,
         (top + 0.03) as f32,
@@ -161,18 +176,39 @@ struct PickupEffect {
     color: [f32; 3],
 }
 
-/// A collection's ground beat over the drop at (x, z), its pallet turned `turn`.
+/// What raises a supply's dust: a tank crushing it, its lid thrown out at `exit`
+/// along `out` (level, unit) in its signal `color`; or a restocked crate landing.
+#[derive(Clone, Copy, Debug)]
+enum Beat {
+    Crush {
+        exit: [f64; 2],
+        out: [f64; 2],
+        color: [f32; 3],
+    },
+    Landing,
+}
+
+/// A supply's beat round the drop at (x, z); its age counts up from below zero
+/// while it waits to start.
 #[derive(Clone, Copy, Debug)]
 struct Collection {
     x: f64,
     z: f64,
-    turn: f64,
     age: f64,
-    color: [f32; 3],
+    beat: Beat,
+}
+
+impl Collection {
+    fn seconds(&self) -> f64 {
+        match self.beat {
+            Beat::Crush { .. } => CRUSH_SECONDS,
+            Beat::Landing => LANDING_SECONDS,
+        }
+    }
 }
 
 /// Whether a drop was last seen stocked, and since when (negative infinity for a
-/// drop first seen in that state, so a battle's drops start with full plumes).
+/// drop first seen in that state, so a battle's drops start with full wisps).
 #[derive(Clone, Copy, Debug)]
 struct Supply {
     id: u32,
@@ -225,18 +261,36 @@ impl PickupEffects {
         });
     }
 
-    /// The ground beat of a supply taken from the drop at (x, z), its pallet turned
-    /// `turn`, in its signal `color`.
-    pub fn collect(&mut self, x: f64, z: f64, turn: f64, color: u32) {
+    fn push(&mut self, beat: Collection) {
         if self.collections.len() >= MAX_PICKUP_EFFECTS {
             self.collections.pop_front();
         }
-        self.collections.push_back(Collection {
+        self.collections.push_back(beat);
+    }
+
+    /// The dust and smoke of the supply at (x, z) crushed under a hull, its lid
+    /// thrown out from `exit` along `out` (level, unit), in its signal `color`.
+    pub fn collect(&mut self, x: f64, z: f64, exit: [f64; 2], out: [f64; 2], color: u32) {
+        self.push(Collection {
             x,
             z,
-            turn,
             age: 0.0,
-            color: hex_to_linear(color),
+            beat: Beat::Crush {
+                exit,
+                out,
+                color: hex_to_linear(color),
+            },
+        });
+    }
+
+    /// The dust a restocked crate raises landing on its pallet at (x, z), `delay`
+    /// seconds from now.
+    pub fn land(&mut self, x: f64, z: f64, delay: f64) {
+        self.push(Collection {
+            x,
+            z,
+            age: -delay,
+            beat: Beat::Landing,
         });
     }
 
@@ -247,11 +301,11 @@ impl PickupEffects {
         });
         self.collections.retain_mut(|beat| {
             beat.age += dt;
-            beat.age < COLLECT_SECONDS
+            beat.age < beat.seconds()
         });
     }
 
-    /// Write the plume over every stocked pallet (and the last of it over a pallet
+    /// Write the wisp over every stocked pallet (and the last of it over a pallet
     /// just emptied) and the promotion pops into `puffs`, after the blasts have
     /// rebuilt it this frame.
     pub fn draw(&mut self, state: &RenderState, puffs: &mut PoolBuffer) {
@@ -285,15 +339,11 @@ impl PickupEffects {
             } else {
                 continue;
             };
-            let base = grenade(pickup.x, pickup.z, supply_turn(pickup.id));
-            let since_taken = state.elapsed - taken;
-            if since_taken > SNUFF_SECONDS * 0.5 {
-                wisp(pickup.id, base, state.elapsed, since_taken, puffs);
-            }
-            if since_taken > SNUFF_SECONDS {
+            if state.elapsed - taken > SNUFF_SECONDS {
                 continue;
             }
-            plume(
+            let base = grenade(pickup.x, pickup.z, supply_turn(pickup.id));
+            wisp(
                 pickup.id,
                 base,
                 pickup_signal(pickup.kind),
@@ -308,25 +358,30 @@ impl PickupEffects {
         }
     }
 
-    /// Write the collections' ground beats into `puffs`. They play round the tank
-    /// that took the supply, usually the viewer's, so they are written after the
-    /// pool has cleared the sight line to it; returns whether any were.
+    /// Write the collections' beats into `puffs`. They play round the tank that
+    /// took the supply, usually the viewer's, so they are written after the pool
+    /// has cleared the sight line to it; returns whether any were.
     pub fn draw_collections(&self, state: &RenderState, puffs: &mut PoolBuffer) -> bool {
         let ground = Ground::from_theme(&state.map_theme);
-        for beat in &self.collections {
-            let dust = ground.dust(beat.x, beat.z).map(|c| c as f32);
-            collection(beat, dust, puffs);
+        let mut any = false;
+        for beat in self.collections.iter().filter(|beat| beat.age >= 0.0) {
+            let dust = pale(ground.dust(beat.x, beat.z).map(|c| c as f32), DUST_LIGHTEN);
+            match beat.beat {
+                Beat::Crush { exit, out, color } => crush(beat, exit, out, color, dust, puffs),
+                Beat::Landing => landing(beat, dust, puffs),
+            }
+            any = true;
         }
-        !self.collections.is_empty()
+        any
     }
 }
 
-/// One drop's column: puffs leaving the grenade since it was `lit` and before the
-/// supply was `taken`, dense and saturated where they leave it, then sheared over
-/// downwind, widening a little, greying and fraying into wisps as they climb. Each
-/// puff keeps the gush, meander and stray it left the grenade with, so the column
-/// moves as one body and never trembles; once the supply is taken it thins away.
-fn plume(id: u32, base: Vec3, color: u32, time: f64, lit: f64, taken: f64, puffs: &mut PoolBuffer) {
+/// One drop's wisp: puffs leaving the grenade since it was `lit` and before the
+/// supply was `taken`, thin and only tinted where they leave it, then sheared over
+/// downwind, widening a little, greying and fraying as they climb. Each puff keeps
+/// the gush, meander and stray it left the grenade with, so the wisp moves as one
+/// body and never trembles; once the supply is taken it thins away.
+fn wisp(id: u32, base: Vec3, color: u32, time: f64, lit: f64, taken: f64, puffs: &mut PoolBuffer) {
     let tint = hex_to_linear(color);
     let seed = hash(f64::from(id));
     let rise = SIGNAL_RISE * (1.0 + SIGNAL_RISE_SPREAD * (2.0 * hash(f64::from(id) + 7.3) - 1.0));
@@ -344,8 +399,8 @@ fn plume(id: u32, base: Vec3, color: u32, time: f64, lit: f64, taken: f64, puffs
             1.0 - SIGNAL_GUSH * 0.5 * (1.0 + (emitted * SIGNAL_GUSH_RATE + seed * TAU).sin());
         let height = rise * (1.0 - (1.0 - a).powf(SIGNAL_SLOWING));
         let shear = SIGNAL_SHEAR * a.powf(SIGNAL_SHEAR_ONSET);
-        // Across the wind: the slow meander of the whole column, and each puff's own
-        // stray as the column breaks up into wisps.
+        // Across the wind: the slow meander of the whole wisp, and each puff's own
+        // stray as it breaks up.
         let stray = SIGNAL_STRAY * (hash(emitted * 3.7 + seed) - 0.5) * 2.0 * a * a;
         let meander =
             SIGNAL_MEANDER * a * (emitted * SIGNAL_MEANDER_RATE + seed * 11.0).sin() + stray;
@@ -359,15 +414,16 @@ fn plume(id: u32, base: Vec3, color: u32, time: f64, lit: f64, taken: f64, puffs
             * (0.88 + 0.12 * gush)
             * (1.0 - 0.25 * smoothstep(a, 0.6, 1.0) * hash(emitted * 5.1 + seed));
         let opacity =
-            SIGNAL_OPACITY * gush * snuff * smoothstep(a, 0.0, 0.03) * (1.0 - a).powf(1.3);
-        let grey = SIGNAL_GREYING * smoothstep(a, SIGNAL_GREYING_FROM, 1.0) as f32;
+            SIGNAL_OPACITY * gush * snuff * smoothstep(a, 0.0, 0.04) * (1.0 - a).powf(1.4);
+        let [low, high] = SIGNAL_GREYING;
+        let grey = low + (high - low) * smoothstep(a, 0.0, 0.7) as f32;
         let erosion =
-            SIGNAL_EROSION[0] + (SIGNAL_EROSION[1] - SIGNAL_EROSION[0]) * smoothstep(a, 0.45, 1.0);
+            SIGNAL_EROSION[0] + (SIGNAL_EROSION[1] - SIGNAL_EROSION[0]) * smoothstep(a, 0.4, 1.0);
         smoke_puff(
             puffs,
             position,
             size as f32,
-            greyed(pale(tint, SIGNAL_PALE), grey).map(|c| c * SIGNAL_BRIGHTNESS),
+            mix(tint, SMOKE_GREY, grey),
             opacity as f32,
             (seed * 3.1 + emitted * 0.37).fract() as f32,
             0.0,
@@ -378,85 +434,126 @@ fn plume(id: u32, base: Vec3, color: u32, time: f64, lit: f64, taken: f64, puffs
     }
 }
 
-/// A spent grenade's faint grey wisp over an empty drop, coming up as the column
-/// it gave off thins away (`since_taken`).
-fn wisp(id: u32, base: Vec3, time: f64, since_taken: f64, puffs: &mut PoolBuffer) {
-    let seed = hash(f64::from(id) + 2.9);
-    let strength = smoothstep(since_taken, SNUFF_SECONDS * 0.5, SNUFF_SECONDS * 2.0);
-    let [wx, wz] = SIGNAL_WIND;
-    for j in 0..WISP_PUFFS {
-        let a = (time / WISP_CYCLE + j as f64 / WISP_PUFFS as f64 + seed).fract();
-        let emitted = time - a * WISP_CYCLE;
-        let shear = 0.6 * a * a;
-        let meander = 0.08 * a * (emitted * SIGNAL_MEANDER_RATE + seed * 7.0).sin();
-        let position = base
-            + Vec3::new(
-                (wx * shear - wz * meander) as f32,
-                (WISP_RISE * (1.0 - (1.0 - a).powf(1.4))) as f32,
-                (wz * shear + wx * meander) as f32,
-            );
-        let size = WISP_SIZE[0] + (WISP_SIZE[1] - WISP_SIZE[0]) * a;
-        let opacity = WISP_OPACITY * strength * smoothstep(a, 0.0, 0.08) * (1.0 - a).powf(1.5);
-        smoke_puff(
-            puffs,
-            position,
-            size as f32,
-            WISP_COLOR,
-            opacity as f32,
-            (seed * 5.3 + emitted * 0.41).fract() as f32,
-            0.0,
-            (0.25 + 0.5 * a) as f32,
-            (0.35 + 0.3 * a) as f32,
-            0.0,
-        );
-    }
-}
-
-/// A collection's thump: the ground's `dust` pushed out low from under the tank
-/// that drove over the pallet, rolling out and settling, and the snuffed grenade's
-/// last puff of the kind's colour rising from it.
-fn collection(beat: &Collection, dust: [f32; 3], puffs: &mut PoolBuffer) {
-    let progress = beat.age / COLLECT_SECONDS;
+/// A supply crushed under a hull: the ground's `dust` squirts out from under the
+/// hull's edge at `exit`, fanned about the throw `out`, a low ring of it rolls out
+/// round the crushed crate from under the whole hull, and the crushed grenade's
+/// `color` bursts out with the lid, rising as it goes.
+fn crush(
+    beat: &Collection,
+    [ex, ez]: [f64; 2],
+    [ox, oz]: [f64; 2],
+    color: [f32; 3],
+    dust: [f32; 3],
+    puffs: &mut PoolBuffer,
+) {
+    let progress = beat.age / CRUSH_SECONDS;
     let spread = 1.0 - (1.0 - progress).powi(3);
-    let fade = smoothstep(beat.age, 0.0, 0.04) * (1.0 - progress).powf(1.6);
-    let turn = hash(beat.x * 0.731 + beat.z * 0.377) * TAU;
-    for j in 0..COLLECT_PUFFS {
-        let bearing = turn + TAU * (j as f64 + 0.3 * hash(j as f64 + turn)) / COLLECT_PUFFS as f64;
-        let reach = (COLLECT_REACH[0] + (COLLECT_REACH[1] - COLLECT_REACH[0]) * spread)
-            * (0.85 + 0.3 * hash(j as f64 * 1.3 + turn));
-        let height = COLLECT_HEIGHT[0] + (COLLECT_HEIGHT[1] - COLLECT_HEIGHT[0]) * spread;
+    let fade = smoothstep(beat.age, 0.0, 0.03) * (1.0 - progress).powf(1.5);
+    let heading = oz.atan2(ox);
+    let turn = hash(beat.x * 0.731 + beat.z * 0.377);
+    for j in 0..SQUIRT_PUFFS {
+        let share = (j as f64 + 0.5) / SQUIRT_PUFFS as f64 * 2.0 - 1.0;
+        let bearing = heading + CRUSH_FAN * share + 0.2 * (hash(j as f64 + turn) - 0.5);
+        let reach = (SQUIRT_REACH[0] + (SQUIRT_REACH[1] - SQUIRT_REACH[0]) * spread)
+            * (1.0 - 0.45 * share.abs())
+            * (0.8 + 0.4 * hash(j as f64 * 1.3 + turn));
+        let height = SQUIRT_HEIGHT[0] + (SQUIRT_HEIGHT[1] - SQUIRT_HEIGHT[0]) * spread;
         let position = Vec3::new(
-            (beat.x + bearing.cos() * reach) as f32,
+            (ex + bearing.cos() * reach) as f32,
             height as f32,
-            (beat.z + bearing.sin() * reach) as f32,
+            (ez + bearing.sin() * reach) as f32,
         );
-        let size = COLLECT_SIZE[0] + (COLLECT_SIZE[1] - COLLECT_SIZE[0]) * spread;
+        let size = SQUIRT_SIZE[0] + (SQUIRT_SIZE[1] - SQUIRT_SIZE[0]) * spread;
         smoke_puff(
             puffs,
             position,
             size as f32,
             dust,
-            (COLLECT_OPACITY * fade) as f32,
+            (SQUIRT_OPACITY * fade) as f32,
             (turn + j as f64 * 0.53).fract() as f32,
             0.0,
-            (0.2 + progress * 0.6) as f32,
+            (0.15 + progress * 0.6) as f32,
             (0.45 + 0.3 * progress) as f32,
             0.0,
         );
     }
-    let last = grenade(beat.x, beat.z, beat.turn) + Vec3::Y * (LAST_PUFF_RISE * spread) as f32;
-    smoke_puff(
-        puffs,
-        last,
-        (LAST_PUFF_SIZE[0] + (LAST_PUFF_SIZE[1] - LAST_PUFF_SIZE[0]) * spread) as f32,
-        greyed(beat.color, 0.3),
-        (0.7 * fade) as f32,
-        (turn + 0.3).fract() as f32,
-        0.0,
-        (progress * 0.8) as f32,
-        (0.2 + 0.4 * progress) as f32,
-        0.0,
-    );
+    for j in 0..RING_PUFFS {
+        let bearing = TAU * (j as f64 + 0.4 * hash(j as f64 + turn * 3.0)) / RING_PUFFS as f64;
+        let reach = RING_REACH[0] + (RING_REACH[1] - RING_REACH[0]) * spread;
+        let position = Vec3::new(
+            (beat.x + bearing.cos() * reach) as f32,
+            (0.12 + 0.15 * spread) as f32,
+            (beat.z + bearing.sin() * reach) as f32,
+        );
+        smoke_puff(
+            puffs,
+            position,
+            (0.3 + 0.35 * spread) as f32,
+            dust,
+            (RING_OPACITY * fade) as f32,
+            (turn * 7.0 + j as f64 * 0.31).fract() as f32,
+            0.0,
+            (0.2 + progress * 0.6) as f32,
+            (0.5 + 0.3 * progress) as f32,
+            0.0,
+        );
+    }
+    let tint = greyed(color, BURST_GREYING);
+    for j in 0..BURST_PUFFS {
+        let bearing = heading + 0.5 * (j as f64 / (BURST_PUFFS - 1) as f64 - 0.5);
+        let reach = BURST_REACH[0] + (BURST_REACH[1] - BURST_REACH[0]) * spread;
+        let rise =
+            BURST_RISE[0] + (BURST_RISE[1] - BURST_RISE[0]) * spread * (0.7 + 0.15 * j as f64);
+        let position = Vec3::new(
+            (ex + bearing.cos() * reach * (1.0 - 0.15 * j as f64)) as f32,
+            rise as f32,
+            (ez + bearing.sin() * reach * (1.0 - 0.15 * j as f64)) as f32,
+        );
+        let size = BURST_SIZE[0] + (BURST_SIZE[1] - BURST_SIZE[0]) * spread;
+        smoke_puff(
+            puffs,
+            position,
+            size as f32,
+            tint,
+            (BURST_OPACITY * fade) as f32,
+            (turn * 5.0 + j as f64 * 0.47).fract() as f32,
+            0.0,
+            (0.1 + progress * 0.7) as f32,
+            (0.25 + 0.4 * progress) as f32,
+            0.0,
+        );
+    }
+}
+
+/// A restocked crate landing on its pallet: a ring of the ground's `dust` puffed
+/// out low from under it.
+fn landing(beat: &Collection, dust: [f32; 3], puffs: &mut PoolBuffer) {
+    let progress = beat.age / LANDING_SECONDS;
+    let spread = 1.0 - (1.0 - progress).powi(3);
+    let fade = smoothstep(beat.age, 0.0, 0.03) * (1.0 - progress).powf(1.5);
+    let turn = hash(beat.x * 0.531 + beat.z * 0.917) * TAU;
+    for j in 0..LANDING_PUFFS {
+        let bearing = turn + TAU * j as f64 / LANDING_PUFFS as f64;
+        let reach = LANDING_REACH[0] + (LANDING_REACH[1] - LANDING_REACH[0]) * spread;
+        let position = Vec3::new(
+            (beat.x + bearing.cos() * reach) as f32,
+            (0.12 + 0.12 * spread) as f32,
+            (beat.z + bearing.sin() * reach) as f32,
+        );
+        let size = LANDING_SIZE[0] + (LANDING_SIZE[1] - LANDING_SIZE[0]) * spread;
+        smoke_puff(
+            puffs,
+            position,
+            size as f32,
+            dust,
+            (LANDING_OPACITY * fade) as f32,
+            (turn + j as f64 * 0.37).fract() as f32,
+            0.0,
+            (0.2 + progress * 0.6) as f32,
+            (0.5 + 0.3 * progress) as f32,
+            0.0,
+        );
+    }
 }
 
 /// A promotion's pop: the colour rolls out over the tank round a core that rises a
@@ -533,9 +630,9 @@ mod tests {
         let stocked = puffs.len();
         assert!(
             stocked > SIGNAL_PUFFS / 2 && stocked <= SIGNAL_PUFFS,
-            "a full plume over a drop first seen stocked"
+            "a full wisp over a drop first seen stocked"
         );
-        // Just taken: the plume already given off is still there, thinning.
+        // Just taken: the wisp already given off is still there, thinning.
         state.pickups[0].available = false;
         state.pickups[0].cooldown_duration = 15.0;
         state.pickups[0].cooldown = 14.9;
@@ -545,35 +642,44 @@ mod tests {
             !puffs.is_empty() && puffs.len() <= stocked,
             "the last smoke"
         );
-        // Soon after: only the spent grenade's faint grey wisp.
+        // Soon after: nothing over the empty pallet.
         state.pickups[0].cooldown = 15.0 - SNUFF_SECONDS * 3.0;
         puffs.clear();
         effects.draw(&state, &mut puffs);
-        assert!(
-            !puffs.is_empty() && puffs.len() <= WISP_PUFFS,
-            "a wisp from an empty pallet"
-        );
-        // Restocked: the plume grows from the grenade.
+        assert!(puffs.is_empty(), "no smoke from an empty pallet");
+        // Restocked: the wisp grows from the grenade.
         state.pickups[0].available = true;
         puffs.clear();
         effects.draw(&state, &mut puffs);
-        assert!(puffs.len() <= 1, "a relit grenade starts its plume afresh");
+        assert!(puffs.len() <= 1, "a relit grenade starts its wisp afresh");
         state.elapsed += SIGNAL_CYCLE / 2.0;
         puffs.clear();
         effects.draw(&state, &mut puffs);
         assert!(puffs.len() > 2 && puffs.len() < stocked, "and it climbs");
         puffs.clear();
-        effects.collect(4.0, -2.0, 0.0, 0xffffff);
+        effects.collect(4.0, -2.0, [6.0, -2.0], [1.0, 0.0], 0xffffff);
+        effects.land(0.0, 0.0, 0.3);
         effects.update(0.1);
         assert!(effects.draw_collections(&state, &mut puffs));
-        assert_eq!(puffs.len(), COLLECT_PUFFS + 1);
-        assert!(
-            puffs.records()[..COLLECT_PUFFS]
-                .iter()
-                .all(|puff| puff.translation().y < 0.4),
-            "the thump stays low"
+        assert_eq!(
+            puffs.len(),
+            SQUIRT_PUFFS + RING_PUFFS + BURST_PUFFS,
+            "the landing waits for the crate to fall"
         );
-        effects.update(COLLECT_SECONDS);
+        assert!(
+            puffs.records()[..SQUIRT_PUFFS + RING_PUFFS]
+                .iter()
+                .all(|puff| puff.translation().y < 0.6),
+            "the dust stays low"
+        );
+        effects.update(0.3);
+        puffs.clear();
+        effects.draw_collections(&state, &mut puffs);
+        assert_eq!(
+            puffs.len(),
+            SQUIRT_PUFFS + RING_PUFFS + BURST_PUFFS + LANDING_PUFFS
+        );
+        effects.update(CRUSH_SECONDS);
         assert!(effects.is_empty(), "the beat is over in a breath");
         puffs.clear();
         for i in 0..30 {

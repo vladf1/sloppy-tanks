@@ -58,7 +58,7 @@ pub struct PickupInspection {
     pub ring: bool,
     pub ring_dim: bool,
     pub refill: bool,
-    /// How much of the marking is freshly re-sprayed (0..1).
+    /// How far the drop has restocked (0..1).
     pub segments: f32,
 }
 
@@ -175,25 +175,23 @@ impl Presentation {
             });
         }
         for (&id, view) in &self.pickups {
-            let (Some(base), Some(rim), Some(gem)) = (
+            let (Some(base), Some(gem)) = (
                 renderer.instance_state(view.base),
-                renderer.instance_state(view.rim),
                 renderer.instance_state(view.gem),
             ) else {
                 continue;
             };
-            // The marking is one part: freshly painted while stocked, faded and
-            // re-sprayed (its progress in `data.x`) while restocking.
+            // A stocked drop stands on its whole pallet; a taken one leaves its
+            // pallet crushed until it restocks (its progress in `segments`).
             let stocked = view.shown == Some(true);
             inspection.pickups.push(PickupInspection {
                 id,
                 base_shown: base.visible,
-                // The full gem, not the small ghost a recharging pad shows.
                 gem: gem.visible && gem.world.x_axis.length() > 0.9,
-                ring: rim.visible && stocked,
-                ring_dim: rim.visible && !stocked,
-                refill: rim.visible && !stocked,
-                segments: rim.data[0],
+                ring: base.visible && stocked,
+                ring_dim: base.visible && !stocked,
+                refill: base.visible && !stocked,
+                segments: view.progress,
             });
         }
         for (&id, view) in &self.fragments {
