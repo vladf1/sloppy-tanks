@@ -10,11 +10,12 @@ use glam::DVec3;
 use crate::geometry::{Mesh, icosahedron_geometry, plane_geometry, widen};
 use crate::scene::{Material, Node, Side, TextureRef};
 
+use super::batching::batch;
 use super::effects_scenery::QUARRY_SIGN_TEXTURE;
 use super::harbor_surfaces::{steel_beam, steel_box};
 use super::model_primitives::adopt_children;
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
-use super::quarry_machinery::{PAINT, weather_paint};
+use super::quarry_machinery::{PAINT, grime, weather_paint};
 use super::quarry_terrain::quarry_ground_drop;
 use crate::geometry::math::hex_to_linear;
 use crate::sim::math::Random;
@@ -201,6 +202,10 @@ fn wheel_loader(group: &mut Node, x: f64, z: f64, yaw: f64) {
         );
     }
     weather_paint(&mut loader);
+    // Merged here only so the dust can be baked over the whole machine; the
+    // equipment batch takes the merged parts as it would the loose ones.
+    batch(&mut loader);
+    grime(&mut loader, 1.5);
     loader.set_rotation_euler(0.0, yaw, 0.0);
     loader.position = DVec3::new(x, -1.79, z);
     adopt_children(group, loader);
@@ -371,6 +376,8 @@ fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
     );
     drill_rig_details(&mut rig, mast_x);
     weather_paint(&mut rig);
+    batch(&mut rig);
+    grime(&mut rig, 1.3);
     rig.set_rotation_euler(0.0, yaw, 0.0);
     rig.position = DVec3::new(x, -1.79, z);
     adopt_children(group, rig);
