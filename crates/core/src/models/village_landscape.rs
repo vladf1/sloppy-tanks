@@ -745,6 +745,7 @@ fn backdrop(group: &mut Node) {
             true,
         );
     }
+    wall_hedges(&mut forest, &mut rng);
     // A continuous craggy ridge blends into the foothills, with snow following the terrain.
     let mut ridge = plane_geometry_segments(
         RIDGE_SIZE[0],
@@ -782,6 +783,62 @@ fn backdrop(group: &mut Node) {
     batch(&mut rocks);
     group.children.push(rocks);
     group.children.push(forest.finish());
+}
+
+/// The outside of the village wall (its centreline is at the arena's edge, 60.5
+/// m), and how far out of it the hedge shrubs root, metres.
+const WALL_OUTSIDE: f64 = 61.0;
+const WALL_HEDGE_OUT: [f64; 2] = [1.3, 3.4];
+/// The wall hedges' shrubs: their heights, metres (the wall stands 2.2 m), and
+/// the run between one clump and the next along the wall.
+const WALL_HEDGE_HEIGHT: [f64; 2] = [2.5, 4.2];
+const WALL_HEDGE_STEP: [f64; 2] = [5.0, 11.0];
+
+/// Shrubs and saplings grown up against the outside of the wall on the north,
+/// east and west, in clumps with gaps between: from inside the village their
+/// crowns break the wall's top line, so the wall reads as an old boundary the
+/// valley has grown over rather than one ruled strip. The south stays open for
+/// the overview, and the lanes, the bridge approach and the sign's gate stay
+/// clear.
+fn wall_hedges(forest: &mut Forest, rng: &mut Random) {
+    for side in 0..3 {
+        let mut run = -57.0 + rng.range(0.0, 4.0);
+        while run < 57.0 {
+            let open = rng.next() < 0.3;
+            let members = 1 + (rng.next() * 3.0) as usize;
+            let centre = run;
+            run += rng.range(WALL_HEDGE_STEP[0], WALL_HEDGE_STEP[1]);
+            if open {
+                continue;
+            }
+            for _ in 0..members {
+                let along = centre + rng.range(-1.8, 1.8);
+                let out = WALL_OUTSIDE + rng.range(WALL_HEDGE_OUT[0], WALL_HEDGE_OUT[1]);
+                let (x, z) = match side {
+                    0 => (along, -out),
+                    1 => (-out, along),
+                    _ => (out, along),
+                };
+                // The bridge approach and the sign's gate north of the main
+                // street, and the farm lanes.
+                if (side == 0 && x.abs() < 11.0) || farmed(x, z) || creek_distance(x, z) < 9.0 {
+                    continue;
+                }
+                let height = rng.range(WALL_HEDGE_HEIGHT[0], WALL_HEDGE_HEIGHT[1]);
+                let span = height * rng.range(0.8, 1.15);
+                let (x, z) = nudge_for_family(x, z, height, |family| {
+                    family == 1 || family == 3 || family == 5
+                });
+                forest.plant(TreeShape {
+                    x,
+                    z,
+                    w: span,
+                    d: span,
+                    h: height,
+                });
+            }
+        }
+    }
 }
 
 /// Stands north of the creek: centre x, z and radius.
