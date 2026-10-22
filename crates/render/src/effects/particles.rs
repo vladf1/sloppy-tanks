@@ -172,9 +172,14 @@ const CLOD_LIFE: [f64; 2] = [5.0, 3.0];
 const SNAP_SPLINTERS: usize = 16;
 /// Torn hull plate a kill scatters around its wreck: count, life (s), size (m),
 /// and the scorched steel it is; it lies in the scorch long after the smoke.
-const SCRAP: usize = 8;
-const SCRAP_LIFE: [f64; 2] = [8.0, 4.0];
-const SCRAP_SIZE: [f64; 2] = [0.08, 0.14];
+const SCRAP: usize = 10;
+const SCRAP_LIFE: [f64; 2] = [16.0, 8.0];
+const SCRAP_SIZE: [f64; 2] = [0.1, 0.18];
+/// Torn skin of a burst drum: curled plates of its red paint, blistered and
+/// charred, lying round the scorch long after the smoke.
+const DRUM_SCRAP: usize = 7;
+const DRUM_SCRAP_SIZE: [f64; 2] = [0.16, 0.16];
+const DRUM_SCRAP_COLORS: [u32; 3] = [0x8f2a1a, 0x2a2420, 0x5a2a1c];
 const SCRAP_COLORS: [u32; 3] = [0x55534d, 0x6a5444, 0x45433f];
 const CLOD_GLOW: [f32; 3] = [2.2, 0.62, 0.09];
 const HURT: Style = Style {
@@ -300,7 +305,11 @@ impl ParticleEffects {
         let count = if timber {
             style.count as i64 - 2
                 + (random.next_f64() * 5.0).floor() as i64
-                + if collapse { TIMBER_COLLAPSE_SPLINTERS } else { 0 }
+                + if collapse {
+                    TIMBER_COLLAPSE_SPLINTERS
+                } else {
+                    0
+                }
         } else {
             style.count as i64
         };
@@ -607,6 +616,39 @@ impl ParticleEffects {
         }
         if event.kind == SimEventType::Death {
             self.scrap(event, random);
+        }
+        if event.cover_kind == Some(CoverKind::Drum) {
+            self.drum_scrap(event, random);
+        }
+    }
+
+    /// The burst drum's skin: a few big curled plates thrown out low, still
+    /// hot, that land and lie round the scorch.
+    fn drum_scrap(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        for i in 0..DRUM_SCRAP {
+            if self.particles.len() >= MAX_PARTICLES {
+                return;
+            }
+            let life = SCRAP_LIFE[0] + random.next_f64() * SCRAP_LIFE[1];
+            let angle = (i as f64 + random.next_f64() * 0.8) * TAU / DRUM_SCRAP as f64;
+            let speed = 1.5 + random.next_f64() * 3.0;
+            self.particles.push(Particle {
+                splinter: false,
+                x: event.x,
+                y: 0.8,
+                z: event.z,
+                vx: angle.cos() * speed,
+                vy: 3.0 + random.next_f64() * 4.0,
+                vz: angle.sin() * speed,
+                life,
+                max: life,
+                size: DRUM_SCRAP_SIZE[0] + random.next_f64() * DRUM_SCRAP_SIZE[1],
+                color: hex_to_linear(DRUM_SCRAP_COLORS[i % DRUM_SCRAP_COLORS.len()]),
+                hot: 0.6,
+                glow: 0.0,
+                rests: true,
+                plate: true,
+            });
         }
     }
 

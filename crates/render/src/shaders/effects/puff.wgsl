@@ -214,7 +214,10 @@ fn puff_color(
     );
     let sun = dot(normal, frame.sun_direction.xyz);
     let direct = smoothstep(-0.25, 0.85, sun) * (0.55 + 0.45 * noise);
-    let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, normal.y * 0.5 + 0.5);
+    // The fill keeps the sky's and ground's brightness but little of their hue:
+    // grass bounce would turn dust olive and a dusk sky smoke lilac.
+    let fill = mix(frame.ground_color.rgb, frame.sky_color.rgb, normal.y * 0.5 + 0.5);
+    let hemisphere = mix(vec3f(dot(fill, vec3f(0.2126, 0.7152, 0.0722))), fill, 0.3);
     // Lit tops and shaded bellies: billows facing down sit in the cloud's own
     // shadow, deep folds between billows take less fill, and the ball's lower
     // half sits in the shade of its upper half.

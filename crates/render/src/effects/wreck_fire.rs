@@ -387,11 +387,8 @@ fn draw(
         // Born quickly at the fire, densest low, thinning out as it spreads; a
         // puff shows only once the column has climbed to it.
         let grown = smoothstep(burner.column - a * SMOKE_CYCLE, 0.0, 0.6);
-        let opacity = smoke
-            * grown
-            * smoothstep(a, 0.0, 0.08)
-            * (1.0 - smoothstep(a, 0.3, 1.0))
-            * 0.62;
+        let opacity =
+            smoke * grown * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.3, 1.0)) * 0.62;
         smoke_puff(
             puffs,
             position,

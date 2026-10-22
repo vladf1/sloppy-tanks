@@ -110,8 +110,13 @@ const SMOKE_PUFFS: usize = 6;
 const HULL_SEAMS: f64 = 1.3;
 const HULL_SEAM_HEIGHT: f64 = 0.45;
 const HULL_HATCH_HEIGHT: f64 = 1.35;
-/// A blast on open ground bursts from a fist-sized heart low over the ground.
-const GROUND_SEAMS: f64 = 0.2;
+/// A blast on open ground bursts from a fist-sized heart low over the ground,
+/// its lobes bigger and closer packed than a vehicle's: one rolling ball with
+/// a broken rim rather than a ring of pops.
+const GROUND_SEAMS: f64 = 0.3;
+const GROUND_LOBES: [f64; 2] = [0.6, 1.55];
+/// How high a ground blast's middle jets, against a vehicle's.
+const GROUND_COLUMN: f64 = 0.5;
 const GROUND_SEAM_HEIGHT: f64 = 0.3;
 const GROUND_HATCH_HEIGHT: f64 = 0.55;
 const SKIRT_PUFFS: usize = 7;
@@ -140,7 +145,7 @@ const FUEL_FLAMES: usize = 4;
 /// they use the puff slots a tank's turret jet would.
 const FUEL_BALLS: usize = 3;
 const FUEL_BALL_CYCLE: f64 = 0.9;
-const FUEL_FIRE: [f64; 2] = [0.25, 2.6];
+const FUEL_FIRE: [f64; 2] = [0.25, 1.5];
 /// A tank's cook-off jet: how long its tongue of flame roars up, and its color.
 const JET_SECONDS: f64 = 0.45;
 const JET_COLOR: [f32; 3] = [1.3, 1.1, 1.0];
@@ -512,7 +517,7 @@ fn fuel_fire(b: &Blast, t: f64, lifetime: f64, streaks: &mut PoolBuffer) {
             base,
             (up + Vec3::new(0.12 * breathe, 0.0, -0.08 * breathe)).normalize(),
             size,
-            size * (1.4 + 0.3 * breathe) * (0.5 + 0.5 * fire as f32),
+            size * (0.85 + 0.25 * breathe) * (0.5 + 0.5 * fire as f32),
             (b.phase * 0.17 + jf * 0.23).fract() as f32,
             [1.05, 1.0, 1.0, (fire * 0.65) as f32],
         );
@@ -1345,10 +1350,22 @@ impl ExplosionEffects {
         let shape = SHAPES[b.shape % SHAPES.len()];
         let cooling = COOLING / look.fire_life;
         let vehicle = b.kind == Kind::Tank;
-        let (source, seam_height, hatch_height) = if vehicle {
-            (HULL_SEAMS, HULL_SEAM_HEIGHT, HULL_HATCH_HEIGHT)
+        let (source, seam_height, hatch_height, [spread, lobe], column) = if vehicle {
+            (
+                HULL_SEAMS,
+                HULL_SEAM_HEIGHT,
+                HULL_HATCH_HEIGHT,
+                [1.0, 1.0],
+                shape.column,
+            )
         } else {
-            (GROUND_SEAMS, GROUND_SEAM_HEIGHT, GROUND_HATCH_HEIGHT)
+            (
+                GROUND_SEAMS,
+                GROUND_SEAM_HEIGHT,
+                GROUND_HATCH_HEIGHT,
+                GROUND_LOBES,
+                shape.column * GROUND_COLUMN,
+            )
         };
         for j in 0..FIRE_PUFFS {
             let jf = j as f64;
@@ -1366,8 +1383,10 @@ impl ExplosionEffects {
             let out = settle(age, 13.0 + 9.0 * r2);
             let (angle, reach, height, size) = if seam {
                 let k = (jf + 0.5) / shape.seams as f64 - 0.5;
-                let angle = b.phase + k * shape.arc + (r3 - 0.5) * shape.arc / shape.seams as f64 * 0.7;
-                let reach = source + (0.3 + 0.5 * r3) * shape.reach * look.fire_spread * out;
+                let angle =
+                    b.phase + k * shape.arc + (r3 - 0.5) * shape.arc / shape.seams as f64 * 0.7;
+                let reach =
+                    source + (0.3 + 0.5 * r3) * shape.reach * look.fire_spread * spread * out;
                 let height = seam_height + 0.3 * r2 + 1.0 * shape.rise * out;
                 // A few big lobes among small ones.
                 let size = 0.25 + (0.55 + 0.85 * r1 * r1) * out;
@@ -1375,7 +1394,7 @@ impl ExplosionEffects {
             } else {
                 let angle = b.phase + jf * 2.399;
                 let reach = 0.1 + 0.5 * r3 * out;
-                let height = hatch_height + shape.column * (1.0 + 1.3 * r3) * settle(age, 6.0 + 3.0 * r2);
+                let height = hatch_height + column * (1.0 + 1.3 * r3) * settle(age, 6.0 + 3.0 * r2);
                 let size = 0.22 + (0.5 + 0.6 * r1 * r1) * out;
                 (angle, reach, height, size)
             };
@@ -1392,12 +1411,18 @@ impl ExplosionEffects {
             let reach = (reach + 0.35 * soot_age) * s;
             // The burning part shrinks back a little as it cools; the soot it
             // leaves keeps spreading.
-            let size = size * (0.84 + 0.16 * fire) * s * look.fire_size * shape.size
+            let size = size * lobe * (0.84 + 0.16 * fire) * s * look.fire_size * shape.size
                 + (0.35 + 0.3 * r2) * soot_age * s.sqrt();
             let pale = smoothstep(soot_age, 0.1, 0.1 + SOOT_SECONDS);
             let carry = soot_age * soot_age * 0.5;
-            let x = b.x + angle.cos() * reach + b.phase.cos() * age * look.drift * 0.5 + WIND[0] * carry;
-            let z = b.z + angle.sin() * reach + b.phase.sin() * age * look.drift * 0.5 + WIND[1] * carry;
+            let x = b.x
+                + angle.cos() * reach
+                + b.phase.cos() * age * look.drift * 0.5
+                + WIND[0] * carry;
+            let z = b.z
+                + angle.sin() * reach
+                + b.phase.sin() * age * look.drift * 0.5
+                + WIND[1] * carry;
             // Each seam glows white-hot round the hull for the flash's first frames,
             // outlining the hull rather than hiding it.
             if vehicle && seam && age < SEAM_FLASH_SECONDS {
@@ -1412,11 +1437,15 @@ impl ExplosionEffects {
             }
             // Fire is dense; its soot is a veil that thins as it climbs and
             // spreads, never a sitting balloon.
-            let veil = 0.6 + 0.38 * fire;
+            let veil = 0.5 + 0.48 * fire;
             let gone = 1.0 - smoothstep(soot_age, 0.25, 1.3 + 0.7 * r3);
             // Jets up the middle burst tall, lobes out of the seams wide; both
             // round out as they turn to soot.
-            let burst = if seam { 0.8 + 0.15 * r4 } else { 1.25 + 0.45 * r4 };
+            let burst = match (seam, vehicle) {
+                (true, _) => 0.8 + 0.15 * r4,
+                (false, true) => 1.25 + 0.45 * r4,
+                (false, false) => 1.0 + 0.2 * r4,
+            };
             let stretch = 1.0 + (burst - 1.0) * fire;
             push_stretched_puff(
                 &mut self.puffs,
