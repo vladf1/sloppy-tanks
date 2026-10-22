@@ -52,12 +52,3 @@ pub fn is_village_dirt(x: f64, z: f64) -> bool {
             && (z - road.z).abs() <= road.d / 2.0 - ROAD_SHOULDER
     })
 }
-
-/// Signed metres from (x, z) into the nearest road strip: positive on the road,
-/// negative on the grass beside it. Vegetation keeps to the grass with it.
-pub fn road_inside(x: f64, z: f64) -> f64 {
-    village_roads()
-        .iter()
-        .map(|road| (road.w / 2.0 - (x - road.x).abs()).min(road.d / 2.0 - (z - road.z).abs()))
-        .fold(f64::NEG_INFINITY, f64::max)
-}

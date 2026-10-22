@@ -9,6 +9,7 @@ use crate::scene::{Effect, Material, TextureRef, Wrap};
 use crate::sim::data::ARENA;
 
 use super::effects_scenery::MEADOW_SWAY;
+use super::village_ground::VILLAGE_GROUND_TEXTURE;
 use super::village_roads::village_roads;
 
 pub use crate::sim::maps::GroundKind;
@@ -43,9 +44,11 @@ pub fn ground_material(kind: GroundKind) -> Material {
 /// [`MEADOW_SWAY`] effect's ground mode paints lush grass from the dry-grass tile
 /// (at [`ground_uvs`]) and wears the village roads into it from the packed-dirt
 /// tile, with ragged grass edges, wheel ruts, pebbles and wildflowers. The roads
-/// reach the shader as data from [`village_roads`], so its dirt stays where the
-/// track dust ([`super::village_roads::is_village_dirt`]) expects it. Vertex
-/// colours multiply the grass (creek banks, far hills).
+/// reach the shader as data from [`village_roads`], so its ruts follow the strips
+/// the track dust ([`super::village_roads::is_village_dirt`]) expects; the worn
+/// dirt itself, the cottage gardens and the fields outside the wall come from the
+/// baked plan ([`super::village_ground`]). Vertex colours multiply the grass
+/// (creek banks, far hills).
 pub fn village_ground_material() -> Arc<Material> {
     static MATERIAL: OnceLock<Arc<Material>> = OnceLock::new();
     MATERIAL
@@ -79,9 +82,17 @@ pub fn village_ground_material() -> Arc<Material> {
                 anisotropy: GROUND_ANISOTROPY,
                 ..TextureRef::file("textures/ground/packed-dirt.webp")
             };
+            // Data, not colour: linear, stored rows from the most negative z.
+            let plan = TextureRef {
+                wrap: Wrap::Clamp,
+                srgb: false,
+                flip_y: false,
+                anisotropy: GROUND_ANISOTROPY,
+                ..TextureRef::file(VILLAGE_GROUND_TEXTURE)
+            };
             Arc::new(Material {
                 map: Some(grass),
-                extra_textures: vec![("dirt", dirt)],
+                extra_textures: vec![("dirt", dirt), ("plan", plan)],
                 vertex_colors: true,
                 effect: Effect::Custom {
                     name: MEADOW_SWAY,

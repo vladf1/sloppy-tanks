@@ -21,7 +21,7 @@ use super::building_kit::{
 };
 use super::house_surfaces::{HouseSurface, house_material};
 use super::model_primitives::{Cache, put, shadowed};
-use super::tank_kit::{Kit, aim, pose};
+use super::tank_kit::{Kit, aim, pose, shift};
 use crate::geometry::math::{js_round, scale_hex_color};
 use crate::geometry::{Mesh, octahedron_geometry};
 use crate::scene::Node;
@@ -70,12 +70,39 @@ const FLOWERS: [u32; 4] = [0xd9837a, 0xf0cf6a, 0xb59ad0, 0xf2efe6];
 const SIDING_PAINTS: [u32; 5] = [0xe0d6bf, 0x9a4436, 0x8a9a7b, 0x7d93a3, 0xcfae6a];
 const ACCENT_PAINTS: [u32; 5] = [0x2f4b3a, 0x5c2b27, 0x2c3d55, 0x3a3836, 0x6b4a2a];
 const TRIM_PAINT: u32 = 0xeae2cf;
+const ROOF_PAINTS: [u32; 6] = [0xb04a36, 0x5a6470, 0x3f6a4c, 0x7a5236, 0x3d4652, 0x9a5a3a];
 const BRIGHT_TRIM: u32 = 0xf4f1ea;
 
 /// The chimney pot's mouth relative to the cottage's ground centre, where the
-/// village's chimney smoke rises.
+/// village's chimney smoke rises. It stays put in world space however the cottage
+/// turns to its street ([`cottage_turns`]).
 pub fn chimney_flue(w: f64, d: f64, h: f64) -> DVec3 {
     DVec3::new(-w * 0.25, h + POT_MOUTH, -d * 0.2)
+}
+
+/// Quarter turns about +y from the built cottage (door on +z, ridge along z) to the
+/// world, so each cottage fronts its own street: the row cottages by the outer
+/// roads face them, the corner ones face into their block, the end-of-street pair
+/// face the green and the village-square houses face the square. A quarter turn
+/// swaps the built width and depth, so the footprint never changes.
+pub fn cottage_turns(x: f64, z: f64) -> i32 {
+    if x.abs() > 40.0 && z.abs() < 26.0 {
+        // Door toward the outer road at x = ±52.
+        if x > 0.0 { 1 } else { -1 }
+    } else if z.abs() > 30.0 {
+        // Door toward the cross road nearer the middle.
+        if z > 0.0 { 2 } else { 0 }
+    } else if x > 0.0 {
+        -1
+    } else {
+        1
+    }
+}
+
+/// The world direction a cottage's door faces (`turns` from [`cottage_turns`]).
+pub fn door_direction(turns: i32) -> DVec2 {
+    let yaw = f64::from(turns) * PI / 2.0;
+    DVec2::new(yaw.sin(), yaw.cos())
 }
 
 /// Stable per-cottage variation from its position.
@@ -86,13 +113,16 @@ fn variant(x: f64, z: f64) -> u32 {
 }
 
 /// Paints of the cottage at `x, z`: one of the village paints or the cover's own
-/// stained colour, a door and shutter colour, and the red or green roof of its
-/// side of the village with gentle weathering.
+/// stained colour, a door and shutter colour, and one of the village's weathered
+/// roofs (terracotta, slate, moss green, umber shake, charcoal), gently varied.
 fn palette(x: f64, z: f64, color: u32) -> Palette {
     let v = variant(x, z);
     let siding_choice = (v % (SIDING_PAINTS.len() as u32 + 1)) as usize;
     let siding = SIDING_PAINTS.get(siding_choice).copied().unwrap_or(color);
-    let roof_base = if z.abs() > 35.0 { 0xb84a3c } else { 0x2f6b4f };
+    // Mirror-image cottages take different roofs, so the symmetric plan does not
+    // read as copies.
+    let quadrant = usize::from(x > 0.0) * 2 + usize::from(z > 0.0);
+    let roof_base = ROOF_PAINTS[(v as usize / 3 + quadrant * 2) % ROOF_PAINTS.len()];
     Palette {
         siding,
         trim: if siding_choice == 0 {
@@ -149,20 +179,53 @@ static OCTAHEDRON: Cache<(), Mesh> = Cache::new();
 /// `house(group, c)`: the cottage for a cover box, its paints chosen from its
 /// position.
 pub(super) fn house(group: &mut Node, x: f64, z: f64, w: f64, d: f64, h: f64, color: u32) {
+    house_facing(group, x, z, w, d, h, color, cottage_turns(x, z));
+}
+
+/// A cottage turned `turns` quarter turns from its built frame (see
+/// [`cottage_turns`]); scenery outside the arena chooses its own.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn house_facing(
+    group: &mut Node,
+    x: f64,
+    z: f64,
+    w: f64,
+    d: f64,
+    h: f64,
+    color: u32,
+    turns: i32,
+) {
     let palette = palette(x, z, color);
     let v = variant(x, z);
     let antenna = (v / 5).is_multiple_of(3);
+    let yaw = f64::from(turns) * PI / 2.0;
+    let (w, d) = if turns % 2 == 0 { (w, d) } else { (d, w) };
+    // The flue keeps its world place (the smoke rises there): carry it into the
+    // turned frame.
+    let world_flue = chimney_flue(
+        if turns % 2 == 0 { w } else { d },
+        if turns % 2 == 0 { d } else { w },
+        h,
+    );
+    let flue = DVec3::new(
+        world_flue.x * yaw.cos() - world_flue.z * yaw.sin(),
+        world_flue.y,
+        world_flue.x * yaw.sin() + world_flue.z * yaw.cos(),
+    );
     let roof = Roof::new(w, d, h);
     let mut kit = Kit::new();
-    build_house(&mut kit, w, d, &roof, antenna);
+    build_house(&mut kit, w, d, &roof, antenna, flue, (v / 11) % 3);
+    let mut cottage = Node::group("");
     // Built per cottage rather than cached, so batching moves these meshes into
     // the cottage's merged parts instead of copying them.
-    add_building(group, kit.finish_scaled(uv_per_metre), &palette);
-    group.children.push(shadowed(
+    add_building(&mut cottage, kit.finish_scaled(uv_per_metre), &palette);
+    cottage.children.push(shadowed(
         Arc::new(shingle_courses(&roof)),
         house_material(HouseSurface::Shingles, palette.roof),
     ));
-    window_plants(group, w, d, &roof, v);
+    window_plants(&mut cottage, w, d, &roof, v);
+    cottage.set_rotation_euler(0.0, yaw, 0.0);
+    group.children.push(cottage);
 }
 
 /// The wall frames: front (+z, the door), back, right (+x) and left, each with its
@@ -232,7 +295,15 @@ fn shutter_room(opening: &Opening, half: f64, inner_limit: f64, alone: bool) -> 
     if width >= MIN_SHUTTER { width } else { 0.0 }
 }
 
-fn build_house(kit: &mut Kit<Surface>, w: f64, d: f64, roof: &Roof, antenna: bool) {
+fn build_house(
+    kit: &mut Kit<Surface>,
+    w: f64,
+    d: f64,
+    roof: &Roof,
+    antenna: bool,
+    flue: DVec3,
+    dormer_plan: u32,
+) {
     // Fieldstone plinth and the two steps up to the door.
     kit.chamfer_block(
         Surface::Stone,
@@ -321,7 +392,116 @@ fn build_house(kit: &mut Kit<Surface>, w: f64, d: f64, roof: &Roof, antenna: boo
     }
     roof_deck(kit, roof);
     gutters(kit, w, d, roof);
-    chimney(kit, w, d, roof, antenna);
+    chimney(kit, flue, roof, antenna);
+    // Some cottages light their attics with dormers, so the roofscape varies.
+    for (side, z) in dormers(d, roof, dormer_plan) {
+        let clear = flue.x * side < 0.0 || (flue.z - z).abs() > DORMER_HALF + CHIMNEY;
+        if clear {
+            dormer(kit, roof, side, z);
+        }
+    }
+}
+
+/// Half width of a dormer's front.
+const DORMER_HALF: f64 = 0.62;
+
+/// Where a cottage's dormers sit: (slope side, z along the ridge) for its plan
+/// (0 none, 1 a pair on one slope, 2 one on each slope).
+fn dormers(d: f64, roof: &Roof, plan: u32) -> Vec<(f64, f64)> {
+    if roof.ridge - roof.wall < 1.3 {
+        return Vec::new();
+    }
+    match plan {
+        1 => vec![(1.0, -d * 0.2), (1.0, d * 0.2)],
+        2 => vec![(1.0, d * 0.08), (-1.0, -d * 0.08)],
+        _ => Vec::new(),
+    }
+}
+
+/// A gabled dormer on one roof slope (`side` ±1 along x) at `z`: a clapboard
+/// front with a double-hung window under a little gable, cheeks running back into
+/// the roof and a small roof in the roof's paint.
+fn dormer(kit: &mut Kit<Surface>, roof: &Roof, side: f64, z: f64) {
+    const PEAK: f64 = 0.3;
+    const THICK: f64 = 0.06;
+    // Low on the slope, just inside the wall line, and never above the ridge.
+    let reach = (roof.eave_x * 0.72).min(roof.eave_x - EAVE_OVERHANG - 0.1);
+    let total = roof.pitch * reach - 0.12;
+    if total < 1.0 {
+        return;
+    }
+    let wall_height = (total - PEAK).min(1.1);
+    let xf = side * reach;
+    let base = roof.top(xf) - 0.08;
+    let frame = pose(
+        DVec3::new(xf, base, z),
+        DVec3::new(0.0, side * PI / 2.0, 0.0),
+    );
+    let outline = [
+        (-DORMER_HALF, 0.0),
+        (DORMER_HALF, 0.0),
+        (DORMER_HALF, wall_height),
+        (0.0, wall_height + PEAK),
+        (-DORMER_HALF, wall_height),
+    ]
+    .map(|(u, y)| DVec2::new(u, y));
+    let opening = Opening {
+        u: 0.0,
+        y: 0.17,
+        width: 0.56,
+        height: (wall_height - 0.32).min(0.6),
+    };
+    wall(kit, frame, &outline, &[opening], 0.08);
+    window(kit, frame, &opening, Glazing { double_hung: true }, 0.08);
+    // Corner boards up the front.
+    for u in [-DORMER_HALF + 0.04, DORMER_HALF - 0.04] {
+        kit.block(
+            Surface::Trim,
+            DVec3::new(0.08, wall_height, 0.03),
+            frame * shift(DVec3::new(u, wall_height / 2.0, 0.015)),
+        );
+    }
+    // The roof meets the dormer's eave line this far back up the slope.
+    let back = side * (xf.abs() - (wall_height - 0.02) / roof.pitch).max(0.05);
+    let length = (xf - back).abs();
+    for s in [-1.0, 1.0] {
+        kit.block(
+            Surface::Siding,
+            DVec3::new(length, wall_height, THICK),
+            shift(DVec3::new(
+                (xf + back) / 2.0,
+                base + wall_height / 2.0,
+                z + s * (DORMER_HALF - THICK / 2.0),
+            )),
+        );
+    }
+    // Roof slabs from the peak down past each cheek, from a small overhang at
+    // the front back into the main roof.
+    let slope = (PEAK / DORMER_HALF).atan();
+    let slant = (DORMER_HALF * DORMER_HALF + PEAK * PEAK).sqrt() + 0.14;
+    let run = length + 0.5;
+    for s in [-1.0, 1.0] {
+        let centre = DVec3::new(
+            (xf + back) / 2.0 + side * 0.12,
+            base + wall_height + PEAK / 2.0 + 0.05 - 0.07,
+            z + s * (slant / 2.0 - 0.03) * slope.cos(),
+        );
+        kit.block_at(
+            Surface::Roof,
+            DVec3::new(run, 0.07, slant),
+            centre,
+            DVec3::new(s * slope, 0.0, 0.0),
+        );
+    }
+    kit.block(
+        Surface::Trim,
+        DVec3::new(run, 0.06, 0.12),
+        shift(DVec3::new(
+            (xf + back) / 2.0 + side * 0.12,
+            base + wall_height + PEAK + 0.04,
+            z,
+        )),
+    );
 }
 
 /// Corner boards, the water table over the plinth (broken by the door) and, on
@@ -719,8 +899,7 @@ fn gutters(kit: &mut Kit<Surface>, w: f64, d: f64, roof: &Roof) {
 /// A brick stack rising through the left slope with a corbelled top, a concrete
 /// cap, lead flashing at the roof and a clay pot; some cottages strap a TV aerial
 /// to it.
-fn chimney(kit: &mut Kit<Surface>, w: f64, d: f64, roof: &Roof, antenna: bool) {
-    let flue = chimney_flue(w, d, roof.ridge);
+fn chimney(kit: &mut Kit<Surface>, flue: DVec3, roof: &Roof, antenna: bool) {
     let (cx, cz) = (flue.x, flue.z);
     let top = roof.ridge + CHIMNEY_TOP;
     let bottom = roof.ridge - roof.pitch * (cx.abs() + CHIMNEY);

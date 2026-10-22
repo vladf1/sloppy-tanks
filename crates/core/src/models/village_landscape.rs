@@ -4,6 +4,7 @@
 //! `creek_distance` and `valley_height` are also the ground queries of the meadow
 //! and the footbridge approach's stepping stones.
 
+use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
 use glam::DVec3;
@@ -16,20 +17,27 @@ use super::effects_scenery::MEADOW_SWAY;
 use super::ground_surfaces::ground_uvs;
 use super::model_primitives::{adopt_children, put, shadow_receiver};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
+use super::village_ground::farmed;
 use super::water_surface::{WaterKind, water_surface};
 use crate::geometry::math::{hex_to_linear, lerp, lerp_color, smoothstep};
 use crate::sim::math::Random;
+use crate::sim::tree_proportions::tree_proportions;
 
 /// Height of the creek's mirror plane.
 pub const CREEK_HEIGHT: f64 = -2.65;
 /// Samples along the creek (`getPoints(160)`).
 const CREEK_DIVISIONS: u32 = 160;
 
+/// Segments per culling chunk of the creek polyline.
+const CREEK_CHUNK: usize = 8;
+
 struct Creek {
     curve: CatmullRomCurve3,
     points: Vec<DVec3>,
     /// Per segment: start x, start z, dx, dz, 1 / squared length.
     segments: Vec<[f64; 5]>,
+    /// Per chunk of [`CREEK_CHUNK`] segments: min x, min z, max x, max z.
+    chunks: Vec<[f64; 4]>,
 }
 
 fn creek() -> &'static Creek {
@@ -60,24 +68,56 @@ fn creek() -> &'static Creek {
                 [a.x, a.z, dx, dz, 1.0 / (dx * dx + dz * dz)]
             })
             .collect();
+        let chunks = points
+            .windows(2)
+            .collect::<Vec<_>>()
+            .chunks(CREEK_CHUNK)
+            .map(|chunk| {
+                chunk.iter().flat_map(|pair| pair.iter()).fold(
+                    [
+                        f64::INFINITY,
+                        f64::INFINITY,
+                        f64::NEG_INFINITY,
+                        f64::NEG_INFINITY,
+                    ],
+                    |[x0, z0, x1, z1], p| [x0.min(p.x), z0.min(p.z), x1.max(p.x), z1.max(p.z)],
+                )
+            })
+            .collect();
         Creek {
             curve,
             points,
             segments,
+            chunks,
         }
     })
 }
 
+/// A point on the creek's centreline at `t` in [0, 1] and the unit tangent there.
+pub fn creek_at(t: f64) -> (DVec3, DVec3) {
+    let creek = creek();
+    (creek.curve.point(t), creek.curve.tangent(t))
+}
+
 /// `creekDistance(x, z)`: horizontal distance to the creek's centreline.
 pub fn creek_distance(x: f64, z: f64) -> f64 {
+    let creek = creek();
     let mut nearest = f64::INFINITY;
-    for &[sx, sz, dx, dz, inverse] in &creek().segments {
-        let ax = x - sx;
-        let az = z - sz;
-        let t = 1.0f64.min(0.0f64.max((ax * dx + az * dz) * inverse));
-        let ex = ax - dx * t;
-        let ez = az - dz * t;
-        nearest = nearest.min(ex * ex + ez * ez);
+    // Chunks whose bounds lie farther than the nearest segment so far are skipped.
+    for (chunk, &[x0, z0, x1, z1]) in creek.segments.chunks(CREEK_CHUNK).zip(&creek.chunks) {
+        let bx = (x0 - x).max(x - x1).max(0.0);
+        let bz = (z0 - z).max(z - z1).max(0.0);
+        if bx * bx + bz * bz >= nearest {
+            continue;
+        }
+        for &[sx, sz, dx, dz, inverse] in chunk {
+            let ax = x - sx;
+            let az = z - sz;
+            let t = 1.0f64.min(0.0f64.max((ax * dx + az * dz) * inverse));
+            let ex = ax - dx * t;
+            let ez = az - dz * t;
+            nearest = nearest.min(ex * ex + ez * ez);
+        }
     }
     nearest.sqrt()
 }
@@ -259,7 +299,12 @@ fn stream_geometry() -> Mesh {
 /// terrain, the creek water, the mountain ridge, batched rocks, batched forest.
 pub fn village_landscape(grass: Arc<Material>) -> Node {
     let mut group = Node::group("pine-valley-landscape");
-    let mut geometry = plane_geometry_segments(340.0, 340.0, 112, 112);
+    let mut geometry = plane_geometry_segments(
+        VALLEY_HALF * 2.0,
+        VALLEY_HALF * 2.0,
+        VALLEY_SEGMENTS,
+        VALLEY_SEGMENTS,
+    );
     geometry.rotate_x(-std::f64::consts::FRAC_PI_2);
     // Vertex colours multiply the ground shader's grass: broad patches, and a
     // muddy, sparser bank along the creek.
@@ -291,34 +336,232 @@ pub fn village_landscape(grass: Arc<Material>) -> Node {
     group
 }
 
-/// Background trees placed by position (the fixed treeline beside the arena).
-const TREELINE: [[f64; 2]; 15] = [
-    [-59.0, -66.0],
-    [-52.0, -67.0],
-    [-19.0, -67.0],
-    [17.0, -68.0],
-    [23.0, -68.0],
-    [45.0, -67.0],
-    [54.0, -66.0],
-    [61.0, -67.0],
-    [-67.0, -48.0],
-    [-67.0, -6.0],
-    [-68.0, 10.0],
-    [-70.0, 54.0],
-    [67.0, -42.0],
-    [68.0, 4.0],
-    [67.0, 42.0],
-];
+/// The northern ridge's grid: size, segments and centre.
+const RIDGE_SIZE: [f64; 2] = [360.0, 95.0];
+const RIDGE_SEGMENTS: [u32; 2] = [90, 26];
+const RIDGE_Z: f64 = -159.5;
+/// The valley terrain's grid.
+const VALLEY_SEGMENTS: u32 = 112;
 
-fn plant_tree(forest: &mut Node, shape: TreeShape) {
-    let mut tree = tree_model(&shape, TreeDetail::Background);
-    tree.position.y = valley_height(shape.x, shape.z) + mountain_rise(shape.x, shape.z);
-    adopt_children(forest, tree);
+/// Height of a triangulated height grid at (x, z), exactly as its mesh draws it:
+/// cells of `cell` metres from `origin`, split along the diagonal from their
+/// (low x, high z) corner to their (high x, low z) corner like `PlaneGeometry`
+/// and [`far_ranges`].
+fn grid_surface(
+    x: f64,
+    z: f64,
+    origin: [f64; 2],
+    cell: [f64; 2],
+    height: impl Fn(f64, f64) -> f64,
+) -> f64 {
+    let (gx, gz) = ((x - origin[0]) / cell[0], (z - origin[1]) / cell[1]);
+    let (ix, iz) = (gx.floor(), gz.floor());
+    let (u, v) = (gx - ix, gz - iz);
+    let corner = |i: f64, j: f64| {
+        height(
+            origin[0] + (ix + i) * cell[0],
+            origin[1] + (iz + j) * cell[1],
+        )
+    };
+    let (b, d) = (corner(0.0, 1.0), corner(1.0, 0.0));
+    if u + v <= 1.0 {
+        let a = corner(0.0, 0.0);
+        a + (d - a) * u + (b - a) * v
+    } else {
+        let c = corner(1.0, 1.0);
+        c + (b - c) * (1.0 - u) + (d - c) * (1.0 - v)
+    }
+}
+
+/// The drawn ground under the backdrop at (x, z): the highest of the valley
+/// terrain, the northern ridge and the distant ranges where each lies, as their
+/// meshes interpolate it (a tree planted on the true height would hang off a
+/// crest the mesh cuts across).
+pub fn backdrop_ground(x: f64, z: f64) -> f64 {
+    let mut ground = f64::NEG_INFINITY;
+    if x.abs() < VALLEY_HALF && z.abs() < VALLEY_HALF {
+        let cell = VALLEY_HALF * 2.0 / f64::from(VALLEY_SEGMENTS);
+        ground = ground.max(grid_surface(
+            x,
+            z,
+            [-VALLEY_HALF; 2],
+            [cell; 2],
+            valley_height,
+        ));
+    }
+    let [width, depth] = RIDGE_SIZE;
+    if x.abs() < width / 2.0 && (z - RIDGE_Z).abs() < depth / 2.0 {
+        let cell = [
+            width / f64::from(RIDGE_SEGMENTS[0]),
+            depth / f64::from(RIDGE_SEGMENTS[1]),
+        ];
+        ground = ground.max(grid_surface(
+            x,
+            z,
+            [-width / 2.0, RIDGE_Z - depth / 2.0],
+            cell,
+            |x, z| valley_height(x, z) + mountain_rise(x, z),
+        ));
+    }
+    if ground == f64::NEG_INFINITY || x.abs() > VALLEY_HALF - 8.0 || z.abs() > VALLEY_HALF - 8.0 {
+        let far = grid_surface(x, z, [-RANGES_HALF; 2], [RANGES_CELL; 2], |x, z| {
+            valley_height(x, z) + mountain_rise(x, z) + far_rise(x, z)
+        });
+        ground = ground.max(far - if ground > f64::NEG_INFINITY { 1.5 } else { 0.0 });
+    }
+    ground
+}
+
+/// Where a trunk can stand on the backdrop: the lowest drawn ground around its
+/// base, a little deeper, so it never hangs over a slope; `None` on faces too
+/// steep for a tree.
+fn trunk_footing(x: f64, z: f64) -> Option<f64> {
+    let reach = 1.1;
+    let around = [(reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)]
+        .map(|(dx, dz)| backdrop_ground(x + dx, z + dz));
+    let low = around.iter().copied().fold(backdrop_ground(x, z), f64::min);
+    let high = around.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    ((high - low) / (reach * 2.0) < 0.85).then_some(low - 0.3)
+}
+
+/// A position near (x, z) whose tree grows into a family `want` accepts: the
+/// family is seeded by position, so nudge it by a few centimetres at a time.
+fn nudge_for_family(x: f64, z: f64, h: f64, want: impl Fn(u32) -> bool) -> (f64, f64) {
+    for k in 0..24 {
+        let (tx, tz) = (x + f64::from(k) * 0.07, z - f64::from(k) * 0.05);
+        if want(tree_proportions(tx, tz, 4.0, 4.0, h).family) {
+            return (tx, tz);
+        }
+    }
+    (x, z)
+}
+
+/// Edge of the forest's batching cells: the renderer merges static scenery in
+/// cells of this size and culls each cell's draws together, so the forest is
+/// batched per cell rather than whole (a single forest batch sits in one cell
+/// and draws everywhere, even from the follow camera).
+const FOREST_CELL: f64 = 60.0;
+
+/// The background forest, one group of trees per batching cell.
+#[derive(Default)]
+struct Forest {
+    cells: BTreeMap<(i64, i64), Node>,
+}
+
+impl Forest {
+    fn plant(&mut self, shape: TreeShape) -> bool {
+        let Some(footing) = trunk_footing(shape.x, shape.z) else {
+            return false;
+        };
+        let mut tree = tree_model(&shape, TreeDetail::Background);
+        tree.position.y = footing;
+        // Far woods, seldom near the camera, merge in cells twice as wide.
+        let far = shape.x.abs().max(shape.z.abs()) > FOREST_CELL * 2.0;
+        let cell = if far { FOREST_CELL * 2.0 } else { FOREST_CELL };
+        let key = (
+            (shape.x / cell).floor() as i64 + if far { 1000 } else { 0 },
+            (shape.z / cell).floor() as i64,
+        );
+        adopt_children(self.cells.entry(key).or_default(), tree);
+        true
+    }
+
+    /// The batched cells under one group.
+    fn finish(self) -> Node {
+        let mut group = Node::group("");
+        for (_, mut cell) in self.cells {
+            batch(&mut cell);
+            group.children.push(cell);
+        }
+        group
+    }
+}
+
+/// Where the background forest leaves the ground open: the village and its yard,
+/// the creek, the mill and the bridge approach, the fields, lanes and farmyard.
+fn forest_clearing(x: f64, z: f64, treeline: bool) -> bool {
+    (x.abs() < 66.0 && z.abs() < 66.0)
+        // Near the wall only the authored treeline stands grow: their 60 m
+        // scenery cells are in view from the follow camera.
+        || (!treeline && x.abs() < 69.0 && z > -99.0 && z < 66.0)
+        // The overview looks in over the southern wall.
+        || (z > 57.0 && z < 92.0 && x.abs() < 98.0)
+        || creek_distance(x, z) < 10.5
+        || ((x + 35.0).abs() < 15.0 && (z + 69.0).abs() < 13.0)
+        || (x.abs() < 9.0 && (z + 82.0).abs() < 16.0)
+        // The field hut north of the creek.
+        || ((x + 41.0).abs() < 4.0 && (z + 99.0).abs() < 4.0)
+        || farmed(x, z)
+        || mountain_rise(x, z) > 30.0
+}
+
+/// One grove: its trees stand thickest and tallest in the middle, younger and
+/// smaller toward the edge, with saplings and shrubs round its skirt.
+#[allow(clippy::too_many_arguments)]
+fn grove(
+    forest: &mut Forest,
+    rng: &mut Random,
+    centre: (f64, f64),
+    radius: f64,
+    trees: usize,
+    age: f64,
+    conifer_share: f64,
+    treeline: bool,
+) {
+    let (cx, cz) = centre;
+    for i in 0..trees {
+        let angle = rng.range(0.0, std::f64::consts::TAU);
+        let reach = rng.next().powf(0.7) * radius;
+        let edge = reach / radius;
+        let (x, z) = (cx + angle.cos() * reach, cz + angle.sin() * reach * 0.8);
+        if forest_clearing(x, z, treeline) {
+            continue;
+        }
+        let height = age * rng.range(0.78, 1.18) * (1.0 - edge * 0.35);
+        let span = height * rng.range(0.4, 0.52);
+        let conifer = rng.next() < conifer_share * (1.0 - edge * 0.3);
+        let (x, z) = nudge_for_family(x, z, height, |family| {
+            if conifer {
+                family < 3
+            } else {
+                family >= 3 && (i % 3 == 0 || family != 4)
+            }
+        });
+        forest.plant(TreeShape {
+            x,
+            z,
+            w: span,
+            d: span,
+            h: height,
+        });
+    }
+    // Saplings and shrubs where the grove meets the open ground.
+    let skirt = (trees / 3).max(3);
+    for _ in 0..skirt {
+        let angle = rng.range(0.0, std::f64::consts::TAU);
+        let reach = radius * rng.range(0.85, 1.25);
+        let (x, z) = (cx + angle.cos() * reach, cz + angle.sin() * reach * 0.8);
+        if forest_clearing(x, z, treeline) {
+            continue;
+        }
+        let height = rng.range(1.8, 3.6);
+        let span = height * rng.range(0.9, 1.3);
+        let (x, z) = nudge_for_family(x, z, height, |family| {
+            family == 1 || family == 3 || family == 5
+        });
+        forest.plant(TreeShape {
+            x,
+            z,
+            w: span,
+            d: span,
+            h: height,
+        });
+    }
 }
 
 fn backdrop(group: &mut Node) {
     let mut rng = Random::new(8274.0);
-    let mut forest = Node::group("");
+    let mut forest = Forest::default();
     let mut rocks = Node::group("");
     let stone = Arc::new(icosahedron_geometry(1.0, 0));
     let stone_materials = [0x879087, 0xa4aa92, 0x717f76].map(|color| {
@@ -328,80 +571,112 @@ fn backdrop(group: &mut Node) {
         })
     });
     let creek = creek();
-    for i in 0..140 {
+    // Banks of rounded stones, in clusters at the bends, a few boulders among them.
+    for i in 0..220 {
         let t = rng.next();
         let p = creek.curve.point(t);
         let tangent = creek.curve.tangent(t);
         let side = if i % 2 == 1 { -1.0 } else { 1.0 };
-        let offset = rng.range(5.5, 9.5) * side;
+        let offset = rng.range(5.0, 9.0) * side;
         let x = p.x - tangent.z * offset;
         let z = p.z + tangent.x * offset;
         let mut rock = Node::mesh(stone.clone(), stone_materials[i % 3].clone());
-        let size = rng.range(0.3, 1.4);
-        rock.scale = DVec3::new(size, size * 0.4, size * rng.range(0.7, 1.2));
+        let size = if i % 17 == 0 {
+            rng.range(1.4, 2.2)
+        } else {
+            rng.range(0.25, 1.1)
+        };
+        rock.scale = DVec3::new(
+            size,
+            size * rng.range(0.38, 0.6),
+            size * rng.range(0.7, 1.2),
+        );
         let pitch = rng.next();
         let yaw = rng.next() * 6.0;
         rock.set_rotation_euler(pitch, yaw, 0.0);
-        put(&mut rocks, rock, x, valley_height(x, z) + size * 0.08, z);
+        put(&mut rocks, rock, x, valley_height(x, z) + size * 0.06, z);
     }
-    // Most of the forest grows in groves, so the hills read as woods with
-    // clearings rather than evenly sprinkled trees.
-    let groves: Vec<(f64, f64)> = (0..46)
-        .map(|_| (rng.range(-150.0, 150.0), rng.range(-145.0, 105.0)))
+    // The forest grows in groves of every age, so the hills read as woods with
+    // clearings and depth rather than ranks of one tree. Mountain groves are all
+    // conifers; valley groves mix in oak, birch and aspen.
+    let groves: Vec<(f64, f64, f64)> = (0..56)
+        .map(|_| {
+            (
+                rng.range(-160.0, 160.0),
+                rng.range(-150.0, 160.0),
+                rng.range(0.0, 1.0),
+            )
+        })
         .collect();
-    for i in 0..420 {
-        let (x, z) = if i % 10 < 7 {
-            let (gx, gz) = groves[i % groves.len()];
-            let angle = rng.range(0.0, std::f64::consts::TAU);
-            let reach = rng.range(0.0, 1.0).sqrt() * 13.0;
-            (gx + angle.cos() * reach, gz + angle.sin() * reach)
-        } else {
-            (rng.range(-148.0, 148.0), rng.range(-145.0, 105.0))
-        };
-        if (x.abs() < 69.0 && z > -99.0)
-            || (z > 57.0 && x.abs() < 98.0)
-            || creek_distance(x, z) < 11.0
-        {
-            continue;
-        }
-        if ((x + 35.0).abs() < 15.0 && (z + 69.0).abs() < 17.0)
-            || (x.abs() < 12.0 && (z + 82.0).abs() < 18.0)
-        {
-            continue;
-        }
-        if mountain_rise(x, z) > 22.0 {
-            continue;
-        }
-        let height = rng.range(6.5, 13.5);
-        let span = rng.range(4.4, 6.8);
-        plant_tree(
+    for &(x, z, pick) in &groves {
+        let alpine = mountain_rise(x, z) > 3.0 || z < -108.0;
+        let radius = 7.0 + pick * 9.0;
+        let trees = (radius * radius * 0.09) as usize;
+        let age = 7.0 + (1.0 - pick) * 6.0;
+        grove(
             &mut forest,
-            TreeShape {
-                x,
-                z,
-                w: span,
-                d: span,
-                h: height,
-            },
+            &mut rng,
+            (x, z),
+            radius,
+            trees,
+            age,
+            if alpine { 1.0 } else { 0.7 },
+            false,
         );
     }
-    for [x, z] in TREELINE {
-        let h = 8.0 + rng.next() * 2.0;
-        plant_tree(
+    // The foothill belt: two staggered rows of conifer stands along the
+    // mountains' feet, so the valley ends in a dark wood below the rock.
+    for row in 0..2 {
+        let z = -113.0 - f64::from(row) * 10.0;
+        let mut x = -178.0 + f64::from(row) * 7.0;
+        while x < 178.0 {
+            let radius = rng.range(6.0, 9.5);
+            let trees = (radius * radius * 0.1) as usize;
+            let age = rng.range(9.0, 14.0);
+            let centre = (x + rng.range(-3.0, 3.0), z + rng.range(-3.0, 3.0));
+            grove(
+                &mut forest,
+                &mut rng,
+                centre,
+                radius,
+                trees,
+                age,
+                1.0,
+                false,
+            );
+            x += rng.range(12.0, 17.0);
+        }
+    }
+    // Stands on the creek's far bank and between the fields beyond it.
+    for [x, z, radius] in NORTH_BANK {
+        let trees = (radius * radius * 0.13) as usize;
+        let age = rng.range(8.0, 12.0);
+        grove(&mut forest, &mut rng, (x, z), radius, trees, age, 0.8, true);
+    }
+    // The near treeline outside the wall: small stands and single trees of mixed
+    // age with shrubs, leaving the lanes, the mill and the bridge open.
+    for [x, z, radius, count] in TREELINE {
+        let age = 7.0 + rng.next() * 4.0;
+        grove(
             &mut forest,
-            TreeShape {
-                x,
-                z,
-                w: 4.4,
-                d: 4.4,
-                h,
-            },
+            &mut rng,
+            (x, z),
+            radius,
+            count as usize,
+            age,
+            0.65,
+            true,
         );
     }
     // A continuous craggy ridge blends into the foothills, with snow following the terrain.
-    let mut ridge = plane_geometry_segments(360.0, 95.0, 90, 26);
+    let mut ridge = plane_geometry_segments(
+        RIDGE_SIZE[0],
+        RIDGE_SIZE[1],
+        RIDGE_SEGMENTS[0],
+        RIDGE_SEGMENTS[1],
+    );
     ridge.rotate_x(-std::f64::consts::FRAC_PI_2);
-    ridge.translate(0.0, 0.0, -159.5);
+    ridge.translate(0.0, 0.0, RIDGE_Z);
     let mut shades = Vec::with_capacity(ridge.positions.len());
     for p in &mut ridge.positions {
         let (x, z) = (f64::from(p[0]), f64::from(p[2]));
@@ -411,8 +686,8 @@ fn backdrop(group: &mut Node) {
     }
     ridge.colors = shades;
     ridge.compute_vertex_normals();
-    // The meadow effect's range mode adds conifer stands, strata, crags and
-    // settled snow to the vertex-coloured bands.
+    // The meadow effect's range mode cuts the slopes into rock facets, forest
+    // and crisp snowfields over the vertex-coloured bands.
     let ranges = Arc::new(Material {
         vertex_colors: true,
         effect: Effect::Custom {
@@ -427,28 +702,42 @@ fn backdrop(group: &mut Node) {
     group
         .children
         .push(Node::mesh(Arc::new(far_ranges()), ranges));
-    // Forest on the southern hills, beyond the overview's foreground.
-    for _ in 0..260 {
-        let x = rng.range(-165.0, 165.0);
-        let z = rng.range(74.0, 165.0);
-        if creek_distance(x, z) < 11.0 || (x.abs() < 40.0 && z < 92.0) {
-            continue;
-        }
-        let height = rng.range(7.0, 14.0);
-        let span = rng.range(3.6, 6.0);
-        plant_tree(
-            &mut forest,
-            TreeShape {
-                x,
-                z,
-                w: span,
-                d: span,
-                h: height,
-            },
-        );
-    }
     batch(&mut rocks);
-    batch(&mut forest);
     group.children.push(rocks);
-    group.children.push(forest);
+    group.children.push(forest.finish());
 }
+
+/// Stands north of the creek: centre x, z and radius.
+const NORTH_BANK: [[f64; 3]; 9] = [
+    [-26.0, -92.0, 5.0],
+    [-64.0, -97.0, 7.0],
+    [-47.0, -106.0, 6.0],
+    [-50.0, -92.0, 4.0],
+    [9.0, -106.0, 5.5],
+    [17.0, -112.0, 5.0],
+    [66.0, -103.0, 7.0],
+    [80.0, -88.0, 5.0],
+    [-2.0, -112.0, 4.5],
+];
+
+/// Stands of the near treeline outside the wall: centre x, z, radius and trees.
+const TREELINE: [[f64; 4]; 18] = [
+    [-60.0, -70.0, 5.0, 5.0],
+    [-12.0, -77.0, 3.5, 3.0],
+    [11.0, -76.0, 3.5, 3.0],
+    [-50.0, -74.0, 4.0, 3.0],
+    [-19.0, -72.0, 3.5, 3.0],
+    [18.0, -70.0, 4.5, 4.0],
+    [33.0, -73.0, 3.0, 2.0],
+    [50.0, -70.0, 6.0, 6.0],
+    [64.0, -76.0, 4.0, 3.0],
+    [-72.0, -48.0, 5.0, 4.0],
+    [-71.0, -8.0, 4.0, 3.0],
+    [-72.0, 14.0, 3.5, 3.0],
+    [-74.0, 58.0, 5.0, 5.0],
+    [74.0, -62.0, 4.0, 3.0],
+    [72.0, 26.0, 3.5, 3.0],
+    [75.0, 52.0, 5.0, 4.0],
+    [-74.0, 30.0, 3.0, 2.0],
+    [73.0, -30.0, 3.0, 2.0],
+];

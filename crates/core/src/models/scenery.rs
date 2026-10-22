@@ -229,8 +229,8 @@ fn create_yard_details(scene: &mut Node) {
 
 /// Bunting poles stand this high above a pier's weathering, and the line sags
 /// this far between them.
-const BUNTING_POLE: f64 = 0.95;
-const BUNTING_SAG: f64 = 0.38;
+const BUNTING_POLE: f64 = 1.3;
+const BUNTING_SAG: f64 = 0.62;
 /// Pennants along the line: spacing, width along it and drop.
 const PENNANT_STEP: f64 = 0.74;
 const PENNANT_WIDTH: f64 = 0.56;

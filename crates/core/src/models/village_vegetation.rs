@@ -20,13 +20,14 @@ use crate::sim::data::ARENA;
 use crate::sim::types::{CoverKind, Team};
 
 use super::effects_scenery::{MEADOW_SWAY, WIND_ORIGIN};
-use super::village_landscape::{creek_distance, valley_height_at};
-use super::village_roads::{road_inside, village_roads};
+use super::village_ground::{farmed, road_wear};
+use super::village_landscape::{creek_at, creek_distance, valley_height_at};
+use super::village_roads::village_roads;
 use crate::sim::math::Random;
 
 /// Instance capacities of the tuft and flower meshes.
-pub const MEADOW_TUFTS: usize = 9000;
-pub const MEADOW_FLOWERS: usize = 2600;
+pub const MEADOW_TUFTS: usize = 12000;
+pub const MEADOW_FLOWERS: usize = 3200;
 /// Candidate placements tried in the open meadow before the tuft capacity fills.
 const MEADOW_CANDIDATES: usize = 5200;
 /// Spacing of the tuft candidates along road shoulders and the wall's foot.
@@ -201,7 +202,13 @@ fn fringe(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
         if (x * 0.83 + z * 0.31).sin() * (z * 0.67 - x * 0.22).cos() * 0.6 + rng.next() < 0.32 {
             return;
         }
-        if road_inside(x, z) > 0.35 || clearings.blocks(x, z) {
+        // Hug the worn edge where it wanders, thinning a metre or so into the
+        // lawn.
+        let wear = road_wear(x, z);
+        if !(-1.6..0.35).contains(&wear) || rng.next() < (-wear - 0.4).max(0.0) * 0.6 {
+            return;
+        }
+        if clearings.blocks(x, z) {
             return;
         }
         let size = rng.range(0.2, 0.44);
@@ -218,9 +225,10 @@ fn fringe(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
         for side in [-1.0, 1.0] {
             let mut t = -length / 2.0;
             while t < length / 2.0 {
-                for _ in 0..2 {
-                    // Mostly at the edge, a few reaching into the grass or the ruts.
-                    let out = rng.next().powf(1.7) * 1.9 - 0.45;
+                for _ in 0..3 {
+                    // Around the painted edge, which wanders a metre or two either
+                    // side of the strip's.
+                    let out = rng.next().powf(1.3) * 4.4 - 1.8;
                     let along = t + rng.range(-0.2, 0.2);
                     let across = side * (half + out);
                     let (x, z) = if north_south {
@@ -251,6 +259,30 @@ fn fringe(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
     }
 }
 
+/// Reed beds in the shallows and on the banks of the creek: clumps of tall
+/// tufts at the water's edge, thicker on the inside of the bends.
+fn reed_beds(meadow: &mut Meadow, rng: &mut Random) {
+    for i in 0..90 {
+        let t = (f64::from(i) + rng.next()) / 90.0;
+        let (p, tangent) = creek_at(t);
+        let side = if rng.next() < 0.5 { -1.0 } else { 1.0 };
+        let edge = rng.range(5.6, 7.2) * side;
+        let (cx, cz) = (p.x - tangent.z * edge, p.z + tangent.x * edge);
+        if cx.abs() < 64.0 && cz.abs() < 64.0 {
+            continue;
+        }
+        let count = 5 + (rng.next() * 6.0) as usize;
+        for _ in 0..count {
+            let angle = rng.range(0.0, PI * 2.0);
+            let reach = rng.next().sqrt() * 1.1;
+            let (x, z) = (cx + angle.cos() * reach, cz + angle.sin() * reach);
+            let river = creek_distance(x, z);
+            let size = rng.range(0.75, 1.3);
+            meadow.tuft(rng, x, valley_height_at(x, z, river) + 0.02, z, size, None);
+        }
+    }
+}
+
 /// `new VillageVegetation().group` (`village-meadow`): the instanced tufts (with
 /// the per-instance [`WIND_ORIGIN`] attribute) and flowers.
 pub fn village_vegetation() -> Node {
@@ -278,7 +310,10 @@ pub fn village_vegetation() -> Node {
         let candidate = i;
         i += 1;
         let inside = x.abs() < 59.0 && z.abs() < 59.0;
-        if inside && (road_inside(x, z) > -1.2 || clearings.blocks(x, z)) {
+        if inside && (road_wear(x, z) > -1.2 || clearings.blocks(x, z)) {
+            continue;
+        }
+        if !inside && farmed(x, z) {
             continue;
         }
         let river = creek_distance(x, z);
@@ -303,6 +338,7 @@ pub fn village_vegetation() -> Node {
         meadow.tuft(&mut rng, x, height + 0.025, z, size, bloom);
     }
     fringe(&mut meadow, &mut rng, &clearings);
+    reed_beds(&mut meadow, &mut rng);
     let Meadow {
         tufts,
         origins,

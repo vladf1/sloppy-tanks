@@ -322,7 +322,7 @@ fn limb(
 }
 
 /// Leaf tint per family; it multiplies the foliage texture.
-const LEAF_COLORS: [u32; 6] = [0x9eb783, 0x7ea197, 0xa3bd8e, 0xb3c08c, 0xc6d08e, 0xd2d08a];
+const LEAF_COLORS: [u32; 6] = [0xa9c68a, 0x8bb0a0, 0xafcb94, 0xb3c08c, 0xc6d08e, 0xd2d08a];
 /// Bark tint per family: warm pine, grey-brown spruce, fir and oak; the pale
 /// families use their own birch bark colors.
 const BARK_COLORS: [u32; 4] = [0xb89c86, 0x9e9286, 0xa6998c, 0x9e9488];
@@ -393,7 +393,7 @@ impl CrownShape {
 
     /// Skylight reaching a point of foliage: dim deep inside and underneath.
     fn light(depth: f64, height: f64) -> f64 {
-        (0.56 + 0.44 * smoothstep(depth, 0.15, 1.0)) * (0.82 + 0.18 * smoothstep(height, -0.9, 0.5))
+        (0.64 + 0.36 * smoothstep(depth, 0.15, 1.0)) * (0.84 + 0.16 * smoothstep(height, -0.9, 0.5))
     }
 }
 
@@ -768,7 +768,7 @@ fn add_conifer_crown(
     lean_z: f64,
 ) -> CrownShape {
     let full = crown.detail == TreeDetail::Full;
-    let tiers = if full { 8 } else { 7 };
+    let tiers = if full { 8 } else { 6 };
     let arms = 6;
     // Pines carry a looser, higher crown; spruce and fir retain their lower boughs.
     let base = match family {
