@@ -257,8 +257,20 @@ fn sky_gradient(direction: vec3f) -> vec3f {
     // on top: warm light added over blue alone mixes to pink and lavender.
     let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
     let warmed = mix(sky, sun_hue * dot(sky, vec3f(0.2126, 0.7152, 0.0722)), min(halo * HALO_WARMING, 0.9));
-    return warmed + frame.sky_sun.rgb * halo;
+    return no_mauve(warmed + frame.sky_sun.rgb * halo);
 }
+
+// A blue zenith blended into a peach or sand horizon passes through mauve, which read
+// as lavender patches between clouds and magenta in-scatter over far hills. Green
+// keeps at least a share of the way from the lesser of red and blue to the greater,
+// as it does in a clear blue sky, so the blend turns through a soft grey instead.
+fn no_mauve(color: vec3f) -> vec3f {
+    let low = min(color.r, color.b);
+    let floor = low + (max(color.r, color.b) - low) * NO_MAUVE_GREEN;
+    return vec3f(color.r, max(color.g, floor), color.b);
+}
+
+const NO_MAUVE_GREEN: f32 = 0.3;
 
 // How quickly the sky's blue turns to the sun's hue under its halo.
 const HALO_WARMING: f32 = 2.5;
@@ -481,11 +493,13 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
 }
 
 // Ground-scale cloud shadow features per metre, and their drift in metres per second.
-const CLOUD_SHADOW_SCALE: f32 = 0.022;
+const CLOUD_SHADOW_SCALE: f32 = 0.014;
 const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
 // Where the shadow noise starts and completes a cloud, above the coverage.
-const CLOUD_SHADOW_LOW: f32 = 0.95;
-const CLOUD_SHADOW_HIGH: f32 = 1.35;
+const CLOUD_SHADOW_LOW: f32 = 0.85;
+const CLOUD_SHADOW_HIGH: f32 = 1.25;
+// Distances from the arena centre in metres over which cloud shadows fade out.
+const CLOUD_SHADOW_FAR: vec2f = vec2f(110.0, 200.0);
 
 // The share of sunlight that passing clouds let through at `world`: soft patches,
 // projected along the sun so tall things and the ground beneath agree.
@@ -502,5 +516,8 @@ fn cloud_shadow(world: vec3f) -> f32 {
     // Broad patches: about the sky's own share of the ground lies under a cloud, so
     // the field reads in large light and shade masses rather than one flat sheet.
     let cover = smoothstep(CLOUD_SHADOW_LOW - coverage, CLOUD_SHADOW_HIGH - coverage, n);
-    return 1.0 - strength * cover;
+    // On the far backdrop the patches shrink to blots that smudge mountain faces and
+    // snowfields like a painted card: they fade out beyond the arena's surroundings.
+    let far = smoothstep(CLOUD_SHADOW_FAR.x, CLOUD_SHADOW_FAR.y, length(world.xz));
+    return 1.0 - strength * cover * (1.0 - far);
 }

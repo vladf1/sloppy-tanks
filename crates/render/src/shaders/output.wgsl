@@ -244,7 +244,7 @@ const EARTH_HUE: f32 = 0.088;
 const PINK_HUE: f32 = 0.955;
 // Meadow green, and the share of its saturation the foliage grade takes at full.
 const MEADOW_HUE: f32 = 0.27;
-const MEADOW_CALM: f32 = 0.16;
+const MEADOW_CALM: f32 = 0.2;
 // Occlusion: the linear scene levels of shade and of sunlit ground, the share of its
 // strength sunlit pixels keep, and its per-channel power (nearly neutral: a warm
 // crease under a cool shadow fill mixed to teal on sand).
@@ -253,7 +253,7 @@ const OCCLUSION_LIT_LEVEL: f32 = 0.45;
 const OCCLUSION_IN_SUN: f32 = 0.55;
 const OCCLUSION_HUE: vec3f = vec3f(0.95, 1.0, 1.05);
 // The least light occlusion leaves anywhere.
-const OCCLUSION_FLOOR: f32 = 0.35;
+const OCCLUSION_FLOOR: f32 = 0.45;
 // The share of its own saturation the bloom keeps.
 const BLOOM_CHROMA: f32 = 0.6;
 // Display mid grey, the pivot of the contrast curve.
@@ -303,7 +303,9 @@ fn grade(color: vec3f) -> vec3f {
     let pink = hue_band(hue, PINK_HUE, 0.06) * output.hues.z * vivid;
     c.b = mix(c.b, min(c.b, c.g * 1.05), pink);
     let grey = luminance(c);
-    let vibrance = 1.0 + output.tone.x * (1.0 - smoothstep(0.0, 0.6, chroma));
+    // Vibrance richens muted sunlit colours (sand, concrete, earth), not the shade:
+    // there it would only pump the sky fill's blue into a violet decal.
+    let vibrance = 1.0 + output.tone.x * (1.0 - smoothstep(0.0, 0.6, chroma)) * smoothstep(SHADE_BAND.z, SHADE_BAND.w, level);
     let saturation = output.lift.w * vibrance * (1.0 - 0.32 * earth) * (1.0 - MEADOW_CALM * meadow);
     c = max(mix(vec3f(grey), c, saturation), vec3f(0.0));
     c = contrast_curve(c, output.gamma.w);

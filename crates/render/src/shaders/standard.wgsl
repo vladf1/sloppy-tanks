@@ -110,13 +110,13 @@ const BLOCKER_BANDS: vec4f = vec4f(0.5, 1.75, 3.75, 6.5);
 // The filter radius (in units of the 7×7 tent) at contact and under far casters,
 // and the caster distances in metres over which it widens.
 const PENUMBRA_CONTACT_RADIUS: f32 = 0.55;
-const PENUMBRA_FAR_RADIUS: f32 = 1.7;
-const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 5.0);
+const PENUMBRA_FAR_RADIUS: f32 = 2.4;
+const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 4.0);
 // Sky the ground sees from inside a cast shadow: hard by its caster a wall or hull
 // hides much of the sky, so the shade is deepest there and opens toward the
 // shadow's tip; this share of the fill remains at contact, rising to all of it over
 // the caster distances in metres.
-const SHADOW_CONTACT_FILL: f32 = 0.62;
+const SHADOW_CONTACT_FILL: f32 = 0.72;
 const SHADOW_FILL_OPENING: vec2f = vec2f(0.3, 5.0);
 // Steepest receiver slope the search follows, metres of depth per texel, and the
 // depth gap it ignores, metres.
@@ -286,11 +286,22 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     }
     // Inside a cast shadow, how much of the sky's fill the caster leaves open.
     let sky_open = mix(1.0, shadow_fill, 1.0 - sunlit);
+    // Under a passing cloud the light is the cloud's own white scatter as much as the
+    // blue sky, so cloud shade keeps the fill neutral as direct sun does; only cast
+    // shadows take its blue.
+    let cast_sunlit = sunlit;
     if atmosphere_on() {
         sunlit *= cloud_shadow(world);
     }
     let sun = frame.sun_color.rgb * sunlit;
     add_direct_light(&reflected, frame.sun_direction.xyz, sun, v, n, diffuse, specular, roughness);
+    if atmosphere_on() {
+        // The sun's glint on wet ground and glossy paint eases toward a ceiling instead
+        // of blowing out: a camera looking toward the sun across puddles saw broad
+        // white sheets with bright rims where their gloss fades, rather than sparkle.
+        let glare = max(max(reflected.specular.r, reflected.specular.g), reflected.specular.b);
+        reflected.specular /= 1.0 + glare / SUN_GLARE_LIMIT;
+    }
     // The seated view looks along its own hull's deck at a grazing angle, where the
     // sky's Fresnel sheen and the sun's glint would bleach the paint to a pale sheet:
     // the nearest few metres reflect less of both and keep their paint.
@@ -329,10 +340,17 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
                     gain = BLAST_LIGHT_GAIN;
                 }
                 var color = light.color.rgb * (distance_attenuation(distance, cutoff, decay) * gain);
+                let l = offset / max(distance, 1e-6);
                 if atmosphere_on() {
                     color = fire_light_hue(color);
+                    // Fire is a wide, rolling source, not a point: its light wraps
+                    // past the terminator, so the ground and the sides of hulls and
+                    // walls around a blast glow rather than only the faces square to it.
+                    let facing = dot(n, l);
+                    let wrapped = clamp((facing + FIRE_WRAP) / (1.0 + FIRE_WRAP), 0.0, 1.0) - clamp(facing, 0.0, 1.0);
+                    reflected.diffuse += max(wrapped, 0.0) * color * diffuse * RECIPROCAL_PI;
                 }
-                add_direct_light(&reflected, offset / max(distance, 1e-6), color, v, n, diffuse, specular, roughness);
+                add_direct_light(&reflected, l, color, v, n, diffuse, specular, roughness);
             }
         }
     }
@@ -356,12 +374,18 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // sand, concrete and grass keep their own warm albedo instead of drifting
         // toward mauve or grey while shadows read clearly cool.
         let fill_level = dot(hemisphere, vec3f(0.2126, 0.7152, 0.0722));
-        hemisphere = mix(hemisphere, vec3f(fill_level), FILL_NEUTRAL_IN_SUN * in_sun);
+        let open_sky = cast_sunlit * smoothstep(0.0, 0.35, dot(n, frame.sun_direction.xyz));
+        hemisphere = mix(hemisphere, vec3f(fill_level), FILL_NEUTRAL_IN_SUN * open_sky);
         // Painterly shade: what the sky fill alone lights keeps a richer version of
         // its own color, so grass shade stays green and earth shade warm brown
         // instead of every shadow settling into the same grey-blue.
+        // Sand and bare earth keep only a little more: their shade reads cool, not
+        // a brown wash, while grass and team paint stay rich.
         let grey = dot(diffuse, vec3f(0.2126, 0.7152, 0.0722));
-        shade_color = max(mix(vec3f(grey), diffuse, SHADE_SATURATION), vec3f(0.0));
+        let warmth = diffuse.g / max(diffuse.r, 1e-4);
+        let earth = smoothstep(0.4, 0.5, warmth) * (1.0 - smoothstep(0.85, 0.95, warmth))
+            * step(diffuse.b, diffuse.g);
+        shade_color = max(mix(vec3f(grey), diffuse, mix(SHADE_SATURATION, EARTH_SHADE_SATURATION, earth)), vec3f(0.0));
     }
     var indirect = hemisphere * shade_color * (RECIPROCAL_PI * sky_open);
     if atmosphere_on() && frame.ground.w > 0.0 {
@@ -444,6 +468,8 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
 // The clear-coat sun glint on satin paint (`shade_standard`): its strength, the
 // coat's roughness and its Fresnel at grazing angles.
 const PAINT_GLINT: f32 = 0.45;
+// The level the sun's specular eases toward (`shade_standard`), against a sun of about 4.
+const SUN_GLARE_LIMIT: f32 = 1.0;
 const PAINT_GLINT_ROUGHNESS: f32 = 0.22;
 const PAINT_GLINT_F90: f32 = 0.3;
 // Sky irradiance form (`shade_standard`): the sky's share of the fill follows
@@ -461,20 +487,23 @@ const BOUNCE_FROM_BELOW: f32 = 0.8;
 const FILL_NEUTRAL_IN_SUN: f32 = 0.3;
 // Saturation of the sky fill's share of a surface's light (1 = its plain color).
 const SHADE_SATURATION: f32 = 1.3;
+const EARTH_SHADE_SATURATION: f32 = 1.0;
 // Point lights' (blast flashes') extra strength with the atmosphere on, and the
 // share of their decay exponent they keep (a wider pool).
-const BLAST_LIGHT_GAIN: f32 = 2.7;
+const BLAST_LIGHT_GAIN: f32 = 3.4;
 const FIRE_POOL_DECAY: f32 = 0.72;
+// How far past the terminator firelight wraps (0 = a point light's plain cosine).
+const FIRE_WRAP: f32 = 0.6;
 // Fire's own color at unit luminance, and how far a deep red-orange flash light turns
 // toward it: a pure red-orange pool over sunlit ground and blue-filled shade reads as a
 // pink screen tint rather than firelight.
-const FIRE_AMBER: vec3f = vec3f(1.0, 0.56, 0.24);
-const FIRE_AMBER_SHARE: f32 = 0.4;
+const FIRE_AMBER: vec3f = vec3f(1.0, 0.6, 0.28);
+const FIRE_AMBER_SHARE: f32 = 0.85;
 
 // The luminance a flash light's pool eases toward right beside it, against a sun of
 // about 3: firelight warms shade and the sunlit ground around a blast without washing
 // a near-camera muzzle flash or fireball across the frame.
-const FIRE_LIGHT_LIMIT: f32 = 3.0;
+const FIRE_LIGHT_LIMIT: f32 = 4.0;
 
 fn fire_light_hue(color: vec3f) -> vec3f {
     let level = dot(color, vec3f(0.2126, 0.7152, 0.0722));

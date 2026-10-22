@@ -350,9 +350,9 @@ pub fn theme_look(theme: Theme) -> ThemeLook {
         sun_color: pick(theme, 0xffd09a, 0xffd4a6, 0xffe6c6),
         sun_intensity: pick(theme, 4.05, 3.9, 4.05),
         sun_position,
-        fill_color: pick(theme, 0x9cb6ea, 0x9ab8e8, 0x9cbcf0),
+        fill_color: pick(theme, 0xa4b8de, 0xaebcd2, 0xaabfd8),
         fill_ground: pick(theme, 0xa48c66, 0x84807a, 0x8a8460),
-        fill_intensity: pick(theme, 1.4, 1.55, 1.6),
+        fill_intensity: pick(theme, 1.7, 1.55, 1.6),
         shadow,
         atmosphere: theme_atmosphere(theme),
     }
@@ -392,8 +392,8 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
             clouds: Clouds {
                 coverage: 0.56,
                 lit: 0xffffff,
-                shade: 0x8094b2,
-                shadow: 0.32,
+                shade: 0x8a9ab0,
+                shadow: 0.42,
             },
             haze: Haze {
                 density: 0.0016,
@@ -418,7 +418,7 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
             },
             ground: Ground {
                 relief: 1.0,
-                tone: 0.12,
+                tone: 0.24,
                 dry_bleach: 0.16,
                 bounce: 0.07,
             },
@@ -433,10 +433,10 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 saturation: 1.1,
                 vibrance: 0.14,
                 contrast: 1.14,
-                vignette: 0.06,
+                vignette: 0.0,
                 black: 0.006,
                 shadow_tint: 0x9fb2e6,
-                shadow_toning: 0.25,
+                shadow_toning: 0.12,
                 highlight_tint: 0xfff0d0,
                 highlight_toning: 0.28,
                 foliage: 1.0,
@@ -456,8 +456,8 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
             clouds: Clouds {
                 coverage: 0.5,
                 lit: 0xfff6ea,
-                shade: 0x8499ae,
-                shadow: 0.3,
+                shade: 0x949eaa,
+                shadow: 0.4,
             },
             haze: Haze {
                 density: 0.0012,
@@ -497,10 +497,10 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
                 saturation: 1.15,
                 vibrance: 0.2,
                 contrast: 1.14,
-                vignette: 0.06,
+                vignette: 0.0,
                 black: 0.006,
                 shadow_tint: 0x9fb2e6,
-                shadow_toning: 0.25,
+                shadow_toning: 0.12,
                 highlight_tint: 0xffe4bc,
                 highlight_toning: 0.38,
                 foliage: 0.6,
@@ -520,8 +520,8 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
             clouds: Clouds {
                 coverage: 0.4,
                 lit: 0xfff4e2,
-                shade: 0xa49c98,
-                shadow: 0.24,
+                shade: 0xb4a690,
+                shadow: 0.34,
             },
             haze: Haze {
                 density: 0.002,
@@ -557,18 +557,18 @@ fn theme_atmosphere(theme: Theme) -> Atmosphere {
             grade: Grade {
                 lift: [0.0; 3],
                 gamma: [1.0; 3],
-                gain: [1.05, 1.01, 0.93],
+                gain: [1.03, 1.0, 0.955],
                 saturation: 1.08,
                 vibrance: 0.22,
                 contrast: 1.14,
-                vignette: 0.06,
+                vignette: 0.0,
                 black: 0.006,
                 shadow_tint: 0x9fb2e6,
-                shadow_toning: 0.25,
+                shadow_toning: 0.12,
                 highlight_tint: 0xffeab0,
                 highlight_toning: 0.32,
                 foliage: 0.5,
-                earth: 0.08,
+                earth: 0.5,
                 red_hold: 0.7,
                 sharpen: 0.6,
             },
@@ -589,7 +589,7 @@ mod tests {
         let harbor = theme_look(Theme::Harbor);
         assert_eq!((harbor.fog_near, harbor.fog_far), (150.0, 260.0));
         let quarry = theme_look(Theme::Quarry);
-        assert_eq!(quarry.fill_intensity, 1.4);
+        assert_eq!(quarry.fill_intensity, 1.7);
         assert!(quarry.shadow.right - quarry.shadow.left > 136.0);
         assert_eq!(Theme::from_name("superstress"), Theme::Custom);
     }

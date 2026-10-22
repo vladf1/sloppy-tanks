@@ -25,7 +25,7 @@ const CLOUD_HORIZON_LIFT: f32 = 0.1;
 const CLOUD_DRIFT: vec2f = vec2f(0.006, 0.0025);
 // Density above the coverage threshold over which a cloud goes from its soft rim
 // to its full body: small keeps the edges crisp and stylized.
-const CLOUD_EDGE: f32 = 0.09;
+const CLOUD_EDGE: f32 = 0.13;
 // Sunlit cloud tops over the sky's brightness, so they read as the whitest thing
 // in the sky.
 const CLOUD_BRIGHTNESS: f32 = 1.45;
@@ -95,7 +95,8 @@ fn sky_radiance(direction: vec3f, aa: f32) -> vec3f {
             color = mix(color, cloud, shape * fade * 0.97 * strength);
         }
     }
-    return horizon_ridges(color, direction, aa);
+    // Cloud edges over the blue blend toward their warm shade through grey, not mauve.
+    return horizon_ridges(no_mauve(color), direction, aa);
 }
 
 @fragment
