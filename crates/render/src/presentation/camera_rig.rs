@@ -167,6 +167,40 @@ fn follow_spring(position: &mut DVec3, velocity: &mut DVec3, target: DVec3, omeg
     *velocity = (*velocity - impulse * omega) * decay;
 }
 
+/// The overhead camera at `zoom` around a focus at the origin: ground offsets from
+/// the focus project as they would on screen.
+fn framing_camera(zoom: f64, aspect: f32) -> PerspectiveCamera {
+    let mut camera = PerspectiveCamera::new(
+        CAMERA.field_of_view as f32,
+        CAMERA.near as f32,
+        CAMERA.far as f32,
+    );
+    camera.aspect = aspect;
+    camera.look_at(
+        Vec3::new(
+            0.0,
+            (zoom * OVERHEAD_HEIGHT) as f32,
+            (zoom * OVERHEAD_BACK) as f32,
+        ),
+        Vec3::ZERO,
+    );
+    camera
+}
+
+/// Shorten a planar `lead` of the focus so the tank it leads from (at `-lead`
+/// from the focus) stays inside the NDC `bounds` of `frame`.
+fn keep_on_screen(frame: &PerspectiveCamera, lead: DVec3, bounds: [f32; 4]) -> DVec3 {
+    let [left, right, bottom, top] = bounds;
+    let ndc = frame.project(Vec3::new(-lead.x as f32, 0.0, -lead.z as f32));
+    let kept = Vec2::new(ndc.x.clamp(left, right), ndc.y.clamp(bottom, top));
+    if kept == ndc.truncate() {
+        return lead;
+    }
+    frame.pick_ground(kept, 0.0).map_or(lead, |tank| {
+        DVec3::new(-f64::from(tank.x), lead.y, -f64::from(tank.z))
+    })
+}
+
 pub struct CameraRig {
     pub zoom: f64,
     /// The interpolated followed point (tank position at `FOLLOW_HEIGHT`).
@@ -503,21 +537,12 @@ impl CameraRig {
         }
         let omega = CAMERA_FEEL.follow_frequency;
         let mut target = self.follow;
-        // Close in on a duel: frame the tank and the nearest enemy together, and
-        // ease back out when the field is clear.
-        let framing = match viewer.threat.filter(|_| viewer.alive) {
-            Some(enemy) => {
-                let distance = (enemy.x - self.follow.x).hypot(enemy.z - self.follow.z);
-                ((CAMERA_FEEL.framing_per_metre * distance + CAMERA_FEEL.framing_margin)
-                    / self.zoom)
-                    .clamp(CAMERA_FEEL.combat_framing, CAMERA_FEEL.calm_framing)
-            }
-            None => CAMERA_FEEL.calm_framing,
-        };
-        self.framing += (framing - self.framing) * (1.0 - (-CAMERA_FEEL.framing_rate * dt).exp());
-        let frame_zoom = self.zoom * self.framing;
+        // The frame the leads are measured in: the overhead pose around the focus
+        // at this zoom, before speed eases it back.
+        let frame = framing_camera(self.zoom * self.framing, self.overhead.aspect);
         let mut lead = DVec3::ZERO;
         if viewer.alive {
+            let frame_zoom = self.zoom * self.framing;
             // The view leans toward the aim in proportion to its reach: a pointer
             // near the tank leaves it centred. A fraction below one keeps the lead
             // from chasing the pointer it moves.
@@ -537,7 +562,7 @@ impl CameraRig {
                 (toward * CAMERA_FEEL.threat_look_ahead)
                     .clamp_length_max(CAMERA_FEEL.max_threat_look_ahead * frame_zoom)
             });
-            let frame = DVec3::new(0.0, 0.0, -CAMERA_FEEL.frame_ahead * frame_zoom);
+            let up_screen = DVec3::new(0.0, 0.0, -CAMERA_FEEL.frame_ahead * frame_zoom);
             // A blast nearby draws the eye for a moment.
             let toward_blast = DVec3::new(
                 self.interest.x - self.follow.x,
@@ -547,11 +572,50 @@ impl CameraRig {
             let blast = (toward_blast * CAMERA_FEEL.blast_look_ahead)
                 .clamp_length_max(CAMERA_FEEL.max_blast_look_ahead * frame_zoom)
                 * smoothstep(self.interest_weight, 0.0, 1.0);
-            lead = (aim * aim_lead + threat + frame + blast)
+            let wanted = (aim * aim_lead + threat + up_screen + blast)
                 .clamp_length_max(CAMERA_FEEL.max_look_ahead * frame_zoom);
+            // However far the leads reach, the player's own tank stays in the calm
+            // middle of the screen, clear of the HUD's panels. The travel lead
+            // answers at once; the others glide on their own spring.
+            lead = keep_on_screen(&frame, wanted + ahead, CAMERA_FEEL.player_frame) - ahead;
             // The spring trails a steady target by 2v/ω; leading by as much keeps a
             // cruising tank centred while starts, stops and turns carry weight.
             target += ahead + travel * (2.0 / omega);
+        }
+        // Frame the duel: zoom in or out until the nearest enemy sits inside the
+        // frame beside the tank, and ease back to the calm framing when the field is
+        // clear. A destroyed viewer's frame holds still over the wreck.
+        if viewer.alive {
+            // A fresh blast or kill close by shares the frame too, so the payoff
+            // never plays out under the HUD.
+            let blast =
+                (self.interest_weight > CAMERA_FEEL.framed_blast_weight).then_some(self.interest);
+            let [left, right, bottom, top] = CAMERA_FEEL.duel_frame;
+            let fit = [viewer.threat, blast]
+                .into_iter()
+                .flatten()
+                .map(|point| {
+                    let from_focus = point - self.follow - lead;
+                    let ndc =
+                        frame.project(Vec3::new(from_focus.x as f32, 0.0, from_focus.z as f32));
+                    // Offsets on screen shrink in proportion to the zoom.
+                    if (0.0..=1.0).contains(&ndc.z) {
+                        f64::from(
+                            (ndc.x / right)
+                                .max(ndc.x / left)
+                                .max(ndc.y / top)
+                                .max(ndc.y / bottom),
+                        )
+                    } else {
+                        f64::INFINITY
+                    }
+                })
+                .reduce(f64::max);
+            let framing = fit.map_or(CAMERA_FEEL.calm_framing, |reach| {
+                (self.framing * reach).clamp(CAMERA_FEEL.combat_framing, CAMERA_FEEL.duel_framing)
+            });
+            self.framing +=
+                (framing - self.framing) * (1.0 - (-CAMERA_FEEL.framing_rate * dt).exp());
         }
         let focus = match self.focus {
             Some(focus) if focus.distance(target + self.lead) < CAMERA_FEEL.snap_distance => {
@@ -570,6 +634,13 @@ impl CameraRig {
                     omega,
                     dt,
                 );
+                // A spring caught out by a sudden turn or a burst of speed still
+                // never lets the tank slide under the HUD.
+                if viewer.alive {
+                    let offset = focus - self.follow;
+                    let guarded = keep_on_screen(&frame, offset, CAMERA_FEEL.player_guard);
+                    focus += DVec3::new(guarded.x - offset.x, 0.0, guarded.z - offset.z);
+                }
                 focus
             }
             _ => {
@@ -942,7 +1013,8 @@ mod tests {
         }
         assert!((rig.overhead.position.x - start.x - 3.0).abs() < 1e-3);
         // A blast shakes the drawn camera; the overhead pose aiming reads only
-        // eases toward it on the focus spring, without the shake's tilt.
+        // eases toward it (and widens to frame it) on its springs, without the
+        // shake's tilt.
         let steady = rig.overhead.position;
         let steady_gaze = (rig.overhead.target - rig.overhead.position).normalize();
         rig.blast(3.0, 4.0, 6.0);
@@ -950,11 +1022,12 @@ mod tests {
         assert!(rig.shake.trauma > 0.0);
         let gaze = (rig.overhead.target - rig.overhead.position).normalize();
         assert!(gaze.distance(steady_gaze) < 1e-5);
-        assert!(rig.overhead.position.distance(steady) < 0.1);
+        let eased = rig.overhead.position.distance(steady);
+        assert!(eased < 0.2, "{eased}");
         let drawn_gaze = (rig.camera.target - rig.camera.position).normalize();
         assert!(drawn_gaze.distance(gaze) > 1e-5);
-        // Its pull fades, and the focus settles back on the tank.
-        for _ in 0..360 {
+        // Its pull fades, and the focus and framing settle back on the tank.
+        for _ in 0..720 {
             rig.update(&viewer(3.0, 0.0), 1.0, 1.0 / 60.0, false, true);
         }
         assert!(rig.overhead.position.distance(steady) < 1e-3);
@@ -962,6 +1035,36 @@ mod tests {
         let mut calm = CameraRig::default();
         calm.blast(200.0, 0.0, 6.0);
         assert_eq!(calm.shake.trauma, 0.0);
+    }
+
+    #[test]
+    fn leads_keep_the_tank_clear_of_the_hud_and_the_duel_in_frame() {
+        let mut rig = CameraRig::default();
+        rig.set_aspect(1600.0 / 900.0);
+        // The pointer and the nearest enemy both pull far toward the lower left,
+        // where the weapon panel sits.
+        let mut tank = viewer(0.0, 0.0);
+        tank.aim = -2.3;
+        tank.threat = Some(DVec3::new(-12.0, 0.0, 10.0));
+        rig.aim_point = Vec3::new(-20.0, 1.0, 18.0);
+        for _ in 0..600 {
+            rig.update(&tank, 1.0, 1.0 / 60.0, false, true);
+        }
+        let on_screen = |point: DVec3| rig.overhead.project(point.as_vec3());
+        let [left, right, bottom, top] = CAMERA_FEEL.player_frame;
+        let player = on_screen(DVec3::new(0.0, FOLLOW_HEIGHT, 0.0));
+        assert!(
+            (left - 1e-3..=right + 1e-3).contains(&player.x)
+                && (bottom - 1e-3..=top + 1e-3).contains(&player.y),
+            "{player:?}"
+        );
+        let [left, right, bottom, top] = CAMERA_FEEL.duel_frame;
+        let enemy = on_screen(DVec3::new(-12.0, FOLLOW_HEIGHT, 10.0));
+        assert!(
+            (left - 0.05..=right + 0.05).contains(&enemy.x)
+                && (bottom - 0.05..=top + 0.05).contains(&enemy.y),
+            "{enemy:?}"
+        );
     }
 
     #[test]
