@@ -1001,7 +1001,6 @@ impl ExplosionEffects {
             Kind::Burnout => {
                 self.burnout(b, t);
                 self.burnout_flare(b, t, streaks);
-                self.ring(b, t, b.scale * 0.6);
             }
             Kind::Landing => self.skirt(b, t, scaled(b.dust, 1.05)),
             Kind::Collapse => {

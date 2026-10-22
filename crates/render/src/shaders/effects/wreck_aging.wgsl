@@ -1,7 +1,7 @@
 // Burnt wreck charring (`wreck-aging.ts`): the base color (after vertex colors
 // and map) chars toward soot-black steel and the emissive glow dims with the
 // brightness. Presentation feeds it per instance as instance_data = (brightness,
-// 1, -, -), so one shared wreck model serves every age; otherwise params[0].x is
+// 1, upright, -), so one shared wreck model serves every age; otherwise params[0].x is
 // the brightness. Brightness falls from 0.8 at death to 0.2 a few seconds later.
 // The burnt steel keeps blistered patches of its paint, sootiest low on the
 // hull, and its seams smoulder with flickering embers.
@@ -50,5 +50,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     (*s).roughness = mix((*s).roughness, 0.95, charred);
     // Embers glow only from faces turned up toward the fire, deep in a hatch or
     // the turret well, never as a disc on an upturned belly.
-    (*s).emissive *= brightness * 0.55 * up;
+    // A piece fed per instance says how upright it lies: a hull on its side or
+    // its roof shows no glowing turret well.
+    let upright = select(1.0, smoothstep(0.6, 0.9, f.instance_data.z), f.instance_data.y > 0.5);
+    (*s).emissive *= brightness * 0.55 * up * upright;
 }

@@ -863,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn burnout_uses_thin_smoke_with_no_shockwave_or_light() {
+    fn burnout_rolls_a_small_gout_of_fire_with_no_shockwave_or_clods() {
         let mut random = CosmeticRandom::default();
         let mut particles = ParticleEffects::default();
         let burnout = SimEvent {
@@ -888,7 +888,11 @@ mod tests {
                 .all(|r| r.data[2] == 2.0),
             "only the scorch: no dust ring or shock front"
         );
-        assert_eq!(particles.explosions.puffs.len(), 3);
+        assert_eq!(
+            particles.explosions.puffs.len(),
+            3 + 4,
+            "the smoke and the gout of fire rolling off the hull"
+        );
     }
 
     /// `cover-hit-effects.test.ts`, particle part: hits chip, a fatal hit bursts.
