@@ -113,7 +113,8 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     let id = floor(g);
     let h = quarry_hash(id + salt);
     let k = quarry_hash(id - salt * 1.7);
-    let radius = mix(0.12, 0.3, h.y * h.y);
+    // Mostly small stones, the odd big one: a long tail of sizes.
+    let radius = mix(0.08, 0.36, h.y * h.y * h.y);
     let stretch = 1.0 + 0.5 * k.w;
     let center = id + 0.5 + (h.zw - 0.5) * (1.0 - 2.0 * radius * stretch);
     // Flattened, turned ovals rather than coins, each a little lumpy.
@@ -153,16 +154,45 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     return out;
 }
 
+// Flat facets struck off a stone face, on a `cell` metre jittered lattice: xy
+// the tilt of the facet the point lies on (each facet a plane of its own, so
+// the face shades as chipped planes rather than a smooth swell), z how near
+// the point lies to the ridge between two facets (1 on it).
+fn quarry_facets(p: vec2f, cell: f32) -> vec3f {
+    let g = p / cell;
+    let id = floor(g);
+    var f1 = 8.0;
+    var f2 = 8.0;
+    var tilt = vec2f(0.0);
+    for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+            let o = vec2f(f32(i), f32(j));
+            let h = quarry_hash(id + o + 113.0);
+            let d = length(id + o + 0.1 + h.xy * 0.8 - g);
+            if d < f1 {
+                f2 = f1;
+                f1 = d;
+                tilt = h.zw * 2.0 - 1.0;
+            } else if d < f2 {
+                f2 = d;
+            }
+        }
+    }
+    return vec3f(tilt, 1.0 - quarry_smoothstep(0.0, 0.08, f2 - f1));
+}
+
 // Plates cracked apart on a `cell` metre jittered lattice (dried mud, jointed
 // caprock): x is the crack line (1 inside a crack about `width` metres wide), y
-// the curled or rounded, paler plate rim beside it.
-fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec2f {
+// the curled or rounded, paler plate rim beside it, z a hash in [0, 1) of the
+// plate the point lies on.
+fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec3f {
     // A gentle warp curves the plate edges so the network never reads as tiles.
     let g0 = p / cell;
     let g = g0 + 0.22 * sin(g0.yx * vec2f(2.3, 1.9) + vec2f(1.7, 0.4));
     let id = floor(g);
     var f1 = 8.0;
     var f2 = 8.0;
+    var plate = 0.0;
     for (var j = -1; j <= 1; j++) {
         for (var i = -1; i <= 1; i++) {
             let o = vec2f(f32(i), f32(j));
@@ -171,6 +201,7 @@ fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec2f
             if d < f1 {
                 f2 = f1;
                 f1 = d;
+                plate = h.z;
             } else if d < f2 {
                 f2 = d;
             }
@@ -183,5 +214,5 @@ fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec2f
     let visible = width / max(width, footprint);
     let crack = (1.0 - quarry_smoothstep(width - soft, width + soft, edge)) * visible;
     let rim = quarry_smoothstep(width * 2.0 + 0.06, width, edge) * (1.0 - crack);
-    return vec2f(crack, rim);
+    return vec3f(crack, rim, plate);
 }
