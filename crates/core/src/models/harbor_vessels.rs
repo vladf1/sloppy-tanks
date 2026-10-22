@@ -76,6 +76,8 @@ fn hull_band(outline: &[[f64; 2]], bottom: f64, top: f64, lower_scale: f64, colo
 
 const CARGO_PAINT: [u32; 5] = [0xcb7d43, 0x3b9394, 0x6e8eae, 0xbaad7c, 0xa76155];
 const GRATING_DARK: u32 = 0x3d4548;
+/// The hatch covers over the holds, in the deck's worn grey.
+const HATCH_COVER: u32 = 0x6b716c;
 const SHIP_WHITE: u32 = 0xf0ebdc;
 /// Antifouling red of the boot-top along every waterline.
 const BOOT_TOP: u32 = 0x9a3a2b;
@@ -155,20 +157,34 @@ fn container_ship(color: u32, variant: usize) -> Node {
             }
         }
     }
+    // Lashing bridges two tiers high between the bays, with a walkway grating
+    // on each level, and the hatch covers the stacks stand on, their edges
+    // showing round every bay.
     for bay in 0..5 {
         let x = -19.1 + f64::from(bay) * 10.2;
         put(
             &mut ship,
-            box_part(0.35, 2.8, 11.6, 0xc9b65a, 0.0),
+            box_part(0.35, 5.9, 11.6, 0xc9b65a, 0.0),
             x,
-            4.25,
+            5.8,
             0.0,
         );
+        for level in [5.7, 8.8] {
+            put(
+                &mut ship,
+                box_part(0.7, 0.1, 11.8, GRATING_DARK, 0.0),
+                x,
+                level,
+                0.0,
+            );
+        }
+    }
+    for bay in 0..4 {
         put(
             &mut ship,
-            box_part(0.5, 0.1, 11.8, GRATING_DARK, 0.0),
-            x,
-            5.7,
+            steel_box(9.9, 0.45, 11.3, HATCH_COVER),
+            -14.0 + f64::from(bay) * 10.2,
+            2.95,
             0.0,
         );
     }

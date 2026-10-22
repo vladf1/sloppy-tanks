@@ -32,6 +32,8 @@ const GASKET: u32 = 0x22282a;
 const DATA_PLATE: u32 = 0xe1d9b7;
 
 const CONTAINER_TEXTURE: &str = "textures/harbor/container.webp";
+/// The same wear with the corrugation and rails baked in, for stowed boxes.
+const RIBBED_TEXTURE: &str = "textures/harbor/container-ribbed.webp";
 /// Metres of wall per repeat of the paint wear tile.
 const WEAR_TILE: f64 = 3.0;
 /// Wall corrugation: pitch and depth, metres. The profile is a trapezoid: outer
@@ -200,8 +202,30 @@ fn wall_panel(panel: &Panel, height: f64, color: u32) -> Node {
 /// A box in container paint, its faces mapped to the wear tile in container space
 /// (`height` again the container's, `floor` the box's bottom above the floor).
 fn wear_box(w: f64, h: f64, d: f64, height: f64, floor: f64, color: u32) -> Node {
+    shadowed(
+        wear_box_mesh(w, h, d, height, floor),
+        container_paint(color),
+    )
+}
+
+/// A stowed box's walls: [`wear_box`] in the ribbed paint, whose tile carries the
+/// pressed corrugation and the rails a flat box lacks.
+fn stowed_box(w: f64, h: f64, d: f64, height: f64, color: u32) -> Node {
+    static RIBBED: Cache<u32, Material> = Cache::new();
+    let paint = RIBBED.get_or_insert(color, || Material {
+        map: Some(TextureRef {
+            wrap: Wrap::Repeat,
+            anisotropy: 4,
+            ..TextureRef::file(RIBBED_TEXTURE)
+        }),
+        ..Material::standard(color, CONTAINER_METALNESS, CONTAINER_ROUGHNESS)
+    });
+    shadowed(wear_box_mesh(w, h, d, height, 0.05), paint)
+}
+
+fn wear_box_mesh(w: f64, h: f64, d: f64, height: f64, floor: f64) -> Arc<Mesh> {
     let key = [w, h, d, height + floor * 7.0].map(f64::to_bits);
-    let mesh = WEAR_BOXES.get_or_insert(key, || {
+    WEAR_BOXES.get_or_insert(key, || {
         let mut geometry = box_geometry(w, h, d);
         for i in 0..geometry.positions.len() {
             let [x, y, z] = geometry.positions[i].map(f64::from);
@@ -218,8 +242,7 @@ fn wear_box(w: f64, h: f64, d: f64, height: f64, floor: f64, color: u32) -> Node
             geometry.uvs[i] = [uv[0] as f32, uv[1] as f32];
         }
         geometry
-    });
-    shadowed(mesh, container_paint(color))
+    })
 }
 
 /// A building's corrugated steel cladding in weathered paint, facing +z from
@@ -569,14 +592,7 @@ pub fn ship_container(group: &mut Node, c: CargoShape) {
             let z = -depth / 2.0 + box_depth * (f64::from(row) + 0.5);
             put(
                 &mut body,
-                wear_box(
-                    box_length - gap,
-                    c.h - 0.1,
-                    box_depth - gap,
-                    c.h,
-                    0.05,
-                    color,
-                ),
+                stowed_box(box_length - gap, c.h - 0.1, box_depth - gap, c.h, color),
                 x,
                 c.h / 2.0,
                 z,

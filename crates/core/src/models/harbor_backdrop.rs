@@ -12,17 +12,19 @@
 //! cranes, masts and turbines shine through. A view draws only the sectors in
 //! front of it. Nothing here casts or receives shadows.
 
-use std::f64::consts::{FRAC_PI_2, PI, TAU};
+use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 use std::sync::Arc;
 
 use crate::geometry::math::{hex_to_linear, scale_hex_color};
-use crate::geometry::{Mesh, merge_geometries};
+use crate::geometry::{Mesh, box_geometry, merge_geometries};
 use crate::scene::{Material, Node};
 
 use super::batching::batch;
 use super::effects_scenery::ApronMode;
 use super::harbor_surfaces::apron_material;
-use super::model_primitives::{adopt_children, beam, box_part, cylinder_part, paint, put, rotated};
+use super::model_primitives::{
+    adopt_children, beam, box_part, cylinder_part, paint, put, rotated, shadowed,
+};
 
 /// The four quarter sectors being filled, indexed by [`sector_of`].
 type Sectors = [Node; 4];
@@ -405,128 +407,387 @@ fn profile_row(theta: f64, row: usize) -> (f64, f64, u32) {
     (offset, y, if q > 0.5 { quay.3 } else { natural.3 })
 }
 
-const CITY_PAINT: [u32; 7] = [
-    0xdfe3e4, 0xb8c6cf, 0x8fa4b4, 0xe8ddc9, 0x9db8c4, 0x70869a, 0xc9b9a3,
+/// Masonry, render and precast paints of the city's older blocks: limestone,
+/// sandstone, brick, warm and cool render and weathered concrete.
+const CITY_PAINT: [u32; 8] = [
+    0xd9d4c6, 0xc7b292, 0x9c6a52, 0xe3d6bd, 0xb9c0bf, 0x8f9696, 0xb58f72, 0xcfc8b8,
 ];
-/// Curtain-wall glass of the newer towers: dark blue-greys that mirror the sky
-/// through the effect's panes, so the skyline is not one pale pastel block.
-const CITY_GLASS: [u32; 3] = [0x48606f, 0x5a6f78, 0x3d5161];
+/// Spandrel and mullion paint of the curtain-walled towers: dark bronze, steel
+/// blue and graphite, between panes that mirror the sky through the effect.
+const CITY_GLASS: [u32; 4] = [0x4a4a42, 0x4b5d68, 0x3a4048, 0x5f6a66];
 /// Rooftop plant and parapets.
 const CITY_PLANT: u32 = 0x8d9393;
 
-/// One tower: a podium, its shaft banded with floors of glazing, a set-back
-/// crown on the taller ones, rooftop plant and, on the tallest, a mast with an
-/// aircraft warning light. Founded below the slope so it never floats on the
-/// facets.
-fn city_tower(i: u32, seed: u32, height: f64, w: f64, d: f64) -> Node {
-    let glass = hash(i, seed + 21) > 0.62;
-    let color = if glass {
-        CITY_GLASS[(hash(i, seed + 23) * CITY_GLASS.len() as f64) as usize % CITY_GLASS.len()]
-    } else {
-        CITY_PAINT[(hash(i, seed + 17) * CITY_PAINT.len() as f64) as usize % CITY_PAINT.len()]
+/// How the far-shore effect glazes a tower's walls, added to [`FACADE_FLAG`]:
+/// punched office windows, a curtain wall of sky-mirroring glass, ribbon glazing
+/// in bands, or the small windows and balcony slabs of flats.
+#[derive(Clone, Copy)]
+enum Facade {
+    Punched = 0,
+    Curtain = 1,
+    Ribbon = 2,
+    Flats = 3,
+}
+
+/// A wall part glazed in `style`, its uv.x carrying `tone` (0..1), which the
+/// effect turns into how many windows are lit and how the glass is tinted, so no
+/// two towers glaze alike.
+fn glazed(part: Node, style: Facade, tone: f64) -> Node {
+    let mut part = flagged(part, FACADE_FLAG + style as u8 as f32);
+    if let Some(drawable) = &mut part.drawable {
+        let mut mesh = (*drawable.mesh).clone();
+        for uv in &mut mesh.uvs {
+            uv[0] = tone as f32;
+        }
+        drawable.mesh = Arc::new(mesh);
+    }
+    part
+}
+
+/// The silhouettes a tower is built to, so the skyline steps, curves and slopes
+/// rather than standing as a row of boxes.
+#[derive(Clone, Copy)]
+enum TowerForm {
+    /// A plain slab with plant on its roof.
+    Slab,
+    /// Two or three setbacks narrowing toward the top.
+    Stepped,
+    /// A round glass drum with a crown ring.
+    Drum,
+    /// A slab whose crown is cut on a slope.
+    Raked,
+    /// Two slender shafts on a shared podium.
+    Twin,
+}
+
+/// One tower `height` metres tall on a `w` x `d` plot, its form, facade and paint
+/// picked from `seed` and `i`, founded below the slope so it never floats on the
+/// facets. Returns the group and the height of its roof.
+fn city_tower(i: u32, seed: u32, height: f64, w: f64, d: f64, form: TowerForm) -> (Node, f64) {
+    let style = match (hash(i, seed + 21) * 4.0) as u32 {
+        0 => Facade::Punched,
+        1 => Facade::Ribbon,
+        2 => Facade::Flats,
+        _ => Facade::Curtain,
+    };
+    let style = match form {
+        TowerForm::Drum | TowerForm::Raked => Facade::Curtain,
+        TowerForm::Twin if matches!(style, Facade::Flats) => Facade::Ribbon,
+        _ => style,
+    };
+    let color = match style {
+        Facade::Curtain => {
+            CITY_GLASS[(hash(i, seed + 23) * CITY_GLASS.len() as f64) as usize % CITY_GLASS.len()]
+        }
+        _ => CITY_PAINT[(hash(i, seed + 17) * CITY_PAINT.len() as f64) as usize % CITY_PAINT.len()],
+    };
+    let tone = hash(i, seed + 25);
+    let wall = |w: f64, h: f64, d: f64, shade: f64| {
+        glazed(
+            box_part(w, h, d, scale_hex_color(color, shade), 0.0),
+            style,
+            tone,
+        )
     };
     let mut tower = Node::group("");
-    let podium = (height * 0.22).clamp(3.0, 7.0);
+    // A podium of shops and lobbies, wider than the shaft.
+    let podium = (height * 0.16).clamp(3.0, 6.0);
     put(
         &mut tower,
         box_part(
-            w * 1.25,
+            w * 1.2,
             podium + FOOTING,
-            d * 1.2,
-            scale_hex_color(color, 0.8),
+            d * 1.18,
+            scale_hex_color(CITY_PAINT[(i as usize + 3) % CITY_PAINT.len()], 0.78),
             0.0,
         ),
         0.0,
         (podium - FOOTING) / 2.0,
         0.0,
     );
-    // Its floors of windows are the far-shore effect's, drawn on the walls.
-    put(
-        &mut tower,
-        facade(box_part(w, height + FOOTING, d, color, 0.0)),
-        0.0,
-        (height - FOOTING) / 2.0,
-        0.0,
-    );
     let mut roof = height;
-    if height > 18.0 && hash(i, seed + 29) > 0.35 {
-        let crown = height * (0.12 + 0.12 * hash(i, seed + 31));
-        put(
-            &mut tower,
-            facade(box_part(
-                w * 0.68,
-                crown,
-                d * 0.68,
-                scale_hex_color(color, 1.06),
+    match form {
+        TowerForm::Slab => {
+            put(
+                &mut tower,
+                wall(w, height + FOOTING, d, 1.0),
                 0.0,
-            )),
-            w * 0.08,
-            height + crown / 2.0,
-            -d * 0.06,
-        );
-        roof += crown;
+                (height - FOOTING) / 2.0,
+                0.0,
+            );
+        }
+        TowerForm::Stepped => {
+            let tiers = if height > 30.0 { 3 } else { 2 };
+            let mut base = -FOOTING;
+            let mut top = height * 0.58;
+            let (mut tw, mut td) = (w, d);
+            for tier in 0..tiers {
+                put(
+                    &mut tower,
+                    wall(tw, top - base, td, 1.0 - 0.05 * f64::from(tier)),
+                    (w - tw) * 0.18,
+                    (top + base) / 2.0,
+                    -(d - td) * 0.12,
+                );
+                base = top;
+                top += (height - top) * if tier + 2 == tiers { 1.0 } else { 0.62 };
+                tw *= 0.74;
+                td *= 0.78;
+            }
+            roof = base;
+        }
+        TowerForm::Drum => {
+            let radius = w.min(d) * 0.55;
+            put(
+                &mut tower,
+                glazed(
+                    cylinder_part(radius, height + FOOTING, color, 14),
+                    style,
+                    tone,
+                ),
+                0.0,
+                (height - FOOTING) / 2.0,
+                0.0,
+            );
+            put(
+                &mut tower,
+                cylinder_part(radius * 1.04, 1.4, CITY_PLANT, 14),
+                0.0,
+                height + 0.7,
+                0.0,
+            );
+            put(
+                &mut tower,
+                cylinder_part(radius * 0.55, 3.0, scale_hex_color(CITY_PLANT, 0.9), 10),
+                0.0,
+                height + 2.2,
+                0.0,
+            );
+            roof += 3.7;
+        }
+        TowerForm::Raked => {
+            put(
+                &mut tower,
+                wall(w, height + FOOTING, d, 1.0),
+                0.0,
+                (height - FOOTING) / 2.0,
+                0.0,
+            );
+            // The crown cut on a slope across the roof, glazed like the walls.
+            let rise = w * (0.45 + 0.4 * hash(i, seed + 27));
+            let crown = glazed(
+                wedge_part(w, rise, d, scale_hex_color(color, 1.06)),
+                style,
+                tone,
+            );
+            put(&mut tower, crown, 0.0, height + rise / 2.0, 0.0);
+            roof += rise;
+        }
+        TowerForm::Twin => {
+            let shaft = w * 0.42;
+            for (side, lift) in [(-1.0, 0.0), (1.0, height * 0.18)] {
+                put(
+                    &mut tower,
+                    wall(
+                        shaft,
+                        height + lift + FOOTING,
+                        d * 0.9,
+                        1.0 - lift / height * 0.3,
+                    ),
+                    side * w * 0.3,
+                    (height + lift - FOOTING) / 2.0,
+                    0.0,
+                );
+            }
+            roof += height * 0.18;
+        }
     }
-    put(
-        &mut tower,
-        box_part(w * 0.36, 2.0, d * 0.4, CITY_PLANT, 0.0),
-        -w * 0.12,
-        roof + 1.0,
-        d * 0.1,
-    );
-    if roof > 26.0 {
+    if matches!(form, TowerForm::Slab | TowerForm::Stepped | TowerForm::Twin) {
+        // Plant rooms and a water tank on the flat roofs.
         put(
             &mut tower,
-            box_part(0.35, 7.0, 0.35, 0xc9cccb, 0.0),
-            w * 0.18,
-            roof + 3.5,
-            0.0,
+            box_part(w * 0.34, 2.2, d * 0.4, CITY_PLANT, 0.0),
+            -w * 0.1,
+            roof + 1.1,
+            d * 0.08,
         );
-        put(
-            &mut tower,
-            box_part(0.9, 0.9, 0.9, WARNING_LIGHT, 0.0),
-            w * 0.18,
-            roof + 7.2,
-            0.0,
-        );
+        if hash(i, seed + 33) > 0.55 {
+            put(
+                &mut tower,
+                cylinder_part(1.1, 2.4, 0x7d7f78, 8),
+                w * 0.22,
+                roof + 1.2,
+                -d * 0.18,
+            );
+        }
     }
-    tower
+    (tower, roof)
 }
 
-/// Towers across the bay to the east, banded with floors of glazing: a front row
-/// on the waterfront and a taller, hazier row behind it, highest round the
-/// centre, so the city reads as a skyline in depth rather than one cut-out row.
+/// A `w` x `h` x `d` block whose top slopes from its -x edge (at its foot) up
+/// to its +x edge: a raked crown or a monopitch roof.
+pub(super) fn wedge_part(w: f64, h: f64, d: f64, color: u32) -> Node {
+    let mut mesh = box_geometry(w, h, d);
+    let slope = glam::DVec3::new(-h / w, 1.0, 0.0).normalize();
+    for (position, normal) in mesh.positions.iter_mut().zip(mesh.normals.iter_mut()) {
+        let top = position[1] > 0.0;
+        if top && position[0] < 0.0 {
+            position[1] = -position[1];
+        }
+        if normal[1] > 0.5 {
+            *normal = [slope.x as f32, slope.y as f32, slope.z as f32];
+        }
+    }
+    shadowed(Arc::new(mesh), paint(color))
+}
+
+/// A tower's aircraft warning mast and light, on the tallest roofs only.
+fn tower_mast(tower: &mut Node, roof: f64, x: f64, length: f64) {
+    put(
+        tower,
+        box_part(0.35, length, 0.35, 0xc9cccb, 0.0),
+        x,
+        roof + length / 2.0,
+        0.0,
+    );
+    put(
+        tower,
+        box_part(0.9, 0.9, 0.9, WARNING_LIGHT, 0.0),
+        x,
+        roof + length + 0.2,
+        0.0,
+    );
+}
+
+/// One layer of the city's towers: how many, the seed of their hashes, the band
+/// of metres inland they stand in, their range of heights and the forms they
+/// are built to.
+struct CityRow {
+    count: u32,
+    seed: u32,
+    first_inland: f64,
+    reach: f64,
+    lowest: f64,
+    tallest: f64,
+    forms: &'static [TowerForm],
+}
+
+/// The city's layers, front to back: older blocks and flats, the business
+/// district, and the far towers on the rising ground.
+const CITY_ROWS: [CityRow; 3] = [
+    CityRow {
+        count: 30,
+        seed: 3,
+        first_inland: 12.0,
+        reach: 34.0,
+        lowest: 7.0,
+        tallest: 22.0,
+        forms: &[
+            TowerForm::Slab,
+            TowerForm::Slab,
+            TowerForm::Stepped,
+            TowerForm::Twin,
+        ],
+    },
+    CityRow {
+        count: 22,
+        seed: 61,
+        first_inland: 60.0,
+        reach: 55.0,
+        lowest: 16.0,
+        tallest: 46.0,
+        forms: &[
+            TowerForm::Slab,
+            TowerForm::Stepped,
+            TowerForm::Drum,
+            TowerForm::Raked,
+            TowerForm::Twin,
+            TowerForm::Stepped,
+        ],
+    },
+    CityRow {
+        count: 16,
+        seed: 97,
+        first_inland: 150.0,
+        reach: 70.0,
+        lowest: 26.0,
+        tallest: 54.0,
+        forms: &[
+            TowerForm::Slab,
+            TowerForm::Drum,
+            TowerForm::Stepped,
+            TowerForm::Raked,
+        ],
+    },
+];
+
+/// The city across the bay to the east, in three layers of depth that the haze
+/// steps apart: a low waterfront of sheds and offices, older blocks and flats
+/// along the front, a taller business district behind it round one landmark
+/// tower, and far towers on the rising ground that are hardly more than haze.
+/// Forms, facades and heights vary tower by tower, so the skyline steps, curves
+/// and slopes instead of repeating one lit box.
 fn city(sectors: &mut Sectors) {
-    for (rows, seed, first_inland, reach, tallest) in
-        [(36u32, 3u32, 10.0, 40.0, 30.0), (28, 61, 55.0, 60.0, 46.0)]
-    {
-        for i in 0..rows {
+    for row in CITY_ROWS {
+        let seed = row.seed;
+        for i in 0..row.count {
             let theta = -0.62 + 1.1 * hash(i, seed);
-            let inland = first_inland + reach * hash(i, seed + 2);
+            let inland = row.first_inland + row.reach * hash(i, seed + 2);
             let (x, y, z) = on_land(theta, inland);
-            let centre = 1.0 - (theta - (-0.05)).abs() / 0.6;
-            let height = 6.0 + hash(i, seed + 4).powi(2) * tallest * (0.4 + 0.6 * centre.max(0.0));
+            // Tallest round the business district's heart, lower toward its ends.
+            let centre = (1.0 - (theta - (-0.05)).abs() / 0.6).max(0.0);
+            let height = row.lowest
+                + hash(i, seed + 4).powf(1.6) * (row.tallest - row.lowest) * (0.45 + 0.55 * centre);
             let (w, d) = (
-                5.0 + 6.0 * hash(i, seed + 6),
-                5.0 + 6.0 * hash(i, seed + 10),
+                8.0 + 9.0 * hash(i, seed + 6),
+                7.0 + 7.0 * hash(i, seed + 10),
             );
-            let yaw = -theta + hash(i, seed + 16) * 0.3;
-            let tower = city_tower(i, seed, height, w, d);
+            let forms = row.forms;
+            let form = forms[(hash(i, seed + 8) * forms.len() as f64) as usize % forms.len()];
+            let yaw = -theta + (hash(i, seed + 16) - 0.5) * 0.5;
+            let (mut tower, roof) = city_tower(i, seed, height, w, d, form);
+            if roof > 44.0 {
+                tower_mast(&mut tower, roof, w * 0.12, 6.0);
+            }
             place_at(sectors, theta, rotated(tower, 0.0, yaw, 0.0), x, y - 0.5, z);
         }
     }
-    // A low waterfront of sheds and offices in front of the towers.
+    // The landmark: a stepped glass tower over the district, its crown lit and a
+    // spire with the city's one aircraft light seen from the harbor.
+    let theta = -0.08;
+    let (x, y, z) = on_land(theta, 92.0);
+    let (mut landmark, roof) = city_tower(7, 211, 74.0, 17.0, 15.0, TowerForm::Stepped);
+    tower_mast(&mut landmark, roof, 0.0, 14.0);
+    place_at(
+        sectors,
+        theta,
+        rotated(landmark, 0.0, -theta + 0.3, 0.0),
+        x,
+        y - 0.5,
+        z,
+    );
+    // A low waterfront of sheds and offices in front of the towers, roofed
+    // flat, pitched or sawtoothed.
     for i in 0..26u32 {
         let theta = -0.7 + 1.2 * hash(i, 23);
         let (x, y, z) = on_land(theta, 3.0 + 5.0 * hash(i, 29));
         let (w, h) = (10.0 + 14.0 * hash(i, 31), 3.5 + 4.0 * hash(i, 37));
         let color = CITY_PAINT[(hash(i, 41) * CITY_PAINT.len() as f64) as usize % CITY_PAINT.len()];
-        let shed = rotated(
+        let mut shed = Node::group("");
+        put(
+            &mut shed,
             box_part(w, h + FOOTING, 7.0, scale_hex_color(color, 0.85), 0.0),
             0.0,
-            -theta + FRAC_PI_2,
+            (h - FOOTING) / 2.0,
             0.0,
         );
-        place_at(sectors, theta, shed, x, y + (h - FOOTING) / 2.0, z);
+        if hash(i, 43) > 0.45 {
+            // A pitched roof: a box turned on its long axis, half sunk.
+            let ridge = rotated(box_part(w, 3.6, 3.6, 0x6d6a66, 0.0), FRAC_PI_4, 0.0, 0.0);
+            put(&mut shed, ridge, 0.0, h, 0.0);
+        }
+        let shed = rotated(shed, 0.0, -theta + FRAC_PI_2, 0.0);
+        place_at(sectors, theta, shed, x, y, z);
     }
 }
 
@@ -605,6 +866,66 @@ fn grain_terminal(sectors: &mut Sectors) {
         top + 13.5,
         hz,
     );
+    // A stair tower up the headhouse's flank, dust filters along the gallery,
+    // and the conveyor running down from the headhouse to a ship loader on the
+    // quay, its spout hanging over the berth: the silhouette of a working
+    // terminal, not a block.
+    let (sx, _, sz) = on_land(head_theta + 0.012, 13.5);
+    put(
+        &mut works,
+        box_part(3.0, house + 4.0 + FOOTING, 3.0, 0x8f8a7c, 0.0),
+        sx,
+        hy + (house + 4.0 - FOOTING) / 2.0,
+        sz,
+    );
+    for k in 0..3 {
+        let (fx, _, fz) = on_land(FIRST + SILO_STEP * (1.0 + 1.6 * f64::from(k)), 7.0);
+        put(
+            &mut works,
+            cylinder_part(1.1, 3.4, 0xa7a9a2, 10),
+            fx,
+            top + 5.2,
+            fz,
+        );
+        put(
+            &mut works,
+            cylinder_part(0.6, 1.2, 0x7d8486, 8),
+            fx,
+            top + 7.4,
+            fz,
+        );
+    }
+    let loader_theta = head_theta - 0.018;
+    let (lx, _, lz) = on_land(loader_theta, -1.0);
+    beam(
+        &mut works,
+        [hx, top + 6.5, hz],
+        [lx, SEA_LEVEL + 17.0, lz],
+        1.9,
+        0x9aa2a2,
+    );
+    put(
+        &mut works,
+        box_part(4.0, 20.0 + FOOTING, 4.0, 0x7d8486, 0.0),
+        lx,
+        SEA_LEVEL + 10.0 - FOOTING / 2.0,
+        lz,
+    );
+    let (bx, _, bz) = on_land(loader_theta, -9.0);
+    beam(
+        &mut works,
+        [lx, SEA_LEVEL + 18.5, lz],
+        [bx, SEA_LEVEL + 15.5, bz],
+        1.6,
+        0xc9a43a,
+    );
+    put(
+        &mut works,
+        cylinder_part(0.7, 7.0, 0x5f6466, 8),
+        bx,
+        SEA_LEVEL + 12.0,
+        bz,
+    );
     place(sectors, head_theta, works);
     // Long sheds behind the silos, and the chimney of the mill.
     for (i, (theta, inland, length)) in [(3.07, 22.0, 30.0), (2.88, 20.0, 32.0)]
@@ -622,13 +943,19 @@ fn grain_terminal(sectors: &mut Sectors) {
             0.0,
         );
         place_at(sectors, theta, shed, x, y + (9.0 - FOOTING) / 2.0, z);
-        let roof = rotated(
-            box_part(length + 0.6, 0.8, 16.6, 0x6f777a, 0.0),
-            0.0,
-            -theta + FRAC_PI_2,
-            0.0,
-        );
-        place_at(sectors, theta, roof, x, y + 9.4, z);
+        // A low-pitched roof in two slopes meeting at the ridge.
+        let mut roof = Node::group("");
+        for side in [-1.0, 1.0] {
+            let slope = rotated(
+                wedge_part(8.4, 2.4, length + 0.6, 0x6f777a),
+                0.0,
+                if side > 0.0 { PI } else { 0.0 },
+                0.0,
+            );
+            put(&mut roof, slope, side * 4.2, 1.2, 0.0);
+        }
+        let roof = rotated(roof, 0.0, -theta, 0.0);
+        place_at(sectors, theta, roof, x, y + 9.0, z);
     }
     let theta = 2.86;
     let (x, y, z) = on_land(theta, 30.0);
@@ -1156,9 +1483,9 @@ fn shader_noise(x: f64, y: f64) -> f64 {
 /// under its canopy (`woods` and `woods_edge` in the far-shore mode, on gentle
 /// ground).
 fn woods_depth(x: f64, z: f64) -> f64 {
-    shader_noise(x / 34.0 + 11.0, z / 34.0 + 11.0) * 0.65
-        + shader_noise(x / 11.0 + 3.0, z / 11.0 + 3.0) * 0.35
-        - 0.03
+    shader_noise(x / 34.0 + 11.0, z / 34.0 + 11.0) * 0.8
+        + shader_noise(x / 11.0 + 3.0, z / 11.0 + 3.0) * 0.2
+        + 0.035
 }
 
 /// Trees in the woods the far-shore effect paints over the headlands: clumps of

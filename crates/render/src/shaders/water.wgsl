@@ -81,6 +81,21 @@ const KELVIN_SLOPE = 0.354;
 const WATER_PI = 3.14159265;
 // The way the wind blows over the harbor (unit x/z): its foam rows run along it.
 const WIND_ROWS = vec2f(0.94, 0.34);
+// The channel buoys (`harbor_scenery::BUOYS`), x and z, the radius of their
+// floats, and the way the tide streams past them (unit x/z): each sits in a
+// collar of lapping foam and trails a short wake downstream.
+const BUOYS = array<vec2f, 8>(
+    vec2f(-74.0, -101.0),
+    vec2f(52.0, -106.0),
+    vec2f(-41.0, 86.0),
+    vec2f(12.0, 99.0),
+    vec2f(58.0, 83.0),
+    vec2f(-141.0, -18.0),
+    vec2f(139.0, 28.0),
+    vec2f(-96.0, 92.0),
+);
+const BUOY_RADIUS = 0.8;
+const TIDE = vec2f(0.8, 0.6);
 
 // Linear colors of the harbor's own grade: churned white foam, the bright teal a
 // sunlit swell shows through its crest, and the water body from the silty green
@@ -521,18 +536,45 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
             let across_wind = dot(input.world.xz, vec2f(-WIND_ROWS.y, WIND_ROWS.x));
             let squall = smoothstep(0.42, 0.75, water_noise(vec2f(downwind, across_wind) / 60.0 + vec2f(t * 0.008, 0.0)));
             if squall > 0.0 {
-                // Rows: thin across the wind, tens of metres long down it, their
-                // lines wandering a little so they never rule straight.
-                let wander = (water_noise(vec2f(downwind * 0.03, across_wind * 0.05) + 3.0) - 0.5) * 3.0;
-                let row = water_noise(vec2f(downwind * 0.035 - t * 0.04, (across_wind + wander) * 0.42));
-                let fine_row = water_noise(vec2f(downwind * 0.09 - t * 0.06, (across_wind + wander) * 1.1) + 11.0);
+                // Streaks: thin across the wind and a few metres long down it,
+                // bent into curves by the gusts and broken into dashes, so they
+                // read as wind on the water, never as long ruled scratches.
+                let wander = (water_noise(vec2f(downwind * 0.09, across_wind * 0.13) + 3.0) - 0.5) * 4.5;
+                let row = water_noise(vec2f(downwind * 0.14 - t * 0.04, (across_wind + wander) * 0.5));
+                let fine_row = water_noise(vec2f(downwind * 0.32 - t * 0.04, (across_wind + wander) * 1.3) + 11.0);
                 let line_field = row * 0.7 + fine_row * 0.3;
-                let streak = smoothstep(0.68, 0.9, line_field) * (1.0 - smoothstep(0.88, 0.98, line_field) * 0.4);
+                let broken = smoothstep(0.35, 0.6, water_noise(vec2f(downwind * 0.06, across_wind * 0.09) + 20.0));
+                let streak = smoothstep(0.68, 0.9, line_field) * (1.0 - smoothstep(0.88, 0.98, line_field) * 0.4) * broken;
                 whitecap = streak * squall * open_water * mix(0.55, 1.0, smoothstep(0.2, 0.65, lace * 0.5 + breakup * 0.5));
             }
         }
+        // The buoys: a collar where the swell laps each float, rings spreading
+        // off it as it rides the swell, and the tide's short wake trailing
+        // downstream, so the marks sit in moving water.
+        var buoy_d = 1e3;
+        var buoy_rel = vec2f(0.0);
+        for (var i = 0; i < 8; i++) {
+            let rel = input.world.xz - BUOYS[i];
+            let d = length(rel);
+            if d < buoy_d {
+                buoy_d = d;
+                buoy_rel = rel;
+            }
+        }
+        var buoy_foam = 0.0;
+        if buoy_d < 12.0 {
+            let off = buoy_d - BUOY_RADIUS;
+            let lap = 1.0 - smoothstep(0.05, 0.35 + breakup * 0.35, off);
+            let rings = smoothstep(0.7, 0.95, sin(off * 3.0 - t * 1.8) * 0.5 + 0.5)
+                * (1.0 - smoothstep(0.4, 3.0, off)) * smoothstep(0.3, 0.6, lace + breakup * 0.3);
+            let down = dot(buoy_rel, TIDE);
+            let side = abs(dot(buoy_rel, vec2f(-TIDE.y, TIDE.x)));
+            let trail = (1.0 - smoothstep(0.25, 0.8 + down * 0.1, side)) * smoothstep(0.2, 1.2, down)
+                * (1.0 - smoothstep(2.0, 9.0, down)) * smoothstep(0.3, 0.65, lace + breakup * 0.4);
+            buoy_foam = max(lap * 0.85, max(rings * 0.45, trail * 0.55));
+        }
         let foam = clamp(line * 0.85 + collar * 0.75 + skirt * 0.42 + wash * 0.5 + flecks * 0.35 + wake_foam
-            + whitecap * 0.2, 0.0, 1.0);
+            + whitecap * 0.2 + buoy_foam, 0.0, 1.0);
         let lit_foam = FOAM_COLOR * (0.7 + 0.3 * max(dot(sun, normal), 0.0)) * mix(0.65, 1.0, sunlit);
         color = mix(albedo, lit_foam, foam * 0.92);
     } else {

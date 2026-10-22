@@ -14,7 +14,7 @@ use super::batching::batch;
 use super::effects_scenery::{
     ApronMode, HARBOR_LABEL_ROWS, HARBOR_LABEL_TEXTURE, harbor_label_row,
 };
-use super::harbor_backdrop::harbor_backdrop;
+use super::harbor_backdrop::{harbor_backdrop, wedge_part};
 use super::harbor_models::{CargoShape, cladding, ship_container};
 use super::harbor_surfaces::{apron_box, apron_material, arrow_marking, marking};
 use super::harbor_vessels::{harbor_fleet, update_harbor_fleet};
@@ -135,6 +135,8 @@ const LINE_WHITE: u32 = 0xe4e2d6;
 
 /// Floor of the transit sheds on the outer quays.
 const WAREHOUSE_FLOOR: f64 = -0.5;
+/// Rise of the warehouse roof's ridge over its eaves, metres.
+const WAREHOUSE_RIDGE: f64 = 1.7;
 const WAREHOUSE_CLADDING: u32 = 0x6a8f9c;
 const WAREHOUSE_ROOF: u32 = 0x7d8a8c;
 const SKYLIGHT: u32 = 0xa9c4c8;
@@ -187,6 +189,9 @@ fn warehouse() -> Node {
     );
     put(&mut shed, end(), 0.0, 0.0, half.1);
     put(&mut shed, rotated(end(), 0.0, PI, 0.0), 0.0, 0.0, -half.1);
+    // A low-pitched roof in two slopes over a fascia, a ridge cap with roof
+    // ventilators along it and a run of skylights let into each slope, so the
+    // shed has an eaves line and a ridge against the sky, not a flat lid.
     put(
         &mut shed,
         box_part(width + 0.6, 0.3, length + 0.6, WAREHOUSE_ROOF, 0.0),
@@ -194,20 +199,58 @@ fn warehouse() -> Node {
         height + 0.15,
         0.0,
     );
-    put(
-        &mut shed,
-        box_part(1.4, 0.6, length - 4.0, WAREHOUSE_ROOF, 0.0),
-        0.0,
-        height + 0.6,
-        0.0,
-    );
-    for x in [-4.6, 4.6] {
+    let half_span = width / 2.0 + 0.3;
+    let pitch = WAREHOUSE_RIDGE.atan2(half_span);
+    for side in [-1.0, 1.0] {
+        let slope = rotated(
+            wedge_part(half_span, WAREHOUSE_RIDGE, length + 0.6, WAREHOUSE_ROOF),
+            0.0,
+            if side > 0.0 { PI } else { 0.0 },
+            0.0,
+        );
         put(
             &mut shed,
-            box_part(2.4, 0.1, length - 8.0, SKYLIGHT, 0.0),
-            x,
-            height + 0.33,
+            slope,
+            side * half_span / 2.0,
+            height + 0.3 + WAREHOUSE_RIDGE / 2.0,
             0.0,
+        );
+        let at = 4.6;
+        put(
+            &mut shed,
+            rotated(
+                box_part(2.4, 0.1, length - 8.0, SKYLIGHT, 0.0),
+                0.0,
+                0.0,
+                -side * pitch,
+            ),
+            side * at,
+            height + 0.35 + WAREHOUSE_RIDGE * (1.0 - at / half_span),
+            0.0,
+        );
+    }
+    put(
+        &mut shed,
+        box_part(1.0, 0.35, length - 2.0, WAREHOUSE_ROOF, 0.0),
+        0.0,
+        height + 0.4 + WAREHOUSE_RIDGE,
+        0.0,
+    );
+    for k in 0..6 {
+        let z = -length / 2.0 + 8.0 + f64::from(k) * (length - 16.0) / 5.0;
+        put(
+            &mut shed,
+            cylinder_part(0.45, 0.9, 0x9a9e98, 10),
+            0.0,
+            height + 0.9 + WAREHOUSE_RIDGE,
+            z,
+        );
+        put(
+            &mut shed,
+            cylinder_part(0.6, 0.12, 0x7f847f, 10),
+            0.0,
+            height + 1.4 + WAREHOUSE_RIDGE,
+            z,
         );
     }
     let door_face = width / 2.0 + 0.05;
@@ -306,11 +349,13 @@ fn lane_runs(crossing: &[(f64, f64)]) -> Vec<(f64, f64)> {
     runs
 }
 
-/// Lettering painted across the middle of the lanes along x, at (lane centre z,
-/// half its width): the centre line's dashes and the arrows stop short of it.
-const LANE_TITLES: [(&str, f64, f64, f64); 2] = [
-    ("HARBOR HAVOC", -45.0, 28.0, 4.0),
-    ("PORT 07", 45.0, 15.0, 3.5),
+/// Lettering painted down the lanes along x, at (centre x, lane centre z, width,
+/// depth): the yard's name in the run west of the north crossing, clear of the
+/// fighting round it, and the berth number across the south crossing. The centre
+/// line's dashes and the arrows stop short of them.
+const LANE_TITLES: [(&str, f64, f64, f64, f64); 2] = [
+    ("HARBOR HAVOC", -27.25, -45.0, 24.0, 3.6),
+    ("PORT 07", 0.0, 45.0, 15.0, 3.5),
 ];
 
 /// Whether lane paint at `along` on the lane along x centred at `centre` would
@@ -319,7 +364,7 @@ fn under_title(along_z: bool, centre: f64, along: f64, reach: f64) -> bool {
     !along_z
         && LANE_TITLES
             .iter()
-            .any(|&(_, z, width, _)| z == centre && along.abs() < width / 2.0 + reach)
+            .any(|&(_, x, z, width, _)| z == centre && (along - x).abs() < width / 2.0 + reach)
 }
 
 /// Lane paint, laid out along z (`along_z`) or along x: solid white edge lines,
@@ -1226,8 +1271,8 @@ impl HarborScenery {
                 0.0,
             );
         }
-        for (text, z, width, depth) in LANE_TITLES {
-            paint_label(&mut labels, text, 0.0, z, width, depth);
+        for (text, x, z, width, depth) in LANE_TITLES {
+            paint_label(&mut labels, text, x, z, width, depth);
         }
         paint_label(&mut labels, "LOADING", 0.0, 3.5, 8.0, 1.1);
         batch_receivers(&mut labels);

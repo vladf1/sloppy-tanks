@@ -22,8 +22,17 @@ const SHORE_LIGHT = vec3f(1.0, 0.0, 0.0);
 const SHORE_LIGHT_GLOW = vec3f(2.4, 0.06, 0.03);
 // Pitch of the profiled cladding's ribs on the far sheds, metres.
 const SHORE_CLAD_RIB = 0.9;
-// Window pitch on the far city's towers: across the face and floor to floor, metres.
-const SHORE_WINDOW = vec2f(2.6, 3.4);
+// The far city's facade styles (`harbor_backdrop::Facade`): bay width and floor
+// height, metres, and each pane's extent within its bay as (left, right, sill,
+// head) fractions: punched office windows, a curtain wall, ribbon glazing and
+// flats.
+const SHORE_FACADE_PITCH = array<vec2f, 4>(vec2f(2.2, 3.6), vec2f(1.5, 3.8), vec2f(1.2, 3.5), vec2f(2.6, 3.0));
+const SHORE_FACADE_PANE = array<vec4f, 4>(
+    vec4f(0.22, 0.78, 0.36, 0.82),
+    vec4f(0.05, 0.95, 0.2, 0.97),
+    vec4f(0.0, 0.96, 0.42, 0.84),
+    vec4f(0.3, 0.7, 0.38, 0.8),
+);
 // Linear glow of a lit office window across the bay.
 const SHORE_WINDOW_GLOW = vec3f(0.9, 0.55, 0.24);
 // The headlands' countryside: a field's size along and across its furrows,
@@ -41,6 +50,10 @@ const SHORE_FOREST = vec3f(0.03, 0.078, 0.026);
 // thin out to the open crests (with the woods' own noise raising or lowering
 // the line), metres above the sea.
 const SHORE_CROWN = 3.2;
+// The far woods' clumps of crowns, metres across, and the step toward the sun
+// (in clumps) over which a clump's rise lights its sunward flank.
+const SHORE_CLUMP = 6.5;
+const SHORE_CLUMP_STEP = 0.16;
 const SHORE_TREELINE = vec2f(28.0, 70.0);
 // The far woods' crowns, and the share of the hillside's haze in front of them.
 const SHORE_CANOPY = vec3f(0.03, 0.058, 0.04);
@@ -48,6 +61,8 @@ const SHORE_CANOPY_HAZE = 0.45;
 // The share of the scene's low sea mist the far shore takes: enough to seat the
 // coast in it, little enough that the terminal and the woods keep their colour.
 const SHORE_MIST = 0.45;
+// The share of the low sky's own colour in the haze over the far shore.
+const SHORE_SKY_HAZE = 0.45;
 // How much of its saturation the headlands' countryside keeps.
 const SHORE_GRASS_SATURATION = 0.78;
 const SHORE_ROCK = vec3f(0.2, 0.19, 0.165);
@@ -85,22 +100,53 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // towers (flagged by their uv) take floors of windows mirroring the sky.
     let n = (*s).normal;
     let across = select(f.world.x, f.world.z, abs(n.x) > abs(n.z));
-    let window_cell = vec2f(across / SHORE_WINDOW.x, (f.world.y - SHORE_SEA_LEVEL) / SHORE_WINDOW.y);
-    let window_aa = fwidth(window_cell) * 0.75;
-    let pane_at = fract(window_cell);
-    let pane = smoothstep(0.2 - window_aa.x, 0.2 + window_aa.x, pane_at.x)
-        * (1.0 - smoothstep(0.8 - window_aa.x, 0.8 + window_aa.x, pane_at.x))
-        * smoothstep(0.32 - window_aa.y, 0.32 + window_aa.y, pane_at.y)
-        * (1.0 - smoothstep(0.86 - window_aa.y, 0.86 + window_aa.y, pane_at.y));
+    // Tower facades (flagged by their uv.y, 10 plus the style; uv.x is the
+    // tower's own tone): punched office windows, a curtain wall of glass between
+    // thin mullions and spandrels, ribbon glazing in bands, or the small windows
+    // of flats over balcony slabs. Each style has its own bay and floor pitch and
+    // pane, so the towers never share one grid.
     let walls = abs(n.y) < 0.5;
     let facade = select(0.0, 1.0, f.uv.y > 5.0 && f.uv.y < 15.0 && walls);
-    let window_hash = shore_hash(floor(window_cell) + vec2f(3.0, 9.0));
-    let blinds = step(0.72, window_hash.x);
-    // The low sun has some offices lit already: a scatter of warm windows
-    // that shine through the haze.
-    let lit_window = pane * facade * step(0.9, window_hash.y) * (1.0 - blinds);
-    let glass = mix(frame.sky_color.rgb * 0.22 + vec3f(0.015, 0.025, 0.035), f.vertex_color.rgb * 0.7, blinds);
-    var albedo = mix(f.vertex_color.rgb, glass, pane * facade);
+    let style = u32(clamp(f.uv.y - 9.5, 0.0, 3.0));
+    let pitch = SHORE_FACADE_PITCH[style];
+    let pane_box = SHORE_FACADE_PANE[style];
+    let window_cell = vec2f(across / pitch.x, (f.world.y - SHORE_SEA_LEVEL) / pitch.y);
+    let window_aa = fwidth(window_cell) * 0.75;
+    let pane_at = fract(window_cell);
+    // Where a pixel spans a bay the panes blend to their share of the wall, so a
+    // far facade reads as a tone, not a crawling grid.
+    let pane_share = (pane_box.y - pane_box.x) * (pane_box.w - pane_box.z);
+    let pane_sharp = smoothstep(pane_box.x - window_aa.x, pane_box.x + window_aa.x, pane_at.x)
+        * (1.0 - smoothstep(pane_box.y - window_aa.x, pane_box.y + window_aa.x, pane_at.x))
+        * smoothstep(pane_box.z - window_aa.y, pane_box.z + window_aa.y, pane_at.y)
+        * (1.0 - smoothstep(pane_box.w - window_aa.y, pane_box.w + window_aa.y, pane_at.y));
+    let pane = mix(pane_sharp, pane_share, smoothstep(0.25, 0.6, max(window_aa.x, window_aa.y)));
+    let tower_tone = f.uv.x;
+    let window_hash = shore_hash(floor(window_cell) + vec2f(3.0, 9.0) + tower_tone * 61.0);
+    let blinds = step(0.78 - tower_tone * 0.2, window_hash.x) * select(1.0, 0.4, style == 1u);
+    // The low sun has some offices lit already: a scatter of warm windows,
+    // more in some towers than others, that shine through the haze.
+    let lit_window = pane_sharp * facade * step(0.93 - tower_tone * 0.05, window_hash.y) * (1.0 - blinds);
+    // Glass mirrors the sky behind the eye off the wall's plane: warm toward the
+    // sun, cooler away from it, paler up the tower where it sees more sky.
+    let eye_ray = normalize(f.world - frame.camera_position.xyz);
+    let mirrored = reflect(eye_ray, n);
+    let sky_seen = sky_gradient(normalize(vec3f(mirrored.x, abs(mirrored.y) * 0.5 + 0.08, mirrored.z)));
+    let glass_tint = mix(vec3f(0.85, 0.92, 1.0), vec3f(1.0, 0.95, 0.86), tower_tone);
+    let glass_height = smoothstep(0.0, 60.0, f.world.y);
+    // Punched windows sit deep in their reveals and see less of the sky than a
+    // flush curtain wall does.
+    let reveal = select(0.7, 1.0, style == 1u);
+    let glass = sky_seen * glass_tint * mix(0.2, 0.36, glass_height) * mix(0.6, 1.0, pane_at.y) * reveal
+        + vec3f(0.006, 0.01, 0.014);
+    let glazing = pane * facade * (1.0 - blinds * 0.6);
+    // Balcony slabs of the flats cast a dark band under each floor.
+    let balcony = select(0.0, 1.0, style == 3u) * facade
+        * (1.0 - smoothstep(0.1, 0.16 + window_aa.y, pane_at.y)) * (1.0 - smoothstep(0.25, 0.6, window_aa.y));
+    // The panes themselves are dark: what shows in them is the mirrored sky,
+    // added after the lighting below.
+    var albedo = mix(f.vertex_color.rgb, vec3f(0.025, 0.028, 0.03), glazing * 0.85);
+    albedo = albedo * (1.0 - balcony * 0.45);
     // Container stacks: every tier and 6 m bay its own box, in a line's paint,
     // with dark seams between them.
     let box_cell = floor(vec2f(across / 6.1, f.world.y / 2.6));
@@ -120,45 +166,32 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         * smoothstep(0.004, 0.03, f.vertex_color.g - f.vertex_color.r);
     let shore_footprint = length(fwidth(f.world));
     let dry = shore_noise(ground / 61.0) * 0.6 + shore_noise(ground / 23.0 + 5.0) * 0.4;
-    let woods = shore_noise(ground / 34.0 + 11.0) * 0.65 + shore_noise(ground / 11.0 + 3.0) * 0.35;
+    let woods = shore_noise(ground / 34.0 + 11.0) * 0.8 + shore_noise(ground / 11.0 + 3.0) * 0.2;
     // The woods climb from the hollows to a ragged tree line short of the
     // crests, which stay open grass and scree, so every ridge reads as a
     // landform with a wooded skirt rather than camouflage blotches.
     let treeline = 1.0 - smoothstep(SHORE_TREELINE.x, SHORE_TREELINE.y, f.world.y + (woods - 0.5) * 30.0);
     // The woods' edge is ragged by the crowns along it, never a smooth blob.
     let crown_noise = shore_noise(ground / 4.2) * 0.6 + shore_noise(ground / 1.6 + 7.0) * 0.4;
-    let woods_edge = woods * 0.8 + slope * 0.3 + 0.12 - (1.0 - treeline) * 0.55 + (crown_noise - 0.5) * 0.09;
-    let woods_aa = max(fwidth(woods_edge), 1e-4);
+    let woods_edge = woods * 0.8 + slope * 0.3 + 0.17 - (1.0 - treeline) * 0.55 + (crown_noise - 0.5) * 0.2;
+    let woods_aa = max(fwidth(woods_edge), 1e-4) + 0.012;
     let forest = smoothstep(0.5 - woods_aa, 0.5 + woods_aa, woods_edge);
-    // Crowns: a canopy of round tops, each lit on its sun side and shading
-    // the next, with dark gaps between, faded to its mean where a pixel spans
-    // a crown. Only worked out where the woods stand.
-    let crown_detail = (1.0 - smoothstep(0.18, 0.6, shore_footprint / SHORE_CROWN)) * forest * terrain;
-    var crowns = mix(0.5, crown_noise, 1.0 - smoothstep(1.5, 5.0, shore_footprint));
-    if crown_detail > 0.0 {
-        let cell = ground / SHORE_CROWN;
-        let base = floor(cell);
-        let local = cell - base;
-        var nearest = 4.0;
-        var toward = vec2f(0.0);
-        var tone = 1.0;
-        for (var j = -1; j <= 1; j++) {
-            for (var i = -1; i <= 1; i++) {
-                let c = vec2f(f32(i), f32(j));
-                let h = shore_hash(base + c + vec2f(41.0, 17.0));
-                let off = (local - c - 0.15 - 0.7 * h.xy) / mix(0.62, 0.98, h.z);
-                let d = dot(off, off);
-                if d < nearest {
-                    nearest = d;
-                    toward = off;
-                    tone = mix(0.7, 1.2, h.w);
-                }
-            }
-        }
-        let dome = vec3f(toward.x, 1.1 * sqrt(max(1.0 - nearest, 0.0)) + 0.2, toward.y);
-        let sunlit = max(dot(normalize(dome), frame.sun_direction.xyz), 0.0);
-        let canopy_value = mix(0.2, mix(0.32, 0.95, sunlit) * tone, 1.0 - smoothstep(0.55, 1.0, nearest));
-        crowns = mix(crowns, canopy_value, crown_detail);
+    // The canopy as massed crowns: clumps a few trees across, each rounded
+    // toward the sun by the slope of its own noise (a lit sunward flank, a
+    // shaded lee), so the woods read in merged masses of value with no outline
+    // round any one crown; a finer grain of single crowns only where a pixel can
+    // resolve it. Worked out only where the woods stand.
+    var crowns = 0.5;
+    if forest * terrain > 0.0 {
+        let toward_sun = normalize(frame.sun_direction.xz + vec2f(1e-4)) * SHORE_CLUMP_STEP;
+        let clump_at = ground / SHORE_CLUMP;
+        let clump = shore_noise(clump_at) * 0.6 + shore_noise(clump_at * 2.7 + 5.0) * 0.4;
+        let sunward = shore_noise(clump_at + toward_sun) * 0.6 + shore_noise((clump_at + toward_sun) * 2.7 + 5.0) * 0.4;
+        let facing = clamp((clump - sunward) * 7.0 + 0.5, 0.0, 1.0);
+        let grain = mix(0.5, crown_noise, 1.0 - smoothstep(0.35, 1.4, shore_footprint / SHORE_CROWN));
+        // Hollows between the clumps sink into shade.
+        let hollow = smoothstep(0.3, 0.55, clump);
+        crowns = mix(0.36, 0.64, facing) * mix(0.8, 1.06, hollow) + (grain - 0.5) * 0.75;
     }
     var land = f.vertex_color.rgb * mix(vec3f(0.88, 1.0, 0.86), vec3f(1.2, 1.1, 0.72), smoothstep(0.45, 0.8, dry));
     let field_at = vec2f(ground.x * 0.83 - ground.y * 0.56, ground.x * 0.56 + ground.y * 0.83) / SHORE_FIELD;
@@ -229,7 +262,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // more light than the shaded slopes round them and glowed as pale cut-outs
     // against the hills, where a wood seen across a bay is a dark mass.
     let sun = max(dot(n, frame.sun_direction.xyz), 0.0) * frame.sun_color.rgb * (1.0 - tree);
-    let lit = albedo * (sun + hemisphere * (1.0 - tree * 0.7)) * 0.3183099;
+    let lit = albedo * (sun + hemisphere * (1.0 - tree * 0.7)) * 0.3183099 + glass * glazing;
     let distance = length(frame.camera_position.xyz - f.world);
     let lift = smoothstep(0.0, 60.0, f.world.y) * SHORE_HAZE_LIFT;
     let haze = (1.0 - exp2(-max(distance - SHORE_HAZE_CLEAR, 0.0) / SHORE_HAZE_DISTANCE)) * (1.0 - lift);
@@ -238,7 +271,13 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // The scene's own aerial perspective: thin haze cools and darkens the
         // near headlands, thick haze melts the ranges into the sky behind them,
         // so the layers recede in steps of value and saturation.
-        horizon = haze_tint((f.world - frame.camera_position.xyz) / max(distance, 1e-3), haze);
+        let ray_out = (f.world - frame.camera_position.xyz) / max(distance, 1e-3);
+        horizon = haze_tint(ray_out, haze);
+        // Across the bay the air takes the colour of the sky low behind the
+        // coast, so the headlands warm toward the evening glow as they recede
+        // instead of turning a blue that fights it.
+        let low_sky = sky_gradient(normalize(vec3f(ray_out.x, 0.04, ray_out.z)));
+        horizon = mix(horizon, low_sky, SHORE_SKY_HAZE * haze);
     } else if frame.fog_color.w > 0.5 {
         horizon = frame.fog_color.rgb;
     }
