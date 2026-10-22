@@ -125,6 +125,27 @@ fn vg_scatter(p: vec2f, density: f32, cells: f32, size: vec2f, aa: f32, seed: f3
     return vec4f(cover, dome, jitter.x, fract(pick * 3.71));
 }
 
+// A low rosette of leaves on a jittered cell grid: x its coverage, y how far
+// out along its leaves (0 at the heart), z a random number for its look.
+fn vg_rosette(p: vec2f, density: f32, cells: f32, size: vec2f, aa: f32, seed: f32) -> vec3f {
+    if density <= 0.0 {
+        return vec3f(0.0);
+    }
+    let cell = floor(p * cells);
+    let jitter = vg_hash2(cell + seed);
+    let pick = vg_hash(cell + seed * 1.37 + 5.1);
+    let local = p - (cell + 0.25 + jitter * 0.5) / cells;
+    let distance = length(local);
+    let radius = mix(size.x, size.y, fract(pick * 7.31));
+    // Five or six leaves, each tapering to a point.
+    let leaves = select(5.0, 6.0, pick > 0.5);
+    let angle = atan2(local.y, local.x) + pick * 6.2832;
+    let reach = radius * mix(0.35, 1.0, pow(abs(cos(angle * leaves * 0.5)), 0.7));
+    let present = select(0.0, 1.0, fract(pick * 13.7) < density);
+    let cover = (1.0 - smoothstep(reach - aa, reach + aa, distance)) * present;
+    return vec3f(cover, distance / radius, jitter.x);
+}
+
 // The baked ground plan (`village_ground.rs`): three squares side by side, the
 // arena, the valley and the arena's tracks, sampled at a world position.
 // Coordinates stay half a texel inside each square.
@@ -232,6 +253,8 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let footprint = max(length(dpdx(f.world)), length(dpdy(f.world)));
     let aa = footprint * 0.75;
     let fine = 1.0 - smoothstep(0.02, 0.06, footprint);
+    // Detail a few centimetres across still reads from the gameplay camera.
+    let mid = 1.0 - smoothstep(0.07, 0.16, footprint);
 
     // ---- The baked plan: inside the wall the arena and its tracks, outside the
     // valley.
@@ -356,17 +379,20 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let wind_across = dot(p, vec2f(-VG_WIND.y, VG_WIND.x));
     let gust = vg_noise(vec2f(wind_along * 0.11 - frame.camera_position.w * VG_GUST_SPEED, wind_across * 0.045))
         * 0.7 + vg_noise(vec2f(wind_along * 0.27 - frame.camera_position.w * VG_GUST_SPEED * 2.45, wind_across * 0.12 + 7.0)) * 0.3;
-    // Clumps: two scattered layers of rounded tussocks, lit crowns over dark
-    // gaps, until they shrink under a few pixels and blend to their average.
+    // Close up the turf breaks into small tufts with lit crowns, and the long
+    // grass lies combed over in wavy strokes downwind; both blend to their
+    // average once they shrink under a few pixels.
     let clump_view = 1.0 - smoothstep(0.045, 0.11, footprint);
-    var tussock = vec4f(0.0);
     var tuft_bed = vec4f(0.0);
+    var comb = 0.5;
     if clump_view * (1.0 - dirt) > 0.0 {
-        tussock = vg_scatter(turned, 0.7, 1.75, vec2f(0.17, 0.3), aa * 2.0, 81.0);
-        tuft_bed = vg_scatter(p, 0.5, 3.4, vec2f(0.07, 0.13), aa * 1.5, 83.0);
+        tuft_bed = vg_scatter(p, 0.45, 3.4, vec2f(0.07, 0.13), aa * 1.5, 83.0);
+        let warp = vg_noise(p * 0.45 + 13.0) * 2.4;
+        comb = vg_noise(vec2f(wind_along * 1.3 + warp, wind_across * 8.5)) * 0.65
+            + vg_noise(vec2f(wind_along * 2.9 - warp, wind_across * 19.0 + 3.0)) * 0.35;
     }
-    let clump_cover = max(tussock.x, tuft_bed.x) * clump_view * (1.0 - dirt);
-    let clump_height = max(tussock.y * mix(0.5, 1.1, long_grass), tuft_bed.y * 0.7) * clump_view * (1.0 - dirt);
+    let clump_cover = tuft_bed.x * clump_view * (1.0 - dirt);
+    let clump_height = (tuft_bed.y * 0.7 + (comb - 0.5) * 0.05 * long_grass) * clump_view * (1.0 - dirt);
 
     // ---- Grass: a living meadow, not a lawn. Short sunlit turf and darker
     // long stands, per-tussock hue, straw on the crests and the walked lines,
@@ -379,7 +405,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         let meso = vg_fbm(p * 0.15 - 11.0);
         let warmth = vg_fbm(p * 0.045 + 3.0);
         let short_turf = mix(vg_linear(0x5f8f35), vg_linear(0x86a845), smoothstep(0.3, 0.75, warmth));
-        let long_turf = mix(vg_linear(0x44723a), vg_linear(0x648c3e), smoothstep(0.3, 0.75, meso));
+        let long_turf = mix(vg_linear(0x4a7a3a), vg_linear(0x6a9442), smoothstep(0.3, 0.75, meso));
         grass = mix(short_turf, long_turf, long_grass);
         // Hollows hold the damp, crests dry off.
         grass = mix(grass, grass * vec3f(0.84, 0.93, 0.86), smoothstep(0.0, -0.45, swell) * 0.7);
@@ -388,13 +414,13 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         grass = mix(grass, mix(vg_linear(0x8d8a52), vg_linear(0xa39d5e), meso), wear * 0.6);
         let blades = mix(0.8, 1.2, clamp((grass_detail - 0.55) * 0.9, 0.0, 1.0));
         grass = grass * blades;
-        // Tussocks: each its own hue, bright crowned, the gaps between them
-        // dark at the roots; deeper in the long stands.
-        let crown_light = smoothstep(0.0, 0.9, max(tussock.y / 0.3, tuft_bed.y / 0.12));
-        let tussock_hue = mix(vec3f(1.05, 1.03, 0.9), vec3f(0.92, 0.99, 0.95), max(tussock.z, tuft_bed.z));
-        let gap_depth = mix(0.95, 0.74, long_grass);
-        let clumped = grass * tussock_hue * mix(0.96, 1.12, crown_light);
-        grass = mix(grass, mix(grass * gap_depth, clumped, clump_cover), clump_view);
+        // Tufts: each its own hue, bright crowned; the long grass in combed
+        // strokes, bright where the blades lie toward the light.
+        let crown_light = smoothstep(0.0, 0.9, tuft_bed.y / 0.12);
+        let tuft_hue = mix(vec3f(1.05, 1.03, 0.9), vec3f(0.92, 0.99, 0.95), tuft_bed.z);
+        grass = mix(grass, grass * tuft_hue * mix(0.96, 1.12, crown_light), clump_cover);
+        let stroke = mix(0.8, 1.16, smoothstep(0.2, 0.8, comb));
+        grass = grass * mix(1.0, stroke, long_grass * clump_view);
         // Bowed blades in a gust.
         let sheen = smoothstep(0.5, 0.85, gust) * mix(0.25, 1.0, long_grass);
         grass = mix(grass, grass * vec3f(1.2, 1.2, 1.02) + vg_linear(0x2a2a12) * 0.25, sheen * 0.32);
@@ -429,7 +455,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // ---- Pebbles: thick along the road shoulders and the verge, kicked out of
     // the ruts onto the loose ground, sparse elsewhere.
     let shoulder = smoothstep(0.15, 0.45, wear) * (1.0 - smoothstep(0.7, 0.95, wear));
-    let pebble_density = (0.02 + shoulder * 0.28 + dirt * (1.0 - packed) * 0.08 + verge * 0.6 + wet_bank * 0.4) * fine * (1.0 - rut);
+    let pebble_density = (0.02 + shoulder * 0.28 + dirt * (1.0 - packed) * 0.05 + verge * 0.6 + wet_bank * 0.4) * fine * (1.0 - rut);
     let pebbles = vg_scatter(p, pebble_density, 2.4, vec2f(0.04, 0.11), aa, 3.0);
     let grit = vg_scatter(p, (0.12 + dirt * 0.25) * fine, 6.5, vec2f(0.014, 0.03), aa, 9.0);
 
@@ -456,6 +482,9 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         let loose = mix(vg_linear(0x7a634d), vg_linear(0x8b735a), smoothstep(0.25, 0.8, vg_fbm(p * 0.07 + 21.0)));
         let hard = mix(vg_linear(0x9a876b), vg_linear(0xab997c), streaks);
         soil = mix(loose, hard, packed * 0.75);
+        // Earth mottled at hand scale: drier crumbs and darker loam.
+        let loam = vg_fbm(p * 0.85 + 41.0);
+        soil = soil * mix(0.88, 1.09, smoothstep(0.25, 0.75, loam)) * mix(1.0, mix(0.94, 1.05, vg_noise(p * 3.1 + 5.0)), mid);
         soil = soil * mix(0.72, 1.28, clamp((dirt_detail - 0.55) * mix(1.1, 0.7, packed), 0.0, 1.0))
             * (dirt_tex / max(dirt_luma, 0.05) * 0.3 + 0.7);
         // The worn margin, where grass roots hold damp soil, and the undercut lip.
@@ -495,14 +524,16 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
 
     // A few fist-sized stones along the shoulders, each with its own shadow
     // cast away from the sun.
-    let stone_density = (shoulder * 0.22 + verge * 0.3 + dirt * (1.0 - packed) * 0.03) * fine * (1.0 - rut);
-    let sun_away = -normalize(frame.sun_direction.xz + vec2f(1e-4, 0.0)) * 0.06;
-    let stones = vg_scatter(p, stone_density, 0.9, vec2f(0.1, 0.19), aa, 57.0);
-    let stone_shadow = vg_scatter(p - sun_away, stone_density, 0.9, vec2f(0.1, 0.19), aa * 2.0, 57.0).x * (1.0 - stones.x);
+    // Gravelly patches in the loose ground, where the topsoil washed off.
+    let gravel_patch = smoothstep(0.58, 0.72, vg_fbm(p * 0.11 + 57.0)) * dirt * (1.0 - packed * 0.6);
+    let stone_density = (shoulder * 0.22 + verge * 0.3 + dirt * (1.0 - packed) * 0.05 + gravel_patch * 0.35) * mid * (1.0 - rut);
+    let sun_away = -normalize(frame.sun_direction.xz + vec2f(1e-4, 0.0)) * 0.08;
+    let stones = vg_scatter(p, stone_density, 0.9, vec2f(0.08, 0.15), aa, 57.0);
+    let stone_shadow = vg_scatter(p - sun_away, stone_density, 0.9, vec2f(0.08, 0.15), aa * 2.0, 57.0).x * (1.0 - stones.x);
     // Pebbles lit by their own dome: a dark foot, a pale crown.
     let pebble_crown = smoothstep(0.0, 0.85, clamp(pebbles.y / 0.08, 0.0, 1.0));
     let stone = mix(vg_linear(0x6f6a62), vg_linear(0xa29d90), pebbles.z) * mix(0.6, 1.12, pebble_crown);
-    let stone_warm = mix(stone, soil * 1.15 * mix(0.6, 1.1, pebble_crown), 0.35 + pebbles.w * 0.4);
+    let stone_warm = mix(stone, soil * mix(0.62, 1.12, pebble_crown), 0.72 + pebbles.w * 0.2);
 
     // ---- Cottage gardens: flower beds on dark mulch, vegetable rows, and a
     // plank edging where a bed meets the lawn.
@@ -538,11 +569,17 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, gravel_tone, verge * 0.85);
     color = mix(color, color * 0.72, grit.x * 0.5);
     color = mix(color, stone_warm, pebbles.x * (1.0 - flower_bed));
-    color = mix(color, color * 0.62, stone_shadow * 0.7 * (1.0 - flower_bed));
+    color = mix(color, color * 0.6, stone_shadow * 0.75 * (1.0 - flower_bed));
     // Lit from the dome's height: a dark foot, a pale crown.
-    let crown = clamp(stones.y / 0.14, 0.0, 1.0);
-    let boulder = mix(vg_linear(0x6d685e), vg_linear(0xa29c8c), stones.z) * mix(0.62, 1.12, smoothstep(0.0, 0.8, crown));
+    let crown = clamp(stones.y / 0.11, 0.0, 1.0);
+    let boulder = mix(soil * 0.85, mix(vg_linear(0x6d685e), vg_linear(0x978f80), stones.z), 0.55) * mix(0.5, 1.12, smoothstep(0.0, 0.8, crown));
     color = mix(color, boulder, stones.x * (1.0 - flower_bed));
+    // Weeds on the loose ground the treads leave alone: small rosettes, dark
+    // at the heart.
+    let weed_density = dirt * (1.0 - packed) * (1.0 - smoothstep(0.0, 0.3, rut + fresh * 0.5)) * 0.3 * mid;
+    let weeds = vg_rosette(p, weed_density, 1.25, vec2f(0.07, 0.13), aa, 91.0);
+    let weed_leaf = mix(vg_linear(0x4a6428), vg_linear(0x7a8a3e), weeds.z) * mix(0.55, 1.05, smoothstep(0.05, 0.8, weeds.y));
+    color = mix(color, weed_leaf, weeds.x * (1.0 - flower_bed) * (1.0 - puddle));
     color = mix(color, bloom_color, blooms.x * (1.0 - dirt) * (1.0 - flower_bed));
     color = mix(color, veg, veg_plot);
     color = mix(color, bed, flower_bed);
@@ -564,7 +601,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
 
     let turf = 0.035 + lip * 0.02;
     let relief = mix(grass_detail * 0.02 + turf, dirt_detail * 0.02 - rut * 0.07 + berm * 0.02 + clods * 0.012 - undercut * 0.012, dirt)
-        + pebbles.y * 0.6 + stones.y * 0.7 + grit.y * 0.4 + cleat * 0.012 * dirt + blooms.y * 0.3 * (1.0 - dirt)
+        + pebbles.y * 0.6 + stones.y * 0.7 + weeds.x * 0.015 + grit.y * 0.4 + cleat * 0.012 * dirt + blooms.y * 0.3 * (1.0 - dirt)
         + bed_relief * flower_bed + veg_relief * veg_plot
         + edging * 0.03 + crop.a * field
         + clump_height + swell * mix(1.8, 0.6, dirt) + bank * inside;
