@@ -71,6 +71,7 @@ mod water_surface;
 
 // Map scenery (village, harbor, quarry, extra-level floors).
 pub mod effects_scenery;
+mod harbor_backdrop;
 mod harbor_scenery;
 mod harbor_vessels;
 mod harbor_water;

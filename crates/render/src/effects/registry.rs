@@ -162,6 +162,12 @@ pub const SAND_DRIFT: EffectDefinition = effect(
     ),
 );
 
+/// Harbor quay concrete and paint in world space (`harbor_surfaces`).
+pub const HARBOR_APRON: EffectDefinition = effect(
+    effects_scenery::HARBOR_APRON,
+    include_str!("../shaders/effects/harbor_apron.wgsl"),
+);
+
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
@@ -180,6 +186,7 @@ pub const BUILTIN_EFFECTS: [EffectDefinition; 14] = [
     QUARRY_SOIL,
     SANDSTONE,
     SAND_DRIFT,
+    HARBOR_APRON,
 ];
 
 /// The renderer's effect table. Index 0 means no effect; effect `i` has id `i + 1`.
