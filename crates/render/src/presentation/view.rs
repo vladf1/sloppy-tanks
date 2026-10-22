@@ -40,7 +40,7 @@ use super::model_catalog::{self, CoverModel, SceneryMover, SceneryWater, TreePar
 use super::models::{self as own, joint};
 use super::posing::{JointBasis, dvec3, euler_yxz, joint_world, lerp, quat, vec3};
 use super::preparation::Preparation;
-use super::suspension::{MotionInput, TankMotion};
+use super::suspension::{MotionInput, TankMotion, engine_shudder};
 use super::theme::{
     SHADOW_BIAS, SHADOW_FILTER_RADIUS, SHADOW_MAP_SIZE, SHADOW_NORMAL_BIAS, SHADOW_RECEIVER_FLOOR,
     Theme, ThemeLook, theme_look,
@@ -1388,10 +1388,14 @@ impl Presentation {
                 }
             }
             SimEventType::Explosion => {
-                self.rig.blast(event.x, event.z, event.size.unwrap_or(2.0));
+                let radius = event.size.unwrap_or(2.0);
+                self.rig.blast(event.x, event.z, radius);
+                self.rock_tanks(event.x, event.z, radius);
             }
             SimEventType::Death => {
-                self.rig.blast(event.x, event.z, event.size.unwrap_or(3.0));
+                let radius = event.size.unwrap_or(3.0);
+                self.rig.blast(event.x, event.z, radius);
+                self.rock_tanks(event.x, event.z, radius);
                 if viewer {
                     self.rig.shake.add_trauma(CAMERA_FEEL.death_trauma);
                 } else {
@@ -1403,6 +1407,17 @@ impl Presentation {
                 }
             }
             _ => {}
+        }
+    }
+
+    /// Every drawn tank near a blast at `(x, z)` rocks on its springs.
+    fn rock_tanks(&mut self, x: f64, z: f64, radius: f64) {
+        for view in self.tanks.values_mut() {
+            let Some(motion) = view.motion.as_mut() else {
+                continue;
+            };
+            let at = view.world.w_axis;
+            motion.blast((f64::from(at.x), f64::from(at.z)), (x, z), radius);
         }
     }
 
@@ -1820,10 +1835,14 @@ impl Presentation {
             // the barrel inherits the tilt and keeps its recoil.
             let (hull, turret, barrel, track) =
                 (&model.hull, &model.turret, &model.barrel, &model.track);
+            // The engine trembles through every hull, each tank to its own beat.
+            let speed = tank.velocity.x.hypot(tank.velocity.z) / CAMERA_FEEL.full_speed;
+            let (shudder_pitch, shudder_roll) =
+                engine_shudder(state.elapsed, f64::from(tank.id) * 0.618, speed);
             let hull_rotation = euler_yxz(
-                suspension.pitch.angle as f32,
+                (suspension.pitch.angle + shudder_pitch) as f32,
                 tank.heading as f32,
-                suspension.roll.angle as f32,
+                (suspension.roll.angle + shudder_roll) as f32,
             );
             let turret_rotation =
                 hull_rotation * Quat::from_rotation_y((aim - tank.heading) as f32);

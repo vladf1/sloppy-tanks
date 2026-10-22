@@ -6,18 +6,18 @@
 
 use super::view_settings::TANK_FEEL;
 
-/// About 6 degrees of steady lean from driving, including sudden stops and knockback.
-const MAX_PITCH: f64 = 0.1;
-/// About 5 degrees of body roll in a hard turn.
-const MAX_ROLL: f64 = 0.085;
+/// About 8 degrees of steady lean from driving, including sudden stops and knockback.
+const MAX_PITCH: f64 = 0.14;
+/// About 7 degrees of body roll in a hard turn.
+const MAX_ROLL: f64 = 0.12;
 /// Kicks may throw the hull further than steady driving leans it.
-const MAX_KICK_ANGLE: f64 = 0.2;
+const MAX_KICK_ANGLE: f64 = 0.26;
 /// Spring angular frequency (rad/s) and damping ratio: one soft overshoot.
 const STIFFNESS: f64 = 11.0;
 const DAMPING_RATIO: f64 = 0.42;
 /// Radians of pitch and roll per m/s² of forward and sideways acceleration.
-const PITCH_PER_ACCELERATION: f64 = 0.0034;
-const ROLL_PER_ACCELERATION: f64 = 0.0034;
+const PITCH_PER_ACCELERATION: f64 = 0.0062;
+const ROLL_PER_ACCELERATION: f64 = 0.006;
 /// The spring integrates in substeps no longer than this, so any frame rate
 /// gives the same motion.
 const SUBSTEP: f64 = 1.0 / 240.0;
@@ -170,6 +170,27 @@ impl TankMotion {
         self.pending_hit = Some((dx, dz, rock));
     }
 
+    /// A blast of `radius` at `blast` rocked the tank standing at `at` and shoved
+    /// it a little, fading with distance, whether or not it took damage.
+    pub fn blast(&mut self, at: (f64, f64), blast: (f64, f64), radius: f64) {
+        let (dx, dz) = (at.0 - blast.0, at.1 - blast.1);
+        let distance = dx.hypot(dz);
+        let reach = radius * TANK_FEEL.blast_reach_per_radius + TANK_FEEL.blast_reach;
+        if distance >= reach || distance < 1e-3 {
+            return;
+        }
+        let falloff = (1.0 - distance / reach).powi(2);
+        let strength = falloff * (radius / 4.0).min(1.5);
+        let (dx, dz) = (dx / distance, dz / distance);
+        let shove = TANK_FEEL.blast_shove * strength;
+        self.shove.kick(dx * shove, dz * shove);
+        let rock = TANK_FEEL.blast_rock * strength;
+        // A hit in the same moment already throws the hull; keep the harder knock.
+        if self.pending_hit.is_none_or(|(_, _, hit)| hit < rock) {
+            self.pending_hit = Some((dx, dz, rock));
+        }
+    }
+
     /// Advance a live tank's pose by `dt` of play: apply the shot and hit waiting
     /// since the last frame, settle the springs and roll the treads.
     pub fn update(&mut self, tank: &MotionInput, dt: f64) {
@@ -239,6 +260,19 @@ impl TankMotion {
             (1.0 + b * flash * flash) as f32,
         ]
     }
+}
+
+/// The engine's shudder through the hull (pitch, roll in rad) at simulation
+/// `time`: a fine idle tremble that grows into a rumble at `speed` (0..1). `phase`
+/// (0..1) sets each tank's engine apart from the others.
+pub fn engine_shudder(time: f64, phase: f64, speed: f64) -> (f64, f64) {
+    use std::f64::consts::TAU;
+    let amplitude = TANK_FEEL.idle_shudder
+        + (TANK_FEEL.drive_shudder - TANK_FEEL.idle_shudder) * speed.clamp(0.0, 1.0);
+    let t = time * TANK_FEEL.shudder_frequency + phase;
+    let pitch = 0.6 * (t * TAU).sin() + 0.4 * (t * 1.73 * TAU + 2.1).sin();
+    let roll = 0.55 * (t * 1.31 * TAU + 0.7).sin() + 0.45 * (t * 2.07 * TAU).sin();
+    (amplitude * pitch, amplitude * 0.7 * roll)
 }
 
 /// What a tank's motion reads from the frame's state.

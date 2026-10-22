@@ -55,15 +55,24 @@ pub struct CameraFeel {
     pub snap_distance: f64,
     /// The leads ride their own critically damped spring of this frequency (rad/s).
     pub lead_frequency: f64,
-    /// The follow camera frames at `calm_framing` of the chosen zoom, closing to
-    /// `combat_framing` as the nearest enemy nears: the frame wants
-    /// `framing_per_metre` of zoom per metre to it plus `framing_margin`, and eases
-    /// there at `framing_rate` per second.
+    /// The follow camera frames at `calm_framing` of the chosen zoom. With an
+    /// enemy near it frames the duel instead: as tight as `combat_framing` and as
+    /// wide as `duel_framing`, whatever keeps that enemy inside `duel_frame`. It
+    /// eases there at `framing_rate` per second.
     pub calm_framing: f64,
     pub combat_framing: f64,
-    pub framing_per_metre: f64,
-    pub framing_margin: f64,
+    pub duel_framing: f64,
     pub framing_rate: f64,
+    /// Screen boxes in NDC (x left, x right, y bottom, y top). The leads never
+    /// carry the player's tank out of `player_frame`, clear of the HUD panels,
+    /// and a lagging spring never past `player_guard`. The duel framing fits
+    /// the enemy inside `duel_frame`.
+    pub player_frame: [f32; 4],
+    pub player_guard: [f32; 4],
+    pub duel_frame: [f32; 4],
+    /// A blast or kill still holding more than this share of its pull on the
+    /// view is framed like an enemy.
+    pub framed_blast_weight: f64,
     /// At `full_speed` (m/s) the camera eases back by this fraction of the zoom,
     /// approaching it at `speed_zoom_rate` per second.
     pub speed_zoom: f64,
@@ -142,23 +151,26 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     follow_frequency: 7.5,
     aim_look_ahead: 0.32,
     max_aim_look_ahead: 0.2,
-    threat_look_ahead: 0.5,
-    max_threat_look_ahead: 0.3,
+    threat_look_ahead: 0.6,
+    max_threat_look_ahead: 0.45,
     threat_range: 30.0,
     frame_ahead: 0.02,
     blast_look_ahead: 0.35,
     max_blast_look_ahead: 0.1,
     blast_look_seconds: 1.4,
-    max_look_ahead: 0.34,
+    max_look_ahead: 0.45,
     travel_look_ahead_seconds: 0.14,
     max_travel_look_ahead: 2.0,
     snap_distance: 14.0,
     lead_frequency: 3.2,
-    calm_framing: 0.78,
-    combat_framing: 0.64,
-    framing_per_metre: 1.15,
-    framing_margin: 6.0,
-    framing_rate: 1.2,
+    calm_framing: 0.88,
+    combat_framing: 0.72,
+    duel_framing: 0.96,
+    framing_rate: 1.6,
+    player_frame: [-0.14, 0.14, -0.2, 0.22],
+    player_guard: [-0.38, 0.38, -0.38, 0.3],
+    duel_frame: [-0.9, 0.88, -0.64, 0.76],
+    framed_blast_weight: 0.3,
     speed_zoom: 0.06,
     full_speed: 8.0,
     speed_zoom_rate: 2.5,
@@ -167,7 +179,7 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     shake_frequency: 13.0,
     kick_frequency: 15.0,
     kick_damping: 0.55,
-    max_kick_offset: 0.9,
+    max_kick_offset: 0.6,
     roll_frequency: 10.0,
     roll_damping: 0.38,
     max_roll: 0.07,
@@ -184,9 +196,9 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     kill_trauma: 0.42,
     blast_trauma_per_radius: 0.13,
     blast_reach: 24.0,
-    blast_kick: 7.0,
+    blast_kick: 5.5,
     kill_punch_in: 0.13,
-    punch_attack: 28.0,
+    punch_attack: 16.0,
     punch_release: 2.4,
     nearby_death_punch: 0.55,
     blast_punch: 0.3,
@@ -247,6 +259,13 @@ pub struct TankFeel {
     pub max_hit_rock: f64,
     pub hit_shove_per_damage: f64,
     pub max_hit_shove: f64,
+    /// A blast rocks tanks within `blast_reach_per_radius` of its radius plus
+    /// `blast_reach` metres, by up to `blast_rock` rad/s and `blast_shove` m/s,
+    /// fading with the square of the distance.
+    pub blast_reach_per_radius: f64,
+    pub blast_reach: f64,
+    pub blast_rock: f64,
+    pub blast_shove: f64,
     /// The shove's spring frequency (rad/s) and damping ratio.
     pub shove_frequency: f64,
     pub shove_damping: f64,
@@ -266,18 +285,27 @@ pub struct TankFeel {
     /// (the top run's link pitch).
     pub track_scroll: f64,
     pub track_period: f64,
+    /// The engine shudders the hull by this many radians idling and at full
+    /// speed (`CAMERA_FEEL.full_speed`), about this many times a second.
+    pub idle_shudder: f64,
+    pub drive_shudder: f64,
+    pub shudder_frequency: f64,
 }
 
 pub const TANK_FEEL: TankFeel = TankFeel {
     recoil_travel: 0.5,
     recoil_climb: 0.09,
-    fire_rock: 1.1,
-    rocket_rock: 1.45,
+    fire_rock: 1.6,
+    rocket_rock: 2.1,
     fire_shove: 2.0,
-    hit_rock_per_damage: 0.03,
-    max_hit_rock: 1.5,
+    hit_rock_per_damage: 0.05,
+    max_hit_rock: 2.2,
     hit_shove_per_damage: 0.09,
     max_hit_shove: 4.0,
+    blast_reach_per_radius: 2.0,
+    blast_reach: 4.0,
+    blast_rock: 1.8,
+    blast_shove: 1.6,
     shove_frequency: 16.0,
     shove_damping: 0.5,
     flash_per_damage: 0.03,
@@ -289,6 +317,9 @@ pub const TANK_FEEL: TankFeel = TankFeel {
     recoil_return: 0.42,
     track_scroll: 0.5,
     track_period: 0.25,
+    idle_shudder: 0.0035,
+    drive_shudder: 0.009,
+    shudder_frequency: 9.0,
 };
 
 /// Where the first-person eye sits in turret-local model units (before vehicle
@@ -336,10 +367,10 @@ pub struct FirstPerson {
 
 pub const FIRST_PERSON: FirstPerson = FirstPerson {
     field_of_view: 52.0,
-    eye_side: 0.62,
+    eye_side: 0.3,
     eye_drop: 0.05,
-    eye_ahead: 0.15,
-    pitch: -0.07,
+    eye_ahead: -0.1,
+    pitch: -0.1,
     mouse_radians_per_pixel: 0.0032,
     touch_turn_radians_per_second: 2.4,
     reticle_distance: 12.0,
