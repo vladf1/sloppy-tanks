@@ -19,6 +19,12 @@
 //! that in a few f32 ulps, so they are compared on a 1/65536 grid instead
 //! ([`forest_normals_match_typescript_on_a_grid`]).
 //!
+//! A few batches added since the port (Pine Village's sculpted ranges and the
+//! pines standing on them, a farmstead batch and a quarry batch) are shaped with
+//! `sin`, `exp` and `powf`, whose last bits differ between platform maths
+//! libraries (macOS against Linux CI), so they are compared by their counts
+//! without their float hashes ([`platform_math`]).
+//!
 //! The moored ships' cargo departs from the TypeScript on purpose: its fittings
 //! are square boxes (`ship_container`), so the ships' painted batches are
 //! compared without their geometry ([`square_ship_fittings`]).
@@ -329,6 +335,27 @@ fn grid_normals(section: &str, path: &str) -> bool {
     section == "village" && path.starts_with("r.4.4.")
 }
 
+/// Batches whose vertex and instance hashes depend on the platform's maths
+/// library (see the module docs).
+fn platform_math(section: &str, path: &str) -> bool {
+    matches!(
+        (section, path),
+        ("village", "r.4.3" | "r.5.1" | "r.7.0.0.4") | ("quarry", "r.2.3")
+    )
+}
+
+/// The line with its vertex and instance hashes blanked, keeping the counts.
+fn without_float_hashes(line: &str) -> String {
+    line.split('|')
+        .map(|field| match field.split_once('=') {
+            Some((key @ ("P" | "N" | "U" | "C"), _)) => format!("{key}=*"),
+            Some(("INST", value)) => format!("INST={}", value.split(',').next().unwrap_or("")),
+            _ => field.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 fn without_normals(line: &str) -> String {
     let mut fields: Vec<&str> = line.split('|').collect();
     if let Some(field) = fields.iter_mut().find(|f| f.starts_with("N=")) {
@@ -387,6 +414,8 @@ fn scenery_matches_typescript() {
                 (without_children(a), without_children(b))
             } else if grid_normals(name, path) {
                 (without_normals(a), without_normals(b))
+            } else if platform_math(name, path) {
+                (without_float_hashes(a), without_float_hashes(b))
             } else if square_ship_fittings(name, path) {
                 (without_geometry(a), without_geometry(b))
             } else {
