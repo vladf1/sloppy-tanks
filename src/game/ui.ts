@@ -220,7 +220,9 @@ export class UI {
       .querySelector("#pause-settings")
       ?.addEventListener("click", () => this.settings.open());
     this.overlay.querySelector("#end-battle")?.addEventListener("click", () => actions.endBattle());
-    this.overlay.querySelector("#restart")?.addEventListener("click", () => actions.restart());
+    for (const restart of this.overlay.querySelectorAll("#restart, #results-close")) {
+      restart.addEventListener("click", () => actions.restart());
+    }
   }
   /** The battle report's hero tile shows the viewer's tank in its team's paint: Battle
    * Setup's render of that tank, from the sheet's row for the team. */
