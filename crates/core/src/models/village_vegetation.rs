@@ -21,7 +21,7 @@ use crate::sim::types::{CoverKind, Team};
 
 use super::effects_scenery::{MEADOW_SWAY, WIND_ORIGIN};
 use super::village_ground::{
-    SHORTCUTS, VEGETABLE_ROW, deep_turf, farmed, polyline_distance, road_wear, vegetable_plots,
+    SHORTCUTS, VEGETABLE_ROW, farmed, polyline_distance, road_wear, vegetable_plots,
 };
 use super::village_landscape::{creek_at, creek_distance, valley_height_at};
 use super::village_roads::village_roads;
@@ -31,7 +31,7 @@ use crate::sim::math::Random;
 pub const MEADOW_TUFTS: usize = 12000;
 pub const MEADOW_FLOWERS: usize = 3200;
 /// Candidate placements tried in the open meadow before the tuft capacity fills.
-const MEADOW_CANDIDATES: usize = 5200;
+const MEADOW_CANDIDATES: usize = 4500;
 /// Spacing of the tuft candidates along road shoulders and the wall's foot.
 const FRINGE_STEP: f64 = 0.42;
 /// The TypeScript's full-turn approximation for tuft yaw (kept for identical output).
@@ -54,27 +54,26 @@ const CROP_STEP: f64 = 0.34;
 const TUFT_LEAN: f64 = 0.24;
 /// Farthest a clump's tufts stand from its heart, metres.
 const CLUMP_REACH: f64 = 0.42;
-/// How high the arena's turf stands over the worn ground where it is whole
-/// (`VG_BANK_CRUMBLY` in `meadow_sway.wgsl`, its lower step): tufts rooted
-/// there stand on it, not sunk in it.
-const TURF_RISE: f64 = 0.14;
+/// How high a tuft's root sits over the flat floor, so its blades never clip
+/// into the ground they spring from.
+const ROOT_LIFT: f64 = 0.02;
 /// Candidate drifts of tufts tried across the arena lawns.
 const LAWN_DRIFTS: usize = 1900;
 
-/// Seven tapering blades fanned wide around the tuft, so it reads as a clump from
+/// Six tapering blades fanned wide around the tuft, so it reads as a clump from
 /// overhead as well as from the side, darker at the root. Their normals
 /// lean up like the ground's, so a tuft shades into the grass it grows from
 /// instead of flickering blade by blade.
 fn tuft_geometry() -> Mesh {
-    const BLADES: usize = 7;
+    const BLADES: usize = 6;
     let mut positions = Vec::with_capacity(BLADES * 9);
     let mut normals = Vec::with_capacity(BLADES * 9);
     let mut colors = Vec::with_capacity(BLADES * 3);
     for i in 0..BLADES {
         let a = i as f64 * 2.39996;
         let (x, z) = (a.cos(), a.sin());
-        let reach = 0.26 + (i % 3) as f64 * 0.1;
-        let height = 0.5 + ((i * 5) % 7) as f64 * 0.07;
+        let reach = 0.28 + (i % 3) as f64 * 0.1;
+        let height = 0.5 + ((i * 5) % 6) as f64 * 0.08;
         let root = 0.06 + (i % 2) as f64 * 0.02;
         // Roots stand slightly apart so the clump has a footprint.
         let (bx, bz) = (x * 0.05, z * 0.05);
@@ -216,7 +215,7 @@ fn vegetable_beds() -> Vec<Instance> {
                         matrix: compose(
                             DVec3::new(
                                 x + rng.range(-0.03, 0.03),
-                                TURF_RISE + 0.01,
+                                0.01,
                                 z + rng.range(-0.04, 0.04),
                             ),
                             quat_from_euler(0.0, rng.next() * TUFT_TURN, 0.0),
@@ -392,13 +391,37 @@ fn long_stands(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
     }
 }
 
-/// Where an arena tuft roots: on the raised turf where it stands whole, on the
-/// floor near the worn ground, where the turf's edge wanders.
-fn turf_ground(x: f64, z: f64) -> f64 {
-    if deep_turf(x, z) {
-        TURF_RISE + 0.02
-    } else {
-        0.02
+/// Where an arena tuft roots: the playable floor is flat.
+fn turf_ground(_x: f64, _z: f64) -> f64 {
+    ROOT_LIFT
+}
+
+/// Understory round the arena's trees: a ring of tall, dark tufts in the
+/// trunk's shade, thickest on the side away from the paths, so each tree stands
+/// in its own patch of rough grass rather than on the mown lawn.
+fn understory(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
+    let trees: Vec<(f64, f64)> = arena_layout()
+        .iter()
+        .filter(|c| c.kind == CoverKind::Tree)
+        .map(|c| (c.x, c.z))
+        .collect();
+    for (x, z) in trees {
+        let count = 7 + (rng.next() * 5.0) as usize;
+        for _ in 0..count {
+            let angle = rng.range(0.0, PI * 2.0);
+            let reach = rng.range(0.9, 2.3);
+            let (tx, tz) = (x + angle.cos() * reach, z + angle.sin() * reach);
+            if road_wear(tx, tz) > 0.0 || clearings.blocks(tx, tz) {
+                continue;
+            }
+            let size = rng.range(0.38, 0.62);
+            let tint = LONG_TUFT_COLORS[(rng.next() * 3.0) as usize % 3];
+            let value = rng.range(0.78, 0.95) as f32;
+            meadow.tuft(rng, tx, ROOT_LIFT, tz, size, None);
+            if let Some(last) = meadow.tufts.last_mut() {
+                last.color = instance_color(tint).map(|c| c.map(|v| v * value));
+            }
+        }
     }
 }
 
@@ -453,22 +476,27 @@ fn fringe(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
             return;
         }
         // Hug the worn edge where it wanders, thinning a metre or so into the
-        // lawn.
+        // lawn, and spilling in ever sparser, smaller clumps a metre or two
+        // out onto the dirt, so the turf never stops along one line.
         let wear = road_wear(x, z);
-        if !(-1.6..0.35).contains(&wear) || rng.next() < (-wear - 0.4).max(0.0) * 0.6 {
+        if !(-1.6..1.9).contains(&wear) || rng.next() < (-wear - 0.4).max(0.0) * 0.6 {
+            return;
+        }
+        let spilled = wear.max(0.0) / 1.9;
+        if rng.next() < spilled.sqrt() * 1.3 {
             return;
         }
         if clearings.blocks(x, z) {
             return;
         }
-        let size = rng.range(0.2, 0.44);
+        let size = rng.range(0.18, 0.46) * (1.0 - spilled * 0.45);
         let bloom = (rng.next() < 0.07).then(|| FLOWER_COLORS[(rng.next() * 4.0) as usize % 4]);
         // Thicker clumps on the turf side of the edge.
         let members = 1 + (rng.next() * (1.2 - wear.min(0.0)).min(3.0)) as usize;
         let open = |tx: f64, tz: f64| {
             tx.abs() < ARENA - 0.25
                 && tz.abs() < ARENA - 0.25
-                && road_wear(tx, tz) < 0.35
+                && road_wear(tx, tz) < 1.9
                 && !clearings.blocks(tx, tz)
         };
         meadow.clump(rng, x, z, size, members, bloom, &open, &|_, _| 0.02);
@@ -486,7 +514,7 @@ fn fringe(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
                 for _ in 0..3 {
                     // Around the painted edge, which wanders a metre or two either
                     // side of the strip's.
-                    let out = rng.next().powf(1.3) * 4.4 - 1.8;
+                    let out = rng.next().powf(1.3) * 5.6 - 1.8;
                     let along = t + rng.range(-0.2, 0.2);
                     let across = side * (half + out);
                     let (x, z) = if north_south {
@@ -589,8 +617,10 @@ pub fn village_vegetation() -> Node {
         let reed = !inside && river < 11.0;
         let size = if reed {
             rng.range(0.6, 1.05)
+        } else if rng.next() < 0.12 {
+            rng.range(0.5, 0.72)
         } else {
-            rng.range(0.24, 0.48)
+            rng.range(0.2, 0.44)
         };
         let bloom = (!reed && candidate % 3 == 0).then_some(FLOWER_COLORS[candidate % 4]);
         // Tufts gather in clumps where a slow pattern lets them, and stand
@@ -617,6 +647,7 @@ pub fn village_vegetation() -> Node {
     }
     fringe(&mut meadow, &mut rng, &clearings);
     reed_beds(&mut meadow, &mut rng);
+    understory(&mut meadow, &mut rng, &clearings);
     long_stands(&mut meadow, &mut rng, &clearings);
     lawn_drifts(&mut meadow, &mut rng, &clearings);
     let Meadow {

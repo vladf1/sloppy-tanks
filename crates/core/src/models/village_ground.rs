@@ -28,8 +28,6 @@
 //! dirt and the fields are, so tufts line the painted edges and no tree grows in a
 //! field or a lane.
 
-use std::sync::OnceLock;
-
 use glam::DVec2;
 
 use super::house_model::{cottage_turns, door_direction};
@@ -137,8 +135,11 @@ fn road_families(x: f64, z: f64) -> (f64, f64) {
 /// few places swell into broad bites where traffic spilled onto the grass.
 fn edge_wander(x: f64, z: f64) -> f64 {
     let swell = 1.0 + 1.7 * smoothstep(noise(x * 0.027 + 4.0, z * 0.027 - 2.0, 14), 0.52, 0.86);
-    ((fbm(x * 0.05, z * 0.05, 11) - 0.45) * 3.4 + (noise(x * 0.023, z * 0.023, 13) - 0.4) * 2.2)
+    ((fbm(x * 0.05, z * 0.05, 11) - 0.45) * 3.8 + (noise(x * 0.023, z * 0.023, 13) - 0.4) * 2.4)
         * swell
+        // Whole lawns differ: some worn well back from their roads, others
+        // reaching out over the shoulders.
+        + (noise(x * 0.012 + 2.3, z * 0.012 - 1.1, 16) - 0.45) * 3.2
         + (noise(x * 0.23, z * 0.23, 12) - 0.5) * 0.7
 }
 
@@ -376,9 +377,9 @@ impl ArenaPlan {
         // Grass survives in the quiet middle of a road, between and beside the
         // wheel lines, in ragged islands and medians.
         let quiet = 1.0 - smoothstep(traffic, 0.1, 0.34);
-        let islands = smoothstep(fbm(x * 0.11 + 7.0, z * 0.11 - 3.0, 24), 0.42, 0.62);
+        let islands = smoothstep(fbm(x * 0.11 + 7.0, z * 0.11 - 3.0, 24), 0.38, 0.6);
         let survives = quiet * islands * smoothstep(road, 1.2, 2.8);
-        dirt *= 1.0 - survives * 0.65;
+        dirt *= 1.0 - survives * 0.8;
         // Trampled grass: wide where tanks cut the corners, a soft verge elsewhere.
         let corner = smooth_max(along, across, rounding + CORNER_TRAMPLE) + wander;
         let patchy = 0.55 + 0.45 * fbm(x * 0.09, z * 0.09, 21);
@@ -453,27 +454,6 @@ impl ArenaPlan {
         }
         [dirt, trampled.min(1.0), garden, 1.0 - shade]
     }
-}
-
-/// Whether the turf stands whole around (x, z): inside a lawn, clear of its worn
-/// edge, the gardens, trampled patches and the treads cut across it, so a tuft
-/// planted there can stand on the raised turf the ground shader draws.
-pub fn deep_turf(x: f64, z: f64) -> bool {
-    static PLAN: OnceLock<ArenaPlan> = OnceLock::new();
-    let plan = PLAN.get_or_init(ArenaPlan::new);
-    let p = DVec2::new(x, z);
-    if SHORTCUTS
-        .iter()
-        .any(|(points, width)| polyline_distance(p, points) < width + 2.2)
-    {
-        return false;
-    }
-    [(0.0, 0.0), (0.6, 0.0), (-0.6, 0.0), (0.0, 0.6), (0.0, -0.6)]
-        .iter()
-        .all(|(dx, dz)| {
-            let [dirt, trampled, garden, _] = plan.sample(x + dx, z + dz, 0.0);
-            dirt < 0.01 && trampled < 0.25 && garden < 0.05
-        })
 }
 
 /// The cottages' vegetable plots: centre and half extents in world metres. The
