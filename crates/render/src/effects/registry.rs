@@ -171,7 +171,7 @@ pub const HARBOR_APRON: EffectDefinition = effect(
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 14] = [
+pub const BUILTIN_EFFECTS: [EffectDefinition; 15] = [
     WAVE,
     PULSE,
     PUFF,
