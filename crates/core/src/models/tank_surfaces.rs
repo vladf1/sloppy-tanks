@@ -33,7 +33,7 @@ use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 /// saturated color without a camouflage, so a tank's side reads at a glance. The
 /// blue stays bright enough not to fall to black in shade (the paint's own fill
 /// lifts it further), the red deep enough never to wash out to salmon in sun.
-pub const VEHICLE_PAINT: [u32; 2] = [0x2a54a0, 0x801c20];
+pub const VEHICLE_PAINT: [u32; 2] = [0x2a54a0, 0x801b25];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -117,7 +117,7 @@ const UPRIGHT: f64 = 0.6;
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
 const RIM_STRENGTH: f32 = 0.45;
-const PAINT_FILL: f32 = 0.08;
+const PAINT_FILL: f32 = 0.11;
 /// Running gear sits in the hull's shadow: more fill, no rim.
 const GEAR_FILL: f32 = 0.45;
 /// Bare steel where the paint chipped through (sRGB).
