@@ -185,72 +185,67 @@ try {
 
   for (const map of values.maps.split(",").filter(Boolean)) {
     const page = await battlePage(context, map, FRAMES);
+    // Every step below runs whether or not its shot was asked for, and only the
+    // screenshot is skipped: the shots share one battle, so a capture of a few shots
+    // must reach each of them at the same moment as a capture of all of them (a
+    // skipped strip once moved first person 32 frames earlier, onto another scene).
+    const shootIf = (shot, hud = false) => (take(shot) ? shoot(page, map, shot, hud) : null);
 
-    if (take("follow")) {
-      await page.evaluate(() => window.engine.draw());
-      await shoot(page, map, "follow", true);
-    }
+    await page.evaluate(() => window.engine.draw());
+    await shootIf("follow", true);
     const { x: hx, z: hz, heading } = await page.evaluate(() => window.sloppy.sim.human);
     // Three-quarter front of the hull, low like a photographer kneeling beside it.
     const fx = Math.sin(heading);
     const fz = Math.cos(heading);
-    if (take("hero")) {
+    {
       const eye = [hx + fx * 6.5 - fz * 4.5, 2.6, hz + fz * 6.5 + fx * 4.5];
       await page.evaluate((pose) => window.engine.draw(pose), [...eye, hx, 1.0, hz]);
-      await shoot(page, map, "hero");
+      await shootIf("hero");
     }
-    if (take("vista")) {
+    {
       const eye = [hx - fx * 22 + fz * 10, 7, hz - fz * 22 - fx * 10];
       await page.evaluate(
         (pose) => window.engine.draw(pose),
         [...eye, hx + fx * 20, 0, hz + fz * 20],
       );
-      await shoot(page, map, "vista");
+      await shootIf("vista");
     }
-    if (take("overview")) {
-      await page.evaluate(() => {
-        window.engine.draw([], true);
-        window.engine.draw([], true);
-      });
-      await shoot(page, map, "overview");
-    }
-    if (take("action")) {
-      // Blasts ahead of the player, through the shared explosion path, caught mid-bloom.
-      await page.evaluate(
-        ({ x, z }) => {
-          window.sloppy.game.debug_explode(x, z, 6, 40);
-          window.sloppy.game.debug_explode(x + 4, z - 3, 5, 30);
-        },
-        { x: hx + fx * 9, z: hz + fz * 9 },
-      );
-      await play(page, 9);
+    await page.evaluate(() => {
+      window.engine.draw([], true);
+      window.engine.draw([], true);
+    });
+    await shootIf("overview");
+    // Blasts ahead of the player, through the shared explosion path, caught mid-bloom.
+    await page.evaluate(
+      ({ x, z }) => {
+        window.sloppy.game.debug_explode(x, z, 6, 40);
+        window.sloppy.game.debug_explode(x + 4, z - 3, 5, 30);
+      },
+      { x: hx + fx * 9, z: hz + fz * 9 },
+    );
+    await play(page, 9);
+    await page.evaluate(() => window.engine.draw());
+    await shootIf("action", true);
+    // Motion over half a second of play: recoil, suspension, dust, camera.
+    for (let frame = 0; frame < 8; frame++) {
+      await play(page, 4);
       await page.evaluate(() => window.engine.draw());
-      await shoot(page, map, "action", true);
+      if (take("strip")) await shoot(page, map, `strip-${frame}`);
     }
-    if (take("strip")) {
-      // Motion over half a second of play: recoil, suspension, dust, camera.
-      for (let frame = 0; frame < 8; frame++) {
-        await play(page, 4);
-        await page.evaluate(() => window.engine.draw());
-        await shoot(page, map, `strip-${frame}`);
-      }
-    }
-    if (take("first-person")) {
-      await page.evaluate(() => window.sloppy.firstPerson());
-      await animate(page, 90);
-      await shoot(page, map, "first-person", true);
-    }
+    await page.evaluate(() => window.sloppy.firstPerson());
+    await animate(page, 90);
+    await shootIf("first-person", true);
     const interfaceShots = ["respawn", "settings", "recap"].filter(take);
     if (map === "village" && interfaceShots.length) {
       await page.evaluate(() => {
         for (const element of document.querySelectorAll("#overlay")) element.style.display = "";
       });
     }
-    if (map === "village" && take("respawn")) {
+    if (map === "village" && interfaceShots.length) {
       await page.evaluate(() => window.sloppy.killHuman());
       await play(page, 60);
       await page.evaluate(() => window.engine.draw());
-      await shoot(page, map, "respawn", true);
+      await shootIf("respawn", true);
     }
     if (map === "village" && take("settings")) {
       // A script click: autoplay's idle overlay covers the HUD's buttons.
