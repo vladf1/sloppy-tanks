@@ -11,8 +11,10 @@ use std::f64::consts::PI;
 
 use glam::{DMat4, DVec3};
 
-use super::kit::{Kit, Role, at, frame, mirror_x, place, rect, slab, slope_y};
+use super::kit::{Faces, Kit, Role, at, frame, mirror_x, place, rect, slab, slope_y};
 use super::{AXLE_Y, FRONT_AXLE, REAR_AXLE};
+use crate::geometry::Mesh;
+use crate::models::Team;
 
 /// Hull-frame extremes measured by `tank_dimensions`.
 const FRONT: f64 = 2.17;
@@ -160,6 +162,37 @@ fn roof_chevron(kit: &mut Kit) {
     }
 }
 
+/// The team's tactical sign, stencilled small in faded paint on the hood's raised
+/// centre, as on the tanks' turret roofs (a diamond for blue, a forward-pointing
+/// arrowhead for red): centre station, half width and length, and how far it
+/// stands off the crown.
+const INSIGNIA_Z: f64 = 1.44;
+const INSIGNIA_HALF_WIDTH: f64 = 0.2;
+const INSIGNIA_LENGTH: f64 = 0.36;
+const INSIGNIA_PROUD: f64 = 0.004;
+
+pub(super) fn hood_insignia(team: Team) -> Mesh {
+    let outline: &[(f64, f64)] = if team == Team::Blue {
+        &[(0.0, 0.5), (-1.0, 0.0), (0.0, -0.5), (1.0, 0.0)]
+    } else {
+        &[(0.0, 0.5), (-1.0, -0.5), (0.0, -0.32), (1.0, -0.5)]
+    };
+    let points: Vec<DVec3> = outline
+        .iter()
+        .map(|&(x, z)| {
+            let z = INSIGNIA_Z + z * INSIGNIA_LENGTH;
+            DVec3::new(
+                x * INSIGNIA_HALF_WIDTH,
+                hood_y(HOOD_CROWN, z) + INSIGNIA_PROUD,
+                z,
+            )
+        })
+        .collect();
+    let mut faces = Faces::default();
+    faces.polygon(&points, DVec3::new(0.0, 1.0, -HOOD_SLOPE));
+    faces.mesh()
+}
+
 fn hood(kit: &mut Kit) {
     // Front view of the hood: flat fender tops, a raised centre and fender skirts
     // that hang over the wheel openings.
@@ -209,17 +242,7 @@ fn hood(kit: &mut Kit) {
             );
         kit.torus(Role::Steel, 0.03, 0.009, eye);
     }
-    // An olive canvas tarp folded across the hood's crown, slightly askew, with
-    // its tie-down straps over the edges.
-    let z = 1.47;
-    let panel = place(
-        [0.04, hood_y(HOOD_CROWN, z) + 0.005, z],
-        [-HOOD_SLOPE, 0.05, 0.0],
-    );
-    kit.block(Role::Canvas, [0.92, 0.035, 0.62], panel);
-    for x in [-0.36, 0.36] {
-        kit.block(Role::Gap, [0.035, 0.012, 0.7], panel * at([x, 0.002, 0.0]));
-    }
+    // The crown stays clear for the team insignia (`hood_insignia`).
     // Engine air intake beside the windshield on the right, with its grille.
     let intake = at([-0.82, 1.15, 0.98]);
     kit.chamfered(Role::Paint, [0.3, 0.16, 0.2], 0.015, intake);
