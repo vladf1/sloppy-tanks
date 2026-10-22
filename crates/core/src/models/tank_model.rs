@@ -41,10 +41,11 @@ pub(crate) const STEEL: u32 = 0x6f706c;
 /// color is the body and the deep trim frames it, so the paint reads as a designed
 /// two-tone livery and the trim still reads as its team rather than as a black
 /// outline round the hull.
-const TRIM: [u32; 2] = [0x223a6a, 0x5c1c22];
-/// Sight and vision-block glass: a dark, nearly neutral smoked tint that mirrors
-/// the sky, so periscopes read as glass rather than as glowing teal squares.
-pub(super) const GLASS_TINT: u32 = 0x1c2124;
+const TRIM: [u32; 2] = [0x26406f, 0x5a1b1c];
+/// Sight and vision-block glass: a deep teal optical coating that mirrors the sky
+/// and glints in the sun, the turret's focal sparkle, rather than a black slot or a
+/// flat cyan square.
+pub(super) const GLASS_TINT: u32 = 0x1a4148;
 pub(crate) const MARKING_WHITE: u32 = 0xdce7ee;
 /// Tactical signs (the roof and skirt insignia): a faded, mid-value stencil
 /// paint, so a sign reads as a worn marking on the plate rather than as the
@@ -260,9 +261,9 @@ fn contact_shadow_material() -> Arc<Material> {
 /// over an evenly lit deck. It is a turret part, so it turns with the turret and
 /// stretches with its shell, drawn in the contact shadow's material; both teams'
 /// tanks of a kind share its mesh. Wrecks leave it out.
-const TURRET_OCCLUSION_REACH: f64 = 0.26;
+const TURRET_OCCLUSION_REACH: f64 = 0.3;
 const TURRET_OCCLUSION_INSET: f64 = 0.05;
-const TURRET_OCCLUSION_DARKNESS: f32 = 0.7;
+const TURRET_OCCLUSION_DARKNESS: f32 = 0.82;
 /// The longest a corner's mitred offset may grow, as a multiple of the reach.
 const TURRET_OCCLUSION_MITRE: f64 = 1.6;
 

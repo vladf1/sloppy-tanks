@@ -1167,9 +1167,10 @@ fn smoke_cluster(kit: &mut Kit, at: DVec3, side: f64, yaw: f64, rows: u32, cols:
         f64::from(rows) * pitch + 0.03,
         f64::from(cols) * pitch + 0.03,
     );
-    // Painted like the turret they hang on: in gun metal the clusters read as two
-    // black boxes beside the gun from the commander's seat.
-    kit.block_at(Coat::Paint, plate, at, v(0.0, yaw, 0.0));
+    // A mounting plate in the deep trim, tread-plated on top like the fenders: in
+    // gun metal the clusters read as two black boxes beside the gun from the
+    // commander's seat, and in the team paint as two flat slabs.
+    kit.block_at(Coat::Shade, plate, at, v(0.0, yaw, 0.0));
     let direction = DMat4::from_rotation_y(yaw)
         .transform_vector3(v(side * 0.55, 0.6, 0.6))
         .normalize();
@@ -1192,8 +1193,8 @@ fn smoke_cluster(kit: &mut Kit, at: DVec3, side: f64, yaw: f64, rows: u32, cols:
 
 /// A radio antenna: base and whip.
 /// An antenna whip's radius at its foot and tip.
-const ANTENNA_FOOT: f64 = 0.017;
-const ANTENNA_TIP: f64 = 0.008;
+const ANTENNA_FOOT: f64 = 0.015;
+const ANTENNA_TIP: f64 = 0.004;
 
 fn antenna(kit: &mut Kit, base: DVec3, height: f64) {
     let mount = p2(&[(0.04, 0.0), (0.04, 0.06), (0.018, 0.1), (0.0, 0.1)]);
@@ -1819,9 +1820,9 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
 /// across each arm; the diamond's half diagonal and stroke (metres at scale 1).
 const CHEVRON_HALF_WIDTH: f64 = 0.56;
 const CHEVRON_HALF_DEPTH: f64 = 0.36;
-const CHEVRON_STROKE: f64 = 0.17;
+const CHEVRON_STROKE: f64 = 0.21;
 const DIAMOND_RADIUS: f64 = 0.36;
-const DIAMOND_STROKE: f64 = 0.13;
+const DIAMOND_STROKE: f64 = 0.16;
 
 /// The team's emblem painted large across the turret roof in the markings' white,
 /// the same on every tank of a team: an open chevron pointing up the gun for red,

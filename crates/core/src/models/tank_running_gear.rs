@@ -56,11 +56,11 @@ const TRACK_STEEL: u32 = 0x4a4844;
 /// than the hull, so the running gear reads as its own material under the painted
 /// armor: a row of dark discs ringed by black rubber over the dark belt, each with
 /// a bright hub cap and bolt heads catching the light in its centre.
-const WHEEL_DISC: u32 = 0x5a5c57;
+const WHEEL_DISC: u32 = 0x4a4c48;
 const HUB_STEEL: u32 = 0x9a968c;
 const HUB_BOLT: u32 = 0xb8b2a6;
 /// The sprocket and return rollers: bare dark steel.
-const SPROCKET_STEEL: u32 = 0x6a6d6e;
+const SPROCKET_STEEL: u32 = 0x55585a;
 /// Dirty track steel, wheels and rubber share one vertex-colored material, so a
 /// tank's links, wheels, tyres and rubber edges draw together; satin enough for
 /// the worn steel to catch the light.
