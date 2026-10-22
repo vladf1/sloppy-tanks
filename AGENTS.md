@@ -99,7 +99,6 @@ whether Kache was on when reporting build times.
 ```sh
 pnpm run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests
 pnpm run wasm                         # release WebGPU engine into src/generated/engine/; rerun after Rust/WGSL edits
-pnpm run wasm:fast                    # half the rebuild wait, less optimized: iteration only, never timing
 pnpm run wasm:webgl                   # the WebGL2 fallback engine; before trying ?webgl after an edit
 cargo test --workspace --test integration navigation::   # one area of the core tests (add --release for seeded matches)
 node --import tsx --test tests/foo.test.ts    # focused page-shell test
@@ -120,21 +119,6 @@ browser checks that play it rebuild it first, and `build` builds both
 alone resolves different dependency features and compiles Rapier and its stack a
 second time. `tests/traffic-bots.test.ts` drives the built server binary
 (`pnpm run server:build`).
-
-Pick the engine build by what you are checking. `pnpm run wasm:fast` builds Cargo's
-`wasm-fast` profile, which splits each crate into 16 code units that optimize on
-separate cores: a rebuild after a `sloppy-core` edit takes about 7 s instead of 13 s,
-after a renderer edit 4 s instead of 10 s, for about 30% more CPU and a 6% larger
-engine whose simulation and render times came within 4% of release (an indicative
-same-server A/B, not the interleaved method below). Use it while iterating on the page
-shell, HUD, menus, effects, models or game rules, and for functional browser checks.
-Use the release build (`pnpm run wasm`) for anything that times or sizes the engine
-(render CPU, `profile.mjs`, `frame-pacing-check.mjs`, frame-rate thresholds, Wasm
-size) and before reporting how the game performs; those scripts and every `vite build`
-refuse a fast engine, so `build` and deploys always rebuild release. Battle Setup's
-build line ends in `fast engine` while the dev server serves one. The extra CPU comes
-out of other agents' builds: when `uptime`'s load average is near the core count,
-the release build is the better neighbor.
 
 A successful Rust/TypeScript/build/test gate does not prove controls, menu
 transitions, rendering, or cleanup. Run `pnpm run check:browser` against the

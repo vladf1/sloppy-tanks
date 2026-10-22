@@ -21,7 +21,6 @@
     "test": "node --import tsx --test tests/*.test.ts",
     "validate": "cargo run --locked --release -p sloppy-core --example validate",
     "wasm": "node scripts/build-wasm.mjs",
-    "wasm:fast": "node scripts/build-wasm.mjs --fast",
     "wasm:all": "node scripts/build-wasm.mjs --all",
     "wasm:webgl": "node scripts/build-wasm.mjs --webgl",
     "wasm:labs": "node scripts/build-wasm.mjs --labs",

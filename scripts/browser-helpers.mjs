@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
-import { fastEngines } from "./engine-profile.mjs";
 
 /**
  * Browser checks run in headless Chrome so they never pop a window over the desktop;
@@ -20,17 +19,14 @@ export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-t
  */
 const webglOnly = Boolean(process.env.SLOPPY_WEBGL);
 
-/** Whether `gameUrl` is a dev server on this machine, which serves this checkout's
- * generated engines; another host's page plays that host's build. */
-const localServer = ["127.0.0.1", "localhost", "[::1]"].includes(new URL(gameUrl).hostname);
-
 /**
  * Bring the WebGL2 engine up to date before a check plays it. `pnpm run wasm` builds only
  * the WebGPU engine, so after a Rust edit the WebGL one is stale until this runs; when it
- * is current, this is a half-second Cargo no-op.
+ * is current, this is a half-second Cargo no-op. A check of another host's page plays
+ * that host's build, so only local dev servers rebuild.
  */
 export function buildWebglEngine() {
-  if (!localServer) return;
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(new URL(gameUrl).hostname)) return;
   const build = spawnSync(
     process.execPath,
     [fileURLToPath(new URL("build-wasm.mjs", import.meta.url)), "--webgl"],
@@ -40,16 +36,6 @@ export function buildWebglEngine() {
 }
 
 if (webglOnly || new URL(gameUrl).searchParams.has("webgl")) buildWebglEngine();
-
-/**
- * Refuse to time a fast engine build (`pnpm run wasm:fast`): it optimizes less than the
- * engine players get, so its frame and simulation times would mislead.
- */
-export function assertReleaseEngine() {
-  if (!localServer) return;
-  const fast = fastEngines(["src/generated/engine", "src/generated/engine-webgl"]);
-  assert.deepEqual(fast, [], "fast engine build: run pnpm run wasm:all before timing");
-}
 
 /** Headless Chrome whose pages keep their timers and frames while another page is in front,
  * so several players on one machine all keep sending input. */

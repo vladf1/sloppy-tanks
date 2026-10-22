@@ -1,12 +1,11 @@
 // @ts-check
 import { chromium } from "playwright";
-import { assertReleaseEngine, gameUrl, headless } from "./browser-helpers.mjs";
+import { gameUrl, headless } from "./browser-helpers.mjs";
 import { mkdirSync, writeFileSync } from "node:fs";
 
 const label = process.argv[2] ?? "before";
 if (!["before", "after"].includes(label))
   throw new Error("Use before or after as the measurement label.");
-assertReleaseEngine();
 const width = Number(process.env.SLOPPY_WIDTH ?? 1280);
 const height = Number(process.env.SLOPPY_HEIGHT ?? 720);
 const out = `artifacts/performance/${label}`;

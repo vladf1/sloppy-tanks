@@ -1,18 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { chromium } from "playwright";
-import {
-  assertReleaseEngine,
-  click,
-  collectErrors,
-  gameUrl,
-  headless,
-  menuReady,
-} from "./browser-helpers.mjs";
+import { click, collectErrors, gameUrl, headless, menuReady } from "./browser-helpers.mjs";
 
 // Manual regression evidence: include startup and first-use effects, no warm-up
 // discard and no sleeps in the simulation. Never put this workload in normal CI.
-assertReleaseEngine();
 const seconds = Number(process.env.SLOPPY_PACING_SECONDS ?? 30);
 const limit = Number(process.env.SLOPPY_MAX_FRAME_MS ?? 250);
 const output = process.env.SLOPPY_ARTIFACT_DIR ?? "artifacts/performance/frame-pacing";

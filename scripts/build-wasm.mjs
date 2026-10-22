@@ -28,23 +28,16 @@
 // `sloppy-web`) and writes their glue to `src/generated/engine-labs/` instead, so a lab
 // build never replaces the production engine that the game, `pnpm run build` and the dev
 // server load.
-//
-// `--fast` (`pnpm run wasm:fast`) builds with Cargo's `wasm-fast` profile instead of
-// release: about half the wait after an edit, for a larger, somewhat slower engine. Each
-// engine directory gets a `build-profile.txt` stamp, so bundling (vite.config.ts) and the
-// timing scripts refuse a fast engine (scripts/engine-profile.mjs).
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "./content-version.mjs";
-import { PROFILE_STAMP } from "./engine-profile.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const labs = process.argv.includes("--labs");
 const all = process.argv.includes("--all");
 const webglOnly = process.argv.includes("--webgl");
-const profile = process.argv.includes("--fast") ? "wasm-fast" : "release";
 const version = await contentVersion();
 
 const WEBGPU = {
@@ -88,13 +81,12 @@ function run(command, args) {
 }
 
 /** Build `sloppy-web` with `features` in `targetDir`, then write its glue as `outName`
- * in `dir`, stamped with the profile that built it. */
+ * in `dir`. */
 async function buildEngine({ features, targetDir, dir, outName }) {
   await run("cargo", [
     "build",
     "--locked",
-    "--profile",
-    profile,
+    "--release",
     "--target",
     "wasm32-unknown-unknown",
     "--target-dir",
@@ -104,7 +96,7 @@ async function buildEngine({ features, targetDir, dir, outName }) {
     ...features,
   ]);
   await run("wasm-bindgen", [
-    `${targetDir}/wasm32-unknown-unknown/${profile}/sloppy_web.wasm`,
+    `${targetDir}/wasm32-unknown-unknown/release/sloppy_web.wasm`,
     "--target",
     "web",
     "--out-dir",
@@ -112,7 +104,6 @@ async function buildEngine({ features, targetDir, dir, outName }) {
     "--out-name",
     outName,
   ]);
-  await writeFile(fileURLToPath(new URL(`../${dir}/${PROFILE_STAMP}`, import.meta.url)), profile);
 }
 
 /** Build `engines` at once; exits the process if any fails. */
