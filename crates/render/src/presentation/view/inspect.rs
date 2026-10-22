@@ -58,7 +58,7 @@ pub struct PickupInspection {
     pub ring: bool,
     pub ring_dim: bool,
     pub refill: bool,
-    /// Refill arc segments drawn.
+    /// How far the drop has restocked (0..1).
     pub segments: f32,
 }
 
@@ -175,23 +175,23 @@ impl Presentation {
             });
         }
         for (&id, view) in &self.pickups {
-            let (Some(base), Some(rim), Some(gem), Some(pad)) = (
+            let (Some(base), Some(gem)) = (
                 renderer.instance_state(view.base),
-                renderer.instance_state(view.rim),
                 renderer.instance_state(view.gem),
-                self.library.pickup_pad.as_ref(),
             ) else {
                 continue;
             };
+            // A taken drop leaves its bare pallet empty until it restocks (its
+            // progress in `segments`).
+            let stocked = view.shown == Some(true);
             inspection.pickups.push(PickupInspection {
                 id,
                 base_shown: base.visible,
-                // The full gem, not the small ghost a recharging pad shows.
                 gem: gem.visible && gem.world.x_axis.length() > 0.9,
-                ring: joint_shown(&rim, pad.ring),
-                ring_dim: joint_shown(&rim, pad.ring_dim),
-                refill: joint_shown(&rim, pad.refill),
-                segments: rim.data[0],
+                ring: base.visible && stocked,
+                ring_dim: base.visible && !stocked,
+                refill: base.visible && !stocked,
+                segments: view.progress,
             });
         }
         for (&id, view) in &self.fragments {
