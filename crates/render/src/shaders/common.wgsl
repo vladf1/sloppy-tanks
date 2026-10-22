@@ -259,9 +259,16 @@ const SKY_HORIZON_EXPONENT: f32 = 3.2;
 fn sky_gradient(direction: vec3f) -> vec3f {
     let up = clamp(direction.y, 0.0, 1.0);
     let toward_horizon = pow(1.0 - up, SKY_HORIZON_EXPONENT);
-    let sky = mix(frame.sky_zenith.rgb, frame.sky_horizon.rgb, toward_horizon);
+    var sky = mix(frame.sky_zenith.rgb, frame.sky_horizon.rgb, toward_horizon);
     let sun = max(dot(direction, frame.sun_direction.xyz), 0.0);
-    let halo = pow(sun, 8.0) * (0.1 + 0.4 * toward_horizon) + pow(sun, 48.0) * 0.5;
+    // The whole dome follows the sun: on its side of the sky the horizon band glows
+    // brighter and warmer, and opposite it the blue deepens and cools, so every view
+    // has a lit and a shaded quarter instead of one even band around the horizon.
+    let azimuth = dot(normalize(direction.xz + vec2f(1e-5)), normalize(frame.sun_direction.xz + vec2f(1e-5)));
+    let sunward = azimuth * 0.5 + 0.5;
+    sky *= 1.0 + SKY_SUNWARD_GAIN * (sunward * sunward - 0.4) * (0.35 + 0.65 * toward_horizon);
+    let halo = pow(sun, 8.0) * (0.1 + 0.4 * toward_horizon) + pow(sun, 48.0) * 0.5
+        + SKY_SUNWARD_WARMTH * sunward * sunward * sunward * toward_horizon;
     // Around the sun the blue gives way to the sun's own hue before its light adds
     // on top: warm light added over blue alone mixes to pink and lavender.
     let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
@@ -283,6 +290,10 @@ const NO_MAUVE_GREEN: f32 = 0.3;
 
 // How quickly the sky's blue turns to the sun's hue under its halo.
 const HALO_WARMING: f32 = 2.5;
+// The sun-relative dome (`sky_gradient`): how much brighter the sky's sunward side
+// is than the side away from it, and the broad warm glow along the sunward horizon.
+const SKY_SUNWARD_GAIN: f32 = 0.35;
+const SKY_SUNWARD_WARMTH: f32 = 0.04;
 
 // The near range of the horizon's distant ranges stands this much lower than the far
 // one, and each takes this share of the ridge color over the sky behind it.
@@ -391,13 +402,14 @@ fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
     let glow = frame.haze_far.z * toward_sun * toward_sun * amount;
     let level = dot(base, vec3f(0.2126, 0.7152, 0.0722));
     let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
-    return mix(base, sun_hue * level * (1.0 + HAZE_SUN_BRIGHTENING), clamp(glow, 0.0, 1.0));
+    // The cool aerial tint and the sun's warm hue meet through grey, never lavender.
+    return no_mauve(mix(base, sun_hue * level * (1.0 + HAZE_SUN_BRIGHTENING), clamp(glow, 0.0, 1.0)));
 }
 
 // How much brighter than the cool haze the sunward glow is, and the most of the sky
 // behind thick haze takes on.
 const HAZE_SUN_BRIGHTENING: f32 = 0.2;
-const HAZE_SKY_MOST: f32 = 0.45;
+const HAZE_SKY_MOST: f32 = 0.55;
 
 // The share of the cool aerial tint thick haze keeps looking straight away from the sun.
 const HAZE_AWAY_COOL: f32 = 0.35;
@@ -419,9 +431,9 @@ fn sky_behind(ray: vec3f) -> vec3f {
 // The far haze layer thins up a slope at this share of the near layer's falloff, to
 // this share of its density on the highest crests.
 const FAR_HAZE_THINNING: f32 = 1.0;
-const FAR_HAZE_CREST_SHARE: f32 = 0.65;
+const FAR_HAZE_CREST_SHARE: f32 = 0.3;
 // The most the far layer hides: a distant range keeps this much of its own form.
-const FAR_HAZE_MOST: f32 = 0.7;
+const FAR_HAZE_MOST: f32 = 0.62;
 // Height in metres over which the low mist beyond the arena thins by e.
 const MIST_HEIGHT: f32 = 10.0;
 // Shares of the far plane's distance over which surfaces melt into the sky.
@@ -508,7 +520,7 @@ const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
 const CLOUD_SHADOW_LOW: f32 = 1.0;
 const CLOUD_SHADOW_HIGH: f32 = 1.3;
 // Distances from the arena centre in metres over which cloud shadows fade out.
-const CLOUD_SHADOW_FAR: vec2f = vec2f(110.0, 200.0);
+const CLOUD_SHADOW_FAR: vec2f = vec2f(85.0, 125.0);
 
 // The share of sunlight that passing clouds let through at `world`: soft patches,
 // projected along the sun so tall things and the ground beneath agree.

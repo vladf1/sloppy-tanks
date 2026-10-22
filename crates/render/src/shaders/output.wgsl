@@ -1,8 +1,9 @@
 // Post-processing: the bloom chain and the output pass. Bloom thresholds the
 // resolved linear HDR frame into a quarter-size level, halves it down a short mip
 // chain and adds each level back up with a tent filter. The output pass adds the
-// bloom, darkens by the ambient occlusion, tone maps through Three r185's ACES
-// filmic curve with a gamut fit in place of a hard clip, grades (black point, lift,
+// bloom, darkens by the ambient occlusion, tone maps (with the atmosphere on, a
+// hue-keeping filmic curve on each colour's brightest channel; otherwise Three r185's
+// ACES filmic curve with a gamut fit in place of a hard clip), grades (black point, lift,
 // gamma, gain, split toning, a few tamed hues, saturation, contrast, vignette),
 // sharpens edges and encodes sRGB with a little dither against sky banding, into
 // the (non-sRGB) canvas texture. Where the scene rendered smaller than the canvas
@@ -37,6 +38,9 @@ struct Output {
     // x edge sharpening 0..1 (0 skips its taps); yz the reciprocal canvas size and
     // w 1 where the scene rendered smaller than the canvas and is upsampled.
     detail: vec4f,
+    // The filmic curve (`filmic`): x its toe power (0 for ACES), y its shoulder, zw
+    // its b and c terms.
+    curve: vec4f,
 }
 
 @group(0) @binding(0) var source: texture_2d<f32>;
@@ -172,6 +176,38 @@ fn aces_filmic(color: vec3f, exposure: f32) -> vec3f {
     return mix(mapped, clamp(kept, vec3f(0.0), vec3f(1.0)), saturated * HUE_KEEP);
 }
 
+// The filmic curve x^a / (x^(a d) b + c) (Lottes 2016) on each colour's brightest
+// channel, the others keeping their ratio to it: hue and saturation pass through, so
+// a red hull stays red and a navy one navy in sun and shade alike, and the curve's
+// toe presses only the deepest shade toward black instead of ACES's toe, which,
+// with the black point after it, sent every dark painted face in shade to black.
+// Only colours hotter than sunlit white (fire, the sun's disc) bleach toward white
+// as they saturate.
+fn filmic(color: vec3f, exposure: f32) -> vec3f {
+    let exposed = max(color * exposure, vec3f(0.0));
+    let peak = max(max(exposed.r, exposed.g), exposed.b);
+    if peak <= 1e-6 {
+        return vec3f(0.0);
+    }
+    let toned = filmic_curve(vec4f(exposed, peak));
+    let hot = smoothstep(FILMIC_HOT.x, FILMIC_HOT.y, peak);
+    let kept = toned.w * mix(exposed / peak, vec3f(1.0), hot * hot);
+    // Part of the way per channel: its toe deepens the lesser channels of muted
+    // colours a little, so sunlit sand, grass and concrete keep a film's richness
+    // instead of reading pale, while saturated paint keeps its hue.
+    return mix(toned.rgb, kept, FILMIC_HUE_KEEP);
+}
+
+fn filmic_curve(x: vec4f) -> vec4f {
+    let z = pow(x, vec4f(output.curve.x));
+    return min(z / (pow(z, vec4f(output.curve.y)) * output.curve.z + output.curve.w), vec4f(1.0));
+}
+
+// Exposed levels over which hot colours bleach toward white (`filmic`), and the share
+// of the hue-keeping mapping against the per-channel one.
+const FILMIC_HOT: vec2f = vec2f(1.5, 7.0);
+const FILMIC_HUE_KEEP: f32 = 0.4;
+
 // Hue-keeping tone mapping (`aces_filmic`): the saturation (chroma over the brightest
 // channel) where it begins and is complete, the exposed level over which very hot
 // colours return to the per-channel curve, and its share at full.
@@ -252,10 +288,10 @@ const MEADOW_CALM: f32 = 0.2;
 // crease under a cool shadow fill mixed to teal on sand).
 const OCCLUSION_SHADE_LEVEL: f32 = 0.08;
 const OCCLUSION_LIT_LEVEL: f32 = 0.45;
-const OCCLUSION_IN_SUN: f32 = 0.55;
+const OCCLUSION_IN_SUN: f32 = 0.75;
 const OCCLUSION_HUE: vec3f = vec3f(0.95, 1.0, 1.05);
 // The least light occlusion leaves anywhere.
-const OCCLUSION_FLOOR: f32 = 0.55;
+const OCCLUSION_FLOOR: f32 = 0.45;
 // The share of its own saturation the bloom keeps.
 const BLOOM_CHROMA: f32 = 0.6;
 // Display mid grey, the pivot of the contrast curve.
@@ -432,7 +468,12 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         glow = mix(vec3f(luminance(glow)), glow, BLOOM_CHROMA);
         color += glow * (bloom_strength / (1.0 + luminance(glow) * output.hues.w));
     }
-    var display = grade(aces_filmic(color, output.settings.x));
+    var display: vec3f;
+    if output.curve.x > 0.0 {
+        display = grade(filmic(color, output.settings.x));
+    } else {
+        display = grade(aces_filmic(color, output.settings.x));
+    }
     let vignette = output.gain.w;
     if vignette > 0.0 {
         let centered = (uv - 0.5) * vec2f(size.x / size.y, 1.0);

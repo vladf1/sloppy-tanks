@@ -116,7 +116,7 @@ const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 5.0);
 // hides much of the sky, so the shade is deepest there and opens toward the
 // shadow's tip; this share of the fill remains at contact, rising to all of it over
 // the caster distances in metres.
-const SHADOW_CONTACT_FILL: f32 = 0.85;
+const SHADOW_CONTACT_FILL: f32 = 0.7;
 const SHADOW_FILL_OPENING: vec2f = vec2f(0.3, 5.0);
 // Steepest receiver slope the search follows, metres of depth per texel, and the
 // depth gap it ignores, metres.
@@ -495,11 +495,11 @@ const BOUNCE_FROM_BELOW: f32 = 0.8;
 // fill's brightness).
 const FILL_NEUTRAL_IN_SUN: f32 = 0.9;
 // Saturation of the sky fill's share of a surface's light (1 = its plain color).
-const SHADE_SATURATION: f32 = 1.3;
+const SHADE_SATURATION: f32 = 1.12;
 const EARTH_SHADE_SATURATION: f32 = 0.85;
 // Point lights' (blast flashes') extra strength with the atmosphere on, and the
 // share of their decay exponent they keep (a wider pool).
-const BLAST_LIGHT_GAIN: f32 = 3.4;
+const BLAST_LIGHT_GAIN: f32 = 4.5;
 const FIRE_POOL_DECAY: f32 = 0.72;
 // How far past the terminator firelight wraps (0 = a point light's plain cosine).
 const FIRE_WRAP: f32 = 0.6;
@@ -512,7 +512,7 @@ const FIRE_AMBER_SHARE: f32 = 0.85;
 // The luminance a flash light's pool eases toward right beside it, against a sun of
 // about 3: firelight warms shade and the sunlit ground around a blast without washing
 // a near-camera muzzle flash or fireball across the frame.
-const FIRE_LIGHT_LIMIT: f32 = 4.0;
+const FIRE_LIGHT_LIMIT: f32 = 5.0;
 
 fn fire_light_hue(color: vec3f) -> vec3f {
     let level = dot(color, vec3f(0.2126, 0.7152, 0.0722));
