@@ -17,6 +17,8 @@ pub struct Gpu {
     pub layouts: Rc<Layouts>,
     /// The canvas's texture format, the output pipeline's target.
     pub canvas_format: wgpu::TextureFormat,
+    /// MSAA samples of the HDR targets: `SAMPLE_COUNT`, or 1 without multisampling.
+    pub samples: u32,
     /// The adapter's largest 2D texture edge, a hint of the GPU's class.
     pub adapter_max_texture: u32,
     /// `TRANSIENT_ATTACHMENT` where the browser offers it, else empty.
@@ -31,7 +33,10 @@ pub struct Canvas {
 }
 
 impl Gpu {
-    pub async fn new(canvas: web_sys::HtmlCanvasElement) -> Result<(Self, Canvas), String> {
+    pub async fn new(
+        canvas: web_sys::HtmlCanvasElement,
+        msaa: bool,
+    ) -> Result<(Self, Canvas), String> {
         let api = GRAPHICS_API;
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: wgpu::Backends::BROWSER_WEBGPU,
@@ -81,9 +86,11 @@ impl Gpu {
         config.format = config.format.remove_srgb_suffix();
         config.alpha_mode = wgpu::CompositeAlphaMode::Opaque;
         surface.configure(&device, &config);
+        let samples = if msaa { SAMPLE_COUNT } else { 1 };
         let gpu = Self {
-            layouts: Rc::new(Layouts::new(&device)),
+            layouts: Rc::new(Layouts::new(&device, samples)),
             canvas_format: config.format,
+            samples,
             adapter_max_texture: adapter.limits().max_texture_dimension_2d,
             transient: transient_usage(),
             device,
@@ -139,13 +146,16 @@ pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 pub const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
-/// A multisampled HDR color + depth target and its single-sample resolve.
-/// Used for the main view (the scene's size) and the water reflection (fixed size).
-/// The multisampled color is resolved and discarded within its pass, so it is
-/// transient where the browser allows; so is the depth unless a later pass reads it.
-/// Dropping it destroys its textures.
+/// A multisampled HDR color + depth target and its single-sample resolve, or without
+/// multisampling a color target passes draw into directly. Used for the main view
+/// (the scene's size) and the water reflection (fixed size). The multisampled color
+/// is resolved and discarded within its pass, so it is transient where the browser
+/// allows; so is the depth unless a later pass reads it. Dropping it destroys its
+/// textures.
 pub struct ColorTarget {
-    pub color: wgpu::Texture,
+    /// The multisampled color; absent without multisampling.
+    pub color: Option<wgpu::Texture>,
+    /// Where passes draw: the multisampled color, or the resolved texture itself.
     pub color_view: wgpu::TextureView,
     pub depth: wgpu::Texture,
     pub depth_view: wgpu::TextureView,
@@ -180,27 +190,31 @@ pub(super) fn texture_2d(
 }
 
 impl ColorTarget {
-    /// With `sampled_depth` a later pass reads the multisampled depth (the main
-    /// view's ambient occlusion).
+    /// With `sampled_depth` a later pass reads the depth (the main view's ambient
+    /// occlusion).
     pub fn new(gpu: &Gpu, label: &str, width: u32, height: u32, sampled_depth: bool) -> Self {
         let texture = |format, samples, usage| {
             texture_2d(&gpu.device, label, width, height, format, samples, usage)
         };
         let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        let color = texture(HDR_FORMAT, SAMPLE_COUNT, attachment | gpu.transient);
+        let samples = gpu.samples;
+        let color = (samples > 1).then(|| texture(HDR_FORMAT, samples, attachment | gpu.transient));
         let depth_usage = if sampled_depth {
             attachment | wgpu::TextureUsages::TEXTURE_BINDING
         } else {
             attachment | gpu.transient
         };
-        let depth = texture(DEPTH_FORMAT, SAMPLE_COUNT, depth_usage);
+        let depth = texture(DEPTH_FORMAT, samples, depth_usage);
         let resolved = texture(
             HDR_FORMAT,
             1,
             attachment | wgpu::TextureUsages::TEXTURE_BINDING,
         );
         Self {
-            color_view: color.create_view(&Default::default()),
+            color_view: color
+                .as_ref()
+                .unwrap_or(&resolved)
+                .create_view(&Default::default()),
             depth_view: depth.create_view(&Default::default()),
             resolved_view: resolved.create_view(&Default::default()),
             color,
@@ -211,16 +225,24 @@ impl ColorTarget {
 
     /// Bytes its textures hold in memory.
     pub fn bytes(&self) -> u64 {
-        [&self.color, &self.depth, &self.resolved]
+        [self.color.as_ref(), Some(&self.depth), Some(&self.resolved)]
             .into_iter()
+            .flatten()
             .map(texture_bytes)
             .sum()
+    }
+
+    /// The texture a multisampled pass resolves into; none without multisampling.
+    pub fn resolve_target(&self) -> Option<&wgpu::TextureView> {
+        self.color.as_ref().map(|_| &self.resolved_view)
     }
 }
 
 impl Drop for ColorTarget {
     fn drop(&mut self) {
-        self.color.destroy();
+        if let Some(color) = &self.color {
+            color.destroy();
+        }
         self.depth.destroy();
         self.resolved.destroy();
     }

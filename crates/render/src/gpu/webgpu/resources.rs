@@ -115,20 +115,27 @@ pub const BLOOM_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     sampler_entry(2, Filtering),
 ];
 
-/// The main view's multisampled depth and the occlusion uniform.
-pub const OCCLUSION_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
-    wgpu::BindGroupLayoutEntry {
-        binding: 0,
-        visibility: wgpu::ShaderStages::FRAGMENT,
-        ty: wgpu::BindingType::Texture {
-            sample_type: wgpu::TextureSampleType::Depth,
-            view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: true,
+/// The main view's depth and the occlusion uniform.
+const fn occlusion_entries(multisampled: bool) -> [wgpu::BindGroupLayoutEntry; 2] {
+    [
+        wgpu::BindGroupLayoutEntry {
+            binding: 0,
+            visibility: wgpu::ShaderStages::FRAGMENT,
+            ty: wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Depth,
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled,
+            },
+            count: None,
         },
-        count: None,
-    },
-    uniform_entry(1),
-];
+        uniform_entry(1),
+    ]
+}
+
+/// The occlusion pass's entries with the multisampled depth, and without MSAA.
+pub const OCCLUSION_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &occlusion_entries(true);
+pub const SINGLE_SAMPLE_OCCLUSION_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
+    &occlusion_entries(false);
 
 /// The mipmap blit's source level and sampler.
 pub const MIPMAP_SOURCE_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
@@ -150,7 +157,8 @@ pub const MATERIAL_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
 ];
 
 impl Layouts {
-    pub fn new(device: &wgpu::Device) -> Self {
+    /// The layouts for a device drawing its main view with `samples` MSAA samples.
+    pub fn new(device: &wgpu::Device, samples: u32) -> Self {
         let layout = |label, entries| {
             device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
                 label: Some(label),
@@ -163,7 +171,14 @@ impl Layouts {
             water: layout("water", TEXTURED_ENTRIES),
             output: layout("output", OUTPUT_ENTRIES),
             bloom: layout("bloom", BLOOM_ENTRIES),
-            occlusion: layout("occlusion", OCCLUSION_ENTRIES),
+            occlusion: layout(
+                "occlusion",
+                if samples > 1 {
+                    OCCLUSION_ENTRIES
+                } else {
+                    SINGLE_SAMPLE_OCCLUSION_ENTRIES
+                },
+            ),
         }
     }
 }

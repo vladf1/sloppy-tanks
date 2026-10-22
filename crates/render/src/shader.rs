@@ -384,16 +384,33 @@ pub fn sky_source() -> String {
 
 /// The ambient occlusion shader reading the main view's `multisampled` depth
 /// (WebGPU) or the single-sample copy WebGL2 resolves.
-pub fn occlusion_source(multisampled: bool) -> String {
-    // Only the WebGL build reads a single-sample copy; it probes six points, not eight.
-    let depth = if multisampled {
-        "@group(0) @binding(0) var depth: texture_depth_multisampled_2d;\n\
-         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
-         const SAMPLES: i32 = 8;\n"
-    } else {
-        "@group(0) @binding(0) var depth: texture_2d<f32>;\n\
-         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n\
-         const SAMPLES: i32 = 6;\n"
+/// How the occlusion pass reads the main view's depth: WebGPU's multisampled depth,
+/// its single-sampled one without MSAA, or the float copy WebGL2's resolve blits.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OcclusionDepth {
+    Multisampled,
+    SingleSampled,
+    WebglCopy,
+}
+
+pub fn occlusion_source(depth: OcclusionDepth) -> String {
+    let depth = match depth {
+        OcclusionDepth::Multisampled => {
+            "@group(0) @binding(0) var depth: texture_depth_multisampled_2d;\n\
+             fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
+             const SAMPLES: i32 = 8;\n"
+        }
+        OcclusionDepth::SingleSampled => {
+            "@group(0) @binding(0) var depth: texture_depth_2d;\n\
+             fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
+             const SAMPLES: i32 = 8;\n"
+        }
+        // WebGL's weaker devices probe six points, not eight.
+        OcclusionDepth::WebglCopy => {
+            "@group(0) @binding(0) var depth: texture_2d<f32>;\n\
+             fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n\
+             const SAMPLES: i32 = 6;\n"
+        }
     };
     specialize::specialize(&format!("{depth}{OCCLUSION_WGSL}"), &[])
 }
@@ -685,7 +702,7 @@ mod tests {
         translate_for_webgl("output", &output_source());
         translate_for_webgl("mipmap", MIPMAP_WGSL);
         translate_for_webgl("sky", &fixed_source(SKY_WGSL, texture));
-        translate_for_webgl("occlusion", &occlusion_source(false));
+        translate_for_webgl("occlusion", &occlusion_source(OcclusionDepth::WebglCopy));
     }
 
     #[test]
@@ -696,8 +713,15 @@ mod tests {
         validate("output", &output_source());
         validate("mipmap", MIPMAP_WGSL);
         validate("sky", &sky_source());
-        validate("occlusion", &occlusion_source(true));
-        validate("occlusion single-sample", &occlusion_source(false));
+        validate("occlusion", &occlusion_source(OcclusionDepth::Multisampled));
+        validate(
+            "occlusion single-sample",
+            &occlusion_source(OcclusionDepth::SingleSampled),
+        );
+        validate(
+            "occlusion copy",
+            &occlusion_source(OcclusionDepth::WebglCopy),
+        );
     }
 
     /// WebKit guards every WGSL loop with a volatile counter that keeps Metal from
@@ -713,7 +737,14 @@ mod tests {
             ("water".to_owned(), water_source()),
             ("sky".to_owned(), sky_source()),
             ("output".to_owned(), output_source()),
-            ("occlusion".to_owned(), occlusion_source(true)),
+            (
+                "occlusion".to_owned(),
+                occlusion_source(OcclusionDepth::Multisampled),
+            ),
+            (
+                "occlusion single-sample".to_owned(),
+                occlusion_source(OcclusionDepth::SingleSampled),
+            ),
             ("shadow merged".to_owned(), shadow_merged_source()),
             ("shadow cutout".to_owned(), shadow_cutout_source()),
         ];
