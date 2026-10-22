@@ -149,6 +149,7 @@ fn piece_parts(piece: TowerPiece, color: u32, broken: bool) -> Node {
         | TowerPiece::BackWall
         | TowerPiece::WestWall
         | TowerPiece::EastWall => cabin_wall(&mut kit, piece),
+        TowerPiece::Roof if broken => torn_roof(&mut kit),
         TowerPiece::Roof => hip_roof(&mut kit),
         TowerPiece::Ladder => ladder(&mut kit),
     }
@@ -753,6 +754,112 @@ fn hip_roof(kit: &mut Kit<Surface>) {
             aim(cup - tangent * 0.02, cup + tangent),
         );
     }
+}
+
+/// The roof as it falls from the collapse: its sheet torn open down two slopes
+/// and one hip gone, so the rafters and ridge beam show through ragged holes,
+/// and its anemometer snapped off. One rigid piece, but never a whole lid.
+fn torn_roof(kit: &mut Kit<Surface>) {
+    let (ex, ez) = (CABIN_X + ROOF_OVERHANG, CABIN_Z + ROOF_OVERHANG);
+    let ridge_x = ex - ez;
+    let top = CABIN_TOP + ROOF_EDGE;
+    let apex = roof_apex();
+    let sheet = 0.05;
+    // A point on a long slope (`side` -1 front, +1 back) at `u` along the eave
+    // and `v` from the eave (0) to the ridge (1), clamped to the slope's hips.
+    let long = |side: f64, u: f64, v: f64| {
+        let half = ex - (ex - ridge_x) * v;
+        DVec3::new(
+            u.clamp(-half, half),
+            top + (apex - top) * v,
+            side * ez * (1.0 - v),
+        )
+    };
+    // A point on an end slope (`side` -1 west, +1 east) at `w` across it.
+    let end = |side: f64, w: f64, v: f64| {
+        let half = ez * (1.0 - v);
+        DVec3::new(
+            side * (ex - (ex - ridge_x) * v),
+            top + (apex - top) * v,
+            w.clamp(-half, half),
+        )
+    };
+    let panel = |kit: &mut Kit<Surface>, outline: Vec<DVec3>| {
+        let under = outline.iter().map(|p| *p - DVec3::Y * sheet).collect();
+        kit.solid(Surface::Roof, &[under, outline]);
+    };
+    // Front slope: whole from the west hip to a tear running up it, the sheet
+    // past the tear gone.
+    let tear = [0.35, 0.1, 0.55, 0.2, 0.45];
+    let mut front = vec![long(-1.0, -ex, 0.0)];
+    for (i, u) in tear.iter().enumerate() {
+        front.push(long(-1.0, *u, i as f64 / (tear.len() - 1) as f64));
+    }
+    front.push(long(-1.0, -ridge_x, 1.0));
+    panel(kit, front);
+    // Back slope: only its east part hangs on, behind another tear.
+    let tear = [-0.2, 0.15, -0.05, 0.3, 0.05];
+    let mut back = vec![long(1.0, ex, 0.0), long(1.0, ex, 1.0)];
+    for (i, u) in tear.iter().enumerate().rev() {
+        back.push(long(1.0, *u, i as f64 / (tear.len() - 1) as f64));
+    }
+    panel(kit, back);
+    // The east hip keeps its sheet; the west one lost most of it, a ragged
+    // flap left at its eave.
+    panel(
+        kit,
+        vec![end(1.0, -ez, 0.0), end(1.0, ez, 0.0), end(1.0, 0.0, 1.0)],
+    );
+    panel(
+        kit,
+        vec![
+            end(-1.0, -0.7, 0.0),
+            end(-1.0, 0.5, 0.0),
+            end(-1.0, 0.2, 0.3),
+            end(-1.0, -0.1, 0.42),
+            end(-1.0, -0.4, 0.25),
+        ],
+    );
+    // The frame under it: hip rafters, the ridge beam and common rafters.
+    let below = DVec3::Y * (sheet + 0.05);
+    let rafter = |kit: &mut Kit<Surface>, from: DVec3, to: DVec3| {
+        kit.rod(Surface::Siding, 0.05, from - below, to - below, 4);
+    };
+    for (sx, sz) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+        rafter(
+            kit,
+            DVec3::new(sx * ex, top, sz * ez),
+            DVec3::new(sx * ridge_x, apex, 0.0),
+        );
+    }
+    rafter(
+        kit,
+        DVec3::new(-ridge_x, apex, 0.0),
+        DVec3::new(ridge_x, apex, 0.0),
+    );
+    for u in [-0.6, 0.0, 0.6] {
+        for side in [-1.0, 1.0] {
+            rafter(kit, long(side, u, 0.0), long(side, u, 1.0));
+        }
+    }
+    // A rafter snapped in the open hole, its end hanging.
+    rafter(
+        kit,
+        long(-1.0, 1.1, 0.0),
+        long(-1.0, 1.0, 0.45) - DVec3::Y * 0.35,
+    );
+    // The eave boards left along the slopes that kept their sheet.
+    let (board, y) = (ROOF_EDGE + 0.04, CABIN_TOP + ROOF_EDGE / 2.0 - 0.02);
+    kit.block(
+        Surface::Trim,
+        DVec3::new(ex + 0.4, board, 0.03),
+        DMat4::from_translation(DVec3::new(-(ex - 0.4) / 2.0, y, -(ez + 0.015))),
+    );
+    kit.block(
+        Surface::Trim,
+        DVec3::new(0.03, board, 2.0 * ez),
+        DMat4::from_translation(DVec3::new(ex + 0.015, y, 0.0)),
+    );
 }
 
 /// A steel ladder from the ground to grab handles above the deck, tied to the

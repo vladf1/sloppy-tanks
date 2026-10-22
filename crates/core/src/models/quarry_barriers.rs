@@ -160,7 +160,7 @@ const BLOCK_LENGTH: (f64, f64) = (1.3, 3.3);
 /// Open joint between neighbouring blocks, in metres.
 const BLOCK_GAP: (f64, f64) = (0.06, 0.2);
 /// Width of the arris chamfered round a block's top, in metres.
-const BLOCK_ARRIS: (f64, f64) = (0.03, 0.09);
+const BLOCK_ARRIS: (f64, f64) = (0.02, 0.05);
 /// First bed number of the wall's blocks in the sandstone shader's palette.
 const BLOCK_LAYER: f64 = 100.0;
 /// Weathered tints of the wall's stone: buff, iron-stained, grey-brown, pale,
@@ -168,17 +168,17 @@ const BLOCK_LAYER: f64 = 100.0;
 /// so the boundary keeps its line. Cool-leaning, so the warm sandstone shading
 /// settles to buff and grey-brown stone rather than orange.
 const BLOCK_TINTS: [[f32; 3]; 6] = [
-    [0.84, 0.85, 0.89],
-    [0.88, 0.83, 0.8],
-    [0.74, 0.76, 0.81],
-    [0.95, 0.94, 0.94],
-    [0.8, 0.7, 0.66],
-    [0.64, 0.64, 0.68],
+    [0.86, 0.86, 0.9],
+    [0.95, 0.84, 0.77],
+    [0.7, 0.71, 0.77],
+    [1.12, 1.09, 1.04],
+    [0.83, 0.67, 0.58],
+    [0.5, 0.49, 0.53],
 ];
 /// Vertex shade of a block's faces against its top, which faces the sky, and
 /// of a face's foot, where the drift and the sky's shade darken it.
 const FACE_SHADE: f32 = 0.82;
-const FOOT_SHADE: f32 = 0.62;
+const FOOT_SHADE: f32 = 0.7;
 
 static BLOCK_WALLS: Cache<[u64; 3], Mesh> = Cache::new();
 
@@ -340,7 +340,7 @@ impl Block {
         let height = top - self.base;
         let spall_drop = rng.range(0.15, 0.32) * height.min(1.2);
         let tint_pick = rng.next();
-        let value = rng.range(0.9, 1.06) as f32;
+        let value = rng.range(0.86, 1.1) as f32;
         let tint = BLOCK_TINTS[(tint_pick * BLOCK_TINTS.len() as f64) as usize].map(|c| c * value);
         let face_tint = tint.map(|c| c * FACE_SHADE);
         let foot_tint = tint.map(|c| c * FOOT_SHADE);
@@ -384,7 +384,7 @@ impl Block {
             let swell = if sawn {
                 rng.range(-0.01, 0.02)
             } else {
-                rng.range(-0.02, 0.07)
+                rng.range(-0.01, 0.025)
             };
             let (ma, mb) = inset(k, -swell);
             rings[0].push((place(a, self.base - 0.06, b), -0.7));
@@ -429,9 +429,9 @@ impl Block {
                 faces.polygon(&corners, self.layer, facing + up);
             }
         }
-        // The top, weathered stone crowned a little toward its middle, with its
+        // The top, weathered stone barely crowned toward its middle, with its
         // lip as wear.
-        let crown_y = surface_y(centre.x, centre.z, None) + rng.range(0.0, 0.03);
+        let crown_y = surface_y(centre.x, centre.z, None) + rng.range(0.0, 0.01);
         let crown = place(centre.x, crown_y, centre.z);
         let cap: Vec<(DVec3, f64)> = rings[3].iter().map(|&(p, _)| (p, 0.2)).collect();
         faces.fan((crown, 0.0), &cap, self.layer, tint);

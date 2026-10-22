@@ -33,6 +33,7 @@ pub mod tracers;
 pub mod track_dust;
 pub mod track_gravel;
 pub mod tracks;
+pub mod walls;
 pub mod wood_chips;
 pub mod wreck_fire;
 
@@ -193,6 +194,7 @@ impl EffectSystems {
         self.pickups.update(dt);
         self.tracks.update(state, alpha);
         self.particles.explosions.pads.sync(state);
+        self.particles.explosions.walls.sync(state);
         let ground = Ground::from_theme(&state.map_theme);
         self.particles.explosions.ground = ground;
         self.track_dust.update(state, &mut self.random);
@@ -224,6 +226,9 @@ impl EffectSystems {
             &mut self.random,
         );
         self.pickups.draw(state, &mut particles.explosions.puffs);
+        // Every puff is written: keep the billows clear of the walls beside them.
+        let explosions = &mut self.particles.explosions;
+        explosions.walls.keep_puffs_clear(&mut explosions.puffs);
         self.leaves.update(dt, &mut self.random);
         self.wood.update(dt, &mut self.random);
         self.lights = [Flash::default(); FIRE_LIGHTS];
@@ -308,6 +313,8 @@ mod browser {
         /// The CPU side; callers send it events and read its stats directly.
         pub systems: EffectSystems,
         pools: Vec<PoolId>,
+        /// The smoke puffs' pool, whose params carry the walls it softens against.
+        puffs: PoolId,
     }
 
     impl Effects {
@@ -315,13 +322,17 @@ mod browser {
         /// `prepare_step`/`warm_up` and the first blast, mark or shell never compiles
         /// mid-round.
         pub fn new(renderer: &mut Renderer) -> Self {
-            let pools = super::looks::pool_descs()
+            let descs = super::looks::pool_descs();
+            let pools: Vec<PoolId> = descs.iter().map(|desc| renderer.add_pool(desc)).collect();
+            let puffs = descs
                 .iter()
-                .map(|desc| renderer.add_pool(desc))
-                .collect();
+                .position(|desc| desc.label == super::looks::PUFF_POOL)
+                .map(|index| pools[index])
+                .expect("the puff pool");
             Self {
                 systems: EffectSystems::default(),
                 pools,
+                puffs,
             }
         }
 
@@ -358,7 +369,11 @@ mod browser {
         }
 
         fn sync(&mut self, renderer: &mut Renderer) {
-            let Self { systems, pools } = self;
+            let Self {
+                systems,
+                pools,
+                puffs,
+            } = self;
             let mut next = pools.iter();
             systems.for_each_pool(|buffer| {
                 if let Some(&id) = next.next() {
@@ -369,6 +384,7 @@ mod browser {
             let mut params = [[0.0; 4]; 4];
             params[0][0] = systems.tracks.clock as f32;
             renderer.set_pool_params(pools[0], params);
+            renderer.set_pool_params(*puffs, systems.particles.explosions.walls.soft_boxes());
             for (slot, light) in FIRE_LIGHT_SLOTS.into_iter().zip(systems.lights) {
                 renderer.set_point_light(
                     slot,
