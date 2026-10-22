@@ -365,12 +365,12 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // swells are light and colour only: low mounds and hollows a few metres
     // across, the turf standing up in a bank along the worn ground, drier on
     // the crests and lusher where the water collects.
-    let swell = (vg_fbm(p * 0.075 + 90.0) - 0.5) * 2.2 + (vg_noise(p * 0.21 + 4.0) - 0.5) * 0.45;
+    let swell = (vg_noise(p * 0.075 + 90.0) - 0.5) * 1.9 + (vg_noise(vec2f(p.x * 0.17 - p.y * 0.12, p.y * 0.17 + p.x * 0.12) + 4.0) - 0.5) * 0.55;
     let bank = (1.0 - smoothstep(0.08, 0.95, worn)) * 0.22;
     // Long grass grows in broad stands the mowers skip (the tall tufts of
     // `village_vegetation::long_grass` follow the same field) and never where
     // the ground is worn or walked.
-    let stand_field = vg_long_grass(p) + (vg_fbm(p * 0.31 + 23.0) - 0.5) * 0.55;
+    let stand_field = vg_long_grass(p) + (vg_noise(p * 0.31 + 23.0) - 0.5) * 0.5;
     let long_grass = smoothstep(0.08, 0.4, stand_field) * (1.0 - smoothstep(0.05, 0.45, wear)) * (1.0 - field);
     // Gusts comb the long grass: bright bands where the blades bow and show
     // their pale sides, rolling downwind at one speed (the phase varies with
@@ -403,7 +403,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     var bloom_color = vec3f(0.0);
     if dirt < 1.0 {
         let meso = vg_fbm(p * 0.15 - 11.0);
-        let warmth = vg_fbm(p * 0.045 + 3.0);
+        let warmth = vg_noise(p * 0.045 + 3.0);
         let short_turf = mix(vg_linear(0x5f8f35), vg_linear(0x86a845), smoothstep(0.3, 0.75, warmth));
         let long_turf = mix(vg_linear(0x4a7a3a), vg_linear(0x6a9442), smoothstep(0.3, 0.75, meso));
         grass = mix(short_turf, long_turf, long_grass);
@@ -462,7 +462,10 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // Damp hollows in the loose ground: darker, cooler earth with a crisp
     // drying rim and a sheen, so they read as wet rather than as smudges. Its
     // derivative stays out of the branch below.
-    let damp_field = vg_fbm(p * 0.13 + 33.0) * 0.6 - swell * 0.45 + (1.0 - packed) * 0.08 + standing * 0.3;
+    // One field of how the water runs: it soaks the hollows and washes the
+    // topsoil off the crests down to gravel.
+    let runoff = vg_noise(p * 0.12 + 33.0);
+    let damp_field = runoff * 0.6 - swell * 0.45 + (1.0 - packed) * 0.08 + standing * 0.3;
     let damp_aa = max(fwidth(damp_field), 0.004);
     let damp = smoothstep(0.62 - damp_aa, 0.62 + damp_aa, damp_field) * dirt;
 
@@ -483,7 +486,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         let hard = mix(vg_linear(0x9a876b), vg_linear(0xab997c), streaks);
         soil = mix(loose, hard, packed * 0.75);
         // Earth mottled at hand scale: drier crumbs and darker loam.
-        let loam = vg_fbm(p * 0.85 + 41.0);
+        let loam = vg_noise(p * 0.85 + 41.0);
         soil = soil * mix(0.88, 1.09, smoothstep(0.25, 0.75, loam)) * mix(1.0, mix(0.94, 1.05, vg_noise(p * 3.1 + 5.0)), mid);
         soil = soil * mix(0.72, 1.28, clamp((dirt_detail - 0.55) * mix(1.1, 0.7, packed), 0.0, 1.0))
             * (dirt_tex / max(dirt_luma, 0.05) * 0.3 + 0.7);
@@ -495,7 +498,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         soil = mix(soil, soil * vec3f(0.9, 0.88, 0.86), damp_rim * 0.5);
         // Sun-baked mud on the dry, packed lines crazes into plates; the cracks
         // fade out before they could shimmer.
-        let baked = smoothstep(0.55, 0.72, vg_fbm(p * 0.09 + 71.0)) * packed * (1.0 - damp) * dirt;
+        let baked = smoothstep(0.55, 0.72, vg_noise(p * 0.09 + 71.0)) * packed * (1.0 - damp) * dirt;
         let crack_fade = 1.0 - smoothstep(0.012, 0.035, footprint);
         if baked * crack_fade > 0.0 {
             let crack_distance = vg_cracks(p * 2.7) / 2.7;
@@ -525,7 +528,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // A few fist-sized stones along the shoulders, each with its own shadow
     // cast away from the sun.
     // Gravelly patches in the loose ground, where the topsoil washed off.
-    let gravel_patch = smoothstep(0.58, 0.72, vg_fbm(p * 0.11 + 57.0)) * dirt * (1.0 - packed * 0.6);
+    let gravel_patch = smoothstep(0.5, 0.7, (1.0 - runoff) * 0.75 + swell * 0.3) * dirt * (1.0 - packed * 0.6);
     let stone_density = (shoulder * 0.22 + verge * 0.3 + dirt * (1.0 - packed) * 0.05 + gravel_patch * 0.35) * mid * (1.0 - rut);
     let sun_away = -normalize(frame.sun_direction.xz + vec2f(1e-4, 0.0)) * 0.08;
     let stones = vg_scatter(p, stone_density, 0.9, vec2f(0.08, 0.15), aa, 57.0);
@@ -651,7 +654,7 @@ fn vg_conifer_rows(u: f32, v: f32, seed: f32, cap: f32, aa: f32) -> vec4f {
                 continue;
             }
             let h = tallest * mix(0.5, 1.0, fract(pick.y * 7.13)) * mix(0.7, 1.0, room);
-            let foot = base + (tone - 0.5) * 1.3;
+            let foot = base + (tone - 0.5) * 1.8;
             let t = (v - foot) / h;
             if (t < 0.0 || t > 1.0) {
                 continue;
@@ -744,10 +747,19 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     let pixel = max(footprint, 0.02);
     let angle0 = sector * 0.7853982;
     let angle1 = angle0 + 0.7853982;
-    let rows_a = vg_conifer_rows(dot(p.xz, vec2f(-sin(angle0), cos(angle0))), p.y, 11.0 + (sector % 4.0) * 7.0, cap, pixel);
-    let rows_b = vg_conifer_rows(dot(p.xz, vec2f(-sin(angle1), cos(angle1))), p.y, 11.0 + ((sector + 1.0) % 4.0) * 7.0, cap, pixel);
     let gate_a = 1.0 - smoothstep(0.55, 0.8, turn);
     let gate_b = smoothstep(0.2, 0.45, turn);
+    // Each eighth's rows only where its gate lets them show, and none where
+    // no tree can stand or far enough for the canopy's average.
+    let wanted = slope_ok * (1.0 - smoothstep(0.3, 0.75, footprint)) > 0.0;
+    var rows_a = vec4f(0.0, 0.0, 1.0, 0.5);
+    var rows_b = vec4f(0.0, 0.0, 1.0, 0.5);
+    if wanted && gate_a > 0.0 {
+        rows_a = vg_conifer_rows(dot(p.xz, vec2f(-sin(angle0), cos(angle0))), p.y, 11.0 + (sector % 4.0) * 7.0, cap, pixel);
+    }
+    if wanted && gate_b > 0.0 {
+        rows_b = vg_conifer_rows(dot(p.xz, vec2f(-sin(angle1), cos(angle1))), p.y, 11.0 + ((sector + 1.0) % 4.0) * 7.0, cap, pixel);
+    }
     let b_wins = rows_b.x * gate_b > rows_a.x * gate_a;
     var trees = select(rows_a, rows_b, b_wins);
     trees.x = max(rows_a.x * gate_a, rows_b.x * gate_b);
