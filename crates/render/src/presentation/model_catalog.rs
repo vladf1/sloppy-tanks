@@ -221,7 +221,8 @@ fn animated_paths(scenery: &Scenery) -> Vec<Vec<usize>> {
             .unwrap_or_default(),
         Scenery::Harbor(_) => {
             // `HarborScenery::update`: the fleet's ships bob and roll, each crane's
-            // load (its last child) sways, and the beacon group blinks.
+            // load (its last child) sways, each tug (its lane's last child) runs
+            // its loop, and the beacon group blinks.
             let fleet_index = 1;
             let fleet = &root.children[fleet_index];
             let mut paths = Vec::new();
@@ -378,8 +379,8 @@ mod tests {
         assert!(village.root.find(WATERWHEEL).is_none());
         let harbor = scenery(Theme::Harbor).expect("harbor");
         assert!(matches!(harbor.water, Some(SceneryWater::Harbor(_))));
-        // Three ships, four crane loads and the beacons.
-        assert_eq!(harbor.movers.len(), 8);
+        // Three ships, four crane loads, two tugs and the beacons.
+        assert_eq!(harbor.movers.len(), 10);
         let quarry = scenery(Theme::Quarry).expect("quarry");
         assert!(quarry.movers.is_empty() && quarry.water.is_none());
         assert!(scenery(Theme::Custom).is_none());

@@ -6,12 +6,14 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
-use crate::geometry::{plane_geometry, ring_geometry, torus_geometry};
+use crate::geometry::math::hex_to_linear;
+use crate::geometry::{Mesh, cylinder_geometry, plane_geometry, ring_geometry, torus_geometry};
 use crate::scene::{Material, Node, TextureRef};
 
 use super::batching::batch;
-use super::effects_scenery::ApronMode;
-use super::effects_scenery::harbor_label_texture;
+use super::effects_scenery::{
+    ApronMode, HARBOR_LABEL_ROWS, HARBOR_LABEL_TEXTURE, harbor_label_row,
+};
 use super::harbor_backdrop::harbor_backdrop;
 use super::harbor_models::{CargoShape, cladding, ship_container};
 use super::harbor_surfaces::{apron_box, apron_material, arrow_marking, marking};
@@ -19,8 +21,8 @@ use super::harbor_vessels::{harbor_fleet, update_harbor_fleet};
 use super::harbor_water::harbor_water;
 use super::house_surfaces::siding_box;
 use super::model_primitives::{
-    DEFAULT_BOX_RADIUS, TEAM_COLORS, adopt_children, beam, box_part, cylinder_part, paint, put,
-    rotated,
+    Cache, DEFAULT_BOX_RADIUS, TEAM_COLORS, adopt_children, beam, box_part, cylinder_part, paint,
+    put, rotated, shadow_receiver,
 };
 use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
 use crate::sim::data::ARENA;
@@ -44,17 +46,65 @@ impl Default for HarborScenery {
 }
 
 /// `paintLabel(group, text, x, z, width, depth)`: painted lettering flat on the
-/// apron, drawn by the browser (see `effects_scenery::harbor_label_texture`).
+/// apron, its row of the shared label sheet drawn by the browser (see
+/// `effects_scenery::HARBOR_LABEL_TEXTURE`), so every label merges into one draw.
 fn paint_label(group: &mut Node, text: &'static str, x: f64, z: f64, width: f64, depth: f64) {
-    let label = Node::mesh(
-        Arc::new(plane_geometry(width, depth)),
-        Arc::new(Material {
-            map: Some(TextureRef::generated(harbor_label_texture(text))),
-            ..(*apron_material(ApronMode::Label, 0xffffff)).clone()
-        }),
-    );
+    static MATERIAL: std::sync::OnceLock<Arc<Material>> = std::sync::OnceLock::new();
+    let material = MATERIAL
+        .get_or_init(|| {
+            Arc::new(Material {
+                map: Some(TextureRef::generated(HARBOR_LABEL_TEXTURE)),
+                ..(*apron_material(ApronMode::Label, 0xffffff)).clone()
+            })
+        })
+        .clone();
+    // The sheet's row 0 is its top, uploaded at v = 1.
+    let (row, rows) = (harbor_label_row(text) as f32, HARBOR_LABEL_ROWS as f32);
+    let mut plane = plane_geometry(width, depth);
+    for uv in &mut plane.uvs {
+        uv[1] = (uv[1] + rows - 1.0 - row) / rows;
+    }
+    let label = Node::mesh(Arc::new(plane), material);
     put(group, rotated(label, -FRAC_PI_2, 0.0, 0.0), x, 0.035, z);
 }
+
+/// A spawn pad: a twelve-sided steel deck and the light ring set into it, both
+/// in the team's paint as vertex colors with the pad's own coordinates as uv, so
+/// the apron effect draws the tread plate, chevrons and chasing light, and every
+/// pad of both teams is two draws. Heights and footprints are the decks
+/// `effects::spawn_pad_decks` lays decals and mines on.
+fn spawn_pad(details: &mut Node, team: Team, x: f64, z: f64) {
+    static PADS: Cache<(u32, bool), Mesh> = Cache::new();
+    let color = TEAM_COLORS[team.index()];
+    // The ring's uv is offset by `PAD_LIGHT_FLAG`, which the effect reads as the
+    // light strip, so deck and ring share one material.
+    let team_mesh = |mut mesh: Mesh, flag: f32| {
+        let [r, g, b] = hex_to_linear(color);
+        mesh.colors = vec![[r as f32, g as f32, b as f32]; mesh.positions.len()];
+        mesh.uvs = mesh
+            .positions
+            .iter()
+            .map(|p| [p[0] / PAD_RADIUS as f32 + flag, p[2] / PAD_RADIUS as f32])
+            .collect();
+        mesh
+    };
+    let deck = PADS.get_or_insert((color, false), || {
+        team_mesh(cylinder_geometry(PAD_RADIUS, PAD_RADIUS, 0.08, 12), 0.0)
+    });
+    let material = apron_material(ApronMode::Pad, PAD_STEEL);
+    put(details, shadow_receiver(deck, material.clone()), x, 0.06, z);
+    let ring = PADS.get_or_insert((color, true), || {
+        let mut ring = ring_geometry(2.1, 2.3, 32);
+        ring.rotate_x(-FRAC_PI_2);
+        team_mesh(ring, PAD_LIGHT_FLAG)
+    });
+    put(details, shadow_receiver(ring, material), x, 0.11, z);
+}
+/// The uv.x offset that marks a spawn pad's light ring (`effects/harbor_apron.wgsl`).
+const PAD_LIGHT_FLAG: f32 = 10.0;
+/// Radius of a spawn pad's deck and its steel.
+const PAD_RADIUS: f64 = 2.65;
+const PAD_STEEL: u32 = 0x3a4850;
 
 /// Merge a group of ground-level parts, which receive shadows but cast none.
 fn batch_receivers(group: &mut Node) {
@@ -85,7 +135,7 @@ const LINE_YELLOW: u32 = 0xe8b83e;
 /// Height of the hazard band painted at the foot of the walls.
 const KERB_BAND: f64 = 0.32;
 const LINE_WHITE: u32 = 0xe4e2d6;
-const HAZARD_DARK: u32 = 0x2b3236;
+const HAZARD_DARK: u32 = 0x1f2224;
 
 /// Floor of the transit sheds on the outer quays.
 const WAREHOUSE_FLOOR: f64 = -0.5;
@@ -316,7 +366,7 @@ const BOLLARD_DARK: u32 = 0x262d30;
 const BOLLARD_CAP: u32 = 0xe1b64d;
 /// Flood-light masts at the quay corners.
 const LAMP_HEIGHT: f64 = 9.0;
-const LAMP_HOUSING: u32 = 0x2f3a3f;
+const LAMP_HOUSING: u32 = 0x4b585e;
 const LAMP_LENS: u32 = 0xfff1c4;
 /// Mooring lines: hemp color, thickness, sag at mid-span as a fraction of the
 /// span, and the segments a line is drawn with.
@@ -854,6 +904,7 @@ impl HarborScenery {
         let mut ground = Node::group("");
         let mut markings = Node::group("");
         let mut beacons = Node::group("");
+        let mut labels = Node::group("");
         put(
             &mut ground,
             apron_box(
@@ -908,7 +959,7 @@ impl HarborScenery {
                     );
                 }
                 let bay = if z == -32.0 || z == 32.0 { "B2" } else { "B1" };
-                paint_label(&mut root, bay, side * 37.0, z, 2.5, 1.4);
+                paint_label(&mut labels, bay, side * 37.0, z, 2.5, 1.4);
             }
             // Hazard paint along the inner edge of every wall top, and a kerb band
             // at the foot of every inner face.
@@ -1058,29 +1109,14 @@ impl HarborScenery {
             );
         }
         for (text, z, width, depth) in LANE_TITLES {
-            paint_label(&mut root, text, 0.0, z, width, depth);
+            paint_label(&mut labels, text, 0.0, z, width, depth);
         }
-        paint_label(&mut root, "LOADING", 0.0, 3.5, 8.0, 1.1);
+        paint_label(&mut labels, "LOADING", 0.0, 3.5, 8.0, 1.1);
+        batch_receivers(&mut labels);
+        root.children.append(&mut labels.children);
         for team in [Team::Blue, Team::Red] {
             for Vec2 { x, z } in spawn_positions(team, 1.0) {
-                put(
-                    &mut details,
-                    cylinder_part(2.65, 0.08, 0x293f4a, 12),
-                    x,
-                    0.06,
-                    z,
-                );
-                let ring = Node::mesh(
-                    Arc::new(ring_geometry(2.1, 2.3, 32)),
-                    paint(TEAM_COLORS[team.index()]),
-                );
-                put(
-                    &mut details,
-                    rotated(ring, -FRAC_PI_2, 0.0, 0.0),
-                    x,
-                    0.11,
-                    z,
-                );
+                spawn_pad(&mut markings, team, x, z);
             }
         }
         // Working berths sit beyond the wall, each kept differently: on the west a
@@ -1287,6 +1323,8 @@ impl HarborScenery {
                 -2.0,
                 0.0,
             );
+            // Left unbatched: the renderer merges its paint with the rest of its
+            // cell's, and culls it with that cell.
             let shed = rotated(warehouse(), 0.0, if x < 0.0 { 0.0 } else { PI }, 0.0);
             put(&mut details, shed, x, WAREHOUSE_FLOOR, 0.0);
         }

@@ -16,7 +16,7 @@ use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::Arc;
 
 use crate::geometry::math::{hex_to_linear, scale_hex_color};
-use crate::geometry::{Mesh, cone_geometry, merge_geometries};
+use crate::geometry::{Mesh, merge_geometries};
 use crate::scene::{Material, Node};
 
 use super::batching::batch;
@@ -124,10 +124,12 @@ fn shore_radius(theta: f64) -> f64 {
 }
 
 /// Profile of the coast from the waterline inland: (metres past the shoreline,
-/// fraction of the ridge height, extra height, color).
-const PROFILE: [(f64, f64, f64, u32); 6] = [
-    (-3.0, 0.0, -1.2, 0x5d5a50),
-    (2.0, 0.0, 2.4, 0x9c9077),
+/// fraction of the ridge height, extra height, color). Surf breaks white on the
+/// waterline and pale sand rises from it, so the coast reads as a line at a glance.
+const PROFILE: [(f64, f64, f64, u32); 7] = [
+    (-3.0, 0.0, -1.2, 0x4f5650),
+    (0.0, 0.0, 0.35, 0xe4e8e2),
+    (2.0, 0.0, 2.4, 0xc2b28a),
     (9.0, 0.12, 3.0, 0x6f8a4e),
     (30.0, 0.62, 2.0, 0x4f7040),
     (55.0, 1.0, 0.0, 0x3f5e3a),
@@ -147,14 +149,23 @@ fn shore_mesh(from: usize, to: usize) -> Option<Node> {
         let ridge = ridge_height(theta);
         for (row, &(offset, fraction, lift, color)) in PROFILE.iter().enumerate() {
             let jitter = hash(step as u32 * 8 + row as u32, 11) - 0.5;
-            let r = radius + offset + jitter * 4.0;
+            // The waterline rows stay in step so the surf and beach read as bands.
+            let r = radius + offset + jitter * if row < 3 { 0.6 } else { 4.0 };
             let y = SEA_LEVEL
                 + (ridge * fraction + lift) * land_amount(theta).max(0.2)
                 + jitter * ridge * 0.08;
             positions.extend([r * theta.cos(), y, r * theta.sin()]);
             let shade = 0.82 + hash(step as u32 * 8 + row as u32, 23) * 0.3;
-            let craggy = (row == 3 || row == 4) && ridge > 22.0 && hash(step as u32, 29) > 0.55;
-            let color = if craggy { ROCK } else { color };
+            let craggy = (row == 4 || row == 5) && ridge > 22.0 && hash(step as u32, 29) > 0.55;
+            // Built-up shore is a concrete quay rather than a beach.
+            let quayside = row == 2 && built_up(theta);
+            let color = if craggy {
+                ROCK
+            } else if quayside {
+                0xa9a89f
+            } else {
+                color
+            };
             let [cr, cg, cb] = hex_to_linear(scale_hex_color(color, shade));
             colors.push([cr as f32, cg as f32, cb as f32]);
         }
@@ -179,6 +190,24 @@ fn shore_mesh(from: usize, to: usize) -> Option<Node> {
     mesh.colors = colors;
     Some(flat_node(mesh))
 }
+
+/// Mark a part's faces for the far-shore effect by its uv.y (every other
+/// backdrop part keeps its uvs within 0..1): [`FACADE_FLAG`] draws a grid of
+/// windows over a tower's walls, [`STACK_FLAG`] the boxes of a container stack,
+/// each tier and bay its own line's color.
+fn flagged(mut part: Node, flag: f32) -> Node {
+    if let Some(drawable) = &mut part.drawable {
+        let mut mesh = (*drawable.mesh).clone();
+        mesh.uvs = vec![[0.0, flag]; mesh.positions.len()];
+        drawable.mesh = Arc::new(mesh);
+    }
+    part
+}
+fn facade(part: Node) -> Node {
+    flagged(part, FACADE_FLAG)
+}
+const FACADE_FLAG: f32 = 10.0;
+const STACK_FLAG: f32 = 20.0;
 
 /// A vertex-colored mesh de-indexed into flat facets, as a backdrop part.
 fn flat_node(mesh: Mesh) -> Node {
@@ -282,25 +311,14 @@ fn city(sectors: &mut Sectors) {
         let yaw = -theta + hash(i, 19) * 0.3;
         let mut tower = Node::group("");
         // Founded below the slope so no tower floats on the facets.
+        // Its floors of windows are the far-shore effect's, drawn on the walls.
         put(
             &mut tower,
-            box_part(w, height + FOOTING, d, color, 0.0),
+            facade(box_part(w, height + FOOTING, d, color, 0.0)),
             0.0,
             (height - FOOTING) / 2.0,
             0.0,
         );
-        let glass = scale_hex_color(color, 0.55);
-        let mut floor = 3.2;
-        while floor < height - 2.0 {
-            put(
-                &mut tower,
-                box_part(w + 0.3, 1.1, d + 0.3, glass, 0.0),
-                0.0,
-                floor,
-                0.0,
-            );
-            floor += 3.4;
-        }
         put(
             &mut tower,
             box_part(w * 0.4, 2.4, d * 0.4, 0x9aa0a0, 0.0),
@@ -358,7 +376,10 @@ fn terminal(sectors: &mut Sectors) {
         let levels = 1 + (hash(i, 41) * 4.0) as u32;
         let color = BOX_PAINT[(hash(i, 43) * 6.0) as usize % 6];
         let stack = rotated(
-            box_part(12.0, 2.6 * f64::from(levels), 2.5, color, 0.0),
+            flagged(
+                box_part(12.0, 2.6 * f64::from(levels), 2.5, color, 0.0),
+                STACK_FLAG,
+            ),
             0.0,
             -theta,
             0.0,
@@ -712,6 +733,27 @@ fn built_up(theta: f64) -> bool {
     (-0.75..0.52).contains(&theta) || (0.52..1.15).contains(&theta) || (1.3..1.95).contains(&theta)
 }
 
+/// A far pine: an open five-sided spire of unit radius and height standing on
+/// its base. Seen only from across the bay, it needs no base cap or more sides.
+fn pine_mesh() -> Arc<Mesh> {
+    static PINE: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
+    PINE.get_or_init(|| {
+        let mut positions = vec![0.0, 1.0, 0.0];
+        for i in 0..5 {
+            let a = TAU * f64::from(i) / 5.0;
+            positions.extend([a.cos(), 0.0, a.sin()]);
+        }
+        let indices = (0..5u32)
+            .flat_map(|i| [0, 1 + (i + 1) % 5, 1 + i])
+            .collect();
+        let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
+        mesh.compute_vertex_normals();
+        mesh.uvs = vec![[0.0, 0.0]; mesh.positions.len()];
+        Arc::new(mesh)
+    })
+    .clone()
+}
+
 /// Pine woods in clumps over the headlands: dark marks that give the hills their
 /// scale.
 fn woods(sectors: &mut Sectors) {
@@ -732,11 +774,9 @@ fn woods(sectors: &mut Sectors) {
         let (x, y, z) = on_land(theta, inland);
         let height = 3.6 + 3.4 * hash(i, 207);
         let color = [0x2c4a2e, 0x35543a, 0x3f5c33, 0x29402c][(hash(i, 211) * 4.0) as usize % 4];
-        let pine = Node::mesh(
-            Arc::new(cone_geometry(height * 0.3, height, 6)),
-            paint(color),
-        );
-        place_at(sectors, theta, pine, x, y + height / 2.0 - 0.5, z);
+        let mut pine = Node::mesh(pine_mesh(), paint(color));
+        pine.scale = glam::DVec3::new(height * 0.3, height, height * 0.3);
+        place_at(sectors, theta, pine, x, y - 0.5, z);
     }
 }
 

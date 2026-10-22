@@ -11,6 +11,7 @@ use crate::geometry::{Mesh, box_geometry};
 use crate::scene::{Effect, Material, Node, TextureRef, Wrap};
 
 use super::effects_scenery::{ApronMode, DOCK_GRAIN, HARBOR_APRON};
+use super::harbor_models::{CONTAINER_METALNESS, CONTAINER_ROUGHNESS, container_wear};
 use super::model_primitives::{Cache, shadow_receiver, shadowed, span_between};
 
 /// The two harbor surface tiles.
@@ -39,9 +40,12 @@ const HULL_ROUGHNESS: f32 = 0.6;
 const DOCK_BUMP: f32 = 0.035;
 /// Roughness of bare quay concrete and of road paint.
 const APRON_ROUGHNESS: f32 = 0.92;
-const PAINT_ROUGHNESS: f32 = 0.62;
+const PAINT_ROUGHNESS: f32 = 0.84;
 /// Markings keep paint where the effect's wear exceeds this.
 const PAINT_CUTOFF: f32 = 0.5;
+/// A spawn pad's steel tread plate (the effect polishes and paints it further).
+const PAD_METALNESS: f32 = 0.55;
+const PAD_ROUGHNESS: f32 = 0.5;
 
 static MATERIALS: Cache<(HarborSurface, u32), Material> = Cache::new();
 static GEOMETRIES: Cache<(HarborSurface, [u64; 3]), Mesh> = Cache::new();
@@ -102,6 +106,9 @@ pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
             ApronMode::Marking => Material {
                 vertex_colors: true,
                 alpha_test: PAINT_CUTOFF,
+                // The flaking edge resolves through the coverage mask, so chips
+                // read as soft flakes rather than stair-stepped pixels.
+                alpha_to_coverage: true,
                 effect,
                 extra_textures,
                 ..Material::standard(color, 0.0, PAINT_ROUGHNESS)
@@ -123,6 +130,19 @@ pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
                 effect,
                 extra_textures,
                 ..Material::standard(color, HULL_METALNESS, HULL_ROUGHNESS)
+            },
+            ApronMode::Pad => Material {
+                vertex_colors: true,
+                effect,
+                extra_textures,
+                ..Material::standard(color, PAD_METALNESS, PAD_ROUGHNESS)
+            },
+            ApronMode::Container => Material {
+                map: Some(container_wear()),
+                vertex_colors: true,
+                effect,
+                extra_textures,
+                ..Material::standard(color, CONTAINER_METALNESS, CONTAINER_ROUGHNESS)
             },
             ApronMode::Shore => Material {
                 vertex_colors: true,
