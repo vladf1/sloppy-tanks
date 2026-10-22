@@ -103,8 +103,7 @@ function bastionAtlas() {
         mix(0.9, 1.08, fibre) * mix(0.9, 1.08, patches) * mix(1.0, 1.08, smooth(0.6, 1.15, v));
       let color = scale(LINER, shade);
       // Dust washed down from the rim in ragged runs.
-      const run =
-        smooth(0.55, 0.85, fbm(streaks, u * 22, v * 1.5, 22, 3)) * smooth(0.2, 0.9, v);
+      const run = smooth(0.55, 0.85, fbm(streaks, u * 22, v * 1.5, 22, 3)) * smooth(0.2, 0.9, v);
       color = blend(color, scale(SOIL, 1.15), run * 0.28);
       // Sand and soil splashed up from the foot, its edge ragged.
       const splash = 0.32 + 0.12 * fbm(mottle, u * 9 + 5, 0.5, 9, 3);
@@ -132,8 +131,7 @@ function bastionAtlas() {
       if (steel > 0) {
         const rusty = Math.min(1, smooth(0.55, 0.8, fbm(rust, u * 14, v * 12, 14, 3)) + foot * 0.5);
         const lit =
-          1 +
-          0.25 * Math.max(smooth(0, WIRE, -dv) * horizontal, smooth(0, WIRE, -du) * vertical);
+          1 + 0.25 * Math.max(smooth(0, WIRE, -dv) * horizontal, smooth(0, WIRE, -du) * vertical);
         color = blend(color, scale(blend(STEEL, RUST, rusty), lit), steel * 0.75);
       }
       // The spring-coil joint at each edge: a dark band of turns.
