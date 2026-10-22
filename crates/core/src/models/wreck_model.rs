@@ -232,8 +232,9 @@ fn value_noise(p: DVec3) -> f64 {
 /// decomposed back into position, rotation and scale, so a sheared product loses
 /// its shear exactly as Three.js did.
 fn collect_meshes(node: &Node, parent_world: DMat4, out: &mut Vec<Node>) {
-    // Hidden alternatives (the liveries a wreck does not wear) stay out.
-    if !node.visible {
+    // Hidden alternatives (the liveries a wreck does not wear) and the live
+    // turret's deck occlusion stay out.
+    if !node.visible || node.name == part::TURRET_OCCLUSION {
         return;
     }
     let world = parent_world * compose(node.position, node.rotation, node.scale);
