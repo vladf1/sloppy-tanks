@@ -30,9 +30,9 @@ const SECTION_GAP: f64 = 0.02;
 pub const CRATE_SPLITS: [&[u8]; 5] = [&[6], &[2, 4], &[3, 3], &[4, 2], &[2, 2, 2]];
 /// How likely each of [`CRATE_SPLITS`] is for the long walls, the short ends (stiffer,
 /// so more often whole) and the lid.
-const LONG_WALL_ODDS: [f64; 5] = [0.2, 0.2, 0.15, 0.2, 0.25];
-const END_ODDS: [f64; 5] = [0.45, 0.2, 0.1, 0.2, 0.05];
-const LID_ODDS: [f64; 5] = [0.2, 0.2, 0.2, 0.2, 0.2];
+const LONG_WALL_ODDS: [f64; 5] = [0.04, 0.18, 0.18, 0.18, 0.42];
+const END_ODDS: [f64; 5] = [0.2, 0.25, 0.2, 0.25, 0.1];
+const LID_ODDS: [f64; 5] = [0.04, 0.22, 0.22, 0.22, 0.3];
 /// Lengths of the loose planks that can fall out, as a share of the crate's width.
 pub const CRATE_PLANK_LENGTHS: [f64; 3] = [0.4, 0.55, 0.7];
 const MAX_LOOSE_PLANKS: usize = 2;
@@ -121,7 +121,7 @@ impl CrateBreak {
             pick(&END_ODDS),
         ];
         let lid = pick(&LID_ODDS);
-        let planks = (0..pick(&[0.3, 0.45, 0.25]))
+        let planks = (0..pick(&[0.1, 0.4, 0.5]))
             .map(|_| pick(&[1.0 / 3.0; 3]))
             .collect();
         let skid = next() < 0.5;

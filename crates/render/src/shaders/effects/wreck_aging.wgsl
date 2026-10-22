@@ -24,26 +24,31 @@ fn wreck_noise(p: vec2f) -> f32 {
 
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let brightness = select(material.params[0].x, f.instance_data.x, f.instance_data.y > 0.5);
-    // 0 at the moment of death, 1 once the fire has done its work.
-    let charred = smoothstep(0.82, 0.45, brightness);
+    // Most of the paint is gone the moment the ammunition goes, so a fresh wreck
+    // reads as burnt steel with fire on it, not a glowing painted hull; the rest
+    // chars as the fire does its work.
+    let charred = mix(0.72, 1.0, smoothstep(0.8, 0.45, brightness));
     let p = f.world.xz * 1.1 + vec2f(f.world.y * 0.9, -f.world.y * 0.6);
     let soot = wreck_noise(p) * 0.6 + wreck_noise(p * 2.7) * 0.4;
     let low = 1.0 - smoothstep(0.3, 1.6, f.world.y);
-    // Patches where the paint survived, scorched brown at their edges.
-    let paint = smoothstep(0.7, 0.84, soot + 0.08 * (1.0 - low));
-    let scorched = smoothstep(0.42, 0.6, soot) * (1.0 - paint);
-    let steel = vec3f(0.035, 0.032, 0.03) * (0.75 + 0.5 * soot);
-    let burnt_paint = mix(steel, vec3f(0.11, 0.06, 0.035), scorched);
-    let kept = (*s).color * (0.32 + 0.2 * soot);
-    let char_color = mix(burnt_paint, kept, paint * 0.8);
-    (*s).color = mix((*s).color * (0.86 + 0.2 * soot - 0.12 * low), char_color, charred * 0.96);
+    let up = smoothstep(0.2, 0.9, (*s).normal.y);
+    // Charred steel: near-black soot, grey-white ash settled on the faces turned
+    // up to the fire, a little blistered rust-brown low on the sides, and only
+    // rare scraps of the paint. Dark values so the fire on it is the only warm
+    // thing about it.
+    let paint = smoothstep(0.78, 0.9, soot + 0.06 * (1.0 - low));
+    let rusted = smoothstep(0.5, 0.66, soot) * (1.0 - paint) * (1.0 - up) * 0.7;
+    let steel = vec3f(0.028, 0.026, 0.025) * (0.7 + 0.6 * soot);
+    let ash = vec3f(0.16, 0.155, 0.15) * (0.6 + 0.6 * wreck_noise(p * 4.3 + vec2f(2.9, 5.1)));
+    let ashen = up * smoothstep(0.35, 0.65, wreck_noise(p * 1.7 + vec2f(9.1, 4.4)));
+    var burnt = mix(steel, vec3f(0.075, 0.042, 0.026), rusted);
+    burnt = mix(burnt, ash, ashen * 0.85);
+    let kept = (*s).color * (0.3 + 0.15 * soot);
+    let char_color = mix(burnt, kept, paint * 0.6);
+    (*s).color = mix((*s).color * (0.86 + 0.2 * soot - 0.12 * low), char_color, charred * 0.97);
     (*s).color *= mix(1.0, 0.85 + 0.15 * brightness / 0.8, 1.0 - charred);
-    (*s).emissive *= brightness;
-    // Seams and low panels smoulder: thin bright cracks that breathe.
-    let crack = wreck_noise(p * 3.3 + vec2f(7.1, 2.3));
-    let sparse = smoothstep(0.55, 0.75, wreck_noise(p * 0.8 + vec2f(3.7, 1.9)));
-    let seam = smoothstep(0.035, 0.0, abs(crack - 0.5)) * sparse;
-    let breathe = 0.6 + 0.4 * sin(frame.camera_position.w * 3.1 + soot * 11.0);
-    let heat = mix(1.0, 0.45, charred);
-    (*s).emissive += vec3f(1.8, 0.4, 0.05) * seam * breathe * heat * charred * (0.3 + 0.7 * low);
+    (*s).roughness = mix((*s).roughness, 0.95, charred);
+    // Embers glow only from faces turned up toward the fire, deep in a hatch or
+    // the turret well, never as a disc on an upturned belly.
+    (*s).emissive *= brightness * 0.55 * up;
 }

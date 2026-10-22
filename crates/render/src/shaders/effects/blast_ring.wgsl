@@ -69,9 +69,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let r = length(point + warp * 0.45) + (fine - 0.5) * 0.12;
         let around = point / max(radius, 1e-4);
         let rays = smoothstep(0.45, 0.85, ring_noise(around * 2.2 + seed) * 0.7 + ring_noise(around * 4.5 - seed) * 0.3);
-        let heart = 1.0 - smoothstep(0.06, 0.55, r);
+        let heart = 1.0 - smoothstep(0.08, 0.66, r);
         let reach = rays * (1.0 - smoothstep(0.25, 0.86, r + (n - 0.5) * 0.2)) * smoothstep(0.05, 0.3, r);
-        let burn = clamp(heart * (0.8 + 0.3 * n) + reach * 0.38, 0.0, 1.0) * (0.85 + 0.15 * fine);
+        let burn = clamp(heart * (0.85 + 0.3 * n) + reach * 0.5, 0.0, 1.0) * (0.85 + 0.15 * fine);
         let soot = mix(vec3f(0.075, 0.055, 0.04), vec3f(0.012, 0.011, 0.01), smoothstep(0.15, 0.85, heart));
         let clumps = smoothstep(0.55, 0.8, ring_noise(point * 6.0 + seed * 0.4) * 0.65 + fine * 0.45);
         let thrown = smoothstep(0.42, 0.6, r) * (1.0 - smoothstep(0.62, 0.92, r)) * clumps;
@@ -134,17 +134,21 @@ fn wall_mark(
         return;
     }
     let skin = (*s).color;
-    let pit = 1.0 - smoothstep(0.14, 0.38, r);
-    let chipped = smoothstep(0.12, 0.34, r) * (1.0 - smoothstep(0.5, 0.72, r)) * (0.65 + 0.45 * fine);
+    // A ragged pit, broken stone round it in clumps rather than a ring (a full
+    // pale ring reads as a stamped icon from the camera), cracks, and a broad,
+    // uneven soot halo that carries the mark at a distance.
+    let pit = 1.0 - smoothstep(0.1, 0.3, r + (n - 0.5) * 0.15);
+    let clumps = smoothstep(0.45, 0.75, ring_noise(point * 6.5 + seed * 0.8));
+    let chipped = smoothstep(0.1, 0.3, r) * (1.0 - smoothstep(0.38, 0.6, r)) * clumps * (0.6 + 0.4 * fine);
     // Ridged noise draws thin cracks running out from the pit.
     let ridge = 1.0 - abs(ring_noise((point + warp * 0.4) * 4.2 + seed) * 2.0 - 1.0);
     let cracks = smoothstep(0.9, 0.975, ridge) * (1.0 - smoothstep(0.45, 0.92, r));
-    let scorch = (1.0 - smoothstep(0.2, 0.85, r)) * 0.38 * exp(-age / 20.0);
-    let broken = min(skin * 1.3 + vec3f(0.06), vec3f(1.0));
-    var color = mix(skin * 0.3, broken, chipped / max(chipped + scorch, 1e-4));
-    color = mix(color, skin * 0.16, pit);
-    color = mix(color, skin * 0.22, cracks);
-    let alpha = max(max(pit * 0.92, chipped * 0.85), max(cracks * 0.8, scorch));
+    let scorch = (1.0 - smoothstep(0.15, 0.9, r + (n - 0.5) * 0.3)) * (0.55 + 0.25 * exp(-age / 20.0));
+    let broken = min(skin * 1.12 + vec3f(0.03), vec3f(1.0));
+    var color = mix(skin * 0.22, broken, chipped / max(chipped + scorch, 1e-4));
+    color = mix(color, skin * 0.1, pit);
+    color = mix(color, skin * 0.18, cracks);
+    let alpha = max(max(pit * 0.95, chipped * 0.7), max(cracks * 0.8, scorch));
     (*s).color = color;
     (*s).opacity = clamp(alpha, 0.0, 1.0) * edge * strength;
 }

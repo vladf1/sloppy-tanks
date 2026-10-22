@@ -48,8 +48,8 @@ const CLEAR_LANDINGS: [[f64; 2]; 8] = [
 /// Peak heights (m) a breakup lifts the hull, the turret, and the turret on a
 /// one-in-four ammunition cook-off: tens of tonnes jump, they do not fly.
 const HULL_PEAK: [f64; 2] = [0.5, 1.2];
-const TURRET_PEAK: [f64; 2] = [1.8, 3.6];
-const COOK_OFF_PEAK: [f64; 2] = [4.5, 6.5];
+const TURRET_PEAK: [f64; 2] = [1.5, 3.0];
+const COOK_OFF_PEAK: [f64; 2] = [3.4, 5.0];
 /// Spin (rad/s) of a thrown turret or gun; the hull turns at this share of it,
 /// and tips (pitch and roll) at a smaller share again, so it lands on its tracks
 /// a little askew rather than on its end.
@@ -57,7 +57,7 @@ const PIECE_SPIN: [f64; 2] = [4.0, 8.0];
 const HULL_SPIN: f64 = 0.2;
 const HULL_TIP: f64 = 0.35;
 /// A tumbling Humvee is thrown the way it tips: m/s per rad/s of its roll and pitch.
-const HUMVEE_THROW: f64 = 0.45;
+const HUMVEE_THROW: f64 = 0.25;
 /// A quiet burnout's hop (m): a jolt as the ammunition goes, not a launch.
 const BURNOUT_HOP: f64 = 0.35;
 

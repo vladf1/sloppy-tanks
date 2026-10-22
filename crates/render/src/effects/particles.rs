@@ -35,11 +35,11 @@ const PLATE_REST: f64 = 0.16;
 /// A shell striking a container's steel: a hard shower of sparks off the face,
 /// and flakes of its paint and bare metal knocked off it ([minimum, span]).
 const SHEET_SPARKS: Burst = Burst {
-    count: 22,
+    count: 34,
     speed: [6.0, 16.0],
     lift: 0.5,
-    life: [0.25, 0.55],
-    width: 0.075,
+    life: [0.3, 0.6],
+    width: 0.1,
     color: [3.8, 1.6, 0.36],
     gravity: 13.0,
     scatter: 0.12,
@@ -47,14 +47,14 @@ const SHEET_SPARKS: Burst = Burst {
     hide: 0.0,
     cools: true,
 };
-const FLAKES: usize = 7;
-const FLAKE_SIZE: [f64; 2] = [0.06, 0.08];
+const FLAKES: usize = 11;
+const FLAKE_SIZE: [f64; 2] = [0.07, 0.1];
 const BARE_STEEL: u32 = 0x8d9296;
 /// Concrete and stone spall knocked off a wall by a shell: count, life (s),
 /// size (m) and the grey it is (mixed with the ground's dust at the hit).
-const SPALL: usize = 12;
-const SPALL_LIFE: [f64; 2] = [3.0, 2.0];
-const SPALL_SIZE: [f64; 2] = [0.06, 0.12];
+const SPALL: usize = 18;
+const SPALL_LIFE: [f64; 2] = [7.0, 4.0];
+const SPALL_SIZE: [f64; 2] = [0.07, 0.14];
 const SPALL_COLORS: [u32; 3] = [0x9d968b, 0xb8b2a6, 0x7c776f];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -169,9 +169,9 @@ const SNAP_SPLINTERS: usize = 16;
 /// and the scorched steel it is; it lies in the scorch long after the smoke.
 const SCRAP: usize = 8;
 const SCRAP_LIFE: [f64; 2] = [8.0, 4.0];
-const SCRAP_SIZE: [f64; 2] = [0.07, 0.09];
+const SCRAP_SIZE: [f64; 2] = [0.08, 0.14];
 const SCRAP_COLORS: [u32; 3] = [0x55534d, 0x6a5444, 0x45433f];
-const CLOD_GLOW: [f32; 3] = [3.4, 1.05, 0.16];
+const CLOD_GLOW: [f32; 3] = [2.2, 0.62, 0.09];
 const HURT: Style = Style {
     count: 12,
     life: [0.22, 0.16],
@@ -409,12 +409,12 @@ impl ParticleEffects {
             let life = SPALL_LIFE[0] + random.next_f64() * SPALL_LIFE[1];
             let (bx, bz) = back.unwrap_or((random.next_f64() - 0.5, random.next_f64() - 0.5));
             let spread = 3.2;
-            let vx = bx * 2.6 + (random.next_f64() - 0.5) * spread;
-            let vz = bz * 2.6 + (random.next_f64() - 0.5) * spread;
-            let vy = 1.5 + random.next_f64() * 3.5;
-            // A few big lumps among the grit.
+            let vx = bx * 3.4 + (random.next_f64() - 0.5) * spread;
+            let vz = bz * 3.4 + (random.next_f64() - 0.5) * spread;
+            let vy = 2.0 + random.next_f64() * 4.5;
+            // A few heavy chunks among the grit.
             let size = (SPALL_SIZE[0] + random.next_f64() * SPALL_SIZE[1])
-                * if i % 4 == 0 { 1.9 } else { 1.0 };
+                * if i % 4 == 0 { 2.3 } else { 1.0 };
             let grey = hex_to_linear(SPALL_COLORS[i % SPALL_COLORS.len()]);
             let color = match skin {
                 Some(skin) => [0, 1, 2].map(|c| {
@@ -581,7 +581,9 @@ impl ParticleEffects {
                 max: life,
                 size,
                 color: hex_to_linear(soil.clods[i % soil.clods.len()]),
-                hot: if i % 3 == 0 { 0.7 } else { 0.25 },
+                // A few embers among dark clods, so they read as earth flung out
+                // of the fire, not glowing confetti inside it.
+                hot: if i % 4 == 0 { 0.4 } else { 0.0 },
                 glow: 0.0,
                 rests: true,
                 plate: false,
@@ -644,10 +646,10 @@ impl ParticleEffects {
                 max: life,
                 size: SCRAP_SIZE[0] + random.next_f64() * SCRAP_SIZE[1],
                 color: hex_to_linear(SCRAP_COLORS[i % SCRAP_COLORS.len()]),
-                hot: 0.5,
+                hot: 0.3,
                 glow: 0.0,
                 rests: true,
-                plate: i % 4 != 3,
+                plate: i % 2 == 0,
             });
         }
     }

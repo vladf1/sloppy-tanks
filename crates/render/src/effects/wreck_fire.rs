@@ -25,7 +25,9 @@ const SMOKE_PUFFS: usize = 10;
 const FLAME_PUFFS: usize = 3;
 const TRAIL_PUFFS: usize = 6;
 /// The turret's trail and the tumbling hull's.
-pub const PUFFS_PER_WRECK: usize = SMOKE_PUFFS + FLAME_PUFFS + 2 * TRAIL_PUFFS;
+/// Two rolling balls of fire over each burning spot, half a flicker apart.
+const FIRE_BALLS: usize = 2;
+pub const PUFFS_PER_WRECK: usize = SMOKE_PUFFS + FIRE_BALLS * FLAME_PUFFS + 2 * TRAIL_PUFFS;
 /// Flames burn this long; smoke keeps rising for longer.
 const BURN_SECONDS: f64 = 12.0;
 const SMOULDER_SECONDS: f64 = 24.0;
@@ -66,8 +68,14 @@ const EMBER_INTERVAL: f64 = 0.35;
 /// The fire's glow on the ground (m across) and its light.
 const GLOW_SIZE: f32 = 7.0;
 const GLOW_COLOR: [f32; 3] = [0.9, 0.34, 0.07];
-const FIRE_LIGHT: f64 = 24.0;
-const FIRE_LIGHT_COLOR: u32 = 0xff7a30;
+const FIRE_LIGHT: f64 = 13.0;
+const FIRE_LIGHT_COLOR: u32 = 0xff9a55;
+/// The firelight hangs this high over the hull (m), so the hull it burns on is
+/// lit warm from above rather than painted orange.
+const FIRE_LIGHT_HEIGHT: f32 = 3.2;
+/// Burning fuel spilled on the ground beside the hull: where (m, across and
+/// along the hull in its own heading) and how big each pool's licks are.
+const GROUND_FIRES: [[f32; 3]; 2] = [[1.45, -0.6, 0.62], [-1.35, 0.9, 0.5]];
 /// The flames' brightness multiplier (the shader shades yellow root to red tip).
 const FLAME_COLOR: [f32; 3] = [0.82, 0.78, 0.78];
 /// A cleared wreck's fire and smoke die away this fast (1/s).
@@ -188,7 +196,7 @@ impl WreckFires {
             super::offer_light(
                 lights,
                 Flash {
-                    position: burner.position + Vec3::Y * 2.2,
+                    position: burner.position + Vec3::Y * FIRE_LIGHT_HEIGHT,
                     intensity: (FIRE_LIGHT * burner.fire) as f32,
                     color: FIRE_LIGHT_COLOR,
                 },
@@ -361,7 +369,8 @@ fn draw(
         let lap = cycle.floor();
         let swirl = (lap * 2.3 + j as f64 + burner.seed * 7.0).sin() * (0.25 + 0.4 * a);
         let rise = a.powf(0.8);
-        let lean = a * a * SMOKE_CYCLE;
+        // The wind shears the column more the higher it climbs.
+        let lean = a * a * SMOKE_CYCLE * 1.3;
         let position = Vec3::new(
             top.x + (WIND[0] * lean + swirl) as f32,
             top.y + (0.3 + COLUMN_HEIGHT * rise) as f32,
@@ -369,9 +378,9 @@ fn draw(
         );
         let pale = smoothstep(a, 0.05, 0.9) as f32;
         let color = [0, 1, 2].map(|i| soot[i] + (soot_high[i] - soot[i]) * pale);
-        let size = (0.65 + 1.9 * a.powf(0.85)) * vigour;
+        let size = (0.8 + 2.5 * a.powf(0.85)) * vigour;
         // Born quickly at the fire, densest low, thinning out as it spreads.
-        let opacity = smoke * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.4, 1.0)) * 0.72;
+        let opacity = smoke * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.4, 1.0)) * 0.86;
         smoke_puff(
             puffs,
             position,
@@ -400,29 +409,36 @@ fn draw(
     let side = Vec3::new(-WIND[1] as f32, 0.0, WIND[0] as f32).normalize();
     for (j, spot) in FLAME_SPOTS.into_iter().enumerate() {
         let size = FLAME_SIZES[j] * vigour as f32;
-        let cycle = age / FLAME_CYCLE + j as f64 / FLAME_PUFFS as f64 + burner.seed;
-        let a = cycle.fract();
-        let lap = cycle.floor();
         let at = deck(spot);
-        let jitter = ((lap + j as f64) * 1.7).sin() * 0.15;
-        let heat = fire * 0.85 * (1.0 - a * 0.8);
-        // A rolling ball of fire over each spot that cools into the column.
-        smoke_puff(
-            puffs,
-            Vec3::new(
-                at.x + (WIND[0] * a * 0.5 + jitter) as f32,
-                at.y + (0.25 + 1.5 * a) as f32 * size,
-                at.z + (WIND[1] * a * 0.5 - jitter) as f32,
-            ),
-            (0.75 - 0.25 * a) as f32 * size,
-            soot,
-            (fire * (a / 0.12).min(1.0) * (1.0 - a) * 0.85) as f32,
-            (burner.seed * 5.3 + lap * 0.61 + j as f64 * 0.29) as f32,
-            heat as f32,
-            (a * 0.7) as f32,
-            0.0,
-            0.0,
-        );
+        // Rolling balls of fire over each spot, born hot in the opening and
+        // cooling through orange into the soot of the column as they climb: the
+        // blaze's body, which the licks only fringe.
+        for ball in 0..FIRE_BALLS {
+            let cycle = age / FLAME_CYCLE
+                + j as f64 / FLAME_PUFFS as f64
+                + ball as f64 / FIRE_BALLS as f64
+                + burner.seed;
+            let a = cycle.fract();
+            let lap = cycle.floor();
+            let jitter = ((lap + j as f64 + ball as f64 * 0.5) * 1.7).sin() * 0.18;
+            let heat = fire * (1.05 - a * 0.95);
+            smoke_puff(
+                puffs,
+                Vec3::new(
+                    at.x + (WIND[0] * a * 0.6 + jitter) as f32,
+                    at.y + (0.2 + 1.7 * a) as f32 * size,
+                    at.z + (WIND[1] * a * 0.6 - jitter) as f32,
+                ),
+                (0.7 + 0.35 * a) as f32 * size,
+                soot,
+                (fire * (a / 0.1).min(1.0) * (1.0 - a * a) * 0.92) as f32,
+                (burner.seed * 5.3 + lap * 0.61 + j as f64 * 0.29 + ball as f64 * 0.47) as f32,
+                heat as f32,
+                (smoothstep(a, 0.3, 1.0) * 0.75) as f32,
+                0.0,
+                0.0,
+            );
+        }
         // Licks of flame over each burning spot, each its own height and sway,
         // leaning on the wind.
         let [r, g, b] = FLAME_COLOR;
@@ -438,13 +454,13 @@ fn draw(
                 &mut sparks.records,
                 at + spread + Vec3::Y * 0.05,
                 lean.normalize(),
-                (1.1 - 0.2 * (kf - 1.0).abs()) * size,
-                ((1.3 + 0.3 * breathe)
+                (1.5 - 0.2 * (kf - 1.0).abs()) * size,
+                ((0.85 + 0.2 * breathe)
                     * (1.0 - 0.25 * (kf - 1.0).abs())
                     * (0.55 + 0.45 * fire as f32))
                     * size,
                 (burner.seed as f32 * 3.7 + j as f32 * 0.31 + kf * 0.17).fract(),
-                [r, g, b, (fire * (0.8 + 0.2 * flicker)) as f32],
+                [r, g, b, (fire * (0.5 + 0.15 * flicker)) as f32],
             );
         }
         // A soft heat glow behind the tongues gives the fire body, so it reads
@@ -454,6 +470,23 @@ fn draw(
             at + Vec3::Y * (0.55 * size),
             FLAME_GLOW * size,
             [1.0, 0.42, 0.09, (fire * 0.26 * flicker) as f32],
+        );
+    }
+    // Fuel spilled round the hull burns low on the ground beside it.
+    let [r, g, b] = FLAME_COLOR;
+    for (j, [across, along, size]) in GROUND_FIRES.into_iter().enumerate() {
+        let jf = j as f32;
+        let at = base + heading * Vec3::new(across, 0.0, along);
+        let breathe = (time as f32 * 6.1 + burner.seed as f32 * 17.0 + jf * 2.9).sin();
+        let size = size * vigour as f32;
+        flame(
+            &mut sparks.records,
+            Vec3::new(at.x, 0.04, at.z),
+            (up + side * 0.12 * breathe).normalize(),
+            1.5 * size,
+            (0.95 + 0.2 * breathe) * size * (0.5 + 0.5 * fire as f32),
+            (burner.seed as f32 * 5.9 + jf * 0.37).fract(),
+            [r, g, b, (fire * 0.85) as f32],
         );
     }
     burner.ember_clock += dt;
@@ -470,7 +503,7 @@ fn draw(
         &mut sparks.records,
         Vec3::new(base.x, 0.1, base.z),
         size,
-        [r, g, b, (burner.fire * 0.8) as f32],
+        [r, g, b, (burner.fire * 0.45) as f32],
     );
 }
 

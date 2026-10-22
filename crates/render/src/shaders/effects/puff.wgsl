@@ -27,9 +27,21 @@ fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     let right = normalize(cross(up, to_eye));
     let lowest = v.instance_origin.y - abs(up.y) * height;
     let lift = max(0.06 - lowest, 0.0) / max(to_eye.y, 0.2);
-    let pull = min(max(radius * 0.6, lift), length(to_eye_far) * 0.4);
-    (*w).position = v.instance_origin + to_eye * pull + right * corner.x + up * corner.y;
+    let far = length(to_eye_far);
+    let pull = min(max(radius * 0.6, lift), far * 0.4);
+    // Fire engulfs what it burns: a hot puff's card stands further forward, clear
+    // of the hull inside it, so no armour edge slices the fireball into strips;
+    // the card shrinks by the same perspective, so the ball keeps its size on
+    // screen.
+    let engulf = min(PUFF_ENGULF * smoothstep(0.15, 0.6, v.instance_data.y), far * 0.55 - pull);
+    let shrink = (far - pull - max(engulf, 0.0)) / max(far - pull, 1e-3);
+    (*w).position = v.instance_origin + to_eye * (pull + max(engulf, 0.0))
+        + (right * corner.x + up * corner.y) * shrink;
 }
+
+// How much further toward the eye a hot puff's card stands (m): about a hull's
+// half length, so fire inside or behind a vehicle draws over it.
+const PUFF_ENGULF: f32 = 3.0;
 
 fn puff_hash(p: vec2f) -> f32 {
     var q = fract(vec3f(p.x, p.y, p.x) * 0.1031);
@@ -65,7 +77,7 @@ fn puff_fire(t: f32) -> vec3f {
 fn puff_bands(t: f32) -> f32 {
     let f = t * 4.0;
     let step = floor(f) + smoothstep(0.2, 0.8, fract(f));
-    return mix(t, step / 4.0, 0.2);
+    return mix(t, step / 4.0, 0.12);
 }
 
 // Smoke thins as the wall behind it comes within this distance (m) along the
@@ -73,6 +85,9 @@ fn puff_bands(t: f32) -> f32 {
 // along a hard line; and as the ground does, within a shorter one.
 const PUFF_WALL_SOFTNESS: f32 = 1.2;
 const PUFF_GROUND_SOFTNESS: f32 = 0.3;
+// Smoke this close to the camera (m) thins away, so a billow drifting up past a
+// low camera never becomes a flat curtain over the view.
+const PUFF_NEAR_FADE: vec2f = vec2f(1.5, 6.0);
 
 // How much of a puff survives at world point `p`: the ground's and the walls'
 // soft-particle fade along the view. The walls are material.params: up to three
@@ -82,9 +97,9 @@ fn puff_wall_fade(p: vec3f) -> f32 {
     let ray = normalize(p - frame.camera_position.xyz);
     // Every component away from zero, so the slabs' divisions stay finite.
     let dir = select(ray, vec3f(1e-4), abs(ray) < vec3f(1e-4));
-    var fade = 1.0;
+    var fade = smoothstep(PUFF_NEAR_FADE.x, PUFF_NEAR_FADE.y, length(p - frame.camera_position.xyz));
     if dir.y < 0.0 {
-        fade = smoothstep(0.0, PUFF_GROUND_SOFTNESS, p.y / -dir.y);
+        fade = min(fade, smoothstep(0.0, PUFF_GROUND_SOFTNESS, p.y / -dir.y));
     }
     let count = material.params[3].w;
     if count > 0.5 {
@@ -163,7 +178,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             let noise = n1 * 0.55 + n2 * 0.3 + n3 * 0.15;
             let edge = radius + (noise - 0.5) * lumpiness + (n3 - 0.5) * 0.04
                 + erosion * (0.25 + 0.55 * (1.0 - noise));
-            let feather = mix(0.2, 0.56, softness) + erosion * 0.16 + fiery * 0.02;
+            // Fire keeps a crisper edge than smoke, so its billows read as
+            // shapes rather than a blur.
+            let feather = mix(0.2, 0.56, softness) * (1.0 - 0.4 * fiery) + erosion * 0.16;
             // The card's own edge is always clear, however far the noise pushes the
             // rim, so no puff shows the straight side of its quad.
             let window = 1.0 - smoothstep(0.8, 1.0, radius);
@@ -220,10 +237,13 @@ fn puff_color(
         // As a fire puff cools its rim goes first, through deep red into the soot it
         // carries, so a fireball keeps a dark smoky rim and then turns to smoke.
         let core = clamp(1.0 - radius * 0.85, 0.0, 1.0);
-        // Broad noise only, so the bands cool in large lobes rather than speckles.
-        let broad = n1 * 0.85 + n2 * 0.15;
-        let temperature = puff_bands(heat * (0.18 + 0.82 * core * core) * (0.4 + 0.9 * broad));
-        glow = smoothstep(0.03, 0.28, temperature);
+        // Broad noise only, so the bands cool in large lobes rather than speckles,
+        // sharpened so the fire splits into bright billows with dark creases of
+        // soot laced between them rather than one flat orange blob.
+        let broad = mix(n1 * 0.85 + n2 * 0.15, noise, 0.35);
+        let lobes = smoothstep(0.2, 0.8, broad);
+        let temperature = puff_bands(heat * (0.14 + 0.86 * core * core) * (0.2 + 1.25 * lobes));
+        glow = smoothstep(0.05, 0.32, temperature);
         // Each lobe of a fireball is brighter on its upper face and deepens into
         // its folds, so the fire keeps its rolling volume.
         let lobe = 0.5 + 0.7 * smoothstep(-0.35, 0.85, dot(normal, frame.camera_up.xyz) * 0.7 + (n2 - 0.5) * 0.9)
