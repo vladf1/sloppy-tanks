@@ -165,6 +165,8 @@ const BASTION_BULGE: f64 = 0.055;
 const BASTION_ATLAS_HEIGHT: f64 = 1.2;
 /// Inset of an atlas half's UVs, so filtering never reaches the other half.
 const ATLAS_GUTTER: f64 = 0.004;
+/// Vertex shade of a cell's sand fill against its liner.
+const FILL_SHADE: f32 = 0.84;
 
 static BASTION_WALLS: Cache<[u64; 3], Mesh> = Cache::new();
 static BASTION_MATERIAL: Cache<(), Material> = Cache::new();
@@ -187,9 +189,8 @@ fn bastion_material() -> Arc<Material> {
 /// running across X leaves its ends to the walls running along Z, which own the
 /// corners. One mesh per wall shape, one draw.
 pub fn bastion_wall(w: f64, h: f64, d: f64) -> Node {
-    let mesh = BASTION_WALLS.get_or_insert([w, h, d].map(f64::to_bits), || {
-        bastion_geometry(w, h, d)
-    });
+    let mesh =
+        BASTION_WALLS.get_or_insert([w, h, d].map(f64::to_bits), || bastion_geometry(w, h, d));
     shadowed(mesh, bastion_material())
 }
 
@@ -245,9 +246,11 @@ impl Patches {
             self.colors.push(color);
         }
         if normal.dot(facing) < 0.0 {
-            self.indices.extend([base, base + 2, base + 1, base, base + 3, base + 2]);
+            self.indices
+                .extend([base, base + 2, base + 1, base, base + 3, base + 2]);
         } else {
-            self.indices.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+            self.indices
+                .extend([base, base + 1, base + 2, base, base + 2, base + 3]);
         }
     }
 }
@@ -256,7 +259,11 @@ fn bastion_geometry(w: f64, h: f64, d: f64) -> Mesh {
     let along_x = w > d;
     let (length, thickness) = if along_x { (w, d) } else { (d, w) };
     // Walls across X stop short of the corner squares the Z walls fill.
-    let span = if along_x { length - thickness * 2.0 } else { length };
+    let span = if along_x {
+        length - thickness * 2.0
+    } else {
+        length
+    };
     let cells = (span / BASTION_CELL).round().max(1.0) as usize;
     let rows = (thickness / BASTION_CELL).round().max(1.0) as usize;
     let (step, depth) = (span / cells as f64, thickness / rows as f64);
@@ -338,7 +345,7 @@ fn bastion_geometry(w: f64, h: f64, d: f64) -> Mesh {
             // presses hardest, and pinches in at the mesh edges.
             let swell = |s: f64, t: f64| {
                 let across = (PI * s).sin();
-                let up = [0.35, 1.0, 0.2][(t * 2.0).round() as usize];
+                let up = [0.35, 1.0, 0.0][(t * 2.0).round() as usize];
                 bulge * across * up
             };
             let foot = tint.map(|c| c * 0.82);
@@ -364,7 +371,10 @@ fn bastion_geometry(w: f64, h: f64, d: f64) -> Mesh {
                 patches.grid(points, uvs, colors, out_b(outward));
             }
             // The wall's ends, where nothing stands beyond them.
-            for (exposed, a, outward) in [(i == 0 && !along_x, a0, -1.0), (i + 1 == cells && !along_x, a0 + step, 1.0)] {
+            for (exposed, a, outward) in [
+                (i == 0 && !along_x, a0, -1.0),
+                (i + 1 == cells && !along_x, a0 + step, 1.0),
+            ] {
                 if !exposed {
                     continue;
                 }
@@ -382,40 +392,43 @@ fn bastion_geometry(w: f64, h: f64, d: f64) -> Mesh {
                 }
                 patches.grid(points, uvs, colors, out_a(outward));
             }
-            // The sand fill, settled a little under the rim and heaped or slumped
-            // in the middle; its edges meet the sides' top rows.
-            let edge_push = |s: f64, side_b: Option<f64>| {
-                side_b.map_or(0.0, |outward| swell(s, 1.0) * outward)
-            };
-            let mut points = [[DVec3::ZERO; 3]; 3];
-            let mut uvs = [[[0.0; 2]; 3]; 3];
+            // The sand fill, heaped or slumped in the middle under the mesh rim:
+            // a fan from its crown to the rim's corners (the sides pinch in to the
+            // rim, so its edges meet theirs).
             let crown = top + rng.range(-0.02, 0.08);
-            for (row, t) in [0.0, 0.5, 1.0].into_iter().enumerate() {
-                for (column, s) in [0.0, 0.5, 1.0].into_iter().enumerate() {
-                    let a = a0 + step * s;
-                    let mut b = b0 + depth * t;
-                    let rim = row != 1 || column != 1;
-                    let y = if !rim {
-                        crown
-                    } else if row == 1 || column == 1 {
-                        top - 0.01
-                    } else {
-                        top
-                    };
-                    if row == 0 && j == 0 {
-                        b += edge_push(s, Some(-1.0));
-                    }
-                    if row == 2 && j + 1 == rows {
-                        b += edge_push(s, Some(1.0));
-                    }
-                    points[row][column] = world(a, y, b);
-                    uvs[row][column] = [
-                        0.5 + ATLAS_GUTTER + s * (0.5 - ATLAS_GUTTER * 2.0),
-                        ATLAS_GUTTER + t * (1.0 - ATLAS_GUTTER * 2.0),
-                    ];
+            let base = (patches.positions.len() / 3) as u32;
+            let top_u = |s: f64| 0.5 + ATLAS_GUTTER + s * (0.5 - ATLAS_GUTTER * 2.0);
+            let top_v = |t: f64| ATLAS_GUTTER + t * (1.0 - ATLAS_GUTTER * 2.0);
+            for (s, t, y) in [
+                (0.5, 0.5, crown),
+                (0.0, 0.0, top),
+                (1.0, 0.0, top),
+                (1.0, 1.0, top),
+                (0.0, 1.0, top),
+            ] {
+                let p = world(a0 + step * s, y, b0 + depth * t);
+                patches.positions.extend([p.x, p.y, p.z]);
+                patches.uvs.extend([top_u(s), top_v(t)]);
+                // The fill faces the sky square on: held down a shade so it never
+                // reads brighter than the floor beside it.
+                patches.colors.push(tint.map(|c| c * FILL_SHADE));
+            }
+            for k in 0..4u32 {
+                let (a, b) = (base + 1 + k, base + 1 + (k + 1) % 4);
+                let (pa, pb, pc) = (
+                    patches.positions[(a * 3) as usize..(a * 3 + 3) as usize].to_vec(),
+                    patches.positions[(b * 3) as usize..(b * 3 + 3) as usize].to_vec(),
+                    patches.positions[(base * 3) as usize..(base * 3 + 3) as usize].to_vec(),
+                );
+                let up = (DVec3::new(pb[0] - pa[0], pb[1] - pa[1], pb[2] - pa[2]))
+                    .cross(DVec3::new(pc[0] - pa[0], pc[1] - pa[1], pc[2] - pa[2]))
+                    .y;
+                if up >= 0.0 {
+                    patches.indices.extend([a, b, base]);
+                } else {
+                    patches.indices.extend([a, base, b]);
                 }
             }
-            patches.grid(points, uvs, [[tint; 3]; 3], DVec3::Y);
             // Steps where a cell stands above its neighbour along or across.
             let next_along = (i + 1 < cells).then(|| heights[i + 1][j]);
             let prev_along = (i > 0).then(|| heights[i - 1][j]);
@@ -426,19 +439,40 @@ fn bastion_geometry(w: f64, h: f64, d: f64) -> Mesh {
                 if let Some(low) = neighbour.filter(|&low| low < top - 0.003) {
                     let (b_from, b_to) = (b0, b0 + depth);
                     patches.quad(
-                        [world(a, low, b_from), world(a, low, b_to), world(a, top, b_to), world(a, top, b_from)],
-                        [[step_u(0.0), side_v(low)], [step_u(1.0), side_v(low)], [step_u(1.0), side_v(top)], [step_u(0.0), side_v(top)]],
+                        [
+                            world(a, low, b_from),
+                            world(a, low, b_to),
+                            world(a, top, b_to),
+                            world(a, top, b_from),
+                        ],
+                        [
+                            [step_u(0.0), side_v(low)],
+                            [step_u(1.0), side_v(low)],
+                            [step_u(1.0), side_v(top)],
+                            [step_u(0.0), side_v(top)],
+                        ],
                         tint,
                         out_a(outward),
                     );
                 }
             }
-            for (neighbour, b, outward) in [(next_across, b0 + depth, 1.0), (prev_across, b0, -1.0)] {
+            for (neighbour, b, outward) in [(next_across, b0 + depth, 1.0), (prev_across, b0, -1.0)]
+            {
                 if let Some(low) = neighbour.filter(|&low| low < top - 0.003) {
                     let (a_from, a_to) = (a0, a0 + step);
                     patches.quad(
-                        [world(a_from, low, b), world(a_to, low, b), world(a_to, top, b), world(a_from, top, b)],
-                        [[step_u(0.0), side_v(low)], [step_u(1.0), side_v(low)], [step_u(1.0), side_v(top)], [step_u(0.0), side_v(top)]],
+                        [
+                            world(a_from, low, b),
+                            world(a_to, low, b),
+                            world(a_to, top, b),
+                            world(a_from, top, b),
+                        ],
+                        [
+                            [step_u(0.0), side_v(low)],
+                            [step_u(1.0), side_v(low)],
+                            [step_u(1.0), side_v(top)],
+                            [step_u(0.0), side_v(top)],
+                        ],
                         tint,
                         out_b(outward),
                     );
@@ -450,24 +484,4 @@ fn bastion_geometry(w: f64, h: f64, d: f64) -> Mesh {
     mesh.colors = patches.colors;
     mesh.compute_vertex_normals();
     mesh
-}
-
-#[cfg(test)]
-mod tmp_count {
-    use crate::scene::Node;
-    fn casters(node: &Node, out: &mut (usize, usize)) {
-        if let Some(d) = &node.drawable {
-            let mesh = &d.mesh;
-            let t = mesh.indices.as_ref().map_or(mesh.vertex_count(), Vec::len) / 3;
-            let n = d.instances.as_ref().map_or(1, |i| i.len());
-            if d.cast_shadow { out.0 += t * n; } else { out.1 += t * n; }
-        }
-        for c in &node.children { casters(c, out); }
-    }
-    #[test]
-    fn tmp_count_triangles() {
-        let mut out = (0, 0);
-        casters(&crate::models::quarry_scenery::quarry_scenery(), &mut out);
-        eprintln!("quarry scenery casters {} receivers-only {}", out.0, out.1);
-    }
 }

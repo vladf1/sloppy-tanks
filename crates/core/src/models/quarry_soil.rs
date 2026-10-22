@@ -10,6 +10,8 @@ use std::sync::OnceLock;
 
 use crate::geometry::math::{js_hypot, lerp, smoothstep};
 use crate::sim::math::Random;
+use crate::sim::quarry_layout::quarry_layout;
+use crate::sim::types::CoverKind;
 
 use super::quarry_terrain::QUARRY_BANK_TOP;
 
@@ -65,6 +67,41 @@ fn sample_accum(grid: &[f32], x: f64, z: f64) -> f64 {
         + at(i + 1, j) * u * (1.0 - v)
         + at(i, j + 1) * (1.0 - u) * v
         + at(i + 1, j + 1) * u * v
+}
+
+/// Rock covers' footprints as rounded rectangles: centre x/z, half width and
+/// depth, corner radius. The rocks are indestructible, so the shade and stone
+/// baked round their feet never outlive them.
+fn rock_footprints() -> &'static [[f64; 5]] {
+    static ROCKS: OnceLock<Vec<[f64; 5]>> = OnceLock::new();
+    ROCKS.get_or_init(|| {
+        quarry_layout()
+            .into_iter()
+            .filter(|cover| cover.kind == CoverKind::Rock)
+            .map(|c| [c.x, c.z, c.w / 2.0, c.d / 2.0, c.w.min(c.d) * 0.3])
+            .collect()
+    })
+}
+
+/// How far the shade pooled at a rock's foot and the stones it sheds reach from
+/// its footprint, metres.
+const ROCK_CONTACT_REACH: f64 = 2.4;
+const ROCK_SHED_REACH: f64 = 3.6;
+
+/// Distance (metres) from x/z to the nearest rock footprint's edge, negative
+/// inside, capped at `reach`.
+fn rock_distance(x: f64, z: f64, reach: f64) -> f64 {
+    let mut best = reach;
+    for &[cx, cz, half_w, half_d, round] in rock_footprints() {
+        let qx = (x - cx).abs() - (half_w - round);
+        let qz = (z - cz).abs() - (half_d - round);
+        if qx > best + round || qz > best + round {
+            continue;
+        }
+        let d = js_hypot(&[qx.max(0.0), qz.max(0.0)]) + qx.max(qz).min(0.0) - round;
+        best = best.min(d);
+    }
+    best
 }
 
 /// Distance of the apron's haul road from the arena's centre lines, metres.
@@ -324,17 +361,25 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (216.0 - r) * drift;
         g += (199.0 - g) * drift;
         b += (167.0 - b) * drift;
+        // Shade pools at the rocks' feet, where the sky is half hidden, and the
+        // stones they shed lie in a ring round them.
+        let rock_edge = rock_distance(x, z, ROCK_SHED_REACH);
+        // Under the rock itself (its caprock pans sample this bake) stays clear.
+        let contact = (1.0 - smoothstep(rock_edge, -0.2, ROCK_CONTACT_REACH)).powi(2)
+            * smoothstep(rock_edge, -1.6, -0.6);
+        let shed = 1.0 - smoothstep(rock_edge, 0.2, ROCK_SHED_REACH);
         // Gravel shows through stony ground and spill; sand and traffic bury it.
         let gravel = 0.0f64.max(1.0f64.min(
-            0.5 + stony * 0.45 + windrow * 0.35 + gravel_bed * 0.5
+            0.5 + stony * 0.45 + windrow * 0.35 + gravel_bed * 0.5 + shed * 0.45
                 - worn_sand * 0.4
                 - road * 0.25
-                - drift * 0.5,
+                - drift * 0.5 * (1.0 - shed),
         ));
+        let occlusion = 1.0 - contact * 0.38;
         let i = col * 4;
-        out[i] = to_uint8_clamp(r + shade);
-        out[i + 1] = to_uint8_clamp(g + shade);
-        out[i + 2] = to_uint8_clamp(b + shade);
+        out[i] = to_uint8_clamp((r + shade) * occlusion);
+        out[i + 1] = to_uint8_clamp((g + shade) * occlusion);
+        out[i + 2] = to_uint8_clamp((b + shade) * (occlusion - contact * 0.03));
         // Damp hollows dry out into cracked mud plates (alpha below 128).
         let mud = smoothstep(damp, 0.25, 0.55);
         out[i + 3] = to_uint8_clamp(128.0 + gravel * 127.0 * (1.0 - mud) - mud * 127.0);

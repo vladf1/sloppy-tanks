@@ -453,9 +453,6 @@ pub fn quarry_scenery() -> Node {
     let mut truck = rotated(quarry_dump_truck(), 0.0, FRAC_PI_2 + 0.18, 0.0);
     truck.children.push(truck_load());
     put(&mut root, truck, 69.0, -1.75, 18.0);
-    // A second truck runs empty along the west apron's haul road toward the dig.
-    let truck = rotated(quarry_dump_truck(), 0.0, FRAC_PI_2 - 0.06, 0.0);
-    put(&mut root, truck, WEST_TRUCK[0], -1.75, WEST_TRUCK[1]);
     boundary_dressing(&mut equipment);
     for team in [Team::Blue, Team::Red] {
         for Vec2 { x, z } in spawn_positions(team, 1.0) {
@@ -504,9 +501,6 @@ pub fn quarry_scenery() -> Node {
     root.children.push(equipment);
     root
 }
-
-/// Where the empty haul truck stands on the west apron's road (x, z).
-const WEST_TRUCK: [f64; 2] = [-71.4, -30.0];
 
 /// The haul truck's bed (truck frame): floor height, x span and half width.
 const TRUCK_BED: (f64, [f64; 2], f64) = (3.04, [-2.05, 4.95], 2.3);
@@ -619,12 +613,6 @@ fn flank_boulders(geology: &mut Node) {
         [69.0, 76.5, -23.0, -1.0],  // east scree runout
         [-76.5, -69.0, -6.0, 18.0], // west scree runout
         [r.x0, r.x1, r.z0, r.z1],   // east haul ramp
-        [
-            WEST_TRUCK[0] - 3.0,
-            WEST_TRUCK[0] + 3.0,
-            WEST_TRUCK[1] - 7.0,
-            WEST_TRUCK[1] + 7.0,
-        ], // west haul truck
     ];
     let mut placed = 0;
     let mut i = 0u32;
@@ -747,7 +735,11 @@ fn wall_spills(geology: &mut Node) {
         let stretch = rng.range(0.8, 1.5);
         let point = |along: f64, across: f64| {
             let a = side * (face + outward * across);
-            if along_x { (t + along, a) } else { (a, t + along) }
+            if along_x {
+                (t + along, a)
+            } else {
+                (a, t + along)
+            }
         };
         let ground = |x: f64, z: f64| 0.008 - quarry_ground_drop(x, z);
         let base = (positions.len() / 3) as u32;
@@ -778,9 +770,14 @@ fn wall_spills(geology: &mut Node) {
         .map(|i| {
             i.chunks(3)
                 .flat_map(|t| {
-                    let p = |v: u32| glam::DVec3::from(geometry.positions[v as usize].map(f64::from));
+                    let p =
+                        |v: u32| glam::DVec3::from(geometry.positions[v as usize].map(f64::from));
                     let up = (p(t[1]) - p(t[0])).cross(p(t[2]) - p(t[0])).y;
-                    if up < 0.0 { [t[0], t[2], t[1]] } else { [t[0], t[1], t[2]] }
+                    if up < 0.0 {
+                        [t[0], t[2], t[1]]
+                    } else {
+                        [t[0], t[1], t[2]]
+                    }
                 })
                 .collect()
         })

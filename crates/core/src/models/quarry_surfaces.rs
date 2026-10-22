@@ -388,7 +388,10 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
         .iter()
         .map(|&(a, b)| {
             let along = top_ring[b] - top_ring[a];
-            (top_ring[a], DVec3::new(-along.z, 0.0, along.x).normalize_or_zero())
+            (
+                top_ring[a],
+                DVec3::new(-along.z, 0.0, along.x).normalize_or_zero(),
+            )
         })
         .collect();
     let slab_of_point = |p: DVec3| -> usize {
@@ -421,11 +424,8 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
         let tilt_limit = if outcrop { 0.06 } else { 0.03 };
         for &slab in &slab_ids {
             let members: Vec<usize> = (0..columns).filter(|&c| segment_slab[c] == slab).collect();
-            let crown = members
-                .iter()
-                .map(|&c| surface(c, 1.0).y)
-                .sum::<f64>()
-                / members.len() as f64;
+            let crown =
+                members.iter().map(|&c| surface(c, 1.0).y).sum::<f64>() / members.len() as f64;
             let anchor = members.iter().map(|&c| top_ring[c]).sum::<DVec3>() / members.len() as f64;
             slab_anchor[slab] = DVec3::new(anchor.x, 0.0, anchor.z);
             slab_tilt[slab] = DVec3::new(
@@ -458,8 +458,7 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
             }
         }
     }
-    let slab_height =
-        |slab: usize, p: DVec3| plane(&slab_base, &slab_tilt, &slab_anchor, slab, p);
+    let slab_height = |slab: usize, p: DVec3| plane(&slab_base, &slab_tilt, &slab_anchor, slab, p);
 
     // Blocks down the faces: runs of columns split by vertical joints, broken at
     // every joint plane and between them; each stands proud or sits back as a
@@ -498,7 +497,8 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
             }
             block_starts.push((start, run));
             joints[start] = outcrop;
-            deep_joint[start] = outcrop && (joint_column(start) || (kit == Kit::Split && rng.next() < 0.5));
+            deep_joint[start] =
+                outcrop && (joint_column(start) || (kit == Kit::Split && rng.next() < 0.5));
             block_push.push(rng.range(-0.35, 0.35));
             block_bed_push.push(
                 (0..courses.len())
@@ -759,10 +759,28 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
         let n = (c + 1) % columns;
         let slab = segment_slab[c];
         // The chamfer: face top to the slab's rim.
-        corner(points[face_top + c], cap_layer, wears[face_top + c].max(0.3), shade, false);
+        corner(
+            points[face_top + c],
+            cap_layer,
+            wears[face_top + c].max(0.3),
+            shade,
+            false,
+        );
         corner(rim(c, slab), cap_layer, rim_wear(c), shade, false);
-        corner(points[face_top + n], cap_layer, wears[face_top + n].max(0.3), shade, false);
-        corner(points[face_top + n], cap_layer, wears[face_top + n].max(0.3), shade, false);
+        corner(
+            points[face_top + n],
+            cap_layer,
+            wears[face_top + n].max(0.3),
+            shade,
+            false,
+        );
+        corner(
+            points[face_top + n],
+            cap_layer,
+            wears[face_top + n].max(0.3),
+            shade,
+            false,
+        );
         corner(rim(c, slab), cap_layer, rim_wear(c), shade, false);
         corner(rim(n, slab), cap_layer, rim_wear(n), shade, false);
         // Where two slabs meet at a column, close the notch between their rims.
@@ -787,7 +805,9 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
         // The slab's outline in ring order: its own arcs of the rim, closed by the
         // joints it shares with its neighbours.
         let outline: Vec<usize> = (0..columns)
-            .filter(|&c| segment_slab[c] == slab || segment_slab[(c + columns - 1) % columns] == slab)
+            .filter(|&c| {
+                segment_slab[c] == slab || segment_slab[(c + columns - 1) % columns] == slab
+            })
             .collect();
         let rims: Vec<DVec3> = outline.iter().map(|&c| rim(c, slab)).collect();
         let middle = rims.iter().sum::<DVec3>() / rims.len() as f64;

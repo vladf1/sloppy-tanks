@@ -230,6 +230,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let splash = (1.0 - quarry_smoothstep(0.0, 0.35, lift)) * 0.25;
     rock = mix(rock, ground * 0.86, foot * 0.55);
     rock *= 1.0 - splash;
+    // Outcrops darken toward their feet, where the sky is half hidden and the
+    // dust settles, so each stands on the floor instead of floating over it.
+    rock *= select(1.0, mix(0.7, 1.0, quarry_smoothstep(0.0, 3.0, lift)), rocky && !backdrop);
     // The skirt: the floor's own soil and grit, drifted paler up against the toe.
     let stony = clamp((soil.a - 0.5) * 2.0, 0.0, 1.0);
     let detail = near * (grit_far + 0.327) / (0.327 * 0.327 * 2.0);

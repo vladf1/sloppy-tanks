@@ -84,7 +84,9 @@ pub fn quarry_bench(length: f64, height: f64, depth: f64, seed: f64) -> Node {
                 + rng.range(-0.03, 0.03);
             // Blast blocks stand proud or break back as coherent columns, on
             // buttresses and gullies metres deep that model the face at range.
-            let gully = gully_at(x) * 1.3 + (x * 0.29 + seed * 1.3).sin() * 0.35;
+            let gully = (x * 0.11 + seed).sin() * 0.95
+                + (x * 0.29 + seed * 1.3).sin() * 0.5
+                + gully_at(x) * 0.45;
             let block = (x * 0.83 + seed * 3.1).sin() * 0.35 + rng.range(-0.2, 0.2) + gully;
             Column {
                 x,
