@@ -72,7 +72,8 @@ struct Frame {
     ridge_shape: vec4f,
     // x haze per metre that does not thin with height (the long-range aerial
     // perspective that softens far peaks as much as their feet), y the distance from
-    // the eye where it begins, z how strongly haze toward the sun glows with its color.
+    // the eye where it begins, z how strongly haze toward the sun glows with its color,
+    // w the most the low mist beyond the arena hides at ground level.
     haze_far: vec4f,
 }
 
@@ -210,6 +211,13 @@ fn sky_behind(ray: vec3f) -> vec3f {
     return horizon_ridges(sky_gradient(ray), ray, FADED_RIDGE_EDGE);
 }
 
+// The far haze layer thins up a slope at this share of the near layer's falloff, to
+// this share of its density on the highest crests.
+const FAR_HAZE_THINNING: f32 = 0.5;
+const FAR_HAZE_CREST_SHARE: f32 = 0.45;
+// Height in metres over which the low mist beyond the arena thins by e.
+const MIST_HEIGHT: f32 = 9.0;
+
 // Aerial perspective in two layers. Exponential height haze, integrated from where
 // it begins to the surface, lies dense in the valleys and thin up high, so a camera
 // looking down from above stays clean. Beyond `haze_far.y` a thinner haze that does
@@ -242,10 +250,19 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
         let backdrop = mix(frame.aerial.w, 1.0, beyond);
         // The far layer eases in over its first stretch, so it never draws a line.
         let far_travel = max(distance - frame.haze_far.y, 0.0);
-        let far_depth = frame.haze_far.x * far_travel * far_travel / (far_travel + 40.0);
+        // It still thins a little up the slopes, so a far range keeps hazy feet under
+        // clearer crests and reads as a landform rather than one flat card.
+        let crest = exp(-max(world.y, 0.0) * frame.haze.y * FAR_HAZE_THINNING);
+        let far_depth = frame.haze_far.x * far_travel * far_travel / (far_travel + 40.0)
+            * mix(FAR_HAZE_CREST_SHARE, 1.0, crest);
         let near_amount = min(1.0 - exp(-depth), frame.haze.w) * backdrop;
         let far_amount = (1.0 - exp(-far_depth)) * beyond;
-        let amount = min(1.0 - (1.0 - near_amount) * (1.0 - far_amount), frame.haze.w);
+        // Low mist settles in the valleys beyond the arena, thick at the ground and
+        // gone a few storeys up, so distant hills stand out of it with clear crests.
+        let mist = frame.haze_far.w * exp(-max(world.y, 0.0) / MIST_HEIGHT) * beyond
+            * smoothstep(frame.haze_far.y * 0.7, frame.haze_far.y * 1.4, distance);
+        let clear = (1.0 - near_amount) * (1.0 - far_amount) * (1.0 - mist);
+        let amount = min(1.0 - clear, frame.haze.w);
         var hazed = mix(color, haze_tint(ray, amount), amount);
         let far = frame.haze_shape.w;
         if far > 0.0 {

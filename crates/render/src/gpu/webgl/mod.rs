@@ -23,8 +23,8 @@ pub use textures::{Sampler, Texture, TextureView, Uploader};
 use glow::HasContext;
 
 use super::{
-    BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw, OcclusionUniform, OutputUniform,
-    RenderStats, Scene, WaterUniform, lut,
+    BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
+    OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use context::{block, unit};
@@ -233,7 +233,7 @@ struct BloomLevels {
 
 impl BloomLevels {
     fn new(gpu: &Gpu, width: u32, height: u32) -> Self {
-        let levels = (1..=BLOOM_LEVELS)
+        let levels = (BLOOM_FIRST_SHIFT..BLOOM_FIRST_SHIFT + BLOOM_LEVELS)
             .map(|level| {
                 let (w, h) = ((width >> level).max(1), (height >> level).max(1));
                 let texture = storage(gpu, glow::RGBA16F, 1, w, h);

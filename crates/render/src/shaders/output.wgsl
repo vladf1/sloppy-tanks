@@ -1,5 +1,5 @@
 // Post-processing: the bloom chain and the output pass. Bloom thresholds the
-// resolved linear HDR frame into a half-size level, halves it down a short mip
+// resolved linear HDR frame into a quarter-size level, halves it down a short mip
 // chain and adds each level back up with a tent filter. The output pass adds the
 // bloom, darkens by the ambient occlusion, tone maps through Three r185's ACES
 // filmic curve with a gamut fit in place of a hard clip, grades (black point, lift,
@@ -218,6 +218,9 @@ fn hue_band(hue: f32, center: f32, width: f32) -> f32 {
 const LIME_HUE: f32 = 0.215;
 const EARTH_HUE: f32 = 0.088;
 const PINK_HUE: f32 = 0.955;
+// Meadow green, and the share of its saturation the foliage grade takes at full.
+const MEADOW_HUE: f32 = 0.27;
+const MEADOW_CALM: f32 = 0.18;
 // Display mid grey, the pivot of the contrast curve.
 const MID_GREY: f32 = 0.18;
 
@@ -233,7 +236,9 @@ fn grade(color: vec3f) -> vec3f {
     c = c + lift * (vec3f(1.0) - c);
     c = pow(max(c, vec3f(0.0)), 1.0 / output.gamma.rgb);
     let level = luminance(c);
-    let shade = (1.0 - smoothstep(0.0, 0.14, level)) * output.shadows.w;
+    // Toning reaches into the cast shadows, not only the blacks, so shade reads cool
+    // against warm sunlight.
+    let shade = (1.0 - smoothstep(0.0, 0.24, level)) * output.shadows.w;
     let light = smoothstep(0.3, 0.9, level) * output.highlights.w;
     c *= mix(vec3f(1.0), output.shadows.rgb, shade);
     c *= mix(vec3f(1.0), output.highlights.rgb, light);
@@ -251,11 +256,13 @@ fn grade(color: vec3f) -> vec3f {
     c.b = mix(c.b, c.g * 0.4, 0.25 * lime);
     let earth = hue_band(hue, EARTH_HUE, 0.06) * output.hues.y
         * smoothstep(0.2, 0.5, chroma / max(high, 1e-4));
+    // Broad foliage greens give up a little chroma, so meadows read lush, not neon.
+    let meadow = hue_band(hue, MEADOW_HUE, 0.12) * output.hues.x * vivid;
     let pink = hue_band(hue, PINK_HUE, 0.06) * output.hues.z * vivid;
     c.b = mix(c.b, min(c.b, c.g * 1.05), pink);
     let grey = luminance(c);
     let vibrance = 1.0 + output.tone.x * (1.0 - smoothstep(0.0, 0.6, chroma));
-    let saturation = output.lift.w * vibrance * (1.0 - 0.32 * earth);
+    let saturation = output.lift.w * vibrance * (1.0 - 0.32 * earth) * (1.0 - MEADOW_CALM * meadow);
     c = max(mix(vec3f(grey), c, saturation), vec3f(0.0));
     c = MID_GREY * pow(c / MID_GREY, vec3f(output.gamma.w));
     return clamp(c, vec3f(0.0), vec3f(1.0));

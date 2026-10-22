@@ -402,10 +402,14 @@ struct OcclusionUniform {
     depth_terms: [f32; 4],
 }
 
-/// Levels of the bloom chain, from half the canvas size down to a sixteenth: a glow
-/// reaching a few tank lengths at most, so a blast never veils the whole frame, in
-/// seven small passes.
-const BLOOM_LEVELS: usize = 4;
+/// Levels of the bloom chain, from a quarter of the canvas size down to a sixteenth:
+/// a glow reaching a few tank lengths at most, so a blast never veils the whole
+/// frame, in five small passes. The prefilter reads the full-size frame straight
+/// into the quarter level (each of its four bilinear taps averages 2×2 texels), so no
+/// pass fills half the canvas. Level `n` is the canvas size shifted right by
+/// `BLOOM_FIRST_SHIFT + n`.
+const BLOOM_LEVELS: usize = 3;
+const BLOOM_FIRST_SHIFT: usize = 2;
 /// Ambient occlusion: the reach of its probes and the depth gap they ignore, in
 /// metres; where it fades out with view distance; and its contrast power.
 const OCCLUSION_RADIUS: f32 = 1.6;
@@ -421,7 +425,7 @@ const OUTPUT_DITHER: f32 = 1.0;
 /// beyond the gamut desaturate rather than clip, and where the brightest channel's
 /// shoulder begins.
 const GAMUT_LIFT: f32 = 0.15;
-const GAMUT_SHOULDER: f32 = 0.9;
+const GAMUT_SHOULDER: f32 = 0.8;
 /// How quickly a bright bloom saturates: its share halves at this reciprocal luminance.
 const BLOOM_LIMIT: f32 = 0.4;
 
@@ -1077,7 +1081,12 @@ impl Renderer {
                     let shader = ShaderKey::main(material, gpu.effect, receive_shadow);
                     PipelineKey::main(shader, material, faded)
                 };
-                let two_pass = transparent && source.side == Side::Double;
+                // Three draws double-sided transparent materials as back faces, then
+                // front, so a closed shape's far side shows through its near one. A
+                // flat mesh (a ring, a card) never has a face behind another, so it
+                // draws both sides at once in half the draws.
+                let planar = self.meshes.get(mesh).planar;
+                let two_pass = transparent && source.side == Side::Double && !planar;
                 let face = |side| sloppy_core::scene::Material {
                     side,
                     ..(**source).clone()
@@ -1847,7 +1856,7 @@ impl Renderer {
                 a.haze.far_density,
                 a.haze.far_start,
                 a.haze.sun_scatter,
-                0.0,
+                a.haze.mist,
             ],
             ..FrameUniform::zeroed()
         }
