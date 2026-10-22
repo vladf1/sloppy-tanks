@@ -34,12 +34,16 @@ struct WaterOut {
 // What stands in the harbor basin besides the quay, as (centre x, centre z, half
 // x, half z) in metres, axis-aligned: the moored hulls (`harbor_vessels::SHIPS`,
 // an outline from x -34 to 36 and z ±7 before each ship's scale and quarter-turn
-// yaw), then the crane plinths (`CRANES`, 14 × 9 m), the forklift berths and the
-// warehouse quays (`harbor_scenery`). Foam and hull shade hug these footprints.
+// yaw, drawn in at the waterline by the lower hull's inset: to 0.946, 0.923 and
+// 0.895 of it on the three ships, where the -2.2 m water cuts their tapered lower
+// band), then the crane plinths (`CRANES`, 14 × 9 m), the forklift berths and the
+// warehouse quays (`harbor_scenery`). Foam and hull shade hug these footprints: a
+// footprint wider than the hull left a band of water inside it, which foamed into
+// an even white outline round every ship.
 const HULLS = array<vec4f, 3>(
-    vec4f(-7.0, -80.0, 35.0, 7.0),
-    vec4f(-77.0, -8.85, 5.95, 29.75),
-    vec4f(77.0, 15.72, 5.04, 25.2),
+    vec4f(-7.05, -80.0, 33.1, 6.62),
+    vec4f(-77.0, -8.79, 5.49, 27.46),
+    vec4f(77.0, 15.64, 4.51, 22.55),
 );
 // Which way along its long axis each hull's bow points (`harbor_vessels::SHIPS`
 // yaw), and its waterline taper (`harbor_vessels::OUTLINE`) as fractions of the
@@ -98,6 +102,7 @@ const HARBOR_F0 = 0.04;
 // cloud tops broken up by the swell read as a tiled white pattern from above, so
 // they are held down to it, while the darker cranes, hulls and shores mirror whole.
 const HARBOR_CLOUD_CEILING = 1.12;
+const WATER_LUMA = vec3f(0.2126, 0.7152, 0.0722);
 // Metres from the nearest face where the basin turns to channel, and where the
 // wash of a moored hull's ends trails off.
 const HARBOR_CHANNEL = 40.0;
@@ -156,9 +161,10 @@ fn harbor_shore(p: vec2f, t: f32) -> vec4f {
         let d = rounded_box_distance(vec2f(along, across), vec4f(0.0, 0.0, reach, breadth * clamp(taper, 0.0, 1.0)), HULL_ROUNDING);
         if d < out.x {
             out.x = d;
-            // Moored, so the bow and stern only lap a little harder than the
-            // flat sides: no bow wave.
-            out.y = 0.2 + 0.55 * smoothstep(0.6, 1.0, abs(along) / reach);
+            // Moored, so no bow wave: the swell slaps white round the bow and the
+            // transom and only laps along the flat sides, where an even white
+            // outline would read as a sticker round the hull.
+            out.y = 0.06 + 0.84 * smoothstep(0.55, 1.0, abs(along) / reach);
             out.w = 0.0;
         }
         let past = abs(along) - reach;
@@ -309,8 +315,10 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
     // far water shades as one soft sheen.
     let blurred = smoothstep(0.06, 0.45, footprint) * select(0.0, 1.0, water.shore.x < 0.5);
     let glint_normal = normalize(mix(normal, vec3f(0.0, 1.0, 0.0), 0.7 * blurred));
-    let specular = pow(max(0.0, dot(eye, normalize(reflect(-sun, glint_normal)))), mix(100.0, 36.0, blurred))
-        * sun_color * mix(2.0, 0.55, blurred);
+    // Far off the facets a pixel holds tilt every way, so the sun's highlight
+    // spreads into a broad glitter path down the water toward it.
+    let specular = pow(max(0.0, dot(eye, normalize(reflect(-sun, glint_normal)))), mix(100.0, 16.0, blurred))
+        * sun_color * mix(2.0, 0.42, blurred);
     // Glitter: tiny facets of the fast ripples catch the sun one by one.
     let facet = max(0.0, dot(eye, normalize(reflect(-sun, glitter_normal))));
     // Where one pixel spans many ripples their sparkle would only shimmer in a
@@ -331,9 +339,19 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         let detail = 1.0 - smoothstep(0.08, 0.35, footprint);
         // Silty green against the quays and hulls, the basin's teal, then the
         // dredged channel's blue, with the gusts roughening it a little paler.
-        var body = mix(HARBOR_SHALLOW, HARBOR_BASIN, smoothstep(0.5, 10.0, shore));
+        // A hull floats in dredged water: no silty shallows beside it.
+        var body = mix(mix(HARBOR_BASIN, HARBOR_SHALLOW, near.w), HARBOR_BASIN, smoothstep(0.5, 10.0, shore));
         body = mix(body, HARBOR_DEEP, smoothstep(10.0, HARBOR_CHANNEL, shore));
-        body = body * mix(0.92, 1.12, gust);
+        // Broad, slowly drifting bands where the tide mixes silt into the water:
+        // they read from the air where the ripple tile cannot, so the basin is
+        // never one clean gradient.
+        let tide_band = water_noise(input.world.xz / 47.0 + vec2f(t * 0.004, -t * 0.003)) * 0.6
+            + water_noise(input.world.xz / 19.0 - vec2f(t * 0.006, 0.0)) * 0.4;
+        body = body * mix(0.72, 1.06, smoothstep(0.2, 0.8, tide_band)) * mix(0.92, 1.12, gust);
+        // The swell the hulls and walls throw back: faint rings of ruffled water
+        // standing off every face, moving out and dying away within a few metres.
+        let rebound = sin(shore * 1.35 - t * 1.1 + breakup * 1.6) * exp(-max(shore, 0.0) / 5.5) * smoothstep(0.4, 1.4, shore);
+        body = body * (1.0 + rebound * 0.15);
         // The quays' rubble toe shelving away under the water: blocks of stone
         // bent by the swell's refraction, paling the water at a wall's foot and
         // gone into the basin's depth a few metres out.
@@ -344,7 +362,7 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         body = mix(body, TOE_COLOR * mix(0.6, 1.3, blocks), toe * TOE_SHOW);
         // Shade along hulls and quay faces, where the sky is half hidden; a hull's
         // flare and the water it displaces darken it close in.
-        body = body * mix(mix(0.42, 0.55, near.w), 1.0, smoothstep(0.0, mix(4.5, 3.5, near.w), shore));
+        body = body * mix(mix(0.3, 0.55, near.w), 1.0, smoothstep(0.0, mix(6.5, 3.5, near.w), shore));
         // Swell crests lit through from the sun side.
         let crest = clamp(noise.y * 0.9 + 0.15, 0.0, 1.0) * max(dot(-sun.xz, normal.xz) * 4.0 + 0.4, 0.0);
         // Churned wash is aerated: paler and greener under the foam.
@@ -366,7 +384,20 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         if atmosphere_on() {
             let ray = reflect(-eye, glint_normal);
             let sky = sky_gradient(normalize(vec3f(ray.x, max(ray.y, 0.0) + 0.12, ray.z)));
-            reflected = mix(min(streaked, sky * HARBOR_CLOUD_CEILING), sky, far * HARBOR_SKY_SHARE * (0.6 + 0.4 * gust));
+            // Held by brightness, not per channel, so a red hull or crane keeps its
+            // colour in the mirror instead of being clipped to the sky's.
+            let ceiling = dot(sky, WATER_LUMA) * HARBOR_CLOUD_CEILING;
+            let held = streaked * min(1.0, ceiling / max(dot(streaked, WATER_LUMA), 1e-4));
+            reflected = mix(held, sky, far * HARBOR_SKY_SHARE * (0.6 + 0.4 * gust));
+        }
+        // The long swell rolling in from the open sea, crests running along x a
+        // few metres apart: far off it breaks the mirror into rows down to the
+        // horizon, so the open water never reads as one pale sheet.
+        let swell_reach = smoothstep(20.0, 110.0, length(world_to_eye));
+        if swell_reach > 0.0 {
+            let swell_rows = water_noise(vec2f(input.world.x * 0.035, input.world.z * 0.28 + t * 0.35)) * 0.65
+                + water_noise(vec2f(input.world.x * 0.08 + 5.0, input.world.z * 0.6 - t * 0.2)) * 0.35;
+            reflected = reflected * mix(1.0, mix(0.74, 1.08, swell_rows), swell_reach);
         }
         // Glassy slicks mirror the cranes and hulls more clearly than choppy water;
         // even at grazing angles some of the water body shows through the swell.
@@ -378,7 +409,11 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // outwards in rings, streaks trailing off the hulls' ends and the tugs'
         // wakes. The lace breaks it up where the pixels can resolve it.
         let churn = near.y;
-        let line = (1.0 - smoothstep(0.04, 0.16 + breakup * 0.12 + footprint * 0.5, shore)) * mix(0.5, 1.0, churn);
+        // Where the swell slaps the face: broken along it into slaps and lulls,
+        // continuous only where the churn is heavy.
+        let slaps = smoothstep(0.45, 0.8, water_noise(input.world.xz * 0.55 + vec2f(t * 0.09, -t * 0.07)) + lace * 0.25 - 0.1);
+        let line = (1.0 - smoothstep(0.04, 0.16 + breakup * 0.12 + footprint * 0.5, shore)) * mix(0.25, 1.0, churn)
+            * mix(slaps, 1.0, churn);
         // The collar frays into lace; from high up, where the lace cannot resolve,
         // it breaks into the swell's patches rather than a solid white band.
         let collar_lace = mix(smoothstep(0.42, 0.7, breakup + gust * 0.25), smoothstep(0.3, 0.55, breakup + lace * 0.45 - churn * 0.15), detail);
@@ -394,7 +429,28 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // From high up the wake softens rather than breaking into white flecks of
         // the ripple tile.
         let wake_foam = wake.x * wake_lace * mix(0.55, 1.0, detail);
-        let foam = clamp(line * mix(0.6, 0.85, detail) + collar * 0.75 + wash * 0.5 + flecks * 0.35 + tail * 0.7 + wake_foam, 0.0, 1.0);
+        // Whitecaps out on the open water: wind-streaked patches that form where
+        // two drifting swell fields crest together and dissolve as they part,
+        // more of them in the gusts, none in the lee of the quays, faded where a
+        // pixel would only see them shimmer. Only where a squall is passing over
+        // the basin: whole stretches of it lie calm, so the caps never spread
+        // evenly over the water. The noise runs only where caps can show.
+        let open_water = smoothstep(8.0, 26.0, shore) * (1.0 - smoothstep(0.4, 1.4, footprint));
+        var whitecap = 0.0;
+        if open_water > 0.0 {
+            let squall = smoothstep(0.4, 0.72, water_noise(input.world.xz / 55.0 + vec2f(t * 0.012, -t * 0.007)));
+            if squall > 0.0 {
+                let cap_drift = vec2f(t * 0.16, t * 0.06);
+                let cap_a = water_noise(input.world.xz * vec2f(0.3, 1.1) + cap_drift);
+                let cap_b = water_noise(input.world.xz * vec2f(0.8, 1.4) - cap_drift * 1.6 + 13.0);
+                let cap_field = cap_a * 0.6 + cap_b * 0.4 + (gust - 0.5) * 0.45;
+                // A bright breaking crest fading into the lace of its trailing foam.
+                whitecap = smoothstep(0.8, 0.97, cap_field) * open_water * squall
+                    * smoothstep(0.3, 0.75, lace + breakup * 0.3);
+            }
+        }
+        let foam = clamp(line * mix(0.6, 0.85, detail) + collar * 0.75 + wash * 0.5 + flecks * 0.35 + tail * 0.7 + wake_foam
+            + whitecap * 0.65, 0.0, 1.0);
         let lit_foam = FOAM_COLOR * (0.7 + 0.3 * max(dot(sun, normal), 0.0));
         color = mix(albedo, lit_foam, foam * 0.92);
     } else {

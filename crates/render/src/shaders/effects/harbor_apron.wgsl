@@ -95,6 +95,8 @@ const SHORE_LIGHT = vec3f(1.0, 0.0, 0.0);
 const SHORE_LIGHT_GLOW = vec3f(2.4, 0.06, 0.03);
 // Window pitch on the far city's towers: across the face and floor to floor, metres.
 const SHORE_WINDOW = vec2f(2.6, 3.4);
+// Linear glow of a lit office window across the bay.
+const SHORE_WINDOW_GLOW = vec3f(0.9, 0.55, 0.24);
 // The headlands' countryside: a field's size along and across its furrows,
 // metres; the linear paint of its crops (lush, ripe, ploughed and hay), of the
 // woods' shaded canopy and of bare rock.
@@ -134,6 +136,8 @@ const CONTAINER_CELL = 20.0;
 // the rust that weeps from its roof rail and blooms on its roof.
 const CONTAINER_HEIGHT = 3.6;
 const CONTAINER_RUST = vec3f(0.2, 0.072, 0.026);
+// Pitch of the shallow corrugations pressed across a container's roof, metres.
+const CONTAINER_ROOF_PITCH = 0.6;
 // Share of the sunlight that the apron throws back up onto a container's walls.
 const CONTAINER_BOUNCE = 0.045;
 
@@ -145,6 +149,8 @@ const CONTAINER_BOUNCE = 0.045;
 // bases weep rust down both faces.
 const PARAPET_TOP = 1.2;
 const PARAPET_CAP = 0.14;
+// How far the capping beam overhangs the panels, metres.
+const PARAPET_OVERHANG = 0.035;
 const PARAPET_STONE = 2.0;
 const PARAPET_PANEL = 4.0;
 const PARAPET_KERB = 0.32;
@@ -295,9 +301,11 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let tie_row = select(PARAPET_TIE_ROWS.x, PARAPET_TIE_ROWS.y, y > (PARAPET_TIE_ROWS.x + PARAPET_TIE_ROWS.y) * 0.5);
     let tie_d = length(vec2f(tie_x, y - tie_row));
     let tie_aa = max(fwidth(tie_d), 1e-4);
-    let flakes = apron_noise(p * vec2f(1.3, 3.1) + wall * 17.0) * 0.5 + apron_noise(p * 5.3 + 3.0) * 0.32
-        + (grain_luma - 1.0) * 0.15;
-    let flake_aa = max(fwidth(flakes), 0.01);
+    // Paint chips: fine, so wear reads as scraped and flaked paint rather than
+    // blocks of a mask; where it is worn is decided by `wear` below.
+    let flakes = apron_noise(p * vec2f(3.7, 8.3) + wall * 17.0) * 0.5 + apron_noise(p * 11.0 + 3.0) * 0.3
+        + (grain_luma - 1.0) * 0.2;
+    let flake_aa = max(fwidth(flakes), 0.02);
 
     // The cap: its top and the band of its faces above the precast body.
     let cap = max(1.0 - face, smoothstep(PARAPET_TOP - PARAPET_CAP - y_aa, PARAPET_TOP - PARAPET_CAP + y_aa, y));
@@ -338,13 +346,27 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let kerb = (1.0 - smoothstep(PARAPET_KERB - y_aa, PARAPET_KERB + y_aa, y)) * inner;
     let top_band = (1.0 - smoothstep(0.3 - out_aa, 0.3 + out_aa, abs(outward - PARAPET_MIDDLE))) * (1.0 - face);
     let age = smoothstep(0.1, 0.95, select(panel.y, stone.y, top));
-    let threshold = 0.1 + age * 0.3 + scuff * 0.5 + rain * 0.08;
+    // Wear goes where things hit the paint: the kerb's foot and the corners of the
+    // panels, where tracks and hulls catch them; the edges of the top band, where
+    // boots step up onto the wall; round the bollards, where mooring lines chafe;
+    // and the joints between the stones. The open middle of a stripe keeps its coat.
+    let band_edge = 1.0 - smoothstep(0.0, 0.14, 0.3 - abs(outward - PARAPET_MIDDLE));
+    let kerb_foot = 1.0 - smoothstep(0.0, 0.14, y);
+    let corners = 1.0 - smoothstep(0.0, 0.35, select(panel_edge, stone_edge, top));
+    let chafe = 1.0 - smoothstep(0.4, 1.6, abs(along - bollard_at));
+    let wear = select(kerb_foot * 0.7 + corners * 0.45, band_edge * 0.5 + corners * 0.4 + chafe * 0.5, top);
+    let threshold = 0.04 + age * 0.12 + wear * 0.42 + scuff * 0.45 + rain * 0.05;
     let painted = smoothstep(threshold - flake_aa, threshold + flake_aa, flakes) * max(kerb, top_band);
-    let stripe = select(
+    // Ghost of the paint left in the scrapes: stained concrete, not bare white.
+    let paint_ghost = max(kerb, top_band) * (1.0 - painted);
+    // Where a pixel spans a stripe the pair blends to its mean, so the band never
+    // breaks into a crawling dotted line from the air.
+    let stripe_raw = select(
         smoothstep(0.5 - kerb_aa, 0.5 + kerb_aa, fract(kerb_u)),
         smoothstep(0.5 - top_aa, 0.5 + top_aa, fract(top_u)),
         top,
     );
+    let stripe = mix(stripe_raw, 0.45, smoothstep(0.2, 0.45, select(kerb_aa, top_aa, top)));
     let faded = mix(HAZARD_YELLOW, vec3f(dot(HAZARD_YELLOW, APRON_LUMA)) * vec3f(1.25, 1.1, 0.85), age * 0.35) * mix(1.0, 0.82, age);
     var hazard = mix(faded, HAZARD_BLACK + vec3f(0.01) * age, stripe) * mix(0.9, 1.06, grain_luma * 0.5 + 0.25);
 
@@ -359,10 +381,16 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, color * vec3f(0.6, 0.55, 0.48), splash * 0.6);
     // Bare aggregate at the chipped edges of the joints.
     color = color * (1.0 - joint_fringe * 0.16);
+    color = mix(color, color * vec3f(0.78, 0.74, 0.62), paint_ghost * 0.55);
     color = mix(color, hazard * mix(1.0, 0.7, splash), painted);
     color = mix(color, color * vec3f(0.3, 0.3, 0.31), scuff * 0.7);
     color = mix(color, color * 0.35, tie);
     color = color * (1.0 - panel_joint * 0.7) * (1.0 - stone_joint * 0.6);
+    // The cap's arrises, rounded and worn smooth, catch the light along the top of
+    // the wall: a bevel that draws the wall's edge, not a flat painted band.
+    let cap_edge = select(PARAPET_TOP - y, 0.5 + PARAPET_OVERHANG - abs(outward - PARAPET_MIDDLE), top);
+    let arris = (1.0 - smoothstep(0.0, 0.05 + footprint, cap_edge)) * (1.0 - painted);
+    color = color * (1.0 + arris * 0.22);
     // Contact shade at the apron and under the cap's overhang.
     color = color * mix(1.0, mix(0.6, 1.0, smoothstep(0.0, 0.32, y)), inner);
     color = color * (1.0 - 0.22 * smoothstep(PARAPET_TOP - PARAPET_CAP - 0.14, PARAPET_TOP - PARAPET_CAP, y) * body * face);
@@ -370,7 +398,7 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
     roughness = mix(roughness, 0.7, painted);
     roughness = mix(roughness, 0.62, scuff);
     // Relief: the joints and plugs sunk into the face, faded where a pixel spans them.
-    let relief = -(panel_joint + stone_joint) * 0.01 - tie * 0.006;
+    let relief = -(panel_joint + stone_joint) * 0.01 - tie * 0.006 - (1.0 - smoothstep(0.0, 0.06, cap_edge)) * 0.012;
     let relief_dh = vec2f(dpdx(relief), dpdy(relief));
     (*s).normal = apron_relief(n, dpdx(f.world), dpdy(f.world), relief_dh);
     (*s).color = color;
@@ -422,6 +450,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         var box_edge = 1e3;
         var box_end = 1e3;
         var corner = 1e3;
+        var long_z = false;
         // The containers mirror across both axes, so the box is the nearest of
         // those in the point's own quadrant.
         let mirrored = abs(f.world.xz);
@@ -430,6 +459,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             let d = apron_box_distance(mirrored, b);
             if abs(d) < abs(box_edge) {
                 box_edge = d;
+                long_z = b.w > b.z;
                 let q = abs(mirrored - b.xy) - b.zw;
                 // The doors and the front wall are the short ends.
                 box_end = select(-q.x, -q.y, b.w > b.z);
@@ -437,6 +467,17 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             }
         }
         box_edge = abs(box_edge);
+        // The roof is pressed in shallow corrugations across the box and dented
+        // where spreaders and dropped lashing gear struck it; the relief fades
+        // where a pixel spans a corrugation.
+        let roof = select(0.0, 1.0, n.y > 0.5);
+        let roof_footprint = length(fwidth(f.world));
+        let corrugation = 0.5 + 0.5 * cos(select(mirrored.x, mirrored.y, long_z) * 6.2831853 / CONTAINER_ROOF_PITCH);
+        let corrugation_fade = 1.0 - smoothstep(0.03, 0.1, roof_footprint);
+        let dents = smoothstep(0.58, 0.86, apron_noise(f.world.xz * 0.85 + variant.zw * 13.0) * 0.75
+            + apron_noise(f.world.xz * 2.3 + 5.0) * 0.25);
+        let roof_relief = roof * (corrugation * 0.014 * corrugation_fade - dents * 0.025);
+        (*s).normal = apron_relief(n, dpdx(f.world), dpdy(f.world), vec2f(dpdx(roof_relief), dpdy(roof_relief)));
         // How far gone this box is: some lines keep their boxes painted, others
         // run them to rust.
         let age = smoothstep(0.15, 0.95, variant.w);
@@ -456,6 +497,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             let dried = smoothstep(0.55, 0.62, pooled);
             paint = mix(paint, paint * vec3f(1.1, 1.08, 1.04) + vec3f(0.02), 0.25);
             paint = paint * (1.0 - ring * 0.14) * mix(1.0, 0.9, dried);
+            // Dirt settles in the corrugations' valleys and the dents; the top
+            // rails' edges are knocked bright where the paint chips off them.
+            paint = paint * mix(1.0, mix(0.86, 1.04, corrugation), corrugation_fade * 0.8) * (1.0 - dents * 0.14);
+            let rail = (1.0 - smoothstep(0.03, 0.13, box_edge)) * smoothstep(0.35, 0.6, fine);
+            paint = mix(paint, paint * 1.45 + vec3f(0.035), rail * 0.55);
             // Rust bleeds a brown halo into the paint round it.
             let halo = clamp(rim * 1.4 + casting * 1.2 + pits * 0.6, 0.0, 1.0) * smoothstep(0.2, 0.5, fine + age * 0.3);
             paint = mix(paint, paint * vec3f(0.8, 0.68, 0.56), halo * 0.45);
@@ -496,7 +542,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             * (1.0 - smoothstep(0.86 - window_aa.y, 0.86 + window_aa.y, pane_at.y));
         let walls = abs(n.y) < 0.5;
         let facade = select(0.0, 1.0, f.uv.y > 5.0 && f.uv.y < 15.0 && walls);
-        let blinds = step(0.72, apron_hash(floor(window_cell) + vec2f(3.0, 9.0)).x);
+        let window_hash = apron_hash(floor(window_cell) + vec2f(3.0, 9.0));
+        let blinds = step(0.72, window_hash.x);
+        // The low sun has some offices lit already: a scatter of warm windows
+        // that shine through the haze.
+        let lit_window = pane * facade * step(0.9, window_hash.y) * (1.0 - blinds);
         let glass = mix(frame.sky_color.rgb * 0.22 + vec3f(0.015, 0.025, 0.035), f.vertex_color.rgb * 0.7, blinds);
         var albedo = mix(f.vertex_color.rgb, glass, pane * facade);
         // Container stacks: every tier and 6 m bay its own box, in a line's paint,
@@ -545,13 +595,33 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // Grass seen across a bay is never lime: its green greys a little.
         land = mix(vec3f(dot(land, APRON_LUMA)), land, SHORE_GRASS_SATURATION);
         albedo = mix(albedo, land, terrain);
-        let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
+        var hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
         // The far pines (flagged by their uv) are lit mostly by the sky: a crown
         // seen across the bay is a dark mass, and the sun catching the edges of
-        // its few facets drew them as pale outlines.
-        let tree = select(0.0, 1.0, f.uv.y > 35.0);
-        let sun = max(dot(n, frame.sun_direction.xyz), 0.0) * frame.sun_color.rgb * (1.0 - tree * 0.75);
-        let lit = albedo * (sun + hemisphere * (1.0 - tree * 0.2)) * 0.3183099;
+        // its few facets drew them as pale outlines. Each clump steps in value
+        // from its shaded heart (uv.x 0 at a crown's foot) to the tips that catch
+        // the sky, so the woods read as massed crowns rather than cut-out spikes.
+        let tree = select(0.0, 1.0, f.uv.y > 35.0 && f.uv.y < 45.0);
+        albedo = albedo * mix(1.0, mix(0.5, 1.2, f.uv.x), tree);
+        // Fuel tanks (flagged by their uv): welded courses of plate, rust run down
+        // from the roof and a shaded side the sky barely reaches, so the farm
+        // reads as round steel and not pale cut-outs.
+        let steel_tank = select(0.0, 1.0, f.uv.y > 45.0);
+        let course_aa = max(fwidth(f.world.y) / 1.8, 1e-3);
+        if steel_tank > 0.0 {
+            let course = abs(fract((f.world.y - APRON_SEA_LEVEL) / 1.8) - 0.5) * 2.0;
+            let weld = smoothstep(1.0 - course_aa * 2.0, 1.0, course);
+            let streaks = apron_noise(vec2f(atan2(n.z, n.x) * 9.0, f.world.y * 0.15)) * 0.7
+                + apron_noise(vec2f(atan2(n.z, n.x) * 23.0, f.world.y * 0.4)) * 0.3;
+            albedo = albedo * (1.0 - weld * 0.25) * mix(1.0, 0.72, smoothstep(0.55, 0.8, streaks) * select(1.0, 0.0, n.y > 0.5));
+            let away = 1.0 - max(dot(normalize(vec3f(n.x, 0.0, n.z) + vec3f(0.0, 1e-4, 0.0)), normalize(vec3f(frame.sun_direction.x, 0.0, frame.sun_direction.z))), 0.0);
+            hemisphere = hemisphere * mix(1.0, 0.45, away * select(1.0, 0.0, n.y > 0.5));
+        }
+        // Woods take no sun and little sky: their crowns' upturned normals caught
+        // more light than the shaded slopes round them and glowed as pale cut-outs
+        // against the hills, where a wood seen across a bay is a dark mass.
+        let sun = max(dot(n, frame.sun_direction.xyz), 0.0) * frame.sun_color.rgb * (1.0 - tree);
+        let lit = albedo * (sun + hemisphere * (1.0 - tree * 0.7)) * 0.3183099;
         let distance = length(frame.camera_position.xyz - f.world);
         let lift = smoothstep(0.0, 60.0, f.world.y) * SHORE_HAZE_LIFT;
         let haze = (1.0 - exp2(-max(distance - SHORE_HAZE_CLEAR, 0.0) / SHORE_HAZE_DISTANCE)) * (1.0 - lift);
@@ -565,16 +635,26 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             horizon = frame.fog_color.rgb;
         }
         var hazed = mix(lit, horizon, haze);
+        // Seen through this much air a wood is a cool shadow on the hillside, a
+        // step darker and bluer than the haze round it: the warm haze alone left
+        // the crowns glowing tan, like cut-outs pasted on the hills.
+        // Against the low sun they stand darker still, as backlit silhouettes
+        // rather than taking its warm glow.
+        let backlit = smoothstep(0.0, 0.75, dot((f.world - frame.camera_position.xyz) / max(distance, 1e-3), frame.sun_direction.xyz));
+        let wood_shade = mix(vec3f(0.6, 0.7, 0.9), vec3f(0.2, 0.23, 0.3), backlit);
+        let wood = dot(hazed, APRON_LUMA) * wood_shade * mix(0.82, 1.1, f.uv.x);
+        hazed = mix(hazed, wood, tree);
         if atmosphere_on() {
             // The scene's low sea mist: thick at the waterline and thinning up the
             // slopes, so the headlands rise out of it with clear green crests.
             let ray = (f.world - frame.camera_position.xyz) / max(distance, 1e-4);
-            let mist = frame.haze_far.w * exp(-max(f.world.y, 0.0) / MIST_HEIGHT);
+            let mist = frame.haze_far.w * exp(-max(f.world.y, 0.0) / MIST_HEIGHT) * (1.0 - tree * 0.5);
             hazed = mix(hazed, haze_tint(ray, mist), mist);
         }
         // The painted warning lights are flagged by their vertex colour, since the
         // albedo above is repainted for the countryside and containers.
         let light = select(0.0, 1.0, all(abs(f.vertex_color.rgb - SHORE_LIGHT) < vec3f(0.01)));
+        hazed = hazed + SHORE_WINDOW_GLOW * lit_window * (1.0 - haze * 0.5);
         (*s).emissive = mix(hazed, SHORE_LIGHT_GLOW, light);
         (*s).color = vec3f(0.0);
         (*s).roughness = 1.0;
@@ -687,9 +767,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     var grime = 0.0;
     if paved || wall {
         let broad = apron_noise(p / 43.0 + 3.0) * 0.65 + apron_noise(p / 15.0 + 8.0) * 0.35;
+        // The yard's largest scale: whole bays bleached by the sun and others
+        // darkened by years of traffic and run-off, so from the air the apron
+        // reads in broad values rather than one even tile.
+        let vast = apron_noise(p / 71.0 + 21.0) * 0.7 + apron_noise(p / 29.0 + 5.0) * 0.3;
         // Two noises summed bunch round one half, so they are stretched back out to
         // read across the yard from the far end of a quay.
-        grime = mix(0.84, 1.07, smoothstep(0.25, 0.75, mottle)) * mix(0.76, 1.1, smoothstep(0.28, 0.72, broad));
+        grime = mix(0.84, 1.07, smoothstep(0.25, 0.75, mottle)) * mix(0.74, 1.1, smoothstep(0.28, 0.72, broad))
+            * mix(0.8, 1.14, smoothstep(0.25, 0.75, vast));
     }
 
     // Damp hollows that hold water after a shower; the deepest are puddles. The
@@ -831,6 +916,17 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let banked = (1.0 - smoothstep(0.0, 1.6 + mottle * 1.4, fixture)) * smoothstep(0.35, 0.6, mottle);
     let offsets = apron_lane_offsets(p);
     let lane_edge = min(abs(offsets.x) - offsets.z, abs(offsets.y) - offsets.w);
+    // Water lies only where the yard is low: in the sawn joints, along the lanes'
+    // edges where the camber drains, round the drain covers and at the foot of
+    // the wall. Elsewhere a shower leaves at most a damp shade.
+    if puddle > 0.0 || damp > 0.0 {
+        let low = max(
+            max(1.0 - smoothstep(0.12, 0.7, edge), 1.0 - smoothstep(0.25, 1.4, abs(lane_edge))),
+            max((1.0 - smoothstep(0.6, 2.4, cover_d)) * step(0.72, cover_hash.w), 1.0 - smoothstep(0.3, 2.0, -outside)),
+        );
+        puddle = puddle * low;
+        damp = damp * mix(0.3, 1.0, low);
+    }
     // A cast-iron utility cover in some cells, clear of the lane edges and cover.
     let cover_radius = 0.34 + 0.12 * cover_hash.z;
     let has_cover = step(0.72, cover_hash.w) * step(0.9, abs(lane_edge)) * step(1.5, fixture);
@@ -939,20 +1035,31 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let old_hash = apron_hash(old_cell + vec2f(71.0, 13.0));
         let old_at = (old_cell + 0.25 + 0.5 * old_hash.xy) * APRON_OLD_STAIN_CELL;
         let old_dir = vec2f(cos(old_hash.w * 6.283), sin(old_hash.w * 6.283));
-        let old_shape = apron_blotch(p, old_at, old_dir, 1.0 + 1.8 * fract(old_hash.z * 3.7), 1.4 + 2.6 * old_hash.z,
+        // What it was: rust washed off steel, an old diesel spill or lime leached
+        // out of the concrete.
+        let old_kind = fract(old_hash.y * 5.3 + old_hash.w * 2.1);
+        let rusty = old_kind > 0.62;
+        // Rust runs: drawn out along the way the water ran off toward the joints,
+        // in rivulets with a dark core and a pale orange fringe, never one even
+        // tinted wash.
+        let old_stretch = select(1.0 + 1.8 * fract(old_hash.z * 3.7), 2.8 + 2.2 * fract(old_hash.z * 3.7), rusty);
+        let old_shape = apron_blotch(p, old_at, old_dir, old_stretch, select(1.4 + 2.6 * old_hash.z, 0.9 + 1.4 * old_hash.z, rusty),
             (apron_noise(p * 0.7 + old_hash.xy * 30.0) - 0.5) * 0.9 + (grain_luma - 1.0) * 0.15);
         let has_old = step(fract(old_hash.x * 7.3 + old_hash.y * 3.1), 0.55);
         let old_stain = (1.0 - smoothstep(0.55, 1.0, old_shape)) * has_old;
         let old_line = smoothstep(0.75, 0.92, old_shape) * (1.0 - smoothstep(0.92, 1.05, old_shape)) * has_old;
-        // What it was: rust washed off steel, an old diesel spill or lime leached
-        // out of the concrete.
-        let old_kind = fract(old_hash.y * 5.3 + old_hash.w * 2.1);
-        let old_tint = select(
-            select(vec3f(1.07, 1.05, 1.0), vec3f(0.98, 0.8, 0.62), old_kind > 0.62),
-            vec3f(0.74, 0.74, 0.75),
-            old_kind < 0.3,
-        );
-        let old_rim = select(vec3f(0.66, 0.62, 0.57), vec3f(0.72, 0.52, 0.36), old_kind > 0.62);
+        var old_tint = select(vec3f(1.07, 1.05, 1.0), vec3f(0.74, 0.74, 0.75), old_kind < 0.3);
+        var old_rim = vec3f(0.66, 0.62, 0.57);
+        if rusty && old_stain > 0.0 {
+            let old_rel = p - old_at;
+            let run_u = dot(old_rel, old_dir);
+            let run_v = dot(old_rel, vec2f(-old_dir.y, old_dir.x));
+            let rivulets = apron_noise(vec2f(run_v * 4.6, run_u * 0.3) + old_hash.xy * 50.0) * 0.7
+                + apron_noise(vec2f(run_v * 11.0, run_u * 0.8) + 7.0) * 0.3;
+            let core = (1.0 - smoothstep(0.05, 0.7, old_shape)) * smoothstep(0.42, 0.72, rivulets);
+            old_tint = mix(vec3f(0.95, 0.8, 0.66), vec3f(0.5, 0.31, 0.19), core) * mix(0.86, 1.08, rivulets);
+            old_rim = vec3f(0.84, 0.66, 0.5);
+        }
 
         // The print of a container that stood here: the ground under it kept clean
         // of the yard's grime, dirt banked along its sides, rust squares where its
@@ -1061,8 +1168,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         color = mix(color, color * vec3f(1.08, 1.07, 1.03) + vec3f(0.012), ghost * 0.55);
         color = color * (1.0 - fringe * 0.22) * mix(1.0, 1.1, chipped) * (1.0 - hairline * 0.4);
         color = mix(color, color * vec3f(0.92, 0.9, 0.86) * mix(0.8, 1.3, chips * 0.5), spall);
-        color = mix(color, color * old_tint, old_stain * 0.45);
-        color = mix(color, color * old_rim, old_line * 0.6 + old_stain * 0.15);
+        color = mix(color, color * old_tint, old_stain * select(0.45, 0.7, rusty));
+        color = mix(color, color * old_rim, old_line * select(0.6, 0.35, rusty) + old_stain * 0.15);
         color = mix(color, color * vec3f(0.62, 0.56, 0.5), soaked * 0.55);
         // Sheltered under the box, the print kept the concrete's own pale grey.
         color = mix(color, color / max(grime, 0.5) * vec3f(1.03, 1.03, 1.02), print_inside * 0.3);
@@ -1100,6 +1207,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         roughness = mix(roughness, 0.5, cover);
         (*s).metalness = mix((*s).metalness, 0.55, cover);
         (*s).normal = apron_relief((*s).normal, dpx, dpy, relief_dh * (1.0 - puddle));
+        // No two slabs were laid dead level: each tilts a hair its own way and
+        // catches the low sun a shade differently.
+        (*s).normal = normalize((*s).normal + vec3f(slab.z - 0.5, 0.0, slab.w - 0.5) * 0.1 * (1.0 - puddle));
     } else if mode < 2.5 {
         // Asphalt lanes: dark binder with pale aggregate standing proud of it,
         // oxidised paler and browner where the traffic thins and ravelled at the

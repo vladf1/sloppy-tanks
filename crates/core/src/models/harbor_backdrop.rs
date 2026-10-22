@@ -287,6 +287,8 @@ const STACK_FLAG: f32 = 20.0;
 const TERRAIN_FLAG: f32 = 30.0;
 /// The far pines, lit mostly by the sky so the woods read as dark masses.
 const TREE_FLAG: f32 = 40.0;
+/// The tank farm's steel: welded courses, rust runs and a deep shaded side.
+const TANK_FLAG: f32 = 50.0;
 
 /// Ridge height of the mountain range at an angle, metres above the sea.
 fn range_height(theta: f64) -> f64 {
@@ -511,10 +513,11 @@ fn terminal(sectors: &mut Sectors) {
     place_at(sectors, theta, ship, x, SEA_LEVEL - 1.5, z);
 }
 
-/// Crane paint: legs and boom, and the machinery house trim.
+/// Crane paint: legs and boom, and the machinery house trim. Safety yellow and
+/// weathered white, never a team's red or blue.
 const CRANE_LIVERIES: [(u32, u32); 3] = [
-    (0xa8342c, 0xe5e2da),
-    (0x2f5f8a, 0xe5e2da),
+    (0xd2cfc4, 0x3b4b54),
+    (0xc9963a, 0xe5e2da),
     (0xd9a63a, 0x3b4b54),
 ];
 
@@ -787,7 +790,10 @@ fn tank_farm(sectors: &mut Sectors) {
         // Each tank stands in its bund: a low concrete wall round a gravel floor.
         let bund = cylinder_part(radius + 2.2, 1.0 + FOOTING, 0x9d988a, 12);
         place_at(sectors, theta, bund, x, y + (1.0 - FOOTING) / 2.0, z);
-        let tank = cylinder_part(radius, height + FOOTING, 0xe6e4dc, 16);
+        let tank = flagged(
+            cylinder_part(radius, height + FOOTING, 0xd8d5ca, 16),
+            TANK_FLAG,
+        );
         place_at(
             sectors,
             theta,
@@ -833,40 +839,69 @@ fn built_up(theta: f64) -> bool {
     (-0.75..0.52).contains(&theta) || (0.52..1.15).contains(&theta) || (1.3..1.95).contains(&theta)
 }
 
-/// A far pine: an open five-sided spire of unit radius and height standing on
-/// its base. Seen only from across the bay, it needs no base cap or more sides.
-fn pine_mesh() -> Arc<Mesh> {
-    static PINE: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
-    PINE.get_or_init(|| {
-        let mut positions = vec![0.0, 1.0, 0.0];
-        for i in 0..5 {
-            let a = TAU * f64::from(i) / 5.0;
-            positions.extend([a.cos(), 0.0, a.sin()]);
-        }
-        let indices = (0..5u32)
-            .flat_map(|i| [0, 1 + (i + 1) % 5, 1 + i])
-            .collect();
-        let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
-        soft_foliage_normals(&mut mesh);
-        mesh.uvs = vec![[0.0, TREE_FLAG]; mesh.positions.len()];
-        Arc::new(mesh)
-    })
-    .clone()
-}
+/// Spires in a clump of far pines, as (x, z offset, height, radius) in units of
+/// the clump's height: a leader and the shorter crowns crowding round it, their
+/// skirts overlapping so the clump reads as one massed canopy.
+const CLUMPS: [[(f64, f64, f64, f64); 4]; 3] = [
+    [
+        (0.0, 0.0, 1.0, 0.34),
+        (0.36, 0.14, 0.72, 0.3),
+        (-0.3, 0.22, 0.6, 0.28),
+        (0.05, -0.34, 0.8, 0.3),
+    ],
+    [
+        (0.0, 0.0, 0.9, 0.32),
+        (-0.42, -0.1, 1.0, 0.34),
+        (0.38, -0.2, 0.55, 0.27),
+        (0.12, 0.36, 0.68, 0.3),
+    ],
+    [
+        (0.0, 0.0, 1.0, 0.33),
+        (0.4, 0.05, 0.85, 0.31),
+        (-0.36, -0.08, 0.7, 0.3),
+        (0.6, -0.3, 0.5, 0.26),
+    ],
+];
 
-/// Normals pointing out from a point under a tree's middle, as stylised foliage
-/// is shaded: the crown darkens softly away from the light instead of splitting
-/// into a lit and a shaded facet that read as a paper cut-out across the bay.
-fn soft_foliage_normals(mesh: &mut Mesh) {
-    mesh.normals = mesh
-        .positions
-        .iter()
-        .map(|&[x, y, z]| {
-            let v = glam::Vec3::new(x, y + 0.6, z).normalize();
-            v.to_array()
-        })
-        .collect();
-    mesh.uvs = vec![[0.0, 0.0]; mesh.positions.len()];
+/// A clump of far pines, unit high: open five-sided spires (seen only from
+/// across the bay, they need no base cap or more sides), their uv.x stepping
+/// from 0 at a crown's foot to its height at the tip so the far-shore effect
+/// shades the clump from a dark heart to sky-lit tips.
+fn pine_clump_mesh(variant: usize) -> Arc<Mesh> {
+    static CLUMP_MESHES: std::sync::OnceLock<Vec<Arc<Mesh>>> = std::sync::OnceLock::new();
+    CLUMP_MESHES.get_or_init(|| {
+        CLUMPS
+            .iter()
+            .map(|spires| {
+                let (mut positions, mut normals, mut uvs, mut indices) =
+                    (Vec::new(), Vec::new(), Vec::new(), Vec::<u32>::new());
+                for (s, &(ox, oz, height, radius)) in spires.iter().enumerate() {
+                    let base = (positions.len() / 3) as u32;
+                    let twist = TAU * hash(s as u32, 233);
+                    let mut vertex = |x: f64, y: f64, z: f64, shade: f64| {
+                        positions.extend([ox + x, y, oz + z]);
+                        // Normals out from a point under the spire's middle, as
+                        // stylised foliage is shaded: the crown darkens softly away
+                        // from the light instead of splitting into a lit and a
+                        // shaded facet that read as a paper cut-out.
+                        let n = glam::DVec3::new(x, y + 0.6 * height, z).normalize();
+                        normals.extend([n.x, n.y, n.z]);
+                        uvs.extend([shade, f64::from(TREE_FLAG)]);
+                    };
+                    vertex(0.0, height, 0.0, height);
+                    for i in 0..5 {
+                        let a = twist + TAU * f64::from(i) / 5.0;
+                        vertex(radius * a.cos(), 0.0, radius * a.sin(), 0.0);
+                    }
+                    indices.extend(
+                        (0..5u32).flat_map(|i| [base, base + 1 + (i + 1) % 5, base + 1 + i]),
+                    );
+                }
+                Arc::new(Mesh::from_f64(&positions, &normals, &uvs, Some(indices)))
+            })
+            .collect()
+    })[variant % CLUMPS.len()]
+    .clone()
 }
 
 /// The far-shore effect's `apron_hash(cell).x` (`harbor_apron.wgsl`), so trees can
@@ -908,17 +943,21 @@ fn woods_depth(x: f64, z: f64) -> f64 {
         - 0.03
 }
 
-/// Trees in the woods the far-shore effect paints over the headlands: pines,
-/// tallest deep in the woods, as dark as the canopy painted round them, so their
-/// ragged tops rise out of the painted canopy along the ridges and the woods read
-/// as dark masses rather than single trees dotted over the grass.
+/// Trees in the woods the far-shore effect paints over the headlands: clumps of
+/// pines, tallest deep in the woods, as dark as the canopy painted round them, so
+/// their ragged tops rise out of the painted canopy along the ridges and the woods
+/// read as dark masses rather than single trees dotted over the grass.
 fn woods(sectors: &mut Sectors) {
     for i in 0..TREE_SITES {
         let theta = -PI + TAU * hash(i, 201);
+        // None on the slopes under the low sun: seen against it, the haze's
+        // glow turned every crown into a pale cut-out on the skyline.
+        let from_sun = (theta - SUN_AZIMUTH + PI).rem_euclid(TAU) - PI;
         if in_open_sea(theta)
             || built_up(theta)
             || land_amount(theta) < 0.6
             || (1.1..2.05).contains(&theta)
+            || from_sun.abs() < SUN_CLEARING
         {
             continue;
         }
@@ -929,16 +968,22 @@ fn woods(sectors: &mut Sectors) {
             continue;
         }
         let deep = ((depth - WOODS_EDGE) / 0.12).min(1.0);
-        let height = (3.4 + 3.4 * hash(i, 207)) * (0.85 + 0.35 * deep);
-        let width = height * (0.3 + 0.1 * hash(i, 223));
+        let height = (4.2 + 3.6 * hash(i, 207)) * (0.85 + 0.35 * deep);
+        let width = height * (0.95 + 0.25 * hash(i, 223));
         let color = [0x1a2e1d, 0x1f3621, 0x223b22, 0x182a1b][(hash(i, 211) * 4.0) as usize % 4];
-        let mut part = Node::mesh(pine_mesh(), paint(color));
+        let mut part = Node::mesh(pine_clump_mesh((hash(i, 227) * 3.0) as usize), paint(color));
         part.scale = glam::DVec3::new(width, height, width);
+        let part = rotated(part, 0.0, TAU * hash(i, 229), 0.0);
         place_at(sectors, theta, part, x, y - 0.5, z);
     }
 }
-/// Points tried for a tree around the bay; only those in the painted woods grow one.
-const TREE_SITES: u32 = 3800;
+/// Points tried for a clump of trees around the bay; only those in the painted
+/// woods grow one.
+const TREE_SITES: u32 = 2400;
+/// Bearing of the harbor's afternoon sun round the bay (`theme_look`'s sun at
+/// x -48, z 36), and how far either side of it the headlands grow no trees.
+const SUN_AZIMUTH: f64 = 2.498;
+const SUN_CLEARING: f64 = 0.85;
 /// The [`woods_depth`] where trees start: just inside the painted woods' edge.
 const WOODS_EDGE: f64 = 0.5;
 
@@ -946,11 +991,12 @@ const WOODS_EDGE: f64 = 0.5;
 /// A pair close together on the near ridge and two more spread further back, each
 /// its own size, so they read as a wind farm on the hills rather than a row of
 /// clones evenly spaced along the skyline.
+/// Kept small, so the harbor's own cranes stay the landmarks.
 const TURBINES: [(f64, f64, f64); 4] = [
-    (2.4, 50.0, 0.72),
-    (2.53, 66.0, 0.6),
-    (3.0, 78.0, 0.52),
-    (3.42, 60.0, 0.64),
+    (2.4, 50.0, 0.5),
+    (2.53, 66.0, 0.42),
+    (3.0, 78.0, 0.38),
+    (3.42, 60.0, 0.46),
 ];
 
 /// Wind turbines along the western headland ridge.

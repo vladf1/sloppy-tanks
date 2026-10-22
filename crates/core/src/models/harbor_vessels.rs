@@ -490,8 +490,9 @@ fn container_ship(color: u32, variant: usize) -> Node {
 const DECK_CRANE: u32 = 0xe2b443;
 
 const CRANE_GOLD: u32 = 0xe9b347;
-/// The side berths' older pair, in a signal red that stands off the teal water.
-const CRANE_SIGNAL: u32 = 0xbd4a2e;
+/// The side berths' older pair, in a deeper, weathered safety yellow: industrial
+/// paint that stands off the teal water without reading as a team's red or blue.
+const CRANE_AMBER: u32 = 0xd59a36;
 /// Machinery house roof and the walkway grating around it.
 const ROOF_GREY: u32 = 0xb4b9b4;
 const GRATING: u32 = 0x5d676a;
@@ -908,7 +909,7 @@ const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
         FRAC_PI_2,
         0.75,
         CraneLivery {
-            steel: CRANE_SIGNAL,
+            steel: CRANE_AMBER,
             trolley: -17.0,
             cargo: 0xd8d2c4,
         },
@@ -919,7 +920,7 @@ const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
         -FRAC_PI_2,
         0.75,
         CraneLivery {
-            steel: CRANE_SIGNAL,
+            steel: CRANE_AMBER,
             trolley: -12.0,
             cargo: 0x3f8f6a,
         },
