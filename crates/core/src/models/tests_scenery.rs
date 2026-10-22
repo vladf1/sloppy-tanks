@@ -561,9 +561,10 @@ fn scenery_textures_per_theme() {
             "textures/water/normals.webp",
             "textures/harbor/steel.webp",
             "textures/harbor/dock.webp",
-            "textures/harbor/container.webp",
+            "textures/harbor/container-ribbed.webp",
             "generated:harbor-container-liveries",
             "generated:harbor-labels",
+            "textures/harbor/container.webp",
         ]
     );
     assert_eq!(

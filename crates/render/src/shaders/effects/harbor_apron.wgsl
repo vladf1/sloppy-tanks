@@ -97,8 +97,9 @@ const PAD_RING_OUTER = 2.3;
 const PAD_BOLTS = 1.92;
 // The uv.x offset of a pad's light ring (`harbor_scenery::PAD_LIGHT_FLAG`).
 const PAD_LIGHT_FLAG = 10.0;
-// How much of the team's saturation a pad's paint keeps.
-const PAD_SATURATION = 0.55;
+// How much of the team's saturation a pad's paint keeps, and its light ring.
+const PAD_SATURATION = 0.42;
+const PAD_LIGHT_SATURATION = 0.55;
 // Cover containers each stand inside one cell of this grid (`harbor_layout`), so
 // a box takes one shade of its line's color from its cell.
 const CONTAINER_CELL = 20.0;
@@ -141,11 +142,9 @@ const PARAPET_TIE_RADIUS = 0.022;
 // Period of the diagonal hazard stripes along the kerb band and along the inner
 // chamfer, metres, and the linear hazard paints (`harbor_scenery::LINE_YELLOW` and a near
 // black).
-const PARAPET_KERB_STRIPE = 0.55;
-const PARAPET_TOP_STRIPE = 0.6;
-// How far past the wall's middle line the top's hazard coat reaches, metres.
-const PARAPET_PAINT_EDGE = 0.25;
-const HAZARD_YELLOW = vec3f(0.807, 0.479, 0.048);
+const PARAPET_KERB_STRIPE = 1.1;
+const PARAPET_TOP_STRIPE = 1.2;
+const HAZARD_YELLOW = vec3f(0.62, 0.405, 0.075);
 const HAZARD_BLACK = vec3f(0.016, 0.017, 0.019);
 
 fn apron_hash(cell: vec2f) -> vec4f {
@@ -324,20 +323,16 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let salt = smoothstep(0.58, 0.82, apron_noise(vec2f(along * 1.1 + 4.0, y * 0.35)) + (grain_luma - 1.0) * 0.2)
         * (1.0 - smoothstep(0.3, 1.1, y)) * outer;
 
-    // Hazard paint: a kerb band of diagonal stripes on the apron side and along
-    // the cap's inner chamfer, laid in runs: the corners always, other stretches
-    // by the year the gang came round, the rest left to ghosts of the old coat.
-    // The whole frame is kept painted, so the arena's edge reads as one unbroken
-    // safety line from every camera: the kerb band, the inner chamfer and the
-    // apron half of the flat top, out to just past the wall's middle, where the
-    // bollards stand on bare concrete. Each run was repainted in its own year.
+    // Hazard paint: a kerb band of broad diagonal stripes on the apron side and
+    // a coping stripe along the cap's inner chamfer, the flat top left bare
+    // concrete, so from the air the wall reads as a concrete quay edged in
+    // safety paint rather than a painted frame. Laid in runs: most stretches
+    // repainted in their own year, a few left to the ghost of the old coat.
     let run = apron_hash(vec2f(floor(along / PARAPET_PAINT_RUN + wall * 0.37), wall * 13.0 + 5.0));
-    let bevel_coat = 1.0;
-    let kerb_coat = 1.0;
+    let bevel_coat = select(1.0, 0.0, run.z < 0.16);
+    let kerb_coat = select(1.0, 0.0, run.w < 0.24);
     let kerb_zone = (1.0 - smoothstep(PARAPET_KERB - y_aa, PARAPET_KERB + y_aa, y)) * inner;
-    let top_aa_m = max(fwidth(outward), 1e-3);
-    let top_reach = (1.0 - smoothstep(PARAPET_PAINT_EDGE - top_aa_m, PARAPET_PAINT_EDGE + top_aa_m, outward - PARAPET_MIDDLE)) * flat_top;
-    let bevel_zone = max(chamfer * inner_side, top_reach);
+    let bevel_zone = chamfer * inner_side;
     let kerb = kerb_zone * kerb_coat;
     let top_band = bevel_zone * bevel_coat;
     let age = smoothstep(0.1, 0.95, select(panel.y, stone.y, top)) * mix(0.5, 1.0, run.x);
@@ -671,8 +666,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let vast = apron_noise(p / 71.0 + 21.0) * 0.7 + apron_noise(p / 29.0 + 5.0) * 0.3;
         // Two noises summed bunch round one half, so they are stretched back out to
         // read across the yard from the far end of a quay.
-        grime = mix(0.84, 1.07, smoothstep(0.25, 0.75, mottle)) * mix(0.74, 1.1, smoothstep(0.28, 0.72, broad))
-            * mix(0.74, 1.16, smoothstep(0.25, 0.75, vast));
+        // Held within a few steps of value, so the shadows of the tanks and the
+        // stacks stay the darkest thing on the yard and the stains read as wear.
+        grime = mix(0.88, 1.07, smoothstep(0.25, 0.75, mottle)) * mix(0.84, 1.1, smoothstep(0.28, 0.72, broad))
+            * mix(0.84, 1.14, smoothstep(0.25, 0.75, vast));
     }
 
     // Damp hollows that hold water after a shower; the deepest are puddles. The
@@ -705,12 +702,18 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             * (1.0 - smoothstep(0.4, 1.8, pad_r));
         var deck = material.color.rgb * mix(0.9, 1.08, grain_luma * 0.5 + 0.25) * mix(1.0, 1.35, lug);
         deck = mix(deck, vec3f(0.36, 0.38, 0.39), worn * (0.4 + lug * 0.4));
+        // The yard's dust tracked over the plate, thickest toward the rim where
+        // it blows in off the concrete, so the pad sits in the yard rather than
+        // on it.
+        let dust = smoothstep(0.3, 0.75, apron_noise(pad * 0.8 + 7.0) * 0.6 + smoothstep(0.9, 2.5, pad_r) * 0.5
+            + (grain_luma - 1.0) * 0.2) * (1.0 - worn * 0.5);
+        deck = mix(deck, vec3f(0.15, 0.142, 0.128) * mix(0.85, 1.15, grain_luma * 0.5), dust * 0.55);
         // Hazard rim: diagonal stripes of team paint and black round the bevel.
         let around = angle * pad_r;
         let stripe_aa = max(fwidth(around), 1e-3) * 0.9;
         let stripe = smoothstep(0.5 - stripe_aa, 0.5 + stripe_aa, fract((around + pad_r) * 0.9));
         let rim = smoothstep(PAD_RING_OUTER + 0.03 - pad_aa, PAD_RING_OUTER + 0.03 + pad_aa, pad_r);
-        let rim_paint = mix(vec3f(0.035, 0.037, 0.04), team * 0.72, stripe);
+        let rim_paint = mix(vec3f(0.035, 0.037, 0.04), team * 0.6, stripe) * mix(0.75, 1.0, apron_noise(pad * 2.1 + 4.0));
         // Chevrons: four Vs pointing at the centre, between 1.15 and 1.95 m out.
         let quarter = round(angle / 1.5707963) * 1.5707963;
         let radial = vec2f(cos(quarter), sin(quarter));
@@ -739,16 +742,17 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             color = mix(vec3f(0.04, 0.045, 0.05), team * 0.7, band);
         }
         (*s).color = color;
-        (*s).roughness = mix(mix(0.55, 0.32, worn), 0.6, max(paint, rim));
+        (*s).roughness = mix(mix(mix(0.66, 0.42, worn), 0.9, dust), 0.66, max(paint, rim));
         (*s).metalness = mix(0.55, 0.0, max(paint, rim));
         (*s).normal = apron_relief((*s).normal, dpx, dpy, relief_dh);
         if pad_light {
             // The ring is a light strip; no early return, so the derivatives
             // above stay in uniform control flow.
             let chase = pow(0.5 + 0.5 * cos(angle * 3.0 - frame.camera_position.w * 2.2), 6.0);
-            (*s).color = team * 0.35;
+            let light = mix(vec3f(dot(f.vertex_color.rgb, APRON_LUMA)), f.vertex_color.rgb, PAD_LIGHT_SATURATION);
+            (*s).color = light * 0.35;
             // Calm while idle, so a dozen pads never out-shout the tanks on them.
-            (*s).emissive = team * (0.22 + 0.7 * chase);
+            (*s).emissive = light * (0.22 + 0.7 * chase);
             (*s).roughness = 0.3;
             (*s).metalness = 0.0;
         }
@@ -1122,6 +1126,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         }
 
         color = material.color.rgb * f.tint.rgb * grain * tone * hue * pour * grime;
+        // Aggregate exposed in the worn face, read only from close by.
+        let aggregate_near = 1.0 - smoothstep(0.008, 0.03, footprint);
+        color = color * mix(1.0, mix(0.88, 1.08, smoothstep(0.55, 1.7, chips)), aggregate_near);
         color = mix(color, color * vec3f(1.08, 1.07, 1.03) + vec3f(0.012), ghost * 0.55);
         color = mix(color, color * vec3f(0.66, 0.62, 0.56), fringe * 0.5);
         color = color * mix(1.0, 1.1, chipped) * (1.0 - hairline * 0.4);
@@ -1160,8 +1167,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         roughness = mix(roughness, 0.66, oil_core);
         // Standing water is a dull sheen under the yard's dust film, never a
         // mirror: a glossy puddle facing the low sun flared into a white blot.
-        roughness = mix(roughness, 0.8, damp);
-        roughness = mix(roughness, 0.62, puddle);
+        roughness = mix(roughness, 0.86, damp);
+        roughness = mix(roughness, 0.74, puddle);
         // Cast-iron cover: a raised checker plate in a dark gap, rust round it.
         color = mix(color, color * vec3f(0.8, 0.55, 0.38), cover_rust * 0.6);
         color = mix(color, iron, cover);
@@ -1225,10 +1232,18 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
                 * mix(0.3, 1.0, apron_noise(p * 1.1 + 3.0)) * (1.0 - smoothstep(0.05, 0.25, footprint));
         }
         let hairline_fade = 1.0 - smoothstep(0.03, 0.09, footprint);
-        let crack_line = (1.0 - smoothstep(0.0, crack_width * 1.1 + 0.004, abs(crack_noise - 0.5))) * (1.0 - patched);
+        // Cracks run in short broken lengths, never one long line: a crack opens
+        // and closes along its run, wide where the crew poured sealant into it
+        // and hairline where they did not, so it never reads as a pen stroke of
+        // even width laid over the lane.
+        let crack_reach = 0.012 + crack_width * 1.1;
+        let crack_line = (1.0 - smoothstep(0.0, crack_reach, abs(crack_noise - 0.5))) * (1.0 - patched);
         var crack = 0.0;
         if crack_line > 0.0 {
-            crack = crack_line * smoothstep(0.7, 0.8, apron_noise(p / 6.0 + 2.0)) * mix(0.35, 1.0, hairline_fade);
+            let opening = apron_noise(p * 1.3 + 9.0);
+            let crack_open = 0.0015 + 0.009 * opening * opening + crack_width * 1.1;
+            let crack_core = 1.0 - smoothstep(crack_open * 0.4, crack_open, abs(crack_noise - 0.5));
+            crack = crack_core * smoothstep(0.72, 0.8, apron_noise(p / 2.6 + 2.0)) * mix(0.35, 1.0, hairline_fade);
         }
         let craze_line = 1.0 - smoothstep(0.0, craze_width + 0.006, craze);
         var crazing = 0.0;
@@ -1300,15 +1315,16 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         color = color * (1.0 - contact * 0.8);
         color = color * mix(1.0, 0.84, damp) * mix(1.0, 0.72, puddle);
         roughness = mix(0.9, 0.82, oxidised) - stones * 0.05;
-        roughness = mix(roughness, 0.76, traffic.x * 0.8);
+        // The wheel paths are polished to a dull sheen by the rubber.
+        roughness = mix(roughness, 0.68, traffic.x * 0.8);
         // Fresh mix is matte: its binder has not been polished by the wheels yet.
         roughness = mix(roughness, 0.9, patched);
         roughness = mix(roughness, 0.72, skid);
         roughness = mix(roughness, 0.7, drips);
         roughness = mix(roughness, 0.92, crack);
         roughness = mix(roughness, 0.75, seal);
-        roughness = mix(roughness, 0.8, damp);
-        roughness = mix(roughness, 0.62, puddle);
+        roughness = mix(roughness, 0.86, damp);
+        roughness = mix(roughness, 0.74, puddle);
         color = mix(color, color * vec3f(0.8, 0.55, 0.38), cover_rust * 0.5);
         color = mix(color, iron, cover);
         color = color * (1.0 - cover_gap * 0.7);

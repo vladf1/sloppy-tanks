@@ -8,8 +8,10 @@ import { fbm, lattice, mix, smooth } from "./texture-noise";
 
 // Offline only: writes Harbor Havoc's container paint wear, a tile the engine
 // multiplies by each container's color (`harbor_models.rs`). One tile is
-// `CONTAINER_WEAR_TILE` (3 m) of wall across the full container height; the
-// corrugation itself is modelled, so the tile carries only weathering: sun-faded
+// `CONTAINER_WEAR_TILE` (3 m) of wall across the full container height; on the
+// cover containers the corrugation itself is modelled, so their tile carries only
+// weathering, while the stowed boxes' ribbed variant also bakes in the pressed
+// ribs and the rails. The weathering: sun-faded
 // paint, touched-up patches, dents catching the light, rust blooming along the
 // roof and floor rails and running down from chips, grime climbing from the floor,
 // and bare-metal scuffs.
@@ -48,7 +50,30 @@ function encodeLossy(name: string, pixels: Uint8ClampedArray, quality: number) {
 const RUST: [number, number, number] = [0.42, 0.2, 0.09];
 const RUST_DARK: [number, number, number] = [0.2, 0.1, 0.05];
 
-function containerWear() {
+// Corrugations across one tile of the ribbed variant, and the profile's four
+// segments as fractions of a rib (outer flat, falling flank, inner flat, rising
+// flank), as `harbor_models.rs` models them on the cover containers.
+const RIBS = 6;
+const RIB_BREAKS = [0.4, 0.5, 0.9];
+// Brightness of each segment under the yard's high light: the falling flank in
+// shade, the rising one catching the sun.
+const RIB_SHADE = [1.0, 0.7, 0.9, 1.16];
+
+// The pressed profile's shade at `u` (0..1 across the tile), blurred over a
+// pixel or two at each break.
+function ribShade(u: number) {
+  const phase = (u * RIBS) % 1;
+  const soft = 1.5 / (SIZE / RIBS);
+  let shade = RIB_SHADE[0];
+  for (let k = 0; k < RIB_BREAKS.length; k++) {
+    shade = mix(shade, RIB_SHADE[k + 1], smooth(RIB_BREAKS[k] - soft, RIB_BREAKS[k] + soft, phase));
+  }
+  return mix(shade, RIB_SHADE[0], smooth(1 - soft, 1, phase));
+}
+
+// `ribbed` bakes the corrugation and the top and bottom rails into the tile, for
+// the stowed boxes (`harbor_models::ship_container`) whose walls are flat boxes.
+function containerWear(ribbed: boolean, name: string) {
   const random = new Random(707);
   const coarse = lattice(11, true);
   const fine = lattice(12, true);
@@ -68,7 +93,14 @@ function containerWear() {
       const mottle = fbm(coarse, u * 4, v * 4, 4, 5);
       const speck = fine(u * 128, v * 128, 128);
       // Sun-faded towards the roof, paint mottled by years of weather.
-      const shade = 0.82 * mix(0.86, 1.08, mottle) * mix(0.95, 1.04, speck) * mix(1.07, 0.97, v);
+      let shade = 0.82 * mix(0.86, 1.08, mottle) * mix(0.95, 1.04, speck) * mix(1.07, 0.97, v);
+      if (ribbed) {
+        // The top rail catches the light over a dark seam; the bottom rail sits
+        // in the shade of the floor.
+        const rail =
+          v < 0.035 ? 1.1 : v < 0.05 ? 0.62 : v > 0.955 ? 0.74 : v > 0.94 ? 0.6 : ribShade(u);
+        shade *= rail;
+      }
       // Grime rising from the floor rail, ragged at its edge, and dirt washed down
       // in vertical bands from the roof.
       const grimeEdge = 0.74 + 0.12 * fbm(grimeNoise, u * 8, 0.5, 8, 3);
@@ -182,7 +214,8 @@ function containerWear() {
     }
     bytes[p * 4 + 3] = 255;
   }
-  encodeLossy("container.webp", bytes, 86);
+  encodeLossy(name, bytes, 86);
 }
 
-containerWear();
+containerWear(false, "container.webp");
+containerWear(true, "container-ribbed.webp");
