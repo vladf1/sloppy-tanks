@@ -89,18 +89,17 @@ pub struct CameraFeel {
     pub kick_damping: f64,
     pub max_kick_offset: f64,
     /// Knocks also tip the horizon on a spring of this frequency (rad/s) and
-    /// damping ratio, within `max_roll` (rad): the viewer's shot, a kill, a hit at
-    /// full strength and a blast close by, as angular speeds (rad/s).
+    /// damping ratio, within `max_roll` (rad): a kill, a hit at full strength and
+    /// a blast close by, as angular speeds (rad/s). The viewer's own shots never
+    /// move the camera: the player found firing's shake and tilt distracting.
     pub roll_frequency: f64,
     pub roll_damping: f64,
     pub max_roll: f64,
-    pub fire_roll: f64,
     pub kill_roll: f64,
     pub hurt_roll: f64,
     pub blast_roll: f64,
-    /// The viewer's own shot: trauma and backward kick speed (m/s); rockets scale both.
-    pub fire_trauma: f64,
-    pub fire_kick: f64,
+    /// A kill's lurch toward it (m/s at one metre away).
+    pub kill_kick: f64,
     /// The viewer hurt: trauma per hit point, its cap, and the kick speed.
     pub hurt_trauma_per_damage: f64,
     pub max_hurt_trauma: f64,
@@ -124,9 +123,6 @@ pub struct CameraFeel {
     pub nearby_death_punch: f64,
     /// A big blast close by pulls it in by up to this share.
     pub blast_punch: f64,
-    /// The viewer's own shot narrows the lens by this many degrees for a blink.
-    pub fire_fov_kick: f64,
-    pub fov_kick_release: f64,
     /// A reticle that follows the turret rather than a pointer (autoplay) glides to
     /// its point at this rate (per second); a jump farther than `snap_distance` snaps.
     pub aim_track_rate: f64,
@@ -183,12 +179,10 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     roll_frequency: 10.0,
     roll_damping: 0.38,
     max_roll: 0.04,
-    fire_roll: 0.06,
     kill_roll: 0.45,
     hurt_roll: 0.16,
     blast_roll: 0.1,
-    fire_trauma: 0.08,
-    fire_kick: 1.8,
+    kill_kick: 1.8,
     hurt_trauma_per_damage: 0.008,
     max_hurt_trauma: 0.45,
     hurt_kick: 3.5,
@@ -202,8 +196,6 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     punch_release: 2.4,
     nearby_death_punch: 0.55,
     blast_punch: 0.2,
-    fire_fov_kick: 1.0,
-    fov_kick_release: 9.0,
     aim_track_rate: 10.0,
     first_person_shake: 0.55,
     first_person_tilt: 0.65,

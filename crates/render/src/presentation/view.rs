@@ -62,8 +62,6 @@ mod inspect;
 
 /// A dead tank's model hides; the live model rides this far below the body.
 const TANK_MODEL_DROP: f64 = 0.4;
-/// A rocket shot shakes the shooter's camera this much more than a shell.
-const ROCKET_CAMERA_SCALE: f64 = 1.6;
 /// Pickup gems bob and spin above their pads.
 const GEM_HEIGHT: f64 = 1.2;
 const GEM_BOB: f64 = 0.18;
@@ -1344,8 +1342,9 @@ impl Presentation {
     }
 
     /// Weight for the battle's knocks: a shot rocks its tank back, a hit shoves
-    /// and flashes its victim, and the viewer's camera feels its own shots, hits
-    /// and every blast by distance. Destroying an enemy holds the action a moment.
+    /// and flashes its victim, and the viewer's camera feels hits and every blast
+    /// by distance, but never its own shots. Destroying an enemy holds the action
+    /// a moment.
     fn feel_event(&mut self, event: &SimEvent, player_hit: bool) {
         let viewer = event.id.is_some() && event.id == self.viewer_id;
         match event.kind {
@@ -1359,12 +1358,6 @@ impl Presentation {
                     } else {
                         TANK_FEEL.fire_rock
                     };
-                }
-                if viewer {
-                    let scale = if rocket { ROCKET_CAMERA_SCALE } else { 1.0 };
-                    let follow = self.rig.follow;
-                    self.rig
-                        .fired(event.x - follow.x, event.z - follow.z, scale);
                 }
             }
             SimEventType::Hurt => {

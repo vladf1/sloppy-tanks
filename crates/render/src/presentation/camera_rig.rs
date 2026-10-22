@@ -221,9 +221,8 @@ pub struct CameraRig {
     /// The eased speed fraction (0..1) that pulls the camera back.
     speed_zoom: f64,
     pub shake: CameraShake,
-    /// A kill's dolly toward the focus and a shot's lens kick (drawn camera only).
+    /// A kill's dolly toward the focus (drawn camera only).
     pub punch: CameraPunch,
-    fov_kick: CameraPunch,
     /// A recent blast the view leans toward, and how much of its pull is left (0..1).
     interest: DVec3,
     interest_weight: f64,
@@ -288,7 +287,6 @@ impl Default for CameraRig {
             speed_zoom: 0.0,
             shake: CameraShake::default(),
             punch: CameraPunch::default(),
-            fov_kick: CameraPunch::default(),
             interest: DVec3::ZERO,
             interest_weight: 0.0,
             sway_travel: 0.0,
@@ -409,8 +407,6 @@ impl CameraRig {
         self.shake.step(dt);
         self.punch
             .step(CAMERA_FEEL.punch_attack, CAMERA_FEEL.punch_release, dt);
-        self.fov_kick
-            .step(CAMERA_FEEL.punch_attack, CAMERA_FEEL.fov_kick_release, dt);
         self.interest_weight =
             (self.interest_weight - dt / CAMERA_FEEL.blast_look_seconds).max(0.0);
         let speed = viewer.velocity.x.hypot(viewer.velocity.z);
@@ -456,8 +452,7 @@ impl CameraRig {
             0.0
         };
         let seated_fov = FIRST_PERSON.field_of_view + speed_fov;
-        let kick = CAMERA_FEEL.fire_fov_kick * self.fov_kick.drawn;
-        self.camera.fov_y_degrees = (lerp(CAMERA.field_of_view, seated_fov, flight) - kick) as f32;
+        self.camera.fov_y_degrees = lerp(CAMERA.field_of_view, seated_fov, flight) as f32;
         if self.seat_blend > 0.0 {
             // In flight the camera keeps the overhead gaze on the tank, then turns
             // to the turret. Its position arrives in `place_eye`.
@@ -673,21 +668,8 @@ impl CameraRig {
         self.speed_zoom = 0.0;
         self.shake = CameraShake::default();
         self.punch = CameraPunch::default();
-        self.fov_kick = CameraPunch::default();
         self.interest_weight = 0.0;
         self.sway_speed = 0.0;
-    }
-
-    /// The viewer fired toward world direction `(dx, dz)`; rockets pass `scale` > 1.
-    pub fn fired(&mut self, dx: f64, dz: f64, scale: f64) {
-        let length = dx.hypot(dz).max(1e-6);
-        self.shake.add_trauma(CAMERA_FEEL.fire_trauma * scale);
-        self.fov_kick.add(scale.min(1.0));
-        let kick = CAMERA_FEEL.fire_kick * scale / length;
-        self.shake.kick(DVec3::new(-dx * kick, 0.0, -dz * kick));
-        // The gun's side of the screen dips a touch.
-        self.shake
-            .roll_kick(-CAMERA_FEEL.fire_roll * scale * (dx / length).signum());
     }
 
     /// One of the viewer's shots destroyed an enemy at `(x, z)`: a hard knock and a
@@ -698,7 +680,7 @@ impl CameraRig {
         let (dx, dz) = (x - self.follow.x, z - self.follow.z);
         let distance = dx.hypot(dz).max(1.0);
         // The view lurches a little toward the kill.
-        let kick = CAMERA_FEEL.fire_kick / distance;
+        let kick = CAMERA_FEEL.kill_kick / distance;
         self.shake.kick(DVec3::new(dx * kick, 0.0, dz * kick));
         // And the horizon knocks over, away from the kill, before it settles.
         self.shake
