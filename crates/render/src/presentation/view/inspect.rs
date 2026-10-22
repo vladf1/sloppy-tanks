@@ -181,8 +181,9 @@ impl Presentation {
             ) else {
                 continue;
             };
-            // A stocked drop stands on its whole pallet; a taken one leaves its
-            // pallet crushed until it restocks (its progress in `segments`).
+            // A stocked drop flies its pennant at the top of the pole; a taken one
+            // leaves its pallet empty, the pennant hoisted as it restocks (its
+            // progress in `segments`).
             let stocked = view.shown == Some(true);
             inspection.pickups.push(PickupInspection {
                 id,
@@ -191,7 +192,7 @@ impl Presentation {
                 ring: base.visible && stocked,
                 ring_dim: base.visible && !stocked,
                 refill: base.visible && !stocked,
-                segments: view.progress,
+                segments: view.pennant.fract().max(if stocked { 1.0 } else { 0.0 }),
             });
         }
         for (&id, view) in &self.fragments {

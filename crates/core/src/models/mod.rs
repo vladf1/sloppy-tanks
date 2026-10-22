@@ -114,8 +114,8 @@ pub use effects_props::{aged_wreck_material, wreck_brightness};
 pub use flags::{FLAG_CLOTH_NODE, flags_model};
 pub use house_model::house_pieces;
 pub use pickup_visuals::{
-    LID_SIZE, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER,
-    SUPPLY_SCALE, atlas_cell_uv, pickup_cube, pickup_lid, pickup_material, pickup_paint,
+    FLAG_POLE, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, POLE_BEND_STEPS,
+    SMOKE_MARKER, SUPPLY_SCALE, atlas_cell_uv, pickup_cube, pickup_material, pickup_paint,
     pickup_pallet, pickup_signal, pickup_tile_offset,
 };
 pub use timber_model::{timber_debris_model, timber_part_model};

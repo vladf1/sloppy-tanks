@@ -1,13 +1,15 @@
 //! Pickups as military supply (successor of `pickup-visuals.ts` and
 //! `pickup-atlas.ts`): every kind ships as its own piece of military stock, so its
 //! silhouette names it from the gameplay camera, and one large block of its own
-//! paint on the load itself names it again: an open rack of shells under a magenta
-//! lid, red rocket tubes, shell canisters under purple caps, a teal-lidded
-//! ammunition crate, ammo cans with orange lids, a blue armour plate propped on its
-//! stack, yellow jerry cans, a green tool chest beside spare road wheels and a pale
-//! transit case with its mast and dish. Nine hues and no repeats. Each stands on a
-//! wooden pallet laid on a tarp and is painted from one atlas whose tile for the
-//! kind carries the body's surface, the kind's paint and its sprayed stencil.
+//! worn enamel on the load itself names it again: an open rack of shells under a
+//! plum lid, burnt-orange rocket tubes, shell canisters under violet caps, a
+//! teal-lidded ammunition crate, black ammo cans under chartreuse lids, a black
+//! armour plate propped on its stack, sand-yellow jerry cans, a green tool chest
+//! beside spare road wheels and an off-white radio case with its whip antenna. Nine
+//! hues, no repeats and none near the teams' red and blue. Each stands on a wooden
+//! pallet in a soft contact shadow, a pennant in its colour on a pole at the back
+//! corner, and is painted from one atlas whose tile for the kind carries the body's
+//! surface, the kind's paint and its sprayed stencil.
 //!
 //! Faces that show the kind map into the first kind's tile and the `pickup-face`
 //! effect moves them into the instance's tile (instance data `xy`); brass, steel,
@@ -16,14 +18,16 @@
 //! one material. First person fades them through the instance opacity, whose
 //! blended variant warm-up compiles.
 
-use std::f64::consts::FRAC_PI_2;
+use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
 use glam::{DMat4, DVec3};
 
 use super::model_primitives::Cache;
-use crate::geometry::{Mesh, box_geometry, cone_geometry, cylinder_geometry, merge_geometries};
-use crate::scene::{Effect, Material, Node, TextureRef, Wrap};
+use crate::geometry::{
+    Attribute, Mesh, VERTEX_ALPHA, box_geometry, cone_geometry, cylinder_geometry, merge_geometries,
+};
+use crate::scene::{Effect, Material, Node, Shading, TextureRef, Wrap};
 use crate::sim::types::PickupKind;
 
 /// `PICKUP_ATLAS_TILES[kind]`: (column, row) of the kind's tile.
@@ -41,44 +45,45 @@ pub fn pickup_atlas_tile(kind: PickupKind) -> (u32, u32) {
     }
 }
 
-/// The kind's signal colour: the thin wisp of smoke its drop is marked with, which
-/// the plume greys down to a hint. In the family of its paint.
+/// The kind's signal colour: the thin wisp of smoke its grenade gives off, which
+/// greys as it climbs. Its paint's hue, as coloured smoke is mixed: lighter and
+/// milkier than the enamel (the black plate's grenade burns a pale ash grey).
 pub fn pickup_signal(kind: PickupKind) -> u32 {
     match kind {
-        PickupKind::Spread => 0xc8508c,
-        PickupKind::Rocket => 0xc8402e,
-        PickupKind::Rapid => 0xe07a2a,
-        PickupKind::Speed => 0xe0c840,
-        PickupKind::Repair => 0x4cb050,
-        PickupKind::Piercing => 0x38a8a0,
-        PickupKind::Shield => 0x4a78c8,
-        PickupKind::Ricochet => 0x8a62c4,
-        PickupKind::Laser => 0xd8d6d0,
+        PickupKind::Spread => 0xc690b8,
+        PickupKind::Rocket => 0xdc9e6c,
+        PickupKind::Rapid => 0xc4cc7c,
+        PickupKind::Speed => 0xe2d284,
+        PickupKind::Repair => 0x92c290,
+        PickupKind::Piercing => 0x84c2b8,
+        PickupKind::Shield => 0xb4b4b0,
+        PickupKind::Ricochet => 0xaea2d4,
+        PickupKind::Laser => 0xe6e4dc,
     }
 }
 
 /// The kind's colour as supply paint (`PICKUP_PAINTS` in `scripts/asset-data.ts`):
-/// the big painted block on its load, one hue per kind round the wheel and a pale
-/// grey, each in the family of its HUD colour, worn and dusty enamel rather than
-/// toy colours, and no brighter than weathered white paint.
+/// the big painted block on its load and its pennant. Nine hues as far apart as the
+/// wheel allows once the teams' red and blue are left out (plum, burnt orange,
+/// chartreuse, sand yellow, green, teal, violet, black and off-white), each a
+/// muted, dusty military enamel rather than a toy colour.
 pub fn pickup_paint(kind: PickupKind) -> u32 {
     match kind {
-        PickupKind::Spread => 0xa83270,
-        PickupKind::Rocket => 0xb02c22,
-        PickupKind::Rapid => 0xcc6a1a,
-        PickupKind::Speed => 0xd0b62a,
-        PickupKind::Repair => 0x3a8c3a,
-        PickupKind::Piercing => 0x1e8a80,
-        PickupKind::Shield => 0x2e5aa8,
-        PickupKind::Ricochet => 0x643f9e,
-        PickupKind::Laser => 0xbdbab0,
+        PickupKind::Spread => 0x8a4474,
+        PickupKind::Rocket => 0xa85a2a,
+        PickupKind::Rapid => 0x8e9a36,
+        PickupKind::Speed => 0xbc9c36,
+        PickupKind::Repair => 0x447e40,
+        PickupKind::Piercing => 0x2c7a72,
+        PickupKind::Shield => 0x2e3032,
+        PickupKind::Ricochet => 0x5e5294,
+        PickupKind::Laser => 0xc2beb0,
     }
 }
 
 /// The packed atlas under `public/` (`scripts/generate-pickup-atlas.ts`): nine kind
 /// tiles in a 3x3 block; in a fourth column the pallet's planks and swatches of
-/// steel, rubber and webbing; below the block cartridge brass, the sheet a drop is
-/// laid on and the broken boards of a crushed pallet.
+/// steel, rubber and webbing; below the block cartridge brass.
 pub const PICKUP_ATLAS_PATH: &str = "textures/pickups/atlas.webp";
 pub const PICKUP_ICON_SIZE: f64 = 256.0;
 pub const PICKUP_ATLAS_PADDING: f64 = 16.0;
@@ -87,8 +92,6 @@ pub const PICKUP_ATLAS_SIZE: f64 = PICKUP_ATLAS_STRIDE * 4.0;
 pub const PICKUP_PALLET_CELL: (u32, u32) = (3, 0);
 pub const PICKUP_SWATCH_CELL: (u32, u32) = (3, 2);
 pub const PICKUP_BRASS_CELL: (u32, u32) = (0, 3);
-pub const PICKUP_TARP_CELL: (u32, u32) = (1, 3);
-pub const PICKUP_CRUSHED_CELL: (u32, u32) = (3, 3);
 
 /// Everything a drop shows is drawn this much larger than it is modelled, so a
 /// load reads at the gameplay camera; the pickup's reach is the simulation's.
@@ -123,9 +126,9 @@ pub fn pickup_tile_offset(kind: PickupKind) -> [f32; 2] {
     ]
 }
 
-/// The vertex effect that moves a kind face's UVs into the instance's atlas tile
-/// and swaps the pallet between whole and crushed
-/// (`crates/render/src/presentation/shaders/pickup_face.wgsl`).
+/// The vertex effect that moves a kind face's UVs into the instance's atlas tile,
+/// hoists and flutters the pallet's pennant and wears each drop a little
+/// differently (`crates/render/src/presentation/shaders/pickup_face.wgsl`).
 pub const PICKUP_FACE_EFFECT: &str = "pickup-face";
 
 type Cell = (u32, u32);
@@ -141,12 +144,20 @@ const SIDE: Region = [0.0, 0.75, 1.0, 1.0];
 const PLAIN: Region = [0.1, 0.773, 0.9, 0.852];
 const PAINT: Region = [0.02, 0.633, 0.98, 0.742];
 const LID: Region = [0.0, 0.0, 1.0, 0.625];
+/// The pennant's cloth: the kind's paint inside the paint strip, and the only
+/// vertices of any pickup mesh whose `v` lies strictly inside it, so the effect
+/// can find them by their UVs alone (every other face meets that strip only at
+/// its rows).
+const FLAG: Region = [0.15, 0.66, 0.85, 0.715];
 /// Swatches of the shared cell: dark gunmetal (straps, handles, latches), black
 /// rubber (caps, tyres), olive webbing and bright worn steel (masts, drawer pulls).
 const GUNMETAL: Region = [0.06, 0.56, 0.44, 0.94];
 const RUBBER: Region = [0.56, 0.56, 0.94, 0.94];
 const WEBBING: Region = [0.06, 0.06, 0.44, 0.44];
 const BRIGHT: Region = [0.56, 0.06, 0.94, 0.44];
+/// The marker pole: olive webbing drab, inset from that swatch's edges, where no
+/// other part has a vertex, so the effect can find the pole by its UVs and bend it.
+const POLE: Region = [0.1, 0.1, 0.4, 0.4];
 /// The cartridge cell, bottom to top: rim and brass case, then the projectile; and
 /// the primer in the middle of its base, seen from above in the rack.
 const CASE: Region = [0.0, 0.0, 1.0, 0.6];
@@ -168,17 +179,33 @@ pub const PALLET_SIZE: [f64; 2] = [1.6, 1.2];
 pub const PALLET_HEIGHT: f64 = 0.15;
 const PALLET_BOARDS: usize = 5;
 const PALLET_BOARD_WIDTH: f64 = 0.27;
-/// The smoke grenade marking the drop, standing on the sheet at the pallet's back
+/// The smoke grenade marking the drop, standing on the ground at the pallet's back
 /// right corner, where the overhead camera sees it past the load: its top (x,
 /// height, z) where the signal smoke leaves it, and its radius.
 pub const SMOKE_MARKER: [f64; 3] = [0.92, 0.27, -0.44];
 const MARKER_RADIUS: f64 = 0.08;
-/// The canvas sheet the pallet stands on, shaded under it, setting the drop apart
-/// from any ground: its size (x, z) and thickness.
-const TARP_SIZE: [f64; 2] = [2.0, 1.4];
-const TARP_THICKNESS: f64 = 0.014;
-/// The lid a crushed crate throws: its size (x, thickness, z).
-pub const LID_SIZE: [f64; 3] = [0.96, 0.05, 0.68];
+/// The supply point's marker pole at the pallet's back left corner (x, z), its
+/// height, and its pennant in the kind's paint flying from its top toward +x: its
+/// length, depth, the segments it bends in, and how far it is lowered down the pole
+/// while the drop is empty. The pennant is hoisted back up as the supply restocks
+/// (the effect's instance `z`), so an empty drop shows when it will return. The
+/// pole is a flexible whip: a hull driving over it bends it flat, pole and pennant,
+/// by up to `POLE_BEND` (rad), and it springs back up once the hull has passed.
+pub const FLAG_POLE: [f64; 2] = [-0.9, -0.52];
+const POLE_HEIGHT: f64 = 2.0;
+const FLAG_LENGTH: f64 = 0.78;
+const FLAG_DEPTH: f64 = 0.46;
+const FLAG_SEGMENTS: usize = 4;
+const FLAG_DROP: f64 = 0.9;
+const POLE_BEND: f64 = 1.45;
+/// The bend arrives packed into the instance `z` in this many steps (twice the
+/// step count added to the hoist, which stays within 0..1).
+pub const POLE_BEND_STEPS: f32 = 15.0;
+/// The soft shade the drop casts on the ground round its foot: darkness under the
+/// pallet, fading out this far past its edges, at this height over the ground.
+const CONTACT_DARKNESS: f32 = 0.5;
+const CONTACT_REACH: f64 = 0.42;
+const CONTACT_LIFT: f64 = 0.01;
 
 static SHARED: Cache<u8, Mesh> = Cache::new();
 static MATERIALS: Cache<u8, Material> = Cache::new();
@@ -477,6 +504,7 @@ fn shell_canisters() -> Mesh {
             parts.push(
                 Part::drum(radius, height, 12, kind(SIDE))
                     .top(lid_over([-reach, -reach, reach, reach]))
+                    .bottom(swatch(RUBBER))
                     .at(x, height / 2.0, z),
             );
         }
@@ -675,8 +703,9 @@ fn tool_chest() -> Mesh {
     build(parts)
 }
 
-/// Laser: a ribbed pale transit case for the defence set, latched, its whip
-/// antenna raised from one corner and the emitter's dish on the other.
+/// Laser: a ribbed off-white radio transit case for the defence set, latched, its
+/// whip antenna raised from one corner on its mount and a field handset in its
+/// cradle on the lid's other end.
 fn transit_case() -> Mesh {
     let [w, h, d] = [1.28, 0.5, 0.86];
     let lid = [w + 0.04, 0.12, d + 0.04];
@@ -700,34 +729,24 @@ fn transit_case() -> Mesh {
     let top = h + lid[1];
     parts.push(Part::cube([0.12, 0.08, 0.12], swatch(GUNMETAL)).at(0.54, top + 0.04, -0.33));
     parts.push(Part::drum(0.02, 1.1, 5, swatch(BRIGHT)).at(0.54, top + 0.08 + 0.55, -0.33));
-    // The dish on its stub at the back corner, tipped up and back.
-    parts.push(Part::drum(0.05, 0.16, 6, swatch(GUNMETAL)).at(-0.5, top + 0.08, -0.3));
-    parts.push(
-        Part::new(cylinder_geometry(0.2, 0.05, 0.1, 12), kind(PAINT))
-            .tipped(0.0, 0.4)
-            .at(-0.5, top + 0.19, -0.3),
-    );
+    // The handset lying in its cradle: a dark bar with an earpiece and mouthpiece.
+    parts.push(Part::cube([0.4, 0.04, 0.16], swatch(GUNMETAL)).at(-0.36, top + 0.02, 0.22));
+    for x in [-0.2, 0.2] {
+        parts.push(Part::cube([0.1, 0.07, 0.13], swatch(RUBBER)).at(-0.36 + x, top + 0.07, 0.22));
+    }
+    parts.push(Part::cube([0.22, 0.05, 0.08], swatch(RUBBER)).at(-0.36, top + 0.09, 0.22));
     build(parts)
 }
 
-/// The pallet every pickup sits on: a tarp, the smoke grenade beside it in the
-/// kind's paint, and the pallet itself twice: whole (three stringers and five
-/// deck boards) while the supply is stocked, and crushed flat once a tank has
-/// driven over it (its boards broken and splayed on the tarp, mapped into the
-/// crushed cell). The `pickup-face` effect shows one or the other by the instance
-/// data's `z` (1 while stocked).
+/// The pallet every pickup sits on: three stringers and five deck boards, the
+/// smoke grenade on the ground beside it in the kind's paint, and the marker pole
+/// with the kind's pennant at its back left corner. The `pickup-face` effect
+/// lowers the pennant while the drop is empty and hoists it as it restocks.
 fn pallet_geometry() -> Mesh {
     let [w, d] = PALLET_SIZE;
     let deck = 0.035;
     let stringer = PALLET_HEIGHT - deck;
-    let [tw, td] = TARP_SIZE;
-    let mut parts = vec![
-        Part::cube(
-            [tw, TARP_THICKNESS, td],
-            Paint::Face(PICKUP_TARP_CELL, [0.0, 0.0, 1.0, 1.0]),
-        )
-        .at(0.0, TARP_THICKNESS / 2.0, 0.0),
-    ];
+    let mut parts = Vec::new();
     for z in [-1.0, 0.0, 1.0] {
         parts.push(Part::cube([w, stringer, 0.12], wood(CHOCK)).at(
             0.0,
@@ -752,6 +771,7 @@ fn pallet_geometry() -> Mesh {
     parts.push(
         Part::drum(MARKER_RADIUS, top - fuse, 10, kind(PAINT))
             .top(swatch(GUNMETAL))
+            .bottom(swatch(GUNMETAL))
             .at(mx, (top - fuse) / 2.0, mz),
     );
     parts.push(
@@ -762,52 +782,69 @@ fn pallet_geometry() -> Mesh {
         top * 0.6,
         mz,
     ));
-    crushed_pallet(&mut parts);
+    // The marker pole, driven into the ground with a cap on top, and its pennant
+    // in segments along its length so the effect can ripple it.
+    let [px, pz] = FLAG_POLE;
+    parts.push(Part::drum(0.034, POLE_HEIGHT, 6, swatch(POLE)).at(px, POLE_HEIGHT / 2.0, pz));
+    parts.push(Part::drum(0.052, 0.05, 6, swatch(POLE)).at(px, POLE_HEIGHT + 0.02, pz));
+    let piece = FLAG_LENGTH / FLAG_SEGMENTS as f64;
+    for index in 0..FLAG_SEGMENTS {
+        parts.push(Part::cube([piece, FLAG_DEPTH, 0.012], kind(FLAG)).at(
+            px + 0.03 + piece * (index as f64 + 0.5),
+            POLE_HEIGHT - 0.06 - FLAG_DEPTH / 2.0,
+            pz,
+        ));
+    }
     build(parts)
 }
 
-/// The pallet a tank has driven over: deck boards snapped and splayed flat over
-/// the tarp, stringers cracked, the odd broken end propped on another. Every face
-/// maps into the crushed cell, which the `pickup-face` effect folds away while the
-/// supply is stocked.
-fn crushed_pallet(parts: &mut Vec<Part>) {
-    // (length, width, x, z, turn, lift, tip): boards lie flat, or propped on a
-    // neighbour, `lift` higher and tipped by `tip` about their length.
-    let pieces: [(f64, f64, f64, f64, f64, f64, f64); 9] = [
-        (0.86, 0.27, -0.56, 0.04, 1.62, 0.0, 0.0),
-        (0.52, 0.27, -0.22, -0.3, 1.38, 0.0, 0.0),
-        (0.44, 0.26, -0.18, 0.34, 1.9, 0.0, 0.0),
-        (0.7, 0.27, 0.18, 0.02, 1.47, 0.035, 0.08),
-        (0.38, 0.25, 0.5, -0.32, 1.2, 0.0, 0.0),
-        (0.46, 0.27, 0.56, 0.28, 1.75, 0.03, -0.1),
-        (0.62, 0.11, 0.06, -0.46, 0.08, 0.0, 0.0),
-        (0.7, 0.11, -0.3, 0.5, -0.12, 0.0, 0.0),
-        (0.5, 0.11, 0.42, 0.48, 0.22, 0.04, 0.12),
-    ];
-    for (index, (length, width, x, z, turn, lift, tip)) in pieces.into_iter().enumerate() {
-        let thick = if width < 0.15 { 0.1 } else { 0.035 };
-        let row = (index % 4) as f64 * 0.25;
-        parts.push(
-            Part::cube(
-                [length, thick, width],
-                Paint::Face(PICKUP_CRUSHED_CELL, [0.0, row + 0.02, 1.0, row + 0.23]),
-            )
-            .tipped(0.0, tip)
-            .turned(turn)
-            .at(x, TARP_THICKNESS + thick / 2.0 + lift, z),
-        );
+/// The soft shade the drop casts round its foot: a rounded rectangle over the
+/// pallet's footprint, darkest under it and fading to nothing `CONTACT_REACH` past
+/// its edges, in black blended by the vertex alpha, so the drop sits in the ground
+/// rather than on a plate. One mesh for every drop.
+fn contact_shade_geometry() -> Mesh {
+    const ARC: usize = 3;
+    let [w, d] = PALLET_SIZE.map(|v| v / 2.0);
+    let mut positions = Vec::new();
+    let mut alpha = Vec::new();
+    for (grow, round, strength) in [
+        (-0.05, 0.05, CONTACT_DARKNESS),
+        (CONTACT_REACH, CONTACT_REACH, 0.0),
+    ] {
+        for (corner, (sx, sz)) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
+            .into_iter()
+            .enumerate()
+        {
+            for k in 0..ARC {
+                let angle = (corner as f64 + k as f64 / (ARC - 1) as f64) * PI / 2.0;
+                let x = sx * (w + grow - round) + round * angle.cos();
+                let z = sz * (d + grow - round) + round * angle.sin();
+                positions.extend([x, CONTACT_LIFT, z]);
+                alpha.push(strength);
+            }
+        }
     }
-}
-
-/// The lid a crushed crate throws out from under the tank that took it: a board
-/// panel in the kind's paint with its stencil on top and two battens under it.
-fn lid_geometry() -> Mesh {
-    let [w, h, d] = LID_SIZE;
-    let mut parts = vec![Part::cube([w, h, d], kind(PAINT)).top(lid_on([w, d]))];
-    for x in [-0.3, 0.3] {
-        parts.push(Part::cube([0.08, 0.04, d - 0.06], wood(board(1))).at(x, -h / 2.0 - 0.02, 0.0));
+    let ring = (4 * ARC) as u32;
+    // The core as a fan over its corners; then the band out to the rim.
+    let mut indices: Vec<u32> = (1..ring - 1).flat_map(|i| [0, i + 1, i]).collect();
+    for i in 0..ring {
+        let j = (i + 1) % ring;
+        indices.extend([i, j, ring + j, i, ring + j, ring + i]);
     }
-    build(parts)
+    let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
+    mesh.compute_vertex_normals();
+    // Wound to face up, toward the overhead camera.
+    if mesh.normals.iter().map(|n| n[1]).sum::<f32>() < 0.0
+        && let Some(indices) = &mut mesh.indices
+    {
+        for triangle in indices.as_chunks_mut::<3>().0 {
+            triangle.swap(1, 2);
+        }
+        mesh.compute_vertex_normals();
+    }
+    mesh.colors = vec![[0.0, 0.0, 0.0]; mesh.positions.len()];
+    mesh.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
+    mesh
 }
 
 /// The atlas `v` above which a pallet-cell UV belongs to the board a worn pallet
@@ -818,9 +855,27 @@ fn missing_board_from() -> f64 {
     (from + below) / 2.0
 }
 
+/// The atlas `v` range (low, high) inside which a kind-tile UV belongs to the
+/// pennant: strictly inside its region, clear of the plain strip's rows.
+fn flag_rows() -> [f64; 2] {
+    let [_, low] = atlas_cell_uv(KIND, 0.0, FLAG[1] - 0.004);
+    let [_, high] = atlas_cell_uv(KIND, 0.0, FLAG[3] + 0.004);
+    [low, high]
+}
+
+/// The pole's UV rectangle in the atlas (u0, v0, u1, v1), a little wider than its
+/// region and well inside its swatch.
+fn pole_rect() -> [f64; 4] {
+    let [u0, v0] = atlas_cell_uv(PICKUP_SWATCH_CELL, POLE[0] - 0.02, POLE[1] - 0.02);
+    let [u1, v1] = atlas_cell_uv(PICKUP_SWATCH_CELL, POLE[2] + 0.02, POLE[3] + 0.02);
+    [u0, v0, u1, v1]
+}
+
 /// The shared supply paint: the atlas, worn and matte, with the `pickup-face`
-/// effect choosing the kind's tile and the pallet's state; its first param is
-/// [`missing_board_from`].
+/// effect choosing the kind's tile, the pennant's height and the pole's bend; its
+/// params are [`missing_board_from`], the pole's x, the pennant's length and drop;
+/// the pennant's atlas rows ([`flag_rows`]), the pole's z and its greatest bend;
+/// the pole's UV rectangle ([`pole_rect`]).
 pub fn pickup_material() -> Arc<Material> {
     MATERIALS.get_or_insert(0, || {
         let atlas = TextureRef {
@@ -834,7 +889,19 @@ pub fn pickup_material() -> Arc<Material> {
             metalness: 0.06,
             effect: Effect::Custom {
                 name: PICKUP_FACE_EFFECT,
-                params: vec![missing_board_from() as f32, 0.0, 0.0, 0.0],
+                params: vec![
+                    missing_board_from() as f32,
+                    FLAG_POLE[0] as f32,
+                    FLAG_LENGTH as f32,
+                    FLAG_DROP as f32,
+                    flag_rows()[0] as f32,
+                    flag_rows()[1] as f32,
+                    FLAG_POLE[1] as f32,
+                    POLE_BEND as f32,
+                ]
+                .into_iter()
+                .chain(pole_rect().map(|v| v as f32))
+                .collect(),
             },
             ..Material::default()
         }
@@ -856,9 +923,9 @@ fn item_geometry(kind: PickupKind) -> Arc<Mesh> {
     })
 }
 
-/// The pallet's and the lid's keys in the mesh cache, clear of every kind's.
+/// The pallet's and its shade's keys in the mesh cache, clear of every kind's.
 const PALLET_KEY: u8 = 100;
-const LID_KEY: u8 = 101;
+const SHADE_KEY: u8 = 101;
 
 fn part(mesh: Arc<Mesh>) -> Node {
     let mut node = Node::mesh(mesh, pickup_material());
@@ -878,21 +945,25 @@ pub fn pickup_cube(kind: PickupKind) -> Node {
     group
 }
 
-/// The pallet under every pickup, shared by every kind; its instance data's `xy`
-/// paints the smoke grenade for the kind and its `z` shows it whole or crushed.
+/// The pallet under every pickup, shared by every kind, in its soft contact shade;
+/// its instance data's `xy` paints the smoke grenade and pennant for the kind and
+/// its `z` hoists the pennant (1 while stocked).
 pub fn pickup_pallet() -> Node {
     let mesh = SHARED.get_or_insert(PALLET_KEY, pallet_geometry);
     let mut group = Node::default();
     group.children.push(part(mesh));
-    group
-}
-
-/// The lid a crushed crate throws, shared by every kind, centred on its panel;
-/// its instance data's `xy` paints it for the kind.
-pub fn pickup_lid() -> Node {
-    let mesh = SHARED.get_or_insert(LID_KEY, lid_geometry);
-    let mut group = Node::default();
-    group.children.push(part(mesh));
+    let shade = MATERIALS.get_or_insert(1, || Material {
+        shading: Shading::Basic,
+        vertex_colors: true,
+        transparent: true,
+        depth_write: false,
+        polygon_offset: Some((-1.0, -4.0)),
+        ..Material::standard(0x000000, 0.0, 1.0)
+    });
+    group.children.push(Node::mesh(
+        SHARED.get_or_insert(SHADE_KEY, contact_shade_geometry),
+        shade,
+    ));
     group
 }
 
@@ -922,8 +993,6 @@ mod tests {
             PICKUP_PALLET_CELL,
             PICKUP_SWATCH_CELL,
             PICKUP_BRASS_CELL,
-            PICKUP_TARP_CELL,
-            PICKUP_CRUSHED_CELL,
         ];
         let inside = |mesh: &Mesh| {
             mesh.uvs.iter().all(|&[u, v]| {
@@ -939,7 +1008,6 @@ mod tests {
             assert!(inside(&item_geometry(kind)), "{kind:?}");
         }
         assert!(inside(&pallet_geometry()));
-        assert!(inside(&lid_geometry()));
     }
 
     /// Only the pallet's edge board takes the board a worn pallet may lose, so the
@@ -956,9 +1024,48 @@ mod tests {
         };
         // One board: a box's 24 vertices.
         assert_eq!(missing(&pallet_geometry()), 24);
-        assert_eq!(missing(&lid_geometry()), 0);
         for kind in PickupKind::ALL {
             assert_eq!(missing(&item_geometry(kind)), 0, "{kind:?}");
+        }
+    }
+
+    /// Only the pallet's pennant has UVs inside the pennant's rows of a kind tile,
+    /// so the effect hoists and ripples nothing else.
+    #[test]
+    fn only_the_pennant_lies_in_its_rows() {
+        let [low, high] = flag_rows();
+        let [u_end, _] = atlas_cell_uv(KIND, 1.0, 0.0);
+        let flagged = |mesh: &Mesh| {
+            mesh.uvs
+                .iter()
+                .filter(|&&[u, v]| {
+                    f64::from(u) < u_end && f64::from(v) > low && f64::from(v) < high
+                })
+                .count()
+        };
+        assert_eq!(flagged(&pallet_geometry()), FLAG_SEGMENTS * 24);
+        for kind in PickupKind::ALL {
+            assert_eq!(flagged(&item_geometry(kind)), 0, "{kind:?}");
+        }
+    }
+
+    /// Only the marker pole has UVs inside the pole's rectangle, so the effect
+    /// bends nothing else.
+    #[test]
+    fn only_the_pole_lies_in_its_rectangle() {
+        let [u0, v0, u1, v1] = pole_rect();
+        let poled = |mesh: &Mesh| {
+            mesh.uvs
+                .iter()
+                .filter(|&&[u, v]| {
+                    let (u, v) = (f64::from(u), f64::from(v));
+                    u > u0 && u < u1 && v > v0 && v < v1
+                })
+                .count()
+        };
+        assert!(poled(&pallet_geometry()) > 0);
+        for kind in PickupKind::ALL {
+            assert_eq!(poled(&item_geometry(kind)), 0, "{kind:?}");
         }
     }
 

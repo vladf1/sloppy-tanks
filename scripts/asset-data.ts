@@ -38,8 +38,8 @@ export type PickupKind = SpecialAmmo | "rapid" | "shield" | "speed" | "repair" |
 
 // The pickup atlas: one painted tile per kind in a 3x3 block; the pallet's bare
 // planks and swatches of steel, rubber and webbing in the fourth column; cartridge
-// brass, the drop's tarp and a crushed pallet's broken boards below the block. The
-// engine maps UVs with the same layout (`pickup_visuals.rs`).
+// brass below the block. The engine maps UVs with the same layout
+// (`pickup_visuals.rs`).
 export const PICKUP_ATLAS_PATH = "textures/pickups/atlas.webp";
 export const PICKUP_ICON_SIZE = 256;
 export const PICKUP_ATLAS_PADDING = 16;
@@ -48,12 +48,10 @@ export const PICKUP_ATLAS_SIZE = PICKUP_ATLAS_STRIDE * 4;
 export const PICKUP_PALLET_CELL = [3, 0] as const;
 export const PICKUP_SWATCH_CELL = [3, 2] as const;
 export const PICKUP_BRASS_CELL = [0, 3] as const;
-export const PICKUP_TARP_CELL = [1, 3] as const;
-/** The broken boards of a crushed pallet, one board to a row like the planks. */
-export const PICKUP_CRUSHED_CELL = [3, 3] as const;
 /** The surface each kind's supply shows under its paint: pine crates, olive drab
- * tubes, ammo cans, jerry cans and a ribbed olive tool chest, black fibre shell
- * canisters, rolled armour steel and a tan transit case. */
+ * tubes, black ammo cans, jerry cans, black fibre shell canisters, rolled armour
+ * steel, and a tool chest and radio case ribbed and painted all over in the kind's
+ * colour. */
 export const PICKUP_SURFACES = {
   spread: "planks",
   rocket: "olive",
@@ -62,26 +60,38 @@ export const PICKUP_SURFACES = {
   rapid: "can",
   shield: "steel",
   speed: "jerry",
-  repair: "drab",
-  laser: "tan",
+  repair: "painted",
+  laser: "painted",
 } as const satisfies Record<
   PickupKind,
-  "planks" | "olive" | "fibre" | "can" | "steel" | "jerry" | "drab" | "tan"
+  "planks" | "olive" | "fibre" | "can" | "steel" | "jerry" | "painted"
 >;
 /** Each kind's paint (`pickup_paint` in `pickup_visuals.rs`): the big painted
- * block on its load, nine hues and a pale grey, worn enamel rather than toy
- * colours. */
+ * block on its load and its pennant, nine hues clear of the teams' red and blue,
+ * worn military enamel rather than toy colours. */
 export const PICKUP_PAINTS = {
-  spread: 0xa83270,
-  rocket: 0xb02c22,
-  ricochet: 0x643f9e,
-  piercing: 0x1e8a80,
-  rapid: 0xcc6a1a,
-  shield: 0x2e5aa8,
-  speed: 0xd0b62a,
-  repair: 0x3a8c3a,
-  laser: 0xbdbab0,
+  spread: 0x8a4474,
+  rocket: 0xa85a2a,
+  ricochet: 0x5e5294,
+  piercing: 0x2c7a72,
+  rapid: 0x8e9a36,
+  shield: 0x2e3032,
+  speed: 0xbc9c36,
+  repair: 0x447e40,
+  laser: 0xc2beb0,
 } as const satisfies Record<PickupKind, number>;
+/** The lot marking stencilled beside each kind's emblem. */
+export const PICKUP_MARKINGS = {
+  spread: ["12 GA", "FLECH"],
+  rocket: ["RKT HE", "66 MM"],
+  ricochet: ["105 MM", "HESH"],
+  piercing: ["120 MM", "APFSDS"],
+  rapid: ["7.62", "LINKED"],
+  shield: ["ARMOR", "PLATE"],
+  speed: ["FUEL", "20 L"],
+  repair: ["TOOL", "KIT"],
+  laser: ["APS", "RADIO"],
+} as const satisfies Record<PickupKind, readonly [string, string]>;
 export const PICKUP_ATLAS_TILES = {
   spread: [0, 0],
   rocket: [1, 0],
