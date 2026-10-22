@@ -2,13 +2,17 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { EngineEvent } from "../src/game/engine-api";
 import {
+  activeEffects,
   deathCause,
   deathReport,
   effectsLabel,
+  feedIcon,
+  hullTone,
   isOwnKill,
   killFeedNames,
   rankTitle,
 } from "../src/game/hud-feedback";
+import { teamOutcome } from "../src/game/ui-markup";
 
 const death: EngineEvent = {
   type: "death",
@@ -142,4 +146,38 @@ test("rank help uses the engine's bonuses and repair delay", () => {
     }),
     "+20% damage · +15% fire rate · +15% hull · repairs 1% hull/s after 5s out of combat",
   );
+});
+
+test("the hull bar's colour follows the hull's state, never the team", () => {
+  assert.deepEqual([1, 0.61, 0.6, 0.31, 0.3, 0].map(hullTone), [
+    "healthy",
+    "healthy",
+    "damaged",
+    "damaged",
+    "critical",
+    "critical",
+  ]);
+});
+
+test("every kill-feed row carries an icon, the wreck mark when the weapon is unknown", () => {
+  assert.equal(feedIcon("rocket"), "hud-rocket");
+  assert.equal(feedIcon("tow"), "hud-rocket");
+  assert.equal(feedIcon(undefined), "hud-skull");
+});
+
+test("effect chips name each effect apart from what is left of it", () => {
+  assert.deepEqual(activeEffects({ ...noEffects, shield: 4.1, shieldPoints: 79.1, rapid: 3.2 }), [
+    { kind: "shield", name: "SHIELD", detail: "80 HP · 5s" },
+    { kind: "rapid", name: "RAPID", detail: "4s" },
+  ]);
+  assert.deepEqual(activeEffects(noEffects), []);
+});
+
+test("the battle report names a win, a loss or a draw, even for a battle ended early", () => {
+  assert.equal(teamOutcome([100, 80], 0, 0, false), "won");
+  assert.equal(teamOutcome([100, 80], 1, 0, false), "lost");
+  // Ended early: the side ahead when it ended takes it; level scores are a draw.
+  assert.equal(teamOutcome([3, 4], 1, null, true), "won");
+  assert.equal(teamOutcome([3, 4], 0, null, true), "lost");
+  assert.equal(teamOutcome([0, 0], 0, null, true), "draw");
 });

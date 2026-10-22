@@ -8,6 +8,13 @@ const SPEED_LABELS: Record<SpeedKey, string> = {
   "bullet-speed": "Projectile base speed",
 };
 const DEFAULT_VOLUME = 0.6;
+/** The touch preference's choices. A segmented control shows them; the hidden select
+ * behind it holds the value Save reads. */
+const TOUCH_MODES = [
+  ["auto", "Auto"],
+  ["on", "On"],
+  ["off", "Off"],
+] as const;
 
 /** The HUD's corner button that opens the dialog. */
 export const SETTINGS_BUTTON = `<button id="settings-open" class="quiet" type="button" aria-label="Settings" title="Settings" aria-haspopup="dialog"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M10.23 4.61L10.8 1.87h2.4l.57 2.74 2.2.91 2.34-1.53 1.7 1.7-1.53 2.34.91 2.2 2.74.57v2.4l-2.74.57-.91 2.2 1.53 2.34-1.7 1.7-2.34-1.53-2.2.91-.57 2.74h-2.4l-.57-2.74-2.2-.91-2.34 1.53-1.7-1.7 1.53-2.34-.91-2.2-2.74-.57v-2.4l2.74-.57.91-2.2-1.53-2.34 1.7-1.7 2.34 1.53z" /><circle cx="12" cy="12" r="3.2" /></svg></button>`;
@@ -35,11 +42,16 @@ export interface SettingsHandlers {
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
+/** Where a slider's default sits along its track, for the tick that marks it. */
+function defaultMark(min: number, max: number, value: number): string {
+  return `--default:${(((value - min) / (max - min)) * 100).toFixed(1)}%`;
+}
+
 function settingsMarkup(eyebrow: string, speeds: boolean): string {
   const speedRows = (Object.keys(SPEED_LABELS) as SpeedKey[])
     .map(
       (key) =>
-        `<label class="setting-row" for="${key}"><span>${SPEED_LABELS[key]}</span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1"><output id="${key}-value" for="${key}">100%</output></label>`,
+        `<label class="setting-row" for="${key}"><span>${SPEED_LABELS[key]}<small>Default 100%</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}"><output id="${key}-value" for="${key}">100%</output></label>`,
     )
     .join("");
   // The dialog itself takes focus when it opens, so no control starts out ringed as if
@@ -48,9 +60,9 @@ function settingsMarkup(eyebrow: string, speeds: boolean): string {
     <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${eyebrow}</span></div><div class="dialog-title"><h2 id="settings-title">SETTINGS</h2></div></header>
     <div class="setting-group-label">GAME</div>
     <div class="setting-rows">
-    <label class="setting-row" for="touch-mode"><span>Touch controls<small>Auto shows them on touchscreens</small></span><select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
-    <label class="setting-row" for="volume"><span>Sound</span><input id="volume" type="range" min="0" max="1" step="0.05"><output id="volume-value" for="volume"></output></label>
-    ${speeds ? `<div class="setting-group-label">BATTLE SPEED<button class="text-button speeds-reset" type="button">Reset to 100%</button></div>${speedRows}` : ""}
+    <div class="setting-row"><span id="touch-mode-label">Touch controls<small>Auto shows them on touchscreens</small></span><div class="setting-choice" role="radiogroup" aria-labelledby="touch-mode-label">${TOUCH_MODES.map(([value, label]) => `<label><input type="radio" name="touch-mode-choice" value="${value}"><span>${label}</span></label>`).join("")}<select id="touch-mode" class="sr-only" tabindex="-1" aria-hidden="true">${TOUCH_MODES.map(([value, label]) => `<option value="${value}">${label}</option>`).join("")}</select></div></div>
+    <label class="setting-row" for="volume"><span>Sound</span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output></label>
+    ${speeds ? `<div class="setting-group-label">BATTLE SPEED<button class="chip-button speeds-reset" type="button" title="Both speeds back to 100%">RESET</button></div>${speedRows}` : ""}
     </div>
     <div class="menu-actions"><button class="primary settings-save" type="button">SAVE</button><button class="secondary settings-cancel" type="button">CANCEL</button></div>
   </dialog>`;
@@ -98,9 +110,28 @@ export class SettingsDialog {
         this.show(key, 1);
       }
     });
+    const touchMode = this.dialog.querySelector<HTMLSelectElement>("#touch-mode")!;
+    touchMode.addEventListener("change", () => this.showTouchMode());
+    for (const choice of this.dialog.querySelectorAll<HTMLInputElement>(
+      'input[name="touch-mode-choice"]',
+    )) {
+      choice.addEventListener("change", () => {
+        touchMode.value = choice.value;
+      });
+    }
     for (const id of ["volume", ...Object.keys(SPEED_LABELS)]) {
       const input = this.dialog.querySelector<HTMLInputElement>("#" + id);
       input?.addEventListener("input", () => this.show(id, Number(input.value)));
+    }
+  }
+
+  /** The segmented touch choice follows the select's value. */
+  private showTouchMode(): void {
+    const value = this.value("touch-mode");
+    for (const choice of this.dialog.querySelectorAll<HTMLInputElement>(
+      'input[name="touch-mode-choice"]',
+    )) {
+      choice.checked = choice.value === value;
     }
   }
 
@@ -143,6 +174,7 @@ export class SettingsDialog {
       return;
     }
     this.dialog.querySelector<HTMLSelectElement>("#touch-mode")!.value = this.handlers.touchMode();
+    this.showTouchMode();
     this.show("volume", savedVolume());
     const speeds = this.handlers.speeds?.get();
     for (const key of Object.keys(SPEED_LABELS) as SpeedKey[]) {

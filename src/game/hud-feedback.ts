@@ -99,7 +99,8 @@ export function killFeedSides(event: Pick<EngineEvent, "id" | "owner" | "team">)
 
 /** One kill-feed row: the names to show and how long it stays (seconds). `seq` tells two
  * otherwise identical rows apart, such as the same kill twice in one window. `cause`
- * picks the weapon icon between the names and `sides` their colours. */
+ * picks the weapon icon between the names and `sides` their colours; `ownDeath` marks
+ * the viewer's own wreck, which the feed highlights like the viewer's kills. */
 export interface FeedRow {
   names: string[];
   ownKill: boolean;
@@ -107,6 +108,13 @@ export interface FeedRow {
   seq: number;
   cause?: DamageCause;
   sides?: FeedSide[];
+  ownDeath?: boolean;
+}
+
+/** The weapon icon between a kill-feed row's names. Every kill gets one, so every row
+ * reads the same way; a kill without a reported weapon shows the generic wreck mark. */
+export function feedIcon(cause: DamageCause | undefined): string {
+  return (cause && CAUSE_ICONS[cause]) || "hud-skull";
 }
 
 let lastFeedSeq = 0;
@@ -114,28 +122,29 @@ let lastFeedSeq = 0;
 export function newFeedRow(
   names: string[],
   ownKill = false,
-  details: Pick<FeedRow, "cause" | "sides"> = {},
+  details: Pick<FeedRow, "cause" | "sides" | "ownDeath"> = {},
 ): FeedRow {
   return { names, ownKill, time: 5, seq: ++lastFeedSeq, ...details };
 }
 
-/** Shows a feed row: one name for a notice, or killer and victim with an arrow between. The
- * arrow is drawn in CSS because small font sets, such as Tesla's browser, lack symbol glyphs
- * like U+25B8 `▸` and draw a missing-glyph box instead. The viewer's own kills are highlighted;
- * `entering` is the newest row, which plays the pop-in once rather than again each time older
- * rows shift down. */
+/** Shows a feed row: one name for a notice, or killer and victim with the weapon's icon
+ * between. Icons are SVG shapes because small font sets, such as Tesla's browser, lack
+ * symbol glyphs and draw a missing-glyph box instead. Every row has one plate; the
+ * viewer's own kills and wreck carry its highlight. `entering` is the newest row, which
+ * plays the pop-in once rather than again each time older rows shift down. */
 export function showFeedRow(
   row: HTMLElement,
-  feedRow: Pick<FeedRow, "names" | "ownKill" | "seq" | "cause" | "sides">,
+  feedRow: Pick<FeedRow, "names" | "ownKill" | "seq" | "cause" | "sides" | "ownDeath">,
   entering = false,
 ): void {
-  const { names, ownKill, cause, sides = [] } = feedRow;
-  const key = `${feedRow.seq}\n${names.join("\n")}\n${cause ?? ""}\n${sides.join(" ")}`;
+  const { names, ownKill, cause, sides = [], ownDeath = false } = feedRow;
+  const key = `${feedRow.seq}\n${names.join("\n")}\n${cause ?? ""}\n${sides.join(" ")}\n${ownDeath}`;
   if (row.dataset.names === key) {
     return;
   }
   row.dataset.names = key;
   row.classList.toggle("own-kill", ownKill);
+  row.classList.toggle("own-death", ownDeath);
   row.classList.remove("own-kill-new", "feed-new");
   if (entering) {
     // Reading offsetWidth commits the removal so a reused row restarts the animation.
@@ -145,24 +154,17 @@ export function showFeedRow(
   const name = (text: string, index: number) => {
     const span = document.createElement("span");
     span.className = `feed-name ${sides[index] ?? ""}`.trim();
-    span.classList.toggle("you", text === "YOU" && ownKill === (index === 0));
+    span.classList.toggle("you", index === 0 ? ownKill : ownDeath);
     span.textContent = text;
     return span;
   };
   row.replaceChildren(name(names[0], 0));
   names.slice(1).forEach((victim, index) => {
-    const icon = CAUSE_ICONS[cause ?? ""];
-    let mark: Element;
-    if (icon) {
-      mark = document.createElementNS("http://www.w3.org/2000/svg", "svg");
-      mark.setAttribute("class", "feed-weapon");
-      const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-      use.setAttribute("href", `#${icon}`);
-      mark.append(use);
-    } else {
-      mark = document.createElement("i");
-      mark.className = "feed-arrow";
-    }
+    const mark = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    mark.setAttribute("class", "feed-weapon");
+    const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+    use.setAttribute("href", `#${feedIcon(cause)}`);
+    mark.append(use);
     mark.setAttribute("role", "img");
     mark.setAttribute("aria-label", "destroyed");
     row.append(mark, name(victim, index + 1));
@@ -196,6 +198,91 @@ export function setText(root: ParentNode, id: string, text: string): void {
   }
 }
 
+/** How the hull reads at a glance: healthy, damaged or critical, at the overhead bar's
+ * thresholds (`health_bar_state` in the renderer), so both bars change colour together. */
+export type HullTone = "healthy" | "damaged" | "critical";
+
+export function hullTone(ratio: number): HullTone {
+  return ratio <= 0.3 ? "critical" : ratio <= 0.6 ? "damaged" : "healthy";
+}
+
+/** One timed power-up or protection, as the tank panel's chips show it. */
+export interface ActiveEffect {
+  kind: "spawn" | "shield" | "rapid" | "boost" | "laser" | "repair";
+  name: string;
+  /** What is left: seconds, shield points, or nothing for a lasting effect. */
+  detail: string;
+}
+
+export function activeEffects(
+  tank: Pick<
+    HumanState,
+    "protection" | "shield" | "shieldPoints" | "rapid" | "speed" | "laser" | "selfRepair"
+  >,
+): ActiveEffect[] {
+  const seconds = (time: number) => `${Math.ceil(time)}s`;
+  const effects: (ActiveEffect | null)[] = [
+    tank.protection > 0 ? { kind: "spawn", name: "SPAWN SHIELD", detail: "" } : null,
+    tank.shield > 0
+      ? {
+          kind: "shield",
+          name: "SHIELD",
+          detail: `${Math.ceil(tank.shieldPoints)} HP · ${seconds(tank.shield)}`,
+        }
+      : null,
+    tank.rapid > 0 ? { kind: "rapid", name: "RAPID", detail: seconds(tank.rapid) } : null,
+    tank.speed > 0 ? { kind: "boost", name: "BOOST", detail: seconds(tank.speed) } : null,
+    tank.laser > 0 ? { kind: "laser", name: "LASER DEFENSE", detail: seconds(tank.laser) } : null,
+    tank.selfRepair ? { kind: "repair", name: "SELF-REPAIR", detail: "" } : null,
+  ];
+  return effects.filter((effect): effect is ActiveEffect => effect !== null);
+}
+
+/** Each effect's mark in the text line. The chips draw their own colour dot instead (small
+ * font sets lack these symbols), so the marks stay in the text for readers only. */
+const EFFECT_MARKS: Record<ActiveEffect["kind"], string> = {
+  spawn: "",
+  shield: "◇ ",
+  rapid: "» ",
+  boost: "ϟ ",
+  laser: "✧ ",
+  repair: "",
+};
+
+/** The effect chips in the tank panel's footer, rebuilt only when their text changes. Their
+ * text, separators included, reads as `effectsLabel`. */
+function showEffects(root: ParentNode, tank: HumanState): void {
+  const list = root.querySelector<HTMLElement>("#effects");
+  if (!list) {
+    return;
+  }
+  const effects = activeEffects(tank);
+  const key = effects.map(({ kind, detail }) => `${kind}:${detail}`).join("|");
+  if (list.dataset.key === key) {
+    return;
+  }
+  list.dataset.key = key;
+  list.replaceChildren(
+    ...effects.flatMap(({ kind, name, detail }, index) => {
+      const chip = document.createElement("span");
+      chip.className = "effect";
+      chip.dataset.kind = kind;
+      if (EFFECT_MARKS[kind]) {
+        const mark = document.createElement("i");
+        mark.textContent = EFFECT_MARKS[kind];
+        chip.append(mark);
+      }
+      const label = document.createElement("b");
+      label.textContent = name;
+      chip.append(label);
+      if (detail) {
+        chip.append(` ${detail}`);
+      }
+      return index ? ["  ", chip] : [chip];
+    }),
+  );
+}
+
 /** Both HUDs' tank status (`hudMarkup` under `root`): hull, tank and rank, the health bar,
  * the ammo slots, which `slotsDisabled` makes unusable, the mine, power-ups and the low
  * hull warning. */
@@ -207,16 +294,27 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
   rank.dataset.rank = String(tank.rank);
   rank.title = rankTitle(tank);
   setText(root, "hp-max", `/ ${Math.round(tank.maxHp)}`);
-  const hpbar = root.querySelector<HTMLElement>("#hpbar")!;
+  // The bar's colour follows the hull's state, not the team: a full hull never reads as
+  // danger. The phone's hull pill shows the same reading.
   const width = `${tank.healthRatio * 100}%`;
-  hpbar.style.width = width;
-  hpbar.style.backgroundColor = `#${tank.healthColor.toString(16).padStart(6, "0")}`;
-  // The ghost behind the bar trails it down (a CSS transition), showing the chunk a hit
-  // took; it sits under the bar, so a repair hides it until it catches up.
-  const ghost = root.querySelector<HTMLElement>("#hpghost");
-  if (ghost && ghost.style.width !== width) {
-    ghost.style.width = width;
+  const tone = hullTone(tank.healthRatio);
+  for (const bar of root.querySelectorAll<HTMLElement>(".hull-bar")) {
+    if (bar.dataset.tone !== tone) {
+      bar.dataset.tone = tone;
+    }
+    const fill = bar.querySelector<HTMLElement>(".hull-fill");
+    if (fill && fill.style.width !== width) {
+      fill.style.width = width;
+    }
+    // The ghost behind the bar trails it down (a CSS transition), showing the chunk a hit
+    // took; it sits under the bar, so a repair hides it until it catches up.
+    const ghost = bar.querySelector<HTMLElement>(".hull-ghost");
+    if (ghost && ghost.style.width !== width) {
+      ghost.style.width = width;
+    }
   }
+  setText(root, "hull-pill-hp", String(Math.max(0, Math.ceil(tank.hp))));
+  root.querySelector<HTMLElement>(".hull-readout")?.setAttribute("data-tone", tone);
   AMMO_OPTIONS.forEach(({ weapon, label: name }, index) => {
     const slotState = tank.ammo.find((slot) => slot.weapon === weapon);
     const selected = !!slotState?.selected;
@@ -238,29 +336,21 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
     tank.mineCooldown > 0 ? `MINE ${tank.mineCooldown.toFixed(1)}s` : "MINE READY · RMB",
   );
   root.querySelector(".mine-line")?.classList.toggle("cooling", tank.mineCooldown > 0);
-  setText(root, "effects", effectsLabel(tank));
+  showEffects(root, tank);
   root
     .querySelector(".status")!
     .classList.toggle("critical-health", tank.alive && tank.healthRatio < 0.25);
 }
 
+/** The active effects as one line of text, for screen readers and logs. */
 export function effectsLabel(
   tank: Pick<
     HumanState,
     "protection" | "shield" | "shieldPoints" | "rapid" | "speed" | "laser" | "selfRepair"
   >,
 ): string {
-  return [
-    tank.protection > 0 ? "SPAWN SHIELD" : null,
-    tank.shield > 0
-      ? `◇ SHIELD ${Math.ceil(tank.shieldPoints)} HP · ${Math.ceil(tank.shield)}s`
-      : null,
-    tank.rapid > 0 ? `» RAPID ${Math.ceil(tank.rapid)}s` : null,
-    tank.speed > 0 ? `ϟ BOOST ${Math.ceil(tank.speed)}s` : null,
-    tank.laser > 0 ? `✧ LASER DEFENSE ${Math.ceil(tank.laser)}s` : null,
-    tank.selfRepair ? "SELF-REPAIR" : null,
-  ]
-    .filter(Boolean)
+  return activeEffects(tank)
+    .map(({ kind, name, detail }) => `${EFFECT_MARKS[kind]}${name}${detail ? " " + detail : ""}`)
     .join("  ");
 }
 

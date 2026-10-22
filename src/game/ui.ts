@@ -286,6 +286,7 @@ export class UI {
         newFeedRow(names, ownKill, {
           cause: event.damageSource?.cause,
           sides: killFeedSides(event),
+          ownDeath: event.id === human.id,
         }),
       );
       if (ownKill) {

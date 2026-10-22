@@ -362,17 +362,6 @@
   color: #fff;
   pointer-events: none;
 }
-#network-respawn::before {
-  content: "";
-  position: absolute;
-  left: calc(50% - 32px);
-  top: -1px;
-  width: 64px;
-  height: 3px;
-  border-radius: 0 0 3px 3px;
-  background: var(--red);
-  box-shadow: 0 0 12px #ff4d5eaa;
-}
 #network-respawn-count {
   margin: 0;
   font: 400 34px/1 var(--font-display);

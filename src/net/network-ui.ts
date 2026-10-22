@@ -682,6 +682,7 @@ export class NetworkUI {
       this.addFeed(killFeedNames(event, viewerId, hud.scoreboard), isOwnKill(event, viewerId), {
         cause: event.damageSource?.cause,
         sides: killFeedSides(event),
+        ownDeath: event.id === viewerId,
       });
     }
     if (event.id === viewerId) {

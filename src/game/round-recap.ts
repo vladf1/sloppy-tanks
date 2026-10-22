@@ -7,12 +7,12 @@ const METRICS: Record<RecapMetric, { label: string; hint: string }> = {
   damage: { label: "Damage dealt", hint: "Enemy hull damage, no overkill" },
   bestLife: { label: "Best spree", hint: "Most kills in a single life" },
   rank: { label: "Top rank", hint: "Peak rank across all lives" },
-  busiestMinute: { label: "Busiest minute", hint: "Most kills in any rolling 60s" },
+  busiestMinute: { label: "Kills in a minute", hint: "Most kills within any 60 seconds" },
   longestLife: { label: "Longest life", hint: "Longest time alive, pauses excluded" },
-  multikill: { label: "Multikill", hint: "Most kills in any rolling 5s" },
+  multikill: { label: "Kills in 5 seconds", hint: "Most kills within any 5 seconds" },
   clutchKills: { label: "Clutch kills", hint: "Kills at 25% hull or less" },
   revengeKills: { label: "Revenge kills", hint: "Kills on your last killer" },
-  posthumousKills: { label: "From the grave", hint: "Kills by a previous life's ordnance" },
+  posthumousKills: { label: "Kills after wreck", hint: "Kills by a previous life's ordnance" },
   mineKills: { label: "Mine kills", hint: "Kills from mine explosions" },
   coverDestroyed: { label: "Cover wrecked", hint: "Destructible objects you finished" },
   pickups: { label: "Pickups", hint: "Ammo and power-ups collected" },
@@ -45,7 +45,8 @@ export function duration(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }
 
-/** The battle report's feats, stat tiles and details for a finished round. */
+/** The battle report's feats, stat tiles and details for a finished round. Kills comes
+ * first: the report draws it as the hero tile. */
 export function recapMarkup(
   hud: Pick<HudState, "elapsed" | "mapName" | "difficulty">,
   recap: RecapState,

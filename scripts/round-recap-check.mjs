@@ -92,7 +92,11 @@ try {
     }));
     await click(page, "#end-battle");
     await page.locator(".recap-stats").waitFor();
-    assert.equal(await page.locator(".results h2").innerText(), "BATTLE ENDED");
+    // A team battle ended early goes to the side ahead (or a draw); a solo run just ends.
+    assert.match(
+      await page.locator(".results h2").innerText(),
+      mode === "team" ? /^(VICTORY|DEFEAT|DRAW)$/ : /^BATTLE ENDED$/,
+    );
     assert.deepEqual(
       await page.evaluate(() => ({
         elapsed: window.sloppy.sim.elapsed,

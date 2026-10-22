@@ -87,3 +87,12 @@ export function isRoundMinutes(value: unknown): value is number {
     typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= MAX_ROUND_MINUTES
   );
 }
+
+/** The new room's length after one press of Battle Setup's stepper: the next multiple of
+ * `step` minutes in that direction, kept to whole minutes from 1 to MAX_ROUND_MINUTES. */
+export function steppedMinutes(minutes: number, step: number): number {
+  const current = Number.isFinite(minutes) ? minutes : 20;
+  const next =
+    step > 0 ? Math.floor(current / step) * step + step : Math.ceil(current / -step) * -step + step;
+  return Math.min(MAX_ROUND_MINUTES, Math.max(1, next));
+}
