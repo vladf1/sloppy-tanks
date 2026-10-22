@@ -21,7 +21,7 @@ use super::sparks::{EMBERS, Sparks, flame, glow, ground_glow};
 use crate::color::hex_to_linear;
 
 pub const MAX_BURNING_WRECKS: usize = 12;
-const SMOKE_PUFFS: usize = 10;
+const SMOKE_PUFFS: usize = 12;
 const FLAME_PUFFS: usize = 3;
 const TRAIL_PUFFS: usize = 6;
 /// The turret's trail and the tumbling hull's.
@@ -34,8 +34,10 @@ const SMOULDER_SECONDS: f64 = 24.0;
 /// A puff's trip up the column, and a flame's flicker (s).
 const SMOKE_CYCLE: f64 = 3.4;
 const FLAME_CYCLE: f64 = 0.62;
-/// The smoke column's height over a puff's trip (m).
+/// The smoke column's height over a puff's trip (m), and how much faster than
+/// its puffs the column first climbs off a fire that has just caught.
 const COLUMN_HEIGHT: f64 = 8.5;
+const COLUMN_GROWTH: f64 = 1.6;
 /// Where flames burn over a hull, along its length and across it in its own
 /// heading (m), how high over its centre they start whichever way up it lies,
 /// and how big each fire is (times the wreck's own variation).
@@ -57,7 +59,7 @@ const TRAIL_SECONDS: f64 = 2.6;
 /// The hull counts as at rest below this speed (m/s), and the fire takes hold
 /// and dies back at these rates (1/s) as it settles or is thrown again.
 const REST_SPEED: f32 = 1.2;
-const CATCH_RATE: f64 = 1.6;
+const CATCH_RATE: f64 = 3.0;
 const DOUSE_RATE: f64 = 5.0;
 /// A fire whose hull piece was never found takes hold this late (s).
 const UNFOUND_CATCH_SECONDS: f64 = 1.2;
@@ -83,6 +85,9 @@ const CLEAR_RATE: f64 = 0.9;
 /// Oily black smoke at the fire, paling to grey as it climbs and spreads.
 const SOOT: u32 = 0x3b3734;
 const SOOT_HIGH: u32 = 0x8c8a88;
+/// A burnout's fire against a cook-off's: the hull burns from the inside, out
+/// of every hatch, so it reads as dead from across the field.
+const BURNOUT_FIRE: f64 = 0.85;
 /// A dead tank's hull rests this high before its wreck piece is found.
 const REST_HEIGHT: f32 = 0.65;
 
@@ -303,7 +308,7 @@ fn follow(burner: &mut Burner, state: &RenderState, dt: f64) {
     } else {
         (burner.settled - dt * DOUSE_RATE).max(0.0)
     };
-    burner.column += dt.max(0.0) * burner.settled;
+    burner.column += dt.max(0.0) * burner.settled * COLUMN_GROWTH;
     if let Some(turret) = find(burner.turret) {
         let (position, _) = fragment_pose(turret);
         sample(
@@ -349,7 +354,7 @@ fn draw(
     let fire = settled
         * (1.0 - smoothstep(age, BURN_SECONDS * 0.55, BURN_SECONDS))
         * left
-        * if burner.burnout { 0.45 } else { 1.0 };
+        * if burner.burnout { BURNOUT_FIRE } else { 1.0 };
     let flicker = 0.8
         + 0.2 * (time * 13.0 + burner.seed * 40.0).sin() * (time * 7.3 + burner.seed * 9.0).sin();
     burner.fire = fire * flicker;
@@ -383,12 +388,12 @@ fn draw(
         );
         let pale = smoothstep(a, 0.05, 0.9) as f32;
         let color = [0, 1, 2].map(|i| soot[i] + (soot_high[i] - soot[i]) * pale);
-        let size = (0.9 + 2.4 * a.powf(0.85)) * vigour;
+        let size = (1.0 + 2.9 * a.powf(0.85)) * vigour;
         // Born quickly at the fire, densest low, thinning out as it spreads; a
         // puff shows only once the column has climbed to it.
         let grown = smoothstep(burner.column - a * SMOKE_CYCLE, 0.0, 0.6);
         let opacity =
-            smoke * grown * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.3, 1.0)) * 0.74;
+            smoke * grown * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.35, 1.0)) * 0.8;
         smoke_puff(
             puffs,
             position,

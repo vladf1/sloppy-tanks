@@ -28,10 +28,10 @@ const SPLINTER_STRETCH: Vec3 = Vec3::new(0.4, 2.4, 0.4);
 /// Chips and clods are flattened, uneven lumps rather than round beads.
 const CHIP_STRETCH: Vec3 = Vec3::new(1.0, 0.62, 0.84);
 /// Torn plate and flakes of paint are thin and wide.
-const PLATE_STRETCH: Vec3 = Vec3::new(1.5, 0.16, 1.05);
+const PLATE_STRETCH: Vec3 = Vec3::new(1.5, 0.26, 1.05);
 /// A resting chip's or plate's centre stands this share of its size off the ground.
 const CHIP_REST: f64 = 0.55;
-const PLATE_REST: f64 = 0.16;
+const PLATE_REST: f64 = 0.26;
 /// A shell striking a container's steel: a hard shower of sparks off the face,
 /// and flakes of its paint and bare metal knocked off it ([minimum, span]).
 const SHEET_SPARKS: Burst = Burst {
@@ -916,7 +916,7 @@ mod tests {
     }
 
     #[test]
-    fn burnout_rolls_a_small_gout_of_fire_with_no_shockwave_or_clods() {
+    fn burnout_bursts_a_contained_fireball_with_no_shockwave_or_clods() {
         let mut random = CosmeticRandom::default();
         let mut particles = ParticleEffects::default();
         let burnout = SimEvent {
@@ -938,13 +938,13 @@ mod tests {
                 .rings
                 .records()
                 .iter()
-                .all(|r| r.data[2] == 2.0),
-            "only the scorch: no dust ring or shock front"
+                .all(|r| r.data[2] != 1.0),
+            "a scorch and a ring of dust, but no shock front"
         );
-        assert_eq!(
-            particles.explosions.puffs.len(),
-            3 + 4,
-            "the smoke and the gout of fire rolling off the hull"
+        let puffs = particles.explosions.puffs.len();
+        assert!(
+            puffs > 3 + 4 && puffs <= super::super::explosions::PUFFS_PER_BLAST,
+            "a fireball out of the hull's seams beside the smoke and the gout: {puffs}"
         );
     }
 

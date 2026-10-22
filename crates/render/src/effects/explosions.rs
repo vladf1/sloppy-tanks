@@ -31,7 +31,7 @@ use crate::color::hex_to_linear;
 pub const MAX_EXPLOSIONS: usize = 40;
 /// A plain blast's lifetime; tank and drum blasts take their look's.
 pub const EXPLOSION_LIFETIME: f64 = 2.8;
-pub const PUFFS_PER_BLAST: usize = 30;
+pub const PUFFS_PER_BLAST: usize = 34;
 /// Scorches left on the ground at once; the oldest makes room.
 pub const MAX_SCORCHES: usize = 40;
 /// Marks shells leave on hard walls at once; the oldest makes room.
@@ -48,7 +48,9 @@ pub const DECAL_CAPACITY: usize = MAX_EXPLOSIONS * 2 + MAX_SCORCHES + MAX_WALL_M
 /// A scorch cools and then fades out over this many seconds.
 pub const SCORCH_LIFETIME: f64 = 45.0;
 /// A burnout's thin smoke outlasts a normal blast.
-const BURNOUT_LIFETIME: f64 = 2.7;
+const BURNOUT_LIFETIME: f64 = 3.6;
+/// A burnout's fireball against a cook-off's: the hull holds most of it in.
+const BURNOUT_FIRE_SCALE: f64 = 0.72;
 /// Billows of fire and smoke a burnout rolls up off the hull.
 const BURNOUT_BILLOWS: usize = 4;
 /// A dust collapse (timber) and a shell hit's puff.
@@ -68,7 +70,12 @@ const HOUSE_PALL: usize = 4;
 const PLASTER_DUST: u32 = 0xb9ab95;
 const HIT_LIFETIME: f64 = 1.1;
 /// Grit off a wall hangs and settles longer than a hull's puff of smoke.
-const STONE_HIT_LIFETIME: f64 = 1.8;
+const STONE_HIT_LIFETIME: f64 = 3.0;
+/// A holed container smokes from its breach a while after the hit: how long,
+/// and the wisps cycling up out of it (s per trip).
+const SHEET_HIT_LIFETIME: f64 = 3.2;
+const BREACH_WISPS: usize = 3;
+const WISP_CYCLE: f64 = 1.4;
 /// Dust rings show for the first part of a blast only; the shockwave for less.
 const RING_SECONDS: f64 = 0.75;
 const SHOCK_SECONDS: f64 = 0.42;
@@ -84,25 +91,20 @@ const SHOCK_SPREAD: f64 = 5.4;
 /// the wider orange bloom around it.
 /// Kept small and below white so it never blows out a hull beside it.
 const FLASH_SECONDS: f64 = 0.06;
-const FLASH_SIZE: f64 = 4.2;
+const FLASH_SIZE: f64 = 2.2;
 const FLASH_COLOR: [f32; 3] = [3.4, 2.9, 2.2];
-/// A kill's flash halo over its hull (s, m above the ground and m across, times
-/// the blast's scale).
-const HALO_SECONDS: f64 = 0.05;
-const HALO_HEIGHT: f64 = 1.5;
-const HALO_SIZE: f64 = 6.0;
 /// Heat every fireball lobe adds over its first frames, falling away with this
 /// time constant (s): the blast is white-hot before it is orange.
 const FLASH_HEAT: f64 = 1.3;
 const FLASH_HEAT_SECONDS: f64 = 0.04;
 /// The flash's light on the ground round the blast: diameter (m, times the
 /// scale) and HDR colour, gone within a few frames.
-const FLASH_GROUND_SIZE: f64 = 12.0;
+const FLASH_GROUND_SIZE: f64 = 10.0;
 const FLASH_GROUND_COLOR: [f32; 3] = [1.6, 1.25, 0.8];
 /// The white-hot seams a vehicle's flash shows round its hull for its first
 /// frames: each glow's diameter (m, times the scale) and colour.
 const SEAM_FLASH_SECONDS: f64 = 0.08;
-const SEAM_FLASH_SIZE: f64 = 1.8;
+const SEAM_FLASH_SIZE: f64 = 1.3;
 const SEAM_FLASH_COLOR: [f32; 3] = [3.2, 2.6, 1.7];
 const BLOOM_SECONDS: f64 = 0.15;
 const BLOOM_SIZE: f64 = 3.4;
@@ -167,7 +169,12 @@ const FUEL_FLAMES: usize = 4;
 /// they use the puff slots a tank's turret jet would.
 const FUEL_BALLS: usize = 3;
 const FUEL_BALL_CYCLE: f64 = 0.9;
-const FUEL_FIRE: [f64; 2] = [0.25, 1.5];
+const FUEL_FIRE: [f64; 2] = [0.25, 2.6];
+/// The oily plume the burning fuel feeds: puffs cycling up it, a puff's trip
+/// (s) and the plume's height (m, times the blast's scale).
+const FUEL_PLUME: usize = 5;
+const FUEL_PLUME_CYCLE: f64 = 2.6;
+const FUEL_PLUME_HEIGHT: f64 = 5.5;
 /// A tank's cook-off jet: how long its tongue of flame roars up, and its color.
 const JET_SECONDS: f64 = 0.45;
 const JET_COLOR: [f32; 3] = [1.3, 1.1, 1.0];
@@ -415,33 +422,33 @@ const TANK_BLASTS: [Look; 3] = [
 // over the drum's own size, and its oily smoke lingers.
 const BARREL_BLASTS: [Look; 3] = [
     Look {
-        lifetime: 4.6,
-        fire_size: 1.2,
-        fire_spread: 0.9,
-        fire_life: 0.6,
-        fire_rise: 1.4,
+        lifetime: 6.0,
+        fire_size: 1.02,
+        fire_spread: 0.76,
+        fire_life: 0.5,
+        fire_rise: 1.9,
         smoke: 0x4d4844,
         smoke_size: 1.1,
         smoke_rise: 3.0,
         drift: 0.3,
     },
     Look {
-        lifetime: 4.6,
-        fire_size: 1.14,
-        fire_spread: 0.8,
-        fire_life: 0.56,
-        fire_rise: 1.6,
+        lifetime: 6.0,
+        fire_size: 0.97,
+        fire_spread: 0.68,
+        fire_life: 0.5,
+        fire_rise: 2.1,
         smoke: 0x4a4542,
         smoke_size: 1.05,
         smoke_rise: 3.2,
         drift: 1.3,
     },
     Look {
-        lifetime: 4.8,
-        fire_size: 1.16,
-        fire_spread: 0.85,
-        fire_life: 0.6,
-        fire_rise: 1.7,
+        lifetime: 6.0,
+        fire_size: 0.99,
+        fire_spread: 0.72,
+        fire_life: 0.5,
+        fire_rise: 2.2,
         smoke: 0x524a44,
         smoke_size: 1.08,
         smoke_rise: 3.3,
@@ -488,7 +495,7 @@ struct WallMark {
 impl Blast {
     fn look(&self) -> Look {
         match self.kind {
-            Kind::Tank => TANK_BLASTS[self.variant],
+            Kind::Tank | Kind::Burnout => TANK_BLASTS[self.variant],
             Kind::Barrel => BARREL_BLASTS[self.variant],
             _ => BLAST,
         }
@@ -502,7 +509,8 @@ impl Blast {
             Kind::Collapse => COLLAPSE_LIFETIME,
             Kind::HouseFall => HOUSE_DUST_LIFETIME,
             Kind::Hit(Struck::Stone) => STONE_HIT_LIFETIME,
-            Kind::Hit(Struck::Steel | Struck::Sheet) => HIT_LIFETIME,
+            Kind::Hit(Struck::Steel) => HIT_LIFETIME,
+            Kind::Hit(Struck::Sheet) => SHEET_HIT_LIFETIME,
             Kind::Landing => LANDING_LIFETIME,
             Kind::Blast | Kind::Tank | Kind::Barrel => self.look().lifetime,
         }
@@ -980,7 +988,7 @@ impl ExplosionEffects {
             Kind::Blast => Some(5.2),
             Kind::Barrel => Some(6.2),
             Kind::Tank => Some(7.4),
-            Kind::Burnout => Some(2.6),
+            Kind::Burnout => Some(4.4),
             _ => None,
         };
         if let Some(diameter) = scorch {
@@ -1054,8 +1062,8 @@ impl ExplosionEffects {
                     LIGHT_HEIGHT * s + LIGHT_LIFT,
                 ),
                 Kind::Burnout => (
-                    BLAST_LIGHT * 0.5 * s * (-t * 4.0).exp(),
-                    1.2 * s + LIGHT_LIFT,
+                    BLAST_LIGHT * BURNOUT_FIRE_SCALE * s * blast.fire_light(t, &blast.look()),
+                    LIGHT_HEIGHT * s * BURNOUT_FIRE_SCALE + LIGHT_LIFT,
                 ),
                 Kind::Hit(_) => (HIT_LIGHT * (-t * 22.0).exp(), blast.y + 0.6),
                 _ => continue,
@@ -1218,8 +1226,17 @@ impl ExplosionEffects {
             Kind::Wood(wood) => self.wood_dust(b, wood, t, lifetime),
             Kind::Hit(struck) => self.hit(b, struck, t, streaks),
             Kind::Burnout => {
+                // The ammunition goes inside the hull: a smaller fireball bursts
+                // out of its seams and hatches, lighting the ground, and the
+                // hull smokes on.
+                let mut inner = *b;
+                inner.scale *= BURNOUT_FIRE_SCALE;
+                self.ground_glow(&inner, t, &look, streaks);
+                self.skirt(&inner, t, b.dust);
+                self.fireball(&inner, t, &look, linear(TANK_SMOKE), streaks);
                 self.burnout(b, t);
                 self.burnout_flare(b, t, streaks);
+                self.ring(b, t, inner.scale);
             }
             Kind::Landing => self.skirt(b, t, scaled(b.dust, 1.05)),
             Kind::Collapse => {
@@ -1239,8 +1256,9 @@ impl ExplosionEffects {
             }
             Kind::Blast | Kind::Tank | Kind::Barrel => {
                 let smoke = linear(look.smoke);
+                // No sitting haze: the column carries the smoke up and away,
+                // and a broad faint disc over the ground read as a flat decal.
                 self.ground_glow(b, t, &look, streaks);
-                self.haze(b, t, lifetime, mixed(b.dust, smoke, 0.45));
                 self.skirt(b, t, b.dust);
                 self.column(b, t, lifetime, &look, smoke, true);
                 if b.kind == Kind::Tank {
@@ -1249,11 +1267,7 @@ impl ExplosionEffects {
                 if b.kind == Kind::Barrel {
                     fuel_fire(b, t, lifetime, streaks);
                     self.fuel_smoke(b, t, lifetime, smoke);
-                }
-                // A kill leaves burning fuel and oil on the ground where it died,
-                // so the spot keeps burning wherever the wreck was thrown.
-                if b.kind == Kind::Tank {
-                    fuel_fire(b, t, lifetime, streaks);
+                    self.fuel_plume(b, t, lifetime, smoke);
                 }
                 self.fireball(b, t, &look, smoke, streaks);
                 let s = b.scale;
@@ -1270,18 +1284,6 @@ impl ExplosionEffects {
                         [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.3) as f32],
                     );
                 }
-                // A kill's flash: a white halo standing over the hull for a frame
-                // or two, the hull a dark silhouette against it.
-                if b.kind == Kind::Tank && t < HALO_SECONDS {
-                    let k = t / HALO_SECONDS;
-                    let [r, g, bl] = FLASH_COLOR;
-                    glow(
-                        streaks,
-                        Vec3::new(b.x as f32, (HALO_HEIGHT * s) as f32, b.z as f32),
-                        (HALO_SIZE * s * (0.8 + 0.4 * k)) as f32,
-                        [r, g, bl, ((1.0 - k) * 0.85) as f32],
-                    );
-                }
                 if t < FLASH_SECONDS {
                     let k = t / FLASH_SECONDS;
                     let [r, g, bl] = FLASH_COLOR;
@@ -1289,7 +1291,7 @@ impl ExplosionEffects {
                         streaks,
                         center,
                         (FLASH_SIZE * s * (0.7 + 0.5 * k)) as f32,
-                        [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.95) as f32],
+                        [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.7) as f32],
                     );
                 }
                 self.shock(b, t, b.scale);
@@ -1490,7 +1492,7 @@ impl ExplosionEffects {
         let s = b.scale;
         let shape = SHAPES[b.shape % SHAPES.len()];
         let cooling = COOLING / look.fire_life;
-        let vehicle = b.kind == Kind::Tank;
+        let vehicle = matches!(b.kind, Kind::Tank | Kind::Burnout);
         let (source, seam_height, hatch_height, [spread, lobe], column) = if vehicle {
             (
                 HULL_SEAMS,
@@ -1577,7 +1579,7 @@ impl ExplosionEffects {
                     streaks,
                     Vec3::new(x as f32, lift as f32, z as f32),
                     (SEAM_FLASH_SIZE * s * (0.6 + 0.6 * k)) as f32,
-                    [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.8) as f32],
+                    [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.55) as f32],
                 );
             }
             // Fire is dense; its soot is a veil that thins as it climbs and
@@ -1599,13 +1601,13 @@ impl ExplosionEffects {
                 Puff {
                     position: [x, lift, z],
                     size,
-                    color: scaled(smoke, 0.72 + 0.55 * pale),
+                    color: scaled(smoke, 0.42 + 0.75 * pale),
                     opacity: (age / 0.015).min(1.0) * veil * gone,
                     seed: b.phase * 0.29 + jf * 0.311,
                     heat,
                     erosion: (smoothstep(soot_age, 0.0, 1.4 + 0.6 * r3) * 0.85)
                         .max(0.25 * (1.0 - fire)),
-                    softness: (1.0 - fire) * (0.32 + 0.4 * pale),
+                    softness: (1.0 - fire) * (0.2 + 0.35 * pale),
                     underglow: (heat / 0.45).min(1.0) * 0.85,
                 },
                 stretch,
@@ -1672,6 +1674,45 @@ impl ExplosionEffects {
     /// The spilled fuel's body of fire: balls of flame rolling up off the pool
     /// that cool into oily black smoke, so the drum's spot keeps burning after
     /// the fireball (in the puff slots a tank's turret jet would use).
+    /// Black oily smoke the burning fuel feeds: a plume that climbs off the
+    /// puddle, leans on the wind and pales and spreads as it rises, for as
+    /// long as the fuel burns.
+    fn fuel_plume(&mut self, b: &Blast, t: f64, lifetime: f64, smoke: [f64; 3]) {
+        let fed = smoothstep(t, 0.5, 1.1) * (1.0 - smoothstep(t, FUEL_FIRE[1], lifetime));
+        if fed <= 0.01 {
+            return;
+        }
+        let s = b.scale;
+        for j in 0..FUEL_PLUME {
+            let jf = j as f64;
+            // One rate for every puff, each with its own phase.
+            let cycle = (t - 0.5) / FUEL_PLUME_CYCLE + jf / FUEL_PLUME as f64;
+            if cycle < 0.0 {
+                continue;
+            }
+            let a = cycle.fract();
+            let lap = cycle.floor();
+            let swirl = (lap * 2.3 + jf + b.phase * 3.0).sin() * (0.2 + 0.5 * a);
+            let lean = a * a * FUEL_PLUME_CYCLE * 0.8;
+            let size = (0.7 + 2.1 * a.powf(0.8)) * s;
+            self.puff(Puff {
+                position: [
+                    b.x + WIND[0] * lean + swirl,
+                    (0.6 + FUEL_PLUME_HEIGHT * a.powf(0.85)) * s,
+                    b.z + WIND[1] * lean - swirl * 0.6,
+                ],
+                size,
+                color: scaled(smoke, 0.5 + 0.6 * a),
+                opacity: fed * smoothstep(a, 0.0, 0.12) * (1.0 - smoothstep(a, 0.35, 1.0)) * 0.7,
+                seed: b.phase * 0.61 + lap * 0.37 + jf * 0.19,
+                heat: 0.0,
+                erosion: smoothstep(a, 0.3, 1.0) * 0.8,
+                softness: 0.12 + 0.3 * a,
+                underglow: fed * (1.0 - a).powi(4) * 0.5,
+            });
+        }
+    }
+
     fn fuel_smoke(&mut self, b: &Blast, t: f64, lifetime: f64, smoke: [f64; 3]) {
         let fire = smoothstep(t, FUEL_FIRE[0], FUEL_FIRE[0] + 0.25)
             * (1.0 - smoothstep(t, FUEL_FIRE[1], lifetime * 0.95));
@@ -1835,7 +1876,7 @@ impl ExplosionEffects {
         let (color, softness, rise) = match struck {
             Struck::Steel => (linear(HIT_SMOKE), 0.2, 1.5),
             Struck::Sheet => (linear(STEEL_SOOT), 0.3, 1.2),
-            Struck::Stone => (b.dust, 0.68, 0.8),
+            Struck::Stone => (b.dust, 0.85, 0.8),
         };
         let heat = fire_heat(t, 9.0);
         if struck != Struck::Stone && burning(heat) > 0.0 {
@@ -1864,6 +1905,9 @@ impl ExplosionEffects {
         } else {
             HIT_LIFETIME
         };
+        if struck == Struck::Sheet {
+            self.breach_smoke(b, t, y);
+        }
         // A wall blows its grit or soot out of the face it struck, each billow
         // its own distance and size; a hull's smoke just rolls.
         let [bx, bz] = if wall { b.direction } else { [0.0; 2] };
@@ -1913,6 +1957,38 @@ impl ExplosionEffects {
                 } else {
                     0.0
                 },
+            });
+        }
+    }
+
+    /// Thin smoke curling out of a container's breach as its scorched paint
+    /// smoulders: wisps that rise along the face and drift off on the wind.
+    fn breach_smoke(&mut self, b: &Blast, t: f64, y: f64) {
+        let fade = smoothstep(t, 0.25, 0.6) * (1.0 - smoothstep(t, 1.6, SHEET_HIT_LIFETIME));
+        if fade <= 0.01 {
+            return;
+        }
+        let [bx, bz] = b.direction;
+        let soot = linear(STEEL_SOOT);
+        for j in 0..BREACH_WISPS {
+            let jf = j as f64;
+            // One rate for every wisp, each with its own phase.
+            let a = (t / WISP_CYCLE + jf / BREACH_WISPS as f64).fract();
+            let size = 0.25 + 0.7 * a;
+            self.puff(Puff {
+                position: [
+                    b.x + bx * (0.15 + size * 0.5) + WIND[0] * a * 1.2,
+                    y + 0.1 + 1.6 * a,
+                    b.z + bz * (0.15 + size * 0.5) + WIND[1] * a * 1.2,
+                ],
+                size,
+                color: scaled(soot, 0.9 + 0.5 * a),
+                opacity: fade * smoothstep(a, 0.0, 0.15) * (1.0 - smoothstep(a, 0.3, 1.0)) * 0.55,
+                seed: b.phase * 0.83 + jf * 0.29,
+                heat: 0.0,
+                erosion: smoothstep(a, 0.2, 1.0) * 0.8,
+                softness: 0.5,
+                underglow: 0.0,
             });
         }
     }

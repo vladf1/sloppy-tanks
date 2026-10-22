@@ -55,11 +55,13 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let trough = smoothstep(0.5, 0.8, r) * (1.0 - smoothstep(0.8, 0.9, r));
         let fray = smoothstep(0.75 - 0.55 * strength, 1.0 - 0.45 * strength, ring_noise(point * 5.5 + seed) * 0.6 + n * 0.5);
         let hot = 1.0 - smoothstep(0.0, 0.07, age);
-        let pale = (*s).color * 1.5 + vec3f(0.1, 0.09, 0.07);
+        // The crest is lifted dust, a shade paler than the ground, never a
+        // bright drawn circle.
+        let pale = (*s).color * 1.12 + vec3f(0.03, 0.028, 0.024);
         let dark = (*s).color * 0.55;
         let mixed_color = mix(dark, pale, crest / max(crest + trough * 0.6, 1e-4));
-        (*s).color = mix(mixed_color, vec3f(1.6, 0.75, 0.28), hot * 0.6);
-        (*s).opacity = clamp(crest * 0.85 + trough * 0.45, 0.0, 1.0) * fray * strength * inside;
+        (*s).color = mix(mixed_color, vec3f(1.6, 0.75, 0.28), hot * 0.45);
+        (*s).opacity = clamp(crest * 0.55 + trough * 0.4, 0.0, 1.0) * fray * strength * inside;
     } else if kind > 4.5 {
         // Powder a concrete hit spilled at the wall's foot: a pale, patchy
         // stain, feathered into the ground, grainy where the grit lies thick.
@@ -164,7 +166,8 @@ fn wall_mark(
         color = mix(color, bare, lip);
         color += bare * shine * 0.6;
         color = mix(color, vec3f(0.004), hole);
-        let hot = exp(-age / 0.7) * (lip + 0.6 * hole * smoothstep(0.0, breach, r));
+        // The torn edges stay hot for a few seconds after the hit.
+        let hot = exp(-age / 1.8) * (lip + 0.6 * hole * smoothstep(0.0, breach, r));
         color += mix(vec3f(1.4, 0.18, 0.03), vec3f(4.0, 1.7, 0.4), exp(-age / 0.35)) * hot;
         let alpha = max(max(hole, lip), max(soot * 0.95, max(slope * 0.8, blister * 0.75)));
         (*s).color = color;
