@@ -301,7 +301,18 @@ pub fn shipping_container(group: &mut Node, c: CargoShape) {
     adopt_children(group, body);
 }
 
-fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32) {
+/// The yard's paint for a cover container's line color: the slate-blue line is
+/// painted a deeper cobalt, so from the air its boxes stand off the grey apron as
+/// clearly as the orange and teal ones do.
+fn yard_paint_for(color: u32) -> u32 {
+    match color {
+        0x6689ad => 0x3f6c9a,
+        _ => color,
+    }
+}
+
+fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, line: u32) {
+    let color = yard_paint_for(line);
     let dark = scale_hex_color(color, 0.62);
     let (half_l, half_d) = (length / 2.0, depth / 2.0);
     // Steel frame: floor and roof rails along both sides and across both ends,
@@ -362,7 +373,7 @@ fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32
         lift: LIVERY_LIFT,
         ..wall
     };
-    let row = livery_for(color);
+    let row = livery_for(line);
     let wall_z = half_d - RAIL / 2.0 - WALL_DEPTH;
     for (yaw, side) in [(0.0, 1.0), (PI, -1.0)] {
         put(
@@ -511,39 +522,75 @@ fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32
     );
 }
 
-/// A container stacked on a moored ship. Seen only across the basin, it is a
-/// painted box with its rails and corner castings: modelled ribs on every cargo
-/// container made each ship tens of thousands of triangles, drawn again for
-/// shadows and the water reflection, for no visible difference.
+/// Paint of the shipping lines whose boxes a ship's cargo mixes in
+/// (`harbor_vessels::CARGO_PAINT`).
+const FREIGHT_LINES: [u32; 5] = [0xcb7d43, 0x3b9394, 0x6e8eae, 0xbaad7c, 0xa76155];
+/// A twenty-foot box's length and width, metres: a block of ship's cargo is stowed
+/// as boxes of about this size.
+const BOX_LENGTH: f64 = 6.1;
+const BOX_WIDTH: f64 = 2.44;
+/// The gap between stowed boxes, metres: wide enough to read as a dark seam from
+/// across the basin.
+const STOW_GAP: f64 = 0.14;
+
+/// The paint of box `index` of a block of cargo in `color`: the first box and most
+/// of the rest its own line's, with other lines' boxes mixed in, as a ship loads at
+/// many terminals.
+fn stowed_paint(color: u32, index: u32) -> u32 {
+    let mixed = (color ^ index.wrapping_mul(0x9e37_79b9)).wrapping_mul(0x85eb_ca6b) >> 27;
+    if index == 0 || mixed.is_multiple_of(3) {
+        color
+    } else {
+        FREIGHT_LINES[mixed as usize % FREIGHT_LINES.len()]
+    }
+}
+
+/// A container stacked on a moored ship or in an outer quay's stacks. Seen only
+/// across the basin, a block of cargo is stowed as boxes of about twenty-foot size,
+/// each a painted box between its two dark end frames, with dark seams between
+/// them: modelled ribs on every cargo container made each ship tens of thousands
+/// of triangles, drawn again for shadows and the water reflection, for no visible
+/// difference.
 pub fn ship_container(group: &mut Node, c: CargoShape) {
     let along_z = c.d > c.w;
     let (length, depth) = if along_z { (c.d, c.w) } else { (c.w, c.d) };
     let mut body = Node::group("");
-    let dark = scale_hex_color(c.color, 0.62);
-    put(
-        &mut body,
-        wear_box(length - 0.1, c.h - 0.1, depth - 0.1, c.h, 0.05, c.color),
-        0.0,
-        c.h / 2.0,
-        0.0,
-    );
-    for s in [-1.0, 1.0] {
-        for y in [0.1, c.h - 0.08] {
+    let bays = (length / BOX_LENGTH).round().max(1.0);
+    let rows = (depth / BOX_WIDTH).round().max(1.0);
+    let (box_length, box_depth) = (length / bays, depth / rows);
+    let gap = if bays * rows > 1.0 { STOW_GAP } else { 0.1 };
+    let mut index = 0;
+    for bay in 0..bays as u32 {
+        for row in 0..rows as u32 {
+            let color = stowed_paint(c.color, index);
+            index += 1;
+            let dark = scale_hex_color(color, 0.62);
+            let x = -length / 2.0 + box_length * (f64::from(bay) + 0.5);
+            let z = -depth / 2.0 + box_depth * (f64::from(row) + 0.5);
             put(
                 &mut body,
-                box_part(length, RAIL, RAIL, dark, 0.0),
-                0.0,
-                y,
-                s * (depth / 2.0 - RAIL / 2.0),
+                wear_box(
+                    box_length - gap,
+                    c.h - 0.1,
+                    box_depth - gap,
+                    c.h,
+                    0.05,
+                    color,
+                ),
+                x,
+                c.h / 2.0,
+                z,
             );
+            for s in [-1.0, 1.0] {
+                put(
+                    &mut body,
+                    box_part(RAIL, c.h, box_depth - gap * 0.5, dark, 0.0),
+                    x + s * (box_length / 2.0 - RAIL / 2.0 - gap * 0.25),
+                    c.h / 2.0,
+                    z,
+                );
+            }
         }
-        put(
-            &mut body,
-            box_part(RAIL, c.h, depth, dark, 0.0),
-            s * (length / 2.0 - RAIL / 2.0),
-            c.h / 2.0,
-            0.0,
-        );
     }
     if along_z {
         body = rotated(body, 0.0, FRAC_PI_2, 0.0);
