@@ -19,19 +19,23 @@
 //! says whether the player sees slow frames. Where the browser reports when the GPU
 //! finished a frame (WebGPU's `onSubmittedWorkDone`; GPU timestamps are not offered
 //! everywhere), the GPU's frame time says whether the GPU is what makes them slow and
-//! how much room it has. It matters in WebKit, which paces a WebGPU canvas whose GPU
-//! work overran a display frame at 30, 24 or 15 fps and does not raise the rate again
-//! when the work gets cheaper: there the interval stays slow whatever Auto does, so
-//! only the GPU time can show that a step down helped or that a richer rung fits. On
-//! WebGL, with the interval alone, the interval cannot show headroom while frames
-//! keep up with the display, hence the probes.
+//! how much room it has. On WebGL, with the interval alone, the interval cannot show
+//! headroom while frames keep up with the display, hence the probes.
 //!
-//! WebKit's lowered rate is also a smoothness bug of its own: one explosion or loading
-//! hitch that overruns a display frame leaves the canvas at 15-30 fps for the rest of
-//! the session, however cheap the frames become, and reconfiguring the canvas restores
-//! the display rate. So under every setting, frames held slow while the GPU has room
-//! ask for a pacing reset ([`QualityController::take_pacing_reset`]), retried with
-//! growing waits while it does not help.
+//! WebKit lowers a WebGPU canvas's rate to a whole fraction of the display's when its
+//! frames take longer than a display frame, and from August to October 2026 (WebKit
+//! bug 325095; Playwright's WebKit 626.1.6 among them) it never raised it again: a
+//! canvas buffer kept the slowest frame it ever drew as its cost, so the first frames
+//! of a round, or any later frame whose canvas work finished more than a display frame
+//! after it was submitted, left the canvas at 15-30 fps for the rest of the session,
+//! however cheap the frames became. Reconfiguring the canvas restores the display
+//! rate, but that pacer judges the reset canvas on its next few frames, so a reset
+//! holds only while the GPU, at its clock of the moment, fits a display frame. So
+//! under every setting, frames held slow while the GPU has room ask for a pacing reset
+//! ([`QualityController::take_pacing_reset`]), at once after one that brought the
+//! display rate back and with growing waits after one that did not. An Apple GPU
+//! clocks down while frames are held, so its time then can read three or four times
+//! the work's; a fixed setting waits for it to fit, and Auto steps down until it does.
 
 /// Optional per-pixel features, from cheapest to richest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -302,12 +306,25 @@ const UP_AFTER_GPU_SECONDS: f64 = 3.0;
 const MIN_GPU_SAMPLES: usize = 5;
 /// A richer tier at the same scale is expected to cost the GPU up to this factor more.
 const TIER_STEP_COST: f64 = 1.25;
-/// Frames whose mean interval exceeds the target by this factor (37 fps or less) while
-/// the GPU stays within its busy share for this many windows are held back by the
-/// browser's pacing, not by their cost: Auto asks for a pacing reset, first after
-/// the shorter wait and then, while frames stay held, after doubling waits.
-const PACED_FACTOR: f64 = 1.6;
-const PACED_WINDOWS: u32 = 2;
+/// Frames whose mean interval exceeds the target by this factor (43 fps or less, which
+/// takes in the 40 fps step of a 120 Hz display) while the GPU stays within its busy
+/// share of a display frame, and the main thread within its share of the interval, are
+/// held back by the browser's pacing, not by their cost. After this many such windows
+/// the controller asks for a pacing reset: one, since every held second shows. A reset
+/// that brings back the display rate leaves the next held stretch to be reset as
+/// promptly; after one that does not, the next waits the shorter retry and then
+/// doubling ones.
+///
+/// The busy share, and not the held interval, bounds the GPU time because WebKit's
+/// faulty pacer judges a reset canvas on its first 8 frames, at the GPU clock of the
+/// moment, and an Apple GPU clocks down while frames are held: village passes that
+/// spanned 5-6 ms of GPU time at 60 fps spanned 21-25 ms once the canvas was held at
+/// 30 (M3 Max, Playwright WebKit, GPU timestamps). A reset then has those frames queue
+/// at the display rate and drops the canvas lower (30 to 20 fps, measured), so it waits
+/// for a window whose GPU time fits a display frame: resets at 7-11 ms brought back 60
+/// fps, every one at 20-26 ms failed.
+const PACED_FACTOR: f64 = 1.4;
+const PACED_WINDOWS: u32 = 1;
 const FIRST_PACING_RETRY_SECONDS: f64 = 10.0;
 const MAX_PACING_RETRY_SECONDS: f64 = 120.0;
 /// GPU samples one window keeps.
@@ -445,12 +462,14 @@ pub struct QualityController {
     hold: f64,
     log: Vec<Change>,
     changes: u32,
-    /// Consecutive windows of paced frames with GPU room, and the pacing reset due.
+    /// Consecutive windows of frames held by the browser, and the pacing reset due.
     paced_windows: u32,
     pacing_reset: bool,
     pacing_retry_at: f64,
     pacing_wait: f64,
     pacing_resets: u32,
+    /// The last reset has yet to show a frame at the display rate.
+    pacing_unproven: bool,
 }
 
 impl QualityController {
@@ -481,6 +500,7 @@ impl QualityController {
             pacing_retry_at: 0.0,
             pacing_wait: FIRST_PACING_RETRY_SECONDS,
             pacing_resets: 0,
+            pacing_unproven: false,
         };
         controller.rebuild(None);
         controller
@@ -575,6 +595,11 @@ impl QualityController {
             return false;
         }
         self.clock += interval_ms / 1000.0;
+        // A reset proves itself with any frame at the display rate, though the next hitch
+        // may hold the canvas again within the second that follows it.
+        if self.pacing_unproven && interval_ms <= TARGET_FRAME_MS * SLOW_FACTOR {
+            self.frames_kept_up();
+        }
         if self.clock < self.settle_until {
             return false;
         }
@@ -611,8 +636,8 @@ impl QualityController {
         }
     }
 
-    /// Ask for a pacing reset after windows of frames held slow while the GPU had room;
-    /// returns whether one is due now.
+    /// Ask for a pacing reset when the browser holds a window's frames back while the
+    /// GPU has room; returns whether one is due now.
     fn check_pacing(&mut self, measure: Measure) -> bool {
         let held = measure.gpu_ms.is_some_and(|gpu| {
             measure.mean_ms > TARGET_FRAME_MS * PACED_FACTOR
@@ -622,7 +647,7 @@ impl QualityController {
         if !held {
             self.paced_windows = 0;
             if measure.mean_ms <= TARGET_FRAME_MS * SLOW_FACTOR {
-                self.pacing_wait = FIRST_PACING_RETRY_SECONDS;
+                self.frames_kept_up();
             }
             return false;
         }
@@ -633,9 +658,18 @@ impl QualityController {
         self.paced_windows = 0;
         self.pacing_reset = true;
         self.pacing_resets += 1;
+        self.pacing_unproven = true;
         self.pacing_retry_at = self.clock + self.pacing_wait;
         self.pacing_wait = (self.pacing_wait * 2.0).min(MAX_PACING_RETRY_SECONDS);
         true
+    }
+
+    /// Frames reached the display rate: a later held stretch is a new one, reset as
+    /// soon as it is seen.
+    fn frames_kept_up(&mut self) {
+        self.pacing_unproven = false;
+        self.pacing_wait = FIRST_PACING_RETRY_SECONDS;
+        self.pacing_retry_at = self.clock;
     }
 
     fn judge(&mut self, measure: Measure) -> bool {
@@ -1366,6 +1400,104 @@ mod tests {
             assert!(!controller.take_pacing_reset());
             elapsed += 0.0667;
         }
+    }
+
+    /// Frames held at `held` ms with the GPU taking `held_gpu(seconds)` until a pacing
+    /// reset, then at the display rate with `free_gpu`, for `seconds`; returns the
+    /// gameplay seconds at which resets were asked for.
+    fn run_until_reset(
+        controller: &mut QualityController,
+        seconds: f64,
+        held: f64,
+        held_gpu: impl Fn(f64) -> f64,
+        free_gpu: f64,
+    ) -> Vec<f64> {
+        let mut resets = Vec::new();
+        let mut elapsed = 0.0;
+        while elapsed < seconds {
+            let (interval, gpu) = if resets.is_empty() {
+                (held, held_gpu(elapsed))
+            } else {
+                (TARGET_FRAME_MS, free_gpu)
+            };
+            controller.observe(interval, 1.0, Some(gpu));
+            if controller.take_pacing_reset() {
+                resets.push(elapsed);
+            }
+            elapsed += interval / 1000.0;
+        }
+        resets
+    }
+
+    #[test]
+    fn a_held_canvas_is_reset_in_the_first_window_its_gpu_fits_a_display_frame() {
+        // WebKit holds the canvas at 30 fps, and the GPU, clocked down for the longer
+        // frames, spends 24-28 ms on work it does in 6 at the display rate (the village
+        // on an M3 Max). A reset now would be judged on frames that overrun and leave the
+        // canvas lower still, so none comes until the GPU clocks up again; then the first
+        // window asks for one.
+        for setting in [GraphicsSetting::Auto, GraphicsSetting::Fixed(Tier::High)] {
+            let mut controller = QualityController::new(setting, Tier::High, IPAD);
+            let clock = |seconds: f64| {
+                if seconds < 20.0 {
+                    24.0 + 4.0 * (seconds * 7.0).sin().abs()
+                } else {
+                    8.0
+                }
+            };
+            let resets = run_until_reset(&mut controller, 40.0, 33.3, clock, 8.0);
+            assert_eq!(resets.len(), 1, "{resets:?}");
+            // The first window wholly after the clock rises.
+            assert!((20.0..22.5).contains(&resets[0]), "{resets:?}");
+        }
+        // A 40 fps hold, the next step down of a 120 Hz display, is reset at the first
+        // window after the startup seconds.
+        let mut controller = QualityController::new(GraphicsSetting::Auto, Tier::High, IPAD);
+        let resets = run_until_reset(&mut controller, 30.0, 25.0, |_| 10.0, 10.0);
+        assert_eq!(resets.len(), 1, "{resets:?}");
+        assert!(resets[0] < STARTUP_SECONDS + 1.5, "{resets:?}");
+        assert_eq!(controller.changes(), 0);
+    }
+
+    #[test]
+    fn a_reset_that_worked_lets_the_next_hold_be_reset_promptly() {
+        // A hitch holds the canvas again soon after a reset brought the display rate
+        // back, even within the second after it that is not judged: that hold is reset
+        // as soon as the first, not after a retry wait.
+        for again_after in [0.8, 5.0] {
+            let mut controller =
+                QualityController::new(GraphicsSetting::Fixed(Tier::High), Tier::High, IPAD);
+            let mut held = true;
+            let mut resets = Vec::new();
+            let mut elapsed = 0.0;
+            while elapsed < 30.0 {
+                if !held && resets.len() == 1 && elapsed > resets[0] + again_after {
+                    held = true;
+                }
+                let interval = if held { 33.3 } else { TARGET_FRAME_MS };
+                controller.observe(interval, 1.0, Some(10.0));
+                if controller.take_pacing_reset() {
+                    resets.push(elapsed);
+                    held = false;
+                }
+                elapsed += interval / 1000.0;
+            }
+            assert_eq!(resets.len(), 2, "{resets:?}");
+            let hold = resets[0] + again_after;
+            assert!(resets[1] - hold < 2.5, "{resets:?}");
+        }
+        // A reset after which frames never reach the display rate (a browser that caps
+        // them) is retried only after growing waits.
+        let mut controller =
+            QualityController::new(GraphicsSetting::Fixed(Tier::High), Tier::High, IPAD);
+        let mut resets = 0;
+        let mut elapsed = 0.0;
+        while elapsed < 60.0 {
+            controller.observe(33.3, 1.0, Some(10.0));
+            resets += u32::from(controller.take_pacing_reset());
+            elapsed += 0.0333;
+        }
+        assert!((3..=4).contains(&resets), "{resets} resets in a minute");
     }
 
     #[test]
