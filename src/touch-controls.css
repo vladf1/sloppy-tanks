@@ -111,14 +111,14 @@
     0 0 16px #6fd2ff99,
     0 6px 14px #000a;
 }
-/* How to aim and fire: a coach mark in the top-left corner, the one corner no HUD and no
-   thumb uses, so it never hides a target, the arena's middle or the stick, with a target
-   ring that breathes. It leaves at the first touch on the arena, or by itself after the
-   opening seconds. */
+/* How to aim and fire: a coach mark stood on the drive stick, so the controls teach
+   themselves from one corner, clear of the score, the arena's middle and the fight, with
+   a target ring that breathes. It leaves at the first touch on the arena, or by itself
+   after the opening seconds. */
 .touch-fire-hint {
   position: absolute;
   left: max(24px, env(safe-area-inset-left));
-  top: max(14px, env(safe-area-inset-top));
+  bottom: calc(max(28px, env(safe-area-inset-bottom)) + 190px);
   display: flex;
   align-items: center;
   gap: 10px;
@@ -204,17 +204,11 @@
     animation: none;
   }
 }
-/* A phone's corner is tighter: the tag sits level with the score pill. */
+/* A phone's stick is smaller and lower; the tag stands on it all the same. */
 .phone .touch-fire-hint {
-  left: max(10px, env(safe-area-inset-left));
-  top: max(6px, env(safe-area-inset-top));
+  left: max(12px, env(safe-area-inset-left));
+  bottom: calc(max(12px, env(safe-area-inset-bottom)) + 158px);
   padding: 5px 12px 5px 6px;
-}
-/* Held upright, the score pill spans the top; the tag sits under it, at the left. */
-@media (orientation: portrait) {
-  .phone .touch-fire-hint {
-    top: calc(max(6px, env(safe-area-inset-top)) + 96px);
-  }
 }
 .phone .touch-fire-ring {
   width: 28px;
@@ -223,8 +217,9 @@
 .phone .touch-fire-ring::before {
   inset: 7px;
 }
-/* The stick's name on a small dark tag, legible on grass, sand or snow alike. */
+/* The stick explains itself: its name is for screen readers, not a tag under the thumb. */
 .touch-stick > span {
+  display: none;
   position: absolute;
   left: 50%;
   bottom: -12px;
@@ -314,27 +309,29 @@
   font-size: 20px;
   padding: 8px 12px;
 }
-/* On a tablet the zoom pair leaves the corner bar for the right edge, stacked just over
-   the mine button as one cluster under the thumb, so the top keeps only view, pause and
-   settings. */
+/* On a tablet the zoom pair leaves the corner bar and joins the mine button as one thumb
+   cluster: two round keys on an arc round its upper left, the way a shooter's secondary
+   buttons ring its main one, so the top keeps only view, pause and settings. */
 html:not(.phone) .touch-enabled .hud-actions > .touch-zoom {
   position: fixed;
-  right: calc(max(24px, env(safe-area-inset-right)) + 14px);
   width: 48px;
-  min-height: 46px;
+  min-width: 48px;
+  min-height: 48px;
+  padding: 0;
   border: 1px solid var(--edge-strong);
+  border-radius: 50%;
   background: linear-gradient(180deg, #13284aeb, #08142af2);
   box-shadow:
     var(--sheen),
     0 6px 18px #0008;
 }
 html:not(.phone) .touch-enabled #zoom-in {
-  bottom: calc(max(28px, env(safe-area-inset-bottom)) + 182px);
-  border-radius: 12px 12px 0 0;
+  right: calc(max(24px, env(safe-area-inset-right)) + 30px);
+  bottom: calc(max(28px, env(safe-area-inset-bottom)) + 140px);
 }
 html:not(.phone) .touch-enabled #zoom-out {
-  bottom: calc(max(28px, env(safe-area-inset-bottom)) + 136px);
-  border-radius: 0 0 12px 12px;
+  right: calc(max(24px, env(safe-area-inset-right)) + 88px);
+  bottom: calc(max(28px, env(safe-area-inset-bottom)) + 86px);
 }
 html:not(.phone) .touch-enabled .hud-actions > .touch-zoom::before,
 html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-zoom)::before {
@@ -374,7 +371,7 @@ html:not(.phone) .touch-enabled .coral {
    the tank's name, hull and bar on one line, the rack of rounds under it. */
 .touch-enabled .bottom {
   left: calc(max(24px, env(safe-area-inset-left)) + 188px);
-  right: calc(max(24px, env(safe-area-inset-right)) + 92px);
+  right: calc(max(24px, env(safe-area-inset-right)) + 150px);
   bottom: max(22px, env(safe-area-inset-bottom));
   max-width: 460px;
   margin-inline: auto;
@@ -412,22 +409,35 @@ html:not(.phone) .touch-enabled .coral {
   padding-left: 0;
   border-left: 0;
 }
-/* The rack spans the panel's width, so it ends where the hull bar does: the loaded round
-   takes what the narrow keys leave, each key still a full thumb wide. */
+/* The rack spans the panel's width in five equal thumb-wide keys, so every round is the
+   same target; the loaded one is lit and names itself inside its own key, which is wide
+   enough for the longest name. */
 .touch-enabled .ammo-strip {
   width: 100%;
+  min-width: 420px;
 }
-.touch-enabled .ammo-slot {
-  width: 50px;
-  min-height: 50px;
-  padding: 6px 2px;
+.touch-enabled .ammo-slot,
+.touch-enabled .ammo-slot.selected {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  min-height: 54px;
+  padding: 6px 4px 5px;
   touch-action: manipulation;
 }
 .touch-enabled .ammo-slot.selected {
-  flex: 1 1 auto;
-  width: auto;
-  min-width: 128px;
-  padding: 6px 10px;
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  justify-items: center;
+}
+.touch-enabled .ammo-slot.selected b {
+  display: none;
+}
+.touch-enabled .ammo-slot.selected small {
+  grid-area: 2 / 1;
+  justify-self: center;
+  font-size: 12px;
+  letter-spacing: 0.6px;
 }
 .touch-enabled .ammo-slot .ammo-icon {
   width: 22px;
@@ -467,10 +477,6 @@ html:not(.phone) .touch-enabled .coral {
     left: 14px;
     transform: none;
   }
-  /* The score takes the corner here: the coach mark hangs under it. */
-  html:not(.phone) .touch-fire-hint {
-    top: calc(max(14px, env(safe-area-inset-top)) + 84px);
-  }
 }
 /* Narrow or short screens tighten the weapon HUD to fit beside the stick. */
 @media (max-width: 760px), (max-height: 600px) {
@@ -486,12 +492,16 @@ html:not(.phone) .touch-enabled .coral {
   .touch-enabled .ammo-strip {
     gap: 2px;
   }
-  .touch-enabled .ammo-slot {
-    width: 44px;
-    min-height: 46px;
+  .touch-enabled .ammo-strip {
+    min-width: 0;
   }
+  .touch-enabled .ammo-slot,
   .touch-enabled .ammo-slot.selected {
-    min-width: 108px;
+    min-height: 48px;
+  }
+  .touch-enabled .ammo-slot.selected small {
+    font-size: 11px;
+    letter-spacing: 0;
   }
 }
 

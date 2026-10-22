@@ -24,11 +24,12 @@ pub struct HealthBar {
 }
 
 /// The healthy, damaged and critical fills, the page HUD's hull bar colours
-/// (`style.css`), so every bar reads one value one way: green, amber, red. A bar never
+/// (`style.css`), so every bar reads one value one way: green, orange, red. The damaged
+/// tone is orange rather than gold, so it never reads as the gold of a selection. A bar never
 /// wears its team's colour, where a full red-team hull would read as critical; the
 /// team shows in the pointer under the bar and in the tank's own paint.
 pub const HEALTHY_COLOR: u32 = 0x5fe39a;
-pub const WARNING_COLOR: u32 = 0xffc23a;
+pub const WARNING_COLOR: u32 = 0xff9a3c;
 pub const CRITICAL_COLOR: u32 = 0xff4d5e;
 
 /// V-Tanks' fill thresholds, shared by the overhead bar and the player HUD.
@@ -209,10 +210,12 @@ mod tests {
         let fov = 45f64.to_radians();
         // Far cameras draw the bar at its authored size.
         assert_eq!(bar_scale(60.0, fov, 1.84, 900.0), 1.0);
-        // A close camera shrinks it to a smaller share of the view than a far one.
-        let near = bar_scale(11.8, fov, 1.84, 900.0);
-        assert!(near < 0.5, "{near}");
-        let share = 1.84 * near / (2.0 * 11.8 * (fov / 2.0).tan());
+        // A close camera shrinks it to a smaller share of the view than a far one (a
+        // wide lens, so the share stays above the `BAR_MIN_SCALE` floor).
+        let wide = 70f64.to_radians();
+        let near = bar_scale(11.8, wide, 1.84, 900.0);
+        assert!(near > BAR_MIN_SCALE && near < 0.5, "{near}");
+        let share = 1.84 * near / (2.0 * 11.8 * (wide / 2.0).tan());
         assert!((share - BAR_NEAR_SCREEN_SHARE).abs() < 1e-9);
         let mid = bar_scale(21.0, fov, 1.84, 900.0);
         let mid_share = 1.84 * mid / (2.0 * 21.0 * (fov / 2.0).tan());

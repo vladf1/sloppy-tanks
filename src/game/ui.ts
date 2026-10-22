@@ -28,7 +28,7 @@ export const MENU_READY_STATUS = "Arena ready";
 /** Seconds the hit marker shows after the player's shell lands. */
 const HIT_MARKER_TIME = 0.28;
 /** Seconds the elimination banner shows after the player wrecks a tank. */
-const KILL_BANNER_TIME = 1.9;
+const KILL_BANNER_TIME = 1.5;
 /** Seconds the red screen-edge flash fades over after the player's hull is hit. */
 const HURT_FLASH_TIME = 0.6;
 /** Below this share of its hull the tank's HUD warns, like the status panel's pulse. */

@@ -64,22 +64,24 @@ test("pause leaves the score to the header's plates and lists the battle's facts
   assert.match(markup, /<dt>Objective<\/dt><dd>First to 100<\/dd>/);
   assert.match(markup, /<dt>Kills \/ deaths<\/dt><dd>2 \/ 1<\/dd>/);
   assert.match(markup, /<dt>Difficulty<\/dt><dd>Normal<\/dd>/);
-  // The line under the title adds what the plates do not say: the kills still to win.
-  assert.match(
-    markup,
-    /class="dialog-standing" data-tone="ahead">Your team leads by 1 · 96 kills to win</,
-  );
+  // The line under the title says who leads in words; the objective and the clock are
+  // facts below it, never a far-off countdown in the standing line.
+  assert.match(markup, /class="dialog-standing" data-tone="ahead">Your team leads by 1</);
+  assert.doesNotMatch(markup, /to win/);
+  // The team rank says what it ranks by.
+  assert.match(markup, /<dt>Rank in team<\/dt><dd>1st of 1<small>by kills<\/small><\/dd>/);
 });
 
-test("a battle ended early is called ended, never won, and says who was ahead", () => {
+test("a battle ended early is called by where the team stood, never won", () => {
   const early = menuMarkup(teamBattle({ phase: "results", endedEarly: true }), null);
-  assert.match(early, /<h2 id="results-title">BATTLE ENDED<\/h2>/);
-  assert.match(early, /data-outcome="ended"/);
+  assert.match(early, /<h2 id="results-title">ENDED AHEAD<\/h2>/);
+  assert.match(early, /data-outcome="ended-ahead"/);
   assert.doesNotMatch(early, /VICTORY|ENDED BY YOU/);
-  assert.match(early, /Your team led by 1 when you ended it · 1 death</);
+  // The line is about the team alone; the viewer's deaths are on the board.
+  assert.match(early, /You ended the battle with your team 1 kill up\.</);
   const full = menuMarkup(teamBattle({ phase: "results" }), null);
   assert.doesNotMatch(full, /ENDED BY YOU/);
-  assert.match(full, /Your team took the round by 1 · 1 death</);
+  assert.match(full, /Your team took the round by 1\.</);
 });
 
 test("the respawn card names who destroyed the tank in plain words", () => {

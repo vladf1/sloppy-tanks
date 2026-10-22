@@ -130,7 +130,11 @@
            560×300 window centred on each tank keeps the chassis sizes comparable. -->
       <div class="vehicles">
         <button class="vehicle" data-kind="scout" aria-pressed="false">
-          <strong>SKIPPER</strong><small>Light scout</small>
+          <strong>SKIPPER</strong
+          ><small
+            ><span class="class-full">Light scout</span
+            ><span class="class-short" aria-hidden="true">Scout</span></small
+          >
           <svg
             class="tank-preview"
             viewBox="64 38 560 300"
@@ -148,7 +152,11 @@
           </div>
         </button>
         <button class="vehicle selected" data-kind="balanced" aria-pressed="true">
-          <strong>BRUISER</strong><small>Balanced tank</small>
+          <strong>BRUISER</strong
+          ><small
+            ><span class="class-full">Balanced tank</span
+            ><span class="class-short" aria-hidden="true">Balanced</span></small
+          >
           <svg
             class="tank-preview"
             viewBox="75.5 31 560 300"
@@ -172,7 +180,11 @@
           </div>
         </button>
         <button class="vehicle" data-kind="heavy" aria-pressed="false">
-          <strong>BIG RIG</strong><small>Heavy tank</small>
+          <strong>BIG RIG</strong
+          ><small
+            ><span class="class-full">Heavy tank</span
+            ><span class="class-short" aria-hidden="true">Heavy</span></small
+          >
           <svg
             class="tank-preview"
             viewBox="58.5 32.5 560 300"
@@ -330,7 +342,7 @@
           <div class="segmented">
             <label class="segment"
               ><input type="radio" name="difficulty" value="easy" /><span
-                ><b>Easy</b><small>Gentler bots · 10% less damage to you</small></span
+                ><b>Easy</b><small>Gentler bots · −10% damage taken</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="normal" checked /><span
@@ -338,7 +350,7 @@
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="hard" /><span
-                ><b>Hard</b><small>Sharper bots · 15% more damage to you</small></span
+                ><b>Hard</b><small>Sharper bots · +15% damage taken</small></span
               ></label
             >
           </div>
@@ -474,11 +486,9 @@
               </svg>
               <b class="when-loading">Scanning for open rooms…</b>
               <b class="when-ready">No open rooms right now</b>
-              <b class="when-error">Battle the bots while we reconnect</b>
+              <b class="when-error">The room list is waiting for the server</b>
               <small class="when-ready">Be the first: create a room and invite friends.</small>
-              <button class="chip-button when-error" type="button" data-open-play="single">
-                PLAY SINGLE PLAYER
-              </button>
+              <small class="when-error">Open rooms will show here again</small>
             </div>
           </div>
         </div>
@@ -523,6 +533,9 @@
             ><span id="rooms-hint" class="startup-hint">Pick your tank and map meanwhile.</span>
           </div>
           <button id="retry-rooms" class="chip-button" type="button">RETRY</button>
+          <button class="chip-button offline-action" type="button" data-open-play="single">
+            BATTLE THE BOTS
+          </button>
           <div class="startup-track" aria-hidden="true"><span></span></div>
         </div>
         <div class="room-action">

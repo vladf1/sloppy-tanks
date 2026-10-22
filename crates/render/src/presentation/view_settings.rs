@@ -247,7 +247,7 @@ pub const FIRST_PERSON: FirstPerson = FirstPerson {
     mouse_radians_per_pixel: 0.0032,
     touch_turn_radians_per_second: 2.4,
     reticle_distance: 12.0,
-    reticle_scale: 0.3,
+    reticle_scale: 0.38,
     reticle_range: 25.0,
     pickup_opacity: 0.7,
     transition_seconds: 0.8,

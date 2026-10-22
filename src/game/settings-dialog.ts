@@ -86,10 +86,10 @@ function defaultMark(min: number, max: number, value: number): string {
   return `--default:${(ratio * 100).toFixed(1)}%;--default-ratio:${ratio.toFixed(3)}`;
 }
 
-/** The scale under a slider: what its ends mean in words, and a bare caret at the
- * default. The value itself reads once, in the box beside the slider. */
+/** The scale under a slider: what its ends mean in words. The value reads once, in the
+ * box beside the slider, and the default is a notch on the track itself. */
 function sliderScale(low: string, high: string, mark: string): string {
-  return `<span class="slider-scale" style="${mark}" aria-hidden="true"><i>${low}</i><b></b><i>${high}</i></span>`;
+  return `<span class="slider-scale" style="${mark}" aria-hidden="true"><i>${low}</i><i>${high}</i></span>`;
 }
 
 /** The corner X that every dialog with a way back carries. */
