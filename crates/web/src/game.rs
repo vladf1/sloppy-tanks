@@ -90,6 +90,7 @@ use sloppy_core::sim::round_recap::{
 };
 use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
+use sloppy_core::sim::types::{DamageCause, DamageSource};
 use sloppy_core::sim::veterancy::RANKS;
 use sloppy_core::sim::{
     CoverKind, FragmentShape, GameMode, Match, MatchPhase, RenderState, Shot, SimEventType,
@@ -133,7 +134,10 @@ pub mod frame_slot {
     pub const FIRST_PERSON: usize = 9;
     /// This frame's capped delta in seconds (the HUD advances its timers by it).
     pub const DT: usize = 10;
-    pub const LENGTH: usize = 11;
+    /// The first-person gun sight's screen position (NDC, y up), or 0, 0 overhead.
+    pub const RETICLE_X: usize = 11;
+    pub const RETICLE_Y: usize = 12;
+    pub const LENGTH: usize = 13;
 }
 
 /// `Game.hud_json`: the page HUD's view of the match and the human's tank.
@@ -500,6 +504,9 @@ impl Game {
         result[frame_slot::RENDER_MS] = self.times.render_ms as f32;
         result[frame_slot::FIRST_PERSON] = f32::from(u8::from(self.view.rig.first_person.enabled));
         result[frame_slot::DT] = dt as f32;
+        let (reticle_x, reticle_y) = self.view.first_person_reticle_ndc().unwrap_or_default();
+        result[frame_slot::RETICLE_X] = reticle_x;
+        result[frame_slot::RETICLE_Y] = reticle_y;
         self.frame_index += 1;
         Ok(result)
     }
@@ -797,13 +804,31 @@ impl Game {
         let tank = &mut self.sim.tanks[index];
         tank.protection = 0.0;
         tank.shield = 0.0;
-        let team = tank.team;
-        let enemy = self.sim.tanks.iter().find(|other| other.team != team);
-        let (owner, owner_team) = enemy.map_or((0, Team::from_index(team.index() + 1)), |other| {
-            (other.id, other.team)
-        });
+        let (team, body) = (tank.team, tank.body);
+        // The nearest living enemy fires a standard shell, so the kill reports its
+        // weapon and direction like a real one (the respawn card and feed show both).
+        let at = self.sim.body_translation(body).planar();
+        let enemy = self
+            .sim
+            .tanks
+            .iter()
+            .filter(|other| other.team != team && other.alive)
+            .map(|other| (other, self.sim.body_translation(other.body).planar()))
+            .min_by(|(_, a), (_, b)| {
+                (a.x - at.x)
+                    .hypot(a.z - at.z)
+                    .total_cmp(&(b.x - at.x).hypot(b.z - at.z))
+            });
+        let (owner, owner_team, origin) = enemy.map_or(
+            (0, Team::from_index(team.index() + 1), at),
+            |(other, position)| (other.id, other.team, position),
+        );
+        let source = DamageSource {
+            cause: DamageCause::Standard,
+            origin,
+        };
         self.sim
-            .damage_tank(index, 1e12, owner, owner_team, None, None);
+            .damage_tank(index, 1e12, owner, owner_team, None, Some(source));
     }
 
     /// Profiling setup: the seed, tank count and human team the next reset uses.

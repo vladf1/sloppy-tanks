@@ -35,7 +35,9 @@ use sloppy_core::sim::{
 use super::PRESENTATION_EFFECTS;
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
-use super::hud::{health_bar_state, protection_meters, spawn_pulse};
+use super::hud::{
+    BAR_FADE_RATE, BarTrail, approach, bar_scale, health_bar_state, protection_meters, spawn_pulse,
+};
 use super::model_catalog::{self, CoverModel, SceneryMover, SceneryWater, TreeParts, cover_key};
 use super::models::{self as own, joint};
 use super::posing::{JointBasis, dvec3, euler_yxz, joint_world, lerp, quat, vec3};
@@ -49,6 +51,7 @@ use super::view_settings::{
     BAR_HEIGHT, CAMERA, CAMERA_FEEL, FEEDBACK, FIRST_PERSON, OVERHEAD_RETICLE_SCALE,
     PLAYER_BAR_HEIGHT, RETICLE_HEIGHT, TANK_FEEL,
 };
+use crate::camera::PerspectiveCamera;
 use crate::color::hex_to_linear;
 use crate::effects::leaves::Crown as LeafCrown;
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
@@ -160,6 +163,7 @@ struct TankModel {
 struct BarModel {
     model: ModelId,
     fills: [JointBasis; 3],
+    trail: JointBasis,
     ranks: [usize; 3],
     shield: usize,
     shield_fill: JointBasis,
@@ -297,6 +301,7 @@ impl Library {
             BarModel {
                 model,
                 fills: joint::BAR_FILLS.map(|name| basis(renderer, model, &source, name)),
+                trail: basis(renderer, model, &source, joint::BAR_TRAIL),
                 ranks: joint::BAR_RANKS.map(|name| joint_index(renderer, model, name)),
                 shield: joint_index(renderer, model, joint::BAR_SHIELD),
                 shield_fill: basis(renderer, model, &source, joint::BAR_SHIELD_FILL),
@@ -374,6 +379,15 @@ struct TankView {
     team: Team,
     instance: InstanceId,
     bar: InstanceId,
+    /// Whether the bar would show without cover in the way: the tank is alive and the
+    /// view is not seated in it.
+    bar_shown: bool,
+    /// The bar's centre above the drawn hull.
+    bar_anchor: Vec3,
+    /// The bar's opacity, easing out behind cover and back in (0..1).
+    bar_fade: f64,
+    /// The pale chunk of hull the last hit took; `None` until the tank is drawn alive.
+    trail: Option<BarTrail>,
     /// Drawn-pose motion (suspension, hit shove and flash, treads); `None` while
     /// destroyed, so a respawn starts level.
     motion: Option<TankMotion>,
@@ -685,6 +699,52 @@ impl Presentation {
         self.renderer.resize(width, height);
         let (width, height) = self.renderer.size();
         self.rig.set_aspect(width as f32 / height.max(1) as f32);
+    }
+
+    /// Face every tank bar to `camera` (whose orientation is `rotation`), keep it a
+    /// sane size on screen however close the lens comes, and fade it out behind solid
+    /// cover over `dt` seconds. The drawn camera places them each frame; a fixed debug
+    /// pose redraws them for itself.
+    pub fn place_bars(
+        &mut self,
+        covers: &[RenderCover],
+        camera: &PerspectiveCamera,
+        rotation: Quat,
+        dt: f64,
+    ) {
+        let eye = camera.position;
+        let fov_y = f64::from(camera.fov_y_degrees).to_radians();
+        for view in self.tanks.values_mut() {
+            let shown = view.bar_shown && !sight_blocked(eye, view.bar_anchor, covers);
+            view.bar_fade = if view.bar_shown {
+                approach(view.bar_fade, f64::from(u8::from(shown)), BAR_FADE_RATE, dt)
+            } else {
+                0.0
+            };
+            self.renderer.set_visible(view.bar, view.bar_fade > 0.02);
+            self.renderer.set_opacity(view.bar, view.bar_fade as f32);
+            if view.bar_fade <= 0.02 {
+                continue;
+            }
+            let size = bar_scale(
+                f64::from(view.bar_anchor.distance(eye)),
+                fov_y,
+                own::BAR_RIM_WIDTH,
+            ) as f32;
+            self.renderer.set_transform(
+                view.bar,
+                Mat4::from_scale_rotation_translation(Vec3::splat(size), rotation, view.bar_anchor),
+            );
+        }
+    }
+
+    /// Where the first-person gun sight sits on screen (NDC, y up), so the page's hit
+    /// marker lands on it; `None` overhead, where the marker follows the pointer.
+    pub fn first_person_reticle_ndc(&self) -> Option<(f32, f32)> {
+        self.rig.in_first_person.then(|| {
+            let point = self.rig.camera.project(self.crosshair.w_axis.truncate());
+            (point.x, point.y)
+        })
     }
 
     pub fn wreck_view(&self) -> WreckView {
@@ -1044,6 +1104,10 @@ impl Presentation {
                 team: tank.team,
                 instance,
                 bar,
+                bar_shown: false,
+                bar_anchor: Vec3::ZERO,
+                bar_fade: 0.0,
+                trail: None,
                 motion: None,
                 pose: vec![None; joints],
                 world: Mat4::IDENTITY,
@@ -1592,6 +1656,9 @@ impl Presentation {
         self.update_player_indicators(state, dt, overview);
         self.update_tanks(state, alpha, dt);
         self.place_first_person_eye(state);
+        // Bars face and size for the final camera, seated in the turret or overhead.
+        let camera = self.rig.camera;
+        self.place_bars(&state.covers, &camera, self.rig.rotation, dt);
         self.update_branches(dt);
         self.update_covers(state);
         self.update_pickups(state, dt);
@@ -1734,13 +1801,10 @@ impl Presentation {
     }
 
     fn update_tanks(&mut self, state: &RenderState, alpha: f64, dt: f64) {
-        let camera_rotation = self.rig.rotation;
         let seat_blend = self.rig.seat_blend;
         let seat_wanted = self.rig.seat_wanted;
         let look_yaw = self.rig.first_person.yaw;
         let playing = state.match_state.phase == MatchPhase::Playing;
-        // From the turret, bars behind cover hide (last frame's eye is close enough).
-        let seated_eye = self.rig.seated_eye();
         for tank in &state.tanks {
             // Reinforcements arrive after reset; build their visuals on first sight.
             let rebuild = self
@@ -1757,19 +1821,13 @@ impl Presentation {
             let viewer = tank.id == state.viewer_id;
             let seated = viewer && seat_wanted;
             renderer.set_visible(view.instance, tank.alive);
+            let bar_height = if viewer {
+                PLAYER_BAR_HEIGHT
+            } else {
+                BAR_HEIGHT
+            } as f32;
             // The camera flies through the player's bar on the way into the turret.
-            let hidden = seated_eye.is_some_and(|eye| {
-                let bar = Vec3::new(
-                    tank.position.x as f32,
-                    BAR_HEIGHT as f32,
-                    tank.position.z as f32,
-                );
-                sight_blocked(eye, bar, &state.covers)
-            });
-            renderer.set_visible(
-                view.bar,
-                tank.alive && !(viewer && seat_blend > 0.0) && !hidden,
-            );
+            view.bar_shown = tank.alive && !(viewer && seat_blend > 0.0);
             let meters =
                 protection_meters(tank.alive, tank.shield, tank.shield_points, tank.protection);
             renderer.set_node_visible(view.bar, bar.shield, meters.shield_visible);
@@ -1801,6 +1859,7 @@ impl Presentation {
             );
             if !tank.alive {
                 view.motion = None;
+                view.trail = None;
                 view.world = Mat4::ZERO;
                 continue;
             }
@@ -1876,20 +1935,21 @@ impl Presentation {
                 view.pose[joint] = Some(pose);
                 renderer.set_node_transform(view.instance, joint, Some(pose));
             }
-            let bar_world = Mat4::from_rotation_translation(
-                camera_rotation,
-                Vec3::new(
-                    x as f32,
-                    if viewer {
-                        PLAYER_BAR_HEIGHT
-                    } else {
-                        BAR_HEIGHT
-                    } as f32,
-                    z as f32,
-                ),
-            );
-            renderer.set_transform(view.bar, bar_world);
+            view.bar_anchor = Vec3::new(x as f32, bar_height, z as f32);
             let health = health_bar_state(tank.hp, tank.max_hp, tank.team);
+            let trail = view
+                .trail
+                .get_or_insert_with(|| BarTrail::new(health.ratio, state.elapsed))
+                .update(health.ratio, state.elapsed);
+            let trailing = trail > health.ratio + 0.002;
+            renderer.set_node_visible(view.bar, bar.trail.index, trailing);
+            if trailing {
+                renderer.set_node_transform(
+                    view.bar,
+                    bar.trail.index,
+                    Some(bar.trail.with_scale(Vec3::new(trail as f32, 1.0, 1.0))),
+                );
+            }
             let tone = health.tone as usize;
             for (index, fill) in bar.fills.iter().enumerate() {
                 let shown = index == tone && health.ratio > 0.0;

@@ -339,7 +339,9 @@ export async function prepareGame(
       }
     },
   });
-  ui.aimPoint = () => ({ x: controls.nx, y: controls.ny });
+  // The hit marker lands on the aim: the pointer overhead, the gun sight in first person.
+  const reticle = { x: 0, y: 0 };
+  ui.aimPoint = () => (firstPerson ? reticle : { x: controls.nx, y: controls.ny });
   const toggleView = () => {
     firstPerson = game.toggle_first_person();
     saveCameraPreferences(game);
@@ -419,6 +421,8 @@ export async function prepareGame(
       phase = PHASES[result[FRAME.phase]] ?? "ready";
       alive = result[FRAME.humanAlive] === 1;
       firstPerson = result[FRAME.firstPerson] === 1;
+      reticle.x = result[FRAME.reticleX];
+      reticle.y = result[FRAME.reticleY];
       holdPointer();
       if (result[FRAME.clearInput]) {
         controls.clear();

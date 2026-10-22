@@ -18,6 +18,7 @@ import {
 } from "./hud-feedback";
 import { duration } from "./round-recap";
 import { hudIcon, hudMarkup, menuMarkup } from "./ui-markup";
+import { fitPanels } from "./panel-fit";
 import { SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
 export const MENU_READY_STATUS = "Ready when you are";
@@ -176,6 +177,7 @@ export class UI {
     this.playModes = undefined;
     if (phase === "ready") {
       this.overlay.replaceChildren(this.battleSetup.cloneNode(true));
+      fitPanels(this.overlay);
     } else {
       this.overlay.innerHTML = menuMarkup(
         state,
@@ -297,7 +299,7 @@ export class UI {
   /** The hit marker at the player's aim: four ticks that snap out, red on a kill. */
   private showHitMarker(kill: boolean): void {
     const marker = this.hud.querySelector<HTMLElement>("#hit-marker")!;
-    const aim = this.hud.classList.contains("first-person") ? null : this.aimPoint();
+    const aim = this.aimPoint();
     marker.style.left = aim ? `${((aim.x + 1) / 2) * 100}%` : "50%";
     marker.style.top = aim ? `${((1 - aim.y) / 2) * 100}%` : "50%";
     marker.classList.remove("visible");
