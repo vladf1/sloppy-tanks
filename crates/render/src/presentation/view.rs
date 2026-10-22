@@ -10,10 +10,11 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, PICKUP_FRAME_NODE, TreeShape, aged_wreck_material, cover_damage_stage,
+    FLAG_CLOTH_NODE, PALLET_HEIGHT, TreeShape, aged_wreck_material, cover_damage_stage,
     crate_piece_model, create_arena_floor, create_spawn_pads, flags_model, house_pieces, part,
-    pickup_cube, pickup_tile_offset, tank_model, timber_debris_model, timber_part_model,
-    tower_piece_model, tree_branch_stage, tree_foliage, tree_part, wreck_brightness, wreck_model,
+    pickup_cube, pickup_icon, pickup_tile_offset, tank_model, timber_debris_model,
+    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
+    wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -55,6 +56,7 @@ use super::view_settings::{
 use crate::camera::PerspectiveCamera;
 use crate::color::hex_to_linear;
 use crate::effects::leaves::Crown as LeafCrown;
+use crate::effects::pickups::supply_turn;
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 use crate::effects::{CosmeticRandom, Effects};
 use crate::gpu::{
@@ -66,32 +68,17 @@ mod inspect;
 
 /// A dead tank's model hides; the live model rides this far below the body.
 const TANK_MODEL_DROP: f64 = 0.4;
-/// Pickup gems bob and spin above their pads, high enough that the pad's light
-/// column shows beneath them; one turn takes `TAU / GEM_SPIN` seconds.
-const GEM_HEIGHT: f64 = 1.42;
-const GEM_BOB: f64 = 0.14;
-const GEM_BOB_RATE: f64 = 2.0;
-const GEM_SPIN: f64 = 1.0;
-/// A pad's light column breathes between these opacities, slower than the bob.
-const BEAM_OPACITY: f64 = 0.62;
-/// A recharging pad keeps a faint light and a small, still ghost of what returns,
-/// so it never reads as a hole in the ground.
-const EMPTY_BEAM_OPACITY: f64 = 0.24;
-const GHOST_OPACITY: f32 = 0.2;
-const GHOST_SCALE: f32 = 0.62;
-const GHOST_HEIGHT: f64 = 0.95;
-/// A collected pickup's icon pops up above the tank's health bar and climbs, a little
-/// larger before it shrinks away, so the player sees what they took.
-const RISE_SECONDS: f64 = 0.8;
-const RISE_START: f64 = 3.0;
-const RISE_HEIGHT: f64 = 2.2;
-const RISE_SCALE: f64 = 0.8;
-const RISE_POP: f64 = 0.25;
-const RISE_SPIN: f64 = 7.0;
-const BEAM_BREATH: f64 = 0.16;
-/// How fast a waiting pad's inner dashes turn (rad/s): one rate for every pad.
-const DASH_TURN: f64 = 0.9;
-const BEAM_BREATH_RATE: f64 = 2.6;
+/// A collected supply lifts off its pallet, squashed as it is plucked and
+/// swelling a little at the top of the hop, then drops into the tank that took it,
+/// shrinking away: how long, how high it hops and when it tops out, its swell and
+/// squash, where in the tank it lands, and how far it turns on the way.
+const RISE_SECONDS: f64 = 0.5;
+const RISE_POP_SECONDS: f64 = 0.16;
+const RISE_POP_HEIGHT: f64 = 0.9;
+const RISE_POP_SCALE: f64 = 0.15;
+const RISE_SQUASH: f64 = 0.25;
+const RISE_TARGET_HEIGHT: f64 = 1.0;
+const RISE_TURN: f64 = 2.5;
 /// Felling boughs (`tree-debris.ts`). Their leaves catch the air: linear drag per
 /// second slows the fall and the tumble. Landed, they lie until the debris cleanup
 /// sinks them out of sight.
@@ -190,21 +177,20 @@ struct BarModel {
     spawn_fill: JointBasis,
 }
 
-/// A pickup kind's floating hard case, and its frame joint (hidden on the ghost).
+/// A pickup kind's supply item, and the shadowless copy a collection lifts into
+/// the tank.
 struct PickupModel {
     gem: ModelId,
-    frame: usize,
+    icon: ModelId,
 }
 
-/// The pad every pickup stands on, shared by every kind: the steel base, the rim
-/// lights and the beam that instance tints color, and the rim's joints.
+/// What every supply drop shares: the pallet, the ground marking the instance
+/// tint paints in the kind's colour, and the marking's joints.
 struct PadModels {
     base: ModelId,
     rim: ModelId,
-    beam: ModelId,
     ring: usize,
     ring_dim: usize,
-    dash: usize,
     refill: usize,
 }
 
@@ -357,12 +343,9 @@ impl Library {
     }
 
     fn pickup(&mut self, renderer: &mut Renderer, kind: PickupKind) -> &PickupModel {
-        self.pickups.entry(kind).or_insert_with(|| {
-            let gem = renderer.add_model(&pickup_cube(kind), Lifetime::Shared);
-            PickupModel {
-                frame: joint_index(renderer, gem, PICKUP_FRAME_NODE),
-                gem,
-            }
+        self.pickups.entry(kind).or_insert_with(|| PickupModel {
+            gem: renderer.add_model(&pickup_cube(kind), Lifetime::Shared),
+            icon: renderer.add_model(&pickup_icon(kind), Lifetime::Shared),
         })
     }
 
@@ -386,16 +369,15 @@ impl Library {
         })
     }
 
-    /// The pad every pickup shares; instance tints color its lights by kind.
+    /// The pallet and marking every supply drop shares; instance tints paint the
+    /// marking by kind.
     fn pickup_pad(&mut self, renderer: &mut Renderer) -> &PadModels {
         self.pickup_pad.get_or_insert_with(|| {
             let rim = renderer.add_model(&own::pickup_rim(), Lifetime::Shared);
             PadModels {
                 base: renderer.add_model(&own::pickup_base(), Lifetime::Shared),
-                beam: renderer.add_model(&own::pickup_beam(), Lifetime::Shared),
                 ring: joint_index(renderer, rim, joint::PICKUP_RING),
                 ring_dim: joint_index(renderer, rim, joint::PICKUP_RING_DIM),
-                dash: joint_index(renderer, rim, joint::PICKUP_DASH),
                 refill: joint_index(renderer, rim, joint::PICKUP_REFILL),
                 rim,
             }
@@ -511,18 +493,20 @@ struct FragmentView {
 }
 
 struct PickupView {
-    kind: PickupKind,
     base: InstanceId,
     rim: InstanceId,
     gem: InstanceId,
-    beam: InstanceId,
-    spin: f64,
+    /// Whether the views show the supply stocked (None: not yet set).
+    shown: Option<bool>,
 }
 
-/// A collected pickup's icon rising from the tank that took it.
+/// A collected supply lifting off its pallet into the tank that took it.
 struct PickupRise {
     instance: InstanceId,
     tank: Option<u32>,
+    /// The pallet it left, and its turn there.
+    from: (f64, f64),
+    turn: f64,
     x: f64,
     z: f64,
     age: f64,
@@ -1431,46 +1415,40 @@ impl Presentation {
 
     fn add_pickup(&mut self, id: u32, kind: PickupKind, x: f64, z: f64) {
         let gem_model = self.library.pickup(&mut self.renderer, kind).gem;
-        let (base_model, rim_model, beam_model) = {
+        let (base_model, rim_model) = {
             let pad = self.library.pickup_pad(&mut self.renderer);
-            (pad.base, pad.rim, pad.beam)
+            (pad.base, pad.rim)
         };
-        let place = Mat4::from_translation(Vec3::new(x as f32, 0.0, z as f32));
+        let turn = Quat::from_rotation_y(supply_turn(id) as f32);
+        let ground = Vec3::new(x as f32, 0.0, z as f32);
         let renderer = &mut self.renderer;
         let base = renderer
-            .add_instance(base_model, place, Lifetime::Round)
-            .expect("pickup model");
-        let rim = renderer
-            .add_instance(rim_model, place, Lifetime::Round)
-            .expect("rim model");
-        let gem = renderer
-            .add_instance(gem_model, place, Lifetime::Round)
-            .expect("gem model");
-        let beam = renderer
             .add_instance(
-                beam_model,
-                Mat4::from_translation(Vec3::new(
-                    x as f32,
-                    own::PICKUP_LIGHT_HEIGHT as f32,
-                    z as f32,
-                )),
+                base_model,
+                Mat4::from_rotation_translation(turn, ground),
                 Lifetime::Round,
             )
-            .expect("beam model");
-        let color = hex_to_linear(pickup(kind).color);
-        renderer.set_tint(beam, color);
-        renderer.set_tint(rim, color);
+            .expect("pallet model");
+        let rim = renderer
+            .add_instance(rim_model, Mat4::from_translation(ground), Lifetime::Round)
+            .expect("marking model");
+        let gem = renderer
+            .add_instance(
+                gem_model,
+                Mat4::from_rotation_translation(turn, ground + Vec3::Y * PALLET_HEIGHT as f32),
+                Lifetime::Round,
+            )
+            .expect("supply model");
+        renderer.set_tint(rim, hex_to_linear(pickup(kind).color));
         let [u, v] = pickup_tile_offset(kind);
         renderer.set_instance_data(gem, [u, v, 0.0, 0.0]);
         self.pickups.insert(
             id,
             PickupView {
-                kind,
                 base,
                 rim,
                 gem,
-                beam,
-                spin: 0.0,
+                shown: None,
             },
         );
     }
@@ -1694,7 +1672,7 @@ impl Presentation {
         self.place_bars(&state.covers, &camera, self.rig.rotation, dt);
         self.update_branches(dt);
         self.update_covers(state);
-        self.update_pickups(state, dt);
+        self.update_pickups(state);
         self.update_pickup_rises(state, alpha, dt);
         self.update_fragments(state);
         self.warm_section();
@@ -2232,8 +2210,8 @@ impl Presentation {
         });
     }
 
-    fn update_pickups(&mut self, state: &RenderState, dt: f64) {
-        // Pickups hover at eye height; first person sees through them.
+    fn update_pickups(&mut self, state: &RenderState) {
+        // Supplies stand at a turret's eye height; first person sees through them.
         let opacity = if self.rig.in_first_person {
             FIRST_PERSON.pickup_opacity
         } else {
@@ -2247,73 +2225,44 @@ impl Presentation {
             self.renderer.remove_instance(view.base);
             self.renderer.remove_instance(view.rim);
             self.renderer.remove_instance(view.gem);
-            self.renderer.remove_instance(view.beam);
         }
-        let dash_angle = self.time * DASH_TURN;
-        for pickup in &state.pickups {
-            if !self.pickups.contains_key(&pickup.id) {
-                self.add_pickup(pickup.id, pickup.kind, pickup.x, pickup.z);
+        for supply in &state.pickups {
+            if !self.pickups.contains_key(&supply.id) {
+                self.add_pickup(supply.id, supply.kind, supply.x, supply.z);
             }
-            let view = self.pickups.get_mut(&pickup.id).expect("pickup view");
-            let model = &self.library.pickups[&view.kind];
+            let view = self.pickups.get_mut(&supply.id).expect("pickup view");
             let pad = self.library.pickup_pad.as_ref().expect("pickup pad");
             let renderer = &mut self.renderer;
-            let ghost = if pickup.available { 1.0 } else { GHOST_OPACITY };
-            renderer.set_opacity(view.gem, opacity * ghost);
-            let phase = f64::from(pickup.id);
-            let breath = (self.time * BEAM_BREATH_RATE + phase).sin();
-            let light = if pickup.available {
-                BEAM_OPACITY + breath * BEAM_BREATH
-            } else {
-                EMPTY_BEAM_OPACITY
-            };
-            renderer.set_opacity(view.beam, opacity * light as f32);
-            renderer.set_node_visible(view.rim, pad.ring, pickup.available);
-            renderer.set_node_visible(view.rim, pad.ring_dim, !pickup.available);
-            renderer.set_node_visible(view.rim, pad.refill, !pickup.available);
-            renderer.set_node_visible(view.rim, pad.dash, pickup.available);
-            renderer.set_node_visible(view.gem, model.frame, pickup.available);
-            if pickup.available {
-                let angle = dash_angle + phase;
-                renderer.set_node_transform(
-                    view.rim,
-                    pad.dash,
-                    Some(own::pickup_dash_transform(angle)),
-                );
+            let stocked = supply.available;
+            renderer.set_opacity(view.gem, opacity);
+            if view.shown != Some(stocked) {
+                view.shown = Some(stocked);
+                renderer.set_visible(view.gem, stocked);
+                renderer.set_node_visible(view.rim, pad.ring, stocked);
+                renderer.set_node_visible(view.rim, pad.ring_dim, !stocked);
+                renderer.set_node_visible(view.rim, pad.refill, !stocked);
             }
-            let fallback = if pickup.kind == PickupKind::Laser {
-                LASER_DEFENSE.initial_delay
-            } else {
-                AMMO_RESPAWN_SECONDS
-            };
-            let duration = if pickup.cooldown_duration != 0.0 {
-                pickup.cooldown_duration
-            } else {
-                fallback
-            };
-            let progress = (1.0 - pickup.cooldown / duration).clamp(0.0, 1.0);
-            let segments = (progress * f64::from(own::REFILL_SEGMENTS)).floor() as f32;
-            renderer.set_instance_data(view.rim, [segments, 0.0, 0.0, 0.0]);
-            view.spin += dt * GEM_SPIN;
-            let (height, scale) = if pickup.available {
-                let bob = (self.time * GEM_BOB_RATE + phase).sin() * GEM_BOB;
-                (GEM_HEIGHT + bob, 1.0)
-            } else {
-                (GHOST_HEIGHT, GHOST_SCALE)
-            };
-            renderer.set_transform(
-                view.gem,
-                Mat4::from_scale_rotation_translation(
-                    Vec3::splat(scale),
-                    Quat::from_rotation_y((PI / 4.0 + view.spin) as f32),
-                    Vec3::new(pickup.x as f32, height as f32, pickup.z as f32),
-                ),
-            );
+            if !stocked {
+                let fallback = if supply.kind == PickupKind::Laser {
+                    LASER_DEFENSE.initial_delay
+                } else {
+                    AMMO_RESPAWN_SECONDS
+                };
+                let duration = if supply.cooldown_duration != 0.0 {
+                    supply.cooldown_duration
+                } else {
+                    fallback
+                };
+                let progress = (1.0 - supply.cooldown / duration).clamp(0.0, 1.0);
+                let ticks = (progress * f64::from(own::REFILL_TICKS)) as f32;
+                renderer.set_instance_data(view.rim, [ticks, 0.0, 0.0, 0.0]);
+            }
         }
     }
 
-    /// Raise the collected kind's icon off the tank that took it. The event names
-    /// the kind only by its color, which is unique per kind.
+    /// Lift the collected supply off its pallet into the tank that took it. The
+    /// event names the kind only by its colour, which is unique per kind, and the
+    /// pallet by where it stands.
     fn add_pickup_rise(&mut self, event: &SimEvent) {
         let Some(kind) = PickupKind::ALL
             .into_iter()
@@ -2326,18 +2275,30 @@ impl Presentation {
         {
             self.renderer.remove_instance(oldest.instance);
         }
-        let gem = self.library.pickup(&mut self.renderer, kind).gem;
+        let icon = self.library.pickup(&mut self.renderer, kind).icon;
         let Some(instance) =
             self.renderer
-                .add_instance(gem, Mat4::from_scale(Vec3::ZERO), Lifetime::Round)
+                .add_instance(icon, Mat4::from_scale(Vec3::ZERO), Lifetime::Round)
         else {
             return;
         };
         let [u, v] = pickup_tile_offset(kind);
         self.renderer.set_instance_data(instance, [u, v, 0.0, 0.0]);
+        let turn = self
+            .pickups
+            .iter()
+            .find(|(_, view)| {
+                self.renderer.instance_state(view.base).is_some_and(|base| {
+                    let at = base.world.w_axis;
+                    (f64::from(at.x) - event.x).hypot(f64::from(at.z) - event.z) < 0.01
+                })
+            })
+            .map_or(0.0, |(&id, _)| supply_turn(id));
         self.pickup_rises.push_back(PickupRise {
             instance,
             tank: event.id,
+            from: (event.x, event.z),
+            turn,
             x: event.x,
             z: event.z,
             age: 0.0,
@@ -2352,7 +2313,7 @@ impl Presentation {
                 renderer.remove_instance(rise.instance);
                 return false;
             }
-            // Over the tank while it lives, else where it was taken.
+            // Into the tank while it lives, else back onto the pallet.
             if let Some(tank) = rise
                 .tank
                 .and_then(|id| state.tanks.iter().find(|t| t.id == id && t.alive))
@@ -2360,21 +2321,31 @@ impl Presentation {
                 rise.x = tank.previous.x + (tank.position.x - tank.previous.x) * alpha;
                 rise.z = tank.previous.z + (tank.position.z - tank.previous.z) * alpha;
             }
-            let progress = rise.age / RISE_SECONDS;
-            let climb = 1.0 - (1.0 - progress).powi(3);
-            let pop = (progress * PI / 0.3).sin().max(0.0) * RISE_POP;
-            let shrink = (1.0 - ((progress - 0.55) / 0.45).clamp(0.0, 1.0)).powi(2);
-            let scale = RISE_SCALE * (0.6 + 0.4 * (progress / 0.12).min(1.0) + pop) * shrink;
+            let (pop, drop) = if rise.age < RISE_POP_SECONDS {
+                (rise.age / RISE_POP_SECONDS, 0.0)
+            } else {
+                (
+                    1.0,
+                    (rise.age - RISE_POP_SECONDS) / (RISE_SECONDS - RISE_POP_SECONDS),
+                )
+            };
+            let lift = PALLET_HEIGHT + RISE_POP_HEIGHT * (1.0 - (1.0 - pop).powi(2));
+            let swell = 1.0 + RISE_POP_SCALE * (pop * PI).sin();
+            let squash = RISE_SQUASH * (1.0 - pop).powi(2);
+            let pull = drop * drop;
+            let shrink = 1.0 - pull;
+            let (fx, fz) = rise.from;
+            let x = fx + (rise.x - fx) * pull;
+            let z = fz + (rise.z - fz) * pull;
+            let y = lift + (RISE_TARGET_HEIGHT - lift) * pull;
+            let width = swell * (1.0 + squash) * shrink;
+            let height = swell * (1.0 - squash) * shrink;
             renderer.set_transform(
                 rise.instance,
                 Mat4::from_scale_rotation_translation(
-                    Vec3::splat(scale as f32),
-                    Quat::from_rotation_y((PI / 4.0 + rise.age * RISE_SPIN) as f32),
-                    Vec3::new(
-                        rise.x as f32,
-                        (RISE_START + climb * RISE_HEIGHT) as f32,
-                        rise.z as f32,
-                    ),
+                    Vec3::new(width as f32, height as f32, width as f32),
+                    Quat::from_rotation_y((rise.turn + RISE_TURN * pull) as f32),
+                    Vec3::new(x as f32, y as f32, z as f32),
                 ),
             );
             true
