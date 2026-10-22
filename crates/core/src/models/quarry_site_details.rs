@@ -35,8 +35,10 @@ fn site_sign(group: &mut Node) {
 }
 
 /// Machinery, stockpiles and haul lanes on the apron that scrub never grows on.
-const SCRUB_KEEP_OUT: [[f64; 4]; 7] = [
+const SCRUB_KEEP_OUT: [[f64; 4]; 9] = [
     [-31.0, -16.0, -76.0, -60.0], // excavator
+    [3.0, 26.0, 65.0, 76.0],      // drill rig and its drilled line
+    [-31.0, -15.0, 65.0, 78.0],   // south spoil heap
     [-66.0, -38.0, -74.0, -65.0], // screening conveyor and hopper
     [5.0, 27.0, -78.0, -59.0],    // sentinel butte
     [23.0, 54.0, -76.0, -62.0],   // site office, water tank, drums and sign
@@ -56,6 +58,169 @@ pub fn quarry_site_details(equipment: &mut Node) {
     // Mobile lighting plants stand by for night shifts, giving the apron some height.
     light_tower(equipment, 57.0, -67.5, -0.4);
     light_tower(equipment, -67.0, 58.0, 2.2);
+    // A blast-hole drill works the south apron, its mast up over the line of
+    // holes it has drilled (their cuttings are the scenery's spoil).
+    drill_rig(equipment, DRILL_RIG[0], DRILL_RIG[1], DRILL_RIG[2]);
+}
+
+/// The drill rig's spot on the south apron: x, z and yaw.
+const DRILL_RIG: [f64; 3] = [9.0, 70.2, 0.08];
+/// The drilled holes run east of the rig along the apron, metres apart.
+const DRILL_HOLES: usize = 6;
+const DRILL_HOLE_SPACING: f64 = 2.6;
+
+/// `drillRig(group, x, z, yaw)`: a crawler blast-hole drill in fleet yellow on
+/// dark tracks: compressor house, cab, and a tall feed mast with its rotation
+/// head, rod carousel and dust hood at the collar. Painted in the colours the
+/// site's other steel already uses, so it joins their batches.
+fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
+    const YELLOW: u32 = 0xc69a4b;
+    const DARK: u32 = 0x4a4238;
+    const FRAME: u32 = 0x5a564c;
+    let mut rig = Node::group("");
+    for side in [-1.0, 1.0] {
+        put(
+            &mut rig,
+            steel_box(5.2, 0.95, 0.72, DARK),
+            0.0,
+            0.48,
+            side * 1.2,
+        );
+        for dx in [-2.2, 2.2] {
+            let idler = rotated(cylinder_part(0.42, 0.76, 0x343431, 10), FRAC_PI_2, 0.0, 0.0);
+            put(&mut rig, idler, dx, 0.48, side * 1.2);
+        }
+    }
+    put(&mut rig, steel_box(4.8, 0.45, 2.5, FRAME), 0.0, 1.18, 0.0);
+    // Compressor and engine house at the back, grille facing aft.
+    put(&mut rig, steel_box(2.7, 1.7, 2.4, YELLOW), -1.0, 2.25, 0.0);
+    put(
+        &mut rig,
+        box_part(0.05, 1.15, 1.9, 0x3d413b, 0.0),
+        -2.38,
+        2.25,
+        0.0,
+    );
+    put(
+        &mut rig,
+        cylinder_part(0.09, 1.1, 0x7e4a2c, 8),
+        -1.6,
+        3.6,
+        0.8,
+    );
+    // Cab forward on one side, dark glass all round.
+    put(
+        &mut rig,
+        steel_box(1.45, 1.85, 1.3, YELLOW),
+        1.25,
+        2.33,
+        -0.58,
+    );
+    put(
+        &mut rig,
+        box_part(1.2, 1.0, 1.36, 0x42483c, 0.0),
+        1.28,
+        2.6,
+        -0.58,
+    );
+    put(
+        &mut rig,
+        box_part(1.51, 1.0, 1.05, 0x42483c, 0.0),
+        1.25,
+        2.6,
+        -0.58,
+    );
+    put(
+        &mut rig,
+        steel_box(1.65, 0.12, 1.5, DARK),
+        1.25,
+        3.32,
+        -0.58,
+    );
+    // The feed mast, standing on its cradle at the front, braced back to the deck.
+    let mast_x = 2.65;
+    put(
+        &mut rig,
+        steel_box(0.55, 10.2, 0.6, YELLOW),
+        mast_x,
+        6.0,
+        0.55,
+    );
+    put(
+        &mut rig,
+        steel_box(0.16, 9.8, 0.2, 0x9a9a92),
+        mast_x + 0.34,
+        5.9,
+        0.55,
+    );
+    for dz in [0.15, 0.95] {
+        steel_beam(
+            &mut rig,
+            [0.9, 1.4, dz],
+            [mast_x - 0.2, 4.4, dz],
+            0.16,
+            FRAME,
+        );
+    }
+    put(
+        &mut rig,
+        steel_box(0.75, 0.9, 0.8, 0x4e7d7c),
+        mast_x + 0.5,
+        7.2,
+        0.55,
+    );
+    put(
+        &mut rig,
+        cylinder_part(0.3, 3.4, 0x8a4f2e, 10),
+        mast_x - 0.45,
+        3.9,
+        1.15,
+    );
+    put(
+        &mut rig,
+        steel_box(0.95, 0.5, 0.95, 0x515f59),
+        mast_x + 0.4,
+        0.3,
+        0.55,
+    );
+    put(
+        &mut rig,
+        cylinder_part(0.06, 6.6, 0x5b625b, 6),
+        mast_x + 0.45,
+        3.85,
+        0.55,
+    );
+    // Hydraulic jacks down to the apron and a hose loop off the mast head.
+    for (jx, jz) in [(-2.3, -1.45), (-2.3, 1.45), (2.2, -1.45)] {
+        put(&mut rig, steel_box(0.26, 1.2, 0.26, FRAME), jx, 0.6, jz);
+        put(&mut rig, steel_box(0.6, 0.08, 0.6, DARK), jx, 0.04, jz);
+    }
+    steel_beam(
+        &mut rig,
+        [mast_x - 0.2, 11.0, 0.55],
+        [0.6, 3.5, 0.9],
+        0.07,
+        0x343431,
+    );
+    rig.set_rotation_euler(0.0, yaw, 0.0);
+    rig.position = DVec3::new(x, -1.79, z);
+    adopt_children(group, rig);
+}
+
+/// Where the rig's drilled holes stand on the apron, east of it along its line.
+pub(super) fn drill_holes() -> Vec<(f64, f64)> {
+    let [x, z, yaw] = DRILL_RIG;
+    let (sin, cos) = yaw.sin_cos();
+    (0..DRILL_HOLES)
+        .map(|i| {
+            let along = 4.2 + i as f64 * DRILL_HOLE_SPACING;
+            let across = 0.55 + if i % 2 == 0 { 0.0 } else { 1.3 };
+            (
+                x + along * cos + across * sin,
+                z - along * sin + across * cos,
+            )
+        })
+        .collect()
 }
 
 /// Dry scrub holds the undisturbed shoulders, clear of traffic, machinery and the

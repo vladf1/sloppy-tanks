@@ -87,6 +87,15 @@ fn rock_footprints() -> &'static [[f64; 5]] {
 /// its footprint, metres.
 const ROCK_CONTACT_REACH: f64 = 2.4;
 const ROCK_SHED_REACH: f64 = 3.6;
+/// The sun's bearing across the floor (`theme_look`'s quarry sun, toward it):
+/// the foot shade pools on the side turned from it.
+const SUN_BEARING: [f64; 2] = [-0.865, 0.502];
+/// How far the foot shade leans away from the sun, metres.
+const CONTACT_LEAN: f64 = 1.1;
+/// How far a rock's lee drift trails downwind (+x), metres.
+const LEE_TAIL: f64 = 3.2;
+/// Rows a rock's lee drift and leaning shade can reach beyond its footprint.
+const ROCK_ROW_REACH: f64 = ROCK_SHED_REACH + CONTACT_LEAN;
 
 /// The rocks whose footprints come within `reach` of the row at `z`: most rows
 /// meet none, so the per-pixel distance below rarely has anything to test.
@@ -199,10 +208,12 @@ pub fn bake_quarry_soil(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
 fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, out: &mut [u8]) {
     let size = QUARRY_SOIL_SIZE;
     let extent = EXTENT;
-    let rocks = rocks_near_row(z, ROCK_SHED_REACH);
+    let rocks = rocks_near_row(z, ROCK_ROW_REACH);
     for col in 0..size {
         let x = (col as f64 / (size - 1) as f64 - 0.5) * extent;
-        let macro_field = noise(table, x * 0.065, z * 0.065);
+        // Stretched along the +x wind, so sand sheets and deflated ground lie in
+        // streaks behind the obstacles instead of round blotches.
+        let macro_field = noise(table, x * 0.034, z * 0.085);
         let grit = noise(table, x * 0.75, z * 0.75);
         // Broad irregular sheets: windblown sand where the macro field runs high,
         // exposed stony soil where it runs low. A sine warp plus two fixed diagonal
@@ -261,9 +272,9 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (163.0 - r) * stony;
         g += (134.0 - g) * stony;
         b += (101.0 - b) * stony;
-        r += (152.0 - r) * road;
-        g += (135.0 - g) * road;
-        b += (111.0 - b) * road;
+        r += (146.0 - r) * road;
+        g += (129.0 - g) * road;
+        b += (106.0 - b) * road;
         r += (198.0 - r) * windrow * 0.55;
         g += (180.0 - g) * windrow * 0.55;
         b += (150.0 - b) * windrow * 0.55;
@@ -331,9 +342,9 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         b += (106.0 - b) * iron * 0.3;
         let damp =
             (1.0 - smoothstep(stain - bands * 0.08, 0.27, 0.41)) * (1.0 - worn_sand) * off_road;
-        r += (152.0 - r) * damp * 0.6;
-        g += (114.0 - g) * damp * 0.6;
-        b += (88.0 - b) * damp * 0.6;
+        r += (152.0 - r) * damp * 0.4;
+        g += (114.0 - g) * damp * 0.4;
+        b += (88.0 - b) * damp * 0.4;
         // Beds of loose grey gravel where spill has been graded out.
         let spill = noise(table, x * 0.09 + 11.0, z * 0.09 - 5.0);
         let gravel_bed =
@@ -347,8 +358,11 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (146.0 - r) * tyres * 0.6;
         g += (124.0 - g) * tyres * 0.6;
         b += (98.0 - b) * tyres * 0.6;
+        // Loose stone gathers in clusters a few metres across, with clean sand
+        // between them, instead of an even sprinkle.
+        let clump = noise(table, x * 0.31 + 23.0, z * 0.31 - 9.0);
         let pebble = pixel_hash(col, row);
-        let pebbles = if pebble > 0.78 - gravel_bed * 0.25 - stony * 0.08 {
+        let pebbles = if pebble > 0.84 - gravel_bed * 0.25 - stony * 0.08 - (clump - 0.5) * 0.5 {
             (pixel_hash(row + 7919, col) - 0.55) * (22.0 + gravel_bed * 26.0)
         } else {
             0.0
@@ -385,18 +399,43 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         b += (167.0 - b) * drift;
         // Shade pools at the rocks' feet, where the sky is half hidden, and the
         // stones they shed lie in a ring round them.
-        let rock_edge = if rocks.is_empty() {
-            ROCK_SHED_REACH
+        let (rock_edge, shade_edge, lee_edge) = if rocks.is_empty() {
+            (ROCK_SHED_REACH, ROCK_SHED_REACH, ROCK_SHED_REACH)
         } else {
-            rock_distance(&rocks, x, z, ROCK_SHED_REACH)
+            (
+                rock_distance(&rocks, x, z, ROCK_SHED_REACH),
+                // Measured from a point moved toward the sun: ground on the shaded
+                // side lies nearer the rock than it is.
+                rock_distance(
+                    &rocks,
+                    x + SUN_BEARING[0] * CONTACT_LEAN,
+                    z + SUN_BEARING[1] * CONTACT_LEAN,
+                    ROCK_SHED_REACH,
+                ),
+                rock_distance(&rocks, x - LEE_TAIL, z, ROCK_SHED_REACH),
+            )
         };
         // Under the rock itself (its caprock pans sample this bake) stays clear.
-        let contact = (1.0 - smoothstep(rock_edge, -0.2, ROCK_CONTACT_REACH)).powi(2)
-            * smoothstep(rock_edge, -1.6, -0.6);
+        // The foot shade leans away from the sun and breaks up over the ground.
+        let breakup = 0.55 + 0.9 * noise(table, x * 0.8 + 3.0, z * 0.8 + 61.0);
+        let lean_reach = rock_edge.min(shade_edge + 0.4);
+        let contact = ((1.0 - smoothstep(lean_reach, -0.2, ROCK_CONTACT_REACH)).powi(2)
+            * smoothstep(rock_edge, -1.6, -0.6)
+            * breakup)
+            .min(1.0);
         let shed = 1.0 - smoothstep(rock_edge, 0.2, ROCK_SHED_REACH);
+        // Sand trails off each rock's lee in a tapering tongue; the windward foot
+        // is scoured to bare gravel.
+        let lee = (1.0 - smoothstep(lee_edge, -0.4, 1.4))
+            * smoothstep(rock_edge, -0.3, 0.4)
+            * (1.0 - road);
+        r += (220.0 - r) * lee * 0.45;
+        g += (203.0 - g) * lee * 0.45;
+        b += (170.0 - b) * lee * 0.45;
         // Gravel shows through stony ground and spill; sand and traffic bury it.
         let gravel = 0.0f64.max(1.0f64.min(
             0.5 + stony * 0.45 + windrow * 0.35 + gravel_bed * 0.5 + shed * 0.45
+                - lee * 0.8
                 - worn_sand * 0.4
                 - road * 0.25
                 - drift * 0.5 * (1.0 - shed),
