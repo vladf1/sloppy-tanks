@@ -385,7 +385,7 @@ const QUAY_EDGE: f64 = ARENA + BOUNDARY_THICKNESS;
 /// Top of the harbor's boundary wall (`harbor_layout`).
 const WALL_TOP: f64 = 1.2;
 /// Mooring bollards down the middle of the wall top, clear of its chamfers.
-const BOLLARD_LINE: f64 = QUAY_EDGE - 0.5;
+const BOLLARD_LINE: f64 = QUAY_EDGE - 0.6;
 const BOLLARD_DARK: u32 = 0x262d30;
 const BOLLARD_CAP: u32 = 0xe1b64d;
 /// Flood-light masts at the quay corners.
@@ -702,13 +702,12 @@ fn life_ring(details: &mut Node, x: f64, z: f64, yaw: f64) {
 }
 
 /// A flood-light mast standing at (x, floor, z) on its concrete plinth: a tapered
-/// galvanised pole, a headframe with a railed service platform and three
-/// floodlights in visored housings aimed down at `toward` (a unit vector on the
-/// ground toward the apron), and the beacon on top.
+/// galvanised pole, a headframe platform and three floodlights aimed down at
+/// `toward` (a unit vector on the ground toward the apron), and the beacon on top.
 fn flood_mast(details: &mut Node, beacons: &mut Node, [x, floor, z]: [f64; 3], toward: [f64; 2]) {
     static POLE: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
     let pole = POLE
-        .get_or_init(|| Arc::new(cylinder_geometry(0.12, 0.24, LAMP_HEIGHT, 10)))
+        .get_or_init(|| Arc::new(cylinder_geometry(0.12, 0.24, LAMP_HEIGHT, 8)))
         .clone();
     let mut mast = Node::group("");
     put(
@@ -725,39 +724,19 @@ fn flood_mast(details: &mut Node, beacons: &mut Node, [x, floor, z]: [f64; 3], t
         LAMP_HEIGHT / 2.0,
         0.0,
     );
-    // Headframe: the platform's grating, its toe rail and the lamp bar.
+    // Headframe: the service platform's grating and the lamp bar under it.
     put(
         &mut mast,
-        box_part(3.0, 0.1, 1.1, GRATING_STEEL, 0.0),
+        box_part(3.0, 0.12, 1.1, GRATING_STEEL, 0.0),
         0.0,
         LAMP_HEIGHT - 0.35,
         0.0,
     );
-    for (dz, w, d) in [(-0.55, 3.0, 0.05), (0.55, 3.0, 0.05)] {
-        put(
-            &mut mast,
-            box_part(w, 0.05, d, MAST_GALVANISED, 0.0),
-            0.0,
-            LAMP_HEIGHT + 0.45,
-            dz,
-        );
-    }
-    for dx in [-1.45, 1.45] {
-        for dz in [-0.55, 0.55] {
-            put(
-                &mut mast,
-                box_part(0.05, 0.8, 0.05, MAST_GALVANISED, 0.0),
-                dx,
-                LAMP_HEIGHT + 0.05,
-                dz,
-            );
-        }
-    }
     put(
         &mut mast,
-        box_part(3.0, 0.14, 0.14, LAMP_HOUSING, 0.0),
+        box_part(3.0, 0.16, 0.16, LAMP_HOUSING, 0.0),
         0.0,
-        LAMP_HEIGHT - 0.2,
+        LAMP_HEIGHT - 0.55,
         0.5,
     );
     for dx in [-1.05, 0.0, 1.05] {
@@ -768,14 +747,6 @@ fn flood_mast(details: &mut Node, beacons: &mut Node, [x, floor, z]: [f64; 3], t
             0.0,
             0.0,
             0.0,
-        );
-        // The visor over the lens, and the lens itself glowing on the front.
-        put(
-            &mut lamp,
-            box_part(0.86, 0.06, 0.3, LAMP_HOUSING, 0.0),
-            0.0,
-            0.33,
-            0.28,
         );
         put(
             &mut lamp,
@@ -788,7 +759,7 @@ fn flood_mast(details: &mut Node, beacons: &mut Node, [x, floor, z]: [f64; 3], t
             &mut mast,
             rotated(lamp, 0.6, 0.0, 0.0),
             dx,
-            LAMP_HEIGHT - 0.6,
+            LAMP_HEIGHT - 0.85,
             0.72,
         );
     }
@@ -800,11 +771,11 @@ fn flood_mast(details: &mut Node, beacons: &mut Node, [x, floor, z]: [f64; 3], t
         beacons,
         cylinder_part(0.18, 0.3, 0xffb54a, 8),
         x,
-        floor + LAMP_HEIGHT + 0.65,
+        floor + LAMP_HEIGHT - 0.1,
         z,
     );
 }
-/// Galvanised steel of the masts and their rails, and the platforms' grating.
+/// Galvanised steel of the masts, and the platforms' grating.
 const MAST_GALVANISED: u32 = 0x8e979a;
 const GRATING_STEEL: u32 = 0x4d575b;
 
@@ -1120,16 +1091,6 @@ fn quay_dressing(details: &mut Node, beacons: &mut Node) {
     // stacked and painted differently on each.
     container_block(details, [-125.0, 44.0], 2, 4, 3, 1);
     yard_gantry(details, [-125.0, 44.0], 2, 4, 3);
-    yard_gantry(details, [109.0, -58.0], 2, 4, 3);
-    // Light masts down the outer quays, aimed at their yards.
-    for (x, z) in [
-        (-104.8, 30.0),
-        (-104.8, -42.0),
-        (104.8, 52.0),
-        (104.8, -26.0),
-    ] {
-        flood_mast(details, beacons, [x, WAREHOUSE_FLOOR, z], [x.signum(), 0.0]);
-    }
     for z in [45.0, 38.6] {
         reefer(details, -110.0, WAREHOUSE_FLOOR, z);
     }

@@ -199,9 +199,9 @@ pub fn apron_box(w: f64, h: f64, d: f64, color: u32, mode: ApronMode) -> Node {
 /// Depth of the parapet's capping beam, how far it overhangs the precast body on
 /// each face (enough for its edge to throw a shadow line) and the chamfer worn
 /// along both its top arrises, metres: the bevel the hazard paint runs along.
-const PARAPET_CAP: f64 = 0.22;
+const PARAPET_CAP: f64 = 0.3;
 const PARAPET_OVERHANG: f64 = 0.05;
-const PARAPET_CHAMFER: f64 = 0.12;
+const PARAPET_CHAMFER: f64 = 0.2;
 /// The parapet's precast concrete: warm and pale, as the quay's own.
 const PARAPET_CONCRETE: u32 = 0xb8b3a6;
 

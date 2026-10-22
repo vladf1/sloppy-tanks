@@ -476,63 +476,75 @@ fn grain_terminal(sectors: &mut Sectors) {
     const SILO_HEIGHT: f64 = 19.0;
     const SILO_STEP: f64 = 0.027;
     const FIRST: f64 = 2.94;
+    // The bins stand on the low ground by the shore, their tops level along the
+    // gallery whatever the slope under each: the lowest foot sets the line.
+    let base = (0..2u32)
+        .flat_map(|row| {
+            (0..6u32).map(move |i| {
+                let theta = FIRST + SILO_STEP * (f64::from(i) + 0.5 * f64::from(row));
+                on_land(theta, 7.0 + 6.4 * f64::from(row)).1
+            })
+        })
+        .fold(f64::INFINITY, f64::min);
+    let top = base + SILO_HEIGHT;
     for row in 0..2u32 {
-        let inland = 16.0 + 6.4 * f64::from(row);
+        let inland = 7.0 + 6.4 * f64::from(row);
         for i in 0..6u32 {
             let theta = FIRST + SILO_STEP * (f64::from(i) + 0.5 * f64::from(row));
             let (x, y, z) = on_land(theta, inland);
-            let height = SILO_HEIGHT + 2.0 * f64::from(row);
+            let foot = y - FOOTING;
             let silo = flagged(
-                cylinder_part(SILO_RADIUS, height + FOOTING, 0xb5ad9b, 14),
+                cylinder_part(SILO_RADIUS, top - foot, 0xb5ad9b, 14),
                 TANK_FLAG,
             );
-            place_at(sectors, theta, silo, x, y + (height - FOOTING) / 2.0, z);
+            place_at(sectors, theta, silo, x, (top + foot) / 2.0, z);
             place_at(
                 sectors,
                 theta,
                 cylinder_part(SILO_RADIUS + 0.2, 0.7, 0x8f8c84, 14),
                 x,
-                y + height + 0.35,
+                top + 0.35,
                 z,
             );
         }
     }
     // The gallery along the front row's tops, to the headhouse.
     let head_theta = FIRST - 0.03;
-    let (hx, hy, hz) = on_land(head_theta, 19.0);
-    let (ex, ey, ez) = on_land(FIRST + SILO_STEP * 5.0, 16.0);
+    let (hx, hy, hz) = on_land(head_theta, 10.0);
+    let (ex, _, ez) = on_land(FIRST + SILO_STEP * 5.0, 7.0);
     let mut works = Node::group("");
     beam(
         &mut works,
-        [hx, hy + SILO_HEIGHT + 2.2, hz],
-        [ex, ey + SILO_HEIGHT + 2.2, ez],
+        [hx, top + 2.2, hz],
+        [ex, top + 2.2, ez],
         2.6,
         0x9aa2a2,
     );
+    let house = top + 10.0 - hy;
     let headhouse = rotated(
-        box_part(8.0, 29.0 + FOOTING, 9.0, 0xaaa391, 0.0),
+        box_part(8.0, house + FOOTING, 9.0, 0xaaa391, 0.0),
         0.0,
         -head_theta,
         0.0,
     );
-    put(&mut works, headhouse, hx, hy + (29.0 - FOOTING) / 2.0, hz);
+    put(&mut works, headhouse, hx, hy + (house - FOOTING) / 2.0, hz);
     let cupola = rotated(
         box_part(5.0, 3.0, 6.0, 0x7d8486, 0.0),
         0.0,
         -head_theta,
         0.0,
     );
-    put(&mut works, cupola, hx, hy + 30.5, hz);
+    put(&mut works, cupola, hx, top + 11.5, hz);
     put(
         &mut works,
         box_part(1.0, 1.0, 1.0, WARNING_LIGHT, 0.0),
         hx,
-        hy + 32.5,
+        top + 13.5,
         hz,
     );
     place(sectors, head_theta, works);
     // Long sheds behind the silos, and the chimney of the mill.
-    for (i, (theta, inland, length)) in [(3.02, 40.0, 46.0), (2.9, 34.0, 32.0)]
+    for (i, (theta, inland, length)) in [(3.07, 22.0, 30.0), (2.88, 20.0, 32.0)]
         .into_iter()
         .enumerate()
     {
@@ -961,7 +973,9 @@ fn built_up(theta: f64) -> bool {
 /// shoulder is the height of a crown's widest ring as a fraction of its own:
 /// low on a spruce's narrow spire, high on a broadleaf's rounded dome, so the
 /// woods' skyline is lumpy rather than a row of spikes.
-const CLUMPS: [[(f64, f64, f64, f64, f64); 4]; 3] = [
+/// One crown of a clump: (x, z offset, height, radius, shoulder).
+type Crown = (f64, f64, f64, f64, f64);
+const CLUMPS: [[Crown; 4]; 3] = [
     [
         (0.0, 0.0, 1.0, 0.55, 0.5),
         (0.55, 0.16, 0.78, 0.56, 0.62),
