@@ -1,7 +1,6 @@
-//! Port of `quarry-site-details.ts`: the work-floor gravel, dry scrub on the
-//! apron, the screening conveyor, site office dressing, the site sign and two
-//! mobile lighting towers. All tall dressing is outside the playable wall;
-//! in-arena gravel is only 2–4 cm high.
+//! Port of `quarry-site-details.ts`: dry scrub on the apron, the screening
+//! conveyor, site office dressing, the site sign and two mobile lighting towers.
+//! All of it stands outside the playable wall.
 
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
@@ -15,13 +14,9 @@ use super::effects_scenery::QUARRY_SIGN_TEXTURE;
 use super::harbor_surfaces::{steel_beam, steel_box};
 use super::model_primitives::adopt_children;
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
-use super::quarry_soil::quarry_gravel_density;
-use super::quarry_surfaces::{RubbleStone, sandstone_pebbles, sandstone_rubble};
 use super::quarry_terrain::quarry_ground_drop;
-use crate::geometry::math::{hex_to_linear, js_hypot};
-use crate::sim::arena::spawn_positions;
+use crate::geometry::math::hex_to_linear;
 use crate::sim::math::Random;
-use crate::sim::types::Team;
 
 /// The "DUSTY DIG / 03 — ACTIVE QUARRY" board (drawn by the browser, see
 /// [`QUARRY_SIGN_TEXTURE`]) on two posts.
@@ -50,97 +45,11 @@ const SCRUB_KEEP_OUT: [[f64; 4]; 7] = [
     [63.0, 86.0, 24.0, 70.0],     // east haul ramp
 ];
 
-/// Candidate spots tried for work-floor pebbles; the gravel density keeps a few
-/// thousand of them.
-const PEBBLE_TRIES: usize = 6_000;
-
-/// Centimetre pebbles sown where the baked soil reads gravelly, so the work floor
-/// has real grit at the follow camera. Spawn pads stay clean. Its own stream
-/// keeps the rest of the dressing where it was.
-fn work_floor_pebbles(pads: &[crate::sim::types::Vec2]) -> Vec<RubbleStone> {
-    let mut rng = Random::new(40417.0);
-    let mut pebbles = Vec::new();
-    for _ in 0..PEBBLE_TRIES {
-        let x = rng.range(-58.0, 58.0);
-        let z = rng.range(-58.0, 58.0);
-        let keep = quarry_gravel_density(x, z).powf(1.3) * 0.9 + 0.04;
-        let roll = rng.next();
-        if roll > keep || pads.iter().any(|p| js_hypot(&[x - p.x, z - p.z]) < 3.2) {
-            continue;
-        }
-        let size = rng.range(0.05, 0.15) * (1.0 + roll * 0.6);
-        pebbles.push(RubbleStone {
-            x,
-            y: 0.008,
-            z,
-            w: size,
-            h: size * rng.range(0.35, 0.6),
-            d: size * rng.range(0.6, 1.0),
-            rot_y: rng.range(-PI, PI),
-            shade: rng.range(0.5, 0.85),
-        });
-    }
-    pebbles
-}
-
-/// `quarrySiteDetails(equipment, gravel)`: append the site dressing to
-/// `equipment` and the work-floor gravel rubble to `gravel`.
-pub fn quarry_site_details(equipment: &mut Node, gravel: &mut Node) {
+/// `quarrySiteDetails(equipment)`: append the site dressing to `equipment`. The
+/// work floor's loose gravel is the soil shader's (`quarry_soil.wgsl`): stones a
+/// few centimetres high cost a GPU nothing there, and gather where the bake says.
+pub fn quarry_site_details(equipment: &mut Node) {
     let mut rng = Random::new(62541.0);
-    // Spilled haul loads leave tight clusters of flat gravel across the work floor,
-    // with a scatter of strays between them. Spawn pads stay clean.
-    let pads: Vec<_> = spawn_positions(Team::Blue, 1.0)
-        .into_iter()
-        .chain(spawn_positions(Team::Red, 1.0))
-        .collect();
-    let mut stones = Vec::new();
-    let mut stone = |rng: &mut Random, x: f64, z: f64, size: f64| {
-        if x.abs().max(z.abs()) > 58.5 || pads.iter().any(|p| js_hypot(&[x - p.x, z - p.z]) < 3.4) {
-            return;
-        }
-        let h = rng.range(0.04, 0.07);
-        let d = size * rng.range(0.6, 1.1);
-        let rot_y = rng.range(-PI, PI);
-        let shade = rng.range(0.55, 0.95);
-        stones.push(RubbleStone {
-            x,
-            y: 0.008,
-            z,
-            w: size,
-            h,
-            d,
-            rot_y,
-            shade,
-        });
-    };
-    for _ in 0..40 {
-        let cx = rng.range(-56.0, 56.0);
-        let cz = rng.range(-56.0, 56.0);
-        let spread = rng.range(0.8, 2.6);
-        let count = 10 + rng.range(0.0, 16.0).floor() as usize;
-        for _ in 0..count {
-            let angle = rng.range(0.0, PI * 2.0);
-            let r = spread * rng.next().sqrt();
-            let size = rng.range(0.1, 0.3);
-            stone(&mut rng, cx + angle.cos() * r, cz + angle.sin() * r, size);
-        }
-    }
-    // Strays between the clusters, then a few flat spalls knocked off the rock
-    // islands by earlier shelling.
-    for (count, min_size, max_size) in [(240, 0.12, 0.42), (30, 0.45, 0.8)] {
-        for _ in 0..count {
-            let (x, z, size) = (
-                rng.range(-57.0, 57.0),
-                rng.range(-57.0, 57.0),
-                rng.range(min_size, max_size),
-            );
-            stone(&mut rng, x, z, size);
-        }
-    }
-    gravel.children.push(sandstone_rubble(&stones));
-    gravel
-        .children
-        .push(sandstone_pebbles(&work_floor_pebbles(&pads)));
     equipment.children.push(scrub(&mut rng));
     conveyor_and_yard(equipment);
     site_sign(equipment);

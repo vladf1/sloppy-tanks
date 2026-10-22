@@ -4,7 +4,7 @@
 use std::sync::Arc;
 
 use crate::geometry::box_geometry;
-use crate::scene::{Material, Node, TextureRef};
+use crate::scene::{Color, Effect, Material, Node, TextureRef};
 
 use super::batching::batch;
 use super::effects_scenery::VILLAGE_SIGN_TEXTURE;
@@ -39,6 +39,7 @@ impl VillageScenery {
         root.children.push(village_atmosphere());
         root.children.push(village_landmarks());
         root.children.push(approach_details());
+        settle_paint(&mut root);
         Self { root }
     }
 
@@ -55,6 +56,39 @@ impl VillageScenery {
         if let Some(smoke) = self.root.find_mut(CHIMNEY_SMOKE_NODE) {
             set_chimney_smoke(smoke, covers);
         }
+    }
+}
+
+/// The finish every matte painted surface of the village shares.
+const MATTE_ROUGHNESS: f32 = 0.8;
+const MATTE_METALNESS: f32 = 0.05;
+
+/// Give every plain matte paint (untextured, opaque, neither metal nor glowing)
+/// one finish. Static scenery draws once per material and 60 m cell, and painted
+/// parts merge only when everything but their colour matches: a dozen near-equal
+/// roughness values cost a dozen draws in every cell for no visible difference.
+fn settle_paint(root: &mut Node) {
+    let mut stack = vec![root];
+    while let Some(node) = stack.pop() {
+        if let Some(drawable) = &mut node.drawable {
+            let m = &drawable.material;
+            let matte = m.effect == Effect::None
+                && m.map.is_none()
+                && m.bump_map.is_none()
+                && !m.transparent
+                && m.alpha_test == 0.0
+                && m.emissive == Color(0)
+                && m.metalness <= 0.2
+                && m.roughness >= 0.55;
+            if matte && (m.roughness, m.metalness) != (MATTE_ROUGHNESS, MATTE_METALNESS) {
+                drawable.material = Arc::new(Material {
+                    roughness: MATTE_ROUGHNESS,
+                    metalness: MATTE_METALNESS,
+                    ..(**m).clone()
+                });
+            }
+        }
+        stack.extend(node.children.iter_mut());
     }
 }
 

@@ -21,8 +21,8 @@ pub use resources::{MaterialBinding, PageBuffers};
 pub use textures::{Sampler, Texture, TextureView, Uploader};
 
 use super::{
-    BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw, OcclusionUniform, OutputUniform,
-    RenderStats, Scene, WaterUniform, lut,
+    BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
+    OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::mesh_pages::{MeshRange, NO_PAGE};
@@ -676,7 +676,7 @@ impl PostTargets {
             let view = texture.create_view(&Default::default());
             (texture, view)
         };
-        let bloom: Vec<_> = (1..=BLOOM_LEVELS)
+        let bloom: Vec<_> = (BLOOM_FIRST_SHIFT..BLOOM_FIRST_SHIFT + BLOOM_LEVELS)
             .map(|level| {
                 target(
                     "bloom",

@@ -175,21 +175,23 @@ impl Presentation {
             });
         }
         for (&id, view) in &self.pickups {
-            let (Some(base), Some(gem), Some(model)) = (
+            let (Some(base), Some(rim), Some(gem), Some(pad)) = (
                 renderer.instance_state(view.base),
+                renderer.instance_state(view.rim),
                 renderer.instance_state(view.gem),
-                self.library.pickups.get(&view.kind),
+                self.library.pickup_pad.as_ref(),
             ) else {
                 continue;
             };
             inspection.pickups.push(PickupInspection {
                 id,
                 base_shown: base.visible,
-                gem: gem.visible,
-                ring: joint_shown(&base, model.ring),
-                ring_dim: joint_shown(&base, model.ring_dim),
-                refill: joint_shown(&base, model.refill),
-                segments: base.data[0],
+                // The full gem, not the small ghost a recharging pad shows.
+                gem: gem.visible && gem.world.x_axis.length() > 0.9,
+                ring: joint_shown(&rim, pad.ring),
+                ring_dim: joint_shown(&rim, pad.ring_dim),
+                refill: joint_shown(&rim, pad.refill),
+                segments: rim.data[0],
             });
         }
         for (&id, view) in &self.fragments {
