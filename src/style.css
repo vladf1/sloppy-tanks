@@ -974,14 +974,19 @@ body:has(#settings[open]) .hud-actions {
   clip-path: inset(50%);
   white-space: nowrap;
 }
-/* The viewer's own rows: a gold edge and a warm plate; the viewer's name is gold. */
+/* The viewer's own rows: a gold rim and edge; the viewer's name is gold. */
+/* The viewer's lines keep the neutral plate with a crisp gold rim and edge (a warm fill
+   reads muddy over concrete and grass), and fade less with age than the rest. */
 #feed :is(.own-kill, .own-death) {
   padding-right: 12px;
-  background: linear-gradient(90deg, #1d1806b3, #2e2409f0 30%);
+  background: linear-gradient(90deg, #0a1428b3, #0b1730f0 30%);
   box-shadow:
-    inset 0 0 0 1px #ffcf3870,
+    inset 0 0 0 1px #ffcf38a6,
     inset -3px 0 0 var(--gold),
     0 3px 12px #0007;
+}
+#feed > :is(.own-kill, .own-death):nth-child(n + 3) {
+  opacity: 0.85;
 }
 #feed .feed-name.you {
   color: var(--gold-hot);
@@ -5492,7 +5497,7 @@ html.phone,
   }
   /* Narrow cards: the heavy tank stays inside its card. */
   .phone .menu.start .vehicle[data-kind="heavy"] {
-    --scale: 0.96;
+    --scale: 0.88;
   }
   .phone .start .tank-preview {
     height: 76px;
