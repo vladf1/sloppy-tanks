@@ -35,6 +35,8 @@ const GULLY_SPACING: f64 = 11.0;
 /// in metres: the skyline steps down in blocks instead of running ruler-straight.
 const CREST_BREAK: f64 = 0.4;
 const CREST_DROP: (f64, f64) = (0.5, 1.9);
+/// Passes of easing along the crest's safety berm.
+const BERM_SMOOTHING: usize = 3;
 /// How far a face's lowest row sinks below its base into the floor or shelf
 /// it stands on, in metres: deep enough to stay under the lower bench's
 /// shelf where that shelf's crest has broken low.
@@ -115,6 +117,26 @@ pub fn quarry_bench(length: f64, height: f64, depth: f64, seed: f64) -> Node {
             }
         }
         i += run;
+    }
+    // The safety berm was pushed up by a dozer running along the crest: one
+    // continuous windrow, its height and line easing from column to column
+    // instead of a row of tent-shaped peaks.
+    for _ in 0..BERM_SMOOTHING {
+        let eased: Vec<(f64, f64)> = (0..columns.len())
+            .map(|i| {
+                let before = &columns[i.saturating_sub(1)];
+                let after = &columns[(i + 1).min(columns.len() - 1)];
+                let here = &columns[i];
+                (
+                    (before.berm + here.berm * 2.0 + after.berm) / 4.0,
+                    (before.crest + here.crest * 2.0 + after.crest) / 4.0,
+                )
+            })
+            .collect();
+        for (column, (berm, crest)) in columns.iter_mut().zip(eased) {
+            column.berm = berm;
+            column.crest = crest;
+        }
     }
     let peak = columns.iter().map(|c| c.top).fold(0.0, f64::max);
     // Bench-wide beds, gently undulating along the face.
@@ -225,7 +247,11 @@ pub fn quarry_bench(length: f64, height: f64, depth: f64, seed: f64) -> Node {
         }
         // Windrowed safety berm pushed up just behind the crest, then the shelf.
         for (y, z, wear) in [
-            (column.top + 0.5 + column.berm, column.crest + 1.4, 0.0),
+            (
+                column.top + 0.35 + column.berm * 0.7,
+                column.crest + 1.4,
+                0.0,
+            ),
             (column.top + 0.04, column.crest + 2.8, 0.0),
             (column.top, depth, 0.0),
         ] {
