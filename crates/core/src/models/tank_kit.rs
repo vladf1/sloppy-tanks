@@ -26,7 +26,7 @@ const MIN_AREA: f64 = 1e-14;
 /// chassis material.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Coat {
-    /// Darkened team paint: lower hull, add-on armor, frames.
+    /// Graphite trim: lower hull, mantlet, add-on armor, frames.
     Shade,
     /// Team paint: the main armor.
     Paint,

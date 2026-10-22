@@ -27,21 +27,37 @@ export type SpecialAmmo = (typeof SPECIAL_AMMO)[number]["weapon"];
 
 /** Accent colors of the pickups that are not ammunition. */
 export const PICKUP_COLORS = {
-  rapid: 0xffcf54,
+  rapid: 0xffb02a,
   shield: 0x4f94ff,
-  speed: 0xc4ef4a,
-  repair: 0x3fdc78,
-  laser: 0xff3d55,
+  speed: 0xf2f53a,
+  repair: 0x2edb6e,
+  laser: 0xe6f6ff,
 };
 
 export type PickupKind = SpecialAmmo | "rapid" | "shield" | "speed" | "repair" | "laser";
 
-// The pickup atlas: source pixels stay intact; the engine maps UVs with the same layout.
+// The pickup atlas: one painted tile per kind in a 3x3 block, the pallet's bare
+// planks and the ground's spray paint in the fourth column; the engine maps UVs with
+// the same layout (`pickup_visuals.rs`).
 export const PICKUP_ATLAS_PATH = "textures/pickups/atlas.webp";
 export const PICKUP_ICON_SIZE = 256;
 export const PICKUP_ATLAS_PADDING = 16;
 export const PICKUP_ATLAS_STRIDE = PICKUP_ICON_SIZE + PICKUP_ATLAS_PADDING * 2;
-export const PICKUP_ATLAS_SIZE = PICKUP_ATLAS_STRIDE * 3;
+export const PICKUP_ATLAS_SIZE = PICKUP_ATLAS_STRIDE * 4;
+export const PICKUP_PALLET_CELL = [3, 0] as const;
+export const PICKUP_PAINT_CELL = [3, 1] as const;
+/** What each kind is shipped in: wooden ammunition crates, a jerry can, steel cases. */
+export const PICKUP_SHAPES = {
+  spread: "crate",
+  rocket: "crate",
+  ricochet: "crate",
+  piercing: "crate",
+  rapid: "crate",
+  shield: "case",
+  speed: "jerry",
+  repair: "case",
+  laser: "case",
+} as const satisfies Record<PickupKind, "crate" | "jerry" | "case">;
 export const PICKUP_ATLAS_TILES = {
   spread: [0, 0],
   rocket: [1, 0],

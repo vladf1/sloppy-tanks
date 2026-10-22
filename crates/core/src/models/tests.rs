@@ -79,14 +79,14 @@ fn tank_dimensions_match_typescript() {
 fn vehicle_model_counts() {
     // (kind, team, meshes, vertices, triangles, hull, turret, barrel, track-group children)
     let expected = [
-        (VehicleKind::Scout, 0, 190, 26472, 8824, 146, 12, 4, 28),
-        (VehicleKind::Scout, 1, 190, 26724, 8908, 146, 12, 4, 28),
-        (VehicleKind::Balanced, 0, 217, 27978, 9326, 166, 12, 5, 34),
-        (VehicleKind::Balanced, 1, 217, 28158, 9386, 166, 12, 5, 34),
-        (VehicleKind::Heavy, 0, 206, 28710, 9570, 155, 12, 5, 34),
-        (VehicleKind::Heavy, 1, 206, 28764, 9588, 155, 12, 5, 34),
-        (VehicleKind::Humvee, 0, 31, 43752, 14584, 12, 6, 4, 4),
-        (VehicleKind::Humvee, 1, 31, 43752, 14584, 12, 6, 4, 4),
+        (VehicleKind::Scout, 0, 194, 25350, 8450, 148, 12, 6, 28),
+        (VehicleKind::Scout, 1, 194, 25602, 8534, 148, 12, 6, 28),
+        (VehicleKind::Balanced, 0, 221, 26706, 8902, 168, 12, 7, 34),
+        (VehicleKind::Balanced, 1, 221, 26910, 8970, 168, 12, 7, 34),
+        (VehicleKind::Heavy, 0, 210, 27654, 9218, 157, 12, 7, 34),
+        (VehicleKind::Heavy, 1, 210, 27774, 9258, 157, 12, 7, 34),
+        (VehicleKind::Humvee, 0, 31, 32712, 10904, 12, 6, 4, 4),
+        (VehicleKind::Humvee, 1, 31, 32712, 10904, 12, 6, 4, 4),
     ];
     for (kind, team, meshes, vertices, triangles, hull, turret, barrel, tracks) in expected {
         let model = tank_model(kind, Team::from_index(team));
@@ -106,10 +106,10 @@ fn vehicle_model_counts() {
         assert!(model.find(part::MUZZLE).is_some());
     }
     let open = [
-        (VehicleKind::Scout, (193, 26986, 9042)),
-        (VehicleKind::Balanced, (220, 28492, 9544)),
-        (VehicleKind::Heavy, (209, 29224, 9788)),
-        (VehicleKind::Humvee, (31, 43752, 14584)),
+        (VehicleKind::Scout, (197, 25864, 8668)),
+        (VehicleKind::Balanced, (224, 27220, 9120)),
+        (VehicleKind::Heavy, (213, 28168, 9436)),
+        (VehicleKind::Humvee, (31, 32712, 10904)),
     ];
     for (kind, expected) in open {
         let model = tank_model_variant(kind, Team::Blue, true);
@@ -125,27 +125,59 @@ fn painted_parts_wear_the_livery() {
         hull.children[1].drawable.clone().unwrap()
     };
     let (blue, red) = (livery(Team::Blue), livery(Team::Red));
-    // Both teams' armor shares one white, vertex-colored, camouflaged paint
-    // material; the team paint lives in the vertex colors.
-    assert!(Arc::ptr_eq(&blue.material, &red.material));
-    let armor = &red.material;
-    assert!(armor.vertex_colors);
-    assert_eq!(armor.color.0, 0xffffff);
-    assert_eq!(
-        armor.map.as_ref().map(|map| map.source.clone()),
-        Some(TextureSource::File(tank_surfaces::ARMOR_CAMO_TEXTURE))
-    );
-    assert_eq!(armor.emissive.0, 0);
-    assert!(armor.tone_mapped);
-    let mean = |mesh: &crate::geometry::Mesh| {
-        let sum = mesh.colors.iter().fold([0.0f64; 3], |acc, c| {
-            [0, 1, 2].map(|i| acc[i] + f64::from(c[i]))
-        });
-        sum.map(|channel| channel / mesh.colors.len() as f64)
+    // Each team's armor wears one white, vertex-colored paint material whose
+    // effect paints the team color and rims it in the team hue, with the wear tile
+    // as its effect texture; the vertices carry edge data and the paint value.
+    for (team, drawable) in [(Team::Blue, &blue), (Team::Red, &red)] {
+        let armor = &drawable.material;
+        assert!(armor.vertex_colors);
+        assert_eq!(armor.color.0, 0xffffff);
+        assert!(armor.map.is_none());
+        assert_eq!(
+            armor.extra_textures[0].1.source,
+            TextureSource::File(tank_surfaces::ARMOR_PAINT_TEXTURE)
+        );
+        let crate::scene::Effect::Custom { name, params } = &armor.effect else {
+            panic!("{team:?} armor has no paint effect");
+        };
+        assert_eq!(*name, VEHICLE_PAINT_EFFECT);
+        // The paint and its rim follow the team's hue.
+        let paint_is_blue = params[2] > params[0];
+        let rim_is_blue = params[10] > params[8];
+        assert_eq!(paint_is_blue, team == Team::Blue);
+        assert_eq!(rim_is_blue, team == Team::Blue);
+        assert!(armor.tone_mapped);
+        assert!(tank_surfaces::is_camouflaged(armor));
+    }
+    // The trim (lower hull, first) shares the team paint's material, and its
+    // value codes sit below the paint's.
+    let model = tank_model(VehicleKind::Balanced, Team::Red);
+    let hull = model.find(part::HULL).unwrap();
+    let trim = hull.children[0].drawable.as_ref().unwrap();
+    assert!(Arc::ptr_eq(&trim.material, &red.material));
+    let codes = |mesh: &crate::geometry::Mesh| -> (f32, f32) {
+        mesh.colors
+            .iter()
+            .fold((f32::MAX, f32::MIN), |(low, high), c| {
+                (low.min(c[2]), high.max(c[2]))
+            })
     };
-    let (blue_paint, red_paint) = (mean(&blue.mesh), mean(&red.mesh));
-    assert!(blue_paint[2] > blue_paint[0] * 2.0, "{blue_paint:?}");
-    assert!(red_paint[0] > red_paint[2] * 2.0, "{red_paint:?}");
+    assert!(codes(&trim.mesh).1 < 0.5, "{:?}", codes(&trim.mesh));
+    assert!(codes(&red.mesh).0 >= 0.5, "{:?}", codes(&red.mesh));
+    // Plates carry edge data: some corners lie on a convex edge (state 1 near or 3
+    // far) and some channels have no border at all.
+    let states: std::collections::HashSet<i32> = red
+        .mesh
+        .colors
+        .iter()
+        .flat_map(|c| [c[0], c[1]])
+        .map(|channel| channel.floor() as i32)
+        .collect();
+    assert!(states.contains(&1) || states.contains(&3), "{states:?}");
+    // A wreck gets plain paint colors back.
+    let mut burnt = (*red.mesh).clone();
+    tank_surfaces::unpaint(&mut burnt, &red.material);
+    assert!(burnt.colors.iter().all(|c| c[0] > c[1] && c[0] > c[2]));
     // Track links keep their own vertex-colored material without the camouflage.
     let model = tank_model(VehicleKind::Balanced, Team::Red);
     let hull = model.find(part::HULL).unwrap();
@@ -184,33 +216,31 @@ fn wreck_batches_match_golden() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (3042, 0xe34dd7aa, 3255.2710, 0x4cf43c85, 0x3c0c65f6),
-            (3252, 0xe8aa2f85, 1131.5915, 0x472d80e9, 0x76252a50),
-            (588, 0x2dc85934, 467.0304, 0x927969b0, 0x7d5a405b),
+            (3042, 0xe34dd7aa, 3255.2710, 0x4cf43c85, 0x0b62cc1f),
+            (3180, 0x459220d1, 1129.7989, 0xbb2cfc01, 0x14164759),
+            (684, 0x68ef1928, 477.9712, 0xd89b25ac, 0x7b4617f0),
             (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0x18233382),
-            (72, 0x89e75edd, 16.8157, 0x7938d925, 0x24116041),
             (288, 0xd47a0c0d, -11.9209, 0x94d4f49d, 0xabe5a09e),
-            (11592, 0x1a7aef34, -1430.1205, 0xf165e359, 0xee320b95),
+            (10416, 0xc1d435a8, -1430.3675, 0x20db8229, 0x21caabf1),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0x032f499a),
-            (468, 0x74e31910, -19.0127, 0x96734335, 0x2f8e237e),
-            (936, 0xb40fca71, -27.4347, 0xe9946e96, 0x2f48d032),
+            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0xb8974cd3),
+            (468, 0x74e31910, -19.0127, 0x96734335, 0x3079eafc),
+            (936, 0xb40fca71, -27.4347, 0xe9946e96, 0xbc244bd7),
             (348, 0x4b30ac35, -7.1422, 0xa2ea73b1, 0x643434a7),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (6732, 0x1d8bbc0c, 4721.1814, 0xcba4190f, 0x25f19dec),
-            (5124, 0xfc25d62a, 152.7208, 0x1da9bc68, 0x7d33a787),
-            (2022, 0x40709f51, 3493.5606, 0x573ce1b2, 0x8c347fea),
-            (468, 0x99313b9b, -37.2676, 0x14350951, 0x63154447),
-            (72, 0xf81a202d, 16.9247, 0xa3ee9e1d, 0x62c7b85f),
-            (11388, 0x12cb550d, -1834.8611, 0x0d8e1ef5, 0xa507dcb0),
-            (384, 0xd5167fa7, 3.9914, 0x7f59b8e5, 0xe5bb77f9),
+            (6774, 0x67ba5486, 4621.5357, 0x8a5142e8, 0x184791d3),
+            (5052, 0x0ae75746, 302.0712, 0x40f48be4, 0xbe78b71f),
+            (2136, 0x8ebb0f70, 3214.4811, 0x68c98d4f, 0x975788c3),
+            (468, 0xc039e97b, -37.2676, 0x6ee76939, 0x7310fa1f),
+            (10212, 0x2dc17da1, -1833.7917, 0x8c076401, 0x5ae99140),
+            (384, 0x102d4537, 3.9914, 0x7f59b8e5, 0xb162036b),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
-            (480, 0x9816bc91, -12.2110, 0x46e3d094, 0x7f6a917d),
-            (816, 0xf888a217, 685.1319, 0x74fbcac3, 0x135f4c08),
-            (180, 0xec2d00af, 9.2942, 0xacf92475, 0x9a75a2a1),
+            (480, 0x83d3ce01, -1.2731, 0x11ddcd3c, 0x31ce1096),
+            (816, 0xf888a217, 685.1319, 0x74fbcac3, 0x2c56e18d),
+            (300, 0xf2a6e7f7, -4.8805, 0xadcf84c5, 0xd1e1721c),
         ]),
     ];
     for (kind, team, wreck_part, batches) in expected {
