@@ -340,7 +340,7 @@ fn grid_normals(section: &str, path: &str) -> bool {
 fn platform_math(section: &str, path: &str) -> bool {
     matches!(
         (section, path),
-        ("village", "r.4.3" | "r.5.1" | "r.7.0.0.4") | ("quarry", "r.2.3")
+        ("village", "r.4.3" | "r.5.1" | "r.7.0.0.4") | ("quarry", "r.2.1" | "r.2.3")
     )
 }
 
