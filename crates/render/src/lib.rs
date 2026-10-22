@@ -15,6 +15,7 @@ pub mod material;
 pub mod mesh_pages;
 pub mod model;
 pub mod presentation;
+pub mod quality;
 pub mod reflection_cull;
 pub mod shader;
 pub mod shadow_merge;

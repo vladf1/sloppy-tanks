@@ -66,7 +66,7 @@ fn texture_framebuffer(gpu: &Gpu, attachment: u32, texture: glow::Texture) -> gl
 }
 
 /// A multisampled HDR color and depth target resolved into a texture: the main view
-/// (canvas-sized) and the water reflection (fixed size). Dropping it deletes it.
+/// (the scene's size) and the water reflection (fixed size). Dropping it deletes it.
 struct ColorTarget {
     gpu: Gpu,
     width: u32,
@@ -115,7 +115,8 @@ impl ColorTarget {
             );
         }
         check_framebuffer(gpu, label);
-        // The output pass reads it with `texelFetch`.
+        // The output pass reads it with `texelFetch`, or through the linear sampler
+        // where it upsamples a smaller scene.
         let resolved = texel_storage(gpu, glow::RGBA16F, width, height);
         let resolve_framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, resolved);
         // Read with `texelFetch`: nearest filters keep the depth texture complete.
@@ -312,11 +313,13 @@ impl Drop for DepthTarget {
 /// as each draw needs it, so there is nothing to build.
 pub struct FrameGroups;
 
-/// The main view's target (canvas-sized), the sun's shadow maps and every
+/// The main view's target (the scene's size), the sun's shadow maps and every
 /// per-frame binding: view uniforms, instance records and the merged shadows'
 /// record bases.
 pub struct Frame {
     gpu: Gpu,
+    /// The canvas drawing buffer's width and height.
+    canvas: (u32, u32),
     main: ColorTarget,
     bloom: BloomLevels,
     occlusion: OcclusionTarget,
@@ -361,6 +364,7 @@ impl Frame {
         let uniform = |bytes| gpu.create_buffer(glow::UNIFORM_BUFFER, bytes, glow::DYNAMIC_DRAW);
         Self {
             gpu: gpu.clone(),
+            canvas: (canvas.width, canvas.height),
             main: ColorTarget::new(gpu, "main view", canvas.width, canvas.height, true),
             bloom: BloomLevels::new(gpu, canvas.width, canvas.height),
             occlusion: OcclusionTarget::new(gpu, canvas.width, canvas.height),
@@ -385,19 +389,32 @@ impl Frame {
         }
     }
 
+    /// The canvas drawing buffer's size.
     pub fn size(&self) -> (u32, u32) {
+        self.canvas
+    }
+
+    /// The main view's size, which the output pass upsamples to the canvas's.
+    pub fn scene_size(&self) -> (u32, u32) {
         (self.main.width, self.main.height)
     }
 
-    /// Resize the canvas drawing buffer and the main view's target.
-    pub fn resize(&mut self, gpu: &Gpu, width: u32, height: u32) {
-        let width = width.clamp(1, gpu.max_size);
-        let height = height.clamp(1, gpu.max_size);
-        if (self.main.width, self.main.height) == (width, height) {
+    /// Resize the canvas drawing buffer to `canvas` and the main view's target, with
+    /// its post-processing targets, to `scene`.
+    pub fn resize(&mut self, gpu: &Gpu, canvas: (u32, u32), scene: (u32, u32)) {
+        let fit = |(width, height): (u32, u32)| {
+            (width.clamp(1, gpu.max_size), height.clamp(1, gpu.max_size))
+        };
+        let (canvas, scene) = (fit(canvas), fit(scene));
+        if self.canvas != canvas {
+            gpu.canvas.set_width(canvas.0);
+            gpu.canvas.set_height(canvas.1);
+            self.canvas = canvas;
+        }
+        if self.scene_size() == scene {
             return;
         }
-        gpu.canvas.set_width(width);
-        gpu.canvas.set_height(height);
+        let (width, height) = scene;
         // Replacing the targets deletes the old ones.
         self.main = ColorTarget::new(gpu, "main view", width, height, true);
         self.bloom = BloomLevels::new(gpu, width, height);
@@ -449,8 +466,8 @@ impl Frame {
     }
 
     pub fn write_output(&self, gpu: &Gpu, mut uniform: OutputUniform) {
-        // The canvas's rows run bottom-up: HDR row = height - y.
-        uniform.settings[1] = self.main.height as f32;
+        // The canvas's rows run bottom-up: top-down row = height - y.
+        uniform.settings[1] = self.canvas.1 as f32;
         uniform.settings[2] = -1.0;
         // WebGL's weaker devices skip the sharpening's four extra taps per pixel.
         uniform.detail[0] = 0.0;
@@ -496,6 +513,15 @@ impl Frame {
         }
     }
 
+    /// Nothing to reset: the WebGL build samples no GPU time, so it is never asked.
+    pub fn reset_canvas_pacing(&mut self, _gpu: &Gpu) {}
+
+    /// WebGL offers no completion time finer than a frame (its fences update between
+    /// the page's tasks), so no GPU frame time is sampled.
+    pub fn take_gpu_frame_ms(&self) -> Option<f64> {
+        None
+    }
+
     /// The fence's status updates between the page's tasks, not within one.
     pub fn gpu_idle(&self, gpu: &Gpu) -> bool {
         self.fence
@@ -517,7 +543,7 @@ impl Frame {
         }
         self.draw_scene(gpu, scene, stats);
         gpu.bind_framebuffer(None);
-        gpu.viewport(self.main.width, self.main.height);
+        gpu.viewport(self.canvas.0, self.canvas.1);
         self.draw_output(gpu, scene, stats);
         Ok(())
     }
@@ -692,7 +718,8 @@ impl Frame {
         gpu.set_raster(&pipeline.raster);
         gpu.bind_uniform_block(block::OUTPUT, self.output_uniform);
         gpu.bind_texture(unit::SOURCE, self.main.resolved);
-        gpu.bind_sampler(unit::SOURCE, None);
+        // `texelFetch` at full scale ignores it; a smaller scene upsamples through it.
+        gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
         gpu.bind_texture(unit::BLOOM, self.bloom.levels[0].0);
         gpu.bind_sampler(unit::BLOOM, Some(self.linear_sampler));
         // Read only while the occlusion is on, which also draws it.

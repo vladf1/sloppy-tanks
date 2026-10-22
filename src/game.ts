@@ -21,9 +21,11 @@ import {
 import { sameGameOptions, type GameOptions } from "./game/game-options";
 import {
   saveCameraPreferences,
+  savedGraphics,
   savedPreference,
   savePreference,
   startingCamera,
+  startingGraphics,
 } from "./game/player-preferences";
 import { debugPage, isExtraLevel } from "./game/map-options";
 import { NerdStats, engineStatsSections } from "./game/nerd-stats";
@@ -69,6 +71,7 @@ export async function prepareGame(
       cssHeight: innerHeight,
       pixelRatio: devicePixelRatio,
       ...startingCamera(),
+      ...startingGraphics(),
     });
   } catch (error) {
     root.remove();
@@ -333,6 +336,11 @@ export async function prepareGame(
     setting: settings,
     touchMode: () => touchControls.preference,
     setTouchMode: (mode) => touchControls.setPreference(mode),
+    graphics: savedGraphics,
+    setGraphics(setting) {
+      savePreference("graphics", setting);
+      game.set_graphics(setting);
+    },
     selectAmmo(weapon) {
       if (phase === "playing" && alive) {
         controls.ammoSelection = weapon;

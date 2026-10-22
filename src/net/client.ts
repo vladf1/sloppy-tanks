@@ -3,7 +3,13 @@ import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
 import { savedVolume } from "../game/settings-dialog";
-import { saveCameraPreferences, savePreference, startingCamera } from "../game/player-preferences";
+import {
+  saveCameraPreferences,
+  savedGraphics,
+  savePreference,
+  startingCamera,
+  startingGraphics,
+} from "../game/player-preferences";
 import { TouchModeController } from "../game/touch-mode";
 import { returnToSetup, roomAddress, type JoinScreen } from "../game/join-screen";
 import { PREPARE_BUDGET, nextPrepareStep } from "../game/task-yield";
@@ -183,6 +189,11 @@ export async function startMultiplayer(
     setTouchMode(mode: string): void {
       touch.setPreference(mode);
     },
+    graphics: savedGraphics,
+    setGraphics(setting: string): void {
+      savePreference("graphics", setting);
+      game.set_graphics(setting);
+    },
     volume(value) {
       audio.volume(value);
       savePreference("volume", String(value));
@@ -219,6 +230,7 @@ export async function startMultiplayer(
         cssHeight: height,
         pixelRatio: devicePixelRatio,
         ...startingCamera(),
+        ...startingGraphics(),
       }),
     );
   } catch (error) {

@@ -72,8 +72,8 @@ use wasm_bindgen::prelude::*;
 
 use crate::hud::{HudHuman, Scoreboard, human_json};
 use crate::page::{
-    CanvasSize, FrameTimes, HUD_UPDATE_EVERY_FRAMES, PREPARED, aim, create_view, js_error, now_ms,
-    parse, prepare_result, queue_event,
+    CanvasSize, FrameTimes, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, aim, create_view,
+    js_error, now_ms, parse, prepare_result, queue_event,
 };
 use crate::stats::presentation_stats;
 
@@ -150,6 +150,7 @@ pub struct NetGame {
     frame_index: u64,
     times: FrameTimes,
     canvas: CanvasSize,
+    graphics: Graphics,
 }
 
 #[wasm_bindgen]
@@ -165,7 +166,7 @@ impl NetGame {
         if !is_room_code(&config.room) {
             return Err(js_error("Invalid room code"));
         }
-        let (view, canvas, seed) = create_view(canvas, config_json).await?;
+        let (view, canvas, graphics, seed) = create_view(canvas, config_json).await?;
         let client = NetworkClient::new(ClientConfig {
             server_url: config.server.clone(),
             room: config.room.clone(),
@@ -185,6 +186,7 @@ impl NetGame {
             frame_index: 0,
             times: FrameTimes::default(),
             canvas,
+            graphics,
         };
         game.canvas.apply(&mut game.view);
         Ok(game)
@@ -271,6 +273,7 @@ impl NetGame {
     pub fn start(&mut self, now: f64) {
         self.commands.clear();
         self.client.start(now);
+        self.graphics.round_started();
     }
 
     /// Open the in-battle menu; returns whether it is open.
@@ -348,6 +351,13 @@ impl NetGame {
             exact: false,
         };
         self.canvas.apply(&mut self.view);
+        self.graphics
+            .set_pixel_ratio(&mut self.view.renderer, self.canvas.pixel_ratio());
+    }
+
+    /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
+    pub fn set_graphics(&mut self, setting: &str) {
+        self.graphics.set_setting(&mut self.view.renderer, setting);
     }
 
     // ---------------------------------------------------------- queries
@@ -475,6 +485,13 @@ impl NetGame {
         };
         self.times.sim_ms = now_ms() - update_start - render_ms;
         self.times.render_ms = render_ms;
+        let playing = drawn
+            && self
+                .client
+                .display()
+                .is_some_and(|state| state.match_state.phase == MatchPhase::Playing);
+        self.graphics
+            .frame(&mut self.view.renderer, &self.times, playing);
         Ok(self.frame_result(drawn, dt))
     }
 
@@ -522,6 +539,11 @@ impl NetGame {
     pub fn stats_json(&self, now: f64) -> String {
         let mut stats = presentation_stats(&self.view, &self.times);
         stats.insert("pixelRatio".into(), self.canvas.pixel_ratio().into());
+        stats.insert(
+            "quality".into(),
+            self.graphics
+                .stats(&self.view.renderer, self.canvas.pixel_ratio()),
+        );
         if let Some(state) = self.client.display() {
             stats.insert(
                 "scene".into(),
@@ -712,6 +734,7 @@ impl NetGame {
         for _ in 0..2 {
             view.render(display, 1.0, 0.0, false).map_err(js_error)?;
         }
+        self.graphics.round_started();
         self.events.clear();
         self.client.baseline_shown(baseline, now);
         self.drain_client_notices();

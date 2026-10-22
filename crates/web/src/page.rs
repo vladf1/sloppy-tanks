@@ -1,15 +1,18 @@
 //! Page plumbing shared by [`Game`](crate::Game) and [`NetGame`](crate::NetGame) (and
 //! the labs): errors and JSON for the page, the clock, frame timing, canvas sizing,
-//! arena preparation results, the event queue and the local controls' aim.
+//! the graphics quality, arena preparation results, the event queue and the local
+//! controls' aim.
 
 use glam::Vec2;
 use serde::Deserialize;
+use serde_json::{Value, json};
 use sloppy_core::sim::{SimEvent, SimEventType};
 use sloppy_render::gpu::Renderer;
 use sloppy_render::presentation::camera_rig::CameraRig;
 use sloppy_render::presentation::input::InputFrame;
 use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::presentation::{PrepareStatus, Presentation};
+use sloppy_render::quality::{DeviceClass, GraphicsSetting, QualityController, starting_tier};
 use wasm_bindgen::JsValue;
 
 use crate::events::PendingEvent;
@@ -113,8 +116,126 @@ impl CanvasSize {
     }
 }
 
+/// How far each new GPU frame time sample moves the smoothed one.
+const GPU_TIME_SMOOTHING: f64 = 0.1;
+
+/// The graphics tier and render scale: the page's Graphics setting and the device
+/// choose where the quality controller starts, and under Auto it adapts them to the
+/// interval of every gameplay frame (`sloppy_render::quality`).
+pub struct Graphics {
+    controller: QualityController,
+    /// The GPU's frame time, smoothed over recent samples, for Stats for nerds.
+    gpu_ms: Option<f64>,
+}
+
+impl Graphics {
+    /// Start from `setting` ("auto", "high", "medium", "low") on `device` ("desktop",
+    /// "tablet", "phone"), and draw at the controller's first rung.
+    pub fn new(renderer: &mut Renderer, setting: &str, device: &str, pixel_ratio: f64) -> Self {
+        let webgl = sloppy_render::GRAPHICS_API == "WebGL";
+        let start = starting_tier(
+            DeviceClass::parse(device),
+            renderer.max_texture_size(),
+            webgl,
+        );
+        let class = DeviceClass::parse(device);
+        let mut controller =
+            QualityController::new(GraphicsSetting::parse(setting), start, pixel_ratio);
+        if class != DeviceClass::Desktop {
+            controller = controller.with_deep_floor();
+        }
+        let graphics = Self {
+            controller,
+            gpu_ms: None,
+        };
+        graphics.apply(renderer);
+        graphics
+    }
+
+    fn apply(&self, renderer: &mut Renderer) {
+        let rung = self.controller.rung();
+        renderer.set_quality(rung.tier, rung.scale);
+    }
+
+    /// After drawing a frame: under Auto, a gameplay frame's interval, main-thread
+    /// work and the GPU's frame time where sampled feed the controller; other frames
+    /// (menus, pause, results) interrupt it.
+    pub fn frame(&mut self, renderer: &mut Renderer, times: &FrameTimes, playing: bool) {
+        let gpu_ms = renderer.take_gpu_frame_ms();
+        if let Some(sample) = gpu_ms {
+            let smoothed = self.gpu_ms.unwrap_or(sample);
+            self.gpu_ms = Some(smoothed + (sample - smoothed) * GPU_TIME_SMOOTHING);
+        }
+        if !playing {
+            self.controller.interrupted();
+            return;
+        }
+        if self
+            .controller
+            .observe(times.frame_ms, times.sim_ms + times.render_ms, gpu_ms)
+        {
+            self.apply(renderer);
+        }
+        if self.controller.take_pacing_reset() {
+            renderer.reset_canvas_pacing();
+        }
+    }
+
+    /// The Settings dialog's Graphics choice.
+    pub fn set_setting(&mut self, renderer: &mut Renderer, setting: &str) {
+        if self.controller.set_setting(GraphicsSetting::parse(setting)) {
+            self.apply(renderer);
+        }
+    }
+
+    /// The canvas moved to a display of another pixel ratio.
+    pub fn set_pixel_ratio(&mut self, renderer: &mut Renderer, pixel_ratio: f64) {
+        if self.controller.set_pixel_ratio(pixel_ratio) {
+            self.apply(renderer);
+        }
+    }
+
+    /// A new round's arena: its first seconds are not judged.
+    pub fn round_started(&mut self) {
+        self.controller.round_started();
+    }
+
+    /// Stats for nerds' `quality` rows: the setting, tier, render scale, the scene's
+    /// size and the recent changes.
+    pub fn stats(&self, renderer: &Renderer, pixel_ratio: f64) -> Value {
+        let (tier, scale) = renderer.quality();
+        let (width, height) = renderer.scene_size();
+        let log: Vec<Value> = self
+            .controller
+            .log()
+            .iter()
+            .map(|change| {
+                json!({
+                    "at": change.at,
+                    "tier": change.to.tier.name(),
+                    "scale": change.to.scale,
+                    "reason": change.reason.name(),
+                    "meanMs": change.mean_ms,
+                    "gpuMs": change.gpu_ms,
+                })
+            })
+            .collect();
+        json!({
+            "setting": self.controller.setting().name(),
+            "tier": tier.name(),
+            "scale": scale,
+            "renderRatio": f64::from(scale) * pixel_ratio,
+            "scene": [width, height],
+            "gpuMs": self.gpu_ms,
+            "changes": self.controller.changes(),
+            "pacingResets": self.controller.pacing_resets(),
+            "log": log,
+        })
+    }
+}
+
 /// The configuration both game types take: `{ seed?, assetBase, cssWidth?, cssHeight?,
-/// pixelRatio?, firstPerson?, zoom?, hideReticle? }`.
+/// pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?, device? }`.
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct ViewConfig {
@@ -126,15 +247,19 @@ struct ViewConfig {
     first_person: bool,
     zoom: Option<f64>,
     hide_reticle: bool,
+    /// The saved Graphics setting; Auto when absent.
+    graphics: String,
+    /// "desktop", "tablet" or "phone" (`src/game/graphics.ts`).
+    device: String,
 }
 
 /// The renderer on `canvas` and its presentation with the saved camera preferences, the
-/// canvas size to apply and the seed (random when `config_json` has none). Rejects when
-/// the renderer cannot start.
+/// canvas size to apply, the graphics quality and the seed (random when `config_json`
+/// has none). Rejects when the renderer cannot start.
 pub async fn create_view(
     canvas: web_sys::HtmlCanvasElement,
     config_json: &str,
-) -> Result<(Presentation, CanvasSize, f64), JsValue> {
+) -> Result<(Presentation, CanvasSize, Graphics, f64), JsValue> {
     let config: ViewConfig = parse(config_json)?;
     let seed = config
         .seed
@@ -149,14 +274,20 @@ pub async fn create_view(
         device_pixel_ratio: config.pixel_ratio.unwrap_or(1.0),
         exact: false,
     };
-    let renderer = Renderer::new(canvas, config.asset_base)
+    let mut renderer = Renderer::new(canvas, config.asset_base)
         .await
         .map_err(js_error)?;
+    let graphics = Graphics::new(
+        &mut renderer,
+        &config.graphics,
+        &config.device,
+        size.pixel_ratio(),
+    );
     let mut view = Presentation::new(renderer, seed.to_bits());
     view.rig
         .restore_preferences(config.first_person, config.zoom);
     view.hide_reticle = config.hide_reticle;
-    Ok((view, size, seed))
+    Ok((view, size, graphics, seed))
 }
 
 /// `prepare_step`'s `[compiled, remaining, texturesPending, done, gpuPending]`.

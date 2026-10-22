@@ -45,6 +45,9 @@ export interface UIActions {
   /** The touch preference Settings shows, and the one they save. */
   touchMode(): string;
   setTouchMode(mode: string): void;
+  /** The Graphics setting Settings shows, and the one they save. */
+  graphics(): string;
+  setGraphics(setting: string): void;
   selectAmmo(weapon: AmmoWeapon): void;
 }
 
@@ -126,6 +129,8 @@ export class UI {
     this.settings = new SettingsDialog(root, "SINGLE PLAYER", {
       touchMode: () => actions.touchMode(),
       setTouchMode: (mode) => actions.setTouchMode(mode),
+      graphics: () => actions.graphics(),
+      setGraphics: (setting) => actions.setGraphics(setting),
       setVolume: (value) => actions.setting("volume", value),
       controls: controlsMarkup(),
       speeds: {

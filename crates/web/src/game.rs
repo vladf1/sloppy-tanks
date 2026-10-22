@@ -21,8 +21,10 @@
 //!
 //! - `Game.create(canvas, config_json)`: config `{ seed?, assetBase, map?,
 //!   difficulty?, extraLevels?, humanKind?, humanTeam?, gameMode?, autoplay?,
-//!   cssWidth?, cssHeight?, pixelRatio?, firstPerson?, zoom?, hideReticle? }`. Choices follow `initialGameOptions`; the arena is reset and
-//!   preparation begins.
+//!   cssWidth?, cssHeight?, pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?,
+//!   device? }`. Choices follow `initialGameOptions`; the arena is reset and
+//!   preparation begins. `graphics` is the saved Graphics setting and `device`
+//!   the page's device class, which chooses Auto's starting tier.
 //! - `set_options(options_json) -> bool`: Battle Setup choices `{ humanKind,
 //!   humanTeam, gameMode, mapMode, difficulty }` (`GameOptions`, camelCase). When
 //!   they differ, the arena rebuilds with the map's level rules (extra levels
@@ -55,7 +57,9 @@
 //!   fragments, particles, pixel ratio).
 //! - `resize(css_width, css_height, pixel_ratio, exact)`: the drawing buffer is
 //!   the CSS size times the pixel ratio, capped at 1.5; `exact` draws at exactly the
-//!   CSS size (ratio 1).
+//!   CSS size (ratio 1). The scene renders at the graphics quality's scale of it.
+//! - `set_graphics(setting)`: the Settings dialog's Graphics choice ("auto",
+//!   "high", "medium", "low").
 //! - `toggle_first_person() -> bool`: V / the view button while playing.
 //! - `camera_preferences() -> Float64Array [firstPerson, zoom]`: the chosen view
 //!   and clamped overhead zoom, for the page to save after a camera input.
@@ -68,8 +72,8 @@
 use crate::events::{PendingEvent, drain_events};
 use crate::hud::{HudHuman, Scoreboard, human_json};
 use crate::page::{
-    CanvasSize, FrameTimes, HUD_UPDATE_EVERY_FRAMES, PREPARED, aim, create_view, js_error, now_ms,
-    parse, prepare_result, queue_event,
+    CanvasSize, FrameTimes, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, aim, create_view,
+    js_error, now_ms, parse, prepare_result, queue_event,
 };
 use crate::stats::presentation_stats;
 
@@ -248,6 +252,7 @@ pub struct Game {
     events: Vec<PendingEvent>,
     canvas: CanvasSize,
     times: FrameTimes,
+    graphics: Graphics,
     /// The human's tank as the HUD reads it, refilled from the simulation each read.
     hud_tank: RenderTank,
     /// The finished round's recap; personal bests are saved once per result.
@@ -264,7 +269,7 @@ impl Game {
     ) -> Result<Game, JsValue> {
         console_error_panic_hook::set_once();
         let config: GameConfig = parse(config_json)?;
-        let (mut view, canvas, seed) = create_view(canvas, config_json).await?;
+        let (mut view, canvas, graphics, seed) = create_view(canvas, config_json).await?;
         let mut options = initial_game_options(
             seed,
             config.map.as_deref(),
@@ -304,6 +309,7 @@ impl Game {
             events: Vec::new(),
             canvas,
             times: FrameTimes::default(),
+            graphics,
             hud_tank: RenderTank::default(),
             recap: None,
         };
@@ -374,6 +380,7 @@ impl Game {
         self.sim.start();
         self.active = true;
         self.accumulator = 0.0;
+        self.graphics.round_started();
         // Animation frames queued before GO (behind a slow arena rebuild) carry older
         // timestamps; measuring from now keeps them from advancing the new round.
         // Autoplay keeps its seeded timeline frame-exact whatever the page's load
@@ -432,6 +439,7 @@ impl Game {
             self.sim.reset(None);
             self.reset_view();
             self.sim.start();
+            self.graphics.round_started();
         }
         self.view.rig.zoom_by(input.zoom);
         if input.toggle_view {
@@ -490,6 +498,9 @@ impl Game {
             self.sim.set_wreck_view(Some(self.view.wreck_view()));
         }
         self.times.render_ms = now_ms() - render_start;
+        let playing = self.sim.match_state.phase == MatchPhase::Playing;
+        self.graphics
+            .frame(&mut self.view.renderer, &self.times, playing);
         let tank = &self.sim.tanks[human];
         result[frame_slot::PHASE] = phase_code(self.sim.match_state.phase);
         result[frame_slot::HUMAN_ALIVE] = f32::from(u8::from(tank.alive));
@@ -586,6 +597,7 @@ impl Game {
             "particles": effects.particles,
             "elapsed": sim.elapsed,
             "pixelRatio": self.canvas.pixel_ratio(),
+            "quality": self.graphics.stats(&self.view.renderer, self.canvas.pixel_ratio()),
             "bodies": sim.world.bodies.len(),
             "colliders": sim.world.colliders.len(),
             "shots": sim.shots.len(),
@@ -608,6 +620,13 @@ impl Game {
             exact,
         };
         self.canvas.apply(&mut self.view);
+        self.graphics
+            .set_pixel_ratio(&mut self.view.renderer, self.canvas.pixel_ratio());
+    }
+
+    /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
+    pub fn set_graphics(&mut self, setting: &str) {
+        self.graphics.set_setting(&mut self.view.renderer, setting);
     }
 
     /// Enter or leave first person (only while playing); returns whether it is on.

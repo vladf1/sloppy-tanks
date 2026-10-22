@@ -226,6 +226,34 @@ export interface HudState {
   recap: RecapState | null;
 }
 
+/** `stats_json().quality`: the graphics tier and the dynamic render scale
+ * (`crates/render/src/quality.rs`). */
+export interface QualityStats {
+  /** The Graphics setting: "auto", "high", "medium" or "low". */
+  setting: string;
+  /** The tier in effect: "high", "medium" or "low". */
+  tier: string;
+  /** Scene pixels per canvas pixel along each axis; the output pass upsamples. */
+  scale: number;
+  /** Scene pixels per CSS pixel along each axis. */
+  renderRatio: number;
+  /** The scene's width and height in pixels. */
+  scene: [number, number];
+  /** The GPU's frame time in milliseconds, smoothed, where the browser reports when
+   * the GPU finished a frame (WebGPU); null on WebGL. */
+  gpuMs: number | null;
+  /** Auto's tier or scale changes during this page session, and the latest ones. */
+  changes: number;
+  log: {
+    at: number;
+    tier: string;
+    scale: number;
+    reason: string;
+    meanMs: number;
+    gpuMs: number | null;
+  }[];
+}
+
 /** `stats_json`: Stats for nerds. */
 export interface EngineStats {
   frameMs: number;
@@ -234,6 +262,7 @@ export interface EngineStats {
   renderMs: number;
   /** The engine build's browser API: "WebGPU", or "WebGL" for the fallback. */
   graphicsApi: string;
+  quality: QualityStats;
   drawCalls: number;
   triangles: number;
   shadowDrawCalls: number;
