@@ -32,6 +32,9 @@
 //!   simulation's covers.
 //! - `debug_water_json()`, `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
 //!   box for pixel probes; `size <= 0` removes it).
+//! - `debug_set_off({ pools, bloom, occlusion, sky, lights, atmosphere, effects })`: switch
+//!   effect pools (by label), post passes, point lights, the atmosphere or main-view draws of
+//!   custom effects (by name) off, for same-page A/B timing of one frame redrawn.
 //! - `debug_seats(seed)`: two player seats on a room simulation, each drawn from its
 //!   own viewer; see the method.
 
@@ -181,6 +184,18 @@ struct PickupSpec {
     cooldown_duration: f64,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct DebugOffSpec {
+    pools: Vec<String>,
+    bloom: bool,
+    occlusion: bool,
+    sky: bool,
+    lights: bool,
+    atmosphere: bool,
+    effects: Vec<String>,
+}
+
 macro_rules! apply {
     ($target:expr, $patch:expr, $($field:ident),+) => {
         $(if let Some(value) = $patch.$field { $target.$field = value; })+
@@ -189,6 +204,23 @@ macro_rules! apply {
 
 #[wasm_bindgen]
 impl Game {
+    /// Switch passes, lights and effect pools off for a same-page A/B measurement:
+    /// `{ pools: [label...], bloom, occlusion, sky, lights, atmosphere, effects: [name...] }`,
+    /// each `true` = off.
+    pub fn debug_set_off(&mut self, off_json: &str) -> Result<(), JsValue> {
+        let off: DebugOffSpec = parse(off_json)?;
+        self.view.renderer.debug_off = sloppy_render::gpu::DebugOff {
+            pools: off.pools,
+            bloom: off.bloom,
+            occlusion: off.occlusion,
+            sky: off.sky,
+            lights: off.lights,
+            atmosphere: off.atmosphere,
+            effects: off.effects,
+        };
+        Ok(())
+    }
+
     /// Empty the arena except the human and the tanks whose ids are in `keep`.
     pub fn debug_clear_arena(&mut self, keep: Vec<u32>) {
         let sim = &mut self.sim;
