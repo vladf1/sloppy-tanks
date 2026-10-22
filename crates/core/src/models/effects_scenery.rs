@@ -58,13 +58,22 @@ pub const WATER: &str = "water";
 /// traffic (markings alpha-test the chips away, labels fade their alpha).
 /// Quay walls take a wet tide band, barnacles, weed at the waterline and rust runs,
 /// with sunlight thrown off the ripples dancing above the water (as on ship hulls,
-/// which add their plating's weathering); the far shore its own light and haze,
-/// windows on its towers and boxes in its container stacks; spawn pads their
+/// which add their plating's weathering); spawn pads their
 /// tread plate, team paint and chasing light ring; cover containers a shade of
 /// their line's color per box; the sea wall's parapet its precast panels, capping
 /// stones, stains, scuffs and worn hazard paint.
 /// Implemented in `effects/harbor_apron.wgsl`.
 pub const HARBOR_APRON: &str = "harbor-apron";
+
+/// Harbor Havoc's far shore ([`ApronMode::Shore`] materials, `harbor_backdrop`):
+/// vertex colors, flat shaded, fog off, lit and hazed by the effect from their
+/// distance to the eye and emitted, so the coast's layers keep their separation
+/// whatever the scene fog; pure red vertices are warning lights, and parts flagged
+/// by their uv.y take windows, container stacks, countryside, pines, welded tanks,
+/// slipformed bins or cladding. Params: `[mode]` as for [`HARBOR_APRON`] (unused).
+/// A shader of its own, so neither it nor the apron compiles the other's code.
+/// Implemented in `effects/harbor_shore.wgsl`.
+pub const HARBOR_SHORE: &str = "harbor-shore";
 
 /// What a [`HARBOR_APRON`] surface is (`params[0]`).
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
