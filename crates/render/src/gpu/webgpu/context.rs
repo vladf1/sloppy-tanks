@@ -17,6 +17,8 @@ pub struct Gpu {
     pub layouts: Rc<Layouts>,
     /// The canvas's texture format, the output pipeline's target.
     pub canvas_format: wgpu::TextureFormat,
+    /// The bloom levels' format ([`bloom_format`]).
+    pub bloom_format: wgpu::TextureFormat,
     /// MSAA samples of the HDR targets: `SAMPLE_COUNT`, or 1 without multisampling.
     pub samples: u32,
     /// The adapter's largest 2D texture edge, a hint of the GPU's class.
@@ -54,9 +56,11 @@ impl Gpu {
             })
             .await
             .map_err(|error| format!("{api} adapter unavailable: {error}"))?;
+        let bloom_format = bloom_format(adapter.features());
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Sloppy Tanks renderer"),
+                required_features: adapter.features() & wgpu::Features::RG11B10UFLOAT_RENDERABLE,
                 ..Default::default()
             })
             .await
@@ -88,8 +92,9 @@ impl Gpu {
         surface.configure(&device, &config);
         let samples = if msaa { SAMPLE_COUNT } else { 1 };
         let gpu = Self {
-            layouts: Rc::new(Layouts::new(&device, samples)),
+            layouts: Rc::new(Layouts::new(&device)),
             canvas_format: config.format,
+            bloom_format,
             samples,
             adapter_max_texture: adapter.limits().max_texture_dimension_2d,
             transient: transient_usage(),
@@ -141,17 +146,35 @@ pub(super) fn texture_bytes(texture: &wgpu::Texture) -> u64 {
         * u64::from(texel)
 }
 
+/// The scene's HDR color: alpha to coverage (foliage) needs the target's alpha, so not
+/// `rg11b10ufloat`.
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
+
+/// The bloom levels' format: `rg11b10ufloat` where the adapter can render to it
+/// (Safari 26, Chrome), half the bytes of `rgba16float`; a soft glow needs neither
+/// alpha nor more precision.
+fn bloom_format(features: wgpu::Features) -> wgpu::TextureFormat {
+    if features.contains(wgpu::Features::RG11B10UFLOAT_RENDERABLE) {
+        wgpu::TextureFormat::Rg11b10Ufloat
+    } else {
+        HDR_FORMAT
+    }
+}
 /// The ambient occlusion target.
 pub const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
+/// The sun's shadow maps. Their orthographic depth spans `SHADOW_DEPTH` (about 220 m)
+/// linearly, so 16 bits resolve 3.4 mm, a thirteenth of the shadow bias; half the bytes
+/// of a 32-bit float halve the maps' memory and the copy, load and store of the cached
+/// fixed scenery every frame.
+pub const SHADOW_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth16Unorm;
 
 /// A multisampled HDR color + depth target and its single-sample resolve, or without
 /// multisampling a color target passes draw into directly. Used for the main view
 /// (the scene's size) and the water reflection (fixed size). The multisampled color
-/// is resolved and discarded within its pass, so it is transient where the browser
-/// allows; so is the depth unless a later pass reads it. Dropping it destroys its
-/// textures.
+/// is resolved and the depth discarded within the pass (ambient occlusion draws a
+/// depth of its own), so both are transient where the browser allows. Dropping it
+/// destroys its textures.
 pub struct ColorTarget {
     /// The multisampled color; absent without multisampling.
     pub color: Option<wgpu::Texture>,
@@ -190,21 +213,14 @@ pub(super) fn texture_2d(
 }
 
 impl ColorTarget {
-    /// With `sampled_depth` a later pass reads the depth (the main view's ambient
-    /// occlusion).
-    pub fn new(gpu: &Gpu, label: &str, width: u32, height: u32, sampled_depth: bool) -> Self {
+    pub fn new(gpu: &Gpu, label: &str, width: u32, height: u32) -> Self {
         let texture = |format, samples, usage| {
             texture_2d(&gpu.device, label, width, height, format, samples, usage)
         };
         let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
         let samples = gpu.samples;
         let color = (samples > 1).then(|| texture(HDR_FORMAT, samples, attachment | gpu.transient));
-        let depth_usage = if sampled_depth {
-            attachment | wgpu::TextureUsages::TEXTURE_BINDING
-        } else {
-            attachment | gpu.transient
-        };
-        let depth = texture(DEPTH_FORMAT, samples, depth_usage);
+        let depth = texture(DEPTH_FORMAT, samples, attachment | gpu.transient);
         let resolved = texture(
             HDR_FORMAT,
             1,

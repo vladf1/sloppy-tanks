@@ -53,8 +53,8 @@ impl Tier {
     /// What this tier draws. Today's full picture is High; each cheaper tier drops
     /// the optional features whose cost scales with the pixels they cover and that
     /// the eye misses least from the overhead camera. Medium drops the procedural
-    /// detail a few pixels across and the ambient occlusion pass (with the
-    /// multisampled depth it stores and the output's taps); Low also drops bloom and
+    /// detail a few pixels across and the ambient occlusion pass (with its depth
+    /// pass and the output's taps); Low also drops bloom and
     /// halves the sun shadow map.
     pub const fn features(self) -> TierFeatures {
         match self {
@@ -87,7 +87,9 @@ const LOW_SHADOW_MAP: u32 = 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TierFeatures {
     /// Procedural detail a few pixels across: the ground's small hummocks over its
-    /// broad swells, and the clouds' finest octave.
+    /// broad swells, the clouds' finest octave, and on the village, harbor and quarry
+    /// grounds their scattered stones, grit and blooms, the turf's tussocks and the
+    /// finest noise octaves (`fine_detail` in the effect shaders).
     pub fine_detail: bool,
     /// The ambient occlusion pass and its taps in the output pass.
     pub occlusion: bool,
