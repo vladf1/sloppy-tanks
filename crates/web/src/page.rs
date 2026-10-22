@@ -14,7 +14,7 @@ use sloppy_render::presentation::{PrepareStatus, Presentation};
 use wasm_bindgen::JsValue;
 
 use crate::events::PendingEvent;
-use crate::frame_clock::DrawPacing;
+use crate::frame_clock::FramePacing;
 
 /// The HUD refreshes (`hud_json`) every this many frames.
 pub const HUD_UPDATE_EVERY_FRAMES: u64 = 4;
@@ -73,9 +73,9 @@ impl CanvasSize {
 
 /// The configuration both game types take: `{ seed?, assetBase, cssWidth?, cssHeight?,
 /// pixelRatio?, firstPerson?, zoom?, hideReticle?, framesInFlight? }`. `framesInFlight`
-/// draws only while fewer frames are on the GPU, for browsers that queue a WebGPU
-/// canvas's frames without holding animation frames back (0, the default, leaves the
-/// pacing to the browser).
+/// runs frames only while fewer are on the GPU, for browsers that queue a WebGPU
+/// canvas's frames without holding animation frames back ([`FramePacing`]; 0, the
+/// default, leaves the pacing to the browser).
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct ViewConfig {
@@ -97,7 +97,7 @@ pub struct PageView {
     pub canvas: CanvasSize,
     /// The configured seed, or a random one.
     pub seed: f64,
-    pub pacing: DrawPacing,
+    pub pacing: FramePacing,
 }
 
 /// The renderer on `canvas` and its presentation with the saved camera preferences, the
@@ -132,7 +132,7 @@ pub async fn create_view(
         view,
         canvas: size,
         seed,
-        pacing: DrawPacing::new(config.frames_in_flight),
+        pacing: FramePacing::new(config.frames_in_flight),
     })
 }
 

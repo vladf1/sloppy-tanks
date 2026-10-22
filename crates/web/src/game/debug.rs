@@ -36,8 +36,8 @@
 //!   switch effect pools (by label), post passes, point lights, the atmosphere, its ground
 //!   variation or main-view draws of custom effects (by name) off, for same-page A/B
 //!   timing of one frame redrawn.
-//! - `debug_set_frames_in_flight(limit)`: draw while fewer than `limit` frames are on the
-//!   GPU (0 draws every frame), for a same-page A/B of the frame pacing.
+//! - `debug_set_frames_in_flight(limit)`: run frames only while fewer than `limit` are on
+//!   the GPU (0 runs every frame at its timestamp), for a same-page A/B of the pacing.
 //! - `debug_seats(seed)`: two player seats on a room simulation, each drawn from its
 //!   own viewer; see the method.
 
@@ -227,7 +227,7 @@ impl Game {
         Ok(())
     }
 
-    /// Draw only while fewer than `limit` frames are on the GPU; 0 draws every frame.
+    /// Run frames only while fewer than `limit` are on the GPU; 0 runs every frame.
     pub fn debug_set_frames_in_flight(&mut self, limit: u32) {
         self.pacing.limit = limit;
     }

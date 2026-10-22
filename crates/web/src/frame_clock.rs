@@ -1,7 +1,7 @@
 //! The page's frame clock: animation-frame timestamps become capped frame deltas
 //! ([`FrameTimes`]), fixed simulation steps and the interpolation fraction
-//! ([`StepClock`]), and the GPU's backlog decides which frames draw
-//! ([`DrawPacing`]). Plain arithmetic, so it is tested natively.
+//! ([`StepClock`]), and the GPU's backlog decides which frames run and when
+//! ([`FramePacing`]). Plain arithmetic, so it is tested natively.
 
 use sloppy_core::sim::data::STEP;
 
@@ -10,9 +10,16 @@ pub const MAX_FRAME_DELTA_SECONDS: f64 = 0.1;
 const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 /// Catch-up after a stall is bounded so one slow frame cannot spiral.
 pub const MAX_CATCH_UP_STEPS: u32 = 5;
-/// A frame draws at least this long after the last one whatever the backlog reads, so
-/// a completion the browser never reports cannot freeze the picture.
-const MAX_UNDRAWN_SECONDS: f64 = 0.5;
+/// A frame runs at least this long after the last one whatever the backlog reads, so a
+/// completion the browser never reports cannot freeze the game.
+const MAX_WAIT_MS: f64 = 500.0;
+/// A paced frame's time trails its timestamp by at most one 60 Hz frame: the most a
+/// frame waits for an animation frame after the GPU frees it.
+const MAX_LAG_MS: f64 = 1000.0 / 60.0;
+/// Each running frame moves the smoothed interval this share of the way to its own.
+const INTERVAL_SMOOTHING: f64 = 0.1;
+/// Longer gaps between running frames are stalls, not pace.
+const PACED_INTERVAL_LIMIT_MS: f64 = MAX_FRAME_DELTA_SECONDS * MILLISECONDS_PER_SECOND;
 
 /// The animation-frame clock and the timings of the last frame.
 #[derive(Clone, Copy, Debug, Default)]
@@ -88,33 +95,60 @@ impl StepClock {
     }
 }
 
-/// Which frames draw. A browser that queues a WebGPU canvas's frames without holding
-/// animation frames back lets a GPU-bound page run far ahead of its picture, and the
-/// controls answer that late. With a `limit`, a frame that finds that many frames still
-/// on the GPU skips drawing (the simulation still steps), and the next one that draws
-/// advances presentation by the skipped time too, so effects keep real time.
+/// Which animation frames run, and the time each runs at, where the browser queues a
+/// WebGPU canvas's frames without holding animation frames back: there a GPU-bound page
+/// runs far ahead of its picture, and the controls answer that late. With a `limit`, a
+/// frame that finds that many frames still on the GPU is skipped (its presses wait for
+/// the next), so frames run when the GPU finishes one, which falls anywhere between two
+/// animation frames. Their timestamps would then step the game by one or two display
+/// frames while the pictures show at the GPU's even pace, so a frame that runs takes
+/// the smoothed interval between running frames instead, held within a display frame
+/// of its timestamp.
 #[derive(Clone, Copy, Debug, Default)]
-pub struct DrawPacing {
-    undrawn: f64,
-    /// Frames the GPU may still be running when the next one draws; 0 draws every frame.
+pub struct FramePacing {
+    /// Frames the GPU may still be running when the next one runs; 0 runs every frame
+    /// at its own timestamp.
     pub limit: u32,
+    /// The timestamp of the last frame that ran and the time it ran at, in ms.
+    last: Option<(f64, f64)>,
+    /// The smoothed interval between frames that ran, in ms.
+    interval: f64,
 }
 
-impl DrawPacing {
+impl FramePacing {
     pub fn new(limit: u32) -> Self {
         Self {
-            undrawn: 0.0,
             limit,
+            ..Self::default()
         }
     }
 
-    /// The presentation delta to draw this frame with, or `None` to skip drawing it.
-    pub fn draw_delta(&mut self, frames_in_flight: u32, dt: f64) -> Option<f64> {
-        self.undrawn += dt;
-        if self.limit > 0 && frames_in_flight >= self.limit && self.undrawn < MAX_UNDRAWN_SECONDS {
+    /// The time in ms the animation frame at `now` runs at, or `None` to skip it.
+    pub fn frame_time(&mut self, now: f64, frames_in_flight: u32) -> Option<f64> {
+        if self.limit == 0 {
+            return Some(now);
+        }
+        let Some((last_now, last_time)) = self.last else {
+            self.last = Some((now, now));
+            return Some(now);
+        };
+        let waited = now - last_now;
+        if frames_in_flight >= self.limit && waited < MAX_WAIT_MS {
             return None;
         }
-        Some(std::mem::take(&mut self.undrawn).min(MAX_FRAME_DELTA_SECONDS))
+        let time = if !(0.0..=PACED_INTERVAL_LIMIT_MS).contains(&waited) {
+            // A stall, a hidden tab or a clock that ran back: start over from here.
+            self.interval = 0.0;
+            now
+        } else {
+            if self.interval == 0.0 {
+                self.interval = waited;
+            }
+            self.interval += (waited - self.interval) * INTERVAL_SMOOTHING;
+            (last_time + self.interval).clamp(now - MAX_LAG_MS, now)
+        };
+        self.last = Some((now, time));
+        Some(time)
     }
 }
 
@@ -210,36 +244,98 @@ mod tests {
         assert_eq!(times.advance(6000.0), MAX_FRAME_DELTA_SECONDS);
     }
 
-    #[test]
-    fn frames_wait_for_the_gpu_and_draw_the_skipped_time() {
-        let mut pacing = DrawPacing::new(2);
-        assert_eq!(pacing.draw_delta(0, 0.016), Some(0.016));
-        assert_eq!(pacing.draw_delta(1, 0.016), Some(0.016));
-        assert_eq!(pacing.draw_delta(2, 0.016), None);
-        assert_eq!(pacing.draw_delta(3, 0.016), None);
-        let drawn = pacing.draw_delta(1, 0.016).unwrap();
-        assert!((drawn - 0.048).abs() < 1e-12);
-        assert_eq!(pacing.draw_delta(1, 0.016), Some(0.016));
-    }
-
-    #[test]
-    fn without_a_limit_every_frame_draws() {
-        let mut pacing = DrawPacing::default();
-        assert!((0..100).all(|frames| pacing.draw_delta(frames, 0.016) == Some(0.016)));
-    }
-
-    #[test]
-    fn a_backlog_that_never_clears_still_draws() {
-        let mut pacing = DrawPacing::new(2);
-        let mut last = 0;
-        for frame in 1..=240 {
-            if let Some(dt) = pacing.draw_delta(2, 1.0 / 60.0) {
-                // At least every half second, never advancing more than a capped delta.
-                assert!(frame - last <= 31, "frame {frame} after {last}");
-                assert_eq!(dt, MAX_FRAME_DELTA_SECONDS);
-                last = frame;
+    /// The frames a page paced at `limit` runs over `ticks` animation frames `period` ms
+    /// apart (`round`ed to whole ms as WebKit reports them) while each frame keeps the
+    /// GPU busy `gpu` ms after the one before: `(timestamp, time it ran at)`.
+    fn paced(limit: u32, period: f64, gpu: f64, ticks: usize, round: bool) -> Vec<(f64, f64)> {
+        let mut pacing = FramePacing::new(limit);
+        let mut done: Vec<f64> = Vec::new();
+        let mut ran = Vec::new();
+        for tick in 0..ticks {
+            let now = tick as f64 * period;
+            let now = if round { now.round() } else { now };
+            let in_flight = done.iter().filter(|&&finish| finish > now).count() as u32;
+            if let Some(time) = pacing.frame_time(now, in_flight) {
+                let start = done.last().map_or(now, |&last| last.max(now));
+                done.push(start + gpu);
+                ran.push((now, time));
             }
         }
-        assert!(last > 200);
+        ran
+    }
+
+    /// The largest departure of consecutive gaps from their mean.
+    fn unevenness(times: impl Iterator<Item = f64>) -> f64 {
+        let times: Vec<f64> = times.collect();
+        let gaps: Vec<f64> = times.windows(2).map(|pair| pair[1] - pair[0]).collect();
+        let mean = gaps.iter().sum::<f64>() / gaps.len() as f64;
+        gaps.iter()
+            .map(|gap| (gap - mean).abs())
+            .fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn a_gpu_bound_page_runs_at_the_gpu_pace_on_an_even_clock() {
+        for gpu in [22.0, 27.0, 40.0, 70.0] {
+            let ran = paced(2, 1000.0 / 60.0, gpu, 1200, true);
+            let steady = &ran[60..];
+            // One frame runs per GPU frame, so the GPU never idles and never queues more.
+            let rate = (steady.len() - 1) as f64 / (steady.last().unwrap().0 - steady[0].0);
+            assert!((rate * gpu - 1.0).abs() < 0.02, "{gpu} ms: {rate}");
+            // Timestamps step by whole display frames; the clock steps evenly.
+            let stamps = unevenness(steady.iter().map(|&(now, _)| now));
+            let clock = unevenness(steady.iter().map(|&(_, time)| time));
+            assert!(stamps > 5.0, "{gpu} ms: timestamps {stamps}");
+            assert!(clock < stamps / 3.0, "{gpu} ms: clock {clock} vs {stamps}");
+            for &(now, time) in steady {
+                assert!(
+                    time <= now && time >= now - MAX_LAG_MS,
+                    "{gpu} ms: {time} at {now}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn a_page_the_gpu_keeps_up_with_runs_every_frame_on_time() {
+        for round in [false, true] {
+            let ran = paced(2, 1000.0 / 60.0, 9.0, 600, round);
+            assert_eq!(ran.len(), 600);
+            for &(now, time) in &ran[30..] {
+                assert!(now - time < 1.0, "{time} at {now}");
+            }
+            // WebKit's whole-millisecond timestamps even out.
+            assert!(unevenness(ran[30..].iter().map(|&(_, time)| time)) < 0.5);
+        }
+    }
+
+    #[test]
+    fn without_a_limit_every_frame_runs_at_its_timestamp() {
+        let mut pacing = FramePacing::default();
+        for (frame, in_flight) in (0..100).zip((0..10).cycle()) {
+            let now = f64::from(frame) * 16.0;
+            assert_eq!(pacing.frame_time(now, in_flight), Some(now));
+        }
+    }
+
+    #[test]
+    fn a_backlog_that_never_clears_still_runs_and_a_stall_starts_over() {
+        let mut pacing = FramePacing::new(2);
+        let mut last = None;
+        for tick in 0..240 {
+            let now = f64::from(tick) * 1000.0 / 60.0;
+            if let Some(time) = pacing.frame_time(now, 5) {
+                assert_eq!(time, now);
+                if let Some(last) = last {
+                    assert!(now - last <= MAX_WAIT_MS + 17.0, "{now} after {last}");
+                }
+                last = Some(now);
+            }
+        }
+        assert!(last.unwrap() > 3000.0);
+        let mut pacing = FramePacing::new(2);
+        assert_eq!(pacing.frame_time(0.0, 0), Some(0.0));
+        assert_eq!(pacing.frame_time(16.0, 0), Some(16.0));
+        assert_eq!(pacing.frame_time(916.0, 0), Some(916.0));
     }
 }

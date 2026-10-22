@@ -71,7 +71,7 @@ use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use wasm_bindgen::prelude::*;
 
-use crate::frame_clock::{DrawPacing, FrameTimes};
+use crate::frame_clock::{FramePacing, FrameTimes};
 use crate::hud::{HudHuman, Scoreboard, human_json};
 use crate::page::{
     CanvasSize, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageView, aim, create_view, js_error, now_ms,
@@ -151,8 +151,10 @@ pub struct NetGame {
     notices: Vec<Value>,
     frame_index: u64,
     times: FrameTimes,
-    pacing: DrawPacing,
+    pacing: FramePacing,
     canvas: CanvasSize,
+    /// The last frame's result, which a frame skipped for the GPU hands back.
+    last_result: Vec<f32>,
 }
 
 #[wasm_bindgen]
@@ -194,6 +196,7 @@ impl NetGame {
             times: FrameTimes::default(),
             pacing,
             canvas,
+            last_result: vec![0.0; net_frame_slot::LENGTH],
         };
         game.canvas.apply(&mut game.view);
         Ok(game)
@@ -436,7 +439,6 @@ impl NetGame {
     /// events to presentation and draw. See [`net_frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
         let input = InputFrame::from_slice(input);
-        let dt = self.times.advance(now);
         // The development delay delivers messages on this clock too.
         self.client.poll(now);
         self.drain_client_notices();
@@ -444,12 +446,28 @@ impl NetGame {
         if input.toggle_view {
             self.toggle_first_person();
         }
+        let active = self.client.active_input();
+        self.commands.queue(&input, active, now);
+        // Skipped while the GPU still runs earlier frames, a frame only takes its input.
+        // Rooms run at the timestamp itself, which the network client's clocks share.
+        let in_flight = self.view.renderer.frames_in_flight();
+        if self.pacing.frame_time(now, in_flight).is_none() {
+            if active && self.view.rig.first_person.enabled {
+                self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
+            }
+            let mut result = self.last_result.clone();
+            result[net_frame_slot::EVENTS] = self.events.len() as f32;
+            result[net_frame_slot::HUD_DUE] = 0.0;
+            result[net_frame_slot::SIM_MS] = 0.0;
+            result[net_frame_slot::RENDER_MS] = 0.0;
+            result[net_frame_slot::DT] = 0.0;
+            return Ok(result);
+        }
+        let dt = self.times.advance(now);
         if let Some(baseline) = self.baseline.take() {
             self.show_baseline(baseline, now)?;
         }
         let update_start = now_ms();
-        let active = self.client.active_input();
-        self.commands.queue(&input, active, now);
         let local = if active {
             self.local_input(&input, dt)
         } else {
@@ -461,7 +479,6 @@ impl NetGame {
             client,
             view,
             events,
-            pacing,
             ..
         } = self;
         let drawn = match client.frame(now, &local) {
@@ -475,18 +492,19 @@ impl NetGame {
                         displayed.own,
                     );
                 }
-                if let Some(dt) = pacing.draw_delta(view.renderer.frames_in_flight(), frame.dt) {
-                    let render_start = now_ms();
-                    view.render(frame.state, 1.0, dt, false).map_err(js_error)?;
-                    render_ms = now_ms() - render_start;
-                }
+                let render_start = now_ms();
+                view.render(frame.state, 1.0, frame.dt, false)
+                    .map_err(js_error)?;
+                render_ms = now_ms() - render_start;
                 true
             }
             None => false,
         };
         self.times.sim_ms = now_ms() - update_start - render_ms;
         self.times.render_ms = render_ms;
-        Ok(self.frame_result(drawn, dt))
+        let result = self.frame_result(drawn, dt);
+        self.last_result.clone_from(&result);
+        Ok(result)
     }
 
     /// Displayed events for audio and HUD, as JSON (`Game.drain_events()`'s shape).
