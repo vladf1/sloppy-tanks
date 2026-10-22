@@ -319,6 +319,8 @@ These come from playing the game and are easy to undo with "more juice":
   pointer, the drive or enemies, no lagging springs and no automatic zoom. A
   lower, closer or wandering camera hid the field, made every difficulty play
   harder and distracted the player.
+- The action never pauses or slows: no hit-stop or slow motion on kills or hits.
+  It read as dropped frames.
 - Effects follow what their object is doing: a wreck burns only once its hull
   rests, smoke rises and drifts without trembling, and nothing reads as a flat
   cut-out card. Judge effects frame to frame, not from one still.

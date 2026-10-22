@@ -601,9 +601,6 @@ pub struct Presentation {
     pad_decks: SpawnPadDecks,
     pickup_effects: VecDeque<PickupEffect>,
     branches: VecDeque<FallingBranch>,
-    /// Seconds of kill hit-stop still to play; single player's loop slows its
-    /// clock while it lasts.
-    pub hit_stop: f64,
     /// The followed tank, for events that shake the camera.
     viewer_id: Option<u32>,
     hit_confirm_until: f64,
@@ -675,7 +672,6 @@ impl Presentation {
             pad_decks: SpawnPadDecks::default(),
             pickup_effects: VecDeque::new(),
             branches: VecDeque::new(),
-            hit_stop: 0.0,
             viewer_id: None,
             hit_confirm_until: 0.0,
             spawn_cue: 0.0,
@@ -927,7 +923,6 @@ impl Presentation {
         self.sample_models.clear();
         self.renderer.reset_round();
         self.apply_theme(state);
-        self.hit_stop = 0.0;
         self.rig.settle();
         self.hit_confirm_until = 0.0;
         self.player_was_alive = false;
@@ -1399,7 +1394,7 @@ impl Presentation {
         if player_hit {
             self.hit_confirm_until = self.time + FEEDBACK.hit_confirmation_seconds;
         }
-        self.feel_event(event, player_hit);
+        self.feel_event(event);
         if matches!(event.kind, SimEventType::Pickup | SimEventType::Promotion) {
             self.add_pickup_effect(event);
         }
@@ -1408,8 +1403,8 @@ impl Presentation {
     /// Weight for the battle's knocks: a shot rocks its tank back, a hit shoves
     /// and flashes its victim, and blasts rock nearby tanks. The viewer's camera
     /// shakes only when it is hit or destroyed, never for its own shots, kills or
-    /// other explosions. Destroying an enemy holds the action a moment.
-    fn feel_event(&mut self, event: &SimEvent, player_hit: bool) {
+    /// other explosions. The action never pauses or slows for a kill or a hit.
+    fn feel_event(&mut self, event: &SimEvent) {
         let viewer = event.id.is_some() && event.id == self.viewer_id;
         match event.kind {
             SimEventType::Shot => {
@@ -1440,9 +1435,6 @@ impl Presentation {
                     let (dx, dz) = origin.map_or((0.0, 0.0), |(x, z)| (event.x - x, event.z - z));
                     self.rig.hurt(dx, dz, damage);
                 }
-                if player_hit && !viewer {
-                    self.hit_stop = self.hit_stop.max(FEEDBACK.hit_confirm_stop_seconds);
-                }
             }
             SimEventType::Explosion => {
                 let radius = event.size.unwrap_or(2.0);
@@ -1453,9 +1445,6 @@ impl Presentation {
                 self.rock_tanks(event.x, event.z, radius);
                 if viewer {
                     self.rig.shake.add_trauma(CAMERA_FEEL.death_trauma);
-                }
-                if player_hit {
-                    self.hit_stop = FEEDBACK.hit_stop_seconds;
                 }
             }
             _ => {}
@@ -1471,17 +1460,6 @@ impl Presentation {
             let at = view.world.w_axis;
             motion.blast((f64::from(at.x), f64::from(at.z)), (x, z), radius);
         }
-    }
-
-    /// Scale a frame's real time by the kill hit-stop, counting it down. Only the
-    /// single-player loop calls this: a room's clock belongs to the server.
-    pub fn hit_stop_time(&mut self, dt: f64) -> f64 {
-        if self.hit_stop <= 0.0 {
-            return dt;
-        }
-        let held = dt.min(self.hit_stop);
-        self.hit_stop -= held;
-        dt - held * (1.0 - FEEDBACK.hit_stop_time_scale)
     }
 
     /// A shell hit shudders a tree's crown and shakes leaves loose; a felled tree

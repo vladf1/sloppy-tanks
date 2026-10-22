@@ -103,12 +103,6 @@ pub struct Feedback {
     pub pickup_seconds: f64,
     pub max_pickup_effects: usize,
     pub flash_decay: f64,
-    /// Destroying an enemy holds the action for this long at `hit_stop_time_scale`
-    /// (single player only: a room's clock belongs to the server).
-    pub hit_stop_seconds: f64,
-    pub hit_stop_time_scale: f64,
-    /// The viewer's hits on an enemy hold it for this long.
-    pub hit_confirm_stop_seconds: f64,
 }
 
 pub const FEEDBACK: Feedback = Feedback {
@@ -118,9 +112,6 @@ pub const FEEDBACK: Feedback = Feedback {
     pickup_seconds: 0.8,
     max_pickup_effects: 24,
     flash_decay: 12.0,
-    hit_stop_seconds: 0.07,
-    hit_stop_time_scale: 0.06,
-    hit_confirm_stop_seconds: 0.035,
 };
 
 /// How tanks carry their weight on screen (render-only; physics keeps the true pose).

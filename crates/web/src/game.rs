@@ -409,15 +409,7 @@ impl Game {
     /// events to presentation, and draws. See [`frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
         let input = InputFrame::from_slice(input);
-        // Destroying an enemy holds the whole action (simulation, effects, camera)
-        // for a beat. Autoplay has no player to feel it and keeps the seeded
-        // timeline frame-exact.
         let dt = self.times.advance(now);
-        let dt = if self.autoplay {
-            dt
-        } else {
-            self.view.hit_stop_time(dt)
-        };
         let mut result = vec![0.0; frame_slot::LENGTH];
         if !self.active {
             result[frame_slot::PHASE] = phase_code(self.sim.match_state.phase);
