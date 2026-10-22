@@ -297,6 +297,18 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   `drawCalls` in the stats counts main-pass draws; shadow and reflection draws
   are reported separately.
 
+## Camera and effect feel
+
+These come from playing the game and are easy to undo with "more juice":
+
+- The camera shakes only when the viewer is hit or destroyed, and never rolls.
+  The player's own shots, kills, other tanks dying and explosions leave it
+  still: no shake, tilt, kick, zoom punch or pull toward the blast (they gave
+  the player vertigo). Tanks themselves may rock and recoil.
+- Effects follow what their object is doing: a wreck burns only once its hull
+  rests, smoke rises and drifts without trembling, and nothing reads as a flat
+  cut-out card. Judge effects frame to frame, not from one still.
+
 ## Maps, extra levels, and authored data
 
 Map layouts are gameplay data, not only scenery. A new or moved obstacle,
