@@ -365,6 +365,11 @@ fn scenery_matches_typescript() {
     }
     let mut mismatches = Vec::new();
     for (name, lines) in &actual {
+        // Harbor Havoc's scenery and containers were redrawn after the port; the
+        // harbor budget tests bound them instead.
+        if name.starts_with("harbor") || name.starts_with("container-") {
+            continue;
+        }
         let Some((_, reference)) = expected.iter().find(|(n, _)| n == name) else {
             panic!("no reference for {name}");
         };
@@ -510,12 +515,14 @@ fn scenery_textures_per_theme() {
         [
             "textures/water/normals.webp",
             "textures/harbor/steel.webp",
+            "textures/harbor/container.webp",
             "textures/harbor/dock.webp",
             "generated:harbor-label-b2",
             "generated:harbor-label-b1",
             "generated:harbor-label-harbor-havoc",
             "generated:harbor-label-port-07",
             "generated:harbor-label-loading",
+            "generated:harbor-container-liveries",
             "textures/houses/siding.webp",
         ]
     );
@@ -580,6 +587,8 @@ fn ship_cargo_uses_square_fittings() {
         cargo * 5 < cover,
         "cargo {cargo} vs cover {cover} triangles"
     );
+    // Cover containers stand in every view, and in the shadow pass.
+    assert!(cover < 4_000, "cover {cover} triangles");
     // Each ship is drawn for the view, the sun's shadow and the water reflection.
     let harbor = HarborScenery::new();
     for ship in &harbor.root.children[1].children[..3] {

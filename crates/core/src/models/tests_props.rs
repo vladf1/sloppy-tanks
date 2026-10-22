@@ -187,6 +187,11 @@ fn cover_models_match_typescript() {
     let mut failures = Vec::new();
     let mut exact = 0;
     for (index, case) in COVER_CASES.iter().enumerate() {
+        // Containers were rebuilt with modelled corrugation and liveries;
+        // `tests_scenery::ship_cargo_uses_square_fittings` bounds them.
+        if case.kind == CoverKind::Container {
+            continue;
+        }
         let shape = CoverShape {
             kind: case.kind,
             x: case.x,

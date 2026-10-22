@@ -10,6 +10,16 @@ Use case: photorealistic-natural. Asset type: seamless tileable game ground albe
 
 Use case: photorealistic-natural. Asset type: seamless tileable square 1024x1024 game material albedo for painted steel, to multiply by colored ship and container paint. Flat orthographic close-up of pale warm-gray painted steel with subtle worn mottling, thin scratches, sparse tiny brown rust flecks and short downward rust streaks. Mostly intact pale paint, restrained weathering, no corrugation (geometry adds corrugation), no seams, no bolts, no edges, no words, no branding, no objects, no vignette, no baked lighting or shadows. Uniform diffuse illumination; tileable texture filling square edge to edge. Readable industrial miniature game material, not ruined grunge.
 
+## container
+
+`public/textures/harbor/container.webp` is procedural, not generated imagery: the
+weathering multiplied by container and transit-shed paint (sun fade, touched-up
+patches, rust along the rails and running from chips, grime and scuffs). The
+corrugation is modelled, so the tile carries none. Regenerate it with:
+
+```sh
+node --import tsx scripts/generate-harbor-textures.ts
+```
 
 ## Runtime encoding
 
