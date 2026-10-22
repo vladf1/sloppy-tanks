@@ -13,7 +13,7 @@ use glam::{DMat4, DVec2, DVec3};
 use super::building_kit::Surface;
 use super::tank_kit::{Kit, pose, shift};
 use crate::geometry::{Mesh, narrow, widen};
-use crate::sim::house_fracture::{PartPlane, ShardRegion, clip_vertices};
+use crate::sim::house_fracture::{Crack, PartPlane, ShardRegion, clip_vertices};
 use crate::sim::house_layout::{CHIMNEY, PieceShape, RAFTER_DEPTH, Roof};
 use crate::sim::math::Random;
 
@@ -342,6 +342,160 @@ pub(super) fn chimney_breaks(
             ),
         );
     }
+}
+
+/// A shard's inner breaks: shards narrower than this (m across) stay in one
+/// piece, and halves narrower than the second width break no further; how far
+/// (rad) the two halves of a wall shard and of a roof slab fold against each
+/// other along a break, how far its crack wanders off straight (m), and how far
+/// (m) the halves slip along it.
+const FOLD_WIDTH: f64 = 1.1;
+const REFOLD_WIDTH: f64 = 1.5;
+const WALL_FOLD: (f64, f64) = (0.2, 0.4);
+const ROOF_FOLD: (f64, f64) = (0.2, 0.38);
+const FOLD_WANDER: f64 = 0.18;
+const FOLD_SLIP: f64 = 0.04;
+
+/// A wall shard or broken roof slab cracked once more across itself and folded
+/// along the crack, as a falling panel buckles where it is weakest: its two
+/// halves (each the shard's shape cut to one side, so their torn edges and
+/// splinters close the new crack too) with the fold that bends each about the
+/// crack. Narrow shards, whole parts and the chimney come back unbroken. The
+/// shard's collider stays its flat core: the fold only bends its look a little out
+/// of that plane, so it beds into the pile rather than lying on it like a card.
+pub(super) fn fold_shard(
+    shape: &PieceShape,
+    roof: &Roof,
+    rng: &mut Random,
+) -> Vec<(PieceShape, DMat4)> {
+    let mut pieces = Vec::new();
+    for (half, fold) in fold_once(shape, roof, rng, FOLD_WIDTH) {
+        // A wide half breaks again inside itself, folding in its own frame
+        // before the first fold carries it.
+        for (quarter, inner) in fold_once(&half, roof, rng, REFOLD_WIDTH) {
+            pieces.push((quarter, fold * inner));
+        }
+    }
+    pieces
+}
+
+/// One inner break of [`fold_shard`]: the shape's two halves and their folds, or
+/// the shape whole when it is narrower than `width`.
+fn fold_once(
+    shape: &PieceShape,
+    roof: &Roof,
+    rng: &mut Random,
+    width: f64,
+) -> Vec<(PieceShape, DMat4)> {
+    let part = shape.piece.part;
+    let wall = part.wall_index().is_some();
+    let unbroken = vec![(shape.clone(), DMat4::IDENTITY)];
+    if !(wall || part.is_roof()) || shape.region.is_whole() {
+        return unbroken;
+    }
+    let points = shape.region.outline_points(&shape.outline);
+    let Some(lo) = points.iter().copied().reduce(DVec2::min) else {
+        return unbroken;
+    };
+    let hi = points.iter().copied().reduce(DVec2::max).unwrap_or(lo);
+    let span = hi - lo;
+    if span.x < width || span.y < 0.6 {
+        return unbroken;
+    }
+    let s = lo.x + span.x * rng.range(0.38, 0.62);
+    let knots = [0.25, 0.5, 0.75].map(|f| lo.y + span.y * f);
+    let crack = Crack::new(s, &knots, || rng.range(-FOLD_WANDER, FOLD_WANDER));
+    let [left, right] = [
+        ShardRegion::between(None, Some(&crack), None),
+        ShardRegion::between(Some(&crack), None, None),
+    ]
+    .map(|side| shape.region.intersect(&side.cells));
+    // The hinge: the crack's line through the middle of the wall's or deck's
+    // thickness.
+    let plane = &shape.plane;
+    let out = plane.s.cross(plane.t);
+    let middle = |q: DVec2| {
+        let p = plane.origin + plane.s * q.x + plane.t * q.y;
+        if wall {
+            p - out * WALL_EDGE / 2.0
+        } else {
+            DVec3::new(p.x, roof.top(p.x, p.z) - roof.thick / 2.0, p.z)
+        }
+    };
+    let a = middle(DVec2::new(crack.at(lo.y), lo.y));
+    let b = middle(DVec2::new(crack.at(hi.y), hi.y));
+    let axis = (b - a).normalize_or(DVec3::Y);
+    let pivot = (a + b) / 2.0;
+    let (low, high) = if wall { WALL_FOLD } else { ROOF_FOLD };
+    let sign = if rng.next() < 0.5 { 1.0 } else { -1.0 };
+    let angle = rng.range(low, high) * sign;
+    let slip = axis * rng.range(-FOLD_SLIP, FOLD_SLIP);
+    let bend = |angle: f64| {
+        DMat4::from_translation(pivot)
+            * DMat4::from_axis_angle(axis, angle)
+            * DMat4::from_translation(-pivot)
+    };
+    vec![
+        (
+            PieceShape {
+                region: left,
+                ..shape.clone()
+            },
+            bend(angle / 2.0),
+        ),
+        (
+            PieceShape {
+                region: right,
+                ..shape.clone()
+            },
+            DMat4::from_translation(slip) * bend(-angle / 2.0),
+        ),
+    ]
+}
+
+/// How much a collapse piece's paint varies across it (darkest, range): patches
+/// of dust, soot and damp over every finish, so a broken panel reads as a worn,
+/// filthy board rather than a clean painted card.
+const MOTTLE: (f32, f32) = (0.7, 0.36);
+/// Size (m) of the patches.
+const MOTTLE_SCALE: f64 = 0.8;
+
+/// Mottle a batched collapse piece's vertex colours (positions in its own frame;
+/// `seed` keeps neighbouring pieces' patches apart).
+pub(super) fn mottle(mesh: &mut Mesh, seed: f64) {
+    if mesh.colors.len() != mesh.positions.len() {
+        return;
+    }
+    let offset = DVec3::new(seed * 7.31, seed * 3.17, seed * 5.53);
+    for (color, p) in mesh.colors.iter_mut().zip(&mesh.positions) {
+        let q = widen(*p) / MOTTLE_SCALE + offset;
+        let patch = value_noise(q) * 0.7 + value_noise(q * 2.3 + 17.0) * 0.3;
+        let shade = MOTTLE.0 + MOTTLE.1 * patch as f32;
+        for channel in color.iter_mut() {
+            *channel *= shade;
+        }
+    }
+}
+
+/// Smooth 3D value noise in [0, 1] on a unit lattice.
+fn value_noise(p: DVec3) -> f64 {
+    let cell = p.floor();
+    let f = p - cell;
+    let s = f * f * (DVec3::splat(3.0) - 2.0 * f);
+    let corner = |dx: f64, dy: f64, dz: f64| {
+        let q = cell + DVec3::new(dx, dy, dz);
+        let mut h = (q.x as i64).wrapping_mul(73_856_093)
+            ^ (q.y as i64).wrapping_mul(19_349_663)
+            ^ (q.z as i64).wrapping_mul(83_492_791);
+        h = (h ^ (h >> 13)).wrapping_mul(0x5bd1_e995);
+        (h ^ (h >> 15)).rem_euclid(1000) as f64 / 999.0
+    };
+    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+    let x00 = lerp(corner(0.0, 0.0, 0.0), corner(1.0, 0.0, 0.0), s.x);
+    let x10 = lerp(corner(0.0, 1.0, 0.0), corner(1.0, 1.0, 0.0), s.x);
+    let x01 = lerp(corner(0.0, 0.0, 1.0), corner(1.0, 0.0, 1.0), s.x);
+    let x11 = lerp(corner(0.0, 1.0, 1.0), corner(1.0, 1.0, 1.0), s.x);
+    lerp(lerp(x00, x10, s.y), lerp(x01, x11, s.y), s.z)
 }
 
 /// A placement whose local +z runs from `from` to `to`, centred between them.
