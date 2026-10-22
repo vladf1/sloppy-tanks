@@ -113,7 +113,7 @@ pub use effects_props::{aged_wreck_material, wreck_brightness};
 pub use flags::{FLAG_CLOTH_NODE, flags_model};
 pub use house_model::house_pieces;
 pub use pickup_visuals::pickup_cube;
-pub use timber_model::timber_part_model;
+pub use timber_model::{timber_debris_model, timber_part_model};
 pub use tower_model::tower_piece_model;
 pub use tree_models::{
     TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, tree_branch_stage,

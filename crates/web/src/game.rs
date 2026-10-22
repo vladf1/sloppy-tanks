@@ -376,7 +376,13 @@ impl Game {
         self.accumulator = 0.0;
         // Animation frames queued before GO (behind a slow arena rebuild) carry older
         // timestamps; measuring from now keeps them from advancing the new round.
-        self.times.last_ms = Some(now_ms());
+        // Autoplay keeps its seeded timeline frame-exact whatever the page's load
+        // time instead: its first frame starts the round with a full catch-up.
+        self.times.last_ms = Some(if self.autoplay {
+            f64::NEG_INFINITY
+        } else {
+            now_ms()
+        });
     }
 
     pub fn resume(&mut self) {
