@@ -87,7 +87,6 @@ use crate::shadow_merge::{
     MIN_CACHED_SHADOW_TRIANGLES, MergeKind, ShadowMerge, merge_shadows, merged_draw_order,
     shadow_merge_kind,
 };
-use crate::target_memory::target_bytes;
 use backend::{Frame, Gpu, Pipelines, WaterGpu};
 use pools::PoolEntry;
 use resources::{MaterialStore, MeshStore};
@@ -2647,19 +2646,11 @@ impl Renderer {
             + 3
             + self.water.is_some() as usize
             + pools as usize) as u32;
-        let shadow = self.sun_shadow.map_size as u64;
-        let shadow_maps = 1 + u64::from(self.frame.has_static_shadow());
         let (width, height) = self.size();
-        let (scene_width, scene_height) = self.scene_size();
         stats.gpu_bytes = self.meshes.bytes()
             + self.textures.bytes()
-            + target_bytes(scene_width, scene_height, self.gpu.samples)
-            + self.water.as_ref().map_or(0, |w| {
-                let size = w.settings.reflection_size.max(1);
-                target_bytes(size, size, self.gpu.samples)
-            })
-            + shadow * shadow * 4 * shadow_maps
-            + self.frame.post_bytes()
+            + self.frame.target_bytes()
+            + self.water.as_ref().map_or(0, |w| w.gpu.target_bytes())
             + u64::from(self.frame.instances().capacity()) * RECORD_SIZE
             + self.pool_bytes()
             + width as u64 * height as u64 * 4;

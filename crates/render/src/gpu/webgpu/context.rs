@@ -17,10 +17,10 @@ pub struct Gpu {
     pub layouts: Rc<Layouts>,
     /// The canvas's texture format, the output pipeline's target.
     pub canvas_format: wgpu::TextureFormat,
-    /// MSAA samples of the HDR targets: always `SAMPLE_COUNT` here.
-    pub samples: u32,
     /// The adapter's largest 2D texture edge, a hint of the GPU's class.
     pub adapter_max_texture: u32,
+    /// `TRANSIENT_ATTACHMENT` where the browser offers it, else empty.
+    pub transient: wgpu::TextureUsages,
     pub error: ErrorSlot,
 }
 
@@ -84,8 +84,8 @@ impl Gpu {
         let gpu = Self {
             layouts: Rc::new(Layouts::new(&device)),
             canvas_format: config.format,
-            samples: SAMPLE_COUNT,
             adapter_max_texture: adapter.limits().max_texture_dimension_2d,
+            transient: transient_usage(),
             device,
             queue,
             error,
@@ -101,6 +101,39 @@ impl Gpu {
     }
 }
 
+/// `GPUTextureUsage.TRANSIENT_ATTACHMENT` where the browser has it (Safari 26 and
+/// Chrome do): an attachment cleared and discarded within its pass then lives only
+/// in tile memory and holds no memory at all on tiling GPUs (Apple's, phones').
+/// wgpu passes usage bits through to the browser, which rejects a bit it does not
+/// know, so older browsers get plain attachments.
+fn transient_usage() -> wgpu::TextureUsages {
+    let transient = wgpu::TextureUsages::TRANSIENT_ATTACHMENT;
+    let offered = js_sys::Reflect::get(&js_sys::global(), &"GPUTextureUsage".into())
+        .and_then(|usages| js_sys::Reflect::get(&usages, &"TRANSIENT_ATTACHMENT".into()))
+        .ok()
+        .and_then(|bit| bit.as_f64());
+    if offered == Some(f64::from(transient.bits())) {
+        transient
+    } else {
+        wgpu::TextureUsages::empty()
+    }
+}
+
+/// Bytes a texture holds in memory: none for a transient attachment.
+pub(super) fn texture_bytes(texture: &wgpu::Texture) -> u64 {
+    if texture
+        .usage()
+        .contains(wgpu::TextureUsages::TRANSIENT_ATTACHMENT)
+    {
+        return 0;
+    }
+    let texel = texture.format().block_copy_size(None).unwrap_or(4);
+    u64::from(texture.width())
+        * u64::from(texture.height())
+        * u64::from(texture.sample_count())
+        * u64::from(texel)
+}
+
 pub const HDR_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
 /// The ambient occlusion target.
 pub const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
@@ -108,6 +141,8 @@ pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// A multisampled HDR color + depth target and its single-sample resolve.
 /// Used for the main view (the scene's size) and the water reflection (fixed size).
+/// The multisampled color is resolved and discarded within its pass, so it is
+/// transient where the browser allows; so is the depth unless a later pass reads it.
 /// Dropping it destroys its textures.
 pub struct ColorTarget {
     pub color: wgpu::Texture,
@@ -147,22 +182,16 @@ pub(super) fn texture_2d(
 impl ColorTarget {
     /// With `sampled_depth` a later pass reads the multisampled depth (the main
     /// view's ambient occlusion).
-    pub fn new(
-        device: &wgpu::Device,
-        label: &str,
-        width: u32,
-        height: u32,
-        sampled_depth: bool,
-    ) -> Self {
+    pub fn new(gpu: &Gpu, label: &str, width: u32, height: u32, sampled_depth: bool) -> Self {
         let texture = |format, samples, usage| {
-            texture_2d(device, label, width, height, format, samples, usage)
+            texture_2d(&gpu.device, label, width, height, format, samples, usage)
         };
         let attachment = wgpu::TextureUsages::RENDER_ATTACHMENT;
-        let color = texture(HDR_FORMAT, SAMPLE_COUNT, attachment);
+        let color = texture(HDR_FORMAT, SAMPLE_COUNT, attachment | gpu.transient);
         let depth_usage = if sampled_depth {
             attachment | wgpu::TextureUsages::TEXTURE_BINDING
         } else {
-            attachment
+            attachment | gpu.transient
         };
         let depth = texture(DEPTH_FORMAT, SAMPLE_COUNT, depth_usage);
         let resolved = texture(
@@ -178,6 +207,14 @@ impl ColorTarget {
             depth,
             resolved,
         }
+    }
+
+    /// Bytes its textures hold in memory.
+    pub fn bytes(&self) -> u64 {
+        [&self.color, &self.depth, &self.resolved]
+            .into_iter()
+            .map(texture_bytes)
+            .sum()
     }
 }
 

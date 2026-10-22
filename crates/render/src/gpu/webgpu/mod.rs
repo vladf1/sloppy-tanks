@@ -148,7 +148,7 @@ impl Frame {
             wgpu::util::TextureDataOrder::LayerMajor,
             bytemuck::cast_slice(&lut::DFG_LUT),
         );
-        let main_target = ColorTarget::new(device, "main view", width, height, true);
+        let main_target = ColorTarget::new(gpu, "main view", width, height, true);
         let output_uniform = uniform_buffer(device, "output", size_of::<OutputUniform>() as u64);
         let occlusion_uniform =
             uniform_buffer(device, "occlusion", size_of::<OcclusionUniform>() as u64);
@@ -225,7 +225,7 @@ impl Frame {
             return;
         }
         let (width, height) = scene;
-        self.main_target = ColorTarget::new(&gpu.device, "main view", width, height, true);
+        self.main_target = ColorTarget::new(gpu, "main view", width, height, true);
         self.post = PostTargets::new(
             gpu,
             &self.main_target,
@@ -255,10 +255,6 @@ impl Frame {
             DepthMap::new(&gpu.device, "fixed scenery shadow", size)
         });
         keep
-    }
-
-    pub fn has_static_shadow(&self) -> bool {
-        self.static_shadow_map.is_some()
     }
 
     /// The view's instance records.
@@ -334,9 +330,15 @@ impl Frame {
             .write_buffer(&self.occlusion_uniform, 0, bytemuck::bytes_of(uniform));
     }
 
-    /// Bytes of the bloom levels and the occlusion target.
-    pub fn post_bytes(&self) -> u64 {
-        self.post.bytes
+    /// Bytes the main view's target, the post-processing targets and the shadow maps
+    /// hold in memory.
+    pub fn target_bytes(&self) -> u64 {
+        let shadow = [Some(&self.shadow_map), self.static_shadow_map.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|map| context::texture_bytes(&map.texture))
+            .sum::<u64>();
+        self.main_target.bytes() + self.post.bytes + shadow
     }
 
     /// Upload this frame's merged shadow bases.
@@ -822,9 +824,9 @@ impl PostTargets {
         });
         let bytes = bloom
             .iter()
-            .map(|(texture, _)| u64::from(texture.width() * texture.height()) * 8)
+            .map(|(texture, _)| context::texture_bytes(texture))
             .sum::<u64>()
-            + u64::from(occlusion.width() * occlusion.height());
+            + context::texture_bytes(&occlusion);
         Self {
             bloom,
             bloom_groups,
@@ -864,7 +866,7 @@ impl WaterGpu {
         sampler: Sampler,
     ) -> Self {
         let uniform = uniform_buffer(&gpu.device, "water", size_of::<WaterUniform>() as u64);
-        let target = ColorTarget::new(&gpu.device, "water reflection", size, size, false);
+        let target = ColorTarget::new(gpu, "water reflection", size, size, false);
         let bind_group = Self::bind_group(gpu, frame, &uniform, &target, normals, &sampler);
         Self {
             uniform,
@@ -918,6 +920,11 @@ impl WaterGpu {
     pub fn write(&self, gpu: &Gpu, uniform: &WaterUniform) {
         gpu.queue
             .write_buffer(&self.uniform, 0, bytemuck::bytes_of(uniform));
+    }
+
+    /// Bytes the reflection target holds in memory.
+    pub fn target_bytes(&self) -> u64 {
+        self.target.bytes()
     }
 }
 
