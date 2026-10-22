@@ -422,10 +422,10 @@ pub fn spawn_pulse() -> Node {
     root
 }
 
-/// Paint of a pickup pad's steel housing and of the dark deck set into it, and
+/// Paint of a pickup pad's steel housing and of the gunmetal deck set into it, and
 /// how brightly its ring glows.
 const PICKUP_HOUSING: u32 = 0x75808a;
-const PICKUP_DECK: u32 = 0x1d2e3d;
+const PICKUP_DECK: u32 = 0x46525e;
 const PICKUP_RING_GLOW: f32 = 0.45;
 /// Where a pickup pad's light stands: a centimetre above the deck's top (0.19) so
 /// the additive pool never depth-fights it.
@@ -455,7 +455,7 @@ pub fn pickup_base(kind: PickupKind) -> Node {
         0.0,
     );
     let torus = arc(torus_geometry(0.94, 0.045, 5, 24));
-    for (name, opacity) in [(joint::PICKUP_RING, 1.0), (joint::PICKUP_RING_DIM, 0.2)] {
+    for (name, opacity) in [(joint::PICKUP_RING, 1.0), (joint::PICKUP_RING_DIM, 0.45)] {
         let material = Arc::new(Material {
             transparent: true,
             opacity,

@@ -241,22 +241,22 @@ pub const fn pickup(kind: PickupKind) -> PickupStats {
         },
         PickupKind::Shield => PickupStats {
             name: "SHIELD",
-            color: 0x72dbef,
+            color: 0x4f94ff,
             duration: 20.0,
         },
         PickupKind::Speed => PickupStats {
             name: "SPEED BOOST",
-            color: 0xbbe574,
+            color: 0xc4ef4a,
             duration: 20.0,
         },
         PickupKind::Repair => PickupStats {
             name: "REPAIR",
-            color: 0x88ddb0,
+            color: 0x3fdc78,
             duration: 0.0,
         },
         PickupKind::Laser => PickupStats {
             name: "LASER DEFENSE",
-            color: 0x7bfff2,
+            color: 0xff3d55,
             duration: LASER_DEFENSE.duration,
         },
     }

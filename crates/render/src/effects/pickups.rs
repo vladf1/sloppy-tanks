@@ -29,6 +29,13 @@ const BAND_RADIUS: f64 = 1.75;
 const BAND_TIGHTEN: f64 = 0.18;
 const BAND_HEIGHT: f64 = 2.6;
 const BAND_OPACITY: f64 = 0.9;
+/// The impact flash: a bright dome over the pickup that swells and is gone in the
+/// effect's first moments.
+const FLASH_SECONDS: f64 = 0.18;
+const FLASH_RADIUS: f64 = 1.1;
+const FLASH_GROWTH: f64 = 0.6;
+const FLASH_HEIGHT: f64 = 1.8;
+const FLASH_OPACITY: f64 = 0.75;
 /// Segments around every glow mesh: smooth from the battle camera, few triangles.
 const GLOW_SEGMENTS: u32 = 40;
 
@@ -98,16 +105,35 @@ pub fn pickup_beam_geometry() -> Mesh {
         ],
         GLOW_SEGMENTS,
     );
-    let offset = pool.positions.len() as u32;
-    pool.positions.extend(column.positions);
-    pool.normals.extend(column.normals);
-    pool.uvs.extend(column.uvs);
-    pool.colors.extend(column.colors);
-    let column_indices = column.indices.unwrap_or_default();
-    if let Some(indices) = &mut pool.indices {
-        indices.extend(column_indices.into_iter().map(|index| index + offset));
-    }
+    // Light spilling onto the ground around the housing (radius 1.14), just above
+    // the ground rather than the deck.
+    let spill = glow_lathe(
+        &[
+            [1.12, SPILL_DROP, 0.0],
+            [1.2, SPILL_DROP, 0.42],
+            [1.5, SPILL_DROP, 0.16],
+            [2.1, SPILL_DROP, 0.0],
+        ],
+        GLOW_SEGMENTS,
+    );
+    append(&mut pool, column);
+    append(&mut pool, spill);
     pool
+}
+
+/// The ground spill's height relative to the pad light's base on the deck.
+const SPILL_DROP: f64 = -0.17;
+
+fn append(mesh: &mut Mesh, part: Mesh) {
+    let offset = mesh.positions.len() as u32;
+    mesh.positions.extend(part.positions);
+    mesh.normals.extend(part.normals);
+    mesh.uvs.extend(part.uvs);
+    mesh.colors.extend(part.colors);
+    let part_indices = part.indices.unwrap_or_default();
+    if let Some(indices) = &mut mesh.indices {
+        indices.extend(part_indices.into_iter().map(|index| index + offset));
+    }
 }
 
 /// The collection shockwave, flat on the ground with radius 1: a bright leading
@@ -115,10 +141,11 @@ pub fn pickup_beam_geometry() -> Mesh {
 pub fn shockwave_geometry() -> Mesh {
     glow_lathe(
         &[
-            [0.55, 0.0, 0.0],
-            [0.86, 0.0, 0.3],
-            [0.97, 0.0, 1.0],
-            [1.04, 0.0, 0.0],
+            [0.6, 0.0, 0.0],
+            [0.9, 0.0, 0.18],
+            [0.975, 0.0, 0.6],
+            [0.995, 0.0, 1.0],
+            [1.015, 0.0, 0.0],
         ],
         GLOW_SEGMENTS,
     )
@@ -133,6 +160,21 @@ pub fn band_geometry() -> Mesh {
             [1.0, 0.12, 0.6],
             [1.0, 0.5, 0.2],
             [1.0, 1.0, 0.0],
+        ],
+        GLOW_SEGMENTS,
+    )
+}
+
+/// The collection's impact flash, radius and height 1: a dome of light, hottest
+/// at its crown, fading to nothing at the ground.
+pub fn flash_geometry() -> Mesh {
+    glow_lathe(
+        &[
+            [0.0, 1.0, 1.0],
+            [0.35, 0.92, 0.85],
+            [0.7, 0.66, 0.45],
+            [0.92, 0.35, 0.15],
+            [1.0, 0.0, 0.0],
         ],
         GLOW_SEGMENTS,
     )
@@ -157,6 +199,7 @@ pub struct PickupEffects {
     effects: VecDeque<PickupEffect>,
     pub rings: PoolBuffer,
     pub glows: PoolBuffer,
+    pub flashes: PoolBuffer,
 }
 
 impl Default for PickupEffects {
@@ -165,6 +208,7 @@ impl Default for PickupEffects {
             effects: VecDeque::with_capacity(MAX_PICKUP_EFFECTS),
             rings: PoolBuffer::new(MAX_PICKUP_EFFECTS),
             glows: PoolBuffer::new(MAX_PICKUP_EFFECTS),
+            flashes: PoolBuffer::new(MAX_PICKUP_EFFECTS),
         }
     }
 }
@@ -182,6 +226,7 @@ impl PickupEffects {
         self.effects.clear();
         self.rings.clear();
         self.glows.clear();
+        self.flashes.clear();
     }
 
     /// Start a ring at a pickup, following `tank` with a glow while it lives.
@@ -201,6 +246,7 @@ impl PickupEffects {
     pub fn update(&mut self, state: &RenderState, alpha: f64, dt: f64) {
         self.rings.clear();
         self.glows.clear();
+        self.flashes.clear();
         self.effects.retain_mut(|effect| {
             effect.age += dt;
             effect.age < PICKUP_SECONDS
@@ -218,6 +264,24 @@ impl PickupEffects {
                 [r, g, b, (RING_OPACITY * fade) as f32],
                 [0.0; 4],
             ));
+            if effect.age < FLASH_SECONDS {
+                let flash = effect.age / FLASH_SECONDS;
+                let radius = FLASH_RADIUS * (1.0 + FLASH_GROWTH * ease_out(flash));
+                let height = FLASH_HEIGHT * (1.0 - 0.4 * flash);
+                // White-hot at first, settling into the kind's color.
+                let white = (1.0 - flash) as f32 * 0.7;
+                self.flashes.push(record(
+                    Mat4::from_translation(Vec3::new(effect.x as f32, 0.0, effect.z as f32))
+                        * Mat4::from_scale(Vec3::new(radius as f32, height as f32, radius as f32)),
+                    [
+                        r + white,
+                        g + white,
+                        b + white,
+                        (FLASH_OPACITY * (1.0 - flash).powi(2)) as f32,
+                    ],
+                    [0.0; 4],
+                ));
+            }
             let Some(tank) = effect
                 .tank
                 .and_then(|id| state.tanks.iter().find(|t| t.id == id && t.alive))
@@ -261,7 +325,10 @@ mod tests {
             effects.add(i as f64, 0.0, 0xffcf54, Some(7));
         }
         assert_eq!(effects.len(), MAX_PICKUP_EFFECTS);
-        effects.update(&state, 1.0, 0.4);
+        effects.update(&state, 1.0, 0.1);
+        assert_eq!(effects.flashes.len(), MAX_PICKUP_EFFECTS);
+        effects.update(&state, 1.0, 0.3);
+        assert!(effects.flashes.is_empty());
         assert_eq!(effects.rings.len(), MAX_PICKUP_EFFECTS);
         assert_eq!(effects.glows.len(), MAX_PICKUP_EFFECTS);
         let first = &effects.rings.records()[0];
@@ -276,5 +343,9 @@ mod tests {
         assert!(effects.glows.is_empty(), "no band without a living tank");
         effects.update(&state, 1.0, 0.3);
         assert!(effects.is_empty() && effects.rings.is_empty());
+        assert!(
+            effects.flashes.is_empty(),
+            "the flash is gone well before the ring"
+        );
     }
 }

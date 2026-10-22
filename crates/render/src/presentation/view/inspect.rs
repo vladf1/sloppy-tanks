@@ -185,7 +185,8 @@ impl Presentation {
             inspection.pickups.push(PickupInspection {
                 id,
                 base_shown: base.visible,
-                gem: gem.visible,
+                // The full gem, not the small ghost a recharging pad shows.
+                gem: gem.visible && gem.world.x_axis.length() > 0.9,
                 ring: joint_shown(&base, model.ring),
                 ring_dim: joint_shown(&base, model.ring_dim),
                 refill: joint_shown(&base, model.refill),
