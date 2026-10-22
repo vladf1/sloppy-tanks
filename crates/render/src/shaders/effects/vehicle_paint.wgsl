@@ -26,11 +26,14 @@
 // the side turned from the sun, so it never crushes to black in shade, and a rim in
 // its team's hue at grazing angles, so a vehicle's side reads at range in any grade.
 // Running gear (params[3].w 0) keeps its own colors and takes only the fill.
+// Glass (params[3].w 2, `vehicle_glass`) is a dark tint that mirrors the sky
+// toward grazing angles, so windows and sights read as glass from any camera
+// rather than as flat painted or glowing panels.
 //
-// params[0] = (team paint rgb linear, rim strength);
+// params[0] = (team paint rgb linear, rim strength), or the glass tint;
 // params[1] = (trim rgb linear, fill strength);
 // params[2] = (rim hue rgb linear, wear tile repeat);
-// params[3] = (bare steel rgb linear, 1 painted armor or 0 running gear).
+// params[3] = (bare steel rgb linear, 1 painted armor, 0 running gear or 2 glass).
 
 const VEHICLE_EDGE_MARGIN: f32 = 0.04;
 const VEHICLE_EDGE_SPAN: f32 = 0.92;
@@ -54,12 +57,20 @@ const VEHICLE_RECESS_REACH: f32 = 0.12;
 // Chips fade out as a pixel grows past their size, so distant hulls never sparkle.
 const VEHICLE_CHIP_PIXEL_FROM: f32 = 0.01;
 const VEHICLE_CHIP_PIXEL_TO: f32 = 0.024;
+// Plates narrower than these (metres) never chip: bolt heads, latches and trim
+// strips would otherwise scatter grey specks evenly over every deck.
+const VEHICLE_CHIP_PLATE_FROM: f32 = 0.05;
+const VEHICLE_CHIP_PLATE_TO: f32 = 0.11;
 // Paint rubbed lighter on a bevel and on chamfer strips.
 const VEHICLE_BEVEL_LIFT: f32 = 1.7;
 const VEHICLE_BEVEL_PALE: vec3f = vec3f(0.03, 0.022, 0.018);
 const VEHICLE_BEVEL_TINT: f32 = 0.8;
-// Dust and wet mud (linear) and how strongly they cover the lowest armor.
-const VEHICLE_DUST: vec3f = vec3f(0.27, 0.205, 0.12);
+// Dust and wet mud (linear) and how strongly they cover the lowest armor. In a
+// round (the atmosphere on) the dust takes this share of its hue from the map's
+// ground light (sand in the quarry, brown earth in the village, grey concrete at
+// the harbor) at its own brightness; studio scenes keep the plain dust.
+const VEHICLE_DUST: vec3f = vec3f(0.22, 0.165, 0.098);
+const VEHICLE_DUST_LOCAL: f32 = 0.6;
 const VEHICLE_MUD: vec3f = vec3f(0.075, 0.053, 0.034);
 const VEHICLE_DUST_STRENGTH: f32 = 0.82;
 const VEHICLE_MUD_STRENGTH: f32 = 0.7;
@@ -71,7 +82,7 @@ const VEHICLE_GRIME_STRENGTH: f32 = 0.8;
 // Upright plates are satin, so their sides catch the sky as painted steel does;
 // decks are flat-finished (and stay under the ground relief's roughness, which
 // would otherwise texture them in world space as they drive).
-const VEHICLE_PAINT_ROUGHNESS: f32 = 0.44;
+const VEHICLE_PAINT_ROUGHNESS: f32 = 0.36;
 const VEHICLE_DECK_ROUGHNESS: f32 = 0.53;
 const VEHICLE_SHEEN_BREAKUP: f32 = 0.1;
 const VEHICLE_DIRT_ROUGHNESS: f32 = 0.92;
@@ -102,7 +113,7 @@ const VEHICLE_SEAM_PIXEL_TO: f32 = 0.028;
 // by this much either way, resolved only close up (the turret roof seen from the
 // commander's hatch).
 const VEHICLE_GRAIN_CELLS: f32 = 85.0;
-const VEHICLE_GRAIN_VALUE: f32 = 0.16;
+const VEHICLE_GRAIN_VALUE: f32 = 0.26;
 const VEHICLE_GRAIN_PIXEL_FROM: f32 = 0.003;
 const VEHICLE_GRAIN_PIXEL_TO: f32 = 0.009;
 // Soft, sun-faded variation across the paint, this many cells per metre and this
@@ -154,6 +165,45 @@ fn vehicle_channel(c: f32, gradient: vec3f, bevel_width: f32, e: ptr<function, V
     vehicle_border(far, (1.0 - t) * width, across, bevel_width, e);
 }
 
+// Glass: how much of the sky it mirrors head-on and at grazing angles, and a soft
+// diagonal sheen band (along the world's x + z, this many per metre, this wide)
+// that slides across windows as the vehicle turns, as a real reflection does.
+const VEHICLE_GLASS_FACING: f32 = 0.1;
+const VEHICLE_GLASS_GRAZING: f32 = 0.7;
+const VEHICLE_GLASS_ROUGHNESS: f32 = 0.08;
+const VEHICLE_GLASS_SHEEN: f32 = 0.7;
+const VEHICLE_GLASS_SHEEN_CELLS: f32 = 0.9;
+const VEHICLE_GLASS_SHEEN_WIDTH: f32 = 0.09;
+// How much of the sky's color the glass keeps: a clear blue sky mirrored at full
+// saturation turns windows into flat blue panels.
+const VEHICLE_GLASS_SKY_SATURATION: f32 = 0.35;
+
+// The sky a window mirrors: the drawn sky's gradient while the atmosphere is on,
+// the hemisphere fill otherwise, and the ground's light below the horizon.
+fn vehicle_sky(direction: vec3f) -> vec3f {
+    var sky = frame.sky_color.rgb * 0.32;
+    if atmosphere_on() {
+        sky = sky_gradient(normalize(vec3f(direction.x, max(direction.y, 0.05), direction.z)));
+    }
+    let ground = frame.ground_color.rgb * 0.32;
+    let mirrored = mix(ground, sky, smoothstep(-0.08, 0.08, direction.y));
+    let grey = dot(mirrored, vec3f(0.2126, 0.7152, 0.0722));
+    return mix(vec3f(grey), mirrored, VEHICLE_GLASS_SKY_SATURATION);
+}
+
+fn vehicle_glass(s: ptr<function, Surface>, f: EffectFragment) {
+    let n = normalize((*s).normal);
+    let v = f.view_direction;
+    let facing = clamp(dot(n, v), 0.0, 1.0);
+    let fresnel = VEHICLE_GLASS_FACING + (VEHICLE_GLASS_GRAZING - VEHICLE_GLASS_FACING) * pow(1.0 - facing, 4.0);
+    let sheen_phase = fract((f.world.x + f.world.z) * VEHICLE_GLASS_SHEEN_CELLS + f.world.y * 0.4);
+    let sheen = 1.0 - smoothstep(0.0, VEHICLE_GLASS_SHEEN_WIDTH, abs(sheen_phase - 0.5));
+    (*s).color = material.params[0].rgb;
+    (*s).roughness = VEHICLE_GLASS_ROUGHNESS;
+    (*s).metalness = 0.0;
+    (*s).emissive += vehicle_sky(reflect(-v, n)) * (fresnel + sheen * VEHICLE_GLASS_SHEEN);
+}
+
 // The vehicle's own fill: the sky and ground light again, strongest on faces
 // turned from the sun.
 fn vehicle_fill(n: vec3f) -> vec3f {
@@ -170,6 +220,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let dcx = dpdx(f.vertex_color.rg);
     let dcy = dpdy(f.vertex_color.rg);
     (*s).opacity = f.tint.a;
+    if material.params[3].w > 1.5 {
+        vehicle_glass(s, f);
+        return;
+    }
     if material.params[3].w < 0.5 {
         // Running gear: its own colors, lifted out of the hull's shadow.
         (*s).emissive += (*s).color * vehicle_fill((*s).normal) * material.params[1].w;
@@ -261,19 +315,28 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, color * VEHICLE_GRIME, streak * VEHICLE_STREAK_DARKEN / (1.0 - VEHICLE_GRIME.g));
 
     // Dust and mud thrown up by the tracks: a broken, splashed line.
-    let dusty = smoothstep(0.24, 0.56, low + (grime - 0.5) * 0.35) * VEHICLE_DUST_STRENGTH;
+    let dusty = smoothstep(0.24, 0.56, low + (grime - 0.5) * 0.6) * VEHICLE_DUST_STRENGTH;
     let muddy = smoothstep(0.6, 0.84, low + (grime - 0.5) * 0.45) * VEHICLE_MUD_STRENGTH;
-    color = mix(color, VEHICLE_DUST * (0.8 + 0.4 * grime), dusty);
+    let luma = vec3f(0.2126, 0.7152, 0.0722);
+    let ground = frame.ground_color.rgb;
+    let ground_level = dot(ground, luma);
+    let local_dust = ground * (dot(VEHICLE_DUST, luma) / max(ground_level, 1e-4));
+    let local_share = select(0.0, VEHICLE_DUST_LOCAL, atmosphere_on() && ground_level > 1e-4);
+    let dust = mix(VEHICLE_DUST, local_dust, local_share);
+    color = mix(color, dust * (0.8 + 0.4 * grime), dusty);
     color = mix(color, VEHICLE_MUD, muddy);
     let dirt = max(dusty, muddy);
 
-    // Chips to bare steel along convex edges and chamfers (a few low on the hull),
+    // Chips to bare steel along convex edges of broad plates (a few low on the hull),
     // where the chip field dips under the spot's exposure, with a darker rim of
     // lifted paint.
     let resolved = 1.0 - smoothstep(VEHICLE_CHIP_PIXEL_FROM, VEHICLE_CHIP_PIXEL_TO, pixel);
-    let exposure = (edges.near_edge * 0.4 + chamfer * 0.05 + low * 0.05) * (1.0 - dirt * 0.6) * resolved;
+    let plate = smoothstep(VEHICLE_CHIP_PLATE_FROM, VEHICLE_CHIP_PLATE_TO, edges.narrowest);
+    let exposure = (edges.near_edge * 0.26 + low * 0.04) * (1.0 - dirt * 0.6) * resolved * plate;
     let chip = 1.0 - smoothstep(exposure - 0.03, exposure, wear);
-    let chip_rim = (1.0 - smoothstep(exposure, exposure + 0.07, wear)) * (1.0 - chip);
+    // The rim only rings real chips: where nothing is exposed it would darken the
+    // chip field's lowest spots into specks over the whole panel.
+    let chip_rim = (1.0 - smoothstep(exposure, exposure + 0.07, wear)) * (1.0 - chip) * smoothstep(0.0, 0.05, exposure);
     color *= 1.0 - chip_rim * 0.4;
     color = mix(color, material.params[3].rgb * (0.75 + 0.5 * grime), chip);
 
