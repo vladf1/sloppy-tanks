@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { EngineEvent } from "../src/game/engine-api";
 import {
   activeEffects,
+  damageEdgePoint,
   damageRingPlacement,
   deathCause,
   deathReport,
@@ -93,7 +94,7 @@ test("the respawn card tags the killer's tank and tally when the scoreboard know
   });
 });
 
-test("the damage ring wraps the tank overhead and circles the reticle in first person", () => {
+test("the damage ring wraps the tank overhead and opens to the screen edge in first person", () => {
   assert.deepEqual(damageRingPlacement({ x: 0.5, y: -0.5 }), {
     left: "75.00%",
     top: "75.00%",
@@ -102,6 +103,10 @@ test("the damage ring wraps the tank overhead and circles the reticle in first p
   // Off-screen positions stay on the screen.
   assert.equal(damageRingPlacement({ x: 3, y: 0 }).left, "100.00%");
   assert.deepEqual(damageRingPlacement(null), { left: "50%", top: "50%", edge: true });
+  // Straight up is the top edge's middle; a quarter turn clockwise is the right edge.
+  assert.deepEqual(damageEdgePoint(0), { x: "50.0%", y: "0.0%" });
+  assert.deepEqual(damageEdgePoint(Math.PI / 2), { x: "100.0%", y: "50.0%" });
+  assert.deepEqual(damageEdgePoint(Math.PI / 4), { x: "100.0%", y: "0.0%" });
 });
 
 test("kill feed names the viewer as YOU and an ownerless kill as the yard", () => {

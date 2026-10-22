@@ -240,8 +240,8 @@ export class UI {
     tank.setAttribute("aria-hidden", "true");
     slot.replaceChildren(tank);
   }
-  /** Re-seats a showing damage ring after the view changes (first person rings the reticle
-   * instead), without waiting for the next HUD frame. */
+  /** Re-seats a showing damage ring after the view changes (first person opens it to the
+   * screen's edges), without waiting for the next HUD frame. */
   replaceDamageRing(): void {
     const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
     if (!indicator.hidden) {

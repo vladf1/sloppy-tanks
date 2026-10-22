@@ -37,8 +37,7 @@ use super::PRESENTATION_EFFECTS;
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
 use super::hud::{
-    BAR_FADE_RATE, BarTrail, approach, bar_role, bar_scale, health_bar_state, protection_meters,
-    spawn_pulse,
+    BAR_FADE_RATE, BarTrail, approach, bar_scale, health_bar_state, protection_meters, spawn_pulse,
 };
 use super::model_catalog::{self, CoverModel, SceneryMover, SceneryWater, TreeParts, cover_key};
 use super::models::{self as own, joint};
@@ -1826,11 +1825,6 @@ impl Presentation {
         let seat_wanted = self.rig.seat_wanted;
         let look_yaw = self.rig.first_person.yaw;
         let playing = state.match_state.phase == MatchPhase::Playing;
-        let viewer_team = state
-            .tanks
-            .iter()
-            .find(|tank| tank.id == state.viewer_id)
-            .map(|tank| tank.team);
         for tank in &state.tanks {
             // Reinforcements arrive after reset; build their visuals on first sight.
             let rebuild = self
@@ -1976,9 +1970,9 @@ impl Presentation {
                     Some(bar.trail.with_scale(Vec3::new(trail as f32, 1.0, 1.0))),
                 );
             }
-            let role = bar_role(viewer, tank.team, viewer_team) as usize;
+            let tone = health.tone as usize;
             for (index, fill) in bar.fills.iter().enumerate() {
-                let shown = index == role && health.ratio > 0.0;
+                let shown = index == tone && health.ratio > 0.0;
                 renderer.set_node_visible(view.bar, fill.index, shown);
                 if shown {
                     renderer.set_node_transform(

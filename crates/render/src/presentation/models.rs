@@ -25,13 +25,13 @@ use sloppy_core::scene::{Effect, Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
-use super::hud::{ALLY_BAR_COLOR, ENEMY_BAR_COLOR, METER_LOW_Y, OWN_BAR_COLOR};
+use super::hud::{CRITICAL_COLOR, HEALTHY_COLOR, METER_LOW_Y, WARNING_COLOR};
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 
 /// Joint names.
 pub mod joint {
     /// Tank bar hull fill, one per health color; scaled along x by the ratio.
-    pub const BAR_FILLS: [&str; 3] = ["bar-fill-own", "bar-fill-ally", "bar-fill-enemy"];
+    pub const BAR_FILLS: [&str; 3] = ["bar-fill-high", "bar-fill-mid", "bar-fill-low"];
     /// The dark warm chunk a hit took, trailing the fill down; scaled along x.
     pub const BAR_TRAIL: &str = "bar-trail";
     pub const BAR_RANKS: [&str; 3] = ["bar-rank-1", "bar-rank-2", "bar-rank-3"];
@@ -63,10 +63,10 @@ pub const REFILL_SEGMENTS: u32 = 48;
 pub const SPAWN_PROTECTION_COLOR: u32 = 0xffdf86;
 /// The hull fill's full width and height; the track and rim frame it.
 const BAR_WIDTH: f64 = 1.7;
-const BAR_FILL_HEIGHT: f64 = 0.22;
+const BAR_FILL_HEIGHT: f64 = 0.18;
 /// The bar's outer width, which presentation keeps to a share of the screen.
 pub const BAR_RIM_WIDTH: f64 = 1.84;
-const BAR_RIM_HEIGHT: f64 = 0.36;
+const BAR_RIM_HEIGHT: f64 = 0.32;
 /// Hull segments, as the page HUD's bar shows them.
 const BAR_SEGMENTS: usize = 4;
 const METER_FILL_WIDTH: f64 = 1.34;
@@ -203,8 +203,8 @@ fn hud_paint(color: u32, opacity: f32) -> Arc<Material> {
 
 /// `createTankBar(team)`: the hull bar with its three health colors, the shield
 /// and spawn meters, and one to three rank chevrons. Billboarded by the instance.
-/// The fill names whose tank it is (`BarRole`: own, ally, enemy), and the length alone
-/// tells the hull; a team-coloured pointer under the bar ties it to its tank. A
+/// The fill is green, amber or red like the page HUD's hull bar, whatever the team: a
+/// team-coloured pointer under the bar names the side and ties the bar to its tank. A
 /// dark rounded rim keeps it legible on bright grass and pale concrete; the empty track
 /// stays a visible navy so lost hull reads at a glance, a dark ember trail shows the
 /// chunk the last hit took, and a sheen and segment notches give the fill the page
@@ -268,7 +268,7 @@ pub fn tank_bar(team: Team) -> Node {
     );
     trail.visible = false;
     bar.children.push(trail);
-    let colors = [OWN_BAR_COLOR, ALLY_BAR_COLOR, ENEMY_BAR_COLOR];
+    let colors = [HEALTHY_COLOR, WARNING_COLOR, CRITICAL_COLOR];
     // A glassy highlight along the top of the fill, scaled with it.
     let sheen = arc(translated(
         rounded_rect(BAR_WIDTH - 0.03, 0.035, 0.0175),
