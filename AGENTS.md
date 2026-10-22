@@ -311,6 +311,13 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   room, so do not remove `reset_canvas_pacing` as dead code. Measure with Graphics
   pinned (localStorage `sloppy-graphics`) or `debug_set_scene_load`, since Auto
   otherwise changes what is being timed.
+- WebKit (Safari, every iPad) guards each WGSL loop with a volatile
+  forward-progress counter, so Metal cannot unroll it and arrays or vector lanes
+  indexed by the loop counter spill to memory: per-pixel loops ran 15-45x slower
+  than in Chrome (a village frame took 80 ms of GPU time against 4.7). The shader
+  specializer unrolls every literal- or const-bounded loop and a test fails if a
+  variant keeps one; write new loops that way. Chrome timings hide this, so time a
+  new or grown shader in Playwright WebKit at an iPad size too.
 - Pipelines compile on demand and stay cached; `prepare_step` and `warm_up`
   compile the arena's shadow, reflection and effect variants before the first
   gameplay frame. Validate moving cameras, first-use effects and mid-round
