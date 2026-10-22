@@ -98,17 +98,19 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let x = f.uv.x * 2.0 - 1.0;
         let sway = sin(along * 5.0 - time * 7.0 + seed) * 0.22 + sin(along * 11.0 - time * 13.0 + seed * 1.7) * 0.08;
         let lx = x + sway * along;
-        let half_width = (1.0 - pow(along, 1.3)) * (0.5 + 0.5 * smoothstep(0.0, 0.3, along)) * 0.9 + 0.04;
-        let licks = streak_noise(vec2f(lx * 3.2 + seed, along * 3.5 - time * 6.0 + seed * 0.3));
-        let fine = streak_noise(vec2f(lx * 7.0 - seed, along * 8.0 - time * 10.0));
-        let ragged = half_width - abs(lx) + (licks - 0.5) * 0.5 * along + (fine - 0.5) * 0.12;
-        let body = smoothstep(0.0, 0.16, ragged) * smoothstep(0.0, 0.06, along);
-        let inner = smoothstep(0.05, 0.45, ragged / max(half_width, 0.05));
-        let hot = 1.0 - smoothstep(0.0, 0.75, along + (licks - 0.5) * 0.4);
-        let root = vec3f(1.2, 0.38, 0.045);
-        let lick = vec3f(0.7, 0.07, 0.01);
-        (*s).color = mix(lick, root, hot) * (0.55 + 0.65 * inner) * (*s).color;
-        (*s).opacity *= body * (0.35 + 0.65 * hot) * (0.6 + 0.4 * inner);
+        // Soft-edged, it dissolves upward instead of ending in cut-out teeth.
+        let half_width = (1.0 - pow(along, 1.1)) * (0.45 + 0.55 * smoothstep(0.0, 0.3, along)) * 0.7 + 0.03;
+        let licks = streak_noise(vec2f(lx * 2.4 + seed, along * 2.6 - time * 5.0 + seed * 0.3));
+        let fine = streak_noise(vec2f(lx * 5.0 - seed, along * 6.0 - time * 9.0));
+        let ragged = half_width - abs(lx) + (licks - 0.5) * 0.36 * along + (fine - 0.5) * 0.08;
+        let body = smoothstep(-0.04, 0.32, ragged) * smoothstep(0.0, 0.1, along);
+        let dissolve = 1.0 - smoothstep(0.35, 1.0, along + (licks - 0.5) * 0.35);
+        let inner = smoothstep(0.05, 0.55, ragged / max(half_width, 0.05));
+        let hot = 1.0 - smoothstep(0.0, 0.7, along + (licks - 0.5) * 0.4);
+        let root = vec3f(1.25, 0.46, 0.07);
+        let lick = vec3f(0.8, 0.13, 0.02);
+        (*s).color = mix(lick, root, hot) * (0.5 + 0.7 * inner) * (*s).color;
+        (*s).opacity *= body * dissolve * (0.3 + 0.7 * hot) * (0.45 + 0.55 * inner);
         return;
     } else {
         // A tracer: a slim white-hot core at the head, the team's glow widening

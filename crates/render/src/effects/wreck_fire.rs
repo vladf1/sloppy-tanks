@@ -3,9 +3,10 @@
 //! everything near it, and a thick black column of smoke rises off the hull and
 //! leans away on the wind, thinning to a smoulder until the wreck is cleared. The
 //! turret tossed by the blast trails fire and smoke as it flies. Each wreck
-//! follows its hull fragment as it is thrown and settles. Analytic streams of
-//! puffs cycling through the shared puff pool plus a short trail history per
-//! wreck; bounded wreck slots.
+//! follows its hull fragment as it is thrown: while the hull tumbles it only
+//! trails smoke, and the fire takes hold once it has come to rest, burning up
+//! out of whatever side faces the sky. Analytic streams of puffs cycling through
+//! the shared puff pool plus short trail histories per wreck; bounded wreck slots.
 
 use glam::{Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
@@ -16,14 +17,15 @@ use super::Flash;
 use super::explosions::{WIND, smoke_puff};
 use super::pool::PoolBuffer;
 use super::random::CosmeticRandom;
-use super::sparks::{EMBERS, Sparks, flame, ground_glow};
+use super::sparks::{EMBERS, Sparks, flame, glow, ground_glow};
 use crate::color::hex_to_linear;
 
 pub const MAX_BURNING_WRECKS: usize = 12;
 const SMOKE_PUFFS: usize = 10;
 const FLAME_PUFFS: usize = 3;
 const TRAIL_PUFFS: usize = 6;
-pub const PUFFS_PER_WRECK: usize = SMOKE_PUFFS + FLAME_PUFFS + TRAIL_PUFFS;
+/// The turret's trail and the tumbling hull's.
+pub const PUFFS_PER_WRECK: usize = SMOKE_PUFFS + FLAME_PUFFS + 2 * TRAIL_PUFFS;
 /// Flames burn this long; smoke keeps rising for longer.
 const BURN_SECONDS: f64 = 12.0;
 const SMOULDER_SECONDS: f64 = 24.0;
@@ -32,11 +34,12 @@ const SMOKE_CYCLE: f64 = 3.4;
 const FLAME_CYCLE: f64 = 0.62;
 /// The smoke column's height over a puff's trip (m).
 const COLUMN_HEIGHT: f64 = 7.5;
-/// Where flames burn on a hull, in its own frame (m): the engine deck, the open
-/// turret ring and a hatch, and how big each fire is (times the wreck's own
-/// variation).
+/// Where flames burn over a hull, along its length and across it in its own
+/// heading (m), how high over its centre they start whichever way up it lies,
+/// and how big each fire is (times the wreck's own variation).
 const FLAME_SPOTS: [[f32; 3]; FLAME_PUFFS] =
-    [[0.0, 0.3, -0.85], [0.1, 0.38, 0.1], [-0.45, 0.3, -0.35]];
+    [[0.0, 0.0, -0.85], [0.1, 0.0, 0.1], [-0.45, 0.0, -0.35]];
+const FLAME_HEIGHT: f32 = 0.42;
 const FLAME_SIZES: [f32; FLAME_PUFFS] = [1.0, 0.85, 0.6];
 /// Licks of flame per burning spot, and where each stands on the deck around
 /// it (m, in the hull's frame, times the fire's size).
@@ -49,6 +52,15 @@ const ANCHOR_SECONDS: f64 = 1.5;
 /// it is this young.
 const TRAIL_SAMPLE: f64 = 0.03;
 const TRAIL_SECONDS: f64 = 2.6;
+/// The hull counts as at rest below this speed (m/s), and the fire takes hold
+/// and dies back at these rates (1/s) as it settles or is thrown again.
+const REST_SPEED: f32 = 1.2;
+const CATCH_RATE: f64 = 1.6;
+const DOUSE_RATE: f64 = 5.0;
+/// A fire whose hull piece was never found takes hold this late (s).
+const UNFOUND_CATCH_SECONDS: f64 = 1.2;
+/// The fire's soft glow behind its tongues (diameter per flame size, m).
+const FLAME_GLOW: f32 = 1.7;
 /// A burning wreck spits a few embers this often (s).
 const EMBER_INTERVAL: f64 = 0.35;
 /// The fire's glow on the ground (m across) and its light.
@@ -84,10 +96,15 @@ struct Burner {
     /// The hull's pose, or the death's place until the hull is found.
     position: Vec3,
     rotation: Quat,
-    /// The turret's recent positions, newest first.
+    /// The turret's and the flying hull's recent positions, newest first.
     trail: [Vec3; TRAIL_PUFFS],
     trail_count: usize,
     trail_clock: f64,
+    hull_trail: [Vec3; TRAIL_PUFFS],
+    hull_trail_count: usize,
+    hull_trail_clock: f64,
+    /// 0 while the hull flies, rising to 1 once it has come to rest.
+    settled: f64,
     ember_clock: f64,
     /// This frame's fire strength and flicker, for its light.
     fire: f64,
@@ -111,6 +128,10 @@ impl Default for Burner {
             trail: [Vec3::ZERO; TRAIL_PUFFS],
             trail_count: 0,
             trail_clock: 0.0,
+            hull_trail: [Vec3::ZERO; TRAIL_PUFFS],
+            hull_trail_count: 0,
+            hull_trail_clock: 0.0,
+            settled: 0.0,
             ember_clock: 0.0,
             fire: 0.0,
         }
@@ -243,19 +264,60 @@ fn follow(burner: &mut Burner, state: &RenderState, dt: f64) {
     let find = |id: Option<u32>| {
         id.and_then(|id| state.fragments.iter().find(|fragment| fragment.id == id))
     };
+    let mut speed = 0.0;
     if let Some(hull) = find(burner.hull) {
-        (burner.position, burner.rotation) = fragment_pose(hull);
+        let (position, rotation) = fragment_pose(hull);
+        if dt > 0.0 {
+            speed = (position - burner.position).length() / dt as f32;
+        }
+        (burner.position, burner.rotation) = (position, rotation);
+        if speed >= REST_SPEED {
+            sample(
+                &mut burner.hull_trail,
+                &mut burner.hull_trail_count,
+                &mut burner.hull_trail_clock,
+                position,
+                dt,
+            );
+        }
     }
+    // Fire takes hold on a hull at rest and is blown out when it is thrown again.
+    let resting = match burner.hull {
+        Some(_) => speed < REST_SPEED,
+        None => burner.age >= UNFOUND_CATCH_SECONDS,
+    };
+    burner.settled = if resting {
+        (burner.settled + dt * CATCH_RATE).min(1.0)
+    } else {
+        (burner.settled - dt * DOUSE_RATE).max(0.0)
+    };
     if let Some(turret) = find(burner.turret) {
         let (position, _) = fragment_pose(turret);
-        burner.trail_clock += dt;
-        if burner.trail_count == 0 || burner.trail_clock >= TRAIL_SAMPLE {
-            burner.trail_clock = 0.0;
-            burner.trail.copy_within(0..TRAIL_PUFFS - 1, 1);
-            burner.trail_count = (burner.trail_count + 1).min(TRAIL_PUFFS);
-        }
-        burner.trail[0] = position;
+        sample(
+            &mut burner.trail,
+            &mut burner.trail_count,
+            &mut burner.trail_clock,
+            position,
+            dt,
+        );
     }
+}
+
+/// Keep `position` as the newest of a flight's samples, `TRAIL_SAMPLE` apart.
+fn sample(
+    trail: &mut [Vec3; TRAIL_PUFFS],
+    count: &mut usize,
+    clock: &mut f64,
+    position: Vec3,
+    dt: f64,
+) {
+    *clock += dt;
+    if *count == 0 || *clock >= TRAIL_SAMPLE {
+        *clock = 0.0;
+        trail.copy_within(0..TRAIL_PUFFS - 1, 1);
+        *count = (*count + 1).min(TRAIL_PUFFS);
+    }
+    trail[0] = position;
 }
 
 fn draw(
@@ -270,20 +332,26 @@ fn draw(
     let soot_high = hex_to_linear(SOOT_HIGH);
     let age = burner.age;
     let left = 1.0 - burner.cleared;
-    let fire = smoothstep(age, 0.2, 0.8)
+    let settled = smoothstep(burner.settled, 0.0, 1.0);
+    let fire = settled
         * (1.0 - smoothstep(age, BURN_SECONDS * 0.55, BURN_SECONDS))
         * left
         * if burner.burnout { 0.45 } else { 1.0 };
     let flicker = 0.8
         + 0.2 * (time * 13.0 + burner.seed * 40.0).sin() * (time * 7.3 + burner.seed * 9.0).sin();
     burner.fire = fire * flicker;
-    let smoke = smoothstep(age, 0.3, 1.2)
+    // The column stands over a wreck at rest; a flying hull trails its smoke.
+    let smoke = settled
         * (1.0 - smoothstep(age, SMOULDER_SECONDS * 0.55, SMOULDER_SECONDS))
         * left
         * (0.55 + 0.45 * (1.0 - smoothstep(age, BURN_SECONDS * 0.6, BURN_SECONDS)));
     let base = burner.position;
-    let deck = |spot: [f32; 3]| base + burner.rotation * Vec3::from(spot);
-    let top = deck([0.0, 0.4, -0.3]);
+    // Fires sit over the hull along its heading, on whichever side faces up:
+    // a wreck on its roof burns out of its belly, never out of the ground.
+    let forward = burner.rotation * Vec3::Z;
+    let heading = Quat::from_rotation_y(forward.x.atan2(forward.z));
+    let deck = |spot: [f32; 3]| base + heading * Vec3::from(spot) + Vec3::Y * FLAME_HEIGHT;
+    let top = deck([0.0, 0.0, -0.3]);
     // Each wreck burns its own way: how big its fires are and how its column
     // leans and billows.
     let vigour = 0.85 + 0.35 * burner.seed;
@@ -317,7 +385,14 @@ fn draw(
             (fire * (1.0 - a).powi(6) * 0.6) as f32,
         );
     }
-    trail(burner, puffs, soot);
+    trail(burner, &burner.trail, burner.trail_count, puffs, soot);
+    trail(
+        burner,
+        &burner.hull_trail,
+        burner.hull_trail_count,
+        puffs,
+        soot,
+    );
     if fire <= 0.0 {
         return;
     }
@@ -357,7 +432,7 @@ fn draw(
             let breathe = (time as f32 * (5.0 + kf * 1.7) + phase).sin();
             // Spread over the hull's own deck, so a fire fills the opening it
             // burns out of rather than standing in a row.
-            let spread = burner.rotation * Vec3::new(ox, 0.0, oz) * size;
+            let spread = heading * Vec3::new(ox, 0.0, oz) * size;
             let lean = up + side * ((kf - 1.0) * 0.2 + 0.1 * breathe);
             flame(
                 &mut sparks.records,
@@ -372,6 +447,14 @@ fn draw(
                 [r, g, b, (fire * (0.8 + 0.2 * flicker)) as f32],
             );
         }
+        // A soft heat glow behind the tongues gives the fire body, so it reads
+        // as a blaze rather than a row of cut-out licks.
+        glow(
+            &mut sparks.records,
+            at + Vec3::Y * (0.55 * size),
+            FLAME_GLOW * size,
+            [1.0, 0.42, 0.09, (fire * 0.32 * flicker) as f32],
+        );
     }
     burner.ember_clock += dt;
     if burner.ember_clock >= EMBER_INTERVAL {
@@ -391,14 +474,20 @@ fn draw(
     );
 }
 
-/// Fire and smoke streaming behind the tossed turret, burning out as it flies.
-fn trail(burner: &Burner, puffs: &mut PoolBuffer, soot: [f32; 3]) {
-    if burner.trail_count == 0 || burner.age >= TRAIL_SECONDS {
+/// Fire and smoke streaming behind a tossed piece, burning out as it flies.
+fn trail(
+    burner: &Burner,
+    points: &[Vec3; TRAIL_PUFFS],
+    count: usize,
+    puffs: &mut PoolBuffer,
+    soot: [f32; 3],
+) {
+    if count == 0 || burner.age >= TRAIL_SECONDS {
         return;
     }
     let fade = 1.0 - smoothstep(burner.age, TRAIL_SECONDS * 0.55, TRAIL_SECONDS);
     let hot = 1.0 - smoothstep(burner.age, 0.2, 0.8);
-    for (i, position) in burner.trail[..burner.trail_count].iter().enumerate() {
+    for (i, position) in points[..count].iter().enumerate() {
         let k = i as f64 / TRAIL_PUFFS as f64;
         let heat = if i == 0 { hot * 0.9 } else { 0.0 };
         smoke_puff(
@@ -467,7 +556,7 @@ mod tests {
     }
 
     #[test]
-    fn the_fire_follows_its_thrown_hull_and_the_turret_trails_smoke() {
+    fn a_thrown_hull_trails_smoke_and_catches_fire_once_at_rest() {
         let mut state = RenderState::default();
         state.elapsed = 10.0;
         let mut death = SimEvent::at(SimEventType::Death, 0.0, 0.0);
@@ -500,6 +589,15 @@ mod tests {
         assert_eq!((burner.hull, burner.turret), (Some(40), Some(41)));
         assert!((burner.position.x - 4.9).abs() < 1e-4);
         assert_eq!(burner.trail_count, TRAIL_PUFFS);
-        assert!(puffs.len() >= SMOKE_PUFFS + TRAIL_PUFFS);
+        assert_eq!(burner.hull_trail_count, TRAIL_PUFFS);
+        // In flight: trails only, no fire and no standing column.
+        assert_eq!(burner.fire, 0.0);
+        assert!(puffs.len() <= 2 * TRAIL_PUFFS);
+        for _ in 0..60 {
+            step(&mut fires, &state, &mut puffs);
+        }
+        let burner = &fires.burners[0];
+        assert!(burner.fire > 0.3, "the hull at rest burns");
+        assert!(puffs.len() >= SMOKE_PUFFS, "and smokes");
     }
 }
