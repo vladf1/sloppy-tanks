@@ -255,7 +255,7 @@ const OCCLUSION_LIT_LEVEL: f32 = 0.45;
 const OCCLUSION_IN_SUN: f32 = 0.55;
 const OCCLUSION_HUE: vec3f = vec3f(0.95, 1.0, 1.05);
 // The least light occlusion leaves anywhere.
-const OCCLUSION_FLOOR: f32 = 0.45;
+const OCCLUSION_FLOOR: f32 = 0.55;
 // The share of its own saturation the bloom keeps.
 const BLOOM_CHROMA: f32 = 0.6;
 // Display mid grey, the pivot of the contrast curve.

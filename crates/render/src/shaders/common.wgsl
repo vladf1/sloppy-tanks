@@ -397,7 +397,7 @@ fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
 // How much brighter than the cool haze the sunward glow is, and the most of the sky
 // behind thick haze takes on.
 const HAZE_SUN_BRIGHTENING: f32 = 0.2;
-const HAZE_SKY_MOST: f32 = 0.8;
+const HAZE_SKY_MOST: f32 = 0.45;
 
 // The share of the cool aerial tint thick haze keeps looking straight away from the sun.
 const HAZE_AWAY_COOL: f32 = 0.35;
@@ -419,9 +419,9 @@ fn sky_behind(ray: vec3f) -> vec3f {
 // The far haze layer thins up a slope at this share of the near layer's falloff, to
 // this share of its density on the highest crests.
 const FAR_HAZE_THINNING: f32 = 1.0;
-const FAR_HAZE_CREST_SHARE: f32 = 0.3;
+const FAR_HAZE_CREST_SHARE: f32 = 0.65;
 // The most the far layer hides: a distant range keeps this much of its own form.
-const FAR_HAZE_MOST: f32 = 0.62;
+const FAR_HAZE_MOST: f32 = 0.7;
 // Height in metres over which the low mist beyond the arena thins by e.
 const MIST_HEIGHT: f32 = 10.0;
 // Shares of the far plane's distance over which surfaces melt into the sky.
@@ -502,11 +502,11 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
 }
 
 // Ground-scale cloud shadow features per metre, and their drift in metres per second.
-const CLOUD_SHADOW_SCALE: f32 = 0.014;
+const CLOUD_SHADOW_SCALE: f32 = 0.018;
 const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
 // Where the shadow noise starts and completes a cloud, above the coverage.
-const CLOUD_SHADOW_LOW: f32 = 0.85;
-const CLOUD_SHADOW_HIGH: f32 = 1.25;
+const CLOUD_SHADOW_LOW: f32 = 1.0;
+const CLOUD_SHADOW_HIGH: f32 = 1.3;
 // Distances from the arena centre in metres over which cloud shadows fade out.
 const CLOUD_SHADOW_FAR: vec2f = vec2f(110.0, 200.0);
 

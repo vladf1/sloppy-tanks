@@ -110,13 +110,13 @@ const BLOCKER_BANDS: vec4f = vec4f(0.5, 1.75, 3.75, 6.5);
 // The filter radius (in units of the 7×7 tent) at contact and under far casters,
 // and the caster distances in metres over which it widens.
 const PENUMBRA_CONTACT_RADIUS: f32 = 0.55;
-const PENUMBRA_FAR_RADIUS: f32 = 2.4;
-const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 4.0);
+const PENUMBRA_FAR_RADIUS: f32 = 1.7;
+const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 5.0);
 // Sky the ground sees from inside a cast shadow: hard by its caster a wall or hull
 // hides much of the sky, so the shade is deepest there and opens toward the
 // shadow's tip; this share of the fill remains at contact, rising to all of it over
 // the caster distances in metres.
-const SHADOW_CONTACT_FILL: f32 = 0.72;
+const SHADOW_CONTACT_FILL: f32 = 0.85;
 const SHADOW_FILL_OPENING: vec2f = vec2f(0.3, 5.0);
 // Steepest receiver slope the search follows, metres of depth per texel, and the
 // depth gap it ignores, metres.
@@ -295,13 +295,6 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     }
     let sun = frame.sun_color.rgb * sunlit;
     add_direct_light(&reflected, frame.sun_direction.xyz, sun, v, n, diffuse, specular, roughness);
-    if atmosphere_on() {
-        // The sun's glint on wet ground and glossy paint eases toward a ceiling instead
-        // of blowing out: a camera looking toward the sun across puddles saw broad
-        // white sheets with bright rims where their gloss fades, rather than sparkle.
-        let glare = max(max(reflected.specular.r, reflected.specular.g), reflected.specular.b);
-        reflected.specular /= 1.0 + glare / SUN_GLARE_LIMIT;
-    }
     // The seated view looks along its own hull's deck at a grazing angle, where the
     // sky's Fresnel sheen and the sun's glint would bleach the paint to a pale sheet:
     // the nearest few metres reflect less of both and keep their paint.
@@ -319,6 +312,16 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
             let glint = clamp(dot(n, l), 0.0, 1.0) * brdf_ggx(l, v, n, vec3f(0.04), PAINT_GLINT_F90, PAINT_GLINT_ROUGHNESS);
             reflected.specular += sun * (glint * coat);
         }
+        // The sun's glint on wet ground and glossy paint eases toward a ceiling instead
+        // of blowing out: a camera looking toward the sun across puddles and damp
+        // concrete (whose gloss falls in the satin coat's band) saw broad white
+        // sheets with bright rims where their gloss fades, rather than sparkle.
+        // Satin ground (damp concrete, packed earth) facing up eases to a lower
+        // ceiling: the broad lobe of its sheen otherwise lit a whole damp patch as
+        // one pale sheet toward a low sun.
+        let glare = max(max(reflected.specular.r, reflected.specular.g), reflected.specular.b);
+        let satin_ground = smoothstep(0.8, 0.95, n.y) * smoothstep(0.3, 0.4, s.roughness);
+        reflected.specular /= 1.0 + glare / mix(SUN_GLARE_LIMIT, GROUND_GLARE_LIMIT, satin_ground);
     }
     for (var i = 0; i < 4; i++) {
         let light = frame.point_lights[i];
@@ -420,7 +423,12 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // and metals stop going dark outside the sun's highlight.
         let dot_nv = clamp(dot(n, v), 0.0, 1.0);
         let scale_bias = dfg(roughness, dot_nv);
-        let single = specular * scale_bias.x + scale_bias.y;
+        var single = specular * scale_bias.x + scale_bias.y;
+        if atmosphere_on() {
+            // Wet ground and puddles seen at a grazing angle would mirror the bright
+            // sky toward the sun as whole white sheets: open ground keeps a sheen.
+            single = min(single, vec3f(mix(1.0, GROUND_SHEEN_MOST, smoothstep(0.8, 0.95, n.y))));
+        }
         let single_energy = scale_bias.x + scale_bias.y;
         let missing_energy = 1.0 - single_energy;
         let average_fresnel = specular + (1.0 - specular) * 0.047619;
@@ -469,7 +477,8 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
 // coat's roughness and its Fresnel at grazing angles.
 const PAINT_GLINT: f32 = 0.45;
 // The level the sun's specular eases toward (`shade_standard`), against a sun of about 4.
-const SUN_GLARE_LIMIT: f32 = 1.0;
+const SUN_GLARE_LIMIT: f32 = 0.6;
+const GROUND_GLARE_LIMIT: f32 = 0.2;
 const PAINT_GLINT_ROUGHNESS: f32 = 0.22;
 const PAINT_GLINT_F90: f32 = 0.3;
 // Sky irradiance form (`shade_standard`): the sky's share of the fill follows
@@ -484,10 +493,10 @@ const SKY_SUN_SIDE: f32 = 0.22;
 const BOUNCE_FROM_BELOW: f32 = 0.8;
 // The share of the sky fill's blue a fully sunlit surface gives up (it keeps the
 // fill's brightness).
-const FILL_NEUTRAL_IN_SUN: f32 = 0.3;
+const FILL_NEUTRAL_IN_SUN: f32 = 0.9;
 // Saturation of the sky fill's share of a surface's light (1 = its plain color).
 const SHADE_SATURATION: f32 = 1.3;
-const EARTH_SHADE_SATURATION: f32 = 1.0;
+const EARTH_SHADE_SATURATION: f32 = 0.85;
 // Point lights' (blast flashes') extra strength with the atmosphere on, and the
 // share of their decay exponent they keep (a wider pool).
 const BLAST_LIGHT_GAIN: f32 = 3.4;
@@ -516,6 +525,8 @@ fn fire_light_hue(color: vec3f) -> vec3f {
 const VIEW_MODEL_NEAR: f32 = 4.0;
 const VIEW_MODEL_FAR: f32 = 8.0;
 const VIEW_MODEL_SHEEN_CUT: f32 = 0.75;
+// The most of the sky that upward-facing ground (puddles, wet concrete) reflects.
+const GROUND_SHEEN_MOST: f32 = 0.22;
 // Share of the drawn sky glossy finishes reflect.
 const ATMOSPHERE_REFLECTION: f32 = 0.45;
 // The lowest elevation of the drawn sky glossy finishes reflect.
