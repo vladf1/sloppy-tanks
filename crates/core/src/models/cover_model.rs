@@ -14,7 +14,7 @@ use super::building_kit::fieldstone_wall;
 use super::concrete_surfaces::concrete_wall;
 use super::crate_model::{CrateShape, cargo_crate};
 use super::harbor_models::{CargoShape, shipping_container};
-use super::house_model::house;
+use super::house_model::{house, house_heap};
 use super::model_primitives::{box_part, cylinder_part, put};
 use super::quarry_barriers::{dragon_tooth, steel_hedgehog};
 use super::quarry_surfaces::{RubbleStone, sandstone_footing, sandstone_rock, sandstone_rubble};
@@ -22,6 +22,7 @@ use super::timber_model::add_timber_parts;
 use super::tower_model::{rubble, tower};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
+use crate::sim::house_layout::{house_damage_stage, is_house_heap};
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
@@ -68,7 +69,8 @@ impl From<&RenderCover> for CoverShape {
 }
 
 /// `coverDamageStage(c)`: cargo splits at any damage and breaks at 35% health;
-/// timber uses [`timber_damage_stage`]; other kinds have one look.
+/// timber uses [`timber_damage_stage`] and cottages [`house_damage_stage`]; other
+/// kinds have one look.
 pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
     match kind {
         CoverKind::Cargo => {
@@ -81,12 +83,13 @@ pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
             }
         }
         CoverKind::Timber => timber_damage_stage(hp, max_hp),
+        CoverKind::House => house_damage_stage(hp, max_hp),
         _ => 0,
     }
 }
 
 /// `coverModel(c, detail, damageStage)`: rebuild it when [`cover_damage_stage`] or
-/// the timber hit count changes.
+/// the timber, crate or cottage hit count changes.
 pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Node {
     if c.kind == CoverKind::Tree {
         return tree_model(
@@ -120,7 +123,22 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
             },
         ),
         CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
-        CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, c.color),
+        // An intact cottage shows no marks, so shells change its look only at a
+        // damage stage and it keeps its place in the static covers' draws until then.
+        CoverKind::House => house(
+            group,
+            c.x,
+            c.z,
+            c.w,
+            c.d,
+            c.h,
+            damage_stage,
+            if damage_stage == 0 {
+                &[]
+            } else {
+                &c.timber_hits
+            },
+        ),
         CoverKind::Timber => {
             let parts = timber_parts(
                 &TimberWall {
@@ -152,6 +170,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
             }
         }
         CoverKind::Tower => tower(group, c.color),
+        CoverKind::Rubble if is_house_heap(c.h) => {
+            house_heap(group, c.x, c.z, c.w, c.d, c.debris_seed.unwrap_or(0.0));
+        }
         CoverKind::Rubble => rubble(group, c.x, c.z, c.color, c.debris_seed),
         CoverKind::Tree => unreachable!("trees return early"),
         CoverKind::Boundary if c.color == VILLAGE_WALL_COLOR => {

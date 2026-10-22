@@ -11,6 +11,7 @@ use super::crate_layout::{CrateBreak, CratePiece, CrateSection, crate_sections};
 use super::data::group;
 use super::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use super::debris_physics::{DebrisMaterial, debris_material, track_debris_contacts};
+use super::house_layout::{HouseDesign, HousePiece, PLINTH, wall_frames};
 use super::math::{Point3, Quat4, Random, Vec2};
 use super::physics::{
     convex_hull, from_rotation, from_vector, interaction_groups, to_rotation, to_vector, vector,
@@ -236,6 +237,8 @@ pub fn break_scenery(
         CoverKind::Tree => 9,
         CoverKind::Timber => 7,
         CoverKind::Cargo | CoverKind::Drum => 3,
+        // Cottages stood for good before they could fall: they have no legacy draws.
+        CoverKind::House => 0,
         _ => return false,
     };
     // Preserve the old fragment path's draws so cosmetic authoring cannot reshuffle seeded
@@ -372,6 +375,7 @@ pub fn break_scenery(
             );
         }
         CoverKind::Tower => topple_tower(simulation, &mut breakup),
+        CoverKind::House => collapse_house(simulation, &mut breakup),
         _ => return false,
     }
     if let Some(pose) = pose {
@@ -525,5 +529,166 @@ fn topple_tower(simulation: &mut Simulation, breakup: &mut Breakup) {
         let rigid_body = &mut simulation.world.bodies[body];
         rigid_body.set_linvel(vector(linear.x, linear.y, linear.z), true);
         rigid_body.set_angvel(vector(angular.x, angular.y, angular.z), true);
+    }
+}
+
+/// How fast a cottage's walls start to tip over their sills, and how much harder the
+/// wall facing away from the blast is thrown.
+const WALL_TIP: (f64, f64) = (1.6, 2.2);
+const WALL_BLOWN: f64 = 1.3;
+/// How fast the roof's slopes fold in at the ridge as they drop, and how fast
+/// they drop and slide in over the falling walls.
+const ROOF_FOLD: (f64, f64) = (0.9, 1.3);
+const ROOF_DROP: f64 = 0.2;
+const ROOF_SPREAD: f64 = 0.2;
+/// How fast the chimney topples off the roof.
+const CHIMNEY_TIP: (f64, f64) = (1.1, 1.7);
+/// How far the blast carries every piece along its direction (m/s).
+const BLAST_CARRY: f64 = 0.9;
+/// Rafters thrown loose from the roof: count, section and stain.
+const LOOSE_RAFTERS: usize = 4;
+const RAFTER_SECTION: f64 = 0.14;
+const RAFTER_COLOR: u32 = 0x9a7650;
+/// The chimney's brick, for its tint and dust.
+const CHIMNEY_BRICK: u32 = 0x9c4a32;
+/// Seconds a cottage's pieces lie where they fell before they sink away: long
+/// enough to read the collapse, short enough that the heap is soon all that is
+/// left to draw.
+const HOUSE_PIECE_LIFE: f64 = 3.0;
+
+/// Bring a cottage down into the parts its model is built from: the front and side
+/// walls tip outward over their sills like a house of cards, fast enough to fall clear of the
+/// roof they held up (the wall facing away from the blast is thrown hardest); the
+/// roof splits along the ridge and its slopes fold in as they drop onto them; the
+/// chimney topples off and a few rafters are thrown loose. The back wall crumbles
+/// in place into the heap `damage_cover` leaves.
+fn collapse_house(simulation: &mut Simulation, breakup: &mut Breakup) {
+    let cover = breakup.cover;
+    let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
+    let roof = design.roof();
+    let fall = breakup.cover.kick.unwrap_or_else(|| {
+        let angle = breakup.rng.range(0.0, PI * 2.0);
+        Vec2::new(angle.cos(), angle.sin())
+    });
+    // Motion is worked out in the build frame and carried into the world.
+    let fall = design.to_local(DVec3::new(fall.x, 0.0, fall.z));
+    let turn = Quat4::yaw(design.yaw());
+    let frames = wall_frames(design.w, design.d);
+    for shape in design.pieces() {
+        let piece = shape.piece;
+        let local: Vec<f32> = shape
+            .hull
+            .iter()
+            .flat_map(|p| (*p - shape.center).to_array())
+            .map(|v| v as f32)
+            .collect();
+        let (color, material) = match piece {
+            HousePiece::Chimney => (CHIMNEY_BRICK, DebrisMaterial::Concrete),
+            _ if piece.is_roof() => (design.style.roof, DebrisMaterial::Wood),
+            _ => (design.style.siding, DebrisMaterial::Wood),
+        };
+        let at = design.to_world(shape.center);
+        let index = breakup.piece_with(
+            simulation,
+            FragmentShape::Panel,
+            at.to_array(),
+            shape.size.to_array(),
+            Some(color),
+            material,
+            convex_hull(&local),
+        );
+        let fragment = &mut simulation.fragments[index];
+        fragment.house_piece = Some(piece);
+        fragment.house_id = Some(cover.id);
+        let body = fragment.body;
+        let wobble = DVec3::new(
+            breakup.rng.range(-PIECE_WOBBLE, PIECE_WOBBLE),
+            breakup.rng.range(-PIECE_WOBBLE, PIECE_WOBBLE),
+            breakup.rng.range(-PIECE_WOBBLE, PIECE_WOBBLE),
+        );
+        let (linear, angular) =
+            if let Some(wall) = HousePiece::ALL[..4].iter().position(|&p| p == piece) {
+                let (face, out, _, _) = frames[wall];
+                let mut tip = breakup.rng.range(WALL_TIP.0, WALL_TIP.1);
+                if out.dot(fall) > 0.5 {
+                    tip *= WALL_BLOWN;
+                }
+                let pivot = face - out * 0.1 + DVec3::Y * PLINTH;
+                let angular = DVec3::Y.cross(out) * tip + wobble;
+                (
+                    angular.cross(shape.center - pivot) + fall * BLAST_CARRY * 0.5,
+                    angular,
+                )
+            } else if piece.is_roof() {
+                let outward = DVec3::new(shape.center.x, 0.0, shape.center.z).normalize_or_zero();
+                let fold = breakup.rng.range(ROOF_FOLD.0, ROOF_FOLD.1);
+                (
+                    -DVec3::Y * ROOF_DROP + outward * ROOF_SPREAD + fall * BLAST_CARRY * 0.4,
+                    DVec3::Y.cross(-outward) * fold + wobble,
+                )
+            } else {
+                let away = DVec3::new(shape.center.x, 0.0, shape.center.z).normalize_or_zero();
+                let toward = if breakup.cover.kick.is_some() {
+                    fall
+                } else {
+                    away
+                };
+                let tip = breakup.rng.range(CHIMNEY_TIP.0, CHIMNEY_TIP.1);
+                (
+                    toward * 1.4 - DVec3::Y * 0.4,
+                    DVec3::Y.cross(toward) * tip + wobble,
+                )
+            };
+        let [linear, angular] = [linear, angular].map(|v| {
+            let world = design.to_world(v);
+            vector(world.x, world.y, world.z)
+        });
+        let rigid_body = &mut simulation.world.bodies[body];
+        rigid_body.set_rotation(to_rotation(turn), true);
+        rigid_body.set_linvel(linear, true);
+        rigid_body.set_angvel(angular, true);
+    }
+    // Rafters from under the roof, thrown loose across the slopes.
+    let length = (roof.eave_x * roof.eave_x + (roof.ridge - roof.eave_y).powi(2)).sqrt() * 0.75;
+    for i in 0..LOOSE_RAFTERS {
+        let side = if i % 2 == 0 { 1.0 } else { -1.0 };
+        let local = DVec3::new(
+            side * design.w * 0.22,
+            roof.wall - 0.25,
+            breakup.rng.range(-design.d * 0.3, design.d * 0.3),
+        );
+        let at = design.to_world(local);
+        let index = breakup.piece(
+            simulation,
+            FragmentShape::Beam,
+            at.to_array(),
+            [RAFTER_SECTION, RAFTER_SECTION, length],
+            Some(RAFTER_COLOR),
+            DebrisMaterial::Wood,
+        );
+        let body = simulation.fragments[index].body;
+        let lean = side * roof.pitch.atan();
+        let swing = breakup.rng.range(-0.4, 0.4);
+        let rotation = Quat4::from_euler_xyz(0.0, design.yaw() + PI / 2.0 + swing, lean);
+        let spin = DVec3::new(
+            breakup.rng.range(-3.0, 3.0),
+            breakup.rng.range(-2.0, 2.0),
+            breakup.rng.range(-3.0, 3.0),
+        );
+        let throw = design.to_world(DVec3::new(side * 1.5, 1.0, 0.0) + fall * BLAST_CARRY);
+        let rigid_body = &mut simulation.world.bodies[body];
+        rigid_body.set_rotation(to_rotation(rotation), true);
+        rigid_body.set_linvel(vector(throw.x, throw.y, throw.z), true);
+        rigid_body.set_angvel(vector(spin.x, spin.y, spin.z), true);
+        rigid_body.enable_ccd(true);
+    }
+    let life = HOUSE_PIECE_LIFE + DEBRIS_CLEANUP_SECONDS;
+    for fragment in simulation
+        .fragments
+        .iter_mut()
+        .filter(|fragment| breakup.pieces.contains(&fragment.id))
+    {
+        fragment.life = life;
+        fragment.expires_at = Some(simulation.elapsed + life);
     }
 }
