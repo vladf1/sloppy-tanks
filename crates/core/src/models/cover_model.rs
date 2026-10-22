@@ -17,7 +17,7 @@ use super::harbor_models::{CargoShape, shipping_container};
 use super::harbor_surfaces::harbor_parapet;
 use super::house_model::{house, house_heap};
 use super::model_primitives::{box_part, cylinder_part, put};
-use super::quarry_barriers::{bastion_wall, dragon_tooth, steel_hedgehog};
+use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
 use super::quarry_surfaces::{
     RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
     sandstone_rock, sandstone_rubble,
@@ -38,7 +38,7 @@ use crate::sim::types::CoverKind;
 /// Pine Village's boundary colour (`sim::arena::authored_layout`): its walls are
 /// built in fieldstone, other maps' boundaries in concrete.
 const VILLAGE_WALL_COLOR: u32 = 0xa68c68;
-/// Dusty Dig's boundary colour (`sim::quarry_layout`): its walls are bastion cells.
+/// Dusty Dig's boundary colour (`sim::quarry_layout`): its walls are cut sandstone blocks.
 const QUARRY_WALL_COLOR: u32 = 0xd2bd99;
 /// Harbor Havoc's boundary colour (`sim::harbor_layout`): its walls are the sea
 /// wall's parapet.
@@ -188,7 +188,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
             fieldstone_wall(group, c.w, c.h, c.d, c.x, c.z);
         }
         CoverKind::Boundary if c.color == QUARRY_WALL_COLOR => {
-            put(group, bastion_wall(c.w, c.h, c.d), 0.0, 0.0, 0.0);
+            put(group, cut_stone_wall(c.w, c.h, c.d), 0.0, 0.0, 0.0);
         }
         CoverKind::Boundary if c.color == HARBOR_WALL_COLOR => {
             put(group, harbor_parapet(c.w, c.h, c.d), 0.0, c.h / 2.0, 0.0);
