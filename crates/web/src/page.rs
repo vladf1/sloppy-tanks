@@ -205,10 +205,10 @@ fn multisampled(device: &str, setting: &str) -> bool {
 }
 
 /// The configuration both game types take: `{ seed?, assetBase, cssWidth?, cssHeight?,
-/// pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?, device?, framesInFlight?
-/// }`. `framesInFlight` runs frames only while fewer are on the GPU, for browsers that
-/// queue a WebGPU canvas's frames without holding animation frames back
-/// ([`FramePacing`]; 0, the default, leaves the pacing to the browser).
+/// pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?, device?,
+/// framesInFlight? }`. `framesInFlight` runs frames only while fewer are on the GPU,
+/// for browsers that queue a WebGPU canvas's frames without holding animation frames
+/// back ([`FramePacing`]; 0, the default, leaves the pacing to the browser).
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct ViewConfig {
