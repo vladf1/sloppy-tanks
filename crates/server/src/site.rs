@@ -1,7 +1,7 @@
 //! The game's page, scripts, engines and public assets, served from memory beside the
 //! rooms.
 //!
-//! The server image carries the site bundle `scripts/build-server-site.mjs` builds, and
+//! The server image carries the site bundle `scripts/server-site.mjs` builds, and
 //! `SITE_DIR` names it. Every file is read once at startup together with the Brotli and
 //! gzip copies the build stored beside it (`X.br`, `X.gz`), so a request only looks up a
 //! table and no request path ever reaches the filesystem. Vite names the files under

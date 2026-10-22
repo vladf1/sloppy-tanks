@@ -4,6 +4,7 @@ import { dirname, resolve } from "node:path";
 import { build, minify, type Plugin } from "vite";
 import { mapChoiceMarkup } from "./map-picker-markup.ts";
 import { buildLabel, pageBuild } from "./page-health.ts";
+import { BUILD_LABEL_PLACEHOLDER } from "./server-site.mjs";
 
 const entry = fileURLToPath(new URL("../src/main.ts", import.meta.url));
 /** The modules the startup script imports lazily: each is a build entry of its own, and an
@@ -50,7 +51,10 @@ export function startupHtml(base: string): Plugin {
           );
           const setup = markup
             .replaceAll("%BASE_URL%", base)
-            .replace("%BUILD_LABEL%", buildLabel(pageBuild()))
+            .replace(
+              "%BUILD_LABEL%",
+              process.env.SLOPPY_SERVER_SITE ? BUILD_LABEL_PLACEHOLDER : buildLabel(pageBuild()),
+            )
             .replace(
               /<!-- map-choice:(\w+):([\w-]+) -->/g,
               (_comment, name: string, label: string) => mapChoiceMarkup(name, label),

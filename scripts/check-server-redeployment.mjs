@@ -1,10 +1,13 @@
 import { contentVersion, protocolVersion, serverBuild } from "./content-version.mjs";
+import { buildServerSite } from "./server-site.mjs";
 import { gameServer } from "./servers.mjs";
 
 /** Does this checkout need a server redeploy? Compares what its builds would stamp
  * with what the live server reports: the protocol and content version decide whether
  * clients built from here can join, and the server build catches server-only changes
  * (crates/server/, bundled dependencies, build settings) that leave clients compatible.
+ * `--site` also builds the server's copy of the page (scripts/server-site.mjs, after
+ * `pnpm run wasm`) and compares its site build, which only a build can tell.
  * Exit 0: nothing to deploy; 1: redeploy needed; 2: the server did not answer.
  * It also reports whether the live page that uses this server can join it; a page that
  * cannot is a warning, since the page deploy may simply not have caught up yet.
@@ -14,6 +17,7 @@ const HEALTH_TIMEOUT_MS = 10_000;
 const PRODUCTION_PAGE_URL = "https://sloppy-tanks.fridman.me/";
 const DEV_PAGE_URL = "https://sloppy-tanks-dev.fridman.me/";
 const dev = process.argv.includes("--dev");
+const compareSite = process.argv.includes("--site");
 // The address players use, as they reach it.
 const endpoint = process.env.SLOPPY_SERVER_URL ?? gameServer(dev).url;
 const pageUrl =
@@ -34,6 +38,7 @@ const local = {
   protocol: await protocolVersion(),
   contentVersion: await contentVersion(),
   serverBuild: await serverBuild(),
+  siteBuild: compareSite ? await buildServerSite() : undefined,
 };
 let live;
 try {
@@ -45,6 +50,7 @@ try {
 const describe = (side) =>
   (side.version ? `v${side.version}, ` : "") +
   `protocol ${side.protocol}, content ${side.contentVersion}, server build ${side.serverBuild}` +
+  (side.siteBuild ? `, site ${side.siteBuild}` : "") +
   (side.commit ? `, commit ${side.commit}${side.dirty ? " (local changes)" : ""}` : "") +
   (side.builtAt ? `, built ${side.builtAt}` : "");
 console.log(`checkout ${describe(local)}`);
@@ -78,6 +84,16 @@ if (!compatible) {
       "here can already join.",
   );
   process.exitCode = 1;
+} else if (compareSite && live.siteBuild !== local.siteBuild) {
+  console.log(
+    "Redeploy needed for the page the server serves: once this is on main and CI has\n" +
+      "promoted its image, run `pnpm run server:update` (or let auto-update).",
+  );
+  process.exitCode = 1;
 } else {
-  console.log("Up to date: no server redeploy needed.");
+  console.log(
+    compareSite
+      ? "Up to date: no server redeploy needed."
+      : "Up to date: no server redeploy needed (--site also compares the page it serves).",
+  );
 }

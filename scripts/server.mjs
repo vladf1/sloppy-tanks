@@ -3,7 +3,8 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { contentVersion, serverBuild } from "./content-version.mjs";
+import { contentVersion, imageBuild, serverBuild, siteBuild } from "./content-version.mjs";
+import { SERVER_SITE_DIRECTORY } from "./server-site.mjs";
 import { gameServer, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 
 /** Operate a game server machine (deploy/servers.json) over SSH; `--dev` picks the dev
@@ -137,8 +138,11 @@ async function deploy() {
   console.log(
     `Deploying the ${server.role} server (content ${version}, build ${build}) to ${server.ssh}`,
   );
-  const image = `${SERVER_IMAGE}:${build}`;
+  // The image script builds the page the server serves (from the Wasm `pnpm run wasm`
+  // built), which names the image beside the server build.
   run("node", ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE]);
+  const site = await siteBuild(SERVER_SITE_DIRECTORY);
+  const image = `${SERVER_IMAGE}:${imageBuild(build, site)}`;
   await loadImageOnServer(image);
   // Restarts the server, ending live rooms (clients get room-reset from the graceful
   // shutdown), and rolls back if the new image does not report healthy.
@@ -146,8 +150,11 @@ async function deploy() {
   // The build, not only the content version, so a server-only change cannot pass against
   // the previous process.
   await waitForHealth(
-    (status) => status.contentVersion === version && status.serverBuild === build,
-    `content ${version}, build ${build}`,
+    (status) =>
+      status.contentVersion === version &&
+      status.serverBuild === build &&
+      status.siteBuild === site,
+    `content ${version}, build ${build}, site ${site}`,
   );
   console.log(`The ${server.role} server is live at ${server.url}`);
 }

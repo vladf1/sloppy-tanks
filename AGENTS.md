@@ -370,8 +370,11 @@ offline.
   resolve to and `rust-toolchain.toml` (list them with
   `node scripts/content-version.mjs`); `crates/render`, `crates/web` and the page
   shell are outside it. Each machine runs its server as a container image under
-  Podman, behind Caddy's own container: CI pushes one image per server build and,
-  after the Pages deploy, moves `:production` to main's. Production then needs
+  Podman, behind Caddy's own container: CI pushes one image per server build and
+  page and, after the Pages deploy, moves `:production` to main's. The image carries
+  `dist-server/`, the server's own copy of the game page (`scripts/server-site.mjs`),
+  which it serves at `/` beside Pages; that copy's bytes name the image, so they must
+  not depend on the commit (the server fills in Battle Setup's build line). Production then needs
   `pnpm run server:update` unless auto-update is on (`server:status` shows it); ask before running it.
   `pnpm run server:deploy` from `main` is the SSH fallback when CI or the
   registry cannot serve. Never run `server:auto-update`, `server:rollback` or
@@ -381,13 +384,14 @@ offline.
   the dev server) compares this checkout with a live server's `/health` and
   exits non-zero when a redeploy is needed. It tells clients-refused (content
   hash) apart from server-only changes (`serverBuild`: `crates/server`, its
-  dependencies, build settings). Run it after a merge instead of judging by
+  dependencies, build settings); `--site` builds and compares the page the server
+  serves. Run it after a merge instead of judging by
   which directories changed.
   Change the machines only through `deploy/servers.json`, `deploy/server/` and the
   `server:*` scripts described in `crates/server/README.md`. The traffic bots in
   `bots/` are a Cloudflare Worker that targets the production server;
   `pnpm run bots:deploy` publishes them separately.
-- Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
+- Keep `dist-dev/` and `dist-server/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
   suitable HTML entries there and smoke-test their deployed assets and
   behavior; asset generators are automation tools, not test pages.
@@ -398,8 +402,8 @@ offline.
   `version` in package.json, bumped by hand, plus the Pages workflow's
   `github.run_number`, so only main's deploys have the fourth part. `/health` reports
   it as `version`, beside `protocol`, the number clients and the traffic bots read. The server image carries the release of the first main build that
-  shipped its server build; later builds only retag it, so the VPS does not restart
-  for commits that leave the server unchanged.
+  shipped its server build and page; later builds only retag it, so the VPS does not
+  restart for commits that leave both unchanged.
 - After publishing, check the game, test directory, representative fixtures,
   and build metadata through the public URL. A successful upload is not a
   browser check. Dev responses request `noindex`; this is a public site, not

@@ -49,6 +49,7 @@
     "deploy:dev": "pnpm run check && pnpm run build:dev && node scripts/deploy-dev.mjs",
     "server:build": "node scripts/build-server.mjs",
     "server:dev": "node scripts/build-server.mjs && ./target/server/sloppy-server",
+    "server:build-site": "node scripts/server-site.mjs",
     "server:build-docker-image": "node scripts/build-server-image.mjs",
     "server:deploy-check": "cargo fmt -p sloppy-core -p sloppy-server --check && cargo clippy --locked -p sloppy-core -p sloppy-server --all-targets -- -D warnings && cargo test --locked -p sloppy-core -p sloppy-server",
     "server:deploy": "pnpm run server:deploy-check && node scripts/server.mjs deploy",

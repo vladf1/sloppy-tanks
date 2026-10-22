@@ -26,10 +26,10 @@ STATE=/var/lib/sloppy-tanks
 PINNED=sloppy-tanks-pinned
 LABELS=me.fridman.sloppy-tanks
 HEALTH_TIMEOUT_SECONDS=60
-# Auto-update waits for rooms to empty, but not forever. A server-only change can wait out
-# a room's four-hour lifetime; after a content change the live site already sends new
-# visitors a reload message, so it waits only briefly.
-MAX_WAIT_SERVER_ONLY_SECONDS=14400
+# Auto-update waits for rooms to empty, but not forever. A change to the server or the
+# page it serves can wait out a room's four-hour lifetime; after a content change the
+# live site already sends new visitors a reload message, so it waits only briefly.
+MAX_WAIT_COMPATIBLE_SECONDS=14400
 MAX_WAIT_CONTENT_SECONDS=600
 
 usage() {
@@ -63,7 +63,7 @@ image_id() {
   id=$(podman image inspect --format '{{.Id}}' "$1") && echo "sha256:${id#sha256:}"
 }
 describe() {
-  echo "${1:0:19} (v$(label "$1" $LABELS.release), server build $(label "$1" $LABELS.server-build), content $(label "$1" $LABELS.content-version), commit $(label "$1" org.opencontainers.image.revision))"
+  echo "${1:0:19} (v$(label "$1" $LABELS.release), server build $(label "$1" $LABELS.server-build), site $(label "$1" $LABELS.site-build), content $(label "$1" $LABELS.content-version), commit $(label "$1" org.opencontainers.image.revision))"
 }
 hold() { echo "$1 at $(describe "$2") on $(date -u +%FT%TZ)" >"$hold_file"; }
 
@@ -93,14 +93,17 @@ remove_old_images() {
 }
 
 # /health reports the stamps of the process that answers, so a match means the new
-# container, not the one it replaced, is serving.
+# container, not the one it replaced, is serving. An image from before the server served
+# its page has no site build to compare.
 healthy() {
-  local build content body
+  local build content site body
   build=$(label "$1" $LABELS.server-build)
   content=$(label "$1" $LABELS.content-version)
+  site=$(label "$1" $LABELS.site-build)
   for ((waited = 0; waited < HEALTH_TIMEOUT_SECONDS; waited += 2)); do
     body=$(curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" 2>/dev/null | tr -d ' \n' || true)
-    if [[ $body == *"\"contentVersion\":\"$content\""* && $body == *"\"serverBuild\":\"$build\""* ]]; then
+    if [[ $body == *"\"contentVersion\":\"$content\""* && $body == *"\"serverBuild\":\"$build\""* &&
+      (-z $site || $body == *"\"siteBuild\":\"$site\""*) ]]; then
       return 0
     fi
     sleep 2
@@ -163,7 +166,7 @@ auto() {
     echo "$new $now" >"$pending_file"
     echo "New production image $(describe "$new")"
   fi
-  local max=$MAX_WAIT_SERVER_ONLY_SECONDS
+  local max=$MAX_WAIT_COMPATIBLE_SECONDS
   if [[ -z $current || $(label "$new" $LABELS.content-version) != "$(label "$current" $LABELS.content-version)" ]]; then
     max=$MAX_WAIT_CONTENT_SECONDS
   fi
