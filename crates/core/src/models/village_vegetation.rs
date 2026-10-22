@@ -24,7 +24,7 @@ use super::village_ground::{
     SHORTCUTS, VEGETABLE_ROW, farmed, polyline_distance, road_wear, vegetable_plots,
 };
 use super::village_landscape::{creek_at, creek_distance, valley_height_at};
-use super::village_roads::village_roads;
+use super::village_roads::{in_village_square, village_roads};
 use crate::sim::math::Random;
 
 /// Instance capacities of the tuft and flower meshes.
@@ -57,6 +57,9 @@ const CLUMP_REACH: f64 = 0.42;
 /// How high a tuft's root sits over the flat floor, so its blades never clip
 /// into the ground they spring from.
 const ROOT_LIFT: f64 = 0.02;
+/// How far round the village square's kerb tufts keep off (m): grass grows in
+/// its quiet joints in the shader, never as blades standing on the stone.
+const SQUARE_CLEARANCE: f64 = 0.3;
 /// Candidate drifts of tufts tried across the arena lawns.
 const LAWN_DRIFTS: usize = 2500;
 
@@ -259,9 +262,11 @@ impl Clearings {
     }
 
     fn blocks(&self, x: f64, z: f64) -> bool {
-        self.boxes
-            .iter()
-            .any(|[cx, cz, hw, hd]| (x - cx).abs() < *hw && (z - cz).abs() < *hd)
+        in_village_square(x, z, SQUARE_CLEARANCE)
+            || self
+                .boxes
+                .iter()
+                .any(|[cx, cz, hw, hd]| (x - cx).abs() < *hw && (z - cz).abs() < *hd)
             || self
                 .discs
                 .iter()
@@ -464,6 +469,10 @@ fn lawn_drifts(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
     }
 }
 
+/// How far past a road's painted edge the verge's tufts spill onto the dirt (m):
+/// a fringe hugging the turf's lip, not confetti across the road.
+const SPILL_REACH: f64 = 0.6;
+
 /// Grass lining both shoulders of every road and the foot of the perimeter wall,
 /// thickest at the edge and thinning into the meadow, in clumps.
 fn fringe(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
@@ -480,10 +489,10 @@ fn fringe(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
         // lawn, and spilling in ever sparser, smaller clumps a metre or two
         // out onto the dirt, so the turf never stops along one line.
         let wear = road_wear(x, z);
-        if !(-1.6..1.9).contains(&wear) || rng.next() < (-wear - 0.4).max(0.0) * 0.6 {
+        if !(-1.6..SPILL_REACH).contains(&wear) || rng.next() < (-wear - 0.4).max(0.0) * 0.6 {
             return;
         }
-        let spilled = wear.max(0.0) / 1.9;
+        let spilled = wear.max(0.0) / SPILL_REACH;
         if rng.next() < spilled.sqrt() * 1.3 {
             return;
         }
@@ -497,7 +506,7 @@ fn fringe(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
         let open = |tx: f64, tz: f64| {
             tx.abs() < ARENA - 0.25
                 && tz.abs() < ARENA - 0.25
-                && road_wear(tx, tz) < 1.9
+                && road_wear(tx, tz) < SPILL_REACH
                 && !clearings.blocks(tx, tz)
         };
         meadow.clump(rng, x, z, size, members, bloom, &open, &|_, _| 0.02);
