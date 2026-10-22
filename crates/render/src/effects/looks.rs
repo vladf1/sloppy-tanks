@@ -19,7 +19,8 @@ use super::laser::LASER_CAPACITY;
 use super::leaves::{MAX_LEAVES, leaf_mesh};
 use super::particles::{MAX_PARTICLES, shard_mesh};
 use super::pickups::{
-    MAX_PICKUP_EFFECTS, band_geometry, flash_geometry, glow_material, shockwave_geometry,
+    MAX_PICKUP_EFFECTS, RING_CAPACITY, band_geometry, flash_geometry, glow_material,
+    shockwave_geometry,
 };
 use super::pool::{PoolDesc, pool};
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
@@ -183,7 +184,7 @@ pub fn pool_descs() -> Vec<PoolDesc> {
         "pickup rings",
         shockwave_geometry(),
         glow_material(),
-        MAX_PICKUP_EFFECTS,
+        RING_CAPACITY,
     ));
     pools.push(PoolDesc::new(
         "pickup bands",
