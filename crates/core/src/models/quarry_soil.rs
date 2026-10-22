@@ -67,38 +67,6 @@ fn sample_accum(grid: &[f32], x: f64, z: f64) -> f64 {
         + at(i + 1, j + 1) * u * v
 }
 
-/// How much loose gravel lies at (x, z) on the work floor, 0..1: stony ground,
-/// graded spill beds and road windrows, buried under sheets of sand and packed
-/// out of the haul lanes. Follows the bake's own fields, so the scattered
-/// pebbles (`quarry_site_details`) land where the soil already reads gravelly.
-pub fn quarry_gravel_density(x: f64, z: f64) -> f64 {
-    let table = soil_noise();
-    let macro_field = noise(table, x * 0.065, z * 0.065);
-    let warp = (x * 0.021 + 1.7).sin() * (z * 0.023 - 0.6).sin();
-    let bands = (x * 0.045 + z * 0.031 + 1.2).sin() * (z * 0.052 - x * 0.013 + 0.4).sin();
-    let sand = smoothstep(macro_field + warp * 0.18 + bands * 0.1, 0.54, 0.68);
-    let rocky = 1.0 - smoothstep(macro_field - warp * 0.15, 0.27, 0.45);
-    let (road, windrow) = haul_road(table, x, z);
-    let spill = noise(table, x * 0.09 + 11.0, z * 0.09 - 5.0);
-    let gravel_bed = smoothstep(spill, 0.62, 0.74) * (1.0 - road) * (1.0 - sand);
-    (rocky * 0.5 + gravel_bed + windrow * 0.6 - sand * 0.6 - road * 0.4).clamp(0.0, 1.0)
-}
-
-/// The haul loop and crossing at (x, z): graded bed (0..1) and its windrow.
-fn haul_road(table: &[f32], x: f64, z: f64) -> (f64, f64) {
-    let qx = x.abs() - 39.0;
-    let qz = z.abs() - 39.0;
-    let loop_distance = (js_hypot(&[qx.max(0.0), qz.max(0.0)]) + qx.max(qz).min(0.0) - 12.0).abs();
-    let crossing = (z - (x * 0.055).sin() * 1.6).abs();
-    let distance = loop_distance.min(crossing);
-    if distance >= 9.5 {
-        return (0.0, 0.0);
-    }
-    let edge = (noise(table, x * 0.42, z * 0.42) - 0.5) * 1.3;
-    let w = (distance + edge * 0.7 - 6.1) / 0.8;
-    (1.0 - smoothstep(distance + edge, 4.2, 5.5), (-w * w).exp())
-}
-
 /// Loader tyre tracks across the open floor at (x, z): two wandering paths,
 /// each a pair of ruts 1.9 m apart, 0..1 with a pressed tread.
 fn loader_tracks(x: f64, z: f64) -> f64 {

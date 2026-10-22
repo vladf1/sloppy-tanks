@@ -13,6 +13,8 @@ const SOIL_COBBLE_CELL = 0.9;
 const SOIL_STONE_CELL = 0.42;
 const SOIL_GRIT_CELL = 0.15;
 const SOIL_PLATE_CELL = 0.55;
+// Size of the patches loose stone gathers in, metres.
+const SOIL_SPILL_CELL = 5.5;
 // Relief of the bake's own shading (ruts, windrows, ripples), as bump scale.
 const SOIL_BAKE_RELIEF = 2.6;
 
@@ -27,10 +29,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let turned = vec2f(p.x * 0.6 + p.y * 0.8, p.y * 0.6 - p.x * 0.8) / 11.7;
     let far = textureSample(extra_texture0, extra_sampler0, turned);
     let detail = near * (dot(far.rgb, LUMA) + 0.327) / (0.327 * 0.327 * 2.0);
-    // Stones gather where the bake is gravelly and thin out on fine soil.
-    let stones = quarry_pebbles(p, SOIL_STONE_CELL, stony * stony * 0.36, footprint, 3.0);
-    let grit = quarry_pebbles(p, SOIL_GRIT_CELL, 0.06 + stony * 0.4, footprint, 11.0);
-    let cobbles = quarry_pebbles(p, SOIL_COBBLE_CELL, 0.02 + stony * 0.11, footprint, 23.0);
+    // Stones gather where the bake is gravelly and thin out on fine soil, and
+    // lie in drifts and spills rather than an even sprinkle: a few metres of
+    // ground hold most of them, the sand between almost none.
+    let gather = quarry_value(p / SOIL_SPILL_CELL) * 0.65 + quarry_value(p / (SOIL_SPILL_CELL * 0.37) + 7.0) * 0.35;
+    let spill = quarry_smoothstep(0.38, 0.72, gather + stony * 0.25);
+    let stones = quarry_pebbles(p, SOIL_STONE_CELL, (stony * stony * 0.3 + 0.04) * spill * 1.6, footprint, 3.0);
+    let grit = quarry_pebbles(p, SOIL_GRIT_CELL, (0.03 + stony * 0.4) * mix(0.4, 1.4, spill), footprint, 11.0);
+    let cobbles = quarry_pebbles(p, SOIL_COBBLE_CELL, (0.004 + stony * 0.1) * spill * 1.8, footprint, 23.0);
     // Mud plates only where the bake dried some; their crack depth joins the relief.
     var cracks = vec2f(0.0);
     if dried > 0.02 {

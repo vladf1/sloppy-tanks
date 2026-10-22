@@ -31,11 +31,19 @@ use super::quarry_ramp::{
 };
 use super::quarry_scree::quarry_scree;
 use super::quarry_site_details::quarry_site_details;
-use super::quarry_surfaces::{RubbleStone, sand_drift_material, sandstone_rock, sandstone_rubble};
+use super::quarry_surfaces::{
+    RubbleStone, sand_drift_material, sandstone_rock, sandstone_rubble, sandstone_scatter,
+};
 use super::quarry_terrain::{QUARRY_BANK_TOP, quarry_ground_drop, quarry_terrain, soil_uvs};
 
 /// The machinery apron floor, where the lowest cuts and their talus stand.
 const APRON: f64 = -1.8;
+/// Talus stones per metre of wall toe.
+const TALUS_STONES: f64 = 2.1;
+/// Length of one run of talus stones along a wall, in metres: about one cell.
+const TALUS_RUN: f64 = 40.0;
+/// Loose rocks strewn beyond the boundary wall.
+const BOUNDARY_ROCKS: u32 = 40;
 
 /// `spoilSurface(geometry, fresh)`: map world x/z onto the soil bake and warm the
 /// spoil toward the rock above. Fresh crushed stone is paler still.
@@ -236,7 +244,6 @@ pub fn quarry_scenery() -> Node {
     // soil so its batch stays apart from the scree mounds (batches group by Arc).
     let spoil = Arc::new((*soil).clone());
     let mut talus_rng = Random::new(2741.0);
-    let mut talus_stones = Vec::new();
     for strip in quarry_talus_strips() {
         let mut talus = quarry_talus_geometry(strip.x0, strip.x1, strip.seed);
         talus.rotate_y(strip.rot_y);
@@ -245,13 +252,17 @@ pub fn quarry_scenery() -> Node {
         geology
             .children
             .push(shadow_receiver(Arc::new(talus), spoil.clone()));
+        // Stones in runs along the wall, each run landing in its own scenery cell.
         let (cos, sin) = (strip.rot_y.cos(), strip.rot_y.sin());
-        let count = js_round((strip.x1 - strip.x0) * 3.4) as usize;
+        let count = js_round((strip.x1 - strip.x0) * TALUS_STONES) as usize;
+        let runs = ((strip.x1 - strip.x0) / TALUS_RUN).ceil() as usize;
+        let mut stones: Vec<Vec<RubbleStone>> = vec![Vec::new(); runs];
         for _ in 0..count {
             let t = talus_rng.range(0.03, 0.95);
             let along = talus_rng.range(strip.x0, strip.x1);
             let p = quarry_talus_point(along, t, strip.seed);
-            let boulder = t < 0.35 && talus_rng.next() < 0.08;
+            // Big blocks roll furthest; the fines stay up against the face.
+            let boulder = t < 0.35 && talus_rng.next() < 0.1;
             let size = if boulder {
                 talus_rng.range(0.65, 1.3)
             } else {
@@ -261,7 +272,8 @@ pub fn quarry_scenery() -> Node {
             let d = size * talus_rng.range(0.7, 1.2);
             let rot_y = talus_rng.range(-PI, PI);
             let shade = talus_rng.range(0.74, 1.02);
-            talus_stones.push(RubbleStone {
+            let run = (((along - strip.x0) / TALUS_RUN) as usize).min(runs - 1);
+            stones[run].push(RubbleStone {
                 x: strip.x + p.x * cos + p.z * sin,
                 y: APRON + p.y + size * 0.1,
                 z: strip.z - p.x * sin + p.z * cos,
@@ -272,6 +284,9 @@ pub fn quarry_scenery() -> Node {
                 shade,
             });
         }
+        for run in stones.iter().filter(|run| !run.is_empty()) {
+            geology.children.push(sandstone_scatter(run));
+        }
     }
     // Crushed stone heaped under the conveyor head; coarse pieces roll to its toe.
     let pile = quarry_stockpile_spot();
@@ -281,29 +296,31 @@ pub fn quarry_scenery() -> Node {
     geology
         .children
         .push(shadow_receiver(Arc::new(stockpile), spoil.clone()));
-    for _ in 0..70 {
-        let angle = talus_rng.range(0.0, PI * 2.0);
-        let t = talus_rng.range(0.78, 1.02);
-        let size = talus_rng.range(0.18, 0.5);
-        let reach = quarry_stockpile_reach(&pile, angle) * t;
-        let h = size * talus_rng.range(0.5, 0.8);
-        let d = size * talus_rng.range(0.7, 1.2);
-        let rot_y = talus_rng.range(-PI, PI);
-        let shade = talus_rng.range(0.9, 1.15);
-        talus_stones.push(RubbleStone {
-            x: pile.x + angle.cos() * reach,
-            y: APRON + 0.0f64.max(pile.height * (1.0 - t.powf(1.08))) + size * 0.1,
-            z: pile.z + angle.sin() * reach,
-            w: size,
-            h,
-            d,
-            rot_y,
-            shade,
-        });
-    }
-    geology.children.push(sandstone_rubble(&talus_stones));
+    let pile_stones: Vec<RubbleStone> = (0..70)
+        .map(|_| {
+            let angle = talus_rng.range(0.0, PI * 2.0);
+            let t = talus_rng.range(0.78, 1.02);
+            let size = talus_rng.range(0.18, 0.5);
+            let reach = quarry_stockpile_reach(&pile, angle) * t;
+            let h = size * talus_rng.range(0.5, 0.8);
+            let d = size * talus_rng.range(0.7, 1.2);
+            let rot_y = talus_rng.range(-PI, PI);
+            let shade = talus_rng.range(0.9, 1.15);
+            RubbleStone {
+                x: pile.x + angle.cos() * reach,
+                y: APRON + 0.0f64.max(pile.height * (1.0 - t.powf(1.08))) + size * 0.1,
+                z: pile.z + angle.sin() * reach,
+                w: size,
+                h,
+                d,
+                rot_y,
+                shade,
+            }
+        })
+        .collect();
+    geology.children.push(sandstone_scatter(&pile_stones));
     // Local rubble stays outside the boundary; it never advertises nonexistent cover.
-    for i in 0..65u32 {
+    for i in 0..BOUNDARY_ROCKS {
         let side = if i % 2 == 1 { -1.0 } else { 1.0 };
         let mut rock = sandstone_rock(
             0.7 + f64::from(i % 3) * 0.5,
@@ -343,12 +360,20 @@ pub fn quarry_scenery() -> Node {
         let y = quarry_ramp_height(boulder.x, boulder.z) - 0.2;
         put(&mut geology, rock, boulder.x, y, boulder.z);
     }
-    for (i, chip) in quarry_ramp_spoil().into_iter().enumerate() {
-        let rock = sandstone_rock(chip.size, chip.size * 0.45, chip.size * 0.8, i as u32 % 7);
-        let rock = rotated(rock, 0.0, chip.rot_y, 0.0);
-        let y = quarry_ramp_height(chip.x, chip.z) - 0.08;
-        put(&mut geology, rock, chip.x, y, chip.z);
-    }
+    let spoil_chips: Vec<RubbleStone> = quarry_ramp_spoil()
+        .into_iter()
+        .map(|chip| RubbleStone {
+            x: chip.x,
+            y: quarry_ramp_height(chip.x, chip.z) + chip.size * 0.08,
+            z: chip.z,
+            w: chip.size,
+            h: chip.size * 0.45,
+            d: chip.size * 0.8,
+            rot_y: chip.rot_y,
+            shade: 0.92,
+        })
+        .collect();
+    geology.children.push(sandstone_scatter(&spoil_chips));
     geology.children.push(quarry_butte());
     geology.children.push(quarry_mesas());
 
@@ -398,22 +423,13 @@ pub fn quarry_scenery() -> Node {
             68.0 + z,
         );
     }
-    // Gravel a few centimetres high: shadows would only cost a pass, never read.
-    let mut gravel = Node::group("");
-    quarry_site_details(&mut equipment, &mut gravel);
+    quarry_site_details(&mut equipment);
     // Geology stays unbatched: the renderer merges static scenery per material
     // and 60 m cell, so the long faces and drifts cull per cell instead of
     // drawing whole from anywhere.
     batch(&mut equipment);
-    batch(&mut gravel);
-    for mesh in &mut gravel.children {
-        if let Some(drawable) = &mut mesh.drawable {
-            drawable.cast_shadow = false;
-        }
-    }
     root.children.push(geology);
     root.children.push(equipment);
-    root.children.push(gravel);
     root
 }
 

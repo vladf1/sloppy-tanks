@@ -54,6 +54,18 @@ fn quarry_hash(cell: vec2f) -> vec4f {
     return fract((p.xxyz + p.yzzw) * p.zywx);
 }
 
+// Smooth value noise in [0, 1) on a unit lattice, from `quarry_hash`.
+fn quarry_value(p: vec2f) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let a = quarry_hash(i).x;
+    let b = quarry_hash(i + vec2f(1.0, 0.0)).x;
+    let c = quarry_hash(i + vec2f(0.0, 1.0)).x;
+    let d = quarry_hash(i + vec2f(1.0, 1.0)).x;
+    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
+
 // The world-space metres one pixel spans on a surface: computed in uniform
 // control flow, before any branch, and passed to the detail layers that fade
 // out before they shrink below a pixel and shimmer.
