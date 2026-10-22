@@ -167,6 +167,9 @@ const CLODS: usize = 14;
 /// slide; it lies still for its last moments before it shrinks away.
 const CLOD_BOUNCE: f64 = 0.32;
 const CLOD_SLIDE: f64 = 0.55;
+/// A piece lying on the ground slides to a stop at this rate (1/s): about
+/// `CLOD_SLIDE` thirty times a second.
+const SLIDE_DRAG: f64 = 18.0;
 const CLOD_SHRINK: f64 = 0.2;
 /// Seconds a clod lies where it landed ([minimum, random span]).
 const CLOD_LIFE: [f64; 2] = [5.0, 3.0];
@@ -718,17 +721,27 @@ impl ParticleEffects {
             if q.life <= 0.0 {
                 return false;
             }
-            q.x += q.vx * dt;
-            q.y += q.vy * dt;
-            q.z += q.vz * dt;
-            q.vy -= PARTICLE_GRAVITY * dt;
-            // Clods and spall land, bounce and slide to rest on the ground.
             let rest = q.size
                 * if q.plate || q.splinter {
                     PLATE_REST * 2.0
                 } else {
                     CHIP_REST
                 };
+            q.x += q.vx * dt;
+            q.z += q.vz * dt;
+            // A piece lying on the ground stays on it. Gravity sank it a hair every
+            // frame and the landing below lifted it back without fall speed, so it
+            // swapped between its lying and tumbling poses every other frame and
+            // shook and flickered where it lay.
+            if q.rests && q.vy == 0.0 && q.y <= rest {
+                let keep = (-SLIDE_DRAG * dt).exp();
+                q.vx *= keep;
+                q.vz *= keep;
+                return true;
+            }
+            q.y += q.vy * dt;
+            q.vy -= PARTICLE_GRAVITY * dt;
+            // Clods and spall land, bounce and slide to rest on the ground.
             if q.rests && q.y < rest && q.vy < 0.0 {
                 q.y = rest;
                 q.vy = if q.vy < -1.5 {
@@ -893,6 +906,52 @@ mod tests {
                 )
             };
             assert_eq!(record.world(), pose(position, euler, scale));
+        }
+    }
+
+    #[test]
+    fn landed_spall_and_clods_lie_still() {
+        let mut random = CosmeticRandom::default();
+        let mut particles = ParticleEffects::default();
+        // A shell striking hard cover (spall, the path steel's paint flakes share)
+        // and a blast's clods.
+        particles.event(&at(SimEventType::Impact), &mut random);
+        particles.event(
+            &SimEvent {
+                size: Some(3.0),
+                ..at(SimEventType::Death)
+            },
+            &mut random,
+        );
+        let step = 1.0 / 60.0;
+        let mut time = 0.0;
+        for _ in 0..120 {
+            time += step;
+            particles.update(step, time);
+        }
+        let lying: Vec<usize> = (0..particles.particles.len())
+            .filter(|&i| particles.particles[i].rests)
+            .collect();
+        assert!(!lying.is_empty());
+        // Two seconds on, every piece that rests has landed; frame after frame its
+        // pose holds still (only its shrink at the end of its life may change it).
+        for _ in 0..30 {
+            let before: Vec<_> = lying
+                .iter()
+                .map(|&i| particles.records.records()[i].world())
+                .collect();
+            time += step;
+            particles.update(step, time);
+            for (&i, before) in lying.iter().zip(&before) {
+                let q = &particles.particles[i];
+                assert!(q.vy == 0.0, "a landed piece keeps no fall speed");
+                assert!(
+                    particles.records.records()[i]
+                        .world()
+                        .abs_diff_eq(*before, 1e-3),
+                    "a landed piece moved or turned"
+                );
+            }
         }
     }
 
