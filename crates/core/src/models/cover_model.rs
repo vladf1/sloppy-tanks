@@ -17,7 +17,10 @@ use super::harbor_models::{CargoShape, shipping_container};
 use super::house_model::house;
 use super::model_primitives::{box_part, cylinder_part, put};
 use super::quarry_barriers::{dragon_tooth, steel_hedgehog};
-use super::quarry_surfaces::{RubbleStone, sandstone_footing, sandstone_rock, sandstone_rubble};
+use super::quarry_surfaces::{
+    RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
+    sandstone_rock, sandstone_rubble,
+};
 use super::timber_model::add_timber_parts;
 use super::tower_model::{rubble, tower};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
@@ -213,7 +216,8 @@ fn crate_shape(c: &CoverShape) -> CrateShape {
 /// fallen chips rather than additional obstacles.
 fn rock(group: &mut Node, c: &CoverShape) {
     let variant = quarry_rock_variant(c.x, c.z);
-    put(group, sandstone_rock(c.w, c.h, c.d, variant), 0.0, 0.0, 0.0);
+    let outcrop = sandstone_rock(c.w, c.h, c.d, variant, RockSetting::Drift);
+    put(group, outcrop, 0.0, 0.0, 0.0);
     put(group, sandstone_footing(c.w, c.d, variant), 0.0, 0.0, 0.0);
     let mut rubble = Random::new(f64::from(variant) + 902.0);
     let chips: Vec<RubbleStone> = (0..12)
@@ -221,7 +225,7 @@ fn rock(group: &mut Node, c: &CoverShape) {
             let angle = rubble.range(0.0, PI * 2.0);
             let reach = rubble.range(0.56, 0.72);
             let size = rubble.range(0.14, 0.5);
-            // Rest on the drift bank rather than under it.
+            // Rest on the drift bank rather than under or above it.
             let x = angle.cos() * c.w * reach;
             let z = angle.sin() * c.d * reach;
             let h = rubble.range(0.06, 0.12);
@@ -229,7 +233,7 @@ fn rock(group: &mut Node, c: &CoverShape) {
             let shade = rubble.range(0.6, 0.88);
             RubbleStone {
                 x,
-                y: 0.07,
+                y: sandstone_footing_height(c.w, c.d, variant, x, z) + h * STONE_SEAT,
                 z,
                 w: size,
                 h,
