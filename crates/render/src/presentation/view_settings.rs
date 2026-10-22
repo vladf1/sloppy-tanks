@@ -41,11 +41,6 @@ pub struct CameraFeel {
     pub threat_range: f64,
     /// The focus sits this fraction of the zoom up the screen from the tank.
     pub frame_ahead: f64,
-    /// A big blast close by draws the view this fraction of the way toward it, up
-    /// to `max_blast_look_ahead` of the zoom, letting go over `blast_look_seconds`.
-    pub blast_look_ahead: f64,
-    pub max_blast_look_ahead: f64,
-    pub blast_look_seconds: f64,
     /// All of the leads together stay within this fraction of the zoom.
     pub max_look_ahead: f64,
     /// And ahead along the drive by this many seconds of travel, up to a cap.
@@ -70,9 +65,6 @@ pub struct CameraFeel {
     pub player_frame: [f32; 4],
     pub player_guard: [f32; 4],
     pub duel_frame: [f32; 4],
-    /// A blast or kill still holding more than this share of its pull on the
-    /// view is framed like an enemy.
-    pub framed_blast_weight: f64,
     /// At `full_speed` (m/s) the camera eases back by this fraction of the zoom,
     /// approaching it at `speed_zoom_rate` per second.
     pub speed_zoom: f64,
@@ -80,49 +72,22 @@ pub struct CameraFeel {
     pub speed_zoom_rate: f64,
     /// Trauma lost per second.
     pub trauma_decay: f64,
-    /// Shake at full trauma: yaw, pitch and roll (rad) about the view, and its
-    /// noise frequency (Hz).
-    pub shake_angles: [f64; 3],
+    /// Shake at full trauma: yaw and pitch (rad) about the view, and its noise
+    /// frequency (Hz). Only the viewer being hit or destroyed shakes the camera:
+    /// its own shots, kills and other tanks' explosions leave it still, and
+    /// nothing tilts the horizon (the player found it gave them vertigo).
+    pub shake_angles: [f64; 2],
     pub shake_frequency: f64,
     /// Kicks push the camera on a spring of this frequency (rad/s) and damping ratio.
     pub kick_frequency: f64,
     pub kick_damping: f64,
     pub max_kick_offset: f64,
-    /// Knocks also tip the horizon on a spring of this frequency (rad/s) and
-    /// damping ratio, within `max_roll` (rad): a kill, a hit at full strength and
-    /// a blast close by, as angular speeds (rad/s). The viewer's own shots never
-    /// move the camera: the player found firing's shake and tilt distracting.
-    pub roll_frequency: f64,
-    pub roll_damping: f64,
-    pub max_roll: f64,
-    pub kill_roll: f64,
-    pub hurt_roll: f64,
-    pub blast_roll: f64,
-    /// A kill's lurch toward it (m/s at one metre away).
-    pub kill_kick: f64,
     /// The viewer hurt: trauma per hit point, its cap, and the kick speed.
     pub hurt_trauma_per_damage: f64,
     pub max_hurt_trauma: f64,
     pub hurt_kick: f64,
-    /// The viewer destroyed, or one of its shots finishing an enemy.
+    /// The viewer destroyed.
     pub death_trauma: f64,
-    pub kill_trauma: f64,
-    /// A blast's trauma per metre of radius, fading to nothing this far away
-    /// (squared falloff), and its kick speed down and away at the blast.
-    pub blast_trauma_per_radius: f64,
-    pub blast_reach: f64,
-    pub blast_kick: f64,
-    /// Destroying an enemy dollies the drawn camera this fraction of the way to
-    /// its focus, arriving at `punch_attack` and easing out at `punch_release`
-    /// (per second), so a kill lands with a beat of emphasis.
-    pub kill_punch_in: f64,
-    pub punch_attack: f64,
-    pub punch_release: f64,
-    /// Any tank destroyed nearby pulls the camera in and knocks the horizon by up
-    /// to this share of a kill's, fading over `blast_reach`.
-    pub nearby_death_punch: f64,
-    /// A big blast close by pulls it in by up to this share.
-    pub blast_punch: f64,
     /// A reticle that follows the turret rather than a pointer (autoplay) glides to
     /// its point at this rate (per second); a jump farther than `snap_distance` snaps.
     pub aim_track_rate: f64,
@@ -151,9 +116,6 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     max_threat_look_ahead: 0.45,
     threat_range: 30.0,
     frame_ahead: 0.02,
-    blast_look_ahead: 0.35,
-    max_blast_look_ahead: 0.1,
-    blast_look_seconds: 1.4,
     max_look_ahead: 0.45,
     travel_look_ahead_seconds: 0.14,
     max_travel_look_ahead: 2.0,
@@ -166,36 +128,19 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     player_frame: [-0.14, 0.14, -0.2, 0.22],
     player_guard: [-0.38, 0.38, -0.38, 0.3],
     duel_frame: [-0.9, 0.88, -0.64, 0.76],
-    framed_blast_weight: 0.3,
     speed_zoom: 0.06,
     full_speed: 8.0,
     speed_zoom_rate: 2.5,
     trauma_decay: 2.0,
-    shake_angles: [0.007, 0.007, 0.006],
+    shake_angles: [0.007, 0.007],
     shake_frequency: 9.0,
     kick_frequency: 15.0,
     kick_damping: 0.55,
     max_kick_offset: 0.35,
-    roll_frequency: 10.0,
-    roll_damping: 0.38,
-    max_roll: 0.04,
-    kill_roll: 0.45,
-    hurt_roll: 0.16,
-    blast_roll: 0.1,
-    kill_kick: 1.8,
     hurt_trauma_per_damage: 0.008,
     max_hurt_trauma: 0.45,
     hurt_kick: 3.5,
     death_trauma: 0.6,
-    kill_trauma: 0.32,
-    blast_trauma_per_radius: 0.1,
-    blast_reach: 20.0,
-    blast_kick: 3.0,
-    kill_punch_in: 0.1,
-    punch_attack: 16.0,
-    punch_release: 2.4,
-    nearby_death_punch: 0.55,
-    blast_punch: 0.2,
     aim_track_rate: 10.0,
     first_person_shake: 0.55,
     first_person_tilt: 0.65,

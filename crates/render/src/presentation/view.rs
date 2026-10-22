@@ -1342,9 +1342,9 @@ impl Presentation {
     }
 
     /// Weight for the battle's knocks: a shot rocks its tank back, a hit shoves
-    /// and flashes its victim, and the viewer's camera feels hits and every blast
-    /// by distance, but never its own shots. Destroying an enemy holds the action
-    /// a moment.
+    /// and flashes its victim, and blasts rock nearby tanks. The viewer's camera
+    /// shakes only when it is hit or destroyed, never for its own shots, kills or
+    /// other explosions. Destroying an enemy holds the action a moment.
     fn feel_event(&mut self, event: &SimEvent, player_hit: bool) {
         let viewer = event.id.is_some() && event.id == self.viewer_id;
         match event.kind {
@@ -1382,20 +1382,15 @@ impl Presentation {
             }
             SimEventType::Explosion => {
                 let radius = event.size.unwrap_or(2.0);
-                self.rig.blast(event.x, event.z, radius);
                 self.rock_tanks(event.x, event.z, radius);
             }
             SimEventType::Death => {
                 let radius = event.size.unwrap_or(3.0);
-                self.rig.blast(event.x, event.z, radius);
                 self.rock_tanks(event.x, event.z, radius);
                 if viewer {
                     self.rig.shake.add_trauma(CAMERA_FEEL.death_trauma);
-                } else {
-                    self.rig.tank_destroyed(event.x, event.z);
                 }
                 if player_hit {
-                    self.rig.killed(event.x, event.z);
                     self.hit_stop = FEEDBACK.hit_stop_seconds;
                 }
             }
