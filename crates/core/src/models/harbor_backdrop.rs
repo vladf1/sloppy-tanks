@@ -844,17 +844,72 @@ fn pine_mesh() -> Arc<Mesh> {
             .flat_map(|i| [0, 1 + (i + 1) % 5, 1 + i])
             .collect();
         let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
-        mesh.compute_vertex_normals();
-        mesh.uvs = vec![[0.0, 0.0]; mesh.positions.len()];
+        soft_foliage_normals(&mut mesh);
         Arc::new(mesh)
     })
     .clone()
 }
 
-/// Pine woods in clumps over the headlands: dark marks that give the hills their
-/// scale.
+/// Normals pointing out from a point under a tree's middle, as stylised foliage
+/// is shaded: the crown darkens softly away from the light instead of splitting
+/// into a lit and a shaded facet that read as a paper cut-out across the bay.
+fn soft_foliage_normals(mesh: &mut Mesh) {
+    mesh.normals = mesh
+        .positions
+        .iter()
+        .map(|&[x, y, z]| {
+            let v = glam::Vec3::new(x, y + 0.6, z).normalize();
+            v.to_array()
+        })
+        .collect();
+    mesh.uvs = vec![[0.0, 0.0]; mesh.positions.len()];
+}
+
+/// The far-shore effect's `apron_hash(cell).x` (`harbor_apron.wgsl`), so trees can
+/// stand where the effect paints its woods.
+fn shader_hash(x: f64, y: f64) -> f64 {
+    let fract = |v: f64| v - v.floor();
+    let mut p = [
+        fract(x * 0.1031),
+        fract(y * 0.1030),
+        fract(x * 0.0973),
+        fract(y * 0.1099),
+    ];
+    let d = p[0] * (p[3] + 33.33)
+        + p[1] * (p[2] + 33.33)
+        + p[2] * (p[0] + 33.33)
+        + p[3] * (p[1] + 33.33);
+    p = p.map(|v| v + d);
+    fract((p[0] + p[1]) * p[2])
+}
+
+/// The effect's `apron_noise`: smoothed value noise over [`shader_hash`].
+fn shader_noise(x: f64, y: f64) -> f64 {
+    let (ix, iy) = (x.floor(), y.floor());
+    let (fx, fy) = (x - ix, y - iy);
+    let (ux, uy) = (fx * fx * (3.0 - 2.0 * fx), fy * fy * (3.0 - 2.0 * fy));
+    let a = shader_hash(ix, iy);
+    let b = shader_hash(ix + 1.0, iy);
+    let c = shader_hash(ix, iy + 1.0);
+    let d = shader_hash(ix + 1.0, iy + 1.0);
+    (a + (b - a) * ux) + ((c + (d - c) * ux) - (a + (b - a) * ux)) * uy
+}
+
+/// How far into the effect's painted woods a ground point lies: above 0.5 is
+/// under its canopy (`woods` and `woods_edge` in the far-shore mode, on gentle
+/// ground).
+fn woods_depth(x: f64, z: f64) -> f64 {
+    shader_noise(x / 34.0 + 11.0, z / 34.0 + 11.0) * 0.65
+        + shader_noise(x / 11.0 + 3.0, z / 11.0 + 3.0) * 0.35
+        - 0.03
+}
+
+/// Trees in the woods the far-shore effect paints over the headlands: pines,
+/// tallest deep in the woods, as dark as the canopy painted round them, so their
+/// ragged tops rise out of the painted canopy along the ridges and the woods read
+/// as dark masses rather than single trees dotted over the grass.
 fn woods(sectors: &mut Sectors) {
-    for i in 0..1100u32 {
+    for i in 0..TREE_SITES {
         let theta = -PI + TAU * hash(i, 201);
         if in_open_sea(theta)
             || built_up(theta)
@@ -863,19 +918,25 @@ fn woods(sectors: &mut Sectors) {
         {
             continue;
         }
-        // Clumps: only where a slow wave of the angle and the slope allow.
-        let inland = 6.0 + 100.0 * hash(i, 203).powf(0.8);
-        if wave(theta * 2.0 + inland * 0.02, 5.7) < 0.5 {
+        let inland = 6.0 + 104.0 * hash(i, 203).powf(0.8);
+        let (x, y, z) = on_land(theta, inland);
+        let depth = woods_depth(x, z);
+        if depth < WOODS_EDGE {
             continue;
         }
-        let (x, y, z) = on_land(theta, inland);
-        let height = 3.6 + 3.4 * hash(i, 207);
-        let color = [0x2c4a2e, 0x35543a, 0x3f5c33, 0x29402c][(hash(i, 211) * 4.0) as usize % 4];
-        let mut pine = Node::mesh(pine_mesh(), paint(color));
-        pine.scale = glam::DVec3::new(height * 0.3, height, height * 0.3);
-        place_at(sectors, theta, pine, x, y - 0.5, z);
+        let deep = ((depth - WOODS_EDGE) / 0.12).min(1.0);
+        let height = (3.4 + 3.4 * hash(i, 207)) * (0.85 + 0.35 * deep);
+        let width = height * (0.3 + 0.1 * hash(i, 223));
+        let color = [0x1a2e1d, 0x1f3621, 0x223b22, 0x182a1b][(hash(i, 211) * 4.0) as usize % 4];
+        let mut part = Node::mesh(pine_mesh(), paint(color));
+        part.scale = glam::DVec3::new(width, height, width);
+        place_at(sectors, theta, part, x, y - 0.5, z);
     }
 }
+/// Points tried for a tree around the bay; only those in the painted woods grow one.
+const TREE_SITES: u32 = 3800;
+/// The [`woods_depth`] where trees start: just inside the painted woods' edge.
+const WOODS_EDGE: f64 = 0.5;
 
 /// Wind turbines along the western headland ridge.
 fn turbines(sectors: &mut Sectors) {
