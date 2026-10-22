@@ -27,6 +27,7 @@ use super::{
     OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
+use crate::target_memory::target_bytes;
 use context::{block, unit};
 use resources::SHADOW_BASE_LOCATION;
 use textures::{linear_sampler, storage, texel_storage};
@@ -423,10 +424,6 @@ impl Frame {
         keep
     }
 
-    pub fn has_static_shadow(&self) -> bool {
-        self.static_shadow.is_some()
-    }
-
     /// The view's instance records.
     pub fn instances(&self) -> &InstanceStore {
         &self.instance_records
@@ -461,11 +458,18 @@ impl Frame {
         gpu.write_buffer(self.occlusion_uniform, 0, bytemuck::bytes_of(uniform));
     }
 
-    /// Bytes of the bloom levels, the occlusion target and the depth copy.
-    pub fn post_bytes(&self) -> u64 {
+    /// Bytes of the main view's target, the bloom levels, the occlusion target, the
+    /// depth copy and the shadow maps.
+    pub fn target_bytes(&self) -> u64 {
+        let main = target_bytes(self.main.width, self.main.height, self.gpu.samples);
         let occlusion = u64::from(self.occlusion.width * self.occlusion.height);
         let depth = u64::from(self.main.width * self.main.height) * 4;
-        self.bloom.bytes() + occlusion + depth
+        let shadow = [Some(&self.shadow), self.static_shadow.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|map| u64::from(map.size) * u64::from(map.size) * 4)
+            .sum::<u64>();
+        main + self.bloom.bytes() + occlusion + depth + shadow
     }
 
     /// Upload this frame's merged shadow bases.
@@ -765,6 +769,11 @@ impl WaterGpu {
 
     pub fn write(&self, gpu: &Gpu, uniform: &WaterUniform) {
         gpu.write_buffer(self.uniform, 0, bytemuck::bytes_of(uniform));
+    }
+
+    /// Bytes the reflection target holds.
+    pub fn target_bytes(&self) -> u64 {
+        target_bytes(self.target.width, self.target.height, self.gpu.samples)
     }
 
     /// Bind the uniform, normal map and reflection (group 1) for the water draw.
