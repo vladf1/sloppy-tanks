@@ -224,9 +224,8 @@ pub fn tank_bar(team: Team) -> Node {
         10,
     ));
     let mut edge = rounded_rect_shape(BAR_RIM_WIDTH + 0.11, BAR_RIM_HEIGHT + 0.11, 0.135);
-    edge.holes.push(
-        rounded_rect_shape(BAR_RIM_WIDTH - 0.02, BAR_RIM_HEIGHT - 0.02, 0.07).outline,
-    );
+    edge.holes
+        .push(rounded_rect_shape(BAR_RIM_WIDTH - 0.02, BAR_RIM_HEIGHT - 0.02, 0.07).outline);
     let pointer = Shape::from_points(&[
         DVec2::new(-0.095, below - 0.005),
         DVec2::new(0.0, below - 0.105),
