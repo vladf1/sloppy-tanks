@@ -20,7 +20,7 @@ use sloppy_core::models::{
     BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint, put,
     shadowed, siding_box, trunk_fragment,
 };
-use sloppy_core::scene::{Blending, Effect, Material, Node, Side};
+use sloppy_core::scene::{Blending, Color, Effect, Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
@@ -340,16 +340,33 @@ pub fn spawn_pulse() -> Node {
     root
 }
 
-/// The pad under a pickup: painted base, kind-colored ring (bright or dimmed
-/// while recharging) and the refill arc that grows back.
+/// Paint of a pickup pad's steel housing and of the dark deck set into it, and
+/// how brightly its ring glows.
+const PICKUP_HOUSING: u32 = 0x75808a;
+const PICKUP_DECK: u32 = 0x1d2e3d;
+const PICKUP_RING_GLOW: f32 = 0.45;
+
+/// A pickup pad's bevelled steel housing, one mesh shared by every kind.
+fn pickup_housing() -> Node {
+    static HOUSING: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
+    let housing = HOUSING
+        .get_or_init(|| arc(cylinder_geometry(1.0, 1.14, 0.16, 32)))
+        .clone();
+    shadowed(housing, paint(PICKUP_HOUSING))
+}
+
+/// The pad under a pickup: a bevelled steel housing with a dark deck set into it,
+/// the kind-colored ring glowing on its rim (bright or dimmed while recharging)
+/// and the refill arc that grows back.
 pub fn pickup_base(kind: PickupKind) -> Node {
     let color = pickup(kind).color;
     let mut root = Node::group("pickup");
+    put(&mut root, pickup_housing(), 0.0, 0.08, 0.0);
     put(
         &mut root,
-        cylinder_part(1.05, 0.12, 0x25435f, 24),
+        cylinder_part(0.9, 0.05, PICKUP_DECK, 24),
         0.0,
-        0.08,
+        0.165,
         0.0,
     );
     let torus = arc(torus_geometry(0.94, 0.045, 5, 24));
@@ -357,6 +374,8 @@ pub fn pickup_base(kind: PickupKind) -> Node {
         let material = Arc::new(Material {
             transparent: true,
             opacity,
+            emissive: Color(color),
+            emissive_intensity: PICKUP_RING_GLOW * opacity,
             ..(*paint(color)).clone()
         });
         let mut ring = named(at(mesh(torus.clone(), material, 0), 0.0, 0.2, 0.0), name);

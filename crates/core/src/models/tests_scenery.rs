@@ -515,14 +515,14 @@ fn scenery_textures_per_theme() {
         [
             "textures/water/normals.webp",
             "textures/harbor/steel.webp",
-            "textures/harbor/container.webp",
             "textures/harbor/dock.webp",
+            "textures/harbor/container.webp",
+            "generated:harbor-container-liveries",
             "generated:harbor-label-b2",
             "generated:harbor-label-b1",
             "generated:harbor-label-harbor-havoc",
             "generated:harbor-label-port-07",
             "generated:harbor-label-loading",
-            "generated:harbor-container-liveries",
             "textures/houses/siding.webp",
         ]
     );

@@ -1,18 +1,19 @@
 //! Port of `harbor-vessels.ts`: moored container ships and quay gantry cranes
 //! beyond the harbor wall. Ships bob and crane loads sway; see [`harbor_fleet`].
 
-use std::f64::consts::FRAC_PI_2;
+use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
 use glam::DVec3;
 
+use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Mesh, torus_geometry};
 use crate::scene::Node;
 
 use super::batching::batch;
 use super::effects_scenery::ApronMode;
-use super::harbor_models::{CargoShape, ship_container};
-use super::harbor_surfaces::{HarborSurface, apron_box, harbor_material, steel_box};
+use super::harbor_models::{CargoShape, livery_decal, ship_container};
+use super::harbor_surfaces::{apron_box, apron_material, steel_box};
 use super::model_primitives::{DEFAULT_BOX_RADIUS, box_part, cylinder_part, paint, put, rotated};
 use super::model_primitives::{adopt_children, beam};
 
@@ -31,7 +32,9 @@ const OUTLINE: [[f64; 2]; 9] = [
 ];
 
 /// One flat-shaded hull band between `bottom` and `top`, its lower outline scaled
-/// by `lower_scale` (the inset lower hull), with a deck cap.
+/// by `lower_scale` (the inset lower hull), with a deck cap. Its paint is a vertex
+/// color under the hull effect's weathering, so every band of a ship merges into
+/// one draw.
 fn hull_section(bottom: f64, top: f64, lower_scale: f64, color: u32) -> Node {
     let mut positions = Vec::with_capacity(OUTLINE.len() * 6);
     for (y, scale) in [(bottom, lower_scale), (top, 1.0)] {
@@ -60,10 +63,13 @@ fn hull_section(bottom: f64, top: f64, lower_scale: f64, color: u32) -> Node {
             ]
         })
         .collect();
-    Node::mesh(Arc::new(flat), harbor_material(HarborSurface::Steel, color))
+    let [r, g, b] = hex_to_linear(color);
+    flat.colors = vec![[r as f32, g as f32, b as f32]; flat.positions.len()];
+    Node::mesh(Arc::new(flat), apron_material(ApronMode::Hull, 0xffffff))
 }
 
 const CARGO_PAINT: [u32; 5] = [0xcb7d43, 0x3b9394, 0x6e8eae, 0xbaad7c, 0xa76155];
+const GRATING_DARK: u32 = 0x3d4548;
 const SHIP_WHITE: u32 = 0xf0ebdc;
 /// The shipping lines' funnel colors, one per ship.
 const FUNNEL_BAND: [u32; 3] = [0x2f6fa8, 0xc8473b, 0x2f8a6a];
@@ -105,6 +111,49 @@ fn container_ship(color: u32, variant: usize) -> Node {
                 adopt_children(&mut ship, cargo);
             }
         }
+    }
+    // The line's name along the hull, lashing bridges between the bays, draft
+    // marks at bow and stern, and mooring winches on the forecastle and poop.
+    for (yaw, side) in [(0.0, 1.0), (PI, -1.0)] {
+        put(
+            &mut ship,
+            rotated(livery_decal(15.0, variant % 4), 0.0, yaw, 0.0),
+            -1.0,
+            0.75,
+            side * 7.03,
+        );
+        for (x, dz) in [(23.0, 7.0), (-29.0, 7.0)] {
+            for mark in 0..5 {
+                put(
+                    &mut ship,
+                    box_part(0.5, 0.12, 0.05, SHIP_WHITE, 0.0),
+                    x,
+                    -1.0 + f64::from(mark) * 0.5,
+                    side * (dz + 0.03),
+                );
+            }
+        }
+    }
+    for bay in 0..5 {
+        let x = -19.1 + f64::from(bay) * 10.2;
+        put(
+            &mut ship,
+            box_part(0.35, 2.8, 11.6, 0xc9b65a, 0.0),
+            x,
+            4.25,
+            0.0,
+        );
+        put(
+            &mut ship,
+            box_part(0.5, 0.1, 11.8, GRATING_DARK, 0.0),
+            x,
+            5.7,
+            0.0,
+        );
+    }
+    for (x, z) in [(26.0, 2.6), (26.0, -2.6), (-30.5, 2.4), (-30.5, -2.4)] {
+        let drum = rotated(cylinder_part(0.45, 1.1, 0x465558, 10), FRAC_PI_2, 0.0, 0.0);
+        put(&mut ship, drum, x, if x > 0.0 { 4.75 } else { 3.3 }, z);
     }
     // Accommodation block, wraparound bridge glazing, deck rails and twin exhausts.
     put(
@@ -330,6 +379,20 @@ fn container_ship(color: u32, variant: usize) -> Node {
 }
 
 const CRANE_GOLD: u32 = 0xe9b347;
+const CRANE_BLUE: u32 = 0x2f6c9c;
+/// Machinery house roof and the walkway grating around it.
+const ROOF_GREY: u32 = 0xb4b9b4;
+const GRATING: u32 = 0x5d676a;
+
+/// How one quay crane is painted and where its trolley stands.
+#[derive(Clone, Copy)]
+struct CraneLivery {
+    steel: u32,
+    /// Trolley position along the boom (crane frame, metres toward -z).
+    trolley: f64,
+    /// The box on its spreader.
+    cargo: u32,
+}
 const CRANE_DARK: u32 = 0x394f5d;
 const CRANE_WHITE: u32 = 0xe8e4d8;
 const CRANE_GLASS: u32 = 0x5f93a3;
@@ -346,18 +409,18 @@ const BOOM_DEPTH: f64 = 1.5;
 const BOOM_TIP: f64 = -24.0;
 const BACKREACH: f64 = 5.5;
 const APEX: [f64; 3] = [0.0, 29.0, 1.2];
-/// Where the trolley parks along the boom, and the spreader's drop below it.
-const TROLLEY_Z: f64 = -15.0;
+/// The spreader's drop below the trolley.
 const SPREADER_DROP: f64 = 8.0;
 
 /// A ship-to-shore gantry crane on its quay plinth: four legs on wheel bogies, a
 /// braced portal, an A-frame apex whose stays carry the boom, a machinery house
 /// on the backreach, and a trolley with its hanging cab. The spreader and the
 /// container it carries hang below the trolley as the group's last child.
-fn gantry_crane() -> Node {
+fn gantry_crane(livery: CraneLivery) -> Node {
     let mut group = Node::group("quay-crane");
     let g = &mut group;
-    let (gold, dark) = (CRANE_GOLD, CRANE_DARK);
+    let (gold, dark) = (livery.steel, CRANE_DARK);
+    let trolley_z = livery.trolley;
     // The plinth reaches below the waterline so its face takes the tide band.
     put(
         g,
@@ -523,10 +586,56 @@ fn gantry_crane() -> Node {
     );
     put(
         g,
-        steel_box(4.8, 0.25, 4.4, dark),
+        steel_box(4.8, 0.25, 4.4, ROOF_GREY),
         0.0,
         BOOM_Y + 3.65,
         BACKREACH - 2.6,
+    );
+    // Roof plant: two cooling units with their fan rings, an exhaust and a
+    // handrail round the edge, so the house reads as machinery from the air.
+    for dx in [-1.2, 1.2] {
+        put(
+            g,
+            box_part(1.4, 0.6, 1.4, 0xd8dcd6, 0.0),
+            dx,
+            BOOM_Y + 4.08,
+            BACKREACH - 3.3,
+        );
+        put(
+            g,
+            cylinder_part(0.45, 0.08, 0x384246, 12),
+            dx,
+            BOOM_Y + 4.42,
+            BACKREACH - 3.3,
+        );
+    }
+    put(
+        g,
+        cylinder_part(0.22, 1.2, 0x6b7375, 10),
+        1.5,
+        BOOM_Y + 4.35,
+        BACKREACH - 1.4,
+    );
+    for (w, d, x, z) in [
+        (4.8, 0.06, 0.0, BACKREACH - 0.4),
+        (4.8, 0.06, 0.0, BACKREACH - 4.8),
+        (0.06, 4.4, 2.4, BACKREACH - 2.6),
+        (0.06, 4.4, -2.4, BACKREACH - 2.6),
+    ] {
+        put(
+            g,
+            box_part(w, 0.06, d, CRANE_WHITE, 0.0),
+            x,
+            BOOM_Y + 4.75,
+            z,
+        );
+    }
+    put(
+        g,
+        box_part(0.4, 0.5, 0.4, CRANE_RED, 0.0),
+        -1.9,
+        BOOM_Y + 4.05,
+        BACKREACH - 0.9,
     );
     put(
         g,
@@ -565,24 +674,37 @@ fn gantry_crane() -> Node {
     // Trolley on the boom rails and the operator's cab hanging under it.
     put(
         g,
-        steel_box(3.4, 1.0, 3.0, dark),
+        steel_box(3.4, 1.0, 3.0, CRANE_WHITE),
         0.0,
         BOOM_Y - 1.1,
-        TROLLEY_Z,
+        trolley_z,
+    );
+    for dx in [-1.5, 1.5] {
+        for dz in [-1.1, 1.1] {
+            let wheel = rotated(cylinder_part(0.3, 0.25, 0x252c30, 10), 0.0, 0.0, FRAC_PI_2);
+            put(g, wheel, dx, BOOM_Y - 0.55, trolley_z + dz);
+        }
+    }
+    put(
+        g,
+        box_part(2.6, 0.12, 2.0, GRATING, 0.0),
+        0.0,
+        BOOM_Y - 0.55,
+        trolley_z,
     );
     put(
         g,
         steel_box(2.0, 1.9, 2.2, CRANE_WHITE),
         0.9,
         BOOM_Y - 2.7,
-        TROLLEY_Z - 0.6,
+        trolley_z - 0.6,
     );
     put(
         g,
         box_part(2.04, 0.9, 2.24, CRANE_GLASS, 0.0),
         0.9,
         BOOM_Y - 2.55,
-        TROLLEY_Z - 0.65,
+        trolley_z - 0.65,
     );
     batch(g);
 
@@ -622,13 +744,13 @@ fn gantry_crane() -> Node {
             w: 6.1,
             d: 2.45,
             h: 2.6,
-            color: 0x3b7fa6,
+            color: livery.cargo,
         },
     );
     cargo.position.y = -SPREADER_DROP - 0.25 - 2.6;
     adopt_children(&mut load, cargo);
     batch(&mut load);
-    put(&mut group, load, 0.0, BOOM_Y - 1.6, TROLLEY_Z);
+    put(&mut group, load, 0.0, BOOM_Y - 1.6, trolley_z);
     group
 }
 
@@ -639,12 +761,54 @@ const SHIPS: [(f64, f64, f64, f64, u32); 3] = [
     (-77.0, -8.0, FRAC_PI_2, 0.85, 0x527f79),
     (77.0, 15.0, -FRAC_PI_2, 0.72, 0x9a6257),
 ];
-/// Crane positions: x, z, yaw, scale.
-const CRANES: [(f64, f64, f64, f64); 4] = [
-    (-40.0, -65.0, 0.0, 1.0),
-    (40.0, -65.0, 0.0, 1.0),
-    (-65.5, 16.0, FRAC_PI_2, 0.75),
-    (65.5, -20.0, -FRAC_PI_2, 0.75),
+/// Crane positions (x, z, yaw, scale) and liveries: the main berth's pair in the
+/// terminal's gold, working at different reaches, and the older blue pair on the
+/// side berths.
+const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
+    (
+        -40.0,
+        -65.0,
+        0.0,
+        1.0,
+        CraneLivery {
+            steel: CRANE_GOLD,
+            trolley: -15.0,
+            cargo: 0x3b7fa6,
+        },
+    ),
+    (
+        40.0,
+        -65.0,
+        0.0,
+        1.0,
+        CraneLivery {
+            steel: CRANE_GOLD,
+            trolley: -9.5,
+            cargo: 0xc8562f,
+        },
+    ),
+    (
+        -65.5,
+        16.0,
+        FRAC_PI_2,
+        0.75,
+        CraneLivery {
+            steel: CRANE_BLUE,
+            trolley: -17.0,
+            cargo: 0xd8d2c4,
+        },
+    ),
+    (
+        65.5,
+        -20.0,
+        -FRAC_PI_2,
+        0.75,
+        CraneLivery {
+            steel: CRANE_BLUE,
+            trolley: -12.0,
+            cargo: 0x3f8f6a,
+        },
+    ),
 ];
 
 /// `HarborFleet`: the fleet group, three ships (the first children), then four
@@ -656,8 +820,8 @@ pub fn harbor_fleet() -> Node {
         ship.scale = DVec3::splat(scale);
         put(&mut group, ship, x, 0.0, z);
     }
-    for &(x, z, yaw, scale) in &CRANES {
-        let mut crane = rotated(gantry_crane(), 0.0, yaw, 0.0);
+    for &(x, z, yaw, scale, livery) in &CRANES {
+        let mut crane = rotated(gantry_crane(livery), 0.0, yaw, 0.0);
         crane.scale = DVec3::splat(scale);
         put(&mut group, crane, x, 0.0, z);
     }

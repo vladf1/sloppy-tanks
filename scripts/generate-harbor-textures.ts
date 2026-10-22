@@ -10,8 +10,9 @@ import { fbm, lattice, mix, smooth } from "./texture-noise";
 // multiplies by each container's color (`harbor_models.rs`). One tile is
 // `CONTAINER_WEAR_TILE` (3 m) of wall across the full container height; the
 // corrugation itself is modelled, so the tile carries only weathering: sun-faded
-// paint, touched-up patches, rust blooming along the roof and floor rails and
-// running down from chips, grime climbing from the floor, and bare-metal scuffs.
+// paint, touched-up patches, dents catching the light, rust blooming along the
+// roof and floor rails and running down from chips, grime climbing from the floor,
+// and bare-metal scuffs.
 // Tiles horizontally; rows run from the roof (top) to the floor (bottom).
 //
 //   node --import tsx scripts/generate-harbor-textures.ts
@@ -80,10 +81,14 @@ function containerWear() {
       let b = shade * mix(1, 0.5, dirt);
       // Rust blooms along the roof and floor rails.
       const edge = Math.max(smooth(0.07, 0.0, v), smooth(0.9, 1.0, v));
-      const bloom = edge * smooth(0.45, 0.7, fbm(rustNoise, u * 12, v * 12, 12, 4));
-      r = mix(r, RUST[0], bloom * 0.85);
-      g = mix(g, RUST[1], bloom * 0.85);
-      b = mix(b, RUST[2], bloom * 0.85);
+      const bloom = edge * smooth(0.4, 0.66, fbm(rustNoise, u * 12, v * 12, 12, 4));
+      // Rust creeping up from the floor rail where water stands.
+      const creep =
+        smooth(0.8, 0.98, v) * smooth(0.5, 0.75, fbm(rustNoise, u * 20, v * 6 + 9, 20, 3));
+      const rust = Math.min(1, bloom * 0.9 + creep * 0.7);
+      r = mix(r, RUST[0], rust);
+      g = mix(g, RUST[1], rust);
+      b = mix(b, RUST[2], rust);
       const i = (y * SIZE + x) * 3;
       pixels[i] = r;
       pixels[i + 1] = g;
@@ -104,10 +109,29 @@ function containerWear() {
       }
     }
   }
+  // Dents from forklift tines and twistlocks: a soft hollow, lit along its upper
+  // rim and shaded along its lower one.
+  for (let d = 0; d < 9; d++) {
+    const cx = random.next() * SIZE;
+    const cy = random.range(0.25, 0.92) * SIZE;
+    const rx = random.range(14, 46);
+    const ry = random.range(8, 26);
+    const depth = random.range(0.07, 0.16);
+    for (let dy = -Math.ceil(ry); dy <= Math.ceil(ry); dy++) {
+      for (let dx = -Math.ceil(rx); dx <= Math.ceil(rx); dx++) {
+        const r = Math.hypot(dx / rx, dy / ry);
+        if (r > 1) continue;
+        const falloff = smooth(1, 0.35, r);
+        const tone = 1 + (dy < 0 ? 0.6 : -1) * depth * falloff * (Math.abs(dy) / ry);
+        const i = index(Math.round(cx + dx), Math.round(cy + dy));
+        for (let c = 0; c < 3; c++) pixels[i + c] *= tone;
+      }
+    }
+  }
   // Chips through the paint that have rusted, each running down the wall.
-  for (let s = 0; s < 26; s++) {
-    // The first ten run down from the roof rail; the rest from chips in the wall.
-    const fromRail = s < 10;
+  for (let s = 0; s < 44; s++) {
+    // The first sixteen run down from the roof rail; the rest from chips in the wall.
+    const fromRail = s < 16;
     const cx = random.next() * SIZE;
     const cy = (fromRail ? random.range(0.0, 0.05) : random.range(0.05, 0.8)) * SIZE;
     const radius = fromRail ? 0 : random.range(2, 7);
@@ -125,7 +149,7 @@ function containerWear() {
     const width = random.range(1.5, 5);
     for (let y = Math.floor(cy); y < Math.min(SIZE, cy + length); y++) {
       const along = (y - cy) / length;
-      const fade = (1 - along) ** 1.4 * strength * 0.4 * (0.6 + 0.4 * fine(cx * 0.1, y * 0.05, 0));
+      const fade = (1 - along) ** 1.2 * strength * 0.62 * (0.6 + 0.4 * fine(cx * 0.1, y * 0.05, 0));
       const wobble = Math.sin(y * 0.09 + s) * 1.2;
       for (let dx = -Math.ceil(width * 2); dx <= Math.ceil(width * 2); dx++) {
         const weight = fade * Math.exp(-((dx / width) ** 2));

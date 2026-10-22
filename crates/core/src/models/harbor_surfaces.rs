@@ -31,6 +31,10 @@ impl HarborSurface {
 }
 
 const DOCK_TEXTURE: &str = "textures/harbor/dock.webp";
+const STEEL_TEXTURE: &str = "textures/harbor/steel.webp";
+/// Hull plating: painted steel, a little glossier than the cargo.
+const HULL_METALNESS: f32 = 0.25;
+const HULL_ROUGHNESS: f32 = 0.6;
 /// Relief of the dock concrete's bump.
 const DOCK_BUMP: f32 = 0.035;
 /// Roughness of bare quay concrete and of road paint.
@@ -57,7 +61,7 @@ pub fn harbor_material(kind: HarborSurface, color: u32) -> Arc<Material> {
     MATERIALS.get_or_insert((kind, color), || {
         let (path, bump_scale, metalness, roughness) = match kind {
             HarborSurface::Dock => (DOCK_TEXTURE, DOCK_BUMP, 0.0, 0.95),
-            HarborSurface::Steel => ("textures/harbor/steel.webp", 0.012, 0.3, 0.68),
+            HarborSurface::Steel => (STEEL_TEXTURE, 0.012, 0.3, 0.68),
         };
         let texture = TextureRef {
             wrap: Wrap::Mirror,
@@ -75,7 +79,8 @@ pub fn harbor_material(kind: HarborSurface, color: u32) -> Arc<Material> {
 
 /// The quay apron's world-space concrete or paint ([`HARBOR_APRON`]). Concrete
 /// modes bump with the dock tile at the mesh UVs; markings take their paint from
-/// vertex colors so every color shares one draw.
+/// vertex colors so every color shares one draw, as do ship hulls (over the steel
+/// tile) and the far shore.
 pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
     APRON_MATERIALS.get_or_insert((mode, color), || {
         let effect = Effect::Custom {
@@ -107,6 +112,25 @@ pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
                 effect,
                 extra_textures,
                 ..Material::standard(color, 0.0, PAINT_ROUGHNESS)
+            },
+            ApronMode::Hull => Material {
+                map: Some(TextureRef {
+                    wrap: Wrap::Mirror,
+                    anisotropy: 4,
+                    ..TextureRef::file(STEEL_TEXTURE)
+                }),
+                vertex_colors: true,
+                effect,
+                extra_textures,
+                ..Material::standard(color, HULL_METALNESS, HULL_ROUGHNESS)
+            },
+            ApronMode::Shore => Material {
+                vertex_colors: true,
+                flat_shading: true,
+                fog: false,
+                effect,
+                extra_textures,
+                ..Material::standard(color, 0.0, 1.0)
             },
         }
     })

@@ -1,21 +1,28 @@
 //! Harbor Havoc's far shore, so the world ends in a coast rather than grey: green
 //! headlands with wind turbines, a city across the bay, a neighbouring container
-//! terminal, a tank farm and a breakwater with its lighthouse, all well outside
-//! the playfield and softened by the fog. Variation comes from a fixed hash of the
-//! angle, never the simulation's random stream.
+//! terminal, a tank farm, a breakwater with its lighthouse, ships riding at anchor
+//! in the roads and a blue mountain range behind it all, every one outside the
+//! playfield. Variation comes from a fixed hash of the angle, never the
+//! simulation's random stream.
 //!
-//! The coast is split into quarter sectors, each batched on its own, so a view
-//! draws only the sectors in front of it. Nothing here casts or receives shadows.
+//! The coast is split into quarter sectors, each merged into one mesh drawn with the
+//! apron effect's far-shore mode ([`ApronMode::Shore`]): it lights the vertex
+//! colors itself and hazes them by their distance from the eye, so the layers stay
+//! apart instead of drowning in the scene fog, and red warning lights on the
+//! cranes, masts and turbines shine through. A view draws only the sectors in
+//! front of it. Nothing here casts or receives shadows.
 
 use std::f64::consts::{FRAC_PI_2, PI, TAU};
 use std::sync::Arc;
 
-use crate::geometry::Mesh;
 use crate::geometry::math::{hex_to_linear, scale_hex_color};
+use crate::geometry::{Mesh, cone_geometry, merge_geometries};
 use crate::scene::{Material, Node};
 
 use super::batching::batch;
-use super::model_primitives::{adopt_children, beam, box_part, cylinder_part, put, rotated};
+use super::effects_scenery::ApronMode;
+use super::harbor_surfaces::apron_material;
+use super::model_primitives::{adopt_children, beam, box_part, cylinder_part, paint, put, rotated};
 
 /// The four quarter sectors being filled, indexed by [`sector_of`].
 type Sectors = [Node; 4];
@@ -59,12 +66,11 @@ fn place_at(sectors: &mut Sectors, theta: f64, part: Node, x: f64, y: f64, z: f6
 const SEGMENTS: usize = 240;
 /// Mean radius of the shoreline from the arena centre, metres.
 const SHORE_RADIUS: f64 = 232.0;
-/// Distance haze baked into the far shore's colors, so it reads as miles away
-/// whatever the fog: the linear color it fades toward and how far.
-const HAZE: [f32; 3] = [0.36, 0.47, 0.55];
-const HAZE_AMOUNT: f32 = 0.48;
-/// How far the idle terminal cranes have raised their booms from level, radians.
-const BOOM_RAISE: f64 = 1.3;
+/// Paint of a warning light: the far-shore effect makes this exact red glow.
+const WARNING_LIGHT: u32 = 0xff0000;
+/// The mountain range behind the coast: radius of its foot and its depth, metres.
+const RANGE_RADIUS: f64 = 430.0;
+const RANGE_DEPTH: f64 = 150.0;
 /// The open sea to the north (−z), as an angle range with no land.
 const OPEN_SEA: (f64, f64) = (-2.25, -0.95);
 /// Water level the shore rises from (`harbor_water::HARBOR_WATER_HEIGHT`).
@@ -120,13 +126,15 @@ fn shore_radius(theta: f64) -> f64 {
 /// Profile of the coast from the waterline inland: (metres past the shoreline,
 /// fraction of the ridge height, extra height, color).
 const PROFILE: [(f64, f64, f64, u32); 6] = [
-    (-3.0, 0.0, -1.2, 0x6f6a5d),
-    (2.0, 0.0, 2.4, 0x9a907a),
-    (9.0, 0.12, 3.0, 0x7d8f5e),
-    (30.0, 0.62, 2.0, 0x6a8452),
-    (55.0, 1.0, 0.0, 0x56714a),
-    (110.0, 0.55, 0.0, 0x6c8160),
+    (-3.0, 0.0, -1.2, 0x5d5a50),
+    (2.0, 0.0, 2.4, 0x9c9077),
+    (9.0, 0.12, 3.0, 0x6f8a4e),
+    (30.0, 0.62, 2.0, 0x4f7040),
+    (55.0, 1.0, 0.0, 0x3f5e3a),
+    (110.0, 0.55, 0.0, 0x58704f),
 ];
+/// Bare rock showing through on the steepest ground.
+const ROCK: u32 = 0x7d786c;
 
 /// One sector of the shore ring as a flat-shaded, vertex-colored mesh.
 fn shore_mesh(from: usize, to: usize) -> Option<Node> {
@@ -144,7 +152,9 @@ fn shore_mesh(from: usize, to: usize) -> Option<Node> {
                 + (ridge * fraction + lift) * land_amount(theta).max(0.2)
                 + jitter * ridge * 0.08;
             positions.extend([r * theta.cos(), y, r * theta.sin()]);
-            let shade = 0.88 + hash(step as u32 * 8 + row as u32, 23) * 0.22;
+            let shade = 0.82 + hash(step as u32 * 8 + row as u32, 23) * 0.3;
+            let craggy = (row == 3 || row == 4) && ridge > 22.0 && hash(step as u32, 29) > 0.55;
+            let color = if craggy { ROCK } else { color };
             let [cr, cg, cb] = hex_to_linear(scale_hex_color(color, shade));
             colors.push([cr as f32, cg as f32, cb as f32]);
         }
@@ -167,17 +177,74 @@ fn shore_mesh(from: usize, to: usize) -> Option<Node> {
     }
     let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
     mesh.colors = colors;
+    Some(flat_node(mesh))
+}
+
+/// A vertex-colored mesh de-indexed into flat facets, as a backdrop part.
+fn flat_node(mesh: Mesh) -> Node {
     let mut flat = mesh.to_non_indexed();
     flat.compute_vertex_normals();
     flat.uvs = vec![[0.0, 0.0]; flat.positions.len()];
-    Some(Node::mesh(
+    Node::mesh(
         Arc::new(flat),
         Arc::new(Material {
             vertex_colors: true,
             flat_shading: true,
             ..Material::standard(0xffffff, 0.0, 1.0)
         }),
-    ))
+    )
+}
+
+/// Ridge height of the mountain range at an angle, metres above the sea.
+fn range_height(theta: f64) -> f64 {
+    let peaks = wave(theta, 9.1).powf(1.6) * 95.0 + wave(theta * 2.0, 3.3) * 30.0;
+    (35.0 + peaks) * land_amount(theta)
+}
+
+/// One sector of the blue mountain range behind the coast: a foot, the ridge and
+/// the far slope, with darker gullies and paler crests.
+fn range_mesh(from: usize, to: usize) -> Option<Node> {
+    const ROWS: [(f64, f64, u32); 4] = [
+        (0.0, 0.0, 0x56656c),
+        (0.45, 0.62, 0x4c5d68),
+        (0.7, 1.0, 0x667a86),
+        (1.0, 0.4, 0x5b6d79),
+    ];
+    let mut positions = Vec::new();
+    let mut colors = Vec::new();
+    for step in from..=to {
+        let theta = -PI + TAU * step as f64 / SEGMENTS as f64;
+        let height = range_height(theta);
+        for (row, &(depth, fraction, color)) in ROWS.iter().enumerate() {
+            let jitter = hash(step as u32 * 4 + row as u32, 131) - 0.5;
+            let r = RANGE_RADIUS + depth * RANGE_DEPTH + jitter * 10.0;
+            let y = SEA_LEVEL - 4.0 + height * fraction * (1.0 + jitter * 0.25);
+            positions.extend([r * theta.cos(), y, r * theta.sin()]);
+            let shade = 0.85 + hash(step as u32 * 4 + row as u32, 137) * 0.3;
+            let [cr, cg, cb] = hex_to_linear(scale_hex_color(color, shade));
+            colors.push([cr as f32, cg as f32, cb as f32]);
+        }
+    }
+    let rows = ROWS.len();
+    let mut indices = Vec::new();
+    for column in 0..(to - from) {
+        let theta = -PI + TAU * (from + column) as f64 / SEGMENTS as f64;
+        let next = -PI + TAU * (from + column + 1) as f64 / SEGMENTS as f64;
+        if land_amount(theta) <= 0.0 && land_amount(next) <= 0.0 {
+            continue;
+        }
+        for row in 0..rows - 1 {
+            let a = (column * rows + row) as u32;
+            let b = a + rows as u32;
+            indices.extend([a, b, a + 1, b, b + 1, a + 1]);
+        }
+    }
+    if indices.is_empty() {
+        return None;
+    }
+    let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
+    mesh.colors = colors;
+    Some(flat_node(mesh))
 }
 
 /// A point on the land `inland` metres past the shoreline at `theta`, at ground
@@ -214,11 +281,12 @@ fn city(sectors: &mut Sectors) {
         let color = CITY_PAINT[(hash(i, 17) * CITY_PAINT.len() as f64) as usize % CITY_PAINT.len()];
         let yaw = -theta + hash(i, 19) * 0.3;
         let mut tower = Node::group("");
+        // Founded below the slope so no tower floats on the facets.
         put(
             &mut tower,
-            box_part(w, height, d, color, 0.0),
+            box_part(w, height + FOOTING, d, color, 0.0),
             0.0,
-            height / 2.0,
+            (height - FOOTING) / 2.0,
             0.0,
         );
         let glass = scale_hex_color(color, 0.55);
@@ -240,9 +308,43 @@ fn city(sectors: &mut Sectors) {
             height + 1.2,
             0.0,
         );
+        // The tall ones carry a mast with an aircraft warning light.
+        if height > 22.0 {
+            put(
+                &mut tower,
+                box_part(0.35, 6.0, 0.35, 0xc9cccb, 0.0),
+                -w * 0.2,
+                height + 3.0,
+                0.0,
+            );
+            put(
+                &mut tower,
+                box_part(0.9, 0.9, 0.9, WARNING_LIGHT, 0.0),
+                -w * 0.2,
+                height + 6.2,
+                0.0,
+            );
+        }
         place_at(sectors, theta, rotated(tower, 0.0, yaw, 0.0), x, y - 0.5, z);
     }
+    // A low waterfront of sheds and offices in front of the towers.
+    for i in 0..26u32 {
+        let theta = -0.7 + 1.2 * hash(i, 23);
+        let (x, y, z) = on_land(theta, 3.0 + 5.0 * hash(i, 29));
+        let (w, h) = (10.0 + 14.0 * hash(i, 31), 3.5 + 4.0 * hash(i, 37));
+        let color = CITY_PAINT[(hash(i, 41) * CITY_PAINT.len() as f64) as usize % CITY_PAINT.len()];
+        let shed = rotated(
+            box_part(w, h + FOOTING, 7.0, scale_hex_color(color, 0.85), 0.0),
+            0.0,
+            -theta + FRAC_PI_2,
+            0.0,
+        );
+        place_at(sectors, theta, shed, x, y + (h - FOOTING) / 2.0, z);
+    }
 }
+
+/// How far below its ground point a backdrop structure is founded, metres.
+const FOOTING: f64 = 4.0;
 
 const BOX_PAINT: [u32; 6] = [0xc96f3b, 0x3d8a8c, 0x5f7fa6, 0xb7a26e, 0x9b4f45, 0xe0dccd];
 
@@ -263,60 +365,293 @@ fn terminal(sectors: &mut Sectors) {
         );
         place_at(sectors, theta, stack, x, y + 1.3 * f64::from(levels), z);
     }
-    // Idle ship-to-shore cranes, booms raised: the terminal's silhouette.
-    for i in 0..4u32 {
-        let theta = 0.58 + 0.15 * f64::from(i);
+    // Ship-to-shore cranes in a row along the berth, of two generations and
+    // liveries, some working with their booms down over a ship and some idle with
+    // them raised: the terminal's silhouette.
+    for i in 0..6u32 {
+        let theta = 0.56 + 0.105 * f64::from(i) + 0.03 * hash(i, 47);
         let (x, y, z) = on_land(theta, 3.0);
-        let mut crane = Node::group("");
-        let (red, white) = (0xa8342c, 0xe5e2da);
-        for (lx, lz) in [(-5.0, -6.0), (5.0, -6.0), (-5.0, 6.0), (5.0, 6.0)] {
-            put(&mut crane, box_part(1.0, 24.0, 1.0, red, 0.0), lx, 12.0, lz);
-        }
-        for lz in [-6.0, 6.0] {
-            put(
-                &mut crane,
-                box_part(11.0, 1.2, 1.0, red, 0.0),
-                0.0,
-                23.5,
-                lz,
-            );
-            beam(&mut crane, [-5.0, 9.0, lz], [5.0, 23.0, lz], 0.5, red);
-        }
-        for lx in [-4.0, 4.0] {
-            beam(
-                &mut crane,
-                [lx, 24.0, -6.0],
-                [lx * 0.3, 36.0, 1.0],
-                0.8,
-                red,
-            );
-            beam(&mut crane, [lx, 24.0, 6.0], [lx * 0.3, 36.0, 1.0], 0.8, red);
-            // The boom, raised on its hinge, and the stay holding it.
-            let tip = [
-                lx * 0.3,
-                24.5 + 36.0 * BOOM_RAISE.sin(),
-                -6.0 - 36.0 * BOOM_RAISE.cos(),
-            ];
-            beam(&mut crane, [lx * 0.3, 24.5, -6.0], tip, 1.0, white);
-            beam(&mut crane, [lx * 0.3, 36.0, 1.0], tip, 0.3, white);
-        }
-        put(
-            &mut crane,
-            box_part(12.0, 1.4, 14.0, white, 0.0),
-            0.0,
-            24.6,
-            0.0,
-        );
-        put(
-            &mut crane,
-            box_part(6.0, 3.4, 5.0, white, 0.0),
-            0.0,
-            26.9,
-            5.0,
-        );
-        let mut crane = rotated(crane, 0.0, FRAC_PI_2 - theta, 0.0);
-        crane.scale = glam::DVec3::splat(0.75);
+        let (leg, trim) = CRANE_LIVERIES[(i as usize * 2 + 1) % CRANE_LIVERIES.len()];
+        let raise = if hash(i, 53) > 0.45 {
+            1.0 + 0.35 * hash(i, 59)
+        } else {
+            0.0
+        };
+        let tall = 1.0 + 0.25 * f64::from(i % 2);
+        let mut crane = terminal_crane(leg, trim, raise, tall);
+        crane = rotated(crane, 0.0, FRAC_PI_2 - theta, 0.0);
+        crane.scale = glam::DVec3::splat(0.72);
         place_at(sectors, theta, crane, x, y, z);
+    }
+    // A feeder ship alongside the working cranes.
+    let theta = 0.72;
+    let (x, _, z) = on_land(theta, -16.0);
+    let ship = rotated(anchored_ship(0, 70.0), 0.0, -theta - FRAC_PI_2, 0.0);
+    place_at(sectors, theta, ship, x, SEA_LEVEL - 1.5, z);
+}
+
+/// Crane paint: legs and boom, and the machinery house trim.
+const CRANE_LIVERIES: [(u32, u32); 3] = [
+    (0xa8342c, 0xe5e2da),
+    (0x2f5f8a, 0xe5e2da),
+    (0xd9a63a, 0x3b4b54),
+];
+
+/// A terminal's ship-to-shore crane in its own frame, the boom reaching toward
+/// -z: four legs, the portal, an A-frame and a boom that is `raise` radians up
+/// from level, with warning lights at the apex and the boom tip.
+fn terminal_crane(leg: u32, trim: u32, raise: f64, tall: f64) -> Node {
+    let mut crane = Node::group("");
+    let top = 24.0 * tall;
+    for (lx, lz) in [(-5.0, -6.0), (5.0, -6.0), (-5.0, 6.0), (5.0, 6.0)] {
+        put(
+            &mut crane,
+            box_part(1.0, top + FOOTING, 1.0, leg, 0.0),
+            lx,
+            (top - FOOTING) / 2.0,
+            lz,
+        );
+    }
+    for lz in [-6.0, 6.0] {
+        put(
+            &mut crane,
+            box_part(11.0, 1.2, 1.0, leg, 0.0),
+            0.0,
+            top - 0.5,
+            lz,
+        );
+        put(&mut crane, box_part(11.0, 0.7, 0.8, leg, 0.0), 0.0, 6.0, lz);
+        beam(&mut crane, [-5.0, 6.0, lz], [5.0, top - 1.0, lz], 0.5, leg);
+    }
+    let apex = [0.0, top + 12.0, 1.0];
+    let hinge = [0.0, top + 0.5, -6.0];
+    let reach = 40.0;
+    let tip = [
+        0.0,
+        hinge[1] + reach * raise.sin(),
+        hinge[2] - reach * raise.cos(),
+    ];
+    for lx in [-4.0, 4.0] {
+        beam(
+            &mut crane,
+            [lx, top, -6.0],
+            [lx * 0.3, apex[1], apex[2]],
+            0.8,
+            leg,
+        );
+        beam(
+            &mut crane,
+            [lx, top, 6.0],
+            [lx * 0.3, apex[1], apex[2]],
+            0.8,
+            leg,
+        );
+        let side = [lx * 0.3, 0.0, 0.0];
+        beam(
+            &mut crane,
+            [side[0], hinge[1], hinge[2]],
+            [side[0], tip[1], tip[2]],
+            1.0,
+            leg,
+        );
+        // Stays from the apex to the boom's middle and tip.
+        let middle = [
+            side[0],
+            (hinge[1] + tip[1]) / 2.0,
+            (hinge[2] + tip[2]) / 2.0,
+        ];
+        beam(&mut crane, [lx * 0.3, apex[1], apex[2]], middle, 0.3, trim);
+        beam(
+            &mut crane,
+            [lx * 0.3, apex[1], apex[2]],
+            [side[0], tip[1], tip[2]],
+            0.3,
+            trim,
+        );
+        // Backreach behind the portal, carrying the machinery house.
+        beam(
+            &mut crane,
+            [side[0], top + 0.5, 6.0],
+            [side[0], top + 0.5, 14.0],
+            0.9,
+            leg,
+        );
+    }
+    put(
+        &mut crane,
+        box_part(12.0, 1.4, 14.0, leg, 0.0),
+        0.0,
+        top + 0.6,
+        0.0,
+    );
+    put(
+        &mut crane,
+        box_part(6.0, 3.4, 6.0, trim, 0.0),
+        0.0,
+        top + 2.9,
+        10.5,
+    );
+    put(
+        &mut crane,
+        box_part(1.2, 1.2, 1.2, WARNING_LIGHT, 0.0),
+        0.0,
+        apex[1] + 0.9,
+        apex[2],
+    );
+    put(
+        &mut crane,
+        box_part(1.2, 1.2, 1.2, WARNING_LIGHT, 0.0),
+        0.0,
+        tip[1] + 0.9,
+        tip[2],
+    );
+    if raise == 0.0 {
+        // Working: the trolley out over the ship with a box on the spreader.
+        put(
+            &mut crane,
+            box_part(3.0, 1.6, 3.0, trim, 0.0),
+            0.0,
+            top - 0.6,
+            -24.0,
+        );
+        put(
+            &mut crane,
+            box_part(0.2, 9.0, 0.2, 0x2b3236, 0.0),
+            0.0,
+            top - 5.5,
+            -24.0,
+        );
+        put(
+            &mut crane,
+            box_part(2.6, 2.6, 6.1, BOX_PAINT[(tall * 7.0) as usize % 6], 0.0),
+            0.0,
+            top - 11.0,
+            -24.0,
+        );
+    }
+    crane
+}
+
+/// A ship riding at anchor or lying alongside, `length` metres long, in its own
+/// frame with the bow toward +x: a hull with a boot-top, the bridge aft, and either
+/// container stacks or a tanker's pipe deck and manifold.
+fn anchored_ship(variant: u32, length: f64) -> Node {
+    let mut ship = Node::group("");
+    let beam_width = length * 0.15;
+    let hull = [0x2e3e4c, 0x7a2f2a, 0x31503f, 0x2b2f33][variant as usize % 4];
+    put(
+        &mut ship,
+        box_part(length, 3.0, beam_width, 0x8a2f25, 0.0),
+        0.0,
+        0.5,
+        0.0,
+    );
+    put(
+        &mut ship,
+        box_part(length, 5.0, beam_width, hull, 0.0),
+        0.0,
+        4.5,
+        0.0,
+    );
+    // The bow, raked forward.
+    let bow = rotated(
+        box_part(beam_width * 0.75, 5.5, beam_width * 0.75, hull, 0.0),
+        0.0,
+        PI / 4.0,
+        0.0,
+    );
+    put(&mut ship, bow, length / 2.0, 4.3, 0.0);
+    put(
+        &mut ship,
+        box_part(9.0, 9.0, beam_width * 0.9, 0xeeeae0, 0.0),
+        -length * 0.38,
+        11.5,
+        0.0,
+    );
+    put(
+        &mut ship,
+        box_part(9.4, 1.4, beam_width * 1.15, 0x2c3a44, 0.0),
+        -length * 0.38,
+        15.0,
+        0.0,
+    );
+    put(
+        &mut ship,
+        box_part(2.6, 5.0, 3.2, 0xc8473b, 0.0),
+        -length * 0.44,
+        17.0,
+        0.0,
+    );
+    put(
+        &mut ship,
+        box_part(0.4, 9.0, 0.4, 0xd9d6cc, 0.0),
+        -length * 0.36,
+        20.0,
+        0.0,
+    );
+    put(
+        &mut ship,
+        box_part(0.9, 0.9, 0.9, WARNING_LIGHT, 0.0),
+        -length * 0.36,
+        24.8,
+        0.0,
+    );
+    if variant % 3 == 2 {
+        // Tanker: a pipe deck, the manifold and its derrick.
+        put(
+            &mut ship,
+            box_part(length * 0.7, 0.9, 2.0, 0x6d7477, 0.0),
+            length * 0.08,
+            7.5,
+            0.0,
+        );
+        put(
+            &mut ship,
+            box_part(3.0, 2.4, beam_width * 0.8, 0x6d7477, 0.0),
+            0.0,
+            8.2,
+            0.0,
+        );
+        beam(&mut ship, [2.0, 7.0, 0.0], [6.0, 15.0, 2.0], 0.5, 0xd9d6cc);
+    } else {
+        let bays = ((length * 0.62) / 7.0) as u32;
+        for bay in 0..bays {
+            let tiers = 1 + (hash(bay + variant * 31, 151) * 3.0) as u32;
+            for row in 0..3u32 {
+                let color = BOX_PAINT[(hash(bay * 7 + row + variant * 13, 157) * 6.0) as usize % 6];
+                put(
+                    &mut ship,
+                    box_part(6.0, 2.6 * f64::from(tiers), beam_width * 0.28, color, 0.0),
+                    -length * 0.28 + 7.0 * f64::from(bay),
+                    7.0 + 1.3 * f64::from(tiers),
+                    (f64::from(row) - 1.0) * beam_width * 0.3,
+                );
+            }
+        }
+    }
+    ship
+}
+
+/// Ships riding at anchor in the roads beyond the breakwater: (angle, distance
+/// from the arena centre, length, heading, variant).
+const ROADS: [(f64, f64, f64, f64, u32); 4] = [
+    (-2.02, 262.0, 120.0, 0.4, 0),
+    (-1.68, 214.0, 90.0, 2.6, 2),
+    (-1.42, 300.0, 140.0, 0.9, 1),
+    (-1.12, 236.0, 85.0, 3.6, 3),
+];
+
+fn roads(sectors: &mut Sectors) {
+    for &(theta, distance, length, heading, variant) in &ROADS {
+        let ship = rotated(anchored_ship(variant, length), 0.0, heading, 0.0);
+        place_at(
+            sectors,
+            theta,
+            ship,
+            distance * theta.cos(),
+            SEA_LEVEL - 1.5,
+            distance * theta.sin(),
+        );
     }
 }
 
@@ -328,10 +663,22 @@ fn tank_farm(sectors: &mut Sectors) {
         let (x, y, z) = on_land(theta, inland);
         let radius = 2.5 + 2.0 * hash(i, 57);
         let height = 4.0 + 3.0 * hash(i, 59);
-        let tank = cylinder_part(radius, height, 0xe6e4dc, 16);
-        place_at(sectors, theta, tank, x, y + height / 2.0, z);
+        // Each tank stands in its bund: a low concrete wall round a gravel floor.
+        let bund = cylinder_part(radius + 2.2, 1.0 + FOOTING, 0x9d988a, 12);
+        place_at(sectors, theta, bund, x, y + (1.0 - FOOTING) / 2.0, z);
+        let tank = cylinder_part(radius, height + FOOTING, 0xe6e4dc, 16);
+        place_at(
+            sectors,
+            theta,
+            tank,
+            x,
+            y + (height - FOOTING) / 2.0 + 0.6,
+            z,
+        );
         let roof = cylinder_part(radius + 0.2, 0.8, 0x9fa6a6, 16);
-        place_at(sectors, theta, roof, x, y + height, z);
+        place_at(sectors, theta, roof, x, y + height + 0.6, z);
+        let band = cylinder_part(radius + 0.05, 0.6, 0x2f6f8a, 16);
+        place_at(sectors, theta, band, x, y + height * 0.75, z);
     }
     for (i, theta) in [1.62, 1.71].into_iter().enumerate() {
         let (x, y, z) = on_land(theta, 22.0 + 6.0 * i as f64);
@@ -340,6 +687,56 @@ fn tank_farm(sectors: &mut Sectors) {
             let stack = cylinder_part(1.3 - band as f64 * 0.06, 5.0, color, 12);
             place_at(sectors, theta, stack, x, y + 2.5 + band as f64 * 5.0, z);
         }
+        place_at(
+            sectors,
+            theta,
+            cylinder_part(1.6, FOOTING, 0x8d8a80, 12),
+            x,
+            y - FOOTING / 2.0 + 0.2,
+            z,
+        );
+        place_at(
+            sectors,
+            theta,
+            box_part(1.0, 1.0, 1.0, WARNING_LIGHT, 0.0),
+            x,
+            y + 30.5,
+            z,
+        );
+    }
+}
+
+/// Whether an angle is kept clear of woods for the city, the
+/// terminal or the tank farm.
+fn built_up(theta: f64) -> bool {
+    (-0.75..0.52).contains(&theta) || (0.52..1.15).contains(&theta) || (1.3..1.95).contains(&theta)
+}
+
+/// Pine woods in clumps over the headlands: dark marks that give the hills their
+/// scale.
+fn woods(sectors: &mut Sectors) {
+    for i in 0..1100u32 {
+        let theta = -PI + TAU * hash(i, 201);
+        if in_open_sea(theta)
+            || built_up(theta)
+            || land_amount(theta) < 0.6
+            || (1.1..2.05).contains(&theta)
+        {
+            continue;
+        }
+        // Clumps: only where a slow wave of the angle and the slope allow.
+        let inland = 6.0 + 100.0 * hash(i, 203).powf(0.8);
+        if wave(theta * 2.0 + inland * 0.02, 5.7) < 0.5 {
+            continue;
+        }
+        let (x, y, z) = on_land(theta, inland);
+        let height = 3.6 + 3.4 * hash(i, 207);
+        let color = [0x2c4a2e, 0x35543a, 0x3f5c33, 0x29402c][(hash(i, 211) * 4.0) as usize % 4];
+        let pine = Node::mesh(
+            Arc::new(cone_geometry(height * 0.3, height, 6)),
+            paint(color),
+        );
+        place_at(sectors, theta, pine, x, y + height / 2.0 - 0.5, z);
     }
 }
 
@@ -355,10 +752,24 @@ fn turbines(sectors: &mut Sectors) {
         let mut turbine = Node::group("");
         put(
             &mut turbine,
-            cylinder_part(0.7, 32.0, 0xf1f1ec, 10),
+            cylinder_part(0.7, 32.0 + FOOTING, 0xf1f1ec, 10),
             0.0,
-            16.0,
+            (32.0 - FOOTING) / 2.0,
             0.0,
+        );
+        put(
+            &mut turbine,
+            cylinder_part(2.2, 0.8, 0x9d988a, 10),
+            0.0,
+            0.1,
+            0.0,
+        );
+        put(
+            &mut turbine,
+            box_part(0.7, 0.7, 0.7, WARNING_LIGHT, 0.0),
+            0.0,
+            33.6,
+            -0.4,
         );
         put(
             &mut turbine,
@@ -452,24 +863,23 @@ fn breakwater(sectors: &mut Sectors) {
     place(sectors, -FRAC_PI_2 + 0.1, group);
 }
 
-/// Merge a sector, fade its paint into the distance haze and keep it out of the
-/// shadow pass.
+/// Merge a sector into one far-shore mesh (its paint already vertex colors),
+/// kept out of the shadow pass.
 fn finish(mut sector: Node) -> Node {
     batch(&mut sector);
-    for child in &mut sector.children {
-        if let Some(drawable) = &mut child.drawable {
-            drawable.cast_shadow = false;
-            drawable.receive_shadow = false;
-            let mut mesh = (*drawable.mesh).clone();
-            for color in &mut mesh.colors {
-                for (channel, haze) in color.iter_mut().zip(HAZE) {
-                    *channel += (haze - *channel) * HAZE_AMOUNT;
-                }
-            }
-            drawable.mesh = Arc::new(mesh);
-        }
+    let meshes: Vec<Arc<Mesh>> = sector
+        .children
+        .drain(..)
+        .filter_map(|child| child.drawable.map(|drawable| drawable.mesh))
+        .collect();
+    let merged = merge_geometries(&meshes.iter().map(|mesh| &**mesh).collect::<Vec<_>>())
+        .expect("backdrop parts share one vertex layout");
+    let mut node = Node::mesh(Arc::new(merged), apron_material(ApronMode::Shore, 0xffffff));
+    if let Some(drawable) = &mut node.drawable {
+        drawable.cast_shadow = false;
+        drawable.receive_shadow = false;
     }
-    sector
+    node
 }
 
 /// The far shore around the harbor, as four batched sectors.
@@ -481,12 +891,17 @@ pub fn harbor_backdrop() -> Node {
         if let Some(shore) = shore_mesh(index * quarter, (index + 1) * quarter) {
             sector.children.push(shore);
         }
+        if let Some(range) = range_mesh(index * quarter, (index + 1) * quarter) {
+            sector.children.push(range);
+        }
     }
     city(&mut sectors);
     terminal(&mut sectors);
     tank_farm(&mut sectors);
     turbines(&mut sectors);
+    woods(&mut sectors);
     breakwater(&mut sectors);
+    roads(&mut sectors);
     for sector in sectors {
         root.children.push(finish(sector));
     }
