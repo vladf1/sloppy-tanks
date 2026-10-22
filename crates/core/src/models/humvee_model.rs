@@ -13,7 +13,7 @@
 use std::sync::{Arc, OnceLock};
 
 use super::model_primitives::{material, paint, put, shadowed};
-use super::tank_model::{LENS_ROUGHNESS, STENCIL};
+use super::tank_model::{LENS_ROUGHNESS, MARKING_WHITE};
 use super::tank_surfaces::vehicle_glass;
 use super::{Team, VehicleKind, part};
 use crate::geometry::Mesh;
@@ -138,7 +138,7 @@ pub(super) fn humvee_model(team: Team, colors: [u32; 3]) -> Node {
     hull.children.extend(palette.parts(&shared.body));
     hull.children.push(shadowed(
         Arc::new(hood_insignia(team)),
-        material(STENCIL, 0.0, MATTE_ROUGHNESS),
+        material(MARKING_WHITE, 0.0, MATTE_ROUGHNESS),
     ));
     root.children.push(hull);
     root.children.push(turret(&palette));
@@ -199,9 +199,11 @@ mod tests {
     }
 
     #[test]
-    fn teams_differ_only_in_paint() {
+    fn teams_differ_only_in_paint_and_insignia() {
         let (blue, blue_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Blue));
         let (red, red_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Red));
-        assert_eq!((blue, blue_meshes.len()), (red, red_meshes.len()));
+        assert_eq!(blue_meshes.len(), red_meshes.len());
+        let insignia = |team| hood_insignia(team).triangle_count();
+        assert_eq!(blue - insignia(Team::Blue), red - insignia(Team::Red));
     }
 }
