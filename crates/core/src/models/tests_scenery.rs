@@ -554,12 +554,7 @@ fn scenery_textures_per_theme() {
             "textures/harbor/dock.webp",
             "textures/harbor/container.webp",
             "generated:harbor-container-liveries",
-            "generated:harbor-label-b2",
-            "generated:harbor-label-b1",
-            "generated:harbor-label-harbor-havoc",
-            "generated:harbor-label-port-07",
-            "generated:harbor-label-loading",
-            "textures/houses/siding.webp",
+            "generated:harbor-labels",
         ]
     );
     assert_eq!(
@@ -590,7 +585,7 @@ fn scenery_textures_per_theme() {
     for key in [
         effects_scenery::VILLAGE_SIGN_TEXTURE,
         effects_scenery::QUARRY_SIGN_TEXTURE,
-        "harbor-label-loading",
+        effects_scenery::HARBOR_LABEL_TEXTURE,
     ] {
         assert!(effects_scenery::canvas_texture(key).is_some(), "{key}");
     }

@@ -2741,8 +2741,9 @@ html:not(.phone) #toast[data-tone="death"] {
   visibility: hidden;
 }
 /* Single player: the battle formats on the left, difficulty and GO stacked on the right.
-   While the arena loads (or fails to), a status well sits under the formats; once it is
-   ready the well leaves and the formats take its row, so GO carries the ready state. */
+   A status well under the formats says whether the arena is loading, ready or failed. It
+   keeps its row in every state: each new tank or map choice prepares again, and a well
+   that came and went resized the formats with every click. */
 #single-panel {
   grid-template-areas:
     "battle battle difficulty"
@@ -2759,12 +2760,6 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .start #start {
   grid-area: go;
-}
-:is(#startup-overlay, #overlay)[data-state="ready"] #single-panel .startup-progress {
-  display: none;
-}
-:is(#startup-overlay, #overlay)[data-state="ready"] #single-panel .battle-choice {
-  grid-row: 1 / span 2;
 }
 /* Multiplayer: the room list over its status line on the left, name and team over the
    action on the right. */
