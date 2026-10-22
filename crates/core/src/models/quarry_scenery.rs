@@ -20,7 +20,7 @@ use super::batching::batch;
 use super::concrete_surfaces::concrete_wall;
 use super::harbor_surfaces::steel_box;
 use super::model_primitives::{
-    TEAM_COLORS, box_part, cylinder_part, put, rotated, shadow_receiver, shadowed,
+    TEAM_COLORS, box_part, cylinder_part, put, rotated, shadow_receiver,
 };
 use super::quarry_benches::{
     StockpileSpot, quarry_bench, quarry_butte, quarry_mesas, quarry_scree_spots,
@@ -271,7 +271,7 @@ pub fn quarry_scenery() -> Node {
         spoil_surface(&mut talus, 0.0);
         geology
             .children
-            .push(shadowed(Arc::new(talus), spoil.clone()));
+            .push(shadow_receiver(Arc::new(talus), spoil.clone()));
         // Stones in runs along the wall, each run landing in its own scenery cell.
         let (cos, sin) = (strip.rot_y.cos(), strip.rot_y.sin());
         let count = js_round((strip.x1 - strip.x0) * TALUS_STONES) as usize;
@@ -321,7 +321,7 @@ pub fn quarry_scenery() -> Node {
     spoil_surface(&mut stockpile, 1.0);
     geology
         .children
-        .push(shadowed(Arc::new(stockpile), spoil.clone()));
+        .push(shadow_receiver(Arc::new(stockpile), spoil.clone()));
     let pile_stones: Vec<RubbleStone> = (0..70)
         .map(|_| {
             let angle = talus_rng.range(0.0, PI * 2.0);
@@ -356,7 +356,7 @@ pub fn quarry_scenery() -> Node {
     spoil_surface(&mut dig, 0.6);
     geology
         .children
-        .push(shadowed(Arc::new(dig), spoil.clone()));
+        .push(shadow_receiver(Arc::new(dig), spoil.clone()));
     let dig_stones: Vec<RubbleStone> = (0..40)
         .map(|i| {
             let angle = dig_rng.range(0.0, PI * 2.0);
@@ -416,7 +416,7 @@ pub fn quarry_scenery() -> Node {
     let deck = mesh_triangles(&ramp);
     geology
         .children
-        .push(shadowed(Arc::new(ramp), spoil.clone()));
+        .push(shadow_receiver(Arc::new(ramp), spoil.clone()));
     for (i, boulder) in quarry_ramp_boulders().into_iter().enumerate() {
         let rock = sandstone_rock(
             boulder.size,

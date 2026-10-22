@@ -9,7 +9,7 @@ use glam::DVec3;
 use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
 
-use super::model_primitives::shadowed;
+use super::model_primitives::{shadow_receiver, shadowed};
 use super::quarry_benches::ScreeSpot;
 use super::quarry_surfaces::{
     RubbleStone, STONE_SEAT, mesh_triangles, sandstone_material, scatter_mesh, surface_height,
@@ -127,7 +127,7 @@ pub fn quarry_scree(spot: &ScreeSpot, soil: &Arc<Material>) -> [Node; 2] {
     // Both share their batches with the rest of the apron: the fan receives
     // shadows like the floor, the rubble casts like the talus.
     [
-        shadowed(Arc::new(mound), soil.clone()),
+        shadow_receiver(Arc::new(mound), soil.clone()),
         shadowed(Arc::new(rubble), sandstone_material()),
     ]
 }
