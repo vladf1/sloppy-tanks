@@ -9,9 +9,12 @@ import {
   killFeedNames,
   killFeedSides,
   newFeedRow,
+  placeDamageRing,
   setText,
+  showDamageRing,
   showFeed,
   showTankStatus,
+  type ScreenPoint,
 } from "../game/hud-feedback";
 import { debugPage, isExtraLevel, MAP_OPTIONS, mapOption } from "../game/map-options";
 import { duration } from "../game/round-recap";
@@ -146,6 +149,9 @@ export class NetworkUI {
   private toastTime = 0;
   private hurtTime = 0;
   private deathCause = "";
+  /** Where the viewer's tank is on screen (NDC); null in first person. The damage ring
+   * wraps it. */
+  viewerPoint: ScreenPoint | null = null;
   /** Whether the socket is live, being (re)connected, or has given up. */
   private link: "live" | "connecting" | ConnectionEnd = "connecting";
   /** The finished round, read from the final replicated state. */
@@ -188,6 +194,7 @@ export class NetworkUI {
       touchMode: () => this.actions.touchMode(),
       setTouchMode: (mode) => this.actions.setTouchMode(mode),
       setVolume: (value) => this.actions.volume(value),
+      controls: controlsMarkup(),
       opened: () => {
         resumeAfterSettings =
           this.lastLobby?.phase === "playing" && this.link === "live" && !this.menu;
@@ -696,7 +703,7 @@ export class NetworkUI {
       }
       if ((event.type === "hurt" || event.type === "death") && damageAngle !== null) {
         const indicator = this.root.querySelector<HTMLElement>("#damage-direction")!;
-        indicator.style.transform = "translate(-50%, -50%) rotate(" + damageAngle + "rad)";
+        showDamageRing(indicator, damageAngle, this.viewerPoint);
         this.hurtTime = 1.2;
       }
       if (event.type === "respawn") {
@@ -735,7 +742,11 @@ export class NetworkUI {
     this.toastTime -= dt;
     this.root.querySelector("#toast")!.classList.toggle("visible", this.toastTime > 0);
     this.hurtTime -= dt;
-    this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = this.hurtTime <= 0;
+    const indicator = this.root.querySelector<HTMLElement>("#damage-direction")!;
+    indicator.hidden = this.hurtTime <= 0;
+    if (!indicator.hidden) {
+      placeDamageRing(indicator, this.viewerPoint);
+    }
     this.feed = showFeed(this.root.querySelector("#feed")!, this.feed, dt);
     // The status line is only for connection messages; keep it empty during live play.
     if (connected && !this.menu) {

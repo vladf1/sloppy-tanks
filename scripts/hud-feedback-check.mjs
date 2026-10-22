@@ -277,7 +277,8 @@ try {
   assert.equal(await critical(), true);
   await page.keyboard.press("Escape");
   await advance();
-  // The pause menu's controls card lists each action with its keys.
+  // The pause menu's Controls tab lists each action with its keys.
+  await page.locator("#pause-tab-controls").click();
   const controls = await page.locator(".menu .keyboard-controls").innerText();
   assert.match(controls, /Ammo\s+Q\s+E\s+1–5\s+or wheel/);
   assert.match(controls, /Zoom\s+Shift\s+Wheel/);

@@ -358,7 +358,8 @@ pub struct FirstPerson {
     pub transition_turn_start: f64,
     /// Destroyed in first person, the camera eases out of the wreck to this many
     /// metres behind (along the look) and above the last eye, tilted down to
-    /// watch it, over `destroyed_step_seconds`.
+    /// watch it, over `destroyed_step_seconds`. It clears the wreck's own smoke and
+    /// frames the wreck in the upper middle, above the respawn card.
     pub destroyed_back: f64,
     pub destroyed_rise: f64,
     pub destroyed_pitch: f64,
@@ -379,9 +380,9 @@ pub const FIRST_PERSON: FirstPerson = FirstPerson {
     pickup_opacity: 0.7,
     transition_seconds: 0.8,
     transition_turn_start: 0.4,
-    destroyed_back: 4.5,
-    destroyed_rise: 2.2,
-    destroyed_pitch: -0.5,
+    destroyed_back: 13.0,
+    destroyed_rise: 4.0,
+    destroyed_pitch: -0.36,
     destroyed_step_seconds: 0.6,
 };
 
