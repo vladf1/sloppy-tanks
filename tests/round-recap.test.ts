@@ -6,7 +6,9 @@ import {
   mostValuable,
   recapMarkup,
   scoreboardMarkup,
+  standingLine,
   teamLabel,
+  teamPlace,
   wreckLine,
 } from "../src/game/round-recap";
 import type { RecapMetric, RecapState, ScoreboardRow } from "../src/game/engine-api";
@@ -127,5 +129,27 @@ test("the scoreboard lists each team by kills, lights the viewer and crowns one 
     markup,
     /<li class="you"><span class="board-name">You<\/span><span class="board-tag">YOU/,
   );
-  assert.match(markup, /board-mvp red"><span>★ MVP<\/span><b>Cat<\/b><small>3 kills · 4 wrecks/);
+  assert.doesNotMatch(markup, /board-mvp/);
+});
+
+test("pause names who leads and by how much, from the viewer's side", () => {
+  const names = ["BLUE", "RED"];
+  assert.equal(standingLine([3, 4], 1, names), "Your team leads by 1");
+  assert.equal(standingLine([7, 2], 1, names), "Blue team leads by 5");
+  assert.equal(standingLine([2, 2], 0, names), "Level at 2 each");
+});
+
+test("pause places the viewer on their own team by kills, then fewest wrecks", () => {
+  const row = (id: number, team: 0 | 1, kills: number, deaths: number) => ({
+    id,
+    name: `T${id}`,
+    kills,
+    deaths,
+    team,
+    kind: "balanced" as const,
+    human: id === 1,
+  });
+  const rows = [row(1, 1, 2, 1), row(2, 1, 2, 0), row(3, 1, 0, 0), row(4, 0, 9, 0)];
+  assert.deepEqual(teamPlace(rows, 1), { place: 2, of: 3 });
+  assert.equal(teamPlace(rows, 99), null);
 });
