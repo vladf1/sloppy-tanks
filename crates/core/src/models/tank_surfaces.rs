@@ -33,7 +33,7 @@ use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 /// saturated color without a camouflage, so a tank's side reads at a glance. The
 /// blue stays bright enough not to fall to black in shade (the paint's own fill
 /// lifts it further), the red deep enough never to wash out to salmon in sun.
-pub const VEHICLE_PAINT: [u32; 2] = [0x2a54a0, 0x8c2622];
+pub const VEHICLE_PAINT: [u32; 2] = [0x2a54a0, 0x882b25];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -92,14 +92,14 @@ const PLATE_VARIATION: f64 = 0.07;
 /// The hand-painted gradient down an upright plate: its paint value at the
 /// plate's foot and at its top edge. Plates shorter than `GRADIENT_MIN_HEIGHT`
 /// (chamfers, trim) keep their flat value.
-const GRADIENT_FOOT: f64 = 0.74;
+const GRADIENT_FOOT: f64 = 0.8;
 const GRADIENT_TOP: f64 = 1.04;
 const GRADIENT_MIN_HEIGHT: f64 = 0.05;
 /// Upward faces (normal y above `DECK_FACING`) range from `DECK_LOW` at the top of
 /// the dusty band to `DECK_HIGH` `DECK_RAMP` metres above it.
 const DECK_FACING: f64 = 0.5;
-const DECK_LOW: f64 = 0.66;
-const DECK_HIGH: f64 = 1.0;
+const DECK_LOW: f64 = 0.72;
+const DECK_HIGH: f64 = 1.1;
 const DECK_RAMP: f64 = 0.6;
 /// Every painted face darkens toward the ground: `HEIGHT_FOOT` at the ground
 /// line, full value `HEIGHT_SPAN` metres above it, so the hull reads lighter at the
@@ -116,17 +116,17 @@ const UPRIGHT: f64 = 0.6;
 /// the wear tile's. Running gear keeps its own vertex colors and takes only the fill.
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
-const RIM_STRENGTH: f32 = 0.4;
+const RIM_STRENGTH: f32 = 0.55;
 const PAINT_FILL: f32 = 0.08;
 /// Running gear sits in the hull's shadow: more fill, no rim.
 const GEAR_FILL: f32 = 0.45;
 /// Bare steel where the paint chipped through (sRGB).
-const BARE_STEEL: u32 = 0x77746e;
+const BARE_STEEL: u32 = 0x75716a;
 /// The paint's value on the turret and on the hull: the turret a step lighter, so
 /// it stands off the deck from the overhead camera and its facing reads at a
 /// glance, the hull a step deeper beneath it.
-const TURRET_VALUE: f64 = 1.04;
-const HULL_VALUE: f64 = 0.84;
+const TURRET_VALUE: f64 = 1.08;
+const HULL_VALUE: f64 = 0.9;
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
 const SIGNAL_GLOW: f32 = 0.0;

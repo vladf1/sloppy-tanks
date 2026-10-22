@@ -43,28 +43,30 @@ const BOLT_HEAD: f64 = 0.012;
 /// Seam between neighbouring skirt panels.
 const PANEL_SEAM: f64 = 0.014;
 /// Road wheel, idler and roller facets: enough to read round close up.
-const WHEEL_SIDES: u32 = 12;
+const WHEEL_SIDES: u32 = 10;
 const ROLLER_SIDES: u32 = 10;
 const HUB_BOLTS: u32 = 5;
 
 const HEADLIGHT: u32 = 0xd9e6df;
 /// Rubber pads and skirt edges: near black.
-const RUBBER: u32 = 0x1c1d1e;
-/// Road wheel tyres: a black rubber sidewall and a barely lighter, scuffed tread
-/// band, so each wheel reads as a rubber-tyred wheel round its steel disc.
-const TYRE_SIDEWALL: u32 = 0x1f2021;
-const TYRE_TREAD: u32 = 0x2b2c2d;
+const RUBBER: u32 = 0x202122;
+/// Road wheel tyres: a black rubber sidewall and a lighter, scuffed tread band,
+/// so each wheel reads as a rubber tyre round its painted disc.
+const TYRE_SIDEWALL: u32 = 0x232425;
+const TYRE_TREAD: u32 = 0x37383a;
 /// Track shoes and their end connectors and guide horns: dark worn steel, the
-/// connectors and horn faces a little brighter where the wheels and ground rub,
-/// never bright enough to read as white teeth.
-const TRACK_STEEL: u32 = 0x3d3c39;
-const TRACK_CONNECTOR: u32 = 0x4b4a46;
-/// Road wheel discs: dark gun-grey steel rather than the team paint, so the
-/// running gear reads as rubber and steel beneath the painted hull; a lighter
-/// hub cap and bright bolt heads sit in their centre.
-const WHEEL_STEEL: u32 = 0x464a49;
-const HUB_STEEL: u32 = 0x6c6c66;
-const HUB_BOLT: u32 = 0x8d8a82;
+/// connectors and horn faces polished brighter where the wheels and ground rub,
+/// so the track shows its link rhythm under the skirts without reading as white
+/// teeth.
+const TRACK_STEEL: u32 = 0x4a4844;
+const TRACK_CONNECTOR: u32 = 0x77736a;
+/// Road wheel discs wear the team paint a shade deeper, as real road wheels are
+/// painted with the hull: the row of wheels reads as painted discs on black
+/// rubber over the track, and as the vehicle's team even below the skirts. A
+/// steel hub cap and lighter bolt heads sit in their centre.
+const WHEEL_PAINT_VALUE: f64 = 0.8;
+const HUB_STEEL: u32 = 0x5f5c56;
+const HUB_BOLT: u32 = 0x7f7b73;
 /// The sprocket and return rollers: bare dark steel.
 const SPROCKET_STEEL: u32 = 0x55585a;
 /// Dirty track steel, wheels and rubber share one vertex-colored material, so a
@@ -169,7 +171,7 @@ fn gear_layout(c: &Chassis) -> GearLayout {
             rollers: &[0.5, -0.85],
             roller_radius: 0.065,
             skirt: SkirtStyle::Abrams,
-            skirt_bottom: 0.17,
+            skirt_bottom: 0.2,
         }
     }
 }
@@ -193,7 +195,11 @@ pub(super) fn running_gear(hull: &mut Node, track_group: &mut Node, c: &Chassis,
     // The outer face of every wheel sits just inside the end connectors.
     let wheel_face = track_x + side * (gear.track_width / 2.0 - link.connector_width - 0.004);
     let wheel_width = gear.track_width - link.connector_width - 0.03;
-    let wheel = wheel_mesh(gear.wheel_radius, wheel_width, WHEEL_STEEL);
+    let wheel = wheel_mesh(
+        gear.wheel_radius,
+        wheel_width,
+        scaled_hex(c.color, WHEEL_PAINT_VALUE),
+    );
     let steel = material(SPROCKET_STEEL, 0.55, 0.45);
     let rubber = track_material();
     let wheel_y = wheel_height(&gear);
@@ -224,6 +230,14 @@ pub(super) fn running_gear(hull: &mut Node, track_group: &mut Node, c: &Chassis,
     fender(hull, c, reach, side);
     skirt(hull, c, &gear, &path, side);
     headlight(hull, c, side);
+}
+
+/// An sRGB color with each channel scaled by `factor`.
+fn scaled_hex(hex: u32, factor: f64) -> u32 {
+    [16, 8, 0].into_iter().fold(0, |out, shift| {
+        let channel = f64::from((hex >> shift) & 0xff) * factor;
+        out | ((channel.round().clamp(0.0, 255.0) as u32) << shift)
+    })
 }
 
 fn wheel_height(gear: &GearLayout) -> f64 {
@@ -850,21 +864,30 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
     };
     let rear = rear_hub.x + rear_radius * 0.5;
     let front = track_reach(c.length) - 0.03;
+    // Bolted modules of unequal widths, as real skirts are hung: a long middle
+    // module over the stations, shorter ones toward the ends.
     let panels: Vec<Panel> = match gear.skirt {
-        SkirtStyle::Booker => {
-            even_panels(rear, front_hub.x - front_radius * 0.3, 4, |_| (0.04, 0.0))
+        SkirtStyle::Booker => modular_panels(
+            rear,
+            front_hub.x - front_radius * 0.3,
+            &[0.8, 1.25, 1.0, 0.9],
+            |_| (0.04, 0.0),
+        ),
+        SkirtStyle::Abrams => {
+            modular_panels(rear, front, &[0.75, 1.2, 0.85, 1.15, 0.95, 1.1], |j| {
+                // Thick ballistic panels over the front two stations, raked leading edge.
+                match j {
+                    5 => (0.07, 0.34),
+                    4 => (0.07, 0.0),
+                    _ => (0.05, 0.0),
+                }
+            })
         }
-        SkirtStyle::Abrams => even_panels(rear, front, 6, |j| {
-            // Thick ballistic panels over the front two stations, raked leading edge.
-            match j {
-                5 => (0.07, 0.34),
-                4 => (0.07, 0.0),
-                _ => (0.05, 0.0),
-            }
-        }),
-        SkirtStyle::Type99 => even_panels(rear, front - 0.05, 5, |j| {
-            (0.04, if j == 4 { 0.2 } else { 0.0 })
-        }),
+        SkirtStyle::Type99 => {
+            modular_panels(rear, front - 0.05, &[0.85, 1.2, 0.95, 1.0, 1.05], |j| {
+                (0.04, if j == 4 { 0.2 } else { 0.0 })
+            })
+        }
     };
     let paint = material(c.color, 0.05, 0.65);
     let bolt = bolt_mesh();
@@ -877,11 +900,9 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
             continue;
         }
         let length = panel.z[1] - panel.z[0];
-        let bolts = (length / 0.24).round().max(2.0) as u32;
-        let mut rows = vec![top - 0.03];
-        if panel.thickness > 0.06 {
-            rows.push(bottom + 0.035);
-        }
+        let bolts = (length / 0.3).round().max(2.0) as u32;
+        // A row along the top hanger and one just above the lower lip.
+        let rows = [top - 0.03, bottom + SKIRT_LIP_HEIGHT + 0.03];
         for (row, &y) in rows.iter().enumerate() {
             for k in 0..bolts {
                 let mut bz =
@@ -941,13 +962,14 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
 
 /// The skirt insignia's height as a share of the skirt's, and how far it stands
 /// proud of the panel (still inside the fender edge).
-const INSIGNIA_HEIGHT: f64 = 0.78;
+const INSIGNIA_HEIGHT: f64 = 0.5;
 const INSIGNIA_PROUD: f64 = 0.003;
 
 static INSIGNIA: Cache<(Team, [u64; 2]), Mesh> = Cache::new();
 
 /// A team's insignia painted on a skirt, `height` tall, facing out along x on
-/// `side`: a diamond for blue, twin upright bars for red (the turret roof's).
+/// `side`: a diamond for blue, an upright triangle for red. A small tactical
+/// sign beside the turret's unit number, never a second number.
 fn insignia_mesh(team: Team, height: f64, side: f64) -> Arc<Mesh> {
     INSIGNIA.get_or_insert((team, [height, side].map(f64::to_bits)), || {
         let mut b = MeshBuilder::default();
@@ -961,26 +983,34 @@ fn insignia_mesh(team: Team, height: f64, side: f64) -> Arc<Mesh> {
                 UNCOLORED,
             );
         } else {
-            let (bar, gap) = (height * 0.24, height * 0.2);
-            for z in [-(gap + bar) / 2.0, (gap + bar) / 2.0] {
-                let (z0, z1) = (z - bar / 2.0, z + bar / 2.0);
-                b.oriented_quad(
-                    [at(z0, -h), at(z1, -h), at(z1, h), at(z0, h)],
-                    facing,
-                    UNCOLORED,
-                );
-            }
+            let half_base = h * 1.1;
+            b.oriented_tri(
+                [at(-half_base, -h), at(half_base, -h), at(0.0, h)],
+                facing,
+                UNCOLORED,
+            );
         }
         b.finish_uncolored()
     })
 }
 
-fn even_panels(rear: f64, front: f64, count: u32, style: impl Fn(u32) -> (f64, f64)) -> Vec<Panel> {
-    let length = (front - rear) / f64::from(count);
-    (0..count)
-        .map(|j| {
+/// Skirt modules from `rear` to `front`, their lengths in proportion to
+/// `weights` (rear first), each styled by `style(j)` as (thickness, rake).
+fn modular_panels(
+    rear: f64,
+    front: f64,
+    weights: &[f64],
+    style: impl Fn(u32) -> (f64, f64),
+) -> Vec<Panel> {
+    let unit = (front - rear) / weights.iter().sum::<f64>();
+    let mut z = rear;
+    (0u32..)
+        .zip(weights)
+        .map(|(j, weight)| {
             let (thickness, rake) = style(j);
-            let z0 = rear + f64::from(j) * length + PANEL_SEAM / 2.0;
+            let length = weight * unit;
+            let z0 = z + PANEL_SEAM / 2.0;
+            z += length;
             Panel {
                 z: [z0, z0 + length - PANEL_SEAM],
                 thickness,
@@ -989,6 +1019,12 @@ fn even_panels(rear: f64, front: f64, count: u32, style: impl Fn(u32) -> (f64, f
         })
         .collect()
 }
+
+/// The stiffening lip along a skirt module's lower edge: its height and how far
+/// it stands proud of the face (within the bolt heads' allowance, so it stays
+/// inside the overall width).
+const SKIRT_LIP_HEIGHT: f64 = 0.04;
+const SKIRT_LIP_PROUD: f64 = 0.009;
 
 static PANELS: Cache<[u64; 5], Mesh> = Cache::new();
 
@@ -1010,6 +1046,22 @@ fn panel_mesh(panel: &Panel, height: f64, side: f64) -> Arc<Mesh> {
         let p = |x: f64, q: DVec2| DVec3::new(x, q.y, q.x);
         let back = -side * panel.thickness;
         let outward = DVec3::X * side;
+        // The lower lip: a turned-out strip along the bottom edge, catching the
+        // light on its top so each module reads as a bolted plate with an edge.
+        let lip_end = length - panel.rake;
+        let (lo, hi) = (side * -0.001, side * SKIRT_LIP_PROUD);
+        b.box_faces(
+            [lo.min(hi), 0.0, 0.0],
+            [lo.max(hi), SKIRT_LIP_HEIGHT, lip_end],
+            Faces {
+                left: (side < 0.0).then_some(UNCOLORED),
+                right: (side > 0.0).then_some(UNCOLORED),
+                top: Some(UNCOLORED),
+                bottom: Some(UNCOLORED),
+                back: Some(UNCOLORED),
+                front: Some(UNCOLORED),
+            },
+        );
         b.oriented_quad(outline.map(|q| p(0.0, q)), outward, UNCOLORED);
         b.oriented_quad(outline.map(|q| p(back, q)), -outward, UNCOLORED);
         for i in 0..4 {

@@ -369,10 +369,159 @@ fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
         0.07,
         0x343431,
     );
+    drill_rig_details(&mut rig, mast_x);
     weather_paint(&mut rig);
     rig.set_rotation_euler(0.0, yaw, 0.0);
     rig.position = DVec3::new(x, -1.79, z);
     adopt_children(group, rig);
+}
+
+/// The secondary structure that sells the drill rig up close: the crown block
+/// and its sheaves, a caged ladder up the mast, hazard bands at its foot, the
+/// rod carousel, deck handrails, hose loops and the cab's beacon and lamps. All
+/// in colours the rig already uses, so it adds no batch.
+fn drill_rig_details(rig: &mut Node, mast_x: f64) {
+    const DARK: u32 = 0x4a4238;
+    const FRAME: u32 = 0x5a564c;
+    const STEEL: u32 = 0x9a9a92;
+    const RUBBER: u32 = 0x343431;
+    // Crown block over the mast head, two sheaves turning the feed cables.
+    put(rig, steel_box(0.95, 0.55, 0.95, DARK), mast_x, 11.35, 0.55);
+    for dz in [0.3, 0.8] {
+        let sheave = rotated(cylinder_part(0.32, 0.1, RUBBER, 10), FRAC_PI_2, 0.0, 0.0);
+        put(rig, sheave, mast_x + 0.2, 11.55, dz);
+    }
+    for dz in [0.38, 0.72] {
+        steel_beam(
+            rig,
+            [mast_x + 0.5, 11.5, dz],
+            [mast_x + 0.5, 7.7, dz],
+            0.035,
+            RUBBER,
+        );
+    }
+    // Black hazard bands round the mast foot.
+    for k in 0..3 {
+        put(
+            rig,
+            steel_box(0.6, 0.2, 0.65, RUBBER),
+            mast_x,
+            1.3 + f64::from(k) * 0.42,
+            0.55,
+        );
+    }
+    // A caged ladder up the back of the mast.
+    for dz in [0.3, 0.8] {
+        put(
+            rig,
+            steel_box(0.05, 8.6, 0.05, FRAME),
+            mast_x - 0.42,
+            5.9,
+            dz,
+        );
+    }
+    for k in 0..20 {
+        put(
+            rig,
+            steel_box(0.05, 0.04, 0.5, FRAME),
+            mast_x - 0.42,
+            1.9 + f64::from(k) * 0.42,
+            0.55,
+        );
+    }
+    for k in 0..6 {
+        let y = 4.0 + f64::from(k) * 1.2;
+        put(
+            rig,
+            steel_box(0.04, 0.05, 0.7, FRAME),
+            mast_x - 0.85,
+            y,
+            0.55,
+        );
+        for dz in [0.2, 0.9] {
+            put(
+                rig,
+                steel_box(0.45, 0.05, 0.04, FRAME),
+                mast_x - 0.64,
+                y,
+                dz,
+            );
+        }
+    }
+    // The rod carousel alongside the mast: spare drill steel in a rack.
+    for k in 0..5 {
+        let angle = f64::from(k) * 1.25;
+        put(
+            rig,
+            cylinder_part(0.055, 5.6, 0x5b625b, 6),
+            mast_x + 0.62 + angle.cos() * 0.16,
+            4.8,
+            1.15 + angle.sin() * 0.16,
+        );
+    }
+    for y in [2.2, 7.4] {
+        put(rig, steel_box(0.5, 0.08, 0.5, DARK), mast_x + 0.62, y, 1.15);
+    }
+    // Handrails round the deck over the compressor house.
+    let rail_y = 3.55;
+    for (from, to) in [
+        ([-2.35f64, -1.2f64], [0.35f64, -1.2f64]),
+        ([-2.35, 1.2], [2.0, 1.2]),
+        ([-2.35, -1.2], [-2.35, 1.2]),
+    ] {
+        let size = [
+            (to[0] - from[0]).abs().max(0.05),
+            (to[1] - from[1]).abs().max(0.05),
+        ];
+        put(
+            rig,
+            steel_box(size[0], 0.05, size[1], STEEL),
+            (from[0] + to[0]) / 2.0,
+            rail_y,
+            (from[1] + to[1]) / 2.0,
+        );
+    }
+    for (px, pz) in [
+        (-2.35, -1.2),
+        (-1.0, -1.2),
+        (0.35, -1.2),
+        (-2.35, 1.2),
+        (-0.3, 1.2),
+        (2.0, 1.2),
+    ] {
+        put(
+            rig,
+            steel_box(0.05, 0.5, 0.05, STEEL),
+            px,
+            rail_y - 0.25,
+            pz,
+        );
+    }
+    // Hose loops sagging from the deck up to the rotation head.
+    let sag = [
+        [0.2, 3.2, 1.0],
+        [1.0, 3.9, 1.35],
+        [1.8, 5.2, 1.4],
+        [mast_x + 0.2, 7.0, 0.95],
+    ];
+    for pair in sag.windows(2) {
+        steel_beam(rig, pair[0], pair[1], 0.075, RUBBER);
+    }
+    // Cab roof: beacon post and work lamps.
+    put(rig, cylinder_part(0.12, 0.28, 0x7e4a2c, 8), 1.0, 3.52, -0.9);
+    for dz in [-1.05, -0.15] {
+        put(rig, steel_box(0.18, 0.18, 0.22, DARK), 1.95, 3.45, dz);
+    }
+    // Steps up to the cab off the track frame.
+    for k in 0..3 {
+        put(
+            rig,
+            steel_box(0.5, 0.05, 0.3, FRAME),
+            1.3,
+            0.45 + f64::from(k) * 0.42,
+            -1.75,
+        );
+    }
 }
 
 /// Where the rig's drilled holes stand on the apron, east of it along its line.

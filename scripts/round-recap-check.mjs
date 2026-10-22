@@ -118,7 +118,7 @@ try {
   assert.equal(await page.locator(".recap-note").innerText(), "", "first records are not news");
   assert.match(await page.locator(".recap-feats").innerText(), /ONE-TANK ARMY/);
   assert.equal(await page.locator(".recap-stat").count(), 5);
-  assert.equal(await page.locator(".recap-detail").count(), 10);
+  assert.equal(await page.locator(".recap-detail").count(), 11);
   await resize(1280, 720);
   const fits = await page.evaluate(() => {
     const actions = document.querySelector(".results .menu-actions").getBoundingClientRect();
@@ -138,7 +138,7 @@ try {
   await page.screenshot({ path: `${output}/battle-report.png` });
   await open();
   await finish("team", 19);
-  assert.match(await page.locator(".recap-stat").first().innerText(), /BEST 21/);
+  assert.match(await page.locator(".recap-stat").first().innerText(), /2 short of your best · 21/i);
   await resize(1024, 640);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   const top = await page.locator(".results").boundingBox();
