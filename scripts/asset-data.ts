@@ -53,6 +53,8 @@ export const PICKUP_TARP_CELL = [1, 3] as const;
 /** The nine stencils an emptied pallet shows, a 3x3 block in one cell laid out like
  * the kind tiles (`pickup_glyph_offset` in `pickup_visuals.rs`). */
 export const PICKUP_GLYPH_CELL = [2, 3] as const;
+/** The canvas a restocking drop's empty pallet is bundled under. */
+export const PICKUP_BUNDLE_CELL = [3, 3] as const;
 /** The surface each kind's supply shows: pine crates, olive drab tubes, ammo cans
  * and a ribbed olive medical chest, black fibre shell canisters, rolled armour
  * steel, the jerry can's pressed steel and a tan transit case. */
@@ -71,15 +73,16 @@ export const PICKUP_SURFACES = {
   "planks" | "olive" | "fibre" | "can" | "steel" | "jerry" | "drab" | "tan"
 >;
 /** Each kind's colour as supply paint (`pickup_paint` in `pickup_visuals.rs`): the
- * narrow band round its load, its signal colour knocked back toward faded enamel. */
+ * band round its load and the stripe its stencil is sprayed across, its signal colour
+ * knocked back toward faded enamel. */
 export const PICKUP_PAINTS = {
-  spread: 0xa83c4a,
-  rocket: 0xbc5a26,
+  spread: 0xae3328,
+  rocket: 0xc0642a,
   ricochet: 0x7656a8,
   piercing: 0x3a8c80,
   rapid: 0xc8962e,
   shield: 0x3e68b0,
-  speed: 0xaab436,
+  speed: 0xb4a03c,
   repair: 0x4a9450,
   laser: 0xd8d8d0,
 } as const satisfies Record<PickupKind, number>;

@@ -17,7 +17,7 @@ use sloppy_core::geometry::{
     ring_geometry, rounded_box_geometry, shape_geometry, tetrahedron_geometry,
 };
 use sloppy_core::models::{
-    BarrelScrap, DEFAULT_BOX_RADIUS, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH,
+    BUNDLE_TOP, BUNDLE_TOP_SIZE, BarrelScrap, DEFAULT_BOX_RADIUS, PICKUP_ATLAS_PATH,
     PICKUP_GLYPH_CELL, PICKUP_GLYPH_REGION, PICKUP_PAINT_CELL, TEAM_COLORS, atlas_cell_uv,
     barrel_scrap_geometry, cylinder_part, paint, pickup_pallet, put, shadowed, siding_box,
     trunk_fragment,
@@ -461,23 +461,29 @@ pub fn spawn_pulse() -> Node {
     root
 }
 
-/// The supply drop's ground marking, sprayed in the kind's signal colour: one bold
-/// hand-sprayed circle round the pallet (its radii, just clear of the tarp's
-/// corners) over a dark primer edge that reads on sand and asphalt alike, and the
-/// kind's stencil sprayed across the pallet's deck, which the load hides until it is
-/// taken. While the supply is restocked the circle's paint is faded and fresh paint
-/// sweeps round it until the supply returns. Paint on the ground, lit and shadowed
-/// like it, its ragged edges anti-aliased by alpha to coverage, never glowing.
-const MARKING_RADII: [f64; 2] = [1.05, 1.24];
+/// The supply drop's ground marking, sprayed in the kind's signal colour: one wide,
+/// broken, hand-sprayed circle round the pallet (its radii, passing under the
+/// sheet's corners) over a dark primer edge that reads on sand and asphalt alike,
+/// and the kind's stencil sprayed across the canvas bundled over a restocking drop's
+/// empty pallet, folded away while the supply is stocked. While the supply is
+/// restocked the circle's paint is faded and fresh paint sweeps round it until the
+/// supply returns. Paint on the ground, lit and shadowed like it, its ragged edges
+/// anti-aliased by alpha to coverage, never glowing.
+const MARKING_RADII: [f64; 2] = [0.98, 1.32];
 const MARKING_SEGMENTS: u32 = 64;
 const MARKING_CUTOFF: f32 = 0.35;
-/// How far the faded paint of a restocking drop is greyed and darkened.
+/// How far the faded paint of a restocking drop is greyed and darkened, and how far
+/// dust greys even fresh paint.
 const MARKING_FADED: [f32; 2] = [0.7, 0.78];
+const MARKING_DUST: f32 = 0.22;
 /// How high the paint lies over the ground; a depth bias keeps it there.
 const MARKING_HEIGHT: f64 = 0.012;
-/// The stencil on the deck: its size (x, z) and how far it lies over the boards.
-const DECK_STENCIL: [f64; 2] = [1.24, 0.93];
-const DECK_STENCIL_LIFT: f64 = 0.003;
+/// The stencil on the bundle: its size (x, z), its centre's offset along x (clear
+/// of the fold thrown back over the bundle's left end) and how far it lies over the
+/// canvas and the straps across it.
+const BUNDLE_STENCIL: [f64; 2] = [1.0, 0.76];
+const BUNDLE_STENCIL_SHIFT: f64 = 0.08;
+const BUNDLE_STENCIL_LIFT: f64 = 0.016;
 const PAINT_ROUGHNESS: f32 = 0.95;
 
 /// The pallet under every pickup, shared by every kind: planks, a tarp and the
@@ -511,10 +517,11 @@ fn marking_geometry() -> Mesh {
         let a = step * 2;
         indices.extend([a, a + 2, a + 1, a + 2, a + 3, a + 1]);
     }
-    // The deck stencil, its top edge toward -z (up the screen from the camera).
-    let [w, d] = DECK_STENCIL;
-    debug_assert!(w < PALLET_SIZE[0] && d < PALLET_SIZE[1]);
-    let y = (PALLET_HEIGHT + DECK_STENCIL_LIFT - MARKING_HEIGHT) as f32;
+    // The bundle's stencil, its top edge toward -z (up the screen from the camera).
+    let [w, d] = BUNDLE_STENCIL;
+    debug_assert!(w / 2.0 + BUNDLE_STENCIL_SHIFT < BUNDLE_TOP_SIZE[0] / 2.0);
+    debug_assert!(d < BUNDLE_TOP_SIZE[1]);
+    let y = (BUNDLE_TOP + BUNDLE_STENCIL_LIFT - MARKING_HEIGHT) as f32;
     let [u0, v0, u1, v1] = PICKUP_GLYPH_REGION;
     let first = mesh.positions.len() as u32;
     for (x, z, u, v) in [
@@ -523,7 +530,8 @@ fn marking_geometry() -> Mesh {
         (w / 2.0, -d / 2.0, u1, v1),
         (-w / 2.0, -d / 2.0, u0, v1),
     ] {
-        mesh.positions.push([x as f32, y, z as f32]);
+        mesh.positions
+            .push([(x + BUNDLE_STENCIL_SHIFT) as f32, y, z as f32]);
         mesh.normals.push([0.0, 1.0, 0.0]);
         let [u, v] = atlas_cell_uv(PICKUP_GLYPH_CELL, u, v);
         mesh.uvs.push([u as f32, v as f32]);
@@ -552,8 +560,9 @@ fn ground_paint(color: u32) -> Material {
 }
 
 /// A supply drop's marking, one draw for every drop: `instance_data.x` is how much
-/// of the circle is freshly sprayed (1 while stocked), `yz` moves the deck stencil
-/// to the kind's (`pickup_glyph_offset`).
+/// of the circle is freshly sprayed (1 while stocked, which folds the bundle's
+/// stencil away), `yz` moves the bundle's stencil to the kind's
+/// (`pickup_glyph_offset`).
 pub fn pickup_rim() -> Node {
     let mut root = Node::group("pickup-rim");
     let atlas = TextureRef {
@@ -578,7 +587,7 @@ pub fn pickup_rim() -> Node {
                 0.0,
                 MARKING_FADED[0],
                 MARKING_FADED[1],
-                0.0,
+                MARKING_DUST,
                 0.0,
             ],
         },

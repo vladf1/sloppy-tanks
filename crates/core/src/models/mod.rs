@@ -114,9 +114,9 @@ pub use effects_props::{aged_wreck_material, wreck_brightness};
 pub use flags::{FLAG_CLOTH_NODE, flags_model};
 pub use house_model::house_pieces;
 pub use pickup_visuals::{
-    PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, PICKUP_GLYPH_CELL,
-    PICKUP_GLYPH_REGION, PICKUP_PAINT_CELL, SMOKE_MARKER, atlas_cell_uv, pickup_cube,
-    pickup_glyph_offset, pickup_material, pickup_paint, pickup_pallet, pickup_signal,
+    BUNDLE_TOP, BUNDLE_TOP_SIZE, PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT,
+    PICKUP_GLYPH_CELL, PICKUP_GLYPH_REGION, PICKUP_PAINT_CELL, SMOKE_MARKER, atlas_cell_uv,
+    pickup_cube, pickup_glyph_offset, pickup_material, pickup_paint, pickup_pallet, pickup_signal,
     pickup_tile_offset,
 };
 pub use timber_model::{timber_debris_model, timber_part_model};

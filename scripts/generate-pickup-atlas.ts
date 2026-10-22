@@ -10,6 +10,7 @@ import {
   PICKUP_ATLAS_STRIDE,
   PICKUP_ATLAS_TILES,
   PICKUP_BRASS_CELL,
+  PICKUP_BUNDLE_CELL,
   PICKUP_GLYPH_CELL,
   PICKUP_ICON_SIZE,
   PICKUP_PAINT_CELL,
@@ -24,21 +25,23 @@ import { fbm, lattice, smooth } from "./texture-noise";
 // Paint the pickups as military supply. Each kind's tile is the surface its supply
 // shows (weathered pine, olive drab, black fibre, rolled armour steel, pressed jerry
 // can steel, a ribbed olive chest, a tan transit case), with a narrow band of the
-// kind's paint across the top and the source pictogram sprayed large below it in
-// stencil cream (black on the tan case) through a cut stencil: its bridges leave
-// gaps across the strokes, overspray mists and speckles round them, and the paint
-// has chipped. A painted plate carries it where the surface is too busy, and the
-// medical chest's red cross on white. Wear gathers where hands, straps and the
+// kind's paint across the top and, below it, a broad stripe of the same paint brushed
+// across the face, the way ammunition is colour coded. The source pictogram is
+// sprayed over the stripe through a cut stencil, in stencil cream on dark paint and
+// black on light paint: its bridges leave gaps across the strokes, overspray mists
+// and speckles round them, and the paint has chipped. The medical chest carries its
+// red cross on a worn white stripe instead. Wear gathers where hands, straps and the
 // ground touch: chipped paint and grime along the edges, rain streaks down the
-// sides, worn band ends, dust settled low on every face. The fourth column holds the
-// pallet's pine planks, the spray paint marking the ground (white over a dark
-// primer edge, its strokes and overspray in alpha, seamless across the cell so it
-// bends once round a drop) and swatches of gunmetal, rubber, webbing and bright
-// steel; below the block, cartridge brass, the dark canvas tarp a drop is laid on
-// and the nine stencils sprayed across an emptied pallet (white in alpha, tinted by
-// the marking). Edge pixels are extruded into every gutter so filtering and mipmaps
-// never sample a neighbour. Encoded lossy: the surfaces are noise, which lossless
-// packs badly.
+// sides, worn stripe ends, dust settled low on every face. The fourth column holds
+// the pallet's pine planks, the spray paint marking the ground (white over a dark
+// primer edge, its broken strokes and overspray in alpha, seamless across the cell
+// so it bends once round a drop) and swatches of gunmetal, rubber, webbing and
+// bright steel; below the block, cartridge brass, the canvas sheet a drop is laid on
+// (shaded where the pallet stands on it), the nine stencils a restocking drop shows
+// (a white stripe for the marking's tint with the pictogram sprayed dark across it)
+// and the canvas its empty pallet is bundled under. Edge pixels are extruded into
+// every gutter so filtering and mipmaps never sample a neighbour. Encoded lossy: the
+// surfaces are noise, which lossless packs badly.
 
 type Rgb = readonly [number, number, number];
 type Context = ReturnType<Canvas["getContext"]>;
@@ -57,12 +60,18 @@ const SYMBOL_DISTANCE = 140;
 const ACCENT_SATURATION = 0.4;
 /** Layout of a tile in pixels (the engine's `pickup_visuals.rs` maps the same
  * regions): the plain strip and corner plates along the top, the band's rows, the
- * plate and the stencil's centre and largest extent below them. */
+ * stripe's rows and the stencil's centre and largest extent below them. */
 const CORNER = 26;
 const BAND = [26, 62] as const;
-const PLATE = { left: 30, top: 98, right: 226, bottom: 240, radius: 12 } as const;
+const STRIPE = [100, 236] as const;
 const SYMBOL_CENTER = [128, 168] as const;
-const SYMBOL_MAX = [150, 128] as const;
+const SYMBOL_MAX = [148, 112] as const;
+/** How far a stripe's brushed edges wander (pixels) and how much of its paint has
+ * worn through to the surface. */
+const STRIPE_RAGGED = 5;
+const STRIPE_WEAR = 0.07;
+/** Paint lighter than this (relative luminance) takes a black stencil. */
+const LIGHT_PAINT = 0.47;
 /** How far the stencil's strokes are spread, so thin lines carry from above. */
 const STROKE_SPREAD = 4;
 /** The stencil card's bridges: where they cross the symbol (share of its width)
@@ -94,13 +103,16 @@ const FIBRE: Rgb = [52, 44, 36];
 const ARMOUR: Rgb = [116, 120, 122];
 const TAN: Rgb = [156, 138, 100];
 const STEEL: Rgb = [70, 74, 78];
-const PLATE_PAINT: Rgb = [38, 40, 34];
 /** Stencil cream, as stores are marked, and black for the light tan case. */
 const STENCIL_CREAM: Rgb = [222, 212, 178];
 const STENCIL_BLACK: Rgb = [34, 36, 32];
-/** Dust settled on the supply, and the tarp's canvas. */
+/** Dust settled on the supply, the sheet a drop is laid on and the canvas an empty
+ * pallet is bundled under. */
 const DUST: Rgb = [148, 132, 106];
-const CANVAS: Rgb = [54, 58, 44];
+const CANVAS: Rgb = [92, 94, 70];
+const BUNDLE_CANVAS: Rgb = [124, 116, 82];
+/** The dark stencil sprayed across a restocking drop's stripe. */
+const GLYPH_DARK: Rgb = [30, 30, 28];
 const ENCODE_QUALITY = "88";
 
 const hex = (color: number): Rgb => [(color >> 16) & 255, (color >> 8) & 255, color & 255];
@@ -256,17 +268,65 @@ function surfaceOf(surface: Surface, seed: number): (x: number, y: number) => Rg
   }
 }
 
-/** The plate a stencil is sprayed on: dark where the surface itself is too busy to
- * carry it, white behind the medical chest's cross. */
-function plateOf(kind: PickupKind, surface: Surface): Rgb | null {
-  if (kind === "repair") return CROSS_WHITE;
-  return surface === "planks" ? PLATE_PAINT : null;
+const luminance = ([r, g, b]: Rgb) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+
+/** The stripe the stencil is sprayed across: the kind's paint, worn white behind the
+ * medical chest's cross. */
+function stripeOf(kind: PickupKind): Rgb {
+  return kind === "repair" ? CROSS_WHITE : hex(PICKUP_PAINTS[kind]);
 }
 
-/** The stencil's paint: cream, black on the light tan case, red for the cross. */
-function stencilPaint(kind: PickupKind, surface: Surface): Rgb {
+/** The stencil's paint: red for the cross, black on light paint, cream on dark. */
+function stencilPaint(kind: PickupKind): Rgb {
   if (kind === "repair") return CROSS_RED;
-  return surface === "tan" ? STENCIL_BLACK : STENCIL_CREAM;
+  return luminance(stripeOf(kind)) > LIGHT_PAINT ? STENCIL_BLACK : STENCIL_CREAM;
+}
+
+/** A stripe of `color` brushed across `c` from edge to edge between `rows`: edges
+ * that wander, ends worn back, the surface's seams and grain showing through the
+ * paint, and chips knocked out where the noise runs high. */
+function brushStripe(
+  c: Context,
+  rows: readonly [number, number],
+  color: Rgb,
+  seed: number,
+  wear: number,
+) {
+  const image = c.getImageData(0, 0, SIZE, SIZE);
+  const ragged = lattice(seed);
+  const chips = lattice(seed + 3);
+  // The surface's mean value across the stripe, so its relief is measured from it.
+  let total = 0;
+  for (let x = 0; x < SIZE; x++) {
+    const i = (Math.round((rows[0] + rows[1]) / 2) * SIZE + x) * 4;
+    total += luminance([image.data[i], image.data[i + 1], image.data[i + 2]]);
+  }
+  const level = Math.max(0.04, total / SIZE);
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const top = rows[0] + STRIPE_RAGGED * (fbm(ragged, x * 0.05, 1.5, 0, 3) - 0.5) * 2;
+      const bottom = rows[1] + STRIPE_RAGGED * (fbm(ragged, x * 0.05, 7.5, 0, 3) - 0.5) * 2;
+      let cover = smooth(top - 1, top + 1, y) * (1 - smooth(bottom - 1, bottom + 1, y));
+      if (cover <= 0) continue;
+      // Worn back toward the ends of the stripe and chipped across it.
+      const end = 1 - smooth(0, 30, Math.min(x, SIZE - x));
+      const chip = fbm(chips, x * 0.12, y * 0.12, 0, 3) + 0.25 * end;
+      cover *= 1 - smooth(0.76 - wear, 0.8 - wear, chip);
+      const i = (y * SIZE + x) * 4;
+      const under: Rgb = [image.data[i], image.data[i + 1], image.data[i + 2]];
+      // The paint takes the surface's relief: seams and grain read through it.
+      const relief = Math.min(1.12, Math.max(0.55, luminance(under) / level)) ** 0.6;
+      const mottle = 0.92 + 0.12 * fbm(ragged, x * 0.03, y * 0.03, 0, 3);
+      const grey = luminance(color) * 255;
+      const enamel = blend(color, [grey, grey, grey], 0.12);
+      const painted = scale(enamel, relief * mottle);
+      image.data.set(
+        blend(under, painted, cover).map((v) => Math.round(v)),
+        i,
+      );
+    }
+  }
+  c.putImageData(image, 0, 0);
 }
 
 function fill(c: Context, surface: (x: number, y: number) => Rgb) {
@@ -365,23 +425,6 @@ function cornerPlates(c: Context) {
   }
 }
 
-function roundedRect(
-  c: Context,
-  left: number,
-  top: number,
-  right: number,
-  bottom: number,
-  r: number,
-) {
-  c.beginPath();
-  c.moveTo(left + r, top);
-  c.arcTo(right, top, right, bottom, r);
-  c.arcTo(right, bottom, left, bottom, r);
-  c.arcTo(left, bottom, left, top, r);
-  c.arcTo(left, top, right, top, r);
-  c.closePath();
-}
-
 /** Where and how large a stencil is sprayed: its centre, its largest extent, how
  * far its strokes are spread so thin lines carry from above, the overspray's blur
  * and the width of the card's bridges, all in pixels. */
@@ -470,25 +513,9 @@ function craftTile(kind: PickupKind, image: Image) {
   b.fillRect(0, BAND[1] - 2, SIZE, 2);
   weather(band, seed + 11, 0.06, (x) => 1 - smooth(0, 48, Math.min(x, SIZE - x)));
   c.drawImage(band, 0, 0);
-  // The plate, painted by hand: soft-cornered, its rim worn through in places.
-  const plate = plateOf(kind, surface);
-  if (plate) {
-    const layer = createCanvas(SIZE, SIZE);
-    const p = layer.getContext("2d");
-    p.fillStyle = css(plate);
-    roundedRect(p, PLATE.left, PLATE.top, PLATE.right, PLATE.bottom, PLATE.radius);
-    p.fill();
-    weather(
-      layer,
-      seed + 17,
-      0.04,
-      (x, y) =>
-        1 -
-        smooth(0, 14, Math.min(x - PLATE.left, PLATE.right - x, y - PLATE.top, PLATE.bottom - y)),
-    );
-    c.drawImage(layer, 0, 0);
-  }
-  c.drawImage(sprayStencil(image, stencilPaint(kind, surface), TILE_SPRAY, SIZE, seed), 0, 0);
+  // The colour-code stripe brushed across the face, the stencil sprayed over it.
+  brushStripe(c, STRIPE, stripeOf(kind), seed + 17, STRIPE_WEAR);
+  c.drawImage(sprayStencil(image, stencilPaint(kind), TILE_SPRAY, SIZE, seed), 0, 0);
   settleDust(c, seed + 31);
   if (surface === "planks") cornerPlates(c);
   return canvas;
@@ -521,31 +548,66 @@ function settleDust(c: Context, seed: number) {
   c.putImageData(image, 0, 0);
 }
 
-/** The nine stencils an emptied pallet shows, white in alpha for the marking's
- * tint: a 3x3 block of small tiles laid out like the kind tiles. */
+/** The nine stencils a restocking drop shows, a 3x3 block of small tiles laid out
+ * like the kind tiles: a stripe of white paint brushed across the canvas, which the
+ * marking tints in the kind's signal colour, and the pictogram sprayed dark across
+ * it, so it reads on any colour. Transparent round the stripe. */
 function glyphCell(images: Map<PickupKind, Image>) {
   const canvas = createCanvas(SIZE, SIZE);
   const c = canvas.getContext("2d");
-  const tile = SIZE / 3;
+  const tile = Math.floor(SIZE / 3);
+  const edge = 4.5;
   for (const [kind, [column, row]] of Object.entries(PICKUP_ATLAS_TILES)) {
     const image = images.get(kind as PickupKind)!;
+    const seed = 0x61f + column * 7 + row * 13;
+    const stripe = createCanvas(tile, tile);
+    const s = stripe.getContext("2d");
+    // White paint on transparency, its brushed outline wandering and chipped.
+    const paint = s.createImageData(tile, tile);
+    const ragged = lattice(seed);
+    const chips = lattice(seed + 5);
+    const wander = (u: number, row: number) => edge * (fbm(ragged, u * 0.08, row, 0, 3) - 0.5) * 2;
+    for (let y = 0; y < tile; y++) {
+      for (let x = 0; x < tile; x++) {
+        const t = tile * 0.14 + wander(x, 1.5);
+        const b = tile * 0.86 + wander(x, 7.5);
+        const l = edge + wander(y, 3.5);
+        const r = tile - edge + wander(y, 9.5);
+        let cover =
+          smooth(t - 0.8, t + 0.8, y) *
+          (1 - smooth(b - 0.8, b + 0.8, y)) *
+          smooth(l - 0.8, l + 0.8, x) *
+          (1 - smooth(r - 0.8, r + 0.8, x));
+        cover *= 1 - smooth(0.7, 0.75, fbm(chips, x * 0.2, y * 0.2, 0, 3));
+        // Sprayed on canvas: uneven coats, the weave and grime showing through.
+        const weave = (Math.floor(x / 1.5) + Math.floor(y / 1.5)) % 2 ? 0.93 : 1;
+        const coat = (0.72 + 0.28 * fbm(chips, x * 0.06 + 9.1, y * 0.06, 0, 3)) * weave;
+        const value = 240 * coat;
+        paint.data.set(
+          [value, value * 0.99, value * 0.95, Math.round(255 * cover)],
+          (y * tile + x) * 4,
+        );
+      }
+    }
+    s.putImageData(paint, 0, 0);
     const sprayed = sprayStencil(
       image,
-      [236, 236, 230],
+      GLYPH_DARK,
       {
         center: [tile / 2, tile / 2],
-        max: [tile * 0.74, tile * 0.66],
-        spread: 2,
-        blur: 3,
+        max: [tile * 0.7, tile * 0.58],
+        spread: 1.5,
+        blur: 2,
         bridge: 2,
       },
-      Math.ceil(tile),
-      0x61f + column * 7 + row * 13,
+      tile,
+      seed,
     );
-    c.drawImage(sprayed, column * tile, row * tile);
+    // The dark paint lands only on the stripe; its overspray greys the white.
+    s.globalCompositeOperation = "source-atop";
+    s.drawImage(sprayed, 0, 0);
+    c.drawImage(stripe, column * tile, row * tile);
   }
-  // Scuffed by boots and the loads dragged over it.
-  weather(canvas, 0x61f9, 0.1, () => 0, SIZE);
   return canvas;
 }
 
@@ -573,36 +635,80 @@ function palletCell() {
   return canvas;
 }
 
-/** A dark canvas tarp seen from above: its weave, the creases it was folded along,
- * a stitched hem and dust blown onto its edges. */
+/** The canvas sheet a drop is laid on, seen from above: its weave, the creases it
+ * was folded along, a stitched hem, dust blown onto its edges, and the shade under
+ * the pallet standing on it (`PALLET_SIZE` on `TARP_SIZE` in `pickup_visuals.rs`),
+ * deepest in the gaps between its stringers and fading out round its foot. */
 function tarpCell() {
   const canvas = createCanvas(SIZE, SIZE);
   const tone = lattice(0x7a4b1);
   const dust = lattice(0x7a4b3);
   const hem = 10;
+  const [left, top] = [SIZE * 0.1, SIZE * (0.1 / 1.4)];
   fill(canvas.getContext("2d"), (x, y) => {
-    const weave = (Math.floor(x / 2) + Math.floor(y / 2)) % 2 ? 0.94 : 1.04;
+    const weave = (Math.floor(x / 2) + Math.floor(y / 2)) % 2 ? 0.95 : 1.03;
     let k = weave * (0.86 + 0.28 * fbm(tone, x * 0.02, y * 0.02, 0, 4));
     // Fold creases: a lit ridge beside a dark valley, across and along.
     for (const crease of [Math.abs(x - SIZE / 2), Math.abs(y - SIZE * 0.36)]) {
-      if (crease < 1.5) k *= 0.62;
-      else if (crease < 4) k *= 1.16;
+      if (crease < 1.5) k *= 0.7;
+      else if (crease < 4) k *= 1.12;
     }
     const near = edgeDistance(x, y);
-    if (near < hem) k *= near < 2 ? 0.7 : near > hem - 2 ? 0.78 : 1.12;
-    const dusty = (1 - smooth(0, 40, near)) * 0.5 + 0.18 * fbm(dust, x * 0.03, y * 0.03, 0, 3);
+    if (near < hem) k *= near < 2 ? 0.72 : near > hem - 2 ? 0.8 : 1.1;
+    // Contact shade: the distance outside the pallet's footprint (negative under it).
+    const outside = Math.max(left - x, x - (SIZE - left), top - y, y - (SIZE - top));
+    k *= 1 - 0.5 * (1 - smooth(-2, 16, outside));
+    const dusty = (1 - smooth(0, 40, near)) * 0.55 + 0.2 * fbm(dust, x * 0.03, y * 0.03, 0, 3);
     return blend(
       scale(CANVAS, k),
-      DUST,
+      scale(DUST, k),
       dusty * smooth(0.2, 0.9, fbm(dust, x * 0.06, y * 0.06, 0, 2)),
     );
   });
   return canvas;
 }
 
-/** White spray paint run along the cell, seamless from its left edge to its right,
- * over a dark primer edge: a stroke whose edges wander, thinner where the can was
- * lifted, flecked with overspray beside it and dirt through it. */
+/** Rows at the foot of the bundle cell holding its webbing (`BUNDLE_STRAP` in
+ * `pickup_visuals.rs`). */
+const BUNDLE_STRAP_ROWS = 32;
+
+/** The khaki canvas an empty pallet is bundled under, seen from above and from its
+ * sides alike: its weave, a seam stitched across it, slack folds where it is drawn
+ * over the load, darker grime low down and dust settled on it; in its bottom rows the
+ * olive webbing strapping it down. */
+function bundleCell() {
+  const canvas = createCanvas(SIZE, SIZE);
+  const tone = lattice(0xb0d1);
+  const folds = lattice(0xb0d3);
+  const dust = lattice(0xb0d5);
+  fill(canvas.getContext("2d"), (x, y) => {
+    const weave = (Math.floor(x / 2) + Math.floor(y / 2)) % 2 ? 0.95 : 1.03;
+    let k = weave * (0.84 + 0.3 * fbm(tone, x * 0.025, y * 0.025, 0, 4));
+    // Slack folds running down from where the canvas is drawn tight: lit ridges and
+    // shaded valleys.
+    const fold = fbm(folds, x * 0.05, y * 0.012, 0, 3);
+    k *= 0.78 + 0.4 * smooth(0.3, 0.7, fold);
+    // A stitched seam across it.
+    const seam = Math.abs(y - SIZE * 0.42);
+    if (seam < 1.5) k *= 0.62;
+    else if (seam < 3.5) k *= 1.1;
+    else if (seam < 5 && Math.floor(x / 4) % 2) k *= 0.85;
+    const grime = 0.35 * smooth(0.6, 1, y / SIZE) + 0.2 * fbm(dust, x * 0.04, y * 0.04, 0, 3);
+    // The bottom rows: the olive webbing strapping it down.
+    if (y >= SIZE - BUNDLE_STRAP_ROWS) {
+      const twill = (Math.floor(x / 3) + Math.floor(y / 3)) % 2 ? 0.88 : 1.06;
+      return scale([84, 88, 58], twill * (0.86 + 0.24 * fbm(tone, x * 0.08, y * 0.3, 0, 2)));
+    }
+    return blend(scale(BUNDLE_CANVAS, k), scale([72, 64, 50], k), grime);
+  });
+  return canvas;
+}
+
+/** The ground's spray paint, run along the cell and seamless from its left edge to
+ * its right so it bends once round a drop: a wide, uneven pass of white over a dark
+ * primer edge, its line wandering, thinner and broken where the can was lifted, a
+ * second pass laid over part of it, overspray flecks beside it, and dirt, dust and
+ * tread scuffs worn through it, so it reads as paint on the ground, not a drawn line. */
 function paintCell() {
   const canvas = createCanvas(SIZE, SIZE);
   const c = canvas.getContext("2d");
@@ -611,34 +717,42 @@ function paintCell() {
   const breaks = lattice(0x5b1a9);
   const dirt = lattice(0x5b1ab);
   const specks = lattice(0x5b1ad);
+  const second = lattice(0x5b1af);
   // Periods in lattice cells across the cell, so the stroke wraps seamlessly.
-  const WANDER_PERIOD = 8;
-  const BREAK_PERIOD = 5;
+  const WANDER_PERIOD = 6;
+  const BREAK_PERIOD = 7;
+  const stroke = (u: number, v: number, centre: number, half: number, rough: number) =>
+    1 - smooth(0.72, 1.08, Math.abs(v - centre) / half + (rough - 0.5) * 0.55);
   for (let y = 0; y < SIZE; y++) {
     for (let x = 0; x < SIZE; x++) {
-      const u = x + 0.5;
+      const u = (x + 0.5) / SIZE;
       const v = (y + 0.5) / SIZE;
-      const centre =
-        0.5 + 0.12 * (fbm(wander, (u / SIZE) * WANDER_PERIOD, 0.5, WANDER_PERIOD, 3) - 0.5);
-      const lifted = smooth(
-        0.06,
-        0.16,
-        fbm(breaks, (u / SIZE) * BREAK_PERIOD, 3.5, BREAK_PERIOD, 2),
-      );
-      const half = 0.2 + 0.12 * lifted;
-      const across = Math.abs(v - centre) / half;
-      const rough = fbm(wander, (u / SIZE) * 64, v * 16, 64, 3);
-      let coverage = (1 - smooth(0.78, 1.12, across + (rough - 0.5) * 0.5)) * (0.6 + 0.4 * lifted);
-      // Dirt and tread wear through the paint.
-      const grime = fbm(dirt, (u / SIZE) * 32, v * 6, 32, 4);
-      coverage *= 1 - smooth(0.6, 0.72, grime);
+      const centre = 0.5 + 0.18 * (fbm(wander, u * WANDER_PERIOD, 0.5, WANDER_PERIOD, 3) - 0.5);
+      // Where the can was lifted: the pass thins out and breaks off.
+      const lift = fbm(breaks, u * BREAK_PERIOD, 3.5, BREAK_PERIOD, 2);
+      const gap = smooth(0.24, 0.33, lift);
+      const half = 0.17 + 0.17 * gap;
+      const rough = fbm(wander, u * 64, v * 16, 64, 3);
+      let coverage = stroke(u, v, centre, half, rough) * gap;
+      // A second pass over part of the circle, a little off the first.
+      const again = smooth(0.52, 0.62, fbm(second, u * 4, 1.5, 4, 2));
+      const centre2 = centre + 0.1 * (fbm(second, u * 8, 5.5, 8, 2) - 0.5) * 2;
+      coverage = Math.max(coverage, stroke(u, v, centre2, 0.16, rough) * again);
+      // Dirt, dust and treads worn through the paint.
+      const grime = fbm(dirt, u * 40, v * 5, 40, 4);
+      coverage *= 1 - 0.85 * smooth(0.58, 0.7, grime);
+      const scuff = fbm(dirt, u * 6, v * 1.2 + 9.5, 6, 2);
+      coverage *= 1 - 0.6 * smooth(0.62, 0.75, scuff);
       // Overspray flecks beside the stroke.
-      const fleck = specks((u / SIZE) * 160, v * 70, 160);
-      if (across > 0.9 && across < 2.2 && fleck > 0.9 - 0.1 * lifted)
-        coverage = Math.max(coverage, 0.6);
+      const across = Math.abs(v - centre) / half;
+      const fleck = specks(u * 160, v * 70, 160);
+      if (across > 0.9 && across < 2.4 && fleck > 0.92 - 0.06 * gap)
+        coverage = Math.max(coverage, 0.55);
       // A dark primer edge round a light stroke, so the ring reads on pale sand and
-      // on dark asphalt alike.
-      const shade = (214 + 36 * rough) * (1 - 0.78 * smooth(0.5, 0.74, across));
+      // on dark asphalt alike; dust settled over the paint.
+      const dusty = 0.82 + 0.18 * fbm(dirt, u * 20, v * 3 + 4.5, 20, 3);
+      const edge = Math.min(across, Math.abs(v - centre2) / 0.16 + (1 - again) * 9);
+      const shade = (220 + 30 * rough) * dusty * (1 - 0.45 * smooth(0.6, 0.85, edge));
       image.data.set(
         [shade, shade, shade, Math.round(Math.min(1, coverage) * 255)],
         (y * SIZE + x) * 4,
@@ -755,6 +869,7 @@ place(paintCell(), ...PICKUP_PAINT_CELL);
 place(swatchCell(), ...PICKUP_SWATCH_CELL);
 place(brassCell(), ...PICKUP_BRASS_CELL);
 place(tarpCell(), ...PICKUP_TARP_CELL);
+place(bundleCell(), ...PICKUP_BUNDLE_CELL);
 const webp = execFileSync(
   "cwebp",
   ["-quiet", "-q", ENCODE_QUALITY, "-alpha_q", "100", "-m", "6", "-o", "-", "--", "-"],

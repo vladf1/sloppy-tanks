@@ -41,12 +41,12 @@ pub fn pickup_atlas_tile(kind: PickupKind) -> (u32, u32) {
 
 /// The kind's signal colour: the smoke its drop is marked with and the ring sprayed
 /// round it. Nine hues spread round the wheel (and white), so the colour alone
-/// names a kind from across the field, in the family of its HUD colour; rose and
-/// teal stand in for the HUD's pink and cyan, which no smoke grenade comes in.
+/// names a kind from across the field, in the family of its HUD colour; signal red
+/// and teal stand in for the HUD's pink and cyan, which no smoke grenade comes in.
 pub fn pickup_signal(kind: PickupKind) -> u32 {
     match kind {
-        PickupKind::Spread => 0xe2465e,
-        PickupKind::Rocket => 0xf06a24,
+        PickupKind::Spread => 0xdc3426,
+        PickupKind::Rocket => 0xf27e1e,
         PickupKind::Rapid => 0xf4b631,
         PickupKind::Speed => 0xd6e23c,
         PickupKind::Repair => 0x3fc45c,
@@ -57,16 +57,16 @@ pub fn pickup_signal(kind: PickupKind) -> u32 {
     }
 }
 
-/// The kind's colour as supply paint: the narrow band round its load and its smoke
-/// canister, its signal colour knocked back toward faded military enamel
-/// (`PICKUP_PAINTS` in `scripts/asset-data.ts`). The stencils themselves are
-/// sprayed in stencil cream or black, as real stores are.
+/// The kind's colour as supply paint: the band round its load, the stripe its
+/// stencil is sprayed across and its smoke canister, its signal colour knocked back
+/// toward faded military enamel (`PICKUP_PAINTS` in `scripts/asset-data.ts`). The
+/// stencils themselves are sprayed in stencil cream or black, as real stores are.
 pub fn pickup_paint(kind: PickupKind) -> u32 {
     match kind {
-        PickupKind::Spread => 0xa83c4a,
-        PickupKind::Rocket => 0xbc5a26,
+        PickupKind::Spread => 0xae3328,
+        PickupKind::Rocket => 0xc0642a,
         PickupKind::Rapid => 0xc8962e,
-        PickupKind::Speed => 0xaab436,
+        PickupKind::Speed => 0xb4a03c,
         PickupKind::Repair => 0x4a9450,
         PickupKind::Piercing => 0x3a8c80,
         PickupKind::Shield => 0x3e68b0,
@@ -78,8 +78,9 @@ pub fn pickup_paint(kind: PickupKind) -> u32 {
 /// The packed atlas under `public/` (`scripts/generate-pickup-atlas.ts`): nine kind
 /// tiles in a 3x3 block; in a fourth column the pallet's planks, the ground's spray
 /// paint and swatches of steel, rubber and webbing; below them cartridge brass, the
-/// tarp a drop is laid on and the nine stencils sprayed on an empty pallet, in a
-/// 3x3 block of their own laid out like the kind tiles.
+/// sheet a drop is laid on, the nine stencils a restocking drop shows, in a 3x3
+/// block of their own laid out like the kind tiles, and the canvas its empty pallet
+/// is bundled under.
 pub const PICKUP_ATLAS_PATH: &str = "textures/pickups/atlas.webp";
 pub const PICKUP_ICON_SIZE: f64 = 256.0;
 pub const PICKUP_ATLAS_PADDING: f64 = 16.0;
@@ -91,6 +92,7 @@ pub const PICKUP_SWATCH_CELL: (u32, u32) = (3, 2);
 pub const PICKUP_BRASS_CELL: (u32, u32) = (0, 3);
 pub const PICKUP_TARP_CELL: (u32, u32) = (1, 3);
 pub const PICKUP_GLYPH_CELL: (u32, u32) = (2, 3);
+pub const PICKUP_BUNDLE_CELL: (u32, u32) = (3, 3);
 /// The share of the glyph cell one kind's stencil takes, and the region of the
 /// first kind's (u0, v0, u1, v1, `v` up) an empty pallet's stencil maps to.
 const GLYPH_SPAN: f64 = 1.0 / 3.0;
@@ -172,6 +174,10 @@ const PROJECTILE: Region = [0.0, 0.66, 1.0, 1.0];
 const PRIMER: Region = [0.3, 0.02, 0.7, 0.05];
 /// Pallet-cell boards for wooden chocks and spacers.
 const CHOCK: Region = [0.0, 0.0, 1.0, 0.25];
+/// The bundle cell's canvas, and the webbing along its foot (the generator's
+/// `BUNDLE_STRAP_ROWS`).
+const BUNDLE_CANVAS: Region = [0.0, 0.14, 1.0, 1.0];
+const BUNDLE_STRAP: Region = [0.0, 0.01, 1.0, 0.115];
 
 /// The pallet's size (x, z), its height, its deck boards and their width (close
 /// laid, so the stencil sprayed across an empty deck lies on wood).
@@ -179,16 +185,25 @@ pub const PALLET_SIZE: [f64; 2] = [1.6, 1.2];
 pub const PALLET_HEIGHT: f64 = 0.15;
 const PALLET_BOARDS: u32 = 5;
 const PALLET_BOARD_WIDTH: f64 = 0.3;
-/// The smoke grenade marking the drop, standing on the tarp beside the pallet's
-/// right side, where the overhead camera sees it past the load and its smoke leans
-/// away behind it: its top (x, height, z) where the signal smoke leaves it, and its
-/// radius.
-pub const SMOKE_MARKER: [f64; 3] = [0.9, 0.27, -0.2];
+/// The smoke grenade marking the drop, standing on the sheet at the pallet's back
+/// right corner, where the overhead camera sees it past the load and its smoke
+/// shears away behind it: its top (x, height, z) where the signal smoke leaves it,
+/// and its radius.
+pub const SMOKE_MARKER: [f64; 3] = [0.92, 0.27, -0.44];
 const MARKER_RADIUS: f64 = 0.08;
-/// The dark canvas tarp the pallet stands on, a frame of shade that sets the drop
-/// apart from any ground: its size (x, z) and thickness.
+/// The canvas sheet the pallet stands on, shaded under it, setting the drop apart
+/// from any ground: its size (x, z) and thickness.
 const TARP_SIZE: [f64; 2] = [2.0, 1.4];
 const TARP_THICKNESS: f64 = 0.014;
+/// A restocking drop's empty pallet is bundled under canvas, strapped down: the
+/// bundle's size (x, height, z) on the deck, and the size (x, z) of its flat top,
+/// where the marking sprays the kind's stencil (`BUNDLE_TOP` above the ground). The
+/// pallet's instance data `z` is 1 while the supply is stocked, and the
+/// `pickup-face` effect folds the bundle away then.
+const BUNDLE_SIZE: [f64; 3] = [1.36, 0.27, 0.96];
+pub const BUNDLE_TOP_SIZE: [f64; 2] = [1.22, 0.84];
+const BUNDLE_PILLOW: f64 = 0.05;
+pub const BUNDLE_TOP: f64 = PALLET_HEIGHT + BUNDLE_SIZE[1] + BUNDLE_PILLOW;
 
 static SHARED: Cache<u8, Mesh> = Cache::new();
 static MATERIALS: Cache<u8, Material> = Cache::new();
@@ -216,6 +231,10 @@ const fn brass(region: Region) -> Paint {
 
 const fn wood(region: Region) -> Paint {
     Paint::Face(PICKUP_PALLET_CELL, region)
+}
+
+const fn canvas(region: Region) -> Paint {
+    Paint::Face(PICKUP_BUNDLE_CELL, region)
 }
 
 /// One primitive of an item: its mesh, built about the origin, the paint of the
@@ -729,7 +748,57 @@ fn pallet_geometry() -> Mesh {
         top * 0.6,
         mz,
     ));
+    restock_bundle(&mut parts);
     build(parts)
+}
+
+/// The canvas bundle over a restocking drop's empty pallet: the load's cover drawn
+/// down to the deck, a slack pillow of canvas on top, a fold thrown back at one end
+/// and two webbing straps over it. Every face maps into the bundle cell, which the
+/// `pickup-face` effect folds away while the supply is stocked.
+fn restock_bundle(parts: &mut Vec<Part>) {
+    let [w, h, d] = BUNDLE_SIZE;
+    let [tw, td] = BUNDLE_TOP_SIZE;
+    let deck = PALLET_HEIGHT;
+    parts.push(Part::cube([w, h, d], canvas(BUNDLE_CANVAS)).at(0.0, deck + h / 2.0, 0.0));
+    parts.push(
+        Part::cube([tw, BUNDLE_PILLOW, td], canvas(BUNDLE_CANVAS)).at(
+            0.0,
+            deck + h + BUNDLE_PILLOW / 2.0,
+            0.0,
+        ),
+    );
+    // The fold thrown back over the left end, and the slack hanging at the right.
+    parts.push(
+        Part::cube([0.3, 0.05, d * 0.8], canvas(BUNDLE_CANVAS))
+            .turned(0.12)
+            .at(-w / 2.0 + 0.1, BUNDLE_TOP + 0.02, 0.02),
+    );
+    parts.push(
+        Part::cube([0.05, h * 0.8, d * 0.86], canvas(BUNDLE_CANVAS)).at(
+            w / 2.0 + 0.02,
+            deck + h * 0.42,
+            0.0,
+        ),
+    );
+    for x in [-0.36, 0.42] {
+        parts.push(
+            Part::cube([0.08, 0.012, td + 0.02], canvas(BUNDLE_STRAP)).at(
+                x,
+                BUNDLE_TOP + 0.006,
+                0.0,
+            ),
+        );
+        for z in [-1.0, 1.0] {
+            parts.push(
+                Part::cube([0.08, h + 0.04, 0.012], canvas(BUNDLE_STRAP)).at(
+                    x,
+                    deck + (h + 0.04) / 2.0,
+                    z * (d / 2.0 + 0.007),
+                ),
+            );
+        }
+    }
 }
 
 /// The shared supply paint: the atlas, worn and matte, with the `pickup-face`
@@ -826,6 +895,7 @@ mod tests {
             PICKUP_SWATCH_CELL,
             PICKUP_BRASS_CELL,
             PICKUP_TARP_CELL,
+            PICKUP_BUNDLE_CELL,
         ];
         let inside = |mesh: &Mesh| {
             mesh.uvs.iter().all(|&[u, v]| {

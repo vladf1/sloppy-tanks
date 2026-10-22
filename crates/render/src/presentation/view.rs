@@ -68,25 +68,23 @@ mod inspect;
 
 /// A dead tank's model hides; the live model rides this far below the body.
 const TANK_MODEL_DROP: f64 = 0.4;
-/// A collected supply is heaved up out of its pallet beside the tank that took it
-/// and swung onto its turret roof, where it lands with a thump that settles the
-/// hull, squashes and is taken straight in through the hatch, the whole beat under
-/// half a second: how long the swing takes, how high it arcs over the roof, its
-/// size as it is heaved up and as it lands, how long it takes to stow and how far
-/// it sinks doing so. The thump rocks the hull back (rad/s) and squashes the load
-/// this much.
-const SUPPLY_SWING_SECONDS: f64 = 0.24;
-const SUPPLY_SWING_ARC: f64 = 0.45;
-const SUPPLY_HEAVE_SCALE: f64 = 0.7;
-const SUPPLY_STOW_SCALE: f64 = 0.42;
-const SUPPLY_STOW_SECONDS: f64 = 0.2;
-const SUPPLY_HATCH_DEPTH: f64 = 0.3;
-const SUPPLY_THUMP_ROCK: f64 = 1.1;
-const SUPPLY_THUMP_SQUASH: f64 = 0.22;
-/// Where on the roof it rides: this far behind the turret ring, along the aim, and
-/// the roof this far above the gun's muzzle.
-const SUPPLY_ROOF_BACK: f64 = 0.35;
-const SUPPLY_ROOF_ABOVE_MUZZLE: f64 = 0.32;
+/// A collected supply is handed up off its pallet and stowed on the rear deck of the
+/// tank that took it: it is lifted from the hull's top over the pallet and carried
+/// in a low arc back onto the deck, where it lands with a thump that rocks the hull
+/// and squashes it a little, rides there strapped down for a moment as the tank
+/// drives on, then is taken into the stowage bin and fades. How long the carry
+/// takes, how high it arcs, its size as it is lifted and as it is stowed, how long it
+/// rides and how long it takes to fade; the thump's rock (rad/s) and squash.
+const SUPPLY_CARRY_SECONDS: f64 = 0.32;
+const SUPPLY_CARRY_ARC: f64 = 0.4;
+const SUPPLY_LIFT_SCALE: f64 = 0.5;
+const SUPPLY_STOW_SCALE: f64 = 0.4;
+const SUPPLY_RIDE_SECONDS: f64 = 0.95;
+const SUPPLY_FADE_SECONDS: f64 = 0.25;
+const SUPPLY_THUMP_ROCK: f64 = 0.8;
+const SUPPLY_THUMP_SQUASH: f64 = 0.18;
+/// Where on the rear deck it rides: this far in from the hull's back edge.
+const SUPPLY_DECK_INSET: f64 = 0.55;
 /// Felling boughs (`tree-debris.ts`). Their leaves catch the air: linear drag per
 /// second slows the fall and the tumble. Landed, they lie until the debris cleanup
 /// sinks them out of sight.
@@ -492,13 +490,16 @@ struct PickupView {
     base: InstanceId,
     rim: InstanceId,
     gem: InstanceId,
-    /// The marking's stencil offset for the kind (`pickup_glyph_offset`).
+    /// The marking's stencil offset for the kind (`pickup_glyph_offset`), and the
+    /// kind's atlas tile, which paints the pallet's smoke grenade.
     glyph: [f32; 2],
+    tile: [f32; 2],
     /// Whether the views show the supply stocked (None: not yet set).
     shown: Option<bool>,
 }
 
-/// A collected supply swung off its pallet onto the tank that took it.
+/// A collected supply carried off its pallet onto the rear deck of the tank that
+/// took it.
 struct PickupRise {
     instance: InstanceId,
     /// The tank it goes to.
@@ -507,12 +508,13 @@ struct PickupRise {
     x: f64,
     z: f64,
     turn: f64,
-    /// Where it last rode (world) and the turret's aim, for a tank gone before it
-    /// is stowed.
-    roof: Vec3,
-    aim: f64,
-    /// The height it is heaved up from: the hull's top.
-    deck: f32,
+    /// Where it rides on the deck (world), the hull's heading and its rear (unit,
+    /// world), last seen; kept for a tank gone before the load fades.
+    deck: Vec3,
+    heading: f64,
+    rear: Vec3,
+    /// The height it is lifted from: the hull's top.
+    lift: f32,
     age: f64,
     /// It has landed and thumped the hull.
     landed: bool,
@@ -1464,7 +1466,8 @@ impl Presentation {
         renderer.set_instance_data(rim, [1.0, glyph[0], glyph[1], 0.0]);
         let [u, v] = pickup_tile_offset(kind);
         renderer.set_instance_data(gem, [u, v, 0.0, 0.0]);
-        // The pallet's smoke grenade wears the kind's paint too.
+        // The pallet's smoke grenade wears the kind's paint too; its bundle shows
+        // until the supply is known to be stocked.
         renderer.set_instance_data(base, [u, v, 0.0, 0.0]);
         self.pickups.insert(
             id,
@@ -1473,6 +1476,7 @@ impl Presentation {
                 rim,
                 gem,
                 glyph,
+                tile: [u, v],
                 shown: None,
             },
         );
@@ -2263,6 +2267,9 @@ impl Presentation {
             if view.shown != Some(stocked) {
                 view.shown = Some(stocked);
                 renderer.set_visible(view.gem, stocked);
+                // The empty pallet is bundled under canvas until the supply returns.
+                let [tu, tv] = view.tile;
+                renderer.set_instance_data(view.base, [tu, tv, f32::from(stocked), 0.0]);
                 if stocked {
                     renderer.set_instance_data(view.rim, [1.0, gu, gv, 0.0]);
                 }
@@ -2278,7 +2285,8 @@ impl Presentation {
                 } else {
                     fallback
                 };
-                let progress = (1.0 - supply.cooldown / duration).clamp(0.0, 1.0) as f32;
+                // Short of 1, which marks a stocked drop.
+                let progress = (1.0 - supply.cooldown / duration).clamp(0.0, 0.995) as f32;
                 renderer.set_instance_data(view.rim, [progress, gu, gv, 0.0]);
             }
         }
@@ -2332,97 +2340,111 @@ impl Presentation {
             x: event.x,
             z: event.z,
             turn,
-            roof: pallet,
-            aim: turn,
-            deck: pallet.y,
+            deck: pallet,
+            heading: turn,
+            rear: Vec3::ZERO,
+            lift: pallet.y,
             age: 0.0,
             landed: false,
         });
     }
 
-    /// Where a supply rides on a tank's turret roof (world), the turret's aim and
-    /// the height of the hull's top, from the drawn tank; `None` once the tank is
-    /// gone or destroyed.
-    fn supply_roof(&self, state: &RenderState, id: u32) -> Option<(Vec3, f64, f32)> {
+    /// Where a supply rides on a tank's rear deck (world), the hull's heading, the
+    /// unit direction to its rear and the height of the hull's top over the pallet,
+    /// from the drawn tank; `None` once the tank is gone or destroyed.
+    fn supply_deck(&self, state: &RenderState, id: u32) -> Option<(Vec3, f64, Vec3, f32)> {
         let view = self
             .tanks
             .get(&id)
             .filter(|view| view.world != Mat4::ZERO)?;
         let tank = state.tanks.iter().find(|tank| tank.id == id)?;
         let hull = tank_hull(tank.kind);
-        let roof = tank_visual_muzzle(tank.kind).y + SUPPLY_ROOF_ABOVE_MUZZLE;
-        let (sin, cos) = tank.aim.sin_cos();
-        let at = view.world.w_axis;
-        Some((
-            Vec3::new(
-                at.x - (SUPPLY_ROOF_BACK * sin) as f32,
-                at.y + roof as f32,
-                at.z - (SUPPLY_ROOF_BACK * cos) as f32,
-            ),
-            tank.aim,
-            at.y + (hull.center.y + hull.size.y / 2.0) as f32,
-        ))
+        // The model's front is the side its gun points out of at rest.
+        let front = if tank_visual_muzzle(tank.kind).z < 0.0 {
+            -1.0
+        } else {
+            1.0
+        };
+        let top = hull.center.y + hull.size.y / 2.0;
+        let back = hull.center.z - front * (hull.size.z / 2.0 - SUPPLY_DECK_INSET);
+        let deck =
+            view.world
+                .transform_point3(Vec3::new(hull.center.x as f32, top as f32, back as f32));
+        let ahead = view
+            .world
+            .transform_vector3(Vec3::new(0.0, 0.0, front as f32));
+        let rear = Vec3::new(-ahead.x, 0.0, -ahead.z).normalize_or_zero();
+        let heading = f64::from(ahead.x).atan2(f64::from(ahead.z));
+        Some((deck, heading, rear, view.world.w_axis.y + top as f32))
     }
 
     fn update_pickup_rises(&mut self, state: &RenderState, dt: f64) {
         let mut rises = std::mem::take(&mut self.pickup_rises);
+        let total = SUPPLY_CARRY_SECONDS + SUPPLY_RIDE_SECONDS + SUPPLY_FADE_SECONDS;
         rises.retain_mut(|rise| {
             rise.age += dt;
-            if rise.age >= SUPPLY_SWING_SECONDS + SUPPLY_STOW_SECONDS {
+            if rise.age >= total {
                 self.renderer.remove_instance(rise.instance);
                 return false;
             }
-            if let Some((roof, aim, deck)) = rise.tank.and_then(|id| self.supply_roof(state, id)) {
-                (rise.roof, rise.aim) = (roof, aim);
-                // Heaved up from the hull's top, so it never shows inside the hull.
+            if let Some((deck, heading, rear, lift)) =
+                rise.tank.and_then(|id| self.supply_deck(state, id))
+            {
+                (rise.deck, rise.heading, rise.rear) = (deck, heading, rear);
+                // Lifted from the hull's top, so it never shows inside the hull.
                 if rise.age <= dt {
-                    rise.deck = deck;
+                    rise.lift = lift;
                 }
             }
-            let (target, heading) = (rise.roof, rise.aim);
-            let swing = (rise.age / SUPPLY_SWING_SECONDS).min(1.0);
-            if swing >= 1.0 && !rise.landed {
+            let carry = (rise.age / SUPPLY_CARRY_SECONDS).min(1.0);
+            if carry >= 1.0 && !rise.landed {
                 rise.landed = true;
-                // The load lands on the roof: the hull squats under it.
+                // The load lands on the rear deck: the hull rocks back under it.
                 if let Some(motion) = rise
                     .tank
                     .and_then(|id| self.tanks.get_mut(&id))
                     .and_then(|view| view.motion.as_mut())
                 {
-                    let (sin, cos) = heading.sin_cos();
-                    motion
-                        .pending_hit
-                        .get_or_insert((-sin, -cos, SUPPLY_THUMP_ROCK));
+                    motion.pending_hit.get_or_insert((
+                        f64::from(rise.rear.x),
+                        f64::from(rise.rear.z),
+                        SUPPLY_THUMP_ROCK,
+                    ));
                 }
             }
-            // Heaved up at once and across in an eased swing, onto the roof.
-            let along = smoothstep(swing, 0.0, 1.0) as f32;
-            let up = swing as f32;
-            let start = Vec3::new(rise.x as f32, rise.deck, rise.z as f32);
-            let mut center = start.lerp(target, along);
-            let arc = SUPPLY_SWING_ARC as f32 + (target.y - start.y).abs() * 0.3;
-            center.y = start.y + (target.y - start.y) * up + arc * 4.0 * up * (1.0 - up);
-            let size = SUPPLY_HEAVE_SCALE
-                + (SUPPLY_STOW_SCALE - SUPPLY_HEAVE_SCALE) * smoothstep(swing, 0.0, 1.0);
-            // Landed, it squashes on the roof and is taken straight in through the
-            // hatch, sinking out of sight.
-            let stow = ((rise.age - SUPPLY_SWING_SECONDS) / SUPPLY_STOW_SECONDS).clamp(0.0, 1.0);
-            let squash = SUPPLY_THUMP_SQUASH * (std::f64::consts::PI * stow.min(0.5) * 2.0).sin();
-            let sink = stow * stow;
-            center.y -= (SUPPLY_HATCH_DEPTH * sink) as f32;
-            let height = size * (1.0 - squash) * (1.0 - sink);
-            let width = size * (1.0 + squash * 0.5) * (1.0 - 0.35 * sink);
-            // It turns from its pallet to lie square across the roof.
-            let mut yaw = heading - rise.turn;
+            // Carried in a low, eased arc from over the pallet back onto the deck.
+            let along = smoothstep(carry, 0.0, 1.0) as f32;
+            let start = Vec3::new(rise.x as f32, rise.lift, rise.z as f32);
+            let mut at = start.lerp(rise.deck, along);
+            let up = carry as f32;
+            at.y += SUPPLY_CARRY_ARC as f32 * 4.0 * up * (1.0 - up);
+            let size =
+                SUPPLY_LIFT_SCALE + (SUPPLY_STOW_SCALE - SUPPLY_LIFT_SCALE) * f64::from(along);
+            // Landed, it squashes once and settles, then is taken in and fades.
+            let since = rise.age - SUPPLY_CARRY_SECONDS;
+            let squash = if since > 0.0 {
+                SUPPLY_THUMP_SQUASH
+                    * (-since * 14.0).exp()
+                    * (since * std::f64::consts::TAU * 3.0).cos()
+            } else {
+                0.0
+            };
+            let fade = ((since - SUPPLY_RIDE_SECONDS) / SUPPLY_FADE_SECONDS).clamp(0.0, 1.0);
+            let height = size * (1.0 - squash) * (1.0 - 0.15 * fade);
+            let width = size * (1.0 + squash * 0.5) * (1.0 - 0.15 * fade);
+            // It turns from its pallet to lie square across the deck.
+            let mut yaw = rise.heading - rise.turn;
             yaw = (yaw + std::f64::consts::PI).rem_euclid(std::f64::consts::TAU)
                 - std::f64::consts::PI;
-            let yaw = rise.turn + yaw * smoothstep(swing, 0.15, 1.0);
+            let yaw = rise.turn + yaw * smoothstep(carry, 0.1, 1.0);
+            self.renderer
+                .set_opacity(rise.instance, (1.0 - fade * fade) as f32);
             self.renderer.set_transform(
                 rise.instance,
                 Mat4::from_scale_rotation_translation(
                     Vec3::new(width as f32, height.max(0.0) as f32, width as f32),
                     Quat::from_rotation_y(yaw as f32),
-                    center,
+                    at,
                 ),
             );
             true
