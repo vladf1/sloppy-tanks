@@ -518,6 +518,9 @@ impl Game {
                 glam::Vec3::from_slice(&camera[..3]),
                 glam::Vec3::from_slice(&camera[3..]),
             );
+            // A fixed pose stands upright: the drawn follow camera's up carries its
+            // shake roll.
+            pose.up = glam::Vec3::Y;
             self.view.renderer.set_camera(pose);
             self.view
                 .renderer
