@@ -28,13 +28,18 @@ fn strata_hash(n: f32) -> f32 {
 }
 
 fn strata_noise(p: vec2f) -> f32 {
-    let i = floor(p);
+    // Lattice corners wrap every 64 cells, so the hash's sine never sees the
+    // huge arguments whose lost precision draws angular streaks across long
+    // faces; each corner wraps on its own, so no seam opens at the wrap.
+    let cell = floor(p);
+    let i = cell - floor(cell / 64.0) * 64.0;
+    let j = cell + 1.0 - floor((cell + 1.0) / 64.0) * 64.0;
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
     let a = strata_hash(i.x + i.y * 57.0);
-    let b = strata_hash(i.x + 1.0 + i.y * 57.0);
-    let c = strata_hash(i.x + (i.y + 1.0) * 57.0);
-    let d = strata_hash(i.x + 1.0 + (i.y + 1.0) * 57.0);
+    let b = strata_hash(j.x + i.y * 57.0);
+    let c = strata_hash(i.x + j.y * 57.0);
+    let d = strata_hash(j.x + j.y * 57.0);
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
@@ -64,14 +69,14 @@ fn strata_band(n: f32) -> vec3f {
 
 // Vertical half-pipe traces left by the drill holes of a blast or a cut: x is the
 // groove (1 in its trough), y the groove's slope across the face.
-fn drill_traces(along: f32, y: f32, salt: f32, footprint: f32) -> vec2f {
-    let cell = along / DRILL_SPACING;
+fn drill_traces(along: f32, y: f32, salt: f32, footprint: f32, scale: f32) -> vec2f {
+    let cell = along / (DRILL_SPACING * scale);
     let id = floor(cell);
     let h = quarry_hash(vec2f(id, salt));
     // Each hole was drilled to its own depth from the bench above.
     let reach = quarry_smoothstep(h.y * 2.5 - 0.5, h.y * 2.5, y - h.z * 1.5);
     let x = (fract(cell) - 0.5) * DRILL_SPACING / 0.07;
-    let visible = quarry_smoothstep(0.12, 0.04, footprint);
+    let visible = quarry_smoothstep(0.12 * scale, 0.04 * scale, footprint);
     let groove = max(1.0 - x * x, 0.0) * reach * visible * step(0.15, h.x);
     return vec2f(groove, clamp(x, -1.0, 1.0) * groove);
 }
@@ -113,6 +118,8 @@ fn face_joints(along: f32, y: f32, salt: f32, footprint: f32) -> vec3f {
 // boundary's cut blocks, metres.
 const CAP_JOINT_SPACING = vec2f(2.6, 3.7);
 const BLOCK_CRACK_SPACING = 4.6;
+// Spacing of the caprock's fine frost cracks, metres.
+const CAP_HAIRLINE_SPACING = 1.15;
 
 struct CapJoints {
     // The open crack (1 in it) and the rounded shoulder beside it (1 at the lip).
@@ -129,7 +136,7 @@ struct CapJoints {
 // wanders, opens wide and pinches shut along its length, and weathers a rounded
 // shoulder down into it, so the low sun lights one lip and leaves the groove and
 // the far lip in shade. A joint thins to a faint seam before a pixel spans it.
-fn cap_joint_set(p: vec2f, dir: vec2f, spacing: f32, salt: f32, footprint: f32) -> CapJoints {
+fn cap_joint_set(p: vec2f, dir: vec2f, spacing: f32, salt: f32, footprint: f32, narrow: f32) -> CapJoints {
     let along = dot(p, vec2f(-dir.y, dir.x));
     let wander = (quarry_value(vec2f(along * 0.3, salt)) - 0.5) * 1.1
         + (quarry_value(vec2f(along * 1.9, salt + 9.0)) - 0.5) * 0.14;
@@ -139,8 +146,8 @@ fn cap_joint_set(p: vec2f, dir: vec2f, spacing: f32, salt: f32, footprint: f32) 
     let d = (fract(u) - 0.5 - (h.x - 0.5) * 0.35) * spacing;
     let open = quarry_value(vec2f(along * 0.45 + h.y * 13.0, id + salt));
     let present = quarry_smoothstep(0.2, 0.42, open) * step(0.25, h.z);
-    let width = (0.025 + 0.13 * open * open) * present;
-    let reach = width * 1.2 + 0.12;
+    let width = (0.025 + 0.13 * open * open) * present * narrow;
+    let reach = width * 1.2 + 0.12 * narrow;
     let x = abs(d);
     let soft = max(footprint, 0.004);
     var j: CapJoints;
@@ -199,7 +206,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Their faces and shoulders take it too: there the photo's laminae (and the
     // relief bumped from them) curve into wood figure, where sand grains read as
     // sandstone. The bedding comes from the beds' own bands instead.
-    let cap_crust = select(0.0, 1.0, cover_rock);
+    let cap_crust = select(0.0, 1.0, cover_rock || f.uv.y > 4.5);
     let luma = mix(dot(grain, LUMA), crust, cap_crust) * mix(1.0, fine / 0.42, (0.35 + 0.3 * close) * (1.0 - cap_crust))
         * mix(1.0, micro / 0.33, 0.5 * close);
     let warp = sin(p.x * 0.061 + p.z * 0.047) * 0.9 + sin(p.x * 0.19 - p.z * 0.23) * 0.35;
@@ -219,7 +226,13 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // cut: it keeps only its drill traces, so it never reads as a planed board.
     let sawn = select(sawn_cut, 0.0, cover_rock);
     // The face's own horizontal axis, for features laid out on it.
-    let face_axis = normalize(vec2f(-n.z, n.x) + vec2f(0.0001, 0.0));
+    // The benches' faces wander through every bearing over their buttresses and
+    // gullies: an axis turning with the smooth normal would bend the features
+    // laid out along it into a zigzag maze, so they take the nearest of the
+    // world's two horizontal axes instead.
+    let rounded_axis = normalize(vec2f(-n.z, n.x) + vec2f(0.0001, 0.0));
+    let snapped_axis = select(vec2f(sign(-n.z + 0.0001), 0.0), vec2f(0.0, sign(n.x)), abs(n.x) > abs(n.z));
+    let face_axis = select(rounded_axis, snapped_axis, f.uv.x < -0.5);
     let face_along = dot(p.xz, face_axis);
     let face_uv = vec2f(face_along, p.y * 1.3);
     let upright = quarry_smoothstep(0.5, 0.2, abs(n.y));
@@ -231,16 +244,19 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let lamina = sin(lamina_phase * 21.0 + sin(along * 0.9) * 1.2) * 0.5 + 0.5;
     // Faint on the outcrops and the benches' long faces: their curving sets
     // read as wood figure from the arena.
-    let lamina_keep = 1.0 - select(select(0.0, 0.7, backdrop), 0.9, rocky && !backdrop);
+    let lamina_keep = 1.0 - select(select(0.0, 1.0, backdrop), 0.9, rocky && !backdrop);
     // Drill traces: everywhere on sawn faces, in bands on the blasted benches.
     // Each layer below works out its noise only where the rest of its weight
     // can be non-zero, so a skipped pixel keeps the value it had.
     var bench_drilled = 0.0;
     if backdrop && !mesa {
-        bench_drilled = quarry_smoothstep(0.55, 0.7, strata_noise(vec2f(face_along * 0.05, 3.0)));
+        bench_drilled = quarry_smoothstep(0.38, 0.52, strata_noise(vec2f(face_along * 0.05, 3.0)));
     }
     let drilled = max(sawn_cut, bench_drilled) * upright;
-    let drill = drill_traces(face_along, p.y, rock_layer + floor(face_along / 9.0), footprint) * drilled;
+    // The benches were blasted from big presplit holes: half-barrels a long
+    // stride apart, scaled to the bench, where a sawn block's are a hand apart.
+    let drill_scale = select(1.0, 2.1, backdrop);
+    let drill = drill_traces(face_along, p.y, rock_layer + floor(face_along / 9.0), footprint, drill_scale) * drilled;
     let rock_body = select(0.0, 1.0, rocky && !backdrop);
     // Joint cracks across the caprock, cut into the relief so their walls take
     // the sun on one side and fall into shade on the other.
@@ -261,13 +277,22 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let turn = cap_hash.x * 3.14;
         let first_dir = vec2f(cos(turn), sin(turn));
         let second_dir = vec2f(-sin(turn + 0.12), cos(turn + 0.12));
-        let first = cap_joint_set(p.xz, first_dir, select(CAP_JOINT_SPACING.x, BLOCK_CRACK_SPACING, worked > 0.5), rock_layer * 1.3, footprint);
+        // Each cap breaks at its own scale: big tops into broad slabs, small
+        // ones into tighter blocks.
+        let joint_scale = 0.75 + 0.6 * cap_hash.y;
+        let first = cap_joint_set(p.xz, first_dir, select(CAP_JOINT_SPACING.x * joint_scale, BLOCK_CRACK_SPACING, worked > 0.5), rock_layer * 1.3, footprint, 1.0);
         var second = CapJoints(0.0, 0.0, vec2f(0.0), 0.0, 0.0);
+        var hairline = CapJoints(0.0, 0.0, vec2f(0.0), 0.0, 0.0);
         if worked < 0.5 {
-            second = cap_joint_set(p.xz, second_dir, CAP_JOINT_SPACING.y, rock_layer * 1.3 + 40.0, footprint);
+            second = cap_joint_set(p.xz, second_dir, CAP_JOINT_SPACING.y * joint_scale, rock_layer * 1.3 + 40.0, footprint, 1.0);
+            // Frost cracks: a third, finer set at an angle to both, mostly shut,
+            // splitting the slabs between the open joints into smaller plates.
+            let turn3 = turn + 0.7 + cap_hash.z * 0.5;
+            hairline = cap_joint_set(p.xz, vec2f(cos(turn3), sin(turn3)), CAP_HAIRLINE_SPACING * joint_scale, rock_layer * 1.3 + 77.0, footprint, 0.35);
         }
-        cap_cracks = vec2f(max(first.crack, second.crack), max(first.shoulder, second.shoulder)) * top;
-        cap_slope = (first.slope + second.slope) * top;
+        cap_cracks = vec2f(max(max(first.crack, second.crack), hairline.crack * 0.8),
+            max(max(first.shoulder, second.shoulder), hairline.shoulder * 0.5)) * top;
+        cap_slope = (first.slope + second.slope + hairline.slope * 0.5) * top;
         let wide = select(second.width, first.width, first.crack >= second.crack);
         cap_sand = quarry_smoothstep(0.03, 0.07, wide) * top;
         // Each slab between the joints has settled and weathered on its own: a
@@ -282,7 +307,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let tool_patch = quarry_smoothstep(0.35, 0.65, strata_noise(face_uv * 0.9 + vec2f(rock_layer * 2.1, 0.0)));
     let tool_wobble = strata_noise(face_uv * 2.7 + 5.0) * 3.0;
     let strokes = sin((face_along * 0.75 + p.y * 0.66) * 52.0 + tool_wobble);
-    let tooled = tool_patch * worked * upright * (1.0 - sawn) * quarry_smoothstep(0.03, 0.012, footprint);
+    // Only the boundary's blocks were dressed by hand: on the benches' long
+    // faces the strokes read as herringbone weave.
+    let tooled = tool_patch * worked * upright * (1.0 - sawn) * quarry_smoothstep(0.03, 0.012, footprint)
+        * select(1.0, 0.0, backdrop);
     let tooling = strokes * tooled;
     // Fracture relief: ridged noise on the face's own plane breaks every face
     // into shallow conchoidal flakes and spalls, so a face reads as split
@@ -341,7 +369,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     var pit_density = 0.0;
     if upright != 0.0 && sawn != 1.0 {
         let cluster = strata_noise(bedded_uv * 0.42 + vec2f(rock_layer * 3.1, 0.0));
-        pit_density = quarry_smoothstep(0.5, 0.85, cluster) * upright * select(0.55, 0.3, rocky) * (1.0 - sawn)
+        pit_density = quarry_smoothstep(0.5, 0.85, cluster) * upright * select(0.55, select(0.3, 0.1, backdrop), rocky) * (1.0 - sawn)
             * mix(0.3, 1.7, soft_bed);
     }
     let pits = quarry_pebbles(bedded_uv, 0.34, pit_density, footprint, 5.0, 0.0);
@@ -414,7 +442,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let liesegang = pow(sin(band_wave) * 0.5 + 0.5, 6.0) * band_patch * upright;
     // Faint on the cover rocks, whose rounded shoulders would bend the bands
     // into a board's figure.
-    layered = mix(layered, layered * vec3f(0.98, 0.72, 0.55), liesegang * select(0.6, 0.15, cover_rock) * (1.0 - sawn * 0.6));
+    // None on the benches: across their long faces the contour-following bands
+    // read as wood figure and herringbone.
+    layered = mix(layered, layered * vec3f(0.98, 0.72, 0.55), liesegang * select(select(0.6, 0.0, backdrop), 0.15, cover_rock) * (1.0 - sawn * 0.6));
     let tone = sin(p.x * 0.043 + sin(p.z * 0.031) * 2.0)
         * sin(p.z * 0.057 + p.y * 0.11 - p.x * 0.02) * 0.5 + 0.5;
     layered = mix(layered, layered * vec3f(0.92, 0.9, 0.88), quarry_smoothstep(0.6, 0.9, tone) * 0.5);
@@ -451,7 +481,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let mottle_uv = select(face_uv, p.xz, n.y > 0.7);
     let block_mottle = strata_noise(mottle_uv * 1.9 + rock_layer * 5.3) * 0.6
         + strata_noise(mottle_uv * 5.1 + rock_layer) * 0.4;
-    rock *= mix(1.0, 0.78 + 0.36 * block_mottle, max(worked * 0.85, sawn_cut * select(0.0, 0.5, cover_rock)));
+    // Not on the benches: over their long faces the mottle's fine octave turns
+    // into a maze of angular streaks.
+    rock *= mix(1.0, 0.78 + 0.36 * block_mottle, max(worked * select(0.85, 0.0, backdrop), sawn_cut * select(0.0, 0.5, cover_rock)));
     // Each of the boundary's blocks came out of its own part of the bed: a value
     // of its own, so the line never reads as one block repeated.
     rock *= mix(1.0, 0.82 + 0.34 * strata_hash(floor(rock_layer) * 1.7 + 0.4), worked);
@@ -510,13 +542,6 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Each plate between the joints has weathered on its own: a little paler
     // or darker, so the cap reads as broken slabs rather than one painted top.
     rock *= mix(1.0, 0.82 + 0.34 * plate_tone, top * rock_body);
-    // Weathering pans: shallow round hollows the rain has dissolved into the
-    // cover rocks' caps, floored with blown sand and rimmed in shade on the
-    // side the sun cannot reach.
-    let pans = quarry_pebbles(p.xz + rock_layer * 3.7, 2.6, select(0.0, 0.3, cover_rock && !loose) * top, footprint, 87.0, 0.0);
-    rock *= 1.0 - pans.contact * 0.06;
-    rock = mix(rock, ground * vec3f(1.05, 1.0, 0.94) * (0.9 + sand_grit * 0.3), pans.cover * (1.0 - pans.rim) * 0.8);
-    rock *= 1.0 - pans.rim * 0.32;
     // The caps' patina: crisp-edged blotches of darker, greyer varnish over the
     // pale crust, and freckles of lichen, so a top reads as old stone at the
     // gameplay camera rather than smooth clay.
@@ -526,7 +551,6 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let freckles = quarry_pebbles(p.xz * 2.2 + rock_layer * 7.3, 0.6, select(0.0, 0.16, cover_rock && !loose) * top, footprint, 29.0, 0.4);
     let freckle_tint = select(vec3f(0.66, 0.66, 0.56), vec3f(1.0, 0.66, 0.38), freckles.tint.x > 0.98);
     rock = mix(rock, rock * freckle_tint, freckles.cover * 0.6);
-    bumped = normalize(bumped + vec3f(pans.lean.x, 0.0, pans.lean.y) * 0.5);
     // The weathered lips round off paler; the groove holds deep shade, and sand
     // drifts into the bottom of the wide ones.
     rock = mix(rock, mix(rock, srgb_hex(0xeee0c6u), 0.3), cap_cracks.y * 0.35);
@@ -561,8 +585,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Far treads of the benches: varnished desert pavement, darker than the
     // sunlit sand below, so each shelf steps back in value instead of reading
     // as a pale strip between the cliffs.
-    let pavement = up * select(0.0, 1.0, backdrop && !mesa) * quarry_smoothstep(88.0, 125.0, length(p.xz));
-    rock = mix(rock, rock * vec3f(0.74, 0.68, 0.63), pavement * 0.65);
+    let pavement = up * select(0.0, 1.0, backdrop && !mesa) * quarry_smoothstep(66.0, 100.0, length(p.xz));
+    rock = mix(rock, rock * vec3f(0.72, 0.66, 0.61), pavement * 0.78);
     let chips = quarry_pebbles(p.xz, 0.55, select(0.0, select(0.14, 0.05, !backdrop), rocky && !cover_rock) * up * (1.0 - worked), footprint, 17.0, 1.0);
     // Blast rubble left lying on the benches' shelves: boulders a metre or so
     // across with their shadows, so a tread reads as worked ground from above.

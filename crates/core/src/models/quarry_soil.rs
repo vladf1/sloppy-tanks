@@ -175,9 +175,6 @@ fn spawn_pad_ground(x: f64, z: f64) -> (f64, f64) {
     (contact, apron)
 }
 
-/// How much of its mixed colour the baked ground keeps (1 all of it).
-const SOIL_CHROMA: f64 = 0.88;
-
 /// Distance of the apron's haul road from the arena's centre lines, metres.
 const HAUL_RING: f64 = 71.6;
 /// The haul road's ruts across it: two lanes of dual-wheel tracks, metres.
@@ -250,6 +247,42 @@ fn rut_age(table: &[f32], x: f64, z: f64, salt: f64) -> f64 {
             0.3,
             0.7,
         )
+}
+
+/// Half width of a haul road's wheel path: the band every truck's dual wheels
+/// wear dark and smooth, metres.
+const WHEEL_PATH_HALF: f64 = 0.55;
+/// How many times wider a wheel path spreads where traffic turns and bunches
+/// (the loop's corners, the crossing's junctions).
+const WHEEL_PATH_SPREAD: f64 = 0.75;
+
+/// A haul road's wheel path `offset` metres from its centre: (band, treads),
+/// each 0..1. The band is the darker, compacted strip; inside it the latest
+/// passes press a few braided tyre lines that wander a little against each
+/// other, so the path has direction close up without combing the whole road.
+fn wheel_path(table: &[f32], x: f64, z: f64, offset: f64, salt: f64, spread: f64) -> (f64, f64) {
+    let half = WHEEL_PATH_HALF * (1.0 + spread * WHEEL_PATH_SPREAD);
+    if offset.abs() > half * 2.2 {
+        return (0.0, 0.0);
+    }
+    let band = (-(offset / half).powi(6)).exp();
+    let mut treads: f64 = 0.0;
+    for k in 0..3 {
+        let k = k as f64;
+        let drift =
+            (noise(table, x * 0.05 + salt + k * 5.3, z * 0.05 - salt - k * 3.1) - 0.5) * half * 1.4;
+        let line = (offset - drift) / 0.12;
+        treads = treads.max((-line * line).exp() * (1.0 - k * 0.22));
+    }
+    (band, treads * band.sqrt())
+}
+
+/// Where haul traffic turns and bunches at (x, z), 0..1: round the loop's four
+/// corners and where the crossing meets it, the paths spread and wear deepest.
+fn traffic_bunching(x: f64, z: f64) -> f64 {
+    let corner = smoothstep(x.abs(), 36.0, 46.0) * smoothstep(z.abs(), 36.0, 46.0);
+    let junction = (-((x.abs() - 51.0).powi(2) + z * z) / 90.0).exp();
+    corner.max(junction)
 }
 
 /// Loader tyre tracks across the open floor at (x, z): two wandering paths,
@@ -362,7 +395,7 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         let mut road = 0.0;
         let mut windrow = 0.0;
         let mut rut = 0.0;
-        let mut rut_berm = 0.0;
+        let mut treads = 0.0;
         let mut road_edge = 0.0;
         let mut shoulder_gravel = 0.0;
         if distance < 9.5 {
@@ -385,18 +418,17 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             let w = (distance + edge * 0.7 - 6.0) / 0.8;
             let breach = smoothstep(noise(table, x * 0.19 + 31.0, z * 0.19 - 8.0), 0.18, 0.3);
             windrow = (-w * w).exp() * breach;
-            // Two-lane dual-wheel haul tracks pressed into the compacted bed, each
-            // with the spill it shoved aside, fresh in some runs and half filled
-            // with sand in others.
-            let (inner, inner_berm) = rut_profile(distance - 0.8);
-            let (outer, outer_berm) = rut_profile(distance - 3.5);
+            // Two lanes, each with the two wheel paths every truck runs in: broad
+            // dark compacted bands carrying the road's direction, spreading and
+            // wearing deepest where traffic turns and bunches.
+            let spread = traffic_bunching(x, z);
+            let (inner, inner_treads) = wheel_path(table, x, z, distance - 0.85, 3.0, spread);
+            let (outer, outer_treads) = wheel_path(table, x, z, distance - 3.35, 9.0, spread);
             let inner_age = rut_age(table, x, z, 3.0);
-            let outer_age = rut_age(table, x, z, 9.0) * 0.85;
-            rut = (inner * inner_age).max(outer * outer_age) * road;
-            rut_berm = (inner_berm * inner_age).max(outer_berm * outer_age) * road;
-            // Chevron lugs pressed into the ruts by the haul tyres.
-            let lugs = ((x + z) * 9.0).sin() * ((x - z) * 9.0).sin();
-            rut *= 0.8 + 0.35 * lugs;
+            let outer_age = rut_age(table, x, z, 9.0) * 0.9;
+            let bunched = 0.8 + 0.35 * spread;
+            rut = (inner * inner_age).max(outer * outer_age) * road * bunched;
+            treads = (inner_treads * inner_age).max(outer_treads * outer_age) * road;
         }
         // Trampled work floor: one broad central apron plus two midfield patches
         // between the rock shoulders. Fixed smooth shapes, no extra noise.
@@ -434,11 +466,16 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             noise(table, x * 0.06 + 17.0, z * 0.11 - 4.0) + warp * 0.2,
             0.55,
             0.78,
-        ) * (1.0 - rut * 1.5).max(0.0);
-        let packed = road * (1.0 - blown * 0.6);
-        r += (170.0 - r) * packed;
-        g += (149.0 - g) * packed;
-        b += (119.0 - b) * packed;
+        ) * (1.0 - rut * 1.6).max(0.0);
+        let packed = road * (1.0 - blown * 0.4);
+        r += (160.0 - r) * packed;
+        g += (146.0 - g) * packed;
+        b += (126.0 - b) * packed;
+        // The wheel paths: rolled harder and darker still, a cooler grey where
+        // the fines have been ground and the water truck's damp lingers.
+        r += (134.0 - r) * rut * 0.45;
+        g += (124.0 - g) * rut * 0.45;
+        b += (110.0 - b) * rut * 0.45;
         // The crushed-stone shoulder: grey-buff grit a shade off the bed.
         r += (172.0 - r) * shoulder_gravel * 0.6;
         g += (158.0 - g) * shoulder_gravel * 0.6;
@@ -555,14 +592,13 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         } else {
             (0.0, 0.0)
         };
-        r += (152.0 - r) * tyres * 0.35;
-        g += (132.0 - g) * tyres * 0.35;
-        b += (106.0 - b) * tyres * 0.35;
-        // The sand a wheel shoved aside is loose and dry: paler than the ground.
-        let berm = rut_berm.max(tyre_berm);
-        r += (214.0 - r) * berm * 0.35;
-        g += (198.0 - g) * berm * 0.35;
-        b += (166.0 - b) * berm * 0.35;
+        r += (150.0 - r) * tyres * 0.4;
+        g += (132.0 - g) * tyres * 0.4;
+        b += (108.0 - b) * tyres * 0.4;
+        // The sand a wheel shoved aside is loose and dry: a touch paler.
+        r += (210.0 - r) * tyre_berm * 0.15;
+        g += (194.0 - g) * tyre_berm * 0.15;
+        b += (162.0 - b) * tyre_berm * 0.15;
         // Loose stone gathers in clusters a few metres across, with clean sand
         // between them, instead of an even sprinkle.
         let clump = noise(table, x * 0.31 + 23.0, z * 0.31 - 9.0);
@@ -580,16 +616,16 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
                 * worn_sand
                 * off_road
                 * patch
-                * 7.0
+                * 3.5
         } else {
             0.0
         };
         let shade = (macro_field - 0.5) * 11.0 + (grit - 0.5) * 15.0 + fine + aggregate
-            - rut * 17.0
-            + rut_berm * 13.0
+            - rut * 12.0
+            - treads * 20.0
             - road_edge * 16.0
-            - tyres * 11.0
-            + tyre_berm * 10.0
+            - tyres * 13.0
+            + tyre_berm * 4.0
             - haul_ruts * 20.0
             - ring_ruts * 18.0
             - loading * 5.0
@@ -692,12 +728,6 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         g += (98.0 - g) * paint;
         b += (42.0 - b) * paint;
         let occlusion = occlusion * (1.0 - collar * 0.6);
-        // Sun-bleached: the warm key light brings the colour, so the ground's own
-        // stays a step greyer than the sand it was mixed from.
-        let grey = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-        r = grey + (r - grey) * SOIL_CHROMA;
-        g = grey + (g - grey) * SOIL_CHROMA;
-        b = grey + (b - grey) * SOIL_CHROMA;
         let i = col * 4;
         out[i] = to_uint8_clamp((r + shade) * occlusion);
         out[i + 1] = to_uint8_clamp((g + shade) * occlusion);

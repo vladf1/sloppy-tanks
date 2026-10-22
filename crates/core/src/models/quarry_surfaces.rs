@@ -990,7 +990,7 @@ const FACE_VALUE: f64 = 0.88;
 const BLOCK_FLATNESS: f64 = 1.0;
 
 /// Stones per metre of an outcrop's toe.
-const SCREE_DENSITY: f64 = 1.3;
+const SCREE_DENSITY: f64 = 1.7;
 
 /// Scree at an outcrop's toe: fallen blocks leaning on the face, then chips that
 /// thin out and shrink across the sand apron. Ankle-high, so it never reads as
@@ -1013,7 +1013,7 @@ fn scree_stones(
             let n = (c + 1) % toe.len();
             let at = toe[c] + (toe[n] - toe[c]) * rng.next();
             let out = (outward[c] + outward[n]).normalize_or_zero();
-            let block = i % 9 == 0;
+            let block = i % 7 == 0;
             let reach = if block {
                 rng.range(0.05, 0.35)
             } else {
@@ -1071,6 +1071,16 @@ fn skirt_mesh(w: f64, d: f64, variant: u32) -> Arc<Mesh> {
     })
 }
 
+/// How much further a skirt runs out on an outcrop's lee (+x, downwind) and how
+/// much shorter on its scoured windward side, as fractions of its reach.
+const SKIRT_LEE: f64 = 0.8;
+const SKIRT_SCOUR: f64 = 0.35;
+/// Height of a skirt where it banks against the face: windward and lee, metres.
+const SKIRT_BANK: (f64, f64) = (0.18, 0.34);
+/// A skirt's profile out from the face: (fraction of its reach, fraction of its
+/// bank height). Concave, like a drift resting at the sand's angle of repose.
+const SKIRT_PROFILE: [(f64, f64); 4] = [(0.0, 1.0), (0.22, 0.52), (0.55, 0.18), (1.0, -0.06)];
+
 fn sand_skirt(toe: &[DVec3], outward: &[DVec3], rng: &mut Random) -> Mesh {
     let columns = toe.len();
     let reach: Vec<f64> = (0..columns).map(|_| rng.range(0.7, 1.6)).collect();
@@ -1080,14 +1090,25 @@ fn sand_skirt(toe: &[DVec3], outward: &[DVec3], rng: &mut Random) -> Mesh {
             (reach[(c + columns - 1) % columns] + reach[c] * 2.0 + reach[(c + 1) % columns]) / 4.0
         })
         .collect();
-    let ring = |c: usize, f: f64, y: f64| -> DVec3 {
+    // The wind banks sand into a tail on the lee and scours the windward foot.
+    let lee: Vec<f64> = (0..columns).map(|c| outward[c].x).collect();
+    let reach: Vec<f64> = (0..columns)
+        .map(|c| reach[c] * (1.0 + SKIRT_LEE * lee[c].max(0.0) - SKIRT_SCOUR * (-lee[c]).max(0.0)))
+        .collect();
+    let bank: Vec<f64> = (0..columns)
+        .map(|c| SKIRT_BANK.0 + (SKIRT_BANK.1 - SKIRT_BANK.0) * (lee[c] * 0.5 + 0.5))
+        .collect();
+    let ring = |c: usize, f: f64, h: f64| -> DVec3 {
         let p = toe[c] + outward[c] * (reach[c] * f - 0.12);
+        // The rim sinks just under the floor, whatever the bank's height.
+        let y = if h < 0.0 { -0.012 } else { bank[c] * h };
         DVec3::new(p.x, y, p.z)
     };
     let mut positions: Vec<f64> = Vec::new();
     for c in 0..columns {
         let n = (c + 1) % columns;
-        for (f0, y0, f1, y1) in [(0.0, 0.2, 0.4, 0.07), (0.4, 0.07, 1.0, -0.012)] {
+        for pair in SKIRT_PROFILE.windows(2) {
+            let ((f0, y0), (f1, y1)) = (pair[0], pair[1]);
             for p in [
                 ring(c, f0, y0),
                 ring(n, f0, y0),

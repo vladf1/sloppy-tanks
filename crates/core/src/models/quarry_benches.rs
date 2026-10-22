@@ -522,75 +522,6 @@ fn seat_height(below: &[[DVec3; 3]], slab: &Node, w: f64, h: f64, d: f64, varian
     lowest - BUTTE_SEAT
 }
 
-/// Sides of a hoodoo's column.
-const HOODOO_SIDES: usize = 7;
-/// A hoodoo's rings from its buried foot to its cap: (height fraction, radius
-/// fraction, wear).
-const HOODOO_RINGS: [(f64, f64, f64); 6] = [
-    (-0.25, 1.5, 0.0),
-    (0.12, 1.0, -0.3),
-    (0.5, 0.78, 0.0),
-    (0.8, 0.5, -0.8),
-    (0.86, 0.82, 0.9),
-    (1.0, 0.7, 0.6),
-];
-
-/// One hoodoo standing at `foot` (its base level), `height` tall and `radius`
-/// wide at the base, leaning by `tilt` per metre, into the mesas' mesh.
-#[allow(clippy::too_many_arguments)]
-fn hoodoo(
-    positions: &mut Vec<f64>,
-    uvs: &mut Vec<f64>,
-    foot: DVec3,
-    height: f64,
-    radius: f64,
-    tilt: DVec3,
-    layer: f64,
-    rng: &mut Random,
-) {
-    let wobble: Vec<f64> = (0..HOODOO_SIDES).map(|_| rng.range(0.82, 1.15)).collect();
-    let rings: Vec<(Vec<DVec3>, f64)> = HOODOO_RINGS
-        .iter()
-        .map(|&(t, r, wear)| {
-            let y = height * t;
-            let points = (0..HOODOO_SIDES)
-                .map(|s| {
-                    let a = s as f64 / HOODOO_SIDES as f64 * PI * 2.0;
-                    let r = radius * r * wobble[s];
-                    foot + tilt * y + DVec3::new(a.cos() * r, y, a.sin() * r)
-                })
-                .collect();
-            (points, wear)
-        })
-        .collect();
-    for pair in rings.windows(2) {
-        let ((low, low_wear), (high, high_wear)) = (&pair[0], &pair[1]);
-        for s in 0..HOODOO_SIDES {
-            let n = (s + 1) % HOODOO_SIDES;
-            for (p, wear) in [
-                (low[s], *low_wear),
-                (high[s], *high_wear),
-                (low[n], *low_wear),
-                (low[n], *low_wear),
-                (high[s], *high_wear),
-                (high[n], *high_wear),
-            ] {
-                positions.extend([p.x, p.y, p.z]);
-                uvs.extend([layer, wear]);
-            }
-        }
-    }
-    let (top, _) = rings.last().expect("hoodoo rings");
-    let crown = top.iter().sum::<DVec3>() / HOODOO_SIDES as f64 + DVec3::Y * radius * 0.08;
-    for s in 0..HOODOO_SIDES {
-        let n = (s + 1) % HOODOO_SIDES;
-        for p in [crown, top[n], top[s]] {
-            positions.extend([p.x, p.y, p.z]);
-            uvs.extend([layer, 0.5]);
-        }
-    }
-}
-
 /// Sides of a distant mesa's outline.
 const MESA_SIDES: usize = 26;
 /// Bed bands per tier of a distant mesa.
@@ -783,37 +714,6 @@ pub fn quarry_mesas() -> Node {
                 positions.extend([p.x, p.y, p.z]);
                 uvs.extend([layer, 0.0]);
             }
-        }
-        // Hoodoos: pinnacles left standing off the mesa's talus, each a soft
-        // column pinched at its neck under a harder cap, so the skyline breaks
-        // into spires as well as tables. A stream of their own, so the mesas'
-        // layout keeps its draws.
-        let mut spire_rng = Random::new(70517.0 + m as f64 * 17.0);
-        let spires = (spire_rng.next() * 2.6) as usize;
-        for _ in 0..spires {
-            let side = (spire_rng.next() * MESA_SIDES as f64) as usize % MESA_SIDES;
-            let reach = spire_rng.range(1.12, 1.4);
-            let out = outline[side] * reach;
-            // On the talus, which falls 10 m from the cliff foot to 1.6 times
-            // the outline.
-            let foot = centre + DVec3::new(out.x, -10.0 * (reach - 1.0) / 0.6, out.z);
-            let height = mesa.height * spire_rng.range(0.6, 0.95);
-            let radius = mesa.radius * spire_rng.range(0.07, 0.12);
-            let tilt = DVec3::new(
-                spire_rng.range(-0.04, 0.04),
-                0.0,
-                spire_rng.range(-0.04, 0.04),
-            );
-            hoodoo(
-                &mut positions,
-                &mut uvs,
-                foot,
-                height,
-                radius,
-                tilt,
-                -(layer_base + 2.0),
-                &mut spire_rng,
-            );
         }
     }
     let mut geometry = Mesh::from_f64(&positions, &[], &uvs, None);
