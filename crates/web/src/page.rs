@@ -12,7 +12,9 @@ use sloppy_render::presentation::camera_rig::CameraRig;
 use sloppy_render::presentation::input::InputFrame;
 use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::presentation::{PrepareStatus, Presentation};
-use sloppy_render::quality::{DeviceClass, GraphicsSetting, QualityController, starting_tier};
+use sloppy_render::quality::{
+    DeviceClass, GraphicsSetting, QualityController, Tier, starting_tier,
+};
 use wasm_bindgen::JsValue;
 
 use crate::events::PendingEvent;
@@ -234,6 +236,15 @@ impl Graphics {
     }
 }
 
+/// Whether the renderer multisamples, decided once per page since every pipeline is
+/// made for it: desktops do; touch tablets and phones draw single-sampled, since four
+/// samples of the HDR target and its depth cost a tile-based mobile GPU dearly in
+/// fill and bandwidth, unless the player chose High.
+fn multisampled(device: &str, setting: &str) -> bool {
+    DeviceClass::parse(device) == DeviceClass::Desktop
+        || GraphicsSetting::parse(setting) == GraphicsSetting::Fixed(Tier::High)
+}
+
 /// The configuration both game types take: `{ seed?, assetBase, cssWidth?, cssHeight?,
 /// pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?, device? }`.
 #[derive(Deserialize, Default)]
@@ -274,7 +285,8 @@ pub async fn create_view(
         device_pixel_ratio: config.pixel_ratio.unwrap_or(1.0),
         exact: false,
     };
-    let mut renderer = Renderer::new(canvas, config.asset_base)
+    let msaa = multisampled(&config.device, &config.graphics);
+    let mut renderer = Renderer::new(canvas, config.asset_base, msaa)
         .await
         .map_err(js_error)?;
     let graphics = Graphics::new(

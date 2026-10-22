@@ -60,6 +60,8 @@ pub enum LayoutKind {
     Output,
     Bloom,
     Occlusion,
+    /// The occlusion pass reading a single-sampled depth (no MSAA).
+    SingleSampleOcclusion,
     /// Frame group only: depth-only merged shadow casters and the sky.
     ShadowMerged,
     Mipmap,
@@ -69,7 +71,7 @@ impl LayoutKind {
     pub fn groups(self) -> &'static [&'static [wgpu::BindGroupLayoutEntry]] {
         use super::resources::{
             BLOOM_ENTRIES, FRAME_ENTRIES, MATERIAL_ENTRIES, MIPMAP_SOURCE_ENTRIES,
-            OCCLUSION_ENTRIES, OUTPUT_ENTRIES, TEXTURED_ENTRIES,
+            OCCLUSION_ENTRIES, OUTPUT_ENTRIES, SINGLE_SAMPLE_OCCLUSION_ENTRIES, TEXTURED_ENTRIES,
         };
         match self {
             LayoutKind::Surface => &[FRAME_ENTRIES, MATERIAL_ENTRIES],
@@ -77,6 +79,7 @@ impl LayoutKind {
             LayoutKind::Output => &[OUTPUT_ENTRIES],
             LayoutKind::Bloom => &[BLOOM_ENTRIES],
             LayoutKind::Occlusion => &[OCCLUSION_ENTRIES],
+            LayoutKind::SingleSampleOcclusion => &[SINGLE_SAMPLE_OCCLUSION_ENTRIES],
             LayoutKind::ShadowMerged => &[FRAME_ENTRIES],
             LayoutKind::Mipmap => &[MIPMAP_SOURCE_ENTRIES],
         }

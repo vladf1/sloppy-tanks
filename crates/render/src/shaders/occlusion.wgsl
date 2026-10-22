@@ -1,6 +1,7 @@
 // Screen-space ambient occlusion at quarter size (`OCCLUSION_SCALE`). The main view's depth comes from a
-// header (`shader::occlusion_source`): WebGPU reads the multisampled depth, WebGL2
-// (which cannot) a single-sample copy the resolve blits. The header also sets
+// header (`shader::occlusion_source`): WebGPU reads the multisampled depth (or the
+// single-sampled one without MSAA), WebGL2 (which cannot) a single-sample copy the
+// resolve blits. The header also sets
 // `SAMPLES`, the probes per pixel: fewer on WebGL's weaker devices. Each pixel rebuilds its world position and normal from
 // the main view's depth, then tests eight points of a hemisphere a metre or so around
 // it against the depth buffer. The kernel's rotation follows a 4×4 Bayer pattern, so

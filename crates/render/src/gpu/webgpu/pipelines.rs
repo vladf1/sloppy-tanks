@@ -23,11 +23,11 @@ use super::Gpu;
 use super::context::{DEPTH_FORMAT, HDR_FORMAT, OCCLUSION_FORMAT};
 use super::precompile::{Background, LayoutKind, PipelineSpec, Precompiler};
 use crate::effects::EffectRegistry;
-use crate::gpu::{FixedPipelines, SAMPLE_COUNT, SHADOW_MERGED_SIDES};
+use crate::gpu::{FixedPipelines, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
-    BlendMode, Pass, PipelineKey, ShaderKey, occlusion_source, output_source, shader_source,
-    shadow_cutout_source, shadow_merged_source, sky_source, water_source,
+    BlendMode, OcclusionDepth, Pass, PipelineKey, ShaderKey, occlusion_source, output_source,
+    shader_source, shadow_cutout_source, shadow_merged_source, sky_source, water_source,
 };
 use crate::shadow_merge::ShadowVertex;
 
@@ -94,7 +94,7 @@ fn depth_state(
     }
 }
 
-fn water_spec() -> PipelineSpec {
+fn water_spec(samples: u32) -> PipelineSpec {
     PipelineSpec {
         label: "water",
         layout: LayoutKind::Water,
@@ -112,7 +112,7 @@ fn water_spec() -> PipelineSpec {
             Default::default(),
         )),
         multisample: wgpu::MultisampleState {
-            count: SAMPLE_COUNT,
+            count: samples,
             ..Default::default()
         },
     }
@@ -133,7 +133,7 @@ fn output_spec(canvas_format: wgpu::TextureFormat) -> PipelineSpec {
 }
 
 /// The sky: a far-plane triangle drawn where the depth is still clear.
-fn sky_spec() -> PipelineSpec {
+fn sky_spec(samples: u32) -> PipelineSpec {
     PipelineSpec {
         label: "sky",
         layout: LayoutKind::ShadowMerged,
@@ -148,7 +148,7 @@ fn sky_spec() -> PipelineSpec {
             Default::default(),
         )),
         multisample: wgpu::MultisampleState {
-            count: SAMPLE_COUNT,
+            count: samples,
             ..Default::default()
         },
     }
@@ -198,10 +198,14 @@ fn bloom_specs() -> [PipelineSpec; 3] {
     .map(|(label, entry, target)| post_spec(label, LayoutKind::Bloom, "vs_post", entry, target))
 }
 
-fn occlusion_spec() -> PipelineSpec {
+fn occlusion_spec(samples: u32) -> PipelineSpec {
     post_spec(
         "ambient occlusion",
-        LayoutKind::Occlusion,
+        if samples > 1 {
+            LayoutKind::Occlusion
+        } else {
+            LayoutKind::SingleSampleOcclusion
+        },
         "vs_occlusion",
         "fs_occlusion",
         OCCLUSION_FORMAT.into(),
@@ -249,8 +253,8 @@ fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
     }
 }
 
-/// A surface or shadow variant.
-fn surface_spec(key: &PipelineKey) -> PipelineSpec {
+/// A surface or shadow variant for a main view of `samples` MSAA samples.
+fn surface_spec(key: &PipelineKey, samples: u32) -> PipelineSpec {
     let main = key.shader.pass == Pass::Main;
     let (vertex_entry, fragment_entry) = key.shader.entry_points();
     let targets = if main {
@@ -287,9 +291,9 @@ fn surface_spec(key: &PipelineKey) -> PipelineSpec {
             },
         )),
         multisample: wgpu::MultisampleState {
-            count: if main { SAMPLE_COUNT } else { 1 },
+            count: if main { samples } else { 1 },
             mask: !0,
-            alpha_to_coverage_enabled: main && key.shader.alpha_to_coverage,
+            alpha_to_coverage_enabled: main && samples > 1 && key.shader.alpha_to_coverage,
         },
     }
 }
@@ -363,14 +367,21 @@ impl Pipelines {
         let occlusion_layout = pipeline_layout(device, "occlusion", &[&layouts.occlusion]);
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
         let mut jobs = vec![
-            (water_spec(), water_source()),
+            (water_spec(gpu.samples), water_source()),
             (output_spec(canvas_format), output_source()),
-            (sky_spec(), sky_source()),
+            (sky_spec(gpu.samples), sky_source()),
         ];
         for spec in bloom_specs() {
             jobs.push((spec, output_source()));
         }
-        jobs.push((occlusion_spec(), occlusion_source(true)));
+        jobs.push((
+            occlusion_spec(gpu.samples),
+            occlusion_source(if gpu.samples > 1 {
+                OcclusionDepth::Multisampled
+            } else {
+                OcclusionDepth::SingleSampled
+            }),
+        ));
         for (cutout, source) in [
             (false, shadow_merged_source()),
             (true, shadow_cutout_source()),
@@ -436,7 +447,7 @@ impl Pipelines {
                 LayoutKind::Water => &self.water_layout,
                 LayoutKind::Output => &self.output_layout,
                 LayoutKind::Bloom => &self.bloom_layout,
-                LayoutKind::Occlusion => &self.occlusion_layout,
+                LayoutKind::Occlusion | LayoutKind::SingleSampleOcclusion => &self.occlusion_layout,
                 LayoutKind::ShadowMerged => &self.merged_layout,
                 LayoutKind::Surface => &self.surface_layout,
                 LayoutKind::Mipmap => unreachable!("the uploader owns the mipmap blits"),
@@ -488,10 +499,10 @@ impl Pipelines {
             return Some(index);
         }
         if self.precompiler.finished(key) {
-            return create.then(|| self.create(&gpu.device, effects, key));
+            return create.then(|| self.create(gpu, effects, key));
         }
         if !self.precompiler.queued(key) {
-            let spec = surface_spec(key);
+            let spec = surface_spec(key, gpu.samples);
             let source = source(&mut self.sources, effects, key.shader);
             let raw = self.precompiler.module(spec.label, source);
             self.precompiler.start(*key, &spec, &raw);
@@ -504,17 +515,13 @@ impl Pipelines {
     pub fn ensure(&mut self, gpu: &Gpu, effects: &EffectRegistry, key: &PipelineKey) -> u32 {
         match self.find(key) {
             Some(index) => index,
-            None => self.create(&gpu.device, effects, key),
+            None => self.create(gpu, effects, key),
         }
     }
 
-    fn create(
-        &mut self,
-        device: &wgpu::Device,
-        effects: &EffectRegistry,
-        key: &PipelineKey,
-    ) -> u32 {
-        let spec = surface_spec(key);
+    fn create(&mut self, gpu: &Gpu, effects: &EffectRegistry, key: &PipelineKey) -> u32 {
+        let device = &gpu.device;
+        let spec = surface_spec(key, gpu.samples);
         let module = module(
             device,
             spec.label,

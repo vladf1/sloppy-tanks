@@ -20,8 +20,8 @@ use crate::effects::EffectRegistry;
 use crate::gpu::{FixedPipelines, SHADOW_MERGED_SIDES};
 use crate::shader::glsl::{self, Binding, block_point, texture_unit};
 use crate::shader::{
-    BlendMode, PipelineKey, ShaderKey, occlusion_source, output_source, shader_source,
-    shadow_cutout_source, shadow_merged_source, sky_source, water_source,
+    BlendMode, OcclusionDepth, PipelineKey, ShaderKey, occlusion_source, output_source,
+    shader_source, shadow_cutout_source, shadow_merged_source, sky_source, water_source,
 };
 
 /// The fragment stage of programs whose WGSL has none (depth-only casters).
@@ -253,7 +253,7 @@ impl Pipelines {
             Linking::start(
                 gpu,
                 "ambient occlusion",
-                &occlusion_source(false),
+                &occlusion_source(OcclusionDepth::WebglCopy),
                 "vs_occlusion",
                 Some("fs_occlusion"),
             ),
