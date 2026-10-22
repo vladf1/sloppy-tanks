@@ -43,7 +43,13 @@ pub(super) const RING_Z: f64 = -0.12;
 /// The Big Rig's turret, wedges and turret stowage are this much wider than their
 /// Type 99 proportions, so its turret mass reads heavier than the Bruiser's from
 /// any camera (the turret is not part of the hull's hit box).
-const HEAVY_TURRET_WIDTH: f64 = 1.1;
+const HEAVY_TURRET_WIDTH: f64 = 1.2;
+/// The Skipper's turret is this much narrower than its Booker proportions: a
+/// compact, low turret on the shortest hull, so the scout reads light and quick
+/// beside the other two.
+const SCOUT_TURRET_WIDTH: f64 = 0.88;
+/// Where the Skipper's bolted side armor modules hang, out from the centre line.
+const SCOUT_MODULE_X: f64 = 0.865 * SCOUT_TURRET_WIDTH;
 
 /// The merged assemblies of a chassis.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -85,7 +91,7 @@ pub(super) fn ring_radius(c: &Chassis) -> f64 {
 /// over its gun, the Big Rig's stands tall behind its wedges, so the three
 /// classes part by silhouette as well as size.
 fn roof_rise(c: &Chassis) -> f64 {
-    c.pick(0.45, 0.56, 0.66)
+    c.pick(0.42, 0.56, 0.7)
 }
 
 /// Height of the gun axis above the deck.
@@ -382,7 +388,7 @@ fn driver_station(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
         let height = f.top - 0.002 - bottom;
         let width = if c.heavy { 0.2 } else { 0.1 };
         let at = v(x, bottom + height / 2.0, z - 0.035);
-        kit.block_at(Coat::Shade, v(width, height, 0.06), at, v(0.0, yaw, 0.0));
+        kit.block_at(Coat::Gunmetal, v(width, height, 0.06), at, v(0.0, yaw, 0.0));
         kit.block_at(
             Coat::Glass,
             v(width - 0.02, height * 0.45, 0.006),
@@ -409,7 +415,7 @@ fn grille(kit: &mut Kit, f: &HullFrame, center: DVec2, size: DVec2, slats: u32) 
             DVec3::Y,
         );
     };
-    flat(kit, Coat::Shade, size / 2.0, f.roof + 0.003);
+    flat(kit, Coat::Gunmetal, size / 2.0, f.roof + 0.003);
     flat(kit, Coat::Dark, size / 2.0 - 0.025, f.roof + 0.005);
     let pitch = (size.y - 0.08) / f64::from(slats);
     let half_x = size.x / 2.0 - 0.035;
@@ -419,7 +425,7 @@ fn grille(kit: &mut Kit, f: &HullFrame, center: DVec2, size: DVec2, slats: u32) 
         let (front, back) = (z0 + pitch * 0.15, z0 + pitch * 0.85);
         let (low, high) = (f.roof + 0.006, f.top - 0.002);
         kit.quad(
-            Coat::Shade,
+            Coat::Gunmetal,
             [
                 v(center.x - half_x, high, front),
                 v(center.x + half_x, high, front),
@@ -741,7 +747,7 @@ fn rear_plate(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
         for i in 0..3 {
             let y = grille_y - height / 2.0 + height * (f64::from(i) + 0.5) / 3.0;
             kit.block(
-                Coat::Shade,
+                Coat::Gunmetal,
                 v(width + 0.02, 0.02, 0.012),
                 on_rear(x, y, 0.012) * DMat4::from_rotation_x(0.5),
             );
@@ -764,7 +770,7 @@ fn rear_plate(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
         );
         // Guard hood over the lenses.
         kit.block(
-            Coat::Shade,
+            Coat::Gunmetal,
             v(0.15, 0.012, 0.02),
             on_rear(x, light_y + 0.045, 0.012),
         );
@@ -799,7 +805,7 @@ fn rear_plate(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
     } else if !c.scout {
         // Infantry phone box at the right rear corner and the tow pintle.
         kit.block(
-            Coat::Shade,
+            Coat::Gunmetal,
             v(0.14, 0.12, 0.016),
             on_rear(-w + 0.4, light_y - 0.02, 0.008),
         );
@@ -844,7 +850,7 @@ fn front_fittings(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
         }
         // Retaining bar over the links.
         kit.block(
-            Coat::Shade,
+            Coat::Gunmetal,
             v(1.3, 0.02, 0.025),
             f.on_glacis(0.0, link_s + 0.09, 0.03, 0.0),
         );
@@ -879,7 +885,7 @@ fn front_fittings(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
         for z in [0.12, glacis_length * 0.45] {
             for x in [edge, -edge] {
                 kit.block(
-                    Coat::Shade,
+                    Coat::Gunmetal,
                     v(0.07, 0.024, 0.025),
                     f.on_glacis(x, start + z, 0.012, 0.0),
                 );
@@ -1008,7 +1014,7 @@ fn mantlet(kit: &mut Kit, gun_y: f64, face_z: f64, size: DVec3, tube: f64, coax_
 /// A boxy sight head with a glass window in front, optionally with its two
 /// armored doors swung open.
 fn sight_head(kit: &mut Kit, center: DVec3, size: DVec3, yaw: f64, doors: bool) {
-    kit.chamfer_block(Coat::Paint, size, 0.02, pose(center, v(0.0, yaw, 0.0)));
+    kit.chamfer_block(Coat::Shade, size, 0.02, pose(center, v(0.0, yaw, 0.0)));
     let face = size.z / 2.0;
     let window = v(size.x * 0.7, size.y * 0.42, 0.012);
     let glass_at = yawed(center, yaw, v(0.0, size.y * 0.06, face));
@@ -1022,7 +1028,7 @@ fn sight_head(kit: &mut Kit, center: DVec3, size: DVec3, yaw: f64, doors: bool) 
             );
             let door_yaw = yaw + side * 1.1;
             kit.block_at(
-                Coat::Shade,
+                Coat::Gunmetal,
                 v(window.x / 2.0, window.y + 0.03, 0.012),
                 yawed(hinge, door_yaw, v(side * window.x / 4.0, 0.0, 0.0)),
                 v(0.0, door_yaw, 0.0),
@@ -1074,7 +1080,7 @@ fn cupola(kit: &mut Kit, base: DVec3, radius: f64, blocks: u32) {
         (radius - 0.025, height + 0.015),
         (radius - 0.05, height + 0.015),
     ]);
-    kit.turned(Coat::Paint, &body, 12, pose(base, v(-PI / 2.0, 0.0, 0.0)));
+    kit.turned(Coat::Shade, &body, 12, pose(base, v(-PI / 2.0, 0.0, 0.0)));
     for i in 0..blocks {
         let yaw = f64::from(i) / f64::from(blocks) * PI * 2.0;
         kit.block_at(
@@ -1156,7 +1162,7 @@ fn smoke_cluster(kit: &mut Kit, at: DVec3, side: f64, yaw: f64, rows: u32, cols:
         f64::from(rows) * pitch + 0.03,
         f64::from(cols) * pitch + 0.03,
     );
-    kit.block_at(Coat::Shade, plate, at, v(0.0, yaw, 0.0));
+    kit.block_at(Coat::Gunmetal, plate, at, v(0.0, yaw, 0.0));
     let direction = DMat4::from_rotation_y(yaw)
         .transform_vector3(v(side * 0.55, 0.6, 0.6))
         .normalize();
@@ -1170,7 +1176,7 @@ fn smoke_cluster(kit: &mut Kit, at: DVec3, side: f64, yaw: f64, rows: u32, cols:
             let base = yawed(at, yaw, offset);
             let end = base + direction * 0.15;
             let tube = p2(&[(0.031, 0.0), (0.031, 0.15)]);
-            kit.turned(Coat::Shade, &tube, 6, aim(base, end));
+            kit.turned(Coat::Gunmetal, &tube, 6, aim(base, end));
             let cap = p2(&[(0.024, 0.146), (0.0, 0.146)]);
             kit.turned(Coat::Dark, &cap, 6, aim(base, end));
         }
@@ -1187,7 +1193,7 @@ fn antenna(kit: &mut Kit, base: DVec3, height: f64) {
 /// A lifting eye: a lug welded upright to the roof.
 fn lifting_eye(kit: &mut Kit, at: DVec3) {
     kit.block(
-        Coat::Shade,
+        Coat::Gunmetal,
         v(0.07, 0.05, 0.018),
         shift(at + v(0.0, 0.02, 0.0)),
     );
@@ -1217,7 +1223,7 @@ fn wind_sensor(kit: &mut Kit, base: DVec3, height: f64) {
 fn jerrycan(kit: &mut Kit, at: DVec3, yaw: f64) {
     let size = v(0.11, 0.3, 0.22);
     kit.chamfer_block(
-        Coat::Shade,
+        Coat::Canvas,
         size,
         0.018,
         pose(at + v(0.0, size.y / 2.0, 0.0), v(0.0, yaw, 0.0)),
@@ -1261,7 +1267,7 @@ fn stowage_rack(kit: &mut Kit, half_x: f64, z_front: f64, z_back: f64, floor: f6
             let (a, b) = (pair[0] + v(0.0, y, 0.0), pair[1] + v(0.0, y, 0.0));
             let length = (b - a).length() + rail;
             kit.block(
-                Coat::Shade,
+                Coat::Gunmetal,
                 v(rail, rail, length),
                 aim(a, b) * DMat4::from_translation(v(0.0, 0.0, length / 2.0 - rail / 2.0)),
             );
@@ -1271,7 +1277,7 @@ fn stowage_rack(kit: &mut Kit, half_x: f64, z_front: f64, z_back: f64, floor: f6
     for i in 0..posts_back {
         let x = -half_x + 2.0 * half_x * f64::from(i) / f64::from(posts_back - 1);
         kit.block(
-            Coat::Shade,
+            Coat::Gunmetal,
             v(rail * 0.8, top - floor, rail * 0.8),
             shift(v(x, (floor + top) / 2.0, z_back)),
         );
@@ -1279,7 +1285,7 @@ fn stowage_rack(kit: &mut Kit, half_x: f64, z_front: f64, z_back: f64, floor: f6
     // Front posts where the side rails meet the turret.
     for side in [-1.0, 1.0] {
         kit.block(
-            Coat::Shade,
+            Coat::Gunmetal,
             v(rail * 0.8, top - floor, rail * 0.8),
             shift(v(side * half_x, (floor + top) / 2.0, z_front)),
         );
@@ -1298,17 +1304,18 @@ fn turret_levels(c: &Chassis) -> [(Vec<DVec2>, f64); 3] {
     let d = c.deck;
     let roof = d + roof_rise(c);
     if c.scout {
+        let w = SCOUT_TURRET_WIDTH;
         [
             (
-                turret_plan(0.44, 0.8, 0.74, 0.5, -1.02, 0.68, -1.3),
+                turret_plan(0.44 * w, 0.8, 0.74 * w, 0.5, -1.02, 0.68 * w, -1.3),
                 d + 0.08,
             ),
             (
-                turret_plan(0.5, 0.97, 0.84, 0.63, -1.08, 0.78, -1.4),
+                turret_plan(0.5 * w, 0.97, 0.84 * w, 0.63, -1.08, 0.78 * w, -1.4),
                 d + 0.16,
             ),
             (
-                turret_plan(0.48, 0.9, 0.8, 0.58, -1.08, 0.76, -1.38),
+                turret_plan(0.48 * w, 0.9, 0.8 * w, 0.58, -1.08, 0.76 * w, -1.38),
                 roof - 0.025,
             ),
         ]
@@ -1376,7 +1383,7 @@ fn balanced_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
         true,
     );
     // Commander's independent thermal viewer (left front).
-    kit.post(Coat::Shade, 0.08, 0.1, v(0.5, roof - 0.01, 0.42), 10);
+    kit.post(Coat::Gunmetal, 0.08, 0.1, v(0.5, roof - 0.01, 0.42), 10);
     sight_head(
         kit,
         v(0.5, roof + 0.18, 0.42),
@@ -1516,7 +1523,7 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     mantlet(kit, gun_y, 1.3, v(0.38, 0.3, 0.42), 0.074, -0.13);
     // Commander's panoramic sight (right front) and gunner's sight (left).
     let pano = v(-0.48, roof, 0.06);
-    kit.post(Coat::Shade, 0.075, 0.12, pano, 10);
+    kit.post(Coat::Gunmetal, 0.075, 0.12, pano, 10);
     let head = p2(&[
         (0.0, 0.0),
         (0.1, 0.0),
@@ -1550,7 +1557,7 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     hatch_lid(kit, shift(hatch), hatch_radius, HATCH_LID);
     // JD-3 laser dazzler behind the commander: rotating base, box and aperture.
     let dazzler = v(-0.42, roof, -0.9);
-    kit.post(Coat::Shade, 0.12, 0.06, dazzler, 10);
+    kit.post(Coat::Gunmetal, 0.12, 0.06, dazzler, 10);
     kit.chamfer_block(
         Coat::Paint,
         v(0.3, 0.26, 0.36),
@@ -1584,8 +1591,8 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
             );
         }
     }
-    // Roof plate weld at the bustle joint (the centre stays clear for the class
-    // chevrons).
+    // Roof plate weld at the bustle joint (the centre stays clear for the team
+    // insignia).
     seam(kit, roof, DVec2::new(-0.66, -1.05), DVec2::new(0.66, -1.05));
     // Rear stowage box across the bustle.
     kit.chamfer_block(
@@ -1618,7 +1625,7 @@ fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     // Bolted side armor modules, leaning with the turret sides.
     for side in [-1.0, 1.0] {
         let lean = side * 0.06;
-        let module = pose(v(side * 0.865, d + 0.3, -0.42), v(0.0, 0.0, lean));
+        let module = pose(v(side * SCOUT_MODULE_X, d + 0.3, -0.42), v(0.0, 0.0, lean));
         kit.chamfer_block(Coat::Shade, v(0.07, 0.26, 0.86), 0.02, module);
         for row in [-0.07, 0.07] {
             for z in [-0.3, 0.0, 0.3] {
@@ -1638,7 +1645,7 @@ fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
         0.0,
         true,
     );
-    kit.post(Coat::Shade, 0.07, 0.09, v(0.4, roof - 0.01, 0.12), 10);
+    kit.post(Coat::Gunmetal, 0.07, 0.09, v(0.4, roof - 0.01, 0.12), 10);
     sight_head(
         kit,
         v(0.4, roof + 0.16, 0.12),
@@ -1653,23 +1660,30 @@ fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
     hatch_lid(kit, shift(hatch), hatch_radius, HATCH_LID);
     machine_gun(kit, roof, v(0.55, roof + 0.19, -0.28), -0.15, false);
     for side in [-1.0, 1.0] {
-        smoke_cluster(kit, v(side * 0.86, d + 0.36, 0.38), side, side * 0.3, 2, 2);
+        smoke_cluster(
+            kit,
+            v(side * 0.86 * SCOUT_TURRET_WIDTH, d + 0.36, 0.38),
+            side,
+            side * 0.3,
+            2,
+            2,
+        );
     }
-    seam(kit, roof, DVec2::new(-0.7, -0.88), DVec2::new(0.7, -0.88));
-    seam(kit, roof, DVec2::new(-0.44, 0.84), DVec2::new(0.44, 0.84));
-    stowage_rack(kit, 0.8, -0.98, -1.62, d + 0.16, d + 0.42);
+    seam(kit, roof, DVec2::new(-0.62, -0.88), DVec2::new(0.62, -0.88));
+    seam(kit, roof, DVec2::new(-0.39, 0.84), DVec2::new(0.39, 0.84));
+    stowage_rack(kit, 0.72, -0.98, -1.62, d + 0.16, d + 0.42);
     bag(kit, v(0.36, d + 0.165, -1.48), v(0.5, 0.24, 0.24), 0.04);
     rolled_tarp(
         kit,
-        v(-0.74, d + 0.25, -1.58),
-        v(0.74, d + 0.25, -1.58),
+        v(-0.66, d + 0.25, -1.58),
+        v(0.66, d + 0.25, -1.58),
         0.05,
     );
     jerrycan(kit, v(-0.3, d + 0.165, -1.5), PI / 2.0);
     jerrycan(kit, v(-0.58, d + 0.165, -1.5), PI / 2.0);
     antenna(kit, v(0.55, roof, -1.12), 0.8);
     antenna(kit, v(-0.55, roof, -1.12), 0.65);
-    for (x, z) in [(0.5, 0.42), (-0.5, 0.42), (0.6, -1.18), (-0.6, -1.18)] {
+    for (x, z) in [(0.46, 0.42), (-0.46, 0.42), (0.54, -1.18), (-0.54, -1.18)] {
         lifting_eye(kit, v(x, roof, z));
     }
 }
@@ -1679,7 +1693,10 @@ fn scout_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
 fn side_stowage(c: &Chassis, side: f64) -> (DVec3, DVec3) {
     let d = c.deck;
     if c.scout {
-        (v(side * 0.865, d + 0.3, -0.42), v(0.07, 0.26, 0.86))
+        (
+            v(side * SCOUT_MODULE_X, d + 0.3, -0.42),
+            v(0.07, 0.26, 0.86),
+        )
     } else if c.heavy {
         (
             v(
@@ -1725,12 +1742,14 @@ fn extra_stowage(kit: &mut Kit, c: &Chassis, variant: u8) {
     }
 }
 
-/// Class chevrons on the turret roof (one on the Skipper, two on the Bruiser,
-/// three on the Big Rig, matching the bands on its gun): bold enough to read from
-/// the overhead camera and on the menu cards, pointing the way the turret faces.
-/// Stencilled unit numbers on both turret sides, the turret band and the livery's
-/// extra stowage; the team's own sign is on the skirts. The crew livery (the one a
-/// human player's tank wears) paints its band white: the command tank's mark.
+/// The team's tactical sign, small and stencilled in faded paint on the turret
+/// roof, the same on every tank of a team (a diamond for blue, a forward-pointing
+/// arrowhead for red, like the skirts' sign), so team and facing still read from
+/// the overhead camera without relying on hue alone, while the turret roof keeps
+/// its shape (a large white sign read as a hole in it). Stencilled
+/// unit numbers on both turret sides, the turret band and the livery's extra
+/// stowage. The crew livery (the one a human player's tank wears) paints its band
+/// white: the command tank's mark. The gun's white bands give the class.
 fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
     extra_stowage(kit, c, variant);
     if variant == CREW_LIVERY {
@@ -1744,21 +1763,25 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
         );
     }
     let roof = c.deck + roof_rise(c);
-    let count = c.pick(1.0, 2.0, 3.0) as u32;
-    let stroke = c.pick(0.13, 0.11, 0.095);
-    let half_width = c.pick(0.27, 0.29, 0.25);
-    let apex = c.pick(0.6, 0.66, 0.6);
-    for i in 0..count {
-        let tip = apex - f64::from(i) * stroke * (1.0 + CHEVRON_GAP);
-        chevron(kit, roof + 0.003, tip, half_width, stroke);
+    let length = c.pick(0.34, 0.4, 0.42);
+    let half_width = c.pick(0.16, 0.19, 0.2);
+    let centre = DVec2::new(0.0, c.pick(0.34, 0.42, 0.34));
+    let outline: Vec<DVec2> = if team == Team::Blue {
+        p2(&[(0.0, 0.5), (-1.0, 0.0), (0.0, -0.5), (1.0, 0.0)])
+    } else {
+        p2(&[(0.0, 0.5), (-1.0, -0.5), (0.0, -0.32), (1.0, -0.5)])
     }
+    .into_iter()
+    .map(|p| centre + DVec2::new(p.x * half_width, p.y * length))
+    .collect();
+    roof_sign(kit, Coat::Stencil, &outline, roof + 0.003);
     let number = unit_number(c.kind, team, variant);
     let d = c.deck;
     for side in [-1.0, 1.0] {
         // On the turret's side stowage boxes (the scout's bolted side modules).
         let (center, up) = if c.scout {
             let lean = side * 0.06;
-            let module = pose(v(side * 0.865, d + 0.3, -0.42), v(0.0, 0.0, lean));
+            let module = pose(v(side * SCOUT_MODULE_X, d + 0.3, -0.42), v(0.0, 0.0, lean));
             (
                 module.transform_point3(v(side * 0.039, 0.0, 0.15)),
                 module.transform_vector3(DVec3::Y),
@@ -1777,25 +1800,14 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
     }
 }
 
-/// The gap between stacked chevrons (a share of their stroke) and how far an
-/// arm drops back per metre out from the centre.
-const CHEVRON_GAP: f64 = 0.55;
-const CHEVRON_SWEEP: f64 = 0.62;
-
-/// A flat chevron painted on a roof at height `y`, its tip at `tip` (z) on the
-/// centre line, arms reaching `half_width` out and back, `stroke` deep along z.
-fn chevron(kit: &mut Kit, y: f64, tip: f64, half_width: f64, stroke: f64) {
-    let drop = half_width * CHEVRON_SWEEP;
-    for side in [-1.0, 1.0] {
-        let x = side * half_width;
+/// A flat sign painted on a roof at height `y`, from its plan outline (fanned from
+/// its first corner, which must see every other).
+fn roof_sign(kit: &mut Kit, coat: Coat, outline: &[DVec2], y: f64) {
+    for i in 1..outline.len() - 1 {
+        let corners = [outline[0], outline[i], outline[i + 1]].map(|p| v(p.x, y, p.y));
         kit.quad(
-            Coat::Marking,
-            [
-                v(0.0, y, tip),
-                v(x, y, tip - drop),
-                v(x, y, tip - drop - stroke),
-                v(0.0, y, tip - stroke),
-            ],
+            coat,
+            [corners[0], corners[1], corners[2], corners[2]],
             DVec3::Y,
         );
     }
@@ -2059,7 +2071,7 @@ const ID_BAND_GAP: f64 = 0.06;
 
 /// Outer radius of the bare gun tube.
 pub(super) fn tube_radius(c: &Chassis) -> f64 {
-    c.pick(0.062, 0.068, 0.074)
+    c.pick(0.046, 0.068, 0.094)
 }
 
 /// z of the muzzle face; the bore disc sits just in front of it.
