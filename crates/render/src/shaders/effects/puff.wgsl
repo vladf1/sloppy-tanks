@@ -38,6 +38,12 @@ fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     (*w).position = v.instance_origin + to_eye * pull + (right * corner.x + up * corner.y) * cap;
 }
 
+// How bright the smoke in a burning puff is lit, as a share of plain smoke.
+const PUFF_FIRE_SOOT: f32 = 0.45;
+
+// How much of the sun's tint smoke takes (0 grey light, 1 the sun's own).
+const PUFF_SUN_TINT: f32 = 0.55;
+
 // The widest a puff's card may be, as a share of its distance from the eye.
 const PUFF_SCREEN_SHARE: f32 = 0.2;
 
@@ -61,11 +67,11 @@ fn puff_noise(p: vec2f) -> f32 {
 // Linear HDR blackbody-ish ramp: deep red embers, red, orange, yellow, white
 // core. The output pass's tone curve maps these to saturated fire, not cream.
 fn puff_fire(t: f32) -> vec3f {
-    var c = mix(vec3f(0.32, 0.04, 0.01), vec3f(1.05, 0.11, 0.015), smoothstep(0.03, 0.18, t));
-    c = mix(c, vec3f(2.0, 0.42, 0.035), smoothstep(0.18, 0.4, t));
-    c = mix(c, vec3f(2.8, 0.95, 0.1), smoothstep(0.4, 0.7, t));
-    c = mix(c, vec3f(3.6, 1.85, 0.4), smoothstep(0.75, 1.1, t));
-    c = mix(c, vec3f(4.6, 3.3, 1.6), smoothstep(1.15, 1.6, t));
+    var c = mix(vec3f(0.3, 0.045, 0.012), vec3f(0.95, 0.1, 0.012), smoothstep(0.03, 0.18, t));
+    c = mix(c, vec3f(1.9, 0.36, 0.025), smoothstep(0.18, 0.4, t));
+    c = mix(c, vec3f(2.4, 0.64, 0.045), smoothstep(0.4, 0.7, t));
+    c = mix(c, vec3f(3.7, 1.55, 0.24), smoothstep(0.75, 1.1, t));
+    c = mix(c, vec3f(5.6, 4.1, 2.1), smoothstep(1.15, 1.6, t));
     return c;
 }
 
@@ -85,7 +91,7 @@ const PUFF_WALL_SOFTNESS: f32 = 1.2;
 const PUFF_GROUND_SOFTNESS: f32 = 0.3;
 // Smoke this close to the camera (m) thins away, so a billow drifting up past a
 // low camera never becomes a flat curtain over the view.
-const PUFF_NEAR_FADE: vec2f = vec2f(1.5, 6.0);
+const PUFF_NEAR_FADE: vec2f = vec2f(2.5, 8.5);
 
 // How much of a puff survives at world point `p`: the ground's and the walls'
 // soft-particle fade along the view. The walls are material.params: up to three
@@ -178,13 +184,17 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
                 + erosion * (0.25 + 0.55 * (1.0 - noise));
             // Fire keeps a crisper edge than smoke, so its billows read as
             // shapes rather than a blur.
-            let feather = mix(0.2, 0.56, softness) * (1.0 - 0.4 * fiery) + erosion * 0.16;
+            let feather = mix(0.2, 0.56, softness) * (1.0 - 0.15 * fiery) + erosion * 0.16;
             // The card's own edge is always clear, however far the noise pushes the
             // rim, so no puff shows the straight side of its quad.
             let window = 1.0 - smoothstep(0.8, 1.0, radius);
             density = (1.0 - smoothstep(rim - feather, rim, edge)) * window * puff_wall_fade(f.world);
             if density > 0.0 {
-                (*s).color = puff_color((*s).color, point, radius, floor(packed) / 15.0, heat, softness, fiery, n1, n2, noise, f.view_direction);
+                let shaded = puff_color((*s).color, point, radius, floor(packed) / 15.0, heat, softness, fiery, n1, n2, noise, f.view_direction);
+                (*s).color = shaded.rgb;
+                // A fireball's cooled rim is smoke, not a crust: it thins where it no
+                // longer burns, so the lobes' outlines melt into their soot.
+                density *= mix(1.0, 0.55 + 0.45 * shaded.a, fiery);
             }
         }
     }
@@ -204,7 +214,7 @@ fn puff_color(
     n2: f32,
     noise: f32,
     view_direction: vec3f,
-) -> vec3f {
+) -> vec4f {
     // A lumpy ball: noise tilts the sphere normal into billows, lit like the scene.
     let bulge = sqrt(max(1.0 - radius * radius, 0.0));
     let lumps = vec2f(n2 - 0.5, n1 - 0.5) * 1.2;
@@ -212,8 +222,8 @@ fn puff_color(
         frame.camera_right.xyz * (point.x + lumps.x) + frame.camera_up.xyz * (point.y + lumps.y)
             + view_direction * (bulge + 0.3),
     );
-    let sun = dot(normal, frame.sun_direction.xyz);
-    let direct = smoothstep(-0.25, 0.85, sun) * (0.55 + 0.45 * noise);
+    let facing = dot(normal, frame.sun_direction.xyz);
+    let direct = smoothstep(-0.25, 0.85, facing) * (0.55 + 0.45 * noise);
     // The fill keeps the sky's and ground's brightness but little of their hue:
     // grass bounce would turn dust olive and a dusk sky smoke lilac.
     let fill = mix(frame.ground_color.rgb, frame.sky_color.rgb, normal.y * 0.5 + 0.5);
@@ -223,27 +233,34 @@ fn puff_color(
     // half sits in the shade of its upper half.
     let belly = mix(0.35, 1.0, smoothstep(-0.55, 0.65, normal.y));
     let self_shadow = mix(0.62, 1.08, smoothstep(-0.9, 0.7, point.y + (n1 - 0.5) * 0.6));
-    let occlusion = (0.5 + 0.5 * smoothstep(0.2, 0.75, noise)) * belly * self_shadow;
-    var color = albedo * (frame.sun_color.rgb * direct * 1.6 * mix(0.7, 1.0, self_shadow) + hemisphere * occlusion * 0.85)
+    let occlusion = (mix(0.5, 0.7, softness) + mix(0.5, 0.3, softness) * smoothstep(0.2, 0.75, noise)) * belly * self_shadow;
+    // Smoke and dust scatter the sun's light about rather than taking its full
+    // tint: a low sun would otherwise turn grey powder and soot ochre.
+    let sun = mix(vec3f(dot(frame.sun_color.rgb, vec3f(0.2126, 0.7152, 0.0722))), frame.sun_color.rgb, PUFF_SUN_TINT);
+    var color = albedo * (sun * direct * 1.6 * mix(0.7, 1.0, self_shadow) + hemisphere * occlusion * 0.85)
         * RECIPROCAL_PI;
     // The shade side cools toward the sky's blue; the sunlit rim of a billow
     // catches a silver lining, so the shapes stay readable from above.
-    color *= mix(vec3f(0.84, 0.9, 1.06), vec3f(1.0), smoothstep(-0.2, 0.5, sun));
-    let rim_light = smoothstep(0.45, 0.95, radius) * smoothstep(0.1, 0.7, sun) * (1.0 - softness);
-    color += albedo * frame.sun_color.rgb * rim_light * 0.22;
+    color *= mix(vec3f(0.84, 0.9, 1.06), vec3f(1.0), smoothstep(-0.2, 0.5, facing));
+    let rim_light = smoothstep(0.45, 0.95, radius) * smoothstep(0.1, 0.7, facing) * (1.0 - softness);
+    color += albedo * sun * rim_light * 0.22;
 
+    // Smoke still wrapped round fire is dense and dark, so the fire cools
+    // through deep red into soot rather than blending into a pale salmon.
+    color *= mix(1.0, PUFF_FIRE_SOOT, fiery);
     var glow = 0.0;
     if heat > PUFF_FIRE_MIN_HEAT {
         // Fire: hottest at the core and in the dense noise, settling into toon bands.
         // As a fire puff cools its rim goes first, through deep red into the soot it
         // carries, so a fireball keeps a dark smoky rim and then turns to smoke.
-        let core = clamp(1.0 - radius * 0.85, 0.0, 1.0);
-        // Broad noise only, so the bands cool in large lobes rather than speckles,
-        // sharpened so the fire splits into bright billows with dark creases of
-        // soot laced between them rather than one flat orange blob.
-        let broad = mix(n1 * 0.85 + n2 * 0.15, noise, 0.35);
-        let lobes = smoothstep(0.28, 0.74, broad);
-        let temperature = puff_bands(heat * (0.14 + 0.86 * core * core) * (0.15 + 1.05 * lobes));
+        let core = clamp(1.0 - radius * 0.9, 0.0, 1.0);
+        // The noise, not the card's circle, decides where a puff burns hottest:
+        // a radial falloff alone cools every puff into the same dark ring, a
+        // stamped donut. Bright billows split by creases of cooler fire, with a
+        // heart that only shows where the noise is dense.
+        let broad = mix(n1 * 0.7 + n2 * 0.3, noise, 0.45);
+        let lobes = smoothstep(0.2, 0.8, broad);
+        let temperature = puff_bands(heat * (0.5 + 0.5 * core) * (0.18 + 1.0 * lobes * lobes + 0.25 * core * lobes));
         glow = smoothstep(0.05, 0.32, temperature);
         // Each lobe of a fireball is brighter on its upper face and deepens into
         // its folds, so the fire keeps its rolling volume.
@@ -257,5 +274,5 @@ fn puff_color(
             * smoothstep(0.6, -0.6, point.y);
         color += vec3f(1.5, 0.56, 0.12) * lit_from_below * (0.4 + 0.6 * noise);
     }
-    return color;
+    return vec4f(color, glow);
 }

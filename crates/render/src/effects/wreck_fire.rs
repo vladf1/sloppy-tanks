@@ -81,8 +81,8 @@ const FLAME_COLOR: [f32; 3] = [0.82, 0.78, 0.78];
 /// A cleared wreck's fire and smoke die away this fast (1/s).
 const CLEAR_RATE: f64 = 0.9;
 /// Oily black smoke at the fire, paling to grey as it climbs and spreads.
-const SOOT: u32 = 0x2c2a29;
-const SOOT_HIGH: u32 = 0x6c6c6e;
+const SOOT: u32 = 0x3b3734;
+const SOOT_HIGH: u32 = 0x8c8a88;
 /// A dead tank's hull rests this high before its wreck piece is found.
 const REST_HEIGHT: f32 = 0.65;
 
@@ -375,7 +375,7 @@ fn draw(
         let swirl = (lap * 2.3 + j as f64 + burner.seed * 7.0).sin() * (0.25 + 0.4 * a);
         let rise = a.powf(0.8);
         // The wind shears the column more the higher it climbs.
-        let lean = a * a * SMOKE_CYCLE * 1.3;
+        let lean = a * a * SMOKE_CYCLE * 0.9;
         let position = Vec3::new(
             top.x + (WIND[0] * lean + swirl) as f32,
             top.y + (0.3 + COLUMN_HEIGHT * rise) as f32,
@@ -383,12 +383,12 @@ fn draw(
         );
         let pale = smoothstep(a, 0.05, 0.9) as f32;
         let color = [0, 1, 2].map(|i| soot[i] + (soot_high[i] - soot[i]) * pale);
-        let size = (0.7 + 2.1 * a.powf(0.85)) * vigour;
+        let size = (0.9 + 2.4 * a.powf(0.85)) * vigour;
         // Born quickly at the fire, densest low, thinning out as it spreads; a
         // puff shows only once the column has climbed to it.
         let grown = smoothstep(burner.column - a * SMOKE_CYCLE, 0.0, 0.6);
         let opacity =
-            smoke * grown * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.3, 1.0)) * 0.62;
+            smoke * grown * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.3, 1.0)) * 0.74;
         smoke_puff(
             puffs,
             position,
@@ -437,7 +437,7 @@ fn draw(
                     at.y + (0.2 + 1.7 * a) as f32 * size,
                     at.z + (WIND[1] * a * 0.6 - jitter) as f32,
                 ),
-                (0.7 + 0.35 * a) as f32 * size,
+                (0.55 + 0.35 * a) as f32 * size,
                 soot,
                 (fire * (a / 0.1).min(1.0) * (1.0 - a * a) * 0.92) as f32,
                 (burner.seed * 5.3 + lap * 0.61 + j as f64 * 0.29 + ball as f64 * 0.47) as f32,
@@ -463,7 +463,7 @@ fn draw(
                 at + spread + Vec3::Y * 0.05,
                 lean.normalize(),
                 (1.5 - 0.2 * (kf - 1.0).abs()) * size,
-                ((0.85 + 0.2 * breathe)
+                ((1.1 + 0.25 * breathe)
                     * (1.0 - 0.25 * (kf - 1.0).abs())
                     * (0.55 + 0.45 * fire as f32))
                     * size,
