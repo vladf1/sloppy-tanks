@@ -15,18 +15,12 @@ pub struct Layouts {
     pub occlusion: wgpu::BindGroupLayout,
 }
 
+/// A filtered or unfiltered 2D texture, for the fragment stage: no vertex stage
+/// samples one (see [`MATERIAL_ENTRIES`] for what that would cost).
 const fn texture_entry(binding: u32, filterable: bool) -> wgpu::BindGroupLayoutEntry {
-    staged_texture_entry(binding, filterable, wgpu::ShaderStages::FRAGMENT)
-}
-
-const fn staged_texture_entry(
-    binding: u32,
-    filterable: bool,
-    visibility: wgpu::ShaderStages,
-) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
-        visibility,
+        visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Texture {
             sample_type: wgpu::TextureSampleType::Float { filterable },
             view_dimension: wgpu::TextureViewDimension::D2,
@@ -37,17 +31,9 @@ const fn staged_texture_entry(
 }
 
 const fn sampler_entry(binding: u32, ty: wgpu::SamplerBindingType) -> wgpu::BindGroupLayoutEntry {
-    staged_sampler_entry(binding, ty, wgpu::ShaderStages::FRAGMENT)
-}
-
-const fn staged_sampler_entry(
-    binding: u32,
-    ty: wgpu::SamplerBindingType,
-    visibility: wgpu::ShaderStages,
-) -> wgpu::BindGroupLayoutEntry {
     wgpu::BindGroupLayoutEntry {
         binding,
-        visibility,
+        visibility: wgpu::ShaderStages::FRAGMENT,
         ty: wgpu::BindingType::Sampler(ty),
         count: None,
     }
@@ -134,7 +120,12 @@ pub const OCCLUSION_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
 pub const MIPMAP_SOURCE_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
     &[texture_entry(0, true), sampler_entry(1, Filtering)];
 
-/// Map, bump and emissive map for the surface; effect textures for any stage.
+/// Map, bump and emissive map for the surface, and the effect textures, all for the
+/// fragment stage alone. WebKit declares every texture a layout shows a stage in the
+/// Metal code it compiles for that stage, and the first one costs about 45 ms more
+/// per stage on a cold shader cache: with the effect textures visible to it, every
+/// surface and caster vertex stage paid that. `no_vertex_stage_samples_a_texture`
+/// (`shader.rs`) keeps effects' vertex code off them.
 pub const MATERIAL_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     uniform_entry(0),
     texture_entry(1, true),
@@ -143,10 +134,10 @@ pub const MATERIAL_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     sampler_entry(4, Filtering),
     texture_entry(5, true),
     sampler_entry(6, Filtering),
-    staged_texture_entry(7, true, wgpu::ShaderStages::VERTEX_FRAGMENT),
-    staged_sampler_entry(8, Filtering, wgpu::ShaderStages::VERTEX_FRAGMENT),
-    staged_texture_entry(9, true, wgpu::ShaderStages::VERTEX_FRAGMENT),
-    staged_sampler_entry(10, Filtering, wgpu::ShaderStages::VERTEX_FRAGMENT),
+    texture_entry(7, true),
+    sampler_entry(8, Filtering),
+    texture_entry(9, true),
+    sampler_entry(10, Filtering),
 ];
 
 impl Layouts {

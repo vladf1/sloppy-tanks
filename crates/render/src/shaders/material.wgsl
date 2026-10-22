@@ -41,8 +41,9 @@ fn material_has(feature: u32) -> bool {
 @group(1) @binding(4) var bump_sampler: sampler;
 @group(1) @binding(5) var emissive_texture: texture_2d<f32>;
 @group(1) @binding(6) var emissive_sampler: sampler;
-// The material's `extra_textures` in order (white when absent), for effects; also
-// visible to the vertex stage (sample with an explicit level there).
+// The material's `extra_textures` in order (white when absent), for effects'
+// fragment code only: a texture the vertex stage can see costs WebKit about 45 ms
+// more per vertex stage it compiles (`resources.rs`).
 @group(1) @binding(7) var extra_texture0: texture_2d<f32>;
 @group(1) @binding(8) var extra_sampler0: sampler;
 @group(1) @binding(9) var extra_texture1: texture_2d<f32>;

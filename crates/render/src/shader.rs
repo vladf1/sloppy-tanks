@@ -786,6 +786,44 @@ mod tests {
         }
     }
 
+    /// The WebGPU layouts show textures to the fragment stage alone (`resources.rs`
+    /// says why), so a vertex stage, effects' vertex code included, samples none.
+    #[test]
+    fn no_vertex_stage_samples_a_texture() {
+        let mut effects = EffectRegistry::default();
+        for effect in crate::presentation::PRESENTATION_EFFECTS {
+            effects.register(effect);
+        }
+        let count =
+            crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
+        for effect in 0..=count as u16 {
+            let mut keys: Vec<ShaderKey> = [(false, false), (true, true)]
+                .into_iter()
+                .map(|(lit, alpha_test)| ShaderKey {
+                    lit,
+                    alpha_test,
+                    receive_shadow: lit,
+                    effect,
+                    ..ShaderKey::default()
+                })
+                .collect();
+            keys.push(ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test: true,
+                shadow_fade: true,
+                effect,
+                ..ShaderKey::default()
+            });
+            for key in keys {
+                let vertex = StageSources::variant(&key, &effects).vertex;
+                assert!(
+                    !vertex.contains("texture") && !vertex.contains("sampler"),
+                    "the vertex stage of {key:?} samples a texture"
+                );
+            }
+        }
+    }
+
     /// WebKit compiles every stage of every pipeline from its own module, so variants
     /// share a stage's compile only when its module text is the same: without the
     /// fragment code, every surface variant without a vertex effect has one vertex
