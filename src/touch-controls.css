@@ -209,6 +209,12 @@
   top: calc(max(6px, env(safe-area-inset-top)) + 50px);
   padding: 5px 12px 5px 6px;
 }
+/* Held upright, the hull pill takes the slot under the score; the tag hangs below it. */
+@media (orientation: portrait) {
+  .phone .touch-fire-hint {
+    top: calc(max(6px, env(safe-area-inset-top)) + 96px);
+  }
+}
 .phone .touch-fire-ring {
   width: 28px;
   height: 28px;

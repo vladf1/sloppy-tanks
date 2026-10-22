@@ -179,9 +179,11 @@ html:is(.phone, .home-screen-app) {
   line-height: 1.5;
   pointer-events: auto;
 }
+/* Its own stacking context, so the top-edge shade can lie under every HUD element. */
 #hud {
   position: absolute;
   inset: 0;
+  isolation: isolate;
   pointer-events: none;
   transition: opacity 0.3s;
 }
@@ -235,10 +237,12 @@ html:is(.phone, .home-screen-app) {
   );
 }
 /* A soft shade along the top edge keeps the score, buttons and feed legible over bright
-   sky, sand or snow without boxing the arena in. */
+   sky, sand or snow without boxing the arena in. It lies under them: drawn over, it
+   greyed the score plates' white and gold. */
 #hud::after {
   content: "";
   position: absolute;
+  z-index: -1;
   left: 0;
   right: 0;
   top: 0;
@@ -6195,11 +6199,30 @@ html.phone,
 .phone #zoom-in {
   margin-right: 4px;
 }
-/* Held upright the row is too narrow for the group beside the score: zoom takes the
-   left corner and first person and pause the right. */
+/* Held upright the row is too narrow for the group beside the score: the bar splits in
+   two of the same glass, zoom in the left corner and first person and pause the right. */
 @media (orientation: portrait) {
+  .phone .hud-actions,
+  .phone .touch-enabled .hud-actions {
+    left: max(8px, env(safe-area-inset-left));
+    padding: 0;
+    border: 0;
+    background: none;
+    box-shadow: none;
+  }
   .phone #zoom-in {
     margin-right: auto;
+  }
+  .phone .hud-actions > .quiet,
+  .phone .touch-enabled .hud-actions button {
+    border-radius: 0;
+    background: linear-gradient(180deg, #13284ad9, #08142ae6);
+  }
+  .phone :is(#zoom-out, #view-mode) {
+    border-radius: 11px 0 0 11px;
+  }
+  .phone :is(#zoom-in, #pause) {
+    border-radius: 0 11px 11px 0;
   }
 }
 /* Phones get a tiny "nerds" link in the corner the touch controls leave free, held in
