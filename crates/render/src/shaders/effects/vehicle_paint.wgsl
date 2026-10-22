@@ -72,9 +72,9 @@ const VEHICLE_CHIP_PIXEL_TO: f32 = 0.04;
 const VEHICLE_CHIP_PLATE_FROM: f32 = 0.05;
 const VEHICLE_CHIP_PLATE_TO: f32 = 0.11;
 // Paint rubbed lighter on a bevel and on chamfer strips.
-const VEHICLE_BEVEL_LIFT: f32 = 2.1;
+const VEHICLE_BEVEL_LIFT: f32 = 1.65;
 const VEHICLE_BEVEL_PALE: vec3f = vec3f(0.03, 0.022, 0.018);
-const VEHICLE_BEVEL_TINT: f32 = 0.85;
+const VEHICLE_BEVEL_TINT: f32 = 0.7;
 // Dust and wet mud (linear) and how strongly they cover the lowest armor. In a
 // round (the atmosphere on) the dust takes this share of its hue from the map's
 // ground light (sand in the quarry, brown earth in the village, grey concrete at
@@ -83,8 +83,8 @@ const VEHICLE_DUST: vec3f = vec3f(0.12, 0.092, 0.06);
 const VEHICLE_DUST_LOCAL: f32 = 0.6;
 const VEHICLE_MUD: vec3f = vec3f(0.075, 0.053, 0.034);
 const VEHICLE_DUST_STRENGTH: f32 = 0.82;
-const VEHICLE_DUST_STUDIO: f32 = 0.55;
-const VEHICLE_BELT_DUST_STUDIO: f32 = 0.6;
+const VEHICLE_DUST_STUDIO: f32 = 0.12;
+const VEHICLE_BELT_DUST_STUDIO: f32 = 0.2;
 const VEHICLE_MUD_STRENGTH: f32 = 0.7;
 // Grime in recesses: a dark brown multiplier.
 const VEHICLE_GRIME: vec3f = vec3f(0.34, 0.29, 0.24);
@@ -95,7 +95,7 @@ const VEHICLE_GRIME_STRENGTH: f32 = 0.8;
 // decks are flat-finished (and stay under the ground relief's roughness, which
 // would otherwise texture them in world space as they drive).
 const VEHICLE_PAINT_ROUGHNESS: f32 = 0.44;
-const VEHICLE_DECK_ROUGHNESS: f32 = 0.64;
+const VEHICLE_DECK_ROUGHNESS: f32 = 0.76;
 const VEHICLE_SHEEN_BREAKUP: f32 = 0.1;
 const VEHICLE_DIRT_ROUGHNESS: f32 = 0.92;
 const VEHICLE_STEEL_ROUGHNESS: f32 = 0.55;
@@ -107,12 +107,14 @@ const VEHICLE_ENAMEL_ROUGHNESS: f32 = 0.56;
 // cards keep the pure team hue (a cool rim turned the red card pink).
 const VEHICLE_RIM_GLOW: f32 = 0.5;
 const VEHICLE_RIM_COOL: vec3f = vec3f(0.72, 0.84, 1.0);
-const VEHICLE_RIM_COOL_SHARE: f32 = 0.25;
+const VEHICLE_RIM_COOL_SHARE: f32 = 0.08;
 // In a round, team paint keeps this share of its saturation: the maps' grades
 // saturate, and a full-strength red clipped every sunlit plate to one value.
 const VEHICLE_ROUND_SATURATION: f32 = 0.9;
 // The paint's value on studio cards (the menu's previews).
-const VEHICLE_STUDIO_VALUE: f32 = 0.9;
+const VEHICLE_STUDIO_VALUE: f32 = 0.78;
+// And its saturation there: ACES's shoulder bleaches a lit red deck toward salmon.
+const VEHICLE_STUDIO_SATURATION: f32 = 1.18;
 // Rain streaks down upright plates: columns this many per paint UV across and this
 // many per UV along their length, darkening by up to this much, and resolved only
 // while a pixel is smaller than a streak.
@@ -132,6 +134,16 @@ const VEHICLE_SEAM_WIDTH: f32 = 0.01;
 const VEHICLE_SEAM_LIP: f32 = 0.014;
 const VEHICLE_SEAM_PIXEL_FROM: f32 = 0.012;
 const VEHICLE_SEAM_PIXEL_TO: f32 = 0.028;
+// Rivet rows: heads this far apart along a plate's border and this far inside it,
+// this round with a shadow ring this wide, on plates at least this wide, resolved
+// while a pixel is smaller than these sizes (the hero and first-person cameras).
+const VEHICLE_RIVET_PITCH: f32 = 0.13;
+const VEHICLE_RIVET_INSET: f32 = 0.045;
+const VEHICLE_RIVET_RADIUS: f32 = 0.011;
+const VEHICLE_RIVET_RING: f32 = 0.006;
+const VEHICLE_RIVET_MIN_PLATE: f32 = 0.2;
+const VEHICLE_RIVET_PIXEL_FROM: f32 = 0.006;
+const VEHICLE_RIVET_PIXEL_TO: f32 = 0.012;
 // Non-skid coating on decks: a grain this many cells per metre, varying the paint
 // by this much either way, resolved only close up (the turret roof seen from the
 // commander's hatch).
@@ -144,7 +156,7 @@ const VEHICLE_GRAIN_PIXEL_TO: f32 = 0.009;
 // than these sizes), drifted thicker into recesses, in the map's ground color where
 // the atmosphere is on.
 const VEHICLE_DECK_DUST_CELLS: f32 = 6.5;
-const VEHICLE_DECK_DUST_FILM: f32 = 0.32;
+const VEHICLE_DECK_DUST_FILM: f32 = 0.16;
 const VEHICLE_DECK_DUST_DRIFT: f32 = 0.6;
 const VEHICLE_DECK_DUST_MIN_PLATE: f32 = 0.25;
 const VEHICLE_DECK_DUST_PIXEL_FROM: f32 = 0.012;
@@ -162,8 +174,18 @@ const VEHICLE_SPLASH_GRIME: f32 = 0.2;
 // and the fine dust film over the paint just above it.
 const VEHICLE_SPLASH_EDGE: f32 = 0.3;
 const VEHICLE_DUST_FILM: f32 = 0.1;
-// Edge wear: how far toward a convex edge the chip field is exposed.
-const VEHICLE_CHIP_EXPOSURE: f32 = 0.78;
+// The road film's strength at the ground line.
+const VEHICLE_ROAD_FILM: f32 = 0.38;
+// Cells per metre of the fine breakup in settled deck dust.
+const VEHICLE_DECK_DUST_GRAIN: f32 = 9.0;
+// Edge wear: how far toward a convex edge the chip field is exposed, and how much
+// more where two edges meet at a corner. Chips are small and sparse: a dark core of
+// primer and bare steel ringed by a bright, scuffed lip of metal.
+const VEHICLE_CHIP_EXPOSURE: f32 = 0.34;
+const VEHICLE_CHIP_CORNER: f32 = 0.42;
+const VEHICLE_CHIP_CORE: vec3f = vec3f(0.028, 0.026, 0.024);
+const VEHICLE_CHIP_LIP: f32 = 0.045;
+const VEHICLE_CHIP_STUDIO: f32 = 0.4;
 // Cells per metre of the field that gathers chips into worn stretches.
 const VEHICLE_CHIP_CLUSTER: f32 = 2.2;
 // Soft, sun-faded variation across the paint, this many cells per metre and this
@@ -175,7 +197,7 @@ const VEHICLE_FADE_VALUE: f32 = 0.035;
 // little greyer than the panel. Resolved while a pixel is smaller than these sizes,
 // so it carries from the hero and first-person cameras down to the menu cards.
 const VEHICLE_RUB_CELLS: f32 = 7.0;
-const VEHICLE_RUB_STRENGTH: f32 = 0.6;
+const VEHICLE_RUB_STRENGTH: f32 = 0.3;
 const VEHICLE_RUB_LIFT: f32 = 1.55;
 const VEHICLE_RUB_GREY: f32 = 0.3;
 const VEHICLE_RUB_PIXEL_FROM: f32 = 0.022;
@@ -198,16 +220,25 @@ const VEHICLE_MARKING_WEAR: f32 = 0.1;
 const VEHICLE_MARKING_WEAR_CLUSTER: f32 = 0.22;
 const VEHICLE_MARKING_DUST: f32 = 0.16;
 const VEHICLE_MARKING_ROUGHNESS: f32 = 0.72;
-// Lamp lenses: warm glass with a hot core that falls off toward a darker
-// reflector ring at the rim, so a headlight reads as a lamp at any distance.
-const VEHICLE_LAMP_RIM: vec3f = vec3f(0.16, 0.15, 0.13);
-const VEHICLE_LAMP_GLASS: vec3f = vec3f(0.78, 0.7, 0.52);
+// Lamp lenses: clear glass over a silvered reflector, dark at the bezel ring and
+// mirroring the sky. A lamp burns only when the light is low: under a daylight sun
+// (its luminance at or above `VEHICLE_LAMP_DAY`) the filament keeps this share of
+// its glow, a warm glint behind the glass rather than a lit sticker.
+const VEHICLE_LAMP_RIM: vec3f = vec3f(0.035, 0.034, 0.032);
+const VEHICLE_LAMP_GLASS: vec3f = vec3f(0.3, 0.29, 0.26);
 const VEHICLE_LAMP_GLOW: vec3f = vec3f(1.5, 1.12, 0.62);
-const VEHICLE_LAMP_GLOW_RIM: f32 = 0.12;
+const VEHICLE_LAMP_GLOW_RIM: f32 = 0.05;
+const VEHICLE_LAMP_DUSK: f32 = 0.6;
+const VEHICLE_LAMP_DAY: f32 = 2.4;
+const VEHICLE_LAMP_DAY_GLOW: f32 = 0.05;
+const VEHICLE_LAMP_MIRROR: f32 = 0.55;
 
 struct VehicleEdges {
     // 1 on a convex edge, fading out over the chip reach.
     near_edge: f32,
+    // The same for the second nearest convex edge: high only near a corner, where
+    // two edges meet and armor takes the most knocks.
+    corner: f32,
     // 1 on a convex edge, fading out over the bevel band.
     bevel: f32,
     // 1 in a recess, fading out over its reach.
@@ -229,7 +260,9 @@ fn vehicle_border(kind: f32, distance: f32, outward: vec3f, bevel_width: f32, e:
         let band = 1.0 - smoothstep(0.0, bevel_width, distance);
         (*e).bevel = max((*e).bevel, band);
         (*e).roll += outward * band;
-        (*e).near_edge = max((*e).near_edge, 1.0 - smoothstep(0.0, VEHICLE_CHIP_REACH, distance));
+        let near = 1.0 - smoothstep(0.0, VEHICLE_CHIP_REACH, distance);
+        (*e).corner = max((*e).corner, min((*e).near_edge, near));
+        (*e).near_edge = max((*e).near_edge, near);
     }
 }
 
@@ -312,8 +345,8 @@ fn vehicle_gear_fill(n: vec3f) -> vec3f {
 // the running face, and bright end connectors bridging each joint on the edges.
 // Joints are dark gaps; the pattern fades to its average where a link is only a
 // few pixels long, so a distant track never shimmers.
-const BELT_STEEL: vec3f = vec3f(0.07, 0.066, 0.06);
-const BELT_POLISHED: vec3f = vec3f(0.16, 0.152, 0.14);
+const BELT_STEEL: vec3f = vec3f(0.095, 0.09, 0.082);
+const BELT_POLISHED: vec3f = vec3f(0.23, 0.22, 0.2);
 const BELT_RUBBER: vec3f = vec3f(0.022, 0.021, 0.02);
 const BELT_GAP: f32 = 0.25;
 // Links per pixel over which the pattern fades out.
@@ -403,6 +436,41 @@ fn vehicle_belt(s: ptr<function, Surface>, f: EffectFragment, tangent: vec3f, li
     (*s).emissive += color * vehicle_gear_fill(normal) * material.params[1].w;
 }
 
+// Rivet rows along a plate's marked borders, from one edge channel: its value and
+// its screen derivatives, and the paint UVs' (`d_uv` = (du/dx, du/dy, dv/dx,
+// dv/dy)). The channel's gradient in UV space gives the direction along its
+// border lines, and so a coordinate along them for the heads' spacing. Returns
+// the strongest head coverage (x) and its dark ring (y).
+fn vehicle_rivets(c: f32, dcx: f32, dcy: f32, uv: vec2f, d_uv: vec4f, metres_wide: f32, aa: f32) -> vec2f {
+    let det = d_uv.x * d_uv.w - d_uv.z * d_uv.y;
+    if abs(det) < 1e-20 {
+        return vec2f(0.0);
+    }
+    let g = vec2f(dcx * d_uv.w - d_uv.z * dcy, d_uv.x * dcy - dcx * d_uv.y) / det;
+    let g_length = length(g);
+    if g_length < 1e-6 {
+        return vec2f(0.0);
+    }
+    let state = floor(c);
+    let far = floor(state / 3.0);
+    let near = state - far * 3.0;
+    let t = clamp((c - state - VEHICLE_EDGE_MARGIN) / VEHICLE_EDGE_SPAN, 0.0, 1.0);
+    let along = dot(uv, vec2f(-g.y, g.x) / g_length) * VEHICLE_METRES_PER_UV;
+    let q = (fract(along / VEHICLE_RIVET_PITCH) - 0.5) * VEHICLE_RIVET_PITCH;
+    var head = 0.0;
+    var ring = 0.0;
+    for (var k = 0; k < 2; k++) {
+        let kind = select(near, far, k == 1);
+        let distance = select(t, 1.0 - t, k == 1) * metres_wide;
+        if kind > 0.5 {
+            let r = length(vec2f(q, distance - VEHICLE_RIVET_INSET));
+            head = max(head, 1.0 - smoothstep(VEHICLE_RIVET_RADIUS - aa, VEHICLE_RIVET_RADIUS + aa, r));
+            ring = max(ring, 1.0 - smoothstep(VEHICLE_RIVET_RADIUS, VEHICLE_RIVET_RADIUS + VEHICLE_RIVET_RING + aa, r));
+        }
+    }
+    return vec2f(head, ring);
+}
+
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Derivatives and the tile sample first, in uniform control flow.
     let tile = textureSample(extra_texture0, extra_sampler0, f.uv * material.params[2].w);
@@ -412,6 +480,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let dcy = dpdy(f.vertex_color.rg);
     let dux = dpdx(f.uv.x);
     let duy = dpdy(f.uv.x);
+    let dvx = dpdx(f.uv.y);
+    let dvy = dpdy(f.uv.y);
     (*s).opacity = f.tint.a;
     if material.params[3].w > 2.5 {
         // The belt's tangent: the world direction in which its link count grows.
@@ -448,7 +518,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let paint_luma = dot(paint_rgb, vec3f(0.2126, 0.7152, 0.0722));
     // Studio cards light the paint with a strong key and rim under ACES, whose
     // shoulder turns a bright red pink: they show it a step deeper.
-    let round_paint = mix(vec3f(paint_luma), paint_rgb, select(1.0, VEHICLE_ROUND_SATURATION, atmosphere_on()))
+    let round_paint = mix(vec3f(paint_luma), paint_rgb, select(VEHICLE_STUDIO_SATURATION, VEHICLE_ROUND_SATURATION, atmosphere_on()))
         * select(VEHICLE_STUDIO_VALUE, 1.0, atmosphere_on());
     let base = mix(material.params[1].rgb, round_paint, team) * value * f.tint.rgb;
     let chamfer = step(0.55, f.vertex_color.a);
@@ -478,12 +548,18 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
 
     if coat > 1.5 {
         // A lamp lens: hot in its middle, falling off to the reflector ring.
-        let core = smoothstep(0.1, 0.85, clamp(2.0 * edges.nearest / max(edges.narrowest, 1e-4), 0.0, 1.0));
+        let core = smoothstep(0.15, 0.9, clamp(2.0 * edges.nearest / max(edges.narrowest, 1e-4), 0.0, 1.0));
+        let lens_normal = normalize((*s).normal);
+        let sun_level = dot(frame.sun_color.rgb, vec3f(0.2126, 0.7152, 0.0722));
+        let burning = mix(1.0, VEHICLE_LAMP_DAY_GLOW, smoothstep(VEHICLE_LAMP_DUSK, VEHICLE_LAMP_DAY, sun_level));
+        let facing = clamp(dot(lens_normal, f.view_direction), 0.0, 1.0);
+        let mirror = VEHICLE_LAMP_MIRROR * (0.3 + 0.7 * pow(1.0 - facing, 2.0)) * core;
         (*s).color = mix(VEHICLE_LAMP_RIM, VEHICLE_LAMP_GLASS, core) * f.tint.rgb;
-        (*s).roughness = 0.2;
-        (*s).metalness = 0.0;
-        (*s).normal = normalize((*s).normal);
-        (*s).emissive += VEHICLE_LAMP_GLOW * mix(VEHICLE_LAMP_GLOW_RIM, 1.0, core * core) * f.tint.rgb;
+        (*s).roughness = 0.14;
+        (*s).metalness = 0.6 * core;
+        (*s).normal = lens_normal;
+        (*s).emissive += (VEHICLE_LAMP_GLOW * mix(VEHICLE_LAMP_GLOW_RIM, 1.0, core * core) * burning
+            + vehicle_sky(reflect(-f.view_direction, lens_normal)) * mirror) * f.tint.rgb;
         return;
     }
     if coat > 0.5 {
@@ -522,13 +598,33 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let rub_resolved = 1.0 - smoothstep(VEHICLE_RUB_PIXEL_FROM, VEHICLE_RUB_PIXEL_TO, pixel);
     let rub_plate = smoothstep(VEHICLE_CHIP_PLATE_FROM, VEHICLE_CHIP_PLATE_TO, edges.narrowest);
     let rub_field = value_noise(metres * VEHICLE_RUB_CELLS + 9.1) * 0.65 + grime * 0.35;
-    let rub = edges.near_edge * edges.near_edge * smoothstep(0.42, 0.58, rub_field)
+    let rub = edges.near_edge * edges.near_edge * smoothstep(0.42, 0.58, rub_field) * select(0.3, 1.0, atmosphere_on())
         * rub_resolved * rub_plate * (1.0 - chamfer) * VEHICLE_RUB_STRENGTH;
     let rub_grey = vec3f(dot(color, vec3f(0.2126, 0.7152, 0.0722)));
     color = mix(color, mix(color, rub_grey, VEHICLE_RUB_GREY) * VEHICLE_RUB_LIFT + VEHICLE_BEVEL_PALE * 0.5, rub);
     // Grime settled into recesses, patchy along their length.
     let recess = clamp(edges.recess * (0.75 + (0.5 - grime) * 0.9), 0.0, 1.0);
     color = mix(color, color * VEHICLE_GRIME, recess * VEHICLE_GRIME_STRENGTH);
+
+    // Rivet heads in rows just inside the borders of broad plates, close up only: a
+    // bright domed head in a dark ring of shadow, so a plate reads as bolted armor.
+    let rivet_resolved = (1.0 - smoothstep(VEHICLE_RIVET_PIXEL_FROM, VEHICLE_RIVET_PIXEL_TO, pixel))
+        * smoothstep(VEHICLE_RIVET_MIN_PLATE, VEHICLE_RIVET_MIN_PLATE * 1.5, edges.narrowest) * (1.0 - chamfer);
+    var rivet = vec2f(0.0);
+    if rivet_resolved > 0.0 {
+        let d_uv = vec4f(dux, duy, dvx, dvy);
+        let aa = max(pixel * 0.75, 1e-4);
+        let gu = length(gradient_u);
+        let gv = length(gradient_v);
+        if gu > 1e-6 {
+            rivet = max(rivet, vehicle_rivets(f.vertex_color.r, dcx.x, dcy.x, f.uv, d_uv, VEHICLE_EDGE_SPAN / gu, aa));
+        }
+        if gv > 1e-6 {
+            rivet = max(rivet, vehicle_rivets(f.vertex_color.g, dcx.y, dcy.y, f.uv, d_uv, VEHICLE_EDGE_SPAN / gv, aa));
+        }
+        rivet *= rivet_resolved;
+    }
+    color = color * (1.0 - (rivet.y - rivet.x) * 0.55) * (1.0 + rivet.x * 0.45);
 
     // Welded seams cut broad plates into panels: across decks, and upright on the
     // sides and faces, so a deck seam turns the corner down the side. A dark groove
@@ -603,6 +699,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let dust = vehicle_dust();
     color = mix(color, dust * (0.8 + 0.4 * grime), dusty);
     color = mix(color, VEHICLE_MUD, muddy);
+    // Road film: a soft gradient of the map's dust down every upright plate toward
+    // the tracks, so the lower hull reads earthier and lighter rather than crushing
+    // to black in the shade of the fenders.
+    let road = smoothstep(0.05, 0.65, low) * VEHICLE_ROAD_FILM * upright * select(0.0, 1.0, atmosphere_on());
+    color = mix(color, dust * (0.75 + 0.35 * grime), road);
     // Dust settled on the decks: a patchy film on broad plates, drifted into
     // recesses, never on the bevels the crew's boots and the wind keep clean. The
     // film resolves only close up: from the overhead camera and on the menu cards
@@ -611,11 +712,13 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Studio scenes (the menu cards) show the paint showroom clean.
     let film = VEHICLE_DECK_DUST_FILM * broad * select(0.0, 1.0, atmosphere_on())
         * (1.0 - smoothstep(VEHICLE_DECK_DUST_PIXEL_FROM, VEHICLE_DECK_DUST_PIXEL_TO, pixel));
+    // A fine, even film broken up only at the grain of blown sand, thicker where it
+    // drifts against the base of a wall: no broad blotches to read as camouflage.
+    let sand = value_noise(metres * VEHICLE_DECK_DUST_GRAIN + 3.3) * 0.7 + grime * 0.3;
     let settled = deck * (1.0 - chamfer) * (1.0 - bevel)
-        * smoothstep(0.66, 0.74, patches + recess * 0.4)
-        * (film + VEHICLE_DECK_DUST_DRIFT * recess);
+        * (film * (0.7 + 0.3 * sand) + VEHICLE_DECK_DUST_DRIFT * recess * (0.55 + 0.45 * sand));
     color = mix(color, dust * (0.95 + 0.3 * grime), settled);
-    let dirt = max(max(dusty, muddy), settled * 0.8);
+    let dirt = max(max(max(dusty, muddy), settled * 0.8), road);
 
     // Chips to bare steel along convex edges of broad plates (a few low on the hull),
     // where the chip field dips under the spot's exposure, with a darker rim of
@@ -625,14 +728,20 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Wear clusters where hands, boots and branches rub: a broad field gathers the
     // chips into worn stretches and leaves others intact, so they read as history
     // rather than as one stamped size of fleck along every edge.
-    let rubbed = smoothstep(0.25, 0.75, value_noise(metres * VEHICLE_CHIP_CLUSTER + 17.9));
-    let exposure = (edges.near_edge * VEHICLE_CHIP_EXPOSURE * (0.35 + 1.1 * rubbed) + low * 0.05) * (1.0 - dirt * 0.6) * resolved * plate;
-    let chip = 1.0 - smoothstep(exposure - 0.03, exposure, wear);
-    // The rim only rings real chips: where nothing is exposed it would darken the
+    let rubbed = smoothstep(0.3, 0.8, value_noise(metres * VEHICLE_CHIP_CLUSTER + 17.9));
+    let edge_wear = edges.near_edge * edges.near_edge * VEHICLE_CHIP_EXPOSURE * (0.3 + 1.2 * rubbed)
+        + edges.corner * VEHICLE_CHIP_CORNER * (0.5 + 0.8 * rubbed);
+    // Studio cards (the menu) show a tank fresh from the depot: only the hardest-worn
+    // corners have chipped.
+    let worn = select(VEHICLE_CHIP_STUDIO, 1.0, atmosphere_on());
+    let exposure = (edge_wear + low * 0.04) * (1.0 - dirt * 0.6) * resolved * plate * worn;
+    let chip = 1.0 - smoothstep(exposure - 0.015, exposure, wear);
+    // The lip only rings real chips: where nothing is exposed it would light the
     // chip field's lowest spots into specks over the whole panel.
-    let chip_rim = (1.0 - smoothstep(exposure, exposure + 0.07, wear)) * (1.0 - chip) * smoothstep(0.0, 0.05, exposure);
-    color *= 1.0 - chip_rim * 0.55;
-    color = mix(color, material.params[3].rgb * (0.75 + 0.5 * grime), chip);
+    let chip_lip = (1.0 - smoothstep(exposure, exposure + VEHICLE_CHIP_LIP, wear)) * (1.0 - chip)
+        * smoothstep(0.0, 0.05, exposure);
+    color = mix(color, material.params[3].rgb * (0.85 + 0.4 * grime), chip_lip * 0.85);
+    color = mix(color, VEHICLE_CHIP_CORE * (0.8 + 0.5 * grime), chip);
 
     // The sheen breaks up a little with the grime field, so a panel's highlight
     // reads as painted steel rather than moulded plastic.
@@ -640,9 +749,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         + (0.5 - grime) * VEHICLE_SHEEN_BREAKUP * (1.0 - deck) + streak * 0.08
         + (grain - 0.5) * 0.08 * grain_resolved + (fade - 0.5) * 2.0 * VEHICLE_ROUGHNESS_DRIFT;
     roughness = mix(roughness, VEHICLE_DIRT_ROUGHNESS, max(dirt, recess * 0.6));
-    roughness = mix(roughness, VEHICLE_STEEL_ROUGHNESS, chip);
+    roughness = mix(roughness, VEHICLE_STEEL_ROUGHNESS, max(chip, chip_lip));
     (*s).roughness = clamp(roughness + finish, 0.0, 1.0);
-    (*s).metalness = mix((*s).metalness, VEHICLE_STEEL_METALNESS, chip);
+    (*s).metalness = mix((*s).metalness, VEHICLE_STEEL_METALNESS, chip_lip * (1.0 - chip));
     (*s).normal = normal;
     (*s).color = color;
 

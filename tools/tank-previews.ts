@@ -56,7 +56,7 @@ function camera() {
   };
 }
 
-const rim = [4, 3, -4];
+const rim = [-2, 2.5, -6];
 const rimLength = Math.hypot(...rim);
 
 /** Each chassis' track footprint (width, length in metres, the vehicle scale applied;
@@ -82,8 +82,8 @@ const SHADOW_OPACITY = 0.82;
 
 const SCENE = {
   background: 0x000000,
-  hemisphere: { sky: 0xf4ece4, ground: 0x4a5462, intensity: 0.5 },
-  sun: { color: 0xfff1de, intensity: 3.1, position: [5, 4.5, 5], target: [0, 0, 0] },
+  hemisphere: { sky: 0xf4ece4, ground: 0x3c3330, intensity: 0.42 },
+  sun: { color: 0xfff1de, intensity: 3.4, position: [3, 8, -1.5], target: [0, 0, 0] },
   // The key casts shadows, so the turret, mantlet and stowage shade the deck and
   // the skirts shade the running gear: the card tanks read as solid models.
   shadow: {
@@ -97,14 +97,14 @@ const SCENE = {
   },
   pointLight: {
     color: 0xd6e3ff,
-    intensity: 11,
+    intensity: 8,
     distance: 0,
     decay: 0,
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
   },
-  exposure: 0.72,
+  exposure: 0.82,
   // The game's sky reflection, so card paint and steel shade as they do in a round.
-  reflections: 1,
+  reflections: 0.3,
   camera: camera(),
   objects: [],
 };

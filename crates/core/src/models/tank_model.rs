@@ -40,7 +40,7 @@ pub(crate) const STEEL: u32 = 0x6f706c;
 /// color is the body and the deep trim frames it, so the paint reads as a designed
 /// two-tone livery and the trim still reads as its team rather than as a black
 /// outline round the hull.
-const TRIM: [u32; 2] = [0x223a6a, 0x58211a];
+const TRIM: [u32; 2] = [0x1a2c54, 0x3e1813];
 /// Sight and vision-block glass: a deep blue-green tint that mirrors the sky.
 pub(super) const GLASS_TINT: u32 = 0x25505a;
 pub(crate) const MARKING_WHITE: u32 = 0xdce7ee;
@@ -444,7 +444,7 @@ fn turret(c: &Chassis, team: Team) -> Node {
 /// short hull and the Big Rig's a broad, long slab over its long one, so the
 /// three classes part by silhouette at card size and from the overhead camera.
 fn turret_stretch(c: &Chassis) -> (DVec3, f64) {
-    let (across, along) = (c.pick(0.9, 1.0, 1.1), c.pick(0.88, 1.0, 1.08));
+    let (across, along) = (c.pick(0.85, 1.0, 1.14), c.pick(0.82, 1.0, 1.1));
     (DVec3::new(across, 1.0, along), c.pick(1.0, 1.13, 1.3))
 }
 
