@@ -373,7 +373,7 @@ html:not(.phone) .touch-enabled .coral {
   left: calc(max(24px, env(safe-area-inset-left)) + 188px);
   right: calc(max(24px, env(safe-area-inset-right)) + 150px);
   bottom: max(22px, env(safe-area-inset-bottom));
-  max-width: 460px;
+  max-width: 480px;
   margin-inline: auto;
 }
 .touch-enabled .bottom {
@@ -414,7 +414,7 @@ html:not(.phone) .touch-enabled .coral {
    enough for the longest name. */
 .touch-enabled .ammo-strip {
   width: 100%;
-  min-width: 420px;
+  min-width: 440px;
 }
 .touch-enabled .ammo-slot,
 .touch-enabled .ammo-slot.selected {
@@ -437,7 +437,7 @@ html:not(.phone) .touch-enabled .coral {
   grid-area: 2 / 1;
   justify-self: center;
   font-size: 12px;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.3px;
 }
 .touch-enabled .ammo-slot .ammo-icon {
   width: 22px;
@@ -476,6 +476,21 @@ html:not(.phone) .touch-enabled .coral {
   .touch-enabled .scoreboard {
     left: 14px;
     transform: none;
+  }
+}
+/* An upright tablet's rack shares the gap between the thumbs: its keys narrow with it
+   and the loaded round's name takes a tighter setting. */
+@media (max-width: 900px) {
+  .touch-enabled .ammo-strip {
+    min-width: 0;
+  }
+  .touch-enabled .ammo-slot,
+  .touch-enabled .ammo-slot.selected {
+    padding-inline: 2px;
+  }
+  .touch-enabled .ammo-slot.selected small {
+    font-size: 11px;
+    letter-spacing: 0;
   }
 }
 /* Narrow or short screens tighten the weapon HUD to fit beside the stick. */
