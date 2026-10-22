@@ -679,8 +679,9 @@ fn materials_carry_three_features() {
     );
     let ammo = pickup_cube(crate::sim::types::PickupKind::Rocket);
     let face = ammo.children[0].drawable.as_ref().unwrap();
-    assert!(face.material.emissive_map.is_some());
-    assert_eq!(face.material.emissive_map, face.material.map);
+    // Supply is painted, not lit from within.
+    assert!(face.material.map.is_some());
+    assert!(face.material.emissive_map.is_none());
     let village = VillageScenery::new();
     let smoke = village.root.find(CHIMNEY_SMOKE_NODE).unwrap();
     let mesh = &smoke.drawable.as_ref().unwrap().mesh;
