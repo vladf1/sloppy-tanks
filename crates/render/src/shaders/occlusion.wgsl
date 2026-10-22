@@ -1,6 +1,7 @@
 // Screen-space ambient occlusion at half size. The main view's depth comes from a
 // header (`shader::occlusion_source`): WebGPU reads the multisampled depth, WebGL2
-// (which cannot) a single-sample copy the resolve blits. Each pixel rebuilds its world position and normal from
+// (which cannot) a single-sample copy the resolve blits. The header also sets
+// `SAMPLES`, the probes per pixel: fewer on WebGL's weaker devices. Each pixel rebuilds its world position and normal from
 // the main view's depth, then tests eight points of a hemisphere a metre or so around
 // it against the depth buffer. The kernel's rotation follows a 4×4 Bayer pattern, so
 // the output pass's 6×6 tent, which weighs every rotation alike, leaves no noise.
@@ -26,7 +27,6 @@ fn vs_occlusion(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
     return vec4f(corner * 2.0 - 1.0, 0.0, 1.0);
 }
 
-const SAMPLES: i32 = 8;
 const BAYER: array<f32, 16> = array<f32, 16>(
     0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0,
 );

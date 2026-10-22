@@ -20,3 +20,8 @@ of lobed oak sprigs (top row) and small ovate birch/aspen sprigs (bottom row), d
 `node --import tsx scripts/generate-leaf-texture.ts`. Its transparent texels keep a
 leaf green so mipmaps do not darken the cut-out edges; `pnpm run optimize:textures`
 writes the 512 px runtime copy with `-exact` to preserve them.
+
+Living trees draw from `public/textures/trees/atlas.webp`, every runtime tree surface
+side by side, so a tree or a cell of background trees is one material
+(`TREE_ATLAS` in `tree_models.rs`). Rebuild it with
+`node --import tsx scripts/generate-tree-atlas.ts` after any runtime tree surface changes.
