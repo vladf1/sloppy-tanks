@@ -3,7 +3,6 @@
 //! entity, and poses them from each frame's `RenderState`.
 
 use std::collections::{HashMap, VecDeque};
-use std::f64::consts::PI;
 use std::sync::Arc;
 
 use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
@@ -12,7 +11,7 @@ use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, PALLET_HEIGHT, TreeShape, aged_wreck_material, cover_damage_stage,
     crate_piece_model, create_arena_floor, create_spawn_pads, flags_model, house_pieces, part,
-    pickup_cube, pickup_icon, pickup_tile_offset, tank_model, timber_debris_model,
+    pickup_cube, pickup_icon, pickup_paint, pickup_tile_offset, tank_model, timber_debris_model,
     timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
     wreck_brightness, wreck_model,
 };
@@ -56,7 +55,9 @@ use super::view_settings::{
 use crate::camera::PerspectiveCamera;
 use crate::color::hex_to_linear;
 use crate::effects::leaves::Crown as LeafCrown;
-use crate::effects::pickups::supply_turn;
+use crate::effects::pickups::{
+    SUPPLY_APEX_HEIGHT, SUPPLY_BURST_SECONDS, SUPPLY_LAUNCH_HEIGHT, supply_spill, supply_turn,
+};
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 use crate::effects::{CosmeticRandom, Effects};
 use crate::gpu::{
@@ -68,17 +69,19 @@ mod inspect;
 
 /// A dead tank's model hides; the live model rides this far below the body.
 const TANK_MODEL_DROP: f64 = 0.4;
-/// A collected supply lifts off its pallet, squashed as it is plucked and
-/// swelling a little at the top of the hop, then drops into the tank that took it,
-/// shrinking away: how long, how high it hops and when it tops out, its swell and
-/// squash, where in the tank it lands, and how far it turns on the way.
-const RISE_SECONDS: f64 = 0.5;
-const RISE_POP_SECONDS: f64 = 0.16;
-const RISE_POP_HEIGHT: f64 = 0.9;
-const RISE_POP_SCALE: f64 = 0.15;
-const RISE_SQUASH: f64 = 0.25;
-const RISE_TARGET_HEIGHT: f64 = 1.0;
-const RISE_TURN: f64 = 2.5;
+/// A collected supply springs out of its pallet clear of the tank's hull, climbs
+/// to its apex turning and tipping its stencilled top toward the camera, and bursts
+/// open there (`effects::pickups` times the flight): how long it lasts, how fast it
+/// grows to full size, how far it turns and tips, and how it swells and flattens as
+/// it bursts.
+const RISE_SECONDS: f64 = SUPPLY_BURST_SECONDS + 0.08;
+const RISE_GROW_SECONDS: f64 = 0.07;
+const RISE_START_SCALE: f64 = 0.6;
+const RISE_TURN: f64 = 0.7;
+const RISE_TIP: f64 = 0.4;
+const RISE_BURST_SWELL: f64 = 0.45;
+/// The height on a supply it turns and swells about.
+const RISE_MIDDLE: f32 = 0.45;
 /// Felling boughs (`tree-debris.ts`). Their leaves catch the air: linear drag per
 /// second slows the fall and the tumble. Landed, they lie until the debris cleanup
 /// sinks them out of sight.
@@ -500,16 +503,17 @@ struct PickupView {
     shown: Option<bool>,
 }
 
-/// A collected supply lifting off its pallet into the tank that took it.
+/// A collected supply thrown up off its pallet over the tank that took it.
 struct PickupRise {
     instance: InstanceId,
-    tank: Option<u32>,
+    kind: PickupKind,
     /// The pallet it left, and its turn there.
-    from: (f64, f64),
-    turn: f64,
     x: f64,
     z: f64,
+    turn: f64,
     age: f64,
+    /// It has burst open and thrown its pieces.
+    burst: bool,
 }
 
 struct MineView {
@@ -1142,8 +1146,13 @@ impl Presentation {
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
             .expect("tank model");
-        // Team-mates of one chassis wear different unit numbers and stowage.
-        let worn = tank.id as usize % liveries.len();
+        // Team-mates of one chassis wear different unit numbers and stowage; a
+        // human player's tank wears the crew livery.
+        let worn = if tank.human {
+            part::CREW_LIVERY
+        } else {
+            tank.id as usize % part::CREW_LIVERY
+        };
         for (index, joint) in liveries.into_iter().enumerate() {
             if let Some(joint) = joint {
                 self.renderer
@@ -1439,9 +1448,11 @@ impl Presentation {
                 Lifetime::Round,
             )
             .expect("supply model");
-        renderer.set_tint(rim, hex_to_linear(pickup(kind).color));
+        renderer.set_tint(rim, hex_to_linear(pickup_paint(kind)));
         let [u, v] = pickup_tile_offset(kind);
         renderer.set_instance_data(gem, [u, v, 0.0, 0.0]);
+        // The pallet's left-behind lid and smoke grenade wear the kind's paint too.
+        renderer.set_instance_data(base, [u, v, 0.0, 0.0]);
         self.pickups.insert(
             id,
             PickupView {
@@ -1673,7 +1684,7 @@ impl Presentation {
         self.update_branches(dt);
         self.update_covers(state);
         self.update_pickups(state);
-        self.update_pickup_rises(state, alpha, dt);
+        self.update_pickup_rises(dt);
         self.update_fragments(state);
         self.warm_section();
         self.update_mines(state);
@@ -2296,57 +2307,62 @@ impl Presentation {
             .map_or(0.0, |(&id, _)| supply_turn(id));
         self.pickup_rises.push_back(PickupRise {
             instance,
-            tank: event.id,
-            from: (event.x, event.z),
-            turn,
+            kind,
             x: event.x,
             z: event.z,
+            turn,
             age: 0.0,
+            burst: false,
         });
     }
 
-    fn update_pickup_rises(&mut self, state: &RenderState, alpha: f64, dt: f64) {
+    fn update_pickup_rises(&mut self, dt: f64) {
         let renderer = &mut self.renderer;
+        let systems = &mut self.effects.systems;
+        let eye = renderer.camera().position;
         self.pickup_rises.retain_mut(|rise| {
             rise.age += dt;
             if rise.age >= RISE_SECONDS {
                 renderer.remove_instance(rise.instance);
                 return false;
             }
-            // Into the tank while it lives, else back onto the pallet.
-            if let Some(tank) = rise
-                .tank
-                .and_then(|id| state.tanks.iter().find(|t| t.id == id && t.alive))
-            {
-                rise.x = tank.previous.x + (tank.position.x - tank.previous.x) * alpha;
-                rise.z = tank.previous.z + (tank.position.z - tank.previous.z) * alpha;
+            // The climb slows to the apex, where the supply bursts.
+            let climb = (rise.age / SUPPLY_BURST_SECONDS).min(1.0);
+            let y = SUPPLY_LAUNCH_HEIGHT
+                + (SUPPLY_APEX_HEIGHT - SUPPLY_LAUNCH_HEIGHT) * (1.0 - (1.0 - climb).powi(2));
+            if climb >= 1.0 && !rise.burst {
+                rise.burst = true;
+                let (colors, packing) = supply_spill(rise.kind);
+                systems.wood.spill_supply(
+                    DVec3::new(rise.x, y, rise.z),
+                    colors,
+                    packing,
+                    &mut systems.random,
+                );
             }
-            let (pop, drop) = if rise.age < RISE_POP_SECONDS {
-                (rise.age / RISE_POP_SECONDS, 0.0)
-            } else {
-                (
-                    1.0,
-                    (rise.age - RISE_POP_SECONDS) / (RISE_SECONDS - RISE_POP_SECONDS),
-                )
-            };
-            let lift = PALLET_HEIGHT + RISE_POP_HEIGHT * (1.0 - (1.0 - pop).powi(2));
-            let swell = 1.0 + RISE_POP_SCALE * (pop * PI).sin();
-            let squash = RISE_SQUASH * (1.0 - pop).powi(2);
-            let pull = drop * drop;
-            let shrink = 1.0 - pull;
-            let (fx, fz) = rise.from;
-            let x = fx + (rise.x - fx) * pull;
-            let z = fz + (rise.z - fz) * pull;
-            let y = lift + (RISE_TARGET_HEIGHT - lift) * pull;
-            let width = swell * (1.0 + squash) * shrink;
-            let height = swell * (1.0 - squash) * shrink;
+            let grow = RISE_START_SCALE
+                + (1.0 - RISE_START_SCALE) * smoothstep(rise.age, 0.0, RISE_GROW_SECONDS);
+            let burst = ((rise.age - SUPPLY_BURST_SECONDS) / (RISE_SECONDS - SUPPLY_BURST_SECONDS))
+                .clamp(0.0, 1.0);
+            let width = grow * (1.0 + RISE_BURST_SWELL * burst);
+            let height = grow * (1.0 - burst);
+            // Tip the top toward the eye, so the stencil faces the player as it bursts.
+            let center = Vec3::new(rise.x as f32, y as f32, rise.z as f32);
+            let toward = Vec3::new(eye.x - center.x, 0.0, eye.z - center.z).normalize_or_zero();
+            let tip = Quat::from_axis_angle(
+                Vec3::Y.cross(toward).normalize_or(Vec3::X),
+                (RISE_TIP * smoothstep(climb, 0.0, 1.0)) as f32,
+            );
+            let spin = Quat::from_rotation_y((rise.turn + RISE_TURN * climb) as f32);
+            // Stand the supply on its middle, so it tips and swells about it.
+            let middle = Mat4::from_translation(Vec3::Y * -RISE_MIDDLE);
             renderer.set_transform(
                 rise.instance,
                 Mat4::from_scale_rotation_translation(
-                    Vec3::new(width as f32, height as f32, width as f32),
-                    Quat::from_rotation_y((rise.turn + RISE_TURN * pull) as f32),
-                    Vec3::new(x as f32, y as f32, z as f32),
-                ),
+                    Vec3::new(width as f32, height.max(0.0) as f32, width as f32),
+                    tip * spin,
+                    center,
+                ) * middle,
             );
             true
         });
