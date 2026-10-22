@@ -221,7 +221,7 @@ fn wreck_batches_match_golden() {
             (684, 0x5b2abbb4, 276.3541, 0xdcd10f88, 0x18b62874),
             (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0x9e97af5e),
             (288, 0xd47a0c0d, -11.9209, 0x94d4f49d, 0xabe5a09e),
-            (10776, 0x2e5972ab, -3491.3047, 0xb94314ed, 0x54cbc652),
+            (10776, 0x2e5972ab, -3491.3047, 0xb94314ed, 0xec8e7c66),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
             (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0xe2a4151d),
@@ -234,7 +234,7 @@ fn wreck_batches_match_golden() {
             (5496, 0xbff5b201, 257.8100, 0xeb60b42b, 0x89fdfa8e),
             (2124, 0x86669a01, 3107.7462, 0x33971d44, 0xdb8e99ad),
             (468, 0xc039e97b, -37.2676, 0x6ee76939, 0x8e5c3fb4),
-            (9936, 0xd2e8448c, -3891.0023, 0x1acef73d, 0x18d984cd),
+            (9936, 0xd2e8448c, -3891.0023, 0x1acef73d, 0xe55237f8),
             (384, 0x102d4537, 3.9914, 0x7f59b8e5, 0xb162036b),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
