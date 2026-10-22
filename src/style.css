@@ -2467,15 +2467,43 @@ html:not(.phone) #toast[data-tone="death"] {
   letter-spacing: 4px;
   text-shadow: 0 2px 10px #0009;
 }
-/* Folder tabs: the chosen one is the tray's own colour, so it reads as the tray's lid. */
+/* The first row: the logo, then the mode switch filling the rest of the width. The
+   switch is a segmented well of two large buttons; the chosen one is lit like the tray
+   it configures, with a gold rim. With no switch (a site without a game server) the
+   screen's title takes its place. */
+.setup-top {
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  min-width: 0;
+}
+/* Screen readers still hear the title as the dialog's heading. */
+.setup-top:has(.play-tabs) .setup-heading {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  border: 0;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
 .setup-tray {
   display: grid;
-  margin-top: 2px;
 }
 .play-tabs {
   display: grid;
+  flex: 1;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
+  gap: 5px;
+  min-width: 0;
+  padding: 5px;
+  border-radius: 16px;
+  background: #050d1cc0;
+  box-shadow:
+    inset 0 0 0 1px #9fd0ff1c,
+    inset 0 2px 6px #0008;
 }
 .play-tab {
   position: relative;
@@ -2483,23 +2511,24 @@ html:not(.phone) #toast[data-tone="death"] {
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 14px 16px;
+  min-height: 58px;
+  padding: 10px 16px;
   border: 0;
-  border-radius: 14px 14px 0 0;
-  background: linear-gradient(180deg, #11264a, #0b1a33);
-  box-shadow: inset 0 1px #9fd0ff1f;
-  color: #c3d8ea;
+  border-radius: 11px;
+  background: transparent;
+  color: #b4cbe0;
   text-align: left;
   transition:
     background 0.15s,
-    color 0.15s;
+    color 0.15s,
+    box-shadow 0.15s;
 }
 .play-tab svg {
   flex: 0 0 34px;
   height: 34px;
   padding: 6px;
   border-radius: 9px;
-  background: #ffffff0d;
+  background: #ffffff0f;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -2520,16 +2549,22 @@ html:not(.phone) #toast[data-tone="death"] {
   text-transform: uppercase;
 }
 .play-tab small {
-  font-size: 12px;
+  font-size: 13px;
 }
-.play-tab:hover {
-  background: linear-gradient(180deg, #13294a, #0f2241);
+.play-tab:hover:not([aria-selected="true"]) {
+  background: #ffffff0d;
   color: #f0f8ff;
 }
+.play-tab:active:not([aria-selected="true"]) {
+  background: #ffffff08;
+}
 .play-tab[aria-selected="true"] {
-  background: var(--tray);
+  background: linear-gradient(180deg, #24497c, var(--tray));
   color: #fff;
-  box-shadow: inset 0 3px var(--accent);
+  box-shadow:
+    inset 0 0 0 1.5px #ffcf38cc,
+    inset 0 1px #ffffff26,
+    0 4px 14px #0007;
 }
 .play-tab[aria-selected="true"]::after {
   content: "";
@@ -2538,6 +2573,7 @@ html:not(.phone) #toast[data-tone="death"] {
   right: 18%;
   top: 0;
   height: 18px;
+  border-radius: 11px 11px 0 0;
   background: radial-gradient(ellipse 50% 100% at 50% 0, #ffcf3840, transparent);
   pointer-events: none;
 }
@@ -2743,9 +2779,11 @@ html:not(.phone) #toast[data-tone="death"] {
   grid-template-rows: auto 1fr;
   gap: 14px;
   padding: 14px;
-  border-radius: 0 0 16px 16px;
+  border-radius: 16px;
   background: linear-gradient(180deg, var(--tray), #0f2546);
-  box-shadow: inset 0 -1px #ffffff0d;
+  box-shadow:
+    inset 0 1px #9fd0ff1f,
+    inset 0 -1px #ffffff0d;
 }
 /* Both tabs sit on the tank cards' three columns and share one cell, so the taller
    panel sizes both; the hidden one keeps its space rather than collapsing. Each has a
@@ -4048,7 +4086,8 @@ html:not(.phone) #toast[data-tone="death"] {
     gap: 12px;
   }
   .play-tab {
-    padding-block: 12px;
+    min-height: 50px;
+    padding-block: 7px;
   }
   .start .tank-preview {
     height: 90px;
@@ -4916,9 +4955,13 @@ html.phone,
 }
 /* A phone held upright has room for the logo over its short setup; held sideways it
    keeps every pixel for the choices. */
+.phone .setup-top {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 10px;
+}
 .phone .setup-header {
   justify-content: center;
-  margin-bottom: 4px;
 }
 .phone .setup-brand {
   font-size: 30px;
@@ -4949,7 +4992,8 @@ html.phone,
    creates a room. */
 .phone .play-tab {
   gap: 10px;
-  padding: 14px;
+  min-height: 48px;
+  padding: 10px 14px;
 }
 .phone .play-tab svg {
   flex-basis: 20px;
@@ -5096,7 +5140,7 @@ html.phone,
     max-width: none;
   }
   .phone .setup-tray {
-    grid-template-rows: auto 1fr;
+    grid-template-rows: 1fr;
   }
   .phone .setup-panels {
     grid-template-rows: auto 1fr;
