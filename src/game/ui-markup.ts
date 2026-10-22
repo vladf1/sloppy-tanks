@@ -32,7 +32,10 @@ const HUD_ICONS = `<svg class="icon-sprite" aria-hidden="true" focusable="false"
 <symbol id="hud-pause" viewBox="0 0 24 24"><path d="M6.5 4h4v16h-4zM13.5 4h4v16h-4z"/></symbol>
 <symbol id="hud-target" viewBox="0 0 24 24"><path fill="none" stroke="currentColor" stroke-width="2.2" d="M12 4.5a7.5 7.5 0 1 1 0 15 7.5 7.5 0 0 1 0-15zM12 1v6M12 17v6M1 12h6M17 12h6"/></symbol>
 <symbol id="hud-shield" viewBox="0 0 24 24"><path d="M12 1.8 21 5v6.4c0 5.4-3.7 9.4-9 11-5.3-1.6-9-5.6-9-11V5z"/></symbol>
-<symbol id="hud-hull" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 1.6 21 5v6.4c0 5.6-3.7 9.6-9 11-5.3-1.4-9-5.4-9-11V5zm0 3.1v15.1c3.8-1.3 6.2-4.4 6.2-8.4V7z"/></symbol>
+<symbol id="hud-hull" viewBox="0 0 24 24"><path d="M9.2 2.5h5.6a1 1 0 0 1 1 1v5.7h5.7a1 1 0 0 1 1 1v5.6a1 1 0 0 1-1 1h-5.7v5.7a1 1 0 0 1-1 1H9.2a1 1 0 0 1-1-1v-5.7H2.5a1 1 0 0 1-1-1v-5.6a1 1 0 0 1 1-1h5.7V3.5a1 1 0 0 1 1-1z"/></symbol>
+<symbol id="hud-rapid" viewBox="0 0 24 24"><path d="M2.5 5h4.2l6 7-6 7H2.5l6-7zm8.5 0h4.2l6 7-6 7H11l6-7z"/></symbol>
+<symbol id="hud-boost" viewBox="0 0 24 24"><path d="M14.2 1.5 4 13.6h6.4L8.8 22.5 20 9.8h-6.6z"/></symbol>
+<symbol id="hud-repair" viewBox="0 0 24 24"><path d="M15.6 2.2a6 6 0 0 0-5.9 7.6L2.6 16.9a2.2 2.2 0 0 0 3.1 3.1l7.1-7.1a6 6 0 0 0 7.6-5.9l-3.4 3.4-3.1-.9-.9-3.1z"/></symbol>
 <symbol id="hud-lock" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2.5a5 5 0 0 1 5 5V10h1.2c.9 0 1.6.7 1.6 1.6v8.3c0 .9-.7 1.6-1.6 1.6H5.8c-.9 0-1.6-.7-1.6-1.6v-8.3c0-.9.7-1.6 1.6-1.6H7V7.5a5 5 0 0 1 5-5zm0 2.6a2.4 2.4 0 0 0-2.4 2.4V10h4.8V7.5A2.4 2.4 0 0 0 12 5.1zm0 8.2a1.7 1.7 0 0 0-.9 3.1v2h1.8v-2a1.7 1.7 0 0 0-.9-3.1z"/></symbol>
 <symbol id="hud-skull" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2c5 0 8.5 3.4 8.5 8.1 0 2.6-1.1 4.5-3 5.6V19a1.5 1.5 0 0 1-1.5 1.5h-1.2V18h-1.6v2.5h-2.4V18H9.2v2.5H8A1.5 1.5 0 0 1 6.5 19v-3.3c-1.9-1.1-3-3-3-5.6C3.5 5.4 7 2 12 2zM8.6 9.2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6.8 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 13.4l-1.3 2.3h2.6z"/></symbol>
 </svg>`;
@@ -78,8 +81,8 @@ export function hudMarkup(): string {
             `<button type="button" class="ammo-slot" id="ammo-${weapon}" data-ammo="${weapon}" aria-pressed="false" aria-description="${help}" title="${index + 1}: ${name} — ${help}" style="--ammo-color:#${color.toString(16).padStart(6, "0")}"><kbd>${index + 1}</kbd>${hudIcon(`hud-${weapon}`, "ammo-icon")}${hudIcon("hud-lock", "ammo-lock")}<small>${label}</small><b id="ammo-count-${weapon}">${weapon === "standard" ? "∞" : "0"}</b></button>`,
         ).join(
           "",
-        )}</div></div><div class="mine-slot" id="mine-slot" title="Mine (right click)"><span class="mine-dial">${hudIcon("hud-mine", "mine-icon")}<b id="mine-time"></b></span><kbd>RMB</kbd><span class="sr-only" id="mine">MINE READY</span></div><div id="effects" class="effects"></div></div>
-        <div class="hull-compass" aria-hidden="true"><span class="compass-dial"><i class="hull"></i><i class="gun"></i></span><kbd class="compass-key" title="Overhead view (V)">V</kbd></div>
+        )}<span class="ammo-rail-note" aria-hidden="true">${hudIcon("hud-lock", "rail-lock")}<span><b>2–5 LOCKED</b><small>Grab ammo crates</small></span></span></div></div><div class="mine-slot" id="mine-slot" title="Mine (right click)"><span class="mine-dial">${hudIcon("hud-mine", "mine-icon")}<b id="mine-time"></b></span><kbd>RMB</kbd><span class="sr-only" id="mine">MINE READY</span></div><div id="effects" class="effects"></div></div>
+        <div class="hull-compass" aria-hidden="true"><span class="compass-dial"><i class="hull"></i><i class="gun"></i></span><span class="compass-copy"><b>FIRST PERSON</b><small class="compass-key"><kbd>V</kbd>overhead view</small></span></div>
         <div class="combat-notices"><div id="ammo-notice" role="status" aria-live="polite"></div></div>
         </div></div>
         <div id="overlay"></div>`;
@@ -216,8 +219,10 @@ function leadingTeam(scores: readonly number[]): number | null {
 }
 
 const OUTCOME_TITLES = { won: "VICTORY", lost: "DEFEAT", draw: "DRAW" } as const;
-/** A battle ended before its limit, by where the viewer's team stood. */
-const EARLY_TITLES = { ahead: "ENDED AHEAD", behind: "ENDED BEHIND", even: "ENDED EVEN" } as const;
+/** A battle ended before its limit, by where the viewer's team stood: a confident call of
+ * the standing, never a victory the limit never decided. An "ended early" tag beside it
+ * and the line under it say the rest. */
+const EARLY_TITLES = { ahead: "LEAD HELD", behind: "CUT SHORT", even: "STALEMATE" } as const;
 
 /** Small marks leading the dialogs' buttons, drawn in the button's text colour. */
 const actionIcon = (path: string) =>
@@ -252,13 +257,18 @@ function pauseOverviewMarkup(hud: HudState): string {
   const fact = (label: string, value: string, note = "") =>
     `<div><dt>${label}</dt><dd>${value}${note ? `<small>${note}</small>` : ""}</dd></div>`;
   return `${objective}
-    <dl class="pause-facts">${fact("Objective", solo ? "Survive" : hud.endlessMatch ? "Endless battle" : `First to ${hud.scoreLimit}`, solo ? "One life" : "")}${fact("Clock", clock)}${fact("Difficulty", hud.difficulty[0].toUpperCase() + hud.difficulty.slice(1))}${fact("Your tank", escapeHtml(viewer.vehicleName), escapeHtml(viewer.rankName))}${fact("Kills / deaths", `${viewer.kills} / ${viewer.deaths}`)}${place ? fact("Rank in team", `${ordinal(place.place).toLowerCase()} of ${place.of}`, "by kills") : fact("Bots", String(hud.activeEnemies), "active")}</dl>`;
+    <dl class="pause-facts">${fact("Objective", solo ? "Survive" : hud.endlessMatch ? "Endless battle" : `First to ${hud.scoreLimit}`, solo ? "One life" : "")}${fact("Clock", clock)}${fact("Difficulty", hud.difficulty[0].toUpperCase() + hud.difficulty.slice(1))}${fact("Your tank", escapeHtml(viewer.vehicleName), escapeHtml(viewer.rankName))}${fact("Kills / deaths", `${viewer.kills} / ${viewer.deaths}`)}${place ? fact("Team rank", `${ordinal(place.place).toLowerCase()} of ${place.of}`, "by kills") : fact("Bots", String(hud.activeEnemies), "active")}</dl>`;
 }
 
-/** Pause's line under its title: who leads, in words. The objective and the clock are
- * facts below it, so the line never counts down a limit still far away. */
+/** Pause's line under its title: who leads, in words, and how many kills your team
+ * still needs (none in an endless battle or overtime, where the next kill decides). */
 export function pauseStanding(hud: HudState): string {
-  return standingLine(hud.match.scores, hud.humanTeam, hud.teamNames);
+  const standing = standingLine(hud.match.scores, hud.humanTeam, hud.teamNames);
+  if (hud.endlessMatch || !hud.scoreLimit || hud.match.overtime) {
+    return standing;
+  }
+  const needed = Math.max(0, hud.scoreLimit - hud.match.scores[hud.humanTeam]);
+  return `${standing} · your team needs ${countLine(needed, "kill")} to win`;
 }
 
 export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
@@ -316,14 +326,15 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
       const margin = Math.abs(scores[0] - scores[1]);
       lede = endedEarly
         ? leader === null
-          ? "You ended the battle with the teams level."
+          ? "The teams were level when you ended the battle."
           : leader === team
-            ? `You ended the battle with your team ${countLine(margin, "kill")} up.`
-            : `You ended the battle with ${teamLabel(hud.teamNames[leader])} ${countLine(margin, "kill")} up.`
+            ? `Your team led by ${countLine(margin, "kill")} when you ended the battle.`
+            : `${teamLabel(hud.teamNames[leader])} led by ${countLine(margin, "kill")} when you ended the battle.`
         : `${sideName(winner)} took the round${hud.match.overtime ? " in overtime" : margin ? ` by ${margin}` : ""}.`;
     }
     return `<section class="menu compact results" data-outcome="${outcome}" data-team="${side}" aria-labelledby="results-title">
-      <header class="dialog-head results-banner"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span></div>
+      <button id="results-close" class="dialog-close" type="button" aria-label="Close the report and open Battle Setup" title="Battle Setup">${CLOSE_ICON}</button>
+      <header class="dialog-head results-banner"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span>${endedEarly && !solo ? `<span class="early-tag">ENDED EARLY</span>` : ""}</div>
       <div class="dialog-title"><h2 id="results-title">${title}</h2>${solo ? "" : scoreMarkup(scores, "Final score", hud.teamNames, team)}</div>
       <p class="dialog-lede">${lede}</p></header>
       <div class="results-body${solo ? "" : " with-board"}"><div class="results-you">${hud.recap ? recapMarkup(hud, hud.recap) : ""}</div>${solo ? "" : scoreboardMarkup(hud.scoreboard, viewer.id, hud.teamNames, scores)}</div>

@@ -28,7 +28,7 @@ export const MENU_READY_STATUS = "Arena ready";
 /** Seconds the hit marker shows after the player's shell lands. */
 const HIT_MARKER_TIME = 0.28;
 /** Seconds the elimination banner shows after the player wrecks a tank. */
-const KILL_BANNER_TIME = 1.5;
+const KILL_BANNER_TIME = 1.8;
 /** Seconds the red screen-edge flash fades over after the player's hull is hit. */
 const HURT_FLASH_TIME = 0.6;
 /** Below this share of its hull the tank's HUD warns, like the status panel's pulse. */
@@ -224,7 +224,9 @@ export class UI {
       .querySelector("#pause-settings")
       ?.addEventListener("click", () => this.settings.open());
     this.overlay.querySelector("#end-battle")?.addEventListener("click", () => actions.endBattle());
-    this.overlay.querySelector("#restart")?.addEventListener("click", () => actions.restart());
+    for (const restart of this.overlay.querySelectorAll("#restart, #results-close")) {
+      restart.addEventListener("click", () => actions.restart());
+    }
   }
   /** The battle report's hero tile shows the viewer's tank in its team's paint: Battle
    * Setup's render of that tank, from the sheet's row for the team. */

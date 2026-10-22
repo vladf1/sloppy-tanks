@@ -64,21 +64,23 @@ test("pause leaves the score to the header's plates and lists the battle's facts
   assert.match(markup, /<dt>Objective<\/dt><dd>First to 100<\/dd>/);
   assert.match(markup, /<dt>Kills \/ deaths<\/dt><dd>2 \/ 1<\/dd>/);
   assert.match(markup, /<dt>Difficulty<\/dt><dd>Normal<\/dd>/);
-  // The line under the title says who leads in words; the objective and the clock are
-  // facts below it, never a far-off countdown in the standing line.
-  assert.match(markup, /class="dialog-standing" data-tone="ahead">Your team leads by 1</);
-  assert.doesNotMatch(markup, /to win/);
+  // The line under the title says who leads in words and what the team still needs.
+  assert.match(
+    markup,
+    /class="dialog-standing" data-tone="ahead">Your team leads by 1 · your team needs \d+ kills? to win</,
+  );
   // The team rank says what it ranks by.
-  assert.match(markup, /<dt>Rank in team<\/dt><dd>1st of 1<small>by kills<\/small><\/dd>/);
+  assert.match(markup, /<dt>Team rank<\/dt><dd>1st of 1<small>by kills<\/small><\/dd>/);
 });
 
 test("a battle ended early is called by where the team stood, never won", () => {
   const early = menuMarkup(teamBattle({ phase: "results", endedEarly: true }), null);
-  assert.match(early, /<h2 id="results-title">ENDED AHEAD<\/h2>/);
+  assert.match(early, /<h2 id="results-title">LEAD HELD<\/h2>/);
+  assert.match(early, /<span class="early-tag">ENDED EARLY<\/span>/);
   assert.match(early, /data-outcome="ended-ahead"/);
   assert.doesNotMatch(early, /VICTORY|ENDED BY YOU/);
   // The line is about the team alone; the viewer's deaths are on the board.
-  assert.match(early, /You ended the battle with your team 1 kill up\.</);
+  assert.match(early, /Your team led by 1 kill when you ended the battle\.</);
   const full = menuMarkup(teamBattle({ phase: "results" }), null);
   assert.doesNotMatch(full, /ENDED BY YOU/);
   assert.match(full, /Your team took the round by 1\.</);

@@ -320,7 +320,7 @@ export class RoomBrowser {
               : error instanceof Error
                 ? error.message
                 : "Rooms unavailable";
-          this.showStatus("error", "Rooms are offline", `${reason} · retrying`);
+          this.showStatus("error", "Rooms are offline", `${reason} · trying again every ${REFRESH_MS / 1000} s`);
         }
       } finally {
         clearTimeout(timeout);

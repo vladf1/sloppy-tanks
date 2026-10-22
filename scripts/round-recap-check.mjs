@@ -96,7 +96,7 @@ try {
     // limit decided nothing.
     assert.match(
       await page.locator(".results h2").innerText(),
-      mode === "team" ? /^ENDED (AHEAD|BEHIND|EVEN)$/ : /^BATTLE ENDED$/,
+      mode === "team" ? /^(LEAD HELD|CUT SHORT|STALEMATE)$/ : /^BATTLE ENDED$/,
     );
     assert.deepEqual(
       await page.evaluate(() => ({

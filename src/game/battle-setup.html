@@ -342,15 +342,15 @@
           <div class="segmented">
             <label class="segment"
               ><input type="radio" name="difficulty" value="easy" /><span
-                ><b>Easy</b><small>Gentler bots · −10% damage taken</small></span
+                ><b>Easy</b><small>Gentler bots · you take 10% less damage</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="normal" checked /><span
-                ><b>Normal</b><small>The standard combat balance</small></span
+                ><b>Normal</b><small>Standard bots · standard damage</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="hard" /><span
-                ><b>Hard</b><small>Sharper bots · +15% damage taken</small></span
+                ><b>Hard</b><small>Sharper bots · you take 15% more damage</small></span
               ></label
             >
           </div>
@@ -373,7 +373,7 @@
               />
             </svg>
           </svg>
-          <b>Team Battle</b><span>6 vs 6 · Easy bots<br />First to 100</span>
+          <b>Team Battle</b><span>6 vs 6 · Easy bots · First to 100</span>
           <svg
             class="briefing-tank red-tank"
             viewBox="58.5 32.5 560 300"
@@ -486,9 +486,12 @@
               </svg>
               <b class="when-loading">Scanning for open rooms…</b>
               <b class="when-ready">No open rooms right now</b>
-              <b class="when-error">The room list is waiting for the server</b>
+              <b class="when-error">No connection to the game server</b>
               <small class="when-ready">Be the first: create a room and invite friends.</small>
-              <small class="when-error">Open rooms will show here again</small>
+              <small class="when-error">Rooms list here once it answers. The bots are ready now.</small>
+              <button class="offline-action when-error" type="button" data-open-play="single">
+                BATTLE THE BOTS
+              </button>
             </div>
           </div>
         </div>
@@ -532,10 +535,7 @@
             <span id="rooms-message" role="status">Looking for rooms…</span
             ><span id="rooms-hint" class="startup-hint">Pick your tank and map meanwhile.</span>
           </div>
-          <button id="retry-rooms" class="chip-button" type="button">RETRY</button>
-          <button class="chip-button offline-action" type="button" data-open-play="single">
-            BATTLE THE BOTS
-          </button>
+          <button id="retry-rooms" class="chip-button" type="button">RETRY NOW</button>
           <div class="startup-track" aria-hidden="true"><span></span></div>
         </div>
         <div class="room-action">
