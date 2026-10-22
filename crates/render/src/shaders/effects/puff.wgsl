@@ -60,11 +60,58 @@ fn puff_fire(t: f32) -> vec3f {
 }
 
 // A soft staircase over the fire ramp: the temperature settles into a few broad
-// bands with soft steps between them, the stylised look of a toon fireball.
+// bands with soft steps between them, a hint of a toon fireball that still falls
+// off smoothly from its white heart to its red rim.
 fn puff_bands(t: f32) -> f32 {
     let f = t * 4.0;
-    let step = floor(f) + smoothstep(0.3, 0.7, fract(f));
-    return mix(t, step / 4.0, 0.4);
+    let step = floor(f) + smoothstep(0.2, 0.8, fract(f));
+    return mix(t, step / 4.0, 0.2);
+}
+
+// Smoke thins as the wall behind it comes within this distance (m) along the
+// view, like a soft particle against the depth buffer, so no wall cuts a billow
+// along a hard line; and as the ground does, within a shorter one.
+const PUFF_WALL_SOFTNESS: f32 = 1.2;
+const PUFF_GROUND_SOFTNESS: f32 = 0.3;
+
+// How much of a puff survives at world point `p`: the ground's and the walls'
+// soft-particle fade along the view. The walls are material.params: up to three
+// boxes as (centre x, centre z, half width, half depth) standing on the ground,
+// their heights in params[3].xyz and their count in params[3].w (`walls.rs`).
+fn puff_wall_fade(p: vec3f) -> f32 {
+    let ray = normalize(p - frame.camera_position.xyz);
+    // Every component away from zero, so the slabs' divisions stay finite.
+    let dir = select(ray, vec3f(1e-4), abs(ray) < vec3f(1e-4));
+    var fade = 1.0;
+    if dir.y < 0.0 {
+        fade = smoothstep(0.0, PUFF_GROUND_SOFTNESS, p.y / -dir.y);
+    }
+    let count = material.params[3].w;
+    if count > 0.5 {
+        fade = min(fade, puff_box_fade(p, dir, material.params[0], material.params[3].x));
+    }
+    if count > 1.5 {
+        fade = min(fade, puff_box_fade(p, dir, material.params[1], material.params[3].y));
+    }
+    if count > 2.5 {
+        fade = min(fade, puff_box_fade(p, dir, material.params[2], material.params[3].z));
+    }
+    return fade;
+}
+
+// The fade at `p` for the wall box the view ray from it may strike: how far along
+// the ray the box's surface lies, through the slabs of its faces.
+fn puff_box_fade(p: vec3f, dir: vec3f, wall: vec4f, height: f32) -> f32 {
+    let low = vec3f(wall.x - wall.z, 0.0, wall.y - wall.w);
+    let high = vec3f(wall.x + wall.z, height, wall.y + wall.w);
+    let t0 = (low - p) / dir;
+    let t1 = (high - p) / dir;
+    let enter = max(max(min(t0.x, t1.x), min(t0.y, t1.y)), min(t0.z, t1.z));
+    let leave = min(min(max(t0.x, t1.x), max(t0.y, t1.y)), max(t0.z, t1.z));
+    if leave < max(enter, 0.0) {
+        return 1.0;
+    }
+    return smoothstep(0.0, PUFF_WALL_SOFTNESS, max(enter, 0.0));
 }
 
 // Below this heat a puff's fire never reaches the ramp's first glow (temperature
@@ -120,7 +167,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             // The card's own edge is always clear, however far the noise pushes the
             // rim, so no puff shows the straight side of its quad.
             let window = 1.0 - smoothstep(0.8, 1.0, radius);
-            density = (1.0 - smoothstep(rim - feather, rim, edge)) * window;
+            density = (1.0 - smoothstep(rim - feather, rim, edge)) * window * puff_wall_fade(f.world);
             if density > 0.0 {
                 (*s).color = puff_color((*s).color, point, radius, floor(packed) / 15.0, heat, softness, fiery, n1, n2, noise, f.view_direction);
             }

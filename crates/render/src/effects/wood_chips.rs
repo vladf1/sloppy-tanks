@@ -38,7 +38,7 @@ const STOPPED: f64 = 0.02;
 /// paving.
 const CLEARANCE: f64 = 0.03;
 /// Seconds a landed piece lies, [minimum, random span], then shrinks away.
-const WOOD_REST: [f64; 2] = [3.0, 3.0];
+const WOOD_REST: [f64; 2] = [6.0, 4.0];
 const STRAW_REST: [f64; 2] = [4.0, 3.0];
 const SHRINK: f64 = 0.8;
 /// Physics never steps further than this at once (a hidden tab's catch-up frame).

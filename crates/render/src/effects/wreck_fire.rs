@@ -33,7 +33,7 @@ const SMOULDER_SECONDS: f64 = 24.0;
 const SMOKE_CYCLE: f64 = 3.4;
 const FLAME_CYCLE: f64 = 0.62;
 /// The smoke column's height over a puff's trip (m).
-const COLUMN_HEIGHT: f64 = 7.5;
+const COLUMN_HEIGHT: f64 = 8.5;
 /// Where flames burn over a hull, along its length and across it in its own
 /// heading (m), how high over its centre they start whichever way up it lies,
 /// and how big each fire is (times the wreck's own variation).
@@ -69,7 +69,7 @@ const GLOW_COLOR: [f32; 3] = [0.9, 0.34, 0.07];
 const FIRE_LIGHT: f64 = 24.0;
 const FIRE_LIGHT_COLOR: u32 = 0xff7a30;
 /// The flames' brightness multiplier (the shader shades yellow root to red tip).
-const FLAME_COLOR: [f32; 3] = [1.05, 1.0, 1.0];
+const FLAME_COLOR: [f32; 3] = [0.82, 0.78, 0.78];
 /// A cleared wreck's fire and smoke die away this fast (1/s).
 const CLEAR_RATE: f64 = 0.9;
 /// Oily black smoke at the fire, paling to grey as it climbs and spreads.
@@ -369,9 +369,9 @@ fn draw(
         );
         let pale = smoothstep(a, 0.05, 0.9) as f32;
         let color = [0, 1, 2].map(|i| soot[i] + (soot_high[i] - soot[i]) * pale);
-        let size = (0.85 + 2.6 * a.powf(0.85)) * vigour;
+        let size = (0.65 + 1.9 * a.powf(0.85)) * vigour;
         // Born quickly at the fire, densest low, thinning out as it spreads.
-        let opacity = smoke * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.45, 1.0)) * 0.9;
+        let opacity = smoke * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.4, 1.0)) * 0.72;
         smoke_puff(
             puffs,
             position,
@@ -453,7 +453,7 @@ fn draw(
             &mut sparks.records,
             at + Vec3::Y * (0.55 * size),
             FLAME_GLOW * size,
-            [1.0, 0.42, 0.09, (fire * 0.32 * flicker) as f32],
+            [1.0, 0.42, 0.09, (fire * 0.26 * flicker) as f32],
         );
     }
     burner.ember_clock += dt;

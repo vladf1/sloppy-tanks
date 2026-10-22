@@ -21,7 +21,9 @@ use super::ground::Ground;
 use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
 use super::sparks::{flame, glow, ground_glow};
+
 use super::spawn_pad_decks::SpawnPadDecks;
+use super::walls::{Strike, WallMaterial, Walls};
 use super::wood_chips::{CRATE_HEIGHT, HIT_HEIGHT};
 use crate::color::hex_to_linear;
 
@@ -31,9 +33,17 @@ pub const EXPLOSION_LIFETIME: f64 = 2.8;
 pub const PUFFS_PER_BLAST: usize = 30;
 /// Scorches left on the ground at once; the oldest makes room.
 pub const MAX_SCORCHES: usize = 40;
-/// Ground decals a frame may hold: a dust ring and a shockwave per blast, and
-/// every scorch.
-pub const DECAL_CAPACITY: usize = MAX_EXPLOSIONS * 2 + MAX_SCORCHES;
+/// Marks shells leave on hard walls at once; the oldest makes room.
+pub const MAX_WALL_MARKS: usize = 24;
+/// A wall mark lasts this long, fading over its last part (s).
+const WALL_MARK_LIFETIME: f64 = 40.0;
+/// A mark's diameter (m), never more than its face has room for, and how far it
+/// stands off the face (a container's ribs stand proud of its skin).
+const WALL_MARK_SIZE: f64 = 1.3;
+const WALL_MARK_STANDOFF: [f32; 2] = [0.035, 0.1];
+/// Ground decals a frame may hold: a dust ring and a shockwave per blast, every
+/// scorch and every wall mark.
+pub const DECAL_CAPACITY: usize = MAX_EXPLOSIONS * 2 + MAX_SCORCHES + MAX_WALL_MARKS;
 /// A scorch cools and then fades out over this many seconds.
 pub const SCORCH_LIFETIME: f64 = 45.0;
 /// A burnout's thin smoke outlasts a normal blast.
@@ -57,7 +67,7 @@ const SHOCK_SPREAD: f64 = 5.4;
 /// The flash core: how long it burns (s), its diameter (m, times the scale) and
 /// the wider orange bloom around it.
 /// Kept small and below white so it never blows out a hull beside it.
-const FLASH_SECONDS: f64 = 0.07;
+const FLASH_SECONDS: f64 = 0.05;
 const FLASH_SIZE: f64 = 3.0;
 const FLASH_COLOR: [f32; 3] = [3.4, 2.5, 1.2];
 const BLOOM_SECONDS: f64 = 0.15;
@@ -98,6 +108,9 @@ const FIRE_LIGHT_COLOR: u32 = 0xff8436;
 /// HDR color.
 const GROUND_GLOW_SIZE: f64 = 9.0;
 const GROUND_GLOW_COLOR: [f32; 3] = [1.1, 0.42, 0.09];
+/// A drum's spilled fuel burns in this many licks between these times (s).
+const FUEL_FLAMES: usize = 4;
+const FUEL_FIRE: [f64; 2] = [0.25, 2.6];
 /// A tank's cook-off jet: how long its tongue of flame roars up, and its color.
 const JET_SECONDS: f64 = 0.45;
 const JET_COLOR: [f32; 3] = [1.3, 1.1, 1.0];
@@ -105,6 +118,10 @@ const JET_COLOR: [f32; 3] = [1.3, 1.1, 1.0];
 const DUST_RING: f32 = 0.0;
 const SHOCK_RING: f32 = 1.0;
 const SCORCH: f32 = 2.0;
+const STONE_MARK: f32 = 3.0;
+const STEEL_MARK: f32 = 4.0;
+/// Soot off a shell striking a steel wall.
+const STEEL_SOOT: u32 = 0x3d3a37;
 
 const SMOKE: u32 = 0x76787c;
 const TANK_SMOKE: u32 = 0x5c5e62;
@@ -123,6 +140,8 @@ const LANDING_FORCE: [f64; 2] = [140.0, 2500.0];
 const LANDING_HEIGHT: f64 = 1.8;
 const LANDING_REPEAT: f64 = 4.0;
 const LANDING_GAP: f64 = 0.06;
+/// The dust a felled tree's snap shakes up round its stump (a landing's scale).
+const TREE_SNAP_DUST: f64 = 0.55;
 /// Pieces remembered for `LANDING_REPEAT`.
 const LANDING_MEMORY: usize = 24;
 
@@ -153,6 +172,8 @@ enum Struck {
     Steel,
     /// A wall, rock or building: a flash and a puff of grit.
     Stone,
+    /// A container's sheet steel: a flash, a shower of sparks and a little soot.
+    Sheet,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -190,12 +211,12 @@ struct Look {
 
 const BLAST: Look = Look {
     lifetime: EXPLOSION_LIFETIME,
-    fire_size: 0.98,
-    fire_spread: 0.85,
-    fire_life: 0.45,
-    fire_rise: 1.1,
+    fire_size: 0.9,
+    fire_spread: 0.8,
+    fire_life: 0.38,
+    fire_rise: 1.3,
     smoke: SMOKE,
-    smoke_size: 0.9,
+    smoke_size: 0.72,
     smoke_rise: 2.6,
     drift: 0.35,
     double_burst: false,
@@ -207,36 +228,36 @@ const BLAST: Look = Look {
 const TANK_BLASTS: [Look; 3] = [
     Look {
         lifetime: 3.6,
-        fire_size: 1.25,
+        fire_size: 0.92,
         fire_spread: 0.85,
-        fire_life: 0.6,
+        fire_life: 0.36,
         fire_rise: 1.7,
         smoke: TANK_SMOKE,
-        smoke_size: 1.25,
+        smoke_size: 0.9,
         smoke_rise: 3.4,
         drift: 0.3,
         double_burst: true,
     },
     Look {
         lifetime: 3.3,
-        fire_size: 1.34,
-        fire_spread: 1.12,
-        fire_life: 0.58,
+        fire_size: 0.98,
+        fire_spread: 1.05,
+        fire_life: 0.34,
         fire_rise: 0.9,
         smoke: 0x605c58,
-        smoke_size: 1.3,
+        smoke_size: 0.95,
         smoke_rise: 2.6,
         drift: 0.25,
         double_burst: false,
     },
     Look {
         lifetime: 3.4,
-        fire_size: 1.22,
-        fire_spread: 0.98,
-        fire_life: 0.58,
+        fire_size: 0.9,
+        fire_spread: 0.95,
+        fire_life: 0.36,
         fire_rise: 1.3,
         smoke: 0x5e6266,
-        smoke_size: 1.2,
+        smoke_size: 0.88,
         smoke_rise: 3.0,
         drift: 1.3,
         double_burst: false,
@@ -246,37 +267,37 @@ const TANK_BLASTS: [Look; 3] = [
 // A drum's fuel flashes over in a tighter, shorter ball than a tank's ammunition.
 const BARREL_BLASTS: [Look; 3] = [
     Look {
-        lifetime: 2.9,
-        fire_size: 0.98,
-        fire_spread: 0.9,
-        fire_life: 0.52,
+        lifetime: 4.4,
+        fire_size: 0.82,
+        fire_spread: 0.85,
+        fire_life: 0.34,
         fire_rise: 1.0,
         smoke: 0x5e5852,
-        smoke_size: 1.1,
+        smoke_size: 0.82,
         smoke_rise: 2.8,
         drift: 0.3,
         double_burst: false,
     },
     Look {
-        lifetime: 2.9,
-        fire_size: 0.9,
-        fire_spread: 0.75,
-        fire_life: 0.48,
+        lifetime: 4.4,
+        fire_size: 0.78,
+        fire_spread: 0.72,
+        fire_life: 0.32,
         fire_rise: 1.3,
         smoke: 0x5c5c5e,
-        smoke_size: 1.05,
+        smoke_size: 0.8,
         smoke_rise: 3.0,
         drift: 1.4,
         double_burst: false,
     },
     Look {
-        lifetime: 3.0,
-        fire_size: 0.94,
-        fire_spread: 0.8,
-        fire_life: 0.52,
+        lifetime: 4.6,
+        fire_size: 0.8,
+        fire_spread: 0.78,
+        fire_life: 0.34,
         fire_rise: 1.5,
         smoke: 0x625e5a,
-        smoke_size: 1.08,
+        smoke_size: 0.84,
         smoke_rise: 3.2,
         drift: 0.6,
         double_burst: true,
@@ -303,6 +324,20 @@ struct Blast {
     direction: [f64; 2],
 }
 
+/// A shell's mark on a hard wall: a chipped crater in stone, a sooty dent with a
+/// hot heart in steel.
+#[derive(Clone, Copy, Debug, Default)]
+struct WallMark {
+    position: Vec3,
+    normal: Vec3,
+    diameter: f32,
+    steel: bool,
+    /// The wall's color, linear.
+    color: [f32; 3],
+    age: f64,
+    phase: f64,
+}
+
 impl Blast {
     fn look(&self) -> Look {
         match self.kind {
@@ -319,7 +354,7 @@ impl Blast {
             Kind::Burnout => BURNOUT_LIFETIME,
             Kind::Collapse => COLLAPSE_LIFETIME,
             Kind::Hit(Struck::Stone) => STONE_HIT_LIFETIME,
-            Kind::Hit(Struck::Steel) => HIT_LIFETIME,
+            Kind::Hit(Struck::Steel | Struck::Sheet) => HIT_LIFETIME,
             Kind::Landing => LANDING_LIFETIME,
             Kind::Blast | Kind::Tank | Kind::Barrel => self.look().lifetime,
         }
@@ -358,6 +393,53 @@ fn scaled(color: [f64; 3], factor: f64) -> [f64; 3] {
 
 fn mixed(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
     [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
+}
+
+/// A burst drum's spilled fuel: a few low licks of flame on the ground round
+/// it, catching just after the fireball and guttering out, with their glow.
+fn fuel_fire(b: &Blast, t: f64, lifetime: f64, streaks: &mut PoolBuffer) {
+    let fire = smoothstep(t, FUEL_FIRE[0], FUEL_FIRE[0] + 0.2)
+        * (1.0 - smoothstep(t, FUEL_FIRE[1], lifetime * 0.95));
+    if fire <= 0.01 {
+        return;
+    }
+    let s = b.scale as f32;
+    let up = Vec3::new(WIND[0] as f32 * 0.25, 1.0, WIND[1] as f32 * 0.25).normalize();
+    for j in 0..FUEL_FLAMES {
+        let jf = j as f64;
+        let angle = b.phase + jf * 2.399;
+        let reach = (0.25 + 0.55 * hash(b.phase + jf * 0.7)) * b.scale;
+        let base = Vec3::new(
+            (b.x + angle.cos() * reach) as f32,
+            0.05,
+            (b.z + angle.sin() * reach) as f32,
+        );
+        // One rate for every lick, each with its own phase.
+        let breathe = (t * 7.0 + b.phase * 3.0 + jf * 2.1).sin() as f32;
+        let size = (0.55 + 0.25 * hash(b.phase * 1.3 + jf)) as f32 * s;
+        flame(
+            streaks,
+            base,
+            (up + Vec3::new(0.12 * breathe, 0.0, -0.08 * breathe)).normalize(),
+            size,
+            size * (1.4 + 0.3 * breathe) * (0.5 + 0.5 * fire as f32),
+            (b.phase * 0.17 + jf * 0.23).fract() as f32,
+            [1.05, 1.0, 1.0, (fire * 0.9) as f32],
+        );
+    }
+    let [r, g, bl] = GROUND_GLOW_COLOR;
+    ground_glow(
+        streaks,
+        Vec3::new(b.x as f32, 0.08, b.z as f32),
+        3.2 * s,
+        [r, g, bl, (fire * 0.55) as f32],
+    );
+}
+
+/// A plain blast's scale from its event's radius: a shell's interception stays a
+/// pop, a rocket or a mine a fist of fire no bigger than a tank's own death.
+pub fn blast_scale(size: f64) -> f64 {
+    (size / 6.0).clamp(0.45, 1.0)
 }
 
 /// `1 - e^(-rate·age)`: fast at first, settling toward 1.
@@ -451,6 +533,11 @@ pub struct ExplosionEffects {
     pub pads: SpawnPadDecks,
     /// The current map's ground, for the dust blasts kick up.
     pub ground: Ground,
+    /// The round's solid cover: what a shell struck, and what smoke rolls round.
+    pub walls: Walls,
+    marks: [WallMark; MAX_WALL_MARKS],
+    mark_count: usize,
+    mark_cursor: usize,
     /// Seconds of effect time, and the debris pieces that last raised landing
     /// dust (id, when), so a piece settling or resting does not keep puffing.
     clock: f64,
@@ -473,6 +560,10 @@ impl Default for ExplosionEffects {
             rings: PoolBuffer::new(DECAL_CAPACITY),
             pads: SpawnPadDecks::default(),
             ground: Ground::default(),
+            walls: Walls::default(),
+            marks: [WallMark::default(); MAX_WALL_MARKS],
+            mark_count: 0,
+            mark_cursor: 0,
             clock: 0.0,
             landings: [(0, f64::NEG_INFINITY); LANDING_MEMORY],
             landing_cursor: 0,
@@ -502,22 +593,38 @@ impl ExplosionEffects {
         self.landing_cursor = (self.landing_cursor + 1) % LANDING_MEMORY;
         self.last_landing = self.clock;
         let strength = (force / LANDING_FORCE[0]).ln() / (LANDING_FORCE[1] / LANDING_FORCE[0]).ln();
+        self.dust_skirt(
+            event.x,
+            event.z,
+            0.35 + 0.45 * strength.clamp(0.0, 1.0),
+            (f64::from(id) * 2.399).rem_euclid(TAU),
+        );
+    }
+
+    /// A skirt of the ground's dust rolling out low from `(x, z)` at `scale`.
+    fn dust_skirt(&mut self, x: f64, z: f64, scale: f64, phase: f64) {
         let blast = &mut self.blasts[self.cursor];
         self.cursor = (self.cursor + 1) % MAX_EXPLOSIONS;
         *blast = Blast {
             active: true,
             kind: Kind::Landing,
-            x: event.x,
-            z: event.z,
-            scale: 0.35 + 0.45 * strength.clamp(0.0, 1.0),
-            phase: (f64::from(id) * 2.399).rem_euclid(TAU),
+            x,
+            z,
+            scale,
+            phase,
             tempo: 1.0,
-            dust: self.ground.dust(event.x, event.z),
+            dust: self.ground.dust(x, z),
             ..Blast::default()
         };
     }
 
     pub fn event(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        // A felled tree's snap shakes dust off the ground round its stump.
+        if event.kind == SimEventType::Destroy && event.cover_kind == Some(CoverKind::Tree) {
+            let phase = random.next_f64() * TAU;
+            self.dust_skirt(event.x, event.z, TREE_SNAP_DUST, phase);
+            return;
+        }
         let fire = matches!(event.kind, SimEventType::Explosion | SimEventType::Death);
         let wood = match (event.kind, event.cover_kind) {
             (SimEventType::Impact, Some(CoverKind::Cargo))
@@ -527,10 +634,18 @@ impl ExplosionEffects {
             (SimEventType::Destroy, Some(CoverKind::Cargo)) => Some(WoodDust::Burst),
             _ => None,
         };
-        // A shell's hit on a tank (it names a height) or on hard cover (none).
+        // A shell's hit on a tank (it names a height) or on hard cover (none):
+        // a container's steel or stone, on the face nearest the impact.
+        let strike = (event.kind == SimEventType::Impact
+            && event.cover_kind.is_none()
+            && event.height.is_none())
+        .then(|| self.walls.strike(event.x, 1.0, event.z))
+        .flatten();
         let struck = match event.kind {
             SimEventType::Impact if event.cover_kind.is_none() => Some(if event.height.is_some() {
                 Struck::Steel
+            } else if strike.is_some_and(|strike| strike.material == WallMaterial::Steel) {
+                Struck::Sheet
             } else {
                 Struck::Stone
             }),
@@ -595,12 +710,13 @@ impl ExplosionEffects {
         blast.scale = if tank {
             (size / 3.0) * (1.0 + random.next_f64() * 0.15)
         } else {
-            (size / 4.6).clamp(0.6, 1.35)
+            blast_scale(size)
         };
         if barrel {
-            blast.scale *= 0.7 + random.next_f64() * 0.12;
+            blast.scale *= 0.58 + random.next_f64() * 0.1;
         }
         blast.phase = random.next_f64() * TAU;
+        let mut wall_mark = None;
         if let Kind::Hit(_) = kind {
             blast.scale = 1.0;
             blast.y = event.height.unwrap_or(1.0);
@@ -610,6 +726,14 @@ impl ExplosionEffects {
                 if length > 1e-6 {
                     blast.direction = [dx / length, dz / length];
                 }
+            }
+            // A hard wall's hit bursts out of the face it struck, and marks it.
+            if let Some(strike) = strike {
+                blast.x = f64::from(strike.point.x);
+                blast.z = f64::from(strike.point.z);
+                blast.y = f64::from(strike.point.y);
+                blast.direction = [f64::from(strike.normal.x), f64::from(strike.normal.z)];
+                wall_mark = Some((strike, blast.phase));
             }
         }
         if let Some(wood) = wood {
@@ -667,6 +791,9 @@ impl ExplosionEffects {
             self.scorch_cursor = (self.scorch_cursor + 1) % MAX_SCORCHES;
             self.scorch_count = (self.scorch_count + 1).min(MAX_SCORCHES);
         }
+        if let Some((strike, phase)) = wall_mark {
+            self.mark(strike, phase);
+        }
     }
 
     pub fn reset(&mut self) {
@@ -680,6 +807,9 @@ impl ExplosionEffects {
         self.barrel_sequence = 0;
         self.scorch_count = 0;
         self.scorch_cursor = 0;
+        self.mark_count = 0;
+        self.mark_cursor = 0;
+        self.walls.clear();
         self.puffs.clear();
         self.rings.clear();
     }
@@ -734,6 +864,7 @@ impl ExplosionEffects {
         self.puffs.clear();
         self.rings.clear();
         self.scorch_decals(dt);
+        self.wall_marks(dt);
         for index in 0..MAX_EXPLOSIONS {
             let mut blast = self.blasts[index];
             if blast.active {
@@ -781,6 +912,67 @@ impl ExplosionEffects {
         self.scorch_count -= expired;
     }
 
+    /// Leave a shell's mark where it struck a hard wall.
+    fn mark(&mut self, strike: Strike, phase: f64) {
+        let steel = strike.material == WallMaterial::Steel;
+        let diameter = (WALL_MARK_SIZE as f32).min(strike.room * 2.0);
+        if diameter < 0.2 {
+            return;
+        }
+        let standoff = WALL_MARK_STANDOFF[usize::from(steel)];
+        self.marks[self.mark_cursor] = WallMark {
+            position: strike.point + strike.normal * standoff,
+            normal: strike.normal,
+            diameter,
+            steel,
+            color: hex_to_linear(strike.color),
+            age: 0.0,
+            phase,
+        };
+        self.mark_cursor = (self.mark_cursor + 1) % MAX_WALL_MARKS;
+        self.mark_count = (self.mark_count + 1).min(MAX_WALL_MARKS);
+    }
+
+    /// Every wall mark, as a decal standing on its face, oldest first; the tint is
+    /// the wall's own color for the crater's broken stone.
+    fn wall_marks(&mut self, dt: f64) {
+        let first = (self.mark_cursor + MAX_WALL_MARKS - self.mark_count) % MAX_WALL_MARKS;
+        let mut expired = 0;
+        for i in 0..self.mark_count {
+            let mark = &mut self.marks[(first + i) % MAX_WALL_MARKS];
+            mark.age += dt.max(0.0);
+            if mark.age >= WALL_MARK_LIFETIME {
+                expired += 1;
+                continue;
+            }
+            let strength = 1.0 - smoothstep(mark.age, WALL_MARK_LIFETIME * 0.6, WALL_MARK_LIFETIME);
+            let appear = smoothstep(mark.age, 0.0, 0.04);
+            let world = Mat4::from_scale_rotation_translation(
+                Vec3::new(mark.diameter, 1.0, mark.diameter),
+                glam::Quat::from_rotation_arc(Vec3::Y, mark.normal),
+                mark.position,
+            );
+            let kind = if mark.steel { STEEL_MARK } else { STONE_MARK };
+            let [r, g, b] = mark.color;
+            self.rings.push(record(
+                world,
+                [r, g, b, 1.0],
+                [
+                    mark.age as f32,
+                    mark.phase as f32,
+                    kind,
+                    (strength * appear) as f32,
+                ],
+            ));
+        }
+        self.mark_count -= expired;
+    }
+
+    /// Wall marks on hard cover, for tests.
+    pub fn wall_mark_count(&self) -> usize {
+        self.mark_count
+    }
+
     fn puff(&mut self, puff: Puff) {
         push_puff(&mut self.puffs, puff);
     }
@@ -814,6 +1006,9 @@ impl ExplosionEffects {
                 self.column(b, t, lifetime, &look, smoke, true);
                 if b.kind == Kind::Tank {
                     self.turret_jet(b, t, smoke, streaks);
+                }
+                if b.kind == Kind::Barrel {
+                    fuel_fire(b, t, lifetime, streaks);
                 }
                 self.fireball(b, t, &look, smoke);
                 let s = b.scale;
@@ -1074,7 +1269,7 @@ impl ExplosionEffects {
             let carry = soot_age * soot_age * 0.5;
             // Fire is dense; the soot it turns into is a veil the blast's
             // aftermath shows through.
-            let veil = 0.7 + 0.28 * fire;
+            let veil = 0.5 + 0.45 * fire;
             self.puff(Puff {
                 position: [
                     b.x + angle.cos() * reach
@@ -1220,6 +1415,7 @@ impl ExplosionEffects {
         }
         let (color, softness, rise) = match struck {
             Struck::Steel => (linear(HIT_SMOKE), 0.2, 1.5),
+            Struck::Sheet => (linear(STEEL_SOOT), 0.3, 1.2),
             Struck::Stone => (mixed(linear(GRIT), b.dust, 0.35), 0.45, 0.8),
         };
         let heat = fire_heat(t, 9.0);
@@ -1237,13 +1433,15 @@ impl ExplosionEffects {
             });
         }
         let stone = struck == Struck::Stone;
+        let wall = struck != Struck::Steel;
         let life = if stone {
             STONE_HIT_LIFETIME
         } else {
             HIT_LIFETIME
         };
-        // A wall throws its grit back toward the gun; a hull's smoke just rolls.
-        let [bx, bz] = if stone { b.direction } else { [0.0; 2] };
+        // A wall blows its grit or soot out of the face it struck, each billow
+        // its own distance and size; a hull's smoke just rolls.
+        let [bx, bz] = if wall { b.direction } else { [0.0; 2] };
         if stone {
             self.grit_fall(b, t, color);
         }
@@ -1253,13 +1451,14 @@ impl ExplosionEffects {
             if age <= 0.0 {
                 continue;
             }
+            let r = hash(b.phase * 1.3 + jf * 0.77);
             let angle = b.phase + jf * TAU / 3.0;
-            let reach = 0.15 + 0.5 * settle(age, 4.0);
-            let blown = 0.9 * settle(age, 5.0) * (1.0 - 0.25 * jf);
-            let size = if stone {
-                0.5 + 1.35 * age.sqrt()
-            } else {
-                0.4 + 0.9 * age.sqrt()
+            let reach = (0.1 + 0.3 * settle(age, 4.0)) * if wall { 0.6 } else { 1.0 };
+            let blown = (0.5 + 0.9 * r) * settle(age, 5.0) * (1.0 - 0.2 * jf);
+            let size = match struck {
+                Struck::Stone => (0.3 + 0.8 * age.sqrt()) * (0.75 + 0.5 * r),
+                Struck::Sheet => (0.25 + 0.55 * age.sqrt()) * (0.8 + 0.4 * r),
+                Struck::Steel => 0.4 + 0.9 * age.sqrt(),
             };
             self.puff(Puff {
                 position: [
@@ -1270,7 +1469,7 @@ impl ExplosionEffects {
                 size,
                 color: scaled(color, 0.9 + jf * 0.07),
                 opacity: (age / 0.05).min(1.0)
-                    * if stone { 0.72 } else { 0.6 }
+                    * if stone { 0.62 } else { 0.55 }
                     * (1.0 - smoothstep(age, 0.25, life)),
                 seed: b.phase * 0.61 + jf * 0.23,
                 heat: 0.0,
@@ -1566,7 +1765,7 @@ mod tests {
             },
             &mut random,
         );
-        effects.update(0.06, &mut streaks);
+        effects.update(0.03, &mut streaks);
         assert_eq!(
             streaks.len(),
             3,
@@ -1822,7 +2021,7 @@ mod tests {
     }
 
     #[test]
-    fn trees_and_drums_destroyed_raise_no_blast() {
+    fn trees_and_drums_destroyed_raise_no_fiery_blast() {
         let mut random = CosmeticRandom::default();
         let mut effects = ExplosionEffects::default();
         for kind in [CoverKind::Tree, CoverKind::Drum] {
@@ -1831,10 +2030,16 @@ mod tests {
             effects.event(&destroy, &mut random);
         }
         effects.event(&SimEvent::at(SimEventType::Hurt, 0.0, 0.0), &mut random);
-        assert_eq!(effects.active(), 0);
+        assert_eq!(effects.active(), 1, "only the felled tree's dust");
+        assert!(
+            effects
+                .blasts
+                .iter()
+                .any(|b| b.active && b.kind == Kind::Landing)
+        );
         let mut timber = SimEvent::at(SimEventType::Destroy, 0.0, 0.0);
         timber.cover_kind = Some(CoverKind::Timber);
         effects.event(&timber, &mut random);
-        assert_eq!(effects.active(), 1);
+        assert_eq!(effects.active(), 2);
     }
 }

@@ -4,7 +4,9 @@
 // band of lifted dust, frayed by noise as it spreads (tint the same dust), kind 2
 // the scorch it leaves behind: a charred burn with a noise-broken edge, soot
 // rays, clumps of thrown dirt (tint the dust) and embers that flicker and cool,
-// faded out by `strength` as it ages.
+// faded out by `strength` as it ages. Kinds 3 and 4 stand on a wall's face where a
+// shell struck it: a chipped crater in stone (tint = the wall's color) and a sooty
+// dent in steel with a hot heart that cools within a second or two.
 fn ring_hash(p: vec2f) -> f32 {
     var q = fract(vec3f(p.x, p.y, p.x) * 0.1031);
     q += dot(q, q.yzx + 33.33);
@@ -57,6 +59,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let mixed_color = mix(dark, pale, crest / max(crest + trough * 0.6, 1e-4));
         (*s).color = mix(mixed_color, vec3f(1.6, 0.75, 0.28), hot * 0.6);
         (*s).opacity = clamp(crest * 0.85 + trough * 0.45, 0.0, 1.0) * fray * strength * inside;
+    } else if kind > 2.5 {
+        wall_mark(s, point, radius, warp, n, seed, age, kind > 3.5, strength * inside);
     } else {
         // Char: a burn darkest at its heart whose edge the noise breaks into
         // lobes and soot rays, ringed by clumps of thrown dirt and embers that
@@ -93,4 +97,54 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         (*s).color = color;
         (*s).opacity = clamp(max(alpha, embers), 0.0, 1.0) * strength * inside * edge;
     }
+}
+
+// A shell's mark on a wall. Stone: a dark pit inside a ring of freshly broken,
+// paler stone, cracks running out of it and a faint scorch. Steel: a punched dent,
+// a ring of scraped bare metal and a halo of soot, its heart glowing as it cools.
+fn wall_mark(
+    s: ptr<function, Surface>,
+    point: vec2f,
+    radius: f32,
+    warp: vec2f,
+    n: f32,
+    seed: vec2f,
+    age: f32,
+    steel: bool,
+    strength: f32,
+) {
+    let fine = ring_noise(point * 11.0 - seed * 1.3);
+    let r = length(point + warp * 0.3) + (fine - 0.5) * 0.1 + (n - 0.5) * 0.12;
+    let edge = 1.0 - smoothstep(0.62, 0.92, r);
+    if steel {
+        // Streaks of soot thrown out from the hole, a scraped ring of bare steel
+        // round the dent, and the hole itself, glowing as it cools.
+        let around = point / max(radius, 1e-4);
+        let streaks = ring_noise(around * 3.5 + seed) * 0.6 + ring_noise(around * 7.0 - seed) * 0.4;
+        let hole = 1.0 - smoothstep(0.06, 0.14, r);
+        let bare = smoothstep(0.08, 0.16, r) * (1.0 - smoothstep(0.26, 0.4, r + (fine - 0.5) * 0.1));
+        let soot = (1.0 - smoothstep(0.15, 0.55 + 0.35 * streaks, r)) * (0.45 + 0.55 * n);
+        let hot = exp(-age / 0.55) * (1.0 - smoothstep(0.0, 0.3, r));
+        var color = mix(vec3f(0.03, 0.026, 0.022), vec3f(0.62, 0.62, 0.64) * (0.8 + 0.3 * fine), bare / max(bare + soot * 0.5, 1e-4));
+        color = mix(color, vec3f(0.005), hole);
+        color += mix(vec3f(1.4, 0.18, 0.03), vec3f(4.0, 1.7, 0.4), hot) * hot;
+        let alpha = max(max(soot * 0.9, bare * 0.95), max(hole, hot));
+        (*s).color = color;
+        (*s).opacity = clamp(alpha, 0.0, 1.0) * edge * strength;
+        return;
+    }
+    let skin = (*s).color;
+    let pit = 1.0 - smoothstep(0.1, 0.3, r);
+    let chipped = smoothstep(0.08, 0.26, r) * (1.0 - smoothstep(0.36, 0.56, r)) * (0.6 + 0.5 * fine);
+    // Ridged noise draws thin cracks running out from the pit.
+    let ridge = 1.0 - abs(ring_noise((point + warp * 0.4) * 4.2 + seed) * 2.0 - 1.0);
+    let cracks = smoothstep(0.9, 0.975, ridge) * (1.0 - smoothstep(0.3, 0.85, r));
+    let scorch = (1.0 - smoothstep(0.15, 0.75, r)) * 0.3 * exp(-age / 20.0);
+    let broken = min(skin * 1.3 + vec3f(0.06), vec3f(1.0));
+    var color = mix(skin * 0.3, broken, chipped / max(chipped + scorch, 1e-4));
+    color = mix(color, skin * 0.16, pit);
+    color = mix(color, skin * 0.22, cracks);
+    let alpha = max(max(pit * 0.92, chipped * 0.85), max(cracks * 0.8, scorch));
+    (*s).color = color;
+    (*s).opacity = clamp(alpha, 0.0, 1.0) * edge * strength;
 }
