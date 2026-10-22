@@ -79,14 +79,14 @@ fn tank_dimensions_match_typescript() {
 fn vehicle_model_counts() {
     // (kind, team, meshes, vertices, triangles, hull, turret, barrel, track-group children)
     let expected = [
-        (VehicleKind::Scout, 0, 194, 25350, 8450, 148, 12, 6, 28),
-        (VehicleKind::Scout, 1, 194, 25602, 8534, 148, 12, 6, 28),
-        (VehicleKind::Balanced, 0, 221, 26706, 8902, 168, 12, 7, 34),
-        (VehicleKind::Balanced, 1, 221, 26910, 8970, 168, 12, 7, 34),
-        (VehicleKind::Heavy, 0, 210, 27654, 9218, 157, 12, 7, 34),
-        (VehicleKind::Heavy, 1, 210, 27774, 9258, 157, 12, 7, 34),
-        (VehicleKind::Humvee, 0, 31, 32712, 10904, 12, 6, 4, 4),
-        (VehicleKind::Humvee, 1, 31, 32712, 10904, 12, 6, 4, 4),
+        (VehicleKind::Scout, 0, 195, 25668, 8582, 148, 12, 6, 28),
+        (VehicleKind::Scout, 1, 195, 25920, 8666, 148, 12, 6, 28),
+        (VehicleKind::Balanced, 0, 222, 27540, 9206, 168, 12, 7, 34),
+        (VehicleKind::Balanced, 1, 222, 27744, 9274, 168, 12, 7, 34),
+        (VehicleKind::Heavy, 0, 213, 28464, 9514, 159, 12, 7, 34),
+        (VehicleKind::Heavy, 1, 213, 28584, 9554, 159, 12, 7, 34),
+        (VehicleKind::Humvee, 0, 31, 32736, 10938, 11, 6, 4, 4),
+        (VehicleKind::Humvee, 1, 31, 32736, 10938, 11, 6, 4, 4),
     ];
     for (kind, team, meshes, vertices, triangles, hull, turret, barrel, tracks) in expected {
         let model = tank_model(kind, Team::from_index(team));
@@ -106,10 +106,10 @@ fn vehicle_model_counts() {
         assert!(model.find(part::MUZZLE).is_some());
     }
     let open = [
-        (VehicleKind::Scout, (197, 25864, 8668)),
-        (VehicleKind::Balanced, (224, 27220, 9120)),
-        (VehicleKind::Heavy, (213, 28168, 9436)),
-        (VehicleKind::Humvee, (31, 32712, 10904)),
+        (VehicleKind::Scout, (198, 26182, 8800)),
+        (VehicleKind::Balanced, (225, 28054, 9424)),
+        (VehicleKind::Heavy, (216, 28978, 9732)),
+        (VehicleKind::Humvee, (31, 32736, 10938)),
     ];
     for (kind, expected) in open {
         let model = tank_model_variant(kind, Team::Blue, true);
@@ -216,31 +216,31 @@ fn wreck_batches_match_golden() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (3042, 0xe34dd7aa, 3255.2710, 0x4cf43c85, 0x0b62cc1f),
-            (3180, 0x459220d1, 1129.7989, 0xbb2cfc01, 0x14164759),
-            (684, 0x68ef1928, 477.9712, 0xd89b25ac, 0x7b4617f0),
-            (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0x18233382),
+            (3222, 0xc8f398ce, 3080.3525, 0xf1478605, 0x0432274a),
+            (3180, 0x459220d1, 1129.7989, 0xbb2cfc01, 0x1fabd576),
+            (684, 0x5b2abbb4, 276.3541, 0xdcd10f88, 0x18b62874),
+            (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0x9e97af5e),
             (288, 0xd47a0c0d, -11.9209, 0x94d4f49d, 0xabe5a09e),
-            (10416, 0xc1d435a8, -1430.3675, 0x20db8229, 0x21caabf1),
+            (10776, 0x2e5972ab, -3491.3047, 0xb94314ed, 0x54cbc652),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0xb8974cd3),
+            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0xe2a4151d),
             (468, 0x74e31910, -19.0127, 0x96734335, 0x3079eafc),
             (936, 0xb40fca71, -27.4347, 0xe9946e96, 0xbc244bd7),
-            (348, 0x4b30ac35, -7.1422, 0xa2ea73b1, 0x643434a7),
+            (348, 0x4b30ac35, -7.1422, 0xa2ea73b1, 0x1593f5ea),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (6774, 0x67ba5486, 4621.5357, 0x8a5142e8, 0x184791d3),
-            (5052, 0x0ae75746, 302.0712, 0x40f48be4, 0xbe78b71f),
-            (2136, 0x8ebb0f70, 3214.4811, 0x68c98d4f, 0x975788c3),
-            (468, 0xc039e97b, -37.2676, 0x6ee76939, 0x7310fa1f),
-            (10212, 0x2dc17da1, -1833.7917, 0x8c076401, 0x5ae99140),
+            (6942, 0x3d768548, 4732.9945, 0xfa77a3c4, 0xfd3e0901),
+            (5496, 0xbff5b201, 257.8100, 0xeb60b42b, 0x89fdfa8e),
+            (2124, 0x86669a01, 3107.7462, 0x33971d44, 0xdb8e99ad),
+            (468, 0xc039e97b, -37.2676, 0x6ee76939, 0x8e5c3fb4),
+            (9936, 0xd2e8448c, -3891.0023, 0x1acef73d, 0x18d984cd),
             (384, 0x102d4537, 3.9914, 0x7f59b8e5, 0xb162036b),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
-            (480, 0x83d3ce01, -1.2731, 0x11ddcd3c, 0x31ce1096),
-            (816, 0xf888a217, 685.1319, 0x74fbcac3, 0x2c56e18d),
-            (300, 0xf2a6e7f7, -4.8805, 0xadcf84c5, 0xd1e1721c),
+            (480, 0x83d3ce01, -1.2731, 0x11ddcd3c, 0xe5c8a51e),
+            (936, 0x42d872bf, 290.0387, 0xf6fa33ae, 0xb9eee0c3),
+            (300, 0x32eb4057, -4.8805, 0x5fe93231, 0xba882798),
         ]),
     ];
     for (kind, team, wreck_part, batches) in expected {

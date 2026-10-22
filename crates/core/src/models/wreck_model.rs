@@ -16,7 +16,9 @@ use glam::{DMat4, DQuat, DVec3};
 use super::batching::batch;
 use super::model_primitives::Cache;
 use super::tank_model::{WreckPose, tank_model_variant, wreck_pose};
-use super::tank_surfaces::{is_camouflaged, is_signal_panel, scorched_paint_material, unpaint};
+use super::tank_surfaces::{
+    is_camouflaged, is_signal_panel, scorched_paint_material, sooted_glass, unpaint,
+};
 use super::{Team, VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::geometry::math::{compose, decompose, hex_to_linear};
@@ -80,6 +82,16 @@ fn build_wreck(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Node {
     }
     let mut flat = Node::group("wreck");
     collect_meshes(&result, DMat4::IDENTITY, &mut flat.children);
+    // Soot dulls the windows: glass batches with the rest as plain paint.
+    for drawable in flat
+        .children
+        .iter_mut()
+        .filter_map(|child| child.drawable.as_mut())
+    {
+        if let Some(glass) = sooted_glass(&drawable.material) {
+            drawable.material = glass;
+        }
+    }
     // Cloth recognition panels burn away with the vehicle.
     flat.children.retain(|child| {
         child
