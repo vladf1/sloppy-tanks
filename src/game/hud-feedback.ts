@@ -292,6 +292,33 @@ export function hullTone(ratio: number): HullTone {
   return ratio <= 0.3 ? "critical" : ratio <= 0.6 ? "damaged" : "healthy";
 }
 
+/** The tank panel's hull colour along its ramp: green while the hull is sound, through
+ * amber and orange to red as it drains, so every hit visibly moves the colour toward
+ * danger rather than holding one tone between thresholds. Stops are hull shares. */
+const HULL_RAMP: readonly [number, readonly [number, number, number]][] = [
+  [0.25, [0xff, 0x4d, 0x5e]],
+  [0.4, [0xff, 0x86, 0x36]],
+  [0.55, [0xf5, 0xc8, 0x3c]],
+  [0.7, [0x5f, 0xe3, 0x9a]],
+];
+
+export function hullColor(ratio: number): string {
+  const share = Math.min(1, Math.max(0, ratio));
+  let upper = HULL_RAMP.findIndex(([stop]) => share <= stop);
+  if (upper === -1) {
+    upper = HULL_RAMP.length - 1;
+  }
+  const [stopHigh, high] = HULL_RAMP[upper];
+  const [stopLow, low] = HULL_RAMP[Math.max(0, upper - 1)];
+  const t =
+    stopHigh === stopLow ? 1 : Math.min(1, Math.max(0, (share - stopLow) / (stopHigh - stopLow)));
+  const channel = (index: number) =>
+    Math.round(low[index] + (high[index] - low[index]) * t)
+      .toString(16)
+      .padStart(2, "0");
+  return `#${channel(0)}${channel(1)}${channel(2)}`;
+}
+
 /** One timed power-up or protection, as the tank panel's chips show it. */
 export interface ActiveEffect {
   kind: "spawn" | "shield" | "rapid" | "boost" | "laser" | "repair";
@@ -465,6 +492,11 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
     }
   }
   setText(root, "hull-pill-hp", String(Math.max(0, Math.ceil(tank.hp))));
+  // Every hull readout under `root` takes the ramp's colour from one property.
+  const ramp = hullColor(tank.healthRatio);
+  if (root instanceof HTMLElement && root.style.getPropertyValue("--hull-ramp") !== ramp) {
+    root.style.setProperty("--hull-ramp", ramp);
+  }
   root.querySelector<HTMLElement>(".hull-readout")?.setAttribute("data-tone", tone);
   AMMO_OPTIONS.forEach(({ weapon, label: name }, index) => {
     const slotState = tank.ammo.find((slot) => slot.weapon === weapon);

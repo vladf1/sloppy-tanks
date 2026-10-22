@@ -40,17 +40,12 @@ pub const FLAG_CLOTH: EffectDefinition = effect(
     include_str!("shaders/flag_cloth.wgsl"),
 );
 
-/// A restocking supply drop's refill ticks, sprayed in one by one.
-pub const PICKUP_REFILL: EffectDefinition = effect(
-    models::PICKUP_REFILL_EFFECT,
-    include_str!("shaders/pickup_refill.wgsl"),
-);
-
-/// Every pickup kind of a shape from one mesh: the instance picks the atlas tile.
+/// Every pickup kind of a shape from one mesh: the instance picks the atlas tile,
+/// shows its pallet whole or crushed and weathers it a little differently.
 pub const PICKUP_FACE: EffectDefinition = effect(
     sloppy_core::models::PICKUP_FACE_EFFECT,
     include_str!("shaders/pickup_face.wgsl"),
 );
 
 /// Effects presentation registers before building its models.
-pub const PRESENTATION_EFFECTS: [EffectDefinition; 3] = [FLAG_CLOTH, PICKUP_REFILL, PICKUP_FACE];
+pub const PRESENTATION_EFFECTS: [EffectDefinition; 2] = [FLAG_CLOTH, PICKUP_FACE];

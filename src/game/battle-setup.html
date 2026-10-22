@@ -341,15 +341,17 @@
           <div class="segmented">
             <label class="segment"
               ><input type="radio" name="difficulty" value="easy" /><span
-                ><b>Easy</b><small>Gentler bots · you take 10% less damage</small></span
+                ><b>Easy</b
+                ><small>Slower, less accurate bots · you take 10% less damage</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="normal" checked /><span
-                ><b>Normal</b><small>Full-skill bots · even damage</small></span
+                ><b>Normal</b><small>Bots aim well and react fast · the intended fight</small></span
               ></label
             ><label class="segment"
               ><input type="radio" name="difficulty" value="hard" /><span
-                ><b>Hard</b><small>Sharper bots · you take 15% more damage</small></span
+                ><b>Hard</b
+                ><small>Sharp, fast-reloading bots · you take 15% more damage</small></span
               ></label
             >
           </div>
@@ -485,14 +487,14 @@
               </svg>
               <b class="when-loading">Scanning for open rooms…</b>
               <b class="when-ready">No open rooms right now</b>
-              <b class="when-error">Rooms are offline</b>
+              <b class="when-error">Can't reach the game server</b>
               <small class="when-ready">Be the first: create a room and invite friends.</small>
-              <small class="when-error"
-                >Rooms appear when the server is back. The bots are ready now.</small
+              <small class="when-error" id="rooms-retry-line">Trying again shortly</small>
+              <span class="offline-actions when-error"
+                ><button class="offline-action" type="button" data-open-play="single">
+                  BATTLE THE BOTS</button
+                ><button class="chip-button retry-now" type="button">RETRY NOW</button></span
               >
-              <button class="offline-action when-error" type="button" data-open-play="single">
-                BATTLE THE BOTS
-              </button>
             </div>
           </div>
         </div>

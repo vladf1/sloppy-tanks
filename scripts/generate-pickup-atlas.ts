@@ -11,30 +11,36 @@ import {
   PICKUP_ATLAS_TILES,
   PICKUP_BRASS_CELL,
   PICKUP_ICON_SIZE,
-  PICKUP_PAINT_CELL,
+  PICKUP_MARKINGS,
   PICKUP_PAINTS,
   PICKUP_PALLET_CELL,
   PICKUP_SURFACES,
   PICKUP_SWATCH_CELL,
-  PICKUP_TARP_CELL,
 } from "./asset-data";
 import { fbm, lattice, smooth } from "./texture-noise";
 
-// Paint the pickups as military supply. Each kind's tile is the surface its supply
-// shows (weathered pine, olive drab, black fibre, rolled armour steel, pressed jerry
-// can steel, a white ribbed case, a tan transit case), with a band of the kind's
-// paint across the top and the source pictogram sprayed large below it through a
-// cut stencil: its bridges leave gaps across the strokes, overspray mists and
-// speckles round them, and the paint has chipped. A dark painted plate carries it
-// where the surface is too busy. Wear gathers where hands, straps and the ground
-// touch: chipped paint and grime along the edges, worn band ends, dust settled low
-// on every face. The fourth column holds the pallet's sun-greyed planks, the spray
-// paint marking the ground (white, its strokes, gaps and overspray in alpha,
-// seamless across the cell so it bends once round a drop) and swatches of gunmetal,
-// rubber, webbing and bright steel; below the block, cartridge brass and the dark
-// canvas tarp a drop is laid on. Edge pixels are extruded into every gutter so
-// filtering and mipmaps never sample a neighbour. Encoded lossy: the surfaces are
-// noise, which lossless packs badly.
+// Paint the pickups as military supply. Each kind's tile has three bands, top to
+// bottom (`TILE_ROWS`, the regions `pickup_visuals.rs` maps): the side strip, the
+// surface its body shows (weathered pine, olive drab, black fibre, rolled armour
+// steel, ribbed gunmetal) with a band of the kind's paint near the top and grime
+// where it meets the pallet; a strip of the kind's plain paint for lids' edges, caps
+// and tarps; and the lid, one big block of the kind's paint with one big emblem
+// stencilled across its middle and its lot marking over and under it, so the colour
+// and the emblem carry from the gameplay camera and the markings read as stores, not
+// icons. The emblems are drawn here as plain stencil cuts (cartridges, a rocket, a
+// ricochet's bounce, a fin-stabilised dart, a calibre, a shield, a spanner, a field
+// radio); only the jerry can keeps its icon's bolt. The paint is worn enamel,
+// never toy-bright:
+// mottled, chipped back to the surface under it along the edges and where it is
+// knocked, scratched, the grain of a wooden lid reading through, dust drifted over
+// it and grime gathered at its rim. The stencil is sprayed through a cut card in
+// stencil cream on dark paint and black on light paint: its bridges leave gaps
+// across the strokes, overspray mists and speckles round them, and it has chipped
+// with the paint. The repair chest's stencil is a spanner (no protected emblem).
+// The fourth column holds the pallet's pine planks and swatches of gunmetal,
+// rubber, webbing and bright steel; below the block, cartridge brass. Edge pixels
+// are extruded into every gutter so filtering and mipmaps never sample a neighbour.
+// Encoded lossy: the surfaces are noise, which lossless packs badly.
 
 type Rgb = readonly [number, number, number];
 type Context = ReturnType<Canvas["getContext"]>;
@@ -51,14 +57,35 @@ const SYMBOL_DISTANCE = 140;
 /** Saturation above which a symbol pixel is a coloured accent, cut out of the
  * stencil as one of its bridges. */
 const ACCENT_SATURATION = 0.4;
-/** Layout of a tile in pixels (the engine's `pickup_visuals.rs` maps the same
- * regions): the plain strip and corner plates along the top, the band's rows, the
- * plate and the stencil's centre and largest extent below them. */
-const CORNER = 26;
-const BAND = [26, 62] as const;
-const PLATE = { left: 30, top: 98, right: 226, bottom: 240, radius: 12 } as const;
-const SYMBOL_CENTER = [128, 168] as const;
-const SYMBOL_MAX = [150, 128] as const;
+/** Rows of a tile (the engine's `pickup_visuals.rs` regions): the side strip, the
+ * plain paint strip and the lid; the band's rows in the side strip; the rows at the
+ * strip's foot grimed where a side meets the pallet; the stencil's centre and
+ * largest extent on the lid. */
+const TILE_ROWS = { side: [0, 64], paint: [64, 96], lid: [96, 256] } as const;
+const BAND = [10, 23] as const;
+const FOOT = 10;
+const SYMBOL_CENTER = [128, 172] as const;
+const SYMBOL_MAX = [150, 96] as const;
+/** The lot marking: its two lines' baselines, over and under the emblem, centred
+ * across the lid, and its letter height. */
+const MARKING_LINES = [118, 247] as const;
+const MARKING_SIZE = 19;
+/** Board height of a pine surface (pixels): two boards to a side strip, five to a
+ * lid. */
+const BOARD = 32;
+const CORNER = 24;
+/** Paint lighter than this (relative luminance) takes a black stencil. */
+const LIGHT_PAINT = 0.47;
+/** How the lid's paint has worn: how much has chipped away across it and along its
+ * edges, how far in from an edge the wear reaches, and how strongly the surface's
+ * relief reads through. */
+const PAINT_CHIPS = 0.06;
+const EDGE_CHIPS = 0.26;
+const EDGE_WEAR = 20;
+const PAINT_RELIEF = 0.55;
+/** How far the enamel is greyed from the kind's paint: worn, not toy-bright, yet
+ * still its hue from the gameplay camera. */
+const ENAMEL_GREYING = 0.18;
 /** How far the stencil's strokes are spread, so thin lines carry from above. */
 const STROKE_SPREAD = 4;
 /** The stencil card's bridges: where they cross the symbol (share of its width)
@@ -72,25 +99,25 @@ const OVERSPRAY_MIST = 0.22;
 const OVERSPRAY_SPECKS = 0.22;
 /** How much of the stencil's paint has chipped away. */
 const STENCIL_CHIPS = 0.05;
-/** How far in from a face's edge its paint chips and grime gathers. */
-const EDGE_WEAR = 22;
 /** How deep into a face its paint chips. */
 const CHIP_DEPTH = 12;
 const PINE: Rgb = [164, 124, 80];
-const PALLET_PINE: Rgb = [170, 152, 126];
+const PALLET_PINE: Rgb = [176, 134, 88];
 const OLIVE: Rgb = [100, 108, 66];
-const CAN_OLIVE: Rgb = [92, 102, 62];
-const CASE_WHITE: Rgb = [214, 214, 204];
+const CAN_BLACK: Rgb = [50, 54, 46];
+const GUNMETAL_PAINT: Rgb = [72, 76, 74];
 const FIBRE: Rgb = [52, 44, 36];
 const ARMOUR: Rgb = [116, 120, 122];
-const TAN: Rgb = [156, 138, 100];
 const STEEL: Rgb = [70, 74, 78];
-const PLATE_PAINT: Rgb = [38, 40, 34];
-/** Stencil black, for a kind whose paint is too light for its surface. */
+/** Stencil cream, as stores are marked, and black for the light tan case. */
+const STENCIL_CREAM: Rgb = [222, 212, 178];
 const STENCIL_BLACK: Rgb = [34, 36, 32];
-/** Dust settled on the supply, and the tarp's canvas. */
+/** Dust settled on the supply and the sheet a drop is laid on, grime, and the
+ * fresh wood of a snapped board. */
 const DUST: Rgb = [148, 132, 106];
-const CANVAS: Rgb = [54, 58, 44];
+const GRIME: Rgb = [62, 56, 44];
+/** Rust weeping from seams and chips. */
+const RUST: Rgb = [112, 66, 38];
 const ENCODE_QUALITY = "88";
 
 const hex = (color: number): Rgb => [(color >> 16) & 255, (color >> 8) & 255, color & 255];
@@ -150,24 +177,25 @@ function paint(seed: number, base: Rgb, mottling = 0.18) {
     const chip = fbm(chips, x * 0.21, y * 0.21, 0, 3);
     // Chips: dark steel inside, a bright worn rim of paint round each one; along the
     // edges, with the odd scuff on the face.
-    if (chip > 0.8 - 0.22 * rim) return scale(STEEL, 0.75 + 0.3 * k);
-    if (chip > 0.77 - 0.22 * rim) return scale(base, 1.3 * k);
-    const grime = edge * 0.22 + 0.06 * fbm(dust, x * 0.02, y * 0.02, 0, 3);
-    return blend(scale(base, k), [112, 104, 88], grime);
+    if (chip > 0.77 - 0.26 * rim) return scale(STEEL, 0.75 + 0.3 * k);
+    if (chip > 0.73 - 0.26 * rim) return scale(base, 1.32 * k);
+    const grime = edge * 0.38 + 0.1 * fbm(dust, x * 0.02, y * 0.02, 0, 3);
+    return blend(scale(base, k), [78, 72, 58], grime);
   };
 }
 
-/** Paint pressed into horizontal ribs below the band: a lit upper lip and a
- * shadowed lower one every `pitch` pixels. */
+/** Paint pressed into horizontal ribs down the side strip, below the band: a lit
+ * upper lip and a shadowed lower one every `pitch` pixels. */
 function ribbed(seed: number, base: Rgb) {
   const surface = paint(seed, base);
-  const pitch = 38;
+  const pitch = 13;
+  const [from, to] = [BAND[1] + 5, TILE_ROWS.side[1] - 4];
   return (x: number, y: number): Rgb => {
     const color = surface(x, y);
-    if (y < BAND[1] + 8 || y > SIZE - 8) return color;
-    const at = (y - BAND[1] - 8) % pitch;
-    if (at < 3) return scale(color, 1.28);
-    if (at < 6) return scale(color, 0.64);
+    if (y < from || y > to) return color;
+    const at = (y - from) % pitch;
+    if (at < 2) return scale(color, 1.25);
+    if (at < 4) return scale(color, 0.68);
     return color;
   };
 }
@@ -203,59 +231,93 @@ function armour(seed: number) {
   };
 }
 
-/** The jerry can's pressed X and border, lit from the top left. */
-function embossed(seed: number) {
-  const surface = paint(seed, OLIVE);
-  const inset = 0.1 * SIZE;
-  const span = SIZE - 2 * inset;
-  return (x: number, y: number): Rgb => {
-    const color = surface(x, y);
-    const u = (x - inset) / span;
-    const v = (y - inset) / span;
-    if (u < 0 || v < 0 || u > 1 || v > 1) return color;
-    // Signed distances to the two diagonals and to the border, in pixels.
-    const d1 = ((u - v) * span) / Math.SQRT2;
-    const d2 = ((u + v - 1) * span) / Math.SQRT2;
-    const border = Math.min(u, v, 1 - u, 1 - v) * span;
-    for (const d of [d1, d2]) {
-      if (Math.abs(d) < 7) return scale(color, d < 0 ? 1.28 : 0.7);
-    }
-    if (border < 5) return scale(color, border < 2.5 ? 1.25 : 0.72);
-    return color;
-  };
-}
-
-function surfaceOf(surface: Surface, seed: number): (x: number, y: number) => Rgb {
+function surfaceOf(surface: Surface, seed: number, tint: Rgb): (x: number, y: number) => Rgb {
   switch (surface) {
     case "planks":
-      return planks(seed, PINE, 5);
+      return planks(seed, PINE, SIZE / BOARD);
     case "olive":
       return paint(seed, OLIVE);
     case "can":
-      return ribbed(seed, CAN_OLIVE);
+      return ribbed(seed, CAN_BLACK);
     case "fibre":
       return fibre(seed);
     case "steel":
       return armour(seed);
     case "jerry":
-      return embossed(seed);
-    case "white":
-      return ribbed(seed, CASE_WHITE);
-    case "tan":
-      return ribbed(seed, TAN);
+      return paint(seed, scale(tint, 0.9));
+    case "chest":
+      return ribbed(seed, GUNMETAL_PAINT);
+    case "case":
+      return ribbed(seed, OLIVE);
   }
 }
 
-/** The plate a stencil is sprayed on, where the surface itself is too busy to carry
- * the kind's paint from above. */
-function plateOf(surface: Surface): Rgb | null {
-  return surface === "planks" ? PLATE_PAINT : null;
+const luminance = ([r, g, b]: Rgb) => (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+
+/** The stencil's paint: black on light paint, cream on dark. */
+function stencilPaint(kind: PickupKind): Rgb {
+  return luminance(hex(PICKUP_PAINTS[kind])) > LIGHT_PAINT ? STENCIL_BLACK : STENCIL_CREAM;
 }
 
-/** The stencil's paint: the kind's, or black where that is too light to read on
- * the surface. */
-function stencilPaint(kind: PickupKind, surface: Surface): Rgb {
-  return surface === "tan" ? STENCIL_BLACK : hex(PICKUP_PAINTS[kind]);
+/** Distance (pixels) from `x, y` to the nearest edge of the tile's band `rows`. */
+const rowsEdge = (x: number, y: number, [top, bottom]: readonly [number, number]) =>
+  Math.min(x, SIZE - x, y - top, bottom - y);
+
+/** Worn enamel in `color` over the rows `rows` of `c`, on whatever surface is there:
+ * mottled and faded unevenly, the surface's relief (a lid's boards and grain, a
+ * jerry can's pressing) reading through, chipped back to the surface where it is
+ * knocked and more along the edges, scratched, and grimed toward the rim. */
+function paintLayer(
+  c: Context,
+  rows: readonly [number, number],
+  color: Rgb,
+  seed: number,
+  wear = 1,
+) {
+  const image = c.getImageData(0, 0, SIZE, SIZE);
+  const mottle = lattice(seed);
+  const chips = lattice(seed + 3);
+  const scratches = lattice(seed + 5);
+  const grime = lattice(seed + 7);
+  // The surface's mean value across the rows, so its relief is measured from it.
+  let total = 0;
+  let count = 0;
+  for (let y = rows[0]; y < rows[1]; y += 4) {
+    for (let x = 0; x < SIZE; x += 4) {
+      const i = (y * SIZE + x) * 4;
+      total += luminance([image.data[i], image.data[i + 1], image.data[i + 2]]);
+      count++;
+    }
+  }
+  const level = Math.max(0.04, total / count);
+  const grey = luminance(color) * 255;
+  const enamel = blend(color, [grey, grey, grey], ENAMEL_GREYING);
+  for (let y = rows[0]; y < rows[1]; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      const i = (y * SIZE + x) * 4;
+      const under: Rgb = [image.data[i], image.data[i + 1], image.data[i + 2]];
+      const near = rowsEdge(x + 0.5, y + 0.5, rows);
+      const edge = 1 - smooth(1, EDGE_WEAR, near);
+      // Chips: the surface showing through, ringed by a lighter worn lip, many
+      // along the edges and the odd knock across the face.
+      const chip = fbm(chips, x * 0.14, y * 0.14, 0, 3) + EDGE_CHIPS * edge * edge;
+      const bare = smooth(0.78 - PAINT_CHIPS * wear, 0.8 - PAINT_CHIPS * wear, chip);
+      const lip = smooth(0.74 - PAINT_CHIPS * wear, 0.77 - PAINT_CHIPS * wear, chip) - bare;
+      const relief = Math.min(1.15, Math.max(0.5, luminance(under) / level)) ** PAINT_RELIEF;
+      const fade = 0.86 + 0.2 * fbm(mottle, x * 0.025, y * 0.025, 0, 4);
+      let painted = scale(enamel, relief * fade * (1 + 0.18 * lip));
+      // Fine scratches along the lid, catching light.
+      if (fbm(scratches, x * 0.02, y * 0.6, 0, 2) > 0.74) painted = scale(painted, 1.12);
+      // Grime toward the rim and in drifts, dark and warm.
+      const dirt = 0.42 * edge + 0.22 * smooth(0.5, 0.85, fbm(grime, x * 0.03, y * 0.03, 0, 3));
+      painted = blend(painted, GRIME, dirt);
+      image.data.set(
+        blend(painted, scale(under, 0.85), bare).map((v) => Math.round(v)),
+        i,
+      );
+    }
+  }
+  c.putImageData(image, 0, 0);
 }
 
 function fill(c: Context, surface: (x: number, y: number) => Rgb) {
@@ -269,9 +331,220 @@ function fill(c: Context, surface: (x: number, y: number) => Rgb) {
   c.putImageData(image, 0, 0);
 }
 
+/** A stencil's shape on transparency in its ink, and the bounds of its strokes. */
+interface Stencil {
+  stencil: Canvas;
+  bounds: { x: number; y: number; width: number; height: number };
+}
+
+/** The bounds of the opaque strokes on `canvas`. */
+function strokeBounds(canvas: Canvas) {
+  const pixels = canvas.getContext("2d").getImageData(0, 0, SIZE, SIZE).data;
+  let [minX, minY, maxX, maxY] = [SIZE, SIZE, 0, 0];
+  for (let y = 0; y < SIZE; y++) {
+    for (let x = 0; x < SIZE; x++) {
+      if (pixels[(y * SIZE + x) * 4 + 3] > 128) {
+        minX = Math.min(minX, x);
+        minY = Math.min(minY, y);
+        maxX = Math.max(maxX, x);
+        maxY = Math.max(maxY, y);
+      }
+    }
+  }
+  return { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 };
+}
+
+/** The repair chest's stencil: a double open-ended spanner lying across the lid, a
+ * plain tool mark in place of a protected emblem. */
+function spannerStencil(ink: Rgb): Stencil {
+  const stencil = createCanvas(SIZE, SIZE);
+  const c = stencil.getContext("2d");
+  c.translate(SIZE / 2, SIZE / 2);
+  c.rotate(-Math.PI / 5);
+  c.fillStyle = css(ink);
+  const length = 150;
+  const shank = 22;
+  c.fillRect(-length / 2, -shank / 2, length, shank);
+  for (const end of [-1, 1]) {
+    c.beginPath();
+    c.arc((end * length) / 2, 0, 34, 0, Math.PI * 2);
+    c.fill();
+  }
+  // The jaws: a slot cut into each head, opening outward and a little askew.
+  c.globalCompositeOperation = "destination-out";
+  for (const end of [-1, 1]) {
+    c.save();
+    c.translate((end * length) / 2, 0);
+    c.rotate(end * 0.35);
+    c.fillRect(end > 0 ? 6 : -60, -12, 54, 24);
+    c.beginPath();
+    c.arc(end * 6, 0, 12, 0, Math.PI * 2);
+    c.fill();
+    c.restore();
+  }
+  return { stencil, bounds: strokeBounds(stencil) };
+}
+
+/** A stencil cut by `draw` in `ink` on a fresh canvas, and its bounds. */
+function cutStencil(ink: Rgb, draw: (c: Context) => void): Stencil {
+  const stencil = createCanvas(SIZE, SIZE);
+  const c = stencil.getContext("2d");
+  c.fillStyle = css(ink);
+  c.strokeStyle = css(ink);
+  draw(c);
+  return { stencil, bounds: strokeBounds(stencil) };
+}
+
+/** Punch `draw`'s shapes out of a stencil being cut. */
+function punch(c: Context, draw: () => void) {
+  c.save();
+  c.globalCompositeOperation = "destination-out";
+  draw();
+  c.restore();
+}
+
+/** The kind's emblem: plain shapes a stores depot would cut into a card, bold
+ * enough to read from above. */
+function emblemStencil(kind: PickupKind, ink: Rgb, image: Image): Stencil {
+  switch (kind) {
+    case "spread":
+      // Three shotgun cartridges fanned out from their rims.
+      return cutStencil(ink, (c) => {
+        for (const angle of [-0.36, 0, 0.36]) {
+          c.save();
+          c.translate(128, 214);
+          c.rotate(angle);
+          c.fillRect(-17, -14, 34, 14);
+          c.fillRect(-14, -96, 28, 78);
+          c.beginPath();
+          c.moveTo(-14, -102);
+          c.lineTo(14, -102);
+          c.lineTo(14, -124);
+          c.lineTo(0, -138);
+          c.lineTo(-14, -124);
+          c.closePath();
+          c.fill();
+          c.restore();
+        }
+      });
+    case "rocket":
+      // A finned rocket in flight, nose to the right.
+      return cutStencil(ink, (c) => {
+        c.fillRect(48, 112, 132, 32);
+        c.beginPath();
+        c.moveTo(180, 110);
+        c.quadraticCurveTo(214, 112, 236, 128);
+        c.quadraticCurveTo(214, 144, 180, 146);
+        c.closePath();
+        c.fill();
+        for (const side of [-1, 1]) {
+          c.beginPath();
+          c.moveTo(92, 128 + side * 16);
+          c.lineTo(40, 128 + side * 58);
+          c.lineTo(22, 128 + side * 58);
+          c.lineTo(48, 128 + side * 16);
+          c.closePath();
+          c.fill();
+        }
+        c.fillRect(26, 118, 18, 20);
+      });
+    case "ricochet":
+      // A shell's track glancing off a plate: a bold bent arrow over a bar.
+      return cutStencil(ink, (c) => {
+        c.lineWidth = 20;
+        c.lineJoin = "miter";
+        c.beginPath();
+        c.moveTo(26, 52);
+        c.lineTo(104, 168);
+        c.lineTo(178, 74);
+        c.stroke();
+        const [dx, dy] = [178 - 104, 74 - 168];
+        const length = Math.hypot(dx, dy);
+        const [ux, uy] = [dx / length, dy / length];
+        const tip: [number, number] = [178 + ux * 44, 74 + uy * 44];
+        c.beginPath();
+        c.moveTo(...tip);
+        c.lineTo(178 - uy * 30, 74 + ux * 30);
+        c.lineTo(178 + uy * 30, 74 - ux * 30);
+        c.closePath();
+        c.fill();
+        c.fillRect(56, 190, 104, 16);
+      });
+    case "piercing":
+      // A fin-stabilised dart: a long rod, its point and its tail fins.
+      return cutStencil(ink, (c) => {
+        c.fillRect(36, 119, 168, 18);
+        c.beginPath();
+        c.moveTo(204, 114);
+        c.lineTo(244, 128);
+        c.lineTo(204, 142);
+        c.closePath();
+        c.fill();
+        for (const side of [-1, 1]) {
+          c.beginPath();
+          c.moveTo(36, 128 + side * 9);
+          c.lineTo(14, 128 + side * 46);
+          c.lineTo(78, 128 + side * 9);
+          c.closePath();
+          c.fill();
+        }
+      });
+    case "rapid":
+      // The calibre, as ammunition boxes are marked.
+      return cutStencil(ink, (c) => {
+        c.font = "bold 92px sans-serif";
+        c.textAlign = "center";
+        c.fillText("7.62", 128, 162);
+      });
+    case "shield":
+      // A heater shield with a chevron cut through it.
+      return cutStencil(ink, (c) => {
+        c.beginPath();
+        c.moveTo(56, 40);
+        c.lineTo(200, 40);
+        c.lineTo(200, 118);
+        c.quadraticCurveTo(200, 190, 128, 226);
+        c.quadraticCurveTo(56, 190, 56, 118);
+        c.closePath();
+        c.fill();
+        punch(c, () => {
+          c.beginPath();
+          c.moveTo(80, 92);
+          c.lineTo(128, 134);
+          c.lineTo(176, 92);
+          c.lineTo(176, 122);
+          c.lineTo(128, 164);
+          c.lineTo(80, 122);
+          c.closePath();
+          c.fill();
+        });
+      });
+    case "repair":
+      return spannerStencil(ink);
+    case "laser":
+      // A field radio: its set with a dial and a speaker grille, its whip raised.
+      return cutStencil(ink, (c) => {
+        c.fillRect(30, 96, 196, 116);
+        c.fillRect(178, 14, 12, 86);
+        c.fillRect(166, 88, 36, 12);
+        punch(c, () => {
+          c.beginPath();
+          c.arc(82, 154, 38, 0, Math.PI * 2);
+          c.fill();
+          for (let row = 0; row < 3; row++) c.fillRect(138, 114 + row * 32, 72, 18);
+        });
+        c.beginPath();
+        c.arc(82, 154, 18, 0, Math.PI * 2);
+        c.fill();
+      });
+    case "speed":
+      return extractStencil(image, ink);
+  }
+}
+
 /** The source pictogram as a stencil on transparency: one colour, its accents cut
  * out as the stencil's bridges, cropped to its bounds. */
-function extractStencil(image: Image, tint: Rgb) {
+function extractStencil(image: Image, tint: Rgb): Stencil {
   const source = createCanvas(SIZE, SIZE);
   const sourceContext = source.getContext("2d");
   sourceContext.drawImage(image, 0, 0);
@@ -312,14 +585,15 @@ function weather(
   seed: number,
   amount: number,
   edge: (x: number, y: number) => number,
+  size = SIZE,
 ) {
   const c = canvas.getContext("2d");
-  const image = c.getImageData(0, 0, SIZE, SIZE);
+  const image = c.getImageData(0, 0, size, size);
   const noise = lattice(seed);
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
       const wear = fbm(noise, x * 0.09, y * 0.09, 0, 3) + 0.3 * edge(x, y);
-      const i = (y * SIZE + x) * 4 + 3;
+      const i = (y * size + x) * 4 + 3;
       image.data[i] = Math.round(image.data[i] * (1 - smooth(0.78 - amount, 0.82 - amount, wear)));
     }
   }
@@ -353,68 +627,28 @@ function cornerPlates(c: Context) {
   }
 }
 
-function roundedRect(
-  c: Context,
-  left: number,
-  top: number,
-  right: number,
-  bottom: number,
-  r: number,
-) {
-  c.beginPath();
-  c.moveTo(left + r, top);
-  c.arcTo(right, top, right, bottom, r);
-  c.arcTo(right, bottom, left, bottom, r);
-  c.arcTo(left, bottom, left, top, r);
-  c.arcTo(left, top, right, top, r);
-  c.closePath();
+/** Where and how large a stencil is sprayed: its centre, its largest extent, how
+ * far its strokes are spread so thin lines carry from above, the overspray's blur
+ * and the width of the card's bridges, all in pixels. */
+interface Spray {
+  center: readonly [number, number];
+  max: readonly [number, number];
+  spread: number;
+  blur: number;
+  bridge: number;
 }
 
-function craftTile(kind: PickupKind, image: Image) {
-  const surface: Surface = PICKUP_SURFACES[kind];
-  const tint = hex(PICKUP_PAINTS[kind]);
-  const seed = 0x5a7e + PICKUP_PAINTS[kind];
-  const canvas = createCanvas(SIZE, SIZE);
-  const c = canvas.getContext("2d");
-  fill(c, surfaceOf(surface, seed));
-  // The band in the kind's paint across the top, worn back toward its ends.
-  const band = createCanvas(SIZE, SIZE);
-  const b = band.getContext("2d");
-  b.fillStyle = css(tint);
-  b.fillRect(0, BAND[0], SIZE, BAND[1] - BAND[0]);
-  b.fillStyle = css(scale(tint, 0.6));
-  b.fillRect(0, BAND[0], SIZE, 2);
-  b.fillRect(0, BAND[1] - 2, SIZE, 2);
-  weather(band, seed + 11, 0.04, (x) => 1 - smooth(0, 40, Math.min(x, SIZE - x)));
-  c.drawImage(band, 0, 0);
-  // The plate, painted by hand: soft-cornered, its rim worn through in places.
-  const plate = plateOf(surface);
-  if (plate) {
-    const layer = createCanvas(SIZE, SIZE);
-    const p = layer.getContext("2d");
-    p.fillStyle = css(plate);
-    roundedRect(p, PLATE.left, PLATE.top, PLATE.right, PLATE.bottom, PLATE.radius);
-    p.fill();
-    weather(
-      layer,
-      seed + 17,
-      0.02,
-      (x, y) =>
-        1 -
-        smooth(0, 10, Math.min(x - PLATE.left, PLATE.right - x, y - PLATE.top, PLATE.bottom - y)),
-    );
-    c.drawImage(layer, 0, 0);
-  }
-  // The stencil, sprayed through a cut card: overspray misting and speckling round
-  // it, then solid paint with the card's bridges left bare across the strokes, its
-  // fringe frayed and the odd chip knocked out.
-  const ink = stencilPaint(kind, surface);
-  const { stencil, bounds } = extractStencil(image, ink);
-  const fit = Math.min(SYMBOL_MAX[0] / bounds.width, SYMBOL_MAX[1] / bounds.height);
+/** The source pictogram sprayed in `ink` through a cut card onto a transparent
+ * canvas `size` wide: overspray misting and speckling round it, then solid paint
+ * with the card's bridges left bare across the strokes, its fringe frayed and the
+ * odd chip knocked out. */
+function sprayStencil(shape: Stencil, at: Spray, size: number, seed: number) {
+  const { stencil, bounds } = shape;
+  const fit = Math.min(at.max[0] / bounds.width, at.max[1] / bounds.height);
   const [width, height] = [bounds.width * fit, bounds.height * fit];
-  const [left, top] = [SYMBOL_CENTER[0] - width / 2, SYMBOL_CENTER[1] - height / 2];
+  const [left, top] = [at.center[0] - width / 2, at.center[1] - height / 2];
   const layer = (blur: number, spread: number) => {
-    const canvas = createCanvas(SIZE, SIZE);
+    const canvas = createCanvas(size, size);
     const context = canvas.getContext("2d");
     context.filter = blur ? `blur(${blur}px)` : "none";
     for (let step = 0; step < 12; step++) {
@@ -433,135 +667,184 @@ function craftTile(kind: PickupKind, image: Image) {
     }
     return canvas;
   };
-  const solid = layer(0, STROKE_SPREAD);
-  const mist = layer(OVERSPRAY_BLUR, STROKE_SPREAD + 2);
+  const solid = layer(0, at.spread);
+  const mist = layer(at.blur, at.spread + at.blur / 3);
   const cut = solid.getContext("2d");
   cut.globalCompositeOperation = "destination-out";
-  for (const at of BRIDGES) {
-    cut.fillRect(left + width * at - BRIDGE_WIDTH / 2, 0, BRIDGE_WIDTH, SIZE);
+  for (const along of BRIDGES) {
+    cut.fillRect(left + width * along - at.bridge / 2, 0, at.bridge, size);
   }
-  weather(solid, seed + 23, STENCIL_CHIPS, () => 0);
+  weather(solid, seed + 23, STENCIL_CHIPS, () => 0, size);
   // The mist and its speckles, under the paint.
-  const mistPixels = mist.getContext("2d").getImageData(0, 0, SIZE, SIZE);
+  const mistPixels = mist.getContext("2d").getImageData(0, 0, size, size);
   const specks = new Random(seed + 29);
   for (let i = 3; i < mistPixels.data.length; i += 4) {
     const haze = mistPixels.data[i] / 255;
     const speck = haze > 0.04 && haze < 0.7 && specks.next() < OVERSPRAY_SPECKS * haze;
     mistPixels.data[i] = Math.round(255 * Math.max(OVERSPRAY_MIST * haze, speck ? 0.75 : 0));
   }
-  const sprayed = createCanvas(SIZE, SIZE);
+  const sprayed = createCanvas(size, size);
   const s = sprayed.getContext("2d");
   s.putImageData(mistPixels, 0, 0);
   s.drawImage(solid, 0, 0);
-  c.drawImage(sprayed, 0, 0);
-  settleDust(c, seed + 31);
+  return sprayed;
+}
+
+const TILE_SPRAY: Spray = {
+  center: SYMBOL_CENTER,
+  max: SYMBOL_MAX,
+  spread: STROKE_SPREAD,
+  blur: OVERSPRAY_BLUR,
+  bridge: BRIDGE_WIDTH,
+};
+
+/** The jerry can's pressed X and border on its face (the lid band), lit from the
+ * top left, on `surface`. */
+function pressed(surface: (x: number, y: number) => Rgb) {
+  const [top, bottom] = TILE_ROWS.lid;
+  const inset = 14;
+  return (x: number, y: number): Rgb => {
+    const color = surface(x, y);
+    if (y < top) return color;
+    const u = (x - inset) / (SIZE - 2 * inset);
+    const v = (y - top - inset) / (bottom - top - 2 * inset);
+    if (u < 0 || v < 0 || u > 1 || v > 1) return color;
+    const [w, h] = [SIZE - 2 * inset, bottom - top - 2 * inset];
+    const d1 = (u - v) * Math.min(w, h);
+    const d2 = (u + v - 1) * Math.min(w, h);
+    const border = Math.min(u * w, v * h, (1 - u) * w, (1 - v) * h);
+    for (const d of [d1, d2]) {
+      if (Math.abs(d) < 8) return scale(color, d < 0 ? 1.3 : 0.66);
+    }
+    if (border < 5) return scale(color, border < 2.5 ? 1.25 : 0.7);
+    return color;
+  };
+}
+
+/** The kind's lot marking as a stencil: two short lines of block capitals. */
+function markingStencil(kind: PickupKind, ink: Rgb): Stencil {
+  const stencil = createCanvas(SIZE, SIZE);
+  const c = stencil.getContext("2d");
+  c.fillStyle = css(ink);
+  c.font = `bold ${MARKING_SIZE}px sans-serif`;
+  c.textAlign = "center";
+  PICKUP_MARKINGS[kind].forEach((line, index) => {
+    c.fillText(line, SIZE / 2, MARKING_LINES[index]);
+  });
+  return { stencil, bounds: strokeBounds(stencil) };
+}
+
+/** The marking is sprayed where it was cut, no larger than `MARKING_MAX`, its
+ * strokes barely spread and its overspray finer than the emblem's. */
+const MARKING_MAX = [224, 160] as const;
+function markingSpray({ x, y, width, height }: Stencil["bounds"]): Spray {
+  return {
+    center: [x + Math.min(width, MARKING_MAX[0]) / 2, y + height / 2],
+    max: [Math.min(width, MARKING_MAX[0]), Math.min(height, MARKING_MAX[1])],
+    spread: 0.6,
+    blur: 3,
+    bridge: 2,
+  };
+}
+
+/** Rust weeping down from the side strip's band and from chips: thin streaks
+ * where the noise runs high, darkest at their head. */
+function rustStreaks(c: Context, seed: number) {
+  const image = c.getImageData(0, 0, SIZE, SIZE);
+  const streaks = lattice(seed);
+  const [, sideBottom] = TILE_ROWS.side;
+  for (let y = BAND[1]; y < sideBottom; y++) {
+    const fall = 1 - (y - BAND[1]) / (sideBottom - BAND[1]);
+    for (let x = 0; x < SIZE; x++) {
+      const streak = smooth(0.62, 0.8, fbm(streaks, x * 0.18, y * 0.012, 0, 3)) * fall;
+      if (streak <= 0) continue;
+      const i = (y * SIZE + x) * 4;
+      const under: Rgb = [image.data[i], image.data[i + 1], image.data[i + 2]];
+      image.data.set(
+        blend(under, RUST, 0.45 * streak).map((v) => Math.round(v)),
+        i,
+      );
+    }
+  }
+  c.putImageData(image, 0, 0);
+}
+
+function craftTile(kind: PickupKind, image: Image) {
+  const surface: Surface = PICKUP_SURFACES[kind];
+  const tint = hex(PICKUP_PAINTS[kind]);
+  const seed = 0x5a7e + PICKUP_PAINTS[kind];
+  const canvas = createCanvas(SIZE, SIZE);
+  const c = canvas.getContext("2d");
+  const body = surfaceOf(surface, seed, tint);
+  fill(c, surface === "jerry" ? pressed(body) : body);
+  // The band in the kind's paint across the side strip, the strip of plain paint
+  // and the painted lid.
+  paintLayer(c, BAND, tint, seed + 11, 1.4);
+  paintLayer(c, TILE_ROWS.paint, tint, seed + 13);
+  paintLayer(c, TILE_ROWS.lid, tint, seed + 17);
   if (surface === "planks") cornerPlates(c);
+  const ink = stencilPaint(kind);
+  const shape = emblemStencil(kind, ink, image);
+  c.drawImage(sprayStencil(shape, TILE_SPRAY, SIZE, seed), 0, 0);
+  const marking = markingStencil(kind, ink);
+  c.drawImage(sprayStencil(marking, markingSpray(marking.bounds), SIZE, seed + 41), 0, 0);
+  rustStreaks(c, seed + 37);
+  settleDust(c, seed + 31);
   return canvas;
 }
 
-/** Dust settled over a whole tile: drifts where the noise runs high, thickening
- * toward the bottom of every face, where it gathers. */
+/** Dust and grime over a whole tile: drifts where the noise runs high and dust
+ * blown over everything, rain streaks down the side strip, and grime banked up at
+ * the strip's foot, where a side meets the pallet. */
 function settleDust(c: Context, seed: number) {
   const image = c.getImageData(0, 0, SIZE, SIZE);
   const drift = lattice(seed);
+  const rain = lattice(seed + 1);
+  const [sideTop, sideBottom] = TILE_ROWS.side;
   for (let y = 0; y < SIZE; y++) {
     for (let x = 0; x < SIZE; x++) {
-      const low = (y / SIZE) ** 3;
-      const amount = 0.16 * smooth(0.5, 0.85, fbm(drift, x * 0.025, y * 0.025, 0, 4)) + 0.2 * low;
+      const side = y < sideBottom;
+      const low = side ? smooth(sideTop + 20, sideBottom, y) : 0;
+      const foot = side ? smooth(sideBottom - FOOT, sideBottom, y) : 0;
+      // Dust lies thicker on the lid, which faces up.
+      const lid = y >= TILE_ROWS.lid[0] ? 0.04 : 0;
+      const amount =
+        0.06 + lid + 0.24 * smooth(0.45, 0.85, fbm(drift, x * 0.025, y * 0.025, 0, 4)) + 0.2 * low;
+      const streak = side
+        ? smooth(0.55, 0.75, fbm(rain, x * 0.12, y * 0.02, 0, 3)) * 0.18 * (1 - low)
+        : 0;
       const i = (y * SIZE + x) * 4;
       for (let k = 0; k < 3; k++) {
-        image.data[i + k] += (DUST[k] - image.data[i + k]) * amount;
+        const dusty = image.data[i + k] + (DUST[k] - image.data[i + k]) * amount;
+        const grimy = dusty + (GRIME[k] - dusty) * 0.55 * foot;
+        image.data[i + k] = grimy * (1 - streak);
       }
     }
   }
   c.putImageData(image, 0, 0);
 }
 
-/** The pallet's planks, sun-greyed and dry, darker in the seams. */
+/** The pallet's pine planks, one board to a row with its grain along the row:
+ * weathered but still wood, a little greyed, with deep grain lines, end grain
+ * darkening toward both ends, grime and the odd oil stain. */
 function palletCell() {
   const canvas = createCanvas(SIZE, SIZE);
   const boards = planks(0x9a11e7, PALLET_PINE, 4);
   const silver = lattice(0x9a11f3);
+  const lines = lattice(0x9a11f5);
+  const stains = lattice(0x9a11f7);
   fill(canvas.getContext("2d"), (x, y) => {
     const wood = boards(x, y);
-    const grey = 0.35 + 0.3 * fbm(silver, x * 0.02, y * 0.08, 0, 3);
+    const grey = 0.12 + 0.22 * fbm(silver, x * 0.02, y * 0.08, 0, 3);
     const value = (wood[0] + wood[1] + wood[2]) / 3;
-    return blend(wood, [value * 1.02, value, value * 0.96], grey);
+    let color = blend(wood, [value * 1.02, value, value * 0.96], grey);
+    // Fine grain lines running down each board, and its ends darkened by handling.
+    const line = fbm(lines, x * 0.006, y * 0.9, 0, 3);
+    color = scale(color, 0.82 + 0.3 * smooth(0.3, 0.7, line));
+    color = scale(color, 0.78 + 0.22 * smooth(0, 40, Math.min(x, SIZE - x)));
+    const stain = smooth(0.66, 0.76, fbm(stains, x * 0.02, y * 0.03, 0, 3));
+    return blend(color, [52, 44, 36], stain * 0.55);
   });
-  return canvas;
-}
-
-/** A dark canvas tarp seen from above: its weave, the creases it was folded along,
- * a stitched hem and dust blown onto its edges. */
-function tarpCell() {
-  const canvas = createCanvas(SIZE, SIZE);
-  const tone = lattice(0x7a4b1);
-  const dust = lattice(0x7a4b3);
-  const hem = 10;
-  fill(canvas.getContext("2d"), (x, y) => {
-    const weave = (Math.floor(x / 2) + Math.floor(y / 2)) % 2 ? 0.94 : 1.04;
-    let k = weave * (0.86 + 0.28 * fbm(tone, x * 0.02, y * 0.02, 0, 4));
-    // Fold creases: a lit ridge beside a dark valley, across and along.
-    for (const crease of [Math.abs(x - SIZE / 2), Math.abs(y - SIZE * 0.36)]) {
-      if (crease < 1.5) k *= 0.62;
-      else if (crease < 4) k *= 1.16;
-    }
-    const near = edgeDistance(x, y);
-    if (near < hem) k *= near < 2 ? 0.7 : near > hem - 2 ? 0.78 : 1.12;
-    const dusty = (1 - smooth(0, 40, near)) * 0.5 + 0.18 * fbm(dust, x * 0.03, y * 0.03, 0, 3);
-    return blend(
-      scale(CANVAS, k),
-      DUST,
-      dusty * smooth(0.2, 0.9, fbm(dust, x * 0.06, y * 0.06, 0, 2)),
-    );
-  });
-  return canvas;
-}
-
-/** White spray paint run along the cell, seamless from its left edge to its right:
- * a stroke whose edges wander, thinner and broken where the can was lifted,
- * flecked with overspray beside it and dirt through it. */
-function paintCell() {
-  const canvas = createCanvas(SIZE, SIZE);
-  const c = canvas.getContext("2d");
-  const image = c.createImageData(SIZE, SIZE);
-  const wander = lattice(0x5b1a7);
-  const breaks = lattice(0x5b1a9);
-  const dirt = lattice(0x5b1ab);
-  const specks = lattice(0x5b1ad);
-  // Periods in lattice cells across the cell, so the stroke wraps seamlessly.
-  const WANDER_PERIOD = 8;
-  const BREAK_PERIOD = 5;
-  for (let y = 0; y < SIZE; y++) {
-    for (let x = 0; x < SIZE; x++) {
-      const u = x + 0.5;
-      const v = (y + 0.5) / SIZE;
-      const centre =
-        0.5 + 0.12 * (fbm(wander, (u / SIZE) * WANDER_PERIOD, 0.5, WANDER_PERIOD, 3) - 0.5);
-      const lifted = smooth(
-        0.17,
-        0.27,
-        fbm(breaks, (u / SIZE) * BREAK_PERIOD, 3.5, BREAK_PERIOD, 2),
-      );
-      const half = 0.12 + 0.2 * lifted;
-      const across = Math.abs(v - centre) / half;
-      const rough = fbm(wander, (u / SIZE) * 64, v * 16, 64, 3);
-      let coverage = (1 - smooth(0.7, 1.15, across + (rough - 0.5) * 0.6)) * (0.35 + 0.65 * lifted);
-      // Dirt and tread wear through the paint.
-      const grime = fbm(dirt, (u / SIZE) * 32, v * 6, 32, 4);
-      coverage *= 1 - smooth(0.6, 0.72, grime);
-      // Overspray flecks beside the stroke.
-      const fleck = specks((u / SIZE) * 160, v * 70, 160);
-      if (across > 0.9 && across < 2.2 && fleck > 0.9 - 0.1 * lifted)
-        coverage = Math.max(coverage, 0.6);
-      const shade = 214 + 36 * rough;
-      image.data.set(
-        [shade, shade, shade, Math.round(Math.min(1, coverage) * 255)],
-        (y * SIZE + x) * 4,
-      );
-    }
-  }
-  c.putImageData(image, 0, 0);
   return canvas;
 }
 
@@ -590,22 +873,27 @@ function swatchCell() {
   return canvas;
 }
 
-/** A cartridge from base to tip, the same all round: a dark rim, the brass case
- * darkening toward its shoulder, the copper driving band and the olive projectile. */
+/** A cartridge from base to tip, the same all round: a dark rim, a tarnished
+ * brass case darkening toward its shoulder, the copper driving band and the olive
+ * drab projectile with its faded yellow filling band and a dark steel nose. */
 function brassCell() {
   const canvas = createCanvas(SIZE, SIZE);
   const streak = lattice(0xb4a55);
+  const tarnish = lattice(0xb4a57);
   fill(canvas.getContext("2d"), (x, y) => {
     const v = 1 - y / SIZE;
     const n = fbm(streak, x * 0.08, y * 0.01, 0, 3);
-    if (v < 0.05) return scale([118, 88, 42], 0.9 + 0.2 * n);
+    const dull = smooth(0.4, 0.8, fbm(tarnish, x * 0.05, y * 0.05, 0, 3)) * 0.45;
+    if (v < 0.05) return scale([104, 80, 44], 0.9 + 0.2 * n);
     if (v < 0.6) {
       const shoulder = smooth(0.45, 0.6, v);
-      return scale(blend([224, 178, 86], [176, 128, 56], shoulder), 0.88 + 0.26 * n);
+      const brass = scale(blend([192, 150, 78], [150, 110, 54], shoulder), 0.86 + 0.24 * n);
+      return blend(brass, [96, 84, 56], dull);
     }
-    if (v < 0.66) return scale([164, 92, 52], 0.9 + 0.2 * n);
-    if (v > 0.9) return scale([214, 186, 64], 0.9 + 0.2 * n);
-    return scale([112, 118, 88], 0.88 + 0.24 * n);
+    if (v < 0.66) return scale([140, 84, 52], 0.9 + 0.2 * n);
+    if (v > 0.93) return scale([62, 64, 60], 0.9 + 0.2 * n);
+    if (v > 0.78 && v < 0.83) return scale([176, 156, 70], 0.86 + 0.2 * n);
+    return blend(scale([92, 98, 70], 0.86 + 0.24 * n), DUST, 0.12 * n);
   });
   return canvas;
 }
@@ -659,10 +947,8 @@ for (const [kind, [column, row]] of Object.entries(PICKUP_ATLAS_TILES)) {
   place(craftTile(kind as PickupKind, image), column, row);
 }
 place(palletCell(), ...PICKUP_PALLET_CELL);
-place(paintCell(), ...PICKUP_PAINT_CELL);
 place(swatchCell(), ...PICKUP_SWATCH_CELL);
 place(brassCell(), ...PICKUP_BRASS_CELL);
-place(tarpCell(), ...PICKUP_TARP_CELL);
 const webp = execFileSync(
   "cwebp",
   ["-quiet", "-q", ENCODE_QUALITY, "-alpha_q", "100", "-m", "6", "-o", "-", "--", "-"],
