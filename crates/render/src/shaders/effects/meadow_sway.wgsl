@@ -100,8 +100,39 @@ fn vg_strip(across: f32, along: f32, centres: vec3f, outer: f32, centre: f32, ex
 
 // A disc on a jittered cell grid: x the coverage of this cell's disc (0 when the
 // cell has none), y its dome height in metres, zw two random numbers for its look.
+// Only a cell that holds a disc works out its shape.
 fn vg_scatter(p: vec2f, density: f32, cells: f32, size: vec2f, aa: f32, seed: f32) -> vec4f {
     // No cell has a disc: callers weight everything else by the coverage.
+    if density <= 0.0 {
+        return vec4f(0.0);
+    }
+    let q = p * cells;
+    let cell = floor(q);
+    let jitter = vg_hash2(cell + seed);
+    let pick = vg_hash(cell + seed * 1.37 + 5.1);
+    var cover = 0.0;
+    var dome = 0.0;
+    if fract(pick * 13.7) < density {
+        let centre = (cell + 0.2 + jitter * 0.6) / cells;
+        let stretch = mix(0.65, 1.0, jitter.y);
+        let angle = pick * 6.2832;
+        let local = p - centre;
+        let turned = vec2f(
+            local.x * cos(angle) - local.y * sin(angle),
+            (local.x * sin(angle) + local.y * cos(angle)) / stretch,
+        );
+        let radius = mix(size.x, size.y, fract(pick * 7.31));
+        let distance = length(turned);
+        cover = 1.0 - smoothstep(radius - aa, radius + aa, distance);
+        dome = sqrt(max(1.0 - distance * distance / (radius * radius), 0.0)) * radius;
+    }
+    return vec4f(cover, dome, jitter.x, fract(pick * 3.71));
+}
+
+// `vg_scatter` working out the disc of every cell, empty or not, for the cottage
+// beds: skipping their empty cells changes how the beds draw (measured; the full
+// computation evidently leaves those cells non-zero there), so they keep it.
+fn vg_dense_scatter(p: vec2f, density: f32, cells: f32, size: vec2f, aa: f32, seed: f32) -> vec4f {
     if density <= 0.0 {
         return vec4f(0.0);
     }
@@ -551,8 +582,8 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // None below a garden level of 0.08.
     if garden > 0.08 {
         let mulch = vg_linear(0x3f3125) * mix(0.8, 1.2, vg_noise(p * 9.0));
-        let bed_leaves = vg_scatter(p, 0.95, 5.5, vec2f(0.07, 0.12), aa, 71.0);
-        let bed_blooms = vg_scatter(p, 0.8, 8.0, vec2f(0.035, 0.06), aa, 73.0);
+        let bed_leaves = vg_dense_scatter(p, 0.95, 5.5, vec2f(0.07, 0.12), aa, 71.0);
+        let bed_blooms = vg_dense_scatter(p, 0.8, 8.0, vec2f(0.035, 0.06), aa, 73.0);
         var bed_flower = vg_linear(0xe0574e);
         bed_flower = select(bed_flower, vg_linear(0xf2d04f), bed_blooms.z > 0.4);
         bed_flower = select(bed_flower, vg_linear(0xf4f0ec), bed_blooms.z > 0.65);
@@ -561,7 +592,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         bed = mix(bed, bed_flower, bed_blooms.x);
         bed_relief = bed_leaves.y * 0.5 + bed_blooms.y * 0.4;
         let veg_row = sin(p.x * 11.4) * 0.5 + 0.5;
-        let heads = vg_scatter(vec2f(p.x, p.y), 0.9, 4.0, vec2f(0.1, 0.16), aa, 77.0);
+        let heads = vg_dense_scatter(vec2f(p.x, p.y), 0.9, 4.0, vec2f(0.1, 0.16), aa, 77.0);
         veg = mix(vg_linear(0x4a3828), vg_linear(0x5c8a33) * mix(0.85, 1.15, heads.w), smoothstep(0.45, 0.75, veg_row) * max(heads.x, 0.55));
         veg_relief = veg_row * 0.05 + heads.y * 0.3;
         plank = vg_linear(0x7a5a3a) * mix(0.85, 1.1, vg_noise(p * 3.0));

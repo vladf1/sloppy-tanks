@@ -90,8 +90,19 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     let g = p / cell;
     let id = floor(g);
     let h = quarry_hash(id + salt);
-    let k = quarry_hash(id - salt * 1.7);
     let radius = mix(0.12, 0.3, h.y * h.y);
+    let pixel = footprint / (radius * cell);
+    var out: QuarryPebbles;
+    // An empty cell, or a stone faded under a pixel, covers and shades nothing
+    // and leans no normal; its tint is then never seen.
+    if h.x > density || pixel >= 0.7 {
+        out.cover = 0.0;
+        out.contact = 0.0;
+        out.lean = vec2f(0.0);
+        out.tint = vec3f(1.0);
+        return out;
+    }
+    let k = quarry_hash(id - salt * 1.7);
     let stretch = 1.0 + 0.5 * k.w;
     let center = id + 0.5 + (h.zw - 0.5) * (1.0 - 2.0 * radius * stretch);
     // Flattened, turned ovals rather than coins, each a little lumpy.
@@ -101,10 +112,8 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     let local = vec2f(dot(d0, axis) / stretch, dot(d0, side)) / radius;
     let lump = 1.0 + 0.1 * sin(local.x * 2.7 + local.y * 1.3 + k.z * 6.0);
     let r = length(local) / lump;
-    let pixel = footprint / (radius * cell);
     let present = step(h.x, density) * (1.0 - quarry_smoothstep(0.25, 0.7, pixel));
     let edge = max(pixel, 0.12);
-    var out: QuarryPebbles;
     out.cover = (1.0 - quarry_smoothstep(1.0 - edge, 1.0, r)) * present;
     out.contact = quarry_smoothstep(1.55, 1.0, r) * (1.0 - out.cover) * present;
     // A low dome: the normal leans out from the centre, steepest at the rim.
