@@ -31,6 +31,9 @@ const APRON_SEA_LEVEL = -2.2;
 const APRON_TIDE = 0.75;
 // Spacing of the quay wall's vertical expansion joints, metres.
 const APRON_WALL_JOINT = 12.0;
+// Farthest a container's casting rust reaches from the casting, metres (with a
+// margin over the 1.2 m its widest fade spans).
+const APRON_CASTING_REACH = 1.25;
 // Inner face of the boundary wall (`sim::data::ARENA`).
 const APRON_ARENA = 60.0;
 // Distance of a truck's wheel paths from the middle of its traffic half, metres.
@@ -39,30 +42,24 @@ const APRON_WHEEL_OFFSET = 0.9;
 // z), as `harbor_scenery::LANES_ALONG_Z` and `LANES_ALONG_X`.
 const APRON_LANES_Z = array<vec2f, 3>(vec2f(-52.0, 5.0), vec2f(0.0, 7.5), vec2f(52.0, 5.0));
 const APRON_LANES_X = array<vec2f, 3>(vec2f(-45.0, 5.0), vec2f(0.0, 5.0), vec2f(45.0, 5.0));
-// Fixed cover standing on the apron as (centre x, centre z, half x, half z): the
-// indestructible containers (`harbor_layout`, the first twelve, which rust where
-// their castings stand) and the concrete barriers. Ground beside them darkens with
-// contact occlusion and collects grime.
-const APRON_CONTAINERS = 12;
-const APRON_FIXTURES = array<vec4f, 18>(
-    vec4f(-30.0, -32.0, 3.0, 7.0),
-    vec4f(-30.0, -12.0, 3.0, 7.0),
-    vec4f(-30.0, 12.0, 3.0, 7.0),
-    vec4f(-30.0, 32.0, 3.0, 7.0),
-    vec4f(30.0, -32.0, 3.0, 7.0),
-    vec4f(30.0, -12.0, 3.0, 7.0),
+// Fixed cover standing on the apron as (centre x, centre z, half x, half z), as
+// laid out in `harbor_layout`: the twelve indestructible containers, which rust
+// where their castings stand, and six concrete barriers. Ground beside them
+// darkens with contact occlusion and collects grime. The layout is symmetric, so
+// each set is listed for one quadrant: the containers and the side barriers
+// mirror across both axes (measured from |x|, |z|), the end barriers across the
+// centre (measured from the point turned into the north half). Of a box and its
+// mirror images the one in the point's own quadrant is the nearest whenever any
+// is within 54 m, far beyond the 7 m where the ground stops taking their shade.
+const APRON_CONTAINER_QUADRANT = array<vec4f, 3>(
     vec4f(30.0, 12.0, 3.0, 7.0),
     vec4f(30.0, 32.0, 3.0, 7.0),
-    vec4f(-13.0, -8.0, 6.0, 2.5),
-    vec4f(-13.0, 8.0, 6.0, 2.5),
-    vec4f(13.0, -8.0, 6.0, 2.5),
     vec4f(13.0, 8.0, 6.0, 2.5),
-    vec4f(-10.0, -55.0, 4.0, 0.55),
-    vec4f(-34.0, -55.0, 4.0, 0.55),
+);
+const APRON_SIDE_BARRIER = vec4f(43.0, 0.0, 0.6, 5.0);
+const APRON_END_BARRIERS = array<vec4f, 2>(
     vec4f(10.0, 55.0, 4.0, 0.55),
     vec4f(34.0, 55.0, 4.0, 0.55),
-    vec4f(-43.0, 0.0, 0.6, 5.0),
-    vec4f(43.0, 0.0, 0.6, 5.0),
 );
 // Far shore haze: metres of air that hide half of a color, and how much less
 // haze the high ground gets.
@@ -123,64 +120,14 @@ fn apron_lane_offsets(p: vec2f) -> vec4f {
     return out;
 }
 
+// Each layer below runs only where its weight can be non-zero, so a skipped pixel
+// keeps exactly the value it computed before: the far shore and the hull plating
+// need none of the yard's work, the ground's noise lookups wait for the joint,
+// slab, spill, lane or cover that uses them, and container castings only near a
+// container. `mode` is a material uniform, so branches on it are uniform control
+// flow: the texture samples and derivatives a mode needs run inside its branch.
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let mode = material.params[0].x;
-    let wall = mode > 4.5 && mode < 6.5;
-    // A wall face runs along x or z; its plane coordinates are (along, height).
-    let faces_x = abs((*s).normal.x) > abs((*s).normal.z);
-    let along = select(f.world.x, f.world.z, faces_x);
-    let p = select(f.world.xz, vec2f(along, f.world.y), wall);
-    // Every sample and derivative first, in uniform control flow.
-    let turned = vec2f(p.x * 0.8 - p.y * 0.6, p.x * 0.6 + p.y * 0.8);
-    let grain_a = textureSample(extra_texture0, extra_sampler0, p / 4.7).rgb;
-    let grain_b = textureSample(extra_texture0, extra_sampler0, turned / 9.3 + 0.31).rgb;
-    let blur_a = textureSampleBias(extra_texture0, extra_sampler0, p / 4.7, APRON_GRAIN_BLUR).rgb;
-    let blur_b = textureSampleBias(extra_texture0, extra_sampler0, turned / 9.3 + 0.31, APRON_GRAIN_BLUR).rgb;
-    let fine = dot(textureSample(extra_texture0, extra_sampler0, turned / 1.3 + 0.17).rgb, APRON_LUMA) / APRON_TILE_MEAN;
-    let streak_z = dot(textureSample(extra_texture0, extra_sampler0, vec2f(p.x / 1.9, p.y / 60.0)).rgb, APRON_LUMA);
-    let streak_x = dot(textureSample(extra_texture0, extra_sampler0, vec2f(p.y / 1.9, p.x / 60.0) + 0.5).rgb, APRON_LUMA);
-    let slab_uv = p / APRON_SLAB;
-    let cell = floor(slab_uv);
-    let to_edge = (0.5 - abs(fract(slab_uv) - 0.5)) * APRON_SLAB;
-    let edge = min(to_edge.x, to_edge.y);
-    let aa = max(fwidth(edge), 1e-4);
-    let to_expansion = (0.5 - abs(fract(p / APRON_EXPANSION) - 0.5)) * APRON_EXPANSION;
-    let expansion = min(to_expansion.x, to_expansion.y);
-    let expansion_aa = max(fwidth(expansion), 1e-4);
-    let patch_uv = p / APRON_PATCH_CELL;
-    let patch_cell = floor(patch_uv);
-    let patch_local = fract(patch_uv) * APRON_PATCH_CELL;
-    let patch_aa = max(fwidth(patch_local.x) + fwidth(patch_local.y), 1e-4);
-    let crack_noise = apron_noise(p / 3.1 + 13.0) + apron_noise(p * 0.9) * 0.18;
-    let crack_width = max(fwidth(crack_noise), 1e-4);
-    let wall_edge = (0.5 - abs(fract(along / APRON_WALL_JOINT) - 0.5)) * APRON_WALL_JOINT;
-    let wall_aa = max(fwidth(wall_edge), 1e-4);
-    // A utility cover in some cells: distance to its centre.
-    let cover_cell = floor(p / APRON_COVER_CELL);
-    let cover_hash = apron_hash(cover_cell + vec2f(41.0, 7.0));
-    let cover_at = (cover_cell + 0.25 + 0.5 * cover_hash.xy) * APRON_COVER_CELL;
-    let cover_d = length(p - cover_at);
-    let cover_aa = max(fwidth(cover_d), 1e-4);
-    // Hull plating: welded seams on a 2.4 x 1.6 m grid.
-    let plate = (0.5 - abs(fract(vec2f(along / 2.4, (f.world.y + 0.2) / 1.6)) - 0.5)) * vec2f(2.4, 1.6);
-    let plate_aa = max(fwidth(plate.x) + fwidth(plate.y), 1e-4);
-
-    // The tile's grain with its broad blotches divided out.
-    let grain = grain_a / max(blur_a, vec3f(0.02)) * 0.6 + grain_b / max(blur_b, vec3f(0.02)) * 0.4;
-    let grain_luma = dot(grain, APRON_LUMA);
-    // Broad mottling, and the macro variation that keeps the yard from reading as
-    // one tile from the air.
-    let mottle = apron_noise(p / 9.0) * 0.6 + apron_noise(p / 2.7 + 7.0) * 0.4;
-    let broad = apron_noise(p / 43.0 + 3.0) * 0.65 + apron_noise(p / 15.0 + 8.0) * 0.35;
-    let grime = mix(0.88, 1.05, mottle) * mix(0.82, 1.1, broad);
-
-    // Damp hollows that hold water after a shower; the deepest are puddles.
-    let hollow = apron_noise(p / 7.0 + 3.3) * 0.7 + apron_noise(p / 2.1) * 0.3;
-    let damp = smoothstep(0.74, 0.79, hollow);
-    let puddle = smoothstep(0.8, 0.815, hollow);
-
-    var color = (*s).color;
-    var roughness = (*s).roughness;
     if mode > 6.5 {
         // Far shore: lit by the sun and the sky fill, then hazed by the air between
         // it and the eye, emitted whole so the scene's fog never flattens the
@@ -204,6 +151,87 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         (*s).metalness = 0.0;
         return;
     }
+    let wall = mode > 4.5 && mode < 6.5;
+    // Concrete, the asphalt lanes and the paint lie on the yard.
+    let ground = mode < 4.5;
+    // Concrete and asphalt take the joints, cracks and lane streaks.
+    let paved = mode < 2.5;
+    // A wall face runs along x or z; its plane coordinates are (along, height).
+    let faces_x = abs((*s).normal.x) > abs((*s).normal.z);
+    let along = select(f.world.x, f.world.z, faces_x);
+    let p = select(f.world.xz, vec2f(along, f.world.y), wall);
+    // Every sample and derivative first, in control flow uniform across the draw.
+    let turned = vec2f(p.x * 0.8 - p.y * 0.6, p.x * 0.6 + p.y * 0.8);
+    let grain_a = textureSample(extra_texture0, extra_sampler0, p / 4.7).rgb;
+    let grain_b = textureSample(extra_texture0, extra_sampler0, turned / 9.3 + 0.31).rgb;
+    let blur_a = textureSampleBias(extra_texture0, extra_sampler0, p / 4.7, APRON_GRAIN_BLUR).rgb;
+    let blur_b = textureSampleBias(extra_texture0, extra_sampler0, turned / 9.3 + 0.31, APRON_GRAIN_BLUR).rgb;
+    var fine = 0.0;
+    if mode > 0.5 && mode < 4.5 {
+        fine = dot(textureSample(extra_texture0, extra_sampler0, turned / 1.3 + 0.17).rgb, APRON_LUMA) / APRON_TILE_MEAN;
+    }
+    var streak_z = 0.0;
+    var streak_x = 0.0;
+    var crack_noise = 0.0;
+    var crack_width = 0.0;
+    if paved {
+        streak_z = dot(textureSample(extra_texture0, extra_sampler0, vec2f(p.x / 1.9, p.y / 60.0)).rgb, APRON_LUMA);
+        streak_x = dot(textureSample(extra_texture0, extra_sampler0, vec2f(p.y / 1.9, p.x / 60.0) + 0.5).rgb, APRON_LUMA);
+        crack_noise = apron_noise(p / 3.1 + 13.0) + apron_noise(p * 0.9) * 0.18;
+        crack_width = max(fwidth(crack_noise), 1e-4);
+    }
+    let slab_uv = p / APRON_SLAB;
+    let cell = floor(slab_uv);
+    let to_edge = (0.5 - abs(fract(slab_uv) - 0.5)) * APRON_SLAB;
+    let edge = min(to_edge.x, to_edge.y);
+    let aa = max(fwidth(edge), 1e-4);
+    let to_expansion = (0.5 - abs(fract(p / APRON_EXPANSION) - 0.5)) * APRON_EXPANSION;
+    let expansion = min(to_expansion.x, to_expansion.y);
+    let expansion_aa = max(fwidth(expansion), 1e-4);
+    let patch_uv = p / APRON_PATCH_CELL;
+    let patch_cell = floor(patch_uv);
+    let patch_local = fract(patch_uv) * APRON_PATCH_CELL;
+    let patch_aa = max(fwidth(patch_local.x) + fwidth(patch_local.y), 1e-4);
+    let wall_edge = (0.5 - abs(fract(along / APRON_WALL_JOINT) - 0.5)) * APRON_WALL_JOINT;
+    let wall_aa = max(fwidth(wall_edge), 1e-4);
+    // A utility cover in some cells: distance to its centre.
+    let cover_cell = floor(p / APRON_COVER_CELL);
+    let cover_hash = apron_hash(cover_cell + vec2f(41.0, 7.0));
+    let cover_at = (cover_cell + 0.25 + 0.5 * cover_hash.xy) * APRON_COVER_CELL;
+    let cover_d = length(p - cover_at);
+    let cover_aa = max(fwidth(cover_d), 1e-4);
+    // Hull plating: welded seams on a 2.4 x 1.6 m grid.
+    let plate = (0.5 - abs(fract(vec2f(along / 2.4, (f.world.y + 0.2) / 1.6)) - 0.5)) * vec2f(2.4, 1.6);
+    let plate_aa = max(fwidth(plate.x) + fwidth(plate.y), 1e-4);
+
+    // The tile's grain with its broad blotches divided out.
+    let grain = grain_a / max(blur_a, vec3f(0.02)) * 0.6 + grain_b / max(blur_b, vec3f(0.02)) * 0.4;
+    let grain_luma = dot(grain, APRON_LUMA);
+    // Broad mottling, and the macro variation that keeps the yard from reading as
+    // one tile from the air (the paint and the hull take no grime).
+    let mottle = apron_noise(p / 9.0) * 0.6 + apron_noise(p / 2.7 + 7.0) * 0.4;
+    var grime = 0.0;
+    if paved || wall {
+        let broad = apron_noise(p / 43.0 + 3.0) * 0.65 + apron_noise(p / 15.0 + 8.0) * 0.35;
+        grime = mix(0.88, 1.05, mottle) * mix(0.82, 1.1, broad);
+    }
+
+    // Damp hollows that hold water after a shower; the deepest are puddles. The
+    // second octave adds at most 0.3, so below 0.6 the first leaves the hollow
+    // short of the damp threshold (0.74) whatever the second would add.
+    var damp = 0.0;
+    var puddle = 0.0;
+    if ground {
+        let hollow_broad = apron_noise(p / 7.0 + 3.3);
+        if hollow_broad >= 0.6 {
+            let hollow = hollow_broad * 0.7 + apron_noise(p / 2.1) * 0.3;
+            damp = smoothstep(0.74, 0.79, hollow);
+            puddle = smoothstep(0.8, 0.815, hollow);
+        }
+    }
+
+    var color = (*s).color;
+    var roughness = (*s).roughness;
     if mode > 5.5 {
         // Ship hull plating: welded seams, rust running down from the scuppers and
         // the deck edge, a slimy band at the waterline, fender scrapes and the
@@ -242,14 +270,22 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     var fixture = select(-outside, 1e3, outside > 0.0);
     var castings = 0.0;
     if !wall {
-        for (var i = 0; i < 18; i++) {
-            let b = APRON_FIXTURES[i];
-            fixture = min(fixture, apron_box_distance(p, b));
-            if i < APRON_CONTAINERS {
-                let corner = b.xy + sign(p - b.xy) * (b.zw - 0.1);
-                castings = max(castings, 1.0 - smoothstep(0.05, 0.6 + mottle * 0.6, length(p - corner)));
+        let mirrored = abs(p);
+        let north = select(p, -p, p.y < 0.0);
+        for (var i = 0; i < 3; i++) {
+            let b = APRON_CONTAINER_QUADRANT[i];
+            let distance = apron_box_distance(mirrored, b);
+            fixture = min(fixture, distance);
+            // A casting sits inside its container's footprint, so it is at least
+            // `distance` away, and its rust reaches at most 1.2 m.
+            if distance < APRON_CASTING_REACH {
+                let corner = b.xy + sign(mirrored - b.xy) * (b.zw - 0.1);
+                castings = max(castings, 1.0 - smoothstep(0.05, 0.6 + mottle * 0.6, length(mirrored - corner)));
             }
         }
+        fixture = min(fixture, apron_box_distance(mirrored, APRON_SIDE_BARRIER));
+        fixture = min(fixture, apron_box_distance(north, APRON_END_BARRIERS[0]));
+        fixture = min(fixture, apron_box_distance(north, APRON_END_BARRIERS[1]));
     }
     let contact = (1.0 - smoothstep(0.0, 0.8, fixture)) * 0.42 + (1.0 - smoothstep(0.0, 3.2, fixture)) * 0.16;
     let banked = (1.0 - smoothstep(0.0, 1.6 + mottle * 1.4, fixture)) * smoothstep(0.35, 0.6, mottle);
@@ -260,9 +296,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let has_cover = step(0.72, cover_hash.w) * step(0.9, abs(lane_edge)) * step(1.5, fixture);
     let cover = clamp((cover_radius - cover_d) / cover_aa + 0.5, 0.0, 1.0) * has_cover;
     let cover_gap = clamp(0.5 - abs(cover_d - cover_radius - 0.02) / cover_aa * 0.7, 0.0, 1.0) * has_cover;
-    let checker = step(0.0, sin(p.x * 34.0) * sin(p.y * 34.0));
-    let cover_rim = clamp((cover_d - cover_radius + 0.05) / cover_aa + 0.5, 0.0, 1.0);
-    let iron = vec3f(0.05, 0.048, 0.046) * mix(0.8, 1.25, checker) * mix(1.0, 1.4, cover_rim);
+    var iron = vec3f(0.0);
+    if has_cover > 0.0 {
+        let checker = step(0.0, sin(p.x * 34.0) * sin(p.y * 34.0));
+        let cover_rim = clamp((cover_d - cover_radius + 0.05) / cover_aa + 0.5, 0.0, 1.0);
+        iron = vec3f(0.05, 0.048, 0.046) * mix(0.8, 1.25, checker) * mix(1.0, 1.4, cover_rim);
+    }
 
     if wall {
         // Quay wall: weathered concrete panels, a dark wet tide band crusted with
@@ -301,9 +340,15 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             * min(1.0, 2.0 * APRON_SEALANT / expansion_aa);
         let fringe = (1.0 - smoothstep(0.0, 0.3 + mottle * 0.3, edge)) * (0.4 + mottle);
         // Hairline shrinkage cracks across some slabs, darker where dirt fills them.
-        let hairline = (1.0 - smoothstep(0.0, crack_width * 1.2 + 0.003, abs(crack_noise - 0.5)))
-            * step(0.72, slab.z) * (1.0 - patched) * smoothstep(0.55, 0.7, apron_noise(p / 1.7 + slab.xy * 9.0));
-        let chipped = (1.0 - smoothstep(APRON_JOINT, APRON_JOINT * 3.5, edge)) * step(0.6, grain_luma * apron_noise(p * 6.0) * 1.4);
+        var hairline = (1.0 - smoothstep(0.0, crack_width * 1.2 + 0.003, abs(crack_noise - 0.5)))
+            * step(0.72, slab.z) * (1.0 - patched);
+        if hairline > 0.0 {
+            hairline = hairline * smoothstep(0.55, 0.7, apron_noise(p / 1.7 + slab.xy * 9.0));
+        }
+        var chipped = 1.0 - smoothstep(APRON_JOINT, APRON_JOINT * 3.5, edge);
+        if chipped > 0.0 {
+            chipped = chipped * step(0.6, grain_luma * apron_noise(p * 6.0) * 1.4);
+        }
         let streak = select(streak_x, streak_z, abs(offsets.x) - offsets.z < abs(offsets.y) - offsets.w) / APRON_TILE_MEAN;
         let corner_dirt = (1.0 - smoothstep(0.0, 2.4, lane_edge)) * (0.45 + 0.55 * smoothstep(0.7, 1.3, streak));
 
@@ -311,33 +356,35 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // handlers park), dark and still wet at its core with a thin-film sheen.
         let stain_cell = floor(p / APRON_STAIN_CELL);
         let spill = apron_hash(stain_cell + vec2f(5.0, 29.0));
-        let spill_at = (stain_cell + 0.2 + 0.6 * spill.xy) * APRON_STAIN_CELL;
-        let spill_dir = vec2f(cos(spill.w * 6.283), sin(spill.w * 6.283));
-        let rel = p - spill_at;
-        let stretched = vec2f(dot(rel, spill_dir) * 0.55, dot(rel, vec2f(-spill_dir.y, spill_dir.x)));
-        let spill_radius = 0.35 + 1.05 * spill.z * spill.z;
-        let shape = length(stretched) / spill_radius + (apron_noise(p * 1.9 + spill.xy * 40.0) - 0.5) * 0.7
-            + (grain_luma - 1.0) * 0.2;
         let near_cover = 1.0 - smoothstep(1.0, 7.0, fixture);
         let has_spill = step(fract(spill.x * 13.7 + spill.y * 7.1), 0.08 + 0.34 * near_cover);
-        let oil = (1.0 - smoothstep(0.55, 1.0, shape)) * has_spill;
-        let oil_core = (1.0 - smoothstep(0.05, 0.5, shape)) * has_spill;
-        let film = smoothstep(0.2, 0.42, shape) * (1.0 - smoothstep(0.42, 0.62, shape)) * has_spill;
-        let film_tint = 0.6 + 0.4 * cos(6.283 * (shape * 2.6 + vec3f(0.0, 0.33, 0.67)));
 
         color = material.color.rgb * f.tint.rgb * grain * tone * hue * pour * grime;
         color = color * (1.0 - fringe * 0.22) * mix(1.0, 1.1, chipped) * (1.0 - hairline * 0.4);
         color = mix(color, color * vec3f(0.62, 0.58, 0.53), corner_dirt * 0.45);
         color = mix(color, color * vec3f(0.66, 0.6, 0.52), banked * 0.5);
         color = mix(color, color * vec3f(0.85, 0.55, 0.34), castings * 0.75);
-        color = mix(color, color * vec3f(0.24, 0.23, 0.22), oil * mix(0.55, 0.8, spill.z));
-        color = mix(color, color * film_tint * 1.4, film * 0.35);
-        color = color * (1.0 - oil_core * 0.35);
+        if has_spill > 0.0 {
+            let spill_at = (stain_cell + 0.2 + 0.6 * spill.xy) * APRON_STAIN_CELL;
+            let spill_dir = vec2f(cos(spill.w * 6.283), sin(spill.w * 6.283));
+            let rel = p - spill_at;
+            let stretched = vec2f(dot(rel, spill_dir) * 0.55, dot(rel, vec2f(-spill_dir.y, spill_dir.x)));
+            let spill_radius = 0.35 + 1.05 * spill.z * spill.z;
+            let shape = length(stretched) / spill_radius + (apron_noise(p * 1.9 + spill.xy * 40.0) - 0.5) * 0.7
+                + (grain_luma - 1.0) * 0.2;
+            let oil = (1.0 - smoothstep(0.55, 1.0, shape)) * has_spill;
+            let oil_core = (1.0 - smoothstep(0.05, 0.5, shape)) * has_spill;
+            let film = smoothstep(0.2, 0.42, shape) * (1.0 - smoothstep(0.42, 0.62, shape)) * has_spill;
+            let film_tint = 0.6 + 0.4 * cos(6.283 * (shape * 2.6 + vec3f(0.0, 0.33, 0.67)));
+            color = mix(color, color * vec3f(0.24, 0.23, 0.22), oil * mix(0.55, 0.8, spill.z));
+            color = mix(color, color * film_tint * 1.4, film * 0.35);
+            color = color * (1.0 - oil_core * 0.35);
+            roughness = mix(roughness, 0.5, oil);
+            roughness = mix(roughness, 0.14, oil_core);
+        }
         color = color * (1.0 - groove * 0.55) * (1.0 - sealant * 0.65);
         color = color * (1.0 - contact);
         color = color * mix(1.0, 0.8, damp) * mix(1.0, 0.72, puddle);
-        roughness = mix(roughness, 0.5, oil);
-        roughness = mix(roughness, 0.14, oil_core);
         roughness = mix(roughness, 0.42, damp);
         roughness = mix(roughness, 0.12, puddle);
         // Cast-iron cover: a raised checker plate in a dark gap.
@@ -360,8 +407,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let ravel = smoothstep(half - 1.1, half - 0.15, abs(across)) * (0.5 + 0.5 * mottle);
         let tyre = smoothstep(0.8, 1.35, streak) * mix(0.5, 1.0, mottle);
         let lane_along = select(p.x, p.y, along_z);
-        let drips = smoothstep(0.5, 0.7, apron_noise(vec2f(across * 2.2, lane_along * 0.31))
-            * 0.7 + apron_noise(vec2f(across * 5.0, lane_along * 1.7)) * 0.3) * traffic.y;
+        var drips = 0.0;
+        if traffic.y > 0.0 {
+            drips = smoothstep(0.5, 0.7, apron_noise(vec2f(across * 2.2, lane_along * 0.31))
+                * 0.7 + apron_noise(vec2f(across * 5.0, lane_along * 1.7)) * 0.3) * traffic.y;
+        }
         let patch_hash = apron_hash(patch_cell + vec2f(3.0, 11.0));
         let patch_size = vec2f(2.0, 1.4) + patch_hash.zw * vec2f(3.5, 3.0);
         let patch_at = vec2f(0.6) + patch_hash.xy * (vec2f(APRON_PATCH_CELL) - patch_size - 1.2);
@@ -372,10 +422,18 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let has_patch = step(0.75, patch_hash.x * 0.6 + patch_hash.w * 0.6);
         let patched = clamp(inside / patch_aa + 0.5, 0.0, 1.0) * has_patch;
         let seal = (1.0 - smoothstep(0.0, 0.08, abs(inside))) * has_patch;
-        let crack = (1.0 - smoothstep(0.0, crack_width * 1.4 + 0.006, abs(crack_noise - 0.5)))
-            * smoothstep(0.6, 0.74, apron_noise(p / 6.0 + 2.0)) * (1.0 - patched);
-        let centre_joint = (1.0 - smoothstep(0.015, 0.05, abs(across + (apron_noise(p * 0.8) - 0.5) * 0.06)))
-            * smoothstep(0.35, 0.6, apron_noise(p / 4.0 + 17.0));
+        let crack_line = 1.0 - smoothstep(0.0, crack_width * 1.4 + 0.006, abs(crack_noise - 0.5));
+        var crack = 0.0;
+        if crack_line * (1.0 - patched) > 0.0 {
+            crack = crack_line * smoothstep(0.6, 0.74, apron_noise(p / 6.0 + 2.0)) * (1.0 - patched);
+        }
+        // The joint's wobble moves it at most 0.03 m, so beyond 0.085 m of the lane's
+        // centre it is gone.
+        var centre_joint = 0.0;
+        if abs(across) < 0.085 {
+            centre_joint = (1.0 - smoothstep(0.015, 0.05, abs(across + (apron_noise(p * 0.8) - 0.5) * 0.06)))
+                * smoothstep(0.35, 0.6, apron_noise(p / 4.0 + 17.0));
+        }
         let base = material.color.rgb * f.tint.rgb * mix(0.92, 1.06, grain_luma * 0.5)
             * mix(1.0, 1.28, worn * (1.0 - traffic.x * 0.7)) * mix(1.0, 1.2, ravel);
         color = base * (1.0 + aggregate * mix(0.35, 0.7, ravel)) * grime;
