@@ -1693,20 +1693,6 @@ impl Presentation {
                 position: dvec3(tank.position),
                 velocity: DVec3::new(tank.velocity.x, 0.0, tank.velocity.z),
                 aim: tank.aim,
-                threat: state
-                    .tanks
-                    .iter()
-                    .filter(|enemy| enemy.alive && enemy.team != tank.team)
-                    .map(|enemy| {
-                        let at = DVec3::new(enemy.position.x, 0.0, enemy.position.z);
-                        (
-                            at.distance_squared(DVec3::new(tank.position.x, 0.0, tank.position.z)),
-                            at,
-                        )
-                    })
-                    .filter(|(distance, _)| *distance < CAMERA_FEEL.threat_range.powi(2))
-                    .min_by(|a, b| a.0.total_cmp(&b.0))
-                    .map(|(_, at)| at),
             },
             None => ViewerPose::default(),
         }
