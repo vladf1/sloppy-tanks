@@ -1,22 +1,22 @@
 //! The vehicle livery: painted armor, bare metal and matte fittings weathered in
-//! vertex colors and drawn with three shared materials.
+//! vertex data and drawn with a few shared materials.
 //!
-//! Every opaque part of a vehicle model is repainted once when the model is built:
-//! its paint becomes a per-vertex color in the model's own frame (before the
-//! vehicle scale), weathered by where the vertex sits: dust and mud climbing the
-//! lower hull and running gear, a dust film on upward faces, darker undersides, a
-//! slight value shift per armor plate and a hand-painted light-to-dark gradient
-//! down each upright plate. Team paint and its shade then draw with one white
-//! vertex-colored material that carries the paint finish tile (brush strokes,
-//! chips, scratches: `scripts/generate-tank-textures.ts`), projected in model space
-//! so the finish runs on across neighbouring parts. The paint is a clean team color
-//! without a camouflage, so a tank's side reads at a glance from every camera.
+//! Every opaque part of a vehicle model is repainted once when the model is built.
+//! Painted armor (team paint and its deep trim) draws with one material per team
+//! whose shader paints the clean team color itself (`VEHICLE_PAINT_EFFECT`); the
+//! mesh only tells it where the paint wears: each vertex carries how its armor plate
+//! is bounded (the distance to the plate's convex edges, which chip and catch a bevel
+//! highlight, and to its recesses, which collect grime), the paint's value (a slight
+//! shift per plate and a light-to-dark gradient down each upright plate) and how low
+//! it sits in the dusty band. Upper panels stay clean; edges chip, the low hull
+//! dusts over and recesses darken. A wear tile (`scripts/generate-tank-textures.ts`)
+//! shapes the chips and the dust line, projected in model space so it runs on across
+//! neighbouring parts. The paint also takes a fill and a team-colored rim of its own,
+//! so a hull never crushes to black in shade and its side reads at range.
 //! Bare steel and gun metal share a metal material and the rest (rubber edges,
-//! canvas, wood, markings, openings) a matte one, so each joint of a vehicle costs
-//! few draws. Team-colored recognition panels and turret bands glow faintly in
-//! their team's color, one material per team (each team's meshes are its own
-//! already), so a tank's side still reads in shade and at range. Glass and lenses
-//! keep their own glossy materials.
+//! canvas, wood, markings, openings) a matte one; the running gear keeps its
+//! vertex-colored material with the paint's fill. So each joint of a vehicle costs
+//! few draws. Glass and lenses keep their own glossy materials.
 
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
@@ -29,12 +29,11 @@ use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA};
 use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 
-/// Service paint per team: a bright cobalt and a deep signal crimson, less
-/// saturated than the glowing `TEAM_COLORS` so the armor reads as painted steel
-/// while staying instantly team-coded. The blue is kept light enough not to fall
-/// to black in shade, the red deep enough not to wash out to salmon in sun. The
-/// team colors stay on markings, flags, bars and projectiles.
-pub const VEHICLE_PAINT: [u32; 2] = [0x2c78cc, 0xa3322b];
+/// Service paint per team: a strong signal blue and a deep crimson, each one
+/// saturated color without a camouflage, so a tank's side reads at a glance. The
+/// blue stays bright enough not to fall to black in shade (the paint's own fill
+/// lifts it further), the red deep enough never to wash out to salmon in sun.
+pub const VEHICLE_PAINT: [u32; 2] = [0x234f96, 0x8c2720];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -43,9 +42,11 @@ pub fn vehicle_paint(team: Team) -> u32 {
 
 /// The worn-metal image under `public/`, also used by the quarry's machinery.
 pub const ARMOR_WEAR_TEXTURE: &str = "textures/tanks/armor-wear.webp";
-/// The livery's paint finish tile under `public/` (the file keeps the name of the
-/// camouflage it replaced).
+/// The livery's wear tile under `public/` (the file keeps the name of the
+/// camouflage it replaced): alpha shapes chips, the grey the dust line and streaks.
 pub const ARMOR_PAINT_TEXTURE: &str = "textures/tanks/armor-camo.webp";
+/// The name the paint effect knows its wear tile by.
+pub const PAINT_WEAR_TILE: &str = "wear";
 /// The burnt-out paint of wrecks, on the paint's UVs.
 pub const ARMOR_SCORCH_TEXTURE: &str = "textures/tanks/armor-scorch.webp";
 /// Burnt paint: dull, rough, a little relief where it blistered.
@@ -53,75 +54,72 @@ const SCORCH_ROUGHNESS: f32 = 0.92;
 const SCORCH_BUMP_SCALE: f32 = 0.02;
 const TEXTURE_ANISOTROPY: u8 = 4;
 /// Paint UVs per metre of armor, shared with the wrecks' scorch tile (one tile per
-/// 4 m), and how often the paint finish repeats over one UV unit: its chips and
-/// brush strokes are sized for 2 m, sharp from the first-person seat.
+/// 4 m), and how often the wear tile repeats over one UV unit: one tile per 2.5 m,
+/// so a chip is a few centimetres across.
 const PAINT_UV_PER_METRE: f64 = 0.25;
-const PAINT_REPEAT: f32 = 1.25;
-/// The paint tile's mean multiplier (its base tone); the vertex paint is divided
-/// by it so the base tone shows the intended team paint.
-const PAINT_TEXTURE_MEAN: f64 = 0.8;
-/// Height of the paint's relief (layer edges, chips) in the bump map.
-const PAINT_BUMP_SCALE: f32 = 0.012;
-const METAL_BUMP_SCALE: f32 = 0.02;
-/// Military enamel: satin enough to catch a soft sky sheen along plate edges,
-/// rough enough not to read as glossy plastic.
-const PAINT_METALNESS: f32 = 0.1;
-const PAINT_ROUGHNESS: f32 = 0.5;
+const PAINT_REPEAT: f32 = 1.6;
+/// Military enamel: satin enough for chamfered edges to catch the sun, rough
+/// enough that the sky's sheen never washes the color out.
+const PAINT_METALNESS: f32 = 0.08;
+const PAINT_ROUGHNESS: f32 = 0.56;
 /// Bare steel and gun metal.
 const METAL_METALNESS: f32 = 0.55;
 const METAL_ROUGHNESS: f32 = 0.4;
+const METAL_BUMP_SCALE: f32 = 0.02;
 /// Rubber, canvas, wood, stencils and dark openings.
 const MATTE_ROUGHNESS: f32 = 0.85;
 /// Materials smoother than this are glass and lenses and keep their own finish.
 const GLOSSY_BELOW: f32 = 0.4;
 
-/// Dry dust and darker wet mud (sRGB) caked on the lower hull and running gear.
+/// Dry dust and darker wet mud (sRGB) caked on the running gear and fittings; the
+/// paint shader has its own for painted armor.
 const DUST: u32 = 0x8f7c5c;
 const MUD: u32 = 0x4e4031;
-/// How much dust tints the lowest paint, and how far wet mud climbs (a fraction of
-/// the dusty band).
+/// How much dust tints the lowest fittings, and how far wet mud climbs (a fraction
+/// of the dusty band).
 const DUST_STRENGTH: f64 = 0.8;
 /// Tracks and tyres (already vertex-colored) take little dry dust and a lighter
 /// coat of mud than the hull, so wheels, tyres and links stay legible.
-const DUST_ON_RUNNING_GEAR: f64 = 0.25;
-const MUD_ON_RUNNING_GEAR: f64 = 0.55;
+const DUST_ON_RUNNING_GEAR: f64 = 0.12;
+const MUD_ON_RUNNING_GEAR: f64 = 0.5;
 const MUD_STRENGTH: f64 = 0.68;
 const MUD_BAND: f64 = 0.55;
-/// Dust settled on upward faces: a trace, so the overhead camera still sees the
-/// team paint rather than a brown film.
-const TOP_FILM: f64 = 0.05;
 /// Darkening at the ground line and on the undersides.
-const GROUND_SHADE: f64 = 0.7;
+const GROUND_SHADE: f64 = 0.72;
 const UNDERSIDE_SHADE: f64 = 0.62;
 /// Plate-to-plate paint value variation (fraction either way).
-const PLATE_VARIATION: f64 = 0.1;
+const PLATE_VARIATION: f64 = 0.07;
 /// The hand-painted gradient down an upright plate: its paint value at the
 /// plate's foot and at its top edge. Plates shorter than `GRADIENT_MIN_HEIGHT`
 /// (chamfers, trim) keep their flat value.
-const GRADIENT_FOOT: f64 = 0.62;
-const GRADIENT_TOP: f64 = 1.1;
+const GRADIENT_FOOT: f64 = 0.7;
+const GRADIENT_TOP: f64 = 1.06;
 const GRADIENT_MIN_HEIGHT: f64 = 0.05;
+/// Upward faces (normal y above `DECK_FACING`) range from `DECK_LOW` at the top of
+/// the dusty band to `DECK_HIGH` `DECK_RAMP` metres above it.
+const DECK_FACING: f64 = 0.5;
+const DECK_LOW: f64 = 0.84;
+const DECK_HIGH: f64 = 1.1;
+const DECK_RAMP: f64 = 0.6;
 /// Faces leaning less than this (normal y) from vertical take the gradient.
 const UPRIGHT: f64 = 0.6;
-/// The custom shading of painted armor (`shaders/effects/vehicle_paint.wgsl`):
-/// chips to bare steel by the tile's wear field and the vertex's exposure, dust
-/// and mud splashed up the lower hull, roughness that follows the finish, a faint
-/// glow in the paint's own color and a team-colored fresnel rim. Params: team rim
-/// (linear rgb, strength), bare steel (linear rgb, ambient lift), dust (linear
-/// rgb, strength), mud (linear rgb, strength). The vertex alpha carries the
-/// chamfer flag and the height in the dusty band ([`paint_alpha`]).
+/// The custom shading of painted armor and running gear
+/// (`shaders/effects/vehicle_paint.wgsl`). Params: paint (linear rgb, rim
+/// strength), trim (linear rgb, fill strength), rim hue (linear rgb, wear tile
+/// repeat), bare steel (linear rgb, 1 for paint or 0 for running gear). The paint's
+/// vertex data is described at [`paint_colors`] and [`paint_alpha`]; its UVs are
+/// the wear tile's. Running gear keeps its own vertex colors and takes only the fill.
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
-/// The team rim's strength at a silhouette, and how much painted armor glows in
-/// its own color so it keeps its hue in shade instead of falling to black.
-const RIM_STRENGTH: f32 = 0.55;
-const AMBIENT_LIFT: f32 = 0.07;
+/// The team rim's strength at a silhouette, and the paint's own fill light.
+const RIM_STRENGTH: f32 = 0.85;
+const PAINT_FILL: f32 = 0.16;
+/// Running gear sits in the hull's shadow: more fill, no rim.
+const GEAR_FILL: f32 = 0.6;
 /// Bare steel where the paint chipped through (sRGB).
-const BARE_STEEL: u32 = 0xa4a7a6;
-/// How strongly dust and mud cover the lowest painted armor.
-const DUST_ON_PAINT: f32 = 0.78;
-const MUD_ON_PAINT: f32 = 0.65;
-/// Recognition panels and turret bands glow this much in their team color.
-const SIGNAL_GLOW: f32 = 0.45;
+const BARE_STEEL: u32 = 0xa9a9a3;
+/// Recognition panels and turret bands: matte cloth and paint in a team's signal
+/// color, without a glow of their own (a glowing stripe has no source).
+const SIGNAL_GLOW: f32 = 0.0;
 /// A chamfer strip: a flat triangle at least this long and at most this wide,
 /// facing diagonally (no axis component above `EDGE_FACING`).
 const EDGE_MIN_LENGTH: f64 = 0.08;
@@ -145,10 +143,11 @@ pub fn armor_wear_texture() -> TextureRef {
     }
 }
 
-fn armor_paint_texture() -> TextureRef {
+/// The wear tile: data, sampled linearly; the shader applies its repeat.
+fn paint_wear_tile() -> TextureRef {
     TextureRef {
         anisotropy: TEXTURE_ANISOTROPY,
-        repeat: [PAINT_REPEAT; 2],
+        srgb: false,
         ..TextureRef::file(ARMOR_PAINT_TEXTURE)
     }
 }
@@ -156,14 +155,15 @@ fn armor_paint_texture() -> TextureRef {
 /// The finishes a livery paints with; each is one shared material.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Finish {
-    /// Painted armor, glowing faintly in the team paint's color.
+    /// Painted armor in a team's paint and trim.
     Paint {
-        glow: u32,
+        paint: u32,
+        trim: u32,
     },
     Metal,
     Matte,
-    /// Recognition panels and turret bands in a team's signal color: matte, glowing
-    /// faintly, kept apart so wrecks can burn them off.
+    /// Recognition panels and turret bands in a team's signal color: matte, kept
+    /// apart so wrecks can burn them off.
     Signal(u32),
 }
 
@@ -185,14 +185,15 @@ fn finish_material(finish: Finish) -> Arc<Material> {
     static METAL: OnceLock<Arc<Material>> = OnceLock::new();
     static MATTE: OnceLock<Arc<Material>> = OnceLock::new();
     match finish {
-        Finish::Paint { glow } => {
-            static PAINTS: Cache<u32, Material> = Cache::new();
-            return PAINTS.get_or_insert(glow, || Material {
+        Finish::Paint { paint, trim } => {
+            static PAINTS: Cache<(u32, u32), Material> = Cache::new();
+            return PAINTS.get_or_insert((paint, trim), || Material {
                 effect: Effect::Custom {
                     name: VEHICLE_PAINT_EFFECT,
-                    params: paint_params(glow),
+                    params: paint_params(paint, trim),
                 },
-                ..paint_material()
+                extra_textures: vec![(PAINT_WEAR_TILE, paint_wear_tile())],
+                ..white_vertex_material(PAINT_METALNESS, PAINT_ROUGHNESS)
             });
         }
         Finish::Metal => METAL.get_or_init(|| {
@@ -212,36 +213,45 @@ fn finish_material(finish: Finish) -> Arc<Material> {
     .clone()
 }
 
-/// The vehicle paint effect's params for a team paint: its rim is the paint's hue
-/// at full brightness.
-fn paint_params(team_paint: u32) -> Vec<f32> {
-    let hue = hex_to_linear(team_paint);
+/// The vehicle paint effect's params for a team's paint and trim: its rim is the
+/// paint's hue at full brightness.
+fn paint_params(paint: u32, trim: u32) -> Vec<f32> {
+    let hue = hex_to_linear(paint);
     let peak = hue.iter().copied().fold(1e-6, f64::max);
-    let [steel, dust, mud] = [BARE_STEEL, DUST, MUD].map(hex_to_linear);
     let mut params = Vec::with_capacity(16);
-    params.extend(hue.map(|c| (c / peak) as f32));
+    params.extend(hue.map(|c| c as f32));
     params.push(RIM_STRENGTH);
-    params.extend(steel.map(|c| c as f32));
-    params.push(AMBIENT_LIFT);
-    params.extend(dust.map(|c| c as f32));
-    params.push(DUST_ON_PAINT);
-    params.extend(mud.map(|c| c as f32));
-    params.push(MUD_ON_PAINT);
+    params.extend(hex_to_linear(trim).map(|c| c as f32));
+    params.push(PAINT_FILL);
+    params.extend(hue.map(|c| (c / peak) as f32));
+    params.push(PAINT_REPEAT);
+    params.extend(hex_to_linear(BARE_STEEL).map(|c| c as f32));
+    params.push(1.0);
     params
 }
 
-fn paint_material() -> Material {
-    let finish = armor_paint_texture();
-    Material {
-        map: Some(finish.clone()),
-        bump_map: Some(finish),
-        bump_scale: PAINT_BUMP_SCALE,
-        ..white_vertex_material(PAINT_METALNESS, PAINT_ROUGHNESS)
-    }
+/// The running gear's material: its own vertex colors and finish with the paint
+/// effect's fill, so wheels and links read in the hull's shadow.
+fn gear_material(source: &Material) -> Arc<Material> {
+    static GEAR: Cache<(u32, u32), Material> = Cache::new();
+    GEAR.get_or_insert(
+        (source.metalness.to_bits(), source.roughness.to_bits()),
+        || {
+            let mut params = vec![0.0; 16];
+            params[7] = GEAR_FILL;
+            params[11] = PAINT_REPEAT;
+            Material {
+                effect: Effect::Custom {
+                    name: VEHICLE_PAINT_EFFECT,
+                    params,
+                },
+                ..source.clone()
+            }
+        },
+    )
 }
 
-/// The recognition material of a team's signal color: matte cloth that glows
-/// faintly in that color.
+/// The recognition material of a team's signal color: matte cloth.
 fn signal_material(color: u32) -> Arc<Material> {
     static SIGNALS: Cache<u32, Material> = Cache::new();
     SIGNALS.get_or_insert(color, || Material {
@@ -253,11 +263,28 @@ fn signal_material(color: u32) -> Arc<Material> {
 
 /// Whether a part wears the team paint finish.
 pub fn is_camouflaged(material: &Material) -> bool {
-    material.map.as_ref().map(|map| &map.source) == Some(&armor_paint_texture().source)
+    matches!(&material.effect, Effect::Custom { name, params }
+        if *name == VEHICLE_PAINT_EFFECT && params.get(15) == Some(&1.0))
 }
 
-/// The material of a wreck's burnt paint: the scorch tile over a vertex-colored ash
-/// base, on the paint's UVs.
+/// Give a painted mesh plain paint colors again (the team paint or trim at the
+/// vertex's value) in place of the paint shader's edge data, for a wreck that burns
+/// it with a material of its own. `material` is the paint material it wore.
+pub fn unpaint(mesh: &mut Mesh, material: &Material) {
+    let Effect::Custom { params, .. } = &material.effect else {
+        return;
+    };
+    let paint = [params[0], params[1], params[2]];
+    let trim = [params[4], params[5], params[6]];
+    for color in &mut mesh.colors {
+        let (base, value) = paint_value_decoded(color[2]);
+        let rgb = if base { paint } else { trim };
+        *color = rgb.map(|c| c * value);
+    }
+}
+
+/// The scorched material of a wreck's burnt paint: the scorch tile over a
+/// vertex-colored ash base, on the paint's UVs.
 pub fn scorched_paint_material() -> Arc<Material> {
     static SCORCHED: OnceLock<Arc<Material>> = OnceLock::new();
     SCORCHED
@@ -303,9 +330,10 @@ pub fn is_signal_panel(material: &Arc<Material>) -> bool {
         && material.emissive.0 != 0
         && material.emissive_intensity == SIGNAL_GLOW
         && material.map.is_none()
+        && material.effect == Effect::None
 }
 
-/// The livery of one vehicle: its painted colors (team paint and shade), the
+/// The livery of one vehicle: its painted colors (team paint and trim), the
 /// colors that are bare metal, its recognition panel's color and its grime band.
 pub struct Livery<'a> {
     pub paint: &'a [u32],
@@ -317,21 +345,19 @@ pub struct Livery<'a> {
 impl Livery<'_> {
     /// The finish a part's material takes, or `None` to leave it alone.
     fn finish(&self, material: &Material) -> Option<Finish> {
-        let opaque = material.shading == Shading::Standard
-            && material.effect == Effect::None
-            && !material.transparent
-            && material.alpha_test == 0.0
-            && material.emissive_map.is_none();
         let color = material.color.0;
-        let ember = std::ptr::eq(material, &*ember_material());
-        if !opaque || ember || material.vertex_colors || material.roughness < GLOSSY_BELOW {
+        if !is_opaque_standard(material) || material.vertex_colors {
+            return None;
+        }
+        if material.roughness < GLOSSY_BELOW {
             return None;
         }
         Some(if self.paint.contains(&color) {
-            // Trim shares the team paint's material (and so its glow): one
-            // painted material per team keeps a joint's paint in one draw.
+            // Trim shares the team paint's material: one painted material per
+            // team keeps a joint's paint in one draw.
             Finish::Paint {
-                glow: self.paint[0],
+                paint: self.paint[0],
+                trim: self.paint.get(1).copied().unwrap_or(self.paint[0]),
             }
         } else if color == self.signal {
             Finish::Signal(color)
@@ -343,10 +369,20 @@ impl Livery<'_> {
     }
 }
 
+/// Opaque standard shading without an effect or cut-out, and not an ember.
+fn is_opaque_standard(material: &Material) -> bool {
+    material.shading == Shading::Standard
+        && material.effect == Effect::None
+        && !material.transparent
+        && material.alpha_test == 0.0
+        && material.emissive_map.is_none()
+        && !std::ptr::eq(material, &*ember_material())
+}
+
 /// Repaint every opaque part of `root` (a vehicle model in its own frame; the
 /// root's transform is ignored) with the livery's weathered finishes. Parts that
-/// are already vertex-colored (tracks, tyres) keep their material and gain the
-/// grime.
+/// are already vertex-colored (tracks, tyres) keep their colors and finish, gain
+/// the grime and take the running gear's fill.
 pub fn apply_livery(root: &mut Node, livery: &Livery) {
     let mut weathered_meshes = HashMap::new();
     for child in &mut root.children {
@@ -380,7 +416,9 @@ fn repaint(
         && drawable.instances.is_none()
     {
         let finish = livery.finish(&drawable.material);
-        let regrimed = drawable.material.vertex_colors && !drawable.mesh.colors.is_empty();
+        let regrimed = drawable.material.vertex_colors
+            && !drawable.mesh.colors.is_empty()
+            && is_opaque_standard(&drawable.material);
         if finish.is_some() || regrimed {
             let key = weather_key(&drawable.mesh, &drawable.material, world);
             let (mesh, material) = weathered_meshes
@@ -390,7 +428,7 @@ fn repaint(
                         Arc::new(weathered(
                             &drawable.mesh,
                             world,
-                            Some(hex_to_linear(drawable.material.color.0)),
+                            Some(drawable.material.color.0),
                             finish,
                             livery.grime,
                         )),
@@ -404,7 +442,7 @@ fn repaint(
                             Finish::Matte,
                             livery.grime,
                         )),
-                        drawable.material.clone(),
+                        gear_material(&drawable.material),
                     ),
                 })
                 .clone();
@@ -450,43 +488,45 @@ fn plate_variation(key: PlateKey) -> f64 {
     (hash % 2001) as f64 / 1000.0 - 1.0
 }
 
-/// Weathered paint of a vertex at model-space `p` on a face with normal `n`.
-fn grimed(
-    base: [f64; 3],
-    p: DVec3,
-    n: DVec3,
-    finish: Finish,
-    grime: Grime,
-    dust_scale: f64,
-) -> [f64; 3] {
-    let dust = hex_to_linear(DUST);
-    let mud = hex_to_linear(MUD);
+/// Dust and mud on a fitting or the running gear at model-space `p`.
+fn grimed(base: [f64; 3], p: DVec3, n: DVec3, grime: Grime, dust_scale: f64) -> [f64; 3] {
     let height = band_height(p, grime);
     let low = 1.0 - height;
-    let mut color = base;
-    // Painted armor takes its dust and mud in the paint shader, splashed and
-    // broken up; everything else bakes them here.
-    if !finish.is_paint() {
-        color = mix(color, dust, low.powf(1.7) * DUST_STRENGTH * dust_scale);
-        let mud_strength = if dust_scale < 1.0 {
-            MUD_STRENGTH * MUD_ON_RUNNING_GEAR
-        } else {
-            MUD_STRENGTH
-        };
-        color = mix(
-            color,
-            mud,
-            (1.0 - height / MUD_BAND).clamp(0.0, 1.0).powi(2) * mud_strength,
-        );
+    let mut color = mix(
+        base,
+        hex_to_linear(DUST),
+        low.powf(1.7) * DUST_STRENGTH * dust_scale,
+    );
+    let mud_strength = if dust_scale < 1.0 {
+        MUD_STRENGTH * MUD_ON_RUNNING_GEAR
+    } else {
+        MUD_STRENGTH
+    };
+    color = mix(
+        color,
+        hex_to_linear(MUD),
+        (1.0 - height / MUD_BAND).clamp(0.0, 1.0).powi(2) * mud_strength,
+    );
+    color.map(|c| c * ground_shade(height, n))
+}
+
+/// Upward faces lighten with height above the dusty band, so from overhead the
+/// turret roof stands off the deck and the deck off the fenders.
+fn deck_value(p: DVec3, n: DVec3, grime: Grime) -> f64 {
+    if n.y <= DECK_FACING {
+        return 1.0;
     }
-    if finish.is_paint() && n.y > 0.5 {
-        color = mix(color, dust, TOP_FILM * (n.y - 0.5) * 2.0);
-    }
+    let rise = smoothstep(grime.dust_top, grime.dust_top + DECK_RAMP, p.y);
+    DECK_LOW + (DECK_HIGH - DECK_LOW) * rise
+}
+
+/// Darker at the ground line and on undersides.
+fn ground_shade(height: f64, n: DVec3) -> f64 {
     let mut shade = GROUND_SHADE + (1.0 - GROUND_SHADE) * smoothstep(0.0, 1.6, height);
     if n.y < 0.0 {
         shade *= 1.0 + (UNDERSIDE_SHADE - 1.0) * -n.y;
     }
-    color.map(|c| c * shade)
+    shade
 }
 
 /// How high a model-space point sits in the dusty band: 0 at the ground, 1 at its
@@ -496,25 +536,34 @@ fn band_height(p: DVec3, grime: Grime) -> f64 {
 }
 
 /// The vertex alpha the paint shader reads: 0.2 plus 0.3 x how low the vertex sits
-/// in the dusty band, raised by 0.4 on a chamfered plate edge. A chamfer flags
-/// whole triangles, so interpolation never mixes the two; the floor keeps the
-/// tile's alpha recoverable after standard shading multiplies the two.
+/// in the dusty band, raised by 0.4 on a chamfer strip. A chamfer flags whole
+/// triangles, so interpolation never mixes the two.
 fn paint_alpha(p: DVec3, grime: Grime, edge: bool) -> f32 {
     let flag = if edge { 0.4 } else { 0.0 };
     (0.2 + flag + 0.3 * (1.0 - band_height(p, grime))) as f32
 }
 
+/// The paint value's code in the blue channel: trim in [0, 0.5), paint in
+/// [0.5, 1], each holding a value up to `VALUE_RANGE`.
+const VALUE_RANGE: f64 = 1.45;
+
+fn paint_value_code(paint: bool, value: f64) -> f32 {
+    let code = (value / VALUE_RANGE).clamp(0.0, 0.998) * 0.5;
+    (if paint { 0.5 + code } else { code }) as f32
+}
+
+/// Whether a code is the team paint (rather than trim), and its value.
+fn paint_value_decoded(code: f32) -> (bool, f32) {
+    let paint = code >= 0.5;
+    let fraction = if paint { code - 0.5 } else { code };
+    (paint, fraction * 2.0 * VALUE_RANGE as f32)
+}
+
 /// A non-indexed copy of `mesh` moved into the model frame for weathering (the
-/// stored positions stay in the part's frame), with weathered vertex colors and,
-/// for paint, model-space paint UVs. `base` is the part's paint; `None`
-/// weathers the mesh's own vertex colors.
-fn weathered(
-    mesh: &Mesh,
-    world: DMat4,
-    base: Option<[f64; 3]>,
-    finish: Finish,
-    grime: Grime,
-) -> Mesh {
+/// stored positions stay in the part's frame). Paint gets the paint shader's
+/// vertex data and model-space wear UVs (`base` is the part's paint color); other
+/// finishes get weathered vertex colors (`None` weathers the mesh's own colors).
+fn weathered(mesh: &Mesh, world: DMat4, base: Option<u32>, finish: Finish, grime: Grime) -> Mesh {
     let mut out = mesh.to_non_indexed();
     let count = out.positions.len();
     let own_colors = std::mem::take(&mut out.colors);
@@ -533,41 +582,54 @@ fn weathered(
             (p, if flip { -face } else { face })
         })
         .collect();
-    let heights = plate_heights(&faces);
+    let flat: Vec<bool> = (0..faces.len())
+        .map(|t| {
+            let n = mesh_normals(&out, t);
+            n[0] == n[1] && n[1] == n[2]
+        })
+        .collect();
+    let plates = finish.is_paint().then(|| Plates::new(&faces, &flat));
+    let (heights, edges) = match &plates {
+        Some(plates) => (plates.heights(&faces), plate_edges(&faces, &flat, plates)),
+        None => (HashMap::new(), Vec::new()),
+    };
+    let is_trim = match finish {
+        Finish::Paint { trim, paint } => base == Some(trim) && trim != paint,
+        _ => false,
+    };
     for (t, &(p, face)) in faces.iter().enumerate() {
-        let key = plate_key(face, p[0]);
-        let variation = if finish.is_paint() {
-            1.0 + PLATE_VARIATION * plate_variation(key)
-        } else {
-            1.0
-        };
-        let gradient = |y: f64| match heights.get(&key) {
-            Some(&(foot, top)) if finish.is_paint() && top - foot >= GRADIENT_MIN_HEIGHT => {
+        let root = plates.as_ref().map_or(t, |plates| plates.roots[t]);
+        let gradient = |y: f64| match heights.get(&root) {
+            Some(&(foot, top)) if top - foot >= GRADIENT_MIN_HEIGHT => {
                 GRADIENT_FOOT + (GRADIENT_TOP - GRADIENT_FOOT) * (y - foot) / (top - foot)
             }
             _ => 1.0,
         };
-        let normals = &mesh_normals(&out, t);
-        let edge = finish.is_paint() && is_chamfer(&p, face, normals);
+        let chamfer = finish.is_paint() && flat[t] && is_chamfer(&p, face);
         for (k, point) in p.iter().enumerate() {
             let index = t * 3 + k;
-            let paint = base
-                .unwrap_or_else(|| own_colors.get(index).map_or([1.0; 3], |c| c.map(f64::from)));
-            let dust_scale = if base.is_some() {
-                1.0
-            } else {
-                DUST_ON_RUNNING_GEAR
-            };
-            let shade = variation * gradient(point.y);
-            let mut color =
-                grimed(paint, *point, face, finish, grime, dust_scale).map(|c| c * shade);
             if finish.is_paint() {
-                color = color.map(|c| c / PAINT_TEXTURE_MEAN);
+                let (q, n) = faces[root];
+                let value = (1.0 + PLATE_VARIATION * plate_variation(plate_key(n, q[0])))
+                    * gradient(point.y)
+                    * deck_value(*point, face, grime)
+                    * ground_shade(band_height(*point, grime), face);
+                let [r, g] = edges[index];
+                colors.push([r, g, paint_value_code(!is_trim, value)]);
                 let (u, v) = paint_uv(*point, face);
                 out.uvs[index] = [u as f32, v as f32];
-                alphas.push(paint_alpha(*point, grime, edge));
+                alphas.push(paint_alpha(*point, grime, chamfer));
+            } else {
+                let (paint, dust_scale) = match base {
+                    Some(hex) => (hex_to_linear(hex), 1.0),
+                    None => (
+                        own_colors.get(index).map_or([1.0; 3], |c| c.map(f64::from)),
+                        DUST_ON_RUNNING_GEAR,
+                    ),
+                };
+                let color = grimed(paint, *point, face, grime, dust_scale);
+                colors.push(color.map(|c| c as f32));
             }
-            colors.push(color.map(|c| c as f32));
         }
     }
     out.colors = colors;
@@ -577,37 +639,15 @@ fn weathered(
     out
 }
 
-/// The height range of every upright plate among `faces` (corners, normal).
-fn plate_heights(faces: &[([DVec3; 3], DVec3)]) -> HashMap<PlateKey, (f64, f64)> {
-    let mut heights = HashMap::new();
-    for (p, face) in faces {
-        if face.y.abs() >= UPRIGHT {
-            continue;
-        }
-        let range = heights
-            .entry(plate_key(*face, p[0]))
-            .or_insert((f64::INFINITY, f64::NEG_INFINITY));
-        for corner in p {
-            range.0 = range.0.min(corner.y);
-            range.1 = range.1.max(corner.y);
-        }
-    }
-    heights
-}
-
 /// The stored normals of triangle `t`.
 fn mesh_normals(mesh: &Mesh, t: usize) -> [[f32; 3]; 3] {
     let at = |k: usize| mesh.normals.get(t * 3 + k).copied().unwrap_or([0.0; 3]);
     [at(0), at(1), at(2)]
 }
 
-/// Whether a triangle is part of a chamfer strip along a plate edge: flat shaded,
-/// long and thin, and facing diagonally between the plates it joins. Smooth
-/// surfaces (gun tubes, wheels) have differing vertex normals and are left alone.
-fn is_chamfer(p: &[DVec3; 3], face: DVec3, normals: &[[f32; 3]; 3]) -> bool {
-    if normals[0] != normals[1] || normals[1] != normals[2] {
-        return false;
-    }
+/// Whether a flat triangle is part of a chamfer strip along a plate edge: long and
+/// thin, and facing diagonally between the plates it joins.
+fn is_chamfer(p: &[DVec3; 3], face: DVec3) -> bool {
     let longest = (0..3)
         .map(|i| p[i].distance(p[(i + 1) % 3]))
         .fold(0.0, f64::max);
@@ -616,9 +656,9 @@ fn is_chamfer(p: &[DVec3; 3], face: DVec3, normals: &[[f32; 3]; 3]) -> bool {
     longest > EDGE_MIN_LENGTH && width < EDGE_MAX_WIDTH && face.abs().max_element() < EDGE_FACING
 }
 
-/// Camouflage coordinates of a model-space point on a face: projected along the
-/// face's dominant axis, with v running up the vertical faces so the tile's rain
-/// streaks run down the armor.
+/// Paint coordinates of a model-space point on a face: projected along the face's
+/// dominant axis, with v running up the vertical faces so the tile's streaks run
+/// down the armor.
 fn paint_uv(p: DVec3, face: DVec3) -> (f64, f64) {
     let n = face.abs();
     let (u, v) = if n.y >= n.x && n.y >= n.z {
@@ -629,4 +669,310 @@ fn paint_uv(p: DVec3, face: DVec3) -> (f64, f64) {
         (p.x, p.y)
     };
     (u * PAINT_UV_PER_METRE, v * PAINT_UV_PER_METRE)
+}
+
+/// What borders an armor plate along one of its sides, as the paint shader reads
+/// it: nothing it marks, a convex edge (chips, bevel highlight) or a recess (grime).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Border {
+    Plain = 0,
+    Edge = 1,
+    Recess = 2,
+}
+
+/// The paint shader's edge data: each of the red and green channels describes a
+/// pair of parallel border lines a triangle lies between (or one line, with a
+/// plain far side), as `state + EDGE_MARGIN + EDGE_SPAN * t`. `t` runs from 0 on
+/// the near line to 1 on the far one and is affine across the triangle, so the
+/// shader recovers both distances in metres from the channel's screen-space
+/// gradient; the integer `state` is the near border plus 3 x the far border.
+/// Triangles without borders (smooth surfaces) hold `NO_EDGES`, which has no
+/// gradient and so no edge anywhere.
+const EDGE_MARGIN: f64 = 0.04;
+const EDGE_SPAN: f64 = 0.92;
+const NO_EDGES: f32 = 0.5;
+/// Corners closer than this are the same point; a vertex this close to a border
+/// segment lies on it.
+const POINT_TOLERANCE: f64 = 1e-4;
+/// Neighbouring faces closer in direction than this (cosine; about 12 degrees)
+/// continue one surface rather than meeting at an edge.
+const CONTINUOUS: f64 = 0.978;
+
+type PointKey = [i64; 3];
+
+fn point_key(p: DVec3) -> PointKey {
+    [p.x, p.y, p.z].map(|v| (v / POINT_TOLERANCE).round() as i64)
+}
+
+/// One side of a plate: a triangle edge no other triangle of the plate shares.
+struct Segment {
+    a: DVec3,
+    b: DVec3,
+    border: Border,
+}
+
+/// A border line a triangle touches: its unit normal into the plate and offset
+/// (`inward · p - offset` is the distance from it), its border, how many of the
+/// triangle's corners lie on its segment and their mean distance from it.
+struct Line {
+    inward: DVec3,
+    offset: f64,
+    border: Border,
+    touches: usize,
+    mean: f64,
+}
+
+impl Line {
+    fn distance(&self, p: DVec3) -> f64 {
+        self.inward.dot(p) - self.offset
+    }
+}
+
+fn distance_to_segment(q: DVec3, a: DVec3, dir: DVec3, length: f64) -> f64 {
+    let t = dir.dot(q - a).clamp(0.0, length);
+    q.distance(a + dir * t)
+}
+
+fn find_root(parent: &mut [usize], mut t: usize) -> usize {
+    while parent[t] != t {
+        parent[t] = parent[parent[t]];
+        t = parent[t];
+    }
+    t
+}
+
+/// A triangle edge by its corners, in either order.
+type EdgeKey = (PointKey, PointKey);
+
+fn edge_key(a: PointKey, b: PointKey) -> EdgeKey {
+    if a <= b { (a, b) } else { (b, a) }
+}
+
+/// The armor plates of a mesh: flat triangles joined by an edge within a few
+/// degrees of each other (a plate and its gently faceted continuation) share a
+/// root triangle.
+struct Plates {
+    keys: Vec<[PointKey; 3]>,
+    /// The triangles on each edge.
+    shared: HashMap<EdgeKey, Vec<usize>>,
+    roots: Vec<usize>,
+}
+
+impl Plates {
+    fn new(faces: &[([DVec3; 3], DVec3)], flat: &[bool]) -> Self {
+        let keys: Vec<[PointKey; 3]> = faces.iter().map(|(p, _)| p.map(point_key)).collect();
+        let mut shared: HashMap<EdgeKey, Vec<usize>> = HashMap::new();
+        for (t, k) in keys.iter().enumerate() {
+            for i in 0..3 {
+                shared
+                    .entry(edge_key(k[i], k[(i + 1) % 3]))
+                    .or_default()
+                    .push(t);
+            }
+        }
+        let mut parent: Vec<usize> = (0..faces.len()).collect();
+        for triangles in shared.values() {
+            for (i, &a) in triangles.iter().enumerate() {
+                for &b in &triangles[i + 1..] {
+                    if flat[a] && flat[b] && faces[a].1.dot(faces[b].1) > CONTINUOUS {
+                        // The lower root wins, so a plate's root is its first
+                        // triangle whatever order the edges come in.
+                        let (ra, rb) = (find_root(&mut parent, a), find_root(&mut parent, b));
+                        parent[ra.max(rb)] = ra.min(rb);
+                    }
+                }
+            }
+        }
+        let roots = (0..faces.len())
+            .map(|t| find_root(&mut parent, t))
+            .collect();
+        Self {
+            keys,
+            shared,
+            roots,
+        }
+    }
+
+    /// The height range of every upright plate (by root).
+    fn heights(&self, faces: &[([DVec3; 3], DVec3)]) -> HashMap<usize, (f64, f64)> {
+        let mut heights = HashMap::new();
+        for (t, (p, face)) in faces.iter().enumerate() {
+            if face.y.abs() >= UPRIGHT {
+                continue;
+            }
+            let range = heights
+                .entry(self.roots[t])
+                .or_insert((f64::INFINITY, f64::NEG_INFINITY));
+            for corner in p {
+                range.0 = range.0.min(corner.y);
+                range.1 = range.1.max(corner.y);
+            }
+        }
+        heights
+    }
+}
+
+/// The paint shader's edge channels for every corner of `faces` (corners, normal),
+/// `flat` marking the flat-shaded triangles that form plates. Coplanar flat
+/// triangles joined by an edge make a plate; its sides are convex edges where the
+/// neighbouring face falls away, recesses where it rises (and along the open foot of
+/// an upright plate, which stands on something), plain otherwise.
+fn plate_edges(faces: &[([DVec3; 3], DVec3)], flat: &[bool], plates: &Plates) -> Vec<[f32; 2]> {
+    let count = faces.len();
+    let Plates {
+        keys,
+        shared,
+        roots,
+    } = plates;
+    let mut feet: HashMap<usize, f64> = HashMap::new();
+    for (t, (p, _)) in faces.iter().enumerate() {
+        let low = p.iter().map(|q| q.y).fold(f64::INFINITY, f64::min);
+        let foot = feet.entry(roots[t]).or_insert(f64::INFINITY);
+        *foot = foot.min(low);
+    }
+    let mut sides: HashMap<usize, Vec<Segment>> = HashMap::new();
+    for t in (0..count).filter(|&t| flat[t]) {
+        let (p, normal) = faces[t];
+        for i in 0..3 {
+            let (j, (a, b)) = ((i + 1) % 3, (p[i], p[(i + 1) % 3]));
+            let triangles = &shared[&edge_key(keys[t][i], keys[t][j])];
+            if triangles.iter().any(|&u| u != t && roots[u] == roots[t]) {
+                continue;
+            }
+            let mut border = Border::Plain;
+            let mut open = true;
+            for &u in triangles.iter().filter(|&&u| u != t) {
+                open = false;
+                let Some(k) =
+                    (0..3).find(|&k| keys[u][k] != keys[t][i] && keys[u][k] != keys[t][j])
+                else {
+                    continue;
+                };
+                // A neighbour within a few degrees of the plate continues it (a
+                // gently faceted surface), so the seam between them marks nothing.
+                if normal.dot(faces[u].1) > CONTINUOUS {
+                    break;
+                }
+                let rise = normal.dot(faces[u].0[k] - a);
+                if rise < -1e-5 {
+                    border = Border::Edge;
+                    break;
+                }
+                if rise > 1e-5 {
+                    border = Border::Recess;
+                    break;
+                }
+            }
+            if open {
+                border = Border::Edge;
+            }
+            // The level foot of an upright plate stands on something (a deck, a
+            // box's own floor): it gathers grime rather than chipping.
+            let upright = normal.y.abs() < UPRIGHT;
+            let level = (b.y - a.y).abs() < 0.3 * a.distance(b);
+            let foot = (a.y + b.y) / 2.0 < feet[&roots[t]] + 0.01;
+            if border == Border::Edge && upright && level && foot {
+                border = Border::Recess;
+            }
+            if border != Border::Plain {
+                sides
+                    .entry(roots[t])
+                    .or_default()
+                    .push(Segment { a, b, border });
+            }
+        }
+    }
+    let mut out = vec![[NO_EDGES; 2]; count * 3];
+    for t in (0..count).filter(|&t| flat[t]) {
+        let Some(segments) = sides.get(&roots[t]) else {
+            continue;
+        };
+        let lines = border_lines(&faces[t], segments);
+        let mut used = vec![false; lines.len()];
+        let mut channel = 0;
+        for i in 0..lines.len() {
+            if channel == 2 {
+                break;
+            }
+            if used[i] {
+                continue;
+            }
+            used[i] = true;
+            let near = &lines[i];
+            let far = (0..lines.len())
+                .find(|&j| !used[j] && lines[j].inward.dot(near.inward) < -0.9999)
+                .inspect(|&j| used[j] = true)
+                .map(|j| &lines[j]);
+            let p = faces[t].0;
+            let (width, far_border) = match far {
+                Some(far) => (near.distance(p[0]) + far.distance(p[0]), far.border),
+                None => (
+                    p.iter().map(|q| near.distance(*q)).fold(0.0, f64::max),
+                    Border::Plain,
+                ),
+            };
+            if width < 1e-6 {
+                continue;
+            }
+            let state = f64::from(near.border as u8 + 3 * far_border as u8);
+            for (k, q) in p.iter().enumerate() {
+                let along = (near.distance(*q) / width).clamp(0.0, 1.0);
+                out[t * 3 + k][channel] = (state + EDGE_MARGIN + EDGE_SPAN * along) as f32;
+            }
+            channel += 1;
+        }
+    }
+    out
+}
+
+/// The border lines of a plate's `segments` that the triangle `face` touches, the
+/// ones running along its own edges first, then the nearest.
+fn border_lines(face: &([DVec3; 3], DVec3), segments: &[Segment]) -> Vec<Line> {
+    let (p, normal) = *face;
+    let centroid = (p[0] + p[1] + p[2]) / 3.0;
+    let mut lines: Vec<Line> = Vec::new();
+    for segment in segments {
+        let along = segment.b - segment.a;
+        let length = along.length();
+        if length < 1e-6 {
+            continue;
+        }
+        let dir = along / length;
+        let touches = p
+            .iter()
+            .filter(|q| distance_to_segment(**q, segment.a, dir, length) < POINT_TOLERANCE)
+            .count();
+        if touches == 0 {
+            continue;
+        }
+        let mut inward = normal.cross(dir).normalize_or_zero();
+        if inward.dot(centroid - segment.a) < 0.0 {
+            inward = -inward;
+        }
+        let offset = inward.dot(segment.a);
+        let distances = p.map(|q| inward.dot(q) - offset);
+        // A line that cuts the triangle (a reflex corner) marks no side of it.
+        if distances.iter().any(|&d| d < -POINT_TOLERANCE) {
+            continue;
+        }
+        let mean = distances.iter().sum::<f64>() / 3.0;
+        if let Some(line) = lines.iter_mut().find(|line| {
+            line.inward.dot(inward) > 0.9999 && (line.offset - offset).abs() < POINT_TOLERANCE
+        }) {
+            line.touches = line.touches.max(touches);
+            if segment.border == Border::Edge {
+                line.border = Border::Edge;
+            }
+            continue;
+        }
+        lines.push(Line {
+            inward,
+            offset,
+            border: segment.border,
+            touches,
+            mean,
+        });
+    }
+    lines.sort_by(|x, y| y.touches.cmp(&x.touches).then(x.mean.total_cmp(&y.mean)));
+    lines
 }

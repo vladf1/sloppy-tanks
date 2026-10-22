@@ -49,14 +49,14 @@ const HUB_BOLTS: u32 = 5;
 
 const HEADLIGHT: u32 = 0xd9e6df;
 /// Rubber pads and skirt edges: near black.
-const RUBBER: u32 = 0x1d1e1f;
+const RUBBER: u32 = 0x262728;
 /// Road wheel tyres: a charcoal sidewall and a lighter, scuffed tread band, so
 /// each wheel reads as a rubber-tyred wheel against the dark of the track.
-const TYRE_SIDEWALL: u32 = 0x2b2d2f;
-const TYRE_TREAD: u32 = 0x45464a;
+const TYRE_SIDEWALL: u32 = 0x323438;
+const TYRE_TREAD: u32 = 0x55565a;
 /// Track shoes and their end connectors and guide horns: worn steel, the
 /// connectors and horn faces polished bright where the wheels and ground rub.
-const TRACK_STEEL: u32 = 0x5f5e5a;
+const TRACK_STEEL: u32 = 0x6b6963;
 const TRACK_CONNECTOR: u32 = 0x8f8d87;
 /// Road wheel discs wear the team paint, as on the real vehicles; a steel hub
 /// cap and bright bolt heads sit in their centre.

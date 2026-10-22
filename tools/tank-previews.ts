@@ -3,10 +3,11 @@
 // chassis. `scripts/generate-previews.mjs` packs them into `public/previews/tanks.webp`;
 // `tools/tank-surface-check.html` shows them at card and gameplay scale.
 //
-// The lighting and framing follow the former Three.js card renderer's: a hemisphere
-// light, a bright warm key light from the front left and a strong cool rim light from
-// behind (a distant point light without falloff, which lights like a directional one),
-// ACES tone mapping and a 7 m wide orthographic view from (8, 6, 6). The renderer has no
+// The lighting is a garage card's: a dim hemisphere fill, a bright warm key light from
+// the front left kept below the red paint's clipping point (ACES turns clipped red
+// pink), and a strong cool rim light from behind that edges the silhouette (a
+// distant point light without falloff, which lights like a directional one), ACES
+// tone mapping and a 7 m wide orthographic view from (8, 6, 6). The renderer has no
 // orthographic camera, so a 0.6° perspective camera 400 m away frames the same view.
 // Transparency comes from difference matting: each tank is drawn over black and over
 // white, and the two frames give every pixel's coverage and its unblended color. A soft
@@ -65,8 +66,8 @@ const SHADOW_OPACITY = 0.62;
 
 const SCENE = {
   background: 0x000000,
-  hemisphere: { sky: 0xdcedff, ground: 0x4c6075, intensity: 2.2 },
-  sun: { color: 0xfff0d2, intensity: 4.3, position: [-3, 7, 5], target: [0, 0, 0] },
+  hemisphere: { sky: 0xdcedff, ground: 0x4c6075, intensity: 1.5 },
+  sun: { color: 0xfff0d2, intensity: 3.8, position: [-3, 7, 5], target: [0, 0, 0] },
   shadow: {
     enabled: false,
     mapSize: 512,
@@ -78,7 +79,7 @@ const SCENE = {
   },
   pointLight: {
     color: 0x9fd6ff,
-    intensity: 3.6,
+    intensity: 5,
     distance: 0,
     decay: 0,
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
