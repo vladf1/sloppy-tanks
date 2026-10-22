@@ -36,6 +36,7 @@ use sloppy_core::sim::{
 use super::PRESENTATION_EFFECTS;
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
+use super::house_rest::SettledShards;
 use super::hud::{
     BAR_FADE_RATE, BarTrail, approach, bar_scale, health_bar_state, protection_meters, spawn_pulse,
 };
@@ -627,6 +628,8 @@ pub struct Presentation {
     /// The pieces of each collapsing cottage still to be given a view: the whole
     /// set is built once, when its first piece appears.
     house_pieces: HashMap<u32, Vec<(HousePiece, Node)>>,
+    /// Collapsed cottages' resting shards, merged into one model each.
+    settled: SettledShards<(ModelId, InstanceId)>,
     /// Whether every cottage chimney that smokes still stands, as the smoke was
     /// last filled.
     chimneys: Vec<(u32, bool)>,
@@ -705,6 +708,7 @@ impl Presentation {
             sections: HashMap::new(),
             section_warmups: Vec::new(),
             house_pieces: HashMap::new(),
+            settled: SettledShards::default(),
             chimneys: Vec::new(),
             pickups: HashMap::new(),
             pickup_rises: VecDeque::with_capacity(FEEDBACK.max_pickup_effects),
@@ -985,6 +989,8 @@ impl Presentation {
         self.fragments.clear();
         self.sections.clear();
         self.house_pieces.clear();
+        // Round models go with the round.
+        self.settled.clear();
         self.pickups.clear();
         self.pickup_rises.clear();
         self.mines.clear();
@@ -2377,6 +2383,15 @@ impl Presentation {
                 self.renderer.remove_model(model);
             }
         }
+        for (model, instance) in self.settled.retain(&self.live) {
+            self.renderer.remove_instance(instance);
+            self.renderer.remove_model(model);
+        }
+        let standing = |house: u32| state.covers.iter().any(|c| c.id == house && c.alive);
+        for (model, instance) in self.settled.rebuilt(standing) {
+            self.renderer.remove_instance(instance);
+            self.renderer.remove_model(model);
+        }
         // Pieces drawn so far this frame, per shape.
         let mut pieces = [0_usize; DEBRIS_SHAPES.len()];
         for fragment in &state.fragments {
@@ -2458,6 +2473,46 @@ impl Presentation {
             if view.fades {
                 self.renderer.set_opacity(view.instance, 1.0 - cleanup);
             }
+            if self.settled.tracks(fragment.id) {
+                self.settled
+                    .observe(fragment.id, view.pose, cleanup > 0.0, self.time);
+            }
+        }
+        self.settle_houses();
+    }
+
+    /// Bake resting cottage shards into one model per collapse and hide their own
+    /// views; show again the ones that moved.
+    fn settle_houses(&mut self) {
+        for rebuild in self.settled.plan(self.time) {
+            if let Some((model, instance)) = rebuild.old {
+                self.renderer.remove_instance(instance);
+                self.renderer.remove_model(model);
+            }
+            if let Some(node) = rebuild.node {
+                let model = self.renderer.add_model(&node, Lifetime::Round);
+                if let Some(instance) =
+                    self.renderer
+                        .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
+                {
+                    self.settled.built(rebuild.house, (model, instance));
+                }
+            }
+        }
+        for (house, node) in self.settled.remains() {
+            let model = self.renderer.add_model(&node, Lifetime::Round);
+            if let Some(instance) =
+                self.renderer
+                    .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
+            {
+                self.settled.remains_built(house, (model, instance));
+            }
+        }
+        for (&id, view) in &self.fragments {
+            if self.settled.tracks(id) {
+                self.renderer
+                    .set_visible(view.instance, !self.settled.merged(id));
+            }
         }
     }
 
@@ -2472,7 +2527,9 @@ impl Presentation {
             owned_look(&mut self.renderer, &timber_debris_model(part))
         } else if let (Some(piece), Some(house)) = (fragment.house_piece, fragment.house_id) {
             let node = self.house_piece(piece, house, covers)?;
-            owned_look(&mut self.renderer, &node)
+            let look = owned_look(&mut self.renderer, &node);
+            self.settled.track(fragment.id, house, node, self.time);
+            look
         } else if let Some(piece) = fragment.tower_piece {
             let node = tower_piece_model(piece, fragment.color);
             owned_look(&mut self.renderer, &node)

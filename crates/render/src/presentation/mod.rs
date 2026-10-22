@@ -15,6 +15,7 @@
 pub mod camera_rig;
 pub mod first_person;
 pub mod generated;
+pub mod house_rest;
 pub mod hud;
 pub mod input;
 pub mod model_catalog;
