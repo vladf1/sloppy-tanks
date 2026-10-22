@@ -306,11 +306,15 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   through uniforms and passes (`TierFeatures`), never through pipeline variants.
   Touch devices also draw without MSAA, which is fixed per renderer. Keep a new
   expensive per-pixel feature switchable by a tier. WebKit lowers a WebGPU canvas
-  to 15-30 fps after a single frame overruns and never raises it again on its own;
-  the controller reconfigures the canvas when frames stay held while the GPU has
-  room, so do not remove `reset_canvas_pacing` as dead code. Measure with Graphics
-  pinned (localStorage `sloppy-graphics`) or `debug_set_scene_load`, since Auto
-  otherwise changes what is being timed.
+  to 15-30 fps after a single frame overruns, and builds from August to October 2026
+  (bug 325095, Playwright's WebKit too) never raise it again on their own; the
+  controller reconfigures the canvas when frames stay held while the GPU has room, so
+  do not remove `reset_canvas_pacing` as dead code. Keep that room measured against a
+  display frame: those builds judge a reset canvas on its first frames at the GPU's
+  clock of the moment, and an Apple GPU clocks down while frames are held (5-6 ms of
+  village work spanned 21-25 ms at 30 fps), so resetting then drops the canvas lower.
+  Measure with Graphics pinned (localStorage `sloppy-graphics`) or
+  `debug_set_scene_load`, since Auto otherwise changes what is being timed.
 - WebKit (Safari, every iPad) guards each WGSL loop with a volatile
   forward-progress counter, so Metal cannot unroll it and arrays or vector lanes
   indexed by the loop counter spill to memory: per-pixel loops ran 15-45x slower
