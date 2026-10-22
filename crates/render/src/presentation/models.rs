@@ -359,8 +359,14 @@ fn reticle_material(color: u32, opacity: f32) -> Arc<Material> {
 /// four ticks are one mesh, so each paint is a single draw.
 fn reticle_layer(outline: bool, ink: Arc<Material>, center: Option<Arc<Material>>) -> Vec<Node> {
     let order = if outline { 50 } else { 51 };
-    let (inner, outer) = if outline { (0.37, 0.67) } else { (0.46, 0.57) };
-    let (length, width) = if outline { (0.47, 0.21) } else { (0.31, 0.075) };
+    // The ink is bold enough to hold against a bright sky in the turret seat, and the dark
+    // outline frames it on every side.
+    let (inner, outer) = if outline {
+        (0.35, 0.69)
+    } else {
+        (0.445, 0.585)
+    };
+    let (length, width) = if outline { (0.49, 0.24) } else { (0.31, 0.095) };
     let ring = ring_geometry(inner, outer, 40);
     let ticks: Vec<Mesh> = [(-0.83, 0.0), (0.83, 0.0), (0.0, -0.83), (0.0, 0.83)]
         .into_iter()

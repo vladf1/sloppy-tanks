@@ -80,9 +80,10 @@ pub fn protection_meters(
 }
 
 /// The overhead bar's largest share of the view's height: the follow camera draws
-/// it at about this size, and a low or close camera (hero shots, the turret seat)
-/// shrinks it in the world so it never swells into a slab across the sky.
-pub const BAR_MAX_SCREEN_SHARE: f64 = 0.12;
+/// it under this size, and a low or close camera (hero shots, the turret seat)
+/// shrinks it in the world so it reads as a compact tag over the hull, never a slab
+/// or a signboard across the sky.
+pub const BAR_MAX_SCREEN_SHARE: f64 = 0.07;
 /// It never shrinks below this, so a tank right under the lens keeps a readable bar.
 const BAR_MIN_SCALE: f64 = 0.2;
 /// A view shorter than this many CSS pixels (a phone) draws its bars larger, up to
@@ -199,9 +200,9 @@ mod tests {
         // Far cameras draw the bar at its authored size.
         assert_eq!(bar_scale(60.0, fov, 1.84, 900.0), 1.0);
         // A close camera shrinks it to the same share of the view.
-        let near = bar_scale(4.0, fov, 1.84, 900.0);
+        let near = bar_scale(8.0, fov, 1.84, 900.0);
         assert!(near < 0.5, "{near}");
-        let share = 1.84 * near / (2.0 * 4.0 * (fov / 2.0).tan());
+        let share = 1.84 * near / (2.0 * 8.0 * (fov / 2.0).tan());
         assert!((share - BAR_MAX_SCREEN_SHARE).abs() < 1e-9);
         assert_eq!(bar_scale(0.01, fov, 1.84, 900.0), BAR_MIN_SCALE);
         // A phone's short view grows it, within a bound.
