@@ -7,12 +7,13 @@
 //! meets real blades instead of a painted edge. Tufts keep off cover, pickups and
 //! spawn pads.
 
+use std::collections::BTreeMap;
 use std::f64::consts::PI;
 use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 
-use crate::geometry::math::{compose, hex_to_linear, quat_from_euler};
+use crate::geometry::math::{compose, hex_to_linear, quat_from_euler, quat_from_euler_yxz};
 use crate::geometry::{Attribute, Mesh};
 use crate::scene::{Effect, Instance, Material, Node, Side};
 use crate::sim::arena::{PICKUP_LAYOUT, arena_layout, spawn_positions};
@@ -20,7 +21,9 @@ use crate::sim::data::ARENA;
 use crate::sim::types::{CoverKind, Team};
 
 use super::effects_scenery::{MEADOW_SWAY, WIND_ORIGIN};
-use super::village_ground::{SHORTCUTS, farmed, polyline_distance, road_wear};
+use super::village_ground::{
+    SHORTCUTS, VEGETABLE_ROW, farmed, polyline_distance, road_wear, vegetable_plots,
+};
 use super::village_landscape::{creek_at, creek_distance, valley_height_at};
 use super::village_roads::village_roads;
 use crate::sim::math::Random;
@@ -44,12 +47,25 @@ const LONG_TUFT_COLORS: [u32; 3] = [0x4c7a36, 0x5a873c, 0x6a8f44];
 const STAND_STEP: f64 = 0.9;
 /// Meadow flowers: daisy, buttercup, harebell and campion.
 const FLOWER_COLORS: [u32; 4] = [0xf4f1e4, 0xf2c94a, 0xa58be0, 0xe99ab4];
+/// The meadow's instances draw in cells, so a view draws only the tufts it can
+/// see: the arena split this many ways along each side, and square cells this
+/// many metres across out in the valley.
+const ARENA_CELLS: f64 = 3.0;
+const VALLEY_CELL: f64 = 120.0;
+/// Greens in the cottage plots, a crop to a row: lettuce, cabbage and kale.
+const CROP_COLORS: [u32; 3] = [0x8fbf4a, 0x6f9c5c, 0x4e7a3c];
+/// Metres between heads along a vegetable row.
+const CROP_STEP: f64 = 0.34;
+/// Most a tuft leans off upright, radians.
+const TUFT_LEAN: f64 = 0.24;
+/// Farthest a clump's tufts stand from its heart, metres.
+const CLUMP_REACH: f64 = 0.42;
 
-/// Nine tapering blades fanned around the tuft, darker at the root. Their normals
+/// Seven tapering blades fanned around the tuft, darker at the root. Their normals
 /// lean up like the ground's, so a tuft shades into the grass it grows from
 /// instead of flickering blade by blade.
 fn tuft_geometry() -> Mesh {
-    const BLADES: usize = 9;
+    const BLADES: usize = 7;
     let mut positions = Vec::with_capacity(BLADES * 9);
     let mut normals = Vec::with_capacity(BLADES * 9);
     let mut colors = Vec::with_capacity(BLADES * 3);
@@ -127,6 +143,95 @@ fn bloom_geometry() -> Mesh {
     geometry
 }
 
+/// A head of greens about two units across: five cupped leaves round a domed
+/// heart, dark at the root and pale at the leaf tips.
+fn crop_geometry() -> Mesh {
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut colors = Vec::new();
+    let mut push = |p: [f64; 3], shade: f32, n: DVec3| {
+        positions.extend(p);
+        let n = n.normalize();
+        normals.extend([n.x, n.y, n.z]);
+        colors.push([shade; 3]);
+    };
+    for i in 0..5 {
+        let a = f64::from(i) * PI * 0.4;
+        let (s0, c0) = (a - 0.55).sin_cos();
+        let (s1, c1) = (a + 0.55).sin_cos();
+        let (s, c) = a.sin_cos();
+        let root = [c * 0.12, 0.05, s * 0.12];
+        let left = [c0 * 0.62, 0.32, s0 * 0.62];
+        let tip = [c, 0.42, s];
+        let right = [c1 * 0.62, 0.32, s1 * 0.62];
+        let n = DVec3::new(c * 0.5, 1.0, s * 0.5);
+        for (p, shade) in [
+            (root, 0.6),
+            (right, 1.0),
+            (tip, 1.12),
+            (root, 0.6),
+            (tip, 1.12),
+            (left, 1.0),
+        ] {
+            push(p, shade, n);
+        }
+    }
+    for i in 0..4 {
+        let a0 = f64::from(i) * PI * 0.5;
+        let a1 = a0 + PI * 0.5;
+        let mid = a0 + PI * 0.25;
+        let n = DVec3::new(mid.cos() * 0.6, 1.0, mid.sin() * 0.6);
+        push([0.0, 0.55, 0.0], 1.18, n);
+        push([a1.cos() * 0.38, 0.22, a1.sin() * 0.38], 0.95, n);
+        push([a0.cos() * 0.38, 0.22, a0.sin() * 0.38], 0.95, n);
+    }
+    let mut geometry = Mesh::from_f64(&positions, &normals, &[], None);
+    geometry.colors = colors;
+    geometry
+}
+
+/// Heads of greens along the rows the ground paints in each cottage's
+/// vegetable plot, a few missing where they were picked.
+fn vegetable_beds() -> Vec<Instance> {
+    let mut rng = Random::new(51973.0);
+    let mut heads = Vec::new();
+    let rate = std::f64::consts::TAU / VEGETABLE_ROW;
+    for (centre, half) in vegetable_plots() {
+        let (west, east) = (centre.x - half.x + 0.2, centre.x + half.x - 0.2);
+        // The rows stand where the ground's `sin(x * rate)` peaks.
+        let mut row = ((west * rate - PI / 2.0) / std::f64::consts::TAU).ceil();
+        loop {
+            let x = (PI / 2.0 + std::f64::consts::TAU * row) / rate;
+            if x > east {
+                break;
+            }
+            let crop = CROP_COLORS[row.rem_euclid(3.0) as usize];
+            let mut z = centre.y - half.y + 0.24;
+            while z < centre.y + half.y - 0.16 {
+                if rng.next() < 0.9 {
+                    let size = rng.range(0.15, 0.21);
+                    let value = rng.range(0.88, 1.1) as f32;
+                    heads.push(Instance {
+                        matrix: compose(
+                            DVec3::new(
+                                x + rng.range(-0.03, 0.03),
+                                0.01,
+                                z + rng.range(-0.04, 0.04),
+                            ),
+                            quat_from_euler(0.0, rng.next() * TUFT_TURN, 0.0),
+                            DVec3::new(size, size * rng.range(0.85, 1.15), size),
+                        ),
+                        color: instance_color(crop).map(|c| c.map(|v| v * value)),
+                    });
+                }
+                z += CROP_STEP;
+            }
+            row += 1.0;
+        }
+    }
+    heads
+}
+
 fn instance_color(hex: u32) -> Option<[f32; 3]> {
     Some(hex_to_linear(hex).map(|c| c as f32))
 }
@@ -171,19 +276,28 @@ struct Meadow {
 }
 
 impl Meadow {
+    /// One tuft: squat and spreading or tall and wispy, leaning a little, its
+    /// green a shade lighter or darker than its neighbours'.
     fn tuft(&mut self, rng: &mut Random, x: f64, y: f64, z: f64, size: f64, bloom: Option<u32>) {
         if self.tufts.len() >= MEADOW_TUFTS {
             return;
         }
-        let rotation = quat_from_euler(0.0, rng.next() * TUFT_TURN, 0.0);
-        let shade = self.tufts.len() % 4;
+        let rotation = quat_from_euler_yxz(
+            rng.range(-TUFT_LEAN, TUFT_LEAN),
+            rng.next() * TUFT_TURN,
+            rng.range(-TUFT_LEAN, TUFT_LEAN),
+        );
+        let tall = rng.range(0.78, 1.3);
+        let spread = rng.range(0.82, 1.2) / tall.sqrt();
+        let shade = TUFT_COLORS[(rng.next() * 4.0) as usize % 4];
+        let value = rng.range(0.86, 1.1) as f32;
         self.tufts.push(Instance {
             matrix: compose(
                 DVec3::new(x, y, z),
                 rotation,
-                DVec3::new(size * 0.85, size, size * 0.85),
+                DVec3::new(size * 0.85 * spread, size * tall, size * 0.85 * spread),
             ),
-            color: instance_color(TUFT_COLORS[shade]),
+            color: instance_color(shade).map(|c| c.map(|v| v * value)),
         });
         self.origins.extend([x as f32, z as f32]);
         if let Some(color) = bloom
@@ -196,6 +310,51 @@ impl Meadow {
                 color: instance_color(color),
             });
         }
+    }
+
+    /// A clump of tufts round (x, z), the biggest at its heart, each where
+    /// `open` allows; `members` counts the heart.
+    #[allow(clippy::too_many_arguments)]
+    fn clump(
+        &mut self,
+        rng: &mut Random,
+        x: f64,
+        y: f64,
+        z: f64,
+        size: f64,
+        members: usize,
+        bloom: Option<u32>,
+        open: &dyn Fn(f64, f64) -> bool,
+    ) {
+        for k in 0..members {
+            let (tx, tz) = if k == 0 {
+                (x, z)
+            } else {
+                let angle = rng.range(0.0, PI * 2.0);
+                let reach = rng.range(0.4, 1.0) * CLUMP_REACH;
+                (x + angle.cos() * reach, z + angle.sin() * reach)
+            };
+            if k > 0 && !open(tx, tz) {
+                continue;
+            }
+            let falloff = 1.0 - (k as f64).min(3.0) * 0.14;
+            self.tuft(rng, tx, y, tz, size * falloff, bloom.filter(|_| k == 0));
+        }
+    }
+}
+
+/// The cell a meadow instance at (x, z) draws with.
+fn meadow_cell(x: f64, z: f64) -> (i32, i32, bool) {
+    let reach = ARENA + 1.0;
+    if x.abs() < reach && z.abs() < reach {
+        let cell = |v: f64| ((v + reach) / (reach * 2.0) * ARENA_CELLS).floor() as i32;
+        (cell(x), cell(z), true)
+    } else {
+        (
+            (x / VALLEY_CELL).floor() as i32,
+            (z / VALLEY_CELL).floor() as i32,
+            false,
+        )
     }
 }
 
@@ -237,9 +396,10 @@ fn long_stands(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
             let (tx, tz) = (px + rng.range(-0.35, 0.35), pz + rng.range(-0.35, 0.35));
             let size = rng.range(0.3, 0.62) * (0.75 + stand.min(0.6) * 0.5);
             let tint = LONG_TUFT_COLORS[(rng.next() * 3.0) as usize % 3];
+            let value = rng.range(0.88, 1.08) as f32;
             meadow.tuft(rng, tx, 0.02, tz, size, None);
             if let Some(last) = meadow.tufts.last_mut() {
-                last.color = instance_color(tint);
+                last.color = instance_color(tint).map(|c| c.map(|v| v * value));
             }
         }
     }
@@ -268,7 +428,15 @@ fn fringe(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
         }
         let size = rng.range(0.2, 0.44);
         let bloom = (rng.next() < 0.07).then(|| FLOWER_COLORS[(rng.next() * 4.0) as usize % 4]);
-        meadow.tuft(rng, x, 0.02, z, size, bloom);
+        // Thicker clumps on the turf side of the edge.
+        let members = 1 + (rng.next() * (1.2 - wear.min(0.0)).min(3.0)) as usize;
+        let open = |tx: f64, tz: f64| {
+            tx.abs() < ARENA - 0.25
+                && tz.abs() < ARENA - 0.25
+                && road_wear(tx, tz) < 0.35
+                && !clearings.blocks(tx, tz)
+        };
+        meadow.clump(rng, x, 0.02, z, size, members, bloom, &open);
     };
     for road in village_roads() {
         let north_south = road.d > road.w;
@@ -390,7 +558,20 @@ pub fn village_vegetation() -> Node {
             rng.range(0.24, 0.48)
         };
         let bloom = (!reed && candidate % 3 == 0).then_some(FLOWER_COLORS[candidate % 4]);
-        meadow.tuft(&mut rng, x, height + 0.025, z, size, bloom);
+        // Tufts gather in clumps where a slow pattern lets them, and stand
+        // alone elsewhere.
+        let gathering = ((x * 0.29).sin() * (z * 0.23 + 1.1).cos() * 0.5 + 0.5).powf(1.5);
+        // Out in the valley the clumps are too far to tell apart.
+        let reach = if inside { 1.0 + gathering * 3.0 } else { 1.4 };
+        let members = 1 + (rng.next() * reach) as usize;
+        let open = |tx: f64, tz: f64| {
+            if inside {
+                road_wear(tx, tz) <= -1.2 && !clearings.blocks(tx, tz)
+            } else {
+                creek_distance(tx, tz) >= 7.0 && !farmed(tx, tz)
+            }
+        };
+        meadow.clump(&mut rng, x, height + 0.025, z, size, members, bloom, &open);
     }
     fringe(&mut meadow, &mut rng, &clearings);
     reed_beds(&mut meadow, &mut rng);
@@ -400,9 +581,7 @@ pub fn village_vegetation() -> Node {
         origins,
         flowers,
     } = meadow;
-    let mut tuft_mesh = tuft_geometry();
-    tuft_mesh.set_attribute(Attribute::instance(WIND_ORIGIN, 2, origins));
-    let grass = Material {
+    let grass = Arc::new(Material {
         side: Side::Double,
         vertex_colors: true,
         effect: Effect::Custom {
@@ -410,22 +589,70 @@ pub fn village_vegetation() -> Node {
             params: Vec::new(),
         },
         ..Material::standard(0xffffff, 0.0, 1.0)
-    };
-    let mut tuft_node = Node::mesh(Arc::new(tuft_mesh), Arc::new(grass));
-    let mut flower_node = Node::mesh(
-        Arc::new(bloom_geometry()),
-        Arc::new(Material {
-            side: Side::Double,
-            vertex_colors: true,
-            ..Material::standard(0xffffff, 0.0, 0.8)
-        }),
-    );
-    for (node, instances) in [(&mut tuft_node, tufts), (&mut flower_node, flowers)] {
-        let drawable = node.drawable.as_mut().expect("meadow mesh");
-        drawable.receive_shadow = true;
-        drawable.instances = Some(instances);
+    });
+    let blooms = Arc::new(Material {
+        side: Side::Double,
+        vertex_colors: true,
+        ..Material::standard(0xffffff, 0.0, 0.8)
+    });
+    // Each cell's tufts carry their own wind origins, so each has its own copy
+    // of the small tuft mesh; the flowers share one.
+    let mut tuft_cells: BTreeMap<(i32, i32, bool), (Vec<Instance>, Vec<f32>)> = BTreeMap::new();
+    for (tuft, origin) in tufts.into_iter().zip(origins.chunks_exact(2)) {
+        let cell = meadow_cell(f64::from(origin[0]), f64::from(origin[1]));
+        let (instances, origins) = tuft_cells.entry(cell).or_default();
+        instances.push(tuft);
+        origins.extend_from_slice(origin);
     }
-    group.children.push(tuft_node);
-    group.children.push(flower_node);
+    let tuft_shape = tuft_geometry();
+    let bloom_shape = Arc::new(bloom_geometry());
+    let mut flower_cells: BTreeMap<(i32, i32, bool), Vec<Instance>> = BTreeMap::new();
+    for flower in flowers {
+        let at = flower.matrix.w_axis;
+        flower_cells
+            .entry(meadow_cell(at.x, at.z))
+            .or_default()
+            .push(flower);
+    }
+    for (instances, origins) in tuft_cells.into_values() {
+        let mut mesh = tuft_shape.clone();
+        mesh.set_attribute(Attribute::instance(WIND_ORIGIN, 2, origins));
+        group
+            .children
+            .push(meadow_node(Arc::new(mesh), grass.clone(), instances));
+    }
+    for instances in flower_cells.into_values() {
+        group
+            .children
+            .push(meadow_node(bloom_shape.clone(), blooms.clone(), instances));
+    }
+    let greens = Arc::new(Material {
+        side: Side::Double,
+        vertex_colors: true,
+        ..Material::standard(0xffffff, 0.0, 0.75)
+    });
+    let crop_shape = Arc::new(crop_geometry());
+    let mut crop_cells: BTreeMap<(i32, i32, bool), Vec<Instance>> = BTreeMap::new();
+    for head in vegetable_beds() {
+        let at = head.matrix.w_axis;
+        crop_cells
+            .entry(meadow_cell(at.x, at.z))
+            .or_default()
+            .push(head);
+    }
+    for instances in crop_cells.into_values() {
+        group
+            .children
+            .push(meadow_node(crop_shape.clone(), greens.clone(), instances));
+    }
     group
+}
+
+/// One cell's instanced tufts or flowers.
+fn meadow_node(mesh: Arc<Mesh>, material: Arc<Material>, instances: Vec<Instance>) -> Node {
+    let mut node = Node::mesh(mesh, material);
+    let drawable = node.drawable.as_mut().expect("meadow mesh");
+    drawable.receive_shadow = true;
+    drawable.instances = Some(instances);
+    node
 }

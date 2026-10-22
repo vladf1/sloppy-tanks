@@ -453,6 +453,16 @@ impl ArenaPlan {
     }
 }
 
+/// The cottages' vegetable plots: centre and half extents in world metres. The
+/// ground paints their soil and rows; the vegetation grows heads along them.
+pub fn vegetable_plots() -> Vec<(DVec2, DVec2)> {
+    ArenaPlan::new().plots
+}
+
+/// Metres between the vegetable rows the ground paints (`veg_row` in
+/// `meadow_sway.wgsl`, `sin(x * 11.4)`); the rows run north-south.
+pub const VEGETABLE_ROW: f64 = std::f64::consts::TAU / 11.4;
+
 /// A crop field outside the wall: centre, full size, row direction (radians from
 /// +x) and crop (0 ripe wheat, 1 young rows, 2 ploughed, 3 mown hay).
 struct Field {

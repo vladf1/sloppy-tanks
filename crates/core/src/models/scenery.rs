@@ -101,12 +101,13 @@ pub fn create_spawn_pads(scale: f64) -> Node {
         let side = if team == Team::Blue { -1.0 } else { 1.0 };
         let color = TEAM_COLORS[team.index()];
         for Vec2 { x, z } in spawn_positions(team, scale) {
-            // Low octagonal deployment plinth with a recessed deck and segmented team lights.
+            // Low octagonal deployment plinth of weathered stone with a recessed
+            // slate deck; the segmented lights, badge and chevrons carry the team.
             for (r, h, color, sides, y) in [
-                (2.75, 0.1, 0x283c4e, 8, 0.08),
-                (2.52, 0.045, 0x718898, 8, 0.135),
-                (2.37, 0.035, 0x223d51, 32, 0.17),
-                (1.98, 0.025, 0x455e70, 8, 0.193),
+                (2.75, 0.1, 0x6a665c, 8, 0.08),
+                (2.52, 0.045, 0x9a958a, 8, 0.135),
+                (2.37, 0.035, 0x4a4b47, 32, 0.17),
+                (1.98, 0.025, 0x68665e, 8, 0.193),
             ] {
                 put(&mut details, cylinder_part(r, h, color, sides), x, y, z);
             }
@@ -126,7 +127,7 @@ pub fn create_spawn_pads(scale: f64) -> Node {
                 for i in 0..5 {
                     put(
                         &mut details,
-                        box_part(0.18, 0.02, 0.4, 0x1a2b3c, 0.005),
+                        box_part(0.18, 0.02, 0.4, 0x2c2a26, 0.005),
                         x - 0.52 + f64::from(i) * 0.26,
                         0.218,
                         z + dz,
