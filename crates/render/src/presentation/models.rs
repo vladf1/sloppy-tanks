@@ -14,13 +14,13 @@ use std::sync::Arc;
 use glam::{DVec2, DVec3};
 use sloppy_core::geometry::{
     Mesh, RingGeometry, Shape, circle_geometry, cylinder_geometry, plane_geometry, ring_geometry,
-    rounded_box_geometry, shape_geometry, sphere_geometry, tetrahedron_geometry, torus_geometry,
+    rounded_box_geometry, shape_geometry, tetrahedron_geometry, torus_geometry,
 };
 use sloppy_core::models::{
     BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint, put,
     shadowed, siding_box, trunk_fragment,
 };
-use sloppy_core::scene::{Blending, Color, Effect, Material, Node, Side};
+use sloppy_core::scene::{Color, Effect, Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
@@ -427,6 +427,9 @@ pub fn spawn_pulse() -> Node {
 const PICKUP_HOUSING: u32 = 0x75808a;
 const PICKUP_DECK: u32 = 0x1d2e3d;
 const PICKUP_RING_GLOW: f32 = 0.45;
+/// Where a pickup pad's light stands: a centimetre above the deck's top (0.19) so
+/// the additive pool never depth-fights it.
+pub const PICKUP_LIGHT_HEIGHT: f64 = 0.2;
 
 /// A pickup pad's bevelled steel housing, one mesh shared by every kind.
 fn pickup_housing() -> Node {
@@ -494,38 +497,13 @@ pub fn pickup_base(kind: PickupKind) -> Node {
     root
 }
 
-fn additive(side: Side) -> Arc<Material> {
-    Arc::new(Material {
-        transparent: true,
-        depth_write: false,
-        side,
-        blending: Blending::Additive,
-        ..Material::basic(0xffffff)
-    })
-}
-
-/// The collection ring (colored by instance tint); it spreads and fades.
-pub fn pickup_effect_ring() -> Node {
-    let mut root = Node::group("pickup-effect-ring");
-    root.children.push(at(
-        flat(mesh(
-            arc(ring_geometry(0.88, 1.0, 48)),
-            additive(Side::Double),
-            0,
-        )),
-        0.0,
-        0.08,
-        0.0,
-    ));
-    root
-}
-
-/// The glow around the tank that collected a pickup.
-pub fn pickup_effect_glow() -> Node {
-    let mut root = Node::group("pickup-effect-glow");
+/// A pad's light (`effects::pickups::pickup_beam_geometry`): a pool of light on the
+/// deck and a column fading up toward the gem, colored by instance tint.
+pub fn pickup_beam() -> Node {
+    let mut root = Node::group("pickup-beam");
     root.children.push(mesh(
-        arc(sphere_geometry(1.0, 16, 10)),
-        additive(Side::Back),
+        arc(crate::effects::pickups::pickup_beam_geometry()),
+        Arc::new(crate::effects::pickups::glow_material()),
         0,
     ));
     root

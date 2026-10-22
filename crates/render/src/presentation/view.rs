@@ -18,7 +18,7 @@ use sloppy_core::models::{
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
 use sloppy_core::sim::crate_layout::{CratePiece, crate_section_looks};
-use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, vehicle};
+use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, pickup, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
@@ -65,12 +65,16 @@ mod inspect;
 
 /// A dead tank's model hides; the live model rides this far below the body.
 const TANK_MODEL_DROP: f64 = 0.4;
-/// Pickup gems bob and spin above their pads.
-const GEM_HEIGHT: f64 = 1.2;
-const GEM_BOB: f64 = 0.18;
-/// Pickup glow proportions around the collecting tank.
-const GLOW_SCALE: Vec3 = Vec3::new(1.65, 1.25, 1.9);
-const GLOW_HEIGHT: f32 = 1.1;
+/// Pickup gems bob and spin above their pads, high enough that the pad's light
+/// column shows beneath them; one turn takes `TAU / GEM_SPIN` seconds.
+const GEM_HEIGHT: f64 = 1.42;
+const GEM_BOB: f64 = 0.14;
+const GEM_BOB_RATE: f64 = 2.0;
+const GEM_SPIN: f64 = 1.0;
+/// A pad's light column breathes between these opacities, slower than the bob.
+const BEAM_OPACITY: f64 = 0.62;
+const BEAM_BREATH: f64 = 0.16;
+const BEAM_BREATH_RATE: f64 = 2.6;
 /// Felling boughs (`tree-debris.ts`). Their leaves catch the air: linear drag per
 /// second slows the fall and the tumble. Landed, they lie until the debris cleanup
 /// sinks them out of sight.
@@ -203,8 +207,7 @@ struct Library {
     pickups: HashMap<PickupKind, PickupModel>,
     mines: HashMap<Team, MineModel>,
     debris: HashMap<FragmentShape, BoundedModel>,
-    effect_ring: Option<ModelId>,
-    effect_glow: Option<ModelId>,
+    pickup_beam: Option<ModelId>,
 }
 
 /// Whether solid cover hides the line from `eye` to `target`: seen from the turret,
@@ -359,14 +362,11 @@ impl Library {
         })
     }
 
-    fn effect_models(&mut self, renderer: &mut Renderer) -> (ModelId, ModelId) {
-        let ring = *self.effect_ring.get_or_insert_with(|| {
-            renderer.add_model(&own::pickup_effect_ring(), Lifetime::Shared)
-        });
-        let glow = *self.effect_glow.get_or_insert_with(|| {
-            renderer.add_model(&own::pickup_effect_glow(), Lifetime::Shared)
-        });
-        (ring, glow)
+    /// The pad light every pickup shares; instance tints color it by kind.
+    fn pickup_beam(&mut self, renderer: &mut Renderer) -> ModelId {
+        *self
+            .pickup_beam
+            .get_or_insert_with(|| renderer.add_model(&own::pickup_beam(), Lifetime::Shared))
     }
 }
 
@@ -481,21 +481,13 @@ struct PickupView {
     kind: PickupKind,
     base: InstanceId,
     gem: InstanceId,
+    beam: InstanceId,
     spin: f64,
 }
 
 struct MineView {
     instance: InstanceId,
     light: usize,
-}
-
-struct PickupEffect {
-    ring: InstanceId,
-    glow: InstanceId,
-    age: f64,
-    tank: Option<u32>,
-    x: f32,
-    z: f32,
 }
 
 struct FallingBranch {
@@ -599,7 +591,6 @@ pub struct Presentation {
     mines: HashMap<u32, MineView>,
     /// The spawn pads mines may lie on, for their drawn height.
     pad_decks: SpawnPadDecks,
-    pickup_effects: VecDeque<PickupEffect>,
     branches: VecDeque<FallingBranch>,
     /// Seconds of kill hit-stop still to play; single player's loop slows its
     /// clock while it lasts.
@@ -673,7 +664,6 @@ impl Presentation {
             pickups: HashMap::new(),
             mines: HashMap::new(),
             pad_decks: SpawnPadDecks::default(),
-            pickup_effects: VecDeque::new(),
             branches: VecDeque::new(),
             hit_stop: 0.0,
             viewer_id: None,
@@ -757,7 +747,7 @@ impl Presentation {
             fragments: self.fragments.len() as u32,
             pickups: self.pickups.len() as u32,
             mines: self.mines.len() as u32,
-            pickup_effects: self.pickup_effects.len() as u32,
+            pickup_effects: self.effects.systems.pickups.len() as u32,
             branches: self.branches.len() as u32,
         }
     }
@@ -922,7 +912,6 @@ impl Presentation {
         self.sections.clear();
         self.pickups.clear();
         self.mines.clear();
-        self.pickup_effects.clear();
         self.branches.clear();
         self.sample_models.clear();
         self.renderer.reset_round();
@@ -967,7 +956,7 @@ impl Presentation {
         for shape in DEBRIS_SHAPES {
             self.library.debris(&mut self.renderer, shape);
         }
-        self.library.effect_models(&mut self.renderer);
+        self.library.pickup_beam(&mut self.renderer);
         let mut seen = std::collections::HashSet::new();
         for cover in &state.covers {
             for health in [0.6, 0.3, 0.1] {
@@ -1358,6 +1347,7 @@ impl Presentation {
             let model = self.library.pickup(&mut self.renderer, kind);
             (model.base, model.gem)
         };
+        let beam_model = self.library.pickup_beam(&mut self.renderer);
         let place = Mat4::from_translation(Vec3::new(x as f32, 0.0, z as f32));
         let base = self
             .renderer
@@ -1367,12 +1357,27 @@ impl Presentation {
             .renderer
             .add_instance(gem_model, place, Lifetime::Round)
             .expect("gem model");
+        let beam = self
+            .renderer
+            .add_instance(
+                beam_model,
+                Mat4::from_translation(Vec3::new(
+                    x as f32,
+                    own::PICKUP_LIGHT_HEIGHT as f32,
+                    z as f32,
+                )),
+                Lifetime::Round,
+            )
+            .expect("beam model");
+        self.renderer
+            .set_tint(beam, hex_to_linear(pickup(kind).color));
         self.pickups.insert(
             id,
             PickupView {
                 kind,
                 base,
                 gem,
+                beam,
                 spin: 0.0,
             },
         );
@@ -1400,9 +1405,6 @@ impl Presentation {
             self.hit_confirm_until = self.time + FEEDBACK.hit_confirmation_seconds;
         }
         self.feel_event(event, player_hit);
-        if matches!(event.kind, SimEventType::Pickup | SimEventType::Promotion) {
-            self.add_pickup_effect(event);
-        }
     }
 
     /// Weight for the battle's knocks: a shot rocks its tank back, a hit shoves
@@ -1587,42 +1589,6 @@ impl Presentation {
             .damage_angle((event.x, event.z), (origin.x, origin.z))
     }
 
-    fn add_pickup_effect(&mut self, event: &SimEvent) {
-        if self.pickup_effects.len() >= FEEDBACK.max_pickup_effects
-            && let Some(oldest) = self.pickup_effects.pop_front()
-        {
-            self.renderer.remove_instance(oldest.ring);
-            self.renderer.remove_instance(oldest.glow);
-        }
-        let (ring_model, glow_model) = self.library.effect_models(&mut self.renderer);
-        let tint = hex_to_linear(event.color.unwrap_or(0xffffff));
-        let (x, z) = (event.x as f32, event.z as f32);
-        let ring = self
-            .renderer
-            .add_instance(
-                ring_model,
-                Mat4::from_translation(Vec3::new(x, 0.0, z)),
-                Lifetime::Round,
-            )
-            .expect("effect ring");
-        let glow = self
-            .renderer
-            .add_instance(glow_model, Mat4::IDENTITY, Lifetime::Round)
-            .expect("effect glow");
-        for id in [ring, glow] {
-            self.renderer.set_tint(id, tint);
-        }
-        self.renderer.set_visible(glow, false);
-        self.pickup_effects.push_back(PickupEffect {
-            ring,
-            glow,
-            age: 0.0,
-            tank: event.id,
-            x,
-            z,
-        });
-    }
-
     // -------------------------------------------------------------- frame
 
     /// Synchronize entity visuals, then draw. `alpha` blends the previous and
@@ -1639,7 +1605,6 @@ impl Presentation {
         self.flags
             .update(&mut self.renderer, self.time, &mut self.random);
         self.update_scenery();
-        self.update_pickup_effects(state, alpha, dt);
         self.update_camera(state, alpha, dt, overview);
         self.update_player_indicators(state, dt, overview);
         self.update_tanks(state, alpha, dt);
@@ -1990,53 +1955,6 @@ impl Presentation {
         }
     }
 
-    fn update_pickup_effects(&mut self, state: &RenderState, alpha: f64, dt: f64) {
-        let mut index = 0;
-        while index < self.pickup_effects.len() {
-            let effect = &mut self.pickup_effects[index];
-            effect.age += dt;
-            let progress = effect.age / FEEDBACK.pickup_seconds;
-            if progress >= 1.0 {
-                let effect = self.pickup_effects.remove(index).expect("in range");
-                self.renderer.remove_instance(effect.ring);
-                self.renderer.remove_instance(effect.glow);
-                continue;
-            }
-            index += 1;
-            let fade = (1.0 - progress).powi(2);
-            self.renderer.set_transform(
-                effect.ring,
-                Mat4::from_scale_rotation_translation(
-                    Vec3::splat((1.0 + progress * 3.0) as f32),
-                    Quat::IDENTITY,
-                    Vec3::new(effect.x, 0.0, effect.z),
-                ),
-            );
-            self.renderer.set_opacity(effect.ring, (0.85 * fade) as f32);
-            let tank = effect
-                .tank
-                .and_then(|id| state.tanks.iter().find(|tank| tank.id == id && tank.alive));
-            self.renderer.set_visible(effect.glow, tank.is_some());
-            if let Some(tank) = tank {
-                let position = tank.position;
-                let scale = vehicle(tank.kind).scale * (1.0 + progress * 0.15);
-                self.renderer.set_transform(
-                    effect.glow,
-                    Mat4::from_scale_rotation_translation(
-                        GLOW_SCALE * scale as f32,
-                        Quat::IDENTITY,
-                        Vec3::new(
-                            lerp(tank.previous.x, position.x, alpha) as f32,
-                            GLOW_HEIGHT,
-                            lerp(tank.previous.z, position.z, alpha) as f32,
-                        ),
-                    ),
-                );
-                self.renderer.set_opacity(effect.glow, (0.2 * fade) as f32);
-            }
-        }
-    }
-
     fn update_covers(&mut self, state: &RenderState) {
         let mut shed = Vec::new();
         for cover in &state.covers {
@@ -2240,6 +2158,7 @@ impl Presentation {
         for (_, view) in self.pickups.extract_if(|id, _| !self.live.contains(id)) {
             self.renderer.remove_instance(view.base);
             self.renderer.remove_instance(view.gem);
+            self.renderer.remove_instance(view.beam);
         }
         for pickup in &state.pickups {
             if !self.pickups.contains_key(&pickup.id) {
@@ -2250,6 +2169,13 @@ impl Presentation {
             let renderer = &mut self.renderer;
             renderer.set_visible(view.gem, pickup.available);
             renderer.set_opacity(view.gem, opacity);
+            renderer.set_visible(view.beam, pickup.available);
+            let phase = f64::from(pickup.id);
+            let breath = (self.time * BEAM_BREATH_RATE + phase).sin();
+            renderer.set_opacity(
+                view.beam,
+                opacity * (BEAM_OPACITY + breath * BEAM_BREATH) as f32,
+            );
             renderer.set_node_visible(view.base, model.ring, pickup.available);
             renderer.set_node_visible(view.base, model.ring_dim, !pickup.available);
             renderer.set_node_visible(view.base, model.refill, !pickup.available);
@@ -2266,8 +2192,8 @@ impl Presentation {
             let progress = (1.0 - pickup.cooldown / duration).clamp(0.0, 1.0);
             let segments = (progress * f64::from(own::REFILL_SEGMENTS)).floor() as f32;
             renderer.set_instance_data(view.base, [segments, 0.0, 0.0, 0.0]);
-            view.spin += dt;
-            let height = GEM_HEIGHT + (self.time * 2.0 + f64::from(pickup.id)).sin() * GEM_BOB;
+            view.spin += dt * GEM_SPIN;
+            let height = GEM_HEIGHT + (self.time * GEM_BOB_RATE + phase).sin() * GEM_BOB;
             renderer.set_transform(
                 view.gem,
                 Mat4::from_rotation_translation(
