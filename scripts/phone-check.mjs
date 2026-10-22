@@ -80,6 +80,8 @@ try {
       "#score0",
       "#time",
       "#score1",
+      // The battle's target stays, small under the clock.
+      "#objective",
     ],
     [
       // The nerd stats link is for ?debug pages only (checked at the end).
@@ -87,7 +89,6 @@ try {
       ".touch-mine",
       // Team names stay hidden; only your side keeps its label, as the YOU tab.
       ".scoreboard .team:not(.yours) small",
-      "#objective",
       ".bottom",
       ".brand",
       "#settings-open",
