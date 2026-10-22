@@ -157,7 +157,11 @@ pub mod part {
     /// Alternative liveries inside a tracked tank's turret (unit numbers and extra
     /// stowage); presentation shows one per tank so team-mates are not clones. The
     /// first is the one shown by default.
-    pub const LIVERIES: [&str; 3] = ["livery-0", "livery-1", "livery-2"];
+    pub const LIVERIES: [&str; 4] = ["livery-0", "livery-1", "livery-2", "livery-crew"];
+    /// The livery of a tank a human player drives (an index into [`LIVERIES`]):
+    /// the commander's number and a white command band, so the player's tank is
+    /// never a clone of a bot team-mate. Bots wear the liveries before it.
+    pub const CREW_LIVERY: usize = 3;
 }
 
 /// The side a vehicle, flag or spawn pad belongs to; indexes [`TEAM_COLORS`].

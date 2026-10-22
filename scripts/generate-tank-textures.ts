@@ -4,94 +4,60 @@ import { fileURLToPath } from "node:url";
 import { Random } from "./asset-data";
 import { fbm, lattice, smooth } from "./texture-noise";
 
-// Offline only: the tank livery's paint scheme and weathering, a seamless tile that
-// multiplies the vertex-colored team paint (`tank_surfaces.rs`). Every value is a
-// linear multiplier, so one tile serves both teams: a hand-painted two-tone
-// camouflage of large, crisp-edged disruptive shapes in a clearly darker shade of the
-// team's own hue (with a slightly cooler cast) and a few lighter brush strokes, faded
-// paint, rain streaks, chipped edges showing dark primer, and fine scratches. The
-// shapes are sized to survive the overhead camera: a tank carries two or three across
-// its hull. The base tone is `PAINT_TEXTURE_MEAN` in Rust, so the vertex paint shows
-// as intended on it and worn highlights have headroom. One tile covers
-// 1 / PAINT_UV_PER_METRE (Rust) of armor.
+// Offline only: the tank livery's paint finish, a seamless tile that multiplies the
+// vertex-colored team paint (`tank_surfaces.rs`). Every value is a linear multiplier,
+// so one tile serves both teams. It is a clean factory finish, not a camouflage: the
+// team color must read at a glance from the overhead camera, so there are no large
+// shapes in a second tone. What it adds is what a painted steel plate shows close up:
+// a hand-brushed coat whose value drifts a little across the plate, brush strokes,
+// a faint orange-peel grain, soft rain streaks, chips clustered where crews and
+// branches knock the armor (dark primer with a bright rim of lifted paint) and fine
+// bright scratches. The material's bump map reads the same tile, so chips and
+// strokes catch the light. The base tone is `PAINT_TEXTURE_MEAN` in Rust, so the
+// vertex paint shows as intended on it and worn highlights have headroom. One tile
+// covers 1 / (PAINT_UV_PER_METRE * PAINT_REPEAT) metres of armor (Rust).
 const SIZE = 1024;
 const sources = new URL("../assets/texture-sources/tanks/", import.meta.url);
 
-/** Linear multipliers of the camouflage tones. */
-const BASE = [0.8, 0.8, 0.8];
-const DARK = [0.29, 0.27, 0.31];
-const LIGHT = [1.02, 0.99, 0.94];
-/** Paint built up along a dark shape's brushed edge. */
-const EDGE_BUILDUP = 0.8;
-/** Shares of the tile the dark shapes and the light strokes cover. */
-const DARK_COVER = 0.36;
-const LIGHT_COVER = 0.09;
+/** Linear multiplier of the clean coat. */
+const BASE = 0.8;
+/** How far the coat's value drifts across a plate, its brush strokes and grain. */
+const DRIFT = 0.07;
+const STROKES = 0.035;
+const GRAIN = 0.03;
 /** Exposed primer and rust where the paint chipped away. */
-const PRIMER = [0.3, 0.24, 0.2];
+const PRIMER = [0.34, 0.27, 0.22];
+/** Lifted paint round a chip and a fresh scratch: brighter than the coat. */
+const CHIP_RIM = 1.16;
+const SCRATCH = 1.22;
 
 const field = new Float32Array(SIZE * SIZE * 3);
 const random = new Random(9127);
-const warpX = lattice(31, true);
-const warpY = lattice(32, true);
-const camoDark = lattice(33, true);
-const camoLight = lattice(34, true);
-const mottle = lattice(35, true);
+const drift = lattice(35, true);
+const hue = lattice(38, true);
 const wear = lattice(36, true);
 const brush = lattice(37, true);
-
-/** The value below which `share` of `values` lies. */
-function quantile(values: Float32Array, share: number) {
-  const sorted = Float32Array.from(values).sort();
-  return sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * share))];
-}
-
-// Shape fields: a few large lobes per tile, domain-warped into organic brushed-on
-// shapes whose edges wobble with a fine brush jitter.
-const darkField = new Float32Array(SIZE * SIZE);
-const lightField = new Float32Array(SIZE * SIZE);
-for (let y = 0; y < SIZE; y++)
-  for (let x = 0; x < SIZE; x++) {
-    const u = x / SIZE,
-      v = y / SIZE;
-    const wx = fbm(warpX, u * 3, v * 3, 3, 3) - 0.5;
-    const wy = fbm(warpY, u * 3, v * 3, 3, 3) - 0.5;
-    const cu = u + wx * 0.16,
-      cv = v + wy * 0.16;
-    const jitter = (fbm(brush, u * 64, v * 64, 64, 2) - 0.5) * 0.012;
-    darkField[y * SIZE + x] = fbm(camoDark, cu * 4, cv * 4, 4, 4) + jitter;
-    lightField[y * SIZE + x] = fbm(camoLight, cu * 7, cv * 7, 7, 4) + jitter;
-  }
-const darkAt = quantile(darkField, 1 - DARK_COVER);
-// Light strokes sit outside the dark shapes, so their threshold counts the rest.
-const lightAt = quantile(lightField, 1 - LIGHT_COVER / (1 - DARK_COVER));
-
-/** Signed distance in pixels to a shape's edge (positive inside), from the field's
- * slope, so every edge is equally crisp however fast its noise turns. */
-function edgeDistance(values: Float32Array, threshold: number, x: number, y: number) {
-  const at = (px: number, py: number) =>
-    values[(((py + SIZE) % SIZE) * SIZE + ((px + SIZE) % SIZE)) | 0];
-  const gx = (at(x + 1, y) - at(x - 1, y)) / 2;
-  const gy = (at(x, y + 1) - at(x, y - 1)) / 2;
-  return (at(x, y) - threshold) / Math.max(1e-6, Math.hypot(gx, gy));
-}
+const peel = lattice(39, true);
 
 for (let y = 0; y < SIZE; y++)
   for (let x = 0; x < SIZE; x++) {
     const u = x / SIZE,
       v = y / SIZE;
     const i = y * SIZE + x;
-    const d = edgeDistance(darkField, darkAt, x, y);
-    const dark = smooth(-0.8, 0.8, d);
-    // A thin rim of heavier paint just inside each dark shape's edge.
-    const rim = smooth(0.8, 2, d) * smooth(6, 3, d);
-    const light = smooth(-0.8, 0.8, edgeDistance(lightField, lightAt, x, y)) * smooth(-3, -6, d);
-    const fade = 0.95 + 0.1 * fbm(mottle, u * 12, v * 12, 12, 4);
-    const grain = 1 + (random.next() - 0.5) * 0.035;
-    for (let c = 0; c < 3; c++) {
-      let tone = BASE[c] + (DARK[c] - BASE[c]) * dark + (LIGHT[c] - BASE[c]) * light;
-      tone *= 1 - (1 - EDGE_BUILDUP) * rim;
-      field[i * 3 + c] = tone * fade * grain;
-    }
+    // A slow drift of the coat's value, as one plate's paint dried a shade lighter
+    // than the next, with a slight warm-cool cast that keeps it from looking printed.
+    const tone = 1 + DRIFT * (fbm(drift, u * 3, v * 3, 3, 4) - 0.5) * 2;
+    const cast = (fbm(hue, u * 2, v * 2, 2, 3) - 0.5) * 0.04;
+    // Brush strokes: noise stretched along u (across vertical plates, along the hull
+    // top), broken up so no stroke runs the whole tile.
+    const stroke =
+      (fbm(brush, u * 6, v * 64, 6, 3) - 0.5) * 2 * (0.5 + fbm(brush, u * 4 + 7, v * 4, 4, 2));
+    const orangePeel = fbm(peel, u * 160, v * 160, 160, 2) - 0.5;
+    const grain = (random.next() - 0.5) * GRAIN;
+    const value = BASE * tone * (1 + STROKES * stroke + 0.025 * orangePeel + grain);
+    field[i * 3] = value * (1 + cast);
+    field[i * 3 + 1] = value;
+    field[i * 3 + 2] = value * (1 - cast);
   }
 
 const wrap = (n: number) => ((n % SIZE) + SIZE) % SIZE;
@@ -104,13 +70,13 @@ const multiply = (x: number, y: number, factor: number[] | number, amount = 1) =
 };
 
 // Rain and grime streaks run along the texture's v axis, which the livery maps to up
-// on vertical armor.
-for (let s = 0; s < 220; s++) {
+// on vertical armor: few and faint, so they read as weathering, not dirt.
+for (let s = 0; s < 90; s++) {
   const x0 = random.next() * SIZE,
     y0 = random.next() * SIZE;
-  const length = 40 + random.next() ** 1.5 * 260;
-  const width = 1 + random.next() * 2.5;
-  const strength = 0.05 + random.next() * 0.12;
+  const length = 40 + random.next() ** 1.5 * 220;
+  const width = 1 + random.next() * 2;
+  const strength = 0.03 + random.next() * 0.06;
   for (let t = 0; t < length; t++) {
     const along = Math.min(1, t / 10) * (1 - t / length) ** 0.7;
     const sway = Math.sin(t * 0.05 + s) * 0.8;
@@ -122,39 +88,46 @@ for (let s = 0; s < 220; s++) {
 }
 
 // Chips cluster where the wear mask is high, like the knocks on exposed corners.
-for (let placed = 0, tries = 0; placed < 240 && tries < 40000; tries++) {
+for (let placed = 0, tries = 0; placed < 170 && tries < 40000; tries++) {
   const x0 = random.next() * SIZE,
     y0 = random.next() * SIZE;
-  const mask = fbm(wear, (x0 / SIZE) * 6, (y0 / SIZE) * 6, 6, 3);
-  if (random.next() > smooth(0.42, 0.62, mask)) continue;
+  const mask = fbm(wear, (x0 / SIZE) * 5, (y0 / SIZE) * 5, 5, 3);
+  if (random.next() > smooth(0.45, 0.62, mask)) continue;
   placed++;
-  const radius = random.next() < 0.08 ? 3.5 + random.next() * 4 : 0.7 + random.next() * 1.8;
+  const radius = random.next() < 0.1 ? 3 + random.next() * 3.5 : 1 + random.next() * 1.8;
   const lobes = [random.next() * 6.28, random.next() * 6.28];
-  const reach = Math.ceil(radius * 1.5 + 2);
+  const reach = Math.ceil(radius * 1.5 + 3);
   for (let dy = -reach; dy <= reach; dy++)
     for (let dx = -reach; dx <= reach; dx++) {
       const angle = Math.atan2(dy, dx);
       const edge =
-        radius * (1 + 0.16 * Math.sin(angle * 2 + lobes[0]) + 0.1 * Math.sin(angle * 5 + lobes[1]));
+        radius * (1 + 0.18 * Math.sin(angle * 2 + lobes[0]) + 0.1 * Math.sin(angle * 5 + lobes[1]));
       const d = Math.hypot(dx, dy);
       if (d < edge) multiply(x0 + dx, y0 + dy, PRIMER, smooth(edge, edge - 0.8, d));
-      else if (d < edge + 1.3) multiply(x0 + dx, y0 + dy, 1.14, smooth(edge + 1.3, edge, d));
+      else if (d < edge + 1.6) multiply(x0 + dx, y0 + dy, CHIP_RIM, smooth(edge + 1.6, edge, d));
     }
 }
 
-// Fine scratches: short bright strokes through the paint film.
-for (let s = 0; s < 260; s++) {
-  const x0 = random.next() * SIZE,
-    y0 = random.next() * SIZE;
+// Fine scratches: short bright strokes through the paint film, in loose bundles
+// like a branch or a boot scraped them.
+for (let bundle = 0; bundle < 70; bundle++) {
+  const bx = random.next() * SIZE,
+    by = random.next() * SIZE;
   const angle = random.next() * Math.PI;
-  const length = 6 + random.next() ** 2 * 50;
-  for (let t = 0; t < length; t += 0.5) {
-    multiply(
-      x0 + Math.cos(angle) * t,
-      y0 + Math.sin(angle) * t,
-      1.16,
-      0.35 + 0.65 * (1 - t / length),
-    );
+  const strokes = 1 + Math.floor(random.next() * 4);
+  for (let s = 0; s < strokes; s++) {
+    const x0 = bx + (random.next() - 0.5) * 14,
+      y0 = by + (random.next() - 0.5) * 14;
+    const turn = angle + (random.next() - 0.5) * 0.25;
+    const length = 8 + random.next() ** 2 * 60;
+    for (let t = 0; t < length; t += 0.5) {
+      multiply(
+        x0 + Math.cos(turn) * t,
+        y0 + Math.sin(turn) * t,
+        SCRATCH,
+        0.3 + 0.7 * Math.sin((Math.PI * t) / length),
+      );
+    }
   }
 }
 
