@@ -35,11 +35,11 @@ const PLATE_REST: f64 = 0.16;
 /// A shell striking a container's steel: a hard shower of sparks off the face,
 /// and flakes of its paint and bare metal knocked off it ([minimum, span]).
 const SHEET_SPARKS: Burst = Burst {
-    count: 34,
-    speed: [6.0, 16.0],
+    count: 48,
+    speed: [6.0, 17.0],
     lift: 0.5,
-    life: [0.3, 0.6],
-    width: 0.1,
+    life: [0.3, 0.7],
+    width: 0.13,
     color: [3.8, 1.6, 0.36],
     gravity: 13.0,
     scatter: 0.12,
@@ -47,15 +47,15 @@ const SHEET_SPARKS: Burst = Burst {
     hide: 0.0,
     cools: true,
 };
-const FLAKES: usize = 11;
-const FLAKE_SIZE: [f64; 2] = [0.07, 0.1];
+const FLAKES: usize = 7;
+const FLAKE_SIZE: [f64; 2] = [0.13, 0.11];
 const BARE_STEEL: u32 = 0x8d9296;
 /// Concrete and stone spall knocked off a wall by a shell: count, life (s),
 /// size (m) and the grey it is (mixed with the ground's dust at the hit).
-const SPALL: usize = 18;
-const SPALL_LIFE: [f64; 2] = [7.0, 4.0];
-const SPALL_SIZE: [f64; 2] = [0.07, 0.14];
-const SPALL_COLORS: [u32; 3] = [0x9d968b, 0xb8b2a6, 0x7c776f];
+const SPALL: usize = 20;
+const SPALL_LIFE: [f64; 2] = [9.0, 5.0];
+const SPALL_SIZE: [f64; 2] = [0.06, 0.12];
+const SPALL_COLORS: [u32; 4] = [0x8a847a, 0xa49e93, 0x6c6862, 0x938b7f];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Particle {
@@ -80,6 +80,11 @@ pub struct Particle {
     pub rests: bool,
     /// A flat plate or flake rather than a chunky chip.
     pub plate: bool,
+}
+
+/// A piece's own turn (rad), fixed for its life by its random lifetime.
+fn piece_turn(q: &Particle) -> f32 {
+    ((q.max * 7919.0).fract() * 977.0) as f32
 }
 
 /// The particles' shared mesh: an icosahedron whose corners are pushed in and
@@ -191,6 +196,10 @@ const IMPACT: Style = Style {
     lift: 0.0,
 };
 
+/// Extra splinters a collapsing timber wall bursts, and how much longer than a
+/// hit's chips they lie.
+const TIMBER_COLLAPSE_SPLINTERS: i64 = 12;
+const TIMBER_COLLAPSE_LIFE: f64 = 9.0;
 const TIMBER_COLORS: [u32; 4] = [0x805336, 0xb47a49, 0xc99a65, 0x947958];
 /// Dark bark and pale fresh wood torn from a trunk.
 const TREE_CHIP_COLORS: [u32; 3] = [0x6b5038, 0x8a6a4a, 0xc9a978];
@@ -285,10 +294,13 @@ impl ParticleEffects {
             return !burnout;
         }
         // The real beams carry a collapse; add only a hit-sized handful of chips.
+        // A wall torn down bursts splinters from every snapped joint; they land
+        // and lie in the grass by the wreck.
+        let collapse = timber && explosion;
         let count = if timber {
             style.count as i64 - 2
                 + (random.next_f64() * 5.0).floor() as i64
-                + if explosion { 2 } else { 0 }
+                + if collapse { TIMBER_COLLAPSE_SPLINTERS } else { 0 }
         } else {
             style.count as i64
         };
@@ -313,7 +325,9 @@ impl ParticleEffects {
                 accent.unwrap_or(SPARK_COLOR)
             }
         };
-        let life_scale = if tree {
+        let life_scale = if collapse {
+            TIMBER_COLLAPSE_LIFE
+        } else if tree {
             1.6
         } else if timber {
             2.0
@@ -349,7 +363,7 @@ impl ParticleEffects {
                 color: hex_to_linear(color_at(i)),
                 hot: 0.0,
                 glow: if timber || tree { 0.0 } else { 0.9 },
-                rests: false,
+                rests: collapse,
                 plate: false,
             });
             i += 1;
@@ -408,18 +422,20 @@ impl ParticleEffects {
             }
             let life = SPALL_LIFE[0] + random.next_f64() * SPALL_LIFE[1];
             let (bx, bz) = back.unwrap_or((random.next_f64() - 0.5, random.next_f64() - 0.5));
-            let spread = 3.2;
-            let vx = bx * 3.4 + (random.next_f64() - 0.5) * spread;
-            let vz = bz * 3.4 + (random.next_f64() - 0.5) * spread;
-            let vy = 2.0 + random.next_f64() * 4.5;
+            // Knocked out of the face and dropping close under it.
+            let spread = 2.2;
+            let vx = bx * 2.6 + (random.next_f64() - 0.5) * spread;
+            let vz = bz * 2.6 + (random.next_f64() - 0.5) * spread;
+            let vy = 1.5 + random.next_f64() * 3.5;
             // A few heavy chunks among the grit.
             let size = (SPALL_SIZE[0] + random.next_f64() * SPALL_SIZE[1])
-                * if i % 4 == 0 { 2.3 } else { 1.0 };
+                * if i % 4 == 0 { 2.8 } else { 1.0 };
             let grey = hex_to_linear(SPALL_COLORS[i % SPALL_COLORS.len()]);
             let color = match skin {
                 Some(skin) => [0, 1, 2].map(|c| {
-                    let fresh = 0.8 + 0.25 * (i % 3) as f32;
-                    (skin[c] * 0.6 + grey[c] * 0.4) * fresh
+                    // Broken stone is darker and greyer than the weathered skin.
+                    let fresh = 0.6 + 0.17 * (i % 3) as f32;
+                    (skin[c] * 0.45 + grey[c] * 0.55) * fresh
                 }),
                 None => [0, 1, 2].map(|c| grey[c] * 0.7 + dust[c] as f32 * 0.3),
             };
@@ -687,7 +703,7 @@ impl ParticleEffects {
         });
         self.records.clear();
         let time = time as f32;
-        for (i, q) in self.particles.iter().enumerate() {
+        for q in &self.particles {
             let position = Vec3::new(q.x as f32, q.y.max(MIN_HEIGHT) as f32, q.z as f32);
             let size = if q.rests {
                 (q.size * (q.life / q.max / CLOD_SHRINK).min(1.0)) as f32
@@ -695,16 +711,20 @@ impl ParticleEffects {
                 (q.size * q.life / q.max) as f32
             };
             let lying = q.rests && q.vy == 0.0 && q.vx.abs() + q.vz.abs() < 0.05;
+            // Each piece's own turn, fixed for its life: its slot in the pool moves
+            // as older pieces expire, and a turn taken from that would jolt pieces
+            // lying still.
+            let turn = piece_turn(q);
             let world = if q.splinter && lying {
                 // A splinter lies along the ground where it fell.
-                let spin = i as f32 * 1.7;
+                let spin = turn * 1.7;
                 pose(
                     position,
                     Vec3::new(0.08 * spin.sin(), spin, std::f32::consts::FRAC_PI_2),
                     SPLINTER_STRETCH * size,
                 )
             } else if q.splinter {
-                let spin = i as f32;
+                let spin = turn;
                 pose(
                     position,
                     Vec3::new(time * 5.0 + spin, time * 3.0 + spin, time * 4.0),
@@ -713,7 +733,7 @@ impl ParticleEffects {
             } else if q.rests {
                 // A clod, chip or plate tumbles while it flies and lies flat where
                 // it comes to rest, never balanced on an edge.
-                let spin = i as f32 * 1.7;
+                let spin = turn * 1.7;
                 let stretch = if q.plate { PLATE_STRETCH } else { CHIP_STRETCH };
                 let euler = if lying {
                     let tilt = 0.12 * spin.sin();
@@ -726,7 +746,7 @@ impl ParticleEffects {
                 pose(position, euler, stretch * size)
             } else {
                 // Every fleck tumbles on its own axes.
-                let spin = i as f32 * 2.3;
+                let spin = turn * 2.3;
                 pose(
                     position,
                     Vec3::new(time * 4.0 + spin, time * 3.0 + spin * 0.7, spin),
@@ -816,22 +836,17 @@ mod tests {
         assert!(particles.particles.iter().any(|q| !q.splinter));
         assert!(particles.particles.iter().any(|q| q.splinter));
         let time = time as f32;
-        for (i, (q, record)) in particles
-            .particles
-            .iter()
-            .zip(particles.records.records())
-            .enumerate()
-        {
+        for (q, record) in particles.particles.iter().zip(particles.records.records()) {
             let position = Vec3::new(q.x as f32, q.y.max(MIN_HEIGHT) as f32, q.z as f32);
             let size = (q.size * q.life / q.max) as f32;
-            let spin = i as f32;
+            let spin = piece_turn(q);
             let (euler, scale) = if q.splinter {
                 (
                     Vec3::new(time * 5.0 + spin, time * 3.0 + spin, time * 4.0),
                     SPLINTER_STRETCH * size,
                 )
             } else {
-                let spin = i as f32 * 2.3;
+                let spin = piece_turn(q) * 2.3;
                 (
                     Vec3::new(time * 4.0 + spin, time * 3.0 + spin * 0.7, spin),
                     CHIP_STRETCH * size,

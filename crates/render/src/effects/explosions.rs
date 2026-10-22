@@ -39,7 +39,7 @@ pub const MAX_WALL_MARKS: usize = 24;
 const WALL_MARK_LIFETIME: f64 = 40.0;
 /// A mark's diameter (m), never more than its face has room for, and how far it
 /// stands off the face (a container's ribs stand proud of its skin).
-const WALL_MARK_SIZE: f64 = 1.6;
+const WALL_MARK_SIZE: f64 = 2.4;
 const WALL_MARK_STANDOFF: [f32; 2] = [0.035, 0.16];
 /// Ground decals a frame may hold: a dust ring and a shockwave per blast, every
 /// scorch and every wall mark.
@@ -299,8 +299,6 @@ struct Look {
     smoke_rise: f64,
     /// Sideways drift of the whole cloud (m/s).
     drift: f64,
-    /// Half the fireball bursts a beat later.
-    double_burst: bool,
 }
 
 const BLAST: Look = Look {
@@ -313,7 +311,6 @@ const BLAST: Look = Look {
     smoke_size: 0.92,
     smoke_rise: 2.6,
     drift: 0.35,
-    double_burst: false,
 };
 
 // Distinct silhouettes and timing: a tall column, a wide rolling cloud and a
@@ -323,7 +320,7 @@ const BLAST: Look = Look {
 const TANK_BLASTS: [Look; 3] = [
     Look {
         lifetime: 4.2,
-        fire_size: 1.05,
+        fire_size: 1.15,
         fire_spread: 0.9,
         fire_life: 0.6,
         fire_rise: 1.8,
@@ -331,11 +328,10 @@ const TANK_BLASTS: [Look; 3] = [
         smoke_size: 1.25,
         smoke_rise: 3.4,
         drift: 0.3,
-        double_burst: true,
     },
     Look {
         lifetime: 3.9,
-        fire_size: 1.12,
+        fire_size: 1.22,
         fire_spread: 1.12,
         fire_life: 0.56,
         fire_rise: 1.1,
@@ -343,11 +339,10 @@ const TANK_BLASTS: [Look; 3] = [
         smoke_size: 1.3,
         smoke_rise: 2.8,
         drift: 0.25,
-        double_burst: false,
     },
     Look {
         lifetime: 4.0,
-        fire_size: 1.0,
+        fire_size: 1.1,
         fire_spread: 1.0,
         fire_life: 0.58,
         fire_rise: 1.4,
@@ -355,7 +350,6 @@ const TANK_BLASTS: [Look; 3] = [
         smoke_size: 1.22,
         smoke_rise: 3.1,
         drift: 1.2,
-        double_burst: false,
     },
 ];
 
@@ -364,7 +358,7 @@ const TANK_BLASTS: [Look; 3] = [
 const BARREL_BLASTS: [Look; 3] = [
     Look {
         lifetime: 4.6,
-        fire_size: 1.04,
+        fire_size: 1.2,
         fire_spread: 0.9,
         fire_life: 0.6,
         fire_rise: 1.4,
@@ -372,11 +366,10 @@ const BARREL_BLASTS: [Look; 3] = [
         smoke_size: 1.1,
         smoke_rise: 3.0,
         drift: 0.3,
-        double_burst: false,
     },
     Look {
         lifetime: 4.6,
-        fire_size: 0.98,
+        fire_size: 1.14,
         fire_spread: 0.8,
         fire_life: 0.56,
         fire_rise: 1.6,
@@ -384,11 +377,10 @@ const BARREL_BLASTS: [Look; 3] = [
         smoke_size: 1.05,
         smoke_rise: 3.2,
         drift: 1.3,
-        double_burst: false,
     },
     Look {
         lifetime: 4.8,
-        fire_size: 1.0,
+        fire_size: 1.16,
         fire_spread: 0.85,
         fire_life: 0.6,
         fire_rise: 1.7,
@@ -396,7 +388,6 @@ const BARREL_BLASTS: [Look; 3] = [
         smoke_size: 1.08,
         smoke_rise: 3.3,
         drift: 0.6,
-        double_burst: true,
     },
 ];
 
@@ -703,7 +694,7 @@ impl ExplosionEffects {
         self.dust_skirt(
             event.x,
             event.z,
-            0.35 + 0.45 * strength.clamp(0.0, 1.0),
+            0.35 + 0.7 * strength.clamp(0.0, 1.0),
             (f64::from(id) * 2.399).rem_euclid(TAU),
         );
     }
@@ -1031,7 +1022,7 @@ impl ExplosionEffects {
     /// Leave a shell's mark where it struck a hard wall.
     fn mark(&mut self, strike: Strike, phase: f64) {
         let steel = strike.material == WallMaterial::Steel;
-        let diameter = (WALL_MARK_SIZE as f32).min(strike.room * 2.0);
+        let diameter = (WALL_MARK_SIZE as f32).min(strike.room * 2.3);
         if diameter < 0.2 {
             return;
         }
@@ -1376,16 +1367,16 @@ impl ExplosionEffects {
             let (angle, reach, height, size) = if seam {
                 let k = (jf + 0.5) / shape.seams as f64 - 0.5;
                 let angle = b.phase + k * shape.arc + (r3 - 0.5) * shape.arc / shape.seams as f64 * 0.7;
-                let reach = source + (0.45 + 0.6 * r3) * shape.reach * look.fire_spread * out;
+                let reach = source + (0.3 + 0.5 * r3) * shape.reach * look.fire_spread * out;
                 let height = seam_height + 0.3 * r2 + 1.0 * shape.rise * out;
                 // A few big lobes among small ones.
-                let size = 0.2 + (0.35 + 0.95 * r1 * r1) * out;
+                let size = 0.25 + (0.55 + 0.85 * r1 * r1) * out;
                 (angle, reach, height, size)
             } else {
                 let angle = b.phase + jf * 2.399;
                 let reach = 0.1 + 0.5 * r3 * out;
                 let height = hatch_height + shape.column * (1.0 + 1.3 * r3) * settle(age, 6.0 + 3.0 * r2);
-                let size = 0.2 + (0.45 + 0.6 * r1 * r1) * out;
+                let size = 0.22 + (0.5 + 0.6 * r1 * r1) * out;
                 (angle, reach, height, size)
             };
             // White-hot for the flash's first frames, then the lobe's own cooling.
@@ -1520,9 +1511,9 @@ impl ExplosionEffects {
                     (0.25 + 2.2 * a) * s,
                     b.z + angle.sin() * reach + WIND[1] * a * 0.9,
                 ],
-                size: (0.55 + 0.75 * a) * s,
+                size: (0.35 + 0.6 * a) * s,
                 color: scaled(smoke, 0.55),
-                opacity: fire * (a / 0.1).min(1.0) * (1.0 - a * a) * 0.9,
+                opacity: fire * (a / 0.1).min(1.0) * (1.0 - a * a) * 0.6,
                 seed: b.phase * 0.47 + lap * 0.61 + jf * 0.3,
                 heat: fire * (1.0 - a) * 0.95,
                 erosion: smoothstep(a, 0.35, 1.0) * 0.8,
@@ -1630,7 +1621,11 @@ impl ExplosionEffects {
         // hull keeps its silhouette; the sparks carry the rest.
         // A wall takes the full force of the shell: a bigger, longer flash.
         let wall = struck != Struck::Steel;
-        let (flash_seconds, flare) = if wall { (0.12, 1.6) } else { (0.09, 1.0) };
+        let (flash_seconds, flare) = match struck {
+            Struck::Sheet => (0.14, 2.3),
+            Struck::Stone => (0.12, 1.8),
+            Struck::Steel => (0.09, 1.0),
+        };
         if t < flash_seconds {
             let k = t / flash_seconds;
             let fade = (1.0 - k) as f32;
@@ -1855,7 +1850,7 @@ impl ExplosionEffects {
                     let angle = b.phase + jf * TAU / 5.0 + (j % 2) as f64 * 0.3;
                     let roll = (0.8 + 1.7 * settle(age, 3.5)) * s;
                     let drift = age * 0.45 * s;
-                    let size = (0.85 + 0.8 * age.sqrt()) * s;
+                    let size = (0.95 + 0.9 * age.sqrt()) * s;
                     self.puff(Puff {
                         position: [
                             b.x + angle.cos() * roll + dx * drift,
@@ -1864,7 +1859,7 @@ impl ExplosionEffects {
                         ],
                         size,
                         color: scaled(linear(SAWDUST), 0.88 + jf * 0.035),
-                        opacity: (age / 0.08).min(1.0) * fade * 0.45,
+                        opacity: (age / 0.08).min(1.0) * fade * 0.58,
                         seed: b.phase * 0.2 + jf * 0.19,
                         heat: 0.0,
                         erosion,

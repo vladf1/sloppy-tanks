@@ -240,7 +240,7 @@ fn puff_color(
         // soot laced between them rather than one flat orange blob.
         let broad = mix(n1 * 0.85 + n2 * 0.15, noise, 0.35);
         let lobes = smoothstep(0.28, 0.74, broad);
-        let temperature = puff_bands(heat * (0.14 + 0.86 * core * core) * (0.1 + 1.45 * lobes));
+        let temperature = puff_bands(heat * (0.14 + 0.86 * core * core) * (0.15 + 1.05 * lobes));
         glow = smoothstep(0.05, 0.32, temperature);
         // Each lobe of a fireball is brighter on its upper face and deepens into
         // its folds, so the fire keeps its rolling volume.

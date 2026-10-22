@@ -69,7 +69,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let r = length(point + warp * 0.45) + (fine - 0.5) * 0.12;
         let around = point / max(radius, 1e-4);
         let rays = smoothstep(0.45, 0.85, ring_noise(around * 2.2 + seed) * 0.7 + ring_noise(around * 4.5 - seed) * 0.3);
-        let heart = 1.0 - smoothstep(0.08, 0.66, r);
+        let heart = 1.0 - smoothstep(0.14, 0.74, r);
         let reach = rays * (1.0 - smoothstep(0.25, 0.86, r + (n - 0.5) * 0.2)) * smoothstep(0.05, 0.3, r);
         let burn = clamp(heart * (0.85 + 0.3 * n) + reach * 0.5, 0.0, 1.0) * (0.85 + 0.15 * fine);
         let soot = mix(vec3f(0.075, 0.055, 0.04), vec3f(0.012, 0.011, 0.01), smoothstep(0.15, 0.85, heart));
@@ -86,7 +86,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         let flecks = smoothstep(0.72, 0.92, speck) * heart;
         // One rate for every ember, each with its own phase: a rate that varied
         // across the decal would scale the running time into per-pixel sparkle.
-        let flicker = 0.55 + 0.45 * sin(frame.camera_position.w * 6.0 + speck * 40.0 + fine * 9.0);
+        // The phase is the ember's own, constant across it: a phase that ran
+        // with the noise would draw its gradient as bands of light.
+        let ember_phase = ring_hash(floor(point * 15.0 + seed * 2.0)) * 6.2831853;
+        let flicker = 0.55 + 0.45 * sin(frame.camera_position.w * 6.0 + ember_phase);
         let cool = exp(-age / 1.8);
         let smoulder = 0.18 * (1.0 - smoothstep(4.0, 14.0, age)) * smoothstep(0.8, 0.95, speck);
         let embers = ((ring * smoothstep(0.45, 0.8, n) + flecks * 0.7) * cool + smoulder * heart) * flicker;
@@ -99,9 +102,13 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     }
 }
 
-// A shell's mark on a wall. Stone: a dark pit inside a ring of freshly broken,
-// paler stone, cracks running out of it and a faint scorch. Steel: a punched dent,
-// a ring of scraped bare metal and a halo of soot, its heart glowing as it cools.
+// A shell's mark on a wall. Stone: a crater knocked out of the face, its far
+// slope in shadow and its lip catching the light so it reads as a hole, not a
+// stain; bent rebar across its floor, cracks running out to the face's edges and
+// a pale bloom of crushed dust round it. Steel: the sheet punched in and torn
+// open: a black breach with jagged petals of bare steel bent back round it, a
+// dent ring of shaded and lit metal, blistered paint and a soot fan, the torn
+// edges glowing as they cool.
 fn wall_mark(
     s: ptr<function, Surface>,
     point: vec2f,
@@ -115,40 +122,73 @@ fn wall_mark(
 ) {
     let fine = ring_noise(point * 11.0 - seed * 1.3);
     let r = length(point + warp * 0.3) + (fine - 0.5) * 0.1 + (n - 0.5) * 0.12;
-    let edge = 1.0 - smoothstep(0.78, 0.97, r);
+    let edge = 1.0 - smoothstep(0.8, 0.98, r);
+    let around = point / max(radius, 1e-4);
+    // One side of every hole is in the shade of its lip: a fixed direction in
+    // the mark's own frame, turned by its phase so no two marks match.
+    let lit_side = dot(around, normalize(seed));
     if steel {
-        // Streaks of soot thrown out from the hole, a scraped ring of bare steel
-        // round the dent, and the hole itself, glowing as it cools.
-        let around = point / max(radius, 1e-4);
+        let paint = (*s).color;
+        let angle = atan2(point.y, point.x);
+        // Petals: the breach's edge pushed in and out by angle, so the hole is a
+        // torn star rather than a round punch.
+        let petals = ring_noise(vec2f(angle * 2.2, 0.0) + seed) * 0.6 + ring_noise(vec2f(angle * 5.1, 1.7) - seed) * 0.4;
+        let breach = 0.2 + 0.16 * petals;
+        let hole = 1.0 - smoothstep(breach - 0.015, breach + 0.015, r);
+        let lip = smoothstep(breach - 0.01, breach + 0.02, r) * (1.0 - smoothstep(breach + 0.05, breach + 0.15 + 0.08 * petals, r));
+        // The dent: the sheet sags in toward the breach, darker on its shaded
+        // side and bright where it faces the light.
+        let dent = smoothstep(0.85, 0.3, r) * (1.0 - hole);
+        let slope = dent * smoothstep(0.15, 0.6, r);
+        let shade = 1.0 - 0.55 * slope * smoothstep(-0.2, 0.8, -lit_side);
+        let shine = slope * smoothstep(0.3, 0.9, lit_side);
         let streaks = ring_noise(around * 3.5 + seed) * 0.6 + ring_noise(around * 7.0 - seed) * 0.4;
-        let hole = 1.0 - smoothstep(0.08, 0.18, r);
-        let bare = smoothstep(0.1, 0.2, r) * (1.0 - smoothstep(0.34, 0.5, r + (fine - 0.5) * 0.1));
-        let soot = (1.0 - smoothstep(0.25, 0.65 + 0.3 * streaks, r)) * (0.55 + 0.45 * n);
-        let hot = exp(-age / 0.55) * (1.0 - smoothstep(0.0, 0.38, r));
-        var color = mix(vec3f(0.03, 0.026, 0.022), vec3f(0.62, 0.62, 0.64) * (0.8 + 0.3 * fine), bare / max(bare + soot * 0.5, 1e-4));
-        color = mix(color, vec3f(0.005), hole);
-        color += mix(vec3f(1.4, 0.18, 0.03), vec3f(4.0, 1.7, 0.4), hot) * hot;
-        let alpha = max(max(soot * 0.9, bare * 0.95), max(hole, hot));
+        let soot = (1.0 - smoothstep(0.3, 0.7 + 0.3 * streaks, r)) * (0.6 + 0.4 * n);
+        let blister = smoothstep(0.45, 0.58, r) * (1.0 - smoothstep(0.66, 0.82, r + (fine - 0.5) * 0.2)) * smoothstep(0.35, 0.65, fine);
+        let bare = vec3f(0.55, 0.56, 0.58) * (0.75 + 0.35 * fine);
+        var color = paint * shade;
+        color = mix(color, vec3f(0.035, 0.03, 0.026), soot * 0.85);
+        color = mix(color, vec3f(0.16, 0.08, 0.04), blister * 0.7);
+        color = mix(color, bare, lip);
+        color += bare * shine * 0.6;
+        color = mix(color, vec3f(0.004), hole);
+        let hot = exp(-age / 0.7) * (lip + 0.6 * hole * smoothstep(0.0, breach, r));
+        color += mix(vec3f(1.4, 0.18, 0.03), vec3f(4.0, 1.7, 0.4), exp(-age / 0.35)) * hot;
+        let alpha = max(max(hole, lip), max(soot * 0.95, max(slope * 0.8, blister * 0.75)));
         (*s).color = color;
         (*s).opacity = clamp(alpha, 0.0, 1.0) * edge * strength;
         return;
     }
     let skin = (*s).color;
-    // A ragged pit, broken stone round it in clumps rather than a ring (a full
-    // pale ring reads as a stamped icon from the camera), cracks, and a broad,
-    // uneven soot halo that carries the mark at a distance.
-    let pit = 1.0 - smoothstep(0.1, 0.3, r + (n - 0.5) * 0.15);
-    let clumps = smoothstep(0.45, 0.75, ring_noise(point * 6.5 + seed * 0.8));
-    let chipped = smoothstep(0.1, 0.3, r) * (1.0 - smoothstep(0.38, 0.6, r)) * clumps * (0.6 + 0.4 * fine);
-    // Ridged noise draws thin cracks running out from the pit.
-    let ridge = 1.0 - abs(ring_noise((point + warp * 0.4) * 4.2 + seed) * 2.0 - 1.0);
-    let cracks = smoothstep(0.9, 0.975, ridge) * (1.0 - smoothstep(0.45, 0.92, r));
-    let scorch = (1.0 - smoothstep(0.15, 0.9, r + (n - 0.5) * 0.3)) * (0.55 + 0.25 * exp(-age / 20.0));
-    let broken = min(skin * 1.12 + vec3f(0.03), vec3f(1.0));
-    var color = mix(skin * 0.22, broken, chipped / max(chipped + scorch, 1e-4));
-    color = mix(color, skin * 0.1, pit);
-    color = mix(color, skin * 0.18, cracks);
-    let alpha = max(max(pit * 0.95, chipped * 0.7), max(cracks * 0.8, scorch));
+    // The crater: a ragged hole whose shaded far slope and lit lip give it depth.
+    let crater_r = r + (n - 0.5) * 0.2;
+    let pit = 1.0 - smoothstep(0.34, 0.46, crater_r);
+    let depth = smoothstep(0.46, 0.0, crater_r);
+    let lip = smoothstep(0.38, 0.46, crater_r) * (1.0 - smoothstep(0.48, 0.6, crater_r));
+    let wall_shade = pit * (0.35 + 0.65 * smoothstep(-0.6, 0.6, lit_side));
+    // Bent rebar: two dark bars across the crater's floor.
+    let bar_dir = normalize(seed);
+    let bars = max(
+        smoothstep(0.035, 0.01, abs(dot(point, vec2f(-bar_dir.y, bar_dir.x)) - 0.06)),
+        smoothstep(0.03, 0.008, abs(dot(point, bar_dir) + 0.05))
+    ) * pit * smoothstep(0.44, 0.28, crater_r);
+    // Chipped stone round the lip, in clumps.
+    let clumps = smoothstep(0.42, 0.72, ring_noise(point * 6.5 + seed * 0.8));
+    let chipped = smoothstep(0.4, 0.52, r) * (1.0 - smoothstep(0.6, 0.8, r)) * clumps * (0.6 + 0.4 * fine);
+    // Cracks: ridged noise drawn thin, running out to the mark's edge.
+    let ridge = 1.0 - abs(ring_noise((point + warp * 0.4) * 3.6 + seed) * 2.0 - 1.0);
+    let ridge2 = 1.0 - abs(ring_noise((point - warp * 0.3) * 6.8 - seed) * 2.0 - 1.0);
+    let cracks = max(smoothstep(0.92, 0.985, ridge), smoothstep(0.94, 0.99, ridge2) * 0.8) * smoothstep(0.35, 0.5, r);
+    // Crushed dust settles pale round the hole; a little soot at its heart.
+    let dust = (1.0 - smoothstep(0.4, 0.95, r + (n - 0.5) * 0.3)) * 0.5;
+    let scorch = (1.0 - smoothstep(0.3, 0.7, r + (n - 0.5) * 0.3)) * 0.45 * exp(-age / 25.0);
+    var color = mix(skin, min(skin * 1.18 + vec3f(0.05), vec3f(1.0)), dust);
+    color = mix(color, skin * 0.35, scorch);
+    color = mix(color, min(skin * 1.25 + vec3f(0.06), vec3f(1.0)), chipped + lip * 0.8);
+    color = mix(color, skin * mix(0.08, 0.4, wall_shade) * (0.8 + 0.4 * fine), pit);
+    color = mix(color, skin * 0.12 * (1.0 - 0.5 * depth), cracks);
+    color = mix(color, vec3f(0.05, 0.035, 0.03), bars);
+    let alpha = max(max(pit, chipped * 0.9), max(cracks * 0.9, max(dust, lip)));
     (*s).color = color;
     (*s).opacity = clamp(alpha, 0.0, 1.0) * edge * strength;
 }
