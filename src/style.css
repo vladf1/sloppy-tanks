@@ -2298,6 +2298,12 @@ html:not(.phone) #toast[data-tone="death"] {
     0 40px 140px #000c,
     0 0 120px #2a6fd022;
 }
+/* Wide, tall screens give the panel more of the width. */
+@media (min-width: 1500px) and (min-height: 880px) {
+  .menu.start {
+    max-width: 1120px;
+  }
+}
 .icon-sprite {
   position: absolute;
   width: 0;
@@ -5218,11 +5224,16 @@ html.phone,
   .phone .menu.start .vehicle small {
     display: block;
     justify-self: start;
+    max-width: 100%;
     padding: 2px 6px;
-    font-size: 8.5px;
-    letter-spacing: 0.2px;
+    font-size: 8px;
+    letter-spacing: 0;
     text-align: left;
     white-space: nowrap;
+  }
+  /* No room for the class dot beside the longest class name. */
+  .phone .menu.start .vehicle small::before {
+    display: none;
   }
   /* Narrow cards: the heavy tank stays inside its card. */
   .phone .menu.start .vehicle[data-kind="heavy"] {
