@@ -83,8 +83,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let sn = sin(turn);
     let p = vec2f(c * point.x - sn * point.y, sn * point.x + c * point.y);
     let offset = vec2f(seed * 37.1, seed * 91.7);
-    // Slow enough that a billow's outline drifts rather than trembles.
-    let boil = vec2f(0.0, frame.camera_position.w * (0.16 + 0.3 * fiery));
+    // Slow enough that a billow's outline drifts rather than trembles. A hot puff
+    // churns on as it cools, driven by its falling heat: a boil rate that changed
+    // with heat would scale the whole running time, so a cooling puff's noise
+    // would leap to a new pattern every frame and its density flicker, the more
+    // the longer the game has run.
+    let boil = vec2f(0.0, frame.camera_position.w * 0.16 - heat * 0.25);
     let n1 = puff_noise(p * 2.1 + offset - boil);
     let n2 = puff_noise(p * 4.6 + offset * 1.7 - boil * 1.5);
     let n3 = puff_noise(p * 9.3 + offset * 2.3 - boil * 1.8);
