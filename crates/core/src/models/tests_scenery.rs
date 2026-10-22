@@ -447,8 +447,8 @@ fn scenery_matches_typescript() {
 /// Normals of the background forest batches on a 1/65536 grid
 /// (`Math.round(n * 65536) >>> 0`, FNV-1a): how many batches the cells hold and
 /// the FNV-1a of their hashes in order, as the Pine Village art pass left them
-/// (one atlas batch per cell and compass sector).
-const FOREST_NORMALS: (usize, u32) = (16, 0x22ca_7d78);
+/// (one atlas batch per cell and compass sector; far conifers as solid whorls).
+const FOREST_NORMALS: (usize, u32) = (16, 0x3b5c_fdac);
 
 #[test]
 fn forest_normals_match_typescript_on_a_grid() {
