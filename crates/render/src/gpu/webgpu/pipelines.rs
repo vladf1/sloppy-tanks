@@ -26,7 +26,7 @@ use crate::effects::EffectRegistry;
 use crate::gpu::{FixedPipelines, SAMPLE_COUNT, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
-    BlendMode, OUTPUT_WGSL, Pass, PipelineKey, ShaderKey, occlusion_source, shader_source,
+    BlendMode, Pass, PipelineKey, ShaderKey, occlusion_source, output_source, shader_source,
     shadow_cutout_source, shadow_merged_source, sky_source, water_source,
 };
 use crate::shadow_merge::ShadowVertex;
@@ -364,11 +364,11 @@ impl Pipelines {
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
         let mut jobs = vec![
             (water_spec(), water_source()),
-            (output_spec(canvas_format), OUTPUT_WGSL.to_owned()),
+            (output_spec(canvas_format), output_source()),
             (sky_spec(), sky_source()),
         ];
         for spec in bloom_specs() {
-            jobs.push((spec, OUTPUT_WGSL.to_owned()));
+            jobs.push((spec, output_source()));
         }
         jobs.push((occlusion_spec(), occlusion_source(true)));
         for (cutout, source) in [

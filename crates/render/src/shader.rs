@@ -395,7 +395,12 @@ pub fn occlusion_source(multisampled: bool) -> String {
          fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n\
          const SAMPLES: i32 = 6;\n"
     };
-    format!("{depth}{OCCLUSION_WGSL}")
+    specialize::specialize(&format!("{depth}{OCCLUSION_WGSL}"), &[])
+}
+
+/// The output and bloom shader, its loops unrolled like every other shader's.
+pub fn output_source() -> String {
+    specialize::specialize(OUTPUT_WGSL, &[])
 }
 
 fn fixed_source(template: &str, source: InstanceSource) -> String {
@@ -677,7 +682,7 @@ mod tests {
         translate_for_webgl("water", &fixed_source(WATER_WGSL, texture));
         translate_for_webgl("shadow merged", &fixed_source(SHADOW_MERGED_WGSL, texture));
         translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
-        translate_for_webgl("output", OUTPUT_WGSL);
+        translate_for_webgl("output", &output_source());
         translate_for_webgl("mipmap", MIPMAP_WGSL);
         translate_for_webgl("sky", &fixed_source(SKY_WGSL, texture));
         translate_for_webgl("occlusion", &occlusion_source(false));
@@ -688,11 +693,70 @@ mod tests {
         validate("water", &water_source());
         validate("shadow merged", &shadow_merged_source());
         validate("shadow cutout", &shadow_cutout_source());
-        validate("output", OUTPUT_WGSL);
+        validate("output", &output_source());
         validate("mipmap", MIPMAP_WGSL);
         validate("sky", &sky_source());
         validate("occlusion", &occlusion_source(true));
         validate("occlusion single-sample", &occlusion_source(false));
+    }
+
+    /// WebKit guards every WGSL loop with a volatile counter that keeps Metal from
+    /// unrolling it (`specialize.rs`), which cost the village's main view 15 times
+    /// its GPU time there: every loop a shader runs is one the specializer unrolls.
+    #[test]
+    fn no_shader_keeps_a_loop() {
+        let mut effects = EffectRegistry::default();
+        for effect in crate::presentation::PRESENTATION_EFFECTS {
+            effects.register(effect);
+        }
+        let mut sources = vec![
+            ("water".to_owned(), water_source()),
+            ("sky".to_owned(), sky_source()),
+            ("output".to_owned(), output_source()),
+            ("occlusion".to_owned(), occlusion_source(true)),
+            ("shadow merged".to_owned(), shadow_merged_source()),
+            ("shadow cutout".to_owned(), shadow_cutout_source()),
+        ];
+        let count =
+            crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
+        for effect in 0..=count as u16 {
+            for (lit, alpha_test, receive_shadow) in [
+                (false, false, false),
+                (true, false, false),
+                (true, true, true),
+                (true, false, true),
+            ] {
+                let key = ShaderKey {
+                    lit,
+                    alpha_test,
+                    receive_shadow,
+                    effect,
+                    ..ShaderKey::default()
+                };
+                sources.push((format!("{key:?}"), shader_source(&key, &effects)));
+            }
+            let caster = ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test: true,
+                shadow_fade: true,
+                effect,
+                ..ShaderKey::default()
+            };
+            sources.push((format!("{caster:?}"), shader_source(&caster, &effects)));
+        }
+        for (label, code) in sources {
+            let bytes = code.as_bytes();
+            let kept = (0..bytes.len()).find(|&i| {
+                ["for", "loop", "while"]
+                    .iter()
+                    .any(|word| specialize::word_at(bytes, i, word))
+            });
+            assert!(
+                kept.is_none(),
+                "{label} keeps a loop: {}",
+                &code[kept.unwrap_or(0)..(kept.unwrap_or(0) + 80).min(code.len())]
+            );
+        }
     }
 
     #[test]

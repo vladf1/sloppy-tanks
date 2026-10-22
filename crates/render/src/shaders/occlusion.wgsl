@@ -97,17 +97,17 @@ fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
         let offset = (tangent * cos(angle) * spread + bitangent * sin(angle) * spread + normal * elevation) * reach;
         let probe = center + offset;
         let clip = occlusion.view_projection * vec4f(probe, 1.0);
-        if clip.w <= 0.0 {
-            continue;
-        }
-        let ndc = clip.xy / clip.w;
-        let at = vec2i(vec2f((ndc.x * 0.5 + 0.5) * size.x, (0.5 - ndc.y * 0.5) * size.y));
-        let scene = view_distance(depth_at(at, size_i));
-        let gap = clip.w - scene;
-        // Behind the scene's surface: occluded, unless the surface stands so far in
-        // front that it is a different object (the range check).
-        if gap > bias {
-            occluded += 1.0 - smoothstep(radius * 1.5, radius * 3.5, gap);
+        // Only probes in front of the camera; no `continue`, so the loop unrolls.
+        if clip.w > 0.0 {
+            let ndc = clip.xy / clip.w;
+            let at = vec2i(vec2f((ndc.x * 0.5 + 0.5) * size.x, (0.5 - ndc.y * 0.5) * size.y));
+            let scene = view_distance(depth_at(at, size_i));
+            let gap = clip.w - scene;
+            // Behind the scene's surface: occluded, unless the surface stands so far
+            // in front that it is a different object (the range check).
+            if gap > bias {
+                occluded += 1.0 - smoothstep(radius * 1.5, radius * 3.5, gap);
+            }
         }
     }
     let open = 1.0 - occluded / f32(SAMPLES);
