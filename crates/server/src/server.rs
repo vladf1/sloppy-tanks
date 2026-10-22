@@ -36,6 +36,7 @@ use crate::room_task::{
     Admission, Registry, RoomCommand, RoomHandle, ServerRoomEvents, spawn_room,
 };
 use crate::session::{Clock, MAX_PENDING_CONNECTIONS, RoomSample, RoomSocket};
+use crate::site::Site;
 use crate::socket::{self, Ending, RoomLink, SocketHandle};
 use crate::websocket::{self, Codec, Role, extension};
 use crate::wire::{ConnectionBytes, CountingIo, WireTotals};
@@ -69,6 +70,9 @@ pub struct ServerOptions {
     pub log: Log,
     /// The commit and build time `/health` reports beside the build stamps.
     pub build: BuildInfo,
+    /// The game's own page and assets (`SITE_DIR`), served at every path the server's
+    /// routes leave free, the bare address included.
+    pub site: Option<Arc<Site>>,
 }
 
 impl ServerOptions {
@@ -79,6 +83,7 @@ impl ServerOptions {
             max_sockets_per_ip: DEFAULT_MAX_SOCKETS_PER_IP,
             log: Arc::new(|line| println!("{line}")),
             build: BuildInfo::default(),
+            site: None,
         }
     }
 }
@@ -112,7 +117,7 @@ struct Shared {
 }
 
 /// The multiplayer host: `/health` (and `/health/`), `/rooms`, the `/room/CODE` WebSocket, the public
-/// `/dashboard` and `/stats`.
+/// `/dashboard` and `/stats`, and with a site, the game itself.
 pub struct MultiplayerServer {
     shared: Arc<Shared>,
     address: SocketAddr,
@@ -428,6 +433,9 @@ struct Health<'a> {
     dirty: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     built_at: Option<&'a str>,
+    /// The site bundle this server carries, when it serves the game.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    site_build: Option<&'a str>,
 }
 
 async fn route(
@@ -454,6 +462,7 @@ async fn route(
                 commit: build.commit.as_deref(),
                 dirty: build.commit.as_ref().map(|_| build.dirty),
                 built_at: build.built_at.as_deref(),
+                site_build: shared.options.site.as_deref().map(Site::build),
             };
             let body = serde_json::to_string_pretty(&health).expect("health serializes") + "\n";
             reply(200, Reply::Json(body), &[])
@@ -483,15 +492,10 @@ async fn route(
             let json = serde_json::to_string(&stats).expect("stats serialize");
             reply(200, Reply::Json(json), &[("Cache-Control", "no-store")])
         }
-        // The bare address shows the dashboard: people open it in a browser, and scripts
-        // read /health.
-        "/" | "/dashboard" | "/dashboard/" => {
-            let mut response = Response::builder().status(200);
-            for (name, value) in PAGE_HEADERS {
-                response = response.header(name, value);
-            }
-            response.body(text_body(PAGE)).expect("valid response")
-        }
+        // Without the game, the bare address shows the dashboard: people open it in a
+        // browser, and scripts read /health. With it, the game takes the bare address.
+        "/dashboard" | "/dashboard/" => dashboard_page(),
+        "/" if shared.options.site.is_none() => dashboard_page(),
         "/dashboard/stream" => {
             let ip = client_ip(shared, headers, peer);
             let now = (shared.clock)();
@@ -565,8 +569,24 @@ async fn route(
             reply(200, Reply::Json(json), &cors)
         }
         _ if room_path(path).is_some() => reply(426, Reply::Text("WebSocket required"), &[]),
-        _ => reply(404, Reply::Text("Not found"), &[]),
+        _ => shared
+            .options
+            .site
+            .as_ref()
+            .and_then(|site| site.respond(request.method(), path, headers))
+            .map_or_else(
+                || reply(404, Reply::Text("Not found"), &[]),
+                |response| response.map(BodyExt::boxed),
+            ),
     }
+}
+
+fn dashboard_page() -> Response<Body> {
+    let mut response = Response::builder().status(200);
+    for (name, value) in PAGE_HEADERS {
+        response = response.header(name, value);
+    }
+    response.body(text_body(PAGE)).expect("valid response")
 }
 
 /// A refused upgrade, written like the TypeScript's raw response: the reason phrase is

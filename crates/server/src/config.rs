@@ -1,5 +1,7 @@
 //! Settings from the environment.
 
+use std::path::PathBuf;
+
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8787;
 /// Commits show abbreviated, like the page's `/health`.
@@ -49,11 +51,14 @@ pub struct Settings {
     /// Take the client IP from the last `X-Forwarded-For` hop (the local reverse proxy).
     pub trust_proxy: bool,
     pub build: BuildInfo,
+    /// `SITE_DIR`: the game's site bundle to serve beside the rooms (`/site` in the
+    /// image, `dist-server/` locally), when set.
+    pub site_dir: Option<PathBuf>,
 }
 
 impl Settings {
-    /// Reads `HOST`, `PORT`, `MAX_ROOMS` and the [`BuildInfo`] stamps. A typo must stop
-    /// startup, not silently turn a limit off.
+    /// Reads `HOST`, `PORT`, `MAX_ROOMS`, `SITE_DIR` and the [`BuildInfo`] stamps. A typo
+    /// must stop startup, not silently turn a limit off.
     pub fn from_env(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         let host = lookup("HOST").unwrap_or_else(|| DEFAULT_HOST.to_string());
         let port = match lookup("PORT") {
@@ -72,12 +77,16 @@ impl Settings {
                 _ => return Err("MAX_ROOMS must be a positive integer".into()),
             },
         };
+        let site_dir = lookup("SITE_DIR")
+            .filter(|text| !text.is_empty())
+            .map(PathBuf::from);
         Ok(Self {
             host,
             port,
             max_rooms,
             trust_proxy,
             build: BuildInfo::from_env(&lookup),
+            site_dir,
         })
     }
 }
@@ -101,6 +110,14 @@ mod tests {
         assert_eq!((settings.host.as_str(), settings.port), ("127.0.0.1", 8787));
         assert!(settings.trust_proxy);
         assert_eq!(settings.max_rooms, None);
+        assert_eq!(settings.site_dir, None);
+    }
+
+    #[test]
+    fn reads_the_site_directory() {
+        let site = settings(&[("SITE_DIR", "/site")]).unwrap().site_dir;
+        assert_eq!(site, Some(PathBuf::from("/site")));
+        assert_eq!(settings(&[("SITE_DIR", "")]).unwrap().site_dir, None);
     }
 
     #[test]
