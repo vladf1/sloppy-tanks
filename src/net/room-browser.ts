@@ -3,7 +3,13 @@
 import { CONTENT_VERSION } from "../generated/engine/content-version.js";
 import { busiestOpenRoom, readRoomList, type RoomListing } from "./room-list";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
-import { ROOM_SEATS, isPlayerKind, isRoundMinutes, type JoinChoice } from "./room-protocol";
+import {
+  ROOM_SEATS,
+  isPlayerKind,
+  isRoundMinutes,
+  steppedMinutes,
+  type JoinChoice,
+} from "./room-protocol";
 import type { RoomSelection } from "./pending-join";
 import { debugPage, isExtraLevel, mapOption } from "../game/map-options";
 import { showRoomMap } from "../game/map-picker";
@@ -96,6 +102,14 @@ export class RoomBrowser {
     this.render();
     this.showStatus("loading", "Looking for rooms…", "Pick your tank and map meanwhile.");
     this.refresh.addEventListener("click", () => void this.poll());
+    this.element("#retry-rooms").addEventListener("click", () => void this.poll());
+    const length = this.element<HTMLInputElement>("#create-round-minutes");
+    for (const step of this.panel.querySelectorAll<HTMLButtonElement>(".room-length .step")) {
+      step.addEventListener("click", () => {
+        length.value = String(steppedMinutes(Number(length.value), Number(step.dataset.step)));
+        length.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
     this.join.addEventListener("click", () => this.joinSelected());
     this.create.addEventListener("click", () => this.createRoom());
     // A phone's one action creates a room only when it knows none is open, so it waits
@@ -289,8 +303,9 @@ export class RoomBrowser {
         } else {
           this.rooms = [];
           this.render();
-          // Without a list, a new room is the one thing a phone can still do.
-          this.create.disabled = false;
+          // A server that cannot list rooms cannot host one either: the button waits for
+          // the list to come back rather than send the player into a failure.
+          this.create.disabled = true;
           // fetch() rejects with a TypeError when the server cannot be reached at all.
           this.showStatus(
             "error",

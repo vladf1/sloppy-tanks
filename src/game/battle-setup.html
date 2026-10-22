@@ -74,10 +74,7 @@
   </div>
   <header class="setup-header">
     <div class="setup-brand" aria-hidden="true"><b>SLOPPY</b><b>TANKS</b></div>
-    <div class="setup-heading">
-      <h1 id="setup-title">BATTLE SETUP</h1>
-      <p class="setup-tagline">Little tanks. Big mess.</p>
-    </div>
+    <div class="setup-heading"><h1 id="setup-title">BATTLE SETUP</h1></div>
   </header>
   <div class="setup-section tank-setting" role="group" aria-labelledby="tank-label">
     <div class="setup-label">
@@ -235,6 +232,10 @@
             >
           </div>
         </div>
+        <!-- A phone plays one format at one difficulty; it says which above GO. -->
+        <p class="phone-briefing">
+          <b>Team Battle</b><span>6 vs 6 · Easy bots · First to 100</span>
+        </p>
         <div class="startup-progress">
           <div class="startup-progress-copy">
             <span id="startup-status" role="status" aria-live="polite">Loading game…</span>
@@ -279,28 +280,61 @@
                 ></label
               >
               <div class="room-rules">
-                <label class="room-length"
-                  ><input
-                    id="create-round-minutes"
-                    type="number"
-                    min="1"
-                    max="99"
-                    step="1"
-                    required
-                    value="20"
-                    aria-label="Match length in minutes"
-                  /><span>min</span></label
-                >
+                <div class="room-length" role="group" aria-labelledby="room-length-label">
+                  <span id="room-length-label" class="rule-label">Length</span>
+                  <span class="stepper"
+                    ><button
+                      class="step"
+                      type="button"
+                      data-step="-5"
+                      aria-label="Shorter match"
+                      tabindex="-1"
+                    >
+                      −</button
+                    ><input
+                      id="create-round-minutes"
+                      type="number"
+                      min="1"
+                      max="99"
+                      step="1"
+                      required
+                      value="20"
+                      aria-label="Match length in minutes"
+                    /><span class="unit">min</span
+                    ><button
+                      class="step"
+                      type="button"
+                      data-step="5"
+                      aria-label="Longer match"
+                      tabindex="-1"
+                    >
+                      +
+                    </button></span
+                  >
+                </div>
                 <label
                   class="room-bots-choice"
                   data-tip="No bots fill the teams; empty seats stay empty"
-                  ><input id="create-humans-only" type="checkbox" checked /><span
+                  ><input id="create-humans-only" type="checkbox" role="switch" checked /><span
+                    class="rule-label"
                     >Humans only</span
                   ></label
                 >
               </div>
             </div>
             <div id="room-list"></div>
+            <div class="room-empty" aria-hidden="true">
+              <svg viewBox="0 0 48 48" focusable="false">
+                <circle cx="24" cy="24" r="18" />
+                <circle cx="24" cy="24" r="10" />
+                <path d="M24 24 37 11" />
+              </svg>
+              <b class="when-loading">Scanning for open rooms…</b>
+              <b class="when-ready">No open rooms right now</b>
+              <b class="when-error">Rooms are offline</b>
+              <small class="when-ready">Be the first: create a room and invite friends.</small>
+              <small class="when-error">Single player still works while we reconnect.</small>
+            </div>
           </div>
         </div>
         <div class="setup-section driver-name">
@@ -332,13 +366,14 @@
             </div>
           </div>
         </div>
-        <!-- Like single player's progress well: what is happening, what to do next, and a
-             bar that sweeps while the list loads or a room joins. -->
-        <div class="startup-progress room-status" data-state="loading">
-          <div class="startup-progress-copy">
+        <!-- What the list is doing and what to do next; an error offers a retry. -->
+        <div class="room-status" data-state="loading">
+          <span class="room-status-icon" aria-hidden="true"></span>
+          <div class="room-status-copy">
             <span id="rooms-message" role="status">Looking for rooms…</span
             ><span id="rooms-hint" class="startup-hint">Pick your tank and map meanwhile.</span>
           </div>
+          <button id="retry-rooms" class="chip-button" type="button">RETRY</button>
           <div class="startup-track" aria-hidden="true"><span></span></div>
         </div>
         <div class="room-action">
@@ -373,12 +408,8 @@
         >Ammo</span
       >
       <span class="key-hint"
-        ><span class="keys"><kbd>V</kbd></span
-        >First person</span
-      >
-      <span class="key-hint"
         ><span class="keys"><kbd>Esc</kbd></span
-        >Pause &amp; all controls</span
+        >All controls</span
       >
     </div>
     <div class="menu-help touch-strip">
