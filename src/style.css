@@ -3435,8 +3435,8 @@ html:not(.phone) #toast[data-tone="death"] {
   --tint: #a8733a;
 }
 /* Key art from the tanks' own renders. Team Battle: a blue Bruiser and a red Big Rig
-   squaring up across a "VS" under their sides' glows; Solo Assault: one red tank in the
-   sights of a dim enemy line. */
+   squaring up across a "VS" under their sides' glows; Solo Assault: one red tank before
+   a dim enemy line. */
 .battle-choice .choice-card:has(input[value="team"]) {
   --scene:
     radial-gradient(ellipse 60% 70% at 100% 10%, #ff4d5e4d, transparent 70%),
@@ -3541,20 +3541,6 @@ html:not(.phone) #toast[data-tone="death"] {
   bottom: 0;
   height: 80%;
   margin-inline: auto;
-}
-.solo-art .sights {
-  position: absolute;
-  left: 50%;
-  bottom: 10%;
-  height: 60%;
-  aspect-ratio: 1.7;
-  border: 2px solid #ff6b7acc;
-  border-radius: 50%;
-  box-shadow:
-    0 0 0 1px #0006,
-    0 0 18px #ff4d5e55;
-  transform: translateX(-50%) scaleY(0.62);
-  transform-origin: 50% 100%;
 }
 .battle-choice .choice-card:hover .team-art .blue-tank {
   transform: scaleX(-1) translateX(-4px);
