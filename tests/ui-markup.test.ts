@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { HudState } from "../src/game/engine-api";
-import { menuMarkup, ordinal, scoreMarkup } from "../src/game/ui-markup";
+import { hudMarkup, menuMarkup, ordinal, scoreMarkup } from "../src/game/ui-markup";
 
 test("ordinals read as places: 1st, 2nd, 11th, 21st", () => {
   assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 101, 111].map(ordinal), [
@@ -67,7 +67,7 @@ test("pause leaves the score to the header's plates and lists the battle's facts
   // The line under the title says who leads in words and what the team still needs.
   assert.match(
     markup,
-    /class="dialog-standing" data-tone="ahead">Your team leads by 1 · your team needs \d+ kills? to win</,
+    /class="dialog-standing" data-tone="ahead">Your team leads by 1 · \d+ kills? to win</,
   );
   // The team rank says what it ranks by.
   assert.match(markup, /<dt>Team rank<\/dt><dd>1st of 1<small>by kills<\/small><\/dd>/);
@@ -100,4 +100,20 @@ test("dialog score plates mark only the viewer's side, beside its name", () => {
   assert.match(markup, /<span class="red yours">4<small>RED<em> · YOU<\/em><\/small>/);
   assert.match(markup, /<span class="blue">3<small>BLUE<\/small>/);
   assert.equal(markup.match(/YOU/g)?.length, 1);
+});
+
+test("the ammo rack shows every round's own silhouette, never a locked paragraph", () => {
+  const markup = hudMarkup();
+  // Each of the five slots carries its round's icon and a lock for when it is empty.
+  for (const weapon of ["standard", "spread", "rocket", "ricochet", "piercing"]) {
+    assert.match(markup, new RegExp(`id="ammo-${weapon}"[^]*?<use href="#hud-${weapon}" />`));
+  }
+  assert.equal(markup.match(/class="ammo-lock"/g)?.length, 5);
+  assert.doesNotMatch(markup, /LOCKED|Grab ammo crates/);
+});
+
+test("the respawn card's copy holds for mouse and touch alike", () => {
+  const markup = menuMarkup(teamBattle({ phase: "playing", alive: false }), null);
+  assert.match(markup, /Choose your next tank<small>It rolls out when the timer ends<\/small>/);
+  assert.doesNotMatch(markup, /[Cc]lick|[Tt]ap /);
 });
