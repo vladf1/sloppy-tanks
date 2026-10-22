@@ -38,26 +38,26 @@ const VEHICLE_EDGE_SPAN: f32 = 0.92;
 const VEHICLE_VALUE_RANGE: f32 = 1.45;
 // The bevel band: about this many pixels wide, within these widths in metres, and
 // how far the normal rolls over in it.
-const VEHICLE_BEVEL_PIXELS: f32 = 2.0;
+const VEHICLE_BEVEL_PIXELS: f32 = 2.6;
 const VEHICLE_BEVEL_MIN: f32 = 0.016;
-const VEHICLE_BEVEL_MAX: f32 = 0.09;
+const VEHICLE_BEVEL_MAX: f32 = 0.12;
 const VEHICLE_BEVEL_ROLL: f32 = 0.3;
 // Panel shading: paint along a plate's borders is this much darker, fading out over
 // this fraction of the plate's narrowest width (within these metres).
-const VEHICLE_PANEL_BORDER: f32 = 0.84;
+const VEHICLE_PANEL_BORDER: f32 = 0.74;
 const VEHICLE_PANEL_REACH: f32 = 0.3;
 const VEHICLE_PANEL_MIN: f32 = 0.03;
 const VEHICLE_PANEL_MAX: f32 = 0.35;
 // How far from a convex edge chips reach, and from a recess its grime (metres).
-const VEHICLE_CHIP_REACH: f32 = 0.05;
-const VEHICLE_RECESS_REACH: f32 = 0.09;
+const VEHICLE_CHIP_REACH: f32 = 0.07;
+const VEHICLE_RECESS_REACH: f32 = 0.12;
 // Chips fade out as a pixel grows past their size, so distant hulls never sparkle.
-const VEHICLE_CHIP_PIXEL_FROM: f32 = 0.006;
-const VEHICLE_CHIP_PIXEL_TO: f32 = 0.016;
+const VEHICLE_CHIP_PIXEL_FROM: f32 = 0.01;
+const VEHICLE_CHIP_PIXEL_TO: f32 = 0.024;
 // Paint rubbed lighter on a bevel and on chamfer strips.
-const VEHICLE_BEVEL_LIFT: f32 = 1.6;
-const VEHICLE_BEVEL_PALE: vec3f = vec3f(0.05, 0.042, 0.036);
-const VEHICLE_BEVEL_TINT: f32 = 0.7;
+const VEHICLE_BEVEL_LIFT: f32 = 1.7;
+const VEHICLE_BEVEL_PALE: vec3f = vec3f(0.03, 0.022, 0.018);
+const VEHICLE_BEVEL_TINT: f32 = 0.8;
 // Dust and wet mud (linear) and how strongly they cover the lowest armor.
 const VEHICLE_DUST: vec3f = vec3f(0.27, 0.205, 0.12);
 const VEHICLE_MUD: vec3f = vec3f(0.075, 0.053, 0.034);
@@ -65,16 +65,50 @@ const VEHICLE_DUST_STRENGTH: f32 = 0.82;
 const VEHICLE_MUD_STRENGTH: f32 = 0.7;
 // Grime in recesses: a dark brown multiplier.
 const VEHICLE_GRIME: vec3f = vec3f(0.34, 0.29, 0.24);
-const VEHICLE_GRIME_STRENGTH: f32 = 0.7;
+const VEHICLE_GRIME_STRENGTH: f32 = 0.8;
 // Finish: satin paint, rough dirt, and bare steel scuffed matte, so a chip reads as
 // grey metal rather than as a mirror of the sky.
-const VEHICLE_PAINT_ROUGHNESS: f32 = 0.56;
-const VEHICLE_SHEEN_BREAKUP: f32 = 0.06;
+// Upright plates are satin, so their sides catch the sky as painted steel does;
+// decks are flat-finished (and stay under the ground relief's roughness, which
+// would otherwise texture them in world space as they drive).
+const VEHICLE_PAINT_ROUGHNESS: f32 = 0.44;
+const VEHICLE_DECK_ROUGHNESS: f32 = 0.53;
+const VEHICLE_SHEEN_BREAKUP: f32 = 0.1;
 const VEHICLE_DIRT_ROUGHNESS: f32 = 0.92;
 const VEHICLE_STEEL_ROUGHNESS: f32 = 0.62;
 const VEHICLE_STEEL_METALNESS: f32 = 0.2;
 // The team rim's brightness at a full-strength silhouette.
 const VEHICLE_RIM_GLOW: f32 = 0.4;
+// Rain streaks down upright plates: columns this many per paint UV across and this
+// many per UV along their length, darkening by up to this much, and resolved only
+// while a pixel is smaller than a streak.
+const VEHICLE_STREAK_ACROSS: f32 = 95.0;
+const VEHICLE_STREAK_ALONG: f32 = 2.6;
+const VEHICLE_STREAK_DARKEN: f32 = 0.3;
+const VEHICLE_STREAK_PIXEL_FROM: f32 = 0.02;
+const VEHICLE_STREAK_PIXEL_TO: f32 = 0.045;
+// Metres of armor per paint UV (`PAINT_UV_PER_METRE` in Rust).
+const VEHICLE_METRES_PER_UV: f32 = 4.0;
+// Welded panel seams across broad plates: this far apart (metres), on plates at
+// least this wide, a groove this wide with a sunlit weld lip beside it, resolved
+// while a pixel is smaller than these sizes.
+const VEHICLE_SEAM_SPACING: f32 = 0.6;
+const VEHICLE_SEAM_MIN_PLATE: f32 = 0.4;
+const VEHICLE_SEAM_WIDTH: f32 = 0.01;
+const VEHICLE_SEAM_LIP: f32 = 0.014;
+const VEHICLE_SEAM_PIXEL_FROM: f32 = 0.012;
+const VEHICLE_SEAM_PIXEL_TO: f32 = 0.028;
+// Non-skid coating on decks: a grain this many cells per metre, varying the paint
+// by this much either way, resolved only close up (the turret roof seen from the
+// commander's hatch).
+const VEHICLE_GRAIN_CELLS: f32 = 85.0;
+const VEHICLE_GRAIN_VALUE: f32 = 0.16;
+const VEHICLE_GRAIN_PIXEL_FROM: f32 = 0.003;
+const VEHICLE_GRAIN_PIXEL_TO: f32 = 0.009;
+// Soft, sun-faded variation across the paint, this many cells per metre and this
+// much either way: broad enough never to read as speckle.
+const VEHICLE_FADE_CELLS: f32 = 2.4;
+const VEHICLE_FADE_VALUE: f32 = 0.1;
 
 struct VehicleEdges {
     // 1 on a convex edge, fading out over the chip reach.
@@ -178,17 +212,57 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // as separate pieces of armor under flat light.
     let panel_reach = clamp(edges.narrowest * VEHICLE_PANEL_REACH, VEHICLE_PANEL_MIN, VEHICLE_PANEL_MAX);
     let panel = mix(VEHICLE_PANEL_BORDER, 1.0, smoothstep(0.0, panel_reach, edges.nearest));
-    var color = base * (1.0 + (grime - 0.5) * 0.08) * panel;
+    let metres = f.uv * VEHICLE_METRES_PER_UV;
+    let fade = value_noise(metres * VEHICLE_FADE_CELLS) * 0.65 + value_noise(metres * VEHICLE_FADE_CELLS * 2.7 + 3.1) * 0.35;
+    var color = base * (1.0 + (fade - 0.5) * 2.0 * VEHICLE_FADE_VALUE) * panel;
     // Rubbed edges: a lighter band on each bevel and over chamfer strips.
     let lifted = color * VEHICLE_BEVEL_LIFT + VEHICLE_BEVEL_PALE;
-    color = mix(color, lifted, max(bevel, chamfer * 0.8) * VEHICLE_BEVEL_TINT);
+    color = mix(color, lifted, max(bevel, chamfer * 0.45) * VEHICLE_BEVEL_TINT);
     // Grime settled into recesses, patchy along their length.
     let recess = clamp(edges.recess * (0.75 + (0.5 - grime) * 0.9), 0.0, 1.0);
     color = mix(color, color * VEHICLE_GRIME, recess * VEHICLE_GRIME_STRENGTH);
 
+    // Welded seams cut broad plates into panels: across decks, and upright on the
+    // sides and faces, so a deck seam turns the corner down the side. A dark groove
+    // with a lighter weld lip beside it.
+    let seam_resolved = (1.0 - smoothstep(VEHICLE_SEAM_PIXEL_FROM, VEHICLE_SEAM_PIXEL_TO, pixel))
+        * step(VEHICLE_SEAM_MIN_PLATE, edges.narrowest) * step(edges.narrowest, 100.0)
+        * (1.0 - chamfer);
+    var seam = 0.0;
+    var lip = 0.0;
+    if seam_resolved > 0.0 {
+        // Paint UVs run along the model's x and z on decks and across upright faces,
+        // with v up the upright ones: v on a deck and u on an upright face cross it.
+        let q = select(f.uv.x, f.uv.y, (*s).normal.y > 0.6) * VEHICLE_METRES_PER_UV / VEHICLE_SEAM_SPACING;
+        let offset = (fract(q) - 0.5) * VEHICLE_SEAM_SPACING;
+        let aa = max(pixel, 1e-4);
+        seam = (1.0 - smoothstep(VEHICLE_SEAM_WIDTH * 0.5, VEHICLE_SEAM_WIDTH * 0.5 + aa, abs(offset))) * seam_resolved;
+        let lip_centre = abs(offset - (VEHICLE_SEAM_WIDTH * 0.5 + VEHICLE_SEAM_LIP * 0.5));
+        lip = (1.0 - smoothstep(VEHICLE_SEAM_LIP * 0.5, VEHICLE_SEAM_LIP * 0.5 + aa, lip_centre)) * seam_resolved;
+    }
+    color = color * (1.0 - seam * 0.65) * (1.0 + lip * 0.3);
+
+    // Non-skid grain on decks close up.
+    let deck = smoothstep(0.55, 0.8, (*s).normal.y);
+    let grain_resolved = (1.0 - smoothstep(VEHICLE_GRAIN_PIXEL_FROM, VEHICLE_GRAIN_PIXEL_TO, pixel)) * deck * (1.0 - chamfer);
+    var grain = 0.5;
+    if grain_resolved > 0.0 {
+        grain = value_noise(metres * VEHICLE_GRAIN_CELLS) * 0.6 + value_noise(metres * VEHICLE_GRAIN_CELLS * 2.3 + 1.7) * 0.4;
+    }
+    color *= 1.0 + (grain - 0.5) * 2.0 * VEHICLE_GRAIN_VALUE * grain_resolved;
+
+    // Rain streaks: thin dark runs down upright plates, broken along their length,
+    // fading where a pixel grows past their width so far hulls stay clean.
+    let upright = 1.0 - smoothstep(0.3, 0.6, abs((*s).normal.y));
+    let streak_resolved = 1.0 - smoothstep(VEHICLE_STREAK_PIXEL_FROM, VEHICLE_STREAK_PIXEL_TO, pixel);
+    let column = value_noise(vec2f(f.uv.x * VEHICLE_STREAK_ACROSS, f.uv.y * VEHICLE_STREAK_ALONG));
+    let run = value_noise(vec2f(f.uv.x * VEHICLE_STREAK_ACROSS * 0.21 + 7.3, f.uv.y * VEHICLE_STREAK_ALONG * 3.0));
+    let streak = smoothstep(0.58, 0.92, column) * smoothstep(0.35, 0.75, run) * upright * streak_resolved;
+    color = mix(color, color * VEHICLE_GRIME, streak * VEHICLE_STREAK_DARKEN / (1.0 - VEHICLE_GRIME.g));
+
     // Dust and mud thrown up by the tracks: a broken, splashed line.
-    let dusty = smoothstep(0.36, 0.6, low + (grime - 0.5) * 0.35) * VEHICLE_DUST_STRENGTH;
-    let muddy = smoothstep(0.66, 0.86, low + (grime - 0.5) * 0.45) * VEHICLE_MUD_STRENGTH;
+    let dusty = smoothstep(0.24, 0.56, low + (grime - 0.5) * 0.35) * VEHICLE_DUST_STRENGTH;
+    let muddy = smoothstep(0.6, 0.84, low + (grime - 0.5) * 0.45) * VEHICLE_MUD_STRENGTH;
     color = mix(color, VEHICLE_DUST * (0.8 + 0.4 * grime), dusty);
     color = mix(color, VEHICLE_MUD, muddy);
     let dirt = max(dusty, muddy);
@@ -197,7 +271,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // where the chip field dips under the spot's exposure, with a darker rim of
     // lifted paint.
     let resolved = 1.0 - smoothstep(VEHICLE_CHIP_PIXEL_FROM, VEHICLE_CHIP_PIXEL_TO, pixel);
-    let exposure = (edges.near_edge * 0.4 + chamfer * 0.14 + low * 0.08) * (1.0 - dirt * 0.6) * resolved;
+    let exposure = (edges.near_edge * 0.4 + chamfer * 0.05 + low * 0.05) * (1.0 - dirt * 0.6) * resolved;
     let chip = 1.0 - smoothstep(exposure - 0.03, exposure, wear);
     let chip_rim = (1.0 - smoothstep(exposure, exposure + 0.07, wear)) * (1.0 - chip);
     color *= 1.0 - chip_rim * 0.4;
@@ -205,7 +279,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
 
     // The sheen breaks up a little with the grime field, so a panel's highlight
     // reads as painted steel rather than moulded plastic.
-    var roughness = VEHICLE_PAINT_ROUGHNESS + (0.5 - grime) * VEHICLE_SHEEN_BREAKUP + bevel * 0.14;
+    var roughness = mix(VEHICLE_PAINT_ROUGHNESS, VEHICLE_DECK_ROUGHNESS, deck)
+        + (0.5 - grime) * VEHICLE_SHEEN_BREAKUP * (1.0 - deck) + streak * 0.08
+        + (grain - 0.5) * 0.08 * grain_resolved;
     roughness = mix(roughness, VEHICLE_DIRT_ROUGHNESS, max(dirt, recess * 0.6));
     roughness = mix(roughness, VEHICLE_STEEL_ROUGHNESS, chip);
     (*s).roughness = roughness;

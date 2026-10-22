@@ -33,7 +33,7 @@ use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 /// saturated color without a camouflage, so a tank's side reads at a glance. The
 /// blue stays bright enough not to fall to black in shade (the paint's own fill
 /// lifts it further), the red deep enough never to wash out to salmon in sun.
-pub const VEHICLE_PAINT: [u32; 2] = [0x234f96, 0x8c2720];
+pub const VEHICLE_PAINT: [u32; 2] = [0x2a54a0, 0x962c2a];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -54,10 +54,10 @@ const SCORCH_ROUGHNESS: f32 = 0.92;
 const SCORCH_BUMP_SCALE: f32 = 0.02;
 const TEXTURE_ANISOTROPY: u8 = 4;
 /// Paint UVs per metre of armor, shared with the wrecks' scorch tile (one tile per
-/// 4 m), and how often the wear tile repeats over one UV unit: one tile per 2.5 m,
-/// so a chip is a few centimetres across.
+/// 4 m), and how often the wear tile repeats over one UV unit: one tile per 3.6 m,
+/// so a chip is a few centimetres across and still reads at the hero camera.
 const PAINT_UV_PER_METRE: f64 = 0.25;
-const PAINT_REPEAT: f32 = 1.6;
+const PAINT_REPEAT: f32 = 1.1;
 /// Military enamel: satin enough for chamfered edges to catch the sun, rough
 /// enough that the sky's sheen never washes the color out.
 const PAINT_METALNESS: f32 = 0.08;
@@ -92,15 +92,20 @@ const PLATE_VARIATION: f64 = 0.07;
 /// The hand-painted gradient down an upright plate: its paint value at the
 /// plate's foot and at its top edge. Plates shorter than `GRADIENT_MIN_HEIGHT`
 /// (chamfers, trim) keep their flat value.
-const GRADIENT_FOOT: f64 = 0.7;
-const GRADIENT_TOP: f64 = 1.06;
+const GRADIENT_FOOT: f64 = 0.74;
+const GRADIENT_TOP: f64 = 1.04;
 const GRADIENT_MIN_HEIGHT: f64 = 0.05;
 /// Upward faces (normal y above `DECK_FACING`) range from `DECK_LOW` at the top of
 /// the dusty band to `DECK_HIGH` `DECK_RAMP` metres above it.
 const DECK_FACING: f64 = 0.5;
-const DECK_LOW: f64 = 0.84;
-const DECK_HIGH: f64 = 1.1;
+const DECK_LOW: f64 = 0.66;
+const DECK_HIGH: f64 = 1.0;
 const DECK_RAMP: f64 = 0.6;
+/// Every painted face darkens toward the ground: `HEIGHT_FOOT` at the ground
+/// line, full value `HEIGHT_SPAN` metres above it, so the hull reads lighter at the
+/// turret and heavier at the skirts like a hand-painted model.
+const HEIGHT_FOOT: f64 = 0.8;
+const HEIGHT_SPAN: f64 = 1.3;
 /// Faces leaning less than this (normal y) from vertical take the gradient.
 const UPRIGHT: f64 = 0.6;
 /// The custom shading of painted armor and running gear
@@ -111,12 +116,12 @@ const UPRIGHT: f64 = 0.6;
 /// the wear tile's. Running gear keeps its own vertex colors and takes only the fill.
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
-const RIM_STRENGTH: f32 = 0.85;
-const PAINT_FILL: f32 = 0.22;
+const RIM_STRENGTH: f32 = 0.4;
+const PAINT_FILL: f32 = 0.08;
 /// Running gear sits in the hull's shadow: more fill, no rim.
-const GEAR_FILL: f32 = 0.9;
+const GEAR_FILL: f32 = 0.45;
 /// Bare steel where the paint chipped through (sRGB).
-const BARE_STEEL: u32 = 0xb0aca2;
+const BARE_STEEL: u32 = 0x77746e;
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
 const SIGNAL_GLOW: f32 = 0.0;
@@ -520,6 +525,11 @@ fn deck_value(p: DVec3, n: DVec3, grime: Grime) -> f64 {
     DECK_LOW + (DECK_HIGH - DECK_LOW) * rise
 }
 
+/// The paint's value by height above the ground line.
+fn height_value(p: DVec3, grime: Grime) -> f64 {
+    HEIGHT_FOOT + (1.0 - HEIGHT_FOOT) * smoothstep(grime.ground, grime.ground + HEIGHT_SPAN, p.y)
+}
+
 /// Darker at the ground line and on undersides.
 fn ground_shade(height: f64, n: DVec3) -> f64 {
     let mut shade = GROUND_SHADE + (1.0 - GROUND_SHADE) * smoothstep(0.0, 1.6, height);
@@ -613,6 +623,7 @@ fn weathered(mesh: &Mesh, world: DMat4, base: Option<u32>, finish: Finish, grime
                 let value = (1.0 + PLATE_VARIATION * plate_variation(plate_key(n, q[0])))
                     * gradient(point.y)
                     * deck_value(*point, face, grime)
+                    * height_value(*point, grime)
                     * ground_shade(band_height(*point, grime), face);
                 let [r, g] = edges[index];
                 colors.push([r, g, paint_value_code(!is_trim, value)]);

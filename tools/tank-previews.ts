@@ -3,12 +3,13 @@
 // chassis. `scripts/generate-previews.mjs` packs them into `public/previews/tanks.webp`;
 // `tools/tank-surface-check.html` shows them at card and gameplay scale.
 //
-// The lighting is a garage card's: a dim hemisphere fill, a bright warm key light from
-// the front left kept below the red paint's clipping point (ACES turns clipped red
-// pink), and a strong cool rim light from behind that edges the silhouette (a
-// distant point light without falloff, which lights like a directional one), ACES
-// tone mapping and a 7 m wide orthographic view from (8, 6, 6). The renderer has no
-// orthographic camera, so a 0.6° perspective camera 400 m away frames the same view.
+// The lighting is a garage card's: a dim warm hemisphere fill over a dark floor, a
+// warm key light from the front left and a lowered exposure that keeps the red paint
+// below ACES's shoulder (it turns bright red pink), and a strong cool rim light from
+// behind that edges the silhouette (a distant point light without falloff, which
+// lights like a directional one), ACES tone mapping and a 7 m wide orthographic view
+// from (8, 6, 6). The renderer has no orthographic camera, so a 0.6° perspective
+// camera 400 m away frames the same view.
 // Transparency comes from difference matting: each tank is drawn over black and over
 // white, and the two frames give every pixel's coverage and its unblended color. A soft
 // contact shadow, the tracks' footprint projected through the same view and blurred, is
@@ -66,8 +67,8 @@ const SHADOW_OPACITY = 0.62;
 
 const SCENE = {
   background: 0x000000,
-  hemisphere: { sky: 0xdcedff, ground: 0x4c6075, intensity: 1.5 },
-  sun: { color: 0xfff0d2, intensity: 3.8, position: [-3, 7, 5], target: [0, 0, 0] },
+  hemisphere: { sky: 0xfff2e4, ground: 0x2c3036, intensity: 0.85 },
+  sun: { color: 0xfff1de, intensity: 3.4, position: [-3, 7, 5], target: [0, 0, 0] },
   shadow: {
     enabled: false,
     mapSize: 512,
@@ -78,13 +79,13 @@ const SCENE = {
     normalBias: 0,
   },
   pointLight: {
-    color: 0x9fd6ff,
-    intensity: 5,
+    color: 0xb4dcff,
+    intensity: 7,
     distance: 0,
     decay: 0,
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
   },
-  exposure: 1,
+  exposure: 0.7,
   // The game's sky reflection, so card paint and steel shade as they do in a round.
   reflections: 1,
   camera: camera(),

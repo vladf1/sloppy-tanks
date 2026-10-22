@@ -53,15 +53,15 @@ const RUBBER: u32 = 0x262728;
 /// Road wheel tyres: a charcoal sidewall and a lighter, scuffed tread band, so
 /// each wheel reads as a rubber-tyred wheel against the dark of the track.
 const TYRE_SIDEWALL: u32 = 0x323438;
-const TYRE_TREAD: u32 = 0x55565a;
+const TYRE_TREAD: u32 = 0x47484b;
 /// Track shoes and their end connectors and guide horns: worn steel, the
 /// connectors and horn faces polished bright where the wheels and ground rub.
-const TRACK_STEEL: u32 = 0x6b6963;
-const TRACK_CONNECTOR: u32 = 0x8f8d87;
+const TRACK_STEEL: u32 = 0x4f4e4a;
+const TRACK_CONNECTOR: u32 = 0x828079;
 /// Road wheel discs wear the team paint, as on the real vehicles; a steel hub
 /// cap and bright bolt heads sit in their centre.
-const HUB_STEEL: u32 = 0x8f8f88;
-const HUB_BOLT: u32 = 0xaaa79e;
+const HUB_STEEL: u32 = 0x6c6c66;
+const HUB_BOLT: u32 = 0x8d8a82;
 /// The sprocket and return rollers: bare dark steel.
 const SPROCKET_STEEL: u32 = 0x55585a;
 /// Dirty track steel, wheels and rubber share one vertex-colored material, so a

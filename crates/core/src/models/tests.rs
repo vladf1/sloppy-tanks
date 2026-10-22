@@ -79,12 +79,12 @@ fn tank_dimensions_match_typescript() {
 fn vehicle_model_counts() {
     // (kind, team, meshes, vertices, triangles, hull, turret, barrel, track-group children)
     let expected = [
-        (VehicleKind::Scout, 0, 195, 25350, 8450, 148, 13, 6, 28),
-        (VehicleKind::Scout, 1, 195, 25602, 8534, 148, 13, 6, 28),
-        (VehicleKind::Balanced, 0, 222, 26706, 8902, 168, 13, 7, 34),
-        (VehicleKind::Balanced, 1, 222, 26910, 8970, 168, 13, 7, 34),
-        (VehicleKind::Heavy, 0, 211, 27654, 9218, 157, 13, 7, 34),
-        (VehicleKind::Heavy, 1, 211, 27774, 9258, 157, 13, 7, 34),
+        (VehicleKind::Scout, 0, 194, 25350, 8450, 148, 12, 6, 28),
+        (VehicleKind::Scout, 1, 194, 25602, 8534, 148, 12, 6, 28),
+        (VehicleKind::Balanced, 0, 221, 26706, 8902, 168, 12, 7, 34),
+        (VehicleKind::Balanced, 1, 221, 26910, 8970, 168, 12, 7, 34),
+        (VehicleKind::Heavy, 0, 210, 27654, 9218, 157, 12, 7, 34),
+        (VehicleKind::Heavy, 1, 210, 27774, 9258, 157, 12, 7, 34),
         (VehicleKind::Humvee, 0, 31, 32712, 10904, 12, 6, 4, 4),
         (VehicleKind::Humvee, 1, 31, 32712, 10904, 12, 6, 4, 4),
     ];
@@ -106,9 +106,9 @@ fn vehicle_model_counts() {
         assert!(model.find(part::MUZZLE).is_some());
     }
     let open = [
-        (VehicleKind::Scout, (198, 25864, 8668)),
-        (VehicleKind::Balanced, (225, 27220, 9120)),
-        (VehicleKind::Heavy, (214, 28168, 9436)),
+        (VehicleKind::Scout, (197, 25864, 8668)),
+        (VehicleKind::Balanced, (224, 27220, 9120)),
+        (VehicleKind::Heavy, (213, 28168, 9436)),
         (VehicleKind::Humvee, (31, 32712, 10904)),
     ];
     for (kind, expected) in open {
@@ -216,29 +216,29 @@ fn wreck_batches_match_golden() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (3042, 0xe34dd7aa, 3255.2710, 0x4cf43c85, 0xdef2aefd),
+            (3042, 0xe34dd7aa, 3255.2710, 0x4cf43c85, 0x0b62cc1f),
             (3180, 0x459220d1, 1129.7989, 0xbb2cfc01, 0x14164759),
             (684, 0x68ef1928, 477.9712, 0xd89b25ac, 0x7b4617f0),
             (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0x18233382),
             (288, 0xd47a0c0d, -11.9209, 0x94d4f49d, 0xabe5a09e),
-            (10416, 0xc1d435a8, -1430.3675, 0x20db8229, 0x8db44051),
+            (10416, 0xc1d435a8, -1430.3675, 0x20db8229, 0x21caabf1),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0x48ab4485),
+            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0xb8974cd3),
             (468, 0x74e31910, -19.0127, 0x96734335, 0x3079eafc),
             (936, 0xb40fca71, -27.4347, 0xe9946e96, 0xbc244bd7),
             (348, 0x4b30ac35, -7.1422, 0xa2ea73b1, 0x643434a7),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (6732, 0x3622f7ca, 4714.4587, 0x492764aa, 0x9c72ed32),
+            (6774, 0x67ba5486, 4621.5357, 0x8a5142e8, 0x184791d3),
             (5052, 0x0ae75746, 302.0712, 0x40f48be4, 0xbe78b71f),
             (2136, 0x8ebb0f70, 3214.4811, 0x68c98d4f, 0x975788c3),
             (468, 0xc039e97b, -37.2676, 0x6ee76939, 0x7310fa1f),
-            (10212, 0x2dc17da1, -1833.7917, 0x8c076401, 0x5a0ae012),
+            (10212, 0x2dc17da1, -1833.7917, 0x8c076401, 0x5ae99140),
             (384, 0x102d4537, 3.9914, 0x7f59b8e5, 0xb162036b),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
-            (480, 0x83d3ce01, -1.2731, 0x11ddcd3c, 0x514f0730),
+            (480, 0x83d3ce01, -1.2731, 0x11ddcd3c, 0x31ce1096),
             (816, 0xf888a217, 685.1319, 0x74fbcac3, 0x2c56e18d),
             (300, 0xf2a6e7f7, -4.8805, 0xadcf84c5, 0xd1e1721c),
         ]),

@@ -1319,7 +1319,8 @@ fn turret_levels(c: &Chassis) -> [(Vec<DVec2>, f64); 3] {
     }
 }
 
-/// The turret armor and its team recognition band.
+/// The turret armor and its band in the deep trim: a painted livery line, not a
+/// fluorescent strip that reads as a glow without a source.
 fn turret_armor(kit: &mut Kit, c: &Chassis, bevel: f64) -> [(Vec<DVec2>, f64); 3] {
     let levels = turret_levels(c);
     kit.solid(Coat::Paint, &chamfered_levels(&levels, bevel));
@@ -1329,7 +1330,7 @@ fn turret_armor(kit: &mut Kit, c: &Chassis, bevel: f64) -> [(Vec<DVec2>, f64); 3
         (&levels[2].0, levels[2].1),
         BAND_BELOW_ROOF,
         BAND_HEIGHT,
-        Coat::Signal,
+        Coat::Shade,
     );
     levels
 }
