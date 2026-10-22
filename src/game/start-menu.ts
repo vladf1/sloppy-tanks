@@ -1,5 +1,5 @@
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
-import { startupErrorMessage } from "./startup-error";
+import { startupErrorHint, startupErrorMessage } from "./startup-error";
 
 export interface PreparedGame {
   /** Rebuild the hidden arena for these choices ahead of GO; `onShaders` reports
@@ -78,7 +78,7 @@ export class StartMenu {
       tab.disabled = true;
     });
     this.button.disabled = true;
-    this.button.textContent = "WAIT";
+    this.button.textContent = "LOADING…";
     this.button.setAttribute("aria-busy", "true");
     this.overlay.dataset.state = "starting";
     this.status.textContent = "Preparing your round…";
@@ -138,7 +138,7 @@ export class StartMenu {
     this.button.removeAttribute("aria-busy");
     this.button.textContent = "TRY AGAIN";
     this.button.setAttribute("aria-label", "Try loading the arena again");
-    this.hint("Check your connection, then try again.");
+    this.hint(startupErrorHint(error));
   }
 
   private hint(message: string): void {

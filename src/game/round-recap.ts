@@ -25,6 +25,22 @@ const featuredMetrics: readonly RecapMetric[] = [
   "rank",
 ];
 
+/** How often the viewer's tank was wrecked this round, for the report's opening line. */
+export function wreckLine(deaths: number): string {
+  return deaths <= 0
+    ? "Never wrecked"
+    : deaths === 1
+      ? "Wrecked once"
+      : deaths === 2
+        ? "Wrecked twice"
+        : `Wrecked ${deaths} times`;
+}
+
+/** "BLUE" as the report says it: "Blue team". */
+export function teamLabel(name: string): string {
+  return `${name.charAt(0)}${name.slice(1).toLowerCase()} team`;
+}
+
 export function duration(seconds: number): string {
   return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
 }

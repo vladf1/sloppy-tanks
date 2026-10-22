@@ -1,5 +1,6 @@
 import { AMMO_OPTIONS } from "./ammo-options";
 import type { DamageCause, EngineEvent, HumanState } from "./engine-api";
+import { CAUSE_ICONS } from "./ui-markup";
 
 /** The kill feed shows this many of its newest rows. */
 export const FEED_ROWS = 4;
@@ -17,19 +18,47 @@ const DAMAGE_LABELS: Record<DamageCause, string> = {
   explosion: "Explosion",
 };
 
-/** Both HUDs describe the authoritative damage source, including self and yard damage. */
+/** What wrecked the viewer's tank, for the respawn card: the killer's name (null for
+ * the yard, a departed player or the viewer's own ordnance) and the weapon, when the
+ * engine reported one. */
+export interface DeathReport {
+  killer: string | null;
+  self: boolean;
+  cause: DamageCause | null;
+  /** The weapon's label, such as "Rocket blast", or null when it is unknown. */
+  weapon: string | null;
+}
+
+export function deathReport(
+  event: EngineEvent,
+  scoreboard: readonly { id: number; name: string }[],
+): DeathReport {
+  const self = event.owner !== undefined && event.owner === event.id;
+  const killer = self ? undefined : scoreboard.find((tank) => tank.id === event.owner);
+  const cause = event.damageSource?.cause ?? null;
+  return {
+    killer: killer?.name ?? null,
+    self,
+    cause,
+    weapon: cause ? DAMAGE_LABELS[cause] : null,
+  };
+}
+
+/** Both HUDs describe the authoritative damage source, including self and yard damage.
+ * An unreported weapon is left out rather than called unknown. */
 export function deathCause(
   event: EngineEvent,
   scoreboard: readonly { id: number; name: string }[],
 ): string {
-  const killer = scoreboard.find((tank) => tank.id === event.owner);
-  const cause = event.damageSource ? DAMAGE_LABELS[event.damageSource.cause] : "Unknown weapon";
-  const weapon = `${/^[aeiou]/i.test(cause) ? "an" : "a"} ${cause.toLowerCase()}`;
-  return event.owner === event.id
-    ? `You destroyed yourself with ${weapon}.`
-    : killer
-      ? `${killer.name} killed you with ${weapon}.`
-      : `You were destroyed by ${weapon}.`;
+  const { killer, self, weapon: label } = deathReport(event, scoreboard);
+  const weapon = label ? `${/^[aeiou]/i.test(label) ? "an" : "a"} ${label.toLowerCase()}` : "";
+  if (self) {
+    return weapon ? `You destroyed yourself with ${weapon}.` : "You destroyed yourself.";
+  }
+  if (killer) {
+    return weapon ? `${killer} killed you with ${weapon}.` : `${killer} destroyed you.`;
+  }
+  return weapon ? `You were destroyed by ${weapon}.` : "You were destroyed.";
 }
 
 /** The killer and victim of a kill-feed row, as both HUDs name them. */
@@ -49,19 +78,45 @@ export function isOwnKill(event: Pick<EngineEvent, "id" | "owner">, viewerId: nu
   return event.owner === viewerId && event.id !== viewerId;
 }
 
+/** Which side a kill-feed name is drawn in: a team's colour, or neutral for the yard. */
+export type FeedSide = "blue" | "red" | "neutral";
+
+/** The killer's and victim's sides of a death, for colouring the feed. The victim's team
+ * comes with the event; allies take no hull damage from each other, so the killer is on
+ * the other side unless the tank destroyed itself or the yard did it. */
+export function killFeedSides(event: Pick<EngineEvent, "id" | "owner" | "team">): FeedSide[] {
+  const side = (team: number | undefined): FeedSide =>
+    team === 0 ? "blue" : team === 1 ? "red" : "neutral";
+  const victim = side(event.team);
+  const killer =
+    event.owner === undefined
+      ? "neutral"
+      : event.owner === event.id
+        ? victim
+        : side(event.team === undefined ? undefined : 1 - event.team);
+  return [killer, victim];
+}
+
 /** One kill-feed row: the names to show and how long it stays (seconds). `seq` tells two
- * otherwise identical rows apart, such as the same kill twice in one window. */
+ * otherwise identical rows apart, such as the same kill twice in one window. `cause`
+ * picks the weapon icon between the names and `sides` their colours. */
 export interface FeedRow {
   names: string[];
   ownKill: boolean;
   time: number;
   seq: number;
+  cause?: DamageCause;
+  sides?: FeedSide[];
 }
 
 let lastFeedSeq = 0;
 
-export function newFeedRow(names: string[], ownKill = false): FeedRow {
-  return { names, ownKill, time: 5, seq: ++lastFeedSeq };
+export function newFeedRow(
+  names: string[],
+  ownKill = false,
+  details: Pick<FeedRow, "cause" | "sides"> = {},
+): FeedRow {
+  return { names, ownKill, time: 5, seq: ++lastFeedSeq, ...details };
 }
 
 /** Shows a feed row: one name for a notice, or killer and victim with an arrow between. The
@@ -71,30 +126,47 @@ export function newFeedRow(names: string[], ownKill = false): FeedRow {
  * rows shift down. */
 export function showFeedRow(
   row: HTMLElement,
-  feedRow: Pick<FeedRow, "names" | "ownKill" | "seq">,
+  feedRow: Pick<FeedRow, "names" | "ownKill" | "seq" | "cause" | "sides">,
   entering = false,
 ): void {
-  const { names, ownKill } = feedRow;
-  const key = `${feedRow.seq}\n${names.join("\n")}`;
+  const { names, ownKill, cause, sides = [] } = feedRow;
+  const key = `${feedRow.seq}\n${names.join("\n")}\n${cause ?? ""}\n${sides.join(" ")}`;
   if (row.dataset.names === key) {
     return;
   }
   row.dataset.names = key;
   row.classList.toggle("own-kill", ownKill);
-  row.classList.remove("own-kill-new");
-  if (ownKill && entering) {
+  row.classList.remove("own-kill-new", "feed-new");
+  if (entering) {
     // Reading offsetWidth commits the removal so a reused row restarts the animation.
     void row.offsetWidth;
-    row.classList.add("own-kill-new");
+    row.classList.add(ownKill ? "own-kill-new" : "feed-new");
   }
-  row.replaceChildren(names[0]);
-  for (const name of names.slice(1)) {
-    const arrow = document.createElement("i");
-    arrow.className = "feed-arrow";
-    arrow.setAttribute("role", "img");
-    arrow.setAttribute("aria-label", "destroyed");
-    row.append(arrow, name);
-  }
+  const name = (text: string, index: number) => {
+    const span = document.createElement("span");
+    span.className = `feed-name ${sides[index] ?? ""}`.trim();
+    span.classList.toggle("you", text === "YOU" && ownKill === (index === 0));
+    span.textContent = text;
+    return span;
+  };
+  row.replaceChildren(name(names[0], 0));
+  names.slice(1).forEach((victim, index) => {
+    const icon = CAUSE_ICONS[cause ?? ""];
+    let mark: Element;
+    if (icon) {
+      mark = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      mark.setAttribute("class", "feed-weapon");
+      const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+      use.setAttribute("href", `#${icon}`);
+      mark.append(use);
+    } else {
+      mark = document.createElement("i");
+      mark.className = "feed-arrow";
+    }
+    mark.setAttribute("role", "img");
+    mark.setAttribute("aria-label", "destroyed");
+    row.append(mark, name(victim, index + 1));
+  });
 }
 
 /** Ages the kill feed by `dt` seconds and shows its newest live rows in `feed`, reusing
@@ -134,9 +206,17 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
   const rank = root.querySelector<HTMLElement>("#rank")!;
   rank.dataset.rank = String(tank.rank);
   rank.title = rankTitle(tank);
+  setText(root, "hp-max", `/ ${Math.round(tank.maxHp)}`);
   const hpbar = root.querySelector<HTMLElement>("#hpbar")!;
-  hpbar.style.width = `${tank.healthRatio * 100}%`;
+  const width = `${tank.healthRatio * 100}%`;
+  hpbar.style.width = width;
   hpbar.style.backgroundColor = `#${tank.healthColor.toString(16).padStart(6, "0")}`;
+  // The ghost behind the bar trails it down (a CSS transition), showing the chunk a hit
+  // took; it sits under the bar, so a repair hides it until it catches up.
+  const ghost = root.querySelector<HTMLElement>("#hpghost");
+  if (ghost && ghost.style.width !== width) {
+    ghost.style.width = width;
+  }
   AMMO_OPTIONS.forEach(({ weapon, label: name }, index) => {
     const slotState = tank.ammo.find((slot) => slot.weapon === weapon);
     const selected = !!slotState?.selected;
@@ -157,6 +237,7 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
     "mine",
     tank.mineCooldown > 0 ? `MINE ${tank.mineCooldown.toFixed(1)}s` : "MINE READY · RMB",
   );
+  root.querySelector(".mine-line")?.classList.toggle("cooling", tank.mineCooldown > 0);
   setText(root, "effects", effectsLabel(tank));
   root
     .querySelector(".status")!

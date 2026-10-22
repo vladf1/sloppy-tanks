@@ -3,7 +3,7 @@ import { savedPreference, preferredGameMode } from "./game/player-preferences";
 import { bindPlayModes, initialPlayMode } from "./game/play-modes";
 import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./game/join-screen";
 import { StartMenu } from "./game/start-menu";
-import { startupErrorMessage } from "./game/startup-error";
+import { showFatalError, startupErrorMessage } from "./game/startup-error";
 import { debugPage, isExtraLevel, mapOption } from "./game/map-options";
 import { showExtraLevels } from "./game/map-picker";
 import { isPhone } from "./game/phone-mode";
@@ -33,7 +33,11 @@ function startMultiplayer(joining: JoinScreen, selection?: RoomSelection): void 
     .then(({ startMultiplayer }) => startMultiplayer(root, joining, selection))
     .catch((error: unknown) => {
       console.error("Multiplayer startup failed", error);
-      root.textContent = "Multiplayer could not load. Reload to try again.";
+      showFatalError(
+        root,
+        "MULTIPLAYER DIDN'T LOAD",
+        "The room's game files could not load. Check your connection and reload.",
+      );
     });
 }
 
@@ -139,9 +143,10 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
       })
       .catch((error: unknown) => {
         console.error("Game startup failed", error);
-        root.textContent = startupErrorMessage(
-          error,
-          "The arena could not load. Please reload to try again.",
+        showFatalError(
+          root,
+          "THE ARENA DIDN'T LOAD",
+          startupErrorMessage(error, "The arena could not load. Check your connection and reload."),
         );
       });
     return;

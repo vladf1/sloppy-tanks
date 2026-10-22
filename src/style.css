@@ -1,8 +1,34 @@
+/* One visual language for menus and HUD: deep ink glass panels with a cool hairline
+   edge, the brand yellow for what to press, team blue and red for sides, Impact for
+   display type and the system UI face for everything read. */
 :root {
-  font-family: Arial, sans-serif;
-  color: #f5faff;
+  --font-display: Impact, Haettenschweiler, "Arial Narrow Bold", "Franklin Gothic Bold", sans-serif;
+  --font-ui:
+    system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial,
+    sans-serif;
+  --ink-0: #050a14;
+  --ink-1: #0a1527;
+  --ink-2: #102340;
+  --glass: linear-gradient(180deg, #172d4ff0, #0b1930f5);
+  --glass-hud: linear-gradient(180deg, #11264af0, #08142af2);
+  --edge: #9fd0ff26;
+  --edge-strong: #bfe2ff55;
+  --sheen: inset 0 1px #ffffff1c;
+  --gold: #ffcf38;
+  --gold-hot: #ffe58a;
+  --gold-deep: #ff9d1c;
+  --blue: #3ea6ff;
+  --blue-deep: #1663c7;
+  --red: #ff4d5e;
+  --red-deep: #b81f36;
+  --text: #f4f9ff;
+  --text-dim: #a9c0d8;
+  --text-label: #8ed4ff;
+  font-family: var(--font-ui);
+  color: var(--text);
   background: #55bde9;
   font-synthesis: none;
+  -webkit-font-smoothing: antialiased;
 }
 * {
   box-sizing: border-box;
@@ -65,7 +91,7 @@ html:is(.phone, .home-screen-app) {
   pointer-events: auto;
   cursor: pointer;
   padding: 5px;
-  font-family: Arial, sans-serif;
+  font-family: var(--font-ui);
   font-size: 12px;
   font-weight: 400;
 }
@@ -75,9 +101,7 @@ html:is(.phone, .home-screen-app) {
 /* The open panel's title, in the game's display face like its other titles. */
 #nerd-stats.expanded .nerd-stats-toggle {
   color: #fff;
-  font:
-    800 20px/1 Impact,
-    sans-serif;
+  font: 800 20px/1 var(--font-display);
   letter-spacing: 0.4px;
 }
 /* The open panel keeps its header in place and scrolls only the rows below it. */
@@ -87,9 +111,14 @@ html:is(.phone, .home-screen-app) {
   width: calc(32ch + 24px);
   max-width: calc(100vw - 16px);
   padding: 7px;
-  border-radius: 6px;
-  background: rgba(10, 16, 20, 0.78);
-  color: #eee;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--glass-hud);
+  box-shadow:
+    var(--sheen),
+    0 10px 30px #0009;
+  color: #e6eef8;
+  text-shadow: none;
   font-size: 11px;
   line-height: 1.6;
   max-height: calc(100dvh - 24px);
@@ -133,9 +162,12 @@ html:is(.phone, .home-screen-app) {
   pointer-events: auto;
   cursor: pointer;
   padding: 2px 5px;
-  font-family: Arial, sans-serif;
-  font-size: 12px;
-  font-weight: 600;
+  color: var(--text-label);
+  font-family: var(--font-ui);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
 }
 #nerd-stats details + details {
   margin-top: 6px;
@@ -156,161 +188,284 @@ html:is(.phone, .home-screen-app) {
 #hud button {
   pointer-events: auto;
 }
+/* The low-hull warning: a slow red pulse at the screen's edges while the tank is
+   critical, under the flash of each new hit (#damage-vignette). */
+#hud::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse 80% 75% at 50% 50%,
+    transparent 58%,
+    #d0102555 86%,
+    #8a0014b3 100%
+  );
+  transition: opacity 0.4s;
+}
+#hud.critical::before {
+  opacity: 1;
+  animation: critical-edges 1.6s ease-in-out infinite;
+}
+#hud.paused::before {
+  animation-play-state: paused;
+}
+@keyframes critical-edges {
+  50% {
+    opacity: 0.45;
+  }
+}
+/* A hit flashes the screen's rim, never the middle where the fight is. */
+#damage-vignette {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: radial-gradient(
+    ellipse 85% 80% at 50% 50%,
+    transparent 70%,
+    #ff1f3d22 86%,
+    #b0002080 100%
+  );
+}
 .brand {
   position: absolute;
-  top: 14px;
-  left: 16px;
-  font:
-    900 24px/0.83 Impact,
-    sans-serif;
-  letter-spacing: -0.4px;
-  text-shadow: 0 2px 10px #27433555;
-  transform: rotate(-3deg);
+  top: 12px;
+  left: 18px;
+  color: #fff;
+  font: 400 22px/0.82 var(--font-display);
+  letter-spacing: 0.3px;
+  text-shadow:
+    0 2px 0 #0b1a30,
+    0 0 1px #0b1a30,
+    0 4px 14px #0009;
+  transform: rotate(-4deg) skewX(-6deg);
 }
 .brand span {
   display: block;
-  font-size: 34px;
+  color: var(--gold);
+  font-size: 33px;
 }
+/* The score hangs from the top edge: two team plates cut toward the clock between them,
+   each with a bar that fills toward the score limit; your side carries a gold mark. */
 .scoreboard {
   position: absolute;
-  top: 10px;
+  top: 0;
   left: 50%;
   transform: translateX(-50%);
   display: flex;
-  gap: 3px;
-  filter: drop-shadow(0 6px 10px #28372d30);
+  align-items: stretch;
+  filter: drop-shadow(0 6px 12px #0008);
 }
 .team {
-  width: 100px;
-  padding: 5px 18px;
-  text-align: center;
-  background: #152c49a6;
-  text-shadow: 0 1px 2px #071520b3;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 132px;
+  padding: 6px 18px 11px 24px;
+  color: #fff;
+  text-shadow: 0 2px 3px #0006;
 }
 .team small {
-  display: block;
-  font-size: 10px;
-  line-height: 1.2;
-  font-weight: 800;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font: 800 11px/1.2 var(--font-ui);
   letter-spacing: 2px;
+  opacity: 0.92;
 }
 .team b {
   display: block;
-  font:
-    800 34px/1 Impact,
-    sans-serif;
+  font: 400 38px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
 }
 .mint {
-  border-bottom: 3px solid #008cff;
-  color: #64c6ff;
-  border-radius: 8px 0 0 8px;
+  background:
+    linear-gradient(180deg, #ffffff33, transparent 46%), linear-gradient(180deg, #2f8ff2, #1252b0);
+  clip-path: polygon(0 0, 100% 0, 100% 100%, 16px 100%);
 }
 .coral {
-  border-bottom: 3px solid #ff303e;
-  color: #ff8190;
-  border-radius: 0 8px 8px 0;
+  flex-direction: row-reverse;
+  padding: 6px 24px 11px 18px;
+  background:
+    linear-gradient(180deg, #ffffff33, transparent 46%), linear-gradient(180deg, #ff5367, #b01b33);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%);
+}
+.team.yours small::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  background: var(--gold);
+  box-shadow: 0 0 6px var(--gold);
+  transform: rotate(45deg);
+}
+.team-progress {
+  position: absolute;
+  left: 22px;
+  right: 8px;
+  bottom: 4px;
+  display: flex;
+  justify-content: flex-end;
+  height: 3px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #0a142855;
+}
+.coral .team-progress {
+  left: 8px;
+  right: 22px;
+  justify-content: flex-start;
+}
+.team-progress i {
+  display: block;
+  width: 0;
+  height: 100%;
+  border-radius: inherit;
+  background: #fff;
+  box-shadow: 0 0 6px #fff;
+  transition: width 0.4s;
+}
+.scoreboard.no-limit .team-progress {
+  display: none;
 }
 .clock {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  gap: 2px;
-  background: #f2f9ffb3;
-  color: #163656;
+  gap: 3px;
+  min-width: 116px;
+  padding: 6px 14px 9px;
+  background:
+    linear-gradient(180deg, #ffffff12, transparent 50%), linear-gradient(180deg, #0f2140, #07111f);
+  box-shadow: inset 0 -2px var(--gold);
+  color: #fff;
   text-align: center;
-  min-width: 104px;
-  padding: 5px 12px;
 }
 .clock b {
   display: block;
-  font:
-    800 28px/1 Impact,
-    sans-serif;
+  font: 400 30px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 1px;
 }
 .clock small {
-  font-size: 9px;
-  line-height: 1.2;
-  letter-spacing: 1.6px;
-  font-weight: 800;
+  color: var(--gold);
+  font: 800 9px/1.2 var(--font-ui);
+  letter-spacing: 2px;
+  white-space: nowrap;
+}
+.scoreboard.overtime .clock b {
+  color: #ff8a96;
+  font-size: 22px;
+  line-height: 30px;
 }
 .hud-actions {
   position: absolute;
   right: 14px;
-  top: 14px;
+  top: 12px;
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 /* The corner toolbar belongs to play: any dialog, Settings included, hides all of it. */
 #hud:is(.paused, .menu-open) .hud-actions,
 body:has(#settings[open]) .hud-actions {
   visibility: hidden;
 }
-#settings-open {
-  display: grid;
-  place-items: center;
-  padding: 8px 10px;
-}
 #settings-open svg {
-  width: 22px;
-  height: 22px;
+  width: 21px;
+  height: 21px;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
   stroke-linejoin: round;
 }
+/* Glass key caps: the HUD's corner buttons and the touch zoom share one shape. */
 .quiet {
-  border: 1px solid #f0e9ce66;
-  border-radius: 6px;
-  background: #16314d99;
-  color: #eee6cc;
-  padding: 12px 15px;
-  letter-spacing: 2px;
-  font-weight: 700;
+  display: grid;
+  place-items: center;
+  min-width: 42px;
+  min-height: 42px;
+  padding: 0 11px;
+  border: 1px solid var(--edge-strong);
+  border-radius: 10px;
+  background: linear-gradient(180deg, #1a3459e0, #0a1730eb);
+  box-shadow:
+    var(--sheen),
+    0 4px 14px #0006;
+  color: #e9f2fb;
   font-size: 12px;
+  font-weight: 800;
+  letter-spacing: 1px;
+  transition:
+    transform 0.12s,
+    border-color 0.12s,
+    background 0.12s;
 }
-#fullscreen {
-  font-size: 22px;
-  line-height: 1;
-  letter-spacing: 0;
-  padding: 8px 12px;
+/* Hover lifts only under a real pointer: a tap's sticky hover must not leave a touch
+   button raised out of its row. */
+@media (hover: hover) {
+  .quiet:hover {
+    border-color: var(--gold);
+    color: #fff;
+    transform: translateY(-1px);
+  }
 }
-#fullscreen[aria-pressed="true"] {
-  font-family: monospace;
-  font-size: 14px;
-  line-height: 11px;
-  white-space: pre;
+.quiet:active {
+  transform: translateY(1px) scale(0.96);
+}
+.quiet:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
+}
+.quiet .hud-icon {
+  width: 20px;
+  height: 20px;
+  fill: currentColor;
 }
 .bottom {
   position: absolute;
-  left: 14px;
-  right: 14px;
-  bottom: 14px;
+  left: 16px;
+  right: 16px;
+  bottom: 16px;
   display: flex;
   align-items: flex-end;
   gap: 12px;
 }
+/* The tank panel: hull on the left, the ammunition rack on the right, on dark glass that
+   reads over sand, snow or sky alike. */
 .combat-status {
+  position: relative;
   display: grid;
-  grid-template-columns: 120px minmax(0, 1fr);
+  grid-template-columns: 168px minmax(0, 1fr);
   align-items: center;
-  gap: 0 10px;
-  width: 520px;
+  gap: 0 14px;
+  width: 600px;
   flex-shrink: 0;
   max-width: 100%;
-  padding: 8px 10px;
-  background: #122b47e8;
-  border: 1px solid #eef4d12a;
-  border-radius: 8px;
-  box-shadow: 0 5px 20px #1b33232b;
+  padding: 11px 13px 11px 15px;
+  border: 1px solid var(--edge);
+  border-radius: 14px;
+  background: var(--glass-hud);
+  box-shadow:
+    var(--sheen),
+    0 10px 30px #0009;
 }
-.status small,
-.weapon small {
-  font-size: 11px;
-  letter-spacing: 0.8px;
-  font-weight: 700;
+.combat-status::before {
+  content: "";
+  position: absolute;
+  left: 15px;
+  top: -1px;
+  width: 44px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--gold);
+  box-shadow: 0 0 10px #ffcf3899;
 }
 .status {
-  border-radius: 4px;
+  min-width: 0;
+  border-radius: 8px;
 }
 .status.critical-health {
   animation: critical-health 1.6s ease-in-out infinite;
@@ -321,165 +476,310 @@ body:has(#settings[open]) .hud-actions {
 @keyframes critical-health {
   0%,
   100% {
-    background: #ff665512;
-    box-shadow: 0 0 0 4px #ff665512;
+    background: #ff3b4a10;
+    box-shadow: 0 0 0 5px #ff3b4a10;
   }
   50% {
-    background: #ff665539;
-    box-shadow: 0 0 0 4px #ff665539;
+    background: #ff3b4a33;
+    box-shadow: 0 0 0 5px #ff3b4a33;
   }
 }
 @media (prefers-reduced-motion: reduce) {
   .status.critical-health {
     animation: none;
-    background: #ff665530;
-    box-shadow: 0 0 0 4px #ff665530;
+    background: #ff3b4a2a;
+    box-shadow: 0 0 0 5px #ff3b4a2a;
   }
-}
-.status div {
-  display: flex;
-  align-items: baseline;
-  position: relative;
-  padding-bottom: 5px;
-}
-.status b {
-  font:
-    800 28px/1.1 Impact,
-    sans-serif;
-  font-variant-numeric: tabular-nums;
-}
-.status span {
-  font-size: 10px;
-  margin-left: 6px;
-  opacity: 0.7;
-}
-.status i {
-  position: absolute;
-  height: 3px;
-  bottom: 0;
-  left: 0;
-  background: #41baff;
-  transition: width 0.15s;
+  #hud.critical::before {
+    animation: none;
+  }
 }
 .tank-label {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   gap: 7px;
   white-space: nowrap;
 }
+#vehicle-name {
+  color: #fff;
+  font: 800 12px/1.2 var(--font-ui);
+  letter-spacing: 1.6px;
+}
 #rank {
-  font:
-    700 10px/1.2 Arial,
-    sans-serif;
-  color: #ffd477;
+  padding: 2px 6px 1px;
+  border-radius: 4px;
+  background: linear-gradient(180deg, var(--gold-hot), var(--gold));
+  color: #1a2433;
+  font: 800 9px/1.3 var(--font-ui);
+  letter-spacing: 1px;
   pointer-events: auto;
   cursor: help;
 }
 #rank[data-rank="0"] {
-  color: #b2c4d7;
+  background: #ffffff1c;
+  color: #c3d4e6;
+}
+.hull-readout {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  margin-top: 3px;
+}
+.hull-readout b {
+  font: 400 38px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 6px #0007;
+}
+.hull-readout span {
+  color: var(--text-dim);
+  font: 700 12px/1 var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+.hull-readout span:last-child {
+  margin-left: auto;
+  font-size: 9px;
+  letter-spacing: 2px;
+}
+/* A segmented hull bar: the fill in the engine's health colour, a ghost that trails hits,
+   and notches every tenth. */
+.hull-bar {
+  position: relative;
+  height: 10px;
+  margin-top: 6px;
+  overflow: hidden;
+  border-radius: 3px;
+  background: #040b17;
+  box-shadow: inset 0 0 0 1px #ffffff14;
+}
+.hull-bar i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 100%;
+}
+#hpghost {
+  background: #ffe9e0;
+  transition: width 0.55s cubic-bezier(0.4, 0, 0.2, 1) 0.35s;
+}
+#hpbar {
+  background-color: #41baff;
+  background-image: linear-gradient(180deg, #ffffff5c, #ffffff00 55%, #00000033);
+  box-shadow: 0 0 8px #ffffff33;
+  transition: width 0.15s;
+}
+.hull-bar::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(
+    90deg,
+    transparent 0 calc(10% - 2px),
+    #040b17 calc(10% - 2px) 10%
+  );
 }
 #effects {
-  font-size: 10px;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 1px;
   line-height: 1.4;
   font-style: normal;
-  color: #88e5ff;
+  color: #8ff0ff;
 }
 #effects:empty {
   display: none;
 }
 .weapon {
   position: relative;
-  border-left: 1px solid #ffffff24;
-  padding-left: 10px;
+  min-width: 0;
+  padding-left: 14px;
+  border-left: 1px solid #ffffff17;
 }
-.weapon small {
-  display: block;
-  line-height: 1.4;
-}
-.weapon span {
-  display: block;
-  margin-top: 5px;
-  font-size: 10px;
-  letter-spacing: 0.5px;
-  color: #b3cadd;
-  font-variant-numeric: tabular-nums;
-}
+/* Each round has its own colour and silhouette; the chosen one rises from the rack. */
 .ammo-strip {
   display: grid;
   grid-template-columns: repeat(5, minmax(0, 1fr));
-  gap: 4px;
+  gap: 6px;
+  padding-top: 5px;
 }
 .ammo-slot {
+  position: relative;
   display: grid;
   grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto auto;
   align-items: center;
-  column-gap: 3px;
-  text-align: center;
-  padding: 4px 3px;
-  border: 1px solid #ffffff22;
-  border-top: 3px solid var(--ammo-color);
-  border-radius: 4px;
-  background: #091c30;
-  color: #f5faff;
-  min-height: 48px;
+  min-width: 0;
+  min-height: 62px;
+  padding: 5px 5px 4px;
+  overflow: hidden;
+  border: 1px solid #ffffff1c;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #11284a, #081427);
+  color: var(--text);
   font-variant-numeric: tabular-nums;
+  text-align: center;
+  transition:
+    transform 0.14s,
+    box-shadow 0.14s,
+    border-color 0.14s;
 }
-.ammo-slot small {
-  font-size: 9px;
-  letter-spacing: 0.3px;
+.ammo-slot::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 2px;
+  background: var(--ammo-color);
+  opacity: 0.7;
+}
+.ammo-icon {
+  grid-area: 1 / 2;
+  justify-self: end;
+  width: 22px;
+  height: 22px;
+  fill: var(--ammo-color);
+  filter: drop-shadow(0 0 3px #0009);
 }
 .ammo-slot b {
-  grid-column: 1 / -1;
-  font-size: 20px;
-  line-height: 1.2;
+  grid-area: 2 / 1 / 3 / -1;
+  font: 400 21px/1.05 var(--font-display);
+  text-shadow: 0 1px 3px #0008;
+}
+.ammo-slot small {
+  grid-area: 3 / 1 / 4 / -1;
+  overflow: hidden;
+  color: var(--text-dim);
+  font: 800 8.5px/1.3 var(--font-ui);
+  letter-spacing: 0.3px;
+  text-overflow: clip;
+  white-space: nowrap;
 }
 .ammo-slot.selected {
   border-color: var(--ammo-color);
-  background: #294564;
-  box-shadow: inset 0 -3px var(--ammo-color);
+  background:
+    radial-gradient(
+      ellipse 90% 70% at 50% 0,
+      color-mix(in srgb, var(--ammo-color) 34%, transparent),
+      transparent 75%
+    ),
+    linear-gradient(180deg, #1a3863, #0a1830);
+  box-shadow:
+    0 0 0 1px var(--ammo-color),
+    0 6px 18px color-mix(in srgb, var(--ammo-color) 40%, transparent);
+  transform: translateY(-5px);
+}
+.ammo-slot.selected::before {
+  height: 3px;
+  opacity: 1;
+}
+.ammo-slot.selected small {
+  color: #fff;
+}
+.ammo-slot.selected .ammo-icon {
+  filter: drop-shadow(0 0 5px var(--ammo-color));
+}
+.mine-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 7px;
+  color: #d9e8f6;
+  font: 800 10px/1.2 var(--font-ui);
+  letter-spacing: 1.2px;
+  font-variant-numeric: tabular-nums;
+}
+.mine-icon {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  fill: var(--gold);
+  filter: drop-shadow(0 0 4px #ffcf3888);
+}
+.mine-line.cooling {
+  color: var(--text-dim);
+}
+.mine-line.cooling .mine-icon {
+  fill: #6d84a0;
+  filter: none;
 }
 @media (max-width: 650px) {
   .combat-status {
     grid-template-columns: 1fr;
     width: 100%;
-    padding: 8px;
-    gap: 7px;
+    padding: 9px;
+    gap: 8px;
   }
   .status {
-    display: flex;
-    gap: 12px;
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
     align-items: center;
+    column-gap: 12px;
   }
-  .status div {
-    min-width: 100px;
+  .status .tank-label {
+    grid-column: 1 / -1;
   }
   .weapon {
     padding-left: 0;
     border-left: 0;
   }
 }
+/* The kill feed: killer, weapon, victim in their teams' colours, newest on top. */
 #feed {
   position: absolute;
   right: 14px;
-  top: 68px;
-  font-size: 10px;
+  top: 66px;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  font: 800 11px/1.2 var(--font-ui);
+  letter-spacing: 0.8px;
   text-align: right;
-  letter-spacing: 1px;
+  text-transform: uppercase;
 }
-#feed div {
-  padding: 8px 12px;
-  background: #163a59b8;
-  margin-top: 5px;
-  border-radius: 3px;
+#feed > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px 6px 22px;
+  border-right: 3px solid #ffffff40;
+  background: linear-gradient(270deg, #07122ae6, #07122ad0 70%, #07122a00);
+  text-shadow: 0 1px 2px #000c;
+}
+#feed .feed-name.blue {
+  color: #74c4ff;
+}
+#feed .feed-name.red {
+  color: #ff8592;
+}
+#feed .feed-name.neutral {
+  color: #e8dcc4;
+}
+#feed .feed-name.you {
+  color: #fff;
+}
+#feed .feed-weapon {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  fill: #f2f6fb;
+  filter: drop-shadow(0 1px 1px #000);
 }
 #feed .feed-arrow {
   display: inline-block;
-  width: 0.5em;
-  height: 0.58em;
-  margin: 0 0.45em;
-  vertical-align: 0.07em;
+  width: 0.55em;
+  height: 0.62em;
   background: currentColor;
   clip-path: polygon(0 0, 100% 50%, 0 100%);
+}
+#feed .feed-new {
+  animation: feed-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+/* Entrances move but never fade in: a row is legible from its first frame. */
+@keyframes feed-in {
+  from {
+    transform: translateX(28px);
+  }
 }
 /* Spoken by screen readers, not drawn: the killer is already on screen in the toast. */
 .sr-only {
@@ -494,51 +794,198 @@ body:has(#settings[open]) .hud-actions {
 }
 /* The viewer's own kills stand out from the rest of the feed. */
 #feed .own-kill {
-  background: linear-gradient(90deg, #7a4a12d9, #b8841fd9);
+  border-right-color: var(--gold);
+  background: linear-gradient(270deg, #b8841ff0, #7a4a12d9 70%, #7a4a1200);
   color: #fff3d6;
-  border-right: 4px solid #f2c14e;
-  box-shadow: 0 0 8px #f2c14e55;
+  box-shadow: 14px 0 18px -10px #f2c14e88;
+}
+#feed .own-kill .feed-name {
+  color: #fff;
 }
 #feed .own-kill-new {
   animation: own-kill-pop 0.9s cubic-bezier(0.2, 1.4, 0.4, 1);
 }
 @keyframes own-kill-pop {
   0% {
-    transform: translateX(60px) scale(0.6);
-    opacity: 0;
+    transform: translateX(30px) scale(0.9);
   }
   45% {
-    transform: translateX(0) scale(1.12);
-    opacity: 1;
-    box-shadow: 0 0 16px #f2c14e99;
+    transform: translateX(0) scale(1.08);
   }
   100% {
     transform: none;
-    box-shadow: 0 0 8px #f2c14e55;
   }
 }
 @media (prefers-reduced-motion: reduce) {
-  #feed .own-kill-new {
+  #feed :is(.own-kill-new, .feed-new) {
     animation: none;
   }
 }
+/* Mid-screen notices: pickups in cyan, promotions in gold, your wreck in red, on a band
+   that fades out at both ends. */
 #toast {
   position: absolute;
   z-index: 1;
-  top: 24%;
+  top: 23%;
   left: 50%;
-  transform: translateX(-50%);
+  max-width: min(720px, calc(100% - 40px));
+  padding: 10px 44px;
+  background: linear-gradient(90deg, #08142a00, #08142ae8 16%, #08142ae8 84%, #08142a00);
+  box-shadow:
+    0 -1px 0 -0 #ffcf3800,
+    inset 0 1px #ffcf3866,
+    inset 0 -1px #ffcf3866;
+  color: #fff;
+  font: 800 15px/1.35 var(--font-ui);
+  letter-spacing: 1.4px;
+  text-align: center;
+  text-shadow: 0 2px 4px #000a;
   opacity: 0;
-  background: #ffe572;
-  color: #153954;
-  font-weight: 800;
-  padding: 12px 24px;
-  letter-spacing: 2px;
-  border-radius: 3px;
-  transition: opacity 0.25s linear;
+  transform: translateX(-50%) scale(0.92);
 }
+/* A notice appears at full strength at once and only its scale settles; it leaves at
+   once too, so a notice is never left half-faded over the arena. */
 #toast.visible {
   opacity: 1;
+  transform: translateX(-50%);
+  transition: transform 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+#toast[data-tone="pickup"] {
+  box-shadow:
+    inset 0 1px #6fe6ff77,
+    inset 0 -1px #6fe6ff77;
+  color: #bff6ff;
+}
+#toast[data-tone="promotion"] {
+  color: var(--gold-hot);
+  font-size: 18px;
+}
+#toast[data-tone="death"] {
+  box-shadow:
+    inset 0 1px #ff4d5e88,
+    inset 0 -1px #ff4d5e88;
+  color: #ffd6da;
+}
+/* The hit marker: four ticks that snap out at the aim when your shot lands. */
+#hit-marker {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 0;
+  height: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+#hit-marker i {
+  position: absolute;
+  left: -6px;
+  top: -1.5px;
+  width: 12px;
+  height: 3px;
+  border-radius: 2px;
+  background: #fff;
+  box-shadow: 0 0 3px #000d;
+}
+#hit-marker i:nth-child(1) {
+  transform: rotate(45deg) translateX(-14px);
+}
+#hit-marker i:nth-child(2) {
+  transform: rotate(135deg) translateX(-14px);
+}
+#hit-marker i:nth-child(3) {
+  transform: rotate(225deg) translateX(-14px);
+}
+#hit-marker i:nth-child(4) {
+  transform: rotate(315deg) translateX(-14px);
+}
+#hit-marker.kill i {
+  background: var(--red);
+  width: 15px;
+}
+#hit-marker.visible {
+  animation: hit-pop 0.3s ease-out forwards;
+}
+#hit-marker.kill.visible {
+  animation-duration: 0.45s;
+}
+@keyframes hit-pop {
+  0% {
+    opacity: 1;
+    transform: scale(1.6);
+  }
+  35% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.05);
+  }
+}
+/* The elimination banner under the crosshair. */
+#kill-banner {
+  position: absolute;
+  left: 50%;
+  top: 62%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 40px 8px 30px;
+  background: linear-gradient(90deg, #08142a00, #08142ae0 18%, #08142ae0 82%, #08142a00);
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-50%);
+}
+#kill-banner .kill-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  color: var(--red);
+  fill: var(--red);
+  filter: drop-shadow(0 0 6px #ff4d5e99);
+}
+#kill-banner span {
+  display: grid;
+}
+#kill-banner small {
+  color: var(--red);
+  font: 800 10px/1.2 var(--font-ui);
+  letter-spacing: 3px;
+}
+#kill-banner b {
+  color: #fff;
+  font: 400 24px/1 var(--font-display);
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  text-shadow: 0 2px 4px #000a;
+}
+#kill-banner.visible {
+  animation: kill-banner 1.9s ease forwards;
+}
+@keyframes kill-banner {
+  0% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1.2);
+  }
+  9% {
+    opacity: 1;
+    transform: translateX(-50%) scale(1);
+  }
+  82% {
+    opacity: 1;
+    transform: translateX(-50%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #hit-marker.visible,
+  #kill-banner.visible {
+    animation: none;
+    opacity: 1;
+  }
 }
 #overlay,
 #startup-overlay {
@@ -546,14 +993,17 @@ body:has(#settings[open]) .hud-actions {
   inset: 0;
   display: grid;
   place-items: center;
-  background: linear-gradient(90deg, #12375880, #12375815);
+  isolation: isolate;
   padding: 24px;
-  backdrop-filter: blur(2px);
   overflow-y: auto;
+  /* Pause and the battle report: the arena dims and softens behind the dialog, darkest
+     at the screen's edges. */
+  background: radial-gradient(ellipse 75% 75% at 50% 45%, #07122466, #030812d9 100%);
+  backdrop-filter: blur(5px) saturate(0.85);
 }
 #startup-overlay,
 #overlay:has(.start) {
-  background: #0d1b2a;
+  background: #070f1d;
   backdrop-filter: none;
 }
 #startup-overlay {
@@ -571,18 +1021,19 @@ body:has(#settings[open]) .hud-actions {
 #startup-status,
 #rooms-message {
   position: relative;
-  padding-left: 15px;
-  color: #ffcf38;
+  padding-left: 16px;
+  color: var(--gold);
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 800;
+  letter-spacing: 0.4px;
   line-height: 1.4;
 }
 .startup-progress {
   padding: 12px 15px;
   margin: 0 0 18px;
   border: 1px solid #8bb9dc29;
-  border-radius: 8px;
-  background: #0d223b;
+  border-radius: 10px;
+  background: #0b1d36;
 }
 .startup-progress-copy {
   display: flex;
@@ -592,23 +1043,24 @@ body:has(#settings[open]) .hud-actions {
   gap: 6px 16px;
 }
 .startup-hint {
-  color: #a8bfd1;
+  color: var(--text-dim);
   font-size: 11px;
   line-height: 1.4;
 }
 .startup-track {
-  height: 3px;
+  height: 4px;
   overflow: hidden;
-  border-radius: 3px;
+  border-radius: 4px;
   margin-top: 10px;
-  background: #88b9dc18;
+  background: #88b9dc1a;
 }
 .startup-track span {
   display: block;
   height: 100%;
   width: 38%;
-  background: linear-gradient(90deg, transparent, #ffcf38, #ffe79b);
+  background: linear-gradient(90deg, transparent, var(--gold), var(--gold-hot));
   border-radius: inherit;
+  box-shadow: 0 0 10px #ffcf3899;
   animation: startup-sweep 1.4s ease-in-out infinite;
 }
 @keyframes startup-sweep {
@@ -623,13 +1075,15 @@ body:has(#settings[open]) .hud-actions {
 #multiplayer-panel .room-status[data-state="ready"] .startup-track span {
   width: 100%;
   animation: none;
-  background: #8cdda0;
+  background: linear-gradient(90deg, #4fd884, #a6f0bd);
+  box-shadow: 0 0 10px #6fe39a88;
 }
 :is(#startup-overlay, #overlay)[data-state="error"] .startup-track span,
 #multiplayer-panel .room-status[data-state="error"] .startup-track span {
   width: 100%;
   animation: none;
   background: #ffb2a7;
+  box-shadow: none;
 }
 @media (prefers-reduced-motion: reduce) {
   .startup-track span {
@@ -644,20 +1098,22 @@ body:has(#settings[open]) .hud-actions {
   position: absolute;
   left: 0;
   /* Centered on the first line (line-height 1.4). */
-  top: calc(0.7em - 3.5px);
-  width: 7px;
-  height: 7px;
+  top: calc(0.7em - 4px);
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   background: currentColor;
-  box-shadow: 0 0 0 3px #ffcf3820;
+  box-shadow: 0 0 0 3px #ffcf3826;
 }
 :is(#startup-overlay, #overlay)[data-state="ready"] #startup-status,
 .room-status[data-state="ready"] #rooms-message {
-  color: #a2e6b0;
+  color: #8ff0b0;
 }
 :is(#startup-overlay, #overlay)[data-state="ready"] #startup-status::before,
 .room-status[data-state="ready"] #rooms-message::before {
-  box-shadow: 0 0 0 3px #a2e6b020;
+  box-shadow:
+    0 0 0 3px #8ff0b026,
+    0 0 8px #8ff0b0;
 }
 :is(#startup-overlay, #overlay)[data-state="error"] #startup-status,
 .room-status[data-state="error"] #rooms-message {
@@ -670,32 +1126,33 @@ body:has(#settings[open]) .hud-actions {
 #start:disabled {
   cursor: wait;
 }
+/* Every dialog is a pane of dark glass with a hairline edge and a lit top. */
 .menu {
-  background: #142e4df2;
-  border: 1px solid #f2eac42c;
-  border-radius: 14px;
-  box-shadow: 0 30px 100px #19382e44;
-  padding: 32px 38px;
-  max-width: 960px;
+  position: relative;
   width: 100%;
+  max-width: 960px;
+  padding: 32px 38px;
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  background: var(--glass);
+  box-shadow:
+    var(--sheen),
+    0 40px 120px #000b,
+    0 0 0 1px #0006;
 }
 .eyebrow {
-  font-size: 10px;
-  letter-spacing: 2.5px;
-  color: #a6dfff;
-  font-weight: 700;
+  color: var(--text-label);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 3px;
 }
 h1 {
-  font:
-    900 clamp(40px, 5vw, 72px)/0.91 Impact,
-    sans-serif;
+  font: 400 clamp(40px, 5vw, 72px) / 0.91 var(--font-display);
   letter-spacing: -1px;
   margin: 0;
 }
 h2 {
-  font:
-    800 46px/0.98 Impact,
-    sans-serif;
+  font: 400 46px/0.98 var(--font-display);
   margin: 12px 0 20px;
 }
 .vehicles {
@@ -716,14 +1173,13 @@ h2 {
   background: #2b6189;
 }
 .vehicle.selected {
-  border: 2px solid #ffcf38;
+  border: 2px solid var(--gold);
   background: #28618a;
 }
 .vehicle strong {
   display: block;
-  font:
-    800 27px Impact,
-    sans-serif;
+  font: 400 27px var(--font-display);
+  letter-spacing: 0.5px;
 }
 .vehicle small {
   font-size: 10px;
@@ -749,36 +1205,82 @@ h2 {
 .respawn .tank-preview {
   height: 110px;
 }
-/* Menu buttons share one flat shape: the main action is yellow and the others are an
-   outline of the same size and type, so a row of them reads as one set. */
+/* Menu buttons share one shape: the main action is a lit gold slab and the others are
+   glass outlines of the same size and type, so a row of them reads as one set. */
 .primary,
 .secondary {
+  position: relative;
   min-height: 48px;
   padding: 12px 20px;
+  overflow: hidden;
   border: 0;
-  border-radius: 8px;
+  border-radius: 10px;
   font-size: 15px;
   font-weight: 800;
-  letter-spacing: 1px;
+  letter-spacing: 1.5px;
   line-height: 1.2;
   transition:
-    background 0.1s,
-    box-shadow 0.1s,
-    color 0.1s;
+    filter 0.12s,
+    transform 0.12s,
+    box-shadow 0.12s,
+    background 0.12s,
+    color 0.12s;
 }
 .primary {
-  background: #ffcf38;
-  color: #162d46;
+  background: linear-gradient(180deg, #ffe46e 0%, var(--gold) 48%, #f4a91a 100%);
+  box-shadow:
+    inset 0 1px #fff9,
+    inset 0 -3px #c97d0e,
+    0 8px 24px #ffb21c33;
+  color: #1a2233;
+  text-shadow: 0 1px #fff6;
 }
-.primary:hover {
-  background: #ffe2a0;
+/* A glint crosses the gold on hover. */
+.primary::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: -40%;
+  width: 30%;
+  background: linear-gradient(90deg, transparent, #ffffff8c, transparent);
+  transform: skewX(-20deg) translateX(-120%);
+  pointer-events: none;
 }
-.menu-help {
-  text-align: center;
+.primary:hover:not(:disabled) {
+  filter: brightness(1.07);
+  box-shadow:
+    inset 0 1px #fff9,
+    inset 0 -3px #c97d0e,
+    0 10px 30px #ffb21c66;
+  transform: translateY(-1px);
+}
+.primary:hover:not(:disabled)::after {
+  transform: skewX(-20deg) translateX(560%);
+  transition: transform 0.6s ease;
+}
+.primary:active:not(:disabled) {
+  transform: translateY(1px);
+  box-shadow:
+    inset 0 1px #fff9,
+    inset 0 -1px #c97d0e,
+    0 4px 12px #ffb21c44;
 }
 .compact {
-  max-width: 480px;
-  padding: 24px 28px;
+  max-width: 500px;
+  padding: 26px 30px 28px;
+}
+/* The gold notch on a dialog's top edge, like the HUD's tank panel. */
+.menu.compact::before {
+  content: "";
+  position: absolute;
+  left: 30px;
+  top: -1px;
+  width: 64px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--gold);
+  box-shadow: 0 0 12px #ffcf38aa;
 }
 /* Every dialog opens the same way: a label line (with a link beside it when there is
    one), the title (with the score beside it after a battle) and a sentence under it. */
@@ -794,65 +1296,189 @@ h2 {
   gap: 12px;
 }
 .dialog-eyebrow b {
-  color: #f5faff;
+  color: var(--text);
 }
 .dialog-title {
   display: flex;
   flex-wrap: wrap;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
   column-gap: 16px;
 }
 .dialog-title h2 {
   margin: 0;
-  font-size: 40px;
+  font-size: 50px;
   line-height: 0.95;
-  letter-spacing: 0.5px;
+  letter-spacing: 1px;
+  text-shadow: 0 3px 12px #0008;
 }
 .dialog-score {
-  font:
-    800 34px/1 Impact,
-    sans-serif;
-  letter-spacing: 2px;
-  color: #eef6fb;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: #6f88a3;
+  font: 400 30px/1 var(--font-display);
+}
+.dialog-score :is(.blue, .red) {
+  min-width: 58px;
+  padding: 6px 14px 5px;
+  color: #fff;
+  font-size: 34px;
+  text-align: center;
+  text-shadow: 0 2px 3px #0006;
 }
 .dialog-score .blue {
-  color: #79c5ef;
+  background:
+    linear-gradient(180deg, #ffffff33, transparent 50%), linear-gradient(180deg, #2f8ff2, #1252b0);
+  clip-path: polygon(10px 0, 100% 0, 100% 100%, 0 100%);
 }
 .dialog-score .red {
-  color: #ff8a79;
+  background:
+    linear-gradient(180deg, #ffffff33, transparent 50%), linear-gradient(180deg, #ff5367, #b01b33);
+  clip-path: polygon(0 0, 100% 0, calc(100% - 10px) 100%, 0 100%);
 }
 .dialog-lede {
   margin: 0;
-  color: #c4dfef;
+  color: #c4dbee;
   font-size: 13px;
   line-height: 1.5;
 }
-.dialog-help {
-  margin: 16px 0 0;
-  color: #9fbcd2;
-  font-size: 12px;
-  line-height: 1.7;
-}
 .secondary {
-  background: transparent;
-  box-shadow: inset 0 0 0 2px #8bb9dc59;
+  background: linear-gradient(180deg, #ffffff0d, #ffffff03);
+  box-shadow:
+    inset 0 0 0 1.5px #8bc2ec66,
+    0 6px 18px #0004;
   color: #e6f1f9;
 }
-.secondary:hover {
-  background: #b7d7ed14;
-  box-shadow: inset 0 0 0 2px #b7d7edaa;
+.secondary:hover:not(:disabled) {
+  background: linear-gradient(180deg, #ffffff1f, #ffffff08);
+  box-shadow:
+    inset 0 0 0 1.5px #cfe8fa,
+    0 8px 22px #0006;
   color: #fff;
+  transform: translateY(-1px);
+}
+.secondary:active:not(:disabled) {
+  transform: translateY(1px);
 }
 /* Actions that throw progress away, such as ending a battle, are red. */
 .secondary.danger {
-  box-shadow: inset 0 0 0 2px #ff6f5e99;
+  box-shadow: inset 0 0 0 1.5px #ff6f5e99;
   color: #ffb2a7;
 }
 .secondary.danger:hover {
-  background: #ff6f5e24;
-  box-shadow: inset 0 0 0 2px #ff6f5e;
+  background: #ff4d5e26;
+  box-shadow:
+    inset 0 0 0 1.5px #ff6f5e,
+    0 8px 22px #ff4d5e33;
   color: #fff;
+}
+:is(.primary, .secondary):focus-visible {
+  outline: 3px solid #fff;
+  outline-offset: 3px;
+}
+/* Key caps: raised glass keys with a darker skirt, shared by the Battle Setup strip and
+   the controls card. */
+.menu-help kbd,
+.controls-card kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 3px 7px 2px;
+  border: 1px solid #ffffff30;
+  border-bottom: 3px solid #050c18;
+  border-radius: 5px;
+  background: linear-gradient(180deg, #2c4c7a, #172c4c);
+  box-shadow: 0 1px 0 #ffffff12 inset;
+  color: #fff;
+  font: 800 10.5px/1.3 var(--font-ui);
+  letter-spacing: 0.4px;
+  text-align: center;
+  white-space: nowrap;
+}
+/* Battle Setup's footer: the essentials as one row of key caps and their verbs. */
+.menu-help {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 6px 20px;
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 600;
+}
+.key-hint {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  white-space: nowrap;
+}
+.key-hint .keys {
+  display: inline-flex;
+  gap: 3px;
+}
+/* A touchscreen without a mouse gets its own line. */
+.menu-help.touch-strip {
+  display: none;
+}
+@media (hover: none) and (pointer: coarse) {
+  .menu-help.key-strip {
+    display: none;
+  }
+  .menu-help.touch-strip {
+    display: flex;
+  }
+}
+/* The controls card in pause and the room menu: two columns of action and keys, in a
+   dark well like Battle Setup's choices. Touch controls swap in the touch list. */
+.controls-card {
+  margin-top: 18px;
+  padding: 12px 16px 10px;
+  border-radius: 12px;
+  background: #050d1ccc;
+  box-shadow: inset 0 2px 8px #0008;
+}
+.controls-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0 22px;
+  margin: 0;
+}
+.control-line {
+  display: grid;
+  grid-template-columns: 92px minmax(0, 1fr);
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  border-bottom: 1px solid #9fd0ff12;
+}
+.control-line dt {
+  color: var(--text-dim);
+  font-size: 12px;
+  font-weight: 700;
+}
+.control-line dd {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  margin: 0;
+}
+.control-line small {
+  margin-left: 4px;
+  color: #7f9bb6;
+  font-size: 10.5px;
+}
+.touch-only-controls,
+.touch-enabled .keyboard-controls {
+  display: none;
+}
+.touch-enabled .touch-only-controls {
+  display: grid;
+}
+.controls-note {
+  margin: 9px 0 0;
+  color: #8fb3cb;
+  font-size: 11px;
+  text-align: center;
 }
 @media (max-width: 800px) {
   .menu {
@@ -871,7 +1497,7 @@ h2 {
     bottom: 10px;
   }
   .scoreboard {
-    top: 8px;
+    top: 0;
   }
   .hud-actions {
     right: 10px;
@@ -882,54 +1508,214 @@ h2 {
   }
 }
 
-/* Leave the airborne wreck visible while choosing the next spawn. */
+/* Leave the airborne wreck visible while choosing the next spawn: the respawn card
+   sits low, where the tank panel was (it steps aside while the tank is wrecked). */
 #overlay:has(.respawn) {
-  background: transparent;
+  background: radial-gradient(ellipse 90% 60% at 50% 100%, #3a050c55, transparent 70%);
   backdrop-filter: none;
   place-items: end center;
   pointer-events: none;
-  padding-bottom: 22px;
+  padding-bottom: 18px;
 }
+/* The card is there at once, legible from its first frame; a red glint runs along its
+   top edge as it lands. */
 .menu.respawn {
   pointer-events: auto;
-  padding: 18px 24px;
-  max-width: 760px;
+  max-width: 720px;
+  padding: 14px 18px 16px;
+  overflow: hidden;
+}
+.menu.respawn::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ff8592, transparent);
+  transform: translateX(-100%);
+  animation: respawn-glint 1.4s ease-out 0.1s;
+  pointer-events: none;
+}
+@keyframes respawn-glint {
+  to {
+    transform: translateX(260%);
+  }
+}
+.menu.respawn::before {
+  content: "";
+  position: absolute;
+  left: 18px;
+  top: -1px;
+  width: 64px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--red);
+  box-shadow: 0 0 12px #ff4d5eaa;
+}
+.respawn-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 10px;
+}
+.wrecked-by {
+  display: grid;
+  grid-template-columns: auto auto;
+  justify-content: start;
+  align-items: center;
+  column-gap: 12px;
+  min-width: 0;
+}
+.wrecked-by small {
+  grid-column: 1 / -1;
+  color: #ff8592;
+  font-size: 10px;
+  font-weight: 800;
+  letter-spacing: 3px;
+}
+.wrecked-by b {
+  overflow: hidden;
+  font: 400 30px/1.05 var(--font-display);
+  letter-spacing: 1px;
+  text-overflow: ellipsis;
+  text-transform: uppercase;
+  white-space: nowrap;
+  text-shadow: 0 2px 8px #000a;
+}
+.wrecked-weapon {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 7px;
+  border: 1px solid #ff6f5e55;
+  border-radius: 999px;
+  background: #ff4d5e1f;
+  color: #ffd6da;
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.6px;
+  white-space: nowrap;
+}
+.wrecked-icon {
+  width: 18px;
+  height: 18px;
+  fill: currentColor;
+}
+.respawn-timer {
+  display: grid;
+  justify-items: end;
+  gap: 6px;
+  flex: none;
+}
+.respawn-timer h2 {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0;
+  font-size: 40px;
+  line-height: 0.85;
+}
+.respawn-timer h2 small {
+  color: var(--text-dim);
+  font: 800 11px/1 var(--font-ui);
+  letter-spacing: 2.5px;
+}
+#respawn-count {
+  min-width: 1ch;
+  color: var(--gold);
+  text-align: right;
+  text-shadow: 0 0 18px #ffcf3888;
+}
+.respawn-bar {
+  display: block;
+  width: 150px;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 2px;
+  background: #ffffff17;
+}
+#respawn-fill {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--gold-deep), var(--gold-hot));
+  box-shadow: 0 0 8px #ffcf3888;
+  transform: scaleX(calc(1 - var(--left, 1)));
+  transform-origin: left;
+}
+.respawn-pick {
+  margin: 0 0 8px;
+  padding-top: 10px;
+  border-top: 1px solid #9fd0ff1a;
+  color: var(--text-label);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+  text-transform: uppercase;
+}
+.respawn .vehicles {
+  gap: 8px;
 }
 .respawn .spec,
 .respawn .vehicle small {
   display: none;
 }
-.respawn h2 {
-  font-size: 23px;
-  margin: 0 0 10px;
+.respawn .tank-preview {
+  height: 96px;
 }
 .respawn .vehicle {
-  padding: 8px 12px;
-}
-.respawn .vehicle.selected {
-  padding: 7px 11px;
+  padding: 8px 12px 4px;
 }
 .respawn .vehicle strong {
   font-size: 20px;
 }
+@media (prefers-reduced-motion: reduce) {
+  .menu.respawn::after {
+    animation: none;
+  }
+}
+/* The wrecked tank's panel and notices step aside for the respawn card at once. */
+#hud.dead .bottom {
+  visibility: hidden;
+}
+/* On a desktop or tablet the respawn card names the killer; the phone's small strip
+   leaves that to the mid-screen notice. */
+html:not(.phone) #toast[data-tone="death"] {
+  display: none;
+}
 
 .ammo-slot kbd {
-  display: block;
-  font:
-    600 10px/1.2 Arial,
-    sans-serif;
-  color: #c4dfef;
+  grid-area: 1 / 1;
+  justify-self: start;
+  min-width: 15px;
+  padding: 1px 4px;
+  border-radius: 3px;
+  background: #ffffff14;
+  color: #d4e4f3;
+  font: 800 9px/1.3 var(--font-ui);
 }
 .ammo-slot.empty {
-  color: #9cb2c6;
-  background: #091522;
-  border-top-color: #566d80;
+  border-color: #ffffff10;
+  background: linear-gradient(180deg, #0b1a30, #060f1e);
+  color: #7f93a8;
 }
-.ammo-slot:hover:not(:disabled) {
-  background: #315473;
+.ammo-slot.empty :is(.ammo-icon, b) {
+  opacity: 0.4;
+}
+.ammo-slot.empty .ammo-icon {
+  fill: #8aa0b8;
+}
+.ammo-slot.empty::before {
+  background: #566d80;
+}
+.ammo-slot:hover:not(:disabled, .selected) {
+  border-color: #ffffff40;
+  transform: translateY(-2px);
 }
 .ammo-slot:focus-visible {
-  outline: 3px solid #ffdf38;
+  outline: 3px solid var(--gold);
   outline-offset: 2px;
 }
 #hud .ammo-slot:disabled {
@@ -938,33 +1724,38 @@ h2 {
 }
 .combat-notices {
   position: absolute;
-  bottom: calc(100% + 8px);
+  bottom: calc(100% + 10px);
   left: 0;
   display: grid;
   justify-items: start;
   gap: 6px;
-  width: 520px;
+  width: 600px;
   max-width: 100%;
 }
 #ammo-notice,
 #effects {
   max-width: 100%;
-  padding: 8px 10px;
-  border-radius: 6px;
-  background: #122b47f5;
-  border: 1px solid #88e5ff55;
+  padding: 7px 12px 7px 11px;
+  border: 1px solid #88e5ff40;
+  border-left: 3px solid #6fe6ff;
+  border-radius: 8px;
+  background: var(--glass-hud);
+  box-shadow: 0 6px 16px #0007;
 }
 #ammo-notice {
+  border-color: #ffdf9155;
+  border-left-color: var(--gold);
+  color: var(--gold-hot);
   font-size: 11px;
+  font-weight: 700;
   line-height: 1.4;
-  border-color: #ffdf9177;
-  color: #ffdf91;
 }
 #ammo-notice:empty {
   display: none;
 }
-/* First person: the arena seen through a periscope. The frame only darkens
-   the edges, so the scoreboard, ammo and notices stay readable above it. */
+/* First person: the arena seen through a periscope. The frame only darkens the edges,
+   with range brackets around the sight and faint scan lines, so the scoreboard, ammo
+   and notices stay readable above it. */
 #cockpit {
   position: absolute;
   inset: 0;
@@ -974,18 +1765,81 @@ h2 {
     radial-gradient(ellipse 78% 74% at 50% 46%, transparent 64%, #0a121acc 90%, #05090d 100%),
     linear-gradient(#05090d 0 4px, transparent 4px calc(100% - 4px), #05090d calc(100% - 4px));
 }
+#cockpit::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: repeating-linear-gradient(0deg, #ffffff07 0 1px, transparent 1px 4px);
+}
 #hud.first-person #cockpit {
   display: block;
+}
+.periscope-frame {
+  position: absolute;
+  left: 50%;
+  top: 47%;
+  width: min(520px, 60vw);
+  height: min(300px, 40vh);
+  transform: translate(-50%, -50%);
+}
+.periscope-frame i {
+  position: absolute;
+  width: 28px;
+  height: 20px;
+  border: 0 solid #eaf4ff8c;
+  filter: drop-shadow(0 0 2px #000a);
+}
+.periscope-frame i:nth-child(1) {
+  left: 0;
+  top: 0;
+  border-width: 2px 0 0 2px;
+}
+.periscope-frame i:nth-child(2) {
+  right: 0;
+  top: 0;
+  border-width: 2px 2px 0 0;
+}
+.periscope-frame i:nth-child(3) {
+  left: 0;
+  bottom: 0;
+  border-width: 0 0 2px 2px;
+}
+.periscope-frame i:nth-child(4) {
+  right: 0;
+  bottom: 0;
+  border-width: 0 2px 2px 0;
+}
+/* Range ticks along the frame's centre lines. */
+.periscope-frame::before,
+.periscope-frame::after {
+  content: "";
+  position: absolute;
+  background: repeating-linear-gradient(90deg, #eaf4ff73 0 2px, transparent 2px 22px);
+  filter: drop-shadow(0 0 2px #000a);
+}
+.periscope-frame::before {
+  left: 60px;
+  right: 60px;
+  bottom: -14px;
+  height: 7px;
+}
+.periscope-frame::after {
+  left: -14px;
+  top: 40px;
+  bottom: 40px;
+  width: 7px;
+  background: repeating-linear-gradient(0deg, #eaf4ff73 0 2px, transparent 2px 22px);
 }
 #cockpit .aim-hint {
   position: absolute;
   left: 50%;
   top: calc(50% + 48px);
   margin: 0;
-  padding: 6px 12px;
+  padding: 6px 14px;
   transform: translateX(-50%);
+  border: 1px solid var(--edge-strong);
   border-radius: 999px;
-  background: #16314dcc;
+  background: #0b1830d9;
   color: #f0e9ce;
   font-size: 13px;
   font-weight: 700;
@@ -995,26 +1849,26 @@ h2 {
 #cockpit .aim-hint[hidden] {
   display: none;
 }
-#view-mode {
-  font-size: 20px;
-  line-height: 1;
-  letter-spacing: 0;
-  padding: 9px 12px;
-}
 #view-mode[aria-pressed="true"] {
-  background: #f0e9cecc;
-  color: #16314d;
+  border-color: transparent;
+  background: linear-gradient(180deg, var(--gold-hot), var(--gold));
+  color: #10233c;
 }
 .hull-compass {
   position: absolute;
   left: 50%;
-  bottom: 126px;
-  width: 54px;
-  height: 54px;
-  margin-left: -27px;
-  border: 1px solid #f0e9ce66;
+  bottom: 134px;
+  width: 58px;
+  height: 58px;
+  margin-left: -29px;
+  border: 1px solid var(--edge-strong);
   border-radius: 50%;
-  background: #16314d99;
+  background:
+    radial-gradient(circle, transparent 54%, #ffffff10 55%, transparent 58%),
+    linear-gradient(180deg, #16305ae0, #091629eb);
+  box-shadow:
+    var(--sheen),
+    0 6px 16px #0008;
 }
 .hull-compass i {
   position: absolute;
@@ -1025,56 +1879,64 @@ h2 {
   width: 20px;
   height: 32px;
   margin: -16px 0 0 -10px;
-  border: 2px solid #eee6cc;
+  border: 2px solid #e6eef8;
   border-top-width: 5px;
   border-radius: 3px;
 }
 .hull-compass .gun {
   width: 4px;
-  height: 22px;
-  margin: -22px 0 0 -2px;
+  height: 24px;
+  margin: -24px 0 0 -2px;
   border-radius: 2px;
-  background: #ffdf38;
+  background: var(--gold);
+  box-shadow: 0 0 6px #ffcf38aa;
 }
 
 #damage-direction {
   position: absolute;
   left: 50%;
   top: 50%;
-  width: 180px;
-  height: 180px;
+  width: 200px;
+  height: 200px;
   pointer-events: none;
 }
 #damage-direction i {
   position: absolute;
-  left: calc(50% - 19px);
+  left: calc(50% - 30px);
   top: 0;
-  width: 38px;
-  height: 18px;
-  background: #ff624e;
-  clip-path: polygon(50% 0, 100% 100%, 50% 65%, 0 100%);
-  filter: drop-shadow(0 2px 2px #000);
+  width: 60px;
+  height: 22px;
+  background: linear-gradient(180deg, #ff6b5a, #e0162e);
+  clip-path: polygon(50% 0, 100% 100%, 50% 62%, 0 100%);
+  filter: drop-shadow(0 0 6px #ff2a3a);
 }
-
-/* Battle setup: one dialog for single player and multiplayer. Sections are labelled
-   rows on a three-column grid that the tank cards define; selectable choices are
-   cards like the tanks, and only lists and status use a recessed well. The tank row is
-   shared and never moves; below it the play tabs sit on the tray they switch. The map
-   heads the tray on both tabs, and both trays end in the same status well and yellow
-   action. */
+/* Battle setup: one dialog for single player and multiplayer, a pane of glass over a
+   dusk battlefield. Sections are labelled rows on a three-column grid that the tank
+   cards define; selectable choices are lit cards in dark wells, and the chosen one rises
+   with a gold ring. The tank row is shared and never moves; below it the play tabs sit
+   on the tray they switch. The map heads the tray on both tabs, and both trays end in
+   the same status well and gold action. */
 .menu.start {
-  --tray: #1b3c5f;
-  --card-hover: #2b6189;
-  --card-selected: #28618a;
-  --well: #0c2239;
-  --accent: #ffcf38;
-  --label: #a6dfff;
-  --muted: #9fbcd2;
+  --tray: #15305a;
+  --card: #10264a;
+  --card-hover: #1b3966;
+  --card-selected: #22477a;
+  --well: #071328d9;
+  --accent: var(--gold);
+  --label: var(--text-label);
+  --muted: var(--text-dim);
   display: grid;
   gap: 14px;
   position: relative;
-  max-width: 1000px;
-  padding: 22px 28px 20px;
+  max-width: 1040px;
+  padding: 20px 26px 18px;
+  border-color: #a9d4ff2e;
+  background: linear-gradient(180deg, #12294ce6, #091629f0 60%, #070f1ff5);
+  box-shadow:
+    var(--sheen),
+    0 0 0 1px #0008,
+    0 40px 140px #000c,
+    0 0 120px #2a6fd022;
 }
 .icon-sprite {
   position: absolute;
@@ -1082,9 +1944,177 @@ h2 {
   height: 0;
   overflow: hidden;
 }
+/* The backdrop is fixed to the screen behind the panel: a dusk sky with a low sun,
+   ridges and pines, two tanks on watch, searchlights sweeping and embers rising, over a
+   faint tactical grid. Only transforms and opacity move. */
+.setup-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  overflow: hidden;
+  pointer-events: none;
+  background: #070f1d;
+}
+.setup-backdrop > * {
+  position: absolute;
+}
+.backdrop-sky {
+  inset: 0;
+  background:
+    radial-gradient(ellipse 55% 30% at 50% 66%, #ffb35c55, transparent 70%),
+    radial-gradient(ellipse 90% 45% at 50% 70%, #ff7a3d2e, transparent 75%),
+    radial-gradient(ellipse 70% 60% at 50% 0%, #1d3f7a66, transparent 70%),
+    linear-gradient(180deg, #060c1a 0%, #0f2347 42%, #2a3d6b 60%, #5a4a6a 70%, #1a2338 78%);
+}
+.backdrop-land {
+  left: 0;
+  bottom: 0;
+  width: 100%;
+  height: 100%;
+}
+.backdrop-beams {
+  inset: 0;
+  opacity: 0.55;
+}
+.backdrop-beams i {
+  position: absolute;
+  bottom: 16%;
+  width: 180px;
+  height: 120vh;
+  background: linear-gradient(0deg, #bfe3ff40, #bfe3ff10 45%, transparent 80%);
+  clip-path: polygon(46% 100%, 54% 100%, 100% 0, 0 0);
+  transform-origin: 50% 100%;
+  filter: blur(2px);
+}
+.backdrop-beams i:first-child {
+  left: 7%;
+  animation: beam-sweep 11s ease-in-out infinite alternate;
+}
+.backdrop-beams i:last-child {
+  right: 7%;
+  animation: beam-sweep 13s ease-in-out -6s infinite alternate-reverse;
+}
+@keyframes beam-sweep {
+  from {
+    transform: rotate(-24deg);
+  }
+  to {
+    transform: rotate(18deg);
+  }
+}
+/* A tactical grid laid flat on the ground, drifting toward the viewer. */
+.backdrop-floor {
+  left: -50%;
+  right: -50%;
+  bottom: -30%;
+  height: 70%;
+  background:
+    linear-gradient(90deg, #4aa8ff1c 1px, transparent 1px) 0 0 / 64px 64px,
+    linear-gradient(0deg, #4aa8ff1c 1px, transparent 1px) 0 0 / 64px 64px;
+  mask-image: linear-gradient(0deg, #000 10%, transparent 75%);
+  transform: perspective(500px) rotateX(62deg);
+  transform-origin: 50% 0;
+}
+.backdrop-embers {
+  inset: 0;
+}
+.backdrop-embers i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 0;
+  height: 200%;
+  background-image:
+    radial-gradient(circle, #ffb35c 0 1.5px, transparent 2.5px),
+    radial-gradient(circle, #ffd27a 0 1px, transparent 2px),
+    radial-gradient(circle, #ff8a3d 0 1.2px, transparent 2.2px);
+  background-size:
+    310px 330px,
+    230px 270px,
+    420px 380px;
+  background-position:
+    20px 40px,
+    140px 120px,
+    60px 260px;
+  opacity: 0.5;
+  animation: embers-rise 26s linear infinite;
+}
+.backdrop-embers i:last-child {
+  background-size:
+    270px 410px,
+    370px 300px,
+    190px 350px;
+  background-position:
+    100px 10px,
+    10px 200px,
+    170px 90px;
+  opacity: 0.35;
+  animation-duration: 38s;
+}
+@keyframes embers-rise {
+  from {
+    transform: translateY(0);
+  }
+  to {
+    transform: translateY(-50%);
+  }
+}
+.setup-backdrop::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(ellipse 80% 80% at 50% 50%, transparent 55%, #02050bcc 100%);
+}
+@media (prefers-reduced-motion: reduce) {
+  .backdrop-beams i,
+  .backdrop-embers i {
+    animation: none;
+  }
+}
+/* The logo and the screen's title. */
+.setup-header {
+  display: flex;
+  align-items: center;
+  gap: 18px;
+}
+.setup-brand {
+  display: grid;
+  flex: none;
+  color: #fff;
+  font: 400 21px/0.82 var(--font-display);
+  letter-spacing: 0.3px;
+  text-shadow:
+    0 2px 0 #0b1a30,
+    0 4px 14px #0009;
+  transform: rotate(-4deg) skewX(-6deg);
+}
+.setup-brand b {
+  font-weight: 400;
+}
+.setup-brand b:last-child {
+  color: var(--gold);
+  font-size: 31px;
+}
+.setup-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 16px;
+  padding-left: 18px;
+  border-left: 2px solid #ffffff1c;
+}
 .setup-header h1 {
-  font-size: clamp(32px, 4vw, 44px);
-  letter-spacing: 1px;
+  font-size: clamp(32px, 4vw, 46px);
+  letter-spacing: 1.5px;
+  text-shadow: 0 3px 16px #0009;
+}
+.setup-tagline {
+  margin: 0;
+  color: var(--gold);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 3px;
+  text-transform: uppercase;
 }
 /* Folder tabs: the chosen one is the tray's own colour, so it reads as the tray's lid. */
 .setup-tray {
@@ -1097,20 +2127,27 @@ h2 {
   gap: 6px;
 }
 .play-tab {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 12px;
   min-width: 0;
-  padding: 15px 16px;
+  padding: 14px 16px;
   border: 0;
-  border-radius: 12px 12px 0 0;
-  background: #10273f;
-  color: #a8bfd1;
+  border-radius: 14px 14px 0 0;
+  background: linear-gradient(180deg, #0d1f3b, #0a182f);
+  color: var(--text-dim);
   text-align: left;
+  transition:
+    background 0.15s,
+    color 0.15s;
 }
 .play-tab svg {
-  flex: 0 0 26px;
-  height: 26px;
+  flex: 0 0 34px;
+  height: 34px;
+  padding: 6px;
+  border-radius: 9px;
+  background: #ffffff0d;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -1126,17 +2163,15 @@ h2 {
 }
 .play-tab b {
   display: block;
-  font:
-    800 21px/1 Impact,
-    sans-serif;
-  letter-spacing: 0.5px;
+  font: 400 23px/1 var(--font-display);
+  letter-spacing: 1px;
   text-transform: uppercase;
 }
 .play-tab small {
   font-size: 12px;
 }
 .play-tab:hover {
-  background: #17344f;
+  background: linear-gradient(180deg, #13294a, #0f2241);
   color: #f0f8ff;
 }
 .play-tab[aria-selected="true"] {
@@ -1144,8 +2179,19 @@ h2 {
   color: #fff;
   box-shadow: inset 0 3px var(--accent);
 }
+.play-tab[aria-selected="true"]::after {
+  content: "";
+  position: absolute;
+  left: 18%;
+  right: 18%;
+  top: 0;
+  height: 18px;
+  background: radial-gradient(ellipse 50% 100% at 50% 0, #ffcf3840, transparent);
+  pointer-events: none;
+}
 .play-tab[aria-selected="true"] svg {
-  stroke: var(--accent);
+  background: linear-gradient(180deg, var(--gold-hot), var(--gold));
+  stroke: #1a2233;
 }
 .play-tab[aria-selected="true"] small {
   color: #d3e7f5;
@@ -1164,8 +2210,19 @@ h2 {
   margin-bottom: 8px;
   color: var(--label);
   font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 2px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
+}
+.setup-label > span:first-child::before,
+.setup-label > label:first-child::before {
+  content: "";
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+  margin-right: 8px;
+  vertical-align: 0.25em;
+  border-radius: 2px;
+  background: var(--accent);
 }
 .setup-label small {
   color: var(--muted);
@@ -1174,19 +2231,70 @@ h2 {
   letter-spacing: 0;
   text-align: right;
 }
+/* The tank cards are little showrooms: a spotlight on each tank, a lit turntable under
+   it, and its hull and speed as bars. The chosen tank glows gold. */
+.vehicle {
+  overflow: hidden;
+  isolation: isolate;
+  border: 0;
+  border-radius: 10px;
+  background:
+    radial-gradient(ellipse 60% 55% at 50% 38%, #3d7cc244, transparent 70%),
+    linear-gradient(180deg, #14305a, #0a1830);
+  box-shadow: inset 0 0 0 1px #9fd0ff22;
+  transition:
+    transform 0.18s,
+    box-shadow 0.18s;
+}
+.vehicle:hover {
+  background:
+    radial-gradient(ellipse 60% 55% at 50% 38%, #4f93db55, transparent 70%),
+    linear-gradient(180deg, #183a6a, #0c1d3a);
+}
+.vehicle.selected {
+  border: 0;
+  background:
+    radial-gradient(ellipse 60% 55% at 50% 38%, #ffd36a3a, transparent 70%),
+    linear-gradient(180deg, #1f4a80, #0e2546);
+  box-shadow:
+    inset 0 0 0 2px var(--gold),
+    0 0 26px #ffcf3833;
+}
+.vehicle .tank-preview {
+  transition: transform 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.vehicle:hover .tank-preview {
+  transform: scale(1.05) translateY(-2px);
+}
 /* Name and role share the top line, leaving the card's height to the tank. */
 .start .vehicle {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   column-gap: 8px;
-  padding: 12px 16px 10px;
+  padding: 12px 16px 12px;
+}
+.start .vehicle:hover {
+  transform: translateY(-2px);
 }
 .start .vehicle strong {
-  font-size: 24px;
+  font-size: 26px;
+  text-shadow: 0 2px 8px #0008;
 }
 .start .vehicle small {
+  padding: 3px 7px;
+  border-radius: 5px;
+  background: #ffffff12;
+  color: #cfe3f5;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.6px;
   text-align: right;
+  text-transform: uppercase;
+}
+.start .vehicle.selected small {
+  background: var(--gold);
+  color: #1a2233;
 }
 .start .vehicle :is(.tank-preview, .spec) {
   grid-column: 1 / -1;
@@ -1195,44 +2303,76 @@ h2 {
   /* Taller than its slot: the tank may tuck under the name line. */
   position: relative;
   height: 118px;
-  margin: -24px 0 -8px;
+  margin: -22px 0 -6px;
+  filter: drop-shadow(0 14px 10px #020a14aa);
 }
 .start .vehicle :is(strong, small, .spec) {
   position: relative;
   z-index: 1;
 }
+/* Hull and speed as bars that fill by each tank's share of the best (`--v`). */
 .start .vehicle .spec {
+  gap: 16px;
+  padding-top: 8px;
   border-top: 0;
+  color: #dbe9f6;
+  font-size: 9.5px;
+  letter-spacing: 1.2px;
 }
-/* A soft pool of light behind each tank blends the sprite into the card instead of
-   cutting it out against flat blue; the chosen card's pool is brighter. */
+.spec span {
+  display: grid;
+  flex: 1;
+  gap: 5px;
+}
+.spec span:last-child {
+  text-align: right;
+}
+.spec span::after {
+  content: "";
+  height: 4px;
+  border-radius: 2px;
+  background:
+    linear-gradient(90deg, #6fc6ff, #b8e4ff) 0 0 / calc(var(--v, 1) * 100%) 100% no-repeat,
+    #ffffff17;
+  box-shadow: 0 0 8px #6fc6ff22;
+}
+.spec span:last-child::after {
+  background:
+    linear-gradient(270deg, var(--gold), var(--gold-hot)) 100% 0 / calc(var(--v, 1) * 100%) 100%
+      no-repeat,
+    #ffffff17;
+}
+/* The turntable under each tank. */
 .start .vehicle::before {
   content: "";
   position: absolute;
-  inset: 0;
-  border-radius: inherit;
-  background:
-    radial-gradient(ellipse 34% 20% at 50% 74%, #02101d73, transparent 100%),
-    radial-gradient(ellipse 62% 58% at 50% 56%, #8fc4f236, #8fc4f212 60%, transparent 100%);
+  z-index: -1;
+  left: 14%;
+  right: 14%;
+  top: 46%;
+  height: 34%;
+  border-radius: 50%;
+  background: radial-gradient(ellipse at center, #8cc8ff2e, #8cc8ff0d 55%, transparent 70%);
+  box-shadow: inset 0 0 0 1px #8cc8ff1f;
   pointer-events: none;
 }
 .start .vehicle.selected::before {
-  background:
-    radial-gradient(ellipse 34% 20% at 50% 74%, #02101d80, transparent 100%),
-    radial-gradient(ellipse 62% 58% at 50% 56%, #b5dcff40, #b5dcff12 60%, transparent 100%);
+  background: radial-gradient(ellipse at center, #ffd36a40, #ffcf3812 55%, transparent 70%);
+  box-shadow: inset 0 0 0 1px #ffcf3855;
 }
 .setup-panels {
   display: grid;
   grid-template-rows: auto 1fr;
   gap: 14px;
-  padding: 14px 14px 14px;
-  border-radius: 0 0 14px 14px;
-  background: var(--tray);
+  padding: 14px;
+  border-radius: 0 0 16px 16px;
+  background: linear-gradient(180deg, var(--tray), #0f2546);
+  box-shadow: inset 0 -1px #ffffff0d;
 }
 /* Both tabs sit on the tank cards' three columns and share one cell, so the taller
    panel sizes both; the hidden one keeps its space rather than collapsing. Each has a
    choice row and an action row: a status well under the first two columns and the
-   yellow button under the third, in the same place on both tabs. */
+   gold button under the third, in the same place on both tabs. */
 .setup-panel {
   grid-area: 2 / 1;
   display: grid;
@@ -1271,38 +2411,67 @@ h2 {
   padding: 9px;
 }
 .battle-choice .choice-card b {
-  font-size: 18px;
+  font: 400 24px/1 var(--font-display);
+  letter-spacing: 0.8px;
+  text-transform: uppercase;
 }
 .choice-card,
 .segment {
   position: relative;
   cursor: pointer;
 }
-/* Every Battle Setup choice looks like the play tabs: its options sit in one dark well,
-   and the chosen one lifts out of it with a brighter fill and a yellow ring. */
+/* Every Battle Setup choice sits in one dark well, and the chosen one lifts out of it
+   with a brighter fill and a gold ring. */
 .start :is(.vehicles, .choice-cards, .segmented, .room-list-body, .map-picker) {
-  gap: 4px;
-  padding: 4px;
-  border-radius: 12px;
+  gap: 6px;
+  padding: 5px;
+  border-radius: 14px;
   background: var(--well);
+  box-shadow: inset 0 2px 8px #0008;
 }
 /* Hover and selection switch at once, so a click shows its result on the next frame. */
-.start :is(.vehicle, .choice-card, .segment, .room-row) {
+.start :is(.choice-card, .segment, .room-row) {
   border: 0;
-  border-radius: 9px;
-  background: transparent;
+  border-radius: 10px;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1px #9fd0ff14;
   transition: none;
 }
-.start :is(.vehicle, .choice-card, .segment, .room-row):hover {
-  background: #17344f;
+.start :is(.choice-card, .segment, .room-row):hover {
+  background: var(--card-hover);
+}
+.start #room-list .room-row {
+  background: transparent;
+  box-shadow: none;
+}
+.start #room-list .room-row:hover {
+  background: var(--card-hover);
 }
 .start .vehicle.selected,
 .start :is(.choice-card, .segment):has(input:checked),
 .start .room-row:has(input[name="room-choice"]:checked),
 .map-picker-button,
 .map-picker-option[aria-selected="true"] {
-  background: var(--card-selected);
+  background-color: var(--card-selected);
+  box-shadow:
+    inset 0 0 0 2px var(--accent),
+    0 0 20px #ffcf3826;
+}
+.start :is(.choice-card, .segment):has(input:checked) {
+  background-image: linear-gradient(180deg, #ffffff12, transparent 60%);
+}
+/* A card with a scene draws its gold ring above the scene, not under it (an open room's
+   map draws its own lock there instead, and the player's own map is not chosen then). */
+.start .choice-card:has(input:checked):not(.room-map)::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
   box-shadow: inset 0 0 0 2px var(--accent);
+  pointer-events: none;
+}
+.start[data-play="multiplayer"]:has(#new-room:not(:checked)) .map-row .choice-card::after {
+  box-shadow: none;
 }
 .choice-card:has(input:focus-visible),
 .segment:has(input:focus-visible) {
@@ -1326,6 +2495,60 @@ h2 {
   gap: 12px;
   min-height: 72px;
   padding: 10px 12px;
+  overflow: hidden;
+  isolation: isolate;
+}
+/* Scenes behind the map and battle cards, under a shade that keeps the text legible;
+   the chosen card's scene comes up to full strength. */
+.choice-card::before {
+  content: "";
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  opacity: 0.55;
+  background: var(--scene, none);
+  pointer-events: none;
+  transition: opacity 0.2s;
+}
+.choice-card:hover::before {
+  opacity: 0.8;
+}
+.choice-card:has(input:checked)::before {
+  opacity: 1;
+}
+.map-row .choice-card::before {
+  background:
+    linear-gradient(90deg, #0b1b36 40%, #0b1b36aa 58%, #0b1b3600 80%),
+    var(--art) right bottom / auto 92% no-repeat,
+    linear-gradient(180deg, transparent 40%, var(--tint) 160%);
+}
+/* The description stops short of the scene so the two never overlap. */
+.map-row .choice-card > span {
+  max-width: 64%;
+}
+.map-row .choice-card:has(input[value="village"]) {
+  --art: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 80'%3E %3Cpath fill='%233c8a52' d='M60 80c20-22 50-30 90-28s70 12 90 4v24z'/%3E %3Cpath fill='%232a6a40' d='M100 80c25-14 60-18 90-12s40 4 50 0v12z'/%3E %3Cpath fill='%231f5534' d='M118 32l7.140000000000001 13.5h-3.5700000000000003l7.65 10.5h-4.080000000000001l6.12 6h-26.520000000000003l6.12 -6h-4.080000000000001l7.65 -10.5h-3.5700000000000003z'/%3E%3Cpath fill='%231a4a2d' d='M132 24l8.568 16.2h-4.284l9.18 12.6h-4.896000000000001l7.343999999999999 7.2h-31.824l7.343999999999999 -7.2h-4.896000000000001l9.18 -12.6h-4.284z'/%3E%3Cpath fill='%231a4a2d' d='M226 24l8.092 15.3h-4.046l8.67 11.899999999999999h-4.6240000000000006l6.936 6.800000000000001h-30.056l6.936 -6.800000000000001h-4.6240000000000006l8.67 -11.899999999999999h-4.046z'/%3E%3Cpath fill='%231f5534' d='M214 36l6.188 11.700000000000001h-3.094l6.63 9.1h-3.536l5.303999999999999 5.2h-22.984l5.303999999999999 -5.2h-3.536l6.63 -9.1h-3.094z'/%3E %3Cpath fill='%23efe6cf' d='M160 52h34v18h-34z'/%3E%3Cpath fill='%23b8463a' d='M155 53l22-15 22 15z'/%3E %3Cpath fill='%235a3b28' d='M173 60h7v10h-7z'/%3E%3Cpath fill='%237fb3d9' d='M163 56h6v5h-6zM185 56h6v5h-6z'/%3E %3C/svg%3E");
+  --tint: #2f7d4f;
+}
+.map-row .choice-card:has(input[value="harbor"]) {
+  --art: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 80'%3E %3Cpath fill='%23e0aa35' d='M150 18h4v50h-4zM176 18h4v50h-4zM144 16h66v5h-66zM196 21h3v14h-3z'/%3E %3Cpath fill='%232b2f3a' d='M190 35h14v8h-14z'/%3E %3Cpath fill='%23c2502f' d='M118 52h30v14h-30z'/%3E%3Cpath fill='%232f7f70' d='M150 52h30v14h-30z'/%3E %3Cpath fill='%233b5fa8' d='M134 38h30v14h-30z'/%3E%3Cpath fill='%23d48a2a' d='M182 52h30v14h-30z'/%3E %3Cpath fill='%231f5f99' d='M60 80V68h180v12z'/%3E%3Cpath fill='%235aa6dd' d='M90 70h22v2H90zM150 74h30v2h-30zM200 69h20v2h-20z'/%3E %3C/svg%3E");
+  --tint: #2c6fa8;
+}
+.map-row .choice-card:has(input[value="quarry"]) {
+  --art: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 80'%3E %3Cpath fill='%23c98f4e' d='M110 80V44l14-6h30l8 10h20l10-14h28l20 12v34z'/%3E %3Cpath fill='%23a8703a' d='M110 80V58h30l6-6h40l8 8h46v20z'/%3E %3Cpath fill='%238a5a2e' d='M150 80l6-10h24l6 4h54v6z'/%3E %3Cpath fill='%23e3b072' d='M124 38h30l-6 4h-20zM192 34h28l-8 4h-18z'/%3E %3Cpath fill='%237a4e28' d='M128 70h8l3 4h-14zM206 66h10l2 5h-14z'/%3E %3C/svg%3E");
+  --tint: #a8733a;
+}
+.battle-choice .choice-card:has(input[value="team"]) {
+  --scene:
+    radial-gradient(ellipse 60% 70% at 85% 30%, #ffffff10, transparent 70%),
+    linear-gradient(118deg, transparent 52%, #c0283c55 52.2%, #7a142833 100%),
+    linear-gradient(118deg, #1e64c255 0%, #164a9433 52%, transparent 52.2%);
+}
+.battle-choice .choice-card:has(input[value="solo"]) {
+  --scene:
+    radial-gradient(circle at 80% 38%, transparent 18%, #ff4d5e33 18.5%, transparent 19.5%),
+    radial-gradient(circle at 80% 38%, transparent 30%, #ff4d5e26 30.5%, transparent 31.5%),
+    radial-gradient(ellipse 70% 80% at 80% 40%, #b8203644, transparent 70%);
 }
 /* Solo Assault waits while an extra level fixes the battle format. */
 .choice-card:has(input:disabled) {
@@ -1333,17 +2556,20 @@ h2 {
   cursor: not-allowed;
 }
 .start .choice-card:has(input:disabled):hover {
-  background: transparent;
+  background: var(--card);
 }
 .choice-card input:disabled {
   cursor: not-allowed;
 }
 .choice-icon {
-  flex: 0 0 36px;
-  height: 36px;
-  padding: 7px;
-  border-radius: 8px;
-  background: var(--tint);
+  flex: 0 0 38px;
+  height: 38px;
+  padding: 8px;
+  border-radius: 9px;
+  background: linear-gradient(180deg, #ffffff33, transparent 60%), var(--tint);
+  box-shadow:
+    inset 0 0 0 1px #ffffff33,
+    0 4px 10px #0006;
   fill: none;
   stroke: #fff;
   stroke-width: 1.8;
@@ -1353,13 +2579,16 @@ h2 {
 .choice-card b {
   display: block;
   font-size: 15px;
+  font-weight: 800;
+  text-shadow: 0 1px 4px #000a;
 }
 .choice-card small {
   display: block;
   margin-top: 3px;
-  color: #c4dfef;
+  color: #c9def0;
   font-size: 12px;
   line-height: 1.35;
+  text-shadow: 0 1px 3px #000a;
 }
 /* Map dropdowns: the closed picker shows its chosen map in a well, like the other choices;
    its list opens in the top layer, so it inherits the menu's colours but not its clipping. */
@@ -1369,12 +2598,12 @@ h2 {
   gap: 12px;
   min-height: 72px;
   padding: 10px 14px 10px 12px;
-  border-radius: 9px;
+  border-radius: 10px;
   cursor: pointer;
 }
 .map-picker-button:hover,
 .map-picker-button[aria-expanded="true"] {
-  background: var(--card-hover);
+  background-color: var(--card-hover);
 }
 .map-picker-button:focus-visible {
   outline: 3px solid #fff;
@@ -1420,23 +2649,21 @@ h2 {
   position: fixed;
   inset: auto;
   margin: 0;
-  padding: 4px;
+  padding: 5px;
   overflow-y: auto;
   border: 1px solid #8bb9dc33;
-  border-radius: 12px;
-  background: var(--well);
-  box-shadow: 0 14px 34px #000a;
+  border-radius: 14px;
+  background: #081428;
+  box-shadow: 0 18px 40px #000c;
   color: #fff;
-  font:
-    14px system-ui,
-    sans-serif;
+  font: 14px var(--font-ui);
 }
 .map-picker-option {
   display: flex;
   align-items: center;
   gap: 12px;
   padding: 8px 10px;
-  border-radius: 9px;
+  border-radius: 10px;
   cursor: pointer;
 }
 .map-picker-option.active {
@@ -1490,7 +2717,8 @@ h2 {
   text-align: center;
 }
 /* Difficulty stacks its levels with their effects spelled out, matching the height of
-   the Battle cards beside it and of the name and team on the multiplayer tab. */
+   the Battle cards beside it and of the name and team on the multiplayer tab. Pips at
+   the right edge rank them. */
 .difficulty-setting .segmented {
   flex: 1;
   grid-auto-flow: row;
@@ -1498,11 +2726,36 @@ h2 {
 .difficulty-setting .segment {
   justify-items: start;
   min-height: 0;
-  padding: 5px 12px;
+  padding: 5px 46px 5px 14px;
   text-align: left;
 }
+.difficulty-setting .segment::after {
+  content: "";
+  position: absolute;
+  right: 14px;
+  top: calc(50% - 6px);
+  width: 18px;
+  height: 12px;
+  background:
+    linear-gradient(var(--pip1, #ffffff22), var(--pip1, #ffffff22)) 0 100% / 4px 6px no-repeat,
+    linear-gradient(var(--pip2, #ffffff22), var(--pip2, #ffffff22)) 7px 100% / 4px 9px no-repeat,
+    linear-gradient(var(--pip3, #ffffff22), var(--pip3, #ffffff22)) 14px 100% / 4px 12px no-repeat;
+}
+.difficulty-setting .segment:has(input[value="easy"]) {
+  --pip1: #6fe39a;
+}
+.difficulty-setting .segment:has(input[value="normal"]) {
+  --pip1: var(--gold);
+  --pip2: var(--gold);
+}
+.difficulty-setting .segment:has(input[value="hard"]) {
+  --pip1: var(--red);
+  --pip2: var(--red);
+  --pip3: var(--red);
+}
 .difficulty-setting .segment b {
-  font-size: 14px;
+  font-size: 15px;
+  font-weight: 800;
 }
 .difficulty-setting .segment small {
   display: block;
@@ -1542,17 +2795,55 @@ h2 {
   display: grid;
   align-content: center;
   min-width: 0;
-  min-height: 58px;
+  min-height: 62px;
   margin: 0;
   border: 0;
+  border-radius: 12px;
   background: var(--well);
+  box-shadow: inset 0 2px 8px #0008;
 }
-/* The yellow action has the status well's exact height and edges. */
+/* The gold action has the status well's height and edges, and breathes while ready. */
 .start #start {
   align-self: end;
-  min-height: 58px;
-  padding: 10px 24px;
-  font-size: 30px;
+  min-height: 62px;
+  padding: 8px 24px;
+  border-radius: 12px;
+  font: 400 40px/1 var(--font-display);
+  letter-spacing: 4px;
+}
+.start #start::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  background: radial-gradient(ellipse 60% 90% at 50% 120%, #fff7, transparent 70%);
+  opacity: 0;
+  pointer-events: none;
+}
+:is(#startup-overlay, #overlay)[data-state="ready"] .start #start::before {
+  animation: go-breathe 2.4s ease-in-out infinite;
+}
+:is(#startup-overlay, #overlay)[data-state="ready"] .start #start::after {
+  animation: go-glint 3.6s ease-in-out 1s infinite;
+}
+@keyframes go-breathe {
+  50% {
+    opacity: 1;
+  }
+}
+@keyframes go-glint {
+  0%,
+  70% {
+    transform: skewX(-20deg) translateX(-120%);
+  }
+  100% {
+    transform: skewX(-20deg) translateX(560%);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  :is(#startup-overlay, #overlay)[data-state="ready"] .start #start:is(::before, ::after) {
+    animation: none;
+  }
 }
 .multiplayer-note {
   display: none;
@@ -1572,11 +2863,11 @@ h2 {
 .start[data-play="multiplayer"]:has(#new-room:not(:checked))
   .map-row
   .choice-card:has(input:checked):not(.room-map) {
-  background: transparent;
+  background: var(--card);
   box-shadow: none;
 }
 /* The room's map reads as fixed rather than chosen: a muted ring and a lock where a
-   choice shows the yellow ring or the dropdown's arrow. */
+   choice shows the gold ring or the dropdown's arrow. */
 .start[data-play="multiplayer"]:has(#new-room:not(:checked))
   :is(.map-row .room-map, .map-picker[data-room-map] .map-picker-button) {
   background: var(--card-selected);
@@ -1613,12 +2904,11 @@ h2 {
   height: 42px;
   padding: 0 12px;
   border: 1px solid #92b4cf30;
-  border-radius: 7px;
+  border-radius: 9px;
   background: var(--well);
+  box-shadow: inset 0 2px 6px #0008;
   color: #f5faff;
-  font:
-    600 15px Arial,
-    sans-serif;
+  font: 600 15px var(--font-ui);
 }
 .start input:is([type="text"], [type="number"], :not([type])):focus-visible {
   outline: 2px solid var(--accent);
@@ -1788,8 +3078,7 @@ h2 {
 .new-room {
   flex: none;
   justify-content: space-between;
-  border-bottom: 1px dashed #8bb9dc2e;
-  border-radius: 9px 9px 0 0;
+  border-radius: 10px;
 }
 .new-room-choice {
   display: flex;
@@ -1842,14 +3131,14 @@ h2 {
   padding-top: 14px;
 }
 /* The multiplayer status well follows its own state, not the single-player arena's:
-   yellow and sweeping while the list loads or a room joins, green once the list is in
+   gold and sweeping while the list loads or a room joins, green once the list is in
    (its ready and error states sit with the arena's). */
 #rooms-message {
   white-space: pre-line;
 }
 #multiplayer-panel .room-status .startup-track span {
   width: 38%;
-  background: linear-gradient(90deg, transparent, #ffcf38, #ffe79b);
+  background: linear-gradient(90deg, transparent, var(--gold), var(--gold-hot));
   animation: startup-sweep 1.4s ease-in-out infinite;
 }
 /* One action: Create for the new room, Join for an open room. */
@@ -1858,14 +3147,18 @@ h2 {
   align-self: end;
 }
 .room-action .primary {
-  min-height: 58px;
+  min-height: 62px;
   padding: 10px 18px;
-  font-size: 20px;
+  border-radius: 12px;
+  font: 400 26px/1 var(--font-display);
+  letter-spacing: 2px;
   white-space: nowrap;
 }
 .room-action .primary:disabled {
   background: #b7d7ed14;
+  box-shadow: inset 0 0 0 1px #b7d7ed22;
   color: #7795ab;
+  text-shadow: none;
   cursor: default;
 }
 #multiplayer-panel:has(#new-room:checked) #join-room,
@@ -1945,7 +3238,7 @@ h2 {
     gap: 12px;
   }
   .play-tab {
-    padding-block: 13px;
+    padding-block: 12px;
   }
   .start .tank-preview {
     height: 90px;
@@ -1971,7 +3264,7 @@ h2 {
     display: none;
   }
   .start #start {
-    font-size: 24px;
+    font-size: 30px;
   }
   .vehicles {
     gap: 8px;
@@ -1983,17 +3276,58 @@ h2 {
   }
 }
 
+/* The battle report: the outcome in big type (gold for a win, red for a loss), the score
+   on team plates, then the round's numbers as tiles that land one after another. */
 .menu.results {
-  max-width: 820px;
-  padding: 20px 28px;
+  max-width: 860px;
+  padding: 22px 30px 24px;
   /* Sit above true centre so the report clears the bottom HUD and reads as centred. */
   margin-bottom: 10vh;
+  animation: dialog-in 0.3s ease-out;
+}
+.menu.pause-menu {
+  max-width: 640px;
+  animation: dialog-in 0.25s ease-out;
+}
+@keyframes dialog-in {
+  from {
+    opacity: 0;
+  }
+}
+.results[data-outcome="won"]::before {
+  width: 120px;
+}
+.results[data-outcome="lost"]::before {
+  width: 120px;
+  background: var(--red);
+  box-shadow: 0 0 12px #ff4d5eaa;
+}
+.results .dialog-title h2 {
+  font-size: 58px;
+}
+.results[data-outcome="won"] .dialog-title h2 {
+  background: linear-gradient(180deg, #fff 15%, var(--gold-hot) 55%, var(--gold-deep));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(0 3px 10px #ffb21c55);
+}
+.results[data-outcome="lost"] .dialog-title h2 {
+  background: linear-gradient(180deg, #fff 15%, #ff9aa5 55%, var(--red));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  text-shadow: none;
+  filter: drop-shadow(0 3px 10px #ff4d5e55);
 }
 #overlay:has(.results) {
   align-items: safe center;
 }
 .results .dialog-head {
-  margin-bottom: 14px;
+  margin-bottom: 16px;
+  padding-bottom: 14px;
+  border-bottom: 1px solid #9fd0ff1a;
 }
 .recap-feats {
   display: flex;
@@ -2002,85 +3336,149 @@ h2 {
   margin-bottom: 10px;
 }
 .recap-feats > div {
+  padding: 6px 12px;
   border: 1px solid #ffda7866;
-  background: #ffda7814;
   border-radius: 8px;
-  padding: 5px 12px;
+  background: linear-gradient(180deg, #ffda7826, #ffda780d);
+  color: #e6dcc0;
   font-size: 11px;
   line-height: 1.35;
-  color: #e6dcc0;
 }
 .recap-feats b {
   display: block;
   color: #ffda78;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.8px;
 }
 .recap-stats {
   display: grid;
   grid-template-columns: repeat(6, minmax(0, 1fr));
-  gap: 6px;
+  gap: 8px;
   margin: 0;
 }
 .recap-stat {
+  position: relative;
+  padding: 10px 6px 9px;
+  overflow: hidden;
+  border: 1px solid #a6dfff21;
+  border-radius: 10px;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0, #4f9be022, transparent 70%),
+    linear-gradient(180deg, #0f2442, #081429);
+  box-shadow: var(--sheen);
   text-align: center;
-  background: #091d32a8;
-  border: 1px solid #a6dfff24;
-  border-radius: 8px;
-  padding: 8px 6px 7px;
   cursor: default;
+  animation: tile-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
+}
+.recap-stat::before {
+  content: "";
+  position: absolute;
+  left: 30%;
+  right: 30%;
+  top: 0;
+  height: 2px;
+  border-radius: 0 0 2px 2px;
+  background: var(--text-label);
+  opacity: 0.6;
+}
+.recap-stat:nth-child(2) {
+  animation-delay: 0.04s;
+}
+.recap-stat:nth-child(3) {
+  animation-delay: 0.08s;
+}
+.recap-stat:nth-child(4) {
+  animation-delay: 0.12s;
+}
+.recap-stat:nth-child(5) {
+  animation-delay: 0.16s;
+}
+.recap-stat:nth-child(6) {
+  animation-delay: 0.2s;
+}
+@keyframes tile-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .recap-stat,
+  .menu.results,
+  .menu.pause-menu {
+    animation: none;
+  }
 }
 .recap-stat.is-record {
   border-color: #ffda7899;
-  background: #ffda7812;
+  background:
+    radial-gradient(ellipse 80% 60% at 50% 0, #ffda7833, transparent 70%),
+    linear-gradient(180deg, #2a2a2e, #14131a);
+}
+.recap-stat.is-record::before {
+  background: #ffda78;
+  opacity: 1;
 }
 .recap-stat dt {
-  font-size: 10px;
-  font-weight: 700;
-  text-transform: uppercase;
-  letter-spacing: 1px;
   color: #a6c4d8;
+  font-size: 9.5px;
+  font-weight: 800;
+  letter-spacing: 1.4px;
+  text-transform: uppercase;
   white-space: nowrap;
 }
 .recap-stat dd {
-  margin: 3px 0 2px;
-  font-size: 24px;
-  line-height: 1.1;
-  font-weight: 800;
-  color: #fff5d9;
+  margin: 4px 0 2px;
+  color: #fff;
+  font: 400 32px/1.05 var(--font-display);
+  letter-spacing: 0.5px;
   font-variant-numeric: tabular-nums;
+  text-shadow: 0 2px 8px #0008;
   white-space: nowrap;
 }
 .recap-stat > span {
   display: block;
+  color: #8fb3cb;
   font-size: 10px;
   line-height: 13px;
-  color: #8fb3cb;
 }
 .recap-stat.is-record > span {
   color: #ffda78;
   font-weight: 700;
 }
+/* The rest of the round's numbers: one strip of small cells in a dark well, as many to
+   a row as fit, so a short list never leaves an orphan dangling under the tiles. */
 .recap-details {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(170px, 1fr));
-  column-gap: 20px;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 1px;
   margin: 10px 0 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #9fd0ff14;
   text-align: left;
 }
 .recap-detail {
   display: flex;
+  align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  border-bottom: 1px solid #a6dfff1a;
-  padding: 4px 0;
-  font-size: 12px;
-  color: #b9d0e0;
+  padding: 9px 12px;
+  background: #060f1fe6;
+  color: #a6c4d8;
+  font-size: 11.5px;
+  font-weight: 600;
   cursor: default;
+}
+.recap-detail dt {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .recap-detail dd {
   margin: 0;
-  font-weight: 800;
-  color: #fff5d9;
+  color: #fff;
+  font: 400 17px/1 var(--font-display);
+  letter-spacing: 0.4px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -2091,6 +3489,9 @@ h2 {
   margin: 10px 0 0;
   font-size: 11px;
   color: #8fb3cb;
+}
+.results .recap-note:empty {
+  display: none;
 }
 .recap-note b {
   color: #ffda78;
@@ -2112,73 +3513,173 @@ h2 {
   }
 }
 
-/* Settings: a modal over the battle, the same width and header as the pause menu. Each
-   row is a label and its control, sliders with their value beside them; single player
-   adds its battle speeds. */
+/* Settings: a modal over the battle in the same glass as the other dialogs. Each row is
+   a label and its control, sliders with their value beside them and a gold fill up to
+   the thumb; single player adds its battle speeds. */
 .settings {
-  width: min(480px, calc(100% - 32px));
+  width: min(500px, calc(100% - 32px));
   max-height: calc(100% - 32px);
   margin: auto;
-  padding: 24px 28px;
-  border: 1px solid #f2eac42c;
-  border-radius: 14px;
-  background: #142e4df2;
-  box-shadow: 0 30px 100px #0008;
-  color: #f5faff;
-  font:
-    14px system-ui,
-    sans-serif;
+  padding: 26px 30px 28px;
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  background: var(--glass);
+  box-shadow:
+    var(--sheen),
+    0 40px 120px #000b,
+    0 0 0 1px #0006;
+  color: var(--text);
+  font: 14px var(--font-ui);
+}
+.settings[open] {
+  animation: dialog-pop 0.22s cubic-bezier(0.2, 0.9, 0.3, 1.15);
+}
+@keyframes dialog-pop {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.97);
+  }
+}
+.settings:focus {
+  outline: none;
+}
+.settings::before {
+  content: "";
+  position: absolute;
+  left: 30px;
+  top: 0;
+  width: 64px;
+  height: 3px;
+  border-radius: 0 0 3px 3px;
+  background: var(--gold);
+  box-shadow: 0 0 12px #ffcf38aa;
 }
 .settings::backdrop {
-  background: #06101bb3;
-  backdrop-filter: blur(2px);
+  background: radial-gradient(ellipse 75% 75% at 50% 45%, #07122477, #030812e0 100%);
+  backdrop-filter: blur(5px) saturate(0.85);
 }
 .setting-rows {
-  margin-top: 12px;
+  margin-top: 4px;
 }
 .setting-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 160px 44px;
+  grid-template-columns: minmax(0, 1fr) 170px 46px;
   align-items: center;
-  gap: 12px;
-  min-height: 48px;
-  border-bottom: 1px solid #8bb9dc1f;
-  font-weight: 600;
+  gap: 14px;
+  min-height: 52px;
+  border-bottom: 1px solid #9fd0ff14;
+  font-weight: 700;
+}
+.setting-row > span small {
+  display: block;
+  margin-top: 2px;
+  color: #8fb3cb;
+  font-size: 11px;
+  font-weight: 500;
 }
 .setting-row select {
   grid-column: 2 / -1;
   height: 38px;
-  padding: 0 10px;
-  border: 1px solid #92b4cf40;
-  border-radius: 7px;
-  background: #0c2239;
-  color: #f5faff;
-  font: inherit;
+  padding: 0 34px 0 12px;
+  border: 1px solid #9fd0ff33;
+  border-radius: 9px;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23ffcf38' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E")
+      right 12px center / 12px 8px no-repeat,
+    #050d1ccc;
+  box-shadow: inset 0 2px 6px #0008;
+  color: var(--text);
+  font: 700 14px var(--font-ui);
+  appearance: none;
+  cursor: pointer;
+}
+.setting-row select:hover {
+  border-color: #9fd0ff66;
+}
+.setting-row select:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 2px;
 }
 .setting-row input[type="range"] {
+  --fill: 50%;
   width: 100%;
+  height: 22px;
   margin: 0;
-  accent-color: #ffcf38;
+  background: transparent;
+  appearance: none;
+  cursor: pointer;
+}
+.setting-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 6px;
+  border-radius: 3px;
+  background:
+    linear-gradient(90deg, var(--gold-deep), var(--gold)) 0 0 / var(--fill) 100% no-repeat,
+    #ffffff1a;
+  box-shadow: inset 0 1px 2px #0008;
+}
+.setting-row input[type="range"]::-moz-range-track {
+  height: 6px;
+  border-radius: 3px;
+  background:
+    linear-gradient(90deg, var(--gold-deep), var(--gold)) 0 0 / var(--fill) 100% no-repeat,
+    #ffffff1a;
+}
+.setting-row input[type="range"]::-webkit-slider-thumb {
+  width: 18px;
+  height: 18px;
+  margin-top: -6px;
+  border: 3px solid #fff7d6;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow:
+    0 2px 6px #000a,
+    0 0 0 4px #ffcf3826;
+  appearance: none;
+  transition: transform 0.12s;
+}
+.setting-row input[type="range"]::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 3px solid #fff7d6;
+  border-radius: 50%;
+  background: var(--gold);
+  box-shadow: 0 2px 6px #000a;
+}
+.setting-row input[type="range"]:hover::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.setting-row input[type="range"]:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: 4px;
+  border-radius: 4px;
 }
 .setting-row output {
-  color: #ffcf38;
+  color: var(--gold);
+  font: 400 20px/1 var(--font-display);
   font-variant-numeric: tabular-nums;
+  letter-spacing: 0.5px;
   text-align: right;
 }
 .setting-group-label {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-top: 20px;
-  color: #a6dfff;
-  font-size: 11px;
-  font-weight: 700;
-  letter-spacing: 2px;
+  margin-top: 22px;
+  color: var(--text-label);
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
 }
-.setting-group-label small {
-  color: #9fbcd2;
-  font-weight: 400;
-  letter-spacing: 0;
+.settings .dialog-head + .setting-group-label {
+  margin-top: 16px;
+}
+.speeds-reset {
+  color: #9fc0da;
+  font-size: 11px;
+  letter-spacing: 0.3px;
+  text-decoration: underline;
+  text-decoration-color: #9fc0da55;
+  text-underline-offset: 3px;
 }
 
 /* Phones (src/game/phone-mode.ts): Battle Setup offers only the tank and the map, and
@@ -2203,7 +3704,7 @@ html.phone,
 }
 .phone
   :is(
-    .setup-header,
+    .setup-heading,
     .play-tab small,
     .battle-choice,
     .difficulty-setting,
@@ -2222,6 +3723,24 @@ html.phone,
 .phone .menu.start {
   gap: 10px;
   padding: 14px 16px 12px;
+}
+/* A phone held upright has room for the logo over its short setup; held sideways it
+   keeps every pixel for the choices. */
+.phone .setup-header {
+  justify-content: center;
+  margin-bottom: 4px;
+}
+.phone .setup-brand {
+  font-size: 30px;
+  text-align: center;
+}
+.phone .setup-brand b:last-child {
+  font-size: 46px;
+}
+@media (orientation: landscape) {
+  .phone .setup-header {
+    display: none;
+  }
 }
 .phone .start .vehicles {
   gap: 8px;
@@ -2368,10 +3887,14 @@ html.phone,
   display: none;
 }
 .phone #hud .team {
+  justify-content: center;
   width: auto;
-  min-width: 38px;
-  padding: 4px 6px 3px;
-  border-bottom-width: 2px;
+  min-width: 40px;
+  padding: 4px 10px 3px;
+  clip-path: none;
+}
+.phone #hud .team-progress {
+  display: none;
 }
 /* Outer corners match the buttons beside the pill. */
 .phone #hud .mint {
@@ -2408,9 +3931,15 @@ html.phone,
   max-width: 520px;
   padding: 10px 14px 12px;
 }
-.phone .respawn h2 {
-  font-size: 18px;
+.phone .respawn :is(.wrecked-by, .respawn-pick, .respawn-bar) {
+  display: none;
+}
+.phone .respawn-head {
+  justify-content: center;
   margin-bottom: 8px;
+}
+.phone .respawn-timer h2 {
+  font-size: 24px;
 }
 .phone .respawn .vehicles {
   gap: 8px;

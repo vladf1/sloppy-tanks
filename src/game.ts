@@ -111,7 +111,7 @@ export async function prepareGame(
       if (!sameGameOptions(prepared, wanted)) {
         const next = { ...wanted };
         // The rebuild blocks the main thread for up to a few hundred milliseconds; show
-        // the player's new choice, or GO's WAIT, before it starts.
+        // the player's new choice, or GO's LOADING…, before it starts.
         await afterPaint();
         if (inRound) {
           return;
@@ -236,7 +236,7 @@ export async function prepareGame(
     const button = ui.overlay.querySelector<HTMLButtonElement>("#start, #play-again");
     if (button) {
       button.disabled = true;
-      button.textContent = "WAIT";
+      button.textContent = "LOADING…";
     }
     ui.overlay.dataset.state = "starting";
     const status = ui.overlay.querySelector("#startup-status");
@@ -339,6 +339,7 @@ export async function prepareGame(
       }
     },
   });
+  ui.aimPoint = () => ({ x: controls.nx, y: controls.ny });
   const toggleView = () => {
     firstPerson = game.toggle_first_person();
     saveCameraPreferences(game);

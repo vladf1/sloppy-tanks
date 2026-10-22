@@ -42,12 +42,15 @@ function settingsMarkup(eyebrow: string, speeds: boolean): string {
         `<label class="setting-row" for="${key}"><span>${SPEED_LABELS[key]}</span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1"><output id="${key}-value" for="${key}">100%</output></label>`,
     )
     .join("");
-  return `<dialog id="settings" class="settings" aria-labelledby="settings-title">
+  // The dialog itself takes focus when it opens, so no control starts out ringed as if
+  // the keyboard had chosen it; Tab moves to the first one.
+  return `<dialog id="settings" class="settings" aria-labelledby="settings-title" tabindex="-1">
     <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${eyebrow}</span></div><div class="dialog-title"><h2 id="settings-title">SETTINGS</h2></div></header>
+    <div class="setting-group-label">GAME</div>
     <div class="setting-rows">
-    <label class="setting-row" for="touch-mode"><span>Touch controls</span><select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
+    <label class="setting-row" for="touch-mode"><span>Touch controls<small>Auto shows them on touchscreens</small></span><select id="touch-mode"><option value="auto">Auto</option><option value="on">On</option><option value="off">Off</option></select></label>
     <label class="setting-row" for="volume"><span>Sound</span><input id="volume" type="range" min="0" max="1" step="0.05"><output id="volume-value" for="volume"></output></label>
-    ${speeds ? `<div class="setting-group-label">BATTLE SPEED<small>50–200% · 100% is the default</small></div>${speedRows}` : ""}
+    ${speeds ? `<div class="setting-group-label">BATTLE SPEED<button class="text-button speeds-reset" type="button">Reset to 100%</button></div>${speedRows}` : ""}
     </div>
     <div class="menu-actions"><button class="primary settings-save" type="button">SAVE</button><button class="secondary settings-cancel" type="button">CANCEL</button></div>
   </dialog>`;
@@ -90,6 +93,11 @@ export class SettingsDialog {
       this.save();
       this.close();
     });
+    this.dialog.querySelector(".speeds-reset")?.addEventListener("click", () => {
+      for (const key of Object.keys(SPEED_LABELS)) {
+        this.show(key, 1);
+      }
+    });
     for (const id of ["volume", ...Object.keys(SPEED_LABELS)]) {
       const input = this.dialog.querySelector<HTMLInputElement>("#" + id);
       input?.addEventListener("input", () => this.show(id, Number(input.value)));
@@ -113,6 +121,9 @@ export class SettingsDialog {
     if (input) {
       input.value = String(value);
       this.dialog.querySelector(`#${id}-value`)!.textContent = percent(value);
+      // The track fills up to the thumb in the brand gold (`--fill`, 0–100%).
+      const [min, max] = [Number(input.min), Number(input.max)];
+      input.style.setProperty("--fill", `${((value - min) / (max - min)) * 100}%`);
     }
   }
 
@@ -141,5 +152,6 @@ export class SettingsDialog {
     }
     this.handlers.opened();
     this.dialog.showModal();
+    this.dialog.focus();
   }
 }
