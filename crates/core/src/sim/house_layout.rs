@@ -513,7 +513,7 @@ const STUB: (f64, f64) = (0.3, 0.72);
 /// Clearance between neighbouring shards' colliders across a crack.
 const CRACK_GAP: f64 = 0.02;
 /// Rafters hang this far under a roof deck; a slab's collider takes them in only
-/// inside the wall line, clear of the wall tops it rests on.
+/// inside the wall line, clear of the wall tops.
 pub const RAFTER_DEPTH: f64 = 0.16;
 const RAFTER_INSET: f64 = 0.45;
 
@@ -908,8 +908,15 @@ impl HouseDesign {
             }
         }
         let (xe, ze, rh) = (roof.eave_x, roof.rake_z, roof.ridge_half);
-        // A slab's collider: its deck and shingles, and the rafters under it inside
-        // the wall line.
+        // A slab's collider: its deck and shingles inside the walls, and the rafters
+        // under it inside the wall line. The eaves and rakes that overhang the walls
+        // stay out of it: resting on the wall tops, they would catch each wall shard
+        // tipping out from under the roof and hold it up as a post under a slab many
+        // times its weight. Clear of the walls, the slab drops between them.
+        let (inside_w, inside_d) = (
+            self.w / 2.0 - WALL_DEPTH - GAP,
+            self.d / 2.0 - WALL_DEPTH - GAP,
+        );
         let lift = |x: f64, z: f64, inside: bool| {
             let top = roof.top(x, z);
             let low = top - roof.thick + GAP;
@@ -955,20 +962,16 @@ impl HouseDesign {
                     right.map(|c| straight(c, false)).as_ref(),
                     None,
                 );
-                let points = core.outline_points(&outline);
+                let points = core.outline_points(&within(&outline, inside_d, inside_w));
                 // The rafters' reach, cut off at the wall line.
-                let rafters = core.outline_points(&[
-                    DVec2::new(-ze, 0.0),
-                    DVec2::new(ze, 0.0),
-                    DVec2::new(ze, wall_line),
-                    DVec2::new(-ze, wall_line),
-                ]);
+                let rafters = core.outline_points(&within(&outline, inside_d, wall_line));
                 let mut hull: Vec<DVec3> = points
                     .iter()
                     .flat_map(|q| lift(side * q.y, q.x, false))
                     .chain(rafters.iter().map(|q| lift(side * q.y, q.x, true)[1]))
                     .collect();
-                // The slab carrying the cross gable falls with it on top.
+                // The slab carrying the cross gable falls with it on top, the gable
+                // too held inside the wall it fronts.
                 if let Some(wing) = self.wing().filter(|_| side > 0.0) {
                     let (low, high) = points
                         .iter()
@@ -976,7 +979,11 @@ impl HouseDesign {
                             (l.min(q.x), h.max(q.x))
                         });
                     if (low..high).contains(&wing.z) {
-                        hull.extend(wing.hull(&roof));
+                        hull.extend(
+                            wing.hull(&roof)
+                                .into_iter()
+                                .map(|p| DVec3::new(p.x.min(inside_w), p.y, p.z)),
+                        );
                     }
                 }
                 pieces.push(PieceShape::new(
@@ -1030,7 +1037,7 @@ impl HouseDesign {
                         None,
                     );
                     let hull: Vec<DVec3> = core
-                        .outline_points(&outline)
+                        .outline_points(&within(&outline, inside_w, inside_d))
                         .iter()
                         .flat_map(|q| lift(q.x, end * q.y, false))
                         .collect();
@@ -1114,6 +1121,21 @@ impl HouseDesign {
     pub fn open_floor(&self) -> f64 {
         self.d - HOUSE_HEAP.inset - HOUSE_HEAP.depth
     }
+}
+
+/// The part of a roof slope's plan `outline` (convex; `s` along the slope from
+/// its middle, `t` out from the ridge) within `along` of the middle and `across`
+/// of the ridge.
+fn within(outline: &[DVec2], along: f64, across: f64) -> Vec<DVec2> {
+    let side = |a: DVec2, b: DVec2| Side::through(a, b, DVec2::ZERO, EdgeKind::Band);
+    let inside = ShardRegion {
+        cells: vec![vec![
+            side(DVec2::new(-along, 0.0), DVec2::new(-along, 1.0)),
+            side(DVec2::new(along, 0.0), DVec2::new(along, 1.0)),
+            side(DVec2::new(0.0, across), DVec2::new(1.0, across)),
+        ]],
+    };
+    inside.outline_points(outline)
 }
 
 /// A straight crack at the extreme of `crack` on its far side from the shard it
@@ -1244,6 +1266,25 @@ mod tests {
             for crack in design.roof_cracks(1.0) {
                 let z = crack.points[1].x;
                 assert!((z - wing.z).abs() > wing.half, "{z} {wing:?}");
+            }
+        }
+    }
+
+    /// No roof slab's collider reaches over a wall: a wall shard tipping out from
+    /// under an eave resting on its top would be held standing under the slab.
+    #[test]
+    fn roof_slab_colliders_stay_inside_the_walls() {
+        for (x, z, w, d, h) in village() {
+            let design = HouseDesign::of(x, z, w, d, h);
+            let (inside_w, inside_d) = (design.w / 2.0 - WALL_DEPTH, design.d / 2.0 - WALL_DEPTH);
+            for slab in design.pieces().iter().filter(|p| p.piece.part.is_roof()) {
+                for p in &slab.hull {
+                    assert!(
+                        p.x.abs() < inside_w && p.z.abs() < inside_d,
+                        "{x} {z} {:?} {p}",
+                        slab.piece
+                    );
+                }
             }
         }
     }
