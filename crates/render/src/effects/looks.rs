@@ -6,8 +6,7 @@ use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use sloppy_core::geometry::{
-    Mesh, cylinder_geometry, icosahedron_geometry, plane_geometry, ring_geometry, sphere_geometry,
-    tetrahedron_geometry,
+    Mesh, cylinder_geometry, icosahedron_geometry, plane_geometry, tetrahedron_geometry,
 };
 use sloppy_core::scene::{Blending, Effect, Material, Side};
 use sloppy_core::sim::PickupKind;
@@ -19,7 +18,7 @@ use super::explosions::DECAL_CAPACITY;
 use super::laser::LASER_CAPACITY;
 use super::leaves::{MAX_LEAVES, leaf_mesh};
 use super::particles::{MAX_PARTICLES, shard_mesh};
-use super::pickups::MAX_PICKUP_EFFECTS;
+use super::pickups::{MAX_PICKUP_EFFECTS, band_geometry, glow_material, shockwave_geometry};
 use super::pool::{PoolDesc, pool};
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
 use super::quarry_dust::QUARRY_DUST_CAPACITY;
@@ -178,23 +177,16 @@ pub fn pool_descs() -> Vec<PoolDesc> {
         LASER_CAPACITY,
     ));
 
-    let glow = |side: Side| Material {
-        transparent: true,
-        depth_write: false,
-        side,
-        blending: Blending::Additive,
-        ..Material::basic(0xffffff)
-    };
     pools.push(PoolDesc::new(
         "pickup rings",
-        ring_geometry(0.88, 1.0, 48),
-        glow(Side::Double),
+        shockwave_geometry(),
+        glow_material(),
         MAX_PICKUP_EFFECTS,
     ));
     pools.push(PoolDesc::new(
-        "pickup glows",
-        sphere_geometry(1.0, 16, 10),
-        glow(Side::Back),
+        "pickup bands",
+        band_geometry(),
+        glow_material(),
         MAX_PICKUP_EFFECTS,
     ));
 
