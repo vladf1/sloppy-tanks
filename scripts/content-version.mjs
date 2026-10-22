@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { readdir, readFile } from "node:fs/promises";
+import { join, relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = new URL("../", import.meta.url);
@@ -94,14 +95,42 @@ export async function serverBuild() {
       ".cargo/config.toml",
       "rust-toolchain.toml",
       "scripts/build-server.mjs",
-      // CI names server images by this hash and skips builds the registry already holds,
-      // so the image recipe, its build context and the arguments it gets must change it too.
+      // CI names server images by this hash (beside the page's site build) and skips images
+      // the registry already holds, so the image recipe, its build context and the
+      // arguments it gets must change it too. The site build hashes the page's files but
+      // not their Brotli and gzip copies, so the scripts that make those count here.
       "Dockerfile",
       ".dockerignore",
       "scripts/build-server-image.mjs",
+      "scripts/server-site.mjs",
+      "scripts/precompress.mjs",
     ],
     dependencyTree("sloppy-server", "x86_64-unknown-linux-musl"),
   );
+}
+
+/** The server image's tag: the server it runs and the page it serves. */
+export function imageBuild(serverBuild, siteBuild) {
+  return `${serverBuild}-${siteBuild}`;
+}
+
+/** The multiplayer server's copy of the site (scripts/server-site.mjs) as its `/health`
+ * reports it: SHA-1 over each shipped file's path and bytes, in path order. The Brotli and
+ * gzip copies beside a file only re-encode it, and their bytes depend on the compressor's
+ * version, so they stay out. crates/server/src/site.rs computes the same from what it
+ * loaded. */
+export async function siteBuild(directory) {
+  const entries = await readdir(directory, { recursive: true, withFileTypes: true });
+  const files = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => relative(directory, join(entry.parentPath, entry.name)).split(sep).join("/"));
+  const shipped = new Set(files);
+  const copies = files.filter((path) => /\.(br|gz)$/.test(path) && shipped.has(path.slice(0, -3)));
+  const hash = createHash("sha1");
+  for (const path of files.filter((path) => !copies.includes(path)).sort()) {
+    hash.update(path + "\0").update(await readFile(join(directory, path)));
+  }
+  return hash.digest("hex").slice(0, 24);
 }
 
 // `node scripts/content-version.mjs` lists the sources clients and the server share.

@@ -1,4 +1,6 @@
-# The server image only copies the binary scripts/build-server.mjs --vps built, so
-# nothing else (sources, node_modules, the rest of target) enters the build context.
+# The server image only copies the binary scripts/build-server.mjs --vps built and the
+# page copy scripts/server-site.mjs built, so nothing else (sources, node_modules, the
+# rest of target) enters the build context.
 *
 !target/x86_64-unknown-linux-musl/server/sloppy-server
+!dist-server

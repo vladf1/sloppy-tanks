@@ -6,6 +6,7 @@
 //!   on the 50 ms cadence around a [`host::RoomHost`].
 //! - [`monitor`] / [`dashboard`]: readings, `/stats`, journal lines and `/dashboard`.
 //! - [`match_room`]: the room host, `sloppy_core`'s `MatchHost` behind [`host::RoomHost`].
+//! - [`site`]: the game's own page and assets, served from memory when `SITE_DIR` is set.
 
 pub mod config;
 pub mod dashboard;
@@ -20,6 +21,7 @@ pub mod room_catalog;
 pub mod room_task;
 pub mod server;
 pub mod session;
+pub mod site;
 pub mod socket;
 pub mod tcp_path;
 pub mod websocket;

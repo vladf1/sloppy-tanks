@@ -1,8 +1,8 @@
 # The quality gate, `pnpm run check`, split into parallel jobs. Each job runs one of
 # the scripts `check` chains, so the two cannot drift apart. Pull requests run it
 # directly; the Pages workflow calls it with the production site settings and deploys
-# only after every job here passes. Beside its gate script, the server job publishes the
-# multiplayer server's Docker image, which the Pages workflow promotes to :production.
+# only after every job here passes. Beside the gate scripts, the server-image job publishes
+# the multiplayer server's Docker image, which the Pages workflow promotes to :production.
 name: Code quality
 
 on:
@@ -25,8 +25,10 @@ on:
         default: ""
     outputs:
       server-image:
-        description: The server image this commit built or found, tagged with its server build.
-        value: ${{ jobs.server.outputs.image }}
+        description: >-
+          The server image this commit built or found, tagged with its server build and
+          site build.
+        value: ${{ jobs.server-image.outputs.image }}
 
 permissions:
   contents: read
@@ -47,6 +49,15 @@ jobs:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
           VITE_MULTIPLAYER_URL: ${{ inputs.multiplayer-url }}
           SLOPPY_BUILD_NUMBER: ${{ inputs.build-number }}
+      # The server's own copy of the page (scripts/server-site.mjs), from the same Wasm:
+      # built for the site root and joining the server that serves it, whatever the
+      # Pages inputs. The server-image job ships it.
+      - run: pnpm run server:build-site
+      - uses: actions/upload-artifact@v7
+        with:
+          name: server-site
+          path: dist-server
+          retention-days: 7
       - if: inputs.deploy-base
         uses: actions/configure-pages@v6
       - if: inputs.deploy-base
@@ -75,23 +86,12 @@ jobs:
       - run: pnpm run test:rust
 
   # Builds the static musl server binary once: the page-shell tests drive it, and the
-  # server image (Dockerfile) copies it in. The image is pushed as <server build>, plus
-  # pr-<number> for a pull request, or main and sha-<commit> for main. A server build the
-  # registry already holds is only retagged, after main's first build of it stamps its
-  # build number (scripts/build-server-image.mjs). Nothing here moves :production or touches a
-  # server; fork pull requests, which cannot push, only build.
+  # server image (Dockerfile) copies it in.
   server:
-    name: Server build, page-shell tests and image
+    name: Server build and page-shell tests
     runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-      packages: write
-    outputs:
-      image: ${{ steps.image.outputs.image }}
     env:
       SLOPPY_SERVER_VPS: "1"
-      SERVER_IMAGE: ghcr.io/vladf1/sloppy-tanks-server
-      PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
@@ -131,6 +131,47 @@ jobs:
         with:
           path: ${{ runner.temp }}/kache
           key: ${{ steps.kache-store.outputs.cache-primary-key }}
+      - uses: actions/upload-artifact@v7
+        with:
+          name: server-binary
+          path: target/x86_64-unknown-linux-musl/server/sloppy-server
+          retention-days: 7
+
+  # The server image: the binary the server job built and tested, and the page copy the
+  # site job built. It is pushed as <server build>-<site build>, plus pr-<number> for a
+  # pull request, or main and sha-<commit> for main. An image the registry already holds
+  # is only retagged, after main's first build of it stamps its build number
+  # (scripts/build-server-image.mjs). Nothing here moves :production or touches a server;
+  # fork pull requests, which cannot push, only build.
+  server-image:
+    name: Server image
+    needs: [site, server]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+    env:
+      SERVER_IMAGE: ghcr.io/vladf1/sloppy-tanks-server
+      PUSH: ${{ github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+      # Node runs the image script, and the server build it names the image by comes
+      # from `cargo tree`; nothing compiles here.
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: image
+      - uses: actions/download-artifact@v8
+        with:
+          name: server-site
+          path: dist-server
+      - uses: actions/download-artifact@v8
+        with:
+          name: server-binary
+          path: target/x86_64-unknown-linux-musl/server
+      # Artifacts do not keep the executable bit.
+      - run: chmod +x target/x86_64-unknown-linux-musl/server/sloppy-server
       - name: Log in to the GitHub Container Registry
         if: env.PUSH == 'true'
         run: echo "$TOKEN" | docker login ghcr.io --username "$ACTOR" --password-stdin
@@ -149,7 +190,7 @@ jobs:
           if [ "$PUSH" = true ]; then push=(--push); fi
           number=()
           if [ -n "$BUILD_NUMBER" ]; then number=(--build-number "$BUILD_NUMBER"); fi
-          node scripts/build-server-image.mjs --registry "$SERVER_IMAGE" "${tags[@]}" "${push[@]}" "${number[@]}"
+          node scripts/build-server-image.mjs --prebuilt --registry "$SERVER_IMAGE" "${tags[@]}" "${push[@]}" "${number[@]}"
         env:
           EVENT: ${{ github.event_name }}
           PR_NUMBER: ${{ github.event.pull_request.number }}

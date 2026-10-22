@@ -234,26 +234,32 @@ the Vite dev server keep the default `/sloppy-tanks/` base.
 The workflow sets `VITE_MULTIPLAYER_URL` to the production game server
 (`deploy/servers.json`). It does not deploy that server, but after the site deploys it
 points the server's container image tag `:production` at the commit's image; the dev
-site uses a separate server on its own machine (below). A
+site uses a separate server on its own machine (below). The image also serves the
+game itself at the server's address (<https://sloppy-tanks-server.fridman.me/>) from a
+copy of the page built to join the server that serves it, with precompressed files and
+cache headers set by the server ([the game page](crates/server/README.md#the-game-page));
+Pages stays the main site. A
 client only plays on a server built from the same shared sources: the `crates/core`
 files and the crates they compile with, listed by `node scripts/content-version.mjs`,
 and `pnpm run server:check-if-redeployment-required` says whether the live server
 matches this checkout and warns when the live page cannot join it. Both report their
 build at `/health`: release version (`version`), protocol, content version, commit,
-local-change state and build time, and the server also its server build. The release
+local-change state and build time, and the server also its server build and the
+site build of the page it serves. The release
 version is `MAJOR.MINOR.PATCH.BUILD`, such as `1.1.0.628`: `version` in package.json,
 bumped by hand, and the Pages workflow's run number, which GitHub increments on every
 deploy from main (local and pull request builds have only the first three parts).
 Battle Setup shows it with the commit. The page's `/health` is a static
 `health/index.html` that GitHub Pages serves after a redirect to `/health/`
 (<https://sloppy-tanks.fridman.me/health>). The server's release, commit and time are
-those of the first main build that shipped its server build, so they predate the
-page's when later commits left the server unchanged. After merging changes to any of them, run
+those of the first main build that shipped its server build and page, so they predate
+the Pages site's when later commits left both unchanged. After merging changes to any of them, run
 `pnpm run server:update` (or let auto-update pull it); until then, players on the
 production site are asked to reload and cannot join. Server-only changes
 (`crates/server`, its dependencies and build settings) keep clients compatible but
 still need that update to take effect; client-only files (`crates/render`,
-`crates/web`, the page shell) never do. See `crates/server/README.md` for the
+`crates/web`, the page shell) never stop clients from joining, but they change the page
+the server serves, so its next update picks them up. See `crates/server/README.md` for the
 updater, auto-update and the SSH fallback.
 
 `DEPLOY_BASE` controls both Vite asset URLs and the engine download.

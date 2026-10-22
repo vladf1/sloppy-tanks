@@ -1,8 +1,9 @@
 # Multiplayer server
 
 `sloppy-server` is one native Rust process that hosts every room in memory. It
-serves `/health`, `/rooms`, `/stats`, `/dashboard` (also at `/`) and the `/room/CODE` WebSocket
-on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
+serves `/health`, `/rooms`, `/stats`, `/dashboard` and the `/room/CODE` WebSocket on
+Tokio and hyper, and in its image the game page itself at `/` ([The game page](#the-game-page);
+without one, `/` shows the dashboard), with its own RFC 6455 framing and permessage-deflate
 (`src/websocket/`). Each room is a Tokio task (`room_task.rs`) running a
 `RoomSession` (`session.rs`: socket limits, join timeout, the 50 ms timer) around
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
@@ -41,12 +42,14 @@ it (`.cargo/config.toml`), so macOS needs no cross toolchain. It targets x86-64-
 there before changing either.
 
 `pnpm run server:build-docker-image` builds the same binary into a `linux/amd64`
-Docker image, `sloppy-tanks-server:<server build>` and `:latest` (`Dockerfile`).
-It cross-compiles with `--vps` as above in the normal Cargo target directory, so
+Docker image, `sloppy-tanks-server:<server build>-<site build>` and `:latest`
+(`Dockerfile`), with the game page it serves, built with fresh Wasm engines. It
+cross-compiles with `--vps` as above in the normal Cargo target directory, so
 compiled dependencies are reused locally and from CI's Cargo cache, and the image
-only copies in the static binary, listening on `0.0.0.0:8787`. Try it with
-`docker run --rm -p 8787:8787 sloppy-tanks-server`. The server machines run these
-images (see [Deployment](#deployment)).
+only copies in the static binary, listening on `0.0.0.0:8787`, and the page. Try it
+with `docker run --rm -p 8787:8787 sloppy-tanks-server` and open
+`http://localhost:8787/`. The server machines run these images (see
+[Deployment](#deployment)).
 
 Both builds stamp the content version the browser engine also carries
 (`scripts/content-version.mjs`): a hash of `crates/core` sources, their resolved
@@ -64,9 +67,52 @@ Settings come from the environment:
 | --------------- | -------------------- | ----------------------------------------------------------- |
 | `HOST` / `PORT` | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks |
 | `MAX_ROOMS`     | `10`                 | Live rooms; new room codes beyond it get 503                |
+| `SITE_DIR`      | none                 | The game page to serve at `/` (the image sets `/site`)      |
 
-A malformed value stops startup instead of silently turning a limit off. A loopback
-listener rate-limits by the last `X-Forwarded-For` hop, which Caddy sets.
+A malformed value stops startup instead of silently turning a limit off, and so does
+a `SITE_DIR` that cannot be read or has no `index.html`. A loopback listener
+rate-limits by the last `X-Forwarded-For` hop, which Caddy sets.
+
+## The game page
+
+The image also carries its own copy of the game page, so each server serves the full
+game at its own address (`https://sloppy-tanks-server.fridman.me/`, the dev server's
+`https://45-63-62-42.nip.io/`) beside the Pages site and the dev Worker, which stay the
+main sites. `pnpm run server:build-site` (`scripts/server-site.mjs`) builds it into
+`dist-server/` from the Wasm `pnpm run wasm` built, and refuses a stale engine, since
+the page and the server in one image must share a content version. It is built for
+the site root with `VITE_MULTIPLAYER_URL=/`, which means "the server that served this
+page", so one copy works on every machine and locally.
+
+At startup the server reads every file under `SITE_DIR` into memory (about 15 MB for
+the game, Brotli and gzip copies included) and answers from that table, never from
+the disk (`src/site.rs`). Battle Setup's build line is left as a marker that the
+server fills with its own release and commit, as `/health` reports them, so the copy's
+bytes change only with the page itself; it gzips that one page at startup. `/health`
+reports `siteBuild`, a hash of the files as shipped (`siteBuild` in
+`scripts/content-version.mjs` computes the same).
+
+The other text files and the engines get Brotli (quality 11, 10 for Wasm) and gzip
+copies at build time (`scripts/precompress.mjs`), and the server sends the one the
+request accepts, `Vary: Accept-Encoding`. WebP, PNG and MP3 files go as they are.
+Caddy passes the bytes through untouched.
+
+| Files                                           | `Cache-Control`                       |
+| ----------------------------------------------- | ------------------------------------- |
+| `/assets/*` (Vite puts content hashes in names) | `public, max-age=31536000, immutable` |
+| `/`, textures, audio, icons, manifest           | `no-cache`                            |
+
+Each response has a strong `ETag` per encoding, so a `no-cache` file costs a 304 on a
+repeat visit. The page is sent with `X-Robots-Tag: noindex`, leaving the Pages site to
+search engines. Only `GET` and `HEAD` are served; ranges are ignored. Routes above
+(`/health`, `/stats`, `/rooms`, `/room/CODE`, `/dashboard`) take precedence over files.
+
+To try it without Docker:
+
+```sh
+pnpm run wasm && pnpm run server:build-site
+SITE_DIR=dist-server pnpm run server:dev   # then open http://127.0.0.1:8787/
+```
 
 ## Rooms and limits
 
@@ -114,8 +160,8 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 
 ## Deployment
 
-Production and the dev site each have their own game server machine, an Ubuntu 26.04
-x64 VPS at Vultr, set up identically. `deploy/servers.json` lists both
+Production and the dev site each have their own game server machine, an Ubuntu x64
+VPS at Vultr (26.04 for production, 26.10 for dev), set up identically. `deploy/servers.json` lists both
 (`scripts/servers.mjs` reads it): each machine's public `ip` and its `hostnames`. A
 machine runs the server as a container under Podman, behind Caddy in a container of
 its own, both supervised by systemd through Quadlet units. CI builds the server
@@ -137,23 +183,25 @@ to the list.
 
 ### Images and tags
 
-The `server` job in `.github/workflows/check.yml` builds the binary once, runs the
-page-shell tests against it, then builds the image and pushes it to
+The `server` job in `.github/workflows/check.yml` builds the binary once and runs the
+page-shell tests against it, the `site` job builds the server's page beside the Pages
+build, and the `server-image` job puts both in the image and pushes it to
 `ghcr.io/vladf1/sloppy-tanks-server` (a public package) as:
 
-| Tag             | Moved by                                   | Meaning                                       |
-| --------------- | ------------------------------------------ | --------------------------------------------- |
-| `<serverBuild>` | main's first build of it                   | One image per server build (`/health`'s hash) |
-| `pr-<number>`   | each pull request push                     | That pull request's latest server             |
-| `main`, `sha-…` | each push to `main`                        | Main's latest server, and per commit          |
-| `production`    | the Pages workflow, after the site deploys | What production should run                    |
+| Tag                         | Moved by                                   | Meaning                                                  |
+| --------------------------- | ------------------------------------------ | -------------------------------------------------------- |
+| `<serverBuild>-<siteBuild>` | main's first build of it                   | One image per server and page build (`/health`'s hashes) |
+| `pr-<number>`               | each pull request push                     | That pull request's latest server                        |
+| `main`, `sha-…`             | each push to `main`                        | Main's latest server, and per commit                     |
+| `production`                | the Pages workflow, after the site deploys | What production should run                               |
 
-A commit that leaves the server build alone (page, renderer or docs changes) only
-retags the existing image. Main's builds pass the Pages workflow's run number, which
+A commit that changes neither the server build nor the page it serves (docs, or the
+release version alone) only retags the existing image; a page change makes a new
+image, which restarts the server once rooms empty. Main's builds pass the Pages workflow's run number, which
 completes the release version (`1.1.0.628`, `scripts/release-version.mjs`) the image
 records as a label and as `SLOPPY_RELEASE` for `/health` and the dashboard. When main
 first ships a server build a pull request already built, it restamps that image's
-release, commit and time over the same binary layer; later builds keep them. Pull requests never move `production`, and nothing in CI
+release, commit and time over the same layers; later builds keep them. Pull requests never move `production`, and nothing in CI
 connects to the machines. Fork pull requests build the image without pushing.
 
 ### On a machine
@@ -182,8 +230,8 @@ machine's names written into the Caddyfile:
   the image in `caddy.container` and provision again.
 - `sloppy-tanks-update` (installed in `/usr/local/bin`) is the only thing that
   changes the pin. It pins the new image, restarts the service and waits up to 60
-  seconds for `/health` to report the image's content version and server build
-  (its labels); otherwise it restores the previous image. It keeps the current and
+  seconds for `/health` to report the image's content version, server build and site
+  build (its labels); otherwise it restores the previous image. It keeps the current and
   previous image (tagged `sloppy-tanks-pinned:current` and `:previous`) and prunes
   the rest.
 - `sloppy-tanks-update.timer` is auto-update, off until enabled. It follows
@@ -206,8 +254,9 @@ Each acts on production's machine; `--dev` picks the dev site's.
 
 With auto-update on, the timer checks `:production` every two minutes. A new image
 waits until nobody holds a seat (the `players` count in `/stats`), or at most four
-hours for a server-only change and ten minutes after a content change, when the new
-site is already sending visitors a reload message. Anything other than following
+hours for a change to the server or its page that keeps clients compatible and ten
+minutes after a content change, when the new site is already sending visitors a
+reload message. Anything other than following
 `:production` leaves a hold: an SSH deploy, a rollback or pulling another tag pins
 that image, and auto-update skips its checks until `server:auto-update resume` or
 `server:update`. `server:status` shows the pinned and previous image, any hold or
@@ -234,7 +283,7 @@ lobby. Stop load tests before deploying.
 
 ### Machines
 
-To set up a machine, create an Ubuntu 26.04 x64 VPS with a public IPv4 address and
+To set up a machine, create an Ubuntu 26.04 or 26.10 x64 VPS with a public IPv4 address and
 your SSH key for root, put its address in `deploy/servers.json` and run
 `pnpm run server:provision` (`--dev` for the dev site's). It installs everything,
 starts CI's `:production` image (on dev, `deploy:dev` then replaces it with the
@@ -286,7 +335,8 @@ pnpm run server:stats   # /stats JSON over SSH
 pnpm run server:status  # systemctl status for the game server and Caddy, and its image state
 # add --dev for the dev server
 # exit 1 when the live server needs a redeploy: clients are refused, or only
-# server code changed; --dev checks the dev server, SLOPPY_SERVER_URL=ws://127.0.0.1:8787 a local one
+# server code changed; --site also builds and compares the page it serves; --dev checks
+# the dev server, SLOPPY_SERVER_URL=ws://127.0.0.1:8787 a local one
 pnpm run server:check-if-redeployment-required
 ```
 

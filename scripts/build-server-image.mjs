@@ -1,28 +1,32 @@
 import { spawnSync } from "node:child_process";
 import { appendFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { contentVersion, serverBuild } from "./content-version.mjs";
+import { contentVersion, imageBuild, serverBuild, siteBuild } from "./content-version.mjs";
 import { isNumberedRelease, releaseVersion } from "./release-version.mjs";
+import { buildServerSite, SERVER_SITE_DIRECTORY } from "./server-site.mjs";
 
 /** Build the multiplayer server's linux/amd64 Docker image from `Dockerfile`. The binary
  * comes from `scripts/build-server.mjs --vps`, built in the normal Cargo target directory
- * so its compiled dependencies are reused, and the image only copies it in. The image
- * labels carry the same content version and server build the binary stamps.
+ * so its compiled dependencies are reused, and the game page it serves from
+ * `scripts/server-site.mjs`, after building the Wasm engines; the image only copies both
+ * in. CI passes `--prebuilt` with both already in place from its other jobs. The
+ * image labels carry the same content version and server build the binary stamps, and
+ * the site build `/health` reports for the page.
  *
- * Every image is tagged with its server build, so one build has one image wherever it
- * came from. Locally it is `sloppy-tanks-server:<build>` and `:latest`. CI passes
- * `--registry ghcr.io/vladf1/sloppy-tanks-server --push` and moving tags such as
- * `--tag pr-12`; when the registry already holds that build (a change outside the
- * server), it only adds the tags instead of rebuilding.
+ * Every image is tagged with its server build and site build, so one build has one image
+ * wherever it came from. Locally it is `sloppy-tanks-server:<server>-<site>` and
+ * `:latest`. CI passes `--registry ghcr.io/vladf1/sloppy-tanks-server --push` and moving
+ * tags such as `--tag pr-12`; when the registry already holds that build (a change that
+ * reaches neither the server nor its page), it only adds the tags instead of rebuilding.
  *
  * Main's builds also pass `--build-number`, the Pages workflow's run number, which
  * completes the release version (`1.1.0.628`, scripts/release-version.mjs) the image
  * records as a label and as `SLOPPY_RELEASE` for `/health`. A server build keeps the
  * release of the first main build that shipped it: a pull request usually built the
  * image first, without a number, so that main build restamps the image's metadata
- * (release, commit and time) over the same binary layer, and later builds only retag it.
+ * (release, commit and time) over the same layers, and later builds only retag it.
  * The VPS restarts only when :production's image changes, which then happens once per
- * server build. */
+ * server and page build. */
 const repo = fileURLToPath(new URL("..", import.meta.url));
 const LOCAL_IMAGE = "sloppy-tanks-server";
 
@@ -48,10 +52,14 @@ const RELEASE_LABEL = "me.fridman.sloppy-tanks.release";
 const name = option("--registry")[0] ?? LOCAL_IMAGE;
 const release = releaseVersion(option("--build-number")[0]);
 const push = process.argv.includes("--push");
+const prebuilt = process.argv.includes("--prebuilt");
 const version = await contentVersion();
 const build = await serverBuild();
+const site = prebuilt
+  ? await siteBuild(SERVER_SITE_DIRECTORY)
+  : await buildServerSite({ buildWasm: true });
 const commit = git("rev-parse", "HEAD") + (git("status", "--porcelain") ? "-dirty" : "");
-const image = `${name}:${build}`;
+const image = `${name}:${imageBuild(build, site)}`;
 const extraTags = [...option("--tag"), ...(push ? [] : ["latest"])].map((tag) => `${name}:${tag}`);
 
 const builtAt = new Date().toISOString();
@@ -101,8 +109,10 @@ if (published && isNumberedRelease(release) && !isNumberedRelease(labels[RELEASE
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
 } else {
-  const binary = run("node", ["scripts/build-server.mjs", "--vps"]);
-  if (binary.status !== 0) process.exit(binary.status ?? 1);
+  if (!prebuilt) {
+    const binary = run("node", ["scripts/build-server.mjs", "--vps"]);
+    if (binary.status !== 0) process.exit(binary.status ?? 1);
+  }
   const result = run("docker", [
     "build",
     "--platform",
@@ -111,6 +121,8 @@ if (published && isNumberedRelease(release) && !isNumberedRelease(labels[RELEASE
     `SLOPPY_CONTENT_VERSION=${version}`,
     "--build-arg",
     `SLOPPY_SERVER_BUILD=${build}`,
+    "--build-arg",
+    `SLOPPY_SITE_BUILD=${site}`,
     "--build-arg",
     `GIT_COMMIT=${commit}`,
     "--build-arg",
@@ -125,4 +137,6 @@ if (published && isNumberedRelease(release) && !isNumberedRelease(labels[RELEASE
 }
 // CI reads the image name to promote it after the deploy gate.
 if (process.env.GITHUB_OUTPUT) appendFileSync(process.env.GITHUB_OUTPUT, `image=${image}\n`);
-console.log(`Built ${image} (release ${release}, content ${version}, commit ${commit})`);
+console.log(
+  `Built ${image} (release ${release}, content ${version}, site ${site}, commit ${commit})`,
+);
