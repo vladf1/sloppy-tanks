@@ -3,14 +3,18 @@
 //! assemblies are static, merged into a handful of material batches.
 
 use std::f64::consts::{FRAC_PI_2, PI};
+use std::sync::Arc;
 
 use glam::DVec3;
 
-use crate::scene::Node;
+use crate::scene::{Effect, Material, Node};
 
-use super::batching::batch;
+use super::batching::{batch, vertex_material};
 use super::harbor_surfaces::{steel_beam, steel_box};
-use super::model_primitives::{box_part, cylinder_part, material, put, rotated};
+use super::model_primitives::{
+    CYLINDER_METALNESS, DEFAULT_METALNESS, DEFAULT_ROUGHNESS, box_part, cylinder_part, material,
+    put, rotated,
+};
 use super::tank_surfaces::{Grime, Livery, apply_livery};
 use crate::geometry::math::{normalize, quat_from_unit_vectors};
 
@@ -58,6 +62,32 @@ pub(super) fn fleet_livery(node: &mut Node, dust_top: f64) {
             },
         },
     );
+}
+
+/// The fleet's worn paint on a machine parked in the apron's equipment batch
+/// (the wheel loader, the drill rig): its matte and bare-metal parts take the
+/// batch's own plain and steel finishes, so the livery adds only its paint to
+/// the batch's draws, not a matte and a metal draw of its own.
+pub(super) fn site_livery(node: &mut Node, dust_top: f64) {
+    fleet_livery(node, dust_top);
+    let plain = vertex_material(&material(0xffffff, DEFAULT_METALNESS, DEFAULT_ROUGHNESS));
+    let steel = vertex_material(&material(0xffffff, CYLINDER_METALNESS, DEFAULT_ROUGHNESS));
+    share_finishes(node, &plain, &steel);
+}
+
+fn share_finishes(node: &mut Node, plain: &Arc<Material>, steel: &Arc<Material>) {
+    if let Some(drawable) = &mut node.drawable {
+        let finish = &drawable.material;
+        let livery_finish = finish.vertex_colors && finish.effect == Effect::None;
+        if livery_finish && finish.map.is_none() && finish.metalness == 0.0 {
+            drawable.material = plain.clone();
+        } else if livery_finish && finish.map.is_some() {
+            drawable.material = steel.clone();
+        }
+    }
+    for child in &mut node.children {
+        share_finishes(child, plain, steel);
+    }
 }
 
 /// `piston(group, a, b)`: a hydraulic ram (barrel and polished rod) from a to b.

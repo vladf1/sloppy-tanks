@@ -15,7 +15,7 @@ use super::effects_scenery::QUARRY_SIGN_TEXTURE;
 use super::harbor_surfaces::{steel_beam, steel_box};
 use super::model_primitives::adopt_children;
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
-use super::quarry_machinery::{PAINT, fleet_livery};
+use super::quarry_machinery::{PAINT, site_livery};
 use super::quarry_terrain::quarry_ground_drop;
 use crate::geometry::math::hex_to_linear;
 use crate::sim::math::Random;
@@ -201,7 +201,7 @@ fn wheel_loader(group: &mut Node, x: f64, z: f64, yaw: f64) {
             tooth_z,
         );
     }
-    fleet_livery(&mut loader, 1.9);
+    site_livery(&mut loader, 1.9);
     batch(&mut loader);
     loader.set_rotation_euler(0.0, yaw, 0.0);
     loader.position = DVec3::new(x, -1.79, z);
@@ -372,7 +372,7 @@ fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
         0x343431,
     );
     drill_rig_details(&mut rig, mast_x);
-    fleet_livery(&mut rig, 2.3);
+    site_livery(&mut rig, 2.3);
     batch(&mut rig);
     rig.set_rotation_euler(0.0, yaw, 0.0);
     rig.position = DVec3::new(x, -1.79, z);
