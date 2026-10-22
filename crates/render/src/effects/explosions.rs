@@ -83,10 +83,10 @@ const SURGE_SQUAT: (f64, f64) = (0.6, 0.85);
 /// The core of plaster dust boiling up off the pile: its puffs, one born this
 /// long (s) after another, how fast (per s) they climb, how high (m) the top one
 /// goes, and when they have thinned away ([minimum, span] s).
-const HOUSE_CORE: usize = 6;
+const HOUSE_CORE: usize = 4;
 const CORE_STAGGER: f64 = 0.07;
 const CORE_RATE: f64 = 0.9;
-const CORE_RISE: f64 = 4.2;
+const CORE_RISE: f64 = 2.0;
 const CORE_END: (f64, f64) = (2.7, 0.6);
 /// A collapsed cottage's footprint stains: the churned earth under the heap (two
 /// overlapping, m across, and how far apart), and the lobes of plaster dust round
@@ -98,6 +98,8 @@ const FOOTPRINT_REACH: f64 = 4.2;
 const FOOTPRINT_LOBE: f64 = 7.5;
 /// Plaster and mortar dust, paler than the ground's.
 const PLASTER_DUST: u32 = 0xb9ab95;
+/// A cottage's collapse dust: plaster, mortar and soot together.
+const RUBBLE_DUST: u32 = 0x8e8476;
 /// A shell through a cottage's siding: the share of plaster in its dust against
 /// the paint, and the shade the dust takes so it never glows over the wall.
 const SIDING_PLASTER: f64 = 0.7;
@@ -1330,8 +1332,10 @@ impl ExplosionEffects {
                 self.ring(b, t, b.scale);
             }
             Kind::HouseFall => {
-                // Plaster and mortar off the walls, not the ground the cottage stood on.
-                let dust = mixed(b.dust, linear(PLASTER_DUST), 0.9);
+                // Crushed plaster, mortar and soot off the walls, greyer and darker
+                // than the siding, with the ground's earth in it: the cloud shapes
+                // the collapse instead of melting into the walls' cream.
+                let dust = mixed(b.dust, linear(RUBBLE_DUST), 0.75);
                 self.skirt(b, t, dust);
                 self.house_dust(b, t, dust);
                 if t > HOUSE_IMPACT {
@@ -2196,11 +2200,11 @@ impl ExplosionEffects {
                     // Darker where it boils off the ground, paler as it climbs.
                     color: scaled(
                         dust,
-                        if ground { 0.6 } else { 0.84 } + 0.12 * r3 + 0.1 * settle(age, 1.2),
+                        if ground { 0.5 } else { 0.78 } + 0.12 * r3 + 0.1 * settle(age, 1.2),
                     ),
                     opacity: (age / 0.08).min(1.0)
                         * if ground {
-                            0.5 + 0.12 * r1
+                            0.56 + 0.12 * r1
                         } else {
                             0.32 + 0.1 * r1
                         }
@@ -2265,7 +2269,7 @@ impl ExplosionEffects {
             let angle = b.phase * 1.7 + jf * 2.399 + (r2 - 0.5) * 0.6;
             let spread = HOUSE_FOOT * (0.15 + 0.3 * r3) + 0.6 * settle(age, 0.8);
             let rise = settle(age, CORE_RATE * (0.8 + 0.4 * r1));
-            let size = 1.1 + 0.4 * r2 + 1.8 * rise;
+            let size = 0.8 + 0.3 * r2 + 1.2 * rise;
             // The upper puffs catch the sun; the low ones sit in their own shade.
             let height = CORE_RISE * (0.45 + 0.55 * jf / HOUSE_CORE as f64) * rise;
             let end = CORE_END.0 + CORE_END.1 * r3;
@@ -2276,9 +2280,9 @@ impl ExplosionEffects {
                     b.z + angle.sin() * spread + WIND[1] * age * 0.4,
                 ],
                 size,
-                color: scaled(dust, 0.66 + 0.34 * (height / CORE_RISE) + 0.1 * r2),
+                color: scaled(dust, 0.6 + 0.3 * (height / CORE_RISE) + 0.08 * r2),
                 opacity: (age / 0.15).min(1.0)
-                    * (0.34 + 0.1 * r3)
+                    * (0.28 + 0.08 * r3)
                     * (1.0 - smoothstep(age, 0.6, end)),
                 seed: b.phase * 0.61 + jf * 0.237,
                 heat: 0.0,
