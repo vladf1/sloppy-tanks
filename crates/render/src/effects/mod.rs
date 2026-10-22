@@ -157,8 +157,12 @@ impl EffectSystems {
     /// The visual response to one simulation event (`presentation.ts` `event`).
     pub fn event(&mut self, event: &SimEvent) {
         use SimEventType as T;
-        // Contact telemetry and notices have no visual response.
-        if matches!(event.kind, T::DebrisImpact | T::Notice) {
+        // A hard landing raises dust; notices have no visual response.
+        if event.kind == T::DebrisImpact {
+            self.particles.explosions.landing(event);
+            return;
+        }
+        if event.kind == T::Notice {
             return;
         }
         self.laser.event(event);

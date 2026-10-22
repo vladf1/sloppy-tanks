@@ -161,7 +161,8 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
         }
         _ => command.aim = turn(mx.atan2(mz)),
     }
-    // Deliberately clear nearby weak timber and towers that obstruct a useful route.
+    // Deliberately clear nearby weak timber and towers that obstruct a useful route;
+    // cottages take fifteen shells, so bots drive round them instead.
     // HMMWVs carry only a TOW: never spend an anti-tank missile breaching scenery.
     // A target in sight keeps the turret while it slews or the bot reacts; otherwise
     // cover beside the target's bearing would win every tick the shot is not yet lined up.
@@ -172,7 +173,7 @@ pub fn bot_command(simulation: &mut Simulation, tank_index: usize, dt: f64) -> V
         let weak = simulation.covers.iter().find(|o| {
             o.alive
                 && o.destructible
-                && o.kind != CoverKind::Drum
+                && !matches!(o.kind, CoverKind::Drum | CoverKind::House)
                 && (o.x - position.x).abs() < BREACH_RANGE
                 && (o.z - position.z).abs() < BREACH_RANGE
                 && distance(position, Vec2::new(o.x, o.z)) < BREACH_RANGE

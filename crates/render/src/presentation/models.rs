@@ -13,8 +13,9 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 use sloppy_core::geometry::{
-    Mesh, RingGeometry, Shape, circle_geometry, cylinder_geometry, plane_geometry, ring_geometry,
-    rounded_box_geometry, shape_geometry, tetrahedron_geometry, torus_geometry,
+    Mesh, RingGeometry, Shape, circle_geometry, cylinder_geometry, merge_geometries,
+    plane_geometry, ring_geometry, rounded_box_geometry, shape_geometry, tetrahedron_geometry,
+    torus_geometry,
 };
 use sloppy_core::models::{
     BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint, put,
@@ -24,14 +25,14 @@ use sloppy_core::scene::{Color, Effect, Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
-use super::hud::{CRITICAL_COLOR, METER_LOW_Y, WARNING_COLOR};
+use super::hud::{CRITICAL_COLOR, HEALTHY_COLOR, METER_LOW_Y, WARNING_COLOR};
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 
 /// Joint names.
 pub mod joint {
     /// Tank bar hull fill, one per health color; scaled along x by the ratio.
-    pub const BAR_FILLS: [&str; 3] = ["bar-fill-team", "bar-fill-mid", "bar-fill-low"];
-    /// The pale chunk a hit took, trailing the fill down; scaled along x.
+    pub const BAR_FILLS: [&str; 3] = ["bar-fill-high", "bar-fill-mid", "bar-fill-low"];
+    /// The dark warm chunk a hit took, trailing the fill down; scaled along x.
     pub const BAR_TRAIL: &str = "bar-trail";
     pub const BAR_RANKS: [&str; 3] = ["bar-rank-1", "bar-rank-2", "bar-rank-3"];
     pub const BAR_SHIELD: &str = "bar-shield";
@@ -59,10 +60,10 @@ pub const REFILL_SEGMENTS: u32 = 48;
 pub const SPAWN_PROTECTION_COLOR: u32 = 0xffdf86;
 /// The hull fill's full width and height; the track and rim frame it.
 const BAR_WIDTH: f64 = 1.7;
-const BAR_FILL_HEIGHT: f64 = 0.15;
+const BAR_FILL_HEIGHT: f64 = 0.18;
 /// The bar's outer width, which presentation keeps to a share of the screen.
 pub const BAR_RIM_WIDTH: f64 = 1.84;
-const BAR_RIM_HEIGHT: f64 = 0.29;
+const BAR_RIM_HEIGHT: f64 = 0.32;
 /// Hull segments, as the page HUD's bar shows them.
 const BAR_SEGMENTS: usize = 4;
 const METER_FILL_WIDTH: f64 = 1.34;
@@ -168,6 +169,10 @@ fn protection_meter(name: &str, fill_name: &str, color: u32, segmented: bool) ->
 
 /// A rectangle with rounded corners, centred on the origin, facing +z.
 fn rounded_rect(width: f64, height: f64, radius: f64) -> Mesh {
+    shape_geometry(&[rounded_rect_shape(width, height, radius)])
+}
+
+fn rounded_rect_shape(width: f64, height: f64, radius: f64) -> Shape {
     const CORNER_STEPS: usize = 4;
     let r = radius.min(height / 2.0).min(width / 2.0);
     let (hw, hh) = (width / 2.0 - r, height / 2.0 - r);
@@ -181,7 +186,8 @@ fn rounded_rect(width: f64, height: f64, radius: f64) -> Mesh {
             points.push([cx + r * angle.cos(), cy + r * angle.sin()]);
         }
     }
-    polygon(&points)
+    let points: Vec<DVec2> = points.iter().map(|p| DVec2::new(p[0], p[1])).collect();
+    Shape::from_points(&points)
 }
 
 /// World-space HUD paint with its own opacity.
@@ -194,21 +200,48 @@ fn hud_paint(color: u32, opacity: f32) -> Arc<Material> {
 
 /// `createTankBar(team)`: the hull bar with its three health colors, the shield
 /// and spawn meters, and one to three rank chevrons. Billboarded by the instance.
-/// A dark rounded rim keeps it legible on bright grass and pale concrete; the empty
-/// track stays a visible navy so lost hull reads at a glance, a pale trail shows
-/// the chunk the last hit took, and a sheen and segment notches give the fill the
-/// page HUD's look.
+/// The fill is green, amber or red like the page HUD's hull bar, whatever the team: a
+/// team-coloured pointer under the bar names the side and ties the bar to its tank. A
+/// dark rounded rim keeps it legible on bright grass and pale concrete; the empty track
+/// stays a visible navy so lost hull reads at a glance, a dark ember trail shows the
+/// chunk the last hit took, and a sheen and segment notches give the fill the page
+/// HUD's look.
 pub fn tank_bar(team: Team) -> Node {
     let mut bar = Node::group("tank-bar");
+    // The rim and, under it, the pointer's dark notch, in one mesh; the team's colour
+    // fills the notch.
+    let below = -BAR_RIM_HEIGHT / 2.0;
+    let notch = [
+        DVec2::new(-0.15, below + 0.01),
+        DVec2::new(0.0, below - 0.15),
+        DVec2::new(0.15, below + 0.01),
+    ];
     bar.children.push(mesh(
-        arc(rounded_rect(BAR_RIM_WIDTH, BAR_RIM_HEIGHT, 0.08)),
-        hud_paint(0x050a12, 0.86),
+        arc(shape_geometry(&[
+            rounded_rect_shape(BAR_RIM_WIDTH, BAR_RIM_HEIGHT, 0.08),
+            Shape::from_points(&notch),
+        ])),
+        hud_paint(0x050a12, 0.9),
         10,
     ));
     bar.children.push(at(
         mesh(
+            arc(polygon(&[
+                [-0.095, below - 0.005],
+                [0.0, below - 0.105],
+                [0.095, below - 0.005],
+            ])),
+            hud_material(TEAM_COLORS[team.index()]),
+            12,
+        ),
+        0.0,
+        0.0,
+        0.006,
+    ));
+    bar.children.push(at(
+        mesh(
             arc(rounded_rect(BAR_WIDTH + 0.06, BAR_FILL_HEIGHT + 0.06, 0.06)),
-            hud_paint(0x1d2b40, 0.95),
+            hud_paint(0x1a2638, 0.96),
             11,
         ),
         0.0,
@@ -223,7 +256,7 @@ pub fn tank_bar(team: Team) -> Node {
     ));
     let mut trail = named(
         at(
-            mesh(fill.clone(), hud_paint(0xfff1cf, 0.9), 12),
+            mesh(fill.clone(), hud_paint(0xa8432a, 0.95), 12),
             -BAR_WIDTH / 2.0,
             0.0,
             0.008,
@@ -232,7 +265,7 @@ pub fn tank_bar(team: Team) -> Node {
     );
     trail.visible = false;
     bar.children.push(trail);
-    let colors = [TEAM_COLORS[team.index()], WARNING_COLOR, CRITICAL_COLOR];
+    let colors = [HEALTHY_COLOR, WARNING_COLOR, CRITICAL_COLOR];
     // A glassy highlight along the top of the fill, scaled with it.
     let sheen = arc(translated(
         rounded_rect(BAR_WIDTH - 0.03, 0.035, 0.0175),
@@ -324,26 +357,28 @@ fn reticle_material(color: u32, opacity: f32) -> Arc<Material> {
     })
 }
 
-/// Ring, ticks and centre in one paint (`createReticle`); the rings lie flat.
+/// Ring, ticks and centre in one paint (`createReticle`), lying flat. The ring and its
+/// four ticks are one mesh, so each paint is a single draw.
 fn reticle_layer(outline: bool, ink: Arc<Material>, center: Option<Arc<Material>>) -> Vec<Node> {
     let order = if outline { 50 } else { 51 };
-    let (inner, outer) = if outline { (0.4, 0.64) } else { (0.46, 0.57) };
-    let mut nodes = vec![flat(mesh(
-        arc(ring_geometry(inner, outer, 40)),
-        ink.clone(),
-        order,
-    ))];
-    let (length, width) = if outline { (0.43, 0.18) } else { (0.31, 0.075) };
-    let across = arc(plane_geometry(length, width));
-    let along = arc(plane_geometry(width, length));
-    for (x, z) in [(-0.83, 0.0), (0.83, 0.0), (0.0, -0.83), (0.0, 0.83)] {
-        let geometry = if x == 0.0 {
-            along.clone()
-        } else {
-            across.clone()
-        };
-        nodes.push(at(flat(mesh(geometry, ink.clone(), order)), x, 0.0, z));
-    }
+    let (inner, outer) = if outline { (0.37, 0.67) } else { (0.46, 0.57) };
+    let (length, width) = if outline { (0.47, 0.21) } else { (0.31, 0.075) };
+    let ring = ring_geometry(inner, outer, 40);
+    let ticks: Vec<Mesh> = [(-0.83, 0.0), (0.83, 0.0), (0.0, -0.83), (0.0, 0.83)]
+        .into_iter()
+        .map(|(x, y)| {
+            let (w, h) = if x == 0.0 {
+                (width, length)
+            } else {
+                (length, width)
+            };
+            translated(plane_geometry(w, h), x, y, 0.0)
+        })
+        .collect();
+    let parts: Vec<&Mesh> = std::iter::once(&ring).chain(ticks.iter()).collect();
+    let mut sight = merge_geometries(&parts).expect("ring and ticks share a layout");
+    sight.rotate_x(-PI / 2.0);
+    let mut nodes = vec![mesh(arc(sight), ink, order)];
     if let Some(center) = center {
         nodes.push(flat(mesh(arc(circle_geometry(0.075, 16)), center, 52)));
     }
@@ -356,7 +391,7 @@ fn reticle_layer(outline: bool, ink: Arc<Material>, center: Option<Arc<Material>
 pub fn reticle() -> Node {
     let mut root = Node::group("reticle");
     root.children
-        .extend(reticle_layer(true, reticle_material(0x12263c, 1.0), None));
+        .extend(reticle_layer(true, reticle_material(0x081626, 1.0), None));
     for (name, ink, center, opacity) in [
         (joint::RETICLE_READY, 0xfff9da, 0xffdf38, 1.0),
         (joint::RETICLE_RELOADING, 0xfff9da, 0xffdf38, 0.3),

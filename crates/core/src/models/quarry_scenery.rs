@@ -31,7 +31,10 @@ use super::quarry_ramp::{
 };
 use super::quarry_scree::quarry_scree;
 use super::quarry_site_details::quarry_site_details;
-use super::quarry_surfaces::{RubbleStone, sand_drift_material, sandstone_rock, sandstone_rubble};
+use super::quarry_surfaces::{
+    RockSetting, RubbleStone, STONE_SEAT, mesh_triangles, sand_drift_material, sandstone_rock,
+    sandstone_rubble, surface_height,
+};
 use super::quarry_terrain::{QUARRY_BANK_TOP, quarry_ground_drop, quarry_terrain, soil_uvs};
 
 /// The machinery apron floor, where the lowest cuts and their talus stand.
@@ -273,10 +276,12 @@ pub fn quarry_scenery() -> Node {
             });
         }
     }
-    // Crushed stone heaped under the conveyor head; coarse pieces roll to its toe.
+    // Crushed stone heaped under the conveyor head; coarse pieces roll to its toe
+    // and rest on the heap's slope or the apron beyond it.
     let pile = quarry_stockpile_spot();
     let mut stockpile = quarry_stockpile_geometry(&pile);
     stockpile.translate(pile.x, APRON, pile.z);
+    let heap = mesh_triangles(&stockpile);
     spoil_surface(&mut stockpile, 1.0);
     geology
         .children
@@ -290,10 +295,12 @@ pub fn quarry_scenery() -> Node {
         let d = size * talus_rng.range(0.7, 1.2);
         let rot_y = talus_rng.range(-PI, PI);
         let shade = talus_rng.range(0.9, 1.15);
+        let (x, z) = (pile.x + angle.cos() * reach, pile.z + angle.sin() * reach);
+        let under = surface_height(&heap, x, z).map_or(APRON, |y| y.max(APRON));
         talus_stones.push(RubbleStone {
-            x: pile.x + angle.cos() * reach,
-            y: APRON + 0.0f64.max(pile.height * (1.0 - t.powf(1.08))) + size * 0.1,
-            z: pile.z + angle.sin() * reach,
+            x,
+            y: under + h * STONE_SEAT,
+            z,
             w: size,
             h,
             d,
@@ -310,6 +317,7 @@ pub fn quarry_scenery() -> Node {
             0.4 + f64::from(i % 4) * 0.25,
             1.2,
             i % 4,
+            RockSetting::Ground,
         );
         rock.set_rotation_euler(0.0, rng.range(-1.0, 1.0), 0.0);
         let x = rng.range(-61.0, 61.0);
@@ -337,13 +345,20 @@ pub fn quarry_scenery() -> Node {
             boulder.size * 0.6,
             boulder.size * 0.85,
             i as u32 % 5,
+            RockSetting::Ground,
         );
         let rock = rotated(rock, 0.0, boulder.rot_y, 0.0);
         let y = quarry_ramp_height(boulder.x, boulder.z) - 0.2;
         put(&mut geology, rock, boulder.x, y, boulder.z);
     }
     for (i, chip) in quarry_ramp_spoil().into_iter().enumerate() {
-        let rock = sandstone_rock(chip.size, chip.size * 0.45, chip.size * 0.8, i as u32 % 7);
+        let rock = sandstone_rock(
+            chip.size,
+            chip.size * 0.45,
+            chip.size * 0.8,
+            i as u32 % 7,
+            RockSetting::Ground,
+        );
         let rock = rotated(rock, 0.0, chip.rot_y, 0.0);
         let y = quarry_ramp_height(chip.x, chip.z) - 0.08;
         put(&mut geology, rock, chip.x, y, chip.z);
@@ -391,7 +406,7 @@ pub fn quarry_scenery() -> Node {
     for z in [-2.0, 2.0] {
         put(
             &mut geology,
-            sandstone_rock(5.0, 2.2, 3.5, 0),
+            sandstone_rock(5.0, 2.2, 3.5, 0, RockSetting::Ground),
             -48.0,
             -1.79,
             68.0 + z,
@@ -420,11 +435,13 @@ pub fn quarry_scenery() -> Node {
 const TRUCK_BED: (f64, [f64; 2], f64) = (3.04, [-2.05, 4.95], 2.3);
 
 /// Blasted sandstone heaped in the haul truck's bed: one merged rubble mesh of
-/// angular blocks, crowned in the middle and spilling against the sides.
+/// angular blocks, dropped big ones first so smaller ones settle over them. Each
+/// stone rests on the bed floor or on the stones already under it.
 fn truck_load() -> Node {
     let mut rng = Random::new(6113.0);
     let (floor, [x0, x1], half) = TRUCK_BED;
     let (cx, length) = ((x0 + x1) / 2.0, (x1 - x0) / 2.0);
+    let mut heap = LoadHeap::new(x0, x1, half, floor);
     let stones: Vec<RubbleStone> = (0..90)
         .map(|i| {
             let size = if i < 30 {
@@ -434,27 +451,84 @@ fn truck_load() -> Node {
             };
             let x = cx + rng.range(-1.0, 1.0) * (length - size * 0.4);
             let z = rng.range(-1.0, 1.0) * (half - size * 0.4);
-            let crown = (1.0 - ((x - cx) / length).powi(2)) * (1.0 - (z / half).powi(2));
-            // Big blocks settle first; smaller ones fill in over them.
-            let top = floor + 0.3 + 2.1 * crown;
-            let y = if i < 30 {
-                rng.range(floor + 0.3, top - 0.2)
-            } else {
-                top - size * rng.range(0.1, 0.4)
-            };
+            let h = size * rng.range(0.6, 0.9);
+            let d = size * rng.range(0.7, 1.1);
             RubbleStone {
                 x,
-                y,
+                y: heap.drop(x, z, size, h, d),
                 z,
                 w: size,
-                h: size * rng.range(0.6, 0.9),
-                d: size * rng.range(0.7, 1.1),
+                h,
+                d,
                 rot_y: rng.range(-PI, PI),
                 shade: rng.range(0.85, 1.12),
             }
         })
         .collect();
     sandstone_rubble(&stones)
+}
+
+/// Cell size of the truck load's height field, in metres.
+const LOAD_CELL: f64 = 0.1;
+
+/// The top of the truck load so far over a grid across the bed, so each dropped
+/// stone lands on whatever is already under it.
+struct LoadHeap {
+    x0: f64,
+    half: f64,
+    columns: usize,
+    rows: usize,
+    tops: Vec<f64>,
+}
+
+impl LoadHeap {
+    fn new(x0: f64, x1: f64, half: f64, floor: f64) -> Self {
+        let columns = ((x1 - x0) / LOAD_CELL).ceil() as usize;
+        let rows = (half * 2.0 / LOAD_CELL).ceil() as usize;
+        Self {
+            x0,
+            half,
+            columns,
+            rows,
+            tops: vec![floor; columns * rows],
+        }
+    }
+
+    /// Cells within `radius` of x/z, with their distance.
+    fn cells(&self, x: f64, z: f64, radius: f64) -> Vec<(usize, f64)> {
+        let mut cells = Vec::new();
+        for row in 0..self.rows {
+            for column in 0..self.columns {
+                let cx = self.x0 + (column as f64 + 0.5) * LOAD_CELL;
+                let cz = -self.half + (row as f64 + 0.5) * LOAD_CELL;
+                let distance = (cx - x).hypot(cz - z);
+                if distance <= radius {
+                    cells.push((row * self.columns + column, distance));
+                }
+            }
+        }
+        cells
+    }
+
+    /// Drop a stone of footprint `w` x `d` and height `h` at x/z: the centre
+    /// height at which its underside rests on the highest point under its middle,
+    /// after which its upper half becomes part of the heap. The heap takes the
+    /// smallest a roughened stone can be ([`super::quarry_surfaces::roughen_stone`] shrinks a corner to
+    /// 0.72), so stones dropped later sink into it a little rather than hover.
+    fn drop(&mut self, x: f64, z: f64, w: f64, h: f64, d: f64) -> f64 {
+        let under = self
+            .cells(x, z, 0.25 * w.min(d))
+            .into_iter()
+            .map(|(cell, _)| self.tops[cell])
+            .fold(f64::NEG_INFINITY, f64::max);
+        let y = under + h * STONE_SEAT;
+        let reach = 0.36 * w.min(d);
+        for (cell, distance) in self.cells(x, z, reach) {
+            let crown = y + 0.36 * h * (1.0 - distance / reach);
+            self.tops[cell] = self.tops[cell].max(crown);
+        }
+        y
+    }
 }
 
 /// Half-buried flank boulders break the east/west aprons. A separate stream keeps
@@ -486,7 +560,7 @@ fn flank_boulders(geology: &mut Node) {
         let w = flank_rng.range(1.4, 2.8);
         let h = flank_rng.range(0.9, 1.8);
         let d = flank_rng.range(1.2, 2.4);
-        let mut rock = sandstone_rock(w, h, d, variant);
+        let mut rock = sandstone_rock(w, h, d, variant, RockSetting::Ground);
         rock.set_rotation_euler(0.0, flank_rng.range(-PI, PI), 0.0);
         let y = 0.008 - quarry_ground_drop(x, z) - 0.14;
         put(geology, rock, x, y, z);

@@ -45,7 +45,8 @@ Checks read and arrange the engine through the dev-only `window.sloppy` (see
 [below](#windowsloppy-development-builds)) and the `Game.debug_*` fixture hooks
 (`crates/web/src/game/debug.rs`): an emptied arena, placed and patched tanks, damage
 through the shared damage paths, pickups, shells, mines, fixed simulation steps, still
-frames from a fixed camera, a pixel probe and two room seats. `window.sloppy.sim` is
+frames from a fixed camera, a pixel probe, two room seats, and switches that turn
+passes, effect pools and effects off for same-page timing (`debug_set_off`). `window.sloppy.sim` is
 the simulation and camera and `window.sloppy.stats()` the renderer counters (draws,
 pipelines, late pipelines, allocations). `launchGame()` installs `window.engine` in
 every page: `view()` (what every entity's view showed in the last frame: reticle rings,

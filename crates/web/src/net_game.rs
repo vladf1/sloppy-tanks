@@ -80,19 +80,20 @@ use crate::stats::presentation_stats;
 /// Notices waiting for `take_notices`; a hidden HUD must not grow this without bound.
 const MAX_PENDING_NOTICES: usize = 256;
 
-/// Slots of `frame`'s result. Slots 2-4 and 6-10 are `Game.frame`'s, except that
+/// Slots of `frame`'s result. Slots 2-4, 6-10 and 13-14 are `Game.frame`'s, except that
 /// `SIM_MS` times interpolation, input and event routing, and `HUD_DUE` needs a drawn
 /// frame and is also due while events wait. Slots 0, 1 and 5 stay 0.
 pub mod net_frame_slot {
     pub use crate::game::frame_slot::{
-        COCKPIT, DT, EVENTS, FIRST_PERSON, HUD_DUE, HULL_ANGLE, RENDER_MS, SIM_MS,
+        COCKPIT, DT, EVENTS, FIRST_PERSON, HUD_DUE, HULL_ANGLE, RENDER_MS, SIM_MS, VIEWER_X,
+        VIEWER_Y,
     };
     /// 1 when the arena drew this frame.
     pub const DRAWN: usize = 11;
     /// 1 when the page should free a captured pointer: a menu, a drop or no battle.
     /// A death keeps it captured for the respawn.
     pub const POINTER_FREE: usize = 12;
-    pub const LENGTH: usize = 13;
+    pub const LENGTH: usize = 15;
 }
 
 /// `NetGame.create`'s room settings besides the view configuration
@@ -768,6 +769,9 @@ impl NetGame {
         result[slot::DRAWN] = flag(drawn);
         result[slot::POINTER_FREE] =
             flag(!drawn || !self.client.connected || menu || phase != RoomPhase::Playing);
+        let (viewer_x, viewer_y) = self.view.viewer_ndc().unwrap_or((f32::NAN, f32::NAN));
+        result[slot::VIEWER_X] = viewer_x;
+        result[slot::VIEWER_Y] = viewer_y;
         self.frame_index += 1;
         result
     }

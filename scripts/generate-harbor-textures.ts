@@ -68,7 +68,7 @@ function containerWear() {
       const mottle = fbm(coarse, u * 4, v * 4, 4, 5);
       const speck = fine(u * 128, v * 128, 128);
       // Sun-faded towards the roof, paint mottled by years of weather.
-      let shade = 0.82 * mix(0.86, 1.08, mottle) * mix(0.95, 1.04, speck) * mix(1.07, 0.97, v);
+      const shade = 0.82 * mix(0.86, 1.08, mottle) * mix(0.95, 1.04, speck) * mix(1.07, 0.97, v);
       // Grime rising from the floor rail, ragged at its edge, and dirt washed down
       // in vertical bands from the roof.
       const grimeEdge = 0.74 + 0.12 * fbm(grimeNoise, u * 8, 0.5, 8, 3);

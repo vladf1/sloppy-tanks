@@ -32,6 +32,9 @@
 //!   simulation's covers.
 //! - `debug_water_json()`, `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
 //!   box for pixel probes; `size <= 0` removes it).
+//! - `debug_set_off({ pools, bloom, occlusion, sky, lights, atmosphere, effects })`: switch
+//!   effect pools (by label), post passes, point lights, the atmosphere or main-view draws of
+//!   custom effects (by name) off, for same-page A/B timing of one frame redrawn.
 //! - `debug_seats(seed)`: two player seats on a room simulation, each drawn from its
 //!   own viewer; see the method.
 
@@ -47,11 +50,12 @@ use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multip
 use sloppy_core::net::player_controls::PlayerControls;
 use sloppy_core::scene::{Material, Node};
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::math::{Quat4, Vec2};
+use sloppy_core::sim::data::weapon;
+use sloppy_core::sim::math::{Point3, Quat4, Vec2};
 use sloppy_core::sim::physics::{to_rotation, vector};
 use sloppy_core::sim::{
     AmmoInventory, CoverKind, DamageCause, GameMode, MatchPhase, Mine, Pickup, PlayerAssignment,
-    Shot, Team, VehicleCommand, VehicleKind, Weapon,
+    Shot, SimEvent, SimEventType, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_render::camera::PerspectiveCamera;
 use sloppy_render::gpu::{InstanceId, Lifetime, ModelId};
@@ -181,6 +185,18 @@ struct PickupSpec {
     cooldown_duration: f64,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct DebugOffSpec {
+    pools: Vec<String>,
+    bloom: bool,
+    occlusion: bool,
+    sky: bool,
+    lights: bool,
+    atmosphere: bool,
+    effects: Vec<String>,
+}
+
 macro_rules! apply {
     ($target:expr, $patch:expr, $($field:ident),+) => {
         $(if let Some(value) = $patch.$field { $target.$field = value; })+
@@ -189,6 +205,23 @@ macro_rules! apply {
 
 #[wasm_bindgen]
 impl Game {
+    /// Switch passes, lights and effect pools off for a same-page A/B measurement:
+    /// `{ pools: [label...], bloom, occlusion, sky, lights, atmosphere, effects: [name...] }`,
+    /// each `true` = off.
+    pub fn debug_set_off(&mut self, off_json: &str) -> Result<(), JsValue> {
+        let off: DebugOffSpec = parse(off_json)?;
+        self.view.renderer.debug_off = sloppy_render::gpu::DebugOff {
+            pools: off.pools,
+            bloom: off.bloom,
+            occlusion: off.occlusion,
+            sky: off.sky,
+            lights: off.lights,
+            atmosphere: off.atmosphere,
+            effects: off.effects,
+        };
+        Ok(())
+    }
+
     /// Empty the arena except the human and the tanks whose ids are in `keep`.
     pub fn debug_clear_arena(&mut self, keep: Vec<u32>) {
         let sim = &mut self.sim;
@@ -323,6 +356,22 @@ impl Game {
         };
         let human = self.sim.human();
         let (owner, team, life) = (human.id, human.team, human.life);
+        let cover = &self.sim.covers[index];
+        if cover.alive && !cover.destructible {
+            // Hard cover shrugs off damage; show what shells striking it look like
+            // instead: the impact a shell's world contact raises, in the middle of
+            // each face, each from a gun straight out from that face.
+            let (x, z, hw, hd) = (cover.x, cover.z, cover.w / 2.0, cover.d / 2.0);
+            for (nx, nz) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                let face = Point3::new(x + nx * hw, 1.0, z + nz * hd);
+                let mut impact = SimEvent::at(SimEventType::Impact, face.x, face.z);
+                impact.size = Some(0.6);
+                impact.color = Some(weapon(Weapon::Standard).color);
+                impact.from = Some(Point3::new(face.x + nx * 10.0, 1.0, face.z + nz * 10.0));
+                self.sim.events.push(impact);
+            }
+            return;
+        }
         self.sim
             .damage_cover(index, amount, owner, team, Some(life), None);
     }

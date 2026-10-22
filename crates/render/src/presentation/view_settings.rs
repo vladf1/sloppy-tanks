@@ -23,54 +23,14 @@ pub const CAMERA: Camera = Camera {
     max_pixel_ratio: 1.5,
 };
 
-/// How the follow camera carries weight and reacts to the battle. Shake follows
-/// the trauma model: events add trauma (0..1), which decays linearly, and the
-/// shake grows with its square, so small knocks stay calm and big blasts land.
+/// How the camera reacts to the battle; the overhead camera itself stays fixed on
+/// the tank (`camera_rig.rs`). Shake follows the trauma model: events add trauma
+/// (0..1), which decays linearly, and the shake grows with its square.
 pub struct CameraFeel {
-    /// Angular frequency (rad/s) of the critically damped focus spring; the focus
-    /// leads a moving tank by the spring's lag, so steady driving stays centred.
-    pub follow_frequency: f64,
-    /// The view leans toward the turret's aim by this fraction of the pointer's
-    /// reach from the tank, up to `max_aim_look_ahead` of the zoom.
-    pub aim_look_ahead: f64,
-    pub max_aim_look_ahead: f64,
-    /// And toward the nearest enemy within `threat_range` by this fraction of the
-    /// way, up to `max_threat_look_ahead` of the zoom.
-    pub threat_look_ahead: f64,
-    pub max_threat_look_ahead: f64,
-    pub threat_range: f64,
-    /// The focus sits this fraction of the zoom up the screen from the tank.
-    pub frame_ahead: f64,
-    /// All of the leads together stay within this fraction of the zoom.
-    pub max_look_ahead: f64,
-    /// And ahead along the drive by this many seconds of travel, up to a cap.
-    pub travel_look_ahead_seconds: f64,
-    pub max_travel_look_ahead: f64,
-    /// A focus this far from its target (a respawn, leaving the overview) snaps.
-    pub snap_distance: f64,
-    /// The leads ride their own critically damped spring of this frequency (rad/s).
-    pub lead_frequency: f64,
-    /// The follow camera frames at `calm_framing` of the chosen zoom. With an
-    /// enemy near it frames the duel instead: as tight as `combat_framing` and as
-    /// wide as `duel_framing`, whatever keeps that enemy inside `duel_frame`. It
-    /// eases there at `framing_rate` per second. It never closes in for a fight:
-    /// seeing less of the field made the game play harder.
-    pub calm_framing: f64,
-    pub combat_framing: f64,
-    pub duel_framing: f64,
-    pub framing_rate: f64,
-    /// Screen boxes in NDC (x left, x right, y bottom, y top). The leads never
-    /// carry the player's tank out of `player_frame`, clear of the HUD panels,
-    /// and a lagging spring never past `player_guard`. The duel framing fits
-    /// the enemy inside `duel_frame`.
-    pub player_frame: [f32; 4],
-    pub player_guard: [f32; 4],
-    pub duel_frame: [f32; 4],
-    /// At `full_speed` (m/s) the camera eases back by this fraction of the zoom,
-    /// approaching it at `speed_zoom_rate` per second.
-    pub speed_zoom: f64,
+    /// The seated view's sway and speed widening peak at `full_speed` (m/s),
+    /// easing toward the tank's speed at `sway_rate` per second.
     pub full_speed: f64,
-    pub speed_zoom_rate: f64,
+    pub sway_rate: f64,
     /// Trauma lost per second.
     pub trauma_decay: f64,
     /// Shake at full trauma: yaw and pitch (rad) about the view, and its noise
@@ -90,8 +50,10 @@ pub struct CameraFeel {
     /// The viewer destroyed.
     pub death_trauma: f64,
     /// A reticle that follows the turret rather than a pointer (autoplay) glides to
-    /// its point at this rate (per second); a jump farther than `snap_distance` snaps.
+    /// its point at this rate (per second); a jump farther than `snap_distance`
+    /// (m) snaps.
     pub aim_track_rate: f64,
+    pub snap_distance: f64,
     /// First person shakes less: the view is already close to the action.
     pub first_person_shake: f64,
     /// Share of the hull's pitch and roll the first-person view rides.
@@ -110,28 +72,8 @@ pub struct CameraFeel {
 }
 
 pub const CAMERA_FEEL: CameraFeel = CameraFeel {
-    follow_frequency: 7.5,
-    aim_look_ahead: 0.32,
-    max_aim_look_ahead: 0.2,
-    threat_look_ahead: 0.6,
-    max_threat_look_ahead: 0.45,
-    threat_range: 30.0,
-    frame_ahead: 0.02,
-    max_look_ahead: 0.45,
-    travel_look_ahead_seconds: 0.14,
-    max_travel_look_ahead: 2.0,
-    snap_distance: 14.0,
-    lead_frequency: 3.2,
-    calm_framing: 1.0,
-    combat_framing: 1.0,
-    duel_framing: 1.12,
-    framing_rate: 1.6,
-    player_frame: [-0.14, 0.14, -0.2, 0.22],
-    player_guard: [-0.38, 0.38, -0.38, 0.3],
-    duel_frame: [-0.9, 0.88, -0.64, 0.76],
-    speed_zoom: 0.06,
     full_speed: 8.0,
-    speed_zoom_rate: 2.5,
+    sway_rate: 5.0,
     trauma_decay: 2.0,
     shake_angles: [0.007, 0.007],
     shake_frequency: 9.0,
@@ -143,6 +85,7 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     hurt_kick: 3.5,
     death_trauma: 0.6,
     aim_track_rate: 10.0,
+    snap_distance: 14.0,
     first_person_shake: 0.55,
     first_person_tilt: 0.65,
     first_person_speed_fov: 6.0,
@@ -160,12 +103,6 @@ pub struct Feedback {
     pub pickup_seconds: f64,
     pub max_pickup_effects: usize,
     pub flash_decay: f64,
-    /// Destroying an enemy holds the action for this long at `hit_stop_time_scale`
-    /// (single player only: a room's clock belongs to the server).
-    pub hit_stop_seconds: f64,
-    pub hit_stop_time_scale: f64,
-    /// The viewer's hits on an enemy hold it for this long.
-    pub hit_confirm_stop_seconds: f64,
 }
 
 pub const FEEDBACK: Feedback = Feedback {
@@ -175,9 +112,6 @@ pub const FEEDBACK: Feedback = Feedback {
     pickup_seconds: 0.8,
     max_pickup_effects: 24,
     flash_decay: 12.0,
-    hit_stop_seconds: 0.07,
-    hit_stop_time_scale: 0.06,
-    hit_confirm_stop_seconds: 0.035,
 };
 
 /// How tanks carry their weight on screen (render-only; physics keeps the true pose).
@@ -296,7 +230,8 @@ pub struct FirstPerson {
     pub transition_turn_start: f64,
     /// Destroyed in first person, the camera eases out of the wreck to this many
     /// metres behind (along the look) and above the last eye, tilted down to
-    /// watch it, over `destroyed_step_seconds`.
+    /// watch it, over `destroyed_step_seconds`. It clears the wreck's own smoke and
+    /// frames the wreck in the upper middle, above the respawn card.
     pub destroyed_back: f64,
     pub destroyed_rise: f64,
     pub destroyed_pitch: f64,
@@ -317,9 +252,9 @@ pub const FIRST_PERSON: FirstPerson = FirstPerson {
     pickup_opacity: 0.7,
     transition_seconds: 0.8,
     transition_turn_start: 0.4,
-    destroyed_back: 4.5,
-    destroyed_rise: 2.2,
-    destroyed_pitch: -0.5,
+    destroyed_back: 13.0,
+    destroyed_rise: 4.0,
+    destroyed_pitch: -0.36,
     destroyed_step_seconds: 0.6,
 };
 

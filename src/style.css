@@ -836,48 +836,59 @@ body:has(#settings[open]) .hud-actions {
    carry the gold edge. Older rows sink back as newer ones arrive. */
 #feed {
   position: absolute;
-  right: 14px;
-  top: 64px;
+  right: max(18px, env(safe-area-inset-right));
+  top: 66px;
   display: grid;
   justify-items: end;
-  gap: 3px;
-  font: 800 11px/1.2 var(--font-ui);
-  letter-spacing: 0.8px;
+  gap: 4px;
+  max-width: min(360px, 42vw);
+  font: 800 12px/1.2 var(--font-ui);
+  letter-spacing: 0.35px;
   text-align: right;
   text-transform: uppercase;
 }
+/* Each row is as wide as its names, never wider than the column: a long name ends in an
+   ellipsis instead of pushing the plate past the screen edge. */
 #feed > div {
   display: flex;
   align-items: center;
   gap: 8px;
-  min-height: 28px;
-  padding: 4px 11px 4px 12px;
+  max-width: 100%;
+  min-height: 30px;
+  padding: 5px 12px 5px 12px;
   border-radius: 6px;
-  background: linear-gradient(90deg, #07122ad9, #0a1833eb);
+  background: linear-gradient(90deg, #08142cf0, #0b1a36f5);
   box-shadow:
-    inset 0 0 0 1px #9fd0ff1f,
-    0 4px 12px #0006;
+    inset 0 0 0 1px #9fd0ff24,
+    inset 0 1px #ffffff0f,
+    0 4px 12px #0007;
   text-shadow: 0 1px 2px #000c;
 }
+#feed .feed-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 #feed > div:nth-child(3) {
-  opacity: 0.82;
+  opacity: 0.86;
 }
 #feed > div:nth-child(4) {
-  opacity: 0.64;
+  opacity: 0.7;
 }
 #feed .feed-name.blue {
-  color: #74c4ff;
+  color: #86ceff;
 }
 #feed .feed-name.red {
-  color: #ff8592;
+  color: #ff919c;
 }
 #feed .feed-name.neutral {
   color: #e8dcc4;
 }
 #feed .feed-weapon {
   flex: none;
-  width: 18px;
-  height: 18px;
+  width: 20px;
+  height: 20px;
   fill: #e9f1fa;
   filter: drop-shadow(0 1px 1px #000);
 }
@@ -907,10 +918,11 @@ body:has(#settings[open]) .hud-actions {
 }
 /* The viewer's own rows: a gold edge and a warm plate; the viewer's name is gold. */
 #feed :is(.own-kill, .own-death) {
-  background: linear-gradient(90deg, #2a2208eb, #3d300ef2);
+  padding-right: 14px;
+  background: linear-gradient(90deg, #2b2308f5, #3f310ff8);
   box-shadow:
-    inset 0 0 0 1px #ffcf3866,
-    inset -3px 0 0 var(--gold),
+    inset 0 0 0 1.5px #ffcf3880,
+    inset -4px 0 0 var(--gold),
     0 4px 14px #0007;
 }
 #feed .feed-name.you {
@@ -926,7 +938,7 @@ body:has(#settings[open]) .hud-actions {
     filter: brightness(2);
   }
   45% {
-    transform: scale(1.05);
+    transform: scale(1.03);
   }
   100% {
     transform: none;
@@ -991,31 +1003,38 @@ body:has(#settings[open]) .hud-actions {
   opacity: 0;
   pointer-events: none;
 }
+/* Each tick is white on a dark outline, so it reads over fire, smoke and pale ground
+   alike; a kill turns them red and longer. */
 #hit-marker i {
   position: absolute;
-  left: -6px;
-  top: -1.5px;
-  width: 12px;
-  height: 3px;
+  left: -7px;
+  top: -2px;
+  width: 14px;
+  height: 4px;
   border-radius: 2px;
   background: #fff;
-  box-shadow: 0 0 3px #000d;
+  box-shadow:
+    0 0 0 1.5px #07111f,
+    0 0 6px #000c;
 }
 #hit-marker i:nth-child(1) {
-  transform: rotate(45deg) translateX(-14px);
+  transform: rotate(45deg) translateX(-16px);
 }
 #hit-marker i:nth-child(2) {
-  transform: rotate(135deg) translateX(-14px);
+  transform: rotate(135deg) translateX(-16px);
 }
 #hit-marker i:nth-child(3) {
-  transform: rotate(225deg) translateX(-14px);
+  transform: rotate(225deg) translateX(-16px);
 }
 #hit-marker i:nth-child(4) {
-  transform: rotate(315deg) translateX(-14px);
+  transform: rotate(315deg) translateX(-16px);
 }
 #hit-marker.kill i {
-  background: var(--red);
-  width: 15px;
+  background: #ff4d5e;
+  width: 17px;
+  box-shadow:
+    0 0 0 1.5px #2a050b,
+    0 0 8px #ff2a3acc;
 }
 #hit-marker.visible {
   animation: hit-pop 0.3s ease-out forwards;
@@ -1443,6 +1462,14 @@ h2 {
   text-align: center;
   text-shadow: 0 2px 3px #0006;
 }
+.dialog-score :is(.blue, .red) small {
+  display: block;
+  margin-top: 2px;
+  color: #ffffffcc;
+  font: 800 8.5px/1 var(--font-ui);
+  letter-spacing: 1.6px;
+  text-shadow: none;
+}
 .dialog-score .blue {
   background:
     linear-gradient(180deg, #ffffff33, transparent 50%), linear-gradient(180deg, #2f8ff2, #1252b0);
@@ -1481,6 +1508,26 @@ h2 {
 .secondary.danger {
   box-shadow: inset 0 0 0 1.5px #ff6f5e99;
   color: #ffb2a7;
+}
+/* Buttons lead with a small mark in their text colour. */
+.action-icon {
+  width: 16px;
+  height: 16px;
+  margin: -3px 8px -2px -4px;
+  vertical-align: middle;
+  fill: currentColor;
+}
+/* Pause: Resume and Settings side by side; ending the battle stands apart at the end
+   of the row, smaller and red, so it is never hit by habit. */
+.pause-actions #end-battle {
+  flex: 0 0 auto;
+  margin-left: auto;
+  padding-inline: 18px;
+  background: #ff4d5e12;
+  font-size: 13px;
+}
+.pause-actions :is(#resume, #pause-settings) {
+  flex: 1 1 150px;
 }
 .secondary.danger:hover {
   background: #ff4d5e26;
@@ -1682,55 +1729,80 @@ h2 {
   align-items: center;
   justify-content: space-between;
   gap: 20px;
-  margin-bottom: 12px;
-  padding-bottom: 12px;
+  margin: -14px -18px 12px;
+  padding: 14px 18px 14px 20px;
   border-bottom: 1px solid #9fd0ff1a;
+  background: linear-gradient(90deg, #ff4d5e1f, transparent 55%);
+  box-shadow: inset 4px 0 #ff4d5e;
 }
+/* The killer: a red eyebrow, their name in their team's colour, and tags for the weapon,
+   their tank and their tally, one baseline under the name. */
 .wrecked-by {
   display: grid;
-  grid-template-columns: auto auto;
-  justify-content: start;
-  align-items: center;
-  column-gap: 12px;
+  justify-items: start;
+  row-gap: 3px;
   min-width: 0;
 }
 .wrecked-by small {
-  grid-column: 1 / -1;
   color: #ff8592;
-  font-size: 10.5px;
+  font-size: 11px;
   font-weight: 800;
-  letter-spacing: 3px;
+  letter-spacing: 2.4px;
 }
 .wrecked-by b {
+  max-width: 100%;
   overflow: hidden;
-  font: 400 34px/1.05 var(--font-display);
-  letter-spacing: 1px;
+  font: 400 38px/1 var(--font-display);
+  letter-spacing: 0.5px;
   text-overflow: ellipsis;
   text-transform: uppercase;
   white-space: nowrap;
   text-shadow: 0 2px 8px #000a;
 }
-.wrecked-weapon {
+.wrecked-by.side-blue b {
+  color: #9ad6ff;
+}
+.wrecked-by.side-red b {
+  color: #ffa0a9;
+}
+.wrecked-tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+.wrecked-weapon,
+.killer-tag {
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  padding: 4px 10px 4px 7px;
-  border: 1px solid #ff6f5e55;
-  border-radius: 999px;
-  background: #ff4d5e1f;
-  color: #ffd6da;
+  height: 24px;
+  padding: 0 10px;
+  border-radius: 6px;
   font-size: 11px;
   font-weight: 800;
-  letter-spacing: 0.6px;
+  letter-spacing: 0.8px;
   white-space: nowrap;
+}
+.wrecked-weapon {
+  padding-left: 6px;
+  border: 1px solid #ff6f5e66;
+  background: #ff4d5e2e;
+  color: #ffe1e4;
+}
+.killer-tag {
+  border: 1px solid #9fd0ff2e;
+  background: #0a1830cc;
+  color: #cfe1f2;
 }
 .wrecked-icon {
   width: 18px;
   height: 18px;
   fill: currentColor;
 }
-/* The countdown is the one number that matters: a big gold digit in a ring that drains
-   as the respawn nears, with what to do meanwhile beside it. */
+/* The countdown is the card's focal point: a big gold digit in a ring that drains as the
+   respawn nears. */
 .respawn-timer {
   display: flex;
   align-items: center;
@@ -1740,41 +1812,63 @@ h2 {
 .respawn-timer h2 {
   display: grid;
   justify-items: end;
-  gap: 5px;
+  gap: 4px;
   margin: 0;
   color: #fff;
-  font-size: 26px;
-  letter-spacing: 2px;
+  font-size: 30px;
+  letter-spacing: 1.5px;
   line-height: 0.9;
 }
 .respawn-timer h2 small {
   color: var(--text-label);
-  font: 800 10.5px/1 var(--font-ui);
-  letter-spacing: 2px;
-  text-transform: uppercase;
+  font: 800 11px/1 var(--font-ui);
+  letter-spacing: 2.4px;
 }
 .respawn-ring {
   position: relative;
   display: grid;
   place-items: center;
-  width: 68px;
-  height: 68px;
+  width: 108px;
+  height: 108px;
   border-radius: 50%;
   background: conic-gradient(var(--gold) calc(var(--left, 1) * 360deg), #ffffff1a 0);
-  box-shadow: 0 0 24px #ffcf3833;
+  box-shadow:
+    0 0 0 1px #00000066,
+    0 0 34px #ffcf3840;
 }
 .respawn-ring::before {
   content: "";
   position: absolute;
-  inset: 5px;
+  inset: 6px;
   border-radius: 50%;
-  background: radial-gradient(circle at 50% 30%, #1b355e, #08142a);
+  background: radial-gradient(circle at 50% 30%, #1d3a66, #07122a);
+  box-shadow: inset 0 2px 6px #0008;
 }
 #respawn-count {
   position: relative;
-  color: var(--gold);
-  font: 400 40px/1 var(--font-display);
-  text-shadow: 0 0 18px #ffcf3888;
+  color: var(--gold-hot);
+  font: 400 74px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+  text-shadow:
+    0 2px 0 #7a5a00,
+    0 0 22px #ffcf3899;
+}
+.respawn-pick {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  margin: 0 0 8px;
+  color: #fff;
+  font: 800 12px/1.2 var(--font-ui);
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+}
+.respawn-pick small {
+  color: var(--text-dim);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  text-transform: none;
 }
 .respawn .vehicles {
   gap: 8px;
@@ -1858,6 +1952,20 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .ammo-slot.empty::before {
   opacity: 0;
+}
+/* Rounds not carried wear a small lock: collect a crate to load them. */
+.ammo-lock {
+  display: none;
+}
+.ammo-slot.empty .ammo-lock {
+  display: block;
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 11px;
+  height: 11px;
+  fill: #8ea3bb;
+  filter: drop-shadow(0 1px 1px #000);
 }
 .ammo-slot:hover:not(:disabled, .selected) {
   border-color: #ffffff40;
@@ -2045,16 +2153,20 @@ html:not(.phone) #toast[data-tone="death"] {
   box-shadow: 0 0 6px #ffcf38aa;
 }
 
-/* Incoming damage: a glowing arc on a ring round the middle of the screen, turned toward
-   the shot, with a small pointer at its peak. It belongs to a living tank; the wreck's
-   camera looks elsewhere, so the arc goes with the respawn card. */
+/* Incoming damage: a glowing wedge on a ring round the player's tank, turned toward the
+   shot, brightest at its middle and fading along the ring, with a pointer at its peak.
+   It pulses once as the hit lands. In first person the ring opens out to the screen's
+   edges, where the wedge frames the view instead of crossing it. It belongs to a living
+   tank; the wreck's camera looks elsewhere, so it goes with the respawn card. */
 #damage-direction {
+  --angle: 0rad;
   position: absolute;
   left: 50%;
   top: 50%;
-  width: min(46vh, 380px);
-  height: min(46vh, 380px);
+  width: clamp(190px, 30vmin, 290px);
+  height: clamp(190px, 30vmin, 290px);
   pointer-events: none;
+  transform: translate(-50%, -50%) rotate(var(--angle));
 }
 #damage-direction i {
   position: absolute;
@@ -2062,25 +2174,69 @@ html:not(.phone) #toast[data-tone="death"] {
   border-radius: 50%;
   background: radial-gradient(
     circle closest-side,
-    transparent 84%,
-    #ff455acc 90%,
-    #ff2a3a66 95%,
+    transparent 70%,
+    #ff2a3a33 82%,
+    #ff4458d9 91%,
+    #ffd2d6 94%,
+    #ff3a4ccc 96.5%,
     transparent 100%
   );
-  mask: conic-gradient(from -30deg, #000 0deg, #000 60deg, transparent 60deg);
-  -webkit-mask: conic-gradient(from -30deg, #000 0deg, #000 60deg, transparent 60deg);
-  filter: drop-shadow(0 0 8px #ff2a3a);
+  mask: conic-gradient(from -48deg, transparent, #000 48deg, transparent 96deg, transparent);
+  -webkit-mask: conic-gradient(
+    from -48deg,
+    transparent,
+    #000 48deg,
+    transparent 96deg,
+    transparent
+  );
+}
+/* First person: the whole screen, glowing red at the edge the shot came from. */
+#damage-direction.edge {
+  width: 100%;
+  height: 100%;
+  transform: translate(-50%, -50%);
+}
+#damage-direction.edge i {
+  border-radius: 0;
+  background: radial-gradient(
+    ellipse 34% 44% at var(--edge-x, 50%) var(--edge-y, 0%),
+    #ff2a3ab8,
+    #ff2a3a4d 42%,
+    transparent 72%
+  );
+  mask: none;
+  -webkit-mask: none;
 }
 #damage-direction::after {
   content: "";
   position: absolute;
-  left: calc(50% - 11px);
-  top: -14px;
-  width: 22px;
+  left: calc(50% - 10px);
+  top: -13px;
+  width: 20px;
   height: 12px;
-  background: linear-gradient(180deg, #ff8a7a, #e0162e);
+  background: linear-gradient(180deg, #ffb3a8, #e0162e);
   clip-path: polygon(50% 0, 100% 100%, 0 100%);
-  filter: drop-shadow(0 0 4px #ff2a3a);
+  filter: drop-shadow(0 0 1px #2a050b) drop-shadow(0 0 5px #ff2a3a);
+}
+#damage-direction.edge::after {
+  display: none;
+}
+#damage-direction.pulse i {
+  animation: damage-pulse 0.5s cubic-bezier(0.2, 0.8, 0.3, 1);
+}
+@keyframes damage-pulse {
+  0% {
+    transform: scale(1.14);
+    filter: brightness(1.8);
+  }
+  100% {
+    transform: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  #damage-direction.pulse i {
+    animation: none;
+  }
 }
 #hud.dead #damage-direction {
   display: none;
@@ -2307,8 +2463,9 @@ html:not(.phone) #toast[data-tone="death"] {
   padding: 14px 16px;
   border: 0;
   border-radius: 14px 14px 0 0;
-  background: linear-gradient(180deg, #0d1f3b, #0a182f);
-  color: var(--text-dim);
+  background: linear-gradient(180deg, #11264a, #0b1a33);
+  box-shadow: inset 0 1px #9fd0ff1f;
+  color: #c3d8ea;
   text-align: left;
   transition:
     background 0.15s,
@@ -2545,8 +2702,13 @@ html:not(.phone) #toast[data-tone="death"] {
   top: 46%;
   height: 34%;
   border-radius: 50%;
-  background: radial-gradient(ellipse at center, #8cc8ff2e, #8cc8ff0d 55%, transparent 70%);
-  box-shadow: inset 0 0 0 1px #8cc8ff1f;
+  background: radial-gradient(
+    ellipse at center,
+    color-mix(in srgb, var(--class, #8cc8ff) 26%, transparent),
+    color-mix(in srgb, var(--class, #8cc8ff) 7%, transparent) 55%,
+    transparent 70%
+  );
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--class, #8cc8ff) 22%, transparent);
   pointer-events: none;
 }
 .start .vehicle.selected::before {
@@ -2638,7 +2800,7 @@ html:not(.phone) #toast[data-tone="death"] {
 .battle-choice .choice-card {
   flex-direction: column;
   align-items: flex-start;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 14px 16px;
 }
 .battle-choice .choice-icon {
@@ -2783,20 +2945,107 @@ html:not(.phone) #toast[data-tone="death"] {
   --art: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 240 80'%3E %3Cpath fill='%23c98f4e' d='M110 80V44l14-6h30l8 10h20l10-14h28l20 12v34z'/%3E %3Cpath fill='%23a8703a' d='M110 80V58h30l6-6h40l8 8h46v20z'/%3E %3Cpath fill='%238a5a2e' d='M150 80l6-10h24l6 4h54v6z'/%3E %3Cpath fill='%23e3b072' d='M124 38h30l-6 4h-20zM192 34h28l-8 4h-18z'/%3E %3Cpath fill='%237a4e28' d='M128 70h8l3 4h-14zM206 66h10l2 5h-14z'/%3E %3C/svg%3E");
   --tint: #a8733a;
 }
-/* Team Battle: the two sides' colours glow from opposite corners behind two crossed
-   team pennants; Solo Assault: a red target. */
+/* Key art from the tanks' own renders. Team Battle: a blue Bruiser and a red Big Rig
+   squaring up across a "VS" under their sides' glows; Solo Assault: one red tank in the
+   sights of a dim enemy line. */
 .battle-choice .choice-card:has(input[value="team"]) {
   --scene:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 140 120'%3E%3Cpath d='M50 14 84 26v30c0 24-15 40-34 48-19-8-34-24-34-48V26z' fill='%233ea6ff33' stroke='%2366b6ff' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M90 14l34 12v30c0 24-15 40-34 48-19-8-34-24-34-48V26z' fill='%23ff4d5e33' stroke='%23ff6b7a' stroke-width='3' stroke-linejoin='round'/%3E%3Cpath d='M50 32v58M90 32v58' stroke-width='3' stroke='%23ffffff33'/%3E%3C/svg%3E")
-      right 18px top 18px / auto 58% no-repeat,
-    radial-gradient(ellipse 55% 75% at 100% 0%, #ff4d5e40, transparent 70%),
-    radial-gradient(ellipse 60% 80% at 0% 100%, #3ea6ff38, transparent 70%);
+    radial-gradient(ellipse 60% 70% at 100% 10%, #ff4d5e4d, transparent 70%),
+    radial-gradient(ellipse 60% 70% at 0% 10%, #3ea6ff47, transparent 70%),
+    linear-gradient(180deg, transparent 55%, #050c1a99);
 }
 .battle-choice .choice-card:has(input[value="solo"]) {
   --scene:
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 120 120'%3E%3Cg fill='none' stroke='%23ff6b7a' stroke-width='3'%3E%3Ccircle cx='60' cy='60' r='40'/%3E%3Ccircle cx='60' cy='60' r='22' stroke-opacity='.7'/%3E%3Cpath d='M60 6v26M60 88v26M6 60h26M88 60h26'/%3E%3C/g%3E%3Ccircle cx='60' cy='60' r='5' fill='%23ff6b7a'/%3E%3C/svg%3E")
-      right 18px top 18px / auto 58% no-repeat,
-    radial-gradient(ellipse 60% 85% at 85% 35%, #b8203640, transparent 70%);
+    radial-gradient(ellipse 70% 70% at 60% 35%, #b8203647, transparent 70%),
+    linear-gradient(180deg, transparent 55%, #050c1a99);
+}
+.battle-choice .choice-icon {
+  display: none;
+}
+.mode-art {
+  position: absolute;
+  z-index: -1;
+  left: 0;
+  right: 0;
+  top: 4%;
+  bottom: 26%;
+  pointer-events: none;
+}
+.mode-tank {
+  position: absolute;
+  height: auto;
+  filter: drop-shadow(0 12px 10px #020a14b3);
+  transition: transform 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.2);
+}
+.team-art .blue-tank {
+  left: -2%;
+  top: 30%;
+  width: 54%;
+  transform: scaleX(-1);
+}
+.team-art .red-tank {
+  right: -4%;
+  top: 24%;
+  width: 62%;
+}
+.team-art .versus {
+  position: absolute;
+  left: 48%;
+  top: 12%;
+  color: #fff;
+  font: 400 30px/1 var(--font-display);
+  font-style: normal;
+  letter-spacing: 1px;
+  text-shadow:
+    0 0 14px #ffcf38aa,
+    0 2px 0 #7a5a00;
+  transform: translateX(-50%) skewX(-8deg);
+}
+.solo-art .enemy-tank {
+  width: 36%;
+  filter: brightness(0.6) saturate(0.8) drop-shadow(0 6px 6px #0008);
+}
+.solo-art .enemy-1 {
+  left: -4%;
+  top: 6%;
+}
+.solo-art .enemy-2 {
+  left: 33%;
+  top: -4%;
+  width: 32%;
+}
+.solo-art .enemy-3 {
+  right: -6%;
+  top: 8%;
+}
+.solo-art .hero-tank {
+  left: 16%;
+  top: 34%;
+  width: 66%;
+}
+.solo-art .sights {
+  position: absolute;
+  left: 50%;
+  top: 64%;
+  width: 46%;
+  aspect-ratio: 1;
+  border: 2px solid #ff6b7acc;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 1px #0006,
+    0 0 18px #ff4d5e55;
+  transform: translate(-50%, -50%) scaleY(0.42);
+}
+.battle-choice .choice-card:hover .team-art .blue-tank {
+  transform: scaleX(-1) translateX(-4px);
+}
+.battle-choice .choice-card:hover .team-art .red-tank,
+.battle-choice .choice-card:hover .solo-art .hero-tank {
+  transform: translateX(-4px);
+}
+.battle-choice .choice-card:not(:has(input:checked)) .mode-art {
+  opacity: 0.6;
+  filter: saturate(0.7);
 }
 /* Solo Assault waits while an extra level fixes the battle format. */
 .choice-card:has(input:disabled) {
@@ -3181,7 +3430,7 @@ html:not(.phone) #toast[data-tone="death"] {
   gap: 8px;
 }
 /* The heading's dash is a flex item here: the gap spaces it like the other labels'. */
-.setup-label > .rooms-heading::before {
+.setup-label > span.rooms-heading:first-child::before {
   margin-right: 0;
 }
 /* A small round arrow beside the count. Negative margins keep it from making the
@@ -3325,8 +3574,20 @@ html:not(.phone) #toast[data-tone="death"] {
   animation: room-scan 1.6s linear infinite;
 }
 #multiplayer-panel:has(.room-status[data-state="error"]) .room-empty svg {
+  width: 54px;
+  height: 54px;
   stroke: #ffc23a;
-  opacity: 0.75;
+  opacity: 0.45;
+}
+/* Offline, the status well below says why once; the empty list keeps only its icon, and
+   the new room's rules and button stand down until rooms are back. */
+#multiplayer-panel:has(.room-status[data-state="error"]) .room-empty :is(b, small).when-error {
+  display: none;
+}
+#multiplayer-panel:has(.room-status[data-state="error"]) .new-room {
+  opacity: 0.5;
+  filter: saturate(0.4);
+  pointer-events: none;
 }
 @keyframes room-scan {
   to {
@@ -3638,11 +3899,35 @@ html:not(.phone) #toast[data-tone="death"] {
   white-space: nowrap;
 }
 .room-action .primary:disabled {
-  background: #b7d7ed14;
-  box-shadow: inset 0 0 0 1px #b7d7ed22;
-  color: #7795ab;
+  background: repeating-linear-gradient(-45deg, #ffffff06 0 8px, transparent 8px 16px), #0a1830;
+  box-shadow:
+    inset 0 0 0 1px #b7d7ed2e,
+    inset 0 2px 8px #0008;
+  color: #6f8aa3;
   text-shadow: none;
-  cursor: default;
+  cursor: not-allowed;
+}
+/* Offline, Create Room wears a lock and says it waits for the server. */
+#multiplayer-panel:has(.room-status[data-state="error"]) #create-room::before {
+  content: "";
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  margin: 0 10px -1px 0;
+  background: currentColor;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Cpath fill-rule='evenodd' d='M12 2.5a5 5 0 0 1 5 5V10h1.2c.9 0 1.6.7 1.6 1.6v8.3c0 .9-.7 1.6-1.6 1.6H5.8c-.9 0-1.6-.7-1.6-1.6v-8.3c0-.9.7-1.6 1.6-1.6H7V7.5a5 5 0 0 1 5-5zm0 2.6a2.4 2.4 0 0 0-2.4 2.4V10h4.8V7.5A2.4 2.4 0 0 0 12 5.1z'/%3E%3C/svg%3E")
+    center / contain no-repeat;
+}
+#multiplayer-panel:has(.room-status[data-state="error"]) #create-room::after {
+  content: "WAITING FOR THE SERVER";
+  position: static;
+  display: block;
+  width: auto;
+  margin-top: 6px;
+  background: none;
+  font: 800 9.5px/1 var(--font-ui);
+  letter-spacing: 1.6px;
+  transform: none;
 }
 #multiplayer-panel:has(#new-room:checked) #join-room,
 #multiplayer-panel:not(:has(#new-room:checked)) #create-room {
@@ -3698,7 +3983,7 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .start .menu-help {
   margin: 0;
-  color: var(--muted);
+  color: #a9c2d8;
   font-size: 11.5px;
   line-height: 1.65;
 }
@@ -3708,9 +3993,11 @@ html:not(.phone) #toast[data-tone="death"] {
   position: absolute;
   right: 18px;
   bottom: 12px;
-  color: var(--muted);
-  font-size: 10px;
-  opacity: 0.35;
+  color: #8fa9c2;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.3px;
+  opacity: 0.75;
   pointer-events: none;
 }
 /* Short laptop screens keep the whole setup in view; the pause menu lists controls too. */
@@ -3785,7 +4072,7 @@ html:not(.phone) #toast[data-tone="death"] {
    for a win, dimmed for a loss), the score on team plates beside it; then one hero stat
    and the round's other numbers as tiles that land one after another. */
 .menu.results {
-  max-width: 880px;
+  max-width: 1080px;
   padding: 0 30px 24px;
   overflow: hidden;
   /* Sit above true centre so the report clears the bottom HUD and reads as centred. */
@@ -3793,7 +4080,7 @@ html:not(.phone) #toast[data-tone="death"] {
   animation: dialog-in 0.3s ease-out;
 }
 .menu.pause-menu {
-  max-width: 660px;
+  max-width: 680px;
   animation: dialog-in 0.25s ease-out;
 }
 @keyframes dialog-in {
@@ -3875,6 +4162,179 @@ html:not(.phone) #toast[data-tone="death"] {
 #overlay:has(.results) {
   align-items: safe center;
 }
+/* The report's body: the viewer's round on the left, both teams' scoreboard on the
+   right. */
+.results-body.with-board {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(300px, 1fr);
+  gap: 18px;
+}
+.results-board {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+  align-content: start;
+}
+.board-team {
+  --side: #3ea6ff;
+  overflow: hidden;
+  border: 1px solid #a6dfff1f;
+  border-radius: 10px;
+  background: #060f1fe6;
+  animation: tile-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) 0.1s backwards;
+}
+.board-team.red {
+  --side: #ff5367;
+  animation-delay: 0.16s;
+}
+.board-team header,
+.board-team li {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto 22px 22px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px;
+}
+.board-team header {
+  height: 34px;
+  background: linear-gradient(90deg, color-mix(in srgb, var(--side) 45%, #07122a), #0b1830);
+  box-shadow: inset 0 -2px var(--side);
+}
+.board-team header b {
+  color: #fff;
+  font: 800 12px/1 var(--font-ui);
+  letter-spacing: 2px;
+}
+.board-team header span {
+  color: #fff;
+  font: 400 22px/1 var(--font-display);
+}
+.board-team header i,
+.board-team li :is(b, small) {
+  font-style: normal;
+  text-align: right;
+}
+.board-team header i {
+  color: #ffffffb3;
+  font: 800 9px/1 var(--font-ui);
+  letter-spacing: 1px;
+}
+.board-team ol {
+  margin: 0;
+  padding: 3px 0;
+  list-style: none;
+}
+.board-team li {
+  height: 27px;
+  color: #c9dbea;
+  font-size: 12.5px;
+  font-weight: 600;
+}
+.board-team li:nth-child(even) {
+  background: #ffffff06;
+}
+.board-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-team li b {
+  color: #fff;
+  font: 400 17px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+.board-team li small {
+  color: #8fb3cb;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.board-tag {
+  padding: 2px 5px 1px;
+  border-radius: 4px;
+  background: #ffffff1a;
+  color: #e6f1f9;
+  font: 800 8.5px/1.2 var(--font-ui);
+  letter-spacing: 0.8px;
+}
+.board-team li.you {
+  background: linear-gradient(90deg, #ffcf3829, #ffcf380a);
+  box-shadow: inset 3px 0 var(--gold);
+  color: #fff;
+}
+.board-team li.you .board-tag {
+  background: var(--gold);
+  color: #1a2233;
+}
+.board-team .mvp-tag,
+.board-team li.you .mvp-tag {
+  background: linear-gradient(180deg, var(--gold-hot), var(--gold-deep));
+  color: #2a1a00;
+  box-shadow: 0 0 10px #ffb21c66;
+}
+/* The round's MVP across both columns: a gold star plate. */
+.board-mvp {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 10px 14px;
+  border: 1px solid #ffcf3866;
+  border-radius: 10px;
+  background:
+    radial-gradient(ellipse 60% 120% at 0 50%, #ffcf3833, transparent 70%),
+    linear-gradient(180deg, #1c2a44, #0b1528);
+  animation: tile-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) 0.24s backwards;
+}
+.board-mvp span {
+  padding: 4px 8px 3px;
+  border-radius: 5px;
+  background: linear-gradient(180deg, var(--gold-hot), var(--gold-deep));
+  color: #2a1a00;
+  font: 800 10px/1.2 var(--font-ui);
+  letter-spacing: 1.2px;
+}
+.board-mvp b {
+  min-width: 0;
+  overflow: hidden;
+  color: #fff;
+  font: 400 24px/1 var(--font-display);
+  letter-spacing: 0.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.board-mvp.blue b {
+  color: #9ad6ff;
+}
+.board-mvp.red b {
+  color: #ffa0a9;
+}
+.board-mvp small {
+  margin-left: auto;
+  color: #cfe1f2;
+  font-size: 12px;
+  font-weight: 700;
+  white-space: nowrap;
+}
+/* The hero tile: kills beside the viewer's tank, the peak rank under the count. */
+.recap-rank {
+  color: #ffe9a6;
+  font: 800 10px/1.2 var(--font-ui);
+  font-style: normal;
+  letter-spacing: 1.4px;
+}
+.recap-tank {
+  position: absolute;
+  right: -6px;
+  bottom: -14px;
+  width: 210px;
+  height: 112px;
+  pointer-events: none;
+}
+.recap-tank svg {
+  width: 100%;
+  height: 100%;
+  filter: drop-shadow(0 10px 10px #000a);
+}
 .recap-feats {
   display: flex;
   flex-wrap: wrap;
@@ -3898,7 +4358,7 @@ html:not(.phone) #toast[data-tone="death"] {
 /* Kills is the hero: a wide gold-lit tile at the head of the row. */
 .recap-stats {
   display: grid;
-  grid-template-columns: 1.7fr repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 8px;
   margin: 0;
 }
@@ -3921,13 +4381,15 @@ html:not(.phone) #toast[data-tone="death"] {
   animation: tile-in 0.35s cubic-bezier(0.2, 0.9, 0.3, 1.2) backwards;
 }
 .recap-stat:first-child {
+  grid-column: 1 / -1;
   display: flex;
   flex-direction: row;
   align-items: center;
   justify-content: flex-start;
   gap: 4px 14px;
   flex-wrap: wrap;
-  padding: 10px 16px;
+  min-height: 104px;
+  padding: 12px 220px 12px 18px;
   border-color: #ffcf3855;
   background:
     radial-gradient(ellipse 70% 90% at 0 50%, #ffcf3826, transparent 70%),
@@ -3938,7 +4400,7 @@ html:not(.phone) #toast[data-tone="death"] {
   order: -1;
   margin: 0;
   color: var(--gold-hot);
-  font-size: 62px;
+  font-size: 70px;
   line-height: 0.9;
   text-shadow: 0 0 22px #ffcf3855;
 }
@@ -3948,8 +4410,10 @@ html:not(.phone) #toast[data-tone="death"] {
   letter-spacing: 3px;
 }
 .recap-stat:first-child > span {
-  flex-basis: 100%;
   margin-top: 2px;
+}
+.recap-stat:first-child .recap-rank {
+  flex-basis: 100%;
 }
 .recap-stat:nth-child(2) {
   animation-delay: 0.04s;
@@ -3987,9 +4451,9 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .recap-stat dt {
   color: #a6c4d8;
-  font-size: 9.5px;
+  font-size: 10.5px;
   font-weight: 800;
-  letter-spacing: 1.4px;
+  letter-spacing: 1px;
   text-transform: uppercase;
   white-space: nowrap;
 }
@@ -4015,8 +4479,8 @@ html:not(.phone) #toast[data-tone="death"] {
 /* The rest of the round's numbers: one strip of cells in a dark well, as many to a row as
    fit, so a short list never leaves an orphan dangling under the tiles. */
 .recap-details {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  display: flex;
+  flex-wrap: wrap;
   gap: 1px;
   margin: 10px 0 0;
   overflow: hidden;
@@ -4025,6 +4489,7 @@ html:not(.phone) #toast[data-tone="death"] {
   text-align: left;
 }
 .recap-detail {
+  flex: 1 1 auto;
   display: flex;
   align-items: baseline;
   justify-content: space-between;
@@ -4074,12 +4539,14 @@ html:not(.phone) #toast[data-tone="death"] {
   flex: 1 1 160px;
   margin: 0;
 }
+@media (max-width: 960px) {
+  .results-body.with-board {
+    grid-template-columns: 1fr;
+  }
+}
 @media (max-width: 760px) {
   .recap-stats {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-  .recap-stat:first-child {
-    grid-column: 1 / -1;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
@@ -4087,7 +4554,7 @@ html:not(.phone) #toast[data-tone="death"] {
    a label and its control, sliders with their value beside them and a gold fill up to
    the thumb; single player adds its battle speeds. */
 .settings {
-  width: min(500px, calc(100% - 32px));
+  width: min(580px, calc(100% - 32px));
   max-height: calc(100% - 32px);
   margin: auto;
   padding: 26px 30px 28px;
@@ -4127,7 +4594,7 @@ body:has(#settings[open]) #overlay > .menu {
 }
 .setting-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 170px 46px;
+  grid-template-columns: minmax(0, 1fr) 210px 52px;
   align-items: center;
   gap: 14px;
   min-height: 52px;
@@ -4274,24 +4741,85 @@ body:has(#settings[open]) #overlay > .menu {
   border-radius: 4px;
 }
 .setting-row output {
-  color: var(--gold);
-  font: 400 20px/1 var(--font-display);
+  color: #fff;
+  font: 800 14px/1 var(--font-ui);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.5px;
   text-align: right;
+}
+/* A slider row: the label beside the track, the value at its end and, under the track,
+   its scale with the default marked where the tick sits. */
+.slider-row {
+  grid-template-rows: auto auto;
+  row-gap: 2px;
+  padding: 8px 0 6px;
+}
+.slider-row > span {
+  grid-row: 1 / 3;
+}
+.slider-row input[type="range"] {
+  grid-area: 1 / 2;
+}
+.slider-row output {
+  grid-area: 1 / 3;
+}
+/* Clear of the thumb, which overhangs the track, so the default under it stays legible. */
+.slider-scale {
+  position: relative;
+  grid-area: 2 / 2;
+  height: 12px;
+  margin-top: 7px;
+  color: #7f9bb4;
+  font: 700 9.5px/12px var(--font-ui);
+  font-variant-numeric: tabular-nums;
+}
+.slider-scale i {
+  position: absolute;
+  top: 0;
+  font-style: normal;
+}
+.slider-scale i:first-child {
+  left: 0;
+}
+.slider-scale i:last-child {
+  right: 0;
+}
+.slider-scale i.default {
+  left: var(--default);
+  color: #d9eaf8;
+  transform: translateX(-50%);
+}
+.slider-scale i.default::before {
+  content: "";
+  position: absolute;
+  left: calc(50% - 1px);
+  top: -5px;
+  width: 2px;
+  height: 4px;
+  background: #d9eaf8;
 }
 .setting-group-label {
   display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  margin-top: 22px;
+  align-items: center;
+  gap: 12px;
+  margin-top: 20px;
   color: var(--text-label);
   font-size: 10.5px;
   font-weight: 800;
   letter-spacing: 2.5px;
 }
-.settings .dialog-head + .setting-group-label {
-  margin-top: 16px;
+.settings .dialog-head + .setting-group-label,
+.settings .dialog-pane > .setting-group-label:first-child {
+  margin-top: 4px;
+}
+.settings .dialog-tabs {
+  margin-top: 14px;
+}
+/* Both settings panes keep one size, so switching tabs never moves the buttons. */
+.settings .dialog-pane {
+  min-height: 250px;
+}
+.settings .controls-card {
+  margin: 0;
 }
 /* A small glass pill for a section's own action, such as resetting its sliders. */
 .chip-button {
@@ -4475,11 +5003,11 @@ html.phone,
   display: none;
 }
 .phone .hud-actions > .touch-zoom {
-  min-width: 40px;
+  min-width: 42px;
   padding: 0;
-  color: #cfe0f0;
-  font-size: 18px;
-  opacity: 0.85;
+  color: #fff;
+  font-size: 20px;
+  font-weight: 800;
 }
 .phone #zoom-out {
   border-radius: 10px 0 0 10px;
@@ -4590,12 +5118,23 @@ html.phone,
   }
   .phone .map-row .choice-card {
     min-height: 76px;
+    padding-right: 150px;
+  }
+  .phone .map-row .choice-card::before {
+    background:
+      linear-gradient(90deg, #0b1b36 calc(100% - 180px), #0b1b3600 calc(100% - 100px)),
+      var(--art) right -10px bottom / auto 96% no-repeat,
+      linear-gradient(180deg, transparent 30%, var(--tint) 170%);
   }
   .phone .menu.start .map-row .choice-card small {
     display: block;
   }
   .phone .start .tank-preview {
     height: 92px;
+  }
+  /* The tanks fill their cards on a phone instead of sitting small on the turntable. */
+  .phone .start .vehicle .tank-preview {
+    transform: scale(calc(var(--scale, 1) * 1.3));
   }
   /* The turntable sits under the tank, clear of the hull and speed lines below it. */
   .phone .start .vehicle::before {
@@ -4608,8 +5147,14 @@ html.phone,
     display: grid;
     justify-items: center;
     gap: 4px;
-    margin: 0 0 4px;
-    color: var(--text-dim);
+    margin: 0;
+    padding: 12px 10px;
+    border-radius: 12px;
+    background:
+      radial-gradient(ellipse 60% 90% at 0% 100%, #3ea6ff2e, transparent 70%),
+      radial-gradient(ellipse 60% 90% at 100% 100%, #ff4d5e2e, transparent 70%), var(--well);
+    box-shadow: inset 0 2px 8px #0008;
+    color: #c3d8ea;
     font-size: 12.5px;
     text-align: center;
   }
@@ -4658,7 +5203,17 @@ html.phone,
 }
 .phone
   .menu.compact
-  :is(.dialog-eyebrow, .dialog-lede, .recap-feats, .recap-stats, .recap-details, .recap-note) {
+  :is(
+    .dialog-eyebrow,
+    .dialog-lede,
+    .recap-feats,
+    .recap-stats,
+    .recap-details,
+    .recap-note,
+    .results-board,
+    .dialog-tabs,
+    .dialog-pane
+  ) {
   display: none;
 }
 .phone .menu.compact .dialog-head {
@@ -4740,13 +5295,13 @@ html.phone,
   max-width: 520px;
   padding: 10px 14px 12px;
 }
-.phone .respawn :is(.wrecked-by, .respawn-timer h2 small, .spec) {
+.phone .respawn :is(.wrecked-by, .respawn-timer h2 small, .spec, .respawn-pick) {
   display: none;
 }
 .phone .respawn-head {
   justify-content: center;
-  margin-bottom: 8px;
-  padding-bottom: 8px;
+  margin: -10px -14px 8px;
+  padding: 8px 14px;
 }
 .phone .respawn-timer h2 {
   font-size: 22px;
@@ -4756,7 +5311,7 @@ html.phone,
   height: 46px;
 }
 .phone #respawn-count {
-  font-size: 28px;
+  font-size: 30px;
 }
 /* The battle report on a phone: the outcome band and score, then the two actions. */
 .phone .menu.results {
@@ -4785,4 +5340,157 @@ html.phone,
    the middle, between the drive stick and the thumb that turns the view. */
 .phone .hull-compass {
   bottom: max(16px, env(safe-area-inset-bottom));
+}
+
+/* Dialog tabs: a row of labels over a gold underline; the chosen one is lit. */
+.dialog-tabs {
+  display: flex;
+  gap: 4px;
+  margin: 18px 0 12px;
+  border-bottom: 1px solid #9fd0ff24;
+}
+.dialog-tabs [role="tab"] {
+  position: relative;
+  min-height: 34px;
+  margin: 0 0 -1px;
+  padding: 0 14px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: none;
+  color: #8fb3cb;
+  font: 800 12px/1 var(--font-ui);
+  letter-spacing: 1.6px;
+  cursor: pointer;
+}
+.dialog-tabs [role="tab"]:hover {
+  color: #fff;
+}
+.dialog-tabs [aria-selected="true"] {
+  border-bottom-color: var(--gold);
+  color: #fff;
+}
+.dialog-tabs [role="tab"]:focus-visible {
+  outline: 2px solid var(--gold);
+  outline-offset: -2px;
+  border-radius: 6px 6px 0 0;
+}
+/* Both panes share one size, so switching tabs never moves the buttons. */
+.pause-menu .dialog-pane {
+  min-height: 216px;
+}
+.pause-menu .dialog-pane .controls-card {
+  margin: 0;
+}
+/* Pause's battle tab: each team's race to the score limit as a lit bar, then the
+   clock and the viewer's round in a two-by-two well. */
+.pause-objective {
+  display: grid;
+  gap: 8px;
+}
+.objective-team {
+  --side: #3ea6ff;
+  position: relative;
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  padding: 10px 14px 16px;
+  overflow: hidden;
+  border: 1px solid #a6dfff1f;
+  border-radius: 10px;
+  background: #060f1fe6;
+}
+.objective-team.red {
+  --side: #ff5367;
+}
+.objective-team.yours {
+  border-color: #ffcf3866;
+}
+.objective-team span {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #fff;
+  font: 800 13px/1 var(--font-ui);
+  letter-spacing: 2px;
+}
+.objective-team em {
+  padding: 2px 5px 1px;
+  border-radius: 4px;
+  background: var(--gold);
+  color: #1a2233;
+  font: 800 9px/1.2 var(--font-ui);
+  font-style: normal;
+  letter-spacing: 1px;
+}
+.objective-team b {
+  color: #fff;
+  font: 400 30px/1 var(--font-display);
+  font-variant-numeric: tabular-nums;
+}
+.objective-team b small {
+  color: #8fb3cb;
+  font-size: 18px;
+}
+.objective-team i {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 8px;
+  height: 4px;
+  border-radius: 2px;
+  background:
+    linear-gradient(90deg, var(--side), color-mix(in srgb, var(--side) 60%, #fff)) 0 0 /
+      calc(var(--share) * 100%) 100% no-repeat,
+    #ffffff14;
+  box-shadow: 0 0 10px color-mix(in srgb, var(--side) 30%, transparent);
+}
+.pause-objective.solo {
+  grid-template-columns: repeat(3, 1fr);
+}
+.pause-objective.solo > div {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  padding: 12px;
+  border: 1px solid #a6dfff1f;
+  border-radius: 10px;
+  background: #060f1fe6;
+}
+.pause-objective.solo b {
+  color: #fff;
+  font: 400 32px/1 var(--font-display);
+}
+.pause-objective.solo small {
+  color: #8fb3cb;
+  font: 800 9.5px/1 var(--font-ui);
+  letter-spacing: 1.4px;
+}
+.pause-facts {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  margin: 10px 0 0;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #9fd0ff14;
+}
+.pause-facts > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 14px;
+  background: #060f1fe6;
+}
+.pause-facts dt {
+  color: #8fb3cb;
+  font-size: 12px;
+  font-weight: 600;
+}
+.pause-facts dd {
+  margin: 0;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  text-align: right;
 }
