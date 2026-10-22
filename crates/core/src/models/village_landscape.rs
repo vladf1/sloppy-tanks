@@ -613,7 +613,9 @@ fn backdrop(group: &mut Node) {
         let pitch = rng.next();
         let yaw = rng.next() * 6.0;
         rock.set_rotation_euler(pitch, yaw, 0.0);
-        put(&mut rocks, rock, x, valley_height(x, z) + size * 0.06, z);
+        // On the drawn ground: the coarse terrain mesh cuts below `valley_height`
+        // across the steep creek bank, where a stone set on the true height hovers.
+        put(&mut rocks, rock, x, backdrop_ground(x, z) + size * 0.06, z);
     }
     // The forest grows in groves of every age, so the hills read as woods with
     // clearings and depth rather than ranks of one tree. Mountain groves are all

@@ -47,7 +47,8 @@ pub fn sandstone_material() -> Arc<Material> {
         .clone()
 }
 
-static ROCKS: Cache<([u64; 3], u32), Mesh> = Cache::new();
+/// Eroded rocks by size, variant and what they stand on.
+static ROCKS: Cache<([u64; 3], u32, RockSetting), Mesh> = Cache::new();
 static FOOTINGS: Cache<([u64; 2], u32), Mesh> = Cache::new();
 
 /// Collision ring levels of `quarry_rock_shape`, toe to cap rim, and its sides.
@@ -117,21 +118,80 @@ pub fn bed_rows(bed: Bed) -> [(f64, f64, f64); 4] {
 /// collider, broken by vertical joints and fallen blocks, under a domed, eroded
 /// cap. `uv.x` names each bed for the shader's strata palette and `uv.y` carries
 /// the chipped-edge/cavity wear; the shader ignores real UVs.
-pub fn sandstone_rock(w: f64, h: f64, d: f64, variant: u32) -> Node {
-    let key = ([w, h, d].map(f64::to_bits), variant);
-    let mesh = ROCKS.get_or_insert(key, || eroded_rock(w, h, d, variant));
-    shadowed(mesh, sandstone_material())
+pub fn sandstone_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> Node {
+    shadowed(
+        sandstone_rock_mesh(w, h, d, variant, setting),
+        sandstone_material(),
+    )
 }
 
-fn eroded_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
+/// What a sandstone rock stands on, which decides where its scree rests.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum RockSetting {
+    /// Bare ground level with the rock's base.
+    Ground,
+    /// Its own [`sandstone_footing`] of drifted sand (cover rocks).
+    Drift,
+    /// Another rock: a slab with no scree, since stones shed around its toe would
+    /// hang in the air, and an undercut base ([`STACKED_UNDERCUT`]) so that toe fits
+    /// on the lower rock's cap while its upper beds jut out as a ledge.
+    Stacked,
+}
+
+/// The toe outline of a [`sandstone_rock`], in the rock's own space: where it
+/// meets what it stands on.
+pub fn sandstone_rock_toe(
+    w: f64,
+    h: f64,
+    d: f64,
+    variant: u32,
+    setting: RockSetting,
+) -> Vec<DVec3> {
+    let mut grid = rock_grid(w, h, d, variant, setting);
+    grid.truncate(SHAPE_SIDES);
+    grid
+}
+
+/// The cached mesh of a [`sandstone_rock`].
+pub fn sandstone_rock_mesh(
+    w: f64,
+    h: f64,
+    d: f64,
+    variant: u32,
+    setting: RockSetting,
+) -> Arc<Mesh> {
+    let key = ([w, h, d].map(f64::to_bits), variant, setting);
+    ROCKS.get_or_insert(key, || eroded_rock(w, h, d, variant, setting))
+}
+
+/// How far a stacked slab's lowest collision rings are drawn in toward its axis,
+/// toe first: an undercut soft base under the jutting beds above.
+const STACKED_UNDERCUT: [f64; 4] = [0.64, 0.68, 0.88, 0.97];
+
+/// The collision shape's rings (`SHAPE_SIDES` points each, toe first) and its cap
+/// centre last; a stacked slab's lowest rings are undercut.
+fn rock_grid(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> Vec<DVec3> {
     let shape = quarry_rock_shape(w, h, d, variant);
-    let grid: Vec<DVec3> = shape
+    let mut grid: Vec<DVec3> = shape
         .positions
         .as_chunks::<3>()
         .0
         .iter()
         .map(|p| widen(*p))
         .collect();
+    if setting == RockSetting::Stacked {
+        for (ring, scale) in STACKED_UNDERCUT.into_iter().enumerate() {
+            for p in &mut grid[ring * SHAPE_SIDES..(ring + 1) * SHAPE_SIDES] {
+                p.x *= scale;
+                p.z *= scale;
+            }
+        }
+    }
+    grid
+}
+
+fn eroded_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> Mesh {
+    let grid = rock_grid(w, h, d, variant, setting);
     let center = grid[grid.len() - 1];
     let mut rng = Random::new(812.0 + f64::from(variant) * 7.0 + 0.5);
     let perimeter: f64 = (0..SHAPE_SIDES)
@@ -408,10 +468,15 @@ fn eroded_rock(w: f64, h: f64, d: f64, variant: u32) -> Mesh {
     let cap = (rows.len() - 1) * columns * 6..positions.len() / 3;
     let mut geometry = Mesh::from_f64(&positions, &[], &uvs, None);
     geometry.colors = colors;
-    if outcrop {
-        // Scree shed by the face lies around the toe in the same draw.
+    if outcrop && setting != RockSetting::Stacked {
+        // Scree shed by the face lies around the toe in the same draw, on the
+        // drift or the ground.
         let toe: Vec<DVec3> = (0..columns).map(|c| surface(c, 0.0)).collect();
-        let scree = chip_mesh(&scree_stones(&toe, &outward, h, &mut rng));
+        let rest = |x: f64, z: f64| match setting {
+            RockSetting::Drift => sandstone_footing_height(w, d, variant, x, z),
+            _ => 0.0,
+        };
+        let scree = chip_mesh(&scree_stones(&toe, &outward, h, rest, &mut rng));
         geometry.positions.extend(&scree.positions);
         geometry.uvs.extend(&scree.uvs);
         geometry.colors.extend(&scree.colors);
@@ -436,8 +501,15 @@ const SCREE_DENSITY: f64 = 1.5;
 
 /// Scree at an outcrop's toe: fallen blocks leaning on the face, then chips that
 /// thin out and shrink across the sand apron. Ankle-high, so it never reads as
-/// cover; the apron's drift half-buries the stones nearest the face.
-fn scree_stones(toe: &[DVec3], outward: &[DVec3], h: f64, rng: &mut Random) -> Vec<RubbleStone> {
+/// cover; the apron's drift half-buries the stones nearest the face. The
+/// shed stones rest on what `rest` (x, z) reads as the surface there.
+fn scree_stones(
+    toe: &[DVec3],
+    outward: &[DVec3],
+    h: f64,
+    rest: impl Fn(f64, f64) -> f64,
+    rng: &mut Random,
+) -> Vec<RubbleStone> {
     let perimeter: f64 = (0..toe.len())
         .map(|c| toe[c].distance(toe[(c + 1) % toe.len()]))
         .sum();
@@ -461,12 +533,13 @@ fn scree_stones(toe: &[DVec3], outward: &[DVec3], h: f64, rng: &mut Random) -> V
                 rng.range(0.09, 0.32) * (0.55 + fade * 0.6)
             };
             let p = at + out * (reach + size * 0.35);
+            let height = size * rng.range(0.4, 0.75);
             RubbleStone {
                 x: p.x,
-                y: 0.04 + 0.1 * fade,
+                y: rest(p.x, p.z) + height * STONE_SEAT,
                 z: p.z,
                 w: size,
-                h: size * rng.range(0.4, 0.75),
+                h: height,
                 d: size * rng.range(0.6, 1.1),
                 rot_y: rng.range(-PI, PI),
                 shade: rng.range(0.72, 1.0),
@@ -474,6 +547,11 @@ fn scree_stones(toe: &[DVec3], outward: &[DVec3], h: f64, rng: &mut Random) -> V
         })
         .collect()
 }
+
+/// A [`RubbleStone`]'s centre stands this many of its heights above the surface it
+/// rests on. Its squashed underside reaches 0.126 to 0.21 heights below the centre
+/// ([`stones_from`]), so every stone touches or sinks slightly into that surface.
+pub const STONE_SEAT: f64 = 0.12;
 
 /// One fragment of [`sandstone_rubble`], in world metres.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -609,8 +687,40 @@ pub fn sand_drift_material() -> Arc<Material> {
 /// footprint; cosmetic sediment, never tall enough to imply cover. Its outer ring
 /// fades out through its [`VERTEX_ALPHA`]. Receives shadows only.
 pub fn sandstone_footing(w: f64, d: f64, variant: u32) -> Node {
+    shadow_receiver(footing_mesh(w, d, variant), sand_drift_material())
+}
+
+/// The drift surface of a [`sandstone_footing`] (in the rock's space) at x/z, or
+/// the ground's level (0) beyond it: where loose stones around a cover rock rest.
+pub fn sandstone_footing_height(w: f64, d: f64, variant: u32, x: f64, z: f64) -> f64 {
+    surface_height(&mesh_triangles(&footing_mesh(w, d, variant)), x, z)
+        .unwrap_or(0.0)
+        .max(0.0)
+}
+
+/// Every triangle of `mesh`, indexed or not, for [`surface_height`].
+pub fn mesh_triangles(mesh: &Mesh) -> Vec<[DVec3; 3]> {
+    let corner = |i: u32| widen(mesh.positions[i as usize]);
+    match &mesh.indices {
+        Some(indices) => indices
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| t.map(corner))
+            .collect(),
+        None => mesh
+            .positions
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|t| t.map(widen))
+            .collect(),
+    }
+}
+
+fn footing_mesh(w: f64, d: f64, variant: u32) -> Arc<Mesh> {
     let key = ([w, d].map(f64::to_bits), variant);
-    let mesh = FOOTINGS.get_or_insert(key, || {
+    FOOTINGS.get_or_insert(key, || {
         let shape = quarry_rock_shape(w, 1.0, d, variant).positions;
         let mut rng = Random::new(f64::from(variant) + 451.0);
         let sides = 16u32;
@@ -653,6 +763,22 @@ pub fn sandstone_footing(w: f64, d: f64, variant: u32) -> Node {
         geometry.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
         geometry.compute_vertex_normals();
         geometry
-    });
-    shadow_receiver(mesh, sand_drift_material())
+    })
+}
+
+/// The highest point of `triangles` straight above or below x/z, if any.
+pub fn surface_height(triangles: &[[DVec3; 3]], x: f64, z: f64) -> Option<f64> {
+    triangles
+        .iter()
+        .filter_map(|&[a, b, c]| {
+            let det = (b.z - c.z) * (a.x - c.x) + (c.x - b.x) * (a.z - c.z);
+            if det.abs() < 1e-12 {
+                return None;
+            }
+            let u = ((b.z - c.z) * (x - c.x) + (c.x - b.x) * (z - c.z)) / det;
+            let v = ((c.z - a.z) * (x - c.x) + (a.x - c.x) * (z - c.z)) / det;
+            (u >= 0.0 && v >= 0.0 && u + v <= 1.0)
+                .then_some(u * a.y + v * b.y + (1.0 - u - v) * c.y)
+        })
+        .reduce(f64::max)
 }
