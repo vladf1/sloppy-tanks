@@ -58,22 +58,23 @@ const CLUMP_REACH: f64 = 0.42;
 /// into the ground they spring from.
 const ROOT_LIFT: f64 = 0.02;
 /// Candidate drifts of tufts tried across the arena lawns.
-const LAWN_DRIFTS: usize = 1900;
+const LAWN_DRIFTS: usize = 2500;
 
-/// Six tapering blades fanned wide around the tuft, so it reads as a clump from
-/// overhead as well as from the side, darker at the root. Their normals
+/// Eight tapering blades fanned wide around the tuft, some long and arching
+/// out, some short and upright, so it reads as a clump from overhead as well as
+/// from the side, darker at the root. Their normals
 /// lean up like the ground's, so a tuft shades into the grass it grows from
 /// instead of flickering blade by blade.
 fn tuft_geometry() -> Mesh {
-    const BLADES: usize = 6;
+    const BLADES: usize = 8;
     let mut positions = Vec::with_capacity(BLADES * 9);
     let mut normals = Vec::with_capacity(BLADES * 9);
     let mut colors = Vec::with_capacity(BLADES * 3);
     for i in 0..BLADES {
         let a = i as f64 * 2.39996;
         let (x, z) = (a.cos(), a.sin());
-        let reach = 0.28 + (i % 3) as f64 * 0.1;
-        let height = 0.5 + ((i * 5) % 6) as f64 * 0.08;
+        let reach = 0.24 + (i % 3) as f64 * 0.13;
+        let height = 0.42 + ((i * 5) % 7) as f64 * 0.075;
         let root = 0.06 + (i % 2) as f64 * 0.02;
         // Roots stand slightly apart so the clump has a footprint.
         let (bx, bz) = (x * 0.05, z * 0.05);
@@ -442,8 +443,8 @@ fn lawn_drifts(meadow: &mut Meadow, rng: &mut Random, clearings: &Clearings) {
         if drift + rng.range(-0.6, 0.6) < 0.2 {
             continue;
         }
-        let members = 3 + (rng.next() * 4.0) as usize;
-        let size = rng.range(0.22, 0.44);
+        let members = 4 + (rng.next() * 5.0) as usize;
+        let size = rng.range(0.22, 0.5);
         let bloom = (rng.next() < 0.18).then(|| FLOWER_COLORS[(rng.next() * 4.0) as usize % 4]);
         let first = meadow.tufts.len();
         meadow.clump(rng, x, z, size, members, bloom, &open, &turf_ground);

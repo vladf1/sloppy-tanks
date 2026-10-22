@@ -4,6 +4,8 @@
 //! like a heavy toy on soft springs. Sampling simulation time avoids pulses
 //! between physics ticks.
 
+use sloppy_core::models::TRACK_BELT_PERIOD;
+
 use super::view_settings::TANK_FEEL;
 
 /// About 8 degrees of steady lean from driving, including sudden stops and knockback.
@@ -247,6 +249,12 @@ impl TankMotion {
     /// The top-run tread offset in model units.
     pub fn tread_scroll(&self) -> f64 {
         (self.travel * TANK_FEEL.track_scroll).rem_euclid(TANK_FEEL.track_period)
+    }
+
+    /// The track belts' scroll in model units, wrapped where every belt holds a
+    /// whole number of links (`TRACK_BELT_PERIOD`), so the wrap never jumps.
+    pub fn belt_scroll(&self) -> f64 {
+        (self.travel * TANK_FEEL.track_scroll).rem_euclid(TRACK_BELT_PERIOD)
     }
 
     /// The instance tint: white-hot at the hit, cooling through a warm glow.
