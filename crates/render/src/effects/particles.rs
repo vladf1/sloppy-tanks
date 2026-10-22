@@ -1,8 +1,10 @@
 //! Chips, clods and flecks (`particle-effects.ts`): one bounded instanced draw
-//! of small icosahedra, plus the pooled blasts and glowing sparks it forwards
-//! events to.
+//! of small irregular shards, lit like the scene (hot clods and sparky flecks
+//! glow through the chip effect's emissive), plus the pooled blasts and glowing
+//! sparks it forwards events to.
 
-use glam::{Mat4, Quat, Vec3};
+use glam::Vec3;
+use sloppy_core::geometry::{Mesh, icosahedron_geometry};
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
 use super::explosions::ExplosionEffects;
@@ -17,6 +19,14 @@ const PARTICLE_GRAVITY: f64 = 8.0;
 const MIN_HEIGHT: f64 = 0.1;
 /// Splinters are long thin chips.
 const SPLINTER_STRETCH: Vec3 = Vec3::new(0.4, 2.4, 0.4);
+/// Chips and clods are flattened, uneven lumps rather than round beads.
+const CHIP_STRETCH: Vec3 = Vec3::new(1.0, 0.62, 0.84);
+/// Concrete and stone spall knocked off a wall by a shell: count, life (s),
+/// size (m) and the grey it is (mixed with the ground's dust at the hit).
+const SPALL: usize = 12;
+const SPALL_LIFE: [f64; 2] = [1.1, 0.9];
+const SPALL_SIZE: [f64; 2] = [0.06, 0.12];
+const SPALL_COLORS: [u32; 3] = [0x9d968b, 0xb8b2a6, 0x7c776f];
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Particle {
@@ -34,6 +44,28 @@ pub struct Particle {
     pub color: [f32; 3],
     /// Seconds a clod flung out of a fireball glows before it cools to its color.
     pub hot: f64,
+    /// The share of its color a fleck shines with (sparks and pickup glitter),
+    /// beside the light it catches.
+    pub glow: f32,
+    /// Lands, bounces and slides to rest on the ground instead of falling through.
+    pub rests: bool,
+}
+
+/// The particles' shared mesh: an icosahedron whose corners are pushed in and
+/// out by a fixed hash of where they sit, so every chip is a faceted, uneven
+/// shard rather than a round bead or a hexagon in silhouette.
+pub fn shard_mesh() -> Mesh {
+    let mut mesh = icosahedron_geometry(1.0, 0);
+    for corner in &mut mesh.positions {
+        let [x, y, z] = *corner;
+        let h = ((x * 12.9898 + y * 78.233 + z * 37.719).sin() * 43_758.547)
+            .fract()
+            .abs();
+        let k = 0.62 + 0.5 * h;
+        *corner = [x * k, y * k * 0.9, z * k];
+    }
+    mesh.compute_vertex_normals();
+    mesh
 }
 
 /// Life and size pairs are [minimum, random span]. Chosen once per event.
@@ -261,10 +293,59 @@ impl ParticleEffects {
                 size,
                 color: hex_to_linear(color_at(i)),
                 hot: 0.0,
+                glow: if timber || tree { 0.0 } else { 0.9 },
+                rests: false,
             });
             i += 1;
         }
+        let stone_hit =
+            (event.kind == T::Impact && event.cover_kind.is_none() && event.height.is_none())
+                || event.kind == T::Ricochet;
+        if stone_hit {
+            self.spall(event, random);
+        }
         false
+    }
+
+    /// Chips of concrete or stone a shell knocks off a wall: they burst back off
+    /// the face, fall, bounce and settle in the grit at its foot.
+    fn spall(&mut self, event: &SimEvent, random: &mut CosmeticRandom) {
+        let dust = self.explosions.ground.dust(event.x, event.z);
+        let back = event.from.map(|from| {
+            let (dx, dz) = (from.x - event.x, from.z - event.z);
+            let length = dx.hypot(dz).max(1e-6);
+            (dx / length, dz / length)
+        });
+        for i in 0..SPALL {
+            if self.particles.len() >= MAX_PARTICLES {
+                return;
+            }
+            let life = SPALL_LIFE[0] + random.next_f64() * SPALL_LIFE[1];
+            let (bx, bz) = back.unwrap_or((random.next_f64() - 0.5, random.next_f64() - 0.5));
+            let spread = 3.2;
+            let vx = bx * 2.6 + (random.next_f64() - 0.5) * spread;
+            let vz = bz * 2.6 + (random.next_f64() - 0.5) * spread;
+            let vy = 1.5 + random.next_f64() * 3.5;
+            let size = SPALL_SIZE[0] + random.next_f64() * SPALL_SIZE[1];
+            let grey = hex_to_linear(SPALL_COLORS[i % SPALL_COLORS.len()]);
+            let color = [0, 1, 2].map(|c| grey[c] * 0.7 + dust[c] as f32 * 0.3);
+            self.particles.push(Particle {
+                splinter: false,
+                x: event.x,
+                y: 1.0,
+                z: event.z,
+                vx,
+                vy,
+                vz,
+                life,
+                max: life,
+                size,
+                color,
+                hot: 0.0,
+                glow: 0.0,
+                rests: true,
+            });
+        }
     }
 
     /// Glowing sparks: a blast's spray, steel struck by a shell, or grit off a
@@ -349,6 +430,8 @@ impl ParticleEffects {
                 size,
                 color: hex_to_linear(soil.clods[i % soil.clods.len()]),
                 hot: if i % 3 == 0 { 0.7 } else { 0.25 },
+                glow: 0.0,
+                rests: true,
             });
         }
     }
@@ -365,8 +448,8 @@ impl ParticleEffects {
             q.y += q.vy * dt;
             q.z += q.vz * dt;
             q.vy -= PARTICLE_GRAVITY * dt;
-            // Clods land, bounce and slide to rest on the ground.
-            if q.hot > 0.0 && q.y < q.size * 0.6 && q.vy < 0.0 {
+            // Clods and spall land, bounce and slide to rest on the ground.
+            if q.rests && q.y < q.size * 0.6 && q.vy < 0.0 {
                 q.y = q.size * 0.6;
                 q.vy = if q.vy < -1.5 {
                     -q.vy * CLOD_BOUNCE
@@ -380,11 +463,9 @@ impl ParticleEffects {
         });
         self.records.clear();
         let time = time as f32;
-        // Every chip turns the same way this frame.
-        let chip_turn = Quat::from_rotation_y(time);
         for (i, q) in self.particles.iter().enumerate() {
             let position = Vec3::new(q.x as f32, q.y.max(MIN_HEIGHT) as f32, q.z as f32);
-            let size = if q.hot > 0.0 {
+            let size = if q.rests {
                 (q.size * (q.life / q.max / CLOD_SHRINK).min(1.0)) as f32
             } else {
                 (q.size * q.life / q.max) as f32
@@ -396,26 +477,38 @@ impl ParticleEffects {
                     Vec3::new(time * 5.0 + spin, time * 3.0 + spin, time * 4.0),
                     SPLINTER_STRETCH * size,
                 )
-            } else if q.hot > 0.0 {
-                // A clod tumbles while it flies and lies where it lands.
+            } else if q.rests {
+                // A clod or chip tumbles while it flies and lies where it lands.
                 let spin = i as f32 * 1.7;
                 let tumble = (q.vx.abs() + q.vz.abs() + q.vy.abs()).min(6.0) as f32;
                 let turn = time * tumble * 0.8;
                 pose(
                     position,
                     Vec3::new(turn + spin, turn * 0.7 + spin * 0.5, spin),
-                    Vec3::new(size, size * 0.75, size * 0.9),
+                    CHIP_STRETCH * size,
                 )
             } else {
-                Mat4::from_scale_rotation_translation(Vec3::splat(size), chip_turn, position)
+                // Every fleck tumbles on its own axes.
+                let spin = i as f32 * 2.3;
+                pose(
+                    position,
+                    Vec3::new(time * 4.0 + spin, time * 3.0 + spin * 0.7, spin),
+                    CHIP_STRETCH * size,
+                )
             };
             let mut color = q.color;
+            let mut emissive = color.map(|c| c * q.glow);
             if q.hot > 0.0 {
+                // A hot clod shines through its own color and cools to it.
                 let glow = (1.0 - (q.max - q.life) / q.hot).clamp(0.0, 1.0) as f32;
-                color = [0, 1, 2].map(|c| color[c] + (CLOD_GLOW[c] - color[c]) * glow * glow);
+                let heat = glow * glow;
+                color = color.map(|c| c * (1.0 - 0.8 * heat));
+                emissive = CLOD_GLOW.map(|c| c * heat);
             }
             let [r, g, b] = color;
-            self.records.push(record(world, [r, g, b, 1.0], [0.0; 4]));
+            let [er, eg, eb] = emissive;
+            self.records
+                .push(record(world, [r, g, b, 1.0], [er, eg, eb, 0.0]));
         }
     }
 }
@@ -474,7 +567,9 @@ mod tests {
     fn chips_and_splinters_are_posed_by_their_euler_turn() {
         let mut random = CosmeticRandom::default();
         let mut particles = ParticleEffects::default();
-        particles.event(&at(SimEventType::Impact), &mut random);
+        let mut steel = at(SimEventType::Impact);
+        steel.height = Some(1.0);
+        particles.event(&steel, &mut random);
         particles.event(
             &with_cover(SimEventType::Impact, CoverKind::Tree),
             &mut random,
@@ -499,7 +594,11 @@ mod tests {
                     SPLINTER_STRETCH * size,
                 )
             } else {
-                (Vec3::new(0.0, time, 0.0), Vec3::splat(size))
+                let spin = i as f32 * 2.3;
+                (
+                    Vec3::new(time * 4.0 + spin, time * 3.0 + spin * 0.7, spin),
+                    CHIP_STRETCH * size,
+                )
             };
             assert_eq!(record.world(), pose(position, euler, scale));
         }
@@ -605,17 +704,15 @@ mod tests {
             "muzzle flashes are muzzle.rs's"
         );
         particles.event(&at(SimEventType::Ricochet), &mut random);
-        assert_eq!(particles.particles.len(), IMPACT.count as usize);
+        let stone = IMPACT.count as usize + SPALL;
+        assert_eq!(particles.particles.len(), stone, "sparks and spall");
         assert_eq!(particles.sparks.len(), STONE_SPARKS.count);
         particles.event(&at(SimEventType::Hurt), &mut random);
-        assert_eq!(
-            particles.particles.len(),
-            (IMPACT.count + HURT.count) as usize
-        );
+        assert_eq!(particles.particles.len(), stone + HURT.count as usize);
         particles.event(&at(SimEventType::Pickup), &mut random);
         assert_eq!(
             particles.particles.len(),
-            (IMPACT.count + HURT.count + PICKUP.count) as usize
+            stone + (HURT.count + PICKUP.count) as usize
         );
         for _ in 0..200 {
             particles.event(&at(SimEventType::Pickup), &mut random);

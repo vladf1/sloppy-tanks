@@ -12,8 +12,8 @@ use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, crate_piece_model,
     create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, tank_model,
-    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
-    wreck_brightness, wreck_model,
+    timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage,
+    tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -1320,11 +1320,12 @@ impl Presentation {
 
     /// One simulation event; `player_hit` marks hurt/death events the viewer caused.
     pub fn event(&mut self, event: &SimEvent, player_hit: bool) {
-        // Contact telemetry is for future material-specific sounds and effects.
-        if matches!(
-            event.kind,
-            SimEventType::DebrisImpact | SimEventType::Notice
-        ) {
+        // Debris contacts only raise landing dust (the effects' own filter).
+        if event.kind == SimEventType::DebrisImpact {
+            self.effects.systems.event(event);
+            return;
+        }
+        if event.kind == SimEventType::Notice {
             return;
         }
         self.effects.systems.event(event);
@@ -1506,7 +1507,7 @@ impl Presentation {
             DEBRIS_MARK_SIZE,
         );
         part.marks.push(mark);
-        let (model, look) = owned_look(&mut self.renderer, &timber_part_model(part));
+        let (model, look) = owned_look(&mut self.renderer, &timber_debris_model(part));
         let Some(instance) = self
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
@@ -2327,7 +2328,7 @@ impl Presentation {
     /// a watchtower piece, a section of a crate or a falling crown.
     fn fragment_view(&mut self, fragment: &RenderFragment) -> Option<FragmentView> {
         let (model, look) = if let Some(part) = &fragment.timber_part {
-            owned_look(&mut self.renderer, &timber_part_model(part))
+            owned_look(&mut self.renderer, &timber_debris_model(part))
         } else if let Some(piece) = fragment.tower_piece {
             let node = tower_piece_model(piece, fragment.color);
             owned_look(&mut self.renderer, &node)

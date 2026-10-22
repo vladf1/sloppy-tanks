@@ -18,12 +18,12 @@ use super::PUFF_CAPACITY;
 use super::explosions::DECAL_CAPACITY;
 use super::laser::LASER_CAPACITY;
 use super::leaves::{MAX_LEAVES, leaf_mesh};
-use super::particles::MAX_PARTICLES;
+use super::particles::{MAX_PARTICLES, shard_mesh};
 use super::pickups::MAX_PICKUP_EFFECTS;
 use super::pool::{PoolDesc, pool};
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
 use super::quarry_dust::QUARRY_DUST_CAPACITY;
-use super::registry::{BLAST_RING, DUST, PUFF, STREAK, TRACK_MARK};
+use super::registry::{BLAST_RING, DEBRIS_CHIP, DUST, PUFF, STREAK, TRACK_MARK};
 use super::rocket_smoke::ROCKET_SMOKE_CAPACITY;
 use super::sparks::STREAK_CAPACITY;
 use super::track_dust::TRACK_DUST_CAPACITY;
@@ -198,10 +198,16 @@ pub fn pool_descs() -> Vec<PoolDesc> {
         MAX_PICKUP_EFFECTS,
     ));
 
+    // Faceted shards lit like the scene; sparky flecks and hot clods glow
+    // through the chip effect's emissive.
     pools.push(PoolDesc::new(
         "particles",
-        icosahedron_geometry(1.0, 0),
-        Material::basic(0xffffff),
+        shard_mesh(),
+        Material {
+            flat_shading: true,
+            effect: custom(DEBRIS_CHIP.name),
+            ..Material::standard(0xffffff, 0.0, 0.85)
+        },
         MAX_PARTICLES,
     ));
     // Lit like the crowns they fell from; the instance tint is the leaf's color.

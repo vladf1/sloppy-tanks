@@ -47,11 +47,12 @@ use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multip
 use sloppy_core::net::player_controls::PlayerControls;
 use sloppy_core::scene::{Material, Node};
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::math::{Quat4, Vec2};
+use sloppy_core::sim::data::weapon;
+use sloppy_core::sim::math::{Point3, Quat4, Vec2};
 use sloppy_core::sim::physics::{to_rotation, vector};
 use sloppy_core::sim::{
     AmmoInventory, CoverKind, DamageCause, GameMode, MatchPhase, Mine, Pickup, PlayerAssignment,
-    Shot, Team, VehicleCommand, VehicleKind, Weapon,
+    Shot, SimEvent, SimEventType, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_render::camera::PerspectiveCamera;
 use sloppy_render::gpu::{InstanceId, Lifetime, ModelId};
@@ -323,6 +324,22 @@ impl Game {
         };
         let human = self.sim.human();
         let (owner, team, life) = (human.id, human.team, human.life);
+        let cover = &self.sim.covers[index];
+        if cover.alive && !cover.destructible {
+            // Hard cover shrugs off damage; show what shells striking it look like
+            // instead: the impact a shell's world contact raises, in the middle of
+            // each face, each from a gun straight out from that face.
+            let (x, z, hw, hd) = (cover.x, cover.z, cover.w / 2.0, cover.d / 2.0);
+            for (nx, nz) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                let face = Point3::new(x + nx * hw, 1.0, z + nz * hd);
+                let mut impact = SimEvent::at(SimEventType::Impact, face.x, face.z);
+                impact.size = Some(0.6);
+                impact.color = Some(weapon(Weapon::Standard).color);
+                impact.from = Some(Point3::new(face.x + nx * 10.0, 1.0, face.z + nz * 10.0));
+                self.sim.events.push(impact);
+            }
+            return;
+        }
         self.sim
             .damage_cover(index, amount, owner, team, Some(life), None);
     }

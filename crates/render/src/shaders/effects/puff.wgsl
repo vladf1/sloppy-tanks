@@ -64,7 +64,7 @@ fn puff_fire(t: f32) -> vec3f {
 fn puff_bands(t: f32) -> f32 {
     let f = t * 4.0;
     let step = floor(f) + smoothstep(0.3, 0.7, fract(f));
-    return mix(t, step / 4.0, 0.6);
+    return mix(t, step / 4.0, 0.4);
 }
 
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
@@ -94,11 +94,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Erosion pulls the rim in, most where the noise is thin, so an old puff frays
     // into wisps from the outside instead of going full of holes. Fine noise
     // breaks the rim's outline so no billow reads as a clean disc.
-    let lumpiness = mix(0.72, 0.42, softness);
-    let edge = radius + (noise - 0.5) * lumpiness + (n3 - 0.5) * 0.06
+    let lumpiness = mix(0.56, 0.32, softness);
+    let edge = radius + (noise - 0.5) * lumpiness + (n3 - 0.5) * 0.04
         + erosion * (0.25 + 0.55 * (1.0 - noise));
     let rim = mix(0.8, 0.94, softness);
-    let feather = mix(0.14, 0.5, softness * softness) + erosion * 0.16 + fiery * 0.04;
+    let feather = mix(0.2, 0.56, softness) + erosion * 0.16 + fiery * 0.02;
     // The card's own edge is always clear, however far the noise pushes the rim,
     // so no puff shows the straight side of its quad.
     let window = 1.0 - smoothstep(0.8, 1.0, radius);
@@ -135,7 +135,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let core = clamp(1.0 - radius * 0.85, 0.0, 1.0);
     // Broad noise only, so the bands cool in large lobes rather than speckles.
     let broad = n1 * 0.85 + n2 * 0.15;
-    let temperature = puff_bands(heat * (0.3 + 0.7 * core) * (0.35 + 0.95 * broad));
+    let temperature = puff_bands(heat * (0.18 + 0.82 * core * core) * (0.4 + 0.9 * broad));
     let glow = smoothstep(0.03, 0.28, temperature);
     // Each lobe of a fireball is brighter on its upper face and deepens into
     // its folds, so the fire keeps its rolling volume.
