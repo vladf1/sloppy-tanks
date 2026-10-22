@@ -96,10 +96,6 @@ pub enum ApronMode {
     /// wear tile): each box standing in its own 20 m cell of the yard takes its own
     /// shade of its line's color, so a row of one color never reads as clones.
     Container = 10,
-    /// Container paint off the apron (ship cargo, the outer quays' stacks, the
-    /// transit sheds' cladding; standard, over its wear tile): sky and the light
-    /// thrown up off the water fill its shaded walls, so they never sink into black.
-    Freight = 11,
 }
 
 /// Wind sway of the village meadow tufts (`village-vegetation.ts`), a vertex-only

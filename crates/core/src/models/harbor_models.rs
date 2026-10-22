@@ -49,23 +49,16 @@ const POST: f64 = 0.24;
 /// The livery sits this far proud of the ribs so it never fights them for depth.
 const LIVERY_LIFT: f64 = 0.012;
 
+static PAINT: Cache<u32, Material> = Cache::new();
 static PANELS: Cache<[u64; 6], Mesh> = Cache::new();
 static WEAR_BOXES: Cache<[u64; 4], Mesh> = Cache::new();
 
-/// A part in container paint: the wear tile multiplied by the container's color,
-/// through the apron effect's freight mode so its shaded walls take the harbor's
-/// fill. The color is baked into the part's vertex colors, so freight of every
-/// color shares one material and batches into one draw.
-fn container_paint(mesh: Arc<Mesh>, color: u32) -> Node {
-    static TINTED: Cache<(usize, u32), Mesh> = Cache::new();
-    // The source meshes are cached for good, so their addresses are stable keys.
-    let tinted = TINTED.get_or_insert((Arc::as_ptr(&mesh) as usize, color), || {
-        let mut tinted = (*mesh).clone();
-        let [r, g, b] = hex_to_linear(color);
-        tinted.colors = vec![[r as f32, g as f32, b as f32]; tinted.positions.len()];
-        tinted
-    });
-    shadowed(tinted, apron_material(ApronMode::Freight, 0xffffff))
+/// Container paint: the wear tile multiplied by the container's color.
+fn container_paint(color: u32) -> Arc<Material> {
+    PAINT.get_or_insert(color, || Material {
+        map: Some(container_wear()),
+        ..Material::standard(color, CONTAINER_METALNESS, CONTAINER_ROUGHNESS)
+    })
 }
 
 /// The paint wear tile, repeated along a container's walls.
@@ -201,7 +194,7 @@ fn wall_panel(panel: &Panel, height: f64, color: u32) -> Node {
     let mesh = PANELS.get_or_insert(panel_key(panel, 1), || {
         panel.mesh(|x, y| [x / WEAR_TILE, y / height])
     });
-    container_paint(mesh, color)
+    shadowed(mesh, container_paint(color))
 }
 
 /// A box in container paint, its faces mapped to the wear tile in container space
@@ -226,7 +219,7 @@ fn wear_box(w: f64, h: f64, d: f64, height: f64, floor: f64, color: u32) -> Node
         }
         geometry
     });
-    container_paint(mesh, color)
+    shadowed(mesh, container_paint(color))
 }
 
 /// A building's corrugated steel cladding in weathered paint, facing +z from
@@ -308,22 +301,7 @@ pub fn shipping_container(group: &mut Node, c: CargoShape) {
     adopt_children(group, body);
 }
 
-/// The yard's paint for a cover container's line color: the harbor keeps one
-/// palette (a teal, a slate grey and one safety-orange accent) so its boxes never
-/// share the teams' red and blue and the tanks stay the brightest things on the
-/// apron. The apron effect then gives each box its own shade of it.
-const COVER_PAINT: [(u32, u32); 3] = [
-    (0xd37c38, 0xc4642c),
-    (0x31958d, 0x2c7a72),
-    (0x6689ad, 0x5c676c),
-];
-
 fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32) {
-    let row = livery_for(color);
-    let color = COVER_PAINT
-        .iter()
-        .find(|(line, _)| *line == color)
-        .map_or(color, |&(_, paint)| paint);
     let dark = scale_hex_color(color, 0.62);
     let (half_l, half_d) = (length / 2.0, depth / 2.0);
     // Steel frame: floor and roof rails along both sides and across both ends,
@@ -384,6 +362,7 @@ fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32
         lift: LIVERY_LIFT,
         ..wall
     };
+    let row = livery_for(color);
     let wall_z = half_d - RAIL / 2.0 - WALL_DEPTH;
     for (yaw, side) in [(0.0, 1.0), (PI, -1.0)] {
         put(
@@ -422,7 +401,7 @@ fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32
     put(
         group,
         rotated(
-            in_cover_paint(container_paint(roof_mesh, color), color),
+            in_cover_paint(shadowed(roof_mesh, container_paint(color)), color),
             -FRAC_PI_2,
             0.0,
             0.0,
@@ -532,11 +511,10 @@ fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32
     );
 }
 
-/// A container stacked on a moored ship or in an outer quay's stacks. Seen only
-/// across the basin, it is a painted box framed by its end frames: modelled ribs
-/// on every cargo container made each ship tens of thousands of triangles, and
-/// its long rails were lines too thin to see, drawn again for shadows and the
-/// water reflection.
+/// A container stacked on a moored ship. Seen only across the basin, it is a
+/// painted box with its rails and corner castings: modelled ribs on every cargo
+/// container made each ship tens of thousands of triangles, drawn again for
+/// shadows and the water reflection, for no visible difference.
 pub fn ship_container(group: &mut Node, c: CargoShape) {
     let along_z = c.d > c.w;
     let (length, depth) = if along_z { (c.d, c.w) } else { (c.w, c.d) };
@@ -550,6 +528,15 @@ pub fn ship_container(group: &mut Node, c: CargoShape) {
         0.0,
     );
     for s in [-1.0, 1.0] {
+        for y in [0.1, c.h - 0.08] {
+            put(
+                &mut body,
+                box_part(length, RAIL, RAIL, dark, 0.0),
+                0.0,
+                y,
+                s * (depth / 2.0 - RAIL / 2.0),
+            );
+        }
         put(
             &mut body,
             box_part(RAIL, c.h, depth, dark, 0.0),

@@ -144,13 +144,6 @@ pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
                 extra_textures,
                 ..Material::standard(color, CONTAINER_METALNESS, CONTAINER_ROUGHNESS)
             },
-            ApronMode::Freight => Material {
-                map: Some(container_wear()),
-                vertex_colors: true,
-                effect,
-                extra_textures,
-                ..Material::standard(color, CONTAINER_METALNESS, CONTAINER_ROUGHNESS)
-            },
             ApronMode::Shore => Material {
                 vertex_colors: true,
                 fog: false,

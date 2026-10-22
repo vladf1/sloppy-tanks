@@ -74,7 +74,7 @@ fn hull_band(outline: &[[f64; 2]], bottom: f64, top: f64, lower_scale: f64, colo
     Node::mesh(Arc::new(flat), apron_material(ApronMode::Hull, 0xffffff))
 }
 
-const CARGO_PAINT: [u32; 5] = [0xc4642c, 0x2c7a72, 0x5c676c, 0xc2b99e, 0x7a3f31];
+const CARGO_PAINT: [u32; 5] = [0xcb7d43, 0x3b9394, 0x6e8eae, 0xbaad7c, 0xa76155];
 const GRATING_DARK: u32 = 0x3d4548;
 const SHIP_WHITE: u32 = 0xf0ebdc;
 /// The shipping lines' funnel colors, one per ship.
@@ -490,7 +490,7 @@ fn container_ship(color: u32, variant: usize) -> Node {
 const DECK_CRANE: u32 = 0xe2b443;
 
 const CRANE_GOLD: u32 = 0xe9b347;
-const CRANE_GREY: u32 = 0xaab0ac;
+const CRANE_BLUE: u32 = 0x2f6c9c;
 /// Machinery house roof and the walkway grating around it.
 const ROOF_GREY: u32 = 0xb4b9b4;
 const GRATING: u32 = 0x5d676a;
@@ -871,13 +871,13 @@ fn gantry_crane(livery: CraneLivery) -> Node {
 /// Ship berths: x, z, yaw, scale, hull color. Side berths make ships visible from
 /// both teams' normal deployment cameras.
 const SHIPS: [(f64, f64, f64, f64, u32); 3] = [
-    (-8.0, -80.0, 0.0, 1.0, 0x35596a),
-    (-77.0, -8.0, FRAC_PI_2, 0.85, 0x3f6a64),
-    (77.0, 15.0, -FRAC_PI_2, 0.72, 0x6e4038),
+    (-8.0, -80.0, 0.0, 1.0, 0x3f6d80),
+    (-77.0, -8.0, FRAC_PI_2, 0.85, 0x527f79),
+    (77.0, 15.0, -FRAC_PI_2, 0.72, 0x9a6257),
 ];
 /// Crane positions (x, z, yaw, scale) and liveries: the main berth's pair in the
-/// terminal's gold, working at different reaches, and the older pair on the side
-/// berths in faded terminal grey, so no crane wears a team's blue.
+/// terminal's gold, working at different reaches, and the older blue pair on the
+/// side berths.
 const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
     (
         -40.0,
@@ -907,7 +907,7 @@ const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
         FRAC_PI_2,
         0.75,
         CraneLivery {
-            steel: CRANE_GREY,
+            steel: CRANE_BLUE,
             trolley: -17.0,
             cargo: 0xd8d2c4,
         },
@@ -918,7 +918,7 @@ const CRANES: [(f64, f64, f64, f64, CraneLivery); 4] = [
         -FRAC_PI_2,
         0.75,
         CraneLivery {
-            steel: CRANE_GREY,
+            steel: CRANE_BLUE,
             trolley: -12.0,
             cargo: 0x3f8f6a,
         },
