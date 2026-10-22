@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use sloppy_render::gpu::Renderer;
 use sloppy_render::presentation::Presentation;
 
-use crate::page::FrameTimes;
+use crate::frame_clock::FrameTimes;
 
 /// Draw calls, triangles and GPU resources.
 pub fn renderer_stats(renderer: &Renderer) -> Map<String, Value> {

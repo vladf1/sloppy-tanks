@@ -79,6 +79,9 @@ struct Frame {
     // y how much its albedo varies, z how far its dry crests bleach, w the share of
     // the sun that bounces back into cast shadows from the sunlit ground around them.
     ground: vec4f,
+    // The graphics tier's optional detail (`quality.rs`): y 1 for fine procedural
+    // detail (`fine_detail`); w the scene's pixels per canvas pixel along each axis.
+    quality: vec4f,
 }
 
 // Per drawn instance: world transform, tint (rgb multiplies the base color, a is
@@ -117,6 +120,12 @@ fn tsl_hash(seed: f32) -> f32 {
 
 fn atmosphere_on() -> bool {
     return frame.sky_zenith.w > 0.5;
+}
+
+// Procedural detail a few pixels across (the ground's hummocks, the clouds' finest
+// octave), which the graphics tier may drop; WebGL's weaker devices always do.
+fn fine_detail() -> bool {
+    return !LITE && frame.quality.y > 0.5;
 }
 
 // Integer lattice hash for value noise (bit-exact on WebGPU and WebGL).
@@ -188,9 +197,9 @@ fn ground_macro(world: vec3f, normal: vec3f, roughness: f32) -> GroundMacro {
         return result;
     }
     let swell = value_noise_gradient(world.xz * SWELL_SCALE + vec2f(13.7, -5.3));
-    // WebGL's weaker devices keep the broad swells only.
+    // Without fine detail, the broad swells only.
     var hummock = vec3f(0.5, 0.0, 0.0);
-    if !LITE {
+    if fine_detail() {
         hummock = value_noise_gradient(world.xz * HUMMOCK_SCALE + vec2f(-2.9, 8.1));
     }
     let slope = (swell.yz * (SWELL_SCALE * SWELL_HEIGHT) + hummock.yz * (HUMMOCK_SCALE * HUMMOCK_HEIGHT))

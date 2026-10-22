@@ -17,10 +17,10 @@ use sloppy_core::scene::Side;
 
 use super::context::{Gpu, Raster};
 use crate::effects::EffectRegistry;
-use crate::gpu::{FixedPipelines, SHADOW_MERGED_SIDES};
+use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SHADOW_MERGED_SIDES};
 use crate::shader::glsl::{self, Binding, block_point, texture_unit};
 use crate::shader::{
-    BlendMode, OUTPUT_WGSL, PipelineKey, ShaderKey, occlusion_source, shader_source,
+    BlendMode, PipelineKey, ShaderKey, occlusion_source, output_source, shader_source,
     shadow_cutout_source, shadow_merged_source, sky_source, water_source,
 };
 
@@ -241,16 +241,11 @@ impl Pipelines {
     /// programs; they are used once linked ([`Self::fixed_ready`]) while the page
     /// builds the arena.
     pub fn new(gpu: &Gpu) -> Self {
-        let bloom = |label, entry| Linking::start(gpu, label, OUTPUT_WGSL, "vs_post", Some(entry));
+        let output = output_source();
+        let bloom = |label, entry| Linking::start(gpu, label, &output, "vs_post", Some(entry));
         let jobs = [
             Linking::start(gpu, "water", &water_source(), "vs_water", Some("fs_water")),
-            Linking::start(
-                gpu,
-                "output",
-                OUTPUT_WGSL,
-                "vs_fullscreen",
-                Some("fs_output"),
-            ),
+            Linking::start(gpu, "output", &output, "vs_fullscreen", Some("fs_output")),
             Linking::start(gpu, "sky", &sky_source(), "vs_sky", Some("fs_sky")),
             bloom("bloom prefilter", "fs_bloom_prefilter"),
             bloom("bloom down", "fs_bloom_down"),
@@ -258,7 +253,7 @@ impl Pipelines {
             Linking::start(
                 gpu,
                 "ambient occlusion",
-                &occlusion_source(false),
+                &occlusion_source(false, OCCLUSION_DOWNSCALE),
                 "vs_occlusion",
                 Some("fs_occlusion"),
             ),

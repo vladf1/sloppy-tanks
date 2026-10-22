@@ -123,7 +123,15 @@ fn context_options() -> js_sys::Object {
 }
 
 impl Gpu {
-    pub async fn new(canvas: web_sys::HtmlCanvasElement) -> Result<(Self, Canvas), String> {
+    /// The largest texture and renderbuffer edge.
+    pub fn max_texture_size(&self) -> u32 {
+        self.max_size
+    }
+
+    pub async fn new(
+        canvas: web_sys::HtmlCanvasElement,
+        msaa: bool,
+    ) -> Result<(Self, Canvas), String> {
         let api = GRAPHICS_API;
         let unavailable = |reason: &str| format!("{api} canvas unavailable: {reason}");
         let raw: web_sys::WebGl2RenderingContext = canvas
@@ -146,7 +154,7 @@ impl Gpu {
         } else {
             1.0
         };
-        let samples = sample_count(&raw);
+        let samples = if msaa { sample_count(&raw) } else { 0 };
         let parallel_compile = extensions.contains("KHR_parallel_shader_compile");
         let error = ErrorSlot::default();
         let lost = error.clone();

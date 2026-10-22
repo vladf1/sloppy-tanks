@@ -87,6 +87,16 @@ function fixture(network = false) {
   // The renderer's counters, which a room and single player report alike.
   const render = {
     graphicsApi: "WebGPU",
+    quality: {
+      setting: "auto",
+      tier: "medium",
+      scale: 0.667,
+      renderRatio: 1,
+      scene: [1180, 820],
+      gpuMs: 6.25,
+      changes: 2,
+      log: [],
+    } as EngineStats["quality"],
     drawCalls: 42,
     triangles: 628263,
     shadowTriangles: 241429,
@@ -228,6 +238,11 @@ test("network stats use received scene counts and never require a client physics
         text.includes("412 ms"),
     );
     assert.ok(text.includes("Reflection triangles") && text.includes("192,922"));
+    assert.ok(text.includes("Graphics setting") && text.includes("Auto"));
+    assert.ok(text.includes("Quality tier") && text.includes("Medium"));
+    assert.ok(text.includes("Render scale") && text.includes("67%"));
+    assert.ok(text.includes("Scene pixels") && text.includes("1180×820"));
+    assert.ok(text.includes("GPU frame time") && text.includes("6.3 ms"));
     assertRowsFit(f.container);
     assert.ok(text.includes("2 / 3"), "Tanks alive come from the received scene");
     assert.ok(text.includes("Update CPU / frame"));
@@ -260,7 +275,7 @@ test("panel has one open section per group with the expected rows", () => {
       assert.equal(section.open, title !== "Configuration", `${title} open state`);
     }
     const bodies = f.container.querySelectorAll("pre");
-    assert.equal(bodies.length, 26);
+    assert.equal(bodies.length, 31);
     assertRowsFit(f.container);
     const renderRows = sections
       .find((section) => section.querySelector("summary")?.textContent === "Render")!
@@ -312,6 +327,8 @@ test("panel has one open section per group with the expected rows", () => {
       "192,922",
       "Main triangles",
       "193,912",
+      "Quality tier",
+      "Render scale",
     ]) {
       assert.ok(text.includes(row), `missing row content: ${row}`);
     }

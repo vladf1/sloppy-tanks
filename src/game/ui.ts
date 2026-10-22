@@ -25,10 +25,6 @@ import { fitPanels } from "./panel-fit";
 import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
 export const MENU_READY_STATUS = "Arena ready";
-/** Seconds the hit marker shows after the player's shell lands. */
-const HIT_MARKER_TIME = 0.28;
-/** Seconds the elimination banner shows after the player wrecks a tank. */
-const KILL_BANNER_TIME = 1.9;
 /** Seconds the red screen-edge flash fades over after the player's hull is hit. */
 const HURT_FLASH_TIME = 0.6;
 /** Below this share of its hull the tank's HUD warns, like the status panel's pulse. */
@@ -45,6 +41,9 @@ export interface UIActions {
   /** The touch preference Settings shows, and the one they save. */
   touchMode(): string;
   setTouchMode(mode: string): void;
+  /** The Graphics setting Settings shows, and the one they save. */
+  graphics(): string;
+  setGraphics(setting: string): void;
   selectAmmo(weapon: AmmoWeapon): void;
 }
 
@@ -59,8 +58,6 @@ export class UI {
   toastTime = 0;
   ammoNoticeTime = 0;
   damageTime = 0;
-  hitTime = 0;
-  killBannerTime = 0;
   hurtFlashTime = 0;
   deathCause = "";
   /** The killer and weapon of the viewer's latest death, for the respawn card. */
@@ -68,9 +65,6 @@ export class UI {
   /** The respawn countdown's length when it started, so its bar drains to zero. */
   respawnTotal = 0;
   lastRound = 0;
-  /** Where the player aims on screen, in normalized device coordinates; null for the
-   * screen centre, as in first person. The hit marker appears there. */
-  aimPoint: () => ScreenPoint | null = () => null;
   /** Where the viewer's tank is on screen (NDC); null in first person. The damage ring
    * wraps it. */
   viewerPoint: () => ScreenPoint | null = () => null;
@@ -126,6 +120,8 @@ export class UI {
     this.settings = new SettingsDialog(root, "SINGLE PLAYER", {
       touchMode: () => actions.touchMode(),
       setTouchMode: (mode) => actions.setTouchMode(mode),
+      graphics: () => actions.graphics(),
+      setGraphics: (setting) => actions.setGraphics(setting),
       setVolume: (value) => actions.setting("volume", value),
       controls: controlsMarkup(),
       speeds: {
@@ -260,8 +256,6 @@ export class UI {
     this.deathCause = "";
     this.deathReport = null;
     this.damageTime = 0;
-    this.hitTime = 0;
-    this.killBannerTime = 0;
     this.hurtFlashTime = 0;
     this.ammoNoticeTime = 0;
     this.toastTime = 0;
@@ -276,9 +270,6 @@ export class UI {
   event(event: EngineEvent, state: HudState): void {
     this.syncRound(state.match.round);
     const human = state.human;
-    if (event.playerHit) {
-      this.showHitMarker(event.type === "death");
-    }
     if (event.id === human.id) {
       if (event.type === "hurt") {
         this.hurtFlashTime = HURT_FLASH_TIME;
@@ -325,42 +316,7 @@ export class UI {
           ownDeath: event.id === human.id,
         }),
       );
-      if (ownKill) {
-        this.showKillBanner(names[1]);
-      }
     }
-  }
-  /** Seats the hit marker on the reticle. It follows the reticle while it shows, so a
-   * marker never hangs where the aim was when the shell landed. */
-  private placeHitMarker(marker: HTMLElement): void {
-    const aim = this.aimPoint();
-    const left = aim ? `${(((aim.x + 1) / 2) * 100).toFixed(2)}%` : "50%";
-    const top = aim ? `${(((1 - aim.y) / 2) * 100).toFixed(2)}%` : "50%";
-    if (marker.style.left !== left) {
-      marker.style.left = left;
-    }
-    if (marker.style.top !== top) {
-      marker.style.top = top;
-    }
-  }
-  /** The hit marker at the player's aim: four ticks that snap out, red on a kill. */
-  private showHitMarker(kill: boolean): void {
-    const marker = this.hud.querySelector<HTMLElement>("#hit-marker")!;
-    this.placeHitMarker(marker);
-    marker.classList.remove("visible");
-    void marker.offsetWidth;
-    marker.classList.toggle("kill", kill);
-    marker.classList.add("visible");
-    this.hitTime = HIT_MARKER_TIME * (kill ? 1.6 : 1);
-  }
-  /** The elimination banner below the crosshair, naming the tank the player wrecked. */
-  private showKillBanner(victim: string): void {
-    const banner = this.hud.querySelector<HTMLElement>("#kill-banner")!;
-    banner.querySelector("b")!.textContent = victim;
-    banner.classList.remove("visible");
-    void banner.offsetWidth;
-    banner.classList.add("visible");
-    this.killBannerTime = KILL_BANNER_TIME;
   }
   update(state: HudState, dt: number): void {
     this.state = state;
@@ -371,23 +327,11 @@ export class UI {
     if (match.phase === "playing") {
       this.damageTime = Math.max(0, this.damageTime - dt);
       this.ammoNoticeTime = Math.max(0, this.ammoNoticeTime - dt);
-      this.hitTime = Math.max(0, this.hitTime - dt);
-      this.killBannerTime = Math.max(0, this.killBannerTime - dt);
       this.hurtFlashTime = Math.max(0, this.hurtFlashTime - dt);
     }
     const playing = match.phase === "playing";
-    // A wrecked tank aims at nothing: its hit marker and kill banner go with it, and the
-    // tank panel steps aside for the respawn card.
+    // A wrecked tank's panel steps aside for the respawn card.
     this.hud.classList.toggle("dead", dead && match.phase !== "ready");
-    const hitMarker = this.hud.querySelector<HTMLElement>("#hit-marker")!;
-    if (this.hitTime <= 0 || !playing || dead) {
-      hitMarker.classList.remove("visible");
-    } else {
-      this.placeHitMarker(hitMarker);
-    }
-    if (this.killBannerTime <= 0 || !playing || dead) {
-      this.hud.querySelector("#kill-banner")!.classList.remove("visible");
-    }
     const vignette = this.hud.querySelector<HTMLElement>("#damage-vignette")!;
     const flash = playing ? (this.hurtFlashTime / HURT_FLASH_TIME).toFixed(2) : "0";
     if (vignette.style.opacity !== flash) {

@@ -300,6 +300,12 @@ pub mod group {
     /// tanks, but they skip other debris so the falling deck crushes through
     /// them instead of resting on them.
     pub const CRUSHED_FRAME: u32 = 0x0508_0407;
+    /// A collapsing cottage's shards: solid debris that also rests on its rubble
+    /// mound.
+    pub const HOUSE_SHARD: u32 = 0x0108_0307;
+    /// The mound itself: only the shards rest on it; tanks, shells and other
+    /// debris pass through it.
+    pub const HOUSE_MOUND: u32 = 0x0200_0100;
 }
 
 #[cfg(test)]
