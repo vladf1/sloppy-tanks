@@ -67,18 +67,28 @@ const TUG_HALF_BEAM = 2.3;
 const WAKE_SECONDS = 24.0;
 const KELVIN_SLOPE = 0.354;
 const WATER_PI = 3.14159265;
+// Metres the harbor's sea mist is thinned by (`harbor_apron.wgsl` has the same).
+const SEA_MIST_LIFT = 8.0;
 
 // Linear colors of the harbor's own grade: churned white foam, the bright teal a
-// sunlit swell shows through its crest, and the water body from the silty green
-// against the quays through the basin's teal to the dredged channel's blue.
+// sunlit swell shows through its crest, and the water body from a cool teal
+// against the quays through the basin's blue-teal to the dredged channel's blue.
 const FOAM_COLOR = vec3f(0.8, 0.85, 0.85);
-const CREST_COLOR = vec3f(0.04, 0.24, 0.21);
-const HARBOR_SHALLOW = vec3f(0.024, 0.108, 0.105);
-const HARBOR_BASIN = vec3f(0.01, 0.074, 0.092);
-const HARBOR_DEEP = vec3f(0.005, 0.04, 0.07);
+const CREST_COLOR = vec3f(0.03, 0.21, 0.22);
+const HARBOR_SHALLOW = vec3f(0.016, 0.092, 0.108);
+const HARBOR_BASIN = vec3f(0.008, 0.066, 0.094);
+const HARBOR_DEEP = vec3f(0.004, 0.03, 0.08);
+// The rubble toe the quays stand on, seen through the water: its lit stone, the
+// metres of water that hide half of it, how deep it lies at a wall's foot and
+// how fast it shelves away, and the most of it that ever shows.
+const TOE_COLOR = vec3f(0.1, 0.19, 0.16);
+const TOE_CLARITY = 1.0;
+const TOE_FOOT = 0.3;
+const TOE_SHELF = 0.32;
+const TOE_SHOW = 0.8;
 // Fresnel reflectance of the harbor water seen straight down: real water's 2%
-// lifted a little so the sky still tints it from above.
-const HARBOR_F0 = 0.06;
+// lifted so the sky and whatever stands over the basin still show from above.
+const HARBOR_F0 = 0.085;
 // Metres from the nearest face where the basin turns to channel, and where the
 // wash of a moored hull's ends trails off.
 const HARBOR_CHANNEL = 40.0;
@@ -89,7 +99,7 @@ const HULL_TAIL = 8.0;
 const HARBOR_GLOSSY_NEAR = 35.0;
 const HARBOR_GLOSSY_FAR = 190.0;
 const HARBOR_SMEAR = 0.011;
-const HARBOR_SKY_SHARE = 0.45;
+const HARBOR_SKY_SHARE = 0.25;
 const HARBOR_MIRROR_MAX = 0.86;
 
 // Texels between the taps of the water's sun shadow lookup: wide enough that the
@@ -124,9 +134,10 @@ fn water_noise(p: vec2f) -> f32 {
 // What the water meets near a harbor point: x the metres to the nearest quay
 // face, hull or pier; y how much of the churn that face throws up (a hull's bow
 // and stern most, its flat sides least); z the foam trailing off a hull's ends,
-// streaked along its axis by the tide.
-fn harbor_shore(p: vec2f, t: f32) -> vec3f {
-    var out = vec3f(max(abs(p.x), abs(p.y)) - water.shore.y, 0.55, 0.0);
+// streaked along its axis by the tide; w 1 where that face stands on a rubble
+// toe (a quay or pier), 0 at a hull.
+fn harbor_shore(p: vec2f, t: f32) -> vec4f {
+    var out = vec4f(max(abs(p.x), abs(p.y)) - water.shore.y, 0.55, 0.0, 1.0);
     for (var i = 0; i < 3; i++) {
         let hull = HULLS[i];
         let d = rounded_box_distance(p, hull, HULL_ROUNDING);
@@ -141,6 +152,7 @@ fn harbor_shore(p: vec2f, t: f32) -> vec3f {
             // Moored, so the bow and stern only lap a little harder than the
             // flat sides: no bow wave.
             out.y = 0.2 + 0.55 * smoothstep(0.6, 1.0, abs(along) / reach);
+            out.w = 0.0;
         }
         let past = abs(along) - reach;
         let bend = (water_noise(vec2f(along * 0.08, 7.0)) - 0.5) * 3.0;
@@ -154,6 +166,7 @@ fn harbor_shore(p: vec2f, t: f32) -> vec3f {
         if d < out.x {
             out.x = d;
             out.y = 0.7;
+            out.w = 1.0;
         }
     }
     return out;
@@ -324,9 +337,18 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // dredged channel's blue, with the gusts roughening it a little paler.
         var body = mix(HARBOR_SHALLOW, HARBOR_BASIN, smoothstep(0.5, 10.0, shore));
         body = mix(body, HARBOR_DEEP, smoothstep(10.0, HARBOR_CHANNEL, shore));
-        body = body * mix(0.92, 1.12, gust);
+        // Wind lanes: roughened water a little paler, glassy slicks deeper.
+        body = body * mix(0.84, 1.16, gust);
+        // The quays' rubble toe shelving away under the water: blocks of stone
+        // bent by the swell's refraction, paling the water at a wall's foot and
+        // gone into the basin's depth a few metres out.
+        let refracted = input.world.xz + normal.xz * 0.6;
+        let blocks = mix(0.5, water_noise(refracted * 0.85) * 0.6 + water_noise(refracted * 2.2 + 7.0) * 0.4, detail);
+        let toe_depth = TOE_FOOT + max(shore, 0.0) * TOE_SHELF + (blocks - 0.5) * 0.5;
+        let toe = near.w * exp2(-toe_depth / TOE_CLARITY) * mix(0.55, 1.0, sunlit);
+        body = mix(body, TOE_COLOR * mix(0.55, 1.3, blocks), toe * TOE_SHOW);
         // Shade along hulls and quay faces, where the sky is half hidden.
-        body = body * mix(0.55, 1.0, smoothstep(0.0, 3.5, shore));
+        body = body * mix(0.5, 1.0, smoothstep(0.0, 2.2, shore));
         // Swell crests lit through from the sun side.
         let crest = clamp(noise.y * 0.9 + 0.15, 0.0, 1.0) * max(dot(-sun.xz, normal.xz) * 4.0 + 0.4, 0.0);
         // Churned wash is aerated: paler and greener under the foam.
@@ -354,7 +376,7 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // Glassy slicks mirror the cranes and hulls more clearly than choppy water;
         // even at grazing angles some of the water body shows through the swell.
         let reflectance = HARBOR_F0 + (1.0 - HARBOR_F0) * pow(1.0 - theta, 5.0);
-        let mirror_weight = clamp(reflectance * mix(1.3, 0.9, gust) * (1.0 - aerated * 0.5), 0.0, HARBOR_MIRROR_MAX);
+        let mirror_weight = clamp(reflectance * mix(1.55, 0.85, gust) * (1.0 - aerated * 0.5), 0.0, HARBOR_MIRROR_MAX);
         let albedo = mix(scatter, reflected + specular, mirror_weight) + glitter;
         // Foam: a crisp line where the water slaps every face, a broken collar
         // beside it that is heaviest at a hull's bow and stern, wash lapping
@@ -373,8 +395,10 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // Seen from high up the wake still breaks into patches of foam, never a
         // flat white band.
         let wake_lace = mix(smoothstep(0.3, 0.75, breakup * 0.8 + gust * 0.4), smoothstep(0.25, 0.6, lace * 0.6 + breakup * 0.6), detail);
-        let wake_foam = wake.x * wake_lace;
-        let foam = clamp(line * 0.75 + collar * 0.6 + wash * 0.5 + flecks * 0.35 + tail * 0.7 + wake_foam, 0.0, 1.0);
+        // Softer from high up, where the lace cannot resolve and white streaks read
+        // as brush strokes.
+        let wake_foam = wake.x * wake_lace * mix(0.6, 1.0, detail);
+        let foam = clamp(line * 0.75 + collar * 0.55 + wash * 0.32 + flecks * 0.22 + tail * 0.7 + wake_foam, 0.0, 1.0);
         let lit_foam = FOAM_COLOR * (0.7 + 0.3 * max(dot(sun, normal), 0.0));
         color = mix(albedo, lit_foam, foam * 0.92);
     } else {
@@ -388,5 +412,8 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         let foam = (1.0 - smoothstep(0.12, 0.85, wash)) * smoothstep(0.46, 0.64, breakup);
         color = mix(albedo, vec3f(0.54, 0.67, 0.61), foam * 0.5);
     }
-    return vec4f(apply_fog(color, input.world), 1.0);
+    // The harbor's sea mist is thinned as the far shore's is (`harbor_apron.wgsl`
+    // SEA_MIST_LIFT), so the water and the bank behind it fade alike.
+    let fogged_at = input.world + vec3f(0.0, select(0.0, SEA_MIST_LIFT, harbor), 0.0);
+    return vec4f(apply_fog(color, fogged_at), 1.0);
 }

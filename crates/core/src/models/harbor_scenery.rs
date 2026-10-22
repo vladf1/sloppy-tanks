@@ -103,7 +103,7 @@ fn spawn_pad(details: &mut Node, team: Team, x: f64, z: f64) {
 const PAD_LIGHT_FLAG: f32 = 10.0;
 /// Radius of a spawn pad's deck and its steel.
 const PAD_RADIUS: f64 = 2.65;
-const PAD_STEEL: u32 = 0x474d50;
+const PAD_STEEL: u32 = 0x6a7173;
 
 /// Merge a group of ground-level parts, which receive shadows but cast none.
 fn batch_receivers(group: &mut Node) {
@@ -621,6 +621,37 @@ fn bollard(details: &mut Node, x: f64, z: f64) {
     );
 }
 
+/// A mooring cleat on the wall top at (x, z), its horns along the wall (along x
+/// when `along_x`): a base plate, two posts and the horn bar across them.
+fn cleat(details: &mut Node, x: f64, z: f64, along_x: bool) {
+    let mut put_box = |width: f64, height: f64, depth: f64, dx: f64, y: f64| {
+        let (sx, sz) = if along_x {
+            (width, depth)
+        } else {
+            (depth, width)
+        };
+        let (ox, oz) = if along_x { (dx, 0.0) } else { (0.0, dx) };
+        put(
+            details,
+            box_part(sx, height, sz, BOLLARD_DARK, 0.0),
+            x + ox,
+            WALL_TOP + y,
+            z + oz,
+        );
+    };
+    put_box(0.7, 0.05, 0.28, 0.0, 0.025);
+    for post in [-0.16, 0.16] {
+        put_box(0.1, 0.16, 0.14, post, 0.13);
+    }
+    put_box(0.82, 0.08, 0.13, 0.0, 0.24);
+}
+
+/// Cleats between the bollards along the wall tops, off the bollards' 24 m grid
+/// and clear of the ladders and life rings: along the north and south walls, then
+/// the east and west.
+const CLEATS_ALONG_X: [f64; 4] = [-41.0, -17.0, 7.0, 31.0];
+const CLEATS_ALONG_Z: [f64; 4] = [-31.0, -7.0, 17.0, 41.0];
+
 /// A life-ring station on the wall top: a white post with the ring hung facing
 /// along `yaw`.
 fn life_ring(details: &mut Node, x: f64, z: f64, yaw: f64) {
@@ -910,6 +941,12 @@ fn quay_dressing(details: &mut Node, beacons: &mut Node) {
             }
         }
         flood_mast(details, beacons, side * 62.0, -side * 30.0, [-side, 0.0]);
+        for along in CLEATS_ALONG_X {
+            cleat(details, along * side, side * BOLLARD_LINE, true);
+        }
+        for along in CLEATS_ALONG_Z {
+            cleat(details, side * BOLLARD_LINE, along * side, false);
+        }
     }
     // The outer quays' yards: container blocks either side of the transit sheds,
     // stacked and painted differently on each.

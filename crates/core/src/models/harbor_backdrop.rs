@@ -124,12 +124,13 @@ fn shore_radius(theta: f64) -> f64 {
 }
 
 /// Profile of the coast from the waterline inland: (metres past the shoreline,
-/// fraction of the ridge height, extra height, color). Surf breaks white on the
-/// waterline and pale sand rises from it, so the coast reads as a line at a glance.
+/// fraction of the ridge height, extra height, color). Dark wet rock at the
+/// waterline and warm sand rising from it, so the coast reads as a line at a
+/// glance without a white band that the sea mist would turn into a seam.
 const PROFILE: [(f64, f64, f64, u32); PROFILE_ROWS] = [
-    (-3.0, 0.0, -1.2, 0x4f5650),
-    (0.0, 0.0, 0.35, 0xe4e8e2),
-    (2.0, 0.0, 2.4, 0xc2b28a),
+    (-3.0, 0.0, -1.2, 0x3f4540),
+    (0.0, 0.0, 0.35, 0x6b6c62),
+    (2.0, 0.0, 2.4, 0xb3a37e),
     (9.0, 0.12, 3.0, 0x6f8a4e),
     (19.0, 0.36, 2.6, 0x5a7c46),
     (30.0, 0.62, 2.0, 0x4f7040),
@@ -350,16 +351,18 @@ fn quay_amount(theta: f64) -> f64 {
 const QUAY_DECK: f64 = 2.8;
 
 /// The waterfront's profile, row for row with [`PROFILE`]: the wall's foot under
-/// water, its dark wet face and fender line, a pale coping, the deck the cranes and
-/// stacks stand on, then the hills behind. (offset, ridge fraction, extra height,
-/// color) as in [`PROFILE`].
+/// water, its dark wet face and fender line, the coping, the worn grey deck the
+/// cranes and stacks stand on, then the hills behind. (offset, ridge fraction,
+/// extra height, color) as in [`PROFILE`]. Seen edge on across the bay the deck
+/// is a thin strip, so it is a working yard's dark grey: a pale one read as a band
+/// of fog along the far bank.
 const QUAY_PROFILE: [(f64, f64, f64, u32); PROFILE_ROWS] = [
     (-3.0, 0.0, -1.2, 0x3f4547),
     (-2.8, 0.0, QUAY_DECK - 0.5, 0x2c3133),
-    (-2.6, 0.0, QUAY_DECK, 0xd2d0c6),
-    (6.0, 0.0, QUAY_DECK, 0xa9a89f),
-    (26.0, 0.0, QUAY_DECK, 0xa3a299),
-    (46.0, 0.0, QUAY_DECK, 0x9d9c94),
+    (-2.6, 0.0, QUAY_DECK, 0x8f8d85),
+    (6.0, 0.0, QUAY_DECK, 0x6e6d67),
+    (26.0, 0.0, QUAY_DECK, 0x75736c),
+    (46.0, 0.0, QUAY_DECK, 0x6a6964),
     (54.0, 0.5, QUAY_DECK * 0.5, 0x48683d),
     (62.0, 1.0, 0.0, 0x3f5e3a),
     (85.0, 0.8, 0.0, 0x4a6744),
@@ -922,27 +925,34 @@ fn woods(sectors: &mut Sectors) {
         if woods_depth(x, z) < WOODS_EDGE {
             continue;
         }
-        let color = [0x1a2e1d, 0x1f3621, 0x223b22, 0x182a1b][(hash(i, 211) * 4.0) as usize % 4];
-        let stand = 2 + (hash(i, 229) * 3.0) as u32;
+        // The painted canopy's own greens, so a stand melts into the wood round it.
+        let color = [0x24402a, 0x2a472c, 0x2e4c2d, 0x213b27][(hash(i, 211) * 4.0) as usize % 4];
+        let stand = 3 + (hash(i, 229) * 4.0) as u32;
         for tree in 0..stand {
             let key = i * 8 + tree;
             // The first tree is the stand's tallest; the rest crowd round it.
             let (spread, age) = if tree == 0 {
                 (0.0, 1.0)
             } else {
-                (2.2 + 4.5 * hash(key, 233), 0.55 + 0.4 * hash(key, 239))
+                (0.9 + 2.6 * hash(key, 233), 0.55 + 0.4 * hash(key, 239))
             };
             let turn = TAU * hash(key, 241);
-            let (along, out) = (spread * turn.cos() / shore_radius(theta), spread * turn.sin());
+            let (along, out) = (
+                spread * turn.cos() / shore_radius(theta),
+                spread * turn.sin(),
+            );
             let (tx, ty, tz) = on_land(theta + along, (inland + out).max(4.0));
             let depth = woods_depth(tx, tz);
             if depth < WOODS_EDGE - 0.02 {
                 continue;
             }
             let deep = ((depth - WOODS_EDGE) / 0.12).clamp(0.0, 1.0);
-            let height = (3.6 + 3.8 * hash(key, 207)) * (0.85 + 0.35 * deep) * age;
-            let width = height * (0.3 + 0.1 * hash(key, 223));
-            let mut part = Node::mesh(pine_mesh(), paint(scale_hex_color(color, 0.9 + 0.2 * hash(key, 251))));
+            let height = (4.5 + 4.0 * hash(key, 207)) * (0.85 + 0.35 * deep) * age;
+            let width = height * (0.36 + 0.12 * hash(key, 223));
+            let mut part = Node::mesh(
+                pine_mesh(),
+                paint(scale_hex_color(color, 0.9 + 0.2 * hash(key, 251))),
+            );
             part.scale = glam::DVec3::new(width, height, width);
             place_at(sectors, theta, part, tx, ty - 0.5, tz);
         }
@@ -950,9 +960,15 @@ fn woods(sectors: &mut Sectors) {
 }
 /// Points tried for a stand of trees around the bay; only those in the painted
 /// woods grow one.
-const TREE_SITES: u32 = 3800;
+const TREE_SITES: u32 = 2800;
 /// The [`woods_depth`] where trees start: just inside the painted woods' edge.
 const WOODS_EDGE: f64 = 0.5;
+
+/// How far inland the turbines stand, metres, and their scale: utility-sized
+/// machines up on the ridge that dwarf the cranes across the bay, not toys on
+/// the shore.
+const TURBINE_INLAND: f64 = 72.0;
+const TURBINE_SCALE: f64 = 1.15;
 
 /// Wind turbines along the western headland ridge.
 fn turbines(sectors: &mut Sectors) {
@@ -962,7 +978,7 @@ fn turbines(sectors: &mut Sectors) {
         if in_open_sea(theta) || land_amount(theta) < 0.9 {
             continue;
         }
-        let (x, y, z) = on_land(theta, 55.0);
+        let (x, y, z) = on_land(theta, TURBINE_INLAND);
         let mut turbine = Node::group("");
         put(
             &mut turbine,
@@ -1007,7 +1023,7 @@ fn turbines(sectors: &mut Sectors) {
             put(&mut turbine, arm, 0.0, 32.4, 1.5);
         }
         let mut turbine = rotated(turbine, 0.0, -theta - FRAC_PI_2, 0.0);
-        turbine.scale = glam::DVec3::splat(0.65);
+        turbine.scale = glam::DVec3::splat(TURBINE_SCALE);
         place_at(sectors, theta, turbine, x, y, z);
     }
 }

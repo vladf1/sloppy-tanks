@@ -312,7 +312,11 @@ pub fn shipping_container(group: &mut Node, c: CargoShape) {
 /// palette (a teal, a slate grey and one safety-orange accent) so its boxes never
 /// share the teams' red and blue and the tanks stay the brightest things on the
 /// apron. The apron effect then gives each box its own shade of it.
-const COVER_PAINT: [(u32, u32); 3] = [(0xd37c38, 0xc4642c), (0x31958d, 0x2c7a72), (0x6689ad, 0x5c676c)];
+const COVER_PAINT: [(u32, u32); 3] = [
+    (0xd37c38, 0xc4642c),
+    (0x31958d, 0x2c7a72),
+    (0x6689ad, 0x5c676c),
+];
 
 fn container_parts(group: &mut Node, length: f64, depth: f64, h: f64, color: u32) {
     let row = livery_for(color);
