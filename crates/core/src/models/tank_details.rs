@@ -1584,9 +1584,9 @@ fn heavy_turret(kit: &mut Kit, c: &Chassis, roof: f64, gun_y: f64) {
             );
         }
     }
-    // Roof plate welds.
+    // Roof plate weld at the bustle joint (the centre stays clear for the class
+    // chevrons).
     seam(kit, roof, DVec2::new(-0.66, -1.05), DVec2::new(0.66, -1.05));
-    seam(kit, roof, DVec2::new(0.0, 0.62), DVec2::new(0.0, -0.05));
     // Rear stowage box across the bustle.
     kit.chamfer_block(
         Coat::Shade,
@@ -1725,10 +1725,12 @@ fn extra_stowage(kit: &mut Kit, c: &Chassis, variant: u8) {
     }
 }
 
-/// Team insignia on the turret roof (a diamond for blue, twin bars for red, big
-/// enough to read from the follow camera), stencilled unit numbers on both turret
-/// sides, the turret band and the livery's extra stowage. The crew livery (the one
-/// a human player's tank wears) paints its band white: the command tank's mark.
+/// Class chevrons on the turret roof (one on the Skipper, two on the Bruiser,
+/// three on the Big Rig, matching the bands on its gun): bold enough to read from
+/// the overhead camera and on the menu cards, pointing the way the turret faces.
+/// Stencilled unit numbers on both turret sides, the turret band and the livery's
+/// extra stowage; the team's own sign is on the skirts. The crew livery (the one a
+/// human player's tank wears) paints its band white: the command tank's mark.
 fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
     extra_stowage(kit, c, variant);
     if variant == CREW_LIVERY {
@@ -1742,19 +1744,13 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
         );
     }
     let roof = c.deck + roof_rise(c);
-    let y = roof + 0.003;
-    let z = c.pick(0.2, 0.18, 0.3);
-    if team == Team::Blue {
-        kit.block_at(
-            Coat::Marking,
-            v(0.4, 0.006, 0.4),
-            v(0.0, y, z),
-            v(0.0, PI / 4.0, 0.0),
-        );
-    } else {
-        for x in [-0.13, 0.13] {
-            kit.block(Coat::Marking, v(0.13, 0.006, 0.5), shift(v(x, y, z)));
-        }
+    let count = c.pick(1.0, 2.0, 3.0) as u32;
+    let stroke = c.pick(0.13, 0.11, 0.095);
+    let half_width = c.pick(0.27, 0.29, 0.25);
+    let apex = c.pick(0.6, 0.66, 0.6);
+    for i in 0..count {
+        let tip = apex - f64::from(i) * stroke * (1.0 + CHEVRON_GAP);
+        chevron(kit, roof + 0.003, tip, half_width, stroke);
     }
     let number = unit_number(c.kind, team, variant);
     let d = c.deck;
@@ -1778,6 +1774,30 @@ fn marking(kit: &mut Kit, c: &Chassis, team: Team, variant: u8) {
         };
         let right = v(0.0, 0.0, -side);
         stencil_number(kit, number, center, right, up, c.pick(0.2, 0.24, 0.27));
+    }
+}
+
+/// The gap between stacked chevrons (a share of their stroke) and how far an
+/// arm drops back per metre out from the centre.
+const CHEVRON_GAP: f64 = 0.55;
+const CHEVRON_SWEEP: f64 = 0.62;
+
+/// A flat chevron painted on a roof at height `y`, its tip at `tip` (z) on the
+/// centre line, arms reaching `half_width` out and back, `stroke` deep along z.
+fn chevron(kit: &mut Kit, y: f64, tip: f64, half_width: f64, stroke: f64) {
+    let drop = half_width * CHEVRON_SWEEP;
+    for side in [-1.0, 1.0] {
+        let x = side * half_width;
+        kit.quad(
+            Coat::Marking,
+            [
+                v(0.0, y, tip),
+                v(x, y, tip - drop),
+                v(x, y, tip - drop - stroke),
+                v(0.0, y, tip - stroke),
+            ],
+            DVec3::Y,
+        );
     }
 }
 

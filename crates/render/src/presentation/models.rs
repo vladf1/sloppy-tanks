@@ -462,18 +462,18 @@ pub fn spawn_pulse() -> Node {
 }
 
 /// The supply drop's ground marking, sprayed in the kind's paint round its pallet:
-/// a thin hand-sprayed circle (its radii, just clear of the pallet's corners, so
+/// one bold hand-sprayed circle (its radii, crossing the tarp's corners, so
 /// neighbouring drops barely touch), darkened while the pickup is being restocked,
 /// and outside it a ring of tick marks (radii, count, the gap between ticks as a
 /// share of one, and how faint a tick still to fill is) sprayed in one by one until
 /// the supply returns. Paint on the ground, lit and shadowed like it, its ragged
 /// edges anti-aliased by alpha to coverage, never glowing.
-const MARKING_RADII: [f64; 2] = [1.04, 1.18];
+const MARKING_RADII: [f64; 2] = [1.0, 1.24];
 const MARKING_SEGMENTS: u32 = 64;
 /// The spent ring's darkening of the kind's paint (linear).
 const MARKING_FADED: u32 = 0x5a5a5a;
 const MARKING_CUTOFF: f32 = 0.35;
-const REFILL_RADII: [f64; 2] = [1.22, 1.32];
+const REFILL_RADII: [f64; 2] = [1.28, 1.38];
 pub const REFILL_TICKS: u32 = 24;
 const REFILL_GAP: f32 = 0.42;
 const REFILL_FAINT: f32 = 0.18;

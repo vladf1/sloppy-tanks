@@ -41,38 +41,41 @@ const VEHICLE_EDGE_SPAN: f32 = 0.92;
 const VEHICLE_VALUE_RANGE: f32 = 1.45;
 // The bevel band: about this many pixels wide, within these widths in metres, and
 // how far the normal rolls over in it.
-const VEHICLE_BEVEL_PIXELS: f32 = 2.6;
+const VEHICLE_BEVEL_PIXELS: f32 = 3.2;
 const VEHICLE_BEVEL_MIN: f32 = 0.016;
 const VEHICLE_BEVEL_MAX: f32 = 0.12;
 const VEHICLE_BEVEL_ROLL: f32 = 0.3;
 // Panel shading: paint along a plate's borders is this much darker, fading out over
 // this fraction of the plate's narrowest width (within these metres).
-const VEHICLE_PANEL_BORDER: f32 = 0.74;
+const VEHICLE_PANEL_BORDER: f32 = 0.66;
 const VEHICLE_PANEL_REACH: f32 = 0.3;
 const VEHICLE_PANEL_MIN: f32 = 0.03;
 const VEHICLE_PANEL_MAX: f32 = 0.35;
+const VEHICLE_PANEL_PIXEL_FROM: f32 = 0.018;
+const VEHICLE_PANEL_PIXEL_TO: f32 = 0.045;
 // How far from a convex edge chips reach, and from a recess its grime (metres).
-const VEHICLE_CHIP_REACH: f32 = 0.07;
+const VEHICLE_CHIP_REACH: f32 = 0.075;
 const VEHICLE_RECESS_REACH: f32 = 0.12;
 // Chips fade out as a pixel grows past their size, so distant hulls never sparkle.
-const VEHICLE_CHIP_PIXEL_FROM: f32 = 0.01;
-const VEHICLE_CHIP_PIXEL_TO: f32 = 0.024;
+const VEHICLE_CHIP_PIXEL_FROM: f32 = 0.006;
+const VEHICLE_CHIP_PIXEL_TO: f32 = 0.017;
 // Plates narrower than these (metres) never chip: bolt heads, latches and trim
 // strips would otherwise scatter grey specks evenly over every deck.
 const VEHICLE_CHIP_PLATE_FROM: f32 = 0.05;
 const VEHICLE_CHIP_PLATE_TO: f32 = 0.11;
 // Paint rubbed lighter on a bevel and on chamfer strips.
-const VEHICLE_BEVEL_LIFT: f32 = 1.7;
+const VEHICLE_BEVEL_LIFT: f32 = 2.1;
 const VEHICLE_BEVEL_PALE: vec3f = vec3f(0.03, 0.022, 0.018);
-const VEHICLE_BEVEL_TINT: f32 = 0.8;
+const VEHICLE_BEVEL_TINT: f32 = 0.85;
 // Dust and wet mud (linear) and how strongly they cover the lowest armor. In a
 // round (the atmosphere on) the dust takes this share of its hue from the map's
 // ground light (sand in the quarry, brown earth in the village, grey concrete at
 // the harbor) at its own brightness; studio scenes keep the plain dust.
-const VEHICLE_DUST: vec3f = vec3f(0.22, 0.165, 0.098);
+const VEHICLE_DUST: vec3f = vec3f(0.29, 0.22, 0.135);
 const VEHICLE_DUST_LOCAL: f32 = 0.6;
 const VEHICLE_MUD: vec3f = vec3f(0.075, 0.053, 0.034);
 const VEHICLE_DUST_STRENGTH: f32 = 0.82;
+const VEHICLE_DUST_STUDIO: f32 = 0.5;
 const VEHICLE_MUD_STRENGTH: f32 = 0.7;
 // Grime in recesses: a dark brown multiplier.
 const VEHICLE_GRIME: vec3f = vec3f(0.34, 0.29, 0.24);
@@ -82,12 +85,12 @@ const VEHICLE_GRIME_STRENGTH: f32 = 0.8;
 // Upright plates are satin, so their sides catch the sky as painted steel does;
 // decks are flat-finished (and stay under the ground relief's roughness, which
 // would otherwise texture them in world space as they drive).
-const VEHICLE_PAINT_ROUGHNESS: f32 = 0.36;
-const VEHICLE_DECK_ROUGHNESS: f32 = 0.53;
+const VEHICLE_PAINT_ROUGHNESS: f32 = 0.5;
+const VEHICLE_DECK_ROUGHNESS: f32 = 0.64;
 const VEHICLE_SHEEN_BREAKUP: f32 = 0.1;
 const VEHICLE_DIRT_ROUGHNESS: f32 = 0.92;
-const VEHICLE_STEEL_ROUGHNESS: f32 = 0.62;
-const VEHICLE_STEEL_METALNESS: f32 = 0.2;
+const VEHICLE_STEEL_ROUGHNESS: f32 = 0.48;
+const VEHICLE_STEEL_METALNESS: f32 = 0.45;
 // The team rim's brightness at a full-strength silhouette.
 const VEHICLE_RIM_GLOW: f32 = 0.4;
 // Rain streaks down upright plates: columns this many per paint UV across and this
@@ -116,10 +119,22 @@ const VEHICLE_GRAIN_CELLS: f32 = 85.0;
 const VEHICLE_GRAIN_VALUE: f32 = 0.26;
 const VEHICLE_GRAIN_PIXEL_FROM: f32 = 0.003;
 const VEHICLE_GRAIN_PIXEL_TO: f32 = 0.009;
+// Dust settled on decks: a thin film over broad upward plates (patchy at this many
+// cells per metre, on plates at least this wide, resolved while a pixel is smaller
+// than these sizes), drifted thicker into recesses, in the map's ground color where
+// the atmosphere is on.
+const VEHICLE_DECK_DUST_CELLS: f32 = 1.6;
+const VEHICLE_DECK_DUST_FILM: f32 = 0.32;
+const VEHICLE_DECK_DUST_DRIFT: f32 = 0.6;
+const VEHICLE_DECK_DUST_MIN_PLATE: f32 = 0.25;
+const VEHICLE_DECK_DUST_PIXEL_FROM: f32 = 0.012;
+const VEHICLE_DECK_DUST_PIXEL_TO: f32 = 0.03;
+// Edge wear: how far toward a convex edge the chip field is exposed.
+const VEHICLE_CHIP_EXPOSURE: f32 = 0.5;
 // Soft, sun-faded variation across the paint, this many cells per metre and this
 // much either way: broad enough never to read as speckle.
 const VEHICLE_FADE_CELLS: f32 = 2.4;
-const VEHICLE_FADE_VALUE: f32 = 0.1;
+const VEHICLE_FADE_VALUE: f32 = 0.06;
 
 struct VehicleEdges {
     // 1 on a convex edge, fading out over the chip reach.
@@ -264,8 +279,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Clean paint: only a whisper of the grime field's drift on open panels, each
     // panel a shade lighter in its middle than along its borders, so plates read
     // as separate pieces of armor under flat light.
+    // The border shading fades out as pixels grow, so from the overhead camera a
+    // hull keeps its full, clean team color instead of darkening plate by plate.
     let panel_reach = clamp(edges.narrowest * VEHICLE_PANEL_REACH, VEHICLE_PANEL_MIN, VEHICLE_PANEL_MAX);
-    let panel = mix(VEHICLE_PANEL_BORDER, 1.0, smoothstep(0.0, panel_reach, edges.nearest));
+    let panel_resolved = 1.0 - smoothstep(VEHICLE_PANEL_PIXEL_FROM, VEHICLE_PANEL_PIXEL_TO, pixel);
+    let panel = mix(1.0, mix(VEHICLE_PANEL_BORDER, 1.0, smoothstep(0.0, panel_reach, edges.nearest)), panel_resolved);
     let metres = f.uv * VEHICLE_METRES_PER_UV;
     let fade = value_noise(metres * VEHICLE_FADE_CELLS) * 0.65 + value_noise(metres * VEHICLE_FADE_CELLS * 2.7 + 3.1) * 0.35;
     var color = base * (1.0 + (fade - 0.5) * 2.0 * VEHICLE_FADE_VALUE) * panel;
@@ -315,7 +333,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, color * VEHICLE_GRIME, streak * VEHICLE_STREAK_DARKEN / (1.0 - VEHICLE_GRIME.g));
 
     // Dust and mud thrown up by the tracks: a broken, splashed line.
-    let dusty = smoothstep(0.24, 0.56, low + (grime - 0.5) * 0.6) * VEHICLE_DUST_STRENGTH;
+    // Studio scenes (the menu cards) keep a lighter dusting: a tank fresh from the
+    // depot, its band grounding it without banding the card in tan.
+    let dust_strength = select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on()) * VEHICLE_DUST_STRENGTH;
+    let dusty = smoothstep(0.16, 0.52, low + (grime - 0.5) * 0.6) * dust_strength;
     let muddy = smoothstep(0.6, 0.84, low + (grime - 0.5) * 0.45) * VEHICLE_MUD_STRENGTH;
     let luma = vec3f(0.2126, 0.7152, 0.0722);
     let ground = frame.ground_color.rgb;
@@ -325,19 +346,32 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let dust = mix(VEHICLE_DUST, local_dust, local_share);
     color = mix(color, dust * (0.8 + 0.4 * grime), dusty);
     color = mix(color, VEHICLE_MUD, muddy);
-    let dirt = max(dusty, muddy);
+    // Dust settled on the decks: a patchy film on broad plates, drifted into
+    // recesses, never on the bevels the crew's boots and the wind keep clean. The
+    // film resolves only close up: from the overhead camera and on the menu cards
+    // its patches would read as camouflage blotches over the team color.
+    let patches = value_noise(metres * VEHICLE_DECK_DUST_CELLS + 5.7) * 0.7 + grime * 0.3;
+    let broad = smoothstep(VEHICLE_DECK_DUST_MIN_PLATE, VEHICLE_DECK_DUST_MIN_PLATE * 2.0, edges.narrowest);
+    // Studio scenes (the menu cards) show the paint showroom clean.
+    let film = VEHICLE_DECK_DUST_FILM * broad * select(0.0, 1.0, atmosphere_on())
+        * (1.0 - smoothstep(VEHICLE_DECK_DUST_PIXEL_FROM, VEHICLE_DECK_DUST_PIXEL_TO, pixel));
+    let settled = deck * (1.0 - chamfer) * (1.0 - bevel)
+        * smoothstep(0.38, 0.62, patches + recess * 0.3)
+        * (film + VEHICLE_DECK_DUST_DRIFT * recess);
+    color = mix(color, dust * (0.95 + 0.3 * grime), settled);
+    let dirt = max(max(dusty, muddy), settled * 0.8);
 
     // Chips to bare steel along convex edges of broad plates (a few low on the hull),
     // where the chip field dips under the spot's exposure, with a darker rim of
     // lifted paint.
     let resolved = 1.0 - smoothstep(VEHICLE_CHIP_PIXEL_FROM, VEHICLE_CHIP_PIXEL_TO, pixel);
     let plate = smoothstep(VEHICLE_CHIP_PLATE_FROM, VEHICLE_CHIP_PLATE_TO, edges.narrowest);
-    let exposure = (edges.near_edge * 0.26 + low * 0.04) * (1.0 - dirt * 0.6) * resolved * plate;
+    let exposure = (edges.near_edge * VEHICLE_CHIP_EXPOSURE + low * 0.05) * (1.0 - dirt * 0.6) * resolved * plate;
     let chip = 1.0 - smoothstep(exposure - 0.03, exposure, wear);
     // The rim only rings real chips: where nothing is exposed it would darken the
     // chip field's lowest spots into specks over the whole panel.
     let chip_rim = (1.0 - smoothstep(exposure, exposure + 0.07, wear)) * (1.0 - chip) * smoothstep(0.0, 0.05, exposure);
-    color *= 1.0 - chip_rim * 0.4;
+    color *= 1.0 - chip_rim * 0.55;
     color = mix(color, material.params[3].rgb * (0.75 + 0.5 * grime), chip);
 
     // The sheen breaks up a little with the grime field, so a panel's highlight
