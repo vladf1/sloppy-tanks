@@ -357,6 +357,7 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
     if let Some(effect) = effect {
         code += effect.wgsl;
         code += "\n";
+        code += effect.entry;
     }
     if !effect.is_some_and(|e| e.has_vertex()) {
         code += "fn effect_vertex(v: ptr<function, EffectVertex>) {}\n";

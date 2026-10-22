@@ -1022,22 +1022,29 @@ impl Drop for WaterGpu {
     }
 }
 
-/// A pass into a multisampled target, which keeps only the resolved color.
+/// A pass into a scene target, which keeps only its color, resolved when multisampled.
 fn scene_pass<'a>(
     encoder: &'a mut wgpu::CommandEncoder,
     label: &str,
     target: &ColorTarget,
     clear: wgpu::Color,
 ) -> wgpu::RenderPass<'a> {
+    let resolve_target = target.resolve_target();
     encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
         color_attachments: &[Some(wgpu::RenderPassColorAttachment {
             view: &target.color_view,
             depth_slice: None,
-            resolve_target: Some(&target.resolved_view),
+            resolve_target,
             ops: wgpu::Operations {
                 load: wgpu::LoadOp::Clear(clear),
-                store: wgpu::StoreOp::Discard,
+                // The multisampled color is spent once resolved; a single-sampled
+                // target is the result.
+                store: if resolve_target.is_some() {
+                    wgpu::StoreOp::Discard
+                } else {
+                    wgpu::StoreOp::Store
+                },
             },
         })],
         depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {

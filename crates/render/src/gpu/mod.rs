@@ -92,8 +92,10 @@ use pools::PoolEntry;
 use resources::{MaterialStore, MeshStore};
 use textures::TextureStore;
 
-/// MSAA samples of the main view and the water reflection. WebGL takes the most up
-/// to this that its float targets support (`webgl/context.rs` `sample_count`).
+/// MSAA samples of the main view and the water reflection with multisampling on.
+/// WebGL takes the most up to this that its float targets support
+/// (`webgl/context.rs` `sample_count`). Without multisampling (`Renderer::new`'s
+/// `msaa`, touch devices) both draw single-sampled: WebGPU offers only 1 or 4.
 pub const SAMPLE_COUNT: u32 = 4;
 
 /// Whether a resource survives `reset_round`.
@@ -907,12 +909,15 @@ struct Scene<'a> {
 
 impl Renderer {
     /// Create the device and canvas context. `asset_base` prefixes `TextureSource::File`
-    /// paths (the page's `BASE_URL`). Fails when the build's graphics API is unavailable.
+    /// paths (the page's `BASE_URL`). `msaa` multisamples the main view and the water
+    /// reflection; it is fixed for the renderer's life, since every pipeline is made
+    /// for it. Fails when the build's graphics API is unavailable.
     pub async fn new(
         canvas: web_sys::HtmlCanvasElement,
         asset_base: String,
+        msaa: bool,
     ) -> Result<Renderer, String> {
-        let (gpu, canvas) = Gpu::new(canvas).await?;
+        let (gpu, canvas) = Gpu::new(canvas, msaa).await?;
         let pipelines = Pipelines::new(&gpu);
         let textures = TextureStore::new(&gpu, asset_base);
         let sun_shadow = SunShadow::default();
@@ -1020,6 +1025,11 @@ impl Renderer {
     /// The largest texture edge the GPU offers.
     pub fn max_texture_size(&self) -> u32 {
         self.gpu.max_texture_size()
+    }
+
+    /// MSAA samples of the main view (0 or 1 without multisampling).
+    pub fn samples(&self) -> u32 {
+        self.gpu.samples
     }
 
     /// Multiply the scene's size by `load` on top of the render scale (development:
@@ -1194,8 +1204,12 @@ impl Renderer {
                 let range = self.meshes.get(mesh).range;
                 let source = &gpu.material;
                 let transparent = source.transparent || faded;
+                let multisampled = self.gpu.samples > 1;
                 let main_key = |material: &sloppy_core::scene::Material| {
-                    let shader = ShaderKey::main(material, gpu.effect, receive_shadow);
+                    let mut shader = ShaderKey::main(material, gpu.effect, receive_shadow);
+                    // Without samples to cover, a soft cutout edge would draw its faint
+                    // fringe opaque: a plain alpha test instead.
+                    shader.alpha_to_coverage &= multisampled;
                     PipelineKey::main(shader, material, faded)
                 };
                 // Three draws double-sided transparent materials as back faces, then
@@ -2503,7 +2517,7 @@ impl Renderer {
             .debug_off
             .effects
             .iter()
-            .filter_map(|name| self.effects.id(name))
+            .flat_map(|name| self.effects.ids_named(name))
             .collect();
         let names = &self.debug_off.effects;
         let skip = |key: &PipelineKey| {

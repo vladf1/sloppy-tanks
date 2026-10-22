@@ -87,7 +87,9 @@ const LOW_SHADOW_MAP: u32 = 1024;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TierFeatures {
     /// Procedural detail a few pixels across: the ground's small hummocks over its
-    /// broad swells, and the clouds' finest octave.
+    /// broad swells, the clouds' finest octave, and on the village, harbor and quarry
+    /// grounds their scattered stones, grit and blooms, the turf's tussocks and the
+    /// finest noise octaves (`fine_detail` in the effect shaders).
     pub fine_detail: bool,
     /// The ambient occlusion pass and its taps in the output pass.
     pub occlusion: bool,
@@ -713,8 +715,9 @@ impl QualityController {
         }
         self.slow_windows += 1;
         let cpu_bound = measure.work_ms >= mean * CPU_BOUND_SHARE;
-        let below_floor = self.index + 1 >= self.deep_from
-            && mean.max(measure.gpu_ms.unwrap_or(0.0)) <= DEEP_SLOW_MS;
+        // The frames the player sees, not the GPU's completion time, which a queue of
+        // frames behind it stretches.
+        let below_floor = self.index + 1 >= self.deep_from && mean <= DEEP_SLOW_MS;
         if (self.slow_windows < DOWN_AFTER_WINDOWS && !very_slow)
             || cpu_bound
             || below_floor
@@ -1397,6 +1400,21 @@ mod tests {
         }
         assert!(
             (floor_ratio(&controller) - 0.5).abs() < 0.01,
+            "{:?}",
+            controller.rung()
+        );
+        // A GPU whose completion time a queue of frames stretches past 50 ms while the
+        // frames themselves take 25 ms stays at the floor.
+        let mut controller =
+            QualityController::new(GraphicsSetting::Auto, Tier::Medium, IPAD).with_deep_floor();
+        let mut elapsed = 0.0;
+        while elapsed < 60.0 {
+            let gpu = 50.0 + 100.0 * f64::from(controller.rung().scale).powi(2);
+            controller.observe(25.0, 1.0, Some(gpu));
+            elapsed += 0.025;
+        }
+        assert!(
+            (floor_ratio(&controller) - 0.6).abs() < 0.01,
             "{:?}",
             controller.rung()
         );
