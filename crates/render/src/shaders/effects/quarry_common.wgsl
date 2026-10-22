@@ -100,6 +100,8 @@ struct QuarryPebbles {
     shadow: f32,
     lean: vec2f,
     tint: vec3f,
+    // How far toward its buried rim a covered pixel lies (0 crown, 1 rim).
+    rim: f32,
 }
 
 // One layer of loose stones on a `cell` metre lattice: at most one stone per
@@ -148,6 +150,9 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32) 
     // A low dome: the normal leans out from the centre, steepest at the rim.
     let dome = local / max(length(local), 0.001) * quarry_smoothstep(0.1, 1.0, r) * 0.8;
     out.lean = (dome.x * axis + dome.y * side) * out.cover;
+    // The rim sinks into shade on the side turned from the sun.
+    let from_sun = dot(d0 / max(length(d0), 0.0001), -normalize(sun.xz + vec2f(0.0001, 0.0)));
+    out.rim = quarry_smoothstep(0.35, 1.0, r) * out.cover * (0.3 + 0.7 * clamp(from_sun * 0.6 + 0.5, 0.0, 1.0));
     // Pale limestone, the soil's own stone, cool grey grit, iron-stained, dark chert.
     var t = vec3f(1.18, 1.14, 1.08);
     t = select(t, vec3f(0.98, 0.93, 0.86), k.y > 0.3);

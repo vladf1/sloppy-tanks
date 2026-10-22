@@ -300,7 +300,16 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
     let face_top = if outcrop { FACE_TOP } else { 1.0 };
     let beds = ((h * face_top / BED_THICKNESS).round() as usize).clamp(1, 4);
     let mut courses: Vec<(f64, Course)> = (0..beds)
-        .map(|_| (rng.range(0.45, 1.75), Course::Massive))
+        .map(|_| {
+            // Thin flaggy beds between thick massive ones, never a stack of
+            // equal slabs.
+            let weight = if rng.next() < 0.3 {
+                rng.range(0.28, 0.55)
+            } else {
+                rng.range(0.9, 2.1)
+            };
+            (weight, Course::Massive)
+        })
         .collect();
     if outcrop {
         match kit {
@@ -436,7 +445,7 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
         base[slab] + tilt[slab].dot(DVec3::new(p.x, 0.0, p.z) - anchor[slab])
     };
     {
-        let tilt_limit = if outcrop { 0.06 } else { 0.03 };
+        let tilt_limit = if outcrop { 0.035 } else { 0.03 };
         for &slab in &slab_ids {
             let members: Vec<usize> = (0..columns).filter(|&c| segment_slab[c] == slab).collect();
             let crown =
@@ -448,10 +457,11 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
                 0.0,
                 rng.range(-tilt_limit, tilt_limit),
             );
-            slab_base[slab] = crown * rng.range(0.93, 0.985);
+            slab_base[slab] = crown * rng.range(0.955, 0.985);
         }
         // Step every joint by at least `step` at both of its ends.
-        let step = h * if kit == Kit::Split { 0.09 } else { 0.06 };
+        // Low steps: one caprock broken along its joints, not a stack of plates.
+        let step = h * if kit == Kit::Split { 0.05 } else { 0.035 };
         // A slab lowered for one joint can close another: settle a few times.
         for &(a, b) in joint_ends.iter().cycle().take(joint_ends.len() * 3) {
             let left = segment_slab[(a + columns - 1) % columns];
@@ -492,6 +502,9 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
     // the beds step at the joints instead of running round the rock as one line.
     let mut block_bed_shift: Vec<f64> = Vec::new();
     let mut block_starts = Vec::new();
+    // Where a block's face runs through a parting unbroken: the bed boundary
+    // dies out across that block instead of ringing the rock like a layer cake.
+    let mut block_fused: Vec<Vec<bool>> = Vec::new();
     for (i, &from) in cuts_at.iter().enumerate() {
         let to = cuts_at[(i + 1) % cuts_at.len()];
         let mut length = (to + columns - from) % columns;
@@ -529,6 +542,16 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
             } else {
                 0.0
             });
+            block_fused.push(
+                (0..courses.len())
+                    .map(|k| {
+                        let plain = k > 0
+                            && courses[k].1 == Course::Massive
+                            && courses[k - 1].1 == Course::Massive;
+                        outcrop && k > 0 && rng.next() < if plain { 0.6 } else { 0.2 }
+                    })
+                    .collect(),
+            );
             at += run;
         }
     }
@@ -660,11 +683,22 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
             };
             let (from, to) = (level(row.course), level(row.course + 1));
             let t = from + (to - from) * row.u;
-            let mut push = row.offset
+            // A fused parting: the notch and the lip under it flatten into the
+            // face of the bed.
+            let fused = |k: usize| k < courses.len() && block_fused[block][k];
+            let mid = course_rows(courses[row.course].1)[2].1;
+            let (offset, row_wear) = if row.u < 0.1 && fused(row.course) {
+                (mid, 0.05)
+            } else if row.u > 0.99 && fused(row.course + 1) {
+                (mid, 0.1)
+            } else {
+                (row.offset, row.wear)
+            };
+            let mut push = offset
                 + block_push[block]
                 + block_bed_push[block][row.course]
                 + chips[r * columns + c];
-            let mut worn = row.wear + block_push[block].max(0.0) * 0.4;
+            let mut worn = row_wear + block_push[block].max(0.0) * 0.4;
             let bite = chipped[row.course * columns + c];
             if bite > 0.0 {
                 push -= bite;
@@ -757,14 +791,18 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
     let mut corner = |p: DVec3, layer: f64, wear: f64, shade: f64, cut: bool| {
         positions.extend([p.x, p.y, p.z]);
         uvs.extend([layer, if cut { wear + SAWN } else { wear }]);
-        let dust = 0.9 + 0.1 * (p.y / h).clamp(0.0, 1.0);
-        let s = shade * dust;
+        // Baked occlusion: partings and joints hold shade, chipped lips catch
+        // light, and the foot of the rock sits in the shade of the ground.
+        let rise = (p.y / (h * 0.5)).clamp(0.0, 1.0);
+        let dust = 0.76 + 0.24 * rise * rise * (3.0 - 2.0 * rise);
+        let cavity = 1.0 + wear.min(0.0) * 0.22 + wear.clamp(0.0, 1.0) * 0.05;
+        let s = shade * dust * cavity;
         colors.push([(s * 1.01) as f32, s as f32, (s * 0.99) as f32]);
     };
     for r in 0..rows.len() - 1 {
         let course = rows[r + 1].course;
         let layer = layer_base + course as f64;
-        let shade = shades[course.min(shades.len() - 1)];
+        let shade = shades[course.min(shades.len() - 1)] * FACE_VALUE;
         let (a, b) = (r * columns, (r + 1) * columns);
         for c in 0..columns {
             let n = (c + 1) % columns;
@@ -842,7 +880,7 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
         let swell = if outcrop {
             h * rng.range(-0.012, 0.018)
         } else {
-            h * 0.07
+            h * 0.04
         };
         let crown = DVec3::new(middle.x, slab_height(slab, middle) + swell, middle.z);
         // Rims along a joint sit under the step of a higher neighbour: in its shade.
@@ -942,6 +980,9 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
 /// How deep a joint plane notches the faces it leaves by, in units of relief: a
 /// narrow crack, not a pinch between lumps.
 const JOINT_NOTCH: f64 = 1.7;
+/// Vertex shade of an outcrop's faces against its caprock, so its top reads a
+/// step brighter than its sides from the overhead camera.
+const FACE_VALUE: f64 = 0.88;
 /// How far each block's face is drawn onto one plane (1 = flat).
 const BLOCK_FLATNESS: f64 = 1.0;
 
@@ -1174,13 +1215,87 @@ pub fn sandstone_scatter(stones: &[RubbleStone]) -> Node {
 pub fn scatter_mesh(stones: &[RubbleStone]) -> Mesh {
     let (small, big): (Vec<RubbleStone>, Vec<RubbleStone>) =
         stones.iter().partition(|stone| stone.w < CHIP_SPAN);
+    let (rubble, blocks): (Vec<RubbleStone>, Vec<RubbleStone>) =
+        big.into_iter().partition(|stone| stone.w < BLOCK_SPAN);
     let mut mesh = chip_mesh(&small);
-    let rubble = stone_mesh(&big);
-    mesh.positions.extend(rubble.positions);
-    mesh.normals.extend(rubble.normals);
-    mesh.uvs.extend(rubble.uvs);
-    mesh.colors.extend(rubble.colors);
+    for part in [stone_mesh(&rubble), block_mesh(&blocks)] {
+        mesh.positions.extend(part.positions);
+        mesh.normals.extend(part.normals);
+        mesh.uvs.extend(part.uvs);
+        mesh.colors.extend(part.colors);
+    }
     mesh
+}
+
+/// Stones at least this wide, in metres, are broken sandstone blocks: square
+/// beds with their corners knocked off, not round lumps.
+const BLOCK_SPAN: f64 = 0.62;
+/// How far a broken block's corners are knocked back, as a fraction of its
+/// half size.
+const BLOCK_CORNER: f64 = 0.32;
+
+/// The merged, flat-faceted broken blocks of [`scatter_mesh`].
+fn block_mesh(stones: &[RubbleStone]) -> Mesh {
+    static BLOCK: OnceLock<Mesh> = OnceLock::new();
+    stones_from(BLOCK.get_or_init(broken_block), stones)
+}
+
+/// A unit cube (half size 0.5) with every corner knocked off: six octagonal
+/// faces and eight corner facets, non-indexed so each facet stays flat.
+fn broken_block() -> Mesh {
+    let t = 1.0 - BLOCK_CORNER;
+    let mut positions: Vec<f64> = Vec::new();
+    let mut push = |a: DVec3, b: DVec3, c: DVec3| {
+        // Wind each facet outward.
+        let (b, c) = if (b - a).cross(c - a).dot(a + b + c) < 0.0 {
+            (c, b)
+        } else {
+            (b, c)
+        };
+        for p in [a, b, c] {
+            positions.extend((p * 0.5).to_array());
+        }
+    };
+    for axis in 0..3 {
+        for sign in [-1.0, 1.0] {
+            // The octagon on this face, in order round it.
+            let (u, v) = ((axis + 1) % 3, (axis + 2) % 3);
+            let ring: Vec<DVec3> = [
+                (1.0, t),
+                (t, 1.0),
+                (-t, 1.0),
+                (-1.0, t),
+                (-1.0, -t),
+                (-t, -1.0),
+                (t, -1.0),
+                (1.0, -t),
+            ]
+            .iter()
+            .map(|&(a, b)| {
+                let mut p = [0.0; 3];
+                p[axis] = sign;
+                p[u] = a;
+                p[v] = b;
+                DVec3::from_array(p)
+            })
+            .collect();
+            for k in 1..ring.len() - 1 {
+                push(ring[0], ring[k], ring[k + 1]);
+            }
+        }
+    }
+    for x in [-1.0, 1.0] {
+        for y in [-1.0, 1.0] {
+            for z in [-1.0, 1.0] {
+                push(
+                    DVec3::new(x * t, y, z),
+                    DVec3::new(x, y * t, z),
+                    DVec3::new(x, y, z * t),
+                );
+            }
+        }
+    }
+    Mesh::from_f64(&positions, &[], &[], None)
 }
 
 /// The merged 8-triangle chips of [`scatter_mesh`] and outcrop scree.
