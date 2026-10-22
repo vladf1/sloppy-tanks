@@ -12,14 +12,17 @@ import {
   killFeedNames,
   killFeedSides,
   newFeedRow,
+  placeDamageRing,
   setText,
+  showDamageRing,
   showFeed,
   showTankStatus,
+  type ScreenPoint,
 } from "./hud-feedback";
 import { duration } from "./round-recap";
-import { hudIcon, hudMarkup, menuMarkup } from "./ui-markup";
+import { controlsMarkup, hudIcon, hudMarkup, menuMarkup } from "./ui-markup";
 import { fitPanels } from "./panel-fit";
-import { SettingsDialog } from "./settings-dialog";
+import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
 export const MENU_READY_STATUS = "Ready when you are";
 /** Seconds the hit marker shows after the player's shell lands. */
@@ -67,7 +70,10 @@ export class UI {
   lastRound = 0;
   /** Where the player aims on screen, in normalized device coordinates; null for the
    * screen centre, as in first person. The hit marker appears there. */
-  aimPoint: () => { x: number; y: number } | null = () => null;
+  aimPoint: () => ScreenPoint | null = () => null;
+  /** Where the viewer's tank is on screen (NDC); null in first person. The damage ring
+   * wraps it. */
+  viewerPoint: () => ScreenPoint | null = () => null;
   /** The HUD state of the latest `update`. */
   state?: HudState;
   private readonly battleSetup: HTMLElement;
@@ -121,6 +127,7 @@ export class UI {
       touchMode: () => actions.touchMode(),
       setTouchMode: (mode) => actions.setTouchMode(mode),
       setVolume: (value) => actions.setting("volume", value),
+      controls: controlsMarkup(),
       speeds: {
         get: () => this.state?.speedTuning,
         set: (key, value) => actions.setting(key, value),
@@ -186,6 +193,8 @@ export class UI {
       this.overlay
         .querySelector(".respawn")
         ?.append(this.battleSetup.querySelector(".vehicles")!.cloneNode(true));
+      bindDialogTabs(this.overlay);
+      this.drawRecapTank(state);
     }
     const choices = this.choices;
     syncGameOptions(this.overlay, choices);
@@ -214,6 +223,30 @@ export class UI {
       ?.addEventListener("click", () => this.settings.open());
     this.overlay.querySelector("#end-battle")?.addEventListener("click", () => actions.endBattle());
     this.overlay.querySelector("#restart")?.addEventListener("click", () => actions.restart());
+  }
+  /** The battle report's hero tile shows the viewer's tank in its team's paint: Battle
+   * Setup's render of that tank, from the sheet's row for the team. */
+  private drawRecapTank(state: HudState): void {
+    const slot = this.overlay.querySelector(".recap-tank");
+    const preview = this.battleSetup.querySelector(
+      `.vehicle[data-kind="${state.human.kind}"] .tank-preview`,
+    );
+    if (!slot || !preview) {
+      return;
+    }
+    const tank = preview.cloneNode(true) as SVGElement;
+    tank.querySelector("image")?.setAttribute("y", String(-state.humanTeam * 400));
+    tank.removeAttribute("role");
+    tank.setAttribute("aria-hidden", "true");
+    slot.replaceChildren(tank);
+  }
+  /** Re-seats a showing damage ring after the view changes (first person opens it to the
+   * screen's edges), without waiting for the next HUD frame. */
+  replaceDamageRing(): void {
+    const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
+    if (!indicator.hidden) {
+      placeDamageRing(indicator, this.viewerPoint());
+    }
   }
   /** A new round, or a Battle Setup world, starts with no feedback from the last. */
   private syncRound(round: number): void {
@@ -255,8 +288,7 @@ export class UI {
       if (event.type === "hurt" || event.type === "death") {
         const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
         if (event.damageAngle !== null) {
-          indicator.style.transform = `translate(-50%, -50%) rotate(${event.damageAngle}rad)`;
-          indicator.hidden = false;
+          showDamageRing(indicator, event.damageAngle, this.viewerPoint());
           this.damageTime = 1.2;
         }
       }
@@ -351,6 +383,9 @@ export class UI {
     );
     const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
     indicator.hidden = this.damageTime <= 0 || match.phase !== "playing";
+    if (!indicator.hidden) {
+      placeDamageRing(indicator, this.viewerPoint());
+    }
     indicator.style.opacity = String(Math.min(1, this.damageTime * 2));
     if (this.ammoNoticeTime <= 0) {
       this.hud.querySelector("#ammo-notice")!.textContent = "";

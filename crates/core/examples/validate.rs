@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use serde_json::json;
-use sloppy_core::sim::{MatchPhase, SimEventType, Simulation, VehicleCommand};
+use sloppy_core::sim::{CoverKind, MatchPhase, SimEventType, Simulation, VehicleCommand};
 
 /// Rounds per run, each seeded `round * SEED_STRIDE`.
 const ROUNDS: u32 = 10;
@@ -15,6 +15,16 @@ const SEED_STRIDE: f64 = 79.0;
 const IDLE_HUMAN_ROUNDS: u32 = 3;
 /// A round stops after six simulated minutes even without a result.
 const MAX_STEPS: u32 = 60 * 360;
+/// Cottages still standing are also counted after the first minute of play.
+const FIRST_MINUTE: u32 = 60 * 60;
+
+fn standing(simulation: &Simulation, kind: CoverKind) -> usize {
+    simulation
+        .covers
+        .iter()
+        .filter(|cover| cover.kind == kind && cover.alive)
+        .count()
+}
 
 fn main() {
     let started = Instant::now();
@@ -27,6 +37,7 @@ fn main() {
         simulation.start();
         let mut steps = 0;
         let (mut promotions, mut bot_promotions, mut elite, mut heroic) = (0, 0, 0, 0);
+        let mut houses_after_a_minute = standing(&simulation, CoverKind::House);
         while simulation.match_state.phase == MatchPhase::Playing && steps < MAX_STEPS {
             simulation.step(VehicleCommand::idle(), round > IDLE_HUMAN_ROUNDS);
             let human = simulation.human().id;
@@ -47,6 +58,9 @@ fn main() {
             max_bodies = max_bodies.max(simulation.world.bodies.len());
             max_fragments = max_fragments.max(simulation.fragments.len());
             steps += 1;
+            if steps == FIRST_MINUTE {
+                houses_after_a_minute = standing(&simulation, CoverKind::House);
+            }
         }
         let summary = json!({
             "seed": simulation.seed,
@@ -63,11 +77,9 @@ fn main() {
                 "elite": elite,
                 "heroic": heroic,
             },
-            "towersRemaining": simulation
-                .covers
-                .iter()
-                .filter(|cover| cover.kind == sloppy_core::sim::CoverKind::Tower && cover.alive)
-                .count(),
+            "towersRemaining": standing(&simulation, CoverKind::Tower),
+            "housesAfterAMinute": houses_after_a_minute,
+            "housesRemaining": standing(&simulation, CoverKind::House),
         });
         simulation.reset(None);
         assert_eq!(

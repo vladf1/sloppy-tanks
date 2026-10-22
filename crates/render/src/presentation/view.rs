@@ -11,15 +11,16 @@ use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, TreeShape, aged_wreck_material, cover_damage_stage, crate_piece_model,
-    create_arena_floor, create_spawn_pads, flags_model, part, pickup_cube, tank_model,
-    timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage, tree_part,
-    wreck_brightness, wreck_model,
+    create_arena_floor, create_spawn_pads, flags_model, house_pieces, part, pickup_cube,
+    tank_model, timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage,
+    tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
 use sloppy_core::sim::crate_layout::{CratePiece, crate_section_looks};
-use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, vehicle};
+use sloppy_core::sim::data::{ARENA, LASER_DEFENSE, pickup, vehicle};
 use sloppy_core::sim::debris_cleanup::debris_cleanup_progress;
+use sloppy_core::sim::house_layout::HousePiece;
 use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
@@ -65,12 +66,16 @@ mod inspect;
 
 /// A dead tank's model hides; the live model rides this far below the body.
 const TANK_MODEL_DROP: f64 = 0.4;
-/// Pickup gems bob and spin above their pads.
-const GEM_HEIGHT: f64 = 1.2;
-const GEM_BOB: f64 = 0.18;
-/// Pickup glow proportions around the collecting tank.
-const GLOW_SCALE: Vec3 = Vec3::new(1.65, 1.25, 1.9);
-const GLOW_HEIGHT: f32 = 1.1;
+/// Pickup gems bob and spin above their pads, high enough that the pad's light
+/// column shows beneath them; one turn takes `TAU / GEM_SPIN` seconds.
+const GEM_HEIGHT: f64 = 1.42;
+const GEM_BOB: f64 = 0.14;
+const GEM_BOB_RATE: f64 = 2.0;
+const GEM_SPIN: f64 = 1.0;
+/// A pad's light column breathes between these opacities, slower than the bob.
+const BEAM_OPACITY: f64 = 0.62;
+const BEAM_BREATH: f64 = 0.16;
+const BEAM_BREATH_RATE: f64 = 2.6;
 /// Felling boughs (`tree-debris.ts`). Their leaves catch the air: linear drag per
 /// second slows the fall and the tumble. Landed, they lie until the debris cleanup
 /// sinks them out of sight.
@@ -203,8 +208,7 @@ struct Library {
     pickups: HashMap<PickupKind, PickupModel>,
     mines: HashMap<Team, MineModel>,
     debris: HashMap<FragmentShape, BoundedModel>,
-    effect_ring: Option<ModelId>,
-    effect_glow: Option<ModelId>,
+    pickup_beam: Option<ModelId>,
 }
 
 /// Whether solid cover hides the line from `eye` to `target`: seen from the turret,
@@ -359,14 +363,11 @@ impl Library {
         })
     }
 
-    fn effect_models(&mut self, renderer: &mut Renderer) -> (ModelId, ModelId) {
-        let ring = *self.effect_ring.get_or_insert_with(|| {
-            renderer.add_model(&own::pickup_effect_ring(), Lifetime::Shared)
-        });
-        let glow = *self.effect_glow.get_or_insert_with(|| {
-            renderer.add_model(&own::pickup_effect_glow(), Lifetime::Shared)
-        });
-        (ring, glow)
+    /// The pad light every pickup shares; instance tints color it by kind.
+    fn pickup_beam(&mut self, renderer: &mut Renderer) -> ModelId {
+        *self
+            .pickup_beam
+            .get_or_insert_with(|| renderer.add_model(&own::pickup_beam(), Lifetime::Shared))
     }
 }
 
@@ -481,21 +482,13 @@ struct PickupView {
     kind: PickupKind,
     base: InstanceId,
     gem: InstanceId,
+    beam: InstanceId,
     spin: f64,
 }
 
 struct MineView {
     instance: InstanceId,
     light: usize,
-}
-
-struct PickupEffect {
-    ring: InstanceId,
-    glow: InstanceId,
-    age: f64,
-    tank: Option<u32>,
-    x: f32,
-    z: f32,
 }
 
 struct FallingBranch {
@@ -576,6 +569,12 @@ pub struct Presentation {
     /// Phones aim overhead by touching the arena and draw no overhead reticle; the
     /// first-person gun sight stays.
     pub hide_reticle: bool,
+    /// The view's height in CSS pixels (0 until the page says), which keeps the
+    /// overhead bars readable on a phone's short screen.
+    pub css_height: f64,
+    /// Bars step aside while the battle waits behind a menu (pause, settings, the
+    /// report), so none floats crisp over the dialog's blur.
+    bars_hidden: bool,
     theme: Option<Theme>,
     library: Library,
     reticle: ReticleModel,
@@ -595,11 +594,16 @@ pub struct Presentation {
     /// Section looks this round's crates can break into, still to build; one is
     /// built a frame, so a crate breaking builds none.
     section_warmups: Vec<SectionKey>,
+    /// The pieces of each collapsing cottage still to be given a view: the whole
+    /// set is built once, when its first piece appears.
+    house_pieces: HashMap<u32, Vec<(HousePiece, Node)>>,
+    /// Whether every cottage chimney that smokes still stands, as the smoke was
+    /// last filled.
+    chimneys: Vec<(u32, bool)>,
     pickups: HashMap<u32, PickupView>,
     mines: HashMap<u32, MineView>,
     /// The spawn pads mines may lie on, for their drawn height.
     pad_decks: SpawnPadDecks,
-    pickup_effects: VecDeque<PickupEffect>,
     branches: VecDeque<FallingBranch>,
     /// The followed tank, for events that shake the camera.
     viewer_id: Option<u32>,
@@ -652,6 +656,8 @@ impl Presentation {
             crosshair: Mat4::IDENTITY,
             reticle_size: 1.0,
             hide_reticle: false,
+            css_height: 0.0,
+            bars_hidden: false,
             theme: None,
             library: Library::default(),
             reticle,
@@ -667,10 +673,11 @@ impl Presentation {
             fragments: HashMap::new(),
             sections: HashMap::new(),
             section_warmups: Vec::new(),
+            house_pieces: HashMap::new(),
+            chimneys: Vec::new(),
             pickups: HashMap::new(),
             mines: HashMap::new(),
             pad_decks: SpawnPadDecks::default(),
-            pickup_effects: VecDeque::new(),
             branches: VecDeque::new(),
             viewer_id: None,
             hit_confirm_until: 0.0,
@@ -709,21 +716,31 @@ impl Presentation {
         let eye = camera.position;
         let fov_y = f64::from(camera.fov_y_degrees).to_radians();
         for view in self.tanks.values_mut() {
+            if self.bars_hidden {
+                self.renderer.set_visible(view.bar, false);
+                continue;
+            }
             let shown = view.bar_shown && !sight_blocked(eye, view.bar_anchor, covers);
-            view.bar_fade = if view.bar_shown {
+            let fade = if view.bar_shown {
                 approach(view.bar_fade, f64::from(u8::from(shown)), BAR_FADE_RATE, dt)
             } else {
                 0.0
             };
-            self.renderer.set_visible(view.bar, view.bar_fade > 0.02);
-            self.renderer.set_opacity(view.bar, view.bar_fade as f32);
-            if view.bar_fade <= 0.02 {
+            // An infinite step is a fixed pose's redraw: it shows its own occlusion but
+            // leaves the follow camera's fade where it was.
+            if dt.is_finite() {
+                view.bar_fade = fade;
+            }
+            self.renderer.set_visible(view.bar, fade > 0.02);
+            self.renderer.set_opacity(view.bar, fade as f32);
+            if fade <= 0.02 {
                 continue;
             }
             let size = bar_scale(
                 f64::from(view.bar_anchor.distance(eye)),
                 fov_y,
                 own::BAR_RIM_WIDTH,
+                self.css_height,
             ) as f32;
             self.renderer.set_transform(
                 view.bar,
@@ -732,13 +749,29 @@ impl Presentation {
         }
     }
 
-    /// Where the first-person gun sight sits on screen (NDC, y up), so the page's hit
-    /// marker lands on it; `None` overhead, where the marker follows the pointer.
-    pub fn first_person_reticle_ndc(&self) -> Option<(f32, f32)> {
-        self.rig.in_first_person.then(|| {
+    /// Where the drawn reticle sits on screen (NDC, y up), so the page's hit marker
+    /// lands on it: the gun sight in first person, the aim on the ground overhead.
+    /// `None` while no reticle shows.
+    pub fn reticle_ndc(&self) -> Option<(f32, f32)> {
+        self.crosshair_visible.then(|| {
             let point = self.rig.camera.project(self.crosshair.w_axis.truncate());
             (point.x, point.y)
         })
+    }
+
+    /// Where the viewer's tank sits on screen (NDC, y up), so the page's damage ring
+    /// wraps it; `None` in first person or when it is off screen.
+    pub fn viewer_ndc(&self) -> Option<(f32, f32)> {
+        if self.rig.seat_blend > 0.0 {
+            return None;
+        }
+        let follow = self.rig.follow;
+        let point = self
+            .rig
+            .camera
+            .project(Vec3::new(follow.x as f32, 1.0, follow.z as f32));
+        (point.z > 0.0 && point.z < 1.0 && point.x.abs() < 1.0 && point.y.abs() < 1.0)
+            .then_some((point.x, point.y))
     }
 
     pub fn wreck_view(&self) -> WreckView {
@@ -753,7 +786,7 @@ impl Presentation {
             fragments: self.fragments.len() as u32,
             pickups: self.pickups.len() as u32,
             mines: self.mines.len() as u32,
-            pickup_effects: self.pickup_effects.len() as u32,
+            pickup_effects: self.effects.systems.pickups.len() as u32,
             branches: self.branches.len() as u32,
         }
     }
@@ -879,6 +912,9 @@ impl Presentation {
                     self.renderer.set_part_instances(model, 0, &wisps);
                 }
             }
+            if shown {
+                self.chimneys = model_catalog::standing_chimneys(&state.covers);
+            }
         }
         if self.theme != Some(theme) {
             let water = self
@@ -916,9 +952,9 @@ impl Presentation {
         self.cover_models.clear();
         self.fragments.clear();
         self.sections.clear();
+        self.house_pieces.clear();
         self.pickups.clear();
         self.mines.clear();
-        self.pickup_effects.clear();
         self.branches.clear();
         self.sample_models.clear();
         self.renderer.reset_round();
@@ -962,7 +998,7 @@ impl Presentation {
         for shape in DEBRIS_SHAPES {
             self.library.debris(&mut self.renderer, shape);
         }
-        self.library.effect_models(&mut self.renderer);
+        self.library.pickup_beam(&mut self.renderer);
         let mut seen = std::collections::HashSet::new();
         for cover in &state.covers {
             for health in [0.6, 0.3, 0.1] {
@@ -1353,6 +1389,7 @@ impl Presentation {
             let model = self.library.pickup(&mut self.renderer, kind);
             (model.base, model.gem)
         };
+        let beam_model = self.library.pickup_beam(&mut self.renderer);
         let place = Mat4::from_translation(Vec3::new(x as f32, 0.0, z as f32));
         let base = self
             .renderer
@@ -1362,12 +1399,27 @@ impl Presentation {
             .renderer
             .add_instance(gem_model, place, Lifetime::Round)
             .expect("gem model");
+        let beam = self
+            .renderer
+            .add_instance(
+                beam_model,
+                Mat4::from_translation(Vec3::new(
+                    x as f32,
+                    own::PICKUP_LIGHT_HEIGHT as f32,
+                    z as f32,
+                )),
+                Lifetime::Round,
+            )
+            .expect("beam model");
+        self.renderer
+            .set_tint(beam, hex_to_linear(pickup(kind).color));
         self.pickups.insert(
             id,
             PickupView {
                 kind,
                 base,
                 gem,
+                beam,
                 spin: 0.0,
             },
         );
@@ -1377,11 +1429,12 @@ impl Presentation {
 
     /// One simulation event; `player_hit` marks hurt/death events the viewer caused.
     pub fn event(&mut self, event: &SimEvent, player_hit: bool) {
-        // Contact telemetry is for future material-specific sounds and effects.
-        if matches!(
-            event.kind,
-            SimEventType::DebrisImpact | SimEventType::Notice
-        ) {
+        // Debris contacts only raise landing dust (the effects' own filter).
+        if event.kind == SimEventType::DebrisImpact {
+            self.effects.systems.event(event);
+            return;
+        }
+        if event.kind == SimEventType::Notice {
             return;
         }
         self.effects.systems.event(event);
@@ -1395,9 +1448,6 @@ impl Presentation {
             self.hit_confirm_until = self.time + FEEDBACK.hit_confirmation_seconds;
         }
         self.feel_event(event);
-        if matches!(event.kind, SimEventType::Pickup | SimEventType::Promotion) {
-            self.add_pickup_effect(event);
-        }
     }
 
     /// Weight for the battle's knocks: a shot rocks its tank back, a hit shoves
@@ -1536,7 +1586,7 @@ impl Presentation {
             DEBRIS_MARK_SIZE,
         );
         part.marks.push(mark);
-        let (model, look) = owned_look(&mut self.renderer, &timber_part_model(part));
+        let (model, look) = owned_look(&mut self.renderer, &timber_debris_model(part));
         let Some(instance) = self
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
@@ -1565,42 +1615,6 @@ impl Presentation {
             .damage_angle((event.x, event.z), (origin.x, origin.z))
     }
 
-    fn add_pickup_effect(&mut self, event: &SimEvent) {
-        if self.pickup_effects.len() >= FEEDBACK.max_pickup_effects
-            && let Some(oldest) = self.pickup_effects.pop_front()
-        {
-            self.renderer.remove_instance(oldest.ring);
-            self.renderer.remove_instance(oldest.glow);
-        }
-        let (ring_model, glow_model) = self.library.effect_models(&mut self.renderer);
-        let tint = hex_to_linear(event.color.unwrap_or(0xffffff));
-        let (x, z) = (event.x as f32, event.z as f32);
-        let ring = self
-            .renderer
-            .add_instance(
-                ring_model,
-                Mat4::from_translation(Vec3::new(x, 0.0, z)),
-                Lifetime::Round,
-            )
-            .expect("effect ring");
-        let glow = self
-            .renderer
-            .add_instance(glow_model, Mat4::IDENTITY, Lifetime::Round)
-            .expect("effect glow");
-        for id in [ring, glow] {
-            self.renderer.set_tint(id, tint);
-        }
-        self.renderer.set_visible(glow, false);
-        self.pickup_effects.push_back(PickupEffect {
-            ring,
-            glow,
-            age: 0.0,
-            tank: event.id,
-            x,
-            z,
-        });
-    }
-
     // -------------------------------------------------------------- frame
 
     /// Synchronize entity visuals, then draw. `alpha` blends the previous and
@@ -1617,12 +1631,12 @@ impl Presentation {
         self.flags
             .update(&mut self.renderer, self.time, &mut self.random);
         self.update_scenery();
-        self.update_pickup_effects(state, alpha, dt);
         self.update_camera(state, alpha, dt, overview);
         self.update_player_indicators(state, dt, overview);
         self.update_tanks(state, alpha, dt);
         self.place_first_person_eye(state);
         // Bars face and size for the final camera, seated in the turret or overhead.
+        self.bars_hidden = state.match_state.phase != MatchPhase::Playing;
         let camera = self.rig.camera;
         self.place_bars(&state.covers, &camera, self.rig.rotation, dt);
         self.update_branches(dt);
@@ -1888,7 +1902,7 @@ impl Presentation {
                 renderer.set_node_transform(view.instance, joint, Some(pose));
             }
             view.bar_anchor = Vec3::new(x as f32, bar_height, z as f32);
-            let health = health_bar_state(tank.hp, tank.max_hp, tank.team);
+            let health = health_bar_state(tank.hp, tank.max_hp);
             let trail = view
                 .trail
                 .get_or_insert_with(|| BarTrail::new(health.ratio, state.elapsed))
@@ -1954,54 +1968,28 @@ impl Presentation {
         }
     }
 
-    fn update_pickup_effects(&mut self, state: &RenderState, alpha: f64, dt: f64) {
-        let mut index = 0;
-        while index < self.pickup_effects.len() {
-            let effect = &mut self.pickup_effects[index];
-            effect.age += dt;
-            let progress = effect.age / FEEDBACK.pickup_seconds;
-            if progress >= 1.0 {
-                let effect = self.pickup_effects.remove(index).expect("in range");
-                self.renderer.remove_instance(effect.ring);
-                self.renderer.remove_instance(effect.glow);
-                continue;
-            }
-            index += 1;
-            let fade = (1.0 - progress).powi(2);
-            self.renderer.set_transform(
-                effect.ring,
-                Mat4::from_scale_rotation_translation(
-                    Vec3::splat((1.0 + progress * 3.0) as f32),
-                    Quat::IDENTITY,
-                    Vec3::new(effect.x, 0.0, effect.z),
-                ),
-            );
-            self.renderer.set_opacity(effect.ring, (0.85 * fade) as f32);
-            let tank = effect
-                .tank
-                .and_then(|id| state.tanks.iter().find(|tank| tank.id == id && tank.alive));
-            self.renderer.set_visible(effect.glow, tank.is_some());
-            if let Some(tank) = tank {
-                let position = tank.position;
-                let scale = vehicle(tank.kind).scale * (1.0 + progress * 0.15);
-                self.renderer.set_transform(
-                    effect.glow,
-                    Mat4::from_scale_rotation_translation(
-                        GLOW_SCALE * scale as f32,
-                        Quat::IDENTITY,
-                        Vec3::new(
-                            lerp(tank.previous.x, position.x, alpha) as f32,
-                            GLOW_HEIGHT,
-                            lerp(tank.previous.z, position.z, alpha) as f32,
-                        ),
-                    ),
-                );
-                self.renderer.set_opacity(effect.glow, (0.2 * fade) as f32);
-            }
+    /// Stop the smoke of a cottage whose chimney has toppled or fallen, and start it
+    /// again when the cottage stands again.
+    fn update_chimney_smoke(&mut self, state: &RenderState) {
+        let chimneys = model_catalog::standing_chimneys(&state.covers);
+        if chimneys == self.chimneys {
+            return;
+        }
+        self.chimneys = chimneys;
+        let Some(theme) = self.theme else {
+            return;
+        };
+        if let Some(view) = self.scenery.get_mut(theme.name())
+            && let Some((model, _)) = view.smoke
+            && let Some(smoke) = model_catalog::refill_smoke(&mut view.scenery, &state.covers)
+        {
+            let wisps = model_catalog::smoke_instances(&smoke);
+            self.renderer.set_part_instances(model, 0, &wisps);
         }
     }
 
     fn update_covers(&mut self, state: &RenderState) {
+        self.update_chimney_smoke(state);
         let mut shed = Vec::new();
         for cover in &state.covers {
             let stump = cover.kind == CoverKind::Tree && !cover.alive;
@@ -2204,6 +2192,7 @@ impl Presentation {
         for (_, view) in self.pickups.extract_if(|id, _| !self.live.contains(id)) {
             self.renderer.remove_instance(view.base);
             self.renderer.remove_instance(view.gem);
+            self.renderer.remove_instance(view.beam);
         }
         for pickup in &state.pickups {
             if !self.pickups.contains_key(&pickup.id) {
@@ -2214,6 +2203,13 @@ impl Presentation {
             let renderer = &mut self.renderer;
             renderer.set_visible(view.gem, pickup.available);
             renderer.set_opacity(view.gem, opacity);
+            renderer.set_visible(view.beam, pickup.available);
+            let phase = f64::from(pickup.id);
+            let breath = (self.time * BEAM_BREATH_RATE + phase).sin();
+            renderer.set_opacity(
+                view.beam,
+                opacity * (BEAM_OPACITY + breath * BEAM_BREATH) as f32,
+            );
             renderer.set_node_visible(view.base, model.ring, pickup.available);
             renderer.set_node_visible(view.base, model.ring_dim, !pickup.available);
             renderer.set_node_visible(view.base, model.refill, !pickup.available);
@@ -2230,8 +2226,8 @@ impl Presentation {
             let progress = (1.0 - pickup.cooldown / duration).clamp(0.0, 1.0);
             let segments = (progress * f64::from(own::REFILL_SEGMENTS)).floor() as f32;
             renderer.set_instance_data(view.base, [segments, 0.0, 0.0, 0.0]);
-            view.spin += dt;
-            let height = GEM_HEIGHT + (self.time * 2.0 + f64::from(pickup.id)).sin() * GEM_BOB;
+            view.spin += dt * GEM_SPIN;
+            let height = GEM_HEIGHT + (self.time * GEM_BOB_RATE + phase).sin() * GEM_BOB;
             renderer.set_transform(
                 view.gem,
                 Mat4::from_rotation_translation(
@@ -2255,7 +2251,7 @@ impl Presentation {
         let mut pieces = [0_usize; DEBRIS_SHAPES.len()];
         for fragment in &state.fragments {
             if !self.fragments.contains_key(&fragment.id) {
-                match self.fragment_view(fragment) {
+                match self.fragment_view(fragment, &state.covers) {
                     Some(view) => {
                         self.fragments.insert(fragment.id, view);
                     }
@@ -2336,10 +2332,17 @@ impl Presentation {
     }
 
     /// A physical debris view: an instanced piece, a wreck part, a timber member,
-    /// a watchtower piece, a section of a crate or a falling crown.
-    fn fragment_view(&mut self, fragment: &RenderFragment) -> Option<FragmentView> {
+    /// a watchtower or cottage piece, a section of a crate or a falling crown.
+    fn fragment_view(
+        &mut self,
+        fragment: &RenderFragment,
+        covers: &[RenderCover],
+    ) -> Option<FragmentView> {
         let (model, look) = if let Some(part) = &fragment.timber_part {
-            owned_look(&mut self.renderer, &timber_part_model(part))
+            owned_look(&mut self.renderer, &timber_debris_model(part))
+        } else if let (Some(piece), Some(house)) = (fragment.house_piece, fragment.house_id) {
+            let node = self.house_piece(piece, house, covers)?;
+            owned_look(&mut self.renderer, &node)
         } else if let Some(piece) = fragment.tower_piece {
             let node = tower_piece_model(piece, fragment.color);
             owned_look(&mut self.renderer, &node)
@@ -2390,6 +2393,36 @@ impl Presentation {
             timber: fragment.timber_part.clone(),
             pose: (vec3(fragment.position), quat(fragment.rotation)),
         })
+    }
+
+    /// A collapsing cottage's piece model, building the cottage's whole set when
+    /// its first piece appears.
+    fn house_piece(
+        &mut self,
+        piece: HousePiece,
+        house: u32,
+        covers: &[RenderCover],
+    ) -> Option<Node> {
+        let pieces = match self.house_pieces.entry(house) {
+            std::collections::hash_map::Entry::Occupied(entry) => entry.into_mut(),
+            std::collections::hash_map::Entry::Vacant(entry) => {
+                let cover = covers.iter().find(|cover| cover.id == house)?;
+                entry.insert(house_pieces(
+                    cover.x,
+                    cover.z,
+                    cover.w,
+                    cover.d,
+                    cover.h,
+                    &cover.timber_hits,
+                ))
+            }
+        };
+        let index = pieces.iter().position(|(p, _)| *p == piece)?;
+        let (_, node) = pieces.swap_remove(index);
+        if pieces.is_empty() {
+            self.house_pieces.remove(&house);
+        }
+        Some(node)
     }
 
     fn update_mines(&mut self, state: &RenderState) {

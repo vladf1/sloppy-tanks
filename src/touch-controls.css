@@ -354,6 +354,10 @@ html:not(.phone) .touch-enabled .hud-actions > .touch-zoom + .quiet:not(.touch-z
 }
 .phone .stick-base {
   inset: 14px;
+  border-color: #dff0ff80;
+  background:
+    radial-gradient(circle, transparent 38%, #dff0ff26 39%, transparent 41%),
+    radial-gradient(circle at 50% 40%, #0c1d3be0, #07122af2 72%);
 }
 .phone .touch-drive {
   left: max(12px, env(safe-area-inset-left));

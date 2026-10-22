@@ -62,6 +62,12 @@ impl FrameTimes {
         let last = self.last_ms.unwrap_or(now);
         let raw = ((now - last) / MILLISECONDS_PER_SECOND).max(0.0);
         self.last_ms = Some(last.max(now));
+        // A clock started infinitely long ago (autoplay's round start) catches up
+        // in full without counting as a frame time.
+        if !raw.is_finite() {
+            self.frame_ms = 0.0;
+            return MAX_FRAME_DELTA_SECONDS;
+        }
         self.frame_ms = raw * MILLISECONDS_PER_SECOND;
         if raw > 0.0 {
             self.average_ms += (self.frame_ms - self.average_ms) * 0.05;
@@ -103,6 +109,7 @@ impl CanvasSize {
         let width = (f64::from(self.css.x) * ratio).round().max(1.0) as u32;
         let height = (f64::from(self.css.y) * ratio).round().max(1.0) as u32;
         view.resize(width, height);
+        view.css_height = f64::from(self.css.y);
     }
 }
 

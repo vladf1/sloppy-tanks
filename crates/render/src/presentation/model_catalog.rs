@@ -13,7 +13,7 @@ use glam::{DMat4, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
     self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, Scenery, SmokeCover, TreeDetail,
-    WATERWHEEL, batch, branch_drop_stage, build_scenery, tree_part,
+    WATERWHEEL, batch, branch_drop_stage, build_scenery, cover_damage_stage, tree_part,
 };
 use sloppy_core::scene::{Effect, Node};
 use sloppy_core::sim::CoverKind;
@@ -313,20 +313,46 @@ pub fn refill_smoke(scenery: &mut Scenery, covers: &[RenderCover]) -> Option<Nod
     let Scenery::Village(village) = scenery else {
         return None;
     };
+    // Every cottage smokes while its chimney stands; a toppled or fallen one keeps
+    // its wisps (so the others' never reshuffle) far underground.
     let covers: Vec<SmokeCover> = covers
         .iter()
-        .map(|cover| SmokeCover {
-            kind: cover.kind.as_str(),
-            destructible: cover.destructible,
-            x: cover.x,
-            z: cover.z,
-            w: cover.w,
-            h: cover.h,
-            d: cover.d,
+        .map(|cover| {
+            let house = cover.kind == CoverKind::House;
+            SmokeCover {
+                kind: cover.kind.as_str(),
+                destructible: cover.destructible && !house,
+                x: cover.x,
+                z: cover.z,
+                w: cover.w,
+                h: if house && !chimney_stands(cover) {
+                    FALLEN_CHIMNEY_DEPTH
+                } else {
+                    cover.h
+                },
+                d: cover.d,
+            }
         })
         .collect();
     village.set_covers(&covers);
     village.root.find(CHIMNEY_SMOKE_NODE).cloned()
+}
+
+/// Where a fallen chimney's smoke is sent, out of sight below the ground.
+const FALLEN_CHIMNEY_DEPTH: f64 = -200.0;
+
+/// Whether a cottage's chimney is up: it topples when the cottage is wrecked.
+fn chimney_stands(cover: &RenderCover) -> bool {
+    cover.alive && cover_damage_stage(cover.kind, cover.hp, cover.max_hp) < 2
+}
+
+/// Every cottage and whether its chimney stands, to notice when the smoke changes.
+pub fn standing_chimneys(covers: &[RenderCover]) -> Vec<(u32, bool)> {
+    covers
+        .iter()
+        .filter(|cover| cover.kind == CoverKind::House)
+        .map(|cover| (cover.id, chimney_stands(cover)))
+        .collect()
 }
 
 /// The wisp instances of a smoke node: identity placements with each wisp's
@@ -360,7 +386,10 @@ mod tests {
         assert_eq!(cover_damage_stage(CoverKind::Timber, 60.0, 100.0), 1);
         assert_eq!(cover_damage_stage(CoverKind::Timber, 30.0, 100.0), 2);
         assert_eq!(cover_damage_stage(CoverKind::Timber, 10.0, 100.0), 3);
-        assert_eq!(cover_damage_stage(CoverKind::House, 1.0, 100.0), 0);
+        assert_eq!(cover_damage_stage(CoverKind::House, 100.0, 100.0), 0);
+        assert_eq!(cover_damage_stage(CoverKind::House, 60.0, 100.0), 1);
+        assert_eq!(cover_damage_stage(CoverKind::House, 20.0, 100.0), 2);
+        assert_eq!(cover_damage_stage(CoverKind::Tower, 1.0, 100.0), 0);
         assert_eq!(tree_branch_stage(1.0), 0);
         assert_eq!(tree_branch_stage(0.5), 1);
         assert_eq!(tree_branch_stage(0.35), 2);

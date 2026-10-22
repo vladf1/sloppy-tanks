@@ -19,6 +19,12 @@
 //! that in a few f32 ulps, so they are compared on a 1/65536 grid instead
 //! ([`forest_normals_match_typescript_on_a_grid`]).
 //!
+//! A few batches added since the port (Pine Village's sculpted ranges and the
+//! pines standing on them, a farmstead batch and a quarry batch) are shaped with
+//! `sin`, `exp` and `powf`, whose last bits differ between platform maths
+//! libraries (macOS against Linux CI), so they are compared by their counts
+//! without their float hashes ([`platform_math`]).
+//!
 //! The moored ships' cargo departs from the TypeScript on purpose: its fittings
 //! are square boxes (`ship_container`), so the ships' painted batches are
 //! compared without their geometry ([`square_ship_fittings`]).
@@ -288,11 +294,16 @@ fn sections() -> Vec<(String, Node)> {
     sections
 }
 
-/// Subtrees only one side builds: Three's reflector targets.
+/// Subtrees only one side builds: Three's reflector targets, and the farmhouse,
+/// which is the village cottage (`house_model`, tested there) since the cottages
+/// were redesigned.
 fn skipped(section: &str, path: &str) -> bool {
-    (section == "village" && path.starts_with("r.4.1."))
+    (section == "village" && (path.starts_with("r.4.1.") || path.starts_with(FARMHOUSE)))
         || (section == "harbor" && path.starts_with("r.0."))
 }
+
+/// The farmstead's farmhouse cottage in the village dump.
+const FARMHOUSE: &str = "r.7.0.1.0";
 
 /// Lines whose child count differs only because of a skipped subtree.
 fn loose_children(section: &str, path: &str) -> bool {
@@ -322,6 +333,27 @@ fn without_geometry(line: &str) -> String {
 /// Forest batches whose normals are compared on a grid (see the module docs).
 fn grid_normals(section: &str, path: &str) -> bool {
     section == "village" && path.starts_with("r.4.4.")
+}
+
+/// Batches whose vertex and instance hashes depend on the platform's maths
+/// library (see the module docs).
+fn platform_math(section: &str, path: &str) -> bool {
+    matches!(
+        (section, path),
+        ("village", "r.4.3" | "r.5.1" | "r.7.0.0.4") | ("quarry", "r.2.3")
+    )
+}
+
+/// The line with its vertex and instance hashes blanked, keeping the counts.
+fn without_float_hashes(line: &str) -> String {
+    line.split('|')
+        .map(|field| match field.split_once('=') {
+            Some((key @ ("P" | "N" | "U" | "C"), _)) => format!("{key}=*"),
+            Some(("INST", value)) => format!("INST={}", value.split(',').next().unwrap_or("")),
+            _ => field.to_string(),
+        })
+        .collect::<Vec<_>>()
+        .join("|")
 }
 
 fn without_normals(line: &str) -> String {
@@ -382,6 +414,8 @@ fn scenery_matches_typescript() {
                 (without_children(a), without_children(b))
             } else if grid_normals(name, path) {
                 (without_normals(a), without_normals(b))
+            } else if platform_math(name, path) {
+                (without_float_hashes(a), without_float_hashes(b))
             } else if square_ship_fittings(name, path) {
                 (without_geometry(a), without_geometry(b))
             } else {
@@ -927,8 +961,8 @@ r.7.4.0|-|1|0|=|V=36|I=-1|P=a3137221|N=f87a9e35|U=c0efde65|C=c7066fc5|A=-|X=-|M=
 r.7.4.1|-|1|0|=|V=3492|I=-1|P=f8dcb593|N=15d07677|U=1efa79f9|C=f9352601|A=-|X=-|M=c3d0892e|F=1,1,0,1
 r.7.4.2|-|1|0|=|V=72|I=-1|P=9b32b929|N=f197b4d5|U=155c3305|C=4f70298d|A=-|X=-|M=5f0fd04f|F=1,1,0,1
 r.8|-|1|2|=
-r.8.0|-|1|0|=|V=2052|I=-1|P=8ee44b4f|N=3b68aea1|U=df7ddf85|C=4c16bbe1|A=-|X=-|M=5f0fd04f|F=1,1,0,1
-r.8.1|-|1|0|=|V=36|I=-1|P=5a1045b9|N=f87a9e35|U=5aefde65|C=e27a9e35|A=-|X=-|M=05369b81|F=1,1,0,1
+r.8.0|-|1|0|=|V=2052|I=-1|P=d28a69cb|N=3b68aea1|U=df7ddf85|C=4c16bbe1|A=-|X=-|M=5f0fd04f|F=1,1,0,1
+r.8.1|-|1|0|=|V=36|I=-1|P=552c6071|N=f87a9e35|U=5aefde65|C=e27a9e35|A=-|X=-|M=05369b81|F=1,1,0,1
 # village-smoke
 r|village-chimney-smoke|1|0|=|V=4|I=6|P=463c62b5|N=9d3c62b5|U=d6e17165|C=-|A=-|X=phase:1:a6f6753d;smokeOrigin:3:ad44e6c5|M=f5df665b|F=0,0,0,0|INST=16,-,-
 # waterwheel

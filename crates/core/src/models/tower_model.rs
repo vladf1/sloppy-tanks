@@ -13,6 +13,7 @@
 //! as that part looked. The footings and shoes stay as the rubble.
 
 use std::f64::consts::PI;
+use std::sync::Arc;
 
 use glam::{DMat3, DMat4, DQuat, DVec2, DVec3};
 
@@ -25,6 +26,7 @@ use super::house_model::wall_frames;
 use super::model_primitives::{adopt_children, put, rotated};
 use super::tank_kit::{Kit, aim, pose};
 use super::timber_model::timber_member;
+use crate::geometry::Mesh;
 use crate::geometry::math::js_round;
 use crate::scene::Node;
 use crate::sim::math::Random;
@@ -110,14 +112,16 @@ pub(super) fn tower(group: &mut Node, color: u32) {
     }
     add_building(group, kit.finish_scaled(uv_per_metre), &palette(color));
     for piece in TowerPiece::ALL {
-        group.children.extend(piece_parts(piece, color).children);
+        group
+            .children
+            .extend(piece_parts(piece, color, false).children);
     }
 }
 
 /// A collapse piece drawn as the part it was, centred on its collider and
 /// batched: the model a falling piece of the watchtower moves.
 pub fn tower_piece_model(piece: TowerPiece, color: u32) -> Node {
-    let mut parts = piece_parts(piece, color);
+    let mut parts = piece_parts(piece, color, true);
     parts.position = -DVec3::from_array(piece.bounds().center);
     let mut root = Node::default();
     adopt_children(&mut root, parts);
@@ -125,8 +129,9 @@ pub fn tower_piece_model(piece: TowerPiece, color: u32) -> Node {
     root
 }
 
-/// One piece's members and finishes in tower coordinates.
-fn piece_parts(piece: TowerPiece, color: u32) -> Node {
+/// One piece's members and finishes in tower coordinates; a `broken` piece (one
+/// falling from the collapse) has its window glass shattered out of the frames.
+fn piece_parts(piece: TowerPiece, color: u32, broken: bool) -> Node {
     let mut group = Node::default();
     let mut kit = Kit::new();
     let side = piece.side();
@@ -147,8 +152,43 @@ fn piece_parts(piece: TowerPiece, color: u32) -> Node {
         TowerPiece::Roof => hip_roof(&mut kit),
         TowerPiece::Ladder => ladder(&mut kit),
     }
-    add_building(&mut group, kit.finish_scaled(uv_per_metre), &palette(color));
+    let mut meshes = kit.finish_scaled(uv_per_metre);
+    if broken {
+        for (surface, mesh) in &mut meshes {
+            if *surface == Surface::Glass {
+                *mesh = Arc::new(shattered(mesh, piece as u32));
+            }
+        }
+    }
+    add_building(&mut group, meshes, &palette(color));
     group
+}
+
+/// The jagged shards a pane leaves in its frame when it breaks: from each corner
+/// of each glass triangle, a shard reaching a random way along its two edges.
+fn shattered(glass: &Mesh, seed: u32) -> Mesh {
+    let mut rng = Random::new(f64::from(seed) * 9.73 + 3.1);
+    let mut mesh = Mesh::default();
+    for ((corners, normals), uvs) in glass
+        .positions
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .zip(glass.normals.as_chunks::<3>().0)
+        .zip(glass.uvs.as_chunks::<3>().0)
+    {
+        let at = |i: usize| DVec3::from_array(corners[i % 3].map(f64::from));
+        for i in 0..3 {
+            let (a, b, c) = (at(i), at(i + 1), at(i + 2));
+            let reach = [rng.range(0.15, 0.5), rng.range(0.15, 0.5)];
+            for p in [a, a + (b - a) * reach[0], a + (c - a) * reach[1]] {
+                mesh.positions.push(p.as_vec3().to_array());
+                mesh.normals.push(normals[i]);
+                mesh.uvs.push(uvs[i]);
+            }
+        }
+    }
+    mesh
 }
 
 /// Seeds for one piece's members, distinct between pieces.

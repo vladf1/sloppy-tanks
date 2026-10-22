@@ -605,7 +605,7 @@ fn resolve_contact(
             if let Some(ci) = cover {
                 if matches!(
                     simulation.covers[ci].kind,
-                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower
+                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower | CoverKind::House
                 ) {
                     let speed = shot.vx.hypot(shot.vz);
                     if speed > 0.0 {

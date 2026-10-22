@@ -273,7 +273,7 @@ fn a_watchtower_rebuilds_over_its_rubble_and_reuses_it_when_it_falls_again() {
     let footings = |sim: &Simulation, alive: bool| -> Vec<usize> {
         [-1.0, 1.0]
             .iter()
-            .filter_map(|side| sim.tower_rubble(x + side * TOWER_BASE.offset, z, alive))
+            .filter_map(|side| sim.rubble_at(x + side * TOWER_BASE.offset, z, alive))
             .collect()
     };
     for tank in 0..sim.tanks.len() {
