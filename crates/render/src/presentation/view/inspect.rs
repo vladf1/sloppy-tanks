@@ -181,7 +181,7 @@ impl Presentation {
             ) else {
                 continue;
             };
-            // A taken drop leaves its painted pallet empty until it restocks (its
+            // A taken drop leaves its bare pallet empty until it restocks (its
             // progress in `segments`).
             let stocked = view.shown == Some(true);
             inspection.pickups.push(PickupInspection {

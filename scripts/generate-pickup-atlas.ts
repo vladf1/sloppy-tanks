@@ -22,12 +22,14 @@ import { fbm, lattice, smooth } from "./texture-noise";
 // Paint the pickups as military supply. Each kind's tile has three bands, top to
 // bottom (`TILE_ROWS`, the regions `pickup_visuals.rs` maps): the side strip, the
 // surface its body shows (weathered pine, olive drab, black fibre, rolled armour
-// steel) with a band of the kind's paint near the top and grime where it meets the
-// pallet; a strip of the kind's plain paint for tubes, caps and edges; and the lid,
-// one big block of the kind's paint with one big emblem stencilled across its middle
-// and its lot marking over and under it, so the colour and the emblem carry from the
-// gameplay camera (the pallet's deck wears the same lid, so an empty drop still names
-// its kind) and the markings read as stores, not icons. The paint is worn enamel,
+// steel, ribbed gunmetal) with a band of the kind's paint near the top and grime
+// where it meets the pallet; a strip of the kind's plain paint for lids' edges, caps
+// and tarps; and the lid, one big block of the kind's paint with one big emblem
+// stencilled across its middle and its lot marking over and under it, so the colour
+// and the emblem carry from the gameplay camera and the markings read as stores, not
+// icons. The emblems are drawn here as plain stencil cuts (cartridges, a rocket, a
+// ricochet's bounce, a fin-stabilised dart, a calibre, a shield, a spanner, a field
+// radio); only the jerry can keeps its icon's bolt. The paint is worn enamel,
 // never toy-bright:
 // mottled, chipped back to the surface under it along the edges and where it is
 // knocked, scratched, the grain of a wooden lid reading through, dust drifted over
@@ -60,7 +62,7 @@ const ACCENT_SATURATION = 0.4;
  * strip's foot grimed where a side meets the pallet; the stencil's centre and
  * largest extent on the lid. */
 const TILE_ROWS = { side: [0, 64], paint: [64, 96], lid: [96, 256] } as const;
-const BAND = [9, 27] as const;
+const BAND = [10, 23] as const;
 const FOOT = 10;
 const SYMBOL_CENTER = [128, 172] as const;
 const SYMBOL_MAX = [150, 96] as const;
@@ -103,6 +105,7 @@ const PINE: Rgb = [164, 124, 80];
 const PALLET_PINE: Rgb = [176, 134, 88];
 const OLIVE: Rgb = [100, 108, 66];
 const CAN_BLACK: Rgb = [50, 54, 46];
+const GUNMETAL_PAINT: Rgb = [72, 76, 74];
 const FIBRE: Rgb = [52, 44, 36];
 const ARMOUR: Rgb = [116, 120, 122];
 const STEEL: Rgb = [70, 74, 78];
@@ -241,9 +244,11 @@ function surfaceOf(surface: Surface, seed: number, tint: Rgb): (x: number, y: nu
     case "steel":
       return armour(seed);
     case "jerry":
-      return paint(seed, OLIVE);
-    case "painted":
-      return ribbed(seed, scale(tint, 0.86));
+      return paint(seed, scale(tint, 0.9));
+    case "chest":
+      return ribbed(seed, GUNMETAL_PAINT);
+    case "case":
+      return ribbed(seed, OLIVE);
   }
 }
 
@@ -378,6 +383,163 @@ function spannerStencil(ink: Rgb): Stencil {
     c.restore();
   }
   return { stencil, bounds: strokeBounds(stencil) };
+}
+
+/** A stencil cut by `draw` in `ink` on a fresh canvas, and its bounds. */
+function cutStencil(ink: Rgb, draw: (c: Context) => void): Stencil {
+  const stencil = createCanvas(SIZE, SIZE);
+  const c = stencil.getContext("2d");
+  c.fillStyle = css(ink);
+  c.strokeStyle = css(ink);
+  draw(c);
+  return { stencil, bounds: strokeBounds(stencil) };
+}
+
+/** Punch `draw`'s shapes out of a stencil being cut. */
+function punch(c: Context, draw: () => void) {
+  c.save();
+  c.globalCompositeOperation = "destination-out";
+  draw();
+  c.restore();
+}
+
+/** The kind's emblem: plain shapes a stores depot would cut into a card, bold
+ * enough to read from above. */
+function emblemStencil(kind: PickupKind, ink: Rgb, image: Image): Stencil {
+  switch (kind) {
+    case "spread":
+      // Three shotgun cartridges fanned out from their rims.
+      return cutStencil(ink, (c) => {
+        for (const angle of [-0.36, 0, 0.36]) {
+          c.save();
+          c.translate(128, 214);
+          c.rotate(angle);
+          c.fillRect(-17, -14, 34, 14);
+          c.fillRect(-14, -96, 28, 78);
+          c.beginPath();
+          c.moveTo(-14, -102);
+          c.lineTo(14, -102);
+          c.lineTo(14, -124);
+          c.lineTo(0, -138);
+          c.lineTo(-14, -124);
+          c.closePath();
+          c.fill();
+          c.restore();
+        }
+      });
+    case "rocket":
+      // A finned rocket in flight, nose to the right.
+      return cutStencil(ink, (c) => {
+        c.fillRect(48, 112, 132, 32);
+        c.beginPath();
+        c.moveTo(180, 110);
+        c.quadraticCurveTo(214, 112, 236, 128);
+        c.quadraticCurveTo(214, 144, 180, 146);
+        c.closePath();
+        c.fill();
+        for (const side of [-1, 1]) {
+          c.beginPath();
+          c.moveTo(92, 128 + side * 16);
+          c.lineTo(40, 128 + side * 58);
+          c.lineTo(22, 128 + side * 58);
+          c.lineTo(48, 128 + side * 16);
+          c.closePath();
+          c.fill();
+        }
+        c.fillRect(26, 118, 18, 20);
+      });
+    case "ricochet":
+      // A shell's track glancing off a plate: a bold bent arrow over a bar.
+      return cutStencil(ink, (c) => {
+        c.lineWidth = 20;
+        c.lineJoin = "miter";
+        c.beginPath();
+        c.moveTo(26, 52);
+        c.lineTo(104, 168);
+        c.lineTo(178, 74);
+        c.stroke();
+        const [dx, dy] = [178 - 104, 74 - 168];
+        const length = Math.hypot(dx, dy);
+        const [ux, uy] = [dx / length, dy / length];
+        const tip: [number, number] = [178 + ux * 44, 74 + uy * 44];
+        c.beginPath();
+        c.moveTo(...tip);
+        c.lineTo(178 - uy * 30, 74 + ux * 30);
+        c.lineTo(178 + uy * 30, 74 - ux * 30);
+        c.closePath();
+        c.fill();
+        c.fillRect(56, 190, 104, 16);
+      });
+    case "piercing":
+      // A fin-stabilised dart: a long rod, its point and its tail fins.
+      return cutStencil(ink, (c) => {
+        c.fillRect(36, 119, 168, 18);
+        c.beginPath();
+        c.moveTo(204, 114);
+        c.lineTo(244, 128);
+        c.lineTo(204, 142);
+        c.closePath();
+        c.fill();
+        for (const side of [-1, 1]) {
+          c.beginPath();
+          c.moveTo(36, 128 + side * 9);
+          c.lineTo(14, 128 + side * 46);
+          c.lineTo(78, 128 + side * 9);
+          c.closePath();
+          c.fill();
+        }
+      });
+    case "rapid":
+      // The calibre, as ammunition boxes are marked.
+      return cutStencil(ink, (c) => {
+        c.font = "bold 92px sans-serif";
+        c.textAlign = "center";
+        c.fillText("7.62", 128, 162);
+      });
+    case "shield":
+      // A heater shield with a chevron cut through it.
+      return cutStencil(ink, (c) => {
+        c.beginPath();
+        c.moveTo(56, 40);
+        c.lineTo(200, 40);
+        c.lineTo(200, 118);
+        c.quadraticCurveTo(200, 190, 128, 226);
+        c.quadraticCurveTo(56, 190, 56, 118);
+        c.closePath();
+        c.fill();
+        punch(c, () => {
+          c.beginPath();
+          c.moveTo(80, 92);
+          c.lineTo(128, 134);
+          c.lineTo(176, 92);
+          c.lineTo(176, 122);
+          c.lineTo(128, 164);
+          c.lineTo(80, 122);
+          c.closePath();
+          c.fill();
+        });
+      });
+    case "repair":
+      return spannerStencil(ink);
+    case "laser":
+      // A field radio: its set with a dial and a speaker grille, its whip raised.
+      return cutStencil(ink, (c) => {
+        c.fillRect(30, 96, 196, 116);
+        c.fillRect(178, 14, 12, 86);
+        c.fillRect(166, 88, 36, 12);
+        punch(c, () => {
+          c.beginPath();
+          c.arc(82, 154, 38, 0, Math.PI * 2);
+          c.fill();
+          for (let row = 0; row < 3; row++) c.fillRect(138, 114 + row * 32, 72, 18);
+        });
+        c.beginPath();
+        c.arc(82, 154, 18, 0, Math.PI * 2);
+        c.fill();
+      });
+    case "speed":
+      return extractStencil(image, ink);
+  }
 }
 
 /** The source pictogram as a stencil on transparency: one colour, its accents cut
@@ -622,7 +784,7 @@ function craftTile(kind: PickupKind, image: Image) {
   paintLayer(c, TILE_ROWS.lid, tint, seed + 17);
   if (surface === "planks") cornerPlates(c);
   const ink = stencilPaint(kind);
-  const shape = kind === "repair" ? spannerStencil(ink) : extractStencil(image, ink);
+  const shape = emblemStencil(kind, ink, image);
   c.drawImage(sprayStencil(shape, TILE_SPRAY, SIZE, seed), 0, 0);
   const marking = markingStencil(kind, ink);
   c.drawImage(sprayStencil(marking, markingSpray(marking.bounds), SIZE, seed + 41), 0, 0);

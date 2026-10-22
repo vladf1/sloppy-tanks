@@ -1,17 +1,17 @@
 //! Supply drop smoke (`presentation.ts` `pickupEffect`, reworked as military
-//! supply): one column of signal smoke from the grenade at the back corner of
-//! every stocked pallet, vented dense in the kind's colour (`pickup_signal`, a step
-//! below the HUD's brightness) and keeping that hue as it climbs, widens and is
-//! leaned over by the one wind every column shares, away from the overhead camera,
-//! each at its own phase, so a field of drops says which kind stands where without
-//! a rainbow of neon. An empty drop's grenade is out until its restock nears, when
-//! it starts to fizzle a thin wisp again; a restocked drop's column grows from it.
-//! When a tank takes a supply its crushed grenade bursts: a cloud of the kind's
-//! smoke rolls out low round the hull and lifts, the pallet's dust puffs out with
-//! it, and what the column gave off thins away within a breath. A restocked crate
-//! landing on its pallet raises the same dust. A promotion pops a short burst of
-//! its colour over the tank. Everything is smoke in the shared puff pool, drawn
-//! like the blasts' puffs: no light, beams or rings.
+//! supply): one thin wisp of signal smoke from the grenade at the back corner of
+//! every stocked pallet, its kind's colour greyed toward smoke (`pickup_signal`),
+//! billowing a little where it vents and leaned over by the one wind every wisp
+//! shares, away from the overhead camera, each at its own height and phase, so a
+//! field of drops marks where supply stands without a fence of coloured plumes. An
+//! empty drop's grenade is out until its restock nears, when it starts to fizzle
+//! again; a restocked drop's wisp grows from it. When a tank takes a supply its
+//! crushed grenade vents one puff of its smoke out from under the hull, rolling
+//! downwind, with a little of the pallet's dust kicked out low beside it, and what
+//! the wisp gave off thins away within a breath. A restocked crate landing on its
+//! pallet raises a little dust. A promotion pops a short burst of its colour over
+//! the tank. Everything is smoke in the shared puff pool, drawn like the blasts'
+//! puffs: no light, beams or rings.
 
 use std::collections::VecDeque;
 use std::f64::consts::TAU;
@@ -46,77 +46,82 @@ pub fn supply_wear(id: u32) -> f32 {
 
 const SUPPLY_TURN: f64 = 0.12;
 
-/// The column: puffs in it, seconds each takes to climb it, how high it climbs
+/// The wisp: puffs in it, seconds each takes to climb it, how high it climbs
 /// (each within `SIGNAL_RISE_SPREAD` of it, so a row of drops is not a fence) and
 /// how its climb slows (the jet leaves the grenade fast and loses its push), the
 /// puff size at the grenade and at the top and how soon it widens, how far the
 /// wind has leaned it over by the top and how late in the climb the lean takes
 /// hold, and its opacity at the grenade.
-const SIGNAL_PUFFS: usize = 18;
-const SIGNAL_CYCLE: f64 = 3.2;
-const SIGNAL_RISE: f64 = 2.9;
-const SIGNAL_RISE_SPREAD: f64 = 0.2;
-const SIGNAL_SLOWING: f64 = 1.5;
-const SIGNAL_SIZE: [f64; 2] = [0.2, 0.72];
-const SIGNAL_WIDENING: f64 = 0.65;
-const SIGNAL_SHEAR: f64 = 1.1;
-const SIGNAL_SHEAR_ONSET: f64 = 1.6;
-const SIGNAL_OPACITY: f64 = 0.92;
-/// The column's colour along its climb: the signal colour whole where it vents
-/// and only a little toward smoke's pale grey by the top, so it keeps its hue.
-const SIGNAL_GREYING: [f32; 2] = [0.08, 0.36];
-const SMOKE_GREY: [f32; 3] = [0.62, 0.61, 0.58];
-/// Signal smoke is dense and bright: its albedo is lifted past the blasts' grey
-/// smoke so a column keeps its hue on its shaded side and over any ground.
-const SIGNAL_BRIGHTNESS: f32 = 2.0;
-/// How the column frays: the puffs' erosion at the grenade and at the top (taking
+const SIGNAL_PUFFS: usize = 12;
+const SIGNAL_CYCLE: f64 = 3.6;
+const SIGNAL_RISE: f64 = 1.75;
+const SIGNAL_RISE_SPREAD: f64 = 0.3;
+const SIGNAL_SLOWING: f64 = 1.6;
+const SIGNAL_SIZE: [f64; 2] = [0.24, 0.6];
+const SIGNAL_WIDENING: f64 = 0.5;
+const SIGNAL_SHEAR: f64 = 0.85;
+const SIGNAL_SHEAR_ONSET: f64 = 1.4;
+const SIGNAL_OPACITY: f64 = 0.7;
+/// The wisp's colour along its climb: the signal colour where it vents, greying
+/// toward smoke as it thins.
+const SIGNAL_GREYING: [f32; 2] = [0.0, 0.4];
+const SMOKE_GREY: [f32; 3] = [0.66, 0.65, 0.62];
+/// Signal smoke is a little denser and brighter than the blasts' grey smoke, so a
+/// wisp keeps its tint on its shaded side.
+const SIGNAL_BRIGHTNESS: f32 = 1.5;
+/// How the wisp frays: the puffs' erosion at the grenade and at the top (taking
 /// hold past the middle of the climb), and how far the wisps it breaks into stray
 /// across the wind by the top.
-const SIGNAL_EROSION: [f64; 2] = [0.05, 0.62];
-const SIGNAL_STRAY: f64 = 0.2;
-/// The one wind every column is leaned by: away from the overhead camera (which
-/// sits toward +z) and a little across, so a column trails up the screen behind
+const SIGNAL_EROSION: [f64; 2] = [0.08, 0.66];
+const SIGNAL_STRAY: f64 = 0.16;
+/// The one wind every wisp is leaned by: away from the overhead camera (which
+/// sits toward +z) and a little across, so a wisp trails up the screen behind
 /// its own crate rather than over its neighbours.
 const SIGNAL_WIND: [f64; 2] = [0.36, -0.93];
-/// The column meanders: how far it wanders across the wind by the top, at one rate
-/// for every column (rad/s of emission time, so neighbouring puffs follow one
+/// The wisp meanders: how far it wanders across the wind by the top, at one rate
+/// for every wisp (rad/s of emission time, so neighbouring puffs follow one
 /// another), each at its own phase.
 const SIGNAL_MEANDER: f64 = 0.1;
 const SIGNAL_MEANDER_RATE: f64 = 0.8;
-/// The grenade gushes: one rate for every column (rad/s of emission time, so a
+/// The grenade gushes: one rate for every wisp (rad/s of emission time, so a
 /// puff keeps its share as it climbs), each at its own phase, and how much density
 /// and size the lulls lose.
 const SIGNAL_GUSH_RATE: f64 = 2.3;
-const SIGNAL_GUSH: f64 = 0.18;
+const SIGNAL_GUSH: f64 = 0.25;
 /// An empty drop's grenade fizzles again once its restock is this far along: a
-/// thin, low wisp of this share of the column's density and height at first,
-/// growing to the full column as the supply returns.
+/// thin, low wisp of this share of the full one's density and height at first,
+/// growing to the full wisp as the supply returns.
 const FIZZLE_FROM: f64 = 0.7;
 const FIZZLE: [f64; 2] = [0.15, 0.85];
-/// Once the supply is taken the grenade goes out: the column it gave off thins
+/// Once the supply is taken the grenade goes out: the wisp it gave off thins
 /// away over this long.
 const SNUFF_SECONDS: f64 = 0.45;
-/// A restocked crate landing on its pallet, or a load crushed under a hull: a ring
-/// of dust puffed out from under it (puffs, start and end reach, size, opacity,
-/// seconds).
-const LANDING_PUFFS: usize = 8;
-const LANDING_REACH: [f64; 2] = [0.8, 1.9];
-const LANDING_SIZE: [f64; 2] = [0.32, 0.66];
-const LANDING_OPACITY: f64 = 0.42;
-const LANDING_SECONDS: f64 = 0.6;
+/// A restocked crate landing on its pallet: dust puffed out low from under it
+/// (puffs, start and end reach, size, opacity, seconds).
+const LANDING_PUFFS: usize = 6;
+const LANDING_REACH: [f64; 2] = [0.7, 1.4];
+const LANDING_SIZE: [f64; 2] = [0.26, 0.5];
+const LANDING_OPACITY: f64 = 0.32;
+const LANDING_SECONDS: f64 = 0.55;
 /// How far the ground's dust is lightened toward a pale haze.
 const DUST_LIGHTEN: f32 = 0.4;
-/// A crushed grenade's burst: puffs of the kind's smoke squeezed out from under
-/// the hull and rolling out low round it, clear of the turret (count, start and
-/// end reach from where the drop stood, start and end height, start and end size,
-/// opacity, how far it greys by the end, seconds).
-const BURST_PUFFS: usize = 14;
-const BURST_REACH: [f64; 2] = [1.3, 3.3];
-const BURST_HEIGHT: [f64; 2] = [0.25, 1.05];
-const BURST_SIZE: [f64; 2] = [0.5, 1.35];
-const BURST_OPACITY: f64 = 0.85;
-const BURST_GREYING: f32 = 0.3;
-const BURST_SECONDS: f64 = 1.5;
+/// A crushed grenade's vent: puffs of the kind's smoke squeezed out from under the
+/// hull on the drop's side, rolling out along it and downwind as they rise
+/// (count, how far out they start from the drop and how far they roll, start and
+/// end height, start and end size, opacity, seconds), and the pallet's dust
+/// kicked out low beside them (count, reach, size, opacity, seconds).
+const VENT_PUFFS: usize = 3;
+const VENT_FROM: f64 = 0.7;
+const VENT_ROLL: f64 = 1.3;
+const VENT_HEIGHT: [f64; 2] = [0.3, 1.5];
+const VENT_SIZE: [f64; 2] = [0.4, 1.05];
+const VENT_OPACITY: f64 = 0.6;
+const VENT_SECONDS: f64 = 1.4;
+const VENT_DUST_PUFFS: usize = 3;
+const VENT_DUST_REACH: [f64; 2] = [0.9, 1.6];
+const VENT_DUST_SIZE: [f64; 2] = [0.3, 0.7];
+const VENT_DUST_OPACITY: f64 = 0.34;
+const VENT_DUST_SECONDS: f64 = 0.8;
 /// A promotion's pop: a burst of its colour over the tank, puffs rolling out
 /// (height, count, start and end reach, rise, start and end size, opacity) round a
 /// core, gone in `POP_SECONDS`.
@@ -167,21 +172,28 @@ struct PickupEffect {
     color: [f32; 3],
 }
 
-/// A beat round the drop at (x, z): a ring of the ground's dust as a crate lands
-/// on its pallet or is crushed under a hull, or a crushed grenade's burst of its
-/// signal colour; its age counts up from below zero while it waits to start.
+/// A beat round the drop at (x, z): the ground's dust as a crate lands on its
+/// pallet, or a crushed grenade's vent of its signal colour toward `away` (a unit
+/// ground direction, from the hull out over the drop); its age counts up from
+/// below zero while it waits to start.
 #[derive(Clone, Copy, Debug)]
 struct Collection {
     x: f64,
     z: f64,
     age: f64,
-    burst: Option<[f32; 3]>,
+    vent: Option<Vent>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct Vent {
+    color: [f32; 3],
+    away: [f64; 2],
 }
 
 impl Collection {
     fn seconds(&self) -> f64 {
-        if self.burst.is_some() {
-            BURST_SECONDS
+        if self.vent.is_some() {
+            VENT_SECONDS
         } else {
             LANDING_SECONDS
         }
@@ -251,25 +263,30 @@ impl PickupEffects {
         self.collections.push_back(beat);
     }
 
-    /// The dust a crate raises landing on its pallet at (x, z) or crushed under a
-    /// hull, `delay` seconds from now.
+    /// The dust a crate raises landing on its pallet at (x, z), `delay` seconds
+    /// from now.
     pub fn land(&mut self, x: f64, z: f64, delay: f64) {
         self.push(Collection {
             x,
             z,
             age: -delay,
-            burst: None,
+            vent: None,
         });
     }
 
-    /// The burst of `color` smoke a drop's grenade at (x, z) gives as a hull
-    /// crushes it.
-    pub fn burst(&mut self, x: f64, z: f64, color: u32) {
+    /// The puff of `color` smoke a drop's grenade at (x, z) vents as a hull
+    /// crushes it, out toward `away` (a ground direction from the hull).
+    pub fn vent(&mut self, x: f64, z: f64, away: [f32; 2], color: u32) {
+        let [ax, az] = away.map(f64::from);
+        let length = ax.hypot(az).max(1e-6);
         self.push(Collection {
             x,
             z,
             age: 0.0,
-            burst: Some(hex_to_linear(color)),
+            vent: Some(Vent {
+                color: hex_to_linear(color),
+                away: [ax / length, az / length],
+            }),
         });
     }
 
@@ -359,12 +376,10 @@ impl PickupEffects {
         let ground = Ground::from_theme(&state.map_theme);
         let mut any = false;
         for beat in self.collections.iter().filter(|beat| beat.age >= 0.0) {
-            match beat.burst {
-                Some(color) => burst(beat, color, puffs),
-                None => {
-                    let dust = pale(ground.dust(beat.x, beat.z).map(|c| c as f32), DUST_LIGHTEN);
-                    landing(beat, dust, puffs);
-                }
+            let dust = pale(ground.dust(beat.x, beat.z).map(|c| c as f32), DUST_LIGHTEN);
+            match beat.vent {
+                Some(vent) => vent_puffs(beat, vent, dust, puffs),
+                None => landing(beat, dust, puffs),
             }
             any = true;
         }
@@ -447,39 +462,79 @@ fn column(id: u32, base: Vec3, signal: Signal, time: f64, puffs: &mut PoolBuffer
     }
 }
 
-/// A grenade crushed under a hull: its colour is squeezed out from under the hull
-/// and rolls out low round it in a ring of billows, and clears.
-fn burst(beat: &Collection, color: [f32; 3], puffs: &mut PoolBuffer) {
-    let progress = beat.age / BURST_SECONDS;
-    let spread = 1.0 - (1.0 - progress).powi(3);
-    let fade = smoothstep(beat.age, 0.0, 0.05) * (1.0 - progress).powf(1.3);
-    let turn = hash(beat.x * 0.613 + beat.z * 0.271) * TAU;
-    let tint =
-        mix(color, SMOKE_GREY, BURST_GREYING * progress as f32).map(|c| c * SIGNAL_BRIGHTNESS);
-    for j in 0..BURST_PUFFS {
-        let bearing = turn + TAU * j as f64 / BURST_PUFFS as f64;
-        // Billows at every reach, so the burst is one cloud, not a ring.
-        let reach = (BURST_REACH[0] + (BURST_REACH[1] - BURST_REACH[0]) * spread)
-            * (0.5 + 0.75 * hash(j as f64 * 1.9 + turn));
-        let height = BURST_HEIGHT[0]
-            + (BURST_HEIGHT[1] - BURST_HEIGHT[0]) * spread * (0.6 + 0.8 * hash(j as f64 + turn));
-        let size = (BURST_SIZE[0] + (BURST_SIZE[1] - BURST_SIZE[0]) * spread)
-            * (0.8 + 0.35 * hash(j as f64 * 2.3 + turn));
-        let offset = Vec3::new(
-            (bearing.cos() * reach) as f32,
-            0.0,
-            (bearing.sin() * reach) as f32,
-        );
-        let position = Vec3::new(beat.x as f32, height as f32, beat.z as f32) + offset;
+/// A grenade crushed under a hull: a few puffs of its colour squeezed out on the
+/// drop's side, rolling out and downwind as they rise and thin, each at its own
+/// pace; and the pallet's dust kicked out low beside them. One lopsided cloud,
+/// never a ring round the tank.
+fn vent_puffs(beat: &Collection, vent: Vent, dust: [f32; 3], puffs: &mut PoolBuffer) {
+    let seed = hash(beat.x * 0.613 + beat.z * 0.271);
+    let [ax, az] = vent.away;
+    let [wx, wz] = SIGNAL_WIND;
+    let origin = Vec3::new(beat.x as f32, 0.0, beat.z as f32);
+    for j in 0..VENT_PUFFS {
+        let pace = 0.75 + 0.5 * hash(seed * 7.0 + j as f64);
+        let age = beat.age * pace;
+        let progress = (age / VENT_SECONDS).min(1.0);
+        let roll = 1.0 - (1.0 - progress).powi(3);
+        // Each puff leaves along its own bearing either side of `away`.
+        let bearing = (j as f64 - (VENT_PUFFS as f64 - 1.0) / 2.0) * 0.55 + (seed - 0.5) * 0.4;
+        let (sin, cos) = bearing.sin_cos();
+        let [dx, dz] = [ax * cos - az * sin, ax * sin + az * cos];
+        let reach = VENT_FROM + VENT_ROLL * roll * (0.7 + 0.5 * hash(seed + j as f64 * 3.1));
+        let drift = 0.6 * progress * progress;
+        let height = VENT_HEIGHT[0] + (VENT_HEIGHT[1] - VENT_HEIGHT[0]) * roll * pace;
+        let position = origin
+            + Vec3::new(
+                (dx * reach + wx * drift) as f32,
+                height as f32,
+                (dz * reach + wz * drift) as f32,
+            );
+        let size = (VENT_SIZE[0] + (VENT_SIZE[1] - VENT_SIZE[0]) * roll)
+            * (0.75 + 0.4 * hash(seed * 3.0 + j as f64));
+        let fade = smoothstep(beat.age, 0.0, 0.06) * (1.0 - progress).powf(1.4);
+        let tint = mix(vent.color, SMOKE_GREY, (0.15 + 0.45 * progress) as f32)
+            .map(|c| c * SIGNAL_BRIGHTNESS);
         smoke_puff(
             puffs,
             position,
             size as f32,
             tint,
-            (BURST_OPACITY * fade) as f32,
-            (turn + j as f64 * 0.37).fract() as f32,
+            (VENT_OPACITY * fade) as f32,
+            (seed + j as f64 * 0.37).fract() as f32,
             0.0,
             (0.15 + progress * 0.6) as f32,
+            (0.45 + 0.3 * progress) as f32,
+            0.0,
+        );
+    }
+    let progress = beat.age / VENT_DUST_SECONDS;
+    if progress >= 1.0 {
+        return;
+    }
+    let spread = 1.0 - (1.0 - progress).powi(3);
+    let fade = smoothstep(beat.age, 0.0, 0.03) * (1.0 - progress).powf(1.5);
+    for j in 0..VENT_DUST_PUFFS {
+        let bearing = (j as f64 - 1.0) * 0.8 + (seed - 0.5) * 0.5 + 0.4;
+        let (sin, cos) = bearing.sin_cos();
+        let [dx, dz] = [ax * cos - az * sin, ax * sin + az * cos];
+        let reach = VENT_DUST_REACH[0] + (VENT_DUST_REACH[1] - VENT_DUST_REACH[0]) * spread;
+        let position = origin
+            + Vec3::new(
+                (dx * reach) as f32,
+                (0.1 + 0.12 * spread) as f32,
+                (dz * reach) as f32,
+            );
+        let size = (VENT_DUST_SIZE[0] + (VENT_DUST_SIZE[1] - VENT_DUST_SIZE[0]) * spread)
+            * (0.8 + 0.4 * hash(seed * 5.0 + j as f64));
+        smoke_puff(
+            puffs,
+            position,
+            size as f32,
+            dust,
+            (VENT_DUST_OPACITY * fade) as f32,
+            (seed * 2.0 + j as f64 * 0.41).fract() as f32,
+            0.0,
+            (0.25 + progress * 0.6) as f32,
             (0.5 + 0.3 * progress) as f32,
             0.0,
         );
@@ -494,8 +549,10 @@ fn landing(beat: &Collection, dust: [f32; 3], puffs: &mut PoolBuffer) {
     let fade = smoothstep(beat.age, 0.0, 0.03) * (1.0 - progress).powf(1.5);
     let turn = hash(beat.x * 0.531 + beat.z * 0.917) * TAU;
     for j in 0..LANDING_PUFFS {
-        let bearing = turn + TAU * j as f64 / LANDING_PUFFS as f64;
-        let reach = LANDING_REACH[0] + (LANDING_REACH[1] - LANDING_REACH[0]) * spread;
+        // Out from under the pallet's sides, unevenly, so it is not a ring.
+        let bearing = turn + TAU * (j as f64 + 0.6 * hash(turn + j as f64)) / LANDING_PUFFS as f64;
+        let reach = (LANDING_REACH[0] + (LANDING_REACH[1] - LANDING_REACH[0]) * spread)
+            * (0.75 + 0.5 * hash(turn * 3.0 + j as f64));
         let position = Vec3::new(
             (beat.x + bearing.cos() * reach) as f32,
             (0.12 + 0.12 * spread) as f32,
@@ -658,7 +715,7 @@ mod tests {
     }
 
     #[test]
-    fn an_empty_grenade_fizzles_before_its_restock_and_a_crushed_one_bursts() {
+    fn an_empty_grenade_fizzles_before_its_restock_and_a_crushed_one_vents() {
         let mut state = RenderState {
             elapsed: 50.0,
             ..Default::default()
@@ -688,20 +745,27 @@ mod tests {
         puffs.clear();
         effects.draw(&state, &mut puffs);
         assert!(puffs.len() >= fizzle, "the column carries on");
-        // A crushed grenade bursts its colour round the hull, and it clears.
-        effects.burst(0.0, 0.0, 0xd2622a);
+        // A crushed grenade vents its colour out on the drop's side, and it clears.
+        effects.vent(0.0, 0.0, [1.0, 0.0], 0xd2622a);
         effects.update(0.2);
         puffs.clear();
         assert!(effects.draw_collections(&state, &mut puffs));
-        assert_eq!(puffs.len(), BURST_PUFFS);
+        assert_eq!(puffs.len(), VENT_PUFFS + VENT_DUST_PUFFS);
+        assert!(
+            puffs
+                .records()
+                .iter()
+                .all(|puff| puff.translation().x > 0.0),
+            "the vent leaves on the drop's side, not round the hull"
+        );
         assert!(
             puffs
                 .records()
                 .iter()
                 .all(|puff| puff.translation().y < 2.5),
-            "the burst stays round the hull"
+            "the vent stays low"
         );
-        effects.update(BURST_SECONDS);
+        effects.update(VENT_SECONDS);
         assert!(effects.is_empty());
     }
 }

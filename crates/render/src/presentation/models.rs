@@ -18,7 +18,7 @@ use sloppy_core::geometry::{
 };
 use sloppy_core::models::{
     BarrelScrap, DEFAULT_BOX_RADIUS, TEAM_COLORS, barrel_scrap_geometry, cylinder_part, paint,
-    pickup_pallet, put, shadowed, siding_box, trunk_fragment,
+    pickup_pallet, pickup_parcel, put, shadowed, siding_box, trunk_fragment,
 };
 use sloppy_core::scene::{Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
@@ -463,11 +463,19 @@ pub fn spawn_pulse() -> Node {
     root
 }
 
-/// The pallet under every pickup, shared by every kind: planks, a tarp and the
-/// smoke grenade (`sloppy_core::models::pickup_pallet`).
+/// The pallet under every pickup, shared by every kind: bare planks, the smoke
+/// grenade and the scuffed ground round them (`sloppy_core::models::pickup_pallet`).
 pub fn pickup_base() -> Node {
     let mut root = Node::group("pickup");
     root.children.push(pickup_pallet());
+    root
+}
+
+/// The parcel a collected drop sends aboard the tank that took it
+/// (`sloppy_core::models::pickup_parcel`).
+pub fn pickup_parcel_model() -> Node {
+    let mut root = Node::group("pickup-parcel");
+    root.children.push(pickup_parcel());
     root
 }
 

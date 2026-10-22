@@ -50,8 +50,7 @@ export const PICKUP_SWATCH_CELL = [3, 2] as const;
 export const PICKUP_BRASS_CELL = [0, 3] as const;
 /** The surface each kind's supply shows under its paint: pine crates, olive drab
  * tubes, black ammo cans, jerry cans, black fibre shell canisters, rolled armour
- * steel, and a tool chest and radio case ribbed and painted all over in the kind's
- * colour. */
+ * steel, a ribbed gunmetal tool chest and a ribbed olive drab radio case. */
 export const PICKUP_SURFACES = {
   spread: "planks",
   rocket: "olive",
@@ -60,39 +59,39 @@ export const PICKUP_SURFACES = {
   rapid: "can",
   shield: "steel",
   speed: "jerry",
-  repair: "painted",
-  laser: "painted",
+  repair: "chest",
+  laser: "case",
 } as const satisfies Record<
   PickupKind,
-  "planks" | "olive" | "fibre" | "can" | "steel" | "jerry" | "painted"
+  "planks" | "olive" | "fibre" | "can" | "steel" | "jerry" | "chest" | "case"
 >;
 /** Each kind's paint (`pickup_paint` in `pickup_visuals.rs`): the big painted
- * block on its load and its pallet's deck. Nine hues round the wheel with none
- * repeated (magenta, burnt orange, violet, teal, lime, sky, amber, green and
- * off-white), each the kind's HUD colour family, as worn enamel a step below the
- * HUD's brightness. */
+ * block on top of its load. Nine hues with none repeated (raspberry, burnt orange,
+ * violet, teal, lime, pale steel blue, fuel yellow, green and off-white), as worn
+ * enamel; the raspberry leans to purple and the steel blue is pale and grey, so
+ * neither reads as a team's red or blue. */
 export const PICKUP_PAINTS = {
-  spread: 0xc24c8e,
-  rocket: 0xd2622a,
-  ricochet: 0x7e56c0,
-  piercing: 0x1f9c96,
-  rapid: 0x92b432,
-  shield: 0x4a94d0,
-  speed: 0xe0b02c,
-  repair: 0x3e9448,
-  laser: 0xe2ded0,
+  spread: 0xb44c88,
+  rocket: 0xcc602c,
+  ricochet: 0x7c5cbe,
+  piercing: 0x229a90,
+  rapid: 0x9eb63a,
+  shield: 0x7aa4c6,
+  speed: 0xe2b830,
+  repair: 0x3c9a4e,
+  laser: 0xe6e2d6,
 } as const satisfies Record<PickupKind, number>;
 /** The lot marking stencilled over and under each kind's emblem. */
 export const PICKUP_MARKINGS = {
-  spread: ["12 GA", "FLECH"],
+  spread: ["12 GA", "FLECHETTE"],
   rocket: ["RKT HE", "66 MM"],
   ricochet: ["105 MM", "HESH"],
   piercing: ["120 MM", "APFSDS"],
-  rapid: ["7.62", "LINKED"],
+  rapid: ["CTG 7.62", "LINKED"],
   shield: ["ARMOR", "PLATE"],
   speed: ["FUEL", "20 L"],
   repair: ["TOOL", "KIT"],
-  laser: ["APS", "RADIO"],
+  laser: ["APS", "RADIO SET"],
 } as const satisfies Record<PickupKind, readonly [string, string]>;
 export const PICKUP_ATLAS_TILES = {
   spread: [0, 0],

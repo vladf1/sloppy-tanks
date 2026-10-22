@@ -115,8 +115,8 @@ pub use flags::{FLAG_CLOTH_NODE, flags_model};
 pub use house_model::house_pieces;
 pub use pickup_visuals::{
     PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER, SUPPLY_SCALE,
-    atlas_cell_uv, pickup_cube, pickup_material, pickup_paint, pickup_pallet, pickup_signal,
-    pickup_tile_offset,
+    atlas_cell_uv, pickup_cube, pickup_material, pickup_paint, pickup_pallet, pickup_parcel,
+    pickup_signal, pickup_tile_offset,
 };
 pub use timber_model::{timber_debris_model, timber_part_model};
 pub use tower_model::tower_piece_model;
