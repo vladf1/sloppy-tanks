@@ -106,7 +106,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Stones wash into the hollows and the ruts; the crests are winnowed sand.
     let gather = quarry_value(p / SOIL_SPILL_CELL) * 0.65 + quarry_value(p / (SOIL_SPILL_CELL * 0.37) + 7.0) * 0.35;
     // Drift sand buries the stones; they lie in the deflated ground between.
-    let spill = quarry_smoothstep(0.5, 0.7, gather + stony * 0.25 + hollow * 0.3 - crest * 0.25 - drift_sand * 0.45);
+    let spill = quarry_smoothstep(0.54, 0.66, gather + stony * 0.25 + hollow * 0.3 - crest * 0.25 - drift_sand * 0.45);
     let stones = quarry_pebbles(p, SOIL_STONE_CELL, (stony * stony * 0.3 + 0.05) * spill * 1.8, footprint, 3.0);
     let grit = quarry_pebbles(p, SOIL_GRIT_CELL, (0.03 + stony * 0.4) * mix(0.4, 1.4, spill), footprint, 11.0);
     let cobbles = quarry_pebbles(p, SOIL_COBBLE_CELL, (0.004 + stony * 0.1) * spill * 1.8, footprint, 23.0);
@@ -116,7 +116,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // Toward the edge of a dried patch the plates grow and the cracks thin
         // out to hairlines, so the crazing feathers into the sand.
         let cell = SOIL_PLATE_CELL * mix(1.6, 1.0, quarry_smoothstep(0.1, 0.6, dried));
-        cracks = quarry_cracks(p, cell, mix(0.35, 1.0, quarry_smoothstep(0.15, 0.7, dried)), footprint)
+        cracks = quarry_cracks(p, cell, mix(0.35, 1.0, quarry_smoothstep(0.15, 0.7, dried)), footprint).xy
             * quarry_smoothstep(0.02, 0.55, dried);
     }
     let bake_height = dot(baked.rgb, LUMA);
@@ -136,9 +136,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, color * drift_tint, drift_sand * 0.8);
     color *= 1.0 - (cobbles.shadow * 0.5 + stones.shadow * 0.42 + grit.shadow * 0.25);
     color *= 1.0 - (cobbles.contact * 0.12 + stones.contact * 0.1 + grit.contact * 0.06);
-    color = mix(color, color * cobbles.tint, cobbles.cover);
-    color = mix(color, color * stones.tint, stones.cover);
+    // Stones are rounded and half buried: a lit crown, darkening down to the
+    // rim where they sink into the soil, never a flat coin.
+    color = mix(color, color * cobbles.tint * 0.92, cobbles.cover);
+    color = mix(color, color * stones.tint * 0.94, stones.cover);
     color = mix(color, color * grit.tint, grit.cover * 0.85);
+    color *= 1.0 - (cobbles.rim * 0.34 + stones.rim * 0.3 + grit.rim * 0.12);
     // Dried plates are paler and cooler; the cracks hold shade and moisture.
     color *= 1.0 + cracks.y * 0.12;
     color = mix(color, color * vec3f(0.55, 0.5, 0.46), cracks.x * 0.65);

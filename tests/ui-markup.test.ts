@@ -3,7 +3,7 @@ import { test } from "node:test";
 import type { HudState } from "../src/game/engine-api";
 import { menuMarkup, ordinal } from "../src/game/ui-markup";
 
-test("the respawn card counts the killer's kills as an ordinal", () => {
+test("ordinals read as places: 1st, 2nd, 11th, 21st", () => {
   assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 101, 111].map(ordinal), [
     "1ST",
     "2ND",
@@ -62,7 +62,12 @@ test("pause leaves the score to the header's plates and lists the battle's facts
   assert.match(markup, /class="dialog-score"/);
   assert.doesNotMatch(markup, /KILL SHARE|share-bar/);
   assert.match(markup, /<dt>Objective<\/dt><dd>First to 100<\/dd>/);
-  assert.match(markup, /<dt>You<\/dt><dd>2 kills · 1 death<\/dd>/);
+  assert.match(markup, /<dt>Your kills<\/dt><dd>2<small>Destroyed once<\/small><\/dd>/);
+  assert.match(markup, /<dt>Difficulty<\/dt><dd>Normal<\/dd>/);
+  assert.match(
+    markup,
+    /class="dialog-standing" data-tone="behind">Red team leads by 1|data-tone="ahead">Your team leads by 1/,
+  );
 });
 
 test("a battle ended early says so beside its outcome", () => {
@@ -77,7 +82,7 @@ test("a battle ended early says so beside its outcome", () => {
 test("the respawn card names who destroyed the tank in plain words", () => {
   const markup = menuMarkup(teamBattle({ phase: "playing", alive: false }), {
     report: { killer: "THUNDERCLAP", self: false, cause: "standard", weapon: "Standard shell" },
-    text: "THUNDERCLAP killed you with a standard shell.",
+    text: "THUNDERCLAP destroyed you with a standard shell.",
   });
   assert.match(markup, /<small>DESTROYED BY<\/small><b>THUNDERCLAP<\/b>/);
   assert.doesNotMatch(markup, /WRECKED/);

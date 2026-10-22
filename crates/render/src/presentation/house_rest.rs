@@ -31,14 +31,21 @@ const REMAINS_LIFT: f32 = 0.015;
 const STILL_SECONDS: f64 = 0.12;
 const REBUILD_GAP: f64 = 0.4;
 /// Movement (m, and quaternion difference) a still shard may show between frames.
-const STILL_DISTANCE: f32 = 0.004;
+const STILL_DISTANCE: f32 = 0.006;
 const STILL_TURN: f32 = 0.004;
+/// How far (m, and quaternion difference) a merged shard may creep from the pose
+/// it was baked at before it leaves the merge: a piece settling by millimetres
+/// on the pile stays drawn as part of it.
+const DRIFT_DISTANCE: f32 = 0.05;
+const DRIFT_TURN: f32 = 0.0015;
 
 struct Shard {
     house: u32,
     node: Node,
     /// Its pose last frame, none before the first.
     pose: Option<(Vec3, Quat)>,
+    /// The pose its merge drew it at, while it is merged.
+    baked: Option<(Vec3, Quat)>,
     still_since: f64,
     fading: bool,
 }
@@ -86,6 +93,7 @@ impl<H> SettledShards<H> {
                 house,
                 node,
                 pose: None,
+                baked: None,
                 still_since: now,
                 fading: false,
             },
@@ -101,12 +109,20 @@ impl<H> SettledShards<H> {
         let Some(shard) = self.shards.get_mut(&id) else {
             return;
         };
-        let moved = shard.pose.is_none_or(|(position, rotation)| {
-            position.distance(pose.0) > STILL_DISTANCE
-                || rotation.dot(pose.1).abs() < 1.0 - STILL_TURN
-        });
+        let moved = match shard.baked {
+            // Merged: it stays while it keeps near the pose it was baked at.
+            Some((position, rotation)) => {
+                position.distance(pose.0) > DRIFT_DISTANCE
+                    || rotation.dot(pose.1).abs() < 1.0 - DRIFT_TURN
+            }
+            None => shard.pose.is_none_or(|(position, rotation)| {
+                position.distance(pose.0) > STILL_DISTANCE
+                    || rotation.dot(pose.1).abs() < 1.0 - STILL_TURN
+            }),
+        };
         if moved {
             shard.still_since = now;
+            shard.baked = None;
         }
         shard.pose = Some(pose);
         shard.fading = fading;
@@ -170,6 +186,13 @@ impl<H> SettledShards<H> {
             }
             merge.built_at = now;
             let node = (members.len() >= 2).then(|| merged_node(&self.shards, &members));
+            for (id, shard) in self.shards.iter_mut().filter(|(_, s)| s.house == house) {
+                shard.baked = if node.is_some() && members.contains(id) {
+                    shard.pose
+                } else {
+                    None
+                };
+            }
             if node.is_none() {
                 members.clear();
             }
@@ -327,8 +350,12 @@ fn collect(node: &Node, position: DVec3, rotation: DQuat, root: &mut Node) {
     let local_position = position + rotation * node.position;
     let local_rotation = rotation * node.rotation;
     if let Some(drawable) = &node.drawable {
+        // The pile shades the ground and itself as one caster: one shadow draw
+        // grounds every shard, walls included.
+        let mut drawable = drawable.clone();
+        drawable.cast_shadow = true;
         root.children.push(Node {
-            drawable: Some(drawable.clone()),
+            drawable: Some(drawable),
             position: local_position,
             rotation: local_rotation,
             scale: node.scale,

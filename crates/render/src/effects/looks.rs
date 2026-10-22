@@ -32,6 +32,8 @@ use super::wood_chips::{MAX_STRAW, MAX_WOOD_CHIPS, splinter_mesh, straw_mesh};
 /// Tread marks draw after the ground decals they lie on (`renderOrder = 1`),
 /// and blast decals with them; smoke draws over both, glows over the smoke.
 const TRACK_RENDER_ORDER: i32 = 1;
+/// The smoke puffs' pool label, by which the browser finds it for its params.
+pub const PUFF_POOL: &str = "blast puffs";
 const PUFF_RENDER_ORDER: i32 = 2;
 const STREAK_RENDER_ORDER: i32 = 3;
 const TRACK_COLOR: u32 = 0x283222;
@@ -242,7 +244,7 @@ pub fn pool_descs() -> Vec<PoolDesc> {
     pools.push(PoolDesc {
         render_order: PUFF_RENDER_ORDER,
         ..PoolDesc::new(
-            "blast puffs",
+            PUFF_POOL,
             plane_geometry(2.0, 2.0),
             // Smoke takes the scene's aerial haze, so a distant plume recedes into
             // the air instead of standing as ink against it.
