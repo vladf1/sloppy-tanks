@@ -17,7 +17,7 @@ pub const CAMERA: Camera = Camera {
     field_of_view: 43.0,
     near: 0.1,
     far: 320.0,
-    default_zoom: 34.0,
+    default_zoom: 31.0,
     min_zoom: 17.0,
     max_zoom: 52.0,
     max_pixel_ratio: 1.5,
@@ -34,6 +34,19 @@ pub struct CameraFeel {
     /// reach from the tank, up to `max_aim_look_ahead` of the zoom.
     pub aim_look_ahead: f64,
     pub max_aim_look_ahead: f64,
+    /// And toward the nearest enemy within `threat_range` by this fraction of the
+    /// way, up to `max_threat_look_ahead` of the zoom.
+    pub threat_look_ahead: f64,
+    pub max_threat_look_ahead: f64,
+    pub threat_range: f64,
+    /// The focus sits this fraction of the zoom up the screen from the tank.
+    pub frame_ahead: f64,
+    /// A big blast close by draws the view this fraction of the way toward it,
+    /// letting go over `blast_look_seconds`.
+    pub blast_look_ahead: f64,
+    pub blast_look_seconds: f64,
+    /// All of the leads together stay within this fraction of the zoom.
+    pub max_look_ahead: f64,
     /// And ahead along the drive by this many seconds of travel, up to a cap.
     pub travel_look_ahead_seconds: f64,
     pub max_travel_look_ahead: f64,
@@ -69,18 +82,49 @@ pub struct CameraFeel {
     pub blast_trauma_per_radius: f64,
     pub blast_reach: f64,
     pub blast_kick: f64,
+    /// Destroying an enemy dollies the drawn camera this fraction of the way to
+    /// its focus, arriving at `punch_attack` and easing out at `punch_release`
+    /// (per second), so a kill lands with a beat of emphasis.
+    pub kill_punch_in: f64,
+    pub punch_attack: f64,
+    pub punch_release: f64,
+    /// Any tank destroyed nearby pulls the camera in by up to this share of a
+    /// kill's dolly, fading over `blast_reach`.
+    pub nearby_death_punch: f64,
+    /// A big blast close by pulls it in by up to this share.
+    pub blast_punch: f64,
+    /// The viewer's own shot narrows the lens by this many degrees for a blink.
+    pub fire_fov_kick: f64,
+    pub fov_kick_release: f64,
+    /// A reticle that follows the turret rather than a pointer (autoplay) glides to
+    /// its point at this rate (per second); a jump farther than `snap_distance` snaps.
+    pub aim_track_rate: f64,
     /// First person shakes less: the view is already close to the action.
     pub first_person_shake: f64,
     /// Share of the hull's pitch and roll the first-person view rides.
     pub first_person_tilt: f64,
     /// Degrees the first-person view widens at full speed.
     pub first_person_speed_fov: f64,
+    /// The seated view sways with the treads: one side-to-side cycle per this many
+    /// metres driven, and its bob (m), roll (rad) and engine shudder (m) at full
+    /// speed.
+    pub first_person_bob_metres: f64,
+    pub first_person_bob: f64,
+    pub first_person_sway_roll: f64,
+    pub first_person_shudder: f64,
 }
 
 pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     follow_frequency: 7.5,
-    aim_look_ahead: 0.22,
-    max_aim_look_ahead: 0.12,
+    aim_look_ahead: 0.32,
+    max_aim_look_ahead: 0.17,
+    threat_look_ahead: 0.28,
+    max_threat_look_ahead: 0.16,
+    threat_range: 30.0,
+    frame_ahead: 0.05,
+    blast_look_ahead: 0.35,
+    blast_look_seconds: 1.4,
+    max_look_ahead: 0.26,
     travel_look_ahead_seconds: 0.14,
     max_travel_look_ahead: 2.0,
     snap_distance: 14.0,
@@ -88,7 +132,7 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     full_speed: 8.0,
     speed_zoom_rate: 2.5,
     trauma_decay: 1.6,
-    shake_angles: [0.010, 0.010, 0.016],
+    shake_angles: [0.012, 0.012, 0.022],
     shake_frequency: 13.0,
     kick_frequency: 15.0,
     kick_damping: 0.55,
@@ -99,13 +143,25 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     max_hurt_trauma: 0.55,
     hurt_kick: 6.0,
     death_trauma: 0.7,
-    kill_trauma: 0.3,
+    kill_trauma: 0.42,
     blast_trauma_per_radius: 0.13,
     blast_reach: 24.0,
     blast_kick: 7.0,
+    kill_punch_in: 0.13,
+    punch_attack: 28.0,
+    punch_release: 2.4,
+    nearby_death_punch: 0.45,
+    blast_punch: 0.3,
+    fire_fov_kick: 1.6,
+    fov_kick_release: 9.0,
+    aim_track_rate: 10.0,
     first_person_shake: 0.55,
-    first_person_tilt: 0.45,
-    first_person_speed_fov: 5.0,
+    first_person_tilt: 0.65,
+    first_person_speed_fov: 6.0,
+    first_person_bob_metres: 3.2,
+    first_person_bob: 0.045,
+    first_person_sway_roll: 0.016,
+    first_person_shudder: 0.006,
 };
 
 pub struct Feedback {

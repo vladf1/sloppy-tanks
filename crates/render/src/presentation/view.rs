@@ -201,6 +201,62 @@ struct Library {
     effect_glow: Option<ModelId>,
 }
 
+/// Whether solid cover hides the line from `eye` to `target`: seen from the turret,
+/// a bar behind a rock, container, house or wall would otherwise draw through it.
+/// Footprints are the covers' axis-aligned nav boxes, rising from the ground to
+/// their height; open or small cover (trees, towers on legs, drums) never hides one.
+/// Cover meshes bulge a little past their nav footprints.
+const SIGHT_MARGIN: f64 = 0.3;
+
+fn sight_blocked(eye: Vec3, target: Vec3, covers: &[RenderCover]) -> bool {
+    let (ex, ey, ez) = (f64::from(eye.x), f64::from(eye.y), f64::from(eye.z));
+    let (dx, dy, dz) = (
+        f64::from(target.x) - ex,
+        f64::from(target.y) - ey,
+        f64::from(target.z) - ez,
+    );
+    covers
+        .iter()
+        .filter(|cover| {
+            cover.alive
+                && matches!(
+                    cover.kind,
+                    CoverKind::Rock
+                        | CoverKind::Container
+                        | CoverKind::Cargo
+                        | CoverKind::House
+                        | CoverKind::Timber
+                        | CoverKind::Concrete
+                )
+        })
+        .any(|cover| {
+            let (mut enter, mut leave) = (0.0_f64, 1.0_f64);
+            for (origin, delta, centre, half) in [
+                (ex, dx, cover.x, cover.w / 2.0 + SIGHT_MARGIN),
+                (ez, dz, cover.z, cover.d / 2.0 + SIGHT_MARGIN),
+            ] {
+                if delta.abs() < 1e-9 {
+                    if (origin - centre).abs() > half {
+                        return false;
+                    }
+                    continue;
+                }
+                let (a, b) = (
+                    (centre - half - origin) / delta,
+                    (centre + half - origin) / delta,
+                );
+                enter = enter.max(a.min(b));
+                leave = leave.min(a.max(b));
+                if enter > leave {
+                    return false;
+                }
+            }
+            // The sight line's lowest point over the footprint.
+            let lowest = ey + dy * if dy < 0.0 { leave } else { enter };
+            lowest < cover.h
+        })
+}
+
 fn joint_index(renderer: &Renderer, model: ModelId, name: &str) -> usize {
     renderer
         .model_node(model, name)
@@ -1318,9 +1374,11 @@ impl Presentation {
                 self.rig.blast(event.x, event.z, event.size.unwrap_or(3.0));
                 if viewer {
                     self.rig.shake.add_trauma(CAMERA_FEEL.death_trauma);
+                } else {
+                    self.rig.tank_destroyed(event.x, event.z);
                 }
                 if player_hit {
-                    self.rig.shake.add_trauma(CAMERA_FEEL.kill_trauma);
+                    self.rig.killed(event.x, event.z);
                     self.hit_stop = FEEDBACK.hit_stop_seconds;
                 }
             }
@@ -1545,6 +1603,20 @@ impl Presentation {
                 position: dvec3(tank.position),
                 velocity: DVec3::new(tank.velocity.x, 0.0, tank.velocity.z),
                 aim: tank.aim,
+                threat: state
+                    .tanks
+                    .iter()
+                    .filter(|enemy| enemy.alive && enemy.team != tank.team)
+                    .map(|enemy| {
+                        let at = DVec3::new(enemy.position.x, 0.0, enemy.position.z);
+                        (
+                            at.distance_squared(DVec3::new(tank.position.x, 0.0, tank.position.z)),
+                            at,
+                        )
+                    })
+                    .filter(|(distance, _)| *distance < CAMERA_FEEL.threat_range.powi(2))
+                    .min_by(|a, b| a.0.total_cmp(&b.0))
+                    .map(|(_, at)| at),
             },
             None => ViewerPose::default(),
         }
@@ -1632,6 +1704,8 @@ impl Presentation {
         let seat_wanted = self.rig.seat_wanted;
         let look_yaw = self.rig.first_person.yaw;
         let playing = state.match_state.phase == MatchPhase::Playing;
+        // From the turret, bars behind cover hide (last frame's eye is close enough).
+        let seated_eye = self.rig.seated_eye();
         for tank in &state.tanks {
             // Reinforcements arrive after reset; build their visuals on first sight.
             let rebuild = self
@@ -1649,7 +1723,18 @@ impl Presentation {
             let seated = viewer && seat_wanted;
             renderer.set_visible(view.instance, tank.alive);
             // The camera flies through the player's bar on the way into the turret.
-            renderer.set_visible(view.bar, tank.alive && !(viewer && seat_blend > 0.0));
+            let hidden = seated_eye.is_some_and(|eye| {
+                let bar = Vec3::new(
+                    tank.position.x as f32,
+                    BAR_HEIGHT as f32,
+                    tank.position.z as f32,
+                );
+                sight_blocked(eye, bar, &state.covers)
+            });
+            renderer.set_visible(
+                view.bar,
+                tank.alive && !(viewer && seat_blend > 0.0) && !hidden,
+            );
             let meters =
                 protection_meters(tank.alive, tank.shield, tank.shield_points, tank.protection);
             renderer.set_node_visible(view.bar, bar.shield, meters.shield_visible);

@@ -106,6 +106,11 @@ mod debug;
 const MAX_CATCH_UP_STEPS: u32 = 5;
 /// The round the browser's first arena prepares (it seeds bot names).
 const FIRST_ROUND: u32 = 3;
+/// Metres along an autoplaying turret where its reticle sits: the enemy's distance
+/// within these bounds, or the middle range when it has no enemy.
+const AUTOPLAY_AIM_RANGE: f64 = 14.0;
+const AUTOPLAY_MIN_AIM_RANGE: f64 = 7.0;
+const AUTOPLAY_MAX_AIM_RANGE: f64 = 26.0;
 
 /// Slots of `frame`'s result.
 pub mod frame_slot {
@@ -433,7 +438,15 @@ impl Game {
         if playing {
             self.accumulator = (self.accumulator + dt).min(STEP * f64::from(MAX_CATCH_UP_STEPS));
             let position = self.human_position();
-            let (angle, _) = aim(&mut self.view.rig, &input, position, dt, alive);
+            // Autoplay's turret answers to its brain, not the pointer: the reticle
+            // follows the gun and the camera leans with it.
+            let angle = match self.autoplay_aim_point() {
+                Some(point) if !self.view.rig.first_person.enabled => {
+                    self.view.rig.track_aim(point, dt);
+                    self.sim.human().aim
+                }
+                _ => aim(&mut self.view.rig, &input, position, dt, alive).0,
+            };
             let mut steps = 0;
             while self.accumulator >= STEP && steps < MAX_CATCH_UP_STEPS {
                 let active = self.sim.match_state.phase == MatchPhase::Playing
@@ -841,6 +854,33 @@ impl Game {
 impl Game {
     fn human_index(&self) -> usize {
         self.sim.human_index().unwrap_or(0)
+    }
+
+    /// Where an autoplaying human's gun points: along the turret at the distance of
+    /// the enemy its brain is fighting, or a typical range without one. `None`
+    /// outside autoplay or while destroyed.
+    fn autoplay_aim_point(&self) -> Option<glam::Vec3> {
+        let tank = self.sim.human();
+        if !self.autoplay || !tank.alive {
+            return None;
+        }
+        let (x, z) = self.human_position();
+        let range = self
+            .sim
+            .tanks
+            .iter()
+            .find(|enemy| enemy.alive && enemy.id == tank.brain.target)
+            .map_or(AUTOPLAY_AIM_RANGE, |enemy| {
+                let p = self.sim.tank_position(enemy);
+                (p.x - x)
+                    .hypot(p.z - z)
+                    .clamp(AUTOPLAY_MIN_AIM_RANGE, AUTOPLAY_MAX_AIM_RANGE)
+            });
+        Some(glam::Vec3::new(
+            (x + tank.aim.sin() * range) as f32,
+            0.0,
+            (z + tank.aim.cos() * range) as f32,
+        ))
     }
 
     /// The listener and aim origin: the body, or where the tank died.
