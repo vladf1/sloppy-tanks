@@ -60,11 +60,14 @@ const COLUMN_WIDTH: f64 = 1.0;
 /// The face beds climb to this fraction of the collision levels; the rounded
 /// shoulder above leans back to the cap.
 const FACE_TOP: f64 = 0.88;
+/// How far, as a fraction of the face, a block's partings step up or down from
+/// its neighbours'.
+const BED_STEP: f64 = 0.045;
 /// Rocks narrower than this, in metres, are boulders: one or two beds, no kit.
 const BOULDER_SPAN: f64 = 3.0;
 /// Added to `uv.y` (wear) on a sawn, drilled face, for the shader's drill
 /// traces. A vertex attribute would keep the rock from merging with its footing.
-const SAWN: f64 = 3.0;
+pub(super) const SAWN: f64 = 3.0;
 /// `uv.y` of the sand skirt the shader shades as the floor around it.
 const SKIRT: f64 = -3.0;
 
@@ -286,13 +289,18 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
             n
         })
         .collect();
-    let relief = (0.065 * h.min(w.min(d))).clamp(0.03, 0.3);
+    // Outcrops weather deeper than boulders: ledges jut and undercuts bite.
+    let relief = if outcrop {
+        (0.08 * h.min(w.min(d))).clamp(0.03, 0.36)
+    } else {
+        (0.065 * h.min(w.min(d))).clamp(0.03, 0.3)
+    };
 
     // Courses: a few massive beds with thin partings; the kits vary the stack.
     let face_top = if outcrop { FACE_TOP } else { 1.0 };
     let beds = ((h * face_top / BED_THICKNESS).round() as usize).clamp(1, 4);
     let mut courses: Vec<(f64, Course)> = (0..beds)
-        .map(|_| (rng.range(0.6, 1.5), Course::Massive))
+        .map(|_| (rng.range(0.45, 1.75), Course::Massive))
         .collect();
     if outcrop {
         match kit {
@@ -310,6 +318,13 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
                 if beds >= 2 {
                     let at = 1 + (rng.next() * (beds - 1) as f64) as usize;
                     courses.insert(at, (rng.range(0.18, 0.3), Course::Recessed));
+                }
+                // Some outcrops keep a harder bed on top, jutting over the
+                // softer stone it shelters.
+                if kit != Kit::Sawn && beds >= 2 && rng.next() < 0.6 {
+                    let last = courses.len() - 1;
+                    courses[last].1 = Course::Caprock;
+                    courses[last].0 *= 0.7;
                 }
             }
         }
@@ -473,6 +488,9 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
     let mut deep_joint = vec![false; columns];
     let mut block_push = Vec::new();
     let mut block_bed_push = Vec::new();
+    // Each block's partings sit a little higher or lower than its neighbours':
+    // the beds step at the joints instead of running round the rock as one line.
+    let mut block_bed_shift: Vec<f64> = Vec::new();
     let mut block_starts = Vec::new();
     for (i, &from) in cuts_at.iter().enumerate() {
         let to = cuts_at[(i + 1) % cuts_at.len()];
@@ -499,12 +517,18 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
             joints[start] = outcrop;
             deep_joint[start] =
                 outcrop && (joint_column(start) || (kit == Kit::Split && rng.next() < 0.5));
-            block_push.push(rng.range(-0.35, 0.35));
+            block_push.push(rng.range(-0.45, 0.45));
             block_bed_push.push(
                 (0..courses.len())
                     .map(|_| rng.range(-0.2, 0.2))
                     .collect::<Vec<f64>>(),
             );
+            // One shift for all of a block's partings, so no thin bed inverts.
+            block_bed_shift.push(if outcrop {
+                rng.range(-BED_STEP, BED_STEP)
+            } else {
+                0.0
+            });
             at += run;
         }
     }
@@ -562,10 +586,14 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
                 spall[(c + columns - 1) % columns].max(bite * rng.range(0.2, 0.6));
         }
     }
+    // Each slab weathered its own arris: some edges crisp, some worn round.
+    let slab_arris: Vec<f64> = (0..slab_count)
+        .map(|_| if outcrop { rng.range(0.45, 1.9) } else { 1.0 })
+        .collect();
     let chamfer: Vec<(f64, f64)> = (0..columns)
         .map(|c| {
             let bite = 1.0 + spall[c];
-            let width = arris * rng.range(0.75, 1.25) * bite;
+            let width = arris * rng.range(0.75, 1.25) * bite * slab_arris[segment_slab[c]];
             let drop = arris * rng.range(0.7, 1.15) * bite.powf(0.8);
             (width, if outcrop { drop } else { drop * 1.6 })
         })
@@ -621,17 +649,17 @@ fn quarried_rock(w: f64, h: f64, d: f64, variant: u32, setting: RockSetting) -> 
             let toe = r == 0;
             let local = surface(c, 0.5);
             let tilt = dip.dot(DVec3::new(local.x, 0.0, local.z)) / extent;
+            let block = block_of[c];
             let level = |k: usize| {
                 let base = boundaries[k];
                 if k == 0 || k == courses.len() {
                     base
                 } else {
-                    (base + tilt * face_top).clamp(0.02, face_top - 0.02)
+                    (base + tilt * face_top + block_bed_shift[block]).clamp(0.02, face_top - 0.02)
                 }
             };
             let (from, to) = (level(row.course), level(row.course + 1));
             let t = from + (to - from) * row.u;
-            let block = block_of[c];
             let mut push = row.offset
                 + block_push[block]
                 + block_bed_push[block][row.course]

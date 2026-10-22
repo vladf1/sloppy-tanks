@@ -131,7 +131,11 @@ fn a_collapse_breaks_the_cottage_into_its_parts_and_leaves_a_heap_of_low_cover()
             );
             assert!((p.y - shape.center.y).abs() < 1e-4);
         } else {
-            assert_eq!(f.shape, Some(FragmentShape::Beam), "loose rafters");
+            assert_eq!(
+                f.shape,
+                Some(FragmentShape::Beam),
+                "loose rafters and boards"
+            );
         }
     }
     let heap = heaps(&s);
@@ -152,8 +156,14 @@ fn a_collapse_breaks_the_cottage_into_its_parts_and_leaves_a_heap_of_low_cover()
         let y = s.body_translation(f.body).y;
         assert!(y < design.h * 0.6, "{:?} came down ({y})", f.house_piece);
     }
-    // The pieces sink away within seconds, leaving the heap's body for the cottage's.
-    tick(&mut s, 1.5);
+    // The pieces lie on the heap a while, then sink into it, leaving the heap's body
+    // for the cottage's.
+    tick(&mut s, 5.0);
+    assert!(
+        s.fragments.iter().any(|f| f.house_piece.is_some()),
+        "the collapse stays to be seen"
+    );
+    tick(&mut s, 6.0);
     assert!(s.fragments.is_empty());
     assert_eq!(s.world.bodies.len(), bodies);
 }
@@ -259,4 +269,44 @@ fn a_drum_blast_beside_a_cottage_hurts_it_once_and_bots_never_breach_cottages() 
         standing >= 12,
         "{standing} of 14 cottages stand after a minute"
     );
+}
+
+/// A collapse settles into a pile lying flat: at most one wall shard in a cottage
+/// (wedged in the wreck) is left standing on edge, and few in the village.
+#[test]
+fn every_cottage_collapse_comes_to_rest_with_its_walls_lying_down() {
+    let village = village();
+    let mut standing = Vec::new();
+    for house in houses(&village) {
+        let c = &village.covers[house];
+        let (x, z, w, d, h) = (c.x, c.z, c.w, c.d, c.h);
+        let mut s = Simulation::with_seed(731.0);
+        clear_arena(&mut s, &[]);
+        let house = s.add_cover(&CoverDef::house(x, z, w, d, h, 0xb87b4c));
+        s.nav.rebuild(&s.covers, None);
+        s.start();
+        s.world.step();
+        let design = HouseDesign::of(x, z, w, d, h);
+        s.damage_cover(house, 100_000.0, 999, Team::Blue, None, None);
+        tick(&mut s, 4.0);
+        let walls = sloppy_core::sim::house_layout::wall_frames(design.w, design.d);
+        let mut here = Vec::new();
+        for fragment in &s.fragments {
+            let Some(piece) = fragment.house_piece else {
+                continue;
+            };
+            let Some(wall) = piece.part.wall_index() else {
+                continue;
+            };
+            let out = walls[wall].1;
+            let body = &s.world.bodies[fragment.body];
+            let face = *body.rotation() * glam::Vec3::new(out.x as f32, out.y as f32, out.z as f32);
+            if face.y.abs() < 0.5 {
+                here.push(format!("{x} {z}: {}", String::from(piece)));
+            }
+        }
+        assert!(here.len() <= 1, "{here:?}");
+        standing.extend(here);
+    }
+    assert!(standing.len() <= 3, "{standing:?}");
 }
