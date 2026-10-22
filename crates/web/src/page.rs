@@ -1,7 +1,7 @@
 //! Page plumbing shared by [`Game`](crate::Game) and [`NetGame`](crate::NetGame) (and
-//! the labs): errors and JSON for the page, the clock, frame timing, canvas sizing,
-//! the graphics quality, arena preparation results, the event queue and the local
-//! controls' aim.
+//! the labs): errors and JSON for the page, the clock, canvas sizing, the graphics
+//! quality, arena preparation results, the event queue and the local controls' aim.
+//! Frame timing is [`crate::frame_clock`].
 
 use glam::Vec2;
 use serde::Deserialize;
@@ -18,10 +18,8 @@ use sloppy_render::quality::{
 use wasm_bindgen::JsValue;
 
 use crate::events::PendingEvent;
+use crate::frame_clock::{FramePacing, FrameTimes};
 
-/// Frame deltas are capped so a stalled tab never fast-forwards the match.
-const MAX_FRAME_DELTA_SECONDS: f64 = 0.1;
-const MILLISECONDS_PER_SECOND: f64 = 1000.0;
 /// The HUD refreshes (`hud_json`) every this many frames.
 pub const HUD_UPDATE_EVERY_FRAMES: u64 = 4;
 /// Events waiting for `drain_events`; a hidden HUD must not grow this without bound.
@@ -46,47 +44,6 @@ thread_local! {
 
 pub fn now_ms() -> f64 {
     PERFORMANCE.with(|performance| performance.as_ref().map_or(0.0, |p| p.now()))
-}
-
-/// The animation-frame clock and the timings of the last frame.
-#[derive(Clone, Copy, Debug, Default)]
-pub struct FrameTimes {
-    /// The latest frame timestamp, in milliseconds.
-    pub last_ms: Option<f64>,
-    pub frame_ms: f64,
-    pub sim_ms: f64,
-    pub render_ms: f64,
-    /// Exponential average of frame time for the fps readout.
-    pub average_ms: f64,
-}
-
-impl FrameTimes {
-    /// Move the clock to the frame at `now` and return its capped delta in seconds. A
-    /// queued timestamp can precede a slow rebuild; time never runs backwards.
-    pub fn advance(&mut self, now: f64) -> f64 {
-        let last = self.last_ms.unwrap_or(now);
-        let raw = ((now - last) / MILLISECONDS_PER_SECOND).max(0.0);
-        self.last_ms = Some(last.max(now));
-        // A clock started infinitely long ago (autoplay's round start) catches up
-        // in full without counting as a frame time.
-        if !raw.is_finite() {
-            self.frame_ms = 0.0;
-            return MAX_FRAME_DELTA_SECONDS;
-        }
-        self.frame_ms = raw * MILLISECONDS_PER_SECOND;
-        if raw > 0.0 {
-            self.average_ms += (self.frame_ms - self.average_ms) * 0.05;
-        }
-        raw.min(MAX_FRAME_DELTA_SECONDS)
-    }
-
-    pub fn fps(&self) -> f64 {
-        if self.average_ms > 0.0 {
-            MILLISECONDS_PER_SECOND / self.average_ms
-        } else {
-            0.0
-        }
-    }
 }
 
 /// The canvas's CSS size and the device pixel ratio, which size the drawing buffer.
@@ -161,7 +118,9 @@ impl Graphics {
 
     /// After drawing a frame: under Auto, a gameplay frame's interval, main-thread
     /// work and the GPU's frame time where sampled feed the controller; other frames
-    /// (menus, pause, results) interrupt it.
+    /// (menus, pause, results) interrupt it. Only frames that ran come here, so with
+    /// `framesInFlight` the interval spans the animation frames skipped while the GPU
+    /// caught up: those are the slow frames the player sees, not fast ones.
     pub fn frame(&mut self, renderer: &mut Renderer, times: &FrameTimes, playing: bool) {
         let gpu_ms = renderer.take_gpu_frame_ms();
         if let Some(sample) = gpu_ms {
@@ -246,7 +205,10 @@ fn multisampled(device: &str, setting: &str) -> bool {
 }
 
 /// The configuration both game types take: `{ seed?, assetBase, cssWidth?, cssHeight?,
-/// pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?, device? }`.
+/// pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?, device?, framesInFlight?
+/// }`. `framesInFlight` runs frames only while fewer are on the GPU, for browsers that
+/// queue a WebGPU canvas's frames without holding animation frames back
+/// ([`FramePacing`]; 0, the default, leaves the pacing to the browser).
 #[derive(Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
 struct ViewConfig {
@@ -262,15 +224,27 @@ struct ViewConfig {
     graphics: String,
     /// "desktop", "tablet" or "phone" (`src/game/graphics.ts`).
     device: String,
+    frames_in_flight: u32,
+}
+
+/// What [`create_view`] sets up for a game type.
+pub struct PageView {
+    pub view: Presentation,
+    /// The canvas size to apply.
+    pub canvas: CanvasSize,
+    pub graphics: Graphics,
+    /// The configured seed, or a random one.
+    pub seed: f64,
+    pub pacing: FramePacing,
 }
 
 /// The renderer on `canvas` and its presentation with the saved camera preferences, the
-/// canvas size to apply, the graphics quality and the seed (random when `config_json`
-/// has none). Rejects when the renderer cannot start.
+/// canvas size to apply, the graphics quality, the seed (random when `config_json` has
+/// none) and the frame pacing. Rejects when the renderer cannot start.
 pub async fn create_view(
     canvas: web_sys::HtmlCanvasElement,
     config_json: &str,
-) -> Result<(Presentation, CanvasSize, Graphics, f64), JsValue> {
+) -> Result<PageView, JsValue> {
     let config: ViewConfig = parse(config_json)?;
     let seed = config
         .seed
@@ -299,7 +273,13 @@ pub async fn create_view(
     view.rig
         .restore_preferences(config.first_person, config.zoom);
     view.hide_reticle = config.hide_reticle;
-    Ok((view, size, graphics, seed))
+    Ok(PageView {
+        view,
+        canvas: size,
+        graphics,
+        seed,
+        pacing: FramePacing::new(config.frames_in_flight),
+    })
 }
 
 /// `prepare_step`'s `[compiled, remaining, texturesPending, done, gpuPending]`.

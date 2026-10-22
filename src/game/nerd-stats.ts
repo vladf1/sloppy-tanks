@@ -57,7 +57,7 @@ export function renderRows(stats: RenderStats): StatsRow[] {
     [
       "GPU frame time",
       quality.gpuMs === null ? "—" : `${quality.gpuMs.toFixed(1)} ms`,
-      "How long the GPU takes to finish a frame's scene, from its submission until WebGPU reports it done (more when the GPU was still busy with the frame before). Auto lowers the quality only while this is what slows frames. Not reported on WebGL.",
+      "How long the GPU takes to finish a frame, from its scene's submission until WebGPU reports it done (more when the GPU was still busy with the frame before). Auto lowers the quality only while this is what slows frames. Not reported on WebGL.",
     ],
     ["Draw calls / frame", stats.drawCalls, "GPU draw calls issued per rendered frame."],
     [

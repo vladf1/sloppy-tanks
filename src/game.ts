@@ -423,8 +423,8 @@ export async function prepareGame(
     if (stopped) {
       return;
     }
+    // Since the last frame the engine ran: it skips frames while the GPU catches up.
     const frameMs = Math.max(0, now - last);
-    last = Math.max(last, now);
     if (active && !document.hidden) {
       controls.stickTurns = touchControls.active && firstPerson;
       controls.takeInput(input);
@@ -441,7 +441,11 @@ export async function prepareGame(
         fail(error);
         return;
       }
-      counters.frames++;
+      const ran = result[FRAME.ran] === 1;
+      if (ran) {
+        counters.frames++;
+        last = Math.max(last, now);
+      }
       phase = PHASES[result[FRAME.phase]] ?? "ready";
       alive = result[FRAME.humanAlive] === 1;
       firstPerson = result[FRAME.firstPerson] === 1;
@@ -469,13 +473,17 @@ export async function prepareGame(
         result[FRAME.hullAngle],
         controls.aimWaitsForClick,
       );
-      stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      if (ran) {
+        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+        recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
+      }
       hudDt += result[FRAME.dt];
       if (result[FRAME.hudDue]) {
         updateHud(hudDt);
         hudDt = 0;
       }
-      recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
+    } else {
+      last = Math.max(last, now);
     }
     requestAnimationFrame(loop);
   }

@@ -50,6 +50,7 @@ const FRAME = {
   pointerFree: 12,
   viewerX: 13,
   viewerY: 14,
+  ran: 15,
 } as const;
 /** The dev-build page parameter that shows the transport delay sliders. */
 const LATENCY_SLIDER_PARAM = "latencySlider";
@@ -218,21 +219,18 @@ export async function startMultiplayer(
   let game: NetGame;
   try {
     const [width, height] = cssSize();
-    game = await createNetGame(
-      ui.canvas,
-      JSON.stringify({
-        server,
-        room,
-        savedSeat: savedSeat(seatKey),
-        ...delay,
-        assetBase: import.meta.env.BASE_URL,
-        cssWidth: width,
-        cssHeight: height,
-        pixelRatio: devicePixelRatio,
-        ...startingCamera(),
-        ...startingGraphics(),
-      }),
-    );
+    game = await createNetGame(ui.canvas, {
+      server,
+      room,
+      savedSeat: savedSeat(seatKey),
+      ...delay,
+      assetBase: import.meta.env.BASE_URL,
+      cssWidth: width,
+      cssHeight: height,
+      pixelRatio: devicePixelRatio,
+      ...startingCamera(),
+      ...startingGraphics(),
+    });
   } catch (error) {
     console.error("Multiplayer graphics failed", error);
     root.remove();
@@ -552,7 +550,10 @@ export async function startMultiplayer(
         result[FRAME.hullAngle],
         controls.aimWaitsForClick,
       );
-      stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      // Frames the engine skipped while the GPU caught up are not shown frames.
+      if (result[FRAME.ran]) {
+        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      }
     } else if (result[FRAME.events] > 0) {
       game.drain_events();
     }

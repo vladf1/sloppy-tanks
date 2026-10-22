@@ -22,9 +22,10 @@
 //! - `Game.create(canvas, config_json)`: config `{ seed?, assetBase, map?,
 //!   difficulty?, extraLevels?, humanKind?, humanTeam?, gameMode?, autoplay?,
 //!   cssWidth?, cssHeight?, pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?,
-//!   device? }`. Choices follow `initialGameOptions`; the arena is reset and
-//!   preparation begins. `graphics` is the saved Graphics setting and `device`
-//!   the page's device class, which chooses Auto's starting tier.
+//!   device?, framesInFlight? }` (the view's part is `page::create_view`'s). Choices
+//!   follow `initialGameOptions`; the arena is reset and preparation begins.
+//!   `graphics` is the saved Graphics setting and `device` the page's device class,
+//!   which chooses Auto's starting tier.
 //! - `set_options(options_json) -> bool`: Battle Setup choices `{ humanKind,
 //!   humanTeam, gameMode, mapMode, difficulty }` (`GameOptions`, camelCase). When
 //!   they differ, the arena rebuilds with the map's level rules (extra levels
@@ -43,7 +44,10 @@
 //!   animation frame. Input is the packed raw control state of
 //!   `sloppy_render::presentation::input::slot` (keys, touch sticks, pointer NDC,
 //!   fire, one-shot mine/ammo presses since the last frame, look pixels, zoom,
-//!   view toggle, wheel ammo steps).
+//!   view toggle, wheel ammo steps). With `framesInFlight`, a frame that finds that
+//!   many frames still on the GPU is skipped (its presses wait for the next) and hands
+//!   back the last result; the frames that run take an even clock
+//!   ([`crate::frame_clock::FramePacing`]).
 //! - `drain_events() -> JSON`: `{ listener: {x, z}, listenerRight: {x, z},
 //!   events: [SimEvent & { playerHit, own, damageAngle }] }` for audio and HUD;
 //!   `damageAngle` is the clockwise screen angle (radians) of damage the viewer
@@ -70,10 +74,11 @@
 //! - `error() -> string | undefined`: the first GPU error, if any.
 
 use crate::events::{PendingEvent, drain_events};
+use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
 use crate::hud::{HudHuman, Scoreboard, human_json};
 use crate::page::{
-    CanvasSize, FrameTimes, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, aim, create_view,
-    js_error, now_ms, parse, prepare_result, queue_event,
+    CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageView, aim, create_view, js_error,
+    now_ms, parse, prepare_result, queue_event,
 };
 use crate::stats::presentation_stats;
 
@@ -107,8 +112,6 @@ use wasm_bindgen::prelude::*;
 
 mod debug;
 
-/// Catch-up after a stall is bounded so one slow frame cannot spiral.
-const MAX_CATCH_UP_STEPS: u32 = 5;
 /// The round the browser's first arena prepares (it seeds bot names).
 const FIRST_ROUND: u32 = 3;
 /// Metres along an autoplaying turret where its reticle sits: the enemy's distance
@@ -146,7 +149,10 @@ pub mod frame_slot {
     /// person or off screen.
     pub const VIEWER_X: usize = 13;
     pub const VIEWER_Y: usize = 14;
-    pub const LENGTH: usize = 15;
+    /// 1 when the frame ran; 0 when it was skipped while the GPU still ran earlier
+    /// frames (`framesInFlight`), and the other slots repeat the last frame's.
+    pub const RAN: usize = 15;
+    pub const LENGTH: usize = 16;
 }
 
 /// `Game.hud_json`: the page HUD's view of the match and the human's tank.
@@ -240,7 +246,8 @@ pub struct Game {
     state: RenderState,
     options: GameOptions,
     commands: CommandBuilder,
-    accumulator: f64,
+    steps: StepClock,
+    pacing: FramePacing,
     active: bool,
     autoplay: bool,
     overview: bool,
@@ -257,6 +264,8 @@ pub struct Game {
     hud_tank: RenderTank,
     /// The finished round's recap; personal bests are saved once per result.
     recap: Option<Value>,
+    /// The last frame's result, which a frame skipped for the GPU hands back.
+    last_result: Vec<f32>,
 }
 
 #[wasm_bindgen]
@@ -269,7 +278,13 @@ impl Game {
     ) -> Result<Game, JsValue> {
         console_error_panic_hook::set_once();
         let config: GameConfig = parse(config_json)?;
-        let (mut view, canvas, graphics, seed) = create_view(canvas, config_json).await?;
+        let PageView {
+            mut view,
+            canvas,
+            graphics,
+            seed,
+            pacing,
+        } = create_view(canvas, config_json).await?;
         let mut options = initial_game_options(
             seed,
             config.map.as_deref(),
@@ -298,7 +313,8 @@ impl Game {
             state,
             options,
             commands: CommandBuilder::default(),
-            accumulator: 0.0,
+            steps: StepClock::default(),
+            pacing,
             active: false,
             autoplay: config.autoplay,
             overview: false,
@@ -312,6 +328,7 @@ impl Game {
             graphics,
             hud_tank: RenderTank::default(),
             recap: None,
+            last_result: vec![0.0; frame_slot::LENGTH],
         };
         game.canvas.apply(&mut game.view);
         game.reset_view();
@@ -379,7 +396,7 @@ impl Game {
         self.commands.clear();
         self.sim.start();
         self.active = true;
-        self.accumulator = 0.0;
+        self.steps.reset();
         self.graphics.round_started();
         // Animation frames queued before GO (behind a slow arena rebuild) carry older
         // timestamps; measuring from now keeps them from advancing the new round.
@@ -396,7 +413,7 @@ impl Game {
         if self.sim.match_state.phase == MatchPhase::Paused {
             self.commands.clear();
             self.sim.start();
-            self.accumulator = 0.0;
+            self.steps.reset();
         }
     }
 
@@ -404,7 +421,7 @@ impl Game {
         if self.sim.match_state.phase == MatchPhase::Playing {
             self.sim.match_state.phase = MatchPhase::Paused;
             self.commands.clear();
-            self.accumulator = 0.0;
+            self.steps.reset();
         }
     }
 
@@ -427,10 +444,17 @@ impl Game {
     /// events to presentation, and draws. See [`frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
         let input = InputFrame::from_slice(input);
+        // A paced frame runs at its smoothed time; skipped, it only takes the input.
+        let in_flight = self.view.renderer.frames_in_flight();
+        let Some(now) = self.pacing.frame_time(now, in_flight) else {
+            return Ok(self.wait_for_gpu(&input, now));
+        };
         let dt = self.times.advance(now);
         let mut result = vec![0.0; frame_slot::LENGTH];
+        result[frame_slot::RAN] = 1.0;
         if !self.active {
             result[frame_slot::PHASE] = phase_code(self.sim.match_state.phase);
+            self.last_result.clone_from(&result);
             return Ok(result);
         }
         if self.sim.match_state.phase == MatchPhase::Results && self.auto_rounds {
@@ -451,7 +475,7 @@ impl Game {
         let alive = self.sim.tanks[human].alive;
         self.commands.queue(&input, playing && alive, now);
         if playing {
-            self.accumulator = (self.accumulator + dt).min(STEP * f64::from(MAX_CATCH_UP_STEPS));
+            let steps = self.steps.advance(dt);
             let position = self.human_position();
             // Autoplay's turret answers to its brain, not the pointer: the reticle
             // follows the gun and the camera leans with it.
@@ -462,19 +486,16 @@ impl Game {
                 }
                 _ => aim(&mut self.view.rig, &input, position, dt, alive).0,
             };
-            let mut steps = 0;
-            while self.accumulator >= STEP && steps < MAX_CATCH_UP_STEPS {
+            for _ in 0..steps {
                 let active = self.sim.match_state.phase == MatchPhase::Playing
                     && self.sim.tanks[human].alive;
                 let command = self.commands.command(&input, angle, active);
                 let command = self.view.rig.first_person.steer(command);
                 self.sim.set_wreck_view(Some(self.view.wreck_view()));
                 self.sim.step(command, self.autoplay);
-                self.accumulator -= STEP;
-                steps += 1;
             }
         } else {
-            self.accumulator = 0.0;
+            self.steps.reset();
         }
         let human = self.human_index();
         let clear_input =
@@ -488,7 +509,7 @@ impl Game {
         let render_start = now_ms();
         if self.sim.match_state.phase != MatchPhase::Ready {
             let alpha = if self.sim.match_state.phase == MatchPhase::Playing {
-                self.accumulator / STEP
+                self.steps.alpha()
             } else {
                 1.0
             };
@@ -525,7 +546,33 @@ impl Game {
         result[frame_slot::VIEWER_X] = viewer_x;
         result[frame_slot::VIEWER_Y] = viewer_y;
         self.frame_index += 1;
+        self.last_result.clone_from(&result);
         Ok(result)
+    }
+
+    /// An animation frame skipped while the GPU still runs earlier ones: the view and
+    /// first-person look take its input at once, its presses wait for the next tick, and
+    /// the page keeps the last frame's result.
+    fn wait_for_gpu(&mut self, input: &InputFrame, now: f64) -> Vec<f32> {
+        self.view.rig.zoom_by(input.zoom);
+        if input.toggle_view {
+            self.toggle_first_person();
+        }
+        let playing = self.sim.match_state.phase == MatchPhase::Playing;
+        let alive = self.sim.human().alive;
+        self.commands.queue(input, playing && alive, now);
+        if playing && alive && self.view.rig.first_person.enabled {
+            self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
+        }
+        let mut result = self.last_result.clone();
+        result[frame_slot::RAN] = 0.0;
+        result[frame_slot::EVENTS] = self.events.len() as f32;
+        result[frame_slot::HUD_DUE] = 0.0;
+        result[frame_slot::SIM_MS] = 0.0;
+        result[frame_slot::RENDER_MS] = 0.0;
+        result[frame_slot::FIRST_PERSON] = f32::from(u8::from(self.view.rig.first_person.enabled));
+        result[frame_slot::DT] = 0.0;
+        result
     }
 
     /// Pending events for audio and HUD, as JSON.
@@ -1017,7 +1064,7 @@ impl Game {
         self.prepared = false;
         self.recap = None;
         self.events.clear();
-        self.accumulator = 0.0;
+        self.steps.reset();
     }
 
     fn route_events(&mut self) {

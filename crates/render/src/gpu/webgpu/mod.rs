@@ -10,7 +10,7 @@ mod resources;
 mod textures;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use wgpu::util::DeviceExt;
 
@@ -72,17 +72,18 @@ fn now_ms() -> f64 {
         .map_or(0.0, |performance| performance.now())
 }
 
-/// How long the GPU took to finish a frame: from its scene's submission until the queue
-/// reported everything submitted done, the GPU's own time when it was idle at the
-/// submission (and more when it was still busy). One frame is sampled at a time.
+/// Canvas frames on the GPU, which one completion callback per frame tracks: how many
+/// are still running, and how long the GPU took to finish the latest, from its scene's
+/// submission until the queue reported everything submitted done (the GPU's own time
+/// when it was idle at the submission, and more when it was still busy).
 #[derive(Default)]
-struct GpuFrameTime {
-    /// The latest sample's milliseconds, as `f64` bits.
+struct GpuFrames {
+    /// Canvas frames submitted whose GPU work has not finished yet.
+    in_flight: AtomicU32,
+    /// The latest finished frame's milliseconds, as `f64` bits.
     ms: AtomicU64,
     /// A sample arrived that nobody has taken yet.
     fresh: AtomicBool,
-    /// A sampled frame is still running.
-    pending: AtomicBool,
 }
 
 fn base_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
@@ -122,7 +123,7 @@ pub struct Frame {
     /// Set once the GPU has run everything submitted before the last
     /// [`Frame::await_gpu`].
     gpu_idle: Arc<AtomicBool>,
-    gpu_frame_time: Arc<GpuFrameTime>,
+    gpu_frames: Arc<GpuFrames>,
 }
 
 impl Frame {
@@ -193,7 +194,7 @@ impl Frame {
             shadow_base_buffer: base_buffer(device, INITIAL_SHADOW_BASES),
             shadow_base_capacity: INITIAL_SHADOW_BASES,
             gpu_idle: Arc::new(AtomicBool::new(true)),
-            gpu_frame_time: Arc::default(),
+            gpu_frames: Arc::default(),
         };
         frame.view_groups = frame.frame_groups(gpu, &frame.instance_records);
         frame
@@ -378,27 +379,32 @@ impl Frame {
             .configure(&gpu.device, &self.canvas.config);
     }
 
-    /// The GPU time of the latest sampled frame in milliseconds, once: `None` until a
+    /// The GPU time of the latest finished frame in milliseconds, once: `None` until a
     /// new sample arrives.
     pub fn take_gpu_frame_ms(&self) -> Option<f64> {
-        let sample = &self.gpu_frame_time;
-        sample
+        let frames = &self.gpu_frames;
+        frames
             .fresh
             .swap(false, Ordering::AcqRel)
-            .then(|| f64::from_bits(sample.ms.load(Ordering::Acquire)))
+            .then(|| f64::from_bits(frames.ms.load(Ordering::Acquire)))
     }
 
-    /// Sample this frame's GPU time unless an earlier sample is still running.
-    fn sample_gpu_frame_time(&self, gpu: &Gpu, submitted: f64) {
-        if self.gpu_frame_time.pending.swap(true, Ordering::AcqRel) {
-            return;
-        }
-        let sample = self.gpu_frame_time.clone();
+    /// Canvas frames the GPU has not finished. Chrome holds animation frames back
+    /// while the GPU is behind; WebKit lets them queue.
+    pub fn frames_in_flight(&self) -> u32 {
+        self.gpu_frames.in_flight.load(Ordering::Acquire)
+    }
+
+    /// Count a canvas frame whose scene was submitted at `submitted` (ms) as in flight
+    /// until the GPU finishes it, and then take its GPU time.
+    fn track_frame(&self, gpu: &Gpu, submitted: f64) {
+        let frames = self.gpu_frames.clone();
+        frames.in_flight.fetch_add(1, Ordering::AcqRel);
         gpu.queue.on_submitted_work_done(move || {
             let ms = now_ms() - submitted;
-            sample.ms.store(ms.to_bits(), Ordering::Release);
-            sample.fresh.store(true, Ordering::Release);
-            sample.pending.store(false, Ordering::Release);
+            frames.ms.store(ms.to_bits(), Ordering::Release);
+            frames.fresh.store(true, Ordering::Release);
+            frames.in_flight.fetch_sub(1, Ordering::AcqRel);
         });
     }
 
@@ -421,7 +427,6 @@ impl Frame {
         self.encode_scene(&mut encoder, scene, stats);
         let submitted = now_ms();
         gpu.queue.submit([encoder.finish()]);
-        self.sample_gpu_frame_time(gpu, submitted);
         let output = match self.canvas.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -441,6 +446,7 @@ impl Frame {
         self.encode_output(&mut encoder, &view, scene.pipelines, stats);
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(output);
+        self.track_frame(gpu, submitted);
         Ok(())
     }
 

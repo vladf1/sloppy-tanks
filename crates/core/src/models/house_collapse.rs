@@ -13,7 +13,9 @@ use glam::{DMat4, DVec2, DVec3};
 use super::building_kit::Surface;
 use super::tank_kit::{Kit, pose, shift};
 use crate::geometry::{Mesh, narrow, widen};
-use crate::sim::house_fracture::{Crack, PartPlane, ShardRegion, clip_vertices};
+use crate::sim::house_fracture::{
+    Crack, PartPlane, ShardRegion, Side, clip_vertices, clip_vertices_into,
+};
 use crate::sim::house_layout::{CHIMNEY, PieceShape, RAFTER_DEPTH, Roof};
 use crate::sim::math::Random;
 
@@ -25,6 +27,11 @@ const SHINGLE_EDGE: f64 = 0.05;
 const DECK_EDGE: f64 = 0.06;
 /// Splinters along a torn edge: one about every this many metres.
 const SPLINTER_SPACING: f64 = 0.38;
+/// Metres past a cell's side where a triangle is skipped unclipped: far beyond
+/// `clip_vertices`' tolerance, so clipping it would have left nothing either.
+const CLEARLY_OUTSIDE: f64 = 1e-6;
+/// Metres from a part's plane origin past any of its shards' cells.
+const PLANE_REACH: f64 = 1000.0;
 
 #[derive(Clone, Copy)]
 struct Vertex {
@@ -66,18 +73,50 @@ pub(super) fn clip_mesh(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) ->
             }
         }
     };
+    let cells: Vec<(&Vec<Side>, [DVec2; 2])> = region
+        .cells
+        .iter()
+        .map(|cell| (cell, cell_bounds(cell)))
+        .collect();
+    let [region_min, region_max] = cells.iter().fold(
+        [DVec2::INFINITY, DVec2::NEG_INFINITY],
+        |[low, high], (_, [min, max])| [low.min(*min), high.max(*max)],
+    );
+    let (mut polygon, mut clipped) = (Vec::new(), Vec::new());
     for t in 0..count {
-        let triangle = [0, 1, 2].map(|k| vertex(corner(t, k)));
-        let points = triangle.map(|v| project(&v));
+        let corners = [0, 1, 2].map(|k| corner(t, k));
+        let points = corners.map(|i| plane.project(widen(mesh.positions[i])));
+        let low = points[0].min(points[1]).min(points[2]) - CLEARLY_OUTSIDE;
+        let high = points[0].max(points[1]).max(points[2]) + CLEARLY_OUTSIDE;
+        // A triangle clear of a cell's bounds, or wholly beyond one of its sides, leaves
+        // nothing in it. Most of a part's triangles lie outside most shards, and
+        // clipping each through every side made a cottage's collapse cost a frozen half
+        // second.
+        if low.cmpgt(region_max).any() || high.cmplt(region_min).any() {
+            continue;
+        }
+        let reaches = |(cell, [min, max]): &&(&Vec<Side>, [DVec2; 2])| {
+            low.cmple(*max).all()
+                && high.cmpge(*min).all()
+                && !cell
+                    .iter()
+                    .any(|side| points.iter().all(|q| side.distance(*q) < -CLEARLY_OUTSIDE))
+        };
+        if !cells.iter().any(|cell| reaches(&cell)) {
+            continue;
+        }
+        let triangle = corners.map(vertex);
         let whole = points.iter().all(|q| region.contains(*q)) && !region.straddles(&points);
         if whole {
             emit(&triangle);
             continue;
         }
-        for cell in &region.cells {
-            let mut polygon = triangle.to_vec();
+        for &(cell, _) in cells.iter().filter(reaches) {
+            polygon.clear();
+            polygon.extend_from_slice(&triangle);
             for side in cell {
-                polygon = clip_vertices(&polygon, side, project, mix);
+                clip_vertices_into(&polygon, side, project, mix, &mut clipped);
+                std::mem::swap(&mut polygon, &mut clipped);
                 if polygon.len() < 3 {
                     break;
                 }
@@ -88,6 +127,22 @@ pub(super) fn clip_mesh(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) ->
         }
     }
     (!out.positions.is_empty()).then_some(out)
+}
+
+/// The corners of `cell`'s bounding box in its part's plane, clipped from a square
+/// reaching past every part; inverted (empty) when nothing is inside.
+fn cell_bounds(cell: &[Side]) -> [DVec2; 2] {
+    let mut polygon = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+        .map(|(s, t)| DVec2::new(s, t) * PLANE_REACH)
+        .to_vec();
+    for side in cell {
+        polygon = clip_vertices(&polygon, side, |q| *q, |a, b, k| a.lerp(*b, k));
+    }
+    polygon
+        .iter()
+        .fold([DVec2::INFINITY, DVec2::NEG_INFINITY], |[min, max], q| {
+            [min.min(*q), max.max(*q)]
+        })
 }
 
 /// The parts of the segment `a`–`b` (plane points) outside every opening
@@ -515,4 +570,107 @@ pub(super) fn clip_meshes<C: Copy>(
             clip_mesh(mesh, &shape.plane, &shape.region).map(|mesh| (*coat, Arc::new(mesh)))
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A wall-sized grid of `columns` × `rows` quads in the plane z = 0.
+    fn grid(columns: u32, rows: u32) -> Mesh {
+        let mut mesh = Mesh::default();
+        let mut indices = Vec::new();
+        for row in 0..=rows {
+            for column in 0..=columns {
+                let (s, t) = (column as f32 / columns as f32, row as f32 / rows as f32);
+                mesh.positions.push([s * 4.0 - 2.0, t * 3.0, 0.0]);
+                mesh.normals.push([0.0, 0.0, 1.0]);
+                mesh.uvs.push([s, t]);
+            }
+        }
+        for row in 0..rows {
+            for column in 0..columns {
+                let at = row * (columns + 1) + column;
+                let above = at + columns + 1;
+                indices.extend([at, at + 1, above + 1, at, above + 1, above]);
+            }
+        }
+        mesh.indices = Some(indices);
+        mesh
+    }
+
+    /// Every triangle clipped through every cell's sides, as shards were cut before
+    /// triangles that cannot reach a cell were passed over.
+    fn plain_clip(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) -> Mesh {
+        let vertex = |i: u32| Vertex {
+            p: widen(mesh.positions[i as usize]),
+            n: widen(mesh.normals[i as usize]),
+            uv: DVec2::new(
+                f64::from(mesh.uvs[i as usize][0]),
+                f64::from(mesh.uvs[i as usize][1]),
+            ),
+        };
+        let project = |v: &Vertex| plane.project(v.p);
+        let mut out = Mesh::default();
+        let mut emit = |polygon: &[Vertex]| {
+            for i in 1..polygon.len().saturating_sub(1) {
+                for v in [polygon[0], polygon[i], polygon[i + 1]] {
+                    out.positions.push(narrow(v.p));
+                    out.normals.push(narrow(v.n));
+                    out.uvs.push([v.uv.x as f32, v.uv.y as f32]);
+                }
+            }
+        };
+        for corners in mesh.indices.as_ref().unwrap().chunks(3) {
+            let triangle = [0, 1, 2].map(|k| vertex(corners[k]));
+            let points = triangle.map(|v| project(&v));
+            if points.iter().all(|q| region.contains(*q)) && !region.straddles(&points) {
+                emit(&triangle);
+                continue;
+            }
+            for cell in &region.cells {
+                let mut polygon = triangle.to_vec();
+                for side in cell {
+                    polygon = clip_vertices(&polygon, side, project, mix);
+                    if polygon.len() < 3 {
+                        break;
+                    }
+                }
+                if polygon.len() >= 3 {
+                    emit(&polygon);
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn shards_cut_only_the_triangles_they_reach_as_a_full_clip_would() {
+        let mesh = grid(40, 30);
+        let plane = PartPlane {
+            origin: DVec3::ZERO,
+            s: DVec3::X,
+            t: DVec3::Y,
+        };
+        let mut wander = [0.21, -0.17, 0.09, -0.05].into_iter().cycle();
+        let knots = [0.4, 0.9, 1.5, 2.2, 2.7];
+        let cracks = [-0.7, 0.2, 1.1].map(|s| Crack::new(s, &knots, || wander.next().unwrap()));
+        let regions = [
+            ShardRegion::between(None, Some(&cracks[0]), None),
+            ShardRegion::between(Some(&cracks[0]), Some(&cracks[1]), None),
+            ShardRegion::between(Some(&cracks[1]), Some(&cracks[2]), None),
+            ShardRegion::between(Some(&cracks[2]), None, None),
+        ];
+        let mut triangles = 0;
+        for region in &regions {
+            let cut = clip_mesh(&mesh, &plane, region).expect("every shard keeps some wall");
+            let plain = plain_clip(&mesh, &plane, region);
+            assert_eq!(cut.positions, plain.positions);
+            assert_eq!(cut.normals, plain.normals);
+            assert_eq!(cut.uvs, plain.uvs);
+            triangles += cut.positions.len() / 3;
+        }
+        // Together the shards hold the whole wall, cut along the cracks.
+        assert!(triangles > mesh.triangle_count());
+    }
 }

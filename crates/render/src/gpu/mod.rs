@@ -846,6 +846,9 @@ pub struct Renderer {
     /// A development multiplier on the scene's size, to make the GPU the bottleneck
     /// in a measurement (`debug_set_scene_load`); 1 otherwise.
     scene_load: f32,
+    /// The quality controller asked for a canvas pacing reset that the next frame
+    /// free of queued ones performs.
+    pacing_reset_due: bool,
     /// Development switches a measurement flips within one page (`debug_set_off`).
     pub debug_off: DebugOff,
 }
@@ -959,6 +962,7 @@ impl Renderer {
             render_scale: 1.0,
             requested_shadow_size: sun_shadow.map_size,
             scene_load: 1.0,
+            pacing_reset_due: false,
             debug_off: DebugOff::default(),
             frame,
             gpu,
@@ -1709,15 +1713,21 @@ impl Renderer {
     }
 
     /// Start the canvas's frame pacing afresh (`crate::quality`: WebKit keeps a lowered
-    /// rate for good otherwise).
+    /// rate for good otherwise), at the start of the next frame that finds no earlier
+    /// one on the GPU.
     pub fn reset_canvas_pacing(&mut self) {
-        self.frame.reset_canvas_pacing(&self.gpu);
+        self.pacing_reset_due = true;
     }
 
-    /// The GPU time of the latest sampled frame in milliseconds, once per sample; never
+    /// The GPU time of the latest finished frame in milliseconds, once per sample; never
     /// on WebGL, which cannot time it.
     pub fn take_gpu_frame_ms(&self) -> Option<f64> {
         self.frame.take_gpu_frame_ms()
+    }
+
+    /// Frames drawn into the canvas whose GPU work has not finished.
+    pub fn frames_in_flight(&self) -> u32 {
+        self.frame.frames_in_flight()
     }
 
     /// Draw every prepared variant once offscreen (shadow, main, water and output
@@ -2556,6 +2566,13 @@ impl Renderer {
     fn render_frame(&mut self, time: f32) -> Result<(), String> {
         if let Some(error) = self.error() {
             return Err(error);
+        }
+        // Configuring the canvas replaces its drawing buffer, so it waits for a frame
+        // that has not taken the canvas's texture yet and finds every earlier frame
+        // done: one still on the GPU would be lost instead of shown.
+        if self.pacing_reset_due && self.frame.frames_in_flight() == 0 {
+            self.frame.reset_canvas_pacing(&self.gpu);
+            self.pacing_reset_due = false;
         }
         self.time = time;
         self.meshes.collect_released();
