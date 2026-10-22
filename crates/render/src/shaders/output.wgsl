@@ -150,9 +150,33 @@ fn aces_filmic(color: vec3f, exposure: f32) -> vec3f {
         vec3f(-0.53108, 1.10813, -0.07276),
         vec3f(-0.07367, -0.00605, 1.07602),
     );
-    let mapped = rrt_and_odt_fit(input_matrix * (color * exposure / 0.6));
-    return fit_gamut(output_matrix * mapped);
+    let exposed = color * exposure / 0.6;
+    let mapped = fit_gamut(output_matrix * rrt_and_odt_fit(input_matrix * exposed));
+    // Per channel the curve bleaches a bright saturated colour: a sunlit red deck's
+    // red channel flattens at the shoulder while its small green and blue climb, so
+    // it turns salmon and reads as the same flat value as the shaded flank. For
+    // saturated colours the other channels instead keep their ratio to the
+    // brightest one, which keeps the level the curve gave it: lit and shaded faces
+    // of a team-coloured hull keep their hue and their value steps. Fire and other
+    // very hot colours still bleach toward white.
+    let peak = max(max(exposed.r, exposed.g), exposed.b);
+    let low = min(min(exposed.r, exposed.g), exposed.b);
+    let saturated = smoothstep(HUE_KEEP_FROM, HUE_KEEP_FULL, (peak - low) / max(peak, 1e-5))
+        * (1.0 - smoothstep(HUE_KEEP_HOT.x, HUE_KEEP_HOT.y, peak));
+    if saturated <= 0.0 {
+        return mapped;
+    }
+    let kept = exposed * (max(max(mapped.r, mapped.g), mapped.b) / max(peak, 1e-5));
+    return mix(mapped, clamp(kept, vec3f(0.0), vec3f(1.0)), saturated * HUE_KEEP);
 }
+
+// Hue-keeping tone mapping (`aces_filmic`): the saturation (chroma over the brightest
+// channel) where it begins and is complete, the exposed level over which very hot
+// colours return to the per-channel curve, and its share at full.
+const HUE_KEEP_FROM: f32 = 0.45;
+const HUE_KEEP_FULL: f32 = 0.85;
+const HUE_KEEP_HOT: vec2f = vec2f(1.6, 3.0);
+const HUE_KEEP: f32 = 0.7;
 
 // ACES's output matrix pushes saturated colors out of gamut: a red hull lands with
 // green and blue below 0 and a hot one with red past 1. Clamping each channel turns
@@ -220,17 +244,19 @@ const EARTH_HUE: f32 = 0.088;
 const PINK_HUE: f32 = 0.955;
 // Meadow green, and the share of its saturation the foliage grade takes at full.
 const MEADOW_HUE: f32 = 0.27;
-const MEADOW_CALM: f32 = 0.18;
+const MEADOW_CALM: f32 = 0.28;
 // Occlusion: the linear scene levels of shade and of sunlit ground, the share of its
 // strength sunlit pixels keep, and its per-channel power (warm: blue goes first).
 const OCCLUSION_SHADE_LEVEL: f32 = 0.08;
 const OCCLUSION_LIT_LEVEL: f32 = 0.45;
-const OCCLUSION_IN_SUN: f32 = 0.45;
+const OCCLUSION_IN_SUN: f32 = 0.6;
 const OCCLUSION_HUE: vec3f = vec3f(0.85, 1.0, 1.2);
 // The least light occlusion leaves anywhere.
-const OCCLUSION_FLOOR: f32 = 0.45;
-// Display mid grey, the pivot of the contrast curve.
+const OCCLUSION_FLOOR: f32 = 0.55;
+// Display mid grey, the pivot of the contrast curve, and the level below which the
+// curve eases back to linear.
 const MID_GREY: f32 = 0.18;
+const CONTRAST_TOE: f32 = 0.06;
 
 // The grade on the tone-mapped display color: gain scales the whites, the black point
 // holds the shadows down, lift and gamma bend them, split toning cools shadows and
@@ -281,7 +307,10 @@ fn grade(color: vec3f) -> vec3f {
 // white, so the brightest sunlit faces keep their gradations instead of the power
 // curve pushing them past 1 into one flat colour.
 fn contrast_curve(c: vec3f, contrast: f32) -> vec3f {
-    let low = MID_GREY * pow(max(c, vec3f(0.0)) / MID_GREY, vec3f(contrast));
+    // The power eases back to linear toward black, so the deepest shade keeps its
+    // colour and detail rather than being crushed into ink.
+    let toe = mix(vec3f(1.0), vec3f(contrast), smoothstep(vec3f(0.0), vec3f(CONTRAST_TOE), c));
+    let low = MID_GREY * pow(max(c, vec3f(0.0)) / MID_GREY, toe);
     let x = clamp((c - MID_GREY) / (1.0 - MID_GREY), vec3f(0.0), vec3f(1.0));
     let high = MID_GREY + (1.0 - MID_GREY) * x * (contrast - (contrast - 1.0) * x);
     return select(high, low, c <= vec3f(MID_GREY));

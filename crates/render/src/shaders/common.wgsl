@@ -259,8 +259,8 @@ fn sky_gradient(direction: vec3f) -> vec3f {
 // The near range of the horizon's distant ranges stands this much lower than the far
 // one, and each takes this share of the ridge color over the sky behind it.
 const NEAR_RIDGE_SCALE: f32 = 0.62;
-const FAR_RIDGE_SHARE: f32 = 0.42;
-const NEAR_RIDGE_SHARE: f32 = 0.7;
+const FAR_RIDGE_SHARE: f32 = 0.6;
+const NEAR_RIDGE_SHARE: f32 = 0.85;
 // The ridge line's softness, in ray slope, where surfaces fading into the sky draw it.
 const FADED_RIDGE_EDGE: f32 = 0.002;
 
@@ -279,9 +279,9 @@ fn ridge_profile(azimuth: vec2f, offset: vec2f) -> f32 {
 // How much of the haze behind a range settles over its foot, the azimuth step over
 // which a range's slope is measured, and how strongly that slope turns its faces
 // toward or away from the sun.
-const RIDGE_FOOT_HAZE: f32 = 0.7;
+const RIDGE_FOOT_HAZE: f32 = 0.55;
 const RIDGE_SLOPE_STEP: f32 = 0.004;
-const RIDGE_FACE_LIGHT: f32 = 0.22;
+const RIDGE_FACE_LIGHT: f32 = 0.1;
 // Ray slope over which the faces fade in above the horizon.
 const RIDGE_SHADE_FADE: f32 = 0.004;
 // Mesa strata: bands per range height and how much their value alternates.
@@ -386,11 +386,16 @@ fn sky_behind(ray: vec3f) -> vec3f {
 // this share of its density on the highest crests.
 const FAR_HAZE_THINNING: f32 = 1.0;
 const FAR_HAZE_CREST_SHARE: f32 = 0.3;
+// The distance veil (`apply_fog`): the most it hides, and the distances in metres
+// over which it builds.
+const AERIAL_DEPTH_SHARE: f32 = 0.14;
+const AERIAL_DEPTH_FROM: f32 = 80.0;
+const AERIAL_DEPTH_TO: f32 = 300.0;
 // Height in metres over which the low mist beyond the arena thins by e.
 const MIST_HEIGHT: f32 = 14.0;
 // Shares of the far plane's distance over which surfaces melt into the sky.
-const FAR_FADE_START: f32 = 0.84;
-const FAR_FADE_END: f32 = 0.98;
+const FAR_FADE_START: f32 = 0.9;
+const FAR_FADE_END: f32 = 0.995;
 
 // Aerial perspective in two layers. Exponential height haze, integrated from where
 // it begins to the surface, lies dense in the valleys and thin up high, so a camera
@@ -436,14 +441,21 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
         // gone a few storeys up, so distant hills stand out of it with clear crests.
         let mist = frame.haze_far.w * exp(-max(world.y, 0.0) / MIST_HEIGHT) * beyond * level
             * smoothstep(frame.haze_far.y * 0.7, frame.haze_far.y * 1.4, distance);
-        let clear = (1.0 - near_amount) * (1.0 - far_amount) * (1.0 - mist);
+        // A thin veil that grows with distance alone, steep rays included, so even
+        // the overhead overview steps back toward its far edge instead of reading
+        // the far ship or field as crisp as the tanks below.
+        let veil = AERIAL_DEPTH_SHARE * smoothstep(AERIAL_DEPTH_FROM, AERIAL_DEPTH_TO, distance);
+        let clear = (1.0 - near_amount) * (1.0 - far_amount) * (1.0 - mist) * (1.0 - veil);
         let amount = min(1.0 - clear, frame.haze.w);
         var hazed = mix(color, haze_tint(ray, amount), amount);
         let far = frame.haze_shape.w;
         if far > 0.0 {
             // Late and short, so the far mesas and ranges keep their own form and
-            // only what the far plane is about to clip melts away.
-            let fade = smoothstep(far * FAR_FADE_START, far * FAR_FADE_END, distance);
+            // only what the far plane is about to clip melts away. It follows view
+            // depth, as the far plane does: a distant face fades evenly across its
+            // width instead of smearing at the sides that curve away.
+            let depth = -(frame.view * vec4f(world, 1.0)).z;
+            let fade = smoothstep(far * FAR_FADE_START, far * FAR_FADE_END, depth);
             if fade > 0.0 {
                 hazed = mix(hazed, sky_behind(ray), fade);
             }
