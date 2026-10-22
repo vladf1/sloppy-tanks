@@ -199,7 +199,8 @@ fn hud_paint(color: u32, opacity: f32) -> Arc<Material> {
 /// `createTankBar(team)`: the hull bar with its three health colors, the shield
 /// and spawn meters, and one to three rank chevrons. Billboarded by the instance.
 /// The fill is green, amber or red like the page HUD's hull bar, whatever the team: a
-/// team-coloured pointer under the bar names the side and ties the bar to its tank. A
+/// team-coloured edge round the rim and a pointer under it name the side and tie the
+/// bar to its tank, one mesh in the team's paint so the side costs no extra draw. A
 /// dark rounded rim keeps it legible on bright grass and pale concrete; the empty track
 /// stays a visible navy so lost hull reads at a glance, a dark ember trail shows the
 /// chunk the last hit took, and a sheen and segment notches give the fill the page
@@ -222,13 +223,17 @@ pub fn tank_bar(team: Team) -> Node {
         hud_paint(0x050a12, 0.9),
         10,
     ));
+    let mut edge = rounded_rect_shape(BAR_RIM_WIDTH + 0.11, BAR_RIM_HEIGHT + 0.11, 0.135);
+    edge.holes
+        .push(rounded_rect_shape(BAR_RIM_WIDTH - 0.02, BAR_RIM_HEIGHT - 0.02, 0.07).outline);
+    let pointer = Shape::from_points(&[
+        DVec2::new(-0.095, below - 0.005),
+        DVec2::new(0.0, below - 0.105),
+        DVec2::new(0.095, below - 0.005),
+    ]);
     bar.children.push(at(
         mesh(
-            arc(polygon(&[
-                [-0.095, below - 0.005],
-                [0.0, below - 0.105],
-                [0.095, below - 0.005],
-            ])),
+            arc(shape_geometry(&[edge, pointer])),
             hud_material(TEAM_COLORS[team.index()]),
             12,
         ),

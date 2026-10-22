@@ -92,11 +92,94 @@ fn brdf_ggx_multiscatter(l: vec3f, v: vec3f, n: vec3f, f0: vec3f, f90: f32, roug
     return single + fms * (ems_v * ems_l);
 }
 
+// The receiving triangle's own normal (from screen derivatives, before any bump or
+// macro relief), set by `fs_main`: the plane the penumbra's blocker search follows.
+var<private> receiver_normal: vec3f;
+
+// Contact-hardening penumbra: shadows stay crisp where a hull or wall meets the
+// ground and widen toward the tip of a tall caster's shadow. Blockers are found
+// with the same hardware-filtered compares as the filter (continuous as things
+// move, no noise): four taps around the receiver, against its own plane, find the
+// casters above it, and only where there are any, three more depths sort them by
+// how far up the sun's ray they stand (`BLOCKER_STEPS`, metres).
+const PENUMBRA_SEARCH_TEXELS: f32 = 5.0;
+const BLOCKER_STEPS: vec3f = vec3f(1.0, 2.5, 5.0);
+// The caster distance each band of the search stands for, metres: below the first
+// step, between the steps and beyond the last.
+const BLOCKER_BANDS: vec4f = vec4f(0.5, 1.75, 3.75, 6.5);
+// The filter radius (in units of the 7×7 tent) at contact and under far casters,
+// and the caster distances in metres over which it widens.
+const PENUMBRA_CONTACT_RADIUS: f32 = 0.55;
+const PENUMBRA_FAR_RADIUS: f32 = 1.7;
+const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 5.0);
+// Sky the ground sees from inside a cast shadow: hard by its caster a wall or hull
+// hides much of the sky, so the shade is deepest there and opens toward the
+// shadow's tip; this share of the fill remains at contact, rising to all of it over
+// the caster distances in metres.
+const SHADOW_CONTACT_FILL: f32 = 0.62;
+const SHADOW_FILL_OPENING: vec2f = vec2f(0.3, 5.0);
+// Steepest receiver slope the search follows, metres of depth per texel, and the
+// depth gap it ignores, metres.
+const RECEIVER_SLOPE_LIMIT: f32 = 0.6;
+const BLOCKER_TOLERANCE: f32 = 0.06;
+
+// The share of the sky fill that reaches the receiver inside its cast shadow, set by
+// `penumbra_radius` (1 where nothing casts or no search ran).
+var<private> shadow_fill: f32 = 1.0;
+
+fn penumbra_radius(coord: vec3f, size: f32) -> f32 {
+    let m = frame.shadow_matrix;
+    let ru = vec3f(m[0].x, m[1].x, m[2].x);
+    let rv = vec3f(m[0].y, m[1].y, m[2].y);
+    let rz = vec3f(m[0].z, m[1].z, m[2].z);
+    // The light's projection is orthographic: its rows are orthogonal, so the
+    // receiving plane's depth slope per map unit follows from their dot products.
+    let a = dot(ru, receiver_normal) / dot(ru, ru);
+    let b = dot(rv, receiver_normal) / dot(rv, rv);
+    let c = dot(rz, receiver_normal) / dot(rz, rz);
+    let metres = inverseSqrt(dot(rz, rz));
+    let limit = RECEIVER_SLOPE_LIMIT / metres;
+    // Depth per texel along the map's u and its (flipped) v.
+    let slope = clamp(vec2f(-a, b) * c / max(c * c, 1e-12) / size, vec2f(-limit), vec2f(limit));
+    let tolerance = BLOCKER_TOLERANCE / metres + abs(slope.x) + abs(slope.y);
+    var references = array<f32, 4>();
+    var taps = array<vec2f, 4>();
+    var open = 0.0;
+    for (var i = 0; i < 4; i++) {
+        let offset = vec2f(f32(i & 1) * 2.0 - 1.0, f32(i >> 1u) * 2.0 - 1.0) * PENUMBRA_SEARCH_TEXELS;
+        references[i] = coord.z + dot(slope, offset) - tolerance;
+        taps[i] = coord.xy + offset / size;
+        open += textureSampleCompareLevel(shadow_map, shadow_sampler, taps[i], references[i]);
+    }
+    // The share of the search that casters cover.
+    let blocked = 4.0 - open;
+    if blocked <= 0.0 {
+        return 1.0;
+    }
+    // Casters beyond each step, summed over the four taps.
+    let steps = BLOCKER_STEPS / metres;
+    var beyond = vec3f(0.0);
+    for (var i = 0; i < 4; i++) {
+        for (var k = 0; k < 3; k++) {
+            beyond[k] += 1.0 - textureSampleCompareLevel(shadow_map, shadow_sampler, taps[i], references[i] - steps[k]);
+        }
+    }
+    // The casters' mean distance up the sun's ray.
+    let bands = vec4f(blocked - beyond.x, beyond.x - beyond.y, beyond.y - beyond.z, beyond.z);
+    let reach = dot(bands, BLOCKER_BANDS) / blocked;
+    let found = smoothstep(0.0, 0.3, blocked);
+    let ground = smoothstep(0.5, 0.8, receiver_normal.y);
+    shadow_fill = mix(1.0, mix(SHADOW_CONTACT_FILL, 1.0, smoothstep(SHADOW_FILL_OPENING.x, SHADOW_FILL_OPENING.y, reach)), found * ground);
+    let widening = smoothstep(PENUMBRA_WIDENING.x, PENUMBRA_WIDENING.y, reach);
+    return mix(1.0, mix(PENUMBRA_CONTACT_RADIUS, PENUMBRA_FAR_RADIUS, widening), found);
+}
+
 // The sun's shadow: Castaño's optimized PCF (The Witness), hardware-filtered
 // compares weighted into a smooth tent with no dither noise, after the light-space
 // normal offset and depth bias. Its taps sit exactly where the hardware's bilinear
 // weights complete the tent, so the penumbra glides without stepping as things move:
-// 7×7 texels from 16 taps, or 5×5 from 9 on the lighter WebGL build.
+// 7×7 texels from 16 taps, or 5×5 from 9 on the lighter WebGL build, which also
+// keeps one penumbra width.
 fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
     let position = frame.shadow_matrix * vec4f(world + normal * frame.shadow.y, 1.0);
     let projected = position.xyz / position.w;
@@ -107,7 +190,11 @@ fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
     let st = texels + 0.5 - base;
     let origin = (base - 0.5) / size;
     // The filter radius spreads the taps; at 1 they are exact.
-    let texel = frame.shadow.w / size;
+    var radius = frame.shadow.w;
+    if !LITE && atmosphere_on() {
+        radius *= penumbra_radius(coord, size);
+    }
+    let texel = radius / size;
     var sum = 0.0;
     if LITE {
         let uw = vec3f(4.0 - 3.0 * st.x, 7.0, 1.0 + 3.0 * st.x);
@@ -146,9 +233,15 @@ fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
         }
         sum /= 2704.0;
     }
-    let inside = coord.x >= 0.0 && coord.x <= 1.0 && coord.y >= 0.0 && coord.y <= 1.0 && coord.z <= 1.0;
-    return select(1.0, sum, inside);
+    // Shadows fade out over the map's last texels rather than stopping at its edge,
+    // where a cliff beyond the fitted box would leave a straight-cut band.
+    let edge = min(min(coord.x, 1.0 - coord.x), min(coord.y, 1.0 - coord.y));
+    let inside = smoothstep(0.0, SHADOW_EDGE_FADE, edge) * select(0.0, 1.0, coord.z <= 1.0);
+    return mix(1.0, sum, inside);
 }
+
+// The share of the shadow map over which shadows fade out toward its edge.
+const SHADOW_EDGE_FADE: f32 = 0.04;
 
 fn distance_attenuation(distance: f32, cutoff: f32, decay: f32) -> f32 {
     let falloff = 1.0 / max(pow(distance, decay), 0.01);
@@ -191,11 +284,31 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     if RECEIVE_SHADOW {
         sunlit = sun_shadow(world, n);
     }
+    // Inside a cast shadow, how much of the sky's fill the caster leaves open.
+    let sky_open = mix(1.0, shadow_fill, 1.0 - sunlit);
     if atmosphere_on() {
         sunlit *= cloud_shadow(world);
     }
     let sun = frame.sun_color.rgb * sunlit;
     add_direct_light(&reflected, frame.sun_direction.xyz, sun, v, n, diffuse, specular, roughness);
+    // The seated view looks along its own hull's deck at a grazing angle, where the
+    // sky's Fresnel sheen and the sun's glint would bleach the paint to a pale sheet:
+    // the nearest few metres reflect less of both and keep their paint.
+    let near_view = 1.0 - smoothstep(VIEW_MODEL_NEAR, VIEW_MODEL_FAR, distance(world, frame.camera_position.xyz));
+    if atmosphere_on() {
+        // Satin paint (hulls, containers, vehicles) carries a clear coat: a tight
+        // sun glint along plate edges and decks turned to the light, on top of the
+        // paint's broad sheen, so painted steel reads as metal and its form turns.
+        let coat = PAINT_GLINT * smoothstep(0.38, 0.45, s.roughness) * (1.0 - smoothstep(0.58, 0.66, s.roughness))
+            * (1.0 - smoothstep(0.25, 0.45, s.metalness)) * (1.0 - near_view);
+        if coat > 0.0 {
+            // Its grazing Fresnel is capped: a stylized coat glints toward the sun but
+            // never mirrors a whole deck seen edge-on.
+            let l = frame.sun_direction.xyz;
+            let glint = clamp(dot(n, l), 0.0, 1.0) * brdf_ggx(l, v, n, vec3f(0.04), PAINT_GLINT_F90, PAINT_GLINT_ROUGHNESS);
+            reflected.specular += sun * (glint * coat);
+        }
+    }
     for (var i = 0; i < 4; i++) {
         let light = frame.point_lights[i];
         if dot(light.color.rgb, vec3f(1.0)) > 0.0 {
@@ -204,26 +317,53 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
             // Past the cutoff the attenuation window is exactly zero: skip the BRDF.
             let cutoff = light.position.w;
             if cutoff <= 0.0 || distance < cutoff {
-                var color = light.color.rgb * distance_attenuation(distance, cutoff, light.color.w);
+                var decay = light.color.w;
+                var gain = 1.0;
                 if atmosphere_on() {
-                    // Blasts flash brighter than Three's falloff alone, so fire visibly
-                    // lights the ground and hulls around it.
-                    color *= BLAST_LIGHT_GAIN;
+                    // Fire lights a wide, soft pool rather than a hot spot under
+                    // itself: a gentler falloff than Three's inverse square (the
+                    // cutoff window still ends it), and brighter overall, so blasts
+                    // and burning wrecks visibly light the ground, walls and hulls
+                    // around them in daylight.
+                    decay *= FIRE_POOL_DECAY;
+                    gain = BLAST_LIGHT_GAIN;
+                }
+                var color = light.color.rgb * (distance_attenuation(distance, cutoff, decay) * gain);
+                if atmosphere_on() {
+                    color = fire_light_hue(color);
                 }
                 add_direct_light(&reflected, offset / max(distance, 1e-6), color, v, n, diffuse, specular, roughness);
             }
         }
     }
-    let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
+    var hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
+    // How directly the sun reaches this point: cast and cloud shadow, and faces
+    // turned from it.
+    let in_sun = sunlit * smoothstep(0.0, 0.35, dot(n, frame.sun_direction.xyz));
     var shade_color = diffuse;
     if atmosphere_on() {
+        // Sky irradiance with form: a face sees less of the bright dome the further
+        // it turns from up, and the sky is brightest around the sun, so roofs, hull
+        // decks and the sides turned toward the sun's quarter read lighter than the
+        // flanks and fronts turned away even where all of them are in shade. Without
+        // it every shaded face of a hull takes the same fill and reads as one slab.
+        let up = n.y * 0.5 + 0.5;
+        let dome = up * up * (SKY_DOME_FORM + (1.0 - SKY_DOME_FORM) * up);
+        let sun_side = dot(n.xz, normalize(frame.sun_direction.xz + vec2f(1e-4))) * (1.0 - abs(n.y));
+        hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, dome) * (1.0 + SKY_SUN_SIDE * sun_side);
+        // Warm key, cool fill: the blue sky fill keeps its hue where it is the main
+        // light (shade), but under direct sun it adds only its brightness, so sunlit
+        // sand, concrete and grass keep their own warm albedo instead of drifting
+        // toward mauve or grey while shadows read clearly cool.
+        let fill_level = dot(hemisphere, vec3f(0.2126, 0.7152, 0.0722));
+        hemisphere = mix(hemisphere, vec3f(fill_level), FILL_NEUTRAL_IN_SUN * in_sun);
         // Painterly shade: what the sky fill alone lights keeps a richer version of
         // its own color, so grass shade stays green and earth shade warm brown
         // instead of every shadow settling into the same grey-blue.
         let grey = dot(diffuse, vec3f(0.2126, 0.7152, 0.0722));
         shade_color = max(mix(vec3f(grey), diffuse, SHADE_SATURATION), vec3f(0.0));
     }
-    var indirect = hemisphere * shade_color * RECIPROCAL_PI;
+    var indirect = hemisphere * shade_color * (RECIPROCAL_PI * sky_open);
     if atmosphere_on() && frame.ground.w > 0.0 {
         // Warm bounce from the sunlit ground around: what the sun does not reach
         // directly (cast shadow, cloud shadow or a face turned away) still catches
@@ -231,8 +371,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // stays warm and luminous rather than sinking into one cold blue.
         let ground_tint = frame.ground_color.rgb / max(dot(frame.ground_color.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
         let sun_level = dot(frame.sun_color.rgb, vec3f(0.2126, 0.7152, 0.0722));
-        let lit = sunlit * smoothstep(0.0, 0.35, dot(n, frame.sun_direction.xyz));
-        let bounce = frame.ground.w * sun_level * (1.0 - lit) * (1.0 - 0.5 * max(n.y, 0.0));
+        let bounce = frame.ground.w * sun_level * (1.0 - in_sun) * (1.0 - BOUNCE_FROM_BELOW * n.y);
         indirect += ground_tint * (bounce * RECIPROCAL_PI) * shade_color;
     }
     if atmosphere_on() {
@@ -246,7 +385,10 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     }
     // Only glossy finishes (vehicle paint and steel) reflect the sky; matte
     // terrain and buildings keep the hemisphere fill their themes were tuned with.
-    let reflections = frame.sky_color.w * (1.0 - smoothstep(GLOSSY_UNTIL, MATTE_FROM, s.roughness));
+    var reflections = frame.sky_color.w * (1.0 - smoothstep(GLOSSY_UNTIL, MATTE_FROM, s.roughness));
+    if atmosphere_on() {
+        reflections *= 1.0 - VIEW_MODEL_SHEEN_CUT * near_view;
+    }
     if reflections > 0.0 {
         // Split-sum environment specular with Three's multiscatter terms
         // (`computeMultiscattering`): the reflected sky takes the energy it
@@ -299,10 +441,52 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
     return mix(ground, sky, smoothstep(-horizon_width, horizon_width, up));
 }
 
+// The clear-coat sun glint on satin paint (`shade_standard`): its strength, the
+// coat's roughness and its Fresnel at grazing angles.
+const PAINT_GLINT: f32 = 0.45;
+const PAINT_GLINT_ROUGHNESS: f32 = 0.22;
+const PAINT_GLINT_F90: f32 = 0.3;
+// Sky irradiance form (`shade_standard`): the sky's share of the fill follows
+// up² × (k + (1 - k) × up) for up = n.y / 2 + 1/2, which keeps decks and roofs at the
+// full sky and undersides at the ground but gives walls and hull flanks a third of
+// the sky rather than half. Faces toward the sun's quarter of the sky take this much
+// more fill, and those turned away this much less.
+const SKY_DOME_FORM: f32 = 1.6;
+const SKY_SUN_SIDE: f32 = 0.22;
+// Bounce off the sunlit ground comes from below: walls and hull flanks take it in
+// full, undersides more and decks and roofs little.
+const BOUNCE_FROM_BELOW: f32 = 0.8;
+// The share of the sky fill's blue a fully sunlit surface gives up (it keeps the
+// fill's brightness).
+const FILL_NEUTRAL_IN_SUN: f32 = 0.3;
 // Saturation of the sky fill's share of a surface's light (1 = its plain color).
 const SHADE_SATURATION: f32 = 1.3;
-// Point lights' (blast flashes') extra strength with the atmosphere on.
-const BLAST_LIGHT_GAIN: f32 = 1.6;
+// Point lights' (blast flashes') extra strength with the atmosphere on, and the
+// share of their decay exponent they keep (a wider pool).
+const BLAST_LIGHT_GAIN: f32 = 2.7;
+const FIRE_POOL_DECAY: f32 = 0.72;
+// Fire's own color at unit luminance, and how far a deep red-orange flash light turns
+// toward it: a pure red-orange pool over sunlit ground and blue-filled shade reads as a
+// pink screen tint rather than firelight.
+const FIRE_AMBER: vec3f = vec3f(1.0, 0.56, 0.24);
+const FIRE_AMBER_SHARE: f32 = 0.4;
+
+// The luminance a flash light's pool eases toward right beside it, against a sun of
+// about 3: firelight warms shade and the sunlit ground around a blast without washing
+// a near-camera muzzle flash or fireball across the frame.
+const FIRE_LIGHT_LIMIT: f32 = 3.0;
+
+fn fire_light_hue(color: vec3f) -> vec3f {
+    let level = dot(color, vec3f(0.2126, 0.7152, 0.0722));
+    let amber = FIRE_AMBER / dot(FIRE_AMBER, vec3f(0.2126, 0.7152, 0.0722));
+    return mix(color, amber * level, FIRE_AMBER_SHARE) / (1.0 + level / FIRE_LIGHT_LIMIT);
+}
+// The seated view's own hull (`shade_standard`): within the first distance of the
+// eye its sky sheen is cut by this share and its glint entirely, easing back by the
+// second.
+const VIEW_MODEL_NEAR: f32 = 4.0;
+const VIEW_MODEL_FAR: f32 = 8.0;
+const VIEW_MODEL_SHEEN_CUT: f32 = 0.75;
 // Share of the drawn sky glossy finishes reflect.
 const ATMOSPHERE_REFLECTION: f32 = 0.45;
 // The lowest elevation of the drawn sky glossy finishes reflect.
@@ -322,6 +506,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     // Three's WGSL dFdy is -dpdy (framebuffer Y points down).
     let dpy = -dpdy(input.world);
     let flat_normal = normalize(cross(dpx, dpy));
+    receiver_normal = flat_normal;
     var geometry_normal = normalize(input.normal);
     if material_has(MATERIAL_FLAT_SHADING) {
         geometry_normal = flat_normal;
