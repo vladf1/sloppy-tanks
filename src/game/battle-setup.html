@@ -72,50 +72,10 @@
     <div class="backdrop-floor"></div>
     <div class="backdrop-embers"><i></i><i></i></div>
   </div>
-  <!-- The first row: the logo and the switch between single player and multiplayer,
-       which picks what the tray below configures. The tank under it is shared by both
-       modes and never moves. The title shows only where there is no switch. -->
-  <div class="setup-top">
-    <header class="setup-header">
-      <div class="setup-brand" aria-hidden="true"><b>SLOPPY</b><b>TANKS</b></div>
-      <div class="setup-heading"><h1 id="setup-title">BATTLE SETUP</h1></div>
-    </header>
-    <div class="play-tabs" role="tablist" aria-label="How to play">
-      <button
-        id="tab-single"
-        class="play-tab"
-        type="button"
-        role="tab"
-        aria-selected="true"
-        aria-controls="single-panel"
-        data-play="single"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle cx="12" cy="8" r="4" />
-          <path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
-        </svg>
-        <span><b>Single player</b><small>You versus the bots</small></span>
-      </button>
-      <button
-        id="tab-multiplayer"
-        class="play-tab"
-        type="button"
-        role="tab"
-        aria-selected="false"
-        aria-controls="multiplayer-panel"
-        data-play="multiplayer"
-        tabindex="-1"
-      >
-        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
-          <circle cx="9" cy="8" r="3.5" />
-          <path d="M2 20c0-3.9 3.1-6.2 7-6.2s7 2.3 7 6.2" />
-          <circle cx="17" cy="7" r="3" />
-          <path d="M16.5 12.6c3.2.2 5.5 2.3 5.5 5.9" />
-        </svg>
-        <span><b>Multiplayer</b><small>Online rooms with friends</small></span>
-      </button>
-    </div>
-  </div>
+  <header class="setup-header">
+    <div class="setup-brand" aria-hidden="true"><b>SLOPPY</b><b>TANKS</b></div>
+    <div class="setup-heading"><h1 id="setup-title">BATTLE SETUP</h1></div>
+  </header>
   <div class="setup-section tank-setting" role="group" aria-labelledby="tank-label">
     <div class="setup-label">
       <span id="tank-label">TANK</span><small>Yours in single player and multiplayer</small
@@ -180,11 +140,46 @@
       </button>
     </div>
   </div>
-  <!-- The tray configures the mode chosen at the top. The map heads it for both modes:
-       single player plays it and a new room plays it, while an open room keeps its own.
-       Both panels share one grid cell and end in the same row: a status well and the one
-       yellow action. -->
+  <!-- The tank above the tabs is shared by both modes and never moves; the tabs sit on
+       the tray they switch. The map heads the tray for both tabs: single player plays
+       it and a new room plays it, while an open room keeps its own. Both panels share
+       one grid cell and end in the same row: a status well and the one yellow action. -->
   <div class="setup-tray">
+    <div class="play-tabs" role="tablist" aria-label="How to play">
+      <button
+        id="tab-single"
+        class="play-tab"
+        type="button"
+        role="tab"
+        aria-selected="true"
+        aria-controls="single-panel"
+        data-play="single"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="12" cy="8" r="4" />
+          <path d="M4 21c0-4.4 3.6-7 8-7s8 2.6 8 7" />
+        </svg>
+        <span><b>Single player</b><small>You versus the bots</small></span>
+      </button>
+      <button
+        id="tab-multiplayer"
+        class="play-tab"
+        type="button"
+        role="tab"
+        aria-selected="false"
+        aria-controls="multiplayer-panel"
+        data-play="multiplayer"
+        tabindex="-1"
+      >
+        <svg viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+          <circle cx="9" cy="8" r="3.5" />
+          <path d="M2 20c0-3.9 3.1-6.2 7-6.2s7 2.3 7 6.2" />
+          <circle cx="17" cy="7" r="3" />
+          <path d="M16.5 12.6c3.2.2 5.5 2.3 5.5 5.9" />
+        </svg>
+        <span><b>Multiplayer</b><small>Online rooms with friends</small></span>
+      </button>
+    </div>
     <div class="setup-panels">
       <div class="setup-section map-choice">
         <div class="setup-label">
