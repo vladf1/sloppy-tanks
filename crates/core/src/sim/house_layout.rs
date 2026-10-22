@@ -44,6 +44,14 @@ pub const CHIMNEY_TOP: f64 = 0.3;
 pub const POT_MOUTH: f64 = 0.7;
 /// Clearance between neighbouring pieces' colliders.
 const GAP: f64 = 0.01;
+/// The collapse's rubble mound: how far its foot stays in from the walls' outside
+/// faces, how far further in its crown starts, and the crown's height. Its slopes
+/// are gentle enough (about 35 degrees) for a shard to rest on them.
+pub const MOUND_INSET: f64 = 0.45;
+pub const MOUND_SLOPE_RUN: f64 = 1.45;
+pub const MOUND_HEIGHT: f64 = 1.0;
+/// The least half width of the mound's crown.
+const MOUND_CROWN: f64 = 0.3;
 
 /// The rubble a collapsed cottage leaves: one heap along its back wall, inset from
 /// the walls, low enough to shoot over from a hull but high enough to hide one. The
@@ -212,11 +220,13 @@ const fn style(
 /// finish, colour and roof pitch; [`HouseDesign::facing`] picks one per cottage.
 /// The paints keep to one weathered village palette held apart from the teams'
 /// red and blue and from the grass and dirt: muted cream, sage, tan, ochre, slate
-/// and white walls with one accent each, under roofs a clear step darker that
-/// carry a colour of their own (moss, cedar, terracotta, plum, graphite, teal
-/// and bronze steel), so from overhead every roof stands off the ground by value
-/// and hue, no two neighbours match, and none reads as a team marker. Shingle
-/// paints sit over the shingle texture, which darkens them by about half.
+/// and white walls with one accent each and trim a soft off-white that takes its
+/// shading, under roofs a clear step darker that carry an earthy colour of their
+/// own (moss, slate, cedar, teal, terracotta, ochre, barn-red steel and weathered
+/// silver-brown), so from overhead every roof stands off the ground by value and
+/// hue, no two neighbours match, and none reads as a team marker. Shingle paints
+/// sit over the shingle texture and its weathering, which darken them to about
+/// two fifths, so they are painted that much brighter than they read.
 #[rustfmt::skip]
 pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use DoorWall::{Eave, Gable as Front};
@@ -227,26 +237,26 @@ pub const HOUSE_STYLES: [HouseStyle; 8] = {
     [
         // Cream clapboard, bottle-green plank shutters, a steep moss-green shingle
         // roof and dormers.
-        style(Gable, Front, Shingles, Clapboard, [0xe8dcc0, 0xf6f2e8, 0x2f5040, 0x789f60], 1, false, Board, false, 0.6),
-        // Soft red brick under a low charcoal hip roof, navy door and louvres.
-        style(Hip, Front, Shingles, Brick, [0xd9d0c6, 0xece4d2, 0x24385a, 0x6e7276], 0, false, Louvred, false, 0.72),
+        style(Gable, Front, Shingles, Clapboard, [0xe8dcc0, 0xe6e0d4, 0x2f5040, 0x82996a], 1, false, Board, false, 0.6),
+        // Soft red brick under a low slate-blue hip roof, navy door and louvres.
+        style(Hip, Front, Shingles, Brick, [0xd9d0c6, 0xdfd7c6, 0x24385a, 0x8f98a2], 0, false, Louvred, false, 0.72),
         // Sage side-gable with an oxblood door under a cross gable and weathered
         // cedar shingles, a dormer lighting the back of the attic.
-        style(Gable, Eave, Shingles, Clapboard, [0xa3ae8e, 0xf1ead8, 0x6a2a24, 0xa8774c], 3, true, Board, false, 0.6),
-        // Weathered tan front gable with a shed porch over the door, under deep
-        // teal standing-seam steel.
-        style(Gable, Front, Seams, Clapboard, [0xc4a882, 0xefe8da, 0x2e2c2a, 0x3d6460], 0, false, None, true, 0.68),
-        // Ochre hip cottage under graphite-brown shingles.
-        style(Hip, Front, Shingles, Clapboard, [0xd2b26e, 0xf6f2e8, 0x5c3c22, 0x877b72], 0, false, Board, false, 0.7),
+        style(Gable, Eave, Shingles, Clapboard, [0xa3ae8e, 0xe3dbc8, 0x6a2a24, 0xc48b60], 3, true, Board, false, 0.6),
+        // Weathered tan front gable with a shed porch over the door, under
+        // weathered teal standing-seam steel.
+        style(Gable, Front, Seams, Clapboard, [0xc4a882, 0xe2dacb, 0x2e2c2a, 0x4a706a], 0, false, None, true, 0.68),
+        // Ochre hip cottage under faded terracotta shingles.
+        style(Hip, Front, Shingles, Clapboard, [0xd2b26e, 0xe6e0d4, 0x5c3c22, 0xb87a62], 0, false, Board, false, 0.7),
         // Slate-grey side-gable with black louvres and a cross gable under
-        // weathered terracotta-brown shingles.
-        style(Gable, Eave, Shingles, Clapboard, [0x9ea9b2, 0xf6f2e8, 0x232a28, 0xa8785e], 0, true, Louvred, false, 0.62),
-        // Chalk-white front gable with a porch, under dark bronze standing-seam
-        // steel and black shutters.
-        style(Gable, Front, Seams, Clapboard, [0xeeebe3, 0xffffff, 0x1d2622, 0x5e4a3b], 2, false, Board, true, 0.6),
-        // Sand clapboard side-gable with plum-grey shingles, green louvres and a
-        // cross gable.
-        style(Gable, Eave, Shingles, Clapboard, [0xd8c8a2, 0xf3eee2, 0x2f4b3a, 0x8d7491], 0, true, Louvred, false, 0.64),
+        // lichen-ochre shingles.
+        style(Gable, Eave, Shingles, Clapboard, [0x9ea9b2, 0xe6e0d4, 0x232a28, 0xae9a6e], 0, true, Louvred, false, 0.62),
+        // Chalk-white front gable with a porch, under weathered barn-red
+        // standing-seam steel and black shutters.
+        style(Gable, Front, Seams, Clapboard, [0xe6e2d8, 0xeae6dd, 0x1d2622, 0x7a4c40], 2, false, Board, true, 0.6),
+        // Sand clapboard side-gable with silver-brown shingles, green louvres and
+        // a cross gable.
+        style(Gable, Eave, Shingles, Clapboard, [0xd8c8a2, 0xe5dfd2, 0x2f4b3a, 0xb09c8a], 0, true, Louvred, false, 0.64),
     ]
 };
 
@@ -328,10 +338,14 @@ pub enum HousePart {
     FrontRoof,
     BackRoof,
     Chimney,
+    /// The rubble the walls and floors crush into, heaped in the footprint: the
+    /// pile the falling walls and roof come to rest on. It never moves, and only
+    /// the cottage's own shards rest on it.
+    Mound,
 }
 
 impl HousePart {
-    pub const ALL: [Self; 9] = [
+    pub const ALL: [Self; 10] = [
         Self::FrontWall,
         Self::BackWall,
         Self::RightWall,
@@ -341,6 +355,7 @@ impl HousePart {
         Self::FrontRoof,
         Self::BackRoof,
         Self::Chimney,
+        Self::Mound,
     ];
 
     /// The piece of the wall at `index` in [`wall_frames`] order.
@@ -394,6 +409,7 @@ impl HousePart {
             Self::FrontWall | Self::BackWall | Self::RightWall | Self::LeftWall => 6,
             Self::RightRoof | Self::LeftRoof | Self::FrontRoof | Self::BackRoof => 4,
             Self::Chimney => 2,
+            Self::Mound => 1,
         }
     }
 }
@@ -441,8 +457,8 @@ impl HousePiece {
     /// Every shard any cottage can break into, part by part: a wall's strip `k`
     /// gives shards `2k` (below its split) and `2k + 1` (above it), a slope's strip
     /// `k` shards `2k` (at the ridge or peak) and `2k + 1` (at the eave).
-    pub const ALL: [Self; 42] = {
-        let mut all = [Self::new(HousePart::FrontWall, 0); 42];
+    pub const ALL: [Self; 43] = {
+        let mut all = [Self::new(HousePart::FrontWall, 0); 43];
         let mut next = 0;
         let mut part = 0;
         while part < HousePart::ALL.len() {
@@ -1268,7 +1284,36 @@ impl HouseDesign {
                 hull,
             ));
         }
+        pieces.push(self.mound());
         pieces
+    }
+
+    /// The rubble mound the collapse heaps in the footprint ([`HousePart::Mound`]):
+    /// a low frustum from its foot inside the walls to its flat crown.
+    pub fn mound(&self) -> PieceShape {
+        let (foot_x, foot_z) = (self.w / 2.0 - MOUND_INSET, self.d / 2.0 - MOUND_INSET);
+        let (crown_x, crown_z) = (
+            (foot_x - MOUND_SLOPE_RUN).max(MOUND_CROWN),
+            (foot_z - MOUND_SLOPE_RUN).max(MOUND_CROWN),
+        );
+        let hull = [(foot_x, foot_z, 0.0), (crown_x, crown_z, MOUND_HEIGHT)]
+            .into_iter()
+            .flat_map(|(x, z, y)| {
+                [(-1.0, -1.0), (-1.0, 1.0), (1.0, -1.0), (1.0, 1.0)]
+                    .map(|(sx, sz)| DVec3::new(sx * x, y, sz * z))
+            })
+            .collect();
+        PieceShape::new(
+            HousePiece::new(HousePart::Mound, 0),
+            PartPlane {
+                origin: DVec3::ZERO,
+                s: DVec3::X,
+                t: DVec3::Z,
+            },
+            Vec::new(),
+            ShardRegion::between(None, None, None),
+            hull,
+        )
     }
 
     /// The top of the back wall's stub, left in the heap where its shards broke
@@ -1551,13 +1596,15 @@ mod tests {
             let roof = design.roof();
             // Every wall in two or three strips, each split in two but the back
             // wall's above its stub; each side slope in two strips split at the
-            // ridge and eave, each hip end likewise, and the chimney in two.
+            // ridge and eave, each hip end likewise, the chimney in two and the
+            // rubble mound.
             let walls = |length: f64| if length >= LONG_WALL { 3 } else { 2 };
             let expected = 3 * walls(design.w)
                 + 4 * walls(design.d)
                 + 8
                 + if roof.form == RoofForm::Hip { 8 } else { 0 }
-                + 2;
+                + 2
+                + 1;
             assert_eq!(pieces.len(), expected, "{x} {z}");
             assert!(pieces.len() <= HousePiece::ALL.len());
             for piece in &pieces {
@@ -1569,7 +1616,13 @@ mod tests {
                         "{:?} {p}",
                         piece.piece
                     );
-                    assert!(p.y >= PLINTH - 1e-9 && p.y <= h + 1.0);
+                    // The mound heaps up from the ground, the rest from the plinth.
+                    let floor = if piece.piece.part == HousePart::Mound {
+                        0.0
+                    } else {
+                        PLINTH
+                    };
+                    assert!(p.y >= floor - 1e-9 && p.y <= h + 1.0);
                 }
             }
             // Neighbouring shards' colliders start clear of each other across their

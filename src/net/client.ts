@@ -3,7 +3,13 @@ import { Controls } from "../game/controls";
 import { AudioSystem } from "../game/audio";
 import { Cockpit } from "../game/cockpit";
 import { savedVolume } from "../game/settings-dialog";
-import { saveCameraPreferences, savePreference, startingCamera } from "../game/player-preferences";
+import {
+  saveCameraPreferences,
+  savedGraphics,
+  savePreference,
+  startingCamera,
+  startingGraphics,
+} from "../game/player-preferences";
 import { TouchModeController } from "../game/touch-mode";
 import { returnToSetup, roomAddress, type JoinScreen } from "../game/join-screen";
 import { PREPARE_BUDGET, nextPrepareStep } from "../game/task-yield";
@@ -44,6 +50,7 @@ const FRAME = {
   pointerFree: 12,
   viewerX: 13,
   viewerY: 14,
+  ran: 15,
 } as const;
 /** The dev-build page parameter that shows the transport delay sliders. */
 const LATENCY_SLIDER_PARAM = "latencySlider";
@@ -183,6 +190,11 @@ export async function startMultiplayer(
     setTouchMode(mode: string): void {
       touch.setPreference(mode);
     },
+    graphics: savedGraphics,
+    setGraphics(setting: string): void {
+      savePreference("graphics", setting);
+      game.set_graphics(setting);
+    },
     volume(value) {
       audio.volume(value);
       savePreference("volume", String(value));
@@ -207,20 +219,18 @@ export async function startMultiplayer(
   let game: NetGame;
   try {
     const [width, height] = cssSize();
-    game = await createNetGame(
-      ui.canvas,
-      JSON.stringify({
-        server,
-        room,
-        savedSeat: savedSeat(seatKey),
-        ...delay,
-        assetBase: import.meta.env.BASE_URL,
-        cssWidth: width,
-        cssHeight: height,
-        pixelRatio: devicePixelRatio,
-        ...startingCamera(),
-      }),
-    );
+    game = await createNetGame(ui.canvas, {
+      server,
+      room,
+      savedSeat: savedSeat(seatKey),
+      ...delay,
+      assetBase: import.meta.env.BASE_URL,
+      cssWidth: width,
+      cssHeight: height,
+      pixelRatio: devicePixelRatio,
+      ...startingCamera(),
+      ...startingGraphics(),
+    });
   } catch (error) {
     console.error("Multiplayer graphics failed", error);
     root.remove();
@@ -540,7 +550,10 @@ export async function startMultiplayer(
         result[FRAME.hullAngle],
         controls.aimWaitsForClick,
       );
-      stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      // Frames the engine skipped while the GPU caught up are not shown frames.
+      if (result[FRAME.ran]) {
+        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      }
     } else if (result[FRAME.events] > 0) {
       game.drain_events();
     }

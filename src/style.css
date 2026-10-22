@@ -996,18 +996,12 @@ body:has(#settings[open]) .hud-actions {
 /* Big screens scale the HUD up with them, so its type holds its size against the arena
    (desktop only: touch screens lay their HUD out round the thumbs). */
 @media (min-width: 1800px) and (min-height: 1000px) {
-  html:not(.phone)
-    :not(.touch-enabled)
-    > #hud
-    :is(.bottom, #feed, .scoreboard, .hud-actions, #kill-banner) {
+  html:not(.phone) :not(.touch-enabled) > #hud :is(.bottom, #feed, .scoreboard, .hud-actions) {
     zoom: 1.2;
   }
 }
 @media (min-width: 2400px) and (min-height: 1300px) {
-  html:not(.phone)
-    :not(.touch-enabled)
-    > #hud
-    :is(.bottom, #feed, .scoreboard, .hud-actions, #kill-banner) {
+  html:not(.phone) :not(.touch-enabled) > #hud :is(.bottom, #feed, .scoreboard, .hud-actions) {
     zoom: 1.5;
   }
 }
@@ -1219,164 +1213,6 @@ body:has(#settings[open]) .hud-actions {
     inset 0 1px #ff4d5e88,
     inset 0 -1px #ff4d5e88;
   color: #ffd6da;
-}
-/* The hit marker: four ticks that snap out at the aim when your shot lands. */
-#hit-marker {
-  position: absolute;
-  left: 50%;
-  top: 50%;
-  width: 0;
-  height: 0;
-  opacity: 0;
-  pointer-events: none;
-}
-/* Each tick is white on a dark outline, so it reads over fire, smoke and pale ground
-   alike; a kill turns them red and longer. */
-#hit-marker i {
-  position: absolute;
-  left: -7px;
-  top: -2px;
-  width: 14px;
-  height: 4px;
-  border-radius: 2px;
-  background: #fff;
-  box-shadow:
-    0 0 0 1.5px #07111f,
-    0 0 6px #000c;
-}
-#hit-marker i:nth-child(1) {
-  transform: rotate(45deg) translateX(-16px);
-}
-#hit-marker i:nth-child(2) {
-  transform: rotate(135deg) translateX(-16px);
-}
-#hit-marker i:nth-child(3) {
-  transform: rotate(225deg) translateX(-16px);
-}
-#hit-marker i:nth-child(4) {
-  transform: rotate(315deg) translateX(-16px);
-}
-/* A kill turns the ticks the kill banner's red, on the same dark outline. */
-#hit-marker.kill i {
-  background: #ff3d51;
-  width: 17px;
-  box-shadow:
-    0 0 0 1.5px #2a050b,
-    0 0 6px #000c;
-}
-#hit-marker.visible {
-  animation: hit-pop 0.3s ease-out forwards;
-}
-#hit-marker.kill.visible {
-  animation-duration: 0.45s;
-}
-@keyframes hit-pop {
-  0% {
-    opacity: 1;
-    transform: scale(1.6);
-  }
-  35% {
-    opacity: 1;
-    transform: scale(1);
-  }
-  100% {
-    opacity: 0;
-    transform: scale(1.05);
-  }
-}
-/* The kill confirm has a reserved lane under the score, above the arena's top edge of
-   play, where it never covers the barrel in first person, the fight in the middle or the
-   tank panel: a mid-weight plate in the HUD's armour cut, a red skull badge and the
-   wrecked tank's name under ELIMINATED. It snaps in, holds briefly and lifts away;
-   pickup and promotion notices take the lane under it. */
-#kill-banner {
-  --cut: 11px;
-  position: absolute;
-  z-index: 1;
-  left: 50%;
-  /* A clear gap under the score plates (about 62 px tall), so the two never read as
-     one block. */
-  top: 72px;
-  display: flex;
-  align-items: center;
-  gap: 11px;
-  height: 46px;
-  padding: 0 24px 2px 8px;
-  clip-path: polygon(
-    var(--cut) 0,
-    100% 0,
-    100% calc(100% - var(--cut)),
-    calc(100% - var(--cut)) 100%,
-    0 100%,
-    0 var(--cut)
-  );
-  background:
-    radial-gradient(ellipse 60% 120% at 0 50%, #ff4d5e2e, transparent 70%),
-    linear-gradient(180deg, #172a50fa, #091430fa);
-  box-shadow:
-    inset 0 1px #ffffff26,
-    inset 0 -3px #e3283f;
-  opacity: 0;
-  pointer-events: none;
-  transform: translateX(-50%);
-}
-#kill-banner .kill-flare {
-  display: none;
-}
-#kill-banner .kill-icon {
-  flex: none;
-  width: 32px;
-  height: 32px;
-  padding: 5px;
-  clip-path: polygon(6px 0, 100% 0, 100% calc(100% - 6px), calc(100% - 6px) 100%, 0 100%, 0 6px);
-  background: linear-gradient(180deg, #ff5a6b, #c41d33);
-  box-shadow: inset 0 1px #fff6;
-  fill: #fff;
-}
-#kill-banner span {
-  display: grid;
-  gap: 3px;
-  white-space: nowrap;
-}
-#kill-banner small {
-  color: #ff9aa6;
-  font: 800 12px/1 var(--font-ui);
-  letter-spacing: 2.4px;
-}
-#kill-banner b {
-  color: #fff;
-  font: 400 24px/0.95 var(--font-display);
-  letter-spacing: 0.8px;
-  text-transform: uppercase;
-  text-shadow: 0 1px 3px #000a;
-}
-#kill-banner.visible {
-  animation: kill-banner 1.8s ease forwards;
-}
-@keyframes kill-banner {
-  0% {
-    opacity: 1;
-    transform: translateX(-50%) scale(1.15);
-  }
-  10% {
-    opacity: 1;
-    transform: translateX(-50%) scale(1);
-  }
-  82% {
-    opacity: 1;
-    transform: translateX(-50%);
-  }
-  100% {
-    opacity: 0;
-    transform: translateX(-50%) translateY(-8px);
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  #hit-marker.visible,
-  #kill-banner.visible {
-    animation: none;
-    opacity: 1;
-  }
 }
 /* Armour plates: the tank panel, the corner toolbar and the first-person dial share one
    cut. Clipping takes the hairline off the cut corners, so each corner draws its own
@@ -2275,10 +2111,12 @@ h2 {
   font: 800 12px/1.3 var(--font-ui);
   letter-spacing: 2.4px;
 }
-/* The ring beats once a second with the count. */
+/* The ring beats once a second with the count. It never yields width to the caption,
+   or a narrow card squeezes the circle into an oval. */
 .respawn-ring {
   position: relative;
   display: grid;
+  flex: none;
   place-items: center;
   width: 80px;
   height: 80px;
@@ -3590,8 +3428,8 @@ html:not(.phone) #toast[data-tone="death"] {
   --tint: #a8733a;
 }
 /* Key art from the tanks' own renders. Team Battle: a blue Bruiser and a red Big Rig
-   squaring up across a "VS" under their sides' glows; Solo Assault: one red tank in the
-   sights of a dim enemy line. */
+   squaring up across a "VS" under their sides' glows; Solo Assault: one red tank before
+   a dim enemy line. */
 .battle-choice .choice-card:has(input[value="team"]) {
   --scene:
     radial-gradient(ellipse 60% 70% at 100% 10%, #ff4d5e4d, transparent 70%),
@@ -3701,20 +3539,6 @@ html:not(.phone) #toast[data-tone="death"] {
   bottom: 0;
   height: 80%;
   margin-inline: auto;
-}
-.solo-art .sights {
-  position: absolute;
-  left: 50%;
-  bottom: 10%;
-  height: 60%;
-  aspect-ratio: 1.7;
-  border: 2px solid #ff6b7acc;
-  border-radius: 50%;
-  box-shadow:
-    0 0 0 1px #0006,
-    0 0 18px #ff4d5e55;
-  transform: translateX(-50%) scaleY(0.62);
-  transform-origin: 50% 100%;
 }
 .battle-choice .choice-card:hover .team-art .blue-tank {
   transform: scaleX(-1) translateX(-4px);

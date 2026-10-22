@@ -8,8 +8,9 @@ use glam::DVec3;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::{STEP, group};
 use sloppy_core::sim::house_layout::{
-    HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePiece, is_house_heap,
+    HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, is_house_heap,
 };
+
 use sloppy_core::sim::math::{Random, Vec2};
 use sloppy_core::sim::{CoverKind, DamageCause, FragmentShape, SimEventType, Simulation, Team};
 use support::{clear_arena, collider_groups, event_count, idle};
@@ -118,15 +119,29 @@ fn a_collapse_breaks_the_cottage_into_its_parts_and_leaves_a_heap_of_low_cover()
     }
     for f in &s.fragments {
         assert_eq!(f.source_kind, Some(CoverKind::House));
-        // A stub of wall is led down onto the ground; everything else falls.
+        let mound = f
+            .house_piece
+            .is_some_and(|piece| piece.part == HousePart::Mound);
+        // A stub of wall is led down onto the ground and the rubble mound lies
+        // where it heaps; everything else falls.
         if f.house_stub.is_some() {
             assert!(s.world.bodies[f.body].is_kinematic());
             let piece = f.house_piece.expect("a stub is a cottage's shard");
             assert!(piece.part.wall_index().is_some() && piece.shard.is_multiple_of(2));
+        } else if mound {
+            assert!(s.world.bodies[f.body].is_fixed());
         } else {
             assert!(s.world.bodies[f.body].is_dynamic());
         }
-        assert_eq!(collider_groups(&s, f.body), group::PUSHABLE_DEBRIS);
+        // The shards rest on the mound, which nothing else touches.
+        let groups = if mound {
+            group::HOUSE_MOUND
+        } else if f.house_piece.is_some() {
+            group::HOUSE_SHARD
+        } else {
+            group::PUSHABLE_DEBRIS
+        };
+        assert_eq!(collider_groups(&s, f.body), groups);
         if let Some(piece) = f.house_piece {
             assert_eq!(f.house_id, Some(s.covers[house].id));
             let shape = shapes.iter().find(|shape| shape.piece == piece).unwrap();
@@ -337,8 +352,8 @@ fn every_cottage_collapse_leaves_stubs_of_wall_round_a_pile() {
 /// left steep.
 #[test]
 fn every_cottage_roof_comes_down_shingles_up() {
-    use sloppy_core::sim::house_layout::HousePart;
     let village = village();
+
     let (mut flipped, mut steep, mut slabs) = (Vec::new(), Vec::new(), 0);
     for house in houses(&village) {
         let c = &village.covers[house];
@@ -387,4 +402,57 @@ fn every_cottage_roof_comes_down_shingles_up() {
     }
     assert!(flipped.len() <= 3, "{flipped:?}");
     assert!(steep.len() * 10 <= slabs, "{steep:?} of {slabs}");
+}
+
+/// A collapse heaps up rather than spreading flat: the cottage's walls and floors
+/// crush into a rubble mound in its footprint that never moves and that tanks,
+/// shells and other debris pass through, and the roof comes down onto it, most of
+/// its slabs left lying well up the heap and none far out across the yard.
+#[test]
+fn every_cottage_collapse_heaps_its_roof_on_a_rubble_mound() {
+    let village = village();
+    for house in houses(&village) {
+        let c = &village.covers[house];
+        let (x, z, w, d, h) = (c.x, c.z, c.w, c.d, c.h);
+        let mut s = Simulation::with_seed(731.0);
+        clear_arena(&mut s, &[]);
+        let house = s.add_cover(&CoverDef::house(x, z, w, d, h, 0xb87b4c));
+        s.nav.rebuild(&s.covers, None);
+        s.start();
+        s.world.step();
+        s.damage_cover(house, 100_000.0, 999, Team::Blue, None, None);
+        let mound = |s: &Simulation| {
+            s.fragments
+                .iter()
+                .find(|f| f.house_piece.is_some_and(|p| p.part == HousePart::Mound))
+                .map(|f| (f.body, s.body_translation(f.body)))
+        };
+        let (body, start) = mound(&s).expect("the collapse heaps a mound");
+        assert_eq!(collider_groups(&s, body) >> 16 & (group::TANK >> 16), 0);
+        assert_eq!(group::TANK & 0xffff & (group::HOUSE_MOUND >> 16), 0);
+        assert_eq!(group::DEBRIS_QUERY & 0xffff & (group::HOUSE_MOUND >> 16), 0);
+        tick(&mut s, 4.0);
+        let (_, end) = mound(&s).expect("the mound lies with the pile");
+        assert!((end.x - start.x).abs() + (end.y - start.y).abs() + (end.z - start.z).abs() < 1e-6);
+        let (mut raised, mut slabs) = (0, 0);
+        for f in &s.fragments {
+            if !f.house_piece.is_some_and(|p| p.part.is_roof()) {
+                continue;
+            }
+            let p = s.body_translation(f.body);
+            slabs += 1;
+            if p.y > 0.75 {
+                raised += 1;
+            }
+            assert!(
+                (p.x - x).abs() < w / 2.0 + 2.0 && (p.z - z).abs() < d / 2.0 + 2.0,
+                "{x} {z}: {:?} came down on the wreck ({p:?})",
+                f.house_piece
+            );
+        }
+        assert!(
+            raised * 2 >= slabs,
+            "{x} {z}: {raised} of {slabs} slabs up the heap"
+        );
+    }
 }

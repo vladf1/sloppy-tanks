@@ -299,6 +299,25 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   up to 13 ms a 4K frame. Time a ground, full-screen or layered effect at
   3840×2160 with WebGPU timestamps, switching it off within the page
   (`debug_set_off`), before keeping it.
+- The scene renders at a scale of the canvas that the quality controller
+  (`crates/render/src/quality.rs`, the Graphics setting) picks, and the output pass
+  upsamples it; at scale 1 the output reads texels exactly as before, so the High
+  tier on a desktop is pixel for pixel today's picture. Tiers switch optional work
+  through uniforms and passes (`TierFeatures`), never through pipeline variants.
+  Touch devices also draw without MSAA, which is fixed per renderer. Keep a new
+  expensive per-pixel feature switchable by a tier. WebKit lowers a WebGPU canvas
+  to 15-30 fps after a single frame overruns and never raises it again on its own;
+  the controller reconfigures the canvas when frames stay held while the GPU has
+  room, so do not remove `reset_canvas_pacing` as dead code. Measure with Graphics
+  pinned (localStorage `sloppy-graphics`) or `debug_set_scene_load`, since Auto
+  otherwise changes what is being timed.
+- WebKit (Safari, every iPad) guards each WGSL loop with a volatile
+  forward-progress counter, so Metal cannot unroll it and arrays or vector lanes
+  indexed by the loop counter spill to memory: per-pixel loops ran 15-45x slower
+  than in Chrome (a village frame took 80 ms of GPU time against 4.7). The shader
+  specializer unrolls every literal- or const-bounded loop and a test fails if a
+  variant keeps one; write new loops that way. Chrome timings hide this, so time a
+  new or grown shader in Playwright WebKit at an iPad size too.
 - Pipelines compile on demand and stay cached; `prepare_step` and `warm_up`
   compile the arena's shadow, reflection and effect variants before the first
   gameplay frame. Validate moving cameras, first-use effects and mid-round
@@ -334,6 +353,10 @@ These come from playing the game and are easy to undo with "more juice":
   painted band or a wisp of signal smoke. No science fiction: no holograms,
   neon panels, light beams or pillars, glowing pads or energy rings (they
   looked like "some science fiction movie or game").
+- The kill feed is the kill confirmation. No banners or pop-ups over the
+  field and no hit markers at the aim: an "ELIMINATED" banner under the score
+  covered the fight on desktop, and ticks that turned red on a kill read as a
+  broken cursor.
 
 ## Maps, extra levels, and authored data
 

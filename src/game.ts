@@ -21,9 +21,11 @@ import {
 import { sameGameOptions, type GameOptions } from "./game/game-options";
 import {
   saveCameraPreferences,
+  savedGraphics,
   savedPreference,
   savePreference,
   startingCamera,
+  startingGraphics,
 } from "./game/player-preferences";
 import { debugPage, isExtraLevel } from "./game/map-options";
 import { NerdStats, engineStatsSections } from "./game/nerd-stats";
@@ -69,6 +71,7 @@ export async function prepareGame(
       cssHeight: innerHeight,
       pixelRatio: devicePixelRatio,
       ...startingCamera(),
+      ...startingGraphics(),
     });
   } catch (error) {
     root.remove();
@@ -333,19 +336,19 @@ export async function prepareGame(
     setting: settings,
     touchMode: () => touchControls.preference,
     setTouchMode: (mode) => touchControls.setPreference(mode),
+    graphics: savedGraphics,
+    setGraphics(setting) {
+      savePreference("graphics", setting);
+      game.set_graphics(setting);
+    },
     selectAmmo(weapon) {
       if (phase === "playing" && alive) {
         controls.ammoSelection = weapon;
       }
     },
   });
-  // The hit marker lands on the drawn reticle (the ground aim overhead, the gun sight in
-  // first person), or on the pointer where no reticle shows; the damage ring wraps the
-  // tank on screen.
-  const reticle = { x: NaN, y: NaN };
+  // The damage ring wraps the tank on screen.
   const viewer = { x: NaN, y: NaN };
-  ui.aimPoint = () =>
-    Number.isFinite(reticle.x) ? reticle : firstPerson ? null : { x: controls.nx, y: controls.ny };
   ui.viewerPoint = () => (Number.isFinite(viewer.x) ? viewer : null);
   /** Switches the camera seat; the HUD's damage ring leaves the tank's screen spot at once. */
   const switchSeat = () => {
@@ -415,8 +418,8 @@ export async function prepareGame(
     if (stopped) {
       return;
     }
+    // Since the last frame the engine ran: it skips frames while the GPU catches up.
     const frameMs = Math.max(0, now - last);
-    last = Math.max(last, now);
     if (active && !document.hidden) {
       controls.stickTurns = touchControls.active && firstPerson;
       controls.takeInput(input);
@@ -433,12 +436,14 @@ export async function prepareGame(
         fail(error);
         return;
       }
-      counters.frames++;
+      const ran = result[FRAME.ran] === 1;
+      if (ran) {
+        counters.frames++;
+        last = Math.max(last, now);
+      }
       phase = PHASES[result[FRAME.phase]] ?? "ready";
       alive = result[FRAME.humanAlive] === 1;
       firstPerson = result[FRAME.firstPerson] === 1;
-      reticle.x = result[FRAME.reticleX];
-      reticle.y = result[FRAME.reticleY];
       viewer.x = result[FRAME.viewerX];
       viewer.y = result[FRAME.viewerY];
       holdPointer();
@@ -461,13 +466,17 @@ export async function prepareGame(
         result[FRAME.hullAngle],
         controls.aimWaitsForClick,
       );
-      stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      if (ran) {
+        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+        recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
+      }
       hudDt += result[FRAME.dt];
       if (result[FRAME.hudDue]) {
         updateHud(hudDt);
         hudDt = 0;
       }
-      recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
+    } else {
+      last = Math.max(last, now);
     }
     requestAnimationFrame(loop);
   }
