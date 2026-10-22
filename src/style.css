@@ -4616,6 +4616,11 @@ html:not(.phone) #toast[data-tone="death"] {
   .start .tank-preview {
     height: 90px;
   }
+  /* With the key strip gone the build line follows the panels themselves: it keeps
+     clear of their border instead of tucking up as it does under the strip. */
+  .start .menu-build {
+    margin-top: 4px;
+  }
 }
 @media (max-width: 860px) {
   .choice-cards .choice-icon {
