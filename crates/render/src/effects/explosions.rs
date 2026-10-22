@@ -75,10 +75,22 @@ const HOUSE_PALL: usize = 3;
 /// (m) they climb as they thin. Lumpy and darker at the foot, it rises and thins
 /// over about a second and a half, so the pile shows through it.
 const SURGE_AT: (f64, f64) = (0.55, 0.35);
-const SURGE_BILLOWS: usize = 10;
+const SURGE_BILLOWS: usize = 14;
 const SURGE_RATE: f64 = 2.6;
-const SURGE_REACH: f64 = 2.4;
-const SURGE_RISE: f64 = 1.1;
+const SURGE_REACH: f64 = 3.0;
+const SURGE_RISE: f64 = 0.8;
+/// How squat the surge's billows are against a plain puff: the ones along the
+/// ground and the ones that climb off it, so the skirt hugs the ground as a low,
+/// lumpy roll rather than a ring of round blobs.
+const SURGE_SQUAT: (f64, f64) = (0.5, 0.8);
+/// A collapsed cottage's footprint stains: the churned earth under the heap (two
+/// overlapping, m across, and how far apart), and the lobes of plaster dust round
+/// it, overlapping into a ragged ring: how far (m) from its centre they lie and
+/// how wide they are.
+const FOOTPRINT_CHURN: (f64, f64) = (11.0, 1.2);
+const FOOTPRINT_LOBES: usize = 5;
+const FOOTPRINT_REACH: f64 = 4.2;
+const FOOTPRINT_LOBE: f64 = 7.5;
 /// Darker puffs of plaster and soot out of the pile as the roof lands on it.
 const HOUSE_CORE: usize = 3;
 /// Plaster and mortar dust, paler than the ground's.
@@ -998,6 +1010,8 @@ impl ExplosionEffects {
                 }
             }
         }
+        let footprint =
+            (kind == Kind::HouseFall).then_some((blast.x, blast.z, blast.phase, blast.dust));
         // Fiery blasts char the ground where they went off.
         let scorch = match kind {
             Kind::Blast => Some(5.2),
@@ -1010,6 +1024,9 @@ impl ExplosionEffects {
             let (x, z, phase, dust) = (blast.x, blast.z, blast.phase, blast.dust);
             let diameter = diameter * blast.scale;
             self.stain(x, z, diameter, phase, dust, SCORCH);
+        }
+        if let Some((x, z, phase, ground)) = footprint {
+            self.house_footprint(x, z, phase, ground);
         }
         if let Some((strike, phase, powder)) = wall_mark {
             // Crushed concrete spills pale powder on the ground at the wall's foot.
@@ -1025,6 +1042,40 @@ impl ExplosionEffects {
                 );
             }
             self.mark(strike, phase);
+        }
+    }
+
+    /// The dust and churned earth a cottage's collapse leaves round its footprint:
+    /// a dark stain of soil and rubble under the heap, and lobes of pale plaster
+    /// dust where the walls fell and the surge rolled out, feathered into the
+    /// ground and lasting as long as a scorch.
+    fn house_footprint(&mut self, x: f64, z: f64, phase: f64, ground: [f64; 3]) {
+        let plaster = linear(PLASTER_DUST);
+        let (churn, apart) = FOOTPRINT_CHURN;
+        for side in [-0.5, 0.5] {
+            self.stain(
+                x + phase.cos() * apart * side,
+                z + phase.sin() * apart * side,
+                churn,
+                phase + side,
+                scaled(ground, 0.45),
+                POWDER,
+            );
+        }
+        for k in 0..FOOTPRINT_LOBES {
+            let kf = k as f64;
+            let angle =
+                phase * 1.3 + kf * TAU / FOOTPRINT_LOBES as f64 + (hash(phase + kf) - 0.5) * 0.6;
+            let reach = FOOTPRINT_REACH * (0.85 + 0.3 * hash(phase * 1.7 + kf * 0.9));
+            let diameter = FOOTPRINT_LOBE * (0.8 + 0.4 * hash(phase * 2.3 + kf * 1.3));
+            self.stain(
+                x + angle.cos() * reach,
+                z + angle.sin() * reach,
+                diameter,
+                phase + kf * 0.37,
+                scaled(plaster, 1.08 - 0.12 * hash(phase * 0.7 + kf)),
+                POWDER,
+            );
         }
     }
 
@@ -2097,31 +2148,50 @@ impl ExplosionEffects {
             if age <= 0.0 {
                 continue;
             }
+            // Every other billow rolls along the ground, dark with the soil and
+            // rubble it scours up; the rest climb off it paler and thinner.
+            let ground = j % 2 == 0;
             // Spread round the footprint, bunched a little so the skirt is lumpy
             // rather than an even ring.
             let angle = b.phase * 0.9 + jf * TAU / SURGE_BILLOWS as f64 + (r2 - 0.5) * 0.9;
             let roll = settle(age, SURGE_RATE * (0.8 + 0.4 * r3));
-            let reach = HOUSE_FOOT * (0.55 + 0.25 * r3) + SURGE_REACH * (0.6 + 0.4 * r2) * roll;
-            let size = 0.9 + 0.5 * r2 + 1.3 * roll;
-            let end = 2.0 + 0.8 * r3;
-            self.puff(Puff {
-                position: [
-                    b.x + angle.cos() * reach + WIND[0] * age * 0.3,
-                    0.15 + size * 0.3 + SURGE_RISE * settle(age, 0.9) * (0.5 + 0.5 * r1),
-                    b.z + angle.sin() * reach + WIND[1] * age * 0.3,
-                ],
-                size,
-                // Darker where it boils off the ground, paler as it climbs.
-                color: scaled(dust, 0.66 + 0.18 * r3 + 0.16 * settle(age, 1.2)),
-                opacity: (age / 0.08).min(1.0)
-                    * (0.4 + 0.14 * r1)
-                    * (1.0 - smoothstep(age, 0.5, end)),
-                seed: b.phase * 0.53 + jf * 0.173,
-                heat: 0.0,
-                erosion: smoothstep(age, 0.3, end) * 0.85,
-                softness: 0.5 + 0.2 * r1,
-                underglow: 0.0,
-            });
+            let reach = HOUSE_FOOT * (0.55 + 0.25 * r3)
+                + SURGE_REACH * (0.6 + 0.4 * r2) * roll * if ground { 1.0 } else { 0.7 };
+            let size = if ground {
+                1.0 + 0.5 * r2 + 1.4 * roll
+            } else {
+                0.8 + 0.4 * r2 + 1.0 * roll
+            };
+            let squat = if ground { SURGE_SQUAT.0 } else { SURGE_SQUAT.1 };
+            let end = 2.6 + 0.8 * r3;
+            let climb = if ground { 0.15 } else { 1.0 };
+            push_stretched_puff(
+                &mut self.puffs,
+                Puff {
+                    position: [
+                        b.x + angle.cos() * reach + WIND[0] * age * 0.3,
+                        0.08 + size * squat * 0.32
+                            + SURGE_RISE * climb * settle(age, 0.9) * (0.5 + 0.5 * r1),
+                        b.z + angle.sin() * reach + WIND[1] * age * 0.3,
+                    ],
+                    size,
+                    // Darker where it boils off the ground, paler as it climbs.
+                    color: scaled(
+                        dust,
+                        if ground { 0.58 } else { 0.8 } + 0.14 * r3 + 0.12 * settle(age, 1.2),
+                    ),
+                    opacity: (age / 0.08).min(1.0)
+                        * if ground { 0.36 + 0.1 * r1 } else { 0.22 + 0.08 * r1 }
+                        * (1.0 - smoothstep(age, 0.6, end)),
+                    seed: b.phase * 0.53 + jf * 0.173,
+                    heat: 0.0,
+                    erosion: smoothstep(age, 0.2, end) * 0.9,
+                    // Lumpy, rim-lit billows rather than soft cotton.
+                    softness: if ground { 0.3 } else { 0.45 } + 0.15 * r1,
+                    underglow: 0.0,
+                },
+                squat,
+            );
         }
         for j in 0..HOUSE_BILLOWS {
             let jf = j as f64;
@@ -2139,23 +2209,27 @@ impl ExplosionEffects {
             let reach = HOUSE_FOOT * (0.8 + 0.3 * r3) + HOUSE_ROLL * roll;
             let size = 0.5 + 0.25 * r2 + 0.9 * roll;
             let end = 3.2 + 1.2 * r3;
-            self.puff(Puff {
-                position: [
-                    b.x + angle.cos() * reach + WIND[0] * age * 0.3,
-                    0.1 + size * 0.3 + 0.35 * settle(age, 0.8),
-                    b.z + angle.sin() * reach + WIND[1] * age * 0.3,
-                ],
-                size,
-                color: scaled(dust, 0.84 + 0.22 * r3),
-                opacity: (age / 0.1).min(1.0)
-                    * (0.24 + 0.1 * r1)
-                    * (1.0 - smoothstep(age, 0.8, end)),
-                seed: b.phase * 0.43 + jf * 0.191,
-                heat: 0.0,
-                erosion: smoothstep(age, 0.5, end) * 0.8,
-                softness: 0.55 + 0.25 * r1,
-                underglow: 0.0,
-            });
+            push_stretched_puff(
+                &mut self.puffs,
+                Puff {
+                    position: [
+                        b.x + angle.cos() * reach + WIND[0] * age * 0.3,
+                        0.1 + size * 0.24 + 0.35 * settle(age, 0.8),
+                        b.z + angle.sin() * reach + WIND[1] * age * 0.3,
+                    ],
+                    size,
+                    color: scaled(dust, 0.78 + 0.22 * r3),
+                    opacity: (age / 0.1).min(1.0)
+                        * (0.24 + 0.1 * r1)
+                        * (1.0 - smoothstep(age, 0.8, end)),
+                    seed: b.phase * 0.43 + jf * 0.191,
+                    heat: 0.0,
+                    erosion: smoothstep(age, 0.4, end) * 0.85,
+                    softness: 0.4 + 0.2 * r1,
+                    underglow: 0.0,
+                },
+                SURGE_SQUAT.1,
+            );
         }
         for j in 0..HOUSE_CORE {
             let jf = j as f64;
@@ -2752,5 +2826,19 @@ mod tests {
         timber.cover_kind = Some(CoverKind::Timber);
         effects.event(&timber, &mut random);
         assert_eq!(effects.active(), 2);
+    }
+
+    #[test]
+    fn a_collapsed_cottage_leaves_its_footprint_in_dust() {
+        let mut random = CosmeticRandom::default();
+        let mut effects = ExplosionEffects::default();
+        let mut destroy = SimEvent::at(SimEventType::Destroy, 0.0, 0.0);
+        destroy.cover_kind = Some(CoverKind::House);
+        destroy.size = Some(7.0);
+        effects.event(&destroy, &mut random);
+        assert_eq!(effects.scorches(), FOOTPRINT_LOBES + 2);
+        update(&mut effects, HOUSE_DUST_LIFETIME);
+        assert_eq!(effects.active(), 0);
+        assert_eq!(rings_of(&effects.rings, POWDER), FOOTPRINT_LOBES + 2);
     }
 }

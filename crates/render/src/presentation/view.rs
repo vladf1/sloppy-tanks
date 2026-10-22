@@ -2061,8 +2061,10 @@ impl Presentation {
                 cover.alive
                     && (view.stage != stage
                         || view.debris_seed != cover.debris_seed
-                        || (matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo)
-                            && view.hits != cover.timber_hits.len()))
+                        || (matches!(
+                            cover.kind,
+                            CoverKind::Timber | CoverKind::Cargo | CoverKind::House
+                        ) && view.hits != cover.timber_hits.len()))
             });
             if rebuild {
                 self.add_cover(cover);

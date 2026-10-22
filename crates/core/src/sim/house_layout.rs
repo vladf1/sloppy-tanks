@@ -25,8 +25,8 @@ use super::math::{Random, js_round};
 pub const HOUSE_HEALTH: f64 = 600.0;
 /// Health fractions below which a cottage shows heavier damage: broken windows and
 /// more holes, then a sagging, holed roof and a toppled chimney.
-const DAMAGED: f64 = 0.7;
-const WRECKED: f64 = 0.35;
+const DAMAGED: f64 = 0.8;
+const WRECKED: f64 = 0.45;
 
 /// Height of the fieldstone plinth (two 21 cm steps up to the door).
 pub const PLINTH: f64 = 0.42;
@@ -222,7 +222,7 @@ const fn style(
 /// red and blue and from the grass and dirt: muted cream, sage, tan, ochre, slate
 /// and white walls with one accent each and trim a soft off-white that takes its
 /// shading, under roofs a clear step darker that carry an earthy colour of their
-/// own (moss, blue-grey slate, dark slate, teal, terracotta, faded brick red,
+/// own (moss, blue-grey slate, warm grey slate, teal, terracotta, faded brick red,
 /// barn-red steel and weathered blue slate), never the brown of the dirt or the
 /// olive of the grass, so from overhead every roof stands off the ground by value and
 /// hue, no two neighbours match, and none reads as a team marker. Shingle paints
@@ -241,9 +241,9 @@ pub const HOUSE_STYLES: [HouseStyle; 8] = {
         style(Gable, Front, Shingles, Clapboard, [0xe8dcc0, 0xe6e0d4, 0x2f5040, 0x82996a], 1, false, Board, false, 0.6),
         // Soft red brick under a low slate-blue hip roof, navy door and louvres.
         style(Hip, Front, Shingles, Brick, [0xd9d0c6, 0xdfd7c6, 0x24385a, 0x8f98a2], 0, false, Louvred, false, 0.72),
-        // Sage side-gable with an oxblood door under a cross gable and dark
+        // Sage side-gable with an oxblood door under a cross gable and warm grey
         // weathered slate, a dormer lighting the back of the attic.
-        style(Gable, Eave, Shingles, Clapboard, [0xa3ae8e, 0xe3dbc8, 0x6a2a24, 0x88857e], 3, true, Board, false, 0.6),
+        style(Gable, Eave, Shingles, Clapboard, [0xa3ae8e, 0xe3dbc8, 0x6a2a24, 0xaea796], 3, true, Board, false, 0.6),
         // Weathered tan front gable with a shed porch over the door, under
         // weathered teal standing-seam steel.
         style(Gable, Front, Seams, Clapboard, [0xc4a882, 0xe2dacb, 0x2e2c2a, 0x4a706a], 0, false, None, true, 0.68),

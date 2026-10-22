@@ -132,8 +132,8 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
             },
         ),
         CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
-        // An intact cottage shows no marks, so shells change its look only at a
-        // damage stage and it keeps its place in the static covers' draws until then.
+        // Every shell holes a cottage where it struck; an untouched one keeps its
+        // place in the static covers' draws.
         CoverKind::House => house(
             group,
             c.x,
@@ -142,11 +142,7 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
             c.d,
             c.h,
             damage_stage,
-            if damage_stage == 0 {
-                &[]
-            } else {
-                &c.timber_hits
-            },
+            &c.timber_hits,
         ),
         CoverKind::Timber => {
             let parts = timber_parts(

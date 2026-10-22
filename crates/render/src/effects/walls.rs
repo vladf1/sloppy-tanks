@@ -86,9 +86,10 @@ impl Walls {
                 CoverKind::Rock
                 | CoverKind::Concrete
                 | CoverKind::Teeth
-                | CoverKind::House
                 | CoverKind::Rubble => Some(WallMaterial::Stone),
-                CoverKind::Cargo | CoverKind::Timber => None,
+                // A cottage's model shows each shell's hole, torn through its siding,
+                // so a hit marks it as timber does rather than with a stone crater.
+                CoverKind::Cargo | CoverKind::Timber | CoverKind::House => None,
                 _ => continue,
             };
             self.boxes.push(WallBox {
