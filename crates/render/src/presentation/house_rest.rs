@@ -23,7 +23,8 @@ use sloppy_core::scene::Node;
 
 /// How much of its height a pile keeps once pressed into its lasting remains, and
 /// the least height a pressed piece stands above the ground (m).
-const REMAINS_SQUASH: f32 = 0.2;
+const REMAINS_SQUASH: f32 = 0.32;
+
 const REMAINS_LIFT: f32 = 0.015;
 
 /// Seconds a shard keeps still before it joins its cottage's merge, and the least

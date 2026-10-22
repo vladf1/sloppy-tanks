@@ -166,6 +166,9 @@ export function showFeedRow(
   row.dataset.names = key;
   row.classList.toggle("own-kill", ownKill);
   row.classList.toggle("own-death", ownDeath);
+  // The plate's ends take the killer's and the victim's team colours.
+  row.dataset.from = sides[0] ?? "neutral";
+  row.dataset.to = sides[1] ?? "neutral";
   row.classList.remove("own-kill-new", "feed-new");
   if (entering) {
     // Reading offsetWidth commits the removal so a reused row restarts the animation.
@@ -183,6 +186,7 @@ export function showFeedRow(
   names.slice(1).forEach((victim, index) => {
     const mark = document.createElementNS("http://www.w3.org/2000/svg", "svg");
     mark.setAttribute("class", "feed-weapon");
+    mark.dataset.cause = cause ?? "wreck";
     const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
     use.setAttribute("href", `#${feedIcon(cause)}`);
     mark.append(use);
@@ -371,6 +375,8 @@ function showEffects(root: ParentNode, tank: HumanState): void {
 export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled: boolean): void {
   setText(root, "hp", String(Math.max(0, Math.ceil(tank.hp))));
   setText(root, "vehicle-name", tank.vehicleName);
+  // The phone's hull pill names the tank too.
+  setText(root, "hull-pill-name", tank.vehicleName);
   setText(root, "rank", tank.rankName.toUpperCase());
   const rank = root.querySelector<HTMLElement>("#rank")!;
   rank.dataset.rank = String(tank.rank);

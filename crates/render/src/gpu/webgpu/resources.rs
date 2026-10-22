@@ -115,7 +115,7 @@ pub const BLOOM_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     sampler_entry(2, Filtering),
 ];
 
-/// The main view's multisampled depth and the occlusion uniform.
+/// The occlusion depth pass's depth and the occlusion uniform.
 pub const OCCLUSION_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     wgpu::BindGroupLayoutEntry {
         binding: 0,
@@ -123,7 +123,7 @@ pub const OCCLUSION_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
         ty: wgpu::BindingType::Texture {
             sample_type: wgpu::TextureSampleType::Depth,
             view_dimension: wgpu::TextureViewDimension::D2,
-            multisampled: true,
+            multisampled: false,
         },
         count: None,
     },

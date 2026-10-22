@@ -42,6 +42,8 @@ const WIDTH = Number(values.width);
 const HEIGHT = Number(values.height);
 const FRAMES = Number(values.frames);
 const SEED = Number(values.seed);
+/** Half-second waits for a death shot's victim to lose its spawn shield (6 s in all). */
+const SHIELDED_RETRIES = 12;
 const wanted = new Set(values.shots.split(",").filter(Boolean));
 const take = (shot) => wanted.size === 0 || wanted.has(shot);
 const out = path.resolve(values.out);
@@ -183,72 +185,67 @@ try {
 
   for (const map of values.maps.split(",").filter(Boolean)) {
     const page = await battlePage(context, map, FRAMES);
+    // Every step below runs whether or not its shot was asked for, and only the
+    // screenshot is skipped: the shots share one battle, so a capture of a few shots
+    // must reach each of them at the same moment as a capture of all of them (a
+    // skipped strip once moved first person 32 frames earlier, onto another scene).
+    const shootIf = (shot, hud = false) => (take(shot) ? shoot(page, map, shot, hud) : null);
 
-    if (take("follow")) {
-      await page.evaluate(() => window.engine.draw());
-      await shoot(page, map, "follow", true);
-    }
+    await page.evaluate(() => window.engine.draw());
+    await shootIf("follow", true);
     const { x: hx, z: hz, heading } = await page.evaluate(() => window.sloppy.sim.human);
     // Three-quarter front of the hull, low like a photographer kneeling beside it.
     const fx = Math.sin(heading);
     const fz = Math.cos(heading);
-    if (take("hero")) {
+    {
       const eye = [hx + fx * 6.5 - fz * 4.5, 2.6, hz + fz * 6.5 + fx * 4.5];
       await page.evaluate((pose) => window.engine.draw(pose), [...eye, hx, 1.0, hz]);
-      await shoot(page, map, "hero");
+      await shootIf("hero");
     }
-    if (take("vista")) {
+    {
       const eye = [hx - fx * 22 + fz * 10, 7, hz - fz * 22 - fx * 10];
       await page.evaluate(
         (pose) => window.engine.draw(pose),
         [...eye, hx + fx * 20, 0, hz + fz * 20],
       );
-      await shoot(page, map, "vista");
+      await shootIf("vista");
     }
-    if (take("overview")) {
-      await page.evaluate(() => {
-        window.engine.draw([], true);
-        window.engine.draw([], true);
-      });
-      await shoot(page, map, "overview");
-    }
-    if (take("action")) {
-      // Blasts ahead of the player, through the shared explosion path, caught mid-bloom.
-      await page.evaluate(
-        ({ x, z }) => {
-          window.sloppy.game.debug_explode(x, z, 6, 40);
-          window.sloppy.game.debug_explode(x + 4, z - 3, 5, 30);
-        },
-        { x: hx + fx * 9, z: hz + fz * 9 },
-      );
-      await play(page, 9);
+    await page.evaluate(() => {
+      window.engine.draw([], true);
+      window.engine.draw([], true);
+    });
+    await shootIf("overview");
+    // Blasts ahead of the player, through the shared explosion path, caught mid-bloom.
+    await page.evaluate(
+      ({ x, z }) => {
+        window.sloppy.game.debug_explode(x, z, 6, 40);
+        window.sloppy.game.debug_explode(x + 4, z - 3, 5, 30);
+      },
+      { x: hx + fx * 9, z: hz + fz * 9 },
+    );
+    await play(page, 9);
+    await page.evaluate(() => window.engine.draw());
+    await shootIf("action", true);
+    // Motion over half a second of play: recoil, suspension, dust, camera.
+    for (let frame = 0; frame < 8; frame++) {
+      await play(page, 4);
       await page.evaluate(() => window.engine.draw());
-      await shoot(page, map, "action", true);
+      if (take("strip")) await shoot(page, map, `strip-${frame}`);
     }
-    if (take("strip")) {
-      // Motion over half a second of play: recoil, suspension, dust, camera.
-      for (let frame = 0; frame < 8; frame++) {
-        await play(page, 4);
-        await page.evaluate(() => window.engine.draw());
-        await shoot(page, map, `strip-${frame}`);
-      }
-    }
-    if (take("first-person")) {
-      await page.evaluate(() => window.sloppy.firstPerson());
-      await animate(page, 90);
-      await shoot(page, map, "first-person", true);
-    }
+    await page.evaluate(() => window.sloppy.firstPerson());
+    await animate(page, 90);
+    await shootIf("first-person", true);
     const interfaceShots = ["respawn", "settings", "recap"].filter(take);
     if (map === "village" && interfaceShots.length) {
       await page.evaluate(() => {
         for (const element of document.querySelectorAll("#overlay")) element.style.display = "";
       });
     }
-    if (map === "village" && take("respawn")) {
+    if (map === "village" && interfaceShots.length) {
       await page.evaluate(() => window.sloppy.killHuman());
       await play(page, 60);
       await page.evaluate(() => window.engine.draw());
-      await shoot(page, map, "respawn", true);
+      await shootIf("respawn", true);
     }
     if (map === "village" && take("settings")) {
       // A script click: autoplay's idle overlay covers the HUD's buttons.
@@ -283,24 +280,44 @@ try {
         ["death", false],
         ["humvee-death", true],
       ]) {
-        const victim = await page.evaluate((humvee) => {
-          const { human, tanks } = window.sloppy.sim;
-          const enemies = tanks.filter(
-            (tank) => tank.alive && tank.team !== human.team && (tank.kind === "humvee") === humvee,
-          );
-          const near = (tank) => Math.hypot(tank.x - human.x, tank.z - human.z);
-          return enemies.sort((a, b) => near(a) - near(b))[0] ?? null;
-        }, humvee);
+        // A vehicle that has just respawned shrugs the blow off under its spawn shield
+        // (about 3 s), so the nearest one the damage actually destroys is watched, and
+        // the battle runs on half a second at a time until one is.
+        let victim = null;
+        for (let attempt = 0; attempt < SHIELDED_RETRIES && !victim; attempt++) {
+          if (attempt > 0) await play(page, 30);
+          const candidates = await page.evaluate((humvee) => {
+            const { human, tanks } = window.sloppy.sim;
+            const enemies = tanks.filter(
+              (tank) =>
+                tank.alive && tank.team !== human.team && (tank.kind === "humvee") === humvee,
+            );
+            const near = (tank) => Math.hypot(tank.x - human.x, tank.z - human.z);
+            return enemies.sort((a, b) => near(a) - near(b));
+          }, humvee);
+          for (const candidate of candidates) {
+            const destroyed = await page.evaluate((id) => {
+              const { human } = window.sloppy.sim;
+              const team = human.team === "red" || human.team === 1 ? 1 : 0;
+              window.sloppy.game.debug_damage_tank(id, 100000, human.id, team);
+              const after = window.sloppy.sim.tanks.find((tank) => tank.id === id);
+              return !after?.alive || after.hp <= 0;
+            }, candidate.id);
+            if (destroyed) {
+              // Where it stood when it died, for the watching camera.
+              victim = await page.evaluate(
+                (id) => window.sloppy.sim.tanks.find((tank) => tank.id === id),
+                candidate.id,
+              );
+              break;
+            }
+          }
+        }
         if (!victim) {
           console.log(`${map}-${name}: no victim`);
           continue;
         }
         const pose = [victim.x - 8, 8.5, victim.z - 8, victim.x, 0.8, victim.z];
-        await page.evaluate((id) => {
-          const { human } = window.sloppy.sim;
-          const team = human.team === "red" || human.team === 1 ? 1 : 0;
-          window.sloppy.game.debug_damage_tank(id, 100000, human.id, team);
-        }, victim.id);
         for (const [frame, count] of moments.entries()) {
           await play(page, count);
           await page.evaluate((pose) => window.engine.draw(pose), pose);

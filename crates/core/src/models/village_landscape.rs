@@ -210,8 +210,9 @@ fn mountain_rise(x: f64, z: f64) -> f64 {
     }
     let crags = (x * 0.29 + z * 0.14).sin() * (z * 0.21 - x * 0.13).cos() * 2.4;
     // Ridged noise raises sharp aretes and notches the crests, so the peaks
-    // stand as jagged rock rather than smooth cones.
-    let aretes = (ridges(x * 1.7 + 40.0, z * 1.7) - 0.3) * highest * 0.42;
+    // stand as jagged rock rather than smooth cones; no finer than the ridge's
+    // grid can carry, or the faces break into terraces and zigzag streaks.
+    let aretes = (ridges(x * 1.05 + 40.0, z * 1.05) - 0.3) * highest * 0.42;
     0.0f64.max(highest * 0.8 + total * 0.2 + (crags + aretes) * smoothstep(highest, 2.0, 12.0))
         * smoothstep(-z, 112.0, 133.0)
 }
@@ -237,12 +238,14 @@ fn lattice_noise(x: f64, z: f64) -> f64 {
     lerp(a, b, uz)
 }
 
-/// Ridged peaks of the distant ranges: sharp crests, broad valleys.
+/// Ridged peaks of the distant ranges: sharp crests, broad valleys. Three
+/// octaves: a fourth, ten metres across, aliased on the ranges' 6 m grid into
+/// terraced, streaky faces.
 fn ridges(x: f64, z: f64) -> f64 {
     let mut total = 0.0;
-    let mut amplitude = 0.6;
+    let mut amplitude = 0.66;
     let mut frequency = 0.011;
-    for _ in 0..4 {
+    for _ in 0..3 {
         let n = lattice_noise(x * frequency + 13.7, z * frequency - 4.1);
         total += (1.0 - (n * 2.0 - 1.0).abs()).powi(2) * amplitude;
         amplitude *= 0.45;
@@ -727,7 +730,8 @@ fn backdrop(group: &mut Node) {
         grove(&mut forest, &mut rng, (x, z), radius, trees, age, 0.8, true);
     }
     // The near treeline outside the wall: small stands and single trees of mixed
-    // age with shrubs, leaving the lanes, the mill and the bridge open.
+    // age with shrubs, leaving the lanes, the mill and the bridge open. Mostly
+    // pines and spruces, so the village is ringed by the trees it is named for.
     for [x, z, radius, count] in TREELINE {
         let age = 7.0 + rng.next() * 4.0;
         grove(
@@ -737,7 +741,7 @@ fn backdrop(group: &mut Node) {
             radius,
             count as usize,
             age,
-            0.65,
+            0.85,
             true,
         );
     }

@@ -3,7 +3,38 @@ import { isPhone } from "./phone-mode";
 
 type Preference = "tank" | "game-mode" | "map" | "difficulty" | "camera" | "zoom" | Setting;
 /** The Settings dialog's choices, and the name a player joins rooms with. */
-type Setting = "volume" | "tank-speed" | "bullet-speed" | "touch" | "player-name";
+type Setting = "volume" | "tank-speed" | "bullet-speed" | "touch" | "graphics" | "player-name";
+
+/** The Settings dialog's Graphics choices: Auto adapts the engine's quality tier and
+ * render scale to the frame rate; the others fix the tier at full resolution. */
+export const GRAPHICS_SETTINGS = [
+  ["auto", "Auto"],
+  ["high", "High"],
+  ["medium", "Medium"],
+  ["low", "Low"],
+] as const;
+
+/** The saved Graphics setting, Auto unless the player chose another. */
+export function savedGraphics(): string {
+  const saved = savedPreference("graphics");
+  return GRAPHICS_SETTINGS.some(([value]) => value === saved) ? saved! : "auto";
+}
+
+/** The kind of device, from which the engine picks Auto's starting tier: the phone
+ * edition, a touch tablet (a coarse primary pointer, or iPadOS Safari, which presents
+ * itself as a Mac with touch points) or a desktop. */
+function deviceClass(): "desktop" | "tablet" | "phone" {
+  if (isPhone()) {
+    return "phone";
+  }
+  const iPad = /Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1;
+  return iPad || matchMedia("(pointer: coarse)").matches ? "tablet" : "desktop";
+}
+
+/** The graphics an engine starts with: the saved setting and the device class. */
+export function startingGraphics(): { graphics: string; device: string } {
+  return { graphics: savedGraphics(), device: deviceClass() };
+}
 
 /** Storage can be disabled or full; the choices still work for this visit. */
 export function savedPreference(key: Preference): string | null {

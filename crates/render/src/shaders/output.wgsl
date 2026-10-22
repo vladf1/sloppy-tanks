@@ -5,13 +5,14 @@
 // filmic curve with a gamut fit in place of a hard clip, grades (black point, lift,
 // gamma, gain, split toning, a few tamed hues, saturation, contrast, vignette),
 // sharpens edges and encodes sRGB with a little dither against sky banding, into
-// the (non-sRGB) canvas texture. With everything neutral it is Three's plain ACES
-// output.
+// the (non-sRGB) canvas texture. Where the scene rendered smaller than the canvas
+// (the dynamic render scale, `quality.rs`) it upsamples it on the way. With
+// everything neutral it is Three's plain ACES output.
 
 struct Output {
-    // x exposure; the HDR row of a fragment is y + z × its framebuffer row: 0 and 1
-    // where the target's rows run top-down like the HDR target's (WebGPU), height and
-    // -1 on WebGL's bottom-up canvas. w bloom strength.
+    // x exposure; the top-down canvas row of a fragment is y + z × its framebuffer
+    // row: 0 and 1 where the target's rows run top-down like the HDR target's
+    // (WebGPU), height and -1 on WebGL's bottom-up canvas. w bloom strength.
     settings: vec4f,
     // rgb lift, w saturation.
     lift: vec4f,
@@ -33,7 +34,8 @@ struct Output {
     shadows: vec4f,
     // rgb the highlights' tint (unit luminance), w its strength.
     highlights: vec4f,
-    // x edge sharpening 0..1 (0 skips its taps).
+    // x edge sharpening 0..1 (0 skips its taps); yz the reciprocal canvas size and
+    // w 1 where the scene rendered smaller than the canvas and is upsampled.
     detail: vec4f,
 }
 
@@ -343,28 +345,57 @@ fn highlight_rolloff(c: vec3f) -> vec3f {
     return clamp(c * (eased / peak), vec3f(0.0), vec3f(1.0));
 }
 
+// Edge sharpening: push a colour away from its four neighbours' mean, held within
+// their range so edges steepen without a halo or ringing.
+fn sharpened(color: vec3f, n: vec3f, s: vec3f, w: vec3f, e: vec3f, amount: f32) -> vec3f {
+    let low = min(color, min(min(n, s), min(w, e)));
+    let high = max(color, max(max(n, s), max(w, e)));
+    return clamp(color + (color - (n + s + w + e) * 0.25) * amount, low, high);
+}
+
 @fragment
 fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let row = output.settings.y + output.settings.z * position.y;
-    let pixel = vec2f(position.x, row);
+    // The fragment's pixel in the scene's texels (top-down rows) and its texture
+    // coordinates: the canvas's own pixel at full scale, a scaled one where the scene
+    // rendered smaller and is upsampled here.
+    var pixel = vec2f(position.x, row);
     let size = vec2f(textureDimensions(source));
-    let uv = pixel / size;
-    let texel = vec2i(i32(position.x), i32(row));
-    var color = textureLoad(source, texel, 0).rgb;
+    var uv = pixel / size;
     let sharpen = output.detail.x;
-    if sharpen > 0.0 {
-        // Edge sharpening against the multisample resolve's softness: push the pixel
-        // away from its four neighbours' mean, held within their range so edges
-        // steepen without a halo or ringing.
-        let last = vec2i(size) - 1;
-        let n = textureLoad(source, clamp(texel - vec2i(0, 1), vec2i(0), last), 0).rgb;
-        let s = textureLoad(source, clamp(texel + vec2i(0, 1), vec2i(0), last), 0).rgb;
-        let w = textureLoad(source, clamp(texel - vec2i(1, 0), vec2i(0), last), 0).rgb;
-        let e = textureLoad(source, clamp(texel + vec2i(1, 0), vec2i(0), last), 0).rgb;
-        let low = min(color, min(min(n, s), min(w, e)));
-        let high = max(color, max(max(n, s), max(w, e)));
-        let sharpened = color + (color - (n + s + w + e) * 0.25) * sharpen;
-        color = clamp(sharpened, low, high);
+    var color: vec3f;
+    if output.detail.w > 0.0 {
+        uv = pixel * output.detail.yz;
+        pixel = uv * size;
+        // Bilinear, then sharpened against the filter's softness from bilinear taps a
+        // scene texel away: five taps whatever the scale.
+        color = tap(uv);
+        if sharpen > 0.0 {
+            let t = 1.0 / size;
+            color = sharpened(
+                color,
+                tap(uv - vec2f(0.0, t.y)),
+                tap(uv + vec2f(0.0, t.y)),
+                tap(uv - vec2f(t.x, 0.0)),
+                tap(uv + vec2f(t.x, 0.0)),
+                sharpen,
+            );
+        }
+    } else {
+        let texel = vec2i(i32(position.x), i32(row));
+        color = textureLoad(source, texel, 0).rgb;
+        if sharpen > 0.0 {
+            // Against the multisample resolve's softness.
+            let last = vec2i(size) - 1;
+            color = sharpened(
+                color,
+                textureLoad(source, clamp(texel - vec2i(0, 1), vec2i(0), last), 0).rgb,
+                textureLoad(source, clamp(texel + vec2i(0, 1), vec2i(0), last), 0).rgb,
+                textureLoad(source, clamp(texel - vec2i(1, 0), vec2i(0), last), 0).rgb,
+                textureLoad(source, clamp(texel + vec2i(1, 0), vec2i(0), last), 0).rgb,
+                sharpen,
+            );
+        }
     }
     let strength = output.effects.z;
     if strength > 0.0 {

@@ -64,7 +64,7 @@ const VEHICLE_CHIP_REACH: f32 = 0.075;
 const VEHICLE_RECESS_REACH: f32 = 0.12;
 // Chips fade out as a pixel grows past their size, so distant hulls never sparkle.
 const VEHICLE_CHIP_PIXEL_FROM: f32 = 0.006;
-const VEHICLE_CHIP_PIXEL_TO: f32 = 0.017;
+const VEHICLE_CHIP_PIXEL_TO: f32 = 0.024;
 // Plates narrower than these (metres) never chip: bolt heads, latches and trim
 // strips would otherwise scatter grey specks evenly over every deck.
 const VEHICLE_CHIP_PLATE_FROM: f32 = 0.05;
@@ -98,8 +98,17 @@ const VEHICLE_SHEEN_BREAKUP: f32 = 0.1;
 const VEHICLE_DIRT_ROUGHNESS: f32 = 0.92;
 const VEHICLE_STEEL_ROUGHNESS: f32 = 0.48;
 const VEHICLE_STEEL_METALNESS: f32 = 0.45;
-// The team rim's brightness at a full-strength silhouette.
-const VEHICLE_RIM_GLOW: f32 = 0.4;
+const VEHICLE_ENAMEL_ROUGHNESS: f32 = 0.56;
+// The team rim's brightness at a full-strength silhouette. In a round its hue
+// blends this far toward a cool sky white, so a hull's silhouette parts from warm
+// sand, brick and rust props of its own hue as well as from cool asphalt; studio
+// cards keep the pure team hue (a cool rim turned the red card pink).
+const VEHICLE_RIM_GLOW: f32 = 0.5;
+const VEHICLE_RIM_COOL: vec3f = vec3f(0.72, 0.84, 1.0);
+const VEHICLE_RIM_COOL_SHARE: f32 = 0.25;
+// In a round, team paint keeps this share of its saturation: the maps' grades
+// saturate, and a full-strength red clipped every sunlit plate to one value.
+const VEHICLE_ROUND_SATURATION: f32 = 0.9;
 // Rain streaks down upright plates: columns this many per paint UV across and this
 // many per UV along their length, darkening by up to this much, and resolved only
 // while a pixel is smaller than a streak.
@@ -130,37 +139,33 @@ const VEHICLE_GRAIN_PIXEL_TO: f32 = 0.009;
 // cells per metre, on plates at least this wide, resolved while a pixel is smaller
 // than these sizes), drifted thicker into recesses, in the map's ground color where
 // the atmosphere is on.
-const VEHICLE_DECK_DUST_CELLS: f32 = 1.6;
-const VEHICLE_DECK_DUST_FILM: f32 = 0.7;
+const VEHICLE_DECK_DUST_CELLS: f32 = 6.5;
+const VEHICLE_DECK_DUST_FILM: f32 = 0.32;
 const VEHICLE_DECK_DUST_DRIFT: f32 = 0.6;
 const VEHICLE_DECK_DUST_MIN_PLATE: f32 = 0.25;
 const VEHICLE_DECK_DUST_PIXEL_FROM: f32 = 0.012;
 const VEHICLE_DECK_DUST_PIXEL_TO: f32 = 0.03;
 // The track splash's line: this many waves per metre along the hull, rising and
 // falling by this much of the dusty band.
-const VEHICLE_SPLASH_CELLS: f32 = 1.3;
-const VEHICLE_SPLASH_RISE: f32 = 0.4;
+const VEHICLE_SPLASH_CELLS: f32 = 3.4;
+const VEHICLE_SPLASH_RISE: f32 = 0.22;
+// A finer octave that frays the splash line's edge, and how much the wear tile's
+// broad grime field may still lift or lower it.
+const VEHICLE_SPLASH_FRAY_CELLS: f32 = 11.0;
+const VEHICLE_SPLASH_FRAY: f32 = 0.1;
+const VEHICLE_SPLASH_GRIME: f32 = 0.2;
 // Where the caked band's crisp edge sits on the band (0 its top, 1 the ground),
 // and the fine dust film over the paint just above it.
-const VEHICLE_SPLASH_EDGE: f32 = 0.2;
-const VEHICLE_DUST_FILM: f32 = 0.2;
+const VEHICLE_SPLASH_EDGE: f32 = 0.3;
+const VEHICLE_DUST_FILM: f32 = 0.1;
 // Edge wear: how far toward a convex edge the chip field is exposed.
-const VEHICLE_CHIP_EXPOSURE: f32 = 0.5;
+const VEHICLE_CHIP_EXPOSURE: f32 = 0.62;
 // Cells per metre of the field that gathers chips into worn stretches.
 const VEHICLE_CHIP_CLUSTER: f32 = 2.2;
 // Soft, sun-faded variation across the paint, this many cells per metre and this
 // much either way: broad enough never to read as speckle.
-const VEHICLE_FADE_CELLS: f32 = 2.4;
-const VEHICLE_FADE_VALUE: f32 = 0.09;
-// The turret roof's bleach (in a round, under the saturating grade; studio cards
-// keep the clean color): paint values from these (the turret's roof and its
-// highest decks; hull decks stay below) lose this share of their saturation
-// toward a warm grey and lighten by this much.
-const VEHICLE_ROOF_FROM: f32 = 0.95;
-const VEHICLE_ROOF_TO: f32 = 1.08;
-const VEHICLE_ROOF_BLEACH: f32 = 0.12;
-const VEHICLE_ROOF_LIFT: f32 = 0.12;
-const VEHICLE_ROOF_TINT: vec3f = vec3f(1.1, 0.96, 0.9);
+const VEHICLE_FADE_CELLS: f32 = 3.2;
+const VEHICLE_FADE_VALUE: f32 = 0.035;
 
 struct VehicleEdges {
     // 1 on a convex edge, fading out over the chip reach.
@@ -259,7 +264,7 @@ fn vehicle_fill(n: vec3f) -> vec3f {
 // Joints are dark gaps; the pattern fades to its average where a link is only a
 // few pixels long, so a distant track never shimmers.
 const BELT_STEEL: vec3f = vec3f(0.062, 0.059, 0.054);
-const BELT_POLISHED: vec3f = vec3f(0.2, 0.19, 0.172);
+const BELT_POLISHED: vec3f = vec3f(0.135, 0.13, 0.12);
 const BELT_RUBBER: vec3f = vec3f(0.016, 0.016, 0.017);
 const BELT_GAP: f32 = 0.25;
 // Links per pixel over which the pattern fades out.
@@ -317,11 +322,11 @@ fn vehicle_belt(s: ptr<function, Surface>, f: EffectFragment, tangent: vec3f, li
         // Running face: two polished wheel paths, the guide horns between them.
         let paths = belt_band(across, 0.12, 0.4, soft) + belt_band(across, 0.6, 0.88, soft);
         let horn = belt_band(across, 0.44, 0.56, soft) * belt_band(phase, 0.3, 0.7, soft);
-        color = mix(BELT_STEEL, BELT_POLISHED, paths * 0.85);
+        color = mix(BELT_STEEL, BELT_POLISHED, paths * 0.7);
         color = mix(color, BELT_POLISHED * 1.15, horn);
-        average = mix(BELT_STEEL, BELT_POLISHED, 0.5);
-        roughness = mix(0.62, 0.38, max(paths, horn));
-        metalness = mix(0.4, 0.7, max(paths, horn));
+        average = mix(BELT_STEEL, BELT_POLISHED, 0.4);
+        roughness = mix(0.62, 0.46, max(paths, horn));
+        metalness = mix(0.4, 0.55, max(paths, horn));
     } else {
         // Edges: the rubber pad along the ground side, the shoe above it and the
         // end connector bridging each joint across the shoe.
@@ -382,10 +387,17 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         return;
     }
 
+    // A livery's own finish: its material roughness over the tanks' enamel
+    // (`PAINT_ROUGHNESS` in Rust) shifts every paint roughness, so the soft-skinned
+    // Humvee's flatter paint reads apart from the tanks' satin.
+    let finish = (*s).roughness - VEHICLE_ENAMEL_ROUGHNESS;
     let code = f.vertex_color.b;
     let team = step(0.5, code);
     let value = (code - 0.5 * team) * 2.0 * VEHICLE_VALUE_RANGE;
-    let base = mix(material.params[1].rgb, material.params[0].rgb, team) * value * f.tint.rgb;
+    let paint_rgb = material.params[0].rgb;
+    let paint_luma = dot(paint_rgb, vec3f(0.2126, 0.7152, 0.0722));
+    let round_paint = mix(vec3f(paint_luma), paint_rgb, select(1.0, VEHICLE_ROUND_SATURATION, atmosphere_on()));
+    let base = mix(material.params[1].rgb, round_paint, team) * value * f.tint.rgb;
     let chamfer = step(0.55, f.vertex_color.a);
     let low = clamp((f.vertex_color.a - 0.2 - 0.4 * chamfer) / 0.3, 0.0, 1.0);
     let grime = tile.r;
@@ -420,14 +432,6 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let metres = f.uv * VEHICLE_METRES_PER_UV;
     let fade = value_noise(metres * VEHICLE_FADE_CELLS) * 0.65 + value_noise(metres * VEHICLE_FADE_CELLS * 2.7 + 3.1) * 0.35;
     var color = base * (1.0 + (fade - 0.5) * 2.0 * VEHICLE_FADE_VALUE) * panel;
-    // The turret roof, the highest and lightest paint, is sun-bleached a little
-    // lighter and greyer than the decks below it: a pure team color clips to one
-    // flat slab under a saturating grade, while this keeps the turret's footprint
-    // standing off the hull from the overhead camera.
-    let roof = smoothstep(0.75, 0.92, (*s).normal.y) * smoothstep(VEHICLE_ROOF_FROM, VEHICLE_ROOF_TO, value) * team
-        * select(0.0, 1.0, atmosphere_on());
-    let luma = dot(color, vec3f(0.2126, 0.7152, 0.0722));
-    color = mix(color, vec3f(luma) * VEHICLE_ROOF_TINT, roof * VEHICLE_ROOF_BLEACH) * (1.0 + roof * VEHICLE_ROOF_LIFT);
     // Rubbed edges: a lighter band on each bevel and over chamfer strips.
     let lifted = color * VEHICLE_BEVEL_LIFT + VEHICLE_BEVEL_PALE;
     color = mix(color, lifted, max(bevel, chamfer * 0.45) * VEHICLE_BEVEL_TINT);
@@ -486,8 +490,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // field, with a crisp edge: caked earth below it and only a thin film of fine
     // dust above, so the band reads as thrown dirt rather than as faded paint.
     let splash = value_noise(metres * vec2f(VEHICLE_SPLASH_CELLS, VEHICLE_SPLASH_CELLS * 0.4) + 11.3);
-    let line = low + (grime - 0.5) * 0.55 + (splash - 0.5) * VEHICLE_SPLASH_RISE;
-    let caked = smoothstep(VEHICLE_SPLASH_EDGE, VEHICLE_SPLASH_EDGE + 0.07, line);
+    let fray = value_noise(metres * VEHICLE_SPLASH_FRAY_CELLS + 23.1);
+    let line = low + (grime - 0.5) * VEHICLE_SPLASH_GRIME + (splash - 0.5) * VEHICLE_SPLASH_RISE
+        + (fray - 0.5) * VEHICLE_SPLASH_FRAY;
+    let caked = smoothstep(VEHICLE_SPLASH_EDGE, VEHICLE_SPLASH_EDGE + 0.04, line);
     let band = max(caked * (0.82 + 0.18 * smoothstep(0.5, 0.8, line)), smoothstep(-0.05, 0.2, line) * VEHICLE_DUST_FILM * select(0.0, 1.0, atmosphere_on()));
     let drifted = edges.recess * smoothstep(0.08, 0.5, low) * (0.6 + 0.8 * grime);
     let dusty = clamp(max(band, max(drifted, ledge * (0.35 + 0.5 * grime))), 0.0, 1.0) * dust_strength;
@@ -499,13 +505,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // recesses, never on the bevels the crew's boots and the wind keep clean. The
     // film resolves only close up: from the overhead camera and on the menu cards
     // its patches would read as camouflage blotches over the team color.
-    let patches = value_noise(metres * VEHICLE_DECK_DUST_CELLS + 5.7) * 0.7 + grime * 0.3;
+    let patches = value_noise(metres * VEHICLE_DECK_DUST_CELLS + 5.7) * 0.6
+        + value_noise(metres * VEHICLE_DECK_DUST_CELLS * 2.9 + 2.3) * 0.4;
     let broad = smoothstep(VEHICLE_DECK_DUST_MIN_PLATE, VEHICLE_DECK_DUST_MIN_PLATE * 2.0, edges.narrowest);
     // Studio scenes (the menu cards) show the paint showroom clean.
     let film = VEHICLE_DECK_DUST_FILM * broad * select(0.0, 1.0, atmosphere_on())
         * (1.0 - smoothstep(VEHICLE_DECK_DUST_PIXEL_FROM, VEHICLE_DECK_DUST_PIXEL_TO, pixel));
     let settled = deck * (1.0 - chamfer) * (1.0 - bevel)
-        * smoothstep(0.3, 0.7, patches + recess * 0.3)
+        * smoothstep(0.66, 0.74, patches + recess * 0.4)
         * (film + VEHICLE_DECK_DUST_DRIFT * recess);
     color = mix(color, dust * (0.95 + 0.3 * grime), settled);
     let dirt = max(max(dusty, muddy), settled * 0.8);
@@ -534,7 +541,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         + (grain - 0.5) * 0.08 * grain_resolved;
     roughness = mix(roughness, VEHICLE_DIRT_ROUGHNESS, max(dirt, recess * 0.6));
     roughness = mix(roughness, VEHICLE_STEEL_ROUGHNESS, chip);
-    (*s).roughness = roughness;
+    (*s).roughness = clamp(roughness + finish, 0.0, 1.0);
     (*s).metalness = mix((*s).metalness, VEHICLE_STEEL_METALNESS, chip);
     (*s).normal = normal;
     (*s).color = color;
@@ -545,6 +552,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     (*s).emissive += color * vehicle_fill(normal) * material.params[1].w;
     let grazing = 1.0 - clamp(dot(normal, f.view_direction), 0.0, 1.0);
     let away = 1.0 - clamp(dot(normal, frame.sun_direction.xyz), 0.0, 1.0);
-    let rim = grazing * grazing * (0.45 + 0.55 * away) * material.params[0].w * (1.0 - dirt) * paint;
-    (*s).emissive += material.params[2].rgb * value * rim * VEHICLE_RIM_GLOW;
+    // Only upright plates take it: decks seen at a grazing angle from a low camera
+    // would wash the whole roof toward the rim's cool white.
+    let side = 1.0 - smoothstep(0.45, 0.8, normal.y);
+    let rim = grazing * grazing * (0.45 + 0.55 * away) * side * material.params[0].w * (1.0 - dirt) * paint;
+    let rim_hue = mix(material.params[2].rgb, VEHICLE_RIM_COOL, select(0.0, VEHICLE_RIM_COOL_SHARE, atmosphere_on()));
+    (*s).emissive += rim_hue * value * rim * VEHICLE_RIM_GLOW;
 }
