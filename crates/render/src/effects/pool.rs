@@ -111,6 +111,26 @@ impl PoolBuffer {
         true
     }
 
+    /// Every record for rewriting in place; all of them will upload.
+    pub fn records_mut(&mut self) -> &mut [InstanceRecord] {
+        self.mark(0..self.records.len() as u32);
+        &mut self.records
+    }
+
+    /// Order the records farthest from `eye` first, so a blended pool drawn in
+    /// record order composites back to front; sorts in place, allocation free.
+    pub fn sort_back_to_front(&mut self, eye: Vec3) {
+        if self.records.len() < 2 {
+            return;
+        }
+        self.records.sort_unstable_by(|a, b| {
+            let da = a.translation().distance_squared(eye);
+            let db = b.translation().distance_squared(eye);
+            db.total_cmp(&da)
+        });
+        self.mark(0..self.records.len() as u32);
+    }
+
     /// Remove `slot` by moving the last record into it, keeping one dense draw.
     pub fn swap_remove(&mut self, slot: usize) {
         self.records.swap_remove(slot);

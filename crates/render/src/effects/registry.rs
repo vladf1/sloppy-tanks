@@ -75,12 +75,19 @@ pub const WAVE: EffectDefinition = effect("wave", include_str!("../shaders/effec
 /// metre × 2π, minimum opacity, unused, unused).
 pub const PULSE: EffectDefinition = effect("pulse", include_str!("../shaders/effects/pulse.wgsl"));
 
-/// Explosion smoke and fire (`explosion-effects.ts` puffs): a camera-facing quad
-/// sized by the instance's X/Y scale, shaded as a soft disc. Instance tint is the
-/// linear color and opacity. No params.
+/// Smoke, fire and dust puffs: a camera-facing quad sized by the instance's X/Y
+/// scale, shaded as a sun-lit billow with a boiling noise rim that glows by its
+/// heat. Instance tint is the linear smoke color and opacity; `instance_data` =
+/// (seed, heat, erosion, softness). No params.
 pub const PUFF: EffectDefinition = effect("puff", include_str!("../shaders/effects/puff.wgsl"));
 
-/// A blast's scorched ground ring. `instance_data` = (age s, phase rad). No params.
+/// Additive sparks, tracers, glows and flame tongues. `instance_data` =
+/// (direction xyz, kind). No params.
+pub const STREAK: EffectDefinition =
+    effect("streak", include_str!("../shaders/effects/streak.wgsl"));
+
+/// A blast's ground decals: dust ring, shockwave and scorch. `instance_data` =
+/// (age s, phase rad, kind, strength). No params.
 pub const BLAST_RING: EffectDefinition = effect(
     "blast-ring",
     include_str!("../shaders/effects/blast_ring.wgsl"),
@@ -158,10 +165,11 @@ pub const SAND_DRIFT: EffectDefinition = effect(
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 13] = [
+pub const BUILTIN_EFFECTS: [EffectDefinition; 14] = [
     WAVE,
     PULSE,
     PUFF,
+    STREAK,
     BLAST_RING,
     TRACK_MARK,
     DUST,
