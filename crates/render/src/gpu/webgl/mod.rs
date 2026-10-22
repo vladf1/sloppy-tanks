@@ -449,6 +449,8 @@ impl Frame {
         // The canvas's rows run bottom-up: HDR row = height - y.
         uniform.settings[1] = self.main.height as f32;
         uniform.settings[2] = -1.0;
+        // WebGL's weaker devices skip the sharpening's four extra taps per pixel.
+        uniform.detail[0] = 0.0;
         gpu.write_buffer(self.output_uniform, 0, bytemuck::bytes_of(&uniform));
     }
 

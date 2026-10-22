@@ -372,6 +372,7 @@ struct FrameUniform {
     aerial: [f32; 4],
     ridge: [f32; 4],
     ridge_shape: [f32; 4],
+    haze_far: [f32; 4],
 }
 
 /// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion and the grade. The
@@ -388,6 +389,7 @@ struct OutputUniform {
     hues: [f32; 4],
     shadows: [f32; 4],
     highlights: [f32; 4],
+    detail: [f32; 4],
 }
 
 /// WGSL `Occlusion` (`occlusion.wgsl`).
@@ -400,19 +402,28 @@ struct OcclusionUniform {
     depth_terms: [f32; 4],
 }
 
-/// Levels of the bloom chain, from half the canvas size down.
-const BLOOM_LEVELS: usize = 5;
+/// Levels of the bloom chain, from half the canvas size down to a sixteenth: a glow
+/// reaching a few tank lengths at most, so a blast never veils the whole frame, in
+/// seven small passes.
+const BLOOM_LEVELS: usize = 4;
 /// Ambient occlusion: the reach of its probes and the depth gap they ignore, in
 /// metres; where it fades out with view distance; and its contrast power.
 const OCCLUSION_RADIUS: f32 = 1.6;
 const OCCLUSION_BIAS: f32 = 0.05;
 const OCCLUSION_FADE: (f32, f32) = (110.0, 200.0);
 const OCCLUSION_POWER: f32 = 2.0;
-/// The clouds' strength in the water's mirror: softer and calmer than overhead, as
-/// a rippled surface would blur them.
-const REFLECTED_CLOUDS: f32 = 0.45;
+/// The clouds' strength in the water's mirror: faint, as a rippled surface seen
+/// from above would blur them into the sky's tone rather than mirror their contrast.
+const REFLECTED_CLOUDS: f32 = 0.22;
 /// Output dither amplitude in 8-bit steps, against banding in the sky gradient.
 const OUTPUT_DITHER: f32 = 1.0;
+/// The output's gamut fit (`output.wgsl` `fit_gamut`): how much of the way colors
+/// beyond the gamut desaturate rather than clip, and where the brightest channel's
+/// shoulder begins.
+const GAMUT_LIFT: f32 = 0.15;
+const GAMUT_SHOULDER: f32 = 0.9;
+/// How quickly a bright bloom saturates: its share halves at this reciprocal luminance.
+const BLOOM_LIMIT: f32 = 0.4;
 
 /// WGSL `Water`.
 #[repr(C)]
@@ -1832,6 +1843,12 @@ impl Renderer {
             aerial: rgb4(sky(a.haze.aerial), a.haze.arena_share),
             ridge: rgb4(sky(a.ridges.color), a.ridges.height),
             ridge_shape: [a.ridges.features, a.ridges.mesa, a.ridges.gaps, 0.0],
+            haze_far: [
+                a.haze.far_density,
+                a.haze.far_start,
+                a.haze.sun_scatter,
+                0.0,
+            ],
             ..FrameUniform::zeroed()
         }
     }
@@ -1864,10 +1881,11 @@ impl Renderer {
                 },
                 if on { OUTPUT_DITHER } else { 0.0 },
             ],
-            tone: [grade.vibrance, grade.black, 0.0, 0.0],
-            hues: [grade.foliage, grade.earth, grade.red_hold, 0.0],
+            tone: [grade.vibrance, grade.black, GAMUT_LIFT, GAMUT_SHOULDER],
+            hues: [grade.foliage, grade.earth, grade.red_hold, BLOOM_LIMIT],
             shadows: rgb4(unit_luminance(grade.shadow_tint), grade.shadow_toning),
             highlights: rgb4(unit_luminance(grade.highlight_tint), grade.highlight_toning),
+            detail: [grade.sharpen, 0.0, 0.0, 0.0],
         }
     }
 

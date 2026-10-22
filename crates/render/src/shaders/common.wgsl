@@ -70,6 +70,10 @@ struct Frame {
     // x their features around the horizon, y flat mesa tops 0..1, z the share of the
     // horizon left open between them 0..1.
     ridge_shape: vec4f,
+    // x haze per metre that does not thin with height (the long-range aerial
+    // perspective that softens far peaks as much as their feet), y the distance from
+    // the eye where it begins, z how strongly haze toward the sun glows with its color.
+    haze_far: vec4f,
 }
 
 // Per drawn instance: world transform, tint (rgb multiplies the base color, a is
@@ -193,8 +197,11 @@ fn horizon_ridges(color: vec3f, direction: vec3f, aa: f32) -> vec3f {
 // The colour haze takes on along `ray`: thin haze shifts surfaces toward the cool
 // aerial tint, thick haze becomes the sky behind them (with the sun's warm forward
 // scatter from `sky_gradient`), so silhouettes recede in steps rather than bleach.
+// Looking toward the sun the haze glows warm, away from it it stays cool.
 fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
-    return mix(frame.aerial.rgb, sky_behind(ray), amount * amount);
+    let toward_sun = max(dot(ray, frame.sun_direction.xyz), 0.0);
+    let glow = frame.sky_sun.rgb * (frame.haze_far.z * toward_sun * toward_sun * amount);
+    return mix(frame.aerial.rgb, sky_behind(ray), amount * amount) + glow;
 }
 
 // The sky as drawn behind a surface along `ray`, distant ranges included (no clouds
@@ -203,11 +210,14 @@ fn sky_behind(ray: vec3f) -> vec3f {
     return horizon_ridges(sky_gradient(ray), ray, FADED_RIDGE_EDGE);
 }
 
-// Exponential height haze integrated from where it begins to the surface (aerial
-// perspective): dense near the ground, thin up high, so a camera looking down from
-// above stays clean while the backdrop recedes. Inside the arena square only a share
-// settles; toward the far plane every surface melts into the sky, so nothing the far
-// plane clips draws a hard horizon. Off, Three's linear fog.
+// Aerial perspective in two layers. Exponential height haze, integrated from where
+// it begins to the surface, lies dense in the valleys and thin up high, so a camera
+// looking down from above stays clean. Beyond `haze_far.y` a thinner haze that does
+// not fall off with height takes over, so distant peaks fade as a whole into the
+// horizon instead of standing hard against it while their feet wash out. Inside the
+// arena square only a share of the height haze settles and none of the far haze;
+// toward the far plane every surface melts into the sky, so nothing the far plane
+// clips draws a hard horizon. Off, Three's linear fog.
 fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
     if atmosphere_on() {
         let eye = frame.camera_position.xyz;
@@ -228,8 +238,14 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
         let begin_height = eye.y + ray.y * start;
         let depth = frame.haze.x * exp(-falloff * max(begin_height, 0.0)) * column;
         let outside = length(max(abs(world.xz) - frame.haze_shape.x, vec2f(0.0)));
-        let backdrop = mix(frame.aerial.w, 1.0, smoothstep(0.0, frame.haze_shape.y, outside));
-        let amount = min(1.0 - exp(-depth), frame.haze.w) * backdrop;
+        let beyond = smoothstep(0.0, frame.haze_shape.y, outside);
+        let backdrop = mix(frame.aerial.w, 1.0, beyond);
+        // The far layer eases in over its first stretch, so it never draws a line.
+        let far_travel = max(distance - frame.haze_far.y, 0.0);
+        let far_depth = frame.haze_far.x * far_travel * far_travel / (far_travel + 40.0);
+        let near_amount = min(1.0 - exp(-depth), frame.haze.w) * backdrop;
+        let far_amount = (1.0 - exp(-far_depth)) * beyond;
+        let amount = min(1.0 - (1.0 - near_amount) * (1.0 - far_amount), frame.haze.w);
         var hazed = mix(color, haze_tint(ray, amount), amount);
         let far = frame.haze_shape.w;
         if far > 0.0 {

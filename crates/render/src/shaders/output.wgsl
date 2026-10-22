@@ -2,10 +2,11 @@
 // resolved linear HDR frame into a half-size level, halves it down a short mip
 // chain and adds each level back up with a tent filter. The output pass adds the
 // bloom, darkens by the ambient occlusion, tone maps through Three r185's ACES
-// filmic curve, grades (black point, lift, gamma, gain, split toning, a few tamed
-// hues, saturation, contrast, vignette) and encodes sRGB with a little dither
-// against sky banding, into the (non-sRGB) canvas texture. With everything neutral
-// it is Three's plain ACES output.
+// filmic curve with a gamut fit in place of a hard clip, grades (black point, lift,
+// gamma, gain, split toning, a few tamed hues, saturation, contrast, vignette),
+// sharpens edges and encodes sRGB with a little dither against sky banding, into
+// the (non-sRGB) canvas texture. With everything neutral it is Three's plain ACES
+// output.
 
 struct Output {
     // x exposure; the HDR row of a fragment is y + z × its framebuffer row: 0 and 1
@@ -21,15 +22,19 @@ struct Output {
     // x bloom threshold, y its soft knee, z occlusion strength, w dither in 8-bit steps.
     effects: vec4f,
     // x vibrance: extra saturation for muted colors that leaves vivid ones alone,
-    // y black point.
+    // y black point, z how much of the way out-of-gamut colors desaturate rather
+    // than clip, w where the brightest channel's shoulder begins (0 clamps).
     tone: vec4f,
     // How much x lime foliage turns toward a true green, y orange earth calms and
-    // z red hulls shed the pink the blue sky fill gives them, each 0..1.
+    // z red hulls shed the pink the blue sky fill gives them, each 0..1; w how
+    // quickly a bright bloom saturates (0 adds it all).
     hues: vec4f,
     // Split toning: rgb the shadows' tint (unit luminance), w its strength.
     shadows: vec4f,
     // rgb the highlights' tint (unit luminance), w its strength.
     highlights: vec4f,
+    // x edge sharpening 0..1 (0 skips its taps).
+    detail: vec4f,
 }
 
 @group(0) @binding(0) var source: texture_2d<f32>;
@@ -146,7 +151,36 @@ fn aces_filmic(color: vec3f, exposure: f32) -> vec3f {
         vec3f(-0.07367, -0.00605, 1.07602),
     );
     let mapped = rrt_and_odt_fit(input_matrix * (color * exposure / 0.6));
-    return clamp(output_matrix * mapped, vec3f(0.0), vec3f(1.0));
+    return fit_gamut(output_matrix * mapped);
+}
+
+// ACES's output matrix pushes saturated colors out of gamut: a red hull lands with
+// green and blue below 0 and a hot one with red past 1. Clamping each channel turns
+// such a hull into one flat primary. Instead negative channels are partly lifted by
+// desaturating toward the color's own luminance (hue kept), and the brightest
+// channel rolls over a soft shoulder that scales the whole color, so lit and shaded
+// faces stay apart.
+fn fit_gamut(color: vec3f) -> vec3f {
+    let shoulder = output.tone.w;
+    if shoulder <= 0.0 {
+        return clamp(color, vec3f(0.0), vec3f(1.0));
+    }
+    let level = max(luminance(color), 0.0);
+    let low = min(min(color.r, color.g), color.b);
+    var c = color;
+    if low < 0.0 {
+        // Part way only: all the way would wash red hulls toward coral.
+        let fitted = vec3f(level) + (c - vec3f(level)) * (level / max(level - low, 1e-5));
+        c = mix(max(c, vec3f(0.0)), fitted, output.tone.z);
+    }
+    let peak = max(max(c.r, c.g), c.b);
+    if peak > shoulder {
+        // Slope 1 at the shoulder, easing toward 1 without reaching it.
+        let room = 1.0 - shoulder;
+        let over = peak - shoulder;
+        c *= (shoulder + over * room / (over + room)) / peak;
+    }
+    return clamp(c, vec3f(0.0), vec3f(1.0));
 }
 
 fn srgb_encode(color: vec3f) -> vec3f {
@@ -181,7 +215,7 @@ fn hue_band(hue: f32, center: f32, width: f32) -> f32 {
 
 // Hues the grade singles out: lime grass, orange earth and the pink a red hull
 // picks up from the blue sky fill.
-const LIME_HUE: f32 = 0.22;
+const LIME_HUE: f32 = 0.215;
 const EARTH_HUE: f32 = 0.088;
 const PINK_HUE: f32 = 0.955;
 // Display mid grey, the pivot of the contrast curve.
@@ -207,10 +241,14 @@ fn grade(color: vec3f) -> vec3f {
     let high = max(max(c.r, c.g), c.b);
     let chroma = high - min(min(c.r, c.g), c.b);
     let vivid = smoothstep(0.05, 0.25, chroma / max(high, 1e-4));
-    // Lime turns toward a true green; orange earth toward tan; red stays red.
-    let lime = hue_band(hue, LIME_HUE, 0.075) * output.hues.x * vivid;
-    c.r *= 1.0 - 0.28 * lime;
-    c.g *= 1.0 + 0.06 * lime;
+    // Lime turns toward a deeper, cooler green (less red, a touch of blue, a little
+    // darker), its yellow fringe with it so sunlit blades do not stand out yellow;
+    // orange earth toward tan; red stays red. The band stops short of the yellow of
+    // team rings and hazard paint.
+    let lime = hue_band(hue, LIME_HUE, 0.08) * output.hues.x * vivid;
+    c.r *= 1.0 - 0.32 * lime;
+    c.g *= 1.0 - 0.02 * lime;
+    c.b = mix(c.b, c.g * 0.4, 0.25 * lime);
     let earth = hue_band(hue, EARTH_HUE, 0.06) * output.hues.y
         * smoothstep(0.2, 0.5, chroma / max(high, 1e-4));
     let pink = hue_band(hue, PINK_HUE, 0.06) * output.hues.z * vivid;
@@ -229,7 +267,23 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let pixel = vec2f(position.x, row);
     let size = vec2f(textureDimensions(source));
     let uv = pixel / size;
-    var color = textureLoad(source, vec2i(i32(position.x), i32(row)), 0).rgb;
+    let texel = vec2i(i32(position.x), i32(row));
+    var color = textureLoad(source, texel, 0).rgb;
+    let sharpen = output.detail.x;
+    if sharpen > 0.0 {
+        // Edge sharpening against the multisample resolve's softness: push the pixel
+        // away from its four neighbours' mean, held within their range so edges
+        // steepen without a halo or ringing.
+        let last = vec2i(size) - 1;
+        let n = textureLoad(source, clamp(texel - vec2i(0, 1), vec2i(0), last), 0).rgb;
+        let s = textureLoad(source, clamp(texel + vec2i(0, 1), vec2i(0), last), 0).rgb;
+        let w = textureLoad(source, clamp(texel - vec2i(1, 0), vec2i(0), last), 0).rgb;
+        let e = textureLoad(source, clamp(texel + vec2i(1, 0), vec2i(0), last), 0).rgb;
+        let low = min(color, min(min(n, s), min(w, e)));
+        let high = max(color, max(max(n, s), max(w, e)));
+        let sharpened = color + (color - (n + s + w + e) * 0.25) * sharpen;
+        color = clamp(sharpened, low, high);
+    }
     let strength = output.effects.z;
     if strength > 0.0 {
         // A 3×3 tent of bilinear taps on texel corners of the half-size occlusion:
@@ -249,7 +303,10 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
     let bloom_strength = output.settings.w;
     if bloom_strength > 0.0 {
-        color += textureSampleLevel(bloom, linear_clamp, uv, 0.0).rgb * bloom_strength;
+        // Small glows add in full; a fireball filling the screen saturates instead of
+        // washing the frame out.
+        let glow = textureSampleLevel(bloom, linear_clamp, uv, 0.0).rgb;
+        color += glow * (bloom_strength / (1.0 + luminance(glow) * output.hues.w));
     }
     var display = grade(aces_filmic(color, output.settings.x));
     let vignette = output.gain.w;
