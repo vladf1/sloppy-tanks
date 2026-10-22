@@ -187,13 +187,14 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     var reflected: Reflected;
     reflected.diffuse = vec3f(0.0);
     reflected.specular = vec3f(0.0);
-    var sun = frame.sun_color.rgb;
+    var sunlit = 1.0;
     if RECEIVE_SHADOW {
-        sun *= sun_shadow(world, n);
+        sunlit = sun_shadow(world, n);
     }
     if atmosphere_on() {
-        sun *= cloud_shadow(world);
+        sunlit *= cloud_shadow(world);
     }
+    let sun = frame.sun_color.rgb * sunlit;
     add_direct_light(&reflected, frame.sun_direction.xyz, sun, v, n, diffuse, specular, roughness);
     for (var i = 0; i < 4; i++) {
         let light = frame.point_lights[i];
@@ -223,6 +224,17 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         shade_color = max(mix(vec3f(grey), diffuse, SHADE_SATURATION), vec3f(0.0));
     }
     var indirect = hemisphere * shade_color * RECIPROCAL_PI;
+    if atmosphere_on() && frame.ground.w > 0.0 {
+        // Warm bounce from the sunlit ground around: what the sun does not reach
+        // directly (cast shadow, cloud shadow or a face turned away) still catches
+        // some of its light off the ground, most on walls and hull sides, so shade
+        // stays warm and luminous rather than sinking into one cold blue.
+        let ground_tint = frame.ground_color.rgb / max(dot(frame.ground_color.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
+        let sun_level = dot(frame.sun_color.rgb, vec3f(0.2126, 0.7152, 0.0722));
+        let lit = sunlit * smoothstep(0.0, 0.35, dot(n, frame.sun_direction.xyz));
+        let bounce = frame.ground.w * sun_level * (1.0 - lit) * (1.0 - 0.5 * max(n.y, 0.0));
+        indirect += ground_tint * (bounce * RECIPROCAL_PI) * shade_color;
+    }
     if atmosphere_on() {
         // Stylized sky rim: grazing walls and hull sides catch the bright horizon,
         // most on the side turned from the sun, so silhouettes read on any ground.
@@ -290,7 +302,7 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
 // Saturation of the sky fill's share of a surface's light (1 = its plain color).
 const SHADE_SATURATION: f32 = 1.3;
 // Point lights' (blast flashes') extra strength with the atmosphere on.
-const BLAST_LIGHT_GAIN: f32 = 2.4;
+const BLAST_LIGHT_GAIN: f32 = 1.6;
 // Share of the drawn sky glossy finishes reflect.
 const ATMOSPHERE_REFLECTION: f32 = 0.45;
 // The lowest elevation of the drawn sky glossy finishes reflect.
@@ -391,6 +403,13 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     fragment.tint = input.tint;
     effect_surface(&surface, fragment);
     let alpha_width = fwidth(surface.opacity);
+    if LIT {
+        if atmosphere_on() {
+            let ground = ground_macro(input.world, surface.normal, surface.roughness);
+            surface.normal = ground.normal;
+            surface.color = apply_ground_macro(surface.color, ground);
+        }
+    }
 
     // Three writes alpha 1 for opaque materials; here they draw with blending off,
     // and nothing reads the HDR target's alpha (the output and water passes read
