@@ -3,6 +3,7 @@ import { test } from "node:test";
 import type { EngineEvent } from "../src/game/engine-api";
 import {
   activeEffects,
+  effectShare,
   damageEdgePoint,
   damageRingPlacement,
   deathCause,
@@ -199,6 +200,17 @@ test("every kill-feed row carries an icon, the wreck mark when the weapon is unk
   assert.equal(feedIcon("rocket"), "hud-rocket");
   assert.equal(feedIcon("tow"), "hud-rocket");
   assert.equal(feedIcon(undefined), "hud-skull");
+});
+
+test("an effect's timer ring drains from the longest time seen since it began", () => {
+  const longest = new Map();
+  assert.equal(effectShare(longest, "rapid", 15), 1);
+  assert.equal(effectShare(longest, "rapid", 6), 0.4);
+  // A second pickup refills the ring and becomes the new full length.
+  assert.equal(effectShare(longest, "rapid", 20), 1);
+  assert.equal(effectShare(longest, "rapid", 5), 0.25);
+  // Untimed effects (self-repair) always show a full ring.
+  assert.equal(effectShare(longest, "repair", null), 1);
 });
 
 test("effect chips name each effect apart from what is left of it", () => {

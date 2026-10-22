@@ -79,12 +79,12 @@ fn tank_dimensions_match_typescript() {
 fn vehicle_model_counts() {
     // (kind, team, meshes, vertices, triangles, hull, turret, barrel, track-group children)
     let expected = [
-        (VehicleKind::Scout, 0, 129, 21084, 7062, 110, 12, 6, 0),
-        (VehicleKind::Scout, 1, 129, 21126, 7076, 110, 12, 6, 0),
-        (VehicleKind::Balanced, 0, 146, 22944, 7682, 126, 12, 7, 0),
-        (VehicleKind::Balanced, 1, 146, 22938, 7680, 126, 12, 7, 0),
-        (VehicleKind::Heavy, 0, 133, 23328, 7810, 113, 12, 7, 0),
-        (VehicleKind::Heavy, 1, 133, 23238, 7780, 113, 12, 7, 0),
+        (VehicleKind::Scout, 0, 129, 20952, 7010, 110, 12, 6, 0),
+        (VehicleKind::Scout, 1, 129, 20994, 7024, 110, 12, 6, 0),
+        (VehicleKind::Balanced, 0, 146, 22866, 7648, 126, 12, 7, 0),
+        (VehicleKind::Balanced, 1, 146, 22860, 7646, 126, 12, 7, 0),
+        (VehicleKind::Heavy, 0, 133, 23274, 7784, 113, 12, 7, 0),
+        (VehicleKind::Heavy, 1, 133, 23184, 7754, 113, 12, 7, 0),
         (VehicleKind::Humvee, 0, 32, 32604, 10894, 12, 6, 4, 4),
         (VehicleKind::Humvee, 1, 32, 32580, 10886, 12, 6, 4, 4),
     ];
@@ -106,9 +106,9 @@ fn vehicle_model_counts() {
         assert!(model.find(part::MUZZLE).is_some());
     }
     let open = [
-        (VehicleKind::Scout, (132, 21598, 7280)),
-        (VehicleKind::Balanced, (149, 23458, 7900)),
-        (VehicleKind::Heavy, (136, 23842, 8028)),
+        (VehicleKind::Scout, (132, 21466, 7228)),
+        (VehicleKind::Balanced, (149, 23380, 7866)),
+        (VehicleKind::Heavy, (136, 23788, 8002)),
         (VehicleKind::Humvee, (32, 32604, 10894)),
     ];
     for (kind, expected) in open {
@@ -216,33 +216,33 @@ fn wreck_batches_match_golden() {
     #[rustfmt::skip]
     let expected: [(VehicleKind, usize, WreckPart, &[BatchSummary]); 4] = [
         (VehicleKind::Heavy, 1, WreckPart::Hull, &[
-            (3288, 0xdce2fdb4, 1895.8762, 0xa9da9e3f, 0xc4d9630c),
-            (3522, 0xe910d1f9, 2351.8751, 0x3502a7c6, 0x92381cb9),
-            (594, 0x1fdb38d4, 274.3541, 0xdee32360, 0xcf36a52b),
-            (180, 0x88dc8d75, 40.8671, 0x76c795e5, 0xa23f056c),
+            (3360, 0x2aa83920, 1915.3177, 0xcf4cdb3f, 0xc4a9f9fb),
+            (3504, 0x37e78dfd, 2282.0021, 0x7bea9856, 0x15e908ec),
+            (594, 0x1fdb38d4, 274.3541, 0xdee32360, 0xaea680ce),
+            (108, 0xc7a113b5, 38.8671, 0x3ddbc8a5, 0xc415b1ce),
             (288, 0xd47a0c0d, -11.9209, 0x94d4f49d, 0xabe5a09e),
-            (4392, 0x4bdecb59, -17.7343, 0x1ed3cce5, 0x564f6348),
+            (4056, 0x7d819f71, 41.6836, 0x891f1a25, 0x8ad02ce2),
             (1344, 0x3d775bdd, 2.8138, 0xb6ce257d, 0x2add3aad),
         ]),
         (VehicleKind::Humvee, 0, WreckPart::TurretBarrel, &[
-            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0x010d3415),
+            (4560, 0x7b5fde4a, 1209.6605, 0x423aa6fe, 0x5e23cde4),
             (468, 0x74e31910, -19.0127, 0x96734335, 0x3079eafc),
             (936, 0xb40fca71, -27.4347, 0xe9946e96, 0xbc244bd7),
             (348, 0x4b30ac35, -7.1422, 0xa2ea73b1, 0x1593f5ea),
         ]),
         (VehicleKind::Scout, 0, WreckPart::Intact, &[
-            (5436, 0xda42b3f8, 3748.4700, 0xfdf9f5e0, 0xe00721a6),
-            (7062, 0xa9042686, 1448.6980, 0xa524e123, 0xb8555db8),
-            (2208, 0x01189d96, 3182.8268, 0x8c5cd272, 0x426b07be),
-            (540, 0xabdb0fb7, -64.5104, 0x54b5ab99, 0x4ee6d521),
-            (3852, 0x85f249fd, 5.7848, 0xc66fb1b5, 0x96fe6237),
+            (5772, 0xe1aabd35, 3923.7777, 0xb91c8e3d, 0x4df3e3d9),
+            (7176, 0x4113eb6e, 1155.1995, 0x09113f78, 0x16aa0548),
+            (1968, 0x5004ce48, 3204.1629, 0xa45c0eac, 0x95d3a8af),
+            (468, 0xd373f55d, -37.5120, 0x2cea9759, 0xe459ac66),
+            (3558, 0x5b16d237, 4.4042, 0x879d2911, 0x03f1c882),
             (1344, 0x546c08d5, 1.5827, 0x10f8f7cd, 0x234753be),
-            (384, 0x13c12cb7, 3.9914, 0x7f59b8e5, 0x9618c970),
+            (384, 0x12dfa13b, 3.9914, 0x7f59b8e5, 0xdbc379b3),
         ]),
         (VehicleKind::Balanced, 1, WreckPart::Barrel, &[
-            (480, 0x83d3ce01, -1.2731, 0x11ddcd3c, 0x5b34703b),
-            (936, 0x42d872bf, 290.0387, 0xf6fa33ae, 0xb9eee0c3),
-            (300, 0x32eb4057, -4.8805, 0x5fe93231, 0xba882798),
+            (768, 0xdcd01919, 6.9842, 0xe6ba195b, 0xee790713),
+            (1020, 0x8934b1b7, 334.7098, 0xcdf32c2c, 0x70355ab5),
+            (180, 0xec2d00af, 9.2942, 0xacf92475, 0xba9950de),
         ]),
     ];
     for (kind, team, wreck_part, batches) in expected {

@@ -26,6 +26,8 @@ use js_sys::{Array, Object, Promise, Reflect};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
+use crate::shader::StageSources;
+
 /// Pipelines compiling at once. Background compiles scale well with parallelism
 /// (30 cold pipelines: 6.4 s one at a time, 1.2 s eight at a time, 0.95 s all at
 /// once on an M-series Mac); eight leaves cores for the page and other tabs.
@@ -83,9 +85,9 @@ impl LayoutKind {
     }
 }
 
-/// Everything a render pipeline is made from except its shader module, whose one
-/// WGSL source makes both wgpu's module and the precompiler's. Vertex and fragment
-/// stages share the module.
+/// Everything a render pipeline is made from except its shader code, whose
+/// [`StageSources`] make both wgpu's modules and the precompiler's: a module per
+/// stage, each with only that stage's code.
 #[derive(Debug)]
 pub struct PipelineSpec {
     pub label: &'static str,
@@ -100,19 +102,36 @@ pub struct PipelineSpec {
 }
 
 impl PipelineSpec {
-    /// The wgpu pipeline; instant once [`Precompiler`] has compiled the same one.
+    /// The stages of the module `code` that this pipeline runs.
+    pub fn stages(&self, code: &str) -> StageSources {
+        StageSources::of(code, self.vertex_entry, self.fragment_entry)
+    }
+
+    /// The wgpu pipeline, with modules of its own (`pipelines.rs` says why); instant
+    /// once [`Precompiler`] has compiled the same one.
     pub fn create(
         &self,
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
-        module: &wgpu::ShaderModule,
+        sources: &StageSources,
     ) -> wgpu::RenderPipeline {
+        let module = |stage, source: &str| {
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&format!("{} {stage}", self.label)),
+                source: wgpu::ShaderSource::Wgsl(source.into()),
+            })
+        };
+        let vertex = module("vertex", &sources.vertex);
+        let fragment = sources
+            .fragment
+            .as_deref()
+            .map(|source| module("fragment", source));
         let buffers: Vec<_> = self.buffers.iter().cloned().map(Some).collect();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(self.label),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module,
+                module: &vertex,
                 entry_point: Some(self.vertex_entry),
                 compilation_options: Default::default(),
                 buffers: &buffers,
@@ -121,7 +140,9 @@ impl PipelineSpec {
             depth_stencil: self.depth_stencil.clone(),
             multisample: self.multisample,
             fragment: self.fragment_entry.map(|entry| wgpu::FragmentState {
-                module,
+                module: fragment
+                    .as_ref()
+                    .expect("a fragment entry point has a fragment source"),
                 entry_point: Some(entry),
                 compilation_options: Default::default(),
                 targets: &self.targets,
@@ -132,8 +153,12 @@ impl PipelineSpec {
     }
 }
 
-/// A browser shader module made from the same WGSL as a wgpu one.
-pub struct RawModule(JsValue);
+/// Browser shader modules made from the same WGSL as wgpu's: the vertex stage's and,
+/// if any, the fragment stage's.
+struct RawModules {
+    vertex: JsValue,
+    fragment: Option<JsValue>,
+}
 
 /// A fixed set of pipelines compiling in the background from the moment the
 /// renderer exists, so the page builds the arena meanwhile; the owner creates the
@@ -145,7 +170,7 @@ pub struct Background {
 }
 
 impl Background {
-    pub fn start(device: &wgpu::Device, jobs: &[(&PipelineSpec, &str)]) -> Self {
+    pub fn start(device: &wgpu::Device, jobs: &[(&PipelineSpec, &StageSources)]) -> Self {
         let compiled = Rc::new(RefCell::new(None));
         let held = compiled.clone();
         // Issued now: a spawned task would only start once the page yields, after the
@@ -202,17 +227,27 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         }
     }
 
-    /// A browser module for one pipeline (`pipelines.rs` says why not shared).
-    pub fn module(&self, label: &str, source: &str) -> RawModule {
-        let descriptor = object(&[("label", label.into()), ("code", source.into())]);
-        RawModule(self.device.create_shader_module(&descriptor))
+    /// Browser modules for one pipeline (`pipelines.rs` says why not shared).
+    fn modules(&self, label: &str, sources: &StageSources) -> RawModules {
+        let module = |stage, source: &str| {
+            let label = format!("{label} {stage}");
+            let descriptor = object(&[("label", label.into()), ("code", source.into())]);
+            self.device.create_shader_module(&descriptor)
+        };
+        RawModules {
+            vertex: module("vertex", &sources.vertex),
+            fragment: sources
+                .fragment
+                .as_deref()
+                .map(|source| module("fragment", source)),
+        }
     }
 
     /// Queue `key` for compiling; callers start only keys not [`queued`](Self::queued)
     /// yet.
-    pub fn start(&self, key: K, spec: &PipelineSpec, module: &RawModule) {
+    pub fn start(&self, key: K, spec: &PipelineSpec, sources: &StageSources) {
         self.queue.borrow_mut().started.insert(key);
-        match self.descriptor(spec, module) {
+        match self.descriptor(spec, &self.modules(spec.label, sources)) {
             Ok(descriptor) => self.queue.borrow_mut().waiting.push_back((key, descriptor)),
             Err(error) => {
                 // wgpu compiles it synchronously, as before.
@@ -274,15 +309,11 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     /// wgpu has created its own, so the browser's cache still has them.
     pub fn compile_all(
         &self,
-        jobs: &[(&PipelineSpec, &str)],
+        jobs: &[(&PipelineSpec, &StageSources)],
     ) -> impl Future<Output = Vec<JsValue>> + 'static {
-        let modules: Vec<RawModule> = jobs
-            .iter()
-            .map(|(spec, source)| self.module(spec.label, source))
-            .collect();
         let mut promises = Vec::with_capacity(jobs.len());
-        for ((spec, _), module) in jobs.iter().zip(&modules) {
-            match self.descriptor(spec, module) {
+        for (spec, sources) in jobs {
+            match self.descriptor(spec, &self.modules(spec.label, sources)) {
                 Ok(descriptor) => {
                     promises.push(self.device.create_render_pipeline_async(&descriptor))
                 }
@@ -329,7 +360,7 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     }
 
     /// The browser descriptor wgpu builds for `spec` (wgpu 30 `create_render_pipeline`).
-    fn descriptor(&self, spec: &PipelineSpec, module: &RawModule) -> Result<Object, String> {
+    fn descriptor(&self, spec: &PipelineSpec, modules: &RawModules) -> Result<Object, String> {
         let buffers = spec
             .buffers
             .iter()
@@ -366,7 +397,7 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
             })
             .collect::<Result<Array, String>>()?;
         let vertex = object(&[
-            ("module", module.0.clone()),
+            ("module", modules.vertex.clone()),
             ("entryPoint", spec.vertex_entry.into()),
             ("buffers", buffers.into()),
         ]);
@@ -387,8 +418,12 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
                     None => Ok(JsValue::NULL),
                 })
                 .collect::<Result<Array, String>>()?;
+            let module = modules
+                .fragment
+                .clone()
+                .ok_or("a fragment entry point without a fragment source")?;
             let fragment = object(&[
-                ("module", module.0.clone()),
+                ("module", module),
                 ("entryPoint", entry.into()),
                 ("targets", targets.into()),
             ]);

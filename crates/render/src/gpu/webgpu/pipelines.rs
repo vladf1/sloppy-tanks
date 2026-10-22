@@ -10,6 +10,12 @@
 //! 2 ms whatever the pipeline state. Chrome looks modules up by their source, so the
 //! extra objects cost it nothing.
 //!
+//! Each stage is a module of its own with only that stage's code ([`StageSources`]).
+//! WebKit compiles every stage into a Metal library from the module it is given
+//! (about 0.1 s each on a cold cache), so the many variants whose vertex stage is the
+//! same code share that compile once their fragment code is out of its module: the
+//! village's cold compile went from 71 stage compiles to 50.
+//!
 //! Every pipeline is compiled in the background first (`precompile.rs`): the fixed
 //! ones while the renderer is created, the scene's variants through
 //! [`Pipelines::request`] while an arena prepares. Only a variant first met while
@@ -27,7 +33,7 @@ use crate::effects::EffectRegistry;
 use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
-    BlendMode, Pass, PipelineKey, ShaderKey, occlusion_source, output_source, shader_source,
+    BlendMode, Pass, PipelineKey, ShaderKey, StageSources, occlusion_source, output_source,
     shadow_cutout_source, shadow_merged_source, sky_source, water_source,
 };
 use crate::shadow_merge::ShadowVertex;
@@ -315,23 +321,15 @@ fn surface_spec(key: &PipelineKey, samples: u32) -> PipelineSpec {
     }
 }
 
-/// The cached WGSL of a surface or shadow variant.
+/// The cached stage sources of a surface or shadow variant.
 fn source<'a>(
-    sources: &'a mut HashMap<ShaderKey, String>,
+    sources: &'a mut HashMap<ShaderKey, StageSources>,
     effects: &EffectRegistry,
     shader: ShaderKey,
-) -> &'a str {
+) -> &'a StageSources {
     sources
         .entry(shader)
-        .or_insert_with(|| shader_source(&shader, effects))
-}
-
-/// A wgpu shader module for one pipeline (see the module comment).
-fn module(device: &wgpu::Device, label: &str, source: &str) -> wgpu::ShaderModule {
-    device.create_shader_module(wgpu::ShaderModuleDescriptor {
-        label: Some(label),
-        source: wgpu::ShaderSource::Wgsl(source.into()),
-    })
+        .or_insert_with(|| StageSources::variant(&shader, effects))
 }
 
 pub(super) fn pipeline_layout(
@@ -351,13 +349,13 @@ pub(super) fn pipeline_layout(
 struct FixedJobs {
     /// Water, output, sky, the three bloom passes, occlusion, the water's depth,
     /// then the merged casters in `shadow_merged_index` order.
-    jobs: Vec<(PipelineSpec, String)>,
+    jobs: Vec<(PipelineSpec, StageSources)>,
     compile: Background,
 }
 
 pub struct Pipelines {
     precompiler: Precompiler<PipelineKey>,
-    sources: HashMap<ShaderKey, String>,
+    sources: HashMap<ShaderKey, StageSources>,
     pipelines: Vec<wgpu::RenderPipeline>,
     index: HashMap<PipelineKey, u32>,
     surface_layout: wgpu::PipelineLayout,
@@ -385,29 +383,32 @@ impl Pipelines {
         let bloom_layout = pipeline_layout(device, "bloom", &[&layouts.bloom]);
         let occlusion_layout = pipeline_layout(device, "occlusion", &[&layouts.occlusion]);
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
-        let mut jobs = vec![
-            (water_spec(gpu.samples), water_source()),
-            (output_spec(canvas_format), output_source()),
-            (sky_spec(gpu.samples), sky_source()),
+        let (water, output, sky) = (water_source(), output_source(), sky_source());
+        let occlusion = occlusion_source(true, OCCLUSION_DOWNSCALE / OCCLUSION_DEPTH_DOWNSCALE);
+        let (merged, cutout) = (shadow_merged_source(), shadow_cutout_source());
+        let mut specs = vec![
+            (water_spec(gpu.samples), &water),
+            (output_spec(canvas_format), &output),
+            (sky_spec(gpu.samples), &sky),
         ];
         for spec in bloom_specs(gpu.bloom_format) {
-            jobs.push((spec, output_source()));
+            specs.push((spec, &output));
         }
-        let scale = OCCLUSION_DOWNSCALE / OCCLUSION_DEPTH_DOWNSCALE;
-        jobs.push((occlusion_spec(), occlusion_source(true, scale)));
-        jobs.push((water_depth_spec(), water_source()));
-        for (cutout, source) in [
-            (false, shadow_merged_source()),
-            (true, shadow_cutout_source()),
-        ] {
+        specs.push((occlusion_spec(), &occlusion));
+        specs.push((water_depth_spec(), &water));
+        for (is_cutout, source) in [(false, &merged), (true, &cutout)] {
             for &side in &SHADOW_MERGED_SIDES {
-                jobs.push((shadow_merged_spec(side, cutout), source.clone()));
+                specs.push((shadow_merged_spec(side, is_cutout), source));
             }
         }
-        let specs: Vec<_> = jobs
-            .iter()
-            .map(|(spec, source)| (spec, source.as_str()))
+        let jobs: Vec<_> = specs
+            .into_iter()
+            .map(|(spec, source)| {
+                let stages = spec.stages(source);
+                (spec, stages)
+            })
             .collect();
+        let specs: Vec<_> = jobs.iter().map(|(spec, stages)| (spec, stages)).collect();
         let compile = Background::start(device, &specs);
         Self {
             precompiler: Precompiler::new(device),
@@ -467,7 +468,7 @@ impl Pipelines {
                 LayoutKind::Surface => &self.surface_layout,
                 LayoutKind::Mipmap => unreachable!("the uploader owns the mipmap blits"),
             };
-            spec.create(device, layout, &module(device, spec.label, source))
+            spec.create(device, layout, source)
         });
         let mut next = |what| created.next().expect(what);
         let water = next("water pipeline");
@@ -526,9 +527,8 @@ impl Pipelines {
         }
         if !self.precompiler.queued(key) {
             let spec = surface_spec(key, gpu.samples);
-            let source = source(&mut self.sources, effects, key.shader);
-            let raw = self.precompiler.module(spec.label, source);
-            self.precompiler.start(*key, &spec, &raw);
+            let sources = source(&mut self.sources, effects, key.shader);
+            self.precompiler.start(*key, &spec, sources);
         }
         None
     }
@@ -545,12 +545,8 @@ impl Pipelines {
     fn create(&mut self, gpu: &Gpu, effects: &EffectRegistry, key: &PipelineKey) -> u32 {
         let device = &gpu.device;
         let spec = surface_spec(key, gpu.samples);
-        let module = module(
-            device,
-            spec.label,
-            source(&mut self.sources, effects, key.shader),
-        );
-        let pipeline = spec.create(device, &self.surface_layout, &module);
+        let sources = source(&mut self.sources, effects, key.shader);
+        let pipeline = spec.create(device, &self.surface_layout, sources);
         self.precompiler.release(key);
         self.pipelines.push(pipeline);
         let index = self.pipelines.len() as u32 - 1;
