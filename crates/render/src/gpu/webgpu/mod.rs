@@ -22,7 +22,7 @@ pub use textures::{Sampler, Texture, TextureView, Uploader};
 
 use super::{
     BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
-    OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
+    OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::mesh_pages::{MeshRange, NO_PAGE};
@@ -645,8 +645,8 @@ fn post_draw(
 }
 
 /// The canvas-sized post-processing targets and the bind groups of every pass that
-/// reads the main view: the bloom levels (half size, then halving), the half-size
-/// ambient occlusion and the output. Rebuilt with the main target; dropping it
+/// reads the main view: the bloom levels (quarter size, then halving), the
+/// quarter-size ambient occlusion and the output. Rebuilt with the main target; dropping it
 /// destroys the textures.
 struct PostTargets {
     bloom: Vec<(wgpu::Texture, wgpu::TextureView)>,
@@ -689,8 +689,8 @@ impl PostTargets {
         let (occlusion, occlusion_view) = target(
             "ambient occlusion",
             OCCLUSION_FORMAT,
-            size.width / 2,
-            size.height / 2,
+            size.width / OCCLUSION_DOWNSCALE,
+            size.height / OCCLUSION_DOWNSCALE,
         );
         let bloom_group = |view: &wgpu::TextureView| {
             device.create_bind_group(&wgpu::BindGroupDescriptor {

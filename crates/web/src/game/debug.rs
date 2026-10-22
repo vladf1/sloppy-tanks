@@ -32,9 +32,10 @@
 //!   simulation's covers.
 //! - `debug_water_json()`, `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
 //!   box for pixel probes; `size <= 0` removes it).
-//! - `debug_set_off({ pools, bloom, occlusion, sky, lights, atmosphere, effects })`: switch
-//!   effect pools (by label), post passes, point lights, the atmosphere or main-view draws of
-//!   custom effects (by name) off, for same-page A/B timing of one frame redrawn.
+//! - `debug_set_off({ pools, bloom, occlusion, sky, lights, atmosphere, ground, effects })`:
+//!   switch effect pools (by label), post passes, point lights, the atmosphere, its ground
+//!   variation or main-view draws of custom effects (by name) off, for same-page A/B
+//!   timing of one frame redrawn.
 //! - `debug_seats(seed)`: two player seats on a room simulation, each drawn from its
 //!   own viewer; see the method.
 
@@ -194,6 +195,7 @@ struct DebugOffSpec {
     sky: bool,
     lights: bool,
     atmosphere: bool,
+    ground: bool,
     effects: Vec<String>,
 }
 
@@ -217,6 +219,7 @@ impl Game {
             sky: off.sky,
             lights: off.lights,
             atmosphere: off.atmosphere,
+            ground: off.ground,
             effects: off.effects,
         };
         Ok(())
