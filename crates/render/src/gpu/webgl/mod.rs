@@ -502,6 +502,11 @@ impl Frame {
             .is_none_or(|fence| unsafe { gpu.gl.get_sync_status(fence) } == glow::SIGNALED)
     }
 
+    /// WebGL's own swap holds animation frames back while the GPU is behind.
+    pub fn frames_in_flight(&self) -> u32 {
+        0
+    }
+
     /// Draw a frame into the canvas, which the browser presents once the page yields.
     pub fn draw(
         &mut self,

@@ -207,20 +207,17 @@ export async function startMultiplayer(
   let game: NetGame;
   try {
     const [width, height] = cssSize();
-    game = await createNetGame(
-      ui.canvas,
-      JSON.stringify({
-        server,
-        room,
-        savedSeat: savedSeat(seatKey),
-        ...delay,
-        assetBase: import.meta.env.BASE_URL,
-        cssWidth: width,
-        cssHeight: height,
-        pixelRatio: devicePixelRatio,
-        ...startingCamera(),
-      }),
-    );
+    game = await createNetGame(ui.canvas, {
+      server,
+      room,
+      savedSeat: savedSeat(seatKey),
+      ...delay,
+      assetBase: import.meta.env.BASE_URL,
+      cssWidth: width,
+      cssHeight: height,
+      pixelRatio: devicePixelRatio,
+      ...startingCamera(),
+    });
   } catch (error) {
     console.error("Multiplayer graphics failed", error);
     root.remove();

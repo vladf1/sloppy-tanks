@@ -1615,6 +1615,11 @@ impl Renderer {
         self.frame.gpu_idle(&self.gpu)
     }
 
+    /// Frames drawn into the canvas whose GPU work has not finished.
+    pub fn frames_in_flight(&self) -> u32 {
+        self.frame.frames_in_flight()
+    }
+
     /// Draw every prepared variant once offscreen (shadow, main, water and output
     /// passes) so the browser finishes compiling before gameplay needs them.
     pub fn warm_up(&mut self) -> Result<(), String> {

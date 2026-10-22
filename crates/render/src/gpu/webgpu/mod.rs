@@ -10,7 +10,7 @@ mod resources;
 mod textures;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 use wgpu::util::DeviceExt;
 
@@ -103,6 +103,8 @@ pub struct Frame {
     /// Set once the GPU has run everything submitted before the last
     /// [`Frame::await_gpu`].
     gpu_idle: Arc<AtomicBool>,
+    /// Canvas frames submitted whose GPU work has not finished yet.
+    in_flight: Arc<AtomicU32>,
 }
 
 impl Frame {
@@ -173,6 +175,7 @@ impl Frame {
             shadow_base_buffer: base_buffer(device, INITIAL_SHADOW_BASES),
             shadow_base_capacity: INITIAL_SHADOW_BASES,
             gpu_idle: Arc::new(AtomicBool::new(true)),
+            in_flight: Arc::new(AtomicU32::new(0)),
         };
         frame.view_groups = frame.frame_groups(gpu, &frame.instance_records);
         frame
@@ -336,6 +339,12 @@ impl Frame {
         self.gpu_idle.load(Ordering::Acquire)
     }
 
+    /// Canvas frames the GPU has not finished. Chrome holds animation frames back
+    /// while the GPU is behind; WebKit lets them queue.
+    pub fn frames_in_flight(&self) -> u32 {
+        self.in_flight.load(Ordering::Acquire)
+    }
+
     /// Draw a frame into the canvas. The scene and the canvas go in separate command
     /// buffers. WebKit paces a WebGPU canvas by the GPU time of the command buffers
     /// that write its texture (`WebGPUFramePacer`) and lowers the frame rate when that
@@ -373,6 +382,11 @@ impl Frame {
         self.encode_output(&mut encoder, &view, scene.pipelines, stats);
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(output);
+        let in_flight = self.in_flight.clone();
+        in_flight.fetch_add(1, Ordering::AcqRel);
+        gpu.queue.on_submitted_work_done(move || {
+            in_flight.fetch_sub(1, Ordering::AcqRel);
+        });
         Ok(())
     }
 

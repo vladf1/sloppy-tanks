@@ -23,7 +23,8 @@
 //!
 //! - `create(canvas, config)`: `{ server, room, savedSeat?: {token, roomEpoch}, latency?,
 //!   jitter?, stall?, seed?, assetBase, cssWidth?, cssHeight?, pixelRatio?,
-//!   firstPerson?, zoom?, hideReticle? }`. `server` is
+//!   firstPerson?, zoom?, hideReticle?, framesInFlight? }` (the view's part is
+//!   `page::create_view`'s). `server` is
 //!   the validated WebSocket origin; `latency`/`jitter`/`stall` are the development
 //!   transport-delay URL parameters (omit them in production).
 //! - Actions (`take_actions`, in order): `{type: "open", socket, url}`, `{type: "send",
@@ -70,9 +71,10 @@ use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use wasm_bindgen::prelude::*;
 
+use crate::frame_clock::{DrawPacing, FrameTimes};
 use crate::hud::{HudHuman, Scoreboard, human_json};
 use crate::page::{
-    CanvasSize, FrameTimes, HUD_UPDATE_EVERY_FRAMES, PREPARED, aim, create_view, js_error, now_ms,
+    CanvasSize, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageView, aim, create_view, js_error, now_ms,
     parse, prepare_result, queue_event,
 };
 use crate::stats::presentation_stats;
@@ -149,6 +151,7 @@ pub struct NetGame {
     notices: Vec<Value>,
     frame_index: u64,
     times: FrameTimes,
+    pacing: DrawPacing,
     canvas: CanvasSize,
 }
 
@@ -165,7 +168,12 @@ impl NetGame {
         if !is_room_code(&config.room) {
             return Err(js_error("Invalid room code"));
         }
-        let (view, canvas, seed) = create_view(canvas, config_json).await?;
+        let PageView {
+            view,
+            canvas,
+            seed,
+            pacing,
+        } = create_view(canvas, config_json).await?;
         let client = NetworkClient::new(ClientConfig {
             server_url: config.server.clone(),
             room: config.room.clone(),
@@ -184,6 +192,7 @@ impl NetGame {
             notices: Vec::new(),
             frame_index: 0,
             times: FrameTimes::default(),
+            pacing,
             canvas,
         };
         game.canvas.apply(&mut game.view);
@@ -452,6 +461,7 @@ impl NetGame {
             client,
             view,
             events,
+            pacing,
             ..
         } = self;
         let drawn = match client.frame(now, &local) {
@@ -465,10 +475,11 @@ impl NetGame {
                         displayed.own,
                     );
                 }
-                let render_start = now_ms();
-                view.render(frame.state, 1.0, frame.dt, false)
-                    .map_err(js_error)?;
-                render_ms = now_ms() - render_start;
+                if let Some(dt) = pacing.draw_delta(view.renderer.frames_in_flight(), frame.dt) {
+                    let render_start = now_ms();
+                    view.render(frame.state, 1.0, dt, false).map_err(js_error)?;
+                    render_ms = now_ms() - render_start;
+                }
                 true
             }
             None => false,

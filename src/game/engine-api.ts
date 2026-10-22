@@ -47,6 +47,16 @@ export const FRAME = {
   viewerY: 14,
 } as const;
 
+/** The engine config's `framesInFlight` for this browser: how many frames may still be
+ * on the GPU when the next one draws. Chrome holds animation frames back while the GPU
+ * is behind, so 0 leaves the pacing to it (frame callbacks it reports late would only
+ * skip frames). WebKit (Safari, and every iOS browser) lets a WebGPU canvas's frames
+ * queue instead: a GPU-bound village kept 0.4-0.9 s of frames waiting and the controls
+ * answered that late, so there two keep the GPU fed while the picture stays current. */
+export function framesInFlight(userAgent: string): number {
+  return /AppleWebKit/.test(userAgent) && !/Chrome|Chromium|Android/.test(userAgent) ? 2 : 0;
+}
+
 export const PHASES = ["ready", "playing", "paused", "results"] as const;
 export type Phase = (typeof PHASES)[number];
 export type Team = 0 | 1;
