@@ -53,7 +53,7 @@ test("a first round reports its values without record callouts", () => {
   assert.match(markup, /<dt>Damage dealt<\/dt><dd>1,234<\/dd>/);
   assert.match(markup, /<dt>Longest life<\/dt><dd>1:35<\/dd>/);
   // The kills tile measures the round against the best; the peak rank is a detail.
-  assert.match(markup, /recap-progress is-record">.*Equals your best · 3/);
+  assert.match(markup, /recap-progress is-record">.*Ties your personal best</);
   assert.match(markup, /<dt>Top rank<\/dt><dd>Elite<\/dd>/);
   assert.doesNotMatch(markup, /Time played/);
   assert.match(markup, /<dt>Accuracy<\/dt><dd>—<\/dd>/);
