@@ -1,14 +1,14 @@
 // Showcase stills for judging the game's look build against build: every standard map
 // after a seeded stretch of autoplay, through the follow camera (with HUD), a hero
 // close-up of the player's tank, a low vista, the overview, first person, a blast and
-// a tank and a Humvee dying,
-// plus the interface: Battle Setup (both tabs), the settings dialog, respawn, pause and
+// a tank and a Humvee dying, each kind of destructible cover breaking up, plus the
+// interface: Battle Setup (both tabs), the settings dialog, respawn, pause and
 // the battle report, a tablet's touch HUD and the phone edition. The same seed and frame
 // count give the same battle on a build that leaves gameplay alone, so two builds'
 // stills line up shot for shot.
 //
 //   node scripts/showcase-capture.mjs --out artifacts/showcase/candidate [--maps village,quarry]
-//     [--shots follow,hero,vista,overview,action,strip,first-person,death,menu,respawn,
+//     [--shots follow,hero,vista,overview,action,strip,first-person,death,destruction,menu,respawn,
 //      settings,recap,tablet,phone] [--frames 900] [--seed 4242] [--webgl]
 //
 // It serves this checkout's `src/generated/engine/` through its own Vite dev server on a
@@ -280,6 +280,44 @@ try {
           await play(page, count);
           await page.evaluate((pose) => window.engine.draw(pose), pose);
           await shoot(page, map, `${name}-strip-${frame}`);
+        }
+      }
+      await page.close();
+    }
+  }
+  if (take("destruction")) {
+    // Destructible cover breaking up: on a fresh copy of each map's battle, the cover of
+    // each destructible kind nearest the player is destroyed through the shared damage
+    // path and watched from a fixed elevated camera scaled to its size, through eight
+    // moments from the hit to the settled debris.
+    const moments = [2, 4, 8, 12, 20, 32, 60, 120];
+    const kinds = ["tree", "timber", "tower", "cargo", "drum", "house", "container", "concrete"];
+    for (const map of values.maps.split(",").filter(Boolean)) {
+      const page = await battlePage(context, map, FRAMES);
+      for (const kind of kinds) {
+        const cover = await page.evaluate((kind) => {
+          const { human } = window.sloppy.sim;
+          const near = (cover) => Math.hypot(cover.x - human.x, cover.z - human.z);
+          const covers = window.engine
+            .covers()
+            .filter((cover) => cover.kind === kind && cover.alive);
+          return covers.sort((a, b) => near(a) - near(b))[0] ?? null;
+        }, kind);
+        if (!cover) continue;
+        const reach = Math.max(7, 1.6 * Math.max(cover.w, cover.d, cover.h));
+        const pose = [
+          cover.x - reach,
+          reach * 0.9,
+          cover.z - reach,
+          cover.x,
+          cover.h * 0.3,
+          cover.z,
+        ];
+        await page.evaluate((id) => window.sloppy.game.debug_damage_cover(id, 100000), cover.id);
+        for (const [frame, count] of moments.entries()) {
+          await play(page, count);
+          await page.evaluate((pose) => window.engine.draw(pose), pose);
+          await shoot(page, map, `break-${kind}-strip-${frame}`);
         }
       }
       await page.close();
