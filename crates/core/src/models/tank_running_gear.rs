@@ -20,10 +20,11 @@ use std::sync::Arc;
 
 use glam::{DVec2, DVec3};
 
+use super::super::Team;
 use super::super::model_primitives::{Cache, box_part, material, put, shadowed};
 use super::super::tank_kit::planar_uv;
 use super::super::vertex_material;
-use super::Chassis;
+use super::{Chassis, MARKING_WHITE};
 use crate::geometry::Mesh;
 use crate::geometry::math::hex_to_linear;
 use crate::scene::{Material, Node};
@@ -42,22 +43,25 @@ const BOLT_HEAD: f64 = 0.012;
 /// Seam between neighbouring skirt panels.
 const PANEL_SEAM: f64 = 0.014;
 /// Road wheel, idler and roller facets: enough to read round close up.
-const WHEEL_SIDES: u32 = 16;
+const WHEEL_SIDES: u32 = 12;
 const ROLLER_SIDES: u32 = 10;
 const HUB_BOLTS: u32 = 5;
 
 const HEADLIGHT: u32 = 0xd9e6df;
-/// Rubber tyres, pads and skirt edges: near black, so every wheel reads as a dark
-/// ring round its steel disc.
-const RUBBER: u32 = 0x1d1e1f;
+/// Rubber pads and skirt edges: near black.
+const RUBBER: u32 = 0x262728;
+/// Road wheel tyres: a charcoal sidewall and a lighter, scuffed tread band, so
+/// each wheel reads as a rubber-tyred wheel against the dark of the track.
+const TYRE_SIDEWALL: u32 = 0x323438;
+const TYRE_TREAD: u32 = 0x47484b;
 /// Track shoes and their end connectors and guide horns: worn steel, the
 /// connectors and horn faces polished bright where the wheels and ground rub.
-const TRACK_STEEL: u32 = 0x67645d;
-const TRACK_CONNECTOR: u32 = 0xa29d91;
-/// Road wheel discs: a dark steel web, a lighter hub cap and bright bolt heads.
-const WHEEL_STEEL: u32 = 0x464a4b;
-const HUB_STEEL: u32 = 0x85857f;
-const HUB_BOLT: u32 = 0xaaa79e;
+const TRACK_STEEL: u32 = 0x4f4e4a;
+const TRACK_CONNECTOR: u32 = 0x828079;
+/// Road wheel discs wear the team paint, as on the real vehicles; a steel hub
+/// cap and bright bolt heads sit in their centre.
+const HUB_STEEL: u32 = 0x6c6c66;
+const HUB_BOLT: u32 = 0x8d8a82;
 /// The sprocket and return rollers: bare dark steel.
 const SPROCKET_STEEL: u32 = 0x55585a;
 /// Dirty track steel, wheels and rubber share one vertex-colored material, so a
@@ -184,7 +188,7 @@ pub(super) fn running_gear(hull: &mut Node, track_group: &mut Node, c: &Chassis,
     // The outer face of every wheel sits just inside the end connectors.
     let wheel_face = track_x + side * (gear.track_width / 2.0 - link.connector_width - 0.004);
     let wheel_width = gear.track_width - link.connector_width - 0.03;
-    let wheel = wheel_mesh(gear.wheel_radius, wheel_width);
+    let wheel = wheel_mesh(gear.wheel_radius, wheel_width, c.color);
     let steel = material(SPROCKET_STEEL, 0.55, 0.45);
     let rubber = track_material();
     let wheel_y = wheel_height(&gear);
@@ -660,20 +664,21 @@ fn track_material() -> Arc<Material> {
 // ---------------------------------------------------------------------------
 // Wheels.
 
-static WHEELS: Cache<[u64; 2], Mesh> = Cache::new();
+static WHEELS: Cache<([u64; 2], u32), Mesh> = Cache::new();
 
 /// A twin road wheel about the x axis with its outer face at x = 0 and the pair
 /// reaching back to -`width`, vertex-colored and drawn with the track: a raised
-/// steel hub cap ringed by bright bolts, a dark web dished in toward the rim, and
-/// a black rubber tyre whose sidewall rolls over into the tread band.
-fn wheel_mesh(radius: f64, width: f64) -> Arc<Mesh> {
-    WHEELS.get_or_insert([radius, width].map(f64::to_bits), || {
+/// steel hub cap ringed by bright bolts, a web in the team's `paint` dished in
+/// toward the rim, and a rubber tyre whose sidewall rolls over into a lighter,
+/// scuffed tread band.
+fn wheel_mesh(radius: f64, width: f64, paint: u32) -> Arc<Mesh> {
+    WHEELS.get_or_insert(([radius, width].map(f64::to_bits), paint), || {
         let r = radius;
         let cap = [r * 0.3, -0.01];
         let rim = [r * 0.78, -0.04];
         let mut wheel = MeshBuilder::default();
         wheel.revolve(&[[0.0, 0.0], cap], WHEEL_SIDES, None, HUB_STEEL);
-        wheel.revolve(&[cap, rim], WHEEL_SIDES, None, WHEEL_STEEL);
+        wheel.revolve(&[cap, rim], WHEEL_SIDES, None, paint);
         // Bolt heads stand on the web just outside the cap.
         let bolt_r = r * 0.38;
         let along = (bolt_r - cap[0]) / (rim[0] - cap[0]);
@@ -687,12 +692,8 @@ fn wheel_mesh(radius: f64, width: f64) -> Arc<Mesh> {
                 HUB_BOLT,
             );
         }
-        wheel.revolve(
-            &[rim, [r, -0.012], [r, -width]],
-            WHEEL_SIDES,
-            Some(1),
-            RUBBER,
-        );
+        wheel.revolve(&[rim, [r, -0.012]], WHEEL_SIDES, None, TYRE_SIDEWALL);
+        wheel.revolve(&[[r, -0.012], [r, -width]], WHEEL_SIDES, None, TYRE_TREAD);
         wheel.finish()
     })
 }
@@ -888,6 +889,26 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
             }
         }
     }
+    // The team insignia, large and white, on one panel under the turret.
+    let insignia_panel = match gear.skirt {
+        SkirtStyle::Booker => 1,
+        SkirtStyle::Abrams => 2,
+        SkirtStyle::Type99 => 1,
+    };
+    if let Some(panel) = panels.get(insignia_panel) {
+        let height = (top - bottom) * INSIGNIA_HEIGHT;
+        let part = shadowed(
+            insignia_mesh(c.team, height, side),
+            material(MARKING_WHITE, 0.0, 0.85),
+        );
+        put(
+            hull,
+            part,
+            side * (face + INSIGNIA_PROUD),
+            (top + bottom) / 2.0,
+            (panel.z[0] + panel.z[1]) / 2.0,
+        );
+    }
     // Rubber edge under the panels (Type 99: a deep flap).
     let edge = match gear.skirt {
         SkirtStyle::Booker => 0.05,
@@ -907,6 +928,42 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
         bottom - edge / 2.0 + 0.004,
         (first + last) / 2.0,
     );
+}
+
+/// The skirt insignia's height as a share of the skirt's, and how far it stands
+/// proud of the panel (still inside the fender edge).
+const INSIGNIA_HEIGHT: f64 = 0.62;
+const INSIGNIA_PROUD: f64 = 0.003;
+
+static INSIGNIA: Cache<(Team, [u64; 2]), Mesh> = Cache::new();
+
+/// A team's insignia painted on a skirt, `height` tall, facing out along x on
+/// `side`: a diamond for blue, twin upright bars for red (the turret roof's).
+fn insignia_mesh(team: Team, height: f64, side: f64) -> Arc<Mesh> {
+    INSIGNIA.get_or_insert((team, [height, side].map(f64::to_bits)), || {
+        let mut b = MeshBuilder::default();
+        let facing = DVec3::X * side;
+        let at = |z: f64, y: f64| DVec3::new(0.0, y, z);
+        let h = height / 2.0;
+        if team == Team::Blue {
+            b.oriented_quad(
+                [at(0.0, -h), at(h, 0.0), at(0.0, h), at(-h, 0.0)],
+                facing,
+                UNCOLORED,
+            );
+        } else {
+            let (bar, gap) = (height * 0.24, height * 0.2);
+            for z in [-(gap + bar) / 2.0, (gap + bar) / 2.0] {
+                let (z0, z1) = (z - bar / 2.0, z + bar / 2.0);
+                b.oriented_quad(
+                    [at(z0, -h), at(z1, -h), at(z1, h), at(z0, h)],
+                    facing,
+                    UNCOLORED,
+                );
+            }
+        }
+        b.finish_uncolored()
+    })
 }
 
 fn even_panels(rear: f64, front: f64, count: u32, style: impl Fn(u32) -> (f64, f64)) -> Vec<Panel> {

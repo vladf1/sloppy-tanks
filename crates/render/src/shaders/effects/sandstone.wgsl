@@ -1,8 +1,8 @@
 // Quarried sandstone (`quarry-surfaces.ts` sandstoneMaterial): the photo map
 // sampled triplanar in world space for grain, a strata palette per bed with iron
 // staining in thin wavy bands, cross-bedded laminations, desert varnish down
-// steep faces, chipped pale edges and dark partings, joints across the caprock
-// with sand caught in them, and soil at the foot. Extra texture 0 is the soil
+// steep faces, chipped pale edges and dark partings, lichen on the caprock, a
+// centimetre grain for the close cameras, and soil at the foot. Extra texture 0 is the soil
 // bake (`soil_at`), extra texture 1 the packed-dirt grit.
 //
 // `uv.x` names a bed (constant per triangle): positive on the cover rocks and
@@ -72,8 +72,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let p = f.world;
     let footprint = quarry_footprint(p);
     let q = p / 4.5;
+    // Tops take the photo crossed with itself at a right angle, so its bedding
+    // laminations average into weathered grain instead of streaking over a cap.
+    let top_grain = (textureSample(map_texture, map_sampler, q.xz + vec2f(0.57, 0.43))
+        + textureSample(map_texture, map_sampler, vec2f(q.z, -q.x) * 1.37 + vec2f(0.21, 0.66))) * 0.5;
     let grain = (textureSample(map_texture, map_sampler, q.zy + vec2f(0.31, 0.11)) * blend.x
-        + textureSample(map_texture, map_sampler, q.xz + vec2f(0.57, 0.43)) * blend.y
+        + top_grain * blend.y
         + textureSample(map_texture, map_sampler, q.xy + vec2f(0.13, 0.79)) * blend.z).rgb;
     let soil = soil_at(p);
     let ground = soil.rgb;
@@ -85,7 +89,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // close views: one more sample instead of three.
     let dominant = select(select(q.xy, q.xz, blend.y > blend.z), q.zy, blend.x > max(blend.y, blend.z));
     let fine = dot(textureSample(map_texture, map_sampler, dominant * 3.7 + 0.37).rgb, LUMA);
-    let luma = dot(grain, LUMA) * mix(1.0, fine / 0.42, 0.35);
+    // Close up (the hero and first-person cameras) a centimetre grain from the
+    // grit tile takes over where the photo has run out of texels.
+    let micro = dot(textureSample(extra_texture1, extra_sampler1, dominant * 5.3 + 0.19).rgb, LUMA);
+    let close = quarry_smoothstep(0.02, 0.004, footprint);
+    let luma = dot(grain, LUMA) * mix(1.0, fine / 0.42, 0.35 + 0.3 * close)
+        * mix(1.0, micro / 0.33, 0.5 * close);
     let warp = sin(p.x * 0.061 + p.z * 0.047) * 0.9 + sin(p.x * 0.19 - p.z * 0.23) * 0.35;
     let bed = p.y + warp;
     let along = p.x * 0.8 + p.z * 0.6;
@@ -111,14 +120,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let bench_drilled = select(0.0, bench_band, backdrop && !mesa);
     let drilled = max(sawn, bench_drilled) * upright;
     let drill = drill_traces(face_along, p.y, rock_layer + floor(face_along / 9.0), footprint) * drilled;
-    let height = luma * mix(0.8, 0.35, sawn) + lamina * 0.06 - drill.x * 0.25;
+    let height = luma * mix(0.8, 0.35, sawn) + lamina * (0.06 + 0.06 * close) - drill.x * 0.25 + micro * 0.25 * close;
     var bumped = derivative_bump(height, 0.55, p, n, f.front_facing);
     let face_side = vec3f(face_axis.x, 0.0, face_axis.y);
     bumped = normalize(bumped + face_side * drill.y * 0.6);
     // Tafoni: honeycomb weathering pits clustered on steep weathered faces,
     // overhung and dark inside, with a paler rim.
     let cluster = strata_noise(face_uv * 0.42 + vec2f(rock_layer * 3.1, 0.0));
-    let pit_density = quarry_smoothstep(0.55, 0.85, cluster) * upright * select(0.55, 0.75, rocky) * (1.0 - sawn);
+    let pit_density = quarry_smoothstep(0.55, 0.85, cluster) * upright * select(0.55, 0.3, rocky) * (1.0 - sawn);
     let pits = quarry_pebbles(face_uv, 0.34, pit_density, footprint, 5.0);
     bumped = normalize(bumped - (face_side * pits.lean.x + vec3f(0.0, pits.lean.y, 0.0)) * 0.9);
     // Rocks color by their geometric beds; benches by world height.
@@ -135,8 +144,15 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Sun-bleached caprock: flat tops weather to one pale cream whatever bed they
     // expose, so no top reads as a stamped patch of the face's colors.
     let bleached = quarry_smoothstep(0.7, 0.95, n.y) * select(0.0, 0.55, rocky && !backdrop);
-    layered = mix(layered, srgb_hex(0xdbc4a0u), bleached);
-    layered *= 0.97 + lamina * 0.05;
+    // Each outcrop's cap (its own bed number) weathers its own way: most bleach
+    // pale, some keep a honey tone, a few carry a darker iron crust, so the
+    // field of rocks never reads as one stamped model.
+    let cap_pick = quarry_hash(vec2f(floor(rock_layer), 3.0)).x;
+    var cap_tone = srgb_hex(0xdbc4a0u);
+    cap_tone = select(cap_tone, srgb_hex(0xd0aa7cu), cap_pick > 0.45);
+    cap_tone = select(cap_tone, srgb_hex(0xb07e56u), cap_pick > 0.78);
+    layered = mix(layered, cap_tone, bleached * select(1.0, 1.4, cap_pick > 0.45));
+    layered *= 0.97 + lamina * (0.05 + 0.06 * close);
     // Iron oxide: thin wavy liesegang bands in patches, muted, never a painted
     // stripe.
     let band_wave = p.y * 5.2 + strata_noise(vec2f(face_along * 0.35, p.y * 0.6)) * 2.6 + rock_layer * 1.7;
@@ -169,23 +185,23 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Pits hold shade under their overhanging lip; their rims are fresh stone.
     rock *= 1.0 - pits.cover * (0.3 + 0.35 * clamp(pits.lean.y * 1.5, 0.0, 1.0));
     rock *= 1.0 + pits.contact * 0.1;
-    // Caprock tops: mottled by weathering, split along joints whose edges round
-    // off paler, with sand caught in the joints and hollows.
+    // Caprock tops: mottled by weathering, with sand caught in the hollows.
     let top = quarry_smoothstep(0.6, 0.9, n.y);
     let mottle = strata_noise(p.xz * 0.55 + rock_layer) * 0.6 + strata_noise(p.xz * 1.7) * 0.4;
-    rock *= mix(1.0, 0.8 + mottle * 0.3, top);
+    rock *= mix(1.0, 0.72 + mottle * 0.42, top);
+    // Weathered caprock darkens in broad patches of varnish and grime, so a top
+    // reads as old stone rather than fresh plaster.
+    let aged = quarry_smoothstep(0.45, 0.75, strata_noise(p.xz * 0.21 + rock_layer * 2.3));
+    rock = mix(rock, rock * vec3f(0.8, 0.74, 0.68), aged * top * select(0.0, 0.6, rocky && !backdrop));
     // Weathering pans: shallow solution hollows in the caprock, rimmed in shade
     // and floored with wind-blown sand.
     let pans = quarry_pebbles(p.xz + rock_layer * 3.7, 2.1, select(0.0, 0.16, rocky && !backdrop) * top, footprint, 31.0);
     rock *= 1.0 - pans.contact * 0.1;
-    var joints = vec2f(0.0);
-    // Joints open in patches of the caprock, not a uniform net over every top.
-    let jointed = quarry_smoothstep(0.38, 0.62, strata_noise(p.xz * 0.22 + rock_layer * 1.3));
-    if rocky && top * jointed > 0.01 {
-        joints = quarry_cracks(p.xz + vec2f(rock_layer * 7.3, 0.0), 2.3, 3.6, footprint) * top * jointed;
-    }
-    rock = mix(rock, rock * vec3f(0.5, 0.44, 0.39), joints.x * 0.6);
-    rock *= 1.0 + joints.y * 0.12;
+    // Crustose lichen spots the oldest caprock: grey-green rosettes and the odd
+    // orange one. The joints themselves are cut into the mesh.
+    let lichen = quarry_pebbles(p.xz * 1.6 + rock_layer * 5.1, 0.5, select(0.0, 0.2, rocky && !backdrop) * top, footprint, 41.0);
+    let lichen_tint = select(vec3f(0.62, 0.62, 0.5), vec3f(1.0, 0.62, 0.34), lichen.tint.x > 1.1);
+    rock = mix(rock, rock * lichen_tint, lichen.cover * 0.55 * quarry_smoothstep(0.4, 0.75, mottle));
     // Ledge undersides and undercuts sit in their own shade.
     let under = quarry_smoothstep(-0.05, -0.7, n.y);
     rock *= mix(1.0, 0.72, under);
@@ -193,7 +209,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // the backdrop's broad treads hold sheets of it.
     let up = quarry_smoothstep(0.5, 0.9, n.y);
     let patchy = sin(p.x * 0.37 + sin(p.z * 0.29) * 1.7) * sin(p.z * 0.41 - p.x * 0.13) * 0.5 + 0.5;
-    let pockets = quarry_smoothstep(0.62, 0.8, mottle * 0.7 + sand_grit * 0.5) + joints.y * 0.6 + joints.x * 0.8 + pans.cover * 1.2;
+    let pockets = quarry_smoothstep(0.62, 0.8, mottle * 0.7 + sand_grit * 0.5) + pans.cover * 1.2;
     let sheets = quarry_smoothstep(0.35, 0.65, patchy * 0.6 + sand_grit * 0.7 + up * 0.25);
     let sand_cover = up * select(sheets, clamp(pockets, 0.0, 1.0) * 0.8, rocky && !backdrop);
     let sand = ground * (sand_grit * 0.35 + 0.9) * vec3f(1.06, 1.03, 0.98);
@@ -221,6 +237,9 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let splash = (1.0 - quarry_smoothstep(0.0, 0.35, lift)) * 0.25;
     rock = mix(rock, ground * 0.86, foot * 0.55);
     rock *= 1.0 - splash;
+    // Outcrops darken toward their feet, where the sky is half hidden and the
+    // dust settles, so each stands on the floor instead of floating over it.
+    rock *= select(1.0, mix(0.7, 1.0, quarry_smoothstep(0.0, 3.0, lift)), rocky && !backdrop);
     // The skirt: the floor's own soil and grit, drifted paler up against the toe.
     let stony = clamp((soil.a - 0.5) * 2.0, 0.0, 1.0);
     let detail = near * (grit_far + 0.327) / (0.327 * 0.327 * 2.0);

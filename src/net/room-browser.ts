@@ -47,6 +47,7 @@ export class RoomBrowser {
   private readonly join: HTMLButtonElement;
   private readonly create: HTMLButtonElement;
   private readonly refresh: HTMLButtonElement;
+  private readonly retry: HTMLButtonElement;
   private readonly newRoom: HTMLInputElement;
   private readonly endpoint: URL;
   /** Extra-level rooms show only on a page offering those levels, or when linked. */
@@ -102,7 +103,8 @@ export class RoomBrowser {
     this.render();
     this.showStatus("loading", "Looking for rooms…", "Pick your tank and map meanwhile.");
     this.refresh.addEventListener("click", () => void this.poll());
-    this.element("#retry-rooms").addEventListener("click", () => void this.poll());
+    this.retry = this.element("#retry-rooms");
+    this.retry.addEventListener("click", () => void this.poll());
     const length = this.element<HTMLInputElement>("#create-round-minutes");
     for (const step of this.panel.querySelectorAll<HTMLButtonElement>(".room-length .step")) {
       step.addEventListener("click", () => {
@@ -268,6 +270,8 @@ export class RoomBrowser {
     if (!document.hidden) {
       this.loading = true;
       this.refresh.disabled = true;
+      // A retry under way shows on its button, which waits until the answer is in.
+      this.retry.disabled = true;
       const controller = new AbortController();
       this.controller = controller;
       let timedOut = false;
@@ -316,12 +320,17 @@ export class RoomBrowser {
               : error instanceof Error
                 ? error.message
                 : "Rooms unavailable";
-          this.showStatus("error", "Rooms are offline", `${reason}. Retrying shortly.`);
+          this.showStatus(
+            "error",
+            "Rooms are offline",
+            `${reason}. Trying again every ${REFRESH_MS / 1000} seconds.`,
+          );
         }
       } finally {
         clearTimeout(timeout);
         this.loading = false;
         this.refresh.disabled = false;
+        this.retry.disabled = false;
       }
     }
     if (this.shown) {
