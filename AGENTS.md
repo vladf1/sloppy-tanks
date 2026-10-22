@@ -290,6 +290,15 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   and saved only the GPU process, and `WEBGL_multi_draw` saved nothing, so time a
   change rather than count its calls. `sloppy-render` builds at opt-level 3 for
   speed; the rest of the engine favors size.
+- On big canvases (a 4K window at the 1.5 pixel ratio) per-pixel work decides the
+  GPU frame: the ground shader runs on most pixels and smoke puffs overlap many
+  layers deep. Run a procedural feature only where its weight is non-zero, and
+  noise and lighting only where a puff has density (an `if` whose skipped pixels
+  get exactly the value they would have computed, with texture samples and
+  derivatives ahead of it); the village ground and burning wrecks once cost 6 and
+  up to 13 ms a 4K frame. Time a ground, full-screen or layered effect at
+  3840×2160 with WebGPU timestamps, switching it off within the page
+  (`debug_set_off`), before keeping it.
 - Pipelines compile on demand and stay cached; `prepare_step` and `warm_up`
   compile the arena's shadow, reflection and effect variants before the first
   gameplay frame. Validate moving cameras, first-use effects and mid-round
