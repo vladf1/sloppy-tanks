@@ -17,6 +17,28 @@ const SOIL_PLATE_CELL = 0.55;
 const SOIL_SPILL_CELL = 5.5;
 // Relief of the bake's own shading (ruts, windrows, ripples), as bump scale.
 const SOIL_BAKE_RELIEF = 2.6;
+// The floor's broad swells and hollows: wavelengths and heights, metres. Shading
+// only: the floor stays the plane the tanks drive on, but the low sun picks out
+// a worked, wind-shaped ground.
+const SWELL_SPAN = 21.0;
+const SWELL_HEIGHT = 0.9;
+const HUMMOCK_SPAN = 7.5;
+const HUMMOCK_HEIGHT = 0.22;
+// Windblown sand ridges across the +x wind: span along and across it, height.
+const DUNE_SPAN = vec2f(6.5, 17.0);
+const DUNE_HEIGHT = 0.3;
+
+// Height (metres) of the floor's shaded relief at x/z, with its slope.
+fn soil_relief(p: vec2f) -> vec3f {
+    let swell = quarry_value_grad(p / SWELL_SPAN + vec2f(3.1, 7.7));
+    let hummock = quarry_value_grad(p / HUMMOCK_SPAN + vec2f(11.3, 2.9));
+    let dune = quarry_value_grad(p / DUNE_SPAN + vec2f(5.3, 1.1));
+    return vec3f(
+        (swell.x - 0.5) * SWELL_HEIGHT + (hummock.x - 0.5) * HUMMOCK_HEIGHT + (dune.x - 0.5) * DUNE_HEIGHT,
+        swell.y * SWELL_HEIGHT / SWELL_SPAN + hummock.y * HUMMOCK_HEIGHT / HUMMOCK_SPAN + dune.y * DUNE_HEIGHT / DUNE_SPAN.x,
+        swell.z * SWELL_HEIGHT / SWELL_SPAN + hummock.z * HUMMOCK_HEIGHT / HUMMOCK_SPAN + dune.z * DUNE_HEIGHT / DUNE_SPAN.y,
+    );
+}
 
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let map_uv = f.uv * material.map_transform.xy + material.map_transform.zw;
@@ -32,8 +54,14 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Stones gather where the bake is gravelly and thin out on fine soil, and
     // lie in drifts and spills rather than an even sprinkle: a few metres of
     // ground hold most of them, the sand between almost none.
+    // Level ground only: the relief fades out up banks, spoil and talus.
+    let level = quarry_smoothstep(0.92, 0.99, (*s).normal.y);
+    let relief = soil_relief(p);
+    let hollow = quarry_smoothstep(0.05, -0.35, relief.x) * level;
+    let crest = quarry_smoothstep(0.1, 0.4, relief.x) * level;
+    // Stones wash into the hollows and the ruts; the crests are winnowed sand.
     let gather = quarry_value(p / SOIL_SPILL_CELL) * 0.65 + quarry_value(p / (SOIL_SPILL_CELL * 0.37) + 7.0) * 0.35;
-    let spill = quarry_smoothstep(0.38, 0.72, gather + stony * 0.25);
+    let spill = quarry_smoothstep(0.42, 0.7, gather + stony * 0.25 + hollow * 0.3 - crest * 0.25);
     let stones = quarry_pebbles(p, SOIL_STONE_CELL, (stony * stony * 0.3 + 0.04) * spill * 1.6, footprint, 3.0);
     let grit = quarry_pebbles(p, SOIL_GRIT_CELL, (0.03 + stony * 0.4) * mix(0.4, 1.4, spill), footprint, 11.0);
     let cobbles = quarry_pebbles(p, SOIL_COBBLE_CELL, (0.004 + stony * 0.1) * spill * 1.8, footprint, 23.0);
@@ -50,10 +78,15 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let height = near * mix(0.35, 1.6, stony) + bake_height * SOIL_BAKE_RELIEF
         - cracks.x * 0.04 + cracks.y * 0.03;
     var normal = derivative_bump(height, 1.0, f.world, (*s).normal, f.front_facing);
+    normal = normalize(normal - vec3f(relief.y, 0.0, relief.z) * level);
     let lean = cobbles.lean + stones.lean + grit.lean * 0.7;
     normal = normalize(normal + vec3f(lean.x, 0.0, lean.y));
     var color = baked.rgb * mix(1.0, detail, mix(0.55, 1.5, stony));
-    color *= 1.0 - (cobbles.contact * 0.28 + stones.contact * 0.22 + grit.contact * 0.12);
+    // Hollows hold damp, darker fines; crests are bleached, paler sand.
+    color *= mix(1.0, 0.9, hollow) * mix(1.0, 1.05, crest);
+    color = mix(color, color * vec3f(0.97, 0.95, 0.94), hollow * 0.5);
+    color *= 1.0 - (cobbles.shadow * 0.5 + stones.shadow * 0.42 + grit.shadow * 0.25);
+    color *= 1.0 - (cobbles.contact * 0.12 + stones.contact * 0.1 + grit.contact * 0.06);
     color = mix(color, color * cobbles.tint, cobbles.cover);
     color = mix(color, color * stones.tint, stones.cover);
     color = mix(color, color * grit.tint, grit.cover * 0.85);

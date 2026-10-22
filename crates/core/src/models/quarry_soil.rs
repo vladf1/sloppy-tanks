@@ -67,6 +67,11 @@ fn sample_accum(grid: &[f32], x: f64, z: f64) -> f64 {
         + at(i + 1, j + 1) * u * v
 }
 
+/// Distance of the apron's haul road from the arena's centre lines, metres.
+const HAUL_RING: f64 = 71.6;
+/// The haul road's ruts across it: two lanes of dual-wheel tracks, metres.
+const HAUL_RING_RUTS: [f64; 4] = [-3.4, -1.1, 1.1, 3.4];
+
 /// Loader tyre tracks across the open floor at (x, z): two wandering paths,
 /// each a pair of ruts 1.9 m apart, 0..1 with a pressed tread.
 fn loader_tracks(x: f64, z: f64) -> f64 {
@@ -238,6 +243,26 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             .map(|lane| (-((haul - lane).abs() / 0.3).powi(2)).exp())
             .fold(0.0, f64::max)
             * haul_fade;
+        // The apron's haul road rings the pit between the wall and the benches,
+        // tying the trucks, the ramp and the loading floor together: a compacted
+        // bed with two sets of dual-wheel ruts, wandering a little as it goes.
+        let ring_corner = 14.0;
+        let (rx, rz) = (
+            x.abs() - (HAUL_RING - ring_corner),
+            z.abs() - (HAUL_RING - ring_corner),
+        );
+        let ring = js_hypot(&[rx.max(0.0), rz.max(0.0)]) + rx.max(rz).min(0.0) - ring_corner
+            + 0.9 * (x * 0.05 + z * 0.037).sin();
+        let haul_bed = working * (1.0 - smoothstep(ring.abs(), 3.6, 5.0));
+        let ring_ruts = HAUL_RING_RUTS
+            .into_iter()
+            .map(|lane| (-((ring - lane) / 0.34).powi(2)).exp())
+            .fold(0.0, f64::max)
+            * haul_bed
+            * (0.8 + 0.3 * ((x - z) * 6.0).sin() * ((x + z) * 6.0).sin());
+        r += (150.0 - r) * haul_bed * 0.5;
+        g += (135.0 - g) * haul_bed * 0.5;
+        b += (112.0 - b) * haul_bed * 0.5;
         // Iron-stained ochre ground where one slow field runs high and dark damp
         // hollows where it runs low, away from traffic.
         let stain = noise(table, x * 0.034 + 40.0, z * 0.034 - 17.0);
@@ -285,6 +310,7 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             - rut * 26.0
             - tyres * 16.0
             - haul_ruts * 20.0
+            - ring_ruts * 18.0
             - loading * 5.0
             + ripple
             + pebbles

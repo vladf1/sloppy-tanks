@@ -35,7 +35,7 @@ fn site_sign(group: &mut Node) {
 }
 
 /// Machinery, stockpiles and haul lanes on the apron that scrub never grows on.
-const SCRUB_KEEP_OUT: [[f64; 4]; 7] = [
+const SCRUB_KEEP_OUT: [[f64; 4]; 8] = [
     [-31.0, -16.0, -76.0, -60.0], // excavator
     [-66.0, -38.0, -74.0, -65.0], // screening conveyor and hopper
     [5.0, 27.0, -78.0, -59.0],    // sentinel butte
@@ -43,6 +43,7 @@ const SCRUB_KEEP_OUT: [[f64; 4]; 7] = [
     [-55.0, -36.0, 63.0, 74.0],   // cut stone stacks
     [62.0, 77.0, 8.0, 28.0],      // haul truck bay
     [63.0, 86.0, 24.0, 70.0],     // east haul ramp
+    [-77.0, -66.0, -38.0, -22.0], // west haul truck
 ];
 
 /// `quarrySiteDetails(equipment)`: append the site dressing to `equipment`. The
