@@ -164,16 +164,17 @@ const BLOCK_ARRIS: (f64, f64) = (0.02, 0.05);
 /// First bed number of the wall's blocks in the sandstone shader's palette.
 const BLOCK_LAYER: f64 = 100.0;
 /// Weathered tints of the wall's stone: buff, iron-stained, grey-brown, pale,
-/// rust-crusted and dark weathered. Darker than the floor's sand on the whole
-/// so the boundary keeps its line. Cool-leaning, so the warm sandstone shading
+/// rust-crusted and weathered grey. One value band, a little darker than the
+/// floor's sand so the boundary keeps its line: blocks differ by hue and wear,
+/// never by a near-black outlier. Cool-leaning, so the warm sandstone shading
 /// settles to buff and grey-brown stone rather than orange.
 const BLOCK_TINTS: [[f32; 3]; 6] = [
     [0.86, 0.86, 0.9],
-    [0.95, 0.84, 0.77],
-    [0.7, 0.71, 0.77],
-    [1.12, 1.09, 1.04],
-    [0.83, 0.67, 0.58],
-    [0.5, 0.49, 0.53],
+    [0.94, 0.85, 0.79],
+    [0.8, 0.8, 0.84],
+    [1.0, 0.97, 0.93],
+    [0.9, 0.77, 0.69],
+    [0.76, 0.75, 0.79],
 ];
 /// Vertex shade of a block's faces against its top, which faces the sky, and
 /// of a face's foot, where the drift and the sky's shade darken it.
@@ -340,7 +341,7 @@ impl Block {
         let height = top - self.base;
         let spall_drop = rng.range(0.15, 0.32) * height.min(1.2);
         let tint_pick = rng.next();
-        let value = rng.range(0.86, 1.1) as f32;
+        let value = rng.range(0.92, 1.06) as f32;
         let tint = BLOCK_TINTS[(tint_pick * BLOCK_TINTS.len() as f64) as usize].map(|c| c * value);
         let face_tint = tint.map(|c| c * FACE_SHADE);
         let foot_tint = tint.map(|c| c * FOOT_SHADE);

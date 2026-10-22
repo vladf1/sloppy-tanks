@@ -567,7 +567,7 @@ fn truck_details(group: &mut Node) {
 /// Bake dust and grime into a batched assembly's vertex paint: caked dust low on
 /// the machine, a dust film on every upward face. `soil_line` is the height the
 /// splashed dirt reaches, in the assembly's frame.
-fn grime(group: &mut Node, soil_line: f64) {
+pub(super) fn grime(group: &mut Node, soil_line: f64) {
     let dust = hex_to_linear(GRIME);
     for child in &mut group.children {
         let Some(drawable) = &mut child.drawable else {
