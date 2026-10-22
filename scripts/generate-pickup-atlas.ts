@@ -24,9 +24,10 @@ import { fbm, lattice, smooth } from "./texture-noise";
 // surface its body shows (weathered pine, olive drab, black fibre, rolled armour
 // steel) with a band of the kind's paint near the top and grime where it meets the
 // pallet; a strip of the kind's plain paint for tubes, caps and edges; and the lid,
-// one big block of the kind's paint with a modest emblem stencilled off to one side
-// and a two-line lot marking beside it, so the colour carries from the gameplay
-// camera and the markings read as stores, not icons. The paint is worn enamel,
+// one big block of the kind's paint with one big emblem stencilled across its middle
+// and its lot marking over and under it, so the colour and the emblem carry from the
+// gameplay camera (the pallet's deck wears the same lid, so an empty drop still names
+// its kind) and the markings read as stores, not icons. The paint is worn enamel,
 // never toy-bright:
 // mottled, chipped back to the surface under it along the edges and where it is
 // knocked, scratched, the grain of a wooden lid reading through, dust drifted over
@@ -61,12 +62,12 @@ const ACCENT_SATURATION = 0.4;
 const TILE_ROWS = { side: [0, 64], paint: [64, 96], lid: [96, 256] } as const;
 const BAND = [9, 27] as const;
 const FOOT = 10;
-const SYMBOL_CENTER = [84, 174] as const;
-const SYMBOL_MAX = [96, 88] as const;
-/** The lot marking: its two lines' left edge, baselines and letter height. */
-const MARKING_LEFT = 146;
-const MARKING_LINES = [166, 200] as const;
-const MARKING_SIZE = 25;
+const SYMBOL_CENTER = [128, 172] as const;
+const SYMBOL_MAX = [150, 96] as const;
+/** The lot marking: its two lines' baselines, over and under the emblem, centred
+ * across the lid, and its letter height. */
+const MARKING_LINES = [118, 247] as const;
+const MARKING_SIZE = 19;
 /** Board height of a pine surface (pixels): two boards to a side strip, five to a
  * lid. */
 const BOARD = 32;
@@ -76,10 +77,13 @@ const LIGHT_PAINT = 0.47;
 /** How the lid's paint has worn: how much has chipped away across it and along its
  * edges, how far in from an edge the wear reaches, and how strongly the surface's
  * relief reads through. */
-const PAINT_CHIPS = 0.045;
-const EDGE_CHIPS = 0.22;
+const PAINT_CHIPS = 0.06;
+const EDGE_CHIPS = 0.26;
 const EDGE_WEAR = 20;
 const PAINT_RELIEF = 0.55;
+/** How far the enamel is greyed from the kind's paint: worn, not toy-bright, yet
+ * still its hue from the gameplay camera. */
+const ENAMEL_GREYING = 0.18;
 /** How far the stencil's strokes are spread, so thin lines carry from above. */
 const STROKE_SPREAD = 4;
 /** The stencil card's bridges: where they cross the symbol (share of its width)
@@ -282,7 +286,7 @@ function paintLayer(
   }
   const level = Math.max(0.04, total / count);
   const grey = luminance(color) * 255;
-  const enamel = blend(color, [grey, grey, grey], 0.24);
+  const enamel = blend(color, [grey, grey, grey], ENAMEL_GREYING);
   for (let y = rows[0]; y < rows[1]; y++) {
     for (let x = 0; x < SIZE; x++) {
       const i = (y * SIZE + x) * 4;
@@ -561,15 +565,16 @@ function markingStencil(kind: PickupKind, ink: Rgb): Stencil {
   const c = stencil.getContext("2d");
   c.fillStyle = css(ink);
   c.font = `bold ${MARKING_SIZE}px sans-serif`;
+  c.textAlign = "center";
   PICKUP_MARKINGS[kind].forEach((line, index) => {
-    c.fillText(line, MARKING_LEFT, MARKING_LINES[index]);
+    c.fillText(line, SIZE / 2, MARKING_LINES[index]);
   });
   return { stencil, bounds: strokeBounds(stencil) };
 }
 
-/** The marking is sprayed where it was cut, no wider than `MARKING_MAX`, its
+/** The marking is sprayed where it was cut, no larger than `MARKING_MAX`, its
  * strokes barely spread and its overspray finer than the emblem's. */
-const MARKING_MAX = [100, 64] as const;
+const MARKING_MAX = [224, 160] as const;
 function markingSpray({ x, y, width, height }: Stencil["bounds"]): Spray {
   return {
     center: [x + Math.min(width, MARKING_MAX[0]) / 2, y + height / 2],
@@ -640,9 +645,9 @@ function settleDust(c: Context, seed: number) {
       const low = side ? smooth(sideTop + 20, sideBottom, y) : 0;
       const foot = side ? smooth(sideBottom - FOOT, sideBottom, y) : 0;
       // Dust lies thicker on the lid, which faces up.
-      const lid = y >= TILE_ROWS.lid[0] ? 0.08 : 0;
+      const lid = y >= TILE_ROWS.lid[0] ? 0.04 : 0;
       const amount =
-        0.08 + lid + 0.28 * smooth(0.42, 0.85, fbm(drift, x * 0.025, y * 0.025, 0, 4)) + 0.2 * low;
+        0.06 + lid + 0.24 * smooth(0.45, 0.85, fbm(drift, x * 0.025, y * 0.025, 0, 4)) + 0.2 * low;
       const streak = side
         ? smooth(0.55, 0.75, fbm(rain, x * 0.12, y * 0.02, 0, 3)) * 0.18 * (1 - low)
         : 0;

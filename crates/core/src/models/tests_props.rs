@@ -568,7 +568,7 @@ pub(super) const PICKUP_CASES: &[(PickupKind, Summary)] = &[
     (PickupKind::Rapid, (1, 864, 432, 0x2e0ac39d)),
     (PickupKind::Shield, (1, 336, 168, 0xd7736489)),
     (PickupKind::Speed, (1, 480, 240, 0xd45da329)),
-    (PickupKind::Repair, (1, 616, 348, 0x40ac6f5f)),
+    (PickupKind::Repair, (1, 404, 208, 0x588b2dea)),
     (PickupKind::Laser, (1, 298, 152, 0x261c6f59)),
 ];
 

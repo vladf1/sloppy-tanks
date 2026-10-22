@@ -67,20 +67,22 @@ export const PICKUP_SURFACES = {
   "planks" | "olive" | "fibre" | "can" | "steel" | "jerry" | "painted"
 >;
 /** Each kind's paint (`pickup_paint` in `pickup_visuals.rs`): the big painted
- * block on its load and its pennant, nine hues clear of the teams' red and blue,
- * worn military enamel rather than toy colours. */
+ * block on its load and its pallet's deck. Nine hues round the wheel with none
+ * repeated (magenta, burnt orange, violet, teal, lime, sky, amber, green and
+ * off-white), each the kind's HUD colour family, as worn enamel a step below the
+ * HUD's brightness. */
 export const PICKUP_PAINTS = {
-  spread: 0x8a4474,
-  rocket: 0xa85a2a,
-  ricochet: 0x5e5294,
-  piercing: 0x2c7a72,
-  rapid: 0x8e9a36,
-  shield: 0x2e3032,
-  speed: 0xbc9c36,
-  repair: 0x447e40,
-  laser: 0xc2beb0,
+  spread: 0xc24c8e,
+  rocket: 0xd2622a,
+  ricochet: 0x7e56c0,
+  piercing: 0x1f9c96,
+  rapid: 0x92b432,
+  shield: 0x4a94d0,
+  speed: 0xe0b02c,
+  repair: 0x3e9448,
+  laser: 0xe2ded0,
 } as const satisfies Record<PickupKind, number>;
-/** The lot marking stencilled beside each kind's emblem. */
+/** The lot marking stencilled over and under each kind's emblem. */
 export const PICKUP_MARKINGS = {
   spread: ["12 GA", "FLECH"],
   rocket: ["RKT HE", "66 MM"],
