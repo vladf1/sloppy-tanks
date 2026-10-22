@@ -242,7 +242,7 @@ fn calm_yellow_green(color: vec3f, weight: f32) -> vec3f {
 const BLEACHED_TINT: vec3f = vec3f(1.06, 1.0, 0.86);
 
 // Sky brightness rises toward the horizon by this power of (1 - up).
-const SKY_HORIZON_EXPONENT: f32 = 5.5;
+const SKY_HORIZON_EXPONENT: f32 = 3.2;
 
 // The sky without sun disc or clouds: overhead to horizon gradient and the sun's
 // forward-scattered halo. Distant surfaces fade into it and glossy ones reflect it,
@@ -255,34 +255,13 @@ fn sky_gradient(direction: vec3f) -> vec3f {
     let halo = pow(sun, 8.0) * (0.1 + 0.4 * toward_horizon) + pow(sun, 48.0) * 0.5;
     // Around the sun the blue gives way to the sun's own hue before its light adds
     // on top: warm light added over blue alone mixes to pink and lavender.
-    let warmed = toward_sun_hue(sky, min(halo * HALO_WARMING, 0.9));
-    return no_magenta(warmed + frame.sky_sun.rgb * halo);
+    let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
+    let warmed = mix(sky, sun_hue * dot(sky, vec3f(0.2126, 0.7152, 0.0722)), min(halo * HALO_WARMING, 0.9));
+    return warmed + frame.sky_sun.rgb * halo;
 }
 
 // How quickly the sky's blue turns to the sun's hue under its halo.
 const HALO_WARMING: f32 = 2.5;
-
-// `color` turned `amount` of the way to the sun's hue at its own luminance. A straight
-// mix from sky blue to a warm sun crosses lavender and pink on the way (the green
-// lags both ends), so the blue first gives up its chroma and the warmth comes in from
-// grey: blue, then a pale neutral, then the sun's gold.
-fn toward_sun_hue(color: vec3f, amount: f32) -> vec3f {
-    let level = dot(color, vec3f(0.2126, 0.7152, 0.0722));
-    let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
-    let neutral = mix(color, vec3f(level), smoothstep(0.0, 0.55, amount));
-    return mix(neutral, sun_hue * level, smoothstep(0.3, 1.0, amount));
-}
-
-// Sky and haze are never magenta: where green falls below both red and blue (pink,
-// lavender-rose), it is lifted toward the lesser of them, which turns such a mix
-// toward a neutral warm grey.
-fn no_magenta(color: vec3f) -> vec3f {
-    let least = min(color.r, color.b) * MAGENTA_GUARD;
-    return vec3f(color.r, max(color.g, least), color.b);
-}
-
-// The least green a sky or haze colour keeps, as a share of its lesser red or blue.
-const MAGENTA_GUARD: f32 = 0.96;
 
 // The near range of the horizon's distant ranges stands this much lower than the far
 // one, and each takes this share of the ridge color over the sky behind it.
@@ -388,8 +367,10 @@ fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
     // headland stays a solid silhouette a step off the sky behind it, never a
     // translucent card.
     let base = mix(frame.aerial.rgb, thick, amount * amount * HAZE_SKY_MOST);
-    let glow = clamp(frame.haze_far.z * toward_sun * toward_sun * amount, 0.0, 1.0);
-    return no_magenta(toward_sun_hue(base, glow) * (1.0 + HAZE_SUN_BRIGHTENING * glow));
+    let glow = frame.haze_far.z * toward_sun * toward_sun * amount;
+    let level = dot(base, vec3f(0.2126, 0.7152, 0.0722));
+    let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
+    return mix(base, sun_hue * level * (1.0 + HAZE_SUN_BRIGHTENING), clamp(glow, 0.0, 1.0));
 }
 
 // How much brighter than the cool haze the sunward glow is, and the most of the sky
@@ -478,9 +459,6 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
             return color;
         }
         var hazed = mix(color, haze_tint(ray, amount), amount);
-        // Warm rock or brick under cool haze would mix to mauve: hazed surfaces
-        // recede toward a neutral grey-blue instead.
-        hazed = mix(hazed, no_magenta(hazed), smoothstep(0.0, 0.3, amount));
         let far = frame.haze_shape.w;
         if far > 0.0 {
             // Late and short, so the far mesas and ranges keep their own form and
@@ -508,16 +486,11 @@ const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
 // Where the shadow noise starts and completes a cloud, above the coverage.
 const CLOUD_SHADOW_LOW: f32 = 0.95;
 const CLOUD_SHADOW_HIGH: f32 = 1.35;
-// View distances in metres over which cloud shadows fade out.
-const CLOUD_SHADOW_REACH: vec2f = vec2f(160.0, 320.0);
 
 // The share of sunlight that passing clouds let through at `world`: soft patches,
 // projected along the sun so tall things and the ground beneath agree.
 fn cloud_shadow(world: vec3f) -> f32 {
-    // Projected onto the steep, distant backdrop they stretched into dark smudges and
-    // streaks down the mountain faces: they fade out with distance from the eye.
-    let reach = 1.0 - smoothstep(CLOUD_SHADOW_REACH.x, CLOUD_SHADOW_REACH.y, distance(world, frame.camera_position.xyz));
-    let strength = frame.cloud_shade.w * reach;
+    let strength = frame.cloud_shade.w;
     if strength <= 0.0 {
         return 1.0;
     }

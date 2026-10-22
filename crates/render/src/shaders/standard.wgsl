@@ -116,7 +116,7 @@ const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 5.0);
 // hides much of the sky, so the shade is deepest there and opens toward the
 // shadow's tip; this share of the fill remains at contact, rising to all of it over
 // the caster distances in metres.
-const SHADOW_CONTACT_FILL: f32 = 0.78;
+const SHADOW_CONTACT_FILL: f32 = 0.62;
 const SHADOW_FILL_OPENING: vec2f = vec2f(0.3, 5.0);
 // Steepest receiver slope the search follows, metres of depth per texel, and the
 // depth gap it ignores, metres.
@@ -320,11 +320,11 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
                 var decay = light.color.w;
                 var gain = 1.0;
                 if atmosphere_on() {
-                    // Fire lights a bright pool close around itself that falls off
-                    // nearly as the inverse square (the cutoff window ends it), so
-                    // blasts and burning wrecks visibly light the ground, walls and
-                    // hulls beside them in daylight without an amber wash streaking
-                    // across the ground metres away.
+                    // Fire lights a wide, soft pool rather than a hot spot under
+                    // itself: a gentler falloff than Three's inverse square (the
+                    // cutoff window still ends it), and brighter overall, so blasts
+                    // and burning wrecks visibly light the ground, walls and hulls
+                    // around them in daylight.
                     decay *= FIRE_POOL_DECAY;
                     gain = BLAST_LIGHT_GAIN;
                 }
@@ -356,19 +356,12 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // sand, concrete and grass keep their own warm albedo instead of drifting
         // toward mauve or grey while shadows read clearly cool.
         let fill_level = dot(hemisphere, vec3f(0.2126, 0.7152, 0.0722));
-        hemisphere = mix(hemisphere, vec3f(fill_level), mix(FILL_NEUTRAL_IN_SHADE, FILL_NEUTRAL_IN_SUN, in_sun));
-        // Shade is lit by the sky fill alone and keeps it stronger than sunlit
-        // surfaces add it, so cast shadows and faces turned from the sun read as an
-        // open, cool blue rather than sinking toward black beside a bright key.
-        hemisphere *= mix(SHADE_FILL_LIFT, 1.0, in_sun);
-        // Cool shade: the sky fill shows less of a muted surface's own colour, so
-        // the shade of sand, earth and concrete takes the sky's blue instead of
-        // deepening into brown; vivid paint (team hulls) and foliage keep a richer
-        // version of theirs, so red stays red and navy navy in shade and sun.
+        hemisphere = mix(hemisphere, vec3f(fill_level), FILL_NEUTRAL_IN_SUN * in_sun);
+        // Painterly shade: what the sky fill alone lights keeps a richer version of
+        // its own color, so grass shade stays green and earth shade warm brown
+        // instead of every shadow settling into the same grey-blue.
         let grey = dot(diffuse, vec3f(0.2126, 0.7152, 0.0722));
-        let high = max(max(diffuse.r, diffuse.g), diffuse.b);
-        let vivid = smoothstep(SHADE_VIVID.x, SHADE_VIVID.y, (high - min(min(diffuse.r, diffuse.g), diffuse.b)) / max(high, 1e-4));
-        shade_color = max(mix(vec3f(grey), diffuse, mix(SHADE_SATURATION.x, SHADE_SATURATION.y, vivid)), vec3f(0.0));
+        shade_color = max(mix(vec3f(grey), diffuse, SHADE_SATURATION), vec3f(0.0));
     }
     var indirect = hemisphere * shade_color * (RECIPROCAL_PI * sky_open);
     if atmosphere_on() && frame.ground.w > 0.0 {
@@ -386,10 +379,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // most on the side turned from the sun, so silhouettes read on any ground.
         let facing = 1.0 - clamp(dot(n, v), 0.0, 1.0);
         let away = 0.55 + 0.45 * clamp(-dot(n.xz, normalize(frame.sun_direction.xz + vec2f(1e-4))), 0.0, 1.0);
-        // Only near the play space: on the hazed backdrop it outlined every distant
-        // cone tree and ridge in pale light, like a pencil sketch.
-        let near_rim = 1.0 - smoothstep(RIM_NEAR, RIM_FAR, distance(world, frame.camera_position.xyz));
-        let rim = facing * facing * facing * (1.0 - n.y * n.y) * away * frame.sky_sun.w * near_rim;
+        let rim = facing * facing * facing * (1.0 - n.y * n.y) * away * frame.sky_sun.w;
         let rim_color = frame.sky_horizon.rgb * 0.6 + frame.sky_sun.rgb * 0.4;
         indirect += rim_color * diffuse * rim;
     }
@@ -468,20 +458,13 @@ const SKY_SUN_SIDE: f32 = 0.22;
 const BOUNCE_FROM_BELOW: f32 = 0.8;
 // The share of the sky fill's blue a fully sunlit surface gives up (it keeps the
 // fill's brightness).
-const FILL_NEUTRAL_IN_SUN: f32 = 0.55;
-// The share it gives up in full shade: slate rather than saturated cobalt shadows.
-const FILL_NEUTRAL_IN_SHADE: f32 = 0.3;
-// The sky fill in full shade over its strength in full sun.
-const SHADE_FILL_LIFT: f32 = 1.5;
-// Saturation of the sky fill's share of a surface's light (1 = its plain color), for
-// muted and for vivid albedos, and the albedo saturations (chroma over the brightest
-// channel) between them.
-const SHADE_SATURATION: vec2f = vec2f(0.8, 1.3);
-const SHADE_VIVID: vec2f = vec2f(0.65, 0.9);
+const FILL_NEUTRAL_IN_SUN: f32 = 0.3;
+// Saturation of the sky fill's share of a surface's light (1 = its plain color).
+const SHADE_SATURATION: f32 = 1.3;
 // Point lights' (blast flashes') extra strength with the atmosphere on, and the
-// share of their decay exponent they keep (a slightly wider pool).
-const BLAST_LIGHT_GAIN: f32 = 3.0;
-const FIRE_POOL_DECAY: f32 = 0.9;
+// share of their decay exponent they keep (a wider pool).
+const BLAST_LIGHT_GAIN: f32 = 2.7;
+const FIRE_POOL_DECAY: f32 = 0.72;
 // Fire's own color at unit luminance, and how far a deep red-orange flash light turns
 // toward it: a pure red-orange pool over sunlit ground and blue-filled shade reads as a
 // pink screen tint rather than firelight.
@@ -504,9 +487,6 @@ fn fire_light_hue(color: vec3f) -> vec3f {
 const VIEW_MODEL_NEAR: f32 = 4.0;
 const VIEW_MODEL_FAR: f32 = 8.0;
 const VIEW_MODEL_SHEEN_CUT: f32 = 0.75;
-// View distances in metres over which the sky rim fades out.
-const RIM_NEAR: f32 = 70.0;
-const RIM_FAR: f32 = 140.0;
 // Share of the drawn sky glossy finishes reflect.
 const ATMOSPHERE_REFLECTION: f32 = 0.45;
 // The lowest elevation of the drawn sky glossy finishes reflect.
