@@ -465,7 +465,15 @@ fn environment_radiance(direction: vec3f, roughness: f32) -> vec3f {
         // The drawn sky itself, its gradient softened toward the fill for rough lobes.
         // Its bright horizon band stays out of the reflection: glossy hulls seen at
         // a grazing angle would otherwise wash to white.
-        let drawn = sky_gradient(normalize(vec3f(direction.x, max(up, REFLECTED_SKY_FLOOR), direction.z)));
+        let ray = normalize(vec3f(direction.x, max(up, REFLECTED_SKY_FLOOR), direction.z));
+        var drawn = sky_dome(ray);
+        // Toward the sun the reflected sky takes the sun's hue, and everywhere it
+        // keeps only part of its blue: a clear blue mirrored over warm wet ground or
+        // paint mixed to violet.
+        let level = dot(drawn, vec3f(0.2126, 0.7152, 0.0722));
+        let toward_sun = max(dot(ray, frame.sun_direction.xyz), 0.0);
+        let sun_hue = frame.sky_sun.rgb * (level / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4));
+        drawn = mix(mix(vec3f(level), drawn, REFLECTED_SKY_CHROMA), sun_hue, toward_sun * toward_sun * REFLECTED_SUN_HUE);
         sky = mix(drawn, zenith, lobe * 0.5);
     }
     let ground = frame.ground_color.rgb * RECIPROCAL_PI;
@@ -529,6 +537,10 @@ const VIEW_MODEL_SHEEN_CUT: f32 = 0.75;
 const GROUND_SHEEN_MOST: f32 = 0.22;
 // Share of the drawn sky glossy finishes reflect.
 const ATMOSPHERE_REFLECTION: f32 = 0.45;
+// The share of the reflected sky's own colour glossy finishes keep, and how far it
+// turns to the sun's hue looking toward the sun.
+const REFLECTED_SKY_CHROMA: f32 = 0.6;
+const REFLECTED_SUN_HUE: f32 = 0.7;
 // The lowest elevation of the drawn sky glossy finishes reflect.
 const REFLECTED_SKY_FLOOR: f32 = 0.22;
 // Half-width in direction Y of a mirror's horizon blend.
