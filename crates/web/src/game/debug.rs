@@ -32,6 +32,8 @@
 //!   simulation's covers.
 //! - `debug_water_json()`, `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
 //!   box for pixel probes; `size <= 0` removes it).
+//! - `debug_set_scene_load(load)`: render the scene at `load` times its size on top of
+//!   the graphics quality's scale (GPU load for measurements; 1 restores it).
 //! - `debug_set_off({ pools, bloom, occlusion, sky, lights, atmosphere, ground, effects })`:
 //!   switch effect pools (by label), post passes, point lights, the atmosphere, its ground
 //!   variation or main-view draws of custom effects (by name) off, for same-page A/B
@@ -210,6 +212,12 @@ impl Game {
     /// Switch passes, lights and effect pools off for a same-page A/B measurement:
     /// `{ pools: [label...], bloom, occlusion, sky, lights, atmosphere, effects: [name...] }`,
     /// each `true` = off.
+    /// Multiply the scene's size by `load` on top of the graphics quality's render
+    /// scale, to make the GPU the bottleneck in a measurement; 1 undoes it.
+    pub fn debug_set_scene_load(&mut self, load: f32) {
+        self.view.renderer.debug_set_scene_load(load);
+    }
+
     pub fn debug_set_off(&mut self, off_json: &str) -> Result<(), JsValue> {
         let off: DebugOffSpec = parse(off_json)?;
         self.view.renderer.debug_off = sloppy_render::gpu::DebugOff {

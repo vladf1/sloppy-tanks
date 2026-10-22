@@ -38,8 +38,8 @@ fn cloud_density(p: vec2f) -> f32 {
     var sum = 0.0;
     var amplitude = 0.5;
     var q = p + (warp - 0.5) * 0.9;
-    // WebGL's weaker devices skip the finest octave, a detail a few pixels across.
-    let octaves = select(5, 4, LITE);
+    // Without fine detail the finest octave, a few pixels across, is skipped.
+    let octaves = select(4, 5, fine_detail());
     for (var i = 0; i < octaves; i++) {
         sum += value_noise(q) * amplitude;
         // Rotate each octave so the lattice never lines up.

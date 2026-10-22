@@ -10,7 +10,7 @@ mod resources;
 mod textures;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use wgpu::util::DeviceExt;
 
@@ -66,6 +66,25 @@ impl Drop for DepthMap {
     }
 }
 
+fn now_ms() -> f64 {
+    web_sys::window()
+        .and_then(|window| window.performance())
+        .map_or(0.0, |performance| performance.now())
+}
+
+/// How long the GPU took to finish a frame: from its scene's submission until the queue
+/// reported everything submitted done, the GPU's own time when it was idle at the
+/// submission (and more when it was still busy). One frame is sampled at a time.
+#[derive(Default)]
+struct GpuFrameTime {
+    /// The latest sample's milliseconds, as `f64` bits.
+    ms: AtomicU64,
+    /// A sample arrived that nobody has taken yet.
+    fresh: AtomicBool,
+    /// A sampled frame is still running.
+    pending: AtomicBool,
+}
+
 fn base_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
     device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("shadow bases"),
@@ -103,6 +122,7 @@ pub struct Frame {
     /// Set once the GPU has run everything submitted before the last
     /// [`Frame::await_gpu`].
     gpu_idle: Arc<AtomicBool>,
+    gpu_frame_time: Arc<GpuFrameTime>,
 }
 
 impl Frame {
@@ -173,27 +193,38 @@ impl Frame {
             shadow_base_buffer: base_buffer(device, INITIAL_SHADOW_BASES),
             shadow_base_capacity: INITIAL_SHADOW_BASES,
             gpu_idle: Arc::new(AtomicBool::new(true)),
+            gpu_frame_time: Arc::default(),
         };
         frame.view_groups = frame.frame_groups(gpu, &frame.instance_records);
         frame
     }
 
+    /// The canvas drawing buffer's size.
     pub fn size(&self) -> (u32, u32) {
         (self.canvas.config.width, self.canvas.config.height)
     }
 
-    /// Resize the canvas drawing buffer and the main view's target.
-    pub fn resize(&mut self, gpu: &Gpu, width: u32, height: u32) {
+    /// The main view's size, which the output pass upsamples to the canvas's.
+    pub fn scene_size(&self) -> (u32, u32) {
+        let size = self.main_target.resolved.size();
+        (size.width, size.height)
+    }
+
+    /// Resize the canvas drawing buffer to `canvas` and the main view's target, with
+    /// its post-processing targets, to `scene`.
+    pub fn resize(&mut self, gpu: &Gpu, canvas: (u32, u32), scene: (u32, u32)) {
         let limit = gpu.device.limits().max_texture_dimension_2d;
-        let width = width.clamp(1, limit);
-        let height = height.clamp(1, limit);
+        let fit = |(width, height): (u32, u32)| (width.clamp(1, limit), height.clamp(1, limit));
+        let (canvas, scene) = (fit(canvas), fit(scene));
         let config = &mut self.canvas.config;
-        if config.width == width && config.height == height {
+        if (config.width, config.height) != canvas {
+            (config.width, config.height) = canvas;
+            self.canvas.surface.configure(&gpu.device, config);
+        }
+        if self.scene_size() == scene {
             return;
         }
-        config.width = width;
-        config.height = height;
-        self.canvas.surface.configure(&gpu.device, config);
+        let (width, height) = scene;
         self.main_target = ColorTarget::new(&gpu.device, "main view", width, height, true);
         self.post = PostTargets::new(
             gpu,
@@ -336,6 +367,39 @@ impl Frame {
         self.gpu_idle.load(Ordering::Acquire)
     }
 
+    /// Configure the canvas again as it is. WebKit lowers a WebGPU canvas's frame rate
+    /// when a frame's GPU work overruns a display frame and never raises it again on
+    /// its own; a configuration starts its pacing afresh.
+    pub fn reset_canvas_pacing(&mut self, gpu: &Gpu) {
+        self.canvas
+            .surface
+            .configure(&gpu.device, &self.canvas.config);
+    }
+
+    /// The GPU time of the latest sampled frame in milliseconds, once: `None` until a
+    /// new sample arrives.
+    pub fn take_gpu_frame_ms(&self) -> Option<f64> {
+        let sample = &self.gpu_frame_time;
+        sample
+            .fresh
+            .swap(false, Ordering::AcqRel)
+            .then(|| f64::from_bits(sample.ms.load(Ordering::Acquire)))
+    }
+
+    /// Sample this frame's GPU time unless an earlier sample is still running.
+    fn sample_gpu_frame_time(&self, gpu: &Gpu, submitted: f64) {
+        if self.gpu_frame_time.pending.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        let sample = self.gpu_frame_time.clone();
+        gpu.queue.on_submitted_work_done(move || {
+            let ms = now_ms() - submitted;
+            sample.ms.store(ms.to_bits(), Ordering::Release);
+            sample.fresh.store(true, Ordering::Release);
+            sample.pending.store(false, Ordering::Release);
+        });
+    }
+
     /// Draw a frame into the canvas. The scene and the canvas go in separate command
     /// buffers. WebKit paces a WebGPU canvas by the GPU time of the command buffers
     /// that write its texture (`WebGPUFramePacer`) and lowers the frame rate when that
@@ -353,7 +417,9 @@ impl Frame {
             label: Some("scene"),
         });
         self.encode_scene(&mut encoder, scene, stats);
+        let submitted = now_ms();
         gpu.queue.submit([encoder.finish()]);
+        self.sample_gpu_frame_time(gpu, submitted);
         let output = match self.canvas.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
@@ -644,9 +710,9 @@ fn post_draw(
     pass.draw(0..3, 0..1);
 }
 
-/// The canvas-sized post-processing targets and the bind groups of every pass that
-/// reads the main view: the bloom levels (quarter size, then halving), the
-/// quarter-size ambient occlusion and the output. Rebuilt with the main target; dropping it
+/// The post-processing targets sized from the main view and the bind groups of every
+/// pass that reads it: the bloom levels (quarter size, then halving), the quarter-size
+/// ambient occlusion and the output. Rebuilt with the main target; dropping it
 /// destroys the textures.
 struct PostTargets {
     bloom: Vec<(wgpu::Texture, wgpu::TextureView)>,

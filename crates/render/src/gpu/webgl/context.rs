@@ -123,6 +123,11 @@ fn context_options() -> js_sys::Object {
 }
 
 impl Gpu {
+    /// The largest texture and renderbuffer edge.
+    pub fn max_texture_size(&self) -> u32 {
+        self.max_size
+    }
+
     pub async fn new(canvas: web_sys::HtmlCanvasElement) -> Result<(Self, Canvas), String> {
         let api = GRAPHICS_API;
         let unavailable = |reason: &str| format!("{api} canvas unavailable: {reason}");

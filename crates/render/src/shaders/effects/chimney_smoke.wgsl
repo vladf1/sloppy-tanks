@@ -14,10 +14,11 @@ fn effect_vertex(v: ptr<function, EffectVertex>) {
     );
 }
 
-// Expand the point into a quad of `size` pixels on screen.
+// Expand the point into a quad of `size` canvas pixels on screen, whatever the
+// scene's render scale.
 fn effect_clip(clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex) {
     let view = frame.view * vec4f(w.position, 1.0);
-    let size = clamp((v.extra0.z * 1.6 + 0.22) * 720.0 / -view.z, 1.0, 65.0);
+    let size = clamp((v.extra0.z * 1.6 + 0.22) * 720.0 / -view.z, 1.0, 65.0) * frame.quality.w;
     let offset = v.extra0.xy * size * 2.0 / frame.viewport.xy * (*clip).w;
     *clip = vec4f((*clip).xy + offset, (*clip).zw);
 }

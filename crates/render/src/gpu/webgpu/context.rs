@@ -19,6 +19,8 @@ pub struct Gpu {
     pub canvas_format: wgpu::TextureFormat,
     /// MSAA samples of the HDR targets: always `SAMPLE_COUNT` here.
     pub samples: u32,
+    /// The adapter's largest 2D texture edge, a hint of the GPU's class.
+    pub adapter_max_texture: u32,
     pub error: ErrorSlot,
 }
 
@@ -83,11 +85,19 @@ impl Gpu {
             layouts: Rc::new(Layouts::new(&device)),
             canvas_format: config.format,
             samples: SAMPLE_COUNT,
+            adapter_max_texture: adapter.limits().max_texture_dimension_2d,
             device,
             queue,
             error,
         };
         Ok((gpu, Canvas { surface, config }))
+    }
+}
+
+impl Gpu {
+    /// The largest texture edge the adapter offers.
+    pub fn max_texture_size(&self) -> u32 {
+        self.adapter_max_texture
     }
 }
 
@@ -97,7 +107,7 @@ pub const OCCLUSION_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::R8Unorm;
 pub const DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 
 /// A multisampled HDR color + depth target and its single-sample resolve.
-/// Used for the main view (canvas-sized) and the water reflection (fixed size).
+/// Used for the main view (the scene's size) and the water reflection (fixed size).
 /// Dropping it destroys its textures.
 pub struct ColorTarget {
     pub color: wgpu::Texture,
