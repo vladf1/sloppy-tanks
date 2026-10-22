@@ -30,7 +30,7 @@ use crate::geometry::math::{
     smoothstep, transform_point,
 };
 use crate::geometry::{CylinderGeometry, Mesh, node_bounds};
-use crate::scene::{Color, Effect, Material, Node, Side, TextureRef};
+use crate::scene::{Color, Effect, Material, Node, Side, TextureRef, TextureSource};
 use crate::sim::math::Random;
 use crate::sim::tree_proportions::{TreeProportions, tree_proportions};
 
@@ -134,6 +134,113 @@ impl TreeSurface {
 
 /// Foliage below this texture alpha is cut out.
 const FOLIAGE_CUTOFF: f32 = 0.35;
+
+/// Every tree surface side by side in one texture (`generate-tree-atlas.ts`), so a
+/// tree's crown, each of its boughs and a whole cell of background trees draw in
+/// one material: limbs, foliage and cut wood share its alpha-tested, double-sided
+/// surface (bark is opaque in it). Width and height in texels.
+const TREE_ATLAS: &str = "textures/trees/atlas.webp";
+const TREE_ATLAS_SIZE: [f64; 2] = [1792.0, 512.0];
+/// Texels kept clear of a column's edges, so filtering never reaches the next one.
+const TREE_ATLAS_INSET: f64 = 1.5;
+/// Bark relief over the whole atlas: the foliage takes a little of it too.
+const TREE_ATLAS_BUMP: f32 = 0.035;
+
+impl TreeSurface {
+    /// Its column of [`TREE_ATLAS`]: left edge and width in texels, and the
+    /// fraction of the column's height one tile of the surface fills (the 256 px
+    /// surfaces stack twice in their 512 px column).
+    fn atlas_column(self) -> (f64, f64, f64) {
+        match self {
+            TreeSurface::Bark => (0.0, 256.0, 0.5),
+            TreeSurface::Birch => (256.0, 256.0, 0.5),
+            TreeSurface::Rings => (512.0, 256.0, 0.5),
+            TreeSurface::LeafSprigs => (768.0, 512.0, 1.0),
+            TreeSurface::ConiferSpray => (1280.0, 512.0, 1.0),
+        }
+    }
+
+    /// The surface whose own texture a material maps, if any.
+    fn of(material: &Material) -> Option<Self> {
+        let path = match &material.map.as_ref()?.source {
+            TextureSource::File(path) => *path,
+            TextureSource::Generated(_) => return None,
+        };
+        [
+            TreeSurface::Bark,
+            TreeSurface::Birch,
+            TreeSurface::Rings,
+            TreeSurface::LeafSprigs,
+            TreeSurface::ConiferSpray,
+        ]
+        .into_iter()
+        .find(|kind| kind.texture() == path)
+    }
+}
+
+/// The atlas material, swaying like foliage or (background trees) still.
+static ATLAS_SURFACES: Cache<bool, Material> = Cache::new();
+
+fn atlas_surface(sway: bool) -> Arc<Material> {
+    ATLAS_SURFACES.get_or_insert(sway, || {
+        let map = TextureRef {
+            anisotropy: 4,
+            ..TextureRef::file(TREE_ATLAS)
+        };
+        Material {
+            map: Some(map.clone()),
+            roughness: 1.0,
+            metalness: 0.0,
+            bump_map: Some(map),
+            bump_scale: TREE_ATLAS_BUMP,
+            alpha_test: FOLIAGE_CUTOFF,
+            alpha_to_coverage: true,
+            side: Side::Double,
+            vertex_colors: true,
+            effect: if sway {
+                Effect::Custom {
+                    name: FOLIAGE,
+                    params: Vec::new(),
+                }
+            } else {
+                Effect::None
+            },
+            ..Material::default()
+        }
+    })
+}
+
+/// Move every tree surface under `node` onto the atlas: UVs into the surface's
+/// column, the material's tint into the vertex colours.
+fn into_atlas(node: &mut Node, sway: bool) {
+    let atlas = atlas_surface(sway);
+    let mut stack = vec![node];
+    while let Some(node) = stack.pop() {
+        if let Some(drawable) = &mut node.drawable
+            && let Some(kind) = TreeSurface::of(&drawable.material)
+        {
+            let (left, width, tile) = kind.atlas_column();
+            let [r, g, b] = hex_to_linear(drawable.material.color.0).map(|c| c as f32);
+            let mut mesh = (*drawable.mesh).clone();
+            for uv in &mut mesh.uvs {
+                let u = f64::from(uv[0]).clamp(0.0, 1.0);
+                let texel = left + TREE_ATLAS_INSET + u * (width - 2.0 * TREE_ATLAS_INSET);
+                uv[0] = (texel / TREE_ATLAS_SIZE[0]) as f32;
+                uv[1] = (f64::from(uv[1]) * tile) as f32;
+            }
+            if drawable.material.vertex_colors && mesh.colors.len() == mesh.positions.len() {
+                for color in &mut mesh.colors {
+                    *color = [color[0] * r, color[1] * g, color[2] * b];
+                }
+            } else {
+                mesh.colors = vec![[r, g, b]; mesh.positions.len()];
+            }
+            drawable.mesh = Arc::new(mesh);
+            drawable.material = atlas.clone();
+        }
+        stack.extend(node.children.iter_mut());
+    }
+}
 
 /// Shared tree materials by surface, color, whether foliage sways and whether
 /// vertex colours carry the tint (background trees).
@@ -838,11 +945,13 @@ pub fn tree_model(c: &TreeShape, detail: TreeDetail) -> Node {
             bough.position = center;
         }
         batch(&mut crown);
+        into_atlas(&mut crown, true);
         group.children.push(crown);
     } else {
         // The background crown is the tree group itself.
         crown.position = group.position;
         group = crown;
+        into_atlas(&mut group, false);
     }
     group
 }

@@ -83,6 +83,14 @@ const HARBOR_F0 = 0.06;
 // wash of a moored hull's ends trails off.
 const HARBOR_CHANNEL = 40.0;
 const HULL_TAIL = 8.0;
+// Metres from the eye over which the mirror turns glossy, the screen fraction its
+// streaks reach down the view at most, the share of sky the far facets show and
+// the most the water ever mirrors at a grazing angle.
+const HARBOR_GLOSSY_NEAR = 35.0;
+const HARBOR_GLOSSY_FAR = 190.0;
+const HARBOR_SMEAR = 0.011;
+const HARBOR_SKY_SHARE = 0.45;
+const HARBOR_MIRROR_MAX = 0.86;
 
 fn rounded_box_distance(p: vec2f, footprint: vec4f, radius: f32) -> f32 {
     let q = abs(p - footprint.xy) - footprint.zw + radius;
@@ -201,11 +209,16 @@ fn tug_wakes(p: vec2f, time: f32) -> vec3f {
             let inside = 1.0 - smoothstep(arm * 0.55, arm, across);
             let transverse = (0.5 + 0.5 * cos(from_bow * 1.4)) * inside * fade;
             // Propeller wash: white and churned off the stern, widening and
-            // settling into a glassy scar.
+            // settling into a glassy scar whose edges the swell breaks up and
+            // bends, so it never reads as a band with straight sides.
             let stern = smoothstep(TUG_HALF_LENGTH - 1.0, TUG_HALF_LENGTH + 1.0, behind);
-            let wash_width = 1.3 + age * 0.3;
-            let wash = (1.0 - smoothstep(wash_width * 0.35, wash_width, across)) * exp(-age / 6.5) * stern;
-            let scar = (1.0 - smoothstep(wash_width * 0.5, wash_width * 1.3, across)) * exp(-age / 16.0) * stern;
+            let wander = (water_noise(vec2f(behind * 0.09, f32(i) * 7.0)) - 0.5) * (0.6 + age * 0.12);
+            let ragged = water_noise(vec2f(behind * 0.45, across * 0.6 + f32(i) * 3.0));
+            let wash_width = (1.2 + age * 0.22) * (0.7 + 0.6 * ragged);
+            let off_axis = abs(place.y + wander);
+            let wash = (1.0 - smoothstep(wash_width * 0.3, wash_width, off_axis)) * exp(-age / 4.5) * stern;
+            let scar = (1.0 - smoothstep(wash_width * 0.4, wash_width * 1.2, off_axis)) * exp(-age / 9.0) * stern
+                * smoothstep(0.25, 0.6, ragged + 0.2);
             // The arms break white only close behind the boat; further back they
             // are ridges that roughen the surface.
             let arm_foam = arm_line * 0.6 * smoothstep(1.0, 4.0, from_bow) * exp(-age / 2.5);
@@ -270,7 +283,8 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
     let diffuse = max(dot(sun, normal), 0.0) * sun_color * 0.5;
     let distortion = normal.xz * (0.001 + 1.0 / length(world_to_eye)) * water.settings.y;
     let screen = input.clip.xy * frame.viewport.zw;
-    let mirror = textureSampleLevel(reflection, reflection_sampler, vec2f(1.0 - screen.x, screen.y) + distortion, 0.0).rgb;
+    let mirror_uv = vec2f(1.0 - screen.x, screen.y) + distortion;
+    let mirror = textureSampleLevel(reflection, reflection_sampler, mirror_uv, 0.0).rgb;
     let theta = max(dot(eye, normal), 0.0);
 
     var color: vec3f;
@@ -290,11 +304,29 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // Churned wash is aerated: paler and greener under the foam.
         let aerated = clamp(wake.z * 1.4, 0.0, 1.0);
         var scatter = body * (vec3f(0.8) + diffuse * 0.35) + CREST_COLOR * (crest * 0.35 + wake.y * 0.12);
-        scatter = mix(scatter, CREST_COLOR * 1.6 + vec3f(0.02), aerated * 0.6);
-        // Glassy slicks mirror the cranes and hulls more clearly than choppy water.
+        scatter = mix(scatter, CREST_COLOR * 1.6 + vec3f(0.02), aerated * 0.45);
+        // Far off, one pixel holds many facets of the swell: the mirror smears
+        // into streaks down the view, and the facets tilted toward the eye show
+        // the sky above whatever stands on the shore, so a far hillside never
+        // mirrors one to one.
+        let far = smoothstep(HARBOR_GLOSSY_NEAR, HARBOR_GLOSSY_FAR, length(world_to_eye));
+        let smear = vec2f(normal.x * 0.004, HARBOR_SMEAR) * far;
+        let streaked = mirror * 0.3
+            + textureSampleLevel(reflection, reflection_sampler, mirror_uv + smear, 0.0).rgb * 0.22
+            + textureSampleLevel(reflection, reflection_sampler, mirror_uv - smear, 0.0).rgb * 0.22
+            + textureSampleLevel(reflection, reflection_sampler, mirror_uv + smear * 2.3, 0.0).rgb * 0.13
+            + textureSampleLevel(reflection, reflection_sampler, mirror_uv - smear * 2.3, 0.0).rgb * 0.13;
+        var reflected = streaked;
+        if atmosphere_on() {
+            let ray = reflect(-eye, normal);
+            let sky = sky_gradient(normalize(vec3f(ray.x, max(ray.y, 0.0) + 0.12, ray.z)));
+            reflected = mix(streaked, sky, far * HARBOR_SKY_SHARE * (0.6 + 0.4 * gust));
+        }
+        // Glassy slicks mirror the cranes and hulls more clearly than choppy water;
+        // even at grazing angles some of the water body shows through the swell.
         let reflectance = HARBOR_F0 + (1.0 - HARBOR_F0) * pow(1.0 - theta, 5.0);
-        let mirror_weight = clamp(reflectance * mix(1.3, 0.9, gust) * (1.0 - aerated * 0.5), 0.0, 1.0);
-        let albedo = mix(scatter, mirror + specular, mirror_weight) + glitter;
+        let mirror_weight = clamp(reflectance * mix(1.3, 0.9, gust) * (1.0 - aerated * 0.5), 0.0, HARBOR_MIRROR_MAX);
+        let albedo = mix(scatter, reflected + specular, mirror_weight) + glitter;
         // Foam: a crisp line where the water slaps every face, a broken collar
         // beside it that is heaviest at a hull's bow and stern, wash lapping
         // outwards in rings, streaks trailing off the hulls' ends and the tugs'
@@ -308,7 +340,9 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
             * smoothstep(0.4, 0.64, lace) * detail;
         let flecks = smoothstep(0.72, 0.82, lace * breakup * 1.6) * (1.0 - smoothstep(1.5, 6.0 + churn * 6.0, shore)) * detail;
         let tail = near.z * smoothstep(0.35, 0.6, lace) * 0.8;
-        let wake_lace = mix(0.75, smoothstep(0.25, 0.6, lace * 0.6 + breakup * 0.6), detail);
+        // Seen from high up the wake still breaks into patches of foam, never a
+        // flat white band.
+        let wake_lace = mix(smoothstep(0.3, 0.75, breakup * 0.8 + gust * 0.4), smoothstep(0.25, 0.6, lace * 0.6 + breakup * 0.6), detail);
         let wake_foam = wake.x * wake_lace;
         let foam = clamp(line * 0.85 + collar * 0.8 + wash * 0.5 + flecks * 0.35 + tail * 0.7 + wake_foam, 0.0, 1.0);
         let lit_foam = FOAM_COLOR * (0.7 + 0.3 * max(dot(sun, normal), 0.0));

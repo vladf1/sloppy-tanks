@@ -1,4 +1,4 @@
-// Screen-space ambient occlusion at half size. The main view's depth comes from a
+// Screen-space ambient occlusion at quarter size (`OCCLUSION_SCALE`). The main view's depth comes from a
 // header (`shader::occlusion_source`): WebGPU reads the multisampled depth, WebGL2
 // (which cannot) a single-sample copy the resolve blits. The header also sets
 // `SAMPLES`, the probes per pixel: fewer on WebGL's weaker devices. Each pixel rebuilds its world position and normal from
@@ -27,6 +27,9 @@ fn vs_occlusion(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
     return vec4f(corner * 2.0 - 1.0, 0.0, 1.0);
 }
 
+// Full-size pixels per occlusion texel (`OCCLUSION_DOWNSCALE` in gpu/mod.rs).
+const OCCLUSION_SCALE: i32 = 4;
+
 const BAYER: array<f32, 16> = array<f32, 16>(
     0.0, 8.0, 2.0, 10.0, 12.0, 4.0, 14.0, 6.0, 3.0, 11.0, 1.0, 9.0, 15.0, 7.0, 13.0, 5.0,
 );
@@ -49,8 +52,8 @@ fn view_distance(z: f32) -> f32 {
 fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let size_i = vec2i(textureDimensions(depth));
     let size = vec2f(size_i);
-    let half = vec2i(position.xy);
-    let pixel = half * 2;
+    let cell = vec2i(position.xy);
+    let pixel = cell * OCCLUSION_SCALE;
     let z = depth_at(pixel, size_i);
     if z >= 1.0 {
         return vec4f(1.0);
@@ -79,7 +82,7 @@ fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let tangent_seed = select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 0.0, 1.0), abs(normal.x) > 0.8);
     let tangent = normalize(cross(tangent_seed, normal));
     let bitangent = cross(normal, tangent);
-    let rotation = BAYER[(half.y & 3) * 4 + (half.x & 3)] / 16.0 * 6.28318530718;
+    let rotation = BAYER[(cell.y & 3) * 4 + (cell.x & 3)] / 16.0 * 6.28318530718;
     let radius = occlusion.settings.x;
     let bias = occlusion.settings.y;
     var occluded = 0.0;

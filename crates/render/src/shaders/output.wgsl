@@ -221,6 +221,12 @@ const PINK_HUE: f32 = 0.955;
 // Meadow green, and the share of its saturation the foliage grade takes at full.
 const MEADOW_HUE: f32 = 0.27;
 const MEADOW_CALM: f32 = 0.18;
+// Occlusion: the linear scene levels of shade and of sunlit ground, the share of its
+// strength sunlit pixels keep, and its per-channel power (warm: blue goes first).
+const OCCLUSION_SHADE_LEVEL: f32 = 0.08;
+const OCCLUSION_LIT_LEVEL: f32 = 0.45;
+const OCCLUSION_IN_SUN: f32 = 0.45;
+const OCCLUSION_HUE: vec3f = vec3f(0.85, 1.0, 1.2);
 // Display mid grey, the pivot of the contrast curve.
 const MID_GREY: f32 = 0.18;
 
@@ -293,20 +299,26 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
     let strength = output.effects.z;
     if strength > 0.0 {
-        // A 3×3 tent of bilinear taps on texel corners of the half-size occlusion:
+        // A 3×3 tent of bilinear taps on texel corners of the quarter-size occlusion:
         // 6×6 texels in which every rotation of the 4×4 sample pattern carries the
         // same weight, so the pattern averages away without a dotted residue.
-        let half_size = vec2f(textureDimensions(occlusion));
-        let corner = floor(pixel * 0.5 + 0.25);
+        let occlusion_size = vec2f(textureDimensions(occlusion));
+        let corner = floor(pixel * 0.25 + 0.5);
         var ao = 0.0;
         for (var j = -1; j <= 1; j++) {
             for (var i = -1; i <= 1; i++) {
-                let at = (corner + vec2f(f32(i), f32(j)) * 2.0) / half_size;
+                let at = (corner + vec2f(f32(i), f32(j)) * 2.0) / occlusion_size;
                 let weight = f32((2 - abs(i)) * (2 - abs(j)));
                 ao += textureSampleLevel(occlusion, linear_clamp, at, 0.0).r * weight;
             }
         }
-        color *= mix(1.0, ao / 16.0, strength);
+        // Occlusion takes away sky fill, which sunlit surfaces barely depend on: it
+        // darkens shade fully and bright sunlit ground only lightly, so a tank sits in
+        // a soft contact shade rather than on a dark decal. What it removes is the
+        // cool sky's share most, so creases deepen warm, never into blue or black.
+        let lit = smoothstep(OCCLUSION_SHADE_LEVEL, OCCLUSION_LIT_LEVEL, luminance(color));
+        let open = mix(1.0, ao / 16.0, strength * mix(1.0, OCCLUSION_IN_SUN, lit));
+        color *= pow(vec3f(open), OCCLUSION_HUE);
     }
     let bloom_strength = output.settings.w;
     if bloom_strength > 0.0 {
