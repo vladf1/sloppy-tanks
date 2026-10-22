@@ -695,6 +695,25 @@ fn line_hole(kit: &mut Kit<Surface>, frame: DMat4, hole: &Hole, outline: &[DVec2
             frame.transform_vector3(DVec3::new(inward.x, inward.y, 0.0)),
         );
     }
+    // Soot and splintered paint scorched round the hole, ragged on its outer edge.
+    let mut soot = Random::new(hole.seed + 9.0);
+    let outer: Vec<DVec2> = outline
+        .iter()
+        .map(|&p| center + (p - center) * soot.range(1.15, 1.45))
+        .collect();
+    for i in 0..outline.len() {
+        let j = (i + 1) % outline.len();
+        kit.quad(
+            Surface::Dark,
+            [
+                at(outline[i], 0.006),
+                at(outline[j], 0.006),
+                at(outer[j], 0.006),
+                at(outer[i], 0.006),
+            ],
+            frame.transform_vector3(DVec3::Z),
+        );
+    }
     let r = hole.radius * 1.2;
     kit.quad(
         Surface::Dark,
@@ -1091,6 +1110,9 @@ fn build_house(
     }
     ridge_caps(parts, design, roof);
     gutters(parts, w, d, roof);
+    if let Some(base) = parts.base() {
+        yard(base, design);
+    }
     chimney(parts.kit(HousePart::Chimney), design, roof, wrecked);
     // Some cottages light their attics with dormers, so the roofscape varies.
     if roof.form == RoofForm::Gable {
@@ -2166,6 +2188,68 @@ fn gutters(parts: &mut Parts, w: f64, d: f64, roof: &Roof) {
     }
 }
 
+/// Lived-in clutter against a cottage's walls, chosen per cottage: a stack of split
+/// logs under a little plank roof against its left wall, and a rain barrel under
+/// the right wall's downspout. Both stay within a step of the walls, like the
+/// planters.
+fn yard(kit: &mut Kit<Surface>, design: &HouseDesign) {
+    const LOG: f64 = 0.19;
+    const STACK: (usize, usize) = (6, 3);
+    let (w, d) = (design.w, design.d);
+    let mut rng = Random::new(f64::from(design.variant) * 5.0 + 3.0);
+    if design.variant % 3 != 0 {
+        // The stack runs along the left (-x) wall, clear of its downspout at the back.
+        let x = -w / 2.0 - 0.3;
+        let length = STACK.0 as f64 * (LOG + 0.02);
+        let z0 = d * 0.12 - length / 2.0;
+        for row in 0..STACK.1 {
+            let count = STACK.0 - row % 2;
+            for k in 0..count {
+                let z = z0 + (k as f64 + 0.5 + (row % 2) as f64 * 0.5) * (LOG + 0.02);
+                let y = 0.04 + LOG / 2.0 + row as f64 * (LOG - 0.02);
+                kit.block(
+                    Surface::Wood,
+                    DVec3::new(0.44 + rng.range(-0.04, 0.06), LOG, LOG),
+                    pose(
+                        DVec3::new(x, y, z),
+                        DVec3::new(rng.range(-0.2, 0.2), 0.0, 0.0),
+                    ),
+                );
+            }
+        }
+        // Two posts and a plank roof shedding rain off the stack.
+        let top = 0.04 + STACK.1 as f64 * LOG + 0.12;
+        for end in [-1.0, 1.0] {
+            kit.block(
+                Surface::Trim,
+                DVec3::new(0.07, top, 0.07),
+                shift(DVec3::new(
+                    x - 0.2,
+                    top / 2.0,
+                    z0 + length / 2.0 + end * (length / 2.0 + 0.05),
+                )),
+            );
+        }
+        kit.block(
+            Surface::Roof,
+            DVec3::new(0.7, 0.04, length + 0.3),
+            pose(
+                DVec3::new(x - 0.02, top + 0.06, z0 + length / 2.0),
+                DVec3::new(0.0, 0.0, 0.28),
+            ),
+        );
+    }
+    if design.variant % 2 == 0 {
+        // A rain barrel under the right wall's downspout.
+        let at = DVec3::new(w / 2.0 + 0.36, 0.0, d / 2.0 - 0.5);
+        kit.post(Surface::Wood, 0.27, 0.82, at, 10);
+        for y in [0.15, 0.62] {
+            kit.post(Surface::Iron, 0.285, 0.035, at + DVec3::Y * y, 10);
+        }
+        kit.post(Surface::Dark, 0.23, 0.01, at + DVec3::Y * 0.82, 10);
+    }
+}
+
 /// A brick stack rising through the roof with a corbelled top, a concrete cap,
 /// lead flashing at the roof and a clay pot; some cottages strap a TV aerial to
 /// it. A wrecked cottage's chimney has toppled to a ragged stub, its bricks
@@ -2256,10 +2340,10 @@ fn chimney(kit: &mut Kit<Surface>, design: &HouseDesign, roof: &Roof, toppled: b
             (0.0, pot_height),
         ]
         .map(|(r, z)| DVec2::new(r, z)),
-        12,
+        10,
         aim(pot_base, pot_base + DVec3::Y),
     );
-    kit.post(Surface::Dark, 0.075, 0.004, DVec3::new(cx, flue.y, cz), 12);
+    kit.post(Surface::Dark, 0.075, 0.004, DVec3::new(cx, flue.y, cz), 10);
     if design.antenna {
         let mast = cx + CHIMNEY / 2.0 + 0.04;
         for y in [top - 0.25, top - 0.05] {

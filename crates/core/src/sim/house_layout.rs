@@ -30,8 +30,6 @@ const WRECKED: f64 = 0.35;
 
 /// Height of the fieldstone plinth (two 21 cm steps up to the door).
 pub const PLINTH: f64 = 0.42;
-/// Wall top (the eave line) as a fraction of the ridge height.
-const WALL_FRACTION: f64 = 0.68;
 /// Horizontal roof overhang past the eave walls and past the gable walls.
 pub const EAVE_OVERHANG: f64 = 0.4;
 pub const RAKE_OVERHANG: f64 = 0.3;
@@ -167,6 +165,9 @@ pub struct HouseStyle {
     /// Dormer plan on a gable roof: 0 none, 1 a pair on one slope, 2 one each side.
     pub dormers: u32,
     pub shutters: Shutters,
+    /// Wall top (the eave line) as a fraction of the ridge height: lower walls
+    /// under a steep attic roof, higher ones under a shallow one.
+    pub eave: f64,
 }
 
 const fn style(
@@ -177,6 +178,7 @@ const fn style(
     [siding, trim, accent, roof]: [u32; 4],
     dormers: u32,
     shutters: Shutters,
+    eave: f64,
 ) -> HouseStyle {
     HouseStyle {
         form,
@@ -189,11 +191,15 @@ const fn style(
         roof,
         dormers,
         shutters,
+        eave,
     }
 }
 
 /// The village's house types, ordered so neighbours in the table differ in form,
-/// finish and colour; [`HouseDesign::facing`] picks one per cottage.
+/// finish, colour and roof pitch; [`HouseDesign::facing`] picks one per cottage.
+/// The paints keep to one weathered coastal-village palette: chalky whites, cream,
+/// sage, ochre, slate blue and one oxblood, under charcoal, slate, cedar and
+/// rust-red roofs, so no two hues shout at each other across the green.
 #[rustfmt::skip]
 pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use DoorWall::{Eave, Gable as Front};
@@ -202,22 +208,22 @@ pub const HOUSE_STYLES: [HouseStyle; 8] = {
     use Shutters::{Board, Louvred, None};
     use WallFinish::{Brick, Clapboard};
     [
-        // Cream clapboard, bottle-green plank shutters, charcoal shingles and dormers.
-        style(Gable, Front, Shingles, Clapboard, [0xe8dcc0, 0xf6f2e8, 0x2f5a40, 0x3d4652], 1, Board),
-        // Red brick under a slate hip roof, navy door and louvres.
-        style(Hip, Front, Shingles, Brick, [0xf2e2d2, 0xece4d2, 0x24385a, 0x58626e], 0, Louvred),
-        // Sage side-gable with an oxblood door and terracotta shingles.
-        style(Gable, Eave, Shingles, Clapboard, [0x8fa37c, 0xf1ead8, 0x6a2a24, 0xb24c34], 2, Board),
-        // Barn-red front gable under a green standing-seam roof.
-        style(Gable, Front, Seams, Clapboard, [0xa6402f, 0xf4f0e6, 0x2e2c2a, 0x2f6a48], 0, None),
-        // Butter-yellow hip cottage, umber shingles.
-        style(Hip, Front, Shingles, Clapboard, [0xe0bd62, 0xf6f2e8, 0x5c3c22, 0x7a4c30], 0, Board),
-        // Powder-blue side-gable with navy louvres under charcoal.
-        style(Gable, Eave, Shingles, Clapboard, [0x88a6bf, 0xf6f2e8, 0x22314d, 0x383d46], 0, Louvred),
-        // White front gable under a red standing-seam roof, black plank shutters.
-        style(Gable, Front, Seams, Clapboard, [0xf0ece2, 0xffffff, 0x1d2622, 0xa83a2c], 2, Board),
-        // Brick side-gable with moss shingles and green louvres.
-        style(Gable, Eave, Shingles, Brick, [0xe6d2c0, 0xe8dfca, 0x2f4b3a, 0x4d6440], 0, Louvred),
+        // Cream clapboard, bottle-green plank shutters, a steep charcoal roof and dormers.
+        style(Gable, Front, Shingles, Clapboard, [0xe6dcc6, 0xf6f2e8, 0x2f5040, 0x3b4048], 1, Board, 0.6),
+        // Soft red brick under a low slate hip roof, navy door and louvres.
+        style(Hip, Front, Shingles, Brick, [0xeadccc, 0xece4d2, 0x24385a, 0x5a626a], 0, Louvred, 0.72),
+        // Sage side-gable with an oxblood door under weathered cedar shingles.
+        style(Gable, Eave, Shingles, Clapboard, [0x9aa88a, 0xf1ead8, 0x6a2a24, 0x7a5a42], 2, Board, 0.62),
+        // Oxblood front gable under a dark standing-seam roof.
+        style(Gable, Front, Seams, Clapboard, [0x7d4a3e, 0xefe8da, 0x2e2c2a, 0x464c52], 0, None, 0.68),
+        // Ochre hip cottage, umber shingles.
+        style(Hip, Front, Shingles, Clapboard, [0xcfad6c, 0xf6f2e8, 0x5c3c22, 0x6a4a34], 0, Board, 0.7),
+        // Slate-blue side-gable with navy louvres under charcoal.
+        style(Gable, Eave, Shingles, Clapboard, [0x8098aa, 0xf6f2e8, 0x22314d, 0x3a3e44], 0, Louvred, 0.66),
+        // Chalk-white front gable under a rust-red standing-seam roof, black shutters.
+        style(Gable, Front, Seams, Clapboard, [0xeeebe3, 0xffffff, 0x1d2622, 0x7a4a3e], 2, Board, 0.6),
+        // Brick side-gable with mossy slate shingles and green louvres.
+        style(Gable, Eave, Shingles, Brick, [0xe2d0be, 0xe8dfca, 0x2f4b3a, 0x56604c], 0, Louvred, 0.7),
     ]
 };
 
@@ -243,8 +249,8 @@ pub struct Roof {
 }
 
 impl Roof {
-    pub fn new(form: RoofForm, w: f64, d: f64, h: f64) -> Self {
-        let wall = h * WALL_FRACTION;
+    pub fn new(form: RoofForm, w: f64, d: f64, h: f64, eave: f64) -> Self {
+        let wall = h * eave;
         let pitch = (h - wall) / (w / 2.0);
         let eave_x = w / 2.0 + EAVE_OVERHANG;
         let (rake_z, ridge_half) = match form {
@@ -588,7 +594,7 @@ impl HouseDesign {
     }
 
     pub fn roof(&self) -> Roof {
-        Roof::new(self.style.form, self.w, self.d, self.h)
+        Roof::new(self.style.form, self.w, self.d, self.h, self.style.eave)
     }
 
     /// A build-frame offset carried into the world (about the cottage's centre).
