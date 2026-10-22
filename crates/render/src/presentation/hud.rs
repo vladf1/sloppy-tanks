@@ -3,6 +3,7 @@
 
 use sloppy_core::sim::data::SHIELD_CAPACITY;
 use sloppy_core::sim::simulation_rules::SIMULATION_RULES;
+use sloppy_core::sim::types::Team;
 
 use super::view_settings::FEEDBACK;
 
@@ -30,6 +31,34 @@ pub struct HealthBar {
 pub const HEALTHY_COLOR: u32 = 0x5fe39a;
 pub const WARNING_COLOR: u32 = 0xffc23a;
 pub const CRITICAL_COLOR: u32 = 0xff4d5e;
+
+/// Whose bar it is, which picks the overhead fill: the player's own tank keeps one
+/// fixed hue (and the caret under it), allies and enemies wear the relative colours
+/// every team shooter uses, so friend and foe never share a colour and a full bar never
+/// reads as critical. Declared in the order of the bar's fill joints
+/// (`joint::BAR_FILLS`), which the bar indexes by it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BarRole {
+    Own,
+    Ally,
+    Enemy,
+}
+
+pub const OWN_BAR_COLOR: u32 = 0x6cf0a4;
+pub const ALLY_BAR_COLOR: u32 = 0x4fb8ff;
+pub const ENEMY_BAR_COLOR: u32 = 0xff4a5c;
+
+/// The role of a `team` tank's bar for a viewer on `viewer_team` (none while
+/// spectating, when blue reads as the ally side).
+pub fn bar_role(own: bool, team: Team, viewer_team: Option<Team>) -> BarRole {
+    if own {
+        BarRole::Own
+    } else if team == viewer_team.unwrap_or(Team::Blue) {
+        BarRole::Ally
+    } else {
+        BarRole::Enemy
+    }
+}
 
 /// V-Tanks' fill thresholds, shared by the overhead bar and the player HUD.
 pub fn health_bar_state(hp: f64, maximum: f64) -> HealthBar {
@@ -191,6 +220,14 @@ mod tests {
         assert!(meters.shield_visible && meters.spawn_visible);
         assert_eq!(meters.spawn_y, 0.72);
         assert_eq!(spawn_pulse(2.5), (1.0, 1.0));
+    }
+
+    #[test]
+    fn bars_tell_self_friend_and_foe_apart() {
+        assert_eq!(bar_role(true, Team::Red, Some(Team::Red)), BarRole::Own);
+        assert_eq!(bar_role(false, Team::Red, Some(Team::Red)), BarRole::Ally);
+        assert_eq!(bar_role(false, Team::Blue, Some(Team::Red)), BarRole::Enemy);
+        assert_eq!(bar_role(false, Team::Red, None), BarRole::Enemy);
     }
 
     #[test]

@@ -267,9 +267,8 @@ html:is(.phone, .home-screen-app) {
   display: flex;
   align-items: center;
   gap: 5px;
-  font: 800 11px/1.2 var(--font-ui);
-  letter-spacing: 2px;
-  opacity: 0.92;
+  font: 800 12px/1.2 var(--font-ui);
+  letter-spacing: 1.4px;
 }
 .team b {
   display: block;
@@ -295,8 +294,8 @@ html:is(.phone, .home-screen-app) {
   border-radius: 3px;
   background: #fff;
   color: #0b1a30;
-  font-size: 8.5px;
-  letter-spacing: 1px;
+  font-size: 10.5px;
+  letter-spacing: 0.6px;
   text-shadow: none;
 }
 .coral.yours small::after {
@@ -309,10 +308,10 @@ html:is(.phone, .home-screen-app) {
   bottom: 4px;
   display: flex;
   justify-content: flex-end;
-  height: 3px;
+  height: 4px;
   overflow: hidden;
   border-radius: 2px;
-  background: #0a142855;
+  background: #0a142880;
 }
 .coral .team-progress {
   left: 8px;
@@ -352,8 +351,8 @@ html:is(.phone, .home-screen-app) {
 }
 .clock small {
   color: var(--gold);
-  font: 800 9px/1.2 var(--font-ui);
-  letter-spacing: 2px;
+  font: 800 11px/1.2 var(--font-ui);
+  letter-spacing: 1px;
   white-space: nowrap;
 }
 .scoreboard.overtime .clock b {
@@ -474,7 +473,7 @@ body:has(#settings[open]) .hud-actions {
 .combat-status {
   position: relative;
   display: grid;
-  grid-template-columns: 172px auto;
+  grid-template-columns: 196px auto;
   align-items: stretch;
   gap: 0 14px;
   width: max-content;
@@ -530,16 +529,16 @@ body:has(#settings[open]) .hud-actions {
 }
 #vehicle-name {
   color: #fff;
-  font: 800 12px/1.2 var(--font-ui);
-  letter-spacing: 1.6px;
+  font: 800 14px/1.2 var(--font-ui);
+  letter-spacing: 1px;
 }
 #rank {
   padding: 2px 6px 1px;
   border-radius: 4px;
   background: linear-gradient(180deg, var(--gold-hot), var(--gold));
   color: #1a2433;
-  font: 800 9px/1.3 var(--font-ui);
-  letter-spacing: 1px;
+  font: 800 11px/1.3 var(--font-ui);
+  letter-spacing: 0.6px;
   pointer-events: auto;
   cursor: help;
 }
@@ -554,7 +553,7 @@ body:has(#settings[open]) .hud-actions {
   margin-top: 3px;
 }
 .hull-readout b {
-  font: 400 38px/1 var(--font-display);
+  font: 400 44px/1 var(--font-display);
   font-variant-numeric: tabular-nums;
   text-shadow: 0 2px 6px #0007;
   transition: color 0.2s;
@@ -567,13 +566,13 @@ body:has(#settings[open]) .hud-actions {
 }
 .hull-readout span {
   color: var(--text-dim);
-  font: 700 12px/1 var(--font-ui);
+  font: 700 14px/1 var(--font-ui);
   font-variant-numeric: tabular-nums;
 }
 .hull-readout span:last-child {
   margin-left: auto;
-  font-size: 9px;
-  letter-spacing: 2px;
+  font-size: 11px;
+  letter-spacing: 1px;
 }
 /* A segmented hull bar coloured by the hull's state: green while healthy, amber once
    damaged, red when critical. Lost segments stay dark cells, never brighter than the
@@ -583,8 +582,8 @@ body:has(#settings[open]) .hud-actions {
   --hull: #5fe39a;
   --hull-hot: #c8ffdc;
   position: relative;
-  height: 10px;
-  margin-top: 6px;
+  height: 12px;
+  margin-top: 7px;
   overflow: hidden;
   border-radius: 3px;
   background:
@@ -647,8 +646,8 @@ body:has(#settings[open]) .hud-actions {
   grid-template-rows: auto auto auto;
   align-items: center;
   flex: none;
-  width: 76px;
-  min-height: 62px;
+  width: 84px;
+  min-height: 66px;
   padding: 5px 5px 4px;
   overflow: hidden;
   border: 1px solid #ffffff1c;
@@ -690,8 +689,8 @@ body:has(#settings[open]) .hud-actions {
   grid-area: 3 / 1 / 4 / -1;
   overflow: hidden;
   color: var(--text-dim);
-  font: 800 8.5px/1.3 var(--font-ui);
-  letter-spacing: 0.3px;
+  font: 800 11px/1.3 var(--font-ui);
+  letter-spacing: 0;
   text-overflow: clip;
   white-space: nowrap;
 }
@@ -725,8 +724,8 @@ body:has(#settings[open]) .hud-actions {
   display: flex;
   align-items: center;
   gap: 10px;
-  height: 20px;
-  margin-top: 7px;
+  height: 22px;
+  margin-top: 8px;
 }
 .mine-line {
   display: flex;
@@ -734,8 +733,8 @@ body:has(#settings[open]) .hud-actions {
   align-items: center;
   gap: 6px;
   color: #d9e8f6;
-  font: 800 10px/1.2 var(--font-ui);
-  letter-spacing: 1.2px;
+  font: 800 12px/1.2 var(--font-ui);
+  letter-spacing: 0.6px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -768,15 +767,15 @@ body:has(#settings[open]) .hud-actions {
   align-items: center;
   gap: 5px;
   flex: none;
-  height: 20px;
-  padding: 0 8px 0 7px;
+  height: 22px;
+  padding: 0 9px 0 8px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--effect) 18%, #06122a);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--effect) 55%, transparent);
   color: #fff;
-  font: 700 10px/1 var(--font-ui);
+  font: 700 12px/1 var(--font-ui);
   font-variant-numeric: tabular-nums;
-  letter-spacing: 0.4px;
+  letter-spacing: 0.2px;
 }
 .effect::before {
   content: "";
@@ -841,28 +840,52 @@ body:has(#settings[open]) .hud-actions {
   display: grid;
   justify-items: end;
   gap: 4px;
-  max-width: min(360px, 42vw);
-  font: 800 12px/1.2 var(--font-ui);
-  letter-spacing: 0.35px;
+  width: min(330px, 42vw);
+  font: 800 13px/1.2 var(--font-ui);
+  letter-spacing: 0.2px;
   text-align: right;
   text-transform: uppercase;
 }
 /* Each row is as wide as its names, never wider than the column: a long name ends in an
    ellipsis instead of pushing the plate past the screen edge. */
+/* Every plate is the column's width with the weapon at one fixed spot, so the stack
+   reads as one clean list; the killer's side tints the plate's leading edge. */
 #feed > div {
-  display: flex;
+  --side: #9fb4cc;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 24px minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  max-width: 100%;
-  min-height: 30px;
-  padding: 5px 12px 5px 12px;
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 32px;
+  padding: 5px 12px 5px 14px;
   border-radius: 6px;
-  background: linear-gradient(90deg, #08142cf0, #0b1a36f5);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--side) 26%, transparent), transparent 46%),
+    linear-gradient(90deg, #08142cf0, #0b1a36f5);
   box-shadow:
+    inset 3px 0 0 var(--side),
     inset 0 0 0 1px #9fd0ff24,
     inset 0 1px #ffffff0f,
     0 4px 12px #0007;
   text-shadow: 0 1px 2px #000c;
+}
+#feed > div.killer-blue {
+  --side: #3f9cff;
+}
+#feed > div.killer-red {
+  --side: #ff4d62;
+}
+#feed > div > :only-child {
+  grid-column: 1 / -1;
+  text-align: center;
+}
+#feed .feed-name:first-child {
+  text-align: right;
+}
+#feed .feed-name:last-child:not(:first-child) {
+  text-align: left;
 }
 #feed .feed-name {
   min-width: 0;
@@ -886,7 +909,7 @@ body:has(#settings[open]) .hud-actions {
   color: #e8dcc4;
 }
 #feed .feed-weapon {
-  flex: none;
+  justify-self: center;
   width: 20px;
   height: 20px;
   fill: #e9f1fa;
@@ -901,8 +924,12 @@ body:has(#settings[open]) .hud-actions {
    read as cut off. */
 @keyframes feed-in {
   from {
-    transform: scale(0.9);
+    opacity: 0;
+    transform: translateX(14px);
     filter: brightness(1.8);
+  }
+  40% {
+    opacity: 1;
   }
 }
 /* Spoken by screen readers, not drawn: the killer is already on screen in the toast. */
@@ -918,9 +945,11 @@ body:has(#settings[open]) .hud-actions {
 }
 /* The viewer's own rows: a gold edge and a warm plate; the viewer's name is gold. */
 #feed :is(.own-kill, .own-death) {
-  padding-right: 14px;
-  background: linear-gradient(90deg, #2b2308f5, #3f310ff8);
+  background:
+    linear-gradient(90deg, color-mix(in srgb, var(--side) 26%, transparent), transparent 46%),
+    linear-gradient(90deg, #2b2308f5, #3f310ff8);
   box-shadow:
+    inset 3px 0 0 var(--side),
     inset 0 0 0 1.5px #ffcf3880,
     inset -4px 0 0 var(--gold),
     0 4px 14px #0007;
@@ -934,10 +963,12 @@ body:has(#settings[open]) .hud-actions {
 }
 @keyframes own-kill-pop {
   0% {
-    transform: scale(0.86);
+    opacity: 0;
+    transform: translateX(14px) scale(0.94);
     filter: brightness(2);
   }
   45% {
+    opacity: 1;
     transform: scale(1.03);
   }
   100% {
@@ -1921,17 +1952,17 @@ html:not(.phone) #toast[data-tone="death"] {
   border-radius: 3px;
   background: #ffffff14;
   color: #d4e4f3;
-  font: 800 9px/1.3 var(--font-ui);
+  font: 800 11px/1.3 var(--font-ui);
 }
 /* A round not carried: its key over a small greyed icon, the count and name left out. */
 .ammo-slot.empty {
   grid-template-columns: 1fr;
   justify-items: center;
   align-content: space-evenly;
-  width: 36px;
-  padding: 5px 2px;
-  border-color: #ffffff0d;
-  background: #050d1c99;
+  width: 42px;
+  padding: 5px 2px 18px;
+  border-color: #ffffff12;
+  background: #050d1cb3;
   color: #7f93a8;
 }
 .ammo-slot.empty :is(b, small) {
@@ -1947,7 +1978,7 @@ html:not(.phone) #toast[data-tone="death"] {
   justify-self: center;
   width: 18px;
   height: 18px;
-  fill: #50657e;
+  fill: #3f5168;
   filter: none;
 }
 .ammo-slot.empty::before {
@@ -1957,15 +1988,20 @@ html:not(.phone) #toast[data-tone="death"] {
 .ammo-lock {
   display: none;
 }
+/* Every locked slot carries the same badge: a padlock on a dark disc, centred under
+   the dimmed icon, so locked reads at a glance on all of them. */
 .ammo-slot.empty .ammo-lock {
   display: block;
   position: absolute;
-  right: 3px;
-  bottom: 3px;
-  width: 11px;
-  height: 11px;
-  fill: #8ea3bb;
-  filter: drop-shadow(0 1px 1px #000);
+  left: calc(50% - 9px);
+  bottom: 4px;
+  width: 18px;
+  height: 18px;
+  padding: 3px;
+  border-radius: 50%;
+  background: #0b1628;
+  box-shadow: inset 0 0 0 1px #9fb4cc55;
+  fill: #b9cadd;
 }
 .ammo-slot:hover:not(:disabled, .selected) {
   border-color: #ffffff40;
@@ -2153,18 +2189,20 @@ html:not(.phone) #toast[data-tone="death"] {
   box-shadow: 0 0 6px #ffcf38aa;
 }
 
-/* Incoming damage: a glowing wedge on a ring round the player's tank, turned toward the
+/* Incoming damage: a crisp wedge on a ring round the player's tank, turned toward the
    shot, brightest at its middle and fading along the ring, with a pointer at its peak.
-   It pulses once as the hit lands. In first person the ring opens out to the screen's
-   edges, where the wedge frames the view instead of crossing it. It belongs to a living
-   tank; the wreck's camera looks elsewhere, so it goes with the respawn card. */
+   The ring sits well outside the hull, the barrel and the overhead bar, so it frames the
+   tank instead of crossing it. It pulses once as the hit lands. In first person the same
+   ring circles the reticle at the middle of the view, never a glow out in the world. It
+   belongs to a living tank; the wreck's camera looks elsewhere, so it goes with the
+   respawn card. */
 #damage-direction {
   --angle: 0rad;
   position: absolute;
   left: 50%;
   top: 50%;
-  width: clamp(190px, 30vmin, 290px);
-  height: clamp(190px, 30vmin, 290px);
+  width: clamp(230px, 40vmin, 360px);
+  height: clamp(230px, 40vmin, 360px);
   pointer-events: none;
   transform: translate(-50%, -50%) rotate(var(--angle));
 }
@@ -2174,52 +2212,37 @@ html:not(.phone) #toast[data-tone="death"] {
   border-radius: 50%;
   background: radial-gradient(
     circle closest-side,
-    transparent 70%,
-    #ff2a3a33 82%,
-    #ff4458d9 91%,
-    #ffd2d6 94%,
-    #ff3a4ccc 96.5%,
+    transparent 86%,
+    #ff2a3a40 90%,
+    #ff4458e6 94%,
+    #ffd2d6 95.5%,
+    #ff3a4ccc 97%,
     transparent 100%
   );
-  mask: conic-gradient(from -48deg, transparent, #000 48deg, transparent 96deg, transparent);
+  mask: conic-gradient(from -38deg, transparent, #000 38deg, transparent 76deg, transparent);
   -webkit-mask: conic-gradient(
-    from -48deg,
+    from -38deg,
     transparent,
-    #000 48deg,
-    transparent 96deg,
+    #000 38deg,
+    transparent 76deg,
     transparent
   );
 }
-/* First person: the whole screen, glowing red at the edge the shot came from. */
+/* First person: the ring round the reticle, a little wider than the sight. */
 #damage-direction.edge {
-  width: 100%;
-  height: 100%;
-  transform: translate(-50%, -50%);
-}
-#damage-direction.edge i {
-  border-radius: 0;
-  background: radial-gradient(
-    ellipse 34% 44% at var(--edge-x, 50%) var(--edge-y, 0%),
-    #ff2a3ab8,
-    #ff2a3a4d 42%,
-    transparent 72%
-  );
-  mask: none;
-  -webkit-mask: none;
+  width: clamp(220px, 34vmin, 320px);
+  height: clamp(220px, 34vmin, 320px);
 }
 #damage-direction::after {
   content: "";
   position: absolute;
-  left: calc(50% - 10px);
-  top: -13px;
-  width: 20px;
-  height: 12px;
+  left: calc(50% - 9px);
+  top: -11px;
+  width: 18px;
+  height: 11px;
   background: linear-gradient(180deg, #ffb3a8, #e0162e);
   clip-path: polygon(50% 0, 100% 100%, 0 100%);
   filter: drop-shadow(0 0 1px #2a050b) drop-shadow(0 0 5px #ff2a3a);
-}
-#damage-direction.edge::after {
-  display: none;
 }
 #damage-direction.pulse i {
   animation: damage-pulse 0.5s cubic-bezier(0.2, 0.8, 0.3, 1);

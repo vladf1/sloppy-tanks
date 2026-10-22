@@ -166,6 +166,10 @@ export function showFeedRow(
   row.dataset.names = key;
   row.classList.toggle("own-kill", ownKill);
   row.classList.toggle("own-death", ownDeath);
+  // The killer's side tints the plate's leading edge; a notice has no killer.
+  const killer = names.length > 1 ? sides[0] : undefined;
+  row.classList.toggle("killer-blue", killer === "blue");
+  row.classList.toggle("killer-red", killer === "red");
   row.classList.remove("own-kill-new", "feed-new");
   if (entering) {
     // Reading offsetWidth commits the removal so a reused row restarts the animation.
@@ -217,8 +221,8 @@ export interface ScreenPoint {
   y: number;
 }
 
-/** Where the damage ring sits: around the viewer's tank overhead, or opened out to the
- * screen's edges round its middle in first person (or whenever the tank is off screen). */
+/** Where the damage ring sits: around the viewer's tank overhead, or round the reticle
+ * at the middle of the view in first person. */
 export function damageRingPlacement(viewer: ScreenPoint | null): {
   left: string;
   top: string;
@@ -229,16 +233,6 @@ export function damageRingPlacement(viewer: ScreenPoint | null): {
   }
   const percent = (value: number) => `${(Math.min(1, Math.max(0, value)) * 100).toFixed(2)}%`;
   return { left: percent((viewer.x + 1) / 2), top: percent((1 - viewer.y) / 2), edge: false };
-}
-
-/** The point on the screen's edge (CSS percentages) toward a hit `angle` radians
- * clockwise from straight up. */
-export function damageEdgePoint(angle: number): { x: string; y: string } {
-  const dx = Math.sin(angle);
-  const dy = -Math.cos(angle);
-  const reach = 0.5 / Math.max(Math.abs(dx), Math.abs(dy));
-  const percent = (value: number) => `${((0.5 + value * reach) * 100).toFixed(1)}%`;
-  return { x: percent(dx), y: percent(dy) };
 }
 
 /** Moves the damage ring onto the viewer (`damageRingPlacement`). */
@@ -261,10 +255,6 @@ export function showDamageRing(
 ): void {
   placeDamageRing(indicator, viewer);
   indicator.style.setProperty("--angle", `${angle}rad`);
-  // In first person the glow sits on the screen's edge toward the shot.
-  const { x, y } = damageEdgePoint(angle);
-  indicator.style.setProperty("--edge-x", x);
-  indicator.style.setProperty("--edge-y", y);
   indicator.classList.remove("pulse");
   // Commit the removal so a second hit restarts the pulse.
   void indicator.offsetWidth;
