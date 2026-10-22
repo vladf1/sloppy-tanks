@@ -69,9 +69,22 @@ const SHOCK_SPREAD: f64 = 5.4;
 /// The flash core: how long it burns (s), its diameter (m, times the scale) and
 /// the wider orange bloom around it.
 /// Kept small and below white so it never blows out a hull beside it.
-const FLASH_SECONDS: f64 = 0.05;
-const FLASH_SIZE: f64 = 3.0;
-const FLASH_COLOR: [f32; 3] = [3.4, 2.5, 1.2];
+const FLASH_SECONDS: f64 = 0.06;
+const FLASH_SIZE: f64 = 2.2;
+const FLASH_COLOR: [f32; 3] = [3.4, 2.9, 2.2];
+/// Heat every fireball lobe adds over its first frames, falling away with this
+/// time constant (s): the blast is white-hot before it is orange.
+const FLASH_HEAT: f64 = 1.3;
+const FLASH_HEAT_SECONDS: f64 = 0.04;
+/// The flash's light on the ground round the blast: diameter (m, times the
+/// scale) and HDR colour, gone within a few frames.
+const FLASH_GROUND_SIZE: f64 = 10.0;
+const FLASH_GROUND_COLOR: [f32; 3] = [1.6, 1.25, 0.8];
+/// The white-hot seams a vehicle's flash shows round its hull for its first
+/// frames: each glow's diameter (m, times the scale) and colour.
+const SEAM_FLASH_SECONDS: f64 = 0.08;
+const SEAM_FLASH_SIZE: f64 = 1.3;
+const SEAM_FLASH_COLOR: [f32; 3] = [3.2, 2.6, 1.7];
 const BLOOM_SECONDS: f64 = 0.15;
 const BLOOM_SIZE: f64 = 3.4;
 const BLOOM_COLOR: [f32; 3] = [1.8, 0.62, 0.12];
@@ -88,8 +101,19 @@ const SOOT_SECONDS: f64 = 1.7;
 /// A fire puff burns out (thins to nothing from its rim) as its heat falls
 /// through this range.
 const BURN_OUT: [f64; 2] = [0.1, 0.42];
-const FIRE_PUFFS: usize = 11;
-const SMOKE_PUFFS: usize = 7;
+const FIRE_PUFFS: usize = 12;
+const SMOKE_PUFFS: usize = 6;
+/// A vehicle's fireball bursts out of its hull's seams and hatches, round its
+/// middle rather than over it, so the hull stays in sight inside the blast:
+/// the ring its seam lobes start on (m, times the scale) and how high on the
+/// hull, and where its hatch lobes start, over the deck.
+const HULL_SEAMS: f64 = 1.3;
+const HULL_SEAM_HEIGHT: f64 = 0.45;
+const HULL_HATCH_HEIGHT: f64 = 1.35;
+/// A blast on open ground bursts from a fist-sized heart low over the ground.
+const GROUND_SEAMS: f64 = 0.2;
+const GROUND_SEAM_HEIGHT: f64 = 0.3;
+const GROUND_HATCH_HEIGHT: f64 = 0.55;
 const SKIRT_PUFFS: usize = 7;
 /// The wind every blast's and wreck's smoke drifts on (m/s).
 pub const WIND: [f64; 2] = [0.9, -0.35];
@@ -197,6 +221,70 @@ enum Kind {
     Landing,
 }
 
+/// How a fireball erupts: lobes bursting out round its source ("seams") and the
+/// rest jetting up out of its middle ("hatches"), some of them a beat late.
+#[derive(Clone, Copy, Debug)]
+struct Shape {
+    seams: usize,
+    /// The arc the seam lobes span (rad): all round, or out of one side.
+    arc: f64,
+    /// How far the seam lobes fly out and how fast they rise (times the scale).
+    reach: f64,
+    rise: f64,
+    /// How high the middle lobes jet.
+    column: f64,
+    /// Lobes from this index burst this many seconds late: a second pop.
+    late_from: usize,
+    late: f64,
+    size: f64,
+}
+
+/// Four eruptions, picked at random and never twice running: a ring of fire
+/// out of every seam, a flank blown out of one side with a pop on the other, a
+/// geyser up the middle, and a small burst swallowed by a bigger second one.
+const SHAPES: [Shape; 4] = [
+    Shape {
+        seams: 8,
+        arc: TAU,
+        reach: 1.0,
+        rise: 0.8,
+        column: 1.0,
+        late_from: FIRE_PUFFS,
+        late: 0.0,
+        size: 1.0,
+    },
+    Shape {
+        seams: 8,
+        arc: 2.5,
+        reach: 1.4,
+        rise: 0.7,
+        column: 0.8,
+        late_from: 10,
+        late: 0.13,
+        size: 1.08,
+    },
+    Shape {
+        seams: 5,
+        arc: TAU,
+        reach: 0.75,
+        rise: 0.6,
+        column: 1.9,
+        late_from: FIRE_PUFFS,
+        late: 0.0,
+        size: 0.92,
+    },
+    Shape {
+        seams: 7,
+        arc: TAU,
+        reach: 0.85,
+        rise: 0.9,
+        column: 1.25,
+        late_from: 6,
+        late: 0.11,
+        size: 1.0,
+    },
+];
+
 /// A fiery blast's silhouette and timing.
 #[derive(Clone, Copy, Debug)]
 struct Look {
@@ -235,7 +323,7 @@ const BLAST: Look = Look {
 const TANK_BLASTS: [Look; 3] = [
     Look {
         lifetime: 4.2,
-        fire_size: 1.3,
+        fire_size: 1.05,
         fire_spread: 0.9,
         fire_life: 0.6,
         fire_rise: 1.8,
@@ -247,7 +335,7 @@ const TANK_BLASTS: [Look; 3] = [
     },
     Look {
         lifetime: 3.9,
-        fire_size: 1.38,
+        fire_size: 1.12,
         fire_spread: 1.12,
         fire_life: 0.56,
         fire_rise: 1.1,
@@ -259,7 +347,7 @@ const TANK_BLASTS: [Look; 3] = [
     },
     Look {
         lifetime: 4.0,
-        fire_size: 1.28,
+        fire_size: 1.0,
         fire_spread: 1.0,
         fire_life: 0.58,
         fire_rise: 1.4,
@@ -280,7 +368,7 @@ const BARREL_BLASTS: [Look; 3] = [
         fire_spread: 0.9,
         fire_life: 0.6,
         fire_rise: 1.4,
-        smoke: 0x4e4843,
+        smoke: 0x2f2b28,
         smoke_size: 1.1,
         smoke_rise: 3.0,
         drift: 0.3,
@@ -292,7 +380,7 @@ const BARREL_BLASTS: [Look; 3] = [
         fire_spread: 0.8,
         fire_life: 0.56,
         fire_rise: 1.6,
-        smoke: 0x4c4c4e,
+        smoke: 0x2b2b2c,
         smoke_size: 1.05,
         smoke_rise: 3.2,
         drift: 1.3,
@@ -304,7 +392,7 @@ const BARREL_BLASTS: [Look; 3] = [
         fire_spread: 0.85,
         fire_life: 0.6,
         fire_rise: 1.7,
-        smoke: 0x524e4a,
+        smoke: 0x34302c,
         smoke_size: 1.08,
         smoke_rise: 3.3,
         drift: 0.6,
@@ -322,6 +410,8 @@ struct Blast {
     scale: f64,
     phase: f64,
     variant: usize,
+    /// The eruption (`SHAPES`) of a fiery blast.
+    shape: usize,
     tempo: f64,
     /// Linear color of the ground's dust where it went off.
     dust: [f64; 3],
@@ -371,11 +461,12 @@ impl Blast {
     /// How brightly the blast lights its surroundings `t` seconds in: the
     /// flash's spike, then the flickering fireball until it burns out.
     fn fire_light(&self, t: f64, look: &Look) -> f64 {
-        let flash = (-t * 16.0).exp();
+        // A crisp flash of a frame or two, then the fire's glow.
+        let flash = (-t * 30.0).exp();
         let fire = burning(fire_heat(t, COOLING / look.fire_life));
         let flicker =
             0.85 + 0.15 * (t * 37.0 + self.phase * 5.0).sin() * (t * 23.0 + self.phase).sin();
-        0.7 * flash + 0.6 * fire * flicker
+        1.3 * flash + 0.6 * fire * flicker
     }
 }
 
@@ -493,6 +584,12 @@ const UNDERGLOW_LEVELS: f64 = 15.0;
 
 /// Push a puff record into `pool` (`puff.wgsl`).
 fn push_puff(pool: &mut PoolBuffer, puff: Puff) {
+    push_stretched_puff(pool, puff, 1.0);
+}
+
+/// Push a puff `stretch` times as tall as a plain one: a jet of fire or a
+/// lobe flattened as it bursts out.
+fn push_stretched_puff(pool: &mut PoolBuffer, puff: Puff, stretch: f64) {
     if puff.size <= 0.0 || puff.opacity <= 0.003 {
         return;
     }
@@ -500,7 +597,7 @@ fn push_puff(pool: &mut PoolBuffer, puff: Puff) {
     let world = Mat4::from_scale_rotation_translation(
         Vec3::new(
             puff.size as f32,
-            (puff.size * PUFF_HEIGHT) as f32,
+            (puff.size * PUFF_HEIGHT * stretch) as f32,
             puff.size as f32,
         ),
         glam::Quat::IDENTITY,
@@ -532,6 +629,7 @@ pub struct ExplosionEffects {
     cursor: usize,
     tank_sequence: usize,
     barrel_sequence: usize,
+    last_shape: usize,
     scorches: [Scorch; MAX_SCORCHES],
     scorch_count: usize,
     scorch_cursor: usize,
@@ -561,6 +659,7 @@ impl Default for ExplosionEffects {
             cursor: 0,
             tank_sequence: 0,
             barrel_sequence: 0,
+            last_shape: 0,
             scorches: [Scorch::default(); MAX_SCORCHES],
             scorch_count: 0,
             scorch_cursor: 0,
@@ -724,6 +823,12 @@ impl ExplosionEffects {
             blast.scale *= 0.74 + random.next_f64() * 0.1;
         }
         blast.phase = random.next_f64() * TAU;
+        if fire {
+            // A different eruption from the last one.
+            let step = 1 + (random.next_f64() * (SHAPES.len() - 1) as f64) as usize;
+            self.last_shape = (self.last_shape + step) % SHAPES.len();
+            blast.shape = self.last_shape;
+        }
         let mut wall_mark = None;
         if let Kind::Hit(_) = kind {
             blast.scale = 1.0;
@@ -741,6 +846,8 @@ impl ExplosionEffects {
                 blast.z = f64::from(strike.point.z);
                 blast.y = f64::from(strike.point.y);
                 blast.direction = [f64::from(strike.normal.x), f64::from(strike.normal.z)];
+                // The dust is the wall's own: grey concrete grit, not the ground's.
+                blast.dust = mixed(linear(strike.color), linear(GRIT), 0.45);
                 wall_mark = Some((strike, blast.phase));
             }
         }
@@ -1023,11 +1130,11 @@ impl ExplosionEffects {
                     fuel_fire(b, t, lifetime, streaks);
                     self.fuel_smoke(b, t, lifetime, smoke);
                 }
-                self.fireball(b, t, &look, smoke);
+                self.fireball(b, t, &look, smoke, streaks);
                 let s = b.scale;
-                // Over the hull rather than inside it, so the flash is never hidden
-                // by what it destroys.
-                let center = Vec3::new(b.x as f32, (1.4 * s) as f32, b.z as f32);
+                // Low in the hull's middle: the seams' glows carry the flash round
+                // it, and the hull stands dark against them.
+                let center = Vec3::new(b.x as f32, (0.9 * s) as f32, b.z as f32);
                 if t < BLOOM_SECONDS {
                     let k = t / BLOOM_SECONDS;
                     let [r, g, bl] = BLOOM_COLOR;
@@ -1075,6 +1182,17 @@ impl ExplosionEffects {
             diameter,
             [r, g, bl, (0.5 * strength).min(0.55) as f32],
         );
+        // The flash lights the ground white round the blast for a frame or two.
+        if t < SEAM_FLASH_SECONDS {
+            let k = t / SEAM_FLASH_SECONDS;
+            let [r, g, bl] = FLASH_GROUND_COLOR;
+            ground_glow(
+                streaks,
+                Vec3::new(b.x as f32, y + 0.005, b.z as f32),
+                (FLASH_GROUND_SIZE * s * (0.8 + 0.3 * k)) as f32,
+                [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.85) as f32],
+            );
+        }
     }
 
     /// A broad, faint haze that settles over the blast and lingers, drifting.
@@ -1200,9 +1318,12 @@ impl ExplosionEffects {
                 ],
                 size,
                 color: scaled(smoke, 0.85 + 0.3 * r3),
+                // Thinning as it climbs, so the column frays out overhead rather
+                // than standing as one dark mass.
                 opacity: (age / 0.2).min(1.0)
-                    * 0.72
+                    * 0.55
                     * thin
+                    * (1.0 - 0.55 * smoothstep(y, 2.5 * s, 7.5 * s))
                     * (1.0 - smoothstep(age, life * 0.3, life * 0.85)),
                 seed: b.phase * 0.71 + jf * 0.173,
                 heat: 0.0,
@@ -1213,107 +1334,115 @@ impl ExplosionEffects {
         }
     }
 
-    /// The fireball: a white-hot heart that bursts within a few frames inside
-    /// boiling lobes flung out and up. Each lobe cools from its rim through
-    /// orange and deep red into the soot it carries while the heart burns on a
-    /// beat longer, so the fire retreats inward instead of switching off. The
-    /// soot then climbs on its own heat, faster as it goes, swells, pales and
-    /// thins on the wind, so a blast leaves a rising cloud, never a sitting blob.
-    fn fireball(&mut self, b: &Blast, t: f64, look: &Look, smoke: [f64; 3]) {
+    /// The fireball: lobes of white-hot fire burst out of the source within a few
+    /// frames, a vehicle's out of its hull's seams and hatches round its middle so
+    /// the hull stays in sight, and fly out and up. Each lobe cools from its rim
+    /// through orange and deep red into the soot it carries, so a dark sooty rim
+    /// takes over within a third of a second while the hearts burn on a beat
+    /// longer. The soot then climbs on its own heat, each lobe at its own rate so
+    /// the cloud tears apart as it rises, swells, pales and thins on the wind:
+    /// the blast leaves rising wisps, never a sitting ball.
+    fn fireball(
+        &mut self,
+        b: &Blast,
+        t: f64,
+        look: &Look,
+        smoke: [f64; 3],
+        streaks: &mut PoolBuffer,
+    ) {
         let s = b.scale;
+        let shape = SHAPES[b.shape % SHAPES.len()];
         let cooling = COOLING / look.fire_life;
+        let vehicle = b.kind == Kind::Tank;
+        let (source, seam_height, hatch_height) = if vehicle {
+            (HULL_SEAMS, HULL_SEAM_HEIGHT, HULL_HATCH_HEIGHT)
+        } else {
+            (GROUND_SEAMS, GROUND_SEAM_HEIGHT, GROUND_HATCH_HEIGHT)
+        };
         for j in 0..FIRE_PUFFS {
             let jf = j as f64;
             let r1 = hash(b.phase * 0.53 + jf * 1.371);
             let r2 = hash(b.phase * 1.91 + jf * 0.713);
             let r3 = hash(b.phase * 2.71 + jf * 2.239);
-            let heart = j == 0;
-            let late = look.double_burst && j >= 5;
-            // A few outer lobes cool fast into a dark shell of smoke curling
-            // round the fire, so the fireball has value contrast from its start.
-            let shell = !heart && r3 > 0.5;
-            let age = t - r1 * 0.02 - if late { 0.16 } else { 0.0 };
+            let r4 = hash(b.phase * 3.17 + jf * 0.389);
+            let late = j >= shape.late_from;
+            let age = t - r1 * 0.035 - if late { shape.late } else { 0.0 };
             if age <= 0.0 {
                 continue;
             }
-            // Full size within about a tenth of a second.
-            let out = settle(age, 24.0 + 10.0 * r2);
-            // Golden-angle placement keeps the lobes from lining up in a ring.
-            let angle = b.phase + jf * 2.399 + (r3 - 0.5) * 0.6;
-            let reach = if heart {
-                0.05
+            let seam = j < shape.seams;
+            // Most of the way out within a tenth of a second.
+            let out = settle(age, 13.0 + 9.0 * r2);
+            let (angle, reach, height, size) = if seam {
+                let k = (jf + 0.5) / shape.seams as f64 - 0.5;
+                let angle = b.phase + k * shape.arc + (r3 - 0.5) * shape.arc / shape.seams as f64 * 0.7;
+                let reach = source + (0.45 + 0.6 * r3) * shape.reach * look.fire_spread * out;
+                let height = seam_height + 0.3 * r2 + 1.0 * shape.rise * out;
+                // A few big lobes among small ones.
+                let size = 0.2 + (0.35 + 0.95 * r1 * r1) * out;
+                (angle, reach, height, size)
             } else {
-                (0.15 + (0.62 + 0.35 * r2) * out)
-                    * look.fire_spread
-                    * if shell { 1.25 } else { 1.0 }
-            } * s;
-            // Soot rises on its own heat, gathering speed once the fire is out.
-            let soot_age = (age - look.fire_life * 0.55).max(0.0);
-            let climb = 0.5 * SOOT_BUOYANCY * soot_age * soot_age * (0.8 + 0.4 * r2);
-            let lift = (0.5 + 0.45 * r3 + look.fire_rise * age) * s + climb * s.sqrt();
-            let heat = fire_heat(
-                age,
-                cooling
-                    * if heart {
-                        0.62
-                    } else if shell {
-                        3.0
-                    } else {
-                        0.8 + 0.45 * r3
-                    },
-            ) * if heart { 1.12 } else { 1.0 };
+                let angle = b.phase + jf * 2.399;
+                let reach = 0.1 + 0.5 * r3 * out;
+                let height = hatch_height + shape.column * (1.0 + 1.3 * r3) * settle(age, 6.0 + 3.0 * r2);
+                let size = 0.2 + (0.45 + 0.6 * r1 * r1) * out;
+                (angle, reach, height, size)
+            };
+            // White-hot for the flash's first frames, then the lobe's own cooling.
+            let heat = fire_heat(age, cooling * (0.8 + 0.45 * r4))
+                + FLASH_HEAT * (-age / FLASH_HEAT_SECONDS).exp();
             let fire = burning(heat);
-            // A lobe swells as it bursts, the burning part shrinks back a little as
-            // it cools, and the soot it leaves keeps spreading. Lobes overlap into
-            // one fireball rather than a scatter of pops.
-            let size = (0.62 + 0.95 * out)
-                * (0.82 + 0.18 * fire)
-                * s
-                * look.fire_size
-                * if heart { 1.15 } else { 0.7 + 0.38 * r1 }
-                + (0.35 + 0.25 * r2) * soot_age * s.sqrt();
-            // Fresh soot is dark brown-grey, never ink; as it climbs and spreads it
-            // pales toward the column's grey.
-            let pale = smoothstep(
-                age,
-                look.fire_life * 0.7,
-                look.fire_life * 0.7 + SOOT_SECONDS,
-            );
+            // Soot rises on its own heat once the fire is out, each lobe at its own
+            // rate, so the cloud tears apart into rising wisps.
+            let soot_age = (age - look.fire_life * 0.5).max(0.0);
+            let buoyancy = SOOT_BUOYANCY * (0.55 + 0.9 * r2);
+            let climb = 0.5 * buoyancy * soot_age * soot_age;
+            let lift = (height + look.fire_rise * age * 0.6) * s + climb * s.sqrt();
+            let reach = (reach + 0.35 * soot_age) * s;
+            // The burning part shrinks back a little as it cools; the soot it
+            // leaves keeps spreading.
+            let size = size * (0.84 + 0.16 * fire) * s * look.fire_size * shape.size
+                + (0.35 + 0.3 * r2) * soot_age * s.sqrt();
+            let pale = smoothstep(soot_age, 0.1, 0.1 + SOOT_SECONDS);
             let carry = soot_age * soot_age * 0.5;
-            // Fire is dense; the soot it turns into is a veil the blast's
-            // aftermath shows through.
-            let veil = 0.66 + 0.32 * fire;
-            self.puff(Puff {
-                position: [
-                    b.x + angle.cos() * reach
-                        + b.phase.cos() * age * look.drift * 0.5
-                        + WIND[0] * carry,
-                    lift,
-                    b.z + angle.sin() * reach
-                        + b.phase.sin() * age * look.drift * 0.5
-                        + WIND[1] * carry,
-                ],
-                size,
-                color: scaled(smoke, 0.5 + 0.75 * pale),
-                opacity: (age / 0.02).min(1.0)
-                    * veil
-                    * (1.0
-                        - smoothstep(
-                            age,
-                            look.fire_life * 0.8,
-                            look.fire_life * 0.8 + SOOT_SECONDS,
-                        ))
-                    * (1.0 - 0.3 * pale),
-                seed: b.phase * 0.29 + jf * 0.311,
-                heat,
-                erosion: smoothstep(
-                    age,
-                    look.fire_life * 0.6,
-                    look.fire_life * 0.8 + SOOT_SECONDS,
-                ) * 0.8,
-                softness: (1.0 - fire) * (0.15 + 0.3 * pale),
-                underglow: (heat / 0.45).min(1.0) * 0.85,
-            });
+            let x = b.x + angle.cos() * reach + b.phase.cos() * age * look.drift * 0.5 + WIND[0] * carry;
+            let z = b.z + angle.sin() * reach + b.phase.sin() * age * look.drift * 0.5 + WIND[1] * carry;
+            // Each seam glows white-hot round the hull for the flash's first frames,
+            // outlining the hull rather than hiding it.
+            if vehicle && seam && age < SEAM_FLASH_SECONDS {
+                let k = age / SEAM_FLASH_SECONDS;
+                let [r, g, bl] = SEAM_FLASH_COLOR;
+                glow(
+                    streaks,
+                    Vec3::new(x as f32, lift as f32, z as f32),
+                    (SEAM_FLASH_SIZE * s * (0.6 + 0.6 * k)) as f32,
+                    [r, g, bl, ((1.0 - k) * (1.0 - k) * 0.55) as f32],
+                );
+            }
+            // Fire is dense; its soot is a veil that thins as it climbs and
+            // spreads, never a sitting balloon.
+            let veil = 0.6 + 0.38 * fire;
+            let gone = 1.0 - smoothstep(soot_age, 0.25, 1.3 + 0.7 * r3);
+            // Jets up the middle burst tall, lobes out of the seams wide; both
+            // round out as they turn to soot.
+            let burst = if seam { 0.8 + 0.15 * r4 } else { 1.25 + 0.45 * r4 };
+            let stretch = 1.0 + (burst - 1.0) * fire;
+            push_stretched_puff(
+                &mut self.puffs,
+                Puff {
+                    position: [x, lift, z],
+                    size,
+                    color: scaled(smoke, 0.42 + 0.75 * pale),
+                    opacity: (age / 0.015).min(1.0) * veil * gone,
+                    seed: b.phase * 0.29 + jf * 0.311,
+                    heat,
+                    erosion: (smoothstep(soot_age, 0.0, 1.4 + 0.6 * r3) * 0.85)
+                        .max(0.25 * (1.0 - fire)),
+                    softness: (1.0 - fire) * (0.2 + 0.35 * pale),
+                    underglow: (heat / 0.45).min(1.0) * 0.85,
+                },
+                stretch,
+            );
         }
     }
 
@@ -1521,7 +1650,7 @@ impl ExplosionEffects {
         let (color, softness, rise) = match struck {
             Struck::Steel => (linear(HIT_SMOKE), 0.2, 1.5),
             Struck::Sheet => (linear(STEEL_SOOT), 0.3, 1.2),
-            Struck::Stone => (mixed(linear(GRIT), b.dust, 0.35), 0.45, 0.8),
+            Struck::Stone => (b.dust, 0.45, 0.8),
         };
         let heat = fire_heat(t, 9.0);
         if burning(heat) > 0.0 {
@@ -1887,8 +2016,8 @@ mod tests {
         effects.update(0.03, &mut streaks);
         assert_eq!(
             streaks.len(),
-            3,
-            "the flash core, its bloom and the fire's light on the ground"
+            4,
+            "the flash core, its bloom, the flash's and the fire's light on the ground"
         );
         assert!(heat(&effects.puffs) > 1.0, "a white-hot fireball");
         assert_eq!(rings_of(&effects.rings, SHOCK_RING), 1);

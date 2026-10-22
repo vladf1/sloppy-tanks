@@ -113,6 +113,9 @@ struct Burner {
     hull_trail_clock: f64,
     /// 0 while the hull flies, rising to 1 once it has come to rest.
     settled: f64,
+    /// Seconds the smoke column has been climbing off the resting hull: it
+    /// grows up from the fire rather than appearing whole.
+    column: f64,
     ember_clock: f64,
     /// This frame's fire strength and flicker, for its light.
     fire: f64,
@@ -138,6 +141,7 @@ impl Default for Burner {
             trail_clock: 0.0,
             hull_trail: [Vec3::ZERO; TRAIL_PUFFS],
             hull_trail_count: 0,
+            column: 0.0,
             hull_trail_clock: 0.0,
             settled: 0.0,
             ember_clock: 0.0,
@@ -299,6 +303,7 @@ fn follow(burner: &mut Burner, state: &RenderState, dt: f64) {
     } else {
         (burner.settled - dt * DOUSE_RATE).max(0.0)
     };
+    burner.column += dt.max(0.0) * burner.settled;
     if let Some(turret) = find(burner.turret) {
         let (position, _) = fragment_pose(turret);
         sample(
@@ -378,9 +383,15 @@ fn draw(
         );
         let pale = smoothstep(a, 0.05, 0.9) as f32;
         let color = [0, 1, 2].map(|i| soot[i] + (soot_high[i] - soot[i]) * pale);
-        let size = (0.8 + 2.5 * a.powf(0.85)) * vigour;
-        // Born quickly at the fire, densest low, thinning out as it spreads.
-        let opacity = smoke * smoothstep(a, 0.0, 0.08) * (1.0 - smoothstep(a, 0.4, 1.0)) * 0.86;
+        let size = (0.7 + 2.1 * a.powf(0.85)) * vigour;
+        // Born quickly at the fire, densest low, thinning out as it spreads; a
+        // puff shows only once the column has climbed to it.
+        let grown = smoothstep(burner.column - a * SMOKE_CYCLE, 0.0, 0.6);
+        let opacity = smoke
+            * grown
+            * smoothstep(a, 0.0, 0.08)
+            * (1.0 - smoothstep(a, 0.3, 1.0))
+            * 0.62;
         smoke_puff(
             puffs,
             position,
@@ -566,7 +577,8 @@ mod tests {
         let mut random = CosmeticRandom::seeded(2);
         fires.event(&death, &mut random);
         let mut puffs = PoolBuffer::new(64);
-        for _ in 0..120 {
+        // Long enough for the smoke column to have climbed off the fire.
+        for _ in 0..300 {
             step(&mut fires, &state, &mut puffs);
         }
         assert_eq!(fires.active(), 1);

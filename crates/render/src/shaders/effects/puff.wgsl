@@ -12,9 +12,11 @@ fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     // by most of its radius, so a hull or the ground the puff envelops cuts its
     // far side rather than slicing through its middle. A low puff is pulled
     // further, until its card's lowest edge clears the ground: a card that dips
-    // into the ground would be cut along every step of the terrain.
+    // into the ground would be cut along every step of the terrain. Fire stands
+    // where it burns: a hull in front of a lobe hides it, so a vehicle's blast
+    // shows the hull it erupts from.
     let radius = abs(corner.x);
-    let height = radius * 0.9;
+    let height = abs(corner.y);
     let to_eye_far = frame.camera_position.xyz - v.instance_origin;
     let to_eye = normalize(to_eye_far);
     // The card keeps the world's up rather than the camera's, so a rolling or
@@ -28,20 +30,16 @@ fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     let lowest = v.instance_origin.y - abs(up.y) * height;
     let lift = max(0.06 - lowest, 0.0) / max(to_eye.y, 0.2);
     let far = length(to_eye_far);
+    // However near the camera a billow drifts, its card never spans more than
+    // this share of its distance, so smoke can veil part of the view but never
+    // blank it out.
     let pull = min(max(radius * 0.6, lift), far * 0.4);
-    // Fire engulfs what it burns: a hot puff's card stands further forward, clear
-    // of the hull inside it, so no armour edge slices the fireball into strips;
-    // the card shrinks by the same perspective, so the ball keeps its size on
-    // screen.
-    let engulf = min(PUFF_ENGULF * smoothstep(0.15, 0.6, v.instance_data.y), far * 0.55 - pull);
-    let shrink = (far - pull - max(engulf, 0.0)) / max(far - pull, 1e-3);
-    (*w).position = v.instance_origin + to_eye * (pull + max(engulf, 0.0))
-        + (right * corner.x + up * corner.y) * shrink;
+    let cap = min((far - pull) * PUFF_SCREEN_SHARE / max(radius, 1e-3), 1.0);
+    (*w).position = v.instance_origin + to_eye * pull + (right * corner.x + up * corner.y) * cap;
 }
 
-// How much further toward the eye a hot puff's card stands (m): about a hull's
-// half length, so fire inside or behind a vehicle draws over it.
-const PUFF_ENGULF: f32 = 3.0;
+// The widest a puff's card may be, as a share of its distance from the eye.
+const PUFF_SCREEN_SHARE: f32 = 0.2;
 
 fn puff_hash(p: vec2f) -> f32 {
     var q = fract(vec3f(p.x, p.y, p.x) * 0.1031);
@@ -241,8 +239,8 @@ fn puff_color(
         // sharpened so the fire splits into bright billows with dark creases of
         // soot laced between them rather than one flat orange blob.
         let broad = mix(n1 * 0.85 + n2 * 0.15, noise, 0.35);
-        let lobes = smoothstep(0.2, 0.8, broad);
-        let temperature = puff_bands(heat * (0.14 + 0.86 * core * core) * (0.2 + 1.25 * lobes));
+        let lobes = smoothstep(0.28, 0.74, broad);
+        let temperature = puff_bands(heat * (0.14 + 0.86 * core * core) * (0.1 + 1.45 * lobes));
         glow = smoothstep(0.05, 0.32, temperature);
         // Each lobe of a fireball is brighter on its upper face and deepens into
         // its folds, so the fire keeps its rolling volume.
@@ -254,7 +252,7 @@ fn puff_color(
         // Smoke over a fire glows from below with its light.
         let lit_from_below = underglow * (1.0 - glow) * clamp(0.75 - normal.y, 0.15, 1.0)
             * smoothstep(0.6, -0.6, point.y);
-        color += vec3f(1.7, 0.45, 0.07) * lit_from_below * (0.4 + 0.6 * noise);
+        color += vec3f(1.5, 0.56, 0.12) * lit_from_below * (0.4 + 0.6 * noise);
     }
     return color;
 }
