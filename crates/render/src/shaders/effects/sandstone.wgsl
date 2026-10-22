@@ -245,7 +245,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     cap_tone = select(cap_tone, srgb_hex(0xa38a74u), cap_pick > 0.78);
     layered = mix(layered, cap_tone, bleached * select(1.0, 1.4, cap_pick > 0.45));
     layered *= 0.97 + lamina * (0.05 + 0.06 * close) * (1.0 - worked * 0.85) * (1.0 - rock_body * 0.8);
-    layered = mix(layered, vec3f(dot(layered, LUMA)) * vec3f(1.07, 1.0, 0.9), worked * 0.5);
+    layered = mix(layered, vec3f(dot(layered, LUMA)) * vec3f(1.1, 1.04, 0.95), worked * 0.68);
     // Colour runs along the bedding: long, thin streaks of paler and redder
     // stone inside each bed, so a face never reads as one flat paint.
     let streak_scale = select(vec2f(0.18, 2.6), vec2f(0.55, 0.8), rocky && !backdrop);
@@ -290,7 +290,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Edge wear comes and goes along a lip: fresh chips in runs, weathered
     // stretches between, never one even highlight like a planed board's edge.
     let chip_run = quarry_smoothstep(0.35, 0.65, quarry_value(face_uv * 2.3 + vec2f(3.0, rock_layer)));
-    let chipped = quarry_smoothstep(0.2, 0.8, lip * (0.6 + luma)) * (0.35 + 0.65 * chip_run);
+    let chipped = quarry_smoothstep(0.2, 0.8, lip * (0.6 + luma)) * (0.35 + 0.65 * max(chip_run, worked));
     // Each facet a shade of its own, its ridges struck paler: the face reads as
     // chipped planes in the shade as well as in the sun.
     rock *= 1.0 + (facets.x * 0.035 + facets.z * 0.06) * select(0.0, 1.0, rocky && !backdrop) * quarry_smoothstep(0.05, 0.02, footprint);
@@ -309,7 +309,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     rock = mix(rock, rock * vec3f(0.8, 0.74, 0.68), aged * top * select(0.0, 0.6, rocky && !backdrop));
     // Crustose lichen spots the oldest caprock: grey-green rosettes and the odd
     // orange one. The joints themselves are cut into the mesh.
-    let lichen = quarry_pebbles(p.xz * 1.6 + rock_layer * 5.1, 0.5, select(0.0, 0.1, rocky && !backdrop) * top, footprint, 41.0);
+    let lichen = quarry_pebbles(p.xz * 1.6 + rock_layer * 5.1, 0.5, select(0.0, 0.1, rocky && !backdrop) * top * (1.0 - worked), footprint, 41.0);
     let lichen_tint = select(vec3f(0.62, 0.62, 0.5), vec3f(1.0, 0.62, 0.34), lichen.tint.x > 1.1);
     rock = mix(rock, rock * lichen_tint, lichen.cover * 0.55 * quarry_smoothstep(0.4, 0.75, mottle));
     // Joints and frost cracks craze the caprock into plates: dark lines choked
@@ -325,6 +325,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // yellow toward a dusty rose, a step greyer, so under the warm sun they
     // never read as the timber crates beside them.
     rock = mix(rock, vec3f(dot(rock, LUMA)) * vec3f(1.07, 0.98, 0.93), rock_body * mix(0.28, 0.42, upright));
+    // Outcrops across the floor come from different parts of the bed: some
+    // pale and bleached, some deeper rose. A field broad enough that each
+    // outcrop takes one tone, so no two read as the same stamped model.
+    let outcrop_tone = quarry_value(p.xz / 23.0 + vec2f(5.3, -2.1));
+    let outcrop_tint = mix(vec3f(1.05, 1.02, 0.97), vec3f(0.93, 0.83, 0.78), quarry_smoothstep(0.25, 0.75, outcrop_tone));
+    rock *= mix(vec3f(1.0), outcrop_tint, select(0.0, 1.0, cover_rock));
     // A film of fine dust dulls every top: paler and less saturated than the
     // stone under it, so sunlit caps read as weathered rock, not glazed clay.
     let dust_film = top * select(0.3, 0.45, rocky && !backdrop);
@@ -347,7 +353,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // as a pale strip between the cliffs.
     let pavement = up * select(0.0, 1.0, backdrop && !mesa) * quarry_smoothstep(88.0, 125.0, length(p.xz));
     rock = mix(rock, rock * vec3f(0.74, 0.68, 0.63), pavement * 0.65);
-    let chips = quarry_pebbles(p.xz, 0.55, select(0.0, select(0.14, 0.05, !backdrop), rocky) * up, footprint, 17.0);
+    let chips = quarry_pebbles(p.xz, 0.55, select(0.0, select(0.14, 0.05, !backdrop), rocky) * up * (1.0 - worked), footprint, 17.0);
     // Blast rubble left lying on the benches' shelves: boulders a metre or so
     // across with their shadows, so a tread reads as worked ground from above.
     let rubble = quarry_pebbles(p.xz, 1.9, select(0.0, 0.12, backdrop && !mesa) * up, footprint, 53.0);
