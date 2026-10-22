@@ -99,17 +99,33 @@ var<private> receiver_normal: vec3f;
 // Contact-hardening penumbra: shadows stay crisp where a hull or wall meets the
 // ground and widen toward the tip of a tall caster's shadow. Blockers are found
 // with the same hardware-filtered compares as the filter (continuous as things
-// move, no noise): four taps around the receiver, against its own plane, count the
-// casters above it and those more than `PENUMBRA_FAR_BLOCKER` metres above it.
+// move, no noise): four taps around the receiver, against its own plane, find the
+// casters above it, and only where there are any, three more depths sort them by
+// how far up the sun's ray they stand (`BLOCKER_STEPS`, metres).
 const PENUMBRA_SEARCH_TEXELS: f32 = 5.0;
-const PENUMBRA_FAR_BLOCKER: f32 = 3.5;
-// The filter radius (in units of the 7×7 tent) at contact and under far casters.
+const BLOCKER_STEPS: vec3f = vec3f(1.0, 2.5, 5.0);
+// The caster distance each band of the search stands for, metres: below the first
+// step, between the steps and beyond the last.
+const BLOCKER_BANDS: vec4f = vec4f(0.5, 1.75, 3.75, 6.5);
+// The filter radius (in units of the 7×7 tent) at contact and under far casters,
+// and the caster distances in metres over which it widens.
 const PENUMBRA_CONTACT_RADIUS: f32 = 0.55;
 const PENUMBRA_FAR_RADIUS: f32 = 1.7;
+const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 5.0);
+// Sky the ground sees from inside a cast shadow: hard by its caster a wall or hull
+// hides much of the sky, so the shade is deepest there and opens toward the
+// shadow's tip; this share of the fill remains at contact, rising to all of it over
+// the caster distances in metres.
+const SHADOW_CONTACT_FILL: f32 = 0.62;
+const SHADOW_FILL_OPENING: vec2f = vec2f(0.3, 5.0);
 // Steepest receiver slope the search follows, metres of depth per texel, and the
 // depth gap it ignores, metres.
 const RECEIVER_SLOPE_LIMIT: f32 = 0.6;
 const BLOCKER_TOLERANCE: f32 = 0.06;
+
+// The share of the sky fill that reaches the receiver inside its cast shadow, set by
+// `penumbra_radius` (1 where nothing casts or no search ran).
+var<private> shadow_fill: f32 = 1.0;
 
 fn penumbra_radius(coord: vec3f, size: f32) -> f32 {
     let m = frame.shadow_matrix;
@@ -126,20 +142,36 @@ fn penumbra_radius(coord: vec3f, size: f32) -> f32 {
     // Depth per texel along the map's u and its (flipped) v.
     let slope = clamp(vec2f(-a, b) * c / max(c * c, 1e-12) / size, vec2f(-limit), vec2f(limit));
     let tolerance = BLOCKER_TOLERANCE / metres + abs(slope.x) + abs(slope.y);
-    let reach = PENUMBRA_FAR_BLOCKER / metres;
-    var near = 0.0;
-    var far = 0.0;
+    var references = array<f32, 4>();
+    var taps = array<vec2f, 4>();
+    var open = 0.0;
     for (var i = 0; i < 4; i++) {
         let offset = vec2f(f32(i & 1) * 2.0 - 1.0, f32(i >> 1u) * 2.0 - 1.0) * PENUMBRA_SEARCH_TEXELS;
-        let reference = coord.z + dot(slope, offset) - tolerance;
-        let at = coord.xy + offset / size;
-        near += textureSampleCompareLevel(shadow_map, shadow_sampler, at, reference);
-        far += textureSampleCompareLevel(shadow_map, shadow_sampler, at, reference - reach);
+        references[i] = coord.z + dot(slope, offset) - tolerance;
+        taps[i] = coord.xy + offset / size;
+        open += textureSampleCompareLevel(shadow_map, shadow_sampler, taps[i], references[i]);
     }
-    // Shares of the search that casters cover: any above the receiver, far above it.
-    let blocked = 4.0 - near;
-    let far_share = (4.0 - far) / max(blocked, 1e-3);
-    return mix(1.0, mix(PENUMBRA_CONTACT_RADIUS, PENUMBRA_FAR_RADIUS, far_share), smoothstep(0.0, 0.3, blocked));
+    // The share of the search that casters cover.
+    let blocked = 4.0 - open;
+    if blocked <= 0.0 {
+        return 1.0;
+    }
+    // Casters beyond each step, summed over the four taps.
+    let steps = BLOCKER_STEPS / metres;
+    var beyond = vec3f(0.0);
+    for (var i = 0; i < 4; i++) {
+        for (var k = 0; k < 3; k++) {
+            beyond[k] += 1.0 - textureSampleCompareLevel(shadow_map, shadow_sampler, taps[i], references[i] - steps[k]);
+        }
+    }
+    // The casters' mean distance up the sun's ray.
+    let bands = vec4f(blocked - beyond.x, beyond.x - beyond.y, beyond.y - beyond.z, beyond.z);
+    let reach = dot(bands, BLOCKER_BANDS) / blocked;
+    let found = smoothstep(0.0, 0.3, blocked);
+    let ground = smoothstep(0.5, 0.8, receiver_normal.y);
+    shadow_fill = mix(1.0, mix(SHADOW_CONTACT_FILL, 1.0, smoothstep(SHADOW_FILL_OPENING.x, SHADOW_FILL_OPENING.y, reach)), found * ground);
+    let widening = smoothstep(PENUMBRA_WIDENING.x, PENUMBRA_WIDENING.y, reach);
+    return mix(1.0, mix(PENUMBRA_CONTACT_RADIUS, PENUMBRA_FAR_RADIUS, widening), found);
 }
 
 // The sun's shadow: Castaño's optimized PCF (The Witness), hardware-filtered
@@ -252,6 +284,8 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     if RECEIVE_SHADOW {
         sunlit = sun_shadow(world, n);
     }
+    // Inside a cast shadow, how much of the sky's fill the caster leaves open.
+    let sky_open = mix(1.0, shadow_fill, 1.0 - sunlit);
     if atmosphere_on() {
         sunlit *= cloud_shadow(world);
     }
@@ -329,7 +363,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         let grey = dot(diffuse, vec3f(0.2126, 0.7152, 0.0722));
         shade_color = max(mix(vec3f(grey), diffuse, SHADE_SATURATION), vec3f(0.0));
     }
-    var indirect = hemisphere * shade_color * RECIPROCAL_PI;
+    var indirect = hemisphere * shade_color * (RECIPROCAL_PI * sky_open);
     if atmosphere_on() && frame.ground.w > 0.0 {
         // Warm bounce from the sunlit ground around: what the sun does not reach
         // directly (cast shadow, cloud shadow or a face turned away) still catches
@@ -424,13 +458,13 @@ const SKY_SUN_SIDE: f32 = 0.22;
 const BOUNCE_FROM_BELOW: f32 = 0.8;
 // The share of the sky fill's blue a fully sunlit surface gives up (it keeps the
 // fill's brightness).
-const FILL_NEUTRAL_IN_SUN: f32 = 0.7;
+const FILL_NEUTRAL_IN_SUN: f32 = 0.3;
 // Saturation of the sky fill's share of a surface's light (1 = its plain color).
 const SHADE_SATURATION: f32 = 1.3;
 // Point lights' (blast flashes') extra strength with the atmosphere on, and the
 // share of their decay exponent they keep (a wider pool).
-const BLAST_LIGHT_GAIN: f32 = 2.1;
-const FIRE_POOL_DECAY: f32 = 0.8;
+const BLAST_LIGHT_GAIN: f32 = 2.7;
+const FIRE_POOL_DECAY: f32 = 0.72;
 // Fire's own color at unit luminance, and how far a deep red-orange flash light turns
 // toward it: a pure red-orange pool over sunlit ground and blue-filled shade reads as a
 // pink screen tint rather than firelight.
@@ -440,7 +474,7 @@ const FIRE_AMBER_SHARE: f32 = 0.4;
 // The luminance a flash light's pool eases toward right beside it, against a sun of
 // about 3: firelight warms shade and the sunlit ground around a blast without washing
 // a near-camera muzzle flash or fireball across the frame.
-const FIRE_LIGHT_LIMIT: f32 = 2.2;
+const FIRE_LIGHT_LIMIT: f32 = 3.0;
 
 fn fire_light_hue(color: vec3f) -> vec3f {
     let level = dot(color, vec3f(0.2126, 0.7152, 0.0722));

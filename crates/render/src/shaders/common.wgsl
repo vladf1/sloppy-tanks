@@ -215,10 +215,10 @@ fn apply_ground_macro(color: vec3f, ground: GroundMacro) -> vec3f {
 // yellow-green of a lime meadow edge, and where it is a true green again; earth,
 // sand and hazard paint stay below the first.
 const YELLOW_GREEN_FROM: vec2f = vec2f(0.66, 0.84);
-const TRUE_GREEN_FROM: vec2f = vec2f(1.5, 2.2);
+const TRUE_GREEN_FROM: vec2f = vec2f(1.25, 1.7);
 // How much red, and how much of its missing blue, a yellow-green surface takes on.
-const YELLOW_GREEN_RED: f32 = 0.3;
-const YELLOW_GREEN_BLUE: f32 = 0.12;
+const YELLOW_GREEN_RED: f32 = 0.18;
+const YELLOW_GREEN_BLUE: f32 = 0.06;
 
 // Grass that has yellowed to an acid lime reads as a paint fill from the overhead
 // camera: on the ground it turns toward a natural sap green, a little less red and a
@@ -253,8 +253,15 @@ fn sky_gradient(direction: vec3f) -> vec3f {
     let sky = mix(frame.sky_zenith.rgb, frame.sky_horizon.rgb, toward_horizon);
     let sun = max(dot(direction, frame.sun_direction.xyz), 0.0);
     let halo = pow(sun, 8.0) * (0.1 + 0.4 * toward_horizon) + pow(sun, 48.0) * 0.5;
-    return sky + frame.sky_sun.rgb * halo;
+    // Around the sun the blue gives way to the sun's own hue before its light adds
+    // on top: warm light added over blue alone mixes to pink and lavender.
+    let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
+    let warmed = mix(sky, sun_hue * dot(sky, vec3f(0.2126, 0.7152, 0.0722)), min(halo * HALO_WARMING, 0.9));
+    return warmed + frame.sky_sun.rgb * halo;
 }
+
+// How quickly the sky's blue turns to the sun's hue under its halo.
+const HALO_WARMING: f32 = 2.5;
 
 // The near range of the horizon's distant ranges stands this much lower than the far
 // one, and each takes this share of the ridge color over the sky behind it.
@@ -342,28 +349,34 @@ fn horizon_ridges(color: vec3f, direction: vec3f, aa: f32) -> vec3f {
 }
 
 // The colour haze takes on along `ray`: thin haze shifts surfaces toward the cool
-// aerial tint, thick haze becomes the sky behind them (with the sun's warm forward
-// scatter from `sky_gradient`), so silhouettes recede in steps rather than bleach.
-// Looking toward the sun the haze glows warm, away from it it stays cool.
+// aerial tint, thick haze toward the sky behind them, so silhouettes recede in steps
+// of value and saturation rather than bleach. Away from the sun even thick haze keeps
+// some of the cool tint, so the far layers step from warm to cool across the view.
+// Toward the sun it takes on the sun's own hue and brightens a little; the hue
+// replaces the cool tint's rather than adding warm light over blue, which turned
+// sunward hills lavender and pink.
 fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
     let sun = frame.sun_direction.xyz;
     let toward_sun = max(dot(ray, sun), 0.0);
-    // Away from the sun even thick haze keeps some of the cool aerial tint, so the
-    // far layers step from warm to cool across the view rather than one milky white.
     let away = clamp(-dot(normalize(ray.xz + vec2f(1e-5)), normalize(sun.xz + vec2f(1e-5))), 0.0, 1.0);
-    let thick = mix(sky_behind(ray), frame.aerial.rgb, HAZE_AWAY_COOL * away);
-    let base = mix(frame.aerial.rgb, thick, amount * amount);
-    // Toward the sun the haze takes on the sun's own hue and brightens a little.
-    // The hue replaces the cool tint's rather than adding warm light over blue,
-    // which turned sunward hills lavender and pink.
+    // The sky's own gradient, not the ranges drawn into it: those stand behind
+    // every surface, and their azimuth-banded faces and crest line painted into the
+    // haze over a nearer mountain drew vertical streaks and a horizontal smear.
+    let thick = mix(sky_gradient(ray), frame.aerial.rgb, HAZE_AWAY_COOL * away);
+    // Even the thickest haze keeps a share of the aerial tint, so a far range or
+    // headland stays a solid silhouette a step off the sky behind it, never a
+    // translucent card.
+    let base = mix(frame.aerial.rgb, thick, amount * amount * HAZE_SKY_MOST);
     let glow = frame.haze_far.z * toward_sun * toward_sun * amount;
     let level = dot(base, vec3f(0.2126, 0.7152, 0.0722));
     let sun_hue = frame.sky_sun.rgb / max(dot(frame.sky_sun.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
     return mix(base, sun_hue * level * (1.0 + HAZE_SUN_BRIGHTENING), clamp(glow, 0.0, 1.0));
 }
 
-// How much brighter than the cool haze the sunward glow is.
-const HAZE_SUN_BRIGHTENING: f32 = 0.35;
+// How much brighter than the cool haze the sunward glow is, and the most of the sky
+// behind thick haze takes on.
+const HAZE_SUN_BRIGHTENING: f32 = 0.2;
+const HAZE_SKY_MOST: f32 = 0.8;
 
 // The share of the cool aerial tint thick haze keeps looking straight away from the sun.
 const HAZE_AWAY_COOL: f32 = 0.35;
@@ -386,22 +399,21 @@ fn sky_behind(ray: vec3f) -> vec3f {
 // this share of its density on the highest crests.
 const FAR_HAZE_THINNING: f32 = 1.0;
 const FAR_HAZE_CREST_SHARE: f32 = 0.3;
-// The distance veil (`apply_fog`): the most it hides, and the distances in metres
-// over which it builds.
-const AERIAL_DEPTH_SHARE: f32 = 0.14;
-const AERIAL_DEPTH_FROM: f32 = 80.0;
-const AERIAL_DEPTH_TO: f32 = 300.0;
+// The most the far layer hides: a distant range keeps this much of its own form.
+const FAR_HAZE_MOST: f32 = 0.62;
 // Height in metres over which the low mist beyond the arena thins by e.
-const MIST_HEIGHT: f32 = 14.0;
+const MIST_HEIGHT: f32 = 10.0;
 // Shares of the far plane's distance over which surfaces melt into the sky.
-const FAR_FADE_START: f32 = 0.9;
-const FAR_FADE_END: f32 = 0.995;
+const FAR_FADE_START: f32 = 0.965;
+const FAR_FADE_END: f32 = 0.998;
 
 // Aerial perspective in two layers. Exponential height haze, integrated from where
 // it begins to the surface, lies dense in the valleys and thin up high, so a camera
 // looking down from above stays clean. Beyond `haze_far.y` a thinner haze that does
-// not fall off with height takes over, so distant peaks fade as a whole into the
-// horizon instead of standing hard against it while their feet wash out. Inside the
+// not fall off with height takes over, so distant peaks recede as a whole instead
+// of standing hard against the horizon while their feet wash out; it never hides
+// more than `FAR_HAZE_MOST`, so each range stays an opaque landform a step paler
+// than the one before it, and the sky's own ranges stand behind them. Inside the
 // arena square only a share of the height haze settles and none of the far haze;
 // toward the far plane every surface melts into the sky, so nothing the far plane
 // clips draws a hard horizon. Off, Three's linear fog.
@@ -436,17 +448,16 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
             * mix(FAR_HAZE_CREST_SHARE, 1.0, crest);
         let level = mix(1.0, STEEP_RAY_RESIDUAL, smoothstep(STEEP_RAY_HAZY, STEEP_RAY_CLEAR, -ray.y));
         let near_amount = min(1.0 - exp(-depth), frame.haze.w) * backdrop * level;
-        let far_amount = (1.0 - exp(-far_depth)) * beyond * level;
+        let far_amount = (1.0 - exp(-far_depth)) * FAR_HAZE_MOST * beyond * level;
         // Low mist settles in the valleys beyond the arena, thick at the ground and
         // gone a few storeys up, so distant hills stand out of it with clear crests.
         let mist = frame.haze_far.w * exp(-max(world.y, 0.0) / MIST_HEIGHT) * beyond * level
             * smoothstep(frame.haze_far.y * 0.7, frame.haze_far.y * 1.4, distance);
-        // A thin veil that grows with distance alone, steep rays included, so even
-        // the overhead overview steps back toward its far edge instead of reading
-        // the far ship or field as crisp as the tanks below.
-        let veil = AERIAL_DEPTH_SHARE * smoothstep(AERIAL_DEPTH_FROM, AERIAL_DEPTH_TO, distance);
-        let clear = (1.0 - near_amount) * (1.0 - far_amount) * (1.0 - mist) * (1.0 - veil);
+        let clear = (1.0 - near_amount) * (1.0 - far_amount) * (1.0 - mist);
         let amount = min(1.0 - clear, frame.haze.w);
+        if amount <= 0.0 && distance < frame.haze_shape.w * FAR_FADE_START {
+            return color;
+        }
         var hazed = mix(color, haze_tint(ray, amount), amount);
         let far = frame.haze_shape.w;
         if far > 0.0 {
@@ -470,11 +481,11 @@ fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
 }
 
 // Ground-scale cloud shadow features per metre, and their drift in metres per second.
-const CLOUD_SHADOW_SCALE: f32 = 0.03;
+const CLOUD_SHADOW_SCALE: f32 = 0.022;
 const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
 // Where the shadow noise starts and completes a cloud, above the coverage.
-const CLOUD_SHADOW_LOW: f32 = 1.0;
-const CLOUD_SHADOW_HIGH: f32 = 1.3;
+const CLOUD_SHADOW_LOW: f32 = 0.95;
+const CLOUD_SHADOW_HIGH: f32 = 1.35;
 
 // The share of sunlight that passing clouds let through at `world`: soft patches,
 // projected along the sun so tall things and the ground beneath agree.

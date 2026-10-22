@@ -418,10 +418,10 @@ const BLOOM_FIRST_SHIFT: usize = 2;
 const OCCLUSION_DOWNSCALE: u32 = 4;
 /// Ambient occlusion: the reach of its probes and the depth gap they ignore, in
 /// metres; where it fades out with view distance; and its contrast power.
-const OCCLUSION_RADIUS: f32 = 1.6;
+const OCCLUSION_RADIUS: f32 = 1.8;
 const OCCLUSION_BIAS: f32 = 0.05;
 const OCCLUSION_FADE: (f32, f32) = (110.0, 200.0);
-const OCCLUSION_POWER: f32 = 1.6;
+const OCCLUSION_POWER: f32 = 1.8;
 /// The clouds' strength in the water's mirror: faint, as a rippled surface seen
 /// from above would blur them into the sky's tone rather than mirror their contrast.
 const REFLECTED_CLOUDS: f32 = 0.22;
@@ -431,7 +431,7 @@ const OUTPUT_DITHER: f32 = 1.0;
 /// beyond the gamut desaturate rather than clip, and where the brightest channel's
 /// shoulder begins.
 const GAMUT_LIFT: f32 = 0.15;
-const GAMUT_SHOULDER: f32 = 0.75;
+const GAMUT_SHOULDER: f32 = 0.8;
 /// How quickly a bright bloom saturates: its share halves at this reciprocal luminance.
 const BLOOM_LIMIT: f32 = 0.4;
 
