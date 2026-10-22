@@ -50,7 +50,7 @@ const VEHICLE_VALUE_RANGE: f32 = 1.45;
 // The bevel band: about this many pixels wide, within these widths in metres, and
 // how far the normal rolls over in it.
 const VEHICLE_BEVEL_PIXELS: f32 = 4.5;
-const VEHICLE_BEVEL_MIN: f32 = 0.016;
+const VEHICLE_BEVEL_MIN: f32 = 0.024;
 const VEHICLE_BEVEL_MAX: f32 = 0.12;
 const VEHICLE_BEVEL_ROLL: f32 = 0.45;
 // Panel shading: paint along a plate's borders is this much darker, fading out over
@@ -128,12 +128,15 @@ const VEHICLE_LIFT_SATURATION: f32 = 0.5;
 // the hull (a share of the hemisphere's ground light): the lower hull and the rear
 // plate in shade read as painted steel lit by the earth beside them, never as a
 // black hole. Studio cards keep some of it from their floor.
-const VEHICLE_BOUNCE: f32 = 0.42;
+const VEHICLE_BOUNCE: f32 = 0.55;
 const VEHICLE_BOUNCE_STUDIO: f32 = 0.5;
 // The paint's value on studio cards (the menu's previews).
-const VEHICLE_STUDIO_VALUE: f32 = 0.92;
+const VEHICLE_STUDIO_VALUE: f32 = 0.8;
 // And its saturation there: ACES's shoulder bleaches a lit red deck toward salmon.
-const VEHICLE_STUDIO_SATURATION: f32 = 1.18;
+const VEHICLE_STUDIO_SATURATION: f32 = 1.2;
+// The cards' bright white key lifts a crimson's blue into rose: there a red paint
+// keeps its blue this close to its green, a pure deep red.
+const VEHICLE_STUDIO_CRIMSON: f32 = 0.75;
 // Rain streaks down upright plates: columns this many per paint UV across and this
 // many per UV along their length, darkening by up to this much, and resolved only
 // while a pixel is smaller than a streak.
@@ -192,7 +195,13 @@ const VEHICLE_TREAD_PIXEL_TO: f32 = 0.008;
 // than these sizes), drifted thicker into recesses, in the map's ground color where
 // the atmosphere is on.
 const VEHICLE_DECK_DUST_CELLS: f32 = 6.5;
-const VEHICLE_DECK_DUST_FILM: f32 = 0.16;
+const VEHICLE_DECK_DUST_FILM: f32 = 0.3;
+// From any distance the hull's decks (not the turret roof, which keeps the team
+// color the overhead camera reads) carry this even film of the map's dust, so a
+// hull sits in its world and the turret stands off it as the cleaner, brighter mass.
+// Paint values above `VEHICLE_TURRET_VALUE` are the turret's (`VEHICLE_VALUES`).
+const VEHICLE_DECK_DUST_FAR: f32 = 0.16;
+const VEHICLE_TURRET_VALUE: vec2f = vec2f(0.95, 1.1);
 const VEHICLE_DECK_DUST_DRIFT: f32 = 0.6;
 const VEHICLE_DECK_DUST_MIN_PLATE: f32 = 0.25;
 const VEHICLE_DECK_DUST_PIXEL_FROM: f32 = 0.012;
@@ -321,10 +330,10 @@ fn vehicle_channel(c: f32, gradient: vec3f, bevel_width: f32, e: ptr<function, V
 // Glass: how much of the sky it mirrors head-on and at grazing angles, and a soft
 // diagonal sheen band (along the world's x + z, this many per metre, this wide)
 // that slides across windows as the vehicle turns, as a real reflection does.
-const VEHICLE_GLASS_FACING: f32 = 0.16;
-const VEHICLE_GLASS_GRAZING: f32 = 0.7;
+const VEHICLE_GLASS_FACING: f32 = 0.07;
+const VEHICLE_GLASS_GRAZING: f32 = 0.42;
 const VEHICLE_GLASS_ROUGHNESS: f32 = 0.08;
-const VEHICLE_GLASS_SHEEN: f32 = 0.7;
+const VEHICLE_GLASS_SHEEN: f32 = 0.22;
 const VEHICLE_GLASS_SHEEN_CELLS: f32 = 0.9;
 const VEHICLE_GLASS_SHEEN_WIDTH: f32 = 0.09;
 // How much of the sky's color the glass keeps: a clear blue sky mirrored at full
@@ -362,7 +371,7 @@ fn vehicle_glass(s: ptr<function, Surface>, f: EffectFragment) {
 fn vehicle_fill(n: vec3f) -> vec3f {
     let hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
     let away = 1.0 - clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0);
-    return hemisphere * (0.3 + 0.7 * away);
+    return hemisphere * (0.5 + 0.5 * away);
 }
 
 // The running gear's fill: the paint fill's brightness in a warm neutral, half
@@ -381,9 +390,9 @@ fn vehicle_gear_fill(n: vec3f) -> vec3f {
 // the running face, and bright end connectors bridging each joint on the edges.
 // Joints are dark gaps; the pattern fades to its average where a link is only a
 // few pixels long, so a distant track never shimmers.
-const BELT_STEEL: vec3f = vec3f(0.095, 0.09, 0.082);
-const BELT_POLISHED: vec3f = vec3f(0.23, 0.22, 0.2);
-const BELT_RUBBER: vec3f = vec3f(0.022, 0.021, 0.02);
+const BELT_STEEL: vec3f = vec3f(0.13, 0.123, 0.113);
+const BELT_POLISHED: vec3f = vec3f(0.27, 0.26, 0.24);
+const BELT_RUBBER: vec3f = vec3f(0.04, 0.038, 0.036);
 const BELT_GAP: f32 = 0.25;
 // Links per pixel over which the pattern fades out.
 const BELT_PIXEL_FROM: f32 = 0.16;
@@ -392,7 +401,12 @@ const BELT_PIXEL_TO: f32 = 0.42;
 const BELT_RELIEF: f32 = 0.55;
 // Dust caked on the ground face and climbing the edges.
 const BELT_DUST_GROUND: f32 = 0.14;
-const BELT_DUST_EDGE: f32 = 0.07;
+const BELT_DUST_EDGE: f32 = 0.22;
+// Each link wears its own way: its connectors this much brighter or duller either
+// way and its dust this much more or less, so a run of links reads as worn steel
+// rather than as a stamped pattern.
+const BELT_LINK_WEAR: f32 = 0.35;
+const BELT_LINK_DUST: f32 = 0.6;
 
 fn belt_band(x: f32, low: f32, high: f32, soft: f32) -> f32 {
     return smoothstep(low - soft, low + soft, x) * (1.0 - smoothstep(high - soft, high + soft, x));
@@ -414,6 +428,8 @@ fn vehicle_belt(s: ptr<function, Surface>, f: EffectFragment, tangent: vec3f, li
     let face = floor(f.uv.y);
     let across = fract(f.uv.y);
     let phase = fract(f.uv.x + scroll);
+    // The link's own wear, moving with the link.
+    let link_wear = lattice_hash(vec2i(i32(floor(f.uv.x + scroll)), i32(face) * 7 + 3)) - 0.5;
     let resolved = 1.0 - smoothstep(BELT_PIXEL_FROM, BELT_PIXEL_TO, links_per_pixel);
     let soft = clamp(links_per_pixel * 0.75, 0.015, 0.2);
     // The joint between links: a dark gap at phase 0.
@@ -453,12 +469,12 @@ fn vehicle_belt(s: ptr<function, Surface>, f: EffectFragment, tangent: vec3f, li
         let connector = (belt_band(phase, 0.0, 0.2, soft) + belt_band(phase, 0.8, 1.0, soft))
             * belt_band(across, 0.22, 0.82, soft) * select(0.4, 1.0, outer);
         color = mix(BELT_STEEL, BELT_RUBBER, pad);
-        color = mix(color, BELT_POLISHED, connector);
-        average = mix(mix(BELT_STEEL, BELT_RUBBER, 0.32), BELT_POLISHED, select(0.12, 0.3, outer));
+        color = mix(color, BELT_POLISHED * 0.7 * (1.0 + link_wear * BELT_LINK_WEAR * 2.0), connector);
+        average = mix(mix(BELT_STEEL, BELT_RUBBER, 0.32), BELT_POLISHED * 0.7, select(0.12, 0.3, outer));
         roughness = mix(mix(0.62, 0.9, pad), 0.42, connector);
         metalness = mix(0.25 * (1.0 - pad), 0.5, connector);
         relief = (belt_band(phase, 0.76, 0.84, soft) - belt_band(phase, 0.16, 0.24, soft)) * select(0.0, 1.0, outer);
-        dust = BELT_DUST_EDGE * (1.0 - smoothstep(0.0, 0.7, across));
+        dust = BELT_DUST_EDGE * (1.0 - smoothstep(0.0, 0.8, across)) * (1.0 + link_wear * BELT_LINK_DUST * 2.0 * resolved);
     }
     color = mix(color, color * BELT_GAP, joint);
     color = mix(average, color, resolved) * f.vertex_color.rgb * f.tint.rgb;
@@ -516,6 +532,93 @@ fn vehicle_seam(offset: f32, aa: f32) -> vec2f {
     return vec2f(groove, lip);
 }
 
+struct VehicleDirt {
+    color: vec3f,
+    // How much dirt covers the paint: it dulls the finish and holds back chips.
+    dirt: f32,
+    streak: f32,
+}
+
+// Weathering over the paint and its markings alike, so stencils sit under the grime
+// rather than pristine on top of it: rain streaks down upright plates, dust and mud
+// thrown up by the tracks along the lower hull, a road film toward the tracks and
+// dust settled on the decks (`hull_deck` 1 on the hull, 0 on the turret).
+fn vehicle_dirt(paint: vec3f, n_y: f32, low: f32, grime: f32, metres: vec2f, uv: vec2f, pixel: f32,
+    recess_edge: f32, recess: f32, narrowest: f32, chamfer: f32, bevel: f32, hull_deck: f32) -> VehicleDirt {
+    var color = paint;
+    let deck = smoothstep(0.55, 0.8, n_y);
+    // Rain streaks: thin dark runs down upright plates, broken along their length,
+    // fading where a pixel grows past their width so far hulls stay clean.
+    let upright = 1.0 - smoothstep(0.3, 0.6, abs(n_y));
+    let streak_resolved = 1.0 - smoothstep(VEHICLE_STREAK_PIXEL_FROM, VEHICLE_STREAK_PIXEL_TO, pixel);
+    let column = value_noise(vec2f(uv.x * VEHICLE_STREAK_ACROSS, uv.y * VEHICLE_STREAK_ALONG));
+    let run = value_noise(vec2f(uv.x * VEHICLE_STREAK_ACROSS * 0.21 + 7.3, uv.y * VEHICLE_STREAK_ALONG * 3.0));
+    let streak = smoothstep(0.58, 0.92, column) * smoothstep(0.35, 0.75, run) * upright * streak_resolved;
+    color = mix(color, color * VEHICLE_GRIME, streak * VEHICLE_STREAK_DARKEN / (1.0 - VEHICLE_GRIME.g));
+
+    // Dust and mud thrown up by the tracks, following the hull's shape rather than
+    // a flat line: a splashed band along the lowest plates, drifts in the recesses
+    // and on the ledges low on the hull (fender tops, skirt lips), and clean paint
+    // on the open upright panels above. Studio scenes (the menu cards) show the
+    // paint clean, a tank fresh from the depot: on a card's small, evenly lit hull
+    // the splash band read as stains.
+    let studio = select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on());
+    let dust_strength = studio * VEHICLE_DUST_STRENGTH;
+    let ledge = smoothstep(0.55, 0.85, n_y) * smoothstep(0.3, 0.7, low);
+    // The splash line rises and falls along the hull and breaks up with the grime
+    // field, with a crisp edge: caked earth below it and only a thin film of fine
+    // dust above, so the band reads as thrown dirt rather than as faded paint.
+    let splash = value_noise(metres * vec2f(VEHICLE_SPLASH_CELLS, VEHICLE_SPLASH_CELLS * 0.4) + 11.3);
+    let fray = value_noise(metres * VEHICLE_SPLASH_FRAY_CELLS + 23.1);
+    let line = low + (grime - 0.5) * VEHICLE_SPLASH_GRIME + (splash - 0.5) * VEHICLE_SPLASH_RISE
+        + (fray - 0.5) * VEHICLE_SPLASH_FRAY;
+    let caked = smoothstep(VEHICLE_SPLASH_EDGE, VEHICLE_SPLASH_EDGE + 0.04, line);
+    // Thrown dirt cakes the upright plates; a ledge only catches a lighter coat.
+    let band = max(caked * (0.82 + 0.18 * smoothstep(0.5, 0.8, line)) * mix(0.4, 1.0, upright), smoothstep(-0.05, 0.2, line) * VEHICLE_DUST_FILM * select(0.0, 1.0, atmosphere_on()));
+    // Spatter: drops of mud flung above the caked line, thinning out with height.
+    let spatter_resolved = 1.0 - smoothstep(VEHICLE_SPATTER_PIXEL_FROM, VEHICLE_SPATTER_PIXEL_TO, pixel);
+    let above = smoothstep(VEHICLE_SPLASH_EDGE - VEHICLE_SPATTER_REACH, VEHICLE_SPLASH_EDGE, line) * (1.0 - caked);
+    let drops = value_noise(metres * VEHICLE_SPATTER_CELLS + 41.3) * 0.75 + value_noise(metres * VEHICLE_SPATTER_CELLS * 2.6 + 7.7) * 0.25;
+    let spatter = smoothstep(0.86 - 0.22 * above, 0.9 - 0.22 * above, drops) * above * spatter_resolved * upright;
+    let drifted = recess_edge * smoothstep(0.08, 0.5, low) * (0.6 + 0.8 * grime);
+    // Ledges low on the hull (fender tops, skirt lips) hold dust in drifts and
+    // swept patches, not as one even coat that turns a fender into a brown slab.
+    let patches = value_noise(metres * VEHICLE_DECK_DUST_CELLS + 5.7) * 0.6
+        + value_noise(metres * VEHICLE_DECK_DUST_CELLS * 2.9 + 2.3) * 0.4;
+    let ledge_dust = ledge * (0.08 + 0.5 * smoothstep(0.45, 0.65, patches * 0.7 + grime * 0.3));
+    let dusty = clamp(max(max(band, spatter * 0.9), max(drifted, ledge_dust)), 0.0, 1.0) * dust_strength;
+    let muddy = smoothstep(0.74, 0.94, low + (grime - 0.5) * 0.3) * VEHICLE_MUD_STRENGTH * studio;
+    let dust = vehicle_dust();
+    color = mix(color, dust * (0.8 + 0.4 * grime), dusty);
+    color = mix(color, VEHICLE_MUD, muddy);
+    // Road film: a soft gradient of the map's dust down every upright plate toward
+    // the tracks, so the lower hull reads earthier and lighter rather than crushing
+    // to black in the shade of the fenders.
+    let road = smoothstep(0.05, 0.65, low) * VEHICLE_ROAD_FILM * upright * select(0.0, 1.0, atmosphere_on());
+    color = mix(color, dust * (0.75 + 0.35 * grime), road);
+    // Dust settled on the decks: a film on broad plates, drifted into recesses,
+    // never on the bevels the crew's boots and the wind keep clean. Close up it is
+    // grained and thicker on the hull than on the turret roof; from afar it is an
+    // even film on the hull's decks only, which never reads as camouflage blotches
+    // and leaves the turret the cleaner, brighter mass. Studio scenes (the menu
+    // cards) show the paint showroom clean.
+    let broad = smoothstep(VEHICLE_DECK_DUST_MIN_PLATE, VEHICLE_DECK_DUST_MIN_PLATE * 2.0, narrowest);
+    let near = 1.0 - smoothstep(VEHICLE_DECK_DUST_PIXEL_FROM, VEHICLE_DECK_DUST_PIXEL_TO, pixel);
+    let near_film = VEHICLE_DECK_DUST_FILM * broad * near * (0.7 + 0.3 * hull_deck);
+    let film = (near_film + VEHICLE_DECK_DUST_FAR * hull_deck * (1.0 - near)) * select(0.0, 1.0, atmosphere_on());
+    // A fine, even film broken up only at the grain of blown sand, thicker where it
+    // drifts against the base of a wall: no broad blotches to read as camouflage.
+    let sand = value_noise(metres * VEHICLE_DECK_DUST_GRAIN + 3.3) * 0.7 + grime * 0.3;
+    let settled = deck * (1.0 - chamfer) * (1.0 - bevel)
+        * (film * (0.7 + 0.3 * sand) + VEHICLE_DECK_DUST_DRIFT * recess * (0.55 + 0.45 * sand));
+    color = mix(color, dust * (0.95 + 0.3 * grime), settled);
+    var out: VehicleDirt;
+    out.color = color;
+    out.dirt = max(max(max(dusty, muddy), settled * 0.8), road);
+    out.streak = streak;
+    return out;
+}
+
 fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     // Derivatives and the tile sample first, in uniform control flow.
     let tile = textureSample(extra_texture0, extra_sampler0, f.uv * material.params[2].w);
@@ -562,7 +665,10 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let code = f.vertex_color.b - coat;
     let team = step(0.5, code);
     let value = (code - 0.5 * team) * 2.0 * VEHICLE_VALUE_RANGE;
-    let paint_rgb = material.params[0].rgb;
+    var paint_rgb = material.params[0].rgb;
+    if !atmosphere_on() && paint_rgb.r > paint_rgb.b {
+        paint_rgb.b = mix(paint_rgb.b, min(paint_rgb.b, paint_rgb.g), VEHICLE_STUDIO_CRIMSON);
+    }
     let paint_luma = dot(paint_rgb, vec3f(0.2126, 0.7152, 0.0722));
     // Studio cards light the paint with a strong key and rim under ACES, whose
     // shoulder turns a bright red pink: they show it a step deeper.
@@ -623,8 +729,12 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         var color = mix(white, round_paint * value * f.tint.rgb, flaked);
         let dusted = VEHICLE_MARKING_DUST * select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on()) * (0.6 + 0.8 * grime);
         color = mix(color, vehicle_dust(), dusted);
+        let marking_deck = 1.0 - smoothstep(VEHICLE_TURRET_VALUE.x, VEHICLE_TURRET_VALUE.y, value);
+        let weathered = vehicle_dirt(color, (*s).normal.y, low, grime, metres, f.uv, pixel, 0.0, 0.0,
+            edges.narrowest, 0.0, 0.0, marking_deck);
+        color = weathered.color;
         (*s).color = color;
-        (*s).roughness = clamp(VEHICLE_MARKING_ROUGHNESS + finish, 0.0, 1.0);
+        (*s).roughness = clamp(mix(VEHICLE_MARKING_ROUGHNESS, VEHICLE_DIRT_ROUGHNESS, weathered.dirt) + finish, 0.0, 1.0);
         (*s).metalness = 0.0;
         (*s).normal = normalize((*s).normal);
         (*s).emissive += color * paint_fill;
@@ -753,70 +863,13 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     color *= 1.0 - lug_ring * 0.4;
     color = mix(color, material.params[3].rgb * (0.7 + 0.5 * grime), lug * VEHICLE_TREAD_WEAR);
 
-    // Rain streaks: thin dark runs down upright plates, broken along their length,
-    // fading where a pixel grows past their width so far hulls stay clean.
-    let upright = 1.0 - smoothstep(0.3, 0.6, abs((*s).normal.y));
-    let streak_resolved = 1.0 - smoothstep(VEHICLE_STREAK_PIXEL_FROM, VEHICLE_STREAK_PIXEL_TO, pixel);
-    let column = value_noise(vec2f(f.uv.x * VEHICLE_STREAK_ACROSS, f.uv.y * VEHICLE_STREAK_ALONG));
-    let run = value_noise(vec2f(f.uv.x * VEHICLE_STREAK_ACROSS * 0.21 + 7.3, f.uv.y * VEHICLE_STREAK_ALONG * 3.0));
-    let streak = smoothstep(0.58, 0.92, column) * smoothstep(0.35, 0.75, run) * upright * streak_resolved;
-    color = mix(color, color * VEHICLE_GRIME, streak * VEHICLE_STREAK_DARKEN / (1.0 - VEHICLE_GRIME.g));
-
-    // Dust and mud thrown up by the tracks, following the hull's shape rather than
-    // a flat line: a splashed band along the lowest plates, drifts in the recesses
-    // and on the ledges low on the hull (fender tops, skirt lips), and clean paint
-    // on the open upright panels above. Studio scenes (the menu cards) show the
-    // paint clean, a tank fresh from the depot: on a card's small, evenly lit hull
-    // the splash band read as stains.
-    let studio = select(VEHICLE_DUST_STUDIO, 1.0, atmosphere_on());
-    let dust_strength = studio * VEHICLE_DUST_STRENGTH;
-    let ledge = smoothstep(0.55, 0.85, (*s).normal.y) * smoothstep(0.3, 0.7, low);
-    // The splash line rises and falls along the hull and breaks up with the grime
-    // field, with a crisp edge: caked earth below it and only a thin film of fine
-    // dust above, so the band reads as thrown dirt rather than as faded paint.
-    let splash = value_noise(metres * vec2f(VEHICLE_SPLASH_CELLS, VEHICLE_SPLASH_CELLS * 0.4) + 11.3);
-    let fray = value_noise(metres * VEHICLE_SPLASH_FRAY_CELLS + 23.1);
-    let line = low + (grime - 0.5) * VEHICLE_SPLASH_GRIME + (splash - 0.5) * VEHICLE_SPLASH_RISE
-        + (fray - 0.5) * VEHICLE_SPLASH_FRAY;
-    let caked = smoothstep(VEHICLE_SPLASH_EDGE, VEHICLE_SPLASH_EDGE + 0.04, line);
-    // Thrown dirt cakes the upright plates; a ledge only catches a lighter coat.
-    let band = max(caked * (0.82 + 0.18 * smoothstep(0.5, 0.8, line)) * mix(0.4, 1.0, upright), smoothstep(-0.05, 0.2, line) * VEHICLE_DUST_FILM * select(0.0, 1.0, atmosphere_on()));
-    // Spatter: drops of mud flung above the caked line, thinning out with height.
-    let spatter_resolved = 1.0 - smoothstep(VEHICLE_SPATTER_PIXEL_FROM, VEHICLE_SPATTER_PIXEL_TO, pixel);
-    let above = smoothstep(VEHICLE_SPLASH_EDGE - VEHICLE_SPATTER_REACH, VEHICLE_SPLASH_EDGE, line) * (1.0 - caked);
-    let drops = value_noise(metres * VEHICLE_SPATTER_CELLS + 41.3) * 0.75 + value_noise(metres * VEHICLE_SPATTER_CELLS * 2.6 + 7.7) * 0.25;
-    let spatter = smoothstep(0.86 - 0.22 * above, 0.9 - 0.22 * above, drops) * above * spatter_resolved * upright;
-    let drifted = edges.recess * smoothstep(0.08, 0.5, low) * (0.6 + 0.8 * grime);
-    // Ledges low on the hull (fender tops, skirt lips) hold dust in drifts and
-    // swept patches, not as one even coat that turns a fender into a brown slab.
-    let patches = value_noise(metres * VEHICLE_DECK_DUST_CELLS + 5.7) * 0.6
-        + value_noise(metres * VEHICLE_DECK_DUST_CELLS * 2.9 + 2.3) * 0.4;
-    let ledge_dust = ledge * (0.08 + 0.5 * smoothstep(0.45, 0.65, patches * 0.7 + grime * 0.3));
-    let dusty = clamp(max(max(band, spatter * 0.9), max(drifted, ledge_dust)), 0.0, 1.0) * dust_strength;
-    let muddy = smoothstep(0.74, 0.94, low + (grime - 0.5) * 0.3) * VEHICLE_MUD_STRENGTH * studio;
-    let dust = vehicle_dust();
-    color = mix(color, dust * (0.8 + 0.4 * grime), dusty);
-    color = mix(color, VEHICLE_MUD, muddy);
-    // Road film: a soft gradient of the map's dust down every upright plate toward
-    // the tracks, so the lower hull reads earthier and lighter rather than crushing
-    // to black in the shade of the fenders.
-    let road = smoothstep(0.05, 0.65, low) * VEHICLE_ROAD_FILM * upright * select(0.0, 1.0, atmosphere_on());
-    color = mix(color, dust * (0.75 + 0.35 * grime), road);
-    // Dust settled on the decks: a patchy film on broad plates, drifted into
-    // recesses, never on the bevels the crew's boots and the wind keep clean. The
-    // film resolves only close up: from the overhead camera and on the menu cards
-    // its patches would read as camouflage blotches over the team color.
-    let broad = smoothstep(VEHICLE_DECK_DUST_MIN_PLATE, VEHICLE_DECK_DUST_MIN_PLATE * 2.0, edges.narrowest);
-    // Studio scenes (the menu cards) show the paint showroom clean.
-    let film = VEHICLE_DECK_DUST_FILM * broad * select(0.0, 1.0, atmosphere_on())
-        * (1.0 - smoothstep(VEHICLE_DECK_DUST_PIXEL_FROM, VEHICLE_DECK_DUST_PIXEL_TO, pixel));
-    // A fine, even film broken up only at the grain of blown sand, thicker where it
-    // drifts against the base of a wall: no broad blotches to read as camouflage.
-    let sand = value_noise(metres * VEHICLE_DECK_DUST_GRAIN + 3.3) * 0.7 + grime * 0.3;
-    let settled = deck * (1.0 - chamfer) * (1.0 - bevel)
-        * (film * (0.7 + 0.3 * sand) + VEHICLE_DECK_DUST_DRIFT * recess * (0.55 + 0.45 * sand));
-    color = mix(color, dust * (0.95 + 0.3 * grime), settled);
-    let dirt = max(max(max(dusty, muddy), settled * 0.8), road);
+    // Streaks, thrown dirt and settled dust (shared with the markings).
+    let hull_deck = 1.0 - smoothstep(VEHICLE_TURRET_VALUE.x, VEHICLE_TURRET_VALUE.y, value);
+    let weathered = vehicle_dirt(color, (*s).normal.y, low, grime, metres, f.uv, pixel, edges.recess, recess,
+        edges.narrowest, chamfer, bevel, hull_deck);
+    color = weathered.color;
+    let dirt = weathered.dirt;
+    let streak = weathered.streak;
 
     // Chips to bare steel along convex edges of broad plates (a few low on the hull),
     // where the chip field dips under the spot's exposure, with a darker rim of

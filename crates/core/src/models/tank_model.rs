@@ -16,7 +16,8 @@ use super::model_primitives::{
     Cache, cylinder_part, material, paint, put, rotated, shadow_receiver, shadowed,
 };
 use super::tank_details::{
-    Assembly, RING_Z, ROOF_RISE, assembly, gun_rise, hatch_tops, muzzle_z, ring_radius, tube_radius,
+    Assembly, RING_Z, ROOF_RISE, assembly, gun_rise, hatch_tops, muzzle_z, ring_radius,
+    tube_radius, turret_outline,
 };
 use super::tank_kit::Coat;
 use super::tank_surfaces::{
@@ -40,16 +41,17 @@ pub(crate) const STEEL: u32 = 0x6f706c;
 /// color is the body and the deep trim frames it, so the paint reads as a designed
 /// two-tone livery and the trim still reads as its team rather than as a black
 /// outline round the hull.
-const TRIM: [u32; 2] = [0x223a6a, 0x58211a];
-/// Sight and vision-block glass: a deep blue-green tint that mirrors the sky.
-pub(super) const GLASS_TINT: u32 = 0x25505a;
+const TRIM: [u32; 2] = [0x223a6a, 0x5c1c22];
+/// Sight and vision-block glass: a dark, nearly neutral smoked tint that mirrors
+/// the sky, so periscopes read as glass rather than as glowing teal squares.
+pub(super) const GLASS_TINT: u32 = 0x1c2124;
 pub(crate) const MARKING_WHITE: u32 = 0xdce7ee;
 /// Tactical signs (the roof and skirt insignia): a faded, mid-value stencil
 /// paint, so a sign reads as a worn marking on the plate rather than as the
 /// brightest thing on the vehicle or a hole in its roof from overhead.
 pub(crate) const STENCIL: u32 = 0xa3a19a;
 /// Machine guns, muzzle brakes, clamp bands and cable: dark gun metal.
-const GUNMETAL: u32 = 0x2c2e2f;
+const GUNMETAL: u32 = 0x3a3d3e;
 /// Olive-drab canvas of tarps, bags and the mantlet's dust cover.
 const CANVAS: u32 = 0x4f5236;
 const WOOD: u32 = 0x6a4c30;
@@ -152,6 +154,15 @@ const CONTACT_SHADOW_DARKNESS: f32 = 0.72;
 const CONTACT_SHADOW_CORE: f64 = 0.72;
 /// Height above the ground line, so it never fights the ground's depth.
 const CONTACT_SHADOW_LIFT: f64 = 0.012;
+/// Blended draws sort back to front within a render order, so contact shadows
+/// interleaved with each other kind of blended draw would cost one draw per
+/// vehicle. They and the turrets' deck occlusion (one order per kind, since each
+/// kind's band is its own mesh) draw first among the blended draws, each in a
+/// render order of its own, so a field of vehicles costs one draw for all its
+/// contact shadows and one per kind for its turret bands. Both only darken, so the
+/// order between them never shows.
+const CONTACT_SHADOW_ORDER: i32 = -4;
+const TURRET_OCCLUSION_ORDER: i32 = -3;
 
 fn contact_shadow(kind: VehicleKind) -> Node {
     let (half_width, half_length, ground) = if kind == VehicleKind::Humvee {
@@ -162,6 +173,9 @@ fn contact_shadow(kind: VehicleKind) -> Node {
         (c.overall_width / 2.0, reach, TRACKED_GRIME.ground)
     };
     let mut node = Node::mesh(contact_shadow_mesh(), contact_shadow_material());
+    if let Some(drawable) = &mut node.drawable {
+        drawable.render_order = CONTACT_SHADOW_ORDER;
+    }
     node.position = DVec3::new(0.0, ground + CONTACT_SHADOW_LIFT, 0.0);
     node.scale = DVec3::new(
         half_width + CONTACT_SHADOW_REACH,
@@ -238,6 +252,77 @@ fn contact_shadow_material() -> Arc<Material> {
             })
         })
         .clone()
+}
+
+/// Ambient occlusion where the turret meets the deck: a soft dark band on the deck
+/// round the turret's widest outline, from just under its overhang out by
+/// `TURRET_OCCLUSION_REACH`, so the turret sits on the hull rather than hovering
+/// over an evenly lit deck. It is a turret part, so it turns with the turret and
+/// stretches with its shell, drawn in the contact shadow's material; both teams'
+/// tanks of a kind share its mesh. Wrecks leave it out.
+const TURRET_OCCLUSION_REACH: f64 = 0.26;
+const TURRET_OCCLUSION_INSET: f64 = 0.05;
+const TURRET_OCCLUSION_DARKNESS: f32 = 0.7;
+/// The longest a corner's mitred offset may grow, as a multiple of the reach.
+const TURRET_OCCLUSION_MITRE: f64 = 1.6;
+
+fn turret_occlusion(c: &Chassis) -> Node {
+    static MESHES: Cache<VehicleKind, Mesh> = Cache::new();
+    let mesh = MESHES.get_or_insert(c.kind, || turret_occlusion_mesh(c));
+    let mut node = Node::mesh(mesh, contact_shadow_material());
+    if let Some(drawable) = &mut node.drawable {
+        drawable.render_order = TURRET_OCCLUSION_ORDER + c.pick(0.0, 1.0, 2.0) as i32;
+    }
+    node.name = part::TURRET_OCCLUSION.into();
+    node
+}
+
+fn turret_occlusion_mesh(c: &Chassis) -> Mesh {
+    let outline = turret_outline(c);
+    let n = outline.len();
+    let centre = outline.iter().copied().sum::<glam::DVec2>() / n as f64;
+    // Each edge's outward normal in plan, pointing away from the outline's centre.
+    let normal = |i: usize| {
+        let (a, b) = (outline[i], outline[(i + 1) % n]);
+        let d = (b - a).normalize_or_zero();
+        let perp = glam::DVec2::new(d.y, -d.x);
+        if perp.dot((a + b) / 2.0 - centre) < 0.0 {
+            -perp
+        } else {
+            perp
+        }
+    };
+    // Just over the hull roof (the deck plate's top).
+    let y = c.deck + ROOF_RISE + CONTACT_SHADOW_LIFT;
+    let mut positions = Vec::with_capacity(n * 6);
+    let mut alpha = Vec::with_capacity(n * 2);
+    for (i, &p) in outline.iter().enumerate() {
+        let (before, after) = (normal((i + n - 1) % n), normal(i));
+        let direction = (before + after).normalize_or_zero();
+        let mitre = (1.0 / direction.dot(after).max(1e-3)).min(TURRET_OCCLUSION_MITRE);
+        let inner = p - direction * TURRET_OCCLUSION_INSET * mitre;
+        let outer = p + direction * TURRET_OCCLUSION_REACH * mitre;
+        positions.extend([inner.x, y, inner.y, outer.x, y, outer.y]);
+        alpha.extend([TURRET_OCCLUSION_DARKNESS, 0.0]);
+    }
+    let mut indices = Vec::with_capacity(n * 6);
+    for i in 0..n as u32 {
+        let j = (i + 1) % n as u32;
+        indices.extend([2 * i, 2 * j, 2 * j + 1, 2 * i, 2 * j + 1, 2 * i + 1]);
+    }
+    let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
+    mesh.compute_vertex_normals();
+    if mesh.normals.iter().map(|n| n[1]).sum::<f32>() < 0.0
+        && let Some(indices) = &mut mesh.indices
+    {
+        for triangle in indices.as_chunks_mut::<3>().0 {
+            triangle.swap(1, 2);
+        }
+        mesh.compute_vertex_normals();
+    }
+    mesh.colors = vec![[0.0, 0.0, 0.0]; mesh.positions.len()];
+    mesh.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
+    mesh
 }
 
 /// Chassis measurements shared by the hull and turret builders.
@@ -421,6 +506,7 @@ pub(super) fn wreck_pose(kind: VehicleKind) -> Option<WreckPose> {
 fn turret(c: &Chassis, team: Team) -> Node {
     let mut turret = Node::group(part::TURRET);
     add_assembly(&mut turret, c, Assembly::Turret);
+    turret.children.push(turret_occlusion(c));
     for (variant, name) in (0u8..).zip(part::LIVERIES) {
         let mut livery = Node::group(name);
         livery.visible = variant == 0;

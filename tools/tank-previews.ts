@@ -79,7 +79,7 @@ const SHADOW_OPACITY = 0.82;
 
 const SCENE = {
   background: 0x000000,
-  hemisphere: { sky: 0xf4ece4, ground: 0x3c3330, intensity: 0.35 },
+  hemisphere: { sky: 0xf4ece4, ground: 0x3c3330, intensity: 0.5 },
   sun: { color: 0xffeed8, intensity: 3.6, position: [5, 6, 3], target: [0, 0, 0] },
   // The key casts shadows, so the turret, mantlet and stowage shade the deck and
   // the skirts shade the running gear: the card tanks read as solid models.
@@ -94,7 +94,7 @@ const SCENE = {
   },
   pointLight: {
     color: 0xcfe0ff,
-    intensity: 10,
+    intensity: 18,
     distance: 0,
     decay: 0,
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),

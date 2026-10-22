@@ -36,10 +36,10 @@ use crate::scene::{Color, Effect, Material, Node, Shading, TextureRef};
 /// keeps) keep the red off magenta in the menu and off maroon from overhead. The
 /// blue stays bright enough not to fall to black in shade. In a round the paint
 /// shader holds their saturation back under the map's saturating grade.
-pub const VEHICLE_PAINT: [u32; 2] = [0x3864ae, 0x862b25];
+pub const VEHICLE_PAINT: [u32; 2] = [0x3864ae, 0x8a1f2c];
 /// The Humvee's paint per team: the same team hue a step deeper and flatter, a
 /// soft-skinned truck's matte finish rather than the tanks' satin armor enamel.
-pub const HUMVEE_PAINT: [u32; 2] = [0x3a62a0, 0x7a2d26];
+pub const HUMVEE_PAINT: [u32; 2] = [0x3a62a0, 0x7b2129];
 
 /// A team's vehicle body paint.
 pub fn vehicle_paint(team: Team) -> u32 {
@@ -79,6 +79,11 @@ const MATTE_PAINT_ROUGHNESS: f32 = 0.74;
 /// Bare steel and gun metal.
 const METAL_METALNESS: f32 = 0.55;
 const METAL_ROUGHNESS: f32 = 0.4;
+/// The vehicles' bare steel and gun metal: worn, oily and less mirror-like, with
+/// enough diffuse response that housings, lugs and machine guns in shade read as
+/// metal rather than as black boxes with a plastic highlight.
+const WORN_METAL_METALNESS: f32 = 0.35;
+const WORN_METAL_ROUGHNESS: f32 = 0.5;
 const METAL_BUMP_SCALE: f32 = 0.02;
 /// Rubber, canvas, wood, stencils and dark openings.
 const MATTE_ROUGHNESS: f32 = 0.85;
@@ -125,9 +130,9 @@ const UPRIGHT: f64 = 0.6;
 pub const VEHICLE_PAINT_EFFECT: &str = "vehicle-paint";
 /// The team rim's strength at a silhouette, and the paint's own fill light.
 const RIM_STRENGTH: f32 = 0.6;
-const PAINT_FILL: f32 = 0.26;
+const PAINT_FILL: f32 = 0.55;
 /// Running gear sits in the hull's shadow: more fill, no rim.
-const GEAR_FILL: f32 = 1.1;
+const GEAR_FILL: f32 = 1.6;
 /// Bare steel where the paint chipped through (sRGB): bright enough to read as
 /// scuffed metal against either team's paint rather than as a dark fleck of dirt.
 const BARE_STEEL: u32 = 0x6e6a63;
@@ -147,18 +152,21 @@ struct PaintValues {
     /// foot and at its top edge.
     gradient_foot: f64,
     gradient_top: f64,
+    /// Bare metal in the vehicles' worn finish rather than the machines' polish.
+    worn_metal: bool,
 }
 
 /// Tanks and the Humvee: a deep hull deck under a lighter turret and a strong
 /// light-to-dark gradient down each side, so the turret, the deck and the flanks
 /// part by value from the overhead camera and the boxy plates read as forms.
 const VEHICLE_VALUES: PaintValues = PaintValues {
-    hull: 0.9,
-    turret: 1.08,
-    deck_low: 0.62,
-    deck_high: 1.02,
-    gradient_foot: 0.74,
-    gradient_top: 1.08,
+    hull: 0.84,
+    turret: 1.14,
+    deck_low: 0.6,
+    deck_high: 1.04,
+    gradient_foot: 0.72,
+    gradient_top: 1.1,
+    worn_metal: true,
 };
 /// Machines in the vehicles' worn finish (the quarry fleet) keep the gentler
 /// shading their map was graded with.
@@ -169,6 +177,7 @@ const MACHINE_VALUES: PaintValues = PaintValues {
     deck_high: 1.08,
     gradient_foot: 0.8,
     gradient_top: 1.04,
+    worn_metal: false,
 };
 /// Recognition panels and turret bands: matte cloth and paint in a team's signal
 /// color, without a glow of their own (a glowing stripe has no source).
@@ -215,7 +224,10 @@ enum Finish {
         /// The Humvee's flat finish rather than the tanks' satin enamel.
         matte: bool,
     },
-    Metal,
+    /// Bare steel and gun metal, `worn` in the vehicles' finish.
+    Metal {
+        worn: bool,
+    },
     Matte,
     /// Recognition panels and turret bands in a team's signal color: matte, kept
     /// apart so wrecks can burn them off.
@@ -238,6 +250,7 @@ impl Finish {
 /// The shared material of a finish.
 fn finish_material(finish: Finish) -> Arc<Material> {
     static METAL: OnceLock<Arc<Material>> = OnceLock::new();
+    static WORN_METAL: OnceLock<Arc<Material>> = OnceLock::new();
     static MATTE: OnceLock<Arc<Material>> = OnceLock::new();
     match finish {
         Finish::Paint { paint, trim, matte } => {
@@ -256,15 +269,22 @@ fn finish_material(finish: Finish) -> Arc<Material> {
                 ..white_vertex_material(PAINT_METALNESS, roughness)
             });
         }
-        Finish::Metal => METAL.get_or_init(|| {
-            let wear = armor_wear_texture();
-            Arc::new(Material {
-                map: Some(wear.clone()),
-                bump_map: Some(wear),
-                bump_scale: METAL_BUMP_SCALE,
-                ..white_vertex_material(METAL_METALNESS, METAL_ROUGHNESS)
+        Finish::Metal { worn } => {
+            let (cell, metalness, roughness) = if worn {
+                (&WORN_METAL, WORN_METAL_METALNESS, WORN_METAL_ROUGHNESS)
+            } else {
+                (&METAL, METAL_METALNESS, METAL_ROUGHNESS)
+            };
+            cell.get_or_init(|| {
+                let wear = armor_wear_texture();
+                Arc::new(Material {
+                    map: Some(wear.clone()),
+                    bump_map: Some(wear),
+                    bump_scale: METAL_BUMP_SCALE,
+                    ..white_vertex_material(metalness, roughness)
+                })
             })
-        }),
+        }
         Finish::Matte => {
             MATTE.get_or_init(|| Arc::new(white_vertex_material(0.0, MATTE_ROUGHNESS)))
         }
@@ -487,7 +507,7 @@ impl Livery<'_> {
             } else if color == self.signal {
                 Finish::Signal(color)
             } else if self.metal.contains(&color) || material.metalness >= 0.45 {
-                Finish::Metal
+                Finish::Metal { worn: false }
             } else {
                 Finish::Matte
             },
@@ -566,7 +586,14 @@ fn repaint(
     if let Some(drawable) = &mut node.drawable
         && drawable.instances.is_none()
     {
-        let finish = livery.finish(&drawable.material);
+        let finish = livery
+            .finish(&drawable.material)
+            .map(|finish| match finish {
+                Finish::Metal { .. } => Finish::Metal {
+                    worn: values.worn_metal,
+                },
+                other => other,
+            });
         let regrimed = drawable.material.vertex_colors
             && !drawable.mesh.colors.is_empty()
             && is_opaque_standard(&drawable.material);
