@@ -46,8 +46,12 @@ for (const [name, w] of columns) {
 // would only store their artefacts at twice the size); `-exact` keeps the colour
 // under the cut-out texels.
 const header = `P7\nWIDTH ${width}\nHEIGHT ${height}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n`;
-const webp = execFileSync("cwebp", ["-quiet", "-q", "86", "-m", "6", "-exact", "-alpha_q", "100", "-o", "-", "--", "-"], {
-  input: Buffer.concat([Buffer.from(header, "ascii"), Buffer.from(atlas.buffer)]),
-  maxBuffer: 32 * 1024 * 1024,
-});
+const webp = execFileSync(
+  "cwebp",
+  ["-quiet", "-q", "86", "-m", "6", "-exact", "-alpha_q", "100", "-o", "-", "--", "-"],
+  {
+    input: Buffer.concat([Buffer.from(header, "ascii"), Buffer.from(atlas.buffer)]),
+    maxBuffer: 32 * 1024 * 1024,
+  },
+);
 await writeFile(new URL("atlas.webp", trees), webp);
