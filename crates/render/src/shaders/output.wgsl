@@ -242,9 +242,18 @@ fn hue_band(hue: f32, center: f32, width: f32) -> f32 {
 const LIME_HUE: f32 = 0.215;
 const EARTH_HUE: f32 = 0.088;
 const PINK_HUE: f32 = 0.955;
+// The pastel guard (`grade`): the saturations (chroma over the brightest linear
+// channel) over which it lets go, and the least green a muted colour keeps as a
+// share of the lesser of its red and blue.
+const PASTEL_GUARD_SATURATION: vec2f = vec2f(0.78, 0.9);
+const PASTEL_GREEN_FLOOR: f32 = 0.94;
+// Extra saturation for nearly pure colours, and the saturations (chroma over the
+// brightest channel) over which it comes in: grass, sand and earth stay below.
+const PURE_SATURATION: f32 = 0.06;
+const PURE_FROM: vec2f = vec2f(0.86, 0.97);
 // Meadow green, and the share of its saturation the foliage grade takes at full.
 const MEADOW_HUE: f32 = 0.27;
-const MEADOW_CALM: f32 = 0.16;
+const MEADOW_CALM: f32 = 0.25;
 // Occlusion: the linear scene levels of shade and of sunlit ground, the share of its
 // strength sunlit pixels keep, and its per-channel power (nearly neutral: a warm
 // crease under a cool shadow fill mixed to teal on sand).
@@ -254,8 +263,10 @@ const OCCLUSION_IN_SUN: f32 = 0.55;
 const OCCLUSION_HUE: vec3f = vec3f(0.95, 1.0, 1.05);
 // The least light occlusion leaves anywhere.
 const OCCLUSION_FLOOR: f32 = 0.35;
-// The share of its own saturation the bloom keeps.
+// The share of its own saturation the bloom keeps, and the least green, as a share of
+// the lesser of red and blue, a pixel its glow dominates keeps.
 const BLOOM_CHROMA: f32 = 0.6;
+const BLOOM_GREEN_FLOOR: f32 = 0.92;
 // Display mid grey, the pivot of the contrast curve.
 const MID_GREY: f32 = 0.18;
 // The display levels where the shadow toning fades in above black and where it fades
@@ -302,9 +313,20 @@ fn grade(color: vec3f) -> vec3f {
     let meadow = hue_band(hue, MEADOW_HUE, 0.12) * output.hues.x * vivid;
     let pink = hue_band(hue, PINK_HUE, 0.06) * output.hues.z * vivid;
     c.b = mix(c.b, min(c.b, c.g * 1.05), pink);
+    // Nothing in a daylight battlefield is a pastel pink or mauve: where green falls
+    // below both red and blue in a muted colour (warm firelight or glow over blue
+    // sky, smoke or shade, warm rock under cool haze), it is lifted toward the lesser
+    // of them, so the colour reads as a warm or neutral grey. Saturated purples (the
+    // armour pickups) and team reds, whose blue is low, are untouched.
+    let muted = 1.0 - smoothstep(PASTEL_GUARD_SATURATION.x, PASTEL_GUARD_SATURATION.y, chroma / max(high, 1e-4));
+    c.g = max(c.g, min(c.r, c.b) * PASTEL_GREEN_FLOOR * muted);
     let grey = luminance(c);
     let vibrance = 1.0 + output.tone.x * (1.0 - smoothstep(0.0, 0.6, chroma));
-    let saturation = output.lift.w * vibrance * (1.0 - 0.32 * earth) * (1.0 - MEADOW_CALM * meadow);
+    // Nearly pure colours (team paint, hazard yellow) gain a little more, so the warm
+    // key and the sky's reflection never thin a red hull toward salmon or a navy one
+    // toward slate: what the light adds to their low channels is taken back out.
+    let pure = 1.0 + PURE_SATURATION * smoothstep(PURE_FROM.x, PURE_FROM.y, chroma / max(high, 1e-4));
+    let saturation = output.lift.w * vibrance * pure * (1.0 - 0.32 * earth) * (1.0 - MEADOW_CALM * meadow);
     c = max(mix(vec3f(grey), c, saturation), vec3f(0.0));
     c = contrast_curve(c, output.gamma.w);
     return highlight_rolloff(c);
@@ -397,7 +419,14 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         // grey concrete would otherwise mix to magenta.
         var glow = textureSampleLevel(bloom, linear_clamp, uv, 0.0).rgb;
         glow = mix(vec3f(luminance(glow)), glow, BLOOM_CHROMA);
-        color += glow * (bloom_strength / (1.0 + luminance(glow) * output.hues.w));
+        glow *= bloom_strength / (1.0 + luminance(glow) * output.hues.w);
+        let lit = color + glow;
+        // A fire's warm glow over blue sky or blue-filled shade still mixes to pink
+        // where it dominates: there green, lagging both, is lifted toward the lesser
+        // of red and blue, so the glow reads as hot amber haze, never magenta.
+        let share = luminance(glow) / max(luminance(lit), 1e-4);
+        let least = min(lit.r, lit.b) * BLOOM_GREEN_FLOOR;
+        color = vec3f(lit.r, max(lit.g, mix(lit.g, least, smoothstep(0.1, 0.5, share))), lit.b);
     }
     var display = grade(aces_filmic(color, output.settings.x));
     let vignette = output.gain.w;
