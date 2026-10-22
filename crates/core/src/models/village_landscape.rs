@@ -150,7 +150,7 @@ const LEVEL_FOOTINGS: [[f64; 3]; 4] = [
 /// high: level at the wall's foot, along the creek and under the landmarks of
 /// [`LEVEL_FOOTINGS`], so nothing set on the old floor floats or sinks.
 fn knolls(x: f64, z: f64, edge: f64, river: f64) -> f64 {
-    let reach = smoothstep(edge, 63.0, 82.0) * smoothstep(river, 9.0, 18.0);
+    let reach = smoothstep(edge, 62.0, 76.0) * smoothstep(river, 9.0, 18.0);
     if reach <= 0.0 {
         return 0.0;
     }
@@ -158,7 +158,7 @@ fn knolls(x: f64, z: f64, edge: f64, river: f64) -> f64 {
         .iter()
         .map(|&[cx, cz, radius]| smoothstep((x - cx).hypot(z - cz), radius, radius + 10.0))
         .fold(1.0, f64::min);
-    let rolls = (lattice_noise(x * 0.045 + 3.1, z * 0.045 - 7.7) - 0.5) * 3.4
+    let rolls = (lattice_noise(x * 0.045 + 3.1, z * 0.045 - 7.7) - 0.5) * 3.8
         + (lattice_noise(x * 0.11 - 2.0, z * 0.11 + 5.0) - 0.5) * 1.1;
     reach * level * rolls
 }
