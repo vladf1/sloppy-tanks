@@ -2257,9 +2257,9 @@ html:not(.phone) #toast[data-tone="death"] {
 /* Battle setup: one dialog for single player and multiplayer, a pane of glass over a
    dusk battlefield. Sections are labelled rows on a three-column grid that the tank
    cards define; selectable choices are lit cards in dark wells, and the chosen one rises
-   with a gold ring. The tank row is shared and never moves; below it the play tabs sit
-   on the tray they switch. The map heads the tray on both tabs, and both trays end in
-   the same status well and gold action. */
+   with a gold ring. The play tabs head the dialog as folder tabs on the tray they
+   switch; the tray holds the shared tank row, then the map, then the chosen mode's
+   panel, and both panels end in the same status well and gold action. */
 .menu.start {
   --tray: #15305a;
   --card: #10264a;
@@ -2269,8 +2269,10 @@ html:not(.phone) #toast[data-tone="death"] {
   --accent: var(--gold);
   --label: var(--text-label);
   --muted: var(--text-dim);
+  --tray-edge: #8fc4f04a;
+  --setup-gap: 14px;
   display: grid;
-  gap: 14px;
+  gap: var(--setup-gap);
   position: relative;
   max-width: 1040px;
   padding: 18px 26px 14px;
@@ -2463,15 +2465,24 @@ html:not(.phone) #toast[data-tone="death"] {
   letter-spacing: 4px;
   text-shadow: 0 2px 10px #0009;
 }
-/* The first row: the logo, then the mode switch filling the rest of the width. The
-   switch is a segmented well of two large buttons; the chosen one is lit like the tray
-   it configures, with a gold rim. With no switch (a site without a game server) the
-   screen's title takes its place. */
+/* The first row: the logo, then the folder tabs for single player and multiplayer,
+   standing on the tray they switch. The chosen tab is the tray's own surface: same
+   colour, the tray's outline running up its sides and over its gold-lit top, and no line
+   between the two, so the tank, map and mode settings below read as its contents. The
+   other tab sits recessed behind, darker, lower and dimmer, with the tray's edge running
+   under it. With no multiplayer (a site without a game server) the screen's title takes
+   the tabs' place. */
 .setup-top {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 22px;
   min-width: 0;
+  /* The tabs meet the tray: no row gap between them. */
+  margin-bottom: calc(-1 * var(--setup-gap));
+}
+.setup-top .setup-header {
+  align-self: center;
+  padding-bottom: 6px;
 }
 /* Screen readers still hear the title as the dialog's heading. */
 .setup-top:has(.play-tabs) .setup-heading {
@@ -2487,19 +2498,27 @@ html:not(.phone) #toast[data-tone="death"] {
 }
 .setup-tray {
   display: grid;
+  gap: var(--setup-gap);
+  min-width: 0;
+  padding: 14px;
+  border: 1px solid var(--tray-edge);
+  border-radius: 16px 0 16px 16px;
+  background: linear-gradient(180deg, var(--tray) 0, #11294d 45%, #0d2242);
+  box-shadow:
+    inset 0 -1px #ffffff0d,
+    0 10px 30px #0006;
 }
 .play-tabs {
+  position: relative;
+  z-index: 1;
   display: grid;
   flex: 1;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 5px;
+  align-items: end;
+  gap: 6px;
   min-width: 0;
-  padding: 5px;
-  border-radius: 16px;
-  background: #050d1cc0;
-  box-shadow:
-    inset 0 0 0 1px #9fd0ff1c,
-    inset 0 2px 6px #0008;
+  /* Down over the tray's top edge, which the chosen tab covers. */
+  margin-bottom: -1px;
 }
 .play-tab {
   position: relative;
@@ -2507,24 +2526,27 @@ html:not(.phone) #toast[data-tone="death"] {
   align-items: center;
   gap: 12px;
   min-width: 0;
-  min-height: 58px;
-  padding: 10px 16px;
-  border: 0;
-  border-radius: 11px;
-  background: transparent;
-  color: #b4cbe0;
+  min-height: 52px;
+  /* Clear of the tray's edge, which runs under a recessed tab. */
+  margin-bottom: 1px;
+  padding: 9px 16px;
+  border: 1px solid #9fd0ff1f;
+  border-bottom: 0;
+  border-radius: 14px 14px 0 0;
+  background: linear-gradient(180deg, #0f2342, #0a1830);
+  box-shadow: inset 0 -8px 12px -8px #0009;
+  color: #9fb8cf;
   text-align: left;
   transition:
     background 0.15s,
-    color 0.15s,
-    box-shadow 0.15s;
+    color 0.15s;
 }
 .play-tab svg {
   flex: 0 0 34px;
   height: 34px;
   padding: 6px;
   border-radius: 9px;
-  background: #ffffff0f;
+  background: #ffffff0d;
   fill: none;
   stroke: currentColor;
   stroke-width: 1.8;
@@ -2548,19 +2570,22 @@ html:not(.phone) #toast[data-tone="death"] {
   font-size: 13px;
 }
 .play-tab:hover:not([aria-selected="true"]) {
-  background: #ffffff0d;
+  background: linear-gradient(180deg, #14305a, #0e2142);
   color: #f0f8ff;
 }
 .play-tab:active:not([aria-selected="true"]) {
-  background: #ffffff08;
+  background: linear-gradient(180deg, #102849, #0b1b36);
 }
+/* The chosen tab is taller, the tray's colour and outline, and reaches down over the
+   tray's edge so the two are one surface. */
 .play-tab[aria-selected="true"] {
-  background: linear-gradient(180deg, #24497c, var(--tray));
+  min-height: 60px;
+  margin-bottom: 0;
+  padding-bottom: 10px;
+  border-color: var(--tray-edge);
+  background: var(--tray);
   color: #fff;
-  box-shadow:
-    inset 0 0 0 1.5px #ffcf38cc,
-    inset 0 1px #ffffff26,
-    0 4px 14px #0007;
+  box-shadow: inset 0 3px var(--accent);
 }
 .play-tab[aria-selected="true"]::after {
   content: "";
@@ -2568,8 +2593,7 @@ html:not(.phone) #toast[data-tone="death"] {
   left: 18%;
   right: 18%;
   top: 0;
-  height: 18px;
-  border-radius: 11px 11px 0 0;
+  height: 22px;
   background: radial-gradient(ellipse 50% 100% at 50% 0, #ffcf3840, transparent);
   pointer-events: none;
 }
@@ -2783,13 +2807,8 @@ html:not(.phone) #toast[data-tone="death"] {
 .setup-panels {
   display: grid;
   grid-template-rows: auto 1fr;
-  gap: 14px;
-  padding: 14px;
-  border-radius: 16px;
-  background: linear-gradient(180deg, var(--tray), #0f2546);
-  box-shadow:
-    inset 0 1px #9fd0ff1f,
-    inset 0 -1px #ffffff0d;
+  gap: var(--setup-gap);
+  min-width: 0;
 }
 /* Both tabs sit on the tank cards' three columns and share one cell, so the taller
    panel sizes both; the hidden one keeps its space rather than collapsing. Each has a
@@ -3024,38 +3043,42 @@ html:not(.phone) #toast[data-tone="death"] {
 .battle-choice .choice-icon {
   display: none;
 }
+/* The art fills the poster above its title and sizes its tanks by that box's height, so
+   a shorter poster (a short screen, or the status well's row under the posters) shrinks
+   the scene instead of running it into the title. */
 .mode-art {
   position: absolute;
   z-index: -1;
   left: 0;
   right: 0;
-  top: 4%;
-  bottom: 26%;
+  top: 6px;
+  bottom: 62px;
   pointer-events: none;
 }
 .mode-tank {
   position: absolute;
-  height: auto;
+  width: auto;
+  aspect-ratio: 560 / 300;
   filter: drop-shadow(0 12px 10px #020a14b3);
   transition: transform 0.25s cubic-bezier(0.2, 0.9, 0.3, 1.2);
 }
 .team-art .blue-tank {
   left: -2%;
-  top: 30%;
-  width: 54%;
+  bottom: 0;
+  height: 76%;
   transform: scaleX(-1);
 }
 .team-art .red-tank {
   right: -4%;
-  top: 24%;
-  width: 62%;
+  bottom: 6%;
+  height: 88%;
 }
 /* VS is a struck badge between the two tanks: a dark disc with a gold rim, so the word
    reads as part of the art rather than type laid over it. */
 .team-art .versus {
   position: absolute;
   left: 50%;
-  top: 16%;
+  top: 0;
   display: grid;
   place-items: center;
   width: 54px;
@@ -3076,39 +3099,42 @@ html:not(.phone) #toast[data-tone="death"] {
   transform: translateX(-50%);
 }
 .solo-art .enemy-tank {
-  width: 36%;
+  height: 42%;
   filter: brightness(0.6) saturate(0.8) drop-shadow(0 6px 6px #0008);
 }
 .solo-art .enemy-1 {
   left: -4%;
-  top: 6%;
+  top: 4%;
 }
 .solo-art .enemy-2 {
-  left: 33%;
-  top: -4%;
-  width: 32%;
+  left: 36%;
+  top: -6%;
+  height: 34%;
 }
 .solo-art .enemy-3 {
   right: -6%;
-  top: 8%;
+  top: 6%;
 }
 .solo-art .hero-tank {
-  left: 16%;
-  top: 34%;
-  width: 66%;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  height: 80%;
+  margin-inline: auto;
 }
 .solo-art .sights {
   position: absolute;
   left: 50%;
-  top: 64%;
-  width: 46%;
-  aspect-ratio: 1;
+  bottom: 10%;
+  height: 60%;
+  aspect-ratio: 1.7;
   border: 2px solid #ff6b7acc;
   border-radius: 50%;
   box-shadow:
     0 0 0 1px #0006,
     0 0 18px #ff4d5e55;
-  transform: translate(-50%, -50%) scaleY(0.42);
+  transform: translateX(-50%) scaleY(0.62);
+  transform-origin: 50% 100%;
 }
 .battle-choice .choice-card:hover .team-art .blue-tank {
   transform: scaleX(-1) translateX(-4px);
@@ -3648,10 +3674,8 @@ html:not(.phone) #toast[data-tone="death"] {
   animation: room-scan 1.6s linear infinite;
 }
 #multiplayer-panel:has(.room-status[data-state="error"]) .room-empty svg {
-  width: 54px;
-  height: 54px;
   stroke: #ffc23a;
-  opacity: 0.45;
+  opacity: 0.55;
 }
 /* Offline, the status well below says why; the empty list says where rooms will show,
    and the new room's rules and button stand down until rooms are back: greyed, but
@@ -3995,7 +4019,7 @@ html:not(.phone) #toast[data-tone="death"] {
   position: static;
   display: block;
   width: auto;
-  margin-top: 6px;
+  margin-top: 4px;
   background: none;
   color: #9fb6cc;
   font: 700 12px/1 var(--font-ui);
@@ -4085,10 +4109,30 @@ html:not(.phone) #toast[data-tone="death"] {
     padding-inline: 0;
   }
 }
+/* A phone keeps every row for the choices: the build line sits in the panel's bottom
+   padding, under the tray's corner. */
 .phone .start .menu-build {
-  position: static;
-  justify-self: end;
-  margin-top: -4px;
+  position: absolute;
+  right: 18px;
+  bottom: 3px;
+  margin: 0;
+  font-size: 9.5px;
+}
+/* Held sideways, the panels drop the empty row their hidden formats and room list
+   would take, so the status well and the action sit right under the map. */
+@media (orientation: landscape) {
+  .phone #single-panel {
+    grid-template-areas: "status status go";
+  }
+  .phone #multiplayer-panel {
+    grid-template-areas: "status status action";
+  }
+  .phone .menu.start .tank-preview {
+    height: 54px;
+  }
+  html.phone .menu.start {
+    padding-top: 10px;
+  }
 }
 @media (max-height: 770px) {
   .start .menu-footer,
@@ -4096,11 +4140,20 @@ html:not(.phone) #toast[data-tone="death"] {
     display: none;
   }
   .menu.start {
-    gap: 12px;
+    --setup-gap: 12px;
   }
   .play-tab {
-    min-height: 50px;
-    padding-block: 7px;
+    min-height: 46px;
+    padding-block: 6px;
+  }
+  .play-tab[aria-selected="true"] {
+    min-height: 54px;
+    padding-bottom: 7px;
+  }
+  /* Without the logo the tabs span the whole top edge, so the tray is square under
+     both of its top corners. */
+  .setup-tray {
+    border-top-left-radius: 0;
   }
   .start .tank-preview {
     height: 90px;
@@ -4118,8 +4171,11 @@ html:not(.phone) #toast[data-tone="death"] {
     grid-template-columns: minmax(0, 1fr);
     grid-template-areas: none;
   }
+  /* Every item stacks in the one column, including those placed by a named area with a
+     stronger selector: an area the template no longer names makes implicit columns. */
   .setup-panel > *,
-  .start .setup-panel > #start {
+  .start .setup-panel > :is(#start, .startup-progress),
+  #multiplayer-panel > .room-status {
     grid-area: auto;
     grid-column: auto;
   }
@@ -4994,8 +5050,8 @@ html.phone,
   display: none;
 }
 .phone .menu.start {
-  gap: 10px;
-  padding: 14px 16px 12px;
+  --setup-gap: 10px;
+  padding: 14px 16px 16px;
 }
 /* A phone held upright has room for the logo over its short setup; held sideways it
    keeps every pixel for the choices. */
@@ -5036,8 +5092,11 @@ html.phone,
    creates a room. */
 .phone .play-tab {
   gap: 10px;
-  min-height: 48px;
-  padding: 10px 14px;
+  min-height: 44px;
+  padding: 9px 14px;
+}
+.phone .play-tab[aria-selected="true"] {
+  min-height: 52px;
 }
 .phone .play-tab svg {
   flex-basis: 20px;
@@ -5046,9 +5105,10 @@ html.phone,
 .phone .play-tab b {
   font-size: 17px;
 }
-.phone .setup-panels {
-  gap: 10px;
+/* A phone's tabs span the top edge: the tray is square under both top corners. */
+.phone .setup-tray {
   padding: 10px;
+  border-top-left-radius: 0;
 }
 .phone .setup-panel {
   grid-template-rows: auto;
@@ -5180,11 +5240,11 @@ html.phone,
     place-items: stretch;
   }
   .phone .menu.start {
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto 1fr;
     max-width: none;
   }
   .phone .setup-tray {
-    grid-template-rows: 1fr;
+    grid-template-rows: auto 1fr;
   }
   .phone .setup-panels {
     grid-template-rows: auto 1fr;
@@ -5226,8 +5286,19 @@ html.phone,
     display: grid;
     gap: 5px;
     padding-top: 0;
-    font-size: 9.5px;
-    letter-spacing: 0.4px;
+    font-size: 9px;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+  /* Upright, the status well is one slim line over GO: it keeps that size in every
+     state, so nothing moves, and GO stays on screen. */
+  .phone .menu.start .startup-progress {
+    min-height: 0;
+    padding: 7px 12px 8px;
+  }
+  .phone .menu.start .startup-progress .startup-track {
+    height: 3px;
+    margin-top: 5px;
   }
   .phone .menu.start .vehicle .spec span:last-child {
     text-align: left;
@@ -5239,7 +5310,7 @@ html.phone,
       #ffffff17;
   }
   .phone .map-row .choice-card {
-    min-height: 76px;
+    min-height: 64px;
     padding-right: 150px;
   }
   .phone .map-row .choice-card::before {
@@ -5252,7 +5323,7 @@ html.phone,
     display: block;
   }
   .phone .start .tank-preview {
-    height: 92px;
+    height: 82px;
   }
   /* The tanks fill their cards on a phone instead of sitting small on the turntable. */
   .phone .start .vehicle .tank-preview {
