@@ -216,7 +216,7 @@ pub const fn pickup(kind: PickupKind) -> PickupStats {
     match kind {
         PickupKind::Rapid => PickupStats {
             name: "RAPID FIRE",
-            color: 0xffcf54,
+            color: 0xffb02a,
             duration: 20.0,
         },
         PickupKind::Spread => PickupStats {
@@ -246,17 +246,17 @@ pub const fn pickup(kind: PickupKind) -> PickupStats {
         },
         PickupKind::Speed => PickupStats {
             name: "SPEED BOOST",
-            color: 0xc4ef4a,
+            color: 0xf2f53a,
             duration: 20.0,
         },
         PickupKind::Repair => PickupStats {
             name: "REPAIR",
-            color: 0x3fdc78,
+            color: 0x2edb6e,
             duration: 0.0,
         },
         PickupKind::Laser => PickupStats {
             name: "LASER DEFENSE",
-            color: 0xff3d55,
+            color: 0xe6f6ff,
             duration: LASER_DEFENSE.duration,
         },
     }
