@@ -24,13 +24,15 @@ use sloppy_core::scene::{Blending, Color, Effect, Material, Node, Side};
 use sloppy_core::sim::data::{MINE_RADIUS, pickup};
 use sloppy_core::sim::{FragmentShape, PickupKind, Team};
 
-use super::hud::METER_LOW_Y;
+use super::hud::{CRITICAL_COLOR, METER_LOW_Y, WARNING_COLOR};
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 
 /// Joint names.
 pub mod joint {
     /// Tank bar hull fill, one per health color; scaled along x by the ratio.
     pub const BAR_FILLS: [&str; 3] = ["bar-fill-team", "bar-fill-mid", "bar-fill-low"];
+    /// The pale chunk a hit took, trailing the fill down; scaled along x.
+    pub const BAR_TRAIL: &str = "bar-trail";
     pub const BAR_RANKS: [&str; 3] = ["bar-rank-1", "bar-rank-2", "bar-rank-3"];
     pub const BAR_SHIELD: &str = "bar-shield";
     pub const BAR_SHIELD_FILL: &str = "bar-shield-fill";
@@ -55,7 +57,14 @@ pub const PICKUP_REFILL_EFFECT: &str = "pickup-refill";
 pub const REFILL_SEGMENTS: u32 = 48;
 
 pub const SPAWN_PROTECTION_COLOR: u32 = 0xffdf86;
-const BAR_WIDTH: f64 = 1.75;
+/// The hull fill's full width and height; the track and rim frame it.
+const BAR_WIDTH: f64 = 1.7;
+const BAR_FILL_HEIGHT: f64 = 0.15;
+/// The bar's outer width, which presentation keeps to a share of the screen.
+pub const BAR_RIM_WIDTH: f64 = 1.84;
+const BAR_RIM_HEIGHT: f64 = 0.29;
+/// Hull segments, as the page HUD's bar shows them.
+const BAR_SEGMENTS: usize = 4;
 const METER_FILL_WIDTH: f64 = 1.34;
 const METER_FILL_X: f64 = -0.51;
 
@@ -157,41 +166,114 @@ fn protection_meter(name: &str, fill_name: &str, color: u32, segmented: bool) ->
     group
 }
 
+/// A rectangle with rounded corners, centred on the origin, facing +z.
+fn rounded_rect(width: f64, height: f64, radius: f64) -> Mesh {
+    const CORNER_STEPS: usize = 4;
+    let r = radius.min(height / 2.0).min(width / 2.0);
+    let (hw, hh) = (width / 2.0 - r, height / 2.0 - r);
+    let mut points = Vec::with_capacity(4 * (CORNER_STEPS + 1));
+    for (i, (cx, cy)) in [(hw, hh), (-hw, hh), (-hw, -hh), (hw, -hh)]
+        .into_iter()
+        .enumerate()
+    {
+        for step in 0..=CORNER_STEPS {
+            let angle = (i as f64 + step as f64 / CORNER_STEPS as f64) * PI / 2.0;
+            points.push([cx + r * angle.cos(), cy + r * angle.sin()]);
+        }
+    }
+    polygon(&points)
+}
+
+/// World-space HUD paint with its own opacity.
+fn hud_paint(color: u32, opacity: f32) -> Arc<Material> {
+    Arc::new(Material {
+        opacity,
+        ..(*hud_material(color)).clone()
+    })
+}
+
 /// `createTankBar(team)`: the hull bar with its three health colors, the shield
 /// and spawn meters, and one to three rank chevrons. Billboarded by the instance.
+/// A dark rounded rim keeps it legible on bright grass and pale concrete; the empty
+/// track stays a visible navy so lost hull reads at a glance, a pale trail shows
+/// the chunk the last hit took, and a sheen and segment notches give the fill the
+/// page HUD's look.
 pub fn tank_bar(team: Team) -> Node {
     let mut bar = Node::group("tank-bar");
     bar.children.push(mesh(
-        arc(plane_geometry(1.87, 0.28)),
-        hud_material(0x9eb8ab),
+        arc(rounded_rect(BAR_RIM_WIDTH, BAR_RIM_HEIGHT, 0.08)),
+        hud_paint(0x050a12, 0.86),
         10,
     ));
     bar.children.push(at(
-        mesh(arc(plane_geometry(1.81, 0.22)), hud_material(0x010504), 11),
+        mesh(
+            arc(rounded_rect(BAR_WIDTH + 0.06, BAR_FILL_HEIGHT + 0.06, 0.06)),
+            hud_paint(0x1d2b40, 0.95),
+            11,
+        ),
         0.0,
         0.0,
         0.005,
     ));
     let fill = arc(translated(
-        plane_geometry(BAR_WIDTH, 0.16),
+        rounded_rect(BAR_WIDTH, BAR_FILL_HEIGHT, 0.045),
         BAR_WIDTH / 2.0,
         0.0,
         0.0,
     ));
-    let colors = [TEAM_COLORS[team.index()], 0xffe27a, 0xff7c73];
+    let mut trail = named(
+        at(
+            mesh(fill.clone(), hud_paint(0xfff1cf, 0.9), 12),
+            -BAR_WIDTH / 2.0,
+            0.0,
+            0.008,
+        ),
+        joint::BAR_TRAIL,
+    );
+    trail.visible = false;
+    bar.children.push(trail);
+    let colors = [TEAM_COLORS[team.index()], WARNING_COLOR, CRITICAL_COLOR];
+    // A glassy highlight along the top of the fill, scaled with it.
+    let sheen = arc(translated(
+        rounded_rect(BAR_WIDTH - 0.03, 0.035, 0.0175),
+        BAR_WIDTH / 2.0,
+        BAR_FILL_HEIGHT / 2.0 - 0.032,
+        0.002,
+    ));
+    let sheen_paint = hud_paint(0xffffff, 0.3);
     for (name, color) in joint::BAR_FILLS.iter().zip(colors) {
         let mut node = named(
             at(
-                mesh(fill.clone(), hud_material(color), 12),
+                mesh(fill.clone(), hud_material(color), 13),
                 -BAR_WIDTH / 2.0,
                 0.0,
                 0.01,
             ),
             name,
         );
+        node.children
+            .push(mesh(sheen.clone(), sheen_paint.clone(), 14));
         node.visible = false;
         bar.children.push(node);
     }
+    let notches: Vec<Shape> = (1..BAR_SEGMENTS)
+        .map(|i| {
+            let x = -BAR_WIDTH / 2.0 + BAR_WIDTH * i as f64 / BAR_SEGMENTS as f64;
+            let (hw, hh) = (0.016, BAR_FILL_HEIGHT / 2.0 + 0.01);
+            Shape::from_points(&[
+                DVec2::new(x - hw, -hh),
+                DVec2::new(x + hw, -hh),
+                DVec2::new(x + hw, hh),
+                DVec2::new(x - hw, hh),
+            ])
+        })
+        .collect();
+    bar.children.push(at(
+        mesh(arc(shape_geometry(&notches)), hud_paint(0x050a12, 0.7), 15),
+        0.0,
+        0.0,
+        0.014,
+    ));
     bar.children.push(at(
         protection_meter(
             joint::BAR_SHIELD,
@@ -221,8 +303,8 @@ pub fn tank_bar(team: Team) -> Node {
     for (i, name) in joint::BAR_RANKS.iter().enumerate() {
         let mut node = named(
             at(
-                mesh(chevron.clone(), gold.clone(), 13),
-                -1.18,
+                mesh(chevron.clone(), gold.clone(), 16),
+                -1.2,
                 0.15 - i as f64 * 0.15,
                 0.015,
             ),
@@ -525,6 +607,7 @@ mod tests {
         let mut found = Vec::new();
         names(&tank_bar(Team::Red), &mut found);
         for name in joint::BAR_FILLS.iter().chain(&joint::BAR_RANKS).chain(&[
+            joint::BAR_TRAIL,
             joint::BAR_SHIELD,
             joint::BAR_SHIELD_FILL,
             joint::BAR_SPAWN,

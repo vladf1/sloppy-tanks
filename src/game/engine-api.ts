@@ -39,6 +39,9 @@ export const FRAME = {
   renderMs: 8,
   firstPerson: 9,
   dt: 10,
+  /** The first-person gun sight's screen position (NDC, y up); 0, 0 overhead. */
+  reticleX: 11,
+  reticleY: 12,
 } as const;
 
 export const PHASES = ["ready", "playing", "paused", "results"] as const;

@@ -21,7 +21,7 @@ try {
   const pixels = new Uint8ClampedArray(readFileSync(raw));
   writeFileSync(
     new URL("../public/textures/ground/village-ground.webp", import.meta.url),
-    encodePixelsWebp(pixels, size * 2, size),
+    encodePixelsWebp(pixels, size * 3, size),
   );
 } finally {
   rmSync(scratch, { recursive: true, force: true });

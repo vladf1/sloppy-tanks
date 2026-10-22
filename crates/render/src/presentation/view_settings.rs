@@ -17,119 +17,43 @@ pub const CAMERA: Camera = Camera {
     field_of_view: 43.0,
     near: 0.1,
     far: 320.0,
-    default_zoom: 31.0,
+    default_zoom: 34.0,
     min_zoom: 17.0,
     max_zoom: 52.0,
     max_pixel_ratio: 1.5,
 };
 
-/// How the follow camera carries weight and reacts to the battle. Shake follows
-/// the trauma model: events add trauma (0..1), which decays linearly, and the
-/// shake grows with its square, so small knocks stay calm and big blasts land.
+/// How the camera reacts to the battle; the overhead camera itself stays fixed on
+/// the tank (`camera_rig.rs`). Shake follows the trauma model: events add trauma
+/// (0..1), which decays linearly, and the shake grows with its square.
 pub struct CameraFeel {
-    /// Angular frequency (rad/s) of the critically damped focus spring; the focus
-    /// leads a moving tank by the spring's lag, so steady driving stays centred.
-    pub follow_frequency: f64,
-    /// The view leans toward the turret's aim by this fraction of the pointer's
-    /// reach from the tank, up to `max_aim_look_ahead` of the zoom.
-    pub aim_look_ahead: f64,
-    pub max_aim_look_ahead: f64,
-    /// And toward the nearest enemy within `threat_range` by this fraction of the
-    /// way, up to `max_threat_look_ahead` of the zoom.
-    pub threat_look_ahead: f64,
-    pub max_threat_look_ahead: f64,
-    pub threat_range: f64,
-    /// The focus sits this fraction of the zoom up the screen from the tank.
-    pub frame_ahead: f64,
-    /// A big blast close by draws the view this fraction of the way toward it, up
-    /// to `max_blast_look_ahead` of the zoom, letting go over `blast_look_seconds`.
-    pub blast_look_ahead: f64,
-    pub max_blast_look_ahead: f64,
-    pub blast_look_seconds: f64,
-    /// All of the leads together stay within this fraction of the zoom.
-    pub max_look_ahead: f64,
-    /// And ahead along the drive by this many seconds of travel, up to a cap.
-    pub travel_look_ahead_seconds: f64,
-    pub max_travel_look_ahead: f64,
-    /// A focus this far from its target (a respawn, leaving the overview) snaps.
-    pub snap_distance: f64,
-    /// The leads ride their own critically damped spring of this frequency (rad/s).
-    pub lead_frequency: f64,
-    /// The follow camera frames at `calm_framing` of the chosen zoom. With an
-    /// enemy near it frames the duel instead: as tight as `combat_framing` and as
-    /// wide as `duel_framing`, whatever keeps that enemy inside `duel_frame`. It
-    /// eases there at `framing_rate` per second.
-    pub calm_framing: f64,
-    pub combat_framing: f64,
-    pub duel_framing: f64,
-    pub framing_rate: f64,
-    /// Screen boxes in NDC (x left, x right, y bottom, y top). The leads never
-    /// carry the player's tank out of `player_frame`, clear of the HUD panels,
-    /// and a lagging spring never past `player_guard`. The duel framing fits
-    /// the enemy inside `duel_frame`.
-    pub player_frame: [f32; 4],
-    pub player_guard: [f32; 4],
-    pub duel_frame: [f32; 4],
-    /// A blast or kill still holding more than this share of its pull on the
-    /// view is framed like an enemy.
-    pub framed_blast_weight: f64,
-    /// At `full_speed` (m/s) the camera eases back by this fraction of the zoom,
-    /// approaching it at `speed_zoom_rate` per second.
-    pub speed_zoom: f64,
+    /// The seated view's sway and speed widening peak at `full_speed` (m/s),
+    /// easing toward the tank's speed at `sway_rate` per second.
     pub full_speed: f64,
-    pub speed_zoom_rate: f64,
+    pub sway_rate: f64,
     /// Trauma lost per second.
     pub trauma_decay: f64,
-    /// Shake at full trauma: yaw, pitch and roll (rad) about the view, and its
-    /// noise frequency (Hz).
-    pub shake_angles: [f64; 3],
+    /// Shake at full trauma: yaw and pitch (rad) about the view, and its noise
+    /// frequency (Hz). Only the viewer being hit or destroyed shakes the camera:
+    /// its own shots, kills and other tanks' explosions leave it still, and
+    /// nothing tilts the horizon (the player found it gave them vertigo).
+    pub shake_angles: [f64; 2],
     pub shake_frequency: f64,
     /// Kicks push the camera on a spring of this frequency (rad/s) and damping ratio.
     pub kick_frequency: f64,
     pub kick_damping: f64,
     pub max_kick_offset: f64,
-    /// Knocks also tip the horizon on a spring of this frequency (rad/s) and
-    /// damping ratio, within `max_roll` (rad): the viewer's shot, a kill, a hit at
-    /// full strength and a blast close by, as angular speeds (rad/s).
-    pub roll_frequency: f64,
-    pub roll_damping: f64,
-    pub max_roll: f64,
-    pub fire_roll: f64,
-    pub kill_roll: f64,
-    pub hurt_roll: f64,
-    pub blast_roll: f64,
-    /// The viewer's own shot: trauma and backward kick speed (m/s); rockets scale both.
-    pub fire_trauma: f64,
-    pub fire_kick: f64,
     /// The viewer hurt: trauma per hit point, its cap, and the kick speed.
     pub hurt_trauma_per_damage: f64,
     pub max_hurt_trauma: f64,
     pub hurt_kick: f64,
-    /// The viewer destroyed, or one of its shots finishing an enemy.
+    /// The viewer destroyed.
     pub death_trauma: f64,
-    pub kill_trauma: f64,
-    /// A blast's trauma per metre of radius, fading to nothing this far away
-    /// (squared falloff), and its kick speed down and away at the blast.
-    pub blast_trauma_per_radius: f64,
-    pub blast_reach: f64,
-    pub blast_kick: f64,
-    /// Destroying an enemy dollies the drawn camera this fraction of the way to
-    /// its focus, arriving at `punch_attack` and easing out at `punch_release`
-    /// (per second), so a kill lands with a beat of emphasis.
-    pub kill_punch_in: f64,
-    pub punch_attack: f64,
-    pub punch_release: f64,
-    /// Any tank destroyed nearby pulls the camera in and knocks the horizon by up
-    /// to this share of a kill's, fading over `blast_reach`.
-    pub nearby_death_punch: f64,
-    /// A big blast close by pulls it in by up to this share.
-    pub blast_punch: f64,
-    /// The viewer's own shot narrows the lens by this many degrees for a blink.
-    pub fire_fov_kick: f64,
-    pub fov_kick_release: f64,
     /// A reticle that follows the turret rather than a pointer (autoplay) glides to
-    /// its point at this rate (per second); a jump farther than `snap_distance` snaps.
+    /// its point at this rate (per second); a jump farther than `snap_distance`
+    /// (m) snaps.
     pub aim_track_rate: f64,
+    pub snap_distance: f64,
     /// First person shakes less: the view is already close to the action.
     pub first_person_shake: f64,
     /// Share of the hull's pitch and roll the first-person view rides.
@@ -148,63 +72,20 @@ pub struct CameraFeel {
 }
 
 pub const CAMERA_FEEL: CameraFeel = CameraFeel {
-    follow_frequency: 7.5,
-    aim_look_ahead: 0.32,
-    max_aim_look_ahead: 0.2,
-    threat_look_ahead: 0.6,
-    max_threat_look_ahead: 0.45,
-    threat_range: 30.0,
-    frame_ahead: 0.02,
-    blast_look_ahead: 0.35,
-    max_blast_look_ahead: 0.1,
-    blast_look_seconds: 1.4,
-    max_look_ahead: 0.45,
-    travel_look_ahead_seconds: 0.14,
-    max_travel_look_ahead: 2.0,
-    snap_distance: 14.0,
-    lead_frequency: 3.2,
-    calm_framing: 0.88,
-    combat_framing: 0.72,
-    duel_framing: 0.96,
-    framing_rate: 1.6,
-    player_frame: [-0.14, 0.14, -0.2, 0.22],
-    player_guard: [-0.38, 0.38, -0.38, 0.3],
-    duel_frame: [-0.9, 0.88, -0.64, 0.76],
-    framed_blast_weight: 0.3,
-    speed_zoom: 0.06,
     full_speed: 8.0,
-    speed_zoom_rate: 2.5,
+    sway_rate: 5.0,
     trauma_decay: 2.0,
-    shake_angles: [0.007, 0.007, 0.006],
+    shake_angles: [0.007, 0.007],
     shake_frequency: 9.0,
     kick_frequency: 15.0,
     kick_damping: 0.55,
     max_kick_offset: 0.35,
-    roll_frequency: 10.0,
-    roll_damping: 0.38,
-    max_roll: 0.04,
-    fire_roll: 0.06,
-    kill_roll: 0.45,
-    hurt_roll: 0.16,
-    blast_roll: 0.1,
-    fire_trauma: 0.08,
-    fire_kick: 1.8,
     hurt_trauma_per_damage: 0.008,
     max_hurt_trauma: 0.45,
     hurt_kick: 3.5,
     death_trauma: 0.6,
-    kill_trauma: 0.32,
-    blast_trauma_per_radius: 0.1,
-    blast_reach: 20.0,
-    blast_kick: 3.0,
-    kill_punch_in: 0.1,
-    punch_attack: 16.0,
-    punch_release: 2.4,
-    nearby_death_punch: 0.55,
-    blast_punch: 0.2,
-    fire_fov_kick: 1.0,
-    fov_kick_release: 9.0,
     aim_track_rate: 10.0,
+    snap_distance: 14.0,
     first_person_shake: 0.55,
     first_person_tilt: 0.65,
     first_person_speed_fov: 6.0,
@@ -222,12 +103,6 @@ pub struct Feedback {
     pub pickup_seconds: f64,
     pub max_pickup_effects: usize,
     pub flash_decay: f64,
-    /// Destroying an enemy holds the action for this long at `hit_stop_time_scale`
-    /// (single player only: a room's clock belongs to the server).
-    pub hit_stop_seconds: f64,
-    pub hit_stop_time_scale: f64,
-    /// The viewer's hits on an enemy hold it for this long.
-    pub hit_confirm_stop_seconds: f64,
 }
 
 pub const FEEDBACK: Feedback = Feedback {
@@ -237,9 +112,6 @@ pub const FEEDBACK: Feedback = Feedback {
     pickup_seconds: 0.8,
     max_pickup_effects: 24,
     flash_decay: 12.0,
-    hit_stop_seconds: 0.07,
-    hit_stop_time_scale: 0.06,
-    hit_confirm_stop_seconds: 0.035,
 };
 
 /// How tanks carry their weight on screen (render-only; physics keeps the true pose).
@@ -366,7 +238,7 @@ pub struct FirstPerson {
 }
 
 pub const FIRST_PERSON: FirstPerson = FirstPerson {
-    field_of_view: 52.0,
+    field_of_view: 58.0,
     eye_side: 0.3,
     eye_drop: 0.05,
     eye_ahead: -0.1,

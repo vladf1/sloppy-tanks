@@ -358,9 +358,31 @@
   box-shadow:
     var(--sheen),
     0 30px 80px #000b;
+  overflow: hidden;
   text-align: center;
   color: #fff;
   pointer-events: none;
+}
+/* Single player's respawn card language: a red eyebrow over the countdown and a red
+   glint along the top edge as the card lands. */
+#network-respawn::before {
+  content: "TANK DESTROYED";
+  display: block;
+  margin-bottom: 6px;
+  color: #ff8592;
+  font: 800 10.5px/1 var(--font-ui);
+  letter-spacing: 3px;
+}
+#network-respawn::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ff8592, transparent);
+  transform: translateX(-100%);
+  animation: respawn-glint 1.4s ease-out 0.1s;
 }
 #network-respawn-count {
   margin: 0;
@@ -370,7 +392,9 @@
   text-shadow: 0 2px 8px #000a;
 }
 #network-death-cause {
-  margin: 8px 0 0;
+  margin: 10px 0 0;
+  padding-top: 10px;
+  border-top: 1px solid #9fd0ff1a;
   color: #ffd6da;
   font: 700 13px/1.4 var(--font-ui);
   overflow-wrap: anywhere;

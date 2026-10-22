@@ -3,17 +3,22 @@
 //!
 //! The village ground shader ([`super::ground_surfaces::village_ground_material`])
 //! samples one baked plan, [`VILLAGE_GROUND_TEXTURE`], and frays its edges at
-//! pixel scale. The plan is two squares side by side, each [`GROUND_PLAN_SIZE`]
-//! pixels, row 0 at the most negative z (uploaded without the flip):
+//! pixel scale. The plan is [`PLAN_SQUARES`] squares side by side, each
+//! [`GROUND_PLAN_SIZE`] pixels, row 0 at the most negative z (uploaded without the
+//! flip):
 //!
-//! - left, the arena out to ±[`ARENA_PLAN_HALF`] m: r worn dirt (roads with
-//!   rounded, trampled corners and wandering edges, shortcuts to the pickups, door
-//!   paths and the drip line round each cottage), g trampled grass, b garden beds
-//!   (0.5 a vegetable plot, 1 a flower bed), a open ground (1, lower in the
-//!   contact shade at the foot of walls, cottages, timber, trees and drums);
-//! - right, the valley out to ±[`VALLEY_PLAN_HALF`] m: r farm lanes, the farmyard
-//!   and the creek's sandy banks, g crop fields, b each field's crop and row
-//!   direction ([`field_code`]), a dryness (0 at the water's edge).
+//! - first, the arena out to ±[`ARENA_PLAN_HALF`] m: r worn dirt (roads with
+//!   corners worn anywhere from nearly square to cut far back, edges that bulge
+//!   into broad bites and pinch, grass surviving in the quiet middle of a road,
+//!   door paths and the drip line round each cottage) ramping over
+//!   [`EDGE_RAMP`] m either side of the edge, g trampled grass, b garden beds (0.5
+//!   a vegetable plot, 1 a flower bed), a open ground (1, lower in the contact
+//!   shade at the foot of walls, cottages, timber, trees and drums);
+//! - second, the valley out to ±[`VALLEY_PLAN_HALF`] m: r farm lanes, the
+//!   farmyard and the creek's sandy banks, g crop fields, b each field's crop and
+//!   row direction ([`field_code`]), a dryness (0 at the water's edge);
+//! - third, the arena's tracks ([`super::village_tracks`]): treads, their
+//!   freshness, traffic and standing water.
 //!
 //! Alpha stays high over most of the plan, so nothing leans on colour kept under
 //! transparent pixels.
@@ -28,25 +33,31 @@ use glam::DVec2;
 use super::house_model::{cottage_turns, door_direction};
 use super::village_landscape::creek_distance;
 use super::village_roads::village_roads;
+use super::village_tracks::bake_tracks;
 use crate::geometry::math::smoothstep;
 use crate::sim::arena::{CoverDef, PICKUP_LAYOUT, arena_layout};
 use crate::sim::types::CoverKind;
 
 /// The baked plan the village ground samples.
 pub const VILLAGE_GROUND_TEXTURE: &str = "textures/ground/village-ground.webp";
-/// Pixels along each side of either half of the plan.
+/// Pixels along each side of each square of the plan.
 pub const GROUND_PLAN_SIZE: usize = 512;
+/// Squares side by side in the plan: arena, valley, arena tracks.
+pub const PLAN_SQUARES: usize = 3;
 /// Half size of the arena half's square in metres (0.25 m pixels).
 pub const ARENA_PLAN_HALF: f64 = 64.0;
 /// Half size of the valley half's square in metres.
 pub const VALLEY_PLAN_HALF: f64 = 170.0;
 
-/// How far road corners round into the lawns, in metres of smooth union.
-const CORNER_ROUNDING: f64 = 5.0;
-/// Wider rounding of the trampled grass where tanks cut the corners.
-const CORNER_TRAMPLE: f64 = 11.0;
+/// How far road corners round into the lawns, in metres of smooth union: the
+/// tightest corners and the most cut-away ones.
+const CORNER_ROUNDING: [f64; 2] = [3.0, 16.0];
+/// Metres either side of a road's edge over which the plan's dirt ramps.
+const EDGE_RAMP: f64 = 2.4;
+/// Extra rounding of the trampled grass where tanks cut the corners.
+const CORNER_TRAMPLE: f64 = 6.0;
 
-fn hash(ix: i64, iz: i64, seed: u64) -> f64 {
+pub(super) fn hash(ix: i64, iz: i64, seed: u64) -> f64 {
     let mut h = (ix as u64)
         .wrapping_mul(0x9e37_79b9_7f4a_7c15)
         .wrapping_add((iz as u64).wrapping_mul(0xc2b2_ae3d_27d4_eb4f))
@@ -58,7 +69,7 @@ fn hash(ix: i64, iz: i64, seed: u64) -> f64 {
 }
 
 /// Smooth value noise in [0, 1].
-fn noise(x: f64, z: f64, seed: u64) -> f64 {
+pub(super) fn noise(x: f64, z: f64, seed: u64) -> f64 {
     let (ix, iz) = (x.floor(), z.floor());
     let (fx, fz) = (x - ix, z - iz);
     let (ux, uz) = (fx * fx * (3.0 - 2.0 * fx), fz * fz * (3.0 - 2.0 * fz));
@@ -120,23 +131,33 @@ fn road_families(x: f64, z: f64) -> (f64, f64) {
 }
 
 /// Slow wander of the worn edges, in metres: the roads bulge into the lawns in
-/// some stretches and pinch in others instead of keeping one width.
+/// some stretches and pinch in others instead of keeping one width, and in a
+/// few places swell into broad bites where traffic spilled onto the grass.
 fn edge_wander(x: f64, z: f64) -> f64 {
-    (fbm(x * 0.05, z * 0.05, 11) - 0.45) * 3.4
-        + (noise(x * 0.023, z * 0.023, 13) - 0.4) * 2.2
+    let swell = 1.0 + 1.7 * smoothstep(noise(x * 0.027 + 4.0, z * 0.027 - 2.0, 14), 0.52, 0.86);
+    ((fbm(x * 0.05, z * 0.05, 11) - 0.45) * 3.4 + (noise(x * 0.023, z * 0.023, 13) - 0.4) * 2.2)
+        * swell
         + (noise(x * 0.23, z * 0.23, 12) - 0.5) * 0.7
+}
+
+/// How round the junction corner near (x, z) is worn: some kept nearly square,
+/// others cut far back across the lawn.
+fn corner_rounding(x: f64, z: f64) -> f64 {
+    let [tight, cut] = CORNER_ROUNDING;
+    let pick = smoothstep(noise(x * 0.021 + 3.1, z * 0.021 - 1.7, 15), 0.2, 0.85);
+    tight + (cut - tight) * pick
 }
 
 /// Signed metres into the worn road dirt at (x, z): the road strips joined with
 /// rounded inner corners, their edges wandering. Positive on the dirt.
 pub fn road_wear(x: f64, z: f64) -> f64 {
     let (along, across) = road_families(x, z);
-    smooth_max(along, across, CORNER_ROUNDING) + edge_wander(x, z)
+    smooth_max(along, across, corner_rounding(x, z)) + edge_wander(x, z)
 }
 
 /// Worn tracks across the lawns, where drivers cut through to the pickups and the
 /// cottage gardens: each a wandering polyline in world metres and its width.
-const SHORTCUTS: [(&[[f64; 2]], f64); 8] = [
+pub(super) const SHORTCUTS: [(&[[f64; 2]], f64); 8] = [
     (
         &[
             [-9.5, -7.0],
@@ -339,25 +360,37 @@ impl ArenaPlan {
         }
     }
 
-    /// (dirt, trampled grass, garden, open ground) at (x, z).
-    fn sample(&self, x: f64, z: f64) -> [f64; 4] {
+    /// (dirt, trampled grass, garden, open ground) at (x, z), given how much
+    /// traffic packed the ground there.
+    fn sample(&self, x: f64, z: f64, traffic: f64) -> [f64; 4] {
         let p = DVec2::new(x, z);
         let (along, across) = road_families(x, z);
         let wander = edge_wander(x, z);
-        let road = smooth_max(along, across, CORNER_ROUNDING) + wander;
-        let mut dirt = smoothstep(road, -0.9, 0.9);
+        let rounding = corner_rounding(x, z);
+        let road = smooth_max(along, across, rounding) + wander;
+        // A wide ramp across the edge: the shader cuts it crisply in some
+        // stretches and lets it crumble over a few metres in others.
+        let mut dirt = smoothstep(road, -EDGE_RAMP, EDGE_RAMP);
+        // Grass survives in the quiet middle of a road, between and beside the
+        // wheel lines, in ragged islands and medians.
+        let quiet = 1.0 - smoothstep(traffic, 0.1, 0.34);
+        let islands = smoothstep(fbm(x * 0.11 + 7.0, z * 0.11 - 3.0, 24), 0.42, 0.62);
+        let survives = quiet * islands * smoothstep(road, 1.2, 2.8);
+        dirt *= 1.0 - survives * 0.65;
         // Trampled grass: wide where tanks cut the corners, a soft verge elsewhere.
-        let corner = smooth_max(along, across, CORNER_TRAMPLE) + wander;
+        let corner = smooth_max(along, across, rounding + CORNER_TRAMPLE) + wander;
         let patchy = 0.55 + 0.45 * fbm(x * 0.09, z * 0.09, 21);
-        let mut trampled = smoothstep(corner, -4.5, 0.2) * patchy;
+        // Grass surviving in a road is sparse and beaten flat.
+        let mut trampled = (smoothstep(corner, -4.5, 0.2) * patchy).max(survives);
 
         for (points, width) in SHORTCUTS {
             let distance =
                 polyline_distance(p, points) + (noise(x * 0.35, z * 0.35, 31) - 0.5) * 0.5;
-            // A bare core along the wheel line, worn grass either side.
-            let core = 1.0 - smoothstep(distance, width * 0.18, width * 0.55);
-            dirt = dirt.max(core * (0.55 + 0.4 * noise(x * 0.4, z * 0.4, 32)));
-            trampled = trampled.max(1.0 - smoothstep(distance, width * 0.6, width * 1.6));
+            // The treads cut the turf (`village_tracks`); the grass between and
+            // beside them is flattened and scuffed.
+            let scuff = 1.0 - smoothstep(distance, width * 0.3, width * 1.1);
+            dirt = dirt.max(scuff * 0.38 * noise(x * 0.5, z * 0.5, 32));
+            trampled = trampled.max(1.0 - smoothstep(distance, width * 1.2, width * 2.4));
         }
 
         let mut garden: f64 = 0.0;
@@ -600,21 +633,37 @@ fn valley_sample(x: f64, z: f64) -> [f64; 4] {
     [dirt * (1.0 - planted), planted, code, dry]
 }
 
-/// The baked plan: `GROUND_PLAN_SIZE * 2` wide, `GROUND_PLAN_SIZE` tall, RGBA8
-/// rows from the most negative z.
+/// `value` in [0, 1] rounded to `levels` steps.
+fn quantize(value: f64, levels: f64) -> f64 {
+    (value.clamp(0.0, 1.0) * levels).round() / levels
+}
+
+/// The baked plan: `GROUND_PLAN_SIZE * 3` wide, `GROUND_PLAN_SIZE` tall, RGBA8
+/// rows from the most negative z: the arena, the valley and the arena's tracks
+/// (`village_tracks.rs`).
 pub fn bake_village_ground() -> Vec<u8> {
     let size = GROUND_PLAN_SIZE;
     let plan = ArenaPlan::new();
-    let mut pixels = vec![0u8; size * 2 * size * 4];
+    let tracks = bake_tracks();
+    let mut pixels = vec![0u8; size * PLAN_SQUARES * size * 4];
     let byte = |v: f64| (v.clamp(0.0, 1.0) * 255.0).round() as u8;
     for row in 0..size {
         let t = (row as f64 + 0.5) / size as f64 * 2.0 - 1.0;
         for column in 0..size {
             let s = (column as f64 + 0.5) / size as f64 * 2.0 - 1.0;
-            let arena = plan.sample(s * ARENA_PLAN_HALF, t * ARENA_PLAN_HALF);
+            let at = row * size + column;
+            let arena = plan.sample(s * ARENA_PLAN_HALF, t * ARENA_PLAN_HALF, tracks.traffic[at]);
             let valley = valley_sample(s * VALLEY_PLAN_HALF, t * VALLEY_PLAN_HALF);
-            for (half, values) in [(0, arena), (1, valley)] {
-                let at = (row * size * 2 + half * size + column) * 4;
+            // Coarser steps than a byte where the shader needs no more keep the
+            // lossless WebP small: 1.6 cm steps of tread distance, 16 freshnesses.
+            let worn = [
+                quantize(tracks.tread[at], 64.0),
+                quantize(tracks.fresh[at], 16.0),
+                quantize(tracks.traffic[at], 64.0),
+                quantize(tracks.dryness[at], 32.0),
+            ];
+            for (square, values) in [(0, arena), (1, valley), (2, worn)] {
+                let at = (row * size * PLAN_SQUARES + square * size + column) * 4;
                 for (k, value) in values.into_iter().enumerate() {
                     pixels[at + k] = byte(value);
                 }
