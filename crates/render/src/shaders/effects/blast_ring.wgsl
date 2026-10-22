@@ -115,16 +115,16 @@ fn wall_mark(
 ) {
     let fine = ring_noise(point * 11.0 - seed * 1.3);
     let r = length(point + warp * 0.3) + (fine - 0.5) * 0.1 + (n - 0.5) * 0.12;
-    let edge = 1.0 - smoothstep(0.62, 0.92, r);
+    let edge = 1.0 - smoothstep(0.78, 0.97, r);
     if steel {
         // Streaks of soot thrown out from the hole, a scraped ring of bare steel
         // round the dent, and the hole itself, glowing as it cools.
         let around = point / max(radius, 1e-4);
         let streaks = ring_noise(around * 3.5 + seed) * 0.6 + ring_noise(around * 7.0 - seed) * 0.4;
-        let hole = 1.0 - smoothstep(0.06, 0.14, r);
-        let bare = smoothstep(0.08, 0.16, r) * (1.0 - smoothstep(0.26, 0.4, r + (fine - 0.5) * 0.1));
-        let soot = (1.0 - smoothstep(0.15, 0.55 + 0.35 * streaks, r)) * (0.45 + 0.55 * n);
-        let hot = exp(-age / 0.55) * (1.0 - smoothstep(0.0, 0.3, r));
+        let hole = 1.0 - smoothstep(0.08, 0.18, r);
+        let bare = smoothstep(0.1, 0.2, r) * (1.0 - smoothstep(0.34, 0.5, r + (fine - 0.5) * 0.1));
+        let soot = (1.0 - smoothstep(0.25, 0.65 + 0.3 * streaks, r)) * (0.55 + 0.45 * n);
+        let hot = exp(-age / 0.55) * (1.0 - smoothstep(0.0, 0.38, r));
         var color = mix(vec3f(0.03, 0.026, 0.022), vec3f(0.62, 0.62, 0.64) * (0.8 + 0.3 * fine), bare / max(bare + soot * 0.5, 1e-4));
         color = mix(color, vec3f(0.005), hole);
         color += mix(vec3f(1.4, 0.18, 0.03), vec3f(4.0, 1.7, 0.4), hot) * hot;
@@ -134,12 +134,12 @@ fn wall_mark(
         return;
     }
     let skin = (*s).color;
-    let pit = 1.0 - smoothstep(0.1, 0.3, r);
-    let chipped = smoothstep(0.08, 0.26, r) * (1.0 - smoothstep(0.36, 0.56, r)) * (0.6 + 0.5 * fine);
+    let pit = 1.0 - smoothstep(0.14, 0.38, r);
+    let chipped = smoothstep(0.12, 0.34, r) * (1.0 - smoothstep(0.5, 0.72, r)) * (0.65 + 0.45 * fine);
     // Ridged noise draws thin cracks running out from the pit.
     let ridge = 1.0 - abs(ring_noise((point + warp * 0.4) * 4.2 + seed) * 2.0 - 1.0);
-    let cracks = smoothstep(0.9, 0.975, ridge) * (1.0 - smoothstep(0.3, 0.85, r));
-    let scorch = (1.0 - smoothstep(0.15, 0.75, r)) * 0.3 * exp(-age / 20.0);
+    let cracks = smoothstep(0.9, 0.975, ridge) * (1.0 - smoothstep(0.45, 0.92, r));
+    let scorch = (1.0 - smoothstep(0.2, 0.85, r)) * 0.38 * exp(-age / 20.0);
     let broken = min(skin * 1.3 + vec3f(0.06), vec3f(1.0));
     var color = mix(skin * 0.3, broken, chipped / max(chipped + scorch, 1e-4));
     color = mix(color, skin * 0.16, pit);

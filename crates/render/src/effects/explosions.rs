@@ -40,7 +40,7 @@ const WALL_MARK_LIFETIME: f64 = 40.0;
 /// A mark's diameter (m), never more than its face has room for, and how far it
 /// stands off the face (a container's ribs stand proud of its skin).
 const WALL_MARK_SIZE: f64 = 1.3;
-const WALL_MARK_STANDOFF: [f32; 2] = [0.035, 0.1];
+const WALL_MARK_STANDOFF: [f32; 2] = [0.035, 0.16];
 /// Ground decals a frame may hold: a dust ring and a shockwave per blast, every
 /// scorch and every wall mark.
 pub const DECAL_CAPACITY: usize = MAX_EXPLOSIONS * 2 + MAX_SCORCHES + MAX_WALL_MARKS;
