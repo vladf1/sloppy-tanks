@@ -25,7 +25,7 @@ const REST: [f64; 2] = [3.0, 4.0];
 const SHRINK: f64 = 1.2;
 /// Leaves a shell hit shakes loose, and a felled crown sheds as it goes over.
 const HIT_LEAVES: usize = 26;
-const FELL_LEAVES: usize = 44;
+const FELL_LEAVES: usize = 64;
 /// Of every hundred leaves, this many have turned yellow and this many brown.
 const YELLOWED: f64 = 0.12;
 const WITHERED: f64 = 0.05;
