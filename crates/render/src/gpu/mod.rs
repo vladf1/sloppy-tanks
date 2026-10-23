@@ -1501,10 +1501,10 @@ impl Renderer {
 
     /// A one-off model the caller merged into the upload layout (a settled pile of
     /// debris, `model::prepare_merged`): each part its own mesh, gone from the Wasm
-    /// heap once uploaded.
+    /// heap once uploaded. Its instances never fade.
     pub fn add_merged_model(&mut self, parts: Vec<MergedPart>, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_merged(parts, &mut self.interner);
-        self.register(prepared, lifetime, false)
+        self.register(prepared, lifetime, false, false)
     }
 
     /// Prepare a model whose root's named children are fixed, only ever shown or
