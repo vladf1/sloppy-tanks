@@ -14,6 +14,7 @@ use sloppy_core::sim::render_state::RenderFragment;
 use sloppy_core::sim::{DeathStyle, RenderState, SimEvent, SimEventType, WreckPart};
 
 use super::Flash;
+use super::ease::EaseTable;
 use super::explosions::{WIND, smoke_puff};
 use super::pool::PoolBuffer;
 use super::random::CosmeticRandom;
@@ -124,7 +125,30 @@ struct Burner {
     ember_clock: f64,
     /// This frame's fire strength and flicker, for its light.
     fire: f64,
+    /// Each smoke puff's swirl and each fireball's jitter for the lap it is on
+    /// (lap, value): they change only when a new lap starts.
+    swirls: [(f64, f64); SMOKE_PUFFS],
+    jitters: [(f64, f64); FLAME_PUFFS * FIRE_BALLS],
 }
+
+/// A lap's value, worked out when the lap starts.
+fn per_lap(slot: &mut (f64, f64), lap: f64, value: impl FnOnce() -> f64) -> f64 {
+    if slot.0 != lap {
+        *slot = (lap, value());
+    }
+    slot.1
+}
+
+/// The smoke column's climb and widening powers, tabulated.
+fn column_eases() -> &'static [EaseTable; 2] {
+    static TABLES: std::sync::OnceLock<[EaseTable; 2]> = std::sync::OnceLock::new();
+    TABLES.get_or_init(|| [COLUMN_CLIMB, COLUMN_WIDENING].map(EaseTable::new))
+}
+
+/// How a smoke puff's climb slows and its size grows over its trip (powers of the
+/// share of the trip).
+const COLUMN_CLIMB: f64 = 0.8;
+const COLUMN_WIDENING: f64 = 0.85;
 
 impl Default for Burner {
     fn default() -> Self {
@@ -151,6 +175,8 @@ impl Default for Burner {
             settled: 0.0,
             ember_clock: 0.0,
             fire: 0.0,
+            swirls: [(f64::NAN, 0.0); SMOKE_PUFFS],
+            jitters: [(f64::NAN, 0.0); FLAME_PUFFS * FIRE_BALLS],
         }
     }
 }
@@ -373,12 +399,16 @@ fn draw(
     // Each wreck burns its own way: how big its fires are and how its column
     // leans and billows.
     let vigour = 0.85 + 0.35 * burner.seed;
+    let [climb, widening] = column_eases();
+    let seed = burner.seed;
     for j in 0..SMOKE_PUFFS {
-        let cycle = age / SMOKE_CYCLE + j as f64 / SMOKE_PUFFS as f64 + burner.seed;
+        let cycle = age / SMOKE_CYCLE + j as f64 / SMOKE_PUFFS as f64 + seed;
         let a = cycle.fract();
         let lap = cycle.floor();
-        let swirl = (lap * 2.3 + j as f64 + burner.seed * 7.0).sin() * (0.25 + 0.4 * a);
-        let rise = a.powf(0.8);
+        let swirl = per_lap(&mut burner.swirls[j], lap, || {
+            (lap * 2.3 + j as f64 + seed * 7.0).sin()
+        }) * (0.25 + 0.4 * a);
+        let rise = climb.at(a);
         // The wind shears the column more the higher it climbs.
         let lean = a * a * SMOKE_CYCLE * 0.9;
         let position = Vec3::new(
@@ -388,7 +418,7 @@ fn draw(
         );
         let pale = smoothstep(a, 0.05, 0.9) as f32;
         let color = [0, 1, 2].map(|i| soot[i] + (soot_high[i] - soot[i]) * pale);
-        let size = (1.0 + 2.9 * a.powf(0.85)) * vigour;
+        let size = (1.0 + 2.9 * widening.at(a)) * vigour;
         // Born quickly at the fire, densest low, thinning out as it spreads; a
         // puff shows only once the column has climbed to it.
         let grown = smoothstep(burner.column - a * SMOKE_CYCLE, 0.0, 0.6);
@@ -433,7 +463,9 @@ fn draw(
                 + burner.seed;
             let a = cycle.fract();
             let lap = cycle.floor();
-            let jitter = ((lap + j as f64 + ball as f64 * 0.5) * 1.7).sin() * 0.18;
+            let jitter = per_lap(&mut burner.jitters[j * FIRE_BALLS + ball], lap, || {
+                ((lap + j as f64 + ball as f64 * 0.5) * 1.7).sin()
+            }) * 0.18;
             let heat = fire * (1.05 - a * 0.95);
             smoke_puff(
                 puffs,
