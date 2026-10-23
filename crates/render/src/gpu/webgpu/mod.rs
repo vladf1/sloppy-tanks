@@ -10,9 +10,14 @@ mod precompile;
 mod resources;
 mod textures;
 
+use std::cell::RefCell;
+use std::collections::VecDeque;
+use std::rc::Rc;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 
+use wasm_bindgen::closure::Closure;
+use wasm_bindgen::{JsCast, JsValue};
 use wgpu::util::DeviceExt;
 
 pub use context::{Canvas, Gpu};
@@ -84,24 +89,74 @@ impl Drop for DepthMap {
     }
 }
 
-fn now_ms() -> f64 {
-    web_sys::window()
-        .and_then(|window| window.performance())
-        .map_or(0.0, |performance| performance.now())
-}
-
 /// Canvas frames on the GPU, which one completion callback per frame tracks: how many
 /// are still running, and how long the GPU took to finish the latest, from its scene's
 /// submission until the queue reported everything submitted done (the GPU's own time
 /// when it was idle at the submission, and more when it was still busy).
 #[derive(Default)]
 struct GpuFrames {
-    /// Canvas frames submitted whose GPU work has not finished yet.
-    in_flight: AtomicU32,
-    /// The latest finished frame's milliseconds, as `f64` bits.
-    ms: AtomicU64,
-    /// A sample arrived that nobody has taken yet.
-    fresh: AtomicBool,
+    /// When each canvas frame whose GPU work has not finished had its scene submitted
+    /// (ms), oldest first: the queue reports work done in submission order.
+    submitted: VecDeque<f64>,
+    /// The latest finished frame's milliseconds, until taken.
+    fresh: Option<f64>,
+}
+
+/// The completion callbacks of [`GpuFrames`]: one pair of closures serves every frame,
+/// each frame only chaining them onto its `onSubmittedWorkDone` promise. wgpu's own
+/// `on_submitted_work_done` spawns a task with a future and two new promise closures
+/// per call, about 50 µs of main-thread time a frame in Chrome.
+struct FrameTracker {
+    frames: Rc<RefCell<GpuFrames>>,
+    performance: Option<web_sys::Performance>,
+    /// Both are there until the tracker drops.
+    done: Option<Closure<dyn FnMut(JsValue)>>,
+    /// A lost device rejects the promise; the frame still leaves the count.
+    failed: Option<Closure<dyn FnMut(JsValue)>>,
+}
+
+impl FrameTracker {
+    fn new() -> Self {
+        let frames = Rc::new(RefCell::new(GpuFrames::default()));
+        let performance = web_sys::window().and_then(|window| window.performance());
+        let finish = {
+            let frames = frames.clone();
+            let performance = performance.clone();
+            move || {
+                let mut frames = frames.borrow_mut();
+                if let Some(submitted) = frames.submitted.pop_front() {
+                    let now = performance.as_ref().map_or(0.0, web_sys::Performance::now);
+                    frames.fresh = Some(now - submitted);
+                }
+            }
+        };
+        let on_failure = finish.clone();
+        Self {
+            frames,
+            performance,
+            done: Some(Closure::new(move |_: JsValue| finish())),
+            failed: Some(Closure::new(move |_: JsValue| on_failure())),
+        }
+    }
+
+    fn now_ms(&self) -> f64 {
+        self.performance
+            .as_ref()
+            .map_or(0.0, web_sys::Performance::now)
+    }
+}
+
+impl Drop for FrameTracker {
+    /// Frames still on the GPU settle their promises after the tracker is gone, and a
+    /// dropped closure would throw when they do: the two closures are left to them.
+    fn drop(&mut self) {
+        if let Some(done) = self.done.take() {
+            done.forget();
+        }
+        if let Some(failed) = self.failed.take() {
+            failed.forget();
+        }
+    }
 }
 
 fn base_buffer(device: &wgpu::Device, capacity: u32) -> wgpu::Buffer {
@@ -147,7 +202,7 @@ pub struct Frame {
     /// Set once the GPU has run everything submitted before the last
     /// [`Frame::await_gpu`].
     gpu_idle: Arc<AtomicBool>,
-    gpu_frames: Arc<GpuFrames>,
+    gpu_frames: FrameTracker,
 }
 
 impl Frame {
@@ -249,7 +304,7 @@ impl Frame {
             shadow_base_buffer: base_buffer(device, INITIAL_SHADOW_BASES),
             shadow_base_capacity: INITIAL_SHADOW_BASES,
             gpu_idle: Arc::new(AtomicBool::new(true)),
-            gpu_frames: Arc::default(),
+            gpu_frames: FrameTracker::new(),
         };
         frame.view_groups = frame.frame_groups(gpu, &frame.instance_records);
         frame
@@ -455,30 +510,28 @@ impl Frame {
     /// The GPU time of the latest finished frame in milliseconds, once: `None` until a
     /// new sample arrives.
     pub fn take_gpu_frame_ms(&self) -> Option<f64> {
-        let frames = &self.gpu_frames;
-        frames
-            .fresh
-            .swap(false, Ordering::AcqRel)
-            .then(|| f64::from_bits(frames.ms.load(Ordering::Acquire)))
+        self.gpu_frames.frames.borrow_mut().fresh.take()
     }
 
     /// Canvas frames the GPU has not finished. Chrome holds animation frames back
     /// while the GPU is behind; WebKit lets them queue.
     pub fn frames_in_flight(&self) -> u32 {
-        self.gpu_frames.in_flight.load(Ordering::Acquire)
+        self.gpu_frames.frames.borrow().submitted.len() as u32
     }
 
     /// Count a canvas frame whose scene was submitted at `submitted` (ms) as in flight
     /// until the GPU finishes it, and then take its GPU time.
     fn track_frame(&self, gpu: &Gpu, submitted: f64) {
-        let frames = self.gpu_frames.clone();
-        frames.in_flight.fetch_add(1, Ordering::AcqRel);
-        gpu.queue.on_submitted_work_done(move || {
-            let ms = now_ms() - submitted;
-            frames.ms.store(ms.to_bits(), Ordering::Release);
-            frames.fresh.store(true, Ordering::Release);
-            frames.in_flight.fetch_sub(1, Ordering::AcqRel);
-        });
+        let tracker = &self.gpu_frames;
+        let (Some(queue), Some(on_done), Some(on_failure)) =
+            (gpu.queue.as_webgpu(), &tracker.done, &tracker.failed)
+        else {
+            return;
+        };
+        tracker.frames.borrow_mut().submitted.push_back(submitted);
+        let done: js_sys::Promise = queue.on_submitted_work_done().unchecked_into();
+        // The promise `then` returns is dropped: nothing waits on it.
+        let _ = done.then2(on_done, on_failure);
     }
 
     /// Draw a frame into the canvas. The scene and the canvas go in separate command
@@ -498,7 +551,7 @@ impl Frame {
             label: Some("scene"),
         });
         self.encode_scene(&mut encoder, scene, stats);
-        let submitted = now_ms();
+        let submitted = self.gpu_frames.now_ms();
         gpu.queue.submit([encoder.finish()]);
         let output = match self.canvas.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)

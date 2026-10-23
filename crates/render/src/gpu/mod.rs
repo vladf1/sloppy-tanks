@@ -122,6 +122,13 @@ pub struct InstanceId {
     generation: u32,
 }
 
+/// A model prepared for upload ([`Renderer::prepare_pending_model`]) that is not on
+/// the GPU yet ([`Renderer::add_pending_model`]).
+pub struct PendingModel {
+    prepared: PreparedModel,
+    merge: ShadowMerge,
+}
+
 /// Three linear `Fog`.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fog {
@@ -1388,7 +1395,31 @@ impl Renderer {
     /// `fades`: instances may draw with an opacity below 1 (`add_fading_model`).
     fn register(
         &mut self,
+        prepared: PreparedModel,
+        lifetime: Lifetime,
+        scenery: bool,
+        fades: bool,
+    ) -> ModelId {
+        let merge = self.merge_for(&prepared, scenery);
+        self.register_merged(prepared, merge, lifetime, scenery, fades)
+    }
+
+    /// A prepared model's merged shadow casters.
+    fn merge_for(&self, prepared: &PreparedModel, scenery: bool) -> ShadowMerge {
+        let effects = &self.effects;
+        merge_shadows(
+            prepared,
+            |index| shadow_merge_kind(effects, &prepared.parts[index].material),
+            scenery,
+            SHADOW_MERGE_CELL,
+        )
+    }
+
+    /// [`Self::register`] with the model's shadow merge already made.
+    fn register_merged(
+        &mut self,
         mut prepared: PreparedModel,
+        merge: ShadowMerge,
         lifetime: Lifetime,
         scenery: bool,
         fades: bool,
@@ -1398,15 +1429,7 @@ impl Renderer {
             groups,
             slots,
             merged,
-        } = {
-            let effects = &self.effects;
-            merge_shadows(
-                &prepared,
-                |index| shadow_merge_kind(effects, &prepared.parts[index].material),
-                scenery,
-                SHADOW_MERGE_CELL,
-            )
-        };
+        } = merge;
         // The whole model is known before anything uploads, so a large one gets batch
         // pages of its own.
         let reservation = self.meshes.reserve(&gpu, &prepared.meshes, &groups);
@@ -1544,6 +1567,21 @@ impl Renderer {
     pub fn add_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_model(root, &mut self.interner);
         self.register(prepared, lifetime, false, false)
+    }
+
+    /// The CPU half of [`Self::add_model`]: the model prepared for upload and its
+    /// shadow casters merged, so a caller spreading a costly model over frames can
+    /// upload it in a later one ([`Self::add_pending_model`]).
+    pub fn prepare_pending_model(&mut self, root: &Node) -> PendingModel {
+        let prepared = prepare_model(root, &mut self.interner);
+        let merge = self.merge_for(&prepared, false);
+        PendingModel { prepared, merge }
+    }
+
+    /// Upload a model [`Self::prepare_pending_model`] made, as `add_model` would have.
+    pub fn add_pending_model(&mut self, pending: PendingModel, lifetime: Lifetime) -> ModelId {
+        let PendingModel { prepared, merge } = pending;
+        self.register_merged(prepared, merge, lifetime, false, false)
     }
 
     /// `add_model` for a model whose instances fade (an opacity below 1 draws them

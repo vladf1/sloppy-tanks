@@ -62,8 +62,8 @@ use crate::effects::pickups::{supply_turn, supply_wear};
 use crate::effects::spawn_pad_decks::SpawnPadDecks;
 use crate::effects::{CosmeticRandom, Effects};
 use crate::gpu::{
-    Environment, Fog, InstanceId, Lifetime, ModelId, PrepareProgress, Renderer, SunShadow,
-    WaterSettings,
+    Environment, Fog, InstanceId, Lifetime, ModelId, PendingModel, PrepareProgress, Renderer,
+    SunShadow, WaterSettings,
 };
 
 mod inspect;
@@ -723,7 +723,18 @@ struct HouseLook {
     cover: u32,
     /// The look being built (`cover_key`).
     key: String,
-    build: HouseCoverBuild,
+    phase: HousePhase,
+}
+
+/// Where a cottage's new look has got to. Each phase is a step of its own: a cottage's
+/// model is batched, prepared and uploaded in separate steps from building it, so a
+/// slow device spreads the work over frames instead of taking it in one.
+enum HousePhase {
+    Building(HouseCoverBuild),
+    /// Built, to batch and prepare for upload.
+    Built(Node),
+    /// Ready to upload and show.
+    Ready(CoverModel, PendingModel),
 }
 
 struct CoverModelEntry {
@@ -1538,7 +1549,7 @@ impl Presentation {
         &mut self,
         cover: &RenderCover,
         stage: u32,
-        built_model: Option<CoverModel>,
+        built_model: Option<(CoverModel, Option<PendingModel>)>,
     ) -> (String, Mat4) {
         let movable = cover.motion.is_some();
         let built = Self::built_cover(cover);
@@ -1549,8 +1560,8 @@ impl Presentation {
         if let Some(entry) = self.cover_models.get_mut(&key) {
             entry.users += 1;
         } else {
-            let CoverModel { mut root, tree } =
-                built_model.unwrap_or_else(|| model_catalog::cover_model(&built, stage));
+            let (CoverModel { mut root, tree }, pending) =
+                built_model.unwrap_or_else(|| (model_catalog::cover_model(&built, stage), None));
             if movable {
                 // The body's centre is half the cover's height up; drop the parts.
                 let drop = cover.h / (2.0 * root.scale.y);
@@ -1559,7 +1570,12 @@ impl Presentation {
                 }
             }
             self.textures.request_scenery(&mut self.renderer, &root);
-            let model = self.renderer.add_model(&root, Lifetime::Round);
+            // A model prepared ahead was prepared from this root; only cottages, which
+            // never move, are.
+            let model = match pending.filter(|_| !movable) {
+                Some(pending) => self.renderer.add_pending_model(pending, Lifetime::Round),
+                None => self.renderer.add_model(&root, Lifetime::Round),
+            };
             self.cover_models.insert(
                 key.clone(),
                 CoverModelEntry {
@@ -1595,8 +1611,13 @@ impl Presentation {
         self.add_cover_with(cover, None);
     }
 
-    /// [`add_cover`](Self::add_cover) with its look's model when it was built ahead.
-    fn add_cover_with(&mut self, cover: &RenderCover, built_model: Option<CoverModel>) {
+    /// [`add_cover`](Self::add_cover) with its look's model when it was built ahead,
+    /// and prepared for upload when that was done ahead too.
+    fn add_cover_with(
+        &mut self,
+        cover: &RenderCover,
+        built_model: Option<(CoverModel, Option<PendingModel>)>,
+    ) {
         let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
         let (key, world) = self.cover_entry(cover, stage, built_model);
         let entry = &self.cover_models[&key];
@@ -2439,7 +2460,7 @@ impl Presentation {
                 let look = HouseLook {
                     cover: cover.id,
                     key,
-                    build: HouseCoverBuild::new(
+                    phase: HousePhase::Building(HouseCoverBuild::new(
                         cover.x,
                         cover.z,
                         cover.w,
@@ -2447,7 +2468,7 @@ impl Presentation {
                         cover.h,
                         stage,
                         &cover.timber_hits,
-                    ),
+                    )),
                 };
                 match found {
                     Some(index) => {
@@ -2462,10 +2483,26 @@ impl Presentation {
             }
         };
         loop {
-            if let Some(root) = self.house_looks[index].build.step() {
-                self.house_looks.swap_remove(index);
-                self.add_cover_with(cover, Some(model_catalog::built_cover_model(root)));
-                return;
+            let phase = &mut self.house_looks[index].phase;
+            match phase {
+                HousePhase::Building(build) => {
+                    if let Some(root) = build.step() {
+                        *phase = HousePhase::Built(root);
+                    }
+                }
+                HousePhase::Built(root) => {
+                    let model = model_catalog::built_cover_model(std::mem::take(root));
+                    let pending = self.renderer.prepare_pending_model(&model.root);
+                    *phase = HousePhase::Ready(model, pending);
+                }
+                HousePhase::Ready(..) => {
+                    let look = self.house_looks.swap_remove(index);
+                    let HousePhase::Ready(model, pending) = look.phase else {
+                        unreachable!("matched above")
+                    };
+                    self.add_cover_with(cover, Some((model, Some(pending))));
+                    return;
+                }
             }
             if now_ms() - start >= COVER_REBUILD_MS {
                 return;

@@ -20,6 +20,7 @@ pub fn js_sign(value: f64) -> f64 {
 pub use crate::sim::math::{js_round, to_int32};
 
 /// `Vector3.normalize()`: multiply by the reciprocal length; a zero vector stays zero.
+#[inline(always)]
 pub fn normalize(v: DVec3) -> DVec3 {
     let length = v.length();
     v * (1.0 / if length == 0.0 { 1.0 } else { length })
@@ -37,7 +38,13 @@ pub fn angle_to(a: DVec3, b: DVec3) -> f64 {
 
 /// `Vector3.applyMatrix4` for affine and projective matrices.
 pub fn transform_point(m: &DMat4, p: DVec3) -> DVec3 {
-    let e = m.to_cols_array();
+    transform_point_cols(&m.to_cols_array(), p)
+}
+
+/// [`transform_point`] by a matrix's column-major elements, taken once for a whole
+/// mesh: the models build size-optimised, where the copy per vertex stayed.
+#[inline(always)]
+pub fn transform_point_cols(e: &[f64; 16], p: DVec3) -> DVec3 {
     let w = 1.0 / (e[3] * p.x + e[7] * p.y + e[11] * p.z + e[15]);
     DVec3::new(
         (e[0] * p.x + e[4] * p.y + e[8] * p.z + e[12]) * w,
@@ -78,7 +85,12 @@ pub fn normal_matrix(m: &DMat4) -> DMat3 {
 
 /// `Vector3.applyNormalMatrix`: multiply by the normal matrix, then normalise.
 pub fn transform_normal(normal_matrix: &DMat3, n: DVec3) -> DVec3 {
-    let e = normal_matrix.to_cols_array();
+    transform_normal_cols(&normal_matrix.to_cols_array(), n)
+}
+
+/// [`transform_normal`] by a normal matrix's column-major elements.
+#[inline(always)]
+pub fn transform_normal_cols(e: &[f64; 9], n: DVec3) -> DVec3 {
     normalize(DVec3::new(
         e[0] * n.x + e[3] * n.y + e[6] * n.z,
         e[1] * n.x + e[4] * n.y + e[7] * n.z,
