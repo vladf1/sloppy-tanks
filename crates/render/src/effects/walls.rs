@@ -102,7 +102,9 @@ pub struct Walls {
     soft: [[f32; 4]; 4],
     /// The boxes by ground cell, so a puff tests the few walls near it.
     grid: WallGrid,
-    /// Scratch: one puff's candidate walls and the smoke it leaves at them.
+    /// Scratch: one puff's candidate walls (as a bit set, then listed) and the smoke
+    /// it leaves at them.
+    mask: Vec<u64>,
     candidates: Vec<u32>,
     gathered: Vec<(u32, f32)>,
 }
@@ -132,11 +134,12 @@ struct WallGrid {
     cell: f32,
     columns: usize,
     rows: usize,
-    /// Cell `c`'s boxes are `walls[starts[c]..starts[c + 1]]`, in index order.
-    starts: Vec<u32>,
-    walls: Vec<u32>,
-    /// Scratch for filling the cells.
-    next: Vec<u32>,
+    /// 64-bit words in a cell's set of boxes.
+    words: usize,
+    /// Cell `c`'s boxes as a bit set, box `i` at bit `i % 64` of word
+    /// `bits[c * words + i / 64]`: a puff unions its cells' sets and reads the boxes
+    /// out in index order, where gathering lists and sorting them cost twice as much.
+    bits: Vec<u64>,
 }
 
 impl WallGrid {
@@ -166,36 +169,18 @@ impl WallGrid {
         let count = |extent: f32| ((extent / self.cell).floor() as usize + 1).min(MAX_GRID_CELLS);
         self.columns = count(max[0] - min[0]);
         self.rows = count(max[1] - min[1]);
-        // Count each cell's boxes, turn the counts into starts, then fill.
-        self.starts.clear();
-        self.starts.resize(self.columns * self.rows + 1, 0);
-        for index in 0..self.boxes.len() {
-            let (columns, rows) = self.cells(&self.boxes[index], 0.0);
-            for row in rows {
-                for column in columns.clone() {
-                    self.starts[row * self.columns + column + 1] += 1;
-                }
-            }
-        }
-        for cell in 1..self.starts.len() {
-            self.starts[cell] += self.starts[cell - 1];
-        }
-        self.walls.clear();
-        self.walls
-            .resize(*self.starts.last().unwrap_or(&0) as usize, 0);
-        let mut next = std::mem::take(&mut self.next);
-        next.clone_from(&self.starts);
+        self.words = self.boxes.len().div_ceil(64);
+        self.bits.clear();
+        self.bits.resize(self.columns * self.rows * self.words, 0);
         for (index, b) in self.boxes.iter().enumerate() {
             let (columns, rows) = self.cells(b, 0.0);
             for row in rows {
                 for column in columns.clone() {
-                    let slot = &mut next[row * self.columns + column];
-                    self.walls[*slot as usize] = index as u32;
-                    *slot += 1;
+                    let cell = row * self.columns + column;
+                    self.bits[cell * self.words + index / 64] |= 1 << (index % 64);
                 }
             }
         }
-        self.next = next;
     }
 
     /// The columns and rows of the cells `b`, grown by `margin`, overlaps.
@@ -215,8 +200,8 @@ impl WallGrid {
     }
 
     /// The boxes overlapping the square of half size `reach` round (x, z), each once
-    /// and in index order.
-    fn near(&self, x: f32, z: f32, reach: f32, out: &mut Vec<u32>) {
+    /// and in index order (`mask` is scratch).
+    fn near(&self, x: f32, z: f32, reach: f32, mask: &mut Vec<u64>, out: &mut Vec<u32>) {
         out.clear();
         let point = PuffBox {
             x,
@@ -224,16 +209,26 @@ impl WallGrid {
             ..PuffBox::default()
         };
         let (columns, rows) = self.cells(&point, reach);
+        if columns.is_empty() || rows.is_empty() {
+            return;
+        }
+        mask.clear();
+        mask.resize(self.words, 0);
         for row in rows {
             for column in columns.clone() {
-                let cell = row * self.columns + column;
-                out.extend_from_slice(
-                    &self.walls[self.starts[cell] as usize..self.starts[cell + 1] as usize],
-                );
+                let cell = (row * self.columns + column) * self.words;
+                for (word, bits) in mask.iter_mut().zip(&self.bits[cell..cell + self.words]) {
+                    *word |= bits;
+                }
             }
         }
-        out.sort_unstable();
-        out.dedup();
+        for (word, &bits) in mask.iter().enumerate() {
+            let mut bits = bits;
+            while bits != 0 {
+                out.push((word * 64) as u32 + bits.trailing_zeros());
+                bits &= bits - 1;
+            }
+        }
     }
 }
 
@@ -454,6 +449,7 @@ impl Walls {
         let Self {
             grid,
             smoke,
+            mask,
             candidates,
             gathered,
             ..
@@ -463,7 +459,13 @@ impl Walls {
             let radius = Vec3::from_slice(&puff.world_rows[0][..3]).length();
             let weight = puff.tint[3] * radius * radius;
             let slack = radius * SEARCH_SLACK;
-            grid.near(start.x, start.z, radius * SOFT_REACH + slack, candidates);
+            grid.near(
+                start.x,
+                start.z,
+                radius * SOFT_REACH + slack,
+                mask,
+                candidates,
+            );
             gathered.clear();
             let (mut center, mut pushes, drift) = push_puff(
                 start,

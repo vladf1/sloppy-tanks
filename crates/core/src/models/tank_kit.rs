@@ -420,7 +420,12 @@ impl<C: Finishes> Kit<C> {
             if buffer.is_empty() {
                 continue;
             }
-            let mut mesh = Mesh::default();
+            let mut mesh = Mesh {
+                positions: Vec::with_capacity(buffer.len()),
+                normals: Vec::with_capacity(buffer.len()),
+                uvs: Vec::with_capacity(buffer.len()),
+                ..Mesh::default()
+            };
             for triangle in buffer.as_chunks::<3>().0 {
                 let [a, b, c] = [triangle[0].0, triangle[1].0, triangle[2].0];
                 let face = (b - a).cross(c - a);

@@ -5,7 +5,7 @@
 
 use std::f64::consts::TAU;
 
-use glam::Vec3;
+use glam::{Mat4, Quat, Vec3};
 use sloppy_core::geometry::{Mesh, icosahedron_geometry};
 use sloppy_core::sim::{CoverKind, DeathStyle, SimEvent, SimEventType};
 
@@ -16,6 +16,7 @@ use super::random::CosmeticRandom;
 use super::sparks::{BLAST_SPARKS, Burst, EMBERS, METAL_SPARKS, STONE_SPARKS, Sparks};
 use super::walls::{Strike, WallMaterial};
 use crate::color::hex_to_linear;
+use crate::presentation::posing::euler_xyz;
 
 pub const MAX_PARTICLES: usize = 1200;
 /// Heavier than real gravity, like the simulation's: chips and plates drop and
@@ -82,6 +83,10 @@ pub struct Particle {
     pub rests: bool,
     /// A flat plate or flake rather than a chunky chip.
     pub plate: bool,
+    /// Its rotation once it lies still, which never changes after: most pieces in the
+    /// pool lie on the ground, and posing each from its Euler angles every frame took
+    /// most of the particles' update.
+    pub lying_turn: Option<Quat>,
 }
 
 /// A piece's own turn (rad), fixed for its life by its random lifetime.
@@ -379,6 +384,7 @@ impl ParticleEffects {
                 glow: if timber || tree { 0.0 } else { 0.9 },
                 rests: collapse,
                 plate: false,
+                lying_turn: None,
             });
             i += 1;
         }
@@ -471,6 +477,7 @@ impl ParticleEffects {
                 glow: 0.0,
                 rests: true,
                 plate: false,
+                lying_turn: None,
             });
         }
     }
@@ -513,6 +520,7 @@ impl ParticleEffects {
                 glow: 0.0,
                 rests: true,
                 plate: true,
+                lying_turn: None,
             });
         }
     }
@@ -613,6 +621,7 @@ impl ParticleEffects {
                 glow: 0.0,
                 rests: true,
                 plate: false,
+                lying_turn: None,
             });
         }
         if event.kind == SimEventType::Death {
@@ -649,6 +658,7 @@ impl ParticleEffects {
                 glow: 0.0,
                 rests: true,
                 plate: true,
+                lying_turn: None,
             });
         }
     }
@@ -679,6 +689,7 @@ impl ParticleEffects {
                 glow: 0.0,
                 rests: true,
                 plate: false,
+                lying_turn: None,
             });
         }
     }
@@ -709,6 +720,7 @@ impl ParticleEffects {
                 glow: 0.0,
                 rests: true,
                 plate: i % 2 == 0,
+                lying_turn: None,
             });
         }
     }
@@ -757,7 +769,7 @@ impl ParticleEffects {
         });
         self.records.clear();
         let time = time as f32;
-        for q in &self.particles {
+        for q in &mut self.particles {
             let position = Vec3::new(q.x as f32, q.y.max(MIN_HEIGHT) as f32, q.z as f32);
             let size = if q.rests {
                 (q.size * (q.life / q.max / CLOD_SHRINK).min(1.0)) as f32
@@ -771,12 +783,11 @@ impl ParticleEffects {
             let turn = piece_turn(q);
             let world = if q.splinter && lying {
                 // A splinter lies along the ground where it fell.
-                let spin = turn * 1.7;
-                pose(
-                    position,
-                    Vec3::new(0.08 * spin.sin(), spin, std::f32::consts::FRAC_PI_2),
-                    SPLINTER_STRETCH * size,
-                )
+                let rotation = *q.lying_turn.get_or_insert_with(|| {
+                    let spin = turn * 1.7;
+                    euler_xyz(0.08 * spin.sin(), spin, std::f32::consts::FRAC_PI_2)
+                });
+                Mat4::from_scale_rotation_translation(SPLINTER_STRETCH * size, rotation, position)
             } else if q.splinter {
                 let spin = turn;
                 pose(
@@ -789,15 +800,21 @@ impl ParticleEffects {
                 // it comes to rest, never balanced on an edge.
                 let spin = turn * 1.7;
                 let stretch = if q.plate { PLATE_STRETCH } else { CHIP_STRETCH };
-                let euler = if lying {
-                    let tilt = 0.12 * spin.sin();
-                    Vec3::new(tilt, spin, tilt * 0.7)
+                if lying {
+                    let rotation = *q.lying_turn.get_or_insert_with(|| {
+                        let tilt = 0.12 * spin.sin();
+                        euler_xyz(tilt, spin, tilt * 0.7)
+                    });
+                    Mat4::from_scale_rotation_translation(stretch * size, rotation, position)
                 } else {
                     let tumble = (q.vx.abs() + q.vz.abs() + q.vy.abs()).min(6.0) as f32;
                     let turn = time * tumble * 0.8;
-                    Vec3::new(turn + spin, turn * 0.7 + spin * 0.5, spin)
-                };
-                pose(position, euler, stretch * size)
+                    pose(
+                        position,
+                        Vec3::new(turn + spin, turn * 0.7 + spin * 0.5, spin),
+                        stretch * size,
+                    )
+                }
             } else {
                 // Every fleck tumbles on its own axes.
                 let spin = turn * 2.3;

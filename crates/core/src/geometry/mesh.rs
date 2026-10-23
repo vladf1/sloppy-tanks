@@ -2,8 +2,8 @@ use glam::{DMat4, DVec3};
 
 use super::Buckets;
 use super::math::{
-    normal_matrix, normalize, rotation_x, rotation_y, rotation_z, to_int32, transform_normal,
-    transform_point,
+    normal_matrix, normalize, rotation_x, rotation_y, rotation_z, to_int32, transform_normal_cols,
+    transform_point_cols,
 };
 
 /// Name of the per-vertex alpha attribute (`item_size` 1) of meshes whose Three.js
@@ -137,13 +137,14 @@ impl Mesh {
     /// `BufferGeometry.applyMatrix4`: positions by the matrix, normals by its normal
     /// matrix (renormalised). UVs, colors and custom attributes are unchanged.
     pub fn apply_matrix4(&mut self, matrix: &DMat4) -> &mut Self {
+        let elements = matrix.to_cols_array();
         for p in &mut self.positions {
-            *p = narrow(transform_point(matrix, widen(*p)));
+            *p = narrow(transform_point_cols(&elements, widen(*p)));
         }
         if !self.normals.is_empty() {
-            let normal_matrix = normal_matrix(matrix);
+            let normal_matrix = normal_matrix(matrix).to_cols_array();
             for n in &mut self.normals {
-                *n = narrow(transform_normal(&normal_matrix, widen(*n)));
+                *n = narrow(transform_normal_cols(&normal_matrix, widen(*n)));
             }
         }
         self
