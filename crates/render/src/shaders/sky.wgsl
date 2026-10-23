@@ -81,7 +81,7 @@ fn sky_radiance(direction: vec3f, aa: f32) -> vec3f {
             // toward the sun) catches bright light, the thick cores and the side
             // away from it settle into the cool shade color, and the flat bases
             // (seen low over the horizon) darken.
-            let toward_sun = normalize(sun.xz + vec2f(1e-4)) * 0.11;
+            let toward_sun = frame.sun_heading.xy * 0.11;
             let behind = cloud_density(plane + toward_sun);
             let lit = smoothstep(-0.06, 0.1, density - behind);
             let core = smoothstep(threshold, threshold + 0.3, density);

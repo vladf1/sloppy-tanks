@@ -419,7 +419,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // it every shaded face of a hull takes the same fill and reads as one slab.
         let up = n.y * 0.5 + 0.5;
         let dome = up * up * (SKY_DOME_FORM + (1.0 - SKY_DOME_FORM) * up);
-        let sun_side = dot(n.xz, normalize(frame.sun_direction.xz + vec2f(1e-4))) * (1.0 - abs(n.y));
+        let sun_side = dot(n.xz, frame.sun_heading.xy) * (1.0 - abs(n.y));
         hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, dome) * (1.0 + SKY_SUN_SIDE * sun_side);
         // Warm key, cool fill: the blue sky fill keeps its hue where it is the main
         // light (shade), but under direct sun it adds only its brightness, so sunlit
@@ -440,24 +440,19 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         shade_color = max(mix(vec3f(grey), diffuse, mix(SHADE_SATURATION, EARTH_SHADE_SATURATION, earth)), vec3f(0.0));
     }
     var indirect = hemisphere * shade_color * (RECIPROCAL_PI * sky_open);
-    if atmosphere_on() && frame.ground.w > 0.0 {
-        // Warm bounce from the sunlit ground around: what the sun does not reach
-        // directly (cast shadow, cloud shadow or a face turned away) still catches
-        // some of its light off the ground, most on walls and hull sides, so shade
-        // stays warm and luminous rather than sinking into one cold blue.
-        let ground_tint = frame.ground_color.rgb / max(dot(frame.ground_color.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
-        let sun_level = dot(frame.sun_color.rgb, vec3f(0.2126, 0.7152, 0.0722));
-        let bounce = frame.ground.w * sun_level * (1.0 - in_sun) * (1.0 - BOUNCE_FROM_BELOW * n.y);
-        indirect += ground_tint * (bounce * RECIPROCAL_PI) * shade_color;
-    }
     if atmosphere_on() {
+        // Warm bounce from the sunlit ground around (`bounce`, the ground fill's hue at
+        // the sun's level): what the sun does not reach directly (cast shadow, cloud
+        // shadow or a face turned away) still catches some of its light off the ground,
+        // most on walls and hull sides, so shade stays warm and luminous rather than
+        // sinking into one cold blue.
+        indirect += frame.bounce.rgb * ((1.0 - in_sun) * (1.0 - BOUNCE_FROM_BELOW * n.y)) * shade_color;
         // Stylized sky rim: grazing walls and hull sides catch the bright horizon,
         // most on the side turned from the sun, so silhouettes read on any ground.
         let facing = 1.0 - clamp(dot(n, v), 0.0, 1.0);
-        let away = 0.55 + 0.45 * clamp(-dot(n.xz, normalize(frame.sun_direction.xz + vec2f(1e-4))), 0.0, 1.0);
-        let rim = facing * facing * facing * (1.0 - n.y * n.y) * away * frame.sky_sun.w;
-        let rim_color = frame.sky_horizon.rgb * 0.6 + frame.sky_sun.rgb * 0.4;
-        indirect += rim_color * diffuse * rim;
+        let away = 0.55 + 0.45 * clamp(-dot(n.xz, frame.sun_heading.xy), 0.0, 1.0);
+        let rim = facing * facing * facing * (1.0 - n.y * n.y) * away;
+        indirect += frame.rim.rgb * diffuse * rim;
     }
     // Only glossy finishes (vehicle paint and steel) reflect the sky; matte
     // terrain and buildings keep the hemisphere fill their themes were tuned with.

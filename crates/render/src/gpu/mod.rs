@@ -385,6 +385,9 @@ struct FrameUniform {
     penumbra_v: [f32; 4],
     penumbra_depth: [f32; 4],
     penumbra_steps: [f32; 4],
+    sun_heading: [f32; 4],
+    bounce: [f32; 4],
+    rim: [f32; 4],
 }
 
 /// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade and the
@@ -2176,7 +2179,23 @@ impl Renderer {
             return FrameUniform::zeroed();
         }
         let sky = |color| hex_to_linear_scaled(color, a.sky_intensity);
+        let env = &self.environment;
+        let sun = (env.sun_position - env.sun_target).normalize_or_zero();
+        let heading = (Vec2::new(sun.x, sun.z) + Vec2::splat(1e-4)).normalize();
+        let horizon = Vec3::from(sky(a.horizon));
+        let glow = Vec3::from(hex_to_linear_scaled(a.sun_glow, a.sun_glow_intensity));
+        let rim = (horizon * 0.6 + glow * 0.4) * a.rim;
+        // The bounce at full strength: the ground fill's hue at the sun's luminance.
+        let luminance = |color: Vec3| color.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+        let ground = Vec3::from(hex_to_linear_scaled(env.ground_color, env.hemisphere_intensity));
+        let sun_level = luminance(Vec3::from(hex_to_linear_scaled(env.sun_color, env.sun_intensity)));
+        let bounce_strength = if self.debug_off.ground { 0.0 } else { a.ground.bounce };
+        let bounce = ground / luminance(ground).max(1e-4)
+            * (bounce_strength * sun_level * std::f32::consts::FRAC_1_PI);
         FrameUniform {
+            sun_heading: [heading.x, heading.y, 0.0, 0.0],
+            bounce: rgb4(bounce.into(), 0.0),
+            rim: rgb4(rim.into(), 0.0),
             sky_rays: sky_rays.inverse().to_cols_array(),
             sky_zenith: rgb4(sky(a.zenith), 1.0),
             sky_horizon: rgb4(sky(a.horizon), a.sun_radius.cos()),

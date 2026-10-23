@@ -93,6 +93,13 @@ struct Frame {
     penumbra_v: vec4f,
     penumbra_depth: vec4f,
     penumbra_steps: vec4f,
+    // Terms of the atmosphere alike for every pixel (`gpu::atmosphere_uniform`), zero
+    // while it is off: xy the sun's heading across the ground (unit length); rgb the
+    // warm bounce off the sunlit ground into full shade (`shade_standard`); rgb the sky
+    // rim's colour at its strength.
+    sun_heading: vec4f,
+    bounce: vec4f,
+    rim: vec4f,
 }
 
 // Per drawn instance: world transform, tint (rgb multiplies the base color, a is
@@ -274,7 +281,7 @@ fn sky_dome(direction: vec3f) -> vec3f {
     let up = clamp(direction.y, 0.0, 1.0);
     let toward_horizon = pow(1.0 - up, SKY_HORIZON_EXPONENT);
     let sky = mix(frame.sky_zenith.rgb, frame.sky_horizon.rgb, toward_horizon);
-    let sunward = dot(normalize(direction.xz + vec2f(1e-5)), normalize(frame.sun_direction.xz + vec2f(1e-5))) * 0.5 + 0.5;
+    let sunward = dot(normalize(direction.xz + vec2f(1e-5)), frame.sun_heading.xy) * 0.5 + 0.5;
     return sky * (1.0 + SKY_SUNWARD_GAIN * (sunward * sunward - 0.4) * (0.35 + 0.65 * toward_horizon));
 }
 
@@ -414,7 +421,7 @@ fn haze_tint(ray: vec3f, amount: f32) -> vec3f {
 fn haze_tint_over(sky: vec3f, ray: vec3f, amount: f32) -> vec3f {
     let sun = frame.sun_direction.xyz;
     let toward_sun = max(dot(ray, sun), 0.0);
-    let away = clamp(-dot(normalize(ray.xz + vec2f(1e-5)), normalize(sun.xz + vec2f(1e-5))), 0.0, 1.0);
+    let away = clamp(-dot(normalize(ray.xz + vec2f(1e-5)), frame.sun_heading.xy), 0.0, 1.0);
     // The sky's own gradient, not the ranges drawn into it: those stand behind
     // every surface, and their azimuth-banded faces and crest line painted into the
     // haze over a nearer mountain drew vertical streaks and a horizontal smear.
