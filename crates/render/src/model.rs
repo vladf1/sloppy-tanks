@@ -228,6 +228,10 @@ fn merges_across_joints(material: &Material) -> bool {
         && matches!(material.effect, sloppy_core::scene::Effect::None)
 }
 
+/// A mesh alone in its fixed joint merges with other joints' only up to this many
+/// vertices: a larger one is drawn as it was, from its shared mesh.
+const MAX_LONE_MERGE_VERTICES: usize = 2048;
+
 /// The cell edge (m) by which a merged part orders its joints, so the joints a view
 /// shows lie in few runs of its mesh.
 const SEGMENT_CELL: f64 = 16.0;
@@ -406,27 +410,50 @@ impl<'a> Builder<'a, '_> {
     /// instanced), goes the way it would in any model.
     fn merge_across(&mut self) {
         let across = std::mem::take(&mut self.across.order);
-        for (key, mut members) in across {
+        for (key, members) in across {
             let first = members[0].pending.drawable;
-            let one_joint = members.iter().all(|m| m.joint == members[0].joint);
             let instanced = members.iter().all(|m| {
                 Arc::ptr_eq(&m.pending.drawable.mesh, &first.mesh)
                     && Arc::ptr_eq(&m.pending.drawable.material, &first.material)
             });
-            if one_joint || instanced {
-                for member in members {
-                    let key = GroupKey {
-                        node: member.joint,
-                        ..key.clone()
-                    };
-                    let pending = Pending {
-                        drawable: member.pending.drawable,
-                        transform: member.relative,
-                    };
-                    self.groups.push(key, pending);
-                }
+            // A large mesh alone in its joint stays a shared part, streamed to the GPU
+            // from the caller's mesh: merged, it would be copied whole into the merge,
+            // and the Wasm heap keeps its peak for good. (A joint's members arrive
+            // together.)
+            let kept: Vec<bool> = (0..members.len())
+                .map(|index| {
+                    let joint = members[index].joint;
+                    let alone = (index == 0 || members[index - 1].joint != joint)
+                        && members
+                            .get(index + 1)
+                            .is_none_or(|next| next.joint != joint);
+                    instanced
+                        || (alone
+                            && members[index].pending.drawable.mesh.positions.len()
+                                > MAX_LONE_MERGE_VERTICES)
+                })
+                .collect();
+            let (mut keep, mut members): (Vec<_>, Vec<_>) =
+                members.into_iter().zip(kept).partition(|(_, kept)| *kept);
+            // What is left merges only across two joints or more.
+            if members.iter().all(|(m, _)| m.joint == members[0].0.joint) {
+                keep.append(&mut members);
+            }
+            for (member, _) in keep {
+                let key = GroupKey {
+                    node: member.joint,
+                    ..key.clone()
+                };
+                let pending = Pending {
+                    drawable: member.pending.drawable,
+                    transform: member.relative,
+                };
+                self.groups.push(key, pending);
+            }
+            if members.is_empty() {
                 continue;
             }
+            let mut members: Vec<Fixed> = members.into_iter().map(|(member, _)| member).collect();
             // Joints in ground order (where each one's first drawable stands), so the
             // ones a view shows lie in few runs. A joint's members arrive together.
             let mut blocks: Vec<(usize, usize)> = Vec::new();
@@ -451,7 +478,16 @@ impl<'a> Builder<'a, '_> {
                 members.extend(slots[start..end].iter_mut().filter_map(Option::take));
             }
             let (material, _) = self.draw_material(&first.material);
+            // Sized up front: growing by doubling would leave the heap at its peak.
             let mut data = MeshData::default();
+            let meshes = members.iter().map(|m| &m.pending.drawable.mesh);
+            data.vertices
+                .reserve_exact(meshes.clone().map(|mesh| mesh.positions.len()).sum());
+            data.indices.reserve_exact(
+                meshes
+                    .map(|mesh| mesh.indices.as_ref().map_or(mesh.positions.len(), Vec::len))
+                    .sum(),
+            );
             let mut segments: Vec<Segment> = Vec::new();
             for member in &members {
                 let drawable = member.pending.drawable;
@@ -901,6 +937,59 @@ mod tests {
         let plain = prepare_model(&root, &mut interner);
         assert!(plain.parts.iter().all(|p| p.segments.is_none()));
         assert_eq!(plain.parts.iter().filter(|p| p.node == 1).count(), 2);
+    }
+
+    #[test]
+    fn a_large_mesh_alone_in_its_joint_stays_shared() {
+        // Merged, it would be copied whole; small parts still merge across joints.
+        let big = Arc::new(sloppy_core::geometry::sphere_geometry(1.0, 64, 48));
+        assert!(big.positions.len() > MAX_LONE_MERGE_VERTICES);
+        let small = quad();
+        let paint = Arc::new(Material::standard(0x887766, 0.0, 0.9));
+        let mut root = Node::group("static-covers");
+        for i in 0..3 {
+            let mut joint = Node::group(format!("cover:{i}"));
+            joint.children = vec![
+                part(&big, &paint, f64::from(i) * 10.0),
+                part(&small, &paint, f64::from(i) * 10.0 + 2.0),
+            ];
+            root.children.push(joint);
+        }
+        let mut interner = MaterialInterner::default();
+        let model = prepare_combined(&root, &mut interner);
+        // Each joint has two members of the paint: merged within it, then across.
+        assert_eq!(model.parts.len(), 1);
+        let mut root = Node::group("static-covers");
+        for i in 0..3 {
+            let mut joint = Node::group(format!("cover:{i}"));
+            joint.children = vec![part(&big, &paint, f64::from(i) * 10.0)];
+            root.children.push(joint);
+            let mut other = Node::group(format!("crate:{i}"));
+            other.children = vec![part(&small, &paint, f64::from(i) * 10.0 + 2.0)];
+            root.children.push(other);
+        }
+        let model = prepare_combined(&root, &mut interner);
+        let shared: Vec<_> = model
+            .parts
+            .iter()
+            .filter(|p| matches!(&p.mesh, PartMesh::Shared(m) if Arc::ptr_eq(m, &big)))
+            .collect();
+        assert_eq!(
+            shared.len(),
+            3,
+            "the large lone meshes keep their shared mesh"
+        );
+        let merged: Vec<_> = model
+            .parts
+            .iter()
+            .filter(|p| p.segments.is_some())
+            .collect();
+        assert_eq!(merged.len(), 1);
+        assert_eq!(
+            merged[0].segments.as_ref().unwrap().len(),
+            3,
+            "the small ones merge"
+        );
     }
 
     #[test]

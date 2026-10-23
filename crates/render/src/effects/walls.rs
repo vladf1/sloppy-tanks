@@ -160,7 +160,8 @@ impl WallGrid {
             max = [max[0].max(b.x + b.half_w), max[1].max(b.z + b.half_d)];
         }
         let span = (max[0] - min[0]).max(max[1] - min[1]).max(0.0);
-        self.cell = WALL_CELL.max(span / MAX_GRID_CELLS as f32);
+        // The far edge's cell is one past `span / cell`, still inside the grid.
+        self.cell = WALL_CELL.max(span / (MAX_GRID_CELLS - 1) as f32);
         self.origin = min;
         let count = |extent: f32| ((extent / self.cell).floor() as usize + 1).min(MAX_GRID_CELLS);
         self.columns = count(max[0] - min[0]);
