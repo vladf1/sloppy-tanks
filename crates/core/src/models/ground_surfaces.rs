@@ -9,7 +9,7 @@ use crate::scene::{Effect, Material, TextureRef, Wrap};
 use crate::sim::data::ARENA;
 
 use super::effects_scenery::MEADOW_SWAY;
-use super::village_ground::VILLAGE_GROUND_TEXTURE;
+use super::village_ground::{VILLAGE_GROUND_BAKE, VILLAGE_GROUND_TEXTURE};
 use super::village_roads::village_roads;
 
 pub use crate::sim::maps::GroundKind;
@@ -47,8 +47,9 @@ pub fn ground_material(kind: GroundKind) -> Material {
 /// reach the shader as data from [`village_roads`], so its ruts follow the strips
 /// the track dust ([`super::village_roads::is_village_dirt`]) expects; the worn
 /// dirt itself, the cottage gardens and the fields outside the wall come from the
-/// baked plan ([`super::village_ground`]). Vertex colours multiply the grass
-/// (creek banks, far hills).
+/// baked plan ([`super::village_ground`]). Its still layers are rendered once into
+/// [`village_ground_bake`], its third extra texture. Vertex colours multiply the
+/// grass (creek banks, far hills).
 pub fn village_ground_material() -> Arc<Material> {
     static MATERIAL: OnceLock<Arc<Material>> = OnceLock::new();
     MATERIAL
@@ -92,7 +93,11 @@ pub fn village_ground_material() -> Arc<Material> {
             };
             Arc::new(Material {
                 map: Some(grass),
-                extra_textures: vec![("dirt", dirt), ("plan", plan)],
+                extra_textures: vec![
+                    ("dirt", dirt),
+                    ("plan", plan),
+                    ("bake", village_ground_bake()),
+                ],
                 vertex_colors: true,
                 effect: Effect::Custom {
                     name: MEADOW_SWAY,
@@ -102,6 +107,18 @@ pub fn village_ground_material() -> Arc<Material> {
             })
         })
         .clone()
+}
+
+/// The village ground's bake ([`VILLAGE_GROUND_BAKE`]), rendered from
+/// [`village_ground_material`]: data, not colour (its colours are stored as square
+/// roots), clamped at the world's edge, rows from the most negative z. Its colours
+/// change over metres, so plain trilinear filtering serves.
+pub fn village_ground_bake() -> TextureRef {
+    TextureRef {
+        srgb: false,
+        flip_y: false,
+        ..TextureRef::generated(VILLAGE_GROUND_BAKE)
+    }
 }
 
 /// `groundUVs(geometry, x, z)`: one tile per eight world metres, aligned across roads

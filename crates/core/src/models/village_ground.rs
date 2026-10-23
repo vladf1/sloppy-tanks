@@ -40,6 +40,11 @@ use crate::sim::types::CoverKind;
 
 /// The baked plan the village ground samples.
 pub const VILLAGE_GROUND_TEXTURE: &str = "textures/ground/village-ground.webp";
+/// The ground's still layers (the lie of the land, the meadow's and the earth's
+/// colours, where the turf gives way, gardens, fields and hedges), which the
+/// renderer renders once on the GPU from the ground material's plan and params
+/// (its `effects::bakes`) for the ground and the meadow tufts to sample.
+pub const VILLAGE_GROUND_BAKE: &str = "village-ground-bake";
 /// Pixels along each side of each square of the plan.
 pub const GROUND_PLAN_SIZE: usize = 512;
 /// Squares side by side in the plan: arena, valley, arena tracks.
