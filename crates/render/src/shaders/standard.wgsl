@@ -324,34 +324,15 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         let satin_ground = smoothstep(0.8, 0.95, n.y) * smoothstep(0.3, 0.4, s.roughness);
         reflected.specular /= 1.0 + glare / mix(SUN_GLARE_LIMIT, GROUND_GLARE_LIMIT, satin_ground);
     }
-    // The point lights (blast flashes and fires). What depends on the surface alone is
-    // worked out once, and their light is summed with its irradiance-weighted
-    // direction, so the GGX lobe and its two DFG taps run once for all of them rather
-    // than once in each of the four unrolled lights: one light is exact, and several
-    // at once merge their highlights on glossy paint.
-    var fire_decay = 1.0;
-    var fire_gain = 1.0;
-    var fire_albedo = diffuse;
-    var fire_share = 1.0;
-    if atmosphere_on() {
-        // Fire lights a wide, soft pool rather than a hot spot under itself: a
-        // gentler falloff than Three's inverse square (the cutoff window still ends
-        // it), and brighter overall, so blasts and burning wrecks visibly light the
-        // ground, walls and hulls around them in daylight.
-        fire_decay = FIRE_POOL_DECAY;
-        // In daylight a blast's light shows in shade and on the walls and hulls
-        // around it; added over sunlit grass, amber only yellowed the green into an
-        // acid blotch, so sunlit faces take less of it.
-        fire_gain = BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0));
-        // Amber light on green grass multiplies to an acid yellow-green blotch: the
-        // surface lends firelight only part of its own hue, so the pool reads as an
-        // orange glow on any ground.
-        fire_albedo = mix(diffuse, vec3f(dot(diffuse, vec3f(0.2126, 0.7152, 0.0722))), FIRE_ALBEDO_GREY);
-        // Even greyed, warm light added over green grass reads lime: foliage takes
-        // only a share of it, walls, earth and hulls all.
-        let green = clamp((diffuse.g - max(diffuse.r, diffuse.b)) / max(diffuse.g, 1e-4), 0.0, 1.0);
-        fire_share = 1.0 - FIRE_ON_GREEN_CUT * green;
-    }
+    // The point lights (blast flashes and fires). Their light is summed with its
+    // irradiance-weighted direction and lit once, so the GGX lobe and its two DFG taps
+    // run once for all of them rather than once in each of the four unrolled lights,
+    // and what depends on the surface alone only where any light reaches it: exact
+    // but for several lights at once, whose highlights on glossy paint merge.
+    // With the atmosphere on, fire lights a wide, soft pool rather than a hot spot
+    // under itself: a gentler falloff than Three's inverse square (the cutoff window
+    // still ends it).
+    let decay_share = select(1.0, FIRE_POOL_DECAY, atmosphere_on());
     var point_irradiance = vec3f(0.0);
     var point_wrap = vec3f(0.0);
     var point_direction = vec3f(0.0);
@@ -363,11 +344,15 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
             // Past the cutoff the attenuation window is exactly zero.
             let cutoff = light.position.w;
             if cutoff <= 0.0 || distance < cutoff {
-                var color = light.color.rgb * (distance_attenuation(distance, cutoff, light.color.w * fire_decay) * fire_gain);
+                var color = light.color.rgb * distance_attenuation(distance, cutoff, light.color.w * decay_share);
                 let l = offset / max(distance, 1e-6);
                 let facing = dot(n, l);
                 if atmosphere_on() {
-                    color = fire_light_hue(color);
+                    // Brighter overall, so blasts and burning wrecks visibly light
+                    // the ground, walls and hulls around them in daylight; but added
+                    // over sunlit grass, amber only yellowed the green into an acid
+                    // blotch, so sunlit faces take less of it.
+                    color = fire_light_ceiling(color * (BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0))));
                     // Fire is a wide, rolling source, not a point: its light wraps
                     // past the terminator, so the ground and the sides of hulls and
                     // walls around a blast glow rather than only the faces square to it.
@@ -380,10 +365,28 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
             }
         }
     }
-    reflected.diffuse += (point_irradiance + point_wrap) * (fire_share * RECIPROCAL_PI) * fire_albedo;
-    if dot(point_irradiance, vec3f(1.0)) > 0.0 {
-        let l = point_direction / max(length(point_direction), 1e-6);
-        reflected.specular += point_irradiance * fire_share * brdf_ggx_multiscatter(l, v, n, specular, 1.0, roughness);
+    if dot(point_irradiance + point_wrap, vec3f(1.0)) > 0.0 {
+        var irradiance = point_irradiance;
+        var wrap = point_wrap;
+        var albedo = diffuse;
+        var share = 1.0;
+        if atmosphere_on() {
+            irradiance = fire_light_hue(irradiance);
+            wrap = fire_light_hue(wrap);
+            // Amber light on green grass multiplies to an acid yellow-green blotch:
+            // the surface lends firelight only part of its own hue, so the pool reads
+            // as an orange glow on any ground.
+            albedo = mix(diffuse, vec3f(dot(diffuse, vec3f(0.2126, 0.7152, 0.0722))), FIRE_ALBEDO_GREY);
+            // Even greyed, warm light added over green grass reads lime: foliage
+            // takes only a share of it, walls, earth and hulls all.
+            let green = clamp((diffuse.g - max(diffuse.r, diffuse.b)) / max(diffuse.g, 1e-4), 0.0, 1.0);
+            share = 1.0 - FIRE_ON_GREEN_CUT * green;
+        }
+        reflected.diffuse += (irradiance + wrap) * (share * RECIPROCAL_PI) * albedo;
+        if dot(irradiance, vec3f(1.0)) > 0.0 {
+            let l = point_direction / max(length(point_direction), 1e-6);
+            reflected.specular += irradiance * share * brdf_ggx_multiscatter(l, v, n, specular, 1.0, roughness);
+        }
     }
     var hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
     // How directly the sun reaches this point: cast and cloud shadow, and faces
@@ -556,10 +559,16 @@ const FIRE_AMBER_SHARE: f32 = 0.85;
 // a near-camera muzzle flash or fireball across the frame.
 const FIRE_LIGHT_LIMIT: f32 = 5.0;
 
-fn fire_light_hue(color: vec3f) -> vec3f {
-    let level = dot(color, vec3f(0.2126, 0.7152, 0.0722));
+// A flash light eased toward its ceiling (`FIRE_LIGHT_LIMIT`), light by light.
+fn fire_light_ceiling(color: vec3f) -> vec3f {
+    return color / (1.0 + dot(color, vec3f(0.2126, 0.7152, 0.0722)) / FIRE_LIGHT_LIMIT);
+}
+
+// Firelight turned toward amber, keeping its luminance: linear, so the lights' sum
+// takes it at once.
+fn fire_light_hue(light: vec3f) -> vec3f {
     let amber = FIRE_AMBER / dot(FIRE_AMBER, vec3f(0.2126, 0.7152, 0.0722));
-    return mix(color, amber * level, FIRE_AMBER_SHARE) / (1.0 + level / FIRE_LIGHT_LIMIT);
+    return mix(light, amber * dot(light, vec3f(0.2126, 0.7152, 0.0722)), FIRE_AMBER_SHARE);
 }
 // The seated view's own hull (`shade_standard`): within the first distance of the
 // eye its sky sheen is cut by this share and its glint entirely, easing back by the
