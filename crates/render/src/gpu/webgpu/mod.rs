@@ -126,6 +126,8 @@ pub struct Frame {
     static_shadow_map: Option<DepthMap>,
     dummy_depth: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
+    /// Nearest clamp-to-edge: gathers of the shadow map's depths.
+    shadow_texel_sampler: wgpu::Sampler,
     lut_view: wgpu::TextureView,
     /// The noise lattice the frame's shaders fetch (`noise_lattice.rs`) and the
     /// atmosphere map they sample (`atmosphere_map.rs`).
@@ -226,6 +228,10 @@ impl Frame {
                 mag_filter: wgpu::FilterMode::Linear,
                 min_filter: wgpu::FilterMode::Linear,
                 compare: Some(wgpu::CompareFunction::LessEqual),
+                ..Default::default()
+            }),
+            shadow_texel_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("shadow texels"),
                 ..Default::default()
             }),
             lut_view: lut.create_view(&Default::default()),
@@ -367,6 +373,10 @@ impl Frame {
                     wgpu::BindGroupEntry {
                         binding: 11,
                         resource: wgpu::BindingResource::TextureView(&self.atmosphere_map_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 12,
+                        resource: wgpu::BindingResource::Sampler(&self.shadow_texel_sampler),
                     },
                 ],
             })

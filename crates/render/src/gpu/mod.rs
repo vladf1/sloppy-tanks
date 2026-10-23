@@ -381,6 +381,10 @@ struct FrameUniform {
     haze_far: [f32; 4],
     ground: [f32; 4],
     quality: [f32; 4],
+    penumbra_u: [f32; 4],
+    penumbra_v: [f32; 4],
+    penumbra_depth: [f32; 4],
+    penumbra_steps: [f32; 4],
 }
 
 /// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade and the
@@ -400,6 +404,40 @@ struct OutputUniform {
     highlights: [f32; 4],
     detail: [f32; 4],
     curve: [f32; 4],
+}
+
+/// The penumbra's blocker search (`standard.wgsl` `penumbra_radius`): the steepest
+/// receiver slope it follows, metres of depth per texel; the depth gap it ignores and
+/// the depth steps that sort casters by how far up the sun's ray they stand, metres.
+const RECEIVER_SLOPE_LIMIT: f32 = 0.6;
+const BLOCKER_TOLERANCE: f32 = 0.06;
+const BLOCKER_STEPS: [f32; 3] = [1.0, 2.5, 5.0];
+
+/// The penumbra search's terms in the sun's shadow map (`Frame` `penumbra_*`), the
+/// same for every receiver, from `shadow_matrix` (world to map UV and depth) and the
+/// map's size in texels. The light's projection is orthographic, so its rows are
+/// orthogonal and a receiving plane's depth slope per map texel follows from their
+/// dot products with the plane's normal: each row over its squared length (u negated
+/// and both over the size, for texels along u and the flipped v), and one metre in
+/// depth units for the limit, the tolerance and the steps.
+fn penumbra_terms(shadow_matrix: Mat4, size: f32) -> [[f32; 4]; 4] {
+    let row = |index| shadow_matrix.row(index).truncate();
+    let (u, v, depth) = (row(0), row(1), row(2));
+    let metre = depth.length();
+    let u = -u / (u.length_squared() * size);
+    let v = v / (v.length_squared() * size);
+    let depth = depth / depth.length_squared();
+    [
+        [u.x, u.y, u.z, RECEIVER_SLOPE_LIMIT * metre],
+        [v.x, v.y, v.z, BLOCKER_TOLERANCE * metre],
+        [depth.x, depth.y, depth.z, 0.0],
+        [
+            BLOCKER_STEPS[0] * metre,
+            BLOCKER_STEPS[1] * metre,
+            BLOCKER_STEPS[2] * metre,
+            0.0,
+        ],
+    ]
 }
 
 /// The filmic curve's terms for `output.wgsl` `filmic`: x its toe power, y the
@@ -2059,6 +2097,8 @@ impl Renderer {
             0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0,
         ]) * shadow.view_projection();
         let world = view.inverse();
+        let [penumbra_u, penumbra_v, penumbra_depth, penumbra_steps] =
+            penumbra_terms(shadow_matrix, self.sun_shadow.map_size as f32);
         let mut point_lights = [[0.0; 8]; MAX_POINT_LIGHTS];
         for (slot, light) in point_lights.iter_mut().zip(&self.point_lights) {
             if let (Some(light), false) = (light, self.debug_off.lights) {
@@ -2120,6 +2160,10 @@ impl Renderer {
             camera_up: rgb4(world.y_axis.truncate().into(), 0.0),
             point_lights,
             quality: self.quality_uniform(),
+            penumbra_u,
+            penumbra_v,
+            penumbra_depth,
+            penumbra_steps,
             ..self.atmosphere_uniform(sky_rays)
         }
     }

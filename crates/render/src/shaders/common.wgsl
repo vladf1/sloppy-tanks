@@ -84,6 +84,15 @@ struct Frame {
     // The graphics tier's optional detail (`quality.rs`): y 1 for fine procedural
     // detail (`fine_detail`); w the scene's pixels per canvas pixel along each axis.
     quality: vec4f,
+    // The penumbra's blocker search (`standard.wgsl` `penumbra_radius`) in the sun's
+    // shadow map, from the light's projection (`gpu::penumbra_terms`): xyz of u and v
+    // turn a receiver's normal into its plane's depth slope per texel, of depth its
+    // depth per metre along the normal; u.w the steepest slope the search follows, v.w
+    // the depth gap it ignores, and steps.xyz its depth steps.
+    penumbra_u: vec4f,
+    penumbra_v: vec4f,
+    penumbra_depth: vec4f,
+    penumbra_steps: vec4f,
 }
 
 // Per drawn instance: world transform, tint (rgb multiplies the base color, a is

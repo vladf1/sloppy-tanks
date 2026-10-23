@@ -8,3 +8,5 @@
 @group(0) @binding(4) var lut_sampler: sampler;
 @group(0) @binding(10) var noise_lattice: texture_2d<f32>;
 @group(0) @binding(11) var atmosphere_map: texture_2d<f32>;
+// Nearest clamp-to-edge: gathers of the shadow map's depths (`penumbra_radius`).
+@group(0) @binding(12) var shadow_texel_sampler: sampler;

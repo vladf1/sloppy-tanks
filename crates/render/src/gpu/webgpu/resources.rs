@@ -54,10 +54,10 @@ const fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 
 // The entries are data so the pipeline precompiler (`precompile.rs`) builds the
 // same layouts as wgpu.
-use wgpu::SamplerBindingType::{Comparison, Filtering};
+use wgpu::SamplerBindingType::{Comparison, Filtering, NonFiltering};
 
 /// Frame uniforms, sun shadow map, DFG lookup table, the instance records, the noise
-/// lattice and the atmosphere map.
+/// lattice, the atmosphere map and the shadow map's nearest sampler.
 pub const FRAME_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     uniform_entry(0),
     wgpu::BindGroupLayoutEntry {
@@ -76,6 +76,7 @@ pub const FRAME_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     super::instance_store::INSTANCE_ENTRY,
     texture_entry(10, true),
     texture_entry(11, true),
+    sampler_entry(12, NonFiltering),
 ];
 
 /// A uniform block and two filtered textures (the water).
