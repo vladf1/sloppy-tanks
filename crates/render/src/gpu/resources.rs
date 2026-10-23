@@ -440,18 +440,28 @@ impl MeshStore {
 }
 
 /// A material's texture slots in binding order: map, bump, emissive, then the
-/// effect's extra textures.
-fn texture_slots(material: &Material) -> [Option<&TextureRef>; 3 + EXTRA_TEXTURE_SLOTS] {
+/// effect's extra textures. A material without a bump or emissive map lends that
+/// slot to its third or fourth extra texture, which its effect then reads as
+/// `bump_texture` or `emissive_texture` (the feature bits that make the standard
+/// shading sample them follow the maps alone): four effect textures with no
+/// bindings added to every pipeline's layout.
+pub(super) fn texture_slots(material: &Material) -> [Option<&TextureRef>; 3 + EXTRA_TEXTURE_SLOTS] {
     let extra = |slot: usize| {
         material
             .extra_textures
             .get(slot)
             .map(|(_, texture)| texture)
     };
+    debug_assert!(
+        (material.bump_map.is_none() || extra(2).is_none())
+            && (material.emissive_map.is_none() || extra(3).is_none())
+            && material.extra_textures.len() <= 4,
+        "a material's extra textures beyond the second need its bump and emissive slots"
+    );
     [
         material.map.as_ref(),
-        material.bump_map.as_ref(),
-        material.emissive_map.as_ref(),
+        material.bump_map.as_ref().or(extra(2)),
+        material.emissive_map.as_ref().or(extra(3)),
         extra(0),
         extra(1),
     ]
@@ -553,6 +563,14 @@ impl MaterialStore {
 
     pub fn get(&self, index: u32) -> &GpuMaterial {
         self.slots.at(index).expect("live material")
+    }
+
+    /// A live material drawn with effect `effect` (a bake's source).
+    pub fn with_effect(&self, effect: u16) -> Option<u32> {
+        self.slots
+            .iter()
+            .find(|(_, entry)| entry.effect == effect)
+            .map(|(index, _)| index)
     }
 
     pub fn get_mut(&mut self, index: u32) -> &mut GpuMaterial {

@@ -14,6 +14,7 @@ use sloppy_core::scene::{Blending, Effect, Material, Shading, Side, TextureRef};
 
 use crate::color::hex_to_linear;
 use crate::effects::EffectRegistry;
+use crate::effects::bakes::BakeDefinition;
 use crate::material::shadow_side;
 
 mod specialize;
@@ -30,6 +31,8 @@ pub const OCCLUSION_WGSL: &str = include_str!("shaders/occlusion.wgsl");
 pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
 pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
+/// The full-screen pass of a bake (`effects::bakes`).
+pub const BAKE_WGSL: &str = include_str!("shaders/bake.wgsl");
 
 /// Where the vertex stage reads instance records (`InstanceStore`): each
 /// source defines the frame group's binding 5 and `instance_at`.
@@ -402,6 +405,23 @@ impl StageSources {
         let (vertex, fragment) = key.entry_points();
         Self::of(&shader_source(key, effects), vertex, fragment)
     }
+}
+
+/// A bake's shader (`effects::bakes`): a surface shader's frame and material
+/// declarations, the bake's WGSL and the full-screen pass, reduced to what its entry
+/// points reach.
+pub fn bake_source(bake: &BakeDefinition) -> String {
+    bake_source_for(bake, InstanceSource::BUILD)
+}
+
+pub(crate) fn bake_source_for(bake: &BakeDefinition, source: InstanceSource) -> String {
+    let code = format!(
+        "{VERTEX_INPUT_WGSL}{}{MATERIAL_WGSL}{}\n{}\n{BAKE_WGSL}",
+        frame_wgsl(source),
+        bake.wgsl,
+        bake.entry
+    );
+    specialize::specialize(&code, &[])
 }
 
 /// The merged shadow-caster shader (`shadow_merge.rs`).

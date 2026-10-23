@@ -13,6 +13,7 @@
 //! seeded simulation stream. `EffectSystems` is the whole CPU side (native, unit
 //! tested); `Effects` binds it to the renderer's pools.
 
+pub mod bakes;
 pub mod explosions;
 pub mod ground;
 pub mod laser;

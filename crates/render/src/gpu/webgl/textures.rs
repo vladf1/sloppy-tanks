@@ -6,13 +6,16 @@
 use glow::HasContext;
 use sloppy_core::scene::Wrap;
 
-use super::context::{Gpu, Raster, unit};
+use super::context::{Gpu, Raster, block, unit};
 use super::programs::{Linking, Program};
+use super::{Frame, MaterialBinding};
 use crate::gpu::textures::{Pixels, SamplerKey, TextureKey};
 use crate::shader::MIPMAP_WGSL;
 
 pub type TextureView = glow::Texture;
 pub type Sampler = glow::Sampler;
+/// A bake's program (`effects::bakes`, [`super::Pipelines::request_bake`]).
+pub type BakePipeline = Program;
 
 /// An uploaded texture with its mip chain; dropping it deletes it.
 pub struct Texture {
@@ -191,6 +194,59 @@ impl Uploader {
             }
         }
         self.generate_mipmaps(gpu, texture, levels, width, height);
+        Texture {
+            gpu: gpu.clone(),
+            view: texture,
+        }
+    }
+
+    /// Render a bake (`effects::bakes`) into a new linear RGBA8 texture of `levels`
+    /// levels: the bake program over level 0, reading the frame's main-view uniform
+    /// and `material`'s uniform and textures, then the mip chain from it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bake(
+        &self,
+        gpu: &Gpu,
+        frame: &Frame,
+        program: &BakePipeline,
+        material: &MaterialBinding,
+        key: &TextureKey,
+        (width, height): (u32, u32),
+        levels: u32,
+    ) -> Texture {
+        debug_assert!(!key.srgb, "bakes render linear RGBA8");
+        let texture = storage(gpu, glow::RGBA8, levels, width, height);
+        let gl = &gpu.gl;
+        gpu.bind_framebuffer(Some(self.framebuffer));
+        unsafe {
+            gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                Some(texture),
+                0,
+            );
+        }
+        gpu.viewport(width, height);
+        gpu.use_program(program.raw);
+        gpu.set_raster(&Raster::PLAIN);
+        gpu.bind_vertex_array(Some(self.no_attributes));
+        gpu.bind_uniform_block(block::FRAME, frame.main_uniform());
+        material.bind(gpu);
+        unsafe { gl.draw_arrays(glow::TRIANGLES, 0, 3) };
+        if levels > 1 {
+            self.generate_mipmaps(gpu, texture, levels, width, height);
+        } else {
+            unsafe {
+                gl.framebuffer_texture_2d(
+                    glow::FRAMEBUFFER,
+                    glow::COLOR_ATTACHMENT0,
+                    glow::TEXTURE_2D,
+                    None,
+                    0,
+                );
+            }
+        }
         Texture {
             gpu: gpu.clone(),
             view: texture,

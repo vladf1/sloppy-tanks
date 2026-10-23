@@ -3,11 +3,11 @@
 
 use sloppy_core::scene::{TextureSource, Wrap};
 
-use super::Gpu;
 use super::context::texture_2d;
 use super::pipelines::pipeline_layout;
 use super::precompile::{Background, LayoutKind, PipelineSpec};
 use super::resources::MIPMAP_SOURCE_ENTRIES;
+use super::{Frame, Gpu, MaterialBinding};
 use crate::gpu::textures::{Pixels, SamplerKey, TextureKey};
 use crate::shader::{MIPMAP_WGSL, StageSources};
 
@@ -25,6 +25,8 @@ impl Drop for Texture {
 
 pub type TextureView = wgpu::TextureView;
 pub type Sampler = wgpu::Sampler;
+/// A bake's pipeline (`effects::bakes`, [`super::Pipelines::request_bake`]).
+pub type BakePipeline = wgpu::RenderPipeline;
 
 fn mipmap_spec(format: wgpu::TextureFormat) -> PipelineSpec {
     PipelineSpec {
@@ -180,6 +182,75 @@ impl Uploader {
             size,
         );
         self.generate_mipmaps(gpu, &texture, key.srgb);
+        Texture {
+            view: texture.create_view(&Default::default()),
+            texture,
+        }
+    }
+
+    /// Render a bake (`effects::bakes`) into a new linear RGBA8 texture of `levels`
+    /// levels: the bake pipeline over level 0, reading the frame's main-view group and
+    /// `material`'s, then the mip chain from it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn bake(
+        &self,
+        gpu: &Gpu,
+        frame: &Frame,
+        pipeline: &BakePipeline,
+        material: &MaterialBinding,
+        key: &TextureKey,
+        (width, height): (u32, u32),
+        levels: u32,
+    ) -> Texture {
+        debug_assert!(!key.srgb, "bakes render linear RGBA8");
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("bake"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: levels,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let target = texture.create_view(&wgpu::TextureViewDescriptor {
+            base_mip_level: 0,
+            mip_level_count: Some(1),
+            ..Default::default()
+        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("bake"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("bake"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, frame.main_group(), &[]);
+            pass.set_bind_group(1, &material.bind_group, &[]);
+            pass.draw(0..3, 0..1);
+        }
+        gpu.queue.submit([encoder.finish()]);
+        self.generate_mipmaps(gpu, &texture, false);
         Texture {
             view: texture.create_view(&Default::default()),
             texture,

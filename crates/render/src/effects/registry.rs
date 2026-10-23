@@ -164,8 +164,9 @@ pub const WRECK_AGING: EffectDefinition = effect(
     include_str!("../shaders/effects/wreck_aging.wgsl"),
 );
 
-/// The Pine Village meadow's functions, which its three kinds share.
-const MEADOW_WGSL: &str = include_str!("../shaders/effects/meadow_sway.wgsl");
+/// The Pine Village meadow's functions, which its three kinds and the ground's bake
+/// (`effects::bakes`) share.
+pub(crate) const MEADOW_WGSL: &str = include_str!("../shaders/effects/meadow_sway.wgsl");
 
 /// Meadow tufts swaying in the wind (`village-vegetation.ts`), the meadow effect's
 /// kind 0 ([`MODES`]).
@@ -177,7 +178,8 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) { vg_tuft_surfac
     ..effect(effects_scenery::MEADOW_SWAY, MEADOW_WGSL)
 };
 
-/// The village ground (`ground_surfaces.rs`), the meadow effect's kind 1.
+/// The village ground (`ground_surfaces.rs`), the meadow effect's kind 1, drawn from
+/// its bake (`bakes::VILLAGE_GROUND_BAKE_DEFINITION`).
 pub const VILLAGE_GROUND: EffectDefinition = EffectDefinition {
     entry:
         "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) { village_ground(s, f); }

@@ -19,7 +19,7 @@ pub use context::{Canvas, Gpu};
 pub use instance_store::InstanceStore;
 pub use pipelines::Pipelines;
 pub use resources::{MaterialBinding, PageBuffers};
-pub use textures::{Sampler, Texture, TextureView, Uploader};
+pub use textures::{BakePipeline, Sampler, Texture, TextureView, Uploader};
 
 use super::{
     BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
@@ -276,6 +276,11 @@ impl Frame {
     /// The view's instance records.
     pub fn instances(&self) -> &InstanceStore {
         &self.instance_records
+    }
+
+    /// The main view's frame group, which bakes read (`effects::bakes`).
+    pub fn main_group(&self) -> &wgpu::BindGroup {
+        &self.view_groups.0[MAIN_VIEW]
     }
 
     /// Replace the view's instance records with an empty store of `capacity`; the

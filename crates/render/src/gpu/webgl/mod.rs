@@ -18,7 +18,7 @@ mod textures;
 pub use context::{Canvas, Gpu};
 pub use programs::Pipelines;
 pub use resources::{InstanceStore, MaterialBinding, PageBuffers};
-pub use textures::{Sampler, Texture, TextureView, Uploader};
+pub use textures::{BakePipeline, Sampler, Texture, TextureView, Uploader};
 
 use glow::HasContext;
 
@@ -458,6 +458,11 @@ impl Frame {
 
     pub fn frame_groups(&self, _gpu: &Gpu, _instances: &InstanceStore) -> FrameGroups {
         FrameGroups
+    }
+
+    /// The main view's frame uniform, which bakes read (`effects::bakes`).
+    pub fn main_uniform(&self) -> glow::Buffer {
+        self.view_uniforms[MAIN_VIEW]
     }
 
     pub fn write_views(&self, gpu: &Gpu, views: &[FrameUniform; VIEW_COUNT]) {
