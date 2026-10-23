@@ -361,10 +361,12 @@ fn village_ground_bake(uv: vec2f) -> vec4f {
             let trodden = smoothstep(0.58, 0.86, vg_noise(p * 0.18 + 9.0) * 0.7 + vg_noise(p * 0.9 + 2.0) * 0.3) * (1.0 - packed * 0.4);
             extra = max(against * mix(0.75, 1.15, vg_noise(p * 0.6 + 11.0)), trodden * 0.8) / VG_SILT_RANGE;
         } else {
-            // Wildflowers in meadow drifts, never where the ground is worn or walked.
+            // Wildflowers in meadow drifts, never where the ground is worn or walked,
+            // nor in the crop fields.
             let wear = smoothstep(0.0, 0.9, max(plan.worn, plan.trampled * 0.85));
             let flowers = vg_noise(p * 0.08 + 61.0) * 0.65 + vg_noise(p * 0.17 + 3.0) * 0.35;
-            extra = smoothstep(0.45, 0.72, flowers) * (1.0 - smoothstep(0.1, 0.4, wear));
+            let meadow = smoothstep(0.45, 0.72, flowers) * (1.0 - smoothstep(0.1, 0.4, wear));
+            extra = vg_meadow_encode(meadow * (1.0 - plan.field), plan.field);
         }
         return vec4f(vg_cover_encode(edge.cover), vg_slope_encode(slope.x), vg_slope_encode(slope.y), clamp(extra, 0.0, 1.0));
     }

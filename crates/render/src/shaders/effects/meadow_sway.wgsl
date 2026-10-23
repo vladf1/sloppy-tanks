@@ -464,7 +464,8 @@ const VG_PLAN_HEIGHT = 512.0;
 //   `vg_damp_decode`);
 // - fields: r where the turf gives way (`vg_cover_decode`, positive on the turf), gb
 //   the land's slope along x and z (`vg_slope_decode`), a the wildflower meadows
-//   (outside the village square) or the earth silted over its paving (inside).
+//   and the crop fields (`vg_meadow_encode`) outside the village square, the earth
+//   silted over its paving inside.
 // Rows run from the most negative z, like the plan's.
 const VG_BAKE_PAGE = 512.0;
 const VG_BAKE_SIZE = vec2f(1536.0, 1024.0);
@@ -544,6 +545,12 @@ fn vg_damp_encode(damp: f32) -> f32 {
 
 fn vg_damp_decode(value: f32) -> f32 {
     return value * 2.0 - 0.5;
+}
+
+// The meadows above one half, the crop fields below it, so a texel between them
+// filters to neither.
+fn vg_meadow_encode(meadow: f32, field: f32) -> f32 {
+    return clamp(0.5 + 0.5 * meadow - 0.5 * field, 0.0, 1.0);
 }
 
 // Earth silted over the square's paving, stored over 0..1.2.
@@ -743,8 +750,8 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let sun_flat = normalize(frame.sun_direction.xz + vec2f(1e-4, 0.0));
     let sun_run = min(length(frame.sun_direction.xz) / max(frame.sun_direction.y, 0.2), 2.6);
 
-    // ---- The bake: colours through their mips (anisotropic, at most
-    // VG_BAKE_REACH texels wide), the fields at their finest level.
+    // ---- The bake: colours through their mips (at most VG_BAKE_REACH texels
+    // wide), each only where it shows, the fields at their finest level.
     let dp_x = dpdx(p);
     let dp_y = dpdy(p);
     let row = vg_bake_row(p);
@@ -753,22 +760,14 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let narrow = min(1.0, VG_BAKE_REACH / max(reach, 1e-6));
     let ddx = dp_x * to_uv * narrow;
     let ddy = dp_y * to_uv * narrow;
-    let grass_bake = vg_bake_grad(vg_bake_uv(p, row, VG_BAKE_GRASS), ddx, ddy);
-    let earth_bake = vg_bake_grad(vg_bake_uv(p, row, VG_BAKE_EARTH), ddx, ddy);
     let fields = vg_bake_level(vg_bake_uv(p, row, VG_BAKE_FIELDS));
-    // The turf's edge where the sun's ray over this point meets its rim.
-    let lip_fields = vg_bake_level(vg_bake_uv(p + sun_flat * sun_run * VG_TURF_LIP, row, VG_BAKE_FIELDS));
-    let long_grass = grass_bake.a;
-    let damp_field = vg_damp_decode(earth_bake.a);
-    let damp_aa = max(fwidth(damp_field), 0.004);
     let on_square = inside > 0.0 && vg_in_square(p);
-    let meadow = select(fields.a, 0.0, on_square);
+    let meadow = select(max(fields.a * 2.0 - 1.0, 0.0), 0.0, on_square);
+    let field = select(max(1.0 - fields.a * 2.0, 0.0), 0.0, on_square);
 
     // ---- Treads (`village_tracks.rs`): metres to the nearest tread's centre,
     // how fresh it is, the traffic that packed the ground and standing water.
     let tracks = textureSample(extra_texture1, extra_sampler1, vg_plan_uv(p, VG_ARENA_PLAN, 2.0));
-    // The tracks where the sun's ray over a rut's floor crosses its rim.
-    let tracks_sun = textureSample(extra_texture1, extra_sampler1, vg_plan_uv(p + sun_flat * sun_run * VG_RUT_DEPTH, VG_ARENA_PLAN, 2.0));
     let tread_aa = max(fwidth((1.0 - tracks.r) * VG_TREAD_REACH), aa);
     // The tread's run, from the slope of its proximity ramp across the screen.
     let ramp = vec2f(dpdx(tracks.r), dpdy(tracks.r));
@@ -794,8 +793,13 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         * (1.0 - smoothstep(VG_TREAD_HALF + 0.1, VG_TREAD_HALF + 0.34, tread_distance)) * tread_break;
     // Old treads blur into the packed dirt; fresh ones keep sharp walls.
     let rut = tread_bed * smoothstep(0.05, 0.6, fresh) * tread_bite;
-    let tread_sun = 1.0 - smoothstep(VG_TREAD_HALF - tread_aa, VG_TREAD_HALF + tread_aa, (1.0 - tracks_sun.r) * VG_TREAD_REACH);
-    let rut_sun = tread_sun * smoothstep(0.05, 0.6, tracks_sun.g * inside);
+    // The tracks where the sun's ray over a rut's floor crosses its rim.
+    var rut_sun = 0.0;
+    if rut > 0.0 {
+        let tracks_sun = textureSampleLevel(extra_texture1, extra_sampler1, vg_plan_uv(p + sun_flat * sun_run * VG_RUT_DEPTH, VG_ARENA_PLAN, 2.0), 0.0);
+        let tread_sun = 1.0 - smoothstep(VG_TREAD_HALF - tread_aa, VG_TREAD_HALF + tread_aa, (1.0 - tracks_sun.r) * VG_TREAD_REACH);
+        rut_sun = tread_sun * smoothstep(0.05, 0.6, tracks_sun.g * inside);
+    }
     let berm = tread_berm * smoothstep(0.35, 0.9, fresh);
     // Cleat prints across a fresh tread, gone before they shrink to a few pixels.
     let tread_along = dot(p, vec2f(-tread_across.y, tread_across.x));
@@ -835,16 +839,22 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let dirt = max(max(1.0 - far_cover, rut), mud_rim);
     // The same over a few centimetres, for the relief.
     let soft_dirt = max(max(1.0 - smoothstep(-0.3, 0.3, cover_drive), rut), mud_rim);
-    // The turf stands a hand high and shades the earth below its rim.
-    let rim_shade = smoothstep(-cover_soft, cover_soft, vg_cover_decode(lip_fields.r) + fray) * (1.0 - far_cover);
-    let clump_shade = rim_shade * 0.45 * dirt * (1.0 - rut);
-    let damp = smoothstep(0.58 - damp_aa, 0.58 + damp_aa, damp_field) * dirt;
+    // The turf stands a hand high and shades the earth below its rim: the bake's
+    // edge where the sun's ray over this point meets the rim.
+    var clump_shade = 0.0;
+    if dirt > 0.0 && cover_static > -0.9 {
+        let lip = vg_bake_level(vg_bake_uv(p + sun_flat * sun_run * VG_TURF_LIP, row, VG_BAKE_FIELDS)).r;
+        let rim_shade = smoothstep(-cover_soft, cover_soft, vg_cover_decode(lip) + fray) * (1.0 - far_cover);
+        clump_shade = rim_shade * 0.45 * dirt * (1.0 - rut);
+    }
 
     // ---- Grass: the bake's meadow under the tile's blades, bowing in the gusts.
     var grass = vec3f(0.0);
     var blooms = vec4f(0.0);
     var bloom_color = vec3f(0.0);
     if dirt < 1.0 {
+        let grass_bake = vg_bake_grad(vg_bake_uv(p, row, VG_BAKE_GRASS), ddx, ddy);
+        let long_grass = grass_bake.a;
         grass = grass_bake.rgb * grass_bake.rgb;
         let blades = mix(0.84, 1.16, clamp((grass_detail - 0.55) * 0.9, 0.0, 1.0));
         grass = grass * blades;
@@ -861,10 +871,11 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // Flower drifts tint the meadow where single blooms are too small to draw.
         grass = mix(grass, vg_linear(0xe8d68a), meadow * (1.0 - fine) * 0.12);
         // Keep the bank tint and the far hills' vertex shading.
-        grass = grass * f.vertex_color.rgb;
+        // (The crops take only a little of it.)
+        grass = grass * mix(f.vertex_color.rgb, vec3f(mix(0.9, 1.0, f.vertex_color.g)), field);
         // Wildflowers in the meadows: daisies with gold hearts, buttercups,
         // violets and campion.
-        blooms = vg_scatter(p, (0.03 + meadow * 0.22) * fine, 1.9, vec2f(0.035, 0.06), aa, 27.0);
+        blooms = vg_scatter(p, (0.03 + meadow * 0.22) * (1.0 - field) * fine, 1.9, vec2f(0.035, 0.06), aa, 27.0);
         if blooms.x > 0.0 {
             let bloom_pick = blooms.z;
             var petals = vg_linear(0xf3f0e4);
@@ -909,8 +920,16 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // ---- Dirt: the bake's earth with the tile's grain, combed along the busy
     // lines, damp in the hollows and cut by the treads.
     var soil = vec3f(0.0);
+    // Damp hollows in the loose ground: darker, cooler earth with a crisp drying
+    // rim, the bake's damp field cut over about a pixel.
+    var damp_field = 0.0;
+    var damp = 0.0;
     if dirt > 0.0 || paved > 0.0 {
+        let earth_bake = vg_bake_grad(vg_bake_uv(p, row, VG_BAKE_EARTH), ddx, ddy);
         soil = earth_bake.rgb * earth_bake.rgb;
+        damp_field = vg_damp_decode(earth_bake.a);
+        let damp_aa = max(footprint * 0.2, 0.004);
+        damp = smoothstep(0.58 - damp_aa, 0.58 + damp_aa, damp_field) * dirt;
         // Which way the road runs, for streaks combed along it.
         // Packed lanes are combed with streaks along the road's run.
         if packed > 0.0 {
