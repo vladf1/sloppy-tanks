@@ -73,6 +73,8 @@ export class UI {
   deathReport: DeathReport | null = null;
   /** The respawn countdown's length when it started, so its bar drains to zero. */
   respawnTotal = 0;
+  /** The animation frame that shows the filled respawn card (see `showRespawn`). */
+  private respawnShow = 0;
   lastRound = 0;
   /** Where the viewer's tank is on screen (NDC); null in first person. The damage ring
    * wraps it. */
@@ -254,18 +256,31 @@ export class UI {
   }
   /** Show or hide the respawn card. It stays built and drawn, unseen, between deaths, so
    * a death only fills in who did it and shows it: building and painting the card on the
-   * death frame cost Safari on an iPad 30 ms, every death. */
+   * death frame cost Safari on an iPad 30 ms, every death. The card is filled on the
+   * death frame and shown on the next, so Safari repaints it and starts its entrance on
+   * different frames: together, with the death's other HUD changes, they held an iPad's
+   * death frame 10 ms longer. */
   private showRespawn(shown: boolean): void {
     const layer = this.respawnLayer;
-    if (shown && layer.firstElementChild) {
+    cancelAnimationFrame(this.respawnShow);
+    this.respawnShow = 0;
+    if (!shown) {
+      layer.classList.remove("shown");
+      layer.inert = true;
+      return;
+    }
+    if (layer.firstElementChild) {
       layer.querySelector(".wrecked-by")!.outerHTML = wreckedByMarkup(
         this.deathCause ? this.deathReport : null,
       );
       layer.querySelector("#death-cause")!.textContent = this.deathCause;
       syncGameOptions(layer, this.choices);
     }
-    layer.classList.toggle("shown", shown);
-    layer.inert = !shown;
+    this.respawnShow = requestAnimationFrame(() => {
+      this.respawnShow = 0;
+      layer.classList.add("shown");
+      layer.inert = false;
+    });
   }
   private drawRecapTank(state: HudState): void {
     const slot = this.overlay.querySelector(".recap-tank");
@@ -399,9 +414,19 @@ export class UI {
       this.hud.querySelector("#ammo-notice")!.textContent = "";
     }
     if (this.lastPhase !== match.phase || dead !== this.lastDead) {
+      // A death or respawn in play only shows or hides the respawn card: the menus
+      // stay away, and rebuilding them restyled the page on Safari's death frames.
+      const inPlay =
+        this.lastPhase === "playing" &&
+        match.phase === "playing" &&
+        this.respawnLayer.firstElementChild !== null;
       this.lastPhase = match.phase;
       this.lastDead = dead;
-      this.show(state);
+      if (inPlay) {
+        this.showRespawn(dead);
+      } else {
+        this.show(state);
+      }
     }
     const set = (id: string, text: string) => setText(document, id, text);
     const solo = state.gameMode === "solo";
