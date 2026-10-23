@@ -1415,7 +1415,7 @@ mod tests {
                 .count()
                 >= 4
         );
-        assert!(shared.iter().filter(|(_, e)| e.has_shared_vertex()).count() >= 7);
+        assert!(shared.iter().filter(|(_, e)| e.has_shared_vertex()).count() >= 4);
         for (lit, alpha_test) in [(true, false), (true, true), (false, false)] {
             let key = |effect| ShaderKey {
                 lit,
@@ -1432,7 +1432,9 @@ mod tests {
                     assert!(stages.vertex.contains("let effect = material.features.y;"));
                     moving.insert(stages.vertex);
                 } else {
-                    assert_eq!(stages.vertex, plain.vertex, "{}", effect.name);
+                    let own = effect.has_own_vertex_hooks();
+                    assert_eq!(stages.vertex != plain.vertex, own, "{}", effect.name);
+                    assert!(!stages.vertex.contains("features.y"), "{}", effect.name);
                 }
                 let own_surface = effect.has_own_surface() || (!lit && effect.has_surface());
                 assert_eq!(

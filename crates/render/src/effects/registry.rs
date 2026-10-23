@@ -30,8 +30,10 @@
 //! vertex stage for every effect that has them (plain variants keep their own, which
 //! the branches would slow). WebKit compiles each distinct stage at first use on a
 //! cold start, about 0.3 s for a lit fragment stage and 0.05 s for a vertex stage,
-//! and a debris glow, a pallet's wear, a crown's sway or a billboard's corners each
-//! cost one for a few lines of their own.
+//! and a debris glow, a pallet's wear, a crown's normals or a billboard's corners
+//! each cost one for a few lines of their own. Only the particles' few-vertex
+//! billboards share vertex hooks: the branches' material read cost every vertex of
+//! a tree crown, a flag or a pallet (0.005 ms of an iPad-size village frame).
 
 use sloppy_core::models::{effects_props, effects_scenery};
 
@@ -270,9 +272,11 @@ const MODES: [(&str, &[(f32, &str)]); 1] = [(
 /// Tree crowns swaying in the wind, shaded as rounded masses.
 pub const FOLIAGE: EffectDefinition = EffectDefinition {
     still_shadow: true,
-    shared_vertex: wgsl!("shaders/effects/foliage.wgsl"),
     shared_surface: wgsl!("shaders/effects/foliage_surface.wgsl"),
-    ..effect(effects_scenery::FOLIAGE, "")
+    ..effect(
+        effects_scenery::FOLIAGE,
+        wgsl!("shaders/effects/foliage.wgsl"),
+    )
 };
 
 /// Screen-sized chimney wisps (`village-atmosphere.ts`).
