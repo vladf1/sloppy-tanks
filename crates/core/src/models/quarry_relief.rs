@@ -79,7 +79,7 @@ pub fn shade_relief(pixels: &mut [u8], start: usize) {
         }
         for (cell, pixels) in row.chunks_mut(4 * RELIEF_STEP).enumerate() {
             let (a, b) = (between[cell], between[cell + 1]);
-            for (step, pixel) in pixels.chunks_exact_mut(4).enumerate() {
+            for (step, pixel) in pixels.as_chunks_mut::<4>().0.iter_mut().enumerate() {
                 let fx = step as f32 / RELIEF_STEP as f32;
                 for k in 0..3 {
                     let scale = a[k] + (b[k] - a[k]) * fx;
@@ -258,7 +258,7 @@ mod tests {
         shade_relief(&mut pixels, 640);
         let mut lowest = 255;
         let mut highest = 0;
-        for pixel in pixels.chunks_exact(4) {
+        for pixel in pixels.as_chunks::<4>().0 {
             assert_eq!(pixel[3], 160);
             lowest = lowest.min(pixel[0]);
             highest = highest.max(pixel[0]);
