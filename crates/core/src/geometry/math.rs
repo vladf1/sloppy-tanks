@@ -20,6 +20,7 @@ pub fn js_sign(value: f64) -> f64 {
 pub use crate::sim::math::{js_round, to_int32};
 
 /// `Vector3.normalize()`: multiply by the reciprocal length; a zero vector stays zero.
+#[inline(always)]
 pub fn normalize(v: DVec3) -> DVec3 {
     let length = v.length();
     v * (1.0 / if length == 0.0 { 1.0 } else { length })

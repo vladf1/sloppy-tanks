@@ -338,8 +338,9 @@ pub fn timber_debris_model(p: &TimberPart) -> Node {
     let size = [p.w, p.h, p.d];
     let (across_a, across_b) = if along == 1 { (0, 2) } else { (1, 2) };
     for end in [-1.0, 1.0] {
-        let mut positions = Vec::new();
-        let mut uvs = Vec::new();
+        // Each cell's fibre: four slivers of two windings, three corners each.
+        let mut positions = Vec::with_capacity(SPLINTER_CELLS * 4 * 2 * 3 * 3);
+        let mut uvs = Vec::with_capacity(SPLINTER_CELLS * 4 * 2 * 3 * 2);
         // The break runs through the whole section: a grid of fibres covers the
         // end face, most snapped short and a few torn out long, each leaning its
         // own way, so the end reads as torn wood rather than a sawn cut with
