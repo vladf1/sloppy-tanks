@@ -21,9 +21,12 @@ use glam::Vec3;
 use sloppy_core::models::{SMOKE_MARKER, SUPPLY_SCALE, pickup_signal};
 use sloppy_core::sim::RenderState;
 
+use super::EffectView;
+use super::ease::EaseTable;
 use super::explosions::smoke_puff;
 use super::ground::Ground;
 use super::pool::PoolBuffer;
+use crate::camera::Sphere;
 use crate::color::hex_to_linear;
 
 /// `FEEDBACK.maxPickupEffects` (view-settings.ts), and how long a promotion's
@@ -214,7 +217,104 @@ struct Supply {
     since: f64,
     /// When its grenade relit while it was last seen empty (infinity: not yet).
     relit: f64,
+    /// Its column's fixed shape and the puffs it is giving off.
+    column: Column,
 }
+
+/// What a drop's column keeps between frames: its grenade, its own phase and height,
+/// and what each puff took from the moment it left the grenade. A puff's gush,
+/// meander, stray and size jitter depend only on when it was emitted, so they are
+/// worked out once per climb rather than every frame (the transcendentals were most
+/// of the column's cost).
+#[derive(Clone, Copy, Debug)]
+struct Column {
+    /// The pallet position the grenade was placed for.
+    at: [f64; 2],
+    base: Vec3,
+    seed: f64,
+    /// The climb before the fizzle's strength scales it.
+    rise: f64,
+    puffs: [Emission; SIGNAL_PUFFS],
+}
+
+impl Column {
+    fn new(id: u32, x: f64, z: f64) -> Self {
+        let seed = hash(f64::from(id));
+        Self {
+            at: [x, z],
+            base: grenade(x, z, supply_turn(id)),
+            seed,
+            rise: SIGNAL_RISE
+                * (1.0 + SIGNAL_RISE_SPREAD * (2.0 * hash(f64::from(id) + 7.3) - 1.0)),
+            puffs: [Emission::default(); SIGNAL_PUFFS],
+        }
+    }
+}
+
+/// The powers that shape a puff's climb (slowing, lean onset, widening and fading),
+/// tabulated: four of them for every puff of every column each frame.
+struct EaseTables([EaseTable; 4]);
+
+/// The fading power of the column's opacity toward its top.
+const SIGNAL_FADING: f64 = 1.1;
+
+fn ease_tables() -> &'static EaseTables {
+    static TABLES: std::sync::OnceLock<EaseTables> = std::sync::OnceLock::new();
+    TABLES.get_or_init(|| {
+        EaseTables(
+            [
+                SIGNAL_SLOWING,
+                SIGNAL_SHEAR_ONSET,
+                SIGNAL_WIDENING,
+                SIGNAL_FADING,
+            ]
+            .map(EaseTable::new),
+        )
+    })
+}
+
+/// One puff's draws from its emission time, valid for the climb numbered `climb`.
+#[derive(Clone, Copy, Debug)]
+struct Emission {
+    climb: f64,
+    gush: f64,
+    meander: f64,
+    stray: f64,
+    shrink: f64,
+    seed: f32,
+}
+
+impl Default for Emission {
+    fn default() -> Self {
+        Self {
+            climb: f64::NAN,
+            gush: 0.0,
+            meander: 0.0,
+            stray: 0.0,
+            shrink: 0.0,
+            seed: 0.0,
+        }
+    }
+}
+
+impl Emission {
+    fn new(climb: f64, emitted: f64, seed: f64) -> Self {
+        Self {
+            climb,
+            gush: 1.0 - SIGNAL_GUSH * 0.5 * (1.0 + (emitted * SIGNAL_GUSH_RATE + seed * TAU).sin()),
+            meander: (emitted * SIGNAL_MEANDER_RATE + seed * 11.0).sin(),
+            stray: hash(emitted * 3.7 + seed) - 0.5,
+            shrink: hash(emitted * 5.1 + seed),
+            seed: (seed * 3.1 + emitted * 0.37).fract() as f32,
+        }
+    }
+}
+
+/// Every puff of a column lies within this far of the point `COLUMN_MIDDLE` over its
+/// grenade: the highest climb, the lean and the stray of the widest puff, its card
+/// included, with room to spare.
+const COLUMN_REACH: f32 = 3.5;
+const COLUMN_MIDDLE: f32 = 1.25;
 
 #[derive(Clone, Debug)]
 pub struct PickupEffects {
@@ -309,8 +409,9 @@ impl PickupEffects {
 
     /// Write the column over every stocked pallet (the last of it over a pallet
     /// just emptied, a fizzle over one about to restock) and the promotion pops
-    /// into `puffs`, after the blasts have rebuilt it this frame.
-    pub fn draw(&mut self, state: &RenderState, puffs: &mut PoolBuffer) {
+    /// into `puffs`, after the blasts have rebuilt it this frame. Columns no view
+    /// shows are left out.
+    pub fn draw(&mut self, state: &RenderState, view: &EffectView, puffs: &mut PoolBuffer) {
         self.supplies
             .retain(|supply| state.pickups.iter().any(|pickup| pickup.id == supply.id));
         for pickup in &state.pickups {
@@ -322,8 +423,9 @@ impl PickupEffects {
                 let near = smoothstep(progress, FIZZLE_FROM, 1.0);
                 (lit, FIZZLE[0] + (FIZZLE[1] - FIZZLE[0]) * near)
             });
-            let since = match self.supplies.iter_mut().find(|s| s.id == pickup.id) {
-                Some(supply) => {
+            let at = match self.supplies.iter().position(|s| s.id == pickup.id) {
+                Some(at) => {
+                    let supply = &mut self.supplies[at];
                     if supply.stocked != pickup.available {
                         supply.stocked = pickup.available;
                         // A restocked grenade carries on from its fizzle, if it was
@@ -331,7 +433,10 @@ impl PickupEffects {
                         supply.since = supply.relit.min(state.elapsed);
                     }
                     supply.relit = relit.map_or(f64::INFINITY, |(lit, _)| lit);
-                    supply.since
+                    if supply.column.at != [pickup.x, pickup.z] {
+                        supply.column = Column::new(pickup.id, pickup.x, pickup.z);
+                    }
+                    at
                 }
                 None => {
                     self.supplies.push(Supply {
@@ -339,10 +444,13 @@ impl PickupEffects {
                         stocked: pickup.available,
                         since: f64::NEG_INFINITY,
                         relit: f64::INFINITY,
+                        column: Column::new(pickup.id, pickup.x, pickup.z),
                     });
-                    f64::NEG_INFINITY
+                    self.supplies.len() - 1
                 }
             };
+            let supply = &mut self.supplies[at];
+            let since = supply.since;
             // When the supply was taken: never while stocked, and long enough ago
             // for a drop whose cooldown has no known start. An empty drop's grenade
             // fizzles again as its restock nears.
@@ -361,14 +469,20 @@ impl PickupEffects {
             if state.elapsed - taken > SNUFF_SECONDS {
                 continue;
             }
-            let base = grenade(pickup.x, pickup.z, supply_turn(pickup.id));
+            let bounds = Sphere {
+                center: supply.column.base + Vec3::new(0.0, COLUMN_MIDDLE, 0.0),
+                radius: COLUMN_REACH,
+            };
+            if !view.sees(&bounds) {
+                continue;
+            }
             let signal = Signal {
                 color: pickup_signal(pickup.kind),
                 lit,
                 taken,
                 strength,
             };
-            column(pickup.id, base, signal, state.elapsed, puffs);
+            column(&mut supply.column, signal, state.elapsed, puffs);
         }
         for effect in &self.effects {
             pop(effect, puffs);
@@ -408,15 +522,13 @@ struct Signal {
 /// leaned over downwind, widening, fraying and greying a little as they climb. Each
 /// puff keeps the gush, meander and stray it left the grenade with, so the column
 /// moves as one body and never trembles; once the supply is taken it thins away.
-fn column(id: u32, base: Vec3, signal: Signal, time: f64, puffs: &mut PoolBuffer) {
+fn column(column: &mut Column, signal: Signal, time: f64, puffs: &mut PoolBuffer) {
     let tint = hex_to_linear(signal.color);
-    let seed = hash(f64::from(id));
-    let rise = SIGNAL_RISE
-        * (1.0 + SIGNAL_RISE_SPREAD * (2.0 * hash(f64::from(id) + 7.3) - 1.0))
-        * signal.strength.sqrt();
+    let (base, seed) = (column.base, column.seed);
+    let rise = column.rise * signal.strength.sqrt();
     let snuff = 1.0 - smoothstep(time - signal.taken, 0.0, SNUFF_SECONDS);
     let [wx, wz] = SIGNAL_WIND;
-    for j in 0..SIGNAL_PUFFS {
+    for (j, emission) in column.puffs.iter_mut().enumerate() {
         let cycle = time / SIGNAL_CYCLE + j as f64 / SIGNAL_PUFFS as f64 + seed;
         let a = cycle.fract();
         // When this puff left the grenade; constant over its climb.
@@ -424,31 +536,34 @@ fn column(id: u32, base: Vec3, signal: Signal, time: f64, puffs: &mut PoolBuffer
         if emitted < signal.lit || emitted > signal.taken {
             continue;
         }
-        let gush =
-            1.0 - SIGNAL_GUSH * 0.5 * (1.0 + (emitted * SIGNAL_GUSH_RATE + seed * TAU).sin());
-        let height = rise * (1.0 - (1.0 - a).powf(SIGNAL_SLOWING));
-        let shear = SIGNAL_SHEAR * a.powf(SIGNAL_SHEAR_ONSET);
+        let climb = cycle - a;
+        if emission.climb != climb {
+            *emission = Emission::new(climb, emitted, seed);
+        }
+        let gush = emission.gush;
+        let [slowing, onset, widening, fading] = &ease_tables().0;
+        let height = rise * (1.0 - slowing.at(1.0 - a));
+        let shear = SIGNAL_SHEAR * onset.at(a);
         // Across the wind: the slow meander of the whole column, and each puff's
         // own stray as it breaks up.
-        let stray = SIGNAL_STRAY * (hash(emitted * 3.7 + seed) - 0.5) * 2.0 * a * a;
-        let meander =
-            SIGNAL_MEANDER * a * (emitted * SIGNAL_MEANDER_RATE + seed * 11.0).sin() + stray;
+        let stray = SIGNAL_STRAY * emission.stray * 2.0 * a * a;
+        let meander = SIGNAL_MEANDER * a * emission.meander + stray;
         let position = base
             + Vec3::new(
                 (wx * shear - wz * meander) as f32,
                 height as f32,
                 (wz * shear + wx * meander) as f32,
             );
-        let size = (SIGNAL_SIZE[0] + (SIGNAL_SIZE[1] - SIGNAL_SIZE[0]) * a.powf(SIGNAL_WIDENING))
+        let size = (SIGNAL_SIZE[0] + (SIGNAL_SIZE[1] - SIGNAL_SIZE[0]) * widening.at(a))
             * (0.88 + 0.12 * gush)
             * (0.55 + 0.45 * signal.strength)
-            * (1.0 - 0.25 * smoothstep(a, 0.6, 1.0) * hash(emitted * 5.1 + seed));
+            * (1.0 - 0.25 * smoothstep(a, 0.6, 1.0) * emission.shrink);
         let opacity = SIGNAL_OPACITY
             * signal.strength
             * gush
             * snuff
             * smoothstep(a, 0.0, 0.04)
-            * (1.0 - a).powf(1.1);
+            * fading.at(1.0 - a);
         let thinning = smoothstep(a, SIGNAL_SATURATED, 1.0);
         let grey = SIGNAL_GREYING * thinning as f32;
         let [bright, dim] = SIGNAL_BRIGHTNESS;
@@ -461,7 +576,7 @@ fn column(id: u32, base: Vec3, signal: Signal, time: f64, puffs: &mut PoolBuffer
             size as f32,
             mix(tint, SMOKE_GREY, grey).map(|c| c * brightness),
             opacity as f32,
-            (seed * 3.1 + emitted * 0.37).fract() as f32,
+            emission.seed,
             0.0,
             erosion as f32,
             softness as f32,
@@ -631,8 +746,103 @@ fn pop(effect: &PickupEffect, puffs: &mut PoolBuffer) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::camera::PerspectiveCamera;
     use sloppy_core::sim::PickupKind;
     use sloppy_core::sim::types::Pickup;
+
+    fn stocked(id: u32, x: f64, z: f64) -> Pickup {
+        Pickup {
+            id,
+            kind: PickupKind::Speed,
+            x,
+            z,
+            available: true,
+            cooldown: 0.0,
+            cooldown_duration: 0.0,
+        }
+    }
+
+    #[test]
+    fn a_column_drawn_every_frame_matches_one_drawn_afresh() {
+        // Each puff keeps what it took from its emission for its whole climb.
+        let mut state = RenderState::default();
+        state.pickups.push(stocked(4, 3.0, -7.0));
+        state.pickups.push(stocked(9, -12.0, 5.0));
+        let mut running = PickupEffects::default();
+        let mut puffs = PoolBuffer::new(1024);
+        for frame in 0..600 {
+            state.elapsed = 30.0 + f64::from(frame) / 60.0;
+            puffs.clear();
+            running.draw(&state, &EffectView::default(), &mut puffs);
+        }
+        let mut fresh = PoolBuffer::new(1024);
+        PickupEffects::default().draw(&state, &EffectView::default(), &mut fresh);
+        assert_eq!(puffs.len(), fresh.len());
+        assert!(puffs.len() > SIGNAL_PUFFS);
+        for (a, b) in puffs.records().iter().zip(fresh.records()) {
+            assert!(a.world().abs_diff_eq(b.world(), 1e-5));
+            for (x, y) in a
+                .tint
+                .iter()
+                .chain(&a.data)
+                .zip(b.tint.iter().chain(&b.data))
+            {
+                assert!((x - y).abs() < 1e-5, "{x} {y}");
+            }
+        }
+    }
+
+    #[test]
+    fn the_climb_tables_follow_their_powers() {
+        let tables = ease_tables();
+        for (table, power) in tables.0.iter().zip([
+            SIGNAL_SLOWING,
+            SIGNAL_SHEAR_ONSET,
+            SIGNAL_WIDENING,
+            SIGNAL_FADING,
+        ]) {
+            for step in 0..=4000 {
+                let x = f64::from(step) / 4000.0;
+                let error = (table.at(x) - x.powf(power)).abs();
+                // A puff fades in over the first 4% of its climb, and is not drawn
+                // at all for the first half percent.
+                let bound = match x {
+                    x if x < 0.005 => 1e-2,
+                    x if x < 0.04 => 1e-3,
+                    _ => 1e-5,
+                };
+                assert!(error < bound, "{power} at {x}: {error}");
+            }
+        }
+    }
+
+    #[test]
+    fn columns_no_view_shows_are_left_out() {
+        let mut state = RenderState {
+            elapsed: 20.0,
+            ..Default::default()
+        };
+        state.pickups.push(stocked(3, 0.0, 0.0));
+        let draw = |view: &EffectView| {
+            let mut puffs = PoolBuffer::new(64);
+            PickupEffects::default().draw(&state, view, &mut puffs);
+            puffs.len()
+        };
+        let full = draw(&EffectView::default());
+        assert!(full > 0);
+        let mut camera = PerspectiveCamera::new(20.0, 0.1, 500.0);
+        // Steeply down at the ground beyond the drop, which stands above the view.
+        camera.look_at(Vec3::new(0.0, 10.0, 50.0), Vec3::new(0.0, -40.0, 0.0));
+        assert_eq!(draw(&EffectView::new(&camera.view_projection(), None)), 0);
+        // Water below mirrors the column into the view.
+        let mirrored = EffectView::new(&camera.view_projection(), Some(-15.0));
+        assert_eq!(draw(&mirrored), full);
+        camera.look_at(Vec3::new(0.0, 30.0, 25.0), Vec3::ZERO);
+        assert_eq!(
+            draw(&EffectView::new(&camera.view_projection(), None)),
+            full
+        );
+    }
 
     #[test]
     fn stocked_pallets_smoke_snuff_out_once_taken_and_promotions_pop() {
@@ -651,7 +861,7 @@ mod tests {
         });
         let mut effects = PickupEffects::default();
         let mut puffs = PoolBuffer::new(1024);
-        effects.draw(&state, &mut puffs);
+        effects.draw(&state, &EffectView::default(), &mut puffs);
         let stocked = puffs.len();
         assert!(
             stocked > SIGNAL_PUFFS / 2 && stocked <= SIGNAL_PUFFS,
@@ -662,7 +872,7 @@ mod tests {
         state.pickups[0].cooldown_duration = 15.0;
         state.pickups[0].cooldown = 14.9;
         puffs.clear();
-        effects.draw(&state, &mut puffs);
+        effects.draw(&state, &EffectView::default(), &mut puffs);
         assert!(
             !puffs.is_empty() && puffs.len() <= stocked,
             "the last smoke"
@@ -670,16 +880,16 @@ mod tests {
         // Soon after, before it smoulders again: nothing over the empty pallet.
         state.pickups[0].cooldown = 15.0 - (SNUFF_SECONDS + FIZZLE_FROM * 15.0) / 2.0;
         puffs.clear();
-        effects.draw(&state, &mut puffs);
+        effects.draw(&state, &EffectView::default(), &mut puffs);
         assert!(puffs.is_empty(), "the grenade goes out for a breath");
         // Restocked: the column grows from the grenade.
         state.pickups[0].available = true;
         puffs.clear();
-        effects.draw(&state, &mut puffs);
+        effects.draw(&state, &EffectView::default(), &mut puffs);
         assert!(puffs.len() <= 1, "a relit grenade starts its column afresh");
         state.elapsed += SIGNAL_CYCLE / 2.0;
         puffs.clear();
-        effects.draw(&state, &mut puffs);
+        effects.draw(&state, &EffectView::default(), &mut puffs);
         assert!(puffs.len() > 2 && puffs.len() < stocked, "and it climbs");
         puffs.clear();
         effects.land(4.0, -2.0, 0.0);
@@ -711,7 +921,7 @@ mod tests {
         assert_eq!(effects.len(), MAX_PICKUP_EFFECTS);
         effects.update(0.1);
         state.pickups.clear();
-        effects.draw(&state, &mut puffs);
+        effects.draw(&state, &EffectView::default(), &mut puffs);
         assert_eq!(puffs.len(), MAX_PICKUP_EFFECTS * POP_PUFFS);
         assert!(
             puffs.records()[0].translation().y > POP_HEIGHT as f32,
@@ -738,7 +948,7 @@ mod tests {
         });
         let mut effects = PickupEffects::default();
         let mut puffs = PoolBuffer::new(1024);
-        effects.draw(&state, &mut puffs);
+        effects.draw(&state, &EffectView::default(), &mut puffs);
         let faint = |puffs: &PoolBuffer| puffs.records().iter().map(|p| p.tint[3]).sum::<f32>();
         let early = faint(&puffs);
         assert!(!puffs.is_empty(), "a faint wisp through the cooldown");
@@ -746,7 +956,7 @@ mod tests {
         state.elapsed += 9.0;
         state.pickups[0].cooldown = 1.0;
         puffs.clear();
-        effects.draw(&state, &mut puffs);
+        effects.draw(&state, &EffectView::default(), &mut puffs);
         let fizzle = puffs.len();
         assert!(
             fizzle > 2 && faint(&puffs) > early,
@@ -756,7 +966,7 @@ mod tests {
         state.elapsed += 1.0;
         state.pickups[0].available = true;
         puffs.clear();
-        effects.draw(&state, &mut puffs);
+        effects.draw(&state, &EffectView::default(), &mut puffs);
         assert!(puffs.len() >= fizzle, "the column carries on");
         // A crushed grenade vents its colour out on the drop's side, and it clears.
         effects.vent(0.0, 0.0, [1.0, 0.0], 0xd2622a);

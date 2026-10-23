@@ -14,6 +14,7 @@
 //! tested); `Effects` binds it to the renderer's pools.
 
 pub mod bakes;
+pub mod ease;
 pub mod explosions;
 pub mod ground;
 pub mod laser;
@@ -38,8 +39,10 @@ pub mod walls;
 pub mod wood_chips;
 pub mod wreck_fire;
 
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use sloppy_core::sim::{RenderState, SimEvent, SimEventType};
+
+use crate::camera::{Frustum, Sphere};
 
 pub use pool::{PoolBuffer, PoolDesc};
 pub use random::CosmeticRandom;
@@ -80,6 +83,39 @@ pub struct Flash {
     pub position: Vec3,
     pub intensity: f32,
     pub color: u32,
+}
+
+/// What this frame's views can show, so an effect can leave out smoke no view draws:
+/// the camera's frustum and, while the water's reflection draws, the water plane. The
+/// reflection's mirrored camera sees exactly what the camera sees of the scene
+/// mirrored in that plane. Effect pools draw in the main view and the reflection only.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EffectView {
+    /// `None` shows everything (before the first camera, and in native tests).
+    frustum: Option<Frustum>,
+    /// The reflecting water's height.
+    mirror: Option<f32>,
+}
+
+impl EffectView {
+    pub fn new(view_projection: &Mat4, mirror: Option<f32>) -> Self {
+        Self {
+            frustum: Some(Frustum::from_view_projection(view_projection)),
+            mirror,
+        }
+    }
+
+    pub fn sees(&self, sphere: &Sphere) -> bool {
+        let Some(frustum) = &self.frustum else {
+            return true;
+        };
+        frustum.intersects_sphere(sphere)
+            || self.mirror.is_some_and(|height| {
+                let mut mirrored = *sphere;
+                mirrored.center.y = 2.0 * height - sphere.center.y;
+                frustum.intersects_sphere(&mirrored)
+            })
+    }
 }
 
 /// Keep `light` in `lights` if it outshines the dimmest one there.
@@ -136,6 +172,8 @@ pub struct EffectSystems {
     pub pickups: PickupEffects,
     /// This frame's brightest fire lights.
     pub lights: [Flash; FIRE_LIGHTS],
+    /// What the frame's views show (set before each update).
+    pub view: EffectView,
 }
 
 impl EffectSystems {
@@ -254,7 +292,8 @@ impl EffectSystems {
             &mut particles.sparks,
             &mut self.random,
         );
-        self.pickups.draw(state, &mut particles.explosions.puffs);
+        self.pickups
+            .draw(state, &self.view, &mut particles.explosions.puffs);
         // Every puff is written: keep the billows clear of the walls beside them.
         let explosions = &mut self.particles.explosions;
         explosions.walls.keep_puffs_clear(&mut explosions.puffs);
@@ -330,7 +369,7 @@ mod browser {
     use glam::Vec3;
 
     use super::explosions::BLAST_LIGHT_DISTANCE;
-    use super::{EffectSystems, FLASH_DECAY, LIGHT_CUTOFF, MUZZLE_FLASH_COLOR};
+    use super::{EffectSystems, EffectView, FLASH_DECAY, LIGHT_CUTOFF, MUZZLE_FLASH_COLOR};
     use crate::gpu::{PointLight, PoolId, Renderer};
 
     /// The point-light slots the fire lights and the muzzle flash use.
@@ -344,6 +383,12 @@ mod browser {
         pools: Vec<PoolId>,
         /// The smoke puffs' pool, whose params carry the walls it softens against.
         puffs: PoolId,
+        /// The walls last written to those params: they rarely change, and each write
+        /// is a buffer upload.
+        soft_walls: Option<[[f32; 4]; 4]>,
+        /// Leave nothing out for being out of view: the frame is about to be drawn
+        /// again from another pose (`Game::debug_render`).
+        pub show_everything: bool,
     }
 
     impl Effects {
@@ -362,6 +407,8 @@ mod browser {
                 systems: EffectSystems::default(),
                 pools,
                 puffs,
+                soft_walls: None,
+                show_everything: false,
             }
         }
 
@@ -380,6 +427,15 @@ mod browser {
             dt: f64,
             time: f64,
         ) {
+            let mirror = renderer
+                .water_settings()
+                .filter(|water| water.reflection)
+                .map(|water| water.height);
+            self.systems.view = if self.show_everything {
+                EffectView::default()
+            } else {
+                EffectView::new(&renderer.camera().view_projection(), mirror)
+            };
             self.systems.update(state, alpha, dt, time);
             // Smoke puffs overlap heavily: composite them back to front from this
             // frame's eye (presentation sets the camera before effects update).
@@ -407,6 +463,8 @@ mod browser {
                 systems,
                 pools,
                 puffs,
+                soft_walls,
+                ..
             } = self;
             let mut next = pools.iter();
             systems.for_each_pool(|buffer| {
@@ -418,7 +476,11 @@ mod browser {
             let mut params = [[0.0; 4]; 4];
             params[0][0] = systems.tracks.clock as f32;
             renderer.set_pool_params(pools[0], params);
-            renderer.set_pool_params(*puffs, systems.particles.explosions.walls.soft_boxes());
+            let walls = systems.particles.explosions.walls.soft_boxes();
+            if *soft_walls != Some(walls) {
+                renderer.set_pool_params(*puffs, walls);
+                *soft_walls = Some(walls);
+            }
             for (slot, light) in FIRE_LIGHT_SLOTS.into_iter().zip(systems.lights) {
                 renderer.set_point_light(
                     slot,
