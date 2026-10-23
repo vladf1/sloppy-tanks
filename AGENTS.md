@@ -227,8 +227,10 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   `mapped_at_creation` (the browser backend stages the whole mapped range in a
   Wasm-side copy); stream large meshes in chunks; hand generated pixels to the
   GPU as JS `ImageData`; size merged geometry up front and move, not clone,
-  parts a merge consumes. Check a map's `WebAssembly.Memory` size after loading
-  it when changing scenery or upload paths.
+  parts a merge consumes. Keep no CPU copy of a mesh the GPU already holds: the
+  mesh store keeps only a `Weak`, so a model registered once (the wrecks, themed
+  scenery) must not also sit in a cache or a retained tree. Check a map's
+  `WebAssembly.Memory` size after loading it when changing scenery or upload paths.
 - Meshes have no GPU buffers of their own: they share vertex and index pages
   (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
   in the vertex page, so every draw passes `base_vertex` 0 (WebGL2 has none) and a
