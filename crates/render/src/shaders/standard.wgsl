@@ -100,11 +100,12 @@ var<private> receiver_normal: vec3f;
 
 // Contact-hardening penumbra: shadows stay crisp where a hull or wall meets the
 // ground and widen toward the tip of a tall caster's shadow. Blockers are found
-// with bilinearly weighted compares like the filter's (continuous as things move,
-// no noise): four spots around the receiver, against its own plane, find the
+// with the same hardware-filtered compares as the filter (continuous as things
+// move, no noise): four taps around the receiver, against its own plane, find the
 // casters above it, and only where there are any, three more depths sort them by
-// how far up the sun's ray they stand (`penumbra_steps`). Each spot's four depths
-// come from one gather, which answers every depth step without another tap.
+// how far up the sun's ray they stand (`penumbra_steps`): one gather per tap gives
+// the four depths its compare filtered, which answer every step with the same
+// bilinear weights.
 const PENUMBRA_SEARCH_TEXELS: f32 = 5.0;
 // The caster distance each band of the search stands for, metres: below the first
 // step, between the steps and beyond the last.
@@ -141,23 +142,32 @@ fn penumbra_radius(coord: vec3f, size: f32) -> f32 {
     let limit = frame.penumbra_u.w;
     let slope = clamp(across * c / max(c * c, 1e-12), vec2f(-limit), vec2f(limit));
     let tolerance = frame.penumbra_v.w + abs(slope.x) + abs(slope.y);
-    // The spots lie whole texels apart, so one set of bilinear weights serves all
-    // four gathers (their texels in the gather's order: -u +v, +u +v, +u -v, -u -v).
-    let f = fract(coord.xy * size - 0.5);
-    let weights = vec4f((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
-    var depths = array<vec4f, 4>();
     var references = vec4f(0.0);
+    var spots = array<vec2f, 4>();
+    var open = 0.0;
     for (var i = 0; i < 4; i++) {
         let offset = vec2f(f32(i & 1) * 2.0 - 1.0, f32(i >> 1u) * 2.0 - 1.0) * PENUMBRA_SEARCH_TEXELS;
         references[i] = coord.z + dot(slope, offset) - tolerance;
-        depths[i] = textureGather(shadow_map, shadow_texel_sampler, coord.xy + offset / size);
+        spots[i] = coord.xy + offset / size;
+        open += textureSampleCompareLevel(shadow_map, shadow_sampler, spots[i], references[i]);
     }
-    // The share of the search that casters cover.
+    if open >= 4.0 {
+        return 1.0;
+    }
+    // Under casters the spots' own depths answer every depth step: the spots lie whole
+    // texels apart, so one set of bilinear weights serves all four gathers (their
+    // texels in the gather's order: -u +v, +u +v, +u -v, -u -v).
+    let f = fract(coord.xy * size - 0.5);
+    let weights = vec4f((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
+    var depths = array<vec4f, 4>();
+    for (var i = 0; i < 4; i++) {
+        depths[i] = textureGather(shadow_map, shadow_texel_sampler, spots[i]);
+    }
+    // The share of the search that casters cover, and those beyond each step.
     let blocked = 4.0 - penumbra_open(depths, references, weights);
     if blocked <= 0.0 {
         return 1.0;
     }
-    // Casters beyond each step, summed over the four spots.
     let steps = frame.penumbra_steps.xyz;
     var beyond = vec3f(0.0);
     for (var k = 0; k < 3; k++) {
