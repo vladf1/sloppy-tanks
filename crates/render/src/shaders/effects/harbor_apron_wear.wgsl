@@ -27,7 +27,7 @@ fn wear_concrete(p: vec2f, grime: f32, mottle: f32, offsets: vec4f, fixture: vec
     let cell = floor(slab_uv);
     let to_edge = (0.5 - abs(fract(slab_uv) - 0.5)) * APRON_SLAB;
     let edge = min(to_edge.x, to_edge.y);
-    let slab = apron_hash(cell + vec2f(17.0, 5.0));
+    let slab = apron_cell_hash(cell + vec2f(17.0, 5.0));
     var m = vec3f(grime);
     var roughness = WEAR_CONCRETE_ROUGHNESS;
     // Ghosts of bay lines ground off when the yard was re-marked.
@@ -219,8 +219,8 @@ fn wear_asphalt(p: vec2f, along_z: bool, grime: f32, mottle: f32, offsets: vec4f
             + apron_noise(vec2f(across * 5.0, lane_along * 1.7)) * 0.3) * traffic.y;
     }
     let lane_centre = select(p.y - offsets.y, p.x - offsets.x, along_z);
-    let lane_seed = apron_hash(vec2f(lane_centre, 71.0));
-    let section = apron_hash(vec2f(floor(lane_along / APRON_SECTION + lane_seed.x), lane_centre * 0.37 + 5.0));
+    let lane_seed = apron_cell_hash(vec2f(lane_centre, 71.0));
+    let section = apron_cell_hash(vec2f(floor(lane_along / APRON_SECTION + lane_seed.x), lane_centre * 0.37 + 5.0));
     let oxidised = clamp(worn * (1.0 - traffic.x * 0.7) + (section.y - 0.5) * 0.6, 0.0, 1.0);
     var m = mix(0.88, 1.1, section.x) * mix(vec3f(0.92), vec3f(1.3, 1.26, 1.2), oxidised) * mix(1.0, 1.2, ravel) * grime;
     // Braking and pulling away polish the wheel paths hardest in the last stretch
@@ -282,7 +282,7 @@ fn fs_bake(input: BakeOut) -> @location(0) vec4f {
     let to_edge = (0.5 - abs(fract(slab_uv) - 0.5)) * APRON_SLAB;
     let edge = min(to_edge.x, to_edge.y);
     let cover_cell = floor(p / APRON_COVER_CELL);
-    let cover_hash = apron_hash(cover_cell + vec2f(41.0, 7.0));
+    let cover_hash = apron_cell_hash(cover_cell + vec2f(41.0, 7.0));
     let cover_d = length(p - (cover_cell + 0.25 + 0.5 * cover_hash.xy) * APRON_COVER_CELL);
     let has_cover = step(0.72, cover_hash.w) * step(0.9, abs(lane_edge)) * step(1.5, fixture.x);
     let low = max(

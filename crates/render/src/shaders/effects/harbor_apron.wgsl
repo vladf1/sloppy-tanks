@@ -12,9 +12,10 @@
 // container's paint (standard, over its wear tile), shaded per box, 11 the sea
 // wall's parapet round the apron.
 //
-// The modes fall into three kinds, each a definition of its own (`registry.rs`), so a
-// pipeline compiles only its kind's code: the ground (`apron_ground`, concrete and
-// asphalt), the paint on it (`apron_paint`) and the structures (`apron_structure`).
+// The modes fall into three kinds: the ground (`apron_ground`, concrete and asphalt),
+// the paint on it (`apron_paint`) and the structures (`apron_structure`); the
+// alpha-tested markings are a definition of their own (`registry.rs`), so their
+// variants compile only the paint.
 // The ground covers most of the screen, so it works out only its crisp detail per
 // pixel (grain, slab joints and tones, tar, cracks, spalls, repair patches, covers,
 // the asphalt's aggregate and tyre streaks); everything that varies slowly across the
@@ -167,6 +168,19 @@ fn apron_hash(cell: vec2f) -> vec4f {
     var p = fract(cell.xyxy * vec4f(0.1031, 0.1030, 0.0973, 0.1099));
     p = p + dot(p, p.wzxy + 33.33);
     return fract((p.xxyz + p.yzzw) * p.zywx);
+}
+
+// Four values in [0, 1) for a cell of whole coordinates, from one integer hash: about
+// half the work of `apron_hash`, for the cells the ground looks up at every pixel
+// (its wear bake looks up the same ones, so a cover's rust ring and a lane section's
+// tone line up with what the pixel draws).
+fn apron_cell_hash(cell: vec2f) -> vec4f {
+    let c = vec2i(cell);
+    var h = (bitcast<u32>(c.x) * 1597334677u) ^ (bitcast<u32>(c.y) * 3812015801u);
+    h = (h ^ (h >> 16u)) * 2246822519u;
+    h = (h ^ (h >> 13u)) * 3266489917u;
+    h = h ^ (h >> 16u);
+    return vec4f((vec4u(h) >> vec4u(0u, 8u, 16u, 24u)) & vec4u(255u)) * (1.0 / 256.0) + 0.5 / 256.0;
 }
 
 fn apron_noise(p: vec2f) -> f32 {
@@ -334,7 +348,7 @@ fn apron_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let patch_aa = max(fwidth(patch_local.x) + fwidth(patch_local.y), 1e-4);
     // A utility cover in some cells: distance to its centre.
     let cover_cell = floor(p / APRON_COVER_CELL);
-    let cover_hash = apron_hash(cover_cell + vec2f(41.0, 7.0));
+    let cover_hash = apron_cell_hash(cover_cell + vec2f(41.0, 7.0));
     let cover_at = (cover_cell + 0.25 + 0.5 * cover_hash.xy) * APRON_COVER_CELL;
     let cover_d = length(p - cover_at);
     let cover_aa = max(fwidth(cover_d), 1e-4);
@@ -374,7 +388,7 @@ fn apron_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // cracks and spalled corners, then the sawn joints with tar run into them,
         // smeared over a slab where the crew overbanded it, and over the worst
         // cracks.
-        let slab = apron_hash(cell + vec2f(17.0, 5.0));
+        let slab = apron_cell_hash(cell + vec2f(17.0, 5.0));
         let patched = step(slab.y, 0.07);
         let tone = mix(0.74, 1.12, slab.x * slab.x * 0.4 + slab.x * 0.6) * mix(1.0, 1.14, patched);
         let hue = mix(vec3f(1.03, 1.0, 0.95), vec3f(0.96, 0.995, 1.035), slab.w);
@@ -387,7 +401,7 @@ fn apron_ground(s: ptr<function, Surface>, f: EffectFragment) {
             * min(1.0, 2.0 * APRON_SEALANT / expansion_aa);
         // Spalled corners: a chunk broken out where four slabs meet.
         let corner_cell = round(slab_uv);
-        let corner_hash = apron_hash(corner_cell + vec2f(61.0, 3.0));
+        let corner_hash = apron_cell_hash(corner_cell + vec2f(61.0, 3.0));
         let corner_reach = length((slab_uv - corner_cell) * APRON_SLAB);
         let spall_radius = 0.08 + 0.3 * corner_hash.x;
         let spall = (1.0 - smoothstep(spall_radius - aa, spall_radius + aa, corner_reach + (grain_luma - 1.0) * 0.04))
@@ -439,7 +453,7 @@ fn apron_ground(s: ptr<function, Surface>, f: EffectFragment) {
         let stones = smoothstep(1.3, 2.1, chips) * 0.8 - smoothstep(0.7, 0.35, chips) * 0.4;
         let ravel = smoothstep(half - 1.1, half - 0.15, abs(across));
         let tyre = smoothstep(0.8, 1.35, streak) * 0.75;
-        let patch_hash = apron_hash(patch_cell + vec2f(3.0, 11.0));
+        let patch_hash = apron_cell_hash(patch_cell + vec2f(3.0, 11.0));
         let has_patch = step(0.93, patch_hash.x * 0.6 + patch_hash.w * 0.6);
         var patched = 0.0;
         var seal = 0.0;
@@ -457,9 +471,9 @@ fn apron_ground(s: ptr<function, Surface>, f: EffectFragment) {
         // Relaid a stretch at a time, each section meeting the next at a straight
         // transverse joint; cracks run in short broken lengths on the older ones.
         let lane_centre = select(p.y - offsets.y, p.x - offsets.x, along_z);
-        let lane_seed = apron_hash(vec2f(lane_centre, 71.0));
+        let lane_seed = apron_cell_hash(vec2f(lane_centre, 71.0));
         let section_at = lane_along / APRON_SECTION + lane_seed.x;
-        let section = apron_hash(vec2f(floor(section_at), lane_centre * 0.37 + 5.0));
+        let section = apron_cell_hash(vec2f(floor(section_at), lane_centre * 0.37 + 5.0));
         let section_edge = (0.5 - abs(fract(section_at) - 0.5)) * APRON_SECTION;
         let section_joint = (1.0 - smoothstep(0.01, 0.05 + footprint, section_edge)) * step(0.35, section.z);
         // A crack opens and closes along its run, wide where the crew poured
