@@ -67,24 +67,24 @@ pub fn shade_relief(pixels: &mut [u8], start: usize) {
             (0..columns).map(move |c| relief_multiplier(c * RELIEF_STEP, r * RELIEF_STEP))
         })
         .collect();
-    let at = |r: usize, c: usize| lattice[(r - first) * columns + c];
+    let mut between = vec![[0.0f32; 3]; columns];
     for (offset, row) in pixels.chunks_exact_mut(size * 4).enumerate() {
         let y = start + offset;
-        let (r, fy) = (
-            y / RELIEF_STEP,
-            (y % RELIEF_STEP) as f32 / RELIEF_STEP as f32,
-        );
-        for (col, pixel) in row.chunks_exact_mut(4).enumerate() {
-            let (c, fx) = (
-                col / RELIEF_STEP,
-                (col % RELIEF_STEP) as f32 / RELIEF_STEP as f32,
-            );
-            let (a, b, d, e) = (at(r, c), at(r, c + 1), at(r + 1, c), at(r + 1, c + 1));
-            for k in 0..3 {
-                let top = a[k] + (b[k] - a[k]) * fx;
-                let bottom = d[k] + (e[k] - d[k]) * fx;
-                let scale = top + (bottom - top) * fy;
-                pixel[k] = (f32::from(pixel[k]) * scale).round().clamp(0.0, 255.0) as u8;
+        let r = y / RELIEF_STEP - first;
+        let fy = (y % RELIEF_STEP) as f32 / RELIEF_STEP as f32;
+        // The lattice interpolated to this row once, then along it per pixel.
+        let (above, below) = lattice[r * columns..(r + 2) * columns].split_at(columns);
+        for ((out, a), b) in between.iter_mut().zip(above).zip(below) {
+            *out = std::array::from_fn(|k| a[k] + (b[k] - a[k]) * fy);
+        }
+        for (cell, pixels) in row.chunks_mut(4 * RELIEF_STEP).enumerate() {
+            let (a, b) = (between[cell], between[cell + 1]);
+            for (step, pixel) in pixels.chunks_exact_mut(4).enumerate() {
+                let fx = step as f32 / RELIEF_STEP as f32;
+                for k in 0..3 {
+                    let scale = a[k] + (b[k] - a[k]) * fx;
+                    pixel[k] = (f32::from(pixel[k]) * scale).round().clamp(0.0, 255.0) as u8;
+                }
             }
         }
     }
@@ -193,13 +193,17 @@ fn smooth(e0: f64, e1: f64, x: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// A hash in [0, 1) of a lattice cell (Hoskins' hash12).
+/// A hash in [0, 1) of an integer lattice cell (an integer mix: the lattice
+/// takes most of the relief's time).
 fn hash(x: f64, y: f64) -> f64 {
-    let fract = |v: f64| v - v.floor();
-    let mut p = [fract(x * 0.1031), fract(y * 0.1031), fract(x * 0.1031)];
-    let d = p[0] * (p[1] + 33.33) + p[1] * (p[2] + 33.33) + p[2] * (p[0] + 33.33);
-    p = p.map(|v| v + d);
-    fract((p[0] + p[1]) * p[2])
+    let mut h =
+        (x as i32 as u32).wrapping_mul(0x9e37_79b1) ^ (y as i32 as u32).wrapping_mul(0x85eb_ca77);
+    h ^= h >> 15;
+    h = h.wrapping_mul(0x2c1b_3c6d);
+    h ^= h >> 12;
+    h = h.wrapping_mul(0x297a_2d39);
+    h ^= h >> 15;
+    f64::from(h) / 4_294_967_296.0
 }
 
 /// Smooth value noise in [0, 1) on a unit lattice.
@@ -271,8 +275,11 @@ mod tests {
     fn drifts_shade_their_slip_faces() {
         let mut darker = 0;
         let mut lighter = 0;
-        for i in 0..4000 {
-            let (x, z) = (-100.0 + i as f64 * 0.05, 12.0);
+        for i in 0..40_000 {
+            let (x, z) = (
+                -100.0 + (i % 4000) as f64 * 0.05,
+                -90.0 + (i / 4000) as f64 * 20.0,
+            );
             let r = soil_relief(x, z);
             if r.drift_field > 0.5 {
                 let [sx, sz] = r.slope;
