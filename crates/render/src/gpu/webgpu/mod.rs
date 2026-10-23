@@ -658,28 +658,8 @@ impl Frame {
             stats.reflection_draw_calls = count;
             stats.reflection_triangles = stats.triangles - stats.shadow_triangles;
         }
-        {
-            let target = &self.main_target;
-            let mut pass = scene_pass(encoder, "main view", target, clear);
-            pass.set_bind_group(0, &self.view_groups.0[MAIN_VIEW], &[]);
-            let view = &scene.views[MAIN_VIEW];
-            draws.encode(&mut pass, &view.opaque, MAIN_VIEW, Lit, stats);
-            if scene.sky {
-                draw_sky(&mut pass, scene, stats);
-            }
-            if let Some(water) = scene.water
-                && let range = scene.meshes.get(water.mesh).range
-                && !range.is_empty()
-            {
-                pass.set_pipeline(&scene.pipelines.fixed().water);
-                pass.set_bind_group(1, &water.gpu.bind_group, &[]);
-                BoundPages::default().bind(&mut pass, scene.meshes, range);
-                pass.draw_indexed(range.indices(), 0, 0..1);
-                stats.draw_calls += 1;
-                stats.triangles += range.index_count as u64 / 3;
-            }
-            draws.encode(&mut pass, &view.transparent, MAIN_VIEW, Lit, stats);
-        }
+        // The occlusion reads its own depth pass, not the main view: it goes first, so
+        // its short dependent passes run beside the main view's work rather than after.
         let fixed = scene.pipelines.fixed();
         if scene.occlusion {
             self.encode_occlusion_depth(encoder, &draws, stats);
@@ -702,6 +682,28 @@ impl Frame {
                 false,
             );
             stats.draw_calls += 2;
+        }
+        {
+            let target = &self.main_target;
+            let mut pass = scene_pass(encoder, "main view", target, clear);
+            pass.set_bind_group(0, &self.view_groups.0[MAIN_VIEW], &[]);
+            let view = &scene.views[MAIN_VIEW];
+            draws.encode(&mut pass, &view.opaque, MAIN_VIEW, Lit, stats);
+            if scene.sky {
+                draw_sky(&mut pass, scene, stats);
+            }
+            if let Some(water) = scene.water
+                && let range = scene.meshes.get(water.mesh).range
+                && !range.is_empty()
+            {
+                pass.set_pipeline(&scene.pipelines.fixed().water);
+                pass.set_bind_group(1, &water.gpu.bind_group, &[]);
+                BoundPages::default().bind(&mut pass, scene.meshes, range);
+                pass.draw_indexed(range.indices(), 0, 0..1);
+                stats.draw_calls += 1;
+                stats.triangles += range.index_count as u64 / 3;
+            }
+            draws.encode(&mut pass, &view.transparent, MAIN_VIEW, Lit, stats);
         }
         if scene.bloom {
             let post = &self.post;
