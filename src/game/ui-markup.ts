@@ -83,6 +83,7 @@ export function hudMarkup(): string {
         <div class="hull-compass" aria-hidden="true" title="First person: V returns to the overhead view"><span class="compass-dial"><i class="hull"></i><i class="gun"></i></span><kbd class="compass-key">V</kbd></div>
         <div class="combat-notices"><div id="ammo-notice" role="status" aria-live="polite"></div></div>
         </div></div>
+        <div id="respawn-layer" inert></div>
         <div id="overlay"></div>`;
 }
 
@@ -143,7 +144,7 @@ export function ordinal(value: number): string {
   return `${value}${suffix}`;
 }
 
-function wreckedByMarkup(death: DeathReport | null): string {
+export function wreckedByMarkup(death: DeathReport | null): string {
   if (!death) {
     return `<div class="wrecked-by"><small>YOUR TANK</small><b>DESTROYED</b></div>`;
   }
@@ -340,7 +341,15 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
       <button id="restart" class="secondary">${ACTION_ICONS.setup}BATTLE SETUP</button></div>
     </section>`;
   } else if (!viewer.alive) {
-    return `
+    return respawnMarkup(death);
+  }
+  return "";
+}
+
+/** The respawn card: who wrecked the tank, the countdown and the choice of the next
+ * tank (whose cards the page appends). */
+export function respawnMarkup(death: DeathNotice | null): string {
+  return `
       <section class="menu respawn" aria-labelledby="respawn-title">
         <header class="respawn-head">${wreckedByMarkup(death?.report ?? null)}
           <div class="respawn-timer" id="respawn-fill"><h2 id="respawn-title">RESPAWN IN</h2><div class="respawn-ring"><span id="respawn-count">3</span></div></div>
@@ -348,6 +357,4 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
         <p class="respawn-pick">Choose your next tank<small>It rolls out when the timer ends</small></p>
         <p id="death-cause" class="sr-only" role="status"></p>
         </section>`;
-  }
-  return "";
 }

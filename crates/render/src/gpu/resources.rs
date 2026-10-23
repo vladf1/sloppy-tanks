@@ -37,8 +37,10 @@ pub struct GpuMesh {
     pub range: MeshRange,
     pub bounds: Sphere,
     /// Every vertex lies in one plane (a ring, a decal, a billboard card): no view
-    /// sees one of its faces behind another.
-    pub planar: bool,
+    /// sees one of its faces behind another. Only double-sided materials ask, so it
+    /// is worked out when one first does ([`MeshStore::planar`]): the test runs over
+    /// every vertex twice, which cost a debris collapse more than its upload.
+    planar: Option<bool>,
     /// The caller's mesh for shared entries; `None` for model-owned merges.
     source: Option<Weak<Mesh>>,
     /// Live draw classes using this mesh.
@@ -298,7 +300,7 @@ impl MeshStore {
         let (index, _) = self.slots.insert(GpuMesh {
             range,
             bounds: Sphere::from_points(mesh.positions.iter().map(|p| Vec3::from(*p))),
-            planar: planar(mesh.positions.iter().map(|p| Vec3::from(*p))),
+            planar: None,
             source: Some(Arc::downgrade(mesh)),
             users: 0,
         });
@@ -307,8 +309,16 @@ impl MeshStore {
     }
 
     /// Upload merged geometry owned by one model, at its reserved placement if it has
-    /// one; release it with `release`. Its indices are rebased in place.
-    pub fn owned(&mut self, gpu: &Gpu, data: &mut MeshData, reserved: MeshPlacement) -> u32 {
+    /// one; release it with `release`. Its indices are rebased in place. Its vertices
+    /// are gone after this, so whether it is [`planar`](Self::planar) is worked out
+    /// now if a double-sided material draws it (`double_sided`).
+    pub fn owned(
+        &mut self,
+        gpu: &Gpu,
+        data: &mut MeshData,
+        reserved: MeshPlacement,
+        double_sided: bool,
+    ) -> u32 {
         let range = self.upload(
             gpu,
             PageFamily::Surface,
@@ -319,7 +329,8 @@ impl MeshStore {
         let (index, _) = self.slots.insert(GpuMesh {
             range,
             bounds: data.bounds,
-            planar: planar(data.vertices.iter().map(|v| Vec3::from(v.position))),
+            planar: double_sided
+                .then(|| planar(data.vertices.iter().map(|v| Vec3::from(v.position)))),
             source: None,
             users: 0,
         });
@@ -364,6 +375,24 @@ impl MeshStore {
 
     pub fn get(&self, index: u32) -> &GpuMesh {
         self.slots.at(index).expect("live mesh")
+    }
+
+    /// Whether every vertex of mesh `index` lies in one plane, worked out on first
+    /// asking for a shared mesh (whose caller holds its source while it registers a
+    /// model that draws it). A model's own mesh asked about without a double-sided
+    /// material at upload counts as not planar.
+    pub fn planar(&mut self, index: u32) -> bool {
+        let mesh = self.get_mut(index);
+        if let Some(planar) = mesh.planar {
+            return planar;
+        }
+        let answer = mesh
+            .source
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .is_some_and(|source| planar(source.positions.iter().map(|p| Vec3::from(*p))));
+        mesh.planar = Some(answer);
+        answer
     }
 
     pub fn get_mut(&mut self, index: u32) -> &mut GpuMesh {

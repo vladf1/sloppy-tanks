@@ -1254,11 +1254,17 @@ body:has(#settings[open]) .hud-actions {
   transform: translateX(-50%) scale(0.92);
 }
 /* A notice appears at full strength at once and only its scale settles; it leaves at
-   once too, so a notice is never left half-faded over the arena. */
+   once too, so a notice is never left half-faded over the arena. Each notice is a fresh
+   element, so the entrance plays from the start every time. */
 #toast.visible {
   opacity: 1;
   transform: translateX(-50%);
-  transition: transform 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+  animation: toast-in 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+@keyframes toast-in {
+  from {
+    transform: translateX(-50%) scale(0.92);
+  }
 }
 #toast[data-tone="pickup"] {
   box-shadow:
@@ -2040,21 +2046,35 @@ h2 {
 
 /* Leave the airborne wreck visible while choosing the next spawn: the respawn card
    sits low, where the tank panel was (it steps aside while the tank is wrecked). */
-#overlay:has(.respawn) {
-  background: radial-gradient(ellipse 90% 60% at 50% 100%, #3a050c55, transparent 70%);
-  backdrop-filter: none;
+#respawn-layer {
+  position: absolute;
+  inset: 0;
+  display: grid;
   place-items: end center;
+  isolation: isolate;
+  padding: 24px;
   pointer-events: none;
   /* Well clear of the screen's bottom edge, with the dialogs' own breathing room. */
   padding-bottom: max(48px, calc(env(safe-area-inset-bottom) + 28px));
 }
-/* The card is there at once, legible from its first frame; a red glint runs along its
-   top edge as it lands. */
+#respawn-layer.shown {
+  background: radial-gradient(ellipse 90% 60% at 50% 100%, #3a050c55, transparent 70%);
+}
+/* The card stays drawn between deaths, unseen on a layer of its own, so a death shows it
+   without building or painting it. Safari drops the paint of a layer at no opacity, and
+   painting the card again cost an iPad's death frame about 8 ms, so the hidden card sits
+   at a fifth of a percent: below one step of any colour, but drawn. It is there at once,
+   legible from its first frame; a red glint runs along its top edge as it lands. */
 .menu.respawn {
-  pointer-events: auto;
   max-width: 720px;
   padding: 14px 18px 14px;
   overflow: hidden;
+  opacity: 0.002;
+  will-change: opacity;
+}
+#respawn-layer.shown .menu.respawn {
+  opacity: 1;
+  pointer-events: auto;
   animation: respawn-rise 0.32s cubic-bezier(0.2, 0.9, 0.3, 1.08);
 }
 /* The card rises into place, opaque from its first frame. */
@@ -2072,8 +2092,10 @@ h2 {
   height: 2px;
   background: linear-gradient(90deg, transparent, #ff8592, transparent);
   transform: translateX(-100%);
-  animation: respawn-glint 1.4s ease-out 0.1s;
   pointer-events: none;
+}
+#respawn-layer.shown .menu.respawn::after {
+  animation: respawn-glint 1.4s ease-out 0.1s;
 }
 @keyframes respawn-glint {
   to {
@@ -2226,7 +2248,8 @@ h2 {
   letter-spacing: 2.4px;
 }
 /* The ring beats once a second with the count. It never yields width to the caption,
-   or a narrow card squeezes the circle into an oval. */
+   or a narrow card squeezes the circle into an oval. Its layer is there before the
+   beat starts, so a death does not first make one (and repaint the card around it). */
 .respawn-ring {
   position: relative;
   display: grid;
@@ -2234,12 +2257,15 @@ h2 {
   place-items: center;
   width: 80px;
   height: 80px;
-  animation: respawn-beat 1s cubic-bezier(0.2, 0.8, 0.3, 1) infinite;
   border-radius: 50%;
   background: conic-gradient(var(--gold) calc(var(--left, 1) * 360deg), #ffffff1a 0);
   box-shadow:
     0 0 0 1px #00000066,
     0 0 34px #ffcf3840;
+  will-change: transform;
+}
+#respawn-layer.shown .respawn-ring {
+  animation: respawn-beat 1s cubic-bezier(0.2, 0.8, 0.3, 1) infinite;
 }
 .respawn-ring::before {
   content: "";
@@ -2288,13 +2314,16 @@ h2 {
   gap: 10px;
 }
 /* The tanks fill their cards: the choice is the tank, so it is the biggest thing in it.
-   Each grows up from its foot, so even the heavy tank keeps clear of the specs under it. */
+   Each grows up from its foot, so even the heavy tank keeps clear of the specs under it.
+   Each tank, shadow and all, keeps a layer of its own that the hidden card holds
+   painted: Safari otherwise redraws the three filtered tanks on the death frame. */
 .respawn .tank-preview {
   grid-column: 1 / -1;
   height: 92px;
   margin: -4px 0 8px;
   transform: scale(calc(var(--scale, 1) * 1.16));
   transform-origin: 50% 85%;
+  will-change: transform;
 }
 /* Name and class share the top line, leaving the card's height to the tank. */
 .respawn .vehicle {
@@ -2357,9 +2386,9 @@ h2 {
   border-radius: 3px;
 }
 @media (prefers-reduced-motion: reduce) {
-  .menu.respawn,
-  .menu.respawn::after,
-  .respawn-ring {
+  #respawn-layer.shown .menu.respawn,
+  #respawn-layer.shown .menu.respawn::after,
+  #respawn-layer.shown .respawn-ring {
     animation: none;
   }
 }
@@ -6203,7 +6232,7 @@ html.phone,
   user-select: none;
   -webkit-touch-callout: none;
 }
-.phone :is(#startup-overlay, #overlay) {
+.phone :is(#startup-overlay, #overlay, #respawn-layer) {
   padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
     max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
 }
@@ -6921,7 +6950,7 @@ html.phone,
 .phone .respawn .tank-preview {
   height: 48px;
 }
-.phone #overlay:has(.respawn) {
+.phone #respawn-layer {
   padding-bottom: max(10px, env(safe-area-inset-bottom));
 }
 /* First person on a phone keeps the hull compass, low in the middle over the hull pill,

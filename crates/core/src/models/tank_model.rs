@@ -106,6 +106,14 @@ pub fn tank_model(kind: VehicleKind, team: Team) -> Arc<Node> {
     tank_model_variant(kind, team, false)
 }
 
+/// Let go of the built vehicle models (about 10 MB of geometry), once everything that
+/// needed them has its own copy: presentation uploads every vehicle and wreck before
+/// its first round and keeps them, and the Wasm heap can then reuse the space. A later
+/// [`tank_model`] builds its model again.
+pub fn release_tank_models() {
+    MODELS.clear();
+}
+
 /// `tankModel(kind, team, false, openTurretRing)`: `open_turret_ring` cuts the ring
 /// well into the hull roof (used by hull-only wrecks whose turret flew off). Wrecks
 /// keep the team paint; presentation darkens them.
