@@ -408,7 +408,7 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
         code += "\n";
         code += effect.entry;
     }
-    code += &vertex_hooks(key, effect, effects);
+    code += &vertex_hooks(effect, effects);
     code += &surface_hook(key, effect, effects);
     code += match key.pass {
         Pass::Main => STANDARD_WGSL,
@@ -446,23 +446,20 @@ fn dispatch_hook(name: &str, params: &str, branches: &[String]) -> String {
 }
 
 /// The variant's `effect_vertex`, `effect_world` and `effect_clip` that its effect
-/// does not define itself. A surface variant without vertex hooks of its own, and a
-/// caster of an effect with shared ones, takes every shared vertex hook
-/// (`EffectDefinition::shared_vertex`), each run where the material names its effect
-/// (`MaterialUniform::features`), so they all have one vertex stage; a caster without
-/// an effect reads no material and takes none.
-fn vertex_hooks(
-    key: &ShaderKey,
-    effect: Option<&EffectDefinition>,
-    effects: &EffectRegistry,
-) -> String {
+/// does not define itself. A variant of an effect with shared vertex hooks
+/// (`EffectDefinition::shared_vertex`) takes every one of them, each run where the
+/// material names its effect (`MaterialUniform::features`), so all those effects'
+/// surfaces have one vertex stage and their casters another. Every other variant
+/// takes none: the material read and the branches cost WebKit about 1% of the main
+/// view's GPU time when every plain draw ran them.
+fn vertex_hooks(effect: Option<&EffectDefinition>, effects: &EffectRegistry) -> String {
     let mut code = String::new();
     let mut branches: [Vec<String>; 3] = Default::default();
     // An effect's own vertex hooks never sit beside shared ones (`registry.rs`).
     let own = effect
         .filter(|e| e.has_own_vertex_hooks())
         .map(|e| [e.has_vertex(), e.has_world(), e.has_clip()]);
-    if own.is_none() && (key.pass == Pass::Main || effect.is_some_and(|e| e.has_shared_vertex())) {
+    if own.is_none() && effect.is_some_and(|e| e.has_shared_vertex()) {
         for (id, shared) in effects.sharing_hooks() {
             let mut hooks = shared.shared_vertex.to_string();
             for ((hook, _, args), branches) in VERTEX_HOOKS.iter().zip(&mut branches) {
@@ -1374,14 +1371,14 @@ mod tests {
         );
     }
 
-    /// Shared hooks leave their materials the plain variants' stages, run where the
-    /// material names its effect: every surface variant without vertex hooks of its
-    /// own has one vertex stage, and every lit one without a surface hook of its own
-    /// one fragment stage per alpha test. Unlit variants and casters take a shared
+    /// Shared hooks run where the material names its effect: every effect with
+    /// shared vertex hooks has one vertex stage (plain variants keep theirs, which
+    /// reads no material), and every lit variant without a surface hook of its own
+    /// the plain one's fragment stage. Unlit variants and casters take a shared
     /// surface hook as their effect's own, and a caster without an effect reads no
     /// material.
     #[test]
-    fn shared_hooks_share_the_plain_stages() {
+    fn shared_hooks_share_stages() {
         let mut effects = EffectRegistry::default();
         for effect in crate::presentation::PRESENTATION_EFFECTS {
             effects.register(effect);
@@ -1403,10 +1400,16 @@ mod tests {
                 ..ShaderKey::default()
             };
             let plain = StageSources::variant(&key(0), &effects);
-            assert!(plain.vertex.contains("let effect = material.features.y;"));
+            assert!(!plain.vertex.contains("features.y"));
+            let mut moving = std::collections::HashSet::new();
             for &(id, effect) in &shared {
                 let stages = StageSources::variant(&key(id), &effects);
-                assert_eq!(stages.vertex, plain.vertex, "{}", effect.name);
+                if effect.has_shared_vertex() {
+                    assert!(stages.vertex.contains("let effect = material.features.y;"));
+                    moving.insert(stages.vertex);
+                } else {
+                    assert_eq!(stages.vertex, plain.vertex, "{}", effect.name);
+                }
                 let own_surface = effect.has_own_surface() || (!lit && effect.has_surface());
                 assert_eq!(
                     stages.fragment != plain.fragment,
@@ -1415,6 +1418,7 @@ mod tests {
                     effect.name
                 );
             }
+            assert_eq!(moving.len(), 1, "one vertex stage for shared vertex hooks");
             let fragment = plain.fragment.expect("a surface has a fragment stage");
             assert_eq!(fragment.contains("let effect = material.features.y;"), lit);
         }
