@@ -192,8 +192,10 @@ fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
     let origin = (base - 0.5) / size;
     // The filter radius spreads the taps; at 1 they are exact.
     var radius = frame.shadow.w;
-    if !LITE && atmosphere_on() {
-        radius *= penumbra_radius(coord, size);
+    if !LITE {
+        if atmosphere_on() {
+            radius *= penumbra_radius(coord, size);
+        }
     }
     let texel = radius / size;
     var sum = 0.0;

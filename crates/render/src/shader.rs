@@ -61,10 +61,15 @@ impl InstanceSource {
 const FRAME_BINDINGS_WGSL: &str = wgsl!("shaders/frame_bindings.wgsl");
 
 /// `LITE`: true on the WebGL2 build (the texture source), whose weaker devices get
-/// cheaper shadow filters, sky noise and occlusion.
+/// cheaper shadow filters, sky noise and occlusion. Folded like a variant flag
+/// (`lite_flag`), so each build's shaders carry only their own filter.
 fn lite_wgsl(source: InstanceSource) -> String {
-    let lite = source == InstanceSource::Texture;
-    format!("const LITE: bool = {lite};\n")
+    let (name, lite) = lite_flag(source);
+    format!("const {name}: bool = {lite};\n")
+}
+
+fn lite_flag(source: InstanceSource) -> (&'static str, bool) {
+    ("LITE", source == InstanceSource::Texture)
 }
 
 /// The frame declarations and bindings with this build's instance records.
@@ -414,7 +419,9 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
         Pass::Main => STANDARD_WGSL,
         Pass::Shadow => SHADOW_WGSL,
     };
-    specialize::specialize(&code, &flags)
+    let mut folded = flags.to_vec();
+    folded.push(lite_flag(source));
+    specialize::specialize(&code, &folded)
 }
 
 /// One pipeline's stages as the WebGPU backend compiles them: each stage its own
@@ -510,7 +517,7 @@ pub fn bake_source_with_material(fragment: &str, instances: InstanceSource) -> S
         "{VERTEX_INPUT_WGSL}{}{MATERIAL_WGSL}{BAKE_WGSL}{fragment}",
         frame_wgsl(instances)
     );
-    specialize::specialize(&code, &[])
+    specialize::specialize(&code, &[lite_flag(instances)])
 }
 
 /// The output and bloom shader, its loops unrolled like every other shader's. The
@@ -522,12 +529,15 @@ pub fn output_source() -> String {
 fn output_source_for(source: InstanceSource) -> String {
     specialize::specialize(
         &format!("{}{COMMON_WGSL}{OUTPUT_WGSL}", lite_wgsl(source)),
-        &[],
+        &[lite_flag(source)],
     )
 }
 
 fn fixed_source(template: &str, source: InstanceSource) -> String {
-    specialize::specialize(&format!("{}{template}", frame_wgsl(source)), &[])
+    specialize::specialize(
+        &format!("{}{template}", frame_wgsl(source)),
+        &[lite_flag(source)],
+    )
 }
 
 /// The GLSL ES 3.00 the WebGL backend compiles, translated from the WGSL with naga
