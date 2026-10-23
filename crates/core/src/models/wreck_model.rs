@@ -1,8 +1,10 @@
 //! Port of `wreck-model.ts`: the burnt-out assemblies a destroyed vehicle leaves.
 //!
 //! Extract the part from a live model, center it, flatten every mesh into one
-//! group with its transform baked, and batch once. Bounded by chassis × teams ×
-//! assemblies; geometry is shared across rounds, instances clone the node.
+//! group with its transform baked, and batch once. Presentation registers each of
+//! the chassis × teams × assemblies once per page and draws instances of it, so the
+//! wreck is built on request rather than cached: a cache kept every wreck's
+//! vertices on the CPU for good after the GPU had them (about 20 MB of the heap).
 //!
 //! The batched paint is then scorched: soot blooms over most of the armor, heavier
 //! on upward faces where the fire licked, with rust-brown blistered patches and
@@ -14,7 +16,6 @@ use std::sync::Arc;
 use glam::{DMat4, DQuat, DVec3};
 
 use super::batching::batch;
-use super::model_primitives::Cache;
 use super::tank_model::{WreckPose, tank_model_variant, wreck_pose};
 use super::tank_surfaces::{
     is_camouflaged, is_signal_panel, scorched_paint_material, sooted_glass, unpaint,
@@ -31,15 +32,11 @@ pub use crate::sim::types::WreckPart;
 /// they rest where the live vehicle stood.
 const INTACT_CENTER: DVec3 = DVec3::new(0.0, 0.55, 0.0);
 
-static WRECKS: Cache<(VehicleKind, Team, WreckPart), Node> = Cache::new();
-
 /// `wreckModel(kind, team, part)`: a flat group of batched meshes in the part's
 /// centred frame. The vehicle's overall scale is not applied (the parts leave the
 /// scaled root), as in the TypeScript.
 pub fn wreck_model(kind: VehicleKind, team: Team, wreck_part: WreckPart) -> Arc<Node> {
-    WRECKS.get_or_insert((kind, team, wreck_part), || {
-        build_wreck(kind, team, wreck_part)
-    })
+    Arc::new(build_wreck(kind, team, wreck_part))
 }
 
 fn take_child(parent: &mut Node, name: &str) -> Node {
