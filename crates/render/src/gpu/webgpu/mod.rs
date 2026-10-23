@@ -106,9 +106,10 @@ struct GpuFrames {
 struct FrameTracker {
     frames: Rc<RefCell<GpuFrames>>,
     performance: Option<web_sys::Performance>,
-    done: Closure<dyn FnMut(JsValue)>,
+    /// Both are there until the tracker drops.
+    done: Option<Closure<dyn FnMut(JsValue)>>,
     /// A lost device rejects the promise; the frame still leaves the count.
-    failed: Closure<dyn FnMut(JsValue)>,
+    failed: Option<Closure<dyn FnMut(JsValue)>>,
 }
 
 impl FrameTracker {
@@ -130,8 +131,8 @@ impl FrameTracker {
         Self {
             frames,
             performance,
-            done: Closure::new(move |_: JsValue| finish()),
-            failed: Closure::new(move |_: JsValue| on_failure()),
+            done: Some(Closure::new(move |_: JsValue| finish())),
+            failed: Some(Closure::new(move |_: JsValue| on_failure())),
         }
     }
 
@@ -139,6 +140,19 @@ impl FrameTracker {
         self.performance
             .as_ref()
             .map_or(0.0, web_sys::Performance::now)
+    }
+}
+
+impl Drop for FrameTracker {
+    /// Frames still on the GPU settle their promises after the tracker is gone, and a
+    /// dropped closure would throw when they do: the two closures are left to them.
+    fn drop(&mut self) {
+        if let Some(done) = self.done.take() {
+            done.forget();
+        }
+        if let Some(failed) = self.failed.take() {
+            failed.forget();
+        }
     }
 }
 
@@ -459,13 +473,15 @@ impl Frame {
     /// until the GPU finishes it, and then take its GPU time.
     fn track_frame(&self, gpu: &Gpu, submitted: f64) {
         let tracker = &self.gpu_frames;
-        let Some(queue) = gpu.queue.as_webgpu() else {
+        let (Some(queue), Some(on_done), Some(on_failure)) =
+            (gpu.queue.as_webgpu(), &tracker.done, &tracker.failed)
+        else {
             return;
         };
         tracker.frames.borrow_mut().submitted.push_back(submitted);
         let done: js_sys::Promise = queue.on_submitted_work_done().unchecked_into();
         // The promise `then` returns is dropped: nothing waits on it.
-        let _ = done.then2(&tracker.done, &tracker.failed);
+        let _ = done.then2(on_done, on_failure);
     }
 
     /// Draw a frame into the canvas. The scene and the canvas go in separate command
