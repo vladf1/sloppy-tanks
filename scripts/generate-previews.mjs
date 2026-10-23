@@ -6,6 +6,7 @@
 import { chromium } from "playwright";
 import { createServer } from "vite";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
+import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { headless } from "./browser-helpers.mjs";
@@ -13,8 +14,9 @@ import { headless } from "./browser-helpers.mjs";
 const kinds = ["scout", "balanced", "heavy"];
 const output = process.env.SLOPPY_PREVIEWS_OUT ?? "public/previews/tanks.webp";
 const TILE = { width: 640, height: 400 };
-/** WebP quality of the packed sheet. */
-const QUALITY = 88;
+/** WebP quality of the packed sheet. The menu shows a tile at most about 0.8 of its
+ * size on a 2x screen, where quality 80 looks the same as 88. */
+const QUALITY = 80;
 
 async function packTankPreviews(assets) {
   const canvas = createCanvas(TILE.width * kinds.length, TILE.height * 2);
@@ -29,7 +31,27 @@ async function packTankPreviews(assets) {
       context.drawImage(image, column * TILE.width, team * TILE.height);
     }
   }
-  const image = await canvas.encode("webp", QUALITY);
+  // cwebp rather than the canvas's own encoder: at the same quality it packs the
+  // alpha (the soft contact shadows) a quarter smaller and writes no ICC profile.
+  const image = execFileSync(
+    "cwebp",
+    [
+      "-quiet",
+      "-q",
+      String(QUALITY),
+      "-m",
+      "6",
+      "-alpha_q",
+      "100",
+      "-metadata",
+      "none",
+      "-o",
+      "-",
+      "--",
+      "-",
+    ],
+    { input: canvas.toBuffer("image/png"), maxBuffer: 64 * 1024 * 1024 },
+  );
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, image);
   console.log(`${output}: ${image.length} bytes`);
