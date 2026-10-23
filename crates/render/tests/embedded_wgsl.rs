@@ -23,10 +23,12 @@ fn embedded_shaders_carry_no_comments_or_blank_lines() {
         SHADOW_MERGED_WGSL,
         SHADOW_CUTOUT_WGSL,
     ];
+    // An effect's code may all be shared hooks.
     let effects = BUILTIN_EFFECTS
         .iter()
         .chain(PRESENTATION_EFFECTS.iter())
-        .map(|effect| effect.wgsl);
+        .flat_map(|effect| [effect.wgsl, effect.shared_vertex, effect.shared_surface])
+        .filter(|source| !source.is_empty());
     for source in fixed.into_iter().chain(effects) {
         assert!(!source.is_empty());
         assert!(!source.contains("//") && !source.contains("/*"));
