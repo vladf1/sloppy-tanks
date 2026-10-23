@@ -171,8 +171,7 @@ impl WallGrid {
         self.rows = count(max[1] - min[1]);
         self.words = self.boxes.len().div_ceil(64);
         self.bits.clear();
-        self.bits
-            .resize(self.columns * self.rows * self.words, 0);
+        self.bits.resize(self.columns * self.rows * self.words, 0);
         for (index, b) in self.boxes.iter().enumerate() {
             let (columns, rows) = self.cells(b, 0.0);
             for row in rows {

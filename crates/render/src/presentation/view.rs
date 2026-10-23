@@ -1560,8 +1560,8 @@ impl Presentation {
         if let Some(entry) = self.cover_models.get_mut(&key) {
             entry.users += 1;
         } else {
-            let (CoverModel { mut root, tree }, pending) = built_model
-                .unwrap_or_else(|| (model_catalog::cover_model(&built, stage), None));
+            let (CoverModel { mut root, tree }, pending) =
+                built_model.unwrap_or_else(|| (model_catalog::cover_model(&built, stage), None));
             if movable {
                 // The body's centre is half the cover's height up; drop the parts.
                 let drop = cover.h / (2.0 * root.scale.y);
