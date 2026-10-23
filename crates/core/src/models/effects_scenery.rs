@@ -194,8 +194,8 @@ pub const GRIT_TEXTURE: &str = "textures/ground/packed-dirt.webp";
 /// Dusty Dig's baked soil: 2048x2048 RGBA8, sRGB color with linear alpha
 /// (grittiness), clamp-to-edge, mipmapped, 8x anisotropy. Baked in Rust by
 /// `quarry_relief::bake_quarry_ground` (the soil with its floor relief; row
-/// bands, any split). Row 0 is world
-/// `z = -105` and was the canvas' top row; like every CanvasTexture it uploads
+/// bands, any split). Row 0 is world `z = -105` and was the canvas' top row;
+/// like every CanvasTexture it uploads
 /// with Three's default `flipY`, so row 0 lands at `v = 1` (the soil UVs,
 /// `v = 0.5 - z / 210`, rely on this).
 pub const QUARRY_SOIL_TEXTURE: &str = "quarry-soil";

@@ -10,7 +10,7 @@
 // ground is gravelly; mud cracks; and relief from the bake itself, so ruts,
 // windrows and ripples catch the low sun. The floor takes most of the quarry's
 // pixels, so it leaves loose stones to the bake's own speckle and the rubble
-// meshes: a lattice of shaded stones cost WebKit 0.12 ms of an iPad frame.
+// meshes: a lattice of shaded stones here was its costliest layer.
 
 // Lattice spacing of the mud plates, metres.
 const SOIL_PLATE_CELL = 0.55;
