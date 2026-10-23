@@ -36,10 +36,14 @@ fn depth_at(pixel: vec2i, size: vec2i) -> f32 {
     return load_depth(clamp(pixel, vec2i(0), size - 1));
 }
 
-fn world_at(pixel: vec2i, z: f32, size: vec2f) -> vec3f {
+// The homogeneous world position at `pixel` and depth `z`.
+fn world_at(pixel: vec2i, z: f32, size: vec2f) -> vec4f {
     let ndc = vec2f((f32(pixel.x) + 0.5) / size.x * 2.0 - 1.0, 1.0 - (f32(pixel.y) + 0.5) / size.y * 2.0);
-    let world = occlusion.inverse_view_projection * vec4f(ndc, z, 1.0);
-    return world.xyz / world.w;
+    return occlusion.inverse_view_projection * vec4f(ndc, z, 1.0);
+}
+
+fn world_of(homogeneous: vec4f) -> vec3f {
+    return homogeneous.xyz / homogeneous.w;
 }
 
 fn view_distance(z: f32) -> f32 {
@@ -61,12 +65,18 @@ fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
     if fade <= 0.0 {
         return vec4f(1.0);
     }
-    let center = world_at(pixel, z, size);
+    // Homogeneous positions are linear in the pixel and the depth, so the neighbours'
+    // follow from the centre's along the inverse projection's columns.
+    let here = world_at(pixel, z, size);
+    let center = world_of(here);
+    let step_x = occlusion.inverse_view_projection[0] * (2.0 / size.x);
+    let step_y = occlusion.inverse_view_projection[1] * (2.0 / size.y);
+    let along_z = occlusion.inverse_view_projection[2];
     // The normal from the nearer neighbour on each axis, so edges do not bend it.
-    let right = world_at(pixel + vec2i(1, 0), depth_at(pixel + vec2i(1, 0), size_i), size);
-    let left = world_at(pixel - vec2i(1, 0), depth_at(pixel - vec2i(1, 0), size_i), size);
-    let down = world_at(pixel + vec2i(0, 1), depth_at(pixel + vec2i(0, 1), size_i), size);
-    let up = world_at(pixel - vec2i(0, 1), depth_at(pixel - vec2i(0, 1), size_i), size);
+    let right = world_of(here + step_x + along_z * (depth_at(pixel + vec2i(1, 0), size_i) - z));
+    let left = world_of(here - step_x + along_z * (depth_at(pixel - vec2i(1, 0), size_i) - z));
+    let down = world_of(here - step_y + along_z * (depth_at(pixel + vec2i(0, 1), size_i) - z));
+    let up = world_of(here + step_y + along_z * (depth_at(pixel - vec2i(0, 1), size_i) - z));
     var dx = right - center;
     if length(center - left) < length(dx) {
         dx = center - left;
