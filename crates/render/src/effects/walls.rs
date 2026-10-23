@@ -626,6 +626,38 @@ mod tests {
     }
 
     #[test]
+    fn a_wide_yards_far_wall_still_has_a_cell() {
+        // Over a kilometre the cells widen; the far wall's edge is in the last one.
+        let wall = |x: f64, half: f64| WallBox {
+            x,
+            z: 0.0,
+            half_w: half,
+            half_d: 1.0,
+            height: 3.0,
+            material: Some(WallMaterial::Stone),
+            color: 0x808080,
+            trim: 0x808080,
+            roof: 0x808080,
+        };
+        let mut walls = Walls {
+            boxes: vec![wall(0.0, 1.0), wall(1200.0, 0.0)],
+            ..Walls::default()
+        };
+        let mut puffs = PoolBuffer::new(1);
+        puffs.push(record(
+            Mat4::from_translation(Vec3::new(1200.1, 1.0, 0.0)),
+            [1.0; 4],
+            [0.0; 4],
+        ));
+        walls.keep_puffs_clear(&mut puffs);
+        assert!(walls.grid.columns <= MAX_GRID_CELLS);
+        assert!(
+            puffs.records()[0].translation().x > 1200.1,
+            "pushed off the far wall"
+        );
+    }
+
+    #[test]
     fn the_wall_grid_pushes_every_puff_as_the_whole_list_would() {
         let mut random = crate::effects::random::CosmeticRandom::seeded(5);
         let mut pick = |low: f64, high: f64| low + (high - low) * random.next_f64();
