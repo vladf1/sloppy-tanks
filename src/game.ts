@@ -257,6 +257,7 @@ export async function prepareGame(
           status.textContent = stage;
         }
       });
+      await revealBattle(() => {});
       beginRound();
     } catch (error) {
       console.error("Round preparation failed", error);
@@ -296,6 +297,23 @@ export async function prepareGame(
         status.textContent = MENU_READY_STATUS;
       }
     }
+  }
+  /** Show the battle's view, still, and let the browser paint it before the round's
+   * clock starts: the arena as `finish_prepare` drew it, the HUD, the respawn card
+   * (`UI.prepareBattle`) and the touch controls. Painted the first time on the round's
+   * first frame, they held WebKit's next frame for 50-70 ms, a hitch once tanks move;
+   * behind the menu WebKit leaves them unpainted. `hideMenu` takes away the start
+   * menu, which is not part of the arena's page. */
+  async function revealBattle(hideMenu: () => void): Promise<void> {
+    ui.prepareBattle();
+    hideMenu();
+    ui.overlay.style.display = "none";
+    root.classList.remove("menu-ready");
+    root.hidden = false;
+    // A frame starts only once the one before it reached the screen, so the second
+    // waits out that paint.
+    await afterPaint();
+    await afterPaint();
   }
   function beginRound(): void {
     inRound = true;
@@ -534,10 +552,11 @@ export async function prepareGame(
   await prepareArena(choices, onStage);
   return {
     prepare: prepareArena,
-    async start(options) {
+    async start(options, hideMenu) {
       // Usually already prepared while the player chose; then this is instant.
       Object.assign(choices, options);
       await prepareArena(choices, onStage);
+      await revealBattle(hideMenu);
       beginRound();
     },
   };

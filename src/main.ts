@@ -144,8 +144,7 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     }
     void load()
       .then(async (game) => {
-        await game.start(options);
-        setup?.remove();
+        await game.start(options, () => setup?.remove());
       })
       .catch((error: unknown) => {
         console.error("Game startup failed", error);
