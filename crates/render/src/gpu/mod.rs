@@ -328,7 +328,9 @@ pub struct RenderStats {
     pub reflection_draw_calls: u32,
     pub shadow_triangles: u64,
     pub reflection_triangles: u64,
-    /// Ambient occlusion's depth pass (`OCCLUSION_DEPTH_PASS`).
+    /// Ambient occlusion's depth pass (`OCCLUSION_DEPTH_PASS`): a depth draw per
+    /// opaque draw of the main view, apart from the main pass's own.
+    pub occlusion_draw_calls: u32,
     pub occlusion_triangles: u64,
     pub main_triangles: u64,
     /// Instance records written this frame.
@@ -2989,6 +2991,7 @@ impl Renderer {
         stats.triangles = 0;
         stats.reflection_draw_calls = 0;
         stats.reflection_triangles = 0;
+        stats.occlusion_draw_calls = 0;
         stats.occlusion_triangles = 0;
         let result = if warm_up {
             self.frame.warm_up(&self.gpu, &scene, stats);

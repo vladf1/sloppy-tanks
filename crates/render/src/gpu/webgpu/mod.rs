@@ -819,7 +819,7 @@ impl Frame {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        let triangles = stats.triangles;
+        let (draw_calls, triangles) = (stats.draw_calls, stats.triangles);
         pass.set_bind_group(0, &self.view_groups.0[MAIN_VIEW], &[]);
         draws.encode(
             &mut pass,
@@ -839,6 +839,7 @@ impl Frame {
             stats.draw_calls += 1;
             stats.triangles += range.index_count as u64 / 3;
         }
+        stats.occlusion_draw_calls = stats.draw_calls - draw_calls;
         stats.occlusion_triangles = stats.triangles - triangles;
     }
 
