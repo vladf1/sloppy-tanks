@@ -16,6 +16,7 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
 use super::backend::{Gpu, Sampler, Texture, TextureView, Uploader};
+use crate::effects::bakes::bake_for;
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TextureKey {
@@ -122,6 +123,8 @@ pub struct TextureStore {
     entries: HashMap<TextureKey, TextureEntry>,
     loaded: Rc<RefCell<Vec<Loaded>>>,
     generated: HashMap<&'static str, web_sys::ImageData>,
+    /// Requested textures that a bake draws (`effects::bakes`), until it has.
+    bakes: Vec<TextureKey>,
     samplers: HashMap<SamplerKey, Sampler>,
     uploader: Uploader,
     asset_base: String,
@@ -136,6 +139,7 @@ impl TextureStore {
             entries: HashMap::new(),
             loaded: Rc::default(),
             generated: HashMap::new(),
+            bakes: Vec::new(),
             samplers: HashMap::new(),
             uploader: Uploader::new(gpu),
             asset_base,
@@ -176,6 +180,8 @@ impl TextureStore {
                         key,
                         result: Ok(Pixels::Image(image.clone())),
                     });
+                } else if bake_for(name).is_some() {
+                    self.bakes.push(key);
                 }
             }
         }
@@ -206,8 +212,9 @@ impl TextureStore {
         if !self.uploader.ready(gpu) {
             return false;
         }
+        let mut changed = self.draw_bakes(gpu);
         let loaded: Vec<_> = self.loaded.borrow_mut().drain(..).collect();
-        let changed = !loaded.is_empty();
+        changed |= !loaded.is_empty();
         for Loaded { key, result } in loaded {
             let Some(entry) = self.entries.get_mut(&key) else {
                 continue;
@@ -243,6 +250,31 @@ impl TextureStore {
             self.generation += 1;
         }
         changed
+    }
+
+    /// Draw the requested bakes whose pipelines have compiled (starting the rest);
+    /// returns whether any texture became ready.
+    fn draw_bakes(&mut self, gpu: &Gpu) -> bool {
+        let mut drawn = false;
+        let mut index = 0;
+        while index < self.bakes.len() {
+            let TextureSource::Generated(name) = self.bakes[index].source else {
+                unreachable!("only generated textures bake");
+            };
+            let bake = bake_for(name).expect("a bake answers the key");
+            if !self.uploader.ready_to_bake(gpu, bake) {
+                index += 1;
+                continue;
+            }
+            let key = self.bakes.swap_remove(index);
+            if let Some(entry) = self.entries.get_mut(&key) {
+                entry.texture = Some(self.uploader.bake(gpu, bake));
+                entry.bytes = bake.bytes();
+                entry.loading = false;
+                drawn = true;
+            }
+        }
+        drawn
     }
 
     /// The texture's view, or the white placeholder while it loads or for none.

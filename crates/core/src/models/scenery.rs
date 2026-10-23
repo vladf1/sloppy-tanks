@@ -24,6 +24,7 @@ use super::model_primitives::{
     TEAM_COLORS, box_part, cylinder_part, paint, put, rotated, shadow_receiver, shadowed,
 };
 use super::quarry_scenery::quarry_scenery;
+use super::village_atmosphere::CHIMNEY_SMOKE_NODE;
 use super::village_scenery::VillageScenery;
 
 /// A standard map's scenery theme (`RenderState["mapTheme"]`).
@@ -64,6 +65,27 @@ impl Scenery {
             Scenery::Village(scenery) => scenery.update(time),
             Scenery::Harbor(scenery) => scenery.update(time),
             Scenery::Quarry(_) => {}
+        }
+    }
+
+    /// Drop every drawable but the chimney smoke's, once presentation has taken its
+    /// own copy of the tree to draw: [`update`](Self::update) and the movers' poses
+    /// need only the nodes' transforms, and [`VillageScenery::set_covers`] the smoke.
+    /// The retained tree otherwise kept a theme's whole scenery (20-odd MB of
+    /// vertices) on the CPU for the session after the GPU had it.
+    pub fn release_drawables(&mut self) {
+        let root = match self {
+            Scenery::Village(scenery) => &mut scenery.root,
+            Scenery::Harbor(scenery) => &mut scenery.root,
+            Scenery::Quarry(root) => root,
+        };
+        let mut stack = vec![root];
+        while let Some(node) = stack.pop() {
+            if node.name == CHIMNEY_SMOKE_NODE {
+                continue;
+            }
+            node.drawable = None;
+            stack.extend(node.children.iter_mut());
         }
     }
 }

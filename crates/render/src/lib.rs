@@ -7,6 +7,14 @@
 //! natively and carry the unit tests. The `gpu` module is browser-only: `wgpu` on
 //! WebGPU, or with the `webgl` feature glow on WebGL2.
 
+/// The WGSL file at each path under `src/`, one after another, embedded without
+/// comments or blank lines (`build.rs`): the shader text the binary carries.
+macro_rules! wgsl {
+    ($($path:literal),+ $(,)?) => {
+        concat!($(include_str!(concat!(env!("OUT_DIR"), "/wgsl/", $path))),+)
+    };
+}
+
 pub mod camera;
 pub mod color;
 pub mod draw_list;

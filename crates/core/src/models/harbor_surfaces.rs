@@ -10,7 +10,9 @@ use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Mesh, box_geometry, merge_geometries};
 use crate::scene::{Effect, Material, Node, Side, TextureRef, Wrap};
 
-use super::effects_scenery::{ApronMode, DOCK_GRAIN, HARBOR_APRON, HARBOR_SHORE};
+use super::effects_scenery::{
+    APRON_WEAR, ApronMode, DOCK_GRAIN, HARBOR_APRON, HARBOR_APRON_WEAR, HARBOR_SHORE,
+};
 use super::harbor_models::{CONTAINER_METALNESS, CONTAINER_ROUGHNESS, container_wear};
 use super::model_primitives::{Cache, shadow_receiver, shadowed, span_between};
 
@@ -41,8 +43,6 @@ const DOCK_BUMP: f32 = 0.035;
 /// Roughness of bare quay concrete and of road paint.
 const APRON_ROUGHNESS: f32 = 0.92;
 const PAINT_ROUGHNESS: f32 = 0.84;
-/// Markings keep paint where the effect's wear exceeds this.
-const PAINT_CUTOFF: f32 = 0.5;
 /// A spawn pad's steel tread plate (the effect polishes and paints it further).
 const PAD_METALNESS: f32 = 0.55;
 const PAD_ROUGHNESS: f32 = 0.5;
@@ -51,6 +51,15 @@ static MATERIALS: Cache<(HarborSurface, u32), Material> = Cache::new();
 static GEOMETRIES: Cache<(HarborSurface, [u64; 3]), Mesh> = Cache::new();
 static APRON_MATERIALS: Cache<(ApronMode, u32), Material> = Cache::new();
 static MARKINGS: Cache<([u64; 3], u32), Mesh> = Cache::new();
+
+/// The ground's baked wear (linear data, clamped at the edge of its square).
+fn apron_wear() -> TextureRef {
+    TextureRef {
+        srgb: false,
+        flip_y: false,
+        ..TextureRef::generated(HARBOR_APRON_WEAR)
+    }
+}
 
 fn dock_tile(wrap: Wrap) -> TextureRef {
     TextureRef {
@@ -97,22 +106,31 @@ pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
         };
         let extra_textures = vec![(DOCK_GRAIN, dock_tile(Wrap::Repeat))];
         match mode {
-            ApronMode::Concrete
-            | ApronMode::LaneAlongZ
-            | ApronMode::LaneAlongX
-            | ApronMode::QuayWall => Material {
+            ApronMode::Concrete | ApronMode::LaneAlongZ | ApronMode::LaneAlongX => Material {
+                bump_map: Some(dock_tile(Wrap::Mirror)),
+                bump_scale: DOCK_BUMP,
+                effect,
+                extra_textures: vec![
+                    (DOCK_GRAIN, dock_tile(Wrap::Repeat)),
+                    (APRON_WEAR, apron_wear()),
+                ],
+                ..Material::standard(color, 0.0, APRON_ROUGHNESS)
+            },
+            ApronMode::QuayWall => Material {
                 bump_map: Some(dock_tile(Wrap::Mirror)),
                 bump_scale: DOCK_BUMP,
                 effect,
                 extra_textures,
                 ..Material::standard(color, 0.0, APRON_ROUGHNESS)
             },
+            // Blended rather than alpha-tested, like the lettering: the chips fade
+            // out over the effect's soft flake edge, and the paint shares the
+            // apron's one shader instead of compiling alpha-tested variants of
+            // its own (`harbor_scenery::PAINT_RENDER_ORDER` draws it first).
             ApronMode::Marking => Material {
                 vertex_colors: true,
-                alpha_test: PAINT_CUTOFF,
-                // The flaking edge resolves through the coverage mask, so chips
-                // read as soft flakes rather than stair-stepped pixels.
-                alpha_to_coverage: true,
+                transparent: true,
+                depth_write: false,
                 effect,
                 extra_textures,
                 ..Material::standard(color, 0.0, PAINT_ROUGHNESS)

@@ -71,7 +71,8 @@ function startTextureDownloads(options: GameOptions): void {
     "textures/pickups/atlas.webp",
     "textures/tanks/armor-camo.webp",
     "textures/tanks/armor-wear.webp",
-    "textures/ground/packed-dirt.webp",
+    // Every ground but the harbor's concrete quay: roads, yards and quarry grit.
+    ...(options.mapMode === "harbor" ? [] : ["textures/ground/packed-dirt.webp"]),
     "textures/houses/siding.webp",
     "textures/walls/weathered-concrete.webp",
     "textures/barrels/painted-drum.webp",
@@ -79,10 +80,10 @@ function startTextureDownloads(options: GameOptions): void {
       ? [
           "textures/ground/dry-grass.webp",
           "textures/ground/village-ground.webp",
-          "textures/trees/conifer-spray.webp",
+          // Crowns draw from the tree atlas; trunks and stumps from their own bark.
+          "textures/trees/atlas.webp",
           "textures/water/normals.webp",
           "textures/trees/birch.webp",
-          "textures/trees/leaf-sprigs.webp",
           "textures/wood/timber.webp",
         ]
       : []),

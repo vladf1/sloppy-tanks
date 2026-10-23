@@ -5,12 +5,15 @@
 //! playfield. Variation comes from a fixed hash of the angle, never the
 //! simulation's random stream.
 //!
-//! The coast is split into quarter sectors, each merged into one mesh drawn with the
+//! The coast is split into [`SECTORS`] sectors round the bay and the mountain range
+//! behind it into [`RANGE_SECTORS`], each merged into one mesh drawn with the
 //! far-shore effect ([`ApronMode::Shore`], `HARBOR_SHORE`): it lights the vertex
 //! colors itself and hazes them by their distance from the eye, so the layers stay
 //! apart instead of drowning in the scene fog, and red warning lights on the
-//! cranes, masts and turbines shine through. A view draws only the sectors in
-//! front of it. Nothing here casts or receives shadows.
+//! cranes, masts and turbines shine through. A view draws only the sectors its
+//! frustum reaches: from the overhead camera, which looks down at the arena, that is
+//! none of them, and its water reflects only the tall parts of the nearest few.
+//! Nothing here casts or receives shadows.
 
 use std::f64::consts::{FRAC_PI_2, FRAC_PI_4, PI, TAU};
 use std::sync::Arc;
@@ -26,13 +29,26 @@ use super::model_primitives::{
     adopt_children, beam, box_part, cylinder_part, paint, put, rotated, shadowed,
 };
 
-/// The four quarter sectors being filled, indexed by [`sector_of`].
-type Sectors = [Node; 4];
+/// Sectors of the coast each merged into its own mesh: small enough that the bounds
+/// of one, a few hundred metres off, stay clear of views that cannot see it (the
+/// quarter sectors these replaced reached round the whole arena, so every view drew
+/// all four), few enough that a view along the horizon adds only a handful of draws.
+const SECTORS: usize = 16;
+/// Sectors of the mountain range, which is far and low in triangles: wider ones keep
+/// it to a few draws.
+const RANGE_SECTORS: usize = 8;
 
-/// The quarter sector an angle falls in: [-π, -π/2) north-west, [-π/2, 0)
-/// north-east, [0, π/2) south-east, [π/2, π) south-west.
+/// The sectors being filled, indexed by [`sector_of`].
+type Sectors = [Node; SECTORS];
+
+/// The sector an angle falls in, of `count` round the bay counted from -π.
+fn sector_in(theta: f64, count: usize) -> usize {
+    (((theta + PI) / (TAU / count as f64)) as usize).min(count - 1)
+}
+
+/// The coast sector an angle falls in.
 fn sector_of(theta: f64) -> usize {
-    (((theta + PI) / FRAC_PI_2) as usize).min(3)
+    sector_in(theta, SECTORS)
 }
 
 /// Place an assembly in the sector of `theta`, its nested groups baked flat so the
@@ -152,10 +168,10 @@ const COAST_CREASE: f64 = 1.0;
 /// Bare rock showing through on the steepest ground.
 const ROCK: u32 = 0x7d786c;
 
-/// The shore ring, split into its four sectors: smooth-shaded, vertex-colored
+/// The shore ring, split into its sectors: smooth-shaded, vertex-colored
 /// hills (creased at the quay walls and crags) flagged for the countryside.
-fn shore_meshes() -> [Option<Node>; 4] {
-    ring_sectors(
+fn shore_meshes() -> [Option<Node>; SECTORS] {
+    ring_sectors::<SECTORS>(
         PROFILE_ROWS,
         |step, row| {
             let theta = step_angle(step);
@@ -197,15 +213,15 @@ fn step_angle(step: usize) -> f64 {
 
 /// A ring of `rows` vertices per step all round the bay, its normals smoothed
 /// across the whole ring (so no seam shows between sectors) and creased at sharp
-/// edges, then split into the quarter sectors. `vertex` gives a step and row's
+/// edges, then split into `N` sectors. `vertex` gives a step and row's
 /// position and paint, `skip` the columns between two angles left out, and every
 /// vertex takes `flag` as its uv.y.
-fn ring_sectors(
+fn ring_sectors<const N: usize>(
     rows: usize,
     vertex: impl Fn(usize, usize) -> ([f64; 3], u32),
     skip: impl Fn(f64, f64) -> bool,
     flag: f32,
-) -> [Option<Node>; 4] {
+) -> [Option<Node>; N] {
     let mut positions = Vec::new();
     let mut colors = Vec::new();
     for step in 0..=SEGMENTS {
@@ -219,13 +235,13 @@ fn ring_sectors(
     }
     let mut indices = Vec::new();
     // The first triangle of each sector, in the de-indexed mesh.
-    let mut sector_starts = [usize::MAX; 4];
+    let mut sector_starts = [usize::MAX; N];
     for column in 0..SEGMENTS {
         let (theta, next) = (step_angle(column), step_angle(column + 1));
         if skip(theta, next) {
             continue;
         }
-        let sector = sector_of(theta);
+        let sector = sector_in(theta, N);
         if sector_starts[sector] == usize::MAX {
             sector_starts[sector] = indices.len() / 3;
         }
@@ -303,9 +319,9 @@ fn range_height(theta: f64) -> f64 {
     (35.0 + peaks) * land_amount(theta)
 }
 
-/// The blue mountain range behind the coast, in its four sectors: a foot, the
+/// The blue mountain range behind the coast, in its sectors: a foot, the
 /// ridge and the far slope, with darker gullies and paler crests.
-fn range_meshes() -> [Option<Node>; 4] {
+fn range_meshes() -> [Option<Node>; RANGE_SECTORS] {
     // Forest dark on the lower slopes, thinning to grey scree and a pale crest of
     // bare rock that catches the sky, so each ridge reads against the one behind.
     const ROWS: [(f64, f64, u32); 6] = [
@@ -316,7 +332,7 @@ fn range_meshes() -> [Option<Node>; 4] {
         (0.7, 1.0, 0x9aa6a8),
         (1.0, 0.4, 0x5f707a),
     ];
-    ring_sectors(
+    ring_sectors::<RANGE_SECTORS>(
         ROWS.len(),
         |step, row| {
             let theta = step_angle(step);
@@ -1688,16 +1704,14 @@ fn finish(mut sector: Node) -> Node {
     node
 }
 
-/// The far shore around the harbor, as four batched sectors.
+/// The far shore around the harbor, as batched sectors: the coast and what stands on
+/// it, then the range behind, which keeps its own bounds so a view that reaches the
+/// coast below it need not draw it too.
 pub fn harbor_backdrop() -> Node {
     let mut root = Node::group("harbor-backdrop");
     let mut sectors: Sectors = std::array::from_fn(|_| Node::group(""));
-    for (sector, (shore, range)) in sectors
-        .iter_mut()
-        .zip(shore_meshes().into_iter().zip(range_meshes()))
-    {
+    for (sector, shore) in sectors.iter_mut().zip(shore_meshes()) {
         sector.children.extend(shore);
-        sector.children.extend(range);
     }
     city(&mut sectors);
     terminal(&mut sectors);
@@ -1707,8 +1721,15 @@ pub fn harbor_backdrop() -> Node {
     woods(&mut sectors);
     breakwater(&mut sectors);
     roads(&mut sectors);
-    for sector in sectors {
-        root.children.push(finish(sector));
+    let ranges = range_meshes().into_iter().flatten().map(|range| {
+        let mut sector = Node::group("");
+        sector.children.push(range);
+        sector
+    });
+    for sector in sectors.into_iter().chain(ranges) {
+        if !sector.children.is_empty() {
+            root.children.push(finish(sector));
+        }
     }
     root
 }
