@@ -118,7 +118,8 @@ impl RenderLab {
             root.position = glam::DVec3::ZERO;
             root.rotation = glam::DQuat::IDENTITY;
             root.scale = glam::DVec3::ONE;
-            let model = self.renderer.add_model(&root, Lifetime::Round);
+            // Any object may be faded (`set_opacity`).
+            let model = self.renderer.add_fading_model(&root, Lifetime::Round);
             let copies = std::iter::once([0.0; 3]).chain(object.copies.iter().copied());
             for offset in copies {
                 let placed = Mat4::from_translation(glam::DVec3::from(offset).as_vec3()) * world;

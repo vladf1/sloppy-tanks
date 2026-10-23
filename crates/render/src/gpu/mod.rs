@@ -5,8 +5,9 @@
 //!
 //! - `add_model` prepares a `Node` tree once (see `crate::model`); `add_instance`
 //!   places it any number of times. Per instance: world transform, visibility,
-//!   opacity (below 1 it draws blended in the transparent list and its shadow
-//!   dithers away), tint, four effect floats, and local transform/visibility
+//!   opacity (below 1, for a model added with `add_fading_model`, it draws blended
+//!   in the transparent list and its shadow dithers away), tint, four effect
+//!   floats, and local transform/visibility
 //!   overrides for named joints (turret yaw, barrel pitch/recoil, wheels,
 //!   suspension). Every visible part is culled by its bounding sphere per view,
 //!   and instances sharing a mesh and material draw as one instanced call.
@@ -1330,11 +1331,13 @@ impl Renderer {
         }
     }
 
+    /// `fades`: instances may draw with an opacity below 1 (`add_fading_model`).
     fn register(
         &mut self,
         mut prepared: PreparedModel,
         lifetime: Lifetime,
         scenery: bool,
+        fades: bool,
     ) -> ModelId {
         let gpu = self.gpu.clone();
         let ShadowMerge {
@@ -1385,9 +1388,13 @@ impl Renderer {
                 part.cast_shadow,
                 None,
             );
-            // Movable models may fade; give them the blended variant up front so
-            // warm-up compiles it.
-            let fadeable = !scenery
+            // A fading model's opaque parts get their blended variant up front so
+            // warm-up compiles it. Only those that fade: on Apple GPUs blending is
+            // part of the fragment binary, so each blended variant is a whole second
+            // compile of its stage, and every movable model having one cost Safari
+            // about a second of a cold start.
+            let fadeable = fades
+                && !scenery
                 && !part.material.transparent
                 && part.material.blending == Blending::Normal;
             let faded_class = fadeable.then(|| {
@@ -1464,10 +1471,19 @@ impl Renderer {
     }
 
     /// Prepare a movable model (tanks, pickups, props). Named nodes become joints
-    /// that instances can pose; the root's transform comes from each instance.
+    /// that instances can pose; the root's transform comes from each instance. Its
+    /// instances draw opaque whatever their opacity: a model that fades is added
+    /// with `add_fading_model`.
     pub fn add_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_model(root, &mut self.interner);
-        self.register(prepared, lifetime, false)
+        self.register(prepared, lifetime, false, false)
+    }
+
+    /// `add_model` for a model whose instances fade (an opacity below 1 draws them
+    /// blended), with the blended variants of its opaque parts compiled up front.
+    pub fn add_fading_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_model(root, &mut self.interner);
+        self.register(prepared, lifetime, false, true)
     }
 
     /// Prepare a model whose root's named children are fixed, only ever shown or
@@ -1475,7 +1491,7 @@ impl Renderer {
     /// per material and draw in runs of the joints that show.
     pub fn add_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_combined(root, &mut self.interner);
-        self.register(prepared, lifetime, false)
+        self.register(prepared, lifetime, false, false)
     }
 
     /// Joint index for a named node of a model.
@@ -1573,7 +1589,7 @@ impl Renderer {
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
         let prepared = prepare_scenery(root, &mut self.interner);
-        let model = self.register(prepared, lifetime, true);
+        let model = self.register(prepared, lifetime, true, false);
         let id = self
             .add_instance(model, Mat4::IDENTITY, lifetime)
             .expect("model just registered");
