@@ -774,18 +774,66 @@ fn finish_piece(
 /// A cottage's kits for `build`, with its shell hits (made up to a wrecked
 /// cottage's breaches from stage 2) cut into its walls.
 fn cottage_parts(design: &HouseDesign, build: Build, hits: &[TimberHit]) -> (Roof, Parts) {
-    let roof = design.roof();
-    let mut parts = Parts::new(build);
-    let mut rng = Random::new(f64::from(design.variant) + 41.0);
-    let padded;
-    let hits = if build.stage() >= 2 && hits.len() < WRECKED_BREACHES {
-        padded = wrecked_hits(design, &roof, hits);
-        &padded[..]
-    } else {
-        hits
-    };
-    build_house(&mut parts, design, &roof, build, hits, &mut rng);
-    (roof, parts)
+    let mut cut = PartsCut::new(design, build, hits);
+    while !cut.step(design) {}
+    (cut.roof, cut.parts)
+}
+
+/// A cottage's kits built a section at a time: the plinth, each wall, then the roof
+/// and the rest. Built at once, they took a slow device's whole frame.
+struct PartsCut {
+    roof: Roof,
+    parts: Parts,
+    rng: Random,
+    hits: Vec<TimberHit>,
+    build: Build,
+    /// The next section: the plinth, the four walls, then the roof and the rest.
+    next: usize,
+}
+
+/// The plinth, four walls and the roof.
+const HOUSE_SECTIONS: usize = 6;
+
+impl PartsCut {
+    fn new(design: &HouseDesign, build: Build, hits: &[TimberHit]) -> Self {
+        let roof = design.roof();
+        let parts = Parts::new(build);
+        let rng = Random::new(f64::from(design.variant) + 41.0);
+        let hits = if build.stage() >= 2 && hits.len() < WRECKED_BREACHES {
+            wrecked_hits(design, &roof, hits)
+        } else {
+            hits.to_vec()
+        };
+        Self {
+            roof,
+            parts,
+            rng,
+            hits,
+            build,
+            next: 0,
+        }
+    }
+
+    /// Build the next section; whether that was the last.
+    fn step(&mut self, design: &HouseDesign) -> bool {
+        let Self {
+            roof,
+            parts,
+            rng,
+            hits,
+            build,
+            next,
+        } = self;
+        match *next {
+            0 => house_base(parts, design),
+            wall if wall < HOUSE_SECTIONS - 1 => {
+                house_wall(parts, design, roof, *build, hits, rng, wall - 1);
+            }
+            _ => house_roof(parts, design, roof, *build, rng),
+        }
+        *next += 1;
+        *next == HOUSE_SECTIONS
+    }
 }
 
 /// Build a standing cottage: one turned node.
@@ -798,14 +846,17 @@ fn cottage(design: &HouseDesign, palette: &Palette, stage: u32, hits: &[TimberHi
     }
 }
 
-/// A standing cottage built in three steps (its kits, its walls, its roof) with the
-/// same result as at once. A cottage's look changes with each shell that holes it, and
-/// rebuilding it within one frame cost a slow device a frame or two each time.
+/// A standing cottage built in steps (its kits a section at a time, its walls, its
+/// roof) with the same result as at once. A cottage's look changes with each shell
+/// that holes it, and rebuilding it within one frame cost a slow device a frame or two
+/// each time.
 struct CottageBuild {
     design: HouseDesign,
     palette: Palette,
     stage: u32,
     hits: Vec<TimberHit>,
+    /// The kits being cut, until they are done.
+    cut: Option<PartsCut>,
     kits: Option<StandingKits>,
     cottage: Node,
 }
@@ -827,6 +878,7 @@ impl CottageBuild {
             palette,
             stage,
             hits: hits.to_vec(),
+            cut: None,
             kits: None,
             cottage: Node::group(""),
         }
@@ -845,7 +897,13 @@ impl CottageBuild {
             nodes,
         }) = &mut self.kits
         else {
-            let (roof, parts) = cottage_parts(design, Build::Standing(stage), &self.hits);
+            let cut = self
+                .cut
+                .get_or_insert_with(|| PartsCut::new(design, Build::Standing(stage), &self.hits));
+            if !cut.step(design) {
+                return None;
+            }
+            let PartsCut { roof, parts, .. } = self.cut.take().expect("cut above");
             let Parts {
                 kits,
                 courses,
@@ -2186,17 +2244,10 @@ fn broken_door(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening) {
     opening_casing(kit, frame, opening, false);
 }
 
-fn build_house(
-    parts: &mut Parts,
-    design: &HouseDesign,
-    roof: &Roof,
-    build: Build,
-    hits: &[TimberHit],
-    rng: &mut Random,
-) {
+/// The fieldstone plinth and the steps up to the door: a cottage's first section
+/// ([`PartsCut`]).
+fn house_base(parts: &mut Parts, design: &HouseDesign) {
     let (w, d) = (design.w, design.d);
-    let stage = build.stage();
-    let standing = matches!(build, Build::Standing(_));
     let frames = wall_frames(w, d);
     if let Some(base) = parts.base() {
         // Fieldstone plinth and the two steps up to the door.
@@ -2221,6 +2272,23 @@ fn build_house(
             );
         }
     }
+}
+
+/// Wall `index` with its openings, holes, trim and dressing: one of a cottage's
+/// sections ([`PartsCut`]).
+#[allow(clippy::too_many_arguments)]
+fn house_wall(
+    parts: &mut Parts,
+    design: &HouseDesign,
+    roof: &Roof,
+    build: Build,
+    hits: &[TimberHit],
+    rng: &mut Random,
+    index: usize,
+) {
+    let stage = build.stage();
+    let standing = matches!(build, Build::Standing(_));
+    let (frame, half) = wall_frames(design.w, design.d)[index];
     let door_opening = Opening {
         u: 0.0,
         y: PLINTH,
@@ -2229,216 +2297,228 @@ fn build_house(
     };
     let door_edge = DOOR_WIDTH / 2.0 + CASING;
     let brick = design.style.walls == WallFinish::Brick;
-    for (index, (frame, half)) in frames.into_iter().enumerate() {
-        let role = wall_role(design, index);
-        let piece = HousePart::wall(index);
-        let mut outline = vec![
-            DVec2::new(-half, PLINTH),
-            DVec2::new(half, PLINTH),
-            DVec2::new(half, roof.wall),
-        ];
-        if role.gable {
-            outline.push(DVec2::new(0.0, roof.ridge));
-        }
-        outline.push(DVec2::new(-half, roof.wall));
-        let mut windows: Vec<Opening> = window_positions(role, half)
-            .into_iter()
-            .map(|u| window_opening(u, roof))
-            .collect();
-        // The ground floor's windows, which carry window boxes and share a wall's
-        // shutters among themselves.
-        let ground_floor = windows.len();
-        let two_storey = design.storeys() == 2;
-        if two_storey {
-            // The upper floor lights each ground-floor window's bay and the
-            // stair over the door.
-            let mut above: Vec<f64> = windows.iter().map(|o| o.u).collect();
-            if role.door {
-                above.push(0.0);
-            }
-            windows.extend(above.into_iter().map(|u| upper_window(u, roof)));
-        }
-        let mut openings = windows.clone();
+    let role = wall_role(design, index);
+    let piece = HousePart::wall(index);
+    let mut outline = vec![
+        DVec2::new(-half, PLINTH),
+        DVec2::new(half, PLINTH),
+        DVec2::new(half, roof.wall),
+    ];
+    if role.gable {
+        outline.push(DVec2::new(0.0, roof.ridge));
+    }
+    outline.push(DVec2::new(-half, roof.wall));
+    let mut windows: Vec<Opening> = window_positions(role, half)
+        .into_iter()
+        .map(|u| window_opening(u, roof))
+        .collect();
+    // The ground floor's windows, which carry window boxes and share a wall's
+    // shutters among themselves.
+    let ground_floor = windows.len();
+    let two_storey = design.storeys() == 2;
+    if two_storey {
+        // The upper floor lights each ground-floor window's bay and the
+        // stair over the door.
+        let mut above: Vec<f64> = windows.iter().map(|o| o.u).collect();
         if role.door {
-            openings.push(door_opening);
+            above.push(0.0);
         }
-        let vent = role.gable && roof.ridge - roof.wall > 1.0;
-        let vent_opening = Opening {
-            u: 0.0,
-            y: roof.wall + (roof.ridge - roof.wall) * 0.3,
-            width: 0.56,
-            height: 0.34,
-        };
-        if vent {
-            openings.push(vent_opening);
-        }
-        // Holes keep clear of every opening with its casing and sill, and of the
-        // door canopy; a shutter where a hole lands is blown away.
-        let mut keepouts: Vec<Keepout> = openings
-            .iter()
-            .map(|o| {
-                let reach = o.width / 2.0 + CASING + 0.04;
-                [o.u - reach, o.y - 0.16, o.u + reach, o.top() + 0.2]
-            })
-            .collect();
-        if role.door {
-            keepouts.push([-0.8, PLINTH, 0.8, door_opening.top() + 0.75]);
-        }
-        if two_storey {
-            let belt = belt_line(roof);
-            keepouts.push([-half, belt - BELT, half, belt + BELT]);
-        }
-        let (holes, blasted) = wall_holes(
-            design,
-            hits,
-            index,
-            half,
-            roof.wall,
-            &windows,
-            keepouts.clone(),
-            stage,
+        windows.extend(above.into_iter().map(|u| upper_window(u, roof)));
+    }
+    let mut openings = windows.clone();
+    if role.door {
+        openings.push(door_opening);
+    }
+    let vent = role.gable && roof.ridge - roof.wall > 1.0;
+    let vent_opening = Opening {
+        u: 0.0,
+        y: roof.wall + (roof.ridge - roof.wall) * 0.3,
+        width: 0.56,
+        height: 0.34,
+    };
+    if vent {
+        openings.push(vent_opening);
+    }
+    // Holes keep clear of every opening with its casing and sill, and of the
+    // door canopy; a shutter where a hole lands is blown away.
+    let mut keepouts: Vec<Keepout> = openings
+        .iter()
+        .map(|o| {
+            let reach = o.width / 2.0 + CASING + 0.04;
+            [o.u - reach, o.y - 0.16, o.u + reach, o.top() + 0.2]
+        })
+        .collect();
+    if role.door {
+        keepouts.push([-0.8, PLINTH, 0.8, door_opening.top() + 0.75]);
+    }
+    if two_storey {
+        let belt = belt_line(roof);
+        keepouts.push([-half, belt - BELT, half, belt + BELT]);
+    }
+    let (holes, blasted) = wall_holes(
+        design,
+        hits,
+        index,
+        half,
+        roof.wall,
+        &windows,
+        keepouts.clone(),
+        stage,
+    );
+    keepouts.extend(holes.iter().map(|h| {
+        let r = h.radius * 1.1;
+        [h.u - r, h.y - r, h.u + r, h.y + r]
+    }));
+    let stripped = stripped_patches(design, index, half, roof.wall, stage, &mut keepouts);
+    let breaches: Vec<Vec<DVec2>> = holes.iter().map(hole_outline).collect();
+    parts.openings[index] = openings
+        .iter()
+        .map(|o| [o.u - o.width / 2.0, o.y, o.u + o.width / 2.0, o.top()])
+        .chain(holes.iter().map(|h| {
+            [
+                h.u - h.radius,
+                h.y - h.radius,
+                h.u + h.radius,
+                h.y + h.radius,
+            ]
+        }))
+        .collect();
+    let kit = parts.kit(piece);
+    let cuts: Vec<Vec<DVec2>> = breaches.iter().chain(&stripped).cloned().collect();
+    wall_with_breaches(kit, frame, &outline, &openings, REVEAL, &cuts);
+    for (hole, outline) in holes.iter().zip(&breaches) {
+        line_hole(kit, frame, hole, outline, standing);
+    }
+    for patch in &stripped {
+        line_stripped(kit, frame, patch);
+    }
+    if !standing {
+        // A falling wall shows its back: the painted lining and the cut edges.
+        let mut holes: Vec<Vec<DVec2>> = openings.iter().map(Opening::corners).collect();
+        holes.extend(breaches.iter().cloned());
+        let holes: Vec<Vec<DVec2>> = holes.iter().map(|hole| mirrored(hole)).collect();
+        kit.face_with_holes(
+            Surface::Curtain,
+            &mirrored(&outline),
+            &holes,
+            frame * pose(DVec3::new(0.0, 0.0, -LINING), DVec3::new(0.0, PI, 0.0)),
         );
-        keepouts.extend(holes.iter().map(|h| {
-            let r = h.radius * 1.1;
-            [h.u - r, h.y - r, h.u + r, h.y + r]
-        }));
-        let stripped = stripped_patches(design, index, half, roof.wall, stage, &mut keepouts);
-        let breaches: Vec<Vec<DVec2>> = holes.iter().map(hole_outline).collect();
-        parts.openings[index] = openings
-            .iter()
-            .map(|o| [o.u - o.width / 2.0, o.y, o.u + o.width / 2.0, o.top()])
-            .chain(holes.iter().map(|h| {
-                [
-                    h.u - h.radius,
-                    h.y - h.radius,
-                    h.u + h.radius,
-                    h.y + h.radius,
-                ]
-            }))
-            .collect();
-        let kit = parts.kit(piece);
-        let cuts: Vec<Vec<DVec2>> = breaches.iter().chain(&stripped).cloned().collect();
-        wall_with_breaches(kit, frame, &outline, &openings, REVEAL, &cuts);
-        for (hole, outline) in holes.iter().zip(&breaches) {
-            line_hole(kit, frame, hole, outline, standing);
-        }
-        for patch in &stripped {
-            line_stripped(kit, frame, patch);
-        }
-        if !standing {
-            // A falling wall shows its back: the painted lining and the cut edges.
-            let mut holes: Vec<Vec<DVec2>> = openings.iter().map(Opening::corners).collect();
-            holes.extend(breaches.iter().cloned());
-            let holes: Vec<Vec<DVec2>> = holes.iter().map(|hole| mirrored(hole)).collect();
-            kit.face_with_holes(
-                Surface::Curtain,
-                &mirrored(&outline),
-                &holes,
-                frame * pose(DVec3::new(0.0, 0.0, -LINING), DVec3::new(0.0, PI, 0.0)),
+        framing(kit, frame, &outline, &openings, roof.wall);
+        plaster_falls(kit, frame, half, roof.wall, &openings, rng);
+        let at = |p: DVec2, depth: f64| frame.transform_point3(DVec3::new(p.x, p.y, -depth));
+        let center = outline.iter().copied().sum::<DVec2>() / outline.len() as f64;
+        for i in 0..outline.len() {
+            let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
+            let out = (a + b) / 2.0 - center;
+            kit.quad(
+                Surface::Wood,
+                [at(a, 0.0), at(b, 0.0), at(b, LINING), at(a, LINING)],
+                frame.transform_vector3(DVec3::new(out.x, out.y, 0.0)),
             );
-            framing(kit, frame, &outline, &openings, roof.wall);
-            plaster_falls(kit, frame, half, roof.wall, &openings, rng);
-            let at = |p: DVec2, depth: f64| frame.transform_point3(DVec3::new(p.x, p.y, -depth));
-            let center = outline.iter().copied().sum::<DVec2>() / outline.len() as f64;
-            for i in 0..outline.len() {
-                let (a, b) = (outline[i], outline[(i + 1) % outline.len()]);
-                let out = (a + b) / 2.0 - center;
-                kit.quad(
-                    Surface::Wood,
-                    [at(a, 0.0), at(b, 0.0), at(b, LINING), at(a, LINING)],
-                    frame.transform_vector3(DVec3::new(out.x, out.y, 0.0)),
-                );
-            }
-        }
-        let glazing = Glazing { double_hung: true };
-        for (i, opening) in windows.iter().enumerate() {
-            let seed = f64::from(design.variant) * 3.0 + (index * 5 + i) as f64;
-            let blown = blasted.contains(&i);
-            let upper = i >= ground_floor;
-            let broken =
-                blown || stage >= 2 || (stage == 1 && Random::new(seed).next() < BROKEN_WINDOWS);
-            let boarded = !role.door && Random::new(seed + 0.7).next() < BOARDED_WINDOWS;
-            if blown {
-                window_soot(kit, frame, opening, seed);
-            }
-            if broken {
-                broken_window(kit, frame, opening, seed);
-            } else if boarded {
-                boarded_window(kit, frame, opening, seed);
-            } else if upper {
-                // Bedroom casements upstairs: one sash of four lites.
-                window(kit, frame, opening, Glazing { double_hung: false }, REVEAL);
-            } else {
-                window(kit, frame, opening, glazing, REVEAL);
-            }
-            let inner_limit = if role.door { door_edge } else { 0.0 };
-            let room = shutter_room(opening, half, inner_limit, ground_floor == 1);
-            // A wrecked cottage has lost some of its shutters, and a hole beside a
-            // window takes its shutters with it.
-            let reach = opening.width / 2.0 + CASING + 0.01 + room;
-            let holed = holes.iter().any(|hole| {
-                (hole.u - opening.u).abs() < reach + hole.radius
-                    && hole.y + hole.radius > opening.y
-                    && hole.y - hole.radius < opening.top()
-            });
-            let lost = holed || blown || (stage >= 2 && Random::new(seed + 0.5).next() < 0.5);
-            // Shutters dress the street front and the sides; the back of the
-            // cottage, behind its door, makes do without.
-            let back = role.planted && !role.door;
-            // The upper floor's windows go without: shutters on both floors
-            // cost more triangles than the second row of windows itself.
-            if room > 0.0 && !lost && !back && !upper {
-                match design.style.shutters {
-                    Shutters::Louvred => shutters(kit, frame, opening, room),
-                    Shutters::Board => board_shutters(kit, frame, opening, room),
-                    Shutters::None => {}
-                }
-            }
-            if role.planted && !upper {
-                window_box(kit, frame, opening);
-            }
-        }
-        if two_storey {
-            // The belt course between the floors, broken by the door's porch.
-            kit.block(
-                Surface::Trim,
-                DVec3::new(2.0 * half, BELT, TRIM_PROUD * 1.5),
-                frame * shift(DVec3::new(0.0, belt_line(roof), TRIM_PROUD * 0.75)),
-            );
-        }
-        if role.door {
-            if stage >= 2 {
-                broken_door(kit, frame, &door_opening);
-            } else {
-                door(kit, frame, &door_opening, REVEAL);
-            }
-            if design.style.porch && role.gable {
-                porch(kit, frame, half, roof);
-            } else {
-                canopy(kit, frame, &door_opening);
-            }
-            lantern(kit, frame, door_edge + 0.14, PLINTH + 1.55);
-        }
-        if vent {
-            gable_vent(kit, frame, &vent_opening);
-        }
-        wall_trim(
-            kit,
-            frame,
-            half,
-            roof,
-            index < 2,
-            role.gable,
-            !brick,
-            role.door.then_some(door_edge),
-        );
-        if standing && role.planted {
-            window_plants(&mut parts.nodes[0], frame, half, role, roof, design.variant);
-        }
-        if standing && role.door {
-            foundation_bed(parts, frame, half, design.variant);
         }
     }
+    let glazing = Glazing { double_hung: true };
+    for (i, opening) in windows.iter().enumerate() {
+        let seed = f64::from(design.variant) * 3.0 + (index * 5 + i) as f64;
+        let blown = blasted.contains(&i);
+        let upper = i >= ground_floor;
+        let broken =
+            blown || stage >= 2 || (stage == 1 && Random::new(seed).next() < BROKEN_WINDOWS);
+        let boarded = !role.door && Random::new(seed + 0.7).next() < BOARDED_WINDOWS;
+        if blown {
+            window_soot(kit, frame, opening, seed);
+        }
+        if broken {
+            broken_window(kit, frame, opening, seed);
+        } else if boarded {
+            boarded_window(kit, frame, opening, seed);
+        } else if upper {
+            // Bedroom casements upstairs: one sash of four lites.
+            window(kit, frame, opening, Glazing { double_hung: false }, REVEAL);
+        } else {
+            window(kit, frame, opening, glazing, REVEAL);
+        }
+        let inner_limit = if role.door { door_edge } else { 0.0 };
+        let room = shutter_room(opening, half, inner_limit, ground_floor == 1);
+        // A wrecked cottage has lost some of its shutters, and a hole beside a
+        // window takes its shutters with it.
+        let reach = opening.width / 2.0 + CASING + 0.01 + room;
+        let holed = holes.iter().any(|hole| {
+            (hole.u - opening.u).abs() < reach + hole.radius
+                && hole.y + hole.radius > opening.y
+                && hole.y - hole.radius < opening.top()
+        });
+        let lost = holed || blown || (stage >= 2 && Random::new(seed + 0.5).next() < 0.5);
+        // Shutters dress the street front and the sides; the back of the
+        // cottage, behind its door, makes do without.
+        let back = role.planted && !role.door;
+        // The upper floor's windows go without: shutters on both floors
+        // cost more triangles than the second row of windows itself.
+        if room > 0.0 && !lost && !back && !upper {
+            match design.style.shutters {
+                Shutters::Louvred => shutters(kit, frame, opening, room),
+                Shutters::Board => board_shutters(kit, frame, opening, room),
+                Shutters::None => {}
+            }
+        }
+        if role.planted && !upper {
+            window_box(kit, frame, opening);
+        }
+    }
+    if two_storey {
+        // The belt course between the floors, broken by the door's porch.
+        kit.block(
+            Surface::Trim,
+            DVec3::new(2.0 * half, BELT, TRIM_PROUD * 1.5),
+            frame * shift(DVec3::new(0.0, belt_line(roof), TRIM_PROUD * 0.75)),
+        );
+    }
+    if role.door {
+        if stage >= 2 {
+            broken_door(kit, frame, &door_opening);
+        } else {
+            door(kit, frame, &door_opening, REVEAL);
+        }
+        if design.style.porch && role.gable {
+            porch(kit, frame, half, roof);
+        } else {
+            canopy(kit, frame, &door_opening);
+        }
+        lantern(kit, frame, door_edge + 0.14, PLINTH + 1.55);
+    }
+    if vent {
+        gable_vent(kit, frame, &vent_opening);
+    }
+    wall_trim(
+        kit,
+        frame,
+        half,
+        roof,
+        index < 2,
+        role.gable,
+        !brick,
+        role.door.then_some(door_edge),
+    );
+    if standing && role.planted {
+        window_plants(&mut parts.nodes[0], frame, half, role, roof, design.variant);
+    }
+    if standing && role.door {
+        foundation_bed(parts, frame, half, design.variant);
+    }
+}
+
+/// The roof with its covering, the chimney, the yard and the dormers: a cottage's
+/// last section ([`PartsCut`]).
+fn house_roof(
+    parts: &mut Parts,
+    design: &HouseDesign,
+    roof: &Roof,
+    build: Build,
+    rng: &mut Random,
+) {
+    let (w, d) = (design.w, design.d);
+    let stage = build.stage();
+    let standing = matches!(build, Build::Standing(_));
     match roof.form {
         RoofForm::Gable => gable_deck(parts, roof),
         RoofForm::Hip => hip_deck(parts, roof),
@@ -5332,7 +5412,9 @@ mod tests {
                     None => steps += 1,
                 }
             };
-            assert_eq!(steps, 3);
+            // The kits a section at a time (plinth, four walls, roof), then the walls'
+            // and the roof's meshes.
+            assert_eq!(steps, 8);
             let (mut a, mut b) = (Vec::new(), Vec::new());
             contents(&at_once, &mut a);
             contents(&stepped, &mut b);

@@ -718,23 +718,26 @@ struct CoverView {
     tree: Option<TreeView>,
 }
 
-/// A hit cottage's new look being built over a few frames while its last one shows.
-struct HouseLook {
+/// A hit cover's new look being built over a few frames while its last one shows.
+struct CoverLook {
     cover: u32,
     /// The look being built (`cover_key`).
     key: String,
-    phase: HousePhase,
+    phase: LookPhase,
 }
 
-/// Where a cottage's new look has got to. Each phase is a step of its own: a cottage's
-/// model is batched, prepared and uploaded in separate steps from building it, so a
-/// slow device spreads the work over frames instead of taking it in one.
-enum HousePhase {
-    Building(HouseCoverBuild),
-    /// Built, to batch and prepare for upload.
+/// Where a cover's new look has got to. Each phase is a step of its own: a model is
+/// uploaded in a separate step from building it (a cottage's also batched and
+/// prepared), so a slow device spreads the work over frames instead of taking it in one.
+enum LookPhase {
+    /// A cottage's model, built a step at a time (its kits in progress are large).
+    Building(Box<HouseCoverBuild>),
+    /// A cottage's model, built, to batch and prepare for upload.
     Built(Node),
-    /// Ready to upload and show.
-    Ready(CoverModel, PendingModel),
+    /// A crate's or timber wall's look, its model still to build.
+    Unbuilt,
+    /// Ready to upload and show (prepared for upload ahead for a cottage).
+    Ready(CoverModel, Option<PendingModel>),
 }
 
 struct CoverModelEntry {
@@ -949,8 +952,13 @@ pub struct Presentation {
     tanks: HashMap<u32, TankView>,
     covers: HashMap<u32, CoverView>,
     cover_models: HashMap<String, CoverModelEntry>,
-    /// Hit cottages' new looks still being built (one per cottage at most).
-    house_looks: Vec<HouseLook>,
+    /// Hit cottages', crates' and timber walls' new looks still being built or
+    /// uploaded (one per cover at most).
+    cover_looks: Vec<CoverLook>,
+    /// Whether this frame already rebuilt a cover's look or built a debris model:
+    /// work that can wait (debris looks built ahead, a cottage's collapse cut ahead)
+    /// then waits for a quieter frame instead of piling onto this one.
+    busy: bool,
     fragments: HashMap<u32, FragmentView>,
     /// Debris models built this round, shared by every fragment that looks the same:
     /// crate walls split at a few places, so sizes repeat between crates, and every
@@ -1044,7 +1052,8 @@ impl Presentation {
             tanks: HashMap::new(),
             covers: HashMap::new(),
             cover_models: HashMap::new(),
-            house_looks: Vec::new(),
+            cover_looks: Vec::new(),
+            busy: false,
             fragments: HashMap::new(),
             shared_debris: HashMap::new(),
             debris_warmups: Vec::new(),
@@ -1318,7 +1327,7 @@ impl Presentation {
         self.tanks.clear();
         self.covers.clear();
         self.cover_models.clear();
-        self.house_looks.clear();
+        self.cover_looks.clear();
         self.fragments.clear();
         self.shared_debris.clear();
         self.house_pieces.clear();
@@ -1553,10 +1562,7 @@ impl Presentation {
     ) -> (String, Mat4) {
         let movable = cover.motion.is_some();
         let built = Self::built_cover(cover);
-        let mut key = cover_key(&built, stage);
-        if movable {
-            key += "/movable";
-        }
+        let key = Self::cover_model_key(cover, stage);
         if let Some(entry) = self.cover_models.get_mut(&key) {
             entry.users += 1;
         } else {
@@ -1593,6 +1599,17 @@ impl Presentation {
         let offset = DVec3::new(built.x, 0.0, built.z) - entry.origin;
         let world = (DMat4::from_translation(offset) * entry.source.local_matrix()).as_mat4();
         (key, world)
+    }
+
+    /// The key a cover's look's model is kept under in `cover_models`: covers that look
+    /// the same share it, movable ones apart (their parts are dropped to the body's
+    /// centre).
+    fn cover_model_key(cover: &RenderCover, stage: u32) -> String {
+        let mut key = cover_key(&Self::built_cover(cover), stage);
+        if cover.motion.is_some() {
+            key += "/movable";
+        }
+        key
     }
 
     fn release_cover_model(&mut self, key: &str) {
@@ -1697,8 +1714,12 @@ impl Presentation {
         }
     }
 
-    /// Build one queued debris look.
+    /// Build one queued debris look, on a frame that rebuilt no cover and built no
+    /// debris (the look is ahead of need, so it waits for a quieter frame).
     fn warm_debris(&mut self) {
+        if self.busy {
+            return;
+        }
         if let Some(key) = self.debris_warmups.pop() {
             self.shared_debris(key);
         }
@@ -2068,6 +2089,7 @@ impl Presentation {
         overview: bool,
     ) -> Result<(), String> {
         self.time += dt;
+        self.busy = false;
         self.textures.step(&mut self.renderer, SOIL_ROWS_PER_STEP);
         self.flags
             .update(&mut self.renderer, self.time, &mut self.random);
@@ -2446,21 +2468,23 @@ impl Presentation {
         }
     }
 
-    /// Build a hit cottage's new look a step at a time while this frame's rebuild
-    /// time (from `start`) lasts, installing it once done; a newer look starts over.
-    fn build_house_look(&mut self, cover: &RenderCover, stage: u32, start: f64) {
+    /// Build a hit cover's new look a step at a time while this frame's rebuild time
+    /// (from `start`) lasts, installing it once done; a newer look starts over. A step
+    /// takes up to a few milliseconds on a slow device, so one that would not fit in
+    /// what is left of the time waits for the next frame (`longest` is the longest
+    /// step this frame has taken): the time bounds the frame rather than when its last
+    /// step starts.
+    fn build_cover_look(&mut self, cover: &RenderCover, stage: u32, start: f64, longest: &mut f64) {
         let key = cover_key(cover, stage);
         let index = match self
-            .house_looks
+            .cover_looks
             .iter()
             .position(|look| look.cover == cover.id)
         {
-            Some(index) if self.house_looks[index].key == key => index,
+            Some(index) if self.cover_looks[index].key == key => index,
             found => {
-                let look = HouseLook {
-                    cover: cover.id,
-                    key,
-                    phase: HousePhase::Building(HouseCoverBuild::new(
+                let phase = if cover.kind == CoverKind::House {
+                    LookPhase::Building(Box::new(HouseCoverBuild::new(
                         cover.x,
                         cover.z,
                         cover.w,
@@ -2468,43 +2492,67 @@ impl Presentation {
                         cover.h,
                         stage,
                         &cover.timber_hits,
-                    )),
+                    )))
+                } else {
+                    LookPhase::Unbuilt
+                };
+                let look = CoverLook {
+                    cover: cover.id,
+                    key,
+                    phase,
                 };
                 match found {
                     Some(index) => {
-                        self.house_looks[index] = look;
+                        self.cover_looks[index] = look;
                         index
                     }
                     None => {
-                        self.house_looks.push(look);
-                        self.house_looks.len() - 1
+                        self.cover_looks.push(look);
+                        self.cover_looks.len() - 1
                     }
                 }
             }
         };
         loop {
-            let phase = &mut self.house_looks[index].phase;
-            match phase {
-                HousePhase::Building(build) => {
+            let before = now_ms();
+            let phase = &mut self.cover_looks[index].phase;
+            let installed = match phase {
+                LookPhase::Building(build) => {
                     if let Some(root) = build.step() {
-                        *phase = HousePhase::Built(root);
+                        *phase = LookPhase::Built(root);
                     }
+                    false
                 }
-                HousePhase::Built(root) => {
+                LookPhase::Built(root) => {
                     let model = model_catalog::built_cover_model(std::mem::take(root));
                     let pending = self.renderer.prepare_pending_model(&model.root);
-                    *phase = HousePhase::Ready(model, pending);
+                    *phase = LookPhase::Ready(model, Some(pending));
+                    false
                 }
-                HousePhase::Ready(..) => {
-                    let look = self.house_looks.swap_remove(index);
-                    let HousePhase::Ready(model, pending) = look.phase else {
-                        unreachable!("matched above")
-                    };
-                    self.add_cover_with(cover, Some((model, Some(pending))));
-                    return;
+                // A look another cover already shows needs no model of its own.
+                LookPhase::Unbuilt
+                    if !self
+                        .cover_models
+                        .contains_key(&Self::cover_model_key(cover, stage)) =>
+                {
+                    let model = model_catalog::cover_model(&Self::built_cover(cover), stage);
+                    *phase = LookPhase::Ready(model, None);
+                    false
                 }
-            }
-            if now_ms() - start >= COVER_REBUILD_MS {
+                LookPhase::Unbuilt | LookPhase::Ready(..) => {
+                    let look = self.cover_looks.swap_remove(index);
+                    match look.phase {
+                        LookPhase::Ready(model, pending) => {
+                            self.add_cover_with(cover, Some((model, pending)));
+                        }
+                        _ => self.add_cover(cover),
+                    }
+                    true
+                }
+            };
+            let after = now_ms();
+            *longest = longest.max(after - before);
+            if installed || after - start + *longest >= COVER_REBUILD_MS {
                 return;
             }
         }
@@ -2515,6 +2563,7 @@ impl Presentation {
         let mut shed = Vec::new();
         let start = now_ms();
         let mut rebuilt = false;
+        let mut longest = 0.0_f64;
         for cover in &state.covers {
             let stump = cover.kind == CoverKind::Tree && !cover.alive;
             let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
@@ -2529,21 +2578,30 @@ impl Presentation {
                         ) && view.hits != cover.timber_hits.len()))
             });
             // A blast that marks several crates, walls or cottages at once rebuilds them
-            // over a few frames on a slow device: one a frame at least, more while
+            // over a few frames on a slow device: one step a frame at least, more while
             // this frame's rebuild time lasts. A cover keeps its last look meanwhile;
-            // one without a view is always built. A cottage, the costliest to build,
-            // builds its new look in steps over this time.
+            // one without a view is always built. A hit cottage, crate or timber wall
+            // builds its new look in steps (a cottage's model in several), uploading
+            // it in a step of its own.
             let shown = shown.is_some();
-            let wait = shown && rebuilt && now_ms() - start >= COVER_REBUILD_MS;
+            let wait = shown && rebuilt && now_ms() - start + longest >= COVER_REBUILD_MS;
             if rebuild && !wait {
-                if shown && cover.kind == CoverKind::House {
-                    self.build_house_look(cover, stage, start);
+                if shown
+                    && matches!(
+                        cover.kind,
+                        CoverKind::House | CoverKind::Cargo | CoverKind::Timber
+                    )
+                {
+                    self.build_cover_look(cover, stage, start, &mut longest);
                 } else {
+                    let before = now_ms();
                     self.add_cover(cover);
+                    longest = longest.max(now_ms() - before);
                 }
                 rebuilt = true;
-            } else if !rebuild && !self.house_looks.is_empty() {
-                self.house_looks.retain(|look| look.cover != cover.id);
+                self.busy = true;
+            } else if !rebuild && !self.cover_looks.is_empty() {
+                self.cover_looks.retain(|look| look.cover != cover.id);
             }
             let view = self.covers.get_mut(&cover.id).expect("cover view");
             // Destruction removes a movable cover's body; its last pose stays.
@@ -3167,6 +3225,11 @@ impl Presentation {
             if !self.fragments.contains_key(&fragment.id) {
                 match self.fragment_view(fragment, &state.covers) {
                     Some(view) => {
+                        // A debris model of its own (or a shared look not built ahead).
+                        self.busy |= matches!(
+                            view.look,
+                            FragmentLook::Owned(..) | FragmentLook::Shared(..)
+                        );
                         self.fragments.insert(fragment.id, view);
                     }
                     None => continue,
@@ -3404,6 +3467,11 @@ impl Presentation {
     fn prepare_houses(&mut self, covers: &[RenderCover]) {
         for (model, _) in self.house_prep.aim(covers, self.time) {
             self.renderer.remove_model(model);
+        }
+        // The cut is ahead of the collapse: a frame that rebuilt a look or built debris
+        // leaves it for the next.
+        if self.busy {
+            return;
         }
         let (start, time) = (now_ms(), self.time);
         // A step takes up to a few milliseconds on a slow device, so one that would not
