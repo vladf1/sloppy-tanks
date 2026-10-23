@@ -55,7 +55,7 @@ try {
     [".battle-choice", ".difficulty-setting", ".menu-footer", ".room-browse", ".home-screen-tip"],
   );
   await page.screenshot({ path: `${output}/setup-landscape.png` });
-  await page.locator('[data-kind="heavy"]').tap();
+  await page.locator('.start [data-kind="heavy"]').tap();
   await page.locator('input[name="mapMode"][value="harbor"]').tap({ force: true });
   await startRound(page, { touch: true });
   const hud = await page.evaluate(() => window.sloppy.hud());

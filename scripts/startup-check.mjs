@@ -38,7 +38,7 @@ try {
   await delayed.page.goto(url + "?map=harbor", { waitUntil: "domcontentloaded" });
   assert.equal(await delayed.page.locator("canvas").count(), 0);
   assert.equal(await chosenMap(delayed.page), "harbor");
-  await delayed.page.locator('[data-kind="heavy"]').click();
+  await delayed.page.locator('.start [data-kind="heavy"]').click();
   await delayed.page.locator('input[value="solo"]').check();
   await delayed.page.locator('input[value="hard"]').check();
   await click(delayed.page, "#start");
@@ -161,14 +161,21 @@ try {
   assert.deepEqual(results.prepared, { time: 0, elapsed: 0, prepared: true, phase: "ready" });
   // Each vehicle card clips the shared preview sheet: 3 kinds × 2 team rows of 640×400.
   results.previews = await warm.page.evaluate(async () => {
-    const tiles = [...document.querySelectorAll(".tank-preview image")];
+    const tiles = [...document.querySelectorAll(".start .tank-preview image")];
     const sheet = new Image();
     sheet.src = tiles[0].href.baseVal;
     await sheet.decode();
     return { cards: tiles.length, sheet: [sheet.naturalWidth, sheet.naturalHeight] };
   });
   assert.deepEqual(results.previews, { cards: 3, sheet: [1920, 800] });
-  assert.equal(await warm.page.locator("#game").isVisible(), false);
+  // The round's view waits under Battle Setup, painted for GO; the menu covers it.
+  assert.equal(
+    await warm.page.evaluate(
+      () =>
+        !!document.elementFromPoint(innerWidth / 2, innerHeight / 2)?.closest("#startup-overlay"),
+    ),
+    true,
+  );
   await warm.page.screenshot({ path: `${output}/desktop-menu.png` });
   await startRound(warm.page);
   await playing(warm.page);
@@ -194,7 +201,7 @@ try {
   assert.equal(await warm.page.evaluate(() => window.sloppy.view.time), frozen);
   assert.equal(await warm.page.locator("#game").isVisible(), false);
   await chooseMap(warm.page, "harbor");
-  await warm.page.locator('[data-kind="scout"]').click();
+  await warm.page.locator('.start [data-kind="scout"]').click();
   await startRound(warm.page);
   await playing(warm.page);
   results.newRound = await warm.page.evaluate(() => ({
@@ -212,7 +219,7 @@ try {
   await menuReady(changed.page);
   await changed.page.locator('input[value="solo"]').check();
   await chooseMap(changed.page, "harbor");
-  await changed.page.locator('[data-kind="heavy"]').click();
+  await changed.page.locator('.start [data-kind="heavy"]').click();
   await startRound(changed.page);
   await playing(changed.page);
   assert.equal(
@@ -369,7 +376,7 @@ try {
     true,
   );
   assert.equal(
-    await layout.page.locator(".vehicle strong").evaluateAll((titles) =>
+    await layout.page.locator(".start .vehicle strong").evaluateAll((titles) =>
       titles.every((title) => {
         const range = document.createRange();
         range.selectNodeContents(title);
