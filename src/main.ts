@@ -170,8 +170,13 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     }
     arenaStarted = true;
     startTextureDownloads(options);
-    // A second frame leaves a paint opportunity before any engine work begins.
+    // A second frame leaves a paint opportunity before any engine work begins. The
+    // engine compiles off the main thread meanwhile, and the arena's texture bakes
+    // start in workers once it has; a failed load is the arena's to report.
     requestAnimationFrame(() => {
+      void import("./game")
+        .then(({ loadArenaEngine }) => loadArenaEngine(options.mapMode))
+        .catch(() => {});
       requestAnimationFrame(() => {
         void menu.prepare().catch(() => {});
       });

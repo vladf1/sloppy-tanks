@@ -46,8 +46,10 @@ import { MENU_READY_STATUS, UI } from "./game/ui";
 const EXACT_RESOLUTION = { width: 2560, height: 1440 } as const;
 
 /** Load the engine and start the texture bakes the arena of `map` will claim, so they
- * run in workers while the engine builds the arena (`bakeAhead`). */
-async function loadArenaEngine(map: string): Promise<void> {
+ * run in workers while the engine builds the arena (`bakeAhead`). Battle Setup calls
+ * this as its first frame paints; the quarry soil's bake then finishes before the
+ * arena's pipelines do. */
+export async function loadArenaEngine(map: string): Promise<void> {
   await loadEngine();
   bakeAhead(engineModule(), mapTextureBakes(map));
 }
