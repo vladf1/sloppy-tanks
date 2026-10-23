@@ -254,6 +254,9 @@ struct Builder<'a, 'b> {
     single: Vec<(usize, Pending<'a>)>,
     /// Merge cell edge in metres; 0 merges each material into one draw.
     cell_size: f32,
+    /// Upload even a lone part's mesh as the model's own, so no CPU copy outlives the
+    /// upload (a shared mesh keeps its source while its GPU copy lives).
+    own_meshes: bool,
 }
 
 impl<'a> Builder<'a, '_> {
@@ -339,8 +342,19 @@ impl<'a> Builder<'a, '_> {
         let groups = std::mem::take(&mut self.groups.order);
         for (key, members) in groups {
             if members.len() == 1 {
-                // A lone part keeps its shared mesh and exact material.
-                let part = self.shared_part(key.node, &members[0]);
+                // A lone part keeps its shared mesh and exact material, or uploads the
+                // same vertices as the model's own.
+                let pending = &members[0];
+                let part = if self.own_meshes {
+                    let mut data = MeshData::default();
+                    data.append(&pending.drawable.mesh, None, None);
+                    self.model.meshes.push(data.finish());
+                    let mesh = PartMesh::Owned(self.model.meshes.len() - 1);
+                    let material = self.interner.intern(&pending.drawable.material);
+                    self.part(key.node, pending, mesh, material)
+                } else {
+                    self.shared_part(key.node, pending)
+                };
                 self.model.parts.push(part);
                 continue;
             }
@@ -374,12 +388,28 @@ impl<'a> Builder<'a, '_> {
 /// Prepare a movable model. The root's own transform is ignored: an instance's
 /// world matrix places the root, like setting the Three group's position.
 pub fn prepare_model(root: &Node, interner: &mut MaterialInterner) -> PreparedModel {
+    prepare_movable(root, interner, false)
+}
+
+/// [`prepare_model`] with every mesh the model's own: for a one-off merge that no
+/// other model shares, whose CPU copy need not stay in the Wasm heap (which never
+/// shrinks) once it is uploaded.
+pub fn prepare_owned_model(root: &Node, interner: &mut MaterialInterner) -> PreparedModel {
+    prepare_movable(root, interner, true)
+}
+
+fn prepare_movable(
+    root: &Node,
+    interner: &mut MaterialInterner,
+    own_meshes: bool,
+) -> PreparedModel {
     let mut builder = Builder {
         interner,
         model: PreparedModel::default(),
         groups: Groups::new(),
         single: Vec::new(),
         cell_size: 0.0,
+        own_meshes,
     };
     builder.model.nodes.push(ModelNode {
         name: root.name.clone(),
@@ -450,6 +480,7 @@ pub fn prepare_scenery(root: &Node, interner: &mut MaterialInterner) -> Prepared
         groups: Groups::new(),
         single: Vec::new(),
         cell_size: SCENERY_CELL_SIZE,
+        own_meshes: false,
     };
     builder.model.nodes.push(ModelNode {
         name: root.name.clone(),

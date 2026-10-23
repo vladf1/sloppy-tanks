@@ -76,7 +76,8 @@ use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::MaterialInterner;
 use crate::mesh_pages::MeshRange;
 use crate::model::{
-    InstanceData, ModelNode, PartMesh, PreparedModel, prepare_model, prepare_scenery,
+    InstanceData, ModelNode, PartMesh, PreparedModel, prepare_model, prepare_owned_model,
+    prepare_scenery,
 };
 use crate::presentation::theme::SHADOW_DEPTH;
 use crate::presentation::theme::{Grade, Tone};
@@ -1239,8 +1240,8 @@ impl Renderer {
                 // front, so a closed shape's far side shows through its near one. A
                 // flat mesh (a ring, a card) never has a face behind another, so it
                 // draws both sides at once in half the draws.
-                let planar = self.meshes.get(mesh).planar;
-                let two_pass = transparent && source.side == Side::Double && !planar;
+                let two_pass =
+                    transparent && source.side == Side::Double && !self.meshes.planar(mesh);
                 let face = |side| sloppy_core::scene::Material {
                     side,
                     ..(**source).clone()
@@ -1343,11 +1344,22 @@ impl Renderer {
         // pages of its own.
         let reservation = self.meshes.reserve(&gpu, &prepared.meshes, &groups);
         let mut entry_of = vec![None; prepared.parts.len()];
+        // Whether a double-sided material draws each owned mesh, the only kind that
+        // asks whether it is planar.
+        let mut double_sided = vec![false; prepared.meshes.len()];
+        for part in &prepared.parts {
+            if let PartMesh::Owned(index) = part.mesh {
+                double_sided[index] |= part.material.side == Side::Double;
+            }
+        }
         let owned: Vec<u32> = prepared
             .meshes
             .iter_mut()
             .zip(reservation.owned)
-            .map(|(data, placement)| self.meshes.owned(&gpu, data, placement))
+            .zip(double_sided)
+            .map(|((data, placement), double_sided)| {
+                self.meshes.owned(&gpu, data, placement, double_sided)
+            })
             .collect();
         let mut parts = Vec::with_capacity(prepared.parts.len());
         // The parts' instance lists move into the entries: only the joints outlive
@@ -1452,6 +1464,14 @@ impl Renderer {
     /// that instances can pose; the root's transform comes from each instance.
     pub fn add_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_model(root, &mut self.interner);
+        self.register(prepared, lifetime, false)
+    }
+
+    /// [`add_model`](Self::add_model) for a one-off merge nothing else draws (a
+    /// settled pile of debris): every mesh uploads as the model's own, so once the
+    /// caller drops `root` no CPU copy stays in the Wasm heap.
+    pub fn add_owned_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_owned_model(root, &mut self.interner);
         self.register(prepared, lifetime, false)
     }
 

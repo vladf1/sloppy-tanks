@@ -107,6 +107,13 @@ pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
     CoverModel { root, tree }
 }
 
+/// [`cover_model`] for a cottage whose core model was built ahead, in steps
+/// (`models::HouseCoverBuild`): batched the same way.
+pub fn built_cover_model(mut root: Node) -> CoverModel {
+    batch(&mut root);
+    CoverModel { root, tree: None }
+}
+
 fn tree_parts(root: &Node) -> TreeParts {
     let branches = root
         .find(tree_part::CROWN)

@@ -142,6 +142,9 @@ try {
     const { sloppy, engine } = window;
     const game = sloppy.game;
     const { x, z, team } = sloppy.sim.human;
+    // A fresh round builds its covers' debris looks (tower pieces, crate sections) a
+    // frame each; let them finish first.
+    for (let i = 0; i < 120; i++) engine.draw();
     const memory = [];
     for (let i = 0; i < 30; i++) {
       game.debug_add_mine(x, z, team, 0);
