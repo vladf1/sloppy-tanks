@@ -3362,13 +3362,20 @@ impl Presentation {
             self.renderer.remove_model(model);
         }
         let (start, time) = (now_ms(), self.time);
+        // A step takes up to a few milliseconds on a slow device, so one that would not
+        // fit in what is left of the budget waits for the next frame (the first always
+        // runs): the budget bounds the frame rather than when the last step starts.
+        let mut longest_step = 0.0_f64;
         for _ in 0..PREPARE_STEPS {
             let renderer = &mut self.renderer;
+            let before = now_ms();
             let more = self.house_prep.step(time, |node| {
                 let bounds = node_bounds(node, DMat4::IDENTITY);
                 (renderer.add_model(node, Lifetime::Round), bounds)
             });
-            if !more || now_ms() - start >= PREPARE_BUDGET_MS {
+            let after = now_ms();
+            longest_step = longest_step.max(after - before);
+            if !more || after - start + longest_step >= PREPARE_BUDGET_MS {
                 break;
             }
         }
