@@ -450,6 +450,28 @@ pub fn occlusion_source(depth_pass: bool, scale: u32) -> String {
     specialize::specialize(&format!("{depth}{scale}{OCCLUSION_WGSL}"), &[])
 }
 
+/// The full-screen triangle every texture bake draws (`effects::bakes`), and the uv
+/// its fragment stage shades: 0..1 across the target, v increasing down its rows.
+const BAKE_WGSL: &str = "struct BakeOut {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+}
+@vertex
+fn vs_bake(@builtin(vertex_index) index: u32) -> BakeOut {
+    let uv = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
+    var out: BakeOut;
+    out.position = vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
+    out.uv = uv;
+    return out;
+}
+";
+
+/// A texture bake's complete WGSL from the code defining its `fs_bake`, reduced to
+/// what its entry points reach.
+pub fn bake_source(fragment: &str) -> String {
+    specialize::specialize(&format!("{BAKE_WGSL}{fragment}"), &[])
+}
+
 /// The output and bloom shader, its loops unrolled like every other shader's.
 pub fn output_source() -> String {
     specialize::specialize(OUTPUT_WGSL, &[])

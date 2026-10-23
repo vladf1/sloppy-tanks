@@ -238,11 +238,29 @@ pub const SAND_DRIFT: EffectDefinition = effect(
     ),
 );
 
-/// Harbor quay concrete and paint in world space (`harbor_surfaces`).
-pub const HARBOR_APRON: EffectDefinition = effect(
-    effects_scenery::HARBOR_APRON,
-    wgsl!("shaders/effects/harbor_apron.wgsl"),
-);
+/// The harbor apron's functions, which its three kinds share (and its wear bake,
+/// `bakes::HARBOR_APRON_WEAR`).
+pub(crate) const HARBOR_APRON_WGSL: &str = wgsl!("shaders/effects/harbor_apron.wgsl");
+
+/// Harbor quay concrete and asphalt in world space (`harbor_surfaces`), over the
+/// baked wear, the paint on it, and its quay walls, hulls, spawn pads, cover
+/// containers and parapet: every apron material, so they share one shader (WebKit
+/// compiles each distinct shader on a cold start, and a lit one's lighting costs
+/// about as much as the apron's own code).
+pub const HARBOR_APRON: EffectDefinition = EffectDefinition {
+    entry: "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
+    let mode = material.params[0].x;
+    if mode < 2.5 {
+        apron_ground(s, f);
+    } else if mode < 4.5 {
+        apron_paint(s, f);
+    } else {
+        apron_structure(s, f);
+    }
+}
+",
+    ..effect(effects_scenery::HARBOR_APRON, HARBOR_APRON_WGSL)
+};
 
 /// Harbor Havoc's far shore, lit and hazed in the effect (`harbor_backdrop`).
 pub const HARBOR_SHORE: EffectDefinition = effect(
