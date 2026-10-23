@@ -6,11 +6,14 @@ use std::sync::Arc;
 
 use glam::DVec3;
 
-use crate::geometry::{Mesh, icosahedron_geometry, merge_geometries, narrow, widen};
+use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
 
+use super::model_primitives::{shadow_receiver, shadowed};
 use super::quarry_benches::ScreeSpot;
-use super::quarry_surfaces::{roughen_stone, sandstone_material};
+use super::quarry_surfaces::{
+    RubbleStone, STONE_SEAT, mesh_triangles, sandstone_material, scatter_mesh, surface_height,
+};
 use super::quarry_terrain::{plain_soil_colors, quarry_ground_drop, soil_uvs};
 use crate::sim::math::Random;
 
@@ -74,39 +77,39 @@ pub fn quarry_scree_geometry(spot: &ScreeSpot) -> Mesh {
     geometry
 }
 
+/// Rubble stones per square metre of a scree fan.
+const SCREE_STONES: f64 = 0.62;
+
 /// `quarryScreeRubble(spot)`: angular fragments, sparse at the toe and coarser
 /// toward the cut, merged into one mesh (position, normal, uv, color). All
 /// randomness is local to scenery.
 pub fn quarry_scree_rubble(spot: &ScreeSpot) -> Mesh {
     let mut rng = Random::new(spot.seed * 131.0 + 7.0);
-    let template = icosahedron_geometry(1.0, 0);
-    let count = (spot.length * spot.depth * 1.1).ceil() as usize;
-    let mut pieces = Vec::with_capacity(count);
-    for i in 0..count {
-        let u = rng.range(-0.97, 0.97);
-        let t = rng.range(0.04, 0.98);
-        let point = scree_point(spot, u, t);
-        let size = rng.range(0.14, 0.48) * (0.65 + t * 1.1);
-        let large = if i % 11 == 0 { 1.8 } else { 1.0 };
-        let mut geometry = template.clone();
-        for corner in &mut geometry.positions {
-            *corner = narrow(roughen_stone(widen(*corner), i as f64 + spot.seed * 1000.0));
-        }
-        let sy = size * rng.range(0.45, 0.85);
-        let sz = size * rng.range(0.65, 1.25) * large;
-        geometry.scale(size * large, sy, sz);
-        geometry.rotate_x(rng.range(-0.4, 0.4));
-        geometry.rotate_y(rng.range(-PI, PI));
-        geometry.rotate_z(rng.range(-0.3, 0.3));
-        geometry.translate(point.x, point.y.max(0.0) + size * 0.15, point.z);
-        // Flat fracture faces and varied dust deposits break up the bedrock grain.
-        geometry.compute_vertex_normals();
-        let shade = rng.range(0.74, 1.08);
-        geometry.colors =
-            vec![[shade as f32, shade as f32, (shade * 0.97) as f32]; geometry.positions.len()];
-        pieces.push(geometry);
-    }
-    merge_geometries(&pieces.iter().collect::<Vec<_>>()).expect("uniform rubble pieces")
+    let count = (spot.length * spot.depth * SCREE_STONES).ceil() as usize;
+    // Stones rest on the drawn fan, or on the apron beyond its buried rim.
+    let fan = mesh_triangles(&quarry_scree_geometry(spot));
+    let stones: Vec<RubbleStone> = (0..count)
+        .map(|i| {
+            let u = rng.range(-0.97, 0.97);
+            let t = rng.range(0.04, 0.98);
+            let point = scree_point(spot, u, t);
+            let size = rng.range(0.14, 0.48) * (0.65 + t * 1.1);
+            let large = if i % 11 == 0 { 1.8 } else { 1.0 };
+            let h = size * rng.range(0.45, 0.85);
+            let under = surface_height(&fan, point.x, point.z).map_or(0.0, |y| y.max(0.0));
+            RubbleStone {
+                x: point.x,
+                y: under + h * STONE_SEAT,
+                z: point.z,
+                w: size * large,
+                h,
+                d: size * rng.range(0.65, 1.25) * large,
+                rot_y: rng.range(-PI, PI),
+                shade: rng.range(0.74, 1.08),
+            }
+        })
+        .collect();
+    scatter_mesh(&stones)
 }
 
 /// `quarryScree(spot, soil)`: the fan (soil-textured, sampling the ground bake at
@@ -121,8 +124,10 @@ pub fn quarry_scree(spot: &ScreeSpot, soil: &Arc<Material>) -> [Node; 2] {
     }
     soil_uvs(&mut mound);
     plain_soil_colors(&mut mound);
+    // Both share their batches with the rest of the apron: the fan receives
+    // shadows like the floor, the rubble casts like the talus.
     [
-        Node::mesh(Arc::new(mound), soil.clone()),
-        Node::mesh(Arc::new(rubble), sandstone_material()),
+        shadow_receiver(Arc::new(mound), soil.clone()),
+        shadowed(Arc::new(rubble), sandstone_material()),
     ]
 }

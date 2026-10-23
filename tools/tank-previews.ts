@@ -3,22 +3,29 @@
 // chassis. `scripts/generate-previews.mjs` packs them into `public/previews/tanks.webp`;
 // `tools/tank-surface-check.html` shows them at card and gameplay scale.
 //
-// The lighting and framing are the former Three.js card renderer's: a hemisphere light,
-// a warm key light from the front left and a cool rim light from behind (a distant point
-// light without falloff, which lights like a directional one), no shadows, ACES tone
-// mapping and a 7 m wide orthographic view from (8, 6, 6). The renderer has no
-// orthographic camera, so a 0.6° perspective camera 400 m away frames the same view.
+// The lighting is a garage card's: a dim warm hemisphere fill over a dark floor, a
+// warm, shadow-casting key high over the flank the card shows (the flank and the
+// turret take its full strength, so the paint reads as a bright team color with a
+// lit top, a lit side and a shaded front), a cool rim light low from behind on the
+// right that edges the silhouette off the navy card without reaching the decks (a
+// rim from above lands in the decks' specular and washes them pink), no sky
+// reflection (the blue sky turned trim decks lavender), ACES tone mapping and a 7 m wide
+// orthographic view from (8, 6, 6). The renderer has no orthographic camera, so a 0.6° perspective
+// camera 400 m away frames the same view.
 // Transparency comes from difference matting: each tank is drawn over black and over
-// white, and the two frames give every pixel's coverage and its unblended color.
+// white, and the two frames give every pixel's coverage and its unblended color. A soft
+// contact shadow, the tracks' footprint projected through the same view and blurred, is
+// painted under each tank so it sits on the card instead of floating over it.
 import { pixels } from "./lab-references";
 import { loadLabsEngine, prepareLab } from "./labs-engine";
 
 export const PREVIEW_WIDTH = 640;
 export const PREVIEW_HEIGHT = 400;
 export const PREVIEW_KINDS = ["scout", "balanced", "heavy"] as const;
-/** Each preview renders at this multiple of its size and is downsampled, so the
- * tank's edges stay smooth on the cards' dark background. */
-const SUPERSAMPLE = 2;
+/** Each preview renders at this multiple of its size. One: the paint's edge wear
+ * resolves by on-screen size, and drawn finer than the card shows it, every edge
+ * would chip into a pale outline. */
+const SUPERSAMPLE = 1;
 const PREPARE_BUDGET = 8;
 /** Half the orthographic view's height (metres), and its look-at pose. */
 const HALF_HEIGHT = 2.1875;
@@ -46,35 +53,107 @@ function camera() {
   };
 }
 
-const rim = [4, 3, -4];
+const rim = [3, 0.6, -5];
 const rimLength = Math.hypot(...rim);
+
+/** Each chassis' track footprint (width, length in metres, the vehicle scale applied;
+ * `tank_dimensions`), its ground height, and the contact shadow's look. */
+const FOOTPRINTS: Record<(typeof PREVIEW_KINDS)[number], [number, number]> = {
+  scout: [1.91, 3.72],
+  balanced: [1.95, 4.27],
+  heavy: [2.14, 4.7],
+};
+/** Each chassis' turn on its card (radians about up, positive turns the nose toward
+ * the viewer): the Skipper swings in nose first like the scout it is, the Bruiser
+ * holds the standard three-quarter view and the Big Rig turns its long flank to
+ * the card, so the three read apart by pose as well as by silhouette. */
+const POSE_YAW: Record<(typeof PREVIEW_KINDS)[number], number> = {
+  scout: 0.2,
+  balanced: 0,
+  heavy: -0.16,
+};
+const GROUND_Y = -0.17;
+const SHADOW_GROW = 0.35;
+const SHADOW_BLUR = 11;
+const SHADOW_OPACITY = 0.82;
 
 const SCENE = {
   background: 0x000000,
-  hemisphere: { sky: 0xdcedff, ground: 0x4c6075, intensity: 2.4 },
-  sun: { color: 0xfff1d5, intensity: 3.5, position: [-3, 7, 5], target: [0, 0, 0] },
+  hemisphere: { sky: 0xf4ece4, ground: 0x3c3330, intensity: 0.5 },
+  sun: { color: 0xffeed8, intensity: 3.6, position: [5, 6, 3], target: [0, 0, 0] },
+  // The key casts shadows, so the turret, mantlet and stowage shade the deck and
+  // the skirts shade the running gear: the card tanks read as solid models.
   shadow: {
-    enabled: false,
-    mapSize: 512,
-    half: 5,
+    enabled: true,
+    mapSize: 2048,
+    half: 3.6,
     near: 0.5,
     depth: 20,
-    bias: 0,
-    normalBias: 0,
+    bias: -0.0002,
+    normalBias: 0.02,
   },
   pointLight: {
-    color: 0x91cfff,
-    intensity: 2,
+    color: 0xcfe0ff,
+    intensity: 18,
     distance: 0,
     decay: 0,
     position: rim.map((value) => (value / rimLength) * RIM_DISTANCE),
   },
-  exposure: 1,
-  // The game's sky reflection, so card paint and steel shade as they do in a round.
-  reflections: 1,
+  exposure: 0.95,
+  // No sky reflection: on the small card a blue sheen over the decks reads as grey.
+  reflections: 0,
   camera: camera(),
   objects: [],
 };
+
+/** The canvas pixel (at preview size) of a world point through the near-orthographic
+ * card camera. */
+function project([x, y, z]: Vec3): [number, number] {
+  const { position, target } = SCENE.camera;
+  const forward = target.map((value, i) => value - position[i]);
+  const normalize = (v: number[]) => v.map((value) => value / Math.hypot(...v));
+  const f = normalize(forward);
+  const right = normalize([f[1] * 0 - f[2] * 1, f[2] * 0 - f[0] * 0, f[0] * 1 - f[1] * 0]);
+  const up = [
+    right[1] * f[2] - right[2] * f[1],
+    right[2] * f[0] - right[0] * f[2],
+    right[0] * f[1] - right[1] * f[0],
+  ];
+  const offset = [x - target[0], y - target[1], z - target[2]];
+  const dot = (a: number[], b: number[]) => a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
+  const pixelsPerMetre = PREVIEW_HEIGHT / (2 * HALF_HEIGHT);
+  return [
+    PREVIEW_WIDTH / 2 + dot(offset, right) * pixelsPerMetre,
+    PREVIEW_HEIGHT / 2 - dot(offset, up) * pixelsPerMetre,
+  ];
+}
+
+/** A soft contact shadow under a chassis: its grown footprint, blurred. */
+function contactShadow(context: CanvasRenderingContext2D, kind: (typeof PREVIEW_KINDS)[number]) {
+  const [width, length] = FOOTPRINTS[kind];
+  const [hx, hz] = [width / 2 + SHADOW_GROW, length / 2 + SHADOW_GROW];
+  const [sin, cos] = [Math.sin(POSE_YAW[kind]), Math.cos(POSE_YAW[kind])];
+  const corners: Vec3[] = (
+    [
+      [-hx, -hz],
+      [hx, -hz],
+      [hx, hz],
+      [-hx, hz],
+    ] as const
+  ).map(([x, z]) => [x * cos + z * sin, GROUND_Y, -x * sin + z * cos]);
+  context.save();
+  context.filter = `blur(${SHADOW_BLUR}px)`;
+  context.fillStyle = `rgba(0, 0, 0, ${SHADOW_OPACITY})`;
+  context.beginPath();
+  for (const [i, corner] of corners.entries()) {
+    const [px, py] = project(corner);
+    if (i === 0) context.moveTo(px, py);
+    else context.lineTo(px, py);
+  }
+  context.closePath();
+  context.fill();
+  context.restore();
+}
 
 /** Coverage and color from one frame over black and one over white. */
 function matte(black: Uint8ClampedArray, white: Uint8ClampedArray): ImageData {
@@ -113,7 +192,7 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
     for (const team of [0, 1]) {
       for (const kind of PREVIEW_KINDS) {
         const name = `${team}-${kind}`;
-        lab.add_vehicle(name, kind, team, 0, 0, 0, 0);
+        lab.add_vehicle(name, kind, team, 0, 0, 0, POSE_YAW[kind]);
         names.push(name);
       }
     }
@@ -139,6 +218,7 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
       const white = pixels(canvas).data;
       large.getContext("2d")!.putImageData(matte(black, white), 0, 0);
       context.clearRect(0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
+      contactShadow(context, name.split("-")[1] as (typeof PREVIEW_KINDS)[number]);
       context.drawImage(large, 0, 0, PREVIEW_WIDTH, PREVIEW_HEIGHT);
       previews[name] = output.toDataURL("image/png");
     }

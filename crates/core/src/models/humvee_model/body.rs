@@ -11,8 +11,10 @@ use std::f64::consts::PI;
 
 use glam::{DMat4, DVec3};
 
-use super::kit::{Kit, Role, at, frame, mirror_x, place, rect, slab, slope_y};
+use super::kit::{Faces, Kit, Role, at, frame, mirror_x, place, rect, slab, slope_y};
 use super::{AXLE_Y, FRONT_AXLE, REAR_AXLE};
+use crate::geometry::Mesh;
+use crate::models::Team;
 
 /// Hull-frame extremes measured by `tank_dimensions`.
 const FRONT: f64 = 2.17;
@@ -133,6 +135,82 @@ fn tub_and_cab(kit: &mut Kit) {
     kit.block(Role::Shade, [1.3, 0.03, 1.15], at([0.0, ROOF + 0.045, 0.0]));
 }
 
+/// The team's sign in the markings' white, as on the tanks' turret roofs (an open
+/// chevron pointing forward for red, a diamond outline for blue): bold on the
+/// hood's raised centre and again on the roof behind the launcher ring, so the
+/// Humvee's team and heading read from the overhead camera without relying on
+/// hue. Each sign's centre station and scale (the tanks' emblem is 1.12 m across
+/// at scale 1), and how far it stands off the paint.
+const HOOD_SIGN_Z: f64 = 1.42;
+const HOOD_SIGN_SCALE: f64 = 0.6;
+const ROOF_SIGN_Z: f64 = -0.82;
+const ROOF_SIGN_SCALE: f64 = 0.7;
+const SIGN_PROUD: f64 = 0.004;
+/// The emblem at scale 1: the chevron's half width, half depth and stroke, the
+/// diamond's half diagonal and stroke (the tanks' `roof_emblem`).
+const CHEVRON_HALF_WIDTH: f64 = 0.56;
+const CHEVRON_HALF_DEPTH: f64 = 0.36;
+const CHEVRON_STROKE: f64 = 0.17;
+const DIAMOND_RADIUS: f64 = 0.36;
+const DIAMOND_STROKE: f64 = 0.13;
+
+/// The team emblem's plan pieces at scale 1, as (x, z) about its centre, each
+/// fanned from its first corner.
+fn emblem_pieces(team: Team) -> Vec<Vec<[f64; 2]>> {
+    if team == Team::Blue {
+        let corners = |r: f64| [[0.0, r], [r, 0.0], [0.0, -r], [-r, 0.0]];
+        let outer = corners(DIAMOND_RADIUS);
+        let inner = corners(DIAMOND_RADIUS - DIAMOND_STROKE * std::f64::consts::SQRT_2);
+        (0..4)
+            .map(|k| {
+                let next = (k + 1) % 4;
+                vec![outer[k], outer[next], inner[next], inner[k]]
+            })
+            .collect()
+    } else {
+        let (w, h, stroke) = (CHEVRON_HALF_WIDTH, CHEVRON_HALF_DEPTH, CHEVRON_STROKE);
+        let arm = (w * w + 4.0 * h * h).sqrt();
+        let inner_apex = h - stroke * arm / w;
+        let inner_end = w - stroke * arm / (2.0 * h);
+        vec![vec![
+            [0.0, inner_apex],
+            [-inner_end, -h],
+            [-w, -h],
+            [0.0, h],
+            [w, -h],
+            [inner_end, -h],
+        ]]
+    }
+}
+
+/// The team's hood and roof signs as one mesh.
+pub(super) fn hood_insignia(team: Team) -> Mesh {
+    let mut faces = Faces::default();
+    let hood_up = DVec3::new(0.0, 1.0, -HOOD_SLOPE);
+    for piece in emblem_pieces(team) {
+        let hood: Vec<DVec3> = piece
+            .iter()
+            .map(|&[x, z]| {
+                let z = HOOD_SIGN_Z + z * HOOD_SIGN_SCALE;
+                DVec3::new(x * HOOD_SIGN_SCALE, hood_y(HOOD_CROWN, z) + SIGN_PROUD, z)
+            })
+            .collect();
+        faces.polygon(&hood, hood_up);
+        let roof: Vec<DVec3> = piece
+            .iter()
+            .map(|&[x, z]| {
+                DVec3::new(
+                    x * ROOF_SIGN_SCALE,
+                    ROOF + 0.04 + SIGN_PROUD,
+                    ROOF_SIGN_Z + z * ROOF_SIGN_SCALE,
+                )
+            })
+            .collect();
+        faces.polygon(&roof, DVec3::Y);
+    }
+    faces.mesh()
+}
+
 fn hood(kit: &mut Kit) {
     // Front view of the hood: flat fender tops, a raised centre and fender skirts
     // that hang over the wheel openings.
@@ -162,8 +240,8 @@ fn hood(kit: &mut Kit) {
         let y = hood_y(FENDER_TOP, z);
         let vent = side * place([0.86, y, z], [-HOOD_SLOPE, 0.0, 0.0]);
         kit.block(Role::Gap, [0.28, 0.01, 0.34], vent);
-        for i in 0..6 {
-            let slat = vent * place([0.0, 0.012, -0.14 + f64::from(i) * 0.056], [0.5, 0.0, 0.0]);
+        for i in 0..5 {
+            let slat = vent * place([0.0, 0.012, -0.14 + f64::from(i) * 0.07], [0.5, 0.0, 0.0]);
             kit.block(Role::Paint, [0.27, 0.012, 0.04], slat);
         }
         // Rubber hood latch at the front of each fender.
@@ -182,6 +260,7 @@ fn hood(kit: &mut Kit) {
             );
         kit.torus(Role::Steel, 0.03, 0.009, eye);
     }
+    // The crown stays clear for the team insignia (`hood_insignia`).
     // Engine air intake beside the windshield on the right, with its grille.
     let intake = at([-0.82, 1.15, 0.98]);
     kit.chamfered(Role::Paint, [0.3, 0.16, 0.2], 0.015, intake);

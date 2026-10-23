@@ -23,7 +23,8 @@
 //!
 //! - `create(canvas, config)`: `{ server, room, savedSeat?: {token, roomEpoch}, latency?,
 //!   jitter?, stall?, seed?, assetBase, cssWidth?, cssHeight?, pixelRatio?,
-//!   firstPerson?, zoom?, hideReticle? }`. `server` is
+//!   firstPerson?, zoom?, hideReticle?, framesInFlight? }` (the view's part is
+//!   `page::create_view`'s). `server` is
 //!   the validated WebSocket origin; `latency`/`jitter`/`stall` are the development
 //!   transport-delay URL parameters (omit them in production).
 //! - Actions (`take_actions`, in order): `{type: "open", socket, url}`, `{type: "send",
@@ -70,29 +71,31 @@ use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use wasm_bindgen::prelude::*;
 
+use crate::frame_clock::{FramePacing, FrameTimes};
 use crate::hud::{HudHuman, Scoreboard, human_json};
 use crate::page::{
-    CanvasSize, FrameTimes, HUD_UPDATE_EVERY_FRAMES, PREPARED, aim, create_view, js_error, now_ms,
-    parse, prepare_result, queue_event,
+    CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageView, aim, create_view, js_error,
+    now_ms, parse, prepare_result, queue_event,
 };
 use crate::stats::presentation_stats;
 
 /// Notices waiting for `take_notices`; a hidden HUD must not grow this without bound.
 const MAX_PENDING_NOTICES: usize = 256;
 
-/// Slots of `frame`'s result. Slots 2-4 and 6-10 are `Game.frame`'s, except that
+/// Slots of `frame`'s result. Slots 2-4, 6-10 and 13-15 are `Game.frame`'s, except that
 /// `SIM_MS` times interpolation, input and event routing, and `HUD_DUE` needs a drawn
 /// frame and is also due while events wait. Slots 0, 1 and 5 stay 0.
 pub mod net_frame_slot {
     pub use crate::game::frame_slot::{
-        COCKPIT, DT, EVENTS, FIRST_PERSON, HUD_DUE, HULL_ANGLE, RENDER_MS, SIM_MS,
+        COCKPIT, DT, EVENTS, FIRST_PERSON, HUD_DUE, HULL_ANGLE, RAN, RENDER_MS, SIM_MS, VIEWER_X,
+        VIEWER_Y,
     };
     /// 1 when the arena drew this frame.
     pub const DRAWN: usize = 11;
     /// 1 when the page should free a captured pointer: a menu, a drop or no battle.
     /// A death keeps it captured for the respawn.
     pub const POINTER_FREE: usize = 12;
-    pub const LENGTH: usize = 13;
+    pub const LENGTH: usize = 16;
 }
 
 /// `NetGame.create`'s room settings besides the view configuration
@@ -148,7 +151,11 @@ pub struct NetGame {
     notices: Vec<Value>,
     frame_index: u64,
     times: FrameTimes,
+    pacing: FramePacing,
     canvas: CanvasSize,
+    graphics: Graphics,
+    /// The last frame's result, which a frame skipped for the GPU hands back.
+    last_result: Vec<f32>,
 }
 
 #[wasm_bindgen]
@@ -164,7 +171,13 @@ impl NetGame {
         if !is_room_code(&config.room) {
             return Err(js_error("Invalid room code"));
         }
-        let (view, canvas, seed) = create_view(canvas, config_json).await?;
+        let PageView {
+            view,
+            canvas,
+            graphics,
+            seed,
+            pacing,
+        } = create_view(canvas, config_json).await?;
         let client = NetworkClient::new(ClientConfig {
             server_url: config.server.clone(),
             room: config.room.clone(),
@@ -183,7 +196,10 @@ impl NetGame {
             notices: Vec::new(),
             frame_index: 0,
             times: FrameTimes::default(),
+            pacing,
             canvas,
+            graphics,
+            last_result: vec![0.0; net_frame_slot::LENGTH],
         };
         game.canvas.apply(&mut game.view);
         Ok(game)
@@ -270,6 +286,7 @@ impl NetGame {
     pub fn start(&mut self, now: f64) {
         self.commands.clear();
         self.client.start(now);
+        self.graphics.round_started();
     }
 
     /// Open the in-battle menu; returns whether it is open.
@@ -347,6 +364,13 @@ impl NetGame {
             exact: false,
         };
         self.canvas.apply(&mut self.view);
+        self.graphics
+            .set_pixel_ratio(&mut self.view.renderer, self.canvas.pixel_ratio());
+    }
+
+    /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
+    pub fn set_graphics(&mut self, setting: &str) {
+        self.graphics.set_setting(&mut self.view.renderer, setting);
     }
 
     // ---------------------------------------------------------- queries
@@ -399,6 +423,12 @@ impl NetGame {
         prepare_result(&status)
     }
 
+    /// Build one of the models preparation left for after the arena is ready (the
+    /// library's wrecks); false once none remain. The page calls it between tasks.
+    pub fn prebuild_step(&mut self) -> bool {
+        self.view.prebuild_step()
+    }
+
     /// A generated texture to bake off the main thread (`bake_texture(key)` in a
     /// worker), handed out once; `supply_texture` returns the pixels.
     pub fn claim_texture_bake(&mut self) -> Option<String> {
@@ -426,7 +456,6 @@ impl NetGame {
     /// events to presentation and draw. See [`net_frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
         let input = InputFrame::from_slice(input);
-        let dt = self.times.advance(now);
         // The development delay delivers messages on this clock too.
         self.client.poll(now);
         self.drain_client_notices();
@@ -434,6 +463,25 @@ impl NetGame {
         if input.toggle_view {
             self.toggle_first_person();
         }
+        // Skipped while the GPU still runs earlier frames, a frame only takes its input.
+        // Rooms run at the timestamp itself, which the network client's clocks share.
+        let in_flight = self.view.renderer.frames_in_flight();
+        if self.pacing.frame_time(now, in_flight).is_none() {
+            let active = self.client.active_input();
+            self.commands.queue(&input, active, now);
+            if active && self.view.rig.first_person.enabled {
+                self.view.rig.first_person.turn(input.look_pixels, 0.0, 0.0);
+            }
+            let mut result = self.last_result.clone();
+            result[net_frame_slot::RAN] = 0.0;
+            result[net_frame_slot::EVENTS] = self.events.len() as f32;
+            result[net_frame_slot::HUD_DUE] = 0.0;
+            result[net_frame_slot::SIM_MS] = 0.0;
+            result[net_frame_slot::RENDER_MS] = 0.0;
+            result[net_frame_slot::DT] = 0.0;
+            return Ok(result);
+        }
+        let dt = self.times.advance(now);
         if let Some(baseline) = self.baseline.take() {
             self.show_baseline(baseline, now)?;
         }
@@ -474,7 +522,16 @@ impl NetGame {
         };
         self.times.sim_ms = now_ms() - update_start - render_ms;
         self.times.render_ms = render_ms;
-        Ok(self.frame_result(drawn, dt))
+        let playing = drawn
+            && self
+                .client
+                .display()
+                .is_some_and(|state| state.match_state.phase == MatchPhase::Playing);
+        self.graphics
+            .frame(&mut self.view.renderer, &self.times, playing);
+        let result = self.frame_result(drawn, dt);
+        self.last_result.clone_from(&result);
+        Ok(result)
     }
 
     /// Displayed events for audio and HUD, as JSON (`Game.drain_events()`'s shape).
@@ -521,6 +578,11 @@ impl NetGame {
     pub fn stats_json(&self, now: f64) -> String {
         let mut stats = presentation_stats(&self.view, &self.times);
         stats.insert("pixelRatio".into(), self.canvas.pixel_ratio().into());
+        stats.insert(
+            "quality".into(),
+            self.graphics
+                .stats(&self.view.renderer, self.canvas.pixel_ratio()),
+        );
         if let Some(state) = self.client.display() {
             stats.insert(
                 "scene".into(),
@@ -711,6 +773,7 @@ impl NetGame {
         for _ in 0..2 {
             view.render(display, 1.0, 0.0, false).map_err(js_error)?;
         }
+        self.graphics.round_started();
         self.events.clear();
         self.client.baseline_shown(baseline, now);
         self.drain_client_notices();
@@ -766,8 +829,12 @@ impl NetGame {
         result[slot::FIRST_PERSON] = flag(self.view.rig.first_person.enabled);
         result[slot::DT] = dt as f32;
         result[slot::DRAWN] = flag(drawn);
+        result[slot::RAN] = 1.0;
         result[slot::POINTER_FREE] =
             flag(!drawn || !self.client.connected || menu || phase != RoomPhase::Playing);
+        let (viewer_x, viewer_y) = self.view.viewer_ndc().unwrap_or((f32::NAN, f32::NAN));
+        result[slot::VIEWER_X] = viewer_x;
+        result[slot::VIEWER_Y] = viewer_y;
         self.frame_index += 1;
         result
     }

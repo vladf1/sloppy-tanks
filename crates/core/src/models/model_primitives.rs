@@ -51,6 +51,14 @@ impl<K: std::hash::Hash + Eq, V> Cache<K, V> {
             .or_insert(value)
             .clone()
     }
+
+    /// Drop every entry; values still held elsewhere live on, and a later
+    /// `get_or_insert` builds its value again.
+    pub(crate) fn clear(&self) {
+        if let Some(entries) = self.entries.get() {
+            entries.lock().expect("cache lock").clear();
+        }
+    }
 }
 
 static MATERIALS: Cache<(u32, u64, u64), Material> = Cache::new();

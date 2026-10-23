@@ -55,9 +55,10 @@ test("queued GO holds the mode but keeps late arena choices, then closes the set
   f.options.mapMode = "harbor";
   release({
     prepare: async () => {},
-    async start(options) {
+    async start(options, hideMenu) {
       assert.equal(options.mapMode, "harbor");
       order.push("start");
+      hideMenu();
     },
   });
   await setImmediate();

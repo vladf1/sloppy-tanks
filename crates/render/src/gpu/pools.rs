@@ -42,9 +42,13 @@ impl Renderer {
     pub fn add_pool(&mut self, desc: &PoolDesc) -> PoolId {
         let gpu = &self.gpu;
         let material = self.interner.intern(&desc.material);
-        let material =
-            self.materials
-                .get_or_create(gpu, &mut self.textures, &self.effects, &material);
+        let material = self.materials.get_or_create(
+            gpu,
+            &mut self.textures,
+            &self.effects,
+            &material,
+            desc.receive_shadow,
+        );
         let mesh = self.meshes.shared(gpu, &desc.mesh);
         let capacity = desc.capacity.max(1);
         let records = InstanceStore::new(gpu, desc.label, capacity);
@@ -112,10 +116,11 @@ impl Renderer {
             classes,
             builder,
             culls,
+            debug_off,
             ..
         } = self;
         for (_, pool) in pools.iter() {
-            if pool.count == 0 {
+            if pool.count == 0 || debug_off.pools.iter().any(|label| label == pool.label) {
                 continue;
             }
             let transparent = classes

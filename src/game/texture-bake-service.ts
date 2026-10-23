@@ -14,6 +14,9 @@ type Init = (options: { module_or_path: WebAssembly.Module }) => Promise<unknown
 type Bake = (key: string, band: number, bands: number) => Uint8Array | undefined;
 
 export function serveTextureBakes(init: Init, bake: Bake): void {
+  // `null` tells the page this worker's script has loaded (`texture-bake.ts`): WebKit
+  // loads it through the page's main thread, which the arena build then holds.
+  postMessage(null);
   onmessage = async ({ data }: MessageEvent<BakeRequest>) => {
     try {
       await init({ module_or_path: data.engine });

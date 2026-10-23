@@ -1,11 +1,13 @@
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
-import { startupErrorMessage } from "./startup-error";
+import { startupErrorHint, startupErrorMessage } from "./startup-error";
 
 export interface PreparedGame {
   /** Rebuild the hidden arena for these choices ahead of GO; `onShaders` reports
    * compilation only when the choices need shaders that are not ready yet. */
   prepare(options: GameOptions, onShaders: (stage: string) => void): Promise<void>;
-  start(options: GameOptions): Promise<void>;
+  /** Start a round with these choices once their arena is ready; `hideMenu` takes the
+   * menu away first, as the battle's view shows. */
+  start(options: GameOptions, hideMenu: () => void): Promise<void>;
 }
 
 export class StartMenu {
@@ -78,16 +80,17 @@ export class StartMenu {
       tab.disabled = true;
     });
     this.button.disabled = true;
-    this.button.textContent = "WAIT";
+    this.button.textContent = "LOADING…";
     this.button.setAttribute("aria-busy", "true");
     this.overlay.dataset.state = "starting";
     this.status.textContent = "Preparing your round…";
     this.hint("GO received. Your round will start automatically.");
     try {
       const game = await this.prepare();
-      await game.start(this.options);
-      this.started();
-      this.overlay.remove();
+      await game.start(this.options, () => {
+        this.started();
+        this.overlay.remove();
+      });
     } catch (error) {
       if (!this.failed) {
         this.showFailure(error);
@@ -119,8 +122,8 @@ export class StartMenu {
 
   private showReady(): void {
     this.overlay.dataset.state = "ready";
-    this.status.textContent = "Ready to play";
-    this.hint("All set. Hit GO when you’re ready.");
+    this.status.textContent = "Arena ready";
+    this.hint("");
   }
 
   private showFailure(error: unknown): void {
@@ -138,7 +141,7 @@ export class StartMenu {
     this.button.removeAttribute("aria-busy");
     this.button.textContent = "TRY AGAIN";
     this.button.setAttribute("aria-label", "Try loading the arena again");
-    this.hint("Check your connection, then try again.");
+    this.hint(startupErrorHint(error));
   }
 
   private hint(message: string): void {

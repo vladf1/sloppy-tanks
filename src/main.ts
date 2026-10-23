@@ -3,10 +3,11 @@ import { savedPreference, preferredGameMode } from "./game/player-preferences";
 import { bindPlayModes, initialPlayMode } from "./game/play-modes";
 import { JoinScreen, restoreChoices, takeSetupView, type SetupView } from "./game/join-screen";
 import { StartMenu } from "./game/start-menu";
-import { startupErrorMessage } from "./game/startup-error";
+import { showFatalError, startupErrorMessage } from "./game/startup-error";
 import { debugPage, isExtraLevel, mapOption } from "./game/map-options";
 import { showExtraLevels } from "./game/map-picker";
 import { isPhone } from "./game/phone-mode";
+import { fitPanels, keepPanelsFitted } from "./game/panel-fit";
 import type { RoomSelection } from "./net/pending-join";
 import { isPlayerKind } from "./net/room-protocol";
 import "./style.css";
@@ -21,6 +22,8 @@ const startupOverlay = document.querySelector<HTMLElement>("#startup-overlay");
 if (startupOverlay && debugPage(location.search)) {
   showExtraLevels(startupOverlay);
 }
+keepPanelsFitted();
+fitPanels();
 const joiningSetup = document.querySelector<HTMLElement>("#startup-overlay .start");
 if (linkedRoom && setupView?.joining && joiningSetup) {
   startMultiplayer(JoinScreen.resume(joiningSetup, { ...setupView, room: linkedRoom }));
@@ -33,15 +36,19 @@ function startMultiplayer(joining: JoinScreen, selection?: RoomSelection): void 
     .then(({ startMultiplayer }) => startMultiplayer(root, joining, selection))
     .catch((error: unknown) => {
       console.error("Multiplayer startup failed", error);
-      root.textContent = "Multiplayer could not load. Reload to try again.";
+      showFatalError(
+        root,
+        "MULTIPLAYER DIDN'T LOAD",
+        "The room's game files could not load. Check your connection and reload.",
+      );
     });
 }
 
 declare global {
   interface Window {
-    /** Scene texture downloads by URL, each taken over once by the engine's texture
-     * store (`texture_download` in crates/render/src/gpu/textures.rs). */
-    sloppyTextureDownloads?: Map<string, Promise<Response>>;
+    /** Scene texture files decoding by URL, each taken over once by the engine's texture
+     * store (`texture_image` in crates/render/src/gpu/textures.rs). */
+    sloppyTextureImages?: Map<string, Promise<HTMLImageElement>>;
   }
 }
 
@@ -55,43 +62,66 @@ function startTextureDownloads(options: GameOptions): void {
     "textures/houses/stone.webp",
   ];
   const buildings = ["village", "stress-test", "superstress"].includes(options.mapMode);
-  // Start scene image downloads alongside the engine request, before the engine's
-  // scenery discovers them. Small late requests otherwise delay warm-up. Requests from
-  // script rather than <link rel=preload>: WebKit never hands a preload response to
-  // the engine's later fetch(), so it downloaded every texture twice.
-  const downloads = (window.sloppyTextureDownloads ??= new Map());
+  // Start scene image downloads and decodes alongside the engine request, before the
+  // engine's scenery discovers them: they decode off the main thread while it builds
+  // the arena, and small late requests otherwise delay warm-up. From script rather than
+  // <link rel=preload>: WebKit never handed a preload response to the engine's later
+  // fetch(), so it downloaded every texture twice.
+  const images = (window.sloppyTextureImages ??= new Map());
   for (const path of [
     "textures/pickups/atlas.webp",
+    "textures/tanks/armor-camo.webp",
     "textures/tanks/armor-wear.webp",
-    "textures/ground/packed-dirt.webp",
+    // The wrecks' burnt paint, and the bark and rings of loose logs.
+    "textures/tanks/armor-scorch.webp",
+    "textures/trees/bark.webp",
+    "textures/trees/rings.webp",
+    // Every ground but the harbor's concrete quay: roads, yards and quarry grit.
+    ...(options.mapMode === "harbor" ? [] : ["textures/ground/packed-dirt.webp"]),
     "textures/houses/siding.webp",
     "textures/walls/weathered-concrete.webp",
     "textures/barrels/painted-drum.webp",
     ...(options.mapMode === "village"
       ? [
           "textures/ground/dry-grass.webp",
-          "textures/trees/conifer-spray.webp",
+          "textures/ground/village-ground.webp",
+          // Crowns draw from the tree atlas; trunks and stumps from their own bark.
+          "textures/trees/atlas.webp",
           "textures/water/normals.webp",
           "textures/trees/birch.webp",
-          "textures/trees/leaf-sprigs.webp",
           "textures/wood/timber.webp",
         ]
       : []),
     ...(options.mapMode === "harbor"
-      ? ["textures/harbor/dock.webp", "textures/harbor/steel.webp", "textures/water/normals.webp"]
+      ? [
+          "textures/harbor/dock.webp",
+          "textures/harbor/steel.webp",
+          "textures/water/normals.webp",
+          "textures/harbor/container.webp",
+          "textures/harbor/container-ribbed.webp",
+          "textures/wood/timber.webp",
+        ]
       : []),
-    ...(options.mapMode === "quarry" ? ["textures/quarry/sandstone.webp"] : []),
+    ...(options.mapMode === "quarry"
+      ? [
+          "textures/quarry/sandstone.webp",
+          "textures/harbor/steel.webp",
+          "textures/wood/timber.webp",
+        ]
+      : []),
     ...(isExtraLevel(options.mapMode)
       ? ["textures/ground/dry-grass.webp", "textures/wood/timber.webp"]
       : []),
     ...(buildings ? buildingTextures : []),
   ]) {
     const url = `${import.meta.env.BASE_URL}${path}`;
-    if (!downloads.has(url)) {
-      const download = fetch(url);
-      // The engine requests a texture again if its early download fails.
-      download.catch(() => {});
-      downloads.set(url, download);
+    if (!images.has(url)) {
+      const image = new Image();
+      image.src = url;
+      const decoded = image.decode().then(() => image);
+      // The engine decodes a texture again if its early decode fails.
+      decoded.catch(() => {});
+      images.set(url, decoded);
     }
   }
 }
@@ -134,14 +164,14 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     }
     void load()
       .then(async (game) => {
-        await game.start(options);
-        setup?.remove();
+        await game.start(options, () => setup?.remove());
       })
       .catch((error: unknown) => {
         console.error("Game startup failed", error);
-        root.textContent = startupErrorMessage(
-          error,
-          "The arena could not load. Please reload to try again.",
+        showFatalError(
+          root,
+          "THE ARENA DIDN'T LOAD",
+          startupErrorMessage(error, "The arena could not load. Check your connection and reload."),
         );
       });
     return;
@@ -160,11 +190,16 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     }
     arenaStarted = true;
     startTextureDownloads(options);
-    // A second frame leaves a paint opportunity before any engine work begins.
+    // A frame leaves Battle Setup a paint before any engine work begins. The engine
+    // compiles, the arena's texture bakes start in workers once it has, and the arena
+    // builds as soon as they have loaded: waiting a second frame cost WebKit 40-60 ms
+    // of an idle main thread. A failed load is the arena's to report.
     requestAnimationFrame(() => {
-      requestAnimationFrame(() => {
-        void menu.prepare().catch(() => {});
-      });
+      void import("./game")
+        .then(({ loadArenaEngine }) => loadArenaEngine(options.mapMode))
+        .catch(() => {})
+        .then(() => menu.prepare())
+        .catch(() => {});
     });
   };
   const playModes = bindPlayModes(

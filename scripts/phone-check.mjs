@@ -55,7 +55,7 @@ try {
     [".battle-choice", ".difficulty-setting", ".menu-footer", ".room-browse", ".home-screen-tip"],
   );
   await page.screenshot({ path: `${output}/setup-landscape.png` });
-  await page.locator('[data-kind="heavy"]').tap();
+  await page.locator('.start [data-kind="heavy"]').tap();
   await page.locator('input[name="mapMode"][value="harbor"]').tap({ force: true });
   await startRound(page, { touch: true });
   const hud = await page.evaluate(() => window.sloppy.hud());
@@ -80,13 +80,15 @@ try {
       "#score0",
       "#time",
       "#score1",
+      // The battle's target stays, small under the clock.
+      "#objective",
     ],
     [
       // The nerd stats link is for ?debug pages only (checked at the end).
       "#nerd-stats",
       ".touch-mine",
-      "#label0",
-      "#objective",
+      // Team names stay hidden; only your side keeps its label, as the YOU tab.
+      ".scoreboard .team:not(.yours) small",
       ".bottom",
       ".brand",
       "#settings-open",
@@ -105,11 +107,17 @@ try {
       ".scoreboard",
     ];
     const rects = await Promise.all(selectors.map((selector) => box(page, selector)));
-    // One row across the top: zoom at the left of the scoreboard, first person and pause
-    // at its right.
+    // One row across the top: held sideways, zoom, first person and pause group at the
+    // scoreboard's right by the right thumb; held upright, zoom takes the left corner.
     const [, view, , zoomOut, zoomIn, scoreboard] = rects;
-    assert.ok(zoomOut.x < zoomIn.x && zoomIn.x + zoomIn.width <= scoreboard.x, "zoom left");
-    assert.ok(view.x >= scoreboard.x + scoreboard.width, "first person and pause right");
+    assert.ok(zoomOut.x < zoomIn.x, "zoom out before zoom in");
+    if (width > height) {
+      assert.ok(zoomOut.x >= scoreboard.x + scoreboard.width, "zoom right of the scoreboard");
+      assert.ok(view.x >= zoomIn.x + zoomIn.width, "first person and pause right of zoom");
+    } else {
+      assert.ok(zoomIn.x + zoomIn.width <= scoreboard.x, "zoom left");
+      assert.ok(view.x >= scoreboard.x + scoreboard.width, "first person and pause right");
+    }
     assert.ok(Math.abs(zoomIn.y - view.y) < 1, "zoom and first person share the top row");
     assertApart(rects, selectors, width, height);
     // The scoreboard only shows; the controls take touches.
@@ -218,7 +226,7 @@ try {
   await page.evaluate(() => window.sloppy.killHuman());
   await page.locator("#toast.visible").waitFor();
   assert.notEqual((await page.locator("#toast").textContent()).trim(), "");
-  await page.locator(".respawn").waitFor();
+  await page.locator("#respawn-layer.shown .respawn").waitFor();
   const respawn = await page.locator(".menu.respawn").boundingBox();
   assert.ok(
     respawn.height < 402 / 2,

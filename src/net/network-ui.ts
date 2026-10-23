@@ -1,4 +1,4 @@
-import { hudMarkup } from "../game/ui-markup";
+import { controlsMarkup, hudMarkup } from "../game/ui-markup";
 import { SettingsDialog } from "../game/settings-dialog";
 import { AMMO_ORDER } from "../game/ammo-options";
 import {
@@ -7,10 +7,14 @@ import {
   deathCause,
   isOwnKill,
   killFeedNames,
+  killFeedSides,
   newFeedRow,
+  placeDamageRing,
   setText,
+  showDamageRing,
   showFeed,
   showTankStatus,
+  type ScreenPoint,
 } from "../game/hud-feedback";
 import { debugPage, isExtraLevel, MAP_OPTIONS, mapOption } from "../game/map-options";
 import { duration } from "../game/round-recap";
@@ -67,6 +71,9 @@ export interface NetworkActions {
   /** The touch preference Settings shows, and the one they save. */
   touchMode(): string;
   setTouchMode(mode: string): void;
+  /** The Graphics setting Settings shows, and the one they save. */
+  graphics(): string;
+  setGraphics(setting: string): void;
 }
 /** The heading of each connection end, and the retry it offers besides Battle Setup. */
 const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
@@ -78,14 +85,8 @@ const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
   outdated: { title: "GAME UPDATED" },
   renderer: { title: "RENDERER STOPPED" },
 };
-const CONTROLS_HELP = [
-  "WASD / arrows: drive",
-  "Mouse: aim",
-  "Hold left click: fire",
-  "Right click: mine",
-  "Q / E or 1–5: ammo",
-  "Esc: menu",
-];
+/** Seconds the invite button says the link was copied. */
+const COPIED_TIME = 2000;
 const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network-title">
   <header class="dialog-head">
     <div class="dialog-eyebrow"><span class="eyebrow">ROOM <b class="room-code"></b></span><button id="copy-room" class="text-button" type="button">Copy invite link</button></div>
@@ -126,7 +127,7 @@ const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network
     <button id="leave-room" class="secondary" type="button">LEAVE ROOM</button>
   </div>
   <p id="network-leave-note" class="network-note" hidden>You're the last player here, so leaving closes the room.</p>
-  <p class="network-help">${CONTROLS_HELP.map((item) => `<span>${item}</span>`).join(" ")}</p>
+  <details class="network-help"><summary>Controls</summary>${controlsMarkup()}</details>
 </section>
 <section class="menu network-connection" role="alertdialog" aria-labelledby="connection-title" aria-describedby="connection-message" hidden>
   <header class="dialog-head">
@@ -151,6 +152,9 @@ export class NetworkUI {
   private toastTime = 0;
   private hurtTime = 0;
   private deathCause = "";
+  /** Where the viewer's tank is on screen (NDC); null in first person. The damage ring
+   * wraps it. */
+  viewerPoint: ScreenPoint | null = null;
   /** Whether the socket is live, being (re)connected, or has given up. */
   private link: "live" | "connecting" | ConnectionEnd = "connecting";
   /** The finished round, read from the final replicated state. */
@@ -192,7 +196,10 @@ export class NetworkUI {
     new SettingsDialog(root, "MULTIPLAYER", {
       touchMode: () => this.actions.touchMode(),
       setTouchMode: (mode) => this.actions.setTouchMode(mode),
+      graphics: () => this.actions.graphics(),
+      setGraphics: (setting) => this.actions.setGraphics(setting),
       setVolume: (value) => this.actions.volume(value),
+      controls: controlsMarkup(),
       opened: () => {
         resumeAfterSettings =
           this.lastLobby?.phase === "playing" && this.link === "live" && !this.menu;
@@ -266,10 +273,22 @@ export class NetworkUI {
         );
       });
     }
+    // The button itself confirms the copy for a moment, where the player is looking.
+    let copiedTimer = 0;
     this.on("copy-room", () => {
+      const button = this.button("copy-room");
       void navigator.clipboard
         .writeText(location.href)
-        .then(() => this.notice("Invite link copied. Send it to your friends."))
+        .then(() => {
+          this.notice("Invite link copied. Send it to your friends.");
+          button.textContent = "Link copied";
+          button.classList.add("copied");
+          clearTimeout(copiedTimer);
+          copiedTimer = window.setTimeout(() => {
+            button.textContent = "Copy invite link";
+            button.classList.remove("copied");
+          }, COPIED_TIME);
+        })
         .catch(() => this.notice("Copy the address from your browser to invite friends."));
     });
   }
@@ -660,15 +679,23 @@ export class NetworkUI {
     this.root.querySelector("#toast")!.classList.remove("visible");
     this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = true;
   }
-  private addFeed(names: string[], ownKill = false): void {
-    this.feed.unshift(newFeedRow(names, ownKill));
+  private addFeed(
+    names: string[],
+    ownKill = false,
+    details: Parameters<typeof newFeedRow>[2] = {},
+  ): void {
+    this.feed.unshift(newFeedRow(names, ownKill, details));
     this.feed.length = Math.min(FEED_ROWS, this.feed.length);
   }
   event(event: EngineEvent, hud: Hud): void {
     const viewerId = hud.human.id;
     const damageAngle = event.damageAngle;
     if (event.type === "death") {
-      this.addFeed(killFeedNames(event, viewerId, hud.scoreboard), isOwnKill(event, viewerId));
+      this.addFeed(killFeedNames(event, viewerId, hud.scoreboard), isOwnKill(event, viewerId), {
+        cause: event.damageSource?.cause,
+        sides: killFeedSides(event),
+        ownDeath: event.id === viewerId,
+      });
     }
     if (event.id === viewerId) {
       if (event.type === "death") {
@@ -681,7 +708,7 @@ export class NetworkUI {
       }
       if ((event.type === "hurt" || event.type === "death") && damageAngle !== null) {
         const indicator = this.root.querySelector<HTMLElement>("#damage-direction")!;
-        indicator.style.transform = "translate(-50%, -50%) rotate(" + damageAngle + "rad)";
+        showDamageRing(indicator, damageAngle, this.viewerPoint);
         this.hurtTime = 1.2;
       }
       if (event.type === "respawn") {
@@ -712,12 +739,19 @@ export class NetworkUI {
       .classList.toggle("paused", this.menu || !connected || match.phase !== "playing");
     const respawn = this.root.querySelector<HTMLElement>("#network-respawn")!;
     respawn.hidden = tank.alive || this.menu || !connected || match.phase !== "playing";
+    this.root
+      .querySelector("#hud")!
+      .classList.toggle("dead", !tank.alive && match.phase === "playing");
     this.set("network-respawn-count", "Respawn in " + Math.ceil(tank.respawn));
     this.set("network-death-cause", this.deathCause);
     this.toastTime -= dt;
     this.root.querySelector("#toast")!.classList.toggle("visible", this.toastTime > 0);
     this.hurtTime -= dt;
-    this.root.querySelector<HTMLElement>("#damage-direction")!.hidden = this.hurtTime <= 0;
+    const indicator = this.root.querySelector<HTMLElement>("#damage-direction")!;
+    indicator.hidden = this.hurtTime <= 0;
+    if (!indicator.hidden) {
+      placeDamageRing(indicator, this.viewerPoint);
+    }
     this.feed = showFeed(this.root.querySelector("#feed")!, this.feed, dt);
     // The status line is only for connection messages; keep it empty during live play.
     if (connected && !this.menu) {

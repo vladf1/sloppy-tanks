@@ -39,7 +39,7 @@ try {
   await page.goto(gameUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(() => !!window.sloppy);
   await page.screenshot({ path: `${output}/start.png` });
-  await page.locator('[data-kind="balanced"]').click();
+  await page.locator('.start [data-kind="balanced"]').click();
   await startRound(page);
   const before = await page.evaluate(() => window.sloppy.snapshot());
   const pose = () =>
@@ -142,6 +142,9 @@ try {
     const { sloppy, engine } = window;
     const game = sloppy.game;
     const { x, z, team } = sloppy.sim.human;
+    // A fresh round builds its covers' debris looks (tower pieces, crate sections) a
+    // frame each; let them finish first.
+    for (let i = 0; i < 120; i++) engine.draw();
     const memory = [];
     for (let i = 0; i < 30; i++) {
       game.debug_add_mine(x, z, team, 0);

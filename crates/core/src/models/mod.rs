@@ -30,7 +30,7 @@
 //!   implements them.
 //! - Textures: file paths are in each `TextureRef`; [`node_textures`] lists what a
 //!   tree needs, and presentation supplies its generated keys. Those are baked in
-//!   row bands by [`bake_quarry_soil`] (the quarry soil) or drawn by the browser
+//!   row bands by [`bake_quarry_ground`] (the quarry soil) or drawn by the browser
 //!   from [`effects_scenery::canvas_texture`] (signs and labels).
 
 mod batching;
@@ -64,6 +64,7 @@ mod building_kit;
 mod concrete_surfaces;
 mod ground_surfaces;
 mod harbor_surfaces;
+mod house_collapse;
 mod house_model;
 mod house_surfaces;
 mod quarry_surfaces;
@@ -71,6 +72,7 @@ mod water_surface;
 
 // Map scenery (village, harbor, quarry, extra-level floors).
 pub mod effects_scenery;
+mod harbor_backdrop;
 mod harbor_scenery;
 mod harbor_vessels;
 mod harbor_water;
@@ -78,6 +80,7 @@ mod loading_assets;
 mod quarry_benches;
 mod quarry_machinery;
 mod quarry_ramp;
+mod quarry_relief;
 mod quarry_scenery;
 mod quarry_scree;
 mod quarry_site_details;
@@ -85,10 +88,12 @@ mod quarry_soil;
 mod quarry_terrain;
 mod scenery;
 mod village_atmosphere;
+mod village_ground;
 mod village_landmarks;
 mod village_landscape;
 mod village_roads;
 mod village_scenery;
+mod village_tracks;
 mod village_vegetation;
 
 // Shared building blocks.
@@ -98,8 +103,8 @@ pub use model_primitives::{DEFAULT_BOX_RADIUS, TEAM_COLORS, cylinder_part, paint
 // Vehicles.
 pub use humvee_model::HUMVEE_BODY_LENGTH_SCALE;
 pub use tank_dimensions::{TankDimensions, tank_dimensions};
-pub use tank_model::{tank_model, tank_model_variant};
-pub use tank_surfaces::armor_wear_texture;
+pub use tank_model::{release_tank_models, tank_model, tank_model_variant};
+pub use tank_surfaces::{TRACK_BELT_PERIOD, VEHICLE_PAINT_EFFECT, armor_wear_texture};
 pub use wreck_model::{WreckPart, wreck_model};
 
 // Cover, trees and props.
@@ -108,8 +113,13 @@ pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
 pub use crate_model::crate_piece_model;
 pub use effects_props::{aged_wreck_material, wreck_brightness};
 pub use flags::{FLAG_CLOTH_NODE, flags_model};
-pub use pickup_visuals::pickup_cube;
-pub use timber_model::timber_part_model;
+pub use house_model::{HouseCoverBuild, HousePieces, PieceStep, house_pieces};
+pub use pickup_visuals::{
+    PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER, SUPPLY_SCALE,
+    atlas_cell_uv, pickup_board, pickup_cube, pickup_material, pickup_paint, pickup_pallet,
+    pickup_parcel, pickup_signal, pickup_tile_offset,
+};
+pub use timber_model::{timber_debris_model, timber_part_model};
 pub use tower_model::tower_piece_model;
 pub use tree_models::{
     TREE_FAMILIES, TreeDetail, TreeFoliage, TreeShape, branch_drop_stage, tree_branch_stage,
@@ -125,11 +135,15 @@ pub use water_surface::water_normals;
 // Map scenery.
 pub use harbor_scenery::HarborScenery;
 pub use loading_assets::node_textures;
+pub use quarry_relief::bake_quarry_ground;
 pub use quarry_scenery::{SpawnPadShape, quarry_spawn_pad_pieces};
 pub use quarry_soil::{QUARRY_SOIL_SIZE, bake_quarry_soil};
 pub use quarry_terrain::sand_accum;
 pub use scenery::{MapTheme, Scenery, build_scenery, create_arena_floor, create_spawn_pads};
 pub use village_atmosphere::{CHIMNEY_SMOKE_NODE, SmokeCover};
+pub use village_ground::{
+    GROUND_PLAN_SIZE, PLAN_SQUARES, VILLAGE_GROUND_BAKE, bake_village_ground,
+};
 pub use village_landmarks::WATERWHEEL;
 pub use village_roads::is_village_dirt;
 pub use village_scenery::VillageScenery;
@@ -151,6 +165,17 @@ pub mod part {
     /// The launch point inside the barrel (TS `userData.muzzle`): the bore disc
     /// mesh of tanks, an empty marker for the Humvee.
     pub const MUZZLE: &str = "muzzle";
+    /// Alternative liveries inside a tracked tank's turret (unit numbers and extra
+    /// stowage); presentation shows one per tank so team-mates are not clones. The
+    /// first is the one shown by default.
+    pub const LIVERIES: [&str; 4] = ["livery-0", "livery-1", "livery-2", "livery-crew"];
+    /// The livery of a tank a human player drives (an index into [`LIVERIES`]):
+    /// the commander's number and a white command band, so the player's tank is
+    /// never a clone of a bot team-mate. Bots wear the liveries before it.
+    pub const CREW_LIVERY: usize = 3;
+    /// The soft occlusion band on the deck round a turret's foot (a turret part, so
+    /// it turns with it); wrecks leave it out.
+    pub const TURRET_OCCLUSION: &str = "turret-occlusion";
 }
 
 /// The side a vehicle, flag or spawn pad belongs to; indexes [`TEAM_COLORS`].

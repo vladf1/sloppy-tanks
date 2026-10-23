@@ -4,15 +4,18 @@
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
 
-use crate::geometry::torus_geometry;
+use crate::geometry::{cylinder_geometry, torus_geometry};
 use crate::scene::Node;
 
 use super::batching::batch;
 use super::concrete_surfaces::concrete_wall;
+use super::house_model::house_facing;
 use super::house_surfaces::{shingle_roof, siding_box, siding_gable};
 use super::model_primitives::{
     DEFAULT_ROUGHNESS, beam, box_part, cylinder_part, material, put, rotated,
 };
+use super::village_ground::{FARM_FENCES, FARMYARD, hay_field, north_wheat};
+use super::village_landscape::valley_height;
 
 /// The watermill wheel's node name; [`VillageScenery::update`] turns it.
 ///
@@ -284,10 +287,302 @@ fn log_cart() -> Node {
     group
 }
 
+/// Lowest valley ground under a footprint (centre, half extents), so a building
+/// set there never hangs over its downhill corner.
+fn footing(x: f64, z: f64, half_x: f64, half_z: f64) -> f64 {
+    [
+        (-1.0, -1.0),
+        (1.0, -1.0),
+        (-1.0, 1.0),
+        (1.0, 1.0),
+        (0.0, 0.0),
+    ]
+    .iter()
+    .map(|(sx, sz)| valley_height(x + sx * half_x, z + sz * half_z))
+    .fold(f64::INFINITY, f64::min)
+}
+
+const BARN_RED: u32 = 0x963a2b;
+const BARN_TRIM: u32 = 0xe9e1cf;
+const BARN_ROOF: u32 = 0x4c4a47;
+const STRAW: u32 = 0xc7ad62;
+
+/// A red bank barn with white trim, sliding doors braced with an X, a hayloft
+/// door in the gable and a louvred cupola on the ridge; the ridge runs along z.
+fn barn(w: f64, d: f64, wall: f64, rise: f64) -> Node {
+    let mut barn = Node::group("");
+    put(
+        &mut barn,
+        concrete_wall(w + 0.4, 1.6, d + 0.4),
+        0.0,
+        -0.5,
+        0.0,
+    );
+    put(
+        &mut barn,
+        siding_box(w, wall, d, BARN_RED),
+        0.0,
+        0.3 + wall / 2.0,
+        0.0,
+    );
+    put(
+        &mut barn,
+        siding_gable(w, rise, d, BARN_RED),
+        0.0,
+        0.3 + wall,
+        0.0,
+    );
+    put(
+        &mut barn,
+        shingle_roof(w + 0.9, rise + 0.3, d + 0.8, BARN_ROOF),
+        0.0,
+        0.3 + wall - 0.3,
+        0.0,
+    );
+    // Corner boards and a band under the eaves.
+    for sx in [-1.0, 1.0] {
+        for sz in [-1.0, 1.0] {
+            put(
+                &mut barn,
+                box_part(0.22, wall, 0.22, BARN_TRIM, 0.0),
+                sx * w / 2.0,
+                0.3 + wall / 2.0,
+                sz * d / 2.0,
+            );
+        }
+        put(
+            &mut barn,
+            box_part(0.12, 0.2, d, BARN_TRIM, 0.0),
+            sx * (w / 2.0 + 0.04),
+            0.3 + wall - 0.12,
+            0.0,
+        );
+    }
+    // Sliding doors on the yard side (-x), each braced with a white X.
+    for (z, width) in [(-1.6, 3.0), (1.6, 3.0)] {
+        let height = 3.6;
+        put(
+            &mut barn,
+            siding_box(0.12, height, width, 0x7d2f23),
+            -w / 2.0 - 0.08,
+            0.3 + height / 2.0,
+            z,
+        );
+        let (x, low, high) = (-w / 2.0 - 0.16, 0.45, 0.3 + height - 0.15);
+        for (a, b) in [(-1.0, 1.0), (1.0, -1.0)] {
+            beam(
+                &mut barn,
+                [x, low, z + a * (width / 2.0 - 0.15)],
+                [x, high, z + b * (width / 2.0 - 0.15)],
+                0.12,
+                BARN_TRIM,
+            );
+        }
+        for y in [low - 0.05, high + 0.05] {
+            put(
+                &mut barn,
+                box_part(0.1, 0.16, width, BARN_TRIM, 0.0),
+                x,
+                y,
+                z,
+            );
+        }
+    }
+    put(
+        &mut barn,
+        box_part(0.14, 0.14, 6.8, 0x3a3532, 0.0),
+        -w / 2.0 - 0.1,
+        0.3 + 3.75,
+        0.0,
+    );
+    // The hayloft door high in the front gable, hay showing in it.
+    for (sz, ww, hh, color, depth) in [
+        (-1.0, 2.2, 2.0, BARN_TRIM, 0.08),
+        (-1.0, 1.8, 1.6, 0x4a3a28, 0.14),
+        (-1.0, 1.5, 0.6, STRAW, 0.16),
+    ] {
+        put(
+            &mut barn,
+            box_part(ww, hh, depth, color, 0.0),
+            0.0,
+            0.3 + wall + if color == STRAW { 0.0 } else { 0.5 },
+            sz * (d / 2.0 + depth / 2.0),
+        );
+    }
+    // Cupola.
+    let top = 0.3 + wall + rise;
+    put(
+        &mut barn,
+        siding_box(1.1, 1.0, 1.1, BARN_TRIM),
+        0.0,
+        top + 0.2,
+        0.0,
+    );
+    for x in [-0.56, 0.56] {
+        put(
+            &mut barn,
+            box_part(0.04, 0.6, 0.8, 0x3a3532, 0.0),
+            x,
+            top + 0.25,
+            0.0,
+        );
+    }
+    put(
+        &mut barn,
+        shingle_roof(1.6, 0.6, 1.6, BARN_ROOF),
+        0.0,
+        top + 0.68,
+        0.0,
+    );
+    barn
+}
+
+/// A rail fence along a polyline: split posts every few metres, two rails, all
+/// following the ground.
+fn rail_fence(group: &mut Node, points: &[[f64; 2]]) {
+    const SPACING: f64 = 2.6;
+    const POST: u32 = 0x6d5a43;
+    const RAIL: u32 = 0x8a7357;
+    for pair in points.windows(2) {
+        let (a, b) = (pair[0], pair[1]);
+        let length = ((b[0] - a[0]).powi(2) + (b[1] - a[1]).powi(2)).sqrt();
+        let count = (length / SPACING).ceil().max(1.0) as usize;
+        let at = |t: f64| {
+            let (x, z) = (a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t);
+            [x, valley_height(x, z), z]
+        };
+        for i in 0..=count {
+            let [x, y, z] = at(i as f64 / count as f64);
+            let lean = ((x * 1.7 + z * 0.9).sin()) * 0.05;
+            let post = rotated(box_part(0.14, 1.35, 0.14, POST, 0.0), lean, 0.0, lean * 0.6);
+            put(group, post, x, y + 0.5, z);
+            if i < count {
+                let [nx, ny, nz] = at((i + 1) as f64 / count as f64);
+                for h in [0.45, 0.95] {
+                    beam(group, [x, y + h, z], [nx, ny + h, nz], 0.09, RAIL);
+                }
+            }
+        }
+    }
+}
+
+/// The farmstead east of the village: a barn and silo by the yard, a farmhouse
+/// on the lane, round bales on the mown field, rail fences and a log cart.
+fn farmstead() -> Node {
+    let mut group = Node::group("village-farmstead");
+    let mut parts = Node::group("");
+    let ([yard_x, yard_z], _) = FARMYARD;
+    let (bx, bz) = (yard_x + 11.5, yard_z + 3.0);
+    put(
+        &mut parts,
+        barn(9.0, 13.0, 4.6, 3.4),
+        bx,
+        footing(bx, bz, 4.5, 6.5),
+        bz,
+    );
+    // A stave silo with a conical cap beside the barn.
+    let (sx, sz) = (bx + 1.5, bz - 9.5);
+    let silo_ground = footing(sx, sz, 2.0, 2.0);
+    put(
+        &mut parts,
+        cylinder_part(2.1, 10.0, 0xbcb3a3, 16),
+        sx,
+        silo_ground + 4.6,
+        sz,
+    );
+    for i in 0..5 {
+        put(
+            &mut parts,
+            cylinder_part(2.14, 0.12, 0x5d5a55, 16),
+            sx,
+            silo_ground + 1.0 + f64::from(i) * 2.0,
+            sz,
+        );
+    }
+    let cap = Node::mesh(
+        Arc::new(cylinder_geometry(0.15, 2.4, 1.6, 16)),
+        material(0x8e9493, 0.3, 0.5),
+    );
+    put(&mut parts, cap, sx, silo_ground + 10.4, sz);
+    // Haystacks by the barn.
+    for (dx, dz, r) in [(-7.0, 9.0, 1.9), (-9.5, 6.5, 1.5)] {
+        let (x, z) = (yard_x + dx, yard_z + dz);
+        let stack = Node::mesh(
+            Arc::new(cylinder_geometry(0.25, r, r * 1.5, 12)),
+            material(STRAW, 0.0, 1.0),
+        );
+        put(&mut parts, stack, x, valley_height(x, z) + r * 0.7, z);
+    }
+    // Round bales along the hay field's windrows.
+    let (centre, size, angle) = hay_field();
+    let (sin, cos) = angle.sin_cos();
+    let mut seed = 0.37f64;
+    for row in 0..5 {
+        let across = -size[1] / 2.0 + 4.0 + f64::from(row) * 5.6;
+        for k in 0..4 {
+            seed = (seed * 9301.0 + 49297.0) % 233280.0 / 233280.0;
+            let along = -size[0] / 2.0 + 4.0 + f64::from(k) * 6.4 + seed * 2.5;
+            let x = centre[0] + along * cos - across * sin;
+            let z = centre[1] + along * sin + across * cos;
+            let bale = rotated(
+                cylinder_part(0.72, 1.25, STRAW, 14),
+                0.0,
+                seed * 3.0,
+                std::f64::consts::FRAC_PI_2,
+            );
+            put(&mut parts, bale, x, valley_height(x, z) + 0.66, z);
+        }
+    }
+    for fence in FARM_FENCES {
+        rail_fence(&mut parts, fence);
+    }
+    // Sheaves stooked in rows across the north wheat field.
+    let (centre, size, angle) = north_wheat();
+    let (sin, cos) = angle.sin_cos();
+    for row in 0..2 {
+        for k in 0..7 {
+            let along = -size[0] / 2.0 + 3.0 + f64::from(k) * 4.6 + f64::from(row) * 2.3;
+            let across = -2.5 + f64::from(row) * 5.0;
+            let x = centre[0] + along * cos - across * sin;
+            let z = centre[1] + along * sin + across * cos;
+            let stook = Node::mesh(
+                Arc::new(cylinder_geometry(0.12, 0.55, 1.15, 7)),
+                material(STRAW, 0.0, 1.0),
+            );
+            put(&mut parts, stook, x, valley_height(x, z) + 0.5, z);
+        }
+    }
+    // A field hut where the ploughed strip meets the trees.
+    let (hx, hz) = (-41.0, -99.0);
+    let hut_ground = footing(hx, hz, 1.6, 1.8);
+    for (part, y) in [
+        (siding_box(3.0, 2.2, 3.4, 0x7c6142), 1.1),
+        (siding_gable(3.0, 1.1, 3.4, 0x7c6142), 2.2),
+        (shingle_roof(3.5, 1.2, 3.9, 0x5a5650), 2.15),
+        (box_part(0.9, 1.7, 0.08, 0x3e3226, 0.0), 0.85),
+    ] {
+        let z = if y < 1.0 { hz + 1.72 } else { hz };
+        put(&mut parts, part, hx, hut_ground + y, z);
+    }
+    batch(&mut parts);
+    group.children.push(parts);
+    // The farmhouse faces the lane.
+    let (hx, hz) = (yard_x - 7.0, yard_z - 18.0);
+    let mut farmhouse = Node::group("");
+    house_facing(&mut farmhouse, hx, hz, 6.0, 7.0, 5.4, 0xd8cdb4, 0);
+    put(&mut farmhouse, concrete_wall(6.3, 1.6, 7.3), 0.0, -0.8, 0.0);
+    put(&mut group, farmhouse, hx, footing(hx, hz, 3.0, 3.5), hz);
+    let cart = rotated(log_cart(), 0.0, -0.9, 0.0);
+    let (cx, cz) = (yard_x - 2.0, yard_z + 4.0);
+    put(&mut group, cart, cx, valley_height(cx, cz) - 0.1, cz);
+    group
+}
+
 /// `villageLandmarks().group`: the mill, both bridges and the log cart. The mill's
 /// wheel is the descendant named [`WATERWHEEL`].
 pub fn village_landmarks() -> Node {
     let mut group = Node::group("");
+    group.children.push(farmstead());
     put(&mut group, watermill(), -35.0, -0.25, -69.0);
     put(&mut group, footbridge(), 0.0, 0.0, -82.0);
     let bridge = rotated(footbridge(), 0.0, FRAC_PI_2, 0.0);
