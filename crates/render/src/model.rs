@@ -156,6 +156,19 @@ pub struct PreparedPart {
     pub frustum_culled: bool,
     /// InstancedMesh instances, each placed by `local * matrix`.
     pub instances: Option<Vec<InstanceData>>,
+    /// A combined model's part merged across its fixed joints ([`prepare_combined`]):
+    /// each joint's share of the mesh, drawn while that joint shows.
+    pub segments: Option<Vec<Segment>>,
+}
+
+/// One fixed joint's triangles in a part merged across joints: contiguous index and
+/// vertex ranges of the part's mesh, and their bounds in mesh space.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Segment {
+    pub node: usize,
+    pub indices: Range<u32>,
+    pub vertices: Range<u32>,
+    pub bounds: Sphere,
 }
 
 /// A movable joint: a named node, or the root.
@@ -198,6 +211,40 @@ struct Pending<'a> {
     transform: DMat4,
 }
 
+/// A drawable of a combined model's fixed joint: placed in the model's space, and
+/// relative to its joint.
+struct Fixed<'a> {
+    pending: Pending<'a>,
+    relative: DMat4,
+    joint: usize,
+}
+
+/// Whether a fixed joint's drawable may merge with other joints': plain opaque
+/// shading only. A custom effect may read its instance's origin, which a merged part
+/// moves from the joint to the model.
+fn merges_across_joints(material: &Material) -> bool {
+    !material.transparent
+        && material.blending == sloppy_core::scene::Blending::Normal
+        && matches!(material.effect, sloppy_core::scene::Effect::None)
+}
+
+/// The cell edge (m) by which a merged part orders its joints, so the joints a view
+/// shows lie in few runs of its mesh.
+const SEGMENT_CELL: f64 = 16.0;
+
+/// A Z-order key of a ground cell, nearby cells close together.
+fn z_order(x: f64, z: f64) -> u64 {
+    let spread = |value: f64| {
+        let mut v =
+            u64::from(((value / SEGMENT_CELL).floor() as i64 + (1 << 15)).clamp(0, 0xffff) as u16);
+        v = (v | (v << 8)) & 0x00ff_00ff;
+        v = (v | (v << 4)) & 0x0f0f_0f0f;
+        v = (v | (v << 2)) & 0x3333_3333;
+        (v | (v << 1)) & 0x5555_5555
+    };
+    spread(x) | (spread(z) << 1)
+}
+
 #[derive(Clone, PartialEq, Eq, Hash)]
 struct GroupKey {
     node: usize,
@@ -211,24 +258,24 @@ struct GroupKey {
 }
 
 /// Insertion-ordered groups, so preparation is deterministic.
-struct Groups<'a, K> {
-    order: Vec<(K, Vec<Pending<'a>>)>,
+struct Groups<K, V> {
+    order: Vec<(K, Vec<V>)>,
     index: HashMap<K, usize>,
 }
 
-impl<'a, K: Clone + Eq + Hash> Groups<'a, K> {
+impl<K: Clone + Eq + Hash, V> Groups<K, V> {
     fn new() -> Self {
         Self {
             order: Vec::new(),
             index: HashMap::new(),
         }
     }
-    fn push(&mut self, key: K, pending: Pending<'a>) {
+    fn push(&mut self, key: K, value: V) {
         let slot = *self.index.entry(key.clone()).or_insert_with(|| {
             self.order.push((key, Vec::new()));
             self.order.len() - 1
         });
-        self.order[slot].1.push(pending);
+        self.order[slot].1.push(value);
     }
 }
 
@@ -249,11 +296,16 @@ fn instances_of(drawable: &Drawable) -> Option<Vec<InstanceData>> {
 struct Builder<'a, 'b> {
     interner: &'b mut MaterialInterner,
     model: PreparedModel,
-    groups: Groups<'a, GroupKey>,
+    groups: Groups<GroupKey, Pending<'a>>,
     /// Drawables that are placed individually (instanced meshes).
     single: Vec<(usize, Pending<'a>)>,
     /// Merge cell edge in metres; 0 merges each material into one draw.
     cell_size: f32,
+    /// A combined model's fixed joints (by node) and their rest in the model's
+    /// space; empty for other models.
+    fixed: Vec<Option<DMat4>>,
+    /// Plain opaque drawables of fixed joints, grouped across the joints.
+    across: Groups<GroupKey, Fixed<'a>>,
 }
 
 impl<'a> Builder<'a, '_> {
@@ -289,7 +341,7 @@ impl<'a> Builder<'a, '_> {
             return;
         }
         let (material, painted) = self.draw_material(&drawable.material);
-        let key = GroupKey {
+        let mut key = GroupKey {
             node,
             material: Arc::as_ptr(&material) as usize,
             painted,
@@ -299,6 +351,24 @@ impl<'a> Builder<'a, '_> {
             frustum_culled: drawable.frustum_culled,
             cell: self.cell(drawable, &transform),
         };
+        if let Some(Some(rest)) = self.fixed.get(node)
+            && merges_across_joints(&drawable.material)
+        {
+            key.node = 0;
+            let pending = Pending {
+                drawable,
+                transform: *rest * transform,
+            };
+            self.across.push(
+                key,
+                Fixed {
+                    pending,
+                    relative: transform,
+                    joint: node,
+                },
+            );
+            return;
+        }
         self.groups.push(key, pending);
     }
 
@@ -320,6 +390,7 @@ impl<'a> Builder<'a, '_> {
             render_order: drawable.render_order,
             frustum_culled: drawable.frustum_culled,
             instances: instances_of(drawable),
+            segments: None,
         }
     }
 
@@ -330,7 +401,87 @@ impl<'a> Builder<'a, '_> {
         self.part(node, pending, mesh, material)
     }
 
+    /// Merge each group of fixed joints' drawables into one part with a segment per
+    /// joint. A group within one joint, or of one shared mesh and material (drawn
+    /// instanced), goes the way it would in any model.
+    fn merge_across(&mut self) {
+        let across = std::mem::take(&mut self.across.order);
+        for (key, mut members) in across {
+            let first = members[0].pending.drawable;
+            let one_joint = members.iter().all(|m| m.joint == members[0].joint);
+            let instanced = members.iter().all(|m| {
+                Arc::ptr_eq(&m.pending.drawable.mesh, &first.mesh)
+                    && Arc::ptr_eq(&m.pending.drawable.material, &first.material)
+            });
+            if one_joint || instanced {
+                for member in members {
+                    let key = GroupKey {
+                        node: member.joint,
+                        ..key.clone()
+                    };
+                    let pending = Pending {
+                        drawable: member.pending.drawable,
+                        transform: member.relative,
+                    };
+                    self.groups.push(key, pending);
+                }
+                continue;
+            }
+            // Joints in ground order (where each one's first drawable stands), so the
+            // ones a view shows lie in few runs.
+            let mut places: HashMap<usize, u64> = HashMap::new();
+            for member in &members {
+                let at = member.pending.transform.w_axis;
+                places
+                    .entry(member.joint)
+                    .or_insert_with(|| z_order(at.x, at.z));
+            }
+            members.sort_by_key(|m| (places[&m.joint], m.joint));
+            let (material, _) = self.draw_material(&first.material);
+            let mut data = MeshData::default();
+            let mut segments: Vec<Segment> = Vec::new();
+            for member in &members {
+                let drawable = member.pending.drawable;
+                let paint = key
+                    .painted
+                    .then(|| hex_to_linear(drawable.material.color.0));
+                let (vertex, index) = (data.vertices.len() as u32, data.indices.len() as u32);
+                data.append(
+                    &drawable.mesh,
+                    Some(&member.pending.transform.as_mat4()),
+                    paint,
+                );
+                let (vertices, indices) = (data.vertices.len() as u32, data.indices.len() as u32);
+                match segments.last_mut() {
+                    Some(segment) if segment.node == member.joint => {
+                        segment.vertices.end = vertices;
+                        segment.indices.end = indices;
+                    }
+                    _ => segments.push(Segment {
+                        node: member.joint,
+                        indices: index..indices,
+                        vertices: vertex..vertices,
+                        bounds: Sphere::default(),
+                    }),
+                }
+            }
+            for segment in &mut segments {
+                let range = segment.vertices.start as usize..segment.vertices.end as usize;
+                segment.bounds = Sphere::from_points(
+                    data.vertices[range].iter().map(|v| Vec3::from(v.position)),
+                );
+            }
+            self.model.meshes.push(data.finish());
+            let mesh = PartMesh::Owned(self.model.meshes.len() - 1);
+            let mut part = self.part(0, &members[0].pending, mesh, material);
+            part.local = Mat4::IDENTITY;
+            part.segments = Some(segments);
+            self.model.parts.push(part);
+        }
+    }
+
     fn finish(mut self) -> PreparedModel {
+        self.merge_across();
         let singles = std::mem::take(&mut self.single);
         for (node, pending) in &singles {
             let part = self.shared_part(*node, pending);
@@ -374,12 +525,28 @@ impl<'a> Builder<'a, '_> {
 /// Prepare a movable model. The root's own transform is ignored: an instance's
 /// world matrix places the root, like setting the Three group's position.
 pub fn prepare_model(root: &Node, interner: &mut MaterialInterner) -> PreparedModel {
+    prepare_joints(root, interner, false)
+}
+
+/// Prepare a model whose named children of the root are fixed: they only ever show
+/// or hide, never move (the round's static covers, a joint each). Their plain opaque
+/// parts merge across the joints per material into parts with a [`Segment`] per
+/// joint, drawn in runs of the joints that show, so a few dozen covers cost a few
+/// draws per material instead of one per cover and material. Named joints below
+/// them (a tree's crown and boughs) still move as in any model.
+pub fn prepare_combined(root: &Node, interner: &mut MaterialInterner) -> PreparedModel {
+    prepare_joints(root, interner, true)
+}
+
+fn prepare_joints(root: &Node, interner: &mut MaterialInterner, fixed: bool) -> PreparedModel {
     let mut builder = Builder {
         interner,
         model: PreparedModel::default(),
         groups: Groups::new(),
         single: Vec::new(),
         cell_size: 0.0,
+        fixed: vec![None],
+        across: Groups::new(),
     };
     builder.model.nodes.push(ModelNode {
         name: root.name.clone(),
@@ -390,7 +557,13 @@ pub fn prepare_model(root: &Node, interner: &mut MaterialInterner) -> PreparedMo
     if let Some(drawable) = &root.drawable {
         builder.add(0, drawable, DMat4::IDENTITY);
     }
-    fn visit<'a>(builder: &mut Builder<'a, '_>, node: &'a Node, joint: usize, relative: DMat4) {
+    fn visit<'a>(
+        builder: &mut Builder<'a, '_>,
+        node: &'a Node,
+        joint: usize,
+        relative: DMat4,
+        fixed: bool,
+    ) {
         for child in &node.children {
             let local = relative * child.local_matrix();
             let (joint, relative) = if child.name.is_empty() {
@@ -405,15 +578,18 @@ pub fn prepare_model(root: &Node, interner: &mut MaterialInterner) -> PreparedMo
                     rest: local.as_mat4(),
                     visible: child.visible,
                 });
+                // Only the root's own named children are fixed.
+                let rest = (fixed && joint == 0).then_some(local);
+                builder.fixed.push(rest);
                 (builder.model.nodes.len() - 1, DMat4::IDENTITY)
             };
             if let Some(drawable) = &child.drawable {
                 builder.add(joint, drawable, relative);
             }
-            visit(builder, child, joint, relative);
+            visit(builder, child, joint, relative, fixed);
         }
     }
-    visit(&mut builder, root, 0, DMat4::IDENTITY);
+    visit(&mut builder, root, 0, DMat4::IDENTITY, fixed);
     builder.finish()
 }
 
@@ -450,6 +626,8 @@ pub fn prepare_scenery(root: &Node, interner: &mut MaterialInterner) -> Prepared
         groups: Groups::new(),
         single: Vec::new(),
         cell_size: SCENERY_CELL_SIZE,
+        fixed: Vec::new(),
+        across: Groups::new(),
     };
     builder.model.nodes.push(ModelNode {
         name: root.name.clone(),
@@ -457,7 +635,7 @@ pub fn prepare_scenery(root: &Node, interner: &mut MaterialInterner) -> Prepared
         rest: Mat4::IDENTITY,
         visible: true,
     });
-    let mut repeated: Groups<(usize, usize, bool, bool, i32)> = Groups::new();
+    let mut repeated: Groups<(usize, usize, bool, bool, i32), Pending> = Groups::new();
     for (drawable, world) in all {
         let key = repeat_key(drawable);
         if drawable.instances.is_none() && counts[&key] >= SCENERY_INSTANCE_THRESHOLD {
@@ -588,6 +766,128 @@ mod tests {
         assert!(!turret.material.vertex_colors);
         // The barrel's two grey parts merge.
         assert_eq!(model.parts.iter().filter(|p| p.node == 2).count(), 1);
+    }
+
+    /// Four covers, a joint each: a painted block and a slab of two greys apiece, one
+    /// with a glass pane, one with a moving flag joint, and two sharing a crate mesh.
+    fn yard() -> (Node, Arc<Mesh>) {
+        let mesh = quad();
+        let crate_mesh = quad();
+        let red = Arc::new(Material::standard(0x993322, 0.0, 0.8));
+        let blue = Arc::new(Material::standard(0x223399, 0.0, 0.8));
+        let wood = Arc::new(Material {
+            map: Some(sloppy_core::scene::TextureRef::file("wood.webp")),
+            ..Material::standard(0xffffff, 0.0, 0.9)
+        });
+        let glass = Arc::new(Material {
+            transparent: true,
+            opacity: 0.4,
+            ..Material::default()
+        });
+        let mut root = Node::group("static-covers");
+        for (i, x) in [0.0, 40.0, -30.0, 70.0].into_iter().enumerate() {
+            let mut joint = Node::group(format!("cover:{i}"));
+            let mut cover = Node::group("");
+            cover.position = DVec3::new(x, 0.0, 5.0);
+            cover.children = vec![
+                part(&mesh, if i % 2 == 0 { &red } else { &blue }, 0.0),
+                part(&mesh, &blue, 1.0),
+                part(&crate_mesh, &wood, 2.0),
+            ];
+            if i == 1 {
+                cover.children.push(part(&mesh, &glass, 3.0));
+            }
+            if i == 2 {
+                let mut flag = Node::group("flag");
+                flag.children = vec![part(&mesh, &red, 0.0)];
+                cover.children.push(flag);
+            }
+            joint.children.push(cover);
+            root.children.push(joint);
+        }
+        (root, crate_mesh)
+    }
+
+    #[test]
+    fn combined_models_merge_fixed_joints_into_segments() {
+        let (root, crate_mesh) = yard();
+        let mut interner = MaterialInterner::default();
+        let model = prepare_combined(&root, &mut interner);
+        let names: Vec<_> = model.nodes.iter().map(|n| n.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "static-covers",
+                "cover:0",
+                "cover:1",
+                "cover:2",
+                "flag",
+                "cover:3"
+            ]
+        );
+        // The painted blocks and slabs of every cover: one part, a segment per joint
+        // in ground order, each its own contiguous share of the mesh.
+        let merged: Vec<_> = model
+            .parts
+            .iter()
+            .filter(|p| p.segments.is_some())
+            .collect();
+        assert_eq!(merged.len(), 1);
+        let painted = merged[0];
+        assert_eq!(painted.node, 0);
+        assert!(painted.material.vertex_colors);
+        let segments = painted.segments.as_ref().unwrap();
+        let joints: Vec<_> = segments.iter().map(|s| s.node).collect();
+        assert_eq!(joints, [3, 1, 2, 5], "west to east: x -30, 0, 40, 70");
+        let PartMesh::Owned(index) = painted.mesh else {
+            unreachable!()
+        };
+        let data = &model.meshes[index];
+        assert_eq!(data.indices.len(), 4 * 12);
+        let mut next = 0;
+        for segment in segments {
+            assert_eq!(segment.indices.start, next);
+            assert_eq!(segment.indices.len(), 12);
+            next = segment.indices.end;
+            let vertices =
+                &data.vertices[segment.vertices.start as usize..segment.vertices.end as usize];
+            assert!(
+                vertices
+                    .iter()
+                    .all(|v| segment.bounds.center.distance(Vec3::from(v.position))
+                        <= segment.bounds.radius + 1e-4)
+            );
+        }
+        // Baked in the model's space: cover:2 stands at x -30.
+        assert_eq!(
+            data.vertices[segments[0].vertices.start as usize].position,
+            [-30.0, 0.0, 5.0]
+        );
+        // The textured crate is one shared mesh and material: still instanced per joint.
+        let crates: Vec<_> = model
+            .parts
+            .iter()
+            .filter(|p| matches!(&p.mesh, PartMesh::Shared(m) if Arc::ptr_eq(m, &crate_mesh)))
+            .collect();
+        assert_eq!(crates.len(), 4);
+        assert!(crates.iter().all(|p| p.segments.is_none() && p.node != 0));
+        // Glass stays on its joint; the flag keeps its own moving joint.
+        assert!(
+            model
+                .parts
+                .iter()
+                .any(|p| p.material.transparent && p.node == 2)
+        );
+        assert!(
+            model
+                .parts
+                .iter()
+                .any(|p| p.node == 4 && p.segments.is_none())
+        );
+        // A plain model of the same tree keeps a part per joint.
+        let plain = prepare_model(&root, &mut interner);
+        assert!(plain.parts.iter().all(|p| p.segments.is_none()));
+        assert_eq!(plain.parts.iter().filter(|p| p.node == 1).count(), 2);
     }
 
     #[test]

@@ -283,7 +283,11 @@ mod tests {
         let xs: Vec<f32> = pool.records().iter().map(|r| r.translation().x).collect();
         // Distances 2, 10, 0.5, 5, 4, 8: farthest first.
         assert_eq!(xs, [-9.0, 9.0, 6.0, -3.0, 3.0, 0.5]);
-        assert_eq!(pool.dirty().to_vec(), vec![0..6], "every record uploads again");
+        assert_eq!(
+            pool.dirty().to_vec(),
+            vec![0..6],
+            "every record uploads again"
+        );
         // Equally distant records keep their slot order.
         pool.clear();
         for x in [2.0, 0.0, -2.0] {
