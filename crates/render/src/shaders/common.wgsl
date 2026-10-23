@@ -48,7 +48,7 @@ struct Frame {
     sky_zenith: vec4f,
     // rgb sky at the horizon, w cosine of the sun disc's angular radius.
     sky_horizon: vec4f,
-    // rgb sun halo and disc, w rim light strength.
+    // rgb sun halo and disc (w unused: the rim's strength is in `rim`).
     sky_sun: vec4f,
     // rgb sunlit cloud tops, w cloud coverage 0..1.
     cloud_lit: vec4f,

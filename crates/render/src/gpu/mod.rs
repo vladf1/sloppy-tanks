@@ -2212,10 +2212,7 @@ impl Renderer {
             sky_rays: sky_rays.inverse().to_cols_array(),
             sky_zenith: rgb4(sky(a.zenith), 1.0),
             sky_horizon: rgb4(sky(a.horizon), a.sun_radius.cos()),
-            sky_sun: rgb4(
-                hex_to_linear_scaled(a.sun_glow, a.sun_glow_intensity),
-                a.rim,
-            ),
+            sky_sun: rgb4(hex_to_linear_scaled(a.sun_glow, a.sun_glow_intensity), 0.0),
             cloud_lit: rgb4(sky(a.clouds.lit), a.clouds.coverage),
             cloud_shade: rgb4(sky(a.clouds.shade), a.clouds.shadow),
             haze: [a.haze.density, a.haze.falloff, a.haze.start, a.haze.max],
