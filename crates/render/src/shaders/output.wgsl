@@ -62,8 +62,12 @@ struct PostOut {
     @builtin(position) clip: vec4f,
     // Texture coordinates in WebGPU's top-down rows on both backends.
     @location(0) uv: vec2f,
-    // The bloom pass (`fs_bloom`), drawn as the instance index.
-    @location(1) @interpolate(flat) bloom_pass: u32,
+    // The bloom pass (`fs_bloom`), drawn as the instance index. Interpolated rather
+    // than flat: ANGLE's Metal backend (Chrome's WebGL on a Mac) draws a program with
+    // a flat varying through a compute pass per draw that rewrites its indices for
+    // GL's last-vertex convention. Every corner carries the same value, so it arrives
+    // within rounding of it.
+    @location(1) bloom_pass: f32,
 }
 
 @vertex
@@ -75,7 +79,7 @@ fn vs_post(
     var out: PostOut;
     out.clip = vec4f(corner * 2.0 - 1.0, 0.0, 1.0);
     out.uv = vec2f(corner.x, 1.0 - corner.y);
-    out.bloom_pass = bloom_pass;
+    out.bloom_pass = f32(bloom_pass);
     return out;
 }
 
@@ -182,13 +186,14 @@ fn bloom_up(input: PostOut) -> vec4f {
 // apiece on a cold start however small, and the pass is the same for a whole draw.
 @fragment
 fn fs_bloom(input: PostOut) -> @location(0) vec4f {
-    if input.bloom_pass == 0u {
+    let drawn = u32(input.bloom_pass + 0.5);
+    if drawn == 0u {
         return bloom_prefilter(input);
     }
-    if input.bloom_pass == 1u {
+    if drawn == 1u {
         return bloom_down(input);
     }
-    if input.bloom_pass == 3u {
+    if drawn == 3u {
         return occlusion_blur(input);
     }
     return bloom_up(input);
