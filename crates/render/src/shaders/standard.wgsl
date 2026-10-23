@@ -733,13 +733,19 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         } else if !atmosphere_on() {
             color = linear_fog(color, input.world);
         } else {
-            let haze = haze_weights(frame.camera_position.xyz, input.world, view_depth(input.world));
             // Faded instances (opacity below 1) blend too, their alpha their opacity.
-            if material_has(MATERIAL_BLENDED) || input.tint.a < 1.0 {
-                color = blended_haze(color, haze);
-            } else {
-                color = haze_kept(color, haze);
-                alpha = haze_alpha(haze);
+            let blended = material_has(MATERIAL_BLENDED) || input.tint.a < 1.0;
+            if beyond_haze_start(input.world) {
+                let haze = haze_weights(frame.camera_position.xyz, input.world, view_depth(input.world));
+                if blended {
+                    color = blended_haze(color, haze);
+                } else {
+                    color = haze_kept(color, haze);
+                    alpha = haze_alpha(haze);
+                }
+            } else if !blended {
+                // No haze: `haze_alpha` of none.
+                alpha = 1.0;
             }
         }
     }

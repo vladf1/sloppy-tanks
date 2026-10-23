@@ -530,6 +530,14 @@ fn haze_weights(eye: vec3f, world: vec3f, view_depth: f32) -> vec2f {
     return vec2f(amount, fade);
 }
 
+// Whether `world` lies further from the eye than the haze begins (`haze.z`). Nearer
+// surfaces, most of an overhead frame, take no haze at all (`haze_weights` is zero
+// there), so they skip its terms.
+fn beyond_haze_start(world: vec3f) -> bool {
+    let offset = world - frame.camera_position.xyz;
+    return dot(offset, offset) > frame.haze.z * frame.haze.z;
+}
+
 // What remains of a surface's own colour under the haze `weights`. Air between eye
 // and surface first drains a surface's colour and only then tints it: a warm mesa or
 // green slope mixed straight into the cool aerial tint passed through mauve and read
