@@ -346,12 +346,20 @@ const SHADE_BAND: vec4f = vec4f(0.006, 0.03, 0.12, 0.3);
 // warms highlights, a few hues are tamed, then saturation (and vibrance for muted
 // colors) and a contrast curve around mid grey that never clips the blacks.
 fn grade(color: vec3f) -> vec3f {
-    let lift = output.lift.rgb;
-    var c = output.gain.rgb * color;
+    // Uniform branches skip the steps a neutral setting leaves as they are (the
+    // tone-mapped colour is never negative).
+    var c = color;
+    if any(output.gain.rgb != vec3f(1.0)) {
+        c *= output.gain.rgb;
+    }
     let black = output.tone.y;
-    c = max(c - black, vec3f(0.0)) / (1.0 - black);
-    c = c + lift * (vec3f(1.0) - c);
-    // Uniform branches skip the steps a neutral setting leaves as they are.
+    if black != 0.0 {
+        c = max(c - black, vec3f(0.0)) / (1.0 - black);
+    }
+    let lift = output.lift.rgb;
+    if any(lift != vec3f(0.0)) {
+        c = c + lift * (vec3f(1.0) - c);
+    }
     if any(output.gamma.rgb != vec3f(1.0)) {
         c = pow(max(c, vec3f(0.0)), 1.0 / output.gamma.rgb);
     }
