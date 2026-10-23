@@ -43,8 +43,6 @@ const DOCK_BUMP: f32 = 0.035;
 /// Roughness of bare quay concrete and of road paint.
 const APRON_ROUGHNESS: f32 = 0.92;
 const PAINT_ROUGHNESS: f32 = 0.84;
-/// Markings keep paint where the effect's wear exceeds this.
-const PAINT_CUTOFF: f32 = 0.5;
 /// A spawn pad's steel tread plate (the effect polishes and paints it further).
 const PAD_METALNESS: f32 = 0.55;
 const PAD_ROUGHNESS: f32 = 0.5;
@@ -125,12 +123,14 @@ pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
                 extra_textures,
                 ..Material::standard(color, 0.0, APRON_ROUGHNESS)
             },
+            // Blended rather than alpha-tested, like the lettering: the chips fade
+            // out over the effect's soft flake edge, and the paint shares the
+            // apron's one shader instead of compiling alpha-tested variants of
+            // its own (`harbor_scenery::PAINT_RENDER_ORDER` draws it first).
             ApronMode::Marking => Material {
                 vertex_colors: true,
-                alpha_test: PAINT_CUTOFF,
-                // The flaking edge resolves through the coverage mask, so chips
-                // read as soft flakes rather than stair-stepped pixels.
-                alpha_to_coverage: true,
+                transparent: true,
+                depth_write: false,
                 effect,
                 extra_textures,
                 ..Material::standard(color, 0.0, PAINT_ROUGHNESS)

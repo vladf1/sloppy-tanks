@@ -109,12 +109,21 @@ const PAD_LIGHT_FLAG: f32 = 10.0;
 const PAD_RADIUS: f64 = 2.65;
 const PAD_STEEL: u32 = 0x3a4850;
 
-/// Merge a group of ground-level parts, which receive shadows but cast none.
+/// Render order of the paint blended over the apron (markings and lettering): before
+/// every other blended draw, the tanks' contact shadows (`tank_model`) and the
+/// tread marks, smoke and sparks, so nothing over the paint is painted over.
+const PAINT_RENDER_ORDER: i32 = -5;
+
+/// Merge a group of ground-level parts, which receive shadows but cast none; the
+/// blended paint among them draws first ([`PAINT_RENDER_ORDER`]).
 fn batch_receivers(group: &mut Node) {
     batch(group);
     for child in &mut group.children {
         if let Some(drawable) = &mut child.drawable {
             drawable.cast_shadow = false;
+            if drawable.material.transparent {
+                drawable.render_order = PAINT_RENDER_ORDER;
+            }
         }
     }
 }

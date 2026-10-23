@@ -63,7 +63,7 @@ pub const WATER: &str = "water";
 /// them, tar-sealed cracks and repair patches; both take cast-iron covers, contact
 /// grime against the fixed cover and rust under the container castings. Paint modes
 /// keep their color, dirty it and chip it with world-space wear that follows the
-/// traffic (markings alpha-test the chips away, labels fade their alpha).
+/// traffic (both blended: markings fade the chips away, labels fade their alpha).
 /// Quay walls take a wet tide band, barnacles, weed at the waterline and rust runs,
 /// with sunlight thrown off the ripples dancing above the water (as on ship hulls,
 /// which add their plating's weathering); spawn pads their
@@ -92,7 +92,7 @@ pub enum ApronMode {
     LaneAlongZ = 1,
     /// An asphalt traffic lane running along x.
     LaneAlongX = 2,
-    /// Painted marking, alpha-tested where the paint has chipped.
+    /// Painted marking, blended away where the paint has chipped.
     Marking = 3,
     /// Painted lettering (transparent texture), faded where worn.
     Label = 4,

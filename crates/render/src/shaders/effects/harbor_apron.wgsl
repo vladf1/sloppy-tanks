@@ -12,10 +12,9 @@
 // container's paint (standard, over its wear tile), shaded per box, 11 the sea
 // wall's parapet round the apron.
 //
-// The modes fall into three kinds: the ground (`apron_ground`, concrete and asphalt),
-// the paint on it (`apron_paint`) and the structures (`apron_structure`); the
-// alpha-tested markings are a definition of their own (`registry.rs`), so their
-// variants compile only the paint.
+// The modes fall into three kinds, one shader for all of them (`registry.rs`): the
+// ground (`apron_ground`, concrete and asphalt), the paint blended over it
+// (`apron_paint`) and the structures (`apron_structure`).
 // The ground covers most of the screen, so it works out only its crisp detail per
 // pixel (grain, slab joints and tones, tar, cracks, spalls, repair patches, covers,
 // the asphalt's aggregate and tyre streaks); everything that varies slowly across the
