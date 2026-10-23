@@ -5,8 +5,9 @@
 //! - RGB: the ground's macro relief over the square of `RELIEF_HALF_EXTENT` metres
 //!   round the arena centre, one texel per `RELIEF_TEXEL` metres: the slope of its
 //!   broad swells and finer hummocks along x and z (`RELIEF_SLOPE_RANGE` around 0.5)
-//!   and their height -1..1 (as 0..1). It is the hashed noise itself, to 8 bits;
-//!   beyond the square the relief fades out, past anything the gameplay cameras see.
+//!   and their height -1..1 (as 0..1). It is the hashed noise itself, to 8 bits,
+//!   fading out toward the square's edge (`RELIEF_FADE`), past anything the gameplay
+//!   cameras see, so the taps the edge clamps beyond it hold no relief.
 //! - A: the passing clouds' shadow noise, tiled: `CLOUD_PERIOD` cells of its broad
 //!   octave across 255 texels, the last texel repeating the first, so a tap
 //!   `fract`-wrapped into the first 255 texels filters across the seam. Its finer
@@ -20,6 +21,8 @@ pub const ATMOSPHERE_MAP_SIZE: u32 = 256;
 pub const RELIEF_HALF_EXTENT: f32 = 192.0;
 /// The relief's slopes as stored: 0.5 + slope / range.
 pub const RELIEF_SLOPE_RANGE: f32 = 0.3;
+/// Metres from the arena centre along either axis over which the relief fades out.
+const RELIEF_FADE: [f32; 2] = [172.0, 188.0];
 /// Cells of the cloud noise's broad octave in one tile of the map.
 pub const CLOUD_PERIOD: f32 = 16.0;
 /// The finer cloud octave's frequency over the broad one's: 34 cells per tile.
@@ -67,8 +70,11 @@ fn relief_position(index: usize) -> f32 {
 }
 
 /// The ground's macro relief at world (x, z): its slope along x and z, and its
-/// height, -1 in the hollows to 1 on the crests.
+/// height, -1 in the hollows to 1 on the crests, faded out toward the map's edge.
 fn relief(x: f32, z: f32) -> ([f32; 2], f32) {
+    let span = x.abs().max(z.abs());
+    let t = ((span - RELIEF_FADE[0]) / (RELIEF_FADE[1] - RELIEF_FADE[0])).clamp(0.0, 1.0);
+    let share = 1.0 - t * t * (3.0 - 2.0 * t);
     let (swell, swell_slope) = value_noise_gradient(
         x * SWELL_SCALE + SWELL_OFFSET[0],
         z * SWELL_SCALE + SWELL_OFFSET[1],
@@ -78,10 +84,11 @@ fn relief(x: f32, z: f32) -> ([f32; 2], f32) {
         z * HUMMOCK_SCALE + HUMMOCK_OFFSET[1],
     );
     let slope = std::array::from_fn(|axis| {
-        swell_slope[axis] * (SWELL_SCALE * SWELL_HEIGHT)
-            + hummock_slope[axis] * (HUMMOCK_SCALE * HUMMOCK_HEIGHT)
+        (swell_slope[axis] * (SWELL_SCALE * SWELL_HEIGHT)
+            + hummock_slope[axis] * (HUMMOCK_SCALE * HUMMOCK_HEIGHT))
+            * share
     });
-    (slope, (swell - 0.5) * 1.4 + (hummock - 0.5) * 0.6)
+    (slope, ((swell - 0.5) * 1.4 + (hummock - 0.5) * 0.6) * share)
 }
 
 /// The clouds' shadow noise at (x, y) in cells of its broad octave, tiling every

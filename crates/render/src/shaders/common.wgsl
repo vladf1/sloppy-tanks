@@ -182,14 +182,12 @@ fn lattice_noise(p: vec2f) -> f32 {
 
 // The atmosphere map (`atmosphere_map.rs`): its texels per side, the half side in
 // metres of the square its relief covers, the range its slopes are stored in, and the
-// broad cloud octave's cells in one tile of its cloud noise.
+// broad cloud octave's cells in one tile of its cloud noise. The relief fades out
+// toward the map's edge (baked in), so beyond it the clamped taps hold none.
 const ATMOSPHERE_MAP_SIZE: f32 = 256.0;
 const RELIEF_HALF_EXTENT: f32 = 192.0;
 const RELIEF_SLOPE_RANGE: f32 = 0.3;
 const CLOUD_PERIOD: f32 = 16.0;
-// Distances from the arena centre, metres along either axis, over which the relief
-// fades out before the map's edge.
-const RELIEF_FADE: vec2f = vec2f(172.0, 188.0);
 
 struct GroundMacro {
     normal: vec3f,
@@ -220,14 +218,12 @@ fn ground_macro(world: vec3f, normal: vec3f, roughness: f32) -> GroundMacro {
     }
     let uv = world.xz * (0.5 / RELIEF_HALF_EXTENT) + 0.5;
     let relief = textureSampleLevel(atmosphere_map, lut_sampler, uv, 0.0);
-    let span = max(abs(world.x), abs(world.z));
-    let share = weight * (1.0 - smoothstep(RELIEF_FADE.x, RELIEF_FADE.y, span));
-    let slope = (relief.xy - 0.5) * (RELIEF_SLOPE_RANGE * frame.ground.x * share);
+    let slope = (relief.xy - 0.5) * (RELIEF_SLOPE_RANGE * frame.ground.x * weight);
     result.normal = normalize(normal - vec3f(slope.x, 0.0, slope.y));
     // -1 in the hollows to 1 on the crests.
     let height = relief.z * 2.0 - 1.0;
-    result.tone = height * frame.ground.y * share;
-    result.dry = max(height, 0.0) * frame.ground.z * share;
+    result.tone = height * frame.ground.y * weight;
+    result.dry = max(height, 0.0) * frame.ground.z * weight;
     return result;
 }
 
