@@ -30,7 +30,7 @@
 //!   implements them.
 //! - Textures: file paths are in each `TextureRef`; [`node_textures`] lists what a
 //!   tree needs, and presentation supplies its generated keys. Those are baked in
-//!   row bands by [`bake_quarry_soil`] (the quarry soil) or drawn by the browser
+//!   row bands by [`bake_quarry_ground`] (the quarry soil) or drawn by the browser
 //!   from [`effects_scenery::canvas_texture`] (signs and labels).
 
 mod batching;
@@ -80,6 +80,7 @@ mod loading_assets;
 mod quarry_benches;
 mod quarry_machinery;
 mod quarry_ramp;
+mod quarry_relief;
 mod quarry_scenery;
 mod quarry_scree;
 mod quarry_site_details;
@@ -134,6 +135,7 @@ pub use water_surface::water_normals;
 // Map scenery.
 pub use harbor_scenery::HarborScenery;
 pub use loading_assets::node_textures;
+pub use quarry_relief::bake_quarry_ground;
 pub use quarry_scenery::{SpawnPadShape, quarry_spawn_pad_pieces};
 pub use quarry_soil::{QUARRY_SOIL_SIZE, bake_quarry_soil};
 pub use quarry_terrain::sand_accum;

@@ -54,15 +54,23 @@ fn quarry_hash(cell: vec2f) -> vec4f {
     return fract((p.xxyz + p.yzzw) * p.zywx);
 }
 
-// Smooth value noise in [0, 1) on a unit lattice, from `quarry_hash`.
+// One hash in [0, 1) of a lattice cell (Hoskins' hash12): the value noise's
+// corners need one number each, a third of `quarry_hash`'s work.
+fn quarry_hash1(cell: vec2f) -> f32 {
+    var p = fract(cell.xyx * 0.1031);
+    p = p + dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+// Smooth value noise in [0, 1) on a unit lattice, from `quarry_hash1`.
 fn quarry_value(p: vec2f) -> f32 {
     let i = floor(p);
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
-    let a = quarry_hash(i).x;
-    let b = quarry_hash(i + vec2f(1.0, 0.0)).x;
-    let c = quarry_hash(i + vec2f(0.0, 1.0)).x;
-    let d = quarry_hash(i + vec2f(1.0, 1.0)).x;
+    let a = quarry_hash1(i);
+    let b = quarry_hash1(i + vec2f(1.0, 0.0));
+    let c = quarry_hash1(i + vec2f(0.0, 1.0));
+    let d = quarry_hash1(i + vec2f(1.0, 1.0));
     return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
 }
 
@@ -72,10 +80,10 @@ fn quarry_value_grad(p: vec2f) -> vec3f {
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
     let du = 6.0 * f * (1.0 - f);
-    let a = quarry_hash(i).x;
-    let b = quarry_hash(i + vec2f(1.0, 0.0)).x;
-    let c = quarry_hash(i + vec2f(0.0, 1.0)).x;
-    let d = quarry_hash(i + vec2f(1.0, 1.0)).x;
+    let a = quarry_hash1(i);
+    let b = quarry_hash1(i + vec2f(1.0, 0.0));
+    let c = quarry_hash1(i + vec2f(0.0, 1.0));
+    let d = quarry_hash1(i + vec2f(1.0, 1.0));
     let k = a - b - c + d;
     return vec3f(
         a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y,
@@ -144,8 +152,9 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32, 
     let broken = step(1.0 - angular, m.x);
     let turn = m.y * 3.14;
     let e0 = vec2f(cos(turn), sin(turn));
-    let e1 = vec2f(cos(turn + 1.13), sin(turn + 1.13));
-    let e2 = vec2f(cos(turn + 2.2), sin(turn + 2.2));
+    // The other two planes turned 1.13 and 2.2 radians from the first.
+    let e1 = vec2f(e0.x * 0.42666 - e0.y * 0.90441, e0.y * 0.42666 + e0.x * 0.90441);
+    let e2 = vec2f(e0.x * -0.58850 - e0.y * 0.80850, e0.y * -0.58850 + e0.x * 0.80850);
     let s0 = dot(local, e0) * (0.92 + 0.2 * k.x);
     let s1 = dot(local, e1) * (0.9 + 0.25 * k.w);
     let s2 = dot(local, e2) * (0.95 + 0.2 * k.y);
@@ -190,18 +199,20 @@ fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32, 
 // Flat facets struck off a stone face, on a `cell` metre jittered lattice: xy
 // the tilt of the facet the point lies on (each facet a plane of its own, so
 // the face shades as chipped planes rather than a smooth swell), z how near
-// the point lies to the ridge between two facets (1 on it).
+// the point lies to the ridge between two facets (1 on it). Each facet's centre
+// keeps to the middle half of its cell, so the four cells round the point hold
+// its nearest two almost always: a 2x2 search, not 3x3, over every rock face.
 fn quarry_facets(p: vec2f, cell: f32) -> vec3f {
     let g = p / cell;
-    let id = floor(g);
+    let id = floor(g - 0.5);
     var f1 = 8.0;
     var f2 = 8.0;
     var tilt = vec2f(0.0);
-    for (var j = -1; j <= 1; j++) {
-        for (var i = -1; i <= 1; i++) {
+    for (var j = 0; j <= 1; j++) {
+        for (var i = 0; i <= 1; i++) {
             let o = vec2f(f32(i), f32(j));
             let h = quarry_hash(id + o + 113.0);
-            let d = length(id + o + 0.1 + h.xy * 0.8 - g);
+            let d = length(id + o + 0.25 + h.xy * 0.5 - g);
             if d < f1 {
                 f2 = f1;
                 f1 = d;

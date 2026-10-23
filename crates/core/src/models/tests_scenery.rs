@@ -515,8 +515,15 @@ fn scenery_build_times() {
     let start = Instant::now();
     let soil = bake_quarry_soil(sand_accum(), 0, QUARRY_SOIL_SIZE);
     let bake = start.elapsed();
-    assert_eq!(byte_hash(&soil), soil_hash("full"));
     println!("quarry soil bake: {:.1} ms", bake.as_secs_f64() * 1e3);
+    let start = Instant::now();
+    let ground = bake_quarry_ground(sand_accum(), 0, QUARRY_SOIL_SIZE);
+    println!(
+        "quarry soil bake with its relief: {:.1} ms",
+        start.elapsed().as_secs_f64() * 1e3
+    );
+    assert_eq!(ground.len(), soil.len());
+    assert_eq!(byte_hash(&soil), soil_hash("full"));
     for theme in [MapTheme::Village, MapTheme::Harbor, MapTheme::Quarry] {
         let start = Instant::now();
         let scenery = build_scenery(theme);
