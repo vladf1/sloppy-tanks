@@ -20,7 +20,14 @@ import {
   type ScreenPoint,
 } from "./hud-feedback";
 import { duration } from "./round-recap";
-import { controlsMarkup, hudIcon, hudMarkup, menuMarkup } from "./ui-markup";
+import {
+  controlsMarkup,
+  hudIcon,
+  hudMarkup,
+  menuMarkup,
+  respawnMarkup,
+  wreckedByMarkup,
+} from "./ui-markup";
 import { fitPanels } from "./panel-fit";
 import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
@@ -50,6 +57,8 @@ export interface UIActions {
 /** The DOM HUD, menus and battle report, drawn from the engine's HUD state. */
 export class UI {
   overlay: HTMLElement;
+  /** The respawn card's layer, under the menus (see `showRespawn`). */
+  respawnLayer: HTMLElement;
   hud: HTMLElement;
   toast: HTMLElement;
   feed: HTMLElement;
@@ -101,6 +110,7 @@ export class UI {
     });
     root.insertAdjacentHTML("beforeend", hudMarkup());
     this.overlay = root.querySelector("#overlay")!;
+    this.respawnLayer = root.querySelector("#respawn-layer")!;
     this.hud = root.querySelector("#hud")!;
     this.toast = root.querySelector("#toast")!;
     this.feed = root.querySelector("#feed")!;
@@ -174,7 +184,14 @@ export class UI {
   }
   private show(state: HudState): void {
     const phase = state.match.phase;
-    this.overlay.style.display = phase === "playing" && state.human.alive ? "none" : "grid";
+    this.overlay.style.display = phase === "playing" ? "none" : "grid";
+    if (phase === "ready") {
+      // Battle Setup has the tank cards; the battle builds its own respawn card.
+      this.respawnLayer.replaceChildren();
+    } else if (!this.respawnLayer.firstElementChild) {
+      this.buildRespawn();
+    }
+    this.showRespawn(phase === "playing" && !state.human.alive);
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
     this.playModes?.close();
     this.playModes = undefined;
@@ -182,13 +199,9 @@ export class UI {
       this.overlay.replaceChildren(this.battleSetup.cloneNode(true));
       fitPanels(this.overlay);
     } else {
-      this.overlay.innerHTML = menuMarkup(
-        state,
-        this.deathCause ? { report: this.deathReport!, text: this.deathCause } : null,
-      );
-      this.overlay
-        .querySelector(".respawn")
-        ?.append(this.battleSetup.querySelector(".vehicles")!.cloneNode(true));
+      // In play the menus are away: the respawn card has a layer of its own.
+      const death = this.deathCause ? { report: this.deathReport!, text: this.deathCause } : null;
+      this.overlay.innerHTML = phase === "playing" ? "" : menuMarkup(state, death);
       bindDialogTabs(this.overlay);
       this.drawRecapTank(state);
     }
@@ -206,10 +219,6 @@ export class UI {
     }
     this.overlay.parentElement?.classList.toggle("menu-ready", phase === "ready");
     this.overlay.dataset.state = "ready";
-    const death = this.overlay.querySelector("#death-cause");
-    if (death) {
-      death.textContent = this.deathCause;
-    }
     const { actions } = this;
     this.overlay.querySelector("#start")?.addEventListener("click", () => actions.start());
     this.overlay.querySelector("#play-again")?.addEventListener("click", () => actions.start());
@@ -226,6 +235,30 @@ export class UI {
   }
   /** The battle report's hero tile shows the viewer's tank in its team's paint: Battle
    * Setup's render of that tank, from the sheet's row for the team. */
+  /** The battle's respawn card with its tank cards, built as the battle starts. */
+  private buildRespawn(): void {
+    const layer = this.respawnLayer;
+    layer.innerHTML = respawnMarkup(null);
+    layer
+      .querySelector(".respawn")!
+      .append(this.battleSetup.querySelector(".vehicles")!.cloneNode(true));
+    bindGameOptions(layer, this.choices);
+  }
+  /** Show or hide the respawn card. It stays built and drawn, unseen, between deaths, so
+   * a death only fills in who did it and shows it: building and painting the card on the
+   * death frame cost Safari on an iPad 30 ms, every death. */
+  private showRespawn(shown: boolean): void {
+    const layer = this.respawnLayer;
+    if (shown && layer.firstElementChild) {
+      layer.querySelector(".wrecked-by")!.outerHTML = wreckedByMarkup(
+        this.deathCause ? this.deathReport : null,
+      );
+      layer.querySelector("#death-cause")!.textContent = this.deathCause;
+      syncGameOptions(layer, this.choices);
+    }
+    layer.classList.toggle("shown", shown);
+    layer.inert = !shown;
+  }
   private drawRecapTank(state: HudState): void {
     const slot = this.overlay.querySelector(".recap-tank");
     const preview = this.battleSetup.querySelector(
@@ -398,7 +431,7 @@ export class UI {
     set("respawn-count", String(Math.ceil(tank.respawn)));
     if (dead) {
       this.respawnTotal = Math.max(this.respawnTotal, tank.respawn);
-      const fill = this.overlay.querySelector<HTMLElement>("#respawn-fill");
+      const fill = this.respawnLayer.querySelector<HTMLElement>("#respawn-fill");
       const left = this.respawnTotal > 0 ? tank.respawn / this.respawnTotal : 0;
       fill?.style.setProperty("--left", left.toFixed(3));
     }

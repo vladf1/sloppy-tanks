@@ -370,18 +370,20 @@ export async function prepareGame(
   controls.toggleView = toggleView;
   const cockpit = new Cockpit(root, toggleView);
   ui.overlay.addEventListener("change", () => void preloadFromMenu());
-  ui.overlay.addEventListener("click", (event) => {
+  const pickTank = (event: Event) => {
     if (!(event.target instanceof Element && event.target.closest("[data-kind]"))) {
       return;
     }
     if (inRound) {
-      // The respawn menu's tank cards choose the next life's tank.
+      // The respawn card's tank cards choose the next life's tank.
       game.set_human_kind(choices.humanKind);
       prepared = { ...prepared, humanKind: choices.humanKind };
     } else {
       void preloadFromMenu();
     }
-  });
+  };
+  ui.overlay.addEventListener("click", pickTank);
+  ui.respawnLayer.addEventListener("click", pickTank);
   const touchControls = new TouchModeController(
     root,
     controls,

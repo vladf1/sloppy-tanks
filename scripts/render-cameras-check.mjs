@@ -39,9 +39,11 @@ try {
     await freezeLoop(page);
     await page.goto(`${url}?autoplay&map=${map}`);
     await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
-    // Hidden by a stylesheet rule the page cannot override: the overlay shows itself
-    // again (and its respawn card slides in) when autoplay's tank dies mid-check.
-    await page.addStyleTag({ content: "#overlay, #hud { display: none !important; }" });
+    // Hidden by a stylesheet rule the page cannot override: the respawn card shows itself
+    // (sliding in) when autoplay's tank dies mid-check, and the overlay with menus.
+    await page.addStyleTag({
+      content: "#overlay, #respawn-layer, #hud { display: none !important; }",
+    });
     const prepared = await page.evaluate(() => window.sloppy.stats());
     const counters = () =>
       page.evaluate(() => {
