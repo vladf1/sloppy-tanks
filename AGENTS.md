@@ -300,7 +300,11 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   derivatives ahead of it); the village ground and burning wrecks once cost 6 and
   up to 13 ms a 4K frame. Time a ground, full-screen or layered effect at
   3840×2160 with WebGPU timestamps, switching it off within the page
-  (`debug_set_off`), before keeping it.
+  (`debug_set_off`), before keeping it. A ground's still layers (patches, soil
+  colour, slopes, anything that neither moves nor depends on the view) belong in a
+  texture bake (`effects::bakes`: a generated texture a full-screen pass draws once,
+  from its uv alone or from a material's params and textures), sampled per pixel;
+  the village ground's per-pixel noise once cost 4 ms of an iPad frame in WebKit.
 - The scene renders at a scale of the canvas that the quality controller
   (`crates/render/src/quality.rs`, the Graphics setting) picks, and the output pass
   upsamples it; at scale 1 the output reads texels exactly as before, so the High

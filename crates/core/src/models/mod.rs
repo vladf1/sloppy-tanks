@@ -139,7 +139,9 @@ pub use quarry_soil::{QUARRY_SOIL_SIZE, bake_quarry_soil};
 pub use quarry_terrain::sand_accum;
 pub use scenery::{MapTheme, Scenery, build_scenery, create_arena_floor, create_spawn_pads};
 pub use village_atmosphere::{CHIMNEY_SMOKE_NODE, SmokeCover};
-pub use village_ground::{GROUND_PLAN_SIZE, PLAN_SQUARES, bake_village_ground};
+pub use village_ground::{
+    GROUND_PLAN_SIZE, PLAN_SQUARES, VILLAGE_GROUND_BAKE, bake_village_ground,
+};
 pub use village_landmarks::WATERWHEEL;
 pub use village_roads::is_village_dirt;
 pub use village_scenery::VillageScenery;

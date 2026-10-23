@@ -460,6 +460,11 @@ impl Frame {
         FrameGroups
     }
 
+    /// The main view's frame uniform, which bakes read (`effects::bakes`).
+    pub fn main_uniform(&self) -> glow::Buffer {
+        self.view_uniforms[MAIN_VIEW]
+    }
+
     pub fn write_views(&self, gpu: &Gpu, views: &[FrameUniform; VIEW_COUNT]) {
         for (&buffer, uniform) in self.view_uniforms.iter().zip(views) {
             gpu.write_buffer(buffer, 0, bytemuck::bytes_of(uniform));
