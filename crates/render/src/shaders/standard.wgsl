@@ -338,63 +338,67 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // window still ends it).
         let decay = vec4f(lights[0].color.w, lights[1].color.w, lights[2].color.w, lights[3].color.w)
             * select(1.0, FIRE_POOL_DECAY, atmosphere_on());
-        let distance = sqrt(dx * dx + dy * dy + dz * dz);
-        // Past the cutoff the attenuation window is exactly zero.
-        let reaches = (strength > vec4f(0.0)) & ((cutoff <= vec4f(0.0)) | (distance < cutoff));
-        // Three's distance attenuation (`distance_attenuation`), lane by lane.
-        let falloff = 1.0 / max(pow(distance, decay), vec4f(0.01));
-        let ratio = distance / max(cutoff, vec4f(1e-6));
-        let window = clamp(1.0 - ratio * ratio * ratio * ratio, vec4f(0.0), vec4f(1.0));
-        let attenuation = select(vec4f(0.0), select(falloff, falloff * window * window, cutoff > vec4f(0.0)), reaches);
-        let inverse = 1.0 / max(distance, vec4f(1e-6));
-        let facing = (dx * n.x + dy * n.y + dz * n.z) * inverse;
-        let luma = vec4f(
-            dot(lights[0].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
-            dot(lights[1].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
-            dot(lights[2].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
-            dot(lights[3].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
-        );
-        // What scales each light's colour.
-        var scale = attenuation;
-        var wrap_scale = vec4f(0.0);
-        var albedo = diffuse;
-        var share = 1.0;
-        if atmosphere_on() {
-            // Brighter overall, so blasts and burning wrecks visibly light the
-            // ground, walls and hulls around them in daylight; but added over sunlit
-            // grass, amber only yellowed the green into an acid blotch, so sunlit
-            // faces take less of it. Each light eases toward its ceiling
-            // (`FIRE_LIGHT_LIMIT`).
-            let gain = BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0));
-            scale = attenuation * gain / (1.0 + luma * attenuation * gain / FIRE_LIGHT_LIMIT);
-            // Fire is a wide, rolling source, not a point: its light wraps past the
-            // terminator, so the ground and the sides of hulls and walls around a
-            // blast glow rather than only the faces square to it.
-            let wrapped = clamp((facing + FIRE_WRAP) / (1.0 + FIRE_WRAP), vec4f(0.0), vec4f(1.0)) - clamp(facing, vec4f(0.0), vec4f(1.0));
-            wrap_scale = max(wrapped, vec4f(0.0)) * scale;
-            // Amber light on green grass multiplies to an acid yellow-green blotch:
-            // the surface lends firelight only part of its own hue, so the pool reads
-            // as an orange glow on any ground.
-            albedo = mix(diffuse, vec3f(dot(diffuse, vec3f(0.2126, 0.7152, 0.0722))), FIRE_ALBEDO_GREY);
-            // Even greyed, warm light added over green grass reads lime: foliage
-            // takes only a share of it, walls, earth and hulls all.
-            let green = clamp((diffuse.g - max(diffuse.r, diffuse.b)) / max(diffuse.g, 1e-4), 0.0, 1.0);
-            share = 1.0 - FIRE_ON_GREEN_CUT * green;
-        }
-        let lit_scale = clamp(facing, vec4f(0.0), vec4f(1.0)) * scale;
-        let colors = mat4x3f(lights[0].color.rgb, lights[1].color.rgb, lights[2].color.rgb, lights[3].color.rgb);
-        var irradiance = colors * lit_scale;
-        var wrap = colors * wrap_scale;
-        if atmosphere_on() {
-            irradiance = fire_light_hue(irradiance);
-            wrap = fire_light_hue(wrap);
-        }
-        reflected.diffuse += (irradiance + wrap) * (share * RECIPROCAL_PI) * albedo;
-        if dot(irradiance, vec3f(1.0)) > 0.0 {
-            let weight = luma * lit_scale * inverse;
-            let direction = vec3f(dot(dx, weight), dot(dy, weight), dot(dz, weight));
-            let l = direction / max(length(direction), 1e-6);
-            reflected.specular += irradiance * share * brdf_ggx_multiscatter(l, v, n, specular, 1.0, roughness);
+        let span = dx * dx + dy * dy + dz * dz;
+        // Past the cutoff the attenuation window is exactly zero: the rest runs only
+        // where some light reaches.
+        let reaches = (strength > vec4f(0.0)) & ((cutoff <= vec4f(0.0)) | (span < cutoff * cutoff));
+        if any(reaches) {
+            let distance = sqrt(span);
+            // Three's distance attenuation (`distance_attenuation`), lane by lane.
+            let falloff = 1.0 / max(pow(distance, decay), vec4f(0.01));
+            let ratio = distance / max(cutoff, vec4f(1e-6));
+            let window = clamp(1.0 - ratio * ratio * ratio * ratio, vec4f(0.0), vec4f(1.0));
+            let attenuation = select(vec4f(0.0), select(falloff, falloff * window * window, cutoff > vec4f(0.0)), reaches);
+            let inverse = 1.0 / max(distance, vec4f(1e-6));
+            let facing = (dx * n.x + dy * n.y + dz * n.z) * inverse;
+            let luma = vec4f(
+                dot(lights[0].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
+                dot(lights[1].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
+                dot(lights[2].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
+                dot(lights[3].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
+            );
+            // What scales each light's colour.
+            var scale = attenuation;
+            var wrap_scale = vec4f(0.0);
+            var albedo = diffuse;
+            var share = 1.0;
+            if atmosphere_on() {
+                // Brighter overall, so blasts and burning wrecks visibly light the
+                // ground, walls and hulls around them in daylight; but added over sunlit
+                // grass, amber only yellowed the green into an acid blotch, so sunlit
+                // faces take less of it. Each light eases toward its ceiling
+                // (`FIRE_LIGHT_LIMIT`).
+                let gain = BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0));
+                scale = attenuation * gain / (1.0 + luma * attenuation * gain / FIRE_LIGHT_LIMIT);
+                // Fire is a wide, rolling source, not a point: its light wraps past the
+                // terminator, so the ground and the sides of hulls and walls around a
+                // blast glow rather than only the faces square to it.
+                let wrapped = clamp((facing + FIRE_WRAP) / (1.0 + FIRE_WRAP), vec4f(0.0), vec4f(1.0)) - clamp(facing, vec4f(0.0), vec4f(1.0));
+                wrap_scale = max(wrapped, vec4f(0.0)) * scale;
+                // Amber light on green grass multiplies to an acid yellow-green blotch:
+                // the surface lends firelight only part of its own hue, so the pool reads
+                // as an orange glow on any ground.
+                albedo = mix(diffuse, vec3f(dot(diffuse, vec3f(0.2126, 0.7152, 0.0722))), FIRE_ALBEDO_GREY);
+                // Even greyed, warm light added over green grass reads lime: foliage
+                // takes only a share of it, walls, earth and hulls all.
+                let green = clamp((diffuse.g - max(diffuse.r, diffuse.b)) / max(diffuse.g, 1e-4), 0.0, 1.0);
+                share = 1.0 - FIRE_ON_GREEN_CUT * green;
+            }
+            let lit_scale = clamp(facing, vec4f(0.0), vec4f(1.0)) * scale;
+            let colors = mat4x3f(lights[0].color.rgb, lights[1].color.rgb, lights[2].color.rgb, lights[3].color.rgb);
+            var irradiance = colors * lit_scale;
+            var wrap = colors * wrap_scale;
+            if atmosphere_on() {
+                irradiance = fire_light_hue(irradiance);
+                wrap = fire_light_hue(wrap);
+            }
+            reflected.diffuse += (irradiance + wrap) * (share * RECIPROCAL_PI) * albedo;
+            if dot(irradiance, vec3f(1.0)) > 0.0 {
+                let weight = luma * lit_scale * inverse;
+                let direction = vec3f(dot(dx, weight), dot(dy, weight), dot(dz, weight));
+                let l = direction / max(length(direction), 1e-6);
+                reflected.specular += irradiance * share * brdf_ggx_multiscatter(l, v, n, specular, 1.0, roughness);
+            }
         }
     }
     var hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
