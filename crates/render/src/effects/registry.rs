@@ -254,8 +254,12 @@ pub const WRECK_AGING: EffectDefinition = EffectDefinition {
 };
 
 /// The Pine Village meadow's functions, which its three kinds and the ground's bake
-/// (`bakes::VILLAGE_GROUND_BAKE`) share.
-pub(crate) const MEADOW_WGSL: &str = wgsl!("shaders/effects/meadow_sway.wgsl");
+/// (`bakes::VILLAGE_GROUND_BAKE`) share, after the noise tile's lookups
+/// (`ground_noise`), which only the kinds drawn per pixel read.
+pub(crate) const MEADOW_WGSL: &str = wgsl!(
+    "shaders/effects/ground_noise.wgsl",
+    "shaders/effects/meadow_sway.wgsl",
+);
 
 /// Meadow tufts swaying in the wind (`village-vegetation.ts`), the meadow effect's
 /// kind 0 ([`MODES`]).
@@ -313,6 +317,7 @@ pub const CHIMNEY_SMOKE: EffectDefinition = effect(effects_scenery::CHIMNEY_SMOK
 pub const QUARRY_SOIL: EffectDefinition = effect(
     effects_scenery::QUARRY_SOIL,
     wgsl!(
+        "shaders/effects/ground_noise.wgsl",
         "shaders/effects/quarry_common.wgsl",
         "shaders/effects/quarry_soil.wgsl",
     ),
@@ -322,6 +327,7 @@ pub const QUARRY_SOIL: EffectDefinition = effect(
 pub const SANDSTONE: EffectDefinition = effect(
     effects_scenery::SANDSTONE,
     wgsl!(
+        "shaders/effects/ground_noise.wgsl",
         "shaders/effects/quarry_common.wgsl",
         "shaders/effects/sandstone.wgsl",
     ),
@@ -331,6 +337,7 @@ pub const SANDSTONE: EffectDefinition = effect(
 pub const SAND_DRIFT: EffectDefinition = effect(
     effects_scenery::SAND_DRIFT,
     wgsl!(
+        "shaders/effects/ground_noise.wgsl",
         "shaders/effects/quarry_common.wgsl",
         "shaders/effects/sand_drift.wgsl",
     ),
@@ -338,7 +345,10 @@ pub const SAND_DRIFT: EffectDefinition = effect(
 
 /// The harbor apron's functions, which its three kinds share (and its wear bake,
 /// `bakes::HARBOR_APRON_WEAR`).
-pub(crate) const HARBOR_APRON_WGSL: &str = wgsl!("shaders/effects/harbor_apron.wgsl");
+pub(crate) const HARBOR_APRON_WGSL: &str = wgsl!(
+    "shaders/effects/ground_noise.wgsl",
+    "shaders/effects/harbor_apron.wgsl",
+);
 
 /// Harbor quay concrete and asphalt in world space (`harbor_surfaces`), over the
 /// baked wear, the paint on it, and its quay walls, hulls, spawn pads, cover
