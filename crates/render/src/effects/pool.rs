@@ -62,6 +62,9 @@ pub struct PoolBuffer {
     records: Vec<InstanceRecord>,
     capacity: usize,
     dirty: Vec<Range<u32>>,
+    /// Scratch for [`Self::sort_back_to_front`], reserved on its first use.
+    sort_keys: Vec<u64>,
+    sorted: Vec<InstanceRecord>,
 }
 
 impl PoolBuffer {
@@ -71,6 +74,8 @@ impl PoolBuffer {
             records: Vec::with_capacity(capacity),
             capacity,
             dirty: Vec::with_capacity(MAX_DIRTY_RANGES + 1),
+            sort_keys: Vec::new(),
+            sorted: Vec::new(),
         }
     }
 
@@ -118,17 +123,38 @@ impl PoolBuffer {
     }
 
     /// Order the records farthest from `eye` first, so a blended pool drawn in
-    /// record order composites back to front; sorts in place, allocation free.
+    /// record order composites back to front. Each record's distance is taken once
+    /// and sorted as a key with its slot, then the records are gathered in that
+    /// order: comparing whole 80-byte records, two distances per comparison, cost
+    /// the busy puff pool tens of microseconds a frame. Equally distant records keep
+    /// their slot order. Allocation free after the first sort.
     pub fn sort_back_to_front(&mut self, eye: Vec3) {
-        if self.records.len() < 2 {
+        let count = self.records.len();
+        if count < 2 {
             return;
         }
-        self.records.sort_unstable_by(|a, b| {
-            let da = a.translation().distance_squared(eye);
-            let db = b.translation().distance_squared(eye);
-            db.total_cmp(&da)
-        });
-        self.mark(0..self.records.len() as u32);
+        if self.sorted.capacity() < self.capacity {
+            self.sort_keys.reserve_exact(self.capacity);
+            self.sorted.reserve_exact(self.capacity);
+        }
+        self.sort_keys.clear();
+        self.sort_keys
+            .extend(self.records.iter().enumerate().map(|(slot, record)| {
+                // A squared distance is never negative, and non-negative floats order
+                // like their bits: inverted, the farthest sorts first.
+                let distance = record.translation().distance_squared(eye);
+                (u64::from(!distance.to_bits()) << 32) | slot as u64
+            }));
+        self.sort_keys.sort_unstable();
+        self.sorted.clear();
+        let records = &self.records;
+        self.sorted.extend(
+            self.sort_keys
+                .iter()
+                .map(|key| records[(key & u64::from(u32::MAX)) as usize]),
+        );
+        std::mem::swap(&mut self.records, &mut self.sorted);
+        self.mark(0..count as u32);
     }
 
     /// Remove `slot` by moving the last record into it, keeping one dense draw.
@@ -244,6 +270,33 @@ mod tests {
         }
         // The ninth range collapsed the first nine; the tenth starts a new list.
         assert_eq!(pool.dirty(), [0..33, 36..37]);
+    }
+
+    #[test]
+    fn back_to_front_sorting_orders_by_distance_and_keeps_storage() {
+        let mut pool = PoolBuffer::new(8);
+        for x in [3.0, -9.0, 0.5, 6.0, -3.0, 9.0] {
+            pool.push(at(x));
+        }
+        pool.take_dirty(|_, _| {});
+        pool.sort_back_to_front(Vec3::new(1.0, 0.0, 0.0));
+        let xs: Vec<f32> = pool.records().iter().map(|r| r.translation().x).collect();
+        // Distances 2, 10, 0.5, 5, 4, 8: farthest first.
+        assert_eq!(xs, [-9.0, 9.0, 6.0, -3.0, 3.0, 0.5]);
+        assert_eq!(pool.dirty().to_vec(), vec![0..6], "every record uploads again");
+        // Equally distant records keep their slot order.
+        pool.clear();
+        for x in [2.0, 0.0, -2.0] {
+            pool.push(at(x));
+        }
+        pool.sort_back_to_front(Vec3::ZERO);
+        let xs: Vec<f32> = pool.records().iter().map(|r| r.translation().x).collect();
+        assert_eq!(xs, [2.0, -2.0, 0.0]);
+        assert!(pool.records.capacity() >= 8, "the pool never reallocates");
+        for x in 0..5 {
+            pool.push(at(x as f32));
+        }
+        assert_eq!(pool.len(), 8);
     }
 
     #[test]
