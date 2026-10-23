@@ -466,7 +466,9 @@ impl Pipelines {
                 LayoutKind::Occlusion => &self.occlusion_layout,
                 LayoutKind::ShadowMerged => &self.merged_layout,
                 LayoutKind::Surface => &self.surface_layout,
-                LayoutKind::Mipmap => unreachable!("the uploader owns the mipmap blits"),
+                LayoutKind::Mipmap | LayoutKind::Bake => {
+                    unreachable!("the uploader owns the mipmap blits and texture bakes")
+                }
             };
             spec.create(device, layout, source)
         });

@@ -10,7 +10,7 @@ use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Mesh, cylinder_geometry, plane_geometry, ring_geometry, torus_geometry};
 use crate::scene::{Material, Node, TextureRef};
 
-use super::batching::batch;
+use super::batching::{batch, batch_in_cells};
 use super::effects_scenery::{
     ApronMode, HARBOR_LABEL_ROWS, HARBOR_LABEL_TEXTURE, harbor_label_row,
 };
@@ -30,6 +30,10 @@ use crate::sim::types::{Team, Vec2};
 /// Index of the fleet among [`HarborScenery::root`]'s children; the beacons are
 /// the last child.
 const FLEET_CHILD: usize = 1;
+/// The quay dressing merges per square of this edge, metres (the renderer's own
+/// scenery cell): merged whole, its bollards, sheds and the outer quays' stacks made
+/// one mesh round the harbor that every view and the water's reflection drew.
+const DETAIL_CELL: f64 = 60.0;
 
 /// Harbor Havoc scenery, built once and reused across rounds (`HarborScenery`).
 pub struct HarborScenery {
@@ -105,12 +109,21 @@ const PAD_LIGHT_FLAG: f32 = 10.0;
 const PAD_RADIUS: f64 = 2.65;
 const PAD_STEEL: u32 = 0x3a4850;
 
-/// Merge a group of ground-level parts, which receive shadows but cast none.
+/// Render order of the paint blended over the apron (markings and lettering): before
+/// every other blended draw, the tanks' contact shadows (`tank_model`) and the
+/// tread marks, smoke and sparks, so nothing over the paint is painted over.
+const PAINT_RENDER_ORDER: i32 = -5;
+
+/// Merge a group of ground-level parts, which receive shadows but cast none; the
+/// blended paint among them draws first ([`PAINT_RENDER_ORDER`]).
 fn batch_receivers(group: &mut Node) {
     batch(group);
     for child in &mut group.children {
         if let Some(drawable) = &mut child.drawable {
             drawable.cast_shadow = false;
+            if drawable.material.transparent {
+                drawable.render_order = PAINT_RENDER_ORDER;
+            }
         }
     }
 }
@@ -1498,7 +1511,7 @@ impl HarborScenery {
             buoy(&mut details, x, z, red);
         }
         root.children.push(harbor_backdrop());
-        batch(&mut details);
+        batch_in_cells(&mut details, DETAIL_CELL);
         batch_receivers(&mut ground);
         batch_receivers(&mut markings);
         batch(&mut beacons);
