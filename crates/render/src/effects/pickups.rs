@@ -258,6 +258,11 @@ struct EaseTables([EaseTable; 4]);
 /// The fading power of the column's opacity toward its top.
 const SIGNAL_FADING: f64 = 1.1;
 
+/// Build the columns' ease tables now rather than on the frame the first column shows.
+pub fn warm_tables() {
+    ease_tables();
+}
+
 fn ease_tables() -> &'static EaseTables {
     static TABLES: std::sync::OnceLock<EaseTables> = std::sync::OnceLock::new();
     TABLES.get_or_init(|| {

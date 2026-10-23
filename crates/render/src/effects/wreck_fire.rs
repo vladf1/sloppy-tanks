@@ -139,6 +139,12 @@ fn per_lap(slot: &mut (f64, f64), lap: f64, value: impl FnOnce() -> f64) -> f64 
     slot.1
 }
 
+/// Build the smoke column's ease tables now rather than on the frame the first wreck
+/// catches fire (2,050 `powf`s: 0.2 ms on a desktop, 0.75 ms at a quarter the speed).
+pub fn warm_tables() {
+    column_eases();
+}
+
 /// The smoke column's climb and widening powers, tabulated.
 fn column_eases() -> &'static [EaseTable; 2] {
     static TABLES: std::sync::OnceLock<[EaseTable; 2]> = std::sync::OnceLock::new();

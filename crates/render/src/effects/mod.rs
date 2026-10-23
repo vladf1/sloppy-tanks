@@ -399,6 +399,10 @@ mod browser {
         pub fn new(renderer: &mut Renderer) -> Self {
             let descs = super::looks::pool_descs();
             let pools: Vec<PoolId> = descs.iter().map(|desc| renderer.add_pool(desc)).collect();
+            // Tables the first burning wreck and supply column would otherwise build
+            // on their frames, in the middle of a round.
+            super::wreck_fire::warm_tables();
+            super::pickups::warm_tables();
             let puffs = descs
                 .iter()
                 .position(|desc| desc.label == super::looks::PUFF_POOL)
