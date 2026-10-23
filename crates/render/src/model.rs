@@ -345,7 +345,19 @@ impl<'a> Builder<'a, '_> {
                 continue;
             }
             let (material, _) = self.draw_material(&members[0].drawable.material);
-            let mut data = MeshData::default();
+            // Sized up front: growing it part by part left up to twice the merged
+            // vertices allocated, and old and new buffers side by side at each
+            // growth, at the heap's peak (a round's combined covers, about 20 MB).
+            let meshes = members.iter().map(|pending| &pending.drawable.mesh);
+            let vertices = meshes.clone().map(|mesh| mesh.positions.len()).sum();
+            let indices = meshes
+                .map(|mesh| mesh.indices.as_ref().map_or(mesh.positions.len(), Vec::len))
+                .sum();
+            let mut data = MeshData {
+                vertices: Vec::with_capacity(vertices),
+                indices: Vec::with_capacity(indices),
+                ..MeshData::default()
+            };
             for pending in &members {
                 let paint = key
                     .painted
