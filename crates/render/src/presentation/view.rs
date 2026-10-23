@@ -11,9 +11,9 @@ use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
     FLAG_CLOTH_NODE, HouseCoverBuild, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape, aged_wreck_material,
     cover_damage_stage, crate_piece_model, create_arena_floor, create_spawn_pads, flags_model,
-    house_pieces, part, pickup_cube, pickup_signal, pickup_tile_offset, tank_model,
-    timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage,
-    tree_part, wreck_brightness, wreck_model,
+    house_pieces, part, pickup_cube, pickup_signal, pickup_tile_offset, release_tank_models,
+    tank_model, timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage,
+    tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -1349,6 +1349,9 @@ impl Presentation {
                 }
             }
         }
+        // Every vehicle and wreck is uploaded and kept for the page: their source
+        // geometry can go, leaving room in the Wasm heap for what a battle builds.
+        release_tank_models();
         for kind in PickupKind::ALL {
             self.library.pickup(&mut self.renderer, kind);
         }
