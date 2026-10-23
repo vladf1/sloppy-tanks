@@ -970,6 +970,7 @@ mod tests {
             (output_source(), "vs_post", Some("fs_bloom_prefilter")),
             (output_source(), "vs_post", Some("fs_bloom_down")),
             (output_source(), "vs_post", Some("fs_bloom_up")),
+            (output_source(), "vs_post", Some("fs_occlusion_blur")),
             (sky_source(), "vs_sky", Some("fs_sky")),
             (
                 occlusion_source(true, 2),

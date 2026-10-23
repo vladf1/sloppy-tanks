@@ -232,6 +232,17 @@ fn occlusion_spec() -> PipelineSpec {
     )
 }
 
+/// The occlusion's blur for the output pass, from the output and bloom shader.
+fn occlusion_blur_spec() -> PipelineSpec {
+    post_spec(
+        "ambient occlusion blur",
+        LayoutKind::Bloom,
+        "vs_post",
+        "fs_occlusion_blur",
+        OCCLUSION_FORMAT.into(),
+    )
+}
+
 fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
     let (label, layout, vertex_entry) = if cutout {
         ("shadow cutout", LayoutKind::Surface, "vs_shadow_cutout")
@@ -350,8 +361,8 @@ pub(super) fn pipeline_layout(
 
 /// The fixed pipelines while they compile in the background.
 struct FixedJobs {
-    /// Water, output, sky, the three bloom passes, occlusion, the water's depth,
-    /// then the merged casters in `shadow_merged_index` order.
+    /// Water, output, sky, the three bloom passes, occlusion and its blur, the water's
+    /// depth, then the merged casters in `shadow_merged_index` order.
     jobs: Vec<(PipelineSpec, StageSources)>,
     compile: Background,
 }
@@ -398,6 +409,7 @@ impl Pipelines {
             specs.push((spec, &output));
         }
         specs.push((occlusion_spec(), &occlusion));
+        specs.push((occlusion_blur_spec(), &output));
         specs.push((water_depth_spec(), &water));
         for (is_cutout, source) in [(false, &merged), (true, &cutout)] {
             for &side in &SHADOW_MERGED_SIDES {
@@ -481,6 +493,7 @@ impl Pipelines {
         let sky = next("sky pipeline");
         let bloom = [(); 3].map(|_| next("bloom pipeline"));
         let occlusion = next("occlusion pipeline");
+        let occlusion_blur = next("occlusion blur pipeline");
         self.water_depth = Some(next("water depth pipeline"));
         self.fixed = Some(FixedPipelines {
             water,
@@ -488,6 +501,7 @@ impl Pipelines {
             sky,
             bloom,
             occlusion,
+            occlusion_blur,
             shadow_merged: created.collect(),
         });
     }

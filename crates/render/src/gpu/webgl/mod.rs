@@ -197,14 +197,18 @@ impl Drop for ColorTarget {
     }
 }
 
-/// The quarter-size ambient occlusion target and its framebuffer; the output pass
-/// samples it through a linear sampler. Dropping it deletes it.
+/// The quarter-size ambient occlusion target and its blur at each corner of its
+/// texels (one texel larger along each axis), each with its framebuffer; the blur
+/// samples the occlusion through a linear sampler and the output pass fetches the
+/// blur. Dropping it deletes them.
 struct OcclusionTarget {
     gpu: Gpu,
     texture: glow::Texture,
     framebuffer: glow::Framebuffer,
     width: u32,
     height: u32,
+    blurred: glow::Texture,
+    blurred_framebuffer: glow::Framebuffer,
 }
 
 impl OcclusionTarget {
@@ -216,12 +220,17 @@ impl OcclusionTarget {
         let texture = storage(gpu, glow::R8, 1, width, height);
         let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, texture);
         check_framebuffer(gpu, "ambient occlusion");
+        let blurred = texel_storage(gpu, glow::R8, width + 1, height + 1);
+        let blurred_framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, blurred);
+        check_framebuffer(gpu, "ambient occlusion blur");
         Self {
             gpu: gpu.clone(),
             texture,
             framebuffer,
             width,
             height,
+            blurred,
+            blurred_framebuffer,
         }
     }
 }
@@ -231,6 +240,8 @@ impl Drop for OcclusionTarget {
         unsafe {
             self.gpu.gl.delete_framebuffer(self.framebuffer);
             self.gpu.gl.delete_texture(self.texture);
+            self.gpu.gl.delete_framebuffer(self.blurred_framebuffer);
+            self.gpu.gl.delete_texture(self.blurred);
         }
     }
 }
@@ -516,7 +527,8 @@ impl Frame {
     /// depth copy and the shadow maps.
     pub fn target_bytes(&self) -> u64 {
         let main = target_bytes(self.main.width, self.main.height, self.gpu.samples);
-        let occlusion = u64::from(self.occlusion.width * self.occlusion.height);
+        let (width, height) = (self.occlusion.width, self.occlusion.height);
+        let occlusion = u64::from(width * height + (width + 1) * (height + 1));
         let depth = u64::from(self.main.width * self.main.height) * 4;
         let shadow = [Some(&self.shadow), self.static_shadow.as_ref()]
             .into_iter()
@@ -730,7 +742,15 @@ impl Frame {
         gpu.bind_sampler(unit::SOURCE, None);
         gpu.bind_vertex_array(Some(self.no_attributes));
         unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
-        stats.draw_calls += 1;
+        let blur = &scene.pipelines.fixed().occlusion_blur;
+        gpu.bind_framebuffer(Some(target.blurred_framebuffer));
+        gpu.viewport(target.width + 1, target.height + 1);
+        gpu.use_program(scene.pipelines.program(blur.program).raw);
+        gpu.set_raster(&blur.raster);
+        gpu.bind_texture(unit::SOURCE, target.texture);
+        gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
+        unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
+        stats.draw_calls += 2;
     }
 
     /// Threshold the resolved frame into the first bloom level, halve it down the
@@ -774,9 +794,9 @@ impl Frame {
         gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
         gpu.bind_texture(unit::BLOOM, self.bloom.levels[0].0);
         gpu.bind_sampler(unit::BLOOM, Some(self.linear_sampler));
-        // Read only while the occlusion is on, which also draws it.
-        gpu.bind_texture(unit::OCCLUSION, self.occlusion.texture);
-        gpu.bind_sampler(unit::OCCLUSION, Some(self.linear_sampler));
+        // Read only while the occlusion is on, which also draws it (`texelFetch`).
+        gpu.bind_texture(unit::OCCLUSION, self.occlusion.blurred);
+        gpu.bind_sampler(unit::OCCLUSION, None);
         gpu.bind_vertex_array(Some(self.no_attributes));
         unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
         stats.draw_calls += 1;

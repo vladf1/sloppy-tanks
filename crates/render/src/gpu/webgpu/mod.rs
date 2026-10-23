@@ -693,7 +693,15 @@ impl Frame {
                 &post.occlusion_view,
                 false,
             );
-            stats.draw_calls += 1;
+            post_draw(
+                encoder,
+                "ambient occlusion blur",
+                &fixed.occlusion_blur,
+                &post.occlusion_blur_group,
+                &post.occlusion_blurred.1,
+                false,
+            );
+            stats.draw_calls += 2;
         }
         if scene.bloom {
             let post = &self.post;
@@ -864,6 +872,10 @@ struct PostTargets {
     occlusion_view: wgpu::TextureView,
     occlusion_depth: DepthMap,
     occlusion_group: wgpu::BindGroup,
+    /// The occlusion's blur at each corner of its texels, which the output reads,
+    /// and the blur pass's bind group (the occlusion as its source).
+    occlusion_blurred: (wgpu::Texture, wgpu::TextureView),
+    occlusion_blur_group: wgpu::BindGroup,
     output_group: wgpu::BindGroup,
     bytes: u64,
 }
@@ -901,6 +913,12 @@ impl PostTargets {
             size.width / OCCLUSION_DOWNSCALE,
             size.height / OCCLUSION_DOWNSCALE,
         );
+        let occlusion_blurred = target(
+            "ambient occlusion blur",
+            OCCLUSION_FORMAT,
+            size.width / OCCLUSION_DOWNSCALE + 1,
+            size.height / OCCLUSION_DOWNSCALE + 1,
+        );
         let occlusion_depth = DepthMap::of(texture_2d(
             device,
             "occlusion depth",
@@ -932,6 +950,7 @@ impl PostTargets {
         };
         let bloom_groups = bloom.iter().map(|(_, view)| bloom_group(view)).collect();
         let frame_group = bloom_group(&main.resolved_view);
+        let occlusion_blur_group = bloom_group(&occlusion_view);
         let occlusion_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ambient occlusion"),
             layout: &gpu.layouts.occlusion,
@@ -968,7 +987,7 @@ impl PostTargets {
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::TextureView(&occlusion_view),
+                    resource: wgpu::BindingResource::TextureView(&occlusion_blurred.1),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
@@ -981,6 +1000,7 @@ impl PostTargets {
             .map(|(texture, _)| context::texture_bytes(texture))
             .sum::<u64>()
             + context::texture_bytes(&occlusion)
+            + context::texture_bytes(&occlusion_blurred.0)
             + context::texture_bytes(&occlusion_depth.texture);
         Self {
             bloom,
@@ -990,6 +1010,8 @@ impl PostTargets {
             occlusion_view,
             occlusion_depth,
             occlusion_group,
+            occlusion_blurred,
+            occlusion_blur_group,
             output_group,
             bytes,
         }
@@ -1002,6 +1024,7 @@ impl Drop for PostTargets {
             texture.destroy();
         }
         self.occlusion.destroy();
+        self.occlusion_blurred.0.destroy();
     }
 }
 

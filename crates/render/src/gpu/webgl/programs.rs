@@ -220,9 +220,9 @@ fn depth_raster(side: Side) -> Raster {
     }
 }
 
-/// The water, output, sky, three bloom, ambient occlusion, merged and cutout caster
-/// programs, in that order.
-const FIXED_PROGRAMS: usize = 9;
+/// The water, output, sky, three bloom, ambient occlusion and its blur, merged and
+/// cutout caster programs, in that order.
+const FIXED_PROGRAMS: usize = 10;
 
 pub struct Pipelines {
     programs: Vec<Program>,
@@ -257,6 +257,7 @@ impl Pipelines {
                 "vs_occlusion",
                 Some("fs_occlusion"),
             ),
+            bloom("ambient occlusion blur", "fs_occlusion_blur"),
             Linking::start(
                 gpu,
                 "shadow merged",
@@ -317,6 +318,7 @@ impl Pipelines {
             down,
             up,
             occlusion,
+            occlusion_blur,
             merged,
             cutout,
         ] = jobs.map(|job| {
@@ -368,6 +370,10 @@ impl Pipelines {
             ],
             occlusion: Pipeline {
                 program: occlusion,
+                raster: Raster::PLAIN,
+            },
+            occlusion_blur: Pipeline {
+                program: occlusion_blur,
                 raster: Raster::PLAIN,
             },
             shadow_merged,

@@ -1,4 +1,4 @@
-// Post-processing: the bloom chain and the output pass. Bloom thresholds the
+// Post-processing: the bloom chain, the occlusion's blur and the output pass. Bloom thresholds the
 // resolved linear HDR frame into a quarter-size level, halves it down a short mip
 // chain and adds each level back up with a tent filter. The output pass darkens by
 // the ambient occlusion, adds the aerial haze's light the opaque surfaces left to it
@@ -139,6 +139,27 @@ fn fs_bloom_down(input: PostOut) -> @location(0) vec4f {
     var color = e * 0.125 + (a + c + g + i) * 0.03125 + (b + d + f + h) * 0.0625;
     color += (j + k + l + m) * 0.125;
     return vec4f(color, 1.0);
+}
+
+// The occlusion's 3×3 tent of bilinear taps on texel corners: 6×6 texels in which
+// every rotation of the 4×4 sample pattern carries the same weight, so the pattern
+// averages away without a dotted residue. Texel (i, j) of the result holds the tent
+// at the corner where texels i and j begin, one size larger than the occlusion along
+// each axis; the output pass reads it once for the pixels nearest that corner rather
+// than taking nine taps for each of them.
+@fragment
+fn fs_occlusion_blur(@builtin(position) position: vec4f) -> @location(0) vec4f {
+    let corner = floor(position.xy);
+    let size = vec2f(textureDimensions(source));
+    var ao = 0.0;
+    for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+            let at = (corner + vec2f(f32(i), f32(j)) * 2.0) / size;
+            let weight = f32((2 - abs(i)) * (2 - abs(j)));
+            ao += textureSampleLevel(source, linear_clamp, at, 0.0).r * weight;
+        }
+    }
+    return vec4f(ao / 16.0);
 }
 
 // A 3×3 tent over the smaller level, added onto the larger one by the blend.
@@ -473,19 +494,9 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
     let strength = output.effects.z;
     if strength > 0.0 {
-        // A 3×3 tent of bilinear taps on texel corners of the quarter-size occlusion:
-        // 6×6 texels in which every rotation of the 4×4 sample pattern carries the
-        // same weight, so the pattern averages away without a dotted residue.
-        let occlusion_size = vec2f(textureDimensions(occlusion));
-        let corner = floor(pixel * 0.25 + 0.5);
-        var ao = 0.0;
-        for (var j = -1; j <= 1; j++) {
-            for (var i = -1; i <= 1; i++) {
-                let at = (corner + vec2f(f32(i), f32(j)) * 2.0) / occlusion_size;
-                let weight = f32((2 - abs(i)) * (2 - abs(j)));
-                ao += textureSampleLevel(occlusion, linear_clamp, at, 0.0).r * weight;
-            }
-        }
+        // The quarter-size occlusion's tent at the corner of its texels nearest this
+        // pixel (`fs_occlusion_blur`).
+        let ao = textureLoad(occlusion, vec2i(floor(pixel * 0.25 + 0.5)), 0).r;
         // Occlusion takes away sky fill, which sunlit surfaces barely depend on: it
         // darkens shade fully and bright sunlit ground only lightly, so a tank sits in
         // a soft contact shade rather than on a dark decal. What it removes is the
@@ -493,7 +504,7 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         let lit = smoothstep(OCCLUSION_SHADE_LEVEL, OCCLUSION_LIT_LEVEL, luminance(color));
         // It never takes more than part of the light: contact shade stays a soft,
         // coloured shade under a hull, never a black pool.
-        let open = max(mix(1.0, ao / 16.0, strength * mix(1.0, OCCLUSION_IN_SUN, lit)), OCCLUSION_FLOOR);
+        let open = max(mix(1.0, ao, strength * mix(1.0, OCCLUSION_IN_SUN, lit)), OCCLUSION_FLOOR);
         color *= pow(vec3f(open), OCCLUSION_HUE);
     }
     // After the occlusion, which shades the surface rather than the air before it.

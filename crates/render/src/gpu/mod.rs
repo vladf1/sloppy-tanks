@@ -630,8 +630,9 @@ struct FixedPipelines<P> {
     sky: P,
     /// Bloom prefilter, downsample and additive upsample.
     bloom: [P; 3],
-    /// Screen-space ambient occlusion.
+    /// Screen-space ambient occlusion, and its blur for the output pass.
     occlusion: P,
+    occlusion_blur: P,
     /// Merged casters, depth-only then alpha-tested, indexed by
     /// `shadow_merged_index`.
     shadow_merged: Vec<P>,
@@ -639,7 +640,7 @@ struct FixedPipelines<P> {
 
 impl<P> FixedPipelines<P> {
     fn count(&self) -> usize {
-        7 + self.shadow_merged.len()
+        8 + self.shadow_merged.len()
     }
 }
 
