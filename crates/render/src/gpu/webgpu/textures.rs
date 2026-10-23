@@ -166,7 +166,12 @@ impl Uploader {
             } else {
                 &self.bake_layout
             };
-            *state = BakePipeline::Ready(spec.create(device, layout, stages));
+            *state = BakePipeline::Ready(spec.create(
+                device,
+                layout,
+                stages,
+                compile.compiled(0).as_ref(),
+            ));
         }
         matches!(state, BakePipeline::Ready(_))
     }
@@ -247,8 +252,18 @@ impl Uploader {
             && compile.done()
         {
             self.pipelines = Some((
-                srgb.create(device, &self.pipeline_layout, stages),
-                linear.create(device, &self.pipeline_layout, stages),
+                srgb.create(
+                    device,
+                    &self.pipeline_layout,
+                    stages,
+                    compile.compiled(0).as_ref(),
+                ),
+                linear.create(
+                    device,
+                    &self.pipeline_layout,
+                    stages,
+                    compile.compiled(1).as_ref(),
+                ),
             ));
             self.pending = None;
         }

@@ -233,6 +233,14 @@ export class UI {
       restart.addEventListener("click", () => actions.restart());
     }
   }
+  /** Build the battle's view before its round starts: the respawn card and the HUD at
+   * full opacity, so the browser paints them before the round's first frame. */
+  prepareBattle(): void {
+    if (!this.respawnLayer.firstElementChild) {
+      this.buildRespawn();
+    }
+    this.hud.style.opacity = "1";
+  }
   /** The battle report's hero tile shows the viewer's tank in its team's paint: Battle
    * Setup's render of that tank, from the sheet's row for the team. */
   /** The battle's respawn card with its tank cards, built as the battle starts. */
