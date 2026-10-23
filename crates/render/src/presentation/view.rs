@@ -1655,7 +1655,9 @@ impl Presentation {
             root.children.push(joint);
             built.push((*cover, stage, Arc::new(model), tree));
         }
-        let model = self.renderer.add_model(&root, Lifetime::Round);
+        // Each cover joint only ever shows or hides (a cover that changes its look
+        // moves out to its own model), so their parts merge across covers.
+        let model = self.renderer.add_combined_model(&root, Lifetime::Round);
         let instance = self
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
