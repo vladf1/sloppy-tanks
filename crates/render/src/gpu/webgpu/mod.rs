@@ -27,6 +27,7 @@ use super::{
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::mesh_pages::{MeshRange, NO_PAGE};
+use crate::noise_lattice::{NOISE_LATTICE_SIZE, noise_lattice};
 use context::{ColorTarget, DEPTH_FORMAT, OCCLUSION_FORMAT, SHADOW_DEPTH_FORMAT, texture_2d};
 use resources::uniform_buffer;
 
@@ -125,6 +126,8 @@ pub struct Frame {
     dummy_depth: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
     lut_view: wgpu::TextureView,
+    /// The noise lattice the frame's shaders fetch (`noise_lattice.rs`).
+    noise_view: wgpu::TextureView,
     /// Linear clamp-to-edge: the DFG LUT and the water's reflection.
     linear_sampler: wgpu::Sampler,
     view_uniforms: [wgpu::Buffer; VIEW_COUNT],
@@ -164,6 +167,25 @@ impl Frame {
             wgpu::util::TextureDataOrder::LayerMajor,
             bytemuck::cast_slice(&lut::DFG_LUT),
         );
+        let noise = device.create_texture_with_data(
+            &gpu.queue,
+            &wgpu::TextureDescriptor {
+                label: Some("noise lattice"),
+                size: wgpu::Extent3d {
+                    width: NOISE_LATTICE_SIZE,
+                    height: NOISE_LATTICE_SIZE,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            wgpu::util::TextureDataOrder::LayerMajor,
+            &noise_lattice(),
+        );
         let main_target = ColorTarget::new(gpu, "main view", width, height);
         let output_uniform = uniform_buffer(device, "output", size_of::<OutputUniform>() as u64);
         let occlusion_uniform =
@@ -200,6 +222,7 @@ impl Frame {
                 ..Default::default()
             }),
             lut_view: lut.create_view(&Default::default()),
+            noise_view: noise.create_view(&Default::default()),
             linear_sampler,
             view_uniforms,
             // Replaced below, once the frame's own resources exist.
@@ -328,6 +351,10 @@ impl Frame {
                     wgpu::BindGroupEntry {
                         binding: 5,
                         resource: instances.binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: wgpu::BindingResource::TextureView(&self.noise_view),
                     },
                 ],
             })

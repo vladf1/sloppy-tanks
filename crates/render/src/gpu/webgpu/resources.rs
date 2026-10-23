@@ -56,7 +56,8 @@ const fn uniform_entry(binding: u32) -> wgpu::BindGroupLayoutEntry {
 // same layouts as wgpu.
 use wgpu::SamplerBindingType::{Comparison, Filtering};
 
-/// Frame uniforms, sun shadow map, reflection and the instance records.
+/// Frame uniforms, sun shadow map, DFG lookup table, the instance records and the
+/// noise lattice.
 pub const FRAME_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     uniform_entry(0),
     wgpu::BindGroupLayoutEntry {
@@ -73,6 +74,7 @@ pub const FRAME_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     texture_entry(3, true),
     sampler_entry(4, Filtering),
     super::instance_store::INSTANCE_ENTRY,
+    texture_entry(10, true),
 ];
 
 /// A uniform block and two filtered textures (the water).

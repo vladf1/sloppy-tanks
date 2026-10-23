@@ -27,6 +27,7 @@ use super::{
     OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
+use crate::noise_lattice::{NOISE_LATTICE_SIZE, noise_lattice};
 use crate::target_memory::target_bytes;
 use context::{block, unit};
 use resources::SHADOW_BASE_LOCATION;
@@ -332,6 +333,8 @@ pub struct Frame {
     /// The cached fixed-scenery shadow, only while frames copy it.
     static_shadow: Option<DepthTarget>,
     lut: glow::Texture,
+    /// The noise lattice the frame's shaders fetch (`noise_lattice.rs`).
+    noise: glow::Texture,
     shadow_sampler: glow::Sampler,
     /// Linear clamp-to-edge: the DFG LUT and the water's reflection.
     linear_sampler: glow::Sampler,
@@ -366,6 +369,20 @@ impl Frame {
                 glow::PixelUnpackData::Slice(Some(bytemuck::cast_slice(&lut::DFG_LUT))),
             );
         }
+        let noise = texel_storage(gpu, glow::RGBA8, NOISE_LATTICE_SIZE, NOISE_LATTICE_SIZE);
+        unsafe {
+            gl.tex_sub_image_2d(
+                glow::TEXTURE_2D,
+                0,
+                0,
+                0,
+                NOISE_LATTICE_SIZE as i32,
+                NOISE_LATTICE_SIZE as i32,
+                glow::RGBA,
+                glow::UNSIGNED_BYTE,
+                glow::PixelUnpackData::Slice(Some(&noise_lattice())),
+            );
+        }
         let uniform = |bytes| gpu.create_buffer(glow::UNIFORM_BUFFER, bytes, glow::DYNAMIC_DRAW);
         Self {
             gpu: gpu.clone(),
@@ -376,6 +393,7 @@ impl Frame {
             shadow: DepthTarget::new(gpu, "sun shadow map", shadow_size),
             static_shadow: None,
             lut,
+            noise,
             shadow_sampler: linear_sampler(gpu, true),
             linear_sampler: linear_sampler(gpu, false),
             view_uniforms: [0, 1, 2].map(|_| uniform(size_of::<FrameUniform>() as u64)),
@@ -586,6 +604,8 @@ impl Frame {
         // Bindings every view shares; the shadow map's is unused by shadow programs.
         gpu.bind_texture(unit::DFG_LUT, self.lut);
         gpu.bind_sampler(unit::DFG_LUT, Some(self.linear_sampler));
+        gpu.bind_texture(unit::NOISE, self.noise);
+        gpu.bind_sampler(unit::NOISE, None);
         gpu.bind_texture(unit::SHADOW_MAP, self.shadow.texture);
         gpu.bind_sampler(unit::SHADOW_MAP, Some(self.shadow_sampler));
         gpu.bind_texture(unit::INSTANCES, self.instance_records.texture());
@@ -756,6 +776,7 @@ impl Drop for Frame {
         let gl = &self.gpu.gl;
         unsafe {
             gl.delete_texture(self.lut);
+            gl.delete_texture(self.noise);
             gl.delete_buffer(self.occlusion_uniform);
             for sampler in [self.shadow_sampler, self.linear_sampler] {
                 gl.delete_sampler(sampler);

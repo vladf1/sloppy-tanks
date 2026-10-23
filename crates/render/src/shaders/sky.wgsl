@@ -34,7 +34,7 @@ const SUN_DISC: f32 = 24.0;
 
 fn cloud_density(p: vec2f) -> f32 {
     // A low-frequency warp turns the noise's blobs into rounded, billowing heaps.
-    let warp = vec2f(value_noise(p * 0.5 + vec2f(7.1, 2.3)), value_noise(p * 0.5 + vec2f(-3.7, 9.4)));
+    let warp = vec2f(lattice_noise(p * 0.5 + vec2f(7.1, 2.3)), lattice_noise(p * 0.5 + vec2f(-3.7, 9.4)));
     var sum = 0.0;
     var amplitude = 0.5;
     var q = p + (warp - 0.5) * 0.9;
@@ -42,7 +42,7 @@ fn cloud_density(p: vec2f) -> f32 {
         // Without fine detail the finest octave, a few pixels across, is skipped
         // (a condition rather than a shorter loop, so the loop unrolls).
         if fine_detail() || i < 4 {
-            sum += value_noise(q) * amplitude;
+            sum += lattice_noise(q) * amplitude;
             // Rotate each octave so the lattice never lines up.
             q = mat2x2f(1.6, 1.2, -1.2, 1.6) * q + vec2f(3.1, 1.7);
             amplitude *= 0.5;
@@ -69,8 +69,8 @@ fn sky_radiance(direction: vec3f, aa: f32) -> vec3f {
         // Cirrus first, high above the cumulus.
         let streak_axis = normalize(CLOUD_DRIFT);
         let along = vec2f(dot(plane, streak_axis), dot(plane, vec2f(-streak_axis.y, streak_axis.x)));
-        let cirrus_noise = value_noise(along * CIRRUS_STRETCH + vec2f(11.0, 3.0)) * 0.65
-            + value_noise(along * CIRRUS_STRETCH * 2.3 + vec2f(-4.0, 7.0)) * 0.35;
+        let cirrus_noise = lattice_noise(along * CIRRUS_STRETCH + vec2f(11.0, 3.0)) * 0.65
+            + lattice_noise(along * CIRRUS_STRETCH * 2.3 + vec2f(-4.0, 7.0)) * 0.35;
         let cirrus = smoothstep(0.55, 0.85, cirrus_noise) * CIRRUS_OPACITY * smoothstep(0.05, 0.35, direction.y);
         color = mix(color, frame.cloud_lit.rgb * 1.05, cirrus * strength * coverage);
         let density = cloud_density(plane);

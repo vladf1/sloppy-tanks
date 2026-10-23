@@ -147,14 +147,31 @@ fn value_noise(p: vec2f) -> f32 {
     return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
 }
 
-// Value noise and its gradient per unit of `p`, from the same four lattice taps:
-// x the value, yz its slope.
-fn value_noise_gradient(p: vec2f) -> vec3f {
+// The four hashes `lattice_corners` gives `cell`, fetched from the frame's noise
+// lattice (`noise_lattice.rs`): the same values, to 8 bits, within 128 cells of the
+// origin, repeating every 256 cells beyond. One texel read in place of the hashing,
+// for the noise every lit pixel evaluates (cloud shadows, the ground's relief) and the
+// sky's clouds; the output pass, which has no lattice, never reaches it.
+fn lattice_corners_fetched(cell: vec2i) -> vec4f {
+    return textureLoad(noise_lattice, (cell + vec2i(128)) & vec2i(255), 0);
+}
+
+// `value_noise` from the frame's noise lattice.
+fn lattice_noise(p: vec2f) -> f32 {
+    let f = fract(p);
+    let u = f * f * (3.0 - 2.0 * f);
+    let h = lattice_corners_fetched(vec2i(floor(p)));
+    return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
+}
+
+// Value noise from the frame's noise lattice and its gradient per unit of `p`, from
+// the same four corners: x the value, yz its slope.
+fn lattice_noise_gradient(p: vec2f) -> vec3f {
     let cell = vec2i(floor(p));
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
     let du = 6.0 * f * (1.0 - f);
-    let h = lattice_corners(cell);
+    let h = lattice_corners_fetched(cell);
     let a = h.x;
     let b = h.y;
     let c = h.z;
@@ -197,11 +214,11 @@ fn ground_macro(world: vec3f, normal: vec3f, roughness: f32) -> GroundMacro {
     if weight <= 0.0 || (frame.ground.x <= 0.0 && frame.ground.y <= 0.0) {
         return result;
     }
-    let swell = value_noise_gradient(world.xz * SWELL_SCALE + vec2f(13.7, -5.3));
+    let swell = lattice_noise_gradient(world.xz * SWELL_SCALE + vec2f(13.7, -5.3));
     // Without fine detail, the broad swells only.
     var hummock = vec3f(0.5, 0.0, 0.0);
     if fine_detail() {
-        hummock = value_noise_gradient(world.xz * HUMMOCK_SCALE + vec2f(-2.9, 8.1));
+        hummock = lattice_noise_gradient(world.xz * HUMMOCK_SCALE + vec2f(-2.9, 8.1));
     }
     let slope = (swell.yz * (SWELL_SCALE * SWELL_HEIGHT) + hummock.yz * (HUMMOCK_SCALE * HUMMOCK_HEIGHT))
         * (frame.ground.x * weight);
@@ -622,7 +639,7 @@ fn cloud_shadow(world: vec3f) -> f32 {
     let sun = frame.sun_direction.xyz;
     let ground = world.xz - sun.xz / max(sun.y, 0.2) * world.y;
     let p = (ground + CLOUD_SHADOW_DRIFT * frame.camera_position.w) * CLOUD_SHADOW_SCALE;
-    let n = value_noise(p) * 0.68 + value_noise(p * 2.13 + vec2f(17.3, -4.1)) * 0.32;
+    let n = lattice_noise(p) * 0.68 + lattice_noise(p * 2.13 + vec2f(17.3, -4.1)) * 0.32;
     let coverage = frame.cloud_lit.w;
     // Broad patches: about the sky's own share of the ground lies under a cloud, so
     // the field reads in large light and shade masses rather than one flat sheet.

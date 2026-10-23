@@ -22,6 +22,7 @@ pub mod effects;
 pub mod material;
 pub mod mesh_pages;
 pub mod model;
+pub mod noise_lattice;
 pub mod presentation;
 pub mod quality;
 pub mod reflection_cull;
