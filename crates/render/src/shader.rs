@@ -869,6 +869,13 @@ pub(crate) mod webgl_check {
         // would read each other's texture.
         let mut units = std::collections::HashMap::new();
         for stage in &stages {
+            // ANGLE's Metal backend (Chrome's WebGL on a Mac) draws a program with a
+            // flat varying through a compute pass per draw that rewrites its indices
+            // for GL's last-vertex convention.
+            assert!(
+                !stage.source.contains("flat out ") && !stage.source.contains("flat in "),
+                "{label}: a flat varying"
+            );
             for (name, binding) in &stage.blocks {
                 assert!(
                     glsl::block_point(*binding).is_some(),
