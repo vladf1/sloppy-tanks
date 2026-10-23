@@ -64,7 +64,7 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
-use sloppy_core::scene::{Blending, Node, Side, TextureRef};
+use sloppy_core::scene::{Blending, Node, Side, TextureRef, TextureSource};
 
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
 use crate::color::{hex_to_linear, hex_to_linear_scaled};
@@ -1734,6 +1734,7 @@ impl Renderer {
     /// the page between calls (a short timer while only `compiling` remains).
     pub fn prepare_step(&mut self, budget: u32) -> PrepareProgress {
         self.update_textures();
+        self.run_bakes();
         let fixed_pending = !self.pipelines.fixed_ready(&self.gpu);
         let mut compiled = 0;
         // Distinct pipelines the registered scene still lacks. Many draw classes share
@@ -1882,6 +1883,50 @@ impl Renderer {
                 water.gpu.rebind(&self.gpu, &self.frame, view, sampler);
                 water.generation = self.textures.generation;
             }
+        }
+    }
+
+    /// Draw the requested texture bakes (`effects::bakes`) whose pipelines have
+    /// compiled (starting the rest), a bake that reads a material once that material
+    /// exists with its other textures loaded. Until then the materials naming one
+    /// sample the white placeholder and it counts as pending, so preparation waits.
+    fn run_bakes(&mut self) {
+        let mut baked = false;
+        for (key, bake) in self.textures.bakes_due() {
+            if !self.textures.bake_ready(&self.gpu, bake) {
+                continue;
+            }
+            let Some(source) = bake.source else {
+                self.textures.bake(&self.gpu, &key, bake, None);
+                baked = true;
+                continue;
+            };
+            let Some(material) = self
+                .effects
+                .id(source)
+                .and_then(|effect| self.materials.with_effect(effect))
+            else {
+                continue;
+            };
+            let inputs = self.materials.get(material).material.clone();
+            let loaded = resources::texture_slots(&inputs)
+                .into_iter()
+                .flatten()
+                .filter(|texture| !matches!(texture.source, TextureSource::Generated(_)))
+                .all(|texture| self.textures.loaded(texture));
+            if !loaded {
+                continue;
+            }
+            // The bake reads the main view's frame uniform (the sun).
+            self.write_view_uniforms();
+            let binding = &self.materials.get(material).binding;
+            self.textures
+                .bake(&self.gpu, &key, bake, Some((&self.frame, binding)));
+            baked = true;
+        }
+        if baked {
+            self.static_shadow_dirty = true;
+            self.materials.refresh(&self.gpu, &mut self.textures);
         }
     }
 
@@ -2742,6 +2787,7 @@ impl Renderer {
         self.time = time;
         self.meshes.collect_released();
         self.update_textures();
+        self.run_bakes();
         self.upload_static();
         self.update_culls();
         self.build_draws();

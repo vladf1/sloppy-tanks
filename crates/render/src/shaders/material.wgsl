@@ -43,7 +43,10 @@ fn material_has(feature: u32) -> bool {
 @group(1) @binding(6) var emissive_sampler: sampler;
 // The material's `extra_textures` in order (white when absent), for effects'
 // fragment code only: a texture the vertex stage can see costs WebKit about 45 ms
-// more per vertex stage it compiles (`resources.rs`).
+// more per vertex stage it compiles (`resources.rs`). A material without a bump or
+// emissive map binds its third or fourth extra texture there instead, which its
+// effect reads as `bump_texture` or `emissive_texture` (`gpu::resources`
+// `texture_slots`).
 @group(1) @binding(7) var extra_texture0: texture_2d<f32>;
 @group(1) @binding(8) var extra_sampler0: sampler;
 @group(1) @binding(9) var extra_texture1: texture_2d<f32>;

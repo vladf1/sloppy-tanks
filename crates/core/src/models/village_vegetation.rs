@@ -20,6 +20,7 @@ use crate::sim::data::ARENA;
 use crate::sim::types::{CoverKind, Team};
 
 use super::effects_scenery::{MEADOW_SWAY, WIND_ORIGIN};
+use super::ground_surfaces::village_ground_bake;
 use super::village_ground::{
     SHORTCUTS, VEGETABLE_ROW, farmed, polyline_distance, road_wear, vegetable_plots,
 };
@@ -679,9 +680,11 @@ pub fn village_vegetation() -> Node {
         origins,
         flowers,
     } = meadow;
+    // The tufts take their colour from the ground's meadow round them.
     let grass = Arc::new(Material {
         side: Side::Double,
         vertex_colors: true,
+        extra_textures: vec![("bake", village_ground_bake())],
         effect: Effect::Custom {
             name: MEADOW_SWAY,
             params: Vec::new(),

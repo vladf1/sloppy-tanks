@@ -15,8 +15,8 @@ use sloppy_core::scene::{TextureRef, TextureSource, Wrap};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use super::backend::{Gpu, Sampler, Texture, TextureView, Uploader};
-use crate::effects::bakes::bake_for;
+use super::backend::{Frame, Gpu, MaterialBinding, Sampler, Texture, TextureView, Uploader};
+use crate::effects::bakes::{TextureBake, bake_for};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TextureKey {
@@ -212,9 +212,8 @@ impl TextureStore {
         if !self.uploader.ready(gpu) {
             return false;
         }
-        let mut changed = self.draw_bakes(gpu);
         let loaded: Vec<_> = self.loaded.borrow_mut().drain(..).collect();
-        changed |= !loaded.is_empty();
+        let changed = !loaded.is_empty();
         for Loaded { key, result } in loaded {
             let Some(entry) = self.entries.get_mut(&key) else {
                 continue;
@@ -252,31 +251,6 @@ impl TextureStore {
         changed
     }
 
-    /// Draw the requested bakes whose pipelines have compiled (starting the rest);
-    /// returns whether any texture became ready.
-    fn draw_bakes(&mut self, gpu: &Gpu) -> bool {
-        let mut drawn = false;
-        let mut index = 0;
-        while index < self.bakes.len() {
-            let TextureSource::Generated(name) = self.bakes[index].source else {
-                unreachable!("only generated textures bake");
-            };
-            let bake = bake_for(name).expect("a bake answers the key");
-            if !self.uploader.ready_to_bake(gpu, bake) {
-                index += 1;
-                continue;
-            }
-            let key = self.bakes.swap_remove(index);
-            if let Some(entry) = self.entries.get_mut(&key) {
-                entry.texture = Some(self.uploader.bake(gpu, bake));
-                entry.bytes = bake.bytes();
-                entry.loading = false;
-                drawn = true;
-            }
-        }
-        drawn
-    }
-
     /// The texture's view, or the white placeholder while it loads or for none.
     pub fn view(&self, texture: Option<&TextureRef>) -> &TextureView {
         texture
@@ -304,6 +278,49 @@ impl TextureStore {
             .entry(key)
             .or_insert_with(|| Uploader::sampler(gpu, key))
             .clone()
+    }
+
+    /// The requested textures a bake draws (`effects::bakes`) that it has not yet.
+    pub fn bakes_due(&self) -> Vec<(TextureKey, &'static TextureBake)> {
+        self.bakes
+            .iter()
+            .filter_map(|key| match key.source {
+                TextureSource::Generated(name) => Some((key.clone(), bake_for(name)?)),
+                TextureSource::File(_) => None,
+            })
+            .collect()
+    }
+
+    /// Whether `bake` can draw now: its pipeline and the mip blits are ready. The
+    /// first ask starts its background compile.
+    pub fn bake_ready(&mut self, gpu: &Gpu, bake: &'static TextureBake) -> bool {
+        self.uploader.ready(gpu) && self.uploader.ready_to_bake(gpu, bake)
+    }
+
+    /// Whether `texture` has arrived or failed (it no longer waits).
+    pub fn loaded(&self, texture: &TextureRef) -> bool {
+        self.entries
+            .get(&TextureKey::of(texture))
+            .is_some_and(|entry| !entry.loading)
+    }
+
+    /// Draw `bake` into its texture `key` and render its mip levels, reading the frame
+    /// and the binding of its source's material when it has one; it must be ready
+    /// ([`Self::bake_ready`]).
+    pub fn bake(
+        &mut self,
+        gpu: &Gpu,
+        key: &TextureKey,
+        bake: &'static TextureBake,
+        inputs: Option<(&Frame, &MaterialBinding)>,
+    ) {
+        self.bakes.retain(|due| due != key);
+        if let Some(entry) = self.entries.get_mut(key) {
+            entry.texture = Some(self.uploader.bake(gpu, bake, inputs));
+            entry.bytes = bake.bytes();
+            entry.loading = false;
+            self.generation += 1;
+        }
     }
 
     /// Textures still downloading or awaiting generated pixels.
