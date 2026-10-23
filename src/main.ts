@@ -46,9 +46,9 @@ function startMultiplayer(joining: JoinScreen, selection?: RoomSelection): void 
 
 declare global {
   interface Window {
-    /** Scene texture downloads by URL, each taken over once by the engine's texture
-     * store (`texture_download` in crates/render/src/gpu/textures.rs). */
-    sloppyTextureDownloads?: Map<string, Promise<Response>>;
+    /** Scene texture files decoding by URL, each taken over once by the engine's texture
+     * store (`texture_image` in crates/render/src/gpu/textures.rs). */
+    sloppyTextureImages?: Map<string, Promise<HTMLImageElement>>;
   }
 }
 
@@ -62,15 +62,20 @@ function startTextureDownloads(options: GameOptions): void {
     "textures/houses/stone.webp",
   ];
   const buildings = ["village", "stress-test", "superstress"].includes(options.mapMode);
-  // Start scene image downloads alongside the engine request, before the engine's
-  // scenery discovers them. Small late requests otherwise delay warm-up. Requests from
-  // script rather than <link rel=preload>: WebKit never hands a preload response to
-  // the engine's later fetch(), so it downloaded every texture twice.
-  const downloads = (window.sloppyTextureDownloads ??= new Map());
+  // Start scene image downloads and decodes alongside the engine request, before the
+  // engine's scenery discovers them: they decode off the main thread while it builds
+  // the arena, and small late requests otherwise delay warm-up. From script rather than
+  // <link rel=preload>: WebKit never handed a preload response to the engine's later
+  // fetch(), so it downloaded every texture twice.
+  const images = (window.sloppyTextureImages ??= new Map());
   for (const path of [
     "textures/pickups/atlas.webp",
     "textures/tanks/armor-camo.webp",
     "textures/tanks/armor-wear.webp",
+    // The wrecks' burnt paint, and the bark and rings of loose logs.
+    "textures/tanks/armor-scorch.webp",
+    "textures/trees/bark.webp",
+    "textures/trees/rings.webp",
     // Every ground but the harbor's concrete quay: roads, yards and quarry grit.
     ...(options.mapMode === "harbor" ? [] : ["textures/ground/packed-dirt.webp"]),
     "textures/houses/siding.webp",
@@ -88,20 +93,35 @@ function startTextureDownloads(options: GameOptions): void {
         ]
       : []),
     ...(options.mapMode === "harbor"
-      ? ["textures/harbor/dock.webp", "textures/harbor/steel.webp", "textures/water/normals.webp"]
+      ? [
+          "textures/harbor/dock.webp",
+          "textures/harbor/steel.webp",
+          "textures/water/normals.webp",
+          "textures/harbor/container.webp",
+          "textures/harbor/container-ribbed.webp",
+          "textures/wood/timber.webp",
+        ]
       : []),
-    ...(options.mapMode === "quarry" ? ["textures/quarry/sandstone.webp"] : []),
+    ...(options.mapMode === "quarry"
+      ? [
+          "textures/quarry/sandstone.webp",
+          "textures/harbor/steel.webp",
+          "textures/wood/timber.webp",
+        ]
+      : []),
     ...(isExtraLevel(options.mapMode)
       ? ["textures/ground/dry-grass.webp", "textures/wood/timber.webp"]
       : []),
     ...(buildings ? buildingTextures : []),
   ]) {
     const url = `${import.meta.env.BASE_URL}${path}`;
-    if (!downloads.has(url)) {
-      const download = fetch(url);
-      // The engine requests a texture again if its early download fails.
-      download.catch(() => {});
-      downloads.set(url, download);
+    if (!images.has(url)) {
+      const image = new Image();
+      image.src = url;
+      const decoded = image.decode().then(() => image);
+      // The engine decodes a texture again if its early decode fails.
+      decoded.catch(() => {});
+      images.set(url, decoded);
     }
   }
 }

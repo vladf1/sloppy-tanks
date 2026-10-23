@@ -63,8 +63,8 @@ try {
         if (stage && window.startupStages.at(-1) !== stage) window.startupStages.push(stage);
       }).observe(document, { subtree: true, childList: true, characterData: true });
     });
-    // WebKit never hands a <link rel=preload> response to a later fetch(), so textures
-    // the page starts early must reach the engine as responses, not as preloads.
+    // WebKit never hands a <link rel=preload> response to a later request, so textures
+    // the page starts early must reach the engine as its own decodes, not as preloads.
     const textureRequests = new Map();
     page.on("request", (request) => {
       const path = new URL(request.url()).pathname;

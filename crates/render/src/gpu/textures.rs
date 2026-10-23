@@ -86,37 +86,41 @@ struct Loaded {
 /// files the reference flips upside down instead (`fetch_bitmap`).
 const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 
-// The single-player page starts the scene's texture downloads before the engine loads
-// (`startTextureDownloads` in src/main.ts) and leaves them in a map by URL. The store
-// takes each response over once rather than requesting the file again, so every
-// browser downloads it once. A URL the page did not start, or whose early request
-// failed or answered with an HTTP error, is fetched here.
-#[wasm_bindgen(inline_js = "export function textureDownload(url) {
-  const downloads = globalThis.sloppyTextureDownloads;
-  const early = downloads?.get(url);
-  downloads?.delete(url);
-  const retry = () => fetch(url);
-  return early ? early.then((response) => (response.ok ? response : retry()), retry) : retry();
+// Texture files decode in an image element (`HTMLImageElement.decode`), which every
+// browser does off the main thread: WebKit decoded `createImageBitmap(blob)` on it, one
+// file after another, about 80 ms of a village start once the arena was built. The
+// bitmap made from the decoded image has the same texels. The single-player page
+// starts the scene's decodes before the engine loads (`startTextureDownloads` in
+// src/main.ts) and leaves them in a map by URL; the store takes each over once, so
+// every browser downloads a file once. A URL the page did not start, or whose early
+// decode failed, is decoded here.
+#[wasm_bindgen(inline_js = "export function textureImage(url) {
+  const images = globalThis.sloppyTextureImages;
+  const early = images?.get(url);
+  images?.delete(url);
+  const decode = () => {
+    const image = new Image();
+    image.src = url;
+    return image.decode().then(() => image);
+  };
+  return early ? early.catch(decode) : decode();
 }")]
 extern "C" {
-    #[wasm_bindgen(js_name = textureDownload)]
-    fn texture_download(url: &str) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = textureImage)]
+    fn texture_image(url: &str) -> js_sys::Promise;
 }
 
 async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, JsValue> {
     let window = web_sys::window().ok_or("no window")?;
-    let response: web_sys::Response = JsFuture::from(texture_download(url)).await?.dyn_into()?;
-    if !response.ok() {
-        return Err(format!("HTTP {}", response.status()).into());
-    }
-    let blob: web_sys::Blob = JsFuture::from(response.blob()?).await?.dyn_into()?;
+    let image: web_sys::HtmlImageElement = JsFuture::from(texture_image(url)).await?.dyn_into()?;
     let options = web_sys::ImageBitmapOptions::new();
     options.set_premultiply_alpha(web_sys::PremultiplyAlpha::None);
     options.set_color_space_conversion(web_sys::ColorSpaceConversion::None);
     if flip_y && FLIP_BITMAPS_ON_DECODE {
         options.set_image_orientation(web_sys::ImageOrientation::FlipY);
     }
-    let bitmap = window.create_image_bitmap_with_blob_and_image_bitmap_options(&blob, &options)?;
+    let bitmap = window
+        .create_image_bitmap_with_html_image_element_and_image_bitmap_options(&image, &options)?;
     JsFuture::from(bitmap).await?.dyn_into()
 }
 
