@@ -25,8 +25,8 @@ use super::{
     BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
     OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
-use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::atmosphere_map::{ATMOSPHERE_MAP_SIZE, atmosphere_map};
+use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::gpu::blurred_occlusion_size;
 use crate::mesh_pages::{MeshRange, NO_PAGE};
 use crate::noise_lattice::{NOISE_LATTICE_SIZE, noise_lattice};

@@ -403,7 +403,13 @@ impl Frame {
         };
         let noise = texel_storage(gpu, glow::RGBA8, NOISE_LATTICE_SIZE, NOISE_LATTICE_SIZE);
         upload(noise, NOISE_LATTICE_SIZE, &noise_lattice());
-        let atmosphere = storage(gpu, glow::RGBA8, 1, ATMOSPHERE_MAP_SIZE, ATMOSPHERE_MAP_SIZE);
+        let atmosphere = storage(
+            gpu,
+            glow::RGBA8,
+            1,
+            ATMOSPHERE_MAP_SIZE,
+            ATMOSPHERE_MAP_SIZE,
+        );
         upload(atmosphere, ATMOSPHERE_MAP_SIZE, &atmosphere_map());
         let uniform = |bytes| gpu.create_buffer(glow::UNIFORM_BUFFER, bytes, glow::DYNAMIC_DRAW);
         Self {

@@ -2197,9 +2197,19 @@ impl Renderer {
         let rim = (horizon * 0.6 + glow * 0.4) * a.rim;
         // The bounce at full strength: the ground fill's hue at the sun's luminance.
         let luminance = |color: Vec3| color.dot(Vec3::new(0.2126, 0.7152, 0.0722));
-        let ground = Vec3::from(hex_to_linear_scaled(env.ground_color, env.hemisphere_intensity));
-        let sun_level = luminance(Vec3::from(hex_to_linear_scaled(env.sun_color, env.sun_intensity)));
-        let bounce_strength = if self.debug_off.ground { 0.0 } else { a.ground.bounce };
+        let ground = Vec3::from(hex_to_linear_scaled(
+            env.ground_color,
+            env.hemisphere_intensity,
+        ));
+        let sun_level = luminance(Vec3::from(hex_to_linear_scaled(
+            env.sun_color,
+            env.sun_intensity,
+        )));
+        let bounce_strength = if self.debug_off.ground {
+            0.0
+        } else {
+            a.ground.bounce
+        };
         let bounce = ground / luminance(ground).max(1e-4)
             * (bounce_strength * sun_level * std::f32::consts::FRAC_1_PI);
         let slant = Vec2::new(sun.x, sun.z) / sun.y.max(0.2);

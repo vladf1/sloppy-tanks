@@ -31,7 +31,12 @@ pub fn noise_lattice() -> Vec<u8> {
     let mut texels = Vec::with_capacity((size * size * 4) as usize);
     for j in 0..size {
         for i in 0..size {
-            texels.extend([byte(i, j), byte(i + 1, j), byte(i, j + 1), byte(i + 1, j + 1)]);
+            texels.extend([
+                byte(i, j),
+                byte(i + 1, j),
+                byte(i, j + 1),
+                byte(i + 1, j + 1),
+            ]);
         }
     }
     texels
@@ -49,7 +54,15 @@ mod tests {
         let quantized = |x: i32, y: i32| (lattice_hash(x, y) * 255.0).round() as u8;
         // The origin's cell sits at the middle texel.
         let middle = texel(size / 2, size / 2);
-        assert_eq!(middle, [quantized(0, 0), quantized(1, 0), quantized(0, 1), quantized(1, 1)]);
+        assert_eq!(
+            middle,
+            [
+                quantized(0, 0),
+                quantized(1, 0),
+                quantized(0, 1),
+                quantized(1, 1)
+            ]
+        );
         assert_eq!(texel(size / 2 - 3, size / 2 + 5)[0], quantized(-3, 5));
         // A cell's +x corner is the next texel's own corner, across the seam too.
         for (i, j) in [(10, 20), (size - 1, 7), (3, size - 1), (size - 1, size - 1)] {
