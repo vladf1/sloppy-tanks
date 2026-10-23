@@ -6,18 +6,14 @@
 // bake's color: it is static and broad, and worked out here it took a fifth of
 // the floor's time.
 //
-// On top of the bake, in world space: loose stones on one lattice, scattered by
-// the gravel amount; mud cracks; and relief from the bake itself, so ruts,
-// windrows and ripples catch the low sun. The finest grit is the grit tile's own.
+// On top of the bake, in world space: the grit tile's detail, stronger where the
+// ground is gravelly; mud cracks; and relief from the bake itself, so ruts,
+// windrows and ripples catch the low sun. The floor takes most of the quarry's
+// pixels, so it leaves loose stones to the bake's own speckle and the rubble
+// meshes: a lattice of shaded stones cost WebKit 0.12 ms of an iPad frame.
 
-// Lattice spacing of the cobbles and the stones, and of the mud plates, metres.
-const SOIL_COBBLE_CELL = 0.9;
-const SOIL_STONE_CELL = 0.42;
+// Lattice spacing of the mud plates, metres.
 const SOIL_PLATE_CELL = 0.55;
-// How far loose stones' tints settle toward the soil's own colour (1 all the way).
-const SOIL_STONE_DUST = 0.4;
-// Size of the patches loose stone gathers in, metres.
-const SOIL_SPILL_CELL = 5.5;
 // Relief of the bake's own shading (ruts, windrows, ripples), as bump scale.
 const SOIL_BAKE_RELIEF = 2.6;
 
@@ -32,22 +28,6 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let turned = vec2f(p.x * 0.6 + p.y * 0.8, p.y * 0.6 - p.x * 0.8) / 11.7;
     let far = textureSample(extra_texture0, extra_sampler0, turned);
     let detail = near * (dot(far.rgb, LUMA) + 0.327) / (0.327 * 0.327 * 2.0);
-    // Stones gather where the bake is gravelly and thin out on fine soil, and
-    // lie in drifts and spills rather than an even sprinkle: a few metres of
-    // ground hold most of them, the sand between almost none.
-    let spill = quarry_smoothstep(0.54, 0.66, quarry_value(p / SOIL_SPILL_CELL) + stony * 0.25);
-    // One lattice of loose stones: the hand-sized stones, the cobbles' share
-    // among them, on graphics tiers with fine detail (`fine_detail`); the sparse
-    // cobbles alone on the rest.
-    let fine = fine_detail();
-    let stones = quarry_pebbles(
-        p,
-        select(SOIL_COBBLE_CELL, SOIL_STONE_CELL, fine),
-        select(0.004 + stony * 0.1, stony * stony * 0.3 + stony * 0.1 + 0.054, fine) * spill * 1.8,
-        footprint,
-        select(23.0, 3.0, fine),
-        select(0.85, 0.75, fine),
-    );
     // Mud plates only where the bake dried some; their crack depth joins the relief.
     var cracks = vec2f(0.0);
     if dried > 0.02 {
@@ -60,21 +40,11 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let bake_height = dot(baked.rgb, LUMA);
     let height = near * mix(0.35, 1.6, stony) + bake_height * SOIL_BAKE_RELIEF
         - cracks.x * 0.04 + cracks.y * 0.03;
-    var normal = derivative_bump(height, 1.0, f.world, (*s).normal, f.front_facing);
-    let lean = stones.lean * 0.6;
-    normal = normalize(normal + vec3f(lean.x, 0.0, lean.y));
     var color = baked.rgb * mix(1.0, detail, mix(0.55, 1.5, stony));
-    color *= 1.0 - (stones.shadow * 0.3 + stones.contact * 0.1);
-    // Stones are the floor's own rock under its dust: their tints pulled toward
-    // the soil so they sit in its value range, a lit crown settling into a
-    // shaded rim where they sink in, never dark chips or chocolate domes.
-    color = mix(color, color * mix(stones.tint, vec3f(1.0), SOIL_STONE_DUST), stones.cover);
-    color *= 1.0 - stones.rim * 0.18;
     // Dried plates are paler and cooler; the cracks hold shade and moisture.
     color *= 1.0 + cracks.y * 0.12;
     color = mix(color, color * vec3f(0.55, 0.5, 0.46), cracks.x * 0.65);
     (*s).color = color * f.vertex_color.rgb * material.color.rgb * f.tint.rgb;
     (*s).opacity = material.color.a * f.tint.a;
-    (*s).normal = normal;
-    (*s).roughness = mix((*s).roughness, 0.75, stones.cover * 0.5);
+    (*s).normal = derivative_bump(height, 1.0, f.world, (*s).normal, f.front_facing);
 }
