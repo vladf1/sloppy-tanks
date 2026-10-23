@@ -74,11 +74,26 @@ pub const SHADOW_VIEW: usize = 2;
 pub const VIEW_COUNT: usize = 3;
 
 /// One draw call: a class (mesh + material + pipeline) over a record range.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Draw {
     pub class: u32,
     pub first_instance: u32,
     pub instance_count: u32,
+    /// A run of a merged part's segments: indices `first_index..+index_count` of
+    /// its mesh. An `index_count` of 0 draws the whole mesh.
+    pub first_index: u32,
+    pub index_count: u32,
+}
+
+impl Draw {
+    /// The index range it draws of a mesh whose indices are `mesh` in its page.
+    pub fn indices(&self, mesh: std::ops::Range<u32>) -> std::ops::Range<u32> {
+        if self.index_count == 0 {
+            return mesh;
+        }
+        let first = mesh.start + self.first_index;
+        first..first + self.index_count
+    }
 }
 
 #[derive(Clone, Debug, Default)]
@@ -100,6 +115,9 @@ enum Source {
     Record(u32),
     /// A persistent range (static instanced scenery).
     Range { first: u32, count: u32 },
+    /// A record drawing only indices `first..first + count` of its class's mesh (a
+    /// run of a merged part's segments): a draw of its own.
+    Run { record: u32, first: u32, count: u32 },
 }
 
 /// The GPU state an opaque draw of a class binds. Ordering classes by it
@@ -303,6 +321,37 @@ impl DrawListBuilder {
         }
     }
 
+    /// Queue a draw of indices `first_index..+index_count` of the class's mesh with
+    /// record `record`: one run of a merged part's segments.
+    #[allow(clippy::too_many_arguments)]
+    pub fn push_run(
+        &mut self,
+        view: usize,
+        class: u32,
+        transparent: bool,
+        render_order: i32,
+        depth: f32,
+        record: u32,
+        first_index: u32,
+        index_count: u32,
+    ) {
+        let item = Item {
+            render_order,
+            class,
+            depth,
+            source: Source::Run {
+                record,
+                first: first_index,
+                count: index_count,
+            },
+        };
+        if transparent {
+            self.transparent[view].push(item);
+        } else {
+            self.opaque[view].push(item);
+        }
+    }
+
     /// Sort every view and emit draws. Dynamic records start at `base` in the GPU
     /// instance buffer; `self.records` holds them in draw order afterwards.
     /// `order[view]` gives each class's position in that view
@@ -366,6 +415,7 @@ fn emit(
             records.push(pending[index as usize]);
             if let Some(last) = draws.last_mut()
                 && last.class == item.class
+                && last.index_count == 0
                 && last.first_instance + last.instance_count == at
             {
                 last.instance_count += 1;
@@ -373,11 +423,28 @@ fn emit(
             }
             (at, 1)
         }
+        Source::Run {
+            record,
+            first,
+            count,
+        } => {
+            let at = base + records.len() as u32;
+            records.push(pending[record as usize]);
+            draws.push(Draw {
+                class: item.class,
+                first_instance: at,
+                instance_count: 1,
+                first_index: first,
+                index_count: count,
+            });
+            return;
+        }
     };
     draws.push(Draw {
         class: item.class,
         first_instance,
         instance_count,
+        ..Draw::default()
     });
 }
 
@@ -387,10 +454,11 @@ fn bucket(item: &Item, order: &[u32]) -> usize {
     2 * order[item.class as usize] as usize + matches!(item.source, Source::Range { .. }) as usize
 }
 
-/// A record's place within its bucket: records in record (push) order; ranges last.
+/// A record's place within its bucket: records and runs in record (push) order;
+/// ranges last.
 fn rank(item: &Item) -> u32 {
     match item.source {
-        Source::Record(index) => index,
+        Source::Record(index) | Source::Run { record: index, .. } => index,
         Source::Range { .. } => u32::MAX,
     }
 }
@@ -527,17 +595,20 @@ mod tests {
                 Draw {
                     class: 1,
                     first_instance: 10,
-                    instance_count: 2
+                    instance_count: 2,
+                    ..Draw::default()
                 },
                 Draw {
                     class: 1,
                     first_instance: 0,
-                    instance_count: 500
+                    instance_count: 500,
+                    ..Draw::default()
                 },
                 Draw {
                     class: 3,
                     first_instance: 12,
-                    instance_count: 3
+                    instance_count: 3,
+                    ..Draw::default()
                 },
             ]
         );
@@ -752,6 +823,36 @@ mod tests {
     }
 
     #[test]
+    fn runs_of_a_merged_part_draw_their_own_indices() {
+        let mut builder = DrawListBuilder::default();
+        let mut views: [ViewDraws; VIEW_COUNT] = Default::default();
+        let shared = builder.record(record(1.0));
+        builder.push_run(MAIN_VIEW, 2, false, 0, 0.0, shared, 0, 30);
+        builder.push_run(MAIN_VIEW, 2, false, 0, 0.0, shared, 90, 12);
+        // A plain record of the class after them stays its own draw.
+        let r = builder.record(record(2.0));
+        builder.push(MAIN_VIEW, 2, false, 0, 0.0, r);
+        finish(&mut builder, 5, &mut views, &orders(8, same_state));
+        let draws: Vec<_> = views[MAIN_VIEW]
+            .opaque
+            .iter()
+            .map(|d| {
+                (
+                    d.first_instance,
+                    d.instance_count,
+                    d.first_index,
+                    d.index_count,
+                )
+            })
+            .collect();
+        assert_eq!(draws, [(5, 1, 0, 30), (6, 1, 90, 12), (7, 1, 0, 0)]);
+        assert_eq!(builder.records[1].translation().x, 1.0);
+        let run = views[MAIN_VIEW].opaque[1];
+        assert_eq!(run.indices(100..400), 190..202);
+        assert_eq!(views[MAIN_VIEW].opaque[2].indices(100..400), 100..400);
+    }
+
+    #[test]
     fn transparent_draws_sort_by_order_then_back_to_front() {
         let mut builder = DrawListBuilder::default();
         let mut views: [ViewDraws; VIEW_COUNT] = Default::default();
@@ -845,7 +946,7 @@ mod tests {
         let mut pick = |n: f64| (random.next_f64() * n) as u32;
         // What an item is: its class, whether it is a range, and its record or first.
         let identity = |item: &Item| match item.source {
-            Source::Record(index) => (item.class, false, index),
+            Source::Record(index) | Source::Run { record: index, .. } => (item.class, false, index),
             Source::Range { first, .. } => (item.class, true, first),
         };
         let mut scratch = Buckets::default();

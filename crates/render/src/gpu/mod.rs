@@ -76,8 +76,8 @@ use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::MaterialInterner;
 use crate::mesh_pages::MeshRange;
 use crate::model::{
-    InstanceData, ModelNode, PartMesh, PreparedModel, prepare_model, prepare_owned_model,
-    prepare_scenery,
+    InstanceData, ModelNode, PartMesh, PreparedModel, Segment, prepare_combined, prepare_model,
+    prepare_owned_model, prepare_scenery,
 };
 use crate::presentation::theme::SHADOW_DEPTH;
 use crate::presentation::theme::{Grade, Tone};
@@ -515,6 +515,13 @@ struct ClassEntry {
     back: Option<u32>,
     shadow: Option<u32>,
     depth: Option<u32>,
+    /// Whether its shadow and occlusion-depth draws need its own material bound
+    /// ([`ShaderKey::reads_own_material`]); most depth-only casters do not. WebGL
+    /// reads it from the linked program instead.
+    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    shadow_material: bool,
+    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    depth_material: bool,
     /// Parts using this class that cast shadows.
     casters: u32,
     users: u32,
@@ -553,6 +560,9 @@ struct PartEntry {
     /// Mesh-space bounds.
     bounds: Sphere,
     instances: Option<Vec<InstanceData>>,
+    /// A part merged across a combined model's fixed joints: each joint's share of
+    /// its mesh, drawn in runs of the joints that show and are in view.
+    segments: Option<Vec<Segment>>,
     /// Its shadow draws from the model's merged casters (unless faded).
     merged_shadow: bool,
     fixed_shadow: bool,
@@ -667,10 +677,10 @@ const ZERO_RECORD: InstanceRecord = InstanceRecord {
 struct ModelEntry {
     skeleton: PreparedModel,
     parts: Vec<PartEntry>,
-    /// Merged shadow casters, and for movable models the parts (entry indices)
-    /// whose posed records fill slots 0.. (`None`: a part that was skipped).
+    /// Merged shadow casters, and for movable models the parts (entry indices) and
+    /// segments whose posed records fill slots 0.. (`None`: a part that was skipped).
     shadow: Vec<ShadowMesh>,
-    shadow_slots: Vec<Option<usize>>,
+    shadow_slots: Vec<Option<(usize, Option<usize>)>>,
     owned_meshes: Vec<u32>,
     lifetime: Lifetime,
     scenery: bool,
@@ -1255,14 +1265,12 @@ impl Renderer {
                 };
                 let shadow = PipelineKey::shadow(shadow_shader, source);
                 // Without the shadow's dither, which only fades a caster's shadow.
+                let depth_shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
                 let depth_key = (backend::OCCLUSION_DEPTH_PASS
                     && !transparent
                     && source.depth_write
                     && source.depth_test)
-                    .then(|| {
-                        let shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
-                        PipelineKey::occlusion_depth(shader, source)
-                    });
+                    .then(|| PipelineKey::occlusion_depth(depth_shader, source));
                 // Classes are created before their pipelines compile, and draw lists
                 // sort by these.
                 let ranks = [main, shadow].map(|key| pipeline_rank(&mut self.ranks, &key));
@@ -1277,6 +1285,8 @@ impl Renderer {
                     back: None,
                     shadow: None,
                     depth: None,
+                    shadow_material: shadow_shader.reads_own_material(),
+                    depth_material: depth_shader.reads_own_material(),
                     casters: 0,
                     users: 0,
                 };
@@ -1416,12 +1426,16 @@ impl Renderer {
                 frustum_culled: part.frustum_culled,
                 bounds: self.meshes.get(mesh).bounds,
                 instances: part.instances,
+                segments: part.segments,
                 merged_shadow: merged[prepared_index],
                 fixed_shadow: shadow_merge_kind(&self.effects, &part.material)
                     != MergeKind::Separate,
             });
         }
-        let shadow_slots = slots.iter().map(|&index| entry_of[index]).collect();
+        let shadow_slots = slots
+            .iter()
+            .map(|slot| entry_of[slot.part].map(|entry| (entry, slot.segment)))
+            .collect();
         let shadow = groups
             .into_iter()
             .zip(reservation.shadow)
@@ -1472,6 +1486,14 @@ impl Renderer {
     /// caller drops `root` no CPU copy stays in the Wasm heap.
     pub fn add_owned_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_owned_model(root, &mut self.interner);
+        self.register(prepared, lifetime, false)
+    }
+
+    /// Prepare a model whose root's named children are fixed, only ever shown or
+    /// hidden (`model::prepare_combined`): their plain opaque parts merge across them
+    /// per material and draw in runs of the joints that show.
+    pub fn add_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_combined(root, &mut self.interner);
         self.register(prepared, lifetime, false)
     }
 
@@ -1806,6 +1828,7 @@ impl Renderer {
                 class: index,
                 first_instance: 0,
                 instance_count: 1,
+                ..Draw::default()
             };
             if class.transparent {
                 self.views[MAIN_VIEW].transparent.push(draw);
@@ -2403,6 +2426,7 @@ impl Renderer {
                             class: class_index,
                             first_instance: range.first,
                             instance_count: range.count,
+                            ..Draw::default()
                         });
                     }
                     for view in 0..VIEW_COUNT {
@@ -2421,6 +2445,54 @@ impl Renderer {
                     continue;
                 }
                 let transform = joints[part.node] * part.local;
+                if let Some(segments) = &part.segments {
+                    // Runs of the segments each view shows: consecutive ones are
+                    // contiguous in the mesh, so a run is one draw of one record.
+                    let mut record = None;
+                    let mut runs: [Option<(u32, u32)>; VIEW_COUNT] = [None; VIEW_COUNT];
+                    let mut flush = |view: usize, run: Option<(u32, u32)>| {
+                        // An empty run draws nothing (a zero count means the whole mesh).
+                        let Some((first, end)) = run.filter(|(first, end)| end > first) else {
+                            return;
+                        };
+                        let index = *record.get_or_insert_with(|| {
+                            builder.record(InstanceRecord::new(&transform, tint, instance.data))
+                        });
+                        builder.push_run(
+                            view,
+                            class_index,
+                            transparent && view != SHADOW_VIEW,
+                            part.render_order,
+                            0.0,
+                            index,
+                            first,
+                            end - first,
+                        );
+                    };
+                    for segment in segments {
+                        let shown = joint_visible[segment.node];
+                        let sphere = segment.bounds.transformed(&transform);
+                        for (view, run) in runs.iter_mut().enumerate() {
+                            if shown && in_view(view, &sphere) {
+                                match run {
+                                    Some((_, end)) if *end == segment.indices.start => {
+                                        *end = segment.indices.end;
+                                    }
+                                    _ => {
+                                        flush(view, run.take());
+                                        *run = Some((segment.indices.start, segment.indices.end));
+                                    }
+                                }
+                            } else {
+                                flush(view, run.take());
+                            }
+                        }
+                    }
+                    for (view, run) in runs.into_iter().enumerate() {
+                        flush(view, run);
+                    }
+                    continue;
+                }
                 let mut emit = |world: Mat4, color: [f32; 3], data: [f32; 4]| {
                     let sphere = part.bounds.transformed(&world);
                     let mut record = None;
@@ -2486,10 +2558,21 @@ impl Renderer {
                     let first = merged_records.len();
                     let mut sphere: Option<Sphere> = None;
                     for slot in &model.shadow_slots {
-                        let record = match slot.map(|index| &model.parts[index]) {
-                            Some(part) if joint_visible[part.node] => {
+                        // A segment hides with its fixed joint; its vertices lie in
+                        // its part's space.
+                        let posed = slot.map(|(index, segment)| {
+                            let part = &model.parts[index];
+                            match segment.and_then(|s| part.segments.as_ref().map(|all| &all[s])) {
+                                Some(segment) => (part, segment.node, segment.bounds),
+                                None => (part, part.node, part.bounds),
+                            }
+                        });
+                        let record = match posed {
+                            Some((part, node, bounds))
+                                if joint_visible[part.node] && joint_visible[node] =>
+                            {
                                 let world = joints[part.node] * part.local;
-                                let bounds = part.bounds.transformed(&world);
+                                let bounds = bounds.transformed(&world);
                                 sphere = Some(sphere.map_or(bounds, |s| s.union(&bounds)));
                                 InstanceRecord::new(&world, tint, instance.data)
                             }
