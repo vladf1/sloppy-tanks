@@ -29,7 +29,8 @@ try {
     for (let i = 0; i < 4; i++) window.runLoop(performance.now());
   });
   assert.equal(await page.locator("#feed img").count(), 0);
-  assert.match(await page.locator("#feed").innerText(), /YOU.*<img src=x onerror=alert\(1\)>/);
+  // The feed sets each name on its own line, in capitals.
+  assert.match(await page.locator("#feed").innerText(), /YOU\s+<img src=x onerror=alert\(1\)>/i);
   // Battle speeds live in Settings, which pause the battle while open.
   await page.locator("#settings-open").click();
   await advance();

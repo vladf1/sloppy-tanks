@@ -299,13 +299,15 @@ export class UI {
         this.damageTime = 0;
       }
       if (event.type === "pickup" || event.type === "promotion" || event.type === "death") {
-        this.toast.textContent = event.type === "death" ? this.deathCause : (event.label ?? "");
-        this.toast.dataset.tone = event.type;
+        // A fresh element pops in from the start, also over a toast still showing;
+        // restarting the old one's entrance would need a forced style and layout pass.
+        const toast = this.toast.cloneNode(false) as HTMLElement;
+        toast.textContent = event.type === "death" ? this.deathCause : (event.label ?? "");
+        toast.dataset.tone = event.type;
+        toast.classList.add("visible");
+        this.toast.replaceWith(toast);
+        this.toast = toast;
         this.toastTime = event.type === "pickup" ? 1.5 : 2;
-        this.toast.classList.remove("visible");
-        // Commit the hidden state so a toast replacing a visible one pops in again.
-        void this.toast.offsetWidth;
-        this.toast.classList.add("visible");
       }
     }
     if (event.type === "death") {

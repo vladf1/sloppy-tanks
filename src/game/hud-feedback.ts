@@ -151,8 +151,9 @@ export function newFeedRow(
 /** Shows a feed row: one name for a notice, or killer and victim with the weapon's icon
  * between. Icons are SVG shapes because small font sets, such as Tesla's browser, lack
  * symbol glyphs and draw a missing-glyph box instead. Every row has one plate; the
- * viewer's own kills and wreck carry its highlight. `entering` is the newest row, which
- * plays the pop-in once rather than again each time older rows shift down. */
+ * viewer's own kills and wreck carry its highlight. `entering` marks the newest row,
+ * which plays the pop-in; its animation starts when the row's element is new to the
+ * page, which `showFeed` makes sure of. */
 export function showFeedRow(
   row: HTMLElement,
   feedRow: Pick<FeedRow, "names" | "ownKill" | "seq" | "cause" | "sides" | "ownDeath">,
@@ -171,8 +172,6 @@ export function showFeedRow(
   row.dataset.to = sides[1] ?? "neutral";
   row.classList.remove("own-kill-new", "feed-new");
   if (entering) {
-    // Reading offsetWidth commits the removal so a reused row restarts the animation.
-    void row.offsetWidth;
     row.classList.add(ownKill ? "own-kill-new" : "feed-new");
   }
   const name = (text: string, index: number) => {
@@ -196,21 +195,33 @@ export function showFeedRow(
   });
 }
 
-/** Ages the kill feed by `dt` seconds and shows its newest live rows in `feed`, reusing
- * row elements. Returns the rows still showing. */
+/** Ages the kill feed by `dt` seconds and shows its newest live rows in `feed`. Returns
+ * the rows still showing. Each row keeps its element while it shows: rows only enter at
+ * the top, so older rows stay as they are while a new one pushes them down, and a new
+ * row enters as a fresh element whose pop-in starts by itself. Restarting the animation
+ * on a reused element instead needed a forced style and layout pass mid-frame (10 ms of
+ * a death frame on a slow device); moving an element would restart it too. */
 export function showFeed(feed: Element, rows: FeedRow[], dt: number): FeedRow[] {
   const live = rows.filter((row) => (row.time -= dt) > 0);
   live.length = Math.min(FEED_ROWS, live.length);
-  while (feed.childElementCount > live.length) {
-    feed.lastElementChild!.remove();
-  }
-  live.forEach((row, index) => {
-    let node = feed.children[index] as HTMLElement | undefined;
-    if (!node) {
-      node = document.createElement("div");
-      feed.append(node);
+  const showing = new Set(live.map((row) => String(row.seq)));
+  for (const node of Array.from(feed.children) as HTMLElement[]) {
+    if (!showing.has(node.dataset.seq ?? "")) {
+      node.remove();
     }
+  }
+  // The elements left show live rows in order; new rows go in above them.
+  let next = feed.firstElementChild as HTMLElement | null;
+  live.forEach((row, index) => {
+    const seq = String(row.seq);
+    if (next?.dataset.seq === seq) {
+      next = next.nextElementSibling as HTMLElement | null;
+      return;
+    }
+    const node = document.createElement("div");
+    node.dataset.seq = seq;
     showFeedRow(node, row, index === 0);
+    feed.insertBefore(node, next);
   });
   return live;
 }
@@ -269,9 +280,9 @@ export function showDamageRing(
   const { x, y } = damageEdgePoint(angle);
   indicator.style.setProperty("--edge-x", x);
   indicator.style.setProperty("--edge-y", y);
-  indicator.classList.remove("pulse");
-  // Commit the removal so a second hit restarts the pulse.
-  void indicator.offsetWidth;
+  // A fresh glow element restarts the pulse at once; re-adding the class to the old one
+  // would need a forced style and layout pass to see it go first.
+  indicator.replaceChildren(document.createElement("i"));
   indicator.classList.add("pulse");
   indicator.hidden = false;
 }

@@ -1254,11 +1254,17 @@ body:has(#settings[open]) .hud-actions {
   transform: translateX(-50%) scale(0.92);
 }
 /* A notice appears at full strength at once and only its scale settles; it leaves at
-   once too, so a notice is never left half-faded over the arena. */
+   once too, so a notice is never left half-faded over the arena. Each notice is a fresh
+   element, so the entrance plays from the start every time. */
 #toast.visible {
   opacity: 1;
   transform: translateX(-50%);
-  transition: transform 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+  animation: toast-in 0.25s cubic-bezier(0.2, 1.4, 0.4, 1);
+}
+@keyframes toast-in {
+  from {
+    transform: translateX(-50%) scale(0.92);
+  }
 }
 #toast[data-tone="pickup"] {
   box-shadow:
