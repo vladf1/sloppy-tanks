@@ -5,8 +5,8 @@
 //!
 //! Each distinct shader costs a full compile on a cold shader cache (about 0.3 s
 //! for a lit one on an Apple GPU, one at a time in WebKit), so only what changes the
-//! cost of every pixel is a variant: lighting, shadow reception, alpha test and
-//! effects. The cheap per-material features ([`MaterialFeatures`]) are uniform
+//! cost of every pixel is a variant: lighting, alpha test and effects. Shadow
+//! reception and the cheap per-material features ([`MaterialFeatures`]) are uniform
 //! branches, and the side a material draws follows from the pipeline's culling.
 
 use bytemuck::{Pod, Zeroable};
@@ -93,7 +93,6 @@ pub struct ShaderKey {
     pub lit: bool,
     pub alpha_test: bool,
     pub alpha_to_coverage: bool,
-    pub receive_shadow: bool,
     /// Effect id from the registry; 0 is none.
     pub effect: u16,
     /// Shadow pass only: dither the shadow of a fading instance.
@@ -101,14 +100,17 @@ pub struct ShaderKey {
 }
 
 impl ShaderKey {
-    pub fn main(material: &Material, effect: u16, receive_shadow: bool) -> Self {
+    /// A surface variant. Whether it receives the sun's shadow is a uniform branch
+    /// (`MaterialFeatures::RECEIVE_SHADOW`), not a variant: a lit shader without the
+    /// shadow was a second compile of nearly all the same code (WebKit compiles each
+    /// at first use on a cold start), for parts as plain as a lit prop.
+    pub fn main(material: &Material, effect: u16) -> Self {
         let lit = material.shading == Shading::Standard;
         Self {
             pass: Pass::Main,
             lit,
             alpha_test: material.alpha_test > 0.0,
             alpha_to_coverage: material.alpha_to_coverage && material.alpha_test > 0.0,
-            receive_shadow: lit && receive_shadow,
             effect,
             shadow_fade: false,
         }
@@ -165,8 +167,11 @@ impl MaterialFeatures {
     pub const FLAT_SHADING: u32 = 16;
     pub const FOG: u32 = 32;
     /// Drawn blended whatever the instance's opacity (`PipelineKey::main`), so the
-    /// shader writes its opacity, not its haze distance, as alpha.
+    /// shader writes its opacity, not its haze, as alpha.
     pub const BLENDED: u32 = 64;
+    /// Lit and receiving the sun's shadow. A part's setting rather than its
+    /// material's: the material store sets it per (material, reception) pair.
+    pub const RECEIVE_SHADOW: u32 = 128;
 
     pub fn of(material: &Material) -> Self {
         let lit = material.shading == Shading::Standard;
@@ -214,6 +219,15 @@ pub struct MaterialUniform {
 }
 
 impl MaterialUniform {
+    /// `material`'s uniform for parts that do or do not `receive_shadow`.
+    pub fn for_part(material: &Material, receive_shadow: bool) -> Self {
+        let mut uniform = Self::of(material);
+        if receive_shadow && material.shading == Shading::Standard {
+            uniform.features[0] |= MaterialFeatures::RECEIVE_SHADOW;
+        }
+        uniform
+    }
+
     pub fn of(material: &Material) -> Self {
         let [r, g, b] = hex_to_linear(material.color.0);
         let [er, eg, eb] = hex_to_linear(material.emissive.0);
@@ -354,12 +368,11 @@ fn vertex_extra1(input: VertexIn) -> vec4f { return vec4f(0.0); }
 ";
 
 /// The variant constants the templates branch on.
-fn flags(key: &ShaderKey) -> [(&'static str, bool); 5] {
+fn flags(key: &ShaderKey) -> [(&'static str, bool); 4] {
     [
         ("LIT", key.lit),
         ("ALPHA_TEST", key.alpha_test),
         ("ALPHA_TO_COVERAGE", key.alpha_to_coverage),
-        ("RECEIVE_SHADOW", key.receive_shadow),
         ("SHADOW_FADE", key.shadow_fade),
     ]
 }
@@ -749,7 +762,6 @@ pub(crate) mod webgl_check {
                 pass: Pass::Main,
                 lit,
                 alpha_test,
-                receive_shadow: lit,
                 effect: id,
                 ..ShaderKey::default()
             };
@@ -777,7 +789,7 @@ mod tests {
     fn every_variant_is_valid_wgsl_and_translates_for_webgl() {
         let effects = EffectRegistry::default();
         let texture = InstanceSource::Texture;
-        for bits in 0..(1u32 << 4) {
+        for bits in 0..(1u32 << 3) {
             let bit = |i: u32| bits & (1 << i) != 0;
             for effect in 0..=2u16 {
                 let key = ShaderKey {
@@ -785,13 +797,12 @@ mod tests {
                     lit: bit(0),
                     alpha_test: bit(1),
                     alpha_to_coverage: bit(1) && bit(2),
-                    receive_shadow: bit(0) && bit(3),
                     effect,
                     shadow_fade: false,
                 };
                 check_variant("surface", &key, &effects);
-                // Lighting and shadow reception (bits 0 and 3) leave a caster unchanged.
-                if !bit(0) && !bit(3) {
+                // Lighting (bit 0) leaves a caster unchanged.
+                if !bit(0) {
                     let shadow = ShaderKey {
                         pass: Pass::Shadow,
                         alpha_test: bit(1),
@@ -869,7 +880,6 @@ mod tests {
                 .map(|(lit, alpha_test)| ShaderKey {
                     lit,
                     alpha_test,
-                    receive_shadow: lit,
                     effect,
                     ..ShaderKey::default()
                 })
@@ -943,13 +953,12 @@ mod tests {
         let effects = EffectRegistry::default();
         let mut vertex = std::collections::HashSet::new();
         let mut fragment = std::collections::HashSet::new();
-        for bits in 0..(1u32 << 4) {
+        for bits in 0..(1u32 << 3) {
             let bit = |i: u32| bits & (1 << i) != 0;
             let key = ShaderKey {
                 lit: bit(0),
                 alpha_test: bit(1),
                 alpha_to_coverage: bit(1) && bit(2),
-                receive_shadow: bit(0) && bit(3),
                 ..ShaderKey::default()
             };
             let stages = StageSources::variant(&key, &effects);
@@ -1000,16 +1009,10 @@ mod tests {
         let count =
             crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
         for effect in 0..=count as u16 {
-            for (lit, alpha_test, receive_shadow) in [
-                (false, false, false),
-                (true, false, false),
-                (true, true, true),
-                (true, false, true),
-            ] {
+            for (lit, alpha_test) in [(false, false), (true, false), (true, true)] {
                 let key = ShaderKey {
                     lit,
                     alpha_test,
-                    receive_shadow,
                     effect,
                     ..ShaderKey::default()
                 };
@@ -1050,7 +1053,6 @@ mod tests {
                 lit,
                 alpha_test: cutout,
                 alpha_to_coverage: cutout,
-                receive_shadow: lit,
                 ..ShaderKey::default()
             };
             let fragment = StageSources::variant(&key, &effects)
@@ -1095,16 +1097,9 @@ mod tests {
             },
             &effects,
         );
-        assert!(lit.contains("fn shade_standard(") && !lit.contains("fn sun_shadow("));
-        let shadowed = shader_source(
-            &ShaderKey {
-                lit: true,
-                receive_shadow: true,
-                ..ShaderKey::default()
-            },
-            &effects,
-        );
-        assert!(shadowed.contains("fn sun_shadow("));
+        // Shadow reception is a uniform branch of every lit variant.
+        assert!(lit.contains("fn shade_standard(") && lit.contains("fn sun_shadow("));
+        assert!(!unlit.contains("fn sun_shadow("));
         let caster = shader_source(
             &ShaderKey::shadow(&Material::default(), 0, false, &effects),
             &effects,
@@ -1126,10 +1121,7 @@ mod tests {
             side: Side::Double,
             ..plain.clone()
         };
-        assert_eq!(
-            ShaderKey::main(&plain, 0, true),
-            ShaderKey::main(&featured, 0, true)
-        );
+        assert_eq!(ShaderKey::main(&plain, 0), ShaderKey::main(&featured, 0));
         let features = MaterialFeatures::of(&featured);
         for feature in [
             MaterialFeatures::MAP,
@@ -1142,6 +1134,19 @@ mod tests {
         }
         assert!(features.0 & MaterialFeatures::FOG == 0);
         assert!(MaterialFeatures::of(&plain).0 & MaterialFeatures::FOG != 0);
+    }
+
+    #[test]
+    fn shadow_reception_is_a_lit_part_setting_not_a_variant() {
+        let lit = Material::standard(0x808080, 0.5, 0.1);
+        let unlit = Material::basic(0xffffff);
+        let receives = |material: &Material, receive: bool| {
+            MaterialUniform::for_part(material, receive).features[0]
+                & MaterialFeatures::RECEIVE_SHADOW
+                != 0
+        };
+        assert!(receives(&lit, true) && !receives(&lit, false));
+        assert!(!receives(&unlit, true));
     }
 
     #[test]
@@ -1167,6 +1172,7 @@ mod tests {
             ("FLAT_SHADING", MaterialFeatures::FLAT_SHADING),
             ("FOG", MaterialFeatures::FOG),
             ("BLENDED", MaterialFeatures::BLENDED),
+            ("RECEIVE_SHADOW", MaterialFeatures::RECEIVE_SHADOW),
         ] {
             let declaration = format!("const MATERIAL_{name}: u32 = {bit}u;");
             assert!(MATERIAL_WGSL.contains(&declaration), "{declaration}");
@@ -1283,14 +1289,14 @@ mod tests {
             polygon_offset: Some((-1.0, -1.0)),
             ..Material::default()
         };
-        let main = PipelineKey::main(ShaderKey::main(&drift, 0, true), &drift, false);
+        let main = PipelineKey::main(ShaderKey::main(&drift, 0), &drift, false);
         assert_eq!(main.depth_bias.constant, -1);
         assert_eq!(main.depth_bias.slope_scale(), -1.0);
         let effects = EffectRegistry::default();
         let shadow = PipelineKey::shadow(ShaderKey::shadow(&drift, 0, false, &effects), &drift);
         assert_eq!(shadow.depth_bias, DepthBias::default());
         let plain = PipelineKey::main(
-            ShaderKey::main(&Material::default(), 0, true),
+            ShaderKey::main(&Material::default(), 0),
             &Material::default(),
             false,
         );

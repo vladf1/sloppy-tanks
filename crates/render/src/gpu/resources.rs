@@ -478,16 +478,22 @@ pub struct GpuMaterial {
     /// Its uniform and textures as the backend binds them.
     pub binding: MaterialBinding,
     pub effect: u16,
+    /// Its parts receive the sun's shadow (`MaterialFeatures::RECEIVE_SHADOW`).
+    receive_shadow: bool,
     /// The texture store's generation it was bound at.
     generation: u64,
     /// Live draw classes using this material.
     pub users: u32,
 }
 
+/// The store's key: an interned material's identity, and whether the parts drawn
+/// with it receive the sun's shadow (`MaterialUniform::for_part`).
+type MaterialKey = (usize, bool);
+
 #[derive(Default)]
 pub struct MaterialStore {
     slots: Slab<GpuMaterial>,
-    by_ptr: HashMap<usize, u32>,
+    by_ptr: HashMap<MaterialKey, u32>,
     warned: Vec<&'static str>,
 }
 
@@ -509,15 +515,17 @@ fn bound_textures<'a>(
 }
 
 impl MaterialStore {
-    /// The GPU material for an interned material, creating it on first use.
+    /// The GPU material for an interned material drawn on parts that do or do not
+    /// `receive_shadow`, creating it on first use.
     pub fn get_or_create(
         &mut self,
         gpu: &Gpu,
         textures: &mut TextureStore,
         effects: &EffectRegistry,
         material: &Arc<Material>,
+        receive_shadow: bool,
     ) -> u32 {
-        let key = Arc::as_ptr(material) as usize;
+        let key = (Arc::as_ptr(material) as usize, receive_shadow);
         if let Some(&index) = self.by_ptr.get(&key) {
             return index;
         }
@@ -538,10 +546,12 @@ impl MaterialStore {
         };
         let generation = textures.generation;
         let bound = bound_textures(gpu, textures, material);
+        let uniform = MaterialUniform::for_part(material, receive_shadow);
         let entry = GpuMaterial {
             material: material.clone(),
-            binding: MaterialBinding::new(gpu, &MaterialUniform::of(material), bound),
+            binding: MaterialBinding::new(gpu, &uniform, bound),
             effect,
+            receive_shadow,
             generation,
             users: 0,
         };
@@ -582,16 +592,28 @@ impl MaterialStore {
 
     /// Free materials no draw uses and nobody but the store and the interner holds.
     pub fn collect_unused(&mut self) {
+        // A material drawn both with and without shadows has two entries, each
+        // holding it.
+        let mut held: HashMap<usize, usize> = HashMap::new();
+        for (_, entry) in self.slots.iter() {
+            *held
+                .entry(Arc::as_ptr(&entry.material) as usize)
+                .or_default() += 1;
+        }
         let unused: Vec<u32> = self
             .slots
             .iter()
-            .filter(|(_, entry)| entry.users == 0 && Arc::strong_count(&entry.material) <= 2)
+            .filter(|(_, entry)| {
+                let ptr = Arc::as_ptr(&entry.material) as usize;
+                entry.users == 0 && Arc::strong_count(&entry.material) <= 1 + held[&ptr]
+            })
             .map(|(index, _)| index)
             .collect();
         for index in unused {
             // Dropping the binding destroys its uniform buffer.
             let entry = self.slots.remove(index).expect("checked");
-            self.by_ptr.remove(&(Arc::as_ptr(&entry.material) as usize));
+            self.by_ptr
+                .remove(&(Arc::as_ptr(&entry.material) as usize, entry.receive_shadow));
         }
     }
 

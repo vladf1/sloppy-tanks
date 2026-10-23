@@ -3,7 +3,7 @@
 // shading, alpha test, fog, the sun's PCF shadow, hemisphere fill and up to four
 // point lights; with the atmosphere on, cloud shadows and a sky rim, and its aerial
 // haze left to the output pass (`haze_alpha`).
-// Lighting, alpha test and shadow reception are variant constants; the cheap
+// Lighting and alpha test are variant constants; shadow reception and the cheap
 // per-material features are uniform branches (`material_has`).
 // Lighting runs in world space; every dot and cross product Three evaluates in
 // view space is invariant under the view's rotation. Output is linear HDR; the
@@ -244,15 +244,6 @@ fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
 // The share of the shadow map over which shadows fade out toward its edge.
 const SHADOW_EDGE_FADE: f32 = 0.04;
 
-fn distance_attenuation(distance: f32, cutoff: f32, decay: f32) -> f32 {
-    let falloff = 1.0 / max(pow(distance, decay), 0.01);
-    if cutoff > 0.0 {
-        let window = clamp(1.0 - pow(distance / cutoff, 4.0), 0.0, 1.0);
-        return falloff * window * window;
-    }
-    return falloff;
-}
-
 struct Reflected {
     diffuse: vec3f,
     specular: vec3f,
@@ -282,7 +273,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     reflected.diffuse = vec3f(0.0);
     reflected.specular = vec3f(0.0);
     var sunlit = 1.0;
-    if RECEIVE_SHADOW {
+    if material_has(MATERIAL_RECEIVE_SHADOW) {
         sunlit = sun_shadow(world, n);
     }
     // Inside a cast shadow, how much of the sky's fill the caster leaves open.
@@ -324,55 +315,63 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         let satin_ground = smoothstep(0.8, 0.95, n.y) * smoothstep(0.3, 0.4, s.roughness);
         reflected.specular /= 1.0 + glare / mix(SUN_GLARE_LIMIT, GROUND_GLARE_LIMIT, satin_ground);
     }
-    // The point lights (blast flashes and fires). Their light is summed with its
-    // irradiance-weighted direction and lit once, so the GGX lobe and its two DFG taps
-    // run once for all of them rather than once in each of the four unrolled lights,
-    // and what depends on the surface alone only where any light reaches it: exact
-    // but for several lights at once, whose highlights on glossy paint merge.
-    // With the atmosphere on, fire lights a wide, soft pool rather than a hot spot
-    // under itself: a gentler falloff than Three's inverse square (the cutoff window
-    // still ends it).
-    let decay_share = select(1.0, FIRE_POOL_DECAY, atmosphere_on());
-    var point_irradiance = vec3f(0.0);
-    var point_wrap = vec3f(0.0);
-    var point_direction = vec3f(0.0);
-    for (var i = 0; i < 4; i++) {
-        let light = frame.point_lights[i];
-        if dot(light.color.rgb, vec3f(1.0)) > 0.0 {
-            let offset = light.position.xyz - world;
-            let distance = length(offset);
-            // Past the cutoff the attenuation window is exactly zero.
-            let cutoff = light.position.w;
-            if cutoff <= 0.0 || distance < cutoff {
-                var color = light.color.rgb * distance_attenuation(distance, cutoff, light.color.w * decay_share);
-                let l = offset / max(distance, 1e-6);
-                let facing = dot(n, l);
-                if atmosphere_on() {
-                    // Brighter overall, so blasts and burning wrecks visibly light
-                    // the ground, walls and hulls around them in daylight; but added
-                    // over sunlit grass, amber only yellowed the green into an acid
-                    // blotch, so sunlit faces take less of it.
-                    color = fire_light_ceiling(color * (BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0))));
-                    // Fire is a wide, rolling source, not a point: its light wraps
-                    // past the terminator, so the ground and the sides of hulls and
-                    // walls around a blast glow rather than only the faces square to it.
-                    let wrapped = clamp((facing + FIRE_WRAP) / (1.0 + FIRE_WRAP), 0.0, 1.0) - clamp(facing, 0.0, 1.0);
-                    point_wrap += max(wrapped, 0.0) * color;
-                }
-                let irradiance = clamp(facing, 0.0, 1.0) * color;
-                point_irradiance += irradiance;
-                point_direction += l * dot(irradiance, vec3f(0.2126, 0.7152, 0.0722));
-            }
-        }
-    }
-    if dot(point_irradiance + point_wrap, vec3f(1.0)) > 0.0 {
-        var irradiance = point_irradiance;
-        var wrap = point_wrap;
+    // The point lights (blast flashes and fires), all four at once in the lanes of
+    // vectors: one copy of the code rather than four unrolled ones in every lit
+    // variant. Their light is summed with its irradiance-weighted direction and lit
+    // once, so the GGX lobe and its two DFG taps run once for all of them, and only
+    // where a light reaches: exact but for several lights at once, whose highlights
+    // on glossy paint merge.
+    let lights = frame.point_lights;
+    let strength = vec4f(
+        dot(lights[0].color.rgb, vec3f(1.0)),
+        dot(lights[1].color.rgb, vec3f(1.0)),
+        dot(lights[2].color.rgb, vec3f(1.0)),
+        dot(lights[3].color.rgb, vec3f(1.0)),
+    );
+    if any(strength > vec4f(0.0)) {
+        let dx = vec4f(lights[0].position.x, lights[1].position.x, lights[2].position.x, lights[3].position.x) - world.x;
+        let dy = vec4f(lights[0].position.y, lights[1].position.y, lights[2].position.y, lights[3].position.y) - world.y;
+        let dz = vec4f(lights[0].position.z, lights[1].position.z, lights[2].position.z, lights[3].position.z) - world.z;
+        let cutoff = vec4f(lights[0].position.w, lights[1].position.w, lights[2].position.w, lights[3].position.w);
+        // With the atmosphere on, fire lights a wide, soft pool rather than a hot spot
+        // under itself: a gentler falloff than Three's inverse square (the cutoff
+        // window still ends it).
+        let decay = vec4f(lights[0].color.w, lights[1].color.w, lights[2].color.w, lights[3].color.w)
+            * select(1.0, FIRE_POOL_DECAY, atmosphere_on());
+        let distance = sqrt(dx * dx + dy * dy + dz * dz);
+        // Past the cutoff the attenuation window is exactly zero.
+        let reaches = (strength > vec4f(0.0)) & ((cutoff <= vec4f(0.0)) | (distance < cutoff));
+        // Three's distance attenuation (`distance_attenuation`), lane by lane.
+        let falloff = 1.0 / max(pow(distance, decay), vec4f(0.01));
+        let ratio = distance / max(cutoff, vec4f(1e-6));
+        let window = clamp(1.0 - ratio * ratio * ratio * ratio, vec4f(0.0), vec4f(1.0));
+        let attenuation = select(vec4f(0.0), select(falloff, falloff * window * window, cutoff > vec4f(0.0)), reaches);
+        let inverse = 1.0 / max(distance, vec4f(1e-6));
+        let facing = (dx * n.x + dy * n.y + dz * n.z) * inverse;
+        let luma = vec4f(
+            dot(lights[0].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
+            dot(lights[1].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
+            dot(lights[2].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
+            dot(lights[3].color.rgb, vec3f(0.2126, 0.7152, 0.0722)),
+        );
+        // What scales each light's colour.
+        var scale = attenuation;
+        var wrap_scale = vec4f(0.0);
         var albedo = diffuse;
         var share = 1.0;
         if atmosphere_on() {
-            irradiance = fire_light_hue(irradiance);
-            wrap = fire_light_hue(wrap);
+            // Brighter overall, so blasts and burning wrecks visibly light the
+            // ground, walls and hulls around them in daylight; but added over sunlit
+            // grass, amber only yellowed the green into an acid blotch, so sunlit
+            // faces take less of it. Each light eases toward its ceiling
+            // (`FIRE_LIGHT_LIMIT`).
+            let gain = BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0));
+            scale = attenuation * gain / (1.0 + luma * attenuation * gain / FIRE_LIGHT_LIMIT);
+            // Fire is a wide, rolling source, not a point: its light wraps past the
+            // terminator, so the ground and the sides of hulls and walls around a
+            // blast glow rather than only the faces square to it.
+            let wrapped = clamp((facing + FIRE_WRAP) / (1.0 + FIRE_WRAP), vec4f(0.0), vec4f(1.0)) - clamp(facing, vec4f(0.0), vec4f(1.0));
+            wrap_scale = max(wrapped, vec4f(0.0)) * scale;
             // Amber light on green grass multiplies to an acid yellow-green blotch:
             // the surface lends firelight only part of its own hue, so the pool reads
             // as an orange glow on any ground.
@@ -382,9 +381,19 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
             let green = clamp((diffuse.g - max(diffuse.r, diffuse.b)) / max(diffuse.g, 1e-4), 0.0, 1.0);
             share = 1.0 - FIRE_ON_GREEN_CUT * green;
         }
+        let lit_scale = clamp(facing, vec4f(0.0), vec4f(1.0)) * scale;
+        let colors = mat4x3f(lights[0].color.rgb, lights[1].color.rgb, lights[2].color.rgb, lights[3].color.rgb);
+        var irradiance = colors * lit_scale;
+        var wrap = colors * wrap_scale;
+        if atmosphere_on() {
+            irradiance = fire_light_hue(irradiance);
+            wrap = fire_light_hue(wrap);
+        }
         reflected.diffuse += (irradiance + wrap) * (share * RECIPROCAL_PI) * albedo;
         if dot(irradiance, vec3f(1.0)) > 0.0 {
-            let l = point_direction / max(length(point_direction), 1e-6);
+            let weight = luma * lit_scale * inverse;
+            let direction = vec3f(dot(dx, weight), dot(dy, weight), dot(dz, weight));
+            let l = direction / max(length(direction), 1e-6);
             reflected.specular += irradiance * share * brdf_ggx_multiscatter(l, v, n, specular, 1.0, roughness);
         }
     }
@@ -558,11 +567,6 @@ const FIRE_AMBER_SHARE: f32 = 0.85;
 // about 3: firelight warms shade and the sunlit ground around a blast without washing
 // a near-camera muzzle flash or fireball across the frame.
 const FIRE_LIGHT_LIMIT: f32 = 5.0;
-
-// A flash light eased toward its ceiling (`FIRE_LIGHT_LIMIT`), light by light.
-fn fire_light_ceiling(color: vec3f) -> vec3f {
-    return color / (1.0 + dot(color, vec3f(0.2126, 0.7152, 0.0722)) / FIRE_LIGHT_LIMIT);
-}
 
 // Firelight turned toward amber, keeping its luminance: linear, so the lights' sum
 // takes it at once.

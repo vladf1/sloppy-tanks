@@ -1241,7 +1241,7 @@ impl Renderer {
                 let transparent = source.transparent || faded;
                 let multisampled = self.gpu.samples > 1;
                 let main_key = |material: &sloppy_core::scene::Material| {
-                    let mut shader = ShaderKey::main(material, gpu.effect, receive_shadow);
+                    let mut shader = ShaderKey::main(material, gpu.effect);
                     // Without samples to cover, a soft cutout edge would draw its faint
                     // fringe opaque: a plain alpha test instead.
                     shader.alpha_to_coverage &= multisampled;
@@ -1372,6 +1372,7 @@ impl Renderer {
                 &mut self.textures,
                 &self.effects,
                 &part.material,
+                part.receive_shadow,
             );
             let mesh = match &part.mesh {
                 PartMesh::Shared(mesh) => self.meshes.shared(&gpu, mesh),
@@ -1442,6 +1443,7 @@ impl Renderer {
                         &mut self.textures,
                         &self.effects,
                         material,
+                        false,
                     );
                     self.materials.get_mut(index).users += 1;
                     index
@@ -2699,21 +2701,18 @@ impl Renderer {
             .flat_map(|name| self.effects.ids_named(name))
             .collect();
         let names = &self.debug_off.effects;
-        let skip = |key: &PipelineKey| {
-            let shader = key.shader;
+        let skip = |class: &ClassEntry| {
+            let shader = class.main_key.shader;
+            let receives = shader.lit && class.key.receive_shadow;
             (shader.effect != 0 && hidden.contains(&shader.effect))
                 || (shader.effect == 0 && shader.lit && names.iter().any(|n| n == "lit"))
                 || (shader.effect == 0 && !shader.lit && names.iter().any(|n| n == "unlit"))
-                || (shader.receive_shadow && names.iter().any(|n| n == "shadowed"))
+                || (receives && names.iter().any(|n| n == "shadowed"))
         };
         let classes = &self.classes;
         let view = &mut self.views[MAIN_VIEW];
         for list in [&mut view.opaque, &mut view.transparent] {
-            list.retain(|draw| {
-                classes
-                    .at(draw.class)
-                    .is_none_or(|class| !skip(&class.main_key))
-            });
+            list.retain(|draw| classes.at(draw.class).is_none_or(|class| !skip(class)));
         }
     }
 
