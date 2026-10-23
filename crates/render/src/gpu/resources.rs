@@ -19,7 +19,7 @@ use sloppy_core::scene::{Effect, Material, TextureRef};
 use super::Slab;
 use super::backend::{Gpu, MaterialBinding, PageBuffers, Sampler, TextureView};
 use crate::camera::Sphere;
-use crate::effects::EffectRegistry;
+use crate::effects::{EffectRegistry, ground_noise};
 use crate::gpu::textures::TextureStore;
 use crate::mesh_pages::{
     MeshPlacement, MeshRange, MeshSize, Page, PageFamily, PagePlanner, Placement, rebase_indices,
@@ -476,7 +476,8 @@ impl MeshStore {
 /// slot to its third or fourth extra texture, which its effect then reads as
 /// `bump_texture` or `emissive_texture` (the feature bits that make the standard
 /// shading sample them follow the maps alone): four effect textures with no
-/// bindings added to every pipeline's layout.
+/// bindings added to every pipeline's layout. The ground effects find the shared
+/// noise tile (`effects::ground_noise`) in an emissive slot nothing else fills.
 pub(super) fn texture_slots(material: &Material) -> [Option<&TextureRef>; 3 + EXTRA_TEXTURE_SLOTS] {
     let extra = |slot: usize| {
         material
@@ -493,7 +494,9 @@ pub(super) fn texture_slots(material: &Material) -> [Option<&TextureRef>; 3 + EX
     [
         material.map.as_ref(),
         material.bump_map.as_ref().or(extra(2)),
-        material.emissive_map.as_ref().or(extra(3)),
+        material.emissive_map.as_ref().or(extra(3)).or_else(|| {
+            ground_noise::uses_ground_noise(material).then(ground_noise::ground_noise_texture)
+        }),
         extra(0),
         extra(1),
     ]

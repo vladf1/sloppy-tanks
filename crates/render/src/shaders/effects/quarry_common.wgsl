@@ -47,37 +47,32 @@ fn quarry_grit(amount: f32, relief: f32, f: EffectFragment, normal: vec3f) -> Qu
     return grit;
 }
 
-// Four hashes in [0, 1) of a lattice cell (Hoskins' hash without sine).
+// The hashes and value noise below are lookups of the ground noise tile
+// (`ground_noise.wgsl`), bound with the soil's and the sandstone's materials:
+// hashing lattice corners per pixel cost the rock and the floor more than any of
+// their layers.
+
+// Four random numbers in [0, 1] for a lattice cell (whole coordinates; a fractional
+// one stands for the cell holding it).
 fn quarry_hash(cell: vec2f) -> vec4f {
-    var p = fract(cell.xyxy * vec4f(0.1031, 0.1030, 0.0973, 0.1099));
-    p = p + dot(p, p.wzxy + 33.33);
-    return fract((p.xxyz + p.yzzw) * p.zywx);
+    return vec4f(ground_hash(cell), ground_hash(cell + vec2f(113.0, 57.0)));
 }
 
-// One hash in [0, 1) of a lattice cell (Hoskins' hash12): the value noise's
-// corners need one number each, a third of `quarry_hash`'s work.
+// One random number in [0, 1] for a lattice cell, the value noise's corner.
 fn quarry_hash1(cell: vec2f) -> f32 {
-    var p = fract(cell.xyx * 0.1031);
-    p = p + dot(p, p.yzx + 33.33);
-    return fract((p.x + p.y) * p.z);
+    return ground_hash(cell).x;
 }
 
-// Smooth value noise in [0, 1) on a unit lattice, from `quarry_hash1`.
+// Smooth value noise in [0, 1] on a unit lattice.
 fn quarry_value(p: vec2f) -> f32 {
-    let i = floor(p);
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let a = quarry_hash1(i);
-    let b = quarry_hash1(i + vec2f(1.0, 0.0));
-    let c = quarry_hash1(i + vec2f(0.0, 1.0));
-    let d = quarry_hash1(i + vec2f(1.0, 1.0));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    return ground_noise(p).x;
 }
 
-// Smooth value noise with its gradient: (value, d/dx, d/dy) on a unit lattice.
+// Smooth value noise with its gradient: (value, d/dx, d/dy) on a unit lattice,
+// from four corners of white noise so the gradient is exact.
 fn quarry_value_grad(p: vec2f) -> vec3f {
     let i = floor(p);
-    let f = fract(p);
+    let f = p - i;
     let u = f * f * (3.0 - 2.0 * f);
     let du = 6.0 * f * (1.0 - f);
     let a = quarry_hash1(i);
@@ -99,131 +94,7 @@ fn quarry_footprint(world: vec3f) -> f32 {
     return max(length(dpdx(world)), length(dpdy(world)));
 }
 
-struct QuarryPebbles {
-    // Coverage of a stone (0..1), the contact shade around it, the shadow it
-    // casts away from the sun, the horizontal lean of its domed surface's normal
-    // (world x/z) and its tint over the soil.
-    cover: f32,
-    contact: f32,
-    shadow: f32,
-    lean: vec2f,
-    tint: vec3f,
-    // How far toward its buried rim a covered pixel lies (0 crown, 1 rim).
-    rim: f32,
-}
 
-// One layer of loose stones on a `cell` metre lattice: at most one stone per
-// cell, wholly inside it, so a single lookup finds it. `density` is the chance a
-// cell holds one. Stones are tinted relative to the soil so they sit in it, and
-// fade into the ground before they shrink to a pixel and shimmer. `angular` (0
-// to 1) is how many of the stones are broken, faceted chips rather than
-// water-worn ovals.
-fn quarry_pebbles(p: vec2f, cell: f32, density: f32, footprint: f32, salt: f32, angular: f32) -> QuarryPebbles {
-    let g = p / cell;
-    let id = floor(g);
-    let h = quarry_hash(id + salt);
-    // Mostly small stones, the odd big one: a long tail of sizes.
-    let radius = mix(0.08, 0.36, h.y * h.y * h.y);
-    let pixel = footprint / (radius * cell);
-    var out: QuarryPebbles;
-    // An empty cell, or a stone faded under a pixel, covers and shades nothing
-    // and leans no normal; its tint is then never seen.
-    if h.x > density || pixel >= 0.7 {
-        out.cover = 0.0;
-        out.contact = 0.0;
-        out.shadow = 0.0;
-        out.lean = vec2f(0.0);
-        out.tint = vec3f(1.0);
-        return out;
-    }
-    let k = quarry_hash(id - salt * 1.7);
-    let stretch = 1.0 + 0.5 * k.w;
-    let center = id + 0.5 + (h.zw - 0.5) * (1.0 - 2.0 * radius * stretch);
-    // Flattened, turned ovals rather than coins, each a little lumpy.
-    let axis = normalize(k.xw - 0.5 + vec2f(0.0001, 0.0));
-    let side = vec2f(-axis.y, axis.x);
-    let d0 = g - center;
-    let local = vec2f(dot(d0, axis) / stretch, dot(d0, side)) / radius;
-    let lump = 1.0 + 0.1 * sin(local.x * 2.7 + local.y * 1.3 + k.z * 6.0);
-    let round_r = length(local) / lump;
-    // A broken chip: the outline of three uneven pairs of fracture planes, its
-    // crown split into flat faces, each leaning out toward its own edge.
-    let m = quarry_hash(id * 1.31 + salt * 0.7 + 5.0);
-    let broken = step(1.0 - angular, m.x);
-    let turn = m.y * 3.14;
-    let e0 = vec2f(cos(turn), sin(turn));
-    // The other two planes turned 1.13 and 2.2 radians from the first.
-    let e1 = vec2f(e0.x * 0.42666 - e0.y * 0.90441, e0.y * 0.42666 + e0.x * 0.90441);
-    let e2 = vec2f(e0.x * -0.58850 - e0.y * 0.80850, e0.y * -0.58850 + e0.x * 0.80850);
-    let s0 = dot(local, e0) * (0.92 + 0.2 * k.x);
-    let s1 = dot(local, e1) * (0.9 + 0.25 * k.w);
-    let s2 = dot(local, e2) * (0.95 + 0.2 * k.y);
-    let a0 = abs(s0);
-    let a1 = abs(s1);
-    let a2 = abs(s2);
-    let facet_r = max(a0, max(a1, a2)) * 1.08;
-    var facet = e2 * sign(s2);
-    facet = select(facet, e1 * sign(s1), a1 >= max(a0, a2));
-    facet = select(facet, e0 * sign(s0), a0 >= max(a1, a2));
-    let r = mix(round_r, facet_r, broken);
-    let present = step(h.x, density) * (1.0 - quarry_smoothstep(0.25, 0.7, pixel));
-    let edge = max(pixel, 0.12);
-    out.cover = (1.0 - quarry_smoothstep(1.0 - edge, 1.0, r)) * present;
-    out.contact = quarry_smoothstep(1.55, 1.0, r) * (1.0 - out.cover) * present;
-    // The ground a stone's height shades: its outline seen from the sun, a low
-    // sun stretching it out across the soil.
-    let sun = frame.sun_direction.xyz;
-    let reach = radius * 0.55 * min(length(sun.xz) / max(sun.y, 0.15), 3.0);
-    let lit = d0 + normalize(sun.xz + vec2f(0.0001, 0.0)) * reach;
-    let lit_local = vec2f(dot(lit, axis) / stretch, dot(lit, side)) / radius;
-    let blocked = 1.0 - quarry_smoothstep(0.75, 1.05, length(lit_local) / lump);
-    out.shadow = blocked * (1.0 - out.cover) * present;
-    // A low dome: the normal leans out from the centre, steepest at the rim.
-    let dome = local / max(length(local), 0.001) * quarry_smoothstep(0.1, 1.0, r) * 0.8;
-    let faces = facet * (0.25 + 0.55 * quarry_smoothstep(0.15, 0.6, r));
-    let leaning = mix(dome, faces, broken);
-    out.lean = (leaning.x * axis + leaning.y * side) * out.cover;
-    // The rim sinks into shade on the side turned from the sun.
-    let from_sun = dot(d0 / max(length(d0), 0.0001), -normalize(sun.xz + vec2f(0.0001, 0.0)));
-    out.rim = quarry_smoothstep(0.35, 1.0, r) * out.cover * (0.3 + 0.7 * clamp(from_sun * 0.6 + 0.5, 0.0, 1.0));
-    // Pale limestone, the soil's own stone, cool grey grit, iron-stained, dark chert.
-    var t = vec3f(1.18, 1.14, 1.08);
-    t = select(t, vec3f(0.98, 0.93, 0.86), k.y > 0.3);
-    t = select(t, vec3f(0.78, 0.8, 0.84), k.y > 0.55);
-    t = select(t, vec3f(1.02, 0.72, 0.55), k.y > 0.75);
-    t = select(t, vec3f(0.52, 0.48, 0.45), k.y > 0.9);
-    out.tint = t * (0.85 + 0.3 * k.z);
-    return out;
-}
-
-// Flat facets struck off a stone face, on a `cell` metre jittered lattice: xy
-// the tilt of the facet the point lies on (each facet a plane of its own, so
-// the face shades as chipped planes rather than a smooth swell), z how near
-// the point lies to the ridge between two facets (1 on it). Each facet's centre
-// keeps to the middle half of its cell, so the four cells round the point hold
-// its nearest two almost always: a 2x2 search, not 3x3, over every rock face.
-fn quarry_facets(p: vec2f, cell: f32) -> vec3f {
-    let g = p / cell;
-    let id = floor(g - 0.5);
-    var f1 = 8.0;
-    var f2 = 8.0;
-    var tilt = vec2f(0.0);
-    for (var j = 0; j <= 1; j++) {
-        for (var i = 0; i <= 1; i++) {
-            let o = vec2f(f32(i), f32(j));
-            let h = quarry_hash(id + o + 113.0);
-            let d = length(id + o + 0.25 + h.xy * 0.5 - g);
-            if d < f1 {
-                f2 = f1;
-                f1 = d;
-                tilt = h.zw * 2.0 - 1.0;
-            } else if d < f2 {
-                f2 = d;
-            }
-        }
-    }
-    return vec3f(tilt, 1.0 - quarry_smoothstep(0.0, 0.08, f2 - f1));
-}
 
 // Plates cracked apart on a `cell` metre jittered lattice (dried mud, jointed
 // caprock): x is the crack line (1 inside a crack about `width` metres wide), y
@@ -236,27 +107,27 @@ fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec3f
     let id = floor(g);
     var f1 = 8.0;
     var f2 = 8.0;
-    var plate = 0.0;
+    var nearest = id;
     for (var j = -1; j <= 1; j++) {
         for (var i = -1; i <= 1; i++) {
             let o = vec2f(f32(i), f32(j));
-            let h = quarry_hash(id + o + 71.0);
+            let h = ground_hash(id + o + 71.0);
             let d = length(id + o + 0.05 + h.xy * 0.9 - g);
             if d < f1 {
                 f2 = f1;
                 f1 = d;
-                plate = h.z;
+                nearest = id + o;
             } else if d < f2 {
                 f2 = d;
             }
         }
     }
     let edge = (f2 - f1) * cell;
-    let width = (0.012 + 0.01 * quarry_hash(id).z) * width_scale;
+    let width = (0.012 + 0.01 * quarry_hash1(id + 29.0)) * width_scale;
     let soft = max(footprint, 0.004);
     // Thin cracks fade to a faint darkening once a pixel spans them.
     let visible = width / max(width, footprint);
     let crack = (1.0 - quarry_smoothstep(width - soft, width + soft, edge)) * visible;
     let rim = quarry_smoothstep(width * 2.0 + 0.06, width, edge) * (1.0 - crack);
-    return vec3f(crack, rim, plate);
+    return vec3f(crack, rim, ground_hash(nearest + 171.0).x);
 }

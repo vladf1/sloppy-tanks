@@ -3,8 +3,8 @@
 // (`effects::bakes`) with `meadow_sway.wgsl`'s functions: the lie of the land, the
 // meadow's patches and stands, the earth's colours, where the turf gives way, the
 // verge, gardens, fields and hedges, weighed as the gameplay camera sees them. What
-// a page's texels cannot hold (the turf's hand-scale fraying, treads, pebbles,
-// blooms, setts, the tiles' grain, gusts and puddles) stays in `village_ground`.
+// a page's texels cannot hold (the turf's hand-scale fraying, treads, setts, the
+// tiles' grain, gusts and puddles) stays in `village_ground`.
 
 // The plan at `p` as the ground reads it (`village_ground.rs`).
 struct VgPlan {

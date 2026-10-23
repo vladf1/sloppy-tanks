@@ -17,6 +17,7 @@ use wasm_bindgen_futures::JsFuture;
 
 use super::backend::{Frame, Gpu, MaterialBinding, Sampler, Texture, TextureView, Uploader};
 use crate::effects::bakes::{TextureBake, bake_for};
+use crate::effects::ground_noise::{GROUND_NOISE, GROUND_NOISE_SIZE, ground_noise_pixels};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TextureKey {
@@ -175,6 +176,17 @@ impl TextureStore {
                 });
             }
             TextureSource::Generated(name) => {
+                if *name == GROUND_NOISE && !self.generated.contains_key(name) {
+                    let size = GROUND_NOISE_SIZE as u32;
+                    match image_data(size, size, &ground_noise_pixels()) {
+                        Ok(image) => {
+                            self.generated.insert(GROUND_NOISE, image);
+                        }
+                        Err(error) => self
+                            .failures
+                            .push(format!("{GROUND_NOISE}: {}", js_message(&error))),
+                    }
+                }
                 if let Some(image) = self.generated.get(name) {
                     self.loaded.borrow_mut().push(Loaded {
                         key,
