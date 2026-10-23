@@ -17,6 +17,7 @@ pub mod bakes;
 pub mod ease;
 pub mod explosions;
 pub mod ground;
+pub mod ground_noise;
 pub mod laser;
 pub mod leaves;
 pub mod looks;
