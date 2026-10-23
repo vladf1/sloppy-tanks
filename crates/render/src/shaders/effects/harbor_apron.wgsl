@@ -684,7 +684,9 @@ fn parapet_surface(s: ptr<function, Surface>, f: EffectFragment) {
 // eating in from the edges, where the spreaders and castings bite.
 fn container_surface(s: ptr<function, Surface>, f: EffectFragment) {
     let tier_detail = fine_detail();
-    let variant = apron_pixel_hash(floor(f.world.xz / CONTAINER_CELL) + vec2f(5.0, 77.0));
+    // The arithmetic hash, not the noise tile's: it picks each box's paint, and the
+    // yard's colors were chosen with it.
+    let variant = apron_hash(floor(f.world.xz / CONTAINER_CELL) + vec2f(5.0, 77.0));
     var paint = apron_hue((*s).color, (variant.x - 0.5) * 0.85);
     let fade = smoothstep(0.45, 1.0, variant.y);
     paint = mix(paint, vec3f(dot(paint, APRON_LUMA)) * 1.2 + vec3f(0.025), fade * 0.45);
