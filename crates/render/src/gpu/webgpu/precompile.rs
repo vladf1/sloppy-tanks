@@ -9,11 +9,13 @@
 //! So every pipeline is first described once as a [`PipelineSpec`]. The precompiler
 //! issues `createRenderPipelineAsync` for the browser descriptor that wgpu's WebGPU
 //! backend would build from it (same WGSL, bind group layouts, vertex buffers, states
-//! and targets); once that resolves, wgpu creates the identical pipeline, which the
-//! browser's pipeline and shader caches now answer at once. The mapping below mirrors
-//! wgpu 30's `backend/webgpu.rs` for the formats and states the game's pipelines use;
-//! anything else is reported and compiles synchronously. A descriptor that differs
-//! only costs the stall again, since the pipeline drawn with is always wgpu's own.
+//! and targets); once that resolves, wgpu wraps that very pipeline ([`hand_over`]).
+//! Letting wgpu create its twin cost WebKit the whole job again, cache hits and all
+//! (2-9 ms a pipeline, warm or cold, on the GPU process's one queue: about 130 ms of
+//! a harbor start). The mapping below mirrors wgpu 30's `backend/webgpu.rs` for the
+//! formats and states the game's pipelines use; anything else is reported and
+//! compiles synchronously. The precompiler's bind group layouts are its own copies,
+//! group-equivalent to wgpu's, so wgpu's bind groups draw with its pipelines.
 //!
 //! The WebGL backend has its own background compile (`webgl/programs.rs`).
 
@@ -110,9 +112,25 @@ impl PipelineSpec {
         StageSources::of(code, self.vertex_entry, self.fragment_entry)
     }
 
-    /// The wgpu pipeline, with modules of its own (`pipelines.rs` says why); instant
-    /// once [`Precompiler`] has compiled the same one.
+    /// The wgpu pipeline: the one [`Precompiler`] compiled from this spec if
+    /// `compiled` holds it, else created now with modules of its own (`pipelines.rs`
+    /// says why).
     pub fn create(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::PipelineLayout,
+        sources: &StageSources,
+        compiled: Option<&JsValue>,
+    ) -> wgpu::RenderPipeline {
+        match compiled.filter(|pipeline| !pipeline.is_null()) {
+            Some(pipeline) => hand_over(device, pipeline, || {
+                self.create_new(device, layout, sources)
+            }),
+            None => self.create_new(device, layout, sources),
+        }
+    }
+
+    fn create_new(
         &self,
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
@@ -156,6 +174,45 @@ impl PipelineSpec {
     }
 }
 
+/// What the device's `createShaderModule` answers wgpu while it wraps a compiled
+/// pipeline ([`hand_over`]); no pipeline uses it.
+const PLACEHOLDER_WGSL: &str =
+    "@vertex fn placeholder() -> @builtin(position) vec4f { return vec4f(0.0); }";
+
+thread_local! {
+    /// The placeholder module, made once.
+    static PLACEHOLDER: std::cell::OnceCell<JsValue> = const { std::cell::OnceCell::new() };
+}
+
+/// Run `create`, wgpu creating a pipeline, with the browser device's
+/// `createRenderPipeline` answering `pipeline` (compiled in the background from the
+/// same spec) and its `createShaderModule` a placeholder, so wgpu wraps that pipeline
+/// rather than having the browser build its twin. While set, the device's own
+/// properties shadow its prototype's methods, which wasm-bindgen calls as methods.
+fn hand_over<T>(device: &wgpu::Device, pipeline: &JsValue, create: impl FnOnce() -> T) -> T {
+    let raw = raw_device(device);
+    let module = PLACEHOLDER.with(|placeholder| {
+        placeholder
+            .get_or_init(|| raw.create_shader_module(&object(&[("code", PLACEHOLDER_WGSL.into())])))
+            .clone()
+    });
+    let pipeline = pipeline.clone();
+    let answer_pipeline = Closure::<dyn Fn() -> JsValue>::new(move || pipeline.clone());
+    let answer_module = Closure::<dyn Fn() -> JsValue>::new(move || module.clone());
+    let target: &Object = raw.unchecked_ref();
+    set(
+        target,
+        "createRenderPipeline",
+        answer_pipeline.as_ref().clone(),
+    );
+    set(target, "createShaderModule", answer_module.as_ref().clone());
+    let created = create();
+    for name in ["createRenderPipeline", "createShaderModule"] {
+        Reflect::delete_property(target, &name.into()).expect("the device's own property");
+    }
+    created
+}
+
 /// Browser shader modules made from the same WGSL as wgpu's: the vertex stage's and,
 /// if any, the fragment stage's.
 struct RawModules {
@@ -167,8 +224,8 @@ struct RawModules {
 /// renderer exists, so the page builds the arena meanwhile; the owner creates the
 /// wgpu pipelines once [`Background::done`] (or at once when it cannot wait).
 pub struct Background {
-    /// The compiled pipelines once all have finished, held so the browser's cache
-    /// keeps them until wgpu asks.
+    /// The compiled pipelines in job order once all have finished (null for one that
+    /// failed), for wgpu to wrap.
     compiled: Rc<RefCell<Option<Vec<JsValue>>>>,
 }
 
@@ -187,6 +244,11 @@ impl Background {
 
     pub fn done(&self) -> bool {
         self.compiled.borrow().is_some()
+    }
+
+    /// The compiled pipeline of job `index`, once all have finished.
+    pub fn compiled(&self, index: usize) -> Option<JsValue> {
+        self.compiled.borrow().as_ref()?.get(index).cloned()
     }
 }
 
@@ -273,9 +335,10 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         self.queue.borrow().finished.contains_key(key)
     }
 
-    /// Release the compiled copy once wgpu holds the pipeline.
-    pub fn release(&self, key: &K) {
-        self.queue.borrow_mut().finished.remove(key);
+    /// The compiled pipeline of `key` (null if it failed), for wgpu to wrap; the
+    /// precompiler lets go of it.
+    pub fn take(&self, key: &K) -> Option<JsValue> {
+        self.queue.borrow_mut().finished.remove(key)
     }
 
     /// Pipelines waiting for or being compiled.
@@ -308,8 +371,8 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     }
 
     /// Start compiling every spec in the background now; the future resolves to the
-    /// compiled pipelines, for the few fixed ones ([`Background`]). Hold them until
-    /// wgpu has created its own, so the browser's cache still has them.
+    /// compiled pipelines in job order (null for one that could not compile), for the
+    /// few fixed ones ([`Background`]).
     pub fn compile_all(
         &self,
         jobs: &[(&PipelineSpec, &StageSources)],
@@ -320,20 +383,21 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
                 Ok(descriptor) => {
                     promises.push(self.device.create_render_pipeline_async(&descriptor))
                 }
-                Err(error) => web_sys::console::warn_1(
-                    &format!("Cannot precompile the {} pipeline: {error}", spec.label).into(),
-                ),
+                Err(error) => {
+                    web_sys::console::warn_1(
+                        &format!("Cannot precompile the {} pipeline: {error}", spec.label).into(),
+                    );
+                    promises.push(Promise::resolve(&JsValue::NULL));
+                }
             }
         }
         async move {
             let mut compiled = Vec::with_capacity(promises.len());
             for promise in promises {
-                match JsFuture::from(promise).await {
-                    Ok(pipeline) => compiled.push(pipeline),
-                    Err(error) => {
-                        web_sys::console::warn_2(&"Pipeline precompile failed:".into(), &error)
-                    }
-                }
+                compiled.push(JsFuture::from(promise).await.unwrap_or_else(|error| {
+                    web_sys::console::warn_2(&"Pipeline precompile failed:".into(), &error);
+                    JsValue::NULL
+                }));
             }
             compiled
         }

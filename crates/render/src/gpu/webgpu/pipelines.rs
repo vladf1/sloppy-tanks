@@ -16,10 +16,11 @@
 //! same code share that compile once their fragment code is out of its module: the
 //! village's cold compile went from 71 stage compiles to 50.
 //!
-//! Every pipeline is compiled in the background first (`precompile.rs`): the fixed
-//! ones while the renderer is created, the scene's variants through
-//! [`Pipelines::request`] while an arena prepares. Only a variant first met while
-//! drawing ([`Pipelines::ensure`]) still compiles synchronously.
+//! Every pipeline is compiled in the background first (`precompile.rs`), and wgpu
+//! wraps the compiled pipeline: the fixed ones while the renderer is created, the
+//! scene's variants through [`Pipelines::request`] while an arena prepares. Only a
+//! variant first met while drawing ([`Pipelines::ensure`]) still compiles
+//! synchronously.
 
 use std::collections::HashMap;
 
@@ -454,14 +455,10 @@ impl Pipelines {
     }
 
     fn create_fixed(&mut self, device: &wgpu::Device) {
-        let Some(FixedJobs {
-            jobs,
-            compile: _held,
-        }) = self.fixed_jobs.take()
-        else {
+        let Some(FixedJobs { jobs, compile }) = self.fixed_jobs.take() else {
             return;
         };
-        let mut created = jobs.iter().map(|(spec, source)| {
+        let mut created = jobs.iter().enumerate().map(|(index, (spec, source))| {
             let layout = match spec.layout {
                 LayoutKind::Water => &self.water_layout,
                 LayoutKind::Output => &self.output_layout,
@@ -473,7 +470,7 @@ impl Pipelines {
                     unreachable!("the uploader owns the mipmap blits and texture bakes")
                 }
             };
-            spec.create(device, layout, source)
+            spec.create(device, layout, source, compile.compiled(index).as_ref())
         });
         let mut next = |what| created.next().expect(what);
         let water = next("water pipeline");
@@ -551,8 +548,8 @@ impl Pipelines {
         let device = &gpu.device;
         let spec = surface_spec(key, gpu.samples);
         let sources = source(&mut self.sources, effects, key.shader);
-        let pipeline = spec.create(device, &self.surface_layout, sources);
-        self.precompiler.release(key);
+        let compiled = self.precompiler.take(key);
+        let pipeline = spec.create(device, &self.surface_layout, sources, compiled.as_ref());
         self.pipelines.push(pipeline);
         let index = self.pipelines.len() as u32 - 1;
         self.index.insert(*key, index);
