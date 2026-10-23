@@ -1242,6 +1242,8 @@ impl Renderer {
                 let multisampled = self.gpu.samples > 1;
                 let main_key = |material: &sloppy_core::scene::Material| {
                     let mut shader = ShaderKey::main(material, gpu.effect);
+                    // The WebGL build's shadow reception is a variant (`ShaderKey::main`).
+                    shader.receive_shadow = cfg!(feature = "webgl") && shader.lit && receive_shadow;
                     // Without samples to cover, a soft cutout edge would draw its faint
                     // fringe opaque: a plain alpha test instead.
                     shader.alpha_to_coverage &= multisampled;

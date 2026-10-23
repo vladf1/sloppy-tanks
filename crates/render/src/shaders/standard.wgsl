@@ -3,8 +3,9 @@
 // shading, alpha test, fog, the sun's PCF shadow, hemisphere fill and up to four
 // point lights; with the atmosphere on, cloud shadows and a sky rim, and its aerial
 // haze left to the output pass (`haze_alpha`).
-// Lighting and alpha test are variant constants; shadow reception and the cheap
-// per-material features are uniform branches (`material_has`).
+// Lighting and alpha test are variant constants; shadow reception (a variant on
+// the WebGL build, `RECEIVE_SHADOW`) and the cheap per-material features are uniform
+// branches (`material_has`).
 // Lighting runs in world space; every dot and cross product Three evaluates in
 // view space is invariant under the view's rotation. Output is linear HDR; the
 // output pass tone maps the whole frame, as Three's frame-buffer target does.
@@ -275,7 +276,12 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     reflected.diffuse = vec3f(0.0);
     reflected.specular = vec3f(0.0);
     var sunlit = 1.0;
-    if material_has(MATERIAL_RECEIVE_SHADOW) {
+    // WebGL's translation paid for the uniform branch in every lit pixel.
+    if LITE {
+        if RECEIVE_SHADOW {
+            sunlit = sun_shadow(world, n);
+        }
+    } else if material_has(MATERIAL_RECEIVE_SHADOW) {
         sunlit = sun_shadow(world, n);
     }
     // Inside a cast shadow, how much of the sky's fill the caster leaves open.

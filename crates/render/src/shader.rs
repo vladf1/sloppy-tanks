@@ -104,13 +104,17 @@ pub struct ShaderKey {
     pub effect: u16,
     /// Shadow pass only: dither the shadow of a fading instance.
     pub shadow_fade: bool,
+    /// The WebGL build's lit surfaces only: receives the sun's shadow.
+    pub receive_shadow: bool,
 }
 
 impl ShaderKey {
-    /// A surface variant. Whether it receives the sun's shadow is a uniform branch
-    /// (`MaterialFeatures::RECEIVE_SHADOW`), not a variant: a lit shader without the
-    /// shadow was a second compile of nearly all the same code (WebKit compiles each
-    /// at first use on a cold start), for parts as plain as a lit prop.
+    /// A surface variant. On WebGPU whether it receives the sun's shadow is a uniform
+    /// branch (`MaterialFeatures::RECEIVE_SHADOW`), not a variant: a lit shader without
+    /// the shadow was a second compile of nearly all the same code (WebKit compiles
+    /// each at first use on a cold start), for parts as plain as a lit prop. The WebGL
+    /// build, whose translation paid for the branch in every lit pixel (2-3% of a
+    /// Tesla-size village frame), sets `receive_shadow` instead.
     pub fn main(material: &Material, effect: u16) -> Self {
         let lit = material.shading == Shading::Standard;
         Self {
@@ -120,6 +124,7 @@ impl ShaderKey {
             alpha_to_coverage: material.alpha_to_coverage && material.alpha_test > 0.0,
             effect,
             shadow_fade: false,
+            receive_shadow: false,
         }
     }
 
@@ -378,12 +383,13 @@ fn vertex_extra1(input: VertexIn) -> vec4f { return vec4f(0.0); }
 ";
 
 /// The variant constants the templates branch on.
-fn flags(key: &ShaderKey) -> [(&'static str, bool); 4] {
+fn flags(key: &ShaderKey) -> [(&'static str, bool); 5] {
     [
         ("LIT", key.lit),
         ("ALPHA_TEST", key.alpha_test),
         ("ALPHA_TO_COVERAGE", key.alpha_to_coverage),
         ("SHADOW_FADE", key.shadow_fade),
+        ("RECEIVE_SHADOW", key.receive_shadow),
     ]
 }
 
@@ -409,7 +415,7 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
         code += effect.entry;
     }
     code += &vertex_hooks(effect, effects);
-    code += &surface_hook(key, effect, effects);
+    code += &surface_hook(key, effect, effects, source);
     code += match key.pass {
         Pass::Main => STANDARD_WGSL,
         Pass::Shadow => SHADOW_WGSL,
@@ -487,20 +493,23 @@ fn vertex_hooks(effect: Option<&EffectDefinition>, effects: &EffectRegistry) -> 
 }
 
 /// The variant's `effect_surface` unless its effect defines one of its own. A lit
-/// surface variant takes every shared hook (`EffectDefinition::shared_surface`),
+/// WebGPU surface variant takes every shared hook (`EffectDefinition::shared_surface`),
 /// each run where the material names its effect (`MaterialUniform::features`), so
 /// the lit materials of those effects and of none draw with the same fragment stage;
-/// any other variant takes its effect's shared hook as its own.
+/// any other variant takes its effect's shared hook as its own. The WebGL build
+/// shares none: its translation paid for the branches in every lit pixel (1% of a
+/// Tesla-size village frame), and its weaker devices count frames, not compiles.
 fn surface_hook(
     key: &ShaderKey,
     effect: Option<&EffectDefinition>,
     effects: &EffectRegistry,
+    source: InstanceSource,
 ) -> String {
     const NONE: &str = "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {}\n";
     if effect.is_some_and(|e| e.has_own_surface()) {
         return String::new();
     }
-    if key.pass == Pass::Main && key.lit {
+    if key.pass == Pass::Main && key.lit && source == InstanceSource::Storage {
         let mut hooks = String::new();
         let mut branches = Vec::new();
         for (id, shared) in effects.sharing_hooks() {
@@ -909,6 +918,7 @@ mod tests {
                     alpha_to_coverage: bit(1) && bit(2),
                     effect,
                     shadow_fade: false,
+                    receive_shadow: bit(0) && bit(2),
                 };
                 check_variant("surface", &key, &effects);
                 // Lighting (bit 0) leaves a caster unchanged.
@@ -1246,8 +1256,10 @@ mod tests {
         assert!(MaterialFeatures::of(&plain).0 & MaterialFeatures::FOG != 0);
     }
 
+    /// On WebGPU shadow reception is a lit part's uniform setting; the WebGL build,
+    /// whose translation paid for the branch, keeps it a variant.
     #[test]
-    fn shadow_reception_is_a_lit_part_setting_not_a_variant() {
+    fn shadow_reception_is_a_lit_part_setting_on_webgpu() {
         let lit = Material::standard(0x808080, 0.5, 0.1);
         let unlit = Material::basic(0xffffff);
         let receives = |material: &Material, receive: bool| {
@@ -1257,6 +1269,18 @@ mod tests {
         };
         assert!(receives(&lit, true) && !receives(&lit, false));
         assert!(!receives(&unlit, true));
+        let effects = EffectRegistry::default();
+        let key = |receive_shadow| ShaderKey {
+            lit: true,
+            receive_shadow,
+            ..ShaderKey::default()
+        };
+        let source = |receive, source| shader_source_for(&key(receive), &effects, source);
+        let (gpu, gl) = (InstanceSource::Storage, InstanceSource::Texture);
+        assert_eq!(source(true, gpu), source(false, gpu));
+        assert!(source(true, gpu).contains("material_has(MATERIAL_RECEIVE_SHADOW)"));
+        assert!(source(true, gl).contains("fn sun_shadow("));
+        assert!(!source(false, gl).contains("fn sun_shadow("));
     }
 
     #[test]
@@ -1465,6 +1489,15 @@ mod tests {
             .fragment
             .expect("a cutout");
         assert!(caster.contains("fn wreck_noise(") && !caster.contains("features.y"));
+        // The WebGL build's lit variants take the hook as their effect's own too.
+        let lit = |effect| ShaderKey {
+            lit: true,
+            effect,
+            ..ShaderKey::default()
+        };
+        let webgl = |effect| shader_source_for(&lit(effect), &effects, InstanceSource::Texture);
+        assert!(webgl(wreck).contains("fn wreck_noise(") && !webgl(wreck).contains("features.y"));
+        assert!(!webgl(0).contains("fn wreck_noise("));
     }
 
     #[test]
