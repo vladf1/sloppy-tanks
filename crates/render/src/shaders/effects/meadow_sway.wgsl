@@ -89,8 +89,10 @@ fn vg_fbm(p: vec2f) -> f32 {
 }
 
 // The same noise and cell hashes per pixel, from the shared noise tile
-// (`ground_noise.wgsl`): the bake and the tufts' sway keep the arithmetic ones,
-// the ground and the ranges, drawn over most of the frame, look them up.
+// (`ground_noise.wgsl`): the ground, drawn over most of the frame, looks them up.
+// The bake, the tufts' sway and the ranges keep the arithmetic ones: the ranges'
+// glades and treeline were placed by that noise, and the gameplay camera never
+// sees them.
 fn vg_pixel_noise(p: vec2f) -> f32 {
     return ground_noise(p).x;
 }
@@ -101,10 +103,6 @@ fn vg_pixel_hash(p: vec2f) -> f32 {
 
 fn vg_pixel_hash2(p: vec2f) -> vec2f {
     return ground_hash(p);
-}
-
-fn vg_pixel_fbm(p: vec2f) -> f32 {
-    return vg_pixel_noise(p) * 0.55 + vg_pixel_noise(p * 2.07 + 17.3) * 0.3 + vg_pixel_noise(p * 4.13 - 9.1) * 0.15;
 }
 
 // Surface-gradient bump of a world-space height field (metres), like the
@@ -664,25 +662,41 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
             let joint_view = 1.0 - smoothstep(0.025, 0.075, footprint);
             let sett_view = 1.0 - smoothstep(0.03, 0.09, footprint);
             // One stone's cell: each row shifted its own way, so each street's
-            // courses run square to its traffic; the kerb's long stones run along
-            // the edge, in from its outer face.
+            // courses run square to its traffic, and bowing gently as hand-laid rows
+            // do (one lookup of the noise tile); some cells hold two shorter stones.
+            // The kerb's long stones run along the edge, in from its outer face.
             let joint_aa = max(aa * 0.8, 0.004);
             let kerb = select(0.0, 1.0, inward < VG_KERB_WIDTH);
             let arm = abs(p.x) > VG_SQUARE_MAIN.x;
             let straight = select(p, p.yx, arm);
-            let row_index = floor(straight.y / VG_SETT.y);
+            let bowed = straight + (ground_noise(straight * 0.09 + 5.0) - 0.5) * vec2f(0.8, 1.2);
+            let row_index = floor(bowed.y / VG_SETT.y);
             let shift = vg_pixel_hash(vec2f(row_index, 7.0)) * VG_SETT.x;
-            var cell = vec2f(floor((straight.x + shift) / VG_SETT.x), row_index) + select(0.0, 503.0, arm);
-            var local = (fract(vec2f((straight.x + shift) / VG_SETT.x, straight.y / VG_SETT.y)) - 0.5) * VG_SETT;
-            var half = VG_SETT * 0.5 - 0.02;
+            let column = floor((bowed.x + shift) / VG_SETT.x);
+            var pick = vg_pixel_hash2(vec2f(column, row_index) + select(5.0, 508.0, arm));
+            var local = bowed - vec2f((column + 0.5) * VG_SETT.x - shift, (row_index + 0.5) * VG_SETT.y);
+            var reach = VG_SETT.x * 0.5;
+            if pick.y > 0.58 {
+                let cut = (pick.x - 0.5) * 0.08;
+                let right = local.x > cut;
+                local.x = local.x - select(cut * 0.5 - reach * 0.5, cut * 0.5 + reach * 0.5, right);
+                reach = reach * 0.5 + select(cut * 0.5, -cut * 0.5, right);
+                pick = fract(pick * vec2f(7.31, 3.17) + select(0.37, 0.71, right));
+            }
+            // Hand-laid: each stone its own size, rounded its own way, set a
+            // little off true, so the joints are never one width.
+            let jitter = fract(pick.yx * vec2f(5.3, 9.1) + 0.27);
+            local = local - (jitter - 0.5) * 0.02;
+            var half = vec2f(reach, VG_SETT.y * 0.5) - vec2f(0.016, 0.014) - jitter * vec2f(0.022, 0.02);
+            var radius = mix(0.04, 0.09, pick.y);
             if kerb > 0.0 {
                 let run = square_edge.y + dot(square_edge.zw, vec2f(13.7, 29.3));
-                cell = vec2f(floor(run / VG_KERB_STONE), 211.0);
+                pick = vg_pixel_hash2(vec2f(floor(run / VG_KERB_STONE) + 5.0, 216.0));
                 local = (vec2f(fract(run / VG_KERB_STONE), inward / VG_KERB_WIDTH) - 0.5) * vec2f(VG_KERB_STONE, VG_KERB_WIDTH);
                 half = vec2f(VG_KERB_STONE, VG_KERB_WIDTH) * 0.5 - 0.012;
+                radius = 0.035;
             }
-            let pick = vg_pixel_hash2(cell + 5.0);
-            let gap = min(half.x - abs(local.x), half.y - abs(local.y));
+            let gap = -vg_box(local, half, radius);
             let stone = smoothstep(-joint_aa, joint_aa, gap);
             let crown = smoothstep(0.0, 0.07, gap);
             // The worn round top leans out from the middle and each stone sits a
@@ -696,19 +710,29 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
             sett_slope = select(select(lean, lean.yx, arm), (pick - 0.5) * 0.05, kerb > 0.5) * sett_view * (1.0 - silted * 0.8);
             paved_crown = crown;
             paved_stone = stone * (1.0 - silted);
-            // Warm-grey granite, the odd darker whinstone, the kerb paler; far off the
-            // stones settle into the paving's warm average; the lanes' crowns
-            // polished and rubbed darker, their joints packed with earth.
+            // Warm-grey granite with the odd sandstone or dark whinstone, the kerb a
+            // paler, finer granite, every stone weathered its own way (all picked
+            // from the stone's one hash); far off the stones settle into the
+            // paving's warm average; the lanes' crowns polished and rubbed darker,
+            // their joints packed with earth and moss.
             let lane = smoothstep(0.15, 0.75, packed);
+            let kind = fract(pick.x * 13.1);
             var granite = mix(vg_linear(0x7e7870), vg_linear(0xa1988a), pick.y);
-            granite = select(granite, vg_linear(0x5e5850), fract(pick.x * 5.7) < 0.12);
-            granite = mix(granite, vg_linear(0xa59a86), kerb);
-            granite = mix(vg_linear(0x7c6d5b), granite, mix(0.15, 1.0, joint_view));
-            granite = granite * mix(1.0, mix(0.88, 1.08 + lane * 0.06, crown), sett_view) * mix(1.0, 0.86, lane * 0.45);
+            granite = select(granite, mix(vg_linear(0x977f62), vg_linear(0xb09872), pick.y), kind > 0.76);
+            granite = select(granite, vg_linear(0x86684f), kind > 0.94);
+            granite = select(granite, mix(vg_linear(0x524e48), vg_linear(0x68625a), pick.y), fract(pick.x * 5.7) < 0.12);
+            granite = mix(granite, mix(vg_linear(0x9b917f), vg_linear(0xafa48e), pick.x), kerb);
+            granite = mix(mix(vg_linear(0x7c6d5b), vg_linear(0x9a907c), kerb * 0.8), granite, mix(0.15, 1.0, joint_view));
+            granite = granite * mix(1.0, mix(0.9, 1.08, dirt_detail * 0.5), mid);
+            granite = granite * mix(1.0, mix(0.88, 1.08 + lane * 0.06, crown), sett_view);
+            granite = granite * mix(1.0, mix(0.72, 1.12, fract(pick.y * 7.9 + pick.x * 2.3)), joint_view);
+            granite = mix(granite, granite * vec3f(0.84, 0.82, 0.8), lane * 0.45);
             let dust = clamp(0.1 + (1.0 - lane) * 0.2 + (1.0 - crown) * 0.35, 0.0, 0.75) * (1.0 - lane * 0.5);
-            granite = mix(granite, soil * 1.15, dust * 0.42);
-            var paving = mix(granite * mix(0.78, 0.45, joint_view), granite, mix(0.8, stone, joint_view));
-            paving = mix(paving, soil * mix(0.78, 0.95, silted), silted);
+            let soil_grey = vec3f(dot(soil, VG_LUMA));
+            granite = mix(granite, mix(soil_grey, soil, 0.6) * 1.15, dust * 0.42);
+            let joint = mix(granite * 0.78, mix(vg_linear(0x3b2f23), vg_linear(0x3c4a24), (1.0 - lane) * 0.4), joint_view);
+            var paving = mix(joint, granite, mix(0.8, stone, joint_view));
+            paving = mix(paving, mix(soil_grey, soil, 0.7) * mix(0.78, 0.95, silted), silted);
             paving = mix(paving, paving * vec3f(0.62, 0.6, 0.58), wet * 0.6);
             color = mix(color, paving, paved);
         }
@@ -773,7 +797,7 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
 
 // Ridged relief on one plane: 0 in the creases, 1 on the ribs.
 fn vg_ridged(q: vec2f) -> f32 {
-    let r = 1.0 - abs(vg_pixel_noise(q) * 2.0 - 1.0);
+    let r = 1.0 - abs(vg_noise(q) * 2.0 - 1.0);
     return r * r;
 }
 
@@ -786,7 +810,7 @@ fn vg_tips(u: f32, seed: f32) -> vec2f {
     var best = vec2f(0.0, 0.0);
     for (var j = -1; j <= 1; j++) {
         let c = cell + f32(j);
-        let pick = vg_pixel_hash2(vec2f(c, seed));
+        let pick = vg_hash2(vec2f(c, seed));
         let centre = (c + 0.2 + pick.x * 0.6) * VG_TIP_SPACING;
         let tall = VG_TIP_HEIGHT * mix(0.55, 1.25, pick.y);
         let half = tall * 0.3;
@@ -829,17 +853,17 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     let crag_normal = vg_bump(crag * 1.6 * relief_fade, p, planar, f.front_facing);
 
     // Bands, broken by the relief and broad noise so no contour line shows.
-    let band_noise = vg_pixel_fbm(p.xz * 0.016 + 30.0);
+    let band_noise = vg_fbm(p.xz * 0.016 + 30.0);
     let treeline = 22.0 + band_noise * 15.0;
     // The snow reaches lower down the shaded northern ranges and the big
     // massifs than on the sunny shoulders, so no one contour runs across them.
-    let snowline = 41.0 + band_noise * 12.0 + (vg_pixel_noise(p.xz * 0.0055 + 12.0) - 0.5) * 18.0;
+    let snowline = 41.0 + band_noise * 12.0 + (vg_noise(p.xz * 0.0055 + 12.0) - 0.5) * 18.0;
     let meadow = 1.0 - smoothstep(5.0, 11.0, p.y + (band_noise - 0.5) * 6.0);
 
     // Rock: light, warm ribs over cool, dark gullies, faint bedding across the
     // faces, mossy toward its foot.
-    let tone = vg_pixel_fbm(p.xz * 0.04 + p.y * 0.015);
-    let bedding = sin(p.y * 0.9 + vg_pixel_noise(p.xz * 0.05) * 6.0) * 0.5 + 0.5;
+    let tone = vg_fbm(p.xz * 0.04 + p.y * 0.015);
+    let bedding = sin(p.y * 0.9 + vg_noise(p.xz * 0.05) * 6.0) * 0.5 + 0.5;
     // Painted value groups: the relief splits into crisp lit ribs and shaded
     // gullies, with a soft step between, rather than a smooth airbrush.
     let rock_value = crag * 0.9 + tone * 0.15;
@@ -877,20 +901,20 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     let slope_ok = smoothstep(0.4 - slope_aa, 0.4 + slope_aa, slope_drive);
     // Avalanche chutes: a few clean grassy lanes down the deepest gullies,
     // crisp-edged like the wood they cut through.
-    let chute_drive = vg_pixel_noise(vec2f(p.x * 0.02 + p.z * 0.02, 3.0)) - crag * 0.5;
+    let chute_drive = vg_noise(vec2f(p.x * 0.02 + p.z * 0.02, 3.0)) - crag * 0.5;
     let chute_aa = clamp(fwidth(chute_drive), 0.01, 0.08);
     let chute = smoothstep(0.62 - chute_aa, 0.62 + chute_aa, chute_drive) * (1.0 - weights.y);
     let stand = slope_ok * (1.0 - chute * 0.9);
-    let stands = vg_pixel_fbm(p.xz * 0.012 + 50.0);
+    let stands = vg_fbm(p.xz * 0.012 + 50.0);
     // Glades open only on gentle ground, where they hold grass: on a steep face
     // a gap in the wood would show bare rock as a pale blot.
-    let glade = smoothstep(0.31, 0.24, vg_pixel_noise(p.xz * 0.022 + 3.1) * 0.75 + vg_pixel_noise(p.xz * 0.07 + 1.7) * 0.25
+    let glade = smoothstep(0.31, 0.24, vg_noise(p.xz * 0.022 + 3.1) * 0.75 + vg_noise(p.xz * 0.07 + 1.7) * 0.25
         + smoothstep(14.0, 40.0, p.y) * 0.07) * smoothstep(0.66, 0.78, up);
     // The tips run along whichever horizontal axis the face lies across.
     let face_dir = normalize(smooth_normal.xz + vec2f(1e-4, 0.0));
     let along_z = smoothstep(0.35, 0.65, abs(face_dir.x));
     let tip_aa = max(footprint * 0.7, 0.04);
-    let edge = treeline + (vg_pixel_noise(p.xz * 0.03 + 7.0) - 0.5) * 9.0 - VG_TIP_HEIGHT;
+    let edge = treeline + (vg_noise(p.xz * 0.03 + 7.0) - 0.5) * 9.0 - VG_TIP_HEIGHT;
     // The ranks repeat down the face, each lower one in front of the one above
     // it: the point belongs to the lowest rank whose tips rise over it, how
     // far below those tips it lies, and which side of its tree.
@@ -907,7 +931,7 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
         let under = smoothstep(-tip_aa, tip_aa, top - p.y);
         depth = mix(depth, top - p.y, under);
         side = mix(side, tips.y, under);
-        rank_tone = mix(rank_tone, mix(0.9, 1.0, vg_pixel_hash(vec2f(k, 41.0))), under);
+        rank_tone = mix(rank_tone, mix(0.9, 1.0, vg_hash(vec2f(k, 41.0))), under);
         cover = max(cover, under);
     }
     let below = cover;
@@ -923,7 +947,7 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     let tip_light = (1.0 - smoothstep(0.0, VG_RANK_STEP * 1.1, depth)) * mix(0.45, 1.0, smoothstep(-0.4, 0.6, sunward));
     var canopy = mix(needles_dark, needles_lit, tip_light);
     canopy = canopy * rank_tone * mix(0.94, 1.05, stands) * height_tint;
-    let larch_drift = smoothstep(0.7, 0.86, vg_pixel_noise(p.xz * 0.06 + 3.0));
+    let larch_drift = smoothstep(0.7, 0.86, vg_noise(p.xz * 0.06 + 3.0));
     canopy = mix(canopy, vg_linear(0x66803a) * height_tint * mix(0.7, 1.05, tip_light), larch_drift * 0.3);
     // Rock breaks through the wood only where the face turns to cliff
     // (`slope_ok`): the ridged relief's crest lines would cut pale worms
@@ -947,7 +971,7 @@ fn village_ranges(s: ptr<function, Surface>, f: EffectFragment) {
     color = mix(color, snow_light, snow);
     normal = normalize(mix(normal, normalize(mix(crag_normal, smooth_normal, 0.5)), snow));
     // Low meadows keep their vertex colour, mottled.
-    color = mix(color, base * mix(0.9, 1.08, vg_pixel_fbm(p.xz * 0.08)), meadow * 0.8);
+    color = mix(color, base * mix(0.9, 1.08, vg_fbm(p.xz * 0.08)), meadow * 0.8);
     // Cloud shadows drift over the ranges as they do over the valley, kept
     // faint so they never read as stains on the rock.
     color = color * mix(1.0, vg_cloud_light(p.xz), 0.1);
