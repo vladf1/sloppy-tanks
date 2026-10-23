@@ -23,14 +23,15 @@
 //! per material and cached by variant key, so an effect costs one pipeline per
 //! distinct material setup.
 //!
-//! Hooks may instead be shared ones (`EffectDefinition::shared_vertex` and
-//! `shared_surface`): they ride in every surface variant without hooks of their own
-//! (the surface hooks in the lit ones), behind a uniform branch on the material's
-//! effect, so the effect's materials draw with the same stage code as plain ones.
-//! WebKit compiles each distinct stage at first use on a cold start, about 0.3 s for
-//! a lit fragment stage and 0.1 s for a vertex stage, and a debris glow, a pallet's
-//! wear, a crown's sway or a billboard's corners each cost one for a few lines of
-//! their own.
+//! Hooks may instead be shared ones, behind a uniform branch on the material's
+//! effect: shared surface hooks (`EffectDefinition::shared_surface`) ride in every
+//! lit surface variant without a surface hook of its own, so those materials draw
+//! with a plain lit fragment stage, and shared vertex hooks (`shared_vertex`) in one
+//! vertex stage for every effect that has them (plain variants keep their own, which
+//! the branches would slow). WebKit compiles each distinct stage at first use on a
+//! cold start, about 0.3 s for a lit fragment stage and 0.05 s for a vertex stage,
+//! and a debris glow, a pallet's wear, a crown's sway or a billboard's corners each
+//! cost one for a few lines of their own.
 
 use sloppy_core::models::{effects_props, effects_scenery};
 
@@ -46,9 +47,9 @@ pub struct EffectDefinition {
     /// so the binary holds the shared source once; usually empty.
     pub entry: &'static str,
     /// WGSL defining any of `effect_vertex`, `effect_world` and `effect_clip` (and
-    /// only what they use, named for the effect) for every surface variant's vertex
-    /// stage to share, in place of any in `wgsl` (`shader::shader_source`); usually
-    /// empty.
+    /// only what they use, named for the effect) for the effects with shared vertex
+    /// hooks to share one vertex stage, in place of any in `wgsl`
+    /// (`shader::shader_source`); usually empty.
     pub shared_vertex: &'static str,
     /// WGSL defining `effect_surface` (and only what it uses, named for the effect)
     /// for lit materials to share, in place of one in `wgsl`; usually empty.

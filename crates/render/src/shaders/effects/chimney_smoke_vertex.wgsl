@@ -1,5 +1,5 @@
-// A chimney wisp's motion and screen size (`chimney_smoke.wgsl`), shared with every
-// surface variant's vertex stage (`EffectDefinition::shared_vertex`).
+// A chimney wisp's motion and screen size (`chimney_smoke.wgsl`), a shared vertex
+// hook (`EffectDefinition::shared_vertex`).
 fn effect_vertex(v: ptr<function, EffectVertex>) {
     let time = frame.camera_position.w;
     let origin = (*v).instance_data.xyz;

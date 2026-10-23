@@ -1,5 +1,4 @@
-// A streak's quad (`streak.wgsl`), shared with every surface variant's vertex
-// stage (`EffectDefinition::shared_vertex`).
+// A streak's quad (`streak.wgsl`), a shared vertex hook (`EffectDefinition::shared_vertex`).
 fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     let corner = (*w).position - v.instance_origin;
     let kind = v.instance_data.w;

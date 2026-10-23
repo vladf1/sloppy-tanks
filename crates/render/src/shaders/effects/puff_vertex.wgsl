@@ -1,5 +1,4 @@
-// A puff's card (`puff.wgsl`), shared with every surface variant's vertex stage
-// (`EffectDefinition::shared_vertex`).
+// A puff's card (`puff.wgsl`), a shared vertex hook (`EffectDefinition::shared_vertex`).
 fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     let corner = (*w).position - v.instance_origin;
     // The card stands at the front of the ball it draws, pulled toward the eye
