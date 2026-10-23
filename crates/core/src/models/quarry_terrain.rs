@@ -72,7 +72,7 @@ pub fn sand_accum() -> &'static [f32] {
 }
 
 /// The baked work-yard soil ([`QUARRY_SOIL_TEXTURE`], pixels baked in row bands by
-/// `bake_quarry_soil`): sRGB color, alpha = grittiness, clamped, mipmapped, 8x
+/// `bake_quarry_ground`): sRGB color, alpha = grittiness, clamped, mipmapped, 8x
 /// anisotropy.
 pub fn quarry_soil_texture() -> TextureRef {
     TextureRef {
