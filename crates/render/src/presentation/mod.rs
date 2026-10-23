@@ -45,7 +45,8 @@ pub const FLAG_CLOTH: EffectDefinition = effect(
 pub const PICKUP_FACE: EffectDefinition = effect(
     sloppy_core::models::PICKUP_FACE_EFFECT,
     wgsl!("presentation/shaders/pickup_face.wgsl"),
-);
+)
+.with_shared_surface(wgsl!("presentation/shaders/pickup_face_surface.wgsl"));
 
 /// Effects presentation registers before building its models.
 pub const PRESENTATION_EFFECTS: [EffectDefinition; 2] = [FLAG_CLOTH, PICKUP_FACE];

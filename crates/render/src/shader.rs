@@ -6,14 +6,15 @@
 //! Each distinct shader costs a full compile on a cold shader cache (about 0.3 s
 //! for a lit one on an Apple GPU, one at a time in WebKit), so only what changes the
 //! cost of every pixel is a variant: lighting, alpha test and effects. Shadow
-//! reception and the cheap per-material features ([`MaterialFeatures`]) are uniform
+//! reception, the cheap per-material features ([`MaterialFeatures`]) and the short
+//! shared surface hooks of effects (`EffectDefinition::shared_surface`) are uniform
 //! branches, and the side a material draws follows from the pipeline's culling.
 
 use bytemuck::{Pod, Zeroable};
 use sloppy_core::scene::{Blending, Effect, Material, Shading, Side, TextureRef};
 
 use crate::color::hex_to_linear;
-use crate::effects::EffectRegistry;
+use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::shadow_side;
 
 mod specialize;
@@ -219,17 +220,20 @@ pub struct MaterialUniform {
     pub bump_transform: [f32; 4],
     pub emissive_transform: [f32; 4],
     pub params: [[f32; 4]; 4],
-    /// x: `MaterialFeatures` bits.
+    /// x: `MaterialFeatures` bits; y: the id of the effect whose shared surface hook
+    /// the material runs (`surface_hook`), 0 for none.
     pub features: [u32; 4],
 }
 
 impl MaterialUniform {
-    /// `material`'s uniform for parts that do or do not `receive_shadow`.
-    pub fn for_part(material: &Material, receive_shadow: bool) -> Self {
+    /// `material`'s uniform for parts that do or do not `receive_shadow`, with the
+    /// id of its effect when that effect's surface hook is a shared one.
+    pub fn for_part(material: &Material, receive_shadow: bool, shared_surface: u16) -> Self {
         let mut uniform = Self::of(material);
         if receive_shadow && material.shading == Shading::Standard {
             uniform.features[0] |= MaterialFeatures::RECEIVE_SHADOW;
         }
+        uniform.features[1] = shared_surface.into();
         uniform
     }
 
@@ -412,9 +416,7 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
     if !effect.is_some_and(|e| e.has_clip()) {
         code += "fn effect_clip(clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex) {}\n";
     }
-    if !effect.is_some_and(|e| e.has_surface()) {
-        code += "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {}\n";
-    }
+    code += &surface_hook(key, effect, effects);
     code += match key.pass {
         Pass::Main => STANDARD_WGSL,
         Pass::Shadow => SHADOW_WGSL,
@@ -422,6 +424,48 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
     let mut folded = flags.to_vec();
     folded.push(lite_flag(source));
     specialize::specialize(&code, &folded)
+}
+
+/// The variant's `effect_surface` unless its effect defines one of its own. A lit
+/// surface variant takes every shared hook (`EffectDefinition::shared_surface`),
+/// each run where the material names its effect (`MaterialUniform::features`), so
+/// the lit materials of those effects and of none draw with the same fragment stage;
+/// any other variant takes its effect's shared hook as its own.
+fn surface_hook(
+    key: &ShaderKey,
+    effect: Option<&EffectDefinition>,
+    effects: &EffectRegistry,
+) -> String {
+    const NONE: &str = "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {}\n";
+    if effect.is_some_and(|e| e.has_own_surface()) {
+        return String::new();
+    }
+    if key.pass == Pass::Main && key.lit {
+        let mut hooks = String::new();
+        let mut branches = Vec::new();
+        for (id, shared) in effects.shared_surfaces() {
+            let name = format!("shared_surface_{id}");
+            hooks += &shared
+                .shared_surface
+                .replace("fn effect_surface(", &format!("fn {name}("));
+            hooks += "\n";
+            branches.push(format!(
+                "if effect == {id}u {{\n        {name}(s, f);\n    }}"
+            ));
+        }
+        if branches.is_empty() {
+            return NONE.into();
+        }
+        return format!(
+            "{hooks}fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {{\n    \
+             let effect = material.features.y;\n    {}\n}}\n",
+            branches.join(" else ")
+        );
+    }
+    match effect.filter(|e| e.has_shared_surface()) {
+        Some(shared) => format!("{}\n", shared.shared_surface),
+        None => NONE.into(),
+    }
 }
 
 /// One pipeline's stages as the WebGPU backend compiles them: each stage its own
@@ -1151,7 +1195,7 @@ mod tests {
         let lit = Material::standard(0x808080, 0.5, 0.1);
         let unlit = Material::basic(0xffffff);
         let receives = |material: &Material, receive: bool| {
-            MaterialUniform::for_part(material, receive).features[0]
+            MaterialUniform::for_part(material, receive, 0).features[0]
                 & MaterialFeatures::RECEIVE_SHADOW
                 != 0
         };
@@ -1269,6 +1313,60 @@ mod tests {
             PipelineKey::occlusion_depth(shader, &double),
             PipelineKey::shadow(shader, &double)
         );
+    }
+
+    /// A shared surface hook leaves its lit materials the plain lit fragment stage,
+    /// run where the material names its effect; its other hooks stay its own, and
+    /// unlit variants and casters take the hook as their effect's own.
+    #[test]
+    fn shared_surface_hooks_share_the_plain_lit_fragment_stage() {
+        let mut effects = EffectRegistry::default();
+        for effect in crate::presentation::PRESENTATION_EFFECTS {
+            effects.register(effect);
+        }
+        let shared: Vec<_> = effects.shared_surfaces().collect();
+        assert!(shared.len() >= 4);
+        for alpha_test in [false, true] {
+            let key = |effect| ShaderKey {
+                lit: true,
+                alpha_test,
+                effect,
+                ..ShaderKey::default()
+            };
+            let plain = StageSources::variant(&key(0), &effects);
+            for &(id, effect) in &shared {
+                let stages = StageSources::variant(&key(id), &effects);
+                assert_eq!(stages.fragment, plain.fragment, "{}", effect.name);
+                let moves = effect.has_vertex() || effect.has_world() || effect.has_clip();
+                assert_eq!(stages.vertex != plain.vertex, moves, "{}", effect.name);
+            }
+            let fragment = plain.fragment.expect("a surface has a fragment stage");
+            assert!(fragment.contains("let effect = material.features.y;"));
+        }
+        let wreck = effects
+            .id(crate::effects::WRECK_AGING.name)
+            .expect("registered");
+        let unlit = |effect| {
+            let key = ShaderKey {
+                effect,
+                ..ShaderKey::default()
+            };
+            StageSources::variant(&key, &effects)
+                .fragment
+                .expect("a fragment stage")
+        };
+        assert!(unlit(wreck).contains("fn wreck_noise(") && !unlit(wreck).contains("features.y"));
+        assert!(!unlit(0).contains("fn wreck_noise("));
+        let cutout = Material {
+            alpha_test: 0.5,
+            ..Material::default()
+        };
+        let caster = ShaderKey::shadow(&cutout, wreck, false, &effects);
+        assert_eq!(caster.effect, wreck);
+        let caster = StageSources::variant(&caster, &effects)
+            .fragment
+            .expect("a cutout");
+        assert!(caster.contains("fn wreck_noise(") && !caster.contains("features.y"));
     }
 
     #[test]

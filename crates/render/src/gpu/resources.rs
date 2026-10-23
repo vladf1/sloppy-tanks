@@ -546,7 +546,12 @@ impl MaterialStore {
         };
         let generation = textures.generation;
         let bound = bound_textures(gpu, textures, material);
-        let uniform = MaterialUniform::for_part(material, receive_shadow);
+        let shared_surface = if effects.get(effect).is_some_and(|e| e.has_shared_surface()) {
+            effect
+        } else {
+            0
+        };
+        let uniform = MaterialUniform::for_part(material, receive_shadow, shared_surface);
         let entry = GpuMaterial {
             material: material.clone(),
             binding: MaterialBinding::new(gpu, &uniform, bound),
