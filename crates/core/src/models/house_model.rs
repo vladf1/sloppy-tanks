@@ -36,7 +36,7 @@ use super::building_kit::{
     uv_per_metre, wall_with_breaches, window,
 };
 use super::house_collapse::{
-    chimney_breaks, clip_mesh, clip_meshes, fold_shard, mottle, roof_breaks, wall_breaks,
+    ShardClip, chimney_breaks, clip_mesh, clip_meshes, fold_shard, mottle, roof_breaks, wall_breaks,
 };
 use super::house_surfaces::{HouseSurface, house_material};
 use super::model_primitives::{Cache, material, put, shadowed};
@@ -45,8 +45,8 @@ use crate::geometry::math::scale_hex_color;
 use crate::geometry::{Mesh, narrow, octahedron_geometry, widen};
 use crate::scene::{Material, Node};
 use crate::sim::house_layout::{
-    CHIMNEY, EAVE_OVERHANG, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, PLINTH, RAFTER_DEPTH,
-    Roof, RoofCover, RoofForm, Shutters, WING_OVERHANG, WallFinish, Wing, heap_house,
+    CHIMNEY, EAVE_OVERHANG, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, PLINTH, PieceShape,
+    RAFTER_DEPTH, Roof, RoofCover, RoofForm, Shutters, WING_OVERHANG, WallFinish, Wing, heap_house,
 };
 use crate::sim::math::Random;
 use crate::sim::timber_layout::TimberHit;
@@ -458,11 +458,7 @@ pub(super) fn house(
 ) {
     let design = HouseDesign::of(x, z, w, d, h);
     let palette = palette(&design, x, z);
-    group.children.push(
-        cottage(&design, &palette, Build::Standing(stage), hits)
-            .remove(0)
-            .1,
-    );
+    group.children.push(cottage(&design, &palette, stage, hits));
 }
 
 /// A cottage whose door faces `street` quarter turns (see [`door_direction`]);
@@ -480,11 +476,7 @@ pub(super) fn house_facing(
 ) {
     let design = HouseDesign::facing(x, z, w, d, h, street);
     let palette = palette(&design, x, z);
-    group.children.push(
-        cottage(&design, &palette, Build::Standing(0), &[])
-            .remove(0)
-            .1,
-    );
+    group.children.push(cottage(&design, &palette, 0, &[]));
 }
 
 /// The pieces a destroyed cottage falls apart into, each drawn as the part it was
@@ -497,19 +489,291 @@ pub fn house_pieces(
     h: f64,
     hits: &[TimberHit],
 ) -> Vec<(HousePiece, Node)> {
-    let design = HouseDesign::of(x, z, w, d, h);
-    let palette = palette(&design, x, z);
-    cottage(&design, &palette, Build::Pieces, hits)
+    HousePieces::new(x, z, w, d, h, hits).collect()
 }
 
-/// Build a cottage: one turned node for a standing build, or one batched node per
-/// collapse piece.
-fn cottage(
+/// A destroyed cottage's pieces ([`house_pieces`]) built a little at a time, in the
+/// same order and from the same random draws as all at once. A cottage's pieces cost
+/// a slow device about a second, so presentation builds them over many frames while
+/// the damaged cottage still stands: its shell hits stop changing once a shot fells
+/// it. Each [`step`](Self::step) cuts one half of a piece's shard or finishes a piece.
+pub struct HousePieces {
+    design: HouseDesign,
+    palette: Palette,
+    hits: Vec<TimberHit>,
+    /// The cottage's collapse shapes and its kits split by part, worked out by the
+    /// first two steps.
+    shapes: Option<Vec<PieceShape>>,
+    kits: Option<CottageKits>,
+    /// The part being cut and its shapes still to cut.
+    cutting: Option<(PartCut, std::vec::IntoIter<usize>)>,
+    piece: Option<PieceCut>,
+    rng: Random,
+}
+
+/// The piece being cut: its shape, the halves of its shard still to cut (each with
+/// its fold) and what is cut so far.
+struct PieceCut {
+    shape: usize,
+    halves: std::vec::IntoIter<(PieceShape, DMat4)>,
+    shard: Node,
+}
+
+/// A collapsing cottage's roof, wall openings and the parts still to cut, with their
+/// kits and shingle courses.
+struct CottageKits {
+    roof: Roof,
+    openings: [Vec<[f64; 4]>; 4],
+    parts: std::collections::VecDeque<(HousePart, Kit<Surface>, Courses)>,
+}
+
+/// A part's finished meshes and shingles, which each of its shapes is cut from.
+struct PartCut {
+    part: HousePart,
+    meshes: KitMeshes<Surface>,
+    shingled: Option<Mesh>,
+}
+
+/// What one [`HousePieces::step`] did.
+pub enum PieceStep {
+    /// Cut part of a piece.
+    Cut,
+    /// Finished a piece.
+    Piece(HousePiece, Node),
+    /// Every piece is built.
+    Done,
+}
+
+impl HousePieces {
+    pub fn new(x: f64, z: f64, w: f64, d: f64, h: f64, hits: &[TimberHit]) -> Self {
+        let design = HouseDesign::of(x, z, w, d, h);
+        Self {
+            palette: palette(&design, x, z),
+            rng: Random::new(f64::from(design.variant) * 13.0 + 5.0),
+            design,
+            hits: hits.to_vec(),
+            shapes: None,
+            kits: None,
+            cutting: None,
+            piece: None,
+        }
+    }
+
+    /// Cut the next half of the current piece's shard, finish the piece once its
+    /// halves are cut, or start the next piece (folding its shard into halves).
+    pub fn step(&mut self) -> PieceStep {
+        let Some(shapes) = &self.shapes else {
+            self.shapes = Some(self.design.pieces());
+            return PieceStep::Cut;
+        };
+        let Some(kits) = &mut self.kits else {
+            let (roof, parts) = cottage_parts(&self.design, Build::Pieces, &self.hits);
+            let Parts {
+                kits,
+                courses,
+                openings,
+                ..
+            } = parts;
+            let parts = HousePart::ALL
+                .into_iter()
+                .zip(kits)
+                .zip(courses)
+                .map(|((part, kit), courses)| (part, kit, courses))
+                .collect();
+            self.kits = Some(CottageKits {
+                roof,
+                openings,
+                parts,
+            });
+            return PieceStep::Cut;
+        };
+        if let Some(PieceCut {
+            shape,
+            halves,
+            shard,
+        }) = &mut self.piece
+        {
+            let Some((cut, _)) = &self.cutting else {
+                unreachable!("a piece is cut from its part");
+            };
+            let shape = &shapes[*shape];
+            return match halves.next() {
+                Some((half, fold)) => {
+                    let mut bits = cut_half(
+                        &self.design,
+                        &self.palette,
+                        &kits.roof,
+                        &kits.openings,
+                        cut,
+                        shape,
+                        &half,
+                        &fold,
+                        &mut self.rng,
+                    );
+                    shard.children.append(&mut bits.children);
+                    PieceStep::Cut
+                }
+                None => {
+                    let shard = std::mem::take(shard);
+                    let piece = shape.piece;
+                    let node = finish_piece(&self.design, cut.part, shape, shard);
+                    self.piece = None;
+                    PieceStep::Piece(piece, node)
+                }
+            };
+        }
+        loop {
+            if let Some((_, queue)) = &mut self.cutting
+                && let Some(index) = queue.next()
+            {
+                // Each half of a shard is buckled along its inner crack.
+                let halves = fold_shard(&shapes[index], &kits.roof, &mut self.rng);
+                self.piece = Some(PieceCut {
+                    shape: index,
+                    halves: halves.into_iter(),
+                    shard: Node::group(""),
+                });
+                return PieceStep::Cut;
+            }
+            let Some((part, kit, courses)) = kits.parts.pop_front() else {
+                return PieceStep::Done;
+            };
+            let kit = if part == HousePart::Mound {
+                rubble_mound(&self.design)
+            } else {
+                kit
+            };
+            let cut = PartCut {
+                part,
+                meshes: kit.finish_scaled(cottage_uv(self.design.style.walls)),
+                shingled: (!courses.positions.is_empty()).then(|| courses.mesh()),
+            };
+            let queue: Vec<usize> = (0..shapes.len())
+                .filter(|&index| shapes[index].piece.part == part)
+                .collect();
+            self.cutting = Some((cut, queue.into_iter()));
+        }
+    }
+}
+
+impl Iterator for HousePieces {
+    type Item = (HousePiece, Node);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            match self.step() {
+                PieceStep::Cut => {}
+                PieceStep::Piece(piece, node) => return Some((piece, node)),
+                PieceStep::Done => return None,
+            }
+        }
+    }
+}
+
+/// One half of a collapse piece's shard: `half` of `cut`'s part cut from its meshes,
+/// its torn edges closed with splintered timber and buckled by `fold`.
+#[allow(clippy::too_many_arguments)]
+fn cut_half(
     design: &HouseDesign,
     palette: &Palette,
-    build: Build,
-    hits: &[TimberHit],
-) -> Vec<(HousePiece, Node)> {
+    roof: &Roof,
+    openings: &[Vec<[f64; 4]>; 4],
+    cut: &PartCut,
+    shape: &PieceShape,
+    half: &PieceShape,
+    fold: &DMat4,
+    rng: &mut Random,
+) -> Node {
+    let PartCut {
+        part,
+        meshes,
+        shingled,
+    } = cut;
+    let part = *part;
+    let walls = design.style.walls;
+    let uv = cottage_uv(walls);
+    let whole = shape.region.is_whole();
+    let mut bits = Node::group("");
+    let clip = (!whole).then(|| ShardClip::new(&half.plane, &half.region));
+    let cut = match &clip {
+        Some(clip) => clip_meshes(meshes, clip),
+        None => meshes.clone(),
+    };
+    add_cottage(&mut bits, cut, palette, walls, true);
+    let mut breaks = Kit::new();
+    if let Some(index) = part.wall_index() {
+        wall_breaks(&mut breaks, half, &openings[index], rng);
+    } else if part.is_roof() && !whole {
+        roof_breaks(&mut breaks, half, roof, rng);
+    } else if part == HousePart::Chimney {
+        chimney_breaks(&mut breaks, half, design.flue(), design.chimney_snap(), rng);
+    }
+    add_cottage(&mut bits, breaks.finish_scaled(&uv), palette, walls, true);
+    if let Some(mesh) = shingled {
+        let mesh = match &clip {
+            Some(clip) => clip_mesh(mesh, clip),
+            None => Some(mesh.clone()),
+        };
+        if let Some(mesh) = mesh {
+            // A fallen slab keeps its shingles, dulled by the dust of the fall, so it
+            // reads as a broken roof rather than a painted board.
+            let material = house_material(HouseSurface::Shingles, dusted(palette.roof));
+            bits.children.push(shadowed(Arc::new(mesh), material));
+        }
+    }
+    // A collapse starts from the wrecked cottage's racked, bowed frame.
+    for child in &mut bits.children {
+        if let Some(drawable) = &mut child.drawable {
+            let mesh = Arc::make_mut(&mut drawable.mesh);
+            buckle_mesh(mesh, design, roof, 2);
+            mesh.apply_matrix4(fold);
+        }
+    }
+    bits
+}
+
+/// A collapse piece from its cut `shard`: centred on its collider, batched and
+/// grimed, casting a shadow only where that shows.
+fn finish_piece(
+    design: &HouseDesign,
+    part: HousePart,
+    shape: &PieceShape,
+    mut shard: Node,
+) -> Node {
+    shard.position = -shape.center;
+    let mut root = Node::default();
+    root.children.push(shard);
+    flatten(&mut root);
+    batch(&mut root);
+    let seed = f64::from(design.variant) * 0.37
+        + f64::from(shape.piece.shard) * 1.91
+        + part as usize as f64 * 0.73;
+    for child in &mut root.children {
+        if let Some(drawable) = &mut child.drawable {
+            mottle(Arc::make_mut(&mut drawable.mesh), seed);
+        }
+    }
+    // Only the side slopes' ridge slabs and the chimney's top cast shadows as they
+    // fall: they shade the wreck from overhead, the smaller pieces' shadows are lost
+    // under them, and each caster is a draw.
+    let casts = match part {
+        HousePart::RightRoof | HousePart::LeftRoof => shape.piece.shard.is_multiple_of(2),
+        HousePart::Chimney => shape.piece.shard == 1,
+        _ => false,
+    };
+    if !casts {
+        for child in &mut root.children {
+            if let Some(drawable) = &mut child.drawable {
+                drawable.cast_shadow = false;
+            }
+        }
+    }
+    root
+}
+
+/// A cottage's kits for `build`, with its shell hits (made up to a wrecked
+/// cottage's breaches from stage 2) cut into its walls.
+fn cottage_parts(design: &HouseDesign, build: Build, hits: &[TimberHit]) -> (Roof, Parts) {
     let roof = design.roof();
     let mut parts = Parts::new(build);
     let mut rng = Random::new(f64::from(design.variant) + 41.0);
@@ -521,162 +785,155 @@ fn cottage(
         hits
     };
     build_house(&mut parts, design, &roof, build, hits, &mut rng);
-    let walls = design.style.walls;
-    let uv = cottage_uv(walls);
-    let shingles = |mesh: Mesh| {
-        // A fallen slab keeps its shingles, dulled by the dust of the fall, so it
-        // reads as a broken roof rather than a painted board.
-        let material = if build == Build::Pieces {
-            house_material(HouseSurface::Shingles, dusted(palette.roof))
-        } else {
-            house_material(HouseSurface::Shingles, palette.roof)
-        };
-        shadowed(Arc::new(mesh), material)
-    };
-    let Parts {
-        kits,
-        courses,
-        nodes,
-        openings,
-        ..
-    } = parts;
-    match build {
-        Build::Standing(stage) => {
-            let mut cottage = Node::group("");
+    (roof, parts)
+}
+
+/// Build a standing cottage: one turned node.
+fn cottage(design: &HouseDesign, palette: &Palette, stage: u32, hits: &[TimberHit]) -> Node {
+    let mut build = CottageBuild::new(*design, *palette, stage, hits);
+    loop {
+        if let Some(cottage) = build.step() {
+            return cottage;
+        }
+    }
+}
+
+/// A standing cottage built in three steps (its kits, its walls, its roof) with the
+/// same result as at once. A cottage's look changes with each shell that holes it, and
+/// rebuilding it within one frame cost a slow device a frame or two each time.
+struct CottageBuild {
+    design: HouseDesign,
+    palette: Palette,
+    stage: u32,
+    hits: Vec<TimberHit>,
+    kits: Option<StandingKits>,
+    cottage: Node,
+}
+
+/// A standing cottage's kits once built: its roof, the walls' and the roof's kits
+/// (taken as each is finished), the roof's shingle courses and the loose nodes.
+struct StandingKits {
+    roof: Roof,
+    body: Option<Kit<Surface>>,
+    roof_kit: Option<Kit<Surface>>,
+    roof_courses: Courses,
+    nodes: Vec<Node>,
+}
+
+impl CottageBuild {
+    fn new(design: HouseDesign, palette: Palette, stage: u32, hits: &[TimberHit]) -> Self {
+        Self {
+            design,
+            palette,
+            stage,
+            hits: hits.to_vec(),
+            kits: None,
+            cottage: Node::group(""),
+        }
+    }
+
+    /// The next step; the turned cottage once its last is done.
+    fn step(&mut self) -> Option<Node> {
+        let (design, palette, stage) = (&self.design, &self.palette, self.stage);
+        let walls = design.style.walls;
+        let uv = cottage_uv(walls);
+        let Some(StandingKits {
+            roof,
+            body,
+            roof_kit,
+            roof_courses,
+            nodes,
+        }) = &mut self.kits
+        else {
+            let (roof, parts) = cottage_parts(design, Build::Standing(stage), &self.hits);
+            let Parts {
+                kits,
+                courses,
+                nodes,
+                ..
+            } = parts;
             let mut kits = kits.into_iter();
-            let mut courses = courses.into_iter();
             let body = kits.next().expect("body kit");
             let roof_kit = kits.next().expect("roof kit");
+            let roof_courses = courses.into_iter().nth(1).expect("roof courses");
+            let nodes = nodes.into_iter().flatten().collect();
+            self.kits = Some(StandingKits {
+                roof,
+                body: Some(body),
+                roof_kit: Some(roof_kit),
+                roof_courses,
+                nodes,
+            });
+            return None;
+        };
+        if let Some(body) = body.take() {
             let mut body_meshes = body.finish_scaled(&uv);
-            buckle(&mut body_meshes, design, &roof, stage);
+            buckle(&mut body_meshes, design, roof, stage);
             grime(&mut body_meshes, roof.ridge);
-            add_weathered(&mut cottage, body_meshes, palette, walls);
-            let mut roof_meshes = roof_kit.finish_scaled(&uv);
-            let mut roof_courses = courses.nth(1).expect("roof courses");
-            if stage >= 2 {
-                for (_, mesh) in &mut roof_meshes {
-                    sag(Arc::make_mut(mesh), &roof);
-                }
-                roof_courses.sag(&roof);
-            }
-            buckle(&mut roof_meshes, design, &roof, stage);
-            roof_courses.buckle(design, &roof, stage);
-            grime(&mut roof_meshes, roof.ridge);
-            add_weathered(&mut cottage, roof_meshes, palette, walls);
-            if !roof_courses.positions.is_empty() {
-                let material = WEATHERED_SHINGLES.get_or_insert(palette.roof, || Material {
-                    vertex_colors: true,
-                    ..(*house_material(HouseSurface::Shingles, palette.roof)).clone()
-                });
-                cottage.children.push(shadowed(
-                    Arc::new(roof_courses.weathered_mesh(&roof)),
-                    material,
-                ));
-            }
-            for mut node in nodes.into_iter().flatten() {
-                node.position = give(design, &roof, stage, node.position);
-                cottage.children.push(node);
-            }
-            cottage.set_rotation_euler(0.0, design.yaw(), 0.0);
-            vec![(HousePiece::new(HousePart::FrontWall, 0), cottage)]
+            add_weathered(&mut self.cottage, body_meshes, palette, walls);
+            return None;
         }
-        Build::Pieces => {
-            let shapes = design.pieces();
-            let mut rng = Random::new(f64::from(design.variant) * 13.0 + 5.0);
-            let mut pieces = Vec::new();
-            for ((kit, courses), part) in kits.into_iter().zip(courses).zip(HousePart::ALL) {
-                let kit = if part == HousePart::Mound {
-                    rubble_mound(design)
-                } else {
-                    kit
-                };
-                let meshes = kit.finish_scaled(&uv);
+        let cottage = &mut self.cottage;
+        let mut roof_meshes = roof_kit.take().expect("roof kit").finish_scaled(&uv);
+        if stage >= 2 {
+            for (_, mesh) in &mut roof_meshes {
+                sag(Arc::make_mut(mesh), roof);
+            }
+            roof_courses.sag(roof);
+        }
+        buckle(&mut roof_meshes, design, roof, stage);
+        roof_courses.buckle(design, roof, stage);
+        grime(&mut roof_meshes, roof.ridge);
+        add_weathered(cottage, roof_meshes, palette, walls);
+        if !roof_courses.positions.is_empty() {
+            let material = WEATHERED_SHINGLES.get_or_insert(palette.roof, || Material {
+                vertex_colors: true,
+                ..(*house_material(HouseSurface::Shingles, palette.roof)).clone()
+            });
+            cottage.children.push(shadowed(
+                Arc::new(roof_courses.weathered_mesh(roof)),
+                material,
+            ));
+        }
+        for mut node in std::mem::take(nodes) {
+            node.position = give(design, roof, stage, node.position);
+            cottage.children.push(node);
+        }
+        cottage.set_rotation_euler(0.0, design.yaw(), 0.0);
+        Some(std::mem::take(cottage))
+    }
+}
 
-                let shingled = (!courses.positions.is_empty()).then(|| courses.mesh());
-                for shape in shapes.iter().filter(|shape| shape.piece.part == part) {
-                    let whole = shape.region.is_whole();
-                    let mut shard = Node::group("");
-                    // Each half of a shard buckled along its inner crack.
-                    for (half, fold) in fold_shard(shape, &roof, &mut rng) {
-                        let mut bits = Node::group("");
-                        let cut = if whole {
-                            meshes.clone()
-                        } else {
-                            clip_meshes(&meshes, &half)
-                        };
-                        add_cottage(&mut bits, cut, palette, walls, true);
-                        let mut breaks = Kit::new();
-                        if let Some(index) = part.wall_index() {
-                            wall_breaks(&mut breaks, &half, &openings[index], &mut rng);
-                        } else if part.is_roof() && !whole {
-                            roof_breaks(&mut breaks, &half, &roof, &mut rng);
-                        } else if part == HousePart::Chimney {
-                            chimney_breaks(
-                                &mut breaks,
-                                &half,
-                                design.flue(),
-                                design.chimney_snap(),
-                                &mut rng,
-                            );
-                        }
-                        add_cottage(&mut bits, breaks.finish_scaled(&uv), palette, walls, true);
-                        if let Some(mesh) = &shingled {
-                            let mesh = if whole {
-                                Some(mesh.clone())
-                            } else {
-                                clip_mesh(mesh, &half.plane, &half.region)
-                            };
-                            if let Some(mesh) = mesh {
-                                bits.children.push(shingles(mesh));
-                            }
-                        }
-                        // A collapse starts from the wrecked cottage's racked, bowed
-                        // frame.
-                        for child in &mut bits.children {
-                            if let Some(drawable) = &mut child.drawable {
-                                let mesh = Arc::make_mut(&mut drawable.mesh);
-                                buckle_mesh(mesh, design, &roof, 2);
-                                mesh.apply_matrix4(&fold);
-                            }
-                        }
-                        shard.children.append(&mut bits.children);
-                    }
-                    shard.position = -shape.center;
-                    let mut root = Node::default();
-                    root.children.push(shard);
-                    flatten(&mut root);
-                    batch(&mut root);
-                    let seed = f64::from(design.variant) * 0.37
-                        + f64::from(shape.piece.shard) * 1.91
-                        + part as usize as f64 * 0.73;
-                    for child in &mut root.children {
-                        if let Some(drawable) = &mut child.drawable {
-                            mottle(Arc::make_mut(&mut drawable.mesh), seed);
-                        }
-                    }
-                    // Only the side slopes' ridge slabs and the chimney's top cast
-                    // shadows as they fall: they shade the wreck from overhead, the
-                    // smaller pieces' shadows are lost under them, and each caster
-                    // is a draw.
-                    let casts = match part {
-                        HousePart::RightRoof | HousePart::LeftRoof => {
-                            shape.piece.shard.is_multiple_of(2)
-                        }
-                        HousePart::Chimney => shape.piece.shard == 1,
-                        _ => false,
-                    };
-                    if !casts {
-                        for child in &mut root.children {
-                            if let Some(drawable) = &mut child.drawable {
-                                drawable.cast_shadow = false;
-                            }
-                        }
-                    }
-                    pieces.push((shape.piece, root));
-                }
-            }
-            pieces
+/// A cottage cover's model ([`cover_model`](super::cover_model) for a cottage) built
+/// a step at a time: presentation spreads a hit cottage's new look over a few frames,
+/// keeping its last look meanwhile.
+pub struct HouseCoverBuild {
+    x: f64,
+    z: f64,
+    cottage: CottageBuild,
+}
+
+impl HouseCoverBuild {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(x: f64, z: f64, w: f64, d: f64, h: f64, stage: u32, hits: &[TimberHit]) -> Self {
+        let design = HouseDesign::of(x, z, w, d, h);
+        let palette = palette(&design, x, z);
+        Self {
+            x,
+            z,
+            cottage: CottageBuild::new(design, palette, stage, hits),
         }
+    }
+
+    /// The next step; the cover's model once its last is done.
+    pub fn step(&mut self) -> Option<Node> {
+        let cottage = self.cottage.step()?;
+        let mut root = Node {
+            position: DVec3::new(self.x, 0.0, self.z),
+            ..Node::default()
+        };
+        root.children.push(cottage);
+        Some(root)
     }
 }
 
@@ -5025,6 +5282,62 @@ mod tests {
             .filter(|c| c.kind == crate::sim::types::CoverKind::House)
             .map(|c| (c.x, c.z, c.w, c.d, c.h))
             .collect()
+    }
+
+    /// Every vertex and transform of a node tree, to compare two builds.
+    fn contents(node: &Node, out: &mut Vec<f64>) {
+        out.extend(node.position.to_array());
+        out.extend(node.rotation.to_array());
+        if let Some(drawable) = &node.drawable {
+            let mesh = &drawable.mesh;
+            out.extend(mesh.positions.iter().flatten().map(|&v| f64::from(v)));
+            out.extend(mesh.normals.iter().flatten().map(|&v| f64::from(v)));
+            out.extend(mesh.colors.iter().flatten().map(|&v| f64::from(v)));
+            out.extend(mesh.uvs.iter().flatten().map(|&v| f64::from(v)));
+            out.push(f64::from(drawable.material.color.0));
+        }
+        for child in &node.children {
+            contents(child, out);
+        }
+    }
+
+    #[test]
+    fn a_cottage_built_in_steps_matches_one_built_at_once() {
+        let hits = [TimberHit {
+            x: 0.5,
+            y: 1.2,
+            z: 3.0,
+            size: 1.0,
+        }];
+        let (x, z, w, d, h) = village()[0];
+        for stage in [0, 2] {
+            let shape = super::super::CoverShape {
+                kind: crate::sim::types::CoverKind::House,
+                x,
+                z,
+                w,
+                d,
+                h,
+                color: 0,
+                debris_seed: None,
+                timber_hits: hits.to_vec(),
+                timber_join: None,
+            };
+            let at_once = super::super::cover_model(&shape, super::super::TreeDetail::Full, stage);
+            let mut build = HouseCoverBuild::new(x, z, w, d, h, stage, &hits);
+            let mut steps = 1;
+            let stepped = loop {
+                match build.step() {
+                    Some(root) => break root,
+                    None => steps += 1,
+                }
+            };
+            assert_eq!(steps, 3);
+            let (mut a, mut b) = (Vec::new(), Vec::new());
+            contents(&at_once, &mut a);
+            contents(&stepped, &mut b);
+            assert!(!a.is_empty() && a == b, "stage {stage}");
+        }
     }
 
     /// Variety never costs more than the one cottage design did (about 6,400

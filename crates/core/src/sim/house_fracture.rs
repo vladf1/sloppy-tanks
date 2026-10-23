@@ -212,20 +212,25 @@ impl ShardRegion {
     }
 
     /// `polygon` (convex, edges marked) clipped to each cell: the shard's pieces of it.
+    /// Most cells leave nothing of it, so the clipping runs in two reused buffers and
+    /// only a piece that is kept gets its own.
     pub fn clip(&self, polygon: &[(DVec2, EdgeKind)]) -> Vec<Vec<(DVec2, EdgeKind)>> {
-        self.cells
-            .iter()
-            .filter_map(|cell| {
-                let mut piece = polygon.to_vec();
-                for side in cell {
-                    piece = clip_marked(&piece, side);
-                    if piece.len() < 3 {
-                        return None;
-                    }
+        let mut pieces = Vec::new();
+        let mut piece = Vec::with_capacity(polygon.len() + 8);
+        let mut clipped = Vec::with_capacity(polygon.len() + 8);
+        'cells: for cell in &self.cells {
+            piece.clear();
+            piece.extend_from_slice(polygon);
+            for side in cell {
+                clip_marked_into(&piece, side, &mut clipped);
+                std::mem::swap(&mut piece, &mut clipped);
+                if piece.len() < 3 {
+                    continue 'cells;
                 }
-                Some(piece)
-            })
-            .collect()
+            }
+            pieces.push(piece.clone());
+        }
+        pieces
     }
 
     /// Every point of `outline` (convex) the shard keeps, cell by cell.
@@ -258,10 +263,11 @@ fn marked(outline: &[DVec2]) -> Vec<(DVec2, EdgeKind)> {
     outline.iter().map(|&p| (p, EdgeKind::Outline)).collect()
 }
 
-/// Sutherland-Hodgman against one side, each vertex carrying the kind of the edge
-/// that leaves it; an edge along the clip line takes the side's kind.
-fn clip_marked(polygon: &[(DVec2, EdgeKind)], side: &Side) -> Vec<(DVec2, EdgeKind)> {
-    let mut out = Vec::with_capacity(polygon.len() + 2);
+/// Sutherland-Hodgman against one side into `out` (replacing what it held), each
+/// vertex carrying the kind of the edge that leaves it; an edge along the clip line
+/// takes the side's kind.
+fn clip_marked_into(polygon: &[(DVec2, EdgeKind)], side: &Side, out: &mut Vec<(DVec2, EdgeKind)>) {
+    out.clear();
     for i in 0..polygon.len() {
         let (a, kind) = polygon[i];
         let b = polygon[(i + 1) % polygon.len()].0;
@@ -279,7 +285,6 @@ fn clip_marked(polygon: &[(DVec2, EdgeKind)], side: &Side) -> Vec<(DVec2, EdgeKi
             (false, false) => {}
         }
     }
-    out
 }
 
 /// Clip a convex polygon of interpolated vertices to a half-plane: `project`

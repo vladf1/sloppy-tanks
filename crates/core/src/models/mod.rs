@@ -112,7 +112,7 @@ pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
 pub use crate_model::crate_piece_model;
 pub use effects_props::{aged_wreck_material, wreck_brightness};
 pub use flags::{FLAG_CLOTH_NODE, flags_model};
-pub use house_model::house_pieces;
+pub use house_model::{HouseCoverBuild, HousePieces, PieceStep, house_pieces};
 pub use pickup_visuals::{
     PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER, SUPPLY_SCALE,
     atlas_cell_uv, pickup_board, pickup_cube, pickup_material, pickup_paint, pickup_pallet,
