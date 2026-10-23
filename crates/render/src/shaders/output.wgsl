@@ -62,14 +62,20 @@ struct PostOut {
     @builtin(position) clip: vec4f,
     // Texture coordinates in WebGPU's top-down rows on both backends.
     @location(0) uv: vec2f,
+    // The bloom pass (`fs_bloom`), drawn as the instance index.
+    @location(1) @interpolate(flat) bloom_pass: u32,
 }
 
 @vertex
-fn vs_post(@builtin(vertex_index) index: u32) -> PostOut {
+fn vs_post(
+    @builtin(vertex_index) index: u32,
+    @builtin(instance_index) bloom_pass: u32,
+) -> PostOut {
     let corner = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
     var out: PostOut;
     out.clip = vec4f(corner * 2.0 - 1.0, 0.0, 1.0);
     out.uv = vec2f(corner.x, 1.0 - corner.y);
+    out.bloom_pass = bloom_pass;
     return out;
 }
 
@@ -96,8 +102,7 @@ fn scene_haze(color: vec3f, alpha: f32, uv: vec2f) -> vec3f {
 
 // Four bilinear taps covering 4×4 source texels, each weighted down by its own
 // brightness (Karis) so a lone hot pixel cannot flicker, then a soft threshold.
-@fragment
-fn fs_bloom_prefilter(input: PostOut) -> @location(0) vec4f {
+fn bloom_prefilter(input: PostOut) -> vec4f {
     let texel = 1.0 / vec2f(textureDimensions(source));
     var sum = vec3f(0.0);
     var weight = 0.0;
@@ -119,8 +124,7 @@ fn fs_bloom_prefilter(input: PostOut) -> @location(0) vec4f {
 }
 
 // Call of Duty's 13-tap downsample: a 6×6 texel footprint without aliasing.
-@fragment
-fn fs_bloom_down(input: PostOut) -> @location(0) vec4f {
+fn bloom_down(input: PostOut) -> vec4f {
     let t = 1.0 / vec2f(textureDimensions(source));
     let uv = input.uv;
     let a = tap(uv + t * vec2f(-2.0, -2.0));
@@ -142,8 +146,7 @@ fn fs_bloom_down(input: PostOut) -> @location(0) vec4f {
 }
 
 // A 3×3 tent over the smaller level, added onto the larger one by the blend.
-@fragment
-fn fs_bloom_up(input: PostOut) -> @location(0) vec4f {
+fn bloom_up(input: PostOut) -> vec4f {
     let t = 1.0 / vec2f(textureDimensions(source));
     let uv = input.uv;
     var color = tap(uv) * 4.0;
@@ -152,6 +155,20 @@ fn fs_bloom_up(input: PostOut) -> @location(0) vec4f {
     color += tap(uv + vec2f(-t.x, -t.y)) + tap(uv + vec2f(t.x, -t.y));
     color += tap(uv + vec2f(-t.x, t.y)) + tap(uv + vec2f(t.x, t.y));
     return vec4f(color / 16.0, 1.0);
+}
+
+// The bloom chain's passes share one fragment stage, told apart by the pass drawn
+// (`gpu::BloomPass`): WebKit compiles every distinct stage at first use, about 90 ms
+// apiece on a cold start however small, and the pass is the same for a whole draw.
+@fragment
+fn fs_bloom(input: PostOut) -> @location(0) vec4f {
+    if input.bloom_pass == 0u {
+        return bloom_prefilter(input);
+    }
+    if input.bloom_pass == 1u {
+        return bloom_down(input);
+    }
+    return bloom_up(input);
 }
 
 fn rrt_and_odt_fit(v: vec3f) -> vec3f {

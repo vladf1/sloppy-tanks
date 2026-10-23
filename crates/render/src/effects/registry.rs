@@ -26,14 +26,20 @@
 //! Hooks may instead be shared ones, behind a uniform branch on the material's
 //! effect: shared surface hooks (`EffectDefinition::shared_surface`) ride in every
 //! lit surface variant without a surface hook of its own, so those materials draw
-//! with a plain lit fragment stage, and shared vertex hooks (`shared_vertex`) in one
+//! with a plain lit fragment stage (unlit hooks, `shared_unlit`, share one unlit
+//! stage among their own effects), and shared vertex hooks (`shared_vertex`) in one
 //! vertex stage for every effect that has them (plain variants keep their own, which
-//! the branches would slow). WebKit compiles each distinct stage at first use on a
-//! cold start, about 0.3 s for a lit fragment stage and 0.05 s for a vertex stage,
-//! and a debris glow, a pallet's wear, a crown's normals or a billboard's corners
-//! each cost one for a few lines of their own. Only the particles' few-vertex
-//! billboards share vertex hooks: the branches' material read cost every vertex of
-//! a tree crown, a flag or a pallet (0.005 ms of an iPad-size village frame).
+//! the branches would slow). WebKit compiles each distinct stage at first use on a cold start,
+//! about 0.3 s for a lit fragment stage, 0.1 s for an unlit one and 0.05 s for a
+//! vertex stage, and a debris glow, a pallet's wear, a crown's normals, a tread
+//! mark's grain or a billboard's corners each cost one for a few lines of their own.
+//! Only the particles' few-vertex billboards share vertex hooks: the branches'
+//! material read cost every vertex of a tree crown, a flag or a pallet (0.005 ms of
+//! an iPad-size village frame). Only short unlit hooks share, and not with plain
+//! unlit materials, whose blended pixels the branches changed by a bit, which the
+//! output's haze test can turn into a visible step; the smoke puffs, streaks and
+//! blast rings, whose pixels overlap many deep, keep stages of their own, sized for
+//! themselves.
 
 use sloppy_core::models::{effects_props, effects_scenery};
 
@@ -56,6 +62,9 @@ pub struct EffectDefinition {
     /// WGSL defining `effect_surface` (and only what it uses, named for the effect)
     /// for lit materials to share, in place of one in `wgsl`; usually empty.
     pub shared_surface: &'static str,
+    /// `shared_surface` rides in the unlit variants of the effects sharing unlit
+    /// hooks instead of the lit variants.
+    pub shared_unlit: bool,
     /// The shadow pass dithers the caster away with the instance opacity, like
     /// the renderer's faded instances (`debris-fade.ts`).
     pub shadow_fade: bool,
@@ -96,6 +105,7 @@ pub(crate) const fn effect(name: &'static str, wgsl: &'static str) -> EffectDefi
         entry: "",
         shared_vertex: "",
         shared_surface: "",
+        shared_unlit: false,
         shadow_fade: false,
         still_shadow: false,
         hooks: None,
@@ -115,6 +125,15 @@ impl EffectDefinition {
     pub(crate) const fn with_shared_surface(self, wgsl: &'static str) -> Self {
         Self {
             shared_surface: wgsl,
+            ..self
+        }
+    }
+
+    /// The definition with `wgsl` as a shared surface hook for unlit materials.
+    pub(crate) const fn with_shared_unlit_surface(self, wgsl: &'static str) -> Self {
+        Self {
+            shared_surface: wgsl,
+            shared_unlit: true,
             ..self
         }
     }
@@ -168,6 +187,11 @@ impl EffectDefinition {
     pub fn has_shared_surface(&self) -> bool {
         !self.shared_surface.is_empty()
     }
+    /// Whether its shared surface hook rides in the dispatch of a `lit` or unlit
+    /// variant (`shader::surface_hook`).
+    pub fn shares_surface_with(&self, lit: bool) -> bool {
+        self.has_shared_surface() && self.shared_unlit != lit
+    }
     /// Whether its materials name it to the shared hooks (`MaterialUniform::features`).
     pub fn shares_hooks(&self) -> bool {
         self.has_shared_vertex() || self.has_shared_surface()
@@ -204,7 +228,7 @@ pub const BLAST_RING: EffectDefinition =
 /// Fading tread marks (`tracks.ts`). `instance_data` = (birth s, strength);
 /// params[0].x is the trail clock, which the track pool writes every frame.
 pub const TRACK_MARK: EffectDefinition =
-    effect("track-mark", wgsl!("shaders/effects/track_mark.wgsl"));
+    effect("track-mark", "").with_shared_unlit_surface(wgsl!("shaders/effects/track_mark.wgsl"));
 
 /// Lit debris chips with a per-instance glow for hot clods. `instance_data` =
 /// (glow rgb linear, unused). No params.
@@ -215,8 +239,9 @@ pub const DEBRIS_CHIP: EffectDefinition = EffectDefinition {
 
 /// Soft dust billboards (`effect-materials.ts` `dustMaterial`): track dust and
 /// quarry wisps. Instance tint is the linear color and opacity. No params.
-pub const DUST: EffectDefinition = effect("dust", wgsl!("shaders/effects/dust.wgsl"))
-    .with_shared_vertex(wgsl!("shaders/effects/dust_vertex.wgsl"));
+pub const DUST: EffectDefinition = effect("dust", "")
+    .with_shared_vertex(wgsl!("shaders/effects/dust_vertex.wgsl"))
+    .with_shared_unlit_surface(wgsl!("shaders/effects/dust.wgsl"));
 
 // ------------------------------------------------------------------ model effects
 // The `Effect::Custom` names of `sloppy_core::models::effects_props` and
@@ -280,11 +305,9 @@ pub const FOLIAGE: EffectDefinition = EffectDefinition {
 };
 
 /// Screen-sized chimney wisps (`village-atmosphere.ts`).
-pub const CHIMNEY_SMOKE: EffectDefinition = effect(
-    effects_scenery::CHIMNEY_SMOKE,
-    wgsl!("shaders/effects/chimney_smoke.wgsl"),
-)
-.with_shared_vertex(wgsl!("shaders/effects/chimney_smoke_vertex.wgsl"));
+pub const CHIMNEY_SMOKE: EffectDefinition = effect(effects_scenery::CHIMNEY_SMOKE, "")
+    .with_shared_vertex(wgsl!("shaders/effects/chimney_smoke_vertex.wgsl"))
+    .with_shared_unlit_surface(wgsl!("shaders/effects/chimney_smoke.wgsl"));
 
 /// Baked quarry soil with world-space grit (`quarry-terrain.ts`).
 pub const QUARRY_SOIL: EffectDefinition = effect(

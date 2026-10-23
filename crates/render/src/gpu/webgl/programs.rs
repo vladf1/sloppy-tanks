@@ -220,9 +220,9 @@ fn depth_raster(side: Side) -> Raster {
     }
 }
 
-/// The water, output, sky, three bloom, ambient occlusion, merged and cutout caster
-/// programs, in that order.
-const FIXED_PROGRAMS: usize = 9;
+/// The water, output, sky, bloom (all three passes), ambient occlusion, merged and
+/// cutout caster programs, in that order.
+const FIXED_PROGRAMS: usize = 7;
 
 pub struct Pipelines {
     programs: Vec<Program>,
@@ -242,14 +242,12 @@ impl Pipelines {
     /// builds the arena.
     pub fn new(gpu: &Gpu) -> Self {
         let output = output_source();
-        let bloom = |label, entry| Linking::start(gpu, label, &output, "vs_post", Some(entry));
         let jobs = [
             Linking::start(gpu, "water", &water_source(), "vs_water", Some("fs_water")),
             Linking::start(gpu, "output", &output, "vs_fullscreen", Some("fs_output")),
             Linking::start(gpu, "sky", &sky_source(), "vs_sky", Some("fs_sky")),
-            bloom("bloom prefilter", "fs_bloom_prefilter"),
-            bloom("bloom down", "fs_bloom_down"),
-            bloom("bloom up", "fs_bloom_up"),
+            // Each pass draws as its own instance index (`BloomPass`).
+            Linking::start(gpu, "bloom", &output, "vs_post", Some("fs_bloom")),
             Linking::start(
                 gpu,
                 "ambient occlusion",
@@ -309,17 +307,7 @@ impl Pipelines {
         let Some(jobs) = self.fixed_jobs.take() else {
             return;
         };
-        let [
-            water,
-            output,
-            sky,
-            prefilter,
-            down,
-            up,
-            occlusion,
-            merged,
-            cutout,
-        ] = jobs.map(|job| {
+        let [water, output, sky, bloom, occlusion, merged, cutout] = jobs.map(|job| {
             self.programs.push(job.finish(gpu));
             self.programs.len() as u32 - 1
         });
@@ -351,15 +339,15 @@ impl Pipelines {
             },
             bloom: [
                 Pipeline {
-                    program: prefilter,
+                    program: bloom,
                     raster: Raster::PLAIN,
                 },
                 Pipeline {
-                    program: down,
+                    program: bloom,
                     raster: Raster::PLAIN,
                 },
                 Pipeline {
-                    program: up,
+                    program: bloom,
                     raster: Raster {
                         blend: BlendMode::Additive,
                         ..Raster::PLAIN

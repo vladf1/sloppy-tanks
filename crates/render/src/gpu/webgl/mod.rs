@@ -23,7 +23,7 @@ pub use textures::{Sampler, Texture, TextureView, Uploader};
 use glow::HasContext;
 
 use super::{
-    BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
+    BLOOM_FIRST_SHIFT, BLOOM_LEVELS, BloomPass, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
     OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
@@ -704,26 +704,28 @@ impl Frame {
     /// Threshold the resolved frame into the first bloom level, halve it down the
     /// levels and add each back onto the one above.
     fn draw_bloom(&self, gpu: &Gpu, scene: &Scene, stats: &mut RenderStats) {
-        let [prefilter, down, up] = &scene.pipelines.fixed().bloom;
         let levels = &self.bloom.levels;
         gpu.bind_uniform_block(block::OUTPUT, self.output_uniform);
         gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
         gpu.bind_vertex_array(Some(self.no_attributes));
-        let pass = |pipeline: &programs::Pipeline, source: glow::Texture, target: usize| {
+        let pass = |kind: BloomPass, source: glow::Texture, target: usize| {
+            let pipeline = &scene.pipelines.fixed().bloom[kind as usize];
+            let program = scene.pipelines.program(pipeline.program);
             let (_, framebuffer, width, height) = levels[target];
             gpu.bind_framebuffer(Some(framebuffer));
             gpu.viewport(width, height);
-            gpu.use_program(scene.pipelines.program(pipeline.program).raw);
+            gpu.use_program(program.raw);
+            program.set_first_instance(gpu, kind as u32);
             gpu.set_raster(&pipeline.raster);
             gpu.bind_texture(unit::SOURCE, source);
             unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
         };
-        pass(prefilter, self.main.resolved, 0);
+        pass(BloomPass::Prefilter, self.main.resolved, 0);
         for level in 1..BLOOM_LEVELS {
-            pass(down, levels[level - 1].0, level);
+            pass(BloomPass::Down, levels[level - 1].0, level);
         }
         for level in (0..BLOOM_LEVELS - 1).rev() {
-            pass(up, levels[level + 1].0, level);
+            pass(BloomPass::Up, levels[level + 1].0, level);
         }
         stats.draw_calls += 2 * BLOOM_LEVELS as u32 - 1;
     }

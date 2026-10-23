@@ -590,7 +590,8 @@ struct FixedPipelines<P> {
     output: P,
     /// The far-plane sky of the main view and the reflection.
     sky: P,
-    /// Bloom prefilter, downsample and additive upsample.
+    /// Bloom prefilter, downsample and additive upsample, in `BloomPass` order: one
+    /// fragment stage (`fs_bloom`) that the instance index tells which pass it draws.
     bloom: [P; 3],
     /// Screen-space ambient occlusion.
     occlusion: P,
@@ -603,6 +604,15 @@ impl<P> FixedPipelines<P> {
     fn count(&self) -> usize {
         7 + self.shadow_merged.len()
     }
+}
+
+/// The bloom chain's passes, the instance index each draws with (`fs_bloom` in
+/// `output.wgsl`) and their pipelines' order in `FixedPipelines::bloom`.
+#[derive(Clone, Copy)]
+enum BloomPass {
+    Prefilter = 0,
+    Down = 1,
+    Up = 2,
 }
 
 /// A merged, depth-only caster mesh (`shadow_merge.rs`).

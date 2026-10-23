@@ -35,7 +35,7 @@ use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
     BlendMode, Pass, PipelineKey, ShaderKey, StageSources, occlusion_source, output_source,
-    shadow_cutout_source, shadow_merged_source, sky_source, water_source,
+    shadow_cutout_stages, shadow_merged_source, sky_source, water_source,
 };
 use crate::shadow_merge::ShadowVertex;
 
@@ -200,7 +200,8 @@ fn post_spec(
 }
 
 /// Bloom prefilter, downsample and upsample into levels of `format`, the last adding
-/// onto its target.
+/// onto its target: one fragment stage that the instance index tells which pass it
+/// draws (`BloomPass`), so the prefilter and downsample are the same pipeline state.
 fn bloom_specs(format: wgpu::TextureFormat) -> [PipelineSpec; 3] {
     let additive = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -216,11 +217,11 @@ fn bloom_specs(format: wgpu::TextureFormat) -> [PipelineSpec; 3] {
         write_mask: wgpu::ColorWrites::ALL,
     };
     [
-        ("bloom prefilter", "fs_bloom_prefilter", format.into()),
-        ("bloom down", "fs_bloom_down", format.into()),
-        ("bloom up", "fs_bloom_up", add),
+        ("bloom prefilter", format.into()),
+        ("bloom down", format.into()),
+        ("bloom up", add),
     ]
-    .map(|(label, entry, target)| post_spec(label, LayoutKind::Bloom, "vs_post", entry, target))
+    .map(|(label, target)| post_spec(label, LayoutKind::Bloom, "vs_post", "fs_bloom", target))
 }
 
 fn occlusion_spec() -> PipelineSpec {
@@ -247,7 +248,8 @@ fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
         label,
         layout,
         vertex_entry,
-        fragment_entry: cutout.then_some("fs_shadow_cutout"),
+        // The per-part casters' fragment stage (`shadow_cutout_stages`).
+        fragment_entry: cutout.then_some("fs_shadow"),
         buffers: vec![
             wgpu::VertexBufferLayout {
                 array_stride: size_of::<ShadowVertex>() as u64,
@@ -389,7 +391,7 @@ impl Pipelines {
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
         let (water, output, sky) = (water_source(), output_source(), sky_source());
         let occlusion = occlusion_source(true, OCCLUSION_DOWNSCALE / OCCLUSION_DEPTH_DOWNSCALE);
-        let (merged, cutout) = (shadow_merged_source(), shadow_cutout_source());
+        let merged = shadow_merged_source();
         let mut specs = vec![
             (water_spec(gpu.samples), &water),
             (output_spec(canvas_format), &output),
@@ -400,18 +402,20 @@ impl Pipelines {
         }
         specs.push((occlusion_spec(), &occlusion));
         specs.push((water_depth_spec(), &water));
-        for (is_cutout, source) in [(false, &merged), (true, &cutout)] {
-            for &side in &SHADOW_MERGED_SIDES {
-                specs.push((shadow_merged_spec(side, is_cutout), source));
-            }
+        for &side in &SHADOW_MERGED_SIDES {
+            specs.push((shadow_merged_spec(side, false), &merged));
         }
-        let jobs: Vec<_> = specs
+        let mut jobs: Vec<_> = specs
             .into_iter()
             .map(|(spec, source)| {
                 let stages = spec.stages(source);
                 (spec, stages)
             })
             .collect();
+        let cutout = shadow_cutout_stages();
+        for &side in &SHADOW_MERGED_SIDES {
+            jobs.push((shadow_merged_spec(side, true), cutout.clone()));
+        }
         let specs: Vec<_> = jobs.iter().map(|(spec, stages)| (spec, stages)).collect();
         let compile = Background::start(device, &specs);
         Self {

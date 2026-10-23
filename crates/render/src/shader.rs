@@ -382,14 +382,21 @@ fn vertex_extra0(input: VertexIn) -> vec4f { return vec4f(0.0); }
 fn vertex_extra1(input: VertexIn) -> vec4f { return vec4f(0.0); }
 ";
 
-/// The variant constants the templates branch on.
-fn flags(key: &ShaderKey) -> [(&'static str, bool); 5] {
+/// The variant constants the templates branch on. The shadow pass's fragment stage
+/// tests the alpha and dithers a fading caster at run time (`shadow.wgsl`), so every
+/// caster with one shares it, except where `SHADOW_SURFACE`: an alpha-tested caster
+/// whose effect shades the surface that the test reads.
+fn flags(key: &ShaderKey, effect: Option<&EffectDefinition>) -> [(&'static str, bool); 6] {
     [
         ("LIT", key.lit),
         ("ALPHA_TEST", key.alpha_test),
         ("ALPHA_TO_COVERAGE", key.alpha_to_coverage),
         ("SHADOW_FADE", key.shadow_fade),
         ("RECEIVE_SHADOW", key.receive_shadow),
+        (
+            "SHADOW_SURFACE",
+            key.pass == Pass::Shadow && key.alpha_test && effect.is_some_and(|e| e.has_surface()),
+        ),
     ]
 }
 
@@ -400,12 +407,12 @@ pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
 }
 
 fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: InstanceSource) -> String {
-    let flags = flags(key);
+    let effect = effects.get(key.effect);
+    let flags = flags(key, effect);
     let mut code = String::with_capacity(24 * 1024);
     for (name, value) in flags {
         code += &format!("const {name}: bool = {value};\n");
     }
-    let effect = effects.get(key.effect);
     code += VERTEX_INPUT_WGSL;
     code += &frame_wgsl(source);
     code += MATERIAL_WGSL;
@@ -493,12 +500,14 @@ fn vertex_hooks(effect: Option<&EffectDefinition>, effects: &EffectRegistry) -> 
 }
 
 /// The variant's `effect_surface` unless its effect defines one of its own. A lit
-/// WebGPU surface variant takes every shared hook (`EffectDefinition::shared_surface`),
-/// each run where the material names its effect (`MaterialUniform::features`), so
-/// the lit materials of those effects and of none draw with the same fragment stage;
-/// any other variant takes its effect's shared hook as its own. The WebGL build
-/// shares none: its translation paid for the branches in every lit pixel (1% of a
-/// Tesla-size village frame), and its weaker devices count frames, not compiles.
+/// WebGPU surface variant takes every lit shared hook
+/// (`EffectDefinition::shared_surface`), each run where the material names its effect
+/// (`MaterialUniform::features`), so the lit materials of those effects and of none
+/// draw with the same fragment stage; an unlit variant of an effect with an unlit
+/// shared hook (`shared_unlit`) takes every such hook, so those effects share one
+/// stage; any other variant takes its effect's shared hook as its own. The WebGL
+/// build shares none: its translation paid for the branches in every lit pixel (1% of
+/// a Tesla-size village frame), and its weaker devices count frames, not compiles.
 fn surface_hook(
     key: &ShaderKey,
     effect: Option<&EffectDefinition>,
@@ -509,11 +518,19 @@ fn surface_hook(
     if effect.is_some_and(|e| e.has_own_surface()) {
         return String::new();
     }
-    if key.pass == Pass::Main && key.lit && source == InstanceSource::Storage {
+    // A variant whose effect shares its hook with the other kind keeps it as its own,
+    // and plain unlit variants none: the branches changed the bits of their blended
+    // pixels, which the output's haze test turned into visible steps.
+    let dispatches = if key.lit {
+        effect.is_none_or(|e| !e.has_shared_surface() || e.shares_surface_with(true))
+    } else {
+        effect.is_some_and(|e| e.shares_surface_with(false))
+    };
+    if key.pass == Pass::Main && dispatches && source == InstanceSource::Storage {
         let mut hooks = String::new();
         let mut branches = Vec::new();
         for (id, shared) in effects.sharing_hooks() {
-            if shared.has_shared_surface() {
+            if shared.shares_surface_with(key.lit) {
                 let name = format!("shared_surface_{id}");
                 hooks += &shared
                     .shared_surface
@@ -567,6 +584,21 @@ pub fn shadow_merged_source() -> String {
 /// The merged alpha-tested shadow-caster shader.
 pub fn shadow_cutout_source() -> String {
     fixed_source(SHADOW_CUTOUT_WGSL, InstanceSource::BUILD)
+}
+
+/// The WebGPU stages of the merged alpha-tested casters: their own vertex stage and
+/// the fragment stage every per-part caster with one shares (`shadow.wgsl`), the
+/// same text as theirs, so WebKit compiles it once for both.
+pub fn shadow_cutout_stages() -> StageSources {
+    let caster = ShaderKey {
+        pass: Pass::Shadow,
+        alpha_test: true,
+        ..ShaderKey::default()
+    };
+    StageSources {
+        vertex: specialize::entry_point_source(&shadow_cutout_source(), "vs_shadow_cutout"),
+        fragment: StageSources::variant(&caster, &EffectRegistry::default()).fragment,
+    }
 }
 
 /// The water shader: frame declarations plus the water template.
@@ -961,9 +993,7 @@ mod tests {
             (water_source(), "vs_water", Some("fs_water")),
             (water_source(), "vs_water", None),
             (output_source(), "vs_fullscreen", Some("fs_output")),
-            (output_source(), "vs_post", Some("fs_bloom_prefilter")),
-            (output_source(), "vs_post", Some("fs_bloom_down")),
-            (output_source(), "vs_post", Some("fs_bloom_up")),
+            (output_source(), "vs_post", Some("fs_bloom")),
             (sky_source(), "vs_sky", Some("fs_sky")),
             (
                 occlusion_source(true, 2),
@@ -1220,11 +1250,13 @@ mod tests {
         // Shadow reception is a uniform branch of every lit variant.
         assert!(lit.contains("fn shade_standard(") && lit.contains("fn sun_shadow("));
         assert!(!unlit.contains("fn sun_shadow("));
-        let caster = shader_source(
+        // A plain caster writes depth alone: its one stage samples nothing.
+        let caster = StageSources::variant(
             &ShaderKey::shadow(&Material::default(), 0, false, &effects),
             &effects,
         );
-        assert!(!caster.contains("map_texture,") && !caster.contains("fn tsl_hash("));
+        assert!(caster.fragment.is_none());
+        assert!(!caster.vertex.contains("map_texture") && !caster.vertex.contains("fn tsl_hash("));
     }
 
     #[test]
@@ -1397,10 +1429,10 @@ mod tests {
 
     /// Shared hooks run where the material names its effect: every effect with
     /// shared vertex hooks has one vertex stage (plain variants keep theirs, which
-    /// reads no material), and every lit variant without a surface hook of its own
-    /// the plain one's fragment stage. Unlit variants and casters take a shared
-    /// surface hook as their effect's own, and a caster without an effect reads no
-    /// material.
+    /// reads no material), and every lit or unlit variant without a surface hook of
+    /// its own the plain one's fragment stage. Variants of the other kind and casters
+    /// take a shared surface hook as their effect's own, and a caster without an
+    /// effect reads no material.
     #[test]
     fn shared_hooks_share_stages() {
         let mut effects = EffectRegistry::default();
@@ -1426,6 +1458,7 @@ mod tests {
             let plain = StageSources::variant(&key(0), &effects);
             assert!(!plain.vertex.contains("features.y"));
             let mut moving = std::collections::HashSet::new();
+            let mut unlit_shared = std::collections::HashSet::new();
             for &(id, effect) in &shared {
                 let stages = StageSources::variant(&key(id), &effects);
                 if effect.has_shared_vertex() {
@@ -1436,18 +1469,34 @@ mod tests {
                     assert_eq!(stages.vertex != plain.vertex, own, "{}", effect.name);
                     assert!(!stages.vertex.contains("features.y"), "{}", effect.name);
                 }
-                let own_surface = effect.has_own_surface() || (!lit && effect.has_surface());
+                // The plain unlit stage carries no hooks; the unlit ones share another.
+                let shares_plain = lit && effect.shares_surface_with(true);
+                let unshaded = !effect.has_own_surface() && !effect.has_shared_surface();
                 assert_eq!(
-                    stages.fragment != plain.fragment,
-                    own_surface,
+                    stages.fragment == plain.fragment,
+                    shares_plain || unshaded,
                     "{}",
                     effect.name
                 );
+                if !lit && effect.shares_surface_with(false) {
+                    unlit_shared.insert(stages.fragment);
+                }
             }
             assert_eq!(moving.len(), 1, "one vertex stage for shared vertex hooks");
             let fragment = plain.fragment.expect("a surface has a fragment stage");
             assert_eq!(fragment.contains("let effect = material.features.y;"), lit);
+            if !lit {
+                // The tread marks, dust and chimney wisps draw with one stage.
+                assert_eq!(unlit_shared.len(), 1);
+            }
         }
+        assert!(
+            shared
+                .iter()
+                .filter(|(_, e)| e.shares_surface_with(false))
+                .count()
+                >= 3
+        );
         let caster = |effect| {
             let key = ShaderKey {
                 pass: Pass::Shadow,
@@ -1522,6 +1571,45 @@ mod tests {
             ShaderKey::shadow(&solid, wave, false, &effects).effect,
             wave
         );
+    }
+
+    /// Every caster with a fragment stage shares one, alpha-tested, fading or both,
+    /// with or without an effect that only moves it, and so do the merged
+    /// alpha-tested casters: only a cutout whose effect shades it has its own.
+    #[test]
+    fn casters_share_one_fragment_stage() {
+        let effects = EffectRegistry::default();
+        let id = |name| effects.id(name).unwrap();
+        let fragment = |alpha_test, shadow_fade, effect| {
+            let key = ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test,
+                shadow_fade,
+                effect,
+                ..ShaderKey::default()
+            };
+            StageSources::variant(&key, &effects)
+                .fragment
+                .expect("a fragment stage")
+        };
+        let shared = fragment(true, false, 0);
+        assert_eq!(fragment(false, true, 0), shared);
+        assert_eq!(fragment(true, true, 0), shared);
+        assert_eq!(
+            fragment(false, true, id("wave")),
+            shared,
+            "a ripple only moves"
+        );
+        assert_eq!(shadow_cutout_stages().fragment.as_ref(), Some(&shared));
+        let wreck = id(crate::effects::WRECK_AGING.name);
+        assert_ne!(fragment(true, false, wreck), shared);
+        // The merged casters' vertex stage hands it the same varyings.
+        let varyings = |code: &'static str| {
+            let start = code.find("struct ShadowOut {").expect("ShadowOut");
+            let end = start + code[start..].find('}').expect("closed");
+            &code[start..end]
+        };
+        assert_eq!(varyings(SHADOW_WGSL), varyings(SHADOW_CUTOUT_WGSL));
     }
 
     #[test]
