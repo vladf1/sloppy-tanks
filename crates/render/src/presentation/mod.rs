@@ -37,14 +37,14 @@ use crate::effects::{EffectDefinition, effect};
 /// Flag cloth rippling in the arena breeze (`flags.ts`).
 pub const FLAG_CLOTH: EffectDefinition = effect(
     models::FLAG_CLOTH_EFFECT,
-    include_str!("shaders/flag_cloth.wgsl"),
+    wgsl!("presentation/shaders/flag_cloth.wgsl"),
 );
 
 /// Every pickup kind of a shape from one mesh: the instance picks the atlas tile,
 /// shows its pallet whole or crushed and weathers it a little differently.
 pub const PICKUP_FACE: EffectDefinition = effect(
     sloppy_core::models::PICKUP_FACE_EFFECT,
-    include_str!("shaders/pickup_face.wgsl"),
+    wgsl!("presentation/shaders/pickup_face.wgsl"),
 );
 
 /// Effects presentation registers before building its models.

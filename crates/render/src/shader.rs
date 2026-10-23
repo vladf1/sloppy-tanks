@@ -18,18 +18,18 @@ use crate::material::shadow_side;
 
 mod specialize;
 
-pub const COMMON_WGSL: &str = include_str!("shaders/common.wgsl");
-pub const MATERIAL_WGSL: &str = include_str!("shaders/material.wgsl");
-pub const STANDARD_WGSL: &str = include_str!("shaders/standard.wgsl");
-pub const SHADOW_WGSL: &str = include_str!("shaders/shadow.wgsl");
-pub const WATER_WGSL: &str = include_str!("shaders/water.wgsl");
-pub const OUTPUT_WGSL: &str = include_str!("shaders/output.wgsl");
-pub const SKY_WGSL: &str = include_str!("shaders/sky.wgsl");
+pub const COMMON_WGSL: &str = wgsl!("shaders/common.wgsl");
+pub const MATERIAL_WGSL: &str = wgsl!("shaders/material.wgsl");
+pub const STANDARD_WGSL: &str = wgsl!("shaders/standard.wgsl");
+pub const SHADOW_WGSL: &str = wgsl!("shaders/shadow.wgsl");
+pub const WATER_WGSL: &str = wgsl!("shaders/water.wgsl");
+pub const OUTPUT_WGSL: &str = wgsl!("shaders/output.wgsl");
+pub const SKY_WGSL: &str = wgsl!("shaders/sky.wgsl");
 /// Screen-space ambient occlusion, without its depth binding (`occlusion_source`).
-pub const OCCLUSION_WGSL: &str = include_str!("shaders/occlusion.wgsl");
-pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
-pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
-pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
+pub const OCCLUSION_WGSL: &str = wgsl!("shaders/occlusion.wgsl");
+pub const MIPMAP_WGSL: &str = wgsl!("shaders/mipmap.wgsl");
+pub const SHADOW_MERGED_WGSL: &str = wgsl!("shaders/shadow_merged.wgsl");
+pub const SHADOW_CUTOUT_WGSL: &str = wgsl!("shaders/shadow_cutout.wgsl");
 
 /// Where the vertex stage reads instance records (`InstanceStore`): each
 /// source defines the frame group's binding 5 and `instance_at`.
@@ -51,8 +51,8 @@ impl InstanceSource {
 
     fn wgsl(self) -> &'static str {
         match self {
-            Self::Storage => include_str!("shaders/instances_storage.wgsl"),
-            Self::Texture => include_str!("shaders/instances_texture.wgsl"),
+            Self::Storage => wgsl!("shaders/instances_storage.wgsl"),
+            Self::Texture => wgsl!("shaders/instances_texture.wgsl"),
         }
     }
 }
