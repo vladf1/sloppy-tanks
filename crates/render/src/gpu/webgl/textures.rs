@@ -8,8 +8,9 @@ use std::collections::HashMap;
 use glow::HasContext;
 use sloppy_core::scene::Wrap;
 
-use super::context::{Gpu, Raster, unit};
+use super::context::{Gpu, Raster, block, unit};
 use super::programs::{Linking, Program};
+use super::{Frame, MaterialBinding};
 use crate::effects::bakes::TextureBake;
 use crate::gpu::textures::{Pixels, SamplerKey, TextureKey};
 use crate::shader::MIPMAP_WGSL;
@@ -156,19 +157,29 @@ impl Uploader {
         matches!(self.bakes.get(bake.key), Some(Blit::Ready(_)))
     }
 
-    /// Draw `bake` into a new texture and render its mip levels; its program must
-    /// have linked ([`Self::ready_to_bake`]).
-    pub fn bake(&self, gpu: &Gpu, bake: &TextureBake) -> Texture {
+    /// Draw `bake` into a new texture and render its mip levels, binding the frame's
+    /// main-view uniform and its source's material for a bake that reads one; its
+    /// program must have linked ([`Self::ready_to_bake`]).
+    pub fn bake(
+        &self,
+        gpu: &Gpu,
+        bake: &TextureBake,
+        inputs: Option<(&Frame, &MaterialBinding)>,
+    ) -> Texture {
         let Some(Blit::Ready(program)) = self.bakes.get(bake.key) else {
             unreachable!("a bake draws once its program has linked");
         };
-        let size = bake.size;
-        let levels = 32 - size.leading_zeros();
-        let texture = storage(gpu, glow::RGBA8, levels, size, size);
+        let (width, height) = (bake.width, bake.height);
+        let levels = bake.levels();
+        let texture = storage(gpu, glow::RGBA8, levels, width, height);
         gpu.bind_framebuffer(Some(self.framebuffer));
         gpu.use_program(program.raw);
         gpu.set_raster(&Raster::PLAIN);
         gpu.bind_vertex_array(Some(self.no_attributes));
+        if let Some((frame, material)) = inputs {
+            gpu.bind_uniform_block(block::FRAME, frame.main_uniform());
+            material.bind(gpu);
+        }
         let gl = &gpu.gl;
         unsafe {
             gl.framebuffer_texture_2d(
@@ -179,9 +190,9 @@ impl Uploader {
                 0,
             );
         }
-        gpu.viewport(size, size);
+        gpu.viewport(width, height);
         unsafe { gl.draw_arrays(glow::TRIANGLES, 0, 3) };
-        self.generate_mipmaps(gpu, texture, levels, size, size);
+        self.generate_mipmaps(gpu, texture, levels, width, height);
         unsafe {
             gl.framebuffer_texture_2d(
                 glow::FRAMEBUFFER,

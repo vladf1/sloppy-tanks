@@ -490,6 +490,16 @@ pub fn bake_source(fragment: &str) -> String {
     specialize::specialize(&format!("{BAKE_WGSL}{fragment}"), &[])
 }
 
+/// The same for a bake that reads a material (`TextureBake::source`): with a surface
+/// shader's frame and material declarations ahead of its code.
+pub fn bake_source_with_material(fragment: &str, instances: InstanceSource) -> String {
+    let code = format!(
+        "{VERTEX_INPUT_WGSL}{}{MATERIAL_WGSL}{BAKE_WGSL}{fragment}",
+        frame_wgsl(instances)
+    );
+    specialize::specialize(&code, &[])
+}
+
 /// The output and bloom shader, its loops unrolled like every other shader's. The
 /// output pass reads the main view's `Frame` for the haze it adds (`haze_inscatter`).
 pub fn output_source() -> String {

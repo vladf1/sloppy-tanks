@@ -281,6 +281,11 @@ impl Frame {
         &self.instance_records
     }
 
+    /// The main view's frame group, which bakes read (`effects::bakes`).
+    pub fn main_group(&self) -> &wgpu::BindGroup {
+        &self.view_groups.0[MAIN_VIEW]
+    }
+
     /// Replace the view's instance records with an empty store of `capacity`; the
     /// caller rewrites the static records and rebuilds the pools' frame groups.
     pub fn grow_instances(&mut self, gpu: &Gpu, capacity: u32) {
