@@ -33,25 +33,11 @@ async function packTankPreviews(assets) {
   }
   // cwebp rather than the canvas's own encoder: at the same quality it packs the
   // alpha (the soft contact shadows) a quarter smaller and writes no ICC profile.
-  const image = execFileSync(
-    "cwebp",
-    [
-      "-quiet",
-      "-q",
-      String(QUALITY),
-      "-m",
-      "6",
-      "-alpha_q",
-      "100",
-      "-metadata",
-      "none",
-      "-o",
-      "-",
-      "--",
-      "-",
-    ],
-    { input: canvas.toBuffer("image/png"), maxBuffer: 64 * 1024 * 1024 },
-  );
+  const args = ["-quiet", "-q", String(QUALITY), "-m", "6", "-alpha_filter", "best"];
+  const image = execFileSync("cwebp", [...args, "-metadata", "none", "-o", "-", "--", "-"], {
+    input: canvas.toBuffer("image/png"),
+    maxBuffer: 64 * 1024 * 1024,
+  });
   await mkdir(dirname(output), { recursive: true });
   await writeFile(output, image);
   console.log(`${output}: ${image.length} bytes`);
