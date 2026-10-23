@@ -16,10 +16,11 @@
 //! same code share that compile once their fragment code is out of its module: the
 //! village's cold compile went from 71 stage compiles to 50.
 //!
-//! Every pipeline is compiled in the background first (`precompile.rs`): the fixed
-//! ones while the renderer is created, the scene's variants through
-//! [`Pipelines::request`] while an arena prepares. Only a variant first met while
-//! drawing ([`Pipelines::ensure`]) still compiles synchronously.
+//! Every pipeline is compiled in the background first (`precompile.rs`), and wgpu
+//! wraps the compiled pipeline: the fixed ones while the renderer is created, the
+//! scene's variants through [`Pipelines::request`] while an arena prepares. Only a
+//! variant first met while drawing ([`Pipelines::ensure`]) still compiles
+//! synchronously.
 
 use std::collections::HashMap;
 
@@ -34,7 +35,7 @@ use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
     BlendMode, Pass, PipelineKey, ShaderKey, StageSources, occlusion_source, output_source,
-    shadow_cutout_source, shadow_merged_source, sky_source, water_source,
+    shadow_cutout_stages, shadow_merged_source, sky_source, water_source,
 };
 use crate::shadow_merge::ShadowVertex;
 
@@ -199,7 +200,8 @@ fn post_spec(
 }
 
 /// Bloom prefilter, downsample and upsample into levels of `format`, the last adding
-/// onto its target.
+/// onto its target: one fragment stage that the instance index tells which pass it
+/// draws (`BloomPass`), so the prefilter and downsample are the same pipeline state.
 fn bloom_specs(format: wgpu::TextureFormat) -> [PipelineSpec; 3] {
     let additive = wgpu::BlendComponent {
         src_factor: wgpu::BlendFactor::One,
@@ -215,11 +217,11 @@ fn bloom_specs(format: wgpu::TextureFormat) -> [PipelineSpec; 3] {
         write_mask: wgpu::ColorWrites::ALL,
     };
     [
-        ("bloom prefilter", "fs_bloom_prefilter", format.into()),
-        ("bloom down", "fs_bloom_down", format.into()),
-        ("bloom up", "fs_bloom_up", add),
+        ("bloom prefilter", format.into()),
+        ("bloom down", format.into()),
+        ("bloom up", add),
     ]
-    .map(|(label, entry, target)| post_spec(label, LayoutKind::Bloom, "vs_post", entry, target))
+    .map(|(label, target)| post_spec(label, LayoutKind::Bloom, "vs_post", "fs_bloom", target))
 }
 
 fn occlusion_spec() -> PipelineSpec {
@@ -232,13 +234,14 @@ fn occlusion_spec() -> PipelineSpec {
     )
 }
 
-/// The occlusion's blur for the output pass, from the output and bloom shader.
+/// The occlusion's blur for the output pass: the bloom's fragment stage, drawn as
+/// `BloomPass::OcclusionBlur`, into the occlusion's format.
 fn occlusion_blur_spec() -> PipelineSpec {
     post_spec(
         "ambient occlusion blur",
         LayoutKind::Bloom,
         "vs_post",
-        "fs_occlusion_blur",
+        "fs_bloom",
         OCCLUSION_FORMAT.into(),
     )
 }
@@ -257,7 +260,8 @@ fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
         label,
         layout,
         vertex_entry,
-        fragment_entry: cutout.then_some("fs_shadow_cutout"),
+        // The per-part casters' fragment stage (`shadow_cutout_stages`).
+        fragment_entry: cutout.then_some("fs_shadow"),
         buffers: vec![
             wgpu::VertexBufferLayout {
                 array_stride: size_of::<ShadowVertex>() as u64,
@@ -359,12 +363,20 @@ pub(super) fn pipeline_layout(
     })
 }
 
-/// The fixed pipelines while they compile in the background.
-struct FixedJobs {
-    /// Water, output, sky, the three bloom passes, occlusion and its blur, the water's
-    /// depth, then the merged casters in `shadow_merged_index` order.
+/// Pipelines compiling in the background: the fixed ones (output, sky, the three
+/// bloom passes, occlusion and its blur, then the merged casters in
+/// `shadow_merged_index` order), or the water's (its surface, then its depth).
+struct Jobs {
     jobs: Vec<(PipelineSpec, StageSources)>,
     compile: Background,
+}
+
+impl Jobs {
+    fn start(device: &wgpu::Device, jobs: Vec<(PipelineSpec, StageSources)>) -> Self {
+        let specs: Vec<_> = jobs.iter().map(|(spec, stages)| (spec, stages)).collect();
+        let compile = Background::start(device, &specs);
+        Self { jobs, compile }
+    }
 }
 
 pub struct Pipelines {
@@ -378,14 +390,17 @@ pub struct Pipelines {
     bloom_layout: wgpu::PipelineLayout,
     occlusion_layout: wgpu::PipelineLayout,
     merged_layout: wgpu::PipelineLayout,
-    fixed_jobs: Option<FixedJobs>,
+    fixed_jobs: Option<Jobs>,
     fixed: Option<FixedPipelines<wgpu::RenderPipeline>>,
-    /// The water surface in the occlusion depth pass, made with the fixed pipelines.
-    water_depth: Option<wgpu::RenderPipeline>,
+    /// The water's pipelines while they compile, from the first arena with water on:
+    /// a map without any never compiles them (about 0.35 s of a cold start in WebKit).
+    water_jobs: Option<Jobs>,
+    /// The water surface, and its depth for the occlusion depth pass.
+    water: Option<[wgpu::RenderPipeline; 2]>,
 }
 
 impl Pipelines {
-    /// Start compiling the fixed water, output and merged shadow pipelines in the
+    /// Start compiling the fixed output, post and merged shadow pipelines in the
     /// background; they are created once compiled ([`Self::fixed_ready`]) while the
     /// page builds the arena.
     pub fn new(gpu: &Gpu) -> Self {
@@ -397,11 +412,10 @@ impl Pipelines {
         let bloom_layout = pipeline_layout(device, "bloom", &[&layouts.bloom]);
         let occlusion_layout = pipeline_layout(device, "occlusion", &[&layouts.occlusion]);
         let merged_layout = pipeline_layout(device, "shadow merged", &[&layouts.frame]);
-        let (water, output, sky) = (water_source(), output_source(), sky_source());
+        let (output, sky) = (output_source(), sky_source());
         let occlusion = occlusion_source(true, OCCLUSION_DOWNSCALE / OCCLUSION_DEPTH_DOWNSCALE);
-        let (merged, cutout) = (shadow_merged_source(), shadow_cutout_source());
+        let merged = shadow_merged_source();
         let mut specs = vec![
-            (water_spec(gpu.samples), &water),
             (output_spec(canvas_format), &output),
             (sky_spec(gpu.samples), &sky),
         ];
@@ -410,21 +424,21 @@ impl Pipelines {
         }
         specs.push((occlusion_spec(), &occlusion));
         specs.push((occlusion_blur_spec(), &output));
-        specs.push((water_depth_spec(), &water));
-        for (is_cutout, source) in [(false, &merged), (true, &cutout)] {
-            for &side in &SHADOW_MERGED_SIDES {
-                specs.push((shadow_merged_spec(side, is_cutout), source));
-            }
+        for &side in &SHADOW_MERGED_SIDES {
+            specs.push((shadow_merged_spec(side, false), &merged));
         }
-        let jobs: Vec<_> = specs
+        let mut jobs: Vec<_> = specs
             .into_iter()
             .map(|(spec, source)| {
                 let stages = spec.stages(source);
                 (spec, stages)
             })
             .collect();
-        let specs: Vec<_> = jobs.iter().map(|(spec, stages)| (spec, stages)).collect();
-        let compile = Background::start(device, &specs);
+        let cutout = shadow_cutout_stages();
+        for &side in &SHADOW_MERGED_SIDES {
+            jobs.push((shadow_merged_spec(side, true), cutout.clone()));
+        }
+        let fixed_jobs = Jobs::start(device, jobs);
         Self {
             precompiler: Precompiler::new(device),
             sources: HashMap::new(),
@@ -436,9 +450,10 @@ impl Pipelines {
             bloom_layout,
             occlusion_layout,
             merged_layout,
-            fixed_jobs: Some(FixedJobs { jobs, compile }),
+            fixed_jobs: Some(fixed_jobs),
             fixed: None,
-            water_depth: None,
+            water_jobs: None,
+            water: None,
         }
     }
 
@@ -466,37 +481,17 @@ impl Pipelines {
     }
 
     fn create_fixed(&mut self, device: &wgpu::Device) {
-        let Some(FixedJobs {
-            jobs,
-            compile: _held,
-        }) = self.fixed_jobs.take()
-        else {
+        let Some(jobs) = self.fixed_jobs.take() else {
             return;
         };
-        let mut created = jobs.iter().map(|(spec, source)| {
-            let layout = match spec.layout {
-                LayoutKind::Water => &self.water_layout,
-                LayoutKind::Output => &self.output_layout,
-                LayoutKind::Bloom => &self.bloom_layout,
-                LayoutKind::Occlusion => &self.occlusion_layout,
-                LayoutKind::ShadowMerged => &self.merged_layout,
-                LayoutKind::Surface => &self.surface_layout,
-                LayoutKind::Mipmap | LayoutKind::Bake => {
-                    unreachable!("the uploader owns the mipmap blits and texture bakes")
-                }
-            };
-            spec.create(device, layout, source)
-        });
+        let mut created = self.create_jobs(device, &jobs).into_iter();
         let mut next = |what| created.next().expect(what);
-        let water = next("water pipeline");
         let output = next("output pipeline");
         let sky = next("sky pipeline");
         let bloom = [(); 3].map(|_| next("bloom pipeline"));
         let occlusion = next("occlusion pipeline");
         let occlusion_blur = next("occlusion blur pipeline");
-        self.water_depth = Some(next("water depth pipeline"));
         self.fixed = Some(FixedPipelines {
-            water,
             output,
             sky,
             bloom,
@@ -506,6 +501,72 @@ impl Pipelines {
         });
     }
 
+    /// The wgpu pipelines of `jobs`, wrapping those compiled in the background.
+    fn create_jobs(&self, device: &wgpu::Device, jobs: &Jobs) -> Vec<wgpu::RenderPipeline> {
+        let Jobs { jobs, compile } = jobs;
+        jobs.iter()
+            .enumerate()
+            .map(|(index, (spec, source))| {
+                let layout = match spec.layout {
+                    LayoutKind::Water => &self.water_layout,
+                    LayoutKind::Output => &self.output_layout,
+                    LayoutKind::Bloom => &self.bloom_layout,
+                    LayoutKind::Occlusion => &self.occlusion_layout,
+                    LayoutKind::ShadowMerged => &self.merged_layout,
+                    LayoutKind::Surface => &self.surface_layout,
+                    LayoutKind::Mipmap | LayoutKind::Bake => {
+                        unreachable!("the uploader owns the mipmap blits and texture bakes")
+                    }
+                };
+                spec.create(device, layout, source, compile.compiled(index).as_ref())
+            })
+            .collect()
+    }
+
+    /// Start compiling the water's pipelines in the background unless they exist or
+    /// are compiling: called once an arena has water.
+    pub fn start_water(&mut self, gpu: &Gpu) {
+        if self.water.is_none() && self.water_jobs.is_none() {
+            let water = water_source();
+            let jobs = [water_spec(gpu.samples), water_depth_spec()]
+                .into_iter()
+                .map(|spec| {
+                    let stages = spec.stages(&water);
+                    (spec, stages)
+                })
+                .collect();
+            self.water_jobs = Some(Jobs::start(&gpu.device, jobs));
+        }
+    }
+
+    /// Whether the water's pipelines exist, creating them once their background
+    /// compile has finished (and starting it if needed).
+    pub fn water_ready(&mut self, gpu: &Gpu) -> bool {
+        self.start_water(gpu);
+        if let Some(jobs) = self.water_jobs.take_if(|jobs| jobs.compile.done()) {
+            self.create_water(&gpu.device, &jobs);
+        }
+        self.water.is_some()
+    }
+
+    /// Create the water's pipelines now, compiling them synchronously if their
+    /// background compile has not finished; returns whether that stalled.
+    pub fn ensure_water(&mut self, gpu: &Gpu) -> bool {
+        let stalled = !self.water_ready(gpu);
+        if let Some(jobs) = self.water_jobs.take() {
+            self.create_water(&gpu.device, &jobs);
+        }
+        stalled
+    }
+
+    fn create_water(&mut self, device: &wgpu::Device, jobs: &Jobs) {
+        let [surface, depth] = self
+            .create_jobs(device, jobs)
+            .try_into()
+            .unwrap_or_else(|_| unreachable!("the water's surface and depth pipelines"));
+        self.water = Some([surface, depth]);
+    }
+
     /// The fixed pipelines; draws first make sure of them ([`Self::ensure_fixed`]).
     pub fn fixed(&self) -> &FixedPipelines<wgpu::RenderPipeline> {
         self.fixed
@@ -513,11 +574,21 @@ impl Pipelines {
             .expect("fixed pipelines are created before drawing")
     }
 
-    /// The water surface's depth-only pipeline; made with [`Self::fixed`].
-    pub fn water_depth(&self) -> &wgpu::RenderPipeline {
-        self.water_depth
+    /// The water surface's pipeline; an arena with water makes sure of it before
+    /// drawing ([`Self::ensure_water`]).
+    pub fn water(&self) -> &wgpu::RenderPipeline {
+        &self
+            .water
             .as_ref()
-            .expect("fixed pipelines are created before drawing")
+            .expect("water pipelines before water draws")[0]
+    }
+
+    /// The water surface's depth-only pipeline, made with [`Self::water`].
+    pub fn water_depth(&self) -> &wgpu::RenderPipeline {
+        &self
+            .water
+            .as_ref()
+            .expect("water pipelines before water draws")[1]
     }
 
     pub fn find(&self, key: &PipelineKey) -> Option<u32> {
@@ -565,8 +636,8 @@ impl Pipelines {
         let device = &gpu.device;
         let spec = surface_spec(key, gpu.samples);
         let sources = source(&mut self.sources, effects, key.shader);
-        let pipeline = spec.create(device, &self.surface_layout, sources);
-        self.precompiler.release(key);
+        let compiled = self.precompiler.take(key);
+        let pipeline = spec.create(device, &self.surface_layout, sources, compiled.as_ref());
         self.pipelines.push(pipeline);
         let index = self.pipelines.len() as u32 - 1;
         self.index.insert(*key, index);
@@ -578,16 +649,16 @@ impl Pipelines {
         self.precompiler.compiling()
     }
 
-    /// Pipelines including the fixed water, output and merged shadow ones.
+    /// Pipelines including the fixed output and merged shadow ones and the water's.
     pub fn count(&self) -> usize {
         self.pipelines.len()
             + self.fixed.as_ref().map_or(0, FixedPipelines::count)
-            + usize::from(self.water_depth.is_some())
+            + self.water.as_ref().map_or(0, |water| water.len())
     }
 
-    /// Distinct shader sources, including the fixed water, output (with bloom), sky,
-    /// occlusion and merged shadow ones.
+    /// Distinct shader sources, including the fixed output (with bloom), sky,
+    /// occlusion and merged shadow ones and the water's.
     pub fn module_count(&self) -> usize {
-        self.sources.len() + 6
+        self.sources.len() + 5 + usize::from(self.water.is_some())
     }
 }

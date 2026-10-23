@@ -220,9 +220,9 @@ fn depth_raster(side: Side) -> Raster {
     }
 }
 
-/// The water, output, sky, three bloom, ambient occlusion and its blur, merged and
-/// cutout caster programs, in that order.
-const FIXED_PROGRAMS: usize = 10;
+/// The output, sky, bloom (all three passes and the occlusion's blur), ambient
+/// occlusion, merged and cutout caster programs, in that order.
+const FIXED_PROGRAMS: usize = 6;
 
 pub struct Pipelines {
     programs: Vec<Program>,
@@ -234,22 +234,22 @@ pub struct Pipelines {
     /// The fixed programs while they link.
     fixed_jobs: Option<[Linking; FIXED_PROGRAMS]>,
     fixed: Option<FixedPipelines<Pipeline>>,
+    /// The water's program while it links, from the first arena with water on.
+    water_job: Option<Linking>,
+    water: Option<Pipeline>,
 }
 
 impl Pipelines {
-    /// Start linking the fixed water, output, sky, bloom, occlusion and merged shadow
+    /// Start linking the fixed output, sky, bloom, occlusion and merged shadow
     /// programs; they are used once linked ([`Self::fixed_ready`]) while the page
     /// builds the arena.
     pub fn new(gpu: &Gpu) -> Self {
         let output = output_source();
-        let bloom = |label, entry| Linking::start(gpu, label, &output, "vs_post", Some(entry));
         let jobs = [
-            Linking::start(gpu, "water", &water_source(), "vs_water", Some("fs_water")),
             Linking::start(gpu, "output", &output, "vs_fullscreen", Some("fs_output")),
             Linking::start(gpu, "sky", &sky_source(), "vs_sky", Some("fs_sky")),
-            bloom("bloom prefilter", "fs_bloom_prefilter"),
-            bloom("bloom down", "fs_bloom_down"),
-            bloom("bloom up", "fs_bloom_up"),
+            // Each pass draws as its own instance index (`BloomPass`).
+            Linking::start(gpu, "bloom", &output, "vs_post", Some("fs_bloom")),
             Linking::start(
                 gpu,
                 "ambient occlusion",
@@ -257,7 +257,6 @@ impl Pipelines {
                 "vs_occlusion",
                 Some("fs_occlusion"),
             ),
-            bloom("ambient occlusion blur", "fs_occlusion_blur"),
             Linking::start(
                 gpu,
                 "shadow merged",
@@ -281,7 +280,60 @@ impl Pipelines {
             index: HashMap::new(),
             fixed_jobs: Some(jobs),
             fixed: None,
+            water_job: None,
+            water: None,
         }
+    }
+
+    /// Start linking the water's program unless it is linked or linking: called once
+    /// an arena has water.
+    pub fn start_water(&mut self, gpu: &Gpu) {
+        if self.water.is_none() && self.water_job.is_none() {
+            let source = water_source();
+            self.water_job = Some(Linking::start(
+                gpu,
+                "water",
+                &source,
+                "vs_water",
+                Some("fs_water"),
+            ));
+        }
+    }
+
+    /// Whether the water's pipeline exists, creating it once its program linked (and
+    /// starting the link if needed).
+    pub fn water_ready(&mut self, gpu: &Gpu) -> bool {
+        self.start_water(gpu);
+        if let Some(job) = self.water_job.take_if(|job| job.done(gpu)) {
+            self.create_water(gpu, job);
+        }
+        self.water.is_some()
+    }
+
+    /// Create the water's pipeline now, waiting for its program if it has not linked;
+    /// returns whether that stalled.
+    pub fn ensure_water(&mut self, gpu: &Gpu) -> bool {
+        let stalled = !self.water_ready(gpu);
+        if let Some(job) = self.water_job.take() {
+            self.create_water(gpu, job);
+        }
+        stalled
+    }
+
+    fn create_water(&mut self, gpu: &Gpu, job: Linking) {
+        self.programs.push(job.finish(gpu));
+        self.water = Some(Pipeline {
+            program: self.programs.len() as u32 - 1,
+            raster: depth_raster(Side::Front),
+        });
+    }
+
+    /// The water surface's pipeline; an arena with water makes sure of it before
+    /// drawing ([`Self::ensure_water`]).
+    pub fn water(&self) -> &Pipeline {
+        self.water
+            .as_ref()
+            .expect("the water pipeline before water draws")
     }
 
     /// Whether the fixed pipelines exist, creating them once their programs linked.
@@ -310,18 +362,7 @@ impl Pipelines {
         let Some(jobs) = self.fixed_jobs.take() else {
             return;
         };
-        let [
-            water,
-            output,
-            sky,
-            prefilter,
-            down,
-            up,
-            occlusion,
-            occlusion_blur,
-            merged,
-            cutout,
-        ] = jobs.map(|job| {
+        let [output, sky, bloom, occlusion, merged, cutout] = jobs.map(|job| {
             self.programs.push(job.finish(gpu));
             self.programs.len() as u32 - 1
         });
@@ -335,10 +376,6 @@ impl Pipelines {
             }
         }
         self.fixed = Some(FixedPipelines {
-            water: Pipeline {
-                program: water,
-                raster: depth_raster(Side::Front),
-            },
             output: Pipeline {
                 program: output,
                 raster: Raster::PLAIN,
@@ -353,15 +390,15 @@ impl Pipelines {
             },
             bloom: [
                 Pipeline {
-                    program: prefilter,
+                    program: bloom,
                     raster: Raster::PLAIN,
                 },
                 Pipeline {
-                    program: down,
+                    program: bloom,
                     raster: Raster::PLAIN,
                 },
                 Pipeline {
-                    program: up,
+                    program: bloom,
                     raster: Raster {
                         blend: BlendMode::Additive,
                         ..Raster::PLAIN
@@ -372,8 +409,9 @@ impl Pipelines {
                 program: occlusion,
                 raster: Raster::PLAIN,
             },
+            // Drawn as `BloomPass::OcclusionBlur`.
             occlusion_blur: Pipeline {
-                program: occlusion_blur,
+                program: bloom,
                 raster: Raster::PLAIN,
             },
             shadow_merged,
@@ -475,14 +513,19 @@ impl Pipelines {
         self.linking.len() as u32
     }
 
-    /// Pipelines including the fixed water, output and merged shadow ones.
+    /// Pipelines including the fixed output and merged shadow ones and the water's.
     pub fn count(&self) -> usize {
-        self.pipelines.len() + self.fixed.as_ref().map_or(0, FixedPipelines::count)
+        self.pipelines.len()
+            + self.fixed.as_ref().map_or(0, FixedPipelines::count)
+            + usize::from(self.water.is_some())
     }
 
-    /// Distinct shader sources, including the fixed water, output, sky, bloom and
-    /// merged shadow ones.
+    /// Distinct shader sources, including the fixed output, sky, bloom and merged
+    /// shadow ones and the water's.
     pub fn module_count(&self) -> usize {
-        self.by_shader.len() + self.linking.len() + FIXED_PROGRAMS
+        self.by_shader.len()
+            + self.linking.len()
+            + FIXED_PROGRAMS
+            + usize::from(self.water.is_some())
     }
 }

@@ -27,7 +27,7 @@ pub use resources::{MaterialBinding, PageBuffers};
 pub use textures::{Sampler, Texture, TextureView, Uploader};
 
 use super::{
-    BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
+    BLOOM_FIRST_SHIFT, BLOOM_LEVELS, BloomPass, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
     OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
 use crate::atmosphere_map::{ATMOSPHERE_MAP_SIZE, atmosphere_map};
@@ -726,6 +726,7 @@ impl Frame {
                 &post.occlusion_group,
                 &post.occlusion_view,
                 false,
+                0,
             );
             post_draw(
                 encoder,
@@ -734,6 +735,7 @@ impl Frame {
                 &post.occlusion_blur_group,
                 &post.occlusion_blurred.1,
                 false,
+                BloomPass::OcclusionBlur as u32,
             );
             stats.draw_calls += 2;
         }
@@ -750,7 +752,7 @@ impl Frame {
                 && let range = scene.meshes.get(water.mesh).range
                 && !range.is_empty()
             {
-                pass.set_pipeline(&scene.pipelines.fixed().water);
+                pass.set_pipeline(scene.pipelines.water());
                 pass.set_bind_group(1, &water.gpu.bind_group, &[]);
                 BoundPages::default().bind(&mut pass, scene.meshes, range);
                 pass.draw_indexed(range.indices(), 0, 0..1);
@@ -769,6 +771,7 @@ impl Frame {
                 &post.frame_group,
                 &post.bloom[0].1,
                 false,
+                BloomPass::Prefilter as u32,
             );
             for level in 1..BLOOM_LEVELS {
                 post_draw(
@@ -778,6 +781,7 @@ impl Frame {
                     &post.bloom_groups[level - 1],
                     &post.bloom[level].1,
                     false,
+                    BloomPass::Down as u32,
                 );
             }
             for level in (0..BLOOM_LEVELS - 1).rev() {
@@ -788,6 +792,7 @@ impl Frame {
                     &post.bloom_groups[level + 1],
                     &post.bloom[level].1,
                     true,
+                    BloomPass::Up as u32,
                 );
             }
             stats.draw_calls += 2 * BLOOM_LEVELS as u32 - 1;
@@ -883,6 +888,8 @@ fn draw_sky(pass: &mut wgpu::RenderPass, scene: &Scene, stats: &mut RenderStats)
 }
 
 /// One full-screen post draw into `target`, replacing it or (`add`) blending onto it.
+/// A full-screen pass into `target`, adding onto what it holds if `add`, drawn as
+/// instance `instance` (the bloom chain's `BloomPass`).
 fn post_draw(
     encoder: &mut wgpu::CommandEncoder,
     label: &str,
@@ -890,6 +897,7 @@ fn post_draw(
     group: &wgpu::BindGroup,
     target: &wgpu::TextureView,
     add: bool,
+    instance: u32,
 ) {
     let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
         label: Some(label),
@@ -913,7 +921,7 @@ fn post_draw(
     });
     pass.set_pipeline(pipeline);
     pass.set_bind_group(0, group, &[]);
-    pass.draw(0..3, 0..1);
+    pass.draw(0..3, instance..instance + 1);
 }
 
 /// The post-processing targets sized from the main view and the bind groups of every
