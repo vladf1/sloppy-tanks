@@ -12,10 +12,11 @@
 //! like every other texture.
 //!
 //! The bake's WGSL sees the frame and material declarations of a surface shader and
-//! defines `fn bake(uv: vec2f) -> vec4f`: the RGBA8 (linear, unless the reference
-//! asks for sRGB) value of the texel at `uv` over the whole target, rows from the
-//! first (`shaders/bake.wgsl`). It runs one full-screen pass, so it may be as heavy
-//! as its texel count allows, and costs one pipeline compile.
+//! defines `fn bake(uv: vec2f) -> vec4f`: the value of the texel at `uv` over the
+//! whole target, rows from the first (`shaders/bake.wgsl`), stored as linear RGBA8
+//! (so the texture reference must not ask for sRGB; a colour keeps its darks
+//! better stored as its square root). It runs one full-screen pass, so it may be as
+//! heavy as its texel count allows, and costs one pipeline compile.
 
 use sloppy_core::models::VILLAGE_GROUND_BAKE;
 

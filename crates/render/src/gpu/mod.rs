@@ -1866,7 +1866,8 @@ impl Renderer {
             if !loaded || self.pipelines.request_bake(&self.gpu, bake).is_none() {
                 continue;
             }
-            // The bake reads the main view's frame uniform (the sun).
+            // The bake reads the main view's frame uniform (the sun); writing it
+            // borrows the whole renderer, so the pipeline is looked up again after.
             self.write_view_uniforms();
             let Some(pipeline) = self.pipelines.request_bake(&self.gpu, bake) else {
                 continue;
