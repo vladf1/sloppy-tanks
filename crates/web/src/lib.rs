@@ -69,11 +69,11 @@ impl WireView {
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn bake_texture(key: &str, band: u32, bands: u32) -> Option<js_sys::Uint8Array> {
     use sloppy_core::models::effects_scenery::QUARRY_SOIL_TEXTURE;
-    use sloppy_core::models::{QUARRY_SOIL_SIZE, bake_quarry_soil, sand_accum};
+    use sloppy_core::models::{QUARRY_SOIL_SIZE, bake_quarry_ground, sand_accum};
     if key != QUARRY_SOIL_TEXTURE || band >= bands {
         return None;
     }
     let row = |band: u32| QUARRY_SOIL_SIZE * band as usize / bands as usize;
-    let pixels = bake_quarry_soil(sand_accum(), row(band), row(band + 1));
+    let pixels = bake_quarry_ground(sand_accum(), row(band), row(band + 1));
     Some(js_sys::Uint8Array::from(&pixels[..]))
 }

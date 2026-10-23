@@ -14,7 +14,7 @@
 use std::collections::HashSet;
 
 use sloppy_core::models::effects_scenery::QUARRY_SOIL_TEXTURE;
-use sloppy_core::models::{QUARRY_SOIL_SIZE, bake_quarry_soil, sand_accum};
+use sloppy_core::models::{QUARRY_SOIL_SIZE, bake_quarry_ground, sand_accum};
 
 /// Soil rows baked per step: a 2048-row bake is ~300 ms natively, so 128 rows
 /// keep each step near 20 ms while the loading screen yields between steps.
@@ -40,7 +40,7 @@ impl SoilBake {
                 .reserve_exact(QUARRY_SOIL_SIZE * QUARRY_SOIL_SIZE * 4);
         }
         self.pixels
-            .extend_from_slice(&bake_quarry_soil(sand_accum(), self.rows, end));
+            .extend_from_slice(&bake_quarry_ground(sand_accum(), self.rows, end));
         self.rows = end;
         (self.rows == QUARRY_SOIL_SIZE).then(|| std::mem::take(&mut self.pixels))
     }
@@ -302,6 +302,6 @@ mod tests {
             steps += 1;
         }
         assert_eq!(steps, QUARRY_SOIL_SIZE.div_ceil(SOIL_ROWS_PER_STEP * 3 + 7));
-        assert!(result.unwrap() == bake_quarry_soil(sand_accum(), 0, QUARRY_SOIL_SIZE));
+        assert!(result.unwrap() == bake_quarry_ground(sand_accum(), 0, QUARRY_SOIL_SIZE));
     }
 }

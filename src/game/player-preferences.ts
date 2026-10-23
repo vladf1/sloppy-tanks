@@ -76,10 +76,13 @@ export function savedCameraPreferences(): { firstPerson: boolean; zoom?: number 
 const PHONE_ZOOM = 40;
 
 /** The camera an engine starts with: the saved one, on a phone farther out until it
- * zooms and without the reticle, since phones aim by touching the arena. */
+ * zooms. Touch screens (phones, tablets, the Tesla) draw no overhead reticle: they aim
+ * where the finger is, so it sat hidden under the finger and then stuck where the
+ * finger lifted. First person keeps its gun sight everywhere. */
 export function startingCamera(): { firstPerson: boolean; zoom?: number; hideReticle?: true } {
   const saved = savedCameraPreferences();
-  return isPhone() ? { ...saved, zoom: saved.zoom ?? PHONE_ZOOM, hideReticle: true } : saved;
+  const camera = isPhone() ? { ...saved, zoom: saved.zoom ?? PHONE_ZOOM } : saved;
+  return deviceClass() === "desktop" ? camera : { ...camera, hideReticle: true };
 }
 
 /** Read the chosen view and clamped zoom after a user action. The current drawn
