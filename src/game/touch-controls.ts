@@ -17,6 +17,8 @@ export class TouchControls {
   /** The cooldown a mine started with: the button fills over the engine's reload,
    * whatever length the engine gives it. */
   private mineReload = 0;
+  /** The animation frame that shows the hidden controls again (see `update`). */
+  private reveal = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -78,6 +80,8 @@ export class TouchControls {
     } else {
       window.removeEventListener("resize", this.resized);
       this.controls.touch.clear();
+      cancelAnimationFrame(this.reveal);
+      this.reveal = 0;
       this.layer.hidden = true;
     }
   }
@@ -177,7 +181,18 @@ export class TouchControls {
       return;
     }
     const playing = this.controls.active();
-    this.layer.hidden = !playing;
+    // The controls come back a frame after the rest of the HUD's respawn changes: laid
+    // out and painted on the same frame, they held an iPad's respawn frame 6 ms longer.
+    if (!playing) {
+      cancelAnimationFrame(this.reveal);
+      this.reveal = 0;
+      this.layer.hidden = true;
+    } else if (this.layer.hidden && !this.reveal) {
+      this.reveal = requestAnimationFrame(() => {
+        this.reveal = 0;
+        this.layer.hidden = !this.controls.active();
+      });
+    }
     const cooldown = this.mineCooldown();
     this.mineReload = cooldown > 0 ? Math.max(this.mineReload, cooldown) : 0;
     this.mine.disabled = !playing || cooldown > 0;
