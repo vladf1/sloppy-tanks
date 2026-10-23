@@ -60,7 +60,8 @@ pub(super) fn wood(color: u32) -> Arc<Material> {
 /// How a member maps the timber atlas: which plank row and end-grain cell it
 /// samples, where along the board it starts and whether the row is mirrored.
 struct MemberUvs {
-    size: DVec3,
+    /// The member's size as an array: coordinates are picked by axis per vertex.
+    size: [f64; 3],
     grain: usize,
     row_center: f64,
     start: f64,
@@ -77,7 +78,7 @@ impl MemberUvs {
         let mirror = if rng.next() < 0.5 { -1.0 } else { 1.0 };
         let rows = (GRAIN_ROWS + 1) as f64;
         Self {
-            size,
+            size: size.to_array(),
             grain: if size.x >= size.y { 0 } else { 1 },
             // The image's top row is at v = 1 (flipped like Three's textures).
             row_center: 1.0 - (row as f64 + 0.5) / rows,
@@ -89,7 +90,7 @@ impl MemberUvs {
 
     /// The atlas coordinate of `p` on a face whose normal runs along `axis`: end
     /// grain stretched over the ends, a plank row at true scale on the long faces.
-    fn at(&self, p: DVec3, axis: usize) -> [f64; 2] {
+    fn at(&self, p: [f64; 3], axis: usize) -> [f64; 2] {
         let rows = (GRAIN_ROWS + 1) as f64;
         let size = self.size;
         if axis == self.grain {
@@ -123,25 +124,21 @@ fn member_bevel(size: DVec3) -> f64 {
     (size.min_element() * 0.16).min(MEMBER_BEVEL)
 }
 
-/// Appends a flat polygon (a triangle or a quad), wound to face `normal`.
-fn polygon(
-    positions: &mut Vec<f64>,
-    normals: &mut Vec<f64>,
-    uvs: &mut Vec<f64>,
-    indices: &mut Vec<u32>,
-    corners: &[(DVec3, [f64; 2])],
-    normal: DVec3,
-) {
-    let base = (positions.len() / 3) as u32;
+/// Appends a flat polygon (a triangle or a quad), wound to face `normal`. Values are
+/// worked in f64 and stored narrowed, as `Mesh::from_f64` stores them.
+fn polygon(mesh: &mut Mesh, corners: &[(DVec3, [f64; 2])], normal: DVec3) {
+    let base = mesh.positions.len() as u32;
     for (p, uv) in corners {
-        positions.extend_from_slice(&[p.x, p.y, p.z]);
-        normals.extend_from_slice(&[normal.x, normal.y, normal.z]);
-        uvs.extend_from_slice(uv);
+        mesh.positions.push([p.x as f32, p.y as f32, p.z as f32]);
+        mesh.normals
+            .push([normal.x as f32, normal.y as f32, normal.z as f32]);
+        mesh.uvs.push([uv[0] as f32, uv[1] as f32]);
     }
     let facing = (corners[1].0 - corners[0].0)
         .cross(corners[2].0 - corners[0].0)
         .dot(normal)
         > 0.0;
+    let indices = mesh.indices.get_or_insert_with(Vec::new);
     for k in 1..corners.len() as u32 - 1 {
         if facing {
             indices.extend_from_slice(&[base, base + k, base + k + 1]);
@@ -151,6 +148,38 @@ fn polygon(
     }
 }
 
+/// The unit vector along `axis`.
+fn unit(axis: usize) -> DVec3 {
+    let mut v = DVec3::ZERO;
+    v[axis] = 1.0;
+    v
+}
+
+/// The four corners of a member's flat face whose normal runs along `axis` on the
+/// `sign` side, inset to `inner` across it. Coordinates are picked by axis from
+/// arrays: models build size-optimised, where `DVec3`'s indexing stays a call.
+fn face_corners(
+    map: &MemberUvs,
+    half: [f64; 3],
+    inner: [f64; 3],
+    axis: usize,
+    sign: f64,
+) -> [(DVec3, [f64; 2]); 4] {
+    let (a, b) = ((axis + 1) % 3, (axis + 2) % 3);
+    [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(sa, sb)| {
+        let mut p = [0.0; 3];
+        p[axis] = sign * half[axis];
+        p[a] = sa * inner[a];
+        p[b] = sb * inner[b];
+        (DVec3::from_array(p), map.at(p, axis))
+    })
+}
+
+/// Vertices in a member mesh with chamfers: six faces and twelve edge chamfers of
+/// four, eight corner facets of three.
+const MEMBER_VERTICES: usize = 6 * 4 + 12 * 4 + 8 * 3;
+const MEMBER_INDICES: usize = 6 * 6 + 12 * 6 + 8 * 3;
+
 /// A member's box with the grain along the longer of its width (beams) and height
 /// (posts), its edges chamfered by `bevel`. Long faces map one plank row at true
 /// scale, starting at a seeded point along the board; the two ends map one
@@ -159,43 +188,23 @@ fn polygon(
 /// z-, z+, four corners each), then the chamfers and corner facets.
 fn member_mesh(size: DVec3, seed: i32, bevel: f64) -> Mesh {
     let map = MemberUvs::new(size, seed);
-    let half = size / 2.0;
-    let inner = half - DVec3::splat(bevel);
-    let mut positions = Vec::with_capacity(240);
-    let mut normals = Vec::with_capacity(240);
-    let mut uvs = Vec::with_capacity(160);
-    let mut indices = Vec::with_capacity(132);
-    let unit = |axis: usize| {
-        let mut v = DVec3::ZERO;
-        v[axis] = 1.0;
-        v
+    let half = (size / 2.0).to_array();
+    let inner = half.map(|h| h - bevel);
+    let mut mesh = Mesh {
+        positions: Vec::with_capacity(MEMBER_VERTICES),
+        normals: Vec::with_capacity(MEMBER_VERTICES),
+        uvs: Vec::with_capacity(MEMBER_VERTICES),
+        indices: Some(Vec::with_capacity(MEMBER_INDICES)),
+        ..Mesh::default()
     };
     for axis in 0..3 {
-        let (a, b) = ((axis + 1) % 3, (axis + 2) % 3);
         for sign in [-1.0, 1.0] {
-            let corners: Vec<(DVec3, [f64; 2])> =
-                [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
-                    .iter()
-                    .map(|&(sa, sb)| {
-                        let mut p = DVec3::ZERO;
-                        p[axis] = sign * half[axis];
-                        p[a] = sa * inner[a];
-                        p[b] = sb * inner[b];
-                        (p, map.at(p, axis))
-                    })
-                    .collect();
-            polygon(
-                &mut positions,
-                &mut normals,
-                &mut uvs,
-                &mut indices,
-                &corners,
-                unit(axis) * sign,
-            );
+            let corners = face_corners(&map, half, inner, axis, sign);
+            polygon(&mut mesh, &corners, unit(axis) * sign);
         }
     }
     if bevel <= 0.0 {
-        return Mesh::from_f64(&positions, &normals, &uvs, Some(indices));
+        return mesh;
     }
     // Edge chamfers between faces i and j, running along the third axis k.
     for (i, j) in [(0, 1), (0, 2), (1, 2)] {
@@ -204,11 +213,11 @@ fn member_mesh(size: DVec3, seed: i32, bevel: f64) -> Mesh {
         for si in [-1.0, 1.0] {
             for sj in [-1.0, 1.0] {
                 let corner = |on_i: bool, sk: f64| {
-                    let mut p = DVec3::ZERO;
+                    let mut p = [0.0; 3];
                     p[i] = si * if on_i { half[i] } else { inner[i] };
                     p[j] = sj * if on_i { inner[j] } else { half[j] };
                     p[k] = sk * inner[k];
-                    (p, map.at(p, face))
+                    (DVec3::from_array(p), map.at(p, face))
                 };
                 let corners = [
                     corner(true, -1.0),
@@ -217,14 +226,7 @@ fn member_mesh(size: DVec3, seed: i32, bevel: f64) -> Mesh {
                     corner(false, -1.0),
                 ];
                 let normal = (unit(i) * si + unit(j) * sj).normalize();
-                polygon(
-                    &mut positions,
-                    &mut normals,
-                    &mut uvs,
-                    &mut indices,
-                    &corners,
-                    normal,
-                );
+                polygon(&mut mesh, &corners, normal);
             }
         }
     }
@@ -233,26 +235,17 @@ fn member_mesh(size: DVec3, seed: i32, bevel: f64) -> Mesh {
     for sx in [-1.0, 1.0] {
         for sy in [-1.0, 1.0] {
             for sz in [-1.0, 1.0] {
-                let s = DVec3::new(sx, sy, sz);
-                let corners: Vec<(DVec3, [f64; 2])> = (0..3)
-                    .map(|axis| {
-                        let mut p = inner * s;
-                        p[axis] = s[axis] * half[axis];
-                        (p, map.at(p, face))
-                    })
-                    .collect();
-                polygon(
-                    &mut positions,
-                    &mut normals,
-                    &mut uvs,
-                    &mut indices,
-                    &corners,
-                    s.normalize(),
-                );
+                let s = [sx, sy, sz];
+                let corners: [(DVec3, [f64; 2]); 3] = std::array::from_fn(|axis| {
+                    let mut p = [inner[0] * sx, inner[1] * sy, inner[2] * sz];
+                    p[axis] = s[axis] * half[axis];
+                    (DVec3::from_array(p), map.at(p, face))
+                });
+                polygon(&mut mesh, &corners, DVec3::from_array(s).normalize());
             }
         }
     }
-    Mesh::from_f64(&positions, &normals, &uvs, Some(indices))
+    mesh
 }
 
 /// A sawn member of `size` (grain along the longer of x and y) painted `color`,
@@ -265,14 +258,19 @@ pub(super) fn timber_member(size: DVec3, seed: i32, color: u32) -> Node {
 }
 
 /// Only the +z face of [`timber_member`] (2 triangles instead of 12), for boards
-/// whose other faces nothing can see.
+/// whose other faces nothing can see: the face an unchamfered member mesh would
+/// have last of its six, built alone.
 pub(super) fn timber_member_face(size: DVec3, seed: i32, color: u32) -> Node {
-    let mut mesh = member_mesh(size, seed, 0.0);
-    // Faces run x-, x+, y-, y+, z-, z+, four corners and two triangles each.
-    let keep = 20..24;
-    mesh.positions.drain(..keep.start);
-    mesh.normals.drain(..keep.start);
-    mesh.uvs.drain(..keep.start);
+    let map = MemberUvs::new(size, seed);
+    let half = (size / 2.0).to_array();
+    let mut mesh = Mesh {
+        positions: Vec::with_capacity(4),
+        normals: Vec::with_capacity(4),
+        uvs: Vec::with_capacity(4),
+        ..Mesh::default()
+    };
+    let corners = face_corners(&map, half, half, 2, 1.0);
+    polygon(&mut mesh, &corners, unit(2));
     mesh.indices = Some(vec![0, 1, 2, 0, 2, 3]);
     shadowed(Arc::new(mesh), wood(color))
 }
