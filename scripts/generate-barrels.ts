@@ -1,4 +1,4 @@
-import { encodeWebp } from "./encode-webp";
+import { encodeLossyWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
 import { fbm, lattice, mix, smooth } from "./texture-noise";
@@ -8,10 +8,12 @@ import { fbm, lattice, mix, smooth } from "./texture-noise";
 // (row 0) to the bottom chime (row 255); its two rolling hoops sit at rows 38 and
 // 218, where the lathed drum's ribs sample it. Red enamel over steel, worn bare
 // on the hoops and chimes, scratched, rust-streaked from the top and grimy at the
-// foot, with three flame placards that stay legible from any side.
+// foot, with three flame placards that stay legible from any side. Encoded lossy
+// (`DRUM_QUALITY`): the enamel is noise, which lossless packed at 86 KB.
 const width = 512;
 const height = 256;
 const wall = 384;
+const DRUM_QUALITY = 92;
 const canvas = createCanvas(width, height);
 const c = canvas.getContext("2d");
 let seed = 47;
@@ -156,4 +158,4 @@ for (let n = 0; n < 80; n++) {
 
 const target = new URL("../public/textures/barrels/", import.meta.url);
 await mkdir(target, { recursive: true });
-await writeFile(new URL("painted-drum.webp", target), encodeWebp(canvas));
+await writeFile(new URL("painted-drum.webp", target), encodeLossyWebp(canvas, DRUM_QUALITY));

@@ -407,7 +407,7 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
     let distortion = glint_normal.xz * (0.001 + 1.0 / length(world_to_eye)) * water.settings.y;
     let screen = input.clip.xy * frame.viewport.zw;
     let mirror_uv = vec2f(1.0 - screen.x, screen.y) + distortion;
-    // Unhazed, with its distance in alpha (`mirrored_haze`).
+    // The haze's light still to add, its share in alpha (`mirrored_haze`).
     let mirror = textureSampleLevel(reflection, reflection_sampler, mirror_uv, 0.0);
     let theta = max(dot(eye, glint_normal), 0.0);
 

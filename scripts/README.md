@@ -323,7 +323,8 @@ guarantees for other devices.
 
 - Asset generators (`generate-*`, `optimize-textures.mjs`, `generate-previews.mjs`)
   run through the pnpm commands in the root README's Assets section.
-  `encode-webp.ts` is their shared lossless encoder, `texture-noise.ts` their seeded
+  `encode-webp.ts` is their shared encoder (lossless for data tiles, lossy for noisy
+  colour artwork such as the drum), `texture-noise.ts` their seeded
   value noise, and `asset-data.ts` holds the pickup colors and atlas layout they paint
   with, taking the ammunition labels and colors from the HUD's
   `src/game/ammo-options.ts` (the engine's own copies are in `crates/core`; change

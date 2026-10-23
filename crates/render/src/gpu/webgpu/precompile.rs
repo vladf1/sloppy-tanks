@@ -65,6 +65,8 @@ pub enum LayoutKind {
     /// Frame group only: depth-only merged shadow casters and the sky.
     ShadowMerged,
     Mipmap,
+    /// No groups: texture bakes, which work out every texel from its uv alone.
+    Bake,
 }
 
 impl LayoutKind {
@@ -81,6 +83,7 @@ impl LayoutKind {
             LayoutKind::Occlusion => &[OCCLUSION_ENTRIES],
             LayoutKind::ShadowMerged => &[FRAME_ENTRIES],
             LayoutKind::Mipmap => &[MIPMAP_SOURCE_ENTRIES],
+            LayoutKind::Bake => &[],
         }
     }
 }

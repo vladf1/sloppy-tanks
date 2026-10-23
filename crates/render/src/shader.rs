@@ -18,18 +18,18 @@ use crate::material::shadow_side;
 
 mod specialize;
 
-pub const COMMON_WGSL: &str = include_str!("shaders/common.wgsl");
-pub const MATERIAL_WGSL: &str = include_str!("shaders/material.wgsl");
-pub const STANDARD_WGSL: &str = include_str!("shaders/standard.wgsl");
-pub const SHADOW_WGSL: &str = include_str!("shaders/shadow.wgsl");
-pub const WATER_WGSL: &str = include_str!("shaders/water.wgsl");
-pub const OUTPUT_WGSL: &str = include_str!("shaders/output.wgsl");
-pub const SKY_WGSL: &str = include_str!("shaders/sky.wgsl");
+pub const COMMON_WGSL: &str = wgsl!("shaders/common.wgsl");
+pub const MATERIAL_WGSL: &str = wgsl!("shaders/material.wgsl");
+pub const STANDARD_WGSL: &str = wgsl!("shaders/standard.wgsl");
+pub const SHADOW_WGSL: &str = wgsl!("shaders/shadow.wgsl");
+pub const WATER_WGSL: &str = wgsl!("shaders/water.wgsl");
+pub const OUTPUT_WGSL: &str = wgsl!("shaders/output.wgsl");
+pub const SKY_WGSL: &str = wgsl!("shaders/sky.wgsl");
 /// Screen-space ambient occlusion, without its depth binding (`occlusion_source`).
-pub const OCCLUSION_WGSL: &str = include_str!("shaders/occlusion.wgsl");
-pub const MIPMAP_WGSL: &str = include_str!("shaders/mipmap.wgsl");
-pub const SHADOW_MERGED_WGSL: &str = include_str!("shaders/shadow_merged.wgsl");
-pub const SHADOW_CUTOUT_WGSL: &str = include_str!("shaders/shadow_cutout.wgsl");
+pub const OCCLUSION_WGSL: &str = wgsl!("shaders/occlusion.wgsl");
+pub const MIPMAP_WGSL: &str = wgsl!("shaders/mipmap.wgsl");
+pub const SHADOW_MERGED_WGSL: &str = wgsl!("shaders/shadow_merged.wgsl");
+pub const SHADOW_CUTOUT_WGSL: &str = wgsl!("shaders/shadow_cutout.wgsl");
 
 /// Where the vertex stage reads instance records (`InstanceStore`): each
 /// source defines the frame group's binding 5 and `instance_at`.
@@ -51,14 +51,14 @@ impl InstanceSource {
 
     fn wgsl(self) -> &'static str {
         match self {
-            Self::Storage => include_str!("shaders/instances_storage.wgsl"),
-            Self::Texture => include_str!("shaders/instances_texture.wgsl"),
+            Self::Storage => wgsl!("shaders/instances_storage.wgsl"),
+            Self::Texture => wgsl!("shaders/instances_texture.wgsl"),
         }
     }
 }
 
 /// The frame group's bindings of every shader but the output pass.
-const FRAME_BINDINGS_WGSL: &str = include_str!("shaders/frame_bindings.wgsl");
+const FRAME_BINDINGS_WGSL: &str = wgsl!("shaders/frame_bindings.wgsl");
 
 /// `LITE`: true on the WebGL2 build (the texture source), whose weaker devices get
 /// cheaper shadow filters, sky noise and occlusion.
@@ -468,8 +468,30 @@ pub fn occlusion_source(depth_pass: bool, scale: u32) -> String {
     specialize::specialize(&format!("{depth}{scale}{OCCLUSION_WGSL}"), &[])
 }
 
+/// The full-screen triangle every texture bake draws (`effects::bakes`), and the uv
+/// its fragment stage shades: 0..1 across the target, v increasing down its rows.
+const BAKE_WGSL: &str = "struct BakeOut {
+    @builtin(position) position: vec4f,
+    @location(0) uv: vec2f,
+}
+@vertex
+fn vs_bake(@builtin(vertex_index) index: u32) -> BakeOut {
+    let uv = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
+    var out: BakeOut;
+    out.position = vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
+    out.uv = uv;
+    return out;
+}
+";
+
+/// A texture bake's complete WGSL from the code defining its `fs_bake`, reduced to
+/// what its entry points reach.
+pub fn bake_source(fragment: &str) -> String {
+    specialize::specialize(&format!("{BAKE_WGSL}{fragment}"), &[])
+}
+
 /// The output and bloom shader, its loops unrolled like every other shader's. The
-/// output pass reads the main view's `Frame` for the haze it adds (`deferred_haze`).
+/// output pass reads the main view's `Frame` for the haze it adds (`haze_inscatter`).
 pub fn output_source() -> String {
     output_source_for(InstanceSource::BUILD)
 }
