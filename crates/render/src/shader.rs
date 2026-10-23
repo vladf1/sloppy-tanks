@@ -7,8 +7,9 @@
 //! for a lit one on an Apple GPU, one at a time in WebKit), so only what changes the
 //! cost of every pixel is a variant: lighting, alpha test and effects. Shadow
 //! reception, the cheap per-material features ([`MaterialFeatures`]) and the short
-//! shared surface hooks of effects (`EffectDefinition::shared_surface`) are uniform
-//! branches, and the side a material draws follows from the pipeline's culling.
+//! shared hooks of effects (`EffectDefinition::shared_vertex` and `shared_surface`)
+//! are uniform branches, and the side a material draws follows from the pipeline's
+//! culling.
 
 use bytemuck::{Pod, Zeroable};
 use sloppy_core::scene::{Blending, Effect, Material, Shading, Side, TextureRef};
@@ -220,20 +221,20 @@ pub struct MaterialUniform {
     pub bump_transform: [f32; 4],
     pub emissive_transform: [f32; 4],
     pub params: [[f32; 4]; 4],
-    /// x: `MaterialFeatures` bits; y: the id of the effect whose shared surface hook
-    /// the material runs (`surface_hook`), 0 for none.
+    /// x: `MaterialFeatures` bits; y: the id of the effect whose shared hooks the
+    /// material runs (`vertex_hooks`, `surface_hook`), 0 for none.
     pub features: [u32; 4],
 }
 
 impl MaterialUniform {
     /// `material`'s uniform for parts that do or do not `receive_shadow`, with the
-    /// id of its effect when that effect's surface hook is a shared one.
-    pub fn for_part(material: &Material, receive_shadow: bool, shared_surface: u16) -> Self {
+    /// id of its effect when that effect has shared hooks (`sharing`, else 0).
+    pub fn for_part(material: &Material, receive_shadow: bool, sharing: u16) -> Self {
         let mut uniform = Self::of(material);
         if receive_shadow && material.shading == Shading::Standard {
             uniform.features[0] |= MaterialFeatures::RECEIVE_SHADOW;
         }
-        uniform.features[1] = shared_surface.into();
+        uniform.features[1] = sharing.into();
         uniform
     }
 
@@ -407,15 +408,7 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
         code += "\n";
         code += effect.entry;
     }
-    if !effect.is_some_and(|e| e.has_vertex()) {
-        code += "fn effect_vertex(v: ptr<function, EffectVertex>) {}\n";
-    }
-    if !effect.is_some_and(|e| e.has_world()) {
-        code += "fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {}\n";
-    }
-    if !effect.is_some_and(|e| e.has_clip()) {
-        code += "fn effect_clip(clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex) {}\n";
-    }
+    code += &vertex_hooks(key, effect, effects);
     code += &surface_hook(key, effect, effects);
     code += match key.pass {
         Pass::Main => STANDARD_WGSL,
@@ -424,6 +417,76 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
     let mut folded = flags.to_vec();
     folded.push(lite_flag(source));
     specialize::specialize(&code, &folded)
+}
+
+/// The vertex-stage hooks: name, parameters and the arguments that pass them on.
+const VERTEX_HOOKS: [(&str, &str, &str); 3] = [
+    ("effect_vertex", "v: ptr<function, EffectVertex>", "v"),
+    (
+        "effect_world",
+        "w: ptr<function, EffectWorld>, v: EffectVertex",
+        "w, v",
+    ),
+    (
+        "effect_clip",
+        "clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex",
+        "clip, w, v",
+    ),
+];
+
+/// A hook `name(params)` that runs each of `branches` (none: a no-op).
+fn dispatch_hook(name: &str, params: &str, branches: &[String]) -> String {
+    if branches.is_empty() {
+        return format!("fn {name}({params}) {{}}\n");
+    }
+    format!(
+        "fn {name}({params}) {{\n    let effect = material.features.y;\n    {}\n}}\n",
+        branches.join(" else ")
+    )
+}
+
+/// The variant's `effect_vertex`, `effect_world` and `effect_clip` that its effect
+/// does not define itself. A surface variant without vertex hooks of its own, and a
+/// caster of an effect with shared ones, takes every shared vertex hook
+/// (`EffectDefinition::shared_vertex`), each run where the material names its effect
+/// (`MaterialUniform::features`), so they all have one vertex stage; a caster without
+/// an effect reads no material and takes none.
+fn vertex_hooks(
+    key: &ShaderKey,
+    effect: Option<&EffectDefinition>,
+    effects: &EffectRegistry,
+) -> String {
+    let mut code = String::new();
+    let mut branches: [Vec<String>; 3] = Default::default();
+    // An effect's own vertex hooks never sit beside shared ones (`registry.rs`).
+    let own = effect
+        .filter(|e| e.has_own_vertex_hooks())
+        .map(|e| [e.has_vertex(), e.has_world(), e.has_clip()]);
+    if own.is_none() && (key.pass == Pass::Main || effect.is_some_and(|e| e.has_shared_vertex())) {
+        for (id, shared) in effects.sharing_hooks() {
+            let mut hooks = shared.shared_vertex.to_string();
+            for ((hook, _, args), branches) in VERTEX_HOOKS.iter().zip(&mut branches) {
+                let name = format!("shared_{}_{id}", &hook["effect_".len()..]);
+                let definition = format!("fn {hook}(");
+                if hooks.contains(&definition) {
+                    hooks = hooks.replace(&definition, &format!("fn {name}("));
+                    branches.push(format!(
+                        "if effect == {id}u {{\n        {name}({args});\n    }}"
+                    ));
+                }
+            }
+            code += &hooks;
+            code += "\n";
+        }
+    }
+    let defined = own.unwrap_or_default();
+    for (((hook, params, _), branches), defined) in VERTEX_HOOKS.iter().zip(&branches).zip(defined)
+    {
+        if !defined {
+            code += &dispatch_hook(hook, params, branches);
+        }
+    }
+    code
 }
 
 /// The variant's `effect_surface` unless its effect defines one of its own. A lit
@@ -443,24 +506,20 @@ fn surface_hook(
     if key.pass == Pass::Main && key.lit {
         let mut hooks = String::new();
         let mut branches = Vec::new();
-        for (id, shared) in effects.shared_surfaces() {
-            let name = format!("shared_surface_{id}");
-            hooks += &shared
-                .shared_surface
-                .replace("fn effect_surface(", &format!("fn {name}("));
-            hooks += "\n";
-            branches.push(format!(
-                "if effect == {id}u {{\n        {name}(s, f);\n    }}"
-            ));
+        for (id, shared) in effects.sharing_hooks() {
+            if shared.has_shared_surface() {
+                let name = format!("shared_surface_{id}");
+                hooks += &shared
+                    .shared_surface
+                    .replace("fn effect_surface(", &format!("fn {name}("));
+                hooks += "\n";
+                branches.push(format!(
+                    "if effect == {id}u {{\n        {name}(s, f);\n    }}"
+                ));
+            }
         }
-        if branches.is_empty() {
-            return NONE.into();
-        }
-        return format!(
-            "{hooks}fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {{\n    \
-             let effect = material.features.y;\n    {}\n}}\n",
-            branches.join(" else ")
-        );
+        let params = "s: ptr<function, Surface>, f: EffectFragment";
+        return hooks + &dispatch_hook("effect_surface", params, &branches);
     }
     match effect.filter(|e| e.has_shared_surface()) {
         Some(shared) => format!("{}\n", shared.shared_surface),
@@ -1315,34 +1374,69 @@ mod tests {
         );
     }
 
-    /// A shared surface hook leaves its lit materials the plain lit fragment stage,
-    /// run where the material names its effect; its other hooks stay its own, and
-    /// unlit variants and casters take the hook as their effect's own.
+    /// Shared hooks leave their materials the plain variants' stages, run where the
+    /// material names its effect: every surface variant without vertex hooks of its
+    /// own has one vertex stage, and every lit one without a surface hook of its own
+    /// one fragment stage per alpha test. Unlit variants and casters take a shared
+    /// surface hook as their effect's own, and a caster without an effect reads no
+    /// material.
     #[test]
-    fn shared_surface_hooks_share_the_plain_lit_fragment_stage() {
+    fn shared_hooks_share_the_plain_stages() {
         let mut effects = EffectRegistry::default();
         for effect in crate::presentation::PRESENTATION_EFFECTS {
             effects.register(effect);
         }
-        let shared: Vec<_> = effects.shared_surfaces().collect();
-        assert!(shared.len() >= 4);
-        for alpha_test in [false, true] {
+        let shared: Vec<_> = effects.sharing_hooks().collect();
+        assert!(
+            shared
+                .iter()
+                .filter(|(_, e)| e.has_shared_surface())
+                .count()
+                >= 4
+        );
+        assert!(shared.iter().filter(|(_, e)| e.has_shared_vertex()).count() >= 7);
+        for (lit, alpha_test) in [(true, false), (true, true), (false, false)] {
             let key = |effect| ShaderKey {
-                lit: true,
+                lit,
                 alpha_test,
                 effect,
                 ..ShaderKey::default()
             };
             let plain = StageSources::variant(&key(0), &effects);
+            assert!(plain.vertex.contains("let effect = material.features.y;"));
             for &(id, effect) in &shared {
                 let stages = StageSources::variant(&key(id), &effects);
-                assert_eq!(stages.fragment, plain.fragment, "{}", effect.name);
-                let moves = effect.has_vertex() || effect.has_world() || effect.has_clip();
-                assert_eq!(stages.vertex != plain.vertex, moves, "{}", effect.name);
+                assert_eq!(stages.vertex, plain.vertex, "{}", effect.name);
+                let own_surface = effect.has_own_surface() || (!lit && effect.has_surface());
+                assert_eq!(
+                    stages.fragment != plain.fragment,
+                    own_surface,
+                    "{}",
+                    effect.name
+                );
             }
             let fragment = plain.fragment.expect("a surface has a fragment stage");
-            assert!(fragment.contains("let effect = material.features.y;"));
+            assert_eq!(fragment.contains("let effect = material.features.y;"), lit);
         }
+        let caster = |effect| {
+            let key = ShaderKey {
+                pass: Pass::Shadow,
+                effect,
+                ..ShaderKey::default()
+            };
+            StageSources::variant(&key, &effects).vertex
+        };
+        assert!(!caster(0).contains("features.y"));
+        let moving: std::collections::HashSet<_> = shared
+            .iter()
+            .filter(|(_, e)| e.has_shared_vertex())
+            .map(|&(id, _)| caster(id))
+            .collect();
+        assert_eq!(
+            moving.len(),
+            1,
+            "one vertex stage for casters with shared hooks"
+        );
         let wreck = effects
             .id(crate::effects::WRECK_AGING.name)
             .expect("registered");

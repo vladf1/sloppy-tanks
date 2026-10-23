@@ -23,13 +23,14 @@
 //! per material and cached by variant key, so an effect costs one pipeline per
 //! distinct material setup.
 //!
-//! A short surface hook of a lit material may instead be a shared one
-//! (`EffectDefinition::shared_surface`): it rides in every lit surface variant
-//! without a surface hook of its own, behind a uniform branch on the material's
-//! effect, so its materials' fragment stage is the same code as a plain lit one's.
-//! WebKit compiles each distinct fragment stage at first use, about 0.15 s for a
-//! lit one on a cold start, and a debris glow, a pallet's wear or a crown's normals
-//! each cost one for a line or two of their own.
+//! Hooks may instead be shared ones (`EffectDefinition::shared_vertex` and
+//! `shared_surface`): they ride in every surface variant without hooks of their own
+//! (the surface hooks in the lit ones), behind a uniform branch on the material's
+//! effect, so the effect's materials draw with the same stage code as plain ones.
+//! WebKit compiles each distinct stage at first use on a cold start, about 0.3 s for
+//! a lit fragment stage and 0.1 s for a vertex stage, and a debris glow, a pallet's
+//! wear, a crown's sway or a billboard's corners each cost one for a few lines of
+//! their own.
 
 use sloppy_core::models::{effects_props, effects_scenery};
 
@@ -44,9 +45,13 @@ pub struct EffectDefinition {
     /// functions its `wgsl` shares with other definitions (the kinds of [`MODES`]),
     /// so the binary holds the shared source once; usually empty.
     pub entry: &'static str,
-    /// WGSL defining `effect_surface` (and only the helpers it calls, named for the
-    /// effect) for lit materials to share, in place of one in `wgsl`
-    /// (`shader::shader_source`); usually empty.
+    /// WGSL defining any of `effect_vertex`, `effect_world` and `effect_clip` (and
+    /// only what they use, named for the effect) for every surface variant's vertex
+    /// stage to share, in place of any in `wgsl` (`shader::shader_source`); usually
+    /// empty.
+    pub shared_vertex: &'static str,
+    /// WGSL defining `effect_surface` (and only what it uses, named for the effect)
+    /// for lit materials to share, in place of one in `wgsl`; usually empty.
     pub shared_surface: &'static str,
     /// The shadow pass dithers the caster away with the instance opacity, like
     /// the renderer's faded instances (`debris-fade.ts`).
@@ -54,10 +59,10 @@ pub struct EffectDefinition {
     /// The vertex motion is a small cosmetic sway that leaves the cut-out alpha
     /// alone, so the caster may still merge into its model's still shadow.
     pub still_shadow: bool,
-    /// The hooks `wgsl` and `entry` define, found once when the registry takes the definition:
-    /// every model part registered asks, and searching a large snippet each time
-    /// added up.
-    hooks: Option<Hooks>,
+    /// The hooks it defines, its own (`wgsl` and `entry`) and shared, found once
+    /// when the registry takes the definition: every model part registered asks, and
+    /// searching a large snippet each time added up.
+    hooks: Option<[Hooks; 2]>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -86,6 +91,7 @@ pub(crate) const fn effect(name: &'static str, wgsl: &'static str) -> EffectDefi
         name,
         wgsl,
         entry: "",
+        shared_vertex: "",
         shared_surface: "",
         shadow_fade: false,
         still_shadow: false,
@@ -94,6 +100,14 @@ pub(crate) const fn effect(name: &'static str, wgsl: &'static str) -> EffectDefi
 }
 
 impl EffectDefinition {
+    /// The definition with `wgsl` as its shared vertex hooks.
+    pub(crate) const fn with_shared_vertex(self, wgsl: &'static str) -> Self {
+        Self {
+            shared_vertex: wgsl,
+            ..self
+        }
+    }
+
     /// The definition with `wgsl` as its shared surface hook.
     pub(crate) const fn with_shared_surface(self, wgsl: &'static str) -> Self {
         Self {
@@ -105,35 +119,55 @@ impl EffectDefinition {
     /// The definition with its hooks looked up.
     fn with_hooks(self) -> Self {
         Self {
-            hooks: Some(Hooks::of(self.wgsl, self.entry)),
+            hooks: Some(self.find_hooks()),
             ..self
         }
     }
 
-    fn hooks(&self) -> Hooks {
-        self.hooks
-            .unwrap_or_else(|| Hooks::of(self.wgsl, self.entry))
+    fn find_hooks(&self) -> [Hooks; 2] {
+        [
+            Hooks::of(self.wgsl, self.entry),
+            Hooks::of(self.shared_vertex, self.shared_surface),
+        ]
     }
 
+    /// Its own hooks and its shared ones.
+    fn hooks(&self) -> [Hooks; 2] {
+        self.hooks.unwrap_or_else(|| self.find_hooks())
+    }
+
+    // Whether it has each hook, its own or a shared one.
     pub fn has_vertex(&self) -> bool {
-        self.hooks().vertex
+        self.hooks().iter().any(|hooks| hooks.vertex)
     }
     pub fn has_world(&self) -> bool {
-        self.hooks().world
+        self.hooks().iter().any(|hooks| hooks.world)
     }
     pub fn has_clip(&self) -> bool {
-        self.hooks().clip
+        self.hooks().iter().any(|hooks| hooks.clip)
     }
-    /// Whether it has a surface hook, its own or a shared one.
     pub fn has_surface(&self) -> bool {
-        self.hooks().surface || self.has_shared_surface()
+        self.hooks().iter().any(|hooks| hooks.surface)
+    }
+
+    /// Whether it defines vertex-stage hooks of its own, in `wgsl` or `entry`.
+    pub fn has_own_vertex_hooks(&self) -> bool {
+        let [own, _] = self.hooks();
+        own.vertex || own.world || own.clip
     }
     /// Whether its surface hook is its own, in `wgsl` or `entry`.
     pub fn has_own_surface(&self) -> bool {
-        self.hooks().surface
+        self.hooks()[0].surface
+    }
+    pub fn has_shared_vertex(&self) -> bool {
+        !self.shared_vertex.is_empty()
     }
     pub fn has_shared_surface(&self) -> bool {
         !self.shared_surface.is_empty()
+    }
+    /// Whether its materials name it to the shared hooks (`MaterialUniform::features`).
+    pub fn shares_hooks(&self) -> bool {
+        self.has_shared_vertex() || self.has_shared_surface()
     }
 }
 
@@ -151,11 +185,13 @@ pub const PULSE: EffectDefinition = effect("pulse", wgsl!("shaders/effects/pulse
 /// scale, shaded as a sun-lit billow with a boiling noise rim that glows by its
 /// heat. Instance tint is the linear smoke color and opacity; `instance_data` =
 /// (seed, heat, erosion, softness). No params.
-pub const PUFF: EffectDefinition = effect("puff", wgsl!("shaders/effects/puff.wgsl"));
+pub const PUFF: EffectDefinition = effect("puff", wgsl!("shaders/effects/puff.wgsl"))
+    .with_shared_vertex(wgsl!("shaders/effects/puff_vertex.wgsl"));
 
 /// Additive sparks, tracers, glows and flame tongues. `instance_data` =
 /// (direction xyz, kind). No params.
-pub const STREAK: EffectDefinition = effect("streak", wgsl!("shaders/effects/streak.wgsl"));
+pub const STREAK: EffectDefinition = effect("streak", wgsl!("shaders/effects/streak.wgsl"))
+    .with_shared_vertex(wgsl!("shaders/effects/streak_vertex.wgsl"));
 
 /// A blast's ground decals: dust ring, shockwave and scorch. `instance_data` =
 /// (age s, phase rad, kind, strength). No params.
@@ -176,7 +212,8 @@ pub const DEBRIS_CHIP: EffectDefinition = EffectDefinition {
 
 /// Soft dust billboards (`effect-materials.ts` `dustMaterial`): track dust and
 /// quarry wisps. Instance tint is the linear color and opacity. No params.
-pub const DUST: EffectDefinition = effect("dust", wgsl!("shaders/effects/dust.wgsl"));
+pub const DUST: EffectDefinition = effect("dust", wgsl!("shaders/effects/dust.wgsl"))
+    .with_shared_vertex(wgsl!("shaders/effects/dust_vertex.wgsl"));
 
 // ------------------------------------------------------------------ model effects
 // The `Effect::Custom` names of `sloppy_core::models::effects_props` and
@@ -232,18 +269,17 @@ const MODES: [(&str, &[(f32, &str)]); 1] = [(
 /// Tree crowns swaying in the wind, shaded as rounded masses.
 pub const FOLIAGE: EffectDefinition = EffectDefinition {
     still_shadow: true,
+    shared_vertex: wgsl!("shaders/effects/foliage.wgsl"),
     shared_surface: wgsl!("shaders/effects/foliage_surface.wgsl"),
-    ..effect(
-        effects_scenery::FOLIAGE,
-        wgsl!("shaders/effects/foliage.wgsl"),
-    )
+    ..effect(effects_scenery::FOLIAGE, "")
 };
 
 /// Screen-sized chimney wisps (`village-atmosphere.ts`).
 pub const CHIMNEY_SMOKE: EffectDefinition = effect(
     effects_scenery::CHIMNEY_SMOKE,
     wgsl!("shaders/effects/chimney_smoke.wgsl"),
-);
+)
+.with_shared_vertex(wgsl!("shaders/effects/chimney_smoke_vertex.wgsl"));
 
 /// Baked quarry soil with world-space grit (`quarry-terrain.ts`).
 pub const QUARRY_SOIL: EffectDefinition = effect(
@@ -392,11 +428,11 @@ impl EffectRegistry {
             .collect()
     }
 
-    /// The effects with a shared surface hook, by id.
-    pub fn shared_surfaces(&self) -> impl Iterator<Item = (u16, &EffectDefinition)> {
+    /// The effects with shared hooks, by id.
+    pub fn sharing_hooks(&self) -> impl Iterator<Item = (u16, &EffectDefinition)> {
         (1..=self.effects.len() as u16)
             .zip(&self.effects)
-            .filter(|(_, effect)| effect.has_shared_surface())
+            .filter(|(_, effect)| effect.shares_hooks())
     }
 
     pub fn get(&self, id: u16) -> Option<&EffectDefinition> {
@@ -422,18 +458,31 @@ mod tests {
             let effect = registry.get(id).expect("registered");
             assert!(effect.hooks.is_some());
             let source = format!("{}\n{}", effect.wgsl, effect.entry);
-            assert_eq!(effect.has_vertex(), source.contains("fn effect_vertex("));
-            assert_eq!(effect.has_world(), source.contains("fn effect_world("));
-            assert_eq!(effect.has_clip(), source.contains("fn effect_clip("));
+            let shared = format!("{}\n{}", effect.shared_vertex, effect.shared_surface);
+            let defines = |hook: &str| source.contains(hook) || shared.contains(hook);
+            assert_eq!(effect.has_vertex(), defines("fn effect_vertex("));
+            assert_eq!(effect.has_world(), defines("fn effect_world("));
+            assert_eq!(effect.has_clip(), defines("fn effect_clip("));
+            assert_eq!(effect.has_surface(), defines("fn effect_surface("));
             assert_eq!(
                 effect.has_own_surface(),
                 source.contains("fn effect_surface(")
             );
-            // A shared hook replaces an own one and defines nothing else.
+            // Shared hooks replace own ones, each snippet defining only its stage's.
+            let vertex_hooks = ["fn effect_vertex(", "fn effect_world(", "fn effect_clip("];
+            if effect.has_shared_vertex() {
+                assert!(!effect.has_own_vertex_hooks(), "{}", effect.name);
+                assert!(
+                    vertex_hooks
+                        .iter()
+                        .any(|hook| effect.shared_vertex.contains(hook))
+                );
+                assert!(!effect.shared_vertex.contains("fn effect_surface("));
+            }
             if effect.has_shared_surface() {
                 assert!(!effect.has_own_surface(), "{}", effect.name);
                 assert!(effect.shared_surface.contains("fn effect_surface("));
-                for hook in ["fn effect_vertex(", "fn effect_world(", "fn effect_clip("] {
+                for hook in vertex_hooks {
                     assert!(!effect.shared_surface.contains(hook), "{}", effect.name);
                 }
             }

@@ -2,11 +2,6 @@
 // soft, slightly ragged falloff, sunnier on its upper side. The instance
 // transform is translation × scale only. Tint = linear rgb and opacity;
 // instance_data.x is an optional seed that turns each puff's breakup its own way.
-fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
-    let corner = (*w).position - v.instance_origin;
-    (*w).position = v.instance_origin + frame.camera_right.xyz * corner.x + frame.camera_up.xyz * corner.y;
-}
-
 fn dust_hash(p: vec2f) -> f32 {
     var q = fract(vec3f(p.x, p.y, p.x) * 0.1031);
     q += dot(q, q.yzx + 33.33);

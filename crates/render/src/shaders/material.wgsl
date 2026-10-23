@@ -16,7 +16,7 @@ struct MaterialUniform {
     // Effect parameters, 16 floats.
     params: array<vec4f, 4>,
     // x: the MATERIAL_* features below that this material uses; y: the id of the
-    // effect whose shared surface hook it runs, 0 for none (`shader.rs` `surface_hook`).
+    // effect whose shared hooks it runs, 0 for none (`shader.rs` `vertex_hooks`).
     features: vec4u,
 }
 
