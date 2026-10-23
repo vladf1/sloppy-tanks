@@ -241,22 +241,27 @@ impl WallGrid {
 /// is pushed again against every wall.
 const SEARCH_SLACK: f32 = 2.0 * CLEARANCE;
 
-/// Where one puff ends up among `walls`, tested in order (`Walls::keep_puffs_clear`),
-/// and how many pushed it; `smoke(wall, weight)` takes the smoke it leaves at each.
-/// Also returns the farthest the pushes carried it along either ground axis.
+/// Where one puff ends up among the walls `order` lists (every wall when `None`),
+/// tested in that order (`Walls::keep_puffs_clear`), and how many pushed it;
+/// `smoke(wall, weight)` takes the smoke it leaves at each. Also returns the farthest
+/// the pushes carried it along either ground axis.
 fn push_puff(
     start: Vec3,
     radius: f32,
     weight: f32,
-    walls: impl Iterator<Item = (u32, PuffBox)>,
-    mut smoke: impl FnMut(u32, f32),
+    boxes: &[PuffBox],
+    order: Option<&[u32]>,
+    smoke: &mut dyn FnMut(u32, f32),
 ) -> (Vec3, u32, f32) {
     let mut center = start;
     let clearance = radius * CLEARANCE;
     let reach = radius * SOFT_REACH;
     let mut pushes = 0;
     let mut drift: f32 = 0.0;
-    for (index, wall) in walls {
+    let count = order.map_or(boxes.len(), <[u32]>::len);
+    for k in 0..count {
+        let index = order.map_or(k as u32, |order| order[k]);
+        let wall = boxes[index as usize];
         let (hw, hd, h) = (wall.half_w, wall.half_d, wall.height);
         let local = Vec3::new(center.x - wall.x, center.y, center.z - wall.z);
         if local.x.abs() >= hw + reach || local.z.abs() >= hd + reach || local.y >= h + reach {
@@ -459,25 +464,26 @@ impl Walls {
             let slack = radius * SEARCH_SLACK;
             grid.near(start.x, start.z, radius * SOFT_REACH + slack, candidates);
             gathered.clear();
-            let near = candidates
-                .iter()
-                .map(|&index| (index, grid.boxes[index as usize]));
-            let (mut center, mut pushes, drift) =
-                push_puff(start, radius, weight, near, |index, weight| {
-                    gathered.push((index, weight));
-                });
+            let (mut center, mut pushes, drift) = push_puff(
+                start,
+                radius,
+                weight,
+                &grid.boxes,
+                Some(candidates),
+                &mut |index, weight| gathered.push((index, weight)),
+            );
             if drift < slack {
                 for &(index, weight) in gathered.iter() {
                     smoke[index as usize] += weight;
                 }
             } else {
-                let every = grid.boxes.iter().enumerate();
                 (center, pushes, _) = push_puff(
                     start,
                     radius,
                     weight,
-                    every.map(|(index, b)| (index as u32, *b)),
-                    |index, weight| smoke[index as usize] += weight,
+                    &grid.boxes,
+                    None,
+                    &mut |index, weight| smoke[index as usize] += weight,
                 );
             }
             if pushes == 0 {
@@ -596,11 +602,16 @@ mod tests {
         for puff in puffs.records_mut() {
             let radius = Vec3::from_slice(&puff.world_rows[0][..3]).length();
             let weight = puff.tint[3] * radius * radius;
-            let every = boxes.iter().enumerate().map(|(i, b)| (i as u32, *b));
-            let (center, pushes, _) =
-                push_puff(puff.translation(), radius, weight, every, |i, w| {
+            let (center, pushes, _) = push_puff(
+                puff.translation(),
+                radius,
+                weight,
+                &boxes,
+                None,
+                &mut |i, w| {
                     smoke[i as usize] += w;
-                });
+                },
+            );
             if pushes > 0 {
                 for (row, value) in puff.world_rows.iter_mut().zip(center.to_array()) {
                     row[3] = value;

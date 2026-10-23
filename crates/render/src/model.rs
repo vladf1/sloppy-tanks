@@ -428,15 +428,28 @@ impl<'a> Builder<'a, '_> {
                 continue;
             }
             // Joints in ground order (where each one's first drawable stands), so the
-            // ones a view shows lie in few runs.
-            let mut places: HashMap<usize, u64> = HashMap::new();
-            for member in &members {
+            // ones a view shows lie in few runs. A joint's members arrive together.
+            let mut blocks: Vec<(usize, usize)> = Vec::new();
+            let mut keys: Vec<u64> = Vec::new();
+            for (index, member) in members.iter().enumerate() {
+                if index > 0 && members[index - 1].joint == member.joint {
+                    continue;
+                }
                 let at = member.pending.transform.w_axis;
-                places
-                    .entry(member.joint)
-                    .or_insert_with(|| z_order(at.x, at.z));
+                keys.push(z_order(at.x, at.z) << 32 | blocks.len() as u64);
+                blocks.push((index, member.joint));
             }
-            members.sort_by_key(|m| (places[&m.joint], m.joint));
+            keys.sort_unstable();
+            let mut slots: Vec<Option<Fixed>> = members.drain(..).map(Some).collect();
+            for key in keys {
+                let block = (key & u64::from(u32::MAX)) as usize;
+                let (start, joint) = blocks[block];
+                let end = slots[start..]
+                    .iter()
+                    .position(|slot| slot.as_ref().is_none_or(|m| m.joint != joint))
+                    .map_or(slots.len(), |offset| start + offset);
+                members.extend(slots[start..end].iter_mut().filter_map(Option::take));
+            }
             let (material, _) = self.draw_material(&first.material);
             let mut data = MeshData::default();
             let mut segments: Vec<Segment> = Vec::new();
