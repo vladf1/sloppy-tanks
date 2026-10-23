@@ -385,6 +385,9 @@ mod browser {
         /// The walls last written to those params: they rarely change, and each write
         /// is a buffer upload.
         soft_walls: Option<[[f32; 4]; 4]>,
+        /// Leave nothing out for being out of view: the frame is about to be drawn
+        /// again from another pose (`Game::debug_render`).
+        pub show_everything: bool,
     }
 
     impl Effects {
@@ -404,6 +407,7 @@ mod browser {
                 pools,
                 puffs,
                 soft_walls: None,
+                show_everything: false,
             }
         }
 
@@ -426,7 +430,11 @@ mod browser {
                 .water_settings()
                 .filter(|water| water.reflection)
                 .map(|water| water.height);
-            self.systems.view = EffectView::new(&renderer.camera().view_projection(), mirror);
+            self.systems.view = if self.show_everything {
+                EffectView::default()
+            } else {
+                EffectView::new(&renderer.camera().view_projection(), mirror)
+            };
             self.systems.update(state, alpha, dt, time);
             // Smoke puffs overlap heavily: composite them back to front from this
             // frame's eye (presentation sets the camera before effects update).
@@ -455,6 +463,7 @@ mod browser {
                 pools,
                 puffs,
                 soft_walls,
+                ..
             } = self;
             let mut next = pools.iter();
             systems.for_each_pool(|buffer| {
