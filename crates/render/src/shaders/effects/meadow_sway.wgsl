@@ -9,19 +9,20 @@
 //    tuft's wind origin (world x/z). Extra texture 0 is the ground bake, whose
 //    grass each tuft takes its colour from.
 // 1: the village ground (`ground_surfaces.rs`): a meadow of lush and dry patches
-//    worn into dirt roads with tank treads, packed lanes, puddles, pebbles and
-//    wildflowers, a paved square, cottage gardens and the farmland outside the
+//    worn into dirt roads with tank treads, packed lanes, puddles and wildflower
+//    drifts, a paved square, cottage gardens and the farmland outside the
 //    wall, all in world space. Everything of it that neither moves nor changes
 //    with the view (the lie of the land, the meadow's and the earth's colours,
 //    where the turf gives way, gardens, fields and hedges) is rendered once into
 //    the ground bake (`meadow_bake.wgsl`, `effects::bakes`); per pixel the shader
-//    only cuts the turf's edge, the treads and puddles, the square's setts and the
-//    near pebbles and blooms from it, the plan's tracks and the two tiles, and
-//    lets the gusts roll over the long grass. The map is the grass tile at the
+//    only cuts the turf's edge, the treads and puddles and the square's setts
+//    from it, the plan's tracks and the two tiles, and lets the gusts roll over
+//    the long grass. The map is the grass tile at the
 //    mesh UVs (world / 8 m), extra texture 0 the packed-dirt tile, extra texture 1
 //    the baked ground plan (`village_ground.rs`, linear, unflipped), extra texture
 //    2 the ground bake (`vg_bake_uv`; bound in the bump map's slot,
-//    `gpu::resources` `texture_slots`). params[0] = (1, arena half size, unused,
+//    `gpu::resources` `texture_slots`), and the noise tile (`ground_noise.wgsl`)
+//    in the emissive map's. params[0] = (1, arena half size, unused,
 //    unused); params[1].xyz the north-south roads' centre x; params[2].xyz the
 //    east-west roads' centre z; params[3] = half widths (north-south outer,
 //    north-south centre, east-west outer, east-west centre).
@@ -87,6 +88,23 @@ fn vg_fbm(p: vec2f) -> f32 {
     return vg_noise(p) * 0.55 + vg_noise(p * 2.07 + 17.3) * 0.3 + vg_noise(p * 4.13 - 9.1) * 0.15;
 }
 
+// The same noise and cell hashes per pixel, from the shared noise tile
+// (`ground_noise.wgsl`): the ground, drawn over most of the frame, looks them up.
+// The bake, the tufts' sway and the ranges keep the arithmetic ones: the ranges'
+// glades and treeline were placed by that noise, and the gameplay camera never
+// sees them.
+fn vg_pixel_noise(p: vec2f) -> f32 {
+    return ground_noise(p).x;
+}
+
+fn vg_pixel_hash(p: vec2f) -> f32 {
+    return ground_hash(p).x;
+}
+
+fn vg_pixel_hash2(p: vec2f) -> vec2f {
+    return ground_hash(p);
+}
+
 // Surface-gradient bump of a world-space height field (metres), like the
 // standard shader's bump but from a procedural height.
 fn vg_bump(height: f32, world: vec3f, normal: vec3f, front: bool) -> vec3f {
@@ -135,10 +153,6 @@ const VG_KERB_WIDTH = 0.36;
 const VG_KERB_STONE = 0.68;
 // How far the kerb stands proud of the road's earth (m), for the shade it casts.
 const VG_KERB_RISE = 0.07;
-// Radius of the rings of setts at the heart of the crossing (m).
-const VG_ROSETTE = 4.1;
-// Sett rows between the dark courses that panel the streets.
-const VG_PANEL_ROWS = 17.0;
 
 // The square's outline near `p`: x metres inside it (negative outside), y the
 // coordinate along the nearest stretch of kerb, zw that stretch's outward
@@ -179,164 +193,6 @@ fn vg_square(p: vec2f) -> f32 {
     return vg_square_edge(p).x;
 }
 
-// Metres in from the two kerbs that meet at the square's corner nearest `p`.
-fn vg_corner_local(p: vec2f) -> vec2f {
-    let a = abs(p);
-    let in_main = a.x < VG_SQUARE_MAIN.x && a.y < VG_SQUARE_MAIN.y;
-    let in_cross = a.x < VG_SQUARE_CROSS.x && a.y < VG_SQUARE_CROSS.y;
-    if in_main && in_cross {
-        return vec2f(VG_SQUARE_MAIN.x - a.x, VG_SQUARE_CROSS.y - a.y);
-    }
-    return select(VG_SQUARE_CROSS - a, VG_SQUARE_MAIN - a, in_main);
-}
-
-// One stone of the square's paving at `p`: a sett, or a kerb stone round the edge.
-struct VgSett {
-    // 1 on the stone, 0 in the joints.
-    stone: f32,
-    // Its surface slope (world x, z), m per m: a worn, domed top and each stone
-    // set a little askew, so every sett catches the sun its own way.
-    slope: vec2f,
-    // 0 at its rim, 1 over its crown.
-    crown: f32,
-    // Random numbers for its stone and its wear.
-    pick: vec2f,
-    // How high the stone's top stands, 0 in the joints to 1 on the proudest
-    // crowns: earth drifts over the low ones first.
-    height: f32,
-    // 1 on the kerb.
-    kerb: f32,
-    // 1 on the dark course ringing the square's heart.
-    course: f32,
-}
-
-// A rounded stone's top over `local` (metres from its centre) inside `half`:
-// coverage, crown and the outward slope of its worn rim.
-fn vg_stone_top(local: vec2f, half: vec2f, radius: f32, joint_aa: f32) -> vec4f {
-    let d = vg_box(local, half, radius);
-    let stone = 1.0 - smoothstep(-joint_aa, joint_aa, d);
-    let inner = abs(local) - half + radius;
-    var outward = select(vec2f(0.0, sign(local.y)), vec2f(sign(local.x), 0.0), inner.x > inner.y);
-    if inner.x > 0.0 && inner.y > 0.0 {
-        outward = normalize(inner) * sign(local);
-    }
-    let rim = smoothstep(-0.05, 0.0, d);
-    return vec4f(stone, 1.0 - rim, outward * rim);
-}
-
-// Setts in rows across each street, every row shifted its own way, so each
-// street's courses run square to its traffic. The courses bow gently, as
-// hand-laid rows do, some stones are half-length, some sit proud and some have
-// sunk. A course of long kerb stones edges the square. `aa` is the pixel
-// footprint in metres.
-fn vg_setts(p: vec2f, aa: f32) -> VgSett {
-    let joint_aa = max(aa * 0.8, 0.004);
-    let edge = vg_square_edge(p);
-    if edge.x < VG_KERB_WIDTH {
-        // The kerb: long stones along the edge, a square one at each corner,
-        // each settled a centimetre or two off true.
-        let corner = abs(edge.z * edge.w) > 0.1;
-        let run = edge.y + dot(edge.zw, vec2f(13.7, 29.3));
-        let cell = floor(run / VG_KERB_STONE);
-        var pick = vg_hash2(vec2f(cell, dot(edge.zw, vec2f(3.0, 7.0))) + 211.0);
-        // Stone coordinates: along the kerb, and in from its outer face.
-        var local = vec2f(run - (cell + 0.5) * VG_KERB_STONE, edge.x - VG_KERB_WIDTH * 0.5);
-        var half = vec2f(VG_KERB_STONE * 0.5 - 0.012, VG_KERB_WIDTH * 0.5 - 0.012);
-        var along_dir = vec2f(-edge.w, edge.z);
-        var inward_dir = -edge.zw;
-        if corner {
-            // One square stone where two stretches meet.
-            local = vg_corner_local(p) - VG_KERB_WIDTH * 0.5;
-            half = vec2f(VG_KERB_WIDTH * 0.5 - 0.012);
-            pick = vg_hash2(floor(p * 0.5) + 97.0);
-            along_dir = vec2f(-sign(p.x), 0.0);
-            inward_dir = vec2f(0.0, -sign(p.y));
-        }
-        local.y = local.y + (pick.y - 0.5) * 0.02;
-        let top = vg_stone_top(local, half, 0.035, joint_aa);
-        // Its rim, turned into the world; the stones lean a little outward
-        // where the earth beside them has settled.
-        let tilt = (pick - 0.5) * vec2f(0.06, 0.05) - vec2f(0.0, 0.035);
-        let slope2 = top.zw + tilt;
-        let slope = along_dir * slope2.x + inward_dir * slope2.y;
-        return VgSett(top.x, slope, top.y, pick, top.x * mix(0.85, 1.0, top.y), 1.0, 0.0);
-    }
-    let r = length(p);
-    if r < VG_ROSETTE {
-        // The heart of the crossing: setts laid in rings round its middle,
-        // edged by a course of long dark whinstones.
-        let border = r > VG_ROSETTE - VG_KERB_WIDTH;
-        let pitch = select(VG_SETT.y, VG_KERB_WIDTH, border);
-        let ring = select(floor(r / VG_SETT.y), 1000.0, border);
-        let centre_r = select((ring + 0.5) * VG_SETT.y, VG_ROSETTE - VG_KERB_WIDTH * 0.5, border);
-        let length_wanted = select(VG_SETT.x, VG_KERB_STONE * 0.8, border);
-        let count = max(floor(6.2832 * centre_r / length_wanted), 1.0);
-        let turn = atan2(p.y, p.x) / 6.2832 + vg_hash(vec2f(ring, 3.0));
-        let seg = floor(turn * count);
-        var pick = vg_hash2(vec2f(seg, ring) + 401.0);
-        let arc = (turn - (seg + 0.5) / count) * 6.2832 * centre_r;
-        let local = vec2f(arc, r - centre_r);
-        let half = vec2f(3.1416 * centre_r / count, pitch * 0.5) - vec2f(0.016, 0.014) - pick * vec2f(0.016, 0.012);
-        var top = vg_stone_top(local, half, select(mix(0.04, 0.08, pick.y), 0.035, border), joint_aa);
-        if r < VG_SETT.y {
-            // One round stone at the very middle.
-            top = vec4f(1.0 - smoothstep(VG_SETT.y - 0.03 - joint_aa, VG_SETT.y - 0.03 + joint_aa, r), 1.0 - smoothstep(0.15, 0.24, r), p * 0.4);
-            pick = vec2f(0.3, 0.6);
-        }
-        let radial = p / max(r, 1e-4);
-        let around = vec2f(-radial.y, radial.x);
-        let proud = fract(pick.x * 3.7 + pick.y * 1.3);
-        let tilt = (pick - 0.5) * 0.2;
-        let slope2 = top.zw * mix(0.4, 0.7, proud) + local * mix(0.6, 1.0, proud) * select(1.0, 0.3, border) + tilt;
-        let slope = around * slope2.x + radial * slope2.y;
-        let height = top.x * mix(0.45, 1.0, select(proud, 0.9, border)) * mix(0.75, 1.0, top.y);
-        return VgSett(top.x, slope, top.y, pick, height, 0.0, select(0.0, 1.0, border));
-    }
-    let arm = abs(p.x) > VG_SQUARE_MAIN.x;
-    let straight = select(p, p.yx, arm);
-    let q = straight + vec2f(
-        (vg_noise(straight * 0.09 + 5.0) - 0.5) * 0.8,
-        (vg_noise(straight * vec2f(0.11, 0.05)) - 0.5) * 1.2,
-    );
-    let row = floor(q.y / VG_SETT.y);
-    let shift = vg_hash(vec2f(row, 7.0)) * VG_SETT.x;
-    let column = floor((q.x + shift) / VG_SETT.x);
-    let id = vec2f(column, row) + select(0.0, 503.0, arm);
-    var centre = vec2f((column + 0.5) * VG_SETT.x - shift, (row + 0.5) * VG_SETT.y);
-    var reach_x = VG_SETT.x * 0.5;
-    var pick = vg_hash2(id + 5.0);
-    // Some cells hold two shorter stones, cut a little off centre.
-    if pick.y > 0.58 {
-        let cut = (pick.x - 0.5) * 0.08;
-        let right = q.x - centre.x > cut;
-        centre.x = centre.x + select(cut * 0.5 - reach_x * 0.5, cut * 0.5 + reach_x * 0.5, right);
-        reach_x = reach_x * 0.5 + select(cut * 0.5, -cut * 0.5, right);
-        pick = vg_hash2(id + select(37.0, 71.0, right));
-    }
-    let jitter = vg_hash2(id + 23.0 + pick * 3.0);
-    let local = q - centre - (jitter - 0.5) * 0.02;
-    // Hand-laid: each stone its own size, the joints never one width.
-    let half = vec2f(reach_x, VG_SETT.y * 0.5) - vec2f(0.016, 0.014) - jitter * vec2f(0.022, 0.02);
-    let top = vg_stone_top(local, half, mix(0.04, 0.09, pick.y), joint_aa);
-    // Worn round over its rim, a gentle crown over the rest, each stone set a
-    // little askew; the proud ones crown more steeply, the sunk ones lie flat.
-    let proud = fract(pick.x * 3.7 + pick.y * 1.3);
-    let tilt = (pick - 0.5) * 0.22;
-    var slope = top.zw * mix(0.4, 0.7, proud) + local * mix(0.6, 1.0, proud) + tilt;
-    slope = select(slope, slope.yx, arm);
-    let height = top.x * mix(0.45, 1.0, proud) * mix(0.75, 1.0, top.y);
-    // Every few paces a double course of dark whinstone crosses the street,
-    // bowing with the rows, so the paving reads in panels from any height
-    // rather than as one slab.
-    // Measured in rows from the course's middle, anti-aliased along its edge.
-    let rows_out = q.y / VG_SETT.y - 1.0;
-    let from_band = abs(rows_out - VG_PANEL_ROWS * round(rows_out / VG_PANEL_ROWS));
-    let band_aa = max(joint_aa / VG_SETT.y, 0.02);
-    // Half the rosette's border course in weight: a panel line, not a road marking.
-    let band = (1.0 - smoothstep(1.0 - band_aa, 1.0 + band_aa, from_band)) * 0.45;
-    return VgSett(top.x, slope, top.y, pick, height, 0.0, band);
-}
-
 // One road family's nearest strip: (signed metres inside it, offset across it,
 // half width). `centres` are the strips' centres across, `along` the coordinate
 // along them; strips stop a metre short of the arena edge `extent`.
@@ -349,120 +205,6 @@ fn vg_strip(across: f32, along: f32, centres: vec3f, outer: f32, centre: f32, ex
         best = select(best, vec3f(inside, offset, half), inside > best.x);
     }
     return best;
-}
-
-// A disc on a jittered cell grid: x the coverage of this cell's disc (0 when the
-// cell has none), y its dome height in metres, zw two random numbers for its look.
-// Only a cell that holds a disc works out its shape.
-fn vg_scatter(p: vec2f, density: f32, cells: f32, size: vec2f, aa: f32, seed: f32) -> vec4f {
-    // No cell has a disc: callers weight everything else by the coverage.
-    if density <= 0.0 {
-        return vec4f(0.0);
-    }
-    let q = p * cells;
-    let cell = floor(q);
-    let jitter = vg_hash2(cell + seed);
-    let pick = vg_hash(cell + seed * 1.37 + 5.1);
-    var cover = 0.0;
-    var dome = 0.0;
-    if fract(pick * 13.7) < density {
-        let centre = (cell + 0.2 + jitter * 0.6) / cells;
-        let stretch = mix(0.65, 1.0, jitter.y);
-        let angle = pick * 6.2832;
-        let local = p - centre;
-        let turned = vec2f(
-            local.x * cos(angle) - local.y * sin(angle),
-            (local.x * sin(angle) + local.y * cos(angle)) / stretch,
-        );
-        let base_radius = mix(size.x, size.y, fract(pick * 7.31));
-        // A stone, a clod or a bloom is never a true ellipse: a few lobes
-        // break its outline, each its own.
-        let theta = atan2(turned.y, turned.x);
-        let radius = base_radius * (1.0 + 0.15 * sin(theta * 3.0 + pick * 19.0) + 0.08 * sin(theta * 5.0 + jitter.x * 11.0));
-        let distance = length(turned);
-        cover = 1.0 - smoothstep(radius - aa, radius + aa, distance);
-        dome = sqrt(max(1.0 - distance * distance / (radius * radius), 0.0)) * base_radius;
-    }
-    return vec4f(cover, dome, jitter.x, fract(pick * 3.71));
-}
-
-// A stone on `vg_scatter`'s jittered cell grid with the shade it casts on the earth
-// and its sunlit side: `shade` and `light` are the offsets from `p` to where the
-// sun's ray meets the stone, toward the sun. Both come from the stone of the cell
-// under `p` (a stone keeps well inside its cell, so its neighbours' shades barely
-// reach past their own), one cell's worth of hashes and trigonometry for all three.
-// A share `big` of the stones are of the larger `big_size`, their outlines lobed.
-struct VgStone {
-    // Coverage of the stone and its dome height in metres.
-    cover: f32,
-    dome: f32,
-    // Two random numbers for its look.
-    pick: vec2f,
-    // Its shade on the earth beside it.
-    shade: f32,
-    // 1 on its side toward the sun.
-    lit: f32,
-    // 1 for a big stone, 0 for a pebble.
-    big: f32,
-}
-
-// Tussocks per metre along each axis of the turf's edge, close up.
-const VG_TUSSOCK_CELLS = 2.2;
-
-// A tussock of blades seen from above on a jittered cell grid: its coverage, nine to
-// twelve thin points, so it reads as a clump of grass, not a disc.
-fn vg_tussock(p: vec2f, cells: f32, size: vec2f, aa: f32, seed: f32) -> f32 {
-    let cell = floor(p * cells);
-    let jitter = vg_hash2(cell + seed);
-    let pick = vg_hash(cell + seed * 1.37 + 5.1);
-    let local = p - (cell + 0.25 + jitter * 0.5) / cells;
-    let radius = mix(size.x, size.y, fract(pick * 7.31));
-    let blades = floor(mix(9.0, 13.0, fract(pick * 3.3)));
-    let angle = atan2(local.y, local.x) + pick * 6.2832;
-    let reach = radius * mix(0.3, 1.0, pow(abs(cos(angle * blades * 0.5)), 0.45));
-    return 1.0 - smoothstep(reach - aa, reach + aa, length(local));
-}
-
-fn vg_stones(p: vec2f, density: f32, cells: f32, size: vec2f, big_size: vec2f, big: f32, aa: f32, seed: f32, shade: vec2f, light: vec2f) -> VgStone {
-    var stone = VgStone(0.0, 0.0, vec2f(0.0), 0.0, 1.0, 0.0);
-    if density <= 0.0 {
-        return stone;
-    }
-    let cell = floor(p * cells);
-    let jitter = vg_hash2(cell + seed);
-    let pick = vg_hash(cell + seed * 1.37 + 5.1);
-    stone.pick = vec2f(jitter.x, fract(pick * 3.71));
-    if fract(pick * 13.7) >= density {
-        return stone;
-    }
-    let centre = (cell + 0.2 + jitter * 0.6) / cells;
-    let stretch = mix(0.65, 1.0, jitter.y);
-    let angle = pick * 6.2832;
-    let along = vec2f(cos(angle), -sin(angle));
-    let across = vec2f(sin(angle), cos(angle)) / stretch;
-    let local = p - centre;
-    let turned = vec2f(dot(local, along), dot(local, across));
-    let is_big = fract(pick * 5.3) < big;
-    stone.big = select(0.0, 1.0, is_big);
-    let range = select(size, big_size, is_big);
-    let base_radius = mix(range.x, range.y, fract(pick * 7.31));
-    // A stone is never a true ellipse: a few lobes break its outline, each its own
-    // (too small to see on a pebble).
-    var radius = base_radius;
-    let shade_aa = aa * mix(1.6, 2.0, stone.big);
-    if is_big {
-        let theta = atan2(turned.y, turned.x);
-        radius = base_radius * (1.0 + 0.15 * sin(theta * 3.0 + pick * 19.0) + 0.08 * sin(theta * 5.0 + jitter.x * 11.0));
-    }
-    let distance = length(turned);
-    stone.cover = 1.0 - smoothstep(radius - aa, radius + aa, distance);
-    stone.dome = sqrt(max(1.0 - distance * distance / (radius * radius), 0.0)) * base_radius;
-    let shaded = local + shade * mix(1.0, 2.5, stone.big);
-    let shade_distance = length(vec2f(dot(shaded, along), dot(shaded, across)));
-    stone.shade = (1.0 - smoothstep(radius - shade_aa, radius + shade_aa, shade_distance)) * (1.0 - stone.cover);
-    let toward = local + light * mix(1.0, 2.0, stone.big);
-    stone.lit = smoothstep(radius - aa, radius + aa, length(vec2f(dot(toward, along), dot(toward, across))));
-    return stone;
 }
 
 // The baked ground plan (`village_ground.rs`): three squares side by side, the
@@ -502,8 +244,6 @@ const VG_TREAD_HALF = 0.27;
 // The wind over the meadow (unit x/z) and its gusts' speed in noise cells per second.
 const VG_WIND = vec2f(0.8, 0.6);
 const VG_GUST_SPEED = 0.55;
-// How deep a fresh rut reads (m) for the shade its sunward wall casts.
-const VG_RUT_DEPTH = 0.1;
 // How high the turf stands over the worn earth (m), for the shade its rim casts.
 const VG_TURF_LIP = 0.12;
 // The mean luminance of the tufts' instance tints (`village_vegetation::TUFT_COLORS`).
@@ -583,7 +323,7 @@ fn vg_in_square(p: vec2f) -> bool {
 // lower under a cloud's shadow, with soft edges a few tens of metres wide.
 fn vg_cloud_light(p: vec2f) -> f32 {
     let q = p * VG_CLOUD_SCALE + VG_CLOUD_DRIFT * frame.camera_position.w;
-    let cover = vg_noise(q) * 0.65 + vg_noise(q * 2.3 + 5.0) * 0.35;
+    let cover = vg_pixel_noise(q) * 0.65 + vg_pixel_noise(q * 2.3 + 5.0) * 0.35;
     return 1.0 - smoothstep(0.5, 0.7, cover) * 0.3;
 }
 
@@ -741,22 +481,27 @@ fn vg_bake_grad(uv: vec2f, ddx: vec2f, ddy: vec2f) -> vec4f {
 
 // The ground is most of every frame's pixels, so the per-pixel work is the little
 // that the bake cannot hold: the turf's edge cut to a hand's width, treads,
-// puddles, the square's setts, the near pebbles and blooms, the tiles' grain and
-// the gusts. Each runs only where it shows; texture samples and derivatives stay
-// ahead of the branches, in uniform control flow.
+// puddles, the square's setts, the tiles' grain and the gusts. Its noise is
+// looked up in the noise tile, and each layer folds into the colour as soon as it
+// is worked out. A layer costs the whole ground even where it is skipped (the
+// registers it holds slow every pixel), so what reads only up close (single
+// pebbles and wildflowers, tussock blades, cleat prints, a rosette and kerb
+// corners on the square) is left out; texture samples and derivatives stay ahead
+// of the branches, in uniform control flow.
 fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let p = f.world.xz;
     let extent = material.params[0].y;
-    let widths = material.params[3];
     // Pixel footprint in metres: sub-pixel detail fades instead of shimmering.
     // Mostly the pixel's area rather than its longer side, so the ground at a
-    // low, grazing view keeps its pebbles and grain instead of smearing.
-    let footprint_x = length(dpdx(f.world));
-    let footprint_y = length(dpdy(f.world));
+    // low, grazing view keeps its grain instead of smearing.
+    let world_x = dpdx(f.world);
+    let world_y = dpdy(f.world);
+    let footprint_x = length(world_x);
+    let footprint_y = length(world_y);
     let footprint = sqrt(footprint_x * footprint_y) * 0.7 + max(footprint_x, footprint_y) * 0.3;
     let aa = footprint * 0.75;
     // Graphics tiers without fine detail (`fine_detail`) draw the ground as a coarser
-    // pixel would: no pebbles, blooms, cleats or tussock lift. With it, `detail` is 1.
+    // pixel would: no blade fray or tussock lift. With it, `detail` is 1.
     let detail = select(0.0, 1.0, fine_detail());
     let fine = (1.0 - smoothstep(0.02, 0.06, footprint)) * detail;
     // Detail a few centimetres across still reads from the gameplay camera.
@@ -764,64 +509,49 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     // Detail a few decimetres across: the clumps of the turf's edge.
     let coarse = 1.0 - smoothstep(0.1, 0.24, footprint);
     let inside = 1.0 - smoothstep(extent + 2.0, extent + 3.0, max(abs(p.x), abs(p.y)));
-    let sun_flat = normalize(frame.sun_direction.xz + vec2f(1e-4, 0.0));
-    let sun_run = min(length(frame.sun_direction.xz) / max(frame.sun_direction.y, 0.2), 2.6);
 
     // ---- The bake: colours through their mips (at most VG_BAKE_REACH texels
     // wide), each only where it shows, the fields at their finest level.
-    let dp_x = dpdx(p);
-    let dp_y = dpdy(p);
     let row = vg_bake_row(p);
     let to_uv = VG_BAKE_PAGE / (2.0 * select(VG_ARENA_PLAN, VG_VALLEY_PLAN, row > 0.5)) / VG_BAKE_SIZE;
-    let reach = max(length(dp_x * to_uv * VG_BAKE_SIZE), length(dp_y * to_uv * VG_BAKE_SIZE));
+    let reach = max(length(world_x.xz * to_uv * VG_BAKE_SIZE), length(world_y.xz * to_uv * VG_BAKE_SIZE));
     let narrow = min(1.0, VG_BAKE_REACH / max(reach, 1e-6));
-    let ddx = dp_x * to_uv * narrow;
-    let ddy = dp_y * to_uv * narrow;
+    let ddx = world_x.xz * to_uv * narrow;
+    let ddy = world_y.xz * to_uv * narrow;
     let fields = vg_bake_level(vg_bake_uv(p, row, VG_BAKE_FIELDS));
-    let on_square = inside > 0.0 && vg_in_square(p);
+    // The village square's outline, worked out once near it (`vg_square_edge`).
+    var square_edge = vec4f(-1.0, 0.0, 0.0, 0.0);
+    if inside > 0.0 && abs(p.x) < 22.0 && abs(p.y) < 27.5 {
+        square_edge = vg_square_edge(p);
+    }
+    let on_square = square_edge.x > -0.5;
     let meadow = select(max(fields.a * 2.0 - 1.0, 0.0), 0.0, on_square);
     let field = select(max(1.0 - fields.a * 2.0, 0.0), 0.0, on_square);
 
     // ---- Treads (`village_tracks.rs`): metres to the nearest tread's centre,
     // how fresh it is, the traffic that packed the ground and standing water.
     let tracks = textureSample(extra_texture1, extra_sampler1, vg_plan_uv(p, VG_ARENA_PLAN, 2.0));
-    let tread_aa = max(fwidth((1.0 - tracks.r) * VG_TREAD_REACH), aa);
-    // The tread's run, from the slope of its proximity ramp across the screen.
-    let ramp = vec2f(dpdx(tracks.r), dpdy(tracks.r));
-    let jacobian = dp_x.x * dp_y.y - dp_x.y * dp_y.x;
-    let tread_across = normalize(vec2f(ramp.x * dp_y.y - ramp.y * dp_x.y, ramp.y * dp_x.x - ramp.x * dp_y.x) * sign(jacobian) + vec2f(1e-6, 0.0));
+    let tread_aa = max(fwidth(tracks.r) * VG_TREAD_REACH, aa);
     var tread_distance = (1.0 - tracks.r) * VG_TREAD_REACH;
     // Old treads survive in broken stretches; a tank sinks into soft stretches and
     // skims hard ones, so a rut widens and darkens and fades along its run.
     var tread_break = 1.0;
     var tread_bite = 1.0;
     if tracks.r > 0.3 {
-        let soft_ground = vg_noise(p * 0.16 + 47.0);
-        tread_distance -= (soft_ground - 0.5) * 0.1;
-        tread_break = smoothstep(0.32, 0.6, vg_noise(p * 0.42 + 19.0) * 0.8 + 0.1 + tracks.g * 0.35);
-        tread_bite = mix(0.35, 1.0, smoothstep(0.25, 0.7, soft_ground));
+        let ground = ground_noise(p * 0.3 + 19.0);
+        tread_distance -= (ground.y - 0.5) * 0.1;
+        tread_break = smoothstep(0.32, 0.6, ground.x * 0.8 + 0.1 + tracks.g * 0.35);
+        tread_bite = mix(0.35, 1.0, smoothstep(0.25, 0.7, ground.y));
     }
     let fresh = tracks.g * inside;
-    let traffic = tracks.b * inside;
+    let packed = smoothstep(0.2, 0.85, tracks.b * inside);
     let standing = clamp((1.0 - tracks.a) / 0.6, 0.0, 1.0) * inside;
-    let packed = smoothstep(0.2, 0.85, traffic);
     let tread_bed = (1.0 - smoothstep(VG_TREAD_HALF - tread_aa, VG_TREAD_HALF + tread_aa, tread_distance)) * tread_break;
     let tread_berm = smoothstep(VG_TREAD_HALF - 0.02, VG_TREAD_HALF + 0.08, tread_distance)
         * (1.0 - smoothstep(VG_TREAD_HALF + 0.1, VG_TREAD_HALF + 0.34, tread_distance)) * tread_break;
     // Old treads blur into the packed dirt; fresh ones keep sharp walls.
     let rut = tread_bed * smoothstep(0.05, 0.6, fresh) * tread_bite;
-    // The tracks where the sun's ray over a rut's floor crosses its rim.
-    var rut_sun = 0.0;
-    if rut > 0.0 {
-        let tracks_sun = textureSampleLevel(extra_texture1, extra_sampler1, vg_plan_uv(p + sun_flat * sun_run * VG_RUT_DEPTH, VG_ARENA_PLAN, 2.0), 0.0);
-        let tread_sun = 1.0 - smoothstep(VG_TREAD_HALF - tread_aa, VG_TREAD_HALF + tread_aa, (1.0 - tracks_sun.r) * VG_TREAD_REACH);
-        rut_sun = tread_sun * smoothstep(0.05, 0.6, tracks_sun.g * inside);
-    }
     let berm = tread_berm * smoothstep(0.35, 0.9, fresh);
-    // Cleat prints across a fresh tread, gone before they shrink to a few pixels.
-    let tread_along = dot(p, vec2f(-tread_across.y, tread_across.x));
-    let cleat_fade = (1.0 - smoothstep(0.012, 0.03, footprint)) * smoothstep(0.2, 0.6, fresh) * detail;
-    let cleat = smoothstep(0.1, 0.6, cos(tread_along * 28.56)) * rut * cleat_fade;
     // Water stands in the deepest ruts and the junctions' potholes, in a ring of mud.
     let puddle = smoothstep(0.35, 0.65, standing);
     let mud_rim = smoothstep(0.02, 0.24, standing);
@@ -840,23 +570,12 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let dirt_detail = dirt_luma / 0.36 * mix(1.0, dot(dirt_far.rgb, VG_LUMA) / 0.36, 0.5);
 
     // ---- Where the grass wears through: the bake's cover drive (`meadow_bake.wgsl`),
-    // frayed by a hand-scale lift of the tussocks and, close up, the tile's blades,
-    // and cut over a hand or two, never under a pixel.
+    // frayed by a hand-scale lift and, close up, the tile's blades, and cut over a
+    // hand or two, never under a pixel.
     let cover_static = vg_cover_decode(fields.r);
     var lift = 0.0;
     if detail > 0.0 && abs(cover_static) < 0.9 {
-        lift = (vg_noise(p * 2.3 + 7.0) - 0.5) * 0.32 * coarse;
-        // Close up the turf's edge breaks into separate tussocks, each a fan of
-        // blades, with bare earth between.
-        let turf_view = 1.0 - smoothstep(0.01, 0.024, footprint);
-        if turf_view > 0.05 && abs(cover_static) < 0.5 {
-            // Two grids half a cell apart, so the clumps crowd where the turf is full.
-            let tussock = max(
-                vg_tussock(p, VG_TUSSOCK_CELLS, vec2f(0.08, 0.11), aa, 91.0),
-                vg_tussock(p + 0.5 / VG_TUSSOCK_CELLS, VG_TUSSOCK_CELLS, vec2f(0.08, 0.11), aa, 37.0),
-            );
-            lift += (tussock - 0.5) * 0.6 * turf_view;
-        }
+        lift = (ground_noise(p * 2.3 + 7.0).x - 0.5) * 0.4 * coarse;
     }
     let fray = (lift + clamp(grass_detail - 1.0, -0.5, 0.5) * 0.2 * fine) * 0.5;
     let cover_drive = cover_static + fray;
@@ -867,106 +586,41 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     let dirt = max(max(1.0 - far_cover, rut), mud_rim);
     // The same over a few centimetres, for the relief.
     let soft_dirt = max(max(1.0 - smoothstep(-0.3, 0.3, cover_drive), rut), mud_rim);
-    // The turf stands a hand high and shades the earth below its rim: the bake's
-    // edge where the sun's ray over this point meets the rim.
-    var clump_shade = 0.0;
-    if dirt > 0.0 && cover_static > -0.9 {
-        let lip = vg_bake_level(vg_bake_uv(p + sun_flat * sun_run * VG_TURF_LIP, row, VG_BAKE_FIELDS)).r;
-        let rim_shade = smoothstep(-cover_soft, cover_soft, vg_cover_decode(lip) + fray) * (1.0 - far_cover);
-        clump_shade = rim_shade * 0.45 * dirt * (1.0 - rut);
-    }
 
     // ---- Grass: the bake's meadow under the tile's blades, bowing in the gusts.
     var grass = vec3f(0.0);
-    var blooms = vec4f(0.0);
-    var bloom_color = vec3f(0.0);
     if dirt < 1.0 {
         let grass_bake = vg_bake_grad(vg_bake_uv(p, row, VG_BAKE_GRASS), ddx, ddy);
-        let long_grass = grass_bake.a;
-        grass = grass_bake.rgb * grass_bake.rgb;
-        let blades = mix(0.84, 1.16, clamp((grass_detail - 0.55) * 0.9, 0.0, 1.0));
-        grass = grass * blades;
+        grass = grass_bake.rgb * grass_bake.rgb * mix(0.84, 1.16, clamp((grass_detail - 0.55) * 0.9, 0.0, 1.0));
         // Gusts roll over the long grass: soft bright swathes where the blades bow
         // and show their pale sides, downwind at one speed (the phase varies with
         // place, never the rate). Mown lawns stand too short to show them.
-        if long_grass > 0.0 {
+        if grass_bake.a > 0.0 {
             let wind_along = dot(p, VG_WIND);
             let wind_across = dot(p, vec2f(-VG_WIND.y, VG_WIND.x));
-            let gust = vg_noise(vec2f(wind_along * 0.085 - frame.camera_position.w * VG_GUST_SPEED, wind_across * 0.06));
-            let sheen = smoothstep(0.55, 0.9, gust) * long_grass;
+            let gust = ground_noise(vec2f(wind_along * 0.085 - frame.camera_position.w * VG_GUST_SPEED, wind_across * 0.06)).x;
+            let sheen = smoothstep(0.55, 0.9, gust) * grass_bake.a;
             grass = mix(grass, grass * vec3f(1.14, 1.14, 1.02) + vg_linear(0x2a2a12) * 0.15, sheen * 0.22);
         }
-        // Flower drifts tint the meadow where single blooms are too small to draw.
-        grass = mix(grass, vg_linear(0xe8d68a), meadow * (1.0 - fine) * 0.12);
+        // Wildflower drifts tint the meadows.
+        grass = mix(grass, vg_linear(0xe8d68a), meadow * 0.12);
         // Keep the bank tint and the far hills' vertex shading.
         // (The crops take only a little of it.)
         grass = grass * mix(f.vertex_color.rgb, vec3f(mix(0.9, 1.0, f.vertex_color.g)), field);
-        // Wildflowers in the meadows: daisies with gold hearts, buttercups,
-        // violets and campion.
-        blooms = vg_scatter(p, (0.03 + meadow * 0.22) * (1.0 - field) * fine, 1.9, vec2f(0.035, 0.06), aa, 27.0);
-        if blooms.x > 0.0 {
-            let bloom_pick = blooms.z;
-            var petals = vg_linear(0xf3f0e4);
-            petals = select(petals, vg_linear(0xf2c94a), bloom_pick > 0.55);
-            petals = select(petals, vg_linear(0xb08fe0), bloom_pick > 0.78);
-            petals = select(petals, vg_linear(0xec9fb8), bloom_pick > 0.92);
-            let heart = smoothstep(0.55, 0.3, blooms.y / 0.05) * select(0.0, 1.0, bloom_pick <= 0.55);
-            bloom_color = mix(petals, vg_linear(0xe7b52d), heart);
-        }
     }
 
-    // ---- The village square: setts laid over the heart of the village inside a
-    // kerb of long edge stones, earth drifted in over them (the bake's silt), the
-    // kerb shading the road beside it.
-    var sett = VgSett(0.0, vec2f(0.0), 0.0, vec2f(0.0), 0.0, 0.0, 0.0);
-    var paved = 0.0;
-    var silted = 0.0;
-    var kerb_shade = 0.0;
-    var paved_soft = 0.0;
-    // Single stones and joints settle to their average before they could shimmer.
-    let joint_view = 1.0 - smoothstep(0.025, 0.075, footprint);
-    if on_square {
-        let inward = vg_square(p);
-        if inward > -max(aa, 0.06) {
-            paved = 1.0 - smoothstep(-aa, aa, -inward);
-            paved_soft = 1.0 - smoothstep(-0.06, 0.06, -inward);
-            sett = vg_setts(p, aa);
-            let earth = fields.a * VG_SILT_RANGE;
-            // The joints fill first and the proudest crowns last; far off the
-            // stones' average height decides.
-            let level = mix(0.5, sett.height, joint_view);
-            silted = smoothstep(level - 0.1, level + 0.1, earth * 1.3 - 0.18) * (1.0 - sett.kerb * 0.45);
-        }
-        if inward < 0.0 && inward > -0.6 {
-            let foot = 1.0 - smoothstep(0.0, 0.12, -inward);
-            let shaded = select(0.0, 1.0, vg_square(p + sun_flat * sun_run * VG_KERB_RISE) > 0.0);
-            kerb_shade = max(foot * 0.5, shaded);
-        }
-    }
-    let unpaved = 1.0 - paved * 0.9;
-
-    // ---- Dirt: the bake's earth with the tile's grain, combed along the busy
-    // lines, damp in the hollows and cut by the treads.
+    // ---- Dirt: the bake's earth with the tile's grain, damp in the hollows and
+    // cut by the treads (the bake rolls the busy lines darker).
     var soil = vec3f(0.0);
     // Damp hollows in the loose ground: darker, cooler earth with a crisp drying
     // rim, the bake's damp field cut over about a pixel.
-    var damp_field = 0.0;
     var damp = 0.0;
-    if dirt > 0.0 || paved > 0.0 {
+    if dirt > 0.0 || on_square {
         let earth_bake = vg_bake_grad(vg_bake_uv(p, row, VG_BAKE_EARTH), ddx, ddy);
         soil = earth_bake.rgb * earth_bake.rgb;
-        damp_field = vg_damp_decode(earth_bake.a);
+        let damp_field = vg_damp_decode(earth_bake.a);
         let damp_aa = max(footprint * 0.2, 0.004);
         damp = smoothstep(0.58 - damp_aa, 0.58 + damp_aa, damp_field) * dirt;
-        // Which way the road runs, for streaks combed along it.
-        // Packed lanes are combed with streaks along the road's run.
-        if packed > 0.0 {
-            let along = vg_strip(p.x, p.y, material.params[1].xyz, widths.x, widths.y, extent);
-            let across = vg_strip(p.y, p.x, material.params[2].xyz, widths.z, widths.w, extent);
-            let lane = select(vec2f(across.y, p.x), vec2f(along.y, p.y), along.x > across.x);
-            let streaks = vg_noise(vec2f(lane.x * 6.0, lane.y * 0.09));
-            soil = soil * (1.0 + (streaks - 0.5) * 0.34 * smoothstep(0.0, 1.0, packed) * 0.9);
-        }
         // The tile's grain at full strength, so the roads never read as a smear.
         let dirt_tex = mix(vec3f(dirt_luma), dirt_near.rgb, 0.45);
         soil = soil * clamp(1.0 + (dirt_detail / 0.8 - 1.0) * mix(1.5, 1.1, packed), 0.6, 1.4)
@@ -978,118 +632,153 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
         soil = mix(soil, soil * vec3f(0.9, 0.88, 0.86), damp_rim * 0.5);
         soil = mix(soil, soil * vec3f(1.14, 1.11, 1.05), berm * 0.75);
         // Ruts: a worn-out tread is only pressed a little paler into the dirt;
-        // fresh ones cut deeper and darker, with cleat prints across them.
+        // fresh ones cut deeper and darker, their floors in the walls' cool shade.
         soil = mix(soil, soil * vec3f(1.04, 1.035, 1.02), tread_bed * (1.0 - smoothstep(0.2, 0.6, fresh)) * 0.5);
-        soil = mix(soil, soil * vec3f(0.66, 0.62, 0.6), rut * smoothstep(0.25, 0.85, fresh) * 0.8);
-        soil = mix(soil, soil * vec3f(0.8, 0.78, 0.76), cleat * 0.5);
-        soil = mix(soil, soil * vec3f(0.6, 0.6, 0.66), clump_shade * 0.65);
+        soil = mix(soil, soil * vec3f(0.6, 0.57, 0.6), rut * smoothstep(0.25, 0.85, fresh) * 0.85);
         soil = mix(soil, soil * vec3f(0.55, 0.53, 0.5), wet);
     }
 
-    // The setts: warm-grey granite with the odd sandstone or dark whinstone, the
-    // kerb a paler, finer granite, the lanes' crowns polished and their joints
-    // packed with earth. Treads print only dust on the stone, never a rut.
-    var paving = vec3f(0.0);
-    var sett_view = 0.0;
-    if paved > 0.0 {
-        sett_view = 1.0 - smoothstep(0.03, 0.09, footprint);
-        let pick = sett.pick;
-        let kind = fract(pick.x * 13.1);
-        var stone = mix(vg_linear(0x7e7870), vg_linear(0xa1988a), pick.y);
-        stone = select(stone, mix(vg_linear(0x977f62), vg_linear(0xb09872), pick.y), kind > 0.76);
-        stone = select(stone, vg_linear(0x86684f), kind > 0.94);
-        stone = select(stone, mix(vg_linear(0x524e48), vg_linear(0x68625a), pick.y), fract(pick.x * 5.7) < 0.12);
-        stone = mix(stone, mix(vg_linear(0x9b917f), vg_linear(0xafa48e), pick.x), sett.kerb);
-        stone = mix(stone, mix(vg_linear(0x4f4b45), vg_linear(0x67615a), pick.x), sett.course);
-        // Far off each stone settles into the paving's warm average.
-        let average = mix(vg_linear(0x6c5f50), vg_linear(0x8d7c66), 0.5);
-        stone = mix(mix(mix(average, vg_linear(0x9a907c), sett.kerb * 0.8), vg_linear(0x4f4a44), sett.course), stone, mix(0.15, 1.0, joint_view));
-        stone = stone * mix(1.0, mix(0.9, 1.08, dirt_detail * 0.5), mid);
-        let lane = smoothstep(0.15, 0.75, packed);
-        stone = stone * mix(1.0, mix(0.88, 1.08 + lane * 0.06, sett.crown), sett_view);
-        // Each stone weathered its own way, the lanes rubbed darker down their middles.
-        stone = stone * mix(1.0, mix(0.72, 1.12, fract(pick.y * 7.9 + pick.x * 2.3)), joint_view);
-        stone = mix(stone, stone * vec3f(0.84, 0.82, 0.8), lane * 0.45);
-        let dust_tone = mix(vec3f(dot(soil, VG_LUMA)), soil, 0.6) * 1.15;
-        let dust = clamp(0.1 + (1.0 - lane) * 0.2 + (1.0 - sett.crown) * 0.35, 0.0, 0.75) * (1.0 - lane * 0.5);
-        stone = mix(stone, dust_tone, dust * 0.42);
-        // From the gameplay camera the joints are a darker grain, not a grid.
-        let joint = mix(stone * 0.78, mix(vg_linear(0x3b2f23), vg_linear(0x3c4a24), (1.0 - lane) * 0.4), joint_view);
-        paving = mix(joint, stone, mix(0.8, sett.stone, joint_view));
-        paving = mix(paving, mix(paving, soil * 1.2, 0.45), tread_bed * smoothstep(0.1, 0.6, fresh) * 0.4 * mix(0.5, 1.0, sett.crown));
-        paving = mix(paving, mix(vec3f(dot(soil, VG_LUMA)), soil, 0.7) * mix(0.78, 0.95, silted), silted);
-        paving = mix(paving, paving * vec3f(0.62, 0.6, 0.58), wet * 0.6);
-    }
-
-    // ---- Pebbles kicked out of the ruts onto the loose ground and the odd
-    // fist-sized stone, thickest along the shoulders, each with its shade cast away
-    // from the sun, in clusters with bare earth between: only where each spans a
-    // few pixels.
-    var stones = VgStone(0.0, 0.0, vec2f(0.0), 0.0, 1.0, 0.0);
-    let loose_ground = dirt * (1.0 - rut) * unpaved * fine;
-    if loose_ground > 0.0 {
-        // Stones gather on the dry crests where the rain washed the topsoil off, and
-        // along the ruts' berms; the damp hollows keep their earth.
-        let cluster = smoothstep(0.45, 0.8, 0.85 - damp_field + berm * 0.25);
-        // The road's shoulder: the earth just off the turf.
-        let shoulder = smoothstep(-0.7, -0.35, cover_static) * (1.0 - smoothstep(-0.1, 0.1, cover_static));
-        let sun_shift = sun_flat * min(sun_run, 1.6);
-        let density = (0.12 + shoulder * 0.3 + (1.0 - packed) * 0.1) * mix(0.15, 2.2, cluster) * loose_ground;
-        stones = vg_stones(p, density, 2.5, vec2f(0.025, 0.075), vec2f(0.06, 0.1), 0.12, aa, 3.0, sun_shift * 0.04, sun_flat * 0.025);
-    }
-
-    // ---- Combine colour, height and finish.
     var color = mix(grass, soil, dirt);
     // Where the turf thins into the earth the blades' bases and the damp soil
     // between them sit in their own shade.
     color = color * (1.0 - dirt * (1.0 - dirt) * 0.7);
-    color = mix(color, paving, paved);
-    color = mix(color, color * vec3f(0.56, 0.56, 0.62), kerb_shade * 0.55 * (1.0 - paved));
-    color = mix(color, color * mix(vec3f(0.58, 0.58, 0.64), vec3f(0.5, 0.5, 0.57), stones.big), stones.shade * mix(0.7, 0.8, stones.big));
-    // Pebbles half sunk in the earth, its colour with a little grey, lit on their
-    // sunward crown; the big stones half buried, so they take the earth's warmth
-    // and dust, lit from the dome's height with a dark foot.
-    let pebble_crown = smoothstep(0.0, 0.85, clamp(stones.dome / 0.06, 0.0, 1.0));
-    let pebble_tone = mix(vg_linear(0x5e5850), vg_linear(0x8e877a), stones.pick.x) * mix(0.62, 1.0, pebble_crown) * mix(0.85, 1.25, stones.lit);
-    let pebble = mix(pebble_tone, soil * mix(0.62, 1.12, pebble_crown), 0.4 + stones.pick.y * 0.3);
-    let crown = clamp(stones.dome / 0.09, 0.0, 1.0);
-    let boulder = mix(soil * 0.8, mix(vg_linear(0x67625a), vg_linear(0x8f887a), stones.pick.x), 0.45) * mix(0.6, 1.0, smoothstep(0.0, 0.85, crown)) * mix(0.72, 1.3, stones.lit);
-    color = mix(color, mix(pebble, boulder, stones.big), stones.cover);
-    color = mix(color, bloom_color, blooms.x * (1.0 - dirt) * (1.0 - paved));
+
+    // ---- The village square: setts in rows across each street inside a kerb of
+    // long edge stones, earth drifted in over them (the bake's silt), the kerb
+    // shading the road beside it. Treads print only dust on the stone.
+    var sett_slope = vec2f(0.0);
+    var paved = 0.0;
+    var paved_soft = 0.0;
+    var paved_crown = 0.0;
+    var paved_stone = 0.0;
+    var silted = 0.0;
+    if on_square {
+        let inward = square_edge.x;
+        if inward > -max(aa, 0.06) {
+            paved = 1.0 - smoothstep(-aa, aa, -inward);
+            paved_soft = 1.0 - smoothstep(-0.06, 0.06, -inward);
+            // Single stones and joints settle to their average before they could
+            // shimmer.
+            let joint_view = 1.0 - smoothstep(0.025, 0.075, footprint);
+            let sett_view = 1.0 - smoothstep(0.03, 0.09, footprint);
+            // One stone's cell: each row shifted its own way, so each street's
+            // courses run square to its traffic, and bowing gently as hand-laid rows
+            // do (one lookup of the noise tile); some cells hold two shorter stones.
+            // The kerb's long stones run along the edge, in from its outer face.
+            let joint_aa = max(aa * 0.8, 0.004);
+            let kerb = select(0.0, 1.0, inward < VG_KERB_WIDTH);
+            let arm = abs(p.x) > VG_SQUARE_MAIN.x;
+            let straight = select(p, p.yx, arm);
+            let bowed = straight + (ground_noise(straight * 0.09 + 5.0) - 0.5) * vec2f(0.8, 1.2);
+            let row_index = floor(bowed.y / VG_SETT.y);
+            let shift = vg_pixel_hash(vec2f(row_index, 7.0)) * VG_SETT.x;
+            let column = floor((bowed.x + shift) / VG_SETT.x);
+            var pick = vg_pixel_hash2(vec2f(column, row_index) + select(5.0, 508.0, arm));
+            var local = bowed - vec2f((column + 0.5) * VG_SETT.x - shift, (row_index + 0.5) * VG_SETT.y);
+            var reach = VG_SETT.x * 0.5;
+            if pick.y > 0.58 {
+                let cut = (pick.x - 0.5) * 0.08;
+                let right = local.x > cut;
+                local.x = local.x - select(cut * 0.5 - reach * 0.5, cut * 0.5 + reach * 0.5, right);
+                reach = reach * 0.5 + select(cut * 0.5, -cut * 0.5, right);
+                pick = fract(pick * vec2f(7.31, 3.17) + select(0.37, 0.71, right));
+            }
+            // Hand-laid: each stone its own size, rounded its own way, set a
+            // little off true, so the joints are never one width.
+            let jitter = fract(pick.yx * vec2f(5.3, 9.1) + 0.27);
+            local = local - (jitter - 0.5) * 0.02;
+            var half = vec2f(reach, VG_SETT.y * 0.5) - vec2f(0.016, 0.014) - jitter * vec2f(0.022, 0.02);
+            var radius = mix(0.04, 0.09, pick.y);
+            if kerb > 0.0 {
+                let run = square_edge.y + dot(square_edge.zw, vec2f(13.7, 29.3));
+                pick = vg_pixel_hash2(vec2f(floor(run / VG_KERB_STONE) + 5.0, 216.0));
+                local = (vec2f(fract(run / VG_KERB_STONE), inward / VG_KERB_WIDTH) - 0.5) * vec2f(VG_KERB_STONE, VG_KERB_WIDTH);
+                half = vec2f(VG_KERB_STONE, VG_KERB_WIDTH) * 0.5 - 0.012;
+                radius = 0.035;
+            }
+            let gap = -vg_box(local, half, radius);
+            let stone = smoothstep(-joint_aa, joint_aa, gap);
+            let crown = smoothstep(0.0, 0.07, gap);
+            // The worn round top leans out from the middle and each stone sits a
+            // little askew, so every sett catches the sun its own way.
+            let lean = local / max(half, vec2f(0.05)) * (1.0 - crown) * 0.6 + (pick - 0.5) * 0.2;
+            // The joints fill first and the proudest crowns last; far off the
+            // stones' average height decides.
+            let height = stone * mix(0.45, 1.0, pick.x) * mix(0.75, 1.0, crown);
+            let level = mix(0.5, height, joint_view);
+            silted = smoothstep(level - 0.1, level + 0.1, fields.a * VG_SILT_RANGE * 1.3 - 0.18) * (1.0 - kerb * 0.45);
+            sett_slope = select(select(lean, lean.yx, arm), (pick - 0.5) * 0.05, kerb > 0.5) * sett_view * (1.0 - silted * 0.8);
+            paved_crown = crown;
+            paved_stone = stone * (1.0 - silted);
+            // Warm-grey granite with the odd sandstone or dark whinstone, the kerb a
+            // paler, finer granite, every stone weathered its own way (all picked
+            // from the stone's one hash); far off the stones settle into the
+            // paving's warm average; the lanes' crowns polished and rubbed darker,
+            // their joints packed with earth and moss.
+            let lane = smoothstep(0.15, 0.75, packed);
+            let kind = fract(pick.x * 13.1);
+            var granite = mix(vg_linear(0x7e7870), vg_linear(0xa1988a), pick.y);
+            granite = select(granite, mix(vg_linear(0x977f62), vg_linear(0xb09872), pick.y), kind > 0.76);
+            granite = select(granite, vg_linear(0x86684f), kind > 0.94);
+            granite = select(granite, mix(vg_linear(0x524e48), vg_linear(0x68625a), pick.y), fract(pick.x * 5.7) < 0.12);
+            granite = mix(granite, mix(vg_linear(0x9b917f), vg_linear(0xafa48e), pick.x), kerb);
+            granite = mix(mix(vg_linear(0x7c6d5b), vg_linear(0x9a907c), kerb * 0.8), granite, mix(0.15, 1.0, joint_view));
+            granite = granite * mix(1.0, mix(0.9, 1.08, dirt_detail * 0.5), mid);
+            granite = granite * mix(1.0, mix(0.88, 1.08 + lane * 0.06, crown), sett_view);
+            granite = granite * mix(1.0, mix(0.72, 1.12, fract(pick.y * 7.9 + pick.x * 2.3)), joint_view);
+            granite = mix(granite, granite * vec3f(0.84, 0.82, 0.8), lane * 0.45);
+            let dust = clamp(0.1 + (1.0 - lane) * 0.2 + (1.0 - crown) * 0.35, 0.0, 0.75) * (1.0 - lane * 0.5);
+            let soil_grey = vec3f(dot(soil, VG_LUMA));
+            granite = mix(granite, mix(soil_grey, soil, 0.6) * 1.15, dust * 0.42);
+            let joint = mix(granite * 0.78, mix(vg_linear(0x3b2f23), vg_linear(0x3c4a24), (1.0 - lane) * 0.4), joint_view);
+            var paving = mix(joint, granite, mix(0.8, stone, joint_view));
+            paving = mix(paving, mix(soil_grey, soil, 0.7) * mix(0.78, 0.95, silted), silted);
+            paving = mix(paving, paving * vec3f(0.62, 0.6, 0.58), wet * 0.6);
+            color = mix(color, paving, paved);
+        }
+        if inward < 0.0 && inward > -0.6 {
+            let sun_flat = normalize(frame.sun_direction.xz + vec2f(1e-4, 0.0));
+            let sun_run = min(length(frame.sun_direction.xz) / max(frame.sun_direction.y, 0.2), 2.6);
+            let foot = 1.0 - smoothstep(0.0, 0.12, -inward);
+            let shaded = select(0.0, 1.0, vg_square(p + sun_flat * sun_run * VG_KERB_RISE) > 0.0);
+            color = mix(color, color * vec3f(0.56, 0.56, 0.62), max(foot * 0.5, shaded) * 0.55 * (1.0 - paved));
+        }
+    }
+
     // Puddles: muddy water, dark where it is deep, mirroring the pale sky
     // overhead and the hills at the horizon when the view grazes it.
     var mirror = vec3f(0.0);
     if puddle > 0.0 {
-        let view = normalize(frame.camera_position.xyz - f.world);
+        let view_up = normalize(frame.camera_position.xyz - f.world).y;
         let depth = smoothstep(0.35, 1.0, standing);
         let water = mix(color * vec3f(0.36, 0.33, 0.29), vg_linear(0x221d16), depth * 0.75);
-        let mirrored = mix(vg_linear(0x6d7d74), vg_linear(0xaebfcb), smoothstep(0.1, 0.55, view.y));
-        let fresnel = 0.05 + 0.4 * pow(1.0 - clamp(view.y, 0.0, 1.0), 4.0);
+        let mirrored = mix(vg_linear(0x6d7d74), vg_linear(0xaebfcb), smoothstep(0.1, 0.55, view_up));
+        let graze = 1.0 - clamp(view_up, 0.0, 1.0);
+        let fresnel = 0.05 + 0.4 * graze * graze * graze * graze;
         color = mix(color, water, puddle);
         // Its own light, so the reflection holds in shade too; the surface stays
         // matte to the lighting, which would mirror the whole bright sky as foil.
         mirror = mirrored * fresnel * 0.7 * puddle;
     }
-    // The rut walls' shade on their floors: cool, since only the sky lights them.
-    let rut_shadow = rut * (1.0 - rut_sun) * dirt * (1.0 - paved);
-    color = mix(color, color * vec3f(0.55, 0.57, 0.66), rut_shadow * 0.45 * (1.0 - puddle));
 
     // Detail tuned for the gameplay camera tilts by its height per pixel, so
     // close up it would flatten out: nearer views keep their grain and lumps.
     let near_boost = clamp(0.045 / max(footprint, 1e-4), 1.0, 4.0);
-    var relief = mix(grass_detail * 0.02 + 0.012 + VG_TURF_LIP * 0.25, dirt_detail * 0.02 - rut * 0.1 + berm * 0.025, soft_dirt) * (1.0 - paved_soft * (1.0 - silted * 0.5))
-        + paved_soft * VG_KERB_RISE * 0.4
-        + stones.dome * mix(0.6, 0.7, stones.big) + cleat * 0.012 * dirt * (1.0 - paved) + blooms.y * 0.3 * (1.0 - dirt);
-    relief = relief * near_boost;
-    let micro_normal = vg_bump(mix(relief, -0.08, puddle), f.world, (*s).normal, f.front_facing);
+    let relief = (mix(grass_detail * 0.02 + 0.012 + VG_TURF_LIP * 0.25, dirt_detail * 0.02 - rut * 0.1 + berm * 0.025, soft_dirt) * (1.0 - paved_soft * (1.0 - silted * 0.5))
+        + paved_soft * VG_KERB_RISE * 0.4) * near_boost;
+    // Its slope per pixel: the height's screen derivatives turned into the
+    // ground's x and z through the pixel's footprint, then a pixel's run in metres.
+    let height = mix(relief, -0.08, puddle);
+    let dh = vec2f(dpdx(height), dpdy(height));
+    let jacobian = world_x.x * world_y.z - world_y.x * world_x.z;
+    let per_pixel = footprint / select(jacobian, 1e-8, abs(jacobian) < 1e-8);
+    let micro = vec2f(world_y.z * dh.x - world_x.z * dh.y, world_x.x * dh.y - world_y.x * dh.x) * per_pixel;
     // The lie of the land in true slopes (the bake's): swells and hollows over the
     // meadow, the banks where lawns stand a little proud of their worn roads, the
     // earth's mounds. Visual only; the floor stays flat. Each sett's worn crown and
-    // its tilt come from its own shape (its slope runs downhill).
-    let land = vec3f(vg_slope_decode(fields.g), 0.0, vg_slope_decode(fields.b));
-    var tilt = land - (*s).normal * dot((*s).normal, land);
-    tilt = tilt - vec3f(sett.slope.x, 0.0, sett.slope.y) * paved * sett_view * (1.0 - silted * 0.8) * inside;
-    let normal = normalize(micro_normal - tilt * (1.0 - puddle));
+    // its tilt come from its own shape. Puddles lie flat.
+    let land = vec2f(vg_slope_decode(fields.g), vg_slope_decode(fields.b));
+    let slope = (micro + land - sett_slope * paved * inside) * (1.0 - puddle);
 
     // Cloud shadows drift over the valley; the arena keeps the steady sun its
     // shadows are read against.
@@ -1098,11 +787,11 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     }
 
     (*s).color = color * material.color.rgb * f.tint.rgb;
-    (*s).normal = normalize(mix(normal, (*s).normal, puddle));
+    (*s).normal = normalize((*s).normal - vec3f(slope.x, 0.0, slope.y));
     (*s).emissive = (*s).emissive + mirror;
     (*s).roughness = mix(mix(mix(mix(0.95, mix(0.92, 0.82, packed), dirt), 0.68, wet * 0.6), 0.55, damp * 0.8), 0.62, puddle);
     // Worn setts take a dull sheen on their crowns.
-    (*s).roughness = mix((*s).roughness, mix(0.8, 0.6, smoothstep(0.15, 0.75, packed) * sett.crown), paved * sett.stone * (1.0 - silted) * (1.0 - puddle));
+    (*s).roughness = mix((*s).roughness, mix(0.8, 0.6, smoothstep(0.15, 0.75, packed) * paved_crown), paved * paved_stone * (1.0 - puddle));
     (*s).opacity = material.color.a * f.tint.a;
 }
 
