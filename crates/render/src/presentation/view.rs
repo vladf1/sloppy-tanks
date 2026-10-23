@@ -1411,6 +1411,8 @@ impl Presentation {
             // Falling crowns and boughs reuse the live tree's materials, whose
             // faded variants every movable model registers up front.
         }
+        // The arena's whole look is registered: its pipelines compile from here on.
+        self.renderer.request_pipelines();
     }
 
     /// Create up to `budget` pipelines whose background compile has finished and queue

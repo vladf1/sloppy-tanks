@@ -1897,6 +1897,23 @@ impl Renderer {
         }
     }
 
+    /// Queue the background compile of every pipeline the registered scene still lacks,
+    /// creating none: an arena's preparation asks for its pipelines as soon as it has
+    /// registered them, so the browser compiles them while the page still sets up (its
+    /// HUD, texture decodes and uploads) rather than from the first `prepare_step`.
+    pub fn request_pipelines(&mut self) {
+        let gpu = &self.gpu;
+        for class in self.classes.iter_mut() {
+            for (slot, key) in class.pipeline_slots() {
+                if slot.is_none()
+                    && let Some(key) = key
+                {
+                    *slot = self.pipelines.request(gpu, &self.effects, key, false);
+                }
+            }
+        }
+    }
+
     /// Create every pipeline the scene still needs, synchronously for any whose
     /// background compile has not finished.
     fn complete_pipelines(&mut self) {
