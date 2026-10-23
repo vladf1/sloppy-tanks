@@ -18,7 +18,7 @@ mod textures;
 pub use context::{Canvas, Gpu};
 pub use programs::Pipelines;
 pub use resources::{InstanceStore, MaterialBinding, PageBuffers};
-pub use textures::{BakePipeline, Sampler, Texture, TextureView, Uploader};
+pub use textures::{Sampler, Texture, TextureView, Uploader};
 
 use glow::HasContext;
 

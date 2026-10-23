@@ -29,14 +29,12 @@ use super::Gpu;
 use super::OCCLUSION_DEPTH_DOWNSCALE;
 use super::context::{DEPTH_FORMAT, HDR_FORMAT, OCCLUSION_FORMAT, SHADOW_DEPTH_FORMAT};
 use super::precompile::{Background, LayoutKind, PipelineSpec, Precompiler};
-use super::textures::BakePipeline;
 use crate::effects::EffectRegistry;
-use crate::effects::bakes::BakeDefinition;
 use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SHADOW_MERGED_SIDES};
 use crate::model::Vertex;
 use crate::shader::{
-    BlendMode, Pass, PipelineKey, ShaderKey, StageSources, bake_source, occlusion_source,
-    output_source, shadow_cutout_source, shadow_merged_source, sky_source, water_source,
+    BlendMode, Pass, PipelineKey, ShaderKey, StageSources, occlusion_source, output_source,
+    shadow_cutout_source, shadow_merged_source, sky_source, water_source,
 };
 use crate::shadow_merge::ShadowVertex;
 
@@ -231,18 +229,6 @@ fn occlusion_spec() -> PipelineSpec {
     )
 }
 
-/// A bake's full-screen pass into linear RGBA8, with a surface's frame and material
-/// groups (`effects::bakes`).
-fn bake_spec() -> PipelineSpec {
-    post_spec(
-        "bake",
-        LayoutKind::Surface,
-        "vs_bake",
-        "fs_bake",
-        wgpu::TextureFormat::Rgba8Unorm.into(),
-    )
-}
-
 fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
     let (label, layout, vertex_entry) = if cutout {
         ("shadow cutout", LayoutKind::Surface, "vs_shadow_cutout")
@@ -382,10 +368,6 @@ pub struct Pipelines {
     fixed: Option<FixedPipelines<wgpu::RenderPipeline>>,
     /// The water surface in the occlusion depth pass, made with the fixed pipelines.
     water_depth: Option<wgpu::RenderPipeline>,
-    /// Bake pipelines (`effects::bakes`) by key, compiled in the background first.
-    bake_precompiler: Precompiler<&'static str>,
-    bake_sources: HashMap<&'static str, StageSources>,
-    bakes: HashMap<&'static str, wgpu::RenderPipeline>,
 }
 
 impl Pipelines {
@@ -442,9 +424,6 @@ impl Pipelines {
             fixed_jobs: Some(FixedJobs { jobs, compile }),
             fixed: None,
             water_depth: None,
-            bake_precompiler: Precompiler::new(device),
-            bake_sources: HashMap::new(),
-            bakes: HashMap::new(),
         }
     }
 
@@ -487,7 +466,9 @@ impl Pipelines {
                 LayoutKind::Occlusion => &self.occlusion_layout,
                 LayoutKind::ShadowMerged => &self.merged_layout,
                 LayoutKind::Surface => &self.surface_layout,
-                LayoutKind::Mipmap => unreachable!("the uploader owns the mipmap blits"),
+                LayoutKind::Mipmap | LayoutKind::Bake => {
+                    unreachable!("the uploader owns the mipmap blits and texture bakes")
+                }
             };
             spec.create(device, layout, source)
         });
@@ -575,31 +556,9 @@ impl Pipelines {
         index
     }
 
-    /// The pipeline of `bake` once its background compile has finished; until then it
-    /// queues the compile and returns `None`.
-    pub fn request_bake(&mut self, gpu: &Gpu, bake: &BakeDefinition) -> Option<&BakePipeline> {
-        if !self.bakes.contains_key(bake.key) {
-            let spec = bake_spec();
-            let sources = self
-                .bake_sources
-                .entry(bake.key)
-                .or_insert_with(|| spec.stages(&bake_source(bake)));
-            if !self.bake_precompiler.finished(&bake.key) {
-                if !self.bake_precompiler.queued(&bake.key) {
-                    self.bake_precompiler.start(bake.key, &spec, sources);
-                }
-                return None;
-            }
-            let pipeline = spec.create(&gpu.device, &self.surface_layout, sources);
-            self.bake_precompiler.release(&bake.key);
-            self.bakes.insert(bake.key, pipeline);
-        }
-        self.bakes.get(bake.key)
-    }
-
-    /// Variants and bakes queued for or in background compilation.
+    /// Variants queued for or in background compilation.
     pub fn compiling(&self) -> u32 {
-        self.precompiler.compiling() + self.bake_precompiler.compiling()
+        self.precompiler.compiling()
     }
 
     /// Pipelines including the fixed water, output and merged shadow ones.
@@ -607,12 +566,11 @@ impl Pipelines {
         self.pipelines.len()
             + self.fixed.as_ref().map_or(0, FixedPipelines::count)
             + usize::from(self.water_depth.is_some())
-            + self.bakes.len()
     }
 
     /// Distinct shader sources, including the fixed water, output (with bloom), sky,
     /// occlusion and merged shadow ones.
     pub fn module_count(&self) -> usize {
-        self.sources.len() + self.bake_sources.len() + 6
+        self.sources.len() + 6
     }
 }

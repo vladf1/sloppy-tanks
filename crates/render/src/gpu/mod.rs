@@ -1867,16 +1867,24 @@ impl Renderer {
         }
     }
 
-    /// Render the generated textures a registered bake makes (`effects::bakes`) once
-    /// the material of its source effect exists with its other textures loaded and the
-    /// bake's pipeline has compiled. Until then the materials naming one sample the
-    /// white placeholder and it counts as pending, so preparation waits for it.
+    /// Draw the requested texture bakes (`effects::bakes`) whose pipelines have
+    /// compiled (starting the rest), a bake that reads a material once that material
+    /// exists with its other textures loaded. Until then the materials naming one
+    /// sample the white placeholder and it counts as pending, so preparation waits.
     fn run_bakes(&mut self) {
         let mut baked = false;
         for (key, bake) in self.textures.bakes_due() {
+            if !self.textures.bake_ready(&self.gpu, bake) {
+                continue;
+            }
+            let Some(source) = bake.source else {
+                self.textures.bake(&self.gpu, &key, bake, None);
+                baked = true;
+                continue;
+            };
             let Some(material) = self
                 .effects
-                .id(bake.source)
+                .id(source)
                 .and_then(|effect| self.materials.with_effect(effect))
             else {
                 continue;
@@ -1887,21 +1895,18 @@ impl Renderer {
                 .flatten()
                 .filter(|texture| !matches!(texture.source, TextureSource::Generated(_)))
                 .all(|texture| self.textures.loaded(texture));
-            if !loaded || self.pipelines.request_bake(&self.gpu, bake).is_none() {
+            if !loaded {
                 continue;
             }
-            // The bake reads the main view's frame uniform (the sun); writing it
-            // borrows the whole renderer, so the pipeline is looked up again after.
+            // The bake reads the main view's frame uniform (the sun).
             self.write_view_uniforms();
-            let Some(pipeline) = self.pipelines.request_bake(&self.gpu, bake) else {
-                continue;
-            };
             let binding = &self.materials.get(material).binding;
-            baked |= self
-                .textures
-                .bake(&self.gpu, &self.frame, pipeline, binding, &key, bake);
+            self.textures
+                .bake(&self.gpu, &key, bake, Some((&self.frame, binding)));
+            baked = true;
         }
         if baked {
+            self.static_shadow_dirty = true;
             self.materials.refresh(&self.gpu, &mut self.textures);
         }
     }

@@ -1,13 +1,16 @@
 //! GPU meshes and materials. A shared `Arc<Mesh>` or interned `Arc<Material>` is
-//! uploaded once, keyed by pointer identity (the store keeps a clone, so the
-//! pointer cannot be reused while the entry lives). Entries used only by released
+//! uploaded once, keyed by pointer identity. A mesh entry holds a `Weak`, which
+//! keeps the allocation (so the pointer cannot be reused while the entry lives)
+//! but not the vertices: once the GPU has them, the CPU copy goes as soon as no
+//! caller holds the mesh. Wasm memory never shrinks, and models such as the wrecks
+//! are registered once and then only drawn. Entries used only by released
 //! resources are freed once no caller still holds the `Arc` (meshes at the next
 //! frame's collection, materials on `reset_round`) — the Rust form of disposing
 //! only `userData.owned` resources. Meshes live in shared mesh pages
 //! (`crate::mesh_pages`), not buffers of their own.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use glam::Vec3;
 use sloppy_core::geometry::Mesh;
@@ -37,7 +40,7 @@ pub struct GpuMesh {
     /// sees one of its faces behind another.
     pub planar: bool,
     /// The caller's mesh for shared entries; `None` for model-owned merges.
-    source: Option<Arc<Mesh>>,
+    source: Option<Weak<Mesh>>,
     /// Live draw classes using this mesh.
     pub users: u32,
 }
@@ -79,7 +82,7 @@ impl GpuMesh {
             && self
                 .source
                 .as_ref()
-                .is_some_and(|source| Arc::strong_count(source) == 1)
+                .is_some_and(|source| source.strong_count() == 0)
     }
 }
 
@@ -296,7 +299,7 @@ impl MeshStore {
             range,
             bounds: Sphere::from_points(mesh.positions.iter().map(|p| Vec3::from(*p))),
             planar: planar(mesh.positions.iter().map(|p| Vec3::from(*p))),
-            source: Some(mesh.clone()),
+            source: Some(Arc::downgrade(mesh)),
             users: 0,
         });
         self.shared.insert(key, index);
@@ -397,7 +400,7 @@ impl MeshStore {
         if let Some(mesh) = self.slots.remove(index) {
             self.free_range(mesh.range);
             if let Some(source) = mesh.source {
-                self.shared.remove(&(Arc::as_ptr(&source) as usize));
+                self.shared.remove(&(source.as_ptr() as usize));
             }
         }
     }

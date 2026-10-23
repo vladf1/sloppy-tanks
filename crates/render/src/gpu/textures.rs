@@ -15,10 +15,8 @@ use sloppy_core::scene::{TextureRef, TextureSource, Wrap};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use super::backend::{
-    BakePipeline, Frame, Gpu, MaterialBinding, Sampler, Texture, TextureView, Uploader,
-};
-use crate::effects::bakes::{self, BakeDefinition};
+use super::backend::{Frame, Gpu, MaterialBinding, Sampler, Texture, TextureView, Uploader};
+use crate::effects::bakes::{TextureBake, bake_for};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TextureKey {
@@ -125,6 +123,8 @@ pub struct TextureStore {
     entries: HashMap<TextureKey, TextureEntry>,
     loaded: Rc<RefCell<Vec<Loaded>>>,
     generated: HashMap<&'static str, web_sys::ImageData>,
+    /// Requested textures that a bake draws (`effects::bakes`), until it has.
+    bakes: Vec<TextureKey>,
     samplers: HashMap<SamplerKey, Sampler>,
     uploader: Uploader,
     asset_base: String,
@@ -139,6 +139,7 @@ impl TextureStore {
             entries: HashMap::new(),
             loaded: Rc::default(),
             generated: HashMap::new(),
+            bakes: Vec::new(),
             samplers: HashMap::new(),
             uploader: Uploader::new(gpu),
             asset_base,
@@ -179,6 +180,8 @@ impl TextureStore {
                         key,
                         result: Ok(Pixels::Image(image.clone())),
                     });
+                } else if bake_for(name).is_some() {
+                    self.bakes.push(key);
                 }
             }
         }
@@ -277,17 +280,21 @@ impl TextureStore {
             .clone()
     }
 
-    /// Generated textures that a registered bake renders (`effects::bakes`) and that
-    /// have not been rendered yet.
-    pub fn bakes_due(&self) -> Vec<(TextureKey, &'static BakeDefinition)> {
-        self.entries
+    /// The requested textures a bake draws (`effects::bakes`) that it has not yet.
+    pub fn bakes_due(&self) -> Vec<(TextureKey, &'static TextureBake)> {
+        self.bakes
             .iter()
-            .filter(|(_, entry)| entry.loading)
-            .filter_map(|(key, _)| match key.source {
-                TextureSource::Generated(name) => Some((key.clone(), bakes::find(name)?)),
+            .filter_map(|key| match key.source {
+                TextureSource::Generated(name) => Some((key.clone(), bake_for(name)?)),
                 TextureSource::File(_) => None,
             })
             .collect()
+    }
+
+    /// Whether `bake` can draw now: its pipeline and the mip blits are ready. The
+    /// first ask starts its background compile.
+    pub fn bake_ready(&mut self, gpu: &Gpu, bake: &'static TextureBake) -> bool {
+        self.uploader.ready(gpu) && self.uploader.ready_to_bake(gpu, bake)
     }
 
     /// Whether `texture` has arrived or failed (it no longer waits).
@@ -297,44 +304,23 @@ impl TextureStore {
             .is_some_and(|entry| !entry.loading)
     }
 
-    /// Render `bake` into its texture `key` from a material's binding and the frame's
-    /// main view, then its mip levels. False (nothing done) until the mip blits
-    /// have compiled.
-    #[allow(clippy::too_many_arguments)]
+    /// Draw `bake` into its texture `key` and render its mip levels, reading the frame
+    /// and the binding of its source's material when it has one; it must be ready
+    /// ([`Self::bake_ready`]).
     pub fn bake(
         &mut self,
         gpu: &Gpu,
-        frame: &Frame,
-        pipeline: &BakePipeline,
-        material: &MaterialBinding,
         key: &TextureKey,
-        bake: &BakeDefinition,
-    ) -> bool {
-        if !self.uploader.ready(gpu) {
-            return false;
+        bake: &'static TextureBake,
+        inputs: Option<(&Frame, &MaterialBinding)>,
+    ) {
+        self.bakes.retain(|due| due != key);
+        if let Some(entry) = self.entries.get_mut(key) {
+            entry.texture = Some(self.uploader.bake(gpu, bake, inputs));
+            entry.bytes = bake.bytes();
+            entry.loading = false;
+            self.generation += 1;
         }
-        let Some(entry) = self.entries.get_mut(key) else {
-            return false;
-        };
-        let levels = if key.mipmaps {
-            32 - bake.width.max(bake.height).max(1).leading_zeros()
-        } else {
-            1
-        };
-        let size = (bake.width, bake.height);
-        entry.texture = Some(
-            self.uploader
-                .bake(gpu, frame, pipeline, material, key, size, levels),
-        );
-        entry.loading = false;
-        let texels = u64::from(bake.width) * u64::from(bake.height);
-        entry.bytes = if levels > 1 {
-            (texels * 4 * 4).div_ceil(3)
-        } else {
-            texels * 4
-        };
-        self.generation += 1;
-        true
     }
 
     /// Textures still downloading or awaiting generated pixels.

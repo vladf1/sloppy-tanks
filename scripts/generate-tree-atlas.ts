@@ -44,11 +44,13 @@ for (const [name, w] of columns) {
 }
 // Lossy like the bark it copies (the sources are already lossy, so a lossless copy
 // would only store their artefacts at twice the size); `-exact` keeps the colour
-// under the cut-out texels.
+// under the cut-out texels. The cut-out alpha is quantised (`-alpha_q 60`: 14 levels,
+// each texel within 0.04): alpha to coverage resolves five levels with 4x MSAA and
+// the alpha test cuts at one, while the soft ramps of all 256 took a third of the file.
 const header = `P7\nWIDTH ${width}\nHEIGHT ${height}\nDEPTH 4\nMAXVAL 255\nTUPLTYPE RGB_ALPHA\nENDHDR\n`;
 const webp = execFileSync(
   "cwebp",
-  ["-quiet", "-q", "86", "-m", "6", "-exact", "-alpha_q", "100", "-o", "-", "--", "-"],
+  ["-quiet", "-q", "80", "-m", "6", "-exact", "-alpha_q", "60", "-o", "-", "--", "-"],
   {
     input: Buffer.concat([Buffer.from(header, "ascii"), Buffer.from(atlas.buffer)]),
     maxBuffer: 32 * 1024 * 1024,

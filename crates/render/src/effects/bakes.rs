@@ -1,97 +1,126 @@
-//! Textures the GPU renders once from a material: an effect's still layers, worked
-//! out per texel of a world-space atlas instead of per pixel of every frame.
+//! Texture bakes: textures a full-screen pass draws once on the GPU from WGSL, the
+//! first time a material asks for them, so static surface layers that vary slowly
+//! across a map are worked out per texel once rather than per pixel every frame. A
+//! bake answers a `TextureSource::Generated` key; the texture store holds it as
+//! loading until its pass has run (`gpu::Renderer::run_bakes`), so an arena waits for
+//! it like any other texture, and both backends draw it with the same WGSL into
+//! linear RGBA8 with every mip level (a colour keeps its darks better stored as its
+//! square root).
 //!
-//! A material names a bake by its key, `TextureRef::generated(key)`, among its
-//! textures. The material of the bake's [`BakeDefinition::source`] effect supplies
-//! everything the bake reads: its uniform (the effect params) and its other
-//! textures, bound as for drawing, with the frame's main-view uniform (the sun).
-//! The renderer (`gpu::Renderer::run_bakes`) renders it once those textures have
-//! loaded and its pipeline has compiled, then renders the mip chain; until then the
-//! materials naming it sample the white placeholder and it counts as a pending
-//! texture, so an arena's preparation waits for it. It stays for the page's life,
-//! like every other texture.
-//!
-//! The bake's WGSL sees the frame and material declarations of a surface shader and
-//! defines `fn bake(uv: vec2f) -> vec4f`: the value of the texel at `uv` over the
-//! whole target, rows from the first (`shaders/bake.wgsl`), stored as linear RGBA8
-//! (so the texture reference must not ask for sRGB; a colour keeps its darks
-//! better stored as its square root). It runs one full-screen pass, so it may be as
-//! heavy as its texel count allows, and costs one pipeline compile.
+//! A bake works out each texel from its uv alone, or, with a [`TextureBake::source`],
+//! also reads the material of that effect (its params and its other textures, bound
+//! as for drawing) and the main view's frame uniform (the sun): it then waits until
+//! that material exists with those textures loaded, and its WGSL sees a surface
+//! shader's frame and material declarations.
 
-use sloppy_core::models::VILLAGE_GROUND_BAKE;
+use sloppy_core::models::{VILLAGE_GROUND_BAKE as VILLAGE_GROUND_KEY, effects_scenery};
 
-use super::registry::{MEADOW_WGSL, VILLAGE_GROUND};
+use super::registry::{HARBOR_APRON_WGSL, MEADOW_WGSL, VILLAGE_GROUND};
+use crate::shader::InstanceSource;
 
-/// One registered bake.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub struct BakeDefinition {
-    /// The `TextureSource::Generated` key materials name it by.
+/// One bake: the generated-texture key it answers, its size in texels and the WGSL
+/// pieces that, concatenated, define `fn fs_bake(input: BakeOut) -> @location(0)
+/// vec4f`, the texel at `input.uv` (0..1, v increasing down the rows, as a material
+/// samples it).
+#[derive(Debug, PartialEq, Eq)]
+pub struct TextureBake {
     pub key: &'static str,
     pub width: u32,
     pub height: u32,
-    /// The effect definition (`EffectDefinition::name`) of the material it renders from.
-    pub source: &'static str,
-    /// WGSL shared with the source effect (held once in the binary).
-    pub wgsl: &'static str,
-    /// WGSL appended after `wgsl`, defining `bake`.
-    pub entry: &'static str,
+    /// The effect definition (`EffectDefinition::name`) whose material the bake
+    /// reads, if any.
+    pub source: Option<&'static str>,
+    pub wgsl: &'static [&'static str],
 }
 
-/// The Pine Village ground's still layers (`meadow_bake.wgsl`; the page layout is
-/// `meadow_sway.wgsl`'s `vg_bake_uv`): six pages of 512² texels, the arena's and the
-/// valley's grass, earth and fields.
-pub const VILLAGE_GROUND_BAKE_DEFINITION: BakeDefinition = BakeDefinition {
-    key: VILLAGE_GROUND_BAKE,
-    width: 1536,
+impl TextureBake {
+    /// Its complete WGSL for this build, entry points `vs_bake` and `fs_bake`.
+    pub fn source(&self) -> String {
+        self.source_for(InstanceSource::BUILD)
+    }
+
+    pub(crate) fn source_for(&self, instances: InstanceSource) -> String {
+        let fragment = self.wgsl.concat();
+        if self.source.is_some() {
+            crate::shader::bake_source_with_material(&fragment, instances)
+        } else {
+            crate::shader::bake_source(&fragment)
+        }
+    }
+
+    /// Mip levels down to one texel.
+    pub fn levels(&self) -> u32 {
+        32 - self.width.max(self.height).leading_zeros()
+    }
+
+    /// GPU bytes of the texture and its mip chain.
+    pub fn bytes(&self) -> u64 {
+        (u64::from(self.width) * u64::from(self.height) * 4 * 4).div_ceil(3)
+    }
+}
+
+/// Harbor Havoc's ground wear (`harbor_apron_wear.wgsl`): 12.5 cm texels over the
+/// 128 m round the arena, enough for the stains, wheel paths and puddles it holds,
+/// whose edges are soft; the crisp detail stays per pixel.
+pub const HARBOR_APRON_WEAR: TextureBake = TextureBake {
+    key: effects_scenery::HARBOR_APRON_WEAR,
+    width: 1024,
     height: 1024,
-    source: VILLAGE_GROUND.name,
-    wgsl: MEADOW_WGSL,
-    entry: concat!(
-        include_str!("../shaders/effects/meadow_bake.wgsl"),
-        "fn bake(uv: vec2f) -> vec4f { return village_ground_bake(uv); }\n",
-    ),
+    source: None,
+    wgsl: &[
+        HARBOR_APRON_WGSL,
+        wgsl!("shaders/effects/harbor_apron_wear.wgsl"),
+    ],
 };
 
-pub const BUILTIN_BAKES: [BakeDefinition; 1] = [VILLAGE_GROUND_BAKE_DEFINITION];
+/// The Pine Village ground's still layers (`meadow_bake.wgsl`, from the ground
+/// material's plan and params; the page layout is `meadow_sway.wgsl`'s `vg_bake_uv`):
+/// six pages of 512² texels, the arena's and the valley's grass, earth and fields.
+pub const VILLAGE_GROUND_BAKE: TextureBake = TextureBake {
+    key: VILLAGE_GROUND_KEY,
+    width: 1536,
+    height: 1024,
+    source: Some(VILLAGE_GROUND.name),
+    wgsl: &[
+        MEADOW_WGSL,
+        wgsl!("shaders/effects/meadow_bake.wgsl"),
+        "@fragment fn fs_bake(input: BakeOut) -> @location(0) vec4f { return village_ground_bake(input.uv); }\n",
+    ],
+};
 
-/// The bake that renders the generated texture `key`, if one does.
-pub fn find(key: &str) -> Option<&'static BakeDefinition> {
-    BUILTIN_BAKES.iter().find(|bake| bake.key == key)
+pub const BAKES: [TextureBake; 2] = [HARBOR_APRON_WEAR, VILLAGE_GROUND_BAKE];
+
+/// The bake that answers a generated texture key, if any.
+pub fn bake_for(key: &str) -> Option<&'static TextureBake> {
+    BAKES.iter().find(|bake| bake.key == key)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::effects::EffectRegistry;
-    use crate::shader::webgl_check::{translate_for_webgl, validate};
-    use crate::shader::{InstanceSource, StageSources, bake_source_for};
+    use crate::shader::StageSources;
+    use crate::shader::webgl_check::{translate_for_webgl, validate, validate_stages};
 
-    /// Every bake's source effect is registered, and its shader is valid WGSL for
-    /// both builds, each WebGPU stage alone too.
+    /// Every bake is valid WGSL in both its stages, keeps textures out of its vertex
+    /// stage, translates for WebGL and reads a registered effect's material.
     #[test]
-    fn every_bake_compiles_for_both_builds() {
+    fn every_bake_is_valid_wgsl_and_translates_for_webgl() {
         let effects = EffectRegistry::default();
-        for bake in BUILTIN_BAKES {
-            assert!(
-                effects.id(bake.source).is_some(),
-                "{}: no source effect",
-                bake.key
-            );
-            assert_eq!(find(bake.key), Some(&bake));
-            let code = bake_source_for(&bake, InstanceSource::Storage);
-            validate(bake.key, &code);
-            let stages = StageSources::of(&code, "vs_bake", Some("fs_bake"));
-            validate(&format!("{} vertex", bake.key), &stages.vertex);
-            validate(
-                &format!("{} fragment", bake.key),
-                stages.fragment.as_deref().expect("a fragment stage"),
-            );
+        for bake in &BAKES {
+            let source = bake.source_for(InstanceSource::Storage);
+            validate(bake.key, &source);
+            let stages = StageSources::of(&source, "vs_bake", Some("fs_bake"));
+            validate_stages(bake.key, &stages);
             assert!(
                 !stages.vertex.contains("texture"),
                 "{}: the vertex stage samples",
                 bake.key
             );
-            translate_for_webgl(bake.key, &bake_source_for(&bake, InstanceSource::Texture));
+            translate_for_webgl(bake.key, &bake.source_for(InstanceSource::Texture));
+            assert!(bake.source.is_none_or(|name| effects.id(name).is_some()));
+            assert_eq!(bake_for(bake.key), Some(bake));
         }
+        assert_eq!(bake_for("sign"), None);
     }
 }

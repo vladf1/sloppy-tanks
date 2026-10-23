@@ -227,8 +227,10 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   `mapped_at_creation` (the browser backend stages the whole mapped range in a
   Wasm-side copy); stream large meshes in chunks; hand generated pixels to the
   GPU as JS `ImageData`; size merged geometry up front and move, not clone,
-  parts a merge consumes. Check a map's `WebAssembly.Memory` size after loading
-  it when changing scenery or upload paths.
+  parts a merge consumes. Keep no CPU copy of a mesh the GPU already holds: the
+  mesh store keeps only a `Weak`, so a model registered once (the wrecks, themed
+  scenery) must not also sit in a cache or a retained tree. Check a map's
+  `WebAssembly.Memory` size after loading it when changing scenery or upload paths.
 - Meshes have no GPU buffers of their own: they share vertex and index pages
   (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
   in the vertex page, so every draw passes `base_vertex` 0 (WebGL2 has none) and a
@@ -300,9 +302,9 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   3840×2160 with WebGPU timestamps, switching it off within the page
   (`debug_set_off`), before keeping it. A ground's still layers (patches, soil
   colour, slopes, anything that neither moves nor depends on the view) belong in a
-  GPU bake (`effects::bakes`: a generated texture rendered once from its material),
-  sampled per pixel; the village ground's per-pixel noise once cost 4 ms of an
-  iPad frame in WebKit.
+  texture bake (`effects::bakes`: a generated texture a full-screen pass draws once,
+  from its uv alone or from a material's params and textures), sampled per pixel;
+  the village ground's per-pixel noise once cost 4 ms of an iPad frame in WebKit.
 - The scene renders at a scale of the canvas that the quality controller
   (`crates/render/src/quality.rs`, the Graphics setting) picks, and the output pass
   upsamples it; at scale 1 the output reads texels exactly as before, so the High

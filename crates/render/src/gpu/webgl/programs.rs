@@ -17,11 +17,10 @@ use sloppy_core::scene::Side;
 
 use super::context::{Gpu, Raster};
 use crate::effects::EffectRegistry;
-use crate::effects::bakes::BakeDefinition;
 use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SHADOW_MERGED_SIDES};
 use crate::shader::glsl::{self, Binding, block_point, texture_unit};
 use crate::shader::{
-    BlendMode, PipelineKey, ShaderKey, bake_source, occlusion_source, output_source, shader_source,
+    BlendMode, PipelineKey, ShaderKey, occlusion_source, output_source, shader_source,
     shadow_cutout_source, shadow_merged_source, sky_source, water_source,
 };
 
@@ -235,14 +234,6 @@ pub struct Pipelines {
     /// The fixed programs while they link.
     fixed_jobs: Option<[Linking; FIXED_PROGRAMS]>,
     fixed: Option<FixedPipelines<Pipeline>>,
-    /// Bake programs (`effects::bakes`) by key, linking or linked.
-    bakes: HashMap<&'static str, Bake>,
-}
-
-/// A bake's program while it links, then linked.
-enum Bake {
-    Linking(Linking),
-    Ready(Program),
 }
 
 impl Pipelines {
@@ -289,7 +280,6 @@ impl Pipelines {
             index: HashMap::new(),
             fixed_jobs: Some(jobs),
             fixed: None,
-            bakes: HashMap::new(),
         }
     }
 
@@ -474,42 +464,9 @@ impl Pipelines {
         self.create(key, program)
     }
 
-    /// The program of `bake` once it has linked; until then it starts the link and
-    /// returns `None`.
-    pub fn request_bake(&mut self, gpu: &Gpu, bake: &BakeDefinition) -> Option<&Program> {
-        let entry = self.bakes.entry(bake.key).or_insert_with(|| {
-            Bake::Linking(Linking::start(
-                gpu,
-                "bake",
-                &bake_source(bake),
-                "vs_bake",
-                Some("fs_bake"),
-            ))
-        });
-        if let Bake::Linking(linking) = entry {
-            if !linking.done(gpu) {
-                return None;
-            }
-            let Some(Bake::Linking(linking)) = self.bakes.remove(bake.key) else {
-                unreachable!("checked");
-            };
-            self.bakes
-                .insert(bake.key, Bake::Ready(linking.finish(gpu)));
-        }
-        match self.bakes.get(bake.key) {
-            Some(Bake::Ready(program)) => Some(program),
-            _ => None,
-        }
-    }
-
-    /// Variants and bakes linking in the background.
+    /// Variants linking in the background.
     pub fn compiling(&self) -> u32 {
-        let bakes = self
-            .bakes
-            .values()
-            .filter(|bake| matches!(bake, Bake::Linking(_)))
-            .count();
-        (self.linking.len() + bakes) as u32
+        self.linking.len() as u32
     }
 
     /// Pipelines including the fixed water, output and merged shadow ones.

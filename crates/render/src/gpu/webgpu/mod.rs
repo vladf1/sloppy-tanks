@@ -19,7 +19,7 @@ pub use context::{Canvas, Gpu};
 pub use instance_store::InstanceStore;
 pub use pipelines::Pipelines;
 pub use resources::{MaterialBinding, PageBuffers};
-pub use textures::{BakePipeline, Sampler, Texture, TextureView, Uploader};
+pub use textures::{Sampler, Texture, TextureView, Uploader};
 
 use super::{
     BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,

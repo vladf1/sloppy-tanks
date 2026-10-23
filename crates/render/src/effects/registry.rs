@@ -111,48 +111,41 @@ impl EffectDefinition {
 /// Cloth ripple for flags and banners (vertex hook). The mesh lies in its local
 /// XY plane, pinned at `uv.x = 0`. params[0] = (amplitude m, wavelength m,
 /// speed rad/s, unused).
-pub const WAVE: EffectDefinition = effect("wave", include_str!("../shaders/effects/wave.wgsl"));
+pub const WAVE: EffectDefinition = effect("wave", wgsl!("shaders/effects/wave.wgsl"));
 
 /// A glowing band that scrolls up the surface and thins its opacity (surface
 /// hook). params[0] = (glow rgb linear, speed rad/s); params[1] = (bands per
 /// metre × 2π, minimum opacity, unused, unused).
-pub const PULSE: EffectDefinition = effect("pulse", include_str!("../shaders/effects/pulse.wgsl"));
+pub const PULSE: EffectDefinition = effect("pulse", wgsl!("shaders/effects/pulse.wgsl"));
 
 /// Smoke, fire and dust puffs: a camera-facing quad sized by the instance's X/Y
 /// scale, shaded as a sun-lit billow with a boiling noise rim that glows by its
 /// heat. Instance tint is the linear smoke color and opacity; `instance_data` =
 /// (seed, heat, erosion, softness). No params.
-pub const PUFF: EffectDefinition = effect("puff", include_str!("../shaders/effects/puff.wgsl"));
+pub const PUFF: EffectDefinition = effect("puff", wgsl!("shaders/effects/puff.wgsl"));
 
 /// Additive sparks, tracers, glows and flame tongues. `instance_data` =
 /// (direction xyz, kind). No params.
-pub const STREAK: EffectDefinition =
-    effect("streak", include_str!("../shaders/effects/streak.wgsl"));
+pub const STREAK: EffectDefinition = effect("streak", wgsl!("shaders/effects/streak.wgsl"));
 
 /// A blast's ground decals: dust ring, shockwave and scorch. `instance_data` =
 /// (age s, phase rad, kind, strength). No params.
-pub const BLAST_RING: EffectDefinition = effect(
-    "blast-ring",
-    include_str!("../shaders/effects/blast_ring.wgsl"),
-);
+pub const BLAST_RING: EffectDefinition =
+    effect("blast-ring", wgsl!("shaders/effects/blast_ring.wgsl"));
 
 /// Fading tread marks (`tracks.ts`). `instance_data` = (birth s, strength);
 /// params[0].x is the trail clock, which the track pool writes every frame.
-pub const TRACK_MARK: EffectDefinition = effect(
-    "track-mark",
-    include_str!("../shaders/effects/track_mark.wgsl"),
-);
+pub const TRACK_MARK: EffectDefinition =
+    effect("track-mark", wgsl!("shaders/effects/track_mark.wgsl"));
 
 /// Lit debris chips with a per-instance glow for hot clods. `instance_data` =
 /// (glow rgb linear, unused). No params.
-pub const DEBRIS_CHIP: EffectDefinition = effect(
-    "debris-chip",
-    include_str!("../shaders/effects/debris_chip.wgsl"),
-);
+pub const DEBRIS_CHIP: EffectDefinition =
+    effect("debris-chip", wgsl!("shaders/effects/debris_chip.wgsl"));
 
 /// Soft dust billboards (`effect-materials.ts` `dustMaterial`): track dust and
 /// quarry wisps. Instance tint is the linear color and opacity. No params.
-pub const DUST: EffectDefinition = effect("dust", include_str!("../shaders/effects/dust.wgsl"));
+pub const DUST: EffectDefinition = effect("dust", wgsl!("shaders/effects/dust.wgsl"));
 
 // ------------------------------------------------------------------ model effects
 // The `Effect::Custom` names of `sloppy_core::models::effects_props` and
@@ -161,12 +154,12 @@ pub const DUST: EffectDefinition = effect("dust", include_str!("../shaders/effec
 /// Burnt wreck darkening of base and emissive color (`wreck-aging.ts`).
 pub const WRECK_AGING: EffectDefinition = effect(
     effects_props::WRECK_AGING,
-    include_str!("../shaders/effects/wreck_aging.wgsl"),
+    wgsl!("shaders/effects/wreck_aging.wgsl"),
 );
 
 /// The Pine Village meadow's functions, which its three kinds and the ground's bake
-/// (`effects::bakes`) share.
-pub(crate) const MEADOW_WGSL: &str = include_str!("../shaders/effects/meadow_sway.wgsl");
+/// (`bakes::VILLAGE_GROUND_BAKE`) share.
+pub(crate) const MEADOW_WGSL: &str = wgsl!("shaders/effects/meadow_sway.wgsl");
 
 /// Meadow tufts swaying in the wind (`village-vegetation.ts`), the meadow effect's
 /// kind 0 ([`MODES`]).
@@ -179,7 +172,7 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) { vg_tuft_surfac
 };
 
 /// The village ground (`ground_surfaces.rs`), the meadow effect's kind 1, drawn from
-/// its bake (`bakes::VILLAGE_GROUND_BAKE_DEFINITION`).
+/// its bake (`bakes::VILLAGE_GROUND_BAKE`).
 pub const VILLAGE_GROUND: EffectDefinition = EffectDefinition {
     entry:
         "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) { village_ground(s, f); }
@@ -210,59 +203,77 @@ pub const FOLIAGE: EffectDefinition = EffectDefinition {
     still_shadow: true,
     ..effect(
         effects_scenery::FOLIAGE,
-        include_str!("../shaders/effects/foliage.wgsl"),
+        wgsl!("shaders/effects/foliage.wgsl"),
     )
 };
 
 /// Screen-sized chimney wisps (`village-atmosphere.ts`).
 pub const CHIMNEY_SMOKE: EffectDefinition = effect(
     effects_scenery::CHIMNEY_SMOKE,
-    include_str!("../shaders/effects/chimney_smoke.wgsl"),
+    wgsl!("shaders/effects/chimney_smoke.wgsl"),
 );
 
 /// Baked quarry soil with world-space grit (`quarry-terrain.ts`).
 pub const QUARRY_SOIL: EffectDefinition = effect(
     effects_scenery::QUARRY_SOIL,
-    concat!(
-        include_str!("../shaders/effects/quarry_common.wgsl"),
-        include_str!("../shaders/effects/quarry_soil.wgsl"),
+    wgsl!(
+        "shaders/effects/quarry_common.wgsl",
+        "shaders/effects/quarry_soil.wgsl",
     ),
 );
 
 /// Triplanar layered sandstone (`quarry-surfaces.ts`).
 pub const SANDSTONE: EffectDefinition = effect(
     effects_scenery::SANDSTONE,
-    concat!(
-        include_str!("../shaders/effects/quarry_common.wgsl"),
-        include_str!("../shaders/effects/sandstone.wgsl"),
+    wgsl!(
+        "shaders/effects/quarry_common.wgsl",
+        "shaders/effects/sandstone.wgsl",
     ),
 );
 
 /// Sand drifted around rock cover (`quarry-surfaces.ts`).
 pub const SAND_DRIFT: EffectDefinition = effect(
     effects_scenery::SAND_DRIFT,
-    concat!(
-        include_str!("../shaders/effects/quarry_common.wgsl"),
-        include_str!("../shaders/effects/sand_drift.wgsl"),
+    wgsl!(
+        "shaders/effects/quarry_common.wgsl",
+        "shaders/effects/sand_drift.wgsl",
     ),
 );
 
-/// Harbor quay concrete and paint in world space (`harbor_surfaces`).
-pub const HARBOR_APRON: EffectDefinition = effect(
-    effects_scenery::HARBOR_APRON,
-    include_str!("../shaders/effects/harbor_apron.wgsl"),
-);
+/// The harbor apron's functions, which its three kinds share (and its wear bake,
+/// `bakes::HARBOR_APRON_WEAR`).
+pub(crate) const HARBOR_APRON_WGSL: &str = wgsl!("shaders/effects/harbor_apron.wgsl");
+
+/// Harbor quay concrete and asphalt in world space (`harbor_surfaces`), over the
+/// baked wear, the paint on it, and its quay walls, hulls, spawn pads, cover
+/// containers and parapet: every apron material, so they share one shader (WebKit
+/// compiles each distinct shader on a cold start, and a lit one's lighting costs
+/// about as much as the apron's own code).
+pub const HARBOR_APRON: EffectDefinition = EffectDefinition {
+    entry: "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
+    let mode = material.params[0].x;
+    if mode < 2.5 {
+        apron_ground(s, f);
+    } else if mode < 4.5 {
+        apron_paint(s, f);
+    } else {
+        apron_structure(s, f);
+    }
+}
+",
+    ..effect(effects_scenery::HARBOR_APRON, HARBOR_APRON_WGSL)
+};
 
 /// Harbor Havoc's far shore, lit and hazed in the effect (`harbor_backdrop`).
 pub const HARBOR_SHORE: EffectDefinition = effect(
     effects_scenery::HARBOR_SHORE,
-    include_str!("../shaders/effects/harbor_shore.wgsl"),
+    wgsl!("shaders/effects/harbor_shore.wgsl"),
 );
 
 /// Worn, dirt-splashed vehicle paint with a team rim (`tank_surfaces.rs`).
 pub const VEHICLE_PAINT: EffectDefinition = effect(
     sloppy_core::models::VEHICLE_PAINT_EFFECT,
-    include_str!("../shaders/effects/vehicle_paint.wgsl"),
+    wgsl!("shaders/effects/vehicle_paint.wgsl"),
 );
 
 /// Effects available before any registration: the lab samples, the game's
