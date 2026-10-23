@@ -406,6 +406,23 @@ struct VgStone {
     big: f32,
 }
 
+// Tussocks per metre along each axis of the turf's edge, close up.
+const VG_TUSSOCK_CELLS = 2.2;
+
+// A tussock of blades seen from above on a jittered cell grid: its coverage, nine to
+// twelve thin points, so it reads as a clump of grass, not a disc.
+fn vg_tussock(p: vec2f, cells: f32, size: vec2f, aa: f32, seed: f32) -> f32 {
+    let cell = floor(p * cells);
+    let jitter = vg_hash2(cell + seed);
+    let pick = vg_hash(cell + seed * 1.37 + 5.1);
+    let local = p - (cell + 0.25 + jitter * 0.5) / cells;
+    let radius = mix(size.x, size.y, fract(pick * 7.31));
+    let blades = floor(mix(9.0, 13.0, fract(pick * 3.3)));
+    let angle = atan2(local.y, local.x) + pick * 6.2832;
+    let reach = radius * mix(0.3, 1.0, pow(abs(cos(angle * blades * 0.5)), 0.45));
+    return 1.0 - smoothstep(reach - aa, reach + aa, length(local));
+}
+
 fn vg_stones(p: vec2f, density: f32, cells: f32, size: vec2f, big_size: vec2f, big: f32, aa: f32, seed: f32, shade: vec2f, light: vec2f) -> VgStone {
     var stone = VgStone(0.0, 0.0, vec2f(0.0), 0.0, 1.0, 0.0);
     if density <= 0.0 {
@@ -829,6 +846,17 @@ fn village_ground(s: ptr<function, Surface>, f: EffectFragment) {
     var lift = 0.0;
     if detail > 0.0 && abs(cover_static) < 0.9 {
         lift = (vg_noise(p * 2.3 + 7.0) - 0.5) * 0.32 * coarse;
+        // Close up the turf's edge breaks into separate tussocks, each a fan of
+        // blades, with bare earth between.
+        let turf_view = 1.0 - smoothstep(0.01, 0.024, footprint);
+        if turf_view > 0.05 && abs(cover_static) < 0.5 {
+            // Two grids half a cell apart, so the clumps crowd where the turf is full.
+            let tussock = max(
+                vg_tussock(p, VG_TUSSOCK_CELLS, vec2f(0.08, 0.11), aa, 91.0),
+                vg_tussock(p + 0.5 / VG_TUSSOCK_CELLS, VG_TUSSOCK_CELLS, vec2f(0.08, 0.11), aa, 37.0),
+            );
+            lift += (tussock - 0.5) * 0.6 * turf_view;
+        }
     }
     let fray = (lift + clamp(grass_detail - 1.0, -0.5, 0.5) * 0.2 * fine) * 0.5;
     let cover_drive = cover_static + fray;
