@@ -76,13 +76,16 @@ fn blend_state(mode: BlendMode) -> Option<wgpu::BlendState> {
     };
     match mode {
         BlendMode::Replace => None,
+        // The alpha blends like the colour, so it keeps the share of the haze behind
+        // that shows through (`haze_alpha`).
         BlendMode::Normal => Some(wgpu::BlendState {
             color: component(BlendFactor::SrcAlpha, BlendFactor::OneMinusSrcAlpha),
             alpha: component(BlendFactor::One, BlendFactor::OneMinusSrcAlpha),
         }),
+        // Added light hides nothing behind it: the alpha, and so its haze, stays.
         BlendMode::Additive => Some(wgpu::BlendState {
             color: component(BlendFactor::SrcAlpha, BlendFactor::One),
-            alpha: component(BlendFactor::One, BlendFactor::One),
+            alpha: component(BlendFactor::Zero, BlendFactor::One),
         }),
     }
 }

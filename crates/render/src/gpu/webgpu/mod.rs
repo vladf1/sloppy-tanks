@@ -174,9 +174,12 @@ impl Frame {
             min_filter: wgpu::FilterMode::Linear,
             ..Default::default()
         });
+        let view_uniforms =
+            [0, 1, 2].map(|_| uniform_buffer(device, "frame", size_of::<FrameUniform>() as u64));
         let post = PostTargets::new(
             gpu,
             &main_target,
+            &view_uniforms[MAIN_VIEW],
             &output_uniform,
             &occlusion_uniform,
             &linear_sampler,
@@ -198,8 +201,7 @@ impl Frame {
             }),
             lut_view: lut.create_view(&Default::default()),
             linear_sampler,
-            view_uniforms: [0, 1, 2]
-                .map(|_| uniform_buffer(device, "frame", size_of::<FrameUniform>() as u64)),
+            view_uniforms,
             // Replaced below, once the frame's own resources exist.
             view_groups: FrameGroups(std::array::from_fn(|_| post.output_group.clone())),
             instance_records,
@@ -245,6 +247,7 @@ impl Frame {
         self.post = PostTargets::new(
             gpu,
             &self.main_target,
+            &self.view_uniforms[MAIN_VIEW],
             &self.output_uniform,
             &self.occlusion_uniform,
             &self.linear_sampler,
@@ -815,6 +818,7 @@ impl PostTargets {
     fn new(
         gpu: &Gpu,
         main: &ColorTarget,
+        main_view: &wgpu::Buffer,
         output_uniform: &wgpu::Buffer,
         occlusion_uniform: &wgpu::Buffer,
         sampler: &wgpu::Sampler,
@@ -911,6 +915,10 @@ impl PostTargets {
                 wgpu::BindGroupEntry {
                     binding: 7,
                     resource: wgpu::BindingResource::TextureView(&occlusion_view),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 8,
+                    resource: main_view.as_entire_binding(),
                 },
             ],
         });

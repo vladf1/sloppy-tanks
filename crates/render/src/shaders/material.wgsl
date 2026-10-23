@@ -29,6 +29,8 @@ const MATERIAL_BUMP: u32 = 4u;
 const MATERIAL_VERTEX_COLORS: u32 = 8u;
 const MATERIAL_FLAT_SHADING: u32 = 16u;
 const MATERIAL_FOG: u32 = 32u;
+// Drawn blended (transparent or additive), so its alpha is its opacity.
+const MATERIAL_BLENDED: u32 = 64u;
 
 fn material_has(feature: u32) -> bool {
     return (material.features.x & feature) != 0u;

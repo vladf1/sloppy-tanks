@@ -618,6 +618,7 @@ fn depth_stencil(state: &wgpu::DepthStencilState) -> Result<Object, String> {
 fn blend_factor(factor: wgpu::BlendFactor) -> Result<&'static str, String> {
     use wgpu::BlendFactor as B;
     Ok(match factor {
+        B::Zero => "zero",
         B::One => "one",
         B::SrcAlpha => "src-alpha",
         B::OneMinusSrcAlpha => "one-minus-src-alpha",

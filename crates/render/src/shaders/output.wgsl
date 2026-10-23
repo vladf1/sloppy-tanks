@@ -1,7 +1,8 @@
 // Post-processing: the bloom chain and the output pass. Bloom thresholds the
 // resolved linear HDR frame into a quarter-size level, halves it down a short mip
-// chain and adds each level back up with a tent filter. The output pass adds the
-// bloom, darkens by the ambient occlusion, tone maps (with the atmosphere on, a
+// chain and adds each level back up with a tent filter. The output pass darkens by
+// the ambient occlusion, adds the aerial haze's light the opaque surfaces left to it
+// (`haze_alpha`), adds the bloom, tone maps (with the atmosphere on, a
 // hue-keeping filmic curve on each colour's brightest channel; otherwise Three r185's
 // ACES filmic curve with a gamut fit in place of a hard clip), grades (black point, lift,
 // gamma, gain, split toning, a few tamed hues, saturation, contrast, vignette),
@@ -48,6 +49,8 @@ struct Output {
 @group(0) @binding(2) var linear_clamp: sampler;
 @group(0) @binding(6) var bloom: texture_2d<f32>;
 @group(0) @binding(7) var occlusion: texture_2d<f32>;
+// The main view's uniform, for the haze (`common.wgsl`).
+@group(0) @binding(8) var<uniform> frame: Frame;
 
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
@@ -76,6 +79,19 @@ fn luminance(color: vec3f) -> f32 {
 
 fn tap(uv: vec2f) -> vec3f {
     return textureSampleLevel(source, linear_clamp, uv, 0.0).rgb;
+}
+
+// The haze's light the opaque surfaces at `uv` (top-down scene coordinates) left to
+// this pass, `alpha` their `haze_alpha`, along the main view's ray through it.
+fn scene_haze(color: vec3f, alpha: f32, uv: vec2f) -> vec3f {
+    if !atmosphere_on() || alpha <= 1.0 {
+        return color;
+    }
+    let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let far = frame.sky_rays * vec4f(ndc, 1.0, 1.0);
+    let near = frame.sky_rays * vec4f(ndc, 0.0, 1.0);
+    let ray = normalize(far.xyz / far.w - near.xyz / near.w);
+    return color + haze_inscatter(ray, haze_weights_of(alpha));
 }
 
 // Four bilinear taps covering 4×4 source texels, each weighted down by its own
@@ -400,12 +416,15 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     var uv = pixel / size;
     let sharpen = output.detail.x;
     var color: vec3f;
+    var alpha: f32;
     if output.detail.w > 0.0 {
         uv = pixel * output.detail.yz;
         pixel = uv * size;
         // Bilinear, then sharpened against the filter's softness from bilinear taps a
         // scene texel away: five taps whatever the scale.
-        color = tap(uv);
+        let center = textureSampleLevel(source, linear_clamp, uv, 0.0);
+        color = center.rgb;
+        alpha = center.a;
         if sharpen > 0.0 {
             let t = 1.0 / size;
             color = sharpened(
@@ -419,7 +438,9 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
     } else {
         let texel = vec2i(i32(position.x), i32(row));
-        color = textureLoad(source, texel, 0).rgb;
+        let center = textureLoad(source, texel, 0);
+        color = center.rgb;
+        alpha = center.a;
         if sharpen > 0.0 {
             // Against the multisample resolve's softness.
             let last = vec2i(size) - 1;
@@ -458,6 +479,8 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         let open = max(mix(1.0, ao / 16.0, strength * mix(1.0, OCCLUSION_IN_SUN, lit)), OCCLUSION_FLOOR);
         color *= pow(vec3f(open), OCCLUSION_HUE);
     }
+    // After the occlusion, which shades the surface rather than the air before it.
+    color = scene_haze(color, alpha, uv);
     let bloom_strength = output.settings.w;
     if bloom_strength > 0.0 {
         // Small glows add in full; a fireball filling the screen saturates instead of

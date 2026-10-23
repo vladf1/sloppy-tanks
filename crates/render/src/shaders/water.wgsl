@@ -407,7 +407,8 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
     let distortion = glint_normal.xz * (0.001 + 1.0 / length(world_to_eye)) * water.settings.y;
     let screen = input.clip.xy * frame.viewport.zw;
     let mirror_uv = vec2f(1.0 - screen.x, screen.y) + distortion;
-    let mirror = textureSampleLevel(reflection, reflection_sampler, mirror_uv, 0.0).rgb;
+    // Unhazed, with its distance in alpha (`mirrored_haze`).
+    let mirror = textureSampleLevel(reflection, reflection_sampler, mirror_uv, 0.0);
     let theta = max(dot(eye, glint_normal), 0.0);
 
     var color: vec3f;
@@ -455,11 +456,12 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         // mirrors one to one.
         let far = smoothstep(HARBOR_GLOSSY_NEAR, HARBOR_GLOSSY_FAR, length(world_to_eye));
         let smear = vec2f(normal.x * 0.004, HARBOR_SMEAR) * far;
-        let streaked = mirror * 0.3
-            + textureSampleLevel(reflection, reflection_sampler, mirror_uv + smear, 0.0).rgb * 0.22
-            + textureSampleLevel(reflection, reflection_sampler, mirror_uv - smear, 0.0).rgb * 0.22
-            + textureSampleLevel(reflection, reflection_sampler, mirror_uv + smear * 2.3, 0.0).rgb * 0.13
-            + textureSampleLevel(reflection, reflection_sampler, mirror_uv - smear * 2.3, 0.0).rgb * 0.13;
+        let streaked = mirrored_haze(mirror * 0.3
+            + textureSampleLevel(reflection, reflection_sampler, mirror_uv + smear, 0.0) * 0.22
+            + textureSampleLevel(reflection, reflection_sampler, mirror_uv - smear, 0.0) * 0.22
+            + textureSampleLevel(reflection, reflection_sampler, mirror_uv + smear * 2.3, 0.0) * 0.13
+            + textureSampleLevel(reflection, reflection_sampler, mirror_uv - smear * 2.3, 0.0) * 0.13,
+            input.world, water.shore.z);
         var reflected = streaked;
         if atmosphere_on() {
             let ray = reflect(-eye, glint_normal);
@@ -583,7 +585,8 @@ fn fs_water(input: WaterOut) -> @location(0) vec4f {
         let shallow = exp(max(shore, 0.0) * -0.55);
         let bank = mix(water.deep_color.rgb, water.shallow_color.rgb, shallow * 0.65);
         let scatter = max(0.0, dot(normal, eye)) * bank;
-        let albedo = mix(scatter * (vec3f(0.85) + diffuse * 0.25), mirror + specular, reflectance);
+        let mirrored = mirrored_haze(mirror, input.world, water.shore.z);
+        let albedo = mix(scatter * (vec3f(0.85) + diffuse * 0.25), mirrored + specular, reflectance);
         let wash = shore + sin(t * 1.8 + input.world.x * 0.35 + input.world.z * 0.3) * 0.18;
         let foam = (1.0 - smoothstep(0.12, 0.85, wash)) * smoothstep(0.46, 0.64, breakup);
         color = mix(albedo, vec3f(0.54, 0.67, 0.61), foam * 0.5);

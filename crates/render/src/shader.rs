@@ -57,12 +57,23 @@ impl InstanceSource {
     }
 }
 
-/// The frame declarations with this build's instance records, and `LITE`: true on
-/// the WebGL2 build (the texture source), whose weaker devices get cheaper shadow
-/// filters, sky noise and occlusion.
-fn frame_wgsl(source: InstanceSource) -> String {
+/// The frame group's bindings of every shader but the output pass.
+const FRAME_BINDINGS_WGSL: &str = include_str!("shaders/frame_bindings.wgsl");
+
+/// `LITE`: true on the WebGL2 build (the texture source), whose weaker devices get
+/// cheaper shadow filters, sky noise and occlusion.
+fn lite_wgsl(source: InstanceSource) -> String {
     let lite = source == InstanceSource::Texture;
-    format!("const LITE: bool = {lite};\n{COMMON_WGSL}{}", source.wgsl())
+    format!("const LITE: bool = {lite};\n")
+}
+
+/// The frame declarations and bindings with this build's instance records.
+fn frame_wgsl(source: InstanceSource) -> String {
+    format!(
+        "{}{COMMON_WGSL}{FRAME_BINDINGS_WGSL}{}",
+        lite_wgsl(source),
+        source.wgsl()
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -145,6 +156,9 @@ impl MaterialFeatures {
     pub const VERTEX_COLORS: u32 = 8;
     pub const FLAT_SHADING: u32 = 16;
     pub const FOG: u32 = 32;
+    /// Drawn blended whatever the instance's opacity (`PipelineKey::main`), so the
+    /// shader writes its opacity, not its haze distance, as alpha.
+    pub const BLENDED: u32 = 64;
 
     pub fn of(material: &Material) -> Self {
         let lit = material.shading == Shading::Standard;
@@ -156,6 +170,10 @@ impl MaterialFeatures {
             (Self::VERTEX_COLORS, material.vertex_colors),
             (Self::FLAT_SHADING, material.flat_shading),
             (Self::FOG, material.fog),
+            (
+                Self::BLENDED,
+                material.transparent || material.blending == Blending::Additive,
+            ),
         ];
         Self(
             features
@@ -442,9 +460,17 @@ pub fn occlusion_source(depth_pass: bool, scale: u32) -> String {
     specialize::specialize(&format!("{depth}{scale}{OCCLUSION_WGSL}"), &[])
 }
 
-/// The output and bloom shader, its loops unrolled like every other shader's.
+/// The output and bloom shader, its loops unrolled like every other shader's. The
+/// output pass reads the main view's `Frame` for the haze it adds (`deferred_haze`).
 pub fn output_source() -> String {
-    specialize::specialize(OUTPUT_WGSL, &[])
+    output_source_for(InstanceSource::BUILD)
+}
+
+fn output_source_for(source: InstanceSource) -> String {
+    specialize::specialize(
+        &format!("{}{COMMON_WGSL}{OUTPUT_WGSL}", lite_wgsl(source)),
+        &[],
+    )
 }
 
 fn fixed_source(template: &str, source: InstanceSource) -> String {
@@ -486,7 +512,8 @@ pub mod glsl {
 
     /// Uniform buffer binding points, fixed per `(group, binding)`.
     pub mod block {
-        /// Group 0 binding 0: the view's `Frame`.
+        /// Group 0 binding 0: the view's `Frame`; binding 8 of the output program, the
+        /// main view's.
         pub const FRAME: u32 = 0;
         /// Group 1 binding 0: the material's (or the water's) uniform.
         pub const MATERIAL: u32 = 1;
@@ -512,7 +539,7 @@ pub mod glsl {
     /// The uniform block point of a WGSL uniform's binding.
     pub fn block_point(binding: Binding) -> Option<u32> {
         match binding {
-            (0, 0) => Some(block::FRAME),
+            (0, 0 | 8) => Some(block::FRAME),
             (1, 0) => Some(block::MATERIAL),
             (0, 1) => Some(block::OUTPUT),
             _ => None,
@@ -739,7 +766,7 @@ mod tests {
         translate_for_webgl("water", &fixed_source(WATER_WGSL, texture));
         translate_for_webgl("shadow merged", &fixed_source(SHADOW_MERGED_WGSL, texture));
         translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
-        translate_for_webgl("output", &output_source());
+        translate_for_webgl("output", &output_source_for(texture));
         translate_for_webgl("mipmap", MIPMAP_WGSL);
         translate_for_webgl("sky", &fixed_source(SKY_WGSL, texture));
         translate_for_webgl("occlusion", &occlusion_source(false, 4));
@@ -929,6 +956,32 @@ mod tests {
         }
     }
 
+    /// The aerial haze's light (the sky gradient and the ranges it looks up) is added
+    /// once per pixel in the output pass and the water's mirror, out of every surface
+    /// variant's code but an alpha-to-coverage cutout's, whose alpha is its coverage.
+    #[test]
+    fn surfaces_leave_their_haze_to_the_output_pass() {
+        let effects = EffectRegistry::default();
+        for (lit, cutout) in [(false, false), (true, false), (false, true), (true, true)] {
+            let key = ShaderKey {
+                lit,
+                alpha_test: cutout,
+                alpha_to_coverage: cutout,
+                receive_shadow: lit,
+                ..ShaderKey::default()
+            };
+            let fragment = StageSources::variant(&key, &effects)
+                .fragment
+                .expect("a surface has a fragment stage");
+            assert_eq!(fragment.contains("fn sky_gradient("), cutout, "{key:?}");
+            assert!(fragment.contains("fn haze_alpha(") != cutout, "{key:?}");
+        }
+        let output = StageSources::of(&output_source(), "vs_fullscreen", Some("fs_output"));
+        assert!(output.fragment.unwrap().contains("fn haze_inscatter("));
+        let water = StageSources::of(&water_source(), "vs_water", Some("fs_water"));
+        assert!(water.fragment.unwrap().contains("fn mirrored_haze("));
+    }
+
     #[test]
     fn instance_texture_rows_match_the_store() {
         let declarations = [
@@ -1030,6 +1083,7 @@ mod tests {
             ("VERTEX_COLORS", MaterialFeatures::VERTEX_COLORS),
             ("FLAT_SHADING", MaterialFeatures::FLAT_SHADING),
             ("FOG", MaterialFeatures::FOG),
+            ("BLENDED", MaterialFeatures::BLENDED),
         ] {
             let declaration = format!("const MATERIAL_{name}: u32 = {bit}u;");
             assert!(MATERIAL_WGSL.contains(&declaration), "{declaration}");

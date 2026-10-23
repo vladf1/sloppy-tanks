@@ -1,7 +1,8 @@
 // Main-pass surface shader: Three r185 MeshStandardMaterial (LIT) or
 // MeshBasicMaterial, with map, emissive map, bump map, RGBA vertex colors, flat
 // shading, alpha test, fog, the sun's PCF shadow, hemisphere fill and up to four
-// point lights; with the atmosphere on, aerial haze, cloud shadows and a sky rim.
+// point lights; with the atmosphere on, cloud shadows and a sky rim, and its aerial
+// haze left to the output pass (`haze_alpha`).
 // Lighting, alpha test and shadow reception are variant constants; the cheap
 // per-material features are uniform branches (`material_has`).
 // Lighting runs in world space; every dot and cross product Three evaluates in
@@ -323,51 +324,66 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         let satin_ground = smoothstep(0.8, 0.95, n.y) * smoothstep(0.3, 0.4, s.roughness);
         reflected.specular /= 1.0 + glare / mix(SUN_GLARE_LIMIT, GROUND_GLARE_LIMIT, satin_ground);
     }
+    // The point lights (blast flashes and fires). What depends on the surface alone is
+    // worked out once, and their light is summed with its irradiance-weighted
+    // direction, so the GGX lobe and its two DFG taps run once for all of them rather
+    // than once in each of the four unrolled lights: one light is exact, and several
+    // at once merge their highlights on glossy paint.
+    var fire_decay = 1.0;
+    var fire_gain = 1.0;
+    var fire_albedo = diffuse;
+    var fire_share = 1.0;
+    if atmosphere_on() {
+        // Fire lights a wide, soft pool rather than a hot spot under itself: a
+        // gentler falloff than Three's inverse square (the cutoff window still ends
+        // it), and brighter overall, so blasts and burning wrecks visibly light the
+        // ground, walls and hulls around them in daylight.
+        fire_decay = FIRE_POOL_DECAY;
+        // In daylight a blast's light shows in shade and on the walls and hulls
+        // around it; added over sunlit grass, amber only yellowed the green into an
+        // acid blotch, so sunlit faces take less of it.
+        fire_gain = BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0));
+        // Amber light on green grass multiplies to an acid yellow-green blotch: the
+        // surface lends firelight only part of its own hue, so the pool reads as an
+        // orange glow on any ground.
+        fire_albedo = mix(diffuse, vec3f(dot(diffuse, vec3f(0.2126, 0.7152, 0.0722))), FIRE_ALBEDO_GREY);
+        // Even greyed, warm light added over green grass reads lime: foliage takes
+        // only a share of it, walls, earth and hulls all.
+        let green = clamp((diffuse.g - max(diffuse.r, diffuse.b)) / max(diffuse.g, 1e-4), 0.0, 1.0);
+        fire_share = 1.0 - FIRE_ON_GREEN_CUT * green;
+    }
+    var point_irradiance = vec3f(0.0);
+    var point_wrap = vec3f(0.0);
+    var point_direction = vec3f(0.0);
     for (var i = 0; i < 4; i++) {
         let light = frame.point_lights[i];
         if dot(light.color.rgb, vec3f(1.0)) > 0.0 {
             let offset = light.position.xyz - world;
             let distance = length(offset);
-            // Past the cutoff the attenuation window is exactly zero: skip the BRDF.
+            // Past the cutoff the attenuation window is exactly zero.
             let cutoff = light.position.w;
             if cutoff <= 0.0 || distance < cutoff {
-                var decay = light.color.w;
-                var gain = 1.0;
-                if atmosphere_on() {
-                    // Fire lights a wide, soft pool rather than a hot spot under
-                    // itself: a gentler falloff than Three's inverse square (the
-                    // cutoff window still ends it), and brighter overall, so blasts
-                    // and burning wrecks visibly light the ground, walls and hulls
-                    // around them in daylight.
-                    decay *= FIRE_POOL_DECAY;
-                    // In daylight a blast's light shows in shade and on the walls and
-                    // hulls around it; added over sunlit grass, amber only yellowed
-                    // the green into an acid blotch, so sunlit faces take less of it.
-                    gain = BLAST_LIGHT_GAIN * (1.0 - FIRE_SUNLIT_DIM * sunlit * clamp(dot(n, frame.sun_direction.xyz), 0.0, 1.0));
-                }
-                var color = light.color.rgb * (distance_attenuation(distance, cutoff, decay) * gain);
+                var color = light.color.rgb * (distance_attenuation(distance, cutoff, light.color.w * fire_decay) * fire_gain);
                 let l = offset / max(distance, 1e-6);
-                var lit_albedo = diffuse;
+                let facing = dot(n, l);
                 if atmosphere_on() {
                     color = fire_light_hue(color);
-                    // Amber light on green grass multiplies to an acid yellow-green
-                    // blotch: the surface lends firelight only part of its own hue,
-                    // so the pool reads as an orange glow on any ground.
-                    lit_albedo = mix(diffuse, vec3f(dot(diffuse, vec3f(0.2126, 0.7152, 0.0722))), FIRE_ALBEDO_GREY);
-                    // Even greyed, warm light added over green grass reads lime:
-                    // foliage takes only a share of it, walls, earth and hulls all.
-                    let green = clamp((diffuse.g - max(diffuse.r, diffuse.b)) / max(diffuse.g, 1e-4), 0.0, 1.0);
-                    color *= 1.0 - FIRE_ON_GREEN_CUT * green;
                     // Fire is a wide, rolling source, not a point: its light wraps
                     // past the terminator, so the ground and the sides of hulls and
                     // walls around a blast glow rather than only the faces square to it.
-                    let facing = dot(n, l);
                     let wrapped = clamp((facing + FIRE_WRAP) / (1.0 + FIRE_WRAP), 0.0, 1.0) - clamp(facing, 0.0, 1.0);
-                    reflected.diffuse += max(wrapped, 0.0) * color * lit_albedo * RECIPROCAL_PI;
+                    point_wrap += max(wrapped, 0.0) * color;
                 }
-                add_direct_light(&reflected, l, color, v, n, lit_albedo, specular, roughness);
+                let irradiance = clamp(facing, 0.0, 1.0) * color;
+                point_irradiance += irradiance;
+                point_direction += l * dot(irradiance, vec3f(0.2126, 0.7152, 0.0722));
             }
         }
+    }
+    reflected.diffuse += (point_irradiance + point_wrap) * (fire_share * RECIPROCAL_PI) * fire_albedo;
+    if dot(point_irradiance, vec3f(1.0)) > 0.0 {
+        let l = point_direction / max(length(point_direction), 1e-6);
+        reflected.specular += point_irradiance * fire_share * brdf_ggx_multiscatter(l, v, n, specular, 1.0, roughness);
     }
     var hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, n.y * 0.5 + 0.5);
     // How directly the sun reaches this point: cast and cloud shadow, and faces
@@ -667,8 +683,7 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
     }
 
     // Three writes alpha 1 for opaque materials; here they draw with blending off,
-    // and nothing reads the HDR target's alpha (the output and water passes read
-    // rgb), so their alpha is left as computed.
+    // so their alpha is free to carry the haze the output pass adds (`haze_alpha`).
     var alpha = surface.opacity;
     if ALPHA_TEST {
         let cutoff = material.surface.z;
@@ -687,7 +702,21 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         color = shade_standard(surface, input.world, view_direction, geometry_roughness);
     }
     if material_has(MATERIAL_FOG) {
-        color = apply_fog(color, input.world);
+        if ALPHA_TO_COVERAGE {
+            // Its alpha is the coverage, so it hazes itself.
+            color = apply_fog(color, input.world);
+        } else if !atmosphere_on() {
+            color = linear_fog(color, input.world);
+        } else {
+            let haze = haze_weights(frame.camera_position.xyz, input.world, view_depth(input.world));
+            // Faded instances (opacity below 1) blend too, their alpha their opacity.
+            if material_has(MATERIAL_BLENDED) || input.tint.a < 1.0 {
+                color = blended_haze(color, haze);
+            } else {
+                color = haze_kept(color, haze);
+                alpha = haze_alpha(haze);
+            }
+        }
     }
     return vec4f(color, alpha);
 }
