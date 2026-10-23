@@ -325,6 +325,12 @@ const TIER_STEP_COST: f64 = 1.25;
 /// fps, every one at 20-26 ms failed.
 const PACED_FACTOR: f64 = 1.4;
 const PACED_WINDOWS: u32 = 1;
+/// Gameplay frames into a round before its canvas's pacing is reset, once. The arena's
+/// preparation frames and a round's first ones wait on the page's first paints, and
+/// WebKit's faulty pacer keeps each canvas buffer's slowest frame until the canvas is
+/// configured again, so it would judge the round on them and hold it at 30 fps until
+/// a held window asks for a reset seconds later. Configuring it costs no frame.
+const ROUND_START_RESET_FRAMES: u32 = 4;
 const FIRST_PACING_RETRY_SECONDS: f64 = 10.0;
 const MAX_PACING_RETRY_SECONDS: f64 = 120.0;
 /// GPU samples one window keeps.
@@ -470,6 +476,9 @@ pub struct QualityController {
     pacing_resets: u32,
     /// The last reset has yet to show a frame at the display rate.
     pacing_unproven: bool,
+    /// Gameplay frames since the round started, until its pacing reset
+    /// (`ROUND_START_RESET_FRAMES`).
+    round_frames: Option<u32>,
 }
 
 impl QualityController {
@@ -501,6 +510,7 @@ impl QualityController {
             pacing_wait: FIRST_PACING_RETRY_SECONDS,
             pacing_resets: 0,
             pacing_unproven: false,
+            round_frames: None,
         };
         controller.rebuild(None);
         controller
@@ -571,8 +581,10 @@ impl QualityController {
         self.rung() != before
     }
 
-    /// A new round began: its first seconds are not judged.
+    /// A new round began: its first seconds are not judged, and its canvas's pacing is
+    /// reset once its first frames are past.
     pub fn round_started(&mut self) {
+        self.round_frames = Some(0);
         self.window.clear();
         self.slow_windows = 0;
         self.comfortable_seconds = 0.0;
@@ -591,6 +603,10 @@ impl QualityController {
     /// work on it, and a GPU frame time when one arrived since the last call. Returns
     /// whether the rung changed.
     pub fn observe(&mut self, interval_ms: f64, work_ms: f64, gpu_ms: Option<f64>) -> bool {
+        if let Some(frames) = self.round_frames.map(|frames| frames + 1) {
+            self.round_frames = (frames < ROUND_START_RESET_FRAMES).then_some(frames);
+            self.pacing_reset |= frames == ROUND_START_RESET_FRAMES;
+        }
         if !(interval_ms > 0.0 && interval_ms <= STALL_MS) {
             return false;
         }
@@ -1355,6 +1371,24 @@ mod tests {
         let mut controller = QualityController::new(GraphicsSetting::Auto, Tier::Medium, IPAD);
         let visited = simulate_gpu(&mut controller, 120.0, |_| 12.0, vsync);
         assert_eq!(visited.len(), 1, "{visited:?}");
+    }
+
+    #[test]
+    fn a_round_resets_the_canvas_pacing_once_past_its_first_frames() {
+        let mut controller =
+            QualityController::new(GraphicsSetting::Fixed(Tier::High), Tier::High, IPAD);
+        controller.round_started();
+        let mut asked = Vec::new();
+        // The first frame comes long after the menu's last one.
+        for frame in 1..=120 {
+            let interval = if frame == 1 { 5000.0 } else { TARGET_FRAME_MS };
+            controller.observe(interval, 1.0, None);
+            if controller.take_pacing_reset() {
+                asked.push(frame);
+            }
+        }
+        assert_eq!(asked, [ROUND_START_RESET_FRAMES]);
+        assert_eq!(controller.pacing_resets(), 0, "not a held window's reset");
     }
 
     #[test]
