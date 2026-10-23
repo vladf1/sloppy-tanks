@@ -37,7 +37,9 @@ use sloppy_core::sim::{
 use super::PRESENTATION_EFFECTS;
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
-use super::house_prep::{HousePreparation, PREPARE_BUDGET_MS, PREPARE_STEPS, Prepared};
+use super::house_prep::{
+    HousePreparation, PREPARE_BUDGET_MS, PREPARE_STEPS, Prepared, release_spent_houses,
+};
 use super::house_rest::SettledShards;
 use super::hud::{
     BAR_FADE_RATE, BarTrail, approach, bar_scale, health_bar_state, protection_meters, spawn_pulse,
@@ -3232,6 +3234,10 @@ impl Presentation {
             self.renderer.remove_instance(instance);
             self.renderer.remove_model(model);
         }
+        let renderer = &mut self.renderer;
+        release_spent_houses(&mut self.house_pieces, &state.fragments, |(model, _)| {
+            renderer.remove_model(model);
+        });
         let standing = |house: u32| state.covers.iter().any(|c| c.id == house && c.alive);
         for (model, instance) in self.settled.rebuilt(standing) {
             self.renderer.remove_instance(instance);

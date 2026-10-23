@@ -9,11 +9,13 @@
 //! once. One cottage at a time, since its pieces hold megabytes of geometry.
 //! Presentation only: the simulation breaks the cottage the same way regardless.
 
+use std::collections::HashMap;
+
 use sloppy_core::models::{HousePieces, PieceStep, cover_damage_stage};
 use sloppy_core::scene::Node;
 use sloppy_core::sim::CoverKind;
 use sloppy_core::sim::house_layout::HousePiece;
-use sloppy_core::sim::render_state::RenderCover;
+use sloppy_core::sim::render_state::{RenderCover, RenderFragment};
 use sloppy_core::sim::timber_layout::TimberHit;
 
 /// Milliseconds of each frame the preparation may take, and the most steps it takes
@@ -186,10 +188,76 @@ impl<M> HousePreparation<M> {
     }
 }
 
+/// Drop the piece sets of cottages none of whose pieces is on the field any more,
+/// handing each unshown piece's model to `release`. A collapse takes its cottage's
+/// whole set when its first piece appears, but presentation can see only part of it
+/// (a fragment budget spent between two frames, a room joined mid-collapse), and the
+/// pieces it never shows would otherwise keep their geometry and models all round.
+pub fn release_spent_houses<M>(
+    sets: &mut HashMap<u32, Vec<Prepared<M>>>,
+    fragments: &[RenderFragment],
+    mut release: impl FnMut(M),
+) {
+    if sets.is_empty() {
+        return;
+    }
+    sets.retain(|house, pieces| {
+        let shown = fragments
+            .iter()
+            .any(|fragment| fragment.house_piece.is_some() && fragment.house_id == Some(*house));
+        if !shown {
+            pieces
+                .drain(..)
+                .filter_map(|prepared| prepared.model)
+                .for_each(&mut release);
+        }
+        shown
+    });
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use sloppy_core::models::house_pieces;
+
+    #[test]
+    fn piece_sets_go_with_their_collapse() {
+        use sloppy_core::sim::house_layout::HousePart;
+        let wall = HousePiece {
+            part: HousePart::FrontWall,
+            shard: 0,
+        };
+        let set = |models: &[usize]| -> Vec<Prepared<usize>> {
+            models
+                .iter()
+                .map(|&model| Prepared {
+                    piece: wall,
+                    node: Node::default(),
+                    model: Some(model),
+                })
+                .collect()
+        };
+        let mut sets = HashMap::from([(1, set(&[10, 11])), (2, set(&[20]))]);
+        let piece_of = |house: u32| RenderFragment {
+            house_piece: Some(wall),
+            house_id: Some(house),
+            ..RenderFragment::default()
+        };
+        // Cottage 2's last shown piece is gone; cottage 1 still has one on the field.
+        let mut released = Vec::new();
+        release_spent_houses(&mut sets, &[piece_of(1)], |model| released.push(model));
+        assert_eq!(released, [20]);
+        assert!(sets.contains_key(&1) && !sets.contains_key(&2));
+        // Other debris does not keep a cottage's set.
+        let other = RenderFragment {
+            house_id: Some(1),
+            ..RenderFragment::default()
+        };
+        release_spent_houses(&mut sets, &[other], |model| released.push(model));
+        released.sort_unstable();
+        assert_eq!(released, [10, 11, 20]);
+        assert!(sets.is_empty());
+    }
 
     fn cottage(id: u32, hp: f64) -> RenderCover {
         RenderCover {
