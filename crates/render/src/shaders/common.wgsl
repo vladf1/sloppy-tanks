@@ -125,15 +125,26 @@ fn lattice_hash(cell: vec2i) -> f32 {
     return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
+// `lattice_hash` of `cell` and of its +x, +y and +xy neighbours (in that order), the
+// neighbours' products by each axis's constant taken from the cell's (wrapping
+// arithmetic, so the same bits): half the integer multiplies of four hashes.
+fn lattice_corners(cell: vec2i) -> vec4f {
+    let x = bitcast<u32>(cell.x) * 1597334677u;
+    let y = bitcast<u32>(cell.y) * 3812015801u;
+    let x1 = x + 1597334677u;
+    let y1 = y + 3812015801u;
+    var h = vec4u(x ^ y, x1 ^ y, x ^ y1, x1 ^ y1);
+    h = (h ^ (h >> vec4u(16u))) * 2246822519u;
+    h = h ^ (h >> vec4u(13u));
+    return vec4f(h >> vec4u(8u)) * (1.0 / 16777216.0);
+}
+
 fn value_noise(p: vec2f) -> f32 {
     let cell = vec2i(floor(p));
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
-    let a = lattice_hash(cell);
-    let b = lattice_hash(cell + vec2i(1, 0));
-    let c = lattice_hash(cell + vec2i(0, 1));
-    let d = lattice_hash(cell + vec2i(1, 1));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    let h = lattice_corners(cell);
+    return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
 }
 
 // Value noise and its gradient per unit of `p`, from the same four lattice taps:
@@ -143,10 +154,11 @@ fn value_noise_gradient(p: vec2f) -> vec3f {
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
     let du = 6.0 * f * (1.0 - f);
-    let a = lattice_hash(cell);
-    let b = lattice_hash(cell + vec2i(1, 0));
-    let c = lattice_hash(cell + vec2i(0, 1));
-    let d = lattice_hash(cell + vec2i(1, 1));
+    let h = lattice_corners(cell);
+    let a = h.x;
+    let b = h.y;
+    let c = h.z;
+    let d = h.w;
     let k = a - b - c + d;
     let value = a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y;
     return vec3f(value, du * vec2f(b - a + k * u.y, c - a + k * u.x));
