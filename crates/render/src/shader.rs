@@ -120,6 +120,14 @@ impl ShaderKey {
         }
     }
 
+    /// Whether the variant's output depends on which material is bound: the main
+    /// pass shades with it, an alpha test samples its map against its cutoff, and an
+    /// effect's hooks read its params. Other depth-only variants read none of it, so
+    /// any material bound before them serves (every material shares one layout).
+    pub fn reads_own_material(&self) -> bool {
+        self.pass == Pass::Main || self.alpha_test || self.effect != 0
+    }
+
     /// The variant's vertex and fragment entry points. A shadow caster that neither
     /// alpha-tests nor dithers writes depth only, without a fragment stage.
     pub fn entry_points(&self) -> (&'static str, Option<&'static str>) {

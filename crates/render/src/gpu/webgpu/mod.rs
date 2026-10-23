@@ -1200,15 +1200,18 @@ impl DrawContext<'_> {
                 pass.set_bind_group(0, group, &[]);
                 bound_pool = class.key.pool;
             }
-            let (pipeline, back) = match variant {
-                Lit => (class.main, class.back),
-                Shadow => (class.shadow, None),
-                Depth => (class.depth, None),
+            let (pipeline, back, own_material) = match variant {
+                Lit => (class.main, class.back, true),
+                Shadow => (class.shadow, None, class.shadow_material),
+                Depth => (class.depth, None, class.depth_material),
             };
             let Some(pipeline) = pipeline else {
                 continue;
             };
-            if class.key.material != last_material {
+            // A depth-only caster that reads no material draws with whichever one is
+            // bound; a pass starts with none.
+            if class.key.material != last_material && (own_material || last_material == u32::MAX)
+            {
                 pass.set_bind_group(
                     1,
                     &scene.materials.get(class.key.material).binding.bind_group,

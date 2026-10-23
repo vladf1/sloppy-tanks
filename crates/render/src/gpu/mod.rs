@@ -514,6 +514,13 @@ struct ClassEntry {
     back: Option<u32>,
     shadow: Option<u32>,
     depth: Option<u32>,
+    /// Whether its shadow and occlusion-depth draws need its own material bound
+    /// ([`ShaderKey::reads_own_material`]); most depth-only casters do not. WebGL
+    /// reads it from the linked program instead.
+    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    shadow_material: bool,
+    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    depth_material: bool,
     /// Parts using this class that cast shadows.
     casters: u32,
     users: u32,
@@ -1254,14 +1261,12 @@ impl Renderer {
                 };
                 let shadow = PipelineKey::shadow(shadow_shader, source);
                 // Without the shadow's dither, which only fades a caster's shadow.
+                let depth_shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
                 let depth_key = (backend::OCCLUSION_DEPTH_PASS
                     && !transparent
                     && source.depth_write
                     && source.depth_test)
-                    .then(|| {
-                        let shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
-                        PipelineKey::occlusion_depth(shader, source)
-                    });
+                    .then(|| PipelineKey::occlusion_depth(depth_shader, source));
                 // Classes are created before their pipelines compile, and draw lists
                 // sort by these.
                 let ranks = [main, shadow].map(|key| pipeline_rank(&mut self.ranks, &key));
@@ -1276,6 +1281,8 @@ impl Renderer {
                     back: None,
                     shadow: None,
                     depth: None,
+                    shadow_material: shadow_shader.reads_own_material(),
+                    depth_material: depth_shader.reads_own_material(),
                     casters: 0,
                     users: 0,
                 };
