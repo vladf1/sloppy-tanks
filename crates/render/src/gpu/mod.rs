@@ -583,10 +583,9 @@ fn shadow_merged_index(side: Side, cutout: bool) -> usize {
     side + if cutout { SHADOW_MERGED_SIDES.len() } else { 0 }
 }
 
-/// The water, output and merged shadow pipelines every arena draws with, as the
-/// backend's pipeline type.
+/// The output and merged shadow pipelines every arena draws with, as the backend's
+/// pipeline type. The water's are made only for arenas with water (`set_water`).
 struct FixedPipelines<P> {
-    water: P,
     output: P,
     /// The far-plane sky of the main view and the reflection.
     sky: P,
@@ -602,7 +601,7 @@ struct FixedPipelines<P> {
 
 impl<P> FixedPipelines<P> {
     fn count(&self) -> usize {
-        7 + self.shadow_merged.len()
+        6 + self.shadow_merged.len()
     }
 }
 
@@ -1188,6 +1187,8 @@ impl Renderer {
         let sampler = self.textures.sampler(&self.gpu, Some(&normals));
         let view = self.textures.view(Some(&normals));
         let gpu = WaterGpu::new(&self.gpu, &self.frame, size, view, sampler);
+        // Its pipelines compile while the arena builds, like the fixed ones.
+        self.pipelines.start_water(&self.gpu);
         let footprint = WaterFootprint::new(&settings.mesh, settings.height, settings.calm_extent);
         self.water = Some(Water {
             footprint,
@@ -1765,7 +1766,8 @@ impl Renderer {
     pub fn prepare_step(&mut self, budget: u32) -> PrepareProgress {
         self.update_textures();
         self.run_bakes();
-        let fixed_pending = !self.pipelines.fixed_ready(&self.gpu);
+        let fixed_pending = !self.pipelines.fixed_ready(&self.gpu)
+            || (self.water.is_some() && !self.pipelines.water_ready(&self.gpu));
         let mut compiled = 0;
         // Distinct pipelines the registered scene still lacks. Many draw classes share
         // one pipeline (every opaque textured mesh, say), so progress counts keys, not
@@ -1805,6 +1807,9 @@ impl Renderer {
     fn complete_pipelines(&mut self) {
         let gpu = &self.gpu;
         self.pipelines.ensure_fixed(gpu);
+        if self.water.is_some() {
+            self.pipelines.ensure_water(gpu);
+        }
         for class in self.classes.iter_mut() {
             for (slot, key) in class.pipeline_slots() {
                 if slot.is_none()
@@ -2751,6 +2756,9 @@ impl Renderer {
     fn ensure_frame_pipelines(&mut self) {
         let gpu = &self.gpu;
         if self.pipelines.ensure_fixed(gpu) {
+            self.stats.late_pipelines += 1;
+        }
+        if self.water.is_some() && self.pipelines.ensure_water(gpu) {
             self.stats.late_pipelines += 1;
         }
         if self.occlusion_drawn() {

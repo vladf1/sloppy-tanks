@@ -651,7 +651,7 @@ impl Frame {
             && let range = scene.meshes.get(water.mesh).range
             && !range.is_empty()
         {
-            let pipeline = &scene.pipelines.fixed().water;
+            let pipeline = scene.pipelines.water();
             gpu.use_program(scene.pipelines.program(pipeline.program).raw);
             gpu.set_raster(&pipeline.raster);
             water.gpu.bind(gpu, self.linear_sampler);

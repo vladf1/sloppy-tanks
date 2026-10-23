@@ -622,7 +622,7 @@ impl Frame {
                 && let range = scene.meshes.get(water.mesh).range
                 && !range.is_empty()
             {
-                pass.set_pipeline(&scene.pipelines.fixed().water);
+                pass.set_pipeline(scene.pipelines.water());
                 pass.set_bind_group(1, &water.gpu.bind_group, &[]);
                 BoundPages::default().bind(&mut pass, scene.meshes, range);
                 pass.draw_indexed(range.indices(), 0, 0..1);
