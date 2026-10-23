@@ -205,7 +205,7 @@ impl Presentation {
                     FragmentLook::Piece => "piece",
                     FragmentLook::Wreck(..) => "wreck",
                     FragmentLook::Owned(..) => "owned",
-                    FragmentLook::Section(..) => "section",
+                    FragmentLook::Shared(..) => "shared",
                 },
                 shown: state.visible,
                 opacity: state.opacity,

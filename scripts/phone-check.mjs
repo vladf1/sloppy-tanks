@@ -226,7 +226,7 @@ try {
   await page.evaluate(() => window.sloppy.killHuman());
   await page.locator("#toast.visible").waitFor();
   assert.notEqual((await page.locator("#toast").textContent()).trim(), "");
-  await page.locator(".respawn").waitFor();
+  await page.locator("#respawn-layer.shown .respawn").waitFor();
   const respawn = await page.locator(".menu.respawn").boundingBox();
   assert.ok(
     respawn.height < 402 / 2,

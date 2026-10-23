@@ -234,7 +234,7 @@ try {
       const fragments = engine.view().fragments;
       return {
         pieces: fragments.filter((f) => f.look === "piece" && f.shown),
-        owned: fragments.filter((f) => ["owned", "section"].includes(f.look) && f.shown),
+        owned: fragments.filter((f) => ["owned", "shared"].includes(f.look) && f.shown),
         wrecks: fragments.filter((f) => f.look === "wreck"),
       };
     };

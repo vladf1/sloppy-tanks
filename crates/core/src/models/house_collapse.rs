@@ -14,7 +14,7 @@ use super::building_kit::Surface;
 use super::tank_kit::{Kit, pose, shift};
 use crate::geometry::{Mesh, narrow, widen};
 use crate::sim::house_fracture::{
-    Crack, EdgeKind, PartPlane, ShardRegion, Side, clip_vertices, clip_vertices_into,
+    Crack, EdgeKind, PartPlane, ShardRegion, Side, clip_vertices_into,
 };
 use crate::sim::house_layout::{CHIMNEY, PieceShape, RAFTER_DEPTH, Roof};
 use crate::sim::math::Random;
@@ -33,36 +33,84 @@ const CLEARLY_OUTSIDE: f64 = 1e-6;
 /// Metres from a part's plane origin past any of its shards' cells.
 const PLANE_REACH: f64 = 1000.0;
 
+/// A vertex being clipped, with its point in the part's plane (`PartPlane::project`
+/// of `p`), worked out once rather than at every side a polygon is clipped against.
 #[derive(Clone, Copy)]
 struct Vertex {
     p: DVec3,
     n: DVec3,
     uv: DVec2,
+    q: DVec2,
 }
 
-fn mix(a: &Vertex, b: &Vertex, k: f64) -> Vertex {
+fn mix(plane: &PartPlane, a: &Vertex, b: &Vertex, k: f64) -> Vertex {
+    let p = a.p.lerp(b.p, k);
     Vertex {
-        p: a.p.lerp(b.p, k),
+        p,
         n: a.n.lerp(b.n, k).normalize_or_zero(),
         uv: a.uv.lerp(b.uv, k),
+        q: plane.project(p),
     }
 }
 
-/// `mesh`'s share in `region` of its part's `plane`: triangles inside it and clear
-/// of its cracks are kept whole, the rest are clipped cell by cell. None when
-/// nothing of it is left.
-pub(super) fn clip_mesh(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) -> Option<Mesh> {
-    let vertex = |i: usize| Vertex {
+/// A shard's region of its part's plane, ready to cut the part's meshes to: each
+/// cell with its bounding box in the plane, and the bounds of them all. The boxes
+/// depend only on the region, so the part's meshes, and its shingles, share one set:
+/// working them out again for each mesh cost most of a cottage's collapse.
+pub(super) struct ShardClip<'a> {
+    plane: &'a PartPlane,
+    region: &'a ShardRegion,
+    cells: Vec<(&'a [Side], [DVec2; 2])>,
+    min: DVec2,
+    max: DVec2,
+}
+
+impl<'a> ShardClip<'a> {
+    pub(super) fn new(plane: &'a PartPlane, region: &'a ShardRegion) -> Self {
+        let cells: Vec<(&[Side], [DVec2; 2])> = region
+            .cells
+            .iter()
+            .map(|cell| (&cell[..], cell_bounds(cell)))
+            .collect();
+        let [min, max] = cells.iter().fold(
+            [DVec2::INFINITY, DVec2::NEG_INFINITY],
+            |[low, high], (_, [min, max])| [low.min(*min), high.max(*max)],
+        );
+        Self {
+            plane,
+            region,
+            cells,
+            min,
+            max,
+        }
+    }
+}
+
+/// `mesh`'s share in a shard (`clip`): triangles inside it and clear of its cracks
+/// are kept whole, the rest are clipped cell by cell. None when nothing of it is
+/// left.
+pub(super) fn clip_mesh(mesh: &Mesh, clip: &ShardClip) -> Option<Mesh> {
+    let ShardClip {
+        plane,
+        region,
+        cells,
+        min: region_min,
+        max: region_max,
+    } = clip;
+    let (region_min, region_max) = (*region_min, *region_max);
+    let vertex = |i: usize, q: DVec2| Vertex {
         p: widen(mesh.positions[i]),
         n: widen(mesh.normals[i]),
         uv: DVec2::new(f64::from(mesh.uvs[i][0]), f64::from(mesh.uvs[i][1])),
+        q,
     };
     let count = mesh.triangle_count();
     let corner = |t: usize, k: usize| match &mesh.indices {
         Some(indices) => indices[t * 3 + k] as usize,
         None => t * 3 + k,
     };
-    let project = |v: &Vertex| plane.project(v.p);
+    let project = |v: &Vertex| v.q;
+    let mix = |a: &Vertex, b: &Vertex, k: f64| mix(plane, a, b, k);
     let mut out = Mesh::default();
     let mut emit = |polygon: &[Vertex]| {
         for i in 1..polygon.len().saturating_sub(1) {
@@ -73,15 +121,6 @@ pub(super) fn clip_mesh(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) ->
             }
         }
     };
-    let cells: Vec<(&Vec<Side>, [DVec2; 2])> = region
-        .cells
-        .iter()
-        .map(|cell| (cell, cell_bounds(cell)))
-        .collect();
-    let [region_min, region_max] = cells.iter().fold(
-        [DVec2::INFINITY, DVec2::NEG_INFINITY],
-        |[low, high], (_, [min, max])| [low.min(*min), high.max(*max)],
-    );
     let (mut polygon, mut clipped) = (Vec::new(), Vec::new());
     for t in 0..count {
         let corners = [0, 1, 2].map(|k| corner(t, k));
@@ -95,7 +134,7 @@ pub(super) fn clip_mesh(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) ->
         if low.cmpgt(region_max).any() || high.cmplt(region_min).any() {
             continue;
         }
-        let reaches = |(cell, [min, max]): &&(&Vec<Side>, [DVec2; 2])| {
+        let reaches = |(cell, [min, max]): &&(&[Side], [DVec2; 2])| {
             low.cmple(*max).all()
                 && high.cmpge(*min).all()
                 && !cell
@@ -105,7 +144,7 @@ pub(super) fn clip_mesh(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) ->
         if !cells.iter().any(|cell| reaches(&cell)) {
             continue;
         }
-        let triangle = corners.map(vertex);
+        let triangle = [0, 1, 2].map(|k| vertex(corners[k], points[k]));
         let whole = points.iter().all(|q| region.contains(*q)) && !region.straddles(&points);
         if whole {
             emit(&triangle);
@@ -114,7 +153,7 @@ pub(super) fn clip_mesh(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) ->
         for &(cell, _) in cells.iter().filter(reaches) {
             polygon.clear();
             polygon.extend_from_slice(&triangle);
-            for side in cell {
+            for side in cell.iter() {
                 clip_vertices_into(&polygon, side, project, mix, &mut clipped);
                 std::mem::swap(&mut polygon, &mut clipped);
                 if polygon.len() < 3 {
@@ -132,11 +171,21 @@ pub(super) fn clip_mesh(mesh: &Mesh, plane: &PartPlane, region: &ShardRegion) ->
 /// The corners of `cell`'s bounding box in its part's plane, clipped from a square
 /// reaching past every part; inverted (empty) when nothing is inside.
 fn cell_bounds(cell: &[Side]) -> [DVec2; 2] {
-    let mut polygon = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
-        .map(|(s, t)| DVec2::new(s, t) * PLANE_REACH)
-        .to_vec();
+    let mut polygon = Vec::with_capacity(4 + cell.len());
+    polygon.extend(
+        [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)]
+            .map(|(s, t)| DVec2::new(s, t) * PLANE_REACH),
+    );
+    let mut clipped = Vec::with_capacity(polygon.capacity());
     for side in cell {
-        polygon = clip_vertices(&polygon, side, |q| *q, |a, b, k| a.lerp(*b, k));
+        clip_vertices_into(
+            &polygon,
+            side,
+            |q| *q,
+            |a, b, k| a.lerp(*b, k),
+            &mut clipped,
+        );
+        std::mem::swap(&mut polygon, &mut clipped);
     }
     polygon
         .iter()
@@ -645,19 +694,28 @@ fn value_noise(p: DVec3) -> f64 {
     let cell = p.floor();
     let f = p - cell;
     let s = f * f * (DVec3::splat(3.0) - 2.0 * f);
-    let corner = |dx: f64, dy: f64, dz: f64| {
-        let q = cell + DVec3::new(dx, dy, dz);
-        let mut h = (q.x as i64).wrapping_mul(73_856_093)
-            ^ (q.y as i64).wrapping_mul(19_349_663)
-            ^ (q.z as i64).wrapping_mul(83_492_791);
+    // A corner's hash mixes one product per axis, so the eight corners share six.
+    let axis = |at: f64, scale: i64| {
+        [
+            ((at + 0.0) as i64).wrapping_mul(scale),
+            ((at + 1.0) as i64).wrapping_mul(scale),
+        ]
+    };
+    let (hx, hy, hz) = (
+        axis(cell.x, 73_856_093),
+        axis(cell.y, 19_349_663),
+        axis(cell.z, 83_492_791),
+    );
+    let corner = |dx: usize, dy: usize, dz: usize| {
+        let mut h = hx[dx] ^ hy[dy] ^ hz[dz];
         h = (h ^ (h >> 13)).wrapping_mul(0x5bd1_e995);
         (h ^ (h >> 15)).rem_euclid(1000) as f64 / 999.0
     };
     let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
-    let x00 = lerp(corner(0.0, 0.0, 0.0), corner(1.0, 0.0, 0.0), s.x);
-    let x10 = lerp(corner(0.0, 1.0, 0.0), corner(1.0, 1.0, 0.0), s.x);
-    let x01 = lerp(corner(0.0, 0.0, 1.0), corner(1.0, 0.0, 1.0), s.x);
-    let x11 = lerp(corner(0.0, 1.0, 1.0), corner(1.0, 1.0, 1.0), s.x);
+    let x00 = lerp(corner(0, 0, 0), corner(1, 0, 0), s.x);
+    let x10 = lerp(corner(0, 1, 0), corner(1, 1, 0), s.x);
+    let x01 = lerp(corner(0, 0, 1), corner(1, 0, 1), s.x);
+    let x11 = lerp(corner(0, 1, 1), corner(1, 1, 1), s.x);
     lerp(lerp(x00, x10, s.y), lerp(x01, x11, s.y), s.z)
 }
 
@@ -670,19 +728,18 @@ fn aim(from: DVec3, to: DVec3) -> DMat4 {
 /// Meshes cut to a shard, each with its finish.
 pub(super) fn clip_meshes<C: Copy>(
     meshes: &[(C, Arc<Mesh>)],
-    shape: &PieceShape,
+    clip: &ShardClip,
 ) -> Vec<(C, Arc<Mesh>)> {
     meshes
         .iter()
-        .filter_map(|(coat, mesh)| {
-            clip_mesh(mesh, &shape.plane, &shape.region).map(|mesh| (*coat, Arc::new(mesh)))
-        })
+        .filter_map(|(coat, mesh)| clip_mesh(mesh, clip).map(|mesh| (*coat, Arc::new(mesh))))
         .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sim::house_fracture::clip_vertices;
 
     /// A wall-sized grid of `columns` × `rows` quads in the plane z = 0.
     fn grid(columns: u32, rows: u32) -> Mesh {
@@ -717,8 +774,10 @@ mod tests {
                 f64::from(mesh.uvs[i as usize][0]),
                 f64::from(mesh.uvs[i as usize][1]),
             ),
+            q: DVec2::ZERO,
         };
         let project = |v: &Vertex| plane.project(v.p);
+        let mix = |a: &Vertex, b: &Vertex, k: f64| mix(plane, a, b, k);
         let mut out = Mesh::default();
         let mut emit = |polygon: &[Vertex]| {
             for i in 1..polygon.len().saturating_sub(1) {
@@ -771,7 +830,8 @@ mod tests {
         ];
         let mut triangles = 0;
         for region in &regions {
-            let cut = clip_mesh(&mesh, &plane, region).expect("every shard keeps some wall");
+            let cut = clip_mesh(&mesh, &ShardClip::new(&plane, region))
+                .expect("every shard keeps some wall");
             let plain = plain_clip(&mesh, &plane, region);
             assert_eq!(cut.positions, plain.positions);
             assert_eq!(cut.normals, plain.normals);

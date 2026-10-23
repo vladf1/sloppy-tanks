@@ -47,12 +47,19 @@ pub struct MeshData {
 }
 
 impl MeshData {
-    fn finish(mut self) -> Self {
+    pub(crate) fn finish(mut self) -> Self {
         self.bounds = Sphere::from_points(self.vertices.iter().map(|v| Vec3::from(v.position)));
         self
     }
 
-    fn append(&mut self, mesh: &Mesh, transform: Option<&Mat4>, paint: Option<[f32; 3]>) {
+    /// Append `mesh`'s vertices in the upload layout, moved by `transform` and painted
+    /// `paint` when given, with its indices rebased.
+    pub(crate) fn append(
+        &mut self,
+        mesh: &Mesh,
+        transform: Option<&Mat4>,
+        paint: Option<[f32; 3]>,
+    ) {
         let base = self.vertices.len() as u32;
         let count = mesh.positions.len();
         self.vertices.reserve(count);
@@ -652,6 +659,51 @@ fn prepare_joints(root: &Node, interner: &mut MaterialInterner, fixed: bool) -> 
     }
     visit(&mut builder, root, 0, DMat4::IDENTITY, fixed);
     builder.finish()
+}
+
+/// One part of a model merged by its caller straight into the upload layout: a
+/// material and the vertices it draws, already where the model's root has them.
+pub struct MergedPart {
+    pub material: Arc<Material>,
+    pub data: MeshData,
+    pub cast_shadow: bool,
+}
+
+/// A one-joint model of parts merged by the caller ([`MergedPart`]), each the
+/// model's own mesh: it skips building a scene graph, batching it and converting
+/// it again, each a full copy of the vertices.
+pub fn prepare_merged(parts: Vec<MergedPart>, interner: &mut MaterialInterner) -> PreparedModel {
+    let mut model = PreparedModel::default();
+    model.nodes.push(ModelNode {
+        name: String::new(),
+        parent: None,
+        rest: Mat4::IDENTITY,
+        visible: true,
+    });
+    for MergedPart {
+        material,
+        data,
+        cast_shadow,
+    } in parts
+    {
+        if data.vertices.is_empty() {
+            continue;
+        }
+        model.meshes.push(data.finish());
+        model.parts.push(PreparedPart {
+            node: 0,
+            local: Mat4::IDENTITY,
+            mesh: PartMesh::Owned(model.meshes.len() - 1),
+            material: interner.intern(&material),
+            cast_shadow,
+            receive_shadow: true,
+            render_order: 0,
+            frustum_culled: true,
+            instances: None,
+            segments: None,
+        });
+    }
+    model
 }
 
 /// Static scenery's merge cell edge in metres.

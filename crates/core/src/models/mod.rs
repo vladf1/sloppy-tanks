@@ -103,7 +103,7 @@ pub use model_primitives::{DEFAULT_BOX_RADIUS, TEAM_COLORS, cylinder_part, paint
 // Vehicles.
 pub use humvee_model::HUMVEE_BODY_LENGTH_SCALE;
 pub use tank_dimensions::{TankDimensions, tank_dimensions};
-pub use tank_model::{tank_model, tank_model_variant};
+pub use tank_model::{release_tank_models, tank_model, tank_model_variant};
 pub use tank_surfaces::{TRACK_BELT_PERIOD, VEHICLE_PAINT_EFFECT, armor_wear_texture};
 pub use wreck_model::{WreckPart, wreck_model};
 
@@ -113,7 +113,7 @@ pub use cover_model::{CoverShape, cover_damage_stage, cover_model};
 pub use crate_model::crate_piece_model;
 pub use effects_props::{aged_wreck_material, wreck_brightness};
 pub use flags::{FLAG_CLOTH_NODE, flags_model};
-pub use house_model::house_pieces;
+pub use house_model::{HouseCoverBuild, HousePieces, PieceStep, house_pieces};
 pub use pickup_visuals::{
     PALLET_HEIGHT, PALLET_SIZE, PICKUP_ATLAS_PATH, PICKUP_FACE_EFFECT, SMOKE_MARKER, SUPPLY_SCALE,
     atlas_cell_uv, pickup_board, pickup_cube, pickup_material, pickup_paint, pickup_pallet,
