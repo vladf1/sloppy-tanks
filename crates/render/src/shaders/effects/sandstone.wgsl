@@ -22,8 +22,8 @@
 // close-up flakes, frost hairlines, the cross-bedded laminae, tafoni pits, the
 // faces' chipped facets, crust blotches and vertical joints, drill traces, chisel
 // dressing, iron banding, the worked stone's mottle, the benches' blast rubble,
-// the noise in the bands' lenses and the varnish's drips, and the caps' patina
-// (which the caps' mottle stands in for).
+// the caps' second set of joints, the noise in the bands' lenses and the
+// varnish's drips, and the caps' patina (which the caps' mottle stands in for).
 
 // Warm light bounced off the sunlit floor into faces turned from the sky.
 const FLOOR_BOUNCE = vec3f(1.0, 0.8, 0.62);
@@ -85,9 +85,9 @@ fn strata_band(n: f32) -> vec3f {
     return t;
 }
 
-// Spacing of the caprock's two joint sets, and of the cracks across the
-// boundary's cut blocks, metres.
-const CAP_JOINT_SPACING = vec2f(2.6, 3.7);
+// Spacing of the caprock's joints, and of the cracks across the boundary's cut
+// blocks, metres.
+const CAP_JOINT_SPACING = 2.6;
 const BLOCK_CRACK_SPACING = 4.6;
 
 struct CapJoints {
@@ -234,12 +234,13 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
         // Joint cracks across the caprock, cut into the relief so their walls take
         // the sun on one side and fall into shade on the other.
         let top = quarry_smoothstep(0.6, 0.9, n.y);
-        // Two sets of joints cross each outcrop's cap near square, the first
-        // through-going, the second stopping and starting against it, as jointed
-        // sandstone caprock parts: long weathered grooves with rounded lips, sand
-        // in the wide ones, never an even crazing of tiles. Loose stones are too
-        // small to carry a joint; the boundary's cut blocks carry only the odd
-        // crack right across a block, so no two tops in the line read the same.
+        // A set of joints crosses each outcrop's cap, as jointed sandstone caprock
+        // parts: long weathered grooves with rounded lips that wander and open and
+        // close along their run, sand in the wide ones, never an even crazing of
+        // tiles. (A second set across it cost the rock a tenth of its time.) Loose
+        // stones are too small to carry a joint; the boundary's cut blocks carry
+        // only the odd crack right across a block, so no two tops in the line read
+        // the same.
         var cap_cracks = vec2f(0.0);
         var cap_sand = 0.0;
         var plate_tone = 0.5;
@@ -247,23 +248,17 @@ fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
             let cap_hash = quarry_hash(vec2f(floor(rock_layer), 11.0));
             let turn = cap_hash.x * 3.14;
             let first_dir = vec2f(cos(turn), sin(turn));
-            let second_dir = vec2f(-sin(turn + 0.12), cos(turn + 0.12));
             // Each cap breaks at its own scale: big tops into broad slabs, small
             // ones into tighter blocks.
             let joint_scale = 0.75 + 0.6 * cap_hash.y;
-            let first = cap_joint_set(p.xz, first_dir, select(CAP_JOINT_SPACING.x * joint_scale, BLOCK_CRACK_SPACING, block), rock_layer * 1.3, footprint);
-            var second = CapJoints(0.0, 0.0, vec2f(0.0), 0.0, 0.0);
-            if !block {
-                second = cap_joint_set(p.xz, second_dir, CAP_JOINT_SPACING.y * joint_scale, rock_layer * 1.3 + 40.0, footprint);
-            }
-            cap_cracks = vec2f(max(first.crack, second.crack), max(first.shoulder, second.shoulder)) * top;
-            let wide = select(second.width, first.width, first.crack >= second.crack);
-            cap_sand = quarry_smoothstep(0.03, 0.07, wide) * top;
+            let joints = cap_joint_set(p.xz, first_dir, select(CAP_JOINT_SPACING * joint_scale, BLOCK_CRACK_SPACING, block), rock_layer * 1.3, footprint);
+            cap_cracks = vec2f(joints.crack, joints.shoulder) * top;
+            cap_sand = quarry_smoothstep(0.03, 0.07, joints.width) * top;
             // Each slab between the joints has settled and weathered on its own: a
             // shade and a slight tilt of its own, so the cap reads as broken slabs.
-            let plate = quarry_hash(vec2f(first.cell, second.cell) + rock_layer * 0.37);
+            let plate = quarry_hash(vec2f(joints.cell, 7.0) + rock_layer * 0.37);
             plate_tone = plate.x;
-            let cap_slope = first.slope + second.slope + (plate.yz - 0.5) * 0.09;
+            let cap_slope = joints.slope + (plate.yz - 0.5) * 0.09;
             tilt = -vec3f(cap_slope.x, 0.0, cap_slope.y) * top;
         }
         // The backdrop's faces swell gently, their slope analytic, in metres per
