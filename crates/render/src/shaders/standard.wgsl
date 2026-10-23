@@ -273,12 +273,19 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     reflected.diffuse = vec3f(0.0);
     reflected.specular = vec3f(0.0);
     var sunlit = 1.0;
+    // Only faces turned toward the sun use its shadow and the clouds', and ground,
+    // whose cast shadow also dims its sky fill (`shadow_fill`): on the rest every term
+    // they scale is zero.
+    let toward_sun = dot(n, frame.sun_direction.xyz) > 0.0;
+    let shaded = toward_sun || receiver_normal.y > 0.5;
     // WebGL's translation paid for the uniform branch in every lit pixel.
     if LITE {
         if RECEIVE_SHADOW {
-            sunlit = sun_shadow(world, n);
+            if shaded {
+                sunlit = sun_shadow(world, n);
+            }
         }
-    } else if material_has(MATERIAL_RECEIVE_SHADOW) {
+    } else if material_has(MATERIAL_RECEIVE_SHADOW) && shaded {
         sunlit = sun_shadow(world, n);
     }
     // Inside a cast shadow, how much of the sky's fill the caster leaves open.
@@ -287,7 +294,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     // blue sky, so cloud shade keeps the fill neutral as direct sun does; only cast
     // shadows take its blue.
     let cast_sunlit = sunlit;
-    if atmosphere_on() {
+    if atmosphere_on() && toward_sun {
         sunlit *= cloud_shadow(world);
     }
     let sun = frame.sun_color.rgb * sunlit;
