@@ -546,6 +546,9 @@ impl Gl {
             if (last.blend == BlendMode::Replace) != (raster.blend == BlendMode::Replace) {
                 toggle(glow::BLEND, raster.blend != BlendMode::Replace);
             }
+            // The alpha blends like the colour, so it keeps the share of the haze
+            // behind that shows through (`haze_alpha`); added light hides nothing, so
+            // under it the alpha stays.
             match raster.blend {
                 BlendMode::Normal => unsafe {
                     gl.blend_func_separate(
@@ -556,7 +559,7 @@ impl Gl {
                     )
                 },
                 BlendMode::Additive => unsafe {
-                    gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE, glow::ONE, glow::ONE)
+                    gl.blend_func_separate(glow::SRC_ALPHA, glow::ONE, glow::ZERO, glow::ONE)
                 },
                 BlendMode::Replace => {}
             }

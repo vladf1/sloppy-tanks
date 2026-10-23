@@ -1,6 +1,8 @@
-// Frame-level declarations shared by the surface, shadow and water shaders.
-// `shader.rs` appends `instance_at`, which reads the instance records from where
-// the build keeps them (`instances_storage.wgsl` or `instances_texture.wgsl`).
+// Frame-level declarations shared by the surface, shadow, water, sky and output
+// shaders. `shader.rs` appends the frame group's bindings (`frame_bindings.wgsl`) and
+// `instance_at`, which reads the instance records from where the build keeps them
+// (`instances_storage.wgsl` or `instances_texture.wgsl`); the output pass binds the
+// main view's `frame` alone, in its own group.
 
 const RECIPROCAL_PI: f32 = 0.3183098861837907;
 
@@ -103,12 +105,6 @@ fn expand_instance(row0: vec4f, row1: vec4f, row2: vec4f, tint: vec4f, data: vec
     return instance;
 }
 
-@group(0) @binding(0) var<uniform> frame: Frame;
-@group(0) @binding(1) var shadow_map: texture_depth_2d;
-@group(0) @binding(2) var shadow_sampler: sampler_comparison;
-@group(0) @binding(3) var dfg_lut: texture_2d<f32>;
-@group(0) @binding(4) var lut_sampler: sampler;
-
 // ---------------------------------------------------------------- atmosphere
 
 fn atmosphere_on() -> bool {
@@ -129,15 +125,26 @@ fn lattice_hash(cell: vec2i) -> f32 {
     return f32(h >> 8u) * (1.0 / 16777216.0);
 }
 
+// `lattice_hash` of `cell` and of its +x, +y and +xy neighbours (in that order), the
+// neighbours' products by each axis's constant taken from the cell's (wrapping
+// arithmetic, so the same bits): half the integer multiplies of four hashes.
+fn lattice_corners(cell: vec2i) -> vec4f {
+    let x = bitcast<u32>(cell.x) * 1597334677u;
+    let y = bitcast<u32>(cell.y) * 3812015801u;
+    let x1 = x + 1597334677u;
+    let y1 = y + 3812015801u;
+    var h = vec4u(x ^ y, x1 ^ y, x ^ y1, x1 ^ y1);
+    h = (h ^ (h >> vec4u(16u))) * 2246822519u;
+    h = h ^ (h >> vec4u(13u));
+    return vec4f(h >> vec4u(8u)) * (1.0 / 16777216.0);
+}
+
 fn value_noise(p: vec2f) -> f32 {
     let cell = vec2i(floor(p));
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
-    let a = lattice_hash(cell);
-    let b = lattice_hash(cell + vec2i(1, 0));
-    let c = lattice_hash(cell + vec2i(0, 1));
-    let d = lattice_hash(cell + vec2i(1, 1));
-    return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+    let h = lattice_corners(cell);
+    return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
 }
 
 // Value noise and its gradient per unit of `p`, from the same four lattice taps:
@@ -147,10 +154,11 @@ fn value_noise_gradient(p: vec2f) -> vec3f {
     let f = fract(p);
     let u = f * f * (3.0 - 2.0 * f);
     let du = 6.0 * f * (1.0 - f);
-    let a = lattice_hash(cell);
-    let b = lattice_hash(cell + vec2i(1, 0));
-    let c = lattice_hash(cell + vec2i(0, 1));
-    let d = lattice_hash(cell + vec2i(1, 1));
+    let h = lattice_corners(cell);
+    let a = h.x;
+    let b = h.y;
+    let c = h.z;
+    let d = h.w;
     let k = a - b - c + d;
     let value = a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y;
     return vec3f(value, du * vec2f(b - a + k * u.y, c - a + k * u.x));
@@ -448,86 +456,151 @@ const MIST_HEIGHT: f32 = 10.0;
 const FAR_FADE_START: f32 = 0.965;
 const FAR_FADE_END: f32 = 0.998;
 
-// Aerial perspective in two layers. Exponential height haze, integrated from where
-// it begins to the surface, lies dense in the valleys and thin up high, so a camera
-// looking down from above stays clean. Beyond `haze_far.y` a thinner haze that does
-// not fall off with height takes over, so distant peaks recede as a whole instead
-// of standing hard against the horizon while their feet wash out; it never hides
-// more than `FAR_HAZE_MOST`, so each range stays an opaque landform a step paler
-// than the one before it, and the sky's own ranges stand behind them. Inside the
-// arena square only a share of the height haze settles and none of the far haze;
-// toward the far plane every surface melts into the sky, so nothing the far plane
-// clips draws a hard horizon. Off, Three's linear fog.
+// Aerial perspective in two layers, seen from `eye` (the mirrored eye for the water's
+// reflection) at `world`, `view_depth` along that view's axis: x the share of the
+// surface's colour the haze takes, y the share the far fade then takes toward the sky
+// behind it. Exponential height haze, integrated from where it begins to the surface,
+// lies dense in the valleys and thin up high, so a camera looking down from above
+// stays clean. Beyond `haze_far.y` a thinner haze that does not fall off with height
+// takes over, so distant peaks recede as a whole instead of standing hard against the
+// horizon while their feet wash out; it never hides more than `FAR_HAZE_MOST`, so each
+// range stays an opaque landform a step paler than the one before it, and the sky's
+// own ranges stand behind them. Inside the arena square only a share of the height
+// haze settles and none of the far haze; toward the far plane every surface melts
+// into the sky, so nothing the far plane clips draws a hard horizon.
+fn haze_weights(eye: vec3f, world: vec3f, view_depth: f32) -> vec2f {
+    let offset = world - eye;
+    let distance = length(offset);
+    let ray = offset / max(distance, 1e-4);
+    let start = frame.haze.z;
+    let travelled = distance - start;
+    if travelled <= 0.0 {
+        return vec2f(0.0);
+    }
+    let falloff = frame.haze.y;
+    let rise = ray.y * travelled * falloff;
+    var column = travelled;
+    if abs(rise) > 1e-4 {
+        column = travelled * (1.0 - exp(-rise)) / rise;
+    }
+    let begin_height = eye.y + ray.y * start;
+    let depth = frame.haze.x * exp(-falloff * max(begin_height, 0.0)) * column;
+    let outside = length(max(abs(world.xz) - frame.haze_shape.x, vec2f(0.0)));
+    let beyond = smoothstep(0.0, frame.haze_shape.y, outside);
+    let backdrop = mix(frame.aerial.w, 1.0, beyond);
+    // The far layer eases in over its first stretch, so it never draws a line.
+    let far_travel = max(distance - frame.haze_far.y, 0.0);
+    // It still thins a little up the slopes, so a far range keeps hazy feet under
+    // clearer crests and reads as a landform rather than one flat card.
+    let crest = exp(-max(world.y, 0.0) * frame.haze.y * FAR_HAZE_THINNING);
+    let far_depth = frame.haze_far.x * far_travel * far_travel / (far_travel + 40.0)
+        * mix(FAR_HAZE_CREST_SHARE, 1.0, crest);
+    let level = mix(1.0, STEEP_RAY_RESIDUAL, smoothstep(STEEP_RAY_HAZY, STEEP_RAY_CLEAR, -ray.y));
+    let near_amount = min(1.0 - exp(-depth), frame.haze.w) * backdrop * level;
+    let far_amount = (1.0 - exp(-far_depth)) * FAR_HAZE_MOST * beyond * level;
+    // Low mist settles in the valleys beyond the arena, thick at the ground and
+    // gone a few storeys up, so distant hills stand out of it with clear crests.
+    let mist = frame.haze_far.w * exp(-max(world.y, 0.0) / MIST_HEIGHT) * beyond * level
+        * smoothstep(frame.haze_far.y * 0.7, frame.haze_far.y * 1.4, distance);
+    let clear = (1.0 - near_amount) * (1.0 - far_amount) * (1.0 - mist);
+    let amount = max(min(1.0 - clear, frame.haze.w), 0.0);
+    // Late and short, so the far mesas and ranges keep their own form and only what
+    // the far plane is about to clip melts away. It follows view depth, as the far
+    // plane does: a distant face fades evenly across its width instead of smearing at
+    // the sides that curve away.
+    let far = frame.haze_shape.w;
+    let fade = select(0.0, smoothstep(far * FAR_FADE_START, far * FAR_FADE_END, view_depth), far > 0.0);
+    return vec2f(amount, fade);
+}
+
+// What remains of a surface's own colour under the haze `weights`. Air between eye
+// and surface first drains a surface's colour and only then tints it: a warm mesa or
+// green slope mixed straight into the cool aerial tint passed through mauve and read
+// as a translucent card. Drained first, it steps back as an opaque, cooler and paler
+// band.
+fn haze_kept(color: vec3f, weights: vec2f) -> vec3f {
+    let drained = mix(color, vec3f(dot(color, vec3f(0.2126, 0.7152, 0.0722))), weights.x * HAZE_DRAIN);
+    return drained * ((1.0 - weights.x) * (1.0 - weights.y));
+}
+
+// The light the haze `weights` add along `ray` in place of the colour they take: the
+// haze's tint, then toward the far plane the sky behind (its gradient computed once
+// for both).
+fn haze_inscatter(ray: vec3f, weights: vec2f) -> vec3f {
+    let sky = sky_gradient(ray);
+    var light = haze_tint_over(sky, ray, weights.x) * weights.x;
+    if weights.y > 0.0 {
+        light = mix(light, sky_behind(sky, ray), weights.y);
+    }
+    return light;
+}
+
+fn aerial_haze(color: vec3f, eye: vec3f, world: vec3f, view_depth: f32) -> vec3f {
+    let weights = haze_weights(eye, world, view_depth);
+    if weights.x <= 0.0 && weights.y <= 0.0 {
+        return color;
+    }
+    return haze_kept(color, weights) + haze_inscatter(normalize(world - eye), weights);
+}
+
+// The view's fog at `world`: the atmosphere's haze, or without it Three's linear fog.
 fn apply_fog(color: vec3f, world: vec3f) -> vec3f {
     if atmosphere_on() {
-        let eye = frame.camera_position.xyz;
-        let offset = world - eye;
-        let distance = length(offset);
-        let ray = offset / max(distance, 1e-4);
-        let start = frame.haze.z;
-        let travelled = distance - start;
-        if travelled <= 0.0 {
-            return color;
-        }
-        let falloff = frame.haze.y;
-        let rise = ray.y * travelled * falloff;
-        var column = travelled;
-        if abs(rise) > 1e-4 {
-            column = travelled * (1.0 - exp(-rise)) / rise;
-        }
-        let begin_height = eye.y + ray.y * start;
-        let depth = frame.haze.x * exp(-falloff * max(begin_height, 0.0)) * column;
-        let outside = length(max(abs(world.xz) - frame.haze_shape.x, vec2f(0.0)));
-        let beyond = smoothstep(0.0, frame.haze_shape.y, outside);
-        let backdrop = mix(frame.aerial.w, 1.0, beyond);
-        // The far layer eases in over its first stretch, so it never draws a line.
-        let far_travel = max(distance - frame.haze_far.y, 0.0);
-        // It still thins a little up the slopes, so a far range keeps hazy feet under
-        // clearer crests and reads as a landform rather than one flat card.
-        let crest = exp(-max(world.y, 0.0) * frame.haze.y * FAR_HAZE_THINNING);
-        let far_depth = frame.haze_far.x * far_travel * far_travel / (far_travel + 40.0)
-            * mix(FAR_HAZE_CREST_SHARE, 1.0, crest);
-        let level = mix(1.0, STEEP_RAY_RESIDUAL, smoothstep(STEEP_RAY_HAZY, STEEP_RAY_CLEAR, -ray.y));
-        let near_amount = min(1.0 - exp(-depth), frame.haze.w) * backdrop * level;
-        let far_amount = (1.0 - exp(-far_depth)) * FAR_HAZE_MOST * beyond * level;
-        // Low mist settles in the valleys beyond the arena, thick at the ground and
-        // gone a few storeys up, so distant hills stand out of it with clear crests.
-        let mist = frame.haze_far.w * exp(-max(world.y, 0.0) / MIST_HEIGHT) * beyond * level
-            * smoothstep(frame.haze_far.y * 0.7, frame.haze_far.y * 1.4, distance);
-        let clear = (1.0 - near_amount) * (1.0 - far_amount) * (1.0 - mist);
-        let amount = min(1.0 - clear, frame.haze.w);
-        if amount <= 0.0 && distance < frame.haze_shape.w * FAR_FADE_START {
-            return color;
-        }
-        // The sky's gradient along the ray, once for both the haze and the far fade:
-        // the surface shaders inline it, and a second copy grew the lit variants
-        // past what WebGL's Metal translation compiles.
-        let sky = sky_gradient(ray);
-        // Air between eye and surface first drains a surface's colour and only then
-        // tints it: a warm mesa or green slope mixed straight into the cool aerial
-        // tint passed through mauve and read as a translucent card. Drained first, it
-        // steps back as an opaque, cooler and paler band.
-        let drained = mix(color, vec3f(dot(color, vec3f(0.2126, 0.7152, 0.0722))), amount * HAZE_DRAIN);
-        var hazed = mix(drained, haze_tint_over(sky, ray, amount), amount);
-        let far = frame.haze_shape.w;
-        if far > 0.0 {
-            // Late and short, so the far mesas and ranges keep their own form and
-            // only what the far plane is about to clip melts away. It follows view
-            // depth, as the far plane does: a distant face fades evenly across its
-            // width instead of smearing at the sides that curve away.
-            let depth = -(frame.view * vec4f(world, 1.0)).z;
-            let fade = smoothstep(far * FAR_FADE_START, far * FAR_FADE_END, depth);
-            if fade > 0.0 {
-                hazed = mix(hazed, sky_behind(sky, ray), fade);
-            }
-        }
-        return hazed;
+        return aerial_haze(color, frame.camera_position.xyz, world, view_depth(world));
     }
+    return linear_fog(color, world);
+}
+
+fn view_depth(world: vec3f) -> f32 {
+    return -(frame.view * vec4f(world, 1.0)).z;
+}
+
+fn linear_fog(color: vec3f, world: vec3f) -> vec3f {
     if frame.fog_color.w > 0.5 {
-        let depth = -(frame.view * vec4f(world, 1.0)).z;
-        return mix(color, frame.fog_color.rgb, smoothstep(frame.fog_range.x, frame.fog_range.y, depth));
+        return mix(color, frame.fog_color.rgb, smoothstep(frame.fog_range.x, frame.fog_range.y, view_depth(world)));
     }
     return color;
+}
+
+// With the atmosphere on, opaque surfaces leave the haze's in-scattered light to the
+// pass that reads them, which adds it once per pixel rather than once per overdrawn
+// layer and keeps the sky and the ranges it looks up out of every surface variant's
+// code: the output pass for the main view, the water for its mirror. They write the
+// colour the haze leaves them (`haze_kept`) and, as alpha, 1 + the share it takes
+// (`haze_alpha`). Both blend and resolve like colour: a blended layer over them,
+// drawn with ordinary alpha blending, leaves the share of their haze that shows
+// through it, and alpha at or below 1 takes none (the sky, the water and
+// alpha-to-coverage cutouts, which haze themselves).
+fn haze_alpha(weights: vec2f) -> f32 {
+    return 2.0 - (1.0 - weights.x) * (1.0 - weights.y);
+}
+
+// The weights back from `haze_alpha`. The two shares travel as their product: the haze
+// takes its most before the far fade begins, so the fade is what lies beyond it.
+fn haze_weights_of(alpha: f32) -> vec2f {
+    let taken = clamp(alpha - 1.0, 0.0, 1.0);
+    let amount = min(taken, frame.haze.w);
+    return vec2f(amount, (taken - amount) / max(1.0 - amount, 1e-4));
+}
+
+// A blended layer's own haze, over what it blends onto: the haze's plain tint, the
+// cool aerial colour thickening toward the horizon's, and none of the sky it would
+// look up for the opaque surfaces.
+fn blended_haze(color: vec3f, weights: vec2f) -> vec3f {
+    let tint = mix(frame.aerial.rgb, frame.sky_horizon.rgb, weights.x * weights.x * HAZE_SKY_MOST);
+    return mix(haze_kept(color, vec2f(weights.x, 0.0)) + tint * weights.x, frame.sky_horizon.rgb, weights.y);
+}
+
+// The mirror's haze for a sample of the water's reflection, drawn like the main view
+// (`haze_alpha`) from the eye mirrored under the plane at `height`, seen where the
+// water's surface at `surface` reflects it.
+fn mirrored_haze(sample: vec4f, surface: vec3f, height: f32) -> vec3f {
+    if !atmosphere_on() || sample.a <= 1.0 {
+        return sample.rgb;
+    }
+    let eye = frame.camera_position.xyz;
+    let mirrored = vec3f(eye.x, 2.0 * height - eye.y, eye.z);
+    return sample.rgb + haze_inscatter(normalize(surface - mirrored), haze_weights_of(sample.a));
 }
 
 // Ground-scale cloud shadow features per metre, and their drift in metres per second.

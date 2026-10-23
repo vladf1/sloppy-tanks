@@ -5,15 +5,17 @@
 //!
 //! Each distinct shader costs a full compile on a cold shader cache (about 0.3 s
 //! for a lit one on an Apple GPU, one at a time in WebKit), so only what changes the
-//! cost of every pixel is a variant: lighting, shadow reception, alpha test and
-//! effects. The cheap per-material features ([`MaterialFeatures`]) are uniform
-//! branches, and the side a material draws follows from the pipeline's culling.
+//! cost of every pixel is a variant: lighting, alpha test and effects. Shadow
+//! reception, the cheap per-material features ([`MaterialFeatures`]) and the short
+//! shared hooks of effects (`EffectDefinition::shared_vertex` and `shared_surface`)
+//! are uniform branches, and the side a material draws follows from the pipeline's
+//! culling.
 
 use bytemuck::{Pod, Zeroable};
 use sloppy_core::scene::{Blending, Effect, Material, Shading, Side, TextureRef};
 
 use crate::color::hex_to_linear;
-use crate::effects::EffectRegistry;
+use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::shadow_side;
 
 mod specialize;
@@ -57,12 +59,28 @@ impl InstanceSource {
     }
 }
 
-/// The frame declarations with this build's instance records, and `LITE`: true on
-/// the WebGL2 build (the texture source), whose weaker devices get cheaper shadow
-/// filters, sky noise and occlusion.
+/// The frame group's bindings of every shader but the output pass.
+const FRAME_BINDINGS_WGSL: &str = wgsl!("shaders/frame_bindings.wgsl");
+
+/// `LITE`: true on the WebGL2 build (the texture source), whose weaker devices get
+/// cheaper shadow filters, sky noise and occlusion. Folded like a variant flag
+/// (`lite_flag`), so each build's shaders carry only their own filter.
+fn lite_wgsl(source: InstanceSource) -> String {
+    let (name, lite) = lite_flag(source);
+    format!("const {name}: bool = {lite};\n")
+}
+
+fn lite_flag(source: InstanceSource) -> (&'static str, bool) {
+    ("LITE", source == InstanceSource::Texture)
+}
+
+/// The frame declarations and bindings with this build's instance records.
 fn frame_wgsl(source: InstanceSource) -> String {
-    let lite = source == InstanceSource::Texture;
-    format!("const LITE: bool = {lite};\n{COMMON_WGSL}{}", source.wgsl())
+    format!(
+        "{}{COMMON_WGSL}{FRAME_BINDINGS_WGSL}{}",
+        lite_wgsl(source),
+        source.wgsl()
+    )
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -82,24 +100,31 @@ pub struct ShaderKey {
     pub lit: bool,
     pub alpha_test: bool,
     pub alpha_to_coverage: bool,
-    pub receive_shadow: bool,
     /// Effect id from the registry; 0 is none.
     pub effect: u16,
     /// Shadow pass only: dither the shadow of a fading instance.
     pub shadow_fade: bool,
+    /// The WebGL build's lit surfaces only: receives the sun's shadow.
+    pub receive_shadow: bool,
 }
 
 impl ShaderKey {
-    pub fn main(material: &Material, effect: u16, receive_shadow: bool) -> Self {
+    /// A surface variant. On WebGPU whether it receives the sun's shadow is a uniform
+    /// branch (`MaterialFeatures::RECEIVE_SHADOW`), not a variant: a lit shader without
+    /// the shadow was a second compile of nearly all the same code (WebKit compiles
+    /// each at first use on a cold start), for parts as plain as a lit prop. The WebGL
+    /// build, whose translation paid for the branch in every lit pixel (2-3% of a
+    /// Tesla-size village frame), sets `receive_shadow` instead.
+    pub fn main(material: &Material, effect: u16) -> Self {
         let lit = material.shading == Shading::Standard;
         Self {
             pass: Pass::Main,
             lit,
             alpha_test: material.alpha_test > 0.0,
             alpha_to_coverage: material.alpha_to_coverage && material.alpha_test > 0.0,
-            receive_shadow: lit && receive_shadow,
             effect,
             shadow_fade: false,
+            receive_shadow: false,
         }
     }
 
@@ -153,6 +178,12 @@ impl MaterialFeatures {
     pub const VERTEX_COLORS: u32 = 8;
     pub const FLAT_SHADING: u32 = 16;
     pub const FOG: u32 = 32;
+    /// Drawn blended whatever the instance's opacity (`PipelineKey::main`), so the
+    /// shader writes its opacity, not its haze, as alpha.
+    pub const BLENDED: u32 = 64;
+    /// Lit and receiving the sun's shadow. A part's setting rather than its
+    /// material's: the material store sets it per (material, reception) pair.
+    pub const RECEIVE_SHADOW: u32 = 128;
 
     pub fn of(material: &Material) -> Self {
         let lit = material.shading == Shading::Standard;
@@ -164,6 +195,10 @@ impl MaterialFeatures {
             (Self::VERTEX_COLORS, material.vertex_colors),
             (Self::FLAT_SHADING, material.flat_shading),
             (Self::FOG, material.fog),
+            (
+                Self::BLENDED,
+                material.transparent || material.blending == Blending::Additive,
+            ),
         ];
         Self(
             features
@@ -191,11 +226,23 @@ pub struct MaterialUniform {
     pub bump_transform: [f32; 4],
     pub emissive_transform: [f32; 4],
     pub params: [[f32; 4]; 4],
-    /// x: `MaterialFeatures` bits.
+    /// x: `MaterialFeatures` bits; y: the id of the effect whose shared hooks the
+    /// material runs (`vertex_hooks`, `surface_hook`), 0 for none.
     pub features: [u32; 4],
 }
 
 impl MaterialUniform {
+    /// `material`'s uniform for parts that do or do not `receive_shadow`, with the
+    /// id of its effect when that effect has shared hooks (`sharing`, else 0).
+    pub fn for_part(material: &Material, receive_shadow: bool, sharing: u16) -> Self {
+        let mut uniform = Self::of(material);
+        if receive_shadow && material.shading == Shading::Standard {
+            uniform.features[0] |= MaterialFeatures::RECEIVE_SHADOW;
+        }
+        uniform.features[1] = sharing.into();
+        uniform
+    }
+
     pub fn of(material: &Material) -> Self {
         let [r, g, b] = hex_to_linear(material.color.0);
         let [er, eg, eb] = hex_to_linear(material.emissive.0);
@@ -341,8 +388,8 @@ fn flags(key: &ShaderKey) -> [(&'static str, bool); 5] {
         ("LIT", key.lit),
         ("ALPHA_TEST", key.alpha_test),
         ("ALPHA_TO_COVERAGE", key.alpha_to_coverage),
-        ("RECEIVE_SHADOW", key.receive_shadow),
         ("SHADOW_FADE", key.shadow_fade),
+        ("RECEIVE_SHADOW", key.receive_shadow),
     ]
 }
 
@@ -367,23 +414,123 @@ fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: Instance
         code += "\n";
         code += effect.entry;
     }
-    if !effect.is_some_and(|e| e.has_vertex()) {
-        code += "fn effect_vertex(v: ptr<function, EffectVertex>) {}\n";
-    }
-    if !effect.is_some_and(|e| e.has_world()) {
-        code += "fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {}\n";
-    }
-    if !effect.is_some_and(|e| e.has_clip()) {
-        code += "fn effect_clip(clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex) {}\n";
-    }
-    if !effect.is_some_and(|e| e.has_surface()) {
-        code += "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {}\n";
-    }
+    code += &vertex_hooks(effect, effects);
+    code += &surface_hook(key, effect, effects, source);
     code += match key.pass {
         Pass::Main => STANDARD_WGSL,
         Pass::Shadow => SHADOW_WGSL,
     };
-    specialize::specialize(&code, &flags)
+    let mut folded = flags.to_vec();
+    folded.push(lite_flag(source));
+    specialize::specialize(&code, &folded)
+}
+
+/// The vertex-stage hooks: name, parameters and the arguments that pass them on.
+const VERTEX_HOOKS: [(&str, &str, &str); 3] = [
+    ("effect_vertex", "v: ptr<function, EffectVertex>", "v"),
+    (
+        "effect_world",
+        "w: ptr<function, EffectWorld>, v: EffectVertex",
+        "w, v",
+    ),
+    (
+        "effect_clip",
+        "clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex",
+        "clip, w, v",
+    ),
+];
+
+/// A hook `name(params)` that runs each of `branches` (none: a no-op).
+fn dispatch_hook(name: &str, params: &str, branches: &[String]) -> String {
+    if branches.is_empty() {
+        return format!("fn {name}({params}) {{}}\n");
+    }
+    format!(
+        "fn {name}({params}) {{\n    let effect = material.features.y;\n    {}\n}}\n",
+        branches.join(" else ")
+    )
+}
+
+/// The variant's `effect_vertex`, `effect_world` and `effect_clip` that its effect
+/// does not define itself. A variant of an effect with shared vertex hooks
+/// (`EffectDefinition::shared_vertex`) takes every one of them, each run where the
+/// material names its effect (`MaterialUniform::features`), so all those effects'
+/// surfaces have one vertex stage and their casters another. Every other variant
+/// takes none: the material read and the branches cost WebKit about 1% of the main
+/// view's GPU time when every plain draw ran them.
+fn vertex_hooks(effect: Option<&EffectDefinition>, effects: &EffectRegistry) -> String {
+    let mut code = String::new();
+    let mut branches: [Vec<String>; 3] = Default::default();
+    // An effect's own vertex hooks never sit beside shared ones (`registry.rs`).
+    let own = effect
+        .filter(|e| e.has_own_vertex_hooks())
+        .map(|e| [e.has_vertex(), e.has_world(), e.has_clip()]);
+    if own.is_none() && effect.is_some_and(|e| e.has_shared_vertex()) {
+        for (id, shared) in effects.sharing_hooks() {
+            let mut hooks = shared.shared_vertex.to_string();
+            for ((hook, _, args), branches) in VERTEX_HOOKS.iter().zip(&mut branches) {
+                let name = format!("shared_{}_{id}", &hook["effect_".len()..]);
+                let definition = format!("fn {hook}(");
+                if hooks.contains(&definition) {
+                    hooks = hooks.replace(&definition, &format!("fn {name}("));
+                    branches.push(format!(
+                        "if effect == {id}u {{\n        {name}({args});\n    }}"
+                    ));
+                }
+            }
+            code += &hooks;
+            code += "\n";
+        }
+    }
+    let defined = own.unwrap_or_default();
+    for (((hook, params, _), branches), defined) in VERTEX_HOOKS.iter().zip(&branches).zip(defined)
+    {
+        if !defined {
+            code += &dispatch_hook(hook, params, branches);
+        }
+    }
+    code
+}
+
+/// The variant's `effect_surface` unless its effect defines one of its own. A lit
+/// WebGPU surface variant takes every shared hook (`EffectDefinition::shared_surface`),
+/// each run where the material names its effect (`MaterialUniform::features`), so
+/// the lit materials of those effects and of none draw with the same fragment stage;
+/// any other variant takes its effect's shared hook as its own. The WebGL build
+/// shares none: its translation paid for the branches in every lit pixel (1% of a
+/// Tesla-size village frame), and its weaker devices count frames, not compiles.
+fn surface_hook(
+    key: &ShaderKey,
+    effect: Option<&EffectDefinition>,
+    effects: &EffectRegistry,
+    source: InstanceSource,
+) -> String {
+    const NONE: &str = "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {}\n";
+    if effect.is_some_and(|e| e.has_own_surface()) {
+        return String::new();
+    }
+    if key.pass == Pass::Main && key.lit && source == InstanceSource::Storage {
+        let mut hooks = String::new();
+        let mut branches = Vec::new();
+        for (id, shared) in effects.sharing_hooks() {
+            if shared.has_shared_surface() {
+                let name = format!("shared_surface_{id}");
+                hooks += &shared
+                    .shared_surface
+                    .replace("fn effect_surface(", &format!("fn {name}("));
+                hooks += "\n";
+                branches.push(format!(
+                    "if effect == {id}u {{\n        {name}(s, f);\n    }}"
+                ));
+            }
+        }
+        let params = "s: ptr<function, Surface>, f: EffectFragment";
+        return hooks + &dispatch_hook("effect_surface", params, &branches);
+    }
+    match effect.filter(|e| e.has_shared_surface()) {
+        Some(shared) => format!("{}\n", shared.shared_surface),
+        None => NONE.into(),
+    }
 }
 
 /// One pipeline's stages as the WebGPU backend compiles them: each stage its own
@@ -479,16 +626,27 @@ pub fn bake_source_with_material(fragment: &str, instances: InstanceSource) -> S
         "{VERTEX_INPUT_WGSL}{}{MATERIAL_WGSL}{BAKE_WGSL}{fragment}",
         frame_wgsl(instances)
     );
-    specialize::specialize(&code, &[])
+    specialize::specialize(&code, &[lite_flag(instances)])
 }
 
-/// The output and bloom shader, its loops unrolled like every other shader's.
+/// The output and bloom shader, its loops unrolled like every other shader's. The
+/// output pass reads the main view's `Frame` for the haze it adds (`haze_inscatter`).
 pub fn output_source() -> String {
-    specialize::specialize(OUTPUT_WGSL, &[])
+    output_source_for(InstanceSource::BUILD)
+}
+
+fn output_source_for(source: InstanceSource) -> String {
+    specialize::specialize(
+        &format!("{}{COMMON_WGSL}{OUTPUT_WGSL}", lite_wgsl(source)),
+        &[lite_flag(source)],
+    )
 }
 
 fn fixed_source(template: &str, source: InstanceSource) -> String {
-    specialize::specialize(&format!("{}{template}", frame_wgsl(source)), &[])
+    specialize::specialize(
+        &format!("{}{template}", frame_wgsl(source)),
+        &[lite_flag(source)],
+    )
 }
 
 /// The GLSL ES 3.00 the WebGL backend compiles, translated from the WGSL with naga
@@ -526,7 +684,8 @@ pub mod glsl {
 
     /// Uniform buffer binding points, fixed per `(group, binding)`.
     pub mod block {
-        /// Group 0 binding 0: the view's `Frame`.
+        /// Group 0 binding 0: the view's `Frame`; binding 8 of the output program, the
+        /// main view's.
         pub const FRAME: u32 = 0;
         /// Group 1 binding 0: the material's (or the water's) uniform.
         pub const MATERIAL: u32 = 1;
@@ -552,7 +711,7 @@ pub mod glsl {
     /// The uniform block point of a WGSL uniform's binding.
     pub fn block_point(binding: Binding) -> Option<u32> {
         match binding {
-            (0, 0) => Some(block::FRAME),
+            (0, 0 | 8) => Some(block::FRAME),
             (1, 0) => Some(block::MATERIAL),
             (0, 1) => Some(block::OUTPUT),
             _ => None,
@@ -722,7 +881,6 @@ pub(crate) mod webgl_check {
                 pass: Pass::Main,
                 lit,
                 alpha_test,
-                receive_shadow: lit,
                 effect: id,
                 ..ShaderKey::default()
             };
@@ -750,7 +908,7 @@ mod tests {
     fn every_variant_is_valid_wgsl_and_translates_for_webgl() {
         let effects = EffectRegistry::default();
         let texture = InstanceSource::Texture;
-        for bits in 0..(1u32 << 4) {
+        for bits in 0..(1u32 << 3) {
             let bit = |i: u32| bits & (1 << i) != 0;
             for effect in 0..=2u16 {
                 let key = ShaderKey {
@@ -758,13 +916,13 @@ mod tests {
                     lit: bit(0),
                     alpha_test: bit(1),
                     alpha_to_coverage: bit(1) && bit(2),
-                    receive_shadow: bit(0) && bit(3),
                     effect,
                     shadow_fade: false,
+                    receive_shadow: bit(0) && bit(2),
                 };
                 check_variant("surface", &key, &effects);
-                // Lighting and shadow reception (bits 0 and 3) leave a caster unchanged.
-                if !bit(0) && !bit(3) {
+                // Lighting (bit 0) leaves a caster unchanged.
+                if !bit(0) {
                     let shadow = ShaderKey {
                         pass: Pass::Shadow,
                         alpha_test: bit(1),
@@ -779,7 +937,7 @@ mod tests {
         translate_for_webgl("water", &fixed_source(WATER_WGSL, texture));
         translate_for_webgl("shadow merged", &fixed_source(SHADOW_MERGED_WGSL, texture));
         translate_for_webgl("shadow cutout", &fixed_source(SHADOW_CUTOUT_WGSL, texture));
-        translate_for_webgl("output", &output_source());
+        translate_for_webgl("output", &output_source_for(texture));
         translate_for_webgl("mipmap", MIPMAP_WGSL);
         translate_for_webgl("sky", &fixed_source(SKY_WGSL, texture));
         translate_for_webgl("occlusion", &occlusion_source(false, 4));
@@ -842,7 +1000,6 @@ mod tests {
                 .map(|(lit, alpha_test)| ShaderKey {
                     lit,
                     alpha_test,
-                    receive_shadow: lit,
                     effect,
                     ..ShaderKey::default()
                 })
@@ -916,13 +1073,12 @@ mod tests {
         let effects = EffectRegistry::default();
         let mut vertex = std::collections::HashSet::new();
         let mut fragment = std::collections::HashSet::new();
-        for bits in 0..(1u32 << 4) {
+        for bits in 0..(1u32 << 3) {
             let bit = |i: u32| bits & (1 << i) != 0;
             let key = ShaderKey {
                 lit: bit(0),
                 alpha_test: bit(1),
                 alpha_to_coverage: bit(1) && bit(2),
-                receive_shadow: bit(0) && bit(3),
                 ..ShaderKey::default()
             };
             let stages = StageSources::variant(&key, &effects);
@@ -973,16 +1129,10 @@ mod tests {
         let count =
             crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
         for effect in 0..=count as u16 {
-            for (lit, alpha_test, receive_shadow) in [
-                (false, false, false),
-                (true, false, false),
-                (true, true, true),
-                (true, false, true),
-            ] {
+            for (lit, alpha_test) in [(false, false), (true, false), (true, true)] {
                 let key = ShaderKey {
                     lit,
                     alpha_test,
-                    receive_shadow,
                     effect,
                     ..ShaderKey::default()
                 };
@@ -1010,6 +1160,31 @@ mod tests {
                 &code[kept.unwrap_or(0)..(kept.unwrap_or(0) + 80).min(code.len())]
             );
         }
+    }
+
+    /// The aerial haze's light (the sky gradient and the ranges it looks up) is added
+    /// once per pixel in the output pass and the water's mirror, out of every surface
+    /// variant's code but an alpha-to-coverage cutout's, whose alpha is its coverage.
+    #[test]
+    fn surfaces_leave_their_haze_to_the_output_pass() {
+        let effects = EffectRegistry::default();
+        for (lit, cutout) in [(false, false), (true, false), (false, true), (true, true)] {
+            let key = ShaderKey {
+                lit,
+                alpha_test: cutout,
+                alpha_to_coverage: cutout,
+                ..ShaderKey::default()
+            };
+            let fragment = StageSources::variant(&key, &effects)
+                .fragment
+                .expect("a surface has a fragment stage");
+            assert_eq!(fragment.contains("fn sky_gradient("), cutout, "{key:?}");
+            assert!(fragment.contains("fn haze_alpha(") != cutout, "{key:?}");
+        }
+        let output = StageSources::of(&output_source(), "vs_fullscreen", Some("fs_output"));
+        assert!(output.fragment.unwrap().contains("fn haze_inscatter("));
+        let water = StageSources::of(&water_source(), "vs_water", Some("fs_water"));
+        assert!(water.fragment.unwrap().contains("fn mirrored_haze("));
     }
 
     #[test]
@@ -1042,16 +1217,9 @@ mod tests {
             },
             &effects,
         );
-        assert!(lit.contains("fn shade_standard(") && !lit.contains("fn sun_shadow("));
-        let shadowed = shader_source(
-            &ShaderKey {
-                lit: true,
-                receive_shadow: true,
-                ..ShaderKey::default()
-            },
-            &effects,
-        );
-        assert!(shadowed.contains("fn sun_shadow("));
+        // Shadow reception is a uniform branch of every lit variant.
+        assert!(lit.contains("fn shade_standard(") && lit.contains("fn sun_shadow("));
+        assert!(!unlit.contains("fn sun_shadow("));
         let caster = shader_source(
             &ShaderKey::shadow(&Material::default(), 0, false, &effects),
             &effects,
@@ -1073,10 +1241,7 @@ mod tests {
             side: Side::Double,
             ..plain.clone()
         };
-        assert_eq!(
-            ShaderKey::main(&plain, 0, true),
-            ShaderKey::main(&featured, 0, true)
-        );
+        assert_eq!(ShaderKey::main(&plain, 0), ShaderKey::main(&featured, 0));
         let features = MaterialFeatures::of(&featured);
         for feature in [
             MaterialFeatures::MAP,
@@ -1089,6 +1254,33 @@ mod tests {
         }
         assert!(features.0 & MaterialFeatures::FOG == 0);
         assert!(MaterialFeatures::of(&plain).0 & MaterialFeatures::FOG != 0);
+    }
+
+    /// On WebGPU shadow reception is a lit part's uniform setting; the WebGL build,
+    /// whose translation paid for the branch, keeps it a variant.
+    #[test]
+    fn shadow_reception_is_a_lit_part_setting_on_webgpu() {
+        let lit = Material::standard(0x808080, 0.5, 0.1);
+        let unlit = Material::basic(0xffffff);
+        let receives = |material: &Material, receive: bool| {
+            MaterialUniform::for_part(material, receive, 0).features[0]
+                & MaterialFeatures::RECEIVE_SHADOW
+                != 0
+        };
+        assert!(receives(&lit, true) && !receives(&lit, false));
+        assert!(!receives(&unlit, true));
+        let effects = EffectRegistry::default();
+        let key = |receive_shadow| ShaderKey {
+            lit: true,
+            receive_shadow,
+            ..ShaderKey::default()
+        };
+        let source = |receive, source| shader_source_for(&key(receive), &effects, source);
+        let (gpu, gl) = (InstanceSource::Storage, InstanceSource::Texture);
+        assert_eq!(source(true, gpu), source(false, gpu));
+        assert!(source(true, gpu).contains("material_has(MATERIAL_RECEIVE_SHADOW)"));
+        assert!(source(true, gl).contains("fn sun_shadow("));
+        assert!(!source(false, gl).contains("fn sun_shadow("));
     }
 
     #[test]
@@ -1113,6 +1305,8 @@ mod tests {
             ("VERTEX_COLORS", MaterialFeatures::VERTEX_COLORS),
             ("FLAT_SHADING", MaterialFeatures::FLAT_SHADING),
             ("FOG", MaterialFeatures::FOG),
+            ("BLENDED", MaterialFeatures::BLENDED),
+            ("RECEIVE_SHADOW", MaterialFeatures::RECEIVE_SHADOW),
         ] {
             let declaration = format!("const MATERIAL_{name}: u32 = {bit}u;");
             assert!(MATERIAL_WGSL.contains(&declaration), "{declaration}");
@@ -1201,6 +1395,113 @@ mod tests {
         );
     }
 
+    /// Shared hooks run where the material names its effect: every effect with
+    /// shared vertex hooks has one vertex stage (plain variants keep theirs, which
+    /// reads no material), and every lit variant without a surface hook of its own
+    /// the plain one's fragment stage. Unlit variants and casters take a shared
+    /// surface hook as their effect's own, and a caster without an effect reads no
+    /// material.
+    #[test]
+    fn shared_hooks_share_stages() {
+        let mut effects = EffectRegistry::default();
+        for effect in crate::presentation::PRESENTATION_EFFECTS {
+            effects.register(effect);
+        }
+        let shared: Vec<_> = effects.sharing_hooks().collect();
+        assert!(
+            shared
+                .iter()
+                .filter(|(_, e)| e.has_shared_surface())
+                .count()
+                >= 4
+        );
+        assert!(shared.iter().filter(|(_, e)| e.has_shared_vertex()).count() >= 4);
+        for (lit, alpha_test) in [(true, false), (true, true), (false, false)] {
+            let key = |effect| ShaderKey {
+                lit,
+                alpha_test,
+                effect,
+                ..ShaderKey::default()
+            };
+            let plain = StageSources::variant(&key(0), &effects);
+            assert!(!plain.vertex.contains("features.y"));
+            let mut moving = std::collections::HashSet::new();
+            for &(id, effect) in &shared {
+                let stages = StageSources::variant(&key(id), &effects);
+                if effect.has_shared_vertex() {
+                    assert!(stages.vertex.contains("let effect = material.features.y;"));
+                    moving.insert(stages.vertex);
+                } else {
+                    let own = effect.has_own_vertex_hooks();
+                    assert_eq!(stages.vertex != plain.vertex, own, "{}", effect.name);
+                    assert!(!stages.vertex.contains("features.y"), "{}", effect.name);
+                }
+                let own_surface = effect.has_own_surface() || (!lit && effect.has_surface());
+                assert_eq!(
+                    stages.fragment != plain.fragment,
+                    own_surface,
+                    "{}",
+                    effect.name
+                );
+            }
+            assert_eq!(moving.len(), 1, "one vertex stage for shared vertex hooks");
+            let fragment = plain.fragment.expect("a surface has a fragment stage");
+            assert_eq!(fragment.contains("let effect = material.features.y;"), lit);
+        }
+        let caster = |effect| {
+            let key = ShaderKey {
+                pass: Pass::Shadow,
+                effect,
+                ..ShaderKey::default()
+            };
+            StageSources::variant(&key, &effects).vertex
+        };
+        assert!(!caster(0).contains("features.y"));
+        let moving: std::collections::HashSet<_> = shared
+            .iter()
+            .filter(|(_, e)| e.has_shared_vertex())
+            .map(|&(id, _)| caster(id))
+            .collect();
+        assert_eq!(
+            moving.len(),
+            1,
+            "one vertex stage for casters with shared hooks"
+        );
+        let wreck = effects
+            .id(crate::effects::WRECK_AGING.name)
+            .expect("registered");
+        let unlit = |effect| {
+            let key = ShaderKey {
+                effect,
+                ..ShaderKey::default()
+            };
+            StageSources::variant(&key, &effects)
+                .fragment
+                .expect("a fragment stage")
+        };
+        assert!(unlit(wreck).contains("fn wreck_noise(") && !unlit(wreck).contains("features.y"));
+        assert!(!unlit(0).contains("fn wreck_noise("));
+        let cutout = Material {
+            alpha_test: 0.5,
+            ..Material::default()
+        };
+        let caster = ShaderKey::shadow(&cutout, wreck, false, &effects);
+        assert_eq!(caster.effect, wreck);
+        let caster = StageSources::variant(&caster, &effects)
+            .fragment
+            .expect("a cutout");
+        assert!(caster.contains("fn wreck_noise(") && !caster.contains("features.y"));
+        // The WebGL build's lit variants take the hook as their effect's own too.
+        let lit = |effect| ShaderKey {
+            lit: true,
+            effect,
+            ..ShaderKey::default()
+        };
+        let webgl = |effect| shader_source_for(&lit(effect), &effects, InstanceSource::Texture);
+        assert!(webgl(wreck).contains("fn wreck_noise(") && !webgl(wreck).contains("features.y"));
+        assert!(!webgl(0).contains("fn wreck_noise("));
+    }
+
     #[test]
     fn casters_ignore_effects_that_only_shade_the_surface() {
         let effects = EffectRegistry::default();
@@ -1229,14 +1530,14 @@ mod tests {
             polygon_offset: Some((-1.0, -1.0)),
             ..Material::default()
         };
-        let main = PipelineKey::main(ShaderKey::main(&drift, 0, true), &drift, false);
+        let main = PipelineKey::main(ShaderKey::main(&drift, 0), &drift, false);
         assert_eq!(main.depth_bias.constant, -1);
         assert_eq!(main.depth_bias.slope_scale(), -1.0);
         let effects = EffectRegistry::default();
         let shadow = PipelineKey::shadow(ShaderKey::shadow(&drift, 0, false, &effects), &drift);
         assert_eq!(shadow.depth_bias, DepthBias::default());
         let plain = PipelineKey::main(
-            ShaderKey::main(&Material::default(), 0, true),
+            ShaderKey::main(&Material::default(), 0),
             &Material::default(),
             false,
         );

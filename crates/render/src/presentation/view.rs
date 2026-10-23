@@ -574,7 +574,8 @@ impl Library {
     fn bar(&mut self, renderer: &mut Renderer, team: Team) -> &BarModel {
         self.bars.entry(team).or_insert_with(|| {
             let source = own::tank_bar(team);
-            let model = renderer.add_model(&source, Lifetime::Shared);
+            // Bars fade out behind cover.
+            let model = renderer.add_fading_model(&source, Lifetime::Shared);
             BarModel {
                 model,
                 fills: joint::BAR_FILLS.map(|name| basis(renderer, model, &source, name)),
@@ -598,16 +599,18 @@ impl Library {
         self.wrecks.entry((kind, team, part)).or_insert_with(|| {
             let mut source = (*wreck_model(kind, team, part)).clone();
             age_materials(&mut source);
+            // Wreckage fades as it is cleared away.
             BoundedModel {
-                model: renderer.add_model(&source, Lifetime::Shared),
+                model: renderer.add_fading_model(&source, Lifetime::Shared),
                 bounds: node_bounds(&source, DMat4::IDENTITY),
             }
         })
     }
 
     fn pickup(&mut self, renderer: &mut Renderer, kind: PickupKind) -> &PickupModel {
+        // First person sees through the supplies.
         self.pickups.entry(kind).or_insert_with(|| PickupModel {
-            gem: renderer.add_model(&pickup_cube(kind), Lifetime::Shared),
+            gem: renderer.add_fading_model(&pickup_cube(kind), Lifetime::Shared),
         })
     }
 
@@ -624,8 +627,9 @@ impl Library {
     fn debris(&mut self, renderer: &mut Renderer, shape: FragmentShape) -> &BoundedModel {
         self.debris.entry(shape).or_insert_with(|| {
             let source = own::debris_piece(shape);
+            // Debris fades as it is cleared away.
             BoundedModel {
-                model: renderer.add_model(&source, Lifetime::Shared),
+                model: renderer.add_fading_model(&source, Lifetime::Shared),
                 bounds: node_bounds(&source, DMat4::IDENTITY),
             }
         })
@@ -635,8 +639,9 @@ impl Library {
     /// data paints them by kind.
     fn pickup_pad(&mut self, renderer: &mut Renderer) -> &PadModels {
         self.pickup_pad.get_or_insert_with(|| {
+            // The thrown pieces fade once they land.
             let mut bounded = |source: Node| BoundedModel {
-                model: renderer.add_model(&source, Lifetime::Shared),
+                model: renderer.add_fading_model(&source, Lifetime::Shared),
                 bounds: node_bounds(&source, DMat4::IDENTITY),
             };
             PadModels {
@@ -982,8 +987,9 @@ impl Presentation {
             renderer.register_effect(effect);
         }
         let effects = Effects::new(&mut renderer);
+        // The spawn pulse fades as it spreads.
         let hud = |renderer: &mut Renderer, node: &Node| {
-            let model = renderer.add_model(node, Lifetime::Shared);
+            let model = renderer.add_fading_model(node, Lifetime::Shared);
             let instance = renderer
                 .add_instance(model, Mat4::IDENTITY, Lifetime::Shared)
                 .expect("model just added");
@@ -1677,7 +1683,8 @@ impl Presentation {
         }
     }
 
-    /// A shared debris look's model, built on first use.
+    /// A shared debris look's model, built on first use. Debris fades as it is
+    /// cleared away.
     fn shared_debris(&mut self, key: SharedDebris) -> &BoundedModel {
         let renderer = &mut self.renderer;
         self.shared_debris.entry(key).or_insert_with(|| {
@@ -1690,7 +1697,7 @@ impl Presentation {
             };
             BoundedModel {
                 bounds: node_bounds(&node, DMat4::IDENTITY),
-                model: renderer.add_model(&node, Lifetime::Round),
+                model: renderer.add_fading_model(&node, Lifetime::Round),
             }
         })
     }
@@ -1999,7 +2006,7 @@ impl Presentation {
             DEBRIS_MARK_SIZE,
         );
         part.marks.push(mark);
-        let (model, look) = owned_look(&mut self.renderer, &timber_debris_model(part));
+        let (model, look) = owned_look(&mut self.renderer, &timber_debris_model(part), true);
         let Some(instance) = self
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
@@ -3252,12 +3259,12 @@ impl Presentation {
         covers: &[RenderCover],
     ) -> Option<FragmentView> {
         let (model, look) = if let Some(part) = &fragment.timber_part {
-            owned_look(&mut self.renderer, &timber_debris_model(part))
+            owned_look(&mut self.renderer, &timber_debris_model(part), true)
         } else if let (Some(piece), Some(house)) = (fragment.house_piece, fragment.house_id) {
             let Prepared { node, model, .. } = self.house_piece(piece, house, covers)?;
             let look = match model {
                 Some((model, bounds)) => (model, FragmentLook::Owned(model, bounds)),
-                None => owned_look(&mut self.renderer, &node),
+                None => owned_look(&mut self.renderer, &node, true),
             };
             self.settled.track(fragment.id, house, node, self.time);
             look
@@ -3287,7 +3294,7 @@ impl Presentation {
                 fragment.tree_center_y.unwrap_or(0.0),
                 &shed,
             )?;
-            owned_look(&mut self.renderer, &crown)
+            owned_look(&mut self.renderer, &crown, false)
         } else if let Some(kind) = fragment.wreck {
             let team = fragment.team.unwrap_or(Team::Blue);
             let part = fragment.part.unwrap_or(WreckPart::Hull);
@@ -3369,9 +3376,10 @@ impl Presentation {
         for _ in 0..PREPARE_STEPS {
             let renderer = &mut self.renderer;
             let before = now_ms();
+            // Its pieces are debris, which fades as it is cleared away.
             let more = self.house_prep.step(time, |node| {
                 let bounds = node_bounds(node, DMat4::IDENTITY);
-                (renderer.add_model(node, Lifetime::Round), bounds)
+                (renderer.add_fading_model(node, Lifetime::Round), bounds)
             });
             let after = now_ms();
             longest_step = longest_step.max(after - before);
@@ -3485,10 +3493,15 @@ fn age_materials(node: &mut Node) {
     }
 }
 
-/// A debris look with a model of its own, built for this round.
-fn owned_look(renderer: &mut Renderer, node: &Node) -> (ModelId, FragmentLook) {
+/// A debris look with a model of its own, built for this round: one that fades as it
+/// is cleared away, unless `fades` is false (a felled crown only sinks).
+fn owned_look(renderer: &mut Renderer, node: &Node, fades: bool) -> (ModelId, FragmentLook) {
     let bounds = node_bounds(node, DMat4::IDENTITY);
-    let model = renderer.add_model(node, Lifetime::Round);
+    let model = if fades {
+        renderer.add_fading_model(node, Lifetime::Round)
+    } else {
+        renderer.add_model(node, Lifetime::Round)
+    };
     (model, FragmentLook::Owned(model, bounds))
 }
 

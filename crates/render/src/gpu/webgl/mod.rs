@@ -735,6 +735,8 @@ impl Frame {
         gpu.use_program(scene.pipelines.program(pipeline.program).raw);
         gpu.set_raster(&pipeline.raster);
         gpu.bind_uniform_block(block::OUTPUT, self.output_uniform);
+        // The main view's uniform, for the haze the output adds.
+        gpu.bind_uniform_block(block::FRAME, self.view_uniforms[MAIN_VIEW]);
         gpu.bind_texture(unit::SOURCE, self.main.resolved);
         // `texelFetch` at full scale ignores it; a smaller scene upsamples through it.
         gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));

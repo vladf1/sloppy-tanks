@@ -11,11 +11,3 @@ fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     let flutter = sin(t * 6.0 + dot(p, vec3f(3.1, 2.3, 2.7))) * 0.01 * min(h, 1.0);
     (*w).position = p + vec3f(sway + flutter, flutter * 0.5, sway * 0.6 - flutter * 0.5);
 }
-
-// The standard shader flips a double-sided card's normal on its back face; foliage
-// normals point out of the crown instead, so both faces keep them.
-fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {
-    if !f.front_facing {
-        (*s).normal = -(*s).normal;
-    }
-}

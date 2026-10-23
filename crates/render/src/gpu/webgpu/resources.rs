@@ -84,14 +84,15 @@ pub const TEXTURED_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     sampler_entry(4, Filtering),
 ];
 
-/// The resolved frame, the output uniform, a linear sampler, the bloom and the
-/// ambient occlusion.
+/// The resolved frame, the output uniform, a linear sampler, the bloom, the ambient
+/// occlusion and the main view's uniform, for the haze the output adds.
 pub const OUTPUT_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     texture_entry(0, true),
     uniform_entry(1),
     sampler_entry(2, Filtering),
     texture_entry(6, true),
     texture_entry(7, true),
+    uniform_entry(8),
 ];
 
 /// A bloom pass's source level, the output uniform and a linear sampler.

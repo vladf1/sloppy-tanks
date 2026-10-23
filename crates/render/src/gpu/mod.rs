@@ -5,8 +5,9 @@
 //!
 //! - `add_model` prepares a `Node` tree once (see `crate::model`); `add_instance`
 //!   places it any number of times. Per instance: world transform, visibility,
-//!   opacity (below 1 it draws blended in the transparent list and its shadow
-//!   dithers away), tint, four effect floats, and local transform/visibility
+//!   opacity (below 1, for a model added with `add_fading_model`, it draws blended
+//!   in the transparent list and its shadow dithers away), tint, four effect
+//!   floats, and local transform/visibility
 //!   overrides for named joints (turret yaw, barrel pitch/recoil, wheels,
 //!   suspension). Every visible part is culled by its bounding sphere per view,
 //!   and instances sharing a mesh and material draw as one instanced call.
@@ -1240,7 +1241,9 @@ impl Renderer {
                 let transparent = source.transparent || faded;
                 let multisampled = self.gpu.samples > 1;
                 let main_key = |material: &sloppy_core::scene::Material| {
-                    let mut shader = ShaderKey::main(material, gpu.effect, receive_shadow);
+                    let mut shader = ShaderKey::main(material, gpu.effect);
+                    // The WebGL build's shadow reception is a variant (`ShaderKey::main`).
+                    shader.receive_shadow = cfg!(feature = "webgl") && shader.lit && receive_shadow;
                     // Without samples to cover, a soft cutout edge would draw its faint
                     // fringe opaque: a plain alpha test instead.
                     shader.alpha_to_coverage &= multisampled;
@@ -1330,11 +1333,13 @@ impl Renderer {
         }
     }
 
+    /// `fades`: instances may draw with an opacity below 1 (`add_fading_model`).
     fn register(
         &mut self,
         mut prepared: PreparedModel,
         lifetime: Lifetime,
         scenery: bool,
+        fades: bool,
     ) -> ModelId {
         let gpu = self.gpu.clone();
         let ShadowMerge {
@@ -1380,6 +1385,7 @@ impl Renderer {
                 &mut self.textures,
                 &self.effects,
                 &part.material,
+                part.receive_shadow,
             );
             let mesh = match &part.mesh {
                 PartMesh::Shared(mesh) => self.meshes.shared(&gpu, mesh),
@@ -1396,9 +1402,13 @@ impl Renderer {
                 part.cast_shadow,
                 None,
             );
-            // Movable models may fade; give them the blended variant up front so
-            // warm-up compiles it.
-            let fadeable = !scenery
+            // A fading model's opaque parts get their blended variant up front so
+            // warm-up compiles it. Only those that fade: on Apple GPUs blending is
+            // part of the fragment binary, so each blended variant is a whole second
+            // compile of its stage, and every movable model having one cost Safari
+            // about a second of a cold start.
+            let fadeable = fades
+                && !scenery
                 && !part.material.transparent
                 && part.material.blending == Blending::Normal;
             let faded_class = fadeable.then(|| {
@@ -1446,6 +1456,7 @@ impl Renderer {
                         &mut self.textures,
                         &self.effects,
                         material,
+                        false,
                     );
                     self.materials.get_mut(index).users += 1;
                     index
@@ -1475,18 +1486,27 @@ impl Renderer {
     }
 
     /// Prepare a movable model (tanks, pickups, props). Named nodes become joints
-    /// that instances can pose; the root's transform comes from each instance.
+    /// that instances can pose; the root's transform comes from each instance. Its
+    /// instances draw opaque whatever their opacity: a model that fades is added
+    /// with `add_fading_model`.
     pub fn add_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_model(root, &mut self.interner);
-        self.register(prepared, lifetime, false)
+        self.register(prepared, lifetime, false, false)
+    }
+
+    /// `add_model` for a model whose instances fade (an opacity below 1 draws them
+    /// blended), with the blended variants of its opaque parts compiled up front.
+    pub fn add_fading_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_model(root, &mut self.interner);
+        self.register(prepared, lifetime, false, true)
     }
 
     /// A one-off model the caller merged into the upload layout (a settled pile of
     /// debris, `model::prepare_merged`): each part its own mesh, gone from the Wasm
-    /// heap once uploaded.
+    /// heap once uploaded. Its instances never fade.
     pub fn add_merged_model(&mut self, parts: Vec<MergedPart>, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_merged(parts, &mut self.interner);
-        self.register(prepared, lifetime, false)
+        self.register(prepared, lifetime, false, false)
     }
 
     /// Prepare a model whose root's named children are fixed, only ever shown or
@@ -1494,7 +1514,7 @@ impl Renderer {
     /// per material and draw in runs of the joints that show.
     pub fn add_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_combined(root, &mut self.interner);
-        self.register(prepared, lifetime, false)
+        self.register(prepared, lifetime, false, false)
     }
 
     /// Joint index for a named node of a model.
@@ -1592,7 +1612,7 @@ impl Renderer {
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
         let prepared = prepare_scenery(root, &mut self.interner);
-        let model = self.register(prepared, lifetime, true);
+        let model = self.register(prepared, lifetime, true, false);
         let id = self
             .add_instance(model, Mat4::IDENTITY, lifetime)
             .expect("model just registered");
@@ -2702,21 +2722,18 @@ impl Renderer {
             .flat_map(|name| self.effects.ids_named(name))
             .collect();
         let names = &self.debug_off.effects;
-        let skip = |key: &PipelineKey| {
-            let shader = key.shader;
+        let skip = |class: &ClassEntry| {
+            let shader = class.main_key.shader;
+            let receives = shader.lit && class.key.receive_shadow;
             (shader.effect != 0 && hidden.contains(&shader.effect))
                 || (shader.effect == 0 && shader.lit && names.iter().any(|n| n == "lit"))
                 || (shader.effect == 0 && !shader.lit && names.iter().any(|n| n == "unlit"))
-                || (shader.receive_shadow && names.iter().any(|n| n == "shadowed"))
+                || (receives && names.iter().any(|n| n == "shadowed"))
         };
         let classes = &self.classes;
         let view = &mut self.views[MAIN_VIEW];
         for list in [&mut view.opaque, &mut view.transparent] {
-            list.retain(|draw| {
-                classes
-                    .at(draw.class)
-                    .is_none_or(|class| !skip(&class.main_key))
-            });
+            list.retain(|draw| classes.at(draw.class).is_none_or(|class| !skip(class)));
         }
     }
 

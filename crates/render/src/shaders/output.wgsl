@@ -1,7 +1,8 @@
 // Post-processing: the bloom chain and the output pass. Bloom thresholds the
 // resolved linear HDR frame into a quarter-size level, halves it down a short mip
-// chain and adds each level back up with a tent filter. The output pass adds the
-// bloom, darkens by the ambient occlusion, tone maps (with the atmosphere on, a
+// chain and adds each level back up with a tent filter. The output pass darkens by
+// the ambient occlusion, adds the aerial haze's light the opaque surfaces left to it
+// (`haze_alpha`), adds the bloom, tone maps (with the atmosphere on, a
 // hue-keeping filmic curve on each colour's brightest channel; otherwise Three r185's
 // ACES filmic curve with a gamut fit in place of a hard clip), grades (black point, lift,
 // gamma, gain, split toning, a few tamed hues, saturation, contrast, vignette),
@@ -48,6 +49,8 @@ struct Output {
 @group(0) @binding(2) var linear_clamp: sampler;
 @group(0) @binding(6) var bloom: texture_2d<f32>;
 @group(0) @binding(7) var occlusion: texture_2d<f32>;
+// The main view's uniform, for the haze (`common.wgsl`).
+@group(0) @binding(8) var<uniform> frame: Frame;
 
 @vertex
 fn vs_fullscreen(@builtin(vertex_index) index: u32) -> @builtin(position) vec4f {
@@ -76,6 +79,19 @@ fn luminance(color: vec3f) -> f32 {
 
 fn tap(uv: vec2f) -> vec3f {
     return textureSampleLevel(source, linear_clamp, uv, 0.0).rgb;
+}
+
+// The haze's light the opaque surfaces at `uv` (top-down scene coordinates) left to
+// this pass, `alpha` their `haze_alpha`, along the main view's ray through it.
+fn scene_haze(color: vec3f, alpha: f32, uv: vec2f) -> vec3f {
+    if !atmosphere_on() || alpha <= 1.0 {
+        return color;
+    }
+    let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0);
+    let far = frame.sky_rays * vec4f(ndc, 1.0, 1.0);
+    let near = frame.sky_rays * vec4f(ndc, 0.0, 1.0);
+    let ray = normalize(far.xyz / far.w - near.xyz / near.w);
+    return color + haze_inscatter(ray, haze_weights_of(alpha));
 }
 
 // Four bilinear taps covering 4×4 source texels, each weighted down by its own
@@ -189,18 +205,22 @@ fn filmic(color: vec3f, exposure: f32) -> vec3f {
     if peak <= 1e-6 {
         return vec3f(0.0);
     }
-    let toned = filmic_curve(vec4f(exposed, peak));
+    let toned = filmic_curve(exposed);
+    // The curve rises monotonically (its shoulder is at most 1), so the brightest
+    // channel's is the largest.
+    let toned_peak = max(max(toned.r, toned.g), toned.b);
     let hot = smoothstep(FILMIC_HOT.x, FILMIC_HOT.y, peak);
-    let kept = toned.w * mix(exposed / peak, vec3f(1.0), hot * hot);
+    let kept = toned_peak * mix(exposed / peak, vec3f(1.0), hot * hot);
     // Part of the way per channel: its toe deepens the lesser channels of muted
     // colours a little, so sunlit sand, grass and concrete keep a film's richness
     // instead of reading pale, while saturated paint keeps its hue.
-    return mix(toned.rgb, kept, FILMIC_HUE_KEEP);
+    return mix(toned, kept, FILMIC_HUE_KEEP);
 }
 
-fn filmic_curve(x: vec4f) -> vec4f {
-    let z = pow(x, vec4f(output.curve.x));
-    return min(z / (pow(z, vec4f(output.curve.y)) * output.curve.z + output.curve.w), vec4f(1.0));
+fn filmic_curve(x: vec3f) -> vec3f {
+    // x^a and x^(a d) from one logarithm.
+    let z = log2(x) * output.curve.x;
+    return min(exp2(z) / (exp2(z * output.curve.y) * output.curve.z + output.curve.w), vec3f(1.0));
 }
 
 // Exposed levels over which hot colours bleach toward white (`filmic`), and the share
@@ -310,36 +330,49 @@ fn grade(color: vec3f) -> vec3f {
     let black = output.tone.y;
     c = max(c - black, vec3f(0.0)) / (1.0 - black);
     c = c + lift * (vec3f(1.0) - c);
-    c = pow(max(c, vec3f(0.0)), 1.0 / output.gamma.rgb);
+    // Uniform branches skip the steps a neutral setting leaves as they are.
+    if any(output.gamma.rgb != vec3f(1.0)) {
+        c = pow(max(c, vec3f(0.0)), 1.0 / output.gamma.rgb);
+    }
     let level = luminance(c);
-    let hue = hue_of(c);
     let high = max(max(c.r, c.g), c.b);
     let chroma = high - min(min(c.r, c.g), c.b);
-    let vivid = smoothstep(0.05, 0.25, chroma / max(high, 1e-4));
+    let colourful = chroma / max(high, 1e-4);
+    // The hue grades below read the hue before the toning.
+    let untoned = c;
     // Toning cools the shade band (cast shadows and faces the sun misses), not the
     // blacks below it, and leaves saturated colours alone: tyres and gun steel stay
     // near black, a navy hull stays navy and a red one red, while the grey and earth
     // shade of the ground takes the sky's blue. Highlights warm only a touch, so
     // sunlight reads warm without a veil over the frame.
-    let shade = smoothstep(SHADE_BAND.x, SHADE_BAND.y, level) * (1.0 - smoothstep(SHADE_BAND.z, SHADE_BAND.w, level))
-        * (1.0 - smoothstep(0.25, 0.6, chroma / max(high, 1e-4))) * output.shadows.w;
+    if output.shadows.w > 0.0 {
+        let shade = smoothstep(SHADE_BAND.x, SHADE_BAND.y, level) * (1.0 - smoothstep(SHADE_BAND.z, SHADE_BAND.w, level))
+            * (1.0 - smoothstep(0.25, 0.6, colourful)) * output.shadows.w;
+        c *= mix(vec3f(1.0), output.shadows.rgb, shade);
+    }
     let light = smoothstep(0.35, 0.95, level) * output.highlights.w;
-    c *= mix(vec3f(1.0), output.shadows.rgb, shade);
     c *= mix(vec3f(1.0), output.highlights.rgb, light);
-    // Lime turns toward a deeper, cooler green (less red, a touch of blue, a little
-    // darker), its yellow fringe with it so sunlit blades do not stand out yellow;
-    // orange earth toward tan; red stays red. The band stops short of the yellow of
-    // team rings and hazard paint.
-    let lime = hue_band(hue, LIME_HUE, 0.08) * output.hues.x * vivid;
-    c.r *= 1.0 - 0.32 * lime;
-    c.g *= 1.0 - 0.02 * lime;
-    c.b = mix(c.b, c.g * 0.3, 0.12 * lime);
-    let earth = hue_band(hue, EARTH_HUE, 0.06) * output.hues.y
-        * smoothstep(0.2, 0.5, chroma / max(high, 1e-4));
-    // Broad foliage greens give up a little chroma, so meadows read lush, not neon.
-    let meadow = hue_band(hue, MEADOW_HUE, 0.12) * output.hues.x * vivid;
-    let pink = hue_band(hue, PINK_HUE, 0.06) * output.hues.z * vivid;
-    c.b = mix(c.b, min(c.b, c.g * 1.05), pink);
+    // The hue grades leave near-grey colours alone (every one of them is zero up to
+    // `colourful` 0.05), so those skip the hue.
+    var earth = 0.0;
+    var meadow = 0.0;
+    if colourful > 0.05 {
+        let hue = hue_of(untoned);
+        let vivid = smoothstep(0.05, 0.25, colourful);
+        // Lime turns toward a deeper, cooler green (less red, a touch of blue, a little
+        // darker), its yellow fringe with it so sunlit blades do not stand out yellow;
+        // orange earth toward tan; red stays red. The band stops short of the yellow of
+        // team rings and hazard paint.
+        let lime = hue_band(hue, LIME_HUE, 0.08) * output.hues.x * vivid;
+        c.r *= 1.0 - 0.32 * lime;
+        c.g *= 1.0 - 0.02 * lime;
+        c.b = mix(c.b, c.g * 0.3, 0.12 * lime);
+        earth = hue_band(hue, EARTH_HUE, 0.06) * output.hues.y * smoothstep(0.2, 0.5, colourful);
+        // Broad foliage greens give up a little chroma, so meadows read lush, not neon.
+        meadow = hue_band(hue, MEADOW_HUE, 0.12) * output.hues.x * vivid;
+        let pink = hue_band(hue, PINK_HUE, 0.06) * output.hues.z * vivid;
+        c.b = mix(c.b, min(c.b, c.g * 1.05), pink);
+    }
     let grey = luminance(c);
     // Vibrance richens muted sunlit colours (sand, concrete, earth), not the shade:
     // there it would only pump the sky fill's blue into a violet decal.
@@ -400,12 +433,15 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     var uv = pixel / size;
     let sharpen = output.detail.x;
     var color: vec3f;
+    var alpha: f32;
     if output.detail.w > 0.0 {
         uv = pixel * output.detail.yz;
         pixel = uv * size;
         // Bilinear, then sharpened against the filter's softness from bilinear taps a
         // scene texel away: five taps whatever the scale.
-        color = tap(uv);
+        let center = textureSampleLevel(source, linear_clamp, uv, 0.0);
+        color = center.rgb;
+        alpha = center.a;
         if sharpen > 0.0 {
             let t = 1.0 / size;
             color = sharpened(
@@ -419,7 +455,9 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         }
     } else {
         let texel = vec2i(i32(position.x), i32(row));
-        color = textureLoad(source, texel, 0).rgb;
+        let center = textureLoad(source, texel, 0);
+        color = center.rgb;
+        alpha = center.a;
         if sharpen > 0.0 {
             // Against the multisample resolve's softness.
             let last = vec2i(size) - 1;
@@ -458,6 +496,8 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         let open = max(mix(1.0, ao / 16.0, strength * mix(1.0, OCCLUSION_IN_SUN, lit)), OCCLUSION_FLOOR);
         color *= pow(vec3f(open), OCCLUSION_HUE);
     }
+    // After the occlusion, which shades the surface rather than the air before it.
+    color = scene_haze(color, alpha, uv);
     let bloom_strength = output.settings.w;
     if bloom_strength > 0.0 {
         // Small glows add in full; a fireball filling the screen saturates instead of
@@ -468,12 +508,13 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         glow = mix(vec3f(luminance(glow)), glow, BLOOM_CHROMA);
         color += glow * (bloom_strength / (1.0 + luminance(glow) * output.hues.w));
     }
-    var display: vec3f;
+    var toned: vec3f;
     if output.curve.x > 0.0 {
-        display = grade(filmic(color, output.settings.x));
+        toned = filmic(color, output.settings.x);
     } else {
-        display = grade(aces_filmic(color, output.settings.x));
+        toned = aces_filmic(color, output.settings.x);
     }
+    var display = grade(toned);
     let vignette = output.gain.w;
     if vignette > 0.0 {
         let centered = (uv - 0.5) * vec2f(size.x / size.y, 1.0);

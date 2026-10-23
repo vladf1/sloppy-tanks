@@ -15,7 +15,8 @@ struct MaterialUniform {
     emissive_transform: vec4f,
     // Effect parameters, 16 floats.
     params: array<vec4f, 4>,
-    // x: the MATERIAL_* features below that this material uses.
+    // x: the MATERIAL_* features below that this material uses; y: the id of the
+    // effect whose shared hooks it runs, 0 for none (`shader.rs` `vertex_hooks`).
     features: vec4u,
 }
 
@@ -29,6 +30,10 @@ const MATERIAL_BUMP: u32 = 4u;
 const MATERIAL_VERTEX_COLORS: u32 = 8u;
 const MATERIAL_FLAT_SHADING: u32 = 16u;
 const MATERIAL_FOG: u32 = 32u;
+// Drawn blended (transparent or additive), so its alpha is its opacity.
+const MATERIAL_BLENDED: u32 = 64u;
+// Lit and receiving the sun's shadow (set per part, `MaterialUniform::for_part`).
+const MATERIAL_RECEIVE_SHADOW: u32 = 128u;
 
 fn material_has(feature: u32) -> bool {
     return (material.features.x & feature) != 0u;
