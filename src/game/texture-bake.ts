@@ -65,16 +65,36 @@ async function bakeTexture(engine: EngineSource, key: string): Promise<Uint8Arra
   return pixels;
 }
 
-/** Start the bake an arena waits for, if it has one to hand out. The quarry soil
- * takes the engine about 0.7 s on one thread; in workers it overlaps building the
- * arena and its pipelines instead of adding to them. A failed worker hands the bake
- * back, and the engine bakes it between preparation steps. */
+/** Bakes started before their arena was built, by key, until an arena claims them. */
+const bakesAhead = new Map<string, Promise<Uint8Array>>();
+
+/** Start baking `keys` (`mapTextureBakes`) before the arena that needs them is built;
+ * it takes them over when it claims them (`startTextureBake`). Started at the claim,
+ * the quarry soil finished long after the arena's pipelines, and its start waited
+ * for it. A bake that fails here fails that claim, which bakes on the main thread. */
+export function bakeAhead(engine: EngineSource, keys: readonly string[]): void {
+  for (const key of keys) {
+    if (!bakesAhead.has(key)) {
+      const bake = bakeTexture(engine, key);
+      bake.catch(() => {});
+      bakesAhead.set(key, bake);
+    }
+  }
+}
+
+/** Start the bake an arena waits for, if it has one to hand out, or take over the one
+ * started ahead for it. The quarry soil takes the engine about 1.4 s on one thread; in
+ * workers it overlaps building the arena and its pipelines instead of adding to them.
+ * A failed worker hands the bake back, and the engine bakes it between preparation
+ * steps. */
 export function startTextureBake(game: TextureBaker, engine: EngineSource): void {
   const key = game.claim_texture_bake();
   if (!key) {
     return;
   }
-  bakeTexture(engine, key).then(
+  const ahead = bakesAhead.get(key);
+  bakesAhead.delete(key);
+  (ahead ?? bakeTexture(engine, key)).then(
     (pixels) => {
       try {
         game.supply_texture(key, pixels);

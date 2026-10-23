@@ -36,6 +36,8 @@ export interface EngineGlue {
   NetGame: typeof NetGame;
   /** Binary room messages as JSON, for `?debug` pages' `sloppy.wire`. */
   WireView: typeof WireView;
+  /** The texture bakes a map's arena will claim (`texture-bake.ts`). */
+  map_texture_bakes(map: string): string[];
 }
 
 interface Engine {
@@ -125,6 +127,12 @@ export function engineModule(): { module: WebAssembly.Module; webgl: boolean } {
     throw new Error("The engine has not loaded");
   }
   return { module: current.module, webgl: current.api === "webgl" };
+}
+
+/** The generated textures the arena of Battle Setup map `map` will have the page bake;
+ * none before the engine has loaded. */
+export function mapTextureBakes(map: string): string[] {
+  return current ? current.glue.map_texture_bakes(map) : [];
 }
 
 /** An engine startup error that means its graphics API cannot run here. */
