@@ -1,4 +1,4 @@
-// Post-processing: the bloom chain and the output pass. Bloom thresholds the
+// Post-processing: the bloom chain, the occlusion's blur and the output pass. Bloom thresholds the
 // resolved linear HDR frame into a quarter-size level, halves it down a short mip
 // chain and adds each level back up with a tent filter. The output pass darkens by
 // the ambient occlusion, adds the aerial haze's light the opaque surfaces left to it
@@ -145,6 +145,26 @@ fn bloom_down(input: PostOut) -> vec4f {
     return vec4f(color, 1.0);
 }
 
+// The occlusion's 3×3 tent of bilinear taps on texel corners: 6×6 texels in which
+// every rotation of the 4×4 sample pattern carries the same weight, so the pattern
+// averages away without a dotted residue. Texel (i, j) of the result holds the tent
+// at the corner where texels i and j begin, one size larger than the occlusion along
+// each axis; the output pass reads it once for the pixels nearest that corner rather
+// than taking nine taps for each of them.
+fn occlusion_blur(input: PostOut) -> vec4f {
+    let corner = floor(input.clip.xy);
+    let size = vec2f(textureDimensions(source));
+    var ao = 0.0;
+    for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+            let at = (corner + vec2f(f32(i), f32(j)) * 2.0) / size;
+            let weight = f32((2 - abs(i)) * (2 - abs(j)));
+            ao += textureSampleLevel(source, linear_clamp, at, 0.0).r * weight;
+        }
+    }
+    return vec4f(ao / 16.0);
+}
+
 // A 3×3 tent over the smaller level, added onto the larger one by the blend.
 fn bloom_up(input: PostOut) -> vec4f {
     let t = 1.0 / vec2f(textureDimensions(source));
@@ -157,8 +177,8 @@ fn bloom_up(input: PostOut) -> vec4f {
     return vec4f(color / 16.0, 1.0);
 }
 
-// The bloom chain's passes share one fragment stage, told apart by the pass drawn
-// (`gpu::BloomPass`): WebKit compiles every distinct stage at first use, about 90 ms
+// The bloom chain's passes and the occlusion's blur share one fragment stage, told
+// apart by the pass drawn (`gpu::BloomPass`): WebKit compiles every distinct stage at first use, about 90 ms
 // apiece on a cold start however small, and the pass is the same for a whole draw.
 @fragment
 fn fs_bloom(input: PostOut) -> @location(0) vec4f {
@@ -167,6 +187,9 @@ fn fs_bloom(input: PostOut) -> @location(0) vec4f {
     }
     if input.bloom_pass == 1u {
         return bloom_down(input);
+    }
+    if input.bloom_pass == 3u {
+        return occlusion_blur(input);
     }
     return bloom_up(input);
 }
@@ -342,12 +365,20 @@ const SHADE_BAND: vec4f = vec4f(0.006, 0.03, 0.12, 0.3);
 // warms highlights, a few hues are tamed, then saturation (and vibrance for muted
 // colors) and a contrast curve around mid grey that never clips the blacks.
 fn grade(color: vec3f) -> vec3f {
-    let lift = output.lift.rgb;
-    var c = output.gain.rgb * color;
+    // Uniform branches skip the steps a neutral setting leaves as they are (the
+    // tone-mapped colour is never negative).
+    var c = color;
+    if any(output.gain.rgb != vec3f(1.0)) {
+        c *= output.gain.rgb;
+    }
     let black = output.tone.y;
-    c = max(c - black, vec3f(0.0)) / (1.0 - black);
-    c = c + lift * (vec3f(1.0) - c);
-    // Uniform branches skip the steps a neutral setting leaves as they are.
+    if black != 0.0 {
+        c = max(c - black, vec3f(0.0)) / (1.0 - black);
+    }
+    let lift = output.lift.rgb;
+    if any(lift != vec3f(0.0)) {
+        c = c + lift * (vec3f(1.0) - c);
+    }
     if any(output.gamma.rgb != vec3f(1.0)) {
         c = pow(max(c, vec3f(0.0)), 1.0 / output.gamma.rgb);
     }
@@ -490,19 +521,9 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
     }
     let strength = output.effects.z;
     if strength > 0.0 {
-        // A 3×3 tent of bilinear taps on texel corners of the quarter-size occlusion:
-        // 6×6 texels in which every rotation of the 4×4 sample pattern carries the
-        // same weight, so the pattern averages away without a dotted residue.
-        let occlusion_size = vec2f(textureDimensions(occlusion));
-        let corner = floor(pixel * 0.25 + 0.5);
-        var ao = 0.0;
-        for (var j = -1; j <= 1; j++) {
-            for (var i = -1; i <= 1; i++) {
-                let at = (corner + vec2f(f32(i), f32(j)) * 2.0) / occlusion_size;
-                let weight = f32((2 - abs(i)) * (2 - abs(j)));
-                ao += textureSampleLevel(occlusion, linear_clamp, at, 0.0).r * weight;
-            }
-        }
+        // The quarter-size occlusion's tent at the corner of its texels nearest this
+        // pixel (`occlusion_blur`).
+        let ao = textureLoad(occlusion, vec2i(floor(pixel * 0.25 + 0.5)), 0).r;
         // Occlusion takes away sky fill, which sunlit surfaces barely depend on: it
         // darkens shade fully and bright sunlit ground only lightly, so a tank sits in
         // a soft contact shade rather than on a dark decal. What it removes is the
@@ -510,7 +531,7 @@ fn fs_output(@builtin(position) position: vec4f) -> @location(0) vec4f {
         let lit = smoothstep(OCCLUSION_SHADE_LEVEL, OCCLUSION_LIT_LEVEL, luminance(color));
         // It never takes more than part of the light: contact shade stays a soft,
         // coloured shade under a hull, never a black pool.
-        let open = max(mix(1.0, ao / 16.0, strength * mix(1.0, OCCLUSION_IN_SUN, lit)), OCCLUSION_FLOOR);
+        let open = max(mix(1.0, ao, strength * mix(1.0, OCCLUSION_IN_SUN, lit)), OCCLUSION_FLOOR);
         color *= pow(vec3f(open), OCCLUSION_HUE);
     }
     // After the occlusion, which shades the surface rather than the air before it.

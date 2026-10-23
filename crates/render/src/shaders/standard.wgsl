@@ -103,9 +103,10 @@ var<private> receiver_normal: vec3f;
 // with the same hardware-filtered compares as the filter (continuous as things
 // move, no noise): four taps around the receiver, against its own plane, find the
 // casters above it, and only where there are any, three more depths sort them by
-// how far up the sun's ray they stand (`BLOCKER_STEPS`, metres).
+// how far up the sun's ray they stand (`penumbra_steps`): one gather per tap gives
+// the four depths its compare filtered, which answer every step with the same
+// bilinear weights.
 const PENUMBRA_SEARCH_TEXELS: f32 = 5.0;
-const BLOCKER_STEPS: vec3f = vec3f(1.0, 2.5, 5.0);
 // The caster distance each band of the search stands for, metres: below the first
 // step, between the steps and beyond the last.
 const BLOCKER_BANDS: vec4f = vec4f(0.5, 1.75, 3.75, 6.5);
@@ -120,51 +121,57 @@ const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 5.0);
 // the caster distances in metres.
 const SHADOW_CONTACT_FILL: f32 = 0.7;
 const SHADOW_FILL_OPENING: vec2f = vec2f(0.3, 5.0);
-// Steepest receiver slope the search follows, metres of depth per texel, and the
-// depth gap it ignores, metres.
-const RECEIVER_SLOPE_LIMIT: f32 = 0.6;
-const BLOCKER_TOLERANCE: f32 = 0.06;
 
 // The share of the sky fill that reaches the receiver inside its cast shadow, set by
 // `penumbra_radius` (1 where nothing casts or no search ran).
 var<private> shadow_fill: f32 = 1.0;
 
+// The share of the four search spots' gathered `depths` (bilinearly `weighted`) that
+// lies beyond each spot's reference depth: open to the sun, as the compares of the
+// shadow sampler (less-equal) would find it.
+fn penumbra_open(depths: array<vec4f, 4>, references: vec4f, weights: vec4f) -> f32 {
+    return dot(step(vec4f(references.x), depths[0]), weights) + dot(step(vec4f(references.y), depths[1]), weights)
+        + dot(step(vec4f(references.z), depths[2]), weights) + dot(step(vec4f(references.w), depths[3]), weights);
+}
+
 fn penumbra_radius(coord: vec3f, size: f32) -> f32 {
-    let m = frame.shadow_matrix;
-    let ru = vec3f(m[0].x, m[1].x, m[2].x);
-    let rv = vec3f(m[0].y, m[1].y, m[2].y);
-    let rz = vec3f(m[0].z, m[1].z, m[2].z);
-    // The light's projection is orthographic: its rows are orthogonal, so the
-    // receiving plane's depth slope per map unit follows from their dot products.
-    let a = dot(ru, receiver_normal) / dot(ru, ru);
-    let b = dot(rv, receiver_normal) / dot(rv, rv);
-    let c = dot(rz, receiver_normal) / dot(rz, rz);
-    let metres = inverseSqrt(dot(rz, rz));
-    let limit = RECEIVER_SLOPE_LIMIT / metres;
-    // Depth per texel along the map's u and its (flipped) v.
-    let slope = clamp(vec2f(-a, b) * c / max(c * c, 1e-12) / size, vec2f(-limit), vec2f(limit));
-    let tolerance = BLOCKER_TOLERANCE / metres + abs(slope.x) + abs(slope.y);
-    var references = array<f32, 4>();
-    var taps = array<vec2f, 4>();
+    // The receiving plane's depth slope per texel along the map's u and its (flipped)
+    // v, from its normal and the light's projection (`penumbra_*`, `gpu::penumbra_terms`).
+    let c = dot(frame.penumbra_depth.xyz, receiver_normal);
+    let across = vec2f(dot(frame.penumbra_u.xyz, receiver_normal), dot(frame.penumbra_v.xyz, receiver_normal));
+    let limit = frame.penumbra_u.w;
+    let slope = clamp(across * c / max(c * c, 1e-12), vec2f(-limit), vec2f(limit));
+    let tolerance = frame.penumbra_v.w + abs(slope.x) + abs(slope.y);
+    var references = vec4f(0.0);
+    var spots = array<vec2f, 4>();
     var open = 0.0;
     for (var i = 0; i < 4; i++) {
         let offset = vec2f(f32(i & 1) * 2.0 - 1.0, f32(i >> 1u) * 2.0 - 1.0) * PENUMBRA_SEARCH_TEXELS;
         references[i] = coord.z + dot(slope, offset) - tolerance;
-        taps[i] = coord.xy + offset / size;
-        open += textureSampleCompareLevel(shadow_map, shadow_sampler, taps[i], references[i]);
+        spots[i] = coord.xy + offset / size;
+        open += textureSampleCompareLevel(shadow_map, shadow_sampler, spots[i], references[i]);
     }
-    // The share of the search that casters cover.
-    let blocked = 4.0 - open;
+    if open >= 4.0 {
+        return 1.0;
+    }
+    // Under casters the spots' own depths answer every depth step: the spots lie whole
+    // texels apart, so one set of bilinear weights serves all four gathers (their
+    // texels in the gather's order: -u +v, +u +v, +u -v, -u -v).
+    let f = fract(coord.xy * size - 0.5);
+    let weights = vec4f((1.0 - f.x) * f.y, f.x * f.y, f.x * (1.0 - f.y), (1.0 - f.x) * (1.0 - f.y));
+    var depths = array<vec4f, 4>();
+    for (var i = 0; i < 4; i++) {
+        depths[i] = textureGather(shadow_map, shadow_texel_sampler, spots[i]);
+    }
+    // The share of the search that casters cover, and those beyond each step.
+    let blocked = 4.0 - penumbra_open(depths, references, weights);
     if blocked <= 0.0 {
         return 1.0;
     }
-    // Casters beyond each step, summed over the four taps.
-    let steps = BLOCKER_STEPS / metres;
+    let steps = frame.penumbra_steps.xyz;
     var beyond = vec3f(0.0);
-    for (var i = 0; i < 4; i++) {
-        for (var k = 0; k < 3; k++) {
-            beyond[k] += 1.0 - textureSampleCompareLevel(shadow_map, shadow_sampler, taps[i], references[i] - steps[k]);
-        }
+    for (var k = 0; k < 3; k++) {
+        beyond[k] = 4.0 - penumbra_open(depths, references - steps[k], weights);
     }
     // The casters' mean distance up the sun's ray.
     let bands = vec4f(blocked - beyond.x, beyond.x - beyond.y, beyond.y - beyond.z, beyond.z);
@@ -276,12 +283,19 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     reflected.diffuse = vec3f(0.0);
     reflected.specular = vec3f(0.0);
     var sunlit = 1.0;
+    // Only faces turned toward the sun use its shadow and the clouds', and ground,
+    // whose cast shadow also dims its sky fill (`shadow_fill`): on the rest every term
+    // they scale is zero.
+    let toward_sun = dot(n, frame.sun_direction.xyz) > 0.0;
+    let shaded = toward_sun || receiver_normal.y > 0.5;
     // WebGL's translation paid for the uniform branch in every lit pixel.
     if LITE {
         if RECEIVE_SHADOW {
-            sunlit = sun_shadow(world, n);
+            if shaded {
+                sunlit = sun_shadow(world, n);
+            }
         }
-    } else if material_has(MATERIAL_RECEIVE_SHADOW) {
+    } else if material_has(MATERIAL_RECEIVE_SHADOW) && shaded {
         sunlit = sun_shadow(world, n);
     }
     // Inside a cast shadow, how much of the sky's fill the caster leaves open.
@@ -290,7 +304,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
     // blue sky, so cloud shade keeps the fill neutral as direct sun does; only cast
     // shadows take its blue.
     let cast_sunlit = sunlit;
-    if atmosphere_on() {
+    if atmosphere_on() && toward_sun {
         sunlit *= cloud_shadow(world);
     }
     let sun = frame.sun_color.rgb * sunlit;
@@ -303,9 +317,10 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // Satin paint (hulls, containers, vehicles) carries a clear coat: a tight
         // sun glint along plate edges and decks turned to the light, on top of the
         // paint's broad sheen, so painted steel reads as metal and its form turns.
-        let coat = PAINT_GLINT * smoothstep(0.38, 0.45, s.roughness) * (1.0 - smoothstep(0.58, 0.66, s.roughness))
-            * (1.0 - smoothstep(0.25, 0.45, s.metalness)) * (1.0 - near_view);
-        if coat > 0.0 {
+        // Only satin finishes: rougher terrain and walls, and metals, skip it.
+        if s.roughness > 0.38 && s.roughness < 0.66 && s.metalness < 0.45 {
+            let coat = PAINT_GLINT * smoothstep(0.38, 0.45, s.roughness) * (1.0 - smoothstep(0.58, 0.66, s.roughness))
+                * (1.0 - smoothstep(0.25, 0.45, s.metalness)) * (1.0 - near_view);
             // Its grazing Fresnel is capped: a stylized coat glints toward the sun but
             // never mirrors a whole deck seen edge-on.
             let l = frame.sun_direction.xyz;
@@ -422,7 +437,7 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // it every shaded face of a hull takes the same fill and reads as one slab.
         let up = n.y * 0.5 + 0.5;
         let dome = up * up * (SKY_DOME_FORM + (1.0 - SKY_DOME_FORM) * up);
-        let sun_side = dot(n.xz, normalize(frame.sun_direction.xz + vec2f(1e-4))) * (1.0 - abs(n.y));
+        let sun_side = dot(n.xz, frame.sun_heading.xy) * (1.0 - abs(n.y));
         hemisphere = mix(frame.ground_color.rgb, frame.sky_color.rgb, dome) * (1.0 + SKY_SUN_SIDE * sun_side);
         // Warm key, cool fill: the blue sky fill keeps its hue where it is the main
         // light (shade), but under direct sun it adds only its brightness, so sunlit
@@ -443,24 +458,19 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         shade_color = max(mix(vec3f(grey), diffuse, mix(SHADE_SATURATION, EARTH_SHADE_SATURATION, earth)), vec3f(0.0));
     }
     var indirect = hemisphere * shade_color * (RECIPROCAL_PI * sky_open);
-    if atmosphere_on() && frame.ground.w > 0.0 {
-        // Warm bounce from the sunlit ground around: what the sun does not reach
-        // directly (cast shadow, cloud shadow or a face turned away) still catches
-        // some of its light off the ground, most on walls and hull sides, so shade
-        // stays warm and luminous rather than sinking into one cold blue.
-        let ground_tint = frame.ground_color.rgb / max(dot(frame.ground_color.rgb, vec3f(0.2126, 0.7152, 0.0722)), 1e-4);
-        let sun_level = dot(frame.sun_color.rgb, vec3f(0.2126, 0.7152, 0.0722));
-        let bounce = frame.ground.w * sun_level * (1.0 - in_sun) * (1.0 - BOUNCE_FROM_BELOW * n.y);
-        indirect += ground_tint * (bounce * RECIPROCAL_PI) * shade_color;
-    }
     if atmosphere_on() {
+        // Warm bounce from the sunlit ground around (`bounce`, the ground fill's hue at
+        // the sun's level): what the sun does not reach directly (cast shadow, cloud
+        // shadow or a face turned away) still catches some of its light off the ground,
+        // most on walls and hull sides, so shade stays warm and luminous rather than
+        // sinking into one cold blue.
+        indirect += frame.bounce.rgb * ((1.0 - in_sun) * (1.0 - BOUNCE_FROM_BELOW * n.y)) * shade_color;
         // Stylized sky rim: grazing walls and hull sides catch the bright horizon,
         // most on the side turned from the sun, so silhouettes read on any ground.
         let facing = 1.0 - clamp(dot(n, v), 0.0, 1.0);
-        let away = 0.55 + 0.45 * clamp(-dot(n.xz, normalize(frame.sun_direction.xz + vec2f(1e-4))), 0.0, 1.0);
-        let rim = facing * facing * facing * (1.0 - n.y * n.y) * away * frame.sky_sun.w;
-        let rim_color = frame.sky_horizon.rgb * 0.6 + frame.sky_sun.rgb * 0.4;
-        indirect += rim_color * diffuse * rim;
+        let away = 0.55 + 0.45 * clamp(-dot(n.xz, frame.sun_heading.xy), 0.0, 1.0);
+        let rim = facing * facing * facing * (1.0 - n.y * n.y) * away;
+        indirect += frame.rim.rgb * diffuse * rim;
     }
     // Only glossy finishes (vehicle paint and steel) reflect the sky; matte
     // terrain and buildings keep the hemisphere fill their themes were tuned with.
@@ -733,13 +743,19 @@ fn fs_main(input: VertexOut, @builtin(front_facing) front_facing: bool) -> @loca
         } else if !atmosphere_on() {
             color = linear_fog(color, input.world);
         } else {
-            let haze = haze_weights(frame.camera_position.xyz, input.world, view_depth(input.world));
             // Faded instances (opacity below 1) blend too, their alpha their opacity.
-            if material_has(MATERIAL_BLENDED) || input.tint.a < 1.0 {
-                color = blended_haze(color, haze);
-            } else {
-                color = haze_kept(color, haze);
-                alpha = haze_alpha(haze);
+            let blended = material_has(MATERIAL_BLENDED) || input.tint.a < 1.0;
+            if beyond_haze_start(input.world) {
+                let haze = haze_weights(frame.camera_position.xyz, input.world, view_depth(input.world));
+                if blended {
+                    color = blended_haze(color, haze);
+                } else {
+                    color = haze_kept(color, haze);
+                    alpha = haze_alpha(haze);
+                }
+            } else if !blended {
+                // No haze: `haze_alpha` of none.
+                alpha = 1.0;
             }
         }
     }

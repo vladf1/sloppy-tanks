@@ -220,8 +220,8 @@ fn depth_raster(side: Side) -> Raster {
     }
 }
 
-/// The output, sky, bloom (all three passes), ambient occlusion, merged and cutout
-/// caster programs, in that order.
+/// The output, sky, bloom (all three passes and the occlusion's blur), ambient
+/// occlusion, merged and cutout caster programs, in that order.
 const FIXED_PROGRAMS: usize = 6;
 
 pub struct Pipelines {
@@ -407,6 +407,11 @@ impl Pipelines {
             ],
             occlusion: Pipeline {
                 program: occlusion,
+                raster: Raster::PLAIN,
+            },
+            // Drawn as `BloomPass::OcclusionBlur`.
+            occlusion_blur: Pipeline {
+                program: bloom,
                 raster: Raster::PLAIN,
             },
             shadow_merged,

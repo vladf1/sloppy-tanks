@@ -18,6 +18,8 @@ pub fn renderer_stats(renderer: &Renderer) -> Map<String, Value> {
         "reflectionDrawCalls": render.reflection_draw_calls,
         "shadowTriangles": render.shadow_triangles,
         "reflectionTriangles": render.reflection_triangles,
+        "occlusionDrawCalls": render.occlusion_draw_calls,
+        "occlusionTriangles": render.occlusion_triangles,
         "mainTriangles": render.main_triangles,
         "instanceRecords": render.instance_records,
         "pipelines": render.pipelines,

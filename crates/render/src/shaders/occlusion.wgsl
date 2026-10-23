@@ -36,10 +36,14 @@ fn depth_at(pixel: vec2i, size: vec2i) -> f32 {
     return load_depth(clamp(pixel, vec2i(0), size - 1));
 }
 
-fn world_at(pixel: vec2i, z: f32, size: vec2f) -> vec3f {
+// The homogeneous world position at `pixel` and depth `z`.
+fn world_at(pixel: vec2i, z: f32, size: vec2f) -> vec4f {
     let ndc = vec2f((f32(pixel.x) + 0.5) / size.x * 2.0 - 1.0, 1.0 - (f32(pixel.y) + 0.5) / size.y * 2.0);
-    let world = occlusion.inverse_view_projection * vec4f(ndc, z, 1.0);
-    return world.xyz / world.w;
+    return occlusion.inverse_view_projection * vec4f(ndc, z, 1.0);
+}
+
+fn world_of(homogeneous: vec4f) -> vec3f {
+    return homogeneous.xyz / homogeneous.w;
 }
 
 fn view_distance(z: f32) -> f32 {
@@ -61,12 +65,18 @@ fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
     if fade <= 0.0 {
         return vec4f(1.0);
     }
-    let center = world_at(pixel, z, size);
+    // Homogeneous positions are linear in the pixel and the depth, so the neighbours'
+    // follow from the centre's along the inverse projection's columns.
+    let here = world_at(pixel, z, size);
+    let center = world_of(here);
+    let step_x = occlusion.inverse_view_projection[0] * (2.0 / size.x);
+    let step_y = occlusion.inverse_view_projection[1] * (2.0 / size.y);
+    let along_z = occlusion.inverse_view_projection[2];
     // The normal from the nearer neighbour on each axis, so edges do not bend it.
-    let right = world_at(pixel + vec2i(1, 0), depth_at(pixel + vec2i(1, 0), size_i), size);
-    let left = world_at(pixel - vec2i(1, 0), depth_at(pixel - vec2i(1, 0), size_i), size);
-    let down = world_at(pixel + vec2i(0, 1), depth_at(pixel + vec2i(0, 1), size_i), size);
-    let up = world_at(pixel - vec2i(0, 1), depth_at(pixel - vec2i(0, 1), size_i), size);
+    let right = world_of(here + step_x + along_z * (depth_at(pixel + vec2i(1, 0), size_i) - z));
+    let left = world_of(here - step_x + along_z * (depth_at(pixel - vec2i(1, 0), size_i) - z));
+    let down = world_of(here - step_y + along_z * (depth_at(pixel + vec2i(0, 1), size_i) - z));
+    let up = world_of(here + step_y + along_z * (depth_at(pixel - vec2i(0, 1), size_i) - z));
     var dx = right - center;
     if length(center - left) < length(dx) {
         dx = center - left;
@@ -83,6 +93,12 @@ fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
     let rotation = BAYER[(cell.y & 3) * 4 + (cell.x & 3)] / 16.0 * 6.28318530718;
     let radius = occlusion.settings.x;
     let bias = occlusion.settings.y;
+    // A probe's clip position is linear in its offset: the centre's, plus the frame's
+    // axes' (as directions) scaled by the offset along each.
+    let clip_center = occlusion.view_projection * vec4f(center, 1.0);
+    let clip_tangent = occlusion.view_projection * vec4f(tangent, 0.0);
+    let clip_bitangent = occlusion.view_projection * vec4f(bitangent, 0.0);
+    let clip_normal = occlusion.view_projection * vec4f(normal, 0.0);
     var occluded = 0.0;
     for (var i = 0; i < SAMPLES; i++) {
         // A spiral over the hemisphere: rising elevation, growing reach.
@@ -91,22 +107,20 @@ fn fs_occlusion(@builtin(position) position: vec4f) -> @location(0) vec4f {
         // Mostly low over the surface, where walls and hulls beside it occlude.
         let elevation = 0.1 + 0.6 * fract(t * 3.7 + 0.13);
         let reach = radius * (0.25 + 0.75 * t);
-        let spread = sqrt(1.0 - elevation * elevation);
-        let offset = (tangent * cos(angle) * spread + bitangent * sin(angle) * spread + normal * elevation) * reach;
-        let probe = center + offset;
-        let clip = occlusion.view_projection * vec4f(probe, 1.0);
-        // Only probes in front of the camera; no `continue`, so the loop unrolls.
-        if clip.w > 0.0 {
-            let ndc = clip.xy / clip.w;
-            let at = vec2i(vec2f((ndc.x * 0.5 + 0.5) * size.x, (0.5 - ndc.y * 0.5) * size.y));
-            let scene = view_distance(depth_at(at, size_i));
-            let gap = clip.w - scene;
-            // Behind the scene's surface: occluded, unless the surface stands so far
-            // in front that it is a different object (the range check).
-            if gap > bias {
-                occluded += 1.0 - smoothstep(radius * 1.5, radius * 3.5, gap);
-            }
-        }
+        let spread = sqrt(1.0 - elevation * elevation) * reach;
+        let clip = clip_center + clip_tangent * (cos(angle) * spread) + clip_bitangent * (sin(angle) * spread)
+            + clip_normal * (elevation * reach);
+        // Every probe reads the depth, so the reads issue together (no branch around
+        // them, and no `continue`, so the loop unrolls); only probes in front of the
+        // camera count.
+        let ndc = clamp(clip.xy / max(clip.w, 1e-4), vec2f(-2.0), vec2f(2.0));
+        let at = vec2i(vec2f((ndc.x * 0.5 + 0.5) * size.x, (0.5 - ndc.y * 0.5) * size.y));
+        let scene = view_distance(depth_at(at, size_i));
+        let gap = clip.w - scene;
+        // Behind the scene's surface: occluded, unless the surface stands so far in
+        // front that it is a different object (the range check).
+        let counts = clip.w > 0.0 && gap > bias;
+        occluded += select(0.0, 1.0 - smoothstep(radius * 1.5, radius * 3.5, gap), counts);
     }
     let open = 1.0 - occluded / f32(SAMPLES);
     let ao = pow(clamp(open, 0.0, 1.0), occlusion.depth_terms.z);
