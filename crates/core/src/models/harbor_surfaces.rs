@@ -10,7 +10,9 @@ use crate::geometry::math::hex_to_linear;
 use crate::geometry::{Mesh, box_geometry, merge_geometries};
 use crate::scene::{Effect, Material, Node, Side, TextureRef, Wrap};
 
-use super::effects_scenery::{ApronMode, DOCK_GRAIN, HARBOR_APRON, HARBOR_SHORE};
+use super::effects_scenery::{
+    APRON_WEAR, ApronMode, DOCK_GRAIN, HARBOR_APRON, HARBOR_APRON_WEAR, HARBOR_SHORE,
+};
 use super::harbor_models::{CONTAINER_METALNESS, CONTAINER_ROUGHNESS, container_wear};
 use super::model_primitives::{Cache, shadow_receiver, shadowed, span_between};
 
@@ -51,6 +53,15 @@ static MATERIALS: Cache<(HarborSurface, u32), Material> = Cache::new();
 static GEOMETRIES: Cache<(HarborSurface, [u64; 3]), Mesh> = Cache::new();
 static APRON_MATERIALS: Cache<(ApronMode, u32), Material> = Cache::new();
 static MARKINGS: Cache<([u64; 3], u32), Mesh> = Cache::new();
+
+/// The ground's baked wear (linear data, clamped at the edge of its square).
+fn apron_wear() -> TextureRef {
+    TextureRef {
+        srgb: false,
+        flip_y: false,
+        ..TextureRef::generated(HARBOR_APRON_WEAR)
+    }
+}
 
 fn dock_tile(wrap: Wrap) -> TextureRef {
     TextureRef {
@@ -97,10 +108,17 @@ pub fn apron_material(mode: ApronMode, color: u32) -> Arc<Material> {
         };
         let extra_textures = vec![(DOCK_GRAIN, dock_tile(Wrap::Repeat))];
         match mode {
-            ApronMode::Concrete
-            | ApronMode::LaneAlongZ
-            | ApronMode::LaneAlongX
-            | ApronMode::QuayWall => Material {
+            ApronMode::Concrete | ApronMode::LaneAlongZ | ApronMode::LaneAlongX => Material {
+                bump_map: Some(dock_tile(Wrap::Mirror)),
+                bump_scale: DOCK_BUMP,
+                effect,
+                extra_textures: vec![
+                    (DOCK_GRAIN, dock_tile(Wrap::Repeat)),
+                    (APRON_WEAR, apron_wear()),
+                ],
+                ..Material::standard(color, 0.0, APRON_ROUGHNESS)
+            },
+            ApronMode::QuayWall => Material {
                 bump_map: Some(dock_tile(Wrap::Mirror)),
                 bump_scale: DOCK_BUMP,
                 effect,

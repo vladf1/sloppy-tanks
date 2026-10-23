@@ -198,10 +198,19 @@ pub const VILLAGE_RANGES: EffectDefinition = EffectDefinition {
 /// code its kind runs (the meadow tufts and ranges compiled the whole village ground
 /// beside their own code). Per name, the definition taken when `params[0]` exceeds
 /// each bound, highest first; below them all the name's own definition.
-const MODES: [(&str, &[(f32, &str)]); 1] = [(
-    effects_scenery::MEADOW_SWAY,
-    &[(1.5, VILLAGE_RANGES.name), (0.5, VILLAGE_GROUND.name)],
-)];
+const MODES: [(&str, &[(f32, &str)]); 2] = [
+    (
+        effects_scenery::MEADOW_SWAY,
+        &[(1.5, VILLAGE_RANGES.name), (0.5, VILLAGE_GROUND.name)],
+    ),
+    (
+        effects_scenery::HARBOR_APRON,
+        &[
+            (4.5, HARBOR_APRON_STRUCTURE.name),
+            (2.5, HARBOR_APRON_PAINT.name),
+        ],
+    ),
+];
 
 /// Tree crowns swaying in the wind, shaded as rounded masses.
 pub const FOLIAGE: EffectDefinition = EffectDefinition {
@@ -245,11 +254,34 @@ pub const SAND_DRIFT: EffectDefinition = effect(
     ),
 );
 
-/// Harbor quay concrete and paint in world space (`harbor_surfaces`).
-pub const HARBOR_APRON: EffectDefinition = effect(
-    effects_scenery::HARBOR_APRON,
-    include_str!("../shaders/effects/harbor_apron.wgsl"),
-);
+/// The harbor apron's functions, which its three kinds share (and its wear bake,
+/// `bakes::HARBOR_APRON_WEAR`).
+pub(crate) const HARBOR_APRON_WGSL: &str = include_str!("../shaders/effects/harbor_apron.wgsl");
+
+/// Harbor quay concrete and asphalt in world space (`harbor_surfaces`), over the
+/// baked wear: the apron effect's kind for modes 0 to 2 ([`MODES`]).
+pub const HARBOR_APRON: EffectDefinition = EffectDefinition {
+    entry: "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) { apron_ground(s, f); }
+",
+    ..effect(effects_scenery::HARBOR_APRON, HARBOR_APRON_WGSL)
+};
+
+/// The paint on the apron, markings and lettering: the apron effect's kind for modes
+/// 3 and 4.
+pub const HARBOR_APRON_PAINT: EffectDefinition = EffectDefinition {
+    entry: "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) { apron_paint(s, f); }
+",
+    ..effect("harbor-apron:paint", HARBOR_APRON_WGSL)
+};
+
+/// The harbor's quay walls, hulls, spawn pads, cover containers and parapet: the
+/// apron effect's kind for modes 5 and up.
+pub const HARBOR_APRON_STRUCTURE: EffectDefinition = EffectDefinition {
+    entry:
+        "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) { apron_structure(s, f); }
+",
+    ..effect("harbor-apron:structure", HARBOR_APRON_WGSL)
+};
 
 /// Harbor Havoc's far shore, lit and hazed in the effect (`harbor_backdrop`).
 pub const HARBOR_SHORE: EffectDefinition = effect(
@@ -266,7 +298,7 @@ pub const VEHICLE_PAINT: EffectDefinition = effect(
 /// Effects available before any registration: the lab samples, the game's
 /// runtime effect looks and the model effects. The planar-reflecting water
 /// (`effects_scenery::WATER`) is the renderer's own water pass instead.
-pub const BUILTIN_EFFECTS: [EffectDefinition; 20] = [
+pub const BUILTIN_EFFECTS: [EffectDefinition; 22] = [
     WAVE,
     PULSE,
     PUFF,
@@ -284,6 +316,8 @@ pub const BUILTIN_EFFECTS: [EffectDefinition; 20] = [
     SANDSTONE,
     SAND_DRIFT,
     HARBOR_APRON,
+    HARBOR_APRON_PAINT,
+    HARBOR_APRON_STRUCTURE,
     VEHICLE_PAINT,
     DEBRIS_CHIP,
     HARBOR_SHORE,
@@ -358,6 +392,7 @@ mod tests {
     use super::*;
     use crate::presentation::PRESENTATION_EFFECTS;
     use crate::shader::webgl_check::validate_effect;
+    use crate::shader::{ShaderKey, StageSources};
 
     /// The hooks a registered definition keeps are the ones its WGSL defines.
     #[test]
@@ -396,6 +431,49 @@ mod tests {
         assert!(!kind(2.0).has_world() && kind(2.0).has_surface());
         assert_eq!(registry.ids_named(name).len(), 3);
         assert_eq!(registry.id_for("puff", &[2.0]), registry.id("puff"));
+    }
+
+    /// Each kind of harbor apron material takes its own definition, which holds only
+    /// its own kind's code.
+    #[test]
+    fn harbor_apron_kinds_take_their_own_definitions() {
+        let registry = EffectRegistry::default();
+        let name = effects_scenery::HARBOR_APRON;
+        let kind = |mode: f32| {
+            let id = registry.id_for(name, &[mode]).expect("registered");
+            registry.get(id).expect("registered").name
+        };
+        for mode in [0.0, 1.0, 2.0] {
+            assert_eq!(kind(mode), HARBOR_APRON.name);
+        }
+        for mode in [3.0, 4.0] {
+            assert_eq!(kind(mode), HARBOR_APRON_PAINT.name);
+        }
+        for mode in [5.0, 6.0, 8.0, 10.0, 11.0] {
+            assert_eq!(kind(mode), HARBOR_APRON_STRUCTURE.name);
+        }
+        assert_eq!(registry.ids_named(name).len(), 3);
+        // A ground pipeline carries none of the structures' code, and the reverse.
+        let fragment = |definition: &EffectDefinition, alpha_test: bool| {
+            let key = ShaderKey {
+                lit: true,
+                alpha_test,
+                receive_shadow: true,
+                effect: registry.id(definition.name).expect("registered"),
+                ..ShaderKey::default()
+            };
+            StageSources::variant(&key, &registry)
+                .fragment
+                .expect("a fragment stage")
+        };
+        let ground = fragment(&HARBOR_APRON, false);
+        assert!(ground.contains("fn apron_ground(") && !ground.contains("fn parapet_surface("));
+        let structure = fragment(&HARBOR_APRON_STRUCTURE, false);
+        assert!(
+            structure.contains("fn parapet_surface(") && !structure.contains("fn apron_ground(")
+        );
+        let paint = fragment(&HARBOR_APRON_PAINT, true);
+        assert!(paint.contains("fn apron_paint(") && !paint.contains("fn container_surface("));
     }
 
     /// Every builtin and presentation effect compiles in the variants its materials use.

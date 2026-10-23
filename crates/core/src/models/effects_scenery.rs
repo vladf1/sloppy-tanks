@@ -29,6 +29,13 @@ pub const SOIL: &str = "soil";
 /// Secondary texture: the dock concrete tile (`textures/harbor/dock.webp`), the
 /// grain [`HARBOR_APRON`] samples at world x/z.
 pub const DOCK_GRAIN: &str = "dock-grain";
+/// Secondary texture: the harbor ground's baked wear ([`HARBOR_APRON_WEAR`]), sampled
+/// at world x/z by the concrete and the asphalt lanes.
+pub const APRON_WEAR: &str = "apron-wear";
+/// The generated texture of the harbor ground's wear: grime, stains, oil, wheel
+/// tracks, prints, damp and contact shade, drawn once on the GPU by the renderer's
+/// bake (`effects::bakes::HARBOR_APRON_WEAR`), linear, over the 128 m round the arena.
+pub const HARBOR_APRON_WEAR: &str = "harbor-apron-wear";
 
 /// Planar-reflecting water (`water-surface.ts`): the village creek and the harbor
 /// basin. Unlit (`Shading::Basic`), opaque, fogged and tone mapped. `map` is the
@@ -48,7 +55,8 @@ pub const WATER: &str = "water";
 /// it never shows the tile. Extra texture [`DOCK_GRAIN`] is the dock concrete tile
 /// (sRGB, repeat), sampled at world x/z at several scales and angles for grain; the
 /// material color (and vertex color, for markings) tints it. Params: `[mode]`, an
-/// [`ApronMode`] as a float. Concrete adds six-metre slabs with sawn and sealed
+/// [`ApronMode`] as a float. The concrete and the lanes also take extra texture
+/// [`APRON_WEAR`], their slowly varying wear baked once. Concrete adds six-metre slabs with sawn and sealed
 /// expansion joints, per-slab tone and hue, macro variation, hairline cracks, oil
 /// spills with a wet core, damp patches and puddles (lower roughness); asphalt lanes
 /// add aggregate, ravelled edges, polished wheel paths with an oil strip between

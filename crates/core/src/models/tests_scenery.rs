@@ -565,6 +565,7 @@ fn scenery_textures_per_theme() {
             "generated:harbor-container-liveries",
             "generated:harbor-labels",
             "textures/harbor/container.webp",
+            "generated:harbor-apron-wear",
         ]
     );
     assert_eq!(
