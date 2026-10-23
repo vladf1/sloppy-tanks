@@ -22,6 +22,7 @@ use sloppy_core::models::{SMOKE_MARKER, SUPPLY_SCALE, pickup_signal};
 use sloppy_core::sim::RenderState;
 
 use super::EffectView;
+use super::ease::EaseTable;
 use super::explosions::smoke_puff;
 use super::ground::Ground;
 use super::pool::PoolBuffer;
@@ -251,32 +252,11 @@ impl Column {
 }
 
 /// The powers that shape a puff's climb (slowing, lean onset, widening and fading),
-/// tabulated over 0..1: `powf` is a software routine in Wasm, four of them for every
-/// puff of every column each frame, and the table's linear steps differ from it by
-/// less than a ten-thousandth where a puff is visible.
+/// tabulated: four of them for every puff of every column each frame.
 struct EaseTables([EaseTable; 4]);
 
-/// `x^power` at `EASE_STEPS` even steps over 0..1.
-struct EaseTable([f32; EASE_STEPS + 1]);
-
-const EASE_STEPS: usize = 1024;
 /// The fading power of the column's opacity toward its top.
 const SIGNAL_FADING: f64 = 1.1;
-
-impl EaseTable {
-    fn new(power: f64) -> Self {
-        Self(std::array::from_fn(|step| {
-            (step as f64 / EASE_STEPS as f64).powf(power) as f32
-        }))
-    }
-
-    fn at(&self, x: f64) -> f64 {
-        let scaled = x.clamp(0.0, 1.0) * EASE_STEPS as f64;
-        let step = (scaled as usize).min(EASE_STEPS - 1);
-        let (low, high) = (f64::from(self.0[step]), f64::from(self.0[step + 1]));
-        low + (high - low) * (scaled - step as f64)
-    }
-}
 
 fn ease_tables() -> &'static EaseTables {
     static TABLES: std::sync::OnceLock<EaseTables> = std::sync::OnceLock::new();

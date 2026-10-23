@@ -2432,7 +2432,8 @@ impl Renderer {
                     let mut record = None;
                     let mut runs: [Option<(u32, u32)>; VIEW_COUNT] = [None; VIEW_COUNT];
                     let mut flush = |view: usize, run: Option<(u32, u32)>| {
-                        let Some((first, end)) = run else {
+                        // An empty run draws nothing (a zero count means the whole mesh).
+                        let Some((first, end)) = run.filter(|(first, end)| end > first) else {
                             return;
                         };
                         let index = *record.get_or_insert_with(|| {

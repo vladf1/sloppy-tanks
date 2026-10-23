@@ -13,6 +13,7 @@
 //! seeded simulation stream. `EffectSystems` is the whole CPU side (native, unit
 //! tested); `Effects` binds it to the renderer's pools.
 
+pub mod ease;
 pub mod explosions;
 pub mod ground;
 pub mod laser;
@@ -381,6 +382,9 @@ mod browser {
         pools: Vec<PoolId>,
         /// The smoke puffs' pool, whose params carry the walls it softens against.
         puffs: PoolId,
+        /// The walls last written to those params: they rarely change, and each write
+        /// is a buffer upload.
+        soft_walls: Option<[[f32; 4]; 4]>,
     }
 
     impl Effects {
@@ -399,6 +403,7 @@ mod browser {
                 systems: EffectSystems::default(),
                 pools,
                 puffs,
+                soft_walls: None,
             }
         }
 
@@ -449,6 +454,7 @@ mod browser {
                 systems,
                 pools,
                 puffs,
+                soft_walls,
             } = self;
             let mut next = pools.iter();
             systems.for_each_pool(|buffer| {
@@ -460,7 +466,11 @@ mod browser {
             let mut params = [[0.0; 4]; 4];
             params[0][0] = systems.tracks.clock as f32;
             renderer.set_pool_params(pools[0], params);
-            renderer.set_pool_params(*puffs, systems.particles.explosions.walls.soft_boxes());
+            let walls = systems.particles.explosions.walls.soft_boxes();
+            if *soft_walls != Some(walls) {
+                renderer.set_pool_params(*puffs, walls);
+                *soft_walls = Some(walls);
+            }
             for (slot, light) in FIRE_LIGHT_SLOTS.into_iter().zip(systems.lights) {
                 renderer.set_point_light(
                     slot,
