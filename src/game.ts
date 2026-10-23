@@ -38,7 +38,7 @@ import { debugPage, isExtraLevel } from "./game/map-options";
 import { NerdStats, engineStatsSections } from "./game/nerd-stats";
 import { savedVolume } from "./game/settings-dialog";
 import type { PreparedGame } from "./game/start-menu";
-import { PREPARE_BUDGET, afterPaint, nextPrepareStep } from "./game/task-yield";
+import { PREPARE_BUDGET, afterPaint, nextPrepareStep, stepBetweenTasks } from "./game/task-yield";
 import { bakeAhead, startTextureBake } from "./game/texture-bake";
 import { TouchModeController } from "./game/touch-mode";
 import { MENU_READY_STATUS, UI } from "./game/ui";
@@ -570,6 +570,9 @@ export async function prepareGame(
   requestAnimationFrame(() => setTimeout(audio, 0));
   // The first arena prepares here, so the menu reports its shader progress.
   await prepareArena(choices, onStage);
+  // What the arena left for later (the wrecks of the vehicle library) builds while
+  // the player chooses, after the ready menu.
+  void stepBetweenTasks(() => game.prebuild_step());
   return {
     prepare: prepareArena,
     async start(options, hideMenu) {

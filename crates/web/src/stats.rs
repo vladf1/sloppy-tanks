@@ -58,6 +58,7 @@ pub fn presentation_stats(view: &Presentation, times: &FrameTimes) -> Map<String
             "mines": counts.mines,
             "pickupEffects": counts.pickup_effects,
             "branches": counts.branches,
+            "libraryPending": counts.library_pending,
         }),
     );
     stats.insert("frameMs".into(), times.frame_ms.into());
