@@ -67,6 +67,7 @@ use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Blending, Node, Side, TextureRef, TextureSource};
 
+use crate::atmosphere_map::cloud_tile_offset;
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
 use crate::color::{hex_to_linear, hex_to_linear_scaled};
 use crate::draw_list::{
@@ -388,6 +389,7 @@ struct FrameUniform {
     sun_heading: [f32; 4],
     bounce: [f32; 4],
     rim: [f32; 4],
+    cloud_tiles: [f32; 4],
 }
 
 /// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade and the
@@ -2192,8 +2194,11 @@ impl Renderer {
         let bounce_strength = if self.debug_off.ground { 0.0 } else { a.ground.bounce };
         let bounce = ground / luminance(ground).max(1e-4)
             * (bounce_strength * sun_level * std::f32::consts::FRAC_1_PI);
+        let slant = Vec2::new(sun.x, sun.z) / sun.y.max(0.2);
+        let [drift_x, drift_z] = cloud_tile_offset(self.time);
         FrameUniform {
             sun_heading: [heading.x, heading.y, 0.0, 0.0],
+            cloud_tiles: [slant.x, slant.y, drift_x, drift_z],
             bounce: rgb4(bounce.into(), 0.0),
             rim: rgb4(rim.into(), 0.0),
             sky_rays: sky_rays.inverse().to_cols_array(),

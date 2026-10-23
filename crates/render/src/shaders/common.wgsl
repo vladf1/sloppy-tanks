@@ -100,6 +100,9 @@ struct Frame {
     sun_heading: vec4f,
     bounce: vec4f,
     rim: vec4f,
+    // The cloud shadows' tiles (`cloud_shadow`): xy the ground's shift per metre of
+    // height along the sun's ray, zw the drift's offset in tiles (wrapped).
+    cloud_tiles: vec4f,
 }
 
 // Per drawn instance: world transform, tint (rgb multiplies the base color, a is
@@ -625,10 +628,9 @@ fn mirrored_haze(sample: vec4f, surface: vec3f, height: f32) -> vec3f {
     return sample.rgb + haze_inscatter(normalize(surface - mirrored), haze_weights_of(sample.a));
 }
 
-// Ground-scale cloud shadow features per metre (cells of the noise's broad octave),
-// and their drift in metres per second.
+// Ground-scale cloud shadow features per metre (cells of the noise's broad octave);
+// they drift with the wind (`atmosphere_map::cloud_tile_offset`).
 const CLOUD_SHADOW_SCALE: f32 = 0.018;
-const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
 // Where the shadow noise starts and completes a cloud, above the coverage.
 const CLOUD_SHADOW_LOW: f32 = 1.0;
 const CLOUD_SHADOW_HIGH: f32 = 1.3;
@@ -642,11 +644,11 @@ fn cloud_shadow(world: vec3f) -> f32 {
     if strength <= 0.0 {
         return 1.0;
     }
-    let sun = frame.sun_direction.xyz;
-    let ground = world.xz - sun.xz / max(sun.y, 0.2) * world.y;
+    // The ground beneath along the sun's ray, so tall things and the ground agree.
+    let ground = world.xz - frame.cloud_tiles.xy * world.y;
     // Tiles of the atmosphere map's cloud noise, wrapped into its first 255 texels
     // (the last repeats the first, so the filter crosses the seam).
-    let tiles = (ground + CLOUD_SHADOW_DRIFT * frame.camera_position.w) * (CLOUD_SHADOW_SCALE / CLOUD_PERIOD);
+    let tiles = ground * (CLOUD_SHADOW_SCALE / CLOUD_PERIOD) + frame.cloud_tiles.zw;
     let uv = (fract(tiles) * (ATMOSPHERE_MAP_SIZE - 1.0) + 0.5) / ATMOSPHERE_MAP_SIZE;
     let n = textureSampleLevel(atmosphere_map, lut_sampler, uv, 0.0).a;
     let coverage = frame.cloud_lit.w;

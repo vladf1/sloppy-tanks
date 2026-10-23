@@ -27,6 +27,17 @@ const RELIEF_FADE: [f32; 2] = [172.0, 188.0];
 pub const CLOUD_PERIOD: f32 = 16.0;
 /// The finer cloud octave's frequency over the broad one's: 34 cells per tile.
 pub const CLOUD_DETAIL: f32 = 2.125;
+/// Cloud shadow features per metre on the ground (cells of the broad octave), and
+/// their drift with the wind in metres per second.
+pub const CLOUD_SHADOW_SCALE: f32 = 0.018;
+const CLOUD_SHADOW_DRIFT: [f64; 2] = [1.1, 0.45];
+
+/// How far the cloud shadows have drifted after `time` seconds, in tiles of the map's
+/// cloud noise, wrapped to 0..1 (in double precision: the clock grows all session).
+pub fn cloud_tile_offset(time: f32) -> [f32; 2] {
+    let tiles = f64::from(CLOUD_SHADOW_SCALE) / f64::from(CLOUD_PERIOD) * f64::from(time);
+    CLOUD_SHADOW_DRIFT.map(|drift| (drift * tiles).rem_euclid(1.0) as f32)
+}
 
 // The ground's macro variation: broad swells and finer hummocks per metre, and
 // their heights in metres before the theme's relief scales them.
@@ -150,6 +161,7 @@ mod tests {
             ("RELIEF_HALF_EXTENT", RELIEF_HALF_EXTENT),
             ("RELIEF_SLOPE_RANGE", RELIEF_SLOPE_RANGE),
             ("CLOUD_PERIOD", CLOUD_PERIOD),
+            ("CLOUD_SHADOW_SCALE", CLOUD_SHADOW_SCALE),
         ] {
             let declaration = format!("const {name}: f32 = {value:?};");
             assert!(COMMON_WGSL.contains(&declaration), "{declaration}");
