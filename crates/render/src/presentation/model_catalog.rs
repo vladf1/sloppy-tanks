@@ -137,7 +137,8 @@ fn tree_parts(root: &Node) -> TreeParts {
 /// A themed scenery split for drawing.
 pub struct SceneryModel {
     /// The live core scenery: [`Scenery::update`] animates it each frame and the
-    /// village refills its chimney smoke with `set_covers` on reset.
+    /// village refills its chimney smoke with `set_covers` on reset. Its drawables
+    /// are released ([`Scenery::release_drawables`]): `root` and `movers` draw it.
     pub scenery: Scenery,
     /// Everything that never moves, baked into static batches (world transforms
     /// as authored).
@@ -305,6 +306,9 @@ pub fn scenery(theme: Theme) -> Option<SceneryModel> {
     });
     let smoke = find_path(source, &|node| node.name == CHIMNEY_SMOKE_NODE)
         .map(|(path, _)| take_at(&mut root, &path));
+    // `root` and the movers now hold every mesh until they are registered, after
+    // which only the GPU keeps them: the retained scenery animates transforms alone.
+    scenery.release_drawables();
     Some(SceneryModel {
         scenery,
         root,
@@ -452,13 +456,39 @@ mod tests {
         let floor = f64::from(super::super::theme::SHADOW_RECEIVER_FLOOR);
         for theme in [Theme::Village, Theme::Harbor, Theme::Quarry] {
             let mut model = scenery(theme).expect("scenery");
-            // Ships bob and crane loads sway: sample the animation.
+            let still = lowest_receiver(&model.root, DMat4::IDENTITY);
+            assert!(still > floor, "{theme:?}: a receiver at {still:.2} m");
+            // Ships bob and crane loads sway: sample the animation of what moves.
             for step in 0..40 {
                 model.scenery.update(f64::from(step) * 0.7);
-                let lowest = lowest_receiver(model.scenery.root(), DMat4::IDENTITY);
-                assert!(lowest > floor, "{theme:?}: a receiver at {lowest:.2} m");
+                for mover in &model.movers {
+                    let (world, _) = mover.pose(&model.scenery);
+                    let lowest = lowest_receiver(&mover.root, world);
+                    assert!(lowest > floor, "{theme:?}: a receiver at {lowest:.2} m");
+                }
             }
         }
+    }
+
+    /// The retained scenery only animates transforms and refills the chimney smoke,
+    /// so it keeps no other drawable: `root` and the movers carry the meshes.
+    #[test]
+    fn retained_scenery_keeps_only_the_chimney_smoke() {
+        fn drawables(node: &Node) -> usize {
+            if node.name == CHIMNEY_SMOKE_NODE {
+                return 0;
+            }
+            usize::from(node.drawable.is_some())
+                + node.children.iter().map(drawables).sum::<usize>()
+        }
+        for theme in [Theme::Village, Theme::Harbor, Theme::Quarry] {
+            let model = scenery(theme).expect("scenery");
+            assert_eq!(drawables(model.scenery.root()), 0, "{theme:?}");
+            assert!(drawables(&model.root) > 0, "{theme:?}");
+        }
+        let village = scenery(Theme::Village).expect("village");
+        let smoke = village.scenery.root().find(CHIMNEY_SMOKE_NODE);
+        assert!(smoke.is_some_and(|smoke| smoke.drawable.is_some()));
     }
 
     #[test]

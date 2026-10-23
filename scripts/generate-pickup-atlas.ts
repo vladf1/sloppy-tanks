@@ -112,7 +112,7 @@ const DUST: Rgb = [148, 132, 106];
 const GRIME: Rgb = [52, 46, 36];
 /** Rust weeping from seams and chips. */
 const RUST: Rgb = [112, 66, 38];
-const ENCODE_QUALITY = "88";
+const ENCODE_QUALITY = "80";
 
 const hex = (color: number): Rgb => [(color >> 16) & 255, (color >> 8) & 255, color & 255];
 const css = ([r, g, b]: Rgb, alpha = 1) =>
