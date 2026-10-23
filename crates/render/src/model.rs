@@ -47,12 +47,19 @@ pub struct MeshData {
 }
 
 impl MeshData {
-    fn finish(mut self) -> Self {
+    pub(crate) fn finish(mut self) -> Self {
         self.bounds = Sphere::from_points(self.vertices.iter().map(|v| Vec3::from(v.position)));
         self
     }
 
-    fn append(&mut self, mesh: &Mesh, transform: Option<&Mat4>, paint: Option<[f32; 3]>) {
+    /// Append `mesh`'s vertices in the upload layout, moved by `transform` and painted
+    /// `paint` when given, with its indices rebased.
+    pub(crate) fn append(
+        &mut self,
+        mesh: &Mesh,
+        transform: Option<&Mat4>,
+        paint: Option<[f32; 3]>,
+    ) {
         let base = self.vertices.len() as u32;
         let count = mesh.positions.len();
         self.vertices.reserve(count);
@@ -305,9 +312,6 @@ struct Builder<'a, 'b> {
     single: Vec<(usize, Pending<'a>)>,
     /// Merge cell edge in metres; 0 merges each material into one draw.
     cell_size: f32,
-    /// Upload even a lone part's mesh as the model's own, so no CPU copy outlives the
-    /// upload (a shared mesh keeps its source while its GPU copy lives).
-    own_meshes: bool,
     /// A combined model's fixed joints (by node) and their rest in the model's
     /// space; empty for other models.
     fixed: Vec<Option<DMat4>>,
@@ -542,19 +546,8 @@ impl<'a> Builder<'a, '_> {
         let groups = std::mem::take(&mut self.groups.order);
         for (key, members) in groups {
             if members.len() == 1 {
-                // A lone part keeps its shared mesh and exact material, or uploads the
-                // same vertices as the model's own.
-                let pending = &members[0];
-                let part = if self.own_meshes {
-                    let mut data = MeshData::default();
-                    data.append(&pending.drawable.mesh, None, None);
-                    self.model.meshes.push(data.finish());
-                    let mesh = PartMesh::Owned(self.model.meshes.len() - 1);
-                    let material = self.interner.intern(&pending.drawable.material);
-                    self.part(key.node, pending, mesh, material)
-                } else {
-                    self.shared_part(key.node, pending)
-                };
+                // A lone part keeps its shared mesh and exact material.
+                let part = self.shared_part(key.node, &members[0]);
                 self.model.parts.push(part);
                 continue;
             }
@@ -600,14 +593,7 @@ impl<'a> Builder<'a, '_> {
 /// Prepare a movable model. The root's own transform is ignored: an instance's
 /// world matrix places the root, like setting the Three group's position.
 pub fn prepare_model(root: &Node, interner: &mut MaterialInterner) -> PreparedModel {
-    prepare_joints(root, interner, false, false)
-}
-
-/// [`prepare_model`] with every mesh the model's own: for a one-off merge that no
-/// other model shares, whose CPU copy need not stay in the Wasm heap (which never
-/// shrinks) once it is uploaded.
-pub fn prepare_owned_model(root: &Node, interner: &mut MaterialInterner) -> PreparedModel {
-    prepare_joints(root, interner, false, true)
+    prepare_joints(root, interner, false)
 }
 
 /// Prepare a model whose named children of the root are fixed: they only ever show
@@ -617,22 +603,16 @@ pub fn prepare_owned_model(root: &Node, interner: &mut MaterialInterner) -> Prep
 /// draws per material instead of one per cover and material. Named joints below
 /// them (a tree's crown and boughs) still move as in any model.
 pub fn prepare_combined(root: &Node, interner: &mut MaterialInterner) -> PreparedModel {
-    prepare_joints(root, interner, true, false)
+    prepare_joints(root, interner, true)
 }
 
-fn prepare_joints(
-    root: &Node,
-    interner: &mut MaterialInterner,
-    fixed: bool,
-    own_meshes: bool,
-) -> PreparedModel {
+fn prepare_joints(root: &Node, interner: &mut MaterialInterner, fixed: bool) -> PreparedModel {
     let mut builder = Builder {
         interner,
         model: PreparedModel::default(),
         groups: Groups::new(),
         single: Vec::new(),
         cell_size: 0.0,
-        own_meshes,
         fixed: vec![None],
         across: Groups::new(),
     };
@@ -681,6 +661,51 @@ fn prepare_joints(
     builder.finish()
 }
 
+/// One part of a model merged by its caller straight into the upload layout: a
+/// material and the vertices it draws, already where the model's root has them.
+pub struct MergedPart {
+    pub material: Arc<Material>,
+    pub data: MeshData,
+    pub cast_shadow: bool,
+}
+
+/// A one-joint model of parts merged by the caller ([`MergedPart`]), each the
+/// model's own mesh: it skips building a scene graph, batching it and converting
+/// it again, each a full copy of the vertices.
+pub fn prepare_merged(parts: Vec<MergedPart>, interner: &mut MaterialInterner) -> PreparedModel {
+    let mut model = PreparedModel::default();
+    model.nodes.push(ModelNode {
+        name: String::new(),
+        parent: None,
+        rest: Mat4::IDENTITY,
+        visible: true,
+    });
+    for MergedPart {
+        material,
+        data,
+        cast_shadow,
+    } in parts
+    {
+        if data.vertices.is_empty() {
+            continue;
+        }
+        model.meshes.push(data.finish());
+        model.parts.push(PreparedPart {
+            node: 0,
+            local: Mat4::IDENTITY,
+            mesh: PartMesh::Owned(model.meshes.len() - 1),
+            material: interner.intern(&material),
+            cast_shadow,
+            receive_shadow: true,
+            render_order: 0,
+            frustum_culled: true,
+            instances: None,
+            segments: None,
+        });
+    }
+    model
+}
+
 /// Static scenery's merge cell edge in metres.
 const SCENERY_CELL_SIZE: f32 = 60.0;
 /// A scenery mesh repeated at least this often draws instanced instead of merged.
@@ -714,7 +739,6 @@ pub fn prepare_scenery(root: &Node, interner: &mut MaterialInterner) -> Prepared
         groups: Groups::new(),
         single: Vec::new(),
         cell_size: SCENERY_CELL_SIZE,
-        own_meshes: false,
         fixed: Vec::new(),
         across: Groups::new(),
     };

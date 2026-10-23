@@ -76,8 +76,8 @@ use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::MaterialInterner;
 use crate::mesh_pages::MeshRange;
 use crate::model::{
-    InstanceData, ModelNode, PartMesh, PreparedModel, Segment, prepare_combined, prepare_model,
-    prepare_owned_model, prepare_scenery,
+    InstanceData, MergedPart, ModelNode, PartMesh, PreparedModel, Segment, prepare_combined,
+    prepare_merged, prepare_model, prepare_scenery,
 };
 use crate::presentation::theme::SHADOW_DEPTH;
 use crate::presentation::theme::{Grade, Tone};
@@ -1481,11 +1481,11 @@ impl Renderer {
         self.register(prepared, lifetime, false)
     }
 
-    /// [`add_model`](Self::add_model) for a one-off merge nothing else draws (a
-    /// settled pile of debris): every mesh uploads as the model's own, so once the
-    /// caller drops `root` no CPU copy stays in the Wasm heap.
-    pub fn add_owned_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
-        let prepared = prepare_owned_model(root, &mut self.interner);
+    /// A one-off model the caller merged into the upload layout (a settled pile of
+    /// debris, `model::prepare_merged`): each part its own mesh, gone from the Wasm
+    /// heap once uploaded.
+    pub fn add_merged_model(&mut self, parts: Vec<MergedPart>, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_merged(parts, &mut self.interner);
         self.register(prepared, lifetime, false)
     }
 

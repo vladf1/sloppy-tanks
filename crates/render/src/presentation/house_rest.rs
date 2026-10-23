@@ -20,9 +20,12 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
-use glam::{DQuat, DVec3, Quat, Vec3};
-use sloppy_core::models::batch;
+use glam::{Mat4, Quat, Vec3};
+use sloppy_core::geometry::math::hex_to_linear;
+use sloppy_core::models::{is_paintable, vertex_material};
 use sloppy_core::scene::Node;
+
+use crate::model::{MergedPart, MeshData};
 
 /// How much of its height a pile keeps once pressed into its lasting remains, and
 /// the least height a pressed piece stands above the ground (m).
@@ -73,7 +76,7 @@ struct Chunk<H> {
 /// handle back with [`SettledShards::built`]).
 pub struct Plan<H> {
     pub freed: Vec<H>,
-    pub build: Option<(u64, Node)>,
+    pub build: Option<(u64, Vec<MergedPart>)>,
 }
 
 /// A collapsed cottage's lasting remains: the shards to press, a chunk a frame, and
@@ -236,12 +239,13 @@ impl<H> SettledShards<H> {
                 let pose = shard.pose.expect("a resting shard has a pose");
                 shard.baked = Some((id, pose));
             }
-            let node = merged_node(
+            let parts = merged(
                 members.iter().map(|id| {
                     let shard = &self.shards[id];
                     (&shard.node, shard.pose.expect("posed"))
                 }),
                 true,
+                false,
             );
             self.chunks.insert(
                 id,
@@ -250,7 +254,7 @@ impl<H> SettledShards<H> {
                     handle: None,
                 },
             );
-            (id, node)
+            (id, parts)
         });
         Plan { freed, build }
     }
@@ -264,7 +268,7 @@ impl<H> SettledShards<H> {
     /// The next chunk of remains to draw, one a frame: once a cottage's pile has begun
     /// to sink, each shard that ever rested, pressed flat at the pose it rested at.
     /// Hand each one's handle back with [`SettledShards::remains_built`].
-    pub fn remains(&mut self) -> Option<(u32, Node)> {
+    pub fn remains(&mut self) -> Option<(u32, Vec<MergedPart>)> {
         let sinking: HashSet<u32> = self
             .shards
             .values()
@@ -305,8 +309,10 @@ impl<H> SettledShards<H> {
         let remains = self.remains.get_mut(&house).expect("listed");
         let take = remains.pending.len().min(CHUNK_SHARDS);
         let chunk: Vec<(Node, Pose)> = remains.pending.drain(..take).collect();
-        let node = merged_node(chunk.iter().map(|(node, pose)| (node, *pose)), false);
-        Some((house, pressed(&node)))
+        Some((
+            house,
+            merged(chunk.iter().map(|(node, pose)| (node, *pose)), false, true),
+        ))
     }
 
     pub fn remains_built(&mut self, house: u32, handle: H) {
@@ -342,91 +348,75 @@ impl<H> SettledShards<H> {
     }
 }
 
-/// A merged pile pressed toward the ground: every part's transform baked into its
-/// vertices, heights scaled down and normals tilted to match, no shadow.
-fn pressed(node: &Node) -> Node {
-    let mut root = Node::group("house-remains");
-    press(node, DVec3::ZERO, DQuat::IDENTITY, DVec3::ONE, &mut root);
-    root
-}
-
-fn press(node: &Node, position: DVec3, rotation: DQuat, scale: DVec3, root: &mut Node) {
-    let position = position + rotation * (scale * node.position);
-    let rotation = rotation * node.rotation;
-    let scale = scale * node.scale;
-    if let Some(drawable) = node.drawable.as_ref().filter(|d| d.instances.is_none()) {
-        let mut mesh = (*drawable.mesh).clone();
-        let place = |p: [f32; 3]| {
-            let v =
-                position + rotation * (scale * DVec3::new(p[0].into(), p[1].into(), p[2].into()));
-            [
-                v.x as f32,
-                (v.y as f32 * REMAINS_SQUASH).max(REMAINS_LIFT),
-                v.z as f32,
-            ]
-        };
-        for p in &mut mesh.positions {
-            *p = place(*p);
-        }
-        for n in &mut mesh.normals {
-            let v = rotation * (DVec3::new(n[0].into(), n[1].into(), n[2].into()) / scale);
-            let v = DVec3::new(v.x, v.y / f64::from(REMAINS_SQUASH), v.z).normalize_or(DVec3::Y);
-            *n = [v.x as f32, v.y as f32, v.z as f32];
-        }
-        let mut drawable = drawable.clone();
-        drawable.mesh = Arc::new(mesh);
-        drawable.cast_shadow = false;
-        root.children.push(Node {
-            drawable: Some(drawable),
-            ..Node::default()
-        });
-    }
-    for child in &node.children {
-        press(child, position, rotation, scale, root);
-    }
-}
-
-/// Shards' meshes baked at their poses into one batched model. A chunk of the pile
-/// shades the ground and itself as one caster (`casts`): one shadow draw grounds its
-/// shards, walls included.
-fn merged_node<'a>(shards: impl Iterator<Item = (&'a Node, Pose)>, casts: bool) -> Node {
-    let mut root = Node::group("house-rest");
+/// Shards' meshes baked at their poses straight into the upload layout, one part per
+/// draw material (as batching them would): no scene graph, batched copy or second
+/// conversion, each a full copy of a quarter of a million vertices for a whole pile,
+/// which the Wasm heap keeps for good once it has grown to hold them. A chunk of the
+/// pile shades the ground and itself as one caster (`casts`): one shadow draw grounds
+/// its shards, walls included. Remains (`pressed`) lie squashed toward the ground,
+/// heights scaled down and normals tilted to match.
+fn merged<'a>(
+    shards: impl Iterator<Item = (&'a Node, Pose)>,
+    casts: bool,
+    pressed: bool,
+) -> Vec<MergedPart> {
+    let mut parts = Vec::new();
+    let mut slots = HashMap::new();
     for (node, (position, rotation)) in shards {
-        let position = DVec3::new(
-            f64::from(position.x),
-            f64::from(position.y),
-            f64::from(position.z),
-        );
-        let rotation = DQuat::from_xyzw(
-            f64::from(rotation.x),
-            f64::from(rotation.y),
-            f64::from(rotation.z),
-            f64::from(rotation.w),
-        );
-        collect(node, position, rotation, casts, &mut root);
+        let pose = Mat4::from_rotation_translation(rotation, position);
+        gather(node, pose, casts, pressed, &mut parts, &mut slots);
     }
-    batch(&mut root);
-    root
+    parts
 }
 
-/// The drawables under `node` (whose own parts carry no further transforms past
-/// one level) carried into the pose.
-fn collect(node: &Node, position: DVec3, rotation: DQuat, casts: bool, root: &mut Node) {
-    let local_position = position + rotation * node.position;
-    let local_rotation = rotation * node.rotation;
-    if let Some(drawable) = &node.drawable {
-        let mut drawable = drawable.clone();
-        drawable.cast_shadow = casts;
-        root.children.push(Node {
-            drawable: Some(drawable),
-            position: local_position,
-            rotation: local_rotation,
-            scale: node.scale,
-            ..Node::default()
-        });
+fn gather(
+    node: &Node,
+    parent: Mat4,
+    casts: bool,
+    pressed: bool,
+    parts: &mut Vec<MergedPart>,
+    slots: &mut HashMap<usize, usize>,
+) {
+    let world = parent * node.local_matrix().as_mat4();
+    if let Some(drawable) = node.drawable.as_ref().filter(|d| d.instances.is_none()) {
+        // Opaque standard paint goes into vertex colours under one shared material,
+        // as `batch` paints it.
+        let source = &drawable.material;
+        let (material, paint) = if is_paintable(source) {
+            let [r, g, b] = hex_to_linear(source.color.0);
+            (
+                vertex_material(source),
+                Some([r as f32, g as f32, b as f32]),
+            )
+        } else {
+            (source.clone(), None)
+        };
+        let slot = *slots
+            .entry(Arc::as_ptr(&material) as usize)
+            .or_insert_with(|| {
+                parts.push(MergedPart {
+                    material,
+                    data: MeshData::default(),
+                    cast_shadow: casts,
+                });
+                parts.len() - 1
+            });
+        let data = &mut parts[slot].data;
+        let start = data.vertices.len();
+        data.append(&drawable.mesh, Some(&world), paint);
+        if pressed {
+            for vertex in &mut data.vertices[start..] {
+                let y = &mut vertex.position[1];
+                *y = (*y * REMAINS_SQUASH).max(REMAINS_LIFT);
+                let [x, y, z] = vertex.normal;
+                vertex.normal = Vec3::new(x, y / REMAINS_SQUASH, z)
+                    .normalize_or(Vec3::Y)
+                    .into();
+            }
+        }
     }
     for child in &node.children {
-        collect(child, local_position, local_rotation, casts, root);
+        gather(child, world, casts, pressed, parts, slots);
     }
 }
 
@@ -436,6 +426,22 @@ mod tests {
 
     fn pose(x: f32) -> Pose {
         (Vec3::new(x, 0.0, 0.0), Quat::IDENTITY)
+    }
+
+    /// A shard of one painted triangle two metres up.
+    fn shard() -> Node {
+        let mesh = sloppy_core::geometry::Mesh {
+            positions: vec![[0.0, 2.0, 0.0], [1.0, 2.0, 0.0], [0.0, 3.0, 0.0]],
+            normals: vec![[0.0, 0.0, 1.0]; 3],
+            uvs: vec![[0.0; 2]; 3],
+            ..Default::default()
+        };
+        let mut root = Node::default();
+        root.children.push(Node::mesh(
+            Arc::new(mesh),
+            Arc::new(sloppy_core::scene::Material::default()),
+        ));
+        root
     }
 
     /// One frame as presentation runs it: every shard observed at `at(id)`, chunks
@@ -454,7 +460,13 @@ mod tests {
         }
         let plan = settled.plan(*now);
         let merged = plan.build.is_some();
-        if let Some((chunk, _)) = plan.build {
+        if let Some((chunk, parts)) = plan.build {
+            // One draw material: each shard's triangle, carried to where it rests.
+            assert_eq!(parts.len(), 1);
+            assert!(parts[0].cast_shadow);
+            let vertices = &parts[0].data.vertices;
+            assert!(vertices.len() % 3 == 0 && vertices.len() <= 3 * CHUNK_SHARDS);
+            assert!(vertices.iter().all(|v| v.position[1] >= 2.0));
             settled.built(chunk, *next);
             *next += 1;
         }
@@ -465,7 +477,7 @@ mod tests {
     fn resting_shards_merge_a_chunk_a_frame_and_a_moving_one_breaks_only_its_own() {
         let mut settled: SettledShards<u32> = SettledShards::default();
         for id in 1..=10 {
-            settled.track(id, 9, Node::group(""), 0.0);
+            settled.track(id, 9, shard(), 0.0);
         }
         let (mut now, mut next) = (0.0, 0);
         let rest = |id: u32| id as f32;
@@ -494,9 +506,13 @@ mod tests {
         freed.sort_unstable();
         assert_eq!(freed, vec![1, 2, 3]);
         let mut remains = 0;
-        while let Some((house, node)) = settled.remains() {
+        while let Some((house, parts)) = settled.remains() {
             assert_eq!(house, 9);
-            assert_eq!(node.name, "house-remains");
+            // Pressed flat and casting no shadow.
+            assert!(!parts[0].cast_shadow);
+            for vertex in &parts[0].data.vertices {
+                assert!(vertex.position[1] <= 3.0 * REMAINS_SQUASH + 1e-5);
+            }
             settled.remains_built(house, 30 + remains);
             remains += 1;
         }

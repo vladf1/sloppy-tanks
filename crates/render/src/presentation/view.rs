@@ -3208,15 +3208,15 @@ impl Presentation {
 
     /// Bake resting cottage shards into merged chunks, one a frame, and hide their
     /// own views; show again the ones whose chunk broke up. The merges are one-off
-    /// models, uploaded without keeping a CPU copy.
+    /// models, merged straight into the upload layout and not kept once uploaded.
     fn settle_houses(&mut self) {
         let plan = self.settled.plan(self.time);
         for (model, instance) in plan.freed {
             self.renderer.remove_instance(instance);
             self.renderer.remove_model(model);
         }
-        if let Some((chunk, node)) = plan.build {
-            let model = self.renderer.add_owned_model(&node, Lifetime::Round);
+        if let Some((chunk, parts)) = plan.build {
+            let model = self.renderer.add_merged_model(parts, Lifetime::Round);
             if let Some(instance) =
                 self.renderer
                     .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
@@ -3224,8 +3224,8 @@ impl Presentation {
                 self.settled.built(chunk, (model, instance));
             }
         }
-        if let Some((house, node)) = self.settled.remains() {
-            let model = self.renderer.add_owned_model(&node, Lifetime::Round);
+        if let Some((house, parts)) = self.settled.remains() {
+            let model = self.renderer.add_merged_model(parts, Lifetime::Round);
             if let Some(instance) =
                 self.renderer
                     .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
