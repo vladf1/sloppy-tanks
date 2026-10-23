@@ -26,6 +26,7 @@ use super::{
     BLOOM_FIRST_SHIFT, BLOOM_LEVELS, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
     OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
+use crate::atmosphere_map::{ATMOSPHERE_MAP_SIZE, atmosphere_map};
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::noise_lattice::{NOISE_LATTICE_SIZE, noise_lattice};
 use crate::target_memory::target_bytes;
@@ -333,8 +334,10 @@ pub struct Frame {
     /// The cached fixed-scenery shadow, only while frames copy it.
     static_shadow: Option<DepthTarget>,
     lut: glow::Texture,
-    /// The noise lattice the frame's shaders fetch (`noise_lattice.rs`).
+    /// The noise lattice the frame's shaders fetch (`noise_lattice.rs`) and the
+    /// atmosphere map they sample (`atmosphere_map.rs`).
     noise: glow::Texture,
+    atmosphere_map: glow::Texture,
     shadow_sampler: glow::Sampler,
     /// Linear clamp-to-edge: the DFG LUT and the water's reflection.
     linear_sampler: glow::Sampler,
@@ -369,20 +372,26 @@ impl Frame {
                 glow::PixelUnpackData::Slice(Some(bytemuck::cast_slice(&lut::DFG_LUT))),
             );
         }
+        let upload = |texture, size: u32, data: &[u8]| {
+            gpu.bind_upload_texture(texture);
+            unsafe {
+                gl.tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    size as i32,
+                    size as i32,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(Some(data)),
+                );
+            }
+        };
         let noise = texel_storage(gpu, glow::RGBA8, NOISE_LATTICE_SIZE, NOISE_LATTICE_SIZE);
-        unsafe {
-            gl.tex_sub_image_2d(
-                glow::TEXTURE_2D,
-                0,
-                0,
-                0,
-                NOISE_LATTICE_SIZE as i32,
-                NOISE_LATTICE_SIZE as i32,
-                glow::RGBA,
-                glow::UNSIGNED_BYTE,
-                glow::PixelUnpackData::Slice(Some(&noise_lattice())),
-            );
-        }
+        upload(noise, NOISE_LATTICE_SIZE, &noise_lattice());
+        let atmosphere = storage(gpu, glow::RGBA8, 1, ATMOSPHERE_MAP_SIZE, ATMOSPHERE_MAP_SIZE);
+        upload(atmosphere, ATMOSPHERE_MAP_SIZE, &atmosphere_map());
         let uniform = |bytes| gpu.create_buffer(glow::UNIFORM_BUFFER, bytes, glow::DYNAMIC_DRAW);
         Self {
             gpu: gpu.clone(),
@@ -394,6 +403,7 @@ impl Frame {
             static_shadow: None,
             lut,
             noise,
+            atmosphere_map: atmosphere,
             shadow_sampler: linear_sampler(gpu, true),
             linear_sampler: linear_sampler(gpu, false),
             view_uniforms: [0, 1, 2].map(|_| uniform(size_of::<FrameUniform>() as u64)),
@@ -606,6 +616,8 @@ impl Frame {
         gpu.bind_sampler(unit::DFG_LUT, Some(self.linear_sampler));
         gpu.bind_texture(unit::NOISE, self.noise);
         gpu.bind_sampler(unit::NOISE, None);
+        gpu.bind_texture(unit::ATMOSPHERE_MAP, self.atmosphere_map);
+        gpu.bind_sampler(unit::ATMOSPHERE_MAP, Some(self.linear_sampler));
         gpu.bind_texture(unit::SHADOW_MAP, self.shadow.texture);
         gpu.bind_sampler(unit::SHADOW_MAP, Some(self.shadow_sampler));
         gpu.bind_texture(unit::INSTANCES, self.instance_records.texture());
@@ -777,6 +789,7 @@ impl Drop for Frame {
         unsafe {
             gl.delete_texture(self.lut);
             gl.delete_texture(self.noise);
+            gl.delete_texture(self.atmosphere_map);
             gl.delete_buffer(self.occlusion_uniform);
             for sampler in [self.shadow_sampler, self.linear_sampler] {
                 gl.delete_sampler(sampler);

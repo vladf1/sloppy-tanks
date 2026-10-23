@@ -681,7 +681,9 @@ pub mod glsl {
         pub const OCCLUSION: u32 = 11;
         /// Group 0 binding 10: the noise lattice (`texelFetch`, no sampler).
         pub const NOISE: u32 = 12;
-        pub const COUNT: usize = 13;
+        /// Group 0 binding 11: the atmosphere map (linear clamp).
+        pub const ATMOSPHERE_MAP: u32 = 13;
+        pub const COUNT: usize = 14;
     }
 
     /// Uniform buffer binding points, fixed per `(group, binding)`.
@@ -706,6 +708,7 @@ pub mod glsl {
             (0, 6) => Some(unit::BLOOM),
             (0, 7) => Some(unit::OCCLUSION),
             (0, 10) => Some(unit::NOISE),
+            (0, 11) => Some(unit::ATMOSPHERE_MAP),
             (1, binding @ (1 | 3 | 5 | 7 | 9)) => Some(unit::MATERIAL + (binding - 1) / 2),
             _ => None,
         }

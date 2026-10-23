@@ -15,6 +15,7 @@ macro_rules! wgsl {
     };
 }
 
+pub mod atmosphere_map;
 pub mod camera;
 pub mod color;
 pub mod draw_list;

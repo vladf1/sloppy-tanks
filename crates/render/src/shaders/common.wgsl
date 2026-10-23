@@ -111,8 +111,9 @@ fn atmosphere_on() -> bool {
     return frame.sky_zenith.w > 0.5;
 }
 
-// Procedural detail a few pixels across (the ground's hummocks, the clouds' finest
-// octave), which the graphics tier may drop; WebGL's weaker devices always do.
+// Procedural detail a few pixels across (the sky clouds' finest octave, effects' fine
+// noise), which the graphics tier may drop; WebGL's weaker devices always do. The
+// ground's hummocks, baked into the atmosphere map, cost every tier the same tap.
 fn fine_detail() -> bool {
     return !LITE && frame.quality.y > 0.5;
 }
@@ -150,8 +151,7 @@ fn value_noise(p: vec2f) -> f32 {
 // The four hashes `lattice_corners` gives `cell`, fetched from the frame's noise
 // lattice (`noise_lattice.rs`): the same values, to 8 bits, within 128 cells of the
 // origin, repeating every 256 cells beyond. One texel read in place of the hashing,
-// for the noise every lit pixel evaluates (cloud shadows, the ground's relief) and the
-// sky's clouds; the output pass, which has no lattice, never reaches it.
+// for the sky's clouds; the output pass, which has no lattice, never reaches it.
 fn lattice_corners_fetched(cell: vec2i) -> vec4f {
     return textureLoad(noise_lattice, (cell + vec2i(128)) & vec2i(255), 0);
 }
@@ -164,29 +164,16 @@ fn lattice_noise(p: vec2f) -> f32 {
     return mix(mix(h.x, h.y, u.x), mix(h.z, h.w, u.x), u.y);
 }
 
-// Value noise from the frame's noise lattice and its gradient per unit of `p`, from
-// the same four corners: x the value, yz its slope.
-fn lattice_noise_gradient(p: vec2f) -> vec3f {
-    let cell = vec2i(floor(p));
-    let f = fract(p);
-    let u = f * f * (3.0 - 2.0 * f);
-    let du = 6.0 * f * (1.0 - f);
-    let h = lattice_corners_fetched(cell);
-    let a = h.x;
-    let b = h.y;
-    let c = h.z;
-    let d = h.w;
-    let k = a - b - c + d;
-    let value = a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y;
-    return vec3f(value, du * vec2f(b - a + k * u.y, c - a + k * u.x));
-}
-
-// The ground's macro variation: broad swells and finer hummocks per metre, and
-// their heights in metres before `ground.x` scales them.
-const SWELL_SCALE: f32 = 0.045;
-const SWELL_HEIGHT: f32 = 1.3;
-const HUMMOCK_SCALE: f32 = 0.16;
-const HUMMOCK_HEIGHT: f32 = 0.22;
+// The atmosphere map (`atmosphere_map.rs`): its texels per side, the half side in
+// metres of the square its relief covers, the range its slopes are stored in, and the
+// broad cloud octave's cells in one tile of its cloud noise.
+const ATMOSPHERE_MAP_SIZE: f32 = 256.0;
+const RELIEF_HALF_EXTENT: f32 = 192.0;
+const RELIEF_SLOPE_RANGE: f32 = 0.3;
+const CLOUD_PERIOD: f32 = 16.0;
+// Distances from the arena centre, metres along either axis, over which the relief
+// fades out before the map's edge.
+const RELIEF_FADE: vec2f = vec2f(172.0, 188.0);
 
 struct GroundMacro {
     normal: vec3f,
@@ -199,11 +186,12 @@ struct GroundMacro {
 }
 
 // Large flat ground reads as one ironed sheet from the overhead camera. Rough
-// surfaces facing up take a gentle rolling relief, painted into their normal only
-// (collision, navigation and shadows keep the flat plane), and broad albedo patches
-// whose drier crests lighten and warm while hollows stay darker and richer, so a
-// field breaks into light and shade masses. Its weight is zero on walls, glossy
-// paint and steep faces, which skip the noise.
+// surfaces facing up take a gentle rolling relief of broad swells and finer hummocks
+// (baked into the atmosphere map), painted into their normal only (collision,
+// navigation and shadows keep the flat plane), and broad albedo patches whose drier
+// crests lighten and warm while hollows stay darker and richer, so a field breaks into
+// light and shade masses. Its weight is zero on walls, glossy paint and steep faces,
+// which skip the map.
 fn ground_macro(world: vec3f, normal: vec3f, roughness: f32) -> GroundMacro {
     var result: GroundMacro;
     result.normal = normal;
@@ -214,19 +202,16 @@ fn ground_macro(world: vec3f, normal: vec3f, roughness: f32) -> GroundMacro {
     if weight <= 0.0 || (frame.ground.x <= 0.0 && frame.ground.y <= 0.0) {
         return result;
     }
-    let swell = lattice_noise_gradient(world.xz * SWELL_SCALE + vec2f(13.7, -5.3));
-    // Without fine detail, the broad swells only.
-    var hummock = vec3f(0.5, 0.0, 0.0);
-    if fine_detail() {
-        hummock = lattice_noise_gradient(world.xz * HUMMOCK_SCALE + vec2f(-2.9, 8.1));
-    }
-    let slope = (swell.yz * (SWELL_SCALE * SWELL_HEIGHT) + hummock.yz * (HUMMOCK_SCALE * HUMMOCK_HEIGHT))
-        * (frame.ground.x * weight);
+    let uv = world.xz * (0.5 / RELIEF_HALF_EXTENT) + 0.5;
+    let relief = textureSampleLevel(atmosphere_map, lut_sampler, uv, 0.0);
+    let span = max(abs(world.x), abs(world.z));
+    let share = weight * (1.0 - smoothstep(RELIEF_FADE.x, RELIEF_FADE.y, span));
+    let slope = (relief.xy - 0.5) * (RELIEF_SLOPE_RANGE * frame.ground.x * share);
     result.normal = normalize(normal - vec3f(slope.x, 0.0, slope.y));
     // -1 in the hollows to 1 on the crests.
-    let height = (swell.x - 0.5) * 1.4 + (hummock.x - 0.5) * 0.6;
-    result.tone = clamp(height, -1.0, 1.0) * frame.ground.y * weight;
-    result.dry = clamp(height, 0.0, 1.0) * frame.ground.z * weight;
+    let height = relief.z * 2.0 - 1.0;
+    result.tone = height * frame.ground.y * share;
+    result.dry = max(height, 0.0) * frame.ground.z * share;
     return result;
 }
 
@@ -628,7 +613,8 @@ fn mirrored_haze(sample: vec4f, surface: vec3f, height: f32) -> vec3f {
     return sample.rgb + haze_inscatter(normalize(surface - mirrored), haze_weights_of(sample.a));
 }
 
-// Ground-scale cloud shadow features per metre, and their drift in metres per second.
+// Ground-scale cloud shadow features per metre (cells of the noise's broad octave),
+// and their drift in metres per second.
 const CLOUD_SHADOW_SCALE: f32 = 0.018;
 const CLOUD_SHADOW_DRIFT: vec2f = vec2f(1.1, 0.45);
 // Where the shadow noise starts and completes a cloud, above the coverage.
@@ -646,8 +632,11 @@ fn cloud_shadow(world: vec3f) -> f32 {
     }
     let sun = frame.sun_direction.xyz;
     let ground = world.xz - sun.xz / max(sun.y, 0.2) * world.y;
-    let p = (ground + CLOUD_SHADOW_DRIFT * frame.camera_position.w) * CLOUD_SHADOW_SCALE;
-    let n = lattice_noise(p) * 0.68 + lattice_noise(p * 2.13 + vec2f(17.3, -4.1)) * 0.32;
+    // Tiles of the atmosphere map's cloud noise, wrapped into its first 255 texels
+    // (the last repeats the first, so the filter crosses the seam).
+    let tiles = (ground + CLOUD_SHADOW_DRIFT * frame.camera_position.w) * (CLOUD_SHADOW_SCALE / CLOUD_PERIOD);
+    let uv = (fract(tiles) * (ATMOSPHERE_MAP_SIZE - 1.0) + 0.5) / ATMOSPHERE_MAP_SIZE;
+    let n = textureSampleLevel(atmosphere_map, lut_sampler, uv, 0.0).a;
     let coverage = frame.cloud_lit.w;
     // Broad patches: about the sky's own share of the ground lies under a cloud, so
     // the field reads in large light and shade masses rather than one flat sheet.
