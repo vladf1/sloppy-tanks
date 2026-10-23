@@ -423,6 +423,12 @@ impl NetGame {
         prepare_result(&status)
     }
 
+    /// Build one of the models preparation left for after the arena is ready (the
+    /// library's wrecks); false once none remain. The page calls it between tasks.
+    pub fn prebuild_step(&mut self) -> bool {
+        self.view.prebuild_step()
+    }
+
     /// A generated texture to bake off the main thread (`bake_texture(key)` in a
     /// worker), handed out once; `supply_texture` returns the pixels.
     pub fn claim_texture_bake(&mut self) -> Option<String> {

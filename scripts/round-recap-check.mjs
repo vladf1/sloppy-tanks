@@ -161,7 +161,7 @@ try {
     await page.locator(".choice-card:has(input[value='solo'])").innerText(),
     /endless enemies/,
   );
-  await page.locator('[data-kind="balanced"]').click();
+  await page.locator('.start [data-kind="balanced"]').click();
   await startRound(page);
   await page.waitForFunction(() => document.querySelector("#label0").textContent === "KILLS");
   assert.match(await page.locator("#time").innerText(), /10:00|9:59/);

@@ -39,7 +39,7 @@ try {
   await page.goto(gameUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(() => !!window.sloppy);
   await page.screenshot({ path: `${output}/start.png` });
-  await page.locator('[data-kind="balanced"]').click();
+  await page.locator('.start [data-kind="balanced"]').click();
   await startRound(page);
   const before = await page.evaluate(() => window.sloppy.snapshot());
   const pose = () =>

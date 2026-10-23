@@ -9,11 +9,11 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, HouseCoverBuild, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape, aged_wreck_material,
-    cover_damage_stage, crate_piece_model, create_arena_floor, create_spawn_pads, flags_model,
-    house_pieces, part, pickup_cube, pickup_signal, pickup_tile_offset, release_tank_models,
-    tank_model, timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage,
-    tree_foliage, tree_part, wreck_brightness, wreck_model,
+    FLAG_CLOTH_NODE, HouseCoverBuild, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape, cover_damage_stage,
+    crate_piece_model, create_arena_floor, create_spawn_pads, flags_model, house_pieces, part,
+    pickup_cube, pickup_signal, pickup_tile_offset, release_tank_models, tank_model,
+    timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage,
+    tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -55,6 +55,7 @@ use super::view_settings::{
     BAR_HEIGHT, CAMERA, CAMERA_FEEL, FEEDBACK, FIRST_PERSON, OVERHEAD_RETICLE_SCALE,
     PLAYER_BAR_HEIGHT, RETICLE_HEIGHT, TANK_FEEL,
 };
+use super::wreck_library::{SAMPLE_WRECK, age_materials, library_wrecks};
 use crate::camera::PerspectiveCamera;
 use crate::color::hex_to_linear;
 use crate::effects::leaves::Crown as LeafCrown;
@@ -171,14 +172,6 @@ const COVER_REBUILD_MS: f64 = 3.0;
 /// just below.
 const CUSTOM_FLOOR_Y: f64 = 0.008;
 const CUSTOM_OUTER_FLOOR_Y: f64 = -0.002;
-
-const WRECK_PARTS: [WreckPart; 5] = [
-    WreckPart::Intact,
-    WreckPart::Hull,
-    WreckPart::Turret,
-    WreckPart::TurretBarrel,
-    WreckPart::Barrel,
-];
 
 const DEBRIS_SHAPES: [FragmentShape; 10] = [
     FragmentShape::Armor,
@@ -300,6 +293,8 @@ struct Library {
     mines: HashMap<Team, MineModel>,
     debris: HashMap<FragmentShape, BoundedModel>,
     pickup_pad: Option<PadModels>,
+    /// Every wreck is built and the vehicles' source geometry released.
+    complete: bool,
 }
 
 /// Whether solid cover hides the line from `eye` to `target`: seen from the turret,
@@ -918,6 +913,8 @@ pub struct PresentationStats {
     pub mines: u32,
     pub pickup_effects: u32,
     pub branches: u32,
+    /// Library wrecks the page has yet to build ([`Presentation::prebuild_step`]).
+    pub library_pending: u32,
 }
 
 pub struct Presentation {
@@ -1165,6 +1162,9 @@ impl Presentation {
             mines: self.mines.len() as u32,
             pickup_effects: self.effects.systems.pickups.len() as u32,
             branches: self.branches.len() as u32,
+            library_pending: library_wrecks()
+                .filter(|wreck| !self.library.wrecks.contains_key(wreck))
+                .count() as u32,
         }
     }
 
@@ -1359,10 +1359,11 @@ impl Presentation {
 
     // -------------------------------------------------------------- prepare
 
-    /// Register one model per first-use look this round can show (every wreck
-    /// part, damaged cargo and timber stages, timber beams, mines, pickup glows,
-    /// debris pieces), so `prepare_step` compiles their pipelines before combat
-    /// instead of mid-fight.
+    /// Register one model per first-use look this round can show (the wrecks' looks,
+    /// damaged cargo and timber stages, timber beams, mines, pickup glows, debris
+    /// pieces), so `prepare_step` compiles their pipelines before combat instead of
+    /// mid-fight. Of the wrecks only the sample is built now (`wreck_library`); the page
+    /// builds the rest once the arena is ready ([`Self::prebuild_step`]).
     pub fn begin_prepare(&mut self, state: &RenderState) {
         self.preparation = Preparation::default();
         for kind in VehicleKind::ALL {
@@ -1370,14 +1371,10 @@ impl Presentation {
                 self.library.tank(&mut self.renderer, kind, team);
                 self.library.bar(&mut self.renderer, team);
                 self.library.mine(&mut self.renderer, team);
-                for part in WRECK_PARTS {
-                    self.library.wreck(&mut self.renderer, kind, team, part);
-                }
             }
         }
-        // Every vehicle and wreck is uploaded and kept for the page: their source
-        // geometry can go, leaving room in the Wasm heap for what a battle builds.
-        release_tank_models();
+        let (kind, team, part) = SAMPLE_WRECK;
+        self.library.wreck(&mut self.renderer, kind, team, part);
         for kind in PickupKind::ALL {
             self.library.pickup(&mut self.renderer, kind);
         }
@@ -1420,6 +1417,8 @@ impl Presentation {
             // Falling crowns and boughs reuse the live tree's materials, whose
             // faded variants every movable model registers up front.
         }
+        // The arena's whole look is registered: its pipelines compile from here on.
+        self.renderer.request_pipelines();
     }
 
     /// Create up to `budget` pipelines whose background compile has finished and queue
@@ -1460,6 +1459,25 @@ impl Presentation {
                 || (compiled == 0 && waiting && !self.textures.busy()),
             ready: self.preparation.ready(),
         })
+    }
+
+    /// Build one of the library's wrecks that preparation left for later; false once
+    /// every one is built. Every vehicle and wreck is then uploaded and kept for the
+    /// page, so their source geometry goes, leaving room in the Wasm heap for what a
+    /// battle builds.
+    pub fn prebuild_step(&mut self) -> bool {
+        if self.library.complete {
+            return false;
+        }
+        if let Some((kind, team, part)) =
+            library_wrecks().find(|wreck| !self.library.wrecks.contains_key(wreck))
+        {
+            self.library.wreck(&mut self.renderer, kind, team, part);
+            return true;
+        }
+        release_tank_models();
+        self.library.complete = true;
+        false
     }
 
     /// A generated texture the page should bake off the main thread with the
@@ -3584,17 +3602,6 @@ fn tree_view(
             foliage: tree_foliage(&shape),
         },
         shudder: None,
-    }
-}
-
-/// Give every material of a wreck the aging effect, which darkens base and
-/// emissive color by the brightness each instance carries.
-fn age_materials(node: &mut Node) {
-    if let Some(drawable) = &mut node.drawable {
-        drawable.material = Arc::new(aged_wreck_material(&drawable.material, 0.0));
-    }
-    for child in &mut node.children {
-        age_materials(child);
     }
 }
 

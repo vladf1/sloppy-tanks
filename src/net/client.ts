@@ -12,7 +12,7 @@ import {
 } from "../game/player-preferences";
 import { TouchModeController } from "../game/touch-mode";
 import { returnToSetup, roomAddress, type JoinScreen } from "../game/join-screen";
-import { PREPARE_BUDGET, nextPrepareStep } from "../game/task-yield";
+import { PREPARE_BUDGET, nextPrepareStep, stepBetweenTasks } from "../game/task-yield";
 import { startTextureBake } from "../game/texture-bake";
 import {
   INPUT,
@@ -451,6 +451,7 @@ export async function startMultiplayer(
     }
   }
   let preparing = false;
+  let prebuilding = false;
   /** Compile the arena between tasks, so the join screen keeps painting. */
   async function prepare(): Promise<void> {
     if (preparing) {
@@ -472,6 +473,12 @@ export async function startMultiplayer(
       preparing = false;
     }
     pump();
+    // What the arena left for later (the wrecks of the vehicle library) builds in tasks
+    // of its own; the first arena's work, as the library outlives it.
+    if (!prebuilding) {
+      prebuilding = true;
+      void stepBetweenTasks(() => !stopped && game.prebuild_step());
+    }
   }
   const resize = () => {
     const [width, height] = cssSize();

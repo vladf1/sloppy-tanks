@@ -299,6 +299,8 @@ try {
     });
     await page.goto(pageUrl("?webgl&debug&autoplay&map=superstress"));
     await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
+    // The page builds the rest of the vehicle library once the arena is ready; it keeps.
+    await page.waitForFunction(() => window.sloppy.stats().view.libraryPending === 0);
     const resets = await page.evaluate(
       ({ resets, pose }) => {
         const samples = [];

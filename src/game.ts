@@ -38,7 +38,7 @@ import { debugPage, isExtraLevel } from "./game/map-options";
 import { NerdStats, engineStatsSections } from "./game/nerd-stats";
 import { savedVolume } from "./game/settings-dialog";
 import type { PreparedGame } from "./game/start-menu";
-import { PREPARE_BUDGET, afterPaint, nextPrepareStep } from "./game/task-yield";
+import { PREPARE_BUDGET, afterPaint, nextPrepareStep, stepBetweenTasks } from "./game/task-yield";
 import { bakeAhead, startTextureBake } from "./game/texture-bake";
 import { TouchModeController } from "./game/touch-mode";
 import { MENU_READY_STATUS, UI } from "./game/ui";
@@ -47,11 +47,12 @@ const EXACT_RESOLUTION = { width: 2560, height: 1440 } as const;
 
 /** Load the engine and start the texture bakes the arena of `map` will claim, so they
  * run in workers while the engine builds the arena (`bakeAhead`). Battle Setup calls
- * this as its first frame paints; the quarry soil's bake then finishes before the
- * arena's pipelines do. */
+ * this as its first frame paints and builds the arena once it settles, when the bake
+ * workers have loaded; the quarry soil's bake then finishes before the arena's
+ * pipelines do. */
 export async function loadArenaEngine(map: string): Promise<void> {
   await loadEngine();
-  bakeAhead(engineModule(), mapTextureBakes(map));
+  await bakeAhead(engineModule(), mapTextureBakes(map));
 }
 
 /** Prepare a hidden arena after the lightweight menu has painted. */
@@ -140,7 +141,7 @@ export async function prepareGame(
           continue;
         }
         // Its texture bakes run in workers while the rebuild holds the main thread.
-        bakeAhead(engineModule(), mapTextureBakes(next.mapMode));
+        void bakeAhead(engineModule(), mapTextureBakes(next.mapMode));
         game.set_options(JSON.stringify(next));
         prepared = next;
         total = 0;
@@ -317,22 +318,26 @@ export async function prepareGame(
       }
     }
   }
+  /** Take the in-game menu away and show the battle (`showBattle`) before its round
+   * starts. `hideMenu` takes away a menu that is not part of the arena's page. */
+  async function revealBattle(hideMenu: () => void): Promise<void> {
+    hideMenu();
+    await showBattle();
+  }
   /** Show the battle's view, still, and let the browser paint it before the round's
    * clock starts: the arena as `finish_prepare` drew it, the HUD, the respawn card
    * (`UI.prepareBattle`) and the touch controls. Painted the first time on the round's
    * first frame, they held WebKit's next frame for 50-70 ms, a hitch once tanks move;
-   * behind the menu WebKit leaves them unpainted. `hideMenu` takes away the start
-   * menu, which is not part of the arena's page. */
-  async function revealBattle(hideMenu: () => void): Promise<void> {
+   * hidden behind a menu, WebKit leaves them unpainted. Under the start menu, which is
+   * opaque, they paint unseen. */
+  function showBattle(): Promise<void> {
     ui.prepareBattle();
-    hideMenu();
     ui.overlay.style.display = "none";
     root.classList.remove("menu-ready");
     root.hidden = false;
     // A frame starts only once the one before it reached the screen, so the second
     // waits out that paint.
-    await afterPaint();
-    await afterPaint();
+    return afterPaint().then(afterPaint);
   }
   function beginRound(): void {
     inRound = true;
@@ -569,13 +574,22 @@ export async function prepareGame(
   requestAnimationFrame(() => setTimeout(audio, 0));
   // The first arena prepares here, so the menu reports its shader progress.
   await prepareArena(choices, onStage);
+  // Once the ready menu has painted, what the arena left for later (the wrecks of the
+  // vehicle library) builds, and the first round's view shows and paints under the
+  // menu while the player chooses, so GO only takes the menu away: two paints after
+  // GO had put the round's first frame 30-40 ms later.
+  const battleShown = afterPaint().then(() => {
+    void stepBetweenTasks(() => game.prebuild_step());
+    return showBattle();
+  });
   return {
     prepare: prepareArena,
     async start(options, hideMenu) {
       // Usually already prepared while the player chose; then this is instant.
       Object.assign(choices, options);
       await prepareArena(choices, onStage);
-      await revealBattle(hideMenu);
+      await battleShown;
+      hideMenu();
       beginRound();
     },
   };

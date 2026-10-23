@@ -26,6 +26,7 @@ pub mod preparation;
 pub mod suspension;
 pub mod theme;
 pub mod view_settings;
+pub mod wreck_library;
 
 #[cfg(target_arch = "wasm32")]
 mod view;

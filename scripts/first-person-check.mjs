@@ -27,7 +27,7 @@ await page.addInitScript(() => {
 try {
   await page.goto(gameUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(() => !!window.sloppy);
-  await page.locator('[data-kind="balanced"]').click();
+  await page.locator('.start [data-kind="balanced"]').click();
   await startRound(page);
   await page.mouse.move(800, 300);
   await page.waitForTimeout(300);

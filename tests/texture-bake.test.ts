@@ -46,10 +46,10 @@ test("an arena takes over the bake started ahead for it, and starts none of its 
   const original = host.Worker;
   host.Worker = FakeWorker;
   try {
-    bakeAhead(engine, ["soil"]);
+    void bakeAhead(engine, ["soil"]);
     const ahead = FakeWorker.started;
     assert.ok(ahead > 0, "the bake starts at once");
-    bakeAhead(engine, ["soil"]);
+    void bakeAhead(engine, ["soil"]);
     assert.equal(FakeWorker.started, ahead, "a key already baking is not started again");
 
     const first = game("soil");
@@ -66,6 +66,44 @@ test("an arena takes over the bake started ahead for it, and starts none of its 
     assert.equal(FakeWorker.started, 2 * ahead);
     await new Promise((resolve) => setTimeout(resolve, 10));
     assert.equal(second.supplied.length, 1);
+  } finally {
+    host.Worker = original;
+  }
+});
+
+/** A bake worker whose script loads only when the test says so (it then posts `null`). */
+class LoadingWorker {
+  static all: LoadingWorker[] = [];
+  onmessage: ((event: { data: Uint8Array | string | null }) => void) | null = null;
+  onerror: ((event: { message: string }) => void) | null = null;
+  constructor() {
+    LoadingWorker.all.push(this);
+  }
+  load(): void {
+    this.onmessage?.({ data: null });
+  }
+  postMessage(): void {}
+  terminate(): void {}
+}
+
+test("starting bakes ahead settles once their workers have loaded", async () => {
+  const host = globalThis as { Worker?: unknown };
+  const original = host.Worker;
+  host.Worker = LoadingWorker;
+  try {
+    let settled = false;
+    const loading = bakeAhead(engine, ["dust"]).then(() => {
+      settled = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    assert.equal(settled, false, "the workers have not loaded yet");
+    for (const worker of LoadingWorker.all) {
+      worker.load();
+    }
+    await loading;
+    assert.equal(settled, true);
+    // A map without bakes builds its arena at once.
+    await bakeAhead(engine, []);
   } finally {
     host.Worker = original;
   }
