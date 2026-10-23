@@ -2061,13 +2061,15 @@ h2 {
   background: radial-gradient(ellipse 90% 60% at 50% 100%, #3a050c55, transparent 70%);
 }
 /* The card stays drawn between deaths, unseen on a layer of its own, so a death shows it
-   without building or painting it. It is there at once, legible from its first frame; a
-   red glint runs along its top edge as it lands. */
+   without building or painting it. Safari drops the paint of a layer at no opacity, and
+   painting the card again cost an iPad's death frame about 8 ms, so the hidden card sits
+   at a fifth of a percent: below one step of any colour, but drawn. It is there at once,
+   legible from its first frame; a red glint runs along its top edge as it lands. */
 .menu.respawn {
   max-width: 720px;
   padding: 14px 18px 14px;
   overflow: hidden;
-  opacity: 0;
+  opacity: 0.002;
   will-change: opacity;
 }
 #respawn-layer.shown .menu.respawn {
@@ -2246,7 +2248,8 @@ h2 {
   letter-spacing: 2.4px;
 }
 /* The ring beats once a second with the count. It never yields width to the caption,
-   or a narrow card squeezes the circle into an oval. */
+   or a narrow card squeezes the circle into an oval. Its layer is there before the
+   beat starts, so a death does not first make one (and repaint the card around it). */
 .respawn-ring {
   position: relative;
   display: grid;
@@ -2259,6 +2262,7 @@ h2 {
   box-shadow:
     0 0 0 1px #00000066,
     0 0 34px #ffcf3840;
+  will-change: transform;
 }
 #respawn-layer.shown .respawn-ring {
   animation: respawn-beat 1s cubic-bezier(0.2, 0.8, 0.3, 1) infinite;
@@ -2310,13 +2314,16 @@ h2 {
   gap: 10px;
 }
 /* The tanks fill their cards: the choice is the tank, so it is the biggest thing in it.
-   Each grows up from its foot, so even the heavy tank keeps clear of the specs under it. */
+   Each grows up from its foot, so even the heavy tank keeps clear of the specs under it.
+   Each tank, shadow and all, keeps a layer of its own that the hidden card holds
+   painted: Safari otherwise redraws the three filtered tanks on the death frame. */
 .respawn .tank-preview {
   grid-column: 1 / -1;
   height: 92px;
   margin: -4px 0 8px;
   transform: scale(calc(var(--scale, 1) * 1.16));
   transform-origin: 50% 85%;
+  will-change: transform;
 }
 /* Name and class share the top line, leaving the card's height to the tank. */
 .respawn .vehicle {
