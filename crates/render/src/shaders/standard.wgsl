@@ -307,9 +307,10 @@ fn shade_standard(s: Surface, world: vec3f, v: vec3f, geometry_roughness: f32) -
         // Satin paint (hulls, containers, vehicles) carries a clear coat: a tight
         // sun glint along plate edges and decks turned to the light, on top of the
         // paint's broad sheen, so painted steel reads as metal and its form turns.
-        let coat = PAINT_GLINT * smoothstep(0.38, 0.45, s.roughness) * (1.0 - smoothstep(0.58, 0.66, s.roughness))
-            * (1.0 - smoothstep(0.25, 0.45, s.metalness)) * (1.0 - near_view);
-        if coat > 0.0 {
+        // Only satin finishes: rougher terrain and walls, and metals, skip it.
+        if s.roughness > 0.38 && s.roughness < 0.66 && s.metalness < 0.45 {
+            let coat = PAINT_GLINT * smoothstep(0.38, 0.45, s.roughness) * (1.0 - smoothstep(0.58, 0.66, s.roughness))
+                * (1.0 - smoothstep(0.25, 0.45, s.metalness)) * (1.0 - near_view);
             // Its grazing Fresnel is capped: a stylized coat glints toward the sun but
             // never mirrors a whole deck seen edge-on.
             let l = frame.sun_direction.xyz;
