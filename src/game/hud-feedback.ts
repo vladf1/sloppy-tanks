@@ -288,6 +288,13 @@ export function showDamageRing(
 }
 
 /** Writes `text` into the element `#id` under `root`, unless it already shows it. */
+/** Set an attribute unless it already holds `value`. */
+function setAttributeIfChanged(element: Element, name: string, value: string): void {
+  if (element.getAttribute(name) !== value) {
+    element.setAttribute(name, value);
+  }
+}
+
 export function setText(root: ParentNode, id: string, text: string): void {
   const node = root.querySelector(`#${id}`);
   if (node && node.textContent !== text) {
@@ -480,8 +487,10 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
   setText(root, "hull-pill-name", tank.vehicleName);
   setText(root, "rank", tank.rankName.toUpperCase());
   const rank = root.querySelector<HTMLElement>("#rank")!;
-  rank.dataset.rank = String(tank.rank);
-  rank.title = rankTitle(tank);
+  // The panel updates every few frames: attributes are written only when they change,
+  // since every write, even of the same value, invalidates the panel's style.
+  setAttributeIfChanged(rank, "data-rank", String(tank.rank));
+  setAttributeIfChanged(rank, "title", rankTitle(tank));
   setText(root, "hp-max", `/ ${Math.round(tank.maxHp)}`);
   // The bar's colour follows the hull's state, not the team: a full hull never reads as
   // danger. The phone's hull pill shows the same reading.
@@ -508,15 +517,20 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
   if (root instanceof HTMLElement && root.style.getPropertyValue("--hull-ramp") !== ramp) {
     root.style.setProperty("--hull-ramp", ramp);
   }
-  root.querySelector<HTMLElement>(".hull-readout")?.setAttribute("data-tone", tone);
+  const readout = root.querySelector<HTMLElement>(".hull-readout");
+  if (readout) {
+    setAttributeIfChanged(readout, "data-tone", tone);
+  }
   AMMO_OPTIONS.forEach(({ weapon, label: name }, index) => {
     const slotState = tank.ammo.find((slot) => slot.weapon === weapon);
     const selected = !!slotState?.selected;
     const count = slotState?.count === null ? "∞" : String(slotState?.count ?? 0);
     setText(root, `ammo-count-${weapon}`, count);
     const slot = root.querySelector<HTMLButtonElement>(`#ammo-${weapon}`)!;
-    slot.disabled = slotsDisabled;
-    slot.setAttribute("aria-pressed", String(selected));
+    if (slot.disabled !== slotsDisabled) {
+      slot.disabled = slotsDisabled;
+    }
+    setAttributeIfChanged(slot, "aria-pressed", String(selected));
     // The loaded round's slot widens to name it while the others narrow, so the rack, and
     // the panel with it, keeps one width whichever round is loaded.
     slot.classList.toggle("selected", selected);

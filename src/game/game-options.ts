@@ -114,20 +114,29 @@ function showBattleFormat(overlay: HTMLElement, mapMode: MapId): void {
   });
 }
 
-/** Mark one tank card as the player's choice. */
+/** Mark one tank card as the player's choice. Attributes are only written when they
+ * change: the respawn card syncs on every death, and Safari repaints its drop-shadowed
+ * tanks for any write, even of the same value. */
 export function showTank(overlay: HTMLElement, kind: string): void {
   overlay.querySelectorAll<HTMLButtonElement>("[data-kind]").forEach((card) => {
     const selected = card.dataset.kind === kind;
     card.classList.toggle("selected", selected);
-    card.setAttribute("aria-pressed", String(selected));
+    setChanged(card, "aria-pressed", String(selected));
   });
 }
 
 /** Tank previews are one sprite sheet with a row per team colour. */
 export function showTankTeam(overlay: HTMLElement, team: GameOptions["humanTeam"]): void {
   overlay.querySelectorAll(".tank-preview image").forEach((image) => {
-    image.setAttribute("y", String(-team * 400));
+    setChanged(image, "y", String(-team * 400));
   });
+}
+
+/** Set an attribute unless it already holds `value`. */
+function setChanged(element: Element, name: string, value: string): void {
+  if (element.getAttribute(name) !== value) {
+    element.setAttribute(name, value);
+  }
 }
 
 /** The team colour the tank previews currently show. */

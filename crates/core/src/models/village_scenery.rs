@@ -22,6 +22,9 @@ pub struct VillageScenery {
     /// `pine-village-scenery`: board, grass floor, roads, yard details, valley
     /// landscape, meadow, chimney smoke, landmarks, then the footbridge approach.
     pub root: Node,
+    /// The waterwheel's child-index path from `root`, found once: the scenery has
+    /// thousands of nodes to search by name, and the wheel turns every frame.
+    wheel: Option<Vec<usize>>,
 }
 
 impl Default for VillageScenery {
@@ -40,13 +43,17 @@ impl VillageScenery {
         root.children.push(village_landmarks());
         root.children.push(approach_details());
         settle_paint(&mut root);
-        Self { root }
+        let wheel = node_path(&root, WATERWHEEL);
+        Self { root, wheel }
     }
 
     /// `update(time)`: turn the waterwheel. The creek, meadow sway and smoke read
     /// the same clock in their shaders.
     pub fn update(&mut self, time: f64) {
-        if let Some(wheel) = self.root.find_mut(WATERWHEEL) {
+        if let Some(path) = &self.wheel {
+            let wheel = path
+                .iter()
+                .fold(&mut self.root, |node, &index| &mut node.children[index]);
             wheel.set_rotation_euler(0.0, 0.0, -time * 0.16);
         }
     }
@@ -57,6 +64,20 @@ impl VillageScenery {
             set_chimney_smoke(smoke, covers);
         }
     }
+}
+
+/// The child-index path from `root` to the first node named `name` (depth first, as
+/// `Node::find_mut` searches).
+fn node_path(root: &Node, name: &str) -> Option<Vec<usize>> {
+    if root.name == name {
+        return Some(Vec::new());
+    }
+    root.children.iter().enumerate().find_map(|(index, child)| {
+        node_path(child, name).map(|mut path| {
+            path.insert(0, index);
+            path
+        })
+    })
 }
 
 /// The finish every matte painted surface of the village shares.
