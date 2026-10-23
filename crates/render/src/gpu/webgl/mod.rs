@@ -26,7 +26,10 @@ use super::{
     BLOOM_FIRST_SHIFT, BLOOM_LEVELS, BloomPass, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
     OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
+use crate::atmosphere_map::{ATMOSPHERE_MAP_SIZE, atmosphere_map};
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
+use crate::gpu::blurred_occlusion_size;
+use crate::noise_lattice::{NOISE_LATTICE_SIZE, noise_lattice};
 use crate::target_memory::target_bytes;
 use context::{block, unit};
 use resources::SHADOW_BASE_LOCATION;
@@ -195,14 +198,18 @@ impl Drop for ColorTarget {
     }
 }
 
-/// The quarter-size ambient occlusion target and its framebuffer; the output pass
-/// samples it through a linear sampler. Dropping it deletes it.
+/// The quarter-size ambient occlusion target and its blur at each corner of its
+/// texels (`blurred_occlusion_size`), each with its framebuffer; the blur
+/// samples the occlusion through a linear sampler and the output pass fetches the
+/// blur. Dropping it deletes them.
 struct OcclusionTarget {
     gpu: Gpu,
     texture: glow::Texture,
     framebuffer: glow::Framebuffer,
     width: u32,
     height: u32,
+    blurred: glow::Texture,
+    blurred_framebuffer: glow::Framebuffer,
 }
 
 impl OcclusionTarget {
@@ -214,12 +221,18 @@ impl OcclusionTarget {
         let texture = storage(gpu, glow::R8, 1, width, height);
         let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, texture);
         check_framebuffer(gpu, "ambient occlusion");
+        let (blurred_width, blurred_height) = blurred_occlusion_size(width, height);
+        let blurred = texel_storage(gpu, glow::R8, blurred_width, blurred_height);
+        let blurred_framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, blurred);
+        check_framebuffer(gpu, "ambient occlusion blur");
         Self {
             gpu: gpu.clone(),
             texture,
             framebuffer,
             width,
             height,
+            blurred,
+            blurred_framebuffer,
         }
     }
 }
@@ -229,6 +242,8 @@ impl Drop for OcclusionTarget {
         unsafe {
             self.gpu.gl.delete_framebuffer(self.framebuffer);
             self.gpu.gl.delete_texture(self.texture);
+            self.gpu.gl.delete_framebuffer(self.blurred_framebuffer);
+            self.gpu.gl.delete_texture(self.blurred);
         }
     }
 }
@@ -332,6 +347,10 @@ pub struct Frame {
     /// The cached fixed-scenery shadow, only while frames copy it.
     static_shadow: Option<DepthTarget>,
     lut: glow::Texture,
+    /// The noise lattice the frame's shaders fetch (`noise_lattice.rs`) and the
+    /// atmosphere map they sample (`atmosphere_map.rs`).
+    noise: glow::Texture,
+    atmosphere_map: glow::Texture,
     shadow_sampler: glow::Sampler,
     /// Linear clamp-to-edge: the DFG LUT and the water's reflection.
     linear_sampler: glow::Sampler,
@@ -366,6 +385,32 @@ impl Frame {
                 glow::PixelUnpackData::Slice(Some(bytemuck::cast_slice(&lut::DFG_LUT))),
             );
         }
+        let upload = |texture, size: u32, data: &[u8]| {
+            gpu.bind_upload_texture(texture);
+            unsafe {
+                gl.tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    size as i32,
+                    size as i32,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(Some(data)),
+                );
+            }
+        };
+        let noise = texel_storage(gpu, glow::RGBA8, NOISE_LATTICE_SIZE, NOISE_LATTICE_SIZE);
+        upload(noise, NOISE_LATTICE_SIZE, &noise_lattice());
+        let atmosphere = storage(
+            gpu,
+            glow::RGBA8,
+            1,
+            ATMOSPHERE_MAP_SIZE,
+            ATMOSPHERE_MAP_SIZE,
+        );
+        upload(atmosphere, ATMOSPHERE_MAP_SIZE, &atmosphere_map());
         let uniform = |bytes| gpu.create_buffer(glow::UNIFORM_BUFFER, bytes, glow::DYNAMIC_DRAW);
         Self {
             gpu: gpu.clone(),
@@ -376,6 +421,8 @@ impl Frame {
             shadow: DepthTarget::new(gpu, "sun shadow map", shadow_size),
             static_shadow: None,
             lut,
+            noise,
+            atmosphere_map: atmosphere,
             shadow_sampler: linear_sampler(gpu, true),
             linear_sampler: linear_sampler(gpu, false),
             view_uniforms: [0, 1, 2].map(|_| uniform(size_of::<FrameUniform>() as u64)),
@@ -488,7 +535,9 @@ impl Frame {
     /// depth copy and the shadow maps.
     pub fn target_bytes(&self) -> u64 {
         let main = target_bytes(self.main.width, self.main.height, self.gpu.samples);
-        let occlusion = u64::from(self.occlusion.width * self.occlusion.height);
+        let (width, height) = (self.occlusion.width, self.occlusion.height);
+        let (blurred_width, blurred_height) = blurred_occlusion_size(width, height);
+        let occlusion = u64::from(width * height + blurred_width * blurred_height);
         let depth = u64::from(self.main.width * self.main.height) * 4;
         let shadow = [Some(&self.shadow), self.static_shadow.as_ref()]
             .into_iter()
@@ -586,6 +635,10 @@ impl Frame {
         // Bindings every view shares; the shadow map's is unused by shadow programs.
         gpu.bind_texture(unit::DFG_LUT, self.lut);
         gpu.bind_sampler(unit::DFG_LUT, Some(self.linear_sampler));
+        gpu.bind_texture(unit::NOISE, self.noise);
+        gpu.bind_sampler(unit::NOISE, None);
+        gpu.bind_texture(unit::ATMOSPHERE_MAP, self.atmosphere_map);
+        gpu.bind_sampler(unit::ATMOSPHERE_MAP, Some(self.linear_sampler));
         gpu.bind_texture(unit::SHADOW_MAP, self.shadow.texture);
         gpu.bind_sampler(unit::SHADOW_MAP, Some(self.shadow_sampler));
         gpu.bind_texture(unit::INSTANCES, self.instance_records.texture());
@@ -698,7 +751,20 @@ impl Frame {
         gpu.bind_sampler(unit::SOURCE, None);
         gpu.bind_vertex_array(Some(self.no_attributes));
         unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
-        stats.draw_calls += 1;
+        let blur = &scene.pipelines.fixed().occlusion_blur;
+        let program = scene.pipelines.program(blur.program);
+        gpu.bind_framebuffer(Some(target.blurred_framebuffer));
+        let (blurred_width, blurred_height) = blurred_occlusion_size(target.width, target.height);
+        gpu.viewport(blurred_width, blurred_height);
+        gpu.use_program(program.raw);
+        program.set_first_instance(gpu, BloomPass::OcclusionBlur as u32);
+        gpu.set_raster(&blur.raster);
+        // The bloom program's other passes read the output block: it must be bound.
+        gpu.bind_uniform_block(block::OUTPUT, self.output_uniform);
+        gpu.bind_texture(unit::SOURCE, target.texture);
+        gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
+        unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
+        stats.draw_calls += 2;
     }
 
     /// Threshold the resolved frame into the first bloom level, halve it down the
@@ -744,9 +810,9 @@ impl Frame {
         gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
         gpu.bind_texture(unit::BLOOM, self.bloom.levels[0].0);
         gpu.bind_sampler(unit::BLOOM, Some(self.linear_sampler));
-        // Read only while the occlusion is on, which also draws it.
-        gpu.bind_texture(unit::OCCLUSION, self.occlusion.texture);
-        gpu.bind_sampler(unit::OCCLUSION, Some(self.linear_sampler));
+        // Read only while the occlusion is on, which also draws it (`texelFetch`).
+        gpu.bind_texture(unit::OCCLUSION, self.occlusion.blurred);
+        gpu.bind_sampler(unit::OCCLUSION, None);
         gpu.bind_vertex_array(Some(self.no_attributes));
         unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
         stats.draw_calls += 1;
@@ -758,6 +824,8 @@ impl Drop for Frame {
         let gl = &self.gpu.gl;
         unsafe {
             gl.delete_texture(self.lut);
+            gl.delete_texture(self.noise);
+            gl.delete_texture(self.atmosphere_map);
             gl.delete_buffer(self.occlusion_uniform);
             for sampler in [self.shadow_sampler, self.linear_sampler] {
                 gl.delete_sampler(sampler);

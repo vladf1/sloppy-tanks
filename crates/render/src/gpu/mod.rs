@@ -67,6 +67,7 @@ use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::scene::{Blending, Node, Side, TextureRef, TextureSource};
 
+use crate::atmosphere_map::cloud_tile_offset;
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
 use crate::color::{hex_to_linear, hex_to_linear_scaled};
 use crate::draw_list::{
@@ -327,7 +328,9 @@ pub struct RenderStats {
     pub reflection_draw_calls: u32,
     pub shadow_triangles: u64,
     pub reflection_triangles: u64,
-    /// Ambient occlusion's depth pass (`OCCLUSION_DEPTH_PASS`).
+    /// Ambient occlusion's depth pass (`OCCLUSION_DEPTH_PASS`): a depth draw per
+    /// opaque draw of the main view, apart from the main pass's own.
+    pub occlusion_draw_calls: u32,
     pub occlusion_triangles: u64,
     pub main_triangles: u64,
     /// Instance records written this frame.
@@ -388,6 +391,14 @@ struct FrameUniform {
     haze_far: [f32; 4],
     ground: [f32; 4],
     quality: [f32; 4],
+    penumbra_u: [f32; 4],
+    penumbra_v: [f32; 4],
+    penumbra_depth: [f32; 4],
+    penumbra_steps: [f32; 4],
+    sun_heading: [f32; 4],
+    bounce: [f32; 4],
+    rim: [f32; 4],
+    cloud_tiles: [f32; 4],
 }
 
 /// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade and the
@@ -407,6 +418,40 @@ struct OutputUniform {
     highlights: [f32; 4],
     detail: [f32; 4],
     curve: [f32; 4],
+}
+
+/// The penumbra's blocker search (`standard.wgsl` `penumbra_radius`): the steepest
+/// receiver slope it follows, metres of depth per texel; the depth gap it ignores and
+/// the depth steps that sort casters by how far up the sun's ray they stand, metres.
+const RECEIVER_SLOPE_LIMIT: f32 = 0.6;
+const BLOCKER_TOLERANCE: f32 = 0.06;
+const BLOCKER_STEPS: [f32; 3] = [1.0, 2.5, 5.0];
+
+/// The penumbra search's terms in the sun's shadow map (`Frame` `penumbra_*`), the
+/// same for every receiver, from `shadow_matrix` (world to map UV and depth) and the
+/// map's size in texels. The light's projection is orthographic, so its rows are
+/// orthogonal and a receiving plane's depth slope per map texel follows from their
+/// dot products with the plane's normal: each row over its squared length (u negated
+/// and both over the size, for texels along u and the flipped v), and one metre in
+/// depth units for the limit, the tolerance and the steps.
+fn penumbra_terms(shadow_matrix: Mat4, size: f32) -> [[f32; 4]; 4] {
+    let row = |index| shadow_matrix.row(index).truncate();
+    let (u, v, depth) = (row(0), row(1), row(2));
+    let metre = depth.length();
+    let u = -u / (u.length_squared() * size);
+    let v = v / (v.length_squared() * size);
+    let depth = depth / depth.length_squared();
+    [
+        [u.x, u.y, u.z, RECEIVER_SLOPE_LIMIT * metre],
+        [v.x, v.y, v.z, BLOCKER_TOLERANCE * metre],
+        [depth.x, depth.y, depth.z, 0.0],
+        [
+            BLOCKER_STEPS[0] * metre,
+            BLOCKER_STEPS[1] * metre,
+            BLOCKER_STEPS[2] * metre,
+            0.0,
+        ],
+    ]
 }
 
 /// The filmic curve's terms for `output.wgsl` `filmic`: x its toe power, y the
@@ -450,6 +495,14 @@ const BLOOM_FIRST_SHIFT: usize = 2;
 /// quarter-size target looks the same as a half-size one at a quarter of the probes
 /// (about 1 ms less GPU time at 3840×2160).
 const OCCLUSION_DOWNSCALE: u32 = 4;
+/// The occlusion's blur (`output.wgsl` `occlusion_blur`) for an occlusion of
+/// `width` × `height` texels: one texel per corner the output pass reads, the
+/// corner nearest each scene pixel, which can lie a whole texel past the last when
+/// the scene's size is no multiple of the downscale.
+fn blurred_occlusion_size(width: u32, height: u32) -> (u32, u32) {
+    (width + 2, height + 2)
+}
+
 /// Ambient occlusion: the reach of its probes and the depth gap they ignore, in
 /// metres; where it fades out with view distance; and its contrast power.
 const OCCLUSION_RADIUS: f32 = 1.8;
@@ -599,8 +652,9 @@ struct FixedPipelines<P> {
     /// Bloom prefilter, downsample and additive upsample, in `BloomPass` order: one
     /// fragment stage (`fs_bloom`) that the instance index tells which pass it draws.
     bloom: [P; 3],
-    /// Screen-space ambient occlusion.
+    /// Screen-space ambient occlusion, and its blur for the output pass.
     occlusion: P,
+    occlusion_blur: P,
     /// Merged casters, depth-only then alpha-tested, indexed by
     /// `shadow_merged_index`.
     shadow_merged: Vec<P>,
@@ -608,7 +662,7 @@ struct FixedPipelines<P> {
 
 impl<P> FixedPipelines<P> {
     fn count(&self) -> usize {
-        6 + self.shadow_merged.len()
+        7 + self.shadow_merged.len()
     }
 }
 
@@ -619,6 +673,9 @@ enum BloomPass {
     Prefilter = 0,
     Down = 1,
     Up = 2,
+    /// The occlusion's blur for the output pass (`FixedPipelines::occlusion_blur`),
+    /// which shares the stage.
+    OcclusionBlur = 3,
 }
 
 /// A merged, depth-only caster mesh (`shadow_merge.rs`).
@@ -2112,6 +2169,8 @@ impl Renderer {
             0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0,
         ]) * shadow.view_projection();
         let world = view.inverse();
+        let [penumbra_u, penumbra_v, penumbra_depth, penumbra_steps] =
+            penumbra_terms(shadow_matrix, self.sun_shadow.map_size as f32);
         let mut point_lights = [[0.0; 8]; MAX_POINT_LIGHTS];
         for (slot, light) in point_lights.iter_mut().zip(&self.point_lights) {
             if let (Some(light), false) = (light, self.debug_off.lights) {
@@ -2173,6 +2232,10 @@ impl Renderer {
             camera_up: rgb4(world.y_axis.truncate().into(), 0.0),
             point_lights,
             quality: self.quality_uniform(),
+            penumbra_u,
+            penumbra_v,
+            penumbra_depth,
+            penumbra_steps,
             ..self.atmosphere_uniform(sky_rays)
         }
     }
@@ -2184,14 +2247,40 @@ impl Renderer {
             return FrameUniform::zeroed();
         }
         let sky = |color| hex_to_linear_scaled(color, a.sky_intensity);
+        let env = &self.environment;
+        let sun = (env.sun_position - env.sun_target).normalize_or_zero();
+        let heading = (Vec2::new(sun.x, sun.z) + Vec2::splat(1e-4)).normalize();
+        let horizon = Vec3::from(sky(a.horizon));
+        let glow = Vec3::from(hex_to_linear_scaled(a.sun_glow, a.sun_glow_intensity));
+        let rim = (horizon * 0.6 + glow * 0.4) * a.rim;
+        // The bounce at full strength: the ground fill's hue at the sun's luminance.
+        let luminance = |color: Vec3| color.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+        let ground = Vec3::from(hex_to_linear_scaled(
+            env.ground_color,
+            env.hemisphere_intensity,
+        ));
+        let sun_level = luminance(Vec3::from(hex_to_linear_scaled(
+            env.sun_color,
+            env.sun_intensity,
+        )));
+        let bounce_strength = if self.debug_off.ground {
+            0.0
+        } else {
+            a.ground.bounce
+        };
+        let bounce = ground / luminance(ground).max(1e-4)
+            * (bounce_strength * sun_level * std::f32::consts::FRAC_1_PI);
+        let slant = Vec2::new(sun.x, sun.z) / sun.y.max(0.2);
+        let [drift_x, drift_z] = cloud_tile_offset(self.time);
         FrameUniform {
+            sun_heading: [heading.x, heading.y, 0.0, 0.0],
+            cloud_tiles: [slant.x, slant.y, drift_x, drift_z],
+            bounce: rgb4(bounce.into(), 0.0),
+            rim: rgb4(rim.into(), 0.0),
             sky_rays: sky_rays.inverse().to_cols_array(),
             sky_zenith: rgb4(sky(a.zenith), 1.0),
             sky_horizon: rgb4(sky(a.horizon), a.sun_radius.cos()),
-            sky_sun: rgb4(
-                hex_to_linear_scaled(a.sun_glow, a.sun_glow_intensity),
-                a.rim,
-            ),
+            sky_sun: rgb4(hex_to_linear_scaled(a.sun_glow, a.sun_glow_intensity), 0.0),
             cloud_lit: rgb4(sky(a.clouds.lit), a.clouds.coverage),
             cloud_shade: rgb4(sky(a.clouds.shade), a.clouds.shadow),
             haze: [a.haze.density, a.haze.falloff, a.haze.start, a.haze.max],
@@ -2923,6 +3012,7 @@ impl Renderer {
         stats.triangles = 0;
         stats.reflection_draw_calls = 0;
         stats.reflection_triangles = 0;
+        stats.occlusion_draw_calls = 0;
         stats.occlusion_triangles = 0;
         let result = if warm_up {
             self.frame.warm_up(&self.gpu, &scene, stats);

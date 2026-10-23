@@ -15,6 +15,7 @@ macro_rules! wgsl {
     };
 }
 
+pub mod atmosphere_map;
 pub mod camera;
 pub mod color;
 pub mod draw_list;
@@ -22,6 +23,7 @@ pub mod effects;
 pub mod material;
 pub mod mesh_pages;
 pub mod model;
+pub mod noise_lattice;
 pub mod presentation;
 pub mod quality;
 pub mod reflection_cull;

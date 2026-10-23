@@ -30,8 +30,11 @@ use super::{
     BLOOM_FIRST_SHIFT, BLOOM_LEVELS, BloomPass, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
     OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
+use crate::atmosphere_map::{ATMOSPHERE_MAP_SIZE, atmosphere_map};
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
+use crate::gpu::blurred_occlusion_size;
 use crate::mesh_pages::{MeshRange, NO_PAGE};
+use crate::noise_lattice::{NOISE_LATTICE_SIZE, noise_lattice};
 use context::{ColorTarget, DEPTH_FORMAT, OCCLUSION_FORMAT, SHADOW_DEPTH_FORMAT, texture_2d};
 use resources::uniform_buffer;
 
@@ -179,7 +182,13 @@ pub struct Frame {
     static_shadow_map: Option<DepthMap>,
     dummy_depth: wgpu::TextureView,
     shadow_sampler: wgpu::Sampler,
+    /// Nearest clamp-to-edge: gathers of the shadow map's depths.
+    shadow_texel_sampler: wgpu::Sampler,
     lut_view: wgpu::TextureView,
+    /// The noise lattice the frame's shaders fetch (`noise_lattice.rs`) and the
+    /// atmosphere map they sample (`atmosphere_map.rs`).
+    noise_view: wgpu::TextureView,
+    atmosphere_map_view: wgpu::TextureView,
     /// Linear clamp-to-edge: the DFG LUT and the water's reflection.
     linear_sampler: wgpu::Sampler,
     view_uniforms: [wgpu::Buffer; VIEW_COUNT],
@@ -219,6 +228,29 @@ impl Frame {
             wgpu::util::TextureDataOrder::LayerMajor,
             bytemuck::cast_slice(&lut::DFG_LUT),
         );
+        let rgba8 = |label, size, data: &[u8]| {
+            device.create_texture_with_data(
+                &gpu.queue,
+                &wgpu::TextureDescriptor {
+                    label: Some(label),
+                    size: wgpu::Extent3d {
+                        width: size,
+                        height: size,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Rgba8Unorm,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                wgpu::util::TextureDataOrder::LayerMajor,
+                data,
+            )
+        };
+        let noise = rgba8("noise lattice", NOISE_LATTICE_SIZE, &noise_lattice());
+        let atmosphere = rgba8("atmosphere map", ATMOSPHERE_MAP_SIZE, &atmosphere_map());
         let main_target = ColorTarget::new(gpu, "main view", width, height);
         let output_uniform = uniform_buffer(device, "output", size_of::<OutputUniform>() as u64);
         let occlusion_uniform =
@@ -254,7 +286,13 @@ impl Frame {
                 compare: Some(wgpu::CompareFunction::LessEqual),
                 ..Default::default()
             }),
+            shadow_texel_sampler: device.create_sampler(&wgpu::SamplerDescriptor {
+                label: Some("shadow texels"),
+                ..Default::default()
+            }),
             lut_view: lut.create_view(&Default::default()),
+            noise_view: noise.create_view(&Default::default()),
+            atmosphere_map_view: atmosphere.create_view(&Default::default()),
             linear_sampler,
             view_uniforms,
             // Replaced below, once the frame's own resources exist.
@@ -383,6 +421,18 @@ impl Frame {
                     wgpu::BindGroupEntry {
                         binding: 5,
                         resource: instances.binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 10,
+                        resource: wgpu::BindingResource::TextureView(&self.noise_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 11,
+                        resource: wgpu::BindingResource::TextureView(&self.atmosphere_map_view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 12,
+                        resource: wgpu::BindingResource::Sampler(&self.shadow_texel_sampler),
                     },
                 ],
             })
@@ -662,6 +712,33 @@ impl Frame {
             stats.reflection_draw_calls = count;
             stats.reflection_triangles = stats.triangles - stats.shadow_triangles;
         }
+        // The occlusion reads its own depth pass, not the main view: it goes first, so
+        // its short dependent passes run beside the main view's work rather than after.
+        let fixed = scene.pipelines.fixed();
+        if scene.occlusion {
+            self.encode_occlusion_depth(encoder, &draws, stats);
+            let pipeline = &fixed.occlusion;
+            let post = &self.post;
+            post_draw(
+                encoder,
+                "ambient occlusion",
+                pipeline,
+                &post.occlusion_group,
+                &post.occlusion_view,
+                false,
+                0,
+            );
+            post_draw(
+                encoder,
+                "ambient occlusion blur",
+                &fixed.occlusion_blur,
+                &post.occlusion_blur_group,
+                &post.occlusion_blurred.1,
+                false,
+                BloomPass::OcclusionBlur as u32,
+            );
+            stats.draw_calls += 2;
+        }
         {
             let target = &self.main_target;
             let mut pass = scene_pass(encoder, "main view", target, clear);
@@ -683,22 +760,6 @@ impl Frame {
                 stats.triangles += range.index_count as u64 / 3;
             }
             draws.encode(&mut pass, &view.transparent, MAIN_VIEW, Lit, stats);
-        }
-        let fixed = scene.pipelines.fixed();
-        if scene.occlusion {
-            self.encode_occlusion_depth(encoder, &draws, stats);
-            let pipeline = &fixed.occlusion;
-            let post = &self.post;
-            post_draw(
-                encoder,
-                "ambient occlusion",
-                pipeline,
-                &post.occlusion_group,
-                &post.occlusion_view,
-                false,
-                0,
-            );
-            stats.draw_calls += 1;
         }
         if scene.bloom {
             let post = &self.post;
@@ -763,7 +824,7 @@ impl Frame {
             occlusion_query_set: None,
             multiview_mask: None,
         });
-        let triangles = stats.triangles;
+        let (draw_calls, triangles) = (stats.draw_calls, stats.triangles);
         pass.set_bind_group(0, &self.view_groups.0[MAIN_VIEW], &[]);
         draws.encode(
             &mut pass,
@@ -783,6 +844,7 @@ impl Frame {
             stats.draw_calls += 1;
             stats.triangles += range.index_count as u64 / 3;
         }
+        stats.occlusion_draw_calls = stats.draw_calls - draw_calls;
         stats.occlusion_triangles = stats.triangles - triangles;
     }
 
@@ -875,6 +937,10 @@ struct PostTargets {
     occlusion_view: wgpu::TextureView,
     occlusion_depth: DepthMap,
     occlusion_group: wgpu::BindGroup,
+    /// The occlusion's blur at each corner of its texels, which the output reads,
+    /// and the blur pass's bind group (the occlusion as its source).
+    occlusion_blurred: (wgpu::Texture, wgpu::TextureView),
+    occlusion_blur_group: wgpu::BindGroup,
     output_group: wgpu::BindGroup,
     bytes: u64,
 }
@@ -912,6 +978,16 @@ impl PostTargets {
             size.width / OCCLUSION_DOWNSCALE,
             size.height / OCCLUSION_DOWNSCALE,
         );
+        let (blurred_width, blurred_height) = blurred_occlusion_size(
+            size.width / OCCLUSION_DOWNSCALE,
+            size.height / OCCLUSION_DOWNSCALE,
+        );
+        let occlusion_blurred = target(
+            "ambient occlusion blur",
+            OCCLUSION_FORMAT,
+            blurred_width,
+            blurred_height,
+        );
         let occlusion_depth = DepthMap::of(texture_2d(
             device,
             "occlusion depth",
@@ -943,6 +1019,7 @@ impl PostTargets {
         };
         let bloom_groups = bloom.iter().map(|(_, view)| bloom_group(view)).collect();
         let frame_group = bloom_group(&main.resolved_view);
+        let occlusion_blur_group = bloom_group(&occlusion_view);
         let occlusion_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: Some("ambient occlusion"),
             layout: &gpu.layouts.occlusion,
@@ -979,7 +1056,7 @@ impl PostTargets {
                 },
                 wgpu::BindGroupEntry {
                     binding: 7,
-                    resource: wgpu::BindingResource::TextureView(&occlusion_view),
+                    resource: wgpu::BindingResource::TextureView(&occlusion_blurred.1),
                 },
                 wgpu::BindGroupEntry {
                     binding: 8,
@@ -992,6 +1069,7 @@ impl PostTargets {
             .map(|(texture, _)| context::texture_bytes(texture))
             .sum::<u64>()
             + context::texture_bytes(&occlusion)
+            + context::texture_bytes(&occlusion_blurred.0)
             + context::texture_bytes(&occlusion_depth.texture);
         Self {
             bloom,
@@ -1001,6 +1079,8 @@ impl PostTargets {
             occlusion_view,
             occlusion_depth,
             occlusion_group,
+            occlusion_blurred,
+            occlusion_blur_group,
             output_group,
             bytes,
         }
@@ -1013,6 +1093,7 @@ impl Drop for PostTargets {
             texture.destroy();
         }
         self.occlusion.destroy();
+        self.occlusion_blurred.0.destroy();
     }
 }
 
