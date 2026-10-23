@@ -943,9 +943,11 @@ impl DrawContext<'_> {
                     bound = Some(binding);
                 }
                 program.set_first_instance(gpu, draw.first_instance);
-                self.draw_elements(range.first_index, range.index_count, draw.instance_count);
+                let indices = draw.indices(range.indices());
+                let index_count = indices.end - indices.start;
+                self.draw_elements(indices.start, index_count, draw.instance_count);
                 count += 1;
-                stats.triangles += (range.index_count / 3) as u64 * draw.instance_count as u64;
+                stats.triangles += (index_count / 3) as u64 * draw.instance_count as u64;
             }
         }
         gpu.bind_texture(unit::INSTANCES, self.instances);

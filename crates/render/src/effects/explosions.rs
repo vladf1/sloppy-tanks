@@ -512,6 +512,127 @@ struct Blast {
     /// killing shot), zero when unknown.
     y: f64,
     direction: [f64; 2],
+    /// What its fireball, column and skirt puffs draw from its phase.
+    draws: BlastDraws,
+}
+
+/// A blast's per-puff hashes and bearings. They follow from its phase and eruption
+/// alone, so they are worked out on its first frame instead of every frame: they
+/// were most of a blast's transcendentals.
+#[derive(Clone, Copy, Debug)]
+struct BlastDraws {
+    /// The phase and eruption they were drawn for (NaN: not yet).
+    phase: f64,
+    shape: usize,
+    phase_cos: f64,
+    phase_sin: f64,
+    /// The fireball's build (squat and wide or tall and narrow).
+    build: f64,
+    fireball: [PuffDraw<4>; FIRE_PUFFS],
+    column: [PuffDraw<3>; SMOKE_PUFFS],
+    skirt: [PuffDraw<3>; SKIRT_PUFFS],
+}
+
+/// One puff's hashes and the cosine and sine of its bearing.
+#[derive(Clone, Copy, Debug)]
+struct PuffDraw<const N: usize> {
+    r: [f64; N],
+    cos: f64,
+    sin: f64,
+}
+
+impl<const N: usize> Default for PuffDraw<N> {
+    fn default() -> Self {
+        Self {
+            r: [0.0; N],
+            cos: 0.0,
+            sin: 0.0,
+        }
+    }
+}
+
+impl<const N: usize> PuffDraw<N> {
+    fn new(r: [f64; N], angle: f64) -> Self {
+        Self {
+            r,
+            cos: angle.cos(),
+            sin: angle.sin(),
+        }
+    }
+}
+
+impl Default for BlastDraws {
+    fn default() -> Self {
+        Self {
+            phase: f64::NAN,
+            shape: 0,
+            phase_cos: 0.0,
+            phase_sin: 0.0,
+            build: 0.0,
+            fireball: [PuffDraw::default(); FIRE_PUFFS],
+            column: [PuffDraw::default(); SMOKE_PUFFS],
+            skirt: [PuffDraw::default(); SKIRT_PUFFS],
+        }
+    }
+}
+
+impl BlastDraws {
+    fn new(b: &Blast) -> Self {
+        let phase = b.phase;
+        let shape = SHAPES[b.shape % SHAPES.len()];
+        let fireball = std::array::from_fn(|j| {
+            let jf = j as f64;
+            let r3 = hash(phase * 2.71 + jf * 2.239);
+            let angle = if j < shape.seams {
+                let k = (jf + 0.5) / shape.seams as f64 - 0.5;
+                phase + k * shape.arc + (r3 - 0.5) * shape.arc / shape.seams as f64 * 0.7
+            } else {
+                phase + jf * 2.399
+            };
+            let r = [
+                hash(phase * 0.53 + jf * 1.371),
+                hash(phase * 1.91 + jf * 0.713),
+                r3,
+                hash(phase * 3.17 + jf * 0.389),
+            ];
+            PuffDraw::new(r, angle)
+        });
+        let column = std::array::from_fn(|j| {
+            let jf = j as f64;
+            let r = [
+                hash(phase * 0.91 + jf * 3.137),
+                hash(phase * 1.37 + jf * 1.618),
+                hash(phase * 2.11 + jf * 0.433),
+            ];
+            // Golden-angle placement keeps the column's billows from lining up.
+            PuffDraw::new(r, phase + jf * 2.399)
+        });
+        let skirt = std::array::from_fn(|j| {
+            let jf = j as f64;
+            let r = [
+                hash(phase + jf * 1.913),
+                hash(phase * 1.7 + jf * 0.577),
+                hash(phase * 2.3 + jf * 2.719),
+            ];
+            // Uneven gaps and reaches: a burst of billows, not a stamped ring.
+            PuffDraw::new(r, phase + jf * 2.399 + (r[1] - 0.5) * 1.1)
+        });
+        Self {
+            phase,
+            shape: b.shape,
+            phase_cos: phase.cos(),
+            phase_sin: phase.sin(),
+            build: hash(phase * 4.13 + 0.37),
+            fireball,
+            column,
+            skirt,
+        }
+    }
+
+    /// Whether these are `b`'s.
+    fn of(&self, b: &Blast) -> bool {
+        self.phase == b.phase && self.shape == b.shape
+    }
 }
 
 /// A shell's mark on a hard wall: a chipped crater in stone, a sooty dent with a
@@ -1307,6 +1428,9 @@ impl ExplosionEffects {
             b.active = false;
             return;
         }
+        if !b.draws.of(b) {
+            b.draws = BlastDraws::new(b);
+        }
         match b.kind {
             Kind::Wood(wood) => self.wood_dust(b, wood, t, lifetime),
             Kind::Hit(struck) => self.hit(b, struck, t, streaks),
@@ -1456,25 +1580,22 @@ impl ExplosionEffects {
     /// different sizes and timing that roll out, spread and thin away.
     fn skirt(&mut self, b: &Blast, t: f64, color: [f64; 3]) {
         let s = b.scale;
-        for j in 0..SKIRT_PUFFS {
+        for (j, draw) in b.draws.skirt.iter().enumerate() {
             let jf = j as f64;
-            let r1 = hash(b.phase + jf * 1.913);
-            let r2 = hash(b.phase * 1.7 + jf * 0.577);
-            let r3 = hash(b.phase * 2.3 + jf * 2.719);
+            let [r1, r2, r3] = draw.r;
             let age = t - r1 * 0.07;
-            if age <= 0.0 {
+            let end = 1.1 + 0.8 * r3;
+            // Past its end the billow has thinned to nothing.
+            if age <= 0.0 || age >= end {
                 continue;
             }
-            // Uneven gaps and reaches: a burst of billows, not a stamped ring.
-            let angle = b.phase + jf * 2.399 + (r2 - 0.5) * 1.1;
             let reach = (0.5 + (1.8 + 2.4 * r3) * settle(age, 3.0 + 3.0 * r2)) * s;
             let size = (0.45 + 0.35 * r1 + (0.8 + 0.6 * r2) * age.sqrt()) * s;
-            let end = 1.1 + 0.8 * r3;
             self.puff(Puff {
                 position: [
-                    b.x + angle.cos() * reach + WIND[0] * age * 0.5,
+                    b.x + draw.cos * reach + WIND[0] * age * 0.5,
                     0.2 * s + size * 0.3,
-                    b.z + angle.sin() * reach + WIND[1] * age * 0.5,
+                    b.z + draw.sin * reach + WIND[1] * age * 0.5,
                 ],
                 size,
                 color: scaled(color, 0.8 + 0.25 * r2),
@@ -1509,19 +1630,17 @@ impl ExplosionEffects {
         } else {
             0.0
         };
-        for j in 0..SMOKE_PUFFS {
+        let (phase_cos, phase_sin) = (b.draws.phase_cos, b.draws.phase_sin);
+        for (j, draw) in b.draws.column.iter().enumerate() {
             let jf = j as f64;
-            let r1 = hash(b.phase * 0.91 + jf * 3.137);
-            let r2 = hash(b.phase * 1.37 + jf * 1.618);
-            let r3 = hash(b.phase * 2.11 + jf * 0.433);
+            let [r1, r2, r3] = draw.r;
             let born = 0.1 + jf * 0.05 + r1 * 0.04;
             let age = t - born;
-            if age <= 0.0 {
+            let life = lifetime - born;
+            // By 85% of its life the billow has thinned to nothing.
+            if age <= 0.0 || age >= life * 0.85 {
                 continue;
             }
-            let life = lifetime - born;
-            // Golden-angle placement keeps the column's billows from lining up.
-            let angle = b.phase + jf * 2.399;
             let spread = (0.25 + 0.95 * settle(age, 1.6)) * s * (0.55 + 0.6 * r3);
             let rise = look.smoke_rise * s.sqrt() * (0.7 + 0.5 * r2);
             let y = (1.3 + 0.5 * r1) * s
@@ -1535,13 +1654,9 @@ impl ExplosionEffects {
                 .powf(0.8);
             self.puff(Puff {
                 position: [
-                    b.x + angle.cos() * spread
-                        + WIND[0] * carry
-                        + b.phase.cos() * age * look.drift * 0.4,
+                    b.x + draw.cos * spread + WIND[0] * carry + phase_cos * age * look.drift * 0.4,
                     y,
-                    b.z + angle.sin() * spread
-                        + WIND[1] * carry
-                        + b.phase.sin() * age * look.drift * 0.4,
+                    b.z + draw.sin * spread + WIND[1] * carry + phase_sin * age * look.drift * 0.4,
                 ],
                 size,
                 color: scaled(smoke, 0.85 + 0.3 * r3),
@@ -1599,39 +1714,36 @@ impl ExplosionEffects {
             )
         };
         // Every blast its own build: some squat and wide, some tall and narrow.
-        let build = hash(b.phase * 4.13 + 0.37);
+        let build = b.draws.build;
         let spread = spread * (0.78 + 0.44 * build);
         let column = column * (1.15 - 0.4 * build);
-        for j in 0..FIRE_PUFFS {
+        let (phase_cos, phase_sin) = (b.draws.phase_cos, b.draws.phase_sin);
+        for (j, draw) in b.draws.fireball.iter().enumerate() {
             let jf = j as f64;
-            let r1 = hash(b.phase * 0.53 + jf * 1.371);
-            let r2 = hash(b.phase * 1.91 + jf * 0.713);
-            let r3 = hash(b.phase * 2.71 + jf * 2.239);
-            let r4 = hash(b.phase * 3.17 + jf * 0.389);
+            let [r1, r2, r3, r4] = draw.r;
             let late = j >= shape.late_from;
             let age = t - r1 * 0.035 - if late { shape.late } else { 0.0 };
-            if age <= 0.0 {
+            // Once its soot has thinned to nothing (`gone` below) the lobe is spent.
+            if age <= 0.0 || (age - look.fire_life * 0.5).max(0.0) >= 1.3 + 0.7 * r3 {
                 continue;
             }
             let seam = j < shape.seams;
             // Most of the way out within a tenth of a second.
             let out = settle(age, 22.0 + 10.0 * r2);
-            let (angle, reach, height, size) = if seam {
-                let k = (jf + 0.5) / shape.seams as f64 - 0.5;
-                let angle =
-                    b.phase + k * shape.arc + (r3 - 0.5) * shape.arc / shape.seams as f64 * 0.7;
+            // Seam lobes fan out over the eruption's arc; the middle ones keep the
+            // golden angle (`BlastDraws`).
+            let (reach, height, size) = if seam {
                 let reach =
                     source + (0.3 + 0.5 * r3) * shape.reach * look.fire_spread * spread * out;
                 let height = seam_height + 0.3 * r2 + 1.0 * shape.rise * out;
                 // A few big lobes among small ones.
                 let size = 0.25 + (0.55 + 0.85 * r1 * r1) * out;
-                (angle, reach, height, size)
+                (reach, height, size)
             } else {
-                let angle = b.phase + jf * 2.399;
                 let reach = 0.1 + 0.5 * r3 * out;
                 let height = hatch_height + column * (1.0 + 1.3 * r3) * settle(age, 6.0 + 3.0 * r2);
                 let size = 0.22 + (0.5 + 0.6 * r1 * r1) * out;
-                (angle, reach, height, size)
+                (reach, height, size)
             };
             // White-hot for the flash's first frames, then the lobe's own cooling.
             let heat = fire_heat(age, cooling * (0.8 + 0.45 * r4))
@@ -1650,14 +1762,8 @@ impl ExplosionEffects {
                 + (0.35 + 0.3 * r2) * soot_age * s.sqrt();
             let pale = smoothstep(soot_age, 0.1, 0.1 + SOOT_SECONDS);
             let carry = soot_age * soot_age * 0.5;
-            let x = b.x
-                + angle.cos() * reach
-                + b.phase.cos() * age * look.drift * 0.5
-                + WIND[0] * carry;
-            let z = b.z
-                + angle.sin() * reach
-                + b.phase.sin() * age * look.drift * 0.5
-                + WIND[1] * carry;
+            let x = b.x + draw.cos * reach + phase_cos * age * look.drift * 0.5 + WIND[0] * carry;
+            let z = b.z + draw.sin * reach + phase_sin * age * look.drift * 0.5 + WIND[1] * carry;
             // Each seam glows white-hot round the hull for the flash's first frames,
             // outlining the hull rather than hiding it.
             if vehicle && seam && age < SEAM_FLASH_SECONDS {

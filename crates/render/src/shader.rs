@@ -131,6 +131,14 @@ impl ShaderKey {
         }
     }
 
+    /// Whether the variant's output depends on which material is bound: the main
+    /// pass shades with it, an alpha test samples its map against its cutoff, and an
+    /// effect's hooks read its params. Other depth-only variants read none of it, so
+    /// any material bound before them serves (every material shares one layout).
+    pub fn reads_own_material(&self) -> bool {
+        self.pass == Pass::Main || self.alpha_test || self.effect != 0
+    }
+
     /// The variant's vertex and fragment entry points. A shadow caster that neither
     /// alpha-tests nor dithers writes depth only, without a fragment stage.
     pub fn entry_points(&self) -> (&'static str, Option<&'static str>) {
@@ -849,6 +857,49 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// Whether any entry point of a WGSL module uses a binding of `group`.
+    fn uses_group(code: &str, group: u32) -> bool {
+        let module = naga::front::wgsl::parse_str(code).expect("valid WGSL");
+        let info = naga::valid::Validator::new(
+            naga::valid::ValidationFlags::all(),
+            naga::valid::Capabilities::empty(),
+        )
+        .validate(&module)
+        .expect("valid module");
+        (0..module.entry_points.len()).any(|index| {
+            let uses = info.get_entry_point(index);
+            module.global_variables.iter().any(|(handle, global)| {
+                global.binding.as_ref().is_some_and(|b| b.group == group)
+                    && !uses[handle].is_empty()
+            })
+        })
+    }
+
+    #[test]
+    fn depth_only_variants_that_read_no_material_use_no_material_binding() {
+        // WebGPU depth-only draws keep whatever material the pass bound for these.
+        let effects = EffectRegistry::default();
+        for alpha_test in [false, true] {
+            let key = ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test,
+                ..ShaderKey::default()
+            };
+            let stages = StageSources::variant(&key, &effects);
+            let reads = uses_group(&stages.vertex, 1)
+                || stages
+                    .fragment
+                    .as_deref()
+                    .is_some_and(|fs| uses_group(fs, 1));
+            assert_eq!(reads, key.reads_own_material(), "{key:?}");
+        }
+        let main = ShaderKey {
+            lit: true,
+            ..ShaderKey::default()
+        };
+        assert!(main.reads_own_material());
     }
 
     /// WebKit compiles every stage of every pipeline from its own module, so variants

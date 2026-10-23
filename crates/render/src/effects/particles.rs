@@ -716,6 +716,8 @@ impl ParticleEffects {
     pub fn update(&mut self, dt: f64, time: f64) {
         self.sparks.update(dt);
         self.explosions.update(dt, &mut self.sparks.records);
+        // Resting pieces slide to a stop by the same share every frame.
+        let keep = (-SLIDE_DRAG * dt).exp();
         self.particles.retain_mut(|q| {
             q.life -= dt;
             if q.life <= 0.0 {
@@ -734,7 +736,6 @@ impl ParticleEffects {
             // swapped between its lying and tumbling poses every other frame and
             // shook and flickered where it lay.
             if q.rests && q.vy == 0.0 && q.y <= rest {
-                let keep = (-SLIDE_DRAG * dt).exp();
                 q.vx *= keep;
                 q.vz *= keep;
                 return true;
