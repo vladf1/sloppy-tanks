@@ -486,6 +486,14 @@ const BLOOM_FIRST_SHIFT: usize = 2;
 /// quarter-size target looks the same as a half-size one at a quarter of the probes
 /// (about 1 ms less GPU time at 3840×2160).
 const OCCLUSION_DOWNSCALE: u32 = 4;
+/// The occlusion's blur (`output.wgsl` `fs_occlusion_blur`) for an occlusion of
+/// `width` × `height` texels: one texel per corner the output pass reads, the
+/// corner nearest each scene pixel, which can lie a whole texel past the last when
+/// the scene's size is no multiple of the downscale.
+fn blurred_occlusion_size(width: u32, height: u32) -> (u32, u32) {
+    (width + 2, height + 2)
+}
+
 /// Ambient occlusion: the reach of its probes and the depth gap they ignore, in
 /// metres; where it fades out with view distance; and its contrast power.
 const OCCLUSION_RADIUS: f32 = 1.8;

@@ -28,6 +28,7 @@ use super::{
 };
 use crate::atmosphere_map::{ATMOSPHERE_MAP_SIZE, atmosphere_map};
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
+use crate::gpu::blurred_occlusion_size;
 use crate::noise_lattice::{NOISE_LATTICE_SIZE, noise_lattice};
 use crate::target_memory::target_bytes;
 use context::{block, unit};
@@ -198,7 +199,7 @@ impl Drop for ColorTarget {
 }
 
 /// The quarter-size ambient occlusion target and its blur at each corner of its
-/// texels (one texel larger along each axis), each with its framebuffer; the blur
+/// texels (`blurred_occlusion_size`), each with its framebuffer; the blur
 /// samples the occlusion through a linear sampler and the output pass fetches the
 /// blur. Dropping it deletes them.
 struct OcclusionTarget {
@@ -220,7 +221,8 @@ impl OcclusionTarget {
         let texture = storage(gpu, glow::R8, 1, width, height);
         let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, texture);
         check_framebuffer(gpu, "ambient occlusion");
-        let blurred = texel_storage(gpu, glow::R8, width + 1, height + 1);
+        let (blurred_width, blurred_height) = blurred_occlusion_size(width, height);
+        let blurred = texel_storage(gpu, glow::R8, blurred_width, blurred_height);
         let blurred_framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, blurred);
         check_framebuffer(gpu, "ambient occlusion blur");
         Self {
@@ -528,7 +530,8 @@ impl Frame {
     pub fn target_bytes(&self) -> u64 {
         let main = target_bytes(self.main.width, self.main.height, self.gpu.samples);
         let (width, height) = (self.occlusion.width, self.occlusion.height);
-        let occlusion = u64::from(width * height + (width + 1) * (height + 1));
+        let (blurred_width, blurred_height) = blurred_occlusion_size(width, height);
+        let occlusion = u64::from(width * height + blurred_width * blurred_height);
         let depth = u64::from(self.main.width * self.main.height) * 4;
         let shadow = [Some(&self.shadow), self.static_shadow.as_ref()]
             .into_iter()
@@ -744,7 +747,8 @@ impl Frame {
         unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
         let blur = &scene.pipelines.fixed().occlusion_blur;
         gpu.bind_framebuffer(Some(target.blurred_framebuffer));
-        gpu.viewport(target.width + 1, target.height + 1);
+        let (blurred_width, blurred_height) = blurred_occlusion_size(target.width, target.height);
+        gpu.viewport(blurred_width, blurred_height);
         gpu.use_program(scene.pipelines.program(blur.program).raw);
         gpu.set_raster(&blur.raster);
         gpu.bind_texture(unit::SOURCE, target.texture);

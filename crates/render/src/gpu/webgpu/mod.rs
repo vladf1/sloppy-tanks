@@ -27,6 +27,7 @@ use super::{
 };
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
 use crate::atmosphere_map::{ATMOSPHERE_MAP_SIZE, atmosphere_map};
+use crate::gpu::blurred_occlusion_size;
 use crate::mesh_pages::{MeshRange, NO_PAGE};
 use crate::noise_lattice::{NOISE_LATTICE_SIZE, noise_lattice};
 use context::{ColorTarget, DEPTH_FORMAT, OCCLUSION_FORMAT, SHADOW_DEPTH_FORMAT, texture_2d};
@@ -915,11 +916,15 @@ impl PostTargets {
             size.width / OCCLUSION_DOWNSCALE,
             size.height / OCCLUSION_DOWNSCALE,
         );
+        let (blurred_width, blurred_height) = blurred_occlusion_size(
+            size.width / OCCLUSION_DOWNSCALE,
+            size.height / OCCLUSION_DOWNSCALE,
+        );
         let occlusion_blurred = target(
             "ambient occlusion blur",
             OCCLUSION_FORMAT,
-            size.width / OCCLUSION_DOWNSCALE + 1,
-            size.height / OCCLUSION_DOWNSCALE + 1,
+            blurred_width,
+            blurred_height,
         );
         let occlusion_depth = DepthMap::of(texture_2d(
             device,
