@@ -170,16 +170,16 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     }
     arenaStarted = true;
     startTextureDownloads(options);
-    // A second frame leaves a paint opportunity before any engine work begins. The
-    // engine compiles off the main thread meanwhile, and the arena's texture bakes
-    // start in workers once it has; a failed load is the arena's to report.
+    // A frame leaves Battle Setup a paint before any engine work begins. The engine
+    // compiles, the arena's texture bakes start in workers once it has, and the arena
+    // builds as soon as they have loaded: waiting a second frame cost WebKit 40-60 ms
+    // of an idle main thread. A failed load is the arena's to report.
     requestAnimationFrame(() => {
       void import("./game")
         .then(({ loadArenaEngine }) => loadArenaEngine(options.mapMode))
+        .catch(() => {})
+        .then(() => menu.prepare())
         .catch(() => {});
-      requestAnimationFrame(() => {
-        void menu.prepare().catch(() => {});
-      });
     });
   };
   const playModes = bindPlayModes(

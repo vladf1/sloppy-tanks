@@ -47,11 +47,12 @@ const EXACT_RESOLUTION = { width: 2560, height: 1440 } as const;
 
 /** Load the engine and start the texture bakes the arena of `map` will claim, so they
  * run in workers while the engine builds the arena (`bakeAhead`). Battle Setup calls
- * this as its first frame paints; the quarry soil's bake then finishes before the
- * arena's pipelines do. */
+ * this as its first frame paints and builds the arena once it settles, when the bake
+ * workers have loaded; the quarry soil's bake then finishes before the arena's
+ * pipelines do. */
 export async function loadArenaEngine(map: string): Promise<void> {
   await loadEngine();
-  bakeAhead(engineModule(), mapTextureBakes(map));
+  await bakeAhead(engineModule(), mapTextureBakes(map));
 }
 
 /** Prepare a hidden arena after the lightweight menu has painted. */
@@ -140,7 +141,7 @@ export async function prepareGame(
           continue;
         }
         // Its texture bakes run in workers while the rebuild holds the main thread.
-        bakeAhead(engineModule(), mapTextureBakes(next.mapMode));
+        void bakeAhead(engineModule(), mapTextureBakes(next.mapMode));
         game.set_options(JSON.stringify(next));
         prepared = next;
         total = 0;
