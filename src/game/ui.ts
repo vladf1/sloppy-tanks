@@ -387,7 +387,10 @@ export class UI {
       playing && tank.alive && tank.healthRatio < CRITICAL_HEALTH,
     );
     const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
-    indicator.hidden = this.damageTime <= 0 || match.phase !== "playing";
+    const hideIndicator = this.damageTime <= 0 || match.phase !== "playing";
+    if (indicator.hidden !== hideIndicator) {
+      indicator.hidden = hideIndicator;
+    }
     if (!indicator.hidden) {
       placeDamageRing(indicator, this.viewerPoint());
     }

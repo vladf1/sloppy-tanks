@@ -370,6 +370,24 @@ pub fn js_hypot(values: &[f64]) -> f64 {
     sum.sqrt() * max
 }
 
+/// [`js_hypot`] of two values: the same result without the slice's loops (Kahan's
+/// compensation is exactly zero after the first term). The quarry soil bake takes
+/// several per pixel.
+pub fn js_hypot2(a: f64, b: f64) -> f64 {
+    let max = 0.0f64.max(a.abs()).max(b.abs());
+    if max == f64::INFINITY {
+        return f64::INFINITY;
+    }
+    if a.is_nan() || b.is_nan() {
+        return f64::NAN;
+    }
+    if max == 0.0 {
+        return 0.0;
+    }
+    let (a, b) = (a.abs() / max, b.abs() / max);
+    (a * a + b * b).sqrt() * max
+}
+
 /// `MathUtils.smoothstep(x, min, max)`.
 pub fn smoothstep(x: f64, min: f64, max: f64) -> f64 {
     if x <= min {
@@ -396,6 +414,36 @@ mod tests {
         assert_eq!(js_sign(0.0), 0.0);
         assert_eq!(js_sign(-3.0), -1.0);
         assert_eq!(js_sign(2.0), 1.0);
+    }
+
+    /// Bit for bit what the general hypot gives, specials included.
+    #[test]
+    fn hypot2_matches_js_hypot() {
+        let mut random = crate::sim::math::Random::new(97.0);
+        let mut pairs = vec![
+            (0.0, 0.0),
+            (-0.0, 0.0),
+            (3.0, -4.0),
+            (1e-310, 2e-310),
+            (1e300, 1e300),
+            (f64::INFINITY, f64::NAN),
+            (f64::NAN, 1.0),
+            (f64::MAX, f64::MAX),
+        ];
+        for _ in 0..50_000 {
+            let scale = 10f64.powf(random.next() * 12.0 - 6.0);
+            pairs.push((
+                (random.next() - 0.5) * scale,
+                (random.next() - 0.5) * scale * random.next(),
+            ));
+        }
+        for (a, b) in pairs {
+            assert_eq!(
+                js_hypot2(a, b).to_bits(),
+                js_hypot(&[a, b]).to_bits(),
+                "{a} {b}"
+            );
+        }
     }
 
     #[test]

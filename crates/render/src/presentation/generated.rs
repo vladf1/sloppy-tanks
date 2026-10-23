@@ -16,9 +16,21 @@ use std::collections::HashSet;
 use sloppy_core::models::effects_scenery::QUARRY_SOIL_TEXTURE;
 use sloppy_core::models::{QUARRY_SOIL_SIZE, bake_quarry_ground, sand_accum};
 
+use super::theme::Theme;
+
 /// Soil rows baked per step: a 2048-row bake is ~300 ms natively, so 128 rows
 /// keep each step near 20 ms while the loading screen yields between steps.
 pub const SOIL_ROWS_PER_STEP: usize = 128;
+
+/// The generated textures a theme's scenery has the page bake (`bake_texture` keys,
+/// handed out by [`GeneratedTextures::claim_bake`]). A page may start them as soon as
+/// the engine has loaded, before the arena that asks for them is built.
+pub fn theme_bakes(theme: &str) -> &'static [&'static str] {
+    match Theme::from_name(theme) {
+        Theme::Quarry => &[QUARRY_SOIL_TEXTURE],
+        Theme::Village | Theme::Harbor | Theme::Custom => &[],
+    }
+}
 
 /// An in-progress banded soil bake.
 #[derive(Default)]
@@ -290,6 +302,27 @@ mod tests {
         textures.soil.as_mut().unwrap().step(SOIL_ROWS_PER_STEP);
         assert_eq!(textures.claim_bake(), None, "half-baked here");
         assert!(GeneratedTextures::default().claim_bake().is_none());
+    }
+
+    /// Every texture a theme's scenery has baked is one the page may start early.
+    #[test]
+    fn theme_bakes_are_what_the_scenery_bakes() {
+        use crate::presentation::model_catalog::scenery;
+        use sloppy_core::models::node_textures;
+        use sloppy_core::scene::TextureSource;
+        for theme in [Theme::Village, Theme::Harbor, Theme::Quarry] {
+            let model = scenery(theme).expect("standard theme");
+            let baked: Vec<&str> = node_textures(&model.root)
+                .into_iter()
+                .filter_map(|source| match source {
+                    // `request_scenery` bakes the soil; other keys draw on a canvas.
+                    TextureSource::Generated(key) if key == QUARRY_SOIL_TEXTURE => Some(key),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(baked, theme_bakes(theme.name()), "{theme:?}");
+        }
+        assert!(theme_bakes("stress-test").is_empty());
     }
 
     #[test]

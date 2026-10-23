@@ -3,7 +3,14 @@
 // browser side: preparing the arena behind Battle Setup, one engine frame per
 // animation frame with the packed raw input, and engine events and HUD state for
 // sound and the DOM.
-import { createGame, engineModule, throwGpuError, type Game } from "./engine";
+import {
+  createGame,
+  engineModule,
+  loadEngine,
+  mapTextureBakes,
+  throwGpuError,
+  type Game,
+} from "./engine";
 import { FrameRecorder, createDebug } from "./diagnostics";
 import { printDebugHelp } from "./game/debug-console";
 import { AudioSystem } from "./game/audio";
@@ -32,11 +39,20 @@ import { NerdStats, engineStatsSections } from "./game/nerd-stats";
 import { savedVolume } from "./game/settings-dialog";
 import type { PreparedGame } from "./game/start-menu";
 import { PREPARE_BUDGET, afterPaint, nextPrepareStep } from "./game/task-yield";
-import { startTextureBake } from "./game/texture-bake";
+import { bakeAhead, startTextureBake } from "./game/texture-bake";
 import { TouchModeController } from "./game/touch-mode";
 import { MENU_READY_STATUS, UI } from "./game/ui";
 /** `window.sloppy.exactResolution()` renders at this size whatever the window. */
 const EXACT_RESOLUTION = { width: 2560, height: 1440 } as const;
+
+/** Load the engine and start the texture bakes the arena of `map` will claim, so they
+ * run in workers while the engine builds the arena (`bakeAhead`). Battle Setup calls
+ * this as its first frame paints; the quarry soil's bake then finishes before the
+ * arena's pipelines do. */
+export async function loadArenaEngine(map: string): Promise<void> {
+  await loadEngine();
+  bakeAhead(engineModule(), mapTextureBakes(map));
+}
 
 /** Prepare a hidden arena after the lightweight menu has painted. */
 export async function prepareGame(
@@ -57,6 +73,7 @@ export async function prepareGame(
   const choices: GameOptions = { ...getOptions() };
   let game: Game;
   try {
+    await loadArenaEngine(choices.mapMode);
     game = await createGame(canvas, {
       seed,
       assetBase: import.meta.env.BASE_URL,
@@ -122,6 +139,8 @@ export async function prepareGame(
         if (!sameGameOptions(next, wanted)) {
           continue;
         }
+        // Its texture bakes run in workers while the rebuild holds the main thread.
+        bakeAhead(engineModule(), mapTextureBakes(next.mapMode));
         game.set_options(JSON.stringify(next));
         prepared = next;
         total = 0;

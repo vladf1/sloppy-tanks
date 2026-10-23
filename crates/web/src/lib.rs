@@ -61,6 +61,25 @@ impl WireView {
     }
 }
 
+/// The generated textures the arena of Battle Setup map `map` will have the page bake
+/// (`bake_texture` keys). The page may start them as soon as the engine has loaded,
+/// before the arena is built and claims them (`Game::claim_texture_bake`).
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen]
+pub fn map_texture_bakes(map: &str) -> Vec<String> {
+    use sloppy_core::sim::map_options::MapId;
+    use sloppy_core::sim::maps::MAPS;
+    let theme = MapId::parse(map)
+        .and_then(|id| MAPS.iter().find(|candidate| candidate.id == id))
+        .and_then(|map| map.theme);
+    theme.map_or_else(Vec::new, |theme| {
+        sloppy_render::presentation::generated::theme_bakes(theme.as_str())
+            .iter()
+            .map(|key| key.to_string())
+            .collect()
+    })
+}
+
 /// Rows `band` of `bands` (equal shares, top first) of a generated texture key as
 /// RGBA8, for the page's bake workers: further instances of this module that run only
 /// this call, off the main thread (`Game::claim_texture_bake`). `None` for a key

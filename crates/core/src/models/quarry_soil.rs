@@ -8,10 +8,10 @@
 
 use std::sync::OnceLock;
 
-use crate::geometry::math::{js_hypot, lerp, smoothstep};
+use crate::geometry::math::{js_hypot2, lerp, smoothstep};
 use crate::sim::arena::spawn_positions;
 use crate::sim::data::ARENA;
-use crate::sim::math::Random;
+use crate::sim::math::{Random, Vec2};
 use crate::sim::quarry_layout::quarry_layout;
 use crate::sim::types::{CoverKind, Team};
 
@@ -119,7 +119,7 @@ fn rock_distance(rocks: &[[f64; 5]], x: f64, z: f64, reach: f64) -> f64 {
             continue;
         }
         let qz = (z - cz).abs() - (half_d - round);
-        let d = js_hypot(&[qx.max(0.0), qz.max(0.0)]) + qx.max(qz).min(0.0) - round;
+        let d = js_hypot2(qx.max(0.0), qz.max(0.0)) + qx.max(qz).min(0.0) - round;
         best = best.min(d);
     }
     best
@@ -141,7 +141,7 @@ fn machine_stand(x: f64, z: f64) -> f64 {
     MACHINE_SPOTS
         .iter()
         .map(|&(cx, cz, half_w, half_d)| {
-            let d = js_hypot(&[(x - cx) / (half_w + 2.0), (z - cz) / (half_d + 2.0)]);
+            let d = js_hypot2((x - cx) / (half_w + 2.0), (z - cz) / (half_d + 2.0));
             1.0 - smoothstep(d, 0.45, 1.0)
         })
         .fold(0.0, f64::max)
@@ -155,9 +155,8 @@ const PAD_APRON: f64 = 3.2;
 /// How the ground round the nearest spawn pad is marked at (x, z): (contact,
 /// apron), each 0..1. A shade hugs the disc's edge so the pad sits in the ground,
 /// and the tracks of every tank that has rolled off it tread a darker, gravelly
-/// apron round it.
-fn spawn_pad_ground(x: f64, z: f64) -> (f64, f64) {
-    let pads = spawn_positions(Team::Red, 1.0);
+/// apron round it. `pads` are one team's spawn positions (the other's mirror them).
+fn spawn_pad_ground(x: f64, z: f64, pads: &[Vec2; 5]) -> (f64, f64) {
     let across = x.abs() - pads[0].x.abs();
     if across.abs() > PAD_RADIUS + PAD_APRON {
         return (0.0, 0.0);
@@ -166,7 +165,7 @@ fn spawn_pad_ground(x: f64, z: f64) -> (f64, f64) {
         .iter()
         .map(|pad| (z - pad.z).abs())
         .fold(f64::INFINITY, f64::min);
-    let edge = js_hypot(&[across, along]) - PAD_RADIUS;
+    let edge = js_hypot2(across, along) - PAD_RADIUS;
     if edge > PAD_APRON {
         return (0.0, 0.0);
     }
@@ -190,11 +189,11 @@ const CUTTINGS_REACH: f64 = 0.85;
 
 /// A drilled blast pattern at (x, z): (hole collar, cuttings, paint mark), each
 /// 0..1. Each hole is a dark collar in a pale ring of rock flour, with a dab
-/// of orange marking paint beside it.
-fn blast_pattern(x: f64, z: f64) -> (f64, f64, f64) {
-    for (cx, cz, turn, rows, columns) in BLAST_PATTERNS {
+/// of orange marking paint beside it. `turns` holds each pattern's turn's sine and
+/// cosine.
+fn blast_pattern(x: f64, z: f64, turns: &[(f64, f64); 2]) -> (f64, f64, f64) {
+    for ((cx, cz, _, rows, columns), &(sin, cos)) in BLAST_PATTERNS.into_iter().zip(turns) {
         let (dx, dz) = (x - cx, z - cz);
-        let (sin, cos) = turn.sin_cos();
         let (u, v) = (dx * cos + dz * sin, -dx * sin + dz * cos);
         let (half_u, half_v) = (
             (columns as f64 - 1.0) * BLAST_SPACING / 2.0,
@@ -215,10 +214,10 @@ fn blast_pattern(x: f64, z: f64) -> (f64, f64, f64) {
             u + half_u - gu * BLAST_SPACING,
             v + half_v - gv * BLAST_SPACING,
         );
-        let d = js_hypot(&[ou, ov]);
+        let d = js_hypot2(ou, ov);
         let collar = 1.0 - smoothstep(d, 0.08, 0.15);
         let cuttings = (1.0 - smoothstep(d, 0.15, CUTTINGS_REACH)).powf(0.7) * (1.0 - collar);
-        let paint = 1.0 - smoothstep(js_hypot(&[ou - 0.5, ov + 0.35]), 0.1, 0.16);
+        let paint = 1.0 - smoothstep(js_hypot2(ou - 0.5, ov + 0.35), 0.1, 0.16);
         return (collar, cuttings, paint);
     }
     (0.0, 0.0, 0.0)
@@ -287,27 +286,38 @@ fn traffic_bunching(x: f64, z: f64) -> f64 {
 
 /// Loader tyre tracks across the open floor at (x, z): two wandering paths,
 /// each a pair of ruts 1.9 m apart, as (trough, berm) with a pressed tread.
-fn loader_tracks(table: &[f32], x: f64, z: f64) -> (f64, f64) {
+/// `along_x` holds the sines and cosines of the two paths that curve along x (the
+/// first and third), `along_z` the one that curves along z.
+fn loader_tracks(
+    table: &[f32],
+    x: f64,
+    z: f64,
+    along_x: [(f64, f64); 2],
+    along_z: (f64, f64),
+) -> (f64, f64) {
+    let [(sin_a, cos_a), (sin_c, cos_c)] = along_x;
+    let (sin_b, cos_b) = along_z;
     // Each path is a gentle curve across the yard: the point's offset from it
     // over the curve's local stretch approximates the distance.
     let paths = [
         (
-            z - (14.0 * (x * 0.043 + 0.7).sin() + 0.22 * x - 6.0),
-            14.0 * 0.043 * (x * 0.043 + 0.7).cos() + 0.22,
+            z - (14.0 * sin_a + 0.22 * x - 6.0),
+            14.0 * 0.043 * cos_a + 0.22,
             1.0,
         ),
         (
-            x - (17.0 * (z * 0.037 + 2.1).sin() - 0.18 * z + 9.0),
-            17.0 * 0.037 * (z * 0.037 + 2.1).cos() - 0.18,
+            x - (17.0 * sin_b - 0.18 * z + 9.0),
+            17.0 * 0.037 * cos_b - 0.18,
             1.0,
         ),
         (
-            z - (11.0 * (x * 0.051 - 1.3).sin() - 0.3 * x + 28.0),
-            11.0 * 0.051 * (x * 0.051 - 1.3).cos() - 0.3,
+            z - (11.0 * sin_c - 0.3 * x + 28.0),
+            11.0 * 0.051 * cos_c - 0.3,
             0.7,
         ),
     ];
-    let tread = 0.75 + 0.25 * ((x + z) * 7.0).sin();
+    // The tread is only pressed where a rut runs.
+    let mut tread = None;
     paths
         .into_iter()
         .enumerate()
@@ -316,6 +326,7 @@ fn loader_tracks(table: &[f32], x: f64, z: f64) -> (f64, f64) {
             if (across.abs() - 0.95).abs() > RUT_BERM + 0.4 {
                 return (0.0, 0.0);
             }
+            let tread = *tread.get_or_insert_with(|| 0.75 + 0.25 * ((x + z) * 7.0).sin());
             let (trough, berm) = rut_profile(across.abs() - 0.95);
             let age = rut_age(table, x, z, 13.0 + k as f64 * 7.0) * strength;
             (trough * tread * age, berm * age)
@@ -356,23 +367,76 @@ pub fn bake_quarry_soil(accum: &[f32], start: usize, end: usize) -> Vec<u8> {
             rng.next();
         }
     }
+    let columns = SoilColumns::new();
     for (row, out) in (start..end).zip(pixels.chunks_exact_mut(size * 4)) {
         let z = (row as f64 / (size - 1) as f64 - 0.5) * EXTENT;
-        bake_row(accum, table, &mut rng, row, z, out);
+        bake_row(accum, table, &columns, &mut rng, row, z, out);
     }
     pixels
+}
+
+/// World x across the soil's pixel columns.
+fn column_x(col: usize) -> f64 {
+    (col as f64 / (QUARRY_SOIL_SIZE - 1) as f64 - 0.5) * EXTENT
+}
+
+/// The terms of a pixel that depend on its column alone, worked out once per bake
+/// rather than for every row: in Wasm each sine is a call into software libm.
+struct SoilColumns {
+    x: Vec<f64>,
+    /// The sand warp's sine along x.
+    warp: Vec<f64>,
+    /// The crossing road's wander.
+    crossing: Vec<f64>,
+    /// The apron haul road's wander.
+    haul: Vec<f64>,
+    /// The two loader paths that curve along x: their sines and cosines.
+    loader: Vec<[(f64, f64); 2]>,
+}
+
+impl SoilColumns {
+    fn new() -> Self {
+        let x: Vec<f64> = (0..QUARRY_SOIL_SIZE).map(column_x).collect();
+        Self {
+            warp: x.iter().map(|x| (x * 0.021 + 1.7).sin()).collect(),
+            crossing: x.iter().map(|x| (x * 0.055).sin()).collect(),
+            haul: x.iter().map(|x| (x * 0.085 + 0.6).sin()).collect(),
+            loader: x
+                .iter()
+                .map(|x| {
+                    [
+                        ((x * 0.043 + 0.7).sin(), (x * 0.043 + 0.7).cos()),
+                        ((x * 0.051 - 1.3).sin(), (x * 0.051 - 1.3).cos()),
+                    ]
+                })
+                .collect(),
+            x,
+        }
+    }
 }
 
 /// One row of the soil at `z` into `out`, continuing `rng`. A function of its own,
 /// called per row: a Wasm engine only swaps in optimized code between calls, so one
 /// call baking the whole texture would run in its baseline tier throughout.
 #[inline(never)]
-fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, out: &mut [u8]) {
+fn bake_row(
+    accum: &[f32],
+    table: &[f32],
+    columns: &SoilColumns,
+    rng: &mut Random,
+    row: usize,
+    z: f64,
+    out: &mut [u8],
+) {
     let size = QUARRY_SOIL_SIZE;
-    let extent = EXTENT;
     let rocks = rocks_near_row(z, ROCK_ROW_REACH);
+    let warp_z = (z * 0.023 - 0.6).sin();
+    // The loader path that curves along z.
+    let loader_z = ((z * 0.037 + 2.1).sin(), (z * 0.037 + 2.1).cos());
+    let blast_turns = BLAST_PATTERNS.map(|(_, _, turn, _, _)| turn.sin_cos());
+    let pads = spawn_positions(Team::Red, 1.0);
     for col in 0..size {
-        let x = (col as f64 / (size - 1) as f64 - 0.5) * extent;
+        let x = columns.x[col];
         // Stretched along the +x wind, so sand sheets and deflated ground lie in
         // streaks behind the obstacles instead of round blotches.
         let macro_field = noise(table, x * 0.034, z * 0.085);
@@ -380,7 +444,7 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         // Broad irregular sheets: windblown sand where the macro field runs high,
         // exposed stony soil where it runs low. A sine warp plus two fixed diagonal
         // drift bands break any hint of cellular repetition without another octave.
-        let warp = (x * 0.021 + 1.7).sin() * (z * 0.023 - 0.6).sin();
+        let warp = columns.warp[col] * warp_z;
         let bands = (x * 0.045 + z * 0.031 + 1.2).sin() * (z * 0.052 - x * 0.013 + 0.4).sin();
         let sand = smoothstep(macro_field + warp * 0.18 + bands * 0.1, 0.54, 0.68);
         let rocky = 1.0 - smoothstep(macro_field - warp * 0.15, 0.31, 0.43);
@@ -389,8 +453,8 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         let qx = x.abs() - 39.0;
         let qz = z.abs() - 39.0;
         let loop_distance =
-            (js_hypot(&[qx.max(0.0), qz.max(0.0)]) + qx.max(qz).min(0.0) - 12.0).abs();
-        let crossing = (z - (x * 0.055).sin() * 1.6).abs();
+            (js_hypot2(qx.max(0.0), qz.max(0.0)) + qx.max(qz).min(0.0) - 12.0).abs();
+        let crossing = (z - columns.crossing[col] * 1.6).abs();
         let distance = loop_distance.min(crossing);
         let mut road = 0.0;
         let mut windrow = 0.0;
@@ -432,8 +496,8 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         }
         // Trampled work floor: one broad central apron plus two midfield patches
         // between the rock shoulders. Fixed smooth shapes, no extra noise.
-        let wear = (1.0 - smoothstep(js_hypot(&[x / 30.0, z / 23.0]), 0.55, 1.0))
-            .max(1.0 - smoothstep(js_hypot(&[(x.abs() - 25.0) / 13.0, z / 16.0]), 0.5, 1.0));
+        let wear = (1.0 - smoothstep(js_hypot2(x / 30.0, z / 23.0), 0.55, 1.0))
+            .max(1.0 - smoothstep(js_hypot2((x.abs() - 25.0) / 13.0, z / 16.0), 0.5, 1.0));
         // Beyond the wall the ground falls to the machinery apron: loose fill on
         // the embankment, then a working floor of darker quarry fines.
         let reach = x.abs().max(z.abs());
@@ -494,9 +558,8 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         // The loading floor between the stockpile and the excavator: trodden dark
         // with crushed fines, cut by the loader's ruts running out east along the
         // apron and fading as they go.
-        let loading = (1.0
-            - smoothstep(js_hypot(&[(x + 32.0) / 17.0, (z + 70.0) / 6.5]), 0.45, 1.0))
-            * working;
+        let loading =
+            (1.0 - smoothstep(js_hypot2((x + 32.0) / 17.0, (z + 70.0) / 6.5), 0.45, 1.0)) * working;
         r += (142.0 - r) * loading * 0.55;
         g += (126.0 - g) * loading * 0.55;
         b += (104.0 - b) * loading * 0.55;
@@ -518,13 +581,18 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (74.0 - r) * oil * 0.55;
         g += (68.0 - g) * oil * 0.55;
         b += (62.0 - b) * oil * 0.55;
-        let haul = z - (-70.5 + 2.2 * (x * 0.085 + 0.6).sin());
+        let haul = z - (-70.5 + 2.2 * columns.haul[col]);
         let haul_fade = smoothstep(x, -58.0, -48.0) * (1.0 - smoothstep(x, -6.0, 6.0)) * working;
-        let haul_ruts = [-1.2, 1.2]
-            .into_iter()
-            .map(|lane| (-((haul - lane).abs() / 0.3).powi(2)).exp())
-            .fold(0.0, f64::max)
-            * haul_fade;
+        // Off the loading floor's run the fade is zero, and so are the ruts.
+        let haul_ruts = if haul_fade > 0.0 {
+            [-1.2, 1.2]
+                .into_iter()
+                .map(|lane| (-((haul - lane).abs() / 0.3).powi(2)).exp())
+                .fold(0.0, f64::max)
+                * haul_fade
+        } else {
+            0.0
+        };
         // The apron's haul road rings the pit between the wall and the benches,
         // tying the trucks, the ramp and the loading floor together: a compacted
         // bed with two sets of dual-wheel ruts, wandering a little as it goes.
@@ -586,7 +654,7 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         // Twin tyre ruts of loaders that cut across the open floor between the
         // haul roads, wandering, fading where sand has blown over them.
         let (tyres, tyre_berm) = if apron < 1.0 {
-            let (trough, berm) = loader_tracks(table, x, z);
+            let (trough, berm) = loader_tracks(table, x, z, columns.loader[col], loader_z);
             let keep = off_road * (1.0 - worn_sand * 0.6) * (1.0 - apron);
             (trough * keep, berm * keep)
         } else {
@@ -655,7 +723,7 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
         r += (216.0 - r) * drift;
         g += (199.0 - g) * drift;
         b += (167.0 - b) * drift;
-        let (pad_contact, pad_apron) = spawn_pad_ground(x, z);
+        let (pad_contact, pad_apron) = spawn_pad_ground(x, z, &pads);
         r += (154.0 - r) * pad_apron * 0.55;
         g += (136.0 - g) * pad_apron * 0.55;
         b += (111.0 - b) * pad_apron * 0.55;
@@ -720,7 +788,7 @@ fn bake_row(accum: &[f32], table: &[f32], rng: &mut Random, row: usize, z: f64, 
             - wall_shade.min(1.0) * 0.26
             - under_wall * 0.55
             - pad_contact * 0.3;
-        let (collar, cuttings, paint) = blast_pattern(x, z);
+        let (collar, cuttings, paint) = blast_pattern(x, z, &blast_turns);
         r += (196.0 - r) * cuttings * 0.75;
         g += (188.0 - g) * cuttings * 0.75;
         b += (172.0 - b) * cuttings * 0.75;

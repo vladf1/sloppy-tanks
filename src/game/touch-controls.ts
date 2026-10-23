@@ -181,15 +181,21 @@ export class TouchControls {
     const cooldown = this.mineCooldown();
     this.mineReload = cooldown > 0 ? Math.max(this.mineReload, cooldown) : 0;
     this.mine.disabled = !playing || cooldown > 0;
-    this.mine.style.setProperty(
-      "--mine-ready",
-      `${cooldown > 0 ? (1 - cooldown / this.mineReload) * 100 : 100}%`,
-    );
-    this.mine.querySelector("small")!.textContent =
-      cooldown > 0 ? `${cooldown.toFixed(1)}s` : "MINE";
-    this.mine.setAttribute(
-      "aria-label",
-      cooldown > 0 ? `Mine ready in ${cooldown.toFixed(1)} seconds` : "Drop mine",
-    );
+    // Only what changed is written: the HUD updates the button 15 times a second, and
+    // WebKit repaints it, rim, shadow and filtered icon, for any write of its text,
+    // even the same "MINE".
+    const ready = `${cooldown > 0 ? (1 - cooldown / this.mineReload) * 100 : 100}%`;
+    if (this.mine.style.getPropertyValue("--mine-ready") !== ready) {
+      this.mine.style.setProperty("--mine-ready", ready);
+    }
+    const label = this.mine.querySelector("small")!;
+    const text = cooldown > 0 ? `${cooldown.toFixed(1)}s` : "MINE";
+    if (label.textContent !== text) {
+      label.textContent = text;
+    }
+    const description = cooldown > 0 ? `Mine ready in ${cooldown.toFixed(1)} seconds` : "Drop mine";
+    if (this.mine.getAttribute("aria-label") !== description) {
+      this.mine.setAttribute("aria-label", description);
+    }
   }
 }
