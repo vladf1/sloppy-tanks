@@ -100,6 +100,207 @@ pub struct Walls {
     /// The puff shader's walls: up to `SOFT_WALLS` boxes as (centre x, centre z,
     /// half width, half depth), then their heights and the count.
     soft: [[f32; 4]; 4],
+    /// The boxes by ground cell, so a puff tests the few walls near it.
+    grid: WallGrid,
+    /// Scratch: one puff's candidate walls and the smoke it leaves at them.
+    candidates: Vec<u32>,
+    gathered: Vec<(u32, f32)>,
+}
+
+/// A wall box in the puffs' single precision: centre x and z, half width and depth,
+/// height.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+struct PuffBox {
+    x: f32,
+    z: f32,
+    half_w: f32,
+    half_d: f32,
+    height: f32,
+}
+
+/// Square ground cells holding the boxes that overlap them (`WALL_CELL` metres, at
+/// most `MAX_GRID_CELLS` along a side, widened for a larger yard).
+const WALL_CELL: f32 = 8.0;
+const MAX_GRID_CELLS: usize = 64;
+
+#[derive(Clone, Debug, Default)]
+struct WallGrid {
+    /// The walls it was built for; most frames the round's cover stands as it did.
+    source: Vec<WallBox>,
+    boxes: Vec<PuffBox>,
+    origin: [f32; 2],
+    cell: f32,
+    columns: usize,
+    rows: usize,
+    /// Cell `c`'s boxes are `walls[starts[c]..starts[c + 1]]`, in index order.
+    starts: Vec<u32>,
+    walls: Vec<u32>,
+    /// Scratch for filling the cells.
+    next: Vec<u32>,
+}
+
+impl WallGrid {
+    fn build(&mut self, boxes: &[WallBox]) {
+        if self.source == boxes {
+            return;
+        }
+        self.source.clear();
+        self.source.extend_from_slice(boxes);
+        self.boxes.clear();
+        self.boxes.extend(boxes.iter().map(|wall| PuffBox {
+            x: wall.x as f32,
+            z: wall.z as f32,
+            half_w: wall.half_w as f32,
+            half_d: wall.half_d as f32,
+            height: wall.height as f32,
+        }));
+        let (mut min, mut max) = ([f32::INFINITY; 2], [f32::NEG_INFINITY; 2]);
+        for b in &self.boxes {
+            min = [min[0].min(b.x - b.half_w), min[1].min(b.z - b.half_d)];
+            max = [max[0].max(b.x + b.half_w), max[1].max(b.z + b.half_d)];
+        }
+        let span = (max[0] - min[0]).max(max[1] - min[1]).max(0.0);
+        // The far edge's cell is one past `span / cell`, still inside the grid.
+        self.cell = WALL_CELL.max(span / (MAX_GRID_CELLS - 1) as f32);
+        self.origin = min;
+        let count = |extent: f32| ((extent / self.cell).floor() as usize + 1).min(MAX_GRID_CELLS);
+        self.columns = count(max[0] - min[0]);
+        self.rows = count(max[1] - min[1]);
+        // Count each cell's boxes, turn the counts into starts, then fill.
+        self.starts.clear();
+        self.starts.resize(self.columns * self.rows + 1, 0);
+        for index in 0..self.boxes.len() {
+            let (columns, rows) = self.cells(&self.boxes[index], 0.0);
+            for row in rows {
+                for column in columns.clone() {
+                    self.starts[row * self.columns + column + 1] += 1;
+                }
+            }
+        }
+        for cell in 1..self.starts.len() {
+            self.starts[cell] += self.starts[cell - 1];
+        }
+        self.walls.clear();
+        self.walls
+            .resize(*self.starts.last().unwrap_or(&0) as usize, 0);
+        let mut next = std::mem::take(&mut self.next);
+        next.clone_from(&self.starts);
+        for (index, b) in self.boxes.iter().enumerate() {
+            let (columns, rows) = self.cells(b, 0.0);
+            for row in rows {
+                for column in columns.clone() {
+                    let slot = &mut next[row * self.columns + column];
+                    self.walls[*slot as usize] = index as u32;
+                    *slot += 1;
+                }
+            }
+        }
+        self.next = next;
+    }
+
+    /// The columns and rows of the cells `b`, grown by `margin`, overlaps.
+    fn cells(&self, b: &PuffBox, margin: f32) -> (std::ops::Range<usize>, std::ops::Range<usize>) {
+        let span = |center: f32, half: f32, origin: f32, cells: usize| {
+            let low = ((center - half - margin - origin) / self.cell).floor();
+            let high = ((center + half + margin - origin) / self.cell).floor();
+            if high < 0.0 || low >= cells as f32 {
+                return 0..0;
+            }
+            (low.max(0.0) as usize)..(high as usize + 1).min(cells)
+        };
+        (
+            span(b.x, b.half_w, self.origin[0], self.columns),
+            span(b.z, b.half_d, self.origin[1], self.rows),
+        )
+    }
+
+    /// The boxes overlapping the square of half size `reach` round (x, z), each once
+    /// and in index order.
+    fn near(&self, x: f32, z: f32, reach: f32, out: &mut Vec<u32>) {
+        out.clear();
+        let point = PuffBox {
+            x,
+            z,
+            ..PuffBox::default()
+        };
+        let (columns, rows) = self.cells(&point, reach);
+        for row in rows {
+            for column in columns.clone() {
+                let cell = row * self.columns + column;
+                out.extend_from_slice(
+                    &self.walls[self.starts[cell] as usize..self.starts[cell + 1] as usize],
+                );
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+    }
+}
+
+/// How far a puff's search for walls reaches past its softening reach, in shares of
+/// its radius: room for two pushes clear of a wall. A puff the pushes carry further
+/// is pushed again against every wall.
+const SEARCH_SLACK: f32 = 2.0 * CLEARANCE;
+
+/// Where one puff ends up among the walls `order` lists (every wall when `None`),
+/// tested in that order (`Walls::keep_puffs_clear`), and how many pushed it;
+/// `smoke(wall, weight)` takes the smoke it leaves at each. Also returns the farthest
+/// the pushes carried it along either ground axis.
+fn push_puff(
+    start: Vec3,
+    radius: f32,
+    weight: f32,
+    boxes: &[PuffBox],
+    order: Option<&[u32]>,
+    smoke: &mut dyn FnMut(u32, f32),
+) -> (Vec3, u32, f32) {
+    let mut center = start;
+    let clearance = radius * CLEARANCE;
+    let reach = radius * SOFT_REACH;
+    let mut pushes = 0;
+    let mut drift: f32 = 0.0;
+    let count = order.map_or(boxes.len(), <[u32]>::len);
+    for k in 0..count {
+        let index = order.map_or(k as u32, |order| order[k]);
+        let wall = boxes[index as usize];
+        let (hw, hd, h) = (wall.half_w, wall.half_d, wall.height);
+        let local = Vec3::new(center.x - wall.x, center.y, center.z - wall.z);
+        if local.x.abs() >= hw + reach || local.z.abs() >= hd + reach || local.y >= h + reach {
+            continue;
+        }
+        let nearest = Vec3::new(
+            local.x.clamp(-hw, hw),
+            local.y.clamp(0.0, h),
+            local.z.clamp(-hd, hd),
+        );
+        let away = local - nearest;
+        let distance = away.length();
+        if distance < reach {
+            smoke(index, weight);
+        }
+        if distance >= clearance {
+            continue;
+        }
+        center += if distance > 1e-4 {
+            away / distance * (clearance - distance)
+        } else {
+            // Buried in the box: out through the nearest side or the top.
+            let (depth, normal) = [
+                (hw - local.x, Vec3::X),
+                (hw + local.x, Vec3::NEG_X),
+                (hd - local.z, Vec3::Z),
+                (hd + local.z, Vec3::NEG_Z),
+                (h - local.y, Vec3::Y),
+            ]
+            .into_iter()
+            .min_by(|a, b| a.0.total_cmp(&b.0))
+            .unwrap_or((0.0, Vec3::Y));
+            normal * (depth + clearance)
+        };
+        pushes += 1;
+        drift = drift.max((center.x - start.x).abs().max((center.z - start.z).abs()));
+    }
+    (center, pushes, drift)
 }
 
 impl Walls {
@@ -238,60 +439,53 @@ impl Walls {
     /// round a container or a butte instead of being sliced by it, and thin the
     /// ones wedged where no push frees them. Each puff's new place depends only on
     /// where it would have been, so a drifting billow glides along a wall.
+    ///
+    /// A puff tests only the walls in the ground cells round it, in the same order as
+    /// the whole list: a wall farther than its search reaches cannot touch it unless
+    /// the pushes carried it that far, and then it is pushed again against every wall.
     pub fn keep_puffs_clear(&mut self, puffs: &mut PoolBuffer) {
         self.soft = [[0.0; 4]; 4];
-        if self.boxes.is_empty() {
+        if self.boxes.is_empty() || puffs.is_empty() {
             return;
         }
         self.smoke.clear();
         self.smoke.resize(self.boxes.len(), 0.0);
+        self.grid.build(&self.boxes);
+        let Self {
+            grid,
+            smoke,
+            candidates,
+            gathered,
+            ..
+        } = self;
         for puff in puffs.records_mut() {
             let start = puff.translation();
-            let mut center = start;
             let radius = Vec3::from_slice(&puff.world_rows[0][..3]).length();
-            let clearance = radius * CLEARANCE;
-            let mut pushes = 0;
             let weight = puff.tint[3] * radius * radius;
-            for (wall, smoke) in self.boxes.iter().zip(&mut self.smoke) {
-                let (hw, hd, h) = (wall.half_w as f32, wall.half_d as f32, wall.height as f32);
-                let local = Vec3::new(center.x - wall.x as f32, center.y, center.z - wall.z as f32);
-                let reach = radius * SOFT_REACH;
-                if local.x.abs() >= hw + reach
-                    || local.z.abs() >= hd + reach
-                    || local.y >= h + reach
-                {
-                    continue;
+            let slack = radius * SEARCH_SLACK;
+            grid.near(start.x, start.z, radius * SOFT_REACH + slack, candidates);
+            gathered.clear();
+            let (mut center, mut pushes, drift) = push_puff(
+                start,
+                radius,
+                weight,
+                &grid.boxes,
+                Some(candidates),
+                &mut |index, weight| gathered.push((index, weight)),
+            );
+            if drift < slack {
+                for &(index, weight) in gathered.iter() {
+                    smoke[index as usize] += weight;
                 }
-                let nearest = Vec3::new(
-                    local.x.clamp(-hw, hw),
-                    local.y.clamp(0.0, h),
-                    local.z.clamp(-hd, hd),
+            } else {
+                (center, pushes, _) = push_puff(
+                    start,
+                    radius,
+                    weight,
+                    &grid.boxes,
+                    None,
+                    &mut |index, weight| smoke[index as usize] += weight,
                 );
-                let away = local - nearest;
-                let distance = away.length();
-                if distance < reach {
-                    *smoke += weight;
-                }
-                if distance >= clearance {
-                    continue;
-                }
-                center += if distance > 1e-4 {
-                    away / distance * (clearance - distance)
-                } else {
-                    // Buried in the box: out through the nearest side or the top.
-                    let (depth, normal) = [
-                        (hw - local.x, Vec3::X),
-                        (hw + local.x, Vec3::NEG_X),
-                        (hd - local.z, Vec3::Z),
-                        (hd + local.z, Vec3::NEG_Z),
-                        (h - local.y, Vec3::Y),
-                    ]
-                    .into_iter()
-                    .min_by(|a, b| a.0.total_cmp(&b.0))
-                    .unwrap_or((0.0, Vec3::Y));
-                    normal * (depth + clearance)
-                };
-                pushes += 1;
             }
             if pushes == 0 {
                 continue;
@@ -390,5 +584,149 @@ mod tests {
         let soft = walls.soft_boxes();
         assert_eq!(soft[3][3], 1.0, "the shader softens the smoke against it");
         assert_eq!(soft[0], [0.0, 0.0, 3.0, 1.2]);
+    }
+
+    /// Every puff pushed against every wall in order, as before the grid.
+    fn pushed_against_every_wall(walls: &Walls, puffs: &mut PoolBuffer) -> Vec<f32> {
+        let mut smoke = vec![0.0; walls.boxes.len()];
+        let boxes: Vec<PuffBox> = walls
+            .boxes
+            .iter()
+            .map(|wall| PuffBox {
+                x: wall.x as f32,
+                z: wall.z as f32,
+                half_w: wall.half_w as f32,
+                half_d: wall.half_d as f32,
+                height: wall.height as f32,
+            })
+            .collect();
+        for puff in puffs.records_mut() {
+            let radius = Vec3::from_slice(&puff.world_rows[0][..3]).length();
+            let weight = puff.tint[3] * radius * radius;
+            let (center, pushes, _) = push_puff(
+                puff.translation(),
+                radius,
+                weight,
+                &boxes,
+                None,
+                &mut |i, w| {
+                    smoke[i as usize] += w;
+                },
+            );
+            if pushes > 0 {
+                for (row, value) in puff.world_rows.iter_mut().zip(center.to_array()) {
+                    row[3] = value;
+                }
+            }
+            if pushes > 1 {
+                puff.tint[3] *= SQUEEZED;
+            }
+        }
+        smoke
+    }
+
+    #[test]
+    fn a_wide_yards_far_wall_still_has_a_cell() {
+        // Over a kilometre the cells widen; the far wall's edge is in the last one.
+        let wall = |x: f64, half: f64| WallBox {
+            x,
+            z: 0.0,
+            half_w: half,
+            half_d: 1.0,
+            height: 3.0,
+            material: Some(WallMaterial::Stone),
+            color: 0x808080,
+            trim: 0x808080,
+            roof: 0x808080,
+        };
+        let mut walls = Walls {
+            boxes: vec![wall(0.0, 1.0), wall(1200.0, 0.0)],
+            ..Walls::default()
+        };
+        let mut puffs = PoolBuffer::new(1);
+        puffs.push(record(
+            Mat4::from_translation(Vec3::new(1200.1, 1.0, 0.0)),
+            [1.0; 4],
+            [0.0; 4],
+        ));
+        walls.keep_puffs_clear(&mut puffs);
+        assert!(walls.grid.columns <= MAX_GRID_CELLS);
+        assert!(
+            puffs.records()[0].translation().x > 1200.1,
+            "pushed off the far wall"
+        );
+    }
+
+    #[test]
+    fn the_wall_grid_pushes_every_puff_as_the_whole_list_would() {
+        let mut random = crate::effects::random::CosmeticRandom::seeded(5);
+        let mut pick = |low: f64, high: f64| low + (high - low) * random.next_f64();
+        let mut walls = Walls::default();
+        for _ in 0..60 {
+            walls.boxes.push(WallBox {
+                x: pick(-70.0, 70.0),
+                z: pick(-70.0, 70.0),
+                half_w: pick(0.4, 6.0),
+                half_d: pick(0.4, 6.0),
+                height: pick(0.8, 7.0),
+                material: Some(WallMaterial::Stone),
+                color: 0x808080,
+                trim: 0x808080,
+                roof: 0x808080,
+            });
+        }
+        // Puffs of every size, many beside or inside the boxes.
+        let mut puffs = PoolBuffer::new(2000);
+        for i in 0..2000 {
+            let (x, z) = if i % 2 == 0 {
+                let wall = walls.boxes[i % walls.boxes.len()];
+                (
+                    wall.x + pick(-1.4, 1.4) * wall.half_w,
+                    wall.z + pick(-1.4, 1.4) * wall.half_d,
+                )
+            } else {
+                (pick(-80.0, 80.0), pick(-80.0, 80.0))
+            };
+            let size = pick(0.1, 4.0) as f32;
+            puffs.push(record(
+                Mat4::from_scale_rotation_translation(
+                    Vec3::splat(size),
+                    glam::Quat::IDENTITY,
+                    Vec3::new(x as f32, pick(0.0, 8.0) as f32, z as f32),
+                ),
+                [1.0, 1.0, 1.0, pick(0.1, 1.0) as f32],
+                [0.0; 4],
+            ));
+        }
+        let mut expected = puffs.clone();
+        let mut smoke = pushed_against_every_wall(&walls, &mut expected);
+        walls.keep_puffs_clear(&mut puffs);
+        assert_eq!(puffs.records(), expected.records());
+        // The same smokiest walls go to the shader.
+        let mut soft = [[0.0; 4]; 4];
+        let mut count = 0;
+        while count < SOFT_WALLS {
+            let Some((index, _)) = smoke
+                .iter()
+                .enumerate()
+                .filter(|(_, s)| **s > 0.0)
+                .max_by(|a, b| a.1.total_cmp(b.1))
+            else {
+                break;
+            };
+            smoke[index] = 0.0;
+            let wall = walls.boxes[index];
+            soft[count] = [
+                wall.x as f32,
+                wall.z as f32,
+                wall.half_w as f32,
+                wall.half_d as f32,
+            ];
+            soft[3][count] = wall.height as f32;
+            count += 1;
+        }
+        soft[3][3] = count as f32;
+        assert_eq!(walls.soft_boxes(), soft);
+        assert_eq!(count, SOFT_WALLS);
     }
 }

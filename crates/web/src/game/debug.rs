@@ -593,9 +593,11 @@ impl Game {
     ) -> Result<(), JsValue> {
         self.fill_state();
         self.route_events();
-        self.view
-            .render(&self.state, alpha, dt, overview)
-            .map_err(js_error)?;
+        // Effects the game's camera does not see may show from the fixed pose.
+        self.view.effects.show_everything = camera.len() == 6;
+        let rendered = self.view.render(&self.state, alpha, dt, overview);
+        self.view.effects.show_everything = false;
+        rendered.map_err(js_error)?;
         self.sim.set_wreck_view(Some(self.view.wreck_view()));
         if camera.len() == 6 {
             let mut pose: PerspectiveCamera = self.view.renderer.camera();
