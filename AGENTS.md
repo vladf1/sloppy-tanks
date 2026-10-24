@@ -236,8 +236,10 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   `mapped_at_creation` (the browser backend stages the whole mapped range in a
   Wasm-side copy); stream large meshes in chunks; hand generated pixels to the
   GPU as JS `ImageData`; size merged geometry up front and move, not clone,
-  parts a merge consumes. Check a map's `WebAssembly.Memory` size after loading
-  it when changing scenery or upload paths.
+  parts a merge consumes. Keep no CPU copy of a mesh the GPU already holds: the
+  mesh store keeps only a `Weak`, so a model registered once (the wrecks, themed
+  scenery) must not also sit in a cache or a retained tree. Check a map's
+  `WebAssembly.Memory` size after loading it when changing scenery or upload paths.
 - Meshes have no GPU buffers of their own: they share vertex and index pages
   (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
   in the vertex page, so every draw passes `base_vertex` 0 (WebGL2 has none) and a
@@ -300,12 +302,91 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   and saved only the GPU process, and `WEBGL_multi_draw` saved nothing, so time a
   change rather than count its calls. `sloppy-render` builds at opt-level 3 for
   speed; the rest of the engine favors size.
+- On big canvases (a 4K window at the 1.5 pixel ratio) per-pixel work decides the
+  GPU frame: the ground shader runs on most pixels and smoke puffs overlap many
+  layers deep. Run a procedural feature only where its weight is non-zero, and
+  noise and lighting only where a puff has density (an `if` whose skipped pixels
+  get exactly the value they would have computed, with texture samples and
+  derivatives ahead of it); the village ground and burning wrecks once cost 6 and
+  up to 13 ms a 4K frame. Time a ground, full-screen or layered effect at
+  3840×2160 with WebGPU timestamps, switching it off within the page
+  (`debug_set_off`), before keeping it. A ground's still layers (patches, soil
+  colour, slopes, anything that neither moves nor depends on the view) belong in a
+  texture bake (`effects::bakes`: a generated texture a full-screen pass draws once,
+  from its uv alone or from a material's params and textures), sampled per pixel;
+  the village ground's per-pixel noise once cost 4 ms of an iPad frame in WebKit.
+- The scene renders at a scale of the canvas that the quality controller
+  (`crates/render/src/quality.rs`, the Graphics setting) picks, and the output pass
+  upsamples it; at scale 1 the output reads texels exactly as before, so the High
+  tier on a desktop is pixel for pixel today's picture. Tiers switch optional work
+  through uniforms and passes (`TierFeatures`), never through pipeline variants.
+  Touch devices also draw without MSAA, which is fixed per renderer. Keep a new
+  expensive per-pixel feature switchable by a tier. WebKit lowers a WebGPU canvas
+  to 15-30 fps after a single frame overruns, and builds from August to October 2026
+  (bug 325095, Playwright's WebKit too) never raise it again on their own; the
+  controller reconfigures the canvas when frames stay held while the GPU has room, so
+  do not remove `reset_canvas_pacing` as dead code. Keep that room measured against a
+  display frame: those builds judge a reset canvas on its first frames at the GPU's
+  clock of the moment, and an Apple GPU clocks down while frames are held (5-6 ms of
+  village work spanned 21-25 ms at 30 fps), so resetting then drops the canvas lower.
+  Measure with Graphics pinned (localStorage `sloppy-graphics`) or
+  `debug_set_scene_load`, since Auto otherwise changes what is being timed.
+- WebKit (Safari, every iPad) guards each WGSL loop with a volatile
+  forward-progress counter, so Metal cannot unroll it and arrays or vector lanes
+  indexed by the loop counter spill to memory: per-pixel loops ran 15-45x slower
+  than in Chrome (a village frame took 80 ms of GPU time against 4.7). The shader
+  specializer unrolls every literal- or const-bounded loop and a test fails if a
+  variant keeps one; write new loops that way. Chrome timings hide this, so time a
+  new or grown shader in Playwright WebKit at an iPad size too.
+- WebKit's cold start (an empty Metal shader cache, as after any shader change) is
+  all compiling, one pipeline at a time even through `createRenderPipelineAsync`:
+  a Metal library for every stage of every pipeline (about 0.1 s each, and 45 ms
+  more if the layout shows that stage any texture), then a machine-code compile
+  at each fragment stage's first draw per blend state. Metal caches libraries by
+  their text, so each stage is a module with only its own code (`StageSources`)
+  and textures are visible to the fragment stage alone. Count a new variant or
+  effect as its stages' compiles, and time startup with Playwright WebKit's Metal
+  cache cleared (`com.apple.metal` under `$(getconf DARWIN_USER_CACHE_DIR)`
+  `com.apple.WebKit.GPU+org.webkit.Playwright/com.apple.WebKit.GPU/`).
 - Pipelines compile on demand and stay cached; `prepare_step` and `warm_up`
   compile the arena's shadow, reflection and effect variants before the first
   gameplay frame. Validate moving cameras, first-use effects and mid-round
   destruction when changing batching, shadow merging or warm-up.
   `drawCalls` in the stats counts main-pass draws; shadow and reflection draws
   are reported separately.
+
+## Camera and effect feel
+
+These come from playing the game and are easy to undo with "more juice":
+
+- The camera shakes only when the viewer is hit or destroyed, and never rolls.
+  The player's own shots, kills, other tanks dying and explosions leave it
+  still: no shake, tilt, kick, zoom punch or pull toward the blast (they gave
+  the player vertigo). Tanks themselves may rock and recoil.
+- The overhead camera sits at a fixed offset on the player's tank (about 52
+  degrees, default zoom 34) and looks straight at it: no lean toward the
+  pointer, the drive or enemies, no lagging springs and no automatic zoom. A
+  lower, closer or wandering camera hid the field, made every difficulty play
+  harder and distracted the player.
+- The action never pauses or slows: no hit-stop or slow motion on kills or hits.
+  It read as dropped frames.
+- Effects follow what their object is doing: a wreck burns only once its hull
+  rests, smoke rises and drifts without trembling, and nothing reads as a flat
+  cut-out card. Judge effects frame to frame, not from one still.
+- Shader animation never multiplies the running clock by a rate that varies
+  per pixel, per instance or over a lifetime: the clock is large, so any change
+  in the rate jumps the pattern every frame (cooling smoke flickered this way).
+  Use one rate and vary the phase.
+- Everything on the field belongs on a tank battlefield. Power-ups are military
+  supply: steel ammo cans, wooden or steel supply crates, jerry cans, tool
+  chests, worn paint and stencilled markings, with the kind's colour as a
+  painted band or a wisp of signal smoke. No science fiction: no holograms,
+  neon panels, light beams or pillars, glowing pads or energy rings (they
+  looked like "some science fiction movie or game").
+- The kill feed is the kill confirmation. No banners or pop-ups over the
+  field and no hit markers at the aim: an "ELIMINATED" banner under the score
+  covered the fight on desktop, and ticks that turned red on a kill read as a
+  broken cursor.
 
 ## Maps, extra levels, and authored data
 

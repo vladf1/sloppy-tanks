@@ -15,7 +15,9 @@ use sloppy_core::scene::{TextureRef, TextureSource, Wrap};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
 
-use super::backend::{Gpu, Sampler, Texture, TextureView, Uploader};
+use super::backend::{Frame, Gpu, MaterialBinding, Sampler, Texture, TextureView, Uploader};
+use crate::effects::bakes::{TextureBake, bake_for};
+use crate::effects::ground_noise::{GROUND_NOISE, GROUND_NOISE_SIZE, ground_noise_pixels};
 
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct TextureKey {
@@ -84,37 +86,41 @@ struct Loaded {
 /// files the reference flips upside down instead (`fetch_bitmap`).
 const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 
-// The single-player page starts the scene's texture downloads before the engine loads
-// (`startTextureDownloads` in src/main.ts) and leaves them in a map by URL. The store
-// takes each response over once rather than requesting the file again, so every
-// browser downloads it once. A URL the page did not start, or whose early request
-// failed or answered with an HTTP error, is fetched here.
-#[wasm_bindgen(inline_js = "export function textureDownload(url) {
-  const downloads = globalThis.sloppyTextureDownloads;
-  const early = downloads?.get(url);
-  downloads?.delete(url);
-  const retry = () => fetch(url);
-  return early ? early.then((response) => (response.ok ? response : retry()), retry) : retry();
+// Texture files decode in an image element (`HTMLImageElement.decode`), which every
+// browser does off the main thread: WebKit decoded `createImageBitmap(blob)` on it, one
+// file after another, about 80 ms of a village start once the arena was built. The
+// bitmap made from the decoded image has the same texels. The single-player page
+// starts the scene's decodes before the engine loads (`startTextureDownloads` in
+// src/main.ts) and leaves them in a map by URL; the store takes each over once, so
+// every browser downloads a file once. A URL the page did not start, or whose early
+// decode failed, is decoded here.
+#[wasm_bindgen(inline_js = "export function textureImage(url) {
+  const images = globalThis.sloppyTextureImages;
+  const early = images?.get(url);
+  images?.delete(url);
+  const decode = () => {
+    const image = new Image();
+    image.src = url;
+    return image.decode().then(() => image);
+  };
+  return early ? early.catch(decode) : decode();
 }")]
 extern "C" {
-    #[wasm_bindgen(js_name = textureDownload)]
-    fn texture_download(url: &str) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = textureImage)]
+    fn texture_image(url: &str) -> js_sys::Promise;
 }
 
 async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, JsValue> {
     let window = web_sys::window().ok_or("no window")?;
-    let response: web_sys::Response = JsFuture::from(texture_download(url)).await?.dyn_into()?;
-    if !response.ok() {
-        return Err(format!("HTTP {}", response.status()).into());
-    }
-    let blob: web_sys::Blob = JsFuture::from(response.blob()?).await?.dyn_into()?;
+    let image: web_sys::HtmlImageElement = JsFuture::from(texture_image(url)).await?.dyn_into()?;
     let options = web_sys::ImageBitmapOptions::new();
     options.set_premultiply_alpha(web_sys::PremultiplyAlpha::None);
     options.set_color_space_conversion(web_sys::ColorSpaceConversion::None);
     if flip_y && FLIP_BITMAPS_ON_DECODE {
         options.set_image_orientation(web_sys::ImageOrientation::FlipY);
     }
-    let bitmap = window.create_image_bitmap_with_blob_and_image_bitmap_options(&blob, &options)?;
+    let bitmap = window
+        .create_image_bitmap_with_html_image_element_and_image_bitmap_options(&image, &options)?;
     JsFuture::from(bitmap).await?.dyn_into()
 }
 
@@ -122,6 +128,8 @@ pub struct TextureStore {
     entries: HashMap<TextureKey, TextureEntry>,
     loaded: Rc<RefCell<Vec<Loaded>>>,
     generated: HashMap<&'static str, web_sys::ImageData>,
+    /// Requested textures that a bake draws (`effects::bakes`), until it has.
+    bakes: Vec<TextureKey>,
     samplers: HashMap<SamplerKey, Sampler>,
     uploader: Uploader,
     asset_base: String,
@@ -136,6 +144,7 @@ impl TextureStore {
             entries: HashMap::new(),
             loaded: Rc::default(),
             generated: HashMap::new(),
+            bakes: Vec::new(),
             samplers: HashMap::new(),
             uploader: Uploader::new(gpu),
             asset_base,
@@ -171,11 +180,24 @@ impl TextureStore {
                 });
             }
             TextureSource::Generated(name) => {
+                if *name == GROUND_NOISE && !self.generated.contains_key(name) {
+                    let size = GROUND_NOISE_SIZE as u32;
+                    match image_data(size, size, &ground_noise_pixels()) {
+                        Ok(image) => {
+                            self.generated.insert(GROUND_NOISE, image);
+                        }
+                        Err(error) => self
+                            .failures
+                            .push(format!("{GROUND_NOISE}: {}", js_message(&error))),
+                    }
+                }
                 if let Some(image) = self.generated.get(name) {
                     self.loaded.borrow_mut().push(Loaded {
                         key,
                         result: Ok(Pixels::Image(image.clone())),
                     });
+                } else if bake_for(name).is_some() {
+                    self.bakes.push(key);
                 }
             }
         }
@@ -272,6 +294,49 @@ impl TextureStore {
             .entry(key)
             .or_insert_with(|| Uploader::sampler(gpu, key))
             .clone()
+    }
+
+    /// The requested textures a bake draws (`effects::bakes`) that it has not yet.
+    pub fn bakes_due(&self) -> Vec<(TextureKey, &'static TextureBake)> {
+        self.bakes
+            .iter()
+            .filter_map(|key| match key.source {
+                TextureSource::Generated(name) => Some((key.clone(), bake_for(name)?)),
+                TextureSource::File(_) => None,
+            })
+            .collect()
+    }
+
+    /// Whether `bake` can draw now: its pipeline and the mip blits are ready. The
+    /// first ask starts its background compile.
+    pub fn bake_ready(&mut self, gpu: &Gpu, bake: &'static TextureBake) -> bool {
+        self.uploader.ready(gpu) && self.uploader.ready_to_bake(gpu, bake)
+    }
+
+    /// Whether `texture` has arrived or failed (it no longer waits).
+    pub fn loaded(&self, texture: &TextureRef) -> bool {
+        self.entries
+            .get(&TextureKey::of(texture))
+            .is_some_and(|entry| !entry.loading)
+    }
+
+    /// Draw `bake` into its texture `key` and render its mip levels, reading the frame
+    /// and the binding of its source's material when it has one; it must be ready
+    /// ([`Self::bake_ready`]).
+    pub fn bake(
+        &mut self,
+        gpu: &Gpu,
+        key: &TextureKey,
+        bake: &'static TextureBake,
+        inputs: Option<(&Frame, &MaterialBinding)>,
+    ) {
+        self.bakes.retain(|due| due != key);
+        if let Some(entry) = self.entries.get_mut(key) {
+            entry.texture = Some(self.uploader.bake(gpu, bake, inputs));
+            entry.bytes = bake.bytes();
+            entry.loading = false;
+            self.generation += 1;
+        }
     }
 
     /// Textures still downloading or awaiting generated pixels.

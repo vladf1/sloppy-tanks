@@ -167,8 +167,18 @@ pub fn to_int32(value: f64) -> i32 {
     to_uint32(value) as i32
 }
 
+/// Doubles below this magnitude convert to `i64` exactly once truncated (2^63).
+const I64_RANGE: f64 = 9_223_372_036_854_775_808.0;
+
 /// ECMAScript ToUint32 (`value >>> 0`).
 pub fn to_uint32(value: f64) -> u32 {
+    // The truncated value's low 32 bits are its value modulo 2^32. Every draw of
+    // `Random` converts its state four times, and in Wasm `%` on doubles is a software
+    // fmod that loops over the exponent: the conversion cost the quarry soil bake more
+    // than its own arithmetic.
+    if value.abs() < I64_RANGE {
+        return (value as i64) as u32;
+    }
     if !value.is_finite() {
         return 0;
     }
@@ -361,5 +371,44 @@ mod tests {
         assert_eq!(js_round(-2.5), -2.0);
         assert_eq!(js_round(2.5), 3.0);
         assert!(js_min(f64::NAN, 1.0).is_nan());
+    }
+
+    /// The integer fast path keeps exactly fmod's low 32 bits, up to and past 2^63.
+    #[test]
+    fn uint32_fast_path_matches_fmod() {
+        let by_fmod = |value: f64| {
+            if !value.is_finite() {
+                return 0;
+            }
+            ((value.trunc() % 4_294_967_296.0) as i64) as u32
+        };
+        let mut random = Random::new(4242.0);
+        let mut values = vec![
+            0.0,
+            -0.0,
+            0.5,
+            -0.5,
+            -1.0,
+            4_294_967_295.9,
+            -4_294_967_296.5,
+            9_007_199_254_740_993.0,
+            -9_007_199_254_740_993.0,
+            I64_RANGE,
+            -I64_RANGE,
+            I64_RANGE * 0.999_999_999,
+            -I64_RANGE * 0.999_999_999,
+            1e300,
+            f64::INFINITY,
+            f64::NEG_INFINITY,
+            f64::NAN,
+        ];
+        for _ in 0..20_000 {
+            let magnitude = 2f64.powf(random.next() * 70.0);
+            let sign = if random.next() < 0.5 { -1.0 } else { 1.0 };
+            values.push(sign * magnitude * (1.0 + random.next()));
+        }
+        for value in values {
+            assert_eq!(to_uint32(value), by_fmod(value), "{value}");
+        }
     }
 }

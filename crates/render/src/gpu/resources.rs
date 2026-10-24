@@ -1,13 +1,16 @@
 //! GPU meshes and materials. A shared `Arc<Mesh>` or interned `Arc<Material>` is
-//! uploaded once, keyed by pointer identity (the store keeps a clone, so the
-//! pointer cannot be reused while the entry lives). Entries used only by released
+//! uploaded once, keyed by pointer identity. A mesh entry holds a `Weak`, which
+//! keeps the allocation (so the pointer cannot be reused while the entry lives)
+//! but not the vertices: once the GPU has them, the CPU copy goes as soon as no
+//! caller holds the mesh. Wasm memory never shrinks, and models such as the wrecks
+//! are registered once and then only drawn. Entries used only by released
 //! resources are freed once no caller still holds the `Arc` (meshes at the next
 //! frame's collection, materials on `reset_round`) — the Rust form of disposing
 //! only `userData.owned` resources. Meshes live in shared mesh pages
 //! (`crate::mesh_pages`), not buffers of their own.
 
 use std::collections::HashMap;
-use std::sync::Arc;
+use std::sync::{Arc, Weak};
 
 use glam::Vec3;
 use sloppy_core::geometry::Mesh;
@@ -16,7 +19,7 @@ use sloppy_core::scene::{Effect, Material, TextureRef};
 use super::Slab;
 use super::backend::{Gpu, MaterialBinding, PageBuffers, Sampler, TextureView};
 use crate::camera::Sphere;
-use crate::effects::EffectRegistry;
+use crate::effects::{EffectRegistry, ground_noise};
 use crate::gpu::textures::TextureStore;
 use crate::mesh_pages::{
     MeshPlacement, MeshRange, MeshSize, Page, PageFamily, PagePlanner, Placement, rebase_indices,
@@ -33,11 +36,46 @@ pub struct GpuMesh {
     /// Where its vertices and absolute indices live in the mesh pages.
     pub range: MeshRange,
     pub bounds: Sphere,
+    /// Every vertex lies in one plane (a ring, a decal, a billboard card): no view
+    /// sees one of its faces behind another. Only double-sided materials ask, so it
+    /// is worked out when one first does ([`MeshStore::planar`]): the test runs over
+    /// every vertex twice, which cost a debris collapse more than its upload.
+    planar: Option<bool>,
     /// The caller's mesh for shared entries; `None` for model-owned merges.
-    source: Option<Arc<Mesh>>,
+    source: Option<Weak<Mesh>>,
     /// Live draw classes using this mesh.
     pub users: u32,
 }
+
+/// Whether `points` all lie in one plane, within a hair of their extent.
+fn planar(points: impl Iterator<Item = Vec3> + Clone) -> bool {
+    let mut all = points.clone();
+    let Some(origin) = all.next() else {
+        return true;
+    };
+    let Some(far) = points.clone().max_by(|a, b| {
+        a.distance_squared(origin)
+            .total_cmp(&b.distance_squared(origin))
+    }) else {
+        return true;
+    };
+    let axis = far - origin;
+    let Some(normal) = points
+        .clone()
+        .map(|p| axis.cross(p - origin))
+        .max_by(|a, b| a.length_squared().total_cmp(&b.length_squared()))
+        .and_then(|n| n.try_normalize())
+    else {
+        return true;
+    };
+    let tolerance = axis.length() * PLANAR_TOLERANCE;
+    points
+        .into_iter()
+        .all(|p| normal.dot(p - origin).abs() <= tolerance)
+}
+
+/// How far, as a share of its extent, a vertex may sit off a planar mesh's plane.
+const PLANAR_TOLERANCE: f32 = 1e-4;
 
 impl GpuMesh {
     /// A shared mesh that nothing draws and no caller holds.
@@ -46,7 +84,7 @@ impl GpuMesh {
             && self
                 .source
                 .as_ref()
-                .is_some_and(|source| Arc::strong_count(source) == 1)
+                .is_some_and(|source| source.strong_count() == 0)
     }
 }
 
@@ -262,7 +300,8 @@ impl MeshStore {
         let (index, _) = self.slots.insert(GpuMesh {
             range,
             bounds: Sphere::from_points(mesh.positions.iter().map(|p| Vec3::from(*p))),
-            source: Some(mesh.clone()),
+            planar: None,
+            source: Some(Arc::downgrade(mesh)),
             users: 0,
         });
         self.shared.insert(key, index);
@@ -270,8 +309,16 @@ impl MeshStore {
     }
 
     /// Upload merged geometry owned by one model, at its reserved placement if it has
-    /// one; release it with `release`. Its indices are rebased in place.
-    pub fn owned(&mut self, gpu: &Gpu, data: &mut MeshData, reserved: MeshPlacement) -> u32 {
+    /// one; release it with `release`. Its indices are rebased in place. Its vertices
+    /// are gone after this, so whether it is [`planar`](Self::planar) is worked out
+    /// now if a double-sided material draws it (`double_sided`).
+    pub fn owned(
+        &mut self,
+        gpu: &Gpu,
+        data: &mut MeshData,
+        reserved: MeshPlacement,
+        double_sided: bool,
+    ) -> u32 {
         let range = self.upload(
             gpu,
             PageFamily::Surface,
@@ -282,6 +329,8 @@ impl MeshStore {
         let (index, _) = self.slots.insert(GpuMesh {
             range,
             bounds: data.bounds,
+            planar: double_sided
+                .then(|| planar(data.vertices.iter().map(|v| Vec3::from(v.position)))),
             source: None,
             users: 0,
         });
@@ -328,6 +377,24 @@ impl MeshStore {
         self.slots.at(index).expect("live mesh")
     }
 
+    /// Whether every vertex of mesh `index` lies in one plane, worked out on first
+    /// asking for a shared mesh (whose caller holds its source while it registers a
+    /// model that draws it). A model's own mesh asked about without a double-sided
+    /// material at upload counts as not planar.
+    pub fn planar(&mut self, index: u32) -> bool {
+        let mesh = self.get_mut(index);
+        if let Some(planar) = mesh.planar {
+            return planar;
+        }
+        let answer = mesh
+            .source
+            .as_ref()
+            .and_then(Weak::upgrade)
+            .is_some_and(|source| planar(source.positions.iter().map(|p| Vec3::from(*p))));
+        mesh.planar = Some(answer);
+        answer
+    }
+
     pub fn get_mut(&mut self, index: u32) -> &mut GpuMesh {
         self.slots.at_mut(index).expect("live mesh")
     }
@@ -362,7 +429,7 @@ impl MeshStore {
         if let Some(mesh) = self.slots.remove(index) {
             self.free_range(mesh.range);
             if let Some(source) = mesh.source {
-                self.shared.remove(&(Arc::as_ptr(&source) as usize));
+                self.shared.remove(&(source.as_ptr() as usize));
             }
         }
     }
@@ -405,18 +472,31 @@ impl MeshStore {
 }
 
 /// A material's texture slots in binding order: map, bump, emissive, then the
-/// effect's extra textures.
-fn texture_slots(material: &Material) -> [Option<&TextureRef>; 3 + EXTRA_TEXTURE_SLOTS] {
+/// effect's extra textures. A material without a bump or emissive map lends that
+/// slot to its third or fourth extra texture, which its effect then reads as
+/// `bump_texture` or `emissive_texture` (the feature bits that make the standard
+/// shading sample them follow the maps alone): four effect textures with no
+/// bindings added to every pipeline's layout. The ground effects find the shared
+/// noise tile (`effects::ground_noise`) in an emissive slot nothing else fills.
+pub(super) fn texture_slots(material: &Material) -> [Option<&TextureRef>; 3 + EXTRA_TEXTURE_SLOTS] {
     let extra = |slot: usize| {
         material
             .extra_textures
             .get(slot)
             .map(|(_, texture)| texture)
     };
+    debug_assert!(
+        (material.bump_map.is_none() || extra(2).is_none())
+            && (material.emissive_map.is_none() || extra(3).is_none())
+            && material.extra_textures.len() <= 4,
+        "a material's extra textures beyond the second need its bump and emissive slots"
+    );
     [
         material.map.as_ref(),
-        material.bump_map.as_ref(),
-        material.emissive_map.as_ref(),
+        material.bump_map.as_ref().or(extra(2)),
+        material.emissive_map.as_ref().or(extra(3)).or_else(|| {
+            ground_noise::uses_ground_noise(material).then(ground_noise::ground_noise_texture)
+        }),
         extra(0),
         extra(1),
     ]
@@ -430,16 +510,22 @@ pub struct GpuMaterial {
     /// Its uniform and textures as the backend binds them.
     pub binding: MaterialBinding,
     pub effect: u16,
+    /// Its parts receive the sun's shadow (`MaterialFeatures::RECEIVE_SHADOW`).
+    receive_shadow: bool,
     /// The texture store's generation it was bound at.
     generation: u64,
     /// Live draw classes using this material.
     pub users: u32,
 }
 
+/// The store's key: an interned material's identity, and whether the parts drawn
+/// with it receive the sun's shadow (`MaterialUniform::for_part`).
+type MaterialKey = (usize, bool);
+
 #[derive(Default)]
 pub struct MaterialStore {
     slots: Slab<GpuMaterial>,
-    by_ptr: HashMap<usize, u32>,
+    by_ptr: HashMap<MaterialKey, u32>,
     warned: Vec<&'static str>,
 }
 
@@ -461,15 +547,17 @@ fn bound_textures<'a>(
 }
 
 impl MaterialStore {
-    /// The GPU material for an interned material, creating it on first use.
+    /// The GPU material for an interned material drawn on parts that do or do not
+    /// `receive_shadow`, creating it on first use.
     pub fn get_or_create(
         &mut self,
         gpu: &Gpu,
         textures: &mut TextureStore,
         effects: &EffectRegistry,
         material: &Arc<Material>,
+        receive_shadow: bool,
     ) -> u32 {
-        let key = Arc::as_ptr(material) as usize;
+        let key = (Arc::as_ptr(material) as usize, receive_shadow);
         if let Some(&index) = self.by_ptr.get(&key) {
             return index;
         }
@@ -478,7 +566,7 @@ impl MaterialStore {
         }
         let effect = match &material.effect {
             Effect::None => 0,
-            Effect::Custom { name, .. } => effects.id(name).unwrap_or_else(|| {
+            Effect::Custom { name, params } => effects.id_for(name, params).unwrap_or_else(|| {
                 if !self.warned.contains(name) {
                     self.warned.push(name);
                     web_sys::console::warn_1(
@@ -490,10 +578,17 @@ impl MaterialStore {
         };
         let generation = textures.generation;
         let bound = bound_textures(gpu, textures, material);
+        let sharing = if effects.get(effect).is_some_and(|e| e.shares_hooks()) {
+            effect
+        } else {
+            0
+        };
+        let uniform = MaterialUniform::for_part(material, receive_shadow, sharing);
         let entry = GpuMaterial {
             material: material.clone(),
-            binding: MaterialBinding::new(gpu, &MaterialUniform::of(material), bound),
+            binding: MaterialBinding::new(gpu, &uniform, bound),
             effect,
+            receive_shadow,
             generation,
             users: 0,
         };
@@ -520,22 +615,42 @@ impl MaterialStore {
         self.slots.at(index).expect("live material")
     }
 
+    /// A live material drawn with effect `effect` (a bake's source).
+    pub fn with_effect(&self, effect: u16) -> Option<u32> {
+        self.slots
+            .iter()
+            .find(|(_, entry)| entry.effect == effect)
+            .map(|(index, _)| index)
+    }
+
     pub fn get_mut(&mut self, index: u32) -> &mut GpuMaterial {
         self.slots.at_mut(index).expect("live material")
     }
 
     /// Free materials no draw uses and nobody but the store and the interner holds.
     pub fn collect_unused(&mut self) {
+        // A material drawn both with and without shadows has two entries, each
+        // holding it.
+        let mut held: HashMap<usize, usize> = HashMap::new();
+        for (_, entry) in self.slots.iter() {
+            *held
+                .entry(Arc::as_ptr(&entry.material) as usize)
+                .or_default() += 1;
+        }
         let unused: Vec<u32> = self
             .slots
             .iter()
-            .filter(|(_, entry)| entry.users == 0 && Arc::strong_count(&entry.material) <= 2)
+            .filter(|(_, entry)| {
+                let ptr = Arc::as_ptr(&entry.material) as usize;
+                entry.users == 0 && Arc::strong_count(&entry.material) <= 1 + held[&ptr]
+            })
             .map(|(index, _)| index)
             .collect();
         for index in unused {
             // Dropping the binding destroys its uniform buffer.
             let entry = self.slots.remove(index).expect("checked");
-            self.by_ptr.remove(&(Arc::as_ptr(&entry.material) as usize));
+            self.by_ptr
+                .remove(&(Arc::as_ptr(&entry.material) as usize, entry.receive_shadow));
         }
     }
 

@@ -1,63 +1,161 @@
-import { encodeWebp } from "./encode-webp";
+import { encodeLossyWebp } from "./encode-webp";
 import { createCanvas } from "@napi-rs/canvas";
 import { mkdir, writeFile } from "node:fs/promises";
+import { fbm, lattice, mix, smooth } from "./texture-noise";
 
-// Offline atlas: side wrap on the left, circular lid on the right.
-const canvas = createCanvas(512, 256),
-  c = canvas.getContext("2d");
+// Offline atlas for the explosive drum (`barrel_surfaces.rs`): the wall wrap on the
+// left three quarters, the lid on the right. The wall runs from the top chime
+// (row 0) to the bottom chime (row 255); its two rolling hoops sit at rows 38 and
+// 218, where the lathed drum's ribs sample it. Red enamel over steel, worn bare
+// on the hoops and chimes, scratched, rust-streaked from the top and grimy at the
+// foot, with three flame placards that stay legible from any side. Encoded lossy
+// (`DRUM_QUALITY`): the enamel is noise, which lossless packed at 86 KB.
+const width = 512;
+const height = 256;
+const wall = 384;
+const DRUM_QUALITY = 92;
+const canvas = createCanvas(width, height);
+const c = canvas.getContext("2d");
 let seed = 47;
 const random = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
-c.fillStyle = "#c94b25";
-c.fillRect(0, 0, 512, 256);
-for (let i = 0; i < 5000; i++) {
-  c.fillStyle = i % 3 ? "#703a2425" : "#f6ad7430";
-  c.fillRect(random() * 512, random() * 256, 1 + random() * 3, 1 + random() * 7);
-}
-for (const y of [18, 218]) {
-  c.fillStyle = "#593e2c";
-  c.fillRect(0, y, 384, 7);
-  c.fillStyle = "#e58450";
-  c.fillRect(0, y + 7, 384, 2);
-}
-// Three large flame placards remain legible from different viewing directions.
+const hoops = [38, 218];
+
+// Enamel and placards.
+c.fillStyle = "#c4442a";
+c.fillRect(0, 0, width, height);
 for (const x of [64, 192, 320]) {
   c.save();
-  c.translate(x, 124);
+  c.translate(x, 128);
   c.rotate(Math.PI / 4);
-  c.fillStyle = "#271f19";
-  c.fillRect(-30, -30, 60, 60);
-  c.fillStyle = "#f8db8b";
-  c.fillRect(-26, -26, 52, 52);
+  c.fillStyle = "#241c17";
+  c.fillRect(-32, -32, 64, 64);
+  c.fillStyle = "#f3d27e";
+  c.fillRect(-27, -27, 54, 54);
+  c.strokeStyle = "#241c17";
+  c.lineWidth = 2;
+  c.strokeRect(-22, -22, 44, 44);
   c.restore();
-  c.fillStyle = "#38261c";
+  c.fillStyle = "#2d1f17";
   c.beginPath();
-  c.moveTo(x, 95);
-  c.bezierCurveTo(x + 5, 113, x + 23, 118, x + 15, 138);
-  c.bezierCurveTo(x + 8, 152, x - 17, 146, x - 17, 132);
-  c.bezierCurveTo(x - 19, 124, x - 8, 111, x - 8, 111);
-  c.lineTo(x - 6, 126);
-  c.bezierCurveTo(x + 3, 117, x - 5, 108, x, 95);
+  c.moveTo(x, 100);
+  c.bezierCurveTo(x + 5, 116, x + 21, 121, x + 14, 139);
+  c.bezierCurveTo(x + 8, 151, x - 16, 146, x - 16, 133);
+  c.bezierCurveTo(x - 18, 125, x - 8, 113, x - 8, 113);
+  c.lineTo(x - 6, 127);
+  c.bezierCurveTo(x + 3, 118, x - 5, 110, x, 100);
   c.fill();
-  c.fillStyle = "#f8db8b";
+  c.fillStyle = "#f3d27e";
   c.beginPath();
-  c.moveTo(x, 126);
-  c.quadraticCurveTo(x + 12, 142, x, 143);
-  c.quadraticCurveTo(x - 9, 138, x, 126);
+  c.moveTo(x, 127);
+  c.quadraticCurveTo(x + 11, 142, x, 143);
+  c.quadraticCurveTo(x - 8, 138, x, 127);
   c.fill();
+  // A stencilled bar under the placard.
+  c.fillStyle = "#2a1d16";
+  for (let k = -2; k <= 2; k++) c.fillRect(x - 3 + k * 9, 170, 6, 7);
 }
-c.fillStyle = "#a64226";
-c.fillRect(384, 0, 128, 256);
-for (const radius of [53, 57]) {
-  c.strokeStyle = radius === 53 ? "#e07b49" : "#553e30";
-  c.lineWidth = 3;
+
+// Pressed rings and bungs on the lid.
+const lid = { x: 448, y: 128 };
+for (const [radius, colour, line] of [
+  [61, "#4c3a30", 4],
+  [57, "#e2805a", 2],
+  [44, "#a83a24", 3],
+  [43, "#d9684a", 1],
+  [26, "#a83a24", 2],
+] as const) {
+  c.strokeStyle = colour;
+  c.lineWidth = line;
   c.beginPath();
-  c.arc(448, 128, radius, 0, Math.PI * 2);
+  c.arc(lid.x, lid.y, radius, 0, Math.PI * 2);
   c.stroke();
 }
-for (let i = 0; i < 100; i++) {
-  c.fillStyle = "#563c2f60";
-  c.fillRect(395 + random() * 104, 76 + random() * 104, random() * 5 + 1, 1);
+for (const [bx, by, r] of [
+  [lid.x + 32, lid.y, 10],
+  [lid.x - 27, lid.y - 17, 7],
+]) {
+  c.fillStyle = "#3b2c24";
+  c.beginPath();
+  c.arc(bx, by, r + 3, 0, Math.PI * 2);
+  c.fill();
 }
+
+// Per-pixel wear: mottled enamel, bare steel on the hoops and chimes, rust
+// streaks running down from the top, grime toward the foot.
+const image = c.getImageData(0, 0, width, height);
+const data = image.data;
+const mottle = lattice(11);
+const chips = lattice(12);
+const streak = lattice(13);
+const STEEL = [118, 114, 108];
+const RUST = [112, 58, 30];
+const GRIME = [64, 46, 34];
+for (let y = 0; y < height; y++) {
+  for (let x = 0; x < width; x++) {
+    const i = (y * width + x) * 4;
+    let rgb = [data[i], data[i + 1], data[i + 2]];
+    const onWall = x < wall;
+    // The wall wraps horizontally every `wall` pixels.
+    const u = onWall ? x / wall : (x - wall) / 128;
+    const tone = fbm(mottle, u * 12, y / 18, onWall ? 12 : 0, 4);
+    rgb = rgb.map((v) => v * (0.86 + tone * 0.28));
+    let bare = 0;
+    let rust = 0;
+    let grime = 0;
+    const chip = fbm(chips, u * 40, y / 6, onWall ? 40 : 0, 3);
+    if (onWall) {
+      const rim = Math.min(y, height - 1 - y);
+      const hoop = Math.min(...hoops.map((h) => Math.abs(y - h)));
+      // Raised steel takes the knocks: hoops and chimes wear through to metal.
+      bare = Math.max(1 - smooth(2, 7, rim), 1 - smooth(2.5, 6, hoop)) * smooth(0.35, 0.55, chip);
+      bare = Math.max(bare, smooth(0.66, 0.72, chip) * (1 - smooth(10, 24, hoop)) * 0.9);
+      // Rust bleeds down from the chime and the upper hoop in thin runs.
+      const run = streak(u * 70, 0, 70);
+      const drip =
+        smooth(0.6, 0.85, run) * (1 - smooth(0, 120, y)) * (0.6 + 0.4 * streak(u * 70, y / 30, 70));
+      rust = Math.max(
+        drip * 0.55,
+        smooth(0.55, 0.8, chip) * (1 - smooth(1, 9, Math.min(rim, hoop))) * 0.6,
+      );
+      grime = smooth(170, 255, y) * (0.45 + tone * 0.4);
+    } else {
+      const r = Math.hypot(x - lid.x, y - lid.y);
+      bare = (1 - smooth(1.5, 5, Math.abs(r - 61))) * smooth(0.4, 0.6, chip);
+      rust = smooth(0.58, 0.8, chip) * smooth(48, 60, r) * 0.7;
+      grime = smooth(30, 60, r) * 0.2 * tone;
+    }
+    rgb = rgb.map((v, k) => mix(v, STEEL[k] * (0.85 + chip * 0.4), bare));
+    rgb = rgb.map((v, k) => mix(v, RUST[k], rust));
+    rgb = rgb.map((v, k) => mix(v, GRIME[k], grime * 0.55));
+    data[i] = rgb[0];
+    data[i + 1] = rgb[1];
+    data[i + 2] = rgb[2];
+  }
+}
+c.putImageData(image, 0, 0);
+
+// Scratches through the enamel: short bright strokes with a dark lip.
+for (let n = 0; n < 80; n++) {
+  const x = random() * wall;
+  const y = 8 + random() * (height - 16);
+  const angle = (random() - 0.5) * 1.2 + (random() < 0.5 ? 0 : Math.PI / 2);
+  const length = 4 + random() * 18;
+  const dx = Math.cos(angle) * length;
+  const dy = Math.sin(angle) * length;
+  c.strokeStyle = "#3a2a2280";
+  c.lineWidth = 1.6;
+  c.beginPath();
+  c.moveTo(x, y + 0.8);
+  c.lineTo(x + dx, y + dy + 0.8);
+  c.stroke();
+  c.strokeStyle = "#b9b2a6c0";
+  c.lineWidth = 0.8;
+  c.beginPath();
+  c.moveTo(x, y);
+  c.lineTo(x + dx, y + dy);
+  c.stroke();
+}
+
 const target = new URL("../public/textures/barrels/", import.meta.url);
 await mkdir(target, { recursive: true });
-await writeFile(new URL("painted-drum.webp", target), encodeWebp(canvas));
+await writeFile(new URL("painted-drum.webp", target), encodeLossyWebp(canvas, DRUM_QUALITY));

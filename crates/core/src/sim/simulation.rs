@@ -20,6 +20,8 @@ use super::debris_physics::{
     DebrisContact, DebrisMaterial, debris_material, drain_debris_contacts, track_debris_contacts,
 };
 use super::difficulty::Difficulty;
+use super::house_layout::{HouseDesign, HousePart};
+
 use super::map_options::{MapId, map_option_for};
 use super::maps::{ArenaMap, GroundKind, selected_map};
 use super::match_state::{new_match, tick_match};
@@ -34,6 +36,7 @@ use super::pickups::collect_pickup;
 use super::projectiles::step_projectiles;
 use super::quarry_barrier_shapes::{DRAGON_TOOTH_MASS, dragon_tooth_variant, quarry_barrier_hulls};
 use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
+use super::scenery_pieces::settle_house_pieces;
 use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING};
 use super::tank_driving::drive_tank;
 use super::tank_lifecycle::solo_spawn;
@@ -510,9 +513,19 @@ impl Simulation {
             // The tower stands back on its footings in place of their rubble.
             let (x, z) = (self.covers[index].x, self.covers[index].z);
             for side in [-1.0, 1.0] {
-                if let Some(rubble) = self.tower_rubble(x + side * TOWER_BASE.offset, z, true) {
+                if let Some(rubble) = self.rubble_at(x + side * TOWER_BASE.offset, z, true) {
                     self.retire_cover(rubble);
                 }
+            }
+        }
+        if self.covers[index].kind == CoverKind::House {
+            // A rebuilt cottage clears the heap its collapse left.
+            let cover = &self.covers[index];
+            let design = HouseDesign::of(cover.x, cover.z, cover.w, cover.d, cover.h);
+            let (offset, _) = design.heap_box();
+            let (x, z) = (cover.x + offset.x, cover.z + offset.y);
+            if let Some(rubble) = self.rubble_at(x, z, true) {
+                self.retire_cover(rubble);
             }
         }
         // A felled tree keeps its body as the stump footprint.
@@ -540,16 +553,17 @@ impl Simulation {
         self.nav.rebuild(&self.covers, Some(region));
     }
 
-    /// The rubble cover a collapsed tower left on the footing at `x, z`, standing or
-    /// cleared away.
-    pub fn tower_rubble(&self, x: f64, z: f64, alive: bool) -> Option<usize> {
+    /// The rubble cover a collapse left at `x, z` (a watchtower footing or a
+    /// cottage's heap), standing or cleared away.
+    pub fn rubble_at(&self, x: f64, z: f64, alive: bool) -> Option<usize> {
         self.covers
             .iter()
             .position(|c| c.kind == CoverKind::Rubble && c.alive == alive && c.x == x && c.z == z)
     }
 
     /// Take a standing cover out of the world without destroying it: no debris, events
-    /// or score. A rebuilt watchtower clears the rubble its collapse left this way.
+    /// or score. A rebuilt watchtower or cottage clears the rubble its collapse left
+    /// this way.
     fn retire_cover(&mut self, index: usize) {
         let body = self.covers[index].body;
         let colliders = self.world.bodies[body].colliders().to_vec();
@@ -782,6 +796,7 @@ impl Simulation {
             }
         }
         prepare_debris_cleanup(self);
+        settle_house_pieces(self);
         let mut i = self.fragments.len();
         while i > 0 {
             i -= 1;
@@ -797,8 +812,14 @@ impl Simulation {
             if !hold {
                 fragment.life -= STEP;
             }
-            if fragment.life <= DEBRIS_CLEANUP_SECONDS {
+            // A collapse's rubble mound keeps to the cottage's own shards as it sinks:
+            // as plain debris it would block the tanks it never meant to.
+            let mound = fragment
+                .house_piece
+                .is_some_and(|piece| piece.part == HousePart::Mound);
+            if fragment.life <= DEBRIS_CLEANUP_SECONDS && !mound {
                 let body = fragment.body;
+
                 let collider = self.world.bodies[body].colliders()[0];
                 let collider = &mut self.world.colliders[collider];
                 if packed_groups(collider.collision_groups()) != group::FRAGMENT {

@@ -15,7 +15,8 @@ struct MaterialUniform {
     emissive_transform: vec4f,
     // Effect parameters, 16 floats.
     params: array<vec4f, 4>,
-    // x: the MATERIAL_* features below that this material uses.
+    // x: the MATERIAL_* features below that this material uses; y: the id of the
+    // effect whose shared hooks it runs, 0 for none (`shader.rs` `vertex_hooks`).
     features: vec4u,
 }
 
@@ -29,6 +30,10 @@ const MATERIAL_BUMP: u32 = 4u;
 const MATERIAL_VERTEX_COLORS: u32 = 8u;
 const MATERIAL_FLAT_SHADING: u32 = 16u;
 const MATERIAL_FOG: u32 = 32u;
+// Drawn blended (transparent or additive), so its alpha is its opacity.
+const MATERIAL_BLENDED: u32 = 64u;
+// Lit and receiving the sun's shadow (set per part, `MaterialUniform::for_part`).
+const MATERIAL_RECEIVE_SHADOW: u32 = 128u;
 
 fn material_has(feature: u32) -> bool {
     return (material.features.x & feature) != 0u;
@@ -41,8 +46,12 @@ fn material_has(feature: u32) -> bool {
 @group(1) @binding(4) var bump_sampler: sampler;
 @group(1) @binding(5) var emissive_texture: texture_2d<f32>;
 @group(1) @binding(6) var emissive_sampler: sampler;
-// The material's `extra_textures` in order (white when absent), for effects; also
-// visible to the vertex stage (sample with an explicit level there).
+// The material's `extra_textures` in order (white when absent), for effects'
+// fragment code only: a texture the vertex stage can see costs WebKit about 45 ms
+// more per vertex stage it compiles (`resources.rs`). A material without a bump or
+// emissive map binds its third or fourth extra texture there instead, which its
+// effect reads as `bump_texture` or `emissive_texture` (`gpu::resources`
+// `texture_slots`).
 @group(1) @binding(7) var extra_texture0: texture_2d<f32>;
 @group(1) @binding(8) var extra_sampler0: sampler;
 @group(1) @binding(9) var extra_texture1: texture_2d<f32>;

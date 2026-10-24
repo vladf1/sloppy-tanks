@@ -13,7 +13,7 @@ use glam::{DMat4, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
     self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, Scenery, SmokeCover, TreeDetail,
-    WATERWHEEL, batch, branch_drop_stage, build_scenery, tree_part,
+    WATERWHEEL, batch, branch_drop_stage, build_scenery, cover_damage_stage, tree_part,
 };
 use sloppy_core::scene::{Effect, Node};
 use sloppy_core::sim::CoverKind;
@@ -107,6 +107,13 @@ pub fn cover_model(cover: &RenderCover, stage: u32) -> CoverModel {
     CoverModel { root, tree }
 }
 
+/// [`cover_model`] for a cottage whose core model was built ahead, in steps
+/// (`models::HouseCoverBuild`): batched the same way.
+pub fn built_cover_model(mut root: Node) -> CoverModel {
+    batch(&mut root);
+    CoverModel { root, tree: None }
+}
+
 fn tree_parts(root: &Node) -> TreeParts {
     let branches = root
         .find(tree_part::CROWN)
@@ -130,7 +137,8 @@ fn tree_parts(root: &Node) -> TreeParts {
 /// A themed scenery split for drawing.
 pub struct SceneryModel {
     /// The live core scenery: [`Scenery::update`] animates it each frame and the
-    /// village refills its chimney smoke with `set_covers` on reset.
+    /// village refills its chimney smoke with `set_covers` on reset. Its drawables
+    /// are released ([`Scenery::release_drawables`]): `root` and `movers` draw it.
     pub scenery: Scenery,
     /// Everything that never moves, baked into static batches (world transforms
     /// as authored).
@@ -220,17 +228,14 @@ fn animated_paths(scenery: &Scenery) -> Vec<Vec<usize>> {
             .map(|(path, _)| vec![path])
             .unwrap_or_default(),
         Scenery::Harbor(_) => {
-            // `HarborScenery::update`: the fleet's ships bob and roll, each crane's
-            // load (its last child) sways, and the beacon group blinks.
+            // `HarborScenery::update`: each crane's load (its last child) sways,
+            // each tug (its lane's last child) runs its loop, and the beacon group
+            // blinks. The moored ships lie still and bake with the static scenery.
             let fleet_index = 1;
             let fleet = &root.children[fleet_index];
             let mut paths = Vec::new();
-            for (index, child) in fleet.children.iter().enumerate() {
-                if index < SHIP_COUNT {
-                    paths.push(vec![fleet_index, index]);
-                } else {
-                    paths.push(vec![fleet_index, index, child.children.len() - 1]);
-                }
+            for (index, child) in fleet.children.iter().enumerate().skip(SHIP_COUNT) {
+                paths.push(vec![fleet_index, index, child.children.len() - 1]);
             }
             paths.push(vec![root.children.len() - 1]);
             paths
@@ -301,6 +306,9 @@ pub fn scenery(theme: Theme) -> Option<SceneryModel> {
     });
     let smoke = find_path(source, &|node| node.name == CHIMNEY_SMOKE_NODE)
         .map(|(path, _)| take_at(&mut root, &path));
+    // `root` and the movers now hold every mesh until they are registered, after
+    // which only the GPU keeps them: the retained scenery animates transforms alone.
+    scenery.release_drawables();
     Some(SceneryModel {
         scenery,
         root,
@@ -316,20 +324,46 @@ pub fn refill_smoke(scenery: &mut Scenery, covers: &[RenderCover]) -> Option<Nod
     let Scenery::Village(village) = scenery else {
         return None;
     };
+    // Every cottage smokes while its chimney stands; a toppled or fallen one keeps
+    // its wisps (so the others' never reshuffle) far underground.
     let covers: Vec<SmokeCover> = covers
         .iter()
-        .map(|cover| SmokeCover {
-            kind: cover.kind.as_str(),
-            destructible: cover.destructible,
-            x: cover.x,
-            z: cover.z,
-            w: cover.w,
-            h: cover.h,
-            d: cover.d,
+        .map(|cover| {
+            let house = cover.kind == CoverKind::House;
+            SmokeCover {
+                kind: cover.kind.as_str(),
+                destructible: cover.destructible && !house,
+                x: cover.x,
+                z: cover.z,
+                w: cover.w,
+                h: if house && !chimney_stands(cover) {
+                    FALLEN_CHIMNEY_DEPTH
+                } else {
+                    cover.h
+                },
+                d: cover.d,
+            }
         })
         .collect();
     village.set_covers(&covers);
     village.root.find(CHIMNEY_SMOKE_NODE).cloned()
+}
+
+/// Where a fallen chimney's smoke is sent, out of sight below the ground.
+const FALLEN_CHIMNEY_DEPTH: f64 = -200.0;
+
+/// Whether a cottage's chimney is up: it topples when the cottage is wrecked.
+fn chimney_stands(cover: &RenderCover) -> bool {
+    cover.alive && cover_damage_stage(cover.kind, cover.hp, cover.max_hp) < 2
+}
+
+/// Every cottage and whether its chimney stands, to notice when the smoke changes.
+pub fn standing_chimneys(covers: &[RenderCover]) -> Vec<(u32, bool)> {
+    covers
+        .iter()
+        .filter(|cover| cover.kind == CoverKind::House)
+        .map(|cover| (cover.id, chimney_stands(cover)))
+        .collect()
 }
 
 /// The wisp instances of a smoke node: identity placements with each wisp's
@@ -363,7 +397,10 @@ mod tests {
         assert_eq!(cover_damage_stage(CoverKind::Timber, 60.0, 100.0), 1);
         assert_eq!(cover_damage_stage(CoverKind::Timber, 30.0, 100.0), 2);
         assert_eq!(cover_damage_stage(CoverKind::Timber, 10.0, 100.0), 3);
-        assert_eq!(cover_damage_stage(CoverKind::House, 1.0, 100.0), 0);
+        assert_eq!(cover_damage_stage(CoverKind::House, 100.0, 100.0), 0);
+        assert_eq!(cover_damage_stage(CoverKind::House, 60.0, 100.0), 1);
+        assert_eq!(cover_damage_stage(CoverKind::House, 20.0, 100.0), 2);
+        assert_eq!(cover_damage_stage(CoverKind::Tower, 1.0, 100.0), 0);
         assert_eq!(tree_branch_stage(1.0), 0);
         assert_eq!(tree_branch_stage(0.5), 1);
         assert_eq!(tree_branch_stage(0.35), 2);
@@ -378,8 +415,8 @@ mod tests {
         assert!(village.root.find(WATERWHEEL).is_none());
         let harbor = scenery(Theme::Harbor).expect("harbor");
         assert!(matches!(harbor.water, Some(SceneryWater::Harbor(_))));
-        // Three ships, four crane loads and the beacons.
-        assert_eq!(harbor.movers.len(), 8);
+        // Four crane loads, two tugs and the beacons; the moored ships are static.
+        assert_eq!(harbor.movers.len(), 7);
         let quarry = scenery(Theme::Quarry).expect("quarry");
         assert!(quarry.movers.is_empty() && quarry.water.is_none());
         assert!(scenery(Theme::Custom).is_none());
@@ -419,13 +456,39 @@ mod tests {
         let floor = f64::from(super::super::theme::SHADOW_RECEIVER_FLOOR);
         for theme in [Theme::Village, Theme::Harbor, Theme::Quarry] {
             let mut model = scenery(theme).expect("scenery");
-            // Ships bob and crane loads sway: sample the animation.
+            let still = lowest_receiver(&model.root, DMat4::IDENTITY);
+            assert!(still > floor, "{theme:?}: a receiver at {still:.2} m");
+            // Ships bob and crane loads sway: sample the animation of what moves.
             for step in 0..40 {
                 model.scenery.update(f64::from(step) * 0.7);
-                let lowest = lowest_receiver(model.scenery.root(), DMat4::IDENTITY);
-                assert!(lowest > floor, "{theme:?}: a receiver at {lowest:.2} m");
+                for mover in &model.movers {
+                    let (world, _) = mover.pose(&model.scenery);
+                    let lowest = lowest_receiver(&mover.root, world);
+                    assert!(lowest > floor, "{theme:?}: a receiver at {lowest:.2} m");
+                }
             }
         }
+    }
+
+    /// The retained scenery only animates transforms and refills the chimney smoke,
+    /// so it keeps no other drawable: `root` and the movers carry the meshes.
+    #[test]
+    fn retained_scenery_keeps_only_the_chimney_smoke() {
+        fn drawables(node: &Node) -> usize {
+            if node.name == CHIMNEY_SMOKE_NODE {
+                return 0;
+            }
+            usize::from(node.drawable.is_some())
+                + node.children.iter().map(drawables).sum::<usize>()
+        }
+        for theme in [Theme::Village, Theme::Harbor, Theme::Quarry] {
+            let model = scenery(theme).expect("scenery");
+            assert_eq!(drawables(model.scenery.root()), 0, "{theme:?}");
+            assert!(drawables(&model.root) > 0, "{theme:?}");
+        }
+        let village = scenery(Theme::Village).expect("village");
+        let smoke = village.scenery.root().find(CHIMNEY_SMOKE_NODE);
+        assert!(smoke.is_some_and(|smoke| smoke.drawable.is_some()));
     }
 
     #[test]

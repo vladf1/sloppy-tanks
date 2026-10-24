@@ -11,12 +11,14 @@ use super::pool::{PoolBuffer, record};
 use super::random::CosmeticRandom;
 use crate::color::hex_to_linear;
 
-pub const QUARRY_DUST_CAPACITY: usize = 48;
-pub const QUARRY_DUST_MAX_OPACITY: f64 = 0.1;
+pub const QUARRY_DUST_CAPACITY: usize = 64;
+pub const QUARRY_DUST_MAX_OPACITY: f64 = 0.16;
 const COLOR: u32 = 0xe3cfa5;
 const MAX_STEP: f64 = 0.1;
-/// One spawn in five drifts high over the combat floor instead.
-const HIGH_SHEET_CHANCE: f64 = 0.2;
+/// One spawn in seven drifts high over the combat floor instead.
+const HIGH_SHEET_CHANCE: f64 = 0.15;
+/// About a third skim low across the work floor as long, faint veils.
+const SKIMMER_CHANCE: f64 = 0.5;
 
 #[derive(Clone, Copy, Debug, Default)]
 struct Wisp {
@@ -67,8 +69,10 @@ impl QuarryDust {
         if self.wisps.len() >= QUARRY_DUST_CAPACITY {
             return;
         }
-        // Larger, fainter sheets stay well above the tanks so readability never suffers.
-        let (x, y, z, vx, life, size, alpha) = if random.next_f64() < HIGH_SHEET_CHANCE {
+        // Larger, fainter sheets stay well above the tanks so readability never
+        // suffers; skimmers hug the floor, long and thin, below the turrets.
+        let kind = random.next_f64();
+        let (x, y, z, vx, life, size, alpha) = if kind < HIGH_SHEET_CHANCE {
             let x = -50.0 + random.next_f64() * 100.0;
             let z = -50.0 + random.next_f64() * 100.0;
             let y = 2.4 + random.next_f64() * 2.4;
@@ -76,6 +80,14 @@ impl QuarryDust {
             let life = 6.0 + random.next_f64() * 3.0;
             let size = 5.0 + random.next_f64() * 3.5;
             (x, y, z, vx, life, size, 0.45)
+        } else if kind < SKIMMER_CHANCE {
+            let x = -62.0 + random.next_f64() * 100.0;
+            let z = -56.0 + random.next_f64() * 112.0;
+            let y = 0.25 + random.next_f64() * 0.5;
+            let vx = 2.2 + random.next_f64() * 1.8;
+            let life = 4.0 + random.next_f64() * 3.0;
+            let size = 3.5 + random.next_f64() * 3.0;
+            (x, y, z, vx, life, size, 0.55)
         } else {
             let side = if random.next_f64() < 0.5 { -1.0 } else { 1.0 };
             let z = side * (63.0 + random.next_f64() * 8.0);
@@ -116,7 +128,7 @@ impl QuarryDust {
         let step = dt.min(MAX_STEP);
         self.timer -= step;
         if self.timer <= 0.0 {
-            self.timer = 0.35 + random.next_f64() * 0.6;
+            self.timer = 0.18 + random.next_f64() * 0.3;
             self.spawn(random);
         }
         let elapsed = state.elapsed;
@@ -134,9 +146,11 @@ impl QuarryDust {
         for wisp in &self.wisps {
             let age = 1.0 - wisp.life / wisp.max;
             let size = (wisp.size * (0.8 + age * 1.2)) as f32;
+            // Low skimmers stretch out along the wind.
+            let aspect = if wisp.y < 1.0 { 0.32 } else { 0.55 };
             let world =
                 Mat4::from_translation(Vec3::new(wisp.x as f32, wisp.y as f32, wisp.z as f32))
-                    * Mat4::from_scale(Vec3::new(size, size * 0.55, 1.0));
+                    * Mat4::from_scale(Vec3::new(size, size * aspect, 1.0));
             let opacity = (age * PI).sin() * QUARRY_DUST_MAX_OPACITY * wisp.alpha;
             self.records
                 .push(record(world, [r, g, b, opacity as f32], [0.0; 4]));

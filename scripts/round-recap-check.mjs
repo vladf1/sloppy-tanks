@@ -92,7 +92,12 @@ try {
     }));
     await click(page, "#end-battle");
     await page.locator(".recap-stats").waitFor();
-    assert.equal(await page.locator(".results h2").innerText(), "BATTLE ENDED");
+    // A battle ended early is called by where the team stood, never won or lost: the
+    // limit decided nothing.
+    assert.match(
+      await page.locator(".results h2").innerText(),
+      mode === "team" ? /^(LEAD HELD|CUT SHORT|STALEMATE)$/ : /^BATTLE ENDED$/,
+    );
     assert.deepEqual(
       await page.evaluate(() => ({
         elapsed: window.sloppy.sim.elapsed,
@@ -113,8 +118,9 @@ try {
   await finish("team", 17);
   assert.equal(await page.locator(".recap-note").innerText(), "", "first records are not news");
   assert.match(await page.locator(".recap-feats").innerText(), /ONE-TANK ARMY/);
-  assert.equal(await page.locator(".recap-stat").count(), 6);
-  assert.equal(await page.locator(".recap-detail").count(), 11);
+  assert.equal(await page.locator(".recap-stat").count(), 5);
+  // The details are highlights, at most three of them, never the whole ledger.
+  assert.equal(await page.locator(".recap-detail").count(), 3);
   await resize(1280, 720);
   const fits = await page.evaluate(() => {
     const actions = document.querySelector(".results .menu-actions").getBoundingClientRect();
@@ -134,7 +140,7 @@ try {
   await page.screenshot({ path: `${output}/battle-report.png` });
   await open();
   await finish("team", 19);
-  assert.match(await page.locator(".recap-stat").first().innerText(), /BEST 21/);
+  assert.match(await page.locator(".recap-stat").first().innerText(), /2 short of your best · 21/i);
   await resize(1024, 640);
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
   const top = await page.locator(".results").boundingBox();
@@ -155,7 +161,7 @@ try {
     await page.locator(".choice-card:has(input[value='solo'])").innerText(),
     /endless enemies/,
   );
-  await page.locator('[data-kind="balanced"]').click();
+  await page.locator('.start [data-kind="balanced"]').click();
   await startRound(page);
   await page.waitForFunction(() => document.querySelector("#label0").textContent === "KILLS");
   assert.match(await page.locator("#time").innerText(), /10:00|9:59/);
@@ -200,7 +206,7 @@ try {
   });
   await page.locator(".recap-stats").waitFor();
   assert.match(await page.locator(".results h2").innerText(), /TANK DESTROYED/);
-  assert.match(await page.locator(".recap-stat").nth(2).innerText(), /0:42/);
+  assert.match(await page.locator(".recap-stat").nth(3).innerText(), /0:42/);
   assert.equal(await recapKills(), "0", "a new round starts without kills");
   assert.equal(await page.locator(".recap-feats").count(), 0, "no filler when nothing was earned");
   await page.screenshot({ path: `${output}/battle-report-solo.png` });

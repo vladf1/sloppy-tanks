@@ -5,8 +5,9 @@
 //!
 //! - `add_model` prepares a `Node` tree once (see `crate::model`); `add_instance`
 //!   places it any number of times. Per instance: world transform, visibility,
-//!   opacity (below 1 it draws blended in the transparent list and its shadow
-//!   dithers away), tint, four effect floats, and local transform/visibility
+//!   opacity (below 1, for a model added with `add_fading_model`, it draws blended
+//!   in the transparent list and its shadow dithers away), tint, four effect
+//!   floats, and local transform/visibility
 //!   overrides for named joints (turret yaw, barrel pitch/recoil, wheels,
 //!   suspension). Every visible part is culled by its bounding sphere per view,
 //!   and instances sharing a mesh and material draw as one instanced call.
@@ -52,6 +53,7 @@ use webgl as backend;
 #[cfg(not(feature = "webgl"))]
 use webgpu as backend;
 
+pub use crate::presentation::theme::Atmosphere;
 pub use context::GRAPHICS_API;
 pub use inspect::InstanceState;
 pub use pools::PoolId;
@@ -63,8 +65,9 @@ use std::sync::Arc;
 use bytemuck::{Pod, Zeroable};
 use glam::{Mat4, Vec2, Vec3};
 use sloppy_core::geometry::Mesh;
-use sloppy_core::scene::{Blending, Node, Side, TextureRef};
+use sloppy_core::scene::{Blending, Node, Side, TextureRef, TextureSource};
 
+use crate::atmosphere_map::cloud_tile_offset;
 use crate::camera::{Frustum, PerspectiveCamera, ShadowCamera, ShadowReach, Sphere, mirror_view};
 use crate::color::{hex_to_linear, hex_to_linear_scaled};
 use crate::draw_list::{
@@ -75,23 +78,27 @@ use crate::effects::{EffectDefinition, EffectRegistry};
 use crate::material::MaterialInterner;
 use crate::mesh_pages::MeshRange;
 use crate::model::{
-    InstanceData, ModelNode, PartMesh, PreparedModel, prepare_model, prepare_scenery,
+    InstanceData, MergedPart, ModelNode, PartMesh, PreparedModel, Segment, prepare_combined,
+    prepare_merged, prepare_model, prepare_scenery,
 };
 use crate::presentation::theme::SHADOW_DEPTH;
+use crate::presentation::theme::{Grade, Tone};
+use crate::quality::{Tier, TierFeatures};
 use crate::reflection_cull::{ReflectionMask, WaterFootprint};
 use crate::shader::{PipelineKey, ShaderKey};
 use crate::shadow_merge::{
     MIN_CACHED_SHADOW_TRIANGLES, MergeKind, ShadowMerge, merge_shadows, merged_draw_order,
     shadow_merge_kind,
 };
-use crate::target_memory::target_bytes;
 use backend::{Frame, Gpu, Pipelines, WaterGpu};
 use pools::PoolEntry;
 use resources::{MaterialStore, MeshStore};
 use textures::TextureStore;
 
-/// MSAA samples of the main view and the water reflection. WebGL takes the most up
-/// to this that its float targets support (`webgl/context.rs` `sample_count`).
+/// MSAA samples of the main view and the water reflection with multisampling on.
+/// WebGL takes the most up to this that its float targets support
+/// (`webgl/context.rs` `sample_count`). Without multisampling (`Renderer::new`'s
+/// `msaa`, touch devices) both draw single-sampled: WebGPU offers only 1 or 4.
 pub const SAMPLE_COUNT: u32 = 4;
 
 /// Whether a resource survives `reset_round`.
@@ -113,6 +120,13 @@ pub struct ModelId {
 pub struct InstanceId {
     index: u32,
     generation: u32,
+}
+
+/// A model prepared for upload ([`Renderer::prepare_pending_model`]) that is not on
+/// the GPU yet ([`Renderer::add_pending_model`]).
+pub struct PendingModel {
+    prepared: PreparedModel,
+    merge: ShadowMerge,
 }
 
 /// Three linear `Fog`.
@@ -314,6 +328,10 @@ pub struct RenderStats {
     pub reflection_draw_calls: u32,
     pub shadow_triangles: u64,
     pub reflection_triangles: u64,
+    /// Ambient occlusion's depth pass (`OCCLUSION_DEPTH_PASS`): a depth draw per
+    /// opaque draw of the main view, apart from the main pass's own.
+    pub occlusion_draw_calls: u32,
+    pub occlusion_triangles: u64,
     pub main_triangles: u64,
     /// Instance records written this frame.
     pub instance_records: u32,
@@ -359,7 +377,153 @@ struct FrameUniform {
     camera_right: [f32; 4],
     camera_up: [f32; 4],
     point_lights: [[f32; 8]; MAX_POINT_LIGHTS],
+    sky_rays: [f32; 16],
+    sky_zenith: [f32; 4],
+    sky_horizon: [f32; 4],
+    sky_sun: [f32; 4],
+    cloud_lit: [f32; 4],
+    cloud_shade: [f32; 4],
+    haze: [f32; 4],
+    haze_shape: [f32; 4],
+    aerial: [f32; 4],
+    ridge: [f32; 4],
+    ridge_shape: [f32; 4],
+    haze_far: [f32; 4],
+    ground: [f32; 4],
+    quality: [f32; 4],
+    penumbra_u: [f32; 4],
+    penumbra_v: [f32; 4],
+    penumbra_depth: [f32; 4],
+    penumbra_steps: [f32; 4],
+    sun_heading: [f32; 4],
+    bounce: [f32; 4],
+    rim: [f32; 4],
+    cloud_tiles: [f32; 4],
 }
+
+/// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade and the
+/// upscale from the scene's size to the canvas's. The backend fills in the row
+/// mapping (`settings.y`, `settings.z`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct OutputUniform {
+    settings: [f32; 4],
+    lift: [f32; 4],
+    gamma: [f32; 4],
+    gain: [f32; 4],
+    effects: [f32; 4],
+    tone: [f32; 4],
+    hues: [f32; 4],
+    shadows: [f32; 4],
+    highlights: [f32; 4],
+    detail: [f32; 4],
+    curve: [f32; 4],
+}
+
+/// The penumbra's blocker search (`standard.wgsl` `penumbra_radius`): the steepest
+/// receiver slope it follows, metres of depth per texel; the depth gap it ignores and
+/// the depth steps that sort casters by how far up the sun's ray they stand, metres.
+const RECEIVER_SLOPE_LIMIT: f32 = 0.6;
+const BLOCKER_TOLERANCE: f32 = 0.06;
+const BLOCKER_STEPS: [f32; 3] = [1.0, 2.5, 5.0];
+
+/// The penumbra search's terms in the sun's shadow map (`Frame` `penumbra_*`), the
+/// same for every receiver, from `shadow_matrix` (world to map UV and depth) and the
+/// map's size in texels. The light's projection is orthographic, so its rows are
+/// orthogonal and a receiving plane's depth slope per map texel follows from their
+/// dot products with the plane's normal: each row over its squared length (u negated
+/// and both over the size, for texels along u and the flipped v), and one metre in
+/// depth units for the limit, the tolerance and the steps.
+fn penumbra_terms(shadow_matrix: Mat4, size: f32) -> [[f32; 4]; 4] {
+    let row = |index| shadow_matrix.row(index).truncate();
+    let (u, v, depth) = (row(0), row(1), row(2));
+    let metre = depth.length();
+    let u = -u / (u.length_squared() * size);
+    let v = v / (v.length_squared() * size);
+    let depth = depth / depth.length_squared();
+    [
+        [u.x, u.y, u.z, RECEIVER_SLOPE_LIMIT * metre],
+        [v.x, v.y, v.z, BLOCKER_TOLERANCE * metre],
+        [depth.x, depth.y, depth.z, 0.0],
+        [
+            BLOCKER_STEPS[0] * metre,
+            BLOCKER_STEPS[1] * metre,
+            BLOCKER_STEPS[2] * metre,
+            0.0,
+        ],
+    ]
+}
+
+/// The filmic curve's terms for `output.wgsl` `filmic`: x its toe power, y the
+/// shoulder, zw the curve's b and c, which land scene mid grey on `tone.mid` and
+/// `tone.white` on 1 (all zero for ACES).
+fn tone_curve(tone: &Tone) -> [f32; 4] {
+    if tone.contrast <= 0.0 {
+        return [0.0; 4];
+    }
+    const SCENE_MID: f32 = 0.18;
+    let (a, d) = (tone.contrast, tone.shoulder);
+    let mid = SCENE_MID.powf(a);
+    let mid_shoulder = SCENE_MID.powf(a * d);
+    let white = tone.white.powf(a);
+    let white_shoulder = tone.white.powf(a * d);
+    let b = (white - mid / tone.mid) / (white_shoulder - mid_shoulder);
+    let c = white - white_shoulder * b;
+    [a, d, b, c]
+}
+
+/// WGSL `Occlusion` (`occlusion.wgsl`).
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Pod, Zeroable)]
+struct OcclusionUniform {
+    view_projection: [f32; 16],
+    inverse_view_projection: [f32; 16],
+    settings: [f32; 4],
+    depth_terms: [f32; 4],
+}
+
+/// Levels of the bloom chain, from a quarter of the canvas size down to a sixteenth:
+/// a glow reaching a few tank lengths at most, so a blast never veils the whole
+/// frame, in five small passes. The prefilter reads the full-size frame straight
+/// into the quarter level (each of its four bilinear taps averages 2×2 texels), so no
+/// pass fills half the canvas. Level `n` is the canvas size shifted right by
+/// `BLOOM_FIRST_SHIFT + n`.
+const BLOOM_LEVELS: usize = 3;
+const BLOOM_FIRST_SHIFT: usize = 2;
+/// The ambient occlusion target is the canvas size divided by this. Occlusion is soft,
+/// low-frequency shade and the output pass spreads it over a tent six texels wide, so a
+/// quarter-size target looks the same as a half-size one at a quarter of the probes
+/// (about 1 ms less GPU time at 3840×2160).
+const OCCLUSION_DOWNSCALE: u32 = 4;
+/// The occlusion's blur (`output.wgsl` `occlusion_blur`) for an occlusion of
+/// `width` × `height` texels: one texel per corner the output pass reads, the
+/// corner nearest each scene pixel, which can lie a whole texel past the last when
+/// the scene's size is no multiple of the downscale.
+fn blurred_occlusion_size(width: u32, height: u32) -> (u32, u32) {
+    (width + 2, height + 2)
+}
+
+/// Ambient occlusion: the reach of its probes and the depth gap they ignore, in
+/// metres; where it fades out with view distance; and its contrast power.
+const OCCLUSION_RADIUS: f32 = 1.8;
+const OCCLUSION_BIAS: f32 = 0.05;
+const OCCLUSION_FADE: (f32, f32) = (110.0, 200.0);
+const OCCLUSION_POWER: f32 = 1.8;
+/// The clouds' strength in the water's mirror: faint, as a rippled surface seen
+/// from above would blur them into the sky's tone rather than mirror their contrast.
+const REFLECTED_CLOUDS: f32 = 0.22;
+/// Output dither amplitude in 8-bit steps, against banding in the sky gradient.
+const OUTPUT_DITHER: f32 = 1.0;
+/// The output's gamut fit (`output.wgsl` `fit_gamut`): how much of the way colors
+/// beyond the gamut desaturate rather than clip, and where the brightest channel's
+/// shoulder begins.
+const GAMUT_LIFT: f32 = 0.15;
+const GAMUT_SHOULDER: f32 = 0.8;
+/// How quickly a bright bloom saturates: its share halves at this reciprocal luminance.
+const BLOOM_LIMIT: f32 = 0.4;
+/// Sharpening the output adds per unit of scale below 1 when it upsamples a smaller
+/// scene, against the bilinear filter's softness (at most fully sharpened).
+const UPSCALE_SHARPEN: f32 = 0.8;
 
 /// WGSL `Water`.
 #[repr(C)]
@@ -371,6 +535,13 @@ struct WaterUniform {
     shallow_color: [f32; 4],
     settings: [f32; 4],
     shore: [f32; 4],
+}
+
+/// A linear tint scaled to unit luminance, so it shifts hue without brightening.
+fn unit_luminance(color: u32) -> [f32; 3] {
+    let [r, g, b] = hex_to_linear(color);
+    let luminance = (0.2126 * r + 0.7152 * g + 0.0722 * b).max(1e-4);
+    [r / luminance, g / luminance, b / luminance]
 }
 
 fn rgb4(rgb: [f32; 3], w: f32) -> [f32; 4] {
@@ -397,9 +568,21 @@ struct ClassEntry {
     /// faces, like Three's two-pass `DoubleSide` transparency.
     back_key: Option<PipelineKey>,
     shadow_key: PipelineKey,
+    /// An opaque class that writes depth draws into ambient occlusion's depth pass
+    /// (backends with `OCCLUSION_DEPTH_PASS`) with its depth-only shadow shader, but
+    /// the faces the main view draws.
+    depth_key: Option<PipelineKey>,
     main: Option<u32>,
     back: Option<u32>,
     shadow: Option<u32>,
+    depth: Option<u32>,
+    /// Whether its shadow and occlusion-depth draws need its own material bound
+    /// ([`ShaderKey::reads_own_material`]); most depth-only casters do not. WebGL
+    /// reads it from the linked program instead.
+    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    shadow_material: bool,
+    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    depth_material: bool,
     /// Parts using this class that cast shadows.
     casters: u32,
     users: u32,
@@ -407,8 +590,11 @@ struct ClassEntry {
 
 impl ClassEntry {
     /// Its pipeline slots and the keys that fill them: main always, back for
-    /// two-pass transparency, shadow while a part casts.
-    fn pipeline_slots(&mut self) -> [(&mut Option<u32>, Option<&PipelineKey>); 3] {
+    /// two-pass transparency, shadow while a part casts, depth for ambient
+    /// occlusion. Warm-up draws occlusion whatever the quality tier, and Auto may
+    /// raise the tier to one with occlusion mid-round, so its depth variants are
+    /// prepared with the rest.
+    fn pipeline_slots(&mut self) -> [(&mut Option<u32>, Option<&PipelineKey>); 4] {
         [
             (&mut self.main, Some(&self.main_key)),
             (&mut self.back, self.back_key.as_ref()),
@@ -416,6 +602,7 @@ impl ClassEntry {
                 &mut self.shadow,
                 (self.casters > 0).then_some(&self.shadow_key),
             ),
+            (&mut self.depth, self.depth_key.as_ref()),
         ]
     }
 }
@@ -434,6 +621,9 @@ struct PartEntry {
     /// Mesh-space bounds.
     bounds: Sphere,
     instances: Option<Vec<InstanceData>>,
+    /// A part merged across a combined model's fixed joints: each joint's share of
+    /// its mesh, drawn in runs of the joints that show and are in view.
+    segments: Option<Vec<Segment>>,
     /// Its shadow draws from the model's merged casters (unless faded).
     merged_shadow: bool,
     fixed_shadow: bool,
@@ -453,11 +643,18 @@ fn shadow_merged_index(side: Side, cutout: bool) -> usize {
     side + if cutout { SHADOW_MERGED_SIDES.len() } else { 0 }
 }
 
-/// The water, output and merged shadow pipelines every arena draws with, as the
-/// backend's pipeline type.
+/// The output and merged shadow pipelines every arena draws with, as the backend's
+/// pipeline type. The water's are made only for arenas with water (`set_water`).
 struct FixedPipelines<P> {
-    water: P,
     output: P,
+    /// The far-plane sky of the main view and the reflection.
+    sky: P,
+    /// Bloom prefilter, downsample and additive upsample, in `BloomPass` order: one
+    /// fragment stage (`fs_bloom`) that the instance index tells which pass it draws.
+    bloom: [P; 3],
+    /// Screen-space ambient occlusion, and its blur for the output pass.
+    occlusion: P,
+    occlusion_blur: P,
     /// Merged casters, depth-only then alpha-tested, indexed by
     /// `shadow_merged_index`.
     shadow_merged: Vec<P>,
@@ -465,8 +662,20 @@ struct FixedPipelines<P> {
 
 impl<P> FixedPipelines<P> {
     fn count(&self) -> usize {
-        2 + self.shadow_merged.len()
+        7 + self.shadow_merged.len()
     }
+}
+
+/// The bloom chain's passes, the instance index each draws with (`fs_bloom` in
+/// `output.wgsl`) and their pipelines' order in `FixedPipelines::bloom`.
+#[derive(Clone, Copy)]
+enum BloomPass {
+    Prefilter = 0,
+    Down = 1,
+    Up = 2,
+    /// The occlusion's blur for the output pass (`FixedPipelines::occlusion_blur`),
+    /// which shares the stage.
+    OcclusionBlur = 3,
 }
 
 /// A merged, depth-only caster mesh (`shadow_merge.rs`).
@@ -542,10 +751,10 @@ const ZERO_RECORD: InstanceRecord = InstanceRecord {
 struct ModelEntry {
     skeleton: PreparedModel,
     parts: Vec<PartEntry>,
-    /// Merged shadow casters, and for movable models the parts (entry indices)
-    /// whose posed records fill slots 0.. (`None`: a part that was skipped).
+    /// Merged shadow casters, and for movable models the parts (entry indices) and
+    /// segments whose posed records fill slots 0.. (`None`: a part that was skipped).
     shadow: Vec<ShadowMesh>,
-    shadow_slots: Vec<Option<usize>>,
+    shadow_slots: Vec<Option<(usize, Option<usize>)>>,
     owned_meshes: Vec<u32>,
     lifetime: Lifetime,
     scenery: bool,
@@ -723,6 +932,7 @@ pub struct Renderer {
     static_dirty: bool,
 
     environment: Environment,
+    atmosphere: Atmosphere,
     sun_shadow: SunShadow,
     point_lights: [Option<PointLight>; MAX_POINT_LIGHTS],
     camera: PerspectiveCamera,
@@ -741,6 +951,39 @@ pub struct Renderer {
     merged_draws: Vec<MergedDraw>,
     shadow_bases: Vec<u32>,
     stats: RenderStats,
+    /// The graphics tier's optional features (`crate::quality`).
+    tier: Tier,
+    features: TierFeatures,
+    /// Scene pixels per canvas pixel along each axis; the output pass upsamples.
+    render_scale: f32,
+    /// The sun shadow map edge the arena asked for, before the tier's cap.
+    requested_shadow_size: u32,
+    /// A development multiplier on the scene's size, to make the GPU the bottleneck
+    /// in a measurement (`debug_set_scene_load`); 1 otherwise.
+    scene_load: f32,
+    /// The quality controller asked for a canvas pacing reset that the next frame
+    /// free of queued ones performs.
+    pacing_reset_due: bool,
+    /// Development switches a measurement flips within one page (`debug_set_off`).
+    pub debug_off: DebugOff,
+}
+
+/// Passes, lights and effect pools a same-page A/B measurement turns off.
+#[derive(Clone, Debug, Default)]
+pub struct DebugOff {
+    /// Labels of pools not drawn.
+    pub pools: Vec<String>,
+    pub bloom: bool,
+    pub occlusion: bool,
+    pub sky: bool,
+    pub lights: bool,
+    /// The whole atmosphere: sky, haze, cloud shadows, bloom, occlusion and grade.
+    pub atmosphere: bool,
+    /// The ground's macro relief, tone and bounce (`ground_macro`).
+    pub ground: bool,
+    /// Custom effects whose draws the main view skips; "lit" and "unlit" name
+    /// the plain standard and basic materials, "shadowed" every receiver.
+    pub effects: Vec<String>,
 }
 
 /// What one frame draws, for the backend's passes: the draw lists of every view and
@@ -764,16 +1007,24 @@ struct Scene<'a> {
     /// Start the sun shadow from the cached fixed-scenery shadow instead of clearing it.
     copy_static: bool,
     reflection: bool,
+    /// Draw the sky behind the main view and the reflection.
+    sky: bool,
+    /// Run the bloom chain, and the ambient occlusion pass.
+    bloom: bool,
+    occlusion: bool,
 }
 
 impl Renderer {
     /// Create the device and canvas context. `asset_base` prefixes `TextureSource::File`
-    /// paths (the page's `BASE_URL`). Fails when the build's graphics API is unavailable.
+    /// paths (the page's `BASE_URL`). `msaa` multisamples the main view and the water
+    /// reflection; it is fixed for the renderer's life, since every pipeline is made
+    /// for it. Fails when the build's graphics API is unavailable.
     pub async fn new(
         canvas: web_sys::HtmlCanvasElement,
         asset_base: String,
+        msaa: bool,
     ) -> Result<Renderer, String> {
-        let (gpu, canvas) = Gpu::new(canvas).await?;
+        let (gpu, canvas) = Gpu::new(canvas, msaa).await?;
         let pipelines = Pipelines::new(&gpu);
         let textures = TextureStore::new(&gpu, asset_base);
         let sun_shadow = SunShadow::default();
@@ -804,6 +1055,7 @@ impl Renderer {
             static_records: vec![InstanceRecord::IDENTITY],
             static_dirty: true,
             environment: Environment::default(),
+            atmosphere: Atmosphere::default(),
             sun_shadow,
             point_lights: [None; MAX_POINT_LIGHTS],
             camera: PerspectiveCamera::new(43.0, 0.1, 320.0),
@@ -820,6 +1072,13 @@ impl Renderer {
             merged_draws: Vec::new(),
             shadow_bases: Vec::new(),
             stats: RenderStats::default(),
+            tier: Tier::High,
+            features: Tier::High.features(),
+            render_scale: 1.0,
+            requested_shadow_size: sun_shadow.map_size,
+            scene_load: 1.0,
+            pacing_reset_due: false,
+            debug_off: DebugOff::default(),
             frame,
             gpu,
         })
@@ -830,11 +1089,63 @@ impl Renderer {
     /// Resize the canvas drawing buffer (device pixels). Superseded attachments
     /// are destroyed immediately.
     pub fn resize(&mut self, width: u32, height: u32) {
-        self.frame.resize(&self.gpu, width, height);
+        let scene = self.scene_size_for((width, height));
+        self.frame.resize(&self.gpu, (width, height), scene);
     }
 
+    /// The canvas drawing buffer's size in device pixels.
     pub fn size(&self) -> (u32, u32) {
         self.frame.size()
+    }
+
+    /// The size the scene renders at before the output pass upsamples it.
+    pub fn scene_size(&self) -> (u32, u32) {
+        self.frame.scene_size()
+    }
+
+    /// The scene's size for a canvas of `canvas` pixels at the render scale.
+    fn scene_size_for(&self, canvas: (u32, u32)) -> (u32, u32) {
+        let scale = f64::from(self.render_scale * self.scene_load);
+        let side = |pixels: u32| ((f64::from(pixels) * scale).round() as u32).max(1);
+        (side(canvas.0), side(canvas.1))
+    }
+
+    /// Draw with `tier`'s optional features, the scene at `scale` times the canvas's
+    /// size (at most 1). A changed scale reallocates the scene's targets; a changed
+    /// shadow cap, the shadow maps.
+    pub fn set_quality(&mut self, tier: Tier, scale: f32) {
+        self.tier = tier;
+        self.features = tier.features();
+        self.apply_shadow_size();
+        let scale = scale.clamp(0.05, 1.0);
+        if scale != self.render_scale {
+            self.render_scale = scale;
+            let (width, height) = self.size();
+            self.resize(width, height);
+        }
+    }
+
+    /// The tier and render scale in effect.
+    pub fn quality(&self) -> (Tier, f32) {
+        (self.tier, self.render_scale)
+    }
+
+    /// The largest texture edge the GPU offers.
+    pub fn max_texture_size(&self) -> u32 {
+        self.gpu.max_texture_size()
+    }
+
+    /// MSAA samples of the main view (0 or 1 without multisampling).
+    pub fn samples(&self) -> u32 {
+        self.gpu.samples
+    }
+
+    /// Multiply the scene's size by `load` on top of the render scale (development:
+    /// makes the GPU the bottleneck so the quality controller has work to do).
+    pub fn debug_set_scene_load(&mut self, load: f32) {
+        self.scene_load = load.clamp(0.1, 4.0);
+        let (width, height) = self.size();
+        self.resize(width, height);
     }
 
     /// The first GPU validation error or device loss, if any.
@@ -861,14 +1172,35 @@ impl Renderer {
         &self.environment
     }
 
+    /// The sky, haze, bloom, occlusion and grade (off by default).
+    pub fn set_atmosphere(&mut self, atmosphere: Atmosphere) {
+        self.atmosphere = atmosphere;
+    }
+
+    pub fn atmosphere(&self) -> &Atmosphere {
+        &self.atmosphere
+    }
+
     pub fn set_sun_shadow(&mut self, shadow: SunShadow) {
-        if shadow.map_size != self.sun_shadow.map_size {
-            self.frame
-                .set_shadow_size(&self.gpu, shadow.map_size.max(1));
-            self.rebuild_pool_groups();
-        }
-        self.sun_shadow = shadow;
+        self.requested_shadow_size = shadow.map_size;
+        let map_size = self.sun_shadow.map_size;
+        self.sun_shadow = SunShadow { map_size, ..shadow };
         self.static_shadow_dirty = true;
+        self.apply_shadow_size();
+    }
+
+    /// Size the shadow maps to the arena's request within the tier's cap.
+    fn apply_shadow_size(&mut self) {
+        let size = self
+            .requested_shadow_size
+            .min(self.features.max_shadow_map)
+            .max(1);
+        if size != self.sun_shadow.map_size {
+            self.sun_shadow.map_size = size;
+            self.frame.set_shadow_size(&self.gpu, size);
+            self.rebuild_pool_groups();
+            self.static_shadow_dirty = true;
+        }
     }
 
     pub fn set_point_light(&mut self, index: usize, light: Option<PointLight>) {
@@ -919,6 +1251,8 @@ impl Renderer {
         let sampler = self.textures.sampler(&self.gpu, Some(&normals));
         let view = self.textures.view(Some(&normals));
         let gpu = WaterGpu::new(&self.gpu, &self.frame, size, view, sampler);
+        // Its pipelines compile while the arena builds, like the fixed ones.
+        self.pipelines.start_water(&self.gpu);
         let footprint = WaterFootprint::new(&settings.mesh, settings.height, settings.calm_extent);
         self.water = Some(Water {
             footprint,
@@ -980,11 +1314,22 @@ impl Renderer {
                 let range = self.meshes.get(mesh).range;
                 let source = &gpu.material;
                 let transparent = source.transparent || faded;
+                let multisampled = self.gpu.samples > 1;
                 let main_key = |material: &sloppy_core::scene::Material| {
-                    let shader = ShaderKey::main(material, gpu.effect, receive_shadow);
+                    let mut shader = ShaderKey::main(material, gpu.effect);
+                    // The WebGL build's shadow reception is a variant (`ShaderKey::main`).
+                    shader.receive_shadow = cfg!(feature = "webgl") && shader.lit && receive_shadow;
+                    // Without samples to cover, a soft cutout edge would draw its faint
+                    // fringe opaque: a plain alpha test instead.
+                    shader.alpha_to_coverage &= multisampled;
                     PipelineKey::main(shader, material, faded)
                 };
-                let two_pass = transparent && source.side == Side::Double;
+                // Three draws double-sided transparent materials as back faces, then
+                // front, so a closed shape's far side shows through its near one. A
+                // flat mesh (a ring, a card) never has a face behind another, so it
+                // draws both sides at once in half the draws.
+                let two_pass =
+                    transparent && source.side == Side::Double && !self.meshes.planar(mesh);
                 let face = |side| sloppy_core::scene::Material {
                     side,
                     ..(**source).clone()
@@ -997,6 +1342,13 @@ impl Renderer {
                     main_key(source)
                 };
                 let shadow = PipelineKey::shadow(shadow_shader, source);
+                // Without the shadow's dither, which only fades a caster's shadow.
+                let depth_shader = ShaderKey::shadow(source, gpu.effect, false, &self.effects);
+                let depth_key = (backend::OCCLUSION_DEPTH_PASS
+                    && !transparent
+                    && source.depth_write
+                    && source.depth_test)
+                    .then(|| PipelineKey::occlusion_depth(depth_shader, source));
                 // Classes are created before their pipelines compile, and draw lists
                 // sort by these.
                 let ranks = [main, shadow].map(|key| pipeline_rank(&mut self.ranks, &key));
@@ -1006,9 +1358,13 @@ impl Renderer {
                     main_key: main,
                     back_key: two_pass.then(|| main_key(&face(Side::Back))),
                     shadow_key: shadow,
+                    depth_key,
                     main: None,
                     back: None,
                     shadow: None,
+                    depth: None,
+                    shadow_material: shadow_shader.reads_own_material(),
+                    depth_material: depth_shader.reads_own_material(),
                     casters: 0,
                     users: 0,
                 };
@@ -1052,35 +1408,64 @@ impl Renderer {
         }
     }
 
+    /// `fades`: instances may draw with an opacity below 1 (`add_fading_model`).
     fn register(
         &mut self,
-        mut prepared: PreparedModel,
+        prepared: PreparedModel,
         lifetime: Lifetime,
         scenery: bool,
+        fades: bool,
+    ) -> ModelId {
+        let merge = self.merge_for(&prepared, scenery);
+        self.register_merged(prepared, merge, lifetime, scenery, fades)
+    }
+
+    /// A prepared model's merged shadow casters.
+    fn merge_for(&self, prepared: &PreparedModel, scenery: bool) -> ShadowMerge {
+        let effects = &self.effects;
+        merge_shadows(
+            prepared,
+            |index| shadow_merge_kind(effects, &prepared.parts[index].material),
+            scenery,
+            SHADOW_MERGE_CELL,
+        )
+    }
+
+    /// [`Self::register`] with the model's shadow merge already made.
+    fn register_merged(
+        &mut self,
+        mut prepared: PreparedModel,
+        merge: ShadowMerge,
+        lifetime: Lifetime,
+        scenery: bool,
+        fades: bool,
     ) -> ModelId {
         let gpu = self.gpu.clone();
         let ShadowMerge {
             groups,
             slots,
             merged,
-        } = {
-            let effects = &self.effects;
-            merge_shadows(
-                &prepared,
-                |index| shadow_merge_kind(effects, &prepared.parts[index].material),
-                scenery,
-                SHADOW_MERGE_CELL,
-            )
-        };
+        } = merge;
         // The whole model is known before anything uploads, so a large one gets batch
         // pages of its own.
         let reservation = self.meshes.reserve(&gpu, &prepared.meshes, &groups);
         let mut entry_of = vec![None; prepared.parts.len()];
+        // Whether a double-sided material draws each owned mesh, the only kind that
+        // asks whether it is planar.
+        let mut double_sided = vec![false; prepared.meshes.len()];
+        for part in &prepared.parts {
+            if let PartMesh::Owned(index) = part.mesh {
+                double_sided[index] |= part.material.side == Side::Double;
+            }
+        }
         let owned: Vec<u32> = prepared
             .meshes
             .iter_mut()
             .zip(reservation.owned)
-            .map(|(data, placement)| self.meshes.owned(&gpu, data, placement))
+            .zip(double_sided)
+            .map(|((data, placement), double_sided)| {
+                self.meshes.owned(&gpu, data, placement, double_sided)
+            })
             .collect();
         let mut parts = Vec::with_capacity(prepared.parts.len());
         // The parts' instance lists move into the entries: only the joints outlive
@@ -1091,6 +1476,7 @@ impl Renderer {
                 &mut self.textures,
                 &self.effects,
                 &part.material,
+                part.receive_shadow,
             );
             let mesh = match &part.mesh {
                 PartMesh::Shared(mesh) => self.meshes.shared(&gpu, mesh),
@@ -1107,9 +1493,13 @@ impl Renderer {
                 part.cast_shadow,
                 None,
             );
-            // Movable models may fade; give them the blended variant up front so
-            // warm-up compiles it.
-            let fadeable = !scenery
+            // A fading model's opaque parts get their blended variant up front so
+            // warm-up compiles it. Only those that fade: on Apple GPUs blending is
+            // part of the fragment binary, so each blended variant is a whole second
+            // compile of its stage, and every movable model having one cost Safari
+            // about a second of a cold start.
+            let fadeable = fades
+                && !scenery
                 && !part.material.transparent
                 && part.material.blending == Blending::Normal;
             let faded_class = fadeable.then(|| {
@@ -1137,12 +1527,16 @@ impl Renderer {
                 frustum_culled: part.frustum_culled,
                 bounds: self.meshes.get(mesh).bounds,
                 instances: part.instances,
+                segments: part.segments,
                 merged_shadow: merged[prepared_index],
                 fixed_shadow: shadow_merge_kind(&self.effects, &part.material)
                     != MergeKind::Separate,
             });
         }
-        let shadow_slots = slots.iter().map(|&index| entry_of[index]).collect();
+        let shadow_slots = slots
+            .iter()
+            .map(|slot| entry_of[slot.part].map(|entry| (entry, slot.segment)))
+            .collect();
         let shadow = groups
             .into_iter()
             .zip(reservation.shadow)
@@ -1153,6 +1547,7 @@ impl Renderer {
                         &mut self.textures,
                         &self.effects,
                         material,
+                        false,
                     );
                     self.materials.get_mut(index).users += 1;
                     index
@@ -1182,10 +1577,50 @@ impl Renderer {
     }
 
     /// Prepare a movable model (tanks, pickups, props). Named nodes become joints
-    /// that instances can pose; the root's transform comes from each instance.
+    /// that instances can pose; the root's transform comes from each instance. Its
+    /// instances draw opaque whatever their opacity: a model that fades is added
+    /// with `add_fading_model`.
     pub fn add_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
         let prepared = prepare_model(root, &mut self.interner);
-        self.register(prepared, lifetime, false)
+        self.register(prepared, lifetime, false, false)
+    }
+
+    /// The CPU half of [`Self::add_model`]: the model prepared for upload and its
+    /// shadow casters merged, so a caller spreading a costly model over frames can
+    /// upload it in a later one ([`Self::add_pending_model`]).
+    pub fn prepare_pending_model(&mut self, root: &Node) -> PendingModel {
+        let prepared = prepare_model(root, &mut self.interner);
+        let merge = self.merge_for(&prepared, false);
+        PendingModel { prepared, merge }
+    }
+
+    /// Upload a model [`Self::prepare_pending_model`] made, as `add_model` would have.
+    pub fn add_pending_model(&mut self, pending: PendingModel, lifetime: Lifetime) -> ModelId {
+        let PendingModel { prepared, merge } = pending;
+        self.register_merged(prepared, merge, lifetime, false, false)
+    }
+
+    /// `add_model` for a model whose instances fade (an opacity below 1 draws them
+    /// blended), with the blended variants of its opaque parts compiled up front.
+    pub fn add_fading_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_model(root, &mut self.interner);
+        self.register(prepared, lifetime, false, true)
+    }
+
+    /// A one-off model the caller merged into the upload layout (a settled pile of
+    /// debris, `model::prepare_merged`): each part its own mesh, gone from the Wasm
+    /// heap once uploaded. Its instances never fade.
+    pub fn add_merged_model(&mut self, parts: Vec<MergedPart>, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_merged(parts, &mut self.interner);
+        self.register(prepared, lifetime, false, false)
+    }
+
+    /// Prepare a model whose root's named children are fixed, only ever shown or
+    /// hidden (`model::prepare_combined`): their plain opaque parts merge across them
+    /// per material and draw in runs of the joints that show.
+    pub fn add_combined_model(&mut self, root: &Node, lifetime: Lifetime) -> ModelId {
+        let prepared = prepare_combined(root, &mut self.interner);
+        self.register(prepared, lifetime, false, false)
     }
 
     /// Joint index for a named node of a model.
@@ -1283,7 +1718,7 @@ impl Renderer {
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
         let prepared = prepare_scenery(root, &mut self.interner);
-        let model = self.register(prepared, lifetime, true);
+        let model = self.register(prepared, lifetime, true, false);
         let id = self
             .add_instance(model, Mat4::IDENTITY, lifetime)
             .expect("model just registered");
@@ -1425,7 +1860,9 @@ impl Renderer {
     /// the page between calls (a short timer while only `compiling` remains).
     pub fn prepare_step(&mut self, budget: u32) -> PrepareProgress {
         self.update_textures();
-        let fixed_pending = !self.pipelines.fixed_ready(&self.gpu);
+        self.run_bakes();
+        let fixed_pending = !self.pipelines.fixed_ready(&self.gpu)
+            || (self.water.is_some() && !self.pipelines.water_ready(&self.gpu));
         let mut compiled = 0;
         // Distinct pipelines the registered scene still lacks. Many draw classes share
         // one pipeline (every opaque textured mesh, say), so progress counts keys, not
@@ -1460,11 +1897,31 @@ impl Renderer {
         }
     }
 
+    /// Queue the background compile of every pipeline the registered scene still lacks,
+    /// creating none: an arena's preparation asks for its pipelines as soon as it has
+    /// registered them, so the browser compiles them while the page still sets up (its
+    /// HUD, texture decodes and uploads) rather than from the first `prepare_step`.
+    pub fn request_pipelines(&mut self) {
+        let gpu = &self.gpu;
+        for class in self.classes.iter_mut() {
+            for (slot, key) in class.pipeline_slots() {
+                if slot.is_none()
+                    && let Some(key) = key
+                {
+                    *slot = self.pipelines.request(gpu, &self.effects, key, false);
+                }
+            }
+        }
+    }
+
     /// Create every pipeline the scene still needs, synchronously for any whose
     /// background compile has not finished.
     fn complete_pipelines(&mut self) {
         let gpu = &self.gpu;
         self.pipelines.ensure_fixed(gpu);
+        if self.water.is_some() {
+            self.pipelines.ensure_water(gpu);
+        }
         for class in self.classes.iter_mut() {
             for (slot, key) in class.pipeline_slots() {
                 if slot.is_none()
@@ -1486,6 +1943,24 @@ impl Renderer {
         self.frame.gpu_idle(&self.gpu)
     }
 
+    /// Start the canvas's frame pacing afresh (`crate::quality`: WebKit keeps a lowered
+    /// rate for good otherwise), at the start of the next frame that finds no earlier
+    /// one on the GPU.
+    pub fn reset_canvas_pacing(&mut self) {
+        self.pacing_reset_due = true;
+    }
+
+    /// The GPU time of the latest finished frame in milliseconds, once per sample; never
+    /// on WebGL, which cannot time it.
+    pub fn take_gpu_frame_ms(&self) -> Option<f64> {
+        self.frame.take_gpu_frame_ms()
+    }
+
+    /// Frames drawn into the canvas whose GPU work has not finished.
+    pub fn frames_in_flight(&self) -> u32 {
+        self.frame.frames_in_flight()
+    }
+
     /// Draw every prepared variant once offscreen (shadow, main, water and output
     /// passes) so the browser finishes compiling before gameplay needs them.
     pub fn warm_up(&mut self) -> Result<(), String> {
@@ -1501,6 +1976,7 @@ impl Renderer {
                 class: index,
                 first_instance: 0,
                 instance_count: 1,
+                ..Draw::default()
             };
             if class.transparent {
                 self.views[MAIN_VIEW].transparent.push(draw);
@@ -1554,6 +2030,50 @@ impl Renderer {
                 water.gpu.rebind(&self.gpu, &self.frame, view, sampler);
                 water.generation = self.textures.generation;
             }
+        }
+    }
+
+    /// Draw the requested texture bakes (`effects::bakes`) whose pipelines have
+    /// compiled (starting the rest), a bake that reads a material once that material
+    /// exists with its other textures loaded. Until then the materials naming one
+    /// sample the white placeholder and it counts as pending, so preparation waits.
+    fn run_bakes(&mut self) {
+        let mut baked = false;
+        for (key, bake) in self.textures.bakes_due() {
+            if !self.textures.bake_ready(&self.gpu, bake) {
+                continue;
+            }
+            let Some(source) = bake.source else {
+                self.textures.bake(&self.gpu, &key, bake, None);
+                baked = true;
+                continue;
+            };
+            let Some(material) = self
+                .effects
+                .id(source)
+                .and_then(|effect| self.materials.with_effect(effect))
+            else {
+                continue;
+            };
+            let inputs = self.materials.get(material).material.clone();
+            let loaded = resources::texture_slots(&inputs)
+                .into_iter()
+                .flatten()
+                .filter(|texture| !matches!(texture.source, TextureSource::Generated(_)))
+                .all(|texture| self.textures.loaded(texture));
+            if !loaded {
+                continue;
+            }
+            // The bake reads the main view's frame uniform (the sun).
+            self.write_view_uniforms();
+            let binding = &self.materials.get(material).binding;
+            self.textures
+                .bake(&self.gpu, &key, bake, Some((&self.frame, binding)));
+            baked = true;
+        }
+        if baked {
+            self.static_shadow_dirty = true;
+            self.materials.refresh(&self.gpu, &mut self.textures);
         }
     }
 
@@ -1643,12 +2163,22 @@ impl Renderer {
             .write(&self.gpu, 0, &self.static_records);
     }
 
+    /// The tier's shader switch (`common.wgsl` `fine_detail`) and the scene's scale
+    /// against the canvas.
+    fn quality_uniform(&self) -> [f32; 4] {
+        let fine_detail = if self.features.fine_detail { 1.0 } else { 0.0 };
+        [0.0, fine_detail, 0.0, self.render_scale * self.scene_load]
+    }
+
+    /// A view's uniform; `sky_rays` is its plain view projection, which the sky
+    /// inverts for view rays (the mirror's oblique one would bend them).
     fn frame_uniform(
         &self,
         view_projection: Mat4,
         view: Mat4,
         eye: Vec3,
         size: (u32, u32),
+        sky_rays: Mat4,
     ) -> FrameUniform {
         let env = &self.environment;
         let shadow = self.shadow_camera();
@@ -1656,9 +2186,11 @@ impl Renderer {
             0.5, 0.0, 0.0, 0.0, 0.0, 0.5, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 0.5, 0.5, 0.0, 1.0,
         ]) * shadow.view_projection();
         let world = view.inverse();
+        let [penumbra_u, penumbra_v, penumbra_depth, penumbra_steps] =
+            penumbra_terms(shadow_matrix, self.sun_shadow.map_size as f32);
         let mut point_lights = [[0.0; 8]; MAX_POINT_LIGHTS];
         for (slot, light) in point_lights.iter_mut().zip(&self.point_lights) {
-            if let Some(light) = light {
+            if let (Some(light), false) = (light, self.debug_off.lights) {
                 let [r, g, b] = hex_to_linear_scaled(light.color, light.intensity);
                 *slot = [
                     light.position.x,
@@ -1716,6 +2248,174 @@ impl Renderer {
             camera_right: rgb4(world.x_axis.truncate().into(), 0.0),
             camera_up: rgb4(world.y_axis.truncate().into(), 0.0),
             point_lights,
+            quality: self.quality_uniform(),
+            penumbra_u,
+            penumbra_v,
+            penumbra_depth,
+            penumbra_steps,
+            ..self.atmosphere_uniform(sky_rays)
+        }
+    }
+
+    /// The atmosphere's fields of a view uniform, all zero while it is off.
+    fn atmosphere_uniform(&self, sky_rays: Mat4) -> FrameUniform {
+        let a = &self.atmosphere;
+        if !a.enabled {
+            return FrameUniform::zeroed();
+        }
+        let sky = |color| hex_to_linear_scaled(color, a.sky_intensity);
+        let env = &self.environment;
+        let sun = (env.sun_position - env.sun_target).normalize_or_zero();
+        let heading = (Vec2::new(sun.x, sun.z) + Vec2::splat(1e-4)).normalize();
+        let horizon = Vec3::from(sky(a.horizon));
+        let glow = Vec3::from(hex_to_linear_scaled(a.sun_glow, a.sun_glow_intensity));
+        let rim = (horizon * 0.6 + glow * 0.4) * a.rim;
+        // The bounce at full strength: the ground fill's hue at the sun's luminance.
+        let luminance = |color: Vec3| color.dot(Vec3::new(0.2126, 0.7152, 0.0722));
+        let ground = Vec3::from(hex_to_linear_scaled(
+            env.ground_color,
+            env.hemisphere_intensity,
+        ));
+        let sun_level = luminance(Vec3::from(hex_to_linear_scaled(
+            env.sun_color,
+            env.sun_intensity,
+        )));
+        let bounce_strength = if self.debug_off.ground {
+            0.0
+        } else {
+            a.ground.bounce
+        };
+        let bounce = ground / luminance(ground).max(1e-4)
+            * (bounce_strength * sun_level * std::f32::consts::FRAC_1_PI);
+        let slant = Vec2::new(sun.x, sun.z) / sun.y.max(0.2);
+        let [drift_x, drift_z] = cloud_tile_offset(self.time);
+        FrameUniform {
+            sun_heading: [heading.x, heading.y, 0.0, 0.0],
+            cloud_tiles: [slant.x, slant.y, drift_x, drift_z],
+            bounce: rgb4(bounce.into(), 0.0),
+            rim: rgb4(rim.into(), 0.0),
+            sky_rays: sky_rays.inverse().to_cols_array(),
+            sky_zenith: rgb4(sky(a.zenith), 1.0),
+            sky_horizon: rgb4(sky(a.horizon), a.sun_radius.cos()),
+            sky_sun: rgb4(hex_to_linear_scaled(a.sun_glow, a.sun_glow_intensity), 0.0),
+            cloud_lit: rgb4(sky(a.clouds.lit), a.clouds.coverage),
+            cloud_shade: rgb4(sky(a.clouds.shade), a.clouds.shadow),
+            haze: [a.haze.density, a.haze.falloff, a.haze.start, a.haze.max],
+            haze_shape: [
+                a.haze.clear_half_size,
+                a.haze.clear_fade,
+                1.0,
+                self.camera().far,
+            ],
+            aerial: rgb4(sky(a.haze.aerial), a.haze.arena_share),
+            ridge: rgb4(sky(a.ridges.color), a.ridges.height),
+            ridge_shape: [a.ridges.features, a.ridges.mesa, a.ridges.gaps, 0.0],
+            haze_far: [
+                a.haze.far_density,
+                a.haze.far_start,
+                a.haze.sun_scatter,
+                a.haze.mist,
+            ],
+            ground: if self.debug_off.ground {
+                [0.0; 4]
+            } else {
+                [
+                    a.ground.relief,
+                    a.ground.tone,
+                    a.ground.dry_bleach,
+                    a.ground.bounce,
+                ]
+            },
+            ..FrameUniform::zeroed()
+        }
+    }
+
+    /// The output pass's exposure, bloom, occlusion, grade and upscale.
+    fn output_uniform(&self) -> OutputUniform {
+        let a = &self.atmosphere;
+        let on = a.enabled;
+        let grade = if on { a.grade } else { Grade::NEUTRAL };
+        let (width, height) = self.size();
+        let upscale = self.scene_size() != (width, height);
+        let sharpen = if upscale {
+            (grade.sharpen + (1.0 - self.render_scale).max(0.0) * UPSCALE_SHARPEN).min(1.0)
+        } else {
+            grade.sharpen
+        };
+        let [lr, lg, lb] = grade.lift;
+        let [gr, gg, gb] = grade.gamma;
+        let [nr, ng, nb] = grade.gain;
+        OutputUniform {
+            settings: [
+                self.environment.exposure * if on { a.exposure } else { 1.0 },
+                0.0,
+                1.0,
+                if self.bloom_on() {
+                    a.bloom.strength
+                } else {
+                    0.0
+                },
+            ],
+            lift: [lr, lg, lb, grade.saturation],
+            gamma: [gr, gg, gb, grade.contrast],
+            gain: [nr, ng, nb, grade.vignette],
+            effects: [
+                a.bloom.threshold,
+                a.bloom.knee,
+                if self.occlusion_on() {
+                    a.occlusion
+                } else {
+                    0.0
+                },
+                if on { OUTPUT_DITHER } else { 0.0 },
+            ],
+            tone: [grade.vibrance, grade.black, GAMUT_LIFT, GAMUT_SHOULDER],
+            hues: [grade.foliage, grade.earth, grade.red_hold, BLOOM_LIMIT],
+            shadows: rgb4(unit_luminance(grade.shadow_tint), grade.shadow_toning),
+            highlights: rgb4(unit_luminance(grade.highlight_tint), grade.highlight_toning),
+            detail: [
+                sharpen,
+                1.0 / width.max(1) as f32,
+                1.0 / height.max(1) as f32,
+                if upscale { 1.0 } else { 0.0 },
+            ],
+            curve: if on {
+                tone_curve(&a.tone)
+            } else {
+                tone_curve(&Tone::ACES)
+            },
+        }
+    }
+
+    fn occlusion_on(&self) -> bool {
+        self.atmosphere.enabled && self.atmosphere.occlusion > 0.0 && self.features.occlusion
+    }
+
+    fn bloom_on(&self) -> bool {
+        self.atmosphere.enabled && self.atmosphere.bloom.strength > 0.0 && self.features.bloom
+    }
+
+    /// Whether this frame draws ambient occlusion.
+    fn occlusion_drawn(&self) -> bool {
+        self.occlusion_on() && !self.debug_off.occlusion
+    }
+
+    fn occlusion_uniform(&self) -> OcclusionUniform {
+        let camera = self.camera();
+        let view_projection = camera.view_projection();
+        // View distance from depth for Three's perspective in WebGPU depth:
+        // depth = r + r·near / -z with r = far / (near - far).
+        let r = camera.far / (camera.near - camera.far);
+        OcclusionUniform {
+            view_projection: view_projection.to_cols_array(),
+            inverse_view_projection: view_projection.inverse().to_cols_array(),
+            settings: [
+                OCCLUSION_RADIUS,
+                OCCLUSION_BIAS,
+                OCCLUSION_FADE.0,
+                OCCLUSION_FADE.1,
+            ],
+            depth_terms: [r * camera.near, r, OCCLUSION_POWER, 0.0],
         }
     }
 
@@ -1734,12 +2434,13 @@ impl Renderer {
 
     fn write_view_uniforms(&mut self) {
         let camera = self.camera();
-        let size = self.size();
+        let size = self.scene_size();
         let main = self.frame_uniform(
             camera.view_projection(),
             camera.view(),
             camera.position,
             size,
+            camera.view_projection(),
         );
         let shadow_camera = self.shadow_camera();
         let shadow = self.frame_uniform(
@@ -1747,21 +2448,32 @@ impl Renderer {
             shadow_camera.view(),
             shadow_camera.position,
             (self.sun_shadow.map_size, self.sun_shadow.map_size),
+            shadow_camera.view_projection(),
         );
         let reflection = match (self.mirror(), &self.water) {
             (Some((view, projection)), Some(water)) => {
                 let eye = view.inverse().w_axis.truncate();
                 let size = water.settings.reflection_size.max(1);
-                self.frame_uniform(projection * view, view, eye, (size, size))
+                let rays = camera.projection() * view;
+                let mut mirrored =
+                    self.frame_uniform(projection * view, view, eye, (size, size), rays);
+                mirrored.haze_shape[2] *= REFLECTED_CLOUDS;
+                mirrored
             }
             _ => main,
         };
         let mut views = [main; VIEW_COUNT];
         views[REFLECTION_VIEW] = reflection;
         views[SHADOW_VIEW] = shadow;
+        // Only the main view renders at the dynamic scale.
+        views[REFLECTION_VIEW].quality[3] = 1.0;
+        views[SHADOW_VIEW].quality[3] = 1.0;
         self.frame.write_views(&self.gpu, &views);
-        self.frame
-            .write_output(&self.gpu, self.environment.exposure);
+        self.frame.write_output(&self.gpu, self.output_uniform());
+        if self.occlusion_on() {
+            self.frame
+                .write_occlusion(&self.gpu, &self.occlusion_uniform());
+        }
         if let Some(water) = &self.water {
             let s = &water.settings;
             let shore = match s.shore {
@@ -1938,6 +2650,7 @@ impl Renderer {
                             class: class_index,
                             first_instance: range.first,
                             instance_count: range.count,
+                            ..Draw::default()
                         });
                     }
                     for view in 0..VIEW_COUNT {
@@ -1956,6 +2669,54 @@ impl Renderer {
                     continue;
                 }
                 let transform = joints[part.node] * part.local;
+                if let Some(segments) = &part.segments {
+                    // Runs of the segments each view shows: consecutive ones are
+                    // contiguous in the mesh, so a run is one draw of one record.
+                    let mut record = None;
+                    let mut runs: [Option<(u32, u32)>; VIEW_COUNT] = [None; VIEW_COUNT];
+                    let mut flush = |view: usize, run: Option<(u32, u32)>| {
+                        // An empty run draws nothing (a zero count means the whole mesh).
+                        let Some((first, end)) = run.filter(|(first, end)| end > first) else {
+                            return;
+                        };
+                        let index = *record.get_or_insert_with(|| {
+                            builder.record(InstanceRecord::new(&transform, tint, instance.data))
+                        });
+                        builder.push_run(
+                            view,
+                            class_index,
+                            transparent && view != SHADOW_VIEW,
+                            part.render_order,
+                            0.0,
+                            index,
+                            first,
+                            end - first,
+                        );
+                    };
+                    for segment in segments {
+                        let shown = joint_visible[segment.node];
+                        let sphere = segment.bounds.transformed(&transform);
+                        for (view, run) in runs.iter_mut().enumerate() {
+                            if shown && in_view(view, &sphere) {
+                                match run {
+                                    Some((_, end)) if *end == segment.indices.start => {
+                                        *end = segment.indices.end;
+                                    }
+                                    _ => {
+                                        flush(view, run.take());
+                                        *run = Some((segment.indices.start, segment.indices.end));
+                                    }
+                                }
+                            } else {
+                                flush(view, run.take());
+                            }
+                        }
+                    }
+                    for (view, run) in runs.into_iter().enumerate() {
+                        flush(view, run);
+                    }
+                    continue;
+                }
                 let mut emit = |world: Mat4, color: [f32; 3], data: [f32; 4]| {
                     let sphere = part.bounds.transformed(&world);
                     let mut record = None;
@@ -2021,10 +2782,21 @@ impl Renderer {
                     let first = merged_records.len();
                     let mut sphere: Option<Sphere> = None;
                     for slot in &model.shadow_slots {
-                        let record = match slot.map(|index| &model.parts[index]) {
-                            Some(part) if joint_visible[part.node] => {
+                        // A segment hides with its fixed joint; its vertices lie in
+                        // its part's space.
+                        let posed = slot.map(|(index, segment)| {
+                            let part = &model.parts[index];
+                            match segment.and_then(|s| part.segments.as_ref().map(|all| &all[s])) {
+                                Some(segment) => (part, segment.node, segment.bounds),
+                                None => (part, part.node, part.bounds),
+                            }
+                        });
+                        let record = match posed {
+                            Some((part, node, bounds))
+                                if joint_visible[part.node] && joint_visible[node] =>
+                            {
                                 let world = joints[part.node] * part.local;
-                                let bounds = part.bounds.transformed(&world);
+                                let bounds = bounds.transformed(&world);
                                 sphere = Some(sphere.map_or(bounds, |s| s.union(&bounds)));
                                 InstanceRecord::new(&world, tint, instance.data)
                             }
@@ -2100,11 +2872,49 @@ impl Renderer {
         }
     }
 
+    /// Drop main-view draws of the effects `debug_off.effects` names.
+    fn skip_debug_effects(&mut self) {
+        let hidden: Vec<u16> = self
+            .debug_off
+            .effects
+            .iter()
+            .flat_map(|name| self.effects.ids_named(name))
+            .collect();
+        let names = &self.debug_off.effects;
+        let skip = |class: &ClassEntry| {
+            let shader = class.main_key.shader;
+            let receives = shader.lit && class.key.receive_shadow;
+            (shader.effect != 0 && hidden.contains(&shader.effect))
+                || (shader.effect == 0 && shader.lit && names.iter().any(|n| n == "lit"))
+                || (shader.effect == 0 && !shader.lit && names.iter().any(|n| n == "unlit"))
+                || (receives && names.iter().any(|n| n == "shadowed"))
+        };
+        let classes = &self.classes;
+        let view = &mut self.views[MAIN_VIEW];
+        for list in [&mut view.opaque, &mut view.transparent] {
+            list.retain(|draw| classes.at(draw.class).is_none_or(|class| !skip(class)));
+        }
+    }
+
     /// Compile pipelines for any class drawn this frame that warm-up missed.
     fn ensure_frame_pipelines(&mut self) {
         let gpu = &self.gpu;
         if self.pipelines.ensure_fixed(gpu) {
             self.stats.late_pipelines += 1;
+        }
+        if self.water.is_some() && self.pipelines.ensure_water(gpu) {
+            self.stats.late_pipelines += 1;
+        }
+        if self.occlusion_drawn() {
+            for draw in &self.views[MAIN_VIEW].opaque {
+                let class = self.classes.at_mut(draw.class).expect("live class");
+                if let (Some(key), None) = (&class.depth_key, class.depth) {
+                    if self.pipelines.find(key).is_none() {
+                        self.stats.late_pipelines += 1;
+                    }
+                    class.depth = Some(self.pipelines.ensure(gpu, &self.effects, key));
+                }
+            }
         }
         for (view, draws) in self.views.iter().enumerate() {
             for draw in draws.opaque.iter().chain(&draws.transparent) {
@@ -2135,15 +2945,34 @@ impl Renderer {
 
     /// Draw one frame at `time` seconds (the effect and water clock).
     pub fn render(&mut self, time: f32) -> Result<(), String> {
+        let atmosphere = self.atmosphere.enabled;
+        self.atmosphere.enabled &= !self.debug_off.atmosphere;
+        let result = self.render_frame(time);
+        self.atmosphere.enabled = atmosphere;
+        result
+    }
+
+    fn render_frame(&mut self, time: f32) -> Result<(), String> {
         if let Some(error) = self.error() {
             return Err(error);
+        }
+        // Configuring the canvas replaces its drawing buffer, so it waits for a frame
+        // that has not taken the canvas's texture yet and finds every earlier frame
+        // done: one still on the GPU would be lost instead of shown.
+        if self.pacing_reset_due && self.frame.frames_in_flight() == 0 {
+            self.frame.reset_canvas_pacing(&self.gpu);
+            self.pacing_reset_due = false;
         }
         self.time = time;
         self.meshes.collect_released();
         self.update_textures();
+        self.run_bakes();
         self.upload_static();
         self.update_culls();
         self.build_draws();
+        if !self.debug_off.effects.is_empty() {
+            self.skip_debug_effects();
+        }
         self.ensure_frame_pipelines();
         let base = self.static_records.len() as u32;
         let dynamic = base + self.builder.records.len() as u32;
@@ -2190,20 +3019,28 @@ impl Renderer {
             rebuild_static: copy_static && self.static_shadow_dirty,
             copy_static,
             reflection,
+            // Warm-up draws every pass, so their pipelines are ready either way.
+            sky: warm_up || (self.atmosphere.enabled && !self.debug_off.sky),
+            bloom: warm_up || (self.bloom_on() && !self.debug_off.bloom),
+            occlusion: warm_up || self.occlusion_drawn(),
         };
         let stats = &mut self.stats;
         stats.draw_calls = 0;
         stats.triangles = 0;
         stats.reflection_draw_calls = 0;
         stats.reflection_triangles = 0;
+        stats.occlusion_draw_calls = 0;
+        stats.occlusion_triangles = 0;
         let result = if warm_up {
             self.frame.warm_up(&self.gpu, &scene, stats);
             Ok(())
         } else {
             self.frame.draw(&self.gpu, &scene, stats)
         };
-        stats.main_triangles =
-            stats.triangles - stats.shadow_triangles - stats.reflection_triangles;
+        stats.main_triangles = stats.triangles
+            - stats.shadow_triangles
+            - stats.reflection_triangles
+            - stats.occlusion_triangles;
         if copy_static {
             self.static_shadow_dirty = false;
         }
@@ -2226,25 +3063,19 @@ impl Renderer {
         let (pools, pool_instances) = self.pool_totals();
         stats.pools = pools;
         stats.pool_instances = pool_instances;
-        // Mesh pages, material uniforms, 3 view uniforms, instance buffer, output
-        // and water uniforms, and a record store per pool.
+        // Mesh pages, material uniforms, 3 view uniforms, instance buffer, output,
+        // occlusion and water uniforms, and a record store per pool.
         stats.buffers = (self.meshes.buffers()
             + self.materials.count()
             + VIEW_COUNT
-            + 2
+            + 3
             + self.water.is_some() as usize
             + pools as usize) as u32;
-        let shadow = self.sun_shadow.map_size as u64;
-        let shadow_maps = 1 + u64::from(self.frame.has_static_shadow());
         let (width, height) = self.size();
         stats.gpu_bytes = self.meshes.bytes()
             + self.textures.bytes()
-            + target_bytes(width, height, self.gpu.samples)
-            + self.water.as_ref().map_or(0, |w| {
-                let size = w.settings.reflection_size.max(1);
-                target_bytes(size, size, self.gpu.samples)
-            })
-            + shadow * shadow * 4 * shadow_maps
+            + self.frame.target_bytes()
+            + self.water.as_ref().map_or(0, |w| w.gpu.target_bytes())
             + u64::from(self.frame.instances().capacity()) * RECORD_SIZE
             + self.pool_bytes()
             + width as u64 * height as u64 * 4;

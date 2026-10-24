@@ -47,7 +47,8 @@ Checks read and arrange the engine through the dev-only `window.sloppy` (see
 [below](#windowsloppy-development-builds)) and the `Game.debug_*` fixture hooks
 (`crates/web/src/game/debug.rs`): an emptied arena, placed and patched tanks, damage
 through the shared damage paths, pickups, shells, mines, fixed simulation steps, still
-frames from a fixed camera, a pixel probe and two room seats. `window.sloppy.sim` is
+frames from a fixed camera, a pixel probe, two room seats, and switches that turn
+passes, effect pools and effects off for same-page timing (`debug_set_off`). `window.sloppy.sim` is
 the simulation and camera and `window.sloppy.stats()` the renderer counters (draws,
 pipelines, late pipelines, allocations). `launchGame()` installs `window.engine` in
 every page: `view()` (what every entity's view showed in the last frame: reticle rings,
@@ -274,8 +275,12 @@ time on an otherwise idle machine, and report sample counts with outliers.
 
 - `profile.mjs` needs Vite running and `SLOPPY_URL`. Detailed results and CPU
   profiles go to `artifacts/performance/<label>/`.
-- `frame-pacing-check.mjs` reads `SLOPPY_PACING_SECONDS`, `SLOPPY_MAX_FRAME_MS`
-  and `SLOPPY_ARTIFACT_DIR`.
+- `frame-pacing-check.mjs` reads `SLOPPY_PACING_SECONDS`, `SLOPPY_MAX_FRAME_MS`,
+  `SLOPPY_PACING_MAPS` (comma-separated) and `SLOPPY_ARTIFACT_DIR`. It reports the
+  animation-frame gaps, the gaps between frames that drew and each drawn frame's
+  submit-to-GPU-done latency. `SLOPPY_BROWSER=webkit` measures Playwright's WebKit,
+  `SLOPPY_TABLET=1` an iPad-sized touch screen (1180x820 CSS at 2x) and
+  `SLOPPY_CPU_THROTTLE=4` Chrome with a slowed CPU.
 - For a loading comparison, save each production `dist` under
   `artifacts/performance/loading/<label>/` and keep each snapshot unchanged while
   measuring. Compare first content, menu appearance, final download and
@@ -320,7 +325,8 @@ guarantees for other devices.
 
 - Asset generators (`generate-*`, `optimize-textures.mjs`, `generate-previews.mjs`)
   run through the pnpm commands in the root README's Assets section.
-  `encode-webp.ts` is their shared lossless encoder, `texture-noise.ts` their seeded
+  `encode-webp.ts` is their shared encoder (lossless for data tiles, lossy for noisy
+  colour artwork such as the drum), `texture-noise.ts` their seeded
   value noise, and `asset-data.ts` holds the pickup colors and atlas layout they paint
   with, taking the ammunition labels and colors from the HUD's
   `src/game/ammo-options.ts` (the engine's own copies are in `crates/core`; change
@@ -330,8 +336,8 @@ guarantees for other devices.
   builds that engine first) and packs `public/previews/tanks.webp`.
   `SLOPPY_PREVIEWS_OUT` writes a candidate elsewhere for comparison. The renderer has no orthographic camera or
   transparent canvas, so a narrow perspective camera far away frames the view and
-  each tank is drawn over black and over white to recover its coverage. The
-  checked-in sheet is still the Three.js rendering: the engine's differs by about 13
-  of 255 on tank pixels (brighter sides), so it has not been regenerated.
+  each tank is drawn over black and over white to recover its coverage; a soft
+  contact shadow, the track footprint projected through the same view, is painted
+  under each tank.
 - `startup-html.ts` inlines the Battle Setup menu into `index.html`, and
   `dev-site.ts` plus `deploy-dev.mjs` build and publish the dev site.

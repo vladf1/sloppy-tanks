@@ -27,7 +27,7 @@ await page.addInitScript(() => {
 try {
   await page.goto(gameUrl, { waitUntil: "domcontentloaded", timeout: 60000 });
   await page.waitForFunction(() => !!window.sloppy);
-  await page.locator('[data-kind="balanced"]').click();
+  await page.locator('.start [data-kind="balanced"]').click();
   await startRound(page);
   await page.mouse.move(800, 300);
   await page.waitForTimeout(300);
@@ -149,7 +149,7 @@ try {
       window.engine.setHuman({ shieldPoints: 0 });
       window.sloppy.killHuman();
     });
-  const heavy = page.locator("#overlay .respawn [data-kind='heavy']");
+  const heavy = page.locator("#respawn-layer.shown .respawn [data-kind='heavy']");
   await destroy();
   await heavy.waitFor({ state: "visible" });
   // Destroyed, the view stays in the turret instead of flying overhead and back.

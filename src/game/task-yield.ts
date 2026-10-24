@@ -11,6 +11,14 @@ export function nextTask(): Promise<void> {
   });
 }
 
+/** Run `step` in tasks of its own, starting in the next one, until it reports that
+ * nothing is left: the page paints and takes input between steps. */
+export async function stepBetweenTasks(step: () => boolean): Promise<void> {
+  do {
+    await nextTask();
+  } while (step());
+}
+
 /** How often arena preparation polls a GPU that is still compiling pipelines in the
  * background or running the warm-up. */
 const GPU_POLL_MS = 16;

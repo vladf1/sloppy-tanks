@@ -7,6 +7,8 @@
 
 use std::sync::{Arc, Mutex};
 
+use glam::DVec3;
+
 use super::model_primitives::shadowed;
 use crate::geometry::math::{compose, hex_to_linear};
 use crate::geometry::{Mesh, merge_geometries};
@@ -128,6 +130,46 @@ pub fn paint_mesh(node: &mut Node) {
     mesh.colors = vec![[r as f32, g as f32, b as f32]; mesh.positions.len()];
     drawable.mesh = Arc::new(mesh);
     drawable.material = painted;
+}
+
+/// [`batch`] a group's direct mesh children square by square: parts whose bounds
+/// centre in the same `cell`-metre square of the x/z plane merge together, so a view
+/// culls the squares it cannot see instead of drawing one merge that spans the map.
+pub fn batch_in_cells(group: &mut Node, cell: f64) {
+    let mut cells: Vec<((i64, i64), Node)> = Vec::new();
+    let mut kept = Vec::new();
+    for child in std::mem::take(&mut group.children) {
+        let Some(drawable) = child.drawable.as_ref().filter(|d| d.instances.is_none()) else {
+            kept.push(child);
+            continue;
+        };
+        let (low, high) = drawable.mesh.positions.iter().fold(
+            (DVec3::splat(f64::INFINITY), DVec3::splat(f64::NEG_INFINITY)),
+            |(low, high), p| {
+                let p = DVec3::new(p[0].into(), p[1].into(), p[2].into());
+                (low.min(p), high.max(p))
+            },
+        );
+        let centre = compose(child.position, child.rotation, child.scale)
+            .transform_point3((low + high) / 2.0);
+        let key = (
+            (centre.x / cell).floor() as i64,
+            (centre.z / cell).floor() as i64,
+        );
+        match cells.iter_mut().find(|(at, _)| *at == key) {
+            Some((_, square)) => square.children.push(child),
+            None => {
+                let mut square = Node::group("");
+                square.children.push(child);
+                cells.push((key, square));
+            }
+        }
+    }
+    group.children = kept;
+    for (_, mut square) in cells {
+        batch(&mut square);
+        group.children.append(&mut square.children);
+    }
 }
 
 /// `batch(group)`: replace the group's direct, non-instanced mesh children with

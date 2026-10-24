@@ -1,6 +1,7 @@
 //! Pine Village's authored cover, and the shared pickup and spawn layout every map uses.
 
 use super::data::ARENA;
+use super::house_layout::HOUSE_HEALTH;
 use super::math::{Vec2, js_round};
 use super::timber_layout::{TIMBER_HEALTH, TimberJoin};
 use super::types::{CoverKind, PickupKind, Team};
@@ -76,11 +77,15 @@ impl CoverDef {
     pub const fn tower(x: f64, z: f64) -> Self {
         Self::new(CoverKind::Tower, x, z, 6.0, 5.0, 7.5, 180.0, 0xbd864a)
     }
+
+    /// A village cottage: it stands up to fifteen shells, then collapses.
+    pub const fn house(x: f64, z: f64, w: f64, d: f64, h: f64, color: u32) -> Self {
+        Self::new(CoverKind::House, x, z, w, d, h, HOUSE_HEALTH, color)
+    }
 }
 
 fn authored_layout() -> Vec<CoverDef> {
     let mut result = Vec::new();
-    let infinite = f64::INFINITY;
     let cover = CoverDef::new;
     let tree = |x, z, h| cover(CoverKind::Tree, x, z, 2.6, 2.6, h, 80.0, 0x169f65);
     for s in [-1.0, 1.0] {
@@ -88,29 +93,18 @@ fn authored_layout() -> Vec<CoverDef> {
         for z in [-45.0, -9.0, 9.0, 45.0] {
             result.push(tree(s * 36.0, z, 5.8));
         }
-        for z in [-39.0, -13.0, 13.0, 39.0] {
-            result.push(cover(
-                CoverKind::House,
-                s * 45.0,
-                z,
-                5.0,
-                6.0,
-                4.6,
-                infinite,
-                0xb87b4c,
-            ));
+        // The row houses along the outer roads, each its own height on the
+        // street's common plot so the row reads as built over time: a two-storey
+        // house, a cottage, a low bungalow and a taller cottage (world width,
+        // depth and ridge height), mirrored between the teams' halves. Only the
+        // heights differ: every plot keeps the footprint the lanes were laid out
+        // round.
+        for (z, h) in [(-39.0, 6.8), (-13.0, 4.6), (13.0, 4.3), (39.0, 5.0)] {
+            result.push(CoverDef::house(s * 45.0, z, 5.0, 6.0, h, 0xb87b4c));
         }
-        for z in [-46.0, 46.0] {
-            result.push(cover(
-                CoverKind::House,
-                s * 17.0,
-                z,
-                7.0,
-                5.0,
-                5.2,
-                infinite,
-                0xc78b50,
-            ));
+        // The end-of-street pair: a two-storey house and a broad cottage.
+        for (z, h) in [(-46.0, 6.8), (46.0, 5.2)] {
+            result.push(CoverDef::house(s * 17.0, z, 7.0, 5.0, h, 0xc78b50));
         }
         for z in [-28.0, 28.0] {
             result.push(tree(s * 23.0, z, 6.0));
@@ -189,16 +183,7 @@ fn authored_layout() -> Vec<CoverDef> {
         for z in [-2.0, 2.0] {
             result.push(CoverDef::drum(s * 6.0, z));
         }
-        result.push(cover(
-            CoverKind::House,
-            s * 24.0,
-            0.0,
-            5.0,
-            7.0,
-            4.9,
-            180.0,
-            0xb87b4c,
-        ));
+        result.push(CoverDef::house(s * 24.0, 0.0, 5.0, 7.0, 4.9, 0xb87b4c));
     }
     result
 }
