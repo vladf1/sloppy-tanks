@@ -4,20 +4,38 @@ import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-optio
 import { bindPlayModes, initialPlayMode } from "./play-modes";
 import type { EngineEvent, HudState } from "./engine-api";
 import {
+  type DeathReport,
   type FeedRow,
   deathCause,
+  deathReport,
   isOwnKill,
   killFeedNames,
+  killFeedSides,
   newFeedRow,
+  placeDamageRing,
   setText,
+  showDamageRing,
   showFeed,
   showTankStatus,
+  type ScreenPoint,
 } from "./hud-feedback";
 import { duration } from "./round-recap";
-import { hudMarkup, menuMarkup } from "./ui-markup";
-import { SettingsDialog } from "./settings-dialog";
+import {
+  controlsMarkup,
+  hudIcon,
+  hudMarkup,
+  menuMarkup,
+  respawnMarkup,
+  wreckedByMarkup,
+} from "./ui-markup";
+import { fitPanels } from "./panel-fit";
+import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
-export const MENU_READY_STATUS = "Ready when you are";
+export const MENU_READY_STATUS = "Arena ready";
+/** Seconds the red screen-edge flash fades over after the player's hull is hit. */
+const HURT_FLASH_TIME = 0.6;
+/** Below this share of its hull the tank's HUD warns, like the status panel's pulse. */
+const CRITICAL_HEALTH = 0.25;
 
 export interface UIActions {
   start(): void;
@@ -30,12 +48,17 @@ export interface UIActions {
   /** The touch preference Settings shows, and the one they save. */
   touchMode(): string;
   setTouchMode(mode: string): void;
+  /** The Graphics setting Settings shows, and the one they save. */
+  graphics(): string;
+  setGraphics(setting: string): void;
   selectAmmo(weapon: AmmoWeapon): void;
 }
 
 /** The DOM HUD, menus and battle report, drawn from the engine's HUD state. */
 export class UI {
   overlay: HTMLElement;
+  /** The respawn card's layer, under the menus (see `showRespawn`). */
+  respawnLayer: HTMLElement;
   hud: HTMLElement;
   toast: HTMLElement;
   feed: HTMLElement;
@@ -44,11 +67,22 @@ export class UI {
   toastTime = 0;
   ammoNoticeTime = 0;
   damageTime = 0;
+  hurtFlashTime = 0;
   deathCause = "";
+  /** The killer and weapon of the viewer's latest death, for the respawn card. */
+  deathReport: DeathReport | null = null;
+  /** The respawn countdown's length when it started, so its bar drains to zero. */
+  respawnTotal = 0;
+  /** The animation frame that shows the filled respawn card (see `showRespawn`). */
+  private respawnShow = 0;
   lastRound = 0;
+  /** Where the viewer's tank is on screen (NDC); null in first person. The damage ring
+   * wraps it. */
+  viewerPoint: () => ScreenPoint | null = () => null;
   /** The HUD state of the latest `update`. */
   state?: HudState;
   private readonly battleSetup: HTMLElement;
+  private readonly settings: SettingsDialog;
   private playModes?: { close(): void };
   feedRows: FeedRow[] = [];
   constructor(
@@ -67,7 +101,7 @@ export class UI {
     }
     const hint = this.battleSetup.querySelector(".startup-hint");
     if (hint) {
-      hint.textContent = "Choose your next battlefield.";
+      hint.textContent = "";
     }
     const startButton = this.battleSetup.querySelector<HTMLButtonElement>("#start")!;
     startButton.disabled = false;
@@ -78,6 +112,7 @@ export class UI {
     });
     root.insertAdjacentHTML("beforeend", hudMarkup());
     this.overlay = root.querySelector("#overlay")!;
+    this.respawnLayer = root.querySelector("#respawn-layer")!;
     this.hud = root.querySelector("#hud")!;
     this.toast = root.querySelector("#toast")!;
     this.feed = root.querySelector("#feed")!;
@@ -94,10 +129,13 @@ export class UI {
     // Settings open only during play (the corner button hides behind menus): they pause
     // the battle, and closing them carries it on.
     let resumeAfterSettings = false;
-    new SettingsDialog(root, "SINGLE PLAYER", {
+    this.settings = new SettingsDialog(root, "SINGLE PLAYER", {
       touchMode: () => actions.touchMode(),
       setTouchMode: (mode) => actions.setTouchMode(mode),
+      graphics: () => actions.graphics(),
+      setGraphics: (setting) => actions.setGraphics(setting),
       setVolume: (value) => actions.setting("volume", value),
+      controls: controlsMarkup(),
       speeds: {
         get: () => this.state?.speedTuning,
         set: (key, value) => actions.setting(key, value),
@@ -121,7 +159,7 @@ export class UI {
     const syncFullscreen = () => {
       const active = document.fullscreenElement !== null;
       const label = active ? "Exit fullscreen" : "Enter fullscreen";
-      fullscreen.textContent = active ? "↘↙\n↗↖" : "⛶";
+      fullscreen.innerHTML = hudIcon(active ? "hud-collapse" : "hud-expand");
       fullscreen.setAttribute("aria-pressed", String(active));
       fullscreen.setAttribute("aria-label", label);
       fullscreen.title = label;
@@ -148,20 +186,26 @@ export class UI {
   }
   private show(state: HudState): void {
     const phase = state.match.phase;
-    this.overlay.style.display = phase === "playing" && state.human.alive ? "none" : "grid";
+    this.overlay.style.display = phase === "playing" ? "none" : "grid";
+    if (phase === "ready") {
+      // Battle Setup has the tank cards; the battle builds its own respawn card.
+      this.respawnLayer.replaceChildren();
+    } else if (!this.respawnLayer.firstElementChild) {
+      this.buildRespawn();
+    }
+    this.showRespawn(phase === "playing" && !state.human.alive);
     this.hud.style.opacity = phase === "ready" ? "0" : "1";
     this.playModes?.close();
     this.playModes = undefined;
     if (phase === "ready") {
       this.overlay.replaceChildren(this.battleSetup.cloneNode(true));
+      fitPanels(this.overlay);
     } else {
-      this.overlay.innerHTML = menuMarkup(
-        state,
-        this.battleSetup.querySelector(".menu-help")!.innerHTML,
-      );
-      this.overlay
-        .querySelector(".respawn")
-        ?.append(this.battleSetup.querySelector(".vehicles")!.cloneNode(true));
+      // In play the menus are away: the respawn card has a layer of its own.
+      const death = this.deathCause ? { report: this.deathReport!, text: this.deathCause } : null;
+      this.overlay.innerHTML = phase === "playing" ? "" : menuMarkup(state, death);
+      bindDialogTabs(this.overlay);
+      this.drawRecapTank(state);
     }
     const choices = this.choices;
     syncGameOptions(this.overlay, choices);
@@ -177,16 +221,88 @@ export class UI {
     }
     this.overlay.parentElement?.classList.toggle("menu-ready", phase === "ready");
     this.overlay.dataset.state = "ready";
-    const death = this.overlay.querySelector("#death-cause");
-    if (death) {
-      death.textContent = this.deathCause;
-    }
     const { actions } = this;
     this.overlay.querySelector("#start")?.addEventListener("click", () => actions.start());
     this.overlay.querySelector("#play-again")?.addEventListener("click", () => actions.start());
-    this.overlay.querySelector("#resume")?.addEventListener("click", () => actions.resume());
+    for (const resume of this.overlay.querySelectorAll("#resume, #pause-close")) {
+      resume.addEventListener("click", () => actions.resume());
+    }
+    this.overlay
+      .querySelector("#pause-settings")
+      ?.addEventListener("click", () => this.settings.open());
     this.overlay.querySelector("#end-battle")?.addEventListener("click", () => actions.endBattle());
-    this.overlay.querySelector("#restart")?.addEventListener("click", () => actions.restart());
+    for (const restart of this.overlay.querySelectorAll("#restart, #results-close")) {
+      restart.addEventListener("click", () => actions.restart());
+    }
+  }
+  /** Build the battle's view before its round starts: the respawn card and the HUD at
+   * full opacity, so the browser paints them before the round's first frame. */
+  prepareBattle(): void {
+    if (!this.respawnLayer.firstElementChild) {
+      this.buildRespawn();
+    }
+    this.hud.style.opacity = "1";
+  }
+  /** The battle report's hero tile shows the viewer's tank in its team's paint: Battle
+   * Setup's render of that tank, from the sheet's row for the team. */
+  /** The battle's respawn card with its tank cards, built as the battle starts. */
+  private buildRespawn(): void {
+    const layer = this.respawnLayer;
+    layer.innerHTML = respawnMarkup(null);
+    layer
+      .querySelector(".respawn")!
+      .append(this.battleSetup.querySelector(".vehicles")!.cloneNode(true));
+    bindGameOptions(layer, this.choices);
+  }
+  /** Show or hide the respawn card. It stays built and drawn, unseen, between deaths, so
+   * a death only fills in who did it and shows it: building and painting the card on the
+   * death frame cost Safari on an iPad 30 ms, every death. The card is filled on the
+   * death frame and shown on the next, so Safari repaints it and starts its entrance on
+   * different frames: together, with the death's other HUD changes, they held an iPad's
+   * death frame 10 ms longer. */
+  private showRespawn(shown: boolean): void {
+    const layer = this.respawnLayer;
+    cancelAnimationFrame(this.respawnShow);
+    this.respawnShow = 0;
+    if (!shown) {
+      layer.classList.remove("shown");
+      layer.inert = true;
+      return;
+    }
+    if (layer.firstElementChild) {
+      layer.querySelector(".wrecked-by")!.outerHTML = wreckedByMarkup(
+        this.deathCause ? this.deathReport : null,
+      );
+      layer.querySelector("#death-cause")!.textContent = this.deathCause;
+      syncGameOptions(layer, this.choices);
+    }
+    this.respawnShow = requestAnimationFrame(() => {
+      this.respawnShow = 0;
+      layer.classList.add("shown");
+      layer.inert = false;
+    });
+  }
+  private drawRecapTank(state: HudState): void {
+    const slot = this.overlay.querySelector(".recap-tank");
+    const preview = this.battleSetup.querySelector(
+      `.vehicle[data-kind="${state.human.kind}"] .tank-preview`,
+    );
+    if (!slot || !preview) {
+      return;
+    }
+    const tank = preview.cloneNode(true) as SVGElement;
+    tank.querySelector("image")?.setAttribute("y", String(-state.humanTeam * 400));
+    tank.removeAttribute("role");
+    tank.setAttribute("aria-hidden", "true");
+    slot.replaceChildren(tank);
+  }
+  /** Re-seats a showing damage ring after the view changes (first person opens it to the
+   * screen's edges), without waiting for the next HUD frame. */
+  replaceDamageRing(): void {
+    const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
+    if (!indicator.hidden) {
+      placeDamageRing(indicator, this.viewerPoint());
+    }
   }
   /** A new round, or a Battle Setup world, starts with no feedback from the last. */
   private syncRound(round: number): void {
@@ -196,7 +312,9 @@ export class UI {
     this.lastRound = round;
     this.lastPhase = "";
     this.deathCause = "";
+    this.deathReport = null;
     this.damageTime = 0;
+    this.hurtFlashTime = 0;
     this.ammoNoticeTime = 0;
     this.toastTime = 0;
     this.toast.classList.remove("visible");
@@ -211,6 +329,9 @@ export class UI {
     this.syncRound(state.match.round);
     const human = state.human;
     if (event.id === human.id) {
+      if (event.type === "hurt") {
+        this.hurtFlashTime = HURT_FLASH_TIME;
+      }
       if (event.type === "notice" && human.alive) {
         this.hud.querySelector("#ammo-notice")!.textContent = event.label ?? "";
         this.ammoNoticeTime = 3;
@@ -218,28 +339,42 @@ export class UI {
       if (event.type === "hurt" || event.type === "death") {
         const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
         if (event.damageAngle !== null) {
-          indicator.style.transform = `translate(-50%, -50%) rotate(${event.damageAngle}rad)`;
-          indicator.hidden = false;
+          showDamageRing(indicator, event.damageAngle, this.viewerPoint());
           this.damageTime = 1.2;
         }
       }
       if (event.type === "death") {
         this.deathCause = deathCause(event, state.scoreboard);
+        this.deathReport = deathReport(event, state.scoreboard);
+        this.respawnTotal = 0;
         this.hud.querySelector("#ammo-notice")!.textContent = "";
       }
       if (event.type === "respawn") {
         this.deathCause = "";
+        this.deathReport = null;
         this.damageTime = 0;
       }
       if (event.type === "pickup" || event.type === "promotion" || event.type === "death") {
-        this.toast.textContent = event.type === "death" ? this.deathCause : (event.label ?? "");
+        // A fresh element pops in from the start, also over a toast still showing;
+        // restarting the old one's entrance would need a forced style and layout pass.
+        const toast = this.toast.cloneNode(false) as HTMLElement;
+        toast.textContent = event.type === "death" ? this.deathCause : (event.label ?? "");
+        toast.dataset.tone = event.type;
+        toast.classList.add("visible");
+        this.toast.replaceWith(toast);
+        this.toast = toast;
         this.toastTime = event.type === "pickup" ? 1.5 : 2;
-        this.toast.classList.add("visible");
       }
     }
     if (event.type === "death") {
+      const names = killFeedNames(event, human.id, state.scoreboard);
+      const ownKill = isOwnKill(event, human.id);
       this.feedRows.unshift(
-        newFeedRow(killFeedNames(event, human.id, state.scoreboard), isOwnKill(event, human.id)),
+        newFeedRow(names, ownKill, {
+          cause: event.damageSource?.cause,
+          sides: killFeedSides(event),
+          ownDeath: event.id === human.id,
+        }),
       );
     }
   }
@@ -252,22 +387,70 @@ export class UI {
     if (match.phase === "playing") {
       this.damageTime = Math.max(0, this.damageTime - dt);
       this.ammoNoticeTime = Math.max(0, this.ammoNoticeTime - dt);
+      this.hurtFlashTime = Math.max(0, this.hurtFlashTime - dt);
     }
+    const playing = match.phase === "playing";
+    // A wrecked tank's panel steps aside for the respawn card.
+    this.hud.classList.toggle("dead", dead && match.phase !== "ready");
+    const vignette = this.hud.querySelector<HTMLElement>("#damage-vignette")!;
+    const flash = playing ? (this.hurtFlashTime / HURT_FLASH_TIME).toFixed(2) : "0";
+    if (vignette.style.opacity !== flash) {
+      vignette.style.opacity = flash;
+    }
+    this.hud.classList.toggle(
+      "critical",
+      playing && tank.alive && tank.healthRatio < CRITICAL_HEALTH,
+    );
     const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
-    indicator.hidden = this.damageTime <= 0 || match.phase !== "playing";
+    const hideIndicator = this.damageTime <= 0 || match.phase !== "playing";
+    if (indicator.hidden !== hideIndicator) {
+      indicator.hidden = hideIndicator;
+    }
+    if (!indicator.hidden) {
+      placeDamageRing(indicator, this.viewerPoint());
+    }
     indicator.style.opacity = String(Math.min(1, this.damageTime * 2));
     if (this.ammoNoticeTime <= 0) {
       this.hud.querySelector("#ammo-notice")!.textContent = "";
     }
     if (this.lastPhase !== match.phase || dead !== this.lastDead) {
+      // A death or respawn in play only shows or hides the respawn card: the menus
+      // stay away, and rebuilding them restyled the page on Safari's death frames.
+      const inPlay =
+        this.lastPhase === "playing" &&
+        match.phase === "playing" &&
+        this.respawnLayer.firstElementChild !== null;
       this.lastPhase = match.phase;
       this.lastDead = dead;
-      this.show(state);
+      if (inPlay) {
+        this.showRespawn(dead);
+      } else {
+        this.show(state);
+      }
     }
     const set = (id: string, text: string) => setText(document, id, text);
     const solo = state.gameMode === "solo";
-    set("label0", solo ? "KILLS" : "◆ BLUE");
-    set("label1", solo ? "ACTIVE" : "RED Ⅱ");
+    set("label0", solo ? "KILLS" : "BLUE");
+    set("label1", solo ? "ACTIVE" : "RED");
+    // Each side's bar fills toward the score limit; your side's plate is marked.
+    const scoreboard = this.hud.querySelector<HTMLElement>(".scoreboard")!;
+    scoreboard.classList.toggle("no-limit", solo || state.endlessMatch);
+    match.scores.forEach((score, team) => {
+      const fill = `${Math.min(1, score / Math.max(1, state.scoreLimit)) * 100}%`;
+      const bar = this.hud.querySelector<HTMLElement>(`#progress${team}`)!;
+      if (bar.style.width !== fill) {
+        bar.style.width = fill;
+      }
+      scoreboard
+        .querySelector(team === 0 ? ".mint" : ".coral")!
+        .classList.toggle("yours", !solo && team === state.humanTeam);
+    });
+    // The tank panel's glass takes a tint of your team (none in a solo run).
+    const side = solo ? "" : state.humanTeam === 0 ? "blue" : "red";
+    if ((this.hud.dataset.team ?? "") !== side) {
+      this.hud.dataset.team = side;
+    }
+    scoreboard.classList.toggle("overtime", !state.endlessMatch && match.overtime);
     set(
       "objective",
       solo
@@ -282,8 +465,15 @@ export class UI {
     set("time", !state.endlessMatch && match.overtime ? "NEXT KILL" : duration(sec));
     showTankStatus(this.hud, tank, dead || match.phase !== "playing");
     set("respawn-count", String(Math.ceil(tank.respawn)));
+    if (dead) {
+      this.respawnTotal = Math.max(this.respawnTotal, tank.respawn);
+      const fill = this.respawnLayer.querySelector<HTMLElement>("#respawn-fill");
+      const left = this.respawnTotal > 0 ? tank.respawn / this.respawnTotal : 0;
+      fill?.style.setProperty("--left", left.toFixed(3));
+    }
     this.hud.classList.toggle("paused", match.phase !== "playing");
-    this.toastTime -= dt;
+    // Notices belong to play: a menu or the battle report never shows one behind it.
+    this.toastTime = playing ? this.toastTime - dt : 0;
     if (this.toastTime <= 0) {
       this.toast.classList.remove("visible");
     }

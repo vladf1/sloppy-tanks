@@ -23,12 +23,21 @@ pub use textures::{Sampler, Texture, TextureView, Uploader};
 use glow::HasContext;
 
 use super::{
-    FrameUniform, INITIAL_SHADOW_BASES, MergedDraw, RenderStats, Scene, WaterUniform, lut,
+    BLOOM_FIRST_SHIFT, BLOOM_LEVELS, BloomPass, FrameUniform, INITIAL_SHADOW_BASES, MergedDraw,
+    OCCLUSION_DOWNSCALE, OcclusionUniform, OutputUniform, RenderStats, Scene, WaterUniform, lut,
 };
+use crate::atmosphere_map::{ATMOSPHERE_MAP_SIZE, atmosphere_map};
 use crate::draw_list::{Draw, Grouping, MAIN_VIEW, REFLECTION_VIEW, SHADOW_VIEW, VIEW_COUNT};
+use crate::gpu::blurred_occlusion_size;
+use crate::noise_lattice::{NOISE_LATTICE_SIZE, noise_lattice};
+use crate::target_memory::target_bytes;
 use context::{block, unit};
 use resources::SHADOW_BASE_LOCATION;
 use textures::{linear_sampler, storage, texel_storage};
+
+/// Ambient occlusion reads the depth copy the main view's resolve blits; WebGL2 has
+/// no depth pass of its own for it.
+pub const OCCLUSION_DEPTH_PASS: bool = false;
 
 /// Frames between `getError` checks: the call waits for the GPU process.
 const ERROR_CHECK_FRAMES: u32 = 300;
@@ -37,9 +46,6 @@ const ERROR_CHECK_FRAMES: u32 = 300;
 /// block and every texture and sampler that differs, up to a dozen calls into
 /// JavaScript, where a page rebinds one vertex array.
 pub const DRAW_GROUPING: Grouping = Grouping::MaterialFirst;
-
-/// Bytes of the `Output` uniform (`output.wgsl`).
-const OUTPUT_UNIFORM_BYTES: u64 = 16;
 
 /// Report an incomplete framebuffer through the error slot.
 fn check_framebuffer(gpu: &Gpu, label: &str) {
@@ -68,7 +74,7 @@ fn texture_framebuffer(gpu: &Gpu, attachment: u32, texture: glow::Texture) -> gl
 }
 
 /// A multisampled HDR color and depth target resolved into a texture: the main view
-/// (canvas-sized) and the water reflection (fixed size). Dropping it deletes it.
+/// (the scene's size) and the water reflection (fixed size). Dropping it deletes it.
 struct ColorTarget {
     gpu: Gpu,
     width: u32,
@@ -77,11 +83,14 @@ struct ColorTarget {
     depth: glow::Renderbuffer,
     framebuffer: glow::Framebuffer,
     resolved: glow::Texture,
+    /// A single-sample copy of the depth the resolve also blits, for the main view's
+    /// ambient occlusion (WebGL2 shaders cannot read multisampled depth).
+    resolved_depth: Option<glow::Texture>,
     resolve_framebuffer: glow::Framebuffer,
 }
 
 impl ColorTarget {
-    fn new(gpu: &Gpu, label: &str, width: u32, height: u32) -> Self {
+    fn new(gpu: &Gpu, label: &str, width: u32, height: u32, keep_depth: bool) -> Self {
         let gl = &gpu.gl;
         let renderbuffer = |format| unsafe {
             let renderbuffer = gpu.created(gl.create_renderbuffer(), "renderbuffer");
@@ -114,9 +123,25 @@ impl ColorTarget {
             );
         }
         check_framebuffer(gpu, label);
-        // The output pass reads it with `texelFetch`.
+        // The output pass reads it with `texelFetch`, or through the linear sampler
+        // where it upsamples a smaller scene.
         let resolved = texel_storage(gpu, glow::RGBA16F, width, height);
         let resolve_framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, resolved);
+        // Read with `texelFetch`: nearest filters keep the depth texture complete.
+        let resolved_depth = keep_depth.then(|| {
+            let texture = texel_storage(gpu, glow::DEPTH_COMPONENT32F, width, height);
+            gpu.bind_framebuffer(Some(resolve_framebuffer));
+            unsafe {
+                gl.framebuffer_texture_2d(
+                    glow::FRAMEBUFFER,
+                    glow::DEPTH_ATTACHMENT,
+                    glow::TEXTURE_2D,
+                    Some(texture),
+                    0,
+                );
+            }
+            texture
+        });
         check_framebuffer(gpu, label);
         Self {
             gpu: gpu.clone(),
@@ -126,6 +151,7 @@ impl ColorTarget {
             depth,
             framebuffer,
             resolved,
+            resolved_depth,
             resolve_framebuffer,
         }
     }
@@ -137,14 +163,20 @@ impl ColorTarget {
         gpu.clear(Some(background));
     }
 
-    /// Resolve into the texture, discarding the multisampled color and depth.
-    fn resolve(&self, gpu: &Gpu) {
+    /// Resolve into the texture (and, with `depth`, the depth copy), discarding the
+    /// multisampled color and depth.
+    fn resolve(&self, gpu: &Gpu, depth: bool) {
+        let mask = if depth && self.resolved_depth.is_some() {
+            glow::COLOR_BUFFER_BIT | glow::DEPTH_BUFFER_BIT
+        } else {
+            glow::COLOR_BUFFER_BIT
+        };
         gpu.blit(
             self.framebuffer,
             self.resolve_framebuffer,
             self.width,
             self.height,
-            glow::COLOR_BUFFER_BIT,
+            mask,
         );
         gpu.invalidate_read(&[glow::COLOR_ATTACHMENT0, glow::DEPTH_ATTACHMENT]);
     }
@@ -159,6 +191,103 @@ impl Drop for ColorTarget {
             gl.delete_renderbuffer(self.color);
             gl.delete_renderbuffer(self.depth);
             gl.delete_texture(self.resolved);
+            if let Some(depth) = self.resolved_depth {
+                gl.delete_texture(depth);
+            }
+        }
+    }
+}
+
+/// The quarter-size ambient occlusion target and its blur at each corner of its
+/// texels (`blurred_occlusion_size`), each with its framebuffer; the blur
+/// samples the occlusion through a linear sampler and the output pass fetches the
+/// blur. Dropping it deletes them.
+struct OcclusionTarget {
+    gpu: Gpu,
+    texture: glow::Texture,
+    framebuffer: glow::Framebuffer,
+    width: u32,
+    height: u32,
+    blurred: glow::Texture,
+    blurred_framebuffer: glow::Framebuffer,
+}
+
+impl OcclusionTarget {
+    fn new(gpu: &Gpu, width: u32, height: u32) -> Self {
+        let (width, height) = (
+            (width / OCCLUSION_DOWNSCALE).max(1),
+            (height / OCCLUSION_DOWNSCALE).max(1),
+        );
+        let texture = storage(gpu, glow::R8, 1, width, height);
+        let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, texture);
+        check_framebuffer(gpu, "ambient occlusion");
+        let (blurred_width, blurred_height) = blurred_occlusion_size(width, height);
+        let blurred = texel_storage(gpu, glow::R8, blurred_width, blurred_height);
+        let blurred_framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, blurred);
+        check_framebuffer(gpu, "ambient occlusion blur");
+        Self {
+            gpu: gpu.clone(),
+            texture,
+            framebuffer,
+            width,
+            height,
+            blurred,
+            blurred_framebuffer,
+        }
+    }
+}
+
+impl Drop for OcclusionTarget {
+    fn drop(&mut self) {
+        unsafe {
+            self.gpu.gl.delete_framebuffer(self.framebuffer);
+            self.gpu.gl.delete_texture(self.texture);
+            self.gpu.gl.delete_framebuffer(self.blurred_framebuffer);
+            self.gpu.gl.delete_texture(self.blurred);
+        }
+    }
+}
+
+/// The bloom levels (half the canvas size, then halving), each a linear-filtered
+/// RGBA16F texture with its framebuffer. Dropping them deletes them.
+struct BloomLevels {
+    gpu: Gpu,
+    levels: Vec<(glow::Texture, glow::Framebuffer, u32, u32)>,
+}
+
+impl BloomLevels {
+    fn new(gpu: &Gpu, width: u32, height: u32) -> Self {
+        let levels = (BLOOM_FIRST_SHIFT..BLOOM_FIRST_SHIFT + BLOOM_LEVELS)
+            .map(|level| {
+                let (w, h) = ((width >> level).max(1), (height >> level).max(1));
+                let texture = storage(gpu, glow::RGBA16F, 1, w, h);
+                let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, texture);
+                check_framebuffer(gpu, "bloom");
+                (texture, framebuffer, w, h)
+            })
+            .collect();
+        Self {
+            gpu: gpu.clone(),
+            levels,
+        }
+    }
+
+    fn bytes(&self) -> u64 {
+        self.levels
+            .iter()
+            .map(|&(_, _, w, h)| u64::from(w * h) * 8)
+            .sum()
+    }
+}
+
+impl Drop for BloomLevels {
+    fn drop(&mut self) {
+        let gl = &self.gpu.gl;
+        for &(texture, framebuffer, _, _) in &self.levels {
+            unsafe {
+                gl.delete_framebuffer(framebuffer);
+                gl.delete_texture(texture);
+            }
         }
     }
 }
@@ -204,21 +333,30 @@ impl Drop for DepthTarget {
 /// as each draw needs it, so there is nothing to build.
 pub struct FrameGroups;
 
-/// The main view's target (canvas-sized), the sun's shadow maps and every
+/// The main view's target (the scene's size), the sun's shadow maps and every
 /// per-frame binding: view uniforms, instance records and the merged shadows'
 /// record bases.
 pub struct Frame {
     gpu: Gpu,
+    /// The canvas drawing buffer's width and height.
+    canvas: (u32, u32),
     main: ColorTarget,
+    bloom: BloomLevels,
+    occlusion: OcclusionTarget,
     shadow: DepthTarget,
     /// The cached fixed-scenery shadow, only while frames copy it.
     static_shadow: Option<DepthTarget>,
     lut: glow::Texture,
+    /// The noise lattice the frame's shaders fetch (`noise_lattice.rs`) and the
+    /// atmosphere map they sample (`atmosphere_map.rs`).
+    noise: glow::Texture,
+    atmosphere_map: glow::Texture,
     shadow_sampler: glow::Sampler,
     /// Linear clamp-to-edge: the DFG LUT and the water's reflection.
     linear_sampler: glow::Sampler,
     view_uniforms: [glow::Buffer; VIEW_COUNT],
     output_uniform: glow::Buffer,
+    occlusion_uniform: glow::Buffer,
     instance_records: InstanceStore,
     shadow_bases: glow::Buffer,
     shadow_base_capacity: u32,
@@ -247,17 +385,49 @@ impl Frame {
                 glow::PixelUnpackData::Slice(Some(bytemuck::cast_slice(&lut::DFG_LUT))),
             );
         }
+        let upload = |texture, size: u32, data: &[u8]| {
+            gpu.bind_upload_texture(texture);
+            unsafe {
+                gl.tex_sub_image_2d(
+                    glow::TEXTURE_2D,
+                    0,
+                    0,
+                    0,
+                    size as i32,
+                    size as i32,
+                    glow::RGBA,
+                    glow::UNSIGNED_BYTE,
+                    glow::PixelUnpackData::Slice(Some(data)),
+                );
+            }
+        };
+        let noise = texel_storage(gpu, glow::RGBA8, NOISE_LATTICE_SIZE, NOISE_LATTICE_SIZE);
+        upload(noise, NOISE_LATTICE_SIZE, &noise_lattice());
+        let atmosphere = storage(
+            gpu,
+            glow::RGBA8,
+            1,
+            ATMOSPHERE_MAP_SIZE,
+            ATMOSPHERE_MAP_SIZE,
+        );
+        upload(atmosphere, ATMOSPHERE_MAP_SIZE, &atmosphere_map());
         let uniform = |bytes| gpu.create_buffer(glow::UNIFORM_BUFFER, bytes, glow::DYNAMIC_DRAW);
         Self {
             gpu: gpu.clone(),
-            main: ColorTarget::new(gpu, "main view", canvas.width, canvas.height),
+            canvas: (canvas.width, canvas.height),
+            main: ColorTarget::new(gpu, "main view", canvas.width, canvas.height, true),
+            bloom: BloomLevels::new(gpu, canvas.width, canvas.height),
+            occlusion: OcclusionTarget::new(gpu, canvas.width, canvas.height),
             shadow: DepthTarget::new(gpu, "sun shadow map", shadow_size),
             static_shadow: None,
             lut,
+            noise,
+            atmosphere_map: atmosphere,
             shadow_sampler: linear_sampler(gpu, true),
             linear_sampler: linear_sampler(gpu, false),
             view_uniforms: [0, 1, 2].map(|_| uniform(size_of::<FrameUniform>() as u64)),
-            output_uniform: uniform(OUTPUT_UNIFORM_BYTES),
+            output_uniform: uniform(size_of::<OutputUniform>() as u64),
+            occlusion_uniform: uniform(size_of::<OcclusionUniform>() as u64),
             instance_records: InstanceStore::new(gpu, "instances", instances),
             shadow_bases: gpu.create_buffer(
                 glow::ARRAY_BUFFER,
@@ -271,21 +441,36 @@ impl Frame {
         }
     }
 
+    /// The canvas drawing buffer's size.
     pub fn size(&self) -> (u32, u32) {
+        self.canvas
+    }
+
+    /// The main view's size, which the output pass upsamples to the canvas's.
+    pub fn scene_size(&self) -> (u32, u32) {
         (self.main.width, self.main.height)
     }
 
-    /// Resize the canvas drawing buffer and the main view's target.
-    pub fn resize(&mut self, gpu: &Gpu, width: u32, height: u32) {
-        let width = width.clamp(1, gpu.max_size);
-        let height = height.clamp(1, gpu.max_size);
-        if (self.main.width, self.main.height) == (width, height) {
+    /// Resize the canvas drawing buffer to `canvas` and the main view's target, with
+    /// its post-processing targets, to `scene`.
+    pub fn resize(&mut self, gpu: &Gpu, canvas: (u32, u32), scene: (u32, u32)) {
+        let fit = |(width, height): (u32, u32)| {
+            (width.clamp(1, gpu.max_size), height.clamp(1, gpu.max_size))
+        };
+        let (canvas, scene) = (fit(canvas), fit(scene));
+        if self.canvas != canvas {
+            gpu.canvas.set_width(canvas.0);
+            gpu.canvas.set_height(canvas.1);
+            self.canvas = canvas;
+        }
+        if self.scene_size() == scene {
             return;
         }
-        gpu.canvas.set_width(width);
-        gpu.canvas.set_height(height);
-        // Replacing the target deletes the old one.
-        self.main = ColorTarget::new(gpu, "main view", width, height);
+        let (width, height) = scene;
+        // Replacing the targets deletes the old ones.
+        self.main = ColorTarget::new(gpu, "main view", width, height, true);
+        self.bloom = BloomLevels::new(gpu, width, height);
+        self.occlusion = OcclusionTarget::new(gpu, width, height);
     }
 
     /// Replace the shadow maps.
@@ -307,10 +492,6 @@ impl Frame {
         keep
     }
 
-    pub fn has_static_shadow(&self) -> bool {
-        self.static_shadow.is_some()
-    }
-
     /// The view's instance records.
     pub fn instances(&self) -> &InstanceStore {
         &self.instance_records
@@ -326,16 +507,44 @@ impl Frame {
         FrameGroups
     }
 
+    /// The main view's frame uniform, which bakes read (`effects::bakes`).
+    pub fn main_uniform(&self) -> glow::Buffer {
+        self.view_uniforms[MAIN_VIEW]
+    }
+
     pub fn write_views(&self, gpu: &Gpu, views: &[FrameUniform; VIEW_COUNT]) {
         for (&buffer, uniform) in self.view_uniforms.iter().zip(views) {
             gpu.write_buffer(buffer, 0, bytemuck::bytes_of(uniform));
         }
     }
 
-    pub fn write_output(&self, gpu: &Gpu, exposure: f32) {
-        // The canvas's rows run bottom-up: HDR row = height - y.
-        let settings = [exposure, self.main.height as f32, -1.0, 0.0];
-        gpu.write_buffer(self.output_uniform, 0, bytemuck::bytes_of(&settings));
+    pub fn write_output(&self, gpu: &Gpu, mut uniform: OutputUniform) {
+        // The canvas's rows run bottom-up: top-down row = height - y.
+        uniform.settings[1] = self.canvas.1 as f32;
+        uniform.settings[2] = -1.0;
+        // WebGL's weaker devices skip the sharpening's four extra taps per pixel.
+        uniform.detail[0] = 0.0;
+        gpu.write_buffer(self.output_uniform, 0, bytemuck::bytes_of(&uniform));
+    }
+
+    pub fn write_occlusion(&self, gpu: &Gpu, uniform: &OcclusionUniform) {
+        gpu.write_buffer(self.occlusion_uniform, 0, bytemuck::bytes_of(uniform));
+    }
+
+    /// Bytes of the main view's target, the bloom levels, the occlusion target, the
+    /// depth copy and the shadow maps.
+    pub fn target_bytes(&self) -> u64 {
+        let main = target_bytes(self.main.width, self.main.height, self.gpu.samples);
+        let (width, height) = (self.occlusion.width, self.occlusion.height);
+        let (blurred_width, blurred_height) = blurred_occlusion_size(width, height);
+        let occlusion = u64::from(width * height + blurred_width * blurred_height);
+        let depth = u64::from(self.main.width * self.main.height) * 4;
+        let shadow = [Some(&self.shadow), self.static_shadow.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(|map| u64::from(map.size) * u64::from(map.size) * 4)
+            .sum::<u64>();
+        main + self.bloom.bytes() + occlusion + depth + shadow
     }
 
     /// Upload this frame's merged shadow bases.
@@ -366,10 +575,24 @@ impl Frame {
         }
     }
 
+    /// Nothing to reset: the WebGL build samples no GPU time, so it is never asked.
+    pub fn reset_canvas_pacing(&mut self, _gpu: &Gpu) {}
+
+    /// WebGL offers no completion time finer than a frame (its fences update between
+    /// the page's tasks), so no GPU frame time is sampled.
+    pub fn take_gpu_frame_ms(&self) -> Option<f64> {
+        None
+    }
+
     /// The fence's status updates between the page's tasks, not within one.
     pub fn gpu_idle(&self, gpu: &Gpu) -> bool {
         self.fence
             .is_none_or(|fence| unsafe { gpu.gl.get_sync_status(fence) } == glow::SIGNALED)
+    }
+
+    /// WebGL's own swap holds animation frames back while the GPU is behind.
+    pub fn frames_in_flight(&self) -> u32 {
+        0
     }
 
     /// Draw a frame into the canvas, which the browser presents once the page yields.
@@ -387,7 +610,7 @@ impl Frame {
         }
         self.draw_scene(gpu, scene, stats);
         gpu.bind_framebuffer(None);
-        gpu.viewport(self.main.width, self.main.height);
+        gpu.viewport(self.canvas.0, self.canvas.1);
         self.draw_output(gpu, scene, stats);
         Ok(())
     }
@@ -412,6 +635,10 @@ impl Frame {
         // Bindings every view shares; the shadow map's is unused by shadow programs.
         gpu.bind_texture(unit::DFG_LUT, self.lut);
         gpu.bind_sampler(unit::DFG_LUT, Some(self.linear_sampler));
+        gpu.bind_texture(unit::NOISE, self.noise);
+        gpu.bind_sampler(unit::NOISE, None);
+        gpu.bind_texture(unit::ATMOSPHERE_MAP, self.atmosphere_map);
+        gpu.bind_sampler(unit::ATMOSPHERE_MAP, Some(self.linear_sampler));
         gpu.bind_texture(unit::SHADOW_MAP, self.shadow.texture);
         gpu.bind_sampler(unit::SHADOW_MAP, Some(self.shadow_sampler));
         gpu.bind_texture(unit::INSTANCES, self.instance_records.texture());
@@ -457,21 +684,27 @@ impl Frame {
             target.begin(gpu, scene.background);
             gpu.bind_uniform_block(block::FRAME, self.view_uniforms[REFLECTION_VIEW]);
             let view = &scene.views[REFLECTION_VIEW];
-            let count = draws.encode(&view.opaque, REFLECTION_VIEW, stats)
-                + draws.encode(&view.transparent, REFLECTION_VIEW, stats);
+            let mut count = draws.encode(&view.opaque, REFLECTION_VIEW, stats);
+            if scene.sky {
+                count += self.draw_sky(gpu, scene, stats);
+            }
+            count += draws.encode(&view.transparent, REFLECTION_VIEW, stats);
             stats.reflection_draw_calls = count;
             stats.reflection_triangles = stats.triangles - stats.shadow_triangles;
-            target.resolve(gpu);
+            target.resolve(gpu, false);
         }
         self.main.begin(gpu, scene.background);
         gpu.bind_uniform_block(block::FRAME, self.view_uniforms[MAIN_VIEW]);
         let view = &scene.views[MAIN_VIEW];
         draws.encode(&view.opaque, MAIN_VIEW, stats);
+        if scene.sky {
+            self.draw_sky(gpu, scene, stats);
+        }
         if let Some(water) = scene.water
             && let range = scene.meshes.get(water.mesh).range
             && !range.is_empty()
         {
-            let pipeline = &scene.pipelines.fixed().water;
+            let pipeline = scene.pipelines.water();
             gpu.use_program(scene.pipelines.program(pipeline.program).raw);
             gpu.set_raster(&pipeline.raster);
             water.gpu.bind(gpu, self.linear_sampler);
@@ -481,7 +714,86 @@ impl Frame {
             stats.triangles += range.index_count as u64 / 3;
         }
         draws.encode(&view.transparent, MAIN_VIEW, stats);
-        self.main.resolve(gpu);
+        self.main.resolve(gpu, scene.occlusion);
+        if scene.occlusion {
+            self.draw_occlusion(gpu, scene, stats);
+        }
+        if scene.bloom {
+            self.draw_bloom(gpu, scene, stats);
+        }
+    }
+
+    /// Draw the sky where the bound target's depth is still clear; the view's frame
+    /// uniform is bound. Returns the draw count.
+    fn draw_sky(&self, gpu: &Gpu, scene: &Scene, stats: &mut RenderStats) -> u32 {
+        let pipeline = &scene.pipelines.fixed().sky;
+        gpu.use_program(scene.pipelines.program(pipeline.program).raw);
+        gpu.set_raster(&pipeline.raster);
+        gpu.bind_vertex_array(Some(self.no_attributes));
+        unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
+        stats.draw_calls += 1;
+        1
+    }
+
+    /// The quarter-size ambient occlusion from the resolved depth copy.
+    fn draw_occlusion(&self, gpu: &Gpu, scene: &Scene, stats: &mut RenderStats) {
+        let pipeline = &scene.pipelines.fixed().occlusion;
+        let Some(depth) = self.main.resolved_depth else {
+            return;
+        };
+        let target = &self.occlusion;
+        gpu.bind_framebuffer(Some(target.framebuffer));
+        gpu.viewport(target.width, target.height);
+        gpu.use_program(scene.pipelines.program(pipeline.program).raw);
+        gpu.set_raster(&pipeline.raster);
+        gpu.bind_uniform_block(block::OUTPUT, self.occlusion_uniform);
+        gpu.bind_texture(unit::SOURCE, depth);
+        gpu.bind_sampler(unit::SOURCE, None);
+        gpu.bind_vertex_array(Some(self.no_attributes));
+        unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
+        let blur = &scene.pipelines.fixed().occlusion_blur;
+        let program = scene.pipelines.program(blur.program);
+        gpu.bind_framebuffer(Some(target.blurred_framebuffer));
+        let (blurred_width, blurred_height) = blurred_occlusion_size(target.width, target.height);
+        gpu.viewport(blurred_width, blurred_height);
+        gpu.use_program(program.raw);
+        program.set_first_instance(gpu, BloomPass::OcclusionBlur as u32);
+        gpu.set_raster(&blur.raster);
+        // The bloom program's other passes read the output block: it must be bound.
+        gpu.bind_uniform_block(block::OUTPUT, self.output_uniform);
+        gpu.bind_texture(unit::SOURCE, target.texture);
+        gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
+        unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
+        stats.draw_calls += 2;
+    }
+
+    /// Threshold the resolved frame into the first bloom level, halve it down the
+    /// levels and add each back onto the one above.
+    fn draw_bloom(&self, gpu: &Gpu, scene: &Scene, stats: &mut RenderStats) {
+        let levels = &self.bloom.levels;
+        gpu.bind_uniform_block(block::OUTPUT, self.output_uniform);
+        gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
+        gpu.bind_vertex_array(Some(self.no_attributes));
+        let pass = |kind: BloomPass, source: glow::Texture, target: usize| {
+            let pipeline = &scene.pipelines.fixed().bloom[kind as usize];
+            let program = scene.pipelines.program(pipeline.program);
+            let (_, framebuffer, width, height) = levels[target];
+            gpu.bind_framebuffer(Some(framebuffer));
+            gpu.viewport(width, height);
+            gpu.use_program(program.raw);
+            program.set_first_instance(gpu, kind as u32);
+            gpu.set_raster(&pipeline.raster);
+            gpu.bind_texture(unit::SOURCE, source);
+            unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
+        };
+        pass(BloomPass::Prefilter, self.main.resolved, 0);
+        for level in 1..BLOOM_LEVELS {
+            pass(BloomPass::Down, levels[level - 1].0, level);
+        }
+        for level in (0..BLOOM_LEVELS - 1).rev() {
+            pass(BloomPass::Up, levels[level + 1].0, level);
+        }
+        stats.draw_calls += 2 * BLOOM_LEVELS as u32 - 1;
     }
 
     /// Draw the resolved main view into the bound framebuffer through the output
@@ -491,8 +803,16 @@ impl Frame {
         gpu.use_program(scene.pipelines.program(pipeline.program).raw);
         gpu.set_raster(&pipeline.raster);
         gpu.bind_uniform_block(block::OUTPUT, self.output_uniform);
+        // The main view's uniform, for the haze the output adds.
+        gpu.bind_uniform_block(block::FRAME, self.view_uniforms[MAIN_VIEW]);
         gpu.bind_texture(unit::SOURCE, self.main.resolved);
-        gpu.bind_sampler(unit::SOURCE, None);
+        // `texelFetch` at full scale ignores it; a smaller scene upsamples through it.
+        gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
+        gpu.bind_texture(unit::BLOOM, self.bloom.levels[0].0);
+        gpu.bind_sampler(unit::BLOOM, Some(self.linear_sampler));
+        // Read only while the occlusion is on, which also draws it (`texelFetch`).
+        gpu.bind_texture(unit::OCCLUSION, self.occlusion.blurred);
+        gpu.bind_sampler(unit::OCCLUSION, None);
         gpu.bind_vertex_array(Some(self.no_attributes));
         unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
         stats.draw_calls += 1;
@@ -504,6 +824,9 @@ impl Drop for Frame {
         let gl = &self.gpu.gl;
         unsafe {
             gl.delete_texture(self.lut);
+            gl.delete_texture(self.noise);
+            gl.delete_texture(self.atmosphere_map);
+            gl.delete_buffer(self.occlusion_uniform);
             for sampler in [self.shadow_sampler, self.linear_sampler] {
                 gl.delete_sampler(sampler);
             }
@@ -545,7 +868,7 @@ impl WaterGpu {
                 size_of::<WaterUniform>() as u64,
                 glow::DYNAMIC_DRAW,
             ),
-            target: ColorTarget::new(gpu, "water reflection", size, size),
+            target: ColorTarget::new(gpu, "water reflection", size, size, false),
             normals: *normals,
             normals_sampler: sampler,
         }
@@ -559,6 +882,11 @@ impl WaterGpu {
 
     pub fn write(&self, gpu: &Gpu, uniform: &WaterUniform) {
         gpu.write_buffer(self.uniform, 0, bytemuck::bytes_of(uniform));
+    }
+
+    /// Bytes the reflection target holds.
+    pub fn target_bytes(&self) -> u64 {
+        target_bytes(self.target.width, self.target.height, self.gpu.samples)
     }
 
     /// Bind the uniform, normal map and reflection (group 1) for the water draw.
@@ -690,9 +1018,11 @@ impl DrawContext<'_> {
                     bound = Some(binding);
                 }
                 program.set_first_instance(gpu, draw.first_instance);
-                self.draw_elements(range.first_index, range.index_count, draw.instance_count);
+                let indices = draw.indices(range.indices());
+                let index_count = indices.end - indices.start;
+                self.draw_elements(indices.start, index_count, draw.instance_count);
                 count += 1;
-                stats.triangles += (range.index_count / 3) as u64 * draw.instance_count as u64;
+                stats.triangles += (index_count / 3) as u64 * draw.instance_count as u64;
             }
         }
         gpu.bind_texture(unit::INSTANCES, self.instances);

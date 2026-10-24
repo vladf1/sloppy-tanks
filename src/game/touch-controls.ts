@@ -10,11 +10,15 @@ export class TouchControls {
   private readonly layer: HTMLElement;
   private readonly mine: HTMLButtonElement;
   private readonly stick: HTMLElement;
+  /** How to aim and fire, over the arena until the first touch there. */
+  private readonly fireHint: HTMLElement;
   private origin = { x: 0, y: 0 };
   private enabled = false;
   /** The cooldown a mine started with: the button fills over the engine's reload,
    * whatever length the engine gives it. */
   private mineReload = 0;
+  /** The animation frame that shows the hidden controls again (see `update`). */
+  private reveal = 0;
 
   constructor(
     private readonly root: HTMLElement,
@@ -26,10 +30,12 @@ export class TouchControls {
       "beforeend",
       `<div class="touch-controls" hidden>
       <div class="touch-stick touch-drive" role="group" aria-label="Drive joystick"><div class="stick-base"><i class="stick-knob"></i></div><span>DRIVE</span></div>
-      <button class="touch-mine" type="button" aria-label="Drop mine"><span>✹</span><small>MINE</small></button>
+      <button class="touch-mine" type="button" aria-label="Drop mine"><svg class="touch-mine-icon" aria-hidden="true" focusable="false"><use href="#hud-mine" /></svg><small>MINE</small></button>
+      <div class="touch-fire-hint" aria-hidden="true"><i class="touch-fire-ring"></i><span><b>TOUCH THE ARENA</b>to aim and fire</span></div>
       </div>`,
     );
     this.layer = root.querySelector(".touch-controls")!;
+    this.fireHint = this.layer.querySelector(".touch-fire-hint")!;
     this.mine = this.layer.querySelector(".touch-mine")!;
     this.stick = this.layer.querySelector(".touch-drive")!;
     this.bindStick();
@@ -74,6 +80,8 @@ export class TouchControls {
     } else {
       window.removeEventListener("resize", this.resized);
       this.controls.touch.clear();
+      cancelAnimationFrame(this.reveal);
+      this.reveal = 0;
       this.layer.hidden = true;
     }
   }
@@ -94,8 +102,15 @@ export class TouchControls {
       const x = (event.clientX - this.origin.x) / STICK_RADIUS;
       const y = (event.clientY - this.origin.y) / STICK_RADIUS;
       this.controls.touch.moveStick(event.pointerId, x, y);
-      const scale = STICK_RADIUS / Math.max(1, Math.hypot(x, y));
+      const push = Math.hypot(x, y);
+      const scale = STICK_RADIUS / Math.max(1, push);
       knob.style.transform = `translate(${x * scale}px, ${y * scale}px)`;
+      // The rim lights toward the drive, brighter the further the knob is pushed.
+      base.style.setProperty(
+        "--stick-angle",
+        `${Math.round((Math.atan2(x, -y) * 180) / Math.PI)}deg`,
+      );
+      base.style.setProperty("--stick-push", Math.min(1, push).toFixed(2));
     };
     element.addEventListener("pointerdown", (event) => {
       if (!this.enabled || !this.controls.active() || event.button !== 0) {
@@ -131,6 +146,7 @@ export class TouchControls {
     canvas.addEventListener("pointerdown", (event) => {
       // Only the finger that owns the shot aims; a second one cannot pull the turret.
       if (touching(event) && this.controls.touch.begin("arena", event.pointerId)) {
+        this.fireHint.classList.add("learned");
         lastX = event.clientX;
         this.controls.aimAt(event.clientX, event.clientY);
       }
@@ -154,7 +170,9 @@ export class TouchControls {
       return;
     }
     element.classList.remove("held");
-    element.querySelector<HTMLElement>(".stick-base")!.style.transform = "";
+    const base = element.querySelector<HTMLElement>(".stick-base")!;
+    base.style.transform = "";
+    base.style.removeProperty("--stick-push");
     element.querySelector<HTMLElement>(".stick-knob")!.style.transform = "";
   }
 
@@ -163,19 +181,36 @@ export class TouchControls {
       return;
     }
     const playing = this.controls.active();
-    this.layer.hidden = !playing;
+    // The controls come back a frame after the rest of the HUD's respawn changes: laid
+    // out and painted on the same frame, they held an iPad's respawn frame 6 ms longer.
+    if (!playing) {
+      cancelAnimationFrame(this.reveal);
+      this.reveal = 0;
+      this.layer.hidden = true;
+    } else if (this.layer.hidden && !this.reveal) {
+      this.reveal = requestAnimationFrame(() => {
+        this.reveal = 0;
+        this.layer.hidden = !this.controls.active();
+      });
+    }
     const cooldown = this.mineCooldown();
     this.mineReload = cooldown > 0 ? Math.max(this.mineReload, cooldown) : 0;
     this.mine.disabled = !playing || cooldown > 0;
-    this.mine.style.setProperty(
-      "--mine-ready",
-      `${cooldown > 0 ? (1 - cooldown / this.mineReload) * 100 : 100}%`,
-    );
-    this.mine.querySelector("small")!.textContent =
-      cooldown > 0 ? `${cooldown.toFixed(1)}s` : "MINE";
-    this.mine.setAttribute(
-      "aria-label",
-      cooldown > 0 ? `Mine ready in ${cooldown.toFixed(1)} seconds` : "Drop mine",
-    );
+    // Only what changed is written: the HUD updates the button 15 times a second, and
+    // WebKit repaints it, rim, shadow and filtered icon, for any write of its text,
+    // even the same "MINE".
+    const ready = `${cooldown > 0 ? (1 - cooldown / this.mineReload) * 100 : 100}%`;
+    if (this.mine.style.getPropertyValue("--mine-ready") !== ready) {
+      this.mine.style.setProperty("--mine-ready", ready);
+    }
+    const label = this.mine.querySelector("small")!;
+    const text = cooldown > 0 ? `${cooldown.toFixed(1)}s` : "MINE";
+    if (label.textContent !== text) {
+      label.textContent = text;
+    }
+    const description = cooldown > 0 ? `Mine ready in ${cooldown.toFixed(1)} seconds` : "Drop mine";
+    if (this.mine.getAttribute("aria-label") !== description) {
+      this.mine.setAttribute("aria-label", description);
+    }
   }
 }

@@ -3,11 +3,15 @@
 //! level above by the same blit as WebGPU's (`mipmap.wgsl`; drawing into an sRGB
 //! level averages in linear space), and sampler objects.
 
+use std::collections::HashMap;
+
 use glow::HasContext;
 use sloppy_core::scene::Wrap;
 
-use super::context::{Gpu, Raster, unit};
+use super::context::{Gpu, Raster, block, unit};
 use super::programs::{Linking, Program};
+use super::{Frame, MaterialBinding};
+use crate::effects::bakes::TextureBake;
 use crate::gpu::textures::{Pixels, SamplerKey, TextureKey};
 use crate::shader::MIPMAP_WGSL;
 
@@ -97,6 +101,8 @@ pub struct Uploader {
     no_attributes: glow::VertexArray,
     sampler: glow::Sampler,
     placeholder: glow::Texture,
+    /// Texture bakes' programs by key, linking and then linked.
+    bakes: HashMap<&'static str, Blit>,
 }
 
 impl Uploader {
@@ -125,6 +131,80 @@ impl Uploader {
             no_attributes: gpu.created(unsafe { gpu.gl.create_vertex_array() }, "vertex array"),
             sampler: linear_sampler(gpu, false),
             placeholder,
+            bakes: HashMap::new(),
+        }
+    }
+
+    /// Whether `bake`'s program has linked, starting it the first time it is asked
+    /// for (`webgpu/textures.rs` `Uploader::ready_to_bake`).
+    pub fn ready_to_bake(&mut self, gpu: &Gpu, bake: &'static TextureBake) -> bool {
+        let state = self.bakes.entry(bake.key).or_insert_with(|| {
+            Blit::Linking(Linking::start(
+                gpu,
+                bake.key,
+                &bake.source(),
+                "vs_bake",
+                Some("fs_bake"),
+            ))
+        });
+        if let Blit::Linking(linking) = state
+            && linking.done(gpu)
+            && let Some(Blit::Linking(linking)) = self.bakes.remove(bake.key)
+        {
+            self.bakes
+                .insert(bake.key, Blit::Ready(linking.finish(gpu)));
+        }
+        matches!(self.bakes.get(bake.key), Some(Blit::Ready(_)))
+    }
+
+    /// Draw `bake` into a new texture and render its mip levels, binding the frame's
+    /// main-view uniform and its source's material for a bake that reads one; its
+    /// program must have linked ([`Self::ready_to_bake`]).
+    pub fn bake(
+        &self,
+        gpu: &Gpu,
+        bake: &TextureBake,
+        inputs: Option<(&Frame, &MaterialBinding)>,
+    ) -> Texture {
+        let Some(Blit::Ready(program)) = self.bakes.get(bake.key) else {
+            unreachable!("a bake draws once its program has linked");
+        };
+        let (width, height) = (bake.width, bake.height);
+        let levels = bake.levels();
+        let texture = storage(gpu, glow::RGBA8, levels, width, height);
+        gpu.bind_framebuffer(Some(self.framebuffer));
+        gpu.use_program(program.raw);
+        gpu.set_raster(&Raster::PLAIN);
+        gpu.bind_vertex_array(Some(self.no_attributes));
+        if let Some((frame, material)) = inputs {
+            gpu.bind_uniform_block(block::FRAME, frame.main_uniform());
+            material.bind(gpu);
+        }
+        let gl = &gpu.gl;
+        unsafe {
+            gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                Some(texture),
+                0,
+            );
+        }
+        gpu.viewport(width, height);
+        unsafe { gl.draw_arrays(glow::TRIANGLES, 0, 3) };
+        self.generate_mipmaps(gpu, texture, levels, width, height);
+        unsafe {
+            gl.framebuffer_texture_2d(
+                glow::FRAMEBUFFER,
+                glow::COLOR_ATTACHMENT0,
+                glow::TEXTURE_2D,
+                None,
+                0,
+            );
+        }
+        Texture {
+            gpu: gpu.clone(),
+            view: texture,
         }
     }
 

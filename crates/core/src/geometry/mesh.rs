@@ -1,10 +1,9 @@
-use std::collections::HashMap;
-
 use glam::{DMat4, DVec3};
 
+use super::Buckets;
 use super::math::{
-    normal_matrix, normalize, rotation_x, rotation_y, rotation_z, to_int32, transform_normal,
-    transform_point,
+    normal_matrix, normalize, rotation_x, rotation_y, rotation_z, to_int32, transform_normal_cols,
+    transform_point_cols,
 };
 
 /// Name of the per-vertex alpha attribute (`item_size` 1) of meshes whose Three.js
@@ -138,13 +137,14 @@ impl Mesh {
     /// `BufferGeometry.applyMatrix4`: positions by the matrix, normals by its normal
     /// matrix (renormalised). UVs, colors and custom attributes are unchanged.
     pub fn apply_matrix4(&mut self, matrix: &DMat4) -> &mut Self {
+        let elements = matrix.to_cols_array();
         for p in &mut self.positions {
-            *p = narrow(transform_point(matrix, widen(*p)));
+            *p = narrow(transform_point_cols(&elements, widen(*p)));
         }
         if !self.normals.is_empty() {
-            let normal_matrix = normal_matrix(matrix);
+            let normal_matrix = normal_matrix(matrix).to_cols_array();
             for n in &mut self.normals {
-                *n = narrow(transform_normal(&normal_matrix, widen(*n)));
+                *n = narrow(transform_normal_cols(&normal_matrix, widen(*n)));
             }
         }
         self
@@ -277,26 +277,24 @@ impl Mesh {
                 normalize((c - b).cross(a - b))
             })
             .collect();
-        // Faces around each quantised position, in ascending face order like the
-        // bucket sort in Three's implementation, so sums add in the same order.
-        let mut buckets: HashMap<[i32; 3], Vec<usize>> = HashMap::new();
-        let keys: Vec<[i32; 3]> = result
-            .positions
-            .iter()
-            .map(|p| p.map(|v| to_int32(f64::from(v) * hash_multiplier)))
-            .collect();
-        for (vertex, key) in keys.iter().enumerate() {
-            buckets.entry(*key).or_default().push(vertex / 3);
-        }
-        let mut normals = vec![[0.0f32; 3]; result.positions.len()];
-        for (vertex, key) in keys.iter().enumerate() {
-            let own = face_normals[vertex / 3];
-            let sum: DVec3 = buckets[key]
+        // Corners at each quantised position, in ascending order like the bucket
+        // sort in Three's implementation, so sums add in the same order.
+        let buckets = Buckets::new(
+            result
+                .positions
                 .iter()
-                .map(|&face| face_normals[face])
+                .map(|p| p.map(|v| to_int32(f64::from(v) * hash_multiplier))),
+        );
+        let mut normals = vec![[0.0f32; 3]; result.positions.len()];
+        for (vertex, normal) in normals.iter_mut().enumerate() {
+            let own = face_normals[vertex / 3];
+            let sum: DVec3 = buckets
+                .with(vertex)
+                .iter()
+                .map(|&corner| face_normals[corner / 3])
                 .filter(|other| own.dot(*other) > crease_dot)
                 .sum();
-            normals[vertex] = narrow(normalize(sum));
+            *normal = narrow(normalize(sum));
         }
         result.normals = normals;
         result

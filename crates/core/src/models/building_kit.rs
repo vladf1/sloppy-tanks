@@ -13,7 +13,7 @@ use std::sync::Arc;
 use glam::{DMat4, DVec2, DVec3};
 
 use super::model_primitives::{Cache, material, shadowed};
-use super::tank_kit::{Finishes, Kit, KitMeshes, pose};
+use super::tank_kit::{Finishes, Kit, KitMeshes, pose, ring, shift};
 use crate::geometry::math::{hex_to_linear, linear_to_hex};
 use crate::scene::{Color, Material, Node, TextureRef};
 
@@ -30,7 +30,7 @@ const BRICK_TILE: f64 = 1.2;
 const STONE_TILE: f64 = 1.6;
 /// The average sRGB colour of the clapboard image: paint divided by it keeps
 /// the painted wall at the paint's colour on average.
-const CLAPBOARD_AVERAGE: u32 = 0xd7d3cc;
+pub(super) const CLAPBOARD_AVERAGE: u32 = 0xd7d3cc;
 /// Kit texture density of untextured finishes (it only shades flat paint).
 const PLAIN_UV_PER_METRE: f64 = 0.45;
 
@@ -45,6 +45,10 @@ const CONCRETE: u32 = 0xa9a59d;
 const TERRACOTTA: u32 = 0xa0512f;
 const STAINED_WOOD: u32 = 0x76512f;
 const LAMP_GLASS: u32 = 0xf1d18f;
+/// Timber freshly split where a building broke apart, paler than its stain.
+const SPLIT_TIMBER: u32 = 0xb48d5c;
+/// Blast soot on paint ([`Surface::Soot`]).
+const SOOT: u32 = 0x4d443b;
 
 /// The finishes of a building, in draw order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -81,6 +85,11 @@ pub(super) enum Surface {
     Lamp,
     /// Curtains behind cottage windows.
     Curtain,
+    /// Freshly broken timber: the torn edges and splinters of a collapse.
+    Splinters,
+    /// Soot a shell's blast left on a wall round its hole: a warm char black,
+    /// lighter than an unlit opening so the hole itself still reads darker.
+    Soot,
 }
 
 impl Finishes for Surface {
@@ -101,6 +110,8 @@ impl Finishes for Surface {
         Surface::Wood,
         Surface::Lamp,
         Surface::Curtain,
+        Surface::Splinters,
+        Surface::Soot,
     ];
 }
 
@@ -155,6 +166,10 @@ fn finish(color: u32, (metalness, roughness): (f64, f64)) -> Arc<Material> {
 }
 
 /// Matte paint for small props (planting, soil) that join the buildings' batch.
+#[allow(
+    dead_code,
+    reason = "cottages now plant in their satin class; kept for other buildings' props"
+)]
 pub(super) fn matte(color: u32) -> Arc<Material> {
     finish(color, MATTE)
 }
@@ -176,12 +191,15 @@ pub(super) fn surface_material(surface: Surface, palette: &Palette) -> Arc<Mater
         Surface::Metal => finish(GALVANISED, METALLIC),
         Surface::Iron => finish(IRON, METALLIC),
         Surface::Brass => finish(BRASS, METALLIC),
-        Surface::Roof => finish(palette.roof, METALLIC),
+        // Painted standing-seam steel: satin, so the paint reads from above.
+        Surface::Roof => finish(palette.roof, SATIN),
         Surface::Dark => finish(DARK, MATTE),
         Surface::Concrete => finish(CONCRETE, MATTE),
         Surface::Terracotta => finish(TERRACOTTA, MATTE),
         Surface::Wood => finish(STAINED_WOOD, MATTE),
         Surface::Curtain => finish(CURTAIN, MATTE),
+        Surface::Splinters => finish(SPLIT_TIMBER, MATTE),
+        Surface::Soot => finish(SOOT, MATTE),
     }
 }
 
@@ -242,7 +260,21 @@ pub(super) fn wall(
     openings: &[Opening],
     depth: f64,
 ) {
-    let holes: Vec<Vec<DVec2>> = openings.iter().map(Opening::corners).collect();
+    wall_with_breaches(kit, frame, outline, openings, depth, &[]);
+}
+
+/// [`wall`] also cut by `breaches`: ragged holes (clockwise polygons) that the
+/// caller lines and backs itself, such as shell holes through a cottage's siding.
+pub(super) fn wall_with_breaches(
+    kit: &mut Kit<Surface>,
+    frame: DMat4,
+    outline: &[DVec2],
+    openings: &[Opening],
+    depth: f64,
+    breaches: &[Vec<DVec2>],
+) {
+    let mut holes: Vec<Vec<DVec2>> = openings.iter().map(Opening::corners).collect();
+    holes.extend_from_slice(breaches);
     kit.face_with_holes(Surface::Siding, outline, &holes, frame);
     for opening in openings {
         let (u0, u1) = (
@@ -278,6 +310,12 @@ pub(super) fn wall(
 pub(super) struct Glazing {
     /// Two sashes with a meeting rail (double-hung) or one fixed sash.
     pub double_hung: bool,
+}
+
+/// [`casing`] for openings built without [`window`] or [`door`], such as a
+/// broken window or an empty doorway.
+pub(super) fn opening_casing(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, sill: bool) {
+    casing(kit, frame, opening, sill);
 }
 
 /// Exterior casing around an opening: side boards, a head with its drip cap and,
@@ -665,4 +703,167 @@ pub(super) fn door(kit: &mut Kit<Surface>, frame: DMat4, opening: &Opening, dept
         DVec3::new(u, y0 + 0.0175, -depth / 2.0 + 0.03),
     );
     casing(kit, frame, opening, false);
+}
+
+/// Metres per stone tile on the village boundary wall: coarser fieldstone than
+/// the cottage plinths.
+const WALL_STONE_TILE: f64 = 2.3;
+/// Spacing of the boundary wall's buttress piers along its length.
+pub(super) const WALL_PIER_SPACING: f64 = 10.4;
+/// How far a pier stands proud of the wall's inner and outer faces, and above it.
+const PIER_INNER: f64 = 0.1;
+const PIER_OUTER: f64 = 0.45;
+pub(super) const PIER_RISE: f64 = 0.42;
+/// Height of the coping course and of the footing course.
+const COPING: f64 = 0.2;
+const FOOTING: f64 = 0.38;
+
+/// Where piers stand along a boundary wall of `length`, from its centre.
+pub(super) fn wall_piers(length: f64) -> Vec<f64> {
+    let reach = ((length / 2.0 - 3.0) / WALL_PIER_SPACING).floor() as i32;
+    (-reach..=reach)
+        .map(|k| f64::from(k) * WALL_PIER_SPACING)
+        .collect()
+}
+
+/// Pine Village's perimeter for a boundary cover of footprint `w` × `d` and
+/// height `h` centred at `x, z`: a battered fieldstone wall on a footing course,
+/// capped by irregular coping stones, with buttress piers under dressed caps
+/// every [`WALL_PIER_SPACING`]. The arena side is the side facing the origin.
+/// Walls running along x own the corner piers, so crossing walls never draw the
+/// same block twice. Beyond the collider only the coping's lip, the footing and
+/// the piers' outer faces stand out.
+pub(super) fn fieldstone_wall(group: &mut Node, w: f64, h: f64, d: f64, x: f64, z: f64) {
+    let along_x = w >= d;
+    let (length, thickness) = if along_x { (w, d) } else { (d, w) };
+    // Built along +x with the arena towards -z, then turned into place.
+    let yaw = if along_x {
+        if z >= 0.0 { 0.0 } else { std::f64::consts::PI }
+    } else {
+        x.signum() * std::f64::consts::FRAC_PI_2
+    };
+    let mut rng = crate::sim::math::Random::new(x * 3.1 + z * 7.7 + 911.0);
+    let mut kit: Kit<Surface> = Kit::new();
+    let half = length / 2.0;
+    let top = h - COPING;
+    // Footing: a broad course of larger stones.
+    kit.chamfer_block(
+        Surface::Stone,
+        DVec3::new(length, FOOTING, thickness + 0.2),
+        0.05,
+        shift(DVec3::new(0.0, FOOTING / 2.0, 0.0)),
+    );
+    // The battered body leans in as it rises.
+    let body = |spread: f64| {
+        [
+            (-half, -spread),
+            (half, -spread),
+            (half, spread),
+            (-half, spread),
+        ]
+        .map(|(u, v)| DVec2::new(u, v))
+    };
+    let rings = [
+        ring(&body(thickness / 2.0 + 0.06), FOOTING - 0.02),
+        ring(&body(thickness / 2.0 - 0.03), top),
+    ];
+    kit.solid(Surface::Stone, &rings);
+    let piers = wall_piers(length);
+    let corners = if along_x {
+        vec![-half + 1.0, half - 1.0]
+    } else {
+        Vec::new()
+    };
+    let in_pier = |u: f64| {
+        piers.iter().any(|p| (u - p).abs() < 0.75)
+            || (along_x && (half - u.abs()) < 1.6)
+            || (!along_x && (half - u.abs()) < 2.15)
+    };
+    // Coping: irregular stones laid end to end with mortar gaps.
+    let mut u = -half;
+    while u < half - 0.2 {
+        let span = rng.range(0.55, 1.2).min(half - u);
+        let centre = u + span / 2.0;
+        let lift = rng.range(0.0, 0.07);
+        let tilt = rng.range(-0.025, 0.025);
+        let turn = rng.range(-0.02, 0.02);
+        if !in_pier(centre) {
+            kit.chamfer_block(
+                Surface::Stone,
+                DVec3::new(
+                    span - 0.035,
+                    COPING + lift,
+                    thickness + 0.14 + rng.range(0.0, 0.06),
+                ),
+                0.04,
+                pose(
+                    DVec3::new(centre, top + (COPING + lift) / 2.0 - 0.01, 0.0),
+                    DVec3::new(0.0, turn, tilt),
+                ),
+            );
+        }
+        u += span;
+    }
+    // Buttress piers under dressed caps with a pyramid weathering.
+    let pier = |kit: &mut Kit<Surface>, u: f64, width: f64, depth_in: f64, depth_out: f64| {
+        let depth = thickness + depth_in + depth_out;
+        let offset = (depth_out - depth_in) / 2.0;
+        let rise = h + PIER_RISE;
+        kit.chamfer_block(
+            Surface::Stone,
+            DVec3::new(width + 0.16, FOOTING + 0.06, depth + 0.16),
+            0.05,
+            shift(DVec3::new(u, (FOOTING + 0.06) / 2.0, offset)),
+        );
+        kit.chamfer_block(
+            Surface::Stone,
+            DVec3::new(width, rise - 0.2, depth),
+            0.04,
+            shift(DVec3::new(u, (rise - 0.2) / 2.0, offset)),
+        );
+        kit.chamfer_block(
+            Surface::Concrete,
+            DVec3::new(width + 0.18, 0.16, depth + 0.18),
+            0.035,
+            shift(DVec3::new(u, rise - 0.12, offset)),
+        );
+        let cap = |spread_x: f64, spread_z: f64| {
+            [
+                (-spread_x, -spread_z),
+                (spread_x, -spread_z),
+                (spread_x, spread_z),
+                (-spread_x, spread_z),
+            ]
+            .map(|(a, b)| DVec2::new(u + a, offset + b))
+        };
+        kit.solid(
+            Surface::Concrete,
+            &[
+                ring(&cap(width / 2.0, depth / 2.0), rise - 0.04),
+                ring(&cap(0.04, 0.04), rise + 0.3),
+            ],
+        );
+    };
+    for &u in &piers {
+        pier(&mut kit, u, 1.05, PIER_INNER, PIER_OUTER);
+    }
+    for &u in &corners {
+        pier(&mut kit, u, 2.5, 0.25, 0.25);
+    }
+    let palette = Palette {
+        siding: 0xffffff,
+        trim: 0xffffff,
+        accent: 0xffffff,
+        roof: 0xffffff,
+    };
+    let meshes = kit.finish_scaled(|surface| match surface {
+        Surface::Stone => 1.0 / WALL_STONE_TILE,
+        other => uv_per_metre(other),
+    });
+    let mut wall = Node::default();
+    add_building(&mut wall, meshes, &palette);
+    for mut part in wall.children {
+        part.set_rotation_euler(0.0, yaw, 0.0);
+        group.children.push(part);
+    }
 }

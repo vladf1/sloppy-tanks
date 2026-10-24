@@ -39,7 +39,23 @@ export const FRAME = {
   renderMs: 8,
   firstPerson: 9,
   dt: 10,
+  /** The viewer's tank on screen (NDC, y up); NaN in first person or off screen. */
+  viewerX: 13,
+  viewerY: 14,
+  /** 0 when the engine skipped the frame while the GPU still ran earlier ones
+   * (`framesInFlight`); the other slots then repeat the last frame's. */
+  ran: 15,
 } as const;
+
+/** The engine config's `framesInFlight` for this browser: how many frames may still be
+ * on the GPU when the next one draws. Chrome holds animation frames back while the GPU
+ * is behind, so 0 leaves the pacing to it (frame callbacks it reports late would only
+ * skip frames). WebKit (Safari, and every iOS browser) lets a WebGPU canvas's frames
+ * queue instead: a GPU-bound village kept 0.4-0.9 s of frames waiting and the controls
+ * answered that late, so there two keep the GPU fed while the picture stays current. */
+export function framesInFlight(userAgent: string): number {
+  return /AppleWebKit/.test(userAgent) && !/Chrome|Chromium|Android/.test(userAgent) ? 2 : 0;
+}
 
 export const PHASES = ["ready", "playing", "paused", "results"] as const;
 export type Phase = (typeof PHASES)[number];
@@ -165,6 +181,11 @@ export interface ScoreboardRow {
   id: number;
   name: string;
   kills: number;
+  deaths: number;
+  team: Team;
+  kind: VehicleKind;
+  /** A player's tank rather than a bot's. */
+  human: boolean;
 }
 
 export type RecapMetric =
@@ -215,6 +236,34 @@ export interface HudState {
   recap: RecapState | null;
 }
 
+/** `stats_json().quality`: the graphics tier and the dynamic render scale
+ * (`crates/render/src/quality.rs`). */
+export interface QualityStats {
+  /** The Graphics setting: "auto", "high", "medium" or "low". */
+  setting: string;
+  /** The tier in effect: "high", "medium" or "low". */
+  tier: string;
+  /** Scene pixels per canvas pixel along each axis; the output pass upsamples. */
+  scale: number;
+  /** Scene pixels per CSS pixel along each axis. */
+  renderRatio: number;
+  /** The scene's width and height in pixels. */
+  scene: [number, number];
+  /** The GPU's frame time in milliseconds, smoothed, where the browser reports when
+   * the GPU finished a frame (WebGPU); null on WebGL. */
+  gpuMs: number | null;
+  /** Auto's tier or scale changes during this page session, and the latest ones. */
+  changes: number;
+  log: {
+    at: number;
+    tier: string;
+    scale: number;
+    reason: string;
+    meanMs: number;
+    gpuMs: number | null;
+  }[];
+}
+
 /** `stats_json`: Stats for nerds. */
 export interface EngineStats {
   frameMs: number;
@@ -223,6 +272,7 @@ export interface EngineStats {
   renderMs: number;
   /** The engine build's browser API: "WebGPU", or "WebGL" for the fallback. */
   graphicsApi: string;
+  quality: QualityStats;
   drawCalls: number;
   triangles: number;
   shadowDrawCalls: number;

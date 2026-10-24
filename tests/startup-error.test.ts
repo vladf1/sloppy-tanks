@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { startupErrorMessage, GraphicsUnavailableError } from "../src/game/startup-error";
+import {
+  startupErrorHint,
+  startupErrorMessage,
+  GraphicsUnavailableError,
+} from "../src/game/startup-error";
 
 test("the inline menu recognizes an unavailable-GPU error from the separately built engine", () => {
   const engineError = new Error(
@@ -21,4 +25,11 @@ test("unrelated startup failures retain the caller's recovery message", () => {
   ]) {
     assert.equal(startupErrorMessage(error, "Reload to try again."), "Reload to try again.");
   }
+});
+
+test("a missing GPU points at the browser's settings, other failures at a retry", () => {
+  const engineError = new Error("Neither WebGPU nor WebGL2 is available.");
+  engineError.name = "GraphicsUnavailableError";
+  assert.match(startupErrorHint(engineError), /hardware acceleration/);
+  assert.match(startupErrorHint(new Error("network error")), /try again/);
 });

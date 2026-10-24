@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { PICKUP_COLORS } from "./asset-data";
 import "./generate-barrels";
 import "./generate-ammo-icons";
+import "./generate-tank-textures";
 
 // Offline only: checked-in WebP images are loaded by the game, never this generator.
 const output = new URL("../public/textures/", import.meta.url);

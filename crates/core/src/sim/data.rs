@@ -216,7 +216,7 @@ pub const fn pickup(kind: PickupKind) -> PickupStats {
     match kind {
         PickupKind::Rapid => PickupStats {
             name: "RAPID FIRE",
-            color: 0xffcf54,
+            color: 0xffb02a,
             duration: 20.0,
         },
         PickupKind::Spread => PickupStats {
@@ -241,22 +241,22 @@ pub const fn pickup(kind: PickupKind) -> PickupStats {
         },
         PickupKind::Shield => PickupStats {
             name: "SHIELD",
-            color: 0x72dbef,
+            color: 0x4f94ff,
             duration: 20.0,
         },
         PickupKind::Speed => PickupStats {
             name: "SPEED BOOST",
-            color: 0xbbe574,
+            color: 0xf2f53a,
             duration: 20.0,
         },
         PickupKind::Repair => PickupStats {
             name: "REPAIR",
-            color: 0x88ddb0,
+            color: 0x2edb6e,
             duration: 0.0,
         },
         PickupKind::Laser => PickupStats {
             name: "LASER DEFENSE",
-            color: 0x7bfff2,
+            color: 0xe6f6ff,
             duration: LASER_DEFENSE.duration,
         },
     }
@@ -300,6 +300,12 @@ pub mod group {
     /// tanks, but they skip other debris so the falling deck crushes through
     /// them instead of resting on them.
     pub const CRUSHED_FRAME: u32 = 0x0508_0407;
+    /// A collapsing cottage's shards: solid debris that also rests on its rubble
+    /// mound.
+    pub const HOUSE_SHARD: u32 = 0x0108_0307;
+    /// The mound itself: only the shards rest on it; tanks, shells and other
+    /// debris pass through it.
+    pub const HOUSE_MOUND: u32 = 0x0200_0100;
 }
 
 #[cfg(test)]

@@ -27,6 +27,7 @@ wasm-bindgen-futures.workspace = true
 js-sys.workspace = true
 web-sys = { workspace = true, features = [
   "HtmlCanvasElement",
+  "HtmlImageElement",
   "console",
   "Window",
   "Response",
@@ -42,6 +43,7 @@ web-sys = { workspace = true, features = [
   "WebGl2RenderingContext",
   "Event",
   "EventTarget",
+  "Performance",
 ] }
 
 [dev-dependencies]

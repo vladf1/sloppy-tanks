@@ -13,7 +13,7 @@ export class Cockpit {
   constructor(root: HTMLElement, toggleView: () => void) {
     this.hud = root.querySelector("#hud")!;
     this.toggle = root.querySelector("#view-mode")!;
-    this.hull = root.querySelector("#cockpit .hull")!;
+    this.hull = root.querySelector(".hull-compass .hull")!;
     this.aimHint = root.querySelector("#cockpit .aim-hint")!;
     bindPress(this.toggle, () => {
       toggleView();
@@ -23,7 +23,8 @@ export class Cockpit {
   }
 
   /** `hullAngle` is the hull's clockwise screen angle, with the turret straight up;
-   * `aimWaitsForClick` shows how to take the freed cursor back. */
+   * `aimWaitsForClick` shows how to take the freed cursor back. A NaN angle (a seat switch
+   * between frames) leaves the compass where it is. */
   update(shown: boolean, hullAngle: number, aimWaitsForClick: boolean): void {
     if (shown !== this.shown) {
       this.shown = shown;
@@ -35,7 +36,7 @@ export class Cockpit {
     }
     // Only the compass changes per frame; skip style writes for sub-degree turns.
     const rounded = Math.round((hullAngle * 180) / Math.PI);
-    if (shown && rounded !== this.hullAngle) {
+    if (shown && Number.isFinite(rounded) && rounded !== this.hullAngle) {
       this.hullAngle = rounded;
       this.hull.style.transform = `rotate(${rounded}deg)`;
     }

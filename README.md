@@ -85,7 +85,9 @@ one.
 | Shift + scroll     | Zoom                                                     |
 | V / ◎ button       | Toggle the first-person view from the turret             |
 | Escape / Pause     | Pause                                                    |
-| ⚙ button           | Settings: touch controls, sound and battle speeds        |
+| ⚙ button           | Settings: touch controls, sound, graphics, battle speeds |
+
+Settings' **Graphics: Auto / High / Medium / Low** is saved like the other choices. Auto keeps the frame rate smooth: desktops start with the full picture, while tablets and phones start on Medium at one rendered pixel per CSS pixel without multisampling. As the frames allow, Auto lowers or raises the 3D scene's resolution in small steps and the quality tier with it. High is the full picture; Medium drops ambient occlusion and fine ground and cloud detail; Low also drops bloom and halves the shadow map. A fixed tier draws at full resolution and never adapts, and High also keeps multisampling on a tablet after a reload. Stats for nerds (`?debug`, then N) shows the tier, the render scale and the GPU's frame time.
 
 In first person the camera sits on your turret: the mouse turns it (click the arena to capture the pointer; Esc frees the cursor and a second Esc pauses), WASD steers relative to where you look, the compass above the ammo strip shows which way the hull points, and pickups turn see-through. On touchscreens the drive stick's sideways push turns the view (forward and back drive toward it), and dragging the finger that fires fine-tunes the aim. While destroyed, you watch from above and the pointer stays captured for the respawn; press Esc to pick another tank.
 
@@ -206,7 +208,7 @@ Runtime textures, tank previews and sounds are checked in under `public/`. Devel
 | `pnpm run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp`                           |
 | `pnpm run optimize:textures`     | Optimized runtime textures from preserved sources; requires `cwebp`                                                              |
 | `pnpm run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
-| `pnpm run generate:pickup-atlas` | The shared pickup atlas from the icons in `assets/texture-sources/pickups/`; also run by `generate:textures` and `generate:ammo` |
+| `pnpm run generate:pickup-atlas` | The shared pickup atlas, painted procedurally by its generator script alone; also run by `generate:textures` and `generate:ammo` |
 | `pnpm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
 | `pnpm run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
 | `pnpm run generate:favicon`      | `public/favicon.svg`, drawn as isometric vector shapes                                                                           |
@@ -216,7 +218,7 @@ On macOS, install the offline encoders with `brew install webp ffmpeg`.
 
 Source images and encoding guidance live in [assets/texture-sources](assets/texture-sources/README.md), including [harbor](assets/texture-sources/harbor/README.md), [quarry](assets/texture-sources/quarry/README.md) and [tree](assets/texture-sources/trees/README.md) notes. The optimizer uses 768px grass and sandstone, 512px dirt and concrete, and 512px armor wear and conifer foliage. Source artwork is outside the deployed directory.
 
-For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `pnpm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `node --import tsx scripts/generate-house-textures.ts`, then `pnpm run optimize:textures`.
+For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `pnpm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`. Rebuild the tree atlas after either with `node --import tsx scripts/generate-tree-atlas.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `node --import tsx scripts/generate-house-textures.ts`, then `pnpm run optimize:textures`.
 
 See [tank references](assets/tank-references.md) for model provenance and [water texture notes](public/textures/water/README.md) for its source and license.
 

@@ -26,6 +26,8 @@ pub mod fragments;
 pub mod game_options;
 pub mod harbor_layout;
 pub mod hitboxes;
+pub mod house_fracture;
+pub mod house_layout;
 pub mod humvee_tactics;
 pub mod laser_defense;
 pub mod level_rules;

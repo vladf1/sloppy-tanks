@@ -56,13 +56,21 @@ pub struct ShadowGroup {
     pub cutout: Option<Arc<Material>>,
 }
 
+/// Whose record a merged shadow slot takes: a part's, or for a part merged across a
+/// combined model's fixed joints one of its segments', hidden with that joint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ShadowSlot {
+    pub part: usize,
+    pub segment: Option<usize>,
+}
+
 /// A model's shadow merge.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ShadowMerge {
     pub groups: Vec<ShadowGroup>,
-    /// Movable models: the part indices whose records fill slots 0.., in order.
-    /// Empty for scenery, whose vertices are already in world space.
-    pub slots: Vec<usize>,
+    /// Movable models: the parts (and segments) whose records fill slots 0.., in
+    /// order. Empty for scenery, whose vertices are already in world space.
+    pub slots: Vec<ShadowSlot>,
     /// Per part: whether it draws its shadow from a merged group.
     pub merged: Vec<bool>,
 }
@@ -77,8 +85,8 @@ pub fn shadow_merge_kind(
 ) -> MergeKind {
     let effect = match &material.effect {
         sloppy_core::scene::Effect::None => None,
-        sloppy_core::scene::Effect::Custom { name, .. } => {
-            effects.id(name).and_then(|id| effects.get(id))
+        sloppy_core::scene::Effect::Custom { name, params } => {
+            effects.id_for(name, params).and_then(|id| effects.get(id))
         }
     };
     let still = effect.is_some_and(|effect| effect.still_shadow);
@@ -174,6 +182,11 @@ pub fn merge_shadows(
     // Groups keyed by (side, cell, cutout material), in first-use order.
     let mut keys: Vec<(Side, (i32, i32), usize)> = Vec::new();
     let mut bounds: Vec<Option<Sphere>> = Vec::new();
+    // Every merged placement and its group, found first, so each group is allocated
+    // once at its final size: grown part by part, the groups held up to twice their
+    // vertices, and old and new buffers side by side, at the heap's peak.
+    let mut placed: Vec<Placed> = Vec::new();
+    let mut sizes: Vec<(usize, usize)> = Vec::new();
     for (index, part) in model.parts.iter().enumerate() {
         let merge_kind = if part.cast_shadow {
             kind(index)
@@ -188,8 +201,8 @@ pub fn merge_shadows(
         if !scenery && part.instances.is_some() {
             continue;
         }
-        let (positions, uvs, indices) = part_geometry(part, &model.meshes);
-        if indices.is_empty() {
+        let (vertex_count, index_count) = part_counts(part, &model.meshes);
+        if index_count == 0 {
             continue;
         }
         let placements: Vec<Mat4> = if scenery {
@@ -200,24 +213,37 @@ pub fn merge_shadows(
         } else {
             vec![Mat4::IDENTITY]
         };
-        let slot = if scenery {
-            0
-        } else {
-            merge.slots.push(index);
-            merge.slots.len() as u32 - 1
-        };
+        // One slot per part, or one per segment of a merged part; each vertex gets
+        // its own when the groups are filled (`slots_of`).
+        let first_slot = merge.slots.len() as u32;
+        if !scenery {
+            match &part.segments {
+                Some(segments) => {
+                    for segment_index in 0..segments.len() {
+                        merge.slots.push(ShadowSlot {
+                            part: index,
+                            segment: Some(segment_index),
+                        });
+                    }
+                }
+                None => merge.slots.push(ShadowSlot {
+                    part: index,
+                    segment: None,
+                }),
+            }
+        }
         merge.merged[index] = true;
         let side = shadow_side(&part.material);
-        for placement in placements {
+        for (instance, placement) in placements.into_iter().enumerate() {
             // Transformed on the fly, twice, rather than into a copy of the part.
-            let moved = |p: &Vec3| {
+            let moved = |p: Vec3| {
                 if scenery {
-                    placement.transform_point3(*p)
+                    placement.transform_point3(p)
                 } else {
-                    *p
+                    p
                 }
             };
-            let sphere = Sphere::from_points(positions.iter().map(moved));
+            let sphere = part_bounds(part, &model.meshes, moved);
             let cell = if scenery && cell_size > 0.0 {
                 (
                     (sphere.center.x / cell_size).floor() as i32,
@@ -232,6 +258,7 @@ pub fn merge_shadows(
                 None => {
                     keys.push(key);
                     bounds.push(None);
+                    sizes.push((0, 0));
                     merge.groups.push(ShadowGroup {
                         side,
                         cutout: cutout.clone(),
@@ -240,31 +267,106 @@ pub fn merge_shadows(
                     merge.groups.len() - 1
                 }
             };
-            let target = &mut merge.groups[group];
-            let base = target.vertices.len() as u32;
-            target.vertices.reserve(positions.len());
-            target.indices.reserve(indices.len());
-            target
-                .vertices
-                .extend(
-                    positions
-                        .iter()
-                        .map(moved)
-                        .zip(&uvs)
-                        .map(|(p, uv)| ShadowVertex {
-                            position: p.to_array(),
-                            slot,
-                            uv: uv.to_array(),
-                        }),
-                );
-            target.indices.extend(indices.iter().map(|i| base + i));
+            sizes[group].0 += vertex_count;
+            sizes[group].1 += index_count;
+            placed.push(Placed {
+                part: index as u32,
+                slot: first_slot,
+                group: group as u32,
+                instance: instance as u32,
+            });
             bounds[group] = Some(bounds[group].map_or(sphere, |b| b.union(&sphere)));
         }
+    }
+    for (group, &(vertices, indices)) in merge.groups.iter_mut().zip(&sizes) {
+        group.vertices.reserve_exact(vertices);
+        group.indices.reserve_exact(indices);
+    }
+    // A part's placements are consecutive: its geometry is gathered once.
+    let mut geometry: Option<(u32, Geometry, Vec<u32>)> = None;
+    for item in &placed {
+        let part = &model.parts[item.part as usize];
+        if geometry
+            .as_ref()
+            .is_none_or(|(index, ..)| *index != item.part)
+        {
+            let gathered = part_geometry(part, &model.meshes);
+            let slots = slots_of(part, item.slot, gathered.0.len(), scenery);
+            geometry = Some((item.part, gathered, slots));
+        }
+        let (_, (positions, uvs, indices), slot_of) = geometry.as_ref().expect("gathered above");
+        let placement = scenery.then(|| match &part.instances {
+            Some(list) => part.local * list[item.instance as usize].matrix,
+            None => part.local,
+        });
+        let target = &mut merge.groups[item.group as usize];
+        let base = target.vertices.len() as u32;
+        target.vertices.extend(
+            positions
+                .iter()
+                .zip(uvs)
+                .enumerate()
+                .map(|(vertex, (p, uv))| ShadowVertex {
+                    position: placement
+                        .map_or(*p, |placement| placement.transform_point3(*p))
+                        .to_array(),
+                    slot: slot_of.get(vertex).copied().unwrap_or(0),
+                    uv: uv.to_array(),
+                }),
+        );
+        target.indices.extend(indices.iter().map(|i| base + i));
     }
     for (group, sphere) in merge.groups.iter_mut().zip(bounds) {
         group.bounds = sphere.unwrap_or_default();
     }
     merge
+}
+
+/// Each vertex's slot on a movable model: the part's `first` slot or, with segments,
+/// one slot per segment from `first` on (a vertex outside every segment keeps
+/// `first`). Scenery has no slots.
+fn slots_of(part: &PreparedPart, first: u32, vertices: usize, scenery: bool) -> Vec<u32> {
+    let mut slots = vec![first; if scenery { 0 } else { vertices }];
+    if !scenery && let Some(segments) = &part.segments {
+        for (offset, segment) in segments.iter().enumerate() {
+            let range = segment.vertices.start as usize..segment.vertices.end as usize;
+            slots[range].fill(first + offset as u32);
+        }
+    }
+    slots
+}
+
+/// One merged caster placement: its part, first slot and group, and for scenery which of
+/// the part's instances it is (its world placement is found again when filled).
+struct Placed {
+    part: u32,
+    slot: u32,
+    group: u32,
+    instance: u32,
+}
+
+/// The vertex and triangle-index counts [`part_geometry`] gathers for a part.
+fn part_counts(part: &PreparedPart, meshes: &[MeshData]) -> (usize, usize) {
+    match &part.mesh {
+        PartMesh::Shared(mesh) => {
+            let vertices = mesh.positions.len();
+            (vertices, mesh.indices.as_ref().map_or(vertices, Vec::len))
+        }
+        PartMesh::Owned(index) => (meshes[*index].vertices.len(), meshes[*index].indices.len()),
+    }
+}
+
+/// The bounds of a part's positions moved by `moved`, read in place.
+fn part_bounds(part: &PreparedPart, meshes: &[MeshData], moved: impl Fn(Vec3) -> Vec3) -> Sphere {
+    match &part.mesh {
+        PartMesh::Shared(mesh) => {
+            Sphere::from_points(mesh.positions.iter().map(|p| moved(Vec3::from(*p))))
+        }
+        PartMesh::Owned(index) => {
+            let vertices = meshes[*index].vertices.iter();
+            Sphere::from_points(vertices.map(|v| moved(Vec3::from(v.position))))
+        }
+    }
 }
 
 #[cfg(test)]
@@ -393,6 +495,51 @@ mod tests {
     }
 
     #[test]
+    fn a_combined_models_segments_take_a_slot_each() {
+        // Three covers, a fixed joint each, whose boxes merge across them.
+        let cube = Arc::new(box_geometry(1.0, 1.0, 1.0));
+        let mut root = Node::group("static-covers");
+        for (i, x) in [0.0, 20.0, 40.0].into_iter().enumerate() {
+            let mut joint = Node::group(format!("cover:{i}"));
+            joint
+                .children
+                .push(caster(&cube, Material::standard(0x887766, 0.0, 0.9), x));
+            joint.children.push(caster(
+                &Arc::new(box_geometry(0.5, 2.0, 0.5)),
+                Material::standard(0x445566, 0.0, 0.9),
+                x + 1.0,
+            ));
+            root.children.push(joint);
+        }
+        let mut interner = MaterialInterner::default();
+        let model = crate::model::prepare_combined(&root, &mut interner);
+        let (index, part) = model
+            .parts
+            .iter()
+            .enumerate()
+            .find(|(_, p)| p.segments.is_some())
+            .expect("a merged part");
+        let segments = part.segments.as_ref().unwrap();
+        assert_eq!(segments.len(), 3);
+        let merge = merge_shadows(&model, |_| MergeKind::Opaque, false, 0.0);
+        assert!(merge.merged[index]);
+        let slots: Vec<_> = merge.slots.iter().filter(|s| s.part == index).collect();
+        assert_eq!(slots.len(), 3, "a slot per segment");
+        // Every vertex of a segment carries its segment's slot.
+        let group = &merge.groups[0];
+        for (segment_index, segment) in segments.iter().enumerate() {
+            let slot = merge
+                .slots
+                .iter()
+                .position(|s| s.part == index && s.segment == Some(segment_index))
+                .unwrap() as u32;
+            for vertex in segment.vertices.clone() {
+                assert_eq!(group.vertices[vertex as usize].slot, slot);
+            }
+        }
+    }
+
+    #[test]
     fn scenery_bakes_world_space_per_cell() {
         let cube = Arc::new(box_geometry(1.0, 1.0, 1.0));
         let mut root = Node::group("yard");
@@ -415,5 +562,38 @@ mod tests {
                 .iter()
                 .all(|v| v.slot == 0 && v.position[0] > 199.0)
         );
+    }
+
+    /// Merged geometry is allocated once at its final size: a merge that grew part by
+    /// part left up to twice its vertices allocated at the heap's peak.
+    #[test]
+    fn merges_allocate_their_final_size() {
+        let cube = Arc::new(box_geometry(1.0, 1.0, 1.0));
+        let mut root = Node::group("yard");
+        for i in 0..37 {
+            root.children.push(caster(
+                &cube,
+                Material::standard(0x888888, 0.0, 0.9),
+                f64::from(i) * 2.0,
+            ));
+        }
+        let mut interner = MaterialInterner::default();
+        let model = prepare_model(&root, &mut interner);
+        let merged = &model.meshes[0];
+        assert_eq!(merged.vertices.len(), 37 * cube.positions.len());
+        assert_eq!(merged.vertices.capacity(), merged.vertices.len());
+        assert_eq!(merged.indices.capacity(), merged.indices.len());
+        for scenery in [false, true] {
+            let prepared = if scenery {
+                prepare_scenery(&root, &mut interner)
+            } else {
+                prepare_model(&root, &mut interner)
+            };
+            let merge = merge_shadows(&prepared, |_| MergeKind::Opaque, scenery, 60.0);
+            for group in &merge.groups {
+                assert_eq!(group.vertices.capacity(), group.vertices.len());
+                assert_eq!(group.indices.capacity(), group.indices.len());
+            }
+        }
     }
 }

@@ -181,7 +181,8 @@ try {
   await page.locator("#settings-open").tap();
   await page.locator("#touch-mode").selectOption("off");
   await page.locator(".settings-cancel").tap();
-  assert.equal(await page.locator(".touch-controls").isVisible(), true, "Cancel changes nothing");
+  // Cancel changes nothing: the controls come back (a frame after the battle resumes).
+  await page.locator(".touch-controls").waitFor({ state: "visible", timeout: 2000 });
   await setTouchMode(page, "off", { touch: true });
   await page.locator(".touch-controls").waitFor({ state: "hidden" });
   await setTouchMode(page, "on", { touch: true });

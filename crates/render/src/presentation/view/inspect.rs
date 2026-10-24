@@ -14,6 +14,7 @@ pub struct ReticleInspection {
     pub confirmed: bool,
     pub ready: bool,
     pub reloading: bool,
+    /// Its scale over the resting size: 1, or larger while a hit is confirmed.
     pub scale: f32,
     pub position: Vec3,
 }
@@ -57,7 +58,7 @@ pub struct PickupInspection {
     pub ring: bool,
     pub ring_dim: bool,
     pub refill: bool,
-    /// Refill arc segments drawn.
+    /// How far the drop has restocked (0..1).
     pub segments: f32,
 }
 
@@ -111,7 +112,7 @@ impl Presentation {
                 confirmed: joint_shown(&state, self.reticle.confirmed),
                 ready: joint_shown(&state, self.reticle.ready),
                 reloading: joint_shown(&state, self.reticle.reloading),
-                scale: scale.x,
+                scale: scale.x / self.reticle_size as f32,
                 position,
             };
         }
@@ -139,7 +140,7 @@ impl Presentation {
                     )
                 },
             );
-            let suspension = view.suspension.unwrap_or_default();
+            let suspension = view.motion.unwrap_or_default().suspension;
             inspection.tanks.push(TankInspection {
                 id,
                 shown: model.visible && view.world.w_axis.w != 0.0,
@@ -174,21 +175,23 @@ impl Presentation {
             });
         }
         for (&id, view) in &self.pickups {
-            let (Some(base), Some(gem), Some(model)) = (
+            let (Some(base), Some(gem)) = (
                 renderer.instance_state(view.base),
                 renderer.instance_state(view.gem),
-                self.library.pickups.get(&view.kind),
             ) else {
                 continue;
             };
+            // A taken drop leaves its bare pallet empty until it restocks (its
+            // progress in `segments`).
+            let stocked = view.shown == Some(true);
             inspection.pickups.push(PickupInspection {
                 id,
                 base_shown: base.visible,
-                gem: gem.visible,
-                ring: joint_shown(&base, model.ring),
-                ring_dim: joint_shown(&base, model.ring_dim),
-                refill: joint_shown(&base, model.refill),
-                segments: base.data[0],
+                gem: gem.visible && gem.world.x_axis.length() > 0.9,
+                ring: base.visible && stocked,
+                ring_dim: base.visible && !stocked,
+                refill: base.visible && !stocked,
+                segments: view.progress,
             });
         }
         for (&id, view) in &self.fragments {
@@ -202,7 +205,7 @@ impl Presentation {
                     FragmentLook::Piece => "piece",
                     FragmentLook::Wreck(..) => "wreck",
                     FragmentLook::Owned(..) => "owned",
-                    FragmentLook::Section(..) => "section",
+                    FragmentLook::Shared(..) => "shared",
                 },
                 shown: state.visible,
                 opacity: state.opacity,

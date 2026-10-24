@@ -11,6 +11,7 @@ use super::combat_rules::{COMBAT, MINE};
 use super::data::group;
 use super::debris_physics::blast_debris;
 use super::difficulty::difficulty_tuning;
+use super::house_layout::{HOUSE_HEAP, HouseDesign, heap_seed};
 use super::match_state::award_kill;
 use super::math::{Point3, Vec2, distance};
 use super::movable_cover::moved_cover_region;
@@ -29,7 +30,7 @@ use super::types::{
 use super::veterancy::{KILL_XP, earn_experience};
 use super::wrecks::break_tank;
 
-/// Remembered impact marks per timber wall or cargo crate.
+/// Remembered impact marks per timber wall, cargo crate or cottage.
 const MAX_TIMBER_MARKS: usize = 6;
 
 /// The upright footprint a felled tree leaves on its cover body: the stump's shape and
@@ -181,7 +182,7 @@ impl Simulation {
         self.events.push(death);
     }
 
-    /// Damage a cover: timber marks, destruction, debris and drum or tower chains.
+    /// Damage a cover: impact marks, destruction, debris, rubble and drum chains.
     pub fn damage_cover(
         &mut self,
         cover_index: usize,
@@ -198,7 +199,11 @@ impl Simulation {
         let previous_hp = cover.hp;
         cover.hp -= amount;
         if cover.hp > 0.0 {
-            if matches!(cover.kind, CoverKind::Timber | CoverKind::Cargo) && amount > 0.0 {
+            if matches!(
+                cover.kind,
+                CoverKind::Timber | CoverKind::Cargo | CoverKind::House
+            ) && amount > 0.0
+            {
                 let marks = &mut cover.timber_hits;
                 if marks.len() < MAX_TIMBER_MARKS {
                     let size = if marks.is_empty() {
@@ -270,7 +275,11 @@ impl Simulation {
         destroy.cover_kind = Some(kind);
         destroy.height = Some(h);
         destroy.id = Some(id);
-        destroy.size = Some(if kind == CoverKind::Tower { 7.0 } else { 2.0 });
+        destroy.size = Some(if matches!(kind, CoverKind::Tower | CoverKind::House) {
+            7.0
+        } else {
+            2.0
+        });
         destroy.color = Some(color);
         if kind == CoverKind::Cargo {
             destroy.from = self.covers[cover_index]
@@ -299,7 +308,7 @@ impl Simulation {
                 let seed = Some((self.rng.next() * 4_294_967_296.0).floor());
                 // A tower that rebuilt in place reuses the rubble its last collapse left, so
                 // repeated collapses never grow the cover list.
-                if let Some(index) = self.tower_rubble(rubble_x, z, false) {
+                if let Some(index) = self.rubble_at(rubble_x, z, false) {
                     self.covers[index].debris_seed = seed;
                     self.restore_cover(index);
                     continue;
@@ -316,6 +325,35 @@ impl Simulation {
                 );
                 rubble.debris_seed = seed;
                 self.add_cover(&rubble);
+            }
+            let region = moved_cover_region(&self.covers[cover_index]);
+            self.nav.rebuild(&self.covers, Some(region));
+        }
+        if kind == CoverKind::House {
+            // The back wall and the chimney breast come down in a heap that stays as low
+            // cover; the rest of the footprint opens.
+            let design = HouseDesign::of(x, z, w, d, h);
+            let (offset, size) = design.heap_box();
+            let seed = heap_seed(self.rng.next(), &design);
+            let (heap_x, heap_z) = (x + offset.x, z + offset.y);
+            // A cottage that rebuilt in place reuses its last heap, so repeated
+            // collapses never grow the cover list.
+            if let Some(index) = self.rubble_at(heap_x, heap_z, false) {
+                self.covers[index].debris_seed = Some(seed);
+                self.restore_cover(index);
+            } else {
+                let mut heap = CoverDef::new(
+                    CoverKind::Rubble,
+                    heap_x,
+                    heap_z,
+                    size.x,
+                    size.y,
+                    HOUSE_HEAP.height,
+                    f64::INFINITY,
+                    color,
+                );
+                heap.debris_seed = Some(seed);
+                self.add_cover(&heap);
             }
             let region = moved_cover_region(&self.covers[cover_index]);
             self.nav.rebuild(&self.covers, Some(region));
@@ -404,7 +442,7 @@ impl Simulation {
             {
                 if matches!(
                     cover.kind,
-                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower
+                    CoverKind::Timber | CoverKind::Cargo | CoverKind::Tower | CoverKind::House
                 ) {
                     let dx = cover.x - position.x;
                     let dz = cover.z - position.z;

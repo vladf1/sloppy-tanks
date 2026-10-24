@@ -16,7 +16,7 @@ pub const FLASH_SECONDS: f64 = 0.12;
 const LENS_RISE: f64 = 0.3;
 const MOUNT_DROP: f32 = 0.075;
 /// Tanks rest 0.4 m above their body's origin height.
-const HULL_OFFSET: f64 = 0.4;
+pub(super) const HULL_OFFSET: f64 = 0.4;
 /// A beam hitting nothing in particular strikes at this height.
 const DEFAULT_TARGET_HEIGHT: f64 = 1.0;
 

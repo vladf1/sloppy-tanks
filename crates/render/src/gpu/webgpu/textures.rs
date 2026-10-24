@@ -1,15 +1,47 @@
 //! WebGPU textures: `copyExternalImageToTexture` uploads of decoded files and
 //! generated `ImageData`, mip levels rendered from the level above, and samplers.
 
+use std::collections::HashMap;
+
 use sloppy_core::scene::{TextureSource, Wrap};
 
-use super::Gpu;
 use super::context::texture_2d;
 use super::pipelines::pipeline_layout;
 use super::precompile::{Background, LayoutKind, PipelineSpec};
 use super::resources::MIPMAP_SOURCE_ENTRIES;
+use super::{Frame, Gpu, MaterialBinding};
+use crate::effects::bakes::TextureBake;
 use crate::gpu::textures::{Pixels, SamplerKey, TextureKey};
-use crate::shader::MIPMAP_WGSL;
+use crate::shader::{MIPMAP_WGSL, StageSources};
+
+/// The format every texture bake draws.
+const BAKE_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
+
+/// A bake's pipeline: with a surface's frame and material groups for one that reads
+/// a material, with none for one that works from its uv alone.
+fn bake_spec(bake: &TextureBake) -> PipelineSpec {
+    PipelineSpec {
+        label: "texture bake",
+        layout: if bake.source.is_some() {
+            LayoutKind::Surface
+        } else {
+            LayoutKind::Bake
+        },
+        vertex_entry: "vs_bake",
+        fragment_entry: Some("fs_bake"),
+        buffers: vec![],
+        targets: vec![Some(BAKE_FORMAT.into())],
+        primitive: Default::default(),
+        depth_stencil: None,
+        multisample: Default::default(),
+    }
+}
+
+/// A bake's pipeline while it compiles in the background, then compiled.
+enum BakePipeline {
+    Compiling(PipelineSpec, StageSources, Background),
+    Ready(wgpu::RenderPipeline),
+}
 
 /// An uploaded texture with its mip chain; dropping it destroys it.
 pub struct Texture {
@@ -45,12 +77,18 @@ fn mipmap_spec(format: wgpu::TextureFormat) -> PipelineSpec {
 pub struct Uploader {
     layout: wgpu::BindGroupLayout,
     pipeline_layout: wgpu::PipelineLayout,
-    /// The sRGB and linear blit specs while they compile in the background.
-    pending: Option<(PipelineSpec, PipelineSpec, Background)>,
+    /// The sRGB and linear blit specs and their stages while they compile in the
+    /// background.
+    pending: Option<(PipelineSpec, PipelineSpec, StageSources, Background)>,
     /// The sRGB and linear blit pipelines.
     pipelines: Option<(wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     sampler: wgpu::Sampler,
     placeholder: wgpu::TextureView,
+    /// Texture bakes' pipelines by key, and their layouts: no groups, and a
+    /// surface's frame and material groups for the bakes that read a material.
+    bakes: HashMap<&'static str, BakePipeline>,
+    bake_layout: wgpu::PipelineLayout,
+    material_bake_layout: wgpu::PipelineLayout,
 }
 
 impl Uploader {
@@ -62,10 +100,17 @@ impl Uploader {
             label: Some("mipmap source"),
             entries: MIPMAP_SOURCE_ENTRIES,
         });
+        let bake_layout = pipeline_layout(device, "texture bake", &[]);
+        let material_bake_layout = pipeline_layout(
+            device,
+            "material texture bake",
+            &[&gpu.layouts.frame, &gpu.layouts.material],
+        );
         let pipeline_layout = pipeline_layout(device, "mipmap", &[&layout]);
         let srgb = mipmap_spec(wgpu::TextureFormat::Rgba8UnormSrgb);
         let linear = mipmap_spec(wgpu::TextureFormat::Rgba8Unorm);
-        let compile = Background::start(device, &[(&srgb, MIPMAP_WGSL), (&linear, MIPMAP_WGSL)]);
+        let stages = srgb.stages(MIPMAP_WGSL);
+        let compile = Background::start(device, &[(&srgb, &stages), (&linear, &stages)]);
         let placeholder = texture_2d(
             device,
             "white placeholder",
@@ -86,7 +131,7 @@ impl Uploader {
             placeholder.size(),
         );
         Self {
-            pending: Some((srgb, linear, compile)),
+            pending: Some((srgb, linear, stages, compile)),
             pipelines: None,
             pipeline_layout,
             sampler: device.create_sampler(&wgpu::SamplerDescriptor {
@@ -97,6 +142,105 @@ impl Uploader {
             }),
             layout,
             placeholder: placeholder.create_view(&Default::default()),
+            bakes: HashMap::new(),
+            bake_layout,
+            material_bake_layout,
+        }
+    }
+
+    /// Whether `bake`'s pipeline exists, starting its background compile the first
+    /// time it is asked for and creating it once compiled.
+    pub fn ready_to_bake(&mut self, gpu: &Gpu, bake: &'static TextureBake) -> bool {
+        let device = &gpu.device;
+        let state = self.bakes.entry(bake.key).or_insert_with(|| {
+            let spec = bake_spec(bake);
+            let stages = spec.stages(&bake.source());
+            let compile = Background::start(device, &[(&spec, &stages)]);
+            BakePipeline::Compiling(spec, stages, compile)
+        });
+        if let BakePipeline::Compiling(spec, stages, compile) = state
+            && compile.done()
+        {
+            let layout = if bake.source.is_some() {
+                &self.material_bake_layout
+            } else {
+                &self.bake_layout
+            };
+            *state = BakePipeline::Ready(spec.create(
+                device,
+                layout,
+                stages,
+                compile.compiled(0).as_ref(),
+            ));
+        }
+        matches!(state, BakePipeline::Ready(_))
+    }
+
+    /// Draw `bake` into a new texture and render its mip levels, binding the frame's
+    /// main-view group and its source's material for a bake that reads one; its
+    /// pipeline must be ready ([`Self::ready_to_bake`]).
+    pub fn bake(
+        &self,
+        gpu: &Gpu,
+        bake: &TextureBake,
+        inputs: Option<(&Frame, &MaterialBinding)>,
+    ) -> Texture {
+        let Some(BakePipeline::Ready(pipeline)) = self.bakes.get(bake.key) else {
+            unreachable!("a bake draws once its pipeline is ready");
+        };
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(bake.key),
+            size: wgpu::Extent3d {
+                width: bake.width,
+                height: bake.height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: bake.levels(),
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: BAKE_FORMAT,
+            usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let target = texture.create_view(&wgpu::TextureViewDescriptor {
+            base_mip_level: 0,
+            mip_level_count: Some(1),
+            ..Default::default()
+        });
+        let mut encoder = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("texture bake"),
+            });
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("texture bake"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &target,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            });
+            pass.set_pipeline(pipeline);
+            if let Some((frame, material)) = inputs {
+                pass.set_bind_group(0, frame.main_group(), &[]);
+                pass.set_bind_group(1, &material.bind_group, &[]);
+            }
+            pass.draw(0..3, 0..1);
+        }
+        gpu.queue.submit([encoder.finish()]);
+        self.generate_mipmaps(gpu, &texture, false);
+        Texture {
+            view: texture.create_view(&Default::default()),
+            texture,
         }
     }
 
@@ -104,16 +248,22 @@ impl Uploader {
     /// until then.
     pub fn ready(&mut self, gpu: &Gpu) -> bool {
         let device = &gpu.device;
-        if let Some((srgb, linear, compile)) = &self.pending
+        if let Some((srgb, linear, stages, compile)) = &self.pending
             && compile.done()
         {
-            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some("mipmap blit"),
-                source: wgpu::ShaderSource::Wgsl(MIPMAP_WGSL.into()),
-            });
             self.pipelines = Some((
-                srgb.create(device, &self.pipeline_layout, &module),
-                linear.create(device, &self.pipeline_layout, &module),
+                srgb.create(
+                    device,
+                    &self.pipeline_layout,
+                    stages,
+                    compile.compiled(0).as_ref(),
+                ),
+                linear.create(
+                    device,
+                    &self.pipeline_layout,
+                    stages,
+                    compile.compiled(1).as_ref(),
+                ),
             ));
             self.pending = None;
         }

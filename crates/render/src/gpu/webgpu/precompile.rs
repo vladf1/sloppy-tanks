@@ -9,11 +9,13 @@
 //! So every pipeline is first described once as a [`PipelineSpec`]. The precompiler
 //! issues `createRenderPipelineAsync` for the browser descriptor that wgpu's WebGPU
 //! backend would build from it (same WGSL, bind group layouts, vertex buffers, states
-//! and targets); once that resolves, wgpu creates the identical pipeline, which the
-//! browser's pipeline and shader caches now answer at once. The mapping below mirrors
-//! wgpu 30's `backend/webgpu.rs` for the formats and states the game's pipelines use;
-//! anything else is reported and compiles synchronously. A descriptor that differs
-//! only costs the stall again, since the pipeline drawn with is always wgpu's own.
+//! and targets); once that resolves, wgpu wraps that very pipeline ([`hand_over`]).
+//! Letting wgpu create its twin cost WebKit the whole job again, cache hits and all
+//! (2-9 ms a pipeline, warm or cold, on the GPU process's one queue: about 130 ms of
+//! a harbor start). The mapping below mirrors wgpu 30's `backend/webgpu.rs` for the
+//! formats and states the game's pipelines use; anything else is reported and
+//! compiles synchronously. The precompiler's bind group layouts are its own copies,
+//! group-equivalent to wgpu's, so wgpu's bind groups draw with its pipelines.
 //!
 //! The WebGL backend has its own background compile (`webgl/programs.rs`).
 
@@ -25,6 +27,8 @@ use std::rc::Rc;
 use js_sys::{Array, Object, Promise, Reflect};
 use wasm_bindgen::prelude::*;
 use wasm_bindgen_futures::JsFuture;
+
+use crate::shader::StageSources;
 
 /// Pipelines compiling at once. Background compiles scale well with parallelism
 /// (30 cold pipelines: 6.4 s one at a time, 1.2 s eight at a time, 0.95 s all at
@@ -58,30 +62,37 @@ pub enum LayoutKind {
     Surface,
     Water,
     Output,
-    /// Frame group only: depth-only merged shadow casters.
+    Bloom,
+    Occlusion,
+    /// Frame group only: depth-only merged shadow casters and the sky.
     ShadowMerged,
     Mipmap,
+    /// No groups: texture bakes, which work out every texel from its uv alone.
+    Bake,
 }
 
 impl LayoutKind {
     pub fn groups(self) -> &'static [&'static [wgpu::BindGroupLayoutEntry]] {
         use super::resources::{
-            FRAME_ENTRIES, MATERIAL_ENTRIES, MIPMAP_SOURCE_ENTRIES, OUTPUT_ENTRIES,
-            TEXTURED_ENTRIES,
+            BLOOM_ENTRIES, FRAME_ENTRIES, MATERIAL_ENTRIES, MIPMAP_SOURCE_ENTRIES,
+            OCCLUSION_ENTRIES, OUTPUT_ENTRIES, TEXTURED_ENTRIES,
         };
         match self {
             LayoutKind::Surface => &[FRAME_ENTRIES, MATERIAL_ENTRIES],
             LayoutKind::Water => &[FRAME_ENTRIES, TEXTURED_ENTRIES],
             LayoutKind::Output => &[OUTPUT_ENTRIES],
+            LayoutKind::Bloom => &[BLOOM_ENTRIES],
+            LayoutKind::Occlusion => &[OCCLUSION_ENTRIES],
             LayoutKind::ShadowMerged => &[FRAME_ENTRIES],
             LayoutKind::Mipmap => &[MIPMAP_SOURCE_ENTRIES],
+            LayoutKind::Bake => &[],
         }
     }
 }
 
-/// Everything a render pipeline is made from except its shader module, whose one
-/// WGSL source makes both wgpu's module and the precompiler's. Vertex and fragment
-/// stages share the module.
+/// Everything a render pipeline is made from except its shader code, whose
+/// [`StageSources`] make both wgpu's modules and the precompiler's: a module per
+/// stage, each with only that stage's code.
 #[derive(Debug)]
 pub struct PipelineSpec {
     pub label: &'static str,
@@ -96,19 +107,52 @@ pub struct PipelineSpec {
 }
 
 impl PipelineSpec {
-    /// The wgpu pipeline; instant once [`Precompiler`] has compiled the same one.
+    /// The stages of the module `code` that this pipeline runs.
+    pub fn stages(&self, code: &str) -> StageSources {
+        StageSources::of(code, self.vertex_entry, self.fragment_entry)
+    }
+
+    /// The wgpu pipeline: the one [`Precompiler`] compiled from this spec if
+    /// `compiled` holds it, else created now with modules of its own (`pipelines.rs`
+    /// says why).
     pub fn create(
         &self,
         device: &wgpu::Device,
         layout: &wgpu::PipelineLayout,
-        module: &wgpu::ShaderModule,
+        sources: &StageSources,
+        compiled: Option<&JsValue>,
     ) -> wgpu::RenderPipeline {
+        match compiled.filter(|pipeline| !pipeline.is_null()) {
+            Some(pipeline) => hand_over(device, pipeline, || {
+                self.create_new(device, layout, sources)
+            }),
+            None => self.create_new(device, layout, sources),
+        }
+    }
+
+    fn create_new(
+        &self,
+        device: &wgpu::Device,
+        layout: &wgpu::PipelineLayout,
+        sources: &StageSources,
+    ) -> wgpu::RenderPipeline {
+        let module = |stage, source: &str| {
+            device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some(&format!("{} {stage}", self.label)),
+                source: wgpu::ShaderSource::Wgsl(source.into()),
+            })
+        };
+        let vertex = module("vertex", &sources.vertex);
+        let fragment = sources
+            .fragment
+            .as_deref()
+            .map(|source| module("fragment", source));
         let buffers: Vec<_> = self.buffers.iter().cloned().map(Some).collect();
         device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
             label: Some(self.label),
             layout: Some(layout),
             vertex: wgpu::VertexState {
-                module,
+                module: &vertex,
                 entry_point: Some(self.vertex_entry),
                 compilation_options: Default::default(),
                 buffers: &buffers,
@@ -117,7 +161,9 @@ impl PipelineSpec {
             depth_stencil: self.depth_stencil.clone(),
             multisample: self.multisample,
             fragment: self.fragment_entry.map(|entry| wgpu::FragmentState {
-                module,
+                module: fragment
+                    .as_ref()
+                    .expect("a fragment entry point has a fragment source"),
                 entry_point: Some(entry),
                 compilation_options: Default::default(),
                 targets: &self.targets,
@@ -128,20 +174,63 @@ impl PipelineSpec {
     }
 }
 
-/// A browser shader module made from the same WGSL as a wgpu one.
-pub struct RawModule(JsValue);
+/// What the device's `createShaderModule` answers wgpu while it wraps a compiled
+/// pipeline ([`hand_over`]); no pipeline uses it.
+const PLACEHOLDER_WGSL: &str =
+    "@vertex fn placeholder() -> @builtin(position) vec4f { return vec4f(0.0); }";
+
+thread_local! {
+    /// The placeholder module, made once.
+    static PLACEHOLDER: std::cell::OnceCell<JsValue> = const { std::cell::OnceCell::new() };
+}
+
+/// Run `create`, wgpu creating a pipeline, with the browser device's
+/// `createRenderPipeline` answering `pipeline` (compiled in the background from the
+/// same spec) and its `createShaderModule` a placeholder, so wgpu wraps that pipeline
+/// rather than having the browser build its twin. While set, the device's own
+/// properties shadow its prototype's methods, which wasm-bindgen calls as methods.
+fn hand_over<T>(device: &wgpu::Device, pipeline: &JsValue, create: impl FnOnce() -> T) -> T {
+    let raw = raw_device(device);
+    let module = PLACEHOLDER.with(|placeholder| {
+        placeholder
+            .get_or_init(|| raw.create_shader_module(&object(&[("code", PLACEHOLDER_WGSL.into())])))
+            .clone()
+    });
+    let pipeline = pipeline.clone();
+    let answer_pipeline = Closure::<dyn Fn() -> JsValue>::new(move || pipeline.clone());
+    let answer_module = Closure::<dyn Fn() -> JsValue>::new(move || module.clone());
+    let target: &Object = raw.unchecked_ref();
+    set(
+        target,
+        "createRenderPipeline",
+        answer_pipeline.as_ref().clone(),
+    );
+    set(target, "createShaderModule", answer_module.as_ref().clone());
+    let created = create();
+    for name in ["createRenderPipeline", "createShaderModule"] {
+        Reflect::delete_property(target, &name.into()).expect("the device's own property");
+    }
+    created
+}
+
+/// Browser shader modules made from the same WGSL as wgpu's: the vertex stage's and,
+/// if any, the fragment stage's.
+struct RawModules {
+    vertex: JsValue,
+    fragment: Option<JsValue>,
+}
 
 /// A fixed set of pipelines compiling in the background from the moment the
 /// renderer exists, so the page builds the arena meanwhile; the owner creates the
 /// wgpu pipelines once [`Background::done`] (or at once when it cannot wait).
 pub struct Background {
-    /// The compiled pipelines once all have finished, held so the browser's cache
-    /// keeps them until wgpu asks.
+    /// The compiled pipelines in job order once all have finished (null for one that
+    /// failed), for wgpu to wrap.
     compiled: Rc<RefCell<Option<Vec<JsValue>>>>,
 }
 
 impl Background {
-    pub fn start(device: &wgpu::Device, jobs: &[(&PipelineSpec, &str)]) -> Self {
+    pub fn start(device: &wgpu::Device, jobs: &[(&PipelineSpec, &StageSources)]) -> Self {
         let compiled = Rc::new(RefCell::new(None));
         let held = compiled.clone();
         // Issued now: a spawned task would only start once the page yields, after the
@@ -155,6 +244,11 @@ impl Background {
 
     pub fn done(&self) -> bool {
         self.compiled.borrow().is_some()
+    }
+
+    /// The compiled pipeline of job `index`, once all have finished.
+    pub fn compiled(&self, index: usize) -> Option<JsValue> {
+        self.compiled.borrow().as_ref()?.get(index).cloned()
     }
 }
 
@@ -198,17 +292,27 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         }
     }
 
-    /// A browser module for one pipeline (`pipelines.rs` says why not shared).
-    pub fn module(&self, label: &str, source: &str) -> RawModule {
-        let descriptor = object(&[("label", label.into()), ("code", source.into())]);
-        RawModule(self.device.create_shader_module(&descriptor))
+    /// Browser modules for one pipeline (`pipelines.rs` says why not shared).
+    fn modules(&self, label: &str, sources: &StageSources) -> RawModules {
+        let module = |stage, source: &str| {
+            let label = format!("{label} {stage}");
+            let descriptor = object(&[("label", label.into()), ("code", source.into())]);
+            self.device.create_shader_module(&descriptor)
+        };
+        RawModules {
+            vertex: module("vertex", &sources.vertex),
+            fragment: sources
+                .fragment
+                .as_deref()
+                .map(|source| module("fragment", source)),
+        }
     }
 
     /// Queue `key` for compiling; callers start only keys not [`queued`](Self::queued)
     /// yet.
-    pub fn start(&self, key: K, spec: &PipelineSpec, module: &RawModule) {
+    pub fn start(&self, key: K, spec: &PipelineSpec, sources: &StageSources) {
         self.queue.borrow_mut().started.insert(key);
-        match self.descriptor(spec, module) {
+        match self.descriptor(spec, &self.modules(spec.label, sources)) {
             Ok(descriptor) => self.queue.borrow_mut().waiting.push_back((key, descriptor)),
             Err(error) => {
                 // wgpu compiles it synchronously, as before.
@@ -231,9 +335,10 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
         self.queue.borrow().finished.contains_key(key)
     }
 
-    /// Release the compiled copy once wgpu holds the pipeline.
-    pub fn release(&self, key: &K) {
-        self.queue.borrow_mut().finished.remove(key);
+    /// The compiled pipeline of `key` (null if it failed), for wgpu to wrap; the
+    /// precompiler lets go of it.
+    pub fn take(&self, key: &K) -> Option<JsValue> {
+        self.queue.borrow_mut().finished.remove(key)
     }
 
     /// Pipelines waiting for or being compiled.
@@ -266,36 +371,33 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     }
 
     /// Start compiling every spec in the background now; the future resolves to the
-    /// compiled pipelines, for the few fixed ones ([`Background`]). Hold them until
-    /// wgpu has created its own, so the browser's cache still has them.
+    /// compiled pipelines in job order (null for one that could not compile), for the
+    /// few fixed ones ([`Background`]).
     pub fn compile_all(
         &self,
-        jobs: &[(&PipelineSpec, &str)],
+        jobs: &[(&PipelineSpec, &StageSources)],
     ) -> impl Future<Output = Vec<JsValue>> + 'static {
-        let modules: Vec<RawModule> = jobs
-            .iter()
-            .map(|(spec, source)| self.module(spec.label, source))
-            .collect();
         let mut promises = Vec::with_capacity(jobs.len());
-        for ((spec, _), module) in jobs.iter().zip(&modules) {
-            match self.descriptor(spec, module) {
+        for (spec, sources) in jobs {
+            match self.descriptor(spec, &self.modules(spec.label, sources)) {
                 Ok(descriptor) => {
                     promises.push(self.device.create_render_pipeline_async(&descriptor))
                 }
-                Err(error) => web_sys::console::warn_1(
-                    &format!("Cannot precompile the {} pipeline: {error}", spec.label).into(),
-                ),
+                Err(error) => {
+                    web_sys::console::warn_1(
+                        &format!("Cannot precompile the {} pipeline: {error}", spec.label).into(),
+                    );
+                    promises.push(Promise::resolve(&JsValue::NULL));
+                }
             }
         }
         async move {
             let mut compiled = Vec::with_capacity(promises.len());
             for promise in promises {
-                match JsFuture::from(promise).await {
-                    Ok(pipeline) => compiled.push(pipeline),
-                    Err(error) => {
-                        web_sys::console::warn_2(&"Pipeline precompile failed:".into(), &error)
-                    }
-                }
+                compiled.push(JsFuture::from(promise).await.unwrap_or_else(|error| {
+                    web_sys::console::warn_2(&"Pipeline precompile failed:".into(), &error);
+                    JsValue::NULL
+                }));
             }
             compiled
         }
@@ -325,7 +427,7 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
     }
 
     /// The browser descriptor wgpu builds for `spec` (wgpu 30 `create_render_pipeline`).
-    fn descriptor(&self, spec: &PipelineSpec, module: &RawModule) -> Result<Object, String> {
+    fn descriptor(&self, spec: &PipelineSpec, modules: &RawModules) -> Result<Object, String> {
         let buffers = spec
             .buffers
             .iter()
@@ -362,7 +464,7 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
             })
             .collect::<Result<Array, String>>()?;
         let vertex = object(&[
-            ("module", module.0.clone()),
+            ("module", modules.vertex.clone()),
             ("entryPoint", spec.vertex_entry.into()),
             ("buffers", buffers.into()),
         ]);
@@ -383,8 +485,12 @@ impl<K: Copy + Eq + Hash + 'static> Precompiler<K> {
                     None => Ok(JsValue::NULL),
                 })
                 .collect::<Result<Array, String>>()?;
+            let module = modules
+                .fragment
+                .clone()
+                .ok_or("a fragment entry point without a fragment source")?;
             let fragment = object(&[
-                ("module", module.0.clone()),
+                ("module", module),
                 ("entryPoint", entry.into()),
                 ("targets", targets.into()),
             ]);
@@ -501,7 +607,10 @@ fn texture_format(format: wgpu::TextureFormat) -> Result<&'static str, String> {
         F::Rgba8UnormSrgb => "rgba8unorm-srgb",
         F::Bgra8Unorm => "bgra8unorm",
         F::Rgba16Float => "rgba16float",
+        F::Rg11b10Ufloat => "rg11b10ufloat",
+        F::R8Unorm => "r8unorm",
         F::Depth32Float => "depth32float",
+        F::Depth16Unorm => "depth16unorm",
         other => return Err(format!("texture format {other:?}")),
     })
 }
@@ -576,6 +685,7 @@ fn depth_stencil(state: &wgpu::DepthStencilState) -> Result<Object, String> {
 fn blend_factor(factor: wgpu::BlendFactor) -> Result<&'static str, String> {
     use wgpu::BlendFactor as B;
     Ok(match factor {
+        B::Zero => "zero",
         B::One => "one",
         B::SrcAlpha => "src-alpha",
         B::OneMinusSrcAlpha => "one-minus-src-alpha",

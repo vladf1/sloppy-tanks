@@ -55,7 +55,7 @@ try {
   await checkMultiplayerMenu(alice.page);
   await alice.page.locator("#player-name").fill("Room browser Alice");
   // The tank cards are shared by both tabs and choose the multiplayer tank too.
-  await click(alice.page, '[data-kind="heavy"]');
+  await click(alice.page, '.start [data-kind="heavy"]');
   await chooseMap(alice.page, "harbor");
   await alice.page.locator("#create-round-minutes").fill("3");
   await alice.page.screenshot({ path: `${output}/create.png` });
@@ -115,7 +115,7 @@ try {
   assert.match(await row.innerText(), /3 min/);
   await bob.page.screenshot({ path: `${output}/room-list.png` });
   await bob.page.locator("#player-name").fill("Bob <b>literal</b>");
-  await click(bob.page, '[data-kind="scout"]');
+  await click(bob.page, '.start [data-kind="scout"]');
   await click(bob.page, roomSelector);
   // An open room keeps its own map: the map choice shows that map and waits.
   assert.equal(await bob.page.locator(".map-choice").evaluate((part) => part.inert), true);

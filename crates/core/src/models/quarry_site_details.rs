@@ -1,7 +1,6 @@
-//! Port of `quarry-site-details.ts`: the work-floor gravel, dry scrub on the
-//! apron, the screening conveyor, site office dressing, the site sign and two
-//! mobile lighting towers. All tall dressing is outside the playable wall;
-//! in-arena gravel is only 2–4 cm high.
+//! Port of `quarry-site-details.ts`: dry scrub on the apron, the screening
+//! conveyor, site office dressing, the site sign and two mobile lighting towers.
+//! All of it stands outside the playable wall.
 
 use std::f64::consts::{FRAC_PI_2, PI};
 use std::sync::Arc;
@@ -11,16 +10,15 @@ use glam::DVec3;
 use crate::geometry::{Mesh, icosahedron_geometry, plane_geometry, widen};
 use crate::scene::{Material, Node, Side, TextureRef};
 
+use super::batching::batch;
 use super::effects_scenery::QUARRY_SIGN_TEXTURE;
 use super::harbor_surfaces::{steel_beam, steel_box};
 use super::model_primitives::adopt_children;
 use super::model_primitives::{box_part, cylinder_part, put, rotated};
-use super::quarry_surfaces::{RubbleStone, sandstone_rubble};
+use super::quarry_machinery::{PAINT, site_livery};
 use super::quarry_terrain::quarry_ground_drop;
-use crate::geometry::math::{hex_to_linear, js_hypot};
-use crate::sim::arena::spawn_positions;
+use crate::geometry::math::hex_to_linear;
 use crate::sim::math::Random;
-use crate::sim::types::Team;
 
 /// The "DUSTY DIG / 03 — ACTIVE QUARRY" board (drawn by the browser, see
 /// [`QUARRY_SIGN_TEXTURE`]) on two posts.
@@ -39,8 +37,11 @@ fn site_sign(group: &mut Node) {
 }
 
 /// Machinery, stockpiles and haul lanes on the apron that scrub never grows on.
-const SCRUB_KEEP_OUT: [[f64; 4]; 7] = [
+const SCRUB_KEEP_OUT: [[f64; 4]; 10] = [
     [-31.0, -16.0, -76.0, -60.0], // excavator
+    [-77.0, -65.0, 24.0, 44.0],   // wheel loader and its heap
+    [3.0, 26.0, 65.0, 76.0],      // drill rig and its drilled line
+    [-31.0, -15.0, 65.0, 78.0],   // south spoil heap
     [-66.0, -38.0, -74.0, -65.0], // screening conveyor and hopper
     [5.0, 27.0, -78.0, -59.0],    // sentinel butte
     [23.0, 54.0, -76.0, -62.0],   // site office, water tank, drums and sign
@@ -49,67 +50,497 @@ const SCRUB_KEEP_OUT: [[f64; 4]; 7] = [
     [63.0, 86.0, 24.0, 70.0],     // east haul ramp
 ];
 
-/// `quarrySiteDetails(equipment, gravel)`: append the site dressing to
-/// `equipment` and the work-floor gravel rubble to `gravel`.
-pub fn quarry_site_details(equipment: &mut Node, gravel: &mut Node) {
+/// `quarrySiteDetails(equipment)`: append the site dressing to `equipment`. The
+/// work floor's loose gravel is the soil shader's (`quarry_soil.wgsl`): stones a
+/// few centimetres high cost a GPU nothing there, and gather where the bake says.
+pub fn quarry_site_details(equipment: &mut Node) {
     let mut rng = Random::new(62541.0);
-    // Spilled haul loads leave tight clusters of flat gravel across the work floor,
-    // with a scatter of strays between them. Spawn pads stay clean.
-    let pads: Vec<_> = spawn_positions(Team::Blue, 1.0)
-        .into_iter()
-        .chain(spawn_positions(Team::Red, 1.0))
-        .collect();
-    let mut stones = Vec::new();
-    let mut stone = |rng: &mut Random, x: f64, z: f64, size: f64| {
-        if x.abs().max(z.abs()) > 58.5 || pads.iter().any(|p| js_hypot(&[x - p.x, z - p.z]) < 3.4) {
-            return;
-        }
-        let h = rng.range(0.04, 0.07);
-        let d = size * rng.range(0.6, 1.1);
-        let rot_y = rng.range(-PI, PI);
-        let shade = rng.range(0.55, 0.95);
-        stones.push(RubbleStone {
-            x,
-            y: 0.008,
-            z,
-            w: size,
-            h,
-            d,
-            rot_y,
-            shade,
-        });
-    };
-    for _ in 0..40 {
-        let cx = rng.range(-56.0, 56.0);
-        let cz = rng.range(-56.0, 56.0);
-        let spread = rng.range(0.8, 2.6);
-        let count = 10 + rng.range(0.0, 16.0).floor() as usize;
-        for _ in 0..count {
-            let angle = rng.range(0.0, PI * 2.0);
-            let r = spread * rng.next().sqrt();
-            let size = rng.range(0.1, 0.3);
-            stone(&mut rng, cx + angle.cos() * r, cz + angle.sin() * r, size);
-        }
-    }
-    // Strays between the clusters, then a few flat spalls knocked off the rock
-    // islands by earlier shelling.
-    for (count, min_size, max_size) in [(240, 0.12, 0.42), (30, 0.45, 0.8)] {
-        for _ in 0..count {
-            let (x, z, size) = (
-                rng.range(-57.0, 57.0),
-                rng.range(-57.0, 57.0),
-                rng.range(min_size, max_size),
-            );
-            stone(&mut rng, x, z, size);
-        }
-    }
-    gravel.children.push(sandstone_rubble(&stones));
     equipment.children.push(scrub(&mut rng));
     conveyor_and_yard(equipment);
     site_sign(equipment);
     // Mobile lighting plants stand by for night shifts, giving the apron some height.
     light_tower(equipment, 57.0, -67.5, -0.4);
     light_tower(equipment, -67.0, 58.0, 2.2);
+    // A blast-hole drill works the south apron, its mast up over the line of
+    // holes it has drilled (their cuttings are the scenery's spoil).
+    drill_rig(equipment, DRILL_RIG[0], DRILL_RIG[1], DRILL_RIG[2]);
+    // A wheel loader works the west apron's heap, bucket down at its toe.
+    wheel_loader(equipment, WHEEL_LOADER[0], WHEEL_LOADER[1], WHEEL_LOADER[2]);
+}
+
+/// The wheel loader's spot on the west apron: x, z and yaw (its bucket faces
+/// the heap beside it, toward +z).
+const WHEEL_LOADER: [f64; 3] = [-70.6, 29.5, -1.6];
+
+/// `wheelLoader(group, x, z, yaw)`: an articulated wheel loader in fleet yellow,
+/// bucket lowered: rear engine bay and counterweight, cab over the hinge, lift
+/// arms and a toothed bucket out front on four big tyres. Built along +x.
+fn wheel_loader(group: &mut Node, x: f64, z: f64, yaw: f64) {
+    const DARK: u32 = 0x4a4238;
+    const FRAME: u32 = 0x5a564c;
+    let mut loader = Node::group("");
+    for (wx, wz) in [(-1.7, -1.15), (-1.7, 1.15), (1.6, -1.15), (1.6, 1.15)] {
+        let tyre = rotated(cylinder_part(0.85, 0.7, 0x343431, 12), FRAC_PI_2, 0.0, 0.0);
+        put(&mut loader, tyre, wx, 0.85, wz);
+        let hub = rotated(cylinder_part(0.36, 0.74, 0x7e4a2c, 8), FRAC_PI_2, 0.0, 0.0);
+        put(&mut loader, hub, wx, 0.85, wz);
+    }
+    put(&mut loader, steel_box(5.6, 0.5, 1.5, FRAME), 0.0, 1.05, 0.0);
+    // Engine bay and counterweight at the back, a grille in its tail.
+    put(
+        &mut loader,
+        box_part(2.6, 1.3, 1.9, PAINT, 0.0),
+        -1.75,
+        1.95,
+        0.0,
+    );
+    put(
+        &mut loader,
+        box_part(0.5, 0.9, 2.1, PAINT, 0.0),
+        -3.1,
+        1.55,
+        0.0,
+    );
+    put(
+        &mut loader,
+        box_part(0.05, 0.75, 1.5, 0x3d413b, 0.0),
+        -3.37,
+        1.65,
+        0.0,
+    );
+    put(
+        &mut loader,
+        cylinder_part(0.08, 0.9, 0x7e4a2c, 8),
+        -1.2,
+        3.0,
+        0.6,
+    );
+    // Cab over the hinge, dark glass all round under a pale roof.
+    put(
+        &mut loader,
+        box_part(1.5, 1.7, 1.6, PAINT, 0.0),
+        0.05,
+        2.65,
+        0.0,
+    );
+    put(
+        &mut loader,
+        box_part(1.25, 1.0, 1.66, 0x42483c, 0.0),
+        0.08,
+        2.85,
+        0.0,
+    );
+    put(
+        &mut loader,
+        box_part(1.56, 1.0, 1.35, 0x42483c, 0.0),
+        0.05,
+        2.85,
+        0.0,
+    );
+    put(
+        &mut loader,
+        steel_box(1.75, 0.12, 1.8, DARK),
+        0.05,
+        3.56,
+        0.0,
+    );
+    // Front frame, lift arms down to the bucket and the tilt ram.
+    put(
+        &mut loader,
+        box_part(1.6, 0.9, 1.4, PAINT, 0.0),
+        1.6,
+        1.6,
+        0.0,
+    );
+    for side in [-0.55, 0.55] {
+        steel_beam(
+            &mut loader,
+            [1.1, 2.2, side],
+            [3.55, 0.75, side],
+            0.28,
+            FRAME,
+        );
+    }
+    steel_beam(
+        &mut loader,
+        [1.6, 2.0, 0.0],
+        [3.3, 1.35, 0.0],
+        0.18,
+        0x9a9a92,
+    );
+    put(
+        &mut loader,
+        steel_box(1.15, 0.12, 2.8, DARK),
+        3.95,
+        0.2,
+        0.0,
+    );
+    put(
+        &mut loader,
+        steel_box(0.14, 1.05, 2.8, DARK),
+        3.4,
+        0.68,
+        0.0,
+    );
+    for side in [-1.0, 1.0] {
+        put(
+            &mut loader,
+            steel_box(1.1, 0.95, 0.1, DARK),
+            3.9,
+            0.62,
+            side * 1.35,
+        );
+    }
+    for k in 0..6 {
+        let tooth_z = -1.15 + f64::from(k) * 0.46;
+        put(
+            &mut loader,
+            steel_box(0.32, 0.08, 0.16, 0x9a9a92),
+            4.6,
+            0.17,
+            tooth_z,
+        );
+    }
+    site_livery(&mut loader, 1.9);
+    batch(&mut loader);
+    loader.set_rotation_euler(0.0, yaw, 0.0);
+    loader.position = DVec3::new(x, -1.79, z);
+    adopt_children(group, loader);
+}
+
+/// The drill rig's spot on the south apron: x, z and yaw.
+const DRILL_RIG: [f64; 3] = [9.0, 70.2, 0.08];
+/// The drilled holes run east of the rig along the apron, metres apart.
+const DRILL_HOLES: usize = 6;
+const DRILL_HOLE_SPACING: f64 = 2.6;
+
+/// `drillRig(group, x, z, yaw)`: a crawler blast-hole drill in fleet yellow on
+/// dark tracks: compressor house, cab, and a tall feed mast with its rotation
+/// head, rod carousel and dust hood at the collar. Painted in the colours the
+/// site's other steel already uses, so it joins their batches.
+fn drill_rig(group: &mut Node, x: f64, z: f64, yaw: f64) {
+    const YELLOW: u32 = PAINT;
+    const DARK: u32 = 0x4a4238;
+    const FRAME: u32 = 0x5a564c;
+    let mut rig = Node::group("");
+    for side in [-1.0, 1.0] {
+        put(
+            &mut rig,
+            steel_box(5.2, 0.95, 0.72, DARK),
+            0.0,
+            0.48,
+            side * 1.2,
+        );
+        for dx in [-2.2, 2.2] {
+            let idler = rotated(cylinder_part(0.42, 0.76, 0x343431, 10), FRAC_PI_2, 0.0, 0.0);
+            put(&mut rig, idler, dx, 0.48, side * 1.2);
+        }
+    }
+    put(&mut rig, steel_box(4.8, 0.45, 2.5, FRAME), 0.0, 1.18, 0.0);
+    // Compressor and engine house at the back, grille facing aft.
+    put(
+        &mut rig,
+        box_part(2.7, 1.7, 2.4, YELLOW, 0.0),
+        -1.0,
+        2.25,
+        0.0,
+    );
+    put(
+        &mut rig,
+        box_part(0.05, 1.15, 1.9, 0x3d413b, 0.0),
+        -2.38,
+        2.25,
+        0.0,
+    );
+    put(
+        &mut rig,
+        cylinder_part(0.09, 1.1, 0x7e4a2c, 8),
+        -1.6,
+        3.6,
+        0.8,
+    );
+    // Cab forward on one side, dark glass all round.
+    put(
+        &mut rig,
+        box_part(1.45, 1.85, 1.3, YELLOW, 0.0),
+        1.25,
+        2.33,
+        -0.58,
+    );
+    put(
+        &mut rig,
+        box_part(1.2, 1.0, 1.36, 0x42483c, 0.0),
+        1.28,
+        2.6,
+        -0.58,
+    );
+    put(
+        &mut rig,
+        box_part(1.51, 1.0, 1.05, 0x42483c, 0.0),
+        1.25,
+        2.6,
+        -0.58,
+    );
+    put(
+        &mut rig,
+        steel_box(1.65, 0.12, 1.5, DARK),
+        1.25,
+        3.32,
+        -0.58,
+    );
+    // The feed mast, standing on its cradle at the front, braced back to the deck.
+    let mast_x = 2.65;
+    put(
+        &mut rig,
+        box_part(0.55, 10.2, 0.6, YELLOW, 0.0),
+        mast_x,
+        6.0,
+        0.55,
+    );
+    // Lattice bracing zigzags up both sides of the mast.
+    for side in [0.2, 0.9] {
+        for k in 0..6 {
+            let y = 1.4 + f64::from(k) * 1.55;
+            let (from, to) = if k % 2 == 0 {
+                (-0.26, 0.26)
+            } else {
+                (0.26, -0.26)
+            };
+            steel_beam(
+                &mut rig,
+                [mast_x + from, y, side],
+                [mast_x + to, y + 1.55, side],
+                0.06,
+                FRAME,
+            );
+        }
+    }
+    put(
+        &mut rig,
+        steel_box(0.16, 9.8, 0.2, 0x9a9a92),
+        mast_x + 0.34,
+        5.9,
+        0.55,
+    );
+    for dz in [0.15, 0.95] {
+        steel_beam(
+            &mut rig,
+            [0.9, 1.4, dz],
+            [mast_x - 0.2, 4.4, dz],
+            0.16,
+            FRAME,
+        );
+    }
+    put(
+        &mut rig,
+        steel_box(0.75, 0.9, 0.8, 0x4c5f5a),
+        mast_x + 0.5,
+        7.2,
+        0.55,
+    );
+    put(
+        &mut rig,
+        cylinder_part(0.3, 3.4, 0x8a4f2e, 10),
+        mast_x - 0.45,
+        3.9,
+        1.15,
+    );
+    put(
+        &mut rig,
+        steel_box(0.95, 0.5, 0.95, 0x515f59),
+        mast_x + 0.4,
+        0.3,
+        0.55,
+    );
+    put(
+        &mut rig,
+        cylinder_part(0.06, 6.6, 0x5b625b, 6),
+        mast_x + 0.45,
+        3.85,
+        0.55,
+    );
+    // Hydraulic jacks down to the apron and a hose loop off the mast head.
+    for (jx, jz) in [(-2.3, -1.45), (-2.3, 1.45), (2.2, -1.45)] {
+        put(&mut rig, steel_box(0.26, 1.2, 0.26, FRAME), jx, 0.6, jz);
+        put(&mut rig, steel_box(0.6, 0.08, 0.6, DARK), jx, 0.04, jz);
+    }
+    steel_beam(
+        &mut rig,
+        [mast_x - 0.2, 11.0, 0.55],
+        [0.6, 3.5, 0.9],
+        0.07,
+        0x343431,
+    );
+    drill_rig_details(&mut rig, mast_x);
+    site_livery(&mut rig, 2.3);
+    batch(&mut rig);
+    rig.set_rotation_euler(0.0, yaw, 0.0);
+    rig.position = DVec3::new(x, -1.79, z);
+    adopt_children(group, rig);
+}
+
+/// The secondary structure that sells the drill rig up close: the crown block
+/// and its sheaves, a caged ladder up the mast, hazard bands at its foot, the
+/// rod carousel, deck handrails, hose loops and the cab's beacon and lamps. All
+/// in colours the rig already uses, so it adds no batch.
+fn drill_rig_details(rig: &mut Node, mast_x: f64) {
+    const DARK: u32 = 0x4a4238;
+    const FRAME: u32 = 0x5a564c;
+    const STEEL: u32 = 0x9a9a92;
+    const RUBBER: u32 = 0x343431;
+    // Crown block over the mast head, two sheaves turning the feed cables.
+    put(rig, steel_box(0.95, 0.55, 0.95, DARK), mast_x, 11.35, 0.55);
+    for dz in [0.3, 0.8] {
+        let sheave = rotated(cylinder_part(0.32, 0.1, RUBBER, 10), FRAC_PI_2, 0.0, 0.0);
+        put(rig, sheave, mast_x + 0.2, 11.55, dz);
+    }
+    for dz in [0.38, 0.72] {
+        steel_beam(
+            rig,
+            [mast_x + 0.5, 11.5, dz],
+            [mast_x + 0.5, 7.7, dz],
+            0.035,
+            RUBBER,
+        );
+    }
+    // Black hazard bands round the mast foot.
+    for k in 0..3 {
+        put(
+            rig,
+            steel_box(0.6, 0.2, 0.65, RUBBER),
+            mast_x,
+            1.3 + f64::from(k) * 0.42,
+            0.55,
+        );
+    }
+    // A caged ladder up the back of the mast.
+    for dz in [0.3, 0.8] {
+        put(
+            rig,
+            steel_box(0.05, 8.6, 0.05, FRAME),
+            mast_x - 0.42,
+            5.9,
+            dz,
+        );
+    }
+    for k in 0..20 {
+        put(
+            rig,
+            steel_box(0.05, 0.04, 0.5, FRAME),
+            mast_x - 0.42,
+            1.9 + f64::from(k) * 0.42,
+            0.55,
+        );
+    }
+    for k in 0..6 {
+        let y = 4.0 + f64::from(k) * 1.2;
+        put(
+            rig,
+            steel_box(0.04, 0.05, 0.7, FRAME),
+            mast_x - 0.85,
+            y,
+            0.55,
+        );
+        for dz in [0.2, 0.9] {
+            put(
+                rig,
+                steel_box(0.45, 0.05, 0.04, FRAME),
+                mast_x - 0.64,
+                y,
+                dz,
+            );
+        }
+    }
+    // The rod carousel alongside the mast: spare drill steel in a rack.
+    for k in 0..5 {
+        let angle = f64::from(k) * 1.25;
+        put(
+            rig,
+            cylinder_part(0.055, 5.6, 0x5b625b, 6),
+            mast_x + 0.62 + angle.cos() * 0.16,
+            4.8,
+            1.15 + angle.sin() * 0.16,
+        );
+    }
+    for y in [2.2, 7.4] {
+        put(rig, steel_box(0.5, 0.08, 0.5, DARK), mast_x + 0.62, y, 1.15);
+    }
+    // Handrails round the deck over the compressor house.
+    let rail_y = 3.55;
+    for (from, to) in [
+        ([-2.35f64, -1.2f64], [0.35f64, -1.2f64]),
+        ([-2.35, 1.2], [2.0, 1.2]),
+        ([-2.35, -1.2], [-2.35, 1.2]),
+    ] {
+        let size = [
+            (to[0] - from[0]).abs().max(0.05),
+            (to[1] - from[1]).abs().max(0.05),
+        ];
+        put(
+            rig,
+            steel_box(size[0], 0.05, size[1], STEEL),
+            (from[0] + to[0]) / 2.0,
+            rail_y,
+            (from[1] + to[1]) / 2.0,
+        );
+    }
+    for (px, pz) in [
+        (-2.35, -1.2),
+        (-1.0, -1.2),
+        (0.35, -1.2),
+        (-2.35, 1.2),
+        (-0.3, 1.2),
+        (2.0, 1.2),
+    ] {
+        put(
+            rig,
+            steel_box(0.05, 0.5, 0.05, STEEL),
+            px,
+            rail_y - 0.25,
+            pz,
+        );
+    }
+    // Hose loops sagging from the deck up to the rotation head.
+    let sag = [
+        [0.2, 3.2, 1.0],
+        [1.0, 3.9, 1.35],
+        [1.8, 5.2, 1.4],
+        [mast_x + 0.2, 7.0, 0.95],
+    ];
+    for pair in sag.windows(2) {
+        steel_beam(rig, pair[0], pair[1], 0.075, RUBBER);
+    }
+    // Cab roof: beacon post and work lamps.
+    put(rig, cylinder_part(0.12, 0.28, 0x7e4a2c, 8), 1.0, 3.52, -0.9);
+    for dz in [-1.05, -0.15] {
+        put(rig, steel_box(0.18, 0.18, 0.22, DARK), 1.95, 3.45, dz);
+    }
+    // Steps up to the cab off the track frame.
+    for k in 0..3 {
+        put(
+            rig,
+            steel_box(0.5, 0.05, 0.3, FRAME),
+            1.3,
+            0.45 + f64::from(k) * 0.42,
+            -1.75,
+        );
+    }
+}
+
+/// Where the rig's drilled holes stand on the apron, east of it along its line.
+pub(super) fn drill_holes() -> Vec<(f64, f64)> {
+    let [x, z, yaw] = DRILL_RIG;
+    let (sin, cos) = yaw.sin_cos();
+    (0..DRILL_HOLES)
+        .map(|i| {
+            let along = 4.2 + i as f64 * DRILL_HOLE_SPACING;
+            let across = 0.55 + if i % 2 == 0 { 0.0 } else { 1.3 };
+            (
+                x + along * cos + across * sin,
+                z - along * sin + across * cos,
+            )
+        })
+        .collect()
 }
 
 /// Dry scrub holds the undisturbed shoulders, clear of traffic, machinery and the

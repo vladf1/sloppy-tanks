@@ -5,7 +5,7 @@ use serde_json::{Map, Value, json};
 use sloppy_render::gpu::Renderer;
 use sloppy_render::presentation::Presentation;
 
-use crate::page::FrameTimes;
+use crate::frame_clock::FrameTimes;
 
 /// Draw calls, triangles and GPU resources.
 pub fn renderer_stats(renderer: &Renderer) -> Map<String, Value> {
@@ -18,6 +18,8 @@ pub fn renderer_stats(renderer: &Renderer) -> Map<String, Value> {
         "reflectionDrawCalls": render.reflection_draw_calls,
         "shadowTriangles": render.shadow_triangles,
         "reflectionTriangles": render.reflection_triangles,
+        "occlusionDrawCalls": render.occlusion_draw_calls,
+        "occlusionTriangles": render.occlusion_triangles,
         "mainTriangles": render.main_triangles,
         "instanceRecords": render.instance_records,
         "pipelines": render.pipelines,
@@ -56,6 +58,7 @@ pub fn presentation_stats(view: &Presentation, times: &FrameTimes) -> Map<String
             "mines": counts.mines,
             "pickupEffects": counts.pickup_effects,
             "branches": counts.branches,
+            "libraryPending": counts.library_pending,
         }),
     );
     stats.insert("frameMs".into(), times.frame_ms.into());

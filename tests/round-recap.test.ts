@@ -2,8 +2,17 @@
 // `crates/core/tests/round_recap.rs`; this checks how the battle report shows them.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { recapMarkup } from "../src/game/round-recap";
-import type { RecapMetric, RecapState } from "../src/game/engine-api";
+import {
+  mostValuable,
+  recapMarkup,
+  scoreboardMarkup,
+  standingLine,
+  standoutTile,
+  teamLabel,
+  teamPlace,
+  countLine,
+} from "../src/game/round-recap";
+import type { RecapMetric, RecapState, ScoreboardRow } from "../src/game/engine-api";
 
 const zero = (): Record<RecapMetric, number> => ({
   kills: 0,
@@ -44,8 +53,10 @@ test("a first round reports its values without record callouts", () => {
   assert.match(markup, /<dt>Kills<\/dt><dd>3<\/dd>/);
   assert.match(markup, /<dt>Damage dealt<\/dt><dd>1,234<\/dd>/);
   assert.match(markup, /<dt>Longest life<\/dt><dd>1:35<\/dd>/);
+  // The kills tile measures the round against the best; the peak rank is a detail.
+  assert.match(markup, /recap-progress is-record">.*Ties your personal best</);
   assert.match(markup, /<dt>Top rank<\/dt><dd>Elite<\/dd>/);
-  assert.match(markup, /<dt>Time played<\/dt><dd>2:05<\/dd>/);
+  assert.doesNotMatch(markup, /Time played/);
   assert.match(markup, /<dt>Accuracy<\/dt><dd>—<\/dd>/);
   assert.doesNotMatch(markup, /NEW BEST|BEST |recap-feats/);
   assert.match(markup, /<p class="recap-note"><\/p>/);
@@ -67,7 +78,7 @@ test("improved records are starred and unreached records show the best", () => {
   );
   assert.match(
     markup,
-    /recap-stat is-record" title="Enemy tanks wrecked"><dt>Kills<\/dt><dd>5<\/dd><span>★ NEW BEST/,
+    /recap-stat is-record" title="Enemy tanks destroyed"><dt>Kills<\/dt><dd>5<\/dd><em class="recap-progress is-record">.*★ NEW PERSONAL BEST/,
   );
   assert.match(markup, /<dd>400<\/dd><span>BEST 900<\/span>/);
   assert.match(markup, /recap-detail is-record[^>]*><dt>Mine kills<\/dt><dd>★ 2<\/dd>/);
@@ -79,5 +90,106 @@ test("improved records are starred and unreached records show the best", () => {
 test("storage that refuses records says so", () => {
   const markup = recapMarkup(round, recap({ persisted: false, damageTaken: 250.4 }));
   assert.match(markup, /Personal bests couldn't be saved in this browser/);
-  assert.match(markup, /<dt>Damage taken<\/dt><dd>250<\/dd>/);
+});
+
+test("the report's details are highlights, not a ledger of every number", () => {
+  const stats = {
+    ...zero(),
+    kills: 2,
+    busiestMinute: 2,
+    multikill: 2,
+    pickups: 1,
+    revengeKills: 1,
+  };
+  const markup = recapMarkup(round, recap({ stats, best: stats, damageTaken: 100 }));
+  assert.match(markup, /<dt>Revenge kills<\/dt><dd>1<\/dd>/);
+  assert.doesNotMatch(markup, /Busiest minute|Best multikill|Pickups|Damage taken/);
+  const quiet = recapMarkup(round, recap({ stats: { ...zero(), kills: 1, pickups: 3 } }));
+  assert.match(quiet, /<dl class="recap-details" hidden>/);
+  const triple = recapMarkup(round, recap({ stats: { ...zero(), kills: 3, multikill: 3 } }));
+  assert.match(triple, /<dt>Best multikill<\/dt><dd>3<\/dd>/);
+});
+
+test("the report counts in plain words and names the winning team plainly", () => {
+  assert.deepEqual(
+    [
+      [0, "death"],
+      [1, "death"],
+      [2, "kill"],
+    ].map(([count, noun]) => countLine(count as number, noun as string)),
+    ["0 deaths", "1 death", "2 kills"],
+  );
+  assert.equal(teamLabel("BLUE"), "Blue team");
+});
+
+const row = (id: number, name: string, team: 0 | 1, kills: number, deaths: number) =>
+  ({ id, name, team, kills, deaths, kind: "balanced", human: id === 1 }) as ScoreboardRow;
+
+test("the scoreboard lists each team by kills, lights the viewer and crowns one MVP", () => {
+  const rows = [
+    row(1, "You", 1, 2, 1),
+    row(2, "Ace", 0, 2, 0),
+    row(3, "Bob <b>", 0, 0, 2),
+    row(4, "Cat", 1, 3, 4),
+  ];
+  // Most kills wins; fewer wrecks breaks a tie.
+  assert.equal(mostValuable(rows)?.name, "Cat");
+  assert.equal(mostValuable([row(5, "A", 0, 1, 2), row(6, "B", 1, 1, 0)])?.name, "B");
+  assert.equal(mostValuable([row(5, "A", 0, 0, 0)]), null);
+  const markup = scoreboardMarkup(rows, 1, ["BLUE", "RED"], [2, 5]);
+  assert.match(markup, /aria-label="Blue team, 2"><header><b>BLUE<\/b><span><\/span>/);
+  assert.match(
+    markup,
+    /Ace<\/span><b>2<\/b><small>0<\/small><\/li><li><span class="board-name">Bob &lt;b&gt;/,
+  );
+  assert.match(
+    markup,
+    /<li class="mvp"><span class="board-name">Cat<\/span><span class="board-tag mvp-tag">MVP/,
+  );
+  assert.match(
+    markup,
+    /<li class="you"><span class="board-name">You<\/span><span class="board-tag">YOU/,
+  );
+  assert.doesNotMatch(markup, /board-mvp/);
+});
+
+test("pause names who leads and by how much, from the viewer's side", () => {
+  const names = ["BLUE", "RED"];
+  assert.equal(standingLine([3, 4], 1, names), "Your team leads by 1");
+  assert.equal(standingLine([7, 2], 1, names), "Blue team leads by 5");
+  assert.equal(standingLine([2, 2], 0, names), "Level at 2 each");
+});
+
+test("pause places the viewer on their own team by kills, then fewest wrecks", () => {
+  const row = (id: number, team: 0 | 1, kills: number, deaths: number) => ({
+    id,
+    name: `T${id}`,
+    kills,
+    deaths,
+    team,
+    kind: "balanced" as const,
+    human: id === 1,
+  });
+  const rows = [row(1, 1, 2, 1), row(2, 1, 2, 0), row(3, 1, 0, 0), row(4, 0, 9, 0)];
+  assert.deepEqual(teamPlace(rows, 1), { place: 2, of: 3 });
+  assert.equal(teamPlace(rows, 99), null);
+});
+
+test("the report lights one standout tile: a record, then sharp shooting, then a spree", () => {
+  assert.equal(standoutTile(recap({ improved: ["damage"], shots: 10, directHits: 9 })), "damage");
+  assert.equal(standoutTile(recap({ shots: 10, directHits: 8 })), "accuracy");
+  // A lucky shot or two is not sharp shooting.
+  assert.equal(standoutTile(recap({ shots: 2, directHits: 2 })), "");
+  assert.equal(standoutTile(recap({ stats: { ...zero(), bestLife: 3 } })), "bestLife");
+  assert.equal(standoutTile(recap()), "");
+  const markup = recapMarkup(round, recap({ shots: 10, directHits: 8 }));
+  assert.equal(markup.match(/is-standout/g)?.length, 1);
+  assert.match(markup, /recap-stat is-standout" title="Direct hits/);
+});
+
+test("the scoreboard explains how its MVP is picked, only when there is one", () => {
+  const rows = [row(3, "OUTLAW", 1, 2, 0), row(2, "YOU", 1, 2, 1)];
+  assert.match(scoreboardMarkup(rows, 2, ["BLUE", "RED"], [0, 4]), /fewest deaths breaks a tie/);
+  const scoreless = rows.map((row) => ({ ...row, kills: 0 }));
+  assert.doesNotMatch(scoreboardMarkup(scoreless, 2, ["BLUE", "RED"], [0, 0]), /board-key/);
 });
