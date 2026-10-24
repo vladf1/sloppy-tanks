@@ -2,7 +2,7 @@
 //! they are built from, the heap of rubble they leave as low cover, navigation
 //! through the opened footprint, rebuilding in place and a reset restoring them.
 
-mod support;
+use crate::support;
 
 use glam::DVec3;
 use sloppy_core::sim::arena::CoverDef;
