@@ -331,7 +331,6 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
         : `${sideName(winner)} took the round${hud.match.overtime ? " in overtime" : margin ? ` by ${margin}` : ""}.`;
     }
     return `<section class="menu compact results" data-outcome="${outcome}" data-team="${side}" aria-labelledby="results-title">
-      <button id="results-close" class="dialog-close" type="button" aria-label="Close the report and open Battle Setup" title="Battle Setup">${CLOSE_ICON}</button>
       <header class="dialog-head results-banner"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span>${endedEarly && !solo ? `<span class="early-tag">ENDED EARLY</span>` : ""}</div>
       <div class="dialog-title"><h2 id="results-title">${title}</h2>${solo ? "" : scoreMarkup(scores, "Final score", hud.teamNames, team)}</div>
       <p class="dialog-lede">${lede}</p></header>

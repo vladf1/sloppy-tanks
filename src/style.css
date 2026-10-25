@@ -6909,9 +6909,12 @@ html.phone,
 .phone .menu.compact .menu-actions {
   margin-top: 16px;
 }
+/* A label stays on one line: where two keys cannot fit side by side, each takes a row. */
 .phone .menu.compact .menu-actions button {
   flex-basis: 140px;
+  min-width: max-content;
   min-height: 52px;
+  white-space: nowrap;
 }
 /* The score on a phone: one small pill at the top, blue score, clock and red score;
    the team colours stand in for the labels. */
@@ -7031,16 +7034,20 @@ html.phone,
 .phone #respawn-count {
   font-size: 30px;
 }
-/* The battle report on a phone: the outcome band and score, then the two actions. */
+/* The battle report on a phone: the outcome on one line over its score, then the two
+   actions. The band runs edge to edge in the team's light over its rule, with no stripe
+   down one side. */
 .phone .menu.results {
   padding: 0 20px 18px;
 }
-.phone .results .results-banner {
+.phone .menu.results .results-banner {
   margin: 0 -20px;
-  padding: 16px 20px 14px;
+  padding: 18px 16px 16px;
+  box-shadow: none;
 }
 .phone .results .dialog-title h2 {
-  font-size: 46px;
+  font-size: clamp(30px, 10vw, 46px);
+  white-space: nowrap;
 }
 .phone .respawn .vehicles {
   gap: 8px;

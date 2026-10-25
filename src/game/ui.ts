@@ -224,7 +224,7 @@ export class UI {
       .querySelector("#pause-settings")
       ?.addEventListener("click", () => this.settings.open());
     this.overlay.querySelector("#end-battle")?.addEventListener("click", () => actions.endBattle());
-    for (const restart of this.overlay.querySelectorAll("#restart, #results-close")) {
+    for (const restart of this.overlay.querySelectorAll("#restart")) {
       restart.addEventListener("click", () => actions.restart());
     }
   }
