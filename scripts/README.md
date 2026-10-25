@@ -21,7 +21,9 @@ SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/hud-feedback-check.m
 
 Checks play on the WebGPU engine where the browser has it. `SLOPPY_WEBGL=1` hides
 WebGPU from their pages, so the same checks run on the WebGL2 engine through the
-page's own fallback:
+page's own fallback. Checks that play it (`SLOPPY_WEBGL=1`, a `?webgl` URL and
+`webgl-check.mjs`) first rebuild that engine, which `pnpm run wasm` leaves alone,
+when their URL is a local dev server:
 
 ```sh
 SLOPPY_WEBGL=1 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
@@ -149,7 +151,7 @@ These checks default to the Vite URL `http://127.0.0.1:5173/sloppy-tanks/`; set
 `SLOPPY_URL` for another. WebSocket-frame recording, the room menu checks and polling
 waits are shared in `multiplayer-helpers.mjs`. Server rules
 (seats, idle watchdog, humans-only, reconnect, host transfer, expiry) are covered by
-the engine's tests (`crates/core/tests/net_match_host.rs`, `net_player_controls.rs`,
+the engine's tests (`crates/core/tests/integration/net_match_host.rs`, `net_player_controls.rs`,
 `crates/server/tests/`); these checks cover what only a browser or a real socket
 shows. Room state travels in binary WebSocket frames, deltas against what the client
 already holds; `wire-view.mjs` decodes them through the engine Wasm (one `WireView`
@@ -247,7 +249,7 @@ running server, and is outside CI.
 Do not deploy or restart a watched server during a run: that resets rooms.
 
 The client's projectile and lifecycle display timing is covered by
-`crates/core/tests/net_timing.rs`; use human playtests to judge control feel.
+`crates/core/tests/integration/net_timing.rs`; use human playtests to judge control feel.
 Raw results, failures and screenshots belong under
 `artifacts/performance/multiplayer/`. Automated timings do not establish player
 comfort or account billing capacity; impact-to-feedback excludes projectile flight.

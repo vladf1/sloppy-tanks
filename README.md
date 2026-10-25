@@ -43,7 +43,9 @@ missed the cache.
 Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. Vite
 serves the release Wasm from `src/generated/engine/` (and the WebGL2 build from
 `src/generated/engine-webgl/`); it does not compile Rust,
-so run `pnpm run wasm` again after changing a crate.
+so run `pnpm run wasm` again after changing a crate. That rebuilds the WebGPU engine
+only (the WebGL2 one too when it is missing or the engine's API changed); run
+`pnpm run wasm:webgl` before trying `?webgl` after an edit.
 
 Rendering uses WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU). Elsewhere the page loads a separate WebGL2 build of the engine instead; WebGPU browsers never download it. Add `?webgl` to the URL to try the WebGL2 build on any browser. **Stats for nerds** (on a page opened with `?debug`) shows the graphics API in use and rendering diagnostics.
 
@@ -105,7 +107,8 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 
 ```sh
 pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
-pnpm run wasm           # release Wasm and its glue into src/generated/engine/
+pnpm run wasm           # release WebGPU engine and its glue into src/generated/engine/
+pnpm run wasm:all       # both engines, the WebGL2 one into src/generated/engine-webgl/
 pnpm test               # page shell, import boundary and traffic-bot tests (needs pnpm run server:build)
 pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace)
 pnpm run validate       # ten seeded full matches and reset checks

@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 /**
@@ -16,6 +18,24 @@ export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-t
  * fall back to WebGL by themselves, as a browser without WebGPU does.
  */
 const webglOnly = Boolean(process.env.SLOPPY_WEBGL);
+
+/**
+ * Bring the WebGL2 engine up to date before a check plays it. `pnpm run wasm` builds only
+ * the WebGPU engine, so after a Rust edit the WebGL one is stale until this runs; when it
+ * is current, this is a half-second Cargo no-op. A check of another host's page plays
+ * that host's build, so only local dev servers rebuild.
+ */
+export function buildWebglEngine() {
+  if (!["127.0.0.1", "localhost", "[::1]"].includes(new URL(gameUrl).hostname)) return;
+  const build = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL("build-wasm.mjs", import.meta.url)), "--webgl"],
+    { stdio: "inherit" },
+  );
+  assert.equal(build.status, 0, "the WebGL engine build failed");
+}
+
+if (webglOnly || new URL(gameUrl).searchParams.has("webgl")) buildWebglEngine();
 
 /** Headless Chrome whose pages keep their timers and frames while another page is in front,
  * so several players on one machine all keep sending input. */
