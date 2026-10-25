@@ -4866,6 +4866,34 @@ html:not(.phone) #toast[data-tone="death"] {
   }
 }
 
+/* Below the garage layout the logo shares the tabs' row; its tilt and drop shadow spill
+   past its box, so it needs room above the tray it stands over. */
+@media (max-width: 1239px) {
+  html:not(.phone) .setup-top .setup-header {
+    padding: 6px 0 18px;
+  }
+}
+/* A narrow window gives the logo a row of its own over the tabs, so each tab's name fits on
+   one line, and the tank cards drop their bars: the name, class and picture say enough. */
+@media (max-width: 600px) {
+  html:not(.phone) .setup-top {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0;
+  }
+  html:not(.phone) .setup-top .setup-header {
+    flex: 1 0 100%;
+    justify-content: center;
+    padding-bottom: 14px;
+  }
+  html:not(.phone) .play-tabs {
+    flex: 1 1 100%;
+  }
+  html:not(.phone) .start .vehicle .spec {
+    display: none;
+  }
+}
+
 /* Big screens: the garage. The logo heads the left column and the folder tabs stand
    beside it on the top edge, so no empty title band sits over the choices. The tray
    hangs from its tabs down the right column; your tank has its own sheet under the logo,
@@ -5113,11 +5141,46 @@ html:not(.phone) #toast[data-tone="death"] {
     height: 80px;
   }
 }
+/* The arena's preparation is one slim line at every width, and once the arena is ready it
+   says nothing: it keeps its place, so nothing moves as it comes and goes. A failure takes
+   a full well with its reason and what to do. (A phone floats its own line.) */
+html:not(.phone)
+  :is(#startup-overlay, #overlay):not([data-state="error"])
+  .start
+  #single-panel
+  .startup-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  pointer-events: none;
+}
+html:not(.phone)
+  :is(#startup-overlay, #overlay):not([data-state="error"])
+  .start
+  #single-panel
+  .startup-hint {
+  display: none;
+}
+html:not(.phone)
+  :is(#startup-overlay, #overlay):not([data-state="error"])
+  .start
+  #single-panel
+  .startup-track {
+  width: 72px;
+  height: 3px;
+  margin: 0;
+}
+html:not(.phone) :is(#startup-overlay, #overlay)[data-state="ready"] .start .startup-progress {
+  visibility: hidden;
+}
 /* Single player on a wide screen: the battle posters run the full height beside the
-   difficulty levels and GO. The arena's preparation reads on the BATTLE heading's line,
-   over the posters, where it takes no row of its own: nothing moves as it comes and goes,
-   and once the arena is ready it says nothing. A failure takes a full well under the
-   posters, with its reason and what to do. */
+   difficulty levels and GO. The line reads on the BATTLE heading's line, over the posters,
+   where it takes no row of its own. */
 @media (min-width: 601px) {
   html:not(.phone) :is(#startup-overlay, #overlay):not([data-state="error"]) #single-panel {
     grid-template-areas:
@@ -5133,34 +5196,16 @@ html:not(.phone) #toast[data-tone="death"] {
     z-index: 1;
     align-self: start;
     justify-self: end;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 16px;
-    min-height: 0;
-    padding: 0;
-    background: none;
-    box-shadow: none;
-    pointer-events: none;
   }
+}
+/* In the one column the line sits between the difficulty levels and GO. */
+@media (max-width: 600px) {
   html:not(.phone)
     :is(#startup-overlay, #overlay):not([data-state="error"])
     .start
     #single-panel
-    .startup-hint {
-    display: none;
-  }
-  html:not(.phone)
-    :is(#startup-overlay, #overlay):not([data-state="error"])
-    .start
-    #single-panel
-    .startup-track {
-    width: 72px;
-    height: 3px;
-    margin: 0;
-  }
-  html:not(.phone) :is(#startup-overlay, #overlay)[data-state="ready"] .start .startup-progress {
-    visibility: hidden;
+    .startup-progress {
+    justify-self: center;
   }
 }
 
