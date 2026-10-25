@@ -4755,19 +4755,25 @@ html:not(.phone) #toast[data-tone="death"] {
   font-size: 12.5px;
   line-height: 1.65;
 }
-/* The build line has a slim row of its own at the panel's foot, right-aligned under the
-   key strip, so the two never meet at any width; tucked into the panel's bottom padding,
-   it stays on screen whenever the panel does. */
+/* The build line sits in the screen's bottom-right corner, outside the dialog. It is
+   part of the setup markup so the in-game copy keeps it, but fixed to the screen; the
+   panel's fit zoom would scale it with the dialog, so it counters that zoom. fitPanels
+   marks it crowded where the dialog leaves the corner no room, and it hides then. */
 .start .menu-build {
-  grid-column: 1 / -1;
-  justify-self: end;
-  margin: calc(4px - var(--setup-gap)) 2px -4px 0;
+  position: fixed;
+  right: 12px;
+  bottom: 8px;
+  zoom: calc(1 / var(--panel-zoom, 1));
   color: #b4c8db;
   font-size: 11.5px;
   font-weight: 600;
   line-height: 14px;
   letter-spacing: 0.3px;
+  white-space: nowrap;
   pointer-events: none;
+}
+.start .menu-build[data-crowded] {
+  visibility: hidden;
 }
 /* Short laptop screens keep the whole setup in view; the pause menu lists controls too. */
 @media (max-height: 770px), (max-width: 800px) {
@@ -4775,11 +4781,9 @@ html:not(.phone) #toast[data-tone="death"] {
     padding-inline: 0;
   }
 }
-/* A phone's build line ends the sheet under GO, clear of the logo and every choice. */
+/* A phone's sheet fills the screen, so its corner has no room for the build line. */
 .phone .start .menu-build {
-  margin: 2px 4px 0 0;
-  color: #7f98b2;
-  font-size: 11px;
+  display: none;
 }
 /* Held sideways, the panels drop the empty row their hidden formats and room list
    would take, so the status well and the action sit right under the map. */
@@ -4820,11 +4824,6 @@ html:not(.phone) #toast[data-tone="death"] {
   }
   .start .tank-preview {
     height: 90px;
-  }
-  /* With the key strip gone the build line follows the panels themselves: it keeps
-     clear of their border instead of tucking up as it does under the strip. */
-  .start .menu-build {
-    margin-top: 4px;
   }
 }
 @media (max-width: 860px) {
@@ -4930,14 +4929,10 @@ html:not(.phone) #toast[data-tone="death"] {
   html:not(.phone) .start[data-play="multiplayer"] .setup-panels {
     border-radius: 16px 0 16px 16px;
   }
-  /* Fixed rows under the sheets, so a short screen's missing title row never draws
-     the build line up into it. */
+  /* A fixed row under the sheets, so a short screen's missing title row never draws
+     the key strip up into them. */
   html:not(.phone) .start .menu-footer {
     grid-area: 4 / 1 / 5 / -1;
-  }
-  html:not(.phone) .start .menu-build {
-    grid-area: 5 / 1 / 6 / -1;
-    margin-top: 4px;
   }
   html:not(.phone) .start .menu-footer {
     margin-top: 14px;
@@ -7179,8 +7174,5 @@ html.phone,
   }
   html:not(.phone) .start:has(.play-tabs) .menu-footer {
     grid-area: 4 / 2 / 5 / 3;
-  }
-  html:not(.phone) .start:has(.play-tabs) .menu-build {
-    grid-area: 5 / 2 / 6 / 3;
   }
 }
