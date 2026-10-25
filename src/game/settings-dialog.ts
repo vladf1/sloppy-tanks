@@ -77,8 +77,6 @@ export interface SettingsHandlers {
     get(): HudState["speedTuning"] | undefined;
     set(key: SpeedKey, value: number): void;
   };
-  /** The controls reference its Controls tab shows (`controlsMarkup`). */
-  controls?: string;
   /** Runs before the dialog shows and after it closes, so the battle can wait for it. */
   opened(): void;
   closed(): void;
@@ -112,7 +110,7 @@ function sliderScale(low: string, high: string, mark: string): string {
 /** The corner X that every dialog with a way back carries. */
 export const CLOSE_ICON = `<svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12l5.6 5.6-1.4 1.4-5.6-5.6L6.4 19 5 17.6l5.6-5.6L5 6.4z"/></svg>`;
 
-function settingsMarkup(eyebrow: string, speeds: boolean, controls: string): string {
+function settingsMarkup(eyebrow: string, speeds: boolean): string {
   const speedRows = (Object.keys(SPEED_LABELS) as SpeedKey[])
     .map(
       (key) =>
@@ -124,17 +122,13 @@ function settingsMarkup(eyebrow: string, speeds: boolean, controls: string): str
   return `<dialog id="settings" class="settings" aria-labelledby="settings-title" tabindex="-1">
     <button class="dialog-close settings-close" type="button" aria-label="Close settings without saving" title="Close (Esc)">${CLOSE_ICON}</button>
     <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${eyebrow}</span></div><div class="dialog-title"><h2 id="settings-title">SETTINGS</h2></div></header>
-    <div class="dialog-tabs" role="tablist" aria-label="Settings"><button type="button" role="tab" id="settings-tab-game" aria-selected="true" aria-controls="settings-game">GAME</button>${controls ? `<button type="button" role="tab" id="settings-tab-controls" aria-selected="false" aria-controls="settings-controls" tabindex="-1">CONTROLS</button>` : ""}</div>
-    <div class="dialog-panes">
-    <div class="dialog-pane setting-rows" id="settings-game" role="tabpanel" aria-labelledby="settings-tab-game">
+    <div class="dialog-pane setting-rows">
     <div class="setting-group-label"><span>SOUND &amp; INPUT</span></div>
     <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output>${sliderScale("Mute", "Loud", defaultMark(0, 1, DEFAULT_VOLUME))}</label>
     ${choiceRow("touch-mode", "Touch controls", "Auto shows them on touchscreens", TOUCH_MODES)}
     <div class="setting-group-label"><span>DISPLAY</span></div>
     ${choiceRow("graphics", "Graphics", "Auto keeps the frame rate smooth", GRAPHICS_SETTINGS)}
     ${speeds ? `<div class="setting-group-label"><span>BATTLE SPEED</span><button class="group-action speeds-reset" type="button" title="Both speeds back to 100%"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5" /></svg>Reset to 100%</button></div>${speedRows}` : ""}
-    </div>
-    ${controls ? `<div class="dialog-pane" id="settings-controls" role="tabpanel" aria-labelledby="settings-tab-controls" hidden>${controls}</div>` : ""}
     </div>
     <div class="menu-actions"><button class="primary settings-save" type="button">SAVE</button><button class="secondary settings-cancel" type="button">CANCEL</button></div>
   </dialog>`;
@@ -153,12 +147,8 @@ export class SettingsDialog {
     eyebrow: string,
     private readonly handlers: SettingsHandlers,
   ) {
-    root.insertAdjacentHTML(
-      "beforeend",
-      settingsMarkup(eyebrow, !!handlers.speeds, handlers.controls ?? ""),
-    );
+    root.insertAdjacentHTML("beforeend", settingsMarkup(eyebrow, !!handlers.speeds));
     this.dialog = root.querySelector<HTMLDialogElement>("#settings")!;
-    bindDialogTabs(this.dialog);
     this.opener = root.querySelector<HTMLElement>("#settings-open");
     this.opener?.addEventListener("click", () => this.open());
     for (const type of ["keydown", "keyup"]) {

@@ -1,5 +1,6 @@
 import { showTankTeam, type GameOptions } from "./game-options";
 import { isExtraLevel, mapOption } from "./map-options";
+import { fitPanels } from "./panel-fit";
 import type { RoomBrowser } from "../net/room-browser";
 import type { RoomSelection } from "../net/pending-join";
 import type { RoomLink } from "../net/room-browser";
@@ -85,6 +86,8 @@ function bindTabs(setup: HTMLElement, initial: PlayMode, change: (mode: PlayMode
     if (setup.dataset.play !== mode) {
       showPlayMode(setup, mode);
       change(mode);
+      // In a narrow window the tabs differ in height: fit the new one to the screen.
+      fitPanels(setup.parentElement ?? document);
     }
   };
   showPlayMode(setup, initial);

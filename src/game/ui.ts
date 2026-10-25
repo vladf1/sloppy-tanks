@@ -20,14 +20,7 @@ import {
   type ScreenPoint,
 } from "./hud-feedback";
 import { duration } from "./round-recap";
-import {
-  controlsMarkup,
-  hudIcon,
-  hudMarkup,
-  menuMarkup,
-  respawnMarkup,
-  wreckedByMarkup,
-} from "./ui-markup";
+import { hudIcon, hudMarkup, menuMarkup, respawnMarkup, wreckedByMarkup } from "./ui-markup";
 import { fitPanels } from "./panel-fit";
 import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
@@ -135,7 +128,6 @@ export class UI {
       graphics: () => actions.graphics(),
       setGraphics: (setting) => actions.setGraphics(setting),
       setVolume: (value) => actions.setting("volume", value),
-      controls: controlsMarkup(),
       speeds: {
         get: () => this.state?.speedTuning,
         set: (key, value) => actions.setting(key, value),
