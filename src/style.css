@@ -2391,7 +2391,7 @@ h2 {
   white-space: nowrap;
 }
 /* Thick enough to compare the three tanks at a glance in the few seconds the card is up. */
-.respawn .spec span::after {
+.respawn .spec > span::after {
   height: 6px;
   border-radius: 3px;
 }
@@ -3123,12 +3123,13 @@ html:not(.phone) #toast[data-tone="death"] {
   text-align: right;
   text-shadow: none;
 }
-/* A class has a full name and, for a phone's narrow card, one word. */
-.vehicle .class-short,
-.phone .menu.start .vehicle .class-full {
+/* A card's labels have a full form and, for a phone's narrow card, a short one: the
+   class in one word, the hull as HP. */
+.vehicle .short-label,
+.phone .menu.start .vehicle .full-label {
   display: none;
 }
-.phone .menu.start .vehicle .class-short {
+.phone .menu.start .vehicle .short-label {
   display: inline;
 }
 /* The tank cards are little showrooms: a spotlight on each tank and its hull and speed
@@ -3251,15 +3252,15 @@ html:not(.phone) #toast[data-tone="death"] {
   font-size: 11px;
   letter-spacing: 1.2px;
 }
-.spec span {
+.spec > span {
   display: grid;
   flex: 1;
   gap: 5px;
 }
-.spec span:last-child {
+.spec > span:last-child {
   text-align: right;
 }
-.spec span::after {
+.spec > span::after {
   content: "";
   height: 4px;
   border-radius: 2px;
@@ -3268,7 +3269,7 @@ html:not(.phone) #toast[data-tone="death"] {
     #ffffff17;
   box-shadow: 0 0 8px #6fc6ff22;
 }
-.spec span:last-child::after {
+.spec > span:last-child::after {
   background:
     linear-gradient(270deg, var(--gold), var(--gold-hot)) 100% 0 / calc(var(--v, 1) * 100%) 100%
       no-repeat,
@@ -5210,7 +5211,8 @@ html:not(.phone) #toast[data-tone="death"] {
   }
 }
 /* An upright tablet's three tank cards are narrow: the class takes its one-word name on
-   a line of its own under the tank's name, and the stats keep to one line each. */
+   a line of its own under the tank's name, and the stats keep to one line each, the
+   hull as HP. */
 @media (max-width: 900px) {
   html:not(.phone) .start .tank-setting .vehicle {
     grid-template-columns: minmax(0, 1fr);
@@ -5219,10 +5221,10 @@ html:not(.phone) #toast[data-tone="death"] {
   html:not(.phone) .start .tank-setting .vehicle small {
     justify-self: start;
   }
-  html:not(.phone) .start .vehicle .class-full {
+  html:not(.phone) .start .vehicle .full-label {
     display: none;
   }
-  html:not(.phone) .start .vehicle .class-short {
+  html:not(.phone) .start .vehicle .short-label {
     display: inline;
   }
   html:not(.phone) .start .tank-setting .vehicle .spec {
@@ -6732,8 +6734,10 @@ html.phone,
     height: 76px;
     margin: 0;
   }
+  /* The stats stack, each bar the card's full width rather than its label's. */
   .phone .menu.start .vehicle .spec {
     display: grid;
+    justify-content: stretch;
     gap: 5px;
     padding-top: 0;
     font-size: 10.5px;
@@ -6755,10 +6759,10 @@ html.phone,
     bottom: 42px;
     transform: translateX(-50%);
   }
-  .phone .menu.start .vehicle .spec span:last-child {
+  .phone .menu.start .vehicle .spec > span:last-child {
     text-align: left;
   }
-  .phone .menu.start .vehicle .spec span:last-child::after {
+  .phone .menu.start .vehicle .spec > span:last-child::after {
     background:
       linear-gradient(90deg, var(--gold), var(--gold-hot)) 0 0 / calc(var(--v, 1) * 100%) 100%
         no-repeat,
