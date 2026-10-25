@@ -6,8 +6,10 @@
 //! across the middle of a crate's lid and on down its faces, across a tarp lashed
 //! over rocket tubes, round shell canisters near their caps, over the tops of
 //! jerry cans. Nine hues, one per kind, none repeated. Each stands on a raw wooden
-//! pallet in a scuffed patch of ground, the smoke grenade that marks it standing on
-//! the pallet's back corner with its fuse; no poles, flags, painted rings or pads.
+//! pallet in a scuffed patch of ground, drawn larger than its pallet's deck so the
+//! kind reads from the gameplay camera, the smoke grenade that marks it standing in
+//! the dirt off the pallet's back corner with its fuse; no poles, flags, painted rings
+//! or pads.
 //! An emptied drop is its bare pallet, its grenade still smoking thinly. Everything
 //! is painted from one atlas whose tile for the kind carries the body's surface,
 //! the kind's band and its sprayed stencil. A collected drop sends one of its own
@@ -101,6 +103,10 @@ pub const PICKUP_BRASS_CELL: (u32, u32) = (0, 3);
 /// Everything a drop shows is drawn this much larger than it is modelled, so a
 /// load reads at the gameplay camera; the pickup's reach is the simulation's.
 pub const SUPPLY_SCALE: f64 = 1.2;
+/// The load on the pallet is drawn this much larger again, the pallet staying its
+/// size: the kind's silhouette and band name it at the gameplay camera, and the load
+/// overhangs the deck's edges a little, as a big load does.
+pub const LOAD_SCALE: f64 = 1.3;
 
 /// A UV inside the atlas cell at (`column`, `row`), `v` up as in a mesh.
 pub fn atlas_cell_uv((column, row): (u32, u32), u: f64, v: f64) -> [f64; 2] {
@@ -178,10 +184,10 @@ pub const PALLET_SIZE: [f64; 2] = [1.86, 1.3];
 pub const PALLET_HEIGHT: f64 = 0.15;
 const PALLET_BOARDS: usize = 5;
 const PALLET_BOARD_WIDTH: f64 = 0.3;
-/// The smoke grenade marking the drop, standing on the pallet's back right corner
-/// clear of every load, where the overhead camera sees it: its top (x, height, z)
-/// where the signal smoke leaves it, and its radius.
-pub const SMOKE_MARKER: [f64; 3] = [0.84, 0.5, -0.54];
+/// The smoke grenade marking the drop, standing in the dirt off the pallet's back
+/// right corner, clear of every load however wide, where the overhead camera sees
+/// it: its top (x, height, z) where the signal smoke leaves it, and its radius.
+pub const SMOKE_MARKER: [f64; 3] = [1.1, 0.35, -0.82];
 const MARKER_RADIUS: f64 = 0.085;
 /// The scuffed ground under the drop: darkness under the pallet and just past its
 /// edges (`CONTACT_SPILL`), dust banked `DRIFT_BANK` out from its edges in
@@ -738,7 +744,7 @@ fn transit_case() -> Mesh {
 }
 
 /// The pallet every pickup sits on, bare: three stringers and five deck boards of
-/// raw pine, one of which a worn pallet has lost, and the smoke grenade standing on
+/// raw pine, one of which a worn pallet has lost, and the smoke grenade standing off
 /// its back corner, olive drab with its top in the kind's paint, as M18 grenades
 /// are marked, its steel fuse, spoon and pull ring catching the light. An emptied
 /// drop is just this.
@@ -765,16 +771,16 @@ fn pallet_geometry() -> Mesh {
                 .at(x, stringer + deck / 2.0, 0.0),
         );
     }
-    // The smoke grenade on the deck: an olive canister, its top band in the kind's
+    // The smoke grenade in the dirt: an olive canister, its top band in the kind's
     // paint, its bright fuse head, the spoon down its side and the pull ring.
     let [mx, top, mz] = SMOKE_MARKER;
     let fuse = 0.06;
     let band = 0.07;
-    let body = top - PALLET_HEIGHT - fuse - band;
+    let body = top - fuse - band;
     parts.push(
         Part::drum(MARKER_RADIUS, body, 10, swatch(WEBBING))
             .bottom(swatch(GUNMETAL))
-            .at(mx, PALLET_HEIGHT + body / 2.0, mz),
+            .at(mx, body / 2.0, mz),
     );
     parts.push(
         Part::drum(MARKER_RADIUS, band, 10, kind(PAINT))
@@ -1191,24 +1197,45 @@ mod tests {
         }
     }
 
-    /// Every kind stands on its pallet's deck within its footprint (rocket tubes
-    /// may overhang its ends), low enough to read as a load rather than cover.
+    /// A kind's load as drawn on its pallet (`LOAD_SCALE`): its lowest and highest
+    /// corners in the pallet's units.
+    fn drawn_bounds(kind: PickupKind) -> (DVec3, DVec3) {
+        let mut low = DVec3::splat(f64::MAX);
+        let mut high = DVec3::splat(f64::MIN);
+        for p in &item_geometry(kind).positions {
+            let p = DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
+            low = low.min(p * LOAD_SCALE);
+            high = high.max(p * LOAD_SCALE);
+        }
+        (low, high)
+    }
+
+    /// Every kind stands on its pallet's deck, overhanging its edges only a little as
+    /// drawn (rocket tubes further past its ends), low enough to read as a load
+    /// rather than cover.
     #[test]
     fn every_item_fits_its_pallet() {
         let [w, d] = PALLET_SIZE;
         for kind in PickupKind::ALL {
-            let mesh = item_geometry(kind);
-            let mut low = DVec3::splat(f64::MAX);
-            let mut high = DVec3::splat(f64::MIN);
-            for p in &mesh.positions {
-                let p = DVec3::new(f64::from(p[0]), f64::from(p[1]), f64::from(p[2]));
-                low = low.min(p);
-                high = high.max(p);
-            }
+            let (low, high) = drawn_bounds(kind);
             assert!(low.y > -1e-6, "{kind:?} stands on the deck");
-            assert!(high.x - low.x <= w + 0.2, "{kind:?} {low} {high}");
-            assert!(high.z - low.z <= d + 0.05, "{kind:?} {low} {high}");
-            assert!(high.y < 1.9, "{kind:?}");
+            assert!(high.x - low.x <= w + 0.5, "{kind:?} {low} {high}");
+            assert!(high.z - low.z <= d + 0.25, "{kind:?} {low} {high}");
+            assert!(high.y < 2.4, "{kind:?}");
+        }
+    }
+
+    /// The smoke grenade stands off the pallet, clear of every load as drawn, so the
+    /// overhead camera always sees what marks the drop.
+    #[test]
+    fn the_smoke_grenade_stands_clear_of_every_load() {
+        let [mx, _, mz] = SMOKE_MARKER;
+        let [w, d] = PALLET_SIZE;
+        assert!(mx - MARKER_RADIUS > w / 2.0 && -mz - MARKER_RADIUS > d / 2.0);
+        for kind in PickupKind::ALL {
+            let (low, high) = drawn_bounds(kind);
+            let clear = mx - MARKER_RADIUS > high.x || mz + MARKER_RADIUS < low.z;
+            assert!(clear, "{kind:?} {low} {high}");
         }
     }
 }
