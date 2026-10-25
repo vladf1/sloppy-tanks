@@ -3122,8 +3122,8 @@ html:not(.phone) #toast[data-tone="death"] {
 .phone .menu.start .vehicle .class-short {
   display: inline;
 }
-/* The tank cards are little showrooms: a spotlight on each tank, a lit turntable under
-   it, and its hull and speed as bars. The chosen tank glows gold. */
+/* The tank cards are little showrooms: a spotlight on each tank and its hull and speed
+   as bars. The chosen tank glows gold. */
 .vehicle {
   overflow: hidden;
   isolation: isolate;
@@ -3185,8 +3185,8 @@ html:not(.phone) #toast[data-tone="death"] {
   background: var(--gold);
   color: #1a2233;
 }
-/* Each class reads at a glance: a light scout sits small on its turntable and a heavy
-   tank fills it, and the class tag carries the class's colour. */
+/* Each class reads at a glance: a light scout sits small in its card and a heavy tank
+   fills it, and the class tag carries the class's colour. */
 .vehicle[data-kind="scout"] {
   --class: #5fd8ff;
   --scale: 0.8;
@@ -3264,29 +3264,6 @@ html:not(.phone) #toast[data-tone="death"] {
     linear-gradient(270deg, var(--gold), var(--gold-hot)) 100% 0 / calc(var(--v, 1) * 100%) 100%
       no-repeat,
     #ffffff17;
-}
-/* The turntable under each tank. */
-.start .vehicle::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  left: 14%;
-  right: 14%;
-  top: 46%;
-  height: 34%;
-  border-radius: 50%;
-  background: radial-gradient(
-    ellipse at center,
-    color-mix(in srgb, var(--class, #8cc8ff) 26%, transparent),
-    color-mix(in srgb, var(--class, #8cc8ff) 7%, transparent) 55%,
-    transparent 70%
-  );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--class, #8cc8ff) 22%, transparent);
-  pointer-events: none;
-}
-.start .vehicle.selected::before {
-  background: radial-gradient(ellipse at center, #ffd36a40, #ffcf3812 55%, transparent 70%);
-  box-shadow: inset 0 0 0 1px #ffcf3855;
 }
 .setup-panels {
   display: grid;
@@ -6794,17 +6771,9 @@ html.phone,
   .phone .start .tank-preview {
     height: 82px;
   }
-  /* The tanks fill their turntables on a phone, each standing inside its disc and well
-     clear of its card's edges. */
+  /* The tanks fill their cards on a phone, well clear of the cards' edges. */
   .phone .start .vehicle .tank-preview {
     transform: scale(calc(var(--scale, 1) * 1.22)) translateY(-3px);
-  }
-  /* The turntable sits close under the tank, clear of the hull and speed lines below. */
-  .phone .start .vehicle::before {
-    top: 38%;
-    height: 24%;
-    left: 7%;
-    right: 7%;
   }
   /* Upright, the two formats share the room the hidden difficulty leaves above GO, each
      key with its name centred in it. */
