@@ -10,41 +10,6 @@
 // view space is invariant under the view's rotation. Output is linear HDR; the
 // output pass tone maps the whole frame, as Three's frame-buffer target does.
 
-struct VertexOut {
-    @builtin(position) clip: vec4f,
-    @location(0) world: vec3f,
-    @location(1) normal: vec3f,
-    @location(2) uv: vec2f,
-    @location(3) color: vec4f,
-    @location(4) tint: vec4f,
-    @location(5) data: vec4f,
-    @location(6) extra0: vec4f,
-    @location(7) extra1: vec4f,
-}
-
-@vertex
-fn vs_main(input: VertexIn, @builtin(instance_index) index: u32) -> VertexOut {
-    let instance = instance_at(index);
-    var v = effect_input(input, instance);
-    effect_vertex(&v);
-    var w: EffectWorld;
-    w.position = (instance.world * vec4f(v.position, 1.0)).xyz;
-    w.normal = normal_matrix(instance.world) * v.normal;
-    effect_world(&w, v);
-    var out: VertexOut;
-    out.clip = frame.view_projection * vec4f(w.position, 1.0);
-    effect_clip(&out.clip, w, v);
-    out.world = w.position;
-    out.normal = w.normal;
-    out.uv = v.uv;
-    out.color = vec4f(v.color, v.color_alpha);
-    out.tint = instance.tint;
-    out.data = instance.data;
-    out.extra0 = v.extra0;
-    out.extra1 = v.extra1;
-    return out;
-}
-
 fn dfg(roughness: f32, dot_nv: f32) -> vec2f {
     // Three's 16×16 DFG LUT; level 0 keeps it free of derivative rules.
     return textureSampleLevel(dfg_lut, lut_sampler, vec2f(roughness, dot_nv), 0.0).rg;

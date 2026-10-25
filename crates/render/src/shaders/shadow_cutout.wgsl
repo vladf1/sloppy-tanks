@@ -18,27 +18,16 @@ struct CutoutMaterial {
 @group(1) @binding(1) var map_texture: texture_2d<f32>;
 @group(1) @binding(2) var map_sampler: sampler;
 
-// `ShadowOut` in shadow.wgsl, location for location.
-struct ShadowOut {
-    @builtin(position) clip: vec4f,
-    @location(0) world: vec3f,
-    @location(1) uv: vec2f,
-    @location(2) tint: vec4f,
-    @location(3) data: vec4f,
-    @location(4) extra0: vec4f,
-    @location(5) extra1: vec4f,
-}
-
 @vertex
 fn vs_shadow_cutout(
     @location(0) position: vec3f,
     @location(1) slot: u32,
     @location(2) base: u32,
     @location(3) uv: vec2f,
-) -> ShadowOut {
+) -> VertexOut {
     let instance = instance_at(base + slot);
     let world = instance.world * vec4f(position, 1.0);
-    var out: ShadowOut;
+    var out: VertexOut;
     out.clip = frame.view_projection * world;
     out.world = world.xyz;
     out.uv = uv;
@@ -50,7 +39,7 @@ fn vs_shadow_cutout(
 }
 
 @fragment
-fn fs_shadow_cutout(input: ShadowOut) {
+fn fs_shadow_cutout(input: VertexOut) {
     let map_uv = input.uv * material.map_transform.xy + material.map_transform.zw;
     let texel = textureSample(map_texture, map_sampler, map_uv);
     if material.color.a * texel.a <= material.surface.z {
