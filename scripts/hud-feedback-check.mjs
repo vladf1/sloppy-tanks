@@ -19,12 +19,7 @@ try {
   await startRound(page);
   // HUD feedback must consume elapsed time, including frames between HUD refreshes.
   const hudTiming = await page.evaluate(async () => {
-    // Vite can timestamp this import after a rebuild; patch the class the page loaded.
-    const uiModule = performance
-      .getEntriesByType("resource")
-      .findLast((entry) => new URL(entry.name).pathname.endsWith("/src/game/ui.ts"));
-    if (!uiModule) throw new Error("The page did not load the HUD module");
-    const { UI } = await import(uiModule.name);
+    const { UI } = await import(new URL("src/game/ui.ts", location.href).href);
     const { FRAME } = await import(new URL("src/game/engine-api.ts", location.href).href);
     const originalUpdate = UI.prototype.update;
     const game = window.sloppy.game;

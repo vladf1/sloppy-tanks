@@ -56,7 +56,10 @@ try {
   assert.equal(await delayed.page.locator(".start").getAttribute("data-play"), "single");
   // A last-minute choice during the queued start must reach the actual round.
   await chooseMap(delayed.page, "quarry");
-  assert.equal(await delayed.page.locator("canvas").count(), 0);
+  // The bundled game can create its hidden canvas before the held binary arrives.
+  // No arena may become visible or start simulating while the download is blocked.
+  assert.equal(await delayed.page.locator("canvas:visible").count(), 0);
+  assert.equal(await delayed.page.evaluate(() => window.sloppy?.sim.elapsed ?? 0), 0);
   releaseEngine();
   await playing(delayed.page);
   results.delayed = await delayed.page.evaluate(() => ({
@@ -64,7 +67,6 @@ try {
     map: window.sloppy.sim.mapMode,
     mode: window.sloppy.sim.gameMode,
     difficulty: window.sloppy.sim.difficulty,
-    round: window.sloppy.sim.match.round,
     canvases: document.querySelectorAll("canvas#game").length,
   }));
   assert.deepEqual(results.delayed, {
@@ -72,9 +74,13 @@ try {
     map: "quarry",
     mode: "solo",
     difficulty: "hard",
-    round: 3,
     canvases: 1,
   });
+  // Preparation can begin before or after the late map choice. Whichever path ran,
+  // the settled round must not rebuild again while the player is driving.
+  const settledRound = await delayed.page.evaluate(() => window.sloppy.sim.match.round);
+  await delayed.page.waitForFunction(() => window.sloppy.sim.elapsed > 0.25);
+  assert.equal(await delayed.page.evaluate(() => window.sloppy.sim.match.round), settledRound);
   // A setup cloned while early GO disabled the tabs must unlock them next round.
   await delayed.page.keyboard.press("Escape");
   await delayed.page.locator("#end-battle").click();
@@ -264,7 +270,9 @@ try {
 
   console.log("Delayed loading, prepared arena reuse, gameplay, and new rounds passed.");
   const failure = await fresh();
-  await failure.page.route(/\/src\/game\.ts(?:\?|$)/, (route) => route.abort(), { times: 1 });
+  await failure.page.route(/\/assets\/game-[\w-]+\.js(?:\?|$)/, (route) => route.abort(), {
+    times: 1,
+  });
   await failure.page.goto(url);
   await failure.page.waitForFunction(
     () => document.querySelector("#startup-overlay")?.dataset.state === "error",
@@ -338,7 +346,7 @@ try {
 
   const layout = await fresh();
   const { promise: game, resolve: releaseGame } = Promise.withResolvers();
-  await layout.page.route(/\/src\/game\.ts(?:\?|$)/, async (route) => {
+  await layout.page.route(/\/assets\/game-[\w-]+\.js(?:\?|$)/, async (route) => {
     await game;
     await route.continue();
   });

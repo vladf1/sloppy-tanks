@@ -104,7 +104,7 @@ export async function serverBuild() {
   );
 }
 
-// `node scripts/content-version.mjs` lists the sources clients and the server share.
+// `bun scripts/content-version.mjs` lists the sources clients and the server share.
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   console.log((await contentSources()).join("\n"));
   console.log(`content ${await contentVersion()}`);

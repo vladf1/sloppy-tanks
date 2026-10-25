@@ -138,7 +138,7 @@ async function deploy() {
     `Deploying the ${server.role} server (content ${version}, build ${build}) to ${server.ssh}`,
   );
   const image = `${SERVER_IMAGE}:${build}`;
-  run("node", ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE]);
+  run(process.execPath, ["scripts/build-server-image.mjs", "--registry", SERVER_IMAGE]);
   await loadImageOnServer(image);
   // Restarts the server, ending live rooms (clients get room-reset from the graceful
   // shutdown), and rolls back if the new image does not report healthy.
@@ -189,7 +189,7 @@ switch (command) {
     else if (argument === "off") ssh("systemctl disable --now sloppy-tanks-update.timer");
     else if (argument === "resume") ssh("sloppy-tanks-update resume");
     else {
-      console.error("Usage: pnpm run server:auto-update on|off|resume [--dev]");
+      console.error("Usage: bun run server:auto-update on|off|resume [--dev]");
       process.exit(1);
     }
     ssh("sloppy-tanks-update status");
@@ -219,7 +219,7 @@ switch (command) {
   }
   default:
     console.error(
-      "Usage: node scripts/server.mjs provision|update|deploy|rollback|auto-update|status|logs|stats [--dev]",
+      "Usage: bun scripts/server.mjs provision|update|deploy|rollback|auto-update|status|logs|stats [--dev]",
     );
     process.exit(1);
 }

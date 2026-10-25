@@ -1,8 +1,8 @@
-// Binary room-state frames as the JSON the Node checks read. Frames are deltas against
+// Binary room-state frames as the JSON the multiplayer checks read. Frames are deltas against
 // the client's own copy of the state, so only the engine's Rust decoder reads them: each
 // socket gets its own `WireView`, fed that socket's binary messages in order, which
 // returns the former JSON `full` and `snapshot` messages (see `state-mirror.mjs`).
-// The engine Wasm (`pnpm run wasm` builds `src/generated/engine/`) loads on the first
+// The engine Wasm (`bun run wasm` builds `src/generated/engine/`) loads on the first
 // view, synchronously, so socket handlers can create and use views as frames arrive.
 import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
@@ -11,7 +11,7 @@ let engine;
 
 function loadEngine() {
   if (!engine) {
-    // Node's `require` of an ES module is synchronous, unlike `import()`.
+    // Bun's `require` of an ES module is synchronous, unlike `import()`.
     const glue = createRequire(import.meta.url)("../src/generated/engine/engine.js");
     glue.initSync({
       module: readFileSync(new URL("../src/generated/engine/engine_bg.wasm", import.meta.url)),

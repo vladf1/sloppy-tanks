@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "bun:test";
 import type { HudState } from "../src/game/engine-api";
 import { hudMarkup, menuMarkup, ordinal, scoreMarkup } from "../src/game/ui-markup";
 

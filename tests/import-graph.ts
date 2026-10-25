@@ -1,25 +1,21 @@
 // The module graph behind the import boundary tests (`*-imports.test.ts`).
 import { fileURLToPath } from "node:url";
-import { build, type Metafile } from "esbuild";
+type Metafile = Bun.BuildMetafile;
 
 /** The modules bundling `entry` reaches. Imports matching `external` stay out, such as
- * the generated engine glue (`pnpm run wasm`), whose import is all a test needs. */
+ * the generated engine glue (`bun run wasm`), whose import is all a test needs. */
 export async function moduleGraph(
   entry: string,
   external: RegExp,
   splitting = false,
 ): Promise<Metafile["inputs"]> {
-  const { metafile } = await build({
-    absWorkingDir: fileURLToPath(new URL("..", import.meta.url)),
-    entryPoints: [entry],
-    bundle: true,
+  const { metafile } = await Bun.build({
+    root: fileURLToPath(new URL("..", import.meta.url)),
+    entrypoints: [entry],
     splitting,
-    write: false,
     metafile: true,
     format: "esm",
-    outdir: "unused",
-    loader: { ".css": "empty" },
-    logLevel: "silent",
+    target: "browser",
     plugins: [
       {
         name: "external",
@@ -29,6 +25,7 @@ export async function moduleGraph(
       },
     ],
   });
+  if (!metafile) throw new Error("Missing bundle import graph");
   return metafile.inputs;
 }
 

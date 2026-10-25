@@ -1,7 +1,7 @@
 # Cottage surfaces
 
-Lossless sources drawn by `node --import tsx scripts/generate-house-textures.ts`;
-`pnpm run optimize:textures` writes the 512 px runtime copies to
+Lossless sources drawn by `bun scripts/generate-house-textures.ts`;
+`bun run optimize:textures` writes the 512 px runtime copies to
 `public/textures/houses/`. Each image tiles in both directions and is also its own
 bump map, so joints and shadowed laps are darker (lower) than the faces.
 

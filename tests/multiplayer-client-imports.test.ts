@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "bun:test";
 import { importChain, moduleGraph } from "./import-graph";
 
 const CLIENT = "src/net/client.ts";
@@ -7,7 +7,7 @@ const ROOM_BROWSER = "src/net/room-browser.ts";
 // The Rust engine (`NetGame`) runs the connection, replication, interpolation, input and
 // drawing. The room page is only this DOM shell around it; anything else it reaches would
 // be game logic creeping back into TypeScript or a library download on joining a room.
-// scripts/multiplayer-loading-check.mjs checks the real Vite chunks in a browser.
+// scripts/multiplayer-loading-check.mjs checks the real Bun chunks in a browser.
 const SHELL = new Set([
   "src/engine.ts",
   "src/touch-controls.css",
@@ -54,7 +54,7 @@ const SHELL = new Set([
   ].map((name) => `src/net/${name}.ts`),
 ]);
 /** Audio is the one library a room page loads. */
-const LIBRARIES = /[\\/]node_modules[\\/](.pnpm[\\/])?howler[@\\/]/;
+const LIBRARIES = /[\\/]node_modules[\\/](\.bun[\\/])?howler[@\\/]/;
 const staticGraph = (entry: string) => moduleGraph(entry, /generated\/engine(-webgl)?\/|\?url$/);
 
 for (const entry of [CLIENT, ROOM_BROWSER]) {

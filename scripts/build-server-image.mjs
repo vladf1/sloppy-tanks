@@ -101,7 +101,7 @@ if (published && isNumberedRelease(release) && !isNumberedRelease(labels[RELEASE
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
 } else {
-  const binary = run("node", ["scripts/build-server.mjs", "--vps"]);
+  const binary = run(process.execPath, ["scripts/build-server.mjs", "--vps"]);
   if (binary.status !== 0) process.exit(binary.status ?? 1);
   const result = run("docker", [
     "build",

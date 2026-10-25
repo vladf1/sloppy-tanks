@@ -67,14 +67,14 @@ const compatible = live.protocol === local.protocol && live.contentVersion === l
 if (!compatible) {
   console.log(
     "Redeploy needed: once this is on main and CI has promoted its image, run\n" +
-      "`pnpm run server:update` (auto-update does it by itself; `server:deploy` from main\n" +
+      "`bun run server:update` (auto-update does it by itself; `server:deploy` from main\n" +
       "is the SSH fallback). Until then, clients built from here are asked to reload.",
   );
   process.exitCode = 1;
 } else if (live.serverBuild !== local.serverBuild) {
   console.log(
     "Redeploy needed for server-only changes: once this is on main and CI has promoted\n" +
-      "its image, run `pnpm run server:update` (or let auto-update). Clients built from\n" +
+      "its image, run `bun run server:update` (or let auto-update). Clients built from\n" +
       "here can already join.",
   );
   process.exitCode = 1;

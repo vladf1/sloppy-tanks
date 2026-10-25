@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { NerdStats, engineStatsSections } from "../src/game/nerd-stats";
 import type { EngineStats } from "../src/game/engine-api";

@@ -12,12 +12,12 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["webgpu"]
 webgpu = ["sloppy-render/webgpu"]
-# The WebGL2 fallback engine (`pnpm run wasm` builds it with
+# The WebGL2 fallback engine (`bun run wasm` builds it with
 # `--no-default-features --features webgl`); the page loads it only where WebGPU
 # is unavailable.
 webgl = ["sloppy-render/webgl"]
 # The development labs (`RenderLab`, `EffectsLab`) for tools/*-lab.html. Production
-# builds leave them out; `pnpm run wasm -- --labs` builds them.
+# builds leave them out; `bun run wasm:labs` builds them.
 labs = []
 
 [dependencies]

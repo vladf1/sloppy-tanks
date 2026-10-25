@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "bun:test";
 import { busiestOpenRoom, type RoomListing } from "../src/net/room-list";
 import { steppedMinutes } from "../src/net/room-protocol";
 

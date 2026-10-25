@@ -1,4 +1,4 @@
-import { test } from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { Controls } from "../src/game/controls";
 import { INPUT } from "../src/game/engine-api";

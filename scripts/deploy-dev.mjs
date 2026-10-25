@@ -27,7 +27,7 @@ const clientHasServer =
   );
 if (!index.includes('id="tab-multiplayer"') || !clientHasServer) {
   throw new Error(
-    "dist-dev has no multiplayer entry or dev server URL; rebuild with pnpm run build:dev",
+    "dist-dev has no multiplayer entry or dev server URL; rebuild with bun run build:dev",
   );
 }
 
@@ -35,13 +35,16 @@ if (!index.includes('id="tab-multiplayer"') || !clientHasServer) {
 // game/network sources, so publish the dev server from this checkout first. It runs on
 // its own machine, so this never touches production's. The deploy waits until the dev
 // server reports this checkout's content version.
-run("node", ["scripts/server.mjs", "deploy", "--dev"]);
+run(process.execPath, ["scripts/server.mjs", "deploy", "--dev"]);
 
 const build = `${info.commit}${info.dirty ? ", local changes" : ""}`;
 console.log(`Publishing dev build ${info.builtAt} (${build})`);
-run("node", ["deploy/dev-site/precompress.mjs"]);
+run(process.execPath, ["deploy/dev-site/precompress.mjs"]);
 // Fixed destination: the Worker's account, name and domain come from its config.
-run("wrangler", [
+run(process.execPath, [
+  "x",
+  "--bun",
+  "wrangler",
   "deploy",
   "--config",
   "deploy/dev-site/wrangler.jsonc",

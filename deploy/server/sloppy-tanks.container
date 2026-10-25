@@ -25,7 +25,7 @@ Memory=700m
 PodmanArgs=--memory-swap 700m
 PidsLimit=256
 Ulimit=nofile=65536:65536
-# Output goes straight to the unit's journal, as before (pnpm run server:logs).
+# Output goes straight to the unit's journal, as before (bun run server:logs).
 LogDriver=passthrough
 # SIGTERM resets rooms and waits up to a second for clients to finish closing.
 StopTimeout=10

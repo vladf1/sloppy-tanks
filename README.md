@@ -4,15 +4,17 @@ A browser tank game with destructible cover, team battles and solo survival. The
 
 ## Run
 
-Use Node.js 24 or newer, [pnpm](https://pnpm.io/installation) 11 or newer, and Rust through [rustup](https://rustup.rs). On macOS:
+Use [Bun](https://bun.sh/docs/installation) 1.4.4 and Rust through [rustup](https://rustup.rs). On macOS:
 
 ```sh
-brew install node pnpm rustup   # once per machine
+brew install rustup                 # once per machine
+curl -fsSL https://bun.com/install | bash -s "bun-v1.4.4"
+export PATH="$HOME/.bun/bin:$PATH"
 rustup toolchain install        # in the checkout: the toolchain rust-toolchain.toml pins
 cargo install wasm-bindgen-cli --version 0.2.129 --locked
-pnpm install                    # once per checkout or worktree, and after dependency changes
-pnpm run wasm                   # build the engine; rerun after Rust or WGSL edits
-pnpm run dev
+bun install --frozen-lockfile   # once per checkout or worktree, and after dependency changes
+bun run wasm                   # build the engine; rerun after Rust or WGSL edits
+bun run dev
 ```
 
 `rust-toolchain.toml` pins the Rust release, rustfmt, clippy and the
@@ -24,7 +26,17 @@ pnpm run dev
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 ```
 
-On other systems, `npm install -g pnpm` also works. `package.json` pins the exact pnpm version, which pnpm fetches for itself, and npm refuses to run in this repository.
+Bun handles dependency installation, TypeScript checking, bundling, the dev/preview
+servers, tests and script execution. `.bun-version` and `package.json` pin its
+version; CI reads `.bun-version`. Installs use isolated linking and committed
+`bun.lock` files, including the lint package installed by `postinstall`. Only
+`esbuild` and `workerd` (Wrangler dependencies) may run dependency install scripts.
+Run `bun add` to change dependencies and commit both affected lockfiles.
+
+`bun run typecheck` uses `bun check --no-script` so the native checker cannot invoke
+this project's separate `check` quality gate. ESLint and Prettier run on Bun;
+the lint package retains TypeScript 6 solely for ESLint's parser and typed rules.
+The browser build has no standalone TypeScript compiler dependency.
 
 Optionally, cache compiler outputs across checkouts with [Kache](https://github.com/kunobi-ninja/kache),
 which pays off when every change gets its own worktree. Set it as Cargo's wrapper in your
@@ -40,16 +52,18 @@ compiling it again, at the cost of about a second per rebuild within one tree.
 Bypass it for one command with `KACHE_DISABLED=1`; `kache explain` says why a crate
 missed the cache.
 
-Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. Vite
+Open the URL `bun run dev` prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. The Bun server
 serves the release Wasm from `src/generated/engine/` (and the WebGL2 build from
-`src/generated/engine-webgl/`); it does not compile Rust,
-so run `pnpm run wasm` again after changing a crate. That rebuilds the WebGPU engine
+`src/generated/engine-webgl/`). TypeScript, CSS, HTML and generated engine edits
+reload the page. Use `bun run dev --port 5200 --strictPort` for a fixed port or
+`bun run preview` to serve the production build. The dev server does not compile Rust,
+so run `bun run wasm` again after changing a crate. That rebuilds the WebGPU engine
 only (the WebGL2 one too when it is missing or the engine's API changed); run
-`pnpm run wasm:webgl` before trying `?webgl` after an edit.
+`bun run wasm:webgl` before trying `?webgl` after an edit.
 
 Rendering uses WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU). Elsewhere the page loads a separate WebGL2 build of the engine instead; WebGPU browsers never download it. Add `?webgl` to the URL to try the WebGL2 build on any browser. **Stats for nerds** (on a page opened with `?debug`) shows the graphics API in use and rendering diagnostics.
 
-To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
+To try a build on a phone or tablet, `bun run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
 
 ## Play
 
@@ -106,16 +120,16 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 ## Development
 
 ```sh
-pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
-pnpm run wasm           # release WebGPU engine and its glue into src/generated/engine/
-pnpm run wasm:all       # both engines, the WebGL2 one into src/generated/engine-webgl/
-pnpm test               # page shell, import boundary and traffic-bot tests (needs pnpm run server:build)
-pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace)
-pnpm run validate       # ten seeded full matches and reset checks
-pnpm run build          # production output in dist/ (builds the Wasm first)
-pnpm run lint:fix       # safe ESLint fixes
-pnpm run format         # Prettier for source, tests, scripts, styles and docs; cargo fmt for Rust
-pnpm run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
+bun run check          # the CI gate: formatting, Wasm and Bun builds, lint, types, clippy, server, all tests
+bun run wasm           # release WebGPU engine and its glue into src/generated/engine/
+bun run wasm:all       # both engines, the WebGL2 one into src/generated/engine-webgl/
+bun run test               # page shell, import boundary and traffic-bot tests (needs bun run server:build)
+bun run test:rust      # simulation, net, renderer and server tests (cargo test --workspace)
+bun run validate       # ten seeded full matches and reset checks
+bun run build          # production output in dist/ (builds the Wasm first)
+bun run lint:fix       # safe ESLint fixes
+bun run format         # Prettier for source, tests, scripts, styles and docs; cargo fmt for Rust
+bun run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
 ```
 
 [AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements. The engine was ported from the TypeScript game at `35afd91` (in Git history) and differs from it on purpose in Rapier 0.36's contact response, zlib-rs level 2 WebSocket compression, square cargo fittings on the three moored harbor ships and ownerless damage sent as `owner: 0`.
@@ -206,22 +220,22 @@ The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
 
 Runtime textures, tank previews and sounds are checked in under `public/`. Development and production builds use these files directly. Regenerate them only when changing artwork or sound:
 
-| Command                          | Output / requirements                                                                                                            |
-| -------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp`                           |
-| `pnpm run optimize:textures`     | Optimized runtime textures from preserved sources; requires `cwebp`                                                              |
-| `pnpm run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
-| `pnpm run generate:pickup-atlas` | The shared pickup atlas, painted procedurally by its generator script alone; also run by `generate:textures` and `generate:ammo` |
-| `pnpm run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
-| `pnpm run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
-| `pnpm run generate:favicon`      | `public/favicon.svg`, drawn as isometric vector shapes                                                                           |
-| `pnpm run generate:app-icons`    | The Home Screen icons in `public/icons/`: the favicon's tank on navy; requires Google Chrome                                     |
+| Command                         | Output / requirements                                                                                                            |
+| ------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `bun run generate:textures`     | Procedural pickup, house, barrel and armor artwork, followed by texture optimization; requires `cwebp`                           |
+| `bun run optimize:textures`     | Optimized runtime textures from preserved sources; requires `cwebp`                                                              |
+| `bun run generate:ammo`         | The four special-ammunition pictograms; requires `cwebp`                                                                         |
+| `bun run generate:pickup-atlas` | The shared pickup atlas, painted procedurally by its generator script alone; also run by `generate:textures` and `generate:ammo` |
+| `bun run generate:previews`     | Tank selection WebPs rendered from the actual models; requires Google Chrome                                                     |
+| `bun run generate:audio`        | Thirteen MP3 effects; requires FFmpeg                                                                                            |
+| `bun run generate:favicon`      | `public/favicon.svg`, drawn as isometric vector shapes                                                                           |
+| `bun run generate:app-icons`    | The Home Screen icons in `public/icons/`: the favicon's tank on navy; requires Google Chrome                                     |
 
 On macOS, install the offline encoders with `brew install webp ffmpeg`.
 
 Source images and encoding guidance live in [assets/texture-sources](assets/texture-sources/README.md), including [harbor](assets/texture-sources/harbor/README.md), [quarry](assets/texture-sources/quarry/README.md) and [tree](assets/texture-sources/trees/README.md) notes. The optimizer uses 768px grass and sandstone, 512px dirt and concrete, and 512px armor wear and conifer foliage. Source artwork is outside the deployed directory.
 
-For conifer artwork, run `node --import tsx scripts/generate-conifer-texture.ts` followed by `pnpm run optimize:textures`. Other tree patterns use `node --import tsx scripts/generate-tree-textures.ts`. Rebuild the tree atlas after either with `node --import tsx scripts/generate-tree-atlas.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `node --import tsx scripts/generate-house-textures.ts`, then `pnpm run optimize:textures`.
+For conifer artwork, run `bun scripts/generate-conifer-texture.ts` followed by `bun run optimize:textures`. Other tree patterns use `bun scripts/generate-tree-textures.ts`. Rebuild the tree atlas after either with `bun scripts/generate-tree-atlas.ts`. The cottage and watchtower surfaces ([notes](assets/texture-sources/houses/README.md)) use `bun scripts/generate-house-textures.ts`, then `bun run optimize:textures`.
 
 See [tank references](assets/tank-references.md) for model provenance and [water texture notes](public/textures/water/README.md) for its source and license.
 
@@ -229,20 +243,20 @@ See [tank references](assets/tank-references.md) for model provenance and [water
 
 A GitHub Pages workflow publishes on pushes to `main`, after the quality gate passes: the
 pull-request check workflow's parallel jobs, which together run everything in
-`pnpm run check` and build the site.
+`bun run check` and build the site.
 It builds `dist/` with `DEPLOY_BASE=/` for <https://sloppy-tanks.fridman.me/>, the
 repository's Pages custom domain (a DNS-only CNAME to `vladf1.github.io` in
 fridman.me's Cloudflare zone). The old
-address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run build` and
-the Vite dev server keep the default `/sloppy-tanks/` base.
+address <https://fridman.me/sloppy-tanks/> redirects there. Local `bun run build` and
+the Bun dev server keep the default `/sloppy-tanks/` base.
 
-The workflow sets `VITE_MULTIPLAYER_URL` to the production game server
+The workflow sets `MULTIPLAYER_URL` to the production game server
 (`deploy/servers.json`). It does not deploy that server, but after the site deploys it
 points the server's container image tag `:production` at the commit's image; the dev
 site uses a separate server on its own machine (below). A
 client only plays on a server built from the same shared sources: the `crates/core`
-files and the crates they compile with, listed by `node scripts/content-version.mjs`,
-and `pnpm run server:check-if-redeployment-required` says whether the live server
+files and the crates they compile with, listed by `bun scripts/content-version.mjs`,
+and `bun run server:check-if-redeployment-required` says whether the live server
 matches this checkout and warns when the live page cannot join it. Both report their
 build at `/health`: release version (`version`), protocol, content version, commit,
 local-change state and build time, and the server also its server build. The release
@@ -254,25 +268,25 @@ Battle Setup shows it with the commit. The page's `/health` is a static
 (<https://sloppy-tanks.fridman.me/health>). The server's release, commit and time are
 those of the first main build that shipped its server build, so they predate the
 page's when later commits left the server unchanged. After merging changes to any of them, run
-`pnpm run server:update` (or let auto-update pull it); until then, players on the
+`bun run server:update` (or let auto-update pull it); until then, players on the
 production site are asked to reload and cannot join. Server-only changes
 (`crates/server`, its dependencies and build settings) keep clients compatible but
 still need that update to take effect; client-only files (`crates/render`,
 `crates/web`, the page shell) never do. See `crates/server/README.md` for the
 updater, auto-update and the SSH fallback.
 
-`DEPLOY_BASE` controls both Vite asset URLs and the engine download.
+`DEPLOY_BASE` controls both asset URLs and the engine download.
 
 The build separates the interactive menu from the engine and audio. Battle Setup appears immediately with a progress strip while the engine, textures and hidden arena prepare. Pressing GO early changes the button to WAIT and confirms that the round will start automatically; there is no need to keep clicking. The arena's shaders and first frame are prepared before combat starts. GO reuses the prepared arena when its choices still match, or prepares the newly selected map while keeping the menu visible. Independent image downloads, device setup and GPU pipeline compilation overlap where possible. The engine (Rust simulation and WebGPU renderer) is one WebAssembly file, emitted as a separate hashed asset and requested from the page's head so it downloads while the menu loads. A second file holds the WebGL2 build, which the head script requests instead only when the browser gives no WebGPU adapter. Hosts should serve it as `application/wasm` with gzip or Brotli compression.
 
 ### Local dev deployment
 
-`pnpm run deploy:dev` runs the normal checks, builds the current local checkout
+`bun run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes it to the separate `sloppy-tanks-dev`
-Cloudflare Worker. Run `pnpm exec wrangler login` first (or provide an API token that
+Cloudflare Worker. Run `bun x --bun wrangler login` first (or provide an API token that
 can deploy Workers and their custom domains). The Worker's account, name and domain
 come from `deploy/dev-site/wrangler.jsonc`, independent of the local Git branch. No Git
-commit or push is required. `pnpm run build:dev` builds without publishing.
+commit or push is required. `bun run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev multiplayer server, which
 runs on its own machine: the `dev` entry of `deploy/servers.json`, reached at the
 first of its hostnames, now its nip.io name (`wss://1-2-3-4.nip.io`, dashboard at

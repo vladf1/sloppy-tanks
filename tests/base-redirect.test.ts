@@ -1,15 +1,11 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
-import { baseRedirectMiddleware } from "../scripts/base-redirect";
+import { test } from "bun:test";
+import { requestPath } from "../scripts/site-server";
 
 function visit(base: string, url: string): string | undefined {
-  let location: string | undefined;
-  const response = {
-    writeHead: (_status: number, headers: { Location: string }) => (location = headers.Location),
-    end: () => {},
-  };
-  baseRedirectMiddleware(base)({ url } as never, response as never, () => {});
-  return location;
+  const result = requestPath(new Request(`http://localhost${url}`), base);
+  const location = result instanceof Response ? result.headers.get("Location") : null;
+  return location ? new URL(location).pathname + new URL(location).search : undefined;
 }
 
 test("the bare base redirects to the page and keeps its query", () => {
@@ -25,4 +21,19 @@ test("other paths and a root base pass through", () => {
   assert.equal(visit("/sloppy-tanks/", "/sloppy-tanks/?debug"), undefined);
   assert.equal(visit("/sloppy-tanks/", "/sloppy-tanks-other"), undefined);
   assert.equal(visit("/", "/?debug"), undefined);
+});
+
+test("the server refuses malformed and escaping paths", () => {
+  for (const pathname of ["/%", "/%2e%2e%2fsecret", "/%5csecret", "/.git/config", "/%00secret"]) {
+    const result = requestPath(
+      new Request(`http://localhost/sloppy-tanks${pathname}`),
+      "/sloppy-tanks/",
+    );
+    assert.ok(result instanceof Response);
+    assert.ok(result.status === 400 || result.status === 404);
+  }
+  assert.equal(
+    requestPath(new Request("http://localhost/sloppy-tanks/assets/game.js"), "/sloppy-tanks/"),
+    "assets/game.js",
+  );
 });

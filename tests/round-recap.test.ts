@@ -1,6 +1,6 @@
 // The recap's statistics, feats and personal bests are engine logic, covered by
 // `crates/core/tests/integration/round_recap.rs`; this checks how the battle report shows them.
-import { test } from "node:test";
+import { test } from "bun:test";
 import assert from "node:assert/strict";
 import {
   mostValuable,

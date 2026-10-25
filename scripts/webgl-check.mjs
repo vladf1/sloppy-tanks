@@ -97,8 +97,7 @@ async function newPage() {
   const page = await context.newPage();
   page.setDefaultTimeout(LOADING_TIMEOUT_MS);
   const binaries = [];
-  // Engine binaries are fetched; Vite's dev server also serves `?url` imports of
-  // them as scripts.
+  // Count only the engine binary requests.
   page.on("request", (request) => {
     const path = new URL(request.url()).pathname;
     if (path.endsWith(".wasm") && request.resourceType() === "fetch") {

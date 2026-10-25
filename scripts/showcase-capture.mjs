@@ -8,16 +8,16 @@
 // count give the same battle on a build that leaves gameplay alone, so two builds'
 // stills line up shot for shot.
 //
-//   node scripts/showcase-capture.mjs --out artifacts/showcase/candidate [--maps village,quarry]
+//   bun scripts/showcase-capture.mjs --out artifacts/showcase/candidate [--maps village,quarry]
 //     [--shots follow,hero,vista,overview,action,strip,first-person,death,destruction,pickups,
 //      menu,respawn,settings,recap,tablet,phone] [--frames 900] [--seed 4242] [--webgl]
 //
-// It serves this checkout's `src/generated/engine/` through its own Vite dev server on a
-// free port (run `pnpm run wasm` first), so parallel checkouts never share a port.
+// It serves this checkout's `src/generated/engine/` through its own Bun dev server on a
+// free port (run `bun run wasm` first), so parallel checkouts never share a port.
 import fs from "node:fs";
 import path from "node:path";
 import { parseArgs } from "node:util";
-import { createServer } from "vite";
+import { startDevServer } from "./site-server.ts";
 import {
   freezeLoop,
   installEngineHelpers,
@@ -49,14 +49,8 @@ const take = (shot) => wanted.size === 0 || wanted.has(shot);
 const out = path.resolve(values.out);
 fs.mkdirSync(out, { recursive: true });
 
-const server = await createServer({
-  configFile: path.resolve("vite.config.ts"),
-  server: { port: 0, host: "127.0.0.1", strictPort: false },
-  logLevel: "error",
-});
-await server.listen();
-const { port } = server.httpServer.address();
-const base = `http://127.0.0.1:${port}/sloppy-tanks/`;
+const server = startDevServer({ port: 0 });
+const base = server.url.href;
 const webglQuery = values.webgl ? "&webgl" : "";
 const { browser, context, errors } = await launchGame({
   viewport: { width: WIDTH, height: HEIGHT },
@@ -571,7 +565,7 @@ try {
 } finally {
   fs.writeFileSync(path.join(out, "report.json"), JSON.stringify(report, null, 2));
   await browser.close();
-  await server.close();
+  await server.stop();
 }
 if (errors.length) {
   console.error("Page errors:", errors.join("\n"));

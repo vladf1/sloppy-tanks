@@ -11,14 +11,14 @@ machine behind Caddy ([Deployment](#deployment)); production's is at
 `wss://sloppy-tanks-server.fridman.me`.
 
 ```sh
-pnpm run server:dev        # build for this machine and listen on 127.0.0.1:8787
-pnpm run dev               # in another terminal; open ?multiplayer on the printed URL
+bun run server:dev        # build for this machine and listen on 127.0.0.1:8787
+bun run dev               # in another terminal; open ?multiplayer on the printed URL
 ```
 
-The client uses `ws://127.0.0.1:8787` locally. `pnpm run server:check:players`
+The client uses `ws://127.0.0.1:8787` locally. `bun run server:check:players`
 runs real player sockets on all maps against a running server;
 `SLOPPY_SERVER_URL=wss://sloppy-tanks-server.fridman.me` tests production's.
-`pnpm run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects
+`bun run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects
 a remote server for that browser check. For sustained traffic from other
 regions, the traffic bots (a separate Cloudflare Worker) join open rooms on
 production's server; see `bots/README.md`.
@@ -27,20 +27,20 @@ Tests: `cargo test -p sloppy-server` covers settings, limits, the WebSocket code
 and deflate, sessions, the monitor and dashboard, and end-to-end rooms through
 an independent client (`tests/server.rs`, `tests/match_room.rs`). Reconnect, host
 transfer, expiry and replication live in `crates/core/tests/integration/net_*.rs`.
-`tests/traffic-bots.test.ts` in `pnpm test` drives the built binary with the
+`tests/traffic-bots.test.ts` in `bun run test` drives the built binary with the
 TypeScript traffic bots.
 
 ## Build and settings
 
-`pnpm run server:build` builds `target/server/sloppy-server` with the `server`
+`bun run server:build` builds `target/server/sloppy-server` with the `server`
 Cargo profile (optimized, unwinding, so one room's panic ends only that room).
-`node scripts/build-server.mjs --vps` cross-compiles the static
+`bun scripts/build-server.mjs --vps` cross-compiles the static
 `x86_64-unknown-linux-musl` binary the server machines run; Rust's bundled `rust-lld` links
 it (`.cargo/config.toml`), so macOS needs no cross toolchain. It targets x86-64-v3
 (AVX2, BMI2) without FMA, which would change seeded physics results; read the comment
 there before changing either.
 
-`pnpm run server:build-docker-image` builds the same binary into a `linux/amd64`
+`bun run server:build-docker-image` builds the same binary into a `linux/amd64`
 Docker image, `sloppy-tanks-server:<server build>` and `:latest` (`Dockerfile`).
 It cross-compiles with `--vps` as above in the normal Cargo target directory, so
 compiled dependencies are reused locally and from CI's Cargo cache, and the image
@@ -51,7 +51,7 @@ images (see [Deployment](#deployment)).
 Both builds stamp the content version the browser engine also carries
 (`scripts/content-version.mjs`): a hash of `crates/core` sources, their resolved
 crate tree and `rust-toolchain.toml`. Mismatched clients are rejected with a
-reload message, so after editing `crates/core`, rebuild the Wasm (`pnpm run
+reload message, so after editing `crates/core`, rebuild the Wasm (`bun run
 wasm`) and the server together. The build also stamps a `serverBuild`
 fingerprint of the core and server sources, their dependencies and build
 settings, which `/health` reports so deploys and the redeploy check notice
@@ -192,14 +192,14 @@ machine's names written into the Caddyfile:
 ### Deploying
 
 ```sh
-pnpm run server:update                # pull :production and switch now
-pnpm run server:update --image pr-12  # pull another tag (or full image name) and pin it
-pnpm run server:update --dev --image pr-12   # try a pull request's server on the dev server
-pnpm run server:rollback              # switch back to the previous image
-pnpm run server:auto-update on|off    # production follows :production by itself, or not
-pnpm run server:auto-update resume    # lift a hold (below) so auto-update follows again
-pnpm run server:deploy                # SSH fallback: build here, copy the image, switch
-pnpm run server:provision             # set a machine up, or again after editing deploy/server/*
+bun run server:update                # pull :production and switch now
+bun run server:update --image pr-12  # pull another tag (or full image name) and pin it
+bun run server:update --dev --image pr-12   # try a pull request's server on the dev server
+bun run server:rollback              # switch back to the previous image
+bun run server:auto-update on|off    # production follows :production by itself, or not
+bun run server:auto-update resume    # lift a hold (below) so auto-update follows again
+bun run server:deploy                # SSH fallback: build here, copy the image, switch
+bun run server:provision             # set a machine up, or again after editing deploy/server/*
 ```
 
 Each acts on production's machine; `--dev` picks the dev site's.
@@ -222,7 +222,7 @@ production it refuses a checkout that is not a clean `origin/main`; `--force`
 overrides that. It finishes once the server reports the checkout's build through
 Caddy.
 
-`pnpm run deploy:dev` deploys the dev server first (`scripts/server.mjs deploy
+`bun run deploy:dev` deploys the dev server first (`scripts/server.mjs deploy
 --dev`), waits until its `/health` reports the checkout's build, then uploads the dev
 site; it never touches production's machine. It refuses to upload a build without
 the multiplayer entry.
@@ -236,7 +236,7 @@ lobby. Stop load tests before deploying.
 
 To set up a machine, create an Ubuntu 26.04 x64 VPS with a public IPv4 address and
 your SSH key for root, put its address in `deploy/servers.json` and run
-`pnpm run server:provision` (`--dev` for the dev site's). It installs everything,
+`bun run server:provision` (`--dev` for the dev site's). It installs everything,
 starts CI's `:production` image (on dev, `deploy:dev` then replaces it with the
 checkout's build), and waits until the server answers through Caddy at its nip.io
 name, which takes about a minute
@@ -251,7 +251,7 @@ its address in production's entry and provision it: players stay on the old mach
 until the hostname's record points at the new one, while the scripts already check
 the new one through its nip.io name.
 
-`pnpm run server:point-hostname` (`--dev` for the dev site's) then moves the first
+`bun run server:point-hostname` (`--dev` for the dev site's) then moves the first
 hostname with its own record (`--hostname <name>` picks another) through Cloudflare's
 API, where fridman.me's DNS lives: it asks for an API token and the IP, defaulting to
 the machine in the list, sets the existing A record and waits until Google's and
@@ -261,10 +261,10 @@ it finds it on: Caddy answers the ACME challenges itself and serves players' wss
 connections directly; Cloudflare's edge certificates would only cover a proxied record.
 
 ```sh
-pnpm run server:provision                   # after changing production's ip in deploy/servers.json
-pnpm run server:point-hostname --dry-run    # shows the record and the change
-pnpm run server:point-hostname              # moves it and waits for public resolvers
-pnpm run server:provision                   # so Caddy obtains the certificate at once
+bun run server:provision                   # after changing production's ip in deploy/servers.json
+bun run server:point-hostname --dry-run    # shows the record and the change
+bun run server:point-hostname              # moves it and waits for public resolvers
+bun run server:provision                   # so Caddy obtains the certificate at once
 ```
 
 The token is made once and reused; keep it in a password manager and off the machines,
@@ -281,13 +281,13 @@ out `{dashed-ip}` names, which no certificate authority could reach at a private
 ## Monitoring
 
 ```sh
-pnpm run server:logs    # follow the journal: room lifecycle lines and minute summaries
-pnpm run server:stats   # /stats JSON over SSH
-pnpm run server:status  # systemctl status for the game server and Caddy, and its image state
+bun run server:logs    # follow the journal: room lifecycle lines and minute summaries
+bun run server:stats   # /stats JSON over SSH
+bun run server:status  # systemctl status for the game server and Caddy, and its image state
 # add --dev for the dev server
 # exit 1 when the live server needs a redeploy: clients are refused, or only
 # server code changed; --dev checks the dev server, SLOPPY_SERVER_URL=ws://127.0.0.1:8787 a local one
-pnpm run server:check-if-redeployment-required
+bun run server:check-if-redeployment-required
 ```
 
 The log has one line per event: a room is created, a player joins, disconnects

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { test } from "node:test";
+import { test } from "bun:test";
 import { fitPanels } from "../src/game/panel-fit";
 
 /** The build label's box: where its top-left corner sits in the window. */

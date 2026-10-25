@@ -1,4 +1,4 @@
-import { mock, test } from "node:test";
+import { jest, test } from "bun:test";
 import assert from "node:assert/strict";
 import { afterPaint, nextTask } from "../src/game/task-yield";
 
@@ -16,7 +16,7 @@ test("afterPaint waits for the next frame and a task after it, or a timer when n
   const host = globalThis as { requestAnimationFrame?: (callback: () => void) => number };
   const original = host.requestAnimationFrame;
   host.requestAnimationFrame = (callback) => frames.push(callback);
-  mock.timers.enable({ apis: ["setTimeout"] });
+  jest.useFakeTimers();
   try {
     let painted = false;
     const paint = afterPaint().then(() => (painted = true));
@@ -33,14 +33,14 @@ test("afterPaint waits for the next frame and a task after it, or a timer when n
     const hidden = afterPaint().then(() => (waited = true));
     await nextTask();
     assert.equal(waited, false);
-    mock.timers.tick(99);
+    jest.advanceTimersByTime(99);
     await Promise.resolve();
     assert.equal(waited, false, "the fallback waits for its full timeout");
-    mock.timers.tick(1);
+    jest.advanceTimersByTime(1);
     await hidden;
     assert.equal(waited, true);
   } finally {
-    mock.timers.reset();
+    jest.useRealTimers();
     if (original) host.requestAnimationFrame = original;
     else delete host.requestAnimationFrame;
   }

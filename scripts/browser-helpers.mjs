@@ -10,7 +10,7 @@ import { chromium } from "playwright";
  */
 export const headless = !process.env.SLOPPY_HEADED;
 
-/** The Vite dev server under test; `pnpm run dev` prints it. */
+/** The Bun dev server under test; `bun run dev` prints it. */
 export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 
 /**
@@ -20,7 +20,7 @@ export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-t
 const webglOnly = Boolean(process.env.SLOPPY_WEBGL);
 
 /**
- * Bring the WebGL2 engine up to date before a check plays it. `pnpm run wasm` builds only
+ * Bring the WebGL2 engine up to date before a check plays it. `bun run wasm` builds only
  * the WebGPU engine, so after a Rust edit the WebGL one is stale until this runs; when it
  * is current, this is a half-second Cargo no-op. A check of another host's page plays
  * that host's build, so only local dev servers rebuild.
@@ -215,13 +215,13 @@ export function chosenMap(page) {
  * `Math.random` uses (cosmetic variation, bot names) stay untouched. */
 export async function seedGame(page, seed) {
   if (!Number.isSafeInteger(seed) || seed < 0) throw new Error("Invalid fixture seed");
-  // Startup is bundled inline in HTML in both Vite modes.
+  // Startup is bundled inline in HTML in both Bun modes.
   await page.route(
     (url) => url.pathname.endsWith("/") || url.pathname.endsWith(".html"),
     async (route) => {
       const url = new URL(route.request().url());
       if (["127.0.0.1", "localhost"].includes(url.hostname)) {
-        // Chromium treats a fulfilled document as non-local; allow this fixture's Vite socket.
+        // Chromium treats a fulfilled document as non-local; allow this fixture's Bun socket.
         await page.context().grantPermissions(["local-network-access"], { origin: url.origin });
       }
       const response = await route.fetch();

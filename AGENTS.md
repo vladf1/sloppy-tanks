@@ -71,57 +71,56 @@ One implementation of the game, in Rust, shared by the browser and the server:
   In TypeScript, let the compiler infer obvious locals and narrow engine JSON
   at the boundary (`src/game/engine-api.ts`).
 - `cargo fmt` and clippy (`-D warnings`) own Rust style; Prettier owns the rest.
-  The page compiles with TypeScript 7; lint uses a separate TypeScript 6
+  Bun checks the page; lint uses a separate TypeScript 6
   toolchain (see `tools/lint/README.md`).
 
 ## Normal development and validation
 
-Use Node.js 24 LTS, pnpm 11 or newer and Rust through rustup; if `pnpm`
-is missing, install it with `brew install pnpm`. `rust-toolchain.toml` pins
-Rust with rustfmt, clippy and the `wasm32-unknown-unknown` and
-`x86_64-unknown-linux-musl` targets; the wasm-bindgen CLI must be 0.2.129, the
-crate pin. Put rustup's cargo before Homebrew's:
-`export PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH`. `devEngines` in `package.json` pins the exact pnpm
-version, which pnpm 11+ switches to by itself, and makes npm (including `npx`)
-refuse to run; `engines.pnpm` rejects older pnpm, which ignores the pin. Run
-`pnpm install` in every new checkout or worktree and after dependency changes;
-it replaces `npm ci`, `pnpm add` replaces `npm install <package>`, and the
-root postinstall also installs the isolated lint toolchain in `tools/lint/`.
-Packages come from pnpm's shared store, so a worktree install takes about a
-second and no extra disk. pnpm blocks dependency install scripts: a new
-dependency that needs one fails the install until `pnpm approve-builds <name>`
-records it under `allowBuilds` in `pnpm-workspace.yaml`. Local Rust builds may run
+Use Bun 1.4.4 (pinned in `.bun-version` and `package.json`) and Rust through rustup.
+Bun supplies installation, TypeScript checking, bundling, dev/preview servers,
+script execution and the native test runner. ESLint and Prettier run on Bun;
+TypeScript 6 in `tools/lint/` exists only for ESLint's parser and typed rules.
+`rust-toolchain.toml` pins Rust with rustfmt, clippy and the
+`wasm32-unknown-unknown` and `x86_64-unknown-linux-musl` targets; the wasm-bindgen CLI
+must be 0.2.129, the crate pin. Put rustup's cargo before Homebrew's:
+`export PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH`.
+Run `bun install --frozen-lockfile` in every new checkout or worktree. The root
+postinstall installs `tools/lint/` with its own committed `bun.lock`; use `bun add`
+for dependency changes. Installs use isolated linking and explicitly trust only
+`esbuild` and `workerd`, Wrangler's dependencies. Review a new dependency's install
+script before adding it to `trustedDependencies`. Keep `--no-script` on the native
+`bun check` command: this repository also has a `check` package script.
+Local Rust builds may run
 through [Kache](README.md#run), a user-level `rustc-wrapper` that restores compiler
 outputs across worktrees; keep it out of the repository's Cargo config and CI. If a
 build looks stale, rerun it with `KACHE_DISABLED=1` before debugging the code, and say
 whether Kache was on when reporting build times.
 
 ```sh
-pnpm run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests
-pnpm run wasm                         # release WebGPU engine into src/generated/engine/; rerun after Rust/WGSL edits
-pnpm run wasm:webgl                   # the WebGL2 fallback engine; before trying ?webgl after an edit
+bun run check                        # CI gate: format, Wasm/Bun build, lint, types, clippy, server, all tests
+bun run wasm                         # release WebGPU engine into src/generated/engine/; rerun after Rust/WGSL edits
+bun run wasm:webgl                   # the WebGL2 fallback engine; before trying ?webgl after an edit
 cargo test --workspace --test integration navigation::   # one area of the core tests (add --release for seeded matches)
-node --import tsx --test tests/foo.test.ts    # focused page-shell test
-pnpm run validate                     # seeded headless matches and reset checks
-pnpm run dev                          # browser work; use the printed URL
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
+bun test tests/foo.test.ts    # focused page-shell test
+bun run validate                     # seeded headless matches and reset checks
+bun run dev                          # browser work; use the printed URL
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun run check:browser
 ```
 
-`pnpm run validate` writes its results to the ignored
-`artifacts/performance/simulation-results.json`. `pnpm run build` creates
-`dist/`; it is a build output, not a place to edit source behavior. Vite and
-`tsc` import the generated glue, so run `pnpm run wasm` before them; `build`,
-`build:dev` and `check` do. `pnpm run wasm` leaves the WebGL2 engine
+`bun run validate` writes its results to the ignored
+`artifacts/performance/simulation-results.json`. `bun run build` creates
+`dist/`; it is a build output, not a place to edit source behavior. The Bun bundler and checker import the generated glue, so run `bun run wasm` before them; `build`,
+`build:dev` and `check` do. `bun run wasm` leaves the WebGL2 engine
 (`src/generated/engine-webgl/`) alone unless its glue is missing or the engine's
 API changed, because building it doubles the compile work of every edit; the
 browser checks that play it rebuild it first, and `build` builds both
-(`pnpm run wasm:all`). Keep `--workspace` on focused cargo commands: `-p sloppy-core`
+(`bun run wasm:all`). Keep `--workspace` on focused cargo commands: `-p sloppy-core`
 alone resolves different dependency features and compiles Rapier and its stack a
 second time. `tests/traffic-bots.test.ts` drives the built server binary
-(`pnpm run server:build`).
+(`bun run server:build`).
 
 A successful Rust/TypeScript/build/test gate does not prove controls, menu
-transitions, rendering, or cleanup. Run `pnpm run check:browser` against the
+transitions, rendering, or cleanup. Run `bun run check:browser` against the
 dev server for startup, menu, input or rendering changes, or the focused check
 from `scripts/README.md` while iterating. Keep those checks passing: fix or
 delete a check that no longer matches the game rather than leaving it broken,
@@ -140,7 +139,7 @@ desktop; retain tablet/iPad touch support, the phone edition and their input che
 
 Profiling and benchmarks (`profile.mjs`, the loading and host-download
 benchmarks) are manual evidence, not normal CI. Do not add these
-workloads to `pnpm run check` or deployment workflows. Keep HTTP delivery,
+workloads to `bun run check` or deployment workflows. Keep HTTP delivery,
 browser cold-load, and in-game rendering/gameplay conclusions separate; a
 result from one category does not prove the others. Preserve outliers and
 disclose sample counts instead of reporting a clean percentile that discarded
@@ -148,7 +147,7 @@ a slow run.
 
 Separate page runs of one build drift 2x on a developer Mac, so compare render
 CPU (`renderMs`, the engine's presentation and `Renderer::render`) between builds
-loaded at once: debug-API static bundles (`NODE_ENV=development pnpm exec vite
+loaded at once: debug-API static bundles (`NODE_ENV=development bun run dev
 build --minify false`) served cross-origin isolated for 5 µs timer resolution, one
 page per build, seeded, with the overview camera; hold the game's `loop`, step
 every page through the same timestamps in alternating 40-frame blocks, wait for
@@ -283,7 +282,7 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   differently between the engines.
   WebGL may simplify an effect, but must not give up a performance optimization
   such as a cache or batching: its devices are the weaker ones. Keep both
-  building: `pnpm run rust:clippy` lints both, `scripts/webgl-check.mjs` plays the
+  building: `bun run rust:clippy` lints both, `scripts/webgl-check.mjs` plays the
   fallback and `SLOPPY_WEBGL=1` runs any browser check on the WebGL engine (both
   rebuild it first through `buildWebglEngine()` in `scripts/browser-helpers.mjs`).
   Shaders are handwritten WGSL; custom model effects register
@@ -434,7 +433,7 @@ offline.
   there. Local builds and the dev server keep the default `/sloppy-tanks/` base.
   The workflow runs the same parallel jobs as the pull-request check
   (`.github/workflows/check.yml`, each running one of the scripts
-  `pnpm run check` chains), so a lint/type/build/test failure blocks the
+  `bun run check` chains), so a lint/type/build/test failure blocks the
   deploy. Add a new gate step to one of those scripts, not to `check` itself,
   or CI will skip it.
 - Treat historical artifacts, frame rates, CDN measurements, and deployment
@@ -447,7 +446,7 @@ offline.
 
 ## Local dev publishing
 
-- `pnpm run deploy:dev` checks the checkout, builds `dist-dev/`, and publishes it
+- `bun run deploy:dev` checks the checkout, builds `dist-dev/`, and publishes it
   to the dedicated Cloudflare Worker `sloppy-tanks-dev` (setup and URLs in
   `README.md`). It publishes current local files, including uncommitted
   changes. Use this when asked to publish the dev site. Do not publish it to
@@ -459,16 +458,16 @@ offline.
   dev server's rooms and never touches production's server. Client and server
   must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with
-  `node scripts/content-version.mjs`); `crates/render`, `crates/web` and the page
+  `bun scripts/content-version.mjs`); `crates/render`, `crates/web` and the page
   shell are outside it. Each machine runs its server as a container image under
   Podman, behind Caddy's own container: CI pushes one image per server build and,
   after the Pages deploy, moves `:production` to main's. Production then needs
-  `pnpm run server:update` unless auto-update is on (`server:status` shows it); ask before running it.
-  `pnpm run server:deploy` from `main` is the SSH fallback when CI or the
+  `bun run server:update` unless auto-update is on (`server:status` shows it); ask before running it.
+  `bun run server:deploy` from `main` is the SSH fallback when CI or the
   registry cannot serve. Never run `server:auto-update`, `server:rollback` or
   `server:update` for production without being asked. The dev server only changes
   on `deploy:dev` or an explicit `--dev` command.
-  `pnpm run server:check-if-redeployment-required` (add `--dev` for
+  `bun run server:check-if-redeployment-required` (add `--dev` for
   the dev server) compares this checkout with a live server's `/health` and
   exits non-zero when a redeploy is needed. It tells clients-refused (content
   hash) apart from server-only changes (`serverBuild`: `crates/server`, its
@@ -477,7 +476,7 @@ offline.
   Change the machines only through `deploy/servers.json`, `deploy/server/` and the
   `server:*` scripts described in `crates/server/README.md`. The traffic bots in
   `bots/` are a Cloudflare Worker that targets the production server;
-  `pnpm run bots:deploy` publishes them separately.
+  `bun run bots:deploy` publishes them separately.
 - Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
   suitable HTML entries there and smoke-test their deployed assets and

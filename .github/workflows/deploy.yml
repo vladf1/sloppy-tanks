@@ -49,7 +49,7 @@ jobs:
         uses: actions/deploy-pages@v5
 
   # After the site is live, point :production at this commit's server image. The VPS
-  # pulls it on `pnpm run server:update`, or by itself when auto-update is on
+  # pulls it on `bun run server:update`, or by itself when auto-update is on
   # (crates/server/README.md); nothing here connects to the server.
   promote-server:
     needs: [check, deploy]

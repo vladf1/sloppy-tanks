@@ -37,11 +37,10 @@ function bakeBand(engine: EngineSource, key: string, band: number, bands: number
   });
   const pixels = new Promise<Uint8Array>((resolve, reject) => {
     // Each build's glue has its own worker, so a WebGPU page never loads WebGL code.
-    const worker = engine.webgl
-      ? new Worker(new URL("./texture-bake-worker-webgl.ts", import.meta.url), {
-          type: "module",
-        })
-      : new Worker(new URL("./texture-bake-worker.ts", import.meta.url), { type: "module" });
+    const worker = new Worker(
+      engine.webgl ? import.meta.env.WEBGL_BAKE_WORKER_URL : import.meta.env.WEBGPU_BAKE_WORKER_URL,
+      { type: "module" },
+    );
     // The worker posts `null` once its script has loaded (`texture-bake-service.ts`).
     worker.onmessage = ({ data }: MessageEvent<Uint8Array | string | null>) => {
       workerLoaded();

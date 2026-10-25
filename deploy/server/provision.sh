@@ -2,7 +2,7 @@
 # Idempotent setup of one game server machine on Ubuntu: Podman, the server's and Caddy's
 # Quadlet units, the image updater, key-only SSH and the firewall. Run as root from a
 # directory holding this script and the other files in deploy/server/, where
-# `node scripts/server.mjs provision` uploads them (it writes the machine's names into
+# `bun scripts/server.mjs provision` uploads them (it writes the machine's names into
 # the Caddyfile). It starts no server image: the first deploy pins one.
 set -euo pipefail
 cd "$(dirname "$0")"
@@ -33,7 +33,7 @@ install -m 644 Caddyfile /etc/sloppy-tanks/caddy/Caddyfile
 install -m 755 sloppy-tanks-update /usr/local/bin/sloppy-tanks-update
 install -m 644 sloppy-tanks-update.service sloppy-tanks-update.timer /etc/systemd/system/
 install -m 644 sloppy-tanks.container caddy.container /etc/containers/systemd/
-# The auto-update timer stays as it is: `pnpm run server:auto-update on|off` owns it.
+# The auto-update timer stays as it is: `bun run server:auto-update on|off` owns it.
 systemctl daemon-reload
 
 # Caddy reloads its config in place, keeping players connected, unless its unit names

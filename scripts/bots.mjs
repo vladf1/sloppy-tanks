@@ -4,7 +4,7 @@ import { parseArgs } from "node:util";
 const endpoint = (
   process.env.SLOPPY_BOTS_URL ?? "https://sloppy-tanks-bots.vova145.workers.dev"
 ).replace(/\/$/, "");
-// `pnpm run bots -- start …` passes its `--` through, and parseArgs reads every flag
+// `bun run bots -- start …` passes its `--` through, and parseArgs reads every flag
 // after a `--` as a positional, so `--minutes` and `--host` would be dropped silently.
 const args = process.argv.slice(2);
 if (args[0] === "--") args.shift();
@@ -57,7 +57,7 @@ function print(status) {
 switch (command) {
   case "start": {
     const [region, bots] = rest;
-    if (!region) throw new Error("Usage: pnpm run bots -- start <region> [bots] [--minutes N]");
+    if (!region) throw new Error("Usage: bun run bots -- start <region> [bots] [--minutes N]");
     const result = await api("start", {
       region,
       bots: bots === undefined ? undefined : Number(bots),
@@ -78,8 +78,8 @@ switch (command) {
     break;
   default:
     console.log(`Usage:
-  pnpm run bots -- start <region> [bots=1]    [--minutes 5]  [--host] [--room CODE] [--per-room 1]
-  pnpm run bots -- stop [region]              stop one region, or all
-  pnpm run bots -- status
+  bun run bots -- start <region> [bots=1]    [--minutes 5]  [--host] [--room CODE] [--per-room 1]
+  bun run bots -- stop [region]              stop one region, or all
+  bun run bots -- status
 Regions: wnam enam sam weur eeur apac oc afr me`);
 }

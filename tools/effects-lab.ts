@@ -4,11 +4,11 @@
 // and an amplified difference image (references: `lab-references.ts`, `scripts/README.md`
 // Labs). The Three side drew its cosmetic randomness from its own stream, so only the
 // overall match is meaningful.
-// Build the labs engine with `pnpm run wasm:labs`, then open
+// Build the labs engine with `bun run wasm:labs`, then open
 // /sloppy-tanks/tools/effects-lab.html on the dev server.
 // `?t=<seconds>` (default 4) runs the script to that time and freezes it;
 // `?live` loops it. `?theme=quarry|harbor` switches dust colors and effects.
-import type { EffectsLab } from "../src/generated/engine-labs/engine.js";
+import type { EffectsLab } from "../src/generated/engine-labs/engine-labs.js";
 import type { VehicleKind, Weapon } from "../src/game/engine-api";
 import { compareImages, loadReference, pixels } from "./lab-references";
 import { fail, loadLabsEngine, prepareLab } from "./labs-engine";

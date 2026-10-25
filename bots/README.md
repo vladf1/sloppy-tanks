@@ -33,17 +33,17 @@ immediately.
 ## Use
 
 ```sh
-pnpm run bots:deploy                    # deploy after changing bot code
-pnpm run bots -- start weur 4 --host    # --minutes 5 --room CODE --per-room 1
-pnpm run bots -- start apac 2           # join whatever rooms are open
-pnpm run bots -- status
-pnpm run bots -- stop apac              # or no region to stop all
+bun run bots:deploy                    # deploy after changing bot code
+bun run bots -- start weur 4 --host    # --minutes 5 --room CODE --per-room 1
+bun run bots -- start apac 2           # join whatever rooms are open
+bun run bots -- status
+bun run bots -- stop apac              # or no region to stop all
 ```
 
 The root URL serves a control page with the same actions. There is no
 authentication: anyone with the URL can start and stop bots, bounded by the
 32-bot and 6-hour limits per region. Local
-development: `pnpm exec wrangler dev --config bots/wrangler.jsonc` with `SERVER_URL`
+development: `bun x --bun wrangler dev --config bots/wrangler.jsonc` with `SERVER_URL`
 overridden to a local server.
 
 ## Cost

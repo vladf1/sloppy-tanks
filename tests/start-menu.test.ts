@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import { setImmediate } from "node:timers/promises";
-import { test } from "node:test";
+import { mock, afterEach, spyOn, test } from "bun:test";
 import { initialGameOptions } from "../src/game/game-options";
 import { StartMenu, type PreparedGame } from "../src/game/start-menu";
+
+afterEach(() => mock.restore());
 
 class MenuNode extends EventTarget {
   disabled = false;
@@ -66,8 +68,9 @@ test("queued GO holds the mode but keeps late arena choices, then closes the set
   assert.equal(f.overlay.removed, true);
 });
 
-test("a failed queued start restores the mode tabs", async (context) => {
-  context.mock.method(console, "error", () => {});
+test("a failed queued start restores the mode tabs", async () => {
+  spyOn(console, "error").mockImplementation(() => {});
+
   const f = fixture(async () => {
     throw new Error("Download unavailable");
   });

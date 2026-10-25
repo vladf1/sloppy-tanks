@@ -1,7 +1,7 @@
 // Build the browser engine: release Wasm for `sloppy-web`, then its wasm-bindgen
 // glue into the ignored `src/generated/engine/`. Pages import
-// `src/generated/engine/engine.js` and the binary through Vite's `?url`, and
-// initialize with `init({ module_or_path: wasmUrl })`. Vite does not compile Rust:
+// `src/generated/engine/engine.js` and the binary through the `?url` asset loader, and
+// initialize with `init({ module_or_path: wasmUrl })`. Bun does not compile Rust:
 // rerun this after Rust or WGSL edits.
 //
 // A second build renders with WebGL2 instead of WebGPU (`sloppy-web`'s `webgl`
@@ -9,10 +9,10 @@
 // src/engine.ts loads it only where WebGPU is unavailable. Its own file names keep its
 // binary apart from the WebGPU one in the bundle. Rebuilding it doubled the compile work
 // of every edit while agents play WebGPU, so by default only the WebGPU engine is built,
-// and the WebGL one too only when its glue is missing (Vite resolves its import) or its
-// API no longer matches (tsc checks both against the page). `--webgl` builds the WebGL
+// and the WebGL one too only when its glue is missing (Bun resolves its import) or its
+// API no longer matches (the checker checks both against the page). `--webgl` builds the WebGL
 // engine alone, for `?webgl` and the browser checks that play it; `--all` builds both,
-// as `pnpm run build` does. Two builds run at once, the WebGL one in its own target
+// as `bun run build` does. Two builds run at once, the WebGL one in its own target
 // directory (`target/webgl`) so neither waits on the other's Cargo lock.
 //
 // Cargo runs from the repository root so `.cargo/config.toml` (SIMD) applies.
@@ -26,7 +26,7 @@
 //
 // `--labs` adds the development labs (`RenderLab`, `EffectsLab`, the `labs` feature of
 // `sloppy-web`) and writes their glue to `src/generated/engine-labs/` instead, so a lab
-// build never replaces the production engine that the game, `pnpm run build` and the dev
+// build never replaces the production engine that the game, `bun run build` and the dev
 // server load.
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -56,7 +56,7 @@ const LABS = {
   features: ["--features", "labs"],
   targetDir: "target",
   dir: "src/generated/engine-labs",
-  outName: "engine",
+  outName: "engine-labs",
 };
 
 /** Run `command` from the repository root; rejects unless it succeeds. */
@@ -145,7 +145,7 @@ async function requestedEngines() {
 
 const engines = await requestedEngines();
 await buildEngines(engines);
-// The page and tsc treat both glues as one API, so a WebGPU build that changed it
+// The page and checker treat both glues as one API, so a WebGPU build that changed it
 // rebuilds the WebGL engine as well.
 if (engines.length === 1 && engines[0] === WEBGPU) {
   if ((await publicApi(WEBGPU)) !== (await publicApi(WEBGL))) {

@@ -14,7 +14,7 @@ import { gameServer } from "./servers.mjs";
  * it stays DNS only: Caddy answers the ACME challenges and serves players' wss itself.
  * `--dry-run` shows the record and the change without making it.
  *
- *   pnpm run server:point-hostname [--dev] [--hostname <name>] [--dry-run]
+ *   bun run server:point-hostname [--dev] [--hostname <name>] [--dry-run]
  *
  * Run it after the new machine checks out through its nip.io name, then provision again
  * so Caddy obtains the hostname's certificate at once (crates/server/README.md). */
@@ -181,7 +181,7 @@ async function main() {
   await waitForPublicDns(hostname, ip);
   console.log(
     `${hostname} resolves to ${ip}. ` +
-      `Next: pnpm run server:provision${dev ? " --dev" : ""} so Caddy obtains its certificate now.`,
+      `Next: bun run server:provision${dev ? " --dev" : ""} so Caddy obtains its certificate now.`,
   );
 }
 

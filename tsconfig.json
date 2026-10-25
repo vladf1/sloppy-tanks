@@ -11,10 +11,10 @@
     "skipLibCheck": true,
     "noEmit": true,
     "allowImportingTsExtensions": true,
-    "types": ["vite/client", "node"],
+    "types": ["bun"],
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
     "noImplicitOverride": true
   },
-  "include": ["src", "tests", "scripts", "tools/**/*.ts", "vite.config.ts", "vite.dev.config.ts"]
+  "include": ["src", "tests", "scripts", "tools/**/*.ts"]
 }
