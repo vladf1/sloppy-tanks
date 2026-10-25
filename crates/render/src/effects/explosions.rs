@@ -2550,13 +2550,21 @@ const SIGHT_RADIUS: f32 = 3.0;
 
 /// Thin every puff in `puffs` that covers the sight line from `eye` to `target`
 /// (the player's tank), most where the line passes through its middle.
-pub fn clear_sight_line(puffs: &mut PoolBuffer, eye: Vec3, target: Vec3) {
+pub fn clear_sight_line(
+    puffs: &mut PoolBuffer,
+    eye: Vec3,
+    target: Vec3,
+    keep: std::ops::Range<usize>,
+) {
     let sight = target - eye;
     let length_squared = sight.length_squared();
     if length_squared < 1e-6 {
         return;
     }
-    for puff in puffs.records_mut() {
+    for (index, puff) in puffs.records_mut().iter_mut().enumerate() {
+        if keep.contains(&index) {
+            continue;
+        }
         let center = puff.translation();
         let along = ((center - eye).dot(sight) / length_squared).clamp(0.0, 1.0);
         let miss = center.distance(eye + sight * along);
