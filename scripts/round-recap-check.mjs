@@ -181,7 +181,8 @@ try {
   });
   await page.waitForFunction(() => document.querySelector("#score0").textContent === "55");
   assert.equal(await page.evaluate(() => window.sloppy.sim.match.phase), "playing");
-  assert.equal(await page.locator("#score1").innerText(), "6", "six active enemies");
+  // A solo pill is the kills and the clock: the bots' plate, always six, is not shown.
+  assert.equal(await page.locator("#score1").isVisible(), false, "no constant enemy count");
   await page.screenshot({ path: `${output}/solo-scoreboard.png` });
   await page.keyboard.press("Escape");
   const frozen = await page.evaluate(() => window.sloppy.sim.match.time);

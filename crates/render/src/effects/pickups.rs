@@ -1,12 +1,15 @@
 //! Supply drop smoke (`presentation.ts` `pickupEffect`, reworked as military
-//! supply): one thin wisp of signal smoke from the grenade on the back corner of
+//! supply): one thin wisp of signal smoke from the grenade off the back corner of
 //! every stocked pallet, in its kind's full colour (`pickup_signal`) for the first
-//! third of its climb and then thinning, softening and greying toward smoke,
-//! leaned over by the one wind every wisp shares, away from the overhead camera,
+//! third of its climb and then spreading, softening, greying and thinning into the
+//! air, leaned over by the one wind every wisp shares, away from the overhead camera,
 //! each at its own height and phase, so a field of drops marks where supply stands
-//! without a fence of coloured plumes. Once a drop is taken its grenade goes out
-//! for a breath, then smoulders again in a faint, low wisp of the returning kind
-//! that grows as the restock nears; a restocked drop's wisp carries on from it.
+//! without a fence of coloured plumes. The wisp is the drop's marker, so the sight
+//! line to the player's tank never thins it (`PickupEffects::columns`). Once a drop
+//! is taken its grenade goes out for a breath, the smoke it gave off climbing on and
+//! thinning away as smoke does, then smoulders again in a faint, low wisp of the
+//! returning kind that grows as the restock nears; a restocked drop's wisp carries
+//! on from it.
 //! When a tank takes a supply its crushed grenade vents one puff of its smoke out
 //! from under the hull where the load bursts out, rolling downwind, with a kick of
 //! the ground's dust round it. A restocked crate landing on its pallet raises a
@@ -53,17 +56,18 @@ const SUPPLY_TURN: f64 = 0.12;
 /// The wisp: puffs in it, seconds each takes to climb it, how high it climbs
 /// (each within `SIGNAL_RISE_SPREAD` of it, so a row of drops is not a fence) and
 /// how its climb slows (the jet leaves the grenade fast and loses its push), the
-/// puff size at the grenade and at the top and how soon it widens, how far the
-/// wind has leaned it over by the top and how late in the climb the lean takes
+/// puff size at the grenade and at the top and how soon it widens (a plume spreads
+/// as it rises, so its top is a broad haze rather than the end of a stick), how far
+/// the wind has leaned it over by the top and how late in the climb the lean takes
 /// hold, and its opacity at the grenade.
 const SIGNAL_PUFFS: usize = 12;
 const SIGNAL_CYCLE: f64 = 3.6;
-const SIGNAL_RISE: f64 = 1.9;
+const SIGNAL_RISE: f64 = 2.6;
 const SIGNAL_RISE_SPREAD: f64 = 0.3;
 const SIGNAL_SLOWING: f64 = 1.6;
-const SIGNAL_SIZE: [f64; 2] = [0.18, 0.56];
+const SIGNAL_SIZE: [f64; 2] = [0.18, 0.9];
 const SIGNAL_WIDENING: f64 = 0.55;
-const SIGNAL_SHEAR: f64 = 0.85;
+const SIGNAL_SHEAR: f64 = 1.1;
 const SIGNAL_SHEAR_ONSET: f64 = 1.4;
 const SIGNAL_OPACITY: f64 = 0.68;
 /// The wisp's colour along its climb (share of the climb): the full signal colour
@@ -101,9 +105,6 @@ const SIGNAL_GUSH: f64 = 0.25;
 /// returns, so a player can see what will come back there and roughly when.
 const FIZZLE_FROM: f64 = 0.06;
 const FIZZLE: [f64; 2] = [0.35, 0.9];
-/// Once the supply is taken the grenade goes out: the wisp it gave off thins
-/// away over this long.
-const SNUFF_SECONDS: f64 = 0.45;
 /// A restocked crate landing on its pallet: dust puffed out low from under it
 /// (puffs, start and end reach, size, opacity, seconds).
 const LANDING_PUFFS: usize = 6;
@@ -255,8 +256,9 @@ impl Column {
 /// tabulated: four of them for every puff of every column each frame.
 struct EaseTables([EaseTable; 4]);
 
-/// The fading power of the column's opacity toward its top.
-const SIGNAL_FADING: f64 = 1.1;
+/// The fading power of the column's opacity toward its top: dense where it leaves
+/// the grenade, then thinning faster than it climbs, as smoke diluting into air does.
+const SIGNAL_FADING: f64 = 1.8;
 
 /// Build the columns' ease tables now rather than on the frame the first column shows.
 pub fn warm_tables() {
@@ -318,14 +320,16 @@ impl Emission {
 /// Every puff of a column lies within this far of the point `COLUMN_MIDDLE` over its
 /// grenade: the highest climb, the lean and the stray of the widest puff, its card
 /// included, with room to spare.
-const COLUMN_REACH: f32 = 3.5;
-const COLUMN_MIDDLE: f32 = 1.25;
+const COLUMN_REACH: f32 = 4.0;
+const COLUMN_MIDDLE: f32 = 1.6;
 
 #[derive(Clone, Debug)]
 pub struct PickupEffects {
     effects: VecDeque<PickupEffect>,
     collections: VecDeque<Collection>,
     supplies: Vec<Supply>,
+    /// The puffs this frame's columns wrote into the pool.
+    columns: std::ops::Range<usize>,
 }
 
 impl Default for PickupEffects {
@@ -334,6 +338,7 @@ impl Default for PickupEffects {
             effects: VecDeque::with_capacity(MAX_PICKUP_EFFECTS),
             collections: VecDeque::with_capacity(MAX_PICKUP_EFFECTS),
             supplies: Vec::new(),
+            columns: 0..0,
         }
     }
 }
@@ -345,6 +350,14 @@ impl PickupEffects {
 
     pub fn is_empty(&self) -> bool {
         self.effects.is_empty() && self.collections.is_empty()
+    }
+
+    /// Where this frame's columns lie in the puff pool, as written (before the pool
+    /// is sorted): the drops' markers, which the sight line to the player's tank
+    /// leaves alone. A thin wisp never hid a hull, and thinned it blinked out as a
+    /// tank drove up to the drop it marks.
+    pub fn columns(&self) -> std::ops::Range<usize> {
+        self.columns.clone()
     }
 
     pub fn reset(&mut self) {
@@ -419,6 +432,7 @@ impl PickupEffects {
     pub fn draw(&mut self, state: &RenderState, view: &EffectView, puffs: &mut PoolBuffer) {
         self.supplies
             .retain(|supply| state.pickups.iter().any(|pickup| pickup.id == supply.id));
+        let first = puffs.len();
         for pickup in &state.pickups {
             // An empty drop's grenade relights when its restock is `FIZZLE_FROM`
             // along: from then (when the cooldown is known), and how strongly.
@@ -471,7 +485,9 @@ impl PickupEffects {
             } else {
                 continue;
             };
-            if state.elapsed - taken > SNUFF_SECONDS {
+            // The smoke given off before the grenade went out climbs on until the last
+            // of it has thinned away at the top.
+            if state.elapsed - taken > SIGNAL_CYCLE {
                 continue;
             }
             let bounds = Sphere {
@@ -489,6 +505,7 @@ impl PickupEffects {
             };
             column(&mut supply.column, signal, state.elapsed, puffs);
         }
+        self.columns = first..puffs.len();
         for effect in &self.effects {
             pop(effect, puffs);
         }
@@ -526,12 +543,12 @@ struct Signal {
 /// supply was taken, dense and in the kind's colour where they leave it, then
 /// leaned over downwind, widening, fraying and greying a little as they climb. Each
 /// puff keeps the gush, meander and stray it left the grenade with, so the column
-/// moves as one body and never trembles; once the supply is taken it thins away.
+/// moves as one body and never trembles; once the supply is taken no more leave the
+/// grenade, and those in the air finish their climb.
 fn column(column: &mut Column, signal: Signal, time: f64, puffs: &mut PoolBuffer) {
     let tint = hex_to_linear(signal.color);
     let (base, seed) = (column.base, column.seed);
     let rise = column.rise * signal.strength.sqrt();
-    let snuff = 1.0 - smoothstep(time - signal.taken, 0.0, SNUFF_SECONDS);
     let [wx, wz] = SIGNAL_WIND;
     for (j, emission) in column.puffs.iter_mut().enumerate() {
         let cycle = time / SIGNAL_CYCLE + j as f64 / SIGNAL_PUFFS as f64 + seed;
@@ -563,12 +580,8 @@ fn column(column: &mut Column, signal: Signal, time: f64, puffs: &mut PoolBuffer
             * (0.88 + 0.12 * gush)
             * (0.55 + 0.45 * signal.strength)
             * (1.0 - 0.25 * smoothstep(a, 0.6, 1.0) * emission.shrink);
-        let opacity = SIGNAL_OPACITY
-            * signal.strength
-            * gush
-            * snuff
-            * smoothstep(a, 0.0, 0.04)
-            * fading.at(1.0 - a);
+        let opacity =
+            SIGNAL_OPACITY * signal.strength * gush * smoothstep(a, 0.0, 0.04) * fading.at(1.0 - a);
         let thinning = smoothstep(a, SIGNAL_SATURATED, 1.0);
         let grey = SIGNAL_GREYING * thinning as f32;
         let [bright, dim] = SIGNAL_BRIGHTNESS;
@@ -850,7 +863,7 @@ mod tests {
     }
 
     #[test]
-    fn stocked_pallets_smoke_snuff_out_once_taken_and_promotions_pop() {
+    fn stocked_pallets_smoke_until_taken_and_promotions_pop() {
         let mut state = RenderState {
             elapsed: 20.0,
             ..Default::default()
@@ -872,18 +885,32 @@ mod tests {
             stocked > SIGNAL_PUFFS / 2 && stocked <= SIGNAL_PUFFS,
             "a full column over a drop first seen stocked"
         );
-        // Just taken: the smoke already given off is still there, thinning.
+        // Just taken: the smoke already given off is still there.
         state.pickups[0].available = false;
-        state.pickups[0].cooldown_duration = 15.0;
-        state.pickups[0].cooldown = 14.9;
+        state.pickups[0].cooldown_duration = 120.0;
+        state.pickups[0].cooldown = 119.9;
         puffs.clear();
         effects.draw(&state, &EffectView::default(), &mut puffs);
         assert!(
             !puffs.is_empty() && puffs.len() <= stocked,
             "the last smoke"
         );
-        // Soon after, before it smoulders again: nothing over the empty pallet.
-        state.pickups[0].cooldown = 15.0 - (SNUFF_SECONDS + FIZZLE_FROM * 15.0) / 2.0;
+        // A second on, none has left the grenade since: the rest climbs on clear of it.
+        let grenade_top = (SMOKE_MARKER[1] * SUPPLY_SCALE) as f32;
+        state.pickups[0].cooldown = 119.0;
+        puffs.clear();
+        effects.draw(&state, &EffectView::default(), &mut puffs);
+        assert!(!puffs.is_empty(), "the smoke in the air finishes its climb");
+        assert!(
+            puffs
+                .records()
+                .iter()
+                .all(|puff| puff.translation().y > grenade_top + 0.3),
+            "no smoke leaves the grenade once it is out"
+        );
+        // Once that has thinned away, before it smoulders again: nothing over the
+        // empty pallet.
+        state.pickups[0].cooldown = 120.0 - (SIGNAL_CYCLE + FIZZLE_FROM * 120.0) / 2.0;
         puffs.clear();
         effects.draw(&state, &EffectView::default(), &mut puffs);
         assert!(puffs.is_empty(), "the grenade goes out for a breath");

@@ -456,17 +456,13 @@ impl CameraRig {
         // axis leans with the suspension.
         let up = turret.y_axis.truncate().normalize_or(Vec3::Y);
         let share = (CAMERA_FEEL.first_person_tilt * f64::from(flight)) as f32;
-        // Driving sways the seat side to side with the treads, bobs it twice a
-        // cycle and shudders it with the engine, all growing with speed.
+        // Driving sways the seat side to side with the treads and bobs it twice a
+        // cycle, both growing with speed. Standing still, the seat holds still: the
+        // engine adds no rumble to the view.
         let phase = self.sway_travel / CAMERA_FEEL.first_person_bob_metres * std::f64::consts::TAU;
         let sway = self.sway_speed * f64::from(flight);
         let roll = CAMERA_FEEL.first_person_sway_roll * sway * phase.sin();
-        // The engine rumbles even at a standstill, harder at speed.
-        let rumble =
-            lerp(CAMERA_FEEL.first_person_idle_rumble, 1.0, self.sway_speed) * f64::from(flight);
-        let shudder =
-            CAMERA_FEEL.first_person_shudder * rumble * shake_noise(self.shake.clock * 17.0);
-        let bob = CAMERA_FEEL.first_person_bob * sway * (phase * 2.0).cos().abs() + shudder;
+        let bob = CAMERA_FEEL.first_person_bob * sway * (phase * 2.0).cos().abs();
         let forward = turret.z_axis.truncate().normalize_or(Vec3::Z);
         self.seat_tilt = Quat::IDENTITY.slerp(Quat::from_rotation_arc(Vec3::Y, up), share)
             * Quat::from_axis_angle(forward, roll as f32);
@@ -594,9 +590,8 @@ mod tests {
         assert!(rig.in_first_person);
         let turret = Mat4::from_translation(Vec3::new(0.0, 0.25, 0.0));
         let eye = rig.place_eye(&turret, VehicleKind::Balanced).unwrap();
-        // Within the idling engine's rumble.
-        let rumble = CAMERA_FEEL.first_person_shudder as f32;
-        assert!(rig.camera.position.distance(eye) <= rumble);
+        // Standing still, the seat holds still: no engine rumble in the view.
+        assert!(rig.camera.position.distance(eye) < 1e-4);
         // Facing yaw 0 looks along +Z, tilted slightly down.
         let forward = (rig.camera.target - rig.camera.position).normalize();
         assert!(forward.z > 0.99 && forward.y < 0.0, "{forward:?}");
@@ -628,7 +623,7 @@ mod tests {
         rig.update(&viewer(30.0, -12.0), 1.0, 0.016, false, true);
         let eye = rig.place_eye(&respawned, VehicleKind::Balanced).unwrap();
         assert!(rig.in_first_person);
-        assert!(rig.camera.position.distance(eye) <= rumble);
+        assert!(rig.camera.position.distance(eye) < 1e-4);
     }
 
     #[test]

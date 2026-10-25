@@ -72,7 +72,6 @@ export function hudMarkup(): string {
         <div class="team coral"><small id="label1">RED</small><b id="score1">0</b><i class="team-progress"><i id="progress1"></i></i></div><b class="your-side" aria-hidden="true">YOUR TEAM</b></div>
         <div class="hud-actions"><button id="view-mode" class="quiet" type="button" aria-label="First-person view" title="First-person view (V)" aria-pressed="false">${hudIcon("hud-eye")}</button><button id="fullscreen" class="quiet" type="button" aria-label="Enter fullscreen" title="Enter fullscreen" aria-pressed="false">${hudIcon("hud-expand")}</button><button id="pause" class="quiet" type="button" aria-label="Pause" title="Pause (Esc)">${hudIcon("hud-pause")}</button>${SETTINGS_BUTTON}</div>
         <div id="feed"></div><div id="toast"></div><div id="damage-direction" role="img" aria-label="Incoming damage" hidden><i></i></div>
-        <div id="hull-pill" aria-hidden="true"><small id="hull-pill-name"></small>${hudIcon("hud-hull", "hull-pill-icon")}<b id="hull-pill-hp">100</b>${HULL_BAR}</div>
         <div class="bottom"><div class="combat-status"><div class="status"><header class="tank-label"><small id="vehicle-name">BRUISER</small><b id="rank">ROOKIE</b></header><div class="hull-readout" data-tone="healthy" title="Hull">${hudIcon("hud-hull", "hull-icon")}<b id="hp">100</b><span class="hull-max" id="hp-max">/ 100</span></div>${HULL_BAR}</div>
         <div class="weapon"><div class="ammo-strip" role="group" aria-label="Ammunition">${AMMO_OPTIONS.map(
           ({ weapon, label, name, color, help }, index) =>
@@ -250,7 +249,7 @@ function pauseOverviewMarkup(hud: HudState): string {
       : `${duration(Math.ceil(hud.match.time))} left`;
   // A team battle's score is on the header's plates already; the body adds only facts.
   const objective = solo
-    ? `<div class="pause-objective solo"><div><b>${viewer.kills}</b><small>KILLS</small></div><div><b>${hud.activeEnemies}</b><small>ENEMIES ACTIVE</small></div><div><b>1</b><small>LIFE</small></div></div>`
+    ? `<div class="pause-objective solo"><div><b>${viewer.kills}</b><small>KILLS</small></div><div><b>${duration(hud.elapsed)}</b><small>SURVIVED</small></div></div>`
     : "";
   const place = solo ? null : teamPlace(hud.scoreboard, viewer.id);
   const fact = (label: string, value: string, note = "") =>
@@ -332,7 +331,6 @@ export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
         : `${sideName(winner)} took the round${hud.match.overtime ? " in overtime" : margin ? ` by ${margin}` : ""}.`;
     }
     return `<section class="menu compact results" data-outcome="${outcome}" data-team="${side}" aria-labelledby="results-title">
-      <button id="results-close" class="dialog-close" type="button" aria-label="Close the report and open Battle Setup" title="Battle Setup">${CLOSE_ICON}</button>
       <header class="dialog-head results-banner"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span>${endedEarly && !solo ? `<span class="early-tag">ENDED EARLY</span>` : ""}</div>
       <div class="dialog-title"><h2 id="results-title">${title}</h2>${solo ? "" : scoreMarkup(scores, "Final score", hud.teamNames, team)}</div>
       <p class="dialog-lede">${lede}</p></header>

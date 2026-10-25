@@ -9,11 +9,11 @@ use glam::{BVec3, DMat4, DVec3, Mat4, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::geometry::{Aabb, node_bounds};
 use sloppy_core::models::{
-    FLAG_CLOTH_NODE, HouseCoverBuild, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape, cover_damage_stage,
-    crate_piece_model, create_arena_floor, create_spawn_pads, flags_model, house_pieces, part,
-    pickup_cube, pickup_signal, pickup_tile_offset, release_tank_models, tank_model,
-    timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage, tree_foliage,
-    tree_part, wreck_brightness, wreck_model,
+    FLAG_CLOTH_NODE, HouseCoverBuild, LOAD_SCALE, PALLET_HEIGHT, SUPPLY_SCALE, TreeShape,
+    cover_damage_stage, crate_piece_model, create_arena_floor, create_spawn_pads, flags_model,
+    house_pieces, part, pickup_cube, pickup_signal, pickup_tile_offset, release_tank_models,
+    tank_model, timber_debris_model, timber_part_model, tower_piece_model, tree_branch_stage,
+    tree_foliage, tree_part, wreck_brightness, wreck_model,
 };
 use sloppy_core::scene::Node;
 use sloppy_core::sim::ammunition::AMMO_RESPAWN_SECONDS;
@@ -1853,8 +1853,9 @@ impl Presentation {
         let at = Vec3::new(x as f32, 0.0, z as f32);
         let scale = Vec3::splat(SUPPLY_SCALE as f32);
         let ground = Mat4::from_scale_rotation_translation(scale, turn, at);
+        // The load is drawn larger than its pallet, standing on the same deck.
         let rest = Mat4::from_scale_rotation_translation(
-            scale,
+            scale * LOAD_SCALE as f32,
             turn,
             at + Vec3::Y * (PALLET_HEIGHT * SUPPLY_SCALE) as f32,
         );
@@ -2345,10 +2346,14 @@ impl Presentation {
             // the barrel inherits the tilt and keeps its recoil.
             let (hull, turret, barrel, track) =
                 (&model.hull, &model.turret, &model.barrel, &model.track);
-            // The engine trembles through every hull, each tank to its own beat.
-            let speed = tank.velocity.x.hypot(tank.velocity.z) / CAMERA_FEEL.full_speed;
-            let (shudder_pitch, shudder_roll) =
-                engine_shudder(state.elapsed, f64::from(tank.id) * 0.618, speed);
+            // The engine trembles through every other hull, each tank to its own beat;
+            // the viewer's own tank holds still under them.
+            let (shudder_pitch, shudder_roll) = if viewer {
+                (0.0, 0.0)
+            } else {
+                let speed = tank.velocity.x.hypot(tank.velocity.z) / CAMERA_FEEL.full_speed;
+                engine_shudder(state.elapsed, f64::from(tank.id) * 0.618, speed)
+            };
             let hull_rotation = euler_yxz(
                 (suspension.pitch.angle + shudder_pitch) as f32,
                 tank.heading as f32,

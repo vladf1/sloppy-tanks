@@ -442,19 +442,22 @@ mod browser {
                 EffectView::new(&renderer.camera().view_projection(), mirror)
             };
             self.systems.update(state, alpha, dt, time);
-            // Smoke puffs overlap heavily: composite them back to front from this
-            // frame's eye (presentation sets the camera before effects update).
             let eye = renderer.camera().position;
             let puffs = &mut self.systems.particles.explosions.puffs;
-            puffs.sort_back_to_front(eye);
+            // Smoke between the camera and the player's tank thins, but for the drops'
+            // signal wisps, which mark them; the pool is still in written order.
             if let Some(viewer) = state.viewer().filter(|tank| tank.alive) {
                 let target = Vec3::new(
                     viewer.position.x as f32,
                     viewer.position.y as f32 + 0.4,
                     viewer.position.z as f32,
                 );
-                super::explosions::clear_sight_line(puffs, eye, target);
+                let keep = self.systems.pickups.columns();
+                super::explosions::clear_sight_line(puffs, eye, target, keep);
             }
+            // Smoke puffs overlap heavily: composite them back to front from this
+            // frame's eye (presentation sets the camera before effects update).
+            puffs.sort_back_to_front(eye);
             // A collection's ground beat plays round the tank that took the supply,
             // so it is added after the sight line to the viewer is cleared.
             if self.systems.pickups.draw_collections(state, puffs) {

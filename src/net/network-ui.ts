@@ -199,7 +199,6 @@ export class NetworkUI {
       graphics: () => this.actions.graphics(),
       setGraphics: (setting) => this.actions.setGraphics(setting),
       setVolume: (value) => this.actions.volume(value),
-      controls: controlsMarkup(),
       opened: () => {
         resumeAfterSettings =
           this.lastLobby?.phase === "playing" && this.link === "live" && !this.menu;

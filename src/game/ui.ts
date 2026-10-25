@@ -20,15 +20,9 @@ import {
   type ScreenPoint,
 } from "./hud-feedback";
 import { duration } from "./round-recap";
-import {
-  controlsMarkup,
-  hudIcon,
-  hudMarkup,
-  menuMarkup,
-  respawnMarkup,
-  wreckedByMarkup,
-} from "./ui-markup";
+import { hudIcon, hudMarkup, menuMarkup, respawnMarkup, wreckedByMarkup } from "./ui-markup";
 import { fitPanels } from "./panel-fit";
+import { isPhone } from "./phone-mode";
 import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
 export const MENU_READY_STATUS = "Arena ready";
@@ -135,7 +129,6 @@ export class UI {
       graphics: () => actions.graphics(),
       setGraphics: (setting) => actions.setGraphics(setting),
       setVolume: (value) => actions.setting("volume", value),
-      controls: controlsMarkup(),
       speeds: {
         get: () => this.state?.speedTuning,
         set: (key, value) => actions.setting(key, value),
@@ -231,7 +224,7 @@ export class UI {
       .querySelector("#pause-settings")
       ?.addEventListener("click", () => this.settings.open());
     this.overlay.querySelector("#end-battle")?.addEventListener("click", () => actions.endBattle());
-    for (const restart of this.overlay.querySelectorAll("#restart, #results-close")) {
+    for (const restart of this.overlay.querySelectorAll("#restart")) {
       restart.addEventListener("click", () => actions.restart());
     }
   }
@@ -431,9 +424,11 @@ export class UI {
     const set = (id: string, text: string) => setText(document, id, text);
     const solo = state.gameMode === "solo";
     set("label0", solo ? "KILLS" : "BLUE");
-    set("label1", solo ? "ACTIVE" : "RED");
-    // Each side's bar fills toward the score limit; your side's plate is marked.
+    // Each side's bar fills toward the score limit; your side's plate is marked. A solo run
+    // has no other side (its bots refill to six at once), so its pill is your kills and the
+    // clock.
     const scoreboard = this.hud.querySelector<HTMLElement>(".scoreboard")!;
+    scoreboard.classList.toggle("solo", solo);
     scoreboard.classList.toggle("no-limit", solo || state.endlessMatch);
     match.scores.forEach((score, team) => {
       const fill = `${Math.min(1, score / Math.max(1, state.scoreLimit)) * 100}%`;
@@ -451,16 +446,14 @@ export class UI {
       this.hud.dataset.team = side;
     }
     scoreboard.classList.toggle("overtime", !state.endlessMatch && match.overtime);
+    // A phone's score pill has room for the goal alone; its pause menu adds the rule.
+    const soloObjective = isPhone() ? "SURVIVE" : "SURVIVE · ONE LIFE";
     set(
       "objective",
-      solo
-        ? "SURVIVE · ONE LIFE"
-        : state.endlessMatch
-          ? "ENDLESS STRESS"
-          : `FIRST TO ${state.scoreLimit}`,
+      solo ? soloObjective : state.endlessMatch ? "ENDLESS STRESS" : `FIRST TO ${state.scoreLimit}`,
     );
     set("score0", String(solo ? tank.kills : match.scores[0]));
-    set("score1", String(solo ? state.activeEnemies : match.scores[1]));
+    set("score1", String(match.scores[1]));
     const sec = state.endlessMatch ? Math.floor(elapsed) : Math.ceil(match.time);
     set("time", !state.endlessMatch && match.overtime ? "NEXT KILL" : duration(sec));
     showTankStatus(this.hud, tank, dead || match.phase !== "playing");
