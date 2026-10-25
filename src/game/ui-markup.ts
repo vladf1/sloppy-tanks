@@ -249,7 +249,7 @@ function pauseOverviewMarkup(hud: HudState): string {
       : `${duration(Math.ceil(hud.match.time))} left`;
   // A team battle's score is on the header's plates already; the body adds only facts.
   const objective = solo
-    ? `<div class="pause-objective solo"><div><b>${viewer.kills}</b><small>KILLS</small></div><div><b>${hud.activeEnemies}</b><small>ENEMIES ACTIVE</small></div><div><b>1</b><small>LIFE</small></div></div>`
+    ? `<div class="pause-objective solo"><div><b>${viewer.kills}</b><small>KILLS</small></div><div><b>${duration(hud.elapsed)}</b><small>SURVIVED</small></div></div>`
     : "";
   const place = solo ? null : teamPlace(hud.scoreboard, viewer.id);
   const fact = (label: string, value: string, note = "") =>

@@ -392,6 +392,15 @@ html:is(.phone, .home-screen-app) {
 .scoreboard.no-limit .team-progress {
   display: none;
 }
+/* A solo run has no other side: the pill is your kills and the clock, which takes the
+   missing plate's slanted end. */
+.scoreboard.solo .coral {
+  display: none;
+}
+.scoreboard.solo .clock {
+  padding-right: 24px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%);
+}
 .clock {
   display: flex;
   flex-direction: column;
@@ -6954,8 +6963,23 @@ html.phone,
 .phone #hud .mint {
   border-radius: var(--hud-corner) 0 0 var(--hud-corner);
 }
-.phone #hud .coral {
+.phone #hud :is(.coral, .scoreboard.solo .clock) {
   border-radius: 0 var(--hud-corner) var(--hud-corner) 0;
+}
+.phone #hud .scoreboard.solo .clock {
+  padding-right: 6px;
+  clip-path: none;
+}
+/* A solo run's kills plate names its number the way YOU names your side's. */
+.phone #hud .scoreboard.solo .mint small {
+  display: block;
+  order: 2;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #ffffff2e;
+  font-size: 11px;
+  line-height: 1.15;
+  letter-spacing: 1.2px;
 }
 .phone #hud .team b {
   font-size: 19px;
@@ -7151,8 +7175,10 @@ html.phone,
   display: grid;
   gap: 8px;
 }
+/* A solo run's tallies are what changes as it goes: kills and time survived. The facts
+   under them hold its rules (one life, six bots at once). */
 .pause-objective.solo {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
 }
 .pause-objective.solo > div {
   display: grid;
