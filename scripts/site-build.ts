@@ -78,26 +78,37 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
     "import.meta.env.MULTIPLAYER_URL": JSON.stringify(multiplayerUrl),
     "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"),
   };
+  const pages = options.pages ?? [
+    "index.html",
+    ...(options.devSite ? ["test-pages.html", ...devPages.map((page) => page.path)] : []),
+  ];
+  const main = pages.includes("index.html");
+  const entrypoints = [
+    ...(main ? lazyEntries.map((entry) => entry.source) : []),
+    ...(options.entries ?? []),
+  ];
   const files = new Map<string, Blob>();
-  // Workers are separate entrypoints: each carries only its own engine's glue.
-  // Explicit URLs replace the old bundler's implicit new-URL worker transform.
-  for (const [source, key] of [
-    ["src/game/texture-bake-worker.ts", "WEBGPU_BAKE_WORKER_URL"],
-    ["src/game/texture-bake-worker-webgl.ts", "WEBGL_BAKE_WORKER_URL"],
-  ]) {
-    const worker = await Bun.build({
-      entrypoints: [path.join(root, source)],
-      root,
-      target: "browser",
-      minify,
-      naming,
-      define,
-    });
-    const output = worker.outputs.find((file) => file.kind === "entry-point");
-    if (!output) throw new Error(`Missing worker output: ${source}`);
-    const name = output.path.replace(/^\.\//, "");
-    files.set(name, output);
-    define[`import.meta.env.${key}`] = JSON.stringify(base + name);
+  // Only the game and room client start texture-bake workers. Keep labs builds
+  // independent of both generated gameplay engines.
+  if (entrypoints.some((entry) => entry === "src/game.ts" || entry === "src/net/client.ts")) {
+    for (const [source, key] of [
+      ["src/game/texture-bake-worker.ts", "WEBGPU_BAKE_WORKER_URL"],
+      ["src/game/texture-bake-worker-webgl.ts", "WEBGL_BAKE_WORKER_URL"],
+    ]) {
+      const worker = await Bun.build({
+        entrypoints: [path.join(root, source)],
+        root,
+        target: "browser",
+        minify,
+        naming,
+        define,
+      });
+      const output = worker.outputs.find((file) => file.kind === "entry-point");
+      if (!output) throw new Error(`Missing worker output: ${source}`);
+      const name = output.path.replace(/^\.\//, "");
+      files.set(name, output);
+      define[`import.meta.env.${key}`] = JSON.stringify(base + name);
+    }
   }
 
   // Compile styles before entering bundler callbacks: Bun.build is not reentrant.
@@ -114,15 +125,6 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
     const name = `assets/${path.basename(source, ".css")}-${css.hash}.css`;
     cssAssets.set(path.join(root, source), { name, body: css });
   }
-  const pages = options.pages ?? [
-    "index.html",
-    ...(options.devSite ? ["test-pages.html", ...devPages.map((page) => page.path)] : []),
-  ];
-  const main = pages.includes("index.html");
-  const entrypoints = [
-    ...(main ? lazyEntries.map((entry) => entry.source) : []),
-    ...(options.entries ?? []),
-  ];
   const virtual = new Map<string, string>();
   const templates = new Map<string, string>();
   for (const page of pages) {

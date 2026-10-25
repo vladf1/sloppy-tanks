@@ -147,8 +147,8 @@ a slow run.
 
 Separate page runs of one build drift 2x on a developer Mac, so compare render
 CPU (`renderMs`, the engine's presentation and `Renderer::render`) between builds
-loaded at once: debug-API static bundles (`NODE_ENV=development bun run dev
-build --minify false`) served cross-origin isolated for 5 µs timer resolution, one
+loaded at once: debug-API static bundles (`NODE_ENV=development bun scripts/build.ts
+--minify false`) served cross-origin isolated for 5 µs timer resolution, one
 page per build, seeded, with the overview camera; hold the game's `loop`, step
 every page through the same timestamps in alternating 40-frame blocks, wait for
 the GPU before each frame, pair frame _n_ across builds and report the mean paired
