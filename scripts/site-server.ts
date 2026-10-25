@@ -128,10 +128,12 @@ export function startDevServer({
     port,
     reusePort: false,
     development: false,
-    async fetch(request) {
+    async fetch(request, server) {
       const relative = requestPath(request, base);
       if (relative instanceof Response) return relative;
       if (relative === "__reload") {
+        // An idle reload stream stays open until its page leaves.
+        server.timeout(request, 0);
         let controller: ReadableStreamDefaultController;
         return new Response(
           new ReadableStream({
