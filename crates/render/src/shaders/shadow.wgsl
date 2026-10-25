@@ -1,4 +1,6 @@
 // Sun shadow-map pass. `frame.view_projection` is the light's orthographic matrix.
+// Casters run the surfaces' vertex stage (`vs_main`, `surface_vertex.wgsl`), so
+// WebKit compiles it once for both passes.
 // A fragment stage exists only for alpha-tested casters and fading instances;
 // every other caster writes depth alone. Those casters share one fragment stage
 // (`fs_shadow`), whichever they are, and so do the merged alpha-tested casters

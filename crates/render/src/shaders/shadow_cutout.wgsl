@@ -1,8 +1,8 @@
 // Merged alpha-tested shadow casters (`shadow_merge.rs` cutout groups): like
 // `shadow_merged.wgsl`, plus the cards' UVs for an alpha test against the shared
-// material's cutoff. The vertex stage hands `shadow.wgsl`'s `fs_shadow` the varyings
-// of its own vertex stage, so on WebGPU these casters share that fragment stage
-// with the per-part casters (`gpu/webgpu/pipelines.rs`); merged casters never fade,
+// material's cutoff. The vertex stage writes the per-part casters' varyings
+// (`VertexOut`, `surface_io.wgsl`), so on WebGPU these casters share `shadow.wgsl`'s
+// `fs_shadow` with them (`gpu/webgpu/pipelines.rs`); merged casters never fade,
 // so their tint keeps its dither out. The WebGL build links `fs_shadow_cutout`.
 
 // The leading fields of `MaterialUniform` in material.wgsl.

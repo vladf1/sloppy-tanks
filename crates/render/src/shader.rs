@@ -1146,8 +1146,8 @@ mod tests {
 
     /// WebKit compiles every stage of every pipeline from its own module, so variants
     /// share a stage's compile only when its module text is the same: without the
-    /// fragment code, every surface variant without a vertex effect has one vertex
-    /// stage, and every caster without one has one too.
+    /// fragment code, every surface variant and every caster without a vertex effect
+    /// has one vertex stage.
     #[test]
     fn variants_share_the_stages_they_run_alike() {
         let effects = EffectRegistry::default();
@@ -1168,25 +1168,21 @@ mod tests {
             vertex.insert(stages.vertex);
             fragment.insert(fs);
         }
+        assert!(fragment.len() > 1);
+        for (alpha_test, shadow_fade) in [(false, false), (true, false), (true, true)] {
+            let key = ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test,
+                shadow_fade,
+                ..ShaderKey::default()
+            };
+            vertex.insert(StageSources::variant(&key, &effects).vertex);
+        }
         assert_eq!(
             vertex.len(),
             1,
-            "one vertex stage for every surface variant"
+            "one vertex stage for every surface variant and caster"
         );
-        assert!(fragment.len() > 1);
-        let casters: std::collections::HashSet<_> = [(false, false), (true, false), (true, true)]
-            .into_iter()
-            .map(|(alpha_test, shadow_fade)| {
-                let key = ShaderKey {
-                    pass: Pass::Shadow,
-                    alpha_test,
-                    shadow_fade,
-                    ..ShaderKey::default()
-                };
-                StageSources::variant(&key, &effects).vertex
-            })
-            .collect();
-        assert_eq!(casters.len(), 1, "one vertex stage for every caster");
     }
 
     /// WebKit guards every WGSL loop with a volatile counter that keeps Metal from
@@ -1653,13 +1649,6 @@ mod tests {
         assert_eq!(shadow_cutout_stages().fragment.as_ref(), Some(&shared));
         let wreck = id(crate::effects::WRECK_AGING.name);
         assert_ne!(fragment(true, false, wreck), shared);
-        // The merged casters' vertex stage hands it the same varyings.
-        let varyings = |code: &'static str| {
-            let start = code.find("struct VertexOut {").expect("VertexOut");
-            let end = start + code[start..].find('}').expect("closed");
-            &code[start..end]
-        };
-        assert_eq!(varyings(SHADOW_WGSL), varyings(SHADOW_CUTOUT_WGSL));
     }
 
     #[test]
