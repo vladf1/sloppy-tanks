@@ -6,14 +6,14 @@
 }
 .multiplayer .network-menu,
 .multiplayer .network-connection {
-  --well: #0c2239;
-  --rule: #8bb9dc1f;
-  --label: #a6dfff;
+  --well: #050d1ccc;
+  --rule: #9fd0ff17;
+  --label: var(--text-label);
   --muted: #9fbcd2;
   --text: #c4dfef;
-  --blue: #79c5ef;
-  --red: #ff8a79;
-  --accent: #ffcf38;
+  --blue: #74c4ff;
+  --red: #ff8592;
+  --accent: var(--gold);
   display: grid;
   gap: 16px;
   width: 100%;
@@ -41,13 +41,13 @@
   gap: 6px;
 }
 .network-summary span {
-  padding: 4px 10px;
-  border: 1px solid #92b4cf45;
+  padding: 5px 11px;
+  border: 1px solid #9fd0ff2e;
   border-radius: 999px;
   background: var(--well);
   color: #eef6fb;
   font-size: 12px;
-  font-weight: 600;
+  font-weight: 700;
 }
 /* During a battle the rules sit under the heading; between battles the next battle's
    rules follow the results and teams, just above the actions. */
@@ -66,9 +66,9 @@
 .network-label,
 .network-fields label {
   color: var(--label);
-  font-size: 10px;
-  font-weight: 700;
-  letter-spacing: 1.5px;
+  font-size: 10.5px;
+  font-weight: 800;
+  letter-spacing: 2.5px;
 }
 .network-line {
   display: flex;
@@ -111,19 +111,19 @@
   min-width: 0;
   height: 42px;
   padding: 0 12px;
-  border: 1px solid #92b4cf45;
-  border-radius: 6px;
+  border: 1px solid #9fd0ff33;
+  border-radius: 9px;
   background: var(--well);
+  box-shadow: inset 0 2px 6px #0008;
   color: #f5faff;
-  font:
-    500 14px Arial,
-    sans-serif;
+  font: 700 14px var(--font-ui);
   letter-spacing: 0;
   text-transform: none;
 }
 .multiplayer .network-menu select {
   padding-right: 32px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='m2 2 4 4 4-4' fill='none' stroke='%23b6cedf' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  cursor: pointer;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23ffcf38' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
   background-position: right 12px center;
 }
@@ -139,8 +139,16 @@
 .network-team {
   padding: 10px 12px 6px;
   border-top: 3px solid var(--blue);
-  border-radius: 8px;
-  background: var(--well);
+  border-radius: 10px;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--blue) 14%, transparent), transparent 46px),
+    var(--well);
+  box-shadow: inset 0 2px 8px #0006;
+}
+.network-team[data-team="1"] {
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--red) 14%, transparent), transparent 46px),
+    var(--well);
 }
 .network-team[data-team="1"] {
   border-top-color: var(--red);
@@ -154,9 +162,7 @@
 }
 .network-team strong {
   color: var(--blue);
-  font:
-    800 18px Impact,
-    sans-serif;
+  font: 400 20px var(--font-display);
   letter-spacing: 1px;
 }
 .network-team[data-team="1"] strong {
@@ -255,20 +261,28 @@
 .network-actions .primary {
   flex-basis: 100%;
 }
-.network-help {
-  margin: 0;
-  text-wrap: balance;
+/* The controls stay folded under one line until asked for. */
+.network-help summary {
+  width: max-content;
+  margin: 0 auto;
+  padding: 4px 10px;
+  border-radius: 6px;
   color: var(--muted);
-  font-size: 11.5px;
-  line-height: 1.6;
-  text-align: center;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
-/* Break between items, never inside one, with the separator ending the line. */
-.network-help span {
-  white-space: nowrap;
+.network-help summary:hover {
+  color: #fff0c1;
 }
-.network-help span:not(:last-child)::after {
-  content: " ·";
+.network-help .controls-card {
+  margin-top: 8px;
+}
+.network-help .controls-list {
+  grid-template-columns: minmax(0, 1fr);
+}
+#copy-room.copied {
+  color: #8ff0b0;
 }
 .multiplayer .network-connection {
   max-width: 480px;
@@ -283,11 +297,15 @@
   left: 16px;
   width: 224px;
   padding: 12px;
-  border: 1px solid #b7d7ed30;
-  border-radius: 8px;
-  background: #102a43db;
+  border: 1px solid var(--edge);
+  border-radius: 12px;
+  background: var(--glass-hud);
+  box-shadow:
+    var(--sheen),
+    0 10px 30px #0008;
   color: #f5faff;
   font-size: 12px;
+  font-weight: 700;
   font-variant-numeric: tabular-nums;
 }
 .network-player-heading,
@@ -299,16 +317,16 @@
 }
 .network-player-heading {
   margin-bottom: 8px;
-  color: #b6cedf;
-  font-size: 9px;
-  letter-spacing: 1px;
+  color: var(--text-label);
+  font-size: 9.5px;
+  letter-spacing: 2px;
 }
 .network-player {
-  padding: 6px 0 6px 8px;
-  border-left: 2px solid #79c5ef;
+  padding: 6px 0 6px 9px;
+  border-left: 3px solid #74c4ff;
 }
 .network-player[data-team="1"] {
-  border-color: #ff8a79;
+  border-color: #ff8592;
 }
 .network-player b {
   min-width: 2ch;
@@ -324,31 +342,61 @@
   z-index: 20;
   text-shadow: 0 1px 3px black;
 }
+/* The room's respawn card, low where the tank panel was, like single player's. */
 #network-respawn {
   position: fixed;
-  top: 40%;
+  bottom: 22px;
   left: 50%;
   transform: translateX(-50%);
   width: max-content;
+  min-width: 280px;
   max-width: calc(100% - 48px);
-  padding: 20px 28px;
-  border: 1px solid #eef4d12a;
-  border-radius: 8px;
-  background: #122b47eb;
-  box-shadow: 0 5px 20px #0a162755;
+  padding: 16px 28px 18px;
+  border: 1px solid var(--edge);
+  border-radius: 16px;
+  background: var(--glass);
+  box-shadow:
+    var(--sheen),
+    0 30px 80px #000b;
+  overflow: hidden;
   text-align: center;
-  color: #fff0d2;
+  color: #fff;
   pointer-events: none;
-  text-shadow: 0 2px 5px black;
+}
+/* Single player's respawn card language: a red eyebrow over the countdown and a red
+   glint along the top edge as the card lands. */
+#network-respawn::before {
+  content: "TANK DESTROYED";
+  display: block;
+  margin-bottom: 6px;
+  color: #ff8592;
+  font: 800 10.5px/1 var(--font-ui);
+  letter-spacing: 3px;
+}
+#network-respawn::after {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 40%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ff8592, transparent);
+  transform: translateX(-100%);
+  animation: respawn-glint 1.4s ease-out 0.1s;
 }
 #network-respawn-count {
   margin: 0;
-  font: bold 28px sans-serif;
+  font: 400 34px/1 var(--font-display);
+  letter-spacing: 1.5px;
+  text-transform: uppercase;
+  text-shadow: 0 2px 8px #000a;
 }
 #network-death-cause {
   margin: 10px 0 0;
-  color: #ffcfab;
-  font: 14px/1.4 sans-serif;
+  padding-top: 10px;
+  border-top: 1px solid #9fd0ff1a;
+  color: #ffd6da;
+  font: 700 13px/1.4 var(--font-ui);
   overflow-wrap: anywhere;
 }
 #network-death-cause:empty {

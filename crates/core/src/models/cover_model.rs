@@ -9,18 +9,24 @@ use std::f64::consts::PI;
 
 use glam::DVec3;
 
-use super::barrel_surfaces::explosive_barrel;
-use super::concrete_surfaces::concrete_wall;
+use super::barrel_surfaces::{LID_DROP, explosive_barrel};
+use super::building_kit::fieldstone_wall;
+use super::concrete_surfaces::{concrete_barrier, concrete_wall};
 use super::crate_model::{CrateShape, cargo_crate};
 use super::harbor_models::{CargoShape, shipping_container};
-use super::house_model::house;
-use super::model_primitives::{box_part, cylinder_part, put};
-use super::quarry_barriers::{dragon_tooth, steel_hedgehog};
-use super::quarry_surfaces::{RubbleStone, sandstone_footing, sandstone_rock, sandstone_rubble};
+use super::harbor_surfaces::harbor_parapet;
+use super::house_model::{house, house_heap};
+use super::model_primitives::{cylinder_part, put};
+use super::quarry_barriers::{cut_stone_wall, dragon_tooth, steel_hedgehog};
+use super::quarry_surfaces::{
+    RockSetting, RubbleStone, STONE_SEAT, sandstone_footing, sandstone_footing_height,
+    sandstone_rock, sandstone_rubble,
+};
 use super::timber_model::add_timber_parts;
 use super::tower_model::{rubble, tower};
 use super::tree_models::{TreeDetail, TreeShape, tree_model};
 use crate::scene::Node;
+use crate::sim::house_layout::{house_damage_stage, is_house_heap};
 use crate::sim::math::Random;
 use crate::sim::quarry_rock_shape::quarry_rock_variant;
 use crate::sim::render_state::RenderCover;
@@ -28,6 +34,15 @@ use crate::sim::timber_layout::{
     TimberHit, TimberJoin, TimberWall, timber_damage_stage, timber_parts,
 };
 use crate::sim::types::CoverKind;
+
+/// Pine Village's boundary colour (`sim::arena::authored_layout`): its walls are
+/// built in fieldstone, other maps' boundaries in concrete.
+const VILLAGE_WALL_COLOR: u32 = 0xa68c68;
+/// Dusty Dig's boundary colour (`sim::quarry_layout`): its walls are cut sandstone blocks.
+const QUARRY_WALL_COLOR: u32 = 0xd2bd99;
+/// Harbor Havoc's boundary colour (`sim::harbor_layout`): its walls are the sea
+/// wall's parapet.
+const HARBOR_WALL_COLOR: u32 = 0x879698;
 
 /// The cover fields the models read (`Pick<Cover, "kind" | "x" | ... >`).
 #[derive(Clone, Debug, PartialEq)]
@@ -63,7 +78,8 @@ impl From<&RenderCover> for CoverShape {
 }
 
 /// `coverDamageStage(c)`: cargo splits at any damage and breaks at 35% health;
-/// timber uses [`timber_damage_stage`]; other kinds have one look.
+/// timber uses [`timber_damage_stage`] and cottages [`house_damage_stage`]; other
+/// kinds have one look.
 pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
     match kind {
         CoverKind::Cargo => {
@@ -76,12 +92,13 @@ pub fn cover_damage_stage(kind: CoverKind, hp: f64, max_hp: f64) -> u32 {
             }
         }
         CoverKind::Timber => timber_damage_stage(hp, max_hp),
+        CoverKind::House => house_damage_stage(hp, max_hp),
         _ => 0,
     }
 }
 
 /// `coverModel(c, detail, damageStage)`: rebuild it when [`cover_damage_stage`] or
-/// the timber hit count changes.
+/// the timber, crate or cottage hit count changes.
 pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Node {
     if c.kind == CoverKind::Tree {
         return tree_model(
@@ -115,7 +132,9 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
             },
         ),
         CoverKind::Cargo => cargo_crate(group, crate_shape(c), &c.timber_hits, damage_stage),
-        CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, c.color),
+        // Every shell holes a cottage where it struck; an untouched one keeps its
+        // place in the static covers' draws.
+        CoverKind::House => house(group, c.x, c.z, c.w, c.d, c.h, damage_stage, &c.timber_hits),
         CoverKind::Timber => {
             let parts = timber_parts(
                 &TimberWall {
@@ -134,56 +153,39 @@ pub fn cover_model(c: &CoverShape, detail: TreeDetail, damage_stage: u32) -> Nod
         }
         CoverKind::Drum => {
             put(group, explosive_barrel(), 0.0, 0.8, 0.0);
-            for y in [0.22, 1.35] {
-                put(group, cylinder_part(0.63, 0.1, 0x574e3e, 12), 0.0, y, 0.0);
+            // Screwed bung caps on the recessed lid, where the atlas paints them.
+            let lid = 1.6 - LID_DROP;
+            for (x, z, radius) in [(0.3, 0.0, 0.085), (-0.25, 0.16, 0.06)] {
+                put(
+                    group,
+                    cylinder_part(radius, 0.045, 0x3d3a35, 10),
+                    x,
+                    lid + 0.022,
+                    z,
+                );
             }
-            put(
-                group,
-                cylinder_part(0.15, 0.05, 0x343c31, 12),
-                0.25,
-                1.63,
-                0.0,
-            );
         }
         CoverKind::Tower => tower(group, c.color),
+        CoverKind::Rubble if is_house_heap(c.h) => {
+            house_heap(group, c.x, c.z, c.w, c.d, c.debris_seed.unwrap_or(0.0));
+        }
         CoverKind::Rubble => rubble(group, c.x, c.z, c.color, c.debris_seed),
         CoverKind::Tree => unreachable!("trees return early"),
-        CoverKind::Concrete | CoverKind::Boundary => {
-            let block = if c.kind == CoverKind::Boundary {
-                concrete_wall(c.w, c.h, c.d)
-            } else {
-                box_part(c.w, c.h, c.d, c.color, 0.16)
-            };
-            put(group, block, 0.0, c.h / 2.0, 0.0);
-            if c.kind == CoverKind::Concrete {
-                let along = c.w > c.d;
-                let marks = ((if along { c.w } else { c.d }) / 1.1).floor() as u32;
-                for i in 0..marks {
-                    let i = f64::from(i);
-                    let mark = box_part(
-                        if along { 0.55 } else { 0.035 },
-                        0.22,
-                        if along { 0.035 } else { 0.55 },
-                        0x499ac7,
-                        0.01,
-                    );
-                    put(
-                        group,
-                        mark,
-                        if along {
-                            -c.w / 2.0 + 0.6 + i * 1.1
-                        } else {
-                            c.w / 2.0 + 0.02
-                        },
-                        c.h * 0.7,
-                        if along {
-                            c.d / 2.0 + 0.02
-                        } else {
-                            -c.d / 2.0 + 0.6 + i * 1.1
-                        },
-                    );
-                }
-            }
+        CoverKind::Boundary if c.color == VILLAGE_WALL_COLOR => {
+            fieldstone_wall(group, c.w, c.h, c.d, c.x, c.z);
+        }
+        CoverKind::Boundary if c.color == QUARRY_WALL_COLOR => {
+            put(group, cut_stone_wall(c.w, c.h, c.d), 0.0, 0.0, 0.0);
+        }
+        CoverKind::Boundary if c.color == HARBOR_WALL_COLOR => {
+            put(group, harbor_parapet(c.w, c.h, c.d), 0.0, c.h / 2.0, 0.0);
+        }
+        // Harbor Havoc's precast barriers (the only concrete cover).
+        CoverKind::Concrete => {
+            put(group, concrete_barrier(c.w, c.h, c.d), 0.0, 0.0, 0.0);
+        }
+        CoverKind::Boundary => {
+            put(group, concrete_wall(c.w, c.h, c.d), 0.0, c.h / 2.0, 0.0);
         }
     }
     node
@@ -204,7 +206,8 @@ fn crate_shape(c: &CoverShape) -> CrateShape {
 /// fallen chips rather than additional obstacles.
 fn rock(group: &mut Node, c: &CoverShape) {
     let variant = quarry_rock_variant(c.x, c.z);
-    put(group, sandstone_rock(c.w, c.h, c.d, variant), 0.0, 0.0, 0.0);
+    let outcrop = sandstone_rock(c.w, c.h, c.d, variant, RockSetting::Drift);
+    put(group, outcrop, 0.0, 0.0, 0.0);
     put(group, sandstone_footing(c.w, c.d, variant), 0.0, 0.0, 0.0);
     let mut rubble = Random::new(f64::from(variant) + 902.0);
     let chips: Vec<RubbleStone> = (0..12)
@@ -212,7 +215,7 @@ fn rock(group: &mut Node, c: &CoverShape) {
             let angle = rubble.range(0.0, PI * 2.0);
             let reach = rubble.range(0.56, 0.72);
             let size = rubble.range(0.14, 0.5);
-            // Rest on the drift bank rather than under it.
+            // Rest on the drift bank rather than under or above it.
             let x = angle.cos() * c.w * reach;
             let z = angle.sin() * c.d * reach;
             let h = rubble.range(0.06, 0.12);
@@ -220,7 +223,7 @@ fn rock(group: &mut Node, c: &CoverShape) {
             let shade = rubble.range(0.6, 0.88);
             RubbleStone {
                 x,
-                y: 0.07,
+                y: sandstone_footing_height(c.w, c.d, variant, x, z) + h * STONE_SEAT,
                 z,
                 w: size,
                 h,

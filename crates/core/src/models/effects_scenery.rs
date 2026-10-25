@@ -26,6 +26,16 @@ pub const GRIT: &str = "grit";
 /// Secondary texture: the baked quarry soil ([`QUARRY_SOIL_TEXTURE`]), sampled at
 /// world x/z.
 pub const SOIL: &str = "soil";
+/// Secondary texture: the dock concrete tile (`textures/harbor/dock.webp`), the
+/// grain [`HARBOR_APRON`] samples at world x/z.
+pub const DOCK_GRAIN: &str = "dock-grain";
+/// Secondary texture: the harbor ground's baked wear ([`HARBOR_APRON_WEAR`]), sampled
+/// at world x/z by the concrete and the asphalt lanes.
+pub const APRON_WEAR: &str = "apron-wear";
+/// The generated texture of the harbor ground's wear: grime, stains, oil, wheel
+/// tracks, prints, damp and contact shade, drawn once on the GPU by the renderer's
+/// bake (`effects::bakes::HARBOR_APRON_WEAR`), linear, over the 128 m round the arena.
+pub const HARBOR_APRON_WEAR: &str = "harbor-apron-wear";
 
 /// Planar-reflecting water (`water-surface.ts`): the village creek and the harbor
 /// basin. Unlit (`Shading::Basic`), opaque, fogged and tone mapped. `map` is the
@@ -39,6 +49,77 @@ pub const SOIL: &str = "soil";
 /// extent that skips the reflection while only the apron is in view) is the
 /// renderer's `WaterSettings::harbor` / `creek`.
 pub const WATER: &str = "water";
+
+/// Harbor Havoc's quay concrete, asphalt lanes and the paint on them
+/// (`harbor_surfaces`): standard PBR whose surface is worked out in world space, so
+/// it never shows the tile. Extra texture [`DOCK_GRAIN`] is the dock concrete tile
+/// (sRGB, repeat), sampled at world x/z at several scales and angles for grain; the
+/// material color (and vertex color, for markings) tints it. Params: `[mode]`, an
+/// [`ApronMode`] as a float. The concrete and the lanes also take extra texture
+/// [`APRON_WEAR`], their slowly varying wear baked once. Concrete adds six-metre slabs with sawn and sealed
+/// expansion joints, per-slab tone and hue, macro variation, hairline cracks, oil
+/// spills with a wet core, damp patches and puddles (lower roughness); asphalt lanes
+/// add aggregate, ravelled edges, polished wheel paths with an oil strip between
+/// them, tar-sealed cracks and repair patches; both take cast-iron covers, contact
+/// grime against the fixed cover and rust under the container castings. Paint modes
+/// keep their color, dirty it and chip it with world-space wear that follows the
+/// traffic (both blended: markings fade the chips away, labels fade their alpha).
+/// Quay walls take a wet tide band, barnacles, weed at the waterline and rust runs,
+/// with sunlight thrown off the ripples dancing above the water (as on ship hulls,
+/// which add their plating's weathering); spawn pads their
+/// tread plate, team paint and chasing light ring; cover containers a shade of
+/// their line's color per box; the sea wall's parapet its precast panels, capping
+/// stones, stains, scuffs and worn hazard paint.
+/// Implemented in `effects/harbor_apron.wgsl`.
+pub const HARBOR_APRON: &str = "harbor-apron";
+
+/// Harbor Havoc's far shore ([`ApronMode::Shore`] materials, `harbor_backdrop`):
+/// vertex colors, flat shaded, fog off, lit and hazed by the effect from their
+/// distance to the eye and emitted, so the coast's layers keep their separation
+/// whatever the scene fog; pure red vertices are warning lights, and parts flagged
+/// by their uv.y take windows, container stacks, countryside, pines, welded tanks,
+/// slipformed bins or cladding. Params: `[mode]` as for [`HARBOR_APRON`] (unused).
+/// A shader of its own, so neither it nor the apron compiles the other's code.
+/// Implemented in `effects/harbor_shore.wgsl`.
+pub const HARBOR_SHORE: &str = "harbor-shore";
+
+/// What a [`HARBOR_APRON`] surface is (`params[0]`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum ApronMode {
+    /// Bare quay concrete.
+    Concrete = 0,
+    /// An asphalt traffic lane running along z, its tyre polish along z.
+    LaneAlongZ = 1,
+    /// An asphalt traffic lane running along x.
+    LaneAlongX = 2,
+    /// Painted marking, blended away where the paint has chipped.
+    Marking = 3,
+    /// Painted lettering (transparent texture), faded where worn.
+    Label = 4,
+    /// Vertical quay faces rising from the harbor water.
+    QuayWall = 5,
+    /// Ship hull plating (vertex colors over the steel tile): welded seams, rust
+    /// runs, waterline slime and fender scrapes.
+    Hull = 6,
+    /// The far shore (vertex colors, flat shaded, fog off): lit and hazed in the
+    /// effect by its distance from the eye and emitted, so its layers keep their
+    /// separation whatever the scene fog; pure red vertices are warning lights.
+    Shore = 7,
+    /// A spawn pad: the team color is the vertex color and the uv is the pad's own
+    /// x/z over its radius. Its steel deck takes a tread plate, hazard rim,
+    /// chevrons and bolts; the light ring set into it (uv.x offset by 10) shines
+    /// in the team's color with a pulse chasing round it.
+    Pad = 8,
+    /// The paint of a cover container's walls, doors and roof (standard, over the
+    /// wear tile): each box standing in its own 20 m cell of the yard takes its own
+    /// shade of its line's color, so a row of one color never reads as clones.
+    Container = 10,
+    /// The sea wall's parapet round the apron (the harbor's boundary cover): a
+    /// precast body under a capping beam. Its panel and capping joints, form-tie
+    /// holes, rain and rust stains, tank scuffs and the worn hazard paint of its
+    /// kerb band and top edge are all the effect's, in world space.
+    Parapet = 11,
+}
 
 /// Wind sway of the village meadow tufts (`village-vegetation.ts`), a vertex-only
 /// effect on an instanced, double-sided standard material (roughness 1, white;
@@ -112,8 +193,9 @@ pub const GRIT_TEXTURE: &str = "textures/ground/packed-dirt.webp";
 
 /// Dusty Dig's baked soil: 2048x2048 RGBA8, sRGB color with linear alpha
 /// (grittiness), clamp-to-edge, mipmapped, 8x anisotropy. Baked in Rust by
-/// `quarry_soil::bake_quarry_soil` (row bands, any split). Row 0 is world
-/// `z = -105` and was the canvas' top row; like every CanvasTexture it uploads
+/// `quarry_relief::bake_quarry_ground` (the soil with its floor relief; row
+/// bands, any split). Row 0 is world `z = -105` and was the canvas' top row;
+/// like every CanvasTexture it uploads
 /// with Three's default `flipY`, so row 0 lands at `v = 1` (the soil UVs,
 /// `v = 0.5 - z / 210`, rely on this).
 pub const QUARRY_SOIL_TEXTURE: &str = "quarry-soil";
@@ -122,22 +204,148 @@ pub const VILLAGE_SIGN_TEXTURE: &str = "village-sign";
 /// Dusty Dig's site sign (browser-drawn, see [`canvas_texture`]).
 pub const QUARRY_SIGN_TEXTURE: &str = "quarry-sign";
 
-/// Painted harbor apron labels and their texture keys.
-const HARBOR_LABELS: [(&str, &str); 5] = [
-    ("B1", "harbor-label-b1"),
-    ("B2", "harbor-label-b2"),
-    ("HARBOR HAVOC", "harbor-label-harbor-havoc"),
-    ("PORT 07", "harbor-label-port-07"),
-    ("LOADING", "harbor-label-loading"),
+/// The shipping lines' liveries painted on harbor containers (browser-drawn, see
+/// [`canvas_texture`]): [`CONTAINER_LIVERIES`] rows of white emblem, name and
+/// tagline on transparency, each a 4:1 strip, row 0 at the top.
+pub const CONTAINER_LIVERY_TEXTURE: &str = "harbor-container-liveries";
+pub const CONTAINER_LIVERIES: usize = 4;
+/// Name and tagline of each livery row.
+const LIVERY_ROWS: [(&str, &str); CONTAINER_LIVERIES] = [
+    ("SLOPCO", ""),
+    ("TANKLINE", ""),
+    ("HAVOC", "SHIPPING CO."),
+    ("SLOPPY", "EXPRESS"),
 ];
+const LIVERY_PAINT: &str = "#f4f1e6";
 
-/// The generated texture key of a harbor apron label.
-pub fn harbor_label_texture(text: &str) -> &'static str {
+fn container_liveries() -> CanvasTexture {
+    use CanvasOp::*;
+    let text = |font, text, x, y, align| FillText {
+        color: LIVERY_PAINT,
+        font,
+        align,
+        baseline: "alphabetic",
+        text,
+        at: [x, y],
+        max_width: Some(780.0),
+    };
+    let mut ops = Vec::new();
+    for (row, &(logo, tagline)) in LIVERY_ROWS.iter().enumerate() {
+        let top = row as f64 * 256.0;
+        // An emblem left of the name: a disc crossed by a dark wave for the even rows,
+        // three speed bars for the odd ones.
+        if row % 2 == 0 {
+            let (cx, cy, r) = (110.0, top + 110.0, 78.0);
+            let disc = (0..=32)
+                .map(|i| {
+                    let a = f64::from(i) / 32.0 * std::f64::consts::TAU;
+                    [cx + r * a.cos(), cy + r * a.sin()]
+                })
+                .collect();
+            ops.push(FillPolygon {
+                color: LIVERY_PAINT,
+                points: disc,
+            });
+            ops.push(FillPolygon {
+                color: "#27343c",
+                points: vec![
+                    [cx - r, cy + 6.0],
+                    [cx - 30.0, cy - 22.0],
+                    [cx + 10.0, cy + 8.0],
+                    [cx + r, cy - 26.0],
+                    [cx + r, cy - 4.0],
+                    [cx + 10.0, cy + 30.0],
+                    [cx - 30.0, cy],
+                    [cx - r, cy + 28.0],
+                ],
+            });
+        } else {
+            for bar in 0..3 {
+                let y = top + 60.0 + f64::from(bar) * 44.0;
+                let x = 30.0 + f64::from(bar) * 22.0;
+                ops.push(FillPolygon {
+                    color: LIVERY_PAINT,
+                    points: vec![
+                        [x + 30.0, y],
+                        [x + 170.0, y],
+                        [x + 150.0, y + 28.0],
+                        [x, y + 28.0],
+                    ],
+                });
+            }
+        }
+        let name_y = if tagline.is_empty() {
+            top + 160.0
+        } else {
+            top + 130.0
+        };
+        ops.push(text(
+            "italic 900 150px sans-serif",
+            logo,
+            230.0,
+            name_y,
+            "start",
+        ));
+        if !tagline.is_empty() {
+            ops.push(text(
+                "bold 52px sans-serif",
+                tagline,
+                236.0,
+                top + 186.0,
+                "start",
+            ));
+        }
+    }
+    CanvasTexture {
+        width: 1024,
+        height: 1024,
+        ops,
+    }
+}
+
+/// Painted harbor apron labels and their paint: white on the asphalt lanes,
+/// traffic yellow in the concrete bays. They share one browser-drawn sheet,
+/// [`HARBOR_LABEL_TEXTURE`], a 1024 x 256 row each (row 0 at the top), so every
+/// label on the apron is one draw.
+const HARBOR_LABELS: [(&str, &str); 5] = [
+    ("B1", "#f0c24a"),
+    ("B2", "#f0c24a"),
+    ("HARBOR HAVOC", "#f1efe6"),
+    ("PORT 07", "#f1efe6"),
+    ("LOADING", "#f0c24a"),
+];
+/// The generated texture key of the harbor label sheet.
+pub const HARBOR_LABEL_TEXTURE: &str = "harbor-labels";
+/// Rows of the label sheet.
+pub const HARBOR_LABEL_ROWS: usize = HARBOR_LABELS.len();
+
+/// The row of a harbor apron label on [`HARBOR_LABEL_TEXTURE`].
+pub fn harbor_label_row(text: &str) -> usize {
     HARBOR_LABELS
         .iter()
-        .find(|(label, _)| *label == text)
-        .map(|(_, key)| *key)
+        .position(|(label, _)| *label == text)
         .unwrap_or_else(|| panic!("unknown harbor label {text}"))
+}
+
+fn harbor_label_sheet() -> CanvasTexture {
+    let ops = HARBOR_LABELS
+        .iter()
+        .enumerate()
+        .map(|(row, &(text, color))| CanvasOp::FillText {
+            color,
+            font: "900 140px sans-serif",
+            align: "center",
+            baseline: "middle",
+            text,
+            at: [512.0, 128.0 + row as f64 * 256.0],
+            max_width: Some(990.0),
+        })
+        .collect();
+    CanvasTexture {
+        width: 1024,
+        height: 256 * HARBOR_LABELS.len() as u32,
+        ops,
+    }
 }
 
 /// One Canvas 2D drawing step, replayed by the browser adapter in order on a
@@ -184,22 +392,9 @@ pub struct CanvasTexture {
 /// The canvas drawing behind a browser-drawn generated texture key.
 pub fn canvas_texture(key: &str) -> Option<CanvasTexture> {
     use CanvasOp::*;
-    if let Some((text, _)) = HARBOR_LABELS.iter().find(|(_, k)| *k == key) {
-        return Some(CanvasTexture {
-            width: 1024,
-            height: 256,
-            ops: vec![FillText {
-                color: "#d9ce9d",
-                font: "900 140px sans-serif",
-                align: "center",
-                baseline: "middle",
-                text,
-                at: [512.0, 128.0],
-                max_width: Some(990.0),
-            }],
-        });
-    }
     match key {
+        HARBOR_LABEL_TEXTURE => Some(harbor_label_sheet()),
+        CONTAINER_LIVERY_TEXTURE => Some(container_liveries()),
         VILLAGE_SIGN_TEXTURE => Some(CanvasTexture {
             width: 512,
             height: 128,

@@ -7,6 +7,7 @@ import {
   savePreference,
   savedCameraPreferences,
   saveCameraPreferences,
+  startingCamera,
 } from "../src/game/player-preferences";
 import { memoryStorage, withLocalStorage, withStorage } from "./local-storage";
 
@@ -69,4 +70,45 @@ test("a browser denying access to localStorage itself still opens the setup", ()
     assert.deepEqual(savedCameraPreferences(), { firstPerson: false });
     assert.doesNotThrow(() => savePreference("game-mode", "solo"));
   });
+});
+
+/** Run `body` on a device: `phone` sets the phone edition's class, `coarse` the
+ * primary pointer, `touchPoints` with a Mac user agent iPadOS Safari. */
+function onDevice({ phone = false, coarse = false, touchPoints = 0 }, body: () => void): void {
+  const saved = Object.fromEntries(
+    ["document", "navigator", "matchMedia"].map((key) => [
+      key,
+      Object.getOwnPropertyDescriptor(globalThis, key),
+    ]),
+  );
+  const define = (key: string, value: unknown) =>
+    Object.defineProperty(globalThis, key, { value, configurable: true, writable: true });
+  define("document", {
+    documentElement: { classList: { contains: (name: string) => phone && name === "phone" } },
+  });
+  define("navigator", {
+    userAgent: "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+    maxTouchPoints: touchPoints,
+  });
+  define("matchMedia", (query: string) => ({ matches: coarse && query === "(pointer: coarse)" }));
+  try {
+    withStorage(memoryStorage(), body);
+  } finally {
+    for (const [key, descriptor] of Object.entries(saved)) {
+      if (descriptor) Object.defineProperty(globalThis, key, descriptor);
+      else delete (globalThis as Record<string, unknown>)[key];
+    }
+  }
+}
+
+test("touch screens start without the overhead reticle; desktops keep it", () => {
+  onDevice({}, () => assert.deepEqual(startingCamera(), { firstPerson: false }));
+  for (const device of [{ coarse: true }, { touchPoints: 5 }]) {
+    onDevice(device, () =>
+      assert.deepEqual(startingCamera(), { firstPerson: false, hideReticle: true }),
+    );
+  }
+  onDevice({ phone: true, coarse: true }, () =>
+    assert.deepEqual(startingCamera(), { firstPerson: false, zoom: 40, hideReticle: true }),
+  );
 });

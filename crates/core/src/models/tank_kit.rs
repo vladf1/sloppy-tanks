@@ -26,7 +26,7 @@ const MIN_AREA: f64 = 1e-14;
 /// chassis material.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) enum Coat {
-    /// Darkened team paint: lower hull, add-on armor, frames.
+    /// Graphite trim: lower hull, mantlet, add-on armor, frames.
     Shade,
     /// Team paint: the main armor.
     Paint,
@@ -42,8 +42,10 @@ pub(super) enum Coat {
     Canvas,
     /// Tool handles.
     Wood,
-    /// White team insignia.
+    /// White unit numbers, gun bands and the command band.
     Marking,
+    /// Faded tactical signs.
+    Stencil,
     /// Red tail-light lenses.
     TailLight,
 }
@@ -73,6 +75,7 @@ impl Finishes for Coat {
         Coat::Canvas,
         Coat::Wood,
         Coat::Marking,
+        Coat::Stencil,
         Coat::TailLight,
     ];
 }
@@ -417,7 +420,12 @@ impl<C: Finishes> Kit<C> {
             if buffer.is_empty() {
                 continue;
             }
-            let mut mesh = Mesh::default();
+            let mut mesh = Mesh {
+                positions: Vec::with_capacity(buffer.len()),
+                normals: Vec::with_capacity(buffer.len()),
+                uvs: Vec::with_capacity(buffer.len()),
+                ..Mesh::default()
+            };
             for triangle in buffer.as_chunks::<3>().0 {
                 let [a, b, c] = [triangle[0].0, triangle[1].0, triangle[2].0];
                 let face = (b - a).cross(c - a);

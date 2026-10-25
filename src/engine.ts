@@ -1,9 +1,10 @@
 // The Rust engine for the page, single player and room alike: the wasm-bindgen glue
-// and its hashed binary, built by `pnpm run wasm`. There are two builds: the WebGPU
-// engine (`src/generated/engine/`) and a WebGL2 fallback
-// (`src/generated/engine-webgl/`). A page loads one: the fallback only where the
-// browser offers no WebGPU adapter (or `?webgl` asks for it), so WebGPU browsers
-// never download WebGL code; its glue is a separate chunk imported on demand.
+// and its hashed binary. There are two builds: the WebGPU engine
+// (`src/generated/engine/`, `pnpm run wasm`) and a WebGL2 fallback
+// (`src/generated/engine-webgl/`, `pnpm run wasm:webgl`). A page loads one: the
+// fallback only where the browser offers no WebGPU adapter (or `?webgl` asks for it),
+// so WebGPU browsers never download WebGL code; its glue is a separate chunk imported
+// on demand.
 // Production pages make that choice and start the binary's download from an inline
 // <head> script (the engine-download plugin in vite.config.ts); this module takes
 // both over, so the download and compilation overlap with the menu and the engine's
@@ -12,6 +13,7 @@ import * as webgpuGlue from "./generated/engine/engine.js";
 import type { Game, NetGame, WireView } from "./generated/engine/engine.js";
 import webgpuBinaryUrl from "./generated/engine/engine_bg.wasm?url";
 import webglBinaryUrl from "./generated/engine-webgl/engine-webgl_bg.wasm?url";
+import { framesInFlight } from "./game/engine-api";
 import { GraphicsUnavailableError } from "./game/startup-error";
 
 export type { Game, NetGame, WireView };
@@ -35,6 +37,8 @@ export interface EngineGlue {
   NetGame: typeof NetGame;
   /** Binary room messages as JSON, for `?debug` pages' `sloppy.wire`. */
   WireView: typeof WireView;
+  /** The texture bakes a map's arena will claim (`texture-bake.ts`). */
+  map_texture_bakes(map: string): string[];
 }
 
 interface Engine {
@@ -126,6 +130,12 @@ export function engineModule(): { module: WebAssembly.Module; webgl: boolean } {
   return { module: current.module, webgl: current.api === "webgl" };
 }
 
+/** The generated textures the arena of Battle Setup map `map` will have the page bake;
+ * none before the engine has loaded. */
+export function mapTextureBakes(map: string): string[] {
+  return current ? current.glue.map_texture_bakes(map) : [];
+}
+
 /** An engine startup error that means its graphics API cannot run here. */
 function graphicsUnavailable(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
@@ -157,14 +167,18 @@ async function createWith<T>(create: (glue: EngineGlue) => Promise<T>): Promise<
   }
 }
 
+/** `config` as the engine's configuration JSON, with this browser's frame pacing. */
+const engineConfig = (config: object) =>
+  JSON.stringify({ framesInFlight: framesInFlight(navigator.userAgent), ...config });
+
 /** Create the engine's single-player game on `canvas`. */
 export function createGame(canvas: HTMLCanvasElement, config: object): Promise<Game> {
-  return createWith((glue) => glue.Game.create(canvas, JSON.stringify(config)));
+  return createWith((glue) => glue.Game.create(canvas, engineConfig(config)));
 }
 
-/** Create a room's game on `canvas` from `NetGame.create`'s configuration JSON. */
-export function createNetGame(canvas: HTMLCanvasElement, configJson: string): Promise<NetGame> {
-  return createWith((glue) => glue.NetGame.create(canvas, configJson));
+/** Create a room's game on `canvas` from `NetGame.create`'s configuration. */
+export function createNetGame(canvas: HTMLCanvasElement, config: object): Promise<NetGame> {
+  return createWith((glue) => glue.NetGame.create(canvas, engineConfig(config)));
 }
 
 /** How often, in frames, a page asks its engine for a recorded GPU error. */

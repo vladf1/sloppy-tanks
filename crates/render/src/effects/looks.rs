@@ -6,31 +6,36 @@ use std::f64::consts::FRAC_PI_2;
 use std::sync::Arc;
 
 use sloppy_core::geometry::{
-    Mesh, cylinder_geometry, icosahedron_geometry, plane_geometry, ring_geometry, sphere_geometry,
-    tetrahedron_geometry,
+    Mesh, cylinder_geometry, icosahedron_geometry, plane_geometry, tetrahedron_geometry,
 };
 use sloppy_core::scene::{Blending, Effect, Material, Side};
 use sloppy_core::sim::PickupKind;
 use sloppy_core::sim::ammunition::PROJECTILE_ORDER;
 use sloppy_core::sim::data::pickup;
 
-use super::explosions::{MAX_EXPLOSIONS, PUFFS_PER_BLAST};
+use super::PUFF_CAPACITY;
+use super::explosions::DECAL_CAPACITY;
 use super::laser::LASER_CAPACITY;
 use super::leaves::{MAX_LEAVES, leaf_mesh};
-use super::particles::MAX_PARTICLES;
-use super::pickups::MAX_PICKUP_EFFECTS;
+use super::particles::{MAX_PARTICLES, shard_mesh};
 use super::pool::{PoolDesc, pool};
 use super::projectiles::{PROJECTILE_CAPACITY, projectile_model};
 use super::quarry_dust::QUARRY_DUST_CAPACITY;
-use super::registry::{BLAST_RING, DUST, PUFF, TRACK_MARK};
+use super::registry::{BLAST_RING, DEBRIS_CHIP, DUST, PUFF, STREAK, TRACK_MARK};
 use super::rocket_smoke::ROCKET_SMOKE_CAPACITY;
+use super::sparks::STREAK_CAPACITY;
 use super::track_dust::TRACK_DUST_CAPACITY;
 use super::track_gravel::TRACK_GRAVEL_CAPACITY;
 use super::tracks::TRACK_CAPACITY;
 use super::wood_chips::{MAX_STRAW, MAX_WOOD_CHIPS, splinter_mesh, straw_mesh};
 
-/// Tread marks draw after the ground decals they lie on (`renderOrder = 1`).
+/// Tread marks draw after the ground decals they lie on (`renderOrder = 1`),
+/// and blast decals with them; smoke draws over both, glows over the smoke.
 const TRACK_RENDER_ORDER: i32 = 1;
+/// The smoke puffs' pool label, by which the browser finds it for its params.
+pub const PUFF_POOL: &str = "blast puffs";
+const PUFF_RENDER_ORDER: i32 = 2;
+const STREAK_RENDER_ORDER: i32 = 3;
 const TRACK_COLOR: u32 = 0x283222;
 const TRACK_OPACITY: f32 = 0.38;
 const GRAVEL_COLOR: u32 = 0xb09c7b;
@@ -173,30 +178,16 @@ pub fn pool_descs() -> Vec<PoolDesc> {
         LASER_CAPACITY,
     ));
 
-    let glow = |side: Side| Material {
-        transparent: true,
-        depth_write: false,
-        side,
-        blending: Blending::Additive,
-        ..Material::basic(0xffffff)
-    };
-    pools.push(PoolDesc::new(
-        "pickup rings",
-        ring_geometry(0.88, 1.0, 48),
-        glow(Side::Double),
-        MAX_PICKUP_EFFECTS,
-    ));
-    pools.push(PoolDesc::new(
-        "pickup glows",
-        sphere_geometry(1.0, 16, 10),
-        glow(Side::Back),
-        MAX_PICKUP_EFFECTS,
-    ));
-
+    // Faceted shards lit like the scene; sparky flecks and hot clods glow
+    // through the chip effect's emissive.
     pools.push(PoolDesc::new(
         "particles",
-        icosahedron_geometry(1.0, 0),
-        Material::basic(0xffffff),
+        shard_mesh(),
+        Material {
+            flat_shading: true,
+            effect: custom(DEBRIS_CHIP.name),
+            ..Material::standard(0xffffff, 0.0, 0.85)
+        },
         MAX_PARTICLES,
     ));
     // Lit like the crowns they fell from; the instance tint is the leaf's color.
@@ -238,20 +229,44 @@ pub fn pool_descs() -> Vec<PoolDesc> {
             MAX_STRAW,
         )
     });
-    pools.push(PoolDesc::new(
-        "blast rings",
-        ground_quad(),
-        Material {
-            polygon_offset: Some(DECAL_POLYGON_OFFSET),
-            ..soft_billboard(BLAST_RING.name)
-        },
-        MAX_EXPLOSIONS,
-    ));
-    pools.push(PoolDesc::new(
-        "blast puffs",
-        plane_geometry(2.0, 2.0),
-        soft_billboard(PUFF.name),
-        MAX_EXPLOSIONS * PUFFS_PER_BLAST,
-    ));
+    pools.push(PoolDesc {
+        render_order: TRACK_RENDER_ORDER,
+        ..PoolDesc::new(
+            "blast rings",
+            ground_quad(),
+            Material {
+                polygon_offset: Some(DECAL_POLYGON_OFFSET),
+                ..soft_billboard(BLAST_RING.name)
+            },
+            DECAL_CAPACITY,
+        )
+    });
+    pools.push(PoolDesc {
+        render_order: PUFF_RENDER_ORDER,
+        ..PoolDesc::new(
+            PUFF_POOL,
+            plane_geometry(2.0, 2.0),
+            // Smoke takes the scene's aerial haze, so a distant plume recedes into
+            // the air instead of standing as ink against it.
+            Material {
+                fog: true,
+                ..soft_billboard(PUFF.name)
+            },
+            PUFF_CAPACITY,
+        )
+    });
+    pools.push(PoolDesc {
+        render_order: STREAK_RENDER_ORDER,
+        ..PoolDesc::new(
+            "streaks",
+            plane_geometry(1.0, 1.0),
+            Material {
+                blending: Blending::Additive,
+                tone_mapped: false,
+                ..soft_billboard(STREAK.name)
+            },
+            STREAK_CAPACITY,
+        )
+    });
     pools
 }

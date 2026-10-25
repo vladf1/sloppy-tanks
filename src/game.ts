@@ -3,7 +3,14 @@
 // browser side: preparing the arena behind Battle Setup, one engine frame per
 // animation frame with the packed raw input, and engine events and HUD state for
 // sound and the DOM.
-import { createGame, engineModule, throwGpuError, type Game } from "./engine";
+import {
+  createGame,
+  engineModule,
+  loadEngine,
+  mapTextureBakes,
+  throwGpuError,
+  type Game,
+} from "./engine";
 import { FrameRecorder, createDebug } from "./diagnostics";
 import { printDebugHelp } from "./game/debug-console";
 import { AudioSystem } from "./game/audio";
@@ -21,20 +28,32 @@ import {
 import { sameGameOptions, type GameOptions } from "./game/game-options";
 import {
   saveCameraPreferences,
+  savedGraphics,
   savedPreference,
   savePreference,
   startingCamera,
+  startingGraphics,
 } from "./game/player-preferences";
 import { debugPage, isExtraLevel } from "./game/map-options";
 import { NerdStats, engineStatsSections } from "./game/nerd-stats";
 import { savedVolume } from "./game/settings-dialog";
 import type { PreparedGame } from "./game/start-menu";
-import { PREPARE_BUDGET, afterPaint, nextPrepareStep } from "./game/task-yield";
-import { startTextureBake } from "./game/texture-bake";
+import { PREPARE_BUDGET, afterPaint, nextPrepareStep, stepBetweenTasks } from "./game/task-yield";
+import { bakeAhead, startTextureBake } from "./game/texture-bake";
 import { TouchModeController } from "./game/touch-mode";
 import { MENU_READY_STATUS, UI } from "./game/ui";
 /** `window.sloppy.exactResolution()` renders at this size whatever the window. */
 const EXACT_RESOLUTION = { width: 2560, height: 1440 } as const;
+
+/** Load the engine and start the texture bakes the arena of `map` will claim, so they
+ * run in workers while the engine builds the arena (`bakeAhead`). Battle Setup calls
+ * this as its first frame paints and builds the arena once it settles, when the bake
+ * workers have loaded; the quarry soil's bake then finishes before the arena's
+ * pipelines do. */
+export async function loadArenaEngine(map: string): Promise<void> {
+  await loadEngine();
+  await bakeAhead(engineModule(), mapTextureBakes(map));
+}
 
 /** Prepare a hidden arena after the lightweight menu has painted. */
 export async function prepareGame(
@@ -55,6 +74,7 @@ export async function prepareGame(
   const choices: GameOptions = { ...getOptions() };
   let game: Game;
   try {
+    await loadArenaEngine(choices.mapMode);
     game = await createGame(canvas, {
       seed,
       assetBase: import.meta.env.BASE_URL,
@@ -69,6 +89,7 @@ export async function prepareGame(
       cssHeight: innerHeight,
       pixelRatio: devicePixelRatio,
       ...startingCamera(),
+      ...startingGraphics(),
     });
   } catch (error) {
     root.remove();
@@ -111,7 +132,7 @@ export async function prepareGame(
       if (!sameGameOptions(prepared, wanted)) {
         const next = { ...wanted };
         // The rebuild blocks the main thread for up to a few hundred milliseconds; show
-        // the player's new choice, or GO's WAIT, before it starts.
+        // the player's new choice, or GO's LOADING…, before it starts.
         await afterPaint();
         if (inRound) {
           return;
@@ -119,6 +140,8 @@ export async function prepareGame(
         if (!sameGameOptions(next, wanted)) {
           continue;
         }
+        // Its texture bakes run in workers while the rebuild holds the main thread.
+        void bakeAhead(engineModule(), mapTextureBakes(next.mapMode));
         game.set_options(JSON.stringify(next));
         prepared = next;
         total = 0;
@@ -236,7 +259,7 @@ export async function prepareGame(
     const button = ui.overlay.querySelector<HTMLButtonElement>("#start, #play-again");
     if (button) {
       button.disabled = true;
-      button.textContent = "WAIT";
+      button.textContent = "LOADING…";
     }
     ui.overlay.dataset.state = "starting";
     const status = ui.overlay.querySelector("#startup-status");
@@ -254,6 +277,7 @@ export async function prepareGame(
           status.textContent = stage;
         }
       });
+      await revealBattle(() => {});
       beginRound();
     } catch (error) {
       console.error("Round preparation failed", error);
@@ -294,6 +318,27 @@ export async function prepareGame(
       }
     }
   }
+  /** Take the in-game menu away and show the battle (`showBattle`) before its round
+   * starts. `hideMenu` takes away a menu that is not part of the arena's page. */
+  async function revealBattle(hideMenu: () => void): Promise<void> {
+    hideMenu();
+    await showBattle();
+  }
+  /** Show the battle's view, still, and let the browser paint it before the round's
+   * clock starts: the arena as `finish_prepare` drew it, the HUD, the respawn card
+   * (`UI.prepareBattle`) and the touch controls. Painted the first time on the round's
+   * first frame, they held WebKit's next frame for 50-70 ms, a hitch once tanks move;
+   * hidden behind a menu, WebKit leaves them unpainted. Under the start menu, which is
+   * opaque, they paint unseen. */
+  function showBattle(): Promise<void> {
+    ui.prepareBattle();
+    ui.overlay.style.display = "none";
+    root.classList.remove("menu-ready");
+    root.hidden = false;
+    // A frame starts only once the one before it reached the screen, so the second
+    // waits out that paint.
+    return afterPaint().then(afterPaint);
+  }
   function beginRound(): void {
     inRound = true;
     active = true;
@@ -333,14 +378,33 @@ export async function prepareGame(
     setting: settings,
     touchMode: () => touchControls.preference,
     setTouchMode: (mode) => touchControls.setPreference(mode),
+    graphics: savedGraphics,
+    setGraphics(setting) {
+      savePreference("graphics", setting);
+      game.set_graphics(setting);
+    },
     selectAmmo(weapon) {
       if (phase === "playing" && alive) {
         controls.ammoSelection = weapon;
       }
     },
   });
-  const toggleView = () => {
+  // The damage ring wraps the tank on screen.
+  const viewer = { x: NaN, y: NaN };
+  ui.viewerPoint = () => (Number.isFinite(viewer.x) ? viewer : null);
+  /** Switches the camera seat; the HUD's damage ring leaves the tank's screen spot at once. */
+  const switchSeat = () => {
     firstPerson = game.toggle_first_person();
+    if (firstPerson) {
+      viewer.x = viewer.y = NaN;
+    }
+    ui.replaceDamageRing();
+    // The cockpit frame and the lit view button follow at once, not a frame later.
+    cockpit.update(firstPerson && alive, NaN, controls.aimWaitsForClick);
+    return firstPerson;
+  };
+  const toggleView = () => {
+    switchSeat();
     saveCameraPreferences(game);
     holdPointer();
     controls.capturePointer();
@@ -348,18 +412,20 @@ export async function prepareGame(
   controls.toggleView = toggleView;
   const cockpit = new Cockpit(root, toggleView);
   ui.overlay.addEventListener("change", () => void preloadFromMenu());
-  ui.overlay.addEventListener("click", (event) => {
+  const pickTank = (event: Event) => {
     if (!(event.target instanceof Element && event.target.closest("[data-kind]"))) {
       return;
     }
     if (inRound) {
-      // The respawn menu's tank cards choose the next life's tank.
+      // The respawn card's tank cards choose the next life's tank.
       game.set_human_kind(choices.humanKind);
       prepared = { ...prepared, humanKind: choices.humanKind };
     } else {
       void preloadFromMenu();
     }
-  });
+  };
+  ui.overlay.addEventListener("click", pickTank);
+  ui.respawnLayer.addEventListener("click", pickTank);
   const touchControls = new TouchModeController(
     root,
     controls,
@@ -396,8 +462,8 @@ export async function prepareGame(
     if (stopped) {
       return;
     }
+    // Since the last frame the engine ran: it skips frames while the GPU catches up.
     const frameMs = Math.max(0, now - last);
-    last = Math.max(last, now);
     if (active && !document.hidden) {
       controls.stickTurns = touchControls.active && firstPerson;
       controls.takeInput(input);
@@ -414,10 +480,16 @@ export async function prepareGame(
         fail(error);
         return;
       }
-      counters.frames++;
+      const ran = result[FRAME.ran] === 1;
+      if (ran) {
+        counters.frames++;
+        last = Math.max(last, now);
+      }
       phase = PHASES[result[FRAME.phase]] ?? "ready";
       alive = result[FRAME.humanAlive] === 1;
       firstPerson = result[FRAME.firstPerson] === 1;
+      viewer.x = result[FRAME.viewerX];
+      viewer.y = result[FRAME.viewerY];
       holdPointer();
       if (result[FRAME.clearInput]) {
         controls.clear();
@@ -438,13 +510,17 @@ export async function prepareGame(
         result[FRAME.hullAngle],
         controls.aimWaitsForClick,
       );
-      stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+      if (ran) {
+        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+        recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
+      }
       hudDt += result[FRAME.dt];
       if (result[FRAME.hudDue]) {
         updateHud(hudDt);
         hudDt = 0;
       }
-      recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
+    } else {
+      last = Math.max(last, now);
     }
     requestAnimationFrame(loop);
   }
@@ -466,6 +542,7 @@ export async function prepareGame(
             exactResolution = exact;
             resize();
           },
+          switchSeat,
         },
         recorder,
         counters,
@@ -497,12 +574,22 @@ export async function prepareGame(
   requestAnimationFrame(() => setTimeout(audio, 0));
   // The first arena prepares here, so the menu reports its shader progress.
   await prepareArena(choices, onStage);
+  // Once the ready menu has painted, what the arena left for later (the wrecks of the
+  // vehicle library) builds, and the first round's view shows and paints under the
+  // menu while the player chooses, so GO only takes the menu away: two paints after
+  // GO had put the round's first frame 30-40 ms later.
+  const battleShown = afterPaint().then(() => {
+    void stepBetweenTasks(() => game.prebuild_step());
+    return showBattle();
+  });
   return {
     prepare: prepareArena,
-    async start(options) {
+    async start(options, hideMenu) {
       // Usually already prepared while the player chose; then this is instant.
       Object.assign(choices, options);
       await prepareArena(choices, onStage);
+      await battleShown;
+      hideMenu();
       beginRound();
     },
   };

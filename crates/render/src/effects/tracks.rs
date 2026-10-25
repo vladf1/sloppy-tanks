@@ -170,7 +170,7 @@ impl TrackTrails {
     }
 
     fn lay(&mut self, x: f64, z: f64, angle: f64, scale: f64, humvee: bool) {
-        let (width, length) = if humvee { (0.18, 0.3) } else { (0.48, 0.16) };
+        let (width, length) = if humvee { (0.18, 0.3) } else { (0.48, 0.24) };
         let y = self.pads.decal_height(x, z, 0.0, MARK_HEIGHT);
         let world = Mat4::from_translation(Vec3::new(x as f32, y as f32, z as f32))
             * Mat4::from_rotation_y(angle as f32)

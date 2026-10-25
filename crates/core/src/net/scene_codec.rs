@@ -24,6 +24,7 @@ use super::wire::{
 use crate::sim::crate_layout::CratePiece;
 use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use crate::sim::debris_physics::DebrisMaterial;
+use crate::sim::house_layout::{HousePart, HousePiece};
 use crate::sim::map_options::{MapId, is_extra_level};
 use crate::sim::maps::GroundKind;
 use crate::sim::math::{Point3, Quat4, Vec2, json_number};
@@ -102,6 +103,60 @@ pub const TOWER_PIECES: [(&str, TowerPiece); 12] = [
     ("east-wall", TowerPiece::EastWall),
     ("roof", TowerPiece::Roof),
     ("ladder", TowerPiece::Ladder),
+];
+/// Every shard a cottage breaks into, part by part (as [`HousePiece::ALL`]).
+pub const HOUSE_PIECES: [(&str, HousePiece); 51] = [
+    ("front-wall-0", HousePiece::new(HousePart::FrontWall, 0)),
+    ("front-wall-1", HousePiece::new(HousePart::FrontWall, 1)),
+    ("front-wall-2", HousePiece::new(HousePart::FrontWall, 2)),
+    ("front-wall-3", HousePiece::new(HousePart::FrontWall, 3)),
+    ("front-wall-4", HousePiece::new(HousePart::FrontWall, 4)),
+    ("front-wall-5", HousePiece::new(HousePart::FrontWall, 5)),
+    ("front-wall-6", HousePiece::new(HousePart::FrontWall, 6)),
+    ("front-wall-7", HousePiece::new(HousePart::FrontWall, 7)),
+    ("back-wall-0", HousePiece::new(HousePart::BackWall, 0)),
+    ("back-wall-1", HousePiece::new(HousePart::BackWall, 1)),
+    ("back-wall-2", HousePiece::new(HousePart::BackWall, 2)),
+    ("back-wall-3", HousePiece::new(HousePart::BackWall, 3)),
+    ("back-wall-4", HousePiece::new(HousePart::BackWall, 4)),
+    ("back-wall-5", HousePiece::new(HousePart::BackWall, 5)),
+    ("back-wall-6", HousePiece::new(HousePart::BackWall, 6)),
+    ("back-wall-7", HousePiece::new(HousePart::BackWall, 7)),
+    ("right-wall-0", HousePiece::new(HousePart::RightWall, 0)),
+    ("right-wall-1", HousePiece::new(HousePart::RightWall, 1)),
+    ("right-wall-2", HousePiece::new(HousePart::RightWall, 2)),
+    ("right-wall-3", HousePiece::new(HousePart::RightWall, 3)),
+    ("right-wall-4", HousePiece::new(HousePart::RightWall, 4)),
+    ("right-wall-5", HousePiece::new(HousePart::RightWall, 5)),
+    ("right-wall-6", HousePiece::new(HousePart::RightWall, 6)),
+    ("right-wall-7", HousePiece::new(HousePart::RightWall, 7)),
+    ("left-wall-0", HousePiece::new(HousePart::LeftWall, 0)),
+    ("left-wall-1", HousePiece::new(HousePart::LeftWall, 1)),
+    ("left-wall-2", HousePiece::new(HousePart::LeftWall, 2)),
+    ("left-wall-3", HousePiece::new(HousePart::LeftWall, 3)),
+    ("left-wall-4", HousePiece::new(HousePart::LeftWall, 4)),
+    ("left-wall-5", HousePiece::new(HousePart::LeftWall, 5)),
+    ("left-wall-6", HousePiece::new(HousePart::LeftWall, 6)),
+    ("left-wall-7", HousePiece::new(HousePart::LeftWall, 7)),
+    ("right-roof-0", HousePiece::new(HousePart::RightRoof, 0)),
+    ("right-roof-1", HousePiece::new(HousePart::RightRoof, 1)),
+    ("right-roof-2", HousePiece::new(HousePart::RightRoof, 2)),
+    ("right-roof-3", HousePiece::new(HousePart::RightRoof, 3)),
+    ("left-roof-0", HousePiece::new(HousePart::LeftRoof, 0)),
+    ("left-roof-1", HousePiece::new(HousePart::LeftRoof, 1)),
+    ("left-roof-2", HousePiece::new(HousePart::LeftRoof, 2)),
+    ("left-roof-3", HousePiece::new(HousePart::LeftRoof, 3)),
+    ("front-roof-0", HousePiece::new(HousePart::FrontRoof, 0)),
+    ("front-roof-1", HousePiece::new(HousePart::FrontRoof, 1)),
+    ("front-roof-2", HousePiece::new(HousePart::FrontRoof, 2)),
+    ("front-roof-3", HousePiece::new(HousePart::FrontRoof, 3)),
+    ("back-roof-0", HousePiece::new(HousePart::BackRoof, 0)),
+    ("back-roof-1", HousePiece::new(HousePart::BackRoof, 1)),
+    ("back-roof-2", HousePiece::new(HousePart::BackRoof, 2)),
+    ("back-roof-3", HousePiece::new(HousePart::BackRoof, 3)),
+    ("chimney-0", HousePiece::new(HousePart::Chimney, 0)),
+    ("chimney-1", HousePiece::new(HousePart::Chimney, 1)),
+    ("mound", HousePiece::new(HousePart::Mound, 0)),
 ];
 pub const CRATE_PIECES: [(&str, CratePiece); 10] = [
     ("wall", CratePiece::Wall),
@@ -236,6 +291,8 @@ const COVER_NAMES: [&str; 13] = names(&COVER_KINDS);
 const MATERIAL_NAMES: [&str; 3] = names(&MATERIALS);
 const TOWER_NAMES: [&str; 12] = names(&TOWER_PIECES);
 const CRATE_NAMES: [&str; 10] = names(&CRATE_PIECES);
+const HOUSE_NAMES: [&str; 51] = names(&HOUSE_PIECES);
+
 const SHAPE_NAMES: [&str; 10] = names(&FRAGMENT_SHAPES);
 const WRECK_NAMES: [&str; 5] = names(&WRECK_PARTS);
 const PICKUP_NAMES: [&str; 9] = names(&PICKUP_KINDS);
@@ -355,6 +412,8 @@ wire_fields!(
         PART = Field::new("part", FieldKind::Choice(&WRECK_NAMES)),
         TEAM = Field::new("team", COUNT),
         CRATE_PIECE = Field::new("cratePiece", FieldKind::Choice(&CRATE_NAMES)),
+        HOUSE_PIECE = Field::new("housePiece", FieldKind::Choice(&HOUSE_NAMES)),
+        HOUSE_ID = Field::new("houseId", COUNT),
     }
 );
 
@@ -831,6 +890,10 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
     }
     set_choice(record, TOWER_PIECE, &TOWER_PIECES, fragment.tower_piece);
     set_choice(record, CRATE_PIECE, &CRATE_PIECES, fragment.crate_piece);
+    set_choice(record, HOUSE_PIECE, &HOUSE_PIECES, fragment.house_piece);
+    if let Some(house) = fragment.house_id {
+        record.set_count(HOUSE_ID, u64::from(house));
+    }
     if let Some(tree) = fragment.tree_cover_id {
         record.set_count(TREE_COVER_ID, u64::from(tree));
     }
@@ -1332,6 +1395,8 @@ pub fn read_fragment(record: &WireRecord) -> ReadResult<RenderFragment> {
             .map_err(|e| format!("timberPart: {e}"))?,
         tower_piece: fields.opt_choice(TOWER_PIECE, &TOWER_PIECES)?,
         crate_piece: fields.opt_choice(CRATE_PIECE, &CRATE_PIECES)?,
+        house_piece: fields.opt_choice(HOUSE_PIECE, &HOUSE_PIECES)?,
+        house_id: fields.opt_count32(HOUSE_ID)?,
         tree_cover_id: fields.opt_count32(TREE_COVER_ID)?,
         tree_center_y: fields.opt_fixed(TREE_CENTER_Y)?,
         created_at: fields.opt_fixed(CREATED_AT)?,

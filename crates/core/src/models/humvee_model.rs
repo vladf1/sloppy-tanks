@@ -6,13 +6,16 @@
 //! `muzzle` marker at the launcher mouth.
 //!
 //! Each assembly is merged once into one shared mesh per paint role (`kit`), so
-//! the body, a wheel and the launcher cost a few meshes each; every team reuses
-//! the same geometry with its own palette.
+//! the body, a wheel and the launcher cost a few meshes each; the livery then
+//! bakes each team's weathered paint into its own copy, the four wheels sharing
+//! one.
 
 use std::sync::{Arc, OnceLock};
 
 use super::model_primitives::{material, paint, put, shadowed};
-use super::{VehicleKind, part};
+use super::tank_model::{LENS_ROUGHNESS, MARKING_WHITE};
+use super::tank_surfaces::{LAMP_LENS, vehicle_glass};
+use super::{Team, VehicleKind, part};
 use crate::geometry::Mesh;
 use crate::scene::{Material, Node};
 
@@ -21,6 +24,7 @@ mod kit;
 mod turret;
 mod wheel;
 
+use body::hood_insignia;
 use kit::Role;
 
 /// The body shell and wheelbase are stretched by this factor along z.
@@ -36,18 +40,18 @@ const FRONT_AXLE: f64 = 1.3;
 /// The launcher mouth, where missiles appear.
 const MUZZLE_Z: f64 = 1.7;
 
-/// Tire rubber: dark grey, light enough for the sidewall's shape to show.
-const RUBBER: u32 = 0x25292a;
-const GLASS: u32 = 0x29444b;
+/// Tire rubber: dark grey, light enough for the sidewall and lugs to show.
+const RUBBER: u32 = 0x2d3031;
+/// Armored glass: a deep blue-green tint that mirrors the sky toward grazing
+/// angles (`vehicle_glass`), so the windows read as glass rather than as painted
+/// panels.
+const GLASS: u32 = 0x1f3a40;
 const GAP: u32 = 0x101416;
 const CANVAS: u32 = 0x4f4a38;
-const HEADLAMP: u32 = 0xe5ddbc;
 const AMBER: u32 = 0xdf923b;
 const RED_LAMP: u32 = 0x931e16;
-/// Rubber, seals and canvas are matte; glass and lenses are glossy.
+/// Rubber, seals and canvas are matte.
 const MATTE_ROUGHNESS: f64 = 0.92;
-const GLASS_METALNESS: f64 = 0.5;
-const GLASS_ROUGHNESS: f64 = 0.08;
 
 /// Geometry shared by every Humvee, one mesh per role and assembly.
 struct Assemblies {
@@ -76,7 +80,6 @@ struct Palette {
 
 impl Palette {
     fn material(&self, role: Role) -> Arc<Material> {
-        let glossy = |color| material(color, GLASS_METALNESS, GLASS_ROUGHNESS);
         match role {
             Role::Paint => paint(self.base),
             Role::Shade => paint(self.shade),
@@ -84,10 +87,13 @@ impl Palette {
             Role::Rubber => material(RUBBER, 0.0, MATTE_ROUGHNESS),
             Role::Gap => material(GAP, 0.0, MATTE_ROUGHNESS),
             Role::Canvas => material(CANVAS, 0.0, MATTE_ROUGHNESS),
-            Role::Glass => glossy(GLASS),
-            Role::Headlamp => glossy(HEADLAMP),
-            Role::Amber => glossy(AMBER),
-            Role::Red => glossy(RED_LAMP),
+            Role::Glass => vehicle_glass(GLASS),
+            // The marker lamps draw with the matte fittings; the livery paints the
+            // headlamp lenses as lamps (warm glass, a hot core falling off to the
+            // reflector) in the paint's own draw.
+            Role::Headlamp => material(LAMP_LENS, 0.0, LENS_ROUGHNESS),
+            Role::Amber => material(AMBER, 0.0, LENS_ROUGHNESS),
+            Role::Red => material(RED_LAMP, 0.0, LENS_ROUGHNESS),
         }
     }
 
@@ -99,9 +105,9 @@ impl Palette {
     }
 }
 
-/// `humveeModel(team, false)` in `colors` (paint, shade, steel), before the vehicle
-/// scale and worn finish.
-pub(super) fn humvee_model(colors: [u32; 3]) -> Node {
+/// `humveeModel(team, false)` in `colors` (paint, shade, steel), before the
+/// vehicle scale and worn finish, with the team's insignia on the hood.
+pub(super) fn humvee_model(team: Team, colors: [u32; 3]) -> Node {
     let [base, shade, steel] = colors;
     let palette = Palette { base, shade, steel };
     let shared = assemblies();
@@ -130,6 +136,10 @@ pub(super) fn humvee_model(colors: [u32; 3]) -> Node {
     }
     hull.children.push(track_group);
     hull.children.extend(palette.parts(&shared.body));
+    hull.children.push(shadowed(
+        Arc::new(hood_insignia(team)),
+        material(MARKING_WHITE, 0.0, MATTE_ROUGHNESS),
+    ));
     root.children.push(hull);
     root.children.push(turret(&palette));
     root
@@ -165,7 +175,7 @@ mod tests {
 
     /// Triangles allowed for a whole Humvee: body, four wheels, shields, launcher.
     const TRIANGLE_BUDGET: usize = 15_000;
-    /// Distinct meshes: one per paint role and assembly, one wheel for all four.
+    /// Distinct meshes: one per livery finish and assembly, one wheel for all four.
     const MESH_BUDGET: usize = 24;
 
     fn meshes(model: &Node) -> (usize, Vec<*const Mesh>) {
@@ -189,8 +199,11 @@ mod tests {
     }
 
     #[test]
-    fn teams_share_one_geometry() {
-        let blue = meshes(&tank_model(VehicleKind::Humvee, Team::Blue));
-        assert_eq!(blue, meshes(&tank_model(VehicleKind::Humvee, Team::Red)));
+    fn teams_differ_only_in_paint_and_insignia() {
+        let (blue, blue_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Blue));
+        let (red, red_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Red));
+        assert_eq!(blue_meshes.len(), red_meshes.len());
+        let insignia = |team| hood_insignia(team).triangle_count();
+        assert_eq!(blue - insignia(Team::Blue), red - insignia(Team::Red));
     }
 }

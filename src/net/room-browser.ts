@@ -3,7 +3,13 @@
 import { CONTENT_VERSION } from "../generated/engine/content-version.js";
 import { busiestOpenRoom, readRoomList, type RoomListing } from "./room-list";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
-import { ROOM_SEATS, isPlayerKind, isRoundMinutes, type JoinChoice } from "./room-protocol";
+import {
+  ROOM_SEATS,
+  isPlayerKind,
+  isRoundMinutes,
+  steppedMinutes,
+  type JoinChoice,
+} from "./room-protocol";
 import type { RoomSelection } from "./pending-join";
 import { debugPage, isExtraLevel, mapOption } from "../game/map-options";
 import { showRoomMap } from "../game/map-picker";
@@ -41,6 +47,10 @@ export class RoomBrowser {
   private readonly join: HTMLButtonElement;
   private readonly create: HTMLButtonElement;
   private readonly refresh: HTMLButtonElement;
+  private readonly retry: HTMLButtonElement;
+  /** The offline list's own retry, beside its way into single player. */
+  private readonly retryNow: HTMLButtonElement | null;
+  private readonly retryLine: HTMLElement | null;
   private readonly newRoom: HTMLInputElement;
   private readonly endpoint: URL;
   /** Extra-level rooms show only on a page offering those levels, or when linked. */
@@ -54,6 +64,8 @@ export class RoomBrowser {
   private loading = false;
   private finished = false;
   private timer?: ReturnType<typeof setTimeout>;
+  /** Ticks the offline status's countdown to the next try once a second. */
+  private countdown?: ReturnType<typeof setInterval>;
   private controller?: AbortController;
   private readonly leave = () => this.close();
   /** Phones show no room list: they join the busiest open room, or create one. */
@@ -96,6 +108,18 @@ export class RoomBrowser {
     this.render();
     this.showStatus("loading", "Looking for rooms…", "Pick your tank and map meanwhile.");
     this.refresh.addEventListener("click", () => void this.poll());
+    this.retry = this.element("#retry-rooms");
+    this.retry.addEventListener("click", () => void this.poll());
+    this.retryNow = this.panel.querySelector(".room-empty .retry-now");
+    this.retryNow?.addEventListener("click", () => void this.poll());
+    this.retryLine = this.panel.querySelector("#rooms-retry-line");
+    const length = this.element<HTMLInputElement>("#create-round-minutes");
+    for (const step of this.panel.querySelectorAll<HTMLButtonElement>(".room-length .step")) {
+      step.addEventListener("click", () => {
+        length.value = String(steppedMinutes(Number(length.value), Number(step.dataset.step)));
+        length.dispatchEvent(new Event("change", { bubbles: true }));
+      });
+    }
     this.join.addEventListener("click", () => this.joinSelected());
     this.create.addEventListener("click", () => this.createRoom());
     // A phone's one action creates a room only when it knows none is open, so it waits
@@ -124,6 +148,7 @@ export class RoomBrowser {
     this.shown = false;
     this.lockMap();
     clearTimeout(this.timer);
+    this.stopCountdown();
     this.controller?.abort();
   }
 
@@ -250,10 +275,16 @@ export class RoomBrowser {
     if (!this.shown || this.loading) {
       return;
     }
+    this.stopCountdown();
     let delay = REFRESH_MS;
     if (!document.hidden) {
       this.loading = true;
       this.refresh.disabled = true;
+      // A retry under way shows on its button, which waits until the answer is in.
+      this.retry.disabled = true;
+      if (this.retryNow) {
+        this.retryNow.disabled = true;
+      }
       const controller = new AbortController();
       this.controller = controller;
       let timedOut = false;
@@ -289,30 +320,59 @@ export class RoomBrowser {
         } else {
           this.rooms = [];
           this.render();
-          // Without a list, a new room is the one thing a phone can still do.
-          this.create.disabled = false;
+          // A server that cannot list rooms cannot host one either: the button waits for
+          // the list to come back rather than send the player into a failure.
+          this.create.disabled = true;
           // fetch() rejects with a TypeError when the server cannot be reached at all.
-          this.showStatus(
-            "error",
-            timedOut
-              ? "Room list timed out"
-              : error instanceof TypeError
-                ? "Can't reach the game server"
-                : error instanceof Error
-                  ? error.message
-                  : "Rooms unavailable",
-            "Trying again in a moment.",
-          );
+          // One place says it: the status well names the state and the reason, with the
+          // one retry; the empty list and the locked button only echo it visually.
+          const reason = timedOut
+            ? "The room list timed out"
+            : error instanceof TypeError
+              ? "Can't reach the game server"
+              : error instanceof Error
+                ? error.message
+                : "Rooms unavailable";
+          this.showRetryCountdown(reason, REFRESH_MS);
         }
       } finally {
         clearTimeout(timeout);
         this.loading = false;
         this.refresh.disabled = false;
+        this.retry.disabled = false;
+        if (this.retryNow) {
+          this.retryNow.disabled = false;
+        }
       }
     }
     if (this.shown) {
       this.timer = setTimeout(() => void this.poll(), delay);
     }
+  }
+
+  /** The offline status, counting down to the next try in whole seconds. Beside the tab
+   * the empty list says it once, with its reason, the countdown and both ways forward;
+   * the status well (which a phone shows instead) carries the same words. */
+  private showRetryCountdown(reason: string, delayMs: number): void {
+    const retryAt = performance.now() + delayMs;
+    const tick = () => {
+      const seconds = Math.max(1, Math.ceil((retryAt - performance.now()) / 1000));
+      this.showStatus(
+        "error",
+        "Reconnecting to the game server",
+        `${reason} · next try in ${seconds} s`,
+      );
+      if (this.retryLine) {
+        this.retryLine.textContent = `Rooms list here once it answers · next try in ${seconds} s`;
+      }
+    };
+    tick();
+    this.countdown = setInterval(tick, 1000);
+  }
+
+  private stopCountdown(): void {
+    clearInterval(this.countdown);
+    this.countdown = undefined;
   }
 
   /** Select the linked room if it can take a player; otherwise say why not. */

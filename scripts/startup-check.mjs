@@ -38,7 +38,7 @@ try {
   await delayed.page.goto(url + "?map=harbor", { waitUntil: "domcontentloaded" });
   assert.equal(await delayed.page.locator("canvas").count(), 0);
   assert.equal(await chosenMap(delayed.page), "harbor");
-  await delayed.page.locator('[data-kind="heavy"]').click();
+  await delayed.page.locator('.start [data-kind="heavy"]').click();
   await delayed.page.locator('input[value="solo"]').check();
   await delayed.page.locator('input[value="hard"]').check();
   await click(delayed.page, "#start");
@@ -161,14 +161,21 @@ try {
   assert.deepEqual(results.prepared, { time: 0, elapsed: 0, prepared: true, phase: "ready" });
   // Each vehicle card clips the shared preview sheet: 3 kinds × 2 team rows of 640×400.
   results.previews = await warm.page.evaluate(async () => {
-    const tiles = [...document.querySelectorAll(".tank-preview image")];
+    const tiles = [...document.querySelectorAll(".start .tank-preview image")];
     const sheet = new Image();
     sheet.src = tiles[0].href.baseVal;
     await sheet.decode();
     return { cards: tiles.length, sheet: [sheet.naturalWidth, sheet.naturalHeight] };
   });
   assert.deepEqual(results.previews, { cards: 3, sheet: [1920, 800] });
-  assert.equal(await warm.page.locator("#game").isVisible(), false);
+  // The round's view waits under Battle Setup, painted for GO; the menu covers it.
+  assert.equal(
+    await warm.page.evaluate(
+      () =>
+        !!document.elementFromPoint(innerWidth / 2, innerHeight / 2)?.closest("#startup-overlay"),
+    ),
+    true,
+  );
   await warm.page.screenshot({ path: `${output}/desktop-menu.png` });
   await startRound(warm.page);
   await playing(warm.page);
@@ -194,7 +201,7 @@ try {
   assert.equal(await warm.page.evaluate(() => window.sloppy.view.time), frozen);
   assert.equal(await warm.page.locator("#game").isVisible(), false);
   await chooseMap(warm.page, "harbor");
-  await warm.page.locator('[data-kind="scout"]').click();
+  await warm.page.locator('.start [data-kind="scout"]').click();
   await startRound(warm.page);
   await playing(warm.page);
   results.newRound = await warm.page.evaluate(() => ({
@@ -212,7 +219,7 @@ try {
   await menuReady(changed.page);
   await changed.page.locator('input[value="solo"]').check();
   await chooseMap(changed.page, "harbor");
-  await changed.page.locator('[data-kind="heavy"]').click();
+  await changed.page.locator('.start [data-kind="heavy"]').click();
   await startRound(changed.page);
   await playing(changed.page);
   assert.equal(
@@ -369,7 +376,7 @@ try {
     true,
   );
   assert.equal(
-    await layout.page.locator(".vehicle strong").evaluateAll((titles) =>
+    await layout.page.locator(".start .vehicle strong").evaluateAll((titles) =>
       titles.every((title) => {
         const range = document.createRange();
         range.selectNodeContents(title);
@@ -383,6 +390,78 @@ try {
   );
   results[`layout${viewport.width}`] = "stable inline menu; no horizontal overflow";
   await layout.context.close();
+
+  // Across desktop and tablet sizes the build line stays on screen and clear of every
+  // control and the key strip, and Multiplayer keeps Battle Setup's size (offline here:
+  // the room list's error state is its largest).
+  const sizes = [
+    [1024, 768],
+    [1100, 700],
+    [1180, 820],
+    [1239, 770],
+    [1280, 600],
+    [1280, 720],
+    [1366, 768],
+    [1600, 900],
+    [1920, 1080],
+  ];
+  const sizeContext = await browser.newContext({ viewport: { width: 1280, height: 720 } });
+  const sized = await sizeContext.newPage();
+  sized.on("pageerror", (error) => errors.push(error.message));
+  await sized.goto(url);
+  await menuReady(sized);
+  const measure = () =>
+    sized.evaluate(() => {
+      const build = document.querySelector(".start .menu-build").getBoundingClientRect();
+      const shown = (element) => {
+        const rect = element.getBoundingClientRect();
+        return (
+          rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== "hidden"
+        );
+      };
+      const overlaps = [
+        ...document.querySelectorAll(".start :is(button, input, label, .key-hint, .setup-panels)"),
+      ]
+        .filter(shown)
+        .filter((element) => {
+          const rect = element.getBoundingClientRect();
+          return (
+            Math.min(build.right, rect.right) - Math.max(build.left, rect.left) > 0.5 &&
+            Math.min(build.bottom, rect.bottom) - Math.max(build.top, rect.top) > 0.5
+          );
+        })
+        .map((element) => element.id || element.className);
+      return {
+        overlaps,
+        onScreen: build.top >= 0 && build.bottom <= innerHeight && build.right <= innerWidth,
+        height: Math.round(document.querySelector(".menu.start").getBoundingClientRect().height),
+      };
+    });
+  for (const [width, height] of sizes) {
+    await sized.setViewportSize({ width, height });
+    const single = await sized.locator("#tab-single").boundingBox();
+    await sized.mouse.click(single.x + single.width / 2, single.y + single.height / 2);
+    await sized.waitForFunction(() => document.querySelector(".start").dataset.play === "single");
+    await sized.waitForTimeout(150);
+    const solo = await measure();
+    const tab = await sized.locator("#tab-multiplayer").boundingBox();
+    await sized.mouse.click(tab.x + tab.width / 2, tab.y + tab.height / 2);
+    await sized.waitForFunction(
+      () => document.querySelector(".start").dataset.play === "multiplayer",
+    );
+    await sized.waitForTimeout(150);
+    const rooms = await measure();
+    for (const [name, state] of [
+      ["single player", solo],
+      ["multiplayer", rooms],
+    ]) {
+      assert.deepEqual(state.overlaps, [], `${width}x${height} ${name}: the build line overlaps`);
+      assert.ok(state.onScreen, `${width}x${height} ${name}: the build line is off screen`);
+    }
+    assert.equal(rooms.height, solo.height, `${width}x${height}: Multiplayer resizes Battle Setup`);
+  }
+  results.buildLine = `clear and on screen at ${sizes.length} sizes; tabs keep one size`;
+  await sizeContext.close();
   assert.deepEqual(errors, []);
   writeFileSync(`${output}/checks.json`, JSON.stringify({ ...results, errors }, null, 2));
   console.log(JSON.stringify(results));

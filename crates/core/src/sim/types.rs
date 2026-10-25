@@ -8,8 +8,10 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use super::bot_personalities::BotPersonality;
 use super::crate_layout::CratePiece;
 use super::debris_physics::DebrisMaterial;
+use super::house_layout::HousePiece;
 use super::humvee_tactics::HumveeTactics;
 pub use super::math::{Point3, Quat4, Vec2};
+use super::scenery_pieces::HouseStub;
 use super::timber_layout::{TimberHit, TimberJoin, TimberPart};
 use super::tower_layout::TowerPiece;
 
@@ -651,6 +653,15 @@ pub struct Fragment {
     pub tower_piece: Option<TowerPiece>,
     /// The section of a broken cargo crate this piece is drawn as.
     pub crate_piece: Option<CratePiece>,
+    /// The part of a collapsed cottage this piece is drawn as, and that cottage's
+    /// cover id (its model is built from the cover).
+    pub house_piece: Option<HousePiece>,
+    pub house_id: Option<u32>,
+    /// How often a cottage shard left standing on edge has been tipped over.
+    pub house_topples: u8,
+    /// A stub of a collapsed cottage's wall, led down onto the ground and leaned
+    /// in against the pile before it is let go.
+    pub house_stub: Option<HouseStub>,
     pub tree_cover_id: Option<u32>,
     pub tree_center_y: Option<f64>,
     pub expires_at: Option<f64>,

@@ -54,12 +54,15 @@ async function playingOnline() {
 }
 try {
   await page.goto(base.href);
-  await click(page, '[data-kind="heavy"]');
+  await click(page, '.start [data-kind="heavy"]');
   await page.locator('input[name="gameMode"][value="solo"]').check();
   await page.locator('input[name="difficulty"][value="easy"]').check();
   await chooseMap(page, "quarry");
   await page.reload();
-  assert.equal(await page.locator('[data-kind="heavy"]').getAttribute("aria-pressed"), "true");
+  assert.equal(
+    await page.locator('.start [data-kind="heavy"]').getAttribute("aria-pressed"),
+    "true",
+  );
   assert.equal(await page.locator('input[name="gameMode"][value="solo"]').isChecked(), true);
   assert.equal(await page.locator('input[name="difficulty"][value="easy"]').isChecked(), true);
   assert.equal(await chosenMap(page), "quarry");
@@ -105,7 +108,10 @@ try {
   online.searchParams.set("multiplayer", "");
   await page.goto(online.href);
   await waitForRoomBrowser(page);
-  assert.equal(await page.locator('[data-kind="heavy"]').getAttribute("aria-pressed"), "true");
+  assert.equal(
+    await page.locator('.start [data-kind="heavy"]').getAttribute("aria-pressed"),
+    "true",
+  );
   await page.locator("#player-name").fill("Returning player");
   await click(page, "#create-room");
   await playingOnline();

@@ -125,7 +125,13 @@ export function createDebug(
   game: Game,
   audio: () => AudioSystem,
   controls: Controls,
-  actions: { start(): void; restart(): void; resize(exact: boolean): void },
+  actions: {
+    start(): void;
+    restart(): void;
+    resize(exact: boolean): void;
+    /** Switches the camera seat as the player's toggle does; returns first person. */
+    switchSeat(): boolean;
+  },
   recorder: FrameRecorder,
   counters: { frames: number; events: number },
 ) {
@@ -164,7 +170,7 @@ export function createDebug(
     autoRounds: (value = true) => game.debug_set_auto_rounds(value),
     zoom: (value: number) => game.debug_set_zoom(value),
     reflections: (value: number) => game.debug_set_reflections(value),
-    firstPerson: () => game.toggle_first_person(),
+    firstPerson: () => actions.switchSeat(),
     record(): void {
       recorder.record();
     },

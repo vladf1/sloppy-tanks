@@ -1,7 +1,9 @@
-//! Runtime visual effects: particles, blasts, tread marks and dust, gravel,
+//! Runtime visual effects: particles, blasts and scorches, sparks, muzzle
+//! flashes, shell tracers, burning wrecks, tread marks and dust, gravel,
 //! quarry wind dust, crate splinters and packing straw, falling leaves,
-//! projectiles in flight, laser defense and pickup rings, plus
-//! the explosion light flash, and the WGSL effect registry their materials use.
+//! projectiles in flight, laser defense and supply drop smoke, plus
+//! the explosion and muzzle light flashes, and the WGSL effect registry their
+//! materials use.
 //!
 //! Every effect is a bounded CPU system that writes instance records into a
 //! [`PoolBuffer`]; the renderer draws each pool as one instanced call from a
@@ -11,10 +13,15 @@
 //! seeded simulation stream. `EffectSystems` is the whole CPU side (native, unit
 //! tested); `Effects` binds it to the renderer's pools.
 
+pub mod bakes;
+pub mod ease;
 pub mod explosions;
+pub mod ground;
+pub mod ground_noise;
 pub mod laser;
 pub mod leaves;
 pub mod looks;
+pub mod muzzle;
 pub mod particles;
 pub mod pickups;
 pub mod pool;
@@ -23,52 +30,113 @@ pub mod quarry_dust;
 pub mod random;
 pub mod registry;
 pub mod rocket_smoke;
+pub mod sparks;
 pub mod spawn_pad_decks;
+pub mod tracers;
 pub mod track_dust;
 pub mod track_gravel;
 pub mod tracks;
+pub mod walls;
 pub mod wood_chips;
+pub mod wreck_fire;
 
-use glam::Vec3;
+use glam::{Mat4, Vec3};
 use sloppy_core::sim::{RenderState, SimEvent, SimEventType};
+
+use crate::camera::{Frustum, Sphere};
 
 pub use pool::{PoolBuffer, PoolDesc};
 pub use random::CosmeticRandom;
 pub use registry::*;
 
+use ground::Ground;
 use laser::LaserVisuals;
 use leaves::LeafFall;
+use muzzle::MuzzleFlashes;
 use particles::ParticleEffects;
 use pickups::PickupEffects;
 use projectiles::ProjectileVisuals;
 use quarry_dust::QuarryDust;
 use rocket_smoke::RocketSmoke;
+use tracers::Tracers;
 use track_dust::TrackDust;
 use tracks::TrackTrails;
 use wood_chips::WoodChips;
+use wreck_fire::WreckFires;
 
-use crate::presentation::view_settings::FEEDBACK;
-
-/// The explosion flash (`presentation.ts` `flash`): a warm point light that game
-/// presentation and the effects lab both draw from `EffectSystems::flash`.
-pub const FLASH_COLOR: u32 = 0xffc178;
-pub const FLASH_INTENSITY: f32 = 45.0;
-pub const FLASH_DISTANCE: f32 = 20.0;
+/// Blasts, hits and burning wrecks light their surroundings through this many
+/// point lights, the brightest of them each frame (`EffectSystems::lights`).
+pub const FIRE_LIGHTS: usize = 3;
 pub const FLASH_DECAY: f32 = 2.0;
-const FLASH_HEIGHT: f32 = 3.0;
+/// Below this a light is switched off rather than shading every pixel.
+pub const LIGHT_CUTOFF: f32 = 0.05;
 /// Default pickup color when an event carries none.
 const WHITE: u32 = 0xffffff;
+/// The muzzle flash light's color.
+pub const MUZZLE_FLASH_COLOR: u32 = 0xffc070;
+/// Every puff the shared puff pool may hold: blasts, muzzle smoke, burning wrecks.
+pub const PUFF_CAPACITY: usize = explosions::MAX_EXPLOSIONS * explosions::PUFFS_PER_BLAST
+    + muzzle::MAX_MUZZLE_FLASHES * muzzle::PUFFS_PER_MUZZLE
+    + wreck_fire::MAX_BURNING_WRECKS * wreck_fire::PUFFS_PER_WRECK;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Flash {
     pub position: Vec3,
     pub intensity: f32,
+    pub color: u32,
+}
+
+/// What this frame's views can show, so an effect can leave out smoke no view draws:
+/// the camera's frustum and, while the water's reflection draws, the water plane. The
+/// reflection's mirrored camera sees exactly what the camera sees of the scene
+/// mirrored in that plane. Effect pools draw in the main view and the reflection only.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EffectView {
+    /// `None` shows everything (before the first camera, and in native tests).
+    frustum: Option<Frustum>,
+    /// The reflecting water's height.
+    mirror: Option<f32>,
+}
+
+impl EffectView {
+    pub fn new(view_projection: &Mat4, mirror: Option<f32>) -> Self {
+        Self {
+            frustum: Some(Frustum::from_view_projection(view_projection)),
+            mirror,
+        }
+    }
+
+    pub fn sees(&self, sphere: &Sphere) -> bool {
+        let Some(frustum) = &self.frustum else {
+            return true;
+        };
+        frustum.intersects_sphere(sphere)
+            || self.mirror.is_some_and(|height| {
+                let mut mirrored = *sphere;
+                mirrored.center.y = 2.0 * height - sphere.center.y;
+                frustum.intersects_sphere(&mirrored)
+            })
+    }
+}
+
+/// Keep `light` in `lights` if it outshines the dimmest one there.
+pub fn offer_light(lights: &mut [Flash], light: Flash) {
+    if light.intensity <= LIGHT_CUTOFF {
+        return;
+    }
+    let dimmest = lights
+        .iter_mut()
+        .min_by(|a, b| a.intensity.total_cmp(&b.intensity));
+    if let Some(slot) = dimmest.filter(|slot| slot.intensity < light.intensity) {
+        *slot = light;
+    }
 }
 
 /// Live effect counts, for tests and "Stats for nerds".
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct EffectStats {
-    /// Chips, sparks, embers and falling leaves: every exported "particles" count.
+    /// Chips, clods and falling leaves: every exported "particles" count
+    /// (glowing sparks are streak instances).
     pub particles: u32,
     /// Crate splinters and packing straw (their pools' instances).
     pub wood_chips: u32,
@@ -97,10 +165,16 @@ pub struct EffectSystems {
     pub track_dust: TrackDust,
     pub quarry_dust: QuarryDust,
     pub projectiles: ProjectileVisuals,
+    pub tracers: Tracers,
     pub rocket_smoke: RocketSmoke,
+    pub muzzle: MuzzleFlashes,
+    pub wrecks: WreckFires,
     pub laser: LaserVisuals,
     pub pickups: PickupEffects,
-    pub flash: Flash,
+    /// This frame's brightest fire lights.
+    pub lights: [Flash; FIRE_LIGHTS],
+    /// What the frame's views show (set before each update).
+    pub view: EffectView,
 }
 
 impl EffectSystems {
@@ -112,17 +186,24 @@ impl EffectSystems {
         self.track_dust.reset();
         self.quarry_dust.reset();
         self.projectiles.reset();
+        self.tracers.reset();
         self.rocket_smoke.reset();
+        self.muzzle.reset();
+        self.wrecks.reset();
         self.laser.reset();
         self.pickups.reset();
-        self.flash = Flash::default();
+        self.lights = [Flash::default(); FIRE_LIGHTS];
     }
 
     /// The visual response to one simulation event (`presentation.ts` `event`).
     pub fn event(&mut self, event: &SimEvent) {
         use SimEventType as T;
-        // Contact telemetry and notices have no visual response.
-        if matches!(event.kind, T::DebrisImpact | T::Notice) {
+        // A hard landing raises dust; notices have no visual response.
+        if event.kind == T::DebrisImpact {
+            self.particles.explosions.landing(event);
+            return;
+        }
+        if event.kind == T::Notice {
             return;
         }
         self.laser.event(event);
@@ -132,17 +213,41 @@ impl EffectSystems {
         if event.kind == T::Respawn {
             return;
         }
-        if matches!(event.kind, T::Pickup | T::Promotion) {
+        if event.kind == T::Promotion {
             self.pickups
-                .add(event.x, event.z, event.color.unwrap_or(WHITE), event.id);
+                .add(event.x, event.z, event.color.unwrap_or(WHITE));
         }
         self.wood.event(event, &mut self.random);
-        if self.particles.event(event, &mut self.random) {
-            self.flash = Flash {
-                position: Vec3::new(event.x as f32, FLASH_HEIGHT, event.z as f32),
-                intensity: FLASH_INTENSITY,
-            };
+        if event.kind == SimEventType::Destroy
+            && event.cover_kind == Some(sloppy_core::sim::CoverKind::House)
+            && let Some(house) = self.particles.explosions.walls.house_at(event.x, event.z)
+        {
+            self.wood.house_burst(house);
         }
+        if let Some(strike) = self.siding_strike(event) {
+            self.wood.siding_hit(
+                strike.point,
+                strike.normal,
+                [strike.color, strike.trim],
+                &mut self.random,
+            );
+        }
+        self.muzzle.event(event);
+        self.wrecks.event(event, &mut self.random);
+        self.particles.event(event, &mut self.random);
+    }
+
+    /// The cottage wall a shell's impact (naming no cover or height) struck.
+    fn siding_strike(&self, event: &SimEvent) -> Option<walls::Strike> {
+        (event.kind == SimEventType::Impact && event.cover_kind.is_none() && event.height.is_none())
+            .then(|| {
+                self.particles
+                    .explosions
+                    .walls
+                    .strike(event.x, 1.0, event.z)
+            })
+            .flatten()
+            .filter(|strike| strike.material == walls::WallMaterial::Siding)
     }
 
     /// Leaves shaken from `crown` by a tree hit or felling, once presentation knows
@@ -153,19 +258,51 @@ impl EffectSystems {
 
     /// Advance one rendered frame, in the order `presentation.ts` `render` used.
     pub fn update(&mut self, state: &RenderState, alpha: f64, dt: f64, time: f64) {
-        self.pickups.update(state, alpha, dt);
+        self.pickups.update(dt);
         self.tracks.update(state, alpha);
         self.particles.explosions.pads.sync(state);
+        self.particles.explosions.walls.sync(state);
+        let ground = Ground::from_theme(&state.map_theme);
+        self.particles.explosions.ground = ground;
         self.track_dust.update(state, &mut self.random);
         self.quarry_dust.update(state, dt, &mut self.random);
-        self.flash.intensity *= (-dt * FEEDBACK.flash_decay).exp() as f32;
+        self.particles.explosions.felled_trees(&state.fragments);
         self.projectiles.update(&state.shots, time, alpha);
         self.rocket_smoke
             .update(&state.shots, alpha, dt, &mut self.random);
         self.laser.update(state, alpha, dt);
+        // The sparks and blasts rebuild the streak and puff pools; tracers,
+        // muzzle flashes and burning wrecks add theirs after them.
         self.particles.update(dt, time);
+        let particles = &mut self.particles;
+        self.tracers
+            .update(&state.shots, alpha, &mut particles.sparks.records);
+        self.muzzle.update(
+            state,
+            alpha,
+            dt,
+            ground,
+            &mut particles.sparks,
+            &mut particles.explosions.puffs,
+            &mut self.random,
+        );
+        self.wrecks.update(
+            state,
+            dt,
+            &mut particles.explosions.puffs,
+            &mut particles.sparks,
+            &mut self.random,
+        );
+        self.pickups
+            .draw(state, &self.view, &mut particles.explosions.puffs);
+        // Every puff is written: keep the billows clear of the walls beside them.
+        let explosions = &mut self.particles.explosions;
+        explosions.walls.keep_puffs_clear(&mut explosions.puffs);
         self.leaves.update(dt, &mut self.random);
         self.wood.update(dt, &mut self.random);
+        self.lights = [Flash::default(); FIRE_LIGHTS];
+        self.particles.explosions.lights(&mut self.lights);
+        self.wrecks.lights(&mut self.lights);
     }
 
     /// Every pool buffer, in `looks::pool_descs` order.
@@ -186,14 +323,13 @@ impl EffectSystems {
         visit(&mut self.laser.core);
         visit(&mut self.laser.mount);
         visit(&mut self.laser.lens);
-        visit(&mut self.pickups.rings);
-        visit(&mut self.pickups.glows);
         visit(&mut self.particles.records);
         visit(&mut self.leaves.records);
         visit(&mut self.wood.wood_records);
         visit(&mut self.wood.straw_records);
         visit(&mut self.particles.explosions.rings);
         visit(&mut self.particles.explosions.puffs);
+        visit(&mut self.particles.sparks.records);
     }
 
     pub fn stats(&mut self) -> EffectStats {
@@ -230,19 +366,30 @@ pub use browser::Effects;
 mod browser {
     use sloppy_core::sim::RenderState;
 
-    use super::{EffectSystems, FLASH_COLOR, FLASH_DECAY, FLASH_DISTANCE};
+    use super::muzzle::MUZZLE_LIGHT_DISTANCE;
+    use glam::Vec3;
+
+    use super::explosions::BLAST_LIGHT_DISTANCE;
+    use super::{EffectSystems, EffectView, FLASH_DECAY, LIGHT_CUTOFF, MUZZLE_FLASH_COLOR};
     use crate::gpu::{PointLight, PoolId, Renderer};
 
-    /// The point-light slot the explosion flash uses.
-    const FLASH_LIGHT: usize = 0;
-    /// Below this the light is switched off rather than shading every pixel.
-    const FLASH_CUTOFF: f32 = 0.01;
+    /// The point-light slots the fire lights and the muzzle flash use.
+    const FIRE_LIGHT_SLOTS: [usize; super::FIRE_LIGHTS] = [0, 2, 3];
+    const MUZZLE_LIGHT: usize = 1;
 
     /// The effect systems bound to renderer pools (created once, kept across rounds).
     pub struct Effects {
         /// The CPU side; callers send it events and read its stats directly.
         pub systems: EffectSystems,
         pools: Vec<PoolId>,
+        /// The smoke puffs' pool, whose params carry the walls it softens against.
+        puffs: PoolId,
+        /// The walls last written to those params: they rarely change, and each write
+        /// is a buffer upload.
+        soft_walls: Option<[[f32; 4]; 4]>,
+        /// Leave nothing out for being out of view: the frame is about to be drawn
+        /// again from another pose (`Game::debug_render`).
+        pub show_everything: bool,
     }
 
     impl Effects {
@@ -250,13 +397,23 @@ mod browser {
         /// `prepare_step`/`warm_up` and the first blast, mark or shell never compiles
         /// mid-round.
         pub fn new(renderer: &mut Renderer) -> Self {
-            let pools = super::looks::pool_descs()
+            let descs = super::looks::pool_descs();
+            let pools: Vec<PoolId> = descs.iter().map(|desc| renderer.add_pool(desc)).collect();
+            // Tables the first burning wreck and supply column would otherwise build
+            // on their frames, in the middle of a round.
+            super::wreck_fire::warm_tables();
+            super::pickups::warm_tables();
+            let puffs = descs
                 .iter()
-                .map(|desc| renderer.add_pool(desc))
-                .collect();
+                .position(|desc| desc.label == super::looks::PUFF_POOL)
+                .map(|index| pools[index])
+                .expect("the puff pool");
             Self {
                 systems: EffectSystems::default(),
                 pools,
+                puffs,
+                soft_walls: None,
+                show_everything: false,
             }
         }
 
@@ -275,12 +432,45 @@ mod browser {
             dt: f64,
             time: f64,
         ) {
+            let mirror = renderer
+                .water_settings()
+                .filter(|water| water.reflection)
+                .map(|water| water.height);
+            self.systems.view = if self.show_everything {
+                EffectView::default()
+            } else {
+                EffectView::new(&renderer.camera().view_projection(), mirror)
+            };
             self.systems.update(state, alpha, dt, time);
+            // Smoke puffs overlap heavily: composite them back to front from this
+            // frame's eye (presentation sets the camera before effects update).
+            let eye = renderer.camera().position;
+            let puffs = &mut self.systems.particles.explosions.puffs;
+            puffs.sort_back_to_front(eye);
+            if let Some(viewer) = state.viewer().filter(|tank| tank.alive) {
+                let target = Vec3::new(
+                    viewer.position.x as f32,
+                    viewer.position.y as f32 + 0.4,
+                    viewer.position.z as f32,
+                );
+                super::explosions::clear_sight_line(puffs, eye, target);
+            }
+            // A collection's ground beat plays round the tank that took the supply,
+            // so it is added after the sight line to the viewer is cleared.
+            if self.systems.pickups.draw_collections(state, puffs) {
+                puffs.sort_back_to_front(eye);
+            }
             self.sync(renderer);
         }
 
         fn sync(&mut self, renderer: &mut Renderer) {
-            let Self { systems, pools } = self;
+            let Self {
+                systems,
+                pools,
+                puffs,
+                soft_walls,
+                ..
+            } = self;
             let mut next = pools.iter();
             systems.for_each_pool(|buffer| {
                 if let Some(&id) = next.next() {
@@ -291,14 +481,31 @@ mod browser {
             let mut params = [[0.0; 4]; 4];
             params[0][0] = systems.tracks.clock as f32;
             renderer.set_pool_params(pools[0], params);
-            let flash = systems.flash;
+            let walls = systems.particles.explosions.walls.soft_boxes();
+            if *soft_walls != Some(walls) {
+                renderer.set_pool_params(*puffs, walls);
+                *soft_walls = Some(walls);
+            }
+            for (slot, light) in FIRE_LIGHT_SLOTS.into_iter().zip(systems.lights) {
+                renderer.set_point_light(
+                    slot,
+                    (light.intensity > LIGHT_CUTOFF).then_some(PointLight {
+                        position: light.position,
+                        color: light.color,
+                        intensity: light.intensity,
+                        distance: BLAST_LIGHT_DISTANCE,
+                        decay: FLASH_DECAY,
+                    }),
+                );
+            }
+            let muzzle = systems.muzzle.light;
             renderer.set_point_light(
-                FLASH_LIGHT,
-                (flash.intensity > FLASH_CUTOFF).then_some(PointLight {
-                    position: flash.position,
-                    color: FLASH_COLOR,
-                    intensity: flash.intensity,
-                    distance: FLASH_DISTANCE,
+                MUZZLE_LIGHT,
+                (muzzle.intensity > LIGHT_CUTOFF).then_some(PointLight {
+                    position: muzzle.position,
+                    color: MUZZLE_FLASH_COLOR,
+                    intensity: muzzle.intensity,
+                    distance: MUZZLE_LIGHT_DISTANCE,
                     decay: FLASH_DECAY,
                 }),
             );
@@ -383,12 +590,18 @@ mod tests {
         promotion.color = Some(0xffcf54);
         systems.event(&promotion);
         assert_eq!(systems.pickups.len(), 1);
-        assert_eq!(systems.flash.intensity, 0.0);
+        systems.update(&RenderState::default(), 1.0, 1.0 / 60.0, 0.0);
+        assert!(systems.lights.iter().all(|light| light.intensity == 0.0));
         let mut blast = SimEvent::at(SimEventType::Explosion, 5.0, -4.0);
         blast.size = Some(4.0);
         systems.event(&blast);
-        assert_eq!(systems.flash.intensity, FLASH_INTENSITY);
-        assert_eq!(systems.flash.position, Vec3::new(5.0, 3.0, -4.0));
+        systems.update(&RenderState::default(), 1.0, 1.0 / 60.0, 0.0);
+        let lit = systems
+            .lights
+            .iter()
+            .find(|light| light.intensity > 10.0)
+            .expect("the blast lights its surroundings");
+        assert_eq!((lit.position.x, lit.position.z), (5.0, -4.0));
         let mut drum = SimEvent::at(SimEventType::Destroy, 0.0, 0.0);
         drum.cover_kind = Some(CoverKind::Drum);
         systems.event(&drum);
@@ -410,8 +623,8 @@ mod tests {
         }
         assert!(systems.particles.particles.is_empty());
         assert_eq!(systems.particles.explosions.active(), 2);
-        assert_eq!(systems.flash.intensity, 0.0);
         systems.update(&RenderState::default(), 1.0, 1.0 / 60.0, 0.0);
+        assert!(systems.lights.iter().all(|light| light.intensity == 0.0));
         let stats = systems.stats();
         assert_eq!(stats.particles, 0);
         assert_eq!(stats.wood_chips as usize, systems.wood.len());
@@ -473,6 +686,7 @@ mod tests {
                 SimEventType::Explosion,
                 SimEventType::Death,
                 SimEventType::Pickup,
+                SimEventType::Promotion,
                 SimEventType::Shot,
                 SimEventType::Impact,
                 SimEventType::Ricochet,

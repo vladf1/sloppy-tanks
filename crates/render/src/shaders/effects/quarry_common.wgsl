@@ -46,3 +46,88 @@ fn quarry_grit(amount: f32, relief: f32, f: EffectFragment, normal: vec3f) -> Qu
     grit.normal = derivative_bump(near, relief, f.world, normal, f.front_facing);
     return grit;
 }
+
+// The hashes and value noise below are lookups of the ground noise tile
+// (`ground_noise.wgsl`), bound with the soil's and the sandstone's materials:
+// hashing lattice corners per pixel cost the rock and the floor more than any of
+// their layers.
+
+// Four random numbers in [0, 1] for a lattice cell (whole coordinates; a fractional
+// one stands for the cell holding it).
+fn quarry_hash(cell: vec2f) -> vec4f {
+    return vec4f(ground_hash(cell), ground_hash(cell + vec2f(113.0, 57.0)));
+}
+
+// One random number in [0, 1] for a lattice cell, the value noise's corner.
+fn quarry_hash1(cell: vec2f) -> f32 {
+    return ground_hash(cell).x;
+}
+
+// Smooth value noise in [0, 1] on a unit lattice.
+fn quarry_value(p: vec2f) -> f32 {
+    return ground_noise(p).x;
+}
+
+// Smooth value noise with its gradient: (value, d/dx, d/dy) on a unit lattice,
+// from four corners of white noise so the gradient is exact.
+fn quarry_value_grad(p: vec2f) -> vec3f {
+    let i = floor(p);
+    let f = p - i;
+    let u = f * f * (3.0 - 2.0 * f);
+    let du = 6.0 * f * (1.0 - f);
+    let a = quarry_hash1(i);
+    let b = quarry_hash1(i + vec2f(1.0, 0.0));
+    let c = quarry_hash1(i + vec2f(0.0, 1.0));
+    let d = quarry_hash1(i + vec2f(1.0, 1.0));
+    let k = a - b - c + d;
+    return vec3f(
+        a + (b - a) * u.x + (c - a) * u.y + k * u.x * u.y,
+        du.x * ((b - a) + k * u.y),
+        du.y * ((c - a) + k * u.x),
+    );
+}
+
+// The world-space metres one pixel spans on a surface: computed in uniform
+// control flow, before any branch, and passed to the detail layers that fade
+// out before they shrink below a pixel and shimmer.
+fn quarry_footprint(world: vec3f) -> f32 {
+    return max(length(dpdx(world)), length(dpdy(world)));
+}
+
+
+
+// Plates cracked apart on a `cell` metre jittered lattice (dried mud, jointed
+// caprock): x is the crack line (1 inside a crack about `width` metres wide), y
+// the curled or rounded, paler plate rim beside it, z a hash in [0, 1) of the
+// plate the point lies on.
+fn quarry_cracks(p: vec2f, cell: f32, width_scale: f32, footprint: f32) -> vec3f {
+    // A gentle warp curves the plate edges so the network never reads as tiles.
+    let g0 = p / cell;
+    let g = g0 + 0.22 * sin(g0.yx * vec2f(2.3, 1.9) + vec2f(1.7, 0.4));
+    let id = floor(g);
+    var f1 = 8.0;
+    var f2 = 8.0;
+    var nearest = id;
+    for (var j = -1; j <= 1; j++) {
+        for (var i = -1; i <= 1; i++) {
+            let o = vec2f(f32(i), f32(j));
+            let h = ground_hash(id + o + 71.0);
+            let d = length(id + o + 0.05 + h.xy * 0.9 - g);
+            if d < f1 {
+                f2 = f1;
+                f1 = d;
+                nearest = id + o;
+            } else if d < f2 {
+                f2 = d;
+            }
+        }
+    }
+    let edge = (f2 - f1) * cell;
+    let width = (0.012 + 0.01 * quarry_hash1(id + 29.0)) * width_scale;
+    let soft = max(footprint, 0.004);
+    // Thin cracks fade to a faint darkening once a pixel spans them.
+    let visible = width / max(width, footprint);
+    let crack = (1.0 - quarry_smoothstep(width - soft, width + soft, edge)) * visible;
+    let rim = quarry_smoothstep(width * 2.0 + 0.06, width, edge) * (1.0 - crack);
+    return vec3f(crack, rim, ground_hash(nearest + 171.0).x);
+}

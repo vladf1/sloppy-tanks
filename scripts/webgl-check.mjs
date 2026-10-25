@@ -12,6 +12,7 @@
 import assert from "node:assert/strict";
 import { mkdirSync } from "node:fs";
 import {
+  buildWebglEngine,
   chooseMap,
   freezeLoop,
   gameUrl,
@@ -41,6 +42,8 @@ const STILL_LARGE_TOLERANCE = 0.15;
  * every later reset must leave the same GL objects and Wasm memory. */
 const SETTLING_RESETS = 16;
 const RESETS = 32;
+/** Draws allowed for the arena's warm-up sections to finish registering. */
+const WARM_UP_DRAW_LIMIT = 600;
 /** More frames than the backend draws between `getError` checks
  * (`ERROR_CHECK_FRAMES` in `crates/render/src/gpu/webgl/mod.rs`). */
 const ERROR_CHECK_DRAWS = 320;
@@ -51,6 +54,7 @@ const ERROR_CHECK_DRAWS = 320;
  * mesh's own indices can be. */
 const ZERO_INDEX_UPLOAD_BYTES = 1024;
 mkdirSync(output, { recursive: true });
+buildWebglEngine();
 
 /** The game page with `search` in place of the URL's query. */
 const pageUrl = (search) => Object.assign(new URL(gameUrl), { search }).href;
@@ -297,6 +301,8 @@ try {
     });
     await page.goto(pageUrl("?webgl&debug&autoplay&map=superstress"));
     await page.waitForFunction(() => window.sloppy?.sim.match.phase === "playing");
+    // The page builds the rest of the vehicle library once the arena is ready; it keeps.
+    await page.waitForFunction(() => window.sloppy.stats().view.libraryPending === 0);
     const resets = await page.evaluate(
       ({ resets, pose }) => {
         const samples = [];
@@ -323,6 +329,20 @@ try {
       assert.equal(sample.error, null);
       assert.equal(sample.draws, settled.draws);
     }
+    // The arena keeps registering its warm-up sections a frame at a time after the
+    // last reset, and one may open a new mesh page; let that finish before resizing,
+    // so the comparison sees only what a resize creates and deletes.
+    const warmed = await page.evaluate(
+      ({ pose, limit }) => {
+        let models = -1;
+        for (let frame = 0; frame < limit && window.sloppy.stats().models !== models; frame++) {
+          models = window.sloppy.stats().models;
+          window.engine.draw(pose);
+        }
+        return window.glObjects();
+      },
+      { pose: STILL_POSE, limit: WARM_UP_DRAW_LIMIT },
+    );
     const sizes = [];
     for (const [width, height] of [
       [1100, 700],
@@ -342,7 +362,7 @@ try {
     }
     console.log(JSON.stringify({ sizes }));
     for (const size of sizes) {
-      assert.deepEqual(size.objects, settled.objects, "a resize deletes the targets it replaces");
+      assert.deepEqual(size.objects, warmed, "a resize deletes the targets it replaces");
       assert.equal(size.error, null);
     }
     const lost = await page.evaluate(async () => {

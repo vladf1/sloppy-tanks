@@ -12,6 +12,7 @@ const NETWORK_SECTIONS = ["Performance", "Network", "Render", "Battle", "Configu
 export type RenderStats = Pick<
   EngineStats,
   | "graphicsApi"
+  | "quality"
   | "drawCalls"
   | "triangles"
   | "shadowTriangles"
@@ -21,14 +22,42 @@ export type RenderStats = Pick<
   | "textures"
 >;
 
+const capitalized = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
+
 /** Both panels' Render rows. One row per scene pass: the expanded panel is 32 characters
  * wide, too narrow for the three counts on one row. */
 export function renderRows(stats: RenderStats): StatsRow[] {
+  const { quality } = stats;
   return [
     [
       "Graphics API",
       stats.graphicsApi,
       "WebGPU, or WebGL where the browser offers no WebGPU (or the page has ?webgl).",
+    ],
+    [
+      "Graphics setting",
+      capitalized(quality.setting),
+      "The Settings dialog's Graphics choice. Auto lowers the quality tier and the render scale while frames run slow and raises them again once they keep up.",
+    ],
+    [
+      "Quality tier",
+      capitalized(quality.tier),
+      "The optional per-pixel features in use: High is the full picture; Medium drops fine ground and cloud detail and ambient occlusion; Low also drops bloom and halves the shadow map.",
+    ],
+    [
+      "Render scale",
+      `${Math.round(quality.scale * 100)}%`,
+      `The 3D scene's resolution against the canvas's drawing buffer, ${quality.renderRatio.toFixed(2)} scene pixels per CSS pixel; the output pass upsamples it. ${quality.changes} automatic changes this session.`,
+    ],
+    [
+      "Scene pixels",
+      quality.scene.join("×"),
+      "The 3D scene's width and height in pixels before the upsampling.",
+    ],
+    [
+      "GPU frame time",
+      quality.gpuMs === null ? "—" : `${quality.gpuMs.toFixed(1)} ms`,
+      "How long the GPU takes to finish a frame, from its scene's submission until WebGPU reports it done (more when the GPU was still busy with the frame before). Auto lowers the quality only while this is what slows frames. Not reported on WebGL.",
     ],
     ["Draw calls / frame", stats.drawCalls, "GPU draw calls issued per rendered frame."],
     [

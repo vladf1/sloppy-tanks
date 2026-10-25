@@ -15,6 +15,8 @@
 pub mod camera_rig;
 pub mod first_person;
 pub mod generated;
+pub mod house_prep;
+pub mod house_rest;
 pub mod hud;
 pub mod input;
 pub mod model_catalog;
@@ -24,6 +26,7 @@ pub mod preparation;
 pub mod suspension;
 pub mod theme;
 pub mod view_settings;
+pub mod wreck_library;
 
 #[cfg(target_arch = "wasm32")]
 mod view;
@@ -36,14 +39,16 @@ use crate::effects::{EffectDefinition, effect};
 /// Flag cloth rippling in the arena breeze (`flags.ts`).
 pub const FLAG_CLOTH: EffectDefinition = effect(
     models::FLAG_CLOTH_EFFECT,
-    include_str!("shaders/flag_cloth.wgsl"),
+    wgsl!("presentation/shaders/flag_cloth.wgsl"),
 );
 
-/// The pickup refill arc growing back segment by segment.
-pub const PICKUP_REFILL: EffectDefinition = effect(
-    models::PICKUP_REFILL_EFFECT,
-    include_str!("shaders/pickup_refill.wgsl"),
-);
+/// Every pickup kind of a shape from one mesh: the instance picks the atlas tile,
+/// shows its pallet whole or crushed and weathers it a little differently.
+pub const PICKUP_FACE: EffectDefinition = effect(
+    sloppy_core::models::PICKUP_FACE_EFFECT,
+    wgsl!("presentation/shaders/pickup_face.wgsl"),
+)
+.with_shared_surface(wgsl!("presentation/shaders/pickup_face_surface.wgsl"));
 
 /// Effects presentation registers before building its models.
-pub const PRESENTATION_EFFECTS: [EffectDefinition; 2] = [FLAG_CLOTH, PICKUP_REFILL];
+pub const PRESENTATION_EFFECTS: [EffectDefinition; 2] = [FLAG_CLOTH, PICKUP_FACE];

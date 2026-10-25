@@ -17,7 +17,8 @@
 //! - `debug_add_tank(team, kind) -> id`, `debug_add_cover(spec) -> id`.
 //! - `debug_damage_tank(id, amount, owner, ownerTeam)` and
 //!   `debug_damage_cover(id, amount)` go through the shared damage helpers; an owner
-//!   that is not a tank id credits nobody.
+//!   that is not a tank id credits nobody. `debug_damage_cover_at(id, amount, x, y,
+//!   z)` strikes the cover at a world point, as a shell's contact would.
 //! - `debug_set_sim(patch)`: `{ elapsed, gameMode, reinforcementDelay, match: {
 //!   phase, time, scores, winner }, combatRecord: {...} }`.
 //! - `debug_set_pickups(pickups)`, `debug_add_shot(shot)`, `debug_add_mine(x, z,
@@ -32,6 +33,14 @@
 //!   simulation's covers.
 //! - `debug_water_json()`, `debug_set_water_reflection(on)`, `debug_probe(x, y, z, size, color)` (a plain
 //!   box for pixel probes; `size <= 0` removes it).
+//! - `debug_set_scene_load(load)`: render the scene at `load` times its size on top of
+//!   the graphics quality's scale (GPU load for measurements; 1 restores it).
+//! - `debug_set_off({ pools, bloom, occlusion, sky, lights, atmosphere, ground, effects })`:
+//!   switch effect pools (by label), post passes, point lights, the atmosphere, its ground
+//!   variation or main-view draws of custom effects (by name) off, for same-page A/B
+//!   timing of one frame redrawn.
+//! - `debug_set_frames_in_flight(limit)`: run frames only while fewer than `limit` are on
+//!   the GPU (0 runs every frame at its timestamp), for a same-page A/B of the pacing.
 //! - `debug_seats(seed)`: two player seats on a room simulation, each drawn from its
 //!   own viewer; see the method.
 
@@ -47,11 +56,12 @@ use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multip
 use sloppy_core::net::player_controls::PlayerControls;
 use sloppy_core::scene::{Material, Node};
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::math::{Quat4, Vec2};
+use sloppy_core::sim::data::weapon;
+use sloppy_core::sim::math::{Point3, Quat4, Vec2};
 use sloppy_core::sim::physics::{to_rotation, vector};
 use sloppy_core::sim::{
     AmmoInventory, CoverKind, DamageCause, GameMode, MatchPhase, Mine, Pickup, PlayerAssignment,
-    Shot, Team, VehicleCommand, VehicleKind, Weapon,
+    Shot, SimEvent, SimEventType, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_render::camera::PerspectiveCamera;
 use sloppy_render::gpu::{InstanceId, Lifetime, ModelId};
@@ -181,6 +191,19 @@ struct PickupSpec {
     cooldown_duration: f64,
 }
 
+#[derive(Deserialize, Default)]
+#[serde(default)]
+struct DebugOffSpec {
+    pools: Vec<String>,
+    bloom: bool,
+    occlusion: bool,
+    sky: bool,
+    lights: bool,
+    atmosphere: bool,
+    ground: bool,
+    effects: Vec<String>,
+}
+
 macro_rules! apply {
     ($target:expr, $patch:expr, $($field:ident),+) => {
         $(if let Some(value) = $patch.$field { $target.$field = value; })+
@@ -189,6 +212,35 @@ macro_rules! apply {
 
 #[wasm_bindgen]
 impl Game {
+    /// Switch passes, lights and effect pools off for a same-page A/B measurement:
+    /// `{ pools: [label...], bloom, occlusion, sky, lights, atmosphere, effects: [name...] }`,
+    /// each `true` = off.
+    /// Multiply the scene's size by `load` on top of the graphics quality's render
+    /// scale, to make the GPU the bottleneck in a measurement; 1 undoes it.
+    pub fn debug_set_scene_load(&mut self, load: f32) {
+        self.view.renderer.debug_set_scene_load(load);
+    }
+
+    pub fn debug_set_off(&mut self, off_json: &str) -> Result<(), JsValue> {
+        let off: DebugOffSpec = parse(off_json)?;
+        self.view.renderer.debug_off = sloppy_render::gpu::DebugOff {
+            pools: off.pools,
+            bloom: off.bloom,
+            occlusion: off.occlusion,
+            sky: off.sky,
+            lights: off.lights,
+            atmosphere: off.atmosphere,
+            ground: off.ground,
+            effects: off.effects,
+        };
+        Ok(())
+    }
+
+    /// Run frames only while fewer than `limit` are on the GPU; 0 runs every frame.
+    pub fn debug_set_frames_in_flight(&mut self, limit: u32) {
+        self.pacing.limit = limit;
+    }
+
     /// Empty the arena except the human and the tanks whose ids are in `keep`.
     pub fn debug_clear_arena(&mut self, keep: Vec<u32>) {
         let sim = &mut self.sim;
@@ -323,8 +375,41 @@ impl Game {
         };
         let human = self.sim.human();
         let (owner, team, life) = (human.id, human.team, human.life);
+        let cover = &self.sim.covers[index];
+        if cover.alive && !cover.destructible {
+            // Hard cover shrugs off damage; show what shells striking it look like
+            // instead: the impact a shell's world contact raises, in the middle of
+            // each face, each from a gun straight out from that face.
+            let (x, z, hw, hd) = (cover.x, cover.z, cover.w / 2.0, cover.d / 2.0);
+            for (nx, nz) in [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)] {
+                let face = Point3::new(x + nx * hw, 1.0, z + nz * hd);
+                let mut impact = SimEvent::at(SimEventType::Impact, face.x, face.z);
+                impact.size = Some(0.6);
+                impact.color = Some(weapon(Weapon::Standard).color);
+                impact.from = Some(Point3::new(face.x + nx * 10.0, 1.0, face.z + nz * 10.0));
+                self.sim.events.push(impact);
+            }
+            return;
+        }
         self.sim
             .damage_cover(index, amount, owner, team, Some(life), None);
+    }
+
+    /// Damage a cover as a human shell striking it at world `(x, y, z)` would.
+    pub fn debug_damage_cover_at(&mut self, id: u32, amount: f64, x: f64, y: f64, z: f64) {
+        let Some(index) = self.sim.covers.iter().position(|cover| cover.id == id) else {
+            return;
+        };
+        let human = self.sim.human();
+        let (owner, team, life) = (human.id, human.team, human.life);
+        self.sim.damage_cover(
+            index,
+            amount,
+            owner,
+            team,
+            Some(life),
+            Some(Point3::new(x, y, z)),
+        );
     }
 
     /// Add a cover and its navigation footprint; returns its id.
@@ -508,9 +593,11 @@ impl Game {
     ) -> Result<(), JsValue> {
         self.fill_state();
         self.route_events();
-        self.view
-            .render(&self.state, alpha, dt, overview)
-            .map_err(js_error)?;
+        // Effects the game's camera does not see may show from the fixed pose.
+        self.view.effects.show_everything = camera.len() == 6;
+        let rendered = self.view.render(&self.state, alpha, dt, overview);
+        self.view.effects.show_everything = false;
+        rendered.map_err(js_error)?;
         self.sim.set_wreck_view(Some(self.view.wreck_view()));
         if camera.len() == 6 {
             let mut pose: PerspectiveCamera = self.view.renderer.camera();
@@ -518,7 +605,14 @@ impl Game {
                 glam::Vec3::from_slice(&camera[..3]),
                 glam::Vec3::from_slice(&camera[3..]),
             );
+            // A fixed pose stands upright: the drawn follow camera's up carries its
+            // shake roll.
+            pose.up = glam::Vec3::Y;
             self.view.renderer.set_camera(pose);
+            // Tank bars face, size and hide for the pose, not the follow camera.
+            let rotation = glam::Quat::from_mat4(&pose.view().inverse());
+            self.view
+                .place_bars(&self.state.covers, &pose, rotation, f64::INFINITY);
             self.view
                 .renderer
                 .render(self.view.time as f32)

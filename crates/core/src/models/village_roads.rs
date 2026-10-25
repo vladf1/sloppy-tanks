@@ -1,9 +1,10 @@
-//! Port of `village-roads.ts`: the Pine Village road strips, shared by the road
-//! meshes and surface effects (track dust) so their boundaries stay aligned.
+//! Port of `village-roads.ts`: the Pine Village road strips, shared by the ground
+//! shader and surface effects (track dust) so their boundaries stay aligned.
 
 use crate::sim::data::ARENA;
 
-/// Width of the feathered alpha shoulder along every road edge, in metres.
+/// How far inside a road edge the solid dirt starts, in metres: the ground shader
+/// frays the edge into grass for about this far.
 pub const ROAD_SHOULDER: f64 = 0.7;
 
 /// One road strip: centre, footprint and the height its mesh floats at.
@@ -41,6 +42,19 @@ pub fn village_roads() -> [VillageRoad; 6] {
         across(0.0),
         across(38.0),
     ]
+}
+
+/// The village square's two paved streets round the arena's centre, as half
+/// extents in metres: the main street, then the cross street. The ground shader
+/// (`meadow_sway.wgsl`, `VG_SQUARE_MAIN` and `VG_SQUARE_CROSS`) lays its setts
+/// and kerb on the same outline.
+pub const VILLAGE_SQUARE: [[f64; 2]; 2] = [[7.4, 26.0], [20.5, 4.4]];
+
+/// Whether (x, z) lies on the village square or within `margin` metres of it.
+pub fn in_village_square(x: f64, z: f64, margin: f64) -> bool {
+    VILLAGE_SQUARE
+        .iter()
+        .any(|[hx, hz]| x.abs() < hx + margin && z.abs() < hz + margin)
 }
 
 /// `isVillageDirt`: dust starts on the solid dirt, leaving the grass-blended
