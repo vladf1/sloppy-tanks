@@ -6159,9 +6159,18 @@ body:has(#settings[open]) #overlay > .menu {
 .settings .dialog-tabs {
   margin-top: 14px;
 }
-/* Both settings panes keep one size, so switching tabs never moves the buttons. */
-.settings .dialog-pane {
-  min-height: 250px;
+/* Both settings panes share one grid cell, so the dialog is as tall as the taller pane on
+   every tab and switching tabs never resizes it or moves the buttons. The pane that is
+   not chosen keeps its box but is not drawn, focused or read. */
+.settings .dialog-panes {
+  display: grid;
+}
+.settings .dialog-panes > .dialog-pane {
+  grid-area: 1 / 1;
+}
+.settings .dialog-panes > .dialog-pane[hidden] {
+  display: block;
+  visibility: hidden;
 }
 .settings .controls-card {
   margin: 0;
