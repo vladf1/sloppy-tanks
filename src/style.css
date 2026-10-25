@@ -7164,7 +7164,9 @@ html.phone,
     grid-area: 1 / 1 / 2 / -1;
     align-self: end;
     justify-content: flex-start;
-    padding: 0 0 8px 6px;
+    /* The logo's tilt and drop shadow spill past its box: the padding keeps that, and a
+       clear margin, between it and the folder tabs and the dialog's edge. */
+    padding: 10px 0 24px 12px;
   }
   /* The logo has the first row to itself, as it does at every other width, so the
      folders' row, the tray and the key strip start one row down. */
