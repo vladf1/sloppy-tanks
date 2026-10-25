@@ -22,6 +22,7 @@ import {
 import { duration } from "./round-recap";
 import { hudIcon, hudMarkup, menuMarkup, respawnMarkup, wreckedByMarkup } from "./ui-markup";
 import { fitPanels } from "./panel-fit";
+import { isPhone } from "./phone-mode";
 import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
 export const MENU_READY_STATUS = "Arena ready";
@@ -443,13 +444,11 @@ export class UI {
       this.hud.dataset.team = side;
     }
     scoreboard.classList.toggle("overtime", !state.endlessMatch && match.overtime);
+    // A phone's score pill has room for the goal alone; its pause menu adds the rule.
+    const soloObjective = isPhone() ? "SURVIVE" : "SURVIVE · ONE LIFE";
     set(
       "objective",
-      solo
-        ? "SURVIVE · ONE LIFE"
-        : state.endlessMatch
-          ? "ENDLESS STRESS"
-          : `FIRST TO ${state.scoreLimit}`,
+      solo ? soloObjective : state.endlessMatch ? "ENDLESS STRESS" : `FIRST TO ${state.scoreLimit}`,
     );
     set("score0", String(solo ? tank.kills : match.scores[0]));
     set("score1", String(solo ? state.activeEnemies : match.scores[1]));

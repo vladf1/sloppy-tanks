@@ -1352,8 +1352,9 @@ body:has(#settings[open]) .hud-actions {
   --plate-tint: var(--red);
 }
 /* In first person the dial's segment continues the panel: the panel keeps only its
-   top-left cut and the segment the bottom-right one, so the pair reads as one plate. */
-#hud.first-person .combat-status::before {
+   top-left cut and the segment the bottom-right one, so the pair reads as one plate. (A
+   phone's dial stands apart, so its hull plate keeps both cuts.) */
+html:not(.phone) #hud.first-person .combat-status::before {
   clip-path: polygon(var(--cut) 0, 100% 0, 100% 100%, 0 100%, 0 var(--cut));
 }
 .hull-compass {
@@ -6831,6 +6832,8 @@ html.phone,
   .phone .touch-enabled .hud-actions {
     left: max(8px, env(safe-area-inset-left));
     right: max(8px, env(safe-area-inset-right));
+    /* First person has no zoom: first person and pause keep the right corner. */
+    justify-content: flex-end;
     padding: 0;
     border: 0;
     background: none;
@@ -6913,9 +6916,12 @@ html.phone,
 /* The score on a phone: one small pill at the top, blue score, clock and red score;
    the team colours stand in for the labels. */
 .phone #hud .scoreboard {
-  /* On the same top line as the row of buttons beside it, and as tall. */
+  /* On the same top line as the row of buttons beside it, and as tall. Its own width, not
+     the half of the screen right of `left: 50%`, so a long objective never runs under the
+     score beside it. */
   top: max(6px, env(safe-area-inset-top));
   left: 50%;
+  width: max-content;
   height: var(--hud-row);
   transform: translateX(-50%);
   gap: 2px;
@@ -7048,18 +7054,58 @@ html.phone,
 .phone #respawn-layer {
   padding-bottom: max(10px, env(safe-area-inset-bottom));
 }
-/* First person on a phone keeps the hull compass, low in the middle between the drive
-   stick and the thumb that turns the view. (The phone shows no hull readout of its own:
-   the bar over the player's tank is enough.) */
+/* First person on a phone keeps the hull compass low in the middle, between the drive
+   stick and the thumb that turns the view, and under it a small hull plate: from inside
+   the turret the bar over the player's tank is out of sight. The overhead view shows
+   neither; that bar is the phone's hull readout there. */
 .phone #hud > .bottom {
-  justify-content: center;
+  left: max(8px, env(safe-area-inset-left));
+  right: max(8px, env(safe-area-inset-right));
   bottom: max(10px, env(safe-area-inset-bottom));
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: none;
   pointer-events: none;
 }
-.phone .bottom > :not(.hull-compass) {
+.phone .bottom > :not(.hull-compass, .combat-status),
+.phone #hud:not(.first-person) .combat-status,
+.phone .combat-status > :not(.status),
+.phone .combat-status :is(.tank-label, .hull-readout span) {
   display: none;
 }
+/* The plate is one line: the hull's mark and number, then a short segmented bar. */
+.phone #hud.first-person .combat-status {
+  order: 1;
+  display: block;
+  padding: 5px 12px 6px;
+}
+.phone .combat-status .status {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.phone .combat-status .hull-readout {
+  align-items: center;
+  gap: 4px;
+  margin-top: 0;
+}
+.phone .combat-status .hull-readout b {
+  font-size: 20px;
+}
+.phone .combat-status .hull-icon {
+  width: 16px;
+  height: 16px;
+}
+.phone .combat-status .hull-bar {
+  width: 60px;
+  min-width: 0;
+  height: 7px;
+  margin-top: 0;
+}
 .phone .hull-compass {
+  align-self: center;
   margin: 0;
   padding: 3px;
   border: 1px solid var(--edge);

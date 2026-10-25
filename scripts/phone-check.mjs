@@ -96,6 +96,8 @@ try {
       // Team names stay hidden; only your side keeps its label, as the YOU tab.
       ".scoreboard .team:not(.yours) small",
       ".bottom",
+      // The bar over the player's tank is the hull readout overhead.
+      ".combat-status",
       ".brand",
       "#settings-open",
     ],
@@ -191,7 +193,8 @@ try {
     true,
     "the first-person gun sight shows",
   );
-  await expectVisible(["#cockpit", ".hull-compass"], [".aim-hint"]);
+  // From inside the turret the bar over the tank is out of sight: a small plate reads the hull.
+  await expectVisible(["#cockpit", ".hull-compass", ".combat-status .hull-readout"], [".aim-hint"]);
   await page.screenshot({ path: `${output}/first-person.png` });
   await touch("touchEnd", 2);
   // The drive stick's sideways push turns the view continuously; it never strafes.
