@@ -6571,7 +6571,13 @@ html.phone,
 }
 /* One row across the top: the scoreboard in the middle and, in the right corner, one
    slim glass bar of zoom, first person and pause with hairline dividers, the same bar as
-   the desktop's; the drive stick holds the bottom-left. */
+   the desktop's; the drive stick holds the bottom-left. The keys and the scoreboard share
+   one height, so their tops, middles and bottoms line up (and each key is a full thumb's
+   height). */
+.phone #hud {
+  --hud-row: 44px;
+  --hud-corner: 10px;
+}
 .phone .hud-actions,
 .phone .touch-enabled .hud-actions {
   top: max(6px, env(safe-area-inset-top));
@@ -6584,7 +6590,7 @@ html.phone,
 .phone .hud-actions > .quiet,
 .phone .touch-enabled .hud-actions button {
   min-width: 40px;
-  min-height: 38px;
+  min-height: var(--hud-row);
   padding: 0 8px;
   border: 0;
   border-radius: 9px;
@@ -6616,7 +6622,7 @@ html.phone,
       0 4px 12px #0007;
   }
   .phone .hud-actions > #zoom-out {
-    border-radius: 10px 0 0 10px;
+    border-radius: var(--hud-corner) 0 0 var(--hud-corner);
     box-shadow:
       inset 1px 0 var(--plate-edge),
       inset 0 1px var(--plate-edge),
@@ -6624,7 +6630,7 @@ html.phone,
       0 4px 12px #0007;
   }
   .phone .hud-actions > #zoom-in {
-    border-radius: 0 10px 10px 0;
+    border-radius: 0 var(--hud-corner) var(--hud-corner) 0;
     box-shadow:
       inset -1px 0 var(--plate-edge),
       inset 0 1px var(--plate-edge),
@@ -6633,7 +6639,7 @@ html.phone,
   }
   .phone .hud-actions > :is(#view-mode, #pause) {
     margin-left: 10px;
-    border-radius: 10px;
+    border-radius: var(--hud-corner);
     box-shadow:
       inset 0 0 0 1px var(--plate-edge),
       0 4px 12px #0007;
@@ -6817,11 +6823,14 @@ html.phone,
   margin-right: 4px;
 }
 /* Held upright the row is too narrow for the group beside the score: the bar splits in
-   two of the same glass, zoom in the left corner and first person and pause the right. */
+   two of the same glass, zoom in the left corner and first person and pause the right.
+   The two pairs are as wide as each other and the same distance in from their edges, so
+   the centred scoreboard has equal gaps on both sides. */
 @media (orientation: portrait) {
   .phone .hud-actions,
   .phone .touch-enabled .hud-actions {
     left: max(8px, env(safe-area-inset-left));
+    right: max(8px, env(safe-area-inset-right));
     padding: 0;
     border: 0;
     background: none;
@@ -6839,10 +6848,10 @@ html.phone,
     background: linear-gradient(180deg, #13284ad9, #08142ae6);
   }
   .phone :is(#zoom-out, #view-mode) {
-    border-radius: 11px 0 0 11px;
+    border-radius: var(--hud-corner) 0 0 var(--hud-corner);
   }
   .phone :is(#zoom-in, #pause) {
-    border-radius: 0 11px 11px 0;
+    border-radius: 0 var(--hud-corner) var(--hud-corner) 0;
   }
 }
 /* Phones get a tiny "nerds" link in the corner the touch controls leave free, held in
@@ -6904,9 +6913,10 @@ html.phone,
 /* The score on a phone: one small pill at the top, blue score, clock and red score;
    the team colours stand in for the labels. */
 .phone #hud .scoreboard {
-  /* On the same top line as the row of buttons beside it. */
+  /* On the same top line as the row of buttons beside it, and as tall. */
   top: max(6px, env(safe-area-inset-top));
   left: 50%;
+  height: var(--hud-row);
   transform: translateX(-50%);
   gap: 2px;
 }
@@ -6964,10 +6974,10 @@ html.phone,
 }
 /* Outer corners match the buttons beside the pill. */
 .phone #hud .mint {
-  border-radius: 6px 0 0 6px;
+  border-radius: var(--hud-corner) 0 0 var(--hud-corner);
 }
 .phone #hud .coral {
-  border-radius: 0 6px 6px 0;
+  border-radius: 0 var(--hud-corner) var(--hud-corner) 0;
 }
 .phone #hud .team b {
   font-size: 19px;
