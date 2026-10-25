@@ -42,9 +42,7 @@ console.log(`Publishing dev build ${info.builtAt} (${build})`);
 run(process.execPath, ["deploy/dev-site/precompress.mjs"]);
 // Fixed destination: the Worker's account, name and domain come from its config.
 run(process.execPath, [
-  "x",
-  "--bun",
-  "wrangler",
+  "tools/deploy/wrangler.mjs",
   "deploy",
   "--config",
   "deploy/dev-site/wrangler.jsonc",

@@ -29,9 +29,11 @@ export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 Bun handles dependency installation, TypeScript checking, bundling, the dev/preview
 servers, tests and script execution. `.bun-version` and `package.json` pin its
 version; CI reads `.bun-version`. Installs use isolated linking and committed
-`bun.lock` files, including the lint package installed by `postinstall`. Only
-`esbuild` and `workerd` (Wrangler dependencies) may run dependency install scripts.
-Run `bun add` to change dependencies and commit both affected lockfiles.
+`bun.lock` files, including the lint package installed by `postinstall`. Root
+dependencies cannot run install scripts. Cloudflare's Wrangler is isolated in
+[`tools/deploy/`](tools/deploy/README.md) and installs only when a Cloudflare command
+needs it; that package trusts only its `esbuild` and `workerd` setup scripts.
+Run `bun add` to change dependencies and commit the affected lockfiles.
 
 `bun run typecheck` uses `bun check --no-script` so the native checker cannot invoke
 this project's separate `check` quality gate. ESLint and Prettier run on Bun;
@@ -283,7 +285,7 @@ The build separates the interactive menu from the engine and audio. Battle Setup
 
 `bun run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes it to the separate `sloppy-tanks-dev`
-Cloudflare Worker. Run `bun x --bun wrangler login` first (or provide an API token that
+Cloudflare Worker. Run `bun run wrangler login` first (or provide an API token that
 can deploy Workers and their custom domains). The Worker's account, name and domain
 come from `deploy/dev-site/wrangler.jsonc`, independent of the local Git branch. No Git
 commit or push is required. `bun run build:dev` builds without publishing.

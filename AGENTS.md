@@ -86,8 +86,10 @@ must be 0.2.129, the crate pin. Put rustup's cargo before Homebrew's:
 `export PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH`.
 Run `bun install --frozen-lockfile` in every new checkout or worktree. The root
 postinstall installs `tools/lint/` with its own committed `bun.lock`; use `bun add`
-for dependency changes. Installs use isolated linking and explicitly trust only
-`esbuild` and `workerd`, Wrangler's dependencies. Review a new dependency's install
+for dependency changes. Installs use isolated linking; root dependencies cannot
+run install scripts. Wrangler lives in `tools/deploy/` with a separate lockfile;
+`bun run wrangler` and the Cloudflare deployment commands install it on demand.
+Only that package trusts `esbuild` and `workerd`. Review a new dependency's install
 script before adding it to `trustedDependencies`. Keep `--no-script` on the native
 `bun check` command: this repository also has a `check` package script.
 Local Rust builds may run

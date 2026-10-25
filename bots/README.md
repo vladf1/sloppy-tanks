@@ -42,9 +42,10 @@ bun run bots -- stop apac              # or no region to stop all
 
 The root URL serves a control page with the same actions. There is no
 authentication: anyone with the URL can start and stop bots, bounded by the
-32-bot and 6-hour limits per region. Local
-development: `bun x --bun wrangler dev --config bots/wrangler.jsonc` with `SERVER_URL`
-overridden to a local server.
+32-bot and 6-hour limits per region. Cloudflare commands install the pinned Wrangler
+tools on demand; normal installs and `bun run bots` do not need them. Local Worker
+serving through `wrangler dev` is currently blocked by Bun's Undici dispatcher
+limitation; see [deployment tools](../tools/deploy/README.md).
 
 ## Cost
 
