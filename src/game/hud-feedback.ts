@@ -483,8 +483,6 @@ function showEffects(root: ParentNode, tank: HumanState): void {
 export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled: boolean): void {
   setText(root, "hp", String(Math.max(0, Math.ceil(tank.hp))));
   setText(root, "vehicle-name", tank.vehicleName);
-  // The phone's hull pill names the tank too.
-  setText(root, "hull-pill-name", tank.vehicleName);
   setText(root, "rank", tank.rankName.toUpperCase());
   const rank = root.querySelector<HTMLElement>("#rank")!;
   // The panel updates every few frames: attributes are written only when they change,
@@ -493,7 +491,7 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
   setAttributeIfChanged(rank, "title", rankTitle(tank));
   setText(root, "hp-max", `/ ${Math.round(tank.maxHp)}`);
   // The bar's colour follows the hull's state, not the team: a full hull never reads as
-  // danger. The phone's hull pill shows the same reading.
+  // danger.
   const width = `${tank.healthRatio * 100}%`;
   const tone = hullTone(tank.healthRatio);
   for (const bar of root.querySelectorAll<HTMLElement>(".hull-bar")) {
@@ -511,7 +509,6 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
       ghost.style.width = width;
     }
   }
-  setText(root, "hull-pill-hp", String(Math.max(0, Math.ceil(tank.hp))));
   // Every hull readout under `root` takes the ramp's colour from one property.
   const ramp = hullColor(tank.healthRatio);
   if (root instanceof HTMLElement && root.style.getPropertyValue("--hull-ramp") !== ramp) {

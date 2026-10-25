@@ -2494,11 +2494,6 @@ html:not(.phone) #toast[data-tone="death"] {
 #ammo-notice:empty {
   display: none;
 }
-/* The phone's hull: a small pill at the bottom centre, the one readout its edition keeps
-   besides the score. Other screens show the tank panel instead. */
-#hull-pill {
-  display: none;
-}
 /* First person: one clean sight. The engine draws the gun sight (its reload state in
    its ink); the page only darkens the screen's edges so the score, feed and panel stay
    readable, and docks the hull compass beside the tank panel. */
@@ -6569,7 +6564,7 @@ html.phone,
 .phone .start .battle-choice .choice-card b {
   font-size: 19px;
 }
-.phone #hud > :not(.hud-actions, .scoreboard, #toast, #cockpit, #feed, #hull-pill, .bottom),
+.phone #hud > :not(.hud-actions, .scoreboard, #toast, #cockpit, #feed, .bottom),
 .phone .hud-actions > :not(#pause, #view-mode, .touch-zoom),
 .phone #cockpit .aim-hint {
   display: none;
@@ -6651,70 +6646,6 @@ html.phone,
   color: #c9d9ea;
   font-size: 18px;
   font-weight: 800;
-}
-/* The phone's hull: a pill at the bottom centre with the shield mark, the number and the
-   segmented bar in the hull's state colour. */
-/* The phone's hull plate: the tank's name, then its hull, on the HUD's armour plate. */
-.phone #hull-pill {
-  --cut: 9px;
-  position: absolute;
-  left: 50%;
-  bottom: max(10px, env(safe-area-inset-bottom));
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px 6px 14px;
-  clip-path: polygon(
-    var(--cut) 0,
-    100% 0,
-    100% calc(100% - var(--cut)),
-    calc(100% - var(--cut)) 100%,
-    0 100%,
-    0 var(--cut)
-  );
-  background: var(--plate-fill);
-  box-shadow:
-    inset 0 0 0 1px var(--plate-edge),
-    inset 0 -2px #00000066;
-  transform: translateX(-50%);
-}
-/* The plate names the tank it measures, in a quiet caption ahead of the hull. */
-#hull-pill small {
-  margin-right: 4px;
-  padding-right: 10px;
-  border-right: 1px solid #9fd0ff2e;
-  color: #fff;
-  font: 800 13px/1 var(--font-ui);
-  letter-spacing: 1.4px;
-}
-.phone #hud.dead #hull-pill {
-  visibility: hidden;
-}
-.hull-pill-icon {
-  width: 16px;
-  height: 16px;
-  fill: #5fe39a;
-}
-/* The pill's cross takes the hull's state from its bar, as the tank panel's does. */
-#hull-pill .hull-pill-icon {
-  fill: var(--hull-ramp, #5fe39a);
-}
-#hull-pill b {
-  min-width: 2.2ch;
-  font: 400 20px/1 var(--font-display);
-  font-variant-numeric: tabular-nums;
-}
-#hull-pill .hull-bar {
-  width: 118px;
-  height: 8px;
-  margin: 0;
-}
-/* Held upright, the drive stick takes the bottom edge, so the pill hangs under the score. */
-@media (orientation: portrait) {
-  .phone #hull-pill {
-    top: calc(max(6px, env(safe-area-inset-top)) + 54px);
-    bottom: auto;
-  }
 }
 /* A phone held upright gives Battle Setup the whole screen: the choices stack from the
    top and GO sits at the bottom, under the thumb. Tank cards keep their class tag and
@@ -7107,11 +7038,12 @@ html.phone,
 .phone #respawn-layer {
   padding-bottom: max(10px, env(safe-area-inset-bottom));
 }
-/* First person on a phone keeps the hull compass, low in the middle over the hull pill,
-   between the drive stick and the thumb that turns the view. */
+/* First person on a phone keeps the hull compass, low in the middle between the drive
+   stick and the thumb that turns the view. (The phone shows no hull readout of its own:
+   the bar over the player's tank is enough.) */
 .phone #hud > .bottom {
   justify-content: center;
-  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 44px);
+  bottom: max(10px, env(safe-area-inset-bottom));
   pointer-events: none;
 }
 .phone .bottom > :not(.hull-compass) {
