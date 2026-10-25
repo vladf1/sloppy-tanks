@@ -4321,6 +4321,13 @@ html:not(.phone) #toast[data-tone="death"] {
 .room-empty .offline-actions .offline-action {
   margin-top: 0;
 }
+/* Retry is the dialog's secondary key: the glass outline Cancel wears, as tall as the
+   battle key beside it, so the pair reads like Save and Cancel. Wide enough for the ring
+   that spins before its label while a retry is under way, so it never changes width. */
+.room-empty .offline-actions .retry-now {
+  min-width: 170px;
+  min-height: 46px;
+}
 @media (min-width: 601px) {
   html:not(.phone) #multiplayer-panel:has(.room-status[data-state="error"]) .room-browse {
     grid-row: 1 / 3;
@@ -6244,17 +6251,18 @@ body:has(#settings[open]) #overlay > .menu {
   transform: translateY(1px);
 }
 /* A retry under way spins a small ring before the label and waits. */
-.chip-button:disabled {
+:is(.chip-button, .retry-now):disabled {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   color: #9fb6cc;
   cursor: progress;
 }
-.chip-button:disabled::before {
+:is(.chip-button, .retry-now):disabled::before {
   content: "";
-  width: 9px;
-  height: 9px;
+  width: 0.75em;
+  height: 0.75em;
   border: 2px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
