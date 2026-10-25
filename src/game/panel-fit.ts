@@ -1,9 +1,15 @@
 /** Battle Setup is laid out for a screen about 900 CSS pixels tall. A shorter laptop
  * screen (1280×800, 1366×768, 1280×720) scales the whole panel down to fit instead of
- * cutting off GO below the fold; phones lay out and scroll their own edition. */
+ * cutting off GO below the fold; phones lay out and scroll their own edition, and so does
+ * a narrow window's one column, whose tabs have heights of their own: scaling it to each
+ * would rescale the whole dialog on every tab switch. */
 
-/** The overlay's top padding plus a little room under the panel. */
-const SCREEN_MARGIN = 34;
+/** The overlay's padding above and below the panel (`style.css`, 24px each), which its
+ * scroll height includes, plus the couple of pixels a zoomed layout rounds up to: a panel
+ * given any less room leaves the overlay scrolling. */
+const SCREEN_MARGIN = 50;
+/** Battle Setup's one-column layout (`style.css`), which scrolls rather than scales. */
+const ONE_COLUMN = "(max-width: 600px)";
 /** Below this the text would be too small to read; the overlay scrolls instead. */
 const MIN_SCALE = 0.62;
 
@@ -22,15 +28,31 @@ export function fitPanels(root: ParentNode = document): void {
     if (!height) {
       continue;
     }
-    const scale = Math.min(1, (window.innerHeight - SCREEN_MARGIN) / height);
+    const room = window.innerHeight - SCREEN_MARGIN;
+    const fit = (laidOut: number) => Math.max(MIN_SCALE, Math.min(1, room / laidOut));
+    let scale = window.matchMedia(ONE_COLUMN).matches ? 1 : fit(height);
     if (scale < 0.999) {
-      const zoom = String(Math.max(MIN_SCALE, scale));
-      panel.style.setProperty("zoom", zoom);
-      // The build label counters the zoom to keep its size (it is fixed to the screen).
-      panel.style.setProperty("--panel-zoom", zoom);
+      setZoom(panel, scale);
+      // Text wraps a few pixels taller at a fractional zoom: fit once more to that layout.
+      scale = Math.min(scale, fit(panel.offsetHeight));
+      setZoom(panel, scale);
     }
     fitBuildLabel(panel);
   }
+}
+
+/** Place the build label again after a tab switch, which in a narrow window changes the
+ * panel's height; the panel's scale stays, so switching tabs never rescales Battle Setup. */
+export function fitBuildLabels(root: ParentNode = document): void {
+  for (const panel of root.querySelectorAll<HTMLElement>(".menu.start")) {
+    fitBuildLabel(panel);
+  }
+}
+
+function setZoom(panel: HTMLElement, scale: number): void {
+  panel.style.setProperty("zoom", String(scale));
+  // The build label counters the zoom to keep its size (it is fixed to the screen).
+  panel.style.setProperty("--panel-zoom", String(scale));
 }
 
 /** The build label sits in the screen's bottom-right corner, outside the panel; where the

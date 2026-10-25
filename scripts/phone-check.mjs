@@ -50,13 +50,19 @@ try {
   );
   await page.locator("#startup-overlay[data-state=ready]").waitFor();
   await expectVisible(
-    [".start .vehicles", ".play-tabs", ".map-choice", "#start"],
+    [".start .vehicles", ".play-tabs", ".map-choice", ".battle-choice", "#start"],
     // The Home Screen tip is for an iPhone's browser only; this phone is not one.
-    [".battle-choice", ".difficulty-setting", ".menu-footer", ".room-browse", ".home-screen-tip"],
+    [".difficulty-setting", ".menu-footer", ".room-browse", ".home-screen-tip"],
   );
   await page.screenshot({ path: `${output}/setup-landscape.png` });
   await page.locator('.start [data-kind="heavy"]').tap();
   await page.locator('input[name="mapMode"][value="harbor"]').tap({ force: true });
+  // The format is the phone's choice (the rest of this check plays a team battle); the
+  // difficulty is not: its bots are always Easy.
+  const format = (mode) => page.locator(`.battle-choice .choice-card:has(input[value="${mode}"])`);
+  await format("solo").tap();
+  assert.equal(await page.locator('input[name="gameMode"][value="solo"]').isChecked(), true);
+  await format("team").tap();
   await startRound(page, { touch: true });
   const hud = await page.evaluate(() => window.sloppy.hud());
   assert.equal(hud.difficulty, "easy");
@@ -290,7 +296,7 @@ try {
   await debugPhone.close();
   assert.deepEqual(errors, []);
   console.log(
-    "Phone: tank and map setup, Easy team battle, zoomed-out camera, drive stick and touch to aim and fire, first person, landscape and portrait hit-testing, mid-screen notices, short pause and results, iPhone Home Screen tip passed.",
+    "Phone: tank, map and format setup, Easy team battle, zoomed-out camera, drive stick and touch to aim and fire, first person, landscape and portrait hit-testing, mid-screen notices, short pause and results, iPhone Home Screen tip passed.",
   );
 } finally {
   await browser.close();

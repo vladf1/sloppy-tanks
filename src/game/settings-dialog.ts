@@ -122,7 +122,7 @@ function settingsMarkup(eyebrow: string, speeds: boolean): string {
   return `<dialog id="settings" class="settings" aria-labelledby="settings-title" tabindex="-1">
     <button class="dialog-close settings-close" type="button" aria-label="Close settings without saving" title="Close (Esc)">${CLOSE_ICON}</button>
     <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${eyebrow}</span></div><div class="dialog-title"><h2 id="settings-title">SETTINGS</h2></div></header>
-    <div class="dialog-pane setting-rows">
+    <div class="setting-rows">
     <div class="setting-group-label"><span>SOUND &amp; INPUT</span></div>
     <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output>${sliderScale("Mute", "Loud", defaultMark(0, 1, DEFAULT_VOLUME))}</label>
     ${choiceRow("touch-mode", "Touch controls", "Auto shows them on touchscreens", TOUCH_MODES)}

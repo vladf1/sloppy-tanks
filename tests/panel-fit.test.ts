@@ -40,10 +40,11 @@ function panel(height: number, label?: ReturnType<typeof buildLabel>) {
   };
 }
 
-function withWindow(innerHeight: number, phone: boolean, run: () => void) {
+/** `oneColumn` is a window narrow enough for Battle Setup's one-column layout. */
+function withWindow(innerHeight: number, phone: boolean, run: () => void, oneColumn = false) {
   const globals = globalThis as Record<string, unknown>;
   const saved = { window: globals.window, document: globals.document };
-  globals.window = { innerHeight };
+  globals.window = { innerHeight, matchMedia: () => ({ matches: oneColumn }) };
   globals.document = {
     documentElement: { classList: { contains: (name: string) => phone && name === "phone" } },
   };
@@ -59,7 +60,7 @@ test("a short laptop screen scales Battle Setup down so GO stays on screen", () 
   withWindow(800, false, () => fitPanels({ querySelectorAll: () => [setup] } as never));
   const zoom = Number(setup.zoom());
   assert.ok(zoom < 1, `zoom ${zoom}`);
-  assert.ok(864 * zoom <= 800 - 24, "the scaled panel fits under the overlay's padding");
+  assert.ok(864 * zoom <= 800 - 50, "the scaled panel fits between the overlay's paddings");
   assert.equal(setup.panelZoom(), setup.zoom(), "the build label counters the same zoom");
 });
 
@@ -74,6 +75,13 @@ test("a tall screen, a phone and a tiny window keep sane sizes", () => {
   const tiny = panel(864);
   withWindow(300, false, () => fitPanels({ querySelectorAll: () => [tiny] } as never));
   assert.ok(Number(tiny.zoom()) >= 0.6, "text never shrinks past legibility");
+});
+
+test("a narrow window's one column scrolls at full size, so switching tabs never rescales it", () => {
+  const column = panel(1300);
+  withWindow(900, false, () => fitPanels({ querySelectorAll: () => [column] } as never), true);
+  assert.equal(column.zoom(), undefined);
+  assert.equal(column.panelZoom(), undefined);
 });
 
 test("the build label shows beside or below the dialog and hides where it would crowd it", () => {
