@@ -7137,10 +7137,10 @@ html.phone,
 /* Big screens with both modes: two folders side by side on one top line. Your tank has a
    folder of its own whose tab stands level with the mode tabs, always open, in steel
    rather than the chosen mode's gold: it sits outside the mode folder and never switches,
-   so it plainly serves both. The logo signs the garage's foot, beside the key strip. */
+   so it plainly serves both. The logo keeps the top row above them, as at every width. */
 @media (min-width: 1240px) {
   html:not(.phone) .start:has(.play-tabs) .tank-setting {
-    grid-area: 1 / 1 / 4 / 2;
+    grid-area: 2 / 1 / 5 / 2;
   }
   html:not(.phone) .start:has(.play-tabs) .tank-setting .setup-label {
     position: relative;
@@ -7170,18 +7170,22 @@ html.phone,
     border-top-left-radius: 0;
   }
   html:not(.phone) .start:has(.play-tabs) .setup-top .setup-header {
-    grid-area: 4 / 1 / 6 / 2;
-    align-self: center;
-    justify-content: center;
-    padding: 12px 0 0;
+    grid-area: 1 / 1 / 2 / -1;
+    align-self: end;
+    justify-content: flex-start;
+    /* The logo's tilt and drop shadow spill past its box: the padding keeps that, and a
+       clear margin, between it and the folder tabs and the dialog's edge. */
+    padding: 10px 0 24px 12px;
   }
-  html:not(.phone) .start:has(.play-tabs) .setup-brand {
-    font-size: 22px;
+  /* The logo has the first row to itself, as it does at every other width, so the
+     folders' row, the tray and the key strip start one row down. */
+  html:not(.phone) .start:has(.play-tabs) .play-tabs {
+    grid-area: 2 / 2;
   }
-  html:not(.phone) .start:has(.play-tabs) .setup-brand b:last-child {
-    font-size: 33px;
+  html:not(.phone) .start:has(.play-tabs) .setup-panels {
+    grid-area: 3 / 2 / 5 / 3;
   }
   html:not(.phone) .start:has(.play-tabs) .menu-footer {
-    grid-area: 4 / 2 / 5 / 3;
+    grid-area: 5 / 1 / 6 / -1;
   }
 }
