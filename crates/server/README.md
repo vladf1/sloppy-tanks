@@ -79,7 +79,7 @@ The image also carries its own copy of the game page, so each server serves the 
 game at its own address (`https://sloppy-tanks-server.fridman.me/`, the dev server's
 `https://45-63-62-42.nip.io/`) beside the Pages site and the dev Worker, which stay the
 main sites. `pnpm run server:build-site` (`scripts/server-site.mjs`) builds it into
-`dist-server/` from the Wasm `pnpm run wasm` built, and refuses a stale engine, since
+`dist-server/` from the engines `pnpm run wasm:all` built, and refuses a stale engine, since
 the page and the server in one image must share a content version. It is built for
 the site root with `VITE_MULTIPLAYER_URL=/`, which means "the server that served this
 page", so one copy works on every machine and locally.
@@ -110,7 +110,7 @@ search engines. Only `GET` and `HEAD` are served; ranges are ignored. Routes abo
 To try it without Docker:
 
 ```sh
-pnpm run wasm && pnpm run server:build-site
+pnpm run wasm:all && pnpm run server:build-site
 SITE_DIR=dist-server pnpm run server:dev   # then open http://127.0.0.1:8787/
 ```
 

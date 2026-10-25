@@ -8,7 +8,7 @@ import { precompress } from "./precompress.mjs";
 /** The multiplayer server's own copy of the game page, `dist-server/`, which its image
  * ships and serves (crates/server/src/site.rs). One copy serves every server: it is built
  * for the site root and joins the server that served it (`VITE_MULTIPLAYER_URL=/`).
- * `node scripts/server-site.mjs` builds it from the Wasm engine `pnpm run wasm` built. */
+ * `node scripts/server-site.mjs` builds it from the engines `pnpm run wasm:all` built. */
 const repo = fileURLToPath(new URL("..", import.meta.url));
 export const SERVER_SITE_DIRECTORY = join(repo, "dist-server");
 /** Battle Setup's build line in this copy. The server writes in its own release and
@@ -21,12 +21,16 @@ const COMPRESSIBLE = /\.(html|js|mjs|css|svg|json|webmanifest|txt|md|wasm)$/;
 const MIN_PRECOMPRESSED_BYTES = 1024;
 
 /** Builds `dist-server/` with Brotli and gzip copies and returns its site build.
- * `buildWasm` first builds the engines from this checkout, as a local image build must:
+ * `buildWasm` first builds both engines from this checkout, as a local image build must:
  * the content version below covers only `crates/core`, so engines left from before a
- * renderer or shader change would pass it. CI's site job built them moments earlier. */
+ * renderer or shader change would pass it, and `pnpm run wasm` alone rebuilds the WebGL
+ * fallback only when its API changes. CI's site job built both moments earlier. */
 export async function buildServerSite({ buildWasm = false } = {}) {
   if (buildWasm) {
-    const wasm = spawnSync("node", ["scripts/build-wasm.mjs"], { cwd: repo, stdio: "inherit" });
+    const wasm = spawnSync("node", ["scripts/build-wasm.mjs", "--all"], {
+      cwd: repo,
+      stdio: "inherit",
+    });
     if (wasm.error) throw wasm.error;
     if (wasm.status !== 0) throw new Error(`The Wasm build exited with ${wasm.status}`);
   }
@@ -36,7 +40,7 @@ export async function buildServerSite({ buildWasm = false } = {}) {
     await readFile(join(repo, "src/generated/engine/content-version.js"), "utf8"),
   )?.[1];
   if (stamp !== (await contentVersion())) {
-    throw new Error("The Wasm engine is missing or stale: run `pnpm run wasm` first");
+    throw new Error("The Wasm engines are missing or stale: run `pnpm run wasm:all` first");
   }
   const vite = spawnSync(
     "pnpm",
