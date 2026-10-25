@@ -2345,10 +2345,14 @@ impl Presentation {
             // the barrel inherits the tilt and keeps its recoil.
             let (hull, turret, barrel, track) =
                 (&model.hull, &model.turret, &model.barrel, &model.track);
-            // The engine trembles through every hull, each tank to its own beat.
-            let speed = tank.velocity.x.hypot(tank.velocity.z) / CAMERA_FEEL.full_speed;
-            let (shudder_pitch, shudder_roll) =
-                engine_shudder(state.elapsed, f64::from(tank.id) * 0.618, speed);
+            // The engine trembles through every other hull, each tank to its own beat;
+            // the viewer's own tank holds still under them.
+            let (shudder_pitch, shudder_roll) = if viewer {
+                (0.0, 0.0)
+            } else {
+                let speed = tank.velocity.x.hypot(tank.velocity.z) / CAMERA_FEEL.full_speed;
+                engine_shudder(state.elapsed, f64::from(tank.id) * 0.618, speed)
+            };
             let hull_rotation = euler_yxz(
                 (suspension.pitch.angle + shudder_pitch) as f32,
                 tank.heading as f32,

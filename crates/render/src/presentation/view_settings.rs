@@ -61,14 +61,10 @@ pub struct CameraFeel {
     /// Degrees the first-person view widens at full speed.
     pub first_person_speed_fov: f64,
     /// The seated view sways with the treads: one side-to-side cycle per this many
-    /// metres driven, and its bob (m), roll (rad) and engine shudder (m) at full
-    /// speed.
+    /// metres driven, and its bob (m) and roll (rad) at full speed.
     pub first_person_bob_metres: f64,
     pub first_person_bob: f64,
     pub first_person_sway_roll: f64,
-    pub first_person_shudder: f64,
-    /// Share of that shudder the idling engine keeps.
-    pub first_person_idle_rumble: f64,
 }
 
 pub const CAMERA_FEEL: CameraFeel = CameraFeel {
@@ -92,8 +88,6 @@ pub const CAMERA_FEEL: CameraFeel = CameraFeel {
     first_person_bob_metres: 3.2,
     first_person_bob: 0.045,
     first_person_sway_roll: 0.016,
-    first_person_shudder: 0.008,
-    first_person_idle_rumble: 0.3,
 };
 
 pub struct Feedback {
