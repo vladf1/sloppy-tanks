@@ -33,6 +33,7 @@ version; CI reads `.bun-version`. Installs use isolated linking and committed
 dependencies cannot run install scripts. Cloudflare's Wrangler is isolated in
 [`tools/deploy/`](tools/deploy/README.md) and installs only when a Cloudflare command
 needs it; that package trusts only its `esbuild` and `workerd` setup scripts.
+Wrangler alone runs on Node.js 22 or newer, which Cloudflare commands require on PATH.
 Run `bun add` to change dependencies and commit the affected lockfiles.
 
 `bun run typecheck` uses `bun check --no-script` so the native checker cannot invoke

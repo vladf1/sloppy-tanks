@@ -88,7 +88,9 @@ Run `bun install --frozen-lockfile` in every new checkout or worktree. The root
 postinstall installs `tools/lint/` with its own committed `bun.lock`; use `bun add`
 for dependency changes. Installs use isolated linking; root dependencies cannot
 run install scripts. Wrangler lives in `tools/deploy/` with a separate lockfile;
-`bun run wrangler` and the Cloudflare deployment commands install it on demand.
+`bun run wrangler` and the Cloudflare deployment commands install it on demand
+with Bun, then run Wrangler on Node.js 22 or newer. This is the sole Node runtime
+exception while Bun's Undici dispatcher support is incomplete; do not force it onto Bun.
 Only that package trusts `esbuild` and `workerd`. Review a new dependency's install
 script before adding it to `trustedDependencies`. Keep `--no-script` on the native
 `bun check` command: this repository also has a `check` package script.

@@ -1,6 +1,3 @@
 [install]
 linker = "isolated"
 hoist = false
-
-[run]
-bun = true
