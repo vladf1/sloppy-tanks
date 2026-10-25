@@ -1,5 +1,7 @@
 //! Shell hit volumes around tank hulls, and the hull contact collider.
 
+use std::sync::OnceLock;
+
 use rapier3d::parry::query::{Ray, RayCast};
 use rapier3d::parry::shape::Cuboid;
 use rapier3d::prelude::{ColliderBuilder, Pose};
@@ -52,16 +54,23 @@ fn hit_shape(kind: VehicleKind) -> Cuboid {
     ))
 }
 
-/// Farthest any point of a hit box can lie from its body's origin in plan view, in any
-/// orientation: the box's half-diagonal plus the hull's offset from the origin.
-fn reach(kind: VehicleKind) -> f64 {
-    let hull = tank_hull(kind);
-    let half_diagonal = hypot3(
-        hull.size.x / 2.0 + SHELL_HIT_RADIUS,
-        HIT_HALF_HEIGHT,
-        hull.size.z / 2.0 + SHELL_HIT_RADIUS,
-    );
-    half_diagonal + hull.center.x.hypot(hull.center.z) + REACH_TOLERANCE
+/// Squared reach of the hit box from its body's origin in any orientation: its
+/// half-diagonal plus the hull offset and the query tolerance. Chassis geometry
+/// never changes, so derive these from the measured hulls once.
+fn reach_squared(kind: VehicleKind) -> f64 {
+    static REACHES: OnceLock<[f64; 4]> = OnceLock::new();
+    REACHES.get_or_init(|| {
+        VehicleKind::ALL.map(|kind| {
+            let hull = tank_hull(kind);
+            let half_diagonal = hypot3(
+                hull.size.x / 2.0 + SHELL_HIT_RADIUS,
+                HIT_HALF_HEIGHT,
+                hull.size.z / 2.0 + SHELL_HIT_RADIUS,
+            );
+            let reach = half_diagonal + hull.center.x.hypot(hull.center.z) + REACH_TOLERANCE;
+            reach * reach
+        })
+    })[kind.index()]
 }
 
 /// Full visible footprint for tank contact, without the shell-radius allowance.
@@ -116,7 +125,11 @@ pub fn tank_hit_time(
     } else {
         0.0
     };
-    if (dx - rx * closest).hypot(dz - rz * closest) > reach(tank.kind) {
+    let closest_x = dx - rx * closest;
+    let closest_z = dz - rz * closest;
+    // This is only a conservative rejection; Rapier still decides the exact hit.
+    // Squared distances avoid a software hypot for every shell/hull pair in Wasm.
+    if closest_x * closest_x + closest_z * closest_z > reach_squared(tank.kind) {
         return None;
     }
     let center = tank_hull(tank.kind).center;
