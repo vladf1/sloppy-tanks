@@ -11,4 +11,3 @@ struct VertexOut {
     @location(6) extra0: vec4f,
     @location(7) extra1: vec4f,
 }
-
