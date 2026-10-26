@@ -456,7 +456,8 @@ offline.
   the repository directory.
 - `deploy:dev` first deploys the dev site's own multiplayer server
   (`scripts/server.mjs deploy --dev`, key-based SSH), which runs on its own
-  Vultr machine (`deploy/servers.json` lists both machines). It resets only the
+  Vultr machines (`deploy/servers.json` lists each environment's machines; the
+  `server:*` commands run on all of them, or one with `--ip`). It resets only the
   dev server's rooms and never touches production's server. Client and server
   must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with
