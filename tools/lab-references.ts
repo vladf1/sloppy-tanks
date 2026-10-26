@@ -22,7 +22,7 @@ export function pixels(canvas: HTMLCanvasElement): ImageData {
 
 /** A reference frame as pixels, or undefined when it was not captured here. */
 export async function loadReference(name: string): Promise<ImageData | undefined> {
-  const response = await fetch(`${import.meta.env.BASE_URL}${REFERENCE_DIRECTORY}${name}.png`);
+  const response = await fetch(`${process.env.PUBLIC_BASE_URL}${REFERENCE_DIRECTORY}${name}.png`);
   if (!response.ok || !response.headers.get("content-type")?.startsWith("image/")) {
     return undefined;
   }

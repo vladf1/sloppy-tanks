@@ -23,7 +23,7 @@ while (!server) {
     const options = { hostname: values.host, port, base: values.base };
     server = values.preview
       ? startStaticServer({ ...options, directory: values.outdir })
-      : startDevServer(options);
+      : await startDevServer(options);
   } catch (error) {
     if (
       (error as NodeJS.ErrnoException).code !== "EADDRINUSE" ||

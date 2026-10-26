@@ -76,7 +76,9 @@ patches.
 
 `touch-loading-check.mjs` builds and serves its own production copy, because only
 the production build splits the touch UI into separate files; it needs no dev
-server:
+server. For the same reason `startup-check.mjs`, given a local `SLOPPY_URL`, checks a
+development copy of the production build that it serves itself: the dev server bundles
+the game into the page, where production downloads it after the inline startup.
 
 ```sh
 bun scripts/touch-loading-check.mjs

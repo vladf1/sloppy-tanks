@@ -148,6 +148,31 @@ export async function installEngineHelpers(target) {
       setTank: (id, patch) => game().debug_set_tank(id, JSON.stringify(patch)),
       setHuman: (patch) => game().debug_set_tank(window.sloppy.sim.human.id, JSON.stringify(patch)),
       setSim: (patch) => game().debug_set_sim(JSON.stringify(patch)),
+      /** A fresh, prepared round with changed Battle Setup choices, as the fixtures'
+       * `choose` (`tests/engine-fixture.ts`), whose module the page cannot import. */
+      async choose(changes) {
+        const hud = JSON.parse(game().hud_json());
+        const options = {
+          humanKind: hud.human.kind,
+          humanTeam: hud.humanTeam,
+          gameMode: hud.gameMode,
+          mapMode: hud.mapMode,
+          difficulty: hud.difficulty,
+        };
+        if (!game().set_options(JSON.stringify({ ...options, ...changes }))) game().restart();
+        let gpuPending = false;
+        for (;;) {
+          await new Promise((resolve) => {
+            if (gpuPending) return setTimeout(resolve, 16);
+            const { port1, port2 } = new MessageChannel();
+            port1.onmessage = () => resolve(port1.close());
+            port2.postMessage(null);
+          });
+          const [, , , done, pending] = game().prepare_step(8);
+          if (done) return;
+          gpuPending = pending === 1;
+        }
+      },
     };
   });
 }
@@ -215,12 +240,14 @@ export function chosenMap(page) {
  * `Math.random` uses (cosmetic variation, bot names) stay untouched. */
 export async function seedGame(page, seed) {
   if (!Number.isSafeInteger(seed) || seed < 0) throw new Error("Invalid fixture seed");
-  // Startup is bundled inline in HTML in both Bun modes.
+  // Production inlines the startup in the page; Bun's dev server bundles it, with the
+  // whole game, into the page's /_bun/client/ script.
+  const bundled = (url) => url.pathname.startsWith("/_bun/client/");
   await page.route(
-    (url) => url.pathname.endsWith("/") || url.pathname.endsWith(".html"),
+    (url) => url.pathname.endsWith("/") || url.pathname.endsWith(".html") || bundled(url),
     async (route) => {
       const url = new URL(route.request().url());
-      if (["127.0.0.1", "localhost"].includes(url.hostname)) {
+      if (!bundled(url) && ["127.0.0.1", "localhost"].includes(url.hostname)) {
         // Chromium treats a fulfilled document as non-local; allow this fixture's Bun socket.
         await page.context().grantPermissions(["local-network-access"], { origin: url.origin });
       }
@@ -230,7 +257,9 @@ export async function seedGame(page, seed) {
         /Math\.floor\(Math\.random\(\)\s*\*\s*(?:1e6|1000000)\)/,
         String(seed),
       );
-      if (source === seeded) throw new Error("Game seed initialization changed; update seedGame");
+      const startupElsewhere = !bundled(url) && source.includes('src="/_bun/client/');
+      if (source === seeded && !startupElsewhere)
+        throw new Error("Game seed initialization changed; update seedGame");
       await route.fulfill({ response, body: seeded });
     },
   );

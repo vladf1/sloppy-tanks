@@ -19,8 +19,7 @@ try {
   await startRound(page);
   // HUD feedback must consume elapsed time, including frames between HUD refreshes.
   const hudTiming = await page.evaluate(async () => {
-    const { UI } = await import(new URL("src/game/ui.ts", location.href).href);
-    const { FRAME } = await import(new URL("src/game/engine-api.ts", location.href).href);
+    const { UI, FRAME } = window.sloppy;
     const originalUpdate = UI.prototype.update;
     const game = window.sloppy.game;
     const originalFrame = game.frame;

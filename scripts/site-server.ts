@@ -1,7 +1,7 @@
 import { watch } from "node:fs";
-import { stat } from "node:fs/promises";
+import { readFile, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { buildSite, defaultBase, root, validateBase, type SiteBuild } from "./site-build.ts";
+import { defaultBase, root, validateBase } from "./site-build.ts";
 import { healthBody } from "./page-health.ts";
 
 interface ServerOptions {
@@ -75,180 +75,77 @@ export function startStaticServer({
   });
 }
 
-/** An editor's save or `bun run wasm` writes several files at once; one reload follows them. */
-const CHANGE_SETTLE_MS = 25;
-/** How often a page tries to reach a stopped or restarting dev server again. */
-const RELOAD_RECONNECT_MS = 1000;
-const RELOAD_TOPIC = "reload";
+/** Bun's dev server bundles no workers, so the texture-bake workers are built when a page
+ * asks for them, at these paths under the base. */
+const BAKE_WORKERS = {
+  PUBLIC_WEBGPU_BAKE_WORKER_URL: ["bake-workers/webgpu.js", "src/game/texture-bake-worker.ts"],
+  PUBLIC_WEBGL_BAKE_WORKER_URL: ["bake-workers/webgl.js", "src/game/texture-bake-worker-webgl.ts"],
+} as const;
 
-/** Reloads the page once the server's build token differs from the one it was served
- * with, including after a restart, whose new session makes every token differ. A
- * WebSocket, unlike an event stream, takes none of the browser's six HTTP/1.1
- * connections to the host, so open tabs cannot starve the page requests. */
-function reloadScript(base: string, token: string): string {
-  return `<script>{const url=(location.protocol==="https:"?"wss://":"ws://")+location.host+${JSON.stringify(base + "__reload")};const connect=()=>{const socket=new WebSocket(url);socket.onmessage=({data})=>{if(data!==${JSON.stringify(token)})location.reload()};socket.onclose=()=>setTimeout(connect,${RELOAD_RECONNECT_MS})};connect()}</script>`;
+async function bakeWorker(source: string): Promise<Response> {
+  const { outputs } = await Bun.build({
+    entrypoints: [path.join(root, source)],
+    target: "browser",
+  });
+  return new Response(outputs[0], {
+    headers: { "Content-Type": "text/javascript; charset=utf-8", "Cache-Control": "no-store" },
+  });
 }
 
-/** A failed build served as the page: Bun's located messages, and the reload script, so
- * the page returns by itself once a fix lands. */
-export function buildErrorPage(error: unknown, reload: string): Response {
-  const problems = error instanceof AggregateError && error.errors.length ? error.errors : [error];
-  const text = problems.map((problem) => Bun.inspect(problem, { colors: false })).join("\n\n");
-  const escaped = text.replace(/[&<>]/g, (char) => `&#${char.charCodeAt(0)};`);
-  return new Response(
-    `<!doctype html><meta charset="utf-8"><title>Build failed</title><pre style="white-space:pre-wrap;font:14px/1.4 monospace;margin:16px">${escaped}</pre>${reload}`,
-    {
-      status: 500,
-      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-    },
-  );
-}
-
-export function startDevServer({
+/** Bun's own dev server, with hot reloading: it bundles every page itself, through the
+ * plugin in bunfig.toml (`dev-pages-plugin.ts`), and the build values the pages read. */
+export async function startDevServer({
   hostname = "127.0.0.1",
   port = Number(process.env.PORT) || 5173,
   base = process.env.DEPLOY_BASE || defaultBase,
 }: ServerOptions = {}) {
   validateBase(base);
-  let revision = 0;
-  let outputs = new Map<string, Blob>();
-  let previousOutputs = new Map<string, Blob>();
-  const builds = new Map<string, Promise<SiteBuild>>();
-  const session = crypto.randomUUID();
-  const token = () => `${session}.${revision}`;
+  // The build values the pages read; dev-pages-plugin.ts writes them into the modules.
+  Object.assign(process.env, {
+    PUBLIC_BASE_URL: base,
+    PUBLIC_DEV: "true",
+    PUBLIC_MULTIPLAYER_URL: process.env.MULTIPLAYER_URL ?? "",
+    ...Object.fromEntries(Object.entries(BAKE_WORKERS).map(([key, [url]]) => [key, base + url])),
+  });
+  const routes: Record<string, Bun.HTMLBundle | (() => Promise<Response>)> = {};
+  const pages = new Bun.Glob("{tests,tools}/*.html").scan({ cwd: root });
+  for (const page of ["index.html", "test-pages.html", ...(await Array.fromAsync(pages))]) {
+    const bundle = ((await import(path.join(root, page))) as { default: Bun.HTMLBundle }).default;
+    routes[page === "index.html" ? base : base + page] = bundle;
+  }
   const started = new Date().toISOString();
-  const debugEntries = ["src/game/ui.ts", "src/game/engine-api.ts"];
-  const build = (page: string, entry?: string) => {
-    const key = entry ?? page;
-    let pending = builds.get(key);
-    if (!pending) {
-      const generation = revision;
-      pending = buildSite({
-        base,
-        development: true,
-        pages: entry ? [] : [page],
-        entries: entry ? [entry] : page === "index.html" ? debugEntries : [],
-      })
-        .then((result) => {
-          if (generation === revision)
-            for (const [name, body] of result.files) outputs.set(name, body);
-          return result;
-        })
-        .catch((error) => {
-          if (builds.get(key) === pending) builds.delete(key);
-          throw error;
-        });
-      builds.set(key, pending);
-    }
-    return pending;
-  };
-  /** The build of the current revision: one that a change overtook runs again, so pages
-   * and debug entries never point at chunks that were dropped with their revision. A
-   * failure is thrown only when it belongs to the current sources. */
-  const currentBuild = async (page: string, entry?: string): Promise<SiteBuild> => {
-    for (;;) {
-      const generation = revision;
-      try {
-        const result = await build(page, entry);
-        if (generation === revision) return result;
-      } catch (error) {
-        if (generation === revision) throw error;
-      }
-    }
-  };
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  const changed = () => {
-    clearTimeout(timer);
-    timer = setTimeout(() => {
-      revision++;
-      builds.clear();
-      previousOutputs = outputs;
-      outputs = new Map();
-      server.publish(RELOAD_TOPIC, token());
-    }, CHANGE_SETTLE_MS);
-  };
+  const health = async () =>
+    new Response(await healthBody(started), {
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+    });
+  routes[base + "health"] = routes[base + "health/"] = health;
+  for (const [url, source] of Object.values(BAKE_WORKERS))
+    routes[base + url] = () => bakeWorker(source);
   const server = Bun.serve({
     hostname,
     port,
     reusePort: false,
-    development: false,
-    async fetch(request, server) {
+    development: { hmr: true },
+    routes,
+    async fetch(request) {
       const relative = requestPath(request, base);
       if (relative instanceof Response) return relative;
-      if (relative === "__reload")
-        return server.upgrade(request)
-          ? undefined
-          : new Response("Expected a WebSocket", { status: 426 });
-      if (relative === "health" || relative === "health/")
-        return new Response(await healthBody(started), {
-          headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
-        });
-      const page = relative || "index.html";
-      if (
-        (page === "index.html" ||
-          page === "test-pages.html" ||
-          /^(tests|tools)\/[\w.-]+\.html$/.test(page)) &&
-        (await Bun.file(path.join(root, page)).exists())
-      ) {
-        let result: SiteBuild;
-        try {
-          result = await currentBuild(page);
-        } catch (error) {
-          console.error(error);
-          return buildErrorPage(error, reloadScript(base, token()));
-        }
-        // Read before any await: the token names the revision this page was built from.
-        const reload = reloadScript(base, token());
-        const body = result.files.get(page);
-        if (!body) throw new Error(`No page output for ${page}`);
-        return new Response(
-          (await body.text()).replace("</body>", () => `${reload}</body>`),
-          { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
-        );
-      }
-      // Browser checks import these entries from the same bundle as the running game.
-      if (debugEntries.includes(relative) || relative === "tests/engine-fixture.ts") {
-        const result = debugEntries.includes(relative)
-          ? await currentBuild("index.html")
-          : await currentBuild("", relative);
-        return new Response(
-          `export * from ${JSON.stringify(base + result.entries.get(relative))};`,
-          { headers: { "Content-Type": "text/javascript" } },
-        );
-      }
-      const output = outputs.get(relative) ?? previousOutputs.get(relative);
-      if (output) return new Response(output);
+      // Engine binaries keep their source paths (`dev-pages-plugin.ts`).
+      if (/^src\/generated\/[\w-]+\/[\w-]+\.wasm$/.test(relative))
+        return staticFile(root, relative, request);
       return staticFile(path.join(root, "public"), relative, request);
     },
-    error(error) {
-      console.error(error);
-      return new Response(String(error), { status: 500 });
-    },
-    websocket: {
-      open(socket) {
-        socket.subscribe(RELOAD_TOPIC);
-        socket.send(token());
-      },
-      message() {},
-    },
   });
-  // Register watchers only after binding succeeds, including occupied-port retries.
-  const watchers = ["src", "tests", "tools", "scripts", "public"].map((directory) =>
-    watch(path.join(root, directory), { recursive: true }, (_event, filename) => {
-      if (!filename?.includes("node_modules")) changed();
-    }),
-  );
-  const rootFiles = new Set(["index.html", "test-pages.html", "tsconfig.json", "package.json"]);
-  watchers.push(
-    watch(root, (_event, filename) => {
-      if (filename && rootFiles.has(filename.toString())) changed();
-    }),
-  );
+  // Bun watches the files it bundles, not Battle Setup's markup, which the plugin reads
+  // into the game page; rewriting that page unchanged makes Bun bundle it again.
+  const game = path.join(root, "index.html");
+  const setup = watch(path.join(root, "src/game/battle-setup.html"), () => {
+    void readFile(game).then((html) => writeFile(game, html));
+  });
   return {
     url: new URL(base, server.url),
     stop() {
-      clearTimeout(timer);
-      watchers.forEach((watcher) => watcher.close());
+      setup.close();
       return server.stop(true);
     },
   };

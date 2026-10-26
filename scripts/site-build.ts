@@ -36,9 +36,9 @@ export function validateBase(base: string): string {
 }
 
 /** A metafile source path from the checkout, like `src/game.ts`. Bun writes them from the
- * working directory, whatever `root` says, after any plugin namespace. */
+ * working directory, whatever `root` says. */
 export function sourcePath(file: string): string {
-  return path.relative(root, path.resolve(file.replace(/^inline-html:/, "")));
+  return path.relative(root, path.resolve(file));
 }
 
 /** `metafile` with every source path from the checkout, so readers match the same keys
@@ -93,7 +93,8 @@ function browserAssets(
   };
 }
 
-/** Build only the requested pages; local fixture pages use this on their first request. */
+/** The production pages, or the dev site, or a check's copy of either: only the requested
+ * pages and entries. The dev server lets Bun bundle pages itself (`site-server.ts`). */
 export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
   const base = validateBase(
     options.base ?? (options.devSite ? "/" : process.env.DEPLOY_BASE || defaultBase),
@@ -103,10 +104,11 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
   const multiplayerUrl = options.devSite
     ? gameServer(true).url
     : (process.env.MULTIPLAYER_URL ?? "");
+  // The page reads its build values from `process.env` (src/build-env.d.ts).
   const define: Record<string, string> = {
-    "import.meta.env.BASE_URL": JSON.stringify(base),
-    "import.meta.env.DEV": String(development),
-    "import.meta.env.MULTIPLAYER_URL": JSON.stringify(multiplayerUrl),
+    "process.env.PUBLIC_BASE_URL": JSON.stringify(base),
+    "process.env.PUBLIC_DEV": JSON.stringify(String(development)),
+    "process.env.PUBLIC_MULTIPLAYER_URL": JSON.stringify(multiplayerUrl),
     "process.env.NODE_ENV": JSON.stringify(development ? "development" : "production"),
   };
   const pages = options.pages ?? [
@@ -120,11 +122,11 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
   ];
   const files = new Map<string, Blob>();
   let bakeWorkers = false;
-  /** The texture-bake workers, whose URLs `texture-bake.ts` reads from `import.meta.env`. */
+  /** The texture-bake workers, whose URLs `texture-bake.ts` reads from `process.env`. */
   const buildBakeWorkers = async () => {
     for (const [source, key] of [
-      ["src/game/texture-bake-worker.ts", "WEBGPU_BAKE_WORKER_URL"],
-      ["src/game/texture-bake-worker-webgl.ts", "WEBGL_BAKE_WORKER_URL"],
+      ["src/game/texture-bake-worker.ts", "PUBLIC_WEBGPU_BAKE_WORKER_URL"],
+      ["src/game/texture-bake-worker-webgl.ts", "PUBLIC_WEBGL_BAKE_WORKER_URL"],
     ]) {
       const worker = await Bun.build({
         entrypoints: [path.join(root, source)],
@@ -138,7 +140,7 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
       if (!output) throw new Error(`Missing worker output: ${source}`);
       const name = output.path.replace(/^\.\//, "");
       files.set(name, output);
-      define[`import.meta.env.${key}`] = JSON.stringify(base + name);
+      define[`process.env.${key}`] = JSON.stringify(base + name);
     }
     bakeWorkers = true;
   };
@@ -162,23 +164,20 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
     const name = `assets/${path.basename(source, ".css")}-${css.hash}.css`;
     cssAssets.set(path.join(root, source), { name, body: css });
   }
-  const virtual = new Map<string, string>();
   const templates = new Map<string, string>();
   for (const page of pages) {
     let html = await readFile(path.join(root, page), "utf8");
     // Public URLs retain their names and follow the deployment base.
     html = html.replace(/(\b(?:src|href)=["'])\/(?!\/)/g, `$1${base}`);
     html = devSiteHtml(html, base);
-    let inline = 0;
     html = html.replace(
       /<script\b([^>]*)>([\s\S]*?)<\/script>/gi,
       (tag, attrs: string, contents: string) => {
         if (!/\btype=["']module["']/.test(attrs)) return tag;
         const src = /\bsrc=["']([^"']+)["']/.exec(attrs)?.[1];
-        const entry = src
-          ? path.posix.normalize(path.posix.join(path.posix.dirname(page), src))
-          : `${page}.inline-${inline++}.ts`;
-        if (!src) virtual.set(path.join(root, entry), contents);
+        // Bun's dev server leaves inline modules unbundled, so pages keep them in files.
+        if (!src || contents.trim()) throw new Error(`${page}: move inline modules into a file`);
+        const entry = path.posix.normalize(path.posix.join(path.posix.dirname(page), src));
         entrypoints.push(entry);
         return `<!-- module:${entry} -->`;
       },
@@ -211,27 +210,11 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
         define,
         metafile: true,
         loader: { ".wasm": "file" },
-        plugins: [
-          {
-            name: "inline-modules",
-            setup(build) {
-              build.onResolve({ filter: /\.html\.inline-\d+\.ts$/ }, (args) => ({
-                path: args.path,
-                namespace: "inline-html",
-              }));
-              build.onLoad({ filter: /.*/, namespace: "inline-html" }, (args) => {
-                const contents = virtual.get(args.path);
-                if (contents === undefined) throw new Error(`Unknown inline module ${args.path}`);
-                return { contents, loader: "ts", resolveDir: path.dirname(args.path) };
-              });
-            },
-          },
-          browserAssets(cssAssets, files, base),
-        ],
+        plugins: [browserAssets(cssAssets, files, base)],
       });
     let result = await bundle();
-    // A bundle that reaches the bakes another way would keep `import.meta.env` lookups,
-    // which fail in browsers: give it the worker URLs and build it again.
+    // A bundle that reaches the bakes another way would keep `process.env` lookups, which
+    // fail in browsers: give it the worker URLs and build it again.
     const reachesBakes = Object.keys(result.metafile?.inputs ?? {}).some(
       (file) => sourcePath(file) === "src/game/texture-bake.ts",
     );

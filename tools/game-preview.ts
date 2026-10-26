@@ -118,7 +118,7 @@ async function main(): Promise<void> {
     canvas,
     JSON.stringify({
       seed,
-      assetBase: import.meta.env.BASE_URL,
+      assetBase: process.env.PUBLIC_BASE_URL,
       map,
       extraLevels: true,
       autoplay: params.has("autoplay"),

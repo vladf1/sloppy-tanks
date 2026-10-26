@@ -49,7 +49,7 @@ const take = (shot) => wanted.size === 0 || wanted.has(shot);
 const out = path.resolve(values.out);
 fs.mkdirSync(out, { recursive: true });
 
-const server = startDevServer({ port: 0 });
+const server = await startDevServer({ port: 0 });
 const base = server.url.href;
 const webglQuery = values.webgl ? "&webgl" : "";
 const { browser, context, errors } = await launchGame({

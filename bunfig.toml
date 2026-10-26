@@ -4,3 +4,7 @@ hoist = false
 
 [run]
 bun = true
+
+# Bun's dev server (scripts/site-server.ts) bundles pages through this plugin.
+[serve.static]
+plugins = ["./scripts/dev-pages-plugin.ts"]

@@ -1,0 +1,264 @@
+// The standard maps on the engine: inspection poses, cover damage stages, and two
+// checks: repeated map switches rebuild the right scenery and every cover's view
+// without growing GPU resources or keeping the mesh pages another map needed, and
+// both waters reflect a probe box in the actual framebuffer while the dry arena
+// center skips the reflection pass.
+import { canvasPixel, check, choose, draw, fixtureGame, read } from "./engine-fixture";
+const canvas = document.querySelector("#game");
+const result = document.querySelector("#result");
+const game = await fixtureGame(canvas, { seed: 417, map: "harbor" });
+game.start();
+game.debug_set_autoplay(false);
+let overview = true;
+// A fixed { position, target } camera drawn over the overview frame.
+let pose;
+let busy = false;
+let crateExamples = [];
+const human = () => read.state(game).human;
+
+/** A fresh round of `mode`, prepared and playing (nobody moves: no steps run). */
+async function loadMap(mode) {
+  await choose(game, { mapMode: mode });
+  game.start();
+  game.debug_set_autoplay(false);
+}
+async function useMap(mode) {
+  if (read.state(game).mapMode !== mode) await loadMap(mode);
+}
+async function location(x, z, zoom) {
+  await useMap("harbor");
+  overview = false;
+  pose = undefined;
+  game.debug_place_tank(human().id, x, z, NaN);
+  game.debug_set_zoom(zoom);
+}
+/** Run a handler with the preview loop held, reporting failures. */
+function button(id, handler) {
+  document.querySelector(id).onclick = async () => {
+    busy = true;
+    try {
+      await handler();
+    } catch (error) {
+      console.error(error);
+      result.textContent = `FAIL: ${error.message}`;
+    } finally {
+      busy = false;
+    }
+  };
+}
+button("#overview", async () => {
+  await useMap("harbor");
+  overview = true;
+  pose = undefined;
+});
+button("#dock", () => location(0, -53, 52));
+button("#berth", () => location(-54, 2, 34));
+button("#cargo", () => location(22, 21, 27));
+function crateStatus() {
+  draw(game, 0);
+  const names = ["Intact", "Split wood", "Broken lid"];
+  const views = new Map(read.view(game).covers.map((view) => [view.id, view]));
+  const covers = new Map(read.covers(game).map((cover) => [cover.id, cover]));
+  result.textContent = crateExamples
+    .map((id, i) => {
+      const crate = covers.get(id);
+      const state = crate.alive ? names[views.get(id).stage] : "Destroyed";
+      return `${["Left", "Middle", "Right"][i]}: ${state} (${Math.max(0, crate.hp)}/${crate.maxHp})`;
+    })
+    .join(" · ");
+}
+button("#crate-stages", async () => {
+  await loadMap("harbor");
+  crateExamples = [-5, 0, 5].map((x, i) => {
+    const id = game.debug_add_cover(
+      JSON.stringify({
+        kind: "cargo",
+        x,
+        z: 44,
+        w: 3.1,
+        d: 3,
+        h: 2.6,
+        hp: 90,
+        color: 0xb88b53,
+      }),
+    );
+    game.debug_damage_cover(id, i * 40);
+    return id;
+  });
+  await location(0, 48, 24);
+  crateStatus();
+});
+button("#crate-hit", () => {
+  if (!crateExamples[1]) return;
+  game.debug_damage_cover(crateExamples[1], 40);
+  crateStatus();
+});
+const quarryPoses = {
+  rocks: { position: [43, 20, 59], target: [31, 1, 37] },
+  barriers: { position: [52, 11, 4], target: [43.5, 0.8, -10] },
+  steel: { position: [34, 15, 41], target: [19, 0, 22] },
+  excavator: { position: [-7, 12, -45], target: [-20, 2, -68] },
+  truck: { position: [50, 12, 36], target: [69, 2, 18] },
+};
+button("#quarry", async () => {
+  await useMap("quarry");
+  overview = true;
+  pose = undefined;
+});
+for (const [name, position] of Object.entries(quarryPoses)) {
+  button(`#${name}`, async () => {
+    await useMap("quarry");
+    pose = position;
+  });
+}
+button("#break", async () => {
+  await useMap("quarry");
+  for (const c of read.covers(game)) {
+    if (c.kind === "cargo" && c.x > 30 && c.z > 30) game.debug_damage_cover(c.id, 100);
+  }
+  pose = quarryPoses.rocks;
+  result.textContent = "Shortcut crates destroyed; collider and navigation removed";
+});
+
+const frame = () => new Promise(requestAnimationFrame);
+/** Mesh page space no mesh uses after a map loads: holes and the newest general
+ * pages' free tails, which three general vertex pages
+ * (`crates/render/src/mesh_pages.rs`) leave room for. The pages another map
+ * needed must go. */
+const MAX_MESH_SLACK_BYTES = 24 * 2 ** 20;
+/** Renderer allocations that must return to the same totals on every visit. */
+const resources = () => {
+  const { meshes, materials, textures, buffers, models, gpuBytes } = read.stats(game);
+  return JSON.stringify({ meshes, materials, textures, buffers, models, gpuBytes });
+};
+button("#checks", async () => {
+  result.textContent = "Running…";
+  crateExamples = [];
+  pose = undefined;
+  const failures = [];
+  let baseline;
+  let slack = 0;
+  for (let round = 0; round < 4; round++) {
+    for (const mode of ["village", "quarry", "harbor"]) {
+      await loadMap(mode);
+      draw(game, 1 / 60, true);
+      // Let pending texture uploads complete.
+      await frame();
+      draw(game, 0, true);
+      const view = read.view(game);
+      if (view.theme !== mode) failures.push(`Wrong scenery: ${mode} shows ${view.theme}`);
+      const covers = read.covers(game);
+      const shown = new Map(view.covers.map((cover) => [cover.id, cover]));
+      if (!covers.every((cover) => shown.has(cover.id)) || view.covers.length !== covers.length) {
+        failures.push(`Cover views differ from the covers: ${mode}`);
+      }
+      const { meshSlackBytes } = read.stats(game);
+      slack = Math.max(slack, meshSlackBytes);
+      if (meshSlackBytes > MAX_MESH_SLACK_BYTES) {
+        failures.push(`${mode}: ${meshSlackBytes} bytes of mesh pages unused`);
+      }
+    }
+    const current = resources();
+    if (round === 1) baseline = current;
+    if (round > 1 && current !== baseline) {
+      failures.push(`Resources grew: ${baseline} -> ${current}`);
+    }
+  }
+  if (game.error()) failures.push(`GPU error: ${game.error()}`);
+  overview = true;
+  result.textContent = failures.length
+    ? `FAIL: ${failures.join("; ")}`
+    : `PASS: 12 map switches, cover views match, stable GPU resources (${baseline}), at most ${(slack / 2 ** 20).toFixed(1)} MiB of mesh pages unused`;
+});
+
+/** Draw still frames until the draw count stops changing (pipelines may settle). */
+async function settled(overview) {
+  let previous;
+  for (let i = 0; i < 10; i++) {
+    await frame();
+    draw(game, 0, overview);
+    const { drawCalls } = read.stats(game);
+    if (previous === drawCalls) break;
+    previous = drawCalls;
+  }
+  return read.stats(game);
+}
+/** A reflected probe box read back from the framebuffer, then the pass counts. */
+async function checkWater(mode) {
+  await loadMap(mode);
+  const water = JSON.parse(game.debug_water_json());
+  check(water, `${mode}: no water`);
+  const [x, z] = mode === "harbor" ? [0, 90] : [-81, -12];
+  const level = water.height;
+  const camera = { position: [x, level + 14, z + 18], target: [x, level, z] };
+  let red = [];
+  let green = [];
+  const changed = () => red[0] - green[0] >= 15 && green[1] - red[1] >= 15;
+  try {
+    const sample = async (color) => {
+      await frame();
+      game.debug_probe(x, level + 3, z, 3, color);
+      draw(game, 0, false, camera);
+      // The mirror image of the probe's centre, in canvas pixels.
+      const [px, py] = game.debug_screen_point(x, level - 3, z);
+      return canvasPixel(
+        canvas,
+        px * (canvas.width / innerWidth),
+        py * (canvas.height / innerHeight),
+      );
+    };
+    // A new probe needs its pipeline and a reflection pass before it shows.
+    for (let attempt = 0; attempt < 5; attempt++) {
+      red = await sample(0xff0000);
+      green = await sample(0x00ff00);
+      if (changed()) break;
+    }
+  } finally {
+    game.debug_probe(0, 0, 0, 0, 0);
+  }
+  check(changed(), `${mode}: reflected probe did not change color (${red} / ${green})`);
+  const reflected = await settled(true);
+  game.debug_set_water_reflection(false);
+  const unreflected = await settled(true);
+  game.debug_set_water_reflection(true);
+  check(reflected.reflectionDrawCalls > 0, `${mode}: no reflection render pass`);
+  check(unreflected.reflectionDrawCalls === 0, `${mode}: reflection off still reflects`);
+  // The dry arena centre shows no open water: the pass is skipped.
+  game.debug_place_tank(human().id, 0, 0, NaN);
+  game.debug_set_zoom(23);
+  for (let i = 0; i < 60; i++) draw(game, 1 / 60);
+  const dry = await settled(false);
+  check(
+    dry.reflectionDrawCalls === 0,
+    `${mode}: dry view still reflects (${dry.reflectionDrawCalls} reflection draws)`,
+  );
+  return `${read.hud(game).mapName}: reflection pixels + dry-view skip PASS · ${reflected.reflectionDrawCalls} reflection draws`;
+}
+button("#water-checks", async () => {
+  result.textContent = "Running…";
+  const passes = [];
+  const failures = [];
+  for (const mode of ["harbor", "village"]) {
+    try {
+      passes.push(await checkWater(mode));
+    } catch (error) {
+      console.error(error);
+      failures.push(error.message);
+    }
+  }
+  await loadMap("harbor");
+  overview = true;
+  pose = undefined;
+  result.textContent = failures.length
+    ? `FAIL: ${failures.join(" | ")}`
+    : `PASS: ${passes.join(" | ")}`;
+});
+
+result.textContent = "Harbor scene ready";
+let last = performance.now();
+function render(now) {
+  if (!busy) draw(game, Math.min((now - last) / 1000, 0.1), overview || !!pose, pose);
+  last = now;
+  requestAnimationFrame(render);
+}
+requestAnimationFrame(render);

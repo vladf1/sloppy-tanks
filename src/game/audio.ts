@@ -23,7 +23,7 @@ const AUDIO = {
 
 const sound = (name: string, pool = 12) =>
   new Howl({
-    src: [`${import.meta.env.BASE_URL}audio/${name}.mp3`],
+    src: [`${process.env.PUBLIC_BASE_URL}audio/${name}.mp3`],
     format: ["mp3"],
     pool,
     volume: 0.25,

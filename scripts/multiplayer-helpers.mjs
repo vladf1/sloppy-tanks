@@ -20,8 +20,8 @@ export async function until(condition, message) {
 export function recordRoomFrames(page, errors, { mirror } = {}) {
   const room = { mirror, updates: 0, snapshots: 0, ack: 0, inputs: [], pings: 0 };
   page.on("websocket", (socket) => {
-    // The dev server's live-reload socket (`scripts/site-server.ts`) carries no room traffic.
-    if (new URL(socket.url()).pathname.endsWith("/__reload")) return;
+    // Bun's dev server keeps its own hot-reload socket open, with no room traffic.
+    if (new URL(socket.url()).pathname.startsWith("/_bun/")) return;
     const wire = createWireView();
     socket.on("framereceived", ({ payload }) => {
       try {

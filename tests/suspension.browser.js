@@ -1,0 +1,210 @@
+// The render-only suspension on the engine: the player's tank alone in a
+// cleared arena, driven by fixed simulation steps; pitch, roll and the turret
+// pose come from the presentation (`Game.debug_view_json`).
+import { check, choose, draw, fixtureGame, read } from "./engine-fixture";
+const game = await fixtureGame(document.querySelector("canvas"), { seed: 123 });
+const output = document.querySelector("output");
+const chassis = document.querySelector("#chassis");
+const speed = document.querySelector("#speed");
+const pause = document.querySelector("#pause");
+const STEP = 1 / 60;
+/** The close-up zoom of the preview. */
+const ZOOM = 8;
+// Durations use simulation time; slow motion changes playback, not suspension strength.
+const rest = ["Settling", 0.9, 0, 0];
+const acceleration = ["Accelerating", 0.65, 0, 1];
+const braking = ["Braking", 0.45, 0, 0];
+const demo = [
+  ["At rest", 0.5, 0, 0],
+  acceleration,
+  ["Cruising", 0.45, 0, 1],
+  braking,
+  rest,
+  ["Reversing", 0.7, 0, -1],
+  braking,
+  rest,
+  acceleration,
+  ["Turning left", 0.6, -1, 0],
+  ["Turning right", 0.9, 1, 0],
+  braking,
+  rest,
+];
+let sequence = demo;
+let looping = true;
+let playing = false;
+let completed = false;
+let busy = false;
+// Set while the checks run and their verdict shows; the readout leaves it alone.
+let verdict = false;
+let stage = 0;
+let stageTime = 0;
+let accumulator = 0;
+let previousFrame;
+let lastReadout = 0;
+let human;
+
+async function playSequence(next, loop = false) {
+  completed = false;
+  verdict = false;
+  sequence = next;
+  looping = loop;
+  stage = stageTime = accumulator = 0;
+  await reset(chassis.value);
+  playing = true;
+  pause.textContent = "Pause";
+  showMotion();
+}
+function showMotion() {
+  const state = pose();
+  output.textContent = `${sequence[stage][0]}${playing ? "" : " · paused"}
+Pitch: ${((state.pitch * 180) / Math.PI).toFixed(2)}°
+Roll: ${((state.roll * 180) / Math.PI).toFixed(2)}°`;
+}
+async function reset(kind) {
+  busy = true;
+  await choose(game, { humanKind: kind });
+  game.debug_set_autoplay(false);
+  game.debug_clear_arena(new Uint32Array());
+  human = read.state(game).human;
+  game.debug_place_tank(human.id, 0, 0, 0);
+  game.debug_set_tank(human.id, JSON.stringify({ aim: 0 }));
+  game.start();
+  game.debug_set_zoom(ZOOM);
+  // Settle the camera on the tank before measuring.
+  for (let i = 0; i < 60; i++) draw(game, 0);
+  draw(game, STEP);
+  busy = false;
+}
+function pose() {
+  const state = read.state(game);
+  const tank = read.view(game).tanks.find((view) => view.id === state.human.id);
+  const aim = state.human.aim - state.human.heading;
+  const [x, y, z] = tank.turretForwardInHull;
+  return {
+    instances: read.stats(game).instances,
+    pitch: tank.pitch,
+    roll: tank.roll,
+    turretTiltError: tank.turretTiltError,
+    turretAimError: Math.hypot(x - Math.sin(aim), y, z - Math.cos(aim)),
+  };
+}
+function advance(n, moveX = 0, moveZ = 0) {
+  for (let i = 0; i < n; i++) {
+    game.debug_step(1, moveX, moveZ);
+    draw(game, STEP);
+  }
+  return pose();
+}
+document.querySelector("#demo").onclick = () => playSequence(demo, true);
+document.querySelector("#accelerate").onclick = () =>
+  playSequence([acceleration, ["Cruising", 0.5, 0, 1], braking, rest]);
+document.querySelector("#brake").onclick = () => playSequence([acceleration, braking, rest]);
+document.querySelector("#turn").onclick = () =>
+  playSequence([
+    acceleration,
+    ["Turning left", 0.6, -1, 0],
+    ["Turning right", 0.9, 1, 0],
+    braking,
+    rest,
+  ]);
+chassis.onchange = () => playSequence(sequence, looping);
+pause.onclick = () => {
+  if (completed) {
+    playSequence(sequence, looping);
+    return;
+  }
+  playing = !playing;
+  pause.textContent = playing ? "Pause" : "Resume";
+  showMotion();
+};
+function animate(now) {
+  const dt = previousFrame === undefined ? 0 : Math.min((now - previousFrame) / 1000, 0.1);
+  previousFrame = now;
+  if (!busy) {
+    if (playing) {
+      accumulator += dt * Number(speed.value);
+      while (accumulator >= STEP && playing) {
+        accumulator -= STEP;
+        const [, duration, moveX, moveZ] = sequence[stage];
+        game.debug_step(1, moveX, moveZ);
+        stageTime += STEP;
+        if (stageTime >= duration) {
+          stageTime = 0;
+          stage++;
+          if (stage >= sequence.length) {
+            stage = sequence.length - 1;
+            if (looping) {
+              playSequence(sequence, true);
+              break;
+            }
+            playing = false;
+            completed = true;
+            pause.textContent = "Replay";
+          }
+        }
+      }
+    }
+    if (!busy) {
+      draw(game, playing ? dt * Number(speed.value) : 0);
+      if (!verdict && (now - lastReadout > 50 || !playing)) {
+        showMotion();
+        lastReadout = now;
+      }
+    }
+  }
+  requestAnimationFrame(animate);
+}
+function checkTurret(kind) {
+  for (const aim of [0, Math.PI / 2, Math.PI, -1.2]) {
+    game.debug_set_tank(human.id, JSON.stringify({ aim }));
+    draw(game, 0);
+    const state = pose();
+    check(state.turretTiltError < 1e-6, `${kind}: turret follows hull tilt at aim ${aim}`);
+    check(state.turretAimError < 1e-5, `${kind}: independent turret aim ${aim}`);
+  }
+}
+document.querySelector("#checks").onclick = async () => {
+  playing = false;
+  completed = true;
+  accumulator = 0;
+  pause.textContent = "Replay";
+  verdict = true;
+  output.textContent = "Running…";
+  try {
+    await runChecks();
+  } catch (error) {
+    console.error(error);
+    output.textContent = `FAIL: ${error.message}`;
+  }
+};
+async function runChecks() {
+  for (const kind of ["scout", "balanced", "heavy"]) {
+    await reset(kind);
+    busy = true;
+    const instances = pose().instances;
+    const accelerating = advance(7, 0, 1);
+    check(accelerating.pitch < -0.001, `${kind}: acceleration tilt ${accelerating.pitch}`);
+    checkTurret(kind);
+    advance(30, 0, 1);
+    const braking = advance(7);
+    check(braking.pitch > 0.001, `${kind}: braking tilt ${braking.pitch}`);
+    check(braking.instances === instances, `${kind}: no added instances`);
+    checkTurret(kind);
+    advance(30, 0, 1);
+    const turning = advance(12, 1, 0);
+    check(Math.abs(turning.roll) > 0.001, `${kind}: turning lean`);
+    checkTurret(kind);
+    const settled = advance(120);
+    check(Math.abs(settled.pitch) + Math.abs(settled.roll) < 1e-6, `${kind}: settles flat`);
+    await reset(kind);
+    const fresh = pose();
+    check(fresh.pitch === 0 && fresh.roll === 0, `${kind}: reset clears motion`);
+  }
+  check(!game.error(), `GPU error: ${game.error()}`);
+  await reset(chassis.value);
+  advance(7, 0, 1);
+  output.textContent =
+    "PASS: driving, braking, turning, settling, reset, attached turret with independent aim, unchanged instance count.";
+}
+await playSequence(demo, true);
+requestAnimationFrame(animate);

@@ -77,7 +77,7 @@ export async function prepareGame(
     await loadArenaEngine(choices.mapMode);
     game = await createGame(canvas, {
       seed,
-      assetBase: import.meta.env.BASE_URL,
+      assetBase: process.env.PUBLIC_BASE_URL,
       map: choices.mapMode,
       extraLevels: debugPage(location.search) || isExtraLevel(choices.mapMode),
       difficulty: choices.difficulty,
@@ -525,27 +525,32 @@ export async function prepareGame(
     requestAnimationFrame(loop);
   }
   requestAnimationFrame(loop);
-  if (import.meta.env.DEV) {
+  if (process.env.PUBLIC_DEV === "true") {
     Object.assign(window, {
-      sloppy: createDebug(
-        game,
-        audio,
-        controls,
-        {
-          start() {
-            controls.clear();
-            game.restart();
-            beginRound();
+      sloppy: Object.assign(
+        createDebug(
+          game,
+          audio,
+          controls,
+          {
+            start() {
+              controls.clear();
+              game.restart();
+              beginRound();
+            },
+            restart,
+            resize(exact) {
+              exactResolution = exact;
+              resize();
+            },
+            switchSeat,
           },
-          restart,
-          resize(exact) {
-            exactResolution = exact;
-            resize();
-          },
-          switchSeat,
-        },
-        recorder,
-        counters,
+          recorder,
+          counters,
+        ),
+        // Browser checks wrap the HUD and read frame results (scripts/hud-feedback-check.mjs);
+        // the page is one bundle, so its modules cannot be imported by URL.
+        { UI, FRAME },
       ),
     });
     if (params.has("tweak")) {

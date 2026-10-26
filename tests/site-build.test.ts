@@ -44,7 +44,7 @@ test.skipIf(!engineBuilt)(
     );
     assert.equal(workers.length, 2);
     const bake = await files.get(entries.get("src/game/texture-bake.ts")!)!.text();
-    assert.ok(!bake.includes("import.meta.env"), "no lookup is left for the browser");
+    assert.ok(!bake.includes("process.env"), "no lookup is left for the browser");
     for (const worker of workers) assert.ok(bake.includes(`/sloppy-tanks/${worker}`));
   },
 );

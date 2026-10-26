@@ -28,7 +28,7 @@ export function printDebugHelp(page: "single player" | "room"): void {
       "  sloppy.wire.all()         every kept message (the last 300)",
       "",
     );
-  } else if (import.meta.env.DEV) {
+  } else if (process.env.PUBLIC_DEV === "true") {
     lines.push(
       "Development build: window.sloppy controls the engine, for example",
       "  sloppy.debug()   sloppy.hud()   sloppy.stats()   sloppy.error()",
@@ -37,6 +37,6 @@ export function printDebugHelp(page: "single player" | "room"): void {
       "",
     );
   }
-  lines.push(...PAGE_PARAMETERS, ...(import.meta.env.DEV ? DEV_PARAMETERS : []));
+  lines.push(...PAGE_PARAMETERS, ...(process.env.PUBLIC_DEV === "true" ? DEV_PARAMETERS : []));
   console.info(`Sloppy Tanks debugging\n\n${lines.join("\n")}`);
 }

@@ -1,0 +1,65 @@
+// Solo Assault through 120 kills on the engine: every replacement gets a visible
+// model and health bar, views stay bounded at six enemies plus the player, the
+// time limit ends the round, and a reset and team mode rebuild the views.
+import { check, choose, draw, fixtureGame, read } from "./engine-fixture";
+const result = document.querySelector("#result");
+try {
+  const game = await fixtureGame(document.querySelector("#game"), {
+    seed: 123,
+    map: "harbor",
+    gameMode: "solo",
+  });
+  game.start();
+  game.debug_set_autoplay(false);
+  draw(game, 1 / 60);
+  const human = read.state(game).human;
+  const shown = (id) => read.view(game).tanks.find((tank) => tank.id === id);
+  for (let kill = 0; kill < 120; kill++) {
+    const victim = read.state(game).tanks.find((t) => !t.human && t.alive);
+    check(victim, "An enemy must be available");
+    game.debug_set_tank(victim.id, JSON.stringify({ protection: 0, shield: 0 }));
+    game.debug_set_tank(human.id, JSON.stringify({ protection: 999 }));
+    game.debug_damage_tank(victim.id, 999, human.id, human.team);
+    draw(game, 1 / 60);
+    check(!shown(victim.id).shown, "Destroyed tank hidden before replacement");
+    game.debug_set_sim(JSON.stringify({ reinforcementDelay: 0 }));
+    game.debug_step(1, 0, 0);
+    draw(game, 1 / 60);
+    // A repeated still frame (no time passes, nothing expires) adds no views.
+    const instances = read.stats(game).instances;
+    draw(game, 0);
+    check(read.stats(game).instances === instances, "Repeated frames must not duplicate visuals");
+    const state = read.state(game);
+    const views = read.view(game).tanks;
+    check(views.length === 7, `Models and bars stay bounded (${views.length})`);
+    for (const tank of state.tanks.filter((t) => t.alive)) {
+      const view = views.find((v) => v.id === tank.id);
+      check(view?.shown, `Live tank ${tank.id} needs a visible model`);
+      check(view.barShown, `Live tank ${tank.id} needs a visible health bar`);
+    }
+    check(state.tanks.filter((t) => !t.human && t.alive).length <= 6, "Six active enemies maximum");
+    check(state.match.phase === "playing", "No kill-count victory");
+  }
+  const kills = read.state(game).human.kills;
+  check(kills === 120, `All kills counted (${kills})`);
+  game.debug_set_sim(JSON.stringify({ match: { time: 0.001 } }));
+  game.debug_step(1, 0, 0);
+  const ended = read.state(game);
+  check(
+    ended.match.phase === "results" && ended.match.winner === ended.humanTeam,
+    "Survived at time limit",
+  );
+  game.restart();
+  draw(game, 1 / 60);
+  check(read.view(game).tanks.length === 7, "Reset clears old models and bars");
+  await choose(game, { gameMode: "team" });
+  game.start();
+  draw(game, 1 / 60);
+  check(read.view(game).tanks.length === 12, "Team mode still renders");
+  check(!game.error(), `GPU error: ${game.error()}`);
+  result.textContent =
+    "PASS: 120 kills, 120 replacements, six-enemy cap, model/health-bar lifecycle, round reset, and team mode.";
+} catch (error) {
+  result.textContent = "FAIL: " + error.stack;
+  console.error(error);
+}

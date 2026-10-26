@@ -407,7 +407,7 @@ const SCENE = {
     },
   ] as ObjectSpec[],
 };
-const base = import.meta.env.BASE_URL;
+const base = process.env.PUBLIC_BASE_URL;
 const params = new URLSearchParams(location.search);
 const frozen = params.has("freeze") ? Number(params.get("freeze")) : undefined;
 

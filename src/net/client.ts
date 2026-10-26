@@ -208,14 +208,15 @@ export async function startMultiplayer(
       : [innerWidth, innerHeight];
   };
   const params = new URLSearchParams(location.search);
-  const delay = import.meta.env.DEV
-    ? Object.fromEntries(
-        TRANSPORT_DELAY_PARAMS.filter((key) => params.has(key)).map((key) => [
-          key,
-          params.get(key),
-        ]),
-      )
-    : {};
+  const delay =
+    process.env.PUBLIC_DEV === "true"
+      ? Object.fromEntries(
+          TRANSPORT_DELAY_PARAMS.filter((key) => params.has(key)).map((key) => [
+            key,
+            params.get(key),
+          ]),
+        )
+      : {};
   let game: NetGame;
   try {
     const [width, height] = cssSize();
@@ -224,7 +225,7 @@ export async function startMultiplayer(
       room,
       savedSeat: savedSeat(seatKey),
       ...delay,
-      assetBase: import.meta.env.BASE_URL,
+      assetBase: process.env.PUBLIC_BASE_URL,
       cssWidth: width,
       cssHeight: height,
       pixelRatio: devicePixelRatio,
@@ -591,7 +592,7 @@ export async function startMultiplayer(
   audio.start();
   game.connect(choiceJson, performance.now());
   pump();
-  if (import.meta.env.DEV) {
+  if (process.env.PUBLIC_DEV === "true") {
     const debug = () =>
       JSON.parse(game.debug_json()) as {
         connection: Record<string, unknown>;

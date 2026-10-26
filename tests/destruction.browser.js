@@ -1,0 +1,118 @@
+// Interactive destruction showcase on the engine: one of every destructible cover
+// on the quarry floor, shells, blasts, a landing wreck and a drum chain, drawn
+// from a fixed camera. The rules behind it are the engine's tests.
+import { choose, draw, fixtureGame, read } from "./engine-fixture";
+const game = await fixtureGame(document.querySelector("canvas"), { seed: 731 });
+const output = document.querySelector("output");
+const CAMERA = { position: [17, 22, 30], target: [0, 1, 0] };
+/** A shooter id no tank has. */
+const NOBODY = 999999;
+let tooth;
+let hedgehog;
+let wreck;
+function add(kind, x, z, w, h, d, color = 0x92734e) {
+  return game.debug_add_cover(
+    JSON.stringify({
+      kind,
+      x,
+      z,
+      w,
+      h,
+      d,
+      color,
+      // Dragon’s teeth and hedgehogs never break: no hit points.
+      hp: kind === "teeth" || kind === "hedgehog" ? null : 40,
+    }),
+  );
+}
+function advance(n) {
+  game.debug_step(n, 0, 0);
+  const state = read.state(game);
+  const covers = new Map(read.covers(game).map((cover) => [cover.id, cover]));
+  const concrete = covers.get(tooth);
+  const steel = covers.get(hedgehog);
+  output.textContent =
+    `${state.fragments} pieces · ${state.bodies} bodies · ` +
+    `concrete x=${concrete?.x.toFixed(2)} · steel x=${steel?.x.toFixed(2)}`;
+}
+async function reset() {
+  await choose(game, { mapMode: "quarry" });
+  game.debug_set_autoplay(false);
+  game.debug_clear_arena(new Uint32Array());
+  const { human } = read.state(game);
+  game.debug_place_tank(human.id, 50, 50, NaN);
+  game.debug_set_tank(human.id, JSON.stringify({ protection: 999, cooldown: 999, frozen: true }));
+  add("cargo", -8, 0, 2.4, 2.3, 2.5);
+  add("timber", -3, 0, 3, 2.8, 0.8);
+  add("tree", 3, 0, 2.5, 7, 2.5, 0x389b58);
+  tooth = add("teeth", 8, 0, 1.89, 1.89, 1.89);
+  hedgehog = add("hedgehog", 8, 6, 2.32, 2.16, 2.56);
+  add("drum", -6, 7, 1.2, 1.7, 1.2, 0xc8763c);
+  add("tower", 3, -9, 6.5, 8.5, 5.5, 0xb29663);
+  game.start();
+  wreck = undefined;
+  advance(0);
+}
+document.querySelector("#reset").onclick = reset;
+document.querySelector("#break").onclick = () => {
+  for (const cover of read.covers(game)) {
+    if (cover.alive && cover.id !== tooth && cover.id !== hedgehog) {
+      game.debug_damage_cover(cover.id, 999);
+    }
+  }
+  advance(20);
+};
+document.querySelector("#step").onclick = () => advance(60);
+document.querySelector("#shot").onclick = () => {
+  const concrete = read.covers(game).find((cover) => cover.id === tooth);
+  game.debug_add_shot(
+    JSON.stringify({
+      x: concrete.x - 2,
+      z: concrete.z,
+      vx: 25,
+      vz: 0,
+      team: 0,
+      owner: NOBODY,
+      weapon: "standard",
+      damage: 40,
+      life: 2,
+    }),
+  );
+  advance(20);
+};
+document.querySelector("#blast").onclick = () => {
+  const concrete = read.covers(game).find((cover) => cover.id === tooth);
+  game.debug_explode(concrete.x - 1, concrete.z, 5, 100);
+  advance(25);
+};
+document.querySelector("#steel").onclick = () => {
+  const steel = read.covers(game).find((cover) => cover.id === hedgehog);
+  game.debug_explode(steel.x - 1, steel.z, 5, 80);
+  advance(25);
+};
+document.querySelector("#wreck").onclick = () => {
+  const tank = game.debug_add_tank(1, "balanced");
+  game.debug_place_tank(tank, 0, 7, NaN);
+  game.debug_set_tank(tank, JSON.stringify({ protection: 0, shield: 0 }));
+  game.debug_damage_tank(tank, 1000, NOBODY, 0);
+  game.debug_set_tank(tank, JSON.stringify({ respawn: 999 }));
+  advance(240);
+  const turret = read
+    .state(game)
+    .fragmentViews.find((fragment) => fragment.part?.startsWith("turret"));
+  wreck = turret?.id;
+};
+document.querySelector("#chain").onclick = () => {
+  const turret = read.view(game).fragments.find((fragment) => fragment.id === wreck);
+  if (!turret) return;
+  const [x, , z] = turret.position;
+  const drum = add("drum", x + 1.4, z, 1.2, 1.7, 1.2, 0xc8763c);
+  game.debug_damage_cover(drum, 999);
+  advance(15);
+};
+await reset();
+function frame() {
+  draw(game, 1 / 60, true, CAMERA);
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);

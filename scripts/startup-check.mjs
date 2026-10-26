@@ -4,14 +4,27 @@ import {
   chooseMap,
   chosenMap,
   click,
-  gameUrl as url,
+  gameUrl,
   launchGame,
   menuReady,
   startRound,
 } from "./browser-helpers.mjs";
+import { buildSite } from "./site-build.ts";
+import { startStaticServer } from "./site-server.ts";
 
 const output = "artifacts/performance/startup";
 mkdirSync(output, { recursive: true });
+// Startup is how the production page delivers the game: Battle Setup and its controller
+// inline, the engine download from <head>, the game as a module of its own. Bun's dev
+// server bundles a page whole, so a local run checks a development copy of the
+// production build (with `window.sloppy`); another host's page is checked as it is.
+let url = gameUrl;
+let server;
+if (["127.0.0.1", "localhost", "[::1]"].includes(new URL(gameUrl).hostname)) {
+  const built = await buildSite({ development: true, outdir: `${output}/build` });
+  server = startStaticServer({ directory: `${output}/build`, port: 0, base: built.base });
+  url = new URL(built.base, server.url).href;
+}
 const viewport = { width: 1440, height: 1000 };
 const first = await launchGame({ viewport });
 const { browser, errors } = first;
@@ -469,4 +482,5 @@ try {
   console.log(JSON.stringify(results));
 } finally {
   await browser.close();
+  await server?.stop(true);
 }

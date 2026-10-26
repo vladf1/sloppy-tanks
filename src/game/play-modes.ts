@@ -23,7 +23,7 @@ const TAB_KEYS = ["ArrowLeft", "ArrowRight", "Home", "End"];
 /** Sites with a game server, and local pages, which use the local one. */
 export function multiplayerAvailable(): boolean {
   return (
-    !!import.meta.env.MULTIPLAYER_URL || ["localhost", "127.0.0.1"].includes(location.hostname)
+    !!process.env.PUBLIC_MULTIPLAYER_URL || ["localhost", "127.0.0.1"].includes(location.hostname)
   );
 }
 

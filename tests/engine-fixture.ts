@@ -18,7 +18,7 @@ export interface FixtureConfig {
 /** Create the engine on `canvas` at the window's size and prepare its arena. */
 export async function fixtureGame(canvas: HTMLCanvasElement, config: FixtureConfig = {}) {
   const game = await createGame(canvas, {
-    assetBase: import.meta.env.BASE_URL,
+    assetBase: process.env.PUBLIC_BASE_URL,
     cssWidth: innerWidth,
     cssHeight: innerHeight,
     pixelRatio: 1,

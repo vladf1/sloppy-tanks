@@ -55,10 +55,14 @@ compiling it again, at the cost of about a second per rebuild within one tree.
 Bypass it for one command with `KACHE_DISABLED=1`; `kache explain` says why a crate
 missed the cache.
 
-Open the URL `bun run dev` prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. The Bun server
-serves the release Wasm from `src/generated/engine/` (and the WebGL2 build from
-`src/generated/engine-webgl/`). TypeScript, CSS, HTML and generated engine edits
-reload the page. Use `bun run dev --port 5200 --strictPort` for a fixed port or
+Open the URL `bun run dev` prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. It is
+Bun's own dev server with hot reloading: it bundles each page through
+`scripts/dev-pages-plugin.ts` (listed in `bunfig.toml`) and serves the release Wasm from
+`src/generated/engine/` (and the WebGL2 build from `src/generated/engine-webgl/`).
+Stylesheet edits apply in place; TypeScript, HTML and generated engine edits reload the
+page. The dev page bundles the game whole, where production inlines Battle Setup's startup
+and loads the game as a module of its own, so checks of that delivery build a production
+copy themselves. Use `bun run dev --port 5200 --strictPort` for a fixed port or
 `bun run preview` to serve the production build. The dev server does not compile Rust,
 so run `bun run wasm` again after changing a crate. That rebuilds the WebGPU engine
 only (the WebGL2 one too when it is missing or the engine's API changed); run

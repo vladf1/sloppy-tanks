@@ -43,7 +43,7 @@ async function packTankPreviews(assets) {
   console.log(`${output}: ${image.length} bytes`);
 }
 
-const server = startDevServer({ port: 0 });
+const server = await startDevServer({ port: 0 });
 const browser = await chromium.launch({ channel: "chrome", headless });
 try {
   const page = await browser.newPage();

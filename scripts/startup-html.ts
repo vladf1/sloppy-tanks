@@ -29,6 +29,18 @@ function initialTabScript(multiplayerUrl: string): string {
   return `<script>(()=>{const p=new URLSearchParams(location.search);if(!(${configured}||["localhost","127.0.0.1"].includes(location.hostname))||!(p.has("multiplayer")||p.has("room")))return;const s=document.querySelector("#startup-overlay .start");if(!s)return;s.dataset.play="multiplayer";for(const t of s.querySelectorAll('[role="tab"][data-play]')){const on=t.dataset.play==="multiplayer";t.setAttribute("aria-selected",String(on));t.tabIndex=on?0:-1;const panel=document.getElementById(t.getAttribute("aria-controls"));if(panel)panel.hidden=!on}})()</script>`;
 }
 
+/** Battle Setup for the page's `<!-- battle-setup -->`, in production and development. */
+export async function battleSetupHtml(base: string, multiplayerUrl: string): Promise<string> {
+  const markup = await readFile(new URL("../src/game/battle-setup.html", import.meta.url), "utf8");
+  const setup = markup
+    .replaceAll("%BASE_URL%", base)
+    .replace("%BUILD_LABEL%", buildLabel(pageBuild()))
+    .replace(/<!-- map-choice:(\w+):([\w-]+) -->/g, (_comment, name: string, label: string) =>
+      mapChoiceMarkup(name, label),
+    );
+  return `<div id="startup-overlay" data-state="loading">${setup}</div>${initialTabScript(multiplayerUrl)}`;
+}
+
 export async function startupHtml(
   html: string,
   base: string,
@@ -38,20 +50,10 @@ export async function startupHtml(
   preloads: string[],
   binaries: [string, string],
 ): Promise<string> {
-  const markup = await readFile(new URL("../src/game/battle-setup.html", import.meta.url), "utf8");
-  const setup = markup
-    .replaceAll("%BASE_URL%", base)
-    .replace("%BUILD_LABEL%", buildLabel(pageBuild()))
-    .replace(/<!-- map-choice:(\w+):([\w-]+) -->/g, (_comment, name: string, label: string) =>
-      mapChoiceMarkup(name, label),
-    );
+  const setup = await battleSetupHtml(base, multiplayerUrl);
   const links = `<script>{const p=new URLSearchParams(location.search);if(!p.has("room")&&!p.has("multiplayer")){for(const href of ${JSON.stringify(preloads)}){const link=document.createElement("link");link.rel="modulepreload";link.crossOrigin="anonymous";link.href=href;document.head.append(link);}}}</script>`;
   return html
-    .replace(
-      "<!-- battle-setup -->",
-      () =>
-        `<div id="startup-overlay" data-state="loading">${setup}</div>${initialTabScript(multiplayerUrl)}`,
-    )
+    .replace("<!-- battle-setup -->", () => setup)
     .replace(
       "</head>",
       () =>
