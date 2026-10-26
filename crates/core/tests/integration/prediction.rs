@@ -13,7 +13,7 @@ use crate::support;
 use std::collections::BTreeMap;
 
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
-use sloppy_core::net::prediction::{HullContacts, HullState, TankPredictor};
+use sloppy_core::net::prediction::{HullContacts, HullState, MovingBody, TankPredictor};
 use sloppy_core::net::scene_codec::{MirrorScene, Scene};
 use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::arena::CoverDef;
@@ -40,8 +40,10 @@ struct HostTick {
     input: (f64, f64),
     hull: Option<HullState>,
     heading: f64,
-    /// The scene after this tick, kept at snapshot ticks.
+    /// The scene after this tick, kept at snapshot ticks, with the bodies moving near the
+    /// hull that the snapshot carries.
     scene: Option<RenderState>,
+    bodies: Vec<MovingBody>,
     /// A blast near the viewer, or a hit on it, this tick.
     blast: bool,
     nearest_tank: f64,
@@ -133,13 +135,17 @@ fn record(
         .filter(|other| other.id != viewer && other.alive)
         .map(|other| distance(sim.tank_position(other).planar(), at))
         .fold(f64::INFINITY, f64::min);
+    let snapshot = (tick as usize).is_multiple_of(SNAPSHOT_TICKS);
+    let mut bodies = Vec::new();
+    if snapshot {
+        MovingBody::capture_near(sim, index, &mut bodies);
+    }
     HostTick {
         input: (commands[&viewer].move_x, commands[&viewer].move_z),
         hull: client_hull(sim, viewer, tick),
         heading: tank.heading,
-        scene: (tick as usize)
-            .is_multiple_of(SNAPSHOT_TICKS)
-            .then(|| client_scene(sim, viewer)),
+        scene: snapshot.then(|| client_scene(sim, viewer)),
+        bodies,
         blast,
         nearest_tank,
     }
@@ -152,6 +158,7 @@ fn host_run(sim: &mut Simulation, viewer: u32, script: &Script, ticks: u64) -> V
         hull: client_hull(sim, viewer, 0),
         heading: sim.tanks[tank_index(sim, viewer)].heading,
         scene: Some(client_scene(sim, viewer)),
+        bodies: Vec::new(),
         blast: false,
         nearest_tank: f64::INFINITY,
     }];
@@ -175,6 +182,12 @@ struct Window {
 /// Replays `run` like a client: one predictor, restarted at every snapshot and driven
 /// `horizon` ticks ahead. Windows that cross a death or respawn are left out.
 fn client_replays(run: &[HostTick], horizon: usize) -> Vec<Window> {
+    client_replays_with(run, horizon, true)
+}
+
+/// [`client_replays`], with the debris near the hull and the moving bodies' velocities in
+/// the predicted world (as clients have them since protocol 5) or without.
+fn client_replays_with(run: &[HostTick], horizon: usize, bodies: bool) -> Vec<Window> {
     let mut predictor = TankPredictor::default();
     let mut windows = Vec::new();
     for start in (0..run.len() - horizon).step_by(SNAPSHOT_TICKS) {
@@ -189,6 +202,9 @@ fn client_replays(run: &[HostTick], horizon: usize) -> Vec<Window> {
             continue;
         }
         predictor.sync_scene(scene);
+        if bodies {
+            predictor.sync_bodies(scene, &run[start].bodies, hull.position);
+        }
         predictor.reset(hull);
         let mut window = Window {
             distance: 0.0,
@@ -479,9 +495,10 @@ fn battle_divergence_comes_from_blasts_and_other_tanks() {
 }
 
 /// What the client cannot foresee, sized: a rocket blast beside the hull, and timber the
-/// hull is pushing against breaking under it. Each costs the windows that span it, and
-/// the predicted world has no debris, so the hull then drives through the fresh timber
-/// fragments the host's hull has to shove aside.
+/// hull is pushing against breaking under it. Each costs the windows that span it; after
+/// it, the fresh timber fragments are in the predicted world with the velocities the
+/// snapshots carry, so the hull shoves them aside as the host's does (without them it
+/// drove through and was corrected by up to 20 cm).
 #[test]
 fn unseen_blasts_and_breaking_cover_cost_their_windows() {
     let timber = CoverDef {
@@ -497,7 +514,8 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
         timber_bays: None,
         debris_seed: Some(1.0),
     };
-    for (event, label, later_bound) in [(60, "rocket blast", 0.05), (150, "timber breaking", 0.3)] {
+    for (event, label, later_bound) in [(60, "rocket blast", 0.05), (150, "timber breaking", 0.05)]
+    {
         let (mut sim, viewer) = open_field(VehicleKind::Balanced);
         sim.add_cover(&timber);
         sim.world.step();
@@ -530,6 +548,10 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
         }
         for (horizon, name) in [(HORIZON_100_MS, "100 ms"), (HORIZON_200_MS, "200 ms")] {
             let windows = client_replays(&run, horizon);
+            let without: Vec<f64> = client_replays_with(&run, horizon, false)
+                .iter()
+                .map(|window| window.distance)
+                .collect();
             let mut spanning = Vec::new();
             let mut others = Vec::new();
             for (index, window) in windows.iter().enumerate() {
@@ -542,8 +564,18 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
             }
             let spanning_max = percentile(&mut spanning, 1.0);
             let others_max = percentile(&mut others, 1.0);
+            let without_max = without
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| {
+                    let start = index * SNAPSHOT_TICKS;
+                    !(start + 1..=start + horizon).contains(&(event as usize + 1))
+                })
+                .map(|(_, distance)| *distance)
+                .fold(0.0, f64::max);
             eprintln!(
-                "{label} at {name}: {} windows spanning it, max {spanning_max:.3} m; others max {others_max:.4} m",
+                "{label} at {name}: {} windows spanning it, max {spanning_max:.3} m; others max \
+                 {others_max:.4} m ({without_max:.3} m without the debris)",
                 spanning.len()
             );
             assert!(
@@ -553,4 +585,99 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
             assert!(others_max < later_bound, "{label} {name}: {others_max}");
         }
     }
+}
+
+/// The worst divergence of windows the hull spends near something, with the predicted
+/// world as clients have it and without debris or the moving bodies' velocities.
+fn near_divergence(run: &[HostTick], horizon: usize, near: impl Fn(usize) -> bool) -> (f64, f64) {
+    let worst = |bodies: bool| {
+        client_replays_with(run, horizon, bodies)
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| near(index * SNAPSHOT_TICKS))
+            .map(|(_, window)| window.distance)
+            .fold(0.0, f64::max)
+    };
+    (worst(true), worst(false))
+}
+
+#[test]
+fn pushing_a_drum_and_driving_into_a_wreck_replay_with_their_velocities() {
+    // A drum 5 m ahead, shoved along for three seconds.
+    let (mut sim, viewer) = open_field(VehicleKind::Heavy);
+    sim.add_cover(&CoverDef {
+        kind: CoverKind::Drum,
+        x: 0.0,
+        z: 5.0,
+        w: 1.0,
+        d: 1.0,
+        h: 1.2,
+        hp: f64::INFINITY,
+        color: 0xaa3322,
+        timber_join: None,
+        timber_bays: None,
+        debris_seed: None,
+    });
+    sim.world.step();
+    let run = host_run(&mut sim, viewer, &|_| (0.0, 1.0), 180);
+    let (with, without) = near_divergence(&run, HORIZON_100_MS, |tick| tick > 20);
+    eprintln!("drum: {with:.4} m, {without:.4} m without its velocity");
+    assert!(
+        with < 0.005 && without > 0.01,
+        "drum {with} against {without}"
+    );
+
+    // Bob's tank is destroyed 7 m ahead; once its wreck has landed, alice drives into it.
+    let mut sim = room(
+        MapId::Village,
+        &[
+            player("alice", Team::Blue, 0, VehicleKind::Balanced),
+            player("bob", Team::Red, 0, VehicleKind::Heavy),
+        ],
+        true,
+    );
+    let viewer = human_id(&sim, "alice");
+    let bob = human_id(&sim, "bob");
+    let (alice_index, bob_index) = (tank_index(&sim, viewer), tank_index(&sim, bob));
+    clear_arena(&mut sim, &[alice_index, bob_index]);
+    place_tank(&mut sim, 0, 0.0, 0.0, Some(0.0));
+    place_tank(&mut sim, 1, 0.0, 7.0, Some(0.0));
+    sim.world.step();
+    let bob_index = tank_index(&sim, bob);
+    // Past the spawn protection.
+    sim.tanks[bob_index].protection = 0.0;
+    sim.tanks[bob_index].shield = 0.0;
+    sim.damage_tank(bob_index, 1000.0, viewer, Team::Blue, None, None);
+    assert!(!sim.tanks[bob_index].alive);
+    let mut run = host_run(&mut sim, viewer, &|_| (0.0, 0.0), 150);
+    let from = support::tank_xz(&sim, tank_index(&sim, viewer));
+    let hull = sim
+        .fragments
+        .iter()
+        .find(|fragment| {
+            matches!(
+                fragment.part,
+                Some(
+                    sloppy_core::sim::types::WreckPart::Hull
+                        | sloppy_core::sim::types::WreckPart::Intact
+                )
+            )
+        })
+        .map(|fragment| sim.body_translation(fragment.body).planar())
+        .expect("the wreck has a hull");
+    let toward = Vec2::new(hull.x - from.x, hull.z - from.z);
+    let toward = (
+        toward.x / distance(hull, from),
+        toward.z / distance(hull, from),
+    );
+    for tick in 151..=330 {
+        let commands = BTreeMap::from([(viewer, command(toward))]);
+        run.push(record(&mut sim, viewer, tick, &commands));
+    }
+    let (with, without) = near_divergence(&run, HORIZON_100_MS, |tick| tick > 150);
+    eprintln!("wreck: {with:.4} m, {without:.4} m without the debris");
+    assert!(
+        with < 0.1 && without > 0.2,
+        "wreck {with} against {without}"
+    );
 }

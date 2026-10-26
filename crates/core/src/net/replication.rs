@@ -29,7 +29,7 @@ use std::collections::HashMap;
 
 use super::json::POSITION_SCALE;
 use super::player_controls::Ack;
-use super::prediction::HullState;
+use super::prediction::{HullState, MAX_MOVING_BODIES, MovingBody};
 use super::protocol::{FULL_MESSAGE, SNAPSHOT_MESSAGE};
 use super::scene_codec::{
     COVERS, ENTITY_FIELDS, ENTITY_LIMITS, ENTITY_TYPES, EVENT_FIELDS, EntityStore, FRAGMENTS,
@@ -284,7 +284,7 @@ pub fn write_snapshot_header(
     ack: &Ack,
     first_seq: u64,
     count: usize,
-    hull: Option<&HullState>,
+    hull: Option<(&HullState, &[MovingBody])>,
 ) {
     out.push(SNAPSHOT_MESSAGE);
     put_varint(out, round_id);
@@ -295,9 +295,13 @@ pub fn write_snapshot_header(
     put_varint(out, ack.applied_tick);
     put_varint(out, ack.arrival_tick);
     match hull {
-        Some(hull) => {
+        Some((hull, bodies)) => {
             out.push(1);
             hull.write(out);
+            put_varint(out, bodies.len() as u64);
+            for body in bodies {
+                body.write(out);
+            }
         }
         None => out.push(0),
     }
@@ -329,6 +333,8 @@ pub struct SnapshotBatch<'a> {
     pub ack_arrival: u64,
     /// The seat's tank after `tick`, while it lives.
     pub hull: Option<HullState>,
+    /// With the hull: the bodies moving near it ([`MovingBody::capture_near`]).
+    pub bodies: Vec<MovingBody>,
     read: u64,
     frames: WireReader<'a>,
 }
@@ -352,22 +358,43 @@ pub fn read_binary_message(bytes: &[u8]) -> ReadResult<BinaryMessage<'_>> {
             room_epoch: reader.text(MAX_EPOCH_BYTES)?,
             scene: reader,
         })),
-        SNAPSHOT_MESSAGE => Ok(BinaryMessage::Snapshot(SnapshotBatch {
-            round_id: reader.varint()?,
-            tick: reader.varint()?,
-            ack: reader.varint()?,
-            first_seq: reader.varint()?,
-            count: reader.varint()?,
-            ack_tick: reader.varint()?,
-            ack_arrival: reader.varint()?,
-            hull: match reader.byte()? {
-                0 => None,
-                1 => Some(HullState::read(&mut reader)?),
+        SNAPSHOT_MESSAGE => {
+            let round_id = reader.varint()?;
+            let tick = reader.varint()?;
+            let ack = reader.varint()?;
+            let first_seq = reader.varint()?;
+            let count = reader.varint()?;
+            let ack_tick = reader.varint()?;
+            let ack_arrival = reader.varint()?;
+            let (hull, bodies) = match reader.byte()? {
+                0 => (None, Vec::new()),
+                1 => {
+                    let hull = HullState::read(&mut reader)?;
+                    let count = reader.varint()?;
+                    if count > MAX_MOVING_BODIES as u64 {
+                        return Err("Invalid moving bodies".into());
+                    }
+                    let bodies = (0..count)
+                        .map(|_| MovingBody::read(&mut reader))
+                        .collect::<ReadResult<Vec<_>>>()?;
+                    (Some(hull), bodies)
+                }
                 _ => return Err("Invalid hull".into()),
-            },
-            read: 0,
-            frames: reader,
-        })),
+            };
+            Ok(BinaryMessage::Snapshot(SnapshotBatch {
+                round_id,
+                tick,
+                ack,
+                first_seq,
+                count,
+                ack_tick,
+                ack_arrival,
+                hull,
+                bodies,
+                read: 0,
+                frames: reader,
+            }))
+        }
         _ => Err("Unknown message".into()),
     }
 }

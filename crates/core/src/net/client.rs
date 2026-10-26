@@ -48,12 +48,15 @@ use serde_json::Value;
 
 use super::feel_readings::FeelReadings;
 use super::fixed_step_clock::SIMULATION_STEP_MS;
-use super::hull_prediction::{CorrectionCause, HostUpdate, HullPrediction, PredictedInput};
+use super::hull_prediction::{
+    CorrectionCause, HOLD_TICKS, HeldPose, HostUpdate, HullPrediction, PredictedInput,
+};
 use super::input_cadence::InputCadence;
 use super::json;
 use super::network_timeline::NetworkTimeline;
 use super::own_shots::{Firing, OwnShots};
 use super::player_controls::{Ack, Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
+use super::prediction::Moved;
 use super::protocol::{
     CONTENT_VERSION, Control, JoinChoice, Lobby, MAX_BATCH_FRAMES, MAX_ROOM_MS,
     MAX_SERVER_MESSAGE_BYTES, Message, PROTOCOL_VERSION, ROOM_IDLE_MS, RoomPhase, RoomSettings,
@@ -63,7 +66,7 @@ use super::replication::{BinaryMessage, StateMirror, TimedEvent, read_binary_mes
 use super::schema::{ReadResult, id, parse_record, string, text_length};
 use super::transport_delay::{DelaySettings, TransportDelay};
 use crate::sim::ammunition::{equipped_weapon_for, step_ammo};
-use crate::sim::math::Vec2;
+use crate::sim::math::{Point3, Vec2, angle_delta};
 use crate::sim::render_state::RenderState;
 use crate::sim::types::{
     AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, VehicleKind, Weapon,
@@ -86,6 +89,14 @@ const MAX_FRAME_SECONDS: f64 = 0.1;
 /// An explosion this close to the viewer's hull may have pushed it, metres; blast radii
 /// are a few metres.
 const BLAST_REACH: f64 = 8.0;
+/// Another tank is drawn from the predicted world, in the present like the viewer's own
+/// hull, once this near the drawn hull (metres), and from the delayed display beyond the
+/// far distance, so a tank about to be rammed is drawn where the hull will meet it.
+const PRESENT_TANKS_NEAR: f64 = 5.0;
+const PRESENT_TANKS_FAR: f64 = 10.0;
+/// A crate or piece of debris at rest this close to where the delayed display has it
+/// goes back to the display (metres).
+const HANDBACK_DISTANCE: f64 = 0.02;
 
 /// Why a connection stopped retrying. Each cause offers its own way back into a game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -947,7 +958,11 @@ impl NetworkClient {
                 };
                 let mut host = HostUpdate {
                     hull: batch.hull,
-                    blast: self.pending_hull.is_some_and(|(pending, _)| pending.blast),
+                    bodies: std::mem::take(&mut batch.bodies),
+                    blast: self
+                        .pending_hull
+                        .as_ref()
+                        .is_some_and(|(pending, _)| pending.blast),
                 };
                 self.last_snapshot_ms = now_ms;
                 if let Some(previous) = self.last_batch_ms.replace(now_ms) {
@@ -1432,6 +1447,15 @@ impl NetworkClient {
                 viewer.recoil = self.own_shots.recoil;
             }
         }
+        // What the hull touches is drawn where the predicted world moves it.
+        let released = draw_held(
+            display,
+            &self.prediction.held(now_ms),
+            self.prediction.predicted_tick(),
+        );
+        for moved in released {
+            self.prediction.release(moved);
+        }
         let viewer_id = display.viewer_id;
         let viewer_team = display.viewer().map(|viewer| viewer.team);
         let present = self.prediction.predicted_present(now_ms);
@@ -1574,4 +1598,74 @@ fn read_own_events(
         }
     }
     blast
+}
+
+/// Draws the bodies the predicted hull holds where the predicted world has them, the
+/// newest predicted tick being `tick`: crates and debris outright, other tanks blended in
+/// by how near the viewer's drawn hull they are. Returns the crates and debris that came
+/// to rest where the delayed display has them, which go back to it without a jump.
+fn draw_held(display: &mut RenderState, held: &[HeldPose], tick: u64) -> Vec<Moved> {
+    let mut released = Vec::new();
+    let viewer = display.viewer().map(|viewer| viewer.position.planar());
+    for held in held {
+        let pose = &held.pose;
+        let settled = |drawn: Point3| {
+            tick > held.touched + HOLD_TICKS
+                && pose.resting
+                && crate::sim::math::distance(drawn.planar(), pose.position.planar())
+                    < HANDBACK_DISTANCE
+        };
+        match held.moved {
+            Moved::Tank(id) => {
+                let (Some(viewer), Some(tank)) = (
+                    viewer,
+                    display
+                        .tanks
+                        .iter_mut()
+                        .find(|tank| tank.id == id && tank.alive),
+                ) else {
+                    continue;
+                };
+                let gap = crate::sim::math::distance(viewer, pose.position.planar());
+                let share = ((PRESENT_TANKS_FAR - gap) / (PRESENT_TANKS_FAR - PRESENT_TANKS_NEAR))
+                    .clamp(0.0, 1.0);
+                let share = share * share * (3.0 - 2.0 * share);
+                tank.position = tank.position.lerp(pose.position, share);
+                tank.heading += angle_delta(tank.heading, pose.heading) * share;
+                tank.velocity = tank.velocity.lerp(pose.velocity, share);
+                tank.previous = tank.position.planar();
+            }
+            Moved::Cover(id) => {
+                let Some(cover) = display
+                    .covers
+                    .iter_mut()
+                    .find(|cover| cover.id == id && cover.alive)
+                else {
+                    continue;
+                };
+                if settled(cover.position) {
+                    released.push(held.moved);
+                } else {
+                    cover.position = pose.position;
+                    cover.rotation = pose.rotation;
+                }
+            }
+            Moved::Fragment(id) => {
+                let Some(fragment) = display
+                    .fragments
+                    .iter_mut()
+                    .find(|fragment| fragment.id == id)
+                else {
+                    continue;
+                };
+                if settled(fragment.position) {
+                    released.push(held.moved);
+                } else {
+                    fragment.position = pose.position;
+                    fragment.rotation = pose.rotation;
+                }
+            }
+        }
+    }
+    released
 }

@@ -21,7 +21,7 @@ use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::Tank;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
-use sloppy_core::sim::math::Vec2;
+use sloppy_core::sim::math::{Point3, Vec2};
 use sloppy_core::sim::render_state::RenderShot;
 use sloppy_core::sim::types::{Driver, SimEvent, SimEventType, Team, VehicleKind, Weapon};
 
@@ -49,6 +49,9 @@ struct DrawnFrame {
     now: f64,
     shots: Vec<RenderShot>,
     events: Vec<SimEvent>,
+    /// The viewer's hull and the movable cover.
+    viewer: Option<Point3>,
+    movable: Vec<(u32, Point3)>,
 }
 
 struct Network {
@@ -274,6 +277,14 @@ impl Network {
                         let drawn = DrawnFrame {
                             now,
                             shots: frame.state.shots.clone(),
+                            viewer: frame.state.viewer().map(|viewer| viewer.position),
+                            movable: frame
+                                .state
+                                .covers
+                                .iter()
+                                .filter(|cover| cover.kind.movable())
+                                .map(|cover| (cover.id, cover.position))
+                                .collect(),
                             events: frame.events.into_iter().map(|shown| shown.event).collect(),
                         };
                         peer.drawn.push(drawn);
@@ -624,6 +635,75 @@ fn an_own_shell_strikes_near_cover_close_to_when_it_is_drawn_there() {
         gap > 0.0 && gap <= 2.0 * FRAME_MS,
         "{gap} ms, view delay {view_delay} ms"
     );
+}
+
+#[test]
+fn a_pushed_drum_is_drawn_ahead_of_the_hull_and_handed_back_without_a_jump() {
+    let (mut net, alice, tank_id) = alone_with_a_clear_lane();
+    let aim = net.peers[alice].input.aim_angle;
+    let sim = net.host.simulation.as_mut().unwrap();
+    let from = sim
+        .body_translation(sim.tanks[sim.tank_index(tank_id).unwrap()].body)
+        .planar();
+    let index = sim.add_cover(&sloppy_core::sim::arena::CoverDef {
+        kind: sloppy_core::sim::types::CoverKind::Drum,
+        x: from.x + 6.0 * aim.sin(),
+        z: from.z + 6.0 * aim.cos(),
+        w: 1.0,
+        d: 1.0,
+        h: 1.2,
+        hp: f64::INFINITY,
+        color: 0xaa3322,
+        timber_join: None,
+        timber_bays: None,
+        debris_seed: None,
+    });
+    let drum_id = sim.covers[index].id;
+    net.run(500.0);
+    net.peers[alice].recording = true;
+    net.peers[alice].input.move_x = aim.sin();
+    net.peers[alice].input.move_z = aim.cos();
+    net.run(1500.0);
+    net.peers[alice].input.move_x = 0.0;
+    net.peers[alice].input.move_z = 0.0;
+    net.run(2500.0);
+    let peer = &net.peers[alice];
+    let gaps: Vec<f64> = peer
+        .drawn
+        .iter()
+        .filter_map(|frame| {
+            let viewer = frame.viewer?;
+            let (_, drum) = frame.movable.iter().find(|(id, _)| *id == drum_id)?;
+            Some((drum.x - viewer.x).hypot(drum.z - viewer.z))
+        })
+        .collect();
+    let closest = gaps.iter().copied().fold(f64::INFINITY, f64::min);
+    // Drawn from the delayed display, the drum would sink about a metre into the pushing
+    // hull, which is drawn in the present.
+    assert!(
+        closest > 1.6,
+        "the drum stays ahead of the hull: {closest} m"
+    );
+    let mut steps = peer
+        .drawn
+        .windows(2)
+        .filter_map(|pair| {
+            let (_, a) = pair[0].movable.iter().find(|(id, _)| *id == drum_id)?;
+            let (_, b) = pair[1].movable.iter().find(|(id, _)| *id == drum_id)?;
+            Some((b.x - a.x).hypot(b.z - a.z))
+        })
+        .collect::<Vec<f64>>();
+    let largest = percentile_of(&mut steps, 1.0);
+    eprintln!("drum drawn: closest {closest:.2} m to the hull, largest step {largest:.3} m");
+    assert!(
+        largest < 0.25,
+        "the drum never jumps between frames: {largest} m"
+    );
+}
+
+fn percentile_of(values: &mut [f64], fraction: f64) -> f64 {
+    values.sort_by(f64::total_cmp);
+    values[((values.len() - 1) as f64 * fraction).round() as usize]
 }
 
 #[test]

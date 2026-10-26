@@ -9,7 +9,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::prediction::HullState;
+use super::prediction::{HullState, MovingBody};
 use super::replication::{
     BinaryMessage, DecodedFrame, StateMirror, TimedEvent, read_binary_message,
 };
@@ -250,6 +250,7 @@ impl WireView {
                     "ackTick": batch.ack_tick,
                     "ackArrival": batch.ack_arrival,
                     "hull": batch.hull.as_ref().map(HullState::to_json),
+                    "bodies": batch.bodies.iter().map(MovingBody::to_json).collect::<Vec<_>>(),
                     "snapshots": frames,
                 }))
             }

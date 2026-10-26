@@ -18,7 +18,10 @@ use super::scene_codec::{VEHICLE_KINDS, index_of};
 use super::schema::ReadResult;
 use super::wire::{WireReader, put_varint};
 use crate::sim::damage::tree_stump;
+use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
+use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
+use crate::sim::debris_physics::{DebrisMaterial, debris_material};
 use crate::sim::math::{Point3, Quat4, Vec2};
 use crate::sim::physics::{
     from_vector, interaction_groups, query_filter, to_rotation, to_vector, vector,
@@ -27,7 +30,8 @@ use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderT
 use crate::sim::simulation::{Simulation, arena_world, cover_parts};
 use crate::sim::tank_driving::{Hull, drive_hull};
 use crate::sim::tank_lifecycle::tank_body_parts;
-use crate::sim::types::{CoverKind, VehicleKind};
+use crate::sim::types::{CoverKind, FragmentShape, VehicleKind};
+use crate::sim::wrecks::wreck_piece_box;
 
 /// Multiplayer always drives at the standard speed.
 const SPEED_SCALE: f64 = 1.0;
@@ -148,6 +152,130 @@ impl HullState {
     }
 }
 
+/// Which replicated record a [`MovingBody`] is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BodyKind {
+    /// Movable cover: a drum, a crate, a tank trap.
+    Cover,
+    /// A piece of solid debris.
+    Fragment,
+}
+
+/// Bodies this close to the viewer's hull, and awake, travel with its hull, metres.
+pub const MOVING_BODY_REACH: f64 = 8.0;
+/// Most moving bodies one snapshot carries.
+pub const MAX_MOVING_BODIES: usize = 16;
+
+/// A body moving near the viewer's hull, with its velocity as the host's physics holds
+/// it, so prediction carries it on from its replicated pose instead of from rest. The
+/// replicated scene sends poses, not velocities.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MovingBody {
+    pub kind: BodyKind,
+    pub id: u32,
+    pub velocity: Point3,
+    pub spin: Point3,
+}
+
+impl MovingBody {
+    /// The awake movable cover and solid debris within [`MOVING_BODY_REACH`] of the live
+    /// tank at `tank_index`, nearest first, at most [`MAX_MOVING_BODIES`].
+    pub fn capture_near(simulation: &Simulation, tank_index: usize, out: &mut Vec<MovingBody>) {
+        out.clear();
+        let tank = &simulation.tanks[tank_index];
+        if !tank.alive {
+            return;
+        }
+        let at = simulation.body_translation(tank.body).planar();
+        let mut near = |kind: BodyKind, id: u32, handle: RigidBodyHandle| {
+            let Some(body) = simulation.world.bodies.get(handle) else {
+                return;
+            };
+            let gap = crate::sim::math::distance(from_vector(body.translation()).planar(), at);
+            if body.is_sleeping() || gap > MOVING_BODY_REACH {
+                return;
+            }
+            out.push(MovingBody {
+                kind,
+                id,
+                velocity: from_vector(body.linvel()),
+                spin: from_vector(body.angvel()),
+            });
+        };
+        for &index in &simulation.movable_covers {
+            let cover = &simulation.covers[index];
+            if cover.alive {
+                near(BodyKind::Cover, cover.id, cover.body);
+            }
+        }
+        for fragment in &simulation.fragments {
+            if fragment.wreck.is_some() || fragment.dimensions.is_some() {
+                near(BodyKind::Fragment, fragment.id, fragment.body);
+            }
+        }
+        let gap = |body: &MovingBody| {
+            let handle = match body.kind {
+                BodyKind::Cover => simulation
+                    .covers
+                    .iter()
+                    .find(|cover| cover.id == body.id)
+                    .map(|cover| cover.body),
+                BodyKind::Fragment => simulation
+                    .fragments
+                    .iter()
+                    .find(|fragment| fragment.id == body.id)
+                    .map(|fragment| fragment.body),
+            };
+            handle.map_or(f64::INFINITY, |handle| {
+                crate::sim::math::distance(simulation.body_translation(handle).planar(), at)
+            })
+        };
+        if out.len() > MAX_MOVING_BODIES {
+            out.sort_by(|a, b| gap(a).total_cmp(&gap(b)));
+            out.truncate(MAX_MOVING_BODIES);
+        }
+    }
+
+    /// The wire form: kind, id, then velocity and spin as Rapier's `f32`.
+    pub fn write(&self, out: &mut Vec<u8>) {
+        out.push(match self.kind {
+            BodyKind::Cover => 0,
+            BodyKind::Fragment => 1,
+        });
+        put_varint(out, u64::from(self.id));
+        put_f32s(out, self.velocity);
+        put_f32s(out, self.spin);
+    }
+
+    pub fn read(reader: &mut WireReader<'_>) -> ReadResult<Self> {
+        let kind = match reader.byte()? {
+            0 => BodyKind::Cover,
+            1 => BodyKind::Fragment,
+            _ => return Err("Invalid moving body".into()),
+        };
+        Ok(Self {
+            kind,
+            id: reader.varint32()?,
+            velocity: read_point(reader)?,
+            spin: read_point(reader)?,
+        })
+    }
+
+    /// A readable form for the development wire log.
+    pub fn to_json(&self) -> Value {
+        let point = |p: Point3| json!([p.x, p.y, p.z]);
+        json!({
+            "kind": match self.kind {
+                BodyKind::Cover => "cover",
+                BodyKind::Fragment => "fragment",
+            },
+            "id": self.id,
+            "v": point(self.velocity),
+            "spin": point(self.spin),
+        })
+    }
+}
+
 /// The predicted hull after a step.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PredictedPose {
@@ -187,6 +315,7 @@ struct CoverBody {
 pub struct HullContacts {
     pub tank: bool,
     pub movable_cover: bool,
+    pub debris: bool,
     /// Standing cover or a stump.
     pub cover: bool,
 }
@@ -195,8 +324,42 @@ impl HullContacts {
     pub fn add(&mut self, other: HullContacts) {
         self.tank |= other.tank;
         self.movable_cover |= other.movable_cover;
+        self.debris |= other.debris;
         self.cover |= other.cover;
     }
+}
+
+/// A replicated record whose body the predicted world moves: another tank, movable cover
+/// or a piece of solid debris.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Moved {
+    Tank(u32),
+    Cover(u32),
+    Fragment(u32),
+}
+
+/// A moved body's pose in the predicted world.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BodyPose {
+    pub position: Point3,
+    pub rotation: Quat4,
+    /// A tank's hull heading.
+    pub heading: f64,
+    pub velocity: Point3,
+    /// Asleep or all but still.
+    pub resting: bool,
+}
+
+/// Debris this far from the viewer's hull (metres) joins the predicted world: farther
+/// than the hull can drive in a prediction window.
+const DEBRIS_REACH: f64 = 12.0;
+/// A body slower than this (m/s and rad/s) counts as resting.
+const RESTING_SPEED: f64 = 0.05;
+
+/// A piece of solid debris in the predicted world.
+struct DebrisBody {
+    body: RigidBodyHandle,
+    seen: u64,
 }
 
 struct OtherTank {
@@ -216,6 +379,7 @@ pub struct TankPredictor {
     hull: Option<PredictedHull>,
     covers: HashMap<u32, CoverBody>,
     tanks: HashMap<u32, OtherTank>,
+    debris: HashMap<u32, DebrisBody>,
     /// Counts scene syncs, to find replicated records that disappeared.
     sync: u64,
     /// Storage reused for their ids.
@@ -229,6 +393,7 @@ impl Default for TankPredictor {
             hull: None,
             covers: HashMap::new(),
             tanks: HashMap::new(),
+            debris: HashMap::new(),
             sync: 0,
             gone: Vec::new(),
         }
@@ -294,6 +459,74 @@ impl TankPredictor {
         );
         for id in self.gone.drain(..) {
             if let Some(old) = self.covers.remove(&id) {
+                self.world.remove_body(old.body);
+            }
+        }
+    }
+
+    /// Matches what moves to a received scene: the bodies the host reported moving near the
+    /// hull carry on at their velocities (the rest of the movable cover rests), and the
+    /// solid debris within [`DEBRIS_REACH`] of `around` joins the world at its replicated
+    /// pose. Call after [`sync_scene`](Self::sync_scene) with the same scene.
+    pub fn sync_bodies(&mut self, state: &RenderState, bodies: &[MovingBody], around: Point3) {
+        let sync = self.sync;
+        let moving = |kind: BodyKind, id: u32| {
+            bodies
+                .iter()
+                .find(|body| body.kind == kind && body.id == id)
+        };
+        for moved in bodies.iter().filter(|body| body.kind == BodyKind::Cover) {
+            if let Some(cover) = self.covers.get(&moved.id).filter(|cover| cover.movable) {
+                let body = &mut self.world.bodies[cover.body];
+                body.set_linvel(to_vector(moved.velocity), true);
+                body.set_angvel(to_vector(moved.spin), true);
+            }
+        }
+        for fragment in &state.fragments {
+            // Replicated life stops at the cleanup's length: below it the piece is sinking
+            // and no longer blocks tanks.
+            if !solid_debris(fragment)
+                || fragment.life < DEBRIS_CLEANUP_SECONDS
+                || crate::sim::math::distance(fragment.position.planar(), around.planar())
+                    > DEBRIS_REACH
+            {
+                continue;
+            }
+            if !self.debris.contains_key(&fragment.id) {
+                let Some((body, collider)) = debris_parts(fragment) else {
+                    continue;
+                };
+                let body = self.world.insert_body(body);
+                self.world.bodies[body].set_additional_solver_iterations(2);
+                self.world.insert_collider(collider, Some(body));
+                self.debris
+                    .insert(fragment.id, DebrisBody { body, seen: sync });
+            }
+            let debris = self.debris.get_mut(&fragment.id).expect("inserted above");
+            debris.seen = sync;
+            let body = &mut self.world.bodies[debris.body];
+            body.set_translation(to_vector(fragment.position), false);
+            body.set_rotation(to_rotation(fragment.rotation), false);
+            match moving(BodyKind::Fragment, fragment.id) {
+                Some(moved) => {
+                    body.set_linvel(to_vector(moved.velocity), true);
+                    body.set_angvel(to_vector(moved.spin), true);
+                }
+                None => {
+                    body.set_linvel(Vector::ZERO, false);
+                    body.set_angvel(Vector::ZERO, false);
+                    body.sleep();
+                }
+            }
+        }
+        self.gone.extend(
+            self.debris
+                .iter()
+                .filter(|(_, debris)| debris.seen != sync)
+                .map(|(id, _)| *id),
+        );
+        for id in self.gone.drain(..) {
+            if let Some(old) = self.debris.remove(&id) {
                 self.world.remove_body(old.body);
             }
         }
@@ -466,12 +699,24 @@ impl TankPredictor {
         self.world.step();
     }
 
-    /// What the viewer's hull touches after the last step: other tanks and cover it is in
-    /// contact with. The ground does not count.
+    /// What the viewer's hull touches after the last step: other tanks, cover and debris it
+    /// is in contact with. The ground does not count.
     pub fn hull_contacts(&self) -> HullContacts {
         let mut contacts = HullContacts::default();
+        self.touching(|moved| match moved {
+            Some(Moved::Tank(_)) => contacts.tank = true,
+            Some(Moved::Cover(_)) => contacts.movable_cover = true,
+            Some(Moved::Fragment(_)) => contacts.debris = true,
+            None => contacts.cover = true,
+        });
+        contacts
+    }
+
+    /// Calls `touched` for every body the viewer's hull is in contact with after the last
+    /// step: a moved record, or `None` for standing cover and stumps.
+    pub fn touching(&self, mut touched: impl FnMut(Option<Moved>)) {
         let Some(hull) = self.hull.as_ref() else {
-            return contacts;
+            return;
         };
         for &collider in self.world.bodies[hull.body].colliders() {
             for pair in self.world.contact_pairs_with(collider) {
@@ -486,18 +731,58 @@ impl TankPredictor {
                 let Some(body) = self.world.colliders[other].parent() else {
                     continue;
                 };
-                if self.tanks.values().any(|tank| tank.body == body) {
-                    contacts.tank = true;
-                } else if let Some(cover) = self.covers.values().find(|cover| cover.body == body) {
-                    if cover.movable {
-                        contacts.movable_cover = true;
-                    } else {
-                        contacts.cover = true;
-                    }
+                if let Some((&id, _)) = self.tanks.iter().find(|(_, tank)| tank.body == body) {
+                    touched(Some(Moved::Tank(id)));
+                } else if let Some((&id, cover)) =
+                    self.covers.iter().find(|(_, cover)| cover.body == body)
+                {
+                    touched(cover.movable.then_some(Moved::Cover(id)));
+                } else if let Some((&id, _)) =
+                    self.debris.iter().find(|(_, debris)| debris.body == body)
+                {
+                    touched(Some(Moved::Fragment(id)));
                 }
             }
         }
-        contacts
+    }
+
+    /// Other tanks within `reach` of the viewer's hull.
+    pub fn tanks_near(&self, reach: f64, mut near: impl FnMut(Moved)) {
+        let Some(hull) = self.pose() else {
+            return;
+        };
+        for (&id, tank) in &self.tanks {
+            let at = from_vector(self.world.bodies[tank.body].translation());
+            if crate::sim::math::distance(at.planar(), hull.position.planar()) <= reach {
+                near(Moved::Tank(id));
+            }
+        }
+    }
+
+    /// Where the predicted world has a moved body now.
+    pub fn body_pose(&self, moved: Moved) -> Option<BodyPose> {
+        let (handle, heading) = match moved {
+            Moved::Tank(id) => self
+                .tanks
+                .get(&id)
+                .map(|tank| (tank.body, tank.hull.heading))?,
+            Moved::Cover(id) => (
+                self.covers.get(&id).filter(|cover| cover.movable)?.body,
+                0.0,
+            ),
+            Moved::Fragment(id) => (self.debris.get(&id)?.body, 0.0),
+        };
+        let body = &self.world.bodies[handle];
+        let (linvel, angvel) = (body.linvel(), body.angvel());
+        Some(BodyPose {
+            position: from_vector(body.translation()),
+            rotation: crate::sim::physics::from_rotation(*body.rotation()),
+            heading,
+            velocity: from_vector(linvel),
+            resting: body.is_sleeping()
+                || (f64::from(linvel.length()) < RESTING_SPEED
+                    && f64::from(angvel.length()) < RESTING_SPEED),
+        })
     }
 
     pub fn pose(&self) -> Option<PredictedPose> {
@@ -544,6 +829,58 @@ fn cover_form(cover: &RenderCover) -> Option<CoverForm> {
     } else {
         None
     }
+}
+
+/// The body and collider the host gives a piece of solid debris (`add_wreck_piece`,
+/// `Breakup::piece_with`), built from its replicated record; `None` for other fragments.
+fn debris_parts(fragment: &RenderFragment) -> Option<(RigidBodyBuilder, ColliderBuilder)> {
+    if let (Some(kind), Some(part)) = (fragment.wreck, fragment.part) {
+        let (half, share) = wreck_piece_box(kind, part);
+        let [x, y, z] = half.map(|extent| extent as f32);
+        let mass = vehicle(kind).mass * 1.6 * share;
+        return Some((
+            RigidBodyBuilder::dynamic().ccd_enabled(true),
+            ColliderBuilder::cuboid(x, y, z)
+                .collision_groups(interaction_groups(group::WRECK))
+                .mass(mass as f32)
+                .friction(0.95)
+                .restitution(0.05),
+        ));
+    }
+    let size = fragment.dimensions?;
+    let (w, h, d) = (size.x, size.y, size.z);
+    let builder = if fragment.shape == Some(FragmentShape::Log) {
+        ColliderBuilder::cylinder((h / 2.0) as f32, (w / 2.0) as f32)
+    } else {
+        ColliderBuilder::cuboid((w / 2.0) as f32, (h / 2.0) as f32, (d / 2.0) as f32)
+    };
+    let material = fragment.material.unwrap_or(DebrisMaterial::Wood);
+    let density = if material == DebrisMaterial::Metal {
+        0.65
+    } else {
+        0.35
+    };
+    let surface = debris_material(material);
+    let membership = if fragment.timber_part.is_some() {
+        group::TIMBER_DEBRIS
+    } else if fragment.tower_piece.is_some() {
+        group::CRUSHED_FRAME
+    } else if fragment.house_piece.is_some() {
+        group::HOUSE_SHARD
+    } else {
+        group::PUSHABLE_DEBRIS
+    };
+    Some((
+        RigidBodyBuilder::dynamic()
+            .linear_damping(0.12)
+            .angular_damping(0.25)
+            .can_sleep(true),
+        builder
+            .collision_groups(interaction_groups(membership))
+            .mass(0.18f64.max(w * h * d * density) as f32)
+            .friction(surface.friction as f32)
+            .restitution(surface.restitution as f32),
+    ))
 }
 
 /// Whether a replicated fragment blocks tanks on the host: wreck parts and the authored

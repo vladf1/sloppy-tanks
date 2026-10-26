@@ -17,7 +17,10 @@ use std::collections::VecDeque;
 use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::own_shots::{CoverCast, CoverHit};
 use super::player_controls::Ack;
-use super::prediction::{HullContacts, HullState, PredictedPose, TankPredictor, solid_debris};
+use super::prediction::{
+    BodyPose, HullContacts, HullState, Moved, MovingBody, PredictedPose, TankPredictor,
+    solid_debris,
+};
 use crate::sim::data::STEP;
 use crate::sim::math::{Point3, Vec2, angle_delta, distance};
 use crate::sim::render_state::RenderState;
@@ -52,10 +55,16 @@ const CORRECTION_SAMPLES: usize = 600;
 const CONFIRM_POSITION: f64 = 0.005;
 const CONFIRM_VELOCITY: f64 = 0.05;
 const CONFIRM_HEADING: f64 = 0.002;
-/// Another tank or movable cover this close to the host's hull makes a snapshot replay
-/// even when it confirms the prediction: the replay places them as replicated, which a
-/// held prediction does not.
+/// Another tank, movable cover or solid debris this close to the host's hull makes a
+/// snapshot replay even when it confirms the prediction: the replay places them as
+/// replicated, which a held prediction does not.
 const MOVER_REACH: f64 = 8.0;
+/// Other tanks this close to the hull (metres) are predicted in the present for drawing
+/// too: a tank about to be rammed must be drawn where the hull will meet it.
+const TANK_PRESENT_REACH: f64 = 10.0;
+/// A body the hull stopped touching this many ticks ago may go back to the delayed
+/// display once it rests where the display has it.
+pub const HOLD_TICKS: u64 = 30;
 /// Corrections at least this large count toward their cause's tally.
 const NOTICEABLE_CORRECTION: f64 = 0.02;
 /// A solid piece of debris whose centre is this much closer than half its longest side
@@ -79,9 +88,11 @@ pub struct FiredShot {
 }
 
 /// The viewer's hull from the newest snapshot batch.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct HostUpdate {
     pub hull: Option<HullState>,
+    /// The bodies moving near it, with their velocities.
+    pub bodies: Vec<MovingBody>,
     /// A batch since the previous update carried a blast near the viewer or a hit on it,
     /// which the host may have pushed the hull with.
     pub blast: bool,
@@ -197,6 +208,24 @@ impl CorrectionStats {
     }
 }
 
+/// A body the predicted hull touched, drawn where the predicted world has it.
+#[derive(Clone, Copy, Debug)]
+struct Held {
+    moved: Moved,
+    /// The newest predicted tick it touched the hull (or, a tank, was near it).
+    touched: u64,
+    /// What is left of its latest correction, as for the hull.
+    correction: Point3,
+}
+
+/// A held body to draw: where, and the newest tick it touched the hull.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HeldPose {
+    pub moved: Moved,
+    pub pose: BodyPose,
+    pub touched: u64,
+}
+
 #[derive(Clone, Copy, Debug)]
 struct SentInput {
     seq: i64,
@@ -253,6 +282,8 @@ pub struct HullPrediction {
     gun_interval: f64,
     /// The host's latest shot of this life: its tick and the interval it reloaded to.
     host_shot: Option<(u64, f64)>,
+    /// Bodies the hull touched (and tanks near it), drawn from the predicted world.
+    held: Vec<Held>,
     pub stats: CorrectionStats,
 }
 
@@ -278,6 +309,7 @@ impl HullPrediction {
         // A new life starts loaded.
         self.gun_cooldown = 0.0;
         self.host_shot = None;
+        self.held.clear();
         self.predictor.clear_hull();
     }
 
@@ -412,7 +444,18 @@ impl HullPrediction {
                 }
             }
         }
+        // Held bodies glide off their corrections like the hull.
+        let held_before: Vec<(Moved, Point3)> = self
+            .held
+            .iter()
+            .filter_map(|held| {
+                let pose = self.predictor.body_pose(held.moved)?;
+                Some((held.moved, pose.position))
+            })
+            .collect();
         self.predictor.sync_scene(scene);
+        self.predictor
+            .sync_bodies(scene, &update.bodies, hull.position);
         self.predictor.reset(&hull);
         let old = if continuing { self.current } else { None };
         let mut previous = self.predictor.pose();
@@ -421,6 +464,7 @@ impl HullPrediction {
         for &(tick, input) in &self.inputs {
             self.predictor.step(input.drive.x, input.drive.z);
             self.touched.add(self.predictor.hull_contacts());
+            hold_touched(&mut self.held, &self.predictor, tick);
             previous = current;
             current = self.predictor.pose();
             if let Some(pose) = current {
@@ -431,6 +475,25 @@ impl HullPrediction {
         self.current = current;
         self.life = Some(hull.life);
         self.reload_gun(hull.tick, scene);
+        for (moved, before) in held_before {
+            let after = self.predictor.body_pose(moved).map(|pose| pose.position);
+            if let (Some(held), Some(after)) =
+                (self.held.iter_mut().find(|held| held.moved == moved), after)
+            {
+                let jump = Point3::new(before.x - after.x, before.y - after.y, before.z - after.z);
+                if jump.x.hypot(jump.z) > SNAP_DISTANCE {
+                    held.correction = Point3::ZERO;
+                } else {
+                    held.correction = Point3::new(
+                        held.correction.x + jump.x,
+                        held.correction.y + jump.y,
+                        held.correction.z + jump.z,
+                    );
+                }
+            }
+        }
+        self.held
+            .retain(|held| self.predictor.body_pose(held.moved).is_some());
         let touched = std::mem::take(&mut self.touched);
         match (old, current) {
             (Some(old), Some(new)) => {
@@ -441,7 +504,9 @@ impl HullPrediction {
                     CorrectionCause::Tank
                 } else if touched.movable_cover {
                     CorrectionCause::Crate
-                } else if near_solid_debris(scene, &[hull.position, old.position, new.position]) {
+                } else if touched.debris
+                    || near_solid_debris(scene, &[hull.position, old.position, new.position])
+                {
                     CorrectionCause::Debris
                 } else if touched.cover {
                     CorrectionCause::Cover
@@ -541,6 +606,21 @@ impl HullPrediction {
         self.correction.x *= decay;
         self.correction.z *= decay;
         self.heading_correction *= decay;
+        for held in &mut self.held {
+            held.correction = Point3::new(
+                held.correction.x * decay,
+                held.correction.y * decay,
+                held.correction.z * decay,
+            );
+        }
+        // Tanks that drove out of reach go back to the delayed display.
+        let tick = self.tick;
+        let predictor = &self.predictor;
+        self.held.retain(|held| {
+            !matches!(held.moved, Moved::Tank(_)) || tick <= held.touched + HOLD_TICKS
+        });
+        self.held
+            .retain(|held| predictor.body_pose(held.moved).is_some());
         if !self.active() {
             return fired;
         }
@@ -587,6 +667,7 @@ impl HullPrediction {
             }
             self.predictor.step(drive.drive.x, drive.drive.z);
             self.touched.add(self.predictor.hull_contacts());
+            hold_touched(&mut self.held, &self.predictor, self.tick);
             self.inputs.push_back((self.tick, drive));
             self.inputs.retain_back(MAX_PENDING_TICKS);
             self.previous = self.current;
@@ -598,6 +679,39 @@ impl HullPrediction {
             steps += 1;
         }
         fired
+    }
+
+    /// The held bodies to draw at `now_ms`: where the predicted world has them, less what
+    /// is left of their corrections, carried back to the moment between the last two
+    /// predicted ticks the hull is drawn at.
+    pub fn held(&self, now_ms: f64) -> Vec<HeldPose> {
+        let back = self.present(now_ms).map_or(0.0, |present| {
+            (present - self.tick as f64).clamp(-1.0, 0.0) * STEP
+        });
+        self.held
+            .iter()
+            .filter_map(|held| {
+                let mut pose = self.predictor.body_pose(held.moved)?;
+                pose.position.x += held.correction.x + pose.velocity.x * back;
+                pose.position.y += held.correction.y + pose.velocity.y * back;
+                pose.position.z += held.correction.z + pose.velocity.z * back;
+                Some(HeldPose {
+                    moved: held.moved,
+                    pose,
+                    touched: held.touched,
+                })
+            })
+            .collect()
+    }
+
+    /// Hands a held body back to the delayed display.
+    pub fn release(&mut self, moved: Moved) {
+        self.held.retain(|held| held.moved != moved);
+    }
+
+    /// The newest predicted tick.
+    pub fn predicted_tick(&self) -> u64 {
+        self.tick
     }
 
     /// The predicted present (fractional tick) while a live hull is predicted.
@@ -645,6 +759,25 @@ fn near_solid_debris(scene: &RenderState, points: &[Point3]) -> bool {
         })
 }
 
+/// Marks what the predicted hull touches after the step to `tick`, and the tanks near it,
+/// held.
+fn hold_touched(held: &mut Vec<Held>, predictor: &TankPredictor, tick: u64) {
+    let mut hold = |moved: Moved| match held.iter_mut().find(|held| held.moved == moved) {
+        Some(existing) => existing.touched = existing.touched.max(tick),
+        None => held.push(Held {
+            moved,
+            touched: tick,
+            correction: Point3::ZERO,
+        }),
+    };
+    predictor.touching(|moved| {
+        if let Some(moved) = moved {
+            hold(moved);
+        }
+    });
+    predictor.tanks_near(TANK_PRESENT_REACH, hold);
+}
+
 /// How far `hull` is from the pose predicted for its tick, when it is close enough to
 /// confirm it.
 fn agreement(predicted: &PredictedPose, hull: &HullState) -> Option<f64> {
@@ -672,6 +805,13 @@ fn movers_near(scene: &RenderState, position: Point3) -> bool {
                 .iter()
                 .filter(|cover| cover.alive && cover.kind.movable())
                 .map(|cover| cover.position.planar()),
+        )
+        .chain(
+            scene
+                .fragments
+                .iter()
+                .filter(|fragment| solid_debris(fragment))
+                .map(|fragment| fragment.position.planar()),
         )
         .any(|other| distance(at, other) < MOVER_REACH)
 }

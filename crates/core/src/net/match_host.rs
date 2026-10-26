@@ -15,7 +15,7 @@ use super::multiplayer_simulation::{
     release_player_tank,
 };
 use super::player_controls::PlayerControls;
-use super::prediction::HullState;
+use super::prediction::{HullState, MovingBody};
 use super::protocol::{
     CONTENT_VERSION, Control, EMPTY_GRACE_MS, JoinRequest, Lobby, MAX_BATCH_FRAMES,
     MAX_BATTLE_OVERRUN_MS, MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, Message, PROTOCOL_VERSION,
@@ -1072,9 +1072,13 @@ impl MatchHost {
             let ack = controls.map(|controls| controls.ack).unwrap_or_default();
             // The viewer's own hull, for its client to predict from.
             let simulation = self.simulation.as_ref().expect("checked above");
-            let hull = controls
-                .and_then(|controls| simulation.tank_index(controls.tank_id))
-                .and_then(|index| HullState::capture(simulation, index, tick));
+            let index = controls.and_then(|controls| simulation.tank_index(controls.tank_id));
+            let hull = index.and_then(|index| HullState::capture(simulation, index, tick));
+            // And what moves near it, which prediction carries on.
+            let mut bodies = Vec::new();
+            if let (Some(index), Some(_)) = (index, hull) {
+                MovingBody::capture_near(simulation, index, &mut bodies);
+            }
             // A baseline sent since the previous batch already shows its earlier frames.
             let unseen: Vec<_> = frames
                 .iter()
@@ -1096,7 +1100,7 @@ impl MatchHost {
                     &ack,
                     first_seq,
                     chunk.len(),
-                    hull.as_ref(),
+                    hull.as_ref().map(|hull| (hull, bodies.as_slice())),
                 );
                 for (frame_tick, _, body) in chunk {
                     super::wire::put_varint(&mut message, last_tick - frame_tick);
