@@ -422,6 +422,33 @@ fn wire_input_is_rounded_omits_idle_defaults_and_is_accepted_as_the_same_command
     assert!(command.mine);
 }
 
+#[test]
+fn a_click_whose_press_and_release_start_on_one_tick_still_fires_once() {
+    let (mut sim, tank) = alice_room();
+    let mut controls = PlayerControls::new(&sim, tank, 0.0, true).unwrap();
+    let still = json!({ "moveX": 0 });
+    // The press asked for tick 3 but arrived for tick 5; its release asked for tick 5.
+    let press = input(
+        1,
+        1,
+        net_support::merged(still.clone(), json!({ "tick": 3 })),
+    );
+    let release = input(
+        1,
+        2,
+        net_support::merged(still, json!({ "tick": 5, "fire": false })),
+    );
+    assert!(controls.accept_at(&sim, &press, 4, 5, 70.0));
+    assert!(controls.accept_at(&sim, &release, 4, 5, 72.0));
+    let at_five = controls.command(&mut sim, 5, 83.0).unwrap();
+    assert!(
+        at_five.fire,
+        "the overtaken press fires on the tick it was due"
+    );
+    assert!(!controls.command(&mut sim, 6, 100.0).unwrap().fire);
+    assert_eq!(controls.ack.input_seq, 2, "the release drives from then on");
+}
+
 // ---- Room rosters -------------------------------------------------------------------
 
 fn players() -> [PlayerAssignment; 2] {

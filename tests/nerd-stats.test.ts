@@ -153,6 +153,13 @@ function fixture(network = false) {
       fireToReportMs: { count: 12, mean: 118, p50: 115, p95: 150, max: 160 },
       unansweredPresses: 1,
       hitOffsetM: { count: 5, mean: 1.234, p50: 1.1, p95: 2.05, max: 2.1 },
+      ownShots: {
+        predicted: 14,
+        confirmed: 13,
+        unconfirmedShells: 1,
+        unpredicted: 2,
+        errorM: { count: 13, mean: 0.031, p50: 0.02, p95: 0.08, max: 0.1 },
+      },
     },
   };
   const engine = {
@@ -250,6 +257,8 @@ test("network stats use received scene counts and never require a client physics
     assert.ok(text.includes("Input seq sent / ack") && text.includes("10 / 9"));
     assert.ok(text.includes("Late input starts") && text.includes("2 / 25"));
     assert.ok(text.includes("Fire to flash") && text.includes("196 ms"));
+    assert.ok(text.includes("Own shots on time") && text.includes("13 / 14"));
+    assert.ok(text.includes("Own shell error") && text.includes("3.1 cm"));
     assert.ok(text.includes("Hit offset p95") && text.includes("2.05 m"));
     assert.ok(text.includes("Debris corrections") && text.includes("2.0 cm/s"));
     assert.ok(

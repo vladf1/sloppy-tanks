@@ -231,6 +231,8 @@ pub struct PlayerControls {
     input: Option<ControlInput>,
     /// The arrival tick of `input`.
     input_arrival: u64,
+    /// The tick `input` took over on.
+    input_due: u64,
     waiting: VecDeque<WaitingInput>,
     last_seq: i64,
     last_received_ms: f64,
@@ -269,6 +271,7 @@ impl PlayerControls {
             alive: tank.alive,
             input: None,
             input_arrival: 0,
+            input_due: 0,
             waiting: VecDeque::new(),
             last_seq: 0,
             last_received_ms: now_ms,
@@ -395,13 +398,20 @@ impl PlayerControls {
         if !tank.alive {
             return Some(command);
         }
-        // The newest input due by this tick takes over; any it overtook never drives.
+        // The newest input due by this tick takes over; any it overtook never drives, but a
+        // fire press it overtook still fires this tick: a click whose press arrived late
+        // with its release must not vanish, since the client already drew its shot.
+        let mut overtaken_fire = false;
         while self
             .waiting
             .front()
             .is_some_and(|waiting| waiting.tick <= tick)
         {
             let waiting = self.waiting.pop_front().expect("checked above");
+            if let Some(overtaken) = self.input.as_ref().filter(|_| self.input_due == tick) {
+                overtaken_fire |= overtaken.fire;
+            }
+            self.input_due = tick;
             for action in &waiting.input.actions {
                 self.actions.push_back((*action, waiting.received_ms));
             }
@@ -429,7 +439,7 @@ impl PlayerControls {
         let origin = simulation.body_translation(tank.body);
         command.move_x = move_x;
         command.move_z = move_z;
-        command.fire = fire;
+        command.fire = fire || overtaken_fire;
         command.aim = match aim {
             Aim::Angle(angle) => angle,
             Aim::Point { x, z } => (x - origin.x).atan2(z - origin.z),

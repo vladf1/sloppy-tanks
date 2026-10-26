@@ -247,6 +247,7 @@ function derive(before, after, played) {
     fireToReportMs: feel.fireToReportMs,
     unansweredPresses: feel.unansweredPresses,
     hitOffsetM: feel.hitOffsetM,
+    ownShots: feel.ownShots,
   };
 }
 
@@ -341,6 +342,9 @@ function rows(result) {
     "late batches": player.lateBatches,
     "late inputs": `${player.lateInputStarts}/${player.inputStarts}`,
     "rx ms/s": round(player.receiveMsPerSecond, 1),
+    "own shots": player.ownShots
+      ? `${player.ownShots.confirmed}/${player.ownShots.predicted} -${player.ownShots.unconfirmedShells}`
+      : null,
     "KB/s": round(result.bandwidth?.wireKBpsPerPlayer, 1),
   }));
 }

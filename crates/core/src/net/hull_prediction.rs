@@ -7,10 +7,15 @@
 //! at and arrives in time to start there. Each snapshot restarts the predictor from the
 //! host's hull and replays the ticks the host has not reached; the difference from the
 //! previous prediction becomes a display offset that decays within about 100 ms.
+//!
+//! The prediction also runs the viewer's gun as the host does, so held fire shoots on the
+//! ticks the host's will ([`FiredShot`], drawn by [`super::own_shots`]): its reload counts
+//! down every tick and is rebuilt from the host's own shots at each snapshot.
 
 use std::collections::VecDeque;
 
 use super::fixed_step_clock::SIMULATION_STEP_MS;
+use super::own_shots::{CoverCast, CoverHit};
 use super::player_controls::Ack;
 use super::prediction::{HullContacts, HullState, PredictedPose, TankPredictor, solid_debris};
 use crate::sim::data::STEP;
@@ -56,6 +61,22 @@ const NOTICEABLE_CORRECTION: f64 = 0.02;
 /// A solid piece of debris whose centre is this much closer than half its longest side
 /// plus a hull's half length counts as touching the hull, for the statistics.
 const DEBRIS_REACH: f64 = 2.5;
+
+/// One frame's local controls as the prediction drives them.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PredictedInput {
+    /// The move input, rounded as the host reads it.
+    pub drive: Vec2,
+    pub fire: bool,
+}
+
+/// A shot the predicted gun fired: the host tick it fires on and the hull's position when
+/// it fires, after the tick before.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct FiredShot {
+    pub tick: u64,
+    pub position: Point3,
+}
 
 /// The viewer's hull from the newest snapshot batch.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -201,14 +222,14 @@ pub struct HullPrediction {
     tick: u64,
     previous: Option<PredictedPose>,
     current: Option<PredictedPose>,
-    /// The move input of each predicted tick the host has not confirmed, oldest first.
-    inputs: VecDeque<(u64, Vec2)>,
+    /// The input of each predicted tick the host has not confirmed, oldest first.
+    inputs: VecDeque<(u64, PredictedInput)>,
     /// The predicted hull after each of those ticks.
     poses: VecDeque<(u64, PredictedPose)>,
     /// The first tick the current local input drives, set once when that input appears.
     run_start: u64,
     /// The local input of the last frame.
-    last_input: Option<Vec2>,
+    last_input: Option<PredictedInput>,
     /// `P(now) = now / step + offset`: the predicted tick at local time `now`.
     offset: Option<f64>,
     target_offset: f64,
@@ -226,6 +247,12 @@ pub struct HullPrediction {
     touched: HullContacts,
     /// An acknowledgement since the previous restart showed an input started late.
     late_input: bool,
+    /// The gun's reload after the newest predicted tick, seconds, and the interval it
+    /// reloads to.
+    gun_cooldown: f64,
+    gun_interval: f64,
+    /// The host's latest shot of this life: its tick and the interval it reloaded to.
+    host_shot: Option<(u64, f64)>,
     pub stats: CorrectionStats,
 }
 
@@ -248,6 +275,9 @@ impl HullPrediction {
         self.correction = Vec2::ZERO;
         self.heading_correction = 0.0;
         self.touched = HullContacts::default();
+        // A new life starts loaded.
+        self.gun_cooldown = 0.0;
+        self.host_shot = None;
         self.predictor.clear_hull();
     }
 
@@ -294,6 +324,13 @@ impl HullPrediction {
         self.sent.retain_back(MAX_UNACKED_SENDS);
     }
 
+    /// The host fired the viewer's gun on `tick`, reloading for `interval` seconds.
+    pub fn host_fired(&mut self, tick: u64, interval: f64) {
+        if self.host_shot.is_none_or(|(latest, _)| tick > latest) {
+            self.host_shot = Some((tick, interval));
+        }
+    }
+
     /// One snapshot batch's acknowledgement: when inputs reach the host.
     pub fn acknowledge(&mut self, ack: &Ack) {
         let late_changes = self.stats.late_changes;
@@ -310,7 +347,10 @@ impl HullPrediction {
             self.clear();
             return;
         };
-        let newest_input = self.inputs.back().map_or(Vec2::ZERO, |(_, input)| *input);
+        let newest_input = self
+            .inputs
+            .back()
+            .map_or(PredictedInput::default(), |(_, input)| *input);
         while self
             .inputs
             .pop_front_if(|(tick, _)| *tick <= hull.tick)
@@ -358,6 +398,7 @@ impl HullPrediction {
             self.touched = HullContacts::default();
             self.stats.confirmed += 1;
             self.stats.record(difference, CorrectionCause::Other);
+            self.reload_gun(hull.tick, scene);
             return;
         }
         if restart {
@@ -378,7 +419,7 @@ impl HullPrediction {
         let mut current = previous;
         self.poses.clear();
         for &(tick, input) in &self.inputs {
-            self.predictor.step(input.x, input.z);
+            self.predictor.step(input.drive.x, input.drive.z);
             self.touched.add(self.predictor.hull_contacts());
             previous = current;
             current = self.predictor.pose();
@@ -389,6 +430,7 @@ impl HullPrediction {
         self.previous = previous;
         self.current = current;
         self.life = Some(hull.life);
+        self.reload_gun(hull.tick, scene);
         let touched = std::mem::take(&mut self.touched);
         match (old, current) {
             (Some(old), Some(new)) => {
@@ -425,6 +467,32 @@ impl HullPrediction {
         }
     }
 
+    /// Rebuilds the gun's reload at the newest predicted tick: the host's at `host_tick`,
+    /// from its latest shot when known (the replicated reload is rounded to 0.01 s, which
+    /// could move a shot by a tick) or the scene's, then the predicted ticks' fire.
+    fn reload_gun(&mut self, host_tick: u64, scene: &RenderState) {
+        let mut cooldown = match self.host_shot {
+            Some((tick, interval)) if tick <= host_tick => {
+                let mut cooldown = interval;
+                for _ in tick..host_tick {
+                    if cooldown == 0.0 {
+                        break;
+                    }
+                    cooldown = 0f64.max(cooldown - STEP);
+                }
+                cooldown
+            }
+            _ => scene.viewer().map_or(0.0, |viewer| viewer.cooldown),
+        };
+        for (_, input) in &self.inputs {
+            cooldown = 0f64.max(cooldown - STEP);
+            if input.fire && cooldown <= 0.0 {
+                cooldown = self.gun_interval;
+            }
+        }
+        self.gun_cooldown = cooldown;
+    }
+
     fn learn_arrival(&mut self, ack: &Ack) {
         if ack.input_seq <= self.acked || ack.arrival_tick == 0 {
             return;
@@ -450,12 +518,15 @@ impl HullPrediction {
         }
     }
 
-    /// Advances the prediction to `now_ms`, driving each new tick with `input`.
-    pub fn advance(&mut self, now_ms: f64, input: Vec2) {
+    /// Advances the prediction to `now_ms`, driving each new tick with `input` and a gun
+    /// that reloads for `interval` seconds. Returns the shots it fired.
+    pub fn advance(&mut self, now_ms: f64, input: PredictedInput, interval: f64) -> Vec<FiredShot> {
+        let mut fired = Vec::new();
+        self.gun_interval = interval;
         let dt_ms = self.last_ms.map_or(0.0, |last| (now_ms - last).max(0.0));
         self.last_ms = Some(now_ms);
         let Some(mut offset) = self.offset else {
-            return;
+            return fired;
         };
         // Follow the target at a bounded rate; a large error restarts the clock.
         let error = self.target_offset - offset;
@@ -471,7 +542,7 @@ impl HullPrediction {
         self.correction.z *= decay;
         self.heading_correction *= decay;
         if !self.active() {
-            return;
+            return fired;
         }
         self.stats.seconds += dt_ms / 1000.0;
         let present = now_ms / SIMULATION_STEP_MS + offset;
@@ -501,7 +572,20 @@ impl HullPrediction {
             } else {
                 earlier
             };
-            self.predictor.step(drive.x, drive.z);
+            // The host's order: the reload runs down, then held fire shoots from where the
+            // hull stood after the tick before, then the drive and the world step.
+            self.gun_cooldown = 0f64.max(self.gun_cooldown - STEP);
+            if drive.fire
+                && self.gun_cooldown <= 0.0
+                && let Some(pose) = self.current
+            {
+                self.gun_cooldown = interval;
+                fired.push(FiredShot {
+                    tick: self.tick,
+                    position: pose.position,
+                });
+            }
+            self.predictor.step(drive.drive.x, drive.drive.z);
             self.touched.add(self.predictor.hull_contacts());
             self.inputs.push_back((self.tick, drive));
             self.inputs.retain_back(MAX_PENDING_TICKS);
@@ -513,6 +597,7 @@ impl HullPrediction {
             }
             steps += 1;
         }
+        fired
     }
 
     /// The predicted present (fractional tick) while a live hull is predicted.
@@ -589,4 +674,10 @@ fn movers_near(scene: &RenderState, position: Point3) -> bool {
                 .map(|cover| cover.position.planar()),
         )
         .any(|other| distance(at, other) < MOVER_REACH)
+}
+
+impl CoverCast for HullPrediction {
+    fn cast_cover(&self, origin: Point3, direction: Vec2, distance: f64) -> Option<CoverHit> {
+        CoverCast::cast_cover(&self.predictor, origin, direction, distance)
+    }
 }

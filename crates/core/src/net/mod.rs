@@ -38,6 +38,7 @@ pub mod json;
 pub mod match_host;
 pub mod multiplayer_simulation;
 pub mod network_timeline;
+pub mod own_shots;
 pub mod player_controls;
 pub mod playout_clock;
 pub mod prediction;

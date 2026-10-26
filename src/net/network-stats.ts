@@ -63,6 +63,13 @@ export interface NetworkStatsSource extends RenderStats {
     fireToReportMs: Reading;
     unansweredPresses: number;
     hitOffsetM: Reading;
+    ownShots: {
+      predicted: number;
+      confirmed: number;
+      unconfirmedShells: number;
+      unpredicted: number;
+      errorM: Reading;
+    };
   };
 }
 
@@ -169,6 +176,16 @@ export function networkStatsSections(
           "Fire to flash p95",
           fire.count ? `${Math.round(fire.p95)} ms` : "–",
           `The 95th percentile of recent presses; the slowest took ${Math.round(fire.max)} ms.`,
+        ],
+        [
+          "Own shots on time",
+          `${feel.ownShots.confirmed} / ${feel.ownShots.predicted}`,
+          `Your shots drawn the moment you fired them that the server fired too, out of all such shots. ${feel.ownShots.unpredicted} more were fired by the server without being drawn early, and ${feel.ownShots.unconfirmedShells} early shells were never fired by the server and were dropped.`,
+        ],
+        [
+          "Own shell error",
+          feel.ownShots.errorM.count ? `${(feel.ownShots.errorM.mean * 100).toFixed(1)} cm` : "–",
+          `How far a shell drawn the moment you fired was from the server's shell, a tenth of a second into its flight: the mean of ${feel.ownShots.errorM.count}, 95th percentile ${(feel.ownShots.errorM.p95 * 100).toFixed(1)} cm. The shell then follows the server's path.`,
         ],
         [
           "Hit offset",

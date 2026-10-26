@@ -20,7 +20,7 @@ pub use super::pickups::collect_pickup;
 pub use super::projectiles::{interception_time, step_projectiles};
 
 /// Height of the hull origin above the ground-contact frame the muzzle offsets use.
-const MUZZLE_FRAME_OFFSET: f64 = 0.4;
+pub const MUZZLE_FRAME_OFFSET: f64 = 0.4;
 
 pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
     let tank = &simulation.tanks[tank_index];
@@ -166,15 +166,22 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
 
 /// Seconds between this tank's shots with its equipped weapon.
 pub fn weapon_interval(tank: &Tank) -> f64 {
-    (weapon(equipped_weapon(tank)).interval
-        * if tank.rapid > 0.0 {
+    fire_interval(equipped_weapon(tank), tank.rapid, tank.human, tank.xp)
+}
+
+/// Seconds between shots of `fired` for a tank with `rapid` seconds of rapid fire left,
+/// played by a human or not, with `xp` experience; also for tanks known only by their
+/// replicated values.
+pub fn fire_interval(fired: Weapon, rapid: f64, human: bool, xp: f64) -> f64 {
+    (weapon(fired).interval
+        * if rapid > 0.0 {
             COMBAT.rapid_reload_multiplier
         } else {
             1.0
         })
-        / ((if tank.human {
+        / ((if human {
             PLAYER_FIRE_RATE_MULTIPLIER
         } else {
             1.0
-        }) * rank_stats(tank.xp).fire_rate)
+        }) * rank_stats(xp).fire_rate)
 }

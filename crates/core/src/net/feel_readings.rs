@@ -19,8 +19,6 @@ const MAX_FIRE_WAIT_MS: f64 = 1500.0;
 /// present at the press: the input arrival margin plus jitter. Earlier shots were already
 /// on their way.
 const FIRE_TICK_SLACK: f64 = 6.0;
-/// Own shots reported but not yet displayed; a display buffer holds a handful.
-const MAX_SHOT_ARRIVALS: usize = 16;
 /// Drawn frames are kept this many ticks behind the newest: more than the longest a hit
 /// report takes to arrive after the viewer's present passed it.
 const FRAME_HISTORY_TICKS: f64 = 120.0;
@@ -72,6 +70,15 @@ struct Press {
     at_ms: f64,
     /// The predicted present when the button went down.
     tick: f64,
+    flashed: bool,
+    reported: bool,
+}
+
+impl Press {
+    /// Whether an own shot on `tick` answers this press rather than an earlier one.
+    fn answered_by(&self, tick: f64) -> bool {
+        tick >= self.tick - FIRE_TICK_SLACK
+    }
 }
 
 /// One drawn frame: the viewer's predicted present and where each other live tank was
@@ -86,7 +93,7 @@ struct DrawnFrame {
 pub struct FeelReadings {
     /// From the fire button going down to the frame that draws its muzzle flash, ms.
     pub fire_to_flash: Samples,
-    /// The part of `fire_to_flash` until the batch reporting the shot arrived, ms.
+    /// From the fire button going down to the batch reporting the host's shot, ms.
     pub fire_to_report: Samples,
     /// How far behind the viewer's predicted present the other tanks are drawn, ms, one
     /// sample per drawn frame.
@@ -98,7 +105,6 @@ pub struct FeelReadings {
     pub unanswered_presses: u64,
     press: Option<Press>,
     firing: bool,
-    shot_reports: VecDeque<(f64, f64)>,
     frames: VecDeque<DrawnFrame>,
     spare: Vec<DrawnFrame>,
 }
@@ -109,7 +115,6 @@ impl FeelReadings {
     pub fn restart(&mut self) {
         self.press = None;
         self.firing = false;
-        self.shot_reports.clear();
         self.spare.extend(self.frames.drain(..));
     }
 
@@ -126,12 +131,14 @@ impl FeelReadings {
         ready: bool,
         state: &RenderState,
     ) {
-        if self
+        if let Some(press) = self
             .press
-            .is_some_and(|press| now_ms - press.at_ms > MAX_FIRE_WAIT_MS)
+            .filter(|press| now_ms - press.at_ms > MAX_FIRE_WAIT_MS)
         {
             self.press = None;
-            self.unanswered_presses += 1;
+            if !press.flashed {
+                self.unanswered_presses += 1;
+            }
         }
         let pressed = firing && !self.firing;
         self.firing = firing;
@@ -139,12 +146,14 @@ impl FeelReadings {
             return;
         };
         if pressed && ready {
-            if self.press.is_some() {
+            if self.press.is_some_and(|press| !press.flashed) {
                 self.unanswered_presses += 1;
             }
             self.press = Some(Press {
                 at_ms: now_ms,
                 tick: present,
+                flashed: false,
+                reported: false,
             });
         }
         self.view_delay
@@ -171,31 +180,32 @@ impl FeelReadings {
         self.frames.push_back(frame);
     }
 
-    /// A batch arrived reporting the viewer's own shot at `tick`.
+    /// A batch arrived reporting the host's shot of the viewer's gun at `tick`.
     pub fn own_shot_reported(&mut self, tick: f64, now_ms: f64) {
-        self.shot_reports.push_back((tick, now_ms));
-        self.shot_reports.retain_back(MAX_SHOT_ARRIVALS);
-    }
-
-    /// The display, now at tick `display`, reached one of the viewer's own shots: its
-    /// muzzle flash draws this frame. Reloads keep own shots far more than a frame apart,
-    /// so the newest report the display has passed is this shot's.
-    pub fn own_shot_displayed(&mut self, display: f64, now_ms: f64) {
-        let mut report = None;
-        while let Some(passed) = self.shot_reports.pop_front_if(|(tick, _)| *tick <= display) {
-            report = Some(passed);
-        }
-        let Some(press) = self.press else {
+        let Some(press) = self.press.as_mut().filter(|press| press.answered_by(tick)) else {
             return;
         };
-        let tick = report.map_or(display, |(tick, _)| tick);
-        if tick < press.tick - FIRE_TICK_SLACK {
-            return;
+        if !press.reported {
+            press.reported = true;
+            self.fire_to_report.add(now_ms - press.at_ms);
         }
-        self.press = None;
-        self.fire_to_flash.add(now_ms - press.at_ms);
-        if let Some((_, reported_ms)) = report {
-            self.fire_to_report.add(reported_ms - press.at_ms);
+        if press.flashed {
+            self.press = None;
+        }
+    }
+
+    /// The muzzle flash of an own shot on `tick` draws this frame: the predicted shot's at
+    /// once, or an unpredicted one's when the display reaches it.
+    pub fn own_shot_flashed(&mut self, tick: f64, now_ms: f64) {
+        let Some(press) = self.press.as_mut().filter(|press| press.answered_by(tick)) else {
+            return;
+        };
+        if !press.flashed {
+            press.flashed = true;
+            self.fire_to_flash.add(now_ms - press.at_ms);
+        }
+        if press.reported {
+            self.press = None;
         }
     }
 

@@ -48,10 +48,11 @@ use serde_json::Value;
 
 use super::feel_readings::FeelReadings;
 use super::fixed_step_clock::SIMULATION_STEP_MS;
-use super::hull_prediction::{CorrectionCause, HostUpdate, HullPrediction};
+use super::hull_prediction::{CorrectionCause, HostUpdate, HullPrediction, PredictedInput};
 use super::input_cadence::InputCadence;
 use super::json;
 use super::network_timeline::NetworkTimeline;
+use super::own_shots::{Firing, OwnShots};
 use super::player_controls::{Ack, Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
 use super::protocol::{
     CONTENT_VERSION, Control, JoinChoice, Lobby, MAX_BATCH_FRAMES, MAX_ROOM_MS,
@@ -61,12 +62,13 @@ use super::protocol::{
 use super::replication::{BinaryMessage, StateMirror, TimedEvent, read_binary_message};
 use super::schema::{ReadResult, id, parse_record, string, text_length};
 use super::transport_delay::{DelaySettings, TransportDelay};
-use crate::sim::ammunition::step_ammo;
+use crate::sim::ammunition::{equipped_weapon_for, step_ammo};
 use crate::sim::math::Vec2;
 use crate::sim::render_state::RenderState;
 use crate::sim::types::{
-    AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, Weapon,
+    AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, VehicleKind, Weapon,
 };
+use crate::sim::weapons::fire_interval;
 
 const RECONNECT_WINDOW_MS: f64 = 30_000.0;
 const HEARTBEAT_MS: f64 = 1000.0;
@@ -310,6 +312,16 @@ struct Socket {
     open: bool,
 }
 
+/// The viewer's gun as the newest snapshot has it, with the pending ammo choice.
+#[derive(Clone, Copy, Debug)]
+struct Gun {
+    kind: VehicleKind,
+    weapon: Weapon,
+    team: Team,
+    /// Seconds between shots.
+    interval: f64,
+}
+
 pub struct NetworkClient {
     config: ClientConfig,
     // Connection (connection.ts).
@@ -371,6 +383,8 @@ pub struct NetworkClient {
     /// The newest received scene, refilled for prediction.
     prediction_scene: RenderState,
     pub feel: FeelReadings,
+    /// The viewer's shots, drawn from the frame they are fired.
+    pub own_shots: OwnShots,
     actions: Vec<ClientAction>,
     notices: Vec<ClientNotice>,
 }
@@ -434,6 +448,7 @@ impl NetworkClient {
             pending_hull: None,
             prediction_scene: RenderState::default(),
             feel: FeelReadings::default(),
+            own_shots: OwnShots::default(),
             actions: Vec::new(),
             notices: Vec::new(),
         }
@@ -783,6 +798,7 @@ impl NetworkClient {
                 }
                 self.prediction.reset();
                 self.pending_hull = None;
+                self.own_shots.reset();
                 self.mirror.needs_full = true;
                 self.active = false;
                 self.control = None;
@@ -823,6 +839,7 @@ impl NetworkClient {
                     self.round_id = lobby.round_id;
                     self.prediction.reset();
                     self.pending_hull = None;
+                    self.own_shots.reset();
                     self.observed_tick = 0;
                     self.mirror.needs_full = true;
                     self.active = false;
@@ -912,6 +929,7 @@ impl NetworkClient {
                 self.clear_input();
                 self.prediction.clear();
                 self.pending_hull = None;
+                self.own_shots.reset();
                 self.feel.restart();
                 self.reset_display(now_ms)?;
                 if self.ready_round != self.round_id {
@@ -947,8 +965,9 @@ impl NetworkClient {
                     return Ok(());
                 }
                 let mut pushed = false;
+                let gun = self.gun();
                 for _ in 0..batch.count {
-                    let Some(extras) = self.mirror.apply_snapshot(&mut batch) else {
+                    let Some(mut extras) = self.mirror.apply_snapshot(&mut batch) else {
                         self.request_full(now_ms);
                         break;
                     };
@@ -965,6 +984,22 @@ impl NetworkClient {
                             host.hull.map(|hull| hull.position.planar()),
                             now_ms,
                         );
+                        if let Some(gun) = gun {
+                            for timed in &extras.events {
+                                if timed.event.kind == SimEventType::Shot
+                                    && timed.event.id == Some(control.tank_id)
+                                {
+                                    self.prediction.host_fired(timed.tick as u64, gun.interval);
+                                }
+                            }
+                            self.own_shots.claim(
+                                &mut extras.paths,
+                                &mut extras.events,
+                                gun.team,
+                                control.tank_id,
+                                &self.prediction,
+                            );
+                        }
                         let pushed_frame = self.mirror.render(control.tank_id).and_then(|state| {
                             self.timeline
                                 .push(state, self.mirror.tick, extras.events, extras.paths)
@@ -984,6 +1019,19 @@ impl NetworkClient {
             }
         }
         Ok(())
+    }
+
+    /// The viewer's gun as the newest snapshot has it.
+    fn gun(&self) -> Option<Gun> {
+        let viewer = self.display.as_ref()?.viewer()?;
+        let selected = self.pending_weapon.unwrap_or(viewer.selected_ammo);
+        let weapon = equipped_weapon_for(viewer.kind, &viewer.ammo, selected);
+        Some(Gun {
+            kind: viewer.kind,
+            weapon,
+            team: viewer.team,
+            interval: fire_interval(weapon, viewer.rapid, viewer.human, viewer.xp),
+        })
     }
 
     /// Restarts the own hull's prediction from the host's hull in a snapshot batch that
@@ -1318,18 +1366,56 @@ impl NetworkClient {
             self.receive_failure();
             return None;
         }
-        // This frame's input drives the predicted hull before it is drawn, rounded as the
-        // host will read it.
-        let drive = if self.active_input() {
+        // This frame's input drives the predicted hull and gun before they are drawn,
+        // rounded as the host will read it.
+        let active = self.active_input();
+        let drive = if active {
             Vec2::new(json::value(input.move_x), json::value(input.move_z))
         } else {
             Vec2::ZERO
         };
-        self.prediction.advance(now_ms, drive);
+        let gun = self.gun();
+        let fired = self.prediction.advance(
+            now_ms,
+            PredictedInput {
+                drive,
+                fire: active && input.fire,
+            },
+            gun.map_or(0.0, |gun| gun.interval),
+        );
+        let mut flashes = Vec::new();
+        if let (Some(gun), Some(control)) = (gun, &self.control) {
+            for shot in fired {
+                // The host aims at the pointer's ground point from its own hull.
+                let aim = match input.aim_point {
+                    Some((x, z)) => (x - shot.position.x).atan2(z - shot.position.z),
+                    None => input.aim_angle,
+                };
+                let firing = Firing {
+                    tick: shot.tick,
+                    position: shot.position,
+                    aim,
+                    kind: gun.kind,
+                    weapon: gun.weapon,
+                    team: gun.team,
+                    tank_id: control.tank_id,
+                };
+                flashes.push((shot.tick, self.own_shots.fire(firing, &self.prediction)));
+            }
+        }
+        self.own_shots.recover(dt);
         // The battle keeps playing behind the in-battle menu too. The timeline overwrites
         // the baseline or last frame in place.
         let display = self.display.get_or_insert_with(RenderState::default);
-        let displayed = self.timeline.read(now_ms, self.rtt_ms, dt, display);
+        let mut displayed = self.timeline.read(now_ms, self.rtt_ms, dt, display);
+        let display_tick = self.timeline.display_tick();
+        let own_clock_present = self.prediction.present(now_ms).unwrap_or(display_tick);
+        let impacts = self.own_shots.draw(
+            own_clock_present,
+            display_tick,
+            self.mirror.tick as f64,
+            &mut display.shots,
+        );
         // The own hull is drawn where prediction has it while the displayed tank lives
         // the predicted life; deaths and respawns still wait for the display clock.
         if let Some(drawn) = self.prediction.drawn(now_ms) {
@@ -1343,12 +1429,12 @@ impl NetworkClient {
                 viewer.previous = Vec2::new(drawn.position.x, drawn.position.z);
                 viewer.velocity = drawn.velocity;
                 viewer.heading = drawn.heading;
+                viewer.recoil = self.own_shots.recoil;
             }
         }
         let viewer_id = display.viewer_id;
         let viewer_team = display.viewer().map(|viewer| viewer.team);
         let present = self.prediction.predicted_present(now_ms);
-        let display_tick = self.timeline.display_tick();
         // The gun is ready if its newest known reload ends before a shot sent now arrives.
         let ready = present.is_some_and(|present| {
             display.viewer().is_some_and(|viewer| {
@@ -1359,10 +1445,17 @@ impl NetworkClient {
         let display = self.display.as_ref().expect("filled above");
         self.feel
             .frame(now_ms, present, display_tick, firing, ready, display);
+        // Own shots the prediction missed still show when the display reaches them.
         for event in &displayed {
             if event.kind == SimEventType::Shot && event.id == Some(viewer_id) {
-                self.feel.own_shot_displayed(display_tick, now_ms);
+                self.feel.own_shot_flashed(display_tick, now_ms);
+                self.own_shots.recoil = 1.0;
             }
+        }
+        displayed.extend(impacts);
+        for (tick, flash) in flashes {
+            self.feel.own_shot_flashed(tick as f64, now_ms);
+            displayed.push(flash);
         }
         let events = displayed
             .into_iter()

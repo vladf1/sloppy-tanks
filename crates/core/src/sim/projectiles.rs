@@ -149,7 +149,12 @@ pub struct RocketThrust {
 
 impl RocketThrust {
     pub fn of(simulation: &Simulation) -> Self {
-        let base_speed = weapon(Weapon::Rocket).speed * simulation.speed_tuning.bullet_speed;
+        Self::at_bullet_speed(simulation.speed_tuning.bullet_speed)
+    }
+
+    /// A rocket's thrust under the bullet speed tuning `bullet_speed`.
+    pub fn at_bullet_speed(bullet_speed: f64) -> Self {
+        let base_speed = weapon(Weapon::Rocket).speed * bullet_speed;
         let top_speed = base_speed * COMBAT.rocket_top_speed_multiplier;
         Self {
             acceleration: (top_speed - base_speed) / COMBAT.rocket_acceleration_seconds,

@@ -13,13 +13,16 @@ use std::collections::HashMap;
 use rapier3d::prelude::*;
 use serde_json::{Value, json};
 
+use super::own_shots::{CoverCast, CoverHit, Struck};
 use super::scene_codec::{VEHICLE_KINDS, index_of};
 use super::schema::ReadResult;
 use super::wire::{WireReader, put_varint};
 use crate::sim::damage::tree_stump;
 use crate::sim::data::{STEP, group};
 use crate::sim::math::{Point3, Quat4, Vec2};
-use crate::sim::physics::{from_vector, interaction_groups, to_rotation, to_vector, vector};
+use crate::sim::physics::{
+    from_vector, interaction_groups, query_filter, to_rotation, to_vector, vector,
+};
 use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderTank};
 use crate::sim::simulation::{Simulation, arena_world, cover_parts};
 use crate::sim::tank_driving::{Hull, drive_hull};
@@ -173,6 +176,8 @@ struct CoverBody {
     body: RigidBodyHandle,
     form: CoverForm,
     movable: bool,
+    /// What a shell striking it shows.
+    struck: Struck,
     /// The scene sync that last found its record.
     seen: u64,
 }
@@ -260,6 +265,11 @@ impl TankPredictor {
                         body,
                         form,
                         movable,
+                        struck: Struck {
+                            kind: cover.kind,
+                            color: cover.color,
+                            height: cover.h,
+                        },
                         seen: sync,
                     },
                 );
@@ -498,6 +508,29 @@ impl TankPredictor {
             velocity: from_vector(body.linvel()),
             heading: hull.hull.heading,
             speed: hull.speed,
+        })
+    }
+}
+
+/// The cover as the host's shell query sees it.
+impl CoverCast for TankPredictor {
+    fn cast_cover(&self, origin: Point3, direction: Vec2, distance: f64) -> Option<CoverHit> {
+        let ray = Ray::new(to_vector(origin), vector(direction.x, 0.0, direction.z));
+        let (collider, hit) = self.world.cast_ray_and_get_normal(
+            &ray,
+            distance as f32,
+            true,
+            query_filter(group::COVER_QUERY),
+        )?;
+        let body = self.world.colliders[collider].parent();
+        Some(CoverHit {
+            distance: f64::from(hit.time_of_impact),
+            normal: Vec2::new(f64::from(hit.normal.x), f64::from(hit.normal.z)),
+            struck: self
+                .covers
+                .values()
+                .find(|cover| Some(cover.body) == body)
+                .map(|cover| cover.struck),
         })
     }
 }

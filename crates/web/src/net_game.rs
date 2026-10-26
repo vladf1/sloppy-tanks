@@ -645,6 +645,7 @@ impl NetGame {
             }),
         );
         let feel = &self.client.feel;
+        let own = &self.client.own_shots.stats;
         stats.insert(
             "feel".into(),
             json!({
@@ -653,6 +654,13 @@ impl NetGame {
                 "fireToReportMs": summary(&feel.fire_to_report),
                 "unansweredPresses": feel.unanswered_presses,
                 "hitOffsetM": summary(&feel.hit_offset),
+                "ownShots": {
+                    "predicted": own.predicted,
+                    "confirmed": own.confirmed,
+                    "unconfirmedShells": own.unconfirmed_shells,
+                    "unpredicted": own.unpredicted,
+                    "errorM": summary(&own.error),
+                },
             }),
         );
         Value::Object(stats).to_string()
