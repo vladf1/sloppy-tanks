@@ -13,12 +13,15 @@ use std::collections::VecDeque;
 use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::player_controls::Ack;
 use super::prediction::{HullContacts, HullState, PredictedPose, TankPredictor, solid_debris};
+use crate::sim::data::STEP;
 use crate::sim::math::{Point3, Vec2, angle_delta, distance};
 use crate::sim::render_state::RenderState;
 
-/// Ticks the predicted present runs past the expected arrival of an input sent now. It
-/// covers tick quantization and the up to 25 ms a press may wait for its send slot.
-const ARRIVAL_MARGIN_TICKS: f64 = 2.0;
+/// Ticks the predicted present runs past the expected arrival of an input sent now, over
+/// the arrivals' 90th percentile. A press goes out in the frame it is dated
+/// (`input_cadence.rs`), so one tick is enough: two only added to how far behind the own
+/// hull every other tank is drawn.
+const ARRIVAL_MARGIN_TICKS: f64 = 1.0;
 /// Arrivals this late or earlier, among recent ones, still start on their requested tick.
 const ARRIVAL_PERCENTILE: f64 = 0.9;
 const MAX_ARRIVAL_SAMPLES: usize = 40;
@@ -37,19 +40,29 @@ const CORRECTION_RATE: f64 = 30.0;
 const SNAP_DISTANCE: f64 = 3.0;
 /// Recent correction sizes kept for the statistics.
 const CORRECTION_SAMPLES: usize = 600;
+/// A host hull this close to what was predicted for its tick confirms the prediction,
+/// which then runs on without a replay; the difference stays, at most this, until a
+/// later snapshot disagrees. Free driving differs by up to 2 mm after a restart
+/// (`tests/integration/prediction.rs`).
+const CONFIRM_POSITION: f64 = 0.005;
+const CONFIRM_VELOCITY: f64 = 0.05;
+const CONFIRM_HEADING: f64 = 0.002;
+/// Another tank or movable cover this close to the host's hull makes a snapshot replay
+/// even when it confirms the prediction: the replay places them as replicated, which a
+/// held prediction does not.
+const MOVER_REACH: f64 = 8.0;
 /// Corrections at least this large count toward their cause's tally.
 const NOTICEABLE_CORRECTION: f64 = 0.02;
 /// A solid piece of debris whose centre is this much closer than half its longest side
 /// plus a hull's half length counts as touching the hull, for the statistics.
 const DEBRIS_REACH: f64 = 2.5;
 
-/// One snapshot's acknowledgement and the viewer's hull.
+/// The viewer's hull from the newest snapshot batch.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HostUpdate {
-    pub ack: Ack,
     pub hull: Option<HullState>,
-    /// The batch carried a blast near the viewer or a hit on it, which the host may have
-    /// pushed the hull with.
+    /// A batch since the previous update carried a blast near the viewer or a hit on it,
+    /// which the host may have pushed the hull with.
     pub blast: bool,
 }
 
@@ -126,6 +139,8 @@ pub struct CorrectionStats {
     /// for because they arrived too late.
     pub changes: u64,
     pub late_changes: u64,
+    /// Snapshots that confirmed the prediction, which ran on without a replay.
+    pub confirmed: u64,
     /// The latest correction sizes, metres.
     pub recent: VecDeque<f64>,
     /// Noticeable corrections by cause, in [`CorrectionCause::ALL`] order.
@@ -188,6 +203,8 @@ pub struct HullPrediction {
     current: Option<PredictedPose>,
     /// The move input of each predicted tick the host has not confirmed, oldest first.
     inputs: VecDeque<(u64, Vec2)>,
+    /// The predicted hull after each of those ticks.
+    poses: VecDeque<(u64, PredictedPose)>,
     /// The first tick the current local input drives, set once when that input appears.
     run_start: u64,
     /// The local input of the last frame.
@@ -207,6 +224,8 @@ pub struct HullPrediction {
     heading_correction: f64,
     /// What the hull touched in the steps predicted since the previous snapshot.
     touched: HullContacts,
+    /// An acknowledgement since the previous restart showed an input started late.
+    late_input: bool,
     pub stats: CorrectionStats,
 }
 
@@ -224,6 +243,7 @@ impl HullPrediction {
         self.previous = None;
         self.current = None;
         self.inputs.clear();
+        self.poses.clear();
         self.last_input = None;
         self.correction = Vec2::ZERO;
         self.heading_correction = 0.0;
@@ -274,12 +294,18 @@ impl HullPrediction {
         self.sent.retain_back(MAX_UNACKED_SENDS);
     }
 
-    /// One snapshot: learn from its acknowledgement, then restart from the host's hull and
-    /// replay the ticks it has not reached. `scene` is the newest received scene.
-    pub fn receive(&mut self, update: &HostUpdate, scene: &RenderState, now_ms: f64, rtt_ms: f64) {
+    /// One snapshot batch's acknowledgement: when inputs reach the host.
+    pub fn acknowledge(&mut self, ack: &Ack) {
         let late_changes = self.stats.late_changes;
-        self.learn_arrival(&update.ack);
-        let late_input = self.stats.late_changes > late_changes;
+        self.learn_arrival(ack);
+        self.late_input |= self.stats.late_changes > late_changes;
+    }
+
+    /// Restarts from the host's hull and replays the ticks it has not reached, unless the
+    /// hull confirms the prediction. `scene` is the newest received scene and `now_ms`
+    /// when it arrived.
+    pub fn receive(&mut self, update: &HostUpdate, scene: &RenderState, now_ms: f64, rtt_ms: f64) {
+        let late_input = std::mem::take(&mut self.late_input);
         let Some(hull) = update.hull else {
             self.clear();
             return;
@@ -287,6 +313,16 @@ impl HullPrediction {
         let newest_input = self.inputs.back().map_or(Vec2::ZERO, |(_, input)| *input);
         while self
             .inputs
+            .pop_front_if(|(tick, _)| *tick <= hull.tick)
+            .is_some()
+        {}
+        let predicted = self
+            .poses
+            .iter()
+            .find(|(tick, _)| *tick == hull.tick)
+            .map(|(_, pose)| *pose);
+        while self
+            .poses
             .pop_front_if(|(tick, _)| *tick <= hull.tick)
             .is_some()
         {}
@@ -312,6 +348,18 @@ impl HullPrediction {
             }
             self.offset = Some(self.target_offset.max(estimate));
         }
+        // A prediction the host confirms runs on: replaying it would reproduce it.
+        if !restart
+            && !update.blast
+            && let Some(difference) = predicted.and_then(|pose| agreement(&pose, &hull))
+            && !movers_near(scene, hull.position)
+        {
+            self.predictor.sync_covers(scene);
+            self.touched = HullContacts::default();
+            self.stats.confirmed += 1;
+            self.stats.record(difference, CorrectionCause::Other);
+            return;
+        }
         if restart {
             let predicted = self.tick;
             self.tick = hull.tick;
@@ -328,11 +376,15 @@ impl HullPrediction {
         let old = if continuing { self.current } else { None };
         let mut previous = self.predictor.pose();
         let mut current = previous;
-        for &(_, input) in &self.inputs {
+        self.poses.clear();
+        for &(tick, input) in &self.inputs {
             self.predictor.step(input.x, input.z);
             self.touched.add(self.predictor.hull_contacts());
             previous = current;
             current = self.predictor.pose();
+            if let Some(pose) = current {
+                self.poses.push_back((tick, pose));
+            }
         }
         self.previous = previous;
         self.current = current;
@@ -455,6 +507,10 @@ impl HullPrediction {
             self.inputs.retain_back(MAX_PENDING_TICKS);
             self.previous = self.current;
             self.current = self.predictor.pose();
+            if let Some(pose) = self.current {
+                self.poses.push_back((self.tick, pose));
+                self.poses.retain_back(MAX_PENDING_TICKS);
+            }
             steps += 1;
         }
     }
@@ -502,4 +558,35 @@ fn near_solid_debris(scene: &RenderState, points: &[Point3]) -> bool {
                 .iter()
                 .any(|point| distance(point.planar(), fragment.position.planar()) < reach)
         })
+}
+
+/// How far `hull` is from the pose predicted for its tick, when it is close enough to
+/// confirm it.
+fn agreement(predicted: &PredictedPose, hull: &HullState) -> Option<f64> {
+    let apart = |a: Point3, b: Point3| (a.x - b.x).hypot(a.y - b.y).hypot(a.z - b.z);
+    let position = apart(predicted.position, hull.position);
+    (position <= CONFIRM_POSITION
+        && apart(predicted.velocity, hull.velocity) <= CONFIRM_VELOCITY
+        && angle_delta(predicted.heading, hull.heading).abs() <= CONFIRM_HEADING
+        && (predicted.speed - hull.speed).abs() < STEP)
+        .then_some(position)
+}
+
+/// Whether another live tank or movable cover in `scene` is within [`MOVER_REACH`] of
+/// the viewer's hull at `position`.
+fn movers_near(scene: &RenderState, position: Point3) -> bool {
+    let at = position.planar();
+    scene
+        .tanks
+        .iter()
+        .filter(|tank| tank.alive && tank.id != scene.viewer_id)
+        .map(|tank| tank.position.planar())
+        .chain(
+            scene
+                .covers
+                .iter()
+                .filter(|cover| cover.alive && cover.kind.movable())
+                .map(|cover| cover.position.planar()),
+        )
+        .any(|other| distance(at, other) < MOVER_REACH)
 }

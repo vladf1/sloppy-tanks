@@ -151,6 +151,8 @@ pub struct PredictedPose {
     pub position: Point3,
     pub velocity: Point3,
     pub heading: f64,
+    /// Remaining speed-pickup seconds.
+    pub speed: f64,
 }
 
 struct PredictedHull {
@@ -171,6 +173,8 @@ struct CoverBody {
     body: RigidBodyHandle,
     form: CoverForm,
     movable: bool,
+    /// The scene sync that last found its record.
+    seen: u64,
 }
 
 /// What the viewer's hull touched in a predicted step, for the correction statistics.
@@ -197,6 +201,8 @@ struct OtherTank {
     speed: f64,
     /// The move input of the newest snapshot; prediction holds it.
     drive: Vec2,
+    /// The scene sync that last found it alive.
+    seen: u64,
 }
 
 /// The viewer's hull in a world of the arena's cover and the other tanks.
@@ -205,8 +211,10 @@ pub struct TankPredictor {
     hull: Option<PredictedHull>,
     covers: HashMap<u32, CoverBody>,
     tanks: HashMap<u32, OtherTank>,
-    /// Storage reused to find replicated records that disappeared.
-    stale: Vec<u32>,
+    /// Counts scene syncs, to find replicated records that disappeared.
+    sync: u64,
+    /// Storage reused for their ids.
+    gone: Vec<u32>,
 }
 
 impl Default for TankPredictor {
@@ -216,7 +224,8 @@ impl Default for TankPredictor {
             hull: None,
             covers: HashMap::new(),
             tanks: HashMap::new(),
-            stale: Vec::new(),
+            sync: 0,
+            gone: Vec::new(),
         }
     }
 }
@@ -225,13 +234,19 @@ impl TankPredictor {
     /// Matches the obstacles to a received scene: standing cover and stumps, movable
     /// cover at its replicated pose, and every live tank other than the viewer's.
     pub fn sync_scene(&mut self, state: &RenderState) {
-        self.stale.clear();
-        self.stale.extend(self.covers.keys().copied());
+        self.sync_covers(state);
+        self.sync_tanks(state);
+    }
+
+    /// Matches the cover to a received scene: standing cover and stumps, and movable cover
+    /// at its replicated pose.
+    pub fn sync_covers(&mut self, state: &RenderState) {
+        self.sync += 1;
+        let sync = self.sync;
         for cover in &state.covers {
             let Some(form) = cover_form(cover) else {
                 continue;
             };
-            self.stale.retain(|id| *id != cover.id);
             let current = self.covers.get(&cover.id).map(|existing| existing.form);
             if current != Some(form) {
                 if let Some(old) = self.covers.remove(&cover.id) {
@@ -245,10 +260,13 @@ impl TankPredictor {
                         body,
                         form,
                         movable,
+                        seen: sync,
                     },
                 );
             }
-            if cover.kind.movable() {
+            let existing = self.covers.get_mut(&cover.id).expect("inserted above");
+            existing.seen = sync;
+            if existing.movable {
                 // Movable cover rests where the host last had it; contact wakes it.
                 let body = &mut self.world.bodies[self.covers[&cover.id].body];
                 body.set_translation(to_vector(cover.position), false);
@@ -258,21 +276,35 @@ impl TankPredictor {
                 body.sleep();
             }
         }
-        for id in self.stale.drain(..) {
+        self.gone.extend(
+            self.covers
+                .iter()
+                .filter(|(_, cover)| cover.seen != sync)
+                .map(|(id, _)| *id),
+        );
+        for id in self.gone.drain(..) {
             if let Some(old) = self.covers.remove(&id) {
                 self.world.remove_body(old.body);
             }
         }
+    }
 
-        self.stale.extend(self.tanks.keys().copied());
+    /// Places every live tank other than the viewer's as a received scene has it.
+    fn sync_tanks(&mut self, state: &RenderState) {
+        let sync = self.sync;
         for tank in &state.tanks {
             if tank.id == state.viewer_id || !tank.alive {
                 continue;
             }
-            self.stale.retain(|id| *id != tank.id);
-            self.place_other_tank(tank);
+            self.place_other_tank(tank, sync);
         }
-        for id in self.stale.drain(..) {
+        self.gone.extend(
+            self.tanks
+                .iter()
+                .filter(|(_, tank)| tank.seen != sync)
+                .map(|(id, _)| *id),
+        );
+        for id in self.gone.drain(..) {
             if let Some(old) = self.tanks.remove(&id) {
                 self.world.remove_body(old.body);
             }
@@ -320,7 +352,7 @@ impl TankPredictor {
         body
     }
 
-    fn place_other_tank(&mut self, tank: &RenderTank) {
+    fn place_other_tank(&mut self, tank: &RenderTank, sync: u64) {
         let rebuild = self
             .tanks
             .get(&tank.id)
@@ -344,10 +376,12 @@ impl TankPredictor {
                     },
                     speed: 0.0,
                     drive: Vec2::ZERO,
+                    seen: sync,
                 },
             );
         }
         let other = self.tanks.get_mut(&tank.id).expect("inserted above");
+        other.seen = sync;
         other.hull.heading = tank.heading;
         other.speed = tank.speed;
         other.drive = tank.drive;
@@ -463,6 +497,7 @@ impl TankPredictor {
             position: from_vector(body.translation()),
             velocity: from_vector(body.linvel()),
             heading: hull.hull.heading,
+            speed: hull.speed,
         })
     }
 }

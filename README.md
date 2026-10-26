@@ -195,7 +195,10 @@ the current match.
 `?debug`: click the bottom-right link or press **N**. Network rows show RTT, received update count/rate, update
 age, server tick and input sequence sent/acknowledged. A received update is one
 full-state message or snapshot batch; an input acknowledgement confirms the
-server processed an input sequence. Render includes GPU geometries and textures.
+server processed an input sequence. Feel rows show how far behind your own tank
+other tanks are drawn (view delay), how long a click takes to show its muzzle
+flash, how far a tank you hit was drawn from where the server hit it, and your
+tank's prediction corrections by cause. Render includes GPU geometries and textures.
 
 Single-player downloads no multiplayer page code and opens no game-server connection.
 Multiplayer loads its client and UI only on entry and does not run browser physics.

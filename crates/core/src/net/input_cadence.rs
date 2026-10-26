@@ -1,15 +1,18 @@
 //! When the client sends input (`src/net/input-cadence.ts`): 20 Hz while anything is held
 //! or changing, a 1 Hz refresh while idle so the seat is kept without renewing held
-//! controls at a slower rate. A key press or release goes out without waiting for the
-//! next 20 Hz slot, since that wait adds directly to how late the tank responds.
+//! controls at a slower rate. A key press or release goes out at once, without waiting for
+//! the next 20 Hz slot: the prediction dates it at the frame it was pressed, so any wait
+//! before it is sent makes it reach the host late.
 
 use super::player_controls::{Aim, ControlInput};
 use crate::sim::math::angle_delta;
 
 const ACTIVE_INTERVAL_MS: f64 = 50.0;
-/// The shortest gap before a control change goes out. It bounds the send rate at 40 a
-/// second, clear of the server's 60 input messages a second (`MAX_INPUTS_PER_SECOND`).
-const CONTROL_CHANGE_INTERVAL_MS: f64 = 25.0;
+/// At most this many messages go out in any [`ACTIVE_INTERVAL_MS`]: a control change is
+/// sent at once unless the previous two were sent within it. That bounds the rate at 40 a
+/// second, clear of the server's 60 input messages a second (`MAX_INPUTS_PER_SECOND`),
+/// while a single press never waits.
+const SENDS_PER_INTERVAL: usize = 2;
 const IDLE_INTERVAL_MS: f64 = 1000.0;
 const AIM_POSITION_EPSILON: f64 = 0.01;
 const AIM_ANGLE_EPSILON: f64 = 0.001;
@@ -17,14 +20,15 @@ const AIM_ANGLE_EPSILON: f64 = 0.001;
 #[derive(Clone, Debug)]
 pub struct InputCadence {
     previous: Option<ControlInput>,
-    sent_at: f64,
+    /// When the latest sends went out, newest last.
+    sent_at: [f64; SENDS_PER_INTERVAL],
 }
 
 impl Default for InputCadence {
     fn default() -> Self {
         Self {
             previous: None,
-            sent_at: f64::NEG_INFINITY,
+            sent_at: [f64::NEG_INFINITY; SENDS_PER_INTERVAL],
         }
     }
 }
@@ -32,8 +36,7 @@ impl Default for InputCadence {
 impl InputCadence {
     /// Whether `input` should be sent at `now_ms`.
     pub fn due(&self, input: &ControlInput, now_ms: f64) -> bool {
-        let elapsed = now_ms - self.sent_at;
-        if elapsed < CONTROL_CHANGE_INTERVAL_MS {
+        if now_ms - self.sent_at[0] < ACTIVE_INTERVAL_MS {
             return false;
         }
         let Some(previous) = &self.previous else {
@@ -42,6 +45,7 @@ impl InputCadence {
         if control_changed(input, previous) {
             return true;
         }
+        let elapsed = now_ms - self.sent_at[SENDS_PER_INTERVAL - 1];
         if elapsed < ACTIVE_INTERVAL_MS {
             return false;
         }
@@ -72,7 +76,8 @@ impl InputCadence {
             actions: Vec::new(),
             ..input.clone()
         });
-        self.sent_at = now_ms;
+        self.sent_at.rotate_left(1);
+        self.sent_at[SENDS_PER_INTERVAL - 1] = now_ms;
     }
 }
 

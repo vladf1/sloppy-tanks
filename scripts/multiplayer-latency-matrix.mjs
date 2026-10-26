@@ -23,7 +23,7 @@ import { openMultiplayerTab } from "./multiplayer-helpers.mjs";
 
 const PORT = Number(process.env.SLOPPY_MATRIX_PORT ?? 8791);
 const LABEL = process.env.SLOPPY_MATRIX_LABEL ?? "run";
-const SECONDS = Number(process.env.SLOPPY_MATRIX_SECONDS ?? 40);
+const SECONDS = Number(process.env.SLOPPY_MATRIX_SECONDS ?? 60);
 const MAP = process.env.SLOPPY_MATRIX_MAP ?? "village";
 /** Round trip, jitter and stall in milliseconds, as the dev page parameters take them. */
 const CONDITIONS = [

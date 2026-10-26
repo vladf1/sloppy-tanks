@@ -123,17 +123,17 @@ export function networkStatsSections(
         [
           "Late batches",
           network.lateBatches,
-          "Snapshot batches that arrived over 150 ms after the previous one (they leave every 50 ms) during this page session. The connection held them up, for example while TCP resent a lost packet, or the page itself froze.",
+          "Snapshot batches that arrived over 150 ms after the previous one (they leave 60 times a second) during this page session. The connection held them up, for example while TCP resent a lost packet, or the page itself froze.",
         ],
         [
           "Snapshot CPU",
           `${(receiveShare * 1000).toFixed(1)} ms/s`,
-          "Main-thread time spent applying received snapshots per second, own-hull prediction replays included.",
+          "Main-thread time spent applying received snapshots per second, own-hull prediction replays included. A snapshot that confirms your tank's prediction needs no replay.",
         ],
         [
           "Longest batch gap",
           `${Math.round(network.longestBatchGapMs)} ms`,
-          "The longest wait between consecutive snapshot batches during this page session; about 50 ms while the stream flows.",
+          "The longest wait between consecutive snapshot batches during this page session; about 17 ms while the stream flows.",
         ],
         [
           "Prediction lead",

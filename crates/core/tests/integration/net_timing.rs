@@ -9,7 +9,7 @@ use crate::support;
 use std::f64::consts::PI;
 
 use net_support::{Sweep, WIRE_SLACK, baseline, fire_from, set_linvel, set_translation};
-use sloppy_core::net::fixed_step_clock::FixedStepClock;
+use sloppy_core::net::fixed_step_clock::{BATCH_TICKS, FixedStepClock, HOST_INTERVAL_MS};
 use sloppy_core::net::input_cadence::InputCadence;
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::network_timeline::NetworkTimeline;
@@ -201,7 +201,7 @@ fn aim_one_shot_actions_and_epochs_wake_idle_sends_and_releases_do_not_wait_a_se
 }
 
 #[test]
-fn presses_releases_and_one_shot_actions_skip_the_20_hz_slot_but_stay_25_ms_apart() {
+fn presses_releases_and_one_shot_actions_go_out_at_once_two_per_50_ms_at_most() {
     let held = |move_x: f64, move_z: f64, fire: bool| ControlInput {
         move_x,
         move_z,
@@ -232,8 +232,11 @@ fn presses_releases_and_one_shot_actions_skip_the_20_hz_slot_but_stay_25_ms_apar
     ] {
         let mut cadence = InputCadence::default();
         cadence.sent(&previous, 0.0);
-        assert!(!cadence.due(&input, 24.0));
-        assert!(cadence.due(&input, 25.0));
+        assert!(cadence.due(&input, 1.0), "a press right after a send");
+        // A third message within 50 ms waits until the first of them is 50 ms old.
+        cadence.sent(&previous, 10.0);
+        assert!(!cadence.due(&input, 49.0));
+        assert!(cadence.due(&input, 50.0));
     }
     // A stick drifting within one direction, and aim, keep the 20 Hz cadence.
     for (previous, input) in [
@@ -275,8 +278,12 @@ fn sub_centimetre_camera_noise_does_not_flood_idle_traffic_but_cumulative_aim_ch
 // ---- Playout clock --------------------------------------------------------------------
 
 const FRAME_MS: f64 = 1000.0 / 60.0;
-const TICKS_PER_BATCH: u64 = 3;
-const BATCH_MS: f64 = 50.0;
+const TICKS_PER_BATCH: u64 = BATCH_TICKS as u64;
+const BATCH_MS: f64 = HOST_INTERVAL_MS;
+/// The batch sent at `ms` into a run.
+fn batch_at(ms: f64) -> u64 {
+    (ms / BATCH_MS).round() as u64
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Frame {
@@ -286,8 +293,8 @@ struct Frame {
     buffer_ms: f64,
 }
 
-/// Plays 20 Hz batches through a path whose delay per batch is `delay(batch)`, reading
-/// at 60 Hz.
+/// Plays the host's batches through a path whose delay per batch is `delay(batch)`,
+/// reading at 60 Hz.
 fn play(seconds: f64, mut delay: impl FnMut(u64) -> f64) -> Vec<Frame> {
     let mut clock = PlayoutClock::default();
     let mut arrivals = Vec::new();
@@ -388,8 +395,9 @@ fn ordinary_arrival_jitter_is_absorbed_without_underrun() {
 
 #[test]
 fn a_head_of_line_stall_extrapolates_briefly_grows_the_buffer_then_gives_the_delay_back() {
-    // Batch 60 (3 s) is retransmitted 200 ms late; later batches queue behind it.
-    let frames = play(20.0, |batch| if batch == 60 { 230.0 } else { 30.0 });
+    // The batch at 3 s is retransmitted 200 ms late; later batches queue behind it.
+    let late = batch_at(3000.0);
+    let frames = play(20.0, |batch| if batch == late { 230.0 } else { 30.0 });
     assert_monotonic(&frames);
     for frame in &frames {
         assert!(
@@ -402,7 +410,7 @@ fn a_head_of_line_stall_extrapolates_briefly_grows_the_buffer_then_gives_the_del
         starved > 0 && starved as f64 * FRAME_MS < 200.0,
         "only part of the stall shows"
     );
-    assert!(peak_buffer(&frames) > 100.0, "the stall grows the buffer");
+    assert!(peak_buffer(&frames) > 75.0, "the stall grows the buffer");
     assert!(
         frames.last().unwrap().buffer_ms < 75.0,
         "the buffer shrinks once arrivals are steady again"
@@ -410,20 +418,25 @@ fn a_head_of_line_stall_extrapolates_briefly_grows_the_buffer_then_gives_the_del
 }
 
 #[test]
-fn repeated_stalls_buy_enough_buffer_to_hide_the_next_one() {
+fn repeated_stalls_buy_enough_buffer_to_hide_most_of_the_next_one() {
     // Every second, one batch is retransmitted 150 ms late on a 40 ms path.
-    let frames = play(12.0, |batch| if batch % 20 == 0 { 190.0 } else { 40.0 });
+    let second = batch_at(1000.0);
+    let frames = play(12.0, |batch| if batch % second == 0 { 190.0 } else { 40.0 });
     assert_monotonic(&frames);
     let settled: Vec<Frame> = frames
         .into_iter()
         .filter(|frame| frame.now_ms > 4000.0)
         .collect();
-    assert_eq!(
-        starved(&settled),
-        0,
-        "motion no longer pauses once the stall pattern is learned"
+    // The buffer holds the 95th percentile of arrival lateness: the queued batches behind
+    // each stall, less late than its first, outnumber it, so a frame or two of each
+    // later stall still shows, as bounded extrapolation rather than a pause.
+    let stalls = 8;
+    assert!(
+        starved(&settled) <= 2 * stalls,
+        "the stall pattern is learned: {} starved frames",
+        starved(&settled)
     );
-    assert!(peak_buffer(&settled) <= 250.0);
+    assert!(peak_buffer(&settled) > 120.0 && peak_buffer(&settled) <= 250.0);
 }
 
 #[test]

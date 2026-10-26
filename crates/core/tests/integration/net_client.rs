@@ -14,7 +14,7 @@ use net_support::{
 use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, EndCause, LocalInput, NetworkClient, SavedSeat,
 };
-use sloppy_core::net::fixed_step_clock::SIMULATION_STEP_MS;
+use sloppy_core::net::fixed_step_clock::{HOST_INTERVAL_MS, SIMULATION_STEP_MS};
 use sloppy_core::net::match_host::{HostEvent, MatchHost};
 use sloppy_core::net::protocol::{JoinChoice, Message, RoomPhase, RoomSettings};
 use sloppy_core::net::transport_delay::DelaySettings;
@@ -96,7 +96,7 @@ impl Network {
             now: 0.0,
             next_connection: 0,
             routes: BTreeMap::new(),
-            next_host_tick: 50.0,
+            next_host_tick: HOST_INTERVAL_MS.ceil(),
             stalled_until: 0.0,
             held: Vec::new(),
             frame_ms: vec![FRAME_MS],
@@ -236,7 +236,8 @@ impl Network {
     }
 
     /// Runs the page and host clocks for `ms`: sockets open after one frame, pages poll and
-    /// draw at 60 Hz, the host ticks every 50 ms.
+    /// draw at 60 Hz, and the host's timer fires as the server's does: as each batch of
+    /// ticks falls due while a round runs, every `HOST_INTERVAL_MS` otherwise.
     fn run(&mut self, ms: f64) {
         let end = self.now + ms;
         while self.now < end {
@@ -261,8 +262,13 @@ impl Network {
             }
             self.settle();
             while self.next_host_tick <= self.now {
-                self.host.advance(self.next_host_tick as u64);
-                self.next_host_tick += 50.0;
+                let at = self.next_host_tick as u64;
+                self.host.advance(at);
+                let wait = self
+                    .host
+                    .until_next_batch_ms(at)
+                    .map_or(HOST_INTERVAL_MS, |wait| wait.max(1.0));
+                self.next_host_tick += wait.ceil();
                 self.settle();
             }
         }
@@ -460,7 +466,7 @@ fn late_snapshot_batches_count_only_while_the_stream_should_flow() {
     net.connect(alice, choice("alice", Some(settings(MapId::Harbor))));
     net.run(1000.0);
     let stats = net.peers[alice].client.stats(net.now);
-    // Batches leave every 50 ms and the page reads them on its next 60 Hz frame.
+    // Batches leave every tick and the page reads them on its next 60 Hz frame.
     assert_eq!(stats.late_batches, 0, "{stats:?}");
     assert!(stats.longest_batch_gap_ms < 70.0, "{stats:?}");
     // A lost packet holds up the stream for 200 ms; then everything arrives at once.

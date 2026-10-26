@@ -25,10 +25,11 @@ use sloppy_core::sim::types::{
 use sloppy_core::sim::{RenderState, Simulation};
 use support::{clear_arena, place_tank, tank_index};
 
-/// Snapshot batches carry every third tick.
+/// Prediction windows start every third tick: a sample of the snapshots, which arrive
+/// every tick.
 const SNAPSHOT_TICKS: usize = 3;
 /// Ticks the client predicts past a snapshot at 100 ms and 200 ms round trips, about
-/// the round trip plus one batch.
+/// the round trip plus the input margin.
 const HORIZON_100_MS: usize = 9;
 const HORIZON_200_MS: usize = 15;
 /// Prediction errors below this are invisible; above it a window counts as diverged.

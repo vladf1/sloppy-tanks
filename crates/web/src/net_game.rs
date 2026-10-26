@@ -640,6 +640,8 @@ impl NetGame {
                     })
                     .collect::<serde_json::Map<_, _>>(),
                 "receiveMs": self.receive_ms,
+                "corrections": network.corrections,
+                "confirmedSnapshots": network.confirmed_snapshots,
             }),
         );
         let feel = &self.client.feel;

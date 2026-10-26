@@ -1,7 +1,7 @@
 //! The authoritative room host (`src/net/match-host.ts`): seats, the lobby protocol, the
 //! simulation, per-client baselines and snapshot batches, and the room's own lifetime.
 //!
-//! It is transport-free: the runtime passes each received text, disconnect and 50 ms timer
+//! It is transport-free: the runtime passes each received text, disconnect and timer
 //! tick with its millisecond clock, and drains [`HostEvent`]s (sends, closes, directory
 //! changes) with [`MatchHost::take_events`] after every call. Nothing is sent re-entrantly.
 
@@ -193,7 +193,9 @@ fn lifecycle_changed(simulation: &Simulation, seen: &mut Vec<Note>) -> bool {
 /// A test or tooling observer run after every simulation step, before its events drain.
 pub type TickHook = Box<dyn FnMut(&mut Simulation, u64) + Send>;
 
-/// Owns the simulation and room policy. Call [`advance`](Self::advance) from a 50 ms timer.
+/// Owns the simulation and room policy. Call [`advance`](Self::advance) from a timer every
+/// [`HOST_INTERVAL_MS`](super::fixed_step_clock::HOST_INTERVAL_MS), or as
+/// [`until_next_batch_ms`](Self::until_next_batch_ms) says while a round runs.
 pub struct MatchHost {
     pub simulation: Option<Simulation>,
     pub settings: RoomSettings,
@@ -278,6 +280,14 @@ impl MatchHost {
     /// Elapsed time the fixed-step clock still owes the simulation.
     pub fn debt_ms(&self) -> f64 {
         self.clock.as_ref().map_or(0.0, |clock| clock.debt_ms)
+    }
+
+    /// While a round runs, milliseconds from `now_ms` until its next batch of ticks is due;
+    /// the runtime's timer should call [`advance`](Self::advance) then.
+    pub fn until_next_batch_ms(&self, now_ms: u64) -> Option<f64> {
+        self.clock
+            .as_ref()
+            .map(|clock| clock.until_next_batch_ms(now_ms as f64))
     }
 
     /// Connections that hold a seat.
@@ -921,7 +931,7 @@ impl MatchHost {
         }
     }
 
-    /// The 50 ms timer: expire the room or seats, drop connections that stopped consuming
+    /// The host timer: expire the room or seats, drop connections that stopped consuming
     /// state, step the simulation by the elapsed fixed steps and send snapshot batches.
     pub fn advance(&mut self, now_ms: u64) {
         if self.disposed {
@@ -1029,7 +1039,7 @@ impl MatchHost {
         }
         self.shot_paths.follow(simulation, tick);
         self.drain_events(tick);
-        // Intermediate deaths/respawns and membership changes survive the 20 Hz batching.
+        // Intermediate deaths/respawns and membership changes survive batching several ticks.
         let simulation = self.simulation.as_ref().expect("stepped above");
         if lifecycle_changed(simulation, &mut self.lifecycle) {
             self.capture_frame(tick);

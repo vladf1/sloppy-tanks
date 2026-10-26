@@ -76,8 +76,9 @@ const MAX_RETRY_MS: f64 = 5000.0;
 const FIRST_RETRY_MS: f64 = 500.0;
 /// A bot-driven seat asks for its tank back at most this often.
 const RESUME_RETRY_MS: f64 = 1000.0;
-/// A snapshot batch arriving this long after the previous one (three host intervals,
-/// so at least two batches were held up) counts as late in the network statistics.
+/// A snapshot batch arriving this long after the previous one counts as late in the
+/// network statistics: a stall players see, far past any batch interval (several batches
+/// were held up), and the same threshold whatever the send rate.
 const LATE_BATCH_MS: f64 = 150.0;
 const MAX_FRAME_SECONDS: f64 = 0.1;
 /// An explosion this close to the viewer's hull may have pushed it, metres; blast radii
@@ -299,6 +300,9 @@ pub struct NetworkStats {
     /// Noticeable corrections by cause: count and metres per second of prediction, in
     /// [`CorrectionCause::ALL`] order.
     pub correction_causes: [(u64, f64); CorrectionCause::ALL.len()],
+    /// Of the snapshots counted in `corrections`, those that confirmed the prediction so
+    /// it ran on without a replay.
+    pub confirmed_snapshots: u64,
 }
 
 struct Socket {
@@ -361,6 +365,9 @@ pub struct NetworkClient {
     longest_batch_gap_ms: f64,
     applied_input: i64,
     prediction: HullPrediction,
+    /// The newest batch's hull and when it arrived, for prediction to restart from on the
+    /// next drawn frame: batches arriving together restart it once.
+    pending_hull: Option<(HostUpdate, f64)>,
     /// The newest received scene, refilled for prediction.
     prediction_scene: RenderState,
     pub feel: FeelReadings,
@@ -424,6 +431,7 @@ impl NetworkClient {
             longest_batch_gap_ms: 0.0,
             applied_input: 0,
             prediction: HullPrediction::default(),
+            pending_hull: None,
             prediction_scene: RenderState::default(),
             feel: FeelReadings::default(),
             actions: Vec::new(),
@@ -523,6 +531,7 @@ impl NetworkClient {
                 let tally = self.prediction.stats.cause(cause);
                 (tally.count, per_second(tally.total))
             }),
+            confirmed_snapshots: self.prediction.stats.confirmed,
         }
     }
 
@@ -773,6 +782,7 @@ impl NetworkClient {
                     self.notices.push(ClientNotice::ResetFeedback);
                 }
                 self.prediction.reset();
+                self.pending_hull = None;
                 self.mirror.needs_full = true;
                 self.active = false;
                 self.control = None;
@@ -812,6 +822,7 @@ impl NetworkClient {
                 if lobby.round_id != self.round_id {
                     self.round_id = lobby.round_id;
                     self.prediction.reset();
+                    self.pending_hull = None;
                     self.observed_tick = 0;
                     self.mirror.needs_full = true;
                     self.active = false;
@@ -867,6 +878,7 @@ impl NetworkClient {
                 if changed {
                     self.clear_input();
                     self.prediction.clear();
+                    self.pending_hull = None;
                 }
                 let driver = next.driver;
                 self.control = Some(next);
@@ -899,6 +911,7 @@ impl NetworkClient {
                 self.requested_full = false;
                 self.clear_input();
                 self.prediction.clear();
+                self.pending_hull = None;
                 self.feel.restart();
                 self.reset_display(now_ms)?;
                 if self.ready_round != self.round_id {
@@ -909,14 +922,14 @@ impl NetworkClient {
             }
             BinaryMessage::Snapshot(mut batch) => {
                 self.applied_input = i64::try_from(batch.ack).map_err(|_| "Invalid ack")?;
+                let ack = Ack {
+                    input_seq: self.applied_input,
+                    applied_tick: batch.ack_tick,
+                    arrival_tick: batch.ack_arrival,
+                };
                 let mut host = HostUpdate {
-                    ack: Ack {
-                        input_seq: self.applied_input,
-                        applied_tick: batch.ack_tick,
-                        arrival_tick: batch.ack_arrival,
-                    },
                     hull: batch.hull,
-                    blast: false,
+                    blast: self.pending_hull.is_some_and(|(pending, _)| pending.blast),
                 };
                 self.last_snapshot_ms = now_ms;
                 if let Some(previous) = self.last_batch_ms.replace(now_ms) {
@@ -965,15 +978,16 @@ impl NetworkClient {
                 }
                 if pushed {
                     self.timeline.arrive(self.last_snapshot_ms);
-                    self.predict_from(host, now_ms)?;
+                    self.prediction.acknowledge(&ack);
+                    self.pending_hull = Some((host, now_ms));
                 }
             }
         }
         Ok(())
     }
 
-    /// Restarts the own hull's prediction from the host's hull in a snapshot batch. A
-    /// bot-driven seat or another life's hull predicts nothing.
+    /// Restarts the own hull's prediction from the host's hull in a snapshot batch that
+    /// arrived at `now_ms`. A bot-driven seat or another life's hull predicts nothing.
     fn predict_from(&mut self, mut host: HostUpdate, now_ms: f64) -> ReadResult<()> {
         let Some(control) = &self.control else {
             return Ok(());
@@ -1296,6 +1310,12 @@ impl NetworkClient {
             || self.mirror.state.is_none()
             || self.hidden
         {
+            return None;
+        }
+        if let Some((host, arrived_ms)) = self.pending_hull.take()
+            && self.predict_from(host, arrived_ms).is_err()
+        {
+            self.receive_failure();
             return None;
         }
         // This frame's input drives the predicted hull before it is drawn, rounded as the

@@ -3,7 +3,7 @@
 //! - [`server`]: HTTP routes, the `/room/CODE` WebSocket upgrade, limits and shutdown.
 //! - [`websocket`]: RFC 6455 framing with RFC 7692 permessage-deflate.
 //! - [`room_task`] / [`session`]: one Tokio task per room driving a [`session::RoomSession`]
-//!   on the 50 ms cadence around a [`host::RoomHost`].
+//!   on the host's tick cadence around a [`host::RoomHost`].
 //! - [`monitor`] / [`dashboard`]: readings, `/stats`, journal lines and `/dashboard`.
 //! - [`match_room`]: the room host, `sloppy_core`'s `MatchHost` behind [`host::RoomHost`].
 
