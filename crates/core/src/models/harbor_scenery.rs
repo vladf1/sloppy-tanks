@@ -110,8 +110,8 @@ const PAD_RADIUS: f64 = 2.65;
 const PAD_STEEL: u32 = 0x3a4850;
 
 /// Render order of the paint blended over the apron (markings and lettering): before
-/// every other blended draw, the tanks' contact shadows (`tank_model`) and the
-/// tread marks, smoke and sparks, so nothing over the paint is painted over.
+/// every other blended draw, the tanks' turret bands (`tank_model`) and the tread
+/// marks, smoke and sparks, so nothing over the paint is painted over.
 const PAINT_RENDER_ORDER: i32 = -5;
 
 /// Merge a group of ground-level parts, which receive shadows but cast none; the

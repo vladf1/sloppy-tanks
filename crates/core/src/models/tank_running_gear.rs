@@ -1305,9 +1305,9 @@ mod tests {
 
     /// Triangles of every shown part but the recognition panels and turret bands,
     /// which burn away on wrecks, the embers wrecks add in their hatches, and the
-    /// live vehicle's contact shadow and turret occlusion.
+    /// live vehicle's turret occlusion.
     fn triangles(node: &Node) -> usize {
-        if !node.visible || node.name == "contact-shadow" || node.name == part::TURRET_OCCLUSION {
+        if !node.visible || node.name == part::TURRET_OCCLUSION {
             return 0;
         }
         let own = node.drawable.as_ref().map_or(0, |drawable| {

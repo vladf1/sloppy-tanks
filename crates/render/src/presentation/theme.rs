@@ -16,9 +16,9 @@ pub const SHADOW_MAP_SIZE: u32 = 2048;
 pub const SHADOW_BIAS: f32 = -0.0002;
 pub const SHADOW_NORMAL_BIAS: f32 = 0.05;
 /// Spread of the sun shadow's filter taps in shadow-map texels. At 1 the taps sit
-/// where the bilinear compares complete the filter's tent exactly; a wider spread
-/// steps the penumbra as shadows move. The 7×7 filter gives penumbrae about 50 cm
-/// wide (35 cm from WebGL's 5×5).
+/// where the bilinear compares complete the filter's tent exactly; any other spread
+/// steps the penumbra as shadows move. The 3×3 tent gives penumbrae about 20 cm
+/// wide across the sun's direction, longer along it as the sun lowers.
 pub const SHADOW_FILTER_RADIUS: f32 = 1.0;
 /// No map shows a surface that receives the sun's shadow below this height (the
 /// deepest, the village creek bed, is under 5 m down), so the renderer skips
