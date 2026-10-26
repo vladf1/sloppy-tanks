@@ -146,108 +146,22 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
             },
         };
         apply_vehicle_livery(&mut root, &livery);
-        root.children.push(contact_shadow(kind));
         root.scale = DVec3::splat(vehicle(kind).scale);
         root
     })
 }
 
-/// The soft contact shadow every vehicle sits on: a dark pool on the ground under
-/// it, darkest beneath the hull and fading out a little beyond its tracks or
-/// wheels, so it rests on the ground under any sun rather than hovering over its
-/// cast shadow. Not part of the hull (whose bounds are its hit box) nor of a wreck.
-const CONTACT_SHADOW_REACH: f64 = 0.32;
-/// Its darkness under the hull (alpha over the ground) and how far in from its edge
-/// (a share of its half extent) it reaches that darkness.
-const CONTACT_SHADOW_DARKNESS: f32 = 0.72;
-const CONTACT_SHADOW_CORE: f64 = 0.72;
-/// Height above the ground line, so it never fights the ground's depth.
-const CONTACT_SHADOW_LIFT: f64 = 0.012;
-/// Blended draws sort back to front within a render order, so contact shadows
+/// Height of the turret band above the deck, so it never fights the deck's depth.
+const OCCLUSION_LIFT: f64 = 0.012;
+/// Blended draws sort back to front within a render order, so turret bands
 /// interleaved with each other kind of blended draw would cost one draw per
-/// vehicle. They and the turrets' deck occlusion (one order per kind, since each
-/// kind's band is its own mesh) draw first among the blended draws, each in a
-/// render order of its own, so a field of vehicles costs one draw for all its
-/// contact shadows and one per kind for its turret bands. Both only darken, so the
-/// order between them never shows.
-const CONTACT_SHADOW_ORDER: i32 = -4;
+/// vehicle. They draw first among the blended draws, in a render order per kind
+/// (each kind's band is its own mesh), so a field of vehicles costs one draw per
+/// kind for its turret bands.
 const TURRET_OCCLUSION_ORDER: i32 = -3;
 
-fn contact_shadow(kind: VehicleKind) -> Node {
-    let (half_width, half_length, ground) = if kind == VehicleKind::Humvee {
-        (1.06, 2.27, HUMVEE_GRIME.ground)
-    } else {
-        let c = chassis(kind, Team::Blue, [0; 3]);
-        let reach = c.length * 1.235 / 2.46 + 0.0175;
-        (c.overall_width / 2.0, reach, TRACKED_GRIME.ground)
-    };
-    let mut node = Node::mesh(contact_shadow_mesh(), contact_shadow_material());
-    if let Some(drawable) = &mut node.drawable {
-        drawable.render_order = CONTACT_SHADOW_ORDER;
-    }
-    node.position = DVec3::new(0.0, ground + CONTACT_SHADOW_LIFT, 0.0);
-    node.scale = DVec3::new(
-        half_width + CONTACT_SHADOW_REACH,
-        1.0,
-        half_length + CONTACT_SHADOW_REACH,
-    );
-    node.name = "contact-shadow".into();
-    node
-}
-
-/// A unit rounded square facing up: full darkness inside `CONTACT_SHADOW_CORE`,
-/// fading to none at its rounded rim. Shared by every vehicle (each scales it to
-/// its footprint), so all of them draw in one call.
-fn contact_shadow_mesh() -> Arc<Mesh> {
-    static MESH: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
-    MESH.get_or_init(|| {
-        const ARC: usize = 3;
-        const ROUND: f64 = 0.16;
-        let mut positions = Vec::new();
-        let mut alpha = Vec::new();
-        for (extent, round, strength) in [
-            (CONTACT_SHADOW_CORE, 0.0, CONTACT_SHADOW_DARKNESS),
-            (1.0, ROUND, 0.0),
-        ] {
-            for (corner, (sx, sz)) in [(1.0, 1.0), (-1.0, 1.0), (-1.0, -1.0), (1.0, -1.0)]
-                .into_iter()
-                .enumerate()
-            {
-                for k in 0..ARC {
-                    let angle = (corner as f64 + k as f64 / (ARC - 1) as f64) * PI / 2.0;
-                    let x = sx * (extent - round) + round * angle.cos();
-                    let z = sz * (extent - round) + round * angle.sin();
-                    positions.extend([x, 0.0, z]);
-                    alpha.push(strength);
-                }
-            }
-        }
-        let ring = (4 * ARC) as u32;
-        // The core: a fan over its corners; then the band out to the rim.
-        let mut indices: Vec<u32> = (1..ring - 1).flat_map(|i| [0, i + 1, i]).collect();
-        for i in 0..ring {
-            let j = (i + 1) % ring;
-            indices.extend([i, j, ring + j, i, ring + j, ring + i]);
-        }
-        let mut mesh = Mesh::from_f64(&positions, &[], &[], Some(indices));
-        mesh.compute_vertex_normals();
-        if mesh.normals.iter().map(|n| n[1]).sum::<f32>() < 0.0
-            && let Some(indices) = &mut mesh.indices
-        {
-            for triangle in indices.as_chunks_mut::<3>().0 {
-                triangle.swap(1, 2);
-            }
-            mesh.compute_vertex_normals();
-        }
-        mesh.colors = vec![[0.0, 0.0, 0.0]; mesh.positions.len()];
-        mesh.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alpha));
-        Arc::new(mesh)
-    })
-    .clone()
-}
-
-/// Unlit black, blended over the ground by the mesh's vertex alpha.
-fn contact_shadow_material() -> Arc<Material> {
+/// Unlit black, blended over the deck by the mesh's vertex alpha.
+fn occlusion_material() -> Arc<Material> {
     static MATERIAL: std::sync::OnceLock<Arc<Material>> = std::sync::OnceLock::new();
     MATERIAL
         .get_or_init(|| {
@@ -267,7 +181,7 @@ fn contact_shadow_material() -> Arc<Material> {
 /// round the turret's widest outline, from just under its overhang out by
 /// `TURRET_OCCLUSION_REACH`, so the turret sits on the hull rather than hovering
 /// over an evenly lit deck. It is a turret part, so it turns with the turret and
-/// stretches with its shell, drawn in the contact shadow's material; both teams'
+/// stretches with its shell, drawn in a blended black material; both teams'
 /// tanks of a kind share its mesh. Wrecks leave it out.
 const TURRET_OCCLUSION_REACH: f64 = 0.3;
 const TURRET_OCCLUSION_INSET: f64 = 0.05;
@@ -278,7 +192,7 @@ const TURRET_OCCLUSION_MITRE: f64 = 1.6;
 fn turret_occlusion(c: &Chassis) -> Node {
     static MESHES: Cache<VehicleKind, Mesh> = Cache::new();
     let mesh = MESHES.get_or_insert(c.kind, || turret_occlusion_mesh(c));
-    let mut node = Node::mesh(mesh, contact_shadow_material());
+    let mut node = Node::mesh(mesh, occlusion_material());
     if let Some(drawable) = &mut node.drawable {
         drawable.render_order = TURRET_OCCLUSION_ORDER + c.pick(0.0, 1.0, 2.0) as i32;
     }
@@ -302,7 +216,7 @@ fn turret_occlusion_mesh(c: &Chassis) -> Mesh {
         }
     };
     // Just over the hull roof (the deck plate's top).
-    let y = c.deck + ROOF_RISE + CONTACT_SHADOW_LIFT;
+    let y = c.deck + ROOF_RISE + OCCLUSION_LIFT;
     let mut positions = Vec::with_capacity(n * 6);
     let mut alpha = Vec::with_capacity(n * 2);
     for (i, &p) in outline.iter().enumerate() {
