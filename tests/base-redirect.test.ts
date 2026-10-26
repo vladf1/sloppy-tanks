@@ -2,10 +2,10 @@ import assert from "node:assert/strict";
 import { test } from "bun:test";
 import { requestPath } from "../scripts/site-server";
 
+/** Where a request for `url` is redirected: a path, so the browser keeps its scheme and host. */
 function visit(base: string, url: string): string | undefined {
   const result = requestPath(new Request(`http://localhost${url}`), base);
-  const location = result instanceof Response ? result.headers.get("Location") : null;
-  return location ? new URL(location).pathname + new URL(location).search : undefined;
+  return (result instanceof Response && result.headers.get("Location")) || undefined;
 }
 
 test("the bare base redirects to the page and keeps its query", () => {
@@ -15,6 +15,11 @@ test("the bare base redirects to the page and keeps its query", () => {
     visit("/sloppy-tanks/", "/sloppy-tanks?debug&map=harbor"),
     "/sloppy-tanks/?debug&map=harbor",
   );
+});
+
+test("the site root leads to the page under a base", () => {
+  assert.equal(visit("/sloppy-tanks/", "/"), "/sloppy-tanks/");
+  assert.equal(visit("/sloppy-tanks/", "/?map=quarry"), "/sloppy-tanks/?map=quarry");
 });
 
 test("other paths and a root base pass through", () => {

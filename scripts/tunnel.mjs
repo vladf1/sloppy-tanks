@@ -10,10 +10,9 @@
 // link through public DNS and opens a new tunnel (with a new link) when it is gone.
 import { spawn, spawnSync } from "node:child_process";
 import { Resolver } from "node:dns/promises";
-import { createReadStream, statSync } from "node:fs";
-import { createServer } from "node:http";
 import { request as httpsRequest } from "node:https";
-import { extname, join, relative, resolve } from "node:path";
+import { resolve } from "node:path";
+import { requestPath, staticFile } from "./site-server.ts";
 
 const port = Number(process.env.PORT) || 4179;
 const BASE = "/sloppy-tanks/";
@@ -26,17 +25,6 @@ const WATCHDOG_INTERVAL_MS = 30_000;
 const WATCHDOG_GRACE_MS = 60_000;
 const WATCHDOG_FAILURES_BEFORE_RESTART = 2;
 const WATCHDOG_REQUEST_TIMEOUT_MS = 15_000;
-const TYPES = {
-  ".html": "text/html; charset=utf-8",
-  ".js": "text/javascript",
-  ".css": "text/css",
-  ".wasm": "application/wasm",
-  ".webp": "image/webp",
-  ".svg": "image/svg+xml",
-  ".mp3": "audio/mpeg",
-  ".json": "application/json",
-  ".txt": "text/plain; charset=utf-8",
-};
 
 if (spawnSync("cloudflared", ["--version"], { stdio: "ignore" }).status !== 0) {
   console.error("cloudflared is missing: brew install cloudflared");
@@ -71,47 +59,24 @@ function linkPage() {
     <body><h1>Sloppy Tanks tunnel</h1>${body}</body></html>`;
 }
 
-/** Serve only files inside dist/, under the page's base path. */
-function serveBuild(request, response) {
-  const path = decodeURIComponent(new URL(request.url, "http://local").pathname);
-  if (path === BASE.slice(0, -1)) {
-    response.writeHead(301, { location: BASE }).end();
-    return;
-  }
-  let file = resolve(dist, `.${path.slice(BASE.length - 1)}`);
-  if (relative(dist, file).startsWith("..")) {
-    response.writeHead(403).end();
-    return;
-  }
-  try {
-    if (statSync(file).isDirectory()) file = join(file, "index.html");
-    const size = statSync(file).size;
-    response.writeHead(200, {
-      "content-type": TYPES[extname(file)] ?? "application/octet-stream",
-      "content-length": size,
-    });
-    createReadStream(file).pipe(response);
-  } catch {
-    response.writeHead(404).end("Not found");
-  }
-}
-
-const server = createServer((request, response) => {
-  const path = new URL(request.url, "http://local").pathname;
-  if (path.startsWith(BASE) || path === BASE.slice(0, -1)) {
-    serveBuild(request, response);
-  } else if (path === "/" && /^(localhost|127\.0\.0\.1)(:|$)/.test(request.headers.host ?? "")) {
-    response.writeHead(200, { "content-type": TYPES[".html"], "cache-control": "no-store" });
-    response.end(linkPage());
-  } else if (path === "/") {
-    response.writeHead(302, { location: BASE }).end();
-  } else {
-    response.writeHead(404).end("Not found");
-  }
+/** dist/ under the page's base, as `bun run preview` serves it; the root shows the link
+ * locally and sends visitors through the tunnel to the game. */
+const server = Bun.serve({
+  hostname: "127.0.0.1",
+  port,
+  reusePort: false,
+  development: false,
+  fetch(request) {
+    const local = /^(localhost|127\.0\.0\.1)(:|$)/.test(request.headers.get("host") ?? "");
+    if (local && new URL(request.url).pathname === "/")
+      return new Response(linkPage(), {
+        headers: { "content-type": "text/html; charset=utf-8", "cache-control": "no-store" },
+      });
+    const relative = requestPath(request, BASE);
+    return relative instanceof Response ? relative : staticFile(dist, relative, request);
+  },
 });
-server.listen(port, "127.0.0.1", () => {
-  console.log(`Link page: http://localhost:${port}/`);
-});
+console.log(`Link page: http://localhost:${port}/`);
 
 let tunnel;
 let linkSince = 0;
@@ -190,12 +155,8 @@ setInterval(async () => {
 const stop = (code = 0) => {
   stopping = true;
   tunnel.kill();
-  server.close();
+  void server.stop(true);
   process.exit(code);
 };
 for (const signal of ["SIGINT", "SIGTERM"]) process.on(signal, () => stop());
-server.on("error", (error) => {
-  console.error(`The static server stopped: ${error.message}`);
-  stop(1);
-});
 startTunnel();

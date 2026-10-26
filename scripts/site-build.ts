@@ -1,5 +1,6 @@
 import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { transform as transformCss } from "lightningcss";
 import { devHeaders, devPages, devSiteHtml } from "./dev-site.ts";
 import { healthBody } from "./page-health.ts";
 import { lazyEntries, startupHtml } from "./startup-html.ts";
@@ -64,6 +65,30 @@ export function sourceMetafile(metafile: Bun.BuildMetafile): Bun.BuildMetafile {
     };
   }
   return { inputs, outputs };
+}
+
+/** A browser version as Lightning CSS encodes it. */
+const browser = (major: number, minor = 0) => (major << 16) | (minor << 8);
+/** The browsers the stylesheets are written for: Vite's `baseline-widely-available`, which
+ * the game built with before. It needs newer ones anyway (WebGPU or WebGL2, top-level
+ * await), while Bun's fixed CSS targets (Chrome 80, Safari 14) add prefixes and fallbacks
+ * worth 1.6 KB of the first response. */
+const CSS_TARGETS = {
+  chrome: browser(111),
+  edge: browser(111),
+  firefox: browser(114),
+  safari: browser(16, 4),
+};
+
+/** `source`, a stylesheet that imports no other, written for CSS_TARGETS. */
+export async function stylesheet(source: string, minify: boolean): Promise<string> {
+  const { code } = transformCss({
+    filename: source,
+    code: await readFile(source),
+    minify,
+    targets: CSS_TARGETS,
+  });
+  return code.toString();
 }
 
 /** The load of the stylesheet at `href`, one per page however many modules ask for it, so
@@ -153,19 +178,16 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
   if (entrypoints.some((entry) => entry === "src/game.ts" || entry === "src/net/client.ts"))
     await buildBakeWorkers();
 
-  // Compile styles before entering bundler callbacks: Bun.build is not reentrant.
+  // The stylesheets loaded on their own, ready before the bundle asks for them.
   const cssAssets = new Map<string, { name: string; body: Blob }>();
   for (const source of ["src/touch-controls.css", "src/net/multiplayer.css", "tools/lab.css"]) {
-    const result = await Bun.build({
-      entrypoints: [path.join(root, source)],
-      root,
-      target: "browser",
-      minify,
+    const css = await stylesheet(path.join(root, source), minify);
+    const hash = new Bun.CryptoHasher("sha256").update(css).digest("hex").slice(0, 8);
+    const name = `assets/${path.basename(source, ".css")}-${hash}.css`;
+    cssAssets.set(path.join(root, source), {
+      name,
+      body: new Blob([css], { type: "text/css;charset=utf-8" }),
     });
-    const css = result.outputs.find((file) => file.path.endsWith(".css"));
-    if (!css) throw new Error(`Missing stylesheet: ${source}`);
-    const name = `assets/${path.basename(source, ".css")}-${css.hash}.css`;
-    cssAssets.set(path.join(root, source), { name, body: css });
   }
   const templates = new Map<string, string>();
   for (const page of pages) {
@@ -279,6 +301,8 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
       return `<script type="module" src="${base}${file}"></script>`;
     });
     if (page === "index.html") {
+      // The startup's stylesheets go inline, written for CSS_TARGETS rather than by Bun.
+      const startupStyles: string[] = [];
       const startup = await Bun.build({
         entrypoints: [path.join(root, "src/main.ts")],
         root,
@@ -296,13 +320,20 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
                 );
                 return lazy ? { path: lazy.id, external: true } : undefined;
               });
+              build.onLoad({ filter: /\.css$/ }, (args) => {
+                startupStyles.push(args.path);
+                return { contents: "", loader: "js" };
+              });
             },
           },
         ],
       });
       const js = startup.outputs.find((file) => file.path.endsWith(".js"));
-      const css = startup.outputs.find((file) => file.path.endsWith(".css"));
-      if (!js || !css) throw new Error("Missing inline startup code or styles");
+      if (!js) throw new Error("Missing inline startup code");
+      // Bun loads modules in parallel, so more than one stylesheet would need an order.
+      if (startupStyles.length !== 1)
+        throw new Error(`The startup imports ${startupStyles.length} stylesheets, not one`);
+      const css = await stylesheet(startupStyles[0], true);
       const imports = new Map(
         lazyEntries.map((entry) => [entry.id, withStyles(entries.get(entry.source)!)]),
       );
@@ -333,7 +364,7 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
         base,
         multiplayerUrl,
         script,
-        await css.text(),
+        css,
         [...graph].map((file) => base + file),
         [binary("engine_bg"), binary("engine-webgl_bg")],
       );

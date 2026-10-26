@@ -6,6 +6,9 @@ import { devPageHtml, withBuildValues } from "../scripts/dev-pages-plugin.ts";
 import { startDevServer } from "../scripts/site-server.ts";
 import { root } from "../scripts/site-build.ts";
 
+/** Long enough for a second server process to start and fail to bind. */
+const BIND_ATTEMPT_MS = 2000;
+
 test("a second dev process cannot share an occupied port", async () => {
   const server = await startDevServer({ port: 0 });
   const child = Bun.spawn({
@@ -13,7 +16,7 @@ test("a second dev process cannot share an occupied port", async () => {
     cwd: root,
     stdout: "pipe",
     stderr: "pipe",
-    timeout: 2000,
+    timeout: BIND_ATTEMPT_MS,
   });
   try {
     const [code, errors] = await Promise.all([child.exited, new Response(child.stderr).text()]);

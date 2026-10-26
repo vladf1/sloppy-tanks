@@ -3,7 +3,8 @@ import { existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "bun:test";
-import { buildSite, root } from "../scripts/site-build.ts";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { buildSite, root, stylesheet } from "../scripts/site-build.ts";
 
 test("the development directory builds without gameplay workers or engine binaries", async () => {
   const { files } = await buildSite({ pages: ["test-pages.html"] });
@@ -76,3 +77,20 @@ test.skipIf(!engineBuilt)(
     assert.ok(own.includes(`(globalThis.sloppyStyles??={})["/sloppy-tanks/${sheet}"]??=`));
   },
 );
+
+test("stylesheets keep modern CSS the game's browsers support, without Bun's old-browser fallbacks", async () => {
+  const directory = await mkdtemp(path.join(tmpdir(), "sloppy-css-"));
+  try {
+    const source = path.join(directory, "probe.css");
+    await writeFile(
+      source,
+      ".menu :is(.tab, .card) { color: color-mix(in srgb, var(--team) 40%, blue); user-select: none }",
+    );
+    const css = await stylesheet(source, true);
+    assert.ok(css.includes(":is(.tab,.card)"), css);
+    assert.equal(css.match(/color-mix\(/g)?.length, 1, css);
+    assert.ok(!/-moz-|-webkit-any|-moz-any/.test(css), css);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});

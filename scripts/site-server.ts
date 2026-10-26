@@ -10,13 +10,18 @@ interface ServerOptions {
   base?: string;
 }
 
-/** Decode before checking containment; neither source files nor sibling directories are public. */
+/** A redirect by path alone, which keeps the scheme and host the browser used: behind the
+ * tunnel's HTTPS, an absolute URL from the request would point at plain HTTP. */
+function redirect(location: string): Response {
+  return new Response(null, { status: 302, headers: { Location: location } });
+}
+
+/** Decode before checking containment; neither source files nor sibling directories are public.
+ * The site root and the bare base both lead to the page, query and all. */
 export function requestPath(request: Request, base: string): string | Response {
   const url = new URL(request.url);
-  if (base !== "/" && url.pathname === base.slice(0, -1)) {
-    url.pathname = base;
-    return Response.redirect(url, 302);
-  }
+  if (base !== "/" && (url.pathname === "/" || url.pathname === base.slice(0, -1)))
+    return redirect(base + url.search);
   let pathname: string;
   try {
     pathname = decodeURIComponent(url.pathname);
@@ -34,7 +39,7 @@ export function requestPath(request: Request, base: string): string | Response {
   return relative;
 }
 
-async function staticFile(
+export async function staticFile(
   directory: string,
   relative: string,
   request: Request,
@@ -43,10 +48,7 @@ async function staticFile(
   const info = await stat(filename).catch(() => undefined);
   if (info?.isDirectory()) {
     const url = new URL(request.url);
-    if (!url.pathname.endsWith("/")) {
-      url.pathname += "/";
-      return Response.redirect(url, 302);
-    }
+    if (!url.pathname.endsWith("/")) return redirect(`${url.pathname}/${url.search}`);
     return staticFile(directory, relative + "index.html", request);
   }
   return info?.isFile()
