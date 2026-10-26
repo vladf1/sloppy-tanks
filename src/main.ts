@@ -144,9 +144,8 @@ function startBattleSetup(linkedRoom?: string, view?: Partial<SetupView>): void 
     options.humanKind = view.kind;
   }
   if (isPhone()) {
-    // Battle Setup on a phone offers only the tank and map; the saved desktop
-    // choices stay untouched for the player's other devices.
-    options.gameMode = "team";
+    // Battle Setup on a phone offers the tank, map and format but no difficulty: its
+    // bots are always Easy, and the saved difficulty stays untouched.
     options.difficulty = "easy";
   }
   const autoStart = new URLSearchParams(location.search).has("autoplay");

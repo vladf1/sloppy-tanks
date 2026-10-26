@@ -392,6 +392,15 @@ html:is(.phone, .home-screen-app) {
 .scoreboard.no-limit .team-progress {
   display: none;
 }
+/* A solo run has no other side: the pill is your kills and the clock, which takes the
+   missing plate's slanted end. */
+.scoreboard.solo .coral {
+  display: none;
+}
+.scoreboard.solo .clock {
+  padding-right: 24px;
+  clip-path: polygon(0 0, 100% 0, calc(100% - 16px) 100%, 0 100%);
+}
 .clock {
   display: flex;
   flex-direction: column;
@@ -1352,8 +1361,9 @@ body:has(#settings[open]) .hud-actions {
   --plate-tint: var(--red);
 }
 /* In first person the dial's segment continues the panel: the panel keeps only its
-   top-left cut and the segment the bottom-right one, so the pair reads as one plate. */
-#hud.first-person .combat-status::before {
+   top-left cut and the segment the bottom-right one, so the pair reads as one plate. (A
+   phone's dial stands apart, so its hull plate keeps both cuts.) */
+html:not(.phone) #hud.first-person .combat-status::before {
   clip-path: polygon(var(--cut) 0, 100% 0, 100% 100%, 0 100%, 0 var(--cut));
 }
 .hull-compass {
@@ -2381,7 +2391,7 @@ h2 {
   white-space: nowrap;
 }
 /* Thick enough to compare the three tanks at a glance in the few seconds the card is up. */
-.respawn .spec span::after {
+.respawn .spec > span::after {
   height: 6px;
   border-radius: 3px;
 }
@@ -2492,15 +2502,6 @@ html:not(.phone) #toast[data-tone="death"] {
   line-height: 1.4;
 }
 #ammo-notice:empty {
-  display: none;
-}
-/* A phone's choices in brief above GO; other screens show the cards themselves. */
-.phone-briefing {
-  display: none;
-}
-/* The phone's hull: a small pill at the bottom centre, the one readout its edition keeps
-   besides the score. Other screens show the tank panel instead. */
-#hull-pill {
   display: none;
 }
 /* First person: one clean sight. The engine draws the gun sight (its reload state in
@@ -3122,16 +3123,17 @@ html:not(.phone) #toast[data-tone="death"] {
   text-align: right;
   text-shadow: none;
 }
-/* A class has a full name and, for a phone's narrow card, one word. */
-.vehicle .class-short,
-.phone .menu.start .vehicle .class-full {
+/* A card's labels have a full form and, for a phone's narrow card, a short one: the
+   class in one word, the hull as HP. */
+.vehicle .short-label,
+.phone .menu.start .vehicle .full-label {
   display: none;
 }
-.phone .menu.start .vehicle .class-short {
+.phone .menu.start .vehicle .short-label {
   display: inline;
 }
-/* The tank cards are little showrooms: a spotlight on each tank, a lit turntable under
-   it, and its hull and speed as bars. The chosen tank glows gold. */
+/* The tank cards are little showrooms: a spotlight on each tank and its hull and speed
+   as bars. The chosen tank glows gold. */
 .vehicle {
   overflow: hidden;
   isolation: isolate;
@@ -3193,8 +3195,8 @@ html:not(.phone) #toast[data-tone="death"] {
   background: var(--gold);
   color: #1a2233;
 }
-/* Each class reads at a glance: a light scout sits small on its turntable and a heavy
-   tank fills it, and the class tag carries the class's colour. */
+/* Each class reads at a glance: a light scout sits small in its card and a heavy tank
+   fills it, and the class tag carries the class's colour. */
 .vehicle[data-kind="scout"] {
   --class: #5fd8ff;
   --scale: 0.8;
@@ -3250,15 +3252,15 @@ html:not(.phone) #toast[data-tone="death"] {
   font-size: 11px;
   letter-spacing: 1.2px;
 }
-.spec span {
+.spec > span {
   display: grid;
   flex: 1;
   gap: 5px;
 }
-.spec span:last-child {
+.spec > span:last-child {
   text-align: right;
 }
-.spec span::after {
+.spec > span::after {
   content: "";
   height: 4px;
   border-radius: 2px;
@@ -3267,34 +3269,11 @@ html:not(.phone) #toast[data-tone="death"] {
     #ffffff17;
   box-shadow: 0 0 8px #6fc6ff22;
 }
-.spec span:last-child::after {
+.spec > span:last-child::after {
   background:
     linear-gradient(270deg, var(--gold), var(--gold-hot)) 100% 0 / calc(var(--v, 1) * 100%) 100%
       no-repeat,
     #ffffff17;
-}
-/* The turntable under each tank. */
-.start .vehicle::before {
-  content: "";
-  position: absolute;
-  z-index: -1;
-  left: 14%;
-  right: 14%;
-  top: 46%;
-  height: 34%;
-  border-radius: 50%;
-  background: radial-gradient(
-    ellipse at center,
-    color-mix(in srgb, var(--class, #8cc8ff) 26%, transparent),
-    color-mix(in srgb, var(--class, #8cc8ff) 7%, transparent) 55%,
-    transparent 70%
-  );
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--class, #8cc8ff) 22%, transparent);
-  pointer-events: none;
-}
-.start .vehicle.selected::before {
-  background: radial-gradient(ellipse at center, #ffd36a40, #ffcf3812 55%, transparent 70%);
-  box-shadow: inset 0 0 0 1px #ffcf3855;
 }
 .setup-panels {
   display: grid;
@@ -4321,6 +4300,13 @@ html:not(.phone) #toast[data-tone="death"] {
 .room-empty .offline-actions .offline-action {
   margin-top: 0;
 }
+/* Retry is the dialog's secondary key: the glass outline Cancel wears, as tall as the
+   battle key beside it, so the pair reads like Save and Cancel. Wide enough for the ring
+   that spins before its label while a retry is under way, so it never changes width. */
+.room-empty .offline-actions .retry-now {
+  min-width: 170px;
+  min-height: 46px;
+}
 @media (min-width: 601px) {
   html:not(.phone) #multiplayer-panel:has(.room-status[data-state="error"]) .room-browse {
     grid-row: 1 / 3;
@@ -4755,19 +4741,25 @@ html:not(.phone) #toast[data-tone="death"] {
   font-size: 12.5px;
   line-height: 1.65;
 }
-/* The build line has a slim row of its own at the panel's foot, right-aligned under the
-   key strip, so the two never meet at any width; tucked into the panel's bottom padding,
-   it stays on screen whenever the panel does. */
+/* The build line sits in the screen's bottom-right corner, outside the dialog. It is
+   part of the setup markup so the in-game copy keeps it, but fixed to the screen; the
+   panel's fit zoom would scale it with the dialog, so it counters that zoom. fitPanels
+   marks it crowded where the dialog leaves the corner no room, and it hides then. */
 .start .menu-build {
-  grid-column: 1 / -1;
-  justify-self: end;
-  margin: calc(4px - var(--setup-gap)) 2px -4px 0;
+  position: fixed;
+  right: 12px;
+  bottom: 8px;
+  zoom: calc(1 / var(--panel-zoom, 1));
   color: #b4c8db;
   font-size: 11.5px;
   font-weight: 600;
   line-height: 14px;
   letter-spacing: 0.3px;
+  white-space: nowrap;
   pointer-events: none;
+}
+.start .menu-build[data-crowded] {
+  visibility: hidden;
 }
 /* Short laptop screens keep the whole setup in view; the pause menu lists controls too. */
 @media (max-height: 770px), (max-width: 800px) {
@@ -4775,26 +4767,68 @@ html:not(.phone) #toast[data-tone="death"] {
     padding-inline: 0;
   }
 }
-/* A phone's build line ends the sheet under GO, clear of the logo and every choice. */
+/* A phone's sheet fills the screen, so its corner has no room for the build line. */
 .phone .start .menu-build {
-  margin: 2px 4px 0 0;
-  color: #7f98b2;
-  font-size: 11px;
+  display: none;
 }
-/* Held sideways, the panels drop the empty row their hidden formats and room list
-   would take, so the status well and the action sit right under the map. */
+/* A phone's arena status is a slim pill floating over GO's top edge, so it takes no row of
+   its own, and it goes once the arena is ready; a failure takes the full well instead. */
+.phone :is(#startup-overlay, #overlay):not([data-state="error"]) #single-panel {
+  position: relative;
+}
+.phone :is(#startup-overlay, #overlay):not([data-state="error"]) .menu.start .startup-progress {
+  position: absolute;
+  z-index: 1;
+  width: max-content;
+  max-width: 100%;
+  min-height: 0;
+  padding: 6px 12px 7px;
+  border-radius: 999px;
+  background: #050d1cf0;
+  box-shadow: inset 0 0 0 1px #9fd0ff2e;
+  pointer-events: none;
+}
+.phone :is(#startup-overlay, #overlay)[data-state="ready"] .menu.start .startup-progress {
+  visibility: hidden;
+}
+/* Held sideways, the panels drop the empty row their room list would take, so the formats
+   and the action sit right under the map; the status pill sits on GO's top edge, over the
+   third of the row that GO takes. A failure gives the well its place back beside GO. The
+   height is the screen's scarcest pixel: smaller previews, tighter headings and no spare
+   padding under GO keep an iPhone's whole sheet, Home Screen tip included, on screen. */
 @media (orientation: landscape) {
   .phone #single-panel {
+    grid-template-areas: "battle battle go";
+  }
+  .phone :is(#startup-overlay, #overlay):not([data-state="error"]) .menu.start .startup-progress {
+    top: 0;
+    left: calc(100% - (100% - 2 * 8px) / 6);
+    transform: translate(-50%, -50%);
+  }
+  .phone :is(#startup-overlay, #overlay)[data-state="error"] #single-panel {
     grid-template-areas: "status status go";
+  }
+  .phone :is(#startup-overlay, #overlay)[data-state="error"] .start .battle-choice {
+    display: none;
   }
   .phone #multiplayer-panel {
     grid-template-areas: "status status action";
   }
   .phone .menu.start .tank-preview {
-    height: 54px;
+    height: 42px;
+  }
+  .phone .start .setup-label {
+    margin-bottom: 4px;
   }
   html.phone .menu.start {
-    padding-top: 10px;
+    padding-top: 8px;
+    padding-bottom: 12px;
+  }
+  html.phone .setup-top {
+    gap: 4px;
+  }
+  html.offer-home-screen .start .home-screen-tip {
+    line-height: 1;
   }
 }
 @media (max-height: 770px) {
@@ -4820,11 +4854,6 @@ html:not(.phone) #toast[data-tone="death"] {
   }
   .start .tank-preview {
     height: 90px;
-  }
-  /* With the key strip gone the build line follows the panels themselves: it keeps
-     clear of their border instead of tucking up as it does under the strip. */
-  .start .menu-build {
-    margin-top: 4px;
   }
 }
 @media (max-width: 860px) {
@@ -4864,6 +4893,143 @@ html:not(.phone) #toast[data-tone="death"] {
     flex-direction: column;
     gap: 5px;
     letter-spacing: 0;
+  }
+}
+
+/* Below the garage layout the logo shares the tabs' row; its tilt and drop shadow spill
+   past its box, so it needs room above the tray it stands over. */
+@media (max-width: 1239px) {
+  html:not(.phone) .setup-top .setup-header {
+    padding: 6px 0 18px;
+  }
+}
+/* A narrow window gives the logo a row of its own over the tabs, so each tab's name fits on
+   one line, and the tank cards drop their bars: the name, class and picture say enough. */
+@media (max-width: 600px) {
+  html:not(.phone) .setup-top {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0;
+  }
+  html:not(.phone) .setup-top .setup-header {
+    flex: 1 0 100%;
+    justify-content: center;
+    padding-bottom: 14px;
+  }
+  html:not(.phone) .play-tabs {
+    flex: 1 1 100%;
+  }
+  /* The tabs span the tray's whole top edge, so it is square under both top corners. */
+  html:not(.phone) .setup-tray {
+    border-top-left-radius: 0;
+  }
+  html:not(.phone) .start .vehicle .spec {
+    display: none;
+  }
+  /* The tabs share one size only where the dialog is a fixed grid: in the one column the
+     other tab's panel would stretch this one's rows with empty height. Each tab keeps its
+     own height instead, so the dialog hangs from the top of the window (and scrolls, never
+     shrinks: fitPanels leaves the one column at full size): switching tabs moves nothing
+     above the tray and never rescales the dialog. */
+  html:not(.phone) .start .setup-panel[hidden] {
+    display: none;
+  }
+  /* Every pixel of width counts here: the padding is trimmed and the type scales with the
+     window, so three buttons still fit across a window as narrow as 300px. */
+  html:not(.phone) :is(#startup-overlay, #overlay) {
+    padding: 12px;
+  }
+  html:not(.phone) :is(#startup-overlay, #overlay):has(.start) {
+    align-items: start;
+  }
+  /* The empty list already says the server is out of reach, with the reason, the
+     countdown and both ways forward; the status well under it would say it all again. The
+     new room steps out entirely rather than leaving its place empty: the one column has no
+     shared height to keep. */
+  html:not(.phone)
+    #multiplayer-panel:has(.room-status[data-state="error"])
+    :is(.room-status, .new-room) {
+    display: none;
+  }
+  html:not(.phone) .menu.start {
+    padding: 14px 10px 12px;
+  }
+  html:not(.phone) .start .vehicles {
+    gap: 5px;
+  }
+  html:not(.phone) .start .vehicle {
+    padding: 8px 6px 6px 9px;
+  }
+  html:not(.phone) .start .vehicle strong {
+    font-size: clamp(13px, 4.4vw, 22px);
+  }
+  html:not(.phone) .start .vehicle small {
+    padding-inline: 6px;
+    font-size: 9.5px;
+    letter-spacing: 0.2px;
+  }
+  html:not(.phone) .start .vehicle small::before {
+    margin-right: 4px;
+  }
+  html:not(.phone) .setup-brand {
+    font-size: 22px;
+  }
+  html:not(.phone) .setup-brand b:last-child {
+    font-size: 34px;
+  }
+  html:not(.phone) .play-tab b {
+    font-size: clamp(14px, 4.6vw, 20px);
+  }
+  html:not(.phone) .start .map-row .choice-card b {
+    font-size: clamp(12px, 3.6vw, 15px);
+  }
+  /* The map, battle format and difficulty are short rows of buttons like the tanks: a name
+     (and a map's thumbnail) side by side, with the explanations left for wide screens. */
+  html:not(.phone)
+    .start
+    :is(.map-row, .battle-choice .choice-cards, .difficulty-setting .segmented) {
+    grid-auto-flow: column;
+  }
+  html:not(.phone) .start .map-row .choice-card {
+    flex-direction: column;
+    align-items: flex-start;
+    justify-content: flex-start;
+    min-height: 78px;
+    padding: 9px 10px;
+  }
+  html:not(.phone) .start .map-row .choice-card::before {
+    background:
+      var(--art) center bottom / auto 46% no-repeat,
+      linear-gradient(180deg, transparent 30%, var(--tint) 170%);
+  }
+  html:not(.phone) .start .battle-choice .choice-card {
+    justify-content: center;
+    min-height: 64px;
+    padding: 10px 12px;
+  }
+  html:not(.phone) .start .battle-choice .choice-card b {
+    font-size: clamp(14px, 4.8vw, 19px);
+  }
+  html:not(.phone) .start :is(.map-row, .battle-choice) .choice-card small,
+  html:not(.phone) .start .battle-choice .mode-art,
+  html:not(.phone) .start .difficulty-setting .segment small {
+    display: none;
+  }
+  html:not(.phone) .start .difficulty-setting .segment {
+    justify-items: center;
+    min-height: 78px;
+    padding: 10px 6px 40px;
+    text-align: center;
+  }
+  html:not(.phone) .start .difficulty-setting .segment b {
+    font-size: clamp(13px, 4.4vw, 19px);
+  }
+  html:not(.phone) .start .difficulty-setting .segment::after {
+    top: auto;
+    right: auto;
+    bottom: 10px;
+    left: calc(50% - 14px);
+    transform: none;
   }
 }
 
@@ -4930,14 +5096,10 @@ html:not(.phone) #toast[data-tone="death"] {
   html:not(.phone) .start[data-play="multiplayer"] .setup-panels {
     border-radius: 16px 0 16px 16px;
   }
-  /* Fixed rows under the sheets, so a short screen's missing title row never draws
-     the build line up into it. */
+  /* A fixed row under the sheets, so a short screen's missing title row never draws
+     the key strip up into them. */
   html:not(.phone) .start .menu-footer {
     grid-area: 4 / 1 / 5 / -1;
-  }
-  html:not(.phone) .start .menu-build {
-    grid-area: 5 / 1 / 6 / -1;
-    margin-top: 4px;
   }
   html:not(.phone) .start .menu-footer {
     margin-top: 14px;
@@ -5049,7 +5211,8 @@ html:not(.phone) #toast[data-tone="death"] {
   }
 }
 /* An upright tablet's three tank cards are narrow: the class takes its one-word name on
-   a line of its own under the tank's name, and the stats keep to one line each. */
+   a line of its own under the tank's name, and the stats keep to one line each, the
+   hull as HP. */
 @media (max-width: 900px) {
   html:not(.phone) .start .tank-setting .vehicle {
     grid-template-columns: minmax(0, 1fr);
@@ -5058,10 +5221,10 @@ html:not(.phone) #toast[data-tone="death"] {
   html:not(.phone) .start .tank-setting .vehicle small {
     justify-self: start;
   }
-  html:not(.phone) .start .vehicle .class-full {
+  html:not(.phone) .start .vehicle .full-label {
     display: none;
   }
-  html:not(.phone) .start .vehicle .class-short {
+  html:not(.phone) .start .vehicle .short-label {
     display: inline;
   }
   html:not(.phone) .start .tank-setting .vehicle .spec {
@@ -5118,11 +5281,46 @@ html:not(.phone) #toast[data-tone="death"] {
     height: 80px;
   }
 }
+/* The arena's preparation is one slim line at every width, and once the arena is ready it
+   says nothing: it keeps its place, so nothing moves as it comes and goes. A failure takes
+   a full well with its reason and what to do. (A phone floats its own line.) */
+html:not(.phone)
+  :is(#startup-overlay, #overlay):not([data-state="error"])
+  .start
+  #single-panel
+  .startup-progress {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 16px;
+  min-height: 0;
+  padding: 0;
+  background: none;
+  box-shadow: none;
+  pointer-events: none;
+}
+html:not(.phone)
+  :is(#startup-overlay, #overlay):not([data-state="error"])
+  .start
+  #single-panel
+  .startup-hint {
+  display: none;
+}
+html:not(.phone)
+  :is(#startup-overlay, #overlay):not([data-state="error"])
+  .start
+  #single-panel
+  .startup-track {
+  width: 72px;
+  height: 3px;
+  margin: 0;
+}
+html:not(.phone) :is(#startup-overlay, #overlay)[data-state="ready"] .start .startup-progress {
+  visibility: hidden;
+}
 /* Single player on a wide screen: the battle posters run the full height beside the
-   difficulty levels and GO. The arena's preparation reads on the BATTLE heading's line,
-   over the posters, where it takes no row of its own: nothing moves as it comes and goes,
-   and once the arena is ready it says nothing. A failure takes a full well under the
-   posters, with its reason and what to do. */
+   difficulty levels and GO. The line reads on the BATTLE heading's line, over the posters,
+   where it takes no row of its own. */
 @media (min-width: 601px) {
   html:not(.phone) :is(#startup-overlay, #overlay):not([data-state="error"]) #single-panel {
     grid-template-areas:
@@ -5138,34 +5336,16 @@ html:not(.phone) #toast[data-tone="death"] {
     z-index: 1;
     align-self: start;
     justify-self: end;
-    display: flex;
-    align-items: center;
-    gap: 10px;
-    height: 16px;
-    min-height: 0;
-    padding: 0;
-    background: none;
-    box-shadow: none;
-    pointer-events: none;
   }
+}
+/* In the one column the line sits between the difficulty levels and GO. */
+@media (max-width: 600px) {
   html:not(.phone)
     :is(#startup-overlay, #overlay):not([data-state="error"])
     .start
     #single-panel
-    .startup-hint {
-    display: none;
-  }
-  html:not(.phone)
-    :is(#startup-overlay, #overlay):not([data-state="error"])
-    .start
-    #single-panel
-    .startup-track {
-    width: 72px;
-    height: 3px;
-    margin: 0;
-  }
-  html:not(.phone) :is(#startup-overlay, #overlay)[data-state="ready"] .start .startup-progress {
-    visibility: hidden;
+    .startup-progress {
+    justify-self: center;
   }
 }
 
@@ -6157,19 +6337,8 @@ body:has(#settings[open]) #overlay > .menu {
   outline: 2px solid var(--gold);
   outline-offset: 2px;
 }
-.settings .dialog-head + .setting-group-label,
-.settings .dialog-pane > .setting-group-label:first-child {
-  margin-top: 4px;
-}
-.settings .dialog-tabs {
-  margin-top: 14px;
-}
-/* Both settings panes keep one size, so switching tabs never moves the buttons. */
-.settings .dialog-pane {
-  min-height: 250px;
-}
-.settings .controls-card {
-  margin: 0;
+.settings .setting-rows > .setting-group-label:first-child {
+  margin-top: 16px;
 }
 /* A small glass pill for a section's own action, such as retrying the room list. */
 .chip-button {
@@ -6195,17 +6364,18 @@ body:has(#settings[open]) #overlay > .menu {
   transform: translateY(1px);
 }
 /* A retry under way spins a small ring before the label and waits. */
-.chip-button:disabled {
+:is(.chip-button, .retry-now):disabled {
   display: inline-flex;
   align-items: center;
+  justify-content: center;
   gap: 6px;
   color: #9fb6cc;
   cursor: progress;
 }
-.chip-button:disabled::before {
+:is(.chip-button, .retry-now):disabled::before {
   content: "";
-  width: 9px;
-  height: 9px;
+  width: 0.75em;
+  height: 0.75em;
   border: 2px solid currentColor;
   border-right-color: transparent;
   border-radius: 50%;
@@ -6216,11 +6386,11 @@ body:has(#settings[open]) #overlay > .menu {
   outline-offset: 2px;
 }
 
-/* Phones (src/game/phone-mode.ts): Battle Setup offers only the tank and the map, and
-   the arena shows nothing but the touch controls and a pause button. Touch action
-   applies to every descendant, so `manipulation` here stops double-tap page zoom
-   anywhere (Safari ignores the viewport's user-scalable=no), and taps on labels never
-   select text. */
+/* Phones (src/game/phone-mode.ts): Battle Setup offers only the tank, the map and the
+   battle format, and the arena shows nothing but the touch controls and a pause button.
+   Touch action applies to every descendant, so `manipulation` here stops double-tap page
+   zoom anywhere (Safari ignores the viewport's user-scalable=no), and taps on labels
+   never select text. */
 html.phone,
 .phone body {
   touch-action: manipulation;
@@ -6240,7 +6410,6 @@ html.phone,
   :is(
     .setup-heading,
     .play-tab small,
-    .battle-choice,
     .difficulty-setting,
     .room-browse,
     .driver-name,
@@ -6266,7 +6435,9 @@ html.phone,
   gap: 10px;
 }
 .phone .setup-header {
+  flex-direction: column;
   justify-content: center;
+  gap: 8px;
 }
 .phone .setup-brand {
   font-size: 30px;
@@ -6277,6 +6448,12 @@ html.phone,
 }
 @media (orientation: landscape) {
   .phone .setup-header {
+    display: none;
+  }
+  html.phone.offer-home-screen .setup-header {
+    display: flex;
+  }
+  .phone .setup-brand {
     display: none;
   }
 }
@@ -6334,14 +6511,18 @@ html.phone,
   display: inline;
 }
 /* An iPhone's browser cannot hide its bars for a page, so its Battle Setup suggests the
-   Home Screen, in the tank row's label where the hidden desktop note was. */
+   Home Screen: a line under the logo, since it is about the whole game rather than any one
+   choice. Held sideways the logo steps aside and the line alone heads the sheet. */
 .start .home-screen-tip {
   display: none;
 }
-/* Outranks the phone's hidden label notes, whose :is() takes its longest selector's weight. */
-.offer-home-screen .start .setup-label small.home-screen-tip {
-  display: inline;
+.offer-home-screen .start .home-screen-tip {
+  display: block;
   color: var(--label);
+  font-size: 13px;
+  line-height: 1.2;
+  text-align: center;
+  white-space: nowrap;
 }
 .phone .start .startup-progress,
 .phone .start #start,
@@ -6352,14 +6533,40 @@ html.phone,
   min-height: 48px;
   padding: 6px 10px;
 }
-.phone #hud > :not(.hud-actions, .scoreboard, #toast, #cockpit, #feed, #hull-pill, .bottom),
+/* The battle formats are two keys side by side, as tall as GO, each only its name (which
+   says what it is without a BATTLE heading): the posters' art and the lines under the
+   names are for bigger screens. A phone's bots are always Easy. */
+.phone .start .battle-choice :is(.mode-art, .choice-icon, .choice-card small) {
+  display: none;
+}
+.phone .start .battle-choice .choice-cards {
+  grid-auto-flow: column;
+}
+.phone .start .battle-choice .setup-label {
+  display: none;
+}
+.phone .start .battle-choice .choice-card {
+  justify-content: center;
+  min-height: 50px;
+  padding: 6px 12px;
+}
+.phone .start .battle-choice .choice-card b {
+  font-size: 19px;
+}
+.phone #hud > :not(.hud-actions, .scoreboard, #toast, #cockpit, #feed, .bottom),
 .phone .hud-actions > :not(#pause, #view-mode, .touch-zoom),
 .phone #cockpit .aim-hint {
   display: none;
 }
 /* One row across the top: the scoreboard in the middle and, in the right corner, one
    slim glass bar of zoom, first person and pause with hairline dividers, the same bar as
-   the desktop's; the drive stick holds the bottom-left. */
+   the desktop's; the drive stick holds the bottom-left. The keys and the scoreboard share
+   one height, so their tops, middles and bottoms line up (and each key is a full thumb's
+   height). */
+.phone #hud {
+  --hud-row: 44px;
+  --hud-corner: 10px;
+}
 .phone .hud-actions,
 .phone .touch-enabled .hud-actions {
   top: max(6px, env(safe-area-inset-top));
@@ -6372,7 +6579,7 @@ html.phone,
 .phone .hud-actions > .quiet,
 .phone .touch-enabled .hud-actions button {
   min-width: 40px;
-  min-height: 38px;
+  min-height: var(--hud-row);
   padding: 0 8px;
   border: 0;
   border-radius: 9px;
@@ -6404,7 +6611,7 @@ html.phone,
       0 4px 12px #0007;
   }
   .phone .hud-actions > #zoom-out {
-    border-radius: 10px 0 0 10px;
+    border-radius: var(--hud-corner) 0 0 var(--hud-corner);
     box-shadow:
       inset 1px 0 var(--plate-edge),
       inset 0 1px var(--plate-edge),
@@ -6412,7 +6619,7 @@ html.phone,
       0 4px 12px #0007;
   }
   .phone .hud-actions > #zoom-in {
-    border-radius: 0 10px 10px 0;
+    border-radius: 0 var(--hud-corner) var(--hud-corner) 0;
     box-shadow:
       inset -1px 0 var(--plate-edge),
       inset 0 1px var(--plate-edge),
@@ -6421,7 +6628,7 @@ html.phone,
   }
   .phone .hud-actions > :is(#view-mode, #pause) {
     margin-left: 10px;
-    border-radius: 10px;
+    border-radius: var(--hud-corner);
     box-shadow:
       inset 0 0 0 1px var(--plate-edge),
       0 4px 12px #0007;
@@ -6434,70 +6641,6 @@ html.phone,
   color: #c9d9ea;
   font-size: 18px;
   font-weight: 800;
-}
-/* The phone's hull: a pill at the bottom centre with the shield mark, the number and the
-   segmented bar in the hull's state colour. */
-/* The phone's hull plate: the tank's name, then its hull, on the HUD's armour plate. */
-.phone #hull-pill {
-  --cut: 9px;
-  position: absolute;
-  left: 50%;
-  bottom: max(10px, env(safe-area-inset-bottom));
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 16px 6px 14px;
-  clip-path: polygon(
-    var(--cut) 0,
-    100% 0,
-    100% calc(100% - var(--cut)),
-    calc(100% - var(--cut)) 100%,
-    0 100%,
-    0 var(--cut)
-  );
-  background: var(--plate-fill);
-  box-shadow:
-    inset 0 0 0 1px var(--plate-edge),
-    inset 0 -2px #00000066;
-  transform: translateX(-50%);
-}
-/* The plate names the tank it measures, in a quiet caption ahead of the hull. */
-#hull-pill small {
-  margin-right: 4px;
-  padding-right: 10px;
-  border-right: 1px solid #9fd0ff2e;
-  color: #fff;
-  font: 800 13px/1 var(--font-ui);
-  letter-spacing: 1.4px;
-}
-.phone #hud.dead #hull-pill {
-  visibility: hidden;
-}
-.hull-pill-icon {
-  width: 16px;
-  height: 16px;
-  fill: #5fe39a;
-}
-/* The pill's cross takes the hull's state from its bar, as the tank panel's does. */
-#hull-pill .hull-pill-icon {
-  fill: var(--hull-ramp, #5fe39a);
-}
-#hull-pill b {
-  min-width: 2.2ch;
-  font: 400 20px/1 var(--font-display);
-  font-variant-numeric: tabular-nums;
-}
-#hull-pill .hull-bar {
-  width: 118px;
-  height: 8px;
-  margin: 0;
-}
-/* Held upright, the drive stick takes the bottom edge, so the pill hangs under the score. */
-@media (orientation: portrait) {
-  .phone #hull-pill {
-    top: calc(max(6px, env(safe-area-inset-top)) + 54px);
-    bottom: auto;
-  }
 }
 /* A phone held upright gives Battle Setup the whole screen: the choices stack from the
    top and GO sits at the bottom, under the thumb. Tank cards keep their class tag and
@@ -6541,8 +6684,8 @@ html.phone,
   .phone .setup-panel {
     align-content: end;
   }
-  /* The briefing takes the room the hidden desktop choices leave, so GO stays at the
-     bottom with no empty band above it. */
+  /* The formats take the room the hidden difficulty leaves, so GO stays at the bottom
+     with no empty band above it. */
   .phone #single-panel {
     grid-template-rows: minmax(0, 1fr) auto;
     align-content: stretch;
@@ -6591,8 +6734,10 @@ html.phone,
     height: 76px;
     margin: 0;
   }
+  /* The stats stack, each bar the card's full width rather than its label's. */
   .phone .menu.start .vehicle .spec {
     display: grid;
+    justify-content: stretch;
     gap: 5px;
     padding-top: 0;
     font-size: 10.5px;
@@ -6609,30 +6754,15 @@ html.phone,
     height: 3px;
     margin-top: 5px;
   }
-  .phone :is(#startup-overlay, #overlay):not([data-state="error"]) #single-panel {
-    position: relative;
-  }
   .phone :is(#startup-overlay, #overlay):not([data-state="error"]) .menu.start .startup-progress {
-    position: absolute;
-    z-index: 1;
     left: 50%;
     bottom: 42px;
-    width: max-content;
-    max-width: 100%;
-    padding: 6px 12px 7px;
-    border-radius: 999px;
-    background: #050d1cf0;
-    box-shadow: inset 0 0 0 1px #9fd0ff2e;
     transform: translateX(-50%);
-    pointer-events: none;
   }
-  .phone :is(#startup-overlay, #overlay)[data-state="ready"] .menu.start .startup-progress {
-    visibility: hidden;
-  }
-  .phone .menu.start .vehicle .spec span:last-child {
+  .phone .menu.start .vehicle .spec > span:last-child {
     text-align: left;
   }
-  .phone .menu.start .vehicle .spec span:last-child::after {
+  .phone .menu.start .vehicle .spec > span:last-child::after {
     background:
       linear-gradient(90deg, var(--gold), var(--gold-hot)) 0 0 / calc(var(--v, 1) * 100%) 100%
         no-repeat,
@@ -6654,72 +6784,16 @@ html.phone,
   .phone .start .tank-preview {
     height: 82px;
   }
-  /* The tanks fill their turntables on a phone, each standing inside its disc and well
-     clear of its card's edges. */
+  /* The tanks fill their cards on a phone, well clear of the cards' edges. */
   .phone .start .vehicle .tank-preview {
     transform: scale(calc(var(--scale, 1) * 1.22)) translateY(-3px);
   }
-  /* The turntable sits close under the tank, clear of the hull and speed lines below. */
-  .phone .start .vehicle::before {
-    top: 38%;
-    height: 24%;
-    left: 7%;
-    right: 7%;
-  }
-  /* The format's briefing: a blue and a red tank face off across its name. */
-  .phone .menu.start .phone-briefing {
-    position: relative;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
-    justify-items: center;
+  /* Upright, the two formats share the room the hidden difficulty leaves above GO, each
+     key with its name centred in it. */
+  .phone .start .battle-choice .choice-card {
     align-items: center;
-    align-content: center;
-    gap: 4px 6px;
-    margin: 0;
-    padding: 12px 10px;
-    overflow: hidden;
-    isolation: isolate;
-    border-radius: 12px;
-    background:
-      radial-gradient(ellipse 55% 110% at 0% 100%, #3ea6ff55, transparent 70%),
-      radial-gradient(ellipse 55% 110% at 100% 100%, #ff4d5e55, transparent 70%),
-      linear-gradient(180deg, #14305a, #0a1830);
-    box-shadow:
-      inset 0 0 0 1px #9fd0ff22,
-      inset 0 2px 8px #0006;
-    color: #d6e6f3;
-    font-size: 13px;
+    justify-content: center;
     text-align: center;
-    text-shadow: 0 1px 4px #000c;
-  }
-  /* The tanks are the card's art, as large as its sides allow, so it reads as the hero
-     of the screen it is rather than a list row. */
-  .phone .briefing-tank {
-    grid-row: 1 / 3;
-    width: 118%;
-    max-width: 128px;
-    height: auto;
-    filter: drop-shadow(0 6px 6px #020a14b3);
-  }
-  /* Both tanks stand whole beside the copy, facing each other across it. */
-  .phone .briefing-tank.blue-tank {
-    grid-column: 1;
-    transform: scaleX(-1);
-  }
-  .phone .briefing-tank.red-tank {
-    grid-column: 3;
-  }
-  .phone .phone-briefing > span {
-    grid-column: 2;
-    font-size: 12.5px;
-    white-space: nowrap;
-  }
-  .phone .phone-briefing b {
-    grid-column: 2;
-    color: #fff;
-    font: 400 27px/1 var(--font-display);
-    letter-spacing: 1.5px;
-    text-transform: uppercase;
   }
   .phone .start #start,
   .phone .room-action .primary {
@@ -6732,11 +6806,16 @@ html.phone,
   margin-right: 4px;
 }
 /* Held upright the row is too narrow for the group beside the score: the bar splits in
-   two of the same glass, zoom in the left corner and first person and pause the right. */
+   two of the same glass, zoom in the left corner and first person and pause the right.
+   The two pairs are as wide as each other and the same distance in from their edges, so
+   the centred scoreboard has equal gaps on both sides. */
 @media (orientation: portrait) {
   .phone .hud-actions,
   .phone .touch-enabled .hud-actions {
     left: max(8px, env(safe-area-inset-left));
+    right: max(8px, env(safe-area-inset-right));
+    /* First person has no zoom: first person and pause keep the right corner. */
+    justify-content: flex-end;
     padding: 0;
     border: 0;
     background: none;
@@ -6754,10 +6833,10 @@ html.phone,
     background: linear-gradient(180deg, #13284ad9, #08142ae6);
   }
   .phone :is(#zoom-out, #view-mode) {
-    border-radius: 11px 0 0 11px;
+    border-radius: var(--hud-corner) 0 0 var(--hud-corner);
   }
   .phone :is(#zoom-in, #pause) {
-    border-radius: 0 11px 11px 0;
+    border-radius: 0 var(--hud-corner) var(--hud-corner) 0;
   }
 }
 /* Phones get a tiny "nerds" link in the corner the touch controls leave free, held in
@@ -6812,16 +6891,23 @@ html.phone,
 .phone .menu.compact .menu-actions {
   margin-top: 16px;
 }
+/* A label stays on one line: where two keys cannot fit side by side, each takes a row. */
 .phone .menu.compact .menu-actions button {
   flex-basis: 140px;
+  min-width: max-content;
   min-height: 52px;
+  white-space: nowrap;
 }
 /* The score on a phone: one small pill at the top, blue score, clock and red score;
    the team colours stand in for the labels. */
 .phone #hud .scoreboard {
-  /* On the same top line as the row of buttons beside it. */
+  /* On the same top line as the row of buttons beside it, and as tall. Its own width, not
+     the half of the screen right of `left: 50%`, so a long objective never runs under the
+     score beside it. */
   top: max(6px, env(safe-area-inset-top));
   left: 50%;
+  width: max-content;
+  height: var(--hud-row);
   transform: translateX(-50%);
   gap: 2px;
 }
@@ -6879,10 +6965,25 @@ html.phone,
 }
 /* Outer corners match the buttons beside the pill. */
 .phone #hud .mint {
-  border-radius: 6px 0 0 6px;
+  border-radius: var(--hud-corner) 0 0 var(--hud-corner);
 }
-.phone #hud .coral {
-  border-radius: 0 6px 6px 0;
+.phone #hud :is(.coral, .scoreboard.solo .clock) {
+  border-radius: 0 var(--hud-corner) var(--hud-corner) 0;
+}
+.phone #hud .scoreboard.solo .clock {
+  padding-right: 6px;
+  clip-path: none;
+}
+/* A solo run's kills plate names its number the way YOU names your side's. */
+.phone #hud .scoreboard.solo .mint small {
+  display: block;
+  order: 2;
+  padding: 1px 5px;
+  border-radius: 3px;
+  background: #ffffff2e;
+  font-size: 11px;
+  line-height: 1.15;
+  letter-spacing: 1.2px;
 }
 .phone #hud .team b {
   font-size: 19px;
@@ -6930,16 +7031,20 @@ html.phone,
 .phone #respawn-count {
   font-size: 30px;
 }
-/* The battle report on a phone: the outcome band and score, then the two actions. */
+/* The battle report on a phone: the outcome on one line over its score, then the two
+   actions. The band runs edge to edge in the team's light over its rule, with no stripe
+   down one side. */
 .phone .menu.results {
   padding: 0 20px 18px;
 }
-.phone .results .results-banner {
+.phone .menu.results .results-banner {
   margin: 0 -20px;
-  padding: 16px 20px 14px;
+  padding: 18px 16px 16px;
+  box-shadow: none;
 }
 .phone .results .dialog-title h2 {
-  font-size: 46px;
+  font-size: clamp(30px, 10vw, 46px);
+  white-space: nowrap;
 }
 .phone .respawn .vehicles {
   gap: 8px;
@@ -6953,17 +7058,58 @@ html.phone,
 .phone #respawn-layer {
   padding-bottom: max(10px, env(safe-area-inset-bottom));
 }
-/* First person on a phone keeps the hull compass, low in the middle over the hull pill,
-   between the drive stick and the thumb that turns the view. */
+/* First person on a phone keeps the hull compass low in the middle, between the drive
+   stick and the thumb that turns the view, and under it a small hull plate: from inside
+   the turret the bar over the player's tank is out of sight. The overhead view shows
+   neither; that bar is the phone's hull readout there. */
 .phone #hud > .bottom {
-  justify-content: center;
-  bottom: calc(max(10px, env(safe-area-inset-bottom)) + 44px);
+  left: max(8px, env(safe-area-inset-left));
+  right: max(8px, env(safe-area-inset-right));
+  bottom: max(10px, env(safe-area-inset-bottom));
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  max-width: none;
   pointer-events: none;
 }
-.phone .bottom > :not(.hull-compass) {
+.phone .bottom > :not(.hull-compass, .combat-status),
+.phone #hud:not(.first-person) .combat-status,
+.phone .combat-status > :not(.status),
+.phone .combat-status :is(.tank-label, .hull-readout span) {
   display: none;
 }
+/* The plate is one line: the hull's mark and number, then a short segmented bar. */
+.phone #hud.first-person .combat-status {
+  order: 1;
+  display: block;
+  padding: 5px 12px 6px;
+}
+.phone .combat-status .status {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+}
+.phone .combat-status .hull-readout {
+  align-items: center;
+  gap: 4px;
+  margin-top: 0;
+}
+.phone .combat-status .hull-readout b {
+  font-size: 20px;
+}
+.phone .combat-status .hull-icon {
+  width: 16px;
+  height: 16px;
+}
+.phone .combat-status .hull-bar {
+  width: 60px;
+  min-width: 0;
+  height: 7px;
+  margin-top: 0;
+}
 .phone .hull-compass {
+  align-self: center;
   margin: 0;
   padding: 3px;
   border: 1px solid var(--edge);
@@ -7033,8 +7179,10 @@ html.phone,
   display: grid;
   gap: 8px;
 }
+/* A solo run's tallies are what changes as it goes: kills and time survived. The facts
+   under them hold its rules (one life, six bots at once). */
 .pause-objective.solo {
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(2, 1fr);
 }
 .pause-objective.solo > div {
   display: grid;
@@ -7133,10 +7281,10 @@ html.phone,
 /* Big screens with both modes: two folders side by side on one top line. Your tank has a
    folder of its own whose tab stands level with the mode tabs, always open, in steel
    rather than the chosen mode's gold: it sits outside the mode folder and never switches,
-   so it plainly serves both. The logo signs the garage's foot, beside the key strip. */
+   so it plainly serves both. The logo keeps the top row above them, as at every width. */
 @media (min-width: 1240px) {
   html:not(.phone) .start:has(.play-tabs) .tank-setting {
-    grid-area: 1 / 1 / 4 / 2;
+    grid-area: 2 / 1 / 5 / 2;
   }
   html:not(.phone) .start:has(.play-tabs) .tank-setting .setup-label {
     position: relative;
@@ -7166,21 +7314,22 @@ html.phone,
     border-top-left-radius: 0;
   }
   html:not(.phone) .start:has(.play-tabs) .setup-top .setup-header {
-    grid-area: 4 / 1 / 6 / 2;
-    align-self: center;
-    justify-content: center;
-    padding: 12px 0 0;
+    grid-area: 1 / 1 / 2 / -1;
+    align-self: end;
+    justify-content: flex-start;
+    /* The logo's tilt and drop shadow spill past its box: the padding keeps that, and a
+       clear margin, between it and the folder tabs and the dialog's edge. */
+    padding: 10px 0 24px 12px;
   }
-  html:not(.phone) .start:has(.play-tabs) .setup-brand {
-    font-size: 22px;
+  /* The logo has the first row to itself, as it does at every other width, so the
+     folders' row, the tray and the key strip start one row down. */
+  html:not(.phone) .start:has(.play-tabs) .play-tabs {
+    grid-area: 2 / 2;
   }
-  html:not(.phone) .start:has(.play-tabs) .setup-brand b:last-child {
-    font-size: 33px;
+  html:not(.phone) .start:has(.play-tabs) .setup-panels {
+    grid-area: 3 / 2 / 5 / 3;
   }
   html:not(.phone) .start:has(.play-tabs) .menu-footer {
-    grid-area: 4 / 2 / 5 / 3;
-  }
-  html:not(.phone) .start:has(.play-tabs) .menu-build {
-    grid-area: 5 / 2 / 6 / 3;
+    grid-area: 5 / 1 / 6 / -1;
   }
 }

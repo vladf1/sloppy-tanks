@@ -391,9 +391,10 @@ try {
   results[`layout${viewport.width}`] = "stable inline menu; no horizontal overflow";
   await layout.context.close();
 
-  // Across desktop and tablet sizes the build line stays on screen and clear of every
-  // control and the key strip, and Multiplayer keeps Battle Setup's size (offline here:
-  // the room list's error state is its largest).
+  // Across desktop and tablet sizes the build line is either shown in the screen's corner,
+  // clear of Battle Setup, or hidden where the dialog leaves it no room; it is shown on a
+  // roomy screen. Multiplayer keeps Battle Setup's size (offline here: the room list's
+  // error state is its largest).
   const sizes = [
     [1024, 768],
     [1100, 700],
@@ -412,29 +413,16 @@ try {
   await menuReady(sized);
   const measure = () =>
     sized.evaluate(() => {
-      const build = document.querySelector(".start .menu-build").getBoundingClientRect();
-      const shown = (element) => {
-        const rect = element.getBoundingClientRect();
-        return (
-          rect.width > 0 && rect.height > 0 && getComputedStyle(element).visibility !== "hidden"
-        );
-      };
-      const overlaps = [
-        ...document.querySelectorAll(".start :is(button, input, label, .key-hint, .setup-panels)"),
-      ]
-        .filter(shown)
-        .filter((element) => {
-          const rect = element.getBoundingClientRect();
-          return (
-            Math.min(build.right, rect.right) - Math.max(build.left, rect.left) > 0.5 &&
-            Math.min(build.bottom, rect.bottom) - Math.max(build.top, rect.top) > 0.5
-          );
-        })
-        .map((element) => element.id || element.className);
+      const build = document.querySelector(".start .menu-build");
+      const label = build.getBoundingClientRect();
+      const dialog = document.querySelector(".menu.start").getBoundingClientRect();
       return {
-        overlaps,
-        onScreen: build.top >= 0 && build.bottom <= innerHeight && build.right <= innerWidth,
-        height: Math.round(document.querySelector(".menu.start").getBoundingClientRect().height),
+        shown: getComputedStyle(build).visibility !== "hidden",
+        overlaps:
+          Math.min(label.right, dialog.right) - Math.max(label.left, dialog.left) > 0.5 &&
+          Math.min(label.bottom, dialog.bottom) - Math.max(label.top, dialog.top) > 0.5,
+        onScreen: label.top >= 0 && label.bottom <= innerHeight && label.right <= innerWidth,
+        height: Math.round(dialog.height),
       };
     });
   for (const [width, height] of sizes) {
@@ -455,12 +443,18 @@ try {
       ["single player", solo],
       ["multiplayer", rooms],
     ]) {
-      assert.deepEqual(state.overlaps, [], `${width}x${height} ${name}: the build line overlaps`);
+      assert.ok(
+        !state.shown || !state.overlaps,
+        `${width}x${height} ${name}: the build line overlaps`,
+      );
       assert.ok(state.onScreen, `${width}x${height} ${name}: the build line is off screen`);
+      if (width >= 1600 && height >= 900) {
+        assert.ok(state.shown, `${width}x${height} ${name}: the build line is hidden`);
+      }
     }
     assert.equal(rooms.height, solo.height, `${width}x${height}: Multiplayer resizes Battle Setup`);
   }
-  results.buildLine = `clear and on screen at ${sizes.length} sizes; tabs keep one size`;
+  results.buildLine = `in the corner or hidden, never over the dialog, at ${sizes.length} sizes; tabs keep one size`;
   await sizeContext.close();
   assert.deepEqual(errors, []);
   writeFileSync(`${output}/checks.json`, JSON.stringify({ ...results, errors }, null, 2));

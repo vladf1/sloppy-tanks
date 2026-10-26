@@ -22,8 +22,16 @@ mod specialize;
 
 pub const COMMON_WGSL: &str = wgsl!("shaders/common.wgsl");
 pub const MATERIAL_WGSL: &str = wgsl!("shaders/material.wgsl");
-pub const STANDARD_WGSL: &str = wgsl!("shaders/standard.wgsl");
-pub const SHADOW_WGSL: &str = wgsl!("shaders/shadow.wgsl");
+pub const STANDARD_WGSL: &str = wgsl!(
+    "shaders/surface_io.wgsl",
+    "shaders/surface_vertex.wgsl",
+    "shaders/standard.wgsl"
+);
+pub const SHADOW_WGSL: &str = wgsl!(
+    "shaders/surface_io.wgsl",
+    "shaders/surface_vertex.wgsl",
+    "shaders/shadow.wgsl"
+);
 pub const WATER_WGSL: &str = wgsl!("shaders/water.wgsl");
 pub const OUTPUT_WGSL: &str = wgsl!("shaders/output.wgsl");
 pub const SKY_WGSL: &str = wgsl!("shaders/sky.wgsl");
@@ -31,7 +39,7 @@ pub const SKY_WGSL: &str = wgsl!("shaders/sky.wgsl");
 pub const OCCLUSION_WGSL: &str = wgsl!("shaders/occlusion.wgsl");
 pub const MIPMAP_WGSL: &str = wgsl!("shaders/mipmap.wgsl");
 pub const SHADOW_MERGED_WGSL: &str = wgsl!("shaders/shadow_merged.wgsl");
-pub const SHADOW_CUTOUT_WGSL: &str = wgsl!("shaders/shadow_cutout.wgsl");
+pub const SHADOW_CUTOUT_WGSL: &str = wgsl!("shaders/surface_io.wgsl", "shaders/shadow_cutout.wgsl");
 
 /// Where the vertex stage reads instance records (`InstanceStore`): each
 /// source defines the frame group's binding 5 and `instance_at`.
@@ -159,7 +167,7 @@ impl ShaderKey {
         match self.pass {
             Pass::Main => ("vs_main", Some("fs_main")),
             Pass::Shadow => (
-                "vs_shadow",
+                "vs_main",
                 (self.alpha_test || self.shadow_fade).then_some("fs_shadow"),
             ),
         }
@@ -1027,6 +1035,35 @@ mod tests {
         }
     }
 
+    #[test]
+    fn surface_and_shadow_passes_share_vertex_stage_sources() {
+        let mut effects = EffectRegistry::default();
+        for effect in crate::presentation::PRESENTATION_EFFECTS {
+            effects.register(effect);
+        }
+        let count =
+            crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
+        for effect in 0..=count as u16 {
+            let main = ShaderKey {
+                effect,
+                lit: true,
+                ..ShaderKey::default()
+            };
+            let shadow = ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test: true,
+                shadow_fade: true,
+                effect,
+                ..ShaderKey::default()
+            };
+            assert_eq!(
+                StageSources::variant(&main, &effects).vertex,
+                StageSources::variant(&shadow, &effects).vertex,
+                "effect {effect}",
+            );
+        }
+    }
+
     /// The WebGPU layouts show textures to the fragment stage alone (`resources.rs`
     /// says why), so a vertex stage, effects' vertex code included, samples none.
     #[test]
@@ -1109,8 +1146,8 @@ mod tests {
 
     /// WebKit compiles every stage of every pipeline from its own module, so variants
     /// share a stage's compile only when its module text is the same: without the
-    /// fragment code, every surface variant without a vertex effect has one vertex
-    /// stage, and every caster without one has one too.
+    /// fragment code, every surface variant and every caster without a vertex effect
+    /// has one vertex stage.
     #[test]
     fn variants_share_the_stages_they_run_alike() {
         let effects = EffectRegistry::default();
@@ -1131,25 +1168,21 @@ mod tests {
             vertex.insert(stages.vertex);
             fragment.insert(fs);
         }
+        assert!(fragment.len() > 1);
+        for (alpha_test, shadow_fade) in [(false, false), (true, false), (true, true)] {
+            let key = ShaderKey {
+                pass: Pass::Shadow,
+                alpha_test,
+                shadow_fade,
+                ..ShaderKey::default()
+            };
+            vertex.insert(StageSources::variant(&key, &effects).vertex);
+        }
         assert_eq!(
             vertex.len(),
             1,
-            "one vertex stage for every surface variant"
+            "one vertex stage for every surface variant and caster"
         );
-        assert!(fragment.len() > 1);
-        let casters: std::collections::HashSet<_> = [(false, false), (true, false), (true, true)]
-            .into_iter()
-            .map(|(alpha_test, shadow_fade)| {
-                let key = ShaderKey {
-                    pass: Pass::Shadow,
-                    alpha_test,
-                    shadow_fade,
-                    ..ShaderKey::default()
-                };
-                StageSources::variant(&key, &effects).vertex
-            })
-            .collect();
-        assert_eq!(casters.len(), 1, "one vertex stage for every caster");
     }
 
     /// WebKit guards every WGSL loop with a volatile counter that keeps Metal from
@@ -1616,13 +1649,6 @@ mod tests {
         assert_eq!(shadow_cutout_stages().fragment.as_ref(), Some(&shared));
         let wreck = id(crate::effects::WRECK_AGING.name);
         assert_ne!(fragment(true, false, wreck), shared);
-        // The merged casters' vertex stage hands it the same varyings.
-        let varyings = |code: &'static str| {
-            let start = code.find("struct ShadowOut {").expect("ShadowOut");
-            let end = start + code[start..].find('}').expect("closed");
-            &code[start..end]
-        };
-        assert_eq!(varyings(SHADOW_WGSL), varyings(SHADOW_CUTOUT_WGSL));
     }
 
     #[test]
