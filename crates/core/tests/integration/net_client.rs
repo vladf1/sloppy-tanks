@@ -7,7 +7,9 @@ use crate::net_support;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use net_support::{Sweep, assert_drawn_where_simulated, fire_from, test_host};
+use net_support::{
+    Sweep, assert_drawn_where_simulated, fire_from, set_linvel, set_translation, test_host,
+};
 
 use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, EndCause, LocalInput, NetworkClient, SavedSeat,
@@ -19,8 +21,9 @@ use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::Tank;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::math::Vec2;
 use sloppy_core::sim::render_state::RenderShot;
-use sloppy_core::sim::types::{Driver, VehicleKind, Weapon};
+use sloppy_core::sim::types::{Driver, Team, VehicleKind, Weapon};
 
 const FRAME_MS: f64 = 1000.0 / 60.0;
 
@@ -343,6 +346,81 @@ fn a_created_room_prepares_the_arena_then_drives_with_acknowledged_input() {
     let viewer = display.viewer().unwrap();
     assert!((viewer.position.x - moved.x).hypot(viewer.position.z - moved.z) < 3.0);
     assert_eq!(viewer.aim, 0.3, "own aim shows at once");
+}
+
+#[test]
+fn feel_readings_time_a_click_to_its_flash_and_find_where_the_hit_target_was_drawn() {
+    let mut net = Network::new();
+    let delay = DelaySettings {
+        half_ms: 50.0,
+        jitter_ms: 0.0,
+        stall_ms: 0.0,
+    };
+    let alice = net.add(None, Some(delay));
+    let bob = net.add(None, None);
+    let humans_only = RoomSettings {
+        humans_only: true,
+        ..settings(MapId::Harbor)
+    };
+    net.connect(alice, choice("alice", Some(humans_only)));
+    net.run(300.0);
+    net.connect(
+        bob,
+        JoinChoice {
+            team: Some(Team::Red),
+            ..choice("bob", None)
+        },
+    );
+    net.run(1500.0);
+    // Bob parks in clear view a few metres from alice, who turns her gun to him.
+    let alice_id = net.peers[alice].client.control().unwrap().tank_id;
+    let bob_id = net.peers[bob].client.control().unwrap().tank_id;
+    let sim = net.host.simulation.as_mut().unwrap();
+    let (alice_index, bob_index) = (
+        sim.tank_index(alice_id).unwrap(),
+        sim.tank_index(bob_id).unwrap(),
+    );
+    let from = sim.body_translation(sim.tanks[alice_index].body).planar();
+    let aim = (0..16)
+        .map(|step| f64::from(step) * std::f64::consts::TAU / 16.0)
+        .find(|angle| {
+            let to = Vec2::new(from.x + 7.0 * angle.sin(), from.z + 7.0 * angle.cos());
+            sim.visible(from, to)
+        })
+        .expect("some direction is clear");
+    set_translation(
+        sim,
+        bob_index,
+        from.x + 7.0 * aim.sin(),
+        0.65,
+        from.z + 7.0 * aim.cos(),
+    );
+    set_linvel(sim, bob_index, 0.0, 0.0, 0.0);
+    net.peers[alice].input.aim_angle = aim;
+    net.run(1000.0);
+    // One click.
+    net.peers[alice].input.fire = true;
+    net.run(4.0 * FRAME_MS);
+    net.peers[alice].input.fire = false;
+    net.run(1500.0);
+    let feel = &net.peers[alice].client.feel;
+    assert_eq!(feel.fire_to_flash.count, 1, "{feel:?}");
+    let flash = feel.fire_to_flash.mean();
+    let report = feel.fire_to_report.mean();
+    eprintln!(
+        "fire to flash {flash:.0} ms ({report:.0} ms to the report), view delay {:.0} ms, \
+         hit offsets {} up to {:.3} m",
+        feel.view_delay.mean(),
+        feel.hit_offset.count,
+        feel.hit_offset.largest
+    );
+    // A 100 ms round trip, then the playout buffer behind the report.
+    assert!((100.0..350.0).contains(&flash), "{feel:?}");
+    assert!(report >= 100.0 && report < flash, "{feel:?}");
+    assert!(feel.view_delay.mean() > 100.0, "{feel:?}");
+    // A parked target is drawn where it was hit.
+    assert!(feel.hit_offset.count >= 1, "{feel:?}");
+    assert!(feel.hit_offset.largest < 0.25, "{feel:?}");
 }
 
 #[test]

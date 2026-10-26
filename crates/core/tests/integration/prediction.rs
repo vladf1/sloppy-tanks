@@ -13,7 +13,7 @@ use crate::support;
 use std::collections::BTreeMap;
 
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
-use sloppy_core::net::prediction::{HullState, TankPredictor};
+use sloppy_core::net::prediction::{HullContacts, HullState, TankPredictor};
 use sloppy_core::net::scene_codec::{MirrorScene, Scene};
 use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::arena::CoverDef;
@@ -330,6 +330,46 @@ fn village_cover_replays_within_two_millimetres() {
 /// The viewer rams a parked tank and pushes it, it drives back, then pivots away. The
 /// predictor holds the other tank's replicated input, so pushes replay closely until
 /// that input changes.
+#[test]
+fn the_predicted_hull_reports_the_tank_it_drives_into() {
+    let mut sim = room(
+        MapId::Village,
+        &[
+            player("alice", Team::Blue, 0, VehicleKind::Balanced),
+            player("bob", Team::Red, 0, VehicleKind::Heavy),
+        ],
+        true,
+    );
+    let viewer = human_id(&sim, "alice");
+    let bob = human_id(&sim, "bob");
+    let (alice_index, bob_index) = (tank_index(&sim, viewer), tank_index(&sim, bob));
+    clear_arena(&mut sim, &[alice_index, bob_index]);
+    place_tank(&mut sim, 0, 0.0, 0.0, Some(0.0));
+    place_tank(&mut sim, 1, 0.0, 6.0, Some(0.0));
+    sim.world.step();
+    let mut predictor = TankPredictor::default();
+    predictor.sync_scene(&client_scene(&sim, viewer));
+    predictor.reset(&client_hull(&sim, viewer, 0).unwrap());
+    predictor.step(0.0, 0.0);
+    assert_eq!(
+        predictor.hull_contacts(),
+        HullContacts::default(),
+        "the ground does not count"
+    );
+    let mut touched = HullContacts::default();
+    for _ in 0..90 {
+        predictor.step(0.0, 1.0);
+        touched.add(predictor.hull_contacts());
+    }
+    assert_eq!(
+        touched,
+        HullContacts {
+            tank: true,
+            ..HullContacts::default()
+        }
+    );
+}
+
 #[test]
 fn pushing_another_tank_replays_until_its_input_changes() {
     let mut sim = room(

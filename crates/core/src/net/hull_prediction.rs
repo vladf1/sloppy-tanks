@@ -12,7 +12,7 @@ use std::collections::VecDeque;
 
 use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::player_controls::Ack;
-use super::prediction::{HullState, PredictedPose, TankPredictor};
+use super::prediction::{HullContacts, HullState, PredictedPose, TankPredictor, solid_debris};
 use crate::sim::math::{Point3, Vec2, angle_delta, distance};
 use crate::sim::render_state::RenderState;
 
@@ -37,12 +37,79 @@ const CORRECTION_RATE: f64 = 30.0;
 const SNAP_DISTANCE: f64 = 3.0;
 /// Recent correction sizes kept for the statistics.
 const CORRECTION_SAMPLES: usize = 600;
+/// Corrections at least this large count toward their cause's tally.
+const NOTICEABLE_CORRECTION: f64 = 0.02;
+/// A solid piece of debris whose centre is this much closer than half its longest side
+/// plus a hull's half length counts as touching the hull, for the statistics.
+const DEBRIS_REACH: f64 = 2.5;
 
 /// One snapshot's acknowledgement and the viewer's hull.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct HostUpdate {
     pub ack: Ack,
     pub hull: Option<HullState>,
+    /// The batch carried a blast near the viewer or a hit on it, which the host may have
+    /// pushed the hull with.
+    pub blast: bool,
+}
+
+/// What a correction is put down to, for the statistics: the first of these, in this
+/// order, that the batch or the prediction since the previous snapshot saw.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CorrectionCause {
+    /// A blast near the hull or a hit on it.
+    Blast,
+    /// Contact with another tank, whose steering the prediction only holds.
+    Tank,
+    /// Contact with movable cover (crates, drums), drawn from the delayed timeline.
+    Crate,
+    /// Solid debris (wrecks, timber, broken scenery), absent from the prediction.
+    Debris,
+    /// Contact with standing cover or a stump.
+    Cover,
+    /// An input change that reached the host after the tick it asked for.
+    LateInput,
+    Other,
+}
+
+impl CorrectionCause {
+    pub const ALL: [CorrectionCause; 7] = [
+        CorrectionCause::Blast,
+        CorrectionCause::Tank,
+        CorrectionCause::Crate,
+        CorrectionCause::Debris,
+        CorrectionCause::Cover,
+        CorrectionCause::LateInput,
+        CorrectionCause::Other,
+    ];
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            CorrectionCause::Blast => "blast",
+            CorrectionCause::Tank => "tank",
+            CorrectionCause::Crate => "crate",
+            CorrectionCause::Debris => "debris",
+            CorrectionCause::Cover => "cover",
+            CorrectionCause::LateInput => "lateInput",
+            CorrectionCause::Other => "other",
+        }
+    }
+
+    fn index(self) -> usize {
+        Self::ALL
+            .iter()
+            .position(|cause| *cause == self)
+            .expect("listed")
+    }
+}
+
+/// Corrections put down to one cause.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct CauseTally {
+    /// Corrections of at least [`NOTICEABLE_CORRECTION`].
+    pub count: u64,
+    /// Their distance, metres.
+    pub total: f64,
 }
 
 /// How far prediction had to move the hull, for the network statistics.
@@ -61,15 +128,26 @@ pub struct CorrectionStats {
     pub late_changes: u64,
     /// The latest correction sizes, metres.
     pub recent: VecDeque<f64>,
+    /// Noticeable corrections by cause, in [`CorrectionCause::ALL`] order.
+    pub causes: [CauseTally; CorrectionCause::ALL.len()],
 }
 
 impl CorrectionStats {
-    fn record(&mut self, size: f64) {
+    fn record(&mut self, size: f64, cause: CorrectionCause) {
         self.count += 1;
         self.total += size;
         self.largest = self.largest.max(size);
         self.recent.push_back(size);
         self.recent.retain_back(CORRECTION_SAMPLES);
+        if size >= NOTICEABLE_CORRECTION {
+            let tally = &mut self.causes[cause.index()];
+            tally.count += 1;
+            tally.total += size;
+        }
+    }
+
+    pub fn cause(&self, cause: CorrectionCause) -> CauseTally {
+        self.causes[cause.index()]
     }
 
     /// The 95th percentile of recent corrections, metres.
@@ -127,6 +205,8 @@ pub struct HullPrediction {
     arrivals: VecDeque<f64>,
     correction: Vec2,
     heading_correction: f64,
+    /// What the hull touched in the steps predicted since the previous snapshot.
+    touched: HullContacts,
     pub stats: CorrectionStats,
 }
 
@@ -147,6 +227,7 @@ impl HullPrediction {
         self.last_input = None;
         self.correction = Vec2::ZERO;
         self.heading_correction = 0.0;
+        self.touched = HullContacts::default();
         self.predictor.clear_hull();
     }
 
@@ -196,7 +277,9 @@ impl HullPrediction {
     /// One snapshot: learn from its acknowledgement, then restart from the host's hull and
     /// replay the ticks it has not reached. `scene` is the newest received scene.
     pub fn receive(&mut self, update: &HostUpdate, scene: &RenderState, now_ms: f64, rtt_ms: f64) {
+        let late_changes = self.stats.late_changes;
         self.learn_arrival(&update.ack);
+        let late_input = self.stats.late_changes > late_changes;
         let Some(hull) = update.hull else {
             self.clear();
             return;
@@ -247,16 +330,33 @@ impl HullPrediction {
         let mut current = previous;
         for &(_, input) in &self.inputs {
             self.predictor.step(input.x, input.z);
+            self.touched.add(self.predictor.hull_contacts());
             previous = current;
             current = self.predictor.pose();
         }
         self.previous = previous;
         self.current = current;
         self.life = Some(hull.life);
+        let touched = std::mem::take(&mut self.touched);
         match (old, current) {
             (Some(old), Some(new)) => {
                 let size = distance(old.position.planar(), new.position.planar());
-                self.stats.record(size);
+                let cause = if update.blast {
+                    CorrectionCause::Blast
+                } else if touched.tank {
+                    CorrectionCause::Tank
+                } else if touched.movable_cover {
+                    CorrectionCause::Crate
+                } else if near_solid_debris(scene, &[hull.position, old.position, new.position]) {
+                    CorrectionCause::Debris
+                } else if touched.cover {
+                    CorrectionCause::Cover
+                } else if late_input {
+                    CorrectionCause::LateInput
+                } else {
+                    CorrectionCause::Other
+                };
+                self.stats.record(size, cause);
                 if size > SNAP_DISTANCE {
                     self.correction = Vec2::ZERO;
                     self.heading_correction = 0.0;
@@ -350,12 +450,18 @@ impl HullPrediction {
                 earlier
             };
             self.predictor.step(drive.x, drive.z);
+            self.touched.add(self.predictor.hull_contacts());
             self.inputs.push_back((self.tick, drive));
             self.inputs.retain_back(MAX_PENDING_TICKS);
             self.previous = self.current;
             self.current = self.predictor.pose();
             steps += 1;
         }
+    }
+
+    /// The predicted present (fractional tick) while a live hull is predicted.
+    pub fn predicted_present(&self, now_ms: f64) -> Option<f64> {
+        self.present(now_ms).filter(|_| self.active())
     }
 
     /// The hull to draw at `now_ms`: between the last two predicted ticks, with what is
@@ -379,4 +485,21 @@ impl HullPrediction {
             heading,
         })
     }
+}
+
+/// Whether solid debris in `scene` lies within a hull's reach of any of `points`.
+fn near_solid_debris(scene: &RenderState, points: &[Point3]) -> bool {
+    scene
+        .fragments
+        .iter()
+        .filter(|fragment| solid_debris(fragment))
+        .any(|fragment| {
+            let extent = fragment
+                .dimensions
+                .map_or(fragment.size, |size| size.x.max(size.y).max(size.z));
+            let reach = DEBRIS_REACH + extent / 2.0;
+            points
+                .iter()
+                .any(|point| distance(point.planar(), fragment.position.planar()) < reach)
+        })
 }

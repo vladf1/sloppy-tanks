@@ -46,7 +46,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::hull_prediction::{HostUpdate, HullPrediction};
+use super::feel_readings::FeelReadings;
+use super::fixed_step_clock::SIMULATION_STEP_MS;
+use super::hull_prediction::{CorrectionCause, HostUpdate, HullPrediction};
 use super::input_cadence::InputCadence;
 use super::json;
 use super::network_timeline::NetworkTimeline;
@@ -56,7 +58,7 @@ use super::protocol::{
     MAX_SERVER_MESSAGE_BYTES, Message, PROTOCOL_VERSION, ROOM_IDLE_MS, RoomPhase, RoomSettings,
     client_message,
 };
-use super::replication::{BinaryMessage, StateMirror, read_binary_message};
+use super::replication::{BinaryMessage, StateMirror, TimedEvent, read_binary_message};
 use super::schema::{ReadResult, id, parse_record, string, text_length};
 use super::transport_delay::{DelaySettings, TransportDelay};
 use crate::sim::ammunition::step_ammo;
@@ -78,6 +80,9 @@ const RESUME_RETRY_MS: f64 = 1000.0;
 /// so at least two batches were held up) counts as late in the network statistics.
 const LATE_BATCH_MS: f64 = 150.0;
 const MAX_FRAME_SECONDS: f64 = 0.1;
+/// An explosion this close to the viewer's hull may have pushed it, metres; blast radii
+/// are a few metres.
+const BLAST_REACH: f64 = 8.0;
 
 /// Why a connection stopped retrying. Each cause offers its own way back into a game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -291,6 +296,9 @@ pub struct NetworkStats {
     /// Acknowledged input changes, and those that reached the host after their tick.
     pub input_starts: u64,
     pub late_input_starts: u64,
+    /// Noticeable corrections by cause: count and metres per second of prediction, in
+    /// [`CorrectionCause::ALL`] order.
+    pub correction_causes: [(u64, f64); CorrectionCause::ALL.len()],
 }
 
 struct Socket {
@@ -355,6 +363,7 @@ pub struct NetworkClient {
     prediction: HullPrediction,
     /// The newest received scene, refilled for prediction.
     prediction_scene: RenderState,
+    pub feel: FeelReadings,
     actions: Vec<ClientAction>,
     notices: Vec<ClientNotice>,
 }
@@ -416,6 +425,7 @@ impl NetworkClient {
             applied_input: 0,
             prediction: HullPrediction::default(),
             prediction_scene: RenderState::default(),
+            feel: FeelReadings::default(),
             actions: Vec::new(),
             notices: Vec::new(),
         }
@@ -484,6 +494,10 @@ impl NetworkClient {
     }
 
     pub fn stats(&self, now_ms: f64) -> NetworkStats {
+        let seconds = self.prediction.stats.seconds;
+        let per_second = |metres: f64| {
+            if seconds > 0.0 { metres / seconds } else { 0.0 }
+        };
         NetworkStats {
             rtt_ms: self.rtt_ms,
             received_updates: self.received_updates,
@@ -501,14 +515,14 @@ impl NetworkClient {
             corrections: self.prediction.stats.count,
             correction_total_m: self.prediction.stats.total,
             correction_max_m: self.prediction.stats.largest,
-            correction_m_per_s: if self.prediction.stats.seconds > 0.0 {
-                self.prediction.stats.total / self.prediction.stats.seconds
-            } else {
-                0.0
-            },
+            correction_m_per_s: per_second(self.prediction.stats.total),
             correction_p95_m: self.prediction.stats.p95(),
             input_starts: self.prediction.stats.changes,
             late_input_starts: self.prediction.stats.late_changes,
+            correction_causes: CorrectionCause::ALL.map(|cause| {
+                let tally = self.prediction.stats.cause(cause);
+                (tally.count, per_second(tally.total))
+            }),
         }
     }
 
@@ -885,6 +899,7 @@ impl NetworkClient {
                 self.requested_full = false;
                 self.clear_input();
                 self.prediction.clear();
+                self.feel.restart();
                 self.reset_display(now_ms)?;
                 if self.ready_round != self.round_id {
                     self.prepare(now_ms);
@@ -894,13 +909,14 @@ impl NetworkClient {
             }
             BinaryMessage::Snapshot(mut batch) => {
                 self.applied_input = i64::try_from(batch.ack).map_err(|_| "Invalid ack")?;
-                let host = HostUpdate {
+                let mut host = HostUpdate {
                     ack: Ack {
                         input_seq: self.applied_input,
                         applied_tick: batch.ack_tick,
                         arrival_tick: batch.ack_arrival,
                     },
                     hull: batch.hull,
+                    blast: false,
                 };
                 self.last_snapshot_ms = now_ms;
                 if let Some(previous) = self.last_batch_ms.replace(now_ms) {
@@ -928,6 +944,14 @@ impl NetworkClient {
                         && self.ready_round == self.round_id
                         && !self.hidden
                     {
+                        host.blast |= read_own_events(
+                            &mut self.feel,
+                            &extras.events,
+                            control.tank_id,
+                            self.display.as_ref(),
+                            host.hull.map(|hull| hull.position.planar()),
+                            now_ms,
+                        );
                         let pushed_frame = self.mirror.render(control.tank_id).and_then(|state| {
                             self.timeline
                                 .push(state, self.mirror.tick, extras.events, extras.paths)
@@ -1303,6 +1327,23 @@ impl NetworkClient {
         }
         let viewer_id = display.viewer_id;
         let viewer_team = display.viewer().map(|viewer| viewer.team);
+        let present = self.prediction.predicted_present(now_ms);
+        let display_tick = self.timeline.display_tick();
+        // The gun is ready if its newest known reload ends before a shot sent now arrives.
+        let ready = present.is_some_and(|present| {
+            display.viewer().is_some_and(|viewer| {
+                viewer.cooldown * 1000.0 <= (present - self.mirror.tick as f64) * SIMULATION_STEP_MS
+            })
+        });
+        let firing = input.fire && self.active_input();
+        let display = self.display.as_ref().expect("filled above");
+        self.feel
+            .frame(now_ms, present, display_tick, firing, ready, display);
+        for event in &displayed {
+            if event.kind == SimEventType::Shot && event.id == Some(viewer_id) {
+                self.feel.own_shot_displayed(display_tick, now_ms);
+            }
+        }
         let events = displayed
             .into_iter()
             .map(|event| FrameEvent {
@@ -1381,4 +1422,43 @@ impl NetworkClient {
             self.pending_weapon = None;
         }
     }
+}
+
+/// Feeds the viewer's own shots and hits in one received frame to the feel readings, and
+/// says whether the frame holds a blast near the viewer (at `hull`, when known) or a hit
+/// on it, which may have pushed its hull.
+fn read_own_events(
+    feel: &mut FeelReadings,
+    events: &[TimedEvent],
+    viewer_id: u32,
+    display: Option<&RenderState>,
+    hull: Option<Vec2>,
+    now_ms: f64,
+) -> bool {
+    let viewer_team = display
+        .and_then(RenderState::viewer)
+        .map(|viewer| viewer.team);
+    let mut blast = false;
+    for TimedEvent { tick, event, .. } in events {
+        match event.kind {
+            SimEventType::Shot if event.id == Some(viewer_id) => {
+                feel.own_shot_reported(*tick, now_ms);
+            }
+            SimEventType::Hurt | SimEventType::Death
+                if event.owner == Some(viewer_id)
+                    && event.id.is_some_and(|id| id != viewer_id)
+                    && event.team != viewer_team =>
+            {
+                feel.own_hit(*tick, event.id.expect("checked"), event.x, event.z);
+            }
+            SimEventType::Hurt if event.id == Some(viewer_id) => blast = true,
+            SimEventType::Explosion => {
+                blast |= hull.is_some_and(|hull| {
+                    crate::sim::math::distance(hull, Vec2::new(event.x, event.z)) < BLAST_REACH
+                });
+            }
+            _ => {}
+        }
+    }
+    blast
 }

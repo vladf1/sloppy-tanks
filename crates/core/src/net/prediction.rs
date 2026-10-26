@@ -20,7 +20,7 @@ use crate::sim::damage::tree_stump;
 use crate::sim::data::{STEP, group};
 use crate::sim::math::{Point3, Quat4, Vec2};
 use crate::sim::physics::{from_vector, interaction_groups, to_rotation, to_vector, vector};
-use crate::sim::render_state::{RenderCover, RenderState, RenderTank};
+use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderTank};
 use crate::sim::simulation::{Simulation, arena_world, cover_parts};
 use crate::sim::tank_driving::{Hull, drive_hull};
 use crate::sim::tank_lifecycle::tank_body_parts;
@@ -170,6 +170,24 @@ enum CoverForm {
 struct CoverBody {
     body: RigidBodyHandle,
     form: CoverForm,
+    movable: bool,
+}
+
+/// What the viewer's hull touched in a predicted step, for the correction statistics.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct HullContacts {
+    pub tank: bool,
+    pub movable_cover: bool,
+    /// Standing cover or a stump.
+    pub cover: bool,
+}
+
+impl HullContacts {
+    pub fn add(&mut self, other: HullContacts) {
+        self.tank |= other.tank;
+        self.movable_cover |= other.movable_cover;
+        self.cover |= other.cover;
+    }
 }
 
 struct OtherTank {
@@ -220,7 +238,15 @@ impl TankPredictor {
                     self.world.remove_body(old.body);
                 }
                 let body = self.insert_cover(cover, form);
-                self.covers.insert(cover.id, CoverBody { body, form });
+                let movable = cover.kind.movable();
+                self.covers.insert(
+                    cover.id,
+                    CoverBody {
+                        body,
+                        form,
+                        movable,
+                    },
+                );
             }
             if cover.kind.movable() {
                 // Movable cover rests where the host last had it; contact wakes it.
@@ -396,6 +422,40 @@ impl TankPredictor {
         self.world.step();
     }
 
+    /// What the viewer's hull touches after the last step: other tanks and cover it is in
+    /// contact with. The ground does not count.
+    pub fn hull_contacts(&self) -> HullContacts {
+        let mut contacts = HullContacts::default();
+        let Some(hull) = self.hull.as_ref() else {
+            return contacts;
+        };
+        for &collider in self.world.bodies[hull.body].colliders() {
+            for pair in self.world.contact_pairs_with(collider) {
+                if !pair.has_any_active_contact() {
+                    continue;
+                }
+                let other = if pair.collider1 == collider {
+                    pair.collider2
+                } else {
+                    pair.collider1
+                };
+                let Some(body) = self.world.colliders[other].parent() else {
+                    continue;
+                };
+                if self.tanks.values().any(|tank| tank.body == body) {
+                    contacts.tank = true;
+                } else if let Some(cover) = self.covers.values().find(|cover| cover.body == body) {
+                    if cover.movable {
+                        contacts.movable_cover = true;
+                    } else {
+                        contacts.cover = true;
+                    }
+                }
+            }
+        }
+        contacts
+    }
+
     pub fn pose(&self) -> Option<PredictedPose> {
         let hull = self.hull.as_ref()?;
         let body = &self.world.bodies[hull.body];
@@ -416,6 +476,13 @@ fn cover_form(cover: &RenderCover) -> Option<CoverForm> {
     } else {
         None
     }
+}
+
+/// Whether a replicated fragment blocks tanks on the host: wreck parts and the authored
+/// pieces of broken scenery (timber, crate sections, tower and house pieces), which the
+/// predicted world leaves out. Small shards only touch the ground and cover.
+pub fn solid_debris(fragment: &RenderFragment) -> bool {
+    fragment.wreck.is_some() || fragment.dimensions.is_some()
 }
 
 /// The host's per-tick drive: the speed pickup runs down before the drive impulse.

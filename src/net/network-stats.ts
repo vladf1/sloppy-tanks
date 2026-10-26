@@ -1,5 +1,26 @@
 import { renderRows, type RenderStats, type StatsSections } from "../game/nerd-stats";
 
+/** One feel reading: sample count, mean, median, 95th percentile and largest. */
+interface Reading {
+  count: number;
+  mean: number;
+  p50: number;
+  p95: number;
+  max: number;
+}
+
+/** Correction causes in the engine's order (`CorrectionCause::ALL`): row label and what
+ * the server or the prediction saw. */
+const CORRECTION_CAUSES = [
+  ["blast", "Blast corrections", "a blast near your tank or a hit on it"],
+  ["tank", "Tank corrections", "contact with another tank"],
+  ["crate", "Crate corrections", "contact with a crate or drum"],
+  ["debris", "Debris corrections", "solid debris near your tank (wrecks, timber, broken scenery)"],
+  ["cover", "Cover corrections", "contact with standing cover"],
+  ["lateInput", "Input corrections", "an input change that reached the server after its tick"],
+  ["other", "Other corrections", "none of the other causes"],
+] as const;
+
 /** The part of `NetGame.stats_json()` a room's Stats for nerds panel reads. */
 export interface NetworkStatsSource extends RenderStats {
   scene?: {
@@ -30,6 +51,18 @@ export interface NetworkStatsSource extends RenderStats {
     correctionP95M: number;
     inputStarts: number;
     lateInputStarts: number;
+    correctionCauses: Record<
+      (typeof CORRECTION_CAUSES)[number][0],
+      { count: number; mPerS: number }
+    >;
+    receiveMs: number;
+  };
+  feel: {
+    viewDelayMs: Reading;
+    fireToFlashMs: Reading;
+    fireToReportMs: Reading;
+    unansweredPresses: number;
+    hitOffsetM: Reading;
   };
 }
 
@@ -41,15 +74,19 @@ export function networkStatsSections(
 ): () => StatsSections {
   let sampleMs = 0;
   let sampleUpdates = 0;
+  let sampleReceiveMs = 0;
   return () => {
     const now = performance.now();
     const stats = read(now);
-    const { network, scene } = stats;
+    const { network, scene, feel } = stats;
     const rate = sampleMs
       ? ((network.receivedUpdates - sampleUpdates) * 1000) / (now - sampleMs)
       : 0;
+    const receiveShare = sampleMs ? (network.receiveMs - sampleReceiveMs) / (now - sampleMs) : 0;
     sampleMs = now;
     sampleUpdates = network.receivedUpdates;
+    sampleReceiveMs = network.receiveMs;
+    const fire = feel.fireToFlashMs;
     return {
       Network: [
         ["RTT", `${Math.round(network.rttMs)} ms`, "Measured round-trip time to the game server."],
@@ -89,6 +126,11 @@ export function networkStatsSections(
           "Snapshot batches that arrived over 150 ms after the previous one (they leave every 50 ms) during this page session. The connection held them up, for example while TCP resent a lost packet, or the page itself froze.",
         ],
         [
+          "Snapshot CPU",
+          `${(receiveShare * 1000).toFixed(1)} ms/s`,
+          "Main-thread time spent applying received snapshots per second, own-hull prediction replays included.",
+        ],
+        [
           "Longest batch gap",
           `${Math.round(network.longestBatchGapMs)} ms`,
           "The longest wait between consecutive snapshot batches during this page session; about 50 ms while the stream flows.",
@@ -107,6 +149,36 @@ export function networkStatsSections(
           "Correction p95",
           `${(network.correctionP95M * 100).toFixed(1)} cm`,
           "The 95th percentile of your tank's recent prediction corrections.",
+        ],
+        ...CORRECTION_CAUSES.map(([key, label, cause]): [string, string, string] => [
+          label,
+          `${(network.correctionCauses[key].mPerS * 100).toFixed(1)} cm/s`,
+          `Corrections of 2 cm or more (${network.correctionCauses[key].count} so far), per second of driving, put down to ${cause}: the first cause, in the order of these rows, that the server or the prediction saw since the previous snapshot.`,
+        ]),
+        [
+          "View delay",
+          `${Math.round(feel.viewDelayMs.mean)} ms`,
+          "How far behind your own tank's present other tanks, shells and effects are drawn: the round trip, the input margin and the playout buffer.",
+        ],
+        [
+          "Fire to flash",
+          fire.count ? `${Math.round(fire.mean)} ms` : "–",
+          `From pressing fire with a loaded gun to your muzzle flash on screen, the mean of ${fire.count} presses. ${Math.round(feel.fireToReportMs.mean)} ms of it passes before the server's report of the shot arrives; the rest is the playout buffer.`,
+        ],
+        [
+          "Fire to flash p95",
+          fire.count ? `${Math.round(fire.p95)} ms` : "–",
+          `The 95th percentile of recent presses; the slowest took ${Math.round(fire.max)} ms.`,
+        ],
+        [
+          "Hit offset",
+          feel.hitOffsetM.count ? `${feel.hitOffsetM.mean.toFixed(2)} m` : "–",
+          `For each hit you scored on a tank (${feel.hitOffsetM.count} so far): how far it was drawn, when your own tank reached the moment of the hit, from where the server hit it. A crossing tank needs that much extra lead.`,
+        ],
+        [
+          "Hit offset p95",
+          feel.hitOffsetM.count ? `${feel.hitOffsetM.p95.toFixed(2)} m` : "–",
+          `The 95th percentile of recent hits; the largest was ${feel.hitOffsetM.max.toFixed(2)} m.`,
         ],
         [
           "Late input starts",

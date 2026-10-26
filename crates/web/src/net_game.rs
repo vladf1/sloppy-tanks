@@ -61,6 +61,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sloppy_core::net::client::{ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat};
 use sloppy_core::net::client_setup::pending_join;
+use sloppy_core::net::feel_readings::Samples;
+use sloppy_core::net::hull_prediction::CorrectionCause;
 use sloppy_core::net::protocol::{
     JoinChoice, RoomPhase, RoomSettings, is_room_code, read_player_kind, read_team,
 };
@@ -156,6 +158,9 @@ pub struct NetGame {
     graphics: Graphics,
     /// The last frame's result, which a frame skipped for the GPU hands back.
     last_result: Vec<f32>,
+    /// Main-thread milliseconds spent applying received messages (including deliveries of
+    /// the development delay) this page session, for the statistics.
+    receive_ms: f64,
 }
 
 #[wasm_bindgen]
@@ -200,6 +205,7 @@ impl NetGame {
             canvas,
             graphics,
             last_result: vec![0.0; net_frame_slot::LENGTH],
+            receive_ms: 0.0,
         };
         game.canvas.apply(&mut game.view);
         Ok(game)
@@ -244,7 +250,9 @@ impl NetGame {
     /// A binary frame (a baseline or snapshot batch), copied out of the page's
     /// `ArrayBuffer` in one call.
     pub fn socket_binary(&mut self, socket: u32, bytes: &[u8], now: f64) {
+        let start = now_ms();
         self.client.socket_binary(socket, bytes, now);
+        self.receive_ms += now_ms() - start;
     }
 
     pub fn socket_closed(&mut self, socket: u32, code: u16, now: f64) {
@@ -253,7 +261,9 @@ impl NetGame {
 
     /// Heartbeat, reconnect backoff and development delay; at least every 250 ms.
     pub fn poll(&mut self, now: f64) {
+        let start = now_ms();
         self.client.poll(now);
+        self.receive_ms += now_ms() - start;
     }
 
     /// Stop retrying and close the socket (`pagehide`).
@@ -457,7 +467,7 @@ impl NetGame {
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
         let input = InputFrame::from_slice(input);
         // The development delay delivers messages on this clock too.
-        self.client.poll(now);
+        self.poll(now);
         self.drain_client_notices();
         self.view.rig.zoom_by(input.zoom);
         if input.toggle_view {
@@ -619,9 +629,46 @@ impl NetGame {
                 "correctionP95M": network.correction_p95_m,
                 "inputStarts": network.input_starts,
                 "lateInputStarts": network.late_input_starts,
+                "correctionCauses": CorrectionCause::ALL
+                    .iter()
+                    .zip(network.correction_causes)
+                    .map(|(cause, (count, metres_per_second))| {
+                        (
+                            cause.as_str().to_string(),
+                            json!({ "count": count, "mPerS": metres_per_second }),
+                        )
+                    })
+                    .collect::<serde_json::Map<_, _>>(),
+                "receiveMs": self.receive_ms,
+            }),
+        );
+        let feel = &self.client.feel;
+        stats.insert(
+            "feel".into(),
+            json!({
+                "viewDelayMs": summary(&feel.view_delay),
+                "fireToFlashMs": summary(&feel.fire_to_flash),
+                "fireToReportMs": summary(&feel.fire_to_report),
+                "unansweredPresses": feel.unanswered_presses,
+                "hitOffsetM": summary(&feel.hit_offset),
             }),
         );
         Value::Object(stats).to_string()
+    }
+
+    /// Where the ground point `x`, `z` shows on the canvas, as `[x, y]` in normalized
+    /// device coordinates, or empty when it is off screen: for browser checks that aim.
+    pub fn debug_screen_point(&self, x: f64, z: f64) -> Vec<f32> {
+        let point = self
+            .view
+            .rig
+            .camera
+            .project(glam::Vec3::new(x as f32, 0.0, z as f32));
+        if point.z > 0.0 && point.z < 1.0 && point.x.abs() < 1.0 && point.y.abs() < 1.0 {
+            vec![point.x, point.y]
+        } else {
+            Vec::new()
+        }
     }
 
     /// What the browser checks read from `window.sloppyMultiplayer`.
@@ -838,4 +885,16 @@ impl NetGame {
         self.frame_index += 1;
         result
     }
+}
+
+/// A feel reading as the statistics show it: sample count, mean, median, 95th percentile
+/// and largest.
+fn summary(samples: &Samples) -> Value {
+    json!({
+        "count": samples.count,
+        "mean": samples.mean(),
+        "p50": samples.percentile(0.5),
+        "p95": samples.percentile(0.95),
+        "max": samples.largest,
+    })
 }
