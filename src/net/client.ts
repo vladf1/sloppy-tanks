@@ -216,6 +216,8 @@ export async function startMultiplayer(
         ]),
       )
     : {};
+  // Development comparison: `?dodge=0` draws enemy shells on the display clock alone.
+  const dodge = import.meta.env.DEV && params.get("dodge") === "0" ? { dodge: "0" } : {};
   let game: NetGame;
   try {
     const [width, height] = cssSize();
@@ -224,6 +226,7 @@ export async function startMultiplayer(
       room,
       savedSeat: savedSeat(seatKey),
       ...delay,
+      ...dodge,
       assetBase: import.meta.env.BASE_URL,
       cssWidth: width,
       cssHeight: height,

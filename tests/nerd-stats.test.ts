@@ -146,6 +146,7 @@ function fixture(network = false) {
         other: { count: 1, mPerS: 0.006 },
       },
       receiveMs: 140,
+      phantomStrikes: 2,
     },
     feel: {
       viewDelayMs: { count: 600, mean: 211, p50: 210, p95: 230, max: 260 },
@@ -153,6 +154,8 @@ function fixture(network = false) {
       fireToReportMs: { count: 12, mean: 118, p50: 115, p95: 150, max: 160 },
       unansweredPresses: 1,
       hitOffsetM: { count: 5, mean: 1.234, p50: 1.1, p95: 2.05, max: 2.1 },
+      incomingOffsetM: { count: 4, mean: 0.42, p50: 0.3, p95: 0.9, max: 0.9 },
+      unseenIncoming: 1,
       ownShots: {
         predicted: 14,
         confirmed: 13,
@@ -260,6 +263,8 @@ test("network stats use received scene counts and never require a client physics
     assert.ok(text.includes("Own shots on time") && text.includes("13 / 14"));
     assert.ok(text.includes("Own shell error") && text.includes("3.1 cm"));
     assert.ok(text.includes("Hit offset p95") && text.includes("2.05 m"));
+    assert.ok(text.includes("Incoming offset") && text.includes("0.42 m"));
+    assert.ok(text.includes("Phantom strikes"));
     assert.ok(text.includes("Debris corrections") && text.includes("2.0 cm/s"));
     assert.ok(
       text.includes("Late batches") &&

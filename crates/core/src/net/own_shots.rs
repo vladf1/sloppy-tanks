@@ -73,6 +73,15 @@ pub trait CoverCast {
     fn cast_cover(&self, origin: Point3, direction: Vec2, distance: f64) -> Option<CoverHit>;
 }
 
+/// A world without cover, for timelines kept without a predicted world.
+pub struct NoCover;
+
+impl CoverCast for NoCover {
+    fn cast_cover(&self, _origin: Point3, _direction: Vec2, _distance: f64) -> Option<CoverHit> {
+        None
+    }
+}
+
 /// Where a shell meets cover: how far along, the face's planar normal and the cover.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct CoverHit {
@@ -105,18 +114,18 @@ pub struct Firing {
 
 /// One leg of a shell's flight, drawn from its start until `until`.
 #[derive(Clone, Copy, Debug)]
-struct Leg {
-    path: ShotPath,
-    until: f64,
+pub(super) struct Leg {
+    pub(super) path: ShotPath,
+    pub(super) until: f64,
 }
 
 /// Where an open leg meets cover (fractional tick), the legs a bouncing shell flies after
 /// it, and the impact effect of each strike.
 #[derive(Clone, Debug, Default)]
-struct Forecast {
-    stop: Option<f64>,
-    legs: Vec<Leg>,
-    strikes: Vec<TimedEvent>,
+pub(super) struct Forecast {
+    pub(super) stop: Option<f64>,
+    pub(super) legs: Vec<Leg>,
+    pub(super) strikes: Vec<TimedEvent>,
 }
 
 #[derive(Clone, Debug)]
@@ -268,7 +277,7 @@ fn strike(path: &ShotPath, tick: f64, struck: Option<Struck>, bounces: bool) -> 
 
 /// Where `path`, an open leg, meets cover in the predicted world and how it flies on with
 /// `bounces` left: off the cover's face like the host's ricochet, or not at all.
-fn forecast(path: &ShotPath, bounces: u32, cover: &impl CoverCast) -> Forecast {
+pub(super) fn forecast(path: &ShotPath, bounces: u32, cover: &impl CoverCast) -> Forecast {
     let mut result = Forecast::default();
     let mut current = *path;
     let mut bounces_left = bounces;

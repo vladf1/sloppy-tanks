@@ -8,6 +8,7 @@ const PAGE_PARAMETERS = [
 ];
 const DEV_PARAMETERS = [
   "  ?server=ws://host:port   the game server a room connects to",
+  "  ?dodge=0             a room draws enemy shells on the display clock (no dodger first)",
   "  ?tweak               single player's camera workshop",
 ];
 

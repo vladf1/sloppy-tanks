@@ -53,7 +53,7 @@ use super::hull_prediction::{
 };
 use super::input_cadence::InputCadence;
 use super::json;
-use super::network_timeline::NetworkTimeline;
+use super::network_timeline::{Dodger, NetworkTimeline};
 use super::own_shots::{Firing, OwnShots};
 use super::player_controls::{Ack, Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
 use super::prediction::Moved;
@@ -69,11 +69,15 @@ use crate::sim::ammunition::{equipped_weapon_for, step_ammo};
 use crate::sim::math::{Point3, Vec2, angle_delta};
 use crate::sim::render_state::RenderState;
 use crate::sim::types::{
-    AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, VehicleKind, Weapon,
+    AmmoSelection, DamageCause, Driver, Match, MatchPhase, SimEvent, SimEventType, Team,
+    VehicleKind, Weapon,
 };
 use crate::sim::weapons::fire_interval;
 
 const RECONNECT_WINDOW_MS: f64 = 30_000.0;
+/// A shell that hit the viewer ended this close (metres) to the hull's centre: a direct
+/// hit at its hit box, or a rocket's blast nearby.
+const INCOMING_SHELL_REACH: f64 = 6.0;
 const HEARTBEAT_MS: f64 = 1000.0;
 /// A socket that has not been welcomed, or has heard nothing, for this long is closed.
 const SILENCE_MS: f64 = 10_000.0;
@@ -240,6 +244,9 @@ pub struct ClientConfig {
     pub delay: Option<DelaySettings>,
     /// Seeds the delay's jitter.
     pub seed: u32,
+    /// Draw shells coming at the viewer toward its present ("dodger first", the
+    /// default); off draws them on the display clock alone (`?dodge=0`).
+    pub dodger_first: bool,
 }
 
 /// The local controls for one frame, after the page resolved the camera and pointer.
@@ -316,6 +323,8 @@ pub struct NetworkStats {
     /// Of the snapshots counted in `corrections`, those that confirmed the prediction so
     /// it ran on without a replay.
     pub confirmed_snapshots: u64,
+    /// Enemy shells drawn striking the predicted hull that the host flew past instead.
+    pub phantom_strikes: u64,
 }
 
 struct Socket {
@@ -558,6 +567,7 @@ impl NetworkClient {
                 (tally.count, per_second(tally.total))
             }),
             confirmed_snapshots: self.prediction.stats.confirmed,
+            phantom_strikes: self.timeline.phantom_strikes,
         }
     }
 
@@ -1015,13 +1025,27 @@ impl NetworkClient {
                                 &self.prediction,
                             );
                         }
+                        let incoming = shell_hits(&extras.events, control.tank_id);
                         let pushed_frame = self.mirror.render(control.tank_id).and_then(|state| {
-                            self.timeline
-                                .push(state, self.mirror.tick, extras.events, extras.paths)
+                            self.timeline.push(
+                                state,
+                                self.mirror.tick,
+                                extras.events,
+                                extras.paths,
+                                &self.prediction,
+                            )
                         });
                         if pushed_frame.is_err() {
                             self.request_full(now_ms);
                             break;
+                        }
+                        for (tick, at) in incoming {
+                            if let Some(shell) =
+                                self.timeline
+                                    .shell_ending_near(tick, at, INCOMING_SHELL_REACH)
+                            {
+                                self.feel.incoming_hit(tick, shell);
+                            }
                         }
                         pushed = true;
                     }
@@ -1034,6 +1058,22 @@ impl NetworkClient {
             }
         }
         Ok(())
+    }
+
+    /// The viewer's predicted hull, for drawing shells coming at it.
+    fn dodger(&self, now_ms: f64) -> Option<Dodger> {
+        let present = self.prediction.predicted_present(now_ms)?;
+        let drawn = self.prediction.drawn(now_ms)?;
+        let control = self.control.as_ref()?;
+        let viewer = self.display.as_ref()?.viewer()?;
+        Some(Dodger {
+            present,
+            position: drawn.position.planar(),
+            heading: drawn.heading,
+            kind: viewer.kind,
+            team: viewer.team,
+            tank_id: control.tank_id,
+        })
     }
 
     /// The viewer's gun as the newest snapshot has it.
@@ -1419,10 +1459,18 @@ impl NetworkClient {
             }
         }
         self.own_shots.recover(dt);
+        // Incoming shells are drawn toward the hull's present while it is predicted.
+        let dodger = self
+            .config
+            .dodger_first
+            .then(|| self.dodger(now_ms))
+            .flatten();
         // The battle keeps playing behind the in-battle menu too. The timeline overwrites
         // the baseline or last frame in place.
         let display = self.display.get_or_insert_with(RenderState::default);
-        let mut displayed = self.timeline.read(now_ms, self.rtt_ms, dt, display);
+        let mut displayed = self
+            .timeline
+            .read(now_ms, self.rtt_ms, dt, display, dodger.as_ref());
         let display_tick = self.timeline.display_tick();
         let own_clock_present = self.prediction.present(now_ms).unwrap_or(display_tick);
         let impacts = self.own_shots.draw(
@@ -1559,6 +1607,32 @@ impl NetworkClient {
             self.pending_weapon = None;
         }
     }
+}
+
+/// The ticks and places other tanks' shells hit the viewer `viewer_id` (hurt or killed it).
+fn shell_hits(events: &[TimedEvent], viewer_id: u32) -> Vec<(f64, Vec2)> {
+    events
+        .iter()
+        .filter(|timed| {
+            let event = &timed.event;
+            // The viewer's own rocket hurting it flew as an own shell.
+            matches!(event.kind, SimEventType::Hurt | SimEventType::Death)
+                && event.id == Some(viewer_id)
+                && event.owner != Some(viewer_id)
+                && event.damage_source.is_some_and(|source| {
+                    matches!(
+                        source.cause,
+                        DamageCause::Standard
+                            | DamageCause::Spread
+                            | DamageCause::Rocket
+                            | DamageCause::Ricochet
+                            | DamageCause::Piercing
+                            | DamageCause::Tow
+                    )
+                })
+        })
+        .map(|timed| (timed.tick, Vec2::new(timed.event.x, timed.event.z)))
+        .collect()
 }
 
 /// Feeds the viewer's own shots and hits in one received frame to the feel readings, and

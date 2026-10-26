@@ -26,7 +26,8 @@
 //!   firstPerson?, zoom?, hideReticle?, framesInFlight? }` (the view's part is
 //!   `page::create_view`'s). `server` is
 //!   the validated WebSocket origin; `latency`/`jitter`/`stall` are the development
-//!   transport-delay URL parameters (omit them in production).
+//!   transport-delay URL parameters (omit them in production), and `dodge: "0"` draws
+//!   incoming shells on the display clock alone (development comparisons).
 //! - Actions (`take_actions`, in order): `{type: "open", socket, url}`, `{type: "send",
 //!   socket, text}` (close the socket instead when its `bufferedAmount` exceeds 16 KiB),
 //!   `{type: "close", socket}`, `{type: "saveSeat", token, roomEpoch}`, `{type:
@@ -111,6 +112,8 @@ struct NetConfig {
     latency: Option<String>,
     jitter: Option<String>,
     stall: Option<String>,
+    /// Development switch: `"0"` draws incoming shells on the display clock alone.
+    dodge: Option<String>,
 }
 
 impl NetConfig {
@@ -189,6 +192,7 @@ impl NetGame {
             saved_seat: config.saved_seat(),
             delay: config.delay(),
             seed: seed as u32,
+            dodger_first: config.dodge.as_deref() != Some("0"),
         });
         let mut game = NetGame {
             client,
@@ -642,6 +646,7 @@ impl NetGame {
                 "receiveMs": self.receive_ms,
                 "corrections": network.corrections,
                 "confirmedSnapshots": network.confirmed_snapshots,
+                "phantomStrikes": network.phantom_strikes,
             }),
         );
         let feel = &self.client.feel;
@@ -654,6 +659,8 @@ impl NetGame {
                 "fireToReportMs": summary(&feel.fire_to_report),
                 "unansweredPresses": feel.unanswered_presses,
                 "hitOffsetM": summary(&feel.hit_offset),
+                "incomingOffsetM": summary(&feel.incoming_offset),
+                "unseenIncoming": feel.unseen_incoming,
                 "ownShots": {
                     "predicted": own.predicted,
                     "confirmed": own.confirmed,

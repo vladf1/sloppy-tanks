@@ -56,6 +56,7 @@ export interface NetworkStatsSource extends RenderStats {
       { count: number; mPerS: number }
     >;
     receiveMs: number;
+    phantomStrikes: number;
   };
   feel: {
     viewDelayMs: Reading;
@@ -63,6 +64,8 @@ export interface NetworkStatsSource extends RenderStats {
     fireToReportMs: Reading;
     unansweredPresses: number;
     hitOffsetM: Reading;
+    incomingOffsetM: Reading;
+    unseenIncoming: number;
     ownShots: {
       predicted: number;
       confirmed: number;
@@ -196,6 +199,16 @@ export function networkStatsSections(
           "Hit offset p95",
           feel.hitOffsetM.count ? `${feel.hitOffsetM.p95.toFixed(2)} m` : "–",
           `The 95th percentile of recent hits; the largest was ${feel.hitOffsetM.max.toFixed(2)} m.`,
+        ],
+        [
+          "Incoming offset",
+          feel.incomingOffsetM.count ? `${feel.incomingOffsetM.mean.toFixed(2)} m` : "–",
+          `For each enemy shell that hit you (${feel.incomingOffsetM.count} so far): how close it was drawn to your tank as your own tank reached the moment of the hit; 95th percentile ${feel.incomingOffsetM.p95.toFixed(2)} m. Near zero, a shell you see coming hits where you see it. ${feel.unseenIncoming} more were fired so close that they hit before they could be drawn.`,
+        ],
+        [
+          "Phantom strikes",
+          network.phantomStrikes,
+          "Enemy shells drawn striking your tank, ahead of the server, that the server flew past instead (your tank was elsewhere on the server). Such a shell flies on.",
         ],
         [
           "Late input starts",

@@ -13,6 +13,7 @@ use sloppy_core::net::fixed_step_clock::{BATCH_TICKS, FixedStepClock, HOST_INTER
 use sloppy_core::net::input_cadence::InputCadence;
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::network_timeline::NetworkTimeline;
+use sloppy_core::net::own_shots::NoCover;
 use sloppy_core::net::player_controls::{Action, Aim, ControlInput};
 use sloppy_core::net::playout_clock::PlayoutClock;
 use sloppy_core::net::render_timeline::RenderTimeline;
@@ -555,6 +556,7 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
                 event: event(SimEventType::Death, Some(viewer), 0.0),
             }],
             Vec::new(),
+            &NoCover,
         )
         .unwrap();
     timeline
@@ -567,16 +569,17 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
                 event: event(SimEventType::Respawn, Some(viewer), 30.0),
             }],
             Vec::new(),
+            &NoCover,
         )
         .unwrap();
     timeline
-        .push(respawn.clone(), 6, Vec::new(), Vec::new())
+        .push(respawn.clone(), 6, Vec::new(), Vec::new(), &NoCover)
         .unwrap();
     timeline.arrive(50.0);
     let mut state = RenderState::default();
     let mut frames = Vec::new();
     for now in 50..400 {
-        let events = timeline.read(f64::from(now), 0.0, 0.001, &mut state);
+        let events = timeline.read(f64::from(now), 0.0, 0.001, &mut state, None);
         let tank = state.viewer().unwrap();
         frames.push((
             tank.alive,
@@ -609,7 +612,11 @@ fn coalesced_death_and_respawn_preserve_each_life_and_emit_effects_on_the_displa
         "effects play once"
     );
     timeline.reset(&respawn, 6, 400.0, &LivePaths::default());
-    assert!(timeline.read(410.0, 0.0, 1.0 / 60.0, &mut state).is_empty());
+    assert!(
+        timeline
+            .read(410.0, 0.0, 1.0 / 60.0, &mut state, None)
+            .is_empty()
+    );
 }
 
 #[test]
@@ -646,6 +653,7 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_path_and_disapp
                 PathEntry::Launch(path),
                 PathEntry::End { id: 999, tick: 1.5 },
             ],
+            &NoCover,
         )
         .unwrap();
     timeline.arrive(50.0);
@@ -654,7 +662,7 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_path_and_disapp
     let mut shown = RenderState::default();
     let mut now = 50.0;
     while now < 300.0 {
-        let events = timeline.read(now, 0.0, 1.0 / 60.0, &mut shown);
+        let events = timeline.read(now, 0.0, 1.0 / 60.0, &mut shown, None);
         let shots = shown.shots.clone();
         let tick = timeline.clock.display_ms * 60.0 / 1000.0;
         if (1.0..1.5).contains(&tick) {
@@ -733,16 +741,22 @@ fn a_display_state_refilled_in_place_matches_a_fresh_read_as_names_debris_and_me
     later.fragments = vec![fragment(2, false), fragment(3, true)];
     let mut timeline = NetworkTimeline::default();
     timeline.reset(&first, 0, 0.0, &LivePaths::default());
-    timeline.push(moved, 3, Vec::new(), Vec::new()).unwrap();
-    timeline.push(later, 6, Vec::new(), Vec::new()).unwrap();
+    timeline
+        .push(moved, 3, Vec::new(), Vec::new(), &NoCover)
+        .unwrap();
+    timeline
+        .push(later, 6, Vec::new(), Vec::new(), &NoCover)
+        .unwrap();
     timeline.arrive(50.0);
     let mut shown = RenderState::default();
     let mut interpolated = 0;
     for now in 50..400 {
         let now = f64::from(now);
         let mut fresh = RenderState::default();
-        timeline.clone().read(now, 0.0, 1.0 / 60.0, &mut fresh);
-        timeline.read(now, 0.0, 1.0 / 60.0, &mut shown);
+        timeline
+            .clone()
+            .read(now, 0.0, 1.0 / 60.0, &mut fresh, None);
+        timeline.read(now, 0.0, 1.0 / 60.0, &mut shown, None);
         assert_eq!(
             shown, fresh,
             "the reused state at {now} ms keeps nothing stale"
@@ -965,12 +979,13 @@ fn replay(mut sim: Simulation, ticks: u64, mut before: impl FnMut(&mut Simulatio
                 tick,
                 extras.events,
                 extras.paths,
+                &NoCover,
             )
             .unwrap();
         timeline.arrive(now);
         let mut shown = RenderState::default();
         for _ in 0..12 {
-            timeline.read(now, 0.0, 0.004, &mut shown);
+            timeline.read(now, 0.0, 0.004, &mut shown, None);
             replay
                 .reads
                 .push((timeline.display_tick(), shown.shots.clone()));

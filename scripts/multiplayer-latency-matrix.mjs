@@ -9,7 +9,9 @@
  *
  * It starts its own server (`target/server/sloppy-server`, `pnpm run server:build`) on
  * `SLOPPY_MATRIX_PORT` (default 8791) so its byte counts hold only this run; run Vite and
- * pass its URL as `SLOPPY_URL`. Manual evidence, not a gate: keep it out of `pnpm run check`.
+ * pass its URL as `SLOPPY_URL`. `SLOPPY_MATRIX_PARAMS` adds page parameters to both players
+ * (`dodge=0` compares without "dodger first"). Manual evidence, not a gate: keep it out of
+ * `pnpm run check`.
  *
  *   SLOPPY_URL=http://127.0.0.1:5174/sloppy-tanks/ SLOPPY_MATRIX_LABEL=baseline \
  *     node scripts/multiplayer-latency-matrix.mjs
@@ -25,6 +27,7 @@ const PORT = Number(process.env.SLOPPY_MATRIX_PORT ?? 8791);
 const LABEL = process.env.SLOPPY_MATRIX_LABEL ?? "run";
 const SECONDS = Number(process.env.SLOPPY_MATRIX_SECONDS ?? 60);
 const MAP = process.env.SLOPPY_MATRIX_MAP ?? "village";
+const PARAMS = new URLSearchParams(process.env.SLOPPY_MATRIX_PARAMS ?? "");
 /** Round trip, jitter and stall in milliseconds, as the dev page parameters take them. */
 const CONDITIONS = [
   { name: "rtt0", latency: 0, jitter: 0, stall: 0 },
@@ -86,6 +89,7 @@ function conditionUrl(condition) {
   for (const key of ["latency", "jitter", "stall"]) {
     if (condition[key]) url.searchParams.set(key, String(condition[key]));
   }
+  for (const [key, value] of PARAMS) url.searchParams.set(key, value);
   return url;
 }
 
@@ -247,6 +251,9 @@ function derive(before, after, played) {
     fireToReportMs: feel.fireToReportMs,
     unansweredPresses: feel.unansweredPresses,
     hitOffsetM: feel.hitOffsetM,
+    incomingOffsetM: feel.incomingOffsetM,
+    unseenIncoming: feel.unseenIncoming,
+    phantomStrikes: network.phantomStrikes - before.network.phantomStrikes,
     ownShots: feel.ownShots,
   };
 }
@@ -338,6 +345,7 @@ function rows(result) {
     "view ms": round(player.viewDelayMs.mean),
     "buffer ms": round(player.bufferMs),
     "hit m": `${round(player.hitOffsetM.mean, 2)} p95 ${round(player.hitOffsetM.p95, 2)} (${player.hitOffsetM.count})`,
+    "incoming m": `${round(player.incomingOffsetM.mean, 2)} p95 ${round(player.incomingOffsetM.p95, 2)} (${player.incomingOffsetM.count}) ${player.unseenIncoming} unseen ${player.phantomStrikes} phantom`,
     "corr cm/s": round(player.correctionCmPerS, 1),
     "late batches": player.lateBatches,
     "late inputs": `${player.lateInputStarts}/${player.inputStarts}`,

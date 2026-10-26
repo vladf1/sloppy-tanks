@@ -14,6 +14,7 @@ use net_support::{
 use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, EndCause, LocalInput, NetworkClient, SavedSeat,
 };
+use sloppy_core::net::feel_readings::Samples;
 use sloppy_core::net::fixed_step_clock::{HOST_INTERVAL_MS, SIMULATION_STEP_MS};
 use sloppy_core::net::match_host::{HostEvent, MatchHost};
 use sloppy_core::net::protocol::{JoinChoice, Message, RoomPhase, RoomSettings};
@@ -69,6 +70,8 @@ struct Network {
     /// Page frame intervals, repeated; uneven ones step zero or two ticks some frames.
     frame_ms: Vec<f64>,
     frame: usize,
+    /// Whether pages added from now on draw enemy shells toward their present.
+    dodger_first: bool,
 }
 
 fn choice(name: &str, create: Option<RoomSettings>) -> JoinChoice {
@@ -91,13 +94,18 @@ fn settings(map: MapId) -> RoomSettings {
 }
 
 /// A page's session for room ABCDEFGH on the local server.
-fn client(saved_seat: Option<SavedSeat>, delay: Option<DelaySettings>) -> NetworkClient {
+fn client(
+    saved_seat: Option<SavedSeat>,
+    delay: Option<DelaySettings>,
+    dodger_first: bool,
+) -> NetworkClient {
     NetworkClient::new(ClientConfig {
         server_url: "ws://127.0.0.1:8787/".into(),
         room: "ABCDEFGH".into(),
         saved_seat,
         delay,
         seed: 7,
+        dodger_first,
     })
 }
 
@@ -114,12 +122,13 @@ impl Network {
             held: Vec::new(),
             frame_ms: vec![FRAME_MS],
             frame: 0,
+            dodger_first: true,
         }
     }
 
     fn add(&mut self, saved_seat: Option<SavedSeat>, delay: Option<DelaySettings>) -> usize {
         self.peers.push(Peer {
-            client: client(saved_seat, delay),
+            client: client(saved_seat, delay, self.dodger_first),
             socket: None,
             notices: Vec::new(),
             saved: None,
@@ -1040,7 +1049,7 @@ fn an_expired_seat_or_a_gone_room_ends_with_its_own_cause() {
 
 #[test]
 fn a_server_that_never_answers_ends_as_lost_after_the_reconnect_window() {
-    let mut client = client(None, None);
+    let mut client = client(None, None, true);
     let mut now = 0.0;
     client.connect(choice("alice", None), now);
     let mut opened = 0;
@@ -1213,6 +1222,8 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
         net.run(FRAME_MS);
         waited += FRAME_MS;
     };
+    // Bob draws every shell on the display clock, where the host's sweeps are compared.
+    net.dodger_first = false;
     let bob = net.add(None, None);
     net.connect(
         bob,
@@ -1278,4 +1289,78 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
             "shell {id} ends at tick {end} but is last drawn at {last_drawn}"
         );
     }
+}
+
+/// Alice in a village room with bots, behind a 100 ms round trip, drives at the nearest
+/// enemy and circles it from 18 m for a minute: how close the shells that hit her were
+/// drawn to her hull as her present reached each hit, and how many hit before they were
+/// drawn at all.
+fn shells_that_hit(dodger_first: bool) -> (Samples, u64) {
+    let mut net = Network::new();
+    net.dodger_first = dodger_first;
+    let delay = DelaySettings {
+        half_ms: 50.0,
+        jitter_ms: 0.0,
+        stall_ms: 0.0,
+    };
+    let alice = net.add(None, Some(delay));
+    net.connect(alice, choice("alice", Some(settings(MapId::Village))));
+    net.run(300.0);
+    let tank_id = net.peers[alice].client.control().unwrap().tank_id;
+    for step in 0..600 {
+        let sim = net.host.simulation.as_ref().unwrap();
+        let me = &sim.tanks[sim.tank_index(tank_id).unwrap()];
+        let target = me.alive.then(|| {
+            let here = sim.body_translation(me.body).planar();
+            sim.tanks
+                .iter()
+                .filter(|tank| tank.alive && tank.team != me.team)
+                .map(|tank| sim.body_translation(tank.body).planar())
+                .map(|there| (there.x - here.x, there.z - here.z))
+                .min_by(|a, b| a.0.hypot(a.1).total_cmp(&b.0.hypot(b.1)))
+        });
+        if let Some(Some((dx, dz))) = target {
+            let gap = dx.hypot(dz).max(0.1);
+            let side = if (step / 20) % 2 == 0 { 1.0 } else { -1.0 };
+            let (x, z) = if gap > 18.0 {
+                (dx / gap, dz / gap)
+            } else {
+                (dz / gap * side, -dx / gap * side)
+            };
+            net.peers[alice].input.move_x = x;
+            net.peers[alice].input.move_z = z;
+        }
+        net.run(100.0);
+    }
+    let feel = &net.peers[alice].client.feel;
+    (feel.incoming_offset.clone(), feel.unseen_incoming)
+}
+
+#[test]
+fn enemy_shells_reach_a_dodger_where_its_hull_is_drawn() {
+    let (dodging, unseen) = shells_that_hit(true);
+    let (delayed, unseen_delayed) = shells_that_hit(false);
+    let describe = |samples: &Samples| {
+        format!(
+            "{} hits, p50 {:.2} m, p90 {:.2} m, largest {:.2} m",
+            samples.count,
+            samples.percentile(0.5),
+            samples.percentile(0.9),
+            samples.largest
+        )
+    };
+    eprintln!(
+        "incoming offset: dodger first {} ({unseen} unseen), display clock {} ({unseen_delayed} unseen)",
+        describe(&dodging),
+        describe(&delayed)
+    );
+    assert!(
+        dodging.count >= 8,
+        "enough hits to judge: {}",
+        dodging.count
+    );
+    // Drawn toward the present, a shell meets the hull as the present reaches its hit...
+    assert!(dodging.percentile(0.9) < 1.0, "{}", describe(&dodging));
+    // ...where on the display clock alone it is still about a view delay of flight away.
+    assert!(delayed.percentile(0.5) > 2.0, "{}", describe(&delayed));
 }

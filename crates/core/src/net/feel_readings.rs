@@ -8,8 +8,10 @@
 use std::collections::VecDeque;
 
 use super::fixed_step_clock::SIMULATION_STEP_MS;
+use super::network_timeline::hull_gap;
 use crate::sim::math::{Vec2, distance};
 use crate::sim::render_state::RenderState;
+use crate::sim::types::VehicleKind;
 
 /// Recent samples kept for each reading's percentiles.
 const MAX_SAMPLES: usize = 600;
@@ -26,6 +28,9 @@ const MAX_FRAMES: usize = 512;
 /// A hit is looked up in the first frame whose present reached it, if that frame came
 /// within this many ticks after it (frames are about one tick apart).
 const MAX_HIT_FRAME_TICKS: f64 = 4.0;
+/// An enemy shell's hit on the viewer is measured over the frames whose present lies
+/// within this many ticks before it and one tick after.
+const INCOMING_WINDOW_TICKS: f64 = 6.0;
 
 /// One reading's samples: how many, their mean and largest, and percentiles of the
 /// recent ones.
@@ -81,12 +86,15 @@ impl Press {
     }
 }
 
-/// One drawn frame: the viewer's predicted present and where each other live tank was
-/// drawn.
+/// One drawn frame: the viewer's predicted present, where its hull and each other live
+/// tank were drawn, and where the enemy shells were.
 #[derive(Clone, Debug, Default)]
 struct DrawnFrame {
     present: f64,
+    /// The viewer's hull: kind, position and heading.
+    viewer: Option<(VehicleKind, Vec2, f64)>,
     tanks: Vec<(u32, Vec2)>,
+    shells: Vec<(u32, Vec2)>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -101,6 +109,13 @@ pub struct FeelReadings {
     /// Per hit the viewer scored on another tank: how far that tank was drawn, when the
     /// viewer's own present reached the hit, from where the server hit it, metres.
     pub hit_offset: Samples,
+    /// Per enemy shell that hit the viewer: how close it was drawn to the viewer's hull (its
+    /// hit box) around the moment the viewer's present reached the hit, metres. A shell
+    /// drawn on the display clock is still a view delay of flight away.
+    pub incoming_offset: Samples,
+    /// Enemy shells that hit the viewer without being drawn by then: fired so close that
+    /// their whole flight was shorter than the view delay.
+    pub unseen_incoming: u64,
     /// Presses that got no shot within [`MAX_FIRE_WAIT_MS`].
     pub unanswered_presses: u64,
     press: Option<Press>,
@@ -169,6 +184,8 @@ impl FeelReadings {
         }
         let mut frame = self.spare.pop().unwrap_or_default();
         frame.present = present;
+        let viewer = state.viewer();
+        frame.viewer = viewer.map(|viewer| (viewer.kind, viewer.position.planar(), viewer.heading));
         frame.tanks.clear();
         frame.tanks.extend(
             state
@@ -176,6 +193,14 @@ impl FeelReadings {
                 .iter()
                 .filter(|tank| tank.alive && tank.id != state.viewer_id)
                 .map(|tank| (tank.id, Vec2::new(tank.position.x, tank.position.z))),
+        );
+        frame.shells.clear();
+        frame.shells.extend(
+            state
+                .shots
+                .iter()
+                .filter(|shot| viewer.is_some_and(|viewer| shot.team != viewer.team))
+                .map(|shot| (shot.id, Vec2::new(shot.x, shot.z))),
         );
         self.frames.push_back(frame);
     }
@@ -206,6 +231,29 @@ impl FeelReadings {
         }
         if press.reported {
             self.press = None;
+        }
+    }
+
+    /// The enemy shell `shell` hit the viewer at `tick`.
+    pub fn incoming_hit(&mut self, tick: f64, shell: u32) {
+        // A shell drawn in the present is gone once it strikes the hull, so the window
+        // runs up to the hit and slightly past it.
+        let nearest = self
+            .frames
+            .iter()
+            .filter(|frame| {
+                frame.present >= tick - INCOMING_WINDOW_TICKS && frame.present <= tick + 1.0
+            })
+            .filter_map(|frame| {
+                let (kind, position, heading) = frame.viewer?;
+                let (_, at) = frame.shells.iter().find(|(id, _)| *id == shell)?;
+                Some(hull_gap(kind, position, heading, *at))
+            })
+            .fold(f64::INFINITY, f64::min);
+        if nearest.is_finite() {
+            self.incoming_offset.add(nearest);
+        } else {
+            self.unseen_incoming += 1;
         }
     }
 

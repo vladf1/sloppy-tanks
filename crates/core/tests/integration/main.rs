@@ -15,6 +15,7 @@ mod cover_hit_effects;
 mod debris_cleanup;
 mod destruction_physics;
 mod difficulty;
+mod dodger_first;
 mod driving;
 mod fixtures_smoke;
 mod game;
