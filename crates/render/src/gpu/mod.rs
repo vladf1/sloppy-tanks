@@ -420,14 +420,14 @@ struct OutputUniform {
     curve: [f32; 4],
 }
 
-/// The penumbra's blocker search (`standard.wgsl` `penumbra_radius`): the steepest
+/// The cast shadow's blocker search (`standard.wgsl` `search_casters`): the steepest
 /// receiver slope it follows, metres of depth per texel; the depth gap it ignores and
 /// the depth steps that sort casters by how far up the sun's ray they stand, metres.
 const RECEIVER_SLOPE_LIMIT: f32 = 0.6;
 const BLOCKER_TOLERANCE: f32 = 0.06;
 const BLOCKER_STEPS: [f32; 3] = [1.0, 2.5, 5.0];
 
-/// The penumbra search's terms in the sun's shadow map (`Frame` `penumbra_*`), the
+/// The blocker search's terms in the sun's shadow map (`Frame` `penumbra_*`), the
 /// same for every receiver, from `shadow_matrix` (world to map UV and depth) and the
 /// map's size in texels. The light's projection is orthographic, so its rows are
 /// orthogonal and a receiving plane's depth slope per map texel follows from their

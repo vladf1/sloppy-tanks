@@ -225,6 +225,53 @@ fn unbounded_hit_time(
 }
 
 #[test]
+fn the_hull_reach_bound_preserves_tangent_and_stationary_probes() {
+    let mut simulation = Simulation::with_seed(123.0);
+    for kind in VehicleKind::ALL {
+        let target = simulation
+            .tanks
+            .iter()
+            .position(|tank| tank.kind == kind)
+            .unwrap();
+        let hull = tank_hull(kind);
+        for heading in [
+            0.0,
+            std::f64::consts::FRAC_PI_4,
+            std::f64::consts::FRAC_PI_2,
+            -1.2,
+        ] {
+            place_tank(&mut simulation, target, 0.0, 0.0, Some(heading));
+            for side in [-1.0, 1.0] {
+                for inset in [-0.00001, 0.0, 0.00001] {
+                    let x = hull.center.x + side * (hull.size.x / 2.0 + SHELL_HIT_RADIUS + inset);
+                    for along in [0.0, -6.0] {
+                        let z = hull.center.z + along;
+                        for speed in [0.0, 1.0, 40.0] {
+                            let probe = ShotProbe {
+                                x: x * heading.cos() + z * heading.sin(),
+                                y: None,
+                                z: -x * heading.sin() + z * heading.cos(),
+                                vx: heading.sin() * speed,
+                                vz: heading.cos() * speed,
+                                ignored: None,
+                            };
+                            for limit in [0.0, 0.1, 8.0] {
+                                let tank = &simulation.tanks[target];
+                                assert_eq!(
+                                    tank_hit_time(&simulation, &probe, tank, limit, 0.0, 0.0, None),
+                                    unbounded_hit_time(&simulation, &probe, tank, limit, 0.0, 0.0),
+                                    "{kind:?} heading={heading} side={side} inset={inset} along={along} speed={speed} limit={limit}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn the_hull_reach_bound_skips_only_lanes_that_rapier_would_also_miss() {
     let mut s = Simulation::with_seed(123.0);
     let mut random = Random::new(7.0);

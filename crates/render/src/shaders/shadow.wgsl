@@ -1,43 +1,14 @@
 // Sun shadow-map pass. `frame.view_projection` is the light's orthographic matrix.
+// Casters run the surfaces' vertex stage (`vs_main`, `surface_vertex.wgsl`), so
+// WebKit compiles it once for both passes.
 // A fragment stage exists only for alpha-tested casters and fading instances;
 // every other caster writes depth alone. Those casters share one fragment stage
 // (`fs_shadow`), whichever they are, and so do the merged alpha-tested casters
 // (`shadow_cutout.wgsl`): WebKit compiles every distinct stage at first use, about
 // 50-90 ms apiece on a cold start for a few lines each.
 
-struct ShadowOut {
-    @builtin(position) clip: vec4f,
-    @location(0) world: vec3f,
-    @location(1) uv: vec2f,
-    @location(2) tint: vec4f,
-    @location(3) data: vec4f,
-    @location(4) extra0: vec4f,
-    @location(5) extra1: vec4f,
-}
-
-@vertex
-fn vs_shadow(input: VertexIn, @builtin(instance_index) index: u32) -> ShadowOut {
-    let instance = instance_at(index);
-    var v = effect_input(input, instance);
-    effect_vertex(&v);
-    var w: EffectWorld;
-    w.position = (instance.world * vec4f(v.position, 1.0)).xyz;
-    w.normal = normal_matrix(instance.world) * v.normal;
-    effect_world(&w, v);
-    var out: ShadowOut;
-    out.clip = frame.view_projection * vec4f(w.position, 1.0);
-    effect_clip(&out.clip, w, v);
-    out.world = w.position;
-    out.uv = v.uv;
-    out.tint = instance.tint;
-    out.data = instance.data;
-    out.extra0 = v.extra0;
-    out.extra1 = v.extra1;
-    return out;
-}
-
 @fragment
-fn fs_shadow(input: ShadowOut, @builtin(front_facing) front_facing: bool) {
+fn fs_shadow(input: VertexOut, @builtin(front_facing) front_facing: bool) {
     // An alpha-tested caster's material has a cutoff above zero (`ShaderKey::shadow`).
     let cutoff = material.surface.z;
     if cutoff > 0.0 {

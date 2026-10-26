@@ -10,41 +10,6 @@
 // view space is invariant under the view's rotation. Output is linear HDR; the
 // output pass tone maps the whole frame, as Three's frame-buffer target does.
 
-struct VertexOut {
-    @builtin(position) clip: vec4f,
-    @location(0) world: vec3f,
-    @location(1) normal: vec3f,
-    @location(2) uv: vec2f,
-    @location(3) color: vec4f,
-    @location(4) tint: vec4f,
-    @location(5) data: vec4f,
-    @location(6) extra0: vec4f,
-    @location(7) extra1: vec4f,
-}
-
-@vertex
-fn vs_main(input: VertexIn, @builtin(instance_index) index: u32) -> VertexOut {
-    let instance = instance_at(index);
-    var v = effect_input(input, instance);
-    effect_vertex(&v);
-    var w: EffectWorld;
-    w.position = (instance.world * vec4f(v.position, 1.0)).xyz;
-    w.normal = normal_matrix(instance.world) * v.normal;
-    effect_world(&w, v);
-    var out: VertexOut;
-    out.clip = frame.view_projection * vec4f(w.position, 1.0);
-    effect_clip(&out.clip, w, v);
-    out.world = w.position;
-    out.normal = w.normal;
-    out.uv = v.uv;
-    out.color = vec4f(v.color, v.color_alpha);
-    out.tint = instance.tint;
-    out.data = instance.data;
-    out.extra0 = v.extra0;
-    out.extra1 = v.extra1;
-    return out;
-}
-
 fn dfg(roughness: f32, dot_nv: f32) -> vec2f {
     // Three's 16×16 DFG LUT; level 0 keeps it free of derivative rules.
     return textureSampleLevel(dfg_lut, lut_sampler, vec2f(roughness, dot_nv), 0.0).rg;
@@ -95,46 +60,39 @@ fn brdf_ggx_multiscatter(l: vec3f, v: vec3f, n: vec3f, f0: vec3f, f90: f32, roug
 }
 
 // The receiving triangle's own normal (from screen derivatives, before any bump or
-// macro relief), set by `fs_main`: the plane the penumbra's blocker search follows.
+// macro relief), set by `fs_main`: the plane the blocker search follows.
 var<private> receiver_normal: vec3f;
 
-// Contact-hardening penumbra: shadows stay crisp where a hull or wall meets the
-// ground and widen toward the tip of a tall caster's shadow. Blockers are found
-// with the same hardware-filtered compares as the filter (continuous as things
-// move, no noise): four taps around the receiver, against its own plane, find the
-// casters above it, and only where there are any, three more depths sort them by
-// how far up the sun's ray they stand (`penumbra_steps`): one gather per tap gives
-// the four depths its compare filtered, which answer every step with the same
-// bilinear weights.
-const PENUMBRA_SEARCH_TEXELS: f32 = 5.0;
+// Sky the ground sees from inside a cast shadow: hard by its caster a wall or hull
+// hides much of the sky, so the shade is deepest there and opens toward the
+// shadow's tip. Blockers are found with the same hardware-filtered compares as the
+// filter (continuous as things move, no noise): four taps around the receiver,
+// against its own plane, find the casters above it, and only where there are any,
+// three more depths sort them by how far up the sun's ray they stand
+// (`penumbra_steps`): one gather per tap gives the four depths its compare
+// filtered, which answer every step with the same bilinear weights.
+const BLOCKER_SEARCH_TEXELS: f32 = 5.0;
 // The caster distance each band of the search stands for, metres: below the first
 // step, between the steps and beyond the last.
 const BLOCKER_BANDS: vec4f = vec4f(0.5, 1.75, 3.75, 6.5);
-// The filter radius (in units of the 7×7 tent) at contact and under far casters,
-// and the caster distances in metres over which it widens.
-const PENUMBRA_CONTACT_RADIUS: f32 = 1.0;
-const PENUMBRA_FAR_RADIUS: f32 = 2.1;
-const PENUMBRA_WIDENING: vec2f = vec2f(0.5, 5.0);
-// Sky the ground sees from inside a cast shadow: hard by its caster a wall or hull
-// hides much of the sky, so the shade is deepest there and opens toward the
-// shadow's tip; this share of the fill remains at contact, rising to all of it over
-// the caster distances in metres.
+// The share of the sky fill that remains at contact, rising to all of it over the
+// caster distances in metres.
 const SHADOW_CONTACT_FILL: f32 = 0.7;
 const SHADOW_FILL_OPENING: vec2f = vec2f(0.3, 5.0);
 
 // The share of the sky fill that reaches the receiver inside its cast shadow, set by
-// `penumbra_radius` (1 where nothing casts or no search ran).
+// `search_casters` (1 where nothing casts or no search ran).
 var<private> shadow_fill: f32 = 1.0;
 
 // The share of the four search spots' gathered `depths` (bilinearly `weighted`) that
 // lies beyond each spot's reference depth: open to the sun, as the compares of the
 // shadow sampler (less-equal) would find it.
-fn penumbra_open(depths: array<vec4f, 4>, references: vec4f, weights: vec4f) -> f32 {
+fn blockers_open(depths: array<vec4f, 4>, references: vec4f, weights: vec4f) -> f32 {
     return dot(step(vec4f(references.x), depths[0]), weights) + dot(step(vec4f(references.y), depths[1]), weights)
         + dot(step(vec4f(references.z), depths[2]), weights) + dot(step(vec4f(references.w), depths[3]), weights);
 }
 
-fn penumbra_radius(coord: vec3f, size: f32) -> f32 {
+fn search_casters(coord: vec3f, size: f32) {
     // The receiving plane's depth slope per texel along the map's u and its (flipped)
     // v, from its normal and the light's projection (`penumbra_*`, `gpu::penumbra_terms`).
     let c = dot(frame.penumbra_depth.xyz, receiver_normal);
@@ -146,13 +104,13 @@ fn penumbra_radius(coord: vec3f, size: f32) -> f32 {
     var spots = array<vec2f, 4>();
     var open = 0.0;
     for (var i = 0; i < 4; i++) {
-        let offset = vec2f(f32(i & 1) * 2.0 - 1.0, f32(i >> 1u) * 2.0 - 1.0) * PENUMBRA_SEARCH_TEXELS;
+        let offset = vec2f(f32(i & 1) * 2.0 - 1.0, f32(i >> 1u) * 2.0 - 1.0) * BLOCKER_SEARCH_TEXELS;
         references[i] = coord.z + dot(slope, offset) - tolerance;
         spots[i] = coord.xy + offset / size;
         open += textureSampleCompareLevel(shadow_map, shadow_sampler, spots[i], references[i]);
     }
     if open >= 4.0 {
-        return 1.0;
+        return;
     }
     // Under casters the spots' own depths answer every depth step: the spots lie whole
     // texels apart, so one set of bilinear weights serves all four gathers (their
@@ -164,14 +122,14 @@ fn penumbra_radius(coord: vec3f, size: f32) -> f32 {
         depths[i] = textureGather(shadow_map, shadow_texel_sampler, spots[i]);
     }
     // The share of the search that casters cover, and those beyond each step.
-    let blocked = 4.0 - penumbra_open(depths, references, weights);
+    let blocked = 4.0 - blockers_open(depths, references, weights);
     if blocked <= 0.0 {
-        return 1.0;
+        return;
     }
     let steps = frame.penumbra_steps.xyz;
     var beyond = vec3f(0.0);
     for (var k = 0; k < 3; k++) {
-        beyond[k] = 4.0 - penumbra_open(depths, references - steps[k], weights);
+        beyond[k] = 4.0 - blockers_open(depths, references - steps[k], weights);
     }
     // The casters' mean distance up the sun's ray.
     let bands = vec4f(blocked - beyond.x, beyond.x - beyond.y, beyond.y - beyond.z, beyond.z);
@@ -179,71 +137,43 @@ fn penumbra_radius(coord: vec3f, size: f32) -> f32 {
     let found = smoothstep(0.0, 0.3, blocked);
     let ground = smoothstep(0.5, 0.8, receiver_normal.y);
     shadow_fill = mix(1.0, mix(SHADOW_CONTACT_FILL, 1.0, smoothstep(SHADOW_FILL_OPENING.x, SHADOW_FILL_OPENING.y, reach)), found * ground);
-    let widening = smoothstep(PENUMBRA_WIDENING.x, PENUMBRA_WIDENING.y, reach);
-    return mix(1.0, mix(PENUMBRA_CONTACT_RADIUS, PENUMBRA_FAR_RADIUS, widening), found);
 }
 
 // The sun's shadow: Castaño's optimized PCF (The Witness), hardware-filtered
-// compares weighted into a smooth tent with no dither noise, after the light-space
-// normal offset and depth bias. Its taps sit exactly where the hardware's bilinear
-// weights complete the tent, so the penumbra glides without stepping as things move:
-// 7×7 texels from 16 taps, or 5×5 from 9 on the lighter WebGL build, which also
-// keeps one penumbra width.
+// compares weighted into a smooth 3×3 tent with no dither noise, after the
+// light-space normal offset and depth bias. Its four taps sit exactly where the
+// hardware's bilinear weights complete the tent, so the penumbra glides without
+// stepping as things move; spread any wider or narrower, the taps no longer
+// complete it and the shadow jumps at every texel. The tent stays this narrow
+// because the sun's own penumbra is under a texel at a tank's height, and a wider
+// one washed barrels, antennas and hull edges into a smudge.
 fn sun_shadow(world: vec3f, normal: vec3f) -> f32 {
     let position = frame.shadow_matrix * vec4f(world + normal * frame.shadow.y, 1.0);
     let projected = position.xyz / position.w;
     let coord = vec3f(projected.x, 1.0 - projected.y, projected.z + frame.shadow.x);
     let size = frame.shadow.z;
+    if !LITE {
+        if atmosphere_on() {
+            search_casters(coord, size);
+        }
+    }
     let texels = coord.xy * size;
     let base = floor(texels + 0.5);
     let st = texels + 0.5 - base;
     let origin = (base - 0.5) / size;
-    // The filter radius spreads the taps; at 1 they are exact.
-    var radius = frame.shadow.w;
-    if !LITE {
-        if atmosphere_on() {
-            radius *= penumbra_radius(coord, size);
-        }
-    }
-    let texel = radius / size;
+    let texel = frame.shadow.w / size;
+    let uw = vec2f(3.0 - 2.0 * st.x, 1.0 + 2.0 * st.x);
+    let u = vec2f((2.0 - st.x) / uw.x - 1.0, st.x / uw.y + 1.0) * texel;
+    let vw = vec2f(3.0 - 2.0 * st.y, 1.0 + 2.0 * st.y);
+    let v = vec2f((2.0 - st.y) / vw.x - 1.0, st.y / vw.y + 1.0) * texel;
     var sum = 0.0;
-    if LITE {
-        let uw = vec3f(4.0 - 3.0 * st.x, 7.0, 1.0 + 3.0 * st.x);
-        let u = vec3f((3.0 - 2.0 * st.x) / uw.x - 2.0, (3.0 + st.x) / uw.y, st.x / uw.z + 2.0) * texel;
-        let vw = vec3f(4.0 - 3.0 * st.y, 7.0, 1.0 + 3.0 * st.y);
-        let v = vec3f((3.0 - 2.0 * st.y) / vw.x - 2.0, (3.0 + st.y) / vw.y, st.y / vw.z + 2.0) * texel;
-        for (var j = 0; j < 3; j++) {
-            for (var i = 0; i < 3; i++) {
-                let tap = origin + vec2f(u[i], v[j]);
-                sum += uw[i] * vw[j] * textureSampleCompareLevel(shadow_map, shadow_sampler, tap, coord.z);
-            }
+    for (var j = 0; j < 2; j++) {
+        for (var i = 0; i < 2; i++) {
+            let tap = origin + vec2f(u[i], v[j]);
+            sum += uw[i] * vw[j] * textureSampleCompareLevel(shadow_map, shadow_sampler, tap, coord.z);
         }
-        sum /= 144.0;
-    } else {
-        let s = st.x;
-        let t = st.y;
-        let uw = vec4f(5.0 * s - 6.0, 11.0 * s - 28.0, -(11.0 * s + 17.0), -(5.0 * s + 1.0));
-        let u = vec4f(
-            (4.0 * s - 5.0) / uw.x - 3.0,
-            (4.0 * s - 16.0) / uw.y - 1.0,
-            -(7.0 * s + 5.0) / uw.z + 1.0,
-            -s / uw.w + 3.0,
-        ) * texel;
-        let vw = vec4f(5.0 * t - 6.0, 11.0 * t - 28.0, -(11.0 * t + 17.0), -(5.0 * t + 1.0));
-        let v = vec4f(
-            (4.0 * t - 5.0) / vw.x - 3.0,
-            (4.0 * t - 16.0) / vw.y - 1.0,
-            -(7.0 * t + 5.0) / vw.z + 1.0,
-            -t / vw.w + 3.0,
-        ) * texel;
-        for (var j = 0; j < 4; j++) {
-            for (var i = 0; i < 4; i++) {
-                let tap = origin + vec2f(u[i], v[j]);
-                sum += uw[i] * vw[j] * textureSampleCompareLevel(shadow_map, shadow_sampler, tap, coord.z);
-            }
-        }
-        sum /= 2704.0;
     }
+    sum /= 16.0;
     // Shadows fade out over the map's last texels rather than stopping at its edge,
     // where a cliff beyond the fitted box would leave a straight-cut band.
     let edge = min(min(coord.x, 1.0 - coord.x), min(coord.y, 1.0 - coord.y));
