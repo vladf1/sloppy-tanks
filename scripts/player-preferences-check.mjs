@@ -7,6 +7,7 @@ import {
   click,
   gameUrl,
   launchGame,
+  localDirectory,
   menuReady,
   startRound,
 } from "./browser-helpers.mjs";
@@ -20,7 +21,8 @@ const { browser, page, errors } = await launchGame({
 });
 page.setDefaultTimeout(60000);
 const base = new URL(gameUrl);
-if (process.env.SLOPPY_SERVER) base.searchParams.set("server", process.env.SLOPPY_SERVER);
+if (process.env.SLOPPY_SERVER)
+  base.searchParams.set("directory", localDirectory(process.env.SLOPPY_SERVER));
 const camera = () => page.evaluate(() => Array.from(window.sloppy.game.camera_preferences()));
 const netCamera = () =>
   page.evaluate(() => Array.from(window.sloppyMultiplayer.game.camera_preferences()));

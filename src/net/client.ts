@@ -33,8 +33,7 @@ import {
   type JoinChoice,
   type Lobby,
 } from "./room-protocol";
-import { serverAddress } from "./server-address";
-import { takePendingJoin, type RoomSelection } from "./pending-join";
+import { pendingServer, takePendingJoin, type RoomSelection } from "./pending-join";
 
 /** `NetGame.frame` result slots (`net_frame_slot` in `crates/web/src/net_game.rs`). */
 const FRAME = {
@@ -97,11 +96,6 @@ export async function startMultiplayer(
     location.replace(url);
     return;
   }
-  const address = serverAddress();
-  if (!address) {
-    app.textContent = "This site has no multiplayer server.";
-    return;
-  }
   if (selection) {
     history.replaceState(null, "", roomAddress(room));
   }
@@ -112,12 +106,12 @@ export async function startMultiplayer(
   const choiceJson = selection
     ? JSON.stringify(selection.choice)
     : engine.NetGame.pending_join(pending, room);
-  if (!choiceJson) {
+  const server = selection?.server ?? pendingServer(pending, room);
+  if (!choiceJson || !server) {
     setup.fail("Choose your tank and join the room again.");
     return;
   }
   const selectedChoice = JSON.parse(choiceJson) as JoinChoice;
-  const server = address.href.replace(/\/$/, "");
   const seatKey = "sloppy-seat:" + server + ":" + room;
   let joining: JoinScreen | undefined = setup;
   const root = app.appendChild(document.createElement("div"));

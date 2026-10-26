@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
 import { randomRoomCode } from "../bots/bot-player.ts";
 import { StateMirror } from "./state-mirror.mjs";
-import { chooseMap, click, gameUrl, launchChrome } from "./browser-helpers.mjs";
+import { chooseMap, click, gameUrl, launchChrome, localDirectory } from "./browser-helpers.mjs";
 import {
   assertJoinedBehindSetup,
   checkMultiplayerMenu,
@@ -15,7 +15,8 @@ import {
 } from "./multiplayer-helpers.mjs";
 
 const baseURL = new URL(gameUrl);
-if (process.env.SLOPPY_SERVER) baseURL.searchParams.set("server", process.env.SLOPPY_SERVER);
+if (process.env.SLOPPY_SERVER)
+  baseURL.searchParams.set("directory", localDirectory(process.env.SLOPPY_SERVER));
 const base = baseURL.href;
 const label = process.env.SLOPPY_CHECK_LABEL ?? "local";
 assert.match(label, /^[a-z0-9-]+$/);
@@ -34,7 +35,7 @@ try {
     clients.push(client);
     page.on("pageerror", (error) => errors.push(error.message));
     page.on("request", (request) => {
-      if (new URL(request.url()).pathname === "/rooms") client.listRequests++;
+      if (new URL(request.url()).pathname === "/servers") client.listRequests++;
     });
   }
   const [alice, bob] = clients;

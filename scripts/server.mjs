@@ -63,7 +63,8 @@ async function waitForHealth(expected, describe) {
   }
 }
 
-/** Uploads deploy/server/ with this machine's names in the Caddyfile, and runs provision.sh. */
+/** Uploads deploy/server/ with this machine's names in the Caddyfile and its directory in
+ * the server's unit, and runs provision.sh. */
 function provision() {
   console.log(
     `Provisioning the ${server.role} server on ${server.ssh} (${server.sites.join(", ")})`,
@@ -72,22 +73,24 @@ function provision() {
   try {
     const files = [
       "provision.sh",
-      "sloppy-tanks.container",
       "caddy.container",
       "sloppy-tanks-update",
       "sloppy-tanks-update.service",
       "sloppy-tanks-update.timer",
     ].map((name) => fileURLToPath(new URL(`../deploy/server/${name}`, import.meta.url)));
-    const caddyfile = readFileSync(new URL("../deploy/server/Caddyfile", import.meta.url), "utf8");
-    writeFileSync(
-      join(staging, "Caddyfile"),
-      caddyfile.replaceAll("{$SITES}", server.sites.join(", ")),
-    );
+    const filled = {
+      Caddyfile: ["{$SITES}", server.sites.join(", ")],
+      "sloppy-tanks.container": ["{$DIRECTORY_URL}", server.directory],
+    };
+    for (const [name, [placeholder, value]] of Object.entries(filled)) {
+      const text = readFileSync(new URL(`../deploy/server/${name}`, import.meta.url), "utf8");
+      writeFileSync(join(staging, name), text.replaceAll(placeholder, value));
+    }
     ssh("rm -rf /root/sloppy-tanks-provision && mkdir -p /root/sloppy-tanks-provision");
     run("scp", [
       ...SSH_OPTIONS,
       ...files,
-      join(staging, "Caddyfile"),
+      ...Object.keys(filled).map((name) => join(staging, name)),
       `${server.ssh}:/root/sloppy-tanks-provision/`,
     ]);
   } finally {

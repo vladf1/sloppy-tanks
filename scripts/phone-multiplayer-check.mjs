@@ -6,11 +6,12 @@
 // the phone camera, controls and short menu.
 import assert from "node:assert/strict";
 import { mkdir } from "node:fs/promises";
-import { chooseMap, gameUrl, launchChrome } from "./browser-helpers.mjs";
+import { chooseMap, gameUrl, launchChrome, localDirectory } from "./browser-helpers.mjs";
 import { recordRoomFrames, until } from "./multiplayer-helpers.mjs";
 
 const base = new URL(gameUrl);
-if (process.env.SLOPPY_SERVER) base.searchParams.set("server", process.env.SLOPPY_SERVER);
+if (process.env.SLOPPY_SERVER)
+  base.searchParams.set("directory", localDirectory(process.env.SLOPPY_SERVER));
 const output = "artifacts/performance/phone-multiplayer";
 await mkdir(output, { recursive: true });
 const PHONE = { width: 874, height: 402 };
@@ -49,7 +50,7 @@ async function openPhone(keep, hold) {
     hasTouch: true,
   });
   await context.route(
-    (url) => url.pathname === "/rooms",
+    (url) => url.pathname === "/servers",
     async (route) => {
       const response = await route.fetch();
       const { rooms } = await response.json();
@@ -69,7 +70,7 @@ try {
   const carol = await openPhone(() => [], new Promise((resolve) => (answerList = resolve)));
   // The room browser asks for the list once it has set up the tab, so a request in
   // flight means the button below is the browser's, not the markup's.
-  const listRequested = carol.page.waitForRequest((request) => request.url().includes("/rooms"));
+  const listRequested = carol.page.waitForRequest((request) => request.url().includes("/servers"));
   await carol.page.goto(multiplayer.href);
   await listRequested;
   // Until the first list answers, the phone cannot know that no room is open.

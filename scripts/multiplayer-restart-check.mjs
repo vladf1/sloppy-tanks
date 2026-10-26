@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
-import { chooseMap, click, gameUrl, launchChrome } from "./browser-helpers.mjs";
+import { chooseMap, click, gameUrl, launchChrome, localDirectory } from "./browser-helpers.mjs";
 import { waitForRoomBrowser } from "./multiplayer-helpers.mjs";
 
 const output = "artifacts/performance/multiplayer/restart";
@@ -11,7 +11,7 @@ const url = new URL(gameUrl);
 // Other sessions may hold the usual local ports; SLOPPY_RESTART_PORT picks another.
 const PORT = Number(process.env.SLOPPY_RESTART_PORT ?? 8790);
 url.searchParams.set("multiplayer", "");
-url.searchParams.set("server", `ws://127.0.0.1:${PORT}`);
+url.searchParams.set("directory", localDirectory(`ws://127.0.0.1:${PORT}`));
 let server,
   logs = "";
 const errors = [];

@@ -1,7 +1,7 @@
 // The engine build stamps the content version its joins send (scripts/build-wasm.mjs);
 // rooms of another version can't take this page's players.
 import { CONTENT_VERSION } from "../generated/engine/content-version.js";
-import { busiestOpenRoom, readRoomList, type RoomListing } from "./room-list";
+import { busiestOpenRoom, readServerList, type HostedRoom, type RoomListing } from "./room-list";
 import { preferredPlayerName, rememberPlayerName } from "./player-name";
 import {
   ROOM_SEATS,
@@ -17,7 +17,7 @@ import { isPhone } from "../game/phone-mode";
 import type { GameOptions } from "../game/game-options";
 
 // Battle Setup loads this module alone before any other multiplayer code.
-export { serverAddress } from "./server-address";
+export { directoryAddress } from "./server-address";
 export { joinAfterReload } from "./pending-join";
 
 const REFRESH_MS = 5000;
@@ -52,11 +52,12 @@ export class RoomBrowser {
   private readonly retryNow: HTMLButtonElement | null;
   private readonly retryLine: HTMLElement | null;
   private readonly newRoom: HTMLInputElement;
-  private readonly endpoint: URL;
   /** Extra-level rooms show only on a page offering those levels, or when linked. */
   private readonly extraLevels = debugPage(location.search);
   private readonly linkedRoom?: string;
-  private rooms: RoomListing[] = [];
+  private rooms: HostedRoom[] = [];
+  /** The server a new room opens on: the directory's first that plays this page's game. */
+  private newRoomServer?: string;
   private selected = "";
   /** Shown instead of the usual prompt until the player picks a room. */
   private notice = "";
@@ -79,7 +80,8 @@ export class RoomBrowser {
     /** The shared map choice. An open room keeps its own map, so while one is chosen
      * the choice shows that map and waits. */
     private readonly mapChoice: HTMLElement,
-    address: URL,
+    /** The server directory, which lists every server with its rooms. */
+    private readonly directory: URL,
     /** The shared tank and map; a new room plays the map. */
     private readonly choices: () => Pick<GameOptions, "humanKind" | "mapMode">,
     private readonly enter: (selection: RoomSelection) => void,
@@ -95,10 +97,6 @@ export class RoomBrowser {
     this.refresh = this.element("#refresh-rooms");
     this.newRoom = this.element("#new-room");
     this.linkedRoom = link?.room;
-    this.endpoint = new URL("/rooms", address);
-    this.endpoint.protocol = address.protocol === "wss:" ? "https:" : "http:";
-    // The plain list, which the traffic bots read too, leaves extra-level rooms out.
-    this.endpoint.searchParams.set("debug", "");
     this.name.value ||= preferredPlayerName();
     if (this.autoPick) {
       // A phone offers no room rules, and an empty arena is no battle.
@@ -261,6 +259,8 @@ export class RoomBrowser {
       this.showStatus("ready", this.notice);
     } else if (this.selected) {
       this.showStatus("ready", `Ready to join room ${this.selected}`, "Hit JOIN ROOM to play.");
+    } else if (!this.newRoomServer) {
+      this.showStatus("ready", "Reload for updated game", "The game server runs another version.");
     } else {
       this.showStatus(
         "ready",
@@ -293,20 +293,27 @@ export class RoomBrowser {
         controller.abort();
       }, LIST_TIMEOUT_MS);
       try {
-        const response = await fetch(this.endpoint, {
+        const response = await fetch(this.directory, {
           signal: controller.signal,
           cache: "no-store",
         });
         if (!response.ok) {
           throw new Error("Rooms unavailable");
         }
-        this.rooms = readRoomList(await response.json()).filter(
+        const { servers, rooms } = readServerList(await response.json(), location.hostname);
+        if (!servers.length) {
+          throw new Error("No game server is running");
+        }
+        this.newRoomServer = servers.find(
+          (server) => server.contentVersion === CONTENT_VERSION,
+        )?.url;
+        this.rooms = rooms.filter(
           (room) =>
             this.extraLevels || !isExtraLevel(room.mapMode) || room.room === this.linkedRoom,
         );
         const linked = this.link && this.followLink(this.link);
         this.render();
-        this.create.disabled = false;
+        this.create.disabled = !this.newRoomServer;
         if (linked) {
           this.list
             .querySelector(".room-row:has(input:checked)")
@@ -423,12 +430,13 @@ export class RoomBrowser {
     this.close();
     // The join screen keeps the map inert and showing the room's map while it loads.
     showRoomMap(this.mapChoice, listing.mapMode);
-    this.enter({ room, choice: { ...choice, existingRoom: true } });
+    this.enter({ room, server: listing.server, choice: { ...choice, existingRoom: true } });
   }
 
   private createRoom(): void {
     const choice = this.choice();
-    if (!choice || this.finished) {
+    const server = this.newRoomServer;
+    if (!choice || this.finished || !server) {
       return;
     }
     const length = this.element<HTMLInputElement>("#create-round-minutes");
@@ -449,6 +457,6 @@ export class RoomBrowser {
       roundMinutes,
     };
     this.close();
-    this.enter({ room: newRoomCode(), choice: { ...choice, create } });
+    this.enter({ room: newRoomCode(), server, choice: { ...choice, create } });
   }
 }

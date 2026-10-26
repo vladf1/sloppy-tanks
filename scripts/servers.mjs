@@ -24,6 +24,15 @@ const list = JSON.parse(readFileSync(listFile, "utf8"));
  * :production; the machines pull it (deploy/server/sloppy-tanks-update names it too). */
 export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
 
+/** The server directory (directory/worker.ts): each machine pushes its rooms there, and the
+ * pages of its site read every server's rooms from there. */
+export const DIRECTORY_ORIGIN = "https://sloppy-tanks-directory.fridman.me";
+
+/** The directory URL of the production or dev servers and their site. */
+export function directoryUrl(role) {
+  return `${DIRECTORY_ORIGIN}/servers?environment=${role}`;
+}
+
 /**
  * accept-new trusts a fresh machine's host key on first contact, so a new one needs no
  * manual login, but still refuses a known address whose key has changed. Every ssh and
@@ -74,8 +83,11 @@ export function serverMachine(role, { ip, hostnames }) {
     sites,
     /** The hostnames that need their own DNS record pointing at `ip`. */
     dnsNames: hostnames.filter((name) => !fromIp(name)),
-    /** The WebSocket address players' pages use. */
+    /** The WebSocket address by the first hostname, which the traffic bots use. */
     url: `wss://${sites[0]}`,
+    /** The directory this machine pushes its rooms to. A machine from another list
+     * (SLOPPY_SERVERS, such as a local test VM) pushes nowhere, so players never see it. */
+    directory: process.env.SLOPPY_SERVERS ? "" : directoryUrl(role),
     /** Where the scripts check the server through Caddy: the name that reaches this machine. */
     checkUrl: `https://${machineName ?? sites[0]}`,
   };
