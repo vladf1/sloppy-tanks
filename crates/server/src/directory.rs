@@ -144,7 +144,7 @@ fn tls_connector() -> TlsConnector {
     let roots = rustls::RootCertStore {
         roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
     };
-    let provider = Arc::new(rustls_graviola::default_provider());
+    let provider = Arc::new(rustls_rustcrypto::provider());
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_safe_default_protocol_versions()
         .expect("the provider supports TLS 1.2 and 1.3")

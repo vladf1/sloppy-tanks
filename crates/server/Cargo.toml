@@ -20,7 +20,7 @@ sha1_smol.workspace = true
 getrandom.workspace = true
 libc.workspace = true
 rustls.workspace = true
-rustls-graviola.workspace = true
+rustls-rustcrypto.workspace = true
 tokio-rustls.workspace = true
 webpki-roots.workspace = true
 
