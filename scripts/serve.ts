@@ -1,6 +1,7 @@
+import path from "node:path";
 import { parseArgs } from "node:util";
 import { startDevServer, startStaticServer } from "./site-server.ts";
-import { defaultBase } from "./site-build.ts";
+import { defaultBase, root } from "./site-build.ts";
 
 const { values } = parseArgs({
   options: {
@@ -10,7 +11,8 @@ const { values } = parseArgs({
     open: { type: "boolean", default: false },
     preview: { type: "boolean", default: false },
     base: { type: "string", default: process.env.DEPLOY_BASE || defaultBase },
-    outdir: { type: "string", default: "dist" },
+    // The checkout's build unless a directory is given (relative to the working one).
+    outdir: { type: "string", default: path.join(root, "dist") },
   },
 });
 let port = Number(values.port ?? process.env.PORT ?? (values.preview ? 4173 : 5173));

@@ -75,6 +75,35 @@ export function startStaticServer({
   });
 }
 
+/** An editor's save or `bun run wasm` writes several files at once; one reload follows them. */
+const CHANGE_SETTLE_MS = 25;
+/** How often a page tries to reach a stopped or restarting dev server again. */
+const RELOAD_RECONNECT_MS = 1000;
+const RELOAD_TOPIC = "reload";
+
+/** Reloads the page once the server's build token differs from the one it was served
+ * with, including after a restart, whose new session makes every token differ. A
+ * WebSocket, unlike an event stream, takes none of the browser's six HTTP/1.1
+ * connections to the host, so open tabs cannot starve the page requests. */
+function reloadScript(base: string, token: string): string {
+  return `<script>{const url=(location.protocol==="https:"?"wss://":"ws://")+location.host+${JSON.stringify(base + "__reload")};const connect=()=>{const socket=new WebSocket(url);socket.onmessage=({data})=>{if(data!==${JSON.stringify(token)})location.reload()};socket.onclose=()=>setTimeout(connect,${RELOAD_RECONNECT_MS})};connect()}</script>`;
+}
+
+/** A failed build served as the page: Bun's located messages, and the reload script, so
+ * the page returns by itself once a fix lands. */
+export function buildErrorPage(error: unknown, reload: string): Response {
+  const problems = error instanceof AggregateError && error.errors.length ? error.errors : [error];
+  const text = problems.map((problem) => Bun.inspect(problem, { colors: false })).join("\n\n");
+  const escaped = text.replace(/[&<>]/g, (char) => `&#${char.charCodeAt(0)};`);
+  return new Response(
+    `<!doctype html><meta charset="utf-8"><title>Build failed</title><pre style="white-space:pre-wrap;font:14px/1.4 monospace;margin:16px">${escaped}</pre>${reload}`,
+    {
+      status: 500,
+      headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
+    },
+  );
+}
+
 export function startDevServer({
   hostname = "127.0.0.1",
   port = Number(process.env.PORT) || 5173,
@@ -85,7 +114,8 @@ export function startDevServer({
   let outputs = new Map<string, Blob>();
   let previousOutputs = new Map<string, Blob>();
   const builds = new Map<string, Promise<SiteBuild>>();
-  const listeners = new Set<ReadableStreamDefaultController>();
+  const session = crypto.randomUUID();
+  const token = () => `${session}.${revision}`;
   const started = new Date().toISOString();
   const debugEntries = ["src/game/ui.ts", "src/game/engine-api.ts"];
   const build = (page: string, entry?: string) => {
@@ -112,6 +142,20 @@ export function startDevServer({
     }
     return pending;
   };
+  /** The build of the current revision: one that a change overtook runs again, so pages
+   * and debug entries never point at chunks that were dropped with their revision. A
+   * failure is thrown only when it belongs to the current sources. */
+  const currentBuild = async (page: string, entry?: string): Promise<SiteBuild> => {
+    for (;;) {
+      const generation = revision;
+      try {
+        const result = await build(page, entry);
+        if (generation === revision) return result;
+      } catch (error) {
+        if (generation === revision) throw error;
+      }
+    }
+  };
   let timer: ReturnType<typeof setTimeout> | undefined;
   const changed = () => {
     clearTimeout(timer);
@@ -120,8 +164,8 @@ export function startDevServer({
       builds.clear();
       previousOutputs = outputs;
       outputs = new Map();
-      for (const listener of listeners) listener.enqueue(`data: ${revision}\n\n`);
-    }, 25);
+      server.publish(RELOAD_TOPIC, token());
+    }, CHANGE_SETTLE_MS);
   };
   const server = Bun.serve({
     hostname,
@@ -131,24 +175,10 @@ export function startDevServer({
     async fetch(request, server) {
       const relative = requestPath(request, base);
       if (relative instanceof Response) return relative;
-      if (relative === "__reload") {
-        // An idle reload stream stays open until its page leaves.
-        server.timeout(request, 0);
-        let controller: ReadableStreamDefaultController;
-        return new Response(
-          new ReadableStream({
-            start(value) {
-              controller = value;
-              listeners.add(value);
-              value.enqueue(`data: ${revision}\n\n`);
-            },
-            cancel() {
-              listeners.delete(controller);
-            },
-          }),
-          { headers: { "Content-Type": "text/event-stream", "Cache-Control": "no-cache" } },
-        );
-      }
+      if (relative === "__reload")
+        return server.upgrade(request)
+          ? undefined
+          : new Response("Expected a WebSocket", { status: 426 });
       if (relative === "health" || relative === "health/")
         return new Response(await healthBody(started), {
           headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" },
@@ -160,15 +190,17 @@ export function startDevServer({
           /^(tests|tools)\/[\w.-]+\.html$/.test(page)) &&
         (await Bun.file(path.join(root, page)).exists())
       ) {
-        let generation: number;
         let result: SiteBuild;
-        do {
-          generation = revision;
-          result = await build(page);
-        } while (generation !== revision);
+        try {
+          result = await currentBuild(page);
+        } catch (error) {
+          console.error(error);
+          return buildErrorPage(error, reloadScript(base, token()));
+        }
+        // Read before any await: the token names the revision this page was built from.
+        const reload = reloadScript(base, token());
         const body = result.files.get(page);
         if (!body) throw new Error(`No page output for ${page}`);
-        const reload = `<script>{const updates=new EventSource(${JSON.stringify(base + "__reload")});updates.onmessage=event=>{if(event.data!==${JSON.stringify(String(revision))})location.reload()};}</script>`;
         return new Response(
           (await body.text()).replace("</body>", () => `${reload}</body>`),
           { headers: { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" } },
@@ -177,8 +209,8 @@ export function startDevServer({
       // Browser checks import these entries from the same bundle as the running game.
       if (debugEntries.includes(relative) || relative === "tests/engine-fixture.ts") {
         const result = debugEntries.includes(relative)
-          ? await build("index.html")
-          : await build("", relative);
+          ? await currentBuild("index.html")
+          : await currentBuild("", relative);
         return new Response(
           `export * from ${JSON.stringify(base + result.entries.get(relative))};`,
           { headers: { "Content-Type": "text/javascript" } },
@@ -191,6 +223,13 @@ export function startDevServer({
     error(error) {
       console.error(error);
       return new Response(String(error), { status: 500 });
+    },
+    websocket: {
+      open(socket) {
+        socket.subscribe(RELOAD_TOPIC);
+        socket.send(token());
+      },
+      message() {},
     },
   });
   // Register watchers only after binding succeeds, including occupied-port retries.
@@ -210,8 +249,6 @@ export function startDevServer({
     stop() {
       clearTimeout(timer);
       watchers.forEach((watcher) => watcher.close());
-      listeners.forEach((listener) => listener.close());
-      listeners.clear();
       return server.stop(true);
     },
   };

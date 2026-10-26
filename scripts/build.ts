@@ -1,5 +1,6 @@
+import path from "node:path";
 import { parseArgs } from "node:util";
-import { buildSite } from "./site-build.ts";
+import { buildSite, root } from "./site-build.ts";
 const { values } = parseArgs({
   options: {
     "dev-site": { type: "boolean", default: false },
@@ -8,7 +9,8 @@ const { values } = parseArgs({
     minify: { type: "string" },
   },
 });
-const outdir = values.outdir ?? (values["dev-site"] ? "dist-dev" : "dist");
+// An explicit --outdir is relative to the working directory, the default to the checkout.
+const outdir = values.outdir ?? path.join(root, values["dev-site"] ? "dist-dev" : "dist");
 const start = performance.now();
 const result = await buildSite({
   devSite: values["dev-site"],

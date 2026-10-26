@@ -35,6 +35,37 @@ export function validateBase(base: string): string {
   return base;
 }
 
+/** A metafile source path from the checkout, like `src/game.ts`. Bun writes them from the
+ * working directory, whatever `root` says, after any plugin namespace. */
+export function sourcePath(file: string): string {
+  return path.relative(root, path.resolve(file.replace(/^inline-html:/, "")));
+}
+
+/** `metafile` with every source path from the checkout, so readers match the same keys
+ * from any working directory. Output paths are already relative to the output root. */
+export function sourceMetafile(metafile: Bun.BuildMetafile): Bun.BuildMetafile {
+  const inputs: Bun.BuildMetafile["inputs"] = {};
+  for (const [file, input] of Object.entries(metafile.inputs)) {
+    inputs[sourcePath(file)] = {
+      ...input,
+      imports: input.imports.map((entry) =>
+        entry.external ? entry : { ...entry, path: sourcePath(entry.path) },
+      ),
+    };
+  }
+  const outputs: Bun.BuildMetafile["outputs"] = {};
+  for (const [file, output] of Object.entries(metafile.outputs)) {
+    outputs[file] = {
+      ...output,
+      inputs: Object.fromEntries(
+        Object.entries(output.inputs).map(([input, part]) => [sourcePath(input), part]),
+      ),
+      entryPoint: output.entryPoint && sourcePath(output.entryPoint),
+    };
+  }
+  return { inputs, outputs };
+}
+
 /** CSS imports wait for their own stylesheet. Bun otherwise folds dynamic CSS into the
  * parent entry, downloading the touch UI and room styles before either is selected. */
 function browserAssets(
@@ -88,9 +119,9 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
     ...(options.entries ?? []),
   ];
   const files = new Map<string, Blob>();
-  // Only the game and room client start texture-bake workers. Keep labs builds
-  // independent of both generated gameplay engines.
-  if (entrypoints.some((entry) => entry === "src/game.ts" || entry === "src/net/client.ts")) {
+  let bakeWorkers = false;
+  /** The texture-bake workers, whose URLs `texture-bake.ts` reads from `import.meta.env`. */
+  const buildBakeWorkers = async () => {
     for (const [source, key] of [
       ["src/game/texture-bake-worker.ts", "WEBGPU_BAKE_WORKER_URL"],
       ["src/game/texture-bake-worker-webgl.ts", "WEBGL_BAKE_WORKER_URL"],
@@ -109,7 +140,13 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
       files.set(name, output);
       define[`import.meta.env.${key}`] = JSON.stringify(base + name);
     }
-  }
+    bakeWorkers = true;
+  };
+  // The game and room client start texture-bake workers, so build those first. Labs and
+  // fixture pages stay independent of both generated gameplay engines unless their
+  // bundle reaches the bakes (checked after it is built).
+  if (entrypoints.some((entry) => entry === "src/game.ts" || entry === "src/net/client.ts"))
+    await buildBakeWorkers();
 
   // Compile styles before entering bundler callbacks: Bun.build is not reentrant.
   const cssAssets = new Map<string, { name: string; body: Blob }>();
@@ -161,46 +198,54 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
   const metadata: Bun.BuildMetafile = { inputs: {}, outputs: {} };
   const entries = new Map<string, string>();
   if (entrypoints.length) {
-    const result = await Bun.build({
-      entrypoints: [...new Set(entrypoints)].map((entry) => path.join(root, entry)),
-      root,
-      target: "browser",
-      format: "esm",
-      splitting: true,
-      minify,
-      naming,
-      publicPath: base,
-      define,
-      metafile: true,
-      loader: { ".wasm": "file" },
-      plugins: [
-        {
-          name: "inline-modules",
-          setup(build) {
-            build.onResolve({ filter: /\.html\.inline-\d+\.ts$/ }, (args) => ({
-              path: args.path,
-              namespace: "inline-html",
-            }));
-            build.onLoad({ filter: /.*/, namespace: "inline-html" }, (args) => {
-              const contents = virtual.get(args.path);
-              if (contents === undefined) throw new Error(`Unknown inline module ${args.path}`);
-              return { contents, loader: "ts", resolveDir: path.dirname(args.path) };
-            });
+    const bundle = () =>
+      Bun.build({
+        entrypoints: [...new Set(entrypoints)].map((entry) => path.join(root, entry)),
+        root,
+        target: "browser",
+        format: "esm",
+        splitting: true,
+        minify,
+        naming,
+        publicPath: base,
+        define,
+        metafile: true,
+        loader: { ".wasm": "file" },
+        plugins: [
+          {
+            name: "inline-modules",
+            setup(build) {
+              build.onResolve({ filter: /\.html\.inline-\d+\.ts$/ }, (args) => ({
+                path: args.path,
+                namespace: "inline-html",
+              }));
+              build.onLoad({ filter: /.*/, namespace: "inline-html" }, (args) => {
+                const contents = virtual.get(args.path);
+                if (contents === undefined) throw new Error(`Unknown inline module ${args.path}`);
+                return { contents, loader: "ts", resolveDir: path.dirname(args.path) };
+              });
+            },
           },
-        },
-        browserAssets(cssAssets, files, base),
-      ],
-    });
+          browserAssets(cssAssets, files, base),
+        ],
+      });
+    let result = await bundle();
+    // A bundle that reaches the bakes another way would keep `import.meta.env` lookups,
+    // which fail in browsers: give it the worker URLs and build it again.
+    const reachesBakes = Object.keys(result.metafile?.inputs ?? {}).some(
+      (file) => sourcePath(file) === "src/game/texture-bake.ts",
+    );
+    if (!bakeWorkers && reachesBakes) {
+      await buildBakeWorkers();
+      result = await bundle();
+    }
     if (!result.metafile) throw new Error("Missing browser build metadata");
-    Object.assign(metadata.inputs, result.metafile.inputs);
-    for (const [name, output] of Object.entries(result.metafile.outputs)) {
+    const graph = sourceMetafile(result.metafile);
+    Object.assign(metadata.inputs, graph.inputs);
+    for (const [name, output] of Object.entries(graph.outputs)) {
       const relative = name.replace(/^\.\//, "");
       metadata.outputs[relative] = output;
-      if (output.entryPoint)
-        entries.set(
-          output.entryPoint.replace(/^inline-html:/, "").replace(root + path.sep, ""),
-          relative,
-        );
+      if (output.entryPoint) entries.set(output.entryPoint, relative);
     }
     for (const output of result.outputs) files.set(output.path.replace(/^\.\//, ""), output);
   }

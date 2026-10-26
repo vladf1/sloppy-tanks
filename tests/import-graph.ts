@@ -1,5 +1,6 @@
 // The module graph behind the import boundary tests (`*-imports.test.ts`).
 import { fileURLToPath } from "node:url";
+import { sourceMetafile } from "../scripts/site-build.ts";
 type Metafile = Bun.BuildMetafile;
 
 /** The modules bundling `entry` reaches. Imports matching `external` stay out, such as
@@ -26,7 +27,7 @@ export async function moduleGraph(
     ],
   });
   if (!metafile) throw new Error("Missing bundle import graph");
-  return metafile.inputs;
+  return sourceMetafile(metafile).inputs;
 }
 
 /** The import path from `entry` to `target`, for a readable failure. */

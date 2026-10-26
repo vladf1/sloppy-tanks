@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { protocolVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
 
@@ -13,6 +14,8 @@ import { releaseVersion } from "./release-version.mjs";
 // HTML collapses the indentation, and GitHub Pages cannot send a JSON content type, so
 // a string value carries a style element that keeps it. Browsers show it as `""`.
 const PRESERVE_FORMATTING = "<style>body{white-space:pre;font-family:monospace}</style>";
+/** Git describes this checkout whichever directory a script runs from. */
+const CHECKOUT = fileURLToPath(new URL("..", import.meta.url));
 
 export interface PageBuild {
   /** `1.1.0.628` on main, with the Pages workflow's run number (`SLOPPY_BUILD_NUMBER`). */
@@ -23,7 +26,8 @@ export interface PageBuild {
 
 /** What this checkout builds: its release version and commit. */
 export function pageBuild(): PageBuild {
-  const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8" }).trim();
+  const git = (...args: string[]) =>
+    execFileSync("git", args, { cwd: CHECKOUT, encoding: "utf8" }).trim();
   return {
     release: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
     commit: git("rev-parse", "--short", "HEAD"),
@@ -41,7 +45,7 @@ export async function healthBody(builtAt: string): Promise<string> {
   // The hash the Wasm build stamped into this engine, not one recomputed from the
   // sources, which may have changed since `bun run wasm`.
   const contentVersion = /CONTENT_VERSION = "([0-9a-f]+)"/.exec(
-    readFileSync("src/generated/engine/content-version.js", "utf8"),
+    readFileSync(new URL("../src/generated/engine/content-version.js", import.meta.url), "utf8"),
   )?.[1];
   if (!contentVersion) {
     throw new Error("No content version stamp: run `bun run wasm` first");
