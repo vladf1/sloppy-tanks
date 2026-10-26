@@ -11,6 +11,7 @@ import {
   parseEnvironment,
   type ServerEntry,
 } from "../directory/listing";
+import { renderPage } from "../directory/page";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -80,4 +81,56 @@ test("servers are listed fewest rooms first, ties by url, at the url they announ
     ],
   );
   assert.deepEqual(servers[0], { url: "wss://7-7-7-7.nip.io", rooms: [], seen: 4, protocol: 4 });
+});
+
+test("the overview lists every environment's servers and rooms, escaping what servers sent", () => {
+  const now = 100_000;
+  const page = renderPage(
+    [
+      {
+        name: "production",
+        servers: [
+          {
+            url: "wss://1-2-3-4.nip.io",
+            version: "1.1.1.244",
+            contentVersion: "11aac2382af5a93fd5d30531",
+            serverBuild: "5a8e451fb56078b8714b650a",
+            seen: now - 3000,
+            rooms: [
+              {
+                room: "ABCDEFGH",
+                mapMode: "<script>alert(1)</script>",
+                players: 2,
+                reserved: 3,
+                phase: "playing",
+                time: 125,
+                scores: [4, 1],
+                humansOnly: false,
+                difficulty: "normal",
+                roundMinutes: 10,
+              },
+            ],
+          },
+        ],
+      },
+      { name: "dev", servers: [] },
+    ],
+    now,
+  );
+  assert.match(page, /production <small>1 server · 1 room · 2 players<\/small>/);
+  assert.match(page, /href="https:\/\/1-2-3-4\.nip\.io\/dashboard"/);
+  assert.match(
+    page,
+    /v1\.1\.1\.244 · content 11aac238 · build 5a8e451f · 2 players · seen 3 s ago/,
+  );
+  assert.match(
+    page,
+    /<td>2\/8 \(\+1 reconnecting\)<\/td><td>playing · 2:05 left<\/td><td>4–1<\/td>/,
+  );
+  assert.match(page, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
+  assert.doesNotMatch(page, /<script>/);
+  assert.match(
+    page,
+    /dev <small>0 servers · 0 rooms · 0 players<\/small><\/h2><p class="empty">No servers<\/p>/,
+  );
 });

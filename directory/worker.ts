@@ -7,6 +7,7 @@
  *   the entry, `wss://a-b-c-d.nip.io`, so a server can announce only itself. Replies 204.
  * - `GET /servers?environment=production|dev` from the page (or anyone):
  *   `{ "servers": [{ "url", ...announced fields, "seen" }] }`, fewest rooms first.
+ * - `GET /`: an HTML overview of every environment's servers and rooms.
  *
  * Each environment is one Durable Object holding the latest announcement per server in storage.
  * Every request first deletes the entries older than ENTRY_TTL_MS, so the list holds the servers
@@ -16,6 +17,7 @@
  * Deploy with `pnpm run directory:deploy`.
  */
 import { DurableObject } from "cloudflare:workers";
+import { renderPage } from "./page";
 import {
   ENVIRONMENTS,
   MAX_BODY_BYTES,
@@ -63,9 +65,24 @@ async function announce(
   return new Response(null, { status: 204, headers: HEADERS });
 }
 
+async function overview(env: Env): Promise<Response> {
+  const environments = await Promise.all(
+    ENVIRONMENTS.map(async (name) => ({
+      name,
+      servers: await env.DIRECTORY.get(env.DIRECTORY.idFromName(name)).servers(),
+    })),
+  );
+  return new Response(renderPage(environments, Date.now()), {
+    headers: { ...HEADERS, "Content-Type": "text/html; charset=utf-8" },
+  });
+}
+
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname === "/" && request.method === "GET") {
+      return overview(env);
+    }
     if (url.pathname !== "/servers") {
       return text("Not found", 404);
     }
