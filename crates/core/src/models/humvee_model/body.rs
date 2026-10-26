@@ -9,7 +9,7 @@
 
 use std::f64::consts::PI;
 
-use glam::{DMat4, DVec3};
+use glam::{DMat4, DVec2, DVec3};
 
 use super::kit::{Faces, Kit, Role, at, frame, mirror_x, place, rect, slab, slope_y};
 use super::{AXLE_Y, FRONT_AXLE, REAR_AXLE};
@@ -53,6 +53,16 @@ fn wheel_opening(axle: f64) -> [[f64; 2]; 6] {
 /// Height of the hood top above `y_at_cowl` at station `z`.
 fn hood_y(y_at_cowl: f64, z: f64) -> f64 {
     y_at_cowl + HOOD_SLOPE * (z - COWL)
+}
+
+/// The engine bay under the hood's raised centre: the middle of the hood top and
+/// the half size of the crown in plan.
+pub(super) fn engine_bay() -> (DVec3, DVec2) {
+    let middle = (COWL + HOOD_FRONT) / 2.0;
+    (
+        DVec3::new(0.0, hood_y(HOOD_CROWN, middle), middle),
+        DVec2::new(0.56, (HOOD_FRONT - COWL) / 2.0),
+    )
 }
 
 pub(super) fn body_kit() -> Kit {

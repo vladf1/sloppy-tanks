@@ -12,6 +12,8 @@
 
 use std::sync::{Arc, OnceLock};
 
+use glam::{DVec2, DVec3};
+
 use super::model_primitives::{material, paint, put, shadowed};
 use super::tank_model::{LENS_ROUGHNESS, MARKING_WHITE};
 use super::tank_surfaces::{LAMP_LENS, vehicle_glass};
@@ -103,6 +105,24 @@ impl Palette {
             .iter()
             .map(|(role, mesh)| shadowed(mesh.clone(), self.material(*role)))
     }
+}
+
+/// The openings a burning Humvee wreck's fire comes out of, in the vehicle's frame
+/// before its scale, each as the centre of its top and its half size in plan: the
+/// engine bay under the hood and the gunner's ring in the roof.
+pub(super) fn wreck_openings() -> [(DVec3, DVec2); 2] {
+    let (engine, hood) = body::engine_bay();
+    let stretch = DVec3::new(1.0, 1.0, HUMVEE_BODY_LENGTH_SCALE);
+    [
+        (
+            engine * stretch,
+            hood * DVec2::new(1.0, HUMVEE_BODY_LENGTH_SCALE),
+        ),
+        (
+            DVec3::new(0.0, turret::RING_BASE, 0.0),
+            DVec2::splat(turret::RING_OPENING),
+        ),
+    ]
 }
 
 /// `humveeModel(team, false)` in `colors` (paint, shade, steel), before the

@@ -79,14 +79,14 @@ fn tank_dimensions_match_typescript() {
 fn vehicle_model_counts() {
     // (kind, team, meshes, vertices, triangles, hull, turret, barrel, track-group children)
     let expected = [
-        (VehicleKind::Scout, 0, 130, 20776, 6962, 110, 13, 6, 0),
-        (VehicleKind::Scout, 1, 130, 20818, 6976, 110, 13, 6, 0),
-        (VehicleKind::Balanced, 0, 147, 22666, 7592, 126, 13, 7, 0),
-        (VehicleKind::Balanced, 1, 147, 22660, 7590, 126, 13, 7, 0),
-        (VehicleKind::Heavy, 0, 134, 23074, 7728, 113, 13, 7, 0),
-        (VehicleKind::Heavy, 1, 134, 22984, 7698, 113, 13, 7, 0),
-        (VehicleKind::Humvee, 0, 32, 32604, 10894, 12, 6, 4, 4),
-        (VehicleKind::Humvee, 1, 32, 32580, 10886, 12, 6, 4, 4),
+        (VehicleKind::Scout, 0, 129, 20752, 6928, 110, 13, 6, 0),
+        (VehicleKind::Scout, 1, 129, 20794, 6942, 110, 13, 6, 0),
+        (VehicleKind::Balanced, 0, 146, 22642, 7558, 126, 13, 7, 0),
+        (VehicleKind::Balanced, 1, 146, 22636, 7556, 126, 13, 7, 0),
+        (VehicleKind::Heavy, 0, 133, 23050, 7694, 113, 13, 7, 0),
+        (VehicleKind::Heavy, 1, 133, 22960, 7664, 113, 13, 7, 0),
+        (VehicleKind::Humvee, 0, 31, 32580, 10860, 12, 6, 4, 4),
+        (VehicleKind::Humvee, 1, 31, 32556, 10852, 12, 6, 4, 4),
     ];
     for (kind, team, meshes, vertices, triangles, hull, turret, barrel, tracks) in expected {
         let model = tank_model(kind, Team::from_index(team));
@@ -106,10 +106,10 @@ fn vehicle_model_counts() {
         assert!(model.find(part::MUZZLE).is_some());
     }
     let open = [
-        (VehicleKind::Scout, (133, 21290, 7180)),
-        (VehicleKind::Balanced, (150, 23180, 7810)),
-        (VehicleKind::Heavy, (137, 23588, 7946)),
-        (VehicleKind::Humvee, (32, 32604, 10894)),
+        (VehicleKind::Scout, (132, 21266, 7146)),
+        (VehicleKind::Balanced, (149, 23156, 7776)),
+        (VehicleKind::Heavy, (136, 23564, 7912)),
+        (VehicleKind::Humvee, (31, 32580, 10860)),
     ];
     for (kind, expected) in open {
         let model = tank_model_variant(kind, Team::Blue, true);

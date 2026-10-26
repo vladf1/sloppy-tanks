@@ -1,34 +1,40 @@
-//! Burning wrecks: after a tank's death blast, flames lick up out of the hull's
-//! engine deck and open turret ring, spitting embers and lighting the ground and
-//! everything near it, and a thick black column of smoke rises off the hull and
-//! leans away on the wind, thinning to a smoulder until the wreck is cleared. The
-//! turret tossed by the blast trails fire and smoke as it flies. Each wreck
-//! follows its hull fragment as it is thrown: while the hull tumbles it only
-//! trails smoke, and the fire takes hold once it has come to rest, burning up
-//! out of whatever side faces the sky. Analytic streams of puffs cycling through
-//! the shared puff pool plus short trail histories per wreck; bounded wreck slots.
+//! Burning wrecks: after a tank's death blast, flames roar up out of the openings
+//! of the hull (`wreck_vents`: the open turret ring, the engine deck's grilles,
+//! the hatches a burnout blew open, a Humvee's engine bay and roof ring), spitting
+//! embers and lighting the ground and everything near it, and a thick black column
+//! of smoke rises off the main blaze and leans away on the wind, thinning to a
+//! smoulder until the wreck is cleared. The turret tossed by the blast trails fire
+//! and smoke as it flies. Each wreck follows its hull fragment as it is thrown:
+//! while the hull tumbles it only trails smoke, and the fire takes hold once it
+//! has come to rest. Analytic streams of puffs cycling through the shared puff
+//! pool plus short trail histories per wreck; bounded wreck slots.
 
-use glam::{Quat, Vec3};
+use glam::{DVec2, DVec3, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
+use sloppy_core::models::{WreckVent, wreck_vents};
+use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::render_state::RenderFragment;
-use sloppy_core::sim::{DeathStyle, RenderState, SimEvent, SimEventType, WreckPart};
+use sloppy_core::sim::{DeathStyle, RenderState, SimEvent, SimEventType, VehicleKind, WreckPart};
 
 use super::Flash;
 use super::ease::EaseTable;
 use super::explosions::{WIND, smoke_puff};
 use super::pool::PoolBuffer;
 use super::random::CosmeticRandom;
-use super::sparks::{EMBERS, Sparks, flame, glow, ground_glow};
+use super::sparks::{EMBERS, Sparks, flame, ground_glow};
 use crate::color::hex_to_linear;
 
 pub const MAX_BURNING_WRECKS: usize = 12;
 const SMOKE_PUFFS: usize = 12;
-const FLAME_PUFFS: usize = 3;
 const TRAIL_PUFFS: usize = 6;
-/// The turret's trail and the tumbling hull's.
-/// Two rolling balls of fire over each burning spot, half a flicker apart.
-const FIRE_BALLS: usize = 2;
-pub const PUFFS_PER_WRECK: usize = SMOKE_PUFFS + FIRE_BALLS * FLAME_PUFFS + 2 * TRAIL_PUFFS;
+/// The most openings a wreck burns out of (`wreck_vents`).
+const MAX_VENTS: usize = 3;
+/// Rolling balls of fire over the main blaze, half a flicker apart, and one over
+/// each other opening.
+const MAIN_FIRE_BALLS: usize = 2;
+const FIRE_BALLS: usize = MAIN_FIRE_BALLS + MAX_VENTS - 1;
+/// The smoke column, the fire balls, and the turret's trail and the tumbling hull's.
+pub const PUFFS_PER_WRECK: usize = SMOKE_PUFFS + FIRE_BALLS + 2 * TRAIL_PUFFS;
 /// Flames burn this long; smoke keeps rising for longer.
 const BURN_SECONDS: f64 = 12.0;
 const SMOULDER_SECONDS: f64 = 24.0;
@@ -39,17 +45,32 @@ const FLAME_CYCLE: f64 = 0.62;
 /// its puffs the column first climbs off a fire that has just caught.
 const COLUMN_HEIGHT: f64 = 8.5;
 const COLUMN_GROWTH: f64 = 1.6;
-/// Where flames burn over a hull, along its length and across it in its own
-/// heading (m), how high over its centre they start whichever way up it lies,
-/// and how big each fire is (times the wreck's own variation).
-const FLAME_SPOTS: [[f32; 3]; FLAME_PUFFS] =
-    [[0.0, 0.0, -0.85], [0.1, 0.0, 0.1], [-0.45, 0.0, -0.35]];
-const FLAME_HEIGHT: f32 = 0.42;
-const FLAME_SIZES: [f32; FLAME_PUFFS] = [1.0, 0.85, 0.6];
-/// Licks of flame per burning spot, and where each stands on the deck around
-/// it (m, in the hull's frame, times the fire's size).
-const LICKS: usize = 3;
-const LICK_SPREAD: [[f32; 2]; LICKS] = [[-0.35, 0.15], [0.0, -0.12], [0.38, 0.2]];
+/// A wreck whose hull piece is not found burns out of its middle.
+static UNFOUND_VENTS: [WreckVent; 1] = [WreckVent {
+    center: DVec3::new(0.0, 0.4, 0.0),
+    half_size: DVec2::new(0.6, 0.6),
+    depth: 0.0,
+    main: true,
+}];
+/// A hull whose up axis points lower than this lies on its roof: its fire burns
+/// out of its belly rather than down into the ground.
+const UPTURNED: f32 = -0.3;
+/// Flames stand this deep in their opening (m), below its floor when it has one
+/// (the open turret ring's well, whose rim then hides their root along its
+/// curve): just enough that no gap shows under them, while their ragged root
+/// still rises clear of a flat deck, which would cut it along a straight line.
+const FLAME_SINK: f32 = 0.04;
+/// A flame's card is this much wider than its opening: the body fills the inner
+/// share of the card's root (`streak.wgsl`).
+const FLAME_SPREAD: f32 = 1.3;
+/// How tall flames stand (m per square-root metre of opening width): the main
+/// blaze and the other openings, which burn less fiercely. A narrow hatch still
+/// throws up a tall jet.
+const MAIN_FLAME_HEIGHT: f32 = 1.75;
+const VENT_FLAME_HEIGHT: f32 = 1.3;
+const VENT_FIRE: f64 = 0.8;
+/// The main blaze's core tongue: its width and height against the blaze's.
+const CORE_TONGUE: [f32; 2] = [0.6, 0.85];
 /// A death's wreck pieces are looked up this far from it, this soon after it.
 const ANCHOR_RADIUS: f64 = 7.0;
 const ANCHOR_SECONDS: f64 = 1.5;
@@ -58,27 +79,26 @@ const ANCHOR_SECONDS: f64 = 1.5;
 const TRAIL_SAMPLE: f64 = 0.03;
 const TRAIL_SECONDS: f64 = 2.6;
 /// The hull counts as at rest below this speed (m/s), and the fire takes hold
-/// and dies back at these rates (1/s) as it settles or is thrown again.
+/// and dies back at these rates (1/s) as it settles or is thrown again. Once it
+/// has caught, only a throw blows it out: a hull rising or falling faster than
+/// this (m/s), not one shoved along the ground.
 const REST_SPEED: f32 = 1.2;
+const THROWN_CLIMB: f32 = 2.0;
 const CATCH_RATE: f64 = 3.0;
 const DOUSE_RATE: f64 = 5.0;
 /// A fire whose hull piece was never found takes hold this late (s).
 const UNFOUND_CATCH_SECONDS: f64 = 1.2;
-/// The fire's soft glow behind its tongues (diameter per flame size, m).
-const FLAME_GLOW: f32 = 1.7;
 /// A burning wreck spits a few embers this often (s).
 const EMBER_INTERVAL: f64 = 0.35;
-/// The fire's glow on the ground (m across) and its light.
-const GLOW_SIZE: f32 = 7.0;
+/// The fire's glow on the ground (m across) and its light. Added light turns
+/// sunlit grass lime, so the glow stays small and faint; the light warms the rest.
+const GLOW_SIZE: f32 = 4.5;
 const GLOW_COLOR: [f32; 3] = [0.9, 0.34, 0.07];
 const FIRE_LIGHT: f64 = 13.0;
 const FIRE_LIGHT_COLOR: u32 = 0xff9a55;
 /// The firelight hangs this high over the hull (m), so the hull it burns on is
 /// lit warm from above rather than painted orange.
 const FIRE_LIGHT_HEIGHT: f32 = 3.2;
-/// Burning fuel spilled on the ground beside the hull: where (m, across and
-/// along the hull in its own heading) and how big each pool's licks are.
-const GROUND_FIRES: [[f32; 3]; 2] = [[1.45, -0.6, 0.62], [-1.35, 0.9, 0.5]];
 /// The flames' brightness multiplier (the shader shades yellow root to red tip).
 const FLAME_COLOR: [f32; 3] = [0.82, 0.78, 0.78];
 /// A cleared wreck's fire and smoke die away this fast (1/s).
@@ -107,6 +127,9 @@ struct Burner {
     /// The hull and turret wreck pieces this fire follows, once found.
     hull: Option<u32>,
     turret: Option<u32>,
+    /// The openings the hull burns out of, and its vehicle's scale.
+    vents: &'static [WreckVent],
+    scale: f32,
     /// The hull's pose, or the death's place until the hull is found.
     position: Vec3,
     rotation: Quat,
@@ -119,6 +142,8 @@ struct Burner {
     hull_trail_clock: f64,
     /// 0 while the hull flies, rising to 1 once it has come to rest.
     settled: f64,
+    /// The fire has taken hold, and burns on until the hull is thrown again.
+    caught: bool,
     /// Seconds the smoke column has been climbing off the resting hull: it
     /// grows up from the fire rather than appearing whole.
     column: f64,
@@ -128,7 +153,7 @@ struct Burner {
     /// Each smoke puff's swirl and each fireball's jitter for the lap it is on
     /// (lap, value): they change only when a new lap starts.
     swirls: [(f64, f64); SMOKE_PUFFS],
-    jitters: [(f64, f64); FLAME_PUFFS * FIRE_BALLS],
+    jitters: [(f64, f64); FIRE_BALLS],
 }
 
 /// A lap's value, worked out when the lap starts.
@@ -140,9 +165,11 @@ fn per_lap(slot: &mut (f64, f64), lap: f64, value: impl FnOnce() -> f64) -> f64 
 }
 
 /// Build the smoke column's ease tables now rather than on the frame the first wreck
-/// catches fire (2,050 `powf`s: 0.2 ms on a desktop, 0.75 ms at a quarter the speed).
+/// catches fire (2,050 `powf`s: 0.2 ms on a desktop, 0.75 ms at a quarter the speed),
+/// and measure the wrecks' openings.
 pub fn warm_tables() {
     column_eases();
+    wreck_vents(VehicleKind::Scout, WreckPart::Hull);
 }
 
 /// The smoke column's climb and widening powers, tabulated.
@@ -169,6 +196,8 @@ impl Default for Burner {
             cleared: 0.0,
             hull: None,
             turret: None,
+            vents: &UNFOUND_VENTS,
+            scale: 1.0,
             position: Vec3::ZERO,
             rotation: Quat::IDENTITY,
             trail: [Vec3::ZERO; TRAIL_PUFFS],
@@ -179,10 +208,11 @@ impl Default for Burner {
             column: 0.0,
             hull_trail_clock: 0.0,
             settled: 0.0,
+            caught: false,
             ember_clock: 0.0,
             fire: 0.0,
             swirls: [(f64::NAN, 0.0); SMOKE_PUFFS],
-            jitters: [(f64::NAN, 0.0); FLAME_PUFFS * FIRE_BALLS],
+            jitters: [(f64::NAN, 0.0); FIRE_BALLS],
         }
     }
 }
@@ -307,18 +337,31 @@ fn follow(burner: &mut Burner, state: &RenderState, dt: f64) {
                 nearest[slot] = (distance, Some(fragment.id));
             }
         }
+        // The fire burns out of the hull's own openings once the hull is found.
+        if burner.hull.is_none()
+            && let Some(hull) = nearest[0].1
+            && let Some(piece) = state.fragments.iter().find(|fragment| fragment.id == hull)
+            && let (Some(kind), Some(part)) = (piece.wreck, piece.part)
+        {
+            let vents = wreck_vents(kind, part);
+            if !vents.is_empty() {
+                burner.vents = &vents[..vents.len().min(MAX_VENTS)];
+                burner.scale = vehicle(kind).scale as f32;
+            }
+        }
         burner.hull = burner.hull.or(nearest[0].1);
         burner.turret = burner.turret.or(nearest[1].1);
     }
     let find = |id: Option<u32>| {
         id.and_then(|id| state.fragments.iter().find(|fragment| fragment.id == id))
     };
-    let mut speed = 0.0;
+    let mut velocity = Vec3::ZERO;
     if let Some(hull) = find(burner.hull) {
         let (position, rotation) = fragment_pose(hull);
         if dt > 0.0 {
-            speed = (position - burner.position).length() / dt as f32;
+            velocity = (position - burner.position) / dt as f32;
         }
+        let speed = velocity.length();
         (burner.position, burner.rotation) = (position, rotation);
         if speed >= REST_SPEED {
             sample(
@@ -330,9 +373,11 @@ fn follow(burner: &mut Burner, state: &RenderState, dt: f64) {
             );
         }
     }
-    // Fire takes hold on a hull at rest and is blown out when it is thrown again.
+    // Fire takes hold on a hull at rest and is blown out when it is thrown again;
+    // a burning hull shoved along the ground burns on.
     let resting = match burner.hull {
-        Some(_) => speed < REST_SPEED,
+        Some(_) if burner.caught => velocity.y.abs() < THROWN_CLIMB,
+        Some(_) => velocity.length() < REST_SPEED,
         None => burner.age >= UNFOUND_CATCH_SECONDS,
     };
     burner.settled = if resting {
@@ -340,6 +385,11 @@ fn follow(burner: &mut Burner, state: &RenderState, dt: f64) {
     } else {
         (burner.settled - dt * DOUSE_RATE).max(0.0)
     };
+    if burner.settled >= 1.0 {
+        burner.caught = true;
+    } else if burner.settled <= 0.0 {
+        burner.caught = false;
+    }
     burner.column += dt.max(0.0) * burner.settled * COLUMN_GROWTH;
     if let Some(turret) = find(burner.turret) {
         let (position, _) = fragment_pose(turret);
@@ -396,12 +446,18 @@ fn draw(
         * left
         * (0.55 + 0.45 * (1.0 - smoothstep(age, BURN_SECONDS * 0.6, BURN_SECONDS)));
     let base = burner.position;
-    // Fires sit over the hull along its heading, on whichever side faces up:
-    // a wreck on its roof burns out of its belly, never out of the ground.
-    let forward = burner.rotation * Vec3::Z;
-    let heading = Quat::from_rotation_y(forward.x.atan2(forward.z));
-    let deck = |spot: [f32; 3]| base + heading * Vec3::from(spot) + Vec3::Y * FLAME_HEIGHT;
-    let top = deck([0.0, 0.0, -0.3]);
+    // Fire burns out of the hull's openings wherever they face; a hull on its
+    // roof burns out of its belly, never down into the ground.
+    let upturned = (burner.rotation * Vec3::Y).y < UPTURNED;
+    let (rotation, scale) = (burner.rotation, burner.scale);
+    let opening = |vent: &WreckVent| {
+        let mut local = vent.center.as_vec3();
+        if upturned {
+            local.y = -local.y;
+        }
+        base + rotation * (local * scale)
+    };
+    let top = opening(&burner.vents[0]);
     // Each wreck burns its own way: how big its fires are and how its column
     // leans and billows.
     let vigour = 0.85 + 0.35 * burner.seed;
@@ -456,105 +512,104 @@ fn draw(
     }
     let up = Vec3::new(WIND[0] as f32 * 0.22, 1.0, WIND[1] as f32 * 0.22).normalize();
     let side = Vec3::new(-WIND[1] as f32, 0.0, WIND[0] as f32).normalize();
-    for (j, spot) in FLAME_SPOTS.into_iter().enumerate() {
-        let size = FLAME_SIZES[j] * vigour as f32;
-        let at = deck(spot);
-        // Rolling balls of fire over each spot, born hot in the opening and
-        // cooling through orange into the soot of the column as they climb: the
-        // blaze's body, which the licks only fringe.
-        for ball in 0..FIRE_BALLS {
+    let [r, g, b] = FLAME_COLOR;
+    let mut ball = 0;
+    for (j, vent) in burner.vents.iter().enumerate() {
+        let at = opening(vent);
+        let width = 2.0 * vent.half_size.max_element() as f32 * scale * FLAME_SPREAD;
+        let reach = width.sqrt()
+            * vigour as f32
+            * if vent.main {
+                MAIN_FLAME_HEIGHT
+            } else {
+                VENT_FLAME_HEIGHT
+            };
+        let level = fire * if vent.main { 1.0 } else { VENT_FIRE };
+        // Rolling balls of fire over the opening, born hot in it and cooling
+        // through orange into the soot of the column as they climb: the blaze's
+        // body, which the flames fringe.
+        let balls = if vent.main { MAIN_FIRE_BALLS } else { 1 };
+        for k in 0..balls {
             let cycle = age / FLAME_CYCLE
-                + j as f64 / FLAME_PUFFS as f64
-                + ball as f64 / FIRE_BALLS as f64
+                + j as f64 / MAX_VENTS as f64
+                + k as f64 / balls as f64
                 + burner.seed;
             let a = cycle.fract();
             let lap = cycle.floor();
-            let jitter = per_lap(&mut burner.jitters[j * FIRE_BALLS + ball], lap, || {
-                ((lap + j as f64 + ball as f64 * 0.5) * 1.7).sin()
-            }) * 0.18;
-            let heat = fire * (1.05 - a * 0.95);
+            let jitter = per_lap(&mut burner.jitters[ball], lap, || {
+                ((lap + j as f64 + k as f64 * 0.5) * 1.7).sin()
+            }) * 0.12
+                * f64::from(width);
+            ball += 1;
+            let size = f64::from(width) * (0.5 + 0.4 * a);
             smoke_puff(
                 puffs,
                 Vec3::new(
                     at.x + (WIND[0] * a * 0.6 + jitter) as f32,
-                    at.y + (0.2 + 1.7 * a) as f32 * size,
+                    at.y + (0.15 + 0.75 * a) as f32 * reach,
                     at.z + (WIND[1] * a * 0.6 - jitter) as f32,
                 ),
-                (0.55 + 0.35 * a) as f32 * size,
+                size as f32,
                 soot,
-                (fire * (a / 0.1).min(1.0) * (1.0 - a * a) * 0.92) as f32,
-                (burner.seed * 5.3 + lap * 0.61 + j as f64 * 0.29 + ball as f64 * 0.47) as f32,
-                heat as f32,
+                (level * (a / 0.1).min(1.0) * (1.0 - a * a) * 0.85) as f32,
+                (burner.seed * 5.3 + lap * 0.61 + j as f64 * 0.29 + k as f64 * 0.47) as f32,
+                (level * (1.0 - a * 0.95)) as f32,
                 (smoothstep(a, 0.3, 1.0) * 0.75) as f32,
                 0.0,
                 0.0,
             );
         }
-        // Licks of flame over each burning spot, each its own height and sway,
-        // leaning on the wind.
-        let [r, g, b] = FLAME_COLOR;
-        for (k, [ox, oz]) in LICK_SPREAD.into_iter().enumerate() {
-            let kf = k as f32;
-            let phase = burner.seed as f32 * 31.0 + j as f32 * 4.7 + kf * 2.3;
-            let breathe = (time as f32 * (5.0 + kf * 1.7) + phase).sin();
-            // Spread over the hull's own deck, so a fire fills the opening it
-            // burns out of rather than standing in a row.
-            let spread = heading * Vec3::new(ox, 0.0, oz) * size;
-            let lean = up + side * ((kf - 1.0) * 0.2 + 0.1 * breathe);
-            flame(
-                &mut sparks.records,
-                at + spread + Vec3::Y * 0.05,
-                lean.normalize(),
-                (1.5 - 0.2 * (kf - 1.0).abs()) * size,
-                ((1.1 + 0.25 * breathe)
-                    * (1.0 - 0.25 * (kf - 1.0).abs())
-                    * (0.55 + 0.45 * fire as f32))
-                    * size,
-                (burner.seed as f32 * 3.7 + j as f32 * 0.31 + kf * 0.17).fract(),
-                [r, g, b, (fire * (0.5 + 0.15 * flicker)) as f32],
-            );
-        }
-        // A soft heat glow behind the tongues gives the fire body, so it reads
-        // as a blaze rather than a row of cut-out licks.
-        glow(
-            &mut sparks.records,
-            at + Vec3::Y * (0.55 * size),
-            FLAME_GLOW * size,
-            [1.0, 0.42, 0.09, (fire * 0.26 * flicker) as f32],
-        );
-    }
-    // Fuel spilled round the hull burns low on the ground beside it.
-    let [r, g, b] = FLAME_COLOR;
-    for (j, [across, along, size]) in GROUND_FIRES.into_iter().enumerate() {
+        // The flames themselves stand in the opening, each breathing at one rate
+        // with its own phase and leaning on the wind.
         let jf = j as f32;
-        let at = base + heading * Vec3::new(across, 0.0, along);
-        let breathe = (time as f32 * 6.1 + burner.seed as f32 * 17.0 + jf * 2.9).sin();
-        let size = size * vigour as f32;
+        let breathe = (time as f32 * 4.3 + burner.seed as f32 * 23.0 + jf * 2.1).sin();
+        let lean = (up + side * 0.08 * breathe).normalize();
+        // A well's flames rise from its floor, down the opening's own axis.
+        let depth = if upturned {
+            0.0
+        } else {
+            vent.depth as f32 * scale
+        };
+        let root = at - rotation * Vec3::Y * depth - Vec3::Y * FLAME_SINK;
+        let strength = 0.6 + 0.4 * level as f32;
         flame(
             &mut sparks.records,
-            Vec3::new(at.x, 0.04, at.z),
-            (up + side * 0.12 * breathe).normalize(),
-            1.5 * size,
-            (0.95 + 0.2 * breathe) * size * (0.5 + 0.5 * fire as f32),
-            (burner.seed as f32 * 5.9 + jf * 0.37).fract(),
-            [r, g, b, (fire * 0.85) as f32],
+            root,
+            lean,
+            width,
+            depth + reach * (0.93 + 0.07 * breathe) * strength,
+            (burner.seed as f32 * 3.7 + jf * 0.31).fract(),
+            [r, g, b, (level * (0.7 + 0.1 * flicker)) as f32],
         );
+        if vent.main {
+            // A narrower core of fire roars up the middle of the main blaze.
+            flame(
+                &mut sparks.records,
+                root,
+                (up - side * 0.06 * breathe).normalize(),
+                width * CORE_TONGUE[0],
+                depth + reach * CORE_TONGUE[1] * (0.95 - 0.05 * breathe) * strength,
+                (burner.seed as f32 * 3.7 + 0.53).fract(),
+                [r, g, b, (level * 0.55) as f32],
+            );
+        }
     }
     burner.ember_clock += dt;
     if burner.ember_clock >= EMBER_INTERVAL {
         burner.ember_clock = 0.0;
-        let spot = FLAME_SPOTS[(random.next_f64() * FLAME_PUFFS as f64) as usize % FLAME_PUFFS];
+        let vents = burner.vents;
+        let vent = &vents[(random.next_f64() * vents.len() as f64) as usize % vents.len()];
         let mut embers = EMBERS;
         embers.count = 3;
-        sparks.burst(deck(spot), Vec3::Y, 0.7, &embers, random);
+        sparks.burst(opening(vent), Vec3::Y, 0.7, &embers, random);
     }
     let size = GLOW_SIZE * (0.9 + 0.1 * flicker as f32);
     let [r, g, b] = GLOW_COLOR;
     ground_glow(
         &mut sparks.records,
-        Vec3::new(base.x, 0.1, base.z),
+        Vec3::new(top.x, 0.1, top.z),
         size,
-        [r, g, b, (burner.fire * 0.45) as f32],
+        [r, g, b, (burner.fire * 0.28) as f32],
     );
 }
 
@@ -684,5 +739,17 @@ mod tests {
         let burner = &fires.burners[0];
         assert!(burner.fire > 0.3, "the hull at rest burns");
         assert!(puffs.len() >= SMOKE_PUFFS, "and smokes");
+        // Shoved along the ground by a tank, it burns on.
+        for _ in 0..60 {
+            state.fragments[0].position.z += 4.0 / 60.0;
+            step(&mut fires, &state, &mut puffs);
+        }
+        assert!(fires.burners[0].fire > 0.3, "a pushed wreck keeps burning");
+        // Thrown into the air again, the fire is blown out.
+        for _ in 0..30 {
+            state.fragments[0].position.y += 5.0 / 60.0;
+            step(&mut fires, &state, &mut puffs);
+        }
+        assert_eq!(fires.burners[0].fire, 0.0, "a thrown wreck's fire goes out");
     }
 }
