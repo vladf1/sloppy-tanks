@@ -22,9 +22,15 @@ fn effect_world(w: ptr<function, EffectWorld>, v: EffectVertex) {
     // Seen end on, a streak keeps a width-sized dot instead of collapsing.
     let screen_up = normalize(cross(to_camera, side));
     var along = v.position.y;
+    var reach = v.position.y;
     if (kind > 1.5 && kind < 2.5) || (kind > 3.5 && kind < 4.5) {
         along += 0.5;
     }
+    if kind > 3.5 && kind < 4.5 {
+        // A licking flame's root stays in the opening or on the ground it burns
+        // from: pushed below it, the deck or the ground would cut it straight.
+        reach = max(reach, 0.0);
+    }
     (*w).position = v.instance_origin + side * v.position.x * width + direction * along * extent
-        + screen_up * v.position.y * width * 0.6;
+        + screen_up * reach * width * 0.6;
 }

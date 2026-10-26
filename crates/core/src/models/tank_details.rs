@@ -566,28 +566,47 @@ fn mantlet_bolts(kit: &mut Kit, gun_y: f64, face_z: f64, size: DVec3) {
     }
 }
 
+/// The engine deck's grilles as (centre, size, louvres) in plan, `z` from the
+/// hull's centre: the T-72 lineage's transverse grille across the rear and two
+/// louvred doors ahead of it, the Booker's two doors and rear grille, the
+/// Abrams' two large doors over the turbine.
+fn engine_grilles(c: &Chassis) -> Vec<(DVec2, DVec2, u32)> {
+    let half = c.length / 2.0;
+    let pair = |x: f64, z: f64, size: DVec2, slats: u32| {
+        [-1.0, 1.0].map(|side| (DVec2::new(side * x, -half + z), size, slats))
+    };
+    if c.heavy {
+        let mut grilles = vec![(DVec2::new(0.0, -half + 0.3), DVec2::new(1.5, 0.36), 4)];
+        grilles.extend(pair(0.46, 0.95, DVec2::new(0.62, 0.72), 7));
+        grilles
+    } else if c.scout {
+        let mut grilles = pair(0.36, 0.6, DVec2::new(0.5, 0.8), 7).to_vec();
+        grilles.push((DVec2::new(0.0, -half + 0.16), DVec2::new(1.3, 0.16), 2));
+        grilles
+    } else {
+        pair(0.43, 0.62, DVec2::new(0.66, 0.92), 8).to_vec()
+    }
+}
+
+/// The engine deck's grilles as one opening on the roof, its centre and half
+/// size in plan: where a burning wreck's engine fire licks out.
+pub(super) fn engine_vent(c: &Chassis) -> (DVec3, DVec2) {
+    let (lo, hi) = engine_grilles(c).into_iter().fold(
+        (DVec2::splat(f64::MAX), DVec2::splat(f64::MIN)),
+        |(lo, hi), (center, size, _)| (lo.min(center - size / 2.0), hi.max(center + size / 2.0)),
+    );
+    let center = (lo + hi) / 2.0;
+    (v(center.x, c.deck + ROOF_RISE, center.y), (hi - lo) / 2.0)
+}
+
 fn engine_deck(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
     let half = f.half;
     let w = f.upper_half_width;
+    for (center, size, slats) in engine_grilles(c) {
+        grille(kit, f, center, size, slats);
+    }
     if c.heavy {
-        // T-72 lineage: a transverse grille across the rear, two louvred doors
-        // ahead of it and the access-door seams.
-        grille(
-            kit,
-            f,
-            DVec2::new(0.0, -half + 0.3),
-            DVec2::new(1.5, 0.36),
-            4,
-        );
-        for side in [-1.0, 1.0] {
-            grille(
-                kit,
-                f,
-                DVec2::new(side * 0.46, -half + 0.95),
-                DVec2::new(0.62, 0.72),
-                7,
-            );
-        }
+        // The access-door seams.
         seam(
             kit,
             f.roof,
@@ -595,22 +614,6 @@ fn engine_deck(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
             DVec2::new(w - 0.08, -half + 1.42),
         );
     } else if c.scout {
-        for side in [-1.0, 1.0] {
-            grille(
-                kit,
-                f,
-                DVec2::new(side * 0.36, -half + 0.6),
-                DVec2::new(0.5, 0.8),
-                7,
-            );
-        }
-        grille(
-            kit,
-            f,
-            DVec2::new(0.0, -half + 0.16),
-            DVec2::new(1.3, 0.16),
-            2,
-        );
         seam(
             kit,
             f.roof,
@@ -618,16 +621,7 @@ fn engine_deck(kit: &mut Kit, c: &Chassis, f: &HullFrame) {
             DVec2::new(w - 0.08, -half + 1.12),
         );
     } else {
-        // Abrams: two large grille doors over the turbine and the deck seams.
-        for side in [-1.0, 1.0] {
-            grille(
-                kit,
-                f,
-                DVec2::new(side * 0.43, -half + 0.62),
-                DVec2::new(0.66, 0.92),
-                8,
-            );
-        }
+        // The Abrams' deck seams.
         seam(
             kit,
             f.roof,
