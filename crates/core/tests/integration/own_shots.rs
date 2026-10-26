@@ -111,7 +111,7 @@ fn host_fires(
 /// The own shells drawn with no view delay at `tick`.
 fn drawn_at(own: &mut OwnShots, tick: f64) -> Vec<RenderShot> {
     let mut shots = Vec::new();
-    own.draw(tick, tick, -1.0, &mut shots);
+    own.draw(tick, tick, -1.0, &[], &mut shots);
     shots
 }
 
@@ -282,6 +282,7 @@ fn a_shell_the_host_launched_a_tick_late_glides_onto_its_path() {
             y: start.y,
             visual_y: start.visual_y,
             thrust: None,
+            rewind: 0,
         },
     };
     own.claim(

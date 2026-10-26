@@ -122,6 +122,7 @@ fn sample() -> ControlInput {
         aim: Aim::Point { x: 10.0, z: 20.0 },
         fire: false,
         actions: Vec::new(),
+        view: 0,
     }
 }
 
@@ -636,6 +637,7 @@ fn a_projectile_born_and_destroyed_between_snapshots_follows_its_path_and_disapp
             y: Some(1.0),
             visual_y: None,
             thrust: None,
+            rewind: 0,
         },
     };
     let mut timeline = NetworkTimeline::default();

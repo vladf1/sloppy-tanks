@@ -162,6 +162,7 @@ function fixture(network = false) {
         unconfirmedShells: 1,
         unpredicted: 2,
         errorM: { count: 13, mean: 0.031, p50: 0.02, p95: 0.08, max: 0.1 },
+        phantomStrikes: 3,
       },
     },
   };
@@ -264,7 +265,7 @@ test("network stats use received scene counts and never require a client physics
     assert.ok(text.includes("Own shell error") && text.includes("3.1 cm"));
     assert.ok(text.includes("Hit offset p95") && text.includes("2.05 m"));
     assert.ok(text.includes("Incoming offset") && text.includes("0.42 m"));
-    assert.ok(text.includes("Phantom strikes"));
+    assert.ok(text.includes("Phantom strikes") && text.includes("2 / 3"));
     assert.ok(text.includes("Debris corrections") && text.includes("2.0 cm/s"));
     assert.ok(
       text.includes("Late batches") &&

@@ -216,8 +216,15 @@ export async function startMultiplayer(
         ]),
       )
     : {};
-  // Development comparison: `?dodge=0` draws enemy shells on the display clock alone.
-  const dodge = import.meta.env.DEV && params.get("dodge") === "0" ? { dodge: "0" } : {};
+  // Development comparisons: `?dodge=0` draws enemy shells on the display clock alone,
+  // `?shooter=0` has the host judge this player's shells in its present.
+  const compare = import.meta.env.DEV
+    ? Object.fromEntries(
+        (["dodge", "shooter"] as const)
+          .filter((key) => params.get(key) === "0")
+          .map((key) => [key, "0"]),
+      )
+    : {};
   let game: NetGame;
   try {
     const [width, height] = cssSize();
@@ -226,7 +233,7 @@ export async function startMultiplayer(
       room,
       savedSeat: savedSeat(seatKey),
       ...delay,
-      ...dodge,
+      ...compare,
       assetBase: import.meta.env.BASE_URL,
       cssWidth: width,
       cssHeight: height,

@@ -2,7 +2,7 @@
 //! in, struck against the predicted hull ahead of the host, and eased back to the display
 //! once they have passed.
 
-use sloppy_core::net::network_timeline::{Dodger, NetworkTimeline};
+use sloppy_core::net::network_timeline::{Dodger, NetworkTimeline, TRAIL_TICKS};
 use sloppy_core::net::own_shots::{CoverCast, CoverHit, NoCover};
 use sloppy_core::net::replication::TimedEvent;
 use sloppy_core::net::shot_paths::{LivePaths, PathEntry, ShotLaunch, ShotPath};
@@ -10,6 +10,7 @@ use sloppy_core::sim::data::{STEP, weapon};
 use sloppy_core::sim::hitboxes::SHELL_HIT_RADIUS;
 use sloppy_core::sim::math::{Point3, Vec2};
 use sloppy_core::sim::render_state::{RenderShot, RenderState};
+use sloppy_core::sim::shooter_rewind::MAX_REWIND_TICKS;
 use sloppy_core::sim::tank_dimensions::tank_hull;
 use sloppy_core::sim::types::{SimEvent, SimEventType, Team, VehicleKind, Weapon};
 
@@ -39,6 +40,7 @@ fn dodger(present: f64) -> Dodger {
         kind: VehicleKind::Balanced,
         team: Team::Blue,
         tank_id: VIEWER,
+        trail: [None; TRAIL_TICKS],
     }
 }
 
@@ -63,6 +65,7 @@ fn enemy_shell(tick: f64, x: f64, z: f64) -> ShotPath {
             y: Some(1.0),
             visual_y: None,
             thrust: None,
+            rewind: 0,
         },
     }
 }
@@ -91,6 +94,17 @@ fn play(
     cover: &impl CoverCast,
     host: impl Fn(u64) -> (Vec<TimedEvent>, Vec<PathEntry>),
 ) -> (Vec<Frame>, NetworkTimeline) {
+    play_as(dodger, last, dodger_first, cover, host)
+}
+
+/// [`play`] with the viewer's hull from `viewer` at each present.
+fn play_as(
+    viewer: impl Fn(f64) -> Dodger,
+    last: u64,
+    dodger_first: bool,
+    cover: &impl CoverCast,
+    host: impl Fn(u64) -> (Vec<TimedEvent>, Vec<PathEntry>),
+) -> (Vec<Frame>, NetworkTimeline) {
     let mut timeline = NetworkTimeline::default();
     timeline.reset(&RenderState::default(), 0, 0.0, &LivePaths::default());
     let mut shown = RenderState::default();
@@ -108,7 +122,7 @@ fn play(
             timeline.arrive(now);
         }
         let present = now / STEP_MS + PRESENT_LEAD;
-        let viewer = dodger(present);
+        let viewer = viewer(present);
         let events = timeline.read(
             now,
             100.0,
@@ -366,4 +380,35 @@ fn a_ricochet_that_bounces_back_at_the_viewer_closes_in_again() {
         "struck at present {} for the host's hit at {hit}",
         strike.present
     );
+}
+
+#[test]
+fn a_players_shell_strikes_the_hull_where_its_shooter_saw_it() {
+    // The viewer slid 3 m along -x over the last ticks: a player's shell, judged against
+    // where its shooter saw the hull 12 ticks ago, strikes it there.
+    let moved = |present: f64| Dodger {
+        trail: std::array::from_fn(|back| Some((Vec2::new(0.25 * back as f64, 0.0), 0.0))),
+        ..dodger(present)
+    };
+    let fire = |rewind: u32| {
+        let mut path = enemy_shell(10.0, 3.0, 20.0);
+        path.launch.rewind = rewind;
+        let hit = reaches(&path, hull_front());
+        let quiet = move |tick: u64| {
+            if tick == 10 {
+                (Vec::new(), vec![PathEntry::Launch(path)])
+            } else {
+                (Vec::new(), Vec::new())
+            }
+        };
+        let (frames, _) = play_as(moved, hit.ceil() as u64 + 2, true, &NoCover, quiet);
+        (frames, hit)
+    };
+    let (frames, hit) = fire(MAX_REWIND_TICKS);
+    let impacts = kinds(&frames, SimEventType::Impact);
+    assert_eq!(impacts.len(), 1, "struck where the hull was");
+    assert!((frames[impacts[0]].present - hit).abs() <= 1.0);
+    // A bot's shell is judged against the hull now, 3 m away: it flies past.
+    let (frames, _) = fire(0);
+    assert!(kinds(&frames, SimEventType::Impact).is_empty());
 }

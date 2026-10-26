@@ -29,6 +29,8 @@ pub const MAX_INPUT_LEAD_TICKS: u64 = 30;
 /// Most inputs waiting for their tick: a second of input at the rate limit.
 const MAX_WAITING_INPUTS: usize = MAX_INPUTS_PER_SECOND as usize;
 const MAX_AIM_COORDINATE: f64 = 1024.0;
+/// The largest view delay an input may report, ten seconds; the rewind is capped far lower.
+const MAX_VIEW_TICKS: u32 = 600;
 const MAX_INPUTS_PER_SECOND: u32 = 60;
 
 /// A one-shot action queued with held input.
@@ -59,6 +61,9 @@ pub struct ControlInput {
     pub aim: Aim,
     pub fire: bool,
     pub actions: Vec<Action>,
+    /// Ticks the sender's view of the other tanks runs behind its predicted present: its
+    /// shells meet them where it saw them (`shooter_rewind`). Zero opts out.
+    pub view: u32,
 }
 
 impl ControlInput {
@@ -112,6 +117,9 @@ pub fn encode_input(input: &ControlInput, round_id: u64) -> String {
         });
         if input.fire {
             writer.boolean("fire", true);
+        }
+        if input.view > 0 {
+            writer.int("view", u64::from(input.view));
         }
         if !input.actions.is_empty() {
             let list = writer.key("actions");
@@ -186,6 +194,12 @@ pub fn read_input(value: &Value) -> Option<ControlInput> {
         None | Some(Value::Null) => None,
         some => Some(u64::try_from(safe_integer(some)?).ok()?),
     };
+    let view = match message.get("view") {
+        None | Some(Value::Null) => 0,
+        some => u32::try_from(safe_integer(some)?)
+            .ok()
+            .filter(|ticks| *ticks <= MAX_VIEW_TICKS)?,
+    };
     Some(ControlInput {
         // A negative epoch never matches; keep it distinguishable from every real one.
         control_epoch: u64::try_from(control_epoch).unwrap_or(u64::MAX),
@@ -197,6 +211,7 @@ pub fn read_input(value: &Value) -> Option<ControlInput> {
         aim,
         fire,
         actions,
+        view,
     })
 }
 
@@ -436,6 +451,7 @@ impl PlayerControls {
             self.actions.clear();
             return Some(command);
         };
+        let view = self.input.as_ref().map_or(0, |input| input.view);
         let origin = simulation.body_translation(tank.body);
         command.move_x = move_x;
         command.move_z = move_z;
@@ -457,6 +473,9 @@ impl PlayerControls {
                 command.ammo_selection = Some(AmmoSelection::Weapon(weapon));
             }
             None => {}
+        }
+        if let Some(rewind) = &mut simulation.shooter_rewind {
+            rewind.view_ticks.insert(self.tank_id, view);
         }
         Some(command)
     }

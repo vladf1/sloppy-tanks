@@ -26,8 +26,9 @@
 //!   firstPerson?, zoom?, hideReticle?, framesInFlight? }` (the view's part is
 //!   `page::create_view`'s). `server` is
 //!   the validated WebSocket origin; `latency`/`jitter`/`stall` are the development
-//!   transport-delay URL parameters (omit them in production), and `dodge: "0"` draws
-//!   incoming shells on the display clock alone (development comparisons).
+//!   transport-delay URL parameters (omit them in production); `dodge: "0"` draws
+//!   incoming shells on the display clock alone and `shooter: "0"` asks the host to
+//!   favor no shooter (development comparisons).
 //! - Actions (`take_actions`, in order): `{type: "open", socket, url}`, `{type: "send",
 //!   socket, text}` (close the socket instead when its `bufferedAmount` exceeds 16 KiB),
 //!   `{type: "close", socket}`, `{type: "saveSeat", token, roomEpoch}`, `{type:
@@ -114,6 +115,8 @@ struct NetConfig {
     stall: Option<String>,
     /// Development switch: `"0"` draws incoming shells on the display clock alone.
     dodge: Option<String>,
+    /// Development switch: `"0"` sends no view delay, so the host favors no shooter.
+    shooter: Option<String>,
 }
 
 impl NetConfig {
@@ -193,6 +196,7 @@ impl NetGame {
             delay: config.delay(),
             seed: seed as u32,
             dodger_first: config.dodge.as_deref() != Some("0"),
+            shooter_first: config.shooter.as_deref() != Some("0"),
         });
         let mut game = NetGame {
             client,
@@ -666,6 +670,7 @@ impl NetGame {
                     "confirmed": own.confirmed,
                     "unconfirmedShells": own.unconfirmed_shells,
                     "unpredicted": own.unpredicted,
+                    "phantomStrikes": own.phantom_strikes,
                     "errorM": summary(&own.error),
                 },
             }),
@@ -722,6 +727,11 @@ impl NetGame {
                 "viewer": state.viewer(),
                 "tanks": tanks,
                 "shots": state.shots.len(),
+                "shotList": state
+                    .shots
+                    .iter()
+                    .map(|shot| json!({ "id": shot.id, "team": shot.team, "x": shot.x, "z": shot.z }))
+                    .collect::<Vec<Value>>(),
                 "mines": state.mines.len(),
                 "fragments": state.fragments.len(),
             })

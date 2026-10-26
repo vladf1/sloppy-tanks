@@ -72,6 +72,7 @@ export interface NetworkStatsSource extends RenderStats {
       unconfirmedShells: number;
       unpredicted: number;
       errorM: Reading;
+      phantomStrikes: number;
     };
   };
 }
@@ -193,7 +194,7 @@ export function networkStatsSections(
         [
           "Hit offset",
           feel.hitOffsetM.count ? `${feel.hitOffsetM.mean.toFixed(2)} m` : "–",
-          `For each hit you scored on a tank (${feel.hitOffsetM.count} so far): how far it was drawn, when your own tank reached the moment of the hit, from where the server hit it. A crossing tank needs that much extra lead.`,
+          `For each shell hit you scored on a tank (${feel.hitOffsetM.count} so far): how far the server's impact was from that tank as your screen drew it when your own tank reached the moment of the hit. Near zero, you hit tanks where you see them; otherwise a crossing tank needs that much extra lead.`,
         ],
         [
           "Hit offset p95",
@@ -207,8 +208,8 @@ export function networkStatsSections(
         ],
         [
           "Phantom strikes",
-          network.phantomStrikes,
-          "Enemy shells drawn striking your tank, ahead of the server, that the server flew past instead (your tank was elsewhere on the server). Such a shell flies on.",
+          `${network.phantomStrikes} / ${feel.ownShots.phantomStrikes}`,
+          "Shells drawn striking a tank ahead of the server that the server flew past instead, and flew on: enemy shells at your tank, then your own shells at enemy tanks.",
         ],
         [
           "Late input starts",

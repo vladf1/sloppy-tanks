@@ -134,6 +134,7 @@ pub fn path_json(entry: &PathEntry) -> Value {
         let launch = &path.launch;
         object.insert("team".into(), Value::from(launch.team.index()));
         object.insert("weapon".into(), Value::from(launch.weapon.as_str()));
+        object.insert("rewind".into(), Value::from(launch.rewind));
         for (key, value) in [
             ("y", launch.y),
             ("visualY", launch.visual_y),

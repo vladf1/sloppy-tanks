@@ -394,6 +394,7 @@ fn wire_input_is_rounded_omits_idle_defaults_and_is_accepted_as_the_same_command
         },
         fire: false,
         actions: Vec::new(),
+        view: 0,
     };
     let wire: Value = serde_json::from_str(&encode_input(&idle, 1)).unwrap();
     assert!(wire.get("fire").is_none());

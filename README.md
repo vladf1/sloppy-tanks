@@ -198,11 +198,11 @@ full-state message or snapshot batch; an input acknowledgement confirms the
 server processed an input sequence. Feel rows show how far behind your own tank
 other tanks are drawn (view delay), how long a click takes to show its muzzle
 flash, how many of the shots drawn at once the server fired too and how close
-their shells were to the server's, how far a tank you hit was drawn from where the
-server hit it, how far the shells that hit you were drawn from your tank just
-before they struck (enemy shells close in on your tank's present, so one you see
-coming hits or misses where you see it), and your tank's prediction corrections by
-cause. Render includes GPU geometries and textures.
+their shells were to the server's, how far the
+server's impact was from a tank you hit as your screen drew it (the server judges
+your shells where you saw the targets, up to 200 ms back), how far the shells that hit
+you were drawn from your tank just before they struck (enemy shells close in on your
+tank's present), and your tank's prediction corrections by cause. Render includes GPU geometries and textures.
 
 Single-player downloads no multiplayer page code and opens no game-server connection.
 Multiplayer loads its client and UI only on entry and does not run browser physics.

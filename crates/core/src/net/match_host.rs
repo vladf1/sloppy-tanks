@@ -27,6 +27,7 @@ use super::room_list::RoomListing;
 use super::scene_codec::Scene;
 use super::schema::{MAX_SAFE_INTEGER, Record, id, number_in, parse_record};
 use super::shot_paths::ShotPathRecorder;
+use crate::sim::shooter_rewind::ShooterRewind;
 use crate::sim::simulation::Simulation;
 use crate::sim::types::{MatchPhase, PlayerAssignment, SimEventType, Team, VehicleCommand};
 
@@ -815,6 +816,7 @@ impl MatchHost {
         )?;
         simulation.match_state.time = f64::from(self.settings.round_minutes * 60);
         simulation.projectile_moves = Some(Vec::new());
+        simulation.shooter_rewind = Some(ShooterRewind::default());
         self.clock = Some(FixedStepClock::new(now_ms as f64));
         self.stream = Some(StateStream::new(&self.room_epoch, self.round_id));
         for (_, client) in &mut self.clients {

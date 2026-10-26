@@ -27,7 +27,7 @@ pub fn laser_contact_time(
         return None;
     }
     let end = simulation.body_translation(tank.body);
-    let Vec2 { x: tx, z: tz } = sweep_velocity(tank, end, frame_delta);
+    let Vec2 { x: tx, z: tz } = sweep_velocity(tank.previous, end, frame_delta);
     let x = end.x - tx * (frame_delta - elapsed);
     let z = end.z - tz * (frame_delta - elapsed);
     let dx = shot.x - x;

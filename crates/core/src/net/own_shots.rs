@@ -12,23 +12,29 @@
 //! the host's ticks pass it. Hits, damage and kills stay the host's.
 //!
 //! Own shells are drawn on a clock of their own: at the predicted present when fired, so
-//! they leave the barrel at once, easing into the delayed display over their first
-//! [`BLEND_VIEW_DELAYS`] view delays of flight, so they reach distant tanks and walls on
-//! the timeline those are drawn on. Until the host's path is known that far, a shell ends
-//! at the first cover the predicted world puts in its way, bouncing as the host's would
-//! with bounces left, and shows the host's impact effect there itself; the host's own
-//! effect for it is dropped when it arrives. The host's effects of own shells the
+//! they leave the barrel at once, then on the clock the host judges them by. While the
+//! host favors the shooter (`sim::shooter_rewind`) and rewinds the tanks they meet by the
+//! whole view delay, that is the present itself, at full speed like single player. A
+//! view delay beyond the host's longest rewind, or a host that rewinds nothing, eases them
+//! back over their first [`BLEND_VIEW_DELAYS`] view delays of flight, at four fifths of
+//! real time, so they reach distant tanks on the timeline the host judges them on. Until
+//! the host's path is known that far, a shell ends at the first cover the predicted world
+//! puts in its way, bouncing as the host's would with bounces left, and at an enemy hull
+//! as drawn while the host favors the shooter, and shows the host's impact effect there
+//! itself; the host's own effect for it is dropped when it arrives, and a hull strike the
+//! host flew past instead lets the shell fly on. The host's effects of own shells the
 //! prediction did not foresee play on the shell's clock.
 
 use std::collections::VecDeque;
 
+use super::network_timeline::{STRIKE_CONFIRM_TICKS, hull_gap, hull_strike};
 use super::replication::TimedEvent;
 use super::shot_paths::{PathEntry, ShotLaunch, ShotPath};
 use crate::sim::combat_rules::COMBAT;
 use crate::sim::data::{STEP, TEAM_COLORS, weapon};
 use crate::sim::math::{Point3, Vec2, angle_delta, distance};
 use crate::sim::projectiles::RocketThrust;
-use crate::sim::render_state::RenderShot;
+use crate::sim::render_state::{RenderShot, RenderTank};
 use crate::sim::simulation_rules::SIMULATION_RULES;
 use crate::sim::tank_dimensions::{tank_muzzle, tank_visual_muzzle};
 use crate::sim::types::{CoverKind, SimEvent, SimEventType, Team, VehicleKind, Weapon};
@@ -146,6 +152,10 @@ struct OwnShell {
     /// The predicted launch leg the drawn shell is gliding off, and the tick of its clock
     /// the glide started, once drawn.
     handover: Option<(ShotPath, Option<f64>)>,
+    /// The tick it struck an enemy hull as drawn, ahead of the host.
+    struck: Option<f64>,
+    /// It struck a hull the host flew past: it strikes none again.
+    missed: bool,
 }
 
 impl OwnShell {
@@ -340,6 +350,8 @@ pub struct OwnShotStats {
     /// Per matched shell: how far the predicted shell was from the host's six ticks
     /// after launch, metres.
     pub error: super::feel_readings::Samples,
+    /// Own shells drawn striking an enemy tank that the host flew past instead.
+    pub phantom_strikes: u64,
 }
 
 /// A fired tick the host may still confirm.
@@ -408,6 +420,7 @@ impl OwnShots {
             y: Some(muzzle_height),
             visual_y: Some(visual_height),
             thrust: (fired == Weapon::Rocket).then(|| RocketThrust::at_bullet_speed(BULLET_SPEED)),
+            rewind: 0,
         };
         // A rocket takes its first tick of thrust before its first sweep, so its path
         // starts at the speed after it (`step_projectiles`).
@@ -445,6 +458,8 @@ impl OwnShots {
                 events: Vec::new(),
                 shown: Vec::new(),
                 handover: None,
+                struck: None,
+                missed: false,
             });
         }
         self.fired.push_back(Fired {
@@ -612,21 +627,68 @@ impl OwnShots {
     }
 
     /// Draws the own shells into `shots` and returns the impact effects due, for the
-    /// predicted present `present`, the display tick `display` and the host's newest tick
-    /// `newest` (all fractional ticks). Drops shells that ended and predicted ones the
-    /// host never launched.
+    /// predicted present `present`, the tick own shells settle on `settle` (the display
+    /// tick, plus what the host rewinds for this shooter) and the host's newest tick
+    /// `newest` (all fractional ticks). Ahead of the host, a shell strikes the hulls of
+    /// the enemy `targets` as drawn, where a host favoring the shooter judges it; pass none
+    /// when it does not. Drops shells that ended and predicted ones the host never
+    /// launched.
     pub fn draw(
         &mut self,
         present: f64,
-        display: f64,
+        settle: f64,
         newest: f64,
+        targets: &[RenderTank],
         shots: &mut Vec<RenderShot>,
     ) -> Vec<SimEvent> {
         let mut due = Vec::new();
         let unconfirmed = &mut self.stats.unconfirmed_shells;
+        let phantoms = &mut self.stats.phantom_strikes;
         self.shells.retain_mut(|shell| {
-            let tick = own_clock(present, display, shell.launch_tick());
-            if let Some(mut drawn) = shell.at(tick, newest) {
+            let tick = own_clock(present, settle, shell.launch_tick());
+            // A strike the host flew past instead never happened: the shell flies on.
+            if let Some(struck) = shell.struck
+                && newest >= struck + STRIKE_CONFIRM_TICKS
+                && shell
+                    .legs
+                    .iter()
+                    .rev()
+                    .find(|leg| leg.path.tick <= struck)
+                    .is_some_and(|leg| leg.until > struck + STRIKE_CONFIRM_TICKS)
+            {
+                shell.struck = None;
+                shell.missed = true;
+                *phantoms += 1;
+            }
+            let drawn = shell.at(tick, newest).filter(|_| shell.struck.is_none());
+            let open = shell
+                .legs
+                .last()
+                .filter(|leg| leg.until.is_infinite() && tick > newest);
+            let target = drawn
+                .zip(open)
+                .filter(|_| !shell.missed)
+                .and_then(|(at, leg)| {
+                    let team = leg.path.launch.team;
+                    targets.iter().find(|tank| {
+                        tank.alive
+                            && tank.team != team
+                            && hull_gap(
+                                tank.kind,
+                                tank.position.planar(),
+                                tank.heading,
+                                Vec2::new(at.x, at.z),
+                            ) == 0.0
+                    })?;
+                    Some((at, leg.path))
+                });
+            if let Some((at, path)) = target {
+                shell.struck = Some(tick);
+                for strike in hull_strike(&path, tick, Vec2::new(at.x, at.z)) {
+                    due.push(strike.event.clone());
+                    shell.shown.push(strike);
+                }
+            } else if let Some(mut drawn) = drawn {
                 // Off the predicted path onto the host's, while still on its first leg.
                 if let Some((predicted, from)) = shell.handover.as_mut() {
                     let from = *from.get_or_insert(tick);
@@ -693,8 +755,8 @@ impl OwnShots {
 }
 
 /// The tick an own shell launched at `launch` is drawn at: the predicted present when
-/// fired, easing into the display tick over [`BLEND_VIEW_DELAYS`] view delays of flight at
-/// a constant four fifths of real time.
+/// fired, easing into the tick it settles on (`display`) over [`BLEND_VIEW_DELAYS`] view
+/// delays of flight at a constant four fifths of real time.
 pub fn own_clock(present: f64, display: f64, launch: f64) -> f64 {
     let delay = (present - display).max(0.0);
     let blend = BLEND_VIEW_DELAYS * delay;

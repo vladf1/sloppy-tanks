@@ -9,7 +9,7 @@ use std::collections::VecDeque;
 
 use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::network_timeline::hull_gap;
-use crate::sim::math::{Vec2, distance};
+use crate::sim::math::Vec2;
 use crate::sim::render_state::RenderState;
 use crate::sim::types::VehicleKind;
 
@@ -93,7 +93,8 @@ struct DrawnFrame {
     present: f64,
     /// The viewer's hull: kind, position and heading.
     viewer: Option<(VehicleKind, Vec2, f64)>,
-    tanks: Vec<(u32, Vec2)>,
+    /// Each other live tank: id, kind, position and heading.
+    tanks: Vec<(u32, VehicleKind, Vec2, f64)>,
     shells: Vec<(u32, Vec2)>,
 }
 
@@ -106,8 +107,9 @@ pub struct FeelReadings {
     /// How far behind the viewer's predicted present the other tanks are drawn, ms, one
     /// sample per drawn frame.
     pub view_delay: Samples,
-    /// Per hit the viewer scored on another tank: how far that tank was drawn, when the
-    /// viewer's own present reached the hit, from where the server hit it, metres.
+    /// Per shell hit the viewer scored on another tank: how far the server's impact was
+    /// from that tank's hit box as drawn when the viewer's own present reached the hit,
+    /// metres. Zero when the server judges shells where the shooter saw the target.
     pub hit_offset: Samples,
     /// Per enemy shell that hit the viewer: how close it was drawn to the viewer's hull (its
     /// hit box) around the moment the viewer's present reached the hit, metres. A shell
@@ -192,7 +194,7 @@ impl FeelReadings {
                 .tanks
                 .iter()
                 .filter(|tank| tank.alive && tank.id != state.viewer_id)
-                .map(|tank| (tank.id, Vec2::new(tank.position.x, tank.position.z))),
+                .map(|tank| (tank.id, tank.kind, tank.position.planar(), tank.heading)),
         );
         frame.shells.clear();
         frame.shells.extend(
@@ -257,9 +259,8 @@ impl FeelReadings {
         }
     }
 
-    /// The viewer's shot or blast hurt or killed tank `victim` at `tick`, where the server
-    /// had it at `x`, `z`.
-    pub fn own_hit(&mut self, tick: f64, victim: u32, x: f64, z: f64) {
+    /// The viewer's shell hurt or killed tank `victim` at `tick`, striking it at `impact`.
+    pub fn own_hit(&mut self, tick: f64, victim: u32, impact: Vec2) {
         let Some(frame) = self
             .frames
             .iter()
@@ -268,8 +269,11 @@ impl FeelReadings {
         else {
             return;
         };
-        if let Some((_, drawn)) = frame.tanks.iter().find(|(id, _)| *id == victim) {
-            self.hit_offset.add(distance(*drawn, Vec2::new(x, z)));
+        if let Some(&(_, kind, position, heading)) =
+            frame.tanks.iter().find(|(id, ..)| *id == victim)
+        {
+            self.hit_offset
+                .add(hull_gap(kind, position, heading, impact));
         }
     }
 }

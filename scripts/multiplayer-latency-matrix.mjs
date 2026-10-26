@@ -10,7 +10,7 @@
  * It starts its own server (`target/server/sloppy-server`, `pnpm run server:build`) on
  * `SLOPPY_MATRIX_PORT` (default 8791) so its byte counts hold only this run; run Vite and
  * pass its URL as `SLOPPY_URL`. `SLOPPY_MATRIX_PARAMS` adds page parameters to both players
- * (`dodge=0` compares without "dodger first"). Manual evidence, not a gate: keep it out of
+ * (`dodge=0` compares without "dodger first", `shooter=0` without "shooter first"). Manual evidence, not a gate: keep it out of
  * `pnpm run check`.
  *
  *   SLOPPY_URL=http://127.0.0.1:5174/sloppy-tanks/ SLOPPY_MATRIX_LABEL=baseline \
@@ -351,7 +351,7 @@ function rows(result) {
     "late inputs": `${player.lateInputStarts}/${player.inputStarts}`,
     "rx ms/s": round(player.receiveMsPerSecond, 1),
     "own shots": player.ownShots
-      ? `${player.ownShots.confirmed}/${player.ownShots.predicted} -${player.ownShots.unconfirmedShells}`
+      ? `${player.ownShots.confirmed}/${player.ownShots.predicted} -${player.ownShots.unconfirmedShells} ${player.ownShots.phantomStrikes ?? 0} phantom`
       : null,
     "KB/s": round(result.bandwidth?.wireKBpsPerPlayer, 1),
   }));

@@ -5,7 +5,7 @@ use rapier3d::prelude::Ray;
 use super::ammunition::{consume_ammo, equipped_weapon};
 use super::combat_rules::COMBAT;
 use super::data::{PLAYER_FIRE_RATE_MULTIPLIER, TEAM_COLORS, group, weapon};
-use super::hitboxes::{ShotProbe, tank_hit_time};
+use super::hitboxes::{HullAt, ShotProbe, tank_hit_time};
 use super::humvee_tactics::withdraw_humvee;
 use super::math::Vec2;
 use super::physics::{query_filter, vector};
@@ -88,8 +88,15 @@ pub fn fire_weapon(simulation: &mut Simulation, tank_index: usize) {
         ignored: Some(id),
     };
     for target in &simulation.tanks {
-        if let Some(hit) = tank_hit_time(simulation, &probe, target, spawn_distance, 0.0, 0.0, None)
-        {
+        if let Some(hit) = tank_hit_time(
+            simulation,
+            &probe,
+            target,
+            spawn_distance,
+            0.0,
+            0.0,
+            HullAt::Body,
+        ) {
             spawn_distance = spawn_distance.min(hit);
         }
     }

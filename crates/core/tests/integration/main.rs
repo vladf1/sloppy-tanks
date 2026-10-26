@@ -43,6 +43,7 @@ mod render_state;
 mod resting_stones;
 mod round_recap;
 mod shoot_mines;
+mod shooter_first;
 mod simulation_setup;
 mod stress_test_level;
 mod superstress_level;

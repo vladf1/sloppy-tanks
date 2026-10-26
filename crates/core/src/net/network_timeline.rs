@@ -8,7 +8,9 @@
 //! viewer's hull, by how much of that distance it has covered where it is drawn, and it
 //! is drawn that share of the view delay ahead of the display; it reaches the hull on the
 //! viewer's own clock, so whether it meets the predicted hull shows as the host will
-//! decide it. Once it has passed the viewer it eases back to the display clock at four
+//! decide it; a player's shell, which the host judges against where its shooter saw the
+//! viewer, strikes the hull where it was drawn that long ago. Once it has passed the
+//! viewer it eases back to the display clock at four
 //! fifths of real time, never running backwards; a bounce starts its approach anew. Ahead of the host's newest tick a shell
 //! stops at cover the predicted world puts in its way, and at the viewer's hull, showing
 //! its impact there; the host's own effect for it is then dropped. The host's effects at
@@ -28,6 +30,7 @@ use crate::sim::data::weapon;
 use crate::sim::hitboxes::SHELL_HIT_RADIUS;
 use crate::sim::math::{Vec2, distance};
 use crate::sim::render_state::RenderState;
+use crate::sim::shooter_rewind::{MAX_REWIND_TICKS, target_ticks};
 use crate::sim::tank_dimensions::tank_hull;
 use crate::sim::types::{SimEvent, SimEventType, Team, VehicleKind, Weapon};
 
@@ -49,7 +52,7 @@ const STRIKE_TICKS: f64 = 2.0;
 const STRIKE_DISTANCE: f64 = 1.5;
 /// A strike on the viewer's hull the host has not reported this many ticks after it never
 /// happened (the predicted hull was elsewhere on the host): the shell flies on.
-const STRIKE_CONFIRM_TICKS: f64 = 3.0;
+pub(super) const STRIKE_CONFIRM_TICKS: f64 = 3.0;
 /// Most local strikes remembered for dropping the host's effects.
 const MAX_STRIKES: usize = 32;
 
@@ -63,11 +66,25 @@ pub struct Dodger {
     pub kind: VehicleKind,
     pub team: Team,
     pub tank_id: u32,
+    /// Where the hull was drawn whole ticks before the present (position and heading),
+    /// newest first, for players' shells the host judges against its past.
+    pub trail: [Option<(Vec2, f64)>; TRAIL_TICKS],
 }
 
+/// Ticks of the viewer's past hull a [`Dodger`] keeps: the host's longest rewind.
+pub const TRAIL_TICKS: usize = MAX_REWIND_TICKS as usize + 1;
+
 impl Dodger {
-    fn gap(&self, point: Vec2) -> f64 {
-        hull_gap(self.kind, self.position, self.heading, point)
+    /// How far `point` is from the hit box of the hull as drawn `back` ticks ago.
+    fn gap(&self, point: Vec2, back: u32) -> f64 {
+        let (position, heading) = self
+            .trail
+            .get(back as usize)
+            .copied()
+            .flatten()
+            .filter(|_| back > 0)
+            .unwrap_or((self.position, self.heading));
+        hull_gap(self.kind, position, heading, point)
     }
 }
 
@@ -92,6 +109,9 @@ struct Shell {
     /// Where its current leg started (fired or bounced), and that leg's start tick.
     fired: Vec2,
     leg: Option<f64>,
+    /// Where it was fired, and the ticks it rewinds the tanks it meets (a player's).
+    origin: Vec2,
+    rewind: u32,
     /// The largest share of its flight to the viewer it has covered where drawn.
     presence: f64,
     /// Its nearest approach to the viewer so far where drawn, metres.
@@ -117,6 +137,8 @@ impl Shell {
             team: path.launch.team,
             fired: Vec2::new(path.x, path.z),
             leg: None,
+            origin: Vec2::new(path.x, path.z),
+            rewind: path.launch.rewind,
             presence: 0.0,
             closest: f64::INFINITY,
             receding: false,
@@ -126,6 +148,12 @@ impl Shell {
             missed: false,
             events: Vec::new(),
         }
+    }
+
+    /// The ticks back the host judges it against `dodger`'s hull: its shooter's view
+    /// delay, less where the shooter drew the viewer nearer its present.
+    fn back(&self, dodger: &Dodger) -> u32 {
+        target_ticks(self.rewind, distance(self.origin, dodger.position))
     }
 
     /// The tick it is drawn at for `dodger` with the display at `display`, `elapsed`
@@ -160,10 +188,11 @@ impl Shell {
             }
             if !self.receding {
                 let at = leg.path.at(guess);
-                let gap = dodger.gap(Vec2::new(at.x, at.z));
+                let back = self.back(dodger);
+                let gap = dodger.gap(Vec2::new(at.x, at.z), back);
                 self.closest = self.closest.min(gap);
                 self.receding = gap > self.closest + RECEDE_DISTANCE;
-                let span = dodger.gap(self.fired);
+                let span = dodger.gap(self.fired, back);
                 let presence = if span > 0.0 {
                     (1.0 - gap / span).clamp(0.0, 1.0)
                 } else {
@@ -456,9 +485,9 @@ impl NetworkTimeline {
                 }
                 if shell.struck.is_some() {
                     drawn = None;
-                } else if let Some(at) =
-                    drawn.filter(|at| !shell.missed && dodger.gap(Vec2::new(at.x, at.z)) == 0.0)
-                {
+                } else if let Some(at) = drawn.filter(|at| {
+                    !shell.missed && dodger.gap(Vec2::new(at.x, at.z), shell.back(dodger)) == 0.0
+                }) {
                     // It reaches the viewer's hull on the viewer's clock.
                     shell.struck = Some(tick);
                     for strike in hull_strike(&leg.path, tick, Vec2::new(at.x, at.z)) {
@@ -514,9 +543,8 @@ fn same_strike(a: &TimedEvent, b: &TimedEvent) -> bool {
         ) <= STRIKE_DISTANCE
 }
 
-/// The host's effects of a shell on `path` striking the viewer's hull at `point` on
-/// `tick` (`resolve_contact`'s tank contact): an impact flash, after a rocket's blast.
-fn hull_strike(path: &ShotPath, tick: f64, point: Vec2) -> Vec<TimedEvent> {
+/// The host's effects of a shell on `path` striking a hull at `point` on `tick` (`resolve_contact`'s tank contact): an impact flash, after a rocket's blast.
+pub(super) fn hull_strike(path: &ShotPath, tick: f64, point: Vec2) -> Vec<TimedEvent> {
     let mut strikes = Vec::with_capacity(2);
     let mut timed = |event| {
         strikes.push(TimedEvent {
