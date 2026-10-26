@@ -4,7 +4,7 @@
     "hostnames": ["sloppy-tanks-server.fridman.me", "{dashed-ip}.nip.io"]
   },
   "dev": {
-    "ip": "45.63.62.42",
+    "ip": "144.202.121.45",
     "hostnames": ["{dashed-ip}.nip.io"]
   }
 }

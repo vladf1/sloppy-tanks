@@ -285,7 +285,10 @@ runs on its own machine: the `dev` entry of `deploy/servers.json`, reached at th
 first of its hostnames, now its nip.io name (`wss://1-2-3-4.nip.io`, dashboard at
 `/dashboard`). `deploy:dev` redeploys that dev server from the same checkout first
 (over SSH) so client and server versions match; production multiplayer is never
-affected.
+affected. Unlike production, the dev site keeps the development network tools: a
+room page takes `?latency=`, `?jitter=` and `?stall=` (milliseconds of simulated
+transport delay), `&latencySlider` shows sliders that change them mid-battle, and
+`?dodge=0` / `?shooter=0` turn off the fairness options for comparison.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.

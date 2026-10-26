@@ -52,7 +52,8 @@ const FRAME = {
   viewerY: 14,
   ran: 15,
 } as const;
-/** The dev-build page parameter that shows the transport delay sliders. */
+/** The page parameter that shows the transport delay sliders on a dev server or the dev
+ * site. */
 const LATENCY_SLIDER_PARAM = "latencySlider";
 /** The engine asks for timers at least this often (heartbeat, reconnect, dev delay). */
 const POLL_MS = 250;
@@ -208,7 +209,9 @@ export async function startMultiplayer(
       : [innerWidth, innerHeight];
   };
   const params = new URLSearchParams(location.search);
-  const delay = import.meta.env.DEV
+  // The development network tools, on the dev server and the dev site.
+  const devTools = import.meta.env.DEV || import.meta.env.VITE_DEV_TOOLS === "1";
+  const delay = devTools
     ? Object.fromEntries(
         TRANSPORT_DELAY_PARAMS.filter((key) => params.has(key)).map((key) => [
           key,
@@ -218,7 +221,7 @@ export async function startMultiplayer(
     : {};
   // Development comparisons: `?dodge=0` draws enemy shells on the display clock alone,
   // `?shooter=0` has the host judge this player's shells in its present.
-  const compare = import.meta.env.DEV
+  const compare = devTools
     ? Object.fromEntries(
         (["dodge", "shooter"] as const)
           .filter((key) => params.get(key) === "0")
@@ -642,9 +645,9 @@ export async function startMultiplayer(
         ui,
       },
     });
-    if (params.has(LATENCY_SLIDER_PARAM)) {
-      root.append(latencySlider(game, params, () => ui.canvas.focus()));
-    }
+  }
+  if (devTools && params.has(LATENCY_SLIDER_PARAM)) {
+    root.append(latencySlider(game, params, () => ui.canvas.focus()));
   }
 }
 
