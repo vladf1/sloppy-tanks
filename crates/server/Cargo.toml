@@ -19,6 +19,10 @@ flate2.workspace = true
 sha1_smol.workspace = true
 getrandom.workspace = true
 libc.workspace = true
+rustls.workspace = true
+rustls-graviola.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
