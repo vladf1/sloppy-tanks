@@ -120,9 +120,9 @@ export class RoomBrowser {
     }
     this.join.addEventListener("click", () => this.joinSelected());
     this.create.addEventListener("click", () => this.createRoom());
-    // A phone's one action creates a room only when it knows none is open, so it waits
-    // for the first room list; elsewhere the new room is a choice beside the list.
-    this.create.disabled = this.autoPick;
+    // A new room opens on a server the directory lists, so the button waits for the first
+    // list (which also tells a phone's one action whether a room is open).
+    this.create.disabled = true;
     this.newRoom.addEventListener("change", () => this.choose(""));
     // Editing the new room's rules chooses the new room.
     this.element(".room-rules").addEventListener("focusin", () => {
@@ -230,6 +230,8 @@ export class RoomBrowser {
 
   /** `room` is an open room's code, or "" for the new room. */
   private choose(room: string): void {
+    // The player's own choice ends a room link's wait for its room.
+    this.link = undefined;
     this.selected = room;
     this.join.disabled = !room;
     this.lockMap();
@@ -382,10 +384,14 @@ export class RoomBrowser {
     this.countdown = undefined;
   }
 
-  /** Select the linked room if it can take a player; otherwise say why not. */
+  /** Select the linked room if it can take a player; otherwise say why not. A room made
+   * moments ago reaches the directory a few seconds later, so the link keeps watching
+   * the next lists until its room shows up or the player chooses. */
   private followLink(link: RoomLink): boolean {
-    this.link = undefined;
     const listing = this.rooms.find((room) => room.room === link.room);
+    if (listing) {
+      this.link = undefined;
+    }
     const open = !!listing && this.available(listing);
     if (open) {
       this.selected = link.room;
