@@ -74,9 +74,10 @@ fn streak_flame(s: ptr<function, Surface>, f: EffectFragment, kind: f32) {
         let n2 = streak_noise(vec2f(wx * 8.0 - seed * 0.7 + n1 * 1.3, flow * 2.4 - n1 * 0.8));
         let n = n1 * 0.55 + n2 * 0.45;
         let field = envelope + (n - 0.5) * ragged - pinch;
-        // The root rises out of the opening or the ground raggedly, never
-        // along a line.
-        let root = smoothstep(0.0, 0.05 + 0.16 * n2, along + (n1 - 0.5) * 0.06);
+        // The root curls up out of the opening or off the ground: lowest in the
+        // middle, rising toward the flame's sides, and ragged, never a line.
+        let lip = 0.2 * wx * wx + (n1 - 0.5) * 0.08;
+        let root = smoothstep(lip, lip + 0.05 + 0.14 * n2, along);
         // Crisp low down, softening into wisps toward the tips.
         body = smoothstep(0.0, 0.14 + 0.42 * along, field) * root
             * (1.0 - smoothstep(0.86, 1.0, along));

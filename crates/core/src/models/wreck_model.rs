@@ -43,6 +43,9 @@ pub struct WreckVent {
     pub center: DVec3,
     /// Its half size across (x) and along (z) the vehicle.
     pub half_size: DVec2,
+    /// How deep its floor lies below its top: zero for grilles and hatches on a
+    /// flat deck, the well's depth for the open turret ring.
+    pub depth: f64,
     /// The main blaze, which feeds the smoke column; the others lick out beside it.
     pub main: bool,
 }
@@ -65,18 +68,24 @@ pub fn wreck_vents(kind: VehicleKind, wreck_part: WreckPart) -> &'static [WreckV
 }
 
 fn vents(kind: VehicleKind, wreck_part: WreckPart) -> Vec<WreckVent> {
-    let openings: Vec<(DVec3, DVec2)> = match wreck_openings(kind) {
-        Some(tank) if wreck_part == WreckPart::Hull => vec![tank.ring, tank.engine],
-        Some(tank) => [tank.engine].into_iter().chain(tank.hatches).collect(),
-        None => humvee_wreck_openings().to_vec(),
+    let flat = |(top, half_size)| (top, half_size, 0.0);
+    let openings: Vec<(DVec3, DVec2, f64)> = match wreck_openings(kind) {
+        Some(tank) if wreck_part == WreckPart::Hull => vec![tank.ring, flat(tank.engine)],
+        Some(tank) => [tank.engine]
+            .into_iter()
+            .chain(tank.hatches)
+            .map(flat)
+            .collect(),
+        None => humvee_wreck_openings().map(flat).to_vec(),
     };
     let center = wreck_center(kind, wreck_part);
     openings
         .into_iter()
         .enumerate()
-        .map(|(i, (top, half_size))| WreckVent {
+        .map(|(i, (top, half_size, depth))| WreckVent {
             center: top - center,
             half_size,
+            depth,
             main: i == 0,
         })
         .collect()
@@ -383,6 +392,11 @@ mod tests {
             );
             assert!(
                 (ring.size().x / 2.0 - vent.half_size.x).abs() < 0.01,
+                "{kind:?} {ring:?} {vent:?}"
+            );
+            // Its flames rise from the well's floor.
+            assert!(
+                (ring.max.y - (vent.center.y - vent.depth)).abs() < 0.01,
                 "{kind:?} {ring:?} {vent:?}"
             );
             let hatches = embers(kind, WreckPart::Intact);

@@ -49,14 +49,16 @@ const COLUMN_GROWTH: f64 = 1.6;
 static UNFOUND_VENTS: [WreckVent; 1] = [WreckVent {
     center: DVec3::new(0.0, 0.4, 0.0),
     half_size: DVec2::new(0.6, 0.6),
+    depth: 0.0,
     main: true,
 }];
 /// A hull whose up axis points lower than this lies on its roof: its fire burns
 /// out of its belly rather than down into the ground.
 const UPTURNED: f32 = -0.3;
-/// Flames stand this deep in their opening (m): just enough that no gap shows
-/// under them, while their ragged root still rises clear of a flat deck, which
-/// would cut it along a straight line.
+/// Flames stand this deep in their opening (m), below its floor when it has one
+/// (the open turret ring's well, whose rim then hides their root along its
+/// curve): just enough that no gap shows under them, while their ragged root
+/// still rises clear of a flat deck, which would cut it along a straight line.
 const FLAME_SINK: f32 = 0.04;
 /// A flame's card is this much wider than its opening: the body fills the inner
 /// share of the card's root (`streak.wgsl`).
@@ -77,8 +79,11 @@ const ANCHOR_SECONDS: f64 = 1.5;
 const TRAIL_SAMPLE: f64 = 0.03;
 const TRAIL_SECONDS: f64 = 2.6;
 /// The hull counts as at rest below this speed (m/s), and the fire takes hold
-/// and dies back at these rates (1/s) as it settles or is thrown again.
+/// and dies back at these rates (1/s) as it settles or is thrown again. Once it
+/// has caught, only a throw blows it out: a hull rising or falling faster than
+/// this (m/s), not one shoved along the ground.
 const REST_SPEED: f32 = 1.2;
+const THROWN_CLIMB: f32 = 2.0;
 const CATCH_RATE: f64 = 3.0;
 const DOUSE_RATE: f64 = 5.0;
 /// A fire whose hull piece was never found takes hold this late (s).
@@ -137,6 +142,8 @@ struct Burner {
     hull_trail_clock: f64,
     /// 0 while the hull flies, rising to 1 once it has come to rest.
     settled: f64,
+    /// The fire has taken hold, and burns on until the hull is thrown again.
+    caught: bool,
     /// Seconds the smoke column has been climbing off the resting hull: it
     /// grows up from the fire rather than appearing whole.
     column: f64,
@@ -201,6 +208,7 @@ impl Default for Burner {
             column: 0.0,
             hull_trail_clock: 0.0,
             settled: 0.0,
+            caught: false,
             ember_clock: 0.0,
             fire: 0.0,
             swirls: [(f64::NAN, 0.0); SMOKE_PUFFS],
@@ -347,12 +355,13 @@ fn follow(burner: &mut Burner, state: &RenderState, dt: f64) {
     let find = |id: Option<u32>| {
         id.and_then(|id| state.fragments.iter().find(|fragment| fragment.id == id))
     };
-    let mut speed = 0.0;
+    let mut velocity = Vec3::ZERO;
     if let Some(hull) = find(burner.hull) {
         let (position, rotation) = fragment_pose(hull);
         if dt > 0.0 {
-            speed = (position - burner.position).length() / dt as f32;
+            velocity = (position - burner.position) / dt as f32;
         }
+        let speed = velocity.length();
         (burner.position, burner.rotation) = (position, rotation);
         if speed >= REST_SPEED {
             sample(
@@ -364,9 +373,11 @@ fn follow(burner: &mut Burner, state: &RenderState, dt: f64) {
             );
         }
     }
-    // Fire takes hold on a hull at rest and is blown out when it is thrown again.
+    // Fire takes hold on a hull at rest and is blown out when it is thrown again;
+    // a burning hull shoved along the ground burns on.
     let resting = match burner.hull {
-        Some(_) => speed < REST_SPEED,
+        Some(_) if burner.caught => velocity.y.abs() < THROWN_CLIMB,
+        Some(_) => velocity.length() < REST_SPEED,
         None => burner.age >= UNFOUND_CATCH_SECONDS,
     };
     burner.settled = if resting {
@@ -374,6 +385,11 @@ fn follow(burner: &mut Burner, state: &RenderState, dt: f64) {
     } else {
         (burner.settled - dt * DOUSE_RATE).max(0.0)
     };
+    if burner.settled >= 1.0 {
+        burner.caught = true;
+    } else if burner.settled <= 0.0 {
+        burner.caught = false;
+    }
     burner.column += dt.max(0.0) * burner.settled * COLUMN_GROWTH;
     if let Some(turret) = find(burner.turret) {
         let (position, _) = fragment_pose(turret);
@@ -548,14 +564,20 @@ fn draw(
         let jf = j as f32;
         let breathe = (time as f32 * 4.3 + burner.seed as f32 * 23.0 + jf * 2.1).sin();
         let lean = (up + side * 0.08 * breathe).normalize();
-        let root = at - Vec3::Y * FLAME_SINK;
+        // A well's flames rise from its floor, down the opening's own axis.
+        let depth = if upturned {
+            0.0
+        } else {
+            vent.depth as f32 * scale
+        };
+        let root = at - rotation * Vec3::Y * depth - Vec3::Y * FLAME_SINK;
         let strength = 0.6 + 0.4 * level as f32;
         flame(
             &mut sparks.records,
             root,
             lean,
             width,
-            reach * (0.93 + 0.07 * breathe) * strength,
+            depth + reach * (0.93 + 0.07 * breathe) * strength,
             (burner.seed as f32 * 3.7 + jf * 0.31).fract(),
             [r, g, b, (level * (0.7 + 0.1 * flicker)) as f32],
         );
@@ -566,7 +588,7 @@ fn draw(
                 root,
                 (up - side * 0.06 * breathe).normalize(),
                 width * CORE_TONGUE[0],
-                reach * CORE_TONGUE[1] * (0.95 - 0.05 * breathe) * strength,
+                depth + reach * CORE_TONGUE[1] * (0.95 - 0.05 * breathe) * strength,
                 (burner.seed as f32 * 3.7 + 0.53).fract(),
                 [r, g, b, (level * 0.55) as f32],
             );
@@ -717,5 +739,17 @@ mod tests {
         let burner = &fires.burners[0];
         assert!(burner.fire > 0.3, "the hull at rest burns");
         assert!(puffs.len() >= SMOKE_PUFFS, "and smokes");
+        // Shoved along the ground by a tank, it burns on.
+        for _ in 0..60 {
+            state.fragments[0].position.z += 4.0 / 60.0;
+            step(&mut fires, &state, &mut puffs);
+        }
+        assert!(fires.burners[0].fire > 0.3, "a pushed wreck keeps burning");
+        // Thrown into the air again, the fire is blown out.
+        for _ in 0..30 {
+            state.fragments[0].position.y += 5.0 / 60.0;
+            step(&mut fires, &state, &mut puffs);
+        }
+        assert_eq!(fires.burners[0].fire, 0.0, "a thrown wreck's fire goes out");
     }
 }

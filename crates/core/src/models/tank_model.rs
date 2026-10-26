@@ -365,11 +365,14 @@ fn ring_opening(c: &Chassis) -> f64 {
     if c.scout { 0.5 } else { 0.65 }
 }
 
+/// The height of the open turret ring's floor.
+const RING_WELL_FLOOR: f64 = 0.395;
+
 /// A real cutout with visible inner walls and a dark recessed floor, not a black
 /// decal on the closed deck. Kept inside the original hull bounds.
 fn turret_ring_well(hull: &mut Node, deck: f64, opening: f64, ring_radius: f64) {
     let roof_y = deck + ROOF_RISE;
-    let floor_y = 0.395;
+    let floor_y = RING_WELL_FLOOR;
     let mut rim_mesh = ring_geometry(opening, ring_radius, 24);
     rim_mesh.rotate_x(-PI / 2.0);
     let rim = shadowed(Arc::new(rim_mesh), material(0x4a5358, 0.55, 0.8));
@@ -404,8 +407,8 @@ pub(super) struct WreckPose {
 /// The openings a tracked wreck burns out of, in the vehicle's frame before its
 /// scale, each as the middle of its top and its half size in plan.
 pub(super) struct WreckOpenings {
-    /// The hole a thrown turret leaves in the roof.
-    pub(super) ring: (DVec3, DVec2),
+    /// The hole a thrown turret leaves in the roof, and how deep its well is.
+    pub(super) ring: (DVec3, DVec2, f64),
     /// The engine deck's grilles.
     pub(super) engine: (DVec3, DVec2),
     /// The hatches a burnout blows open, on the turret knocked round on its ring.
@@ -420,6 +423,7 @@ pub(super) fn wreck_openings(kind: VehicleKind) -> Option<WreckOpenings> {
         ring: (
             DVec3::new(0.0, c.deck + ROOF_RISE, RING_Z),
             DVec2::splat(ring_opening(&c)),
+            c.deck + ROOF_RISE - RING_WELL_FLOOR,
         ),
         engine: engine_vent(&c),
         hatches: pose.hatches.map(|(top, radius)| {
