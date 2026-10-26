@@ -11,7 +11,9 @@ use super::LAUNCHER_Y;
 use super::kit::{Kit, Role, at, frame, place, revolve, slab};
 
 /// The ring sits on the roof plate.
-const RING_BASE: f64 = 1.745;
+pub(super) const RING_BASE: f64 = 1.745;
+/// The gunner's opening inside the ring.
+pub(super) const RING_OPENING: f64 = 0.56;
 const PLATE_BASE: f64 = 1.8;
 const PLATE_THICKNESS: f64 = 0.035;
 
@@ -67,16 +69,16 @@ const PLATES: [Plate; 4] = [
 pub(super) fn turret_kit() -> Kit {
     let mut kit = Kit::default();
     let ring = [
-        [0.56, RING_BASE],
+        [RING_OPENING, RING_BASE],
         [0.66, RING_BASE],
         [0.66, 1.8],
         [0.64, 1.82],
-        [0.56, 1.82],
-        [0.56, RING_BASE],
+        [RING_OPENING, 1.82],
+        [RING_OPENING, RING_BASE],
     ];
     let up = place([0.0; 3], [0.0, 0.0, PI / 2.0]);
     kit.add(Role::Shade, &revolve(&ring, 24, false), up);
-    kit.cylinder(Role::Gap, 0.56, 0.004, 24, at([0.0, 1.765, 0.0]));
+    kit.cylinder(Role::Gap, RING_OPENING, 0.004, 24, at([0.0, 1.765, 0.0]));
     for plate in &PLATES {
         let bearings: &[f64] = if plate.bearing == 0.0 {
             &[0.0]

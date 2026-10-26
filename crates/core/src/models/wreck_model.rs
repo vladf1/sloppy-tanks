@@ -11,12 +11,13 @@
 //! only a trace of the team paint left. Presentation darkens the whole wreck further
 //! as it ages.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
-use glam::{DMat4, DQuat, DVec3};
+use glam::{DMat4, DQuat, DVec2, DVec3};
 
 use super::batching::batch;
-use super::tank_model::{WreckPose, tank_model_variant, wreck_pose};
+use super::humvee_model::wreck_openings as humvee_wreck_openings;
+use super::tank_model::{WreckPose, tank_model_variant, wreck_openings, wreck_pose};
 use super::tank_surfaces::{
     is_camouflaged, is_signal_panel, scorched_paint_material, sooted_glass, unpaint,
 };
@@ -25,12 +26,71 @@ use crate::geometry::Mesh;
 use crate::geometry::math::{compose, decompose, hex_to_linear};
 use crate::geometry::node_bounds;
 use crate::scene::Node;
+use crate::sim::data::vehicle;
+use crate::sim::tank_dimensions::tank_hull;
 
 pub use crate::sim::types::WreckPart;
 
 /// Intact wrecks are centred on this fixed point rather than their bounds, so
 /// they rest where the live vehicle stood.
 const INTACT_CENTER: DVec3 = DVec3::new(0.0, 0.55, 0.0);
+
+/// An opening a burning wreck's fire comes out of, in the wreck piece's own
+/// centred frame before the vehicle scale (the frame [`wreck_model`] builds in).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct WreckVent {
+    /// The middle of the opening's top.
+    pub center: DVec3,
+    /// Its half size across (x) and along (z) the vehicle.
+    pub half_size: DVec2,
+    /// The main blaze, which feeds the smoke column; the others lick out beside it.
+    pub main: bool,
+}
+
+/// Where a wreck piece burns, main blaze first. A hull whose turret flew off roars
+/// out of the open turret ring and licks out of its engine deck; a burnt-out tank
+/// burns in its engine bay and out of the hatches the blast blew open; a Humvee
+/// out of its engine bay and its gunner's ring. Thrown turrets and guns do not burn.
+pub fn wreck_vents(kind: VehicleKind, wreck_part: WreckPart) -> &'static [WreckVent] {
+    static VENTS: OnceLock<[[Vec<WreckVent>; 2]; 4]> = OnceLock::new();
+    let vents = VENTS.get_or_init(|| {
+        VehicleKind::ALL
+            .map(|kind| [WreckPart::Intact, WreckPart::Hull].map(|part| vents(kind, part)))
+    });
+    match wreck_part {
+        WreckPart::Intact => &vents[kind.index()][0],
+        WreckPart::Hull => &vents[kind.index()][1],
+        WreckPart::Turret | WreckPart::TurretBarrel | WreckPart::Barrel => &[],
+    }
+}
+
+fn vents(kind: VehicleKind, wreck_part: WreckPart) -> Vec<WreckVent> {
+    let openings: Vec<(DVec3, DVec2)> = match wreck_openings(kind) {
+        Some(tank) if wreck_part == WreckPart::Hull => vec![tank.ring, tank.engine],
+        Some(tank) => [tank.engine].into_iter().chain(tank.hatches).collect(),
+        None => humvee_wreck_openings().to_vec(),
+    };
+    let center = wreck_center(kind, wreck_part);
+    openings
+        .into_iter()
+        .enumerate()
+        .map(|(i, (top, half_size))| WreckVent {
+            center: top - center,
+            half_size,
+            main: i == 0,
+        })
+        .collect()
+}
+
+/// The point a wreck piece is centred on (`build_wreck`): a whole wreck's fixed
+/// rest point, a hull's bounds measured once with the live vehicle's (the open
+/// turret ring stays inside them), divided out of the vehicle scale.
+fn wreck_center(kind: VehicleKind, wreck_part: WreckPart) -> DVec3 {
+    match wreck_part {
+        WreckPart::Intact => INTACT_CENTER,
+        _ => tank_hull(kind).center / vehicle(kind).scale,
+    }
+}
 
 /// `wreckModel(kind, team, part)`: a flat group of batched meshes in the part's
 /// centred frame. The vehicle's overall scale is not applied (the parts leave the
@@ -247,5 +307,90 @@ fn collect_meshes(node: &Node, parent_world: DMat4, out: &mut Vec<Node>) {
     }
     for child in &node.children {
         collect_meshes(child, world, out);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use glam::Vec3Swizzles;
+
+    use crate::geometry::Aabb;
+    use crate::models::tank_surfaces::ember_material;
+
+    /// The bounds of a wreck's glowing embers: the open turret ring's floor, or
+    /// the blown hatches. Batching bakes their paint into vertex colours but keeps
+    /// their glow.
+    fn embers(kind: VehicleKind, wreck_part: WreckPart) -> Aabb {
+        let ember = ember_material();
+        let mut glow = Node::group("embers");
+        glow.children = wreck_model(kind, Team::Blue, wreck_part)
+            .children
+            .iter()
+            .filter(|child| {
+                child.drawable.as_ref().is_some_and(|drawable| {
+                    drawable.material.emissive == ember.emissive
+                        && drawable.material.emissive_intensity == ember.emissive_intensity
+                })
+            })
+            .cloned()
+            .collect();
+        node_bounds(&glow, DMat4::IDENTITY)
+    }
+
+    #[test]
+    fn wrecks_burn_out_of_their_openings() {
+        for kind in VehicleKind::ALL {
+            for part in [WreckPart::Intact, WreckPart::Hull] {
+                let vents = wreck_vents(kind, part);
+                assert_eq!(vents.iter().filter(|vent| vent.main).count(), 1);
+                assert!(vents[0].main, "{kind:?} {part:?}: the main blaze first");
+                let bounds = node_bounds(&wreck_model(kind, Team::Blue, part), DMat4::IDENTITY);
+                for vent in vents {
+                    // Over the piece and up on it (an intact wreck's turret stands
+                    // above its engine deck), neither floating above it nor buried
+                    // in its belly.
+                    let (low, high) = (bounds.min - 0.01, bounds.max + 0.01);
+                    let c = vent.center;
+                    assert!(
+                        c.x - vent.half_size.x >= low.x
+                            && c.x + vent.half_size.x <= high.x
+                            && c.z - vent.half_size.y >= low.z
+                            && c.z + vent.half_size.y <= high.z
+                            && c.y > bounds.min.y + 0.4 * bounds.size().y
+                            && c.y <= high.y,
+                        "{kind:?} {part:?} {vent:?} {bounds:?}"
+                    );
+                }
+            }
+            for part in [
+                WreckPart::Turret,
+                WreckPart::TurretBarrel,
+                WreckPart::Barrel,
+            ] {
+                assert!(wreck_vents(kind, part).is_empty());
+            }
+            if kind == VehicleKind::Humvee {
+                continue;
+            }
+            // The turret ring's fire stands in its smouldering well, and a burnout's
+            // hatch fires in the hatches whose embers glow.
+            let ring = embers(kind, WreckPart::Hull);
+            let vent = wreck_vents(kind, WreckPart::Hull)[0];
+            assert!(
+                (ring.center() - vent.center).xz().length() < 0.01,
+                "{kind:?} {ring:?} {vent:?}"
+            );
+            assert!(
+                (ring.size().x / 2.0 - vent.half_size.x).abs() < 0.01,
+                "{kind:?} {ring:?} {vent:?}"
+            );
+            let hatches = embers(kind, WreckPart::Intact);
+            let [_, first, second] = wreck_vents(kind, WreckPart::Intact) else {
+                panic!("{kind:?}: engine deck and two hatches");
+            };
+            let middle = (first.center + second.center) / 2.0;
+            assert!((hatches.center() - middle).xz().length() < 0.03, "{kind:?}");
+        }
     }
 }

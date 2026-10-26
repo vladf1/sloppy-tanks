@@ -9,15 +9,15 @@
 use std::f64::consts::PI;
 use std::sync::Arc;
 
-use glam::DVec3;
+use glam::{DQuat, DVec2, DVec3};
 
 use super::humvee_model::humvee_model;
 use super::model_primitives::{
     Cache, cylinder_part, material, paint, put, rotated, shadow_receiver, shadowed,
 };
 use super::tank_details::{
-    Assembly, RING_Z, ROOF_RISE, assembly, gun_rise, hatch_tops, muzzle_z, ring_radius,
-    tube_radius, turret_outline,
+    Assembly, RING_Z, ROOF_RISE, assembly, engine_vent, gun_rise, hatch_tops, muzzle_z,
+    ring_radius, tube_radius, turret_outline,
 };
 use super::tank_kit::Coat;
 use super::tank_surfaces::{
@@ -203,12 +203,12 @@ fn turret_occlusion(c: &Chassis) -> Node {
 fn turret_occlusion_mesh(c: &Chassis) -> Mesh {
     let outline = turret_outline(c);
     let n = outline.len();
-    let centre = outline.iter().copied().sum::<glam::DVec2>() / n as f64;
+    let centre = outline.iter().copied().sum::<DVec2>() / n as f64;
     // Each edge's outward normal in plan, pointing away from the outline's centre.
     let normal = |i: usize| {
         let (a, b) = (outline[i], outline[(i + 1) % n]);
         let d = (b - a).normalize_or_zero();
-        let perp = glam::DVec2::new(d.y, -d.x);
+        let perp = DVec2::new(d.y, -d.x);
         if perp.dot((a + b) / 2.0 - centre) < 0.0 {
             -perp
         } else {
@@ -349,8 +349,7 @@ fn hull(c: &Chassis, open_turret_ring: bool) -> Node {
     };
     add_assembly(&mut hull, c, armor);
     if open_turret_ring {
-        let opening = if c.scout { 0.5 } else { 0.65 };
-        turret_ring_well(&mut hull, c.deck, opening, ring_radius(c));
+        turret_ring_well(&mut hull, c.deck, ring_opening(c), ring_radius(c));
     }
     // The renderer still poses the (empty) tread group the Humvee shares; the
     // belt scrolls in its shader.
@@ -359,6 +358,11 @@ fn hull(c: &Chassis, open_turret_ring: bool) -> Node {
         running_gear(&mut hull, c, side);
     }
     hull
+}
+
+/// The radius of the hole a thrown turret leaves in the hull roof.
+fn ring_opening(c: &Chassis) -> f64 {
+    if c.scout { 0.5 } else { 0.65 }
 }
 
 /// A real cutout with visible inner walls and a dark recessed floor, not a black
@@ -393,6 +397,38 @@ pub(super) struct WreckPose {
     pub(super) trunnion: DVec3,
     /// Glowing discs over the open hatches, in the turret's frame.
     pub(super) embers: Node,
+    /// Those hatches as (centre of the opening's top, radius), in the turret's frame.
+    pub(super) hatches: [(DVec3, f64); 2],
+}
+
+/// The openings a tracked wreck burns out of, in the vehicle's frame before its
+/// scale, each as the middle of its top and its half size in plan.
+pub(super) struct WreckOpenings {
+    /// The hole a thrown turret leaves in the roof.
+    pub(super) ring: (DVec3, DVec2),
+    /// The engine deck's grilles.
+    pub(super) engine: (DVec3, DVec2),
+    /// The hatches a burnout blows open, on the turret knocked round on its ring.
+    pub(super) hatches: [(DVec3, DVec2); 2],
+}
+
+pub(super) fn wreck_openings(kind: VehicleKind) -> Option<WreckOpenings> {
+    let pose = wreck_pose(kind)?;
+    let c = chassis(kind, Team::Blue, [0; 3]);
+    let traverse = DQuat::from_rotation_y(pose.turret_yaw);
+    Some(WreckOpenings {
+        ring: (
+            DVec3::new(0.0, c.deck + ROOF_RISE, RING_Z),
+            DVec2::splat(ring_opening(&c)),
+        ),
+        engine: engine_vent(&c),
+        hatches: pose.hatches.map(|(top, radius)| {
+            (
+                pose.ring + traverse * (top - pose.ring),
+                DVec2::splat(radius),
+            )
+        }),
+    })
 }
 
 /// Ember disc thickness, and how much of a hatch opening it fills.
@@ -407,8 +443,13 @@ pub(super) fn wreck_pose(kind: VehicleKind) -> Option<WreckPose> {
     let c = chassis(kind, Team::Blue, [0; 3]);
     let mut embers = Node::group("embers");
     let (stretch, face_z) = turret_stretch(&c);
-    for (top, radius) in hatch_tops(&c) {
-        let top = top * stretch + DVec3::new(0.0, 0.0, face_z * (1.0 - stretch.z));
+    let hatches = hatch_tops(&c).map(|(top, radius)| {
+        (
+            top * stretch + DVec3::new(0.0, 0.0, face_z * (1.0 - stretch.z)),
+            radius,
+        )
+    });
+    for (top, radius) in hatches {
         let mut disc = cylinder_part(radius * EMBER_FILL, EMBER_DISC, 0x000000, 16);
         if let Some(drawable) = &mut disc.drawable {
             drawable.material = ember_material();
@@ -421,6 +462,7 @@ pub(super) fn wreck_pose(kind: VehicleKind) -> Option<WreckPose> {
         gun_droop: c.pick(0.07, 0.085, 0.06),
         trunnion: DVec3::new(0.0, c.deck + gun_rise(&c), c.pick(1.0, 1.13, 1.3)),
         embers,
+        hatches,
     })
 }
 

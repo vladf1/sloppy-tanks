@@ -105,7 +105,7 @@ pub use humvee_model::HUMVEE_BODY_LENGTH_SCALE;
 pub use tank_dimensions::{TankDimensions, tank_dimensions};
 pub use tank_model::{release_tank_models, tank_model, tank_model_variant};
 pub use tank_surfaces::{TRACK_BELT_PERIOD, VEHICLE_PAINT_EFFECT, armor_wear_texture};
-pub use wreck_model::{WreckPart, wreck_model};
+pub use wreck_model::{WreckPart, WreckVent, wreck_model, wreck_vents};
 
 // Cover, trees and props.
 pub use barrel_debris::{BarrelScrap, barrel_scrap_geometry};

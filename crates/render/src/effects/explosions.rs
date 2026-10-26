@@ -199,8 +199,13 @@ const FIRE_LIGHT_COLOR: u32 = 0xffa465;
 /// HDR color.
 const GROUND_GLOW_SIZE: f64 = 7.0;
 const GROUND_GLOW_COLOR: [f32; 3] = [0.95, 0.5, 0.16];
-/// A drum's spilled fuel burns in this many licks between these times (s).
-const FUEL_FLAMES: usize = 4;
+/// A drum's spilled fuel burns as one pool where it stood, a low sheet of flame
+/// across the spill with a taller tongue over its middle: (width, height) of each
+/// (m, times the scale), between these times (s).
+const FUEL_FLAMES: [[f64; 2]; 2] = [[1.7, 0.9], [0.85, 1.45]];
+/// The pool's flames stand on the ground's surface (m), so their ragged root
+/// shows rather than the ground cutting them along a line.
+const FUEL_FIRE_ROOT: f32 = 0.08;
 /// Balls of fire rolling up off the burning fuel, each this long a climb (s);
 /// they use the puff slots a tank's turret jet would.
 const FUEL_BALLS: usize = 3;
@@ -712,8 +717,8 @@ fn mixed(a: [f64; 3], b: [f64; 3], t: f64) -> [f64; 3] {
     [0, 1, 2].map(|i| a[i] + (b[i] - a[i]) * t)
 }
 
-/// A burst drum's spilled fuel: a few low licks of flame on the ground round
-/// it, catching just after the fireball and guttering out, with their glow.
+/// A burst drum's spilled fuel: a pool of low flame on the ground where it stood,
+/// catching just after the fireball and guttering out, with its glow.
 fn fuel_fire(b: &Blast, t: f64, lifetime: f64, streaks: &mut PoolBuffer) {
     let fire = smoothstep(t, FUEL_FIRE[0], FUEL_FIRE[0] + 0.2)
         * (1.0 - smoothstep(t, FUEL_FIRE[1], lifetime * 0.95));
@@ -722,34 +727,27 @@ fn fuel_fire(b: &Blast, t: f64, lifetime: f64, streaks: &mut PoolBuffer) {
     }
     let s = b.scale as f32;
     let up = Vec3::new(WIND[0] as f32 * 0.25, 1.0, WIND[1] as f32 * 0.25).normalize();
-    for j in 0..FUEL_FLAMES {
+    for (j, [width, height]) in FUEL_FLAMES.into_iter().enumerate() {
         let jf = j as f64;
-        let angle = b.phase + jf * 2.399;
-        let reach = (0.25 + 0.55 * hash(b.phase + jf * 0.7)) * b.scale;
-        let base = Vec3::new(
-            (b.x + angle.cos() * reach) as f32,
-            0.05,
-            (b.z + angle.sin() * reach) as f32,
-        );
-        // One rate for every lick, each with its own phase.
+        // One rate for every flame, each with its own phase.
         let breathe = (t * 7.0 + b.phase * 3.0 + jf * 2.1).sin() as f32;
-        let size = (0.55 + 0.25 * hash(b.phase * 1.3 + jf)) as f32 * s;
         flame(
             streaks,
-            base,
-            (up + Vec3::new(0.12 * breathe, 0.0, -0.08 * breathe)).normalize(),
-            size,
-            size * (0.85 + 0.25 * breathe) * (0.5 + 0.5 * fire as f32),
+            Vec3::new(b.x as f32, FUEL_FIRE_ROOT, b.z as f32),
+            (up + Vec3::new(0.08 * breathe, 0.0, -0.05 * breathe)).normalize(),
+            width as f32 * s,
+            height as f32 * s * (0.92 + 0.08 * breathe) * (0.5 + 0.5 * fire as f32),
             (b.phase * 0.17 + jf * 0.23).fract() as f32,
             [1.05, 1.0, 1.0, (fire * 0.65) as f32],
         );
     }
+    // Added light turns sunlit grass lime: a faint glow, the light does the rest.
     let [r, g, bl] = GROUND_GLOW_COLOR;
     ground_glow(
         streaks,
         Vec3::new(b.x as f32, 0.08, b.z as f32),
         3.2 * s,
-        [r, g, bl, (fire * 0.55) as f32],
+        [r, g, bl, (fire * 0.3) as f32],
     );
 }
 
