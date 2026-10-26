@@ -17,9 +17,10 @@ bun run deploy:dev
 ```
 
 The launcher first runs a frozen Bun install in this directory, then runs the pinned
-Wrangler CLI on Node from the repository root. It skips Bun's `node` shim on PATH
-and fails with setup instructions if Node is missing. The first invocation installs the
-tools; later invocations check the lockfile against the existing installation.
+Wrangler CLI on Node from the repository root. It skips Bun's `node` shim, takes the
+first Node.js 22 or newer on PATH, and fails with setup instructions when there is none.
+The first invocation installs the tools; later invocations check the lockfile against
+the existing installation.
 Deployment scripts use this same launcher automatically. Normal development and
 bot control (`bun run bots`) do not need it.
 

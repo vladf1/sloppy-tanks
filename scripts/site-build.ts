@@ -66,6 +66,12 @@ export function sourceMetafile(metafile: Bun.BuildMetafile): Bun.BuildMetafile {
   return { inputs, outputs };
 }
 
+/** The load of the stylesheet at `href`, one per page however many modules ask for it, so
+ * the import that starts a lazy module can start its styles too (`withStyles`). */
+function styleLoad(href: string): string {
+  return `((globalThis.sloppyStyles??={})[${JSON.stringify(href)}]??=new Promise((resolve,reject)=>{const link=document.createElement("link");link.rel="stylesheet";link.href=${JSON.stringify(href)};link.onload=resolve;link.onerror=()=>reject(new Error("Could not load "+link.href));document.head.append(link)}))`;
+}
+
 /** CSS imports wait for their own stylesheet. Bun otherwise folds dynamic CSS into the
  * parent entry, downloading the touch UI and room styles before either is selected. */
 function browserAssets(
@@ -84,10 +90,7 @@ function browserAssets(
         if (!asset) throw new Error(`Missing stylesheet: ${args.path}`);
         const { name, body } = asset;
         files.set(name, body);
-        return {
-          loader: "js",
-          contents: `await new Promise((resolve,reject)=>{const link=document.createElement("link");link.rel="stylesheet";link.href=${JSON.stringify(base + name)};link.onload=resolve;link.onerror=()=>reject(new Error("Could not load "+link.href));document.head.append(link)});`,
-        };
+        return { loader: "js", contents: `await ${styleLoad(base + name)};` };
       });
     },
   };
@@ -232,6 +235,43 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
     }
     for (const output of result.outputs) files.set(output.path.replace(/^\.\//, ""), output);
   }
+  /** The stylesheets `file` loads before it runs: its own and its static imports'. */
+  const stylesOf = (file: string, seen = new Set<string>()): string[] => {
+    if (seen.has(file)) return [];
+    seen.add(file);
+    const output = metadata.outputs[file];
+    const own = Object.keys(output?.inputs ?? {}).flatMap((input) => {
+      const asset = cssAssets.get(path.join(root, input));
+      return asset ? [base + asset.name] : [];
+    });
+    const imported = (output?.imports ?? [])
+      .filter((dependency) => dependency.kind === "import-statement")
+      .flatMap((dependency) => stylesOf(dependency.path.replace(/^\.\//, ""), seen));
+    return [...new Set([...own, ...imported])];
+  };
+  /** An import of the lazy module `file` that starts its stylesheets beside its code,
+   * instead of when the module has downloaded and runs. */
+  const withStyles = (file: string) => {
+    const load = `import(${JSON.stringify(base + file)})`;
+    const styles = stylesOf(file);
+    return styles.length
+      ? `Promise.all([${load},${styles.map(styleLoad).join(",")}]).then(loaded=>loaded[0])`
+      : load;
+  };
+  for (const [file, output] of Object.entries(metadata.outputs)) {
+    const lazy = output.imports
+      .filter((dependency) => dependency.kind === "dynamic-import")
+      .map((dependency) => dependency.path.replace(/^\.\//, ""))
+      .filter((target) => stylesOf(target).length);
+    if (!lazy.length) continue;
+    let code = await files.get(file)!.text();
+    for (const target of lazy) {
+      const load = `import(${JSON.stringify(base + target)})`;
+      if (!code.includes(load)) throw new Error(`${file} imports ${target} in an unknown form`);
+      code = code.replaceAll(load, withStyles(target));
+    }
+    files.set(file, new Blob([code], { type: "text/javascript;charset=utf-8" }));
+  }
   for (const [page, template] of templates) {
     let html = template.replace(/<!-- module:(.+?) -->/g, (_match, entry: string) => {
       const file = entries.get(entry);
@@ -264,11 +304,11 @@ export async function buildSite(options: SiteOptions = {}): Promise<SiteBuild> {
       const css = startup.outputs.find((file) => file.path.endsWith(".css"));
       if (!js || !css) throw new Error("Missing inline startup code or styles");
       const imports = new Map(
-        lazyEntries.map((entry) => [entry.id, base + entries.get(entry.source)]),
+        lazyEntries.map((entry) => [entry.id, withStyles(entries.get(entry.source)!)]),
       );
       const script = (await js.text()).replace(
         /import\((["'`])(sloppy:\w+)\1\)/g,
-        (_load, _quote, id: string) => `import(${JSON.stringify(imports.get(id))})`,
+        (_load, _quote, id: string) => imports.get(id)!,
       );
       const graph = new Set<string>();
       const visit = (file: string) => {

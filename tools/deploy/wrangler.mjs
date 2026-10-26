@@ -10,16 +10,29 @@ function run(command, args) {
   if (result.status !== 0) process.exit(result.status ?? 1);
 }
 
+/** The oldest Node.js major version Wrangler supports. */
+const NODE_MAJOR = 22;
+
 // `bun run` puts a node -> bun shim first on PATH. Wrangler needs actual Node
 // because Miniflare uses Undici's dispatcher, which Bun 1.4.4 does not implement.
+// Take the first real Node new enough, so an old default (nvm's, say) fails here
+// with instructions rather than inside Wrangler after the build.
 const bun = realpathSync(process.execPath);
-const node = (process.env.PATH ?? "")
+const nodes = (process.env.PATH ?? "")
   .split(delimiter)
   .map((directory) => Bun.which("node", { PATH: directory }))
-  .find((candidate) => candidate && realpathSync(candidate) !== bun);
+  .filter((candidate) => candidate && realpathSync(candidate) !== bun)
+  .map((path) => ({
+    path,
+    version: spawnSync(path, ["-p", "process.versions.node"], { encoding: "utf8" }).stdout?.trim(),
+  }));
+const node = nodes.find(({ version }) => Number(version?.split(".")[0]) >= NODE_MAJOR)?.path;
 if (!node) {
+  const found = nodes.map(({ path, version }) => `${version || "unknown"} at ${path}`);
   console.error(
-    "Cloudflare tools require Node.js 22 or newer on PATH. See tools/deploy/README.md.",
+    `Cloudflare tools require Node.js ${NODE_MAJOR} or newer on PATH` +
+      (found.length ? ` (found ${found.join(", ")})` : "") +
+      ". See tools/deploy/README.md.",
   );
   process.exit(1);
 }

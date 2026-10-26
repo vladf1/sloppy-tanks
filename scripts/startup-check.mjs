@@ -80,20 +80,22 @@ try {
     map: window.sloppy.sim.mapMode,
     mode: window.sloppy.sim.gameMode,
     difficulty: window.sloppy.sim.difficulty,
+    round: window.sloppy.sim.match.round,
     canvases: document.querySelectorAll("canvas#game").length,
   }));
+  // A production page settles on round 4 here, as main's Vite build did; another rebuild
+  // for the late choice would raise it.
   assert.deepEqual(results.delayed, {
     tank: "heavy",
     map: "quarry",
     mode: "solo",
     difficulty: "hard",
+    round: 4,
     canvases: 1,
   });
-  // Preparation can begin before or after the late map choice. Whichever path ran,
-  // the settled round must not rebuild again while the player is driving.
-  const settledRound = await delayed.page.evaluate(() => window.sloppy.sim.match.round);
+  // Nor may the settled round rebuild while the player is driving.
   await delayed.page.waitForFunction(() => window.sloppy.sim.elapsed > 0.25);
-  assert.equal(await delayed.page.evaluate(() => window.sloppy.sim.match.round), settledRound);
+  assert.equal(await delayed.page.evaluate(() => window.sloppy.sim.match.round), 4);
   // A setup cloned while early GO disabled the tabs must unlock them next round.
   await delayed.page.keyboard.press("Escape");
   await delayed.page.locator("#end-battle").click();

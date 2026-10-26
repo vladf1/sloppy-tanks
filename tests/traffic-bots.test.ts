@@ -3,7 +3,6 @@ import assert from "node:assert/strict";
 import { spawn, type ChildProcess } from "node:child_process";
 import { existsSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import WebSocket from "ws";
 import { BotPlayer, openSeats, randomRoomCode, type ServerInfo } from "../bots/bot-player";
 import { readStateHeader } from "../bots/state-header";
 
@@ -84,25 +83,26 @@ test(
     });
     for (const [index, seat] of bots.entries()) {
       const socket = new WebSocket(`ws://${base}/room/${room}`);
+      socket.binaryType = "arraybuffer";
       seat.socket = socket;
-      socket.on("message", (data: Buffer, isBinary) => {
-        if (!isBinary) {
-          seat.bot.receive(String(data), performance.now());
+      socket.addEventListener("message", ({ data }: MessageEvent<string | ArrayBuffer>) => {
+        if (typeof data === "string") {
+          seat.bot.receive(data, performance.now());
           return;
         }
-        const header = readStateHeader(data);
+        const header = readStateHeader(new Uint8Array(data));
         if (header.type === "snapshot") {
           seat.acked = Math.max(seat.acked, header.ack ?? 0);
         }
         seat.bot.receive(data, performance.now());
       });
-      socket.on("close", (code) => {
+      socket.addEventListener("close", ({ code }) => {
         seat.closed = code;
         seat.bot.disconnected();
       });
       await new Promise((resolve, reject) => {
-        socket.once("open", resolve);
-        socket.once("error", reject);
+        socket.addEventListener("open", resolve, { once: true });
+        socket.addEventListener("error", reject, { once: true });
       });
       seat.bot.join((text) => socket.send(text), info, performance.now(), index === 0);
       await until(() => seat.bot.phase !== "joining", `bot-${index} to join`);

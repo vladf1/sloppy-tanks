@@ -48,3 +48,31 @@ test.skipIf(!engineBuilt)(
     for (const worker of workers) assert.ok(bake.includes(`/sloppy-tanks/${worker}`));
   },
 );
+
+test.skipIf(!engineBuilt)(
+  "a lazy module's stylesheet starts loading with its code, once per page",
+  async () => {
+    const { files, metadata } = await buildSite({});
+    const touch = [...files.keys()].find((name) => /^assets\/touch-controls-\w+\.js$/.test(name));
+    const sheet = [...files.keys()].find((name) => /^assets\/touch-controls-\w+\.css$/.test(name));
+    assert.ok(touch && sheet);
+    const importers = Object.entries(metadata.outputs).filter(([, output]) =>
+      output.imports.some(
+        (dependency) => dependency.kind === "dynamic-import" && dependency.path === `./${touch}`,
+      ),
+    );
+    assert.ok(importers.length, "something loads the touch controls lazily");
+    for (const [importer] of importers) {
+      const code = await files.get(importer)!.text();
+      assert.ok(
+        code.includes(
+          `Promise.all([import("/sloppy-tanks/${touch}"),((globalThis.sloppyStyles??={})["/sloppy-tanks/${sheet}"]`,
+        ),
+        `${importer} starts the touch styles with the touch module`,
+      );
+    }
+    // The module's own wait shares that load rather than adding a second link.
+    const own = await files.get(touch)!.text();
+    assert.ok(own.includes(`(globalThis.sloppyStyles??={})["/sloppy-tanks/${sheet}"]??=`));
+  },
+);

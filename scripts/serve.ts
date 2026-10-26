@@ -15,7 +15,8 @@ const { values } = parseArgs({
     outdir: { type: "string", default: path.join(root, "dist") },
   },
 });
-let port = Number(values.port ?? process.env.PORT ?? (values.preview ? 4173 : 5173));
+// An empty PORT, as some launchers export it, means the default, not a random port.
+let port = Number(values.port || process.env.PORT || (values.preview ? 4173 : 5173));
 if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error("Invalid port");
 let server;
 while (!server) {

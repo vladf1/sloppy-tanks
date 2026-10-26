@@ -125,7 +125,8 @@ export async function startDevServer({
     hostname,
     port,
     reusePort: false,
-    development: { hmr: true },
+    // Page console output reaches the terminal too, beside the server's own errors.
+    development: { hmr: true, console: true },
     routes,
     async fetch(request) {
       const relative = requestPath(request, base);
