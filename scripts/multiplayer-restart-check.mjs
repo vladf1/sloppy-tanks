@@ -116,7 +116,8 @@ try {
   assert.equal(await page.locator("#connection-retry").isVisible(), false);
   await page.screenshot({ path: `${output}/room-closed.png` });
   await click(page, "#connection-setup");
-  await page.locator("#room-list").waitFor();
+  // With the server gone the room list is empty, and an empty list takes no height.
+  await page.locator("#multiplayer-panel").waitFor();
   assert.deepEqual(errors, []);
   console.log(
     "Server crash and restart: connection recovers to a fresh lobby; reused round number prepares the new map and clears feedback; a graceful restart shows the room-closed dialog and returns to Battle Setup.",

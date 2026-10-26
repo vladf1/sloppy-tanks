@@ -53,9 +53,10 @@ async function openPhone(keep, hold) {
     (url) => url.pathname === "/servers",
     async (route) => {
       const response = await route.fetch();
-      const { rooms } = await response.json();
+      const { servers } = await response.json();
       await hold;
-      await route.fulfill({ response, json: { rooms: keep(rooms) } });
+      const json = { servers: servers.map((server) => ({ ...server, rooms: keep(server.rooms) })) };
+      await route.fulfill({ response, json });
     },
   );
   const page = await context.newPage();
