@@ -108,19 +108,23 @@ single player never loads or polls it.
 `GET /servers` answers in the server directory's format with this one server, so a lone
 local server is its own directory: `{"servers":[{"url":…,…}]}`, where the entry holds
 `url`, the address the request came in on (`wss://` when Caddy received it over HTTPS,
-otherwise `ws://`, with the request's host), `/health`'s fields and `rooms`, every room
-including extra levels. It shares `/rooms`'s CORS headers and rate limit.
+otherwise `ws://`, with the request's host), `/health`'s fields, `startedAt` (when the
+process started, ISO 8601 UTC), the latest `/stats` sample's `cpuPercent` (100 is one
+core) and `rssMB` with the host's `cpus` and `hostMemoryMB` (absent for the first ten
+seconds), and `rooms`, every room including extra levels. It shares `/rooms`'s CORS headers and rate limit.
 
 With `DIRECTORY_URL` set to the directory's base address
 (`https://sloppy-tanks-directory.fridman.me`) and `SERVER_ENVIRONMENT` to the environment
 that lists the server (`production` or `dev`), the server PUTs the same listing, without
-`url`, to `/servers?environment=` there as JSON. It compares the listing
-every 2 seconds and sends it when it changed since the directory last accepted it, or 15
-seconds after that, so the directory sees rooms appear and end within seconds and knows
-the server is still up; each request has 5 seconds. A failing directory is retried at
+`url`, to `/servers?environment=` there as JSON. A room entering or leaving the list
+(its first player joining, its last leaving, or the room ending) sends it at once.
+Otherwise it compares the rooms every 2 seconds and sends the listing when they changed
+since the directory last accepted it, or 15 seconds after that, so the directory knows the
+server is still up; the load figures alone never trigger a send. Each request has 5
+seconds. A failing directory is retried at
 every check and logged only when announcing starts failing or works again. The
 directory takes the server's address from the request's source IP, so the server
-connects to it over IPv4 only. TLS is rustls on Graviola's pure-Rust cryptography with
+connects to it over IPv4 only. TLS is rustls on RustCrypto's pure-Rust cryptography (`rustls-rustcrypto`) with
 Mozilla's root certificates compiled in (`webpki-roots`), which keeps the binary free of
 C code and the image free of a CA store.
 

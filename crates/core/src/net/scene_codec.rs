@@ -4,11 +4,12 @@
 //!
 //! Each entity, the match and the map is a [`WireRecord`] of its kind's field table, with
 //! the precision the TypeScript `rounded` gave that field: positions and sizes in
-//! millimetres, rotations and angles in ten-thousandths, timers and meters in hundredths.
-//! Tables list the fields that change most often first, so a frame's field mask usually
-//! fits one byte. The host compares records slot by slot to send only changed fields;
-//! clients keep the same records and read them into typed values with the TypeScript
-//! readers' limits.
+//! millimetres, rotations and angles in ten-thousandths, meters in hundredths. Entity
+//! timers that count down every step travel in steps ([`TIMER_SCALE`]), so their motion
+//! carries them ([`super::wire::Motion`]). Tables list the fields that change most often
+//! first, so a frame's field mask usually fits one byte. The host compares records slot by
+//! slot to send only changed fields; clients keep the same records and read them into
+//! typed values with the TypeScript readers' limits.
 
 use std::collections::HashMap;
 
@@ -18,10 +19,11 @@ use super::json::{self, POSITION_SCALE, ROTATION_SCALE, VALUE_SCALE};
 use super::protocol::MAP_MODES;
 use super::schema::{NUMBER_BOUND, ReadResult, text_length};
 use super::wire::{
-    Field, FieldKind, Slot, WireReader, WireRecord, names, put_signed, put_varint, read_changes,
-    thousandths, wire_fields, write_changes,
+    Field, FieldKind, Motion, Slot, WireReader, WireRecord, names, put_signed, put_varint,
+    read_changes, thousandths, wire_fields, write_changes,
 };
 use crate::sim::crate_layout::CratePiece;
+use crate::sim::data::STEP;
 use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
 use crate::sim::debris_physics::DebrisMaterial;
 use crate::sim::house_layout::{HousePart, HousePiece};
@@ -273,6 +275,11 @@ pub(crate) fn index_of<T: PartialEq + Copy>(table: &[(&'static str, T)], value: 
 const POSITION: FieldKind = FieldKind::Fixed(POSITION_SCALE);
 const ROTATION: FieldKind = FieldKind::Fixed(ROTATION_SCALE);
 const VALUE: FieldKind = FieldKind::Fixed(VALUE_SCALE);
+/// Entity timers the simulation counts down by one [`STEP`] a step, in whole steps: a
+/// running timer changes by exactly one unit a frame, which its motion carries without
+/// sending anything until it stops or restarts.
+pub const TIMER_SCALE: f64 = 1.0 / STEP;
+const TIMER: FieldKind = FieldKind::Fixed(TIMER_SCALE);
 const COUNT: FieldKind = FieldKind::Count;
 const FLAG: FieldKind = FieldKind::Flag;
 /// Tank and player names are at most 64 UTF-16 units; four UTF-8 bytes each at most.
@@ -314,20 +321,20 @@ wire_fields!(
         VELOCITY_Z = Field::new("velocity.z", POSITION),
         DRIVE_X = Field::new("drive.x", VALUE),
         DRIVE_Z = Field::new("drive.z", VALUE),
-        COOLDOWN = Field::new("cooldown", VALUE),
+        COOLDOWN = Field::new("cooldown", TIMER),
         RECOIL = Field::new("recoil", VALUE),
         POSITION_Y = Field::new("position.y", POSITION),
         VELOCITY_Y = Field::new("velocity.y", POSITION),
         LAST_COMBAT = Field::new("lastCombat", VALUE),
-        SPEED = Field::new("speed", VALUE),
-        MINE_COOLDOWN = Field::new("mineCooldown", VALUE),
+        SPEED = Field::new("speed", TIMER),
+        MINE_COOLDOWN = Field::new("mineCooldown", TIMER),
         HP = Field::new("hp", VALUE),
-        SHIELD = Field::new("shield", VALUE),
+        SHIELD = Field::new("shield", TIMER),
         SHIELD_POINTS = Field::new("shieldPoints", VALUE),
-        PROTECTION = Field::new("protection", VALUE),
-        LASER = Field::new("laser", VALUE),
-        RESPAWN = Field::new("respawn", VALUE),
-        RAPID = Field::new("rapid", VALUE),
+        PROTECTION = Field::new("protection", TIMER),
+        LASER = Field::new("laser", TIMER),
+        RESPAWN = Field::new("respawn", TIMER),
+        RAPID = Field::new("rapid", TIMER),
         XP = Field::new("xp", VALUE),
         MAX_HP = Field::new("maxHp", VALUE),
         ALIVE = Field::new("alive", FLAG),
@@ -390,7 +397,7 @@ wire_fields!(
         ROTATION_Y = Field::new("rotation.y", ROTATION),
         ROTATION_Z = Field::new("rotation.z", ROTATION),
         ROTATION_W = Field::new("rotation.w", ROTATION),
-        LIFE = Field::new("life", VALUE),
+        LIFE = Field::new("life", TIMER),
         SIZE = Field::new("size", POSITION),
         COLOR = Field::new("color", COUNT),
         SHAPE = Field::new("shape", FieldKind::Choice(&SHAPE_NAMES)),
@@ -420,8 +427,8 @@ wire_fields!(
 wire_fields!(
     /// `mineReader`'s fields.
     MINE_FIELDS, mine {
-        ARM = Field::new("arm", VALUE),
-        LIFE = Field::new("life", VALUE),
+        ARM = Field::new("arm", TIMER),
+        LIFE = Field::new("life", TIMER),
         X = Field::new("x", POSITION),
         Z = Field::new("z", POSITION),
         OWNER = Field::new("owner", COUNT),
@@ -434,7 +441,7 @@ wire_fields!(
 wire_fields!(
     /// `pickupReader`'s fields.
     PICKUP_FIELDS, pickup {
-        COOLDOWN = Field::new("cooldown", VALUE),
+        COOLDOWN = Field::new("cooldown", TIMER),
         AVAILABLE = Field::new("available", FLAG),
         X = Field::new("x", POSITION),
         Z = Field::new("z", POSITION),
@@ -763,22 +770,26 @@ fn write_tank(record: &mut WireRecord, simulation: &Simulation, tank: &Tank) {
     record.set_fixed(DRIVE_X, move_x, VALUE_SCALE);
     record.set_fixed(DRIVE_Z, move_z, VALUE_SCALE);
     for (field, value) in [
-        (COOLDOWN, tank.cooldown),
         (RECOIL, tank.recoil),
         (LAST_COMBAT, tank.last_combat),
-        (SPEED, tank.speed),
-        (MINE_COOLDOWN, tank.mine_cooldown),
         (HP, tank.hp),
-        (SHIELD, tank.shield),
         (SHIELD_POINTS, tank.shield_points),
-        (PROTECTION, tank.protection),
-        (LASER, tank.laser),
-        (RESPAWN, tank.respawn),
-        (RAPID, tank.rapid),
         (XP, tank.xp),
         (MAX_HP, simulation.max_health(tank)),
     ] {
         record.set_fixed(field, value, VALUE_SCALE);
+    }
+    for (field, value) in [
+        (COOLDOWN, tank.cooldown),
+        (SPEED, tank.speed),
+        (MINE_COOLDOWN, tank.mine_cooldown),
+        (SHIELD, tank.shield),
+        (PROTECTION, tank.protection),
+        (LASER, tank.laser),
+        (RESPAWN, tank.respawn),
+        (RAPID, tank.rapid),
+    ] {
+        record.set_fixed(field, value, TIMER_SCALE);
     }
     record.set_flag(ALIVE, tank.alive);
     record.set_count(LIFE, u64::from(tank.life));
@@ -875,7 +886,7 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
     set_rotation(record, ROTATION_X, simulation.body_rotation(fragment.body));
     // Clients read life only for the final fade, so a steady value until then keeps
     // every settled piece out of the per-frame deltas.
-    record.set_fixed(LIFE, fragment.life.min(DEBRIS_CLEANUP_SECONDS), VALUE_SCALE);
+    record.set_fixed(LIFE, fragment.life.min(DEBRIS_CLEANUP_SECONDS), TIMER_SCALE);
     record.set_fixed(SIZE, fragment.size, POSITION_SCALE);
     record.set_count(COLOR, u64::from(fragment.color));
     set_choice(record, SHAPE, &FRAGMENT_SHAPES, fragment.shape);
@@ -915,8 +926,8 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
 fn write_mine(record: &mut WireRecord, mine: &Mine) {
     use mine::*;
     record.reset(mine.id, MINE_FIELDS.len());
-    record.set_fixed(ARM, mine.arm, VALUE_SCALE);
-    record.set_fixed(LIFE, mine.life, VALUE_SCALE);
+    record.set_fixed(ARM, mine.arm, TIMER_SCALE);
+    record.set_fixed(LIFE, mine.life, TIMER_SCALE);
     record.set_fixed(X, mine.x, POSITION_SCALE);
     record.set_fixed(Z, mine.z, POSITION_SCALE);
     record.set_count(OWNER, u64::from(mine.owner));
@@ -930,7 +941,7 @@ fn write_mine(record: &mut WireRecord, mine: &Mine) {
 fn write_pickup(record: &mut WireRecord, pickup: &Pickup) {
     use pickup::*;
     record.reset(pickup.id, PICKUP_FIELDS.len());
-    record.set_fixed(COOLDOWN, pickup.cooldown, VALUE_SCALE);
+    record.set_fixed(COOLDOWN, pickup.cooldown, TIMER_SCALE);
     record.set_flag(AVAILABLE, pickup.available);
     record.set_fixed(X, pickup.x, POSITION_SCALE);
     record.set_fixed(Z, pickup.z, POSITION_SCALE);
@@ -1528,6 +1539,8 @@ pub fn read_event(record: &WireRecord) -> ReadResult<SimEvent> {
 pub struct Stored<T> {
     pub wire: WireRecord,
     pub value: T,
+    /// What the record's fixed-point fields changed by in the last frame.
+    pub motion: Motion,
 }
 
 /// Records of one kind in scene order, indexed by id.
@@ -1561,6 +1574,10 @@ impl<T> EntityStore<T> {
 
     pub fn contains(&self, id: u32) -> bool {
         self.index.contains_key(&id)
+    }
+
+    pub(crate) fn get_mut(&mut self, id: u32) -> Option<&mut Stored<T>> {
+        self.index.get(&id).map(|&index| &mut self.records[index])
     }
 
     /// The wire records in scene order.
@@ -1626,7 +1643,11 @@ fn read_store<T>(
     let mut store = EntityStore::default();
     for wire in records {
         let value = read(&wire)?;
-        store.push(Stored { wire, value })?;
+        store.push(Stored {
+            wire,
+            value,
+            motion: Motion::new(),
+        })?;
     }
     Ok(store)
 }

@@ -2,8 +2,8 @@
  * The server directory: game servers announce their room listings here, and the game page
  * reads which servers are up and how busy they are.
  *
- * - `PUT /servers?environment=production|dev` from a game server: its `/health` fields plus a
- *   `rooms` array, as one JSON object of at most MAX_BODY_BYTES. The caller's IPv4 address names
+ * - `PUT /servers?environment=production|dev` from a game server: its `/health` fields, start
+ *   time and load plus a `rooms` array, as one JSON object of at most MAX_BODY_BYTES. The caller's IPv4 address names
  *   the entry, `wss://a-b-c-d.nip.io`, so a server can announce only itself. Replies 204.
  * - `GET /servers?environment=production|dev` from the page (or anyone):
  *   `{ "servers": [{ "url", ...announced fields, "seen" }] }`, fewest rooms first.

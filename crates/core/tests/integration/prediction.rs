@@ -18,7 +18,7 @@ use sloppy_core::net::scene_codec::{MirrorScene, Scene};
 use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::map_options::MapId;
-use sloppy_core::sim::math::{Vec2, angle_delta, distance};
+use sloppy_core::sim::math::{Point3, Vec2, angle_delta, distance};
 use sloppy_core::sim::types::{
     CoverKind, PlayerAssignment, SimEventType, Team, VehicleCommand, VehicleKind,
 };
@@ -93,15 +93,41 @@ fn client_scene(sim: &Simulation, viewer: u32) -> RenderState {
         .unwrap()
 }
 
-/// The viewer's hull through its wire form, which must keep every bit.
+/// The viewer's hull through its wire form, which keeps its position bit for bit, its
+/// velocity to a twentieth of a millimetre per second and its heading to 50 nanoradians.
 fn client_hull(sim: &Simulation, viewer: u32, tick: u64) -> Option<HullState> {
     let hull = HullState::capture(sim, tank_index(sim, viewer), tick)?;
     let mut bytes = Vec::new();
     hull.write(&mut bytes);
     let read = HullState::read(&mut WireReader::new(&bytes)).unwrap();
-    assert_eq!(read, hull, "the wire form keeps every bit");
+    let apart = |a: Point3, b: Point3| {
+        (a.x - b.x)
+            .abs()
+            .max((a.y - b.y).abs())
+            .max((a.z - b.z).abs())
+    };
+    assert!(
+        apart(read.position, hull.position) <= 5e-6,
+        "{read:?} {hull:?}"
+    );
+    assert!(
+        apart(read.velocity, hull.velocity) <= 5e-5,
+        "{read:?} {hull:?}"
+    );
+    assert!(
+        (read.heading - hull.heading).abs() <= 5e-8,
+        "{read:?} {hull:?}"
+    );
+    assert_eq!(
+        (read.tick, read.life, read.kind),
+        (hull.tick, hull.life, hull.kind)
+    );
     Some(read)
 }
+
+/// Replays repeat the host's turns exactly, so a window's heading error is no more than
+/// the wire's rounding of the hull's heading (half of its tenth of a microradian).
+const HEADING_ROUNDING: f64 = 5e-8 + 1e-12;
 
 type Script = dyn Fn(u64) -> (f64, f64);
 
@@ -294,7 +320,7 @@ fn open_field_driving_and_turning_replay_exactly() {
         let (distance, heading) = worst(&client_replays(&run, HORIZON_200_MS));
         eprintln!("open field {kind:?}: {distance} m, {heading} rad");
         assert!(distance < 2e-3, "{kind:?} diverged {distance} m");
-        assert_eq!(heading, 0.0, "{kind:?}");
+        assert!(heading <= HEADING_ROUNDING, "{kind:?} {heading}");
     }
 }
 
@@ -326,7 +352,7 @@ fn driving_into_and_along_a_wall_replays_within_three_centimetres() {
     let (distance, heading) = worst(&client_replays(&run, HORIZON_200_MS));
     eprintln!("wall: {distance} m, {heading} rad");
     assert!(distance < 0.03, "{distance}");
-    assert!(heading < 1e-9, "{heading}");
+    assert!(heading <= HEADING_ROUNDING, "{heading}");
 }
 
 #[test]
@@ -341,7 +367,7 @@ fn village_cover_replays_within_two_millimetres() {
     let (distance, heading) = worst(&client_replays(&run, HORIZON_200_MS));
     eprintln!("village: {distance} m, {heading} rad");
     assert!(distance < 2e-3, "{distance}");
-    assert!(heading < 1e-9, "{heading}");
+    assert!(heading <= HEADING_ROUNDING, "{heading}");
 }
 
 /// The viewer rams a parked tank and pushes it, it drives back, then pivots away. The

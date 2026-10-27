@@ -75,7 +75,17 @@ test("a server is listed at the nip.io name of the IPv4 address it announced fro
 });
 
 test("an announcement keeps its declared /health fields and rooms checked as the page checks them", () => {
-  const body = { version: "1.2.3.4", ...health, dirty: false, rooms: [room("ABCDEFGH")] };
+  const body = {
+    version: "1.2.3.4",
+    ...health,
+    dirty: false,
+    startedAt: "2026-10-27T09:41:05.123Z",
+    cpuPercent: 3.4,
+    cpus: 1,
+    rssMB: 41.2,
+    hostMemoryMB: 961,
+    rooms: [room("ABCDEFGH")],
+  };
   const announced = parseAnnouncement(JSON.stringify({ ...body, url: "wss://elsewhere.example" }));
   assert.deepEqual(JSON.parse(JSON.stringify(announced)), body);
   const malformed = [
@@ -90,7 +100,17 @@ test("an announcement keeps its declared /health fields and rooms checked as the
     { ...health, contentVersion: "", rooms: [] },
     { ...health, version: 1, rooms: [] },
     { ...health, dirty: "no", rooms: [] },
+    { ...health, startedAt: "yesterday", rooms: [] },
+    { ...health, cpuPercent: -1, rooms: [] },
+    { ...health, cpuPercent: "3", rooms: [] },
+    { ...health, cpus: 1.5, rooms: [] },
+    { ...health, rssMB: null, rooms: [] },
   ];
+  // Servers deployed before the load figures announce without them.
+  assert.deepEqual(
+    JSON.parse(JSON.stringify(parseAnnouncement(JSON.stringify({ ...health, rooms: [] })))),
+    { ...health, rooms: [] },
+  );
   for (const text of [
     "",
     "not json",

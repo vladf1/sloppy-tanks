@@ -13,7 +13,8 @@ use sloppy_core::net::replication::{
     PATHS_SECTION, REMOVED_SECTION, StateMirror, StateStream, TimedEvent, UPDATES_SECTION,
 };
 use sloppy_core::net::scene_codec::{
-    ENTITY_FIELDS, ENTITY_TYPES, MINE_FIELDS, MINES, MirrorScene, Scene, TANKS, mine, tank,
+    ENTITY_FIELDS, ENTITY_TYPES, MINE_FIELDS, MINES, MirrorScene, Scene, TANKS, TIMER_SCALE, mine,
+    tank,
 };
 use sloppy_core::net::shot_paths::{PathEntry, ShotLaunch, ShotPath};
 use sloppy_core::net::wire::{WireRecord, put_signed, put_varint, write_changes};
@@ -159,6 +160,76 @@ fn full_and_field_deltas_round_trip_through_json_including_destruction_and_late_
             );
         }
     }
+}
+
+#[test]
+fn moving_records_carry_on_for_every_client_including_late_joiners() {
+    // Bots drive and fire, cover breaks into falling debris and timers count down. Every
+    // frame moves records on by their last change, so a client that started with the
+    // stream and clients that joined from a baseline while things moved (which carries
+    // the motion) must all hold exactly the host's scene after every frame.
+    let mut sim = room(MapId::Village, &one_player());
+    sim.start();
+    let mut stream = StateStream::new("room", 1);
+    let start = full(&mut stream, &Scene::capture(&sim), 0);
+    let mut mirrors = vec![StateMirror::default()];
+    mirrors[0].apply_full(&baseline(&start), "room", 1).unwrap();
+    let mut moving_at_joins = 0;
+    for tick in 1..=240u64 {
+        if tick == 20 {
+            let targets: Vec<usize> = (0..sim.covers.len())
+                .filter(|&i| sim.covers[i].alive && sim.covers[i].destructible)
+                .take(10)
+                .collect();
+            for cover in targets {
+                sim.damage_cover(cover, 10000.0, 0, Team::Blue, None, None);
+            }
+        }
+        if tick % 50 == 0 {
+            let mut late = StateMirror::default();
+            late.apply_full(
+                &baseline(&full(&mut stream, &Scene::default(), tick)),
+                "room",
+                1,
+            )
+            .unwrap();
+            let state = late.state.as_ref().unwrap();
+            moving_at_joins += state
+                .tanks
+                .records
+                .iter()
+                .filter(|stored| !stored.motion.is_empty())
+                .count()
+                + state
+                    .fragments
+                    .records
+                    .iter()
+                    .filter(|stored| !stored.motion.is_empty())
+                    .count();
+            mirrors.push(late);
+        }
+        let t = tick as f64;
+        step(
+            &mut sim,
+            VehicleCommand {
+                move_x: (t / 40.0).sin(),
+                move_z: 1.0,
+                aim: t / 25.0,
+                fire: true,
+                ..VehicleCommand::idle()
+            },
+        );
+        let captured = Scene::capture(&sim);
+        let message = frame(&mut stream, &mut captured.clone(), tick);
+        for (index, mirror) in mirrors.iter_mut().enumerate() {
+            apply_batch(mirror, &message);
+            assert!(
+                mirror.state.as_ref().unwrap().to_scene() == captured,
+                "client {index} differs from the host at tick {tick}"
+            );
+        }
+    }
+    assert!(moving_at_joins > 0, "baselines carried motion");
 }
 
 #[test]
@@ -481,6 +552,20 @@ fn mirror_allows_one_change_per_entity_of_each_kind_in_a_frame() {
 // ---- The capture against an independent reference ----------------------------------
 
 const ANGLES: [&str; 4] = ["aim", "heading", "yaw", "lean"];
+/// Entity timers counted down every step travel in steps; every other `VALUES` field (and
+/// the match `time`) in hundredths. A tank's `life` is a count, which steps keep whole.
+const TIMERS: [&str; 10] = [
+    "cooldown",
+    "speed",
+    "mineCooldown",
+    "shield",
+    "protection",
+    "laser",
+    "respawn",
+    "rapid",
+    "life",
+    "arm",
+];
 const VALUES: [&str; 20] = [
     "hp",
     "maxHp",
@@ -510,6 +595,8 @@ fn round(value: &mut Value, key: &str, parent: &str) {
         Value::Number(number) => {
             let scale = if parent == "rotation" || ANGLES.contains(&key) {
                 10000.0
+            } else if TIMERS.contains(&key) {
+                TIMER_SCALE
             } else if VALUES.contains(&key) || parent == "drive" {
                 100.0
             } else {

@@ -9,6 +9,9 @@ export type Environment = (typeof ENVIRONMENTS)[number];
 export const ENTRY_TTL_MS = 45_000;
 /** Far above a busy server's listing; bounds what one caller can make the directory store. */
 export const MAX_BODY_BYTES = 256 * 1024;
+/** Bounds on the announced load figures, far above any game server's. */
+const MAX_CPUS = 1024;
+const MAX_MEMORY_MB = 16 * 1024 * 1024;
 
 /** What a game server announces: its `/health` fields and its rooms, checked as the page
  * checks them (src/net/room-listing.ts) so one bad announcement cannot spoil the list. */
@@ -20,6 +23,13 @@ export interface Announcement {
   commit?: string;
   dirty?: boolean;
   builtAt?: string;
+  /** When the server process started, ISO 8601. */
+  startedAt?: string;
+  /** The process's CPU time over its latest 10 s sample, in percent of one core. */
+  cpuPercent?: number;
+  cpus?: number;
+  rssMB?: number;
+  hostMemoryMB?: number;
   rooms: RoomListing[];
 }
 export interface ServerEntry extends Announcement {
@@ -51,6 +61,11 @@ function text(value: unknown): string | undefined {
   return typeof value === "string" && value.length >= 1 && value.length <= 128 ? value : undefined;
 }
 
+/** A finite number from 0 to `max`, or undefined when `value` is not one. */
+function amount(value: unknown, max: number): number | undefined {
+  return typeof value === "number" && value >= 0 && value <= max ? value : undefined;
+}
+
 /** The announcement in `body`, keeping only its declared fields, or undefined when any is
  * missing or malformed. */
 export function parseAnnouncement(body: string): Announcement | undefined {
@@ -58,8 +73,14 @@ export function parseAnnouncement(body: string): Announcement | undefined {
     const value = JSON.parse(body) as Record<string, unknown>;
     const optional = (name: string) =>
       value[name] === undefined ? undefined : (text(value[name]) ?? fail(name));
+    const optionalAmount = (name: string, max: number) =>
+      value[name] === undefined ? undefined : (amount(value[name], max) ?? fail(name));
     if (!Number.isSafeInteger(value.protocol)) fail("protocol");
     if (value.dirty !== undefined && typeof value.dirty !== "boolean") fail("dirty");
+    const startedAt = optional("startedAt");
+    if (startedAt !== undefined && Number.isNaN(Date.parse(startedAt))) fail("startedAt");
+    const cpus = optionalAmount("cpus", MAX_CPUS);
+    if (cpus !== undefined && !Number.isInteger(cpus)) fail("cpus");
     return {
       version: optional("version"),
       protocol: value.protocol as number,
@@ -68,6 +89,11 @@ export function parseAnnouncement(body: string): Announcement | undefined {
       commit: optional("commit"),
       dirty: value.dirty as boolean | undefined,
       builtAt: optional("builtAt"),
+      startedAt,
+      cpuPercent: optionalAmount("cpuPercent", MAX_CPUS * 100),
+      cpus,
+      rssMB: optionalAmount("rssMB", MAX_MEMORY_MB),
+      hostMemoryMB: optionalAmount("hostMemoryMB", MAX_MEMORY_MB),
       rooms: readRooms(value.rooms),
     };
   } catch {

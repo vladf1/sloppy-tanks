@@ -71,6 +71,26 @@ function latencyText(url) {
   return ms === null ? "unreachable from here" : `${ms} ms from here`;
 }
 
+const startTime = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
+
+/** When the server started, in this browser's time zone, and its process's load, for
+ * servers that announce them. */
+function loadText(server) {
+  const memory = (mb) => (mb < 1024 ? `${Math.round(mb)} MB` : `${+(mb / 1024).toFixed(1)} GB`);
+  const parts = [];
+  if (server.startedAt) parts.push(`started ${startTime.format(new Date(server.startedAt))}`);
+  if (server.cpuPercent !== undefined) {
+    // Like top, 100% is one core busy.
+    const cores = server.cpus > 1 ? ` of one core · ${server.cpus} cores` : " of 1 core";
+    parts.push(`CPU ${server.cpuPercent.toFixed(1)}%${server.cpus ? cores : ""}`);
+  }
+  if (server.rssMB !== undefined) {
+    const host = server.hostMemoryMB ? ` of ${memory(server.hostMemoryMB)}` : "";
+    parts.push(`memory ${memory(server.rssMB)}${host}`);
+  }
+  return parts.join(" · ");
+}
+
 function serverCard(server) {
   const details = [
     server.version && `v${server.version}`,
@@ -83,6 +103,7 @@ function serverCard(server) {
     url: server.url,
     latency: latencyText(server.url),
     details: details.filter(Boolean).join(" · "),
+    load: loadText(server),
   });
   card.querySelector("a").href = `${server.url.replace(/^wss?:/, "https:")}/dashboard`;
   card.querySelector("tbody").replaceChildren(...server.rooms.map(roomRow));

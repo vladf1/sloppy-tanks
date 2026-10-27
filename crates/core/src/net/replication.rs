@@ -2,16 +2,19 @@
 //!
 //! The host sends a `full` baseline on join, resume and resync, then one snapshot frame per
 //! captured tick: only changed fields of each record, removed ids, and the events and
-//! projectile path entries (`shot_paths`) since the previous frame. A fixed-point field the client already
-//! holds travels as the difference from its value, so a client must apply every frame in
-//! order from a baseline; the client [`StateMirror`] applies frames transactionally: a
-//! malformed or skipped frame never partially alters the mirror; it asks for a new
-//! baseline instead.
+//! projectile path entries (`shot_paths`) since the previous frame. Every frame first moves
+//! each entity record's fixed-point fields on by their [`Motion`] (their change in the
+//! previous frame), and a field the client already holds travels as the difference from
+//! that, so a client must apply every frame in order from a baseline; the client
+//! [`StateMirror`] applies frames transactionally: a malformed or skipped frame never
+//! partially alters the mirror; it asks for a new baseline instead.
 //!
 //! Messages (all integers LEB128 varints, `signed` zigzag varints):
 //!
 //! - `full`: `[FULL_MESSAGE] roundId tick seq eventCursor roomEpoch(text)` then the scene
-//!   ([`Scene::write`]) and every shell's path ([`LivePaths::write_baseline`]).
+//!   ([`Scene::write`]), every shell's path ([`LivePaths::write_baseline`]) and the moving
+//!   records' motion: per kind the count, then each record's id difference, a mask of its
+//!   moving fields and their `signed` changes.
 //! - `snapshot`: `[SNAPSHOT_MESSAGE] roundId tick ack firstSeq count ackTick ackArrival`,
 //!   a hull byte (1 when the seat's [`HullState`] follows, else 0), then `count` frames
 //!   with consecutive sequence numbers. `tick` is the last frame's, so a reader that needs
@@ -20,7 +23,8 @@
 //! A frame is `tickBack` (the header tick minus the frame's), `signed` elapsed difference
 //! in milliseconds, a section mask ([`MATCH_SECTION`] ...) and the sections:
 //! match changes; per changed kind (a kind mask first) the record count and each record
-//! as an id difference (ascending) and its changes; per kind with removals the count and
+//! as an id difference (ascending) and its changes after moving on (records not listed
+//! only move on); per kind with removals the count and
 //! ascending id differences; events as id differences, `signed` tick offsets back from
 //! the frame in thousandths and whole event records; projectile path entries
 //! ([`PathEntry::write_binary`]).
@@ -39,8 +43,9 @@ use super::scene_codec::{
 use super::schema::{NUMBER_BOUND, ReadResult};
 use super::shot_paths::{LivePaths, PathEntry, ShotPath};
 use super::wire::{
-    ChangedFields, WireReader, WireRecord, put_signed, put_text, put_varint, read_changes,
-    thousandths, write_changes,
+    ChangedFields, FieldKind, Motion, Slot, WireReader, WireRecord, is_still, move_on, put_signed,
+    put_text, put_varint, read_changes, read_moving_changes, thousandths, write_changes,
+    write_moving_changes,
 };
 use crate::sim::render_state::{RenderCover, RenderFragment, RenderState, RenderTank};
 use crate::sim::types::{Match, Mine, Pickup, SimEvent};
@@ -75,6 +80,9 @@ pub struct StateStream {
     /// Ids of the previous scene's records by kind, and of the scene being written.
     index: [HashMap<u32, usize>; 5],
     current: [HashMap<u32, usize>; 5],
+    /// The previous scene's records' motion by kind, in scene order, and the next scene's.
+    motion: [Vec<Motion>; 5],
+    next_motion: [Vec<Motion>; 5],
     scratch: SnapshotScratch,
 }
 
@@ -107,6 +115,8 @@ impl StateStream {
             previous: None,
             index: Default::default(),
             current: Default::default(),
+            motion: Default::default(),
+            next_motion: Default::default(),
             scratch: SnapshotScratch::default(),
         }
     }
@@ -118,8 +128,8 @@ impl StateStream {
 
     /// A `full` baseline message: the stream's previous scene (the first baseline starts
     /// the stream with `capture`), at `tick` and the current `seq`, with the id of the last
-    /// event it already reflects and the path of every shell in flight. Only that scene
-    /// works as a baseline: the next frame's differences apply to it.
+    /// event it already reflects, the path of every shell in flight and the scene's motion.
+    /// Only that scene works as a baseline: the next frame's differences apply to it.
     pub fn full<'a>(
         &mut self,
         tick: u64,
@@ -130,6 +140,10 @@ impl StateStream {
         if self.previous.is_none() {
             let scene = capture();
             index_scene(&mut self.index, &scene);
+            for (motion, records) in self.motion.iter_mut().zip(&scene.entities) {
+                motion.clear();
+                motion.resize_with(records.len(), Motion::new);
+            }
             self.previous = Some(scene);
         }
         let scene = self.previous.as_ref().expect("set above");
@@ -142,6 +156,7 @@ impl StateStream {
         put_text(&mut out, &self.room_epoch);
         scene.write(&mut out);
         LivePaths::write_baseline(paths, tick, &mut out);
+        write_motion(scene, &self.motion, &mut out);
         out
     }
 
@@ -164,6 +179,7 @@ impl StateStream {
             entries,
             record,
         } = &mut self.scratch;
+        let (held_motion, next_motion) = (&mut self.motion, &mut self.next_motion);
         let mut out = Vec::with_capacity(256);
         let mut sections = 0;
         let elapsed = thousandths(scene.elapsed);
@@ -197,16 +213,27 @@ impl StateStream {
             let mut count = 0u64;
             let mut last = 0u32;
             let mut changes = Vec::new();
+            let next_motion = &mut next_motion[kind];
+            next_motion.clear();
+            next_motion.resize_with(records.len(), Motion::new);
             for &id in entries.iter() {
-                let next = &records[self.current[kind][&id]];
+                let at = self.current[kind][&id];
+                let next = &records[at];
+                // The record's motion moves to its place in this scene, reusing its buffer.
+                let mut motion = self.index[kind]
+                    .get(&id)
+                    .and_then(|&held| held_motion[kind].get_mut(held))
+                    .map(std::mem::take)
+                    .unwrap_or_default();
                 let start = changes.len();
                 put_varint(&mut changes, u64::from(id - last));
-                if write_changes(fields, old(id), next, &mut changes) {
+                if write_moving_changes(fields, old(id), next, Some(&mut motion), &mut changes) {
                     last = id;
                     count += 1;
                 } else {
                     changes.truncate(start);
                 }
+                next_motion[at] = motion;
             }
             if count > 0 {
                 updated_kinds |= 1 << kind;
@@ -267,11 +294,99 @@ impl StateStream {
         out.extend_from_slice(&body);
         let current = std::mem::take(scene);
         std::mem::swap(&mut self.index, &mut self.current);
+        std::mem::swap(&mut self.motion, &mut self.next_motion);
         if let Some(old) = self.previous.replace(current) {
             *scene = old;
         }
         out
     }
+}
+
+/// Writes the motion section of a baseline: per kind, the moving records in scene order.
+fn write_motion(scene: &Scene, motion: &[Vec<Motion>; 5], out: &mut Vec<u8>) {
+    for (kind, records) in scene.entities.iter().enumerate() {
+        let moving: Vec<(&WireRecord, &Motion)> = records
+            .iter()
+            .zip(&motion[kind])
+            .filter(|(_, motion)| !is_still(motion))
+            .collect();
+        put_varint(out, moving.len() as u64);
+        let mut previous = 0;
+        for (record, motion) in moving {
+            put_signed(out, i64::from(record.id) - previous);
+            previous = i64::from(record.id);
+            let mask = motion
+                .iter()
+                .enumerate()
+                .filter(|(_, change)| **change != 0)
+                .fold(0u64, |mask, (index, _)| mask | 1 << index);
+            put_varint(out, mask);
+            for change in motion.iter().filter(|change| **change != 0) {
+                put_signed(out, *change);
+            }
+        }
+    }
+}
+
+/// Reads a baseline's motion section onto the records `state` holds. Only fixed-point
+/// fields with a value move.
+fn read_motion(reader: &mut WireReader<'_>, state: &mut MirrorScene) -> ReadResult<()> {
+    for kind in 0..ENTITY_TYPES.len() {
+        let fields = ENTITY_FIELDS[kind];
+        let count = reader.varint()?;
+        if count > ENTITY_LIMITS[kind] as u64 {
+            return Err("Invalid list".into());
+        }
+        let mut id = 0i64;
+        for _ in 0..count {
+            id += reader.signed()?;
+            let id = u32::try_from(id).map_err(|_| "Invalid entity id".to_string())?;
+            let mask = reader.varint()?;
+            if mask == 0 || mask >> fields.len() != 0 {
+                return Err("Invalid motion".into());
+            }
+            let mut motion = vec![0; fields.len()];
+            for (index, change) in motion.iter_mut().enumerate() {
+                if mask & (1 << index) != 0 {
+                    *change = reader.signed()?;
+                }
+            }
+            let (wire, held) = match kind {
+                TANKS => state
+                    .tanks
+                    .get_mut(id)
+                    .map(|stored| (&stored.wire, &mut stored.motion)),
+                COVERS => state
+                    .covers
+                    .get_mut(id)
+                    .map(|stored| (&stored.wire, &mut stored.motion)),
+                FRAGMENTS => state
+                    .fragments
+                    .get_mut(id)
+                    .map(|stored| (&stored.wire, &mut stored.motion)),
+                MINES => state
+                    .mines
+                    .get_mut(id)
+                    .map(|stored| (&stored.wire, &mut stored.motion)),
+                _ => state
+                    .pickups
+                    .get_mut(id)
+                    .map(|stored| (&stored.wire, &mut stored.motion)),
+            }
+            .ok_or_else(|| "Unknown motion".to_string())?;
+            let movable = |index: usize| {
+                matches!(fields[index].kind, FieldKind::Fixed(_))
+                    && matches!(wire.slots.get(index), Some(Slot::Number(_)))
+            };
+            if !held.is_empty()
+                || (0..fields.len()).any(|index| motion[index] != 0 && !movable(index))
+            {
+                return Err("Invalid motion".into());
+            }
+            *held = motion;
+        }
+    }
+    Ok(())
 }
 
 /// Writes a snapshot message's header for one seat; the frames follow, each its tick back
@@ -495,11 +610,61 @@ fn update<'a, T>(
         },
         |stored| stored.wire.clone(),
     );
-    let changed = read_changes(ENTITY_FIELDS[kind], &mut wire, reader)?;
+    let mut motion = held.map(|stored| stored.motion.clone()).unwrap_or_default();
+    let changed = read_moving_changes(ENTITY_FIELDS[kind], &mut wire, Some(&mut motion), reader)?;
     let value = read(&wire)?;
-    changes.updates.push(Stored { wire, value });
+    changes.updates.push(Stored {
+        wire,
+        value,
+        motion,
+    });
     let pushed = &changes.updates.last().expect("just pushed").wire;
     Ok((changed, held.is_none(), pushed))
+}
+
+/// Moves on every moving record of `store` the frame neither changed (the updates so far,
+/// in ascending id order) nor removed, listing each in `view` when given.
+fn move_held<T>(
+    store: &EntityStore<T>,
+    changes: &mut KindChanges<T>,
+    removed: &[u32],
+    kind: usize,
+    read: fn(&WireRecord) -> ReadResult<T>,
+    mut view: Option<&mut Vec<ChangedRecord>>,
+) -> ReadResult<()> {
+    let sent = changes.updates.len();
+    for stored in store
+        .records
+        .iter()
+        .filter(|stored| !stored.motion.is_empty())
+    {
+        let id = stored.wire.id;
+        if changes.updates[..sent]
+            .binary_search_by_key(&id, |update| update.wire.id)
+            .is_ok()
+            || removed.contains(&id)
+        {
+            continue;
+        }
+        let mut wire = stored.wire.clone();
+        let changed = move_on(ENTITY_FIELDS[kind], &mut wire, &stored.motion);
+        if let Some(view) = view.as_deref_mut() {
+            view.push(ChangedRecord {
+                kind,
+                id,
+                changed,
+                added: false,
+                record: wire.clone(),
+            });
+        }
+        let value = read(&wire)?;
+        changes.updates.push(Stored {
+            wire,
+            value,
+            motion: stored.motion.clone(),
+        });
+    }
+    Ok(())
 }
 
 /// Queues the removal of record `id`, which the mirror must hold and the frame must not
@@ -565,9 +730,10 @@ impl StateMirror {
             return Err("Wrong baseline identity".into());
         }
         let mut scene = baseline.scene.clone();
-        let state = MirrorScene::read(&mut scene)?;
+        let mut state = MirrorScene::read(&mut scene)?;
         let shots = LivePaths::read_binary(&mut scene, baseline.tick)
             .map_err(|error| format!("paths: {error}"))?;
+        read_motion(&mut scene, &mut state).map_err(|error| format!("motion: {error}"))?;
         if !scene.is_empty() {
             return Err("Trailing data".into());
         }
@@ -728,7 +894,8 @@ impl StateMirror {
                     ),
                 }
                 .map_err(label)?;
-                if view {
+                // A record sent only to stop its motion keeps its values.
+                if view && (added || changed != ChangedFields::default()) {
                     frame.changed.push(ChangedRecord {
                         kind,
                         id,
@@ -762,6 +929,54 @@ impl StateMirror {
                 }?;
                 frame.removed[kind].push(id);
             }
+        }
+        for (kind, name) in ENTITY_TYPES.iter().enumerate() {
+            let removed = &frame.removed[kind];
+            let changes = &mut frame.changes;
+            let view = view.then_some(&mut frame.changed);
+            match kind {
+                TANKS => move_held(
+                    &state.tanks,
+                    &mut changes.tanks,
+                    removed,
+                    kind,
+                    read_tank,
+                    view,
+                ),
+                COVERS => move_held(
+                    &state.covers,
+                    &mut changes.covers,
+                    removed,
+                    kind,
+                    read_cover,
+                    view,
+                ),
+                FRAGMENTS => move_held(
+                    &state.fragments,
+                    &mut changes.fragments,
+                    removed,
+                    kind,
+                    read_fragment,
+                    view,
+                ),
+                MINES => move_held(
+                    &state.mines,
+                    &mut changes.mines,
+                    removed,
+                    kind,
+                    read_mine,
+                    view,
+                ),
+                _ => move_held(
+                    &state.pickups,
+                    &mut changes.pickups,
+                    removed,
+                    kind,
+                    read_pickup,
+                    view,
+                ),
+            }
+            .map_err(|error| format!("{name}: {error}"))?;
         }
         let changes = &frame.changes;
         let lengths = [
