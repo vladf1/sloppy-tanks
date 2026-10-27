@@ -7,20 +7,24 @@ use crate::net_support;
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use net_support::{Sweep, assert_drawn_where_simulated, fire_from, test_host};
+use net_support::{
+    Sweep, assert_drawn_where_simulated, fire_from, set_linvel, set_translation, test_host,
+};
 
 use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, EndCause, LocalInput, NetworkClient, SavedSeat,
 };
-use sloppy_core::net::fixed_step_clock::SIMULATION_STEP_MS;
+use sloppy_core::net::feel_readings::Samples;
+use sloppy_core::net::fixed_step_clock::{HOST_INTERVAL_MS, SIMULATION_STEP_MS};
 use sloppy_core::net::match_host::{HostEvent, MatchHost};
 use sloppy_core::net::protocol::{JoinChoice, Message, RoomPhase, RoomSettings};
 use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::Tank;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::math::{Point3, Vec2, distance};
 use sloppy_core::sim::render_state::RenderShot;
-use sloppy_core::sim::types::{Driver, VehicleKind, Weapon};
+use sloppy_core::sim::types::{Driver, SimEvent, SimEventType, Team, VehicleKind, Weapon};
 
 const FRAME_MS: f64 = 1000.0 / 60.0;
 
@@ -36,6 +40,19 @@ struct Peer {
     frames: usize,
     /// The page draws no frames until then, like a tab stalled by garbage collection.
     stalled_until: f64,
+    /// Every drawn frame's time, shells and events, while recording.
+    recording: bool,
+    drawn: Vec<DrawnFrame>,
+}
+
+/// What one page frame drew.
+struct DrawnFrame {
+    now: f64,
+    shots: Vec<RenderShot>,
+    events: Vec<SimEvent>,
+    /// The viewer's hull and the movable cover.
+    viewer: Option<Point3>,
+    movable: Vec<(u32, Point3)>,
 }
 
 struct Network {
@@ -53,6 +70,10 @@ struct Network {
     /// Page frame intervals, repeated; uneven ones step zero or two ticks some frames.
     frame_ms: Vec<f64>,
     frame: usize,
+    /// Whether pages added from now on draw enemy shells toward their present, and ask
+    /// the host to judge their shells where they saw the targets.
+    dodger_first: bool,
+    shooter_first: bool,
 }
 
 fn choice(name: &str, create: Option<RoomSettings>) -> JoinChoice {
@@ -75,13 +96,20 @@ fn settings(map: MapId) -> RoomSettings {
 }
 
 /// A page's session for room ABCDEFGH on the local server.
-fn client(saved_seat: Option<SavedSeat>, delay: Option<DelaySettings>) -> NetworkClient {
+fn client(
+    saved_seat: Option<SavedSeat>,
+    delay: Option<DelaySettings>,
+    dodger_first: bool,
+    shooter_first: bool,
+) -> NetworkClient {
     NetworkClient::new(ClientConfig {
         server_url: "ws://127.0.0.1:8787/".into(),
         room: "ABCDEFGH".into(),
         saved_seat,
         delay,
         seed: 7,
+        dodger_first,
+        shooter_first,
     })
 }
 
@@ -93,17 +121,19 @@ impl Network {
             now: 0.0,
             next_connection: 0,
             routes: BTreeMap::new(),
-            next_host_tick: 50.0,
+            next_host_tick: HOST_INTERVAL_MS.ceil(),
             stalled_until: 0.0,
             held: Vec::new(),
             frame_ms: vec![FRAME_MS],
             frame: 0,
+            dodger_first: true,
+            shooter_first: true,
         }
     }
 
     fn add(&mut self, saved_seat: Option<SavedSeat>, delay: Option<DelaySettings>) -> usize {
         self.peers.push(Peer {
-            client: client(saved_seat, delay),
+            client: client(saved_seat, delay, self.dodger_first, self.shooter_first),
             socket: None,
             notices: Vec::new(),
             saved: None,
@@ -111,6 +141,8 @@ impl Network {
             input: LocalInput::default(),
             frames: 0,
             stalled_until: 0.0,
+            recording: false,
+            drawn: Vec::new(),
         });
         self.peers.len() - 1
     }
@@ -233,7 +265,8 @@ impl Network {
     }
 
     /// Runs the page and host clocks for `ms`: sockets open after one frame, pages poll and
-    /// draw at 60 Hz, the host ticks every 50 ms.
+    /// draw at 60 Hz, and the host's timer fires as the server's does: as each batch of
+    /// ticks falls due while a round runs, every `HOST_INTERVAL_MS` otherwise.
     fn run(&mut self, ms: f64) {
         let end = self.now + ms;
         while self.now < end {
@@ -251,15 +284,37 @@ impl Network {
                 }
                 self.peers[index].client.poll(now);
                 let input = self.peers[index].input;
-                if self.peers[index].client.frame(now, &input).is_some() {
-                    self.peers[index].frames += 1;
+                let peer = &mut self.peers[index];
+                if let Some(frame) = peer.client.frame(now, &input) {
+                    peer.frames += 1;
+                    if peer.recording {
+                        let drawn = DrawnFrame {
+                            now,
+                            shots: frame.state.shots.clone(),
+                            viewer: frame.state.viewer().map(|viewer| viewer.position),
+                            movable: frame
+                                .state
+                                .covers
+                                .iter()
+                                .filter(|cover| cover.kind.movable())
+                                .map(|cover| (cover.id, cover.position))
+                                .collect(),
+                            events: frame.events.into_iter().map(|shown| shown.event).collect(),
+                        };
+                        peer.drawn.push(drawn);
+                    }
                 }
                 self.peers[index].input.mine = false;
             }
             self.settle();
             while self.next_host_tick <= self.now {
-                self.host.advance(self.next_host_tick as u64);
-                self.next_host_tick += 50.0;
+                let at = self.next_host_tick as u64;
+                self.host.advance(at);
+                let wait = self
+                    .host
+                    .until_next_batch_ms(at)
+                    .map_or(HOST_INTERVAL_MS, |wait| wait.max(1.0));
+                self.next_host_tick += wait.ceil();
                 self.settle();
             }
         }
@@ -346,6 +401,350 @@ fn a_created_room_prepares_the_arena_then_drives_with_acknowledged_input() {
 }
 
 #[test]
+fn feel_readings_time_a_click_to_its_flash_and_find_where_the_hit_target_was_drawn() {
+    let mut net = Network::new();
+    let delay = DelaySettings {
+        half_ms: 50.0,
+        jitter_ms: 0.0,
+        stall_ms: 0.0,
+    };
+    let alice = net.add(None, Some(delay));
+    let bob = net.add(None, None);
+    let humans_only = RoomSettings {
+        humans_only: true,
+        ..settings(MapId::Harbor)
+    };
+    net.connect(alice, choice("alice", Some(humans_only)));
+    net.run(300.0);
+    net.connect(
+        bob,
+        JoinChoice {
+            team: Some(Team::Red),
+            ..choice("bob", None)
+        },
+    );
+    net.run(1500.0);
+    // Bob parks in clear view a few metres from alice, who turns her gun to him.
+    let alice_id = net.peers[alice].client.control().unwrap().tank_id;
+    let bob_id = net.peers[bob].client.control().unwrap().tank_id;
+    let sim = net.host.simulation.as_mut().unwrap();
+    let (alice_index, bob_index) = (
+        sim.tank_index(alice_id).unwrap(),
+        sim.tank_index(bob_id).unwrap(),
+    );
+    let from = sim.body_translation(sim.tanks[alice_index].body).planar();
+    let aim = (0..16)
+        .map(|step| f64::from(step) * std::f64::consts::TAU / 16.0)
+        .find(|angle| {
+            let to = Vec2::new(from.x + 7.0 * angle.sin(), from.z + 7.0 * angle.cos());
+            sim.visible(from, to)
+        })
+        .expect("some direction is clear");
+    set_translation(
+        sim,
+        bob_index,
+        from.x + 7.0 * aim.sin(),
+        0.65,
+        from.z + 7.0 * aim.cos(),
+    );
+    set_linvel(sim, bob_index, 0.0, 0.0, 0.0);
+    net.peers[alice].input.aim_angle = aim;
+    net.run(1000.0);
+    // One click.
+    net.peers[alice].input.fire = true;
+    net.run(4.0 * FRAME_MS);
+    net.peers[alice].input.fire = false;
+    net.run(1500.0);
+    let feel = &net.peers[alice].client.feel;
+    assert_eq!(feel.fire_to_flash.count, 1, "{feel:?}");
+    let flash = feel.fire_to_flash.mean();
+    let report = feel.fire_to_report.mean();
+    eprintln!(
+        "fire to flash {flash:.0} ms ({report:.0} ms to the report), view delay {:.0} ms, \
+         hit offsets {} up to {:.3} m",
+        feel.view_delay.mean(),
+        feel.hit_offset.count,
+        feel.hit_offset.largest
+    );
+    // The flash draws in the frame of the click; the host's report takes the round trip.
+    assert!(flash < FRAME_MS, "{feel:?}");
+    assert!((100.0..300.0).contains(&report), "{feel:?}");
+    assert!(feel.view_delay.mean() > 100.0, "{feel:?}");
+    // A parked target is drawn where it was hit.
+    assert!(feel.hit_offset.count >= 1, "{feel:?}");
+    assert!(feel.hit_offset.largest < 0.25, "{feel:?}");
+}
+
+/// Render ids of shells the client predicted, above any the host issues.
+const PREDICTED_SHELLS: u32 = 0xf000_0000;
+
+/// Alice alone in a humans-only harbor room behind a 100 ms round trip, aiming down a
+/// clear 25 m lane; returns the network, her peer and her tank id.
+fn alone_with_a_clear_lane() -> (Network, usize, u32) {
+    let mut net = Network::new();
+    let delay = DelaySettings {
+        half_ms: 50.0,
+        jitter_ms: 0.0,
+        stall_ms: 0.0,
+    };
+    let alice = net.add(None, Some(delay));
+    let humans_only = RoomSettings {
+        humans_only: true,
+        ..settings(MapId::Harbor)
+    };
+    net.connect(alice, choice("alice", Some(humans_only)));
+    net.run(1500.0);
+    let tank_id = net.peers[alice].client.control().unwrap().tank_id;
+    let sim = net.host.simulation.as_ref().unwrap();
+    let from = sim
+        .body_translation(sim.tanks[sim.tank_index(tank_id).unwrap()].body)
+        .planar();
+    let aim = (0..32)
+        .map(|step| f64::from(step) * std::f64::consts::TAU / 32.0)
+        .find(|angle| {
+            sim.visible(
+                from,
+                Vec2::new(from.x + 25.0 * angle.sin(), from.z + 25.0 * angle.cos()),
+            )
+        })
+        .expect("some lane is clear");
+    net.peers[alice].input.aim_angle = aim;
+    net.run(500.0);
+    (net, alice, tank_id)
+}
+
+#[test]
+fn own_shots_fire_at_once_and_follow_the_hosts_shells_without_jumping_back() {
+    let (mut net, alice, tank_id) = alone_with_a_clear_lane();
+    net.peers[alice].recording = true;
+    let pressed = net.now;
+    // Held fire: the first shot and the reloads after it.
+    net.peers[alice].input.fire = true;
+    net.run(1300.0);
+    net.peers[alice].input.fire = false;
+    net.run(2000.0);
+    let peer = &net.peers[alice];
+    let stats = &peer.client.own_shots.stats;
+    assert!(stats.predicted >= 2, "{stats:?}");
+    assert_eq!(
+        stats.confirmed, stats.predicted,
+        "the host fired every predicted shot"
+    );
+    assert_eq!(stats.unpredicted, 0, "{stats:?}");
+    assert_eq!(stats.unconfirmed_shells, 0, "{stats:?}");
+    assert!(stats.error.largest < 0.05, "{stats:?}");
+    let first = peer.drawn.iter().find(|frame| frame.now > pressed).unwrap();
+    assert!(
+        first
+            .events
+            .iter()
+            .any(|event| event.kind == SimEventType::Shot && event.id == Some(tank_id)),
+        "the muzzle flashes in the first frame after the press"
+    );
+    assert!(
+        first.shots.iter().any(|shot| shot.id >= PREDICTED_SHELLS),
+        "the shell leaves the barrel in the same frame"
+    );
+    let flashes = peer
+        .drawn
+        .iter()
+        .flat_map(|frame| &frame.events)
+        .filter(|event| event.kind == SimEventType::Shot && event.id == Some(tank_id))
+        .count();
+    assert_eq!(
+        flashes as u64, stats.predicted,
+        "the host's own flashes are not shown again"
+    );
+    assert!(
+        peer.drawn
+            .iter()
+            .flat_map(|frame| &frame.shots)
+            .all(|shot| shot.id >= PREDICTED_SHELLS),
+        "own shells are only ever drawn under their predicted ids"
+    );
+    // Each shell moves on along its flight every frame, through the host's handover.
+    let mut checked = 0;
+    for pair in peer.drawn.windows(2) {
+        for shot in &pair[1].shots {
+            let Some(before) = pair[0].shots.iter().find(|old| old.id == shot.id) else {
+                continue;
+            };
+            let speed = shot.vx.hypot(shot.vz);
+            let moved = ((shot.x - before.x) * shot.vx + (shot.z - before.z) * shot.vz) / speed;
+            let seconds = (pair[1].now - pair[0].now) / 1000.0;
+            assert!(
+                moved > 0.0 && moved <= speed * seconds * 1.01,
+                "shell {} moved {moved} m in {seconds} s at {speed} m/s",
+                shot.id
+            );
+            checked += 1;
+        }
+    }
+    assert!(checked > 60, "{checked} frame pairs");
+    let feel = &peer.client.feel;
+    eprintln!(
+        "{} own shots, all confirmed, shells within {:.1} mm of the host's; fire to flash \
+         {:.0} ms, to the host's report {:.0} ms",
+        stats.predicted,
+        stats.error.largest * 1000.0,
+        feel.fire_to_flash.mean(),
+        feel.fire_to_report.mean()
+    );
+}
+
+#[test]
+fn an_own_shell_strikes_near_cover_close_to_when_it_is_drawn_there() {
+    let (mut net, alice, tank_id) = alone_with_a_clear_lane();
+    // A concrete block across the lane 7 m out.
+    let aim = net.peers[alice].input.aim_angle;
+    let sim = net.host.simulation.as_mut().unwrap();
+    let from = sim
+        .body_translation(sim.tanks[sim.tank_index(tank_id).unwrap()].body)
+        .planar();
+    sim.add_cover(&sloppy_core::sim::arena::CoverDef {
+        kind: sloppy_core::sim::types::CoverKind::Concrete,
+        x: from.x + 7.0 * aim.sin(),
+        z: from.z + 7.0 * aim.cos(),
+        w: 4.0,
+        d: 4.0,
+        h: 2.0,
+        hp: f64::INFINITY,
+        color: 0x888888,
+        timber_join: None,
+        timber_bays: None,
+        debris_seed: None,
+    });
+    net.run(500.0);
+    net.peers[alice].recording = true;
+    net.peers[alice].input.fire = true;
+    net.run(FRAME_MS);
+    net.peers[alice].input.fire = false;
+    net.run(1500.0);
+    let peer = &net.peers[alice];
+    let last_drawn = peer
+        .drawn
+        .iter()
+        .rev()
+        .find(|frame| !frame.shots.is_empty())
+        .unwrap()
+        .now;
+    let impacts: Vec<f64> = peer
+        .drawn
+        .iter()
+        .filter(|frame| {
+            frame
+                .events
+                .iter()
+                .any(|event| event.kind == SimEventType::Impact)
+        })
+        .map(|frame| frame.now)
+        .collect();
+    assert_eq!(impacts.len(), 1, "one impact: {impacts:?}");
+    let view_delay = peer.client.feel.view_delay.mean();
+    let gap = impacts[0] - last_drawn;
+    eprintln!("impact {gap:.0} ms after the shell's last frame, view delay {view_delay:.0} ms");
+    // The prediction foresaw the strike: it shows as the shell reaches the cover, not a
+    // round trip later when the host reports it, and the host's own is not shown again.
+    assert!(
+        gap > 0.0 && gap <= 2.0 * FRAME_MS,
+        "{gap} ms, view delay {view_delay} ms"
+    );
+}
+
+#[test]
+fn a_pushed_drum_is_drawn_ahead_of_the_hull_and_handed_back_without_a_jump() {
+    let (mut net, alice, tank_id) = alone_with_a_clear_lane();
+    let aim = net.peers[alice].input.aim_angle;
+    let sim = net.host.simulation.as_mut().unwrap();
+    let from = sim
+        .body_translation(sim.tanks[sim.tank_index(tank_id).unwrap()].body)
+        .planar();
+    let index = sim.add_cover(&sloppy_core::sim::arena::CoverDef {
+        kind: sloppy_core::sim::types::CoverKind::Drum,
+        x: from.x + 6.0 * aim.sin(),
+        z: from.z + 6.0 * aim.cos(),
+        w: 1.0,
+        d: 1.0,
+        h: 1.2,
+        hp: f64::INFINITY,
+        color: 0xaa3322,
+        timber_join: None,
+        timber_bays: None,
+        debris_seed: None,
+    });
+    let drum_id = sim.covers[index].id;
+    net.run(500.0);
+    net.peers[alice].recording = true;
+    net.peers[alice].input.move_x = aim.sin();
+    net.peers[alice].input.move_z = aim.cos();
+    net.run(1500.0);
+    net.peers[alice].input.move_x = 0.0;
+    net.peers[alice].input.move_z = 0.0;
+    net.run(2500.0);
+    let peer = &net.peers[alice];
+    let gaps: Vec<f64> = peer
+        .drawn
+        .iter()
+        .filter_map(|frame| {
+            let viewer = frame.viewer?;
+            let (_, drum) = frame.movable.iter().find(|(id, _)| *id == drum_id)?;
+            Some((drum.x - viewer.x).hypot(drum.z - viewer.z))
+        })
+        .collect();
+    let closest = gaps.iter().copied().fold(f64::INFINITY, f64::min);
+    // Drawn from the delayed display, the drum would sink about a metre into the pushing
+    // hull, which is drawn in the present.
+    assert!(
+        closest > 1.6,
+        "the drum stays ahead of the hull: {closest} m"
+    );
+    let mut steps = peer
+        .drawn
+        .windows(2)
+        .filter_map(|pair| {
+            let (_, a) = pair[0].movable.iter().find(|(id, _)| *id == drum_id)?;
+            let (_, b) = pair[1].movable.iter().find(|(id, _)| *id == drum_id)?;
+            Some((b.x - a.x).hypot(b.z - a.z))
+        })
+        .collect::<Vec<f64>>();
+    let largest = percentile_of(&mut steps, 1.0);
+    eprintln!("drum drawn: closest {closest:.2} m to the hull, largest step {largest:.3} m");
+    assert!(
+        largest < 0.25,
+        "the drum never jumps between frames: {largest} m"
+    );
+}
+
+fn percentile_of(values: &mut [f64], fraction: f64) -> f64 {
+    values.sort_by(f64::total_cmp);
+    values[((values.len() - 1) as f64 * fraction).round() as usize]
+}
+
+#[test]
+fn a_predicted_shot_the_host_never_fires_is_dropped() {
+    let (mut net, alice, _) = alone_with_a_clear_lane();
+    net.peers[alice].recording = true;
+    net.peers[alice].input.fire = true;
+    net.run(FRAME_MS);
+    net.peers[alice].input.fire = false;
+    // The host's gun turns out to be reloading when the click arrives.
+    let tank_id = net.peers[alice].client.control().unwrap().tank_id;
+    let sim = net.host.simulation.as_mut().unwrap();
+    let index = sim.tank_index(tank_id).unwrap();
+    sim.tanks[index].cooldown = 10.0;
+    net.run(1500.0);
+    let peer = &net.peers[alice];
+    let stats = &peer.client.own_shots.stats;
+    assert_eq!((stats.predicted, stats.confirmed), (1, 0), "{stats:?}");
+    assert_eq!(stats.unconfirmed_shells, 1, "{stats:?}");
+    assert!(
+        peer.drawn.first().unwrap().shots.len() == 1,
+        "it was drawn at once"
+    );
+    assert!(peer.drawn.last().unwrap().shots.is_empty(), "and dropped");
+}
+
+#[test]
 fn a_baseline_shows_until_the_next_frame_draws_the_timeline_with_the_own_aim() {
     let mut net = Network::new();
     let alice = net.add(None, None);
@@ -382,7 +781,7 @@ fn late_snapshot_batches_count_only_while_the_stream_should_flow() {
     net.connect(alice, choice("alice", Some(settings(MapId::Harbor))));
     net.run(1000.0);
     let stats = net.peers[alice].client.stats(net.now);
-    // Batches leave every 50 ms and the page reads them on its next 60 Hz frame.
+    // Batches leave every tick and the page reads them on its next 60 Hz frame.
     assert_eq!(stats.late_batches, 0, "{stats:?}");
     assert!(stats.longest_batch_gap_ms < 70.0, "{stats:?}");
     // A lost packet holds up the stream for 200 ms; then everything arrives at once.
@@ -655,7 +1054,7 @@ fn an_expired_seat_or_a_gone_room_ends_with_its_own_cause() {
 
 #[test]
 fn a_server_that_never_answers_ends_as_lost_after_the_reconnect_window() {
-    let mut client = client(None, None);
+    let mut client = client(None, None, true, true);
     let mut now = 0.0;
     client.connect(choice("alice", None), now);
     let mut opened = 0;
@@ -828,6 +1227,8 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
         net.run(FRAME_MS);
         waited += FRAME_MS;
     };
+    // Bob draws every shell on the display clock, where the host's sweeps are compared.
+    net.dodger_first = false;
     let bob = net.add(None, None);
     net.connect(
         bob,
@@ -893,4 +1294,262 @@ fn a_mid_round_joiner_draws_every_shell_in_flight_where_the_host_flies_it() {
             "shell {id} ends at tick {end} but is last drawn at {last_drawn}"
         );
     }
+}
+
+/// Alice in a village room with bots, behind a 100 ms round trip, drives at the nearest
+/// enemy and circles it from 18 m for a minute: how close the shells that hit her were
+/// drawn to her hull as her present reached each hit, and how many hit before they were
+/// drawn at all.
+fn shells_that_hit(dodger_first: bool) -> (Samples, u64) {
+    let mut net = Network::new();
+    net.dodger_first = dodger_first;
+    let delay = DelaySettings {
+        half_ms: 50.0,
+        jitter_ms: 0.0,
+        stall_ms: 0.0,
+    };
+    let alice = net.add(None, Some(delay));
+    net.connect(alice, choice("alice", Some(settings(MapId::Village))));
+    net.run(300.0);
+    let tank_id = net.peers[alice].client.control().unwrap().tank_id;
+    for step in 0..600 {
+        let sim = net.host.simulation.as_ref().unwrap();
+        let me = &sim.tanks[sim.tank_index(tank_id).unwrap()];
+        let target = me.alive.then(|| {
+            let here = sim.body_translation(me.body).planar();
+            sim.tanks
+                .iter()
+                .filter(|tank| tank.alive && tank.team != me.team)
+                .map(|tank| sim.body_translation(tank.body).planar())
+                .map(|there| (there.x - here.x, there.z - here.z))
+                .min_by(|a, b| a.0.hypot(a.1).total_cmp(&b.0.hypot(b.1)))
+        });
+        if let Some(Some((dx, dz))) = target {
+            let gap = dx.hypot(dz).max(0.1);
+            let side = if (step / 20) % 2 == 0 { 1.0 } else { -1.0 };
+            let (x, z) = if gap > 18.0 {
+                (dx / gap, dz / gap)
+            } else {
+                (dz / gap * side, -dx / gap * side)
+            };
+            net.peers[alice].input.move_x = x;
+            net.peers[alice].input.move_z = z;
+        }
+        net.run(100.0);
+    }
+    let feel = &net.peers[alice].client.feel;
+    (feel.incoming_offset.clone(), feel.unseen_incoming)
+}
+
+#[test]
+fn enemy_shells_reach_a_dodger_where_its_hull_is_drawn() {
+    let (dodging, unseen) = shells_that_hit(true);
+    let (delayed, unseen_delayed) = shells_that_hit(false);
+    let describe = |samples: &Samples| {
+        format!(
+            "{} hits, p50 {:.2} m, p90 {:.2} m, largest {:.2} m",
+            samples.count,
+            samples.percentile(0.5),
+            samples.percentile(0.9),
+            samples.largest
+        )
+    };
+    eprintln!(
+        "incoming offset: dodger first {} ({unseen} unseen), display clock {} ({unseen_delayed} unseen)",
+        describe(&dodging),
+        describe(&delayed)
+    );
+    // Seven to ten hits, depending on the platform's floating point.
+    assert!(
+        dodging.count >= 5,
+        "enough hits to judge: {}",
+        dodging.count
+    );
+    // Drawn toward the present, a shell meets the hull as the present reaches its hit (its
+    // strike drawn there)...
+    assert!(dodging.percentile(0.9) < 0.5, "{}", describe(&dodging));
+    // ...where on the display clock alone it is still about a view delay of flight away.
+    assert!(delayed.percentile(0.5) > 2.0, "{}", describe(&delayed));
+}
+
+/// Alice in a village room with bots, behind a 100 ms round trip, circles the nearest
+/// enemy from 18 m for a minute and holds fire at it as her page draws it: how far the
+/// host's impacts were from where her page drew the tanks she hit.
+fn shots_that_hit(shooter_first: bool) -> Samples {
+    let mut net = Network::new();
+    net.shooter_first = shooter_first;
+    let delay = DelaySettings {
+        half_ms: 50.0,
+        jitter_ms: 0.0,
+        stall_ms: 0.0,
+    };
+    let alice = net.add(None, Some(delay));
+    net.connect(alice, choice("alice", Some(settings(MapId::Village))));
+    net.run(300.0);
+    let tank_id = net.peers[alice].client.control().unwrap().tank_id;
+    for step in 0..600 {
+        let sim = net.host.simulation.as_ref().unwrap();
+        let me = &sim.tanks[sim.tank_index(tank_id).unwrap()];
+        let target = me.alive.then(|| {
+            let here = sim.body_translation(me.body).planar();
+            sim.tanks
+                .iter()
+                .filter(|tank| tank.alive && tank.team != me.team)
+                .map(|tank| sim.body_translation(tank.body).planar())
+                .map(|there| (there.x - here.x, there.z - here.z))
+                .min_by(|a, b| a.0.hypot(a.1).total_cmp(&b.0.hypot(b.1)))
+        });
+        if let Some(Some((dx, dz))) = target {
+            let gap = dx.hypot(dz).max(0.1);
+            let side = if (step / 20) % 2 == 0 { 1.0 } else { -1.0 };
+            let (x, z) = if gap > 18.0 {
+                (dx / gap, dz / gap)
+            } else {
+                (dz / gap * side, -dx / gap * side)
+            };
+            net.peers[alice].input.move_x = x;
+            net.peers[alice].input.move_z = z;
+        }
+        // Aim at the nearest enemy where Alice's page draws it.
+        let aim = net.peers[alice].client.display().and_then(|state| {
+            let viewer = state.viewer()?;
+            state
+                .tanks
+                .iter()
+                .filter(|tank| tank.alive && tank.team != viewer.team)
+                .map(|tank| {
+                    (
+                        tank.position.x - viewer.position.x,
+                        tank.position.z - viewer.position.z,
+                    )
+                })
+                .min_by(|a, b| a.0.hypot(a.1).total_cmp(&b.0.hypot(b.1)))
+        });
+        if let Some((dx, dz)) = aim {
+            net.peers[alice].input.aim_angle = dx.atan2(dz);
+            net.peers[alice].input.fire = true;
+        }
+        net.run(100.0);
+    }
+    net.peers[alice].client.feel.hit_offset.clone()
+}
+
+#[test]
+fn a_shooter_hits_tanks_where_its_page_drew_them() {
+    let favored = shots_that_hit(true);
+    let judged_now = shots_that_hit(false);
+    let describe = |samples: &Samples| {
+        format!(
+            "{} hits, p50 {:.2} m, p90 {:.2} m, largest {:.2} m",
+            samples.count,
+            samples.percentile(0.5),
+            samples.percentile(0.9),
+            samples.largest
+        )
+    };
+    eprintln!(
+        "hit offset: shooter first {}, host's present {}",
+        describe(&favored),
+        describe(&judged_now)
+    );
+    // Aimed at the tanks as drawn, with no lead for the view delay, shells strike where
+    // the tanks were drawn; judged in the host's present, often a metre or more away. How
+    // many hit depends on the platform's floating point (11 to 31 in a minute), so only
+    // where they strike is compared.
+    for samples in [&favored, &judged_now] {
+        assert!(
+            samples.count >= 5,
+            "enough hits to judge: {}",
+            describe(samples)
+        );
+    }
+    assert!(favored.percentile(0.9) < 0.3, "{}", describe(&favored));
+    assert!(
+        judged_now.percentile(0.9) > 0.5,
+        "{}",
+        describe(&judged_now)
+    );
+}
+
+#[test]
+fn a_tank_that_stopped_far_away_is_not_drawn_driving_in_on_its_old_input() {
+    let mut net = Network::new();
+    let delay = DelaySettings {
+        half_ms: 50.0,
+        jitter_ms: 0.0,
+        stall_ms: 0.0,
+    };
+    let alice = net.add(None, Some(delay));
+    let bob = net.add(None, None);
+    let humans_only = RoomSettings {
+        humans_only: true,
+        ..settings(MapId::Harbor)
+    };
+    net.connect(alice, choice("alice", Some(humans_only)));
+    net.run(300.0);
+    net.connect(
+        bob,
+        JoinChoice {
+            team: Some(Team::Red),
+            ..choice("bob", None)
+        },
+    );
+    net.run(1500.0);
+    let alice_id = net.peers[alice].client.control().unwrap().tank_id;
+    let bob_id = net.peers[bob].client.control().unwrap().tank_id;
+    // Bob waits 32 m down a clear lane from Alice, who stays parked.
+    let sim = net.host.simulation.as_mut().unwrap();
+    let (alice_index, bob_index) = (
+        sim.tank_index(alice_id).unwrap(),
+        sim.tank_index(bob_id).unwrap(),
+    );
+    let from = sim.body_translation(sim.tanks[alice_index].body).planar();
+    let lane = (0..32)
+        .map(|step| f64::from(step) * std::f64::consts::TAU / 32.0)
+        .find(|angle| {
+            sim.visible(
+                from,
+                Vec2::new(from.x + 34.0 * angle.sin(), from.z + 34.0 * angle.cos()),
+            )
+        })
+        .expect("some lane is clear");
+    let toward = Vec2::new(-lane.sin(), -lane.cos());
+    set_translation(
+        sim,
+        bob_index,
+        from.x - toward.x * 32.0,
+        0.65,
+        from.z - toward.z * 32.0,
+    );
+    set_linvel(sim, bob_index, 0.0, 0.0, 0.0);
+    // He drives toward her, and a nudge to her hull makes her prediction replay, placing
+    // him driving in her predicted world...
+    net.peers[bob].input.move_x = toward.x;
+    net.peers[bob].input.move_z = toward.z;
+    net.run(400.0);
+    let sim = net.host.simulation.as_mut().unwrap();
+    let at = sim.body_translation(sim.tanks[alice_index].body);
+    set_translation(sim, alice_index, at.x + 0.5, at.y, at.z);
+    set_linvel(sim, alice_index, 0.0, 0.0, 0.0);
+    net.run(200.0);
+    // ...then stops far away, while every snapshot confirms her prediction.
+    net.peers[bob].input.move_x = 0.0;
+    net.peers[bob].input.move_z = 0.0;
+    net.run(500.0);
+    let sim = net.host.simulation.as_ref().unwrap();
+    let stopped = sim.body_translation(sim.tanks[bob_index].body).planar();
+    assert!(distance(stopped, from) > 22.0, "bob stopped far away");
+    let mut nearest = f64::INFINITY;
+    for _ in 0..180 {
+        net.run(FRAME_MS);
+        let display = net.peers[alice].client.display().unwrap();
+        let viewer = display.viewer().unwrap().position.planar();
+        let drawn = display.tanks.iter().find(|tank| tank.id == bob_id).unwrap();
+        nearest = nearest.min(distance(drawn.position.planar(), viewer));
+    }
+    assert!(
+        nearest > 20.0,
+        "bob is drawn {nearest} m from alice, though he stopped {} m away",
+        distance(stopped, from)
+    );
 }

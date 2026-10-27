@@ -18,11 +18,12 @@ pub struct RoomCatalog {
 
 impl RoomCatalog {
     /// Publishes a room's listing; a room without connected players is removed at once.
-    pub fn update(&mut self, entry: RoomListing, now_ms: u64) {
+    /// Returns whether the room appeared in or left the list.
+    pub fn update(&mut self, entry: RoomListing, now_ms: u64) -> bool {
         self.prune(now_ms);
-        self.rooms.remove(&entry.room);
+        let was_listed = self.rooms.remove(&entry.room).is_some();
         if entry.players == 0 {
-            return;
+            return was_listed;
         }
         if self.rooms.len() >= MAX_LISTED_ROOMS
             && let Some(oldest) = self
@@ -40,6 +41,12 @@ impl RoomCatalog {
                 updated_ms: now_ms,
             },
         );
+        !was_listed
+    }
+
+    /// Unlists a room that ended; returns whether it was listed.
+    pub fn remove(&mut self, room: &str) -> bool {
+        self.rooms.remove(room).is_some()
     }
 
     fn prune(&mut self, now_ms: u64) {
@@ -120,6 +127,36 @@ mod tests {
         assert_eq!(codes, ["BCDEFGHJ"]);
         assert_eq!(catalog.list(ROOM_LIST_TTL_MS, false).len(), 1);
         assert_eq!(catalog.list(ROOM_LIST_TTL_MS + 1, false).len(), 0);
+    }
+
+    #[test]
+    fn reports_when_a_room_enters_or_leaves_the_list() {
+        let mut catalog = RoomCatalog::default();
+        assert!(catalog.update(entry(), 0), "a room's first player lists it");
+        assert!(
+            !catalog.update(
+                RoomListing {
+                    players: 2,
+                    ..entry()
+                },
+                1
+            ),
+            "a refreshed listing"
+        );
+        assert!(
+            catalog.update(
+                RoomListing {
+                    players: 0,
+                    ..entry()
+                },
+                2
+            ),
+            "the last player left"
+        );
+        assert!(!catalog.remove("ABCDEFGH"), "an unlisted room ended");
+        catalog.update(entry(), 3);
+        assert!(catalog.remove("ABCDEFGH"), "a listed room ended");
+        assert!(catalog.list(4, true).is_empty());
     }
 
     #[test]

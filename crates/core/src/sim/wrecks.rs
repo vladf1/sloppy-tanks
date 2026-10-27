@@ -123,18 +123,7 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
                 .angular_damping((if tumble { motion.damping } else { 3.5 }) as f32)
                 .ccd_enabled(true),
         );
-        let half_length = if humvee {
-            2.18 * HUMVEE_BODY_LENGTH_SCALE
-        } else if kind == VehicleKind::Scout {
-            2.2
-        } else {
-            2.7
-        };
-        let half_extents = [
-            (if humvee { 1.16 } else { 1.22 }) * scale,
-            (if humvee { 0.9 } else { 0.75 }) * scale,
-            half_length * scale,
-        ];
+        let (half_extents, _) = wreck_piece_box(kind, WreckPart::Intact);
         add_wreck_piece(
             simulation,
             body,
@@ -297,35 +286,7 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
         } else {
             aim
         };
-        let size = match part {
-            WreckPart::Hull => [1.22, 0.42, 1.45],
-            WreckPart::Barrel => [0.2, 0.2, 0.95],
-            _ => [
-                0.95,
-                0.45,
-                if part == WreckPart::TurretBarrel {
-                    1.55
-                } else {
-                    1.0
-                },
-            ],
-        };
-        let length_scale = if part == WreckPart::Hull && kind == VehicleKind::Heavy {
-            1.18
-        } else {
-            1.0
-        };
-        let share = match part {
-            WreckPart::Hull => 0.7,
-            WreckPart::Barrel => 0.07,
-            _ if detached => 0.23,
-            _ => 0.3,
-        };
-        let half_extents = [
-            size[0] * scale,
-            size[1] * scale,
-            size[2] * scale * length_scale,
-        ];
+        let (half_extents, share) = wreck_piece_box(kind, part);
         // Preserve the old random cleanup-choice draw in the seeded combat stream.
         simulation.rng.next();
         add_wreck_piece(
@@ -340,6 +301,61 @@ pub fn break_tank(simulation: &mut Simulation, tank_index: usize, burnout: bool)
             part,
         );
     }
+}
+
+/// A wreck piece's box half extents and its share of the wreck's mass (1.6 times the
+/// tank's), by chassis and part; also for wrecks known only by their replicated values.
+pub fn wreck_piece_box(kind: VehicleKind, part: WreckPart) -> ([f64; 3], f64) {
+    let scale = vehicle(kind).scale;
+    if part == WreckPart::Intact {
+        let humvee = kind == VehicleKind::Humvee;
+        let half_length = if humvee {
+            2.18 * HUMVEE_BODY_LENGTH_SCALE
+        } else if kind == VehicleKind::Scout {
+            2.2
+        } else {
+            2.7
+        };
+        let half_extents = [
+            (if humvee { 1.16 } else { 1.22 }) * scale,
+            (if humvee { 0.9 } else { 0.75 }) * scale,
+            half_length * scale,
+        ];
+        return (half_extents, 1.0);
+    }
+    let size = match part {
+        WreckPart::Hull => [1.22, 0.42, 1.45],
+        WreckPart::Barrel => [0.2, 0.2, 0.95],
+        _ => [
+            0.95,
+            0.45,
+            if part == WreckPart::TurretBarrel {
+                1.55
+            } else {
+                1.0
+            },
+        ],
+    };
+    let length_scale = if part == WreckPart::Hull && kind == VehicleKind::Heavy {
+        1.18
+    } else {
+        1.0
+    };
+    // A turret that lost its gun keeps the turret's share less the gun's.
+    let share = match part {
+        WreckPart::Hull => 0.7,
+        WreckPart::Barrel => 0.07,
+        WreckPart::Turret => 0.23,
+        _ => 0.3,
+    };
+    (
+        [
+            size[0] * scale,
+            size[1] * scale,
+            size[2] * scale * length_scale,
+        ],
+        share,
+    )
 }
 
 /// Give a launched wreck body its yaw and solid box collider, then record it as a metal

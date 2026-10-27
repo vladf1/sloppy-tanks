@@ -8,6 +8,9 @@ import { DIRECTORY_URL } from "./scripts/servers.mjs";
 // reads the directory directly, so setting them here covers both bundles.
 process.env.VITE_DIRECTORY_URL = DIRECTORY_URL;
 process.env.VITE_SERVER_ENVIRONMENT = "dev";
+// It also keeps the development network tools a room page offers locally: the transport
+// delay parameters and their slider, and the fairness comparisons.
+process.env.VITE_DEV_TOOLS = "1";
 
 // Load the shared configuration with the Cloudflare root asset base.
 // The shared startup plugin also needs this base, so build:dev sets DEPLOY_BASE.

@@ -1,0 +1,11 @@
+#cloud-config
+# Vultr startup script (cloud-init user data) for a dev site game server: deploy an
+# Ubuntu instance with it and the machine sets itself up (deploy/server/bootstrap.sh),
+# then lists itself in the server directory under dev.
+write_files:
+  - path: /etc/sloppy-tanks/server.env
+    content: |
+      SERVER_ENVIRONMENT=dev
+      DIRECTORY_URL=https://sloppy-tanks-directory.fridman.me
+runcmd:
+  - curl -fsSL --retry 5 https://raw.githubusercontent.com/vladf1/sloppy-tanks/main/deploy/server/bootstrap.sh | bash

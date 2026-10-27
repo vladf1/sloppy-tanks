@@ -7,6 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
+use sloppy_core::net::fixed_step_clock::BATCH_TICKS;
 use sloppy_core::net::match_host::{ConnectionId, MatchHostOptions};
 use sloppy_core::net::room_list::RoomListing;
 
@@ -19,6 +20,8 @@ use crate::tcp_path::TcpReading;
 #[derive(Default)]
 struct SocketLog {
     sent: Vec<Value>,
+    /// Binary state messages (baselines and snapshot batches) sent during a round.
+    states: usize,
     closed: Option<(u16, String)>,
     tcp: Option<TcpReading>,
 }
@@ -47,7 +50,8 @@ impl FakeSocket {
 impl RoomSocket for FakeSocket {
     fn send(&self, message: Message) {
         let Message::Text(text) = message else {
-            panic!("a lobby sends only text");
+            self.0.borrow_mut().states += 1;
+            return;
         };
         self.0
             .borrow_mut()
@@ -392,22 +396,39 @@ fn a_dropped_connection_keeps_its_seat_through_the_grace_then_the_room_expires()
 }
 
 #[test]
-fn keeps_fixed_deadlines_and_reanchors_after_a_late_callback() {
+fn a_running_round_fires_its_timer_as_each_batch_of_ticks_falls_due() {
     let mut harness = Harness::new();
-    let (_, id) = harness.open();
+    let (player, id) = harness.open();
     harness.send(id, &join("player"));
-    let first = harness.room.deadline().unwrap();
-    assert_eq!(first, 1_000_000 + HOST_INTERVAL_MS);
-    // A callback that runs 10 ms late keeps the next deadline on the 50 ms grid.
-    harness.now.store(first + 10, Ordering::Relaxed);
+    // Between rounds the timer keeps a plain interval.
+    assert_eq!(harness.room.deadline(), Some(1_000_000 + HOST_INTERVAL_MS));
+    harness.send(id, r#"{"type":"start","roundId":0}"#);
+    harness.tick(1000);
+    harness.room.sample().unwrap();
+    harness.tick(1000);
+    let second = harness.room.sample().unwrap();
+    // Every callback ran exactly one batch: none ran empty or doubled up.
+    assert!(player.0.borrow().states > 60, "the round streams state");
+    assert_eq!(second.tick % u64::from(BATCH_TICKS), 0);
+    assert_eq!(
+        u64::from(second.ticks) * u64::from(BATCH_TICKS),
+        60,
+        "a second of callbacks stepped a second of ticks"
+    );
+    // A callback 10 ms late runs its batch, and the next one comes early enough to catch up.
+    let due = harness.room.deadline().unwrap();
+    harness.now.store(due + 10, Ordering::Relaxed);
+    let tick = harness.room.sample().unwrap().tick;
     harness.room.on_timer();
-    assert_eq!(harness.room.deadline(), Some(first + HOST_INTERVAL_MS));
-    // One that misses a whole interval re-anchors a full interval out.
-    let late = first + 3 * HOST_INTERVAL_MS + 7;
-    harness.now.store(late, Ordering::Relaxed);
-    harness.room.on_timer();
-    assert_eq!(harness.room.deadline(), Some(late + HOST_INTERVAL_MS));
-    assert_eq!(harness.room.sample().unwrap().ticks, 2);
+    assert_eq!(
+        harness.room.sample().unwrap().tick,
+        tick + u64::from(BATCH_TICKS)
+    );
+    let next = harness.room.deadline().unwrap();
+    assert!(
+        next > due + 10 && next < due + HOST_INTERVAL_MS,
+        "{due} {next}"
+    );
     harness.room.reset("test");
 }
 

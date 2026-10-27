@@ -66,6 +66,10 @@ impl RoomHost for MatchRoom {
         self.host.debt_ms()
     }
 
+    fn until_next_batch_ms(&self, now_ms: u64) -> Option<f64> {
+        self.host.until_next_batch_ms(now_ms)
+    }
+
     fn input_lapses(&self) -> u64 {
         self.host.input_lapses()
     }

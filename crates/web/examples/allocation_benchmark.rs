@@ -12,6 +12,7 @@ use std::time::Instant;
 use serde::Serialize;
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::network_timeline::NetworkTimeline;
+use sloppy_core::net::own_shots::NoCover;
 use sloppy_core::net::replication::StateStream;
 use sloppy_core::net::scene_codec::Scene;
 use sloppy_core::net::shot_paths::{LivePaths, ShotPathRecorder};
@@ -155,7 +156,9 @@ fn main() {
                     };
                     timeline.reset(&received, tick, now, &shots);
                 } else {
-                    timeline.push(received, tick, Vec::new(), entries).unwrap();
+                    timeline
+                        .push(received, tick, Vec::new(), entries, &NoCover)
+                        .unwrap();
                     timeline.arrive(now);
                 }
             });
@@ -166,6 +169,7 @@ fn main() {
                         40.0,
                         1.0 / 60.0,
                         &mut display,
+                        None,
                     );
                 }
             });

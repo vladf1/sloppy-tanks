@@ -37,6 +37,7 @@ use super::projectiles::step_projectiles;
 use super::quarry_barrier_shapes::{DRAGON_TOOTH_MASS, dragon_tooth_variant, quarry_barrier_hulls};
 use super::quarry_rock_shape::{quarry_rock_shape, quarry_rock_variant};
 use super::scenery_pieces::settle_house_pieces;
+use super::shooter_rewind::ShooterRewind;
 use super::simulation_rules::{GRAVITY, MAX_FRAGMENTS, SIMULATION_RULES, SOLO, SPAWN_SCORING};
 use super::tank_driving::drive_tank;
 use super::tank_lifecycle::solo_spawn;
@@ -225,6 +226,8 @@ pub struct Simulation {
     pub after_step: Option<AfterStep>,
     /// When `Some`, every projectile sweep is recorded here for the caller to drain.
     pub projectile_moves: Option<Vec<ProjectileMove>>,
+    /// In a room, the hulls' recent past, so players' shells favor their shooters.
+    pub shooter_rewind: Option<ShooterRewind>,
     pub difficulty: Difficulty,
     pub game_mode: GameMode,
     pub endless_match: bool,
@@ -265,6 +268,7 @@ impl Simulation {
             cover_by_collider: HashMap::new(),
             shots: Vec::new(),
             projectile_tank_positions: Vec::new(),
+            shooter_rewind: None,
             bot_targets: Default::default(),
             mines: Vec::new(),
             mine_update_ids: Vec::new(),
@@ -380,6 +384,9 @@ impl Simulation {
 
     pub fn reset(&mut self, count: Option<usize>) {
         let count = count.unwrap_or(self.round_count);
+        if let Some(rewind) = &mut self.shooter_rewind {
+            rewind.clear();
+        }
         self.world = arena_world();
         self.contact_forces.clear();
         self.debris_contacts.clear();

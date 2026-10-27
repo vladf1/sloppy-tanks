@@ -12,8 +12,9 @@
 # it created, and releases its hold on pf, which stays on if something else enabled it.
 set -euo pipefail
 
-# The production and dev game server machines, whose wss traffic comes from port 443.
-SERVERS_FILE=$(dirname "$0")/../../deploy/servers.json
+# The production and dev game servers the directory lists, whose wss traffic comes from
+# port 443.
+DIRECTORY=https://sloppy-tanks-directory.fridman.me
 ANCHOR=com.apple/sloppy-lossy
 PIPE=4242
 # Exists while the script owns the pipe and anchor; holds its pf enable token.
@@ -48,8 +49,12 @@ case "${1:-}" in
       pfctl -E 2>&1 | awk '/Token/ { print $3 }' >"$STATE_FILE"
     fi
     servers=()
-    for role in production dev; do
-      servers+=("$(plutil -extract "$role.ip" raw -o - "$SERVERS_FILE")")
+    for environment in production dev; do
+      # Each server is listed at the nip.io name of its address, wss://1-2-3-4.nip.io.
+      for ip in $(curl -fsS "$DIRECTORY/servers?environment=$environment" |
+        grep -o 'wss://[0-9-]*\.nip\.io' | sed 's|wss://||; s|\.nip\.io||; s|-|.|g'); do
+        servers+=("$ip")
+      done
     done
     plr=$(awk -v p="$percent" 'BEGIN { printf "%.4f", p / 100 }')
     dnctl pipe "$PIPE" config plr "$plr"

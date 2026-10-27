@@ -1,25 +1,13 @@
-import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 
 /**
- * The multiplayer game servers: the machines of production and of the dev site, listed
- * in deploy/servers.json and set up by deploy/server/ (crates/server/README.md). Each
- * machine has its public `ip`, which every script reaches it by over SSH as root, and
- * the `hostnames` Caddy serves; nothing else differs between the machines.
- *
- * `{dashed-ip}` in a hostname stands for the address with dashes: `{dashed-ip}.nip.io`
- * becomes `1-2-3-4.nip.io`, which nip.io resolves to 1.2.3.4 (sslip.io and others work the
- * same way). Such a name needs no DNS record of ours, so a new machine has a certificate
- * and a working address as soon as it is provisioned; any other hostname needs its own A
- * record pointing at `ip`. Players use the first hostname, and the scripts check through
- * the first one made from the address, which reaches this machine whatever the other
- * names' DNS says.
- *
- * SLOPPY_SERVERS names another list, such as one of local test machines.
+ * The multiplayer game servers: the machines of production and of the dev site, set up by
+ * a provider startup script (deploy/server/cloud-init/) or deploy/server/ over SSH
+ * (crates/server/README.md). The server directory lists the ones that run, each at the
+ * nip.io name of its address (`1-2-3-4.nip.io` resolves to 1.2.3.4), which is all the
+ * scripts need: they reach a machine over SSH as root at that address and check its server
+ * through that name.
  */
-const listFile = process.env.SLOPPY_SERVERS ?? new URL("../deploy/servers.json", import.meta.url);
-const list = JSON.parse(readFileSync(listFile, "utf8"));
-
 /** The server's container image in the GitHub Container Registry. CI pushes it and moves
  * :production; the machines pull it (deploy/server/sloppy-tanks-update names it too). */
 export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
@@ -50,47 +38,43 @@ export const SSH_OPTIONS = [
   "ControlPersist=60",
 ];
 
-const DASHED_IP = "{dashed-ip}";
+/** The environment of production's machines, or with `dev` the dev site's. */
+export const environment = (dev) => (dev ? "dev" : "production");
 
-/** The production machines, or with `dev` the dev site's. An environment lists one
- * machine or several. */
-export function gameServers(dev) {
-  const role = dev ? "dev" : "production";
-  return [list[role]].flat().map((machine) => serverMachine(role, machine));
-}
-
-/** The environment's first machine, the one the traffic bots and the redeploy check use. */
-export function gameServer(dev) {
-  return gameServers(dev)[0];
-}
-
-/** How the scripts reach a machine from its deploy/servers.json entry. */
-export function serverMachine(role, { ip, hostnames }) {
-  if (!hostnames?.length) throw new Error(`${role} in deploy/servers.json lists no hostnames`);
-  if (isIP(ip) !== 4) throw new Error(`${role}'s ip is not an IPv4 address: ${ip}`);
-  const fromIp = (name) => name.includes(DASHED_IP);
-  const expand = (name) => name.replaceAll(DASHED_IP, ip.replaceAll(".", "-"));
-  const sites = hostnames.map(expand);
-  for (const name of sites) {
-    if (/[{}]/.test(name)) throw new Error(`Only ${DASHED_IP} can stand in a hostname: ${name}`);
+/** The machines the directory lists for production, or with `dev` the dev site's; with
+ * `ip`, that one machine, listed or not (one whose server is down, or still booting). */
+export async function gameServers(dev, ip) {
+  if (ip) return [serverMachine(environment(dev), ip)];
+  const list = `${DIRECTORY_URL}/servers?environment=${environment(dev)}`;
+  const response = await fetch(list, { signal: AbortSignal.timeout(10_000) });
+  if (!response.ok) throw new Error(`${list} answered ${response.status}`);
+  const { servers } = await response.json();
+  if (!servers.length) {
+    throw new Error(`${list} lists no running server; name a machine with --ip`);
   }
-  const machineName = hostnames.filter(fromIp).map(expand)[0];
+  return servers.map(({ url }) =>
+    serverMachine(
+      environment(dev),
+      url.match(/^wss:\/\/([\d-]+)\.nip\.io$/)[1].replaceAll("-", "."),
+    ),
+  );
+}
+
+/** How the scripts reach the machine at `ip` and what it serves. */
+export function serverMachine(role, ip) {
+  if (isIP(ip) !== 4) throw new Error(`Not an IPv4 address: ${ip}`);
+  const site = `${ip.replaceAll(".", "-")}.nip.io`;
   return {
     role,
     /** The machine's public IPv4 address. */
     ip,
     /** SSH destination. */
     ssh: `root@${ip}`,
-    /** Every name Caddy serves, which it obtains certificates for. */
-    sites,
-    /** The hostnames that need their own DNS record pointing at `ip`. */
-    dnsNames: hostnames.filter((name) => !fromIp(name)),
-    /** The WebSocket address by the first hostname, which the traffic bots use. */
-    url: `wss://${sites[0]}`,
-    /** The directory this machine pushes its rooms to. A machine from another list
-     * (SLOPPY_SERVERS, such as a local test VM) pushes nowhere, so players never see it. */
-    directory: process.env.SLOPPY_SERVERS ? "" : DIRECTORY_URL,
-    /** Where the scripts check the server through Caddy: the name that reaches this machine. */
-    checkUrl: `https://${machineName ?? sites[0]}`,
+    /** The name Caddy serves and obtains a certificate for. */
+    site,
+    /** The WebSocket address players reach the server by. */
+    url: `wss://${site}`,
+    /** Where the scripts check the server through Caddy. */
+    checkUrl: `https://${site}`,
   };
 }

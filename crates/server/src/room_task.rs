@@ -1,5 +1,5 @@
 //! One Tokio task per room: it owns the [`RoomSession`] (and so the host), receives
-//! socket events and runs the session's timer on the 50 ms cadence.
+//! socket events and runs the session's timer when it is due.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use sloppy_core::net::match_host::ConnectionId;
 use sloppy_core::net::room_list::RoomListing;
-use tokio::sync::{mpsc, oneshot};
+use tokio::sync::{Notify, mpsc, oneshot};
 use tokio::time::Instant;
 
 use crate::host::HostFactory;
@@ -77,12 +77,17 @@ pub struct ServerRoomEvents {
     pub catalog: Arc<Mutex<RoomCatalog>>,
     pub monitor: Arc<Mutex<ServerMonitor>>,
     pub clock: Clock,
+    /// Woken when a room enters or leaves the catalog, so the server directory hears of
+    /// it at once rather than at its next check.
+    pub rooms_changed: Arc<Notify>,
 }
 
 impl RoomEvents for ServerRoomEvents {
     fn listing(&mut self, entry: RoomListing) {
         let now = (self.clock)();
-        self.catalog.lock().expect("catalog").update(entry, now);
+        if self.catalog.lock().expect("catalog").update(entry, now) {
+            self.rooms_changed.notify_one();
+        }
     }
 
     fn activity(&mut self, event: RoomActivity) {
@@ -93,6 +98,11 @@ impl RoomEvents for ServerRoomEvents {
     }
 
     fn ended(&mut self, reason: &str, age_ms: u64) {
+        // A room that closes with players still seated (a failure) leaves the list now
+        // rather than when its listing expires.
+        if self.catalog.lock().expect("catalog").remove(&self.room) {
+            self.rooms_changed.notify_one();
+        }
         self.monitor
             .lock()
             .expect("monitor")

@@ -48,6 +48,7 @@ const SHELL = new Set([
     "player-name",
     "room-browser",
     "room-list",
+    "room-listing",
     "room-protocol",
     "server-address",
     "wire-log",

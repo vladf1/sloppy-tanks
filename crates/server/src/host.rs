@@ -1,6 +1,6 @@
 //! The contract between the server's socket layer and a room's authority.
 //!
-//! [`crate::session::RoomSession`] owns sockets, limits and the 50 ms timer; a
+//! [`crate::session::RoomSession`] owns sockets, limits and the room timer; a
 //! [`RoomHost`] owns everything about the match: seats, tokens, the protocol, the
 //! simulation and the room's own lifetime. The TypeScript server calls `MatchHost`
 //! (`src/net/match-host.ts`) through exactly these operations;
@@ -57,8 +57,8 @@ impl HostOutput {
 /// `Send` (a Rapier world is). It is only ever used from one task at a time and is never
 /// shared, so it needs neither `Sync` nor internal locking. Calls run synchronously on a
 /// runtime worker thread: a host must not block on I/O, and a busy match should keep
-/// [`advance`](RoomHost::advance) well inside the 50 ms interval (a slow tick delays only
-/// that room's next tick on a multi-core host, and everything on a one-core host).
+/// [`advance`](RoomHost::advance) well inside one tick (a slow tick delays only that
+/// room's next tick on a multi-core host, and everything on a one-core host).
 ///
 /// # Time
 ///
@@ -99,10 +99,17 @@ pub trait RoomHost: Send + 'static {
     /// and for connections the host itself closed.
     fn disconnect(&mut self, connection: ConnectionId, now_ms: u64, out: &mut HostOutput);
 
-    /// The 50 ms timer: expire the room or seats, drop connections that stopped
+    /// The room timer: expire the room or seats, drop connections that stopped
     /// consuming state, step the simulation by the elapsed fixed steps, and send each
     /// connection its snapshot batch.
     fn advance(&mut self, now_ms: u64, out: &mut HostOutput);
+
+    /// While a round runs, milliseconds from `now_ms` until its next batch of ticks is
+    /// due, when the session calls [`advance`](RoomHost::advance) again; `None` otherwise,
+    /// for the session's plain [`HOST_INTERVAL_MS`](crate::session::HOST_INTERVAL_MS).
+    fn until_next_batch_ms(&self, _now_ms: u64) -> Option<f64> {
+        None
+    }
 
     /// Ends the match now: send every connection `room-reset` with `reason` and close it
     /// with code 1012, free the simulation, and report [`HostEvent::Changed`]. Calling

@@ -9,7 +9,8 @@
 //! fixed headers are pinned by `fixtures/net-golden-binary.json`, which the traffic bots'
 //! header reader also reads; rerun with `SLOPPY_UPDATE_FIXTURES=1` after a deliberate
 //! format change. Protocol 4's additions (each tank's `drive`, the snapshot's `ackTick`,
-//! `ackArrival` and `hull`) were added to the JSON signatures by hand.
+//! `ackArrival` and `hull`) and protocol 5's (the snapshot's `bodies`) were added to the
+//! JSON signatures by hand.
 
 use crate::net_support;
 

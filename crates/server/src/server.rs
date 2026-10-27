@@ -19,7 +19,7 @@ use hyper_util::rt::{TokioIo, TokioTimer};
 use serde::Serialize;
 use sloppy_core::net::room_list::RoomListing;
 use tokio::net::{TcpListener, ToSocketAddrs};
-use tokio::sync::{mpsc, oneshot, watch};
+use tokio::sync::{Notify, mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
@@ -29,8 +29,9 @@ use crate::directory::{self, DirectoryOptions};
 use crate::host::HostFactory;
 use crate::monitor::{
     BusyProbe, LAG_PROBE_INTERVAL_MS, LagRecorder, LiveReading, MonitorInput, READING_INTERVAL_MS,
-    ServerMonitor, ServerStats, WallClock,
+    ServerMonitor, ServerStats, WallClock, iso_time,
 };
+use crate::process_stats;
 use crate::protocol::{CONTENT_VERSION, PROTOCOL_VERSION, SERVER_BUILD, is_room_code};
 use crate::rate_limit::RateLimit;
 use crate::room_catalog::RoomCatalog;
@@ -42,10 +43,10 @@ use crate::socket::{self, Ending, RoomLink, SocketHandle};
 use crate::websocket::{self, Codec, Role, extension};
 use crate::wire::{ConnectionBytes, CountingIo, WireTotals};
 
-/// Live rooms per process. A busy room measured about 3–4 ms of each 50 ms tick on the
-/// one-vCPU VPS, so ten busy rooms use roughly two thirds of it, leaving headroom for
-/// bursts. Raise it with `MAX_ROOMS` on a larger host. Joining an existing room is never
-/// refused by this cap.
+/// Live rooms per process. A busy room measured about 3–4 ms of each 50 ms on the one-vCPU
+/// VPS when it sent 20 batches a second (sending every tick costs more), so ten busy rooms
+/// used roughly two thirds of it, leaving headroom for bursts. Raise it with `MAX_ROOMS` on
+/// a larger host. Joining an existing room is never refused by this cap.
 pub const DEFAULT_MAX_ROOMS: usize = 10;
 /// Concurrent sockets from one IP; covers a 32-bot traffic swarm sharing an egress address.
 pub const DEFAULT_MAX_SOCKETS_PER_IP: usize = 32;
@@ -161,13 +162,15 @@ impl MultiplayerServer {
         let monitor = Arc::new(Mutex::new(monitor));
         let catalog = Arc::new(Mutex::new(RoomCatalog::default()));
         let registry: Arc<Registry> = Arc::default();
+        let rooms_changed = Arc::new(Notify::new());
         let factory = Arc::new(factory);
         let spawn_room: SpawnRoom = {
-            let (clock, catalog, monitor, registry) = (
+            let (clock, catalog, monitor, registry, rooms_changed) = (
                 clock.clone(),
                 catalog.clone(),
                 monitor.clone(),
                 registry.clone(),
+                rooms_changed.clone(),
             );
             Box::new(move |code, instance| {
                 let events = ServerRoomEvents {
@@ -175,6 +178,7 @@ impl MultiplayerServer {
                     catalog: catalog.clone(),
                     monitor: monitor.clone(),
                     clock: clock.clone(),
+                    rooms_changed: rooms_changed.clone(),
                 };
                 spawn_room(
                     code.to_string(),
@@ -219,12 +223,18 @@ impl MultiplayerServer {
         ];
         if let Some(options) = shared.options.directory.clone() {
             let listed = shared.clone();
-            let listing_json =
-                move || serde_json::to_string(&listing(&listed)).expect("listing serializes");
+            let announcement = move || {
+                let listing = listing(&listed);
+                directory::Announcement {
+                    body: serde_json::to_string(&listing).expect("listing serializes"),
+                    rooms: listing.rooms,
+                }
+            };
             let log = shared.options.log.clone();
             tasks.push(tokio::spawn(directory::announce(
                 options,
-                listing_json,
+                announcement,
+                rooms_changed,
                 log,
             )));
         }
@@ -472,19 +482,49 @@ fn health(build: &BuildInfo) -> Health<'_> {
     }
 }
 
-/// What the server directory lists for this server: `/health`'s fields and every room,
-/// extra levels included.
+/// What the server directory lists for this server: `/health`'s fields, when the process
+/// started, its load and every room, extra levels included.
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct Listing<'a> {
     #[serde(flatten)]
     health: Health<'a>,
+    /// ISO 8601, UTC.
+    started_at: String,
+    /// From the latest `/stats` sample; none in the first ten seconds.
+    #[serde(flatten)]
+    load: Option<Load>,
     rooms: Vec<RoomListing>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct Load {
+    /// The process's CPU time over the sample window, in percent of one core.
+    cpu_percent: f64,
+    cpus: usize,
+    #[serde(rename = "rssMB")]
+    rss_mb: f64,
+    #[serde(rename = "hostMemoryMB")]
+    host_memory_mb: f64,
 }
 
 fn listing(shared: &Shared) -> Listing<'_> {
     let now = (shared.clock)();
+    let (started_ms, load) = {
+        let monitor = shared.monitor.lock().expect("monitor");
+        let load = monitor.latest.as_ref().map(|stats| Load {
+            cpu_percent: stats.cpu_percent,
+            cpus: process_stats::cpu_count(),
+            rss_mb: stats.rss_mb,
+            host_memory_mb: (process_stats::host_memory().0 as f64 / (1024.0 * 1024.0)).round(),
+        });
+        (monitor.started_ms(), load)
+    };
     Listing {
         health: health(&shared.options.build),
+        started_at: iso_time(started_ms),
+        load,
         rooms: shared.catalog.lock().expect("catalog").list(now, true),
     }
 }

@@ -136,6 +136,35 @@ function fixture(network = false) {
       correctionP95M: 0.03,
       inputStarts: 25,
       lateInputStarts: 2,
+      correctionCauses: {
+        blast: { count: 1, mPerS: 0.002 },
+        tank: { count: 3, mPerS: 0.012 },
+        crate: { count: 0, mPerS: 0 },
+        debris: { count: 2, mPerS: 0.02 },
+        cover: { count: 0, mPerS: 0 },
+        lateInput: { count: 0, mPerS: 0 },
+        other: { count: 1, mPerS: 0.006 },
+      },
+      receiveMs: 140,
+      phantomStrikes: 2,
+    },
+    feel: {
+      viewDelayMs: { count: 600, mean: 211, p50: 210, p95: 230, max: 260 },
+      fireToFlashMs: { count: 12, mean: 196.4, p50: 190, p95: 240, max: 251 },
+      fireToReportMs: { count: 12, mean: 118, p50: 115, p95: 150, max: 160 },
+      unansweredPresses: 1,
+      hitOffsetM: { count: 5, mean: 1.234, p50: 1.1, p95: 2.05, max: 2.1 },
+      incomingOffsetM: { count: 4, mean: 0.42, p50: 0.3, p95: 0.9, max: 0.9 },
+      incomingBehindM: { count: 2, mean: 0.87, p50: 0.8, p95: 1.3, max: 1.3 },
+      unseenIncoming: 1,
+      ownShots: {
+        predicted: 14,
+        confirmed: 13,
+        unconfirmedShells: 1,
+        unpredicted: 2,
+        errorM: { count: 13, mean: 0.031, p50: 0.02, p95: 0.08, max: 0.1 },
+        phantomStrikes: 3,
+      },
     },
   };
   const engine = {
@@ -232,6 +261,14 @@ test("network stats use received scene counts and never require a client physics
     assert.ok(text.includes("RTT") && text.includes("42 ms"));
     assert.ok(text.includes("Input seq sent / ack") && text.includes("10 / 9"));
     assert.ok(text.includes("Late input starts") && text.includes("2 / 25"));
+    assert.ok(text.includes("Fire to flash") && text.includes("196 ms"));
+    assert.ok(text.includes("Own shots on time") && text.includes("13 / 14"));
+    assert.ok(text.includes("Own shell error") && text.includes("3.1 cm"));
+    assert.ok(text.includes("Hit offset p95") && text.includes("2.05 m"));
+    assert.ok(text.includes("Incoming offset") && text.includes("0.42 m"));
+    assert.ok(text.includes("Hit where you were") && text.includes("0.87 m"));
+    assert.ok(text.includes("Phantom strikes") && text.includes("2 / 3"));
+    assert.ok(text.includes("Debris corrections") && text.includes("2.0 cm/s"));
     assert.ok(
       text.includes("Late batches") &&
         text.includes("Longest batch gap") &&

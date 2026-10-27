@@ -4,11 +4,11 @@
 serves `/health`, `/rooms`, `/servers`, `/stats`, `/dashboard` (also at `/`) and the `/room/CODE` WebSocket
 on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 (`src/websocket/`). Each room is a Tokio task (`room_task.rs`) running a
-`RoomSession` (`session.rs`: socket limits, join timeout, the 50 ms timer) around
+`RoomSession` (`session.rs`: socket limits, join timeout, the room timer) around
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
 browser engine runs. Production and the dev site each run it on their own Vultr
-machine behind Caddy ([Deployment](#deployment)); production's is at
-`wss://sloppy-tanks-server.fridman.me`.
+machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
+the server directory (https://sloppy-tanks-directory.fridman.me) lists them.
 
 ```sh
 bun run server:dev        # build for this machine and listen on 127.0.0.1:8787
@@ -108,19 +108,23 @@ single player never loads or polls it.
 `GET /servers` answers in the server directory's format with this one server, so a lone
 local server is its own directory: `{"servers":[{"url":…,…}]}`, where the entry holds
 `url`, the address the request came in on (`wss://` when Caddy received it over HTTPS,
-otherwise `ws://`, with the request's host), `/health`'s fields and `rooms`, every room
-including extra levels. It shares `/rooms`'s CORS headers and rate limit.
+otherwise `ws://`, with the request's host), `/health`'s fields, `startedAt` (when the
+process started, ISO 8601 UTC), the latest `/stats` sample's `cpuPercent` (100 is one
+core) and `rssMB` with the host's `cpus` and `hostMemoryMB` (absent for the first ten
+seconds), and `rooms`, every room including extra levels. It shares `/rooms`'s CORS headers and rate limit.
 
 With `DIRECTORY_URL` set to the directory's base address
 (`https://sloppy-tanks-directory.fridman.me`) and `SERVER_ENVIRONMENT` to the environment
 that lists the server (`production` or `dev`), the server PUTs the same listing, without
-`url`, to `/servers?environment=` there as JSON. It compares the listing
-every 2 seconds and sends it when it changed since the directory last accepted it, or 15
-seconds after that, so the directory sees rooms appear and end within seconds and knows
-the server is still up; each request has 5 seconds. A failing directory is retried at
+`url`, to `/servers?environment=` there as JSON. A room entering or leaving the list
+(its first player joining, its last leaving, or the room ending) sends it at once.
+Otherwise it compares the rooms every 2 seconds and sends the listing when they changed
+since the directory last accepted it, or 15 seconds after that, so the directory knows the
+server is still up; the load figures alone never trigger a send. Each request has 5
+seconds. A failing directory is retried at
 every check and logged only when announcing starts failing or works again. The
 directory takes the server's address from the request's source IP, so the server
-connects to it over IPv4 only. TLS is rustls on Graviola's pure-Rust cryptography with
+connects to it over IPv4 only. TLS is rustls on RustCrypto's pure-Rust cryptography (`rustls-rustcrypto`) with
 Mozilla's root certificates compiled in (`webpki-roots`), which keeps the binary free of
 C code and the image free of a CA store.
 
@@ -136,26 +140,18 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 
 ## Deployment
 
-Production and the dev site each have their own game server machine, an Ubuntu 26.04
-x64 VPS at Vultr, set up identically. `deploy/servers.json` lists both
-(`scripts/servers.mjs` reads it): each machine's public `ip` and its `hostnames`. A
-machine runs the server as a container under Podman, behind Caddy in a container of
-its own, both supervised by systemd through Quadlet units. CI builds the server
-images; production pulls them by hand or automatically, and an SSH deploy from a
-checkout covers the dev server and any time CI or the registry cannot.
+Production and the dev site each run game server machines, Ubuntu x64 VPSes at Vultr set
+up identically. A machine runs the server as a container under Podman, behind Caddy in a
+container of its own, both supervised by systemd through Quadlet units. CI builds the
+server images; production pulls them by hand or automatically, and an SSH deploy from a
+checkout covers the dev servers and any time CI or the registry cannot.
 
-Caddy serves every hostname in the list and obtains a Let's Encrypt certificate for
-each. `{dashed-ip}` in a hostname stands for the machine's address with dashes, so
-`{dashed-ip}.nip.io` is its nip.io name (`45-63-56-58.nip.io` resolves to 45.63.56.58;
-sslip.io works the same way). Such a name needs no DNS record of ours, so a machine is
-usable as soon as it is provisioned; any other hostname, such as production's
-`sloppy-tanks-server.fridman.me` (a DNS-only A record at Cloudflare), needs its own record
-pointing at the machine. Players use the first hostname. The scripts reach a machine
-over SSH by its ip and check its server through the first hostname made from
-`{dashed-ip}`, which reaches that machine whatever the other names' DNS says; a list
-without one is checked through its first hostname. The Pages workflow and the
-traffic bots name production's address too; `tests/servers.test.ts` keeps them equal
-to the list.
+Every machine serves the nip.io name of its address (`45-63-56-58.nip.io` resolves to
+45.63.56.58), for which Caddy obtains a Let's Encrypt certificate, so a machine needs no
+DNS record of ours. There is no list of machines: the server directory lists the ones
+that run, under their environment, and the scripts (`scripts/servers.mjs`) take them from
+it, reaching each over SSH as root at its address. `--ip ADDRESS` names a machine the
+directory does not list, such as one whose server is down or that is still booting.
 
 ### Images and tags
 
@@ -180,8 +176,9 @@ connects to the machines. Fork pull requests build the image without pushing.
 
 ### On a machine
 
-`deploy/server/` holds the setup, which `server:provision` uploads with the
-machine's names written into the Caddyfile:
+`deploy/server/` holds the setup, which `bootstrap.sh` fetches at a new machine's first
+boot, or `server:provision` uploads with the machine's names written into the Caddyfile
+and its settings in `server.env`:
 
 - `provision.sh` installs Podman from Ubuntu's archive, the units and the updater,
   turns off SSH password login and allows only SSH, 80 and 443 through `ufw`. It is
@@ -256,49 +253,27 @@ lobby. Stop load tests before deploying.
 
 ### Machines
 
-To set up a machine, create an Ubuntu 26.04 x64 VPS with a public IPv4 address and
-your SSH key for root, put its address in `deploy/servers.json` and run
-`bun run server:provision` (`--dev` for the dev site's). It installs everything,
-starts CI's `:production` image (on dev, `deploy:dev` then replaces it with the
-checkout's build), and waits until the server answers through Caddy at its nip.io
-name, which takes about a minute
-while Caddy obtains the certificate. The scripts trust a new machine's host key on
-first contact and refuse a changed one; after replacing a machine at the same
-address, remove the old key with `ssh-keygen -R <ip>`.
+To add a machine, deploy an Ubuntu x64 instance in Vultr with your SSH key and, as its
+startup script (cloud-init user data), `deploy/server/cloud-init/production.yaml` or
+`dev.yaml`, saved once in Vultr's Startup Scripts. At first boot the user data writes
+`/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`) and runs
+`deploy/server/bootstrap.sh` from the repository's `main`. That serves the machine's own
+nip.io name, runs `provision.sh`, starts CI's `:production` image, and the server appears
+in the directory under its environment within a few minutes, with no SSH from here; from
+then on `deploy:dev` and the other `server:*` commands reach it. A changed
+`deploy/server/` file reaches a machine through Vultr's Reinstall, which keeps the
+address and runs the startup script again (then `deploy:dev` on dev), or through
+`server:provision`. To retire a machine, destroy it: it leaves the directory 45 seconds
+after its server stops.
 
-A hostname needs only its A record pointing at the machine and its place in the
-list; provision again so Caddy serves it. Keep a `{dashed-ip}` name in every machine's
-list, since moving a machine relies on it. To move production to another machine, put
-its address in production's entry and provision it: players stay on the old machine
-until the hostname's record points at the new one, while the scripts already check
-the new one through its nip.io name.
-
-`bun run server:point-hostname` (`--dev` for the dev site's) then moves the first
-hostname with its own record (`--hostname <name>` picks another) through Cloudflare's
-API, where fridman.me's DNS lives: it asks for an API token and the IP, defaulting to
-the machine in the list, sets the existing A record and waits until Google's and
-Cloudflare's resolvers return it; `--dry-run` shows the record and the change without
-making it. The record stays DNS only, not proxied, and the script turns proxying off if
-it finds it on: Caddy answers the ACME challenges itself and serves players' wss
-connections directly; Cloudflare's edge certificates would only cover a proxied record.
-
-```sh
-bun run server:provision                   # after changing production's ip in deploy/servers.json
-bun run server:point-hostname --dry-run    # shows the record and the change
-bun run server:point-hostname              # moves it and waits for public resolvers
-bun run server:provision                   # so Caddy obtains the certificate at once
-```
-
-The token is made once and reused; keep it in a password manager and off the machines,
-since it can repoint any record in the zone. Wrangler's login cannot read DNS records,
-so it needs a token of its own: in Cloudflare's dashboard, My Profile > API Tokens >
-Create Token, the "Edit zone DNS" template with Zone Resources set to Include, Specific
-zone, fridman.me. The template's Zone > DNS > Edit is all the script needs. Cloudflare
-shows the token once; it does not expire unless given a TTL.
-
-`SLOPPY_SERVERS` points the scripts at another list, such as one of local test machines:
-Caddy gives names ending in `.local` its own local certificates, and a test list leaves
-out `{dashed-ip}` names, which no certificate authority could reach at a private address.
+To set up a machine over SSH instead, create an Ubuntu 26.04 x64 VPS with a public
+IPv4 address and your SSH key for root and run `bun run server:provision --ip ADDRESS`
+(with `--dev` for the dev site). It installs everything, starts CI's `:production` image
+(on dev, `deploy:dev` then replaces it with the checkout's build), and waits until the
+server answers through Caddy at its nip.io name, which takes about a minute while Caddy
+obtains the certificate. The scripts trust a new machine's host key on first contact and
+refuse a changed one; after replacing a machine at the same address, remove the old key
+with `ssh-keygen -R <ip>`.
 
 ## Monitoring
 
@@ -352,8 +327,10 @@ start, only a direct loopback request without `X-Forwarded-For` (the update
 timer's) samples on demand; others get 503. Traffic figures count
 message bytes before compression (JSON text and binary state); `wire` figures are socket bytes
 after compression, including WebSocket frame and handshake bytes.
-`tickAvgMs`/`tickMaxMs` are the time spent in each 50 ms room timer callback; a
-`debtMs` that keeps rising means the room is falling behind real time.
+`tickAvgMs`/`tickMaxMs` are the time spent in each room timer callback, which
+fires as each simulation tick falls due while a round runs (60 a second; about
+every 17 ms between rounds); a `debtMs` that keeps rising means the room is
+falling behind real time.
 `rttP50Ms`/`rttMaxMs` are the median and highest of the room sockets' lowest TCP
 round trips,
 `retransmitPercent` the share of the window's data segments that were
@@ -364,13 +341,12 @@ counting global allocator.
 
 ### Dashboard
 
-`/dashboard` (https://sloppy-tanks-server.fridman.me/dashboard for production, the
-dev server's at its own address from `deploy/servers.json`, or
+`/dashboard` (on every server at its own address, linked from the directory's overview, or
 `http://127.0.0.1:8787/dashboard` locally) is a public, read-only page that
 updates every second: CPU, the share of time the runtime's worker threads were
 busy, runtime lag percentiles, memory, traffic on the wire and before
 compression, players and rooms, messages per second by type in each direction,
-the slowest room tick against its 50 ms budget, player round trips and
+the slowest room tick against its 17 ms budget, player round trips and
 retransmits, one row per room (with its players' round trips, retransmits and
 input lapses), recent room events and host load, with charts of the last five
 minutes. Message types are

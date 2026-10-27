@@ -1,7 +1,7 @@
 //! The authoritative room host (`src/net/match-host.ts`): seats, the lobby protocol, the
 //! simulation, per-client baselines and snapshot batches, and the room's own lifetime.
 //!
-//! It is transport-free: the runtime passes each received text, disconnect and 50 ms timer
+//! It is transport-free: the runtime passes each received text, disconnect and timer
 //! tick with its millisecond clock, and drains [`HostEvent`]s (sends, closes, directory
 //! changes) with [`MatchHost::take_events`] after every call. Nothing is sent re-entrantly.
 
@@ -15,7 +15,7 @@ use super::multiplayer_simulation::{
     release_player_tank,
 };
 use super::player_controls::PlayerControls;
-use super::prediction::HullState;
+use super::prediction::{HullState, MovingBody};
 use super::protocol::{
     CONTENT_VERSION, Control, EMPTY_GRACE_MS, JoinRequest, Lobby, MAX_BATCH_FRAMES,
     MAX_BATTLE_OVERRUN_MS, MAX_CLIENT_MESSAGE_BYTES, MAX_ROOM_MS, Message, PROTOCOL_VERSION,
@@ -27,6 +27,7 @@ use super::room_list::RoomListing;
 use super::scene_codec::Scene;
 use super::schema::{MAX_SAFE_INTEGER, Record, id, number_in, parse_record};
 use super::shot_paths::ShotPathRecorder;
+use crate::sim::shooter_rewind::ShooterRewind;
 use crate::sim::simulation::Simulation;
 use crate::sim::types::{MatchPhase, PlayerAssignment, SimEventType, Team, VehicleCommand};
 
@@ -193,7 +194,9 @@ fn lifecycle_changed(simulation: &Simulation, seen: &mut Vec<Note>) -> bool {
 /// A test or tooling observer run after every simulation step, before its events drain.
 pub type TickHook = Box<dyn FnMut(&mut Simulation, u64) + Send>;
 
-/// Owns the simulation and room policy. Call [`advance`](Self::advance) from a 50 ms timer.
+/// Owns the simulation and room policy. Call [`advance`](Self::advance) from a timer every
+/// [`HOST_INTERVAL_MS`](super::fixed_step_clock::HOST_INTERVAL_MS), or as
+/// [`until_next_batch_ms`](Self::until_next_batch_ms) says while a round runs.
 pub struct MatchHost {
     pub simulation: Option<Simulation>,
     pub settings: RoomSettings,
@@ -278,6 +281,14 @@ impl MatchHost {
     /// Elapsed time the fixed-step clock still owes the simulation.
     pub fn debt_ms(&self) -> f64 {
         self.clock.as_ref().map_or(0.0, |clock| clock.debt_ms)
+    }
+
+    /// While a round runs, milliseconds from `now_ms` until its next batch of ticks is due;
+    /// the runtime's timer should call [`advance`](Self::advance) then.
+    pub fn until_next_batch_ms(&self, now_ms: u64) -> Option<f64> {
+        self.clock
+            .as_ref()
+            .map(|clock| clock.until_next_batch_ms(now_ms as f64))
     }
 
     /// Connections that hold a seat.
@@ -805,6 +816,7 @@ impl MatchHost {
         )?;
         simulation.match_state.time = f64::from(self.settings.round_minutes * 60);
         simulation.projectile_moves = Some(Vec::new());
+        simulation.shooter_rewind = Some(ShooterRewind::default());
         self.clock = Some(FixedStepClock::new(now_ms as f64));
         self.stream = Some(StateStream::new(&self.room_epoch, self.round_id));
         for (_, client) in &mut self.clients {
@@ -921,7 +933,7 @@ impl MatchHost {
         }
     }
 
-    /// The 50 ms timer: expire the room or seats, drop connections that stopped consuming
+    /// The host timer: expire the room or seats, drop connections that stopped consuming
     /// state, step the simulation by the elapsed fixed steps and send snapshot batches.
     pub fn advance(&mut self, now_ms: u64) {
         if self.disposed {
@@ -1029,7 +1041,7 @@ impl MatchHost {
         }
         self.shot_paths.follow(simulation, tick);
         self.drain_events(tick);
-        // Intermediate deaths/respawns and membership changes survive the 20 Hz batching.
+        // Intermediate deaths/respawns and membership changes survive batching several ticks.
         let simulation = self.simulation.as_ref().expect("stepped above");
         if lifecycle_changed(simulation, &mut self.lifecycle) {
             self.capture_frame(tick);
@@ -1062,9 +1074,13 @@ impl MatchHost {
             let ack = controls.map(|controls| controls.ack).unwrap_or_default();
             // The viewer's own hull, for its client to predict from.
             let simulation = self.simulation.as_ref().expect("checked above");
-            let hull = controls
-                .and_then(|controls| simulation.tank_index(controls.tank_id))
-                .and_then(|index| HullState::capture(simulation, index, tick));
+            let index = controls.and_then(|controls| simulation.tank_index(controls.tank_id));
+            let hull = index.and_then(|index| HullState::capture(simulation, index, tick));
+            // And what moves near it, which prediction carries on.
+            let mut bodies = Vec::new();
+            if let (Some(index), Some(_)) = (index, hull) {
+                MovingBody::capture_near(simulation, index, &mut bodies);
+            }
             // A baseline sent since the previous batch already shows its earlier frames.
             let unseen: Vec<_> = frames
                 .iter()
@@ -1086,7 +1102,7 @@ impl MatchHost {
                     &ack,
                     first_seq,
                     chunk.len(),
-                    hull.as_ref(),
+                    hull.as_ref().map(|hull| (hull, bodies.as_slice())),
                 );
                 for (frame_tick, _, body) in chunk {
                     super::wire::put_varint(&mut message, last_tick - frame_tick);

@@ -11,7 +11,7 @@ From the repository root, use `bun run wrangler` for any Wrangler command:
 
 ```sh
 bun run wrangler login
-bun run wrangler dev --config bots/wrangler.jsonc --port 8788 --var SERVER_URL:http://127.0.0.1:8787
+bun run wrangler dev --config bots/wrangler.jsonc --port 8788 --var DIRECTORY_URL:http://127.0.0.1:8787
 bun run bots:deploy
 bun run deploy:dev
 ```

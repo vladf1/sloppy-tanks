@@ -400,12 +400,12 @@
                 <th>Score</th>
                 <th data-tip="How long this match has existed.">Age</th>
                 <th
-                  data-tip="Average time of one 50 ms room update (simulation plus snapshots) over the last second."
+                  data-tip="Average time of one room update (a simulation tick plus its snapshots, 60 a second) over the last second."
                 >
                   Tick avg
                 </th>
                 <th
-                  data-tip="Longest room update in the last second. Over 50 ms, the room falls behind real time."
+                  data-tip="Longest room update in the last second. Over 17 ms, the room falls behind real time."
                 >
                   Tick max
                 </th>
@@ -467,7 +467,7 @@
       /** A reading older than this means the stream has stalled. */
       const STALE_MS = 5000;
       const RETRY_MS = 5000;
-      const TICK_BUDGET_MS = 50;
+      const TICK_BUDGET_MS = 1000 / 60;
 
       const $ = (id) => document.getElementById(id);
       /** Explanations for labels a reader may not know; shown on hover or focus. */
@@ -477,7 +477,7 @@
         rooms: "Live matches. New rooms are refused at the cap; joining an existing room never is.",
         cpu: "Share of one CPU core the server process used in the last second, across all its threads. Workers busy is the share of time the runtime's worker threads spent running rooms, sockets and compression rather than waiting.",
         lag: "How late the runtime ran a 10 ms probe timer, beyond the scheduled time. High lag delays room updates and network messages.",
-        tick: "Longest single room update (simulation plus sending snapshots) in the last second. Rooms update every 50 ms, so a tick over 50 ms falls behind real time.",
+        tick: "Longest single room update (simulation plus sending snapshots) in the last second. Rooms update every tick, 60 times a second, so an update over 17 ms falls behind real time.",
         memory:
           "RSS (resident set size) is the physical RAM the server process holds: rooms, Rapier physics, network and compression buffers and the program itself. systemd stops the server at 700 MB. Heap is what the server has allocated now, of the most it ever held at once.",
         traffic:
@@ -596,14 +596,14 @@
           hint: HINTS.lag,
           value: (r) => `${fixed(r.loopLagP99Ms)} ms`,
           note: (r) => `max ${fixed(r.loopLagMaxMs)} ms`,
-          level: (r) => level(r.loopLagP99Ms, 20, TICK_BUDGET_MS),
+          level: (r) => level(r.loopLagP99Ms, TICK_BUDGET_MS / 2, TICK_BUDGET_MS),
           flag: "Slow",
         },
         {
           label: "Slowest room tick",
           hint: HINTS.tick,
           value: (r) => `${fixed(r.tickMaxMs)} ms`,
-          note: () => `budget ${TICK_BUDGET_MS} ms`,
+          note: () => `budget ${Math.round(TICK_BUDGET_MS)} ms`,
           level: (r) => level(r.tickMaxMs, TICK_BUDGET_MS / 2, TICK_BUDGET_MS),
           flag: "Near or over budget",
         },

@@ -47,6 +47,7 @@ pub mod quarry_rock_shape;
 pub mod render_state;
 pub mod round_recap;
 pub mod scenery_pieces;
+pub mod shooter_rewind;
 pub mod simulation;
 pub mod simulation_rules;
 pub mod speed_tuning;

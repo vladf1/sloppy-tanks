@@ -12,8 +12,10 @@ use http_body_util::Full;
 use hyper::{Request, StatusCode, Uri, header};
 use hyper_util::rt::TokioIo;
 use rustls::pki_types::ServerName;
+use sloppy_core::net::room_list::RoomListing;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
+use tokio::sync::Notify;
 use tokio::time::{Instant, MissedTickBehavior};
 use tokio_rustls::TlsConnector;
 
@@ -96,25 +98,42 @@ impl DirectoryOptions {
     }
 }
 
-/// Every `check`, PUTs the `listing` JSON when it differs from the last one the directory
-/// accepted, or when `interval` has passed since then; a failed announcement is retried
-/// at the next check. Logs only when announcing starts working or starts failing.
-pub async fn announce(options: DirectoryOptions, listing: impl Fn() -> String, log: Log) {
+/// What one announcement says: the rooms, whose changes are news, and the whole JSON body,
+/// whose load figures change at every reading and only ride along.
+pub struct Announcement {
+    pub rooms: Vec<RoomListing>,
+    pub body: String,
+}
+
+/// Every `check`, and at once when `rooms_changed` wakes it, PUTs the `listing` when its
+/// rooms differ from the last ones the directory accepted, or when `interval` has passed
+/// since then; a failed announcement is retried at the next check. Logs only when
+/// announcing starts working or starts failing.
+pub async fn announce(
+    options: DirectoryOptions,
+    listing: impl Fn() -> Announcement,
+    rooms_changed: Arc<Notify>,
+    log: Log,
+) {
     let tls = tls_connector();
-    let mut accepted: Option<(Bytes, Instant)> = None;
+    let mut accepted: Option<(Vec<RoomListing>, Instant)> = None;
     let mut working: Option<bool> = None;
     let mut check = tokio::time::interval(options.check);
     check.set_missed_tick_behavior(MissedTickBehavior::Delay);
     loop {
-        check.tick().await;
-        let body = Bytes::from(listing());
+        // A change during an announcement leaves a permit, so it is never missed.
+        tokio::select! {
+            _ = check.tick() => {}
+            () = rooms_changed.notified() => {}
+        }
+        let Announcement { rooms, body } = listing();
         if accepted
             .as_ref()
-            .is_some_and(|(last, at)| *last == body && at.elapsed() < options.interval)
+            .is_some_and(|(last, at)| *last == rooms && at.elapsed() < options.interval)
         {
             continue;
         }
-        let result = tokio::time::timeout(options.timeout, put(&options.url, &tls, body.clone()))
+        let result = tokio::time::timeout(options.timeout, put(&options.url, &tls, body.into()))
             .await
             .unwrap_or_else(|_| {
                 Err(format!(
@@ -134,7 +153,7 @@ pub async fn announce(options: DirectoryOptions, listing: impl Fn() -> String, l
         }
         working = Some(now_working);
         if now_working {
-            accepted = Some((body, Instant::now()));
+            accepted = Some((rooms, Instant::now()));
         }
     }
 }

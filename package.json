@@ -50,7 +50,6 @@
     "server:rollback": "bun scripts/server.mjs rollback",
     "server:auto-update": "bun scripts/server.mjs auto-update",
     "server:provision": "bun scripts/server.mjs provision",
-    "server:point-hostname": "bun scripts/point-hostname.mjs",
     "server:logs": "bun scripts/server.mjs logs",
     "server:stats": "bun scripts/server.mjs stats",
     "server:status": "bun scripts/server.mjs status",

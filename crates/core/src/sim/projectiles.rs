@@ -14,10 +14,11 @@ use super::data::{
 use super::debris_physics::{
     blast_debris, hit_movable_cover, hit_projectile_debris, shatter_debris, shatters,
 };
-use super::hitboxes::{SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
+use super::hitboxes::{HullAt, SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
 use super::laser_defense::laser_contact_time;
 use super::math::{Point3, Vec2, angle_delta, distance};
 use super::physics::{from_vector, query_filter, vector};
+use super::shooter_rewind::{ShooterRewind, target_ticks};
 use super::simulation::{ProjectileMove, Simulation};
 use super::tank_dimensions::tank_muzzle;
 use super::types::{
@@ -149,7 +150,12 @@ pub struct RocketThrust {
 
 impl RocketThrust {
     pub fn of(simulation: &Simulation) -> Self {
-        let base_speed = weapon(Weapon::Rocket).speed * simulation.speed_tuning.bullet_speed;
+        Self::at_bullet_speed(simulation.speed_tuning.bullet_speed)
+    }
+
+    /// A rocket's thrust under the bullet speed tuning `bullet_speed`.
+    pub fn at_bullet_speed(bullet_speed: f64) -> Self {
+        let base_speed = weapon(Weapon::Rocket).speed * bullet_speed;
         let top_speed = base_speed * COMBAT.rocket_top_speed_multiplier;
         Self {
             acceleration: (top_speed - base_speed) / COMBAT.rocket_acceleration_seconds,
@@ -160,6 +166,7 @@ impl RocketThrust {
 
 pub fn step_projectiles(simulation: &mut Simulation, dt: f64, sweep_tank_motion: bool) {
     simulation.shots.retain(|shot| shot.life > 0.0);
+    ShooterRewind::record(simulation);
     // Accelerate once per fixed tick, before all continuous collision sweeps.
     // Contact retries within this tick must not apply thrust again.
     for i in 0..simulation.shots.len() {
@@ -330,7 +337,36 @@ fn find_next_contact(
             }
         }
         let probe = ShotProbe::from(shot);
+        // A player's shell meets the other hulls where its shooter saw them. A shooter
+        // killed since sees them all on the delayed display, none near its hull.
+        let rewind = simulation
+            .shooter_rewind
+            .as_ref()
+            .map(|rewind| (rewind, rewind.shell_ticks(shot.id)))
+            .filter(|(_, ticks)| *ticks > 0)
+            .map(|(rewind, ticks)| {
+                let shooter = simulation
+                    .tank_index(shot.owner)
+                    .and_then(|index| tank_positions[index]);
+                (rewind, ticks, shooter)
+            });
         for (ti, tank) in simulation.tanks.iter().enumerate() {
+            let past = rewind
+                .filter(|_| tank.id != shot.owner)
+                .zip(tank_positions[ti])
+                .and_then(|((rewind, ticks, shooter), at)| {
+                    let ticks = shooter.map_or(ticks, |shooter| {
+                        target_ticks(ticks, distance(shooter.planar(), at.planar()))
+                    });
+                    (ticks > 0)
+                        .then(|| rewind.hull(tank.id, tank.life, ticks))
+                        .flatten()
+                });
+            let hull = match (past, tank_positions[ti]) {
+                (Some(past), _) => HullAt::Past(past),
+                (None, Some(end)) => HullAt::Translation(end),
+                (None, None) => HullAt::Body,
+            };
             if let Some(contact) = tank_hit_time(
                 simulation,
                 &probe,
@@ -338,7 +374,7 @@ fn find_next_contact(
                 time,
                 elapsed,
                 tank_frame_delta,
-                tank_positions[ti],
+                hull,
             ) && (contact < time || next.is_none())
             {
                 time = contact;

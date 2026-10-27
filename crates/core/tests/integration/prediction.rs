@@ -13,22 +13,23 @@ use crate::support;
 use std::collections::BTreeMap;
 
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
-use sloppy_core::net::prediction::{HullState, TankPredictor};
+use sloppy_core::net::prediction::{HullContacts, HullState, MovingBody, TankPredictor};
 use sloppy_core::net::scene_codec::{MirrorScene, Scene};
 use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::map_options::MapId;
-use sloppy_core::sim::math::{Vec2, angle_delta, distance};
+use sloppy_core::sim::math::{Point3, Vec2, angle_delta, distance};
 use sloppy_core::sim::types::{
     CoverKind, PlayerAssignment, SimEventType, Team, VehicleCommand, VehicleKind,
 };
 use sloppy_core::sim::{RenderState, Simulation};
 use support::{clear_arena, place_tank, tank_index};
 
-/// Snapshot batches carry every third tick.
+/// Prediction windows start every third tick: a sample of the snapshots, which arrive
+/// every tick.
 const SNAPSHOT_TICKS: usize = 3;
 /// Ticks the client predicts past a snapshot at 100 ms and 200 ms round trips, about
-/// the round trip plus one batch.
+/// the round trip plus the input margin.
 const HORIZON_100_MS: usize = 9;
 const HORIZON_200_MS: usize = 15;
 /// Prediction errors below this are invisible; above it a window counts as diverged.
@@ -39,8 +40,10 @@ struct HostTick {
     input: (f64, f64),
     hull: Option<HullState>,
     heading: f64,
-    /// The scene after this tick, kept at snapshot ticks.
+    /// The scene after this tick, kept at snapshot ticks, with the bodies moving near the
+    /// hull that the snapshot carries.
     scene: Option<RenderState>,
+    bodies: Vec<MovingBody>,
     /// A blast near the viewer, or a hit on it, this tick.
     blast: bool,
     nearest_tank: f64,
@@ -90,15 +93,41 @@ fn client_scene(sim: &Simulation, viewer: u32) -> RenderState {
         .unwrap()
 }
 
-/// The viewer's hull through its wire form, which must keep every bit.
+/// The viewer's hull through its wire form, which keeps its position bit for bit, its
+/// velocity to a twentieth of a millimetre per second and its heading to 50 nanoradians.
 fn client_hull(sim: &Simulation, viewer: u32, tick: u64) -> Option<HullState> {
     let hull = HullState::capture(sim, tank_index(sim, viewer), tick)?;
     let mut bytes = Vec::new();
     hull.write(&mut bytes);
     let read = HullState::read(&mut WireReader::new(&bytes)).unwrap();
-    assert_eq!(read, hull, "the wire form keeps every bit");
+    let apart = |a: Point3, b: Point3| {
+        (a.x - b.x)
+            .abs()
+            .max((a.y - b.y).abs())
+            .max((a.z - b.z).abs())
+    };
+    assert!(
+        apart(read.position, hull.position) <= 5e-6,
+        "{read:?} {hull:?}"
+    );
+    assert!(
+        apart(read.velocity, hull.velocity) <= 5e-5,
+        "{read:?} {hull:?}"
+    );
+    assert!(
+        (read.heading - hull.heading).abs() <= 5e-8,
+        "{read:?} {hull:?}"
+    );
+    assert_eq!(
+        (read.tick, read.life, read.kind),
+        (hull.tick, hull.life, hull.kind)
+    );
     Some(read)
 }
+
+/// Replays repeat the host's turns exactly, so a window's heading error is no more than
+/// the wire's rounding of the hull's heading (half of its tenth of a microradian).
+const HEADING_ROUNDING: f64 = 5e-8 + 1e-12;
 
 type Script = dyn Fn(u64) -> (f64, f64);
 
@@ -132,13 +161,17 @@ fn record(
         .filter(|other| other.id != viewer && other.alive)
         .map(|other| distance(sim.tank_position(other).planar(), at))
         .fold(f64::INFINITY, f64::min);
+    let snapshot = (tick as usize).is_multiple_of(SNAPSHOT_TICKS);
+    let mut bodies = Vec::new();
+    if snapshot {
+        MovingBody::capture_near(sim, index, &mut bodies);
+    }
     HostTick {
         input: (commands[&viewer].move_x, commands[&viewer].move_z),
         hull: client_hull(sim, viewer, tick),
         heading: tank.heading,
-        scene: (tick as usize)
-            .is_multiple_of(SNAPSHOT_TICKS)
-            .then(|| client_scene(sim, viewer)),
+        scene: snapshot.then(|| client_scene(sim, viewer)),
+        bodies,
         blast,
         nearest_tank,
     }
@@ -151,6 +184,7 @@ fn host_run(sim: &mut Simulation, viewer: u32, script: &Script, ticks: u64) -> V
         hull: client_hull(sim, viewer, 0),
         heading: sim.tanks[tank_index(sim, viewer)].heading,
         scene: Some(client_scene(sim, viewer)),
+        bodies: Vec::new(),
         blast: false,
         nearest_tank: f64::INFINITY,
     }];
@@ -174,6 +208,12 @@ struct Window {
 /// Replays `run` like a client: one predictor, restarted at every snapshot and driven
 /// `horizon` ticks ahead. Windows that cross a death or respawn are left out.
 fn client_replays(run: &[HostTick], horizon: usize) -> Vec<Window> {
+    client_replays_with(run, horizon, true)
+}
+
+/// [`client_replays`], with the debris near the hull and the moving bodies' velocities in
+/// the predicted world (as clients have them since protocol 5) or without.
+fn client_replays_with(run: &[HostTick], horizon: usize, bodies: bool) -> Vec<Window> {
     let mut predictor = TankPredictor::default();
     let mut windows = Vec::new();
     for start in (0..run.len() - horizon).step_by(SNAPSHOT_TICKS) {
@@ -188,6 +228,9 @@ fn client_replays(run: &[HostTick], horizon: usize) -> Vec<Window> {
             continue;
         }
         predictor.sync_scene(scene);
+        if bodies {
+            predictor.sync_bodies(scene, &run[start].bodies, hull.position);
+        }
         predictor.reset(hull);
         let mut window = Window {
             distance: 0.0,
@@ -277,7 +320,7 @@ fn open_field_driving_and_turning_replay_exactly() {
         let (distance, heading) = worst(&client_replays(&run, HORIZON_200_MS));
         eprintln!("open field {kind:?}: {distance} m, {heading} rad");
         assert!(distance < 2e-3, "{kind:?} diverged {distance} m");
-        assert_eq!(heading, 0.0, "{kind:?}");
+        assert!(heading <= HEADING_ROUNDING, "{kind:?} {heading}");
     }
 }
 
@@ -309,7 +352,7 @@ fn driving_into_and_along_a_wall_replays_within_three_centimetres() {
     let (distance, heading) = worst(&client_replays(&run, HORIZON_200_MS));
     eprintln!("wall: {distance} m, {heading} rad");
     assert!(distance < 0.03, "{distance}");
-    assert!(heading < 1e-9, "{heading}");
+    assert!(heading <= HEADING_ROUNDING, "{heading}");
 }
 
 #[test]
@@ -324,12 +367,52 @@ fn village_cover_replays_within_two_millimetres() {
     let (distance, heading) = worst(&client_replays(&run, HORIZON_200_MS));
     eprintln!("village: {distance} m, {heading} rad");
     assert!(distance < 2e-3, "{distance}");
-    assert!(heading < 1e-9, "{heading}");
+    assert!(heading <= HEADING_ROUNDING, "{heading}");
 }
 
 /// The viewer rams a parked tank and pushes it, it drives back, then pivots away. The
 /// predictor holds the other tank's replicated input, so pushes replay closely until
 /// that input changes.
+#[test]
+fn the_predicted_hull_reports_the_tank_it_drives_into() {
+    let mut sim = room(
+        MapId::Village,
+        &[
+            player("alice", Team::Blue, 0, VehicleKind::Balanced),
+            player("bob", Team::Red, 0, VehicleKind::Heavy),
+        ],
+        true,
+    );
+    let viewer = human_id(&sim, "alice");
+    let bob = human_id(&sim, "bob");
+    let (alice_index, bob_index) = (tank_index(&sim, viewer), tank_index(&sim, bob));
+    clear_arena(&mut sim, &[alice_index, bob_index]);
+    place_tank(&mut sim, 0, 0.0, 0.0, Some(0.0));
+    place_tank(&mut sim, 1, 0.0, 6.0, Some(0.0));
+    sim.world.step();
+    let mut predictor = TankPredictor::default();
+    predictor.sync_scene(&client_scene(&sim, viewer));
+    predictor.reset(&client_hull(&sim, viewer, 0).unwrap());
+    predictor.step(0.0, 0.0);
+    assert_eq!(
+        predictor.hull_contacts(),
+        HullContacts::default(),
+        "the ground does not count"
+    );
+    let mut touched = HullContacts::default();
+    for _ in 0..90 {
+        predictor.step(0.0, 1.0);
+        touched.add(predictor.hull_contacts());
+    }
+    assert_eq!(
+        touched,
+        HullContacts {
+            tank: true,
+            ..HullContacts::default()
+        }
+    );
+}
+
 #[test]
 fn pushing_another_tank_replays_until_its_input_changes() {
     let mut sim = room(
@@ -438,9 +521,10 @@ fn battle_divergence_comes_from_blasts_and_other_tanks() {
 }
 
 /// What the client cannot foresee, sized: a rocket blast beside the hull, and timber the
-/// hull is pushing against breaking under it. Each costs the windows that span it, and
-/// the predicted world has no debris, so the hull then drives through the fresh timber
-/// fragments the host's hull has to shove aside.
+/// hull is pushing against breaking under it. Each costs the windows that span it; after
+/// it, the fresh timber fragments are in the predicted world with the velocities the
+/// snapshots carry, so the hull shoves them aside as the host's does (without them it
+/// drove through and was corrected by up to 20 cm).
 #[test]
 fn unseen_blasts_and_breaking_cover_cost_their_windows() {
     let timber = CoverDef {
@@ -456,7 +540,8 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
         timber_bays: None,
         debris_seed: Some(1.0),
     };
-    for (event, label, later_bound) in [(60, "rocket blast", 0.05), (150, "timber breaking", 0.3)] {
+    for (event, label, later_bound) in [(60, "rocket blast", 0.05), (150, "timber breaking", 0.05)]
+    {
         let (mut sim, viewer) = open_field(VehicleKind::Balanced);
         sim.add_cover(&timber);
         sim.world.step();
@@ -489,6 +574,10 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
         }
         for (horizon, name) in [(HORIZON_100_MS, "100 ms"), (HORIZON_200_MS, "200 ms")] {
             let windows = client_replays(&run, horizon);
+            let without: Vec<f64> = client_replays_with(&run, horizon, false)
+                .iter()
+                .map(|window| window.distance)
+                .collect();
             let mut spanning = Vec::new();
             let mut others = Vec::new();
             for (index, window) in windows.iter().enumerate() {
@@ -501,8 +590,18 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
             }
             let spanning_max = percentile(&mut spanning, 1.0);
             let others_max = percentile(&mut others, 1.0);
+            let without_max = without
+                .iter()
+                .enumerate()
+                .filter(|(index, _)| {
+                    let start = index * SNAPSHOT_TICKS;
+                    !(start + 1..=start + horizon).contains(&(event as usize + 1))
+                })
+                .map(|(_, distance)| *distance)
+                .fold(0.0, f64::max);
             eprintln!(
-                "{label} at {name}: {} windows spanning it, max {spanning_max:.3} m; others max {others_max:.4} m",
+                "{label} at {name}: {} windows spanning it, max {spanning_max:.3} m; others max \
+                 {others_max:.4} m ({without_max:.3} m without the debris)",
                 spanning.len()
             );
             assert!(
@@ -512,4 +611,99 @@ fn unseen_blasts_and_breaking_cover_cost_their_windows() {
             assert!(others_max < later_bound, "{label} {name}: {others_max}");
         }
     }
+}
+
+/// The worst divergence of windows the hull spends near something, with the predicted
+/// world as clients have it and without debris or the moving bodies' velocities.
+fn near_divergence(run: &[HostTick], horizon: usize, near: impl Fn(usize) -> bool) -> (f64, f64) {
+    let worst = |bodies: bool| {
+        client_replays_with(run, horizon, bodies)
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| near(index * SNAPSHOT_TICKS))
+            .map(|(_, window)| window.distance)
+            .fold(0.0, f64::max)
+    };
+    (worst(true), worst(false))
+}
+
+#[test]
+fn pushing_a_drum_and_driving_into_a_wreck_replay_with_their_velocities() {
+    // A drum 5 m ahead, shoved along for three seconds.
+    let (mut sim, viewer) = open_field(VehicleKind::Heavy);
+    sim.add_cover(&CoverDef {
+        kind: CoverKind::Drum,
+        x: 0.0,
+        z: 5.0,
+        w: 1.0,
+        d: 1.0,
+        h: 1.2,
+        hp: f64::INFINITY,
+        color: 0xaa3322,
+        timber_join: None,
+        timber_bays: None,
+        debris_seed: None,
+    });
+    sim.world.step();
+    let run = host_run(&mut sim, viewer, &|_| (0.0, 1.0), 180);
+    let (with, without) = near_divergence(&run, HORIZON_100_MS, |tick| tick > 20);
+    eprintln!("drum: {with:.4} m, {without:.4} m without its velocity");
+    assert!(
+        with < 0.005 && without > 0.01,
+        "drum {with} against {without}"
+    );
+
+    // Bob's tank is destroyed 7 m ahead; once its wreck has landed, alice drives into it.
+    let mut sim = room(
+        MapId::Village,
+        &[
+            player("alice", Team::Blue, 0, VehicleKind::Balanced),
+            player("bob", Team::Red, 0, VehicleKind::Heavy),
+        ],
+        true,
+    );
+    let viewer = human_id(&sim, "alice");
+    let bob = human_id(&sim, "bob");
+    let (alice_index, bob_index) = (tank_index(&sim, viewer), tank_index(&sim, bob));
+    clear_arena(&mut sim, &[alice_index, bob_index]);
+    place_tank(&mut sim, 0, 0.0, 0.0, Some(0.0));
+    place_tank(&mut sim, 1, 0.0, 7.0, Some(0.0));
+    sim.world.step();
+    let bob_index = tank_index(&sim, bob);
+    // Past the spawn protection.
+    sim.tanks[bob_index].protection = 0.0;
+    sim.tanks[bob_index].shield = 0.0;
+    sim.damage_tank(bob_index, 1000.0, viewer, Team::Blue, None, None);
+    assert!(!sim.tanks[bob_index].alive);
+    let mut run = host_run(&mut sim, viewer, &|_| (0.0, 0.0), 150);
+    let from = support::tank_xz(&sim, tank_index(&sim, viewer));
+    let hull = sim
+        .fragments
+        .iter()
+        .find(|fragment| {
+            matches!(
+                fragment.part,
+                Some(
+                    sloppy_core::sim::types::WreckPart::Hull
+                        | sloppy_core::sim::types::WreckPart::Intact
+                )
+            )
+        })
+        .map(|fragment| sim.body_translation(fragment.body).planar())
+        .expect("the wreck has a hull");
+    let toward = Vec2::new(hull.x - from.x, hull.z - from.z);
+    let toward = (
+        toward.x / distance(hull, from),
+        toward.z / distance(hull, from),
+    );
+    for tick in 151..=330 {
+        let commands = BTreeMap::from([(viewer, command(toward))]);
+        run.push(record(&mut sim, viewer, tick, &commands));
+    }
+    let (with, without) = near_divergence(&run, HORIZON_100_MS, |tick| tick > 150);
+    eprintln!("wreck: {with:.4} m, {without:.4} m without the debris");
+    assert!(
+        with < 0.1 && without > 0.2,
+        "wreck {with} against {without}"
+    );
 }
