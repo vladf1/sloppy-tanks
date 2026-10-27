@@ -12,8 +12,31 @@ import {
   type ServerEntry,
 } from "../directory/listing";
 import { renderPage } from "../directory/page";
+import type { RoomListing } from "../src/net/room-listing";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
+
+const room = (code: string, changes: Partial<RoomListing> = {}): RoomListing => ({
+  room: code,
+  contentVersion: "11aac2382af5a93fd5d30531",
+  mapMode: "village",
+  difficulty: "normal",
+  humansOnly: false,
+  roundMinutes: 10,
+  players: 1,
+  reserved: 1,
+  phase: "lobby",
+  roundId: 1,
+  time: 0,
+  scores: [0, 0],
+  ...changes,
+});
+const health = {
+  protocol: 4,
+  contentVersion: "11aac2382af5a93fd5d30531",
+  serverBuild: "5a8e451fb56078b8714b650a",
+};
+const entry = (rooms: RoomListing[], seen: number): ServerEntry => ({ ...health, rooms, seen });
 
 test("the directory has one list per game server environment", () => {
   // The startup scripts name each machine's environment.
@@ -49,10 +72,31 @@ test("a server is listed at the nip.io name of the IPv4 address it announced fro
   }
 });
 
-test("an announcement is a JSON object with a rooms array; its other fields pass through", () => {
-  const body = { version: "1.2.3.4", protocol: 4, contentVersion: "abc", rooms: [{ room: "A" }] };
-  assert.deepEqual(parseAnnouncement(JSON.stringify(body)), body);
-  for (const text of ["", "not json", "null", "[]", '"rooms"', "{}", '{"rooms":{}}']) {
+test("an announcement keeps its declared /health fields and rooms checked as the page checks them", () => {
+  const body = { version: "1.2.3.4", ...health, dirty: false, rooms: [room("ABCDEFGH")] };
+  const announced = parseAnnouncement(JSON.stringify({ ...body, url: "wss://elsewhere.example" }));
+  assert.deepEqual(JSON.parse(JSON.stringify(announced)), body);
+  const malformed = [
+    {},
+    { ...health },
+    { ...health, rooms: {} },
+    { ...health, rooms: [1] },
+    { ...health, rooms: [{ room: "A" }] },
+    { ...health, rooms: [room("ABCDEFGH", { players: 9 })] },
+    { ...health, rooms: [room("ABCDEFGH", { mapMode: "<script>" as RoomListing["mapMode"] })] },
+    { ...health, protocol: "4", rooms: [] },
+    { ...health, contentVersion: "", rooms: [] },
+    { ...health, version: 1, rooms: [] },
+    { ...health, dirty: "no", rooms: [] },
+  ];
+  for (const text of [
+    "",
+    "not json",
+    "null",
+    "[]",
+    '"rooms"',
+    ...malformed.map((b) => JSON.stringify(b)),
+  ]) {
     assert.equal(parseAnnouncement(text), undefined, text);
   }
 });
@@ -60,19 +104,19 @@ test("an announcement is a JSON object with a rooms array; its other fields pass
 test("entries not announced within the time to live expire", () => {
   const now = 1_000_000;
   const entries = new Map<string, ServerEntry>([
-    ["wss://1-1-1-1.nip.io", { rooms: [], seen: now }],
-    ["wss://2-2-2-2.nip.io", { rooms: [], seen: now - ENTRY_TTL_MS }],
-    ["wss://3-3-3-3.nip.io", { rooms: [], seen: now - ENTRY_TTL_MS - 1 }],
+    ["wss://1-1-1-1.nip.io", entry([], now)],
+    ["wss://2-2-2-2.nip.io", entry([], now - ENTRY_TTL_MS)],
+    ["wss://3-3-3-3.nip.io", entry([], now - ENTRY_TTL_MS - 1)],
   ]);
   assert.deepEqual(expiredKeys(entries, now), ["wss://3-3-3-3.nip.io"]);
 });
 
 test("servers are listed fewest rooms first, ties by url, at the url they announced from", () => {
   const entries = new Map<string, ServerEntry>([
-    ["wss://9-9-9-9.nip.io", { rooms: [1, 2], seen: 1 }],
-    ["wss://5-5-5-5.nip.io", { rooms: [1], seen: 2 }],
-    ["wss://3-3-3-3.nip.io", { rooms: [1], seen: 3, url: "wss://elsewhere.example" }],
-    ["wss://7-7-7-7.nip.io", { rooms: [], seen: 4, protocol: 4 }],
+    ["wss://9-9-9-9.nip.io", entry([room("AAAAAAAA"), room("BBBBBBBB")], 1)],
+    ["wss://5-5-5-5.nip.io", entry([room("CCCCCCCC")], 2)],
+    ["wss://3-3-3-3.nip.io", entry([room("DDDDDDDD")], 3)],
+    ["wss://7-7-7-7.nip.io", entry([], 4)],
   ]);
   const servers = listServers(entries);
   assert.deepEqual(
@@ -84,36 +128,27 @@ test("servers are listed fewest rooms first, ties by url, at the url they announ
       "wss://9-9-9-9.nip.io",
     ],
   );
-  assert.deepEqual(servers[0], { url: "wss://7-7-7-7.nip.io", rooms: [], seen: 4, protocol: 4 });
+  assert.deepEqual(servers[0], { ...entry([], 4), url: "wss://7-7-7-7.nip.io" });
 });
 
 test("the overview lists every environment's servers and rooms, escaping what servers sent", () => {
   const now = 100_000;
+  const playing = room("ABCDEFGH", {
+    players: 2,
+    reserved: 3,
+    phase: "playing",
+    time: 125,
+    scores: [4, 1],
+  });
   const page = renderPage(
     [
       {
         name: "production",
         servers: [
           {
+            ...entry([playing], now - 3000),
+            version: "<b>1.1.1.244</b>",
             url: "wss://1-2-3-4.nip.io",
-            version: "1.1.1.244",
-            contentVersion: "11aac2382af5a93fd5d30531",
-            serverBuild: "5a8e451fb56078b8714b650a",
-            seen: now - 3000,
-            rooms: [
-              {
-                room: "ABCDEFGH",
-                mapMode: "<script>alert(1)</script>",
-                players: 2,
-                reserved: 3,
-                phase: "playing",
-                time: 125,
-                scores: [4, 1],
-                humansOnly: false,
-                difficulty: "normal",
-                roundMinutes: 10,
-              },
-            ],
           },
         ],
       },
@@ -125,14 +160,13 @@ test("the overview lists every environment's servers and rooms, escaping what se
   assert.match(page, /href="https:\/\/1-2-3-4\.nip\.io\/dashboard"/);
   assert.match(
     page,
-    /v1\.1\.1\.244 · content 11aac238 · build 5a8e451f · 2 players · seen 3 s ago/,
+    /v&lt;b&gt;1\.1\.1\.244&lt;\/b&gt; · content 11aac238 · build 5a8e451f · 2 players · seen 3 s ago/,
   );
   assert.match(
     page,
     /<td>2\/8 \(\+1 reconnecting\)<\/td><td>playing · 2:05 left<\/td><td>4–1<\/td>/,
   );
-  assert.match(page, /&lt;script&gt;alert\(1\)&lt;\/script&gt;/);
-  assert.doesNotMatch(page, /<script>/);
+  assert.doesNotMatch(page, /<b>/);
   assert.match(
     page,
     /dev <small>0 servers · 0 rooms · 0 players<\/small><\/h2><p class="empty">No servers<\/p>/,

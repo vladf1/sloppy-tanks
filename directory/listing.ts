@@ -1,4 +1,5 @@
 // The server directory's rules (worker.ts), free of Cloudflare imports so node tests run them.
+import { readRooms, type RoomListing } from "../src/net/room-listing";
 
 /** Each environment lists its own game servers: production's and the dev site's. */
 export const ENVIRONMENTS = ["production", "dev"] as const;
@@ -9,12 +10,18 @@ export const ENTRY_TTL_MS = 45_000;
 /** Far above a busy server's listing; bounds what one caller can make the directory store. */
 export const MAX_BODY_BYTES = 256 * 1024;
 
-/** A game server's `/health` fields and room listings, passed through as it sent them. */
+/** What a game server announces: its `/health` fields and its rooms, checked as the page
+ * checks them (src/net/room-listing.ts) so one bad announcement cannot spoil the list. */
 export interface Announcement {
-  rooms: unknown[];
-  [field: string]: unknown;
+  version?: string;
+  protocol: number;
+  contentVersion: string;
+  serverBuild: string;
+  commit?: string;
+  dirty?: boolean;
+  builtAt?: string;
+  rooms: RoomListing[];
 }
-/** An announcement as stored, with when it arrived (`Date.now()`). */
 export interface ServerEntry extends Announcement {
   seen: number;
 }
@@ -39,20 +46,38 @@ export function nipUrl(ip: string | null): string | undefined {
   return ipv4 ? `wss://${octets.join("-")}.nip.io` : undefined;
 }
 
-/** The body of an announcement, or undefined unless it is a JSON object with a `rooms` array. */
-export function parseAnnouncement(text: string): Announcement | undefined {
-  let body: unknown;
+/** A short text field, or undefined when `value` is not one. */
+function text(value: unknown): string | undefined {
+  return typeof value === "string" && value.length >= 1 && value.length <= 128 ? value : undefined;
+}
+
+/** The announcement in `body`, keeping only its declared fields, or undefined when any is
+ * missing or malformed. */
+export function parseAnnouncement(body: string): Announcement | undefined {
   try {
-    body = JSON.parse(text);
+    const value = JSON.parse(body) as Record<string, unknown>;
+    const optional = (name: string) =>
+      value[name] === undefined ? undefined : (text(value[name]) ?? fail(name));
+    if (!Number.isSafeInteger(value.protocol)) fail("protocol");
+    if (value.dirty !== undefined && typeof value.dirty !== "boolean") fail("dirty");
+    return {
+      version: optional("version"),
+      protocol: value.protocol as number,
+      contentVersion: text(value.contentVersion) ?? fail("contentVersion"),
+      serverBuild: text(value.serverBuild) ?? fail("serverBuild"),
+      commit: optional("commit"),
+      dirty: value.dirty as boolean | undefined,
+      builtAt: optional("builtAt"),
+      rooms: readRooms(value.rooms),
+    };
   } catch {
+    // JSON.parse, a null body and every check throw alike.
     return undefined;
   }
-  if (typeof body !== "object" || body === null || Array.isArray(body)) {
-    return undefined;
-  }
-  return Array.isArray((body as Record<string, unknown>).rooms)
-    ? (body as Announcement)
-    : undefined;
+}
+
+function fail(field: string): never {
+  throw new Error(`Invalid announcement: ${field}`);
 }
 
 /** Keys of the entries no server has announced within ENTRY_TTL_MS. */

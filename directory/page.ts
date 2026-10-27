@@ -1,5 +1,7 @@
 // The directory's overview page: every environment, its servers and their rooms, as plain
 // HTML the Worker renders on each request. Free of Cloudflare imports so node tests run it.
+import type { RoomListing } from "../src/net/room-listing";
+import { ROOM_SEATS } from "../src/net/room-protocol";
 import type { ListedServer } from "./listing";
 
 /** The page reloads itself this often; servers announce changes within about 2 s. */
@@ -10,41 +12,32 @@ export interface EnvironmentListing {
   servers: ListedServer[];
 }
 
-/** Announcements are unauthenticated, so every value reaching the page is escaped. */
-function escape(value: unknown): string {
-  return String(value ?? "").replace(
+/** Text from announcements and its own markup alike goes through here before the page. */
+function escape(value: string | number): string {
+  return String(value).replace(
     /[&<>"']/g,
     (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]!,
   );
 }
 
-function record(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
-}
-
 const count = (n: number, noun: string) => `${n} ${noun}${n === 1 ? "" : "s"}`;
-const players = (server: ListedServer) =>
-  server.rooms.reduce<number>((sum, room) => sum + (Number(record(room).players) || 0), 0);
+const players = (server: ListedServer) => server.rooms.reduce((sum, room) => sum + room.players, 0);
 
-function clock(seconds: unknown): string {
-  const whole = Math.max(0, Math.ceil(Number(seconds) || 0));
+function clock(seconds: number): string {
+  const whole = Math.max(0, Math.ceil(seconds));
   return `${Math.floor(whole / 60)}:${String(whole % 60).padStart(2, "0")}`;
 }
 
-function roomRow(value: unknown): string {
-  const room = record(value);
-  const scores = Array.isArray(room.scores) ? room.scores.join("–") : "";
-  const phase =
-    room.phase === "playing" ? `playing · ${clock(room.time)} left` : String(room.phase ?? "");
-  const reconnecting = (Number(room.reserved) || 0) - (Number(room.players) || 0);
+function roomRow(room: RoomListing): string {
+  const reconnecting = room.reserved - room.players;
   const cells = [
     room.room,
     room.mapMode,
-    `${String(room.players ?? 0)}/8${reconnecting > 0 ? ` (+${reconnecting} reconnecting)` : ""}`,
-    phase,
-    scores,
+    `${room.players}/${ROOM_SEATS}${reconnecting > 0 ? ` (+${reconnecting} reconnecting)` : ""}`,
+    room.phase === "playing" ? `playing · ${clock(room.time)} left` : room.phase,
+    room.scores.join("–"),
     room.humansOnly ? "humans only" : room.difficulty,
-    `${String(room.roundMinutes ?? "")} min`,
+    `${room.roundMinutes} min`,
   ];
   return `<tr>${cells.map((cell) => `<td>${escape(cell)}</td>`).join("")}</tr>`;
 }
@@ -53,12 +46,12 @@ function serverSection(server: ListedServer, now: number): string {
   const dashboard = server.url.replace(/^wss?:/, "https:") + "/dashboard";
   const seen = Math.max(0, Math.round((now - server.seen) / 1000));
   const details = [
-    server.version && `v${String(server.version)}`,
-    `content ${String(server.contentVersion ?? "?").slice(0, 8)}`,
-    `build ${String(server.serverBuild ?? "?").slice(0, 8)}`,
+    server.version && `v${server.version}`,
+    `content ${server.contentVersion.slice(0, 8)}`,
+    `build ${server.serverBuild.slice(0, 8)}`,
     count(players(server), "player"),
     `seen ${seen} s ago`,
-  ].filter(Boolean);
+  ].filter((detail) => detail !== undefined);
   const rooms = server.rooms.length
     ? `<table><thead><tr><th>Room</th><th>Map</th><th>Players</th><th>Phase</th><th>Score</th><th>Bots</th><th>Length</th></tr></thead><tbody>${server.rooms.map(roomRow).join("")}</tbody></table>`
     : `<p class="empty">No rooms</p>`;
