@@ -16,11 +16,9 @@ pub const GOLD_DEEP: Color32 = Color32::from_rgb(0xff, 0x9d, 0x1c);
 pub const BLUE: Color32 = Color32::from_rgb(0x3e, 0xa6, 0xff);
 pub const BLUE_DEEP: Color32 = Color32::from_rgb(0x16, 0x63, 0xc7);
 pub const RED: Color32 = Color32::from_rgb(0xff, 0x4d, 0x5e);
-pub const RED_DEEP: Color32 = Color32::from_rgb(0xb8, 0x1f, 0x36);
 pub const TEXT: Color32 = Color32::from_rgb(0xf4, 0xf9, 0xff);
 pub const TEXT_DIM: Color32 = Color32::from_rgb(0xa9, 0xc0, 0xd8);
 pub const TEXT_LABEL: Color32 = Color32::from_rgb(0x8e, 0xd4, 0xff);
-pub const HULL_DAMAGED: Color32 = Color32::from_rgb(0xff, 0x9a, 0x3c);
 /// The window behind the menus between rounds.
 pub const BACKDROP: Color32 = INK_1;
 

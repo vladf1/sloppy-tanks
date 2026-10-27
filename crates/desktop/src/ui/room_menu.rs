@@ -177,8 +177,9 @@ impl RoomMenu {
                         killer_team: Some(player.team.index() as u8),
                         victim: String::new(),
                         victim_team: None,
-                        weapon: String::new(),
-                        own: false,
+                        cause: None,
+                        own_kill: false,
+                        own_death: false,
                         age: 0.0,
                     });
                     if ui.kill_feed.len() > super::KILL_FEED_LINES {
@@ -264,8 +265,8 @@ fn team_word(team: Team) -> &'static str {
 fn tank_name(kind: &str) -> &str {
     TANKS
         .iter()
-        .find(|(id, _, _)| *id == kind)
-        .map_or(kind, |(_, name, _)| name)
+        .find(|tank| tank.id == kind)
+        .map_or(kind, |tank| tank.name)
 }
 
 fn centered_window(title: &str) -> egui::Window<'_> {
@@ -286,11 +287,15 @@ pub fn draw(
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     menu.copied = (menu.copied - dt).max(0.0);
+    let art = state
+        .art
+        .take()
+        .unwrap_or_else(|| super::icons::Art::new(context));
     if menu.joining {
         joining(context, menu, &mut actions);
     } else {
         if menu.in_battle() {
-            hud::hud(context, state, view, &mut actions);
+            hud::hud(context, state, &art, view, &mut actions);
             players(context, menu, state);
             if state.hud.as_ref().is_some_and(|hud| !hud.human.alive) {
                 respawn(context, menu, state);
@@ -303,8 +308,9 @@ pub fn draw(
         }
     }
     if state.settings_draft.is_some() {
-        menus::settings(context, state, view, &mut actions);
+        menus::settings(context, state, &art, view, &mut actions);
     }
+    state.art = Some(art);
     if state.show_nerd_stats && view.prefs.nerd_stats {
         super::nerd_stats::panel(context, state);
     }
@@ -504,9 +510,9 @@ fn room_menu(context: &egui::Context, menu: &mut RoomMenu, view: &View, actions:
                 .id_salt("room controls")
                 .show(ui, |ui| {
                     egui::Grid::new("room controls grid").show(ui, |ui| {
-                        for (keys, what) in menus::CONTROLS {
-                            ui.label(RichText::new(*keys).strong());
-                            ui.label(RichText::new(*what).color(TEXT_DIM));
+                        for (what, keys, note) in menus::CONTROLS {
+                            ui.label(RichText::new(keys.join(" ")).strong());
+                            ui.label(RichText::new(format!("{what} {note}")).color(TEXT_DIM));
                             ui.end_row();
                         }
                     });
@@ -683,7 +689,8 @@ fn next_battle(
                 }
                 ui.add_space(12.0);
                 ui.label("Tank");
-                for (id, name, _) in TANKS {
+                for tank in TANKS {
+                    let (id, name) = (tank.id, tank.name);
                     if ui.selectable_label(kind == id, name).clicked() && kind != id {
                         actions.push(Action::RoomChoose {
                             team,

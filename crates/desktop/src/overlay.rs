@@ -168,17 +168,4 @@ impl Overlay {
         });
         self.free_textures(&painted);
     }
-
-    /// Register an RGBA image (rows top first) as an egui texture.
-    pub fn load_image(
-        &self,
-        name: &str,
-        width: usize,
-        height: usize,
-        rgba: &[u8],
-    ) -> egui::TextureHandle {
-        let image = egui::ColorImage::from_rgba_unmultiplied([width, height], rgba);
-        self.context
-            .load_texture(name, image, egui::TextureOptions::LINEAR)
-    }
 }

@@ -49,7 +49,6 @@ pub struct MatchState {
 #[serde(rename_all = "camelCase")]
 pub struct DamageSource {
     pub cause: String,
-    pub origin: Point,
 }
 
 /// A simulation event as `drain_events` reports it.
@@ -109,6 +108,8 @@ pub struct HumanState {
     pub rank_fire_rate: f64,
     pub rank_health: f64,
     pub rank_repair: f64,
+    /// Seconds out of combat before a ranked hull repairs itself.
+    pub repair_delay: f64,
     pub ammo: Vec<AmmoSlot>,
     pub mine_cooldown: f64,
     pub protection: f64,
@@ -132,8 +133,6 @@ pub struct ScoreboardRow {
     pub deaths: f64,
     pub team: u8,
     pub kind: String,
-    #[serde(default)]
-    pub human: bool,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -158,14 +157,6 @@ pub struct RecapState {
     pub rank_names: Vec<String>,
 }
 
-#[derive(Clone, Debug, Default, Deserialize)]
-pub struct SpeedTuning {
-    #[serde(rename = "tank-speed")]
-    pub tank_speed: f64,
-    #[serde(rename = "bullet-speed")]
-    pub bullet_speed: f64,
-}
-
 /// `hud_json`: everything the HUD and menus show.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
@@ -182,7 +173,6 @@ pub struct HudState {
     pub score_limit: f64,
     pub team_names: [String; 2],
     pub active_enemies: f64,
-    pub speed_tuning: SpeedTuning,
     pub human: HumanState,
     pub scoreboard: Vec<ScoreboardRow>,
     pub recap: Option<RecapState>,
