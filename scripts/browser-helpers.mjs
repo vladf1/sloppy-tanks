@@ -26,11 +26,11 @@ const webglOnly = Boolean(process.env.SLOPPY_WEBGL);
  * that host's build, so only local dev servers rebuild.
  */
 /** The `?directory=` a check passes for a local game server at WebSocket address
- * `server`: a lone server lists itself at /servers. */
+ * `server`: a lone server is its own directory. */
 export function localDirectory(server) {
-  const url = new URL("/servers", server);
+  const url = new URL(server);
   url.protocol = url.protocol === "wss:" ? "https:" : "http:";
-  return url.href;
+  return url.origin;
 }
 
 export function buildWebglEngine() {

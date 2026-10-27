@@ -17,6 +17,10 @@ on:
         description: VITE_DIRECTORY_URL for the Pages build.
         type: string
         default: ""
+      server-environment:
+        description: VITE_SERVER_ENVIRONMENT, whose servers the Pages build lists.
+        type: string
+        default: ""
       build-number:
         description: >-
           The Pages workflow's run number, which the page and the server image report as
@@ -46,6 +50,7 @@ jobs:
         env:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
           VITE_DIRECTORY_URL: ${{ inputs.directory-url }}
+          VITE_SERVER_ENVIRONMENT: ${{ inputs.server-environment }}
           SLOPPY_BUILD_NUMBER: ${{ inputs.build-number }}
       - if: inputs.deploy-base
         uses: actions/configure-pages@v6

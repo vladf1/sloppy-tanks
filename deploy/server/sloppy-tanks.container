@@ -14,9 +14,9 @@ Pull=never
 # Host networking keeps the listener on loopback behind Caddy, which reaches it there,
 # and leaves no ports to publish past the firewall.
 Network=host
-# The server pushes its rooms to the directory of its environment (production or dev),
+# The server pushes its rooms to the directory under its environment (production or dev),
 # which server.mjs fills in when it provisions the machine.
-Environment=HOST=127.0.0.1 PORT=8787 DIRECTORY_URL={$DIRECTORY_URL}
+Environment=HOST=127.0.0.1 PORT=8787 DIRECTORY_URL={$DIRECTORY_URL} SERVER_ENVIRONMENT={$SERVER_ENVIRONMENT}
 # A read-only root without Podman's extra tmpfs mounts, no capabilities, and a memory
 # cap without swap.
 ReadOnly=true

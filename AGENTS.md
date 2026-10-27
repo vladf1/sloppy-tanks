@@ -473,7 +473,8 @@ offline.
 - Pages find servers through the server directory, a Cloudflare Worker in
   `directory/` (`pnpm run directory:deploy`) that every server pushes its rooms to;
   one deployment serves production and dev by its `environment` parameter, and
-  `server:provision` writes a machine's `DIRECTORY_URL` into its unit.
+  `server:provision` writes a machine's `DIRECTORY_URL` and `SERVER_ENVIRONMENT` into
+  its unit.
   `pnpm run server:check-if-redeployment-required` (add `--dev` for
   the dev server) compares this checkout with a live server's `/health` and
   exits non-zero when a redeploy is needed. It tells clients-refused (content

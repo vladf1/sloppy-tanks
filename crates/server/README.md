@@ -61,11 +61,12 @@ accepted in production builds.
 
 Settings come from the environment:
 
-| Variable        | Default              | Meaning                                                     |
-| --------------- | -------------------- | ----------------------------------------------------------- |
-| `HOST` / `PORT` | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks |
-| `MAX_ROOMS`     | `10`                 | Live rooms; new room codes beyond it get 503                |
-| `DIRECTORY_URL` | none                 | Where to announce this server's rooms; unset or empty: none |
+| Variable             | Default              | Meaning                                                             |
+| -------------------- | -------------------- | ------------------------------------------------------------------- |
+| `HOST` / `PORT`      | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks         |
+| `MAX_ROOMS`          | `10`                 | Live rooms; new room codes beyond it get 503                        |
+| `DIRECTORY_URL`      | none                 | Where to announce this server's rooms; unset or empty: none         |
+| `SERVER_ENVIRONMENT` | none                 | The environment that lists this server, needed with `DIRECTORY_URL` |
 
 A malformed value stops startup instead of silently turning a limit off. A loopback
 listener rate-limits by the last `X-Forwarded-For` hop, which Caddy sets.
@@ -110,9 +111,10 @@ local server is its own directory: `{"servers":[{"url":…,…}]}`, where the en
 otherwise `ws://`, with the request's host), `/health`'s fields and `rooms`, every room
 including extra levels. It shares `/rooms`'s CORS headers and rate limit.
 
-With `DIRECTORY_URL` set (such as
-`https://sloppy-tanks-directory.fridman.me/servers?environment=dev`), the server PUTs
-the same listing, without `url`, to exactly that address as JSON. It compares the listing
+With `DIRECTORY_URL` set to the directory's base address
+(`https://sloppy-tanks-directory.fridman.me`) and `SERVER_ENVIRONMENT` to the environment
+that lists the server (`production` or `dev`), the server PUTs the same listing, without
+`url`, to `/servers?environment=` there as JSON. It compares the listing
 every 2 seconds and sends it when it changed since the directory last accepted it, or 15
 seconds after that, so the directory sees rooms appear and end within seconds and knows
 the server is still up; each request has 5 seconds. A failing directory is retried at

@@ -1,12 +1,13 @@
 import { mergeConfig } from "vite";
 import config from "./vite.config.ts";
 import { devSite, devPages } from "./scripts/dev-site.ts";
-import { directoryUrl } from "./scripts/servers.mjs";
+import { DIRECTORY_URL } from "./scripts/servers.mjs";
 
-// The dev site always offers multiplayer, on the servers of the dev directory. Vite reads
-// VITE_* values from process.env after loading this file, and the startup build reads it
-// directly, so setting it here covers both bundles.
-process.env.VITE_DIRECTORY_URL = directoryUrl("dev");
+// The dev site always offers multiplayer, on the dev servers the directory lists. Vite
+// reads VITE_* values from process.env after loading this file, and the startup build
+// reads the directory directly, so setting them here covers both bundles.
+process.env.VITE_DIRECTORY_URL = DIRECTORY_URL;
+process.env.VITE_SERVER_ENVIRONMENT = "dev";
 
 // Load the shared configuration with the Cloudflare root asset base.
 // The shared startup plugin also needs this base, so build:dev sets DEPLOY_BASE.

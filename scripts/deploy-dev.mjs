@@ -1,6 +1,6 @@
 import { spawnSync } from "node:child_process";
 import { readdirSync, readFileSync } from "node:fs";
-import { directoryUrl } from "./servers.mjs";
+import { DIRECTORY_URL } from "./servers.mjs";
 
 const repo = new URL("..", import.meta.url);
 
@@ -20,7 +20,7 @@ const assets = new URL("../dist-dev/assets/", import.meta.url);
 // Code splitting decides which chunk carries the directory URL, so look in every script.
 const hasDirectory = readdirSync(assets)
   .filter((name) => name.endsWith(".js"))
-  .some((name) => readFileSync(new URL(name, assets), "utf8").includes(directoryUrl("dev")));
+  .some((name) => readFileSync(new URL(name, assets), "utf8").includes(DIRECTORY_URL));
 if (!index.includes('id="tab-multiplayer"') || !hasDirectory) {
   throw new Error(
     "dist-dev has no multiplayer entry or dev directory URL; rebuild with pnpm run build:dev",

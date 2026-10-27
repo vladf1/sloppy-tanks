@@ -84,12 +84,17 @@ function provision() {
       "sloppy-tanks-update.timer",
     ].map((name) => fileURLToPath(new URL(`../deploy/server/${name}`, import.meta.url)));
     const filled = {
-      Caddyfile: ["{$SITES}", server.sites.join(", ")],
-      "sloppy-tanks.container": ["{$DIRECTORY_URL}", server.directory],
+      Caddyfile: { "{$SITES}": server.sites.join(", ") },
+      "sloppy-tanks.container": {
+        "{$DIRECTORY_URL}": server.directory,
+        "{$SERVER_ENVIRONMENT}": server.role,
+      },
     };
-    for (const [name, [placeholder, value]] of Object.entries(filled)) {
-      const text = readFileSync(new URL(`../deploy/server/${name}`, import.meta.url), "utf8");
-      writeFileSync(join(staging, name), text.replaceAll(placeholder, value));
+    for (const [name, values] of Object.entries(filled)) {
+      let text = readFileSync(new URL(`../deploy/server/${name}`, import.meta.url), "utf8");
+      for (const [placeholder, value] of Object.entries(values))
+        text = text.replaceAll(placeholder, value);
+      writeFileSync(join(staging, name), text);
     }
     ssh("rm -rf /root/sloppy-tanks-provision && mkdir -p /root/sloppy-tanks-provision");
     run("scp", [

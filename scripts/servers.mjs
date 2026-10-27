@@ -25,13 +25,9 @@ const list = JSON.parse(readFileSync(listFile, "utf8"));
 export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
 
 /** The server directory (directory/worker.ts): each machine pushes its rooms there, and the
- * pages of its site read every server's rooms from there. */
-export const DIRECTORY_ORIGIN = "https://sloppy-tanks-directory.fridman.me";
-
-/** The directory URL of the production or dev servers and their site. */
-export function directoryUrl(role) {
-  return `${DIRECTORY_ORIGIN}/servers?environment=${role}`;
-}
+ * pages of its site read every server's rooms from there, each under its environment, the
+ * role (production or dev). */
+export const DIRECTORY_URL = "https://sloppy-tanks-directory.fridman.me";
 
 /**
  * accept-new trusts a fresh machine's host key on first contact, so a new one needs no
@@ -93,7 +89,7 @@ export function serverMachine(role, { ip, hostnames }) {
     url: `wss://${sites[0]}`,
     /** The directory this machine pushes its rooms to. A machine from another list
      * (SLOPPY_SERVERS, such as a local test VM) pushes nowhere, so players never see it. */
-    directory: process.env.SLOPPY_SERVERS ? "" : directoryUrl(role),
+    directory: process.env.SLOPPY_SERVERS ? "" : DIRECTORY_URL,
     /** Where the scripts check the server through Caddy: the name that reaches this machine. */
     checkUrl: `https://${machineName ?? sites[0]}`,
   };
