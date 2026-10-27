@@ -223,24 +223,27 @@ pnpm run desktop:mac      # universal (Apple silicon and Intel) Sloppy Tanks.app
 pnpm run desktop:windows  # sloppy-tanks.exe, on Windows with the MSVC build tools
 ```
 
-Both land in the ignored `artifacts/desktop/`: the Mac app beside a zip of it for
-sharing, and the Windows executable. Build through the script rather than `cargo build`:
-it stamps the content version multiplayer joins send, which must match the servers'
-(the same one the page carries), as well as the release and commit Battle Setup shows.
-It adds the Apple targets with rustup when they are missing and uses the `desktop`
-Cargo profile, which optimizes everything for speed. `cargo run -p sloppy-desktop`
-works for quick local tries, but servers refuse its unstamped content version. The
+Both land in the ignored `artifacts/desktop/`: the Mac app beside a zip of it and an
+installer package (`.pkg`, which puts it in `/Applications`) for sharing, and the
+Windows executable. Build through the script rather than `cargo build`: it stamps the
+content version multiplayer joins send, which must match the servers' (the same one the
+page carries), as well as the release and commit Battle Setup shows. It adds the Apple
+targets with rustup when they are missing and uses the `desktop` Cargo profile, which
+optimizes everything for speed. `cargo run -p sloppy-desktop` works for quick local
+tries, but servers refuse its unstamped content version. The
 [Desktop app workflow](.github/workflows/desktop.yml) builds both on pull requests that
 touch the crates or assets and on main, and keeps them as run artifacts; Linux CI leaves
 the crate out (`--exclude sloppy-desktop`), since its window and audio crates need
 system libraries there.
 
-The builds are unsigned (the Mac app carries only an ad-hoc signature). The first time,
-right-click the Mac app and choose **Open**, or clear the download quarantine with
-`xattr -dr com.apple.quarantine "Sloppy Tanks.app"`; on Windows, SmartScreen asks once:
-**More info**, then **Run anyway**. Start it with `--debug` (for example
-`"Sloppy Tanks.app/Contents/MacOS/sloppy-tanks" --debug`) for the extra levels a `?debug`
-page offers. Settings and personal bests live in
+The builds are unsigned (the Mac app carries only an ad-hoc signature), and so are both
+Mac downloads, the `.pkg` installer and the zip. The first time, right-click the
+package or the app and choose **Open**, or, once macOS has refused it, choose **Open
+Anyway** in System Settings → Privacy & Security; the zip's app can instead have its
+download quarantine cleared with `xattr -dr com.apple.quarantine "Sloppy Tanks.app"`.
+On Windows, SmartScreen asks once: **More info**, then **Run anyway**. Start it with
+`--debug` (for example `"Sloppy Tanks.app/Contents/MacOS/sloppy-tanks" --debug`) for
+the extra levels a `?debug` page offers. Settings and personal bests live in
 `~/Library/Application Support/Sloppy Tanks/` on macOS and `%APPDATA%\Sloppy Tanks\` on
 Windows.
 

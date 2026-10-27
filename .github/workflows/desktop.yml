@@ -1,7 +1,8 @@
 # The desktop app (crates/desktop): lint and test it on macOS, and build the universal
-# macOS app and the Windows executable through `scripts/build-desktop.mjs`, uploaded as
-# this run's artifacts. Linux CI (check.yml) leaves the crate out, since its window,
-# audio and GPU dependencies need system libraries there; nothing deploys from here.
+# macOS app (zipped and as an installer package) and the Windows executable through
+# `scripts/build-desktop.mjs`, uploaded as this run's artifacts. Linux CI (check.yml)
+# leaves the crate out, since its window, audio and GPU dependencies need system
+# libraries there; nothing deploys from here.
 # Builds carry the three-part release and the commit: the fourth part is the Pages
 # workflow's run number, which this workflow does not have.
 name: Desktop app
@@ -43,6 +44,11 @@ jobs:
       - uses: actions/upload-artifact@v7
         with:
           path: artifacts/desktop/Sloppy-Tanks-*-macOS.zip
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/desktop/Sloppy-Tanks-*-macOS.pkg
           archive: false
           if-no-files-found: error
 
