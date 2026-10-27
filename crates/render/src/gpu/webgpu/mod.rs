@@ -160,20 +160,46 @@ impl FrameTracker {
     }
 }
 
-/// [`GpuFrames`] natively: wgpu runs each frame's completion callback from a device
-/// poll, which [`Frame::draw`] makes every frame.
+/// [`GpuFrames`] natively. wgpu runs a frame's completion callback only from a device
+/// poll; one made by the next frame would time a frame as one display frame whatever
+/// its work, and Auto's quality would never find the room to step up again. So a
+/// thread waits on the GPU and runs each callback as its work finishes.
 #[cfg(not(target_arch = "wasm32"))]
 struct FrameTracker {
     frames: Arc<Mutex<GpuFrames>>,
     start: Instant,
+    /// Ends the waiting thread, which holds a handle to the device.
+    stop: Arc<AtomicBool>,
 }
+
+/// How long the waiting thread waits at a time, and rests when nothing is on the GPU.
+#[cfg(not(target_arch = "wasm32"))]
+const GPU_WAIT: std::time::Duration = std::time::Duration::from_millis(100);
+#[cfg(not(target_arch = "wasm32"))]
+const GPU_IDLE_REST: std::time::Duration = std::time::Duration::from_millis(1);
 
 #[cfg(not(target_arch = "wasm32"))]
 impl FrameTracker {
-    fn new() -> Self {
+    fn new(device: &wgpu::Device) -> Self {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (device, stopped) = (device.clone(), stop.clone());
+        let _ = std::thread::Builder::new()
+            .name("gpu completion".into())
+            .spawn(move || {
+                while !stopped.load(Ordering::Acquire) {
+                    let waited = device.poll(wgpu::PollType::Wait {
+                        submission_index: None,
+                        timeout: Some(GPU_WAIT),
+                    });
+                    if waited.is_ok_and(|status| status.is_queue_empty()) {
+                        std::thread::sleep(GPU_IDLE_REST);
+                    }
+                }
+            });
         Self {
             frames: Arc::default(),
             start: Instant::now(),
+            stop,
         }
     }
 
@@ -193,6 +219,13 @@ impl FrameTracker {
 
     fn in_flight(&self) -> u32 {
         Self::lock(&self.frames).submitted.len() as u32
+    }
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl Drop for FrameTracker {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
     }
 }
 
@@ -366,7 +399,10 @@ impl Frame {
             shadow_base_buffer: base_buffer(device, INITIAL_SHADOW_BASES),
             shadow_base_capacity: INITIAL_SHADOW_BASES,
             gpu_idle: Arc::new(AtomicBool::new(true)),
+            #[cfg(target_arch = "wasm32")]
             gpu_frames: FrameTracker::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            gpu_frames: FrameTracker::new(device),
             #[cfg(not(target_arch = "wasm32"))]
             output: None,
             #[cfg(not(target_arch = "wasm32"))]
