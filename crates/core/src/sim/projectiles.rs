@@ -337,22 +337,27 @@ fn find_next_contact(
             }
         }
         let probe = ShotProbe::from(shot);
-        // A player's shell meets the other hulls where its shooter saw them.
+        // A player's shell meets the other hulls where its shooter saw them. A shooter
+        // killed since sees them all on the delayed display, none near its hull.
         let rewind = simulation
             .shooter_rewind
             .as_ref()
             .map(|rewind| (rewind, rewind.shell_ticks(shot.id)))
             .filter(|(_, ticks)| *ticks > 0)
-            .and_then(|(rewind, ticks)| {
-                let shooter = tank_positions[simulation.tank_index(shot.owner)?]?;
-                Some((rewind, ticks, shooter))
+            .map(|(rewind, ticks)| {
+                let shooter = simulation
+                    .tank_index(shot.owner)
+                    .and_then(|index| tank_positions[index]);
+                (rewind, ticks, shooter)
             });
         for (ti, tank) in simulation.tanks.iter().enumerate() {
             let past = rewind
                 .filter(|_| tank.id != shot.owner)
                 .zip(tank_positions[ti])
                 .and_then(|((rewind, ticks, shooter), at)| {
-                    let ticks = target_ticks(ticks, distance(shooter.planar(), at.planar()));
+                    let ticks = shooter.map_or(ticks, |shooter| {
+                        target_ticks(ticks, distance(shooter.planar(), at.planar()))
+                    });
                     (ticks > 0)
                         .then(|| rewind.hull(tank.id, tank.life, ticks))
                         .flatten()

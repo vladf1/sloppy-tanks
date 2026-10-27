@@ -11,8 +11,8 @@ use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::network_timeline::hull_gap;
 use crate::sim::math::{Vec2, distance};
 use crate::sim::render_state::RenderState;
-use crate::sim::shooter_rewind::target_ticks;
-use crate::sim::types::VehicleKind;
+use crate::sim::shooter_rewind::{MAX_REWIND_TICKS, target_ticks};
+use crate::sim::types::{Team, VehicleKind};
 
 /// Recent samples kept for each reading's percentiles.
 const MAX_SAMPLES: usize = 600;
@@ -32,6 +32,12 @@ const MAX_HIT_FRAME_TICKS: f64 = 4.0;
 /// An enemy shell's hit on the viewer is measured over the frames whose present lies
 /// within this many ticks before it and one tick after.
 const INCOMING_WINDOW_TICKS: f64 = 6.0;
+/// A shell that ended within this distance (metres) of a hull's hit box, where the host
+/// had the hull over the shell's rewind, struck it: wire rounding and a hull's sweep within
+/// a tick. Farther off, it hurt the hull with a rocket's blast elsewhere.
+const STRIKE_REACH: f64 = 0.3;
+/// Received ticks of hulls kept: the longest rewind, and the tick a hit sweeps through.
+const HULL_HISTORY_TICKS: usize = MAX_REWIND_TICKS as usize + 2;
 
 /// One reading's samples: how many, their mean and largest, and percentiles of the
 /// recent ones.
@@ -87,8 +93,27 @@ impl Press {
     }
 }
 
+/// An enemy shell that ended near the viewer about when a hit on it arrived.
+#[derive(Clone, Copy, Debug)]
+pub struct ShellEnd {
+    pub shell: u32,
+    /// Where it was fired, and the ticks it rewinds the tanks it meets.
+    pub origin: Vec2,
+    pub rewind: u32,
+    /// Where its path ended.
+    pub at: Vec2,
+}
+
+/// Each live tank's hull in one received tick: id, kind, position and heading.
+#[derive(Clone, Debug, Default)]
+struct HostHulls {
+    tick: f64,
+    hulls: Vec<(u32, VehicleKind, Vec2, f64)>,
+}
+
 /// One drawn frame: the viewer's predicted present, where its hull and each other live
-/// tank were drawn, and where the enemy shells were.
+/// tank were drawn, and where the enemy shells were (their impacts, in the frame that
+/// draws their end).
 #[derive(Clone, Debug, Default)]
 struct DrawnFrame {
     present: f64,
@@ -110,13 +135,15 @@ pub struct FeelReadings {
     pub view_delay: Samples,
     /// Per shell hit the viewer scored on another tank: how far the server's impact was
     /// from that tank's hit box as drawn when the viewer's own present reached the hit,
-    /// metres. Zero when the server judges shells where the shooter saw the target.
+    /// metres. Zero when the server judges shells where the shooter saw the target. A
+    /// blast that only reached the tank (a rocket's beside it, a drum's, a mine's) is none.
     pub hit_offset: Samples,
     /// Per enemy shell that hit the viewer: how close it was drawn to the viewer's hull (its
     /// hit box) around the moment the viewer's present reached the hit, metres: the hull as
     /// drawn then, or for a player's shell the hull as drawn its shooter's rewind earlier,
-    /// where the host judged it. A shell drawn on the display clock is still a view delay
-    /// of flight away.
+    /// where the host judged it. A shell is where its impact shows in the frame that draws
+    /// its strike; one drawn on the display clock is still a view delay of flight away. A
+    /// rocket's blast beside the hull is no shell reaching it.
     pub incoming_offset: Samples,
     /// Per player's shell judged against the viewer's past hull (shooter first): how far it
     /// was drawn from the viewer's hull as drawn when it struck, metres. It strikes where
@@ -131,6 +158,8 @@ pub struct FeelReadings {
     firing: bool,
     frames: VecDeque<DrawnFrame>,
     spare: Vec<DrawnFrame>,
+    /// The hulls of the newest received ticks, oldest first.
+    host: VecDeque<HostHulls>,
 }
 
 impl FeelReadings {
@@ -140,12 +169,71 @@ impl FeelReadings {
         self.press = None;
         self.firing = false;
         self.spare.extend(self.frames.drain(..));
+        self.host.clear();
+    }
+
+    /// A received tick: where the host had each live hull, which tells a shell's strike on
+    /// a hull from a blast beside it.
+    pub fn received(&mut self, tick: f64, state: &RenderState) {
+        let mut entry = if self.host.len() >= HULL_HISTORY_TICKS {
+            self.host.pop_front().expect("checked above")
+        } else {
+            HostHulls::default()
+        };
+        entry.tick = tick;
+        entry.hulls.clear();
+        entry.hulls.extend(
+            state
+                .tanks
+                .iter()
+                .filter(|tank| tank.alive)
+                .map(|tank| (tank.id, tank.kind, tank.position.planar(), tank.heading)),
+        );
+        self.host.push_back(entry);
+    }
+
+    /// How near `point` came to tank `id`'s hit box where the host had it over the `rewind`
+    /// ticks before `tick` and the tick it swept through, metres.
+    fn host_gap(&self, id: u32, point: Vec2, tick: f64, rewind: u32) -> Option<f64> {
+        self.host
+            .iter()
+            .filter(|received| {
+                received.tick <= tick && received.tick >= tick - f64::from(rewind) - 1.0
+            })
+            .filter_map(|received| {
+                let &(_, kind, position, heading) =
+                    received.hulls.iter().find(|hull| hull.0 == id)?;
+                Some(hull_gap(kind, position, heading, point))
+            })
+            .min_by(f64::total_cmp)
+    }
+
+    /// Of `points` near tank `id` about when it was hurt at `tick`, the one that struck its
+    /// hull where the host had it.
+    fn strike<T: Copy>(
+        &self,
+        id: u32,
+        tick: f64,
+        points: &[T],
+        place: impl Fn(&T) -> (Vec2, u32),
+    ) -> Option<T> {
+        points
+            .iter()
+            .filter_map(|candidate| {
+                let (point, rewind) = place(candidate);
+                Some((*candidate, self.host_gap(id, point, tick, rewind)?))
+            })
+            .filter(|(_, gap)| *gap <= STRIKE_REACH)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
+            .map(|(candidate, _)| candidate)
     }
 
     /// One drawn frame. `present` is the viewer's predicted tick while prediction runs,
     /// `display` the tick the other tanks are drawn at, `firing` whether the viewer holds
     /// fire with live controls and `ready` whether the gun will have reloaded by the time
-    /// a shot sent now reaches the server.
+    /// a shot sent now reaches the server. `ended` holds the shells whose impact the frame
+    /// draws instead of them (id, team, where).
+    #[allow(clippy::too_many_arguments)]
     pub fn frame(
         &mut self,
         now_ms: f64,
@@ -154,6 +242,7 @@ impl FeelReadings {
         firing: bool,
         ready: bool,
         state: &RenderState,
+        ended: &[(u32, Team, Vec2)],
     ) {
         if let Some(press) = self
             .press
@@ -204,12 +293,19 @@ impl FeelReadings {
                 .map(|tank| (tank.id, tank.kind, tank.position.planar(), tank.heading)),
         );
         frame.shells.clear();
+        let enemy = |team: Team| viewer.is_some_and(|viewer| team != viewer.team);
         frame.shells.extend(
             state
                 .shots
                 .iter()
-                .filter(|shot| viewer.is_some_and(|viewer| shot.team != viewer.team))
+                .filter(|shot| enemy(shot.team))
                 .map(|shot| (shot.id, Vec2::new(shot.x, shot.z))),
+        );
+        frame.shells.extend(
+            ended
+                .iter()
+                .filter(|(_, team, _)| enemy(*team))
+                .map(|&(id, _, at)| (id, at)),
         );
         self.frames.push_back(frame);
     }
@@ -243,9 +339,18 @@ impl FeelReadings {
         }
     }
 
-    /// The enemy shell `shell`, fired from `origin` by a shooter the host rewinds the tanks
-    /// it meets for by `rewind` ticks, hit the viewer at `tick`.
-    pub fn incoming_hit(&mut self, tick: f64, shell: u32, rewind: u32, origin: Vec2) {
+    /// An enemy shell hurt the viewer `viewer` at `tick`; `ends` are the shells that ended
+    /// near it then. A rocket's blast beside the hull is no shell drawn reaching it.
+    pub fn incoming_hit(&mut self, tick: f64, viewer: u32, ends: &[ShellEnd]) {
+        let Some(ShellEnd {
+            shell,
+            origin,
+            rewind,
+            ..
+        }) = self.strike(viewer, tick, ends, |end| (end.at, end.rewind))
+        else {
+            return;
+        };
         // A shell drawn in the present is gone once it strikes the hull, so the window
         // runs up to the hit and slightly past it.
         let nearest = self
@@ -294,8 +399,12 @@ impl FeelReadings {
             .map(|(_, position, heading)| (position, heading))
     }
 
-    /// The viewer's shell hurt or killed tank `victim` at `tick`, striking it at `impact`.
-    pub fn own_hit(&mut self, tick: f64, victim: u32, impact: Vec2) {
+    /// The viewer's shell hurt or killed tank `victim` at `tick`; `impacts` are the shell
+    /// impacts near it then. A rocket's blast beside the hull struck nothing there.
+    pub fn own_hit(&mut self, tick: f64, victim: u32, impacts: &[Vec2]) {
+        let Some(impact) = self.strike(victim, tick, impacts, |&at| (at, MAX_REWIND_TICKS)) else {
+            return;
+        };
         let Some(frame) = self
             .frames
             .iter()
@@ -310,5 +419,147 @@ impl FeelReadings {
             self.hit_offset
                 .add(hull_gap(kind, position, heading, impact));
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sim::hitboxes::SHELL_HIT_RADIUS;
+    use crate::sim::math::Point3;
+    use crate::sim::render_state::{RenderShot, RenderTank};
+    use crate::sim::tank_dimensions::tank_hull;
+
+    const VIEWER: u32 = 1;
+    const ENEMY: u32 = 2;
+    const SHELL: u32 = 50;
+    const ROCKET: u32 = 51;
+    /// Ticks the other tanks are drawn behind the present.
+    const VIEW_TICKS: f64 = 8.0;
+
+    fn tank(id: u32, team: Team, at: Vec2) -> RenderTank {
+        RenderTank {
+            id,
+            kind: VehicleKind::Balanced,
+            team,
+            alive: true,
+            position: Point3::new(at.x, 0.65, at.z),
+            ..RenderTank::default()
+        }
+    }
+
+    /// The viewer at `viewer` and an enemy at `enemy`, both facing +z, and enemy shells.
+    fn scene(viewer: Vec2, enemy: Vec2, shells: &[(u32, Vec2)]) -> RenderState {
+        RenderState {
+            viewer_id: VIEWER,
+            tanks: vec![
+                tank(VIEWER, Team::Blue, viewer),
+                tank(ENEMY, Team::Red, enemy),
+            ],
+            shots: shells
+                .iter()
+                .map(|&(id, at)| RenderShot {
+                    id,
+                    x: at.x,
+                    z: at.z,
+                    team: Team::Red,
+                    ..RenderShot::default()
+                })
+                .collect(),
+            ..RenderState::default()
+        }
+    }
+
+    /// How far ahead of a hull's centre its hit box's front face lies.
+    fn front() -> f64 {
+        let hull = tank_hull(VehicleKind::Balanced);
+        hull.center.z + hull.size.z / 2.0 + SHELL_HIT_RADIUS
+    }
+
+    /// A point three metres off the side of a hull at `at`, where a rocket struck a wall.
+    fn beside(at: Vec2) -> Vec2 {
+        Vec2::new(
+            at.x + tank_hull(VehicleKind::Balanced).size.x / 2.0 + 3.0,
+            at.z,
+        )
+    }
+
+    #[test]
+    fn the_viewers_hit_is_measured_at_a_shell_impact_on_the_hull_the_host_judged() {
+        let mut feel = FeelReadings::default();
+        // The enemy drives along +x at 0.2 m a tick; the host had it where the viewer's
+        // shell struck, ten ticks back for a player's shell.
+        let enemy = |tick: f64| Vec2::new(0.2 * tick - 20.0, 10.0);
+        for tick in 80..=100 {
+            let tick = f64::from(tick);
+            feel.received(tick, &scene(Vec2::ZERO, enemy(tick), &[]));
+            let drawn = scene(Vec2::ZERO, enemy(tick - VIEW_TICKS), &[]);
+            feel.frame(
+                0.0,
+                Some(tick),
+                tick - VIEW_TICKS,
+                false,
+                false,
+                &drawn,
+                &[],
+            );
+        }
+        // A rocket's blast at the wall beside it hurt it, but struck nothing there.
+        feel.own_hit(95.0, ENEMY, &[beside(enemy(95.0))]);
+        assert_eq!(feel.hit_offset.count, 0, "{feel:?}");
+        // A shell that struck its hull where the shooter saw it, beside another impact.
+        feel.own_hit(96.0, ENEMY, &[beside(enemy(96.0)), enemy(96.0 - 10.0)]);
+        assert_eq!(feel.hit_offset.count, 1, "{feel:?}");
+        assert!(feel.hit_offset.largest < 0.5, "{feel:?}");
+    }
+
+    #[test]
+    fn an_incoming_shell_is_measured_where_its_strike_is_drawn_and_a_blast_beside_is_none() {
+        let mut feel = FeelReadings::default();
+        let enemy = Vec2::new(0.0, 40.0);
+        let hit = 100.0;
+        let strike = Vec2::new(0.0, front());
+        // Closing in fast, the shell is drawn two metres short of the hull in the last frame
+        // before its strike; the strike's frame draws its impact on the hull instead.
+        for tick in 90..=100 {
+            let tick = f64::from(tick);
+            let shells = [(SHELL, Vec2::new(0.0, front() + 2.0 * (hit - tick)))];
+            let drawn = if tick < hit { &shells[..] } else { &[] };
+            let ended = if tick < hit {
+                Vec::new()
+            } else {
+                vec![(SHELL, Team::Red, strike)]
+            };
+            let state = scene(Vec2::ZERO, enemy, drawn);
+            feel.received(tick, &state);
+            feel.frame(
+                0.0,
+                Some(tick),
+                tick - VIEW_TICKS,
+                false,
+                false,
+                &state,
+                &ended,
+            );
+        }
+        let shell = ShellEnd {
+            shell: SHELL,
+            origin: enemy,
+            rewind: 0,
+            at: strike,
+        };
+        let rocket = ShellEnd {
+            shell: ROCKET,
+            at: beside(Vec2::ZERO),
+            ..shell
+        };
+        // A rocket's blast at the wall beside the hull is no shell drawn reaching it.
+        feel.incoming_hit(hit, VIEWER, &[rocket]);
+        assert_eq!(feel.incoming_offset.count, 0, "{feel:?}");
+        assert_eq!(feel.unseen_incoming, 0, "{feel:?}");
+        // The shell that struck is the one whose end met the hull, nearest or not.
+        feel.incoming_hit(hit, VIEWER, &[rocket, shell]);
+        assert_eq!(feel.incoming_offset.count, 1, "{feel:?}");
+        assert!(feel.incoming_offset.largest < 1e-9, "{feel:?}");
     }
 }
