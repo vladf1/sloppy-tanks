@@ -19,6 +19,7 @@ use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 use crate::audio::Audio;
 use crate::bakes::{self, Bake};
 use crate::engine_api::{EventBatch, HudState, Phase};
+use crate::frame_log::{FrameLog, FrameParts};
 use crate::input::{Controls, Shortcut, pack};
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
@@ -38,6 +39,11 @@ const READY_STATUS: &str = "Ready when you are.";
 pub struct Options {
     /// `--debug`: extra levels in Battle Setup.
     pub debug: bool,
+    /// `--frame-log`: frame rate and frame parts on stderr each second.
+    pub frame_log: bool,
+    /// `--autoplay`: the player's tank drives itself and the round starts once the
+    /// arena is ready, for unattended frame-rate runs.
+    pub autoplay: bool,
 }
 
 pub struct App {
@@ -94,12 +100,17 @@ struct Session {
     alive: bool,
     first_person: bool,
     cursor_grabbed: bool,
+    /// The window is covered or minimized.
+    occluded: bool,
     frame_index: u64,
     last_frame: f64,
     /// Seconds the HUD's state has advanced since its last refresh.
     hud_dt: f64,
     /// The engine stopped (a GPU error); shown instead of the game.
     failure: Option<String>,
+    frame_log: Option<FrameLog>,
+    /// This frame's parts, for the frame log.
+    parts: FrameParts,
 }
 
 impl ApplicationHandler for App {
@@ -107,7 +118,7 @@ impl ApplicationHandler for App {
         if self.session.is_some() {
             return;
         }
-        match Session::new(event_loop, self.options.debug) {
+        match Session::new(event_loop, &self.options) {
             Ok(session) => self.session = Some(session),
             Err(error) => {
                 eprintln!("Sloppy Tanks could not start: {error}");
@@ -148,15 +159,24 @@ impl ApplicationHandler for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(session) = &self.session {
-            session.window.request_redraw();
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        use winit::event_loop::ControlFlow;
+        match &self.session {
+            // A hidden window draws nothing: macOS does not pace a covered Metal layer
+            // to the display, so it would spin hundreds of frames a second unseen.
+            Some(session) if session.occluded => event_loop.set_control_flow(ControlFlow::Wait),
+            Some(session) => {
+                event_loop.set_control_flow(ControlFlow::Poll);
+                session.window.request_redraw();
+            }
+            None => {}
         }
     }
 }
 
 impl Session {
-    fn new(event_loop: &ActiveEventLoop, debug: bool) -> Result<Self, String> {
+    fn new(event_loop: &ActiveEventLoop, options: &Options) -> Result<Self, String> {
+        let debug = options.debug;
         let prefs = Preferences::load();
         let mut attributes = Window::default_attributes()
             .with_title("Sloppy Tanks")
@@ -194,6 +214,7 @@ impl Session {
             "zoom": prefs.zoom,
             "graphics": prefs.graphics,
             "device": "desktop",
+            "autoplay": options.autoplay,
         });
         let mut game = pollster::block_on(Game::create(target, &config.to_string()))?;
         let hud = HudState::parse(&game.hud_json()).unwrap_or_default();
@@ -224,12 +245,16 @@ impl Session {
             alive: true,
             first_person: prefs.first_person,
             cursor_grabbed: false,
+            occluded: false,
             frame_index: 0,
             last_frame: now_ms(),
             hud_dt: 0.0,
             failure: None,
+            frame_log: options.frame_log.then(FrameLog::new),
+            parts: FrameParts::default(),
             prefs,
         };
+        session.ui.starting = options.autoplay;
         session.prepared_options = session.wanted_options();
         Ok(session)
     }
@@ -256,6 +281,16 @@ impl Session {
         match event {
             WindowEvent::CloseRequested => return true,
             WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.resize(),
+            // Like a hidden page, a hidden window pauses the round.
+            WindowEvent::Occluded(occluded) => {
+                self.occluded = *occluded;
+                if *occluded {
+                    self.controls.clear();
+                    if self.in_round && self.phase == Phase::Playing {
+                        self.apply(Action::Pause);
+                    }
+                }
+            }
             WindowEvent::Focused(false) => {
                 self.controls.clear();
                 if self.in_round && self.phase == Phase::Playing {
@@ -536,6 +571,9 @@ impl Session {
         let input = self.controls.take_input();
         let zoomed = input.zoom != 0.0;
         let result = self.game.frame(now, &pack(&input))?;
+        self.parts.engine = now_ms() - now;
+        self.parts.sim = f64::from(result.get(frame_slot::SIM_MS).copied().unwrap_or(0.0));
+        self.parts.render = f64::from(result.get(frame_slot::RENDER_MS).copied().unwrap_or(0.0));
         if let Some(error) = self.game.error() {
             return Err(error);
         }
@@ -639,6 +677,7 @@ impl Session {
         let ui_state = &mut self.ui;
         let failure = self.failure.clone();
         let mut actions = Vec::new();
+        let overlay_start = now_ms();
         let mut painted = self.overlay.run(|context| {
             if let Some(failure) = &failure {
                 ui::menus::failure(context, failure);
@@ -647,6 +686,8 @@ impl Session {
             }
         });
         let target = self.game.renderer().size();
+        let present_start = now_ms();
+        self.parts.overlay = present_start - overlay_start;
         let (device, queue) = self.game.renderer().device();
         self.overlay.update_textures(&mut painted, device, queue);
         let overlay = &mut self.overlay;
@@ -661,6 +702,11 @@ impl Session {
             overlay.paint(&painted, device, queue, view, target)
         });
         self.overlay.free_textures(&painted);
+        self.parts.present = now_ms() - present_start;
+        if let Some(log) = &mut self.frame_log {
+            let scene = self.game.renderer().scene_size();
+            log.frame(&self.parts, target, scene);
+        }
         let mut quit = false;
         for action in actions {
             quit |= action == Action::Quit;
