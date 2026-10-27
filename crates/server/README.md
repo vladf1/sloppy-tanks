@@ -260,8 +260,7 @@ lobby. Stop load tests before deploying.
 To add a machine, deploy an Ubuntu x64 instance in Vultr with your SSH key and, as its
 startup script (cloud-init user data), `deploy/server/cloud-init/production.yaml` or
 `dev.yaml`, saved once in Vultr's Startup Scripts. At first boot the user data writes
-`/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`, optional
-`EXTRA_HOSTNAMES`) and runs `deploy/server/bootstrap.sh` from the repository's `main`.
+`/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`) and runs `deploy/server/bootstrap.sh` from the repository's `main`.
 That serves the machine's own nip.io name, runs `provision.sh`, starts CI's
 `:production` image, and the server appears in the directory under its environment
 within a few minutes, with no SSH from here. Add its address to `deploy/servers.json`
