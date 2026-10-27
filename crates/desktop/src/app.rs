@@ -2,8 +2,14 @@
 //! behind Battle Setup, GO starts the round, and every redraw runs one engine frame
 //! with the packed input, plays its events' sounds, lays out the HUD and menus and
 //! shows the frame with them drawn over it.
+//!
+//! One engine owns the window's surface at a time: single player's `Game` behind Battle
+//! Setup ([`Session`]), or a multiplayer room's `NetGame` ([`RoomSession`]). Joining a
+//! room drops the game and its renderer first and keeps the rest of the shell
+//! ([`Shell`]); leaving the room does the reverse.
 
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use serde_json::json;
 use sloppy_render::gpu::RenderTarget;
@@ -12,7 +18,7 @@ use sloppy_web::{Game, frame_slot};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
 use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
-use winit::event_loop::ActiveEventLoop;
+use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
 
@@ -22,6 +28,9 @@ use crate::engine_api::{EventBatch, HudState, Phase};
 use crate::input::{Controls, Shortcut, pack};
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
+use crate::room::{POLL_MS, RoomSession, SavedSeats};
+use crate::room_api::RoomSelection;
+use crate::ui::rooms::RoomsState;
 use crate::ui::{self, Action, UiState};
 
 /// Pipelines created per preparation step; the menu redraws between steps.
@@ -38,20 +47,90 @@ const READY_STATUS: &str = "Ready when you are.";
 pub struct Options {
     /// `--debug`: extra levels in Battle Setup.
     pub debug: bool,
+    /// `--directory <url>`: the server directory to list rooms from.
+    pub directory: Option<String>,
+}
+
+/// Which engine has the window.
+enum Mode {
+    Single(Box<Session>),
+    Room(Box<RoomSession>),
 }
 
 pub struct App {
     options: Options,
-    session: Option<Session>,
+    mode: Option<Mode>,
 }
 
 impl App {
     pub fn new(options: Options) -> Self {
         Self {
             options,
-            session: None,
+            mode: None,
         }
     }
+
+    /// Hand the window to the other engine when the one playing asks: a room Battle
+    /// Setup chose, or Battle Setup after a room. False when no engine could start.
+    fn switch_engine(&mut self) -> bool {
+        let wants_room =
+            matches!(&self.mode, Some(Mode::Single(session)) if session.pending_room.is_some());
+        let wants_setup = matches!(&self.mode, Some(Mode::Room(room)) if room.exit.is_some());
+        if !wants_room && !wants_setup {
+            return true;
+        }
+        let shell = match self.mode.take() {
+            Some(Mode::Single(mut session)) => {
+                let selection = session.pending_room.take();
+                let shell = session.into_shell();
+                crate::surface_layers::release(&shell.window);
+                match selection.map(|selection| RoomSession::new(shell, selection)) {
+                    Some(Ok(room)) => {
+                        self.mode = Some(Mode::Room(Box::new(room)));
+                        return true;
+                    }
+                    Some(Err(failed)) => {
+                        let (mut shell, notice) = *failed;
+                        crate::surface_layers::release(&shell.window);
+                        shell.rooms.returned_from("", &notice);
+                        shell
+                    }
+                    None => return false,
+                }
+            }
+            Some(Mode::Room(mut room)) => {
+                let notice = room.exit.take().unwrap_or_default();
+                let code = room.room().to_owned();
+                let mut shell = room.into_shell();
+                crate::surface_layers::release(&shell.window);
+                shell.rooms.returned_from(&code, &notice);
+                shell
+            }
+            None => return false,
+        };
+        match Session::start(shell) {
+            Ok(session) => {
+                self.mode = Some(Mode::Single(Box::new(session)));
+                true
+            }
+            Err(error) => {
+                eprintln!("Sloppy Tanks could not start: {error}");
+                false
+            }
+        }
+    }
+}
+
+/// What outlives an engine on the window: the window, the choices, the sound, and
+/// Battle Setup's Multiplayer tab with the seats this run holds.
+pub struct Shell {
+    pub window: Arc<Window>,
+    pub prefs: Preferences,
+    pub audio: Option<Audio>,
+    pub debug: bool,
+    pub build: String,
+    pub rooms: RoomsState,
+    pub seats: SavedSeats,
 }
 
 /// The release line Battle Setup shows.
@@ -63,8 +142,8 @@ fn build_line() -> String {
     )
 }
 
-/// The engine's clock, in milliseconds (the origin `Game` reads too).
-fn now_ms() -> f64 {
+/// The engine's clock, in milliseconds (the origin `Game` and `NetGame` read too).
+pub fn now_ms() -> f64 {
     sloppy_web::clock_start().elapsed().as_secs_f64() * 1000.0
 }
 
@@ -100,15 +179,19 @@ struct Session {
     hud_dt: f64,
     /// The engine stopped (a GPU error); shown instead of the game.
     failure: Option<String>,
+    /// Seats rooms gave this run, kept for the next room.
+    seats: SavedSeats,
+    /// CREATE ROOM or JOIN ROOM: the app hands the window to the room.
+    pending_room: Option<RoomSelection>,
 }
 
 impl ApplicationHandler for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        if self.session.is_some() {
+        if self.mode.is_some() {
             return;
         }
-        match Session::new(event_loop, self.options.debug) {
-            Ok(session) => self.session = Some(session),
+        match Session::new(event_loop, &self.options) {
+            Ok(session) => self.mode = Some(Mode::Single(Box::new(session))),
             Err(error) => {
                 eprintln!("Sloppy Tanks could not start: {error}");
                 event_loop.exit();
@@ -122,10 +205,12 @@ impl ApplicationHandler for App {
         _window: WindowId,
         event: WindowEvent,
     ) {
-        let Some(session) = &mut self.session else {
-            return;
+        let quit = match &mut self.mode {
+            Some(Mode::Single(session)) => session.window_event(&event),
+            Some(Mode::Room(room)) => room.window_event(&event),
+            None => return,
         };
-        if session.window_event(&event) {
+        if quit || !self.switch_engine() {
             event_loop.exit();
         }
     }
@@ -136,27 +221,48 @@ impl ApplicationHandler for App {
         _device: DeviceId,
         event: DeviceEvent,
     ) {
-        let Some(session) = &mut self.session else {
+        let DeviceEvent::MouseMotion { delta } = event else {
             return;
         };
-        if let DeviceEvent::MouseMotion { delta } = event
-            && session.cursor_grabbed
-        {
-            session
-                .controls
-                .look(delta.0 / session.window.scale_factor());
+        let (window, controls, grabbed) = match &mut self.mode {
+            Some(Mode::Single(session)) => (
+                &session.window,
+                &mut session.controls,
+                session.cursor_grabbed,
+            ),
+            Some(Mode::Room(room)) => (&room.window, &mut room.controls, room.cursor_grabbed),
+            None => return,
+        };
+        if grabbed {
+            controls.look(delta.0 / window.scale_factor());
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        if let Some(session) = &self.session {
-            session.window.request_redraw();
+    fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        match &mut self.mode {
+            Some(Mode::Single(session)) => {
+                // Frames follow the window's redraws again, as before any room.
+                event_loop.set_control_flow(ControlFlow::Wait);
+                session.window.request_redraw();
+            }
+            Some(Mode::Room(room)) => {
+                // A hidden window draws no frames; the room's heartbeat runs on anyway.
+                room.network();
+                room.window.request_redraw();
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    Instant::now() + Duration::from_millis(POLL_MS as u64),
+                ));
+                if room.exit.is_some() && !self.switch_engine() {
+                    event_loop.exit();
+                }
+            }
+            None => {}
         }
     }
 }
 
 impl Session {
-    fn new(event_loop: &ActiveEventLoop, debug: bool) -> Result<Self, String> {
+    fn new(event_loop: &ActiveEventLoop, options: &Options) -> Result<Self, String> {
         let prefs = Preferences::load();
         let mut attributes = Window::default_attributes()
             .with_title("Sloppy Tanks")
@@ -171,6 +277,32 @@ impl Session {
                 .create_window(attributes)
                 .map_err(|error| error.to_string())?,
         );
+        let mut rooms = RoomsState::default();
+        if let Some(directory) = &options.directory {
+            rooms.directory.clone_from(directory);
+        }
+        Self::start(Shell {
+            window,
+            prefs,
+            audio: None,
+            debug: options.debug,
+            build: build_line(),
+            rooms,
+            seats: SavedSeats::new(),
+        })
+    }
+
+    /// Single player on the shell's window: the arena prepares behind Battle Setup.
+    fn start(shell: Shell) -> Result<Self, String> {
+        let Shell {
+            window,
+            prefs,
+            audio,
+            debug,
+            build,
+            rooms,
+            seats,
+        } = shell;
         let size = window.inner_size();
         let scale = window.scale_factor();
         let logical = size.to_logical::<f64>(scale);
@@ -210,12 +342,13 @@ impl Session {
             ui: UiState {
                 hud: Some(hud),
                 status: "Building the arena…".into(),
+                rooms,
                 ..UiState::default()
             },
-            audio: None,
+            audio,
             bake: None,
             debug,
-            build: build_line(),
+            build,
             prepared_options: String::new(),
             preparing: true,
             compiled: 0,
@@ -228,10 +361,27 @@ impl Session {
             last_frame: now_ms(),
             hud_dt: 0.0,
             failure: None,
+            seats,
+            pending_room: None,
             prefs,
         };
         session.prepared_options = session.wanted_options();
         Ok(session)
+    }
+
+    /// Give the window up: the game, its renderer and the overlay go, the rest stays.
+    fn into_shell(self) -> Shell {
+        let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+        self.window.set_cursor_visible(true);
+        Shell {
+            window: self.window,
+            prefs: self.prefs,
+            audio: self.audio,
+            debug: self.debug,
+            build: self.build,
+            rooms: self.ui.rooms,
+            seats: self.seats,
+        }
     }
 
     /// Battle Setup's choices as `set_options` takes them.
@@ -415,6 +565,19 @@ impl Session {
             }
             Action::SettingsSaved(prefs) => self.save_settings(*prefs),
             Action::Quit => {}
+            Action::JoinRoom(selection) => {
+                self.prefs.player_name.clone_from(&selection.name);
+                self.prefs.save();
+                self.pending_room = Some(*selection);
+            }
+            // A room's own menu.
+            Action::RoomStart
+            | Action::RoomEnd
+            | Action::RoomLeave
+            | Action::RoomRejoin
+            | Action::RoomSetup(_)
+            | Action::RoomChoose { .. }
+            | Action::RoomRules(_) => {}
         }
     }
 
@@ -581,23 +744,7 @@ impl Session {
             && self.phase == Phase::Playing
             && self.ui.settings_draft.is_none()
             && self.window.has_focus();
-        if wanted == self.cursor_grabbed {
-            return;
-        }
-        if wanted {
-            let grabbed = self
-                .window
-                .set_cursor_grab(CursorGrabMode::Locked)
-                .or_else(|_| self.window.set_cursor_grab(CursorGrabMode::Confined));
-            if grabbed.is_ok() {
-                self.window.set_cursor_visible(false);
-                self.cursor_grabbed = true;
-            }
-        } else {
-            let _ = self.window.set_cursor_grab(CursorGrabMode::None);
-            self.window.set_cursor_visible(true);
-            self.cursor_grabbed = false;
-        }
+        grab_pointer(&self.window, wanted, &mut self.cursor_grabbed);
     }
 
     /// Run a frame and show it; true when the player chose to quit.
@@ -635,38 +782,46 @@ impl Session {
             prefs: &self.prefs,
             build: &self.build,
             debug: self.debug,
+            room: false,
         };
         let ui_state = &mut self.ui;
         let failure = self.failure.clone();
         let mut actions = Vec::new();
-        let mut painted = self.overlay.run(|context| {
+        let painted = self.overlay.run(|context| {
             if let Some(failure) = &failure {
                 ui::menus::failure(context, failure);
             } else {
                 actions = ui::draw(context, ui_state, &view);
             }
         });
-        let target = self.game.renderer().size();
-        let (device, queue) = self.game.renderer().device();
-        self.overlay.update_textures(&mut painted, device, queue);
-        let overlay = &mut self.overlay;
-        let [red, green, blue, _] = ui::theme::BACKDROP.to_normalized_gamma_f32();
-        let clear = wgpu::Color {
-            r: f64::from(red),
-            g: f64::from(green),
-            b: f64::from(blue),
-            a: 1.0,
-        };
-        self.game.renderer().present(clear, |device, queue, view| {
-            overlay.paint(&painted, device, queue, view, target)
-        });
-        self.overlay.free_textures(&painted);
+        self.overlay.present(self.game.renderer(), painted);
         let mut quit = false;
         for action in actions {
             quit |= action == Action::Quit;
             self.apply(action);
         }
         quit
+    }
+}
+
+/// Capture the cursor while first person steers (so the mouse turns the view), or
+/// give it back.
+pub fn grab_pointer(window: &Window, wanted: bool, grabbed: &mut bool) {
+    if wanted == *grabbed {
+        return;
+    }
+    if wanted {
+        let captured = window
+            .set_cursor_grab(CursorGrabMode::Locked)
+            .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
+        if captured.is_ok() {
+            window.set_cursor_visible(false);
+            *grabbed = true;
+        }
+    } else {
+        let _ = window.set_cursor_grab(CursorGrabMode::None);
+        window.set_cursor_visible(true);
+        *grabbed = false;
     }
 }
 

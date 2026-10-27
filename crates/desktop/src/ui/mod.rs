@@ -5,11 +5,14 @@
 pub mod hud;
 pub mod menus;
 pub mod nerd_stats;
+pub mod room_menu;
+pub mod rooms;
 pub mod setup;
 pub mod theme;
 
 use crate::engine_api::{EngineEvent, HudState, Phase};
 use crate::preferences::Preferences;
+use crate::room_api::{RoomRules, RoomSelection};
 
 /// What the player asked for this frame.
 #[derive(Clone, Debug, PartialEq)]
@@ -32,6 +35,25 @@ pub enum Action {
     /// Settings saved: the preferences changed.
     SettingsSaved(Box<Preferences>),
     Quit,
+    /// CREATE ROOM or JOIN ROOM on Battle Setup's Multiplayer tab.
+    JoinRoom(Box<RoomSelection>),
+    /// The host's START BATTLE or PLAY AGAIN.
+    RoomStart,
+    /// The host's END BATTLE.
+    RoomEnd,
+    /// LEAVE ROOM, or BATTLE SETUP from the room between battles.
+    RoomLeave,
+    /// TRY AGAIN, JOIN AGAIN or PLAY HERE once the connection ended.
+    RoomRejoin,
+    /// BATTLE SETUP once the connection ended, with the reason to show there.
+    RoomSetup(String),
+    /// Team (`None`: the side with fewer humans) and tank for the next battle.
+    RoomChoose {
+        team: Option<u8>,
+        kind: String,
+    },
+    /// The host's rules for the next battle.
+    RoomRules(RoomRules),
 }
 
 /// One line of the kill feed.
@@ -86,6 +108,8 @@ pub struct UiState {
     pub hull_angle: f64,
     /// The player's tank on screen (NDC, y up), for the damage ring.
     pub viewer: Option<(f32, f32)>,
+    /// Battle Setup's Multiplayer tab: the room list and the join choices.
+    pub rooms: rooms::RoomsState,
 }
 
 /// What the app tells the screens about where things stand.
@@ -97,6 +121,8 @@ pub struct View<'a> {
     pub build: &'a str,
     /// Extra levels may be chosen (`--debug`).
     pub debug: bool,
+    /// A multiplayer room: no single-player respawn choice.
+    pub room: bool,
 }
 
 impl UiState {

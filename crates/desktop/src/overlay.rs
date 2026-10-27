@@ -150,6 +150,25 @@ impl Overlay {
         }
     }
 
+    /// Show the renderer's frame with `painted` over it; between rounds, on a window
+    /// cleared to the backdrop.
+    pub fn present(&mut self, renderer: &mut Renderer, mut painted: Painted) {
+        let target = renderer.size();
+        let (device, queue) = renderer.device();
+        self.update_textures(&mut painted, device, queue);
+        let [red, green, blue, _] = crate::ui::theme::BACKDROP.to_normalized_gamma_f32();
+        let clear = wgpu::Color {
+            r: f64::from(red),
+            g: f64::from(green),
+            b: f64::from(blue),
+            a: 1.0,
+        };
+        renderer.present(clear, |device, queue, view| {
+            self.paint(&painted, device, queue, view, target);
+        });
+        self.free_textures(&painted);
+    }
+
     /// Register an RGBA image (rows top first) as an egui texture.
     pub fn load_image(
         &self,
