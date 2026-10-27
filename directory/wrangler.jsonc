@@ -9,8 +9,14 @@
   "workers_dev": false,
   "preview_urls": false,
   "routes": [{ "pattern": "sloppy-tanks-directory.fridman.me", "custom_domain": true }],
-  "durable_objects": { "bindings": [{ "name": "DIRECTORY", "class_name": "ServerDirectory" }] },
-  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ServerDirectory"] }],
+  "durable_objects": { "bindings": [{ "name": "DIRECTORY", "class_name": "Directory" }] },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["ServerDirectory"] },
+    // ServerDirectory kept its servers in key-value storage; Directory starts with a fresh
+    // database for its SQL table, and deleting the old class drops that storage.
+    { "tag": "v2", "new_sqlite_classes": ["Directory"] },
+    { "tag": "v3", "deleted_classes": ["ServerDirectory"] },
+  ],
   "observability": { "enabled": true },
   // The overview page; requests for anything else, such as /servers, reach the Worker.
   "assets": { "directory": "./public" },

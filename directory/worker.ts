@@ -30,7 +30,7 @@ import {
 } from "./listing";
 
 interface Env {
-  DIRECTORY: DurableObjectNamespace<ServerDirectory>;
+  DIRECTORY: DurableObjectNamespace<Directory>;
 }
 
 const PREFLIGHT_MAX_AGE_SECONDS = 86_400;
@@ -43,7 +43,7 @@ function text(message: string, status: number): Response {
 
 async function announce(
   request: Request,
-  directory: DurableObjectStub<ServerDirectory>,
+  directory: DurableObjectStub<Directory>,
 ): Promise<Response> {
   const url = nipUrl(request.headers.get("CF-Connecting-IP"));
   if (!url) {
@@ -97,7 +97,7 @@ export default {
 
 /** One environment's servers: a row each in its SQLite storage, holding the latest
  * announcement and when it arrived. */
-export class ServerDirectory extends DurableObject<Env> {
+export class Directory extends DurableObject<Env> {
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
     ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS servers (
