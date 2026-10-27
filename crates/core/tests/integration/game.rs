@@ -299,6 +299,9 @@ fn bots_cross_opened_tower_footprint_and_continue_combat_through_ruins() {
                 crossed = true;
             }
         }
+        if crossed && s.match_state.scores.iter().all(|&score| score > 0) && s.bot_reroutes > 0 {
+            break;
+        }
     }
     assert!(crossed, "a bot traverses an opened shortcut");
     assert!(
