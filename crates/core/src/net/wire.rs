@@ -3,11 +3,16 @@
 //!
 //! A record is one entity (or the match, the map, an event) as a fixed list of slots, one
 //! per field of its kind's table. Numbers keep the JSON protocol's quantization as whole
-//! units: positions in millimetres, rotations in ten-thousandths, timers and meters in
-//! hundredths (see [`super::json`]), so a value reads back as the same double the JSON
-//! text did. The host compares slots to find changed fields; the client keeps the same
-//! records, so a fixed-point field the client already holds travels as the difference
-//! from its value, which is usually one byte.
+//! units: positions in millimetres, rotations in ten-thousandths, meters in hundredths
+//! (see [`super::json`]), so a value reads back as the same double the JSON text did;
+//! countdown timers travel in simulation steps. The host compares slots to find changed
+//! fields; the client keeps the same records, so a fixed-point field the client already
+//! holds travels as the difference from its value, which is usually one byte.
+//!
+//! Entity records also keep their [`Motion`]: what each fixed-point field changed by in the
+//! previous frame. Every frame moves such a field on by that much before applying changes,
+//! so a tank driving straight, a falling piece of debris or a timer counting down sends
+//! nothing until its motion changes, and then only the difference from the continuation.
 //!
 //! A record's changes are a varint field mask (bit 0 flags deleted fields, bit `i + 1`
 //! field `i`), a varint mask of deleted fields when flagged, then each present field's
@@ -290,12 +295,52 @@ impl WireRecord {
     }
 }
 
-fn write_value(field: &Field, previous: Option<&Slot>, slot: &Slot, out: &mut Vec<u8>) {
+/// What each slot of a record changed by in the previous frame: a fixed-point field's
+/// difference in units, zero for every other field, and no entries for a record that
+/// stands still.
+pub type Motion = Vec<i64>;
+
+/// Whether `motion` moves nothing.
+pub fn is_still(motion: &[i64]) -> bool {
+    motion.iter().all(|change| *change == 0)
+}
+
+/// The value the client expects field `index` to hold before reading a frame's changes:
+/// a fixed-point number moved on by its motion.
+fn expected(fields: &[Field], index: usize, held: Option<&Slot>, motion: &[i64]) -> Option<i64> {
+    match (fields[index].kind, held) {
+        (FieldKind::Fixed(_), Some(Slot::Number(value))) => {
+            Some(value.wrapping_add(motion.get(index).copied().unwrap_or(0)))
+        }
+        _ => None,
+    }
+}
+
+/// A field's motion from `held` to `next`.
+fn change(field: &Field, held: Option<&Slot>, next: &Slot) -> i64 {
+    match (field.kind, held, next) {
+        (FieldKind::Fixed(_), Some(Slot::Number(old)), Slot::Number(new)) => new.wrapping_sub(*old),
+        _ => 0,
+    }
+}
+
+/// Sets `motion` to the changes from `held` to `next`, empty when nothing moved.
+fn set_motion(fields: &[Field], held: Option<&WireRecord>, next: &[Slot], motion: &mut Motion) {
+    motion.clear();
+    for (index, (field, slot)) in fields.iter().zip(next).enumerate() {
+        let change = change(field, held.map(|record| &record.slots[index]), slot);
+        if change != 0 {
+            motion.resize(fields.len(), 0);
+            motion[index] = change;
+        }
+    }
+}
+
+fn write_value(field: &Field, expected: Option<i64>, slot: &Slot, out: &mut Vec<u8>) {
     match (field.kind, slot) {
-        (FieldKind::Fixed(_), Slot::Number(value)) => match previous {
-            Some(Slot::Number(old)) => put_signed(out, value.wrapping_sub(*old)),
-            _ => put_signed(out, *value),
-        },
+        (FieldKind::Fixed(_), Slot::Number(value)) => {
+            put_signed(out, value.wrapping_sub(expected.unwrap_or(0)));
+        }
         (_, Slot::Number(value)) => put_varint(out, *value as u64),
         (_, Slot::Text(text)) => put_text(out, text),
         (_, Slot::Blob(bytes)) => {
@@ -314,12 +359,30 @@ pub fn write_changes(
     next: &WireRecord,
     out: &mut Vec<u8>,
 ) -> bool {
+    write_moving_changes(fields, previous, next, None, out)
+}
+
+/// [`write_changes`] for a record with `motion`: the client first moves `previous` on by
+/// it, so only fields that then differ are sent, as the difference from the moved value.
+/// `motion` becomes `next`'s, which the following frame moves it on by.
+pub fn write_moving_changes(
+    fields: &[Field],
+    previous: Option<&WireRecord>,
+    next: &WireRecord,
+    motion: Option<&mut Motion>,
+    out: &mut Vec<u8>,
+) -> bool {
     debug_assert!(fields.len() < 64 && next.slots.len() == fields.len());
+    let held_motion: &[i64] = motion.as_deref().map_or(&[], |motion| motion.as_slice());
     let mut mask = 0u64;
     let mut deleted = 0u64;
     for (index, slot) in next.slots.iter().enumerate() {
         let old = previous.map(|record| &record.slots[index]);
-        if old == Some(slot) {
+        let unchanged = match (expected(fields, index, old, held_motion), slot) {
+            (Some(expected), Slot::Number(value)) => expected == *value,
+            _ => old == Some(slot),
+        };
+        if unchanged {
             continue;
         }
         if slot.is_absent() {
@@ -333,20 +396,22 @@ pub fn write_changes(
     if deleted != 0 {
         mask |= 1;
     }
-    if mask == 0 {
-        return false;
-    }
-    put_varint(out, mask);
-    if deleted != 0 {
-        put_varint(out, deleted);
-    }
-    for (index, (field, slot)) in fields.iter().zip(&next.slots).enumerate() {
-        if mask & (1 << (index + 1)) != 0 {
-            let old = previous.map(|record| &record.slots[index]);
-            write_value(field, old, slot, out);
+    if mask != 0 {
+        put_varint(out, mask);
+        if deleted != 0 {
+            put_varint(out, deleted);
+        }
+        for (index, (field, slot)) in fields.iter().zip(&next.slots).enumerate() {
+            if mask & (1 << (index + 1)) != 0 {
+                let old = previous.map(|record| &record.slots[index]);
+                write_value(field, expected(fields, index, old, held_motion), slot, out);
+            }
         }
     }
-    true
+    if let Some(motion) = motion {
+        set_motion(fields, previous, &next.slots, motion);
+    }
+    mask != 0
 }
 
 /// Which fields a frame changed in a record: bit `i` for field `i`.
@@ -358,17 +423,11 @@ pub struct ChangedFields {
 
 fn read_value(
     field: &Field,
-    previous: Option<&Slot>,
+    expected: Option<i64>,
     reader: &mut WireReader<'_>,
 ) -> ReadResult<Slot> {
     Ok(match field.kind {
-        FieldKind::Fixed(_) => {
-            let value = reader.signed()?;
-            match previous {
-                Some(Slot::Number(old)) => Slot::Number(old.wrapping_add(value)),
-                _ => Slot::Number(value),
-            }
-        }
+        FieldKind::Fixed(_) => Slot::Number(expected.unwrap_or(0).wrapping_add(reader.signed()?)),
         FieldKind::Count => {
             Slot::Number(i64::try_from(reader.varint()?).map_err(|_| "Invalid number".to_string())?)
         }
@@ -398,26 +457,78 @@ pub fn read_changes(
     record: &mut WireRecord,
     reader: &mut WireReader<'_>,
 ) -> ReadResult<ChangedFields> {
+    read_moving_changes(fields, record, None, reader)
+}
+
+/// [`read_changes`] for a record with `motion` ([`write_moving_changes`]): fixed-point
+/// fields move on by it first, and `motion` becomes this frame's. The changed fields are
+/// those whose value differs afterwards, sent or moved on.
+pub fn read_moving_changes(
+    fields: &[Field],
+    record: &mut WireRecord,
+    motion: Option<&mut Motion>,
+    reader: &mut WireReader<'_>,
+) -> ReadResult<ChangedFields> {
     record.slots.resize(fields.len(), Slot::Absent);
     let mask = reader.varint()?;
     if mask >> (fields.len() + 1) != 0 {
         return Err("Invalid field mask".into());
     }
     let deleted = if mask & 1 != 0 { reader.varint()? } else { 0 };
-    let set = mask >> 1;
-    if deleted >> fields.len() != 0 || deleted & set != 0 {
+    let sent = mask >> 1;
+    if deleted >> fields.len() != 0 || deleted & sent != 0 {
         return Err("Invalid field mask".into());
     }
+    let held_motion: &[i64] = motion.as_deref().map_or(&[], |motion| motion.as_slice());
+    let mut changed = ChangedFields::default();
+    let mut next_motion = Motion::new();
     for (index, field) in fields.iter().enumerate() {
-        if set & (1 << index) != 0 {
-            let value = read_value(field, Some(&record.slots[index]), reader)
-                .map_err(|error| format!("{}: {error}", field.name))?;
-            record.slots[index] = value;
+        let old = &record.slots[index];
+        let expected = expected(fields, index, Some(old), held_motion);
+        let next = if sent & (1 << index) != 0 {
+            read_value(field, expected, reader)
+                .map_err(|error| format!("{}: {error}", field.name))?
         } else if deleted & (1 << index) != 0 {
-            record.slots[index] = Slot::Absent;
+            Slot::Absent
+        } else if let Some(expected) = expected {
+            Slot::Number(expected)
+        } else {
+            continue;
+        };
+        if next != *old {
+            if next.is_absent() {
+                changed.deleted |= 1 << index;
+            } else {
+                changed.set |= 1 << index;
+            }
+        }
+        let change = change(field, Some(old), &next);
+        if change != 0 {
+            next_motion.resize(fields.len(), 0);
+            next_motion[index] = change;
+        }
+        record.slots[index] = next;
+    }
+    if let Some(motion) = motion {
+        *motion = next_motion;
+    }
+    Ok(changed)
+}
+
+/// Moves a record the frame did not send on by its `motion`, which stays as it is; returns
+/// the fields that changed.
+pub fn move_on(fields: &[Field], record: &mut WireRecord, motion: &[i64]) -> ChangedFields {
+    let mut changed = ChangedFields::default();
+    for (index, slot) in record.slots.iter_mut().enumerate() {
+        let change = motion.get(index).copied().unwrap_or(0);
+        if let (FieldKind::Fixed(_), Slot::Number(value)) = (fields[index].kind, &mut *slot)
+            && change != 0
+        {
+            *value = value.wrapping_add(change);
+            changed.set |= 1 << index;
         }
     }
-    Ok(ChangedFields { set, deleted })
+    changed
 }
 
 #[cfg(test)]
@@ -523,6 +634,58 @@ mod tests {
         };
         read_changes(SAMPLE_FIELDS, &mut fresh, &mut WireReader::new(&out)).unwrap();
         assert_eq!(fresh, before);
+    }
+
+    #[test]
+    fn moving_fields_carry_on_until_their_change_changes() {
+        // x advances 250 mm a frame then stops; hp drops once, then is deleted.
+        let frames = [
+            (record(12.25, Some(40.0)), true),
+            (record(12.5, Some(40.0)), false),
+            (record(12.75, Some(39.0)), true),
+            (record(12.75, Some(39.0)), true),
+            (record(12.75, Some(39.0)), false),
+            (record(12.75, None), true),
+        ];
+        let mut held = record(12.0, Some(40.0));
+        let (mut motion, mut copy, mut copy_motion) = (Motion::new(), held.clone(), Motion::new());
+        for (index, (next, sends)) in frames.into_iter().enumerate() {
+            let mut out = Vec::new();
+            let sent = write_moving_changes(
+                SAMPLE_FIELDS,
+                Some(&held),
+                &next,
+                Some(&mut motion),
+                &mut out,
+            );
+            assert_eq!(sent, sends, "frame {index}");
+            let before = copy.clone();
+            let changed = if sent {
+                let mut reader = WireReader::new(&out);
+                let changed = read_moving_changes(
+                    SAMPLE_FIELDS,
+                    &mut copy,
+                    Some(&mut copy_motion),
+                    &mut reader,
+                )
+                .unwrap();
+                assert!(reader.is_empty());
+                changed
+            } else {
+                move_on(SAMPLE_FIELDS, &mut copy, &copy_motion)
+            };
+            assert_eq!(copy, next, "frame {index}");
+            assert_eq!(copy_motion, motion, "frame {index}");
+            // Changed fields are the ones whose value differs, sent or carried on.
+            let differs = (0..SAMPLE_FIELDS.len())
+                .filter(|&field| {
+                    copy.slots[field] != before.slots[field] && !copy.slots[field].is_absent()
+                })
+                .fold(0, |mask, field| mask | 1 << field);
+            assert_eq!(changed.set, differs, "frame {index}");
+            held = next;
+        }
+        assert!(motion.is_empty(), "a record at rest keeps no motion");
     }
 
     #[test]
