@@ -49,7 +49,8 @@ try {
   await page.locator("#startup-overlay").waitFor({ state: "detached" });
   await page.waitForFunction(() => document.querySelector("#hud")?.style.opacity === "1");
   await page.locator("#nerd-stats .nerd-stats-toggle").click();
-  assert.match(await page.locator("#nerd-stats-details").innerText(), /Physics/);
+  // Section titles show in capitals (innerText follows text-transform).
+  assert.match(await page.locator("#nerd-stats-details").innerText(), /PHYSICS/);
   await page.keyboard.press("n");
   assert.equal(await page.locator("#nerd-stats-details").isVisible(), false);
   await page.keyboard.down("w");
@@ -77,6 +78,8 @@ try {
   console.log("Single-player: zero multiplayer chunk requests, zero sockets, no browser errors.");
   const networkRequests = [];
   const networkPage = await browser.newPage();
+  // A successful empty listing enables Create; this loading check needs no live server.
+  await networkPage.route(/\/rooms(?:\?|$)/, (route) => route.fulfill({ json: { rooms: [] } }));
   networkPage.on("request", (request) => networkRequests.push(request.url()));
   // The multiplayer tab loads only the room list; its styles are inline with the menu.
   await networkPage.goto(server.resolvedUrls.local[0] + "?multiplayer");
