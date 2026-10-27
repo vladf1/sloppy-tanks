@@ -351,12 +351,13 @@ fn snapshots() {
             output = Some(context.run_pass(input, |context| {
                 super::draw(context, &mut scenario.state, &view);
             }));
-            if let Some(output) = &output {
+            if let Some(output) = &mut output {
                 for (id, deltas) in &output.textures_delta.set {
                     for delta in deltas {
                         painter.update_texture(&device, &queue, *id, delta);
                     }
                 }
+                output.textures_delta.clear();
             }
         }
         let output = output.expect("a pass ran");

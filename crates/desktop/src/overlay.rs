@@ -144,10 +144,11 @@ impl Overlay {
     }
 
     /// Free the textures the frame let go of, once it has drawn.
-    pub fn free_textures(&mut self, painted: &Painted) {
+    pub fn free_textures(&mut self, painted: &mut Painted) {
         for id in &painted.textures.free {
             self.painter.free_texture(id);
         }
+        painted.textures.free.clear();
     }
 
     /// Show the renderer's frame with `painted` over it; between rounds, on a window
@@ -166,6 +167,6 @@ impl Overlay {
         renderer.present(clear, |device, queue, view| {
             self.paint(&painted, device, queue, view, target);
         });
-        self.free_textures(&painted);
+        self.free_textures(&mut painted);
     }
 }
