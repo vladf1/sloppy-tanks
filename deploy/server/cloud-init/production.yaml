@@ -1,0 +1,14 @@
+#cloud-config
+# Vultr startup script (cloud-init user data) for a production game server: deploy an
+# Ubuntu instance with it and the machine sets itself up (deploy/server/bootstrap.sh),
+# then lists itself in the server directory under production. The extra hostname is the
+# traffic bots' address for production; it needs a DNS record pointing at the machine
+# (`pnpm run server:point-hostname`).
+write_files:
+  - path: /etc/sloppy-tanks/server.env
+    content: |
+      SERVER_ENVIRONMENT=production
+      DIRECTORY_URL=https://sloppy-tanks-directory.fridman.me
+      EXTRA_HOSTNAMES=sloppy-tanks-server.fridman.me
+runcmd:
+  - [bash, -c, "curl -fsSL --retry 5 https://raw.githubusercontent.com/vladf1/sloppy-tanks/main/deploy/server/bootstrap.sh | bash"]
