@@ -24,6 +24,7 @@ import { DIRECTORY_URL, gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers
  * Anything but following :production leaves a hold that auto-update respects. */
 const repo = new URL("..", import.meta.url);
 const HEALTH_TIMEOUT_MS = 120_000;
+const AUTO_UPDATE_OFF = "/var/lib/sloppy-tanks/auto-update-off";
 const [command, argument] = process.argv.slice(2);
 const dev = process.argv.includes("--dev");
 const servers = await gameServers(dev, option("--ip"));
@@ -196,8 +197,12 @@ async function runCommand() {
       await printHealth();
       break;
     case "auto-update":
-      if (argument === "on") ssh("systemctl enable --now sloppy-tanks-update.timer");
-      else if (argument === "off") ssh("systemctl disable --now sloppy-tanks-update.timer");
+      // The marker keeps an operator's "off" through provisioning, which turns
+      // production's timer on otherwise.
+      if (argument === "on")
+        ssh(`rm -f ${AUTO_UPDATE_OFF} && systemctl enable --now sloppy-tanks-update.timer`);
+      else if (argument === "off")
+        ssh(`touch ${AUTO_UPDATE_OFF} && systemctl disable --now sloppy-tanks-update.timer`);
       else if (argument === "resume") ssh("sloppy-tanks-update resume");
       else {
         console.error("Usage: pnpm run server:auto-update on|off|resume [--dev]");

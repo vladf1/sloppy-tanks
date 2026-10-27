@@ -42,8 +42,13 @@ install -m 644 Caddyfile /etc/sloppy-tanks/caddy/Caddyfile
 install -m 755 sloppy-tanks-update /usr/local/bin/sloppy-tanks-update
 install -m 644 sloppy-tanks-update.service sloppy-tanks-update.timer /etc/systemd/system/
 install -m 644 sloppy-tanks.container caddy.container /etc/containers/systemd/
-# The auto-update timer stays as it is: `pnpm run server:auto-update on|off` owns it.
 systemctl daemon-reload
+# Production follows :production by default; `pnpm run server:auto-update off` leaves a
+# marker that keeps it off through later provisioning. Dev never auto-updates.
+if grep -qx 'SERVER_ENVIRONMENT=production' /etc/sloppy-tanks/server.env &&
+  [[ ! -f /var/lib/sloppy-tanks/auto-update-off ]]; then
+  systemctl enable --now sloppy-tanks-update.timer
+fi
 
 # Caddy reloads its config in place, keeping players connected, unless its unit names
 # another image than the running container's (a Caddy upgrade), which needs a restart.

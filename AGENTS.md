@@ -466,7 +466,8 @@ offline.
   shell are outside it. Each machine runs its server as a container image under
   Podman, behind Caddy's own container: CI pushes one image per server build and,
   after the Pages deploy, moves `:production` to main's. Production then needs
-  `pnpm run server:update` unless auto-update is on (`server:status` shows it); ask before running it.
+  `pnpm run server:update` only where auto-update is off (it is on by default;
+  `server:status` shows it); ask before running it.
   `pnpm run server:deploy` from `main` is the SSH fallback when CI or the
   registry cannot serve. Never run `server:auto-update`, `server:rollback` or
   `server:update` for production without being asked. The dev server only changes

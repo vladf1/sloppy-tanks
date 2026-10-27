@@ -205,8 +205,9 @@ and its settings in `server.env`:
   (its labels); otherwise it restores the previous image. It keeps the current and
   previous image (tagged `sloppy-tanks-pinned:current` and `:previous`) and prunes
   the rest.
-- `sloppy-tanks-update.timer` is auto-update, off until enabled. It follows
-  `:production`, so it is for production's machine.
+- `sloppy-tanks-update.timer` is auto-update. It follows `:production`, so
+  provisioning turns it on for production's machines, unless
+  `server:auto-update off` turned it off there, and leaves it off on dev's.
 
 ### Deploying
 
@@ -215,7 +216,7 @@ pnpm run server:update                # pull :production and switch now
 pnpm run server:update --image pr-12  # pull another tag (or full image name) and pin it
 pnpm run server:update --dev --image pr-12   # try a pull request's server on the dev server
 pnpm run server:rollback              # switch back to the previous image
-pnpm run server:auto-update on|off    # production follows :production by itself, or not
+pnpm run server:auto-update on|off    # production follows :production by itself (default), or not
 pnpm run server:auto-update resume    # lift a hold (below) so auto-update follows again
 pnpm run server:deploy                # SSH fallback: build here, copy the image, switch
 pnpm run server:provision             # set a machine up, or again after editing deploy/server/*
@@ -223,10 +224,11 @@ pnpm run server:provision             # set a machine up, or again after editing
 
 Each acts on production's machine; `--dev` picks the dev site's.
 
-With auto-update on, the timer checks `:production` every two minutes. A new image
-waits until nobody holds a seat (the `players` count in `/stats`), or at most four
-hours for a server-only change and ten minutes after a content change, when the new
-site is already sending visitors a reload message. Anything other than following
+With auto-update on, as production's machines are by default, the timer checks
+`:production` every two minutes. A new image waits until nobody holds a seat (the
+`players` count in `/stats`), or at most four hours for a server-only change and ten
+minutes after a content change, when the new site is already sending visitors a
+reload message. Anything other than following
 `:production` leaves a hold: an SSH deploy, a rollback or pulling another tag pins
 that image, and auto-update skips its checks until `server:auto-update resume` or
 `server:update`. `server:status` shows the pinned and previous image, any hold or
