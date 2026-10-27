@@ -267,6 +267,14 @@ impl ApplicationHandler for App {
         }
     }
 
+    /// The app ends however it was asked to (the macOS menu's Quit included): a room
+    /// says it is leaving first.
+    fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
+        if let Some(Mode::Room(room)) = &mut self.mode {
+            room.quit();
+        }
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         match &mut self.mode {
             // A hidden window draws nothing: macOS does not pace a covered Metal layer

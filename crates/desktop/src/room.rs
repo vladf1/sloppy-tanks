@@ -79,6 +79,10 @@ pub struct RoomSession {
     minimized: bool,
     /// What the room was last told: hidden or shown.
     told_hidden: bool,
+    /// Inside `pump`, which a notice can reach again.
+    pumping: bool,
+    /// `quit` ran.
+    quitting: bool,
     /// Settings opened during the battle put the tank in a bot's hands until they close.
     resume_after_settings: bool,
     last_poll: f64,
@@ -176,6 +180,8 @@ impl RoomSession {
             occluded: false,
             minimized: false,
             told_hidden: false,
+            pumping: false,
+            quitting: false,
             resume_after_settings: false,
             last_poll: now,
             last_frame: now,
@@ -277,6 +283,12 @@ impl RoomSession {
     /// Perform the engine's socket and storage work, then its notices, until both are
     /// empty; handling a notice may call back into the engine.
     fn pump(&mut self) {
+        // A notice handled here can pump again (leaving to Battle Setup); the outer
+        // loop takes what that would have, in order, as the page's `pumping` does.
+        if self.pumping {
+            return;
+        }
+        self.pumping = true;
         loop {
             let actions = RoomAction::parse_all(&self.game.take_actions());
             for action in &actions {
@@ -291,6 +303,19 @@ impl RoomSession {
                 break;
             }
         }
+        self.pumping = false;
+    }
+
+    /// The app quits: leave the room and give the sockets a moment to say so, rather
+    /// than leave the seat held until the server times it out.
+    pub fn quit(&mut self) {
+        if self.quitting {
+            return;
+        }
+        self.quitting = true;
+        self.game.stop();
+        self.pump();
+        self.sockets.close_all_and_wait();
     }
 
     fn perform(&mut self, action: &RoomAction) {
@@ -370,8 +395,7 @@ impl RoomSession {
         let playing = in_battle && alive;
         match event {
             WindowEvent::CloseRequested => {
-                self.game.stop();
-                self.pump();
+                self.quit();
                 return true;
             }
             WindowEvent::Resized(size) => {
@@ -404,8 +428,7 @@ impl RoomSession {
                 }
                 if let PhysicalKey::Code(code) = event.physical_key {
                     if code == KeyCode::KeyQ && self.modifiers.super_key() {
-                        self.game.stop();
-                        self.pump();
+                        self.quit();
                         return true;
                     }
                     let shortcut = self.controls.key(code, event.state, event.repeat, playing);

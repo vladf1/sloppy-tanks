@@ -1,30 +1,28 @@
 //! The room's WebSockets (the `WebSocket` objects of `src/net/client.ts`): each socket
-//! runs on its own thread with `tungstenite`, and its events come back to the main
-//! thread over a channel, which the room drains every frame and poll.
+//! runs on its own thread, a small tokio runtime that waits on the room's sends and
+//! the server's frames at once, so neither waits behind the other. Its events come
+//! back to the main thread over a channel, which the room drains every frame and poll.
 
 use std::collections::HashMap;
-use std::io::ErrorKind;
-use std::net::{TcpStream, ToSocketAddrs};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
-use std::time::Duration;
+use std::sync::mpsc::{Receiver, Sender, channel};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
-use tungstenite::error::Error as SocketError;
-use tungstenite::protocol::WebSocket;
-use tungstenite::stream::MaybeTlsStream;
-use tungstenite::{Message, Utf8Bytes};
+use futures_util::{SinkExt, StreamExt};
+use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
+use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
 /// A socket this far behind on sends is closed and reconnected instead
 /// (`MAX_BUFFERED_BYTES`, the page's `bufferedAmount` limit).
 pub const MAX_BUFFERED_BYTES: usize = 16_384;
 /// Connecting and the opening handshake give up after this long.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
-/// How long a socket thread waits for a frame before it looks for sends again: the
-/// most a send waits behind a quiet socket.
-const READ_WAIT: Duration = Duration::from_millis(2);
 /// A close this side started waits this long for the server's close frame.
 const CLOSE_WAIT: Duration = Duration::from_secs(2);
+/// Quitting waits this long for the sockets to send what they hold and close.
+const QUIT_WAIT: Duration = Duration::from_millis(500);
 /// Close codes the browser reports: normal, no status, abnormal (no close frame).
 const NORMAL_CLOSE: u16 = 1000;
 const NO_STATUS: u16 = 1005;
@@ -46,9 +44,10 @@ enum Command {
 }
 
 struct Socket {
-    commands: Sender<Command>,
+    commands: UnboundedSender<Command>,
     /// Bytes handed to the thread and not yet written (`bufferedAmount`).
     buffered: Arc<AtomicUsize>,
+    thread: JoinHandle<()>,
 }
 
 /// The room's open sockets and their events.
@@ -56,6 +55,8 @@ pub struct Sockets {
     sockets: HashMap<u32, Socket>,
     sender: Sender<SocketEvent>,
     events: Receiver<SocketEvent>,
+    /// Closed sockets whose threads may still be sending their close.
+    closing: Vec<JoinHandle<()>>,
 }
 
 impl Default for Sockets {
@@ -65,6 +66,7 @@ impl Default for Sockets {
             sockets: HashMap::new(),
             sender,
             events,
+            closing: Vec::new(),
         }
     }
 }
@@ -72,21 +74,37 @@ impl Default for Sockets {
 impl Sockets {
     /// Connect to `url` on a new thread; its events carry `id`.
     pub fn open(&mut self, id: u32, url: String) {
-        let (commands, receiver) = channel();
+        let (commands, receiver) = unbounded_channel();
         let buffered = Arc::new(AtomicUsize::new(0));
         let events = self.sender.clone();
         let pending = buffered.clone();
         let spawned = std::thread::Builder::new()
             .name(format!("room socket {id}"))
             .spawn(move || {
-                let code = run(id, &url, &receiver, &pending, &events);
+                let runtime = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build();
+                let code = match runtime {
+                    Ok(runtime) => runtime.block_on(run(id, &url, receiver, &pending, &events)),
+                    Err(_) => ABNORMAL_CLOSE,
+                };
                 let _ = events.send(SocketEvent::Closed(id, code));
             });
-        if spawned.is_err() {
-            let _ = self.sender.send(SocketEvent::Closed(id, ABNORMAL_CLOSE));
-            return;
+        match spawned {
+            Ok(thread) => {
+                self.sockets.insert(
+                    id,
+                    Socket {
+                        commands,
+                        buffered,
+                        thread,
+                    },
+                );
+            }
+            Err(_) => {
+                let _ = self.sender.send(SocketEvent::Closed(id, ABNORMAL_CLOSE));
+            }
         }
-        self.sockets.insert(id, Socket { commands, buffered });
     }
 
     /// Send `text`, or close the socket when it is too far behind (the room reconnects).
@@ -106,6 +124,8 @@ impl Sockets {
     pub fn close(&mut self, id: u32) {
         if let Some(socket) = self.sockets.remove(&id) {
             let _ = socket.commands.send(Command::Close);
+            self.closing.retain(|thread| !thread.is_finished());
+            self.closing.push(socket.thread);
         }
     }
 
@@ -116,6 +136,19 @@ impl Sockets {
             self.sockets.remove(&id);
         }
         Some(event)
+    }
+
+    /// Close every socket and wait a moment for them to send what they hold, the
+    /// room's leave among it, before the app quits.
+    pub fn close_all_and_wait(&mut self) {
+        let ids: Vec<u32> = self.sockets.keys().copied().collect();
+        for id in ids {
+            self.close(id);
+        }
+        let deadline = Instant::now() + QUIT_WAIT;
+        while Instant::now() < deadline && self.closing.iter().any(|thread| !thread.is_finished()) {
+            std::thread::sleep(Duration::from_millis(5));
+        }
     }
 }
 
@@ -128,103 +161,67 @@ impl Drop for Sockets {
     }
 }
 
-/// Connect: TCP within [`CONNECT_TIMEOUT`], then TLS for `wss:` and the WebSocket
-/// handshake. Returns the socket and a handle to its TCP stream for timeouts.
-fn connect(url: &str) -> Option<(WebSocket<MaybeTlsStream<TcpStream>>, TcpStream)> {
-    let request = tungstenite::client::IntoClientRequest::into_client_request(url).ok()?;
-    let uri = request.uri();
-    let host = uri.host()?.trim_start_matches('[').trim_end_matches(']');
-    let port = uri
-        .port_u16()
-        .unwrap_or(if uri.scheme_str() == Some("wss") {
-            443
-        } else {
-            80
-        });
-    let address = (host, port).to_socket_addrs().ok()?.next()?;
-    let stream = TcpStream::connect_timeout(&address, CONNECT_TIMEOUT).ok()?;
-    stream.set_nodelay(true).ok()?;
-    stream.set_read_timeout(Some(CONNECT_TIMEOUT)).ok()?;
-    stream.set_write_timeout(Some(CONNECT_TIMEOUT)).ok()?;
-    let handle = stream.try_clone().ok()?;
-    let (socket, _) = tungstenite::client_tls_with_config(request, stream, None, None).ok()?;
-    Some((socket, handle))
-}
-
-/// A socket's life on its thread: connect, then alternate between the room's sends and
-/// the server's frames until either side closes. Returns the close code.
-fn run(
+/// A socket's life on its thread: connect (every address the name resolves to, like
+/// a browser), then wait on the room's sends and the server's frames together until
+/// either side closes. Returns the close code: the server's when it closed first.
+async fn run(
     id: u32,
     url: &str,
-    commands: &Receiver<Command>,
+    mut commands: UnboundedReceiver<Command>,
     buffered: &AtomicUsize,
     events: &Sender<SocketEvent>,
 ) -> u16 {
-    let Some((mut socket, stream)) = connect(url) else {
+    let connect = tokio_tungstenite::connect_async_tls_with_config(url, None, true, None);
+    let Ok(Ok((socket, _))) = tokio::time::timeout(CONNECT_TIMEOUT, connect).await else {
         return ABNORMAL_CLOSE;
     };
-    if stream.set_read_timeout(Some(READ_WAIT)).is_err() {
-        return ABNORMAL_CLOSE;
-    }
     if events.send(SocketEvent::Opened(id)).is_err() {
         return NORMAL_CLOSE;
     }
-    let mut closing: Option<std::time::Instant> = None;
-    let mut code = NO_STATUS;
+    let (mut write, mut read) = socket.split();
     loop {
-        while closing.is_none() {
-            match commands.try_recv() {
-                Ok(Command::Send(text)) => {
+        tokio::select! {
+            command = commands.recv() => match command {
+                Some(Command::Send(text)) => {
                     let length = text.len();
-                    let sent = socket.send(Message::Text(Utf8Bytes::from(text)));
+                    let sent = write.send(Message::Text(Utf8Bytes::from(text))).await;
                     buffered.fetch_sub(length, Ordering::Relaxed);
                     if sent.is_err() {
                         return ABNORMAL_CLOSE;
                     }
                 }
-                Ok(Command::Close) | Err(TryRecvError::Disconnected) => {
-                    closing = Some(std::time::Instant::now());
-                    code = NORMAL_CLOSE;
-                    let _ = socket.close(None);
+                // The room closed it (or is gone): close, and wait for the server's
+                // close frame a while.
+                Some(Command::Close) | None => {
+                    let _ = write.send(Message::Close(None)).await;
+                    let _ = tokio::time::timeout(CLOSE_WAIT, async {
+                        while let Some(Ok(message)) = read.next().await {
+                            if matches!(message, Message::Close(_)) {
+                                break;
+                            }
+                        }
+                    })
+                    .await;
+                    return NORMAL_CLOSE;
                 }
-                Err(TryRecvError::Empty) => break,
-            }
-        }
-        match socket.read() {
-            Ok(Message::Text(text)) => {
-                if closing.is_none() {
+            },
+            message = read.next() => match message {
+                Some(Ok(Message::Text(text))) => {
                     let _ = events.send(SocketEvent::Text(id, text.as_str().to_owned()));
                 }
-            }
-            Ok(Message::Binary(bytes)) => {
-                if closing.is_none() {
+                Some(Ok(Message::Binary(bytes))) => {
                     let _ = events.send(SocketEvent::Binary(id, bytes.to_vec()));
                 }
-            }
-            Ok(Message::Close(frame)) => {
-                if closing.is_none() {
-                    code = frame.map_or(NO_STATUS, |frame| frame.code.into());
+                // The server closed first: its code stands, whatever is still queued
+                // here (tungstenite answers the close frame itself).
+                Some(Ok(Message::Close(frame))) => {
+                    let code = frame.map_or(NO_STATUS, |frame| frame.code.into());
+                    let _ = write.flush().await;
+                    return code;
                 }
-            }
-            Ok(_) => {}
-            Err(SocketError::Io(error))
-                if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) =>
-            {
-                if let Some(started) = closing {
-                    if started.elapsed() > CLOSE_WAIT {
-                        return code;
-                    }
-                    let _ = socket.flush();
-                }
-            }
-            Err(SocketError::ConnectionClosed | SocketError::AlreadyClosed) => return code,
-            Err(_) => {
-                return if closing.is_some() {
-                    code
-                } else {
-                    ABNORMAL_CLOSE
-                };
-            }
+                Some(Ok(_)) => {}
+                Some(Err(_)) | None => return ABNORMAL_CLOSE,
+            },
         }
     }
 }
@@ -233,7 +230,7 @@ fn run(
 mod tests {
     use super::*;
     use std::net::TcpListener;
-    use std::time::Instant;
+    use tokio_tungstenite::tungstenite;
 
     /// Events until `stop` matches or two seconds pass.
     fn events_until(
@@ -293,6 +290,36 @@ mod tests {
                 SocketEvent::Closed(7, 4001),
             ]
         );
+    }
+
+    #[test]
+    fn the_servers_close_code_survives_sends_queued_behind_it() {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (stream, _) = listener.accept().unwrap();
+            let mut server = tungstenite::accept(stream).unwrap();
+            let _ = server.read();
+            server
+                .close(Some(tungstenite::protocol::CloseFrame {
+                    code: 4001.into(),
+                    reason: "another tab".into(),
+                }))
+                .unwrap();
+            while server.read().is_ok() {}
+        });
+        let mut sockets = Sockets::default();
+        sockets.open(3, format!("ws://{address}/room/ABCDEFGH"));
+        events_until(&mut sockets, |event| *event == SocketEvent::Opened(3));
+        // Input keeps going out at frame rate while the server's close arrives.
+        for frame in 0..200 {
+            sockets.send(3, format!("input {frame}"));
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        let events = events_until(&mut sockets, |event| {
+            matches!(event, SocketEvent::Closed(..))
+        });
+        assert_eq!(events.last(), Some(&SocketEvent::Closed(3, 4001)));
     }
 
     #[test]

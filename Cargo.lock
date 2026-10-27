@@ -3640,6 +3640,7 @@ dependencies = [
  "egui",
  "egui-wgpu",
  "egui-winit",
+ "futures-util",
  "glam 0.33.11",
  "image",
  "kira",
@@ -3650,7 +3651,8 @@ dependencies = [
  "sloppy-core",
  "sloppy-render",
  "sloppy-web",
- "tungstenite",
+ "tokio",
+ "tokio-tungstenite",
  "ureq",
  "winit",
  "winresource",
@@ -4145,8 +4147,12 @@ checksum = "17a073bfed563fa236697a068031408a93cd9522e08abf9933ead3e73411bd71"
 dependencies = [
  "futures-util",
  "log",
+ "rustls",
+ "rustls-pki-types",
  "tokio",
+ "tokio-rustls",
  "tungstenite",
+ "webpki-roots 0.26.11",
 ]
 
 [[package]]
@@ -4254,7 +4260,6 @@ dependencies = [
  "rustls-pki-types",
  "sha1",
  "thiserror 2.0.21",
- "webpki-roots 0.26.11",
 ]
 
 [[package]]
