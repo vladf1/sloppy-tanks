@@ -33,7 +33,7 @@ permissions:
 
 jobs:
   site:
-    name: Site (format, Wasm, types, Bun, lint)
+    name: Site (format, Wasm, types, Vite, lint)
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v7

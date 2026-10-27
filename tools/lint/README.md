@@ -1,6 +1,6 @@
 # Lint toolchain
 
-Bun checks and bundles the game. TypeScript ESLint 8.70 uses TypeScript compiler
+`bun check` checks the game. TypeScript ESLint 8.70 uses TypeScript compiler
 APIs below 6.1, so this isolated package pins TypeScript 6.0.3 for parsing and
 type-aware lint analysis. It never compiles or checks the game build.
 

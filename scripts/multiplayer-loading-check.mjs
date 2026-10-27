@@ -1,6 +1,5 @@
 import assert from "node:assert/strict";
-import { buildSite } from "./site-build.ts";
-import { startStaticServer } from "./site-server.ts";
+import { build, preview } from "vite";
 import { click, launchChrome } from "./browser-helpers.mjs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { checkMultiplayerMenu, waitForRoomBrowser } from "./multiplayer-helpers.mjs";
@@ -9,20 +8,34 @@ const directory = "artifacts/performance/multiplayer";
 const outDir = `${directory}/loading-build`;
 const chunks = new Map();
 const networkStyles = new Set();
-const built = await buildSite({ outdir: outDir });
-for (const [file, item] of Object.entries(built.metadata.outputs)) {
-  if (!file.endsWith(".js")) continue;
-  const modules = Object.keys(item.inputs);
-  assert.ok(
-    !modules.some((id) => /(^|\/)(bots|node_modules\/(ws|esbuild))\//.test(id)),
-    `Server tooling leaked into ${file}`,
-  );
-  chunks.set(file, { bytes: item.bytes, network: modules.some((id) => /^src\/net\//.test(id)) });
-}
-for (const file of built.files.keys())
-  if (/^assets\/multiplayer-.*\.css$/.test(file)) networkStyles.add(file);
-const server = startStaticServer({ directory: outDir, port: 0 });
-const url = new URL(built.base, server.url).href;
+await build({
+  logLevel: "warn",
+  build: { outDir },
+  plugins: [
+    {
+      name: "audit-multiplayer-loading",
+      generateBundle(_options, bundle) {
+        for (const item of Object.values(bundle)) {
+          if (item.type !== "chunk") continue;
+          const modules = Object.keys(item.modules);
+          if (modules.some((id) => /\/src\/net\//.test(id))) {
+            item.viteMetadata?.importedCss.forEach((file) => networkStyles.add(file));
+          }
+          // The traffic bots and Node-only packages (ws, esbuild) never ship to browsers.
+          assert.ok(
+            !modules.some((id) => /\/(bots|node_modules\/(ws|esbuild))\//.test(id)),
+            `Node-only code leaked into ${item.fileName}`,
+          );
+          chunks.set(item.fileName, {
+            bytes: Buffer.byteLength(item.code),
+            network: modules.some((id) => /\/src\/net\//.test(id)),
+          });
+        }
+      },
+    },
+  ],
+});
+const server = await preview({ build: { outDir }, preview: { host: "127.0.0.1", port: 4179 } });
 const browser = await launchChrome();
 const result = { requests: [], sockets: [], errors: [], chunks: Object.fromEntries(chunks) };
 try {
@@ -31,12 +44,12 @@ try {
   page.on("websocket", (socket) => result.sockets.push(socket.url()));
   page.on("pageerror", (error) => result.errors.push(error.message));
   // ?debug offers the nerd stats panel, opened below; it changes nothing that loads.
-  await page.goto(url + "?debug");
+  await page.goto(server.resolvedUrls.local[0] + "?debug");
   await page.locator("#start").click({ timeout: 60000 });
   await page.locator("#startup-overlay").waitFor({ state: "detached" });
   await page.waitForFunction(() => document.querySelector("#hud")?.style.opacity === "1");
   await page.locator("#nerd-stats .nerd-stats-toggle").click();
-  assert.match(await page.locator("#nerd-stats-details").innerText(), /PHYSICS/);
+  assert.match(await page.locator("#nerd-stats-details").innerText(), /Physics/);
   await page.keyboard.press("n");
   assert.equal(await page.locator("#nerd-stats-details").isVisible(), false);
   await page.keyboard.down("w");
@@ -64,16 +77,14 @@ try {
   console.log("Single-player: zero multiplayer chunk requests, zero sockets, no browser errors.");
   const networkRequests = [];
   const networkPage = await browser.newPage();
-  // A successful empty listing enables Create; this loading check needs no live server.
-  await networkPage.route(/\/rooms(?:\?|$)/, (route) => route.fulfill({ json: { rooms: [] } }));
   networkPage.on("request", (request) => networkRequests.push(request.url()));
   // The multiplayer tab loads only the room list; its styles are inline with the menu.
-  await networkPage.goto(url + "?multiplayer");
+  await networkPage.goto(server.resolvedUrls.local[0] + "?multiplayer");
   await waitForRoomBrowser(networkPage);
   await checkMultiplayerMenu(networkPage);
   // A room link opens the same Battle Setup tab, not a room page.
   const roomLinkRequests = networkRequests.length;
-  await networkPage.goto(url + "?room=ABCD2345");
+  await networkPage.goto(server.resolvedUrls.local[0] + "?room=ABCD2345");
   await waitForRoomBrowser(networkPage);
   assert.equal(await networkPage.locator("#tab-multiplayer").getAttribute("aria-selected"), "true");
   assert.equal(
@@ -127,7 +138,7 @@ try {
   console.log("Multiplayer: one engine Wasm, downloaded once, and no other Wasm.");
 } finally {
   await browser.close();
-  await server.stop(true);
+  await new Promise((resolve) => server.httpServer.close(resolve));
   await mkdir(directory, { recursive: true });
   await writeFile(`${directory}/single-player-loading.json`, JSON.stringify(result, null, 2));
 }

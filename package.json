@@ -7,9 +7,9 @@
     "bun": "1.4.4"
   },
   "scripts": {
-    "dev": "bun scripts/serve.ts",
+    "dev": "vite --host 127.0.0.1",
     "tunnel": "bun scripts/tunnel.mjs",
-    "build": "bun run wasm:all && bun run typecheck && bun scripts/build.ts",
+    "build": "bun run wasm:all && bun run typecheck && vite build",
     "test": "bun test --isolate tests/*.test.ts",
     "validate": "cargo run --locked --release -p sloppy-core --example validate",
     "wasm": "bun scripts/build-wasm.mjs",
@@ -39,7 +39,7 @@
     "check:rust-lint": "bun run rust:fmt && bun run rust:clippy",
     "check:server": "bun run server:build && bun run test",
     "postinstall": "bun install --cwd tools/lint --frozen-lockfile",
-    "build:dev": "bun run wasm:all && bun run wasm:labs && bun run typecheck && bun scripts/build.ts --dev-site",
+    "build:dev": "bun run wasm:all && bun run wasm:labs && bun run typecheck && DEPLOY_BASE=/ vite build --config vite.dev.config.ts",
     "deploy:dev": "bun run check && bun run build:dev && bun scripts/deploy-dev.mjs",
     "server:build": "bun scripts/build-server.mjs",
     "server:dev": "bun scripts/build-server.mjs && ./target/server/sloppy-server",
@@ -61,7 +61,7 @@
     "bots": "bun scripts/bots.mjs",
     "bots:deploy": "bun run wrangler deploy --config bots/wrangler.jsonc",
     "wrangler": "bun tools/deploy/wrangler.mjs",
-    "preview": "bun scripts/serve.ts --preview"
+    "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
     "howler": "2.2.4"
@@ -78,10 +78,10 @@
     "eslint": "10.10.0",
     "eslint-config-prettier": "10.1.8",
     "globals": "17.12.0",
-    "lightningcss": "1.33.0",
     "playwright": "1.63.0",
     "prettier": "3.9.6",
-    "tweakpane": "4.0.5"
+    "tweakpane": "4.0.5",
+    "vite": "8.2.2"
   },
   "packageManager": "bun@1.4.4",
   "trustedDependencies": []

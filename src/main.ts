@@ -114,7 +114,7 @@ function startTextureDownloads(options: GameOptions): void {
       : []),
     ...(buildings ? buildingTextures : []),
   ]) {
-    const url = `${process.env.PUBLIC_BASE_URL}${path}`;
+    const url = `${import.meta.env.BASE_URL}${path}`;
     if (!images.has(url)) {
       const image = new Image();
       image.src = url;

@@ -1,22 +1,17 @@
 // Touch UI code and styles load only when touch controls are enabled. Only a
 // production build splits them into separate files, so build and serve one here.
 import assert from "node:assert/strict";
-import { buildSite } from "./site-build.ts";
-import { startStaticServer } from "./site-server.ts";
+import { build, preview } from "vite";
 import { launchGame, nextFrames, setTouchMode, startRound } from "./browser-helpers.mjs";
 
 const outDir = "artifacts/performance/touch-loading/build";
-const built = await buildSite({ outdir: outDir });
-const server = startStaticServer({ directory: outDir, port: 0 });
-const url = new URL(built.base, server.url).href;
-const touchScript = new URL(
-  built.base + built.entries.get("src/game/touch-controls.ts"),
-  server.url,
-).href;
+await build({ logLevel: "warn", build: { outDir } });
+const server = await preview({ build: { outDir }, preview: { host: "127.0.0.1", port: 4180 } });
+const url = server.resolvedUrls.local[0];
 const { browser, context, page, errors } = await launchGame({
   viewport: { width: 1280, height: 800 },
 });
-const isTouchAsset = (url) => url === touchScript || /\/touch-controls[^/]*\.css(?:\?|$)/.test(url);
+const isTouchAsset = (url) => /\/touch-controls[^/]*\.(js|css)(?:\?|$)/.test(url);
 try {
   const downloads = [];
   page.on("request", (request) => {
@@ -116,7 +111,7 @@ try {
   const delayedPage = await delayed.newPage();
   const { promise: gate, resolve: release } = Promise.withResolvers();
   const { promise: pending, resolve: requested } = Promise.withResolvers();
-  await delayedPage.route(touchScript, async (route) => {
+  await delayedPage.route(/\/touch-controls[^/]*\.js$/, async (route) => {
     requested();
     await gate;
     await route.continue();
@@ -127,9 +122,8 @@ try {
   await setTouchMode(delayedPage, "on");
   await pending;
   await setTouchMode(delayedPage, "off");
-  const finished = delayedPage.waitForEvent(
-    "requestfinished",
-    (request) => request.url() === touchScript,
+  const finished = delayedPage.waitForEvent("requestfinished", (request) =>
+    /\/touch-controls[^/]*\.js$/.test(request.url()),
   );
   release();
   await finished;
@@ -160,5 +154,5 @@ try {
   assert.deepEqual(errors, []);
 } finally {
   await browser.close();
-  await server.stop(true);
+  await new Promise((resolve) => server.httpServer.close(resolve));
 }

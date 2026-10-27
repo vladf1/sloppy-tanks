@@ -1,7 +1,9 @@
-// Deliberate allowlist: do not publish source directories or command-line test runners.
+import type { Plugin } from "vite";
+
+// Deliberate allowlist: do not publish source directories or Node-only test runners.
 export const devPages = [
   {
-    // Renders with the labs engine: the dev build needs `bun run wasm -- --labs`.
+    // Renders with the labs engine: the dev build needs `bun run wasm:labs`.
     path: "tools/tank-surface-check.html",
     title: "Tank surfaces",
     detail: "Vehicle textures and materials, drawn by the engine's renderer",
@@ -27,17 +29,33 @@ const devLinks = [
   },
 ];
 
-export function devSiteHtml(html: string, base: string): string {
-  return html.replace(
-    "<!-- dev-pages -->",
-    [...devLinks, ...devPages.map((page) => ({ ...page, href: `/${page.path}` }))]
-      .map(
-        ({ href, title, detail }) =>
-          `<li><a href="${base}${href.slice(1)}">${title}</a><p>${detail}</p></li>`,
-      )
-      .join("\n"),
-  );
+export function devSite(): Plugin {
+  return {
+    name: "dev-site",
+    transformIndexHtml: {
+      order: "post",
+      handler(html) {
+        return html.replace(
+          "<!-- dev-pages -->",
+          [...devLinks, ...devPages.map((page) => ({ ...page, href: `/${page.path}` }))]
+            .map(
+              ({ href, title, detail }) =>
+                `<li><a href="${href}">${title}</a><p>${detail}</p></li>`,
+            )
+            .join("\n"),
+        );
+      },
+    },
+    generateBundle() {
+      // Vite content-hashes every file in /assets/, so the dev host may cache those for
+      // good; HTML and unversioned public files keep its default revalidation.
+      this.emitFile({
+        type: "asset",
+        fileName: "_headers",
+        source:
+          "/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n" +
+          "/*\n  X-Robots-Tag: noindex, nofollow\n",
+      });
+    },
+  };
 }
-
-export const devHeaders =
-  "/assets/*\n  Cache-Control: public, max-age=31536000, immutable\n/*\n  X-Robots-Tag: noindex, nofollow\n";

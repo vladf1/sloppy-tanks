@@ -5,7 +5,7 @@
   checkout is reachable) on `127.0.0.1:4179` (`PORT` overrides), starts
   `cloudflared tunnel --url`, prints the public link and stops both on Ctrl-C.
   `--no-build` reuses the current `dist/`. Opened locally, `http://localhost:4179/`
-  shows the link; through the tunnel, `/` goes to the game. Never tunnel the Bun
+  shows the link; through the tunnel, `/` goes to the game. Never tunnel the Vite
   dev server or the repository.
 - Agents start it with the `tunnel` entry in `.claude/launch.json`, whose preview
   is the link page, and read the link from its output. Reuse a running tunnel

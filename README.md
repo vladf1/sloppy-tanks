@@ -26,8 +26,8 @@ bun run dev
 export PATH="/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH"
 ```
 
-Bun handles dependency installation, TypeScript checking, bundling, the dev/preview
-servers, tests and script execution. `.bun-version` and `package.json` pin its
+Bun handles dependency installation, TypeScript checking, tests and script
+execution; Vite, running on Bun, bundles the game and serves it in development. `.bun-version` and `package.json` pin its
 version; CI reads `.bun-version`. Installs use isolated linking and committed
 `bun.lock` files, including the lint package installed by `postinstall`. Root
 dependencies cannot run install scripts. Cloudflare's Wrangler is isolated in
@@ -55,15 +55,10 @@ compiling it again, at the cost of about a second per rebuild within one tree.
 Bypass it for one command with `KACHE_DISABLED=1`; `kache explain` says why a crate
 missed the cache.
 
-Open the URL `bun run dev` prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. It is
-Bun's own dev server with hot reloading: it bundles each page through
-`scripts/dev-pages-plugin.ts` (listed in `bunfig.toml`) and serves the release Wasm from
-`src/generated/engine/` (and the WebGL2 build from `src/generated/engine-webgl/`).
-Stylesheet edits apply in place; TypeScript, HTML and generated engine edits reload the
-page. The dev page bundles the game whole, where production inlines Battle Setup's startup
-and loads the game as a module of its own, so checks of that delivery build a production
-copy themselves. Use `bun run dev --port 5200 --strictPort` for a fixed port or
-`bun run preview` to serve the production build. The dev server does not compile Rust,
+Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. Vite
+serves the release Wasm from `src/generated/engine/` (and the WebGL2 build from
+`src/generated/engine-webgl/`). Use `bun run dev --port 5200 --strictPort` for a fixed
+port or `bun run preview` to serve a production build. Vite does not compile Rust,
 so run `bun run wasm` again after changing a crate. That rebuilds the WebGPU engine
 only (the WebGL2 one too when it is missing or the engine's API changed); run
 `bun run wasm:webgl` before trying `?webgl` after an edit.
@@ -127,7 +122,7 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 ## Development
 
 ```sh
-bun run check          # the CI gate: formatting, Wasm and Bun builds, lint, types, clippy, server, all tests
+bun run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
 bun run wasm           # release WebGPU engine and its glue into src/generated/engine/
 bun run wasm:all       # both engines, the WebGL2 one into src/generated/engine-webgl/
 bun run test               # page shell, import boundary and traffic-bot tests (needs bun run server:build)
@@ -255,7 +250,7 @@ It builds `dist/` with `DEPLOY_BASE=/` for <https://sloppy-tanks.fridman.me/>, t
 repository's Pages custom domain (a DNS-only CNAME to `vladf1.github.io` in
 fridman.me's Cloudflare zone). The old
 address <https://fridman.me/sloppy-tanks/> redirects there. Local `bun run build` and
-the Bun dev server keep the default `/sloppy-tanks/` base.
+the Vite dev server keep the default `/sloppy-tanks/` base.
 
 The workflow sets `MULTIPLAYER_URL` to the production game server
 (`deploy/servers.json`). It does not deploy that server, but after the site deploys it
@@ -282,7 +277,7 @@ still need that update to take effect; client-only files (`crates/render`,
 `crates/web`, the page shell) never do. See `crates/server/README.md` for the
 updater, auto-update and the SSH fallback.
 
-`DEPLOY_BASE` controls both asset URLs and the engine download.
+`DEPLOY_BASE` controls both Vite asset URLs and the engine download.
 
 The build separates the interactive menu from the engine and audio. Battle Setup appears immediately with a progress strip while the engine, textures and hidden arena prepare. Pressing GO early changes the button to WAIT and confirms that the round will start automatically; there is no need to keep clicking. The arena's shaders and first frame are prepared before combat starts. GO reuses the prepared arena when its choices still match, or prepares the newly selected map while keeping the menu visible. Independent image downloads, device setup and GPU pipeline compilation overlap where possible. The engine (Rust simulation and WebGPU renderer) is one WebAssembly file, emitted as a separate hashed asset and requested from the page's head so it downloads while the menu loads. A second file holds the WebGL2 build, which the head script requests instead only when the browser gives no WebGPU adapter. Hosts should serve it as `application/wasm` with gzip or Brotli compression.
 

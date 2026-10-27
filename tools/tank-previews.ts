@@ -184,7 +184,7 @@ export async function renderTankPreviews(): Promise<Record<string, string>> {
   canvas.height = PREVIEW_HEIGHT * SUPERSAMPLE;
   canvas.style.cssText = `width:${canvas.width}px;height:${canvas.height}px;position:fixed;left:-9999px`;
   document.body.append(canvas);
-  const lab = await RenderLab.create(canvas, process.env.PUBLIC_BASE_URL);
+  const lab = await RenderLab.create(canvas, import.meta.env.BASE_URL);
   try {
     lab.load_scene(JSON.stringify(SCENE));
     lab.resize(canvas.width, canvas.height);

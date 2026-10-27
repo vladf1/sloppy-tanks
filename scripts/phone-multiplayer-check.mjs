@@ -1,4 +1,4 @@
-// Phones' simplified multiplayer (src/game/phone-mode.ts) against Bun and the local game
+// Phones' simplified multiplayer (src/game/phone-mode.ts) against Vite and the local game
 // server: the Multiplayer tab shows no room list, only one action. Carol's phone, seeing
 // no open room, creates one on her map with bots. Bob's phone starts on single player,
 // finds that room on its Multiplayer tab with the room's map shown, follows a busier and

@@ -8,7 +8,7 @@
 // /sloppy-tanks/tools/effects-lab.html on the dev server.
 // `?t=<seconds>` (default 4) runs the script to that time and freezes it;
 // `?live` loops it. `?theme=quarry|harbor` switches dust colors and effects.
-import type { EffectsLab } from "../src/generated/engine-labs/engine-labs.js";
+import type { EffectsLab } from "../src/generated/engine-labs/engine.js";
 import type { VehicleKind, Weapon } from "../src/game/engine-api";
 import { compareImages, loadReference, pixels } from "./lab-references";
 import { fail, loadLabsEngine, prepareLab } from "./labs-engine";
@@ -33,7 +33,7 @@ const params = new URLSearchParams(location.search);
 const live = params.has("live");
 const freezeAt = Number(params.get("t") ?? 4);
 const theme = params.get("theme") ?? "village";
-const base = process.env.PUBLIC_BASE_URL;
+const base = import.meta.env.BASE_URL;
 const rustCanvas = document.querySelector<HTMLCanvasElement>("#rust")!;
 const referenceCanvas = document.querySelector<HTMLCanvasElement>("#reference")!;
 const diffCanvas = document.querySelector<HTMLCanvasElement>("#diff")!;

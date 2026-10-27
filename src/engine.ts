@@ -6,7 +6,7 @@
 // so WebGPU browsers never download WebGL code; its glue is a separate chunk imported
 // on demand.
 // Production pages make that choice and start the binary's download from an inline
-// <head> script (scripts/startup-html.ts); this module takes
+// <head> script (the engine-download plugin in vite.config.ts); this module takes
 // both over, so the download and compilation overlap with the menu and the engine's
 // own JavaScript, and a page downloads and compiles the engine once.
 import * as webgpuGlue from "./generated/engine/engine.js";

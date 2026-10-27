@@ -1,10 +1,10 @@
 // Tank selection previews: renders the game's vehicle models with the engine
-// (`tools/tank-surface-check.html`, the labs build: run `bun run wasm -- --labs`
+// (`tools/tank-surface-check.html`, the labs build: run `bun run wasm:labs`
 // first) in headless Chrome and packs them into `public/previews/tanks.webp`, three
 // chassis columns with one row per team. `SLOPPY_PREVIEWS_OUT` writes elsewhere, for
 // comparing a candidate with the checked-in sheet before replacing it.
 import { chromium } from "playwright";
-import { startDevServer } from "./site-server.ts";
+import { createServer } from "vite";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { execFileSync } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
@@ -43,11 +43,12 @@ async function packTankPreviews(assets) {
   console.log(`${output}: ${image.length} bytes`);
 }
 
-const server = await startDevServer({ port: 0 });
+const server = await createServer({ server: { host: "127.0.0.1", port: 0 } });
+await server.listen();
 const browser = await chromium.launch({ channel: "chrome", headless });
 try {
   const page = await browser.newPage();
-  await page.goto(`${server.url.href}tools/tank-surface-check.html`);
+  await page.goto(`${server.resolvedUrls.local[0]}tools/tank-surface-check.html`);
   await page.waitForFunction(() => window.tankPreviewAssets || window.tankPreviewError, null, {
     timeout: 120000,
   });
@@ -56,5 +57,5 @@ try {
   await packTankPreviews(await page.evaluate(() => window.tankPreviewAssets));
 } finally {
   await browser.close();
-  await server.stop();
+  await server.close();
 }

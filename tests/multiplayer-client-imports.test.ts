@@ -7,7 +7,7 @@ const ROOM_BROWSER = "src/net/room-browser.ts";
 // The Rust engine (`NetGame`) runs the connection, replication, interpolation, input and
 // drawing. The room page is only this DOM shell around it; anything else it reaches would
 // be game logic creeping back into TypeScript or a library download on joining a room.
-// scripts/multiplayer-loading-check.mjs checks the real Bun chunks in a browser.
+// scripts/multiplayer-loading-check.mjs checks the real Vite chunks in a browser.
 const SHELL = new Set([
   "src/engine.ts",
   "src/touch-controls.css",

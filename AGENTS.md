@@ -77,8 +77,9 @@ One implementation of the game, in Rust, shared by the browser and the server:
 ## Normal development and validation
 
 Use Bun 1.4.4 (pinned in `.bun-version` and `package.json`) and Rust through rustup.
-Bun supplies installation, TypeScript checking, bundling, dev/preview servers,
-script execution and the native test runner. ESLint and Prettier run on Bun;
+Bun supplies installation, TypeScript checking, script execution and the native
+test runner; Vite, running on Bun, bundles the page and serves it in development.
+ESLint and Prettier run on Bun;
 TypeScript 6 in `tools/lint/` exists only for ESLint's parser and typed rules.
 `rust-toolchain.toml` pins Rust with rustfmt, clippy and the
 `wasm32-unknown-unknown` and `x86_64-unknown-linux-musl` targets; the wasm-bindgen CLI
@@ -101,7 +102,7 @@ build looks stale, rerun it with `KACHE_DISABLED=1` before debugging the code, a
 whether Kache was on when reporting build times.
 
 ```sh
-bun run check                        # CI gate: format, Wasm/Bun build, lint, types, clippy, server, all tests
+bun run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests
 bun run wasm                         # release WebGPU engine into src/generated/engine/; rerun after Rust/WGSL edits
 bun run wasm:webgl                   # the WebGL2 fallback engine; before trying ?webgl after an edit
 cargo test --workspace --test integration navigation::   # one area of the core tests (add --release for seeded matches)
@@ -113,7 +114,8 @@ SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun run check:browser
 
 `bun run validate` writes its results to the ignored
 `artifacts/performance/simulation-results.json`. `bun run build` creates
-`dist/`; it is a build output, not a place to edit source behavior. The Bun bundler and checker import the generated glue, so run `bun run wasm` before them; `build`,
+`dist/`; it is a build output, not a place to edit source behavior. Vite and
+`bun check` import the generated glue, so run `bun run wasm` before them; `build`,
 `build:dev` and `check` do. `bun run wasm` leaves the WebGL2 engine
 (`src/generated/engine-webgl/`) alone unless its glue is missing or the engine's
 API changed, because building it doubles the compile work of every edit; the
@@ -151,8 +153,8 @@ a slow run.
 
 Separate page runs of one build drift 2x on a developer Mac, so compare render
 CPU (`renderMs`, the engine's presentation and `Renderer::render`) between builds
-loaded at once: debug-API static bundles (`NODE_ENV=development bun scripts/build.ts
---minify false`) served cross-origin isolated for 5 µs timer resolution, one
+loaded at once: debug-API static bundles (`NODE_ENV=development bun x vite
+build --minify false`) served cross-origin isolated for 5 µs timer resolution, one
 page per build, seeded, with the overview camera; hold the game's `loop`, step
 every page through the same timestamps in alternating 40-frame blocks, wait for
 the GPU before each frame, pair frame _n_ across builds and report the mean paired

@@ -76,9 +76,7 @@ patches.
 
 `touch-loading-check.mjs` builds and serves its own production copy, because only
 the production build splits the touch UI into separate files; it needs no dev
-server. For the same reason `startup-check.mjs`, given a local `SLOPPY_URL`, checks a
-development copy of the production build that it serves itself: the dev server bundles
-the game into the page, where production downloads it after the inline startup.
+server:
 
 ```sh
 bun scripts/touch-loading-check.mjs
@@ -149,7 +147,7 @@ village, 2.08 quarry, 4.22 close-up, where the two sides' cosmetic randomness di
 
 ## Multiplayer experiments
 
-These checks default to the Bun URL `http://127.0.0.1:5173/sloppy-tanks/`; set
+These checks default to the Vite URL `http://127.0.0.1:5173/sloppy-tanks/`; set
 `SLOPPY_URL` for another. WebSocket-frame recording, the room menu checks and polling
 waits are shared in `multiplayer-helpers.mjs`. Server rules
 (seats, idle watchdog, humans-only, reconnect, host transfer, expiry) are covered by
@@ -171,7 +169,7 @@ multiplayer's extracted stylesheet loads only once a room is entered, that inact
 menu actions stay hidden, and that the menu fits desktop viewports.
 
 `bun run check:multiplayer` drives **two Chrome contexts through real WebSockets**,
-plus a third for a late join. Run Bun and the local server first (`bun run
+plus a third for a late join. Run Vite and the local server first (`bun run
 server:dev`), or set `SLOPPY_SERVER=wss://sloppy-tanks-server.fridman.me`. The host creates a
 humans-only room on Battle Setup and the others open its room link, which selects
 the room there. It covers literal names, room rules shown as text to guests and during
@@ -195,7 +193,7 @@ Chrome DevTools' packet loss only affects WebRTC. For real loss below TCP on a M
 `sudo scripts/network/lossy-network.sh on` drops 2% of the packets from the server
 ([details](network/README.md)).
 
-With Bun and the local server running, `player-feedback-check.mjs` checks the
+With Vite and the local server running, `player-feedback-check.mjs` checks the
 online HUD's power-up timers, critical hull and death explanation using controlled
 HUD fixtures over a rendered room. `player-preferences-check.mjs` checks saved
 tank, mode, camera and zoom through page reloads, another round, and single-player
@@ -214,12 +212,12 @@ received-update stats, polling cleanup and empty-room removal. For both the relo
 and in-page joins it samples every frame: Battle Setup (restored after the reload)
 stays until the arena replaces it, and the room menu never shows. A link to a room
 that isn't open opens Battle Setup, says so and selects nothing.
-Use `SLOPPY_URL` for either the local Bun URL or the public dev site,
+Use `SLOPPY_URL` for either the local Vite URL or the public dev site,
 `SLOPPY_SERVER` as for `check:multiplayer`, and `SLOPPY_CHECK_LABEL=public` to keep
 separate evidence. Buttons and room selection
 use physical coordinate clicks.
 
-With Bun and the local server running, `bun scripts/phone-multiplayer-check.mjs` plays
+With Vite and the local server running, `bun scripts/phone-multiplayer-check.mjs` plays
 phones' one-action Multiplayer tab: a phone that sees no open room creates one on its map
 with bots, and a second phone, starting on single player, has that room picked with its
 map shown, joins through a reload, and gets the phone camera, controls and short room
@@ -232,7 +230,7 @@ restarts it during a round
 (a crash, not a graceful stop) and checks that the connection dialog shows, that the
 browser returns to a fresh lobby and prepares another map, and that a graceful stop
 then shows the room-closed dialog with its way back to Battle Setup. Run
-`bun run server:build` first and run Bun.
+`bun run server:build` first and run Vite.
 `bun scripts/multiplayer-public-check.mjs` verifies the published dev
 client (`SLOPPY_PUBLIC_URL`) with two players plus its test directory, fixture and
 build metadata.
@@ -275,7 +273,7 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | `bun run validate`                                                                       | Ten seeded headless matches and reset checks                                           |
 | `bun scripts/benchmarks/host-download-benchmark.mjs`                                     | HTTP delivery from the live hosts only ([details](benchmarks/README.md))               |
 
-- `profile.mjs` needs Bun running and `SLOPPY_URL`. Detailed results and CPU
+- `profile.mjs` needs Vite running and `SLOPPY_URL`. Detailed results and CPU
   profiles go to `artifacts/performance/<label>/`.
 - `frame-pacing-check.mjs` reads `SLOPPY_PACING_SECONDS`, `SLOPPY_MAX_FRAME_MS`,
   `SLOPPY_PACING_MAPS` (comma-separated) and `SLOPPY_ARTIFACT_DIR`. It reports the

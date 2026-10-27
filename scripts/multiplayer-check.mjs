@@ -80,7 +80,8 @@ async function enter(page, name, team, action) {
       performance
         .getEntriesByType("resource")
         .map((entry) => entry.name)
-        .filter((name) => new URL(name).pathname.endsWith(".wasm")),
+        // Vite's `?import&url` modules of both engines only name their URLs.
+        .filter((name) => name.includes(".wasm") && !name.includes("?import")),
     );
     assert.ok(
       binaries.some((name) => name.includes("engine-webgl")) &&

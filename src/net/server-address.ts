@@ -1,8 +1,7 @@
 /** The game server's WebSocket address, or undefined when this site has no multiplayer. */
 export function serverAddress(): URL | undefined {
-  const server =
-    process.env.PUBLIC_DEV === "true" ? new URLSearchParams(location.search).get("server") : null;
-  return resolveServerAddress(server, process.env.PUBLIC_MULTIPLAYER_URL, location.hostname);
+  const server = import.meta.env.DEV ? new URLSearchParams(location.search).get("server") : null;
+  return resolveServerAddress(server, import.meta.env.VITE_MULTIPLAYER_URL, location.hostname);
 }
 
 /** The address rules: a development `?server=` override, then the build's configured

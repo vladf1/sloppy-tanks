@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import type { Plugin } from "vite";
 import { protocolVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
 
@@ -14,8 +14,6 @@ import { releaseVersion } from "./release-version.mjs";
 // HTML collapses the indentation, and GitHub Pages cannot send a JSON content type, so
 // a string value carries a style element that keeps it. Browsers show it as `""`.
 const PRESERVE_FORMATTING = "<style>body{white-space:pre;font-family:monospace}</style>";
-/** Git describes this checkout whichever directory a script runs from. */
-const CHECKOUT = fileURLToPath(new URL("..", import.meta.url));
 
 export interface PageBuild {
   /** `1.1.0.628` on main, with the Pages workflow's run number (`SLOPPY_BUILD_NUMBER`). */
@@ -26,8 +24,7 @@ export interface PageBuild {
 
 /** What this checkout builds: its release version and commit. */
 export function pageBuild(): PageBuild {
-  const git = (...args: string[]) =>
-    execFileSync("git", args, { cwd: CHECKOUT, encoding: "utf8" }).trim();
+  const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8" }).trim();
   return {
     release: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
     commit: git("rev-parse", "--short", "HEAD"),
@@ -41,11 +38,11 @@ export function buildLabel({ release, commit, dirty }: PageBuild): string {
 }
 
 /** The page's `/health` body; `builtAt` is when the build ran or the dev server started. */
-export async function healthBody(builtAt: string): Promise<string> {
+async function healthBody(builtAt: string): Promise<string> {
   // The hash the Wasm build stamped into this engine, not one recomputed from the
   // sources, which may have changed since `bun run wasm`.
   const contentVersion = /CONTENT_VERSION = "([0-9a-f]+)"/.exec(
-    readFileSync(new URL("../src/generated/engine/content-version.js", import.meta.url), "utf8"),
+    readFileSync("src/generated/engine/content-version.js", "utf8"),
   )?.[1];
   if (!contentVersion) {
     throw new Error("No content version stamp: run `bun run wasm` first");
@@ -61,4 +58,38 @@ export async function healthBody(builtAt: string): Promise<string> {
     style: PRESERVE_FORMATTING,
   };
   return `${JSON.stringify(health, null, 2)}\n`;
+}
+
+/** Emits `health/index.html` in builds and answers `health` and `health/` on the dev
+ * server, where the page would otherwise fall back to the game's `index.html`. */
+export function pageHealth(): Plugin {
+  let base = "/";
+  return {
+    name: "page-health",
+    configResolved(config) {
+      base = config.base;
+    },
+    configureServer(server) {
+      const started = new Date().toISOString();
+      server.middlewares.use((request, response, next) => {
+        const path = request.url?.split("?")[0];
+        if (path !== `${base}health` && path !== `${base}health/`) return next();
+        // Read on each request, so it follows `bun run wasm` and new commits.
+        healthBody(started).then((body) => {
+          response.setHeader("Content-Type", "text/html; charset=utf-8");
+          response.setHeader("Cache-Control", "no-store");
+          response.end(body);
+        }, next);
+      });
+    },
+    async generateBundle() {
+      let source: string;
+      try {
+        source = await healthBody(new Date().toISOString());
+      } catch (error) {
+        this.error(error instanceof Error ? error.message : String(error));
+      }
+      this.emitFile({ type: "asset", fileName: "health/index.html", source });
+    },
+  };
 }

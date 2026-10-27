@@ -6,7 +6,7 @@
 // /sloppy-tanks/tools/render-lab.html on the dev server.
 // `?freeze=<seconds>` pins the effect/water clock for screenshots (the references use
 // 1.25).
-import type { RenderLab } from "../src/generated/engine-labs/engine-labs.js";
+import type { RenderLab } from "../src/generated/engine-labs/engine.js";
 import { compareImages, loadReference, pixels } from "./lab-references";
 import { fail, loadLabsEngine, prepareLab } from "./labs-engine";
 
@@ -407,7 +407,7 @@ const SCENE = {
     },
   ] as ObjectSpec[],
 };
-const base = process.env.PUBLIC_BASE_URL;
+const base = import.meta.env.BASE_URL;
 const params = new URLSearchParams(location.search);
 const frozen = params.has("freeze") ? Number(params.get("freeze")) : undefined;
 

@@ -1,8 +1,8 @@
 // Types for the labs glue when `bun run wasm:labs` has not run: `bun run build` and
 // CI's type check build only the game engines. Once built, TypeScript resolves the real
-// `src/generated/engine-labs/engine-labs.d.ts` instead. Only the calls TypeScript makes are
+// `src/generated/engine-labs/engine.d.ts` instead. Only the calls TypeScript makes are
 // declared.
-declare module "*/generated/engine-labs/engine-labs.js" {
+declare module "*/generated/engine-labs/engine.js" {
   export class RenderLab {
     static create(canvas: HTMLCanvasElement, assetBase: string): Promise<RenderLab>;
     load_scene(json: string): void;

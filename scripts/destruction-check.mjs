@@ -284,10 +284,11 @@ try {
   // Scrap Yard reuses rubble identities after its towers rebuild. Each collapse
   // chooses a new rubble look, so an existing view must replace its old model.
   results.rebuilding = await page.evaluate(async () => {
+    const { choose } = await import(new URL("tests/engine-fixture.ts", location.href).href);
     const { sloppy, engine } = window;
     const game = sloppy.game;
     game.debug_configure(417, 30, 0);
-    await engine.choose({ mapMode: "superstress" });
+    await choose(game, { mapMode: "superstress" });
     game.start();
     engine.draw();
     const initial = sloppy.stats();
@@ -333,7 +334,7 @@ try {
     game.debug_damage_cover(cargo.id, 9999);
     engine.draw();
     const woodBeforeReset = engine.view().effects.woodChips;
-    await engine.choose({ mapMode: "superstress" });
+    await choose(game, { mapMode: "superstress" });
     game.start();
     engine.draw();
     return { cycles, woodBeforeReset, initial, reset: sloppy.stats(), view: engine.view() };

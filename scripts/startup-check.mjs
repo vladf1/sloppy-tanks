@@ -4,27 +4,14 @@ import {
   chooseMap,
   chosenMap,
   click,
-  gameUrl,
+  gameUrl as url,
   launchGame,
   menuReady,
   startRound,
 } from "./browser-helpers.mjs";
-import { buildSite } from "./site-build.ts";
-import { startStaticServer } from "./site-server.ts";
 
 const output = "artifacts/performance/startup";
 mkdirSync(output, { recursive: true });
-// Startup is how the production page delivers the game: Battle Setup and its controller
-// inline, the engine download from <head>, the game as a module of its own. Bun's dev
-// server bundles a page whole, so a local run checks a development copy of the
-// production build (with `window.sloppy`); another host's page is checked as it is.
-let url = gameUrl;
-let server;
-if (["127.0.0.1", "localhost", "[::1]"].includes(new URL(gameUrl).hostname)) {
-  const built = await buildSite({ development: true, outdir: `${output}/build` });
-  server = startStaticServer({ directory: `${output}/build`, port: 0, base: built.base });
-  url = new URL(built.base, server.url).href;
-}
 const viewport = { width: 1440, height: 1000 };
 const first = await launchGame({ viewport });
 const { browser, errors } = first;
@@ -69,10 +56,7 @@ try {
   assert.equal(await delayed.page.locator(".start").getAttribute("data-play"), "single");
   // A last-minute choice during the queued start must reach the actual round.
   await chooseMap(delayed.page, "quarry");
-  // The bundled game can create its hidden canvas before the held binary arrives.
-  // No arena may become visible or start simulating while the download is blocked.
-  assert.equal(await delayed.page.locator("canvas:visible").count(), 0);
-  assert.equal(await delayed.page.evaluate(() => window.sloppy?.sim.elapsed ?? 0), 0);
+  assert.equal(await delayed.page.locator("canvas").count(), 0);
   releaseEngine();
   await playing(delayed.page);
   results.delayed = await delayed.page.evaluate(() => ({
@@ -83,19 +67,14 @@ try {
     round: window.sloppy.sim.match.round,
     canvases: document.querySelectorAll("canvas#game").length,
   }));
-  // A production page settles on round 4 here, as main's Vite build did; another rebuild
-  // for the late choice would raise it.
   assert.deepEqual(results.delayed, {
     tank: "heavy",
     map: "quarry",
     mode: "solo",
     difficulty: "hard",
-    round: 4,
+    round: 3,
     canvases: 1,
   });
-  // Nor may the settled round rebuild while the player is driving.
-  await delayed.page.waitForFunction(() => window.sloppy.sim.elapsed > 0.25);
-  assert.equal(await delayed.page.evaluate(() => window.sloppy.sim.match.round), 4);
   // A setup cloned while early GO disabled the tabs must unlock them next round.
   await delayed.page.keyboard.press("Escape");
   await delayed.page.locator("#end-battle").click();
@@ -285,9 +264,7 @@ try {
 
   console.log("Delayed loading, prepared arena reuse, gameplay, and new rounds passed.");
   const failure = await fresh();
-  await failure.page.route(/\/assets\/game-[\w-]+\.js(?:\?|$)/, (route) => route.abort(), {
-    times: 1,
-  });
+  await failure.page.route(/\/src\/game\.ts(?:\?|$)/, (route) => route.abort(), { times: 1 });
   await failure.page.goto(url);
   await failure.page.waitForFunction(
     () => document.querySelector("#startup-overlay")?.dataset.state === "error",
@@ -361,7 +338,7 @@ try {
 
   const layout = await fresh();
   const { promise: game, resolve: releaseGame } = Promise.withResolvers();
-  await layout.page.route(/\/assets\/game-[\w-]+\.js(?:\?|$)/, async (route) => {
+  await layout.page.route(/\/src\/game\.ts(?:\?|$)/, async (route) => {
     await game;
     await route.continue();
   });
@@ -484,5 +461,4 @@ try {
   console.log(JSON.stringify(results));
 } finally {
   await browser.close();
-  await server?.stop(true);
 }

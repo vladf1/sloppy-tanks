@@ -24,7 +24,7 @@ bun scripts/generate-harbor-textures.ts
 
 ## Runtime encoding
 
-The two WebPs total about 87 KiB. The 1254px WebP editing sources total about 941 KiB and are not shipped by Bun. The original generated PNGs remain outside the repository in the image-generation output folder. Each runtime image uses 512px per side with mipmaps; compared with 1024px this cuts decoded texture storage by 75%.
+The two WebPs total about 87 KiB. The 1254px WebP editing sources total about 941 KiB and are not shipped by Vite. The original generated PNGs remain outside the repository in the image-generation output folder. Each runtime image uses 512px per side with mipmaps; compared with 1024px this cuts decoded texture storage by 75%.
 
 ```sh
 cwebp -q 80 -resize 512 512 -metadata none assets/texture-sources/harbor/dock.webp -o public/textures/harbor/dock.webp
