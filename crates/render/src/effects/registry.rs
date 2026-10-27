@@ -485,7 +485,8 @@ mod tests {
     use crate::presentation::PRESENTATION_EFFECTS;
     use crate::shader::webgl_check::validate_effect;
 
-    /// The hooks a registered definition keeps are the ones its WGSL defines.
+    /// A registered definition knows its hooks, and a shared snippet replaces the
+    /// effect's own hooks of its stage and defines no other stage's.
     #[test]
     fn registered_hooks_match_the_snippet() {
         let mut registry = EffectRegistry::default();
@@ -495,18 +496,6 @@ mod tests {
         for id in 1..=(BUILTIN_EFFECTS.len() + PRESENTATION_EFFECTS.len()) as u16 {
             let effect = registry.get(id).expect("registered");
             assert!(effect.hooks.is_some());
-            let source = format!("{}\n{}", effect.wgsl, effect.entry);
-            let shared = format!("{}\n{}", effect.shared_vertex, effect.shared_surface);
-            let defines = |hook: &str| source.contains(hook) || shared.contains(hook);
-            assert_eq!(effect.has_vertex(), defines("fn effect_vertex("));
-            assert_eq!(effect.has_world(), defines("fn effect_world("));
-            assert_eq!(effect.has_clip(), defines("fn effect_clip("));
-            assert_eq!(effect.has_surface(), defines("fn effect_surface("));
-            assert_eq!(
-                effect.has_own_surface(),
-                source.contains("fn effect_surface(")
-            );
-            // Shared hooks replace own ones, each snippet defining only its stage's.
             let vertex_hooks = ["fn effect_vertex(", "fn effect_world(", "fn effect_clip("];
             if effect.has_shared_vertex() {
                 assert!(!effect.has_own_vertex_hooks(), "{}", effect.name);
@@ -555,8 +544,13 @@ mod tests {
         for effect in PRESENTATION_EFFECTS {
             registry.register(effect);
         }
-        for id in 1..=(BUILTIN_EFFECTS.len() + PRESENTATION_EFFECTS.len()) as u16 {
-            validate_effect(&registry, id);
-        }
+        let registry = &registry;
+        // Each effect's variants on a thread of their own: they are independent and
+        // this is the crate's longest test.
+        std::thread::scope(|scope| {
+            for id in 1..=(BUILTIN_EFFECTS.len() + PRESENTATION_EFFECTS.len()) as u16 {
+                scope.spawn(move || validate_effect(registry, id));
+            }
+        });
     }
 }

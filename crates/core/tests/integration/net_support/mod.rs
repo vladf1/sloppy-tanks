@@ -1,8 +1,9 @@
 //! A scripted room for the multiplayer tests: named connections, an in-memory clock, and
-//! every message the host sends, parsed (binary state through each connection's
+//! every message the host sends, parsed when read (binary state through each connection's
 //! [`WireView`], as the former JSON); and the host's shell sweeps, to check what a client
 //! draws against them. Import with `use crate::net_support;`.
 
+use std::cell::{Ref, RefCell};
 use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
@@ -28,14 +29,39 @@ use sloppy_core::sim::weapons::fire_weapon;
 pub struct Harness {
     pub host: MatchHost,
     pub now: u64,
-    /// Parsed messages per connection name, in arrival order.
-    pub messages: BTreeMap<String, Vec<Value>>,
     /// Messages per connection name as sent.
     pub wire: BTreeMap<String, Vec<Message>>,
-    views: BTreeMap<String, WireView>,
+    /// Messages per connection name as JSON, parsed on first read.
+    parsed: RefCell<BTreeMap<String, Parsed>>,
     /// Connection names the host closed, once per close.
     pub closed: Vec<String>,
     names: Vec<String>,
+}
+
+/// One connection's messages as JSON. Binary state decodes in arrival order through the
+/// connection's [`WireView`], but only once a test reads the JSON: decoding every frame
+/// as it arrived took half the time of long rooms whose tests read only the wire.
+#[derive(Default)]
+struct Parsed {
+    messages: Vec<Value>,
+    /// Messages after `messages`, not parsed yet.
+    unread: Vec<Message>,
+    view: WireView,
+}
+
+impl Parsed {
+    fn catch_up(&mut self, name: &str) {
+        for message in self.unread.drain(..) {
+            let value = match &message {
+                Message::Text(text) => serde_json::from_str(text).expect("host sends JSON text"),
+                Message::Binary(bytes) => self
+                    .view
+                    .binary(bytes)
+                    .unwrap_or_else(|error| panic!("{name} cannot read state: {error}")),
+            };
+            self.messages.push(value);
+        }
+    }
 }
 
 /// A host created at time 0 whose seat tokens count up from `credential-…001`.
@@ -59,9 +85,8 @@ pub fn harness_aged(age_ms: u64) -> Harness {
     Harness {
         host: test_host("test-room", 4242, None),
         now: age_ms,
-        messages: BTreeMap::new(),
         wire: BTreeMap::new(),
-        views: BTreeMap::new(),
+        parsed: RefCell::default(),
         closed: Vec::new(),
         names: Vec::new(),
     }
@@ -125,18 +150,9 @@ impl Harness {
                     message,
                 } => {
                     let name = self.name(connection);
-                    let value: Value = match &message {
-                        Message::Text(text) => {
-                            serde_json::from_str(text).expect("host sends JSON text")
-                        }
-                        Message::Binary(bytes) => self
-                            .views
-                            .entry(name.clone())
-                            .or_default()
-                            .binary(bytes)
-                            .unwrap_or_else(|error| panic!("{name} cannot read state: {error}")),
-                    };
-                    self.messages.entry(name.clone()).or_default().push(value);
+                    let parsed = self.parsed.get_mut();
+                    let unread = &mut parsed.entry(name.clone()).or_default().unread;
+                    unread.push(message.clone());
                     self.wire.entry(name).or_default().push(message);
                 }
                 HostEvent::Close { connection, .. } => self.closed.push(self.name(connection)),
@@ -173,8 +189,27 @@ impl Harness {
         self.drain();
     }
 
-    pub fn all(&self, name: &str) -> &[Value] {
-        self.messages.get(name).map_or(&[], Vec::as_slice)
+    /// A connection's messages as JSON, in arrival order.
+    pub fn all(&self, name: &str) -> Ref<'_, [Value]> {
+        if let Some(parsed) = self.parsed.borrow_mut().get_mut(name) {
+            parsed.catch_up(name);
+        }
+        Ref::map(self.parsed.borrow(), |parsed| {
+            parsed
+                .get(name)
+                .map_or(&[][..], |parsed| parsed.messages.as_slice())
+        })
+    }
+
+    /// Forgets every message so far, bounding a long session that reads none of them.
+    /// A connection's JSON view then starts again at its next baseline.
+    pub fn forget_messages(&mut self) {
+        for parsed in self.parsed.get_mut().values_mut() {
+            *parsed = Parsed::default();
+        }
+        for wire in self.wire.values_mut() {
+            wire.clear();
+        }
     }
 
     pub fn latest(&self, name: &str, kind: &str) -> Value {
@@ -196,7 +231,7 @@ impl Harness {
     /// Pings every connection that has heard from the host, then runs the 50 ms timer.
     pub fn advance(&mut self) {
         self.now += 50;
-        let names: Vec<String> = self.messages.keys().cloned().collect();
+        let names: Vec<String> = self.parsed.get_mut().keys().cloned().collect();
         for name in names {
             let t = self.now;
             let tick = self.host.tick();
@@ -288,8 +323,11 @@ pub fn assert_same(a: &Value, b: &Value, context: &str) {
             _ => Some(format!("{path}: {a} vs {b}")),
         }
     }
-    if let Some(difference) = first_difference(a, b, String::new()) {
-        panic!("{context}: {difference}");
+    // Paths are formatted only to report a difference: building one per node made the
+    // comparison of whole scenes slow.
+    if !same(a, b) {
+        let difference = first_difference(a, b, String::new());
+        panic!("{context}: {}", difference.expect("values differ"));
     }
 }
 
@@ -395,7 +433,13 @@ pub fn batch(round_id: u64, ack: u64, first_seq: u64, frames: &[(u64, Vec<u8>)])
 impl Harness {
     /// The scene a connection's view mirrors, as the former JSON.
     pub fn mirrored(&self, name: &str) -> Value {
-        self.views[name]
+        let mut parsed = self.parsed.borrow_mut();
+        let parsed = parsed
+            .get_mut(name)
+            .unwrap_or_else(|| panic!("{name} received nothing"));
+        parsed.catch_up(name);
+        parsed
+            .view
             .mirror
             .state
             .as_ref()

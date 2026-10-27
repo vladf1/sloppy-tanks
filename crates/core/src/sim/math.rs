@@ -364,6 +364,7 @@ mod tests {
     fn js_integer_conversions() {
         assert_eq!(to_int32(4_294_967_296.0 + 5.0), 5);
         assert_eq!(to_int32(-1.0), -1);
+        assert_eq!(to_int32(-1.7), -1);
         assert_eq!(to_uint32(-1.0), u32::MAX);
         assert_eq!(to_int32(2_147_483_648.0), i32::MIN);
         assert_eq!(to_uint32(f64::NAN), 0);

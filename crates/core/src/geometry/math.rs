@@ -447,13 +447,6 @@ mod tests {
     }
 
     #[test]
-    fn to_int32_truncates_and_wraps() {
-        assert_eq!(to_int32(-1.7), -1);
-        assert_eq!(to_int32(2_147_483_648.0), -2_147_483_648);
-        assert_eq!(to_int32(12.9), 12);
-    }
-
-    #[test]
     fn euler_matches_matrix_rotation() {
         let q = quat_from_euler(0.3, 0.0, 0.0);
         let a = compose(DVec3::ZERO, q, DVec3::ONE);

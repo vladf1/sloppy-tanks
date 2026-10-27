@@ -15,7 +15,9 @@ const SERVER_PATH =
     : "../target/server/sloppy-server";
 const SERVER = fileURLToPath(new URL(SERVER_PATH, import.meta.url));
 const STEP_MS = 50;
-const DRIVE_MS = 4000;
+/** Inputs each bot must send while driving: about a second at the active rate. */
+const MIN_INPUTS = 20;
+const DRIVE_TIMEOUT_MS = 20_000;
 const START_TIMEOUT_MS = 10_000;
 const ROOM_CODE = /^[A-Z2-9]{8}$/;
 
@@ -55,8 +57,12 @@ function seeded(seed: number): () => number {
   };
 }
 
-async function until(condition: () => boolean, what: string): Promise<void> {
-  const deadline = performance.now() + START_TIMEOUT_MS;
+async function until(
+  condition: () => boolean,
+  what: string,
+  timeoutMs = START_TIMEOUT_MS,
+): Promise<void> {
+  const deadline = performance.now() + timeoutMs;
   while (!condition()) {
     assert.ok(performance.now() < deadline, `Timed out waiting for ${what}`);
     await new Promise((resolve) => setTimeout(resolve, STEP_MS));
@@ -113,14 +119,25 @@ test(
       () => bots.forEach(({ bot }) => bot.update(performance.now())),
       STEP_MS,
     );
-    await new Promise((resolve) => setTimeout(resolve, DRIVE_MS));
+    // Drive until every bot has sent active-rate input the server acknowledged, or
+    // one is dropped; the assertions below say which.
+    await until(
+      () =>
+        bots.some(({ bot, closed }) => closed !== undefined || bot.lastError !== undefined) ||
+        bots.every(({ bot, acked }) => bot.stats.inputs > MIN_INPUTS && acked > 0),
+      "every bot to drive with acknowledged input",
+      DRIVE_TIMEOUT_MS,
+    );
     clearInterval(timer);
 
     for (const { bot, closed, acked } of bots) {
       assert.equal(closed, undefined, "No bot was dropped for stale ticks or invalid messages");
       assert.equal(bot.lastError, undefined);
       assert.equal(bot.phase, "playing");
-      assert.ok(bot.stats.inputs > 20, `Driving bots send active-rate input (${bot.stats.inputs})`);
+      assert.ok(
+        bot.stats.inputs > MIN_INPUTS,
+        `Driving bots send active-rate input (${bot.stats.inputs})`,
+      );
       assert.ok(acked > 0, "The server applied the bot's input");
     }
     for (const { bot, socket } of bots) {
@@ -128,7 +145,7 @@ test(
       socket!.close(1000);
     }
   },
-  4 * START_TIMEOUT_MS + DRIVE_MS,
+  4 * START_TIMEOUT_MS + DRIVE_TIMEOUT_MS,
 );
 
 test("open seat planning fills occupied compatible rooms first and counts pending bots", () => {

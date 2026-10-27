@@ -32,8 +32,9 @@ pub fn specialize(code: &str, flags: &[(&str, bool)]) -> String {
         let declaration = format!("const {name}: bool = {value};\n");
         if let Some(at) = code.find(&declaration) {
             let bytes = code.as_bytes();
-            let used = (0..bytes.len())
-                .any(|i| (i < at || i >= at + declaration.len()) && word_at(bytes, i, name));
+            let used = code
+                .match_indices(name)
+                .any(|(i, _)| (i < at || i >= at + declaration.len()) && word_at(bytes, i, name));
             if !used {
                 code.replace_range(at..at + declaration.len(), "");
             }

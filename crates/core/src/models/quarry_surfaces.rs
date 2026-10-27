@@ -1424,3 +1424,18 @@ pub fn sand_drift_material() -> Arc<Material> {
 pub fn sandstone_footing(_w: f64, _d: f64, _variant: u32) -> Node {
     Node::group("")
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The drawn rock walks the collision shape's rings by `SHAPE_LEVELS` and
+    /// `SHAPE_SIDES`, so the two must agree on its layout.
+    #[test]
+    fn rock_grid_has_the_collision_rings_and_cap() {
+        for setting in [RockSetting::Ground, RockSetting::Stacked] {
+            let grid = rock_grid(2.0, 1.0, 3.0, 5, setting);
+            assert_eq!(grid.len(), SHAPE_LEVELS.len() * SHAPE_SIDES + 1);
+        }
+    }
+}

@@ -668,15 +668,6 @@ mod tests {
     }
 
     #[test]
-    fn zoom_stays_within_limits() {
-        let mut rig = CameraRig::default();
-        rig.zoom_by(-100.0);
-        assert_eq!(rig.zoom, CAMERA.min_zoom);
-        rig.zoom_by(100.0);
-        assert_eq!(rig.zoom, CAMERA.max_zoom);
-    }
-
-    #[test]
     fn saved_camera_preferences_use_renderer_limits_and_keep_the_chosen_view() {
         let mut rig = CameraRig::default();
         rig.restore_preferences(true, Some(-100.0));

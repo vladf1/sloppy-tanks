@@ -6,6 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 description = "Sloppy Tanks game rules, simulation, models and replication shared by the browser and the server"
 
+[lib]
+# The crate has no doc examples, so `cargo test` skips the empty rustdoc pass.
+doctest = false
+
 [dependencies]
 rapier3d.workspace = true
 glam.workspace = true

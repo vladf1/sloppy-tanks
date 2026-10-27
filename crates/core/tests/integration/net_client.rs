@@ -942,45 +942,33 @@ fn a_page_reload_rejoins_its_saved_seat() {
     assert!(net.peers[reloaded].client.active_input());
 }
 
+/// Heartbeats measure the round trip of a delay the page joins with, and of one it
+/// changes to mid-session, both ways, without reconnecting.
 #[test]
-fn heartbeats_ping_every_second_and_measure_round_trips() {
-    let mut net = Network::new();
-    let delay = DelaySettings {
-        half_ms: 40.0,
-        ..DelaySettings::default()
-    };
-    let alice = net.add(None, Some(delay));
-    net.connect(alice, choice("alice", Some(settings(MapId::Village))));
-    net.run(3000.0);
-    let stats = net.peers[alice].client.stats(net.now);
-    assert!(net.peers[alice].client.connected);
-    assert!(
-        stats.rtt_ms >= 80.0 && stats.rtt_ms < 120.0,
-        "a 40 ms each way delay measures ~80 ms: {}",
-        stats.rtt_ms
-    );
-    assert!(net.peers[alice].client.active_input());
-}
-
-#[test]
-fn the_transport_delay_changes_mid_session_without_reconnecting() {
-    let mut net = Network::new();
-    let alice = net.add(None, None);
-    net.connect(alice, choice("alice", Some(settings(MapId::Village))));
-    net.run(2000.0);
-    assert!(net.peers[alice].client.stats(net.now).rtt_ms < 40.0);
+fn heartbeats_measure_round_trips_as_the_transport_delay_changes_mid_session() {
     let delayed = |half_ms| DelaySettings {
         half_ms,
         ..DelaySettings::default()
     };
-    net.peers[alice].client.set_delay(delayed(40.0));
+    let mut net = Network::new();
+    let alice = net.add(None, Some(delayed(40.0)));
+    net.connect(alice, choice("alice", Some(settings(MapId::Village))));
     net.run(3000.0);
+    assert!(net.peers[alice].client.connected);
     let rtt = net.peers[alice].client.stats(net.now).rtt_ms;
-    assert!((80.0..120.0).contains(&rtt), "40 ms each way: {rtt}");
+    assert!(
+        (80.0..120.0).contains(&rtt),
+        "a 40 ms each way delay measures ~80 ms: {rtt}"
+    );
+    assert!(net.peers[alice].client.active_input());
     net.peers[alice].client.set_delay(delayed(0.0));
     net.run(3000.0);
     let rtt = net.peers[alice].client.stats(net.now).rtt_ms;
-    assert!(rtt < 40.0, "the delay is gone again: {rtt}");
+    assert!(rtt < 40.0, "the delay is gone: {rtt}");
+    net.peers[alice].client.set_delay(delayed(40.0));
+    net.run(3000.0);
+    let rtt = net.peers[alice].client.stats(net.now).rtt_ms;
+    assert!((80.0..120.0).contains(&rtt), "40 ms each way again: {rtt}");
     assert!(net.peers[alice].client.connected);
     assert!(net.ended(alice).is_none());
 }

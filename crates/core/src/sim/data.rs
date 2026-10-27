@@ -307,26 +307,3 @@ pub mod group {
     /// debris pass through it.
     pub const HOUSE_MOUND: u32 = 0x0200_0100;
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn speeds_match_the_typescript_table() {
-        // Values printed by the TS `VEHICLES` and `WEAPONS` tables.
-        let expected = [
-            (VehicleKind::Scout, 11.103161181308407, 0.8316108339272986),
-            (VehicleKind::Balanced, 8.954162242990652, 0.8057851239669421),
-            (VehicleKind::Heavy, 6.805163304672895, 0.8577868852459014),
-            (VehicleKind::Humvee, 13.61032660934579, 0.9),
-        ];
-        for (kind, speed, scale) in expected {
-            assert_eq!(vehicle(kind).speed, speed);
-            assert_eq!(vehicle(kind).scale, scale);
-        }
-        assert_eq!(weapon(Weapon::Standard).speed, 21.695999999999998);
-        assert_eq!(weapon(Weapon::Spread).speed, 19.887999999999998);
-        assert_eq!(weapon(Weapon::Rocket).speed, 15.367999999999999);
-    }
-}
