@@ -367,16 +367,16 @@ pub(crate) mod tests {
     use sloppy_core::geometry::{box_geometry, cylinder_geometry, widen};
     use sloppy_core::models::{HarborScenery, create_spawn_pads};
     use sloppy_core::scene::{Material, Node};
-    use std::sync::Arc;
+    use std::sync::{Arc, LazyLock};
 
     /// Pad decks are ankle-high; anything above is a post, a cap or a vessel.
     const DECK_CEILING: f64 = 0.3;
 
-    pub(crate) type Triangle = [DVec3; 3];
+    type Triangle = [DVec3; 3];
 
     /// The triangles of `node` below the deck ceiling that reach into the square of
     /// half-size `extent` around `center`.
-    pub(crate) fn triangles_near(node: &Node, center: Vec2, extent: f64) -> Vec<Triangle> {
+    fn triangles_near(node: &Node, center: Vec2, extent: f64) -> Vec<Triangle> {
         let mut triangles = Vec::new();
         node.traverse(DMat4::IDENTITY, &mut |part, world| {
             let Some(drawable) = &part.drawable else {
@@ -411,13 +411,109 @@ pub(crate) mod tests {
     }
 
     /// The highest triangle over `(x, z)`: the surface a decal there must clear.
-    pub(crate) fn surface_top(triangles: &[Triangle], x: f64, z: f64) -> Option<f64> {
+    fn surface_top<'a>(
+        triangles: impl IntoIterator<Item = &'a Triangle>,
+        x: f64,
+        z: f64,
+    ) -> Option<f64> {
         triangles
-            .iter()
+            .into_iter()
             .filter_map(|&[a, b, c]| height_over(a, b, c, x, z))
             .fold(None, |top: Option<f64>, y| {
                 Some(top.map_or(y, |t| t.max(y)))
             })
+    }
+
+    /// Side of a [`DeckSurface`] bin, metres.
+    const BIN: f64 = 0.1;
+
+    /// The deck triangles around a spawn point, binned by their footprint so a
+    /// height lookup tests only the few triangles whose bounds hold the point: the
+    /// tests sample tens of thousands of points against thousands of triangles.
+    pub(crate) struct DeckSurface {
+        triangles: Vec<Triangle>,
+        /// Corner of bin (0, 0), the low X and Z of the sampled square.
+        origin: Vec2,
+        side: usize,
+        bins: Vec<Vec<u32>>,
+    }
+
+    impl DeckSurface {
+        /// The triangles of `node` that reach into the square of half-size `extent`
+        /// around `center`.
+        fn near(node: &Node, center: Vec2, extent: f64) -> Self {
+            // A rounding error's margin, so a point a barycentric test accepts on a
+            // triangle's edge always falls in one of its bins.
+            const MARGIN: f64 = 1e-9;
+            let triangles = triangles_near(node, center, extent);
+            let origin = Vec2::new(center.x - extent, center.z - extent);
+            let side = (extent * 2.0 / BIN).ceil() as usize + 1;
+            let last = (side - 1) as f64;
+            let mut bins = vec![Vec::new(); side * side];
+            for (index, triangle) in triangles.iter().enumerate() {
+                let range = |f: fn(&DVec3) -> f64, low: f64| {
+                    let (min, max) = triangle
+                        .iter()
+                        .map(f)
+                        .fold((f64::MAX, f64::MIN), |(a, b), v| (a.min(v), b.max(v)));
+                    let bin = |v: f64| ((v - low) / BIN).floor().clamp(0.0, last) as usize;
+                    bin(min - MARGIN)..=bin(max + MARGIN)
+                };
+                for i in range(|p| p.x, origin.x) {
+                    for j in range(|p| p.z, origin.z) {
+                        bins[i * side + j].push(index as u32);
+                    }
+                }
+            }
+            Self {
+                triangles,
+                origin,
+                side,
+                bins,
+            }
+        }
+
+        /// The highest triangle over `(x, z)`, as a scan of every triangle finds it.
+        pub(crate) fn top(&self, x: f64, z: f64) -> Option<f64> {
+            let bin = |v: f64, low: f64| {
+                let cell = ((v - low) / BIN).floor();
+                (cell >= 0.0 && cell < self.side as f64).then_some(cell as usize)
+            };
+            match (bin(x, self.origin.x), bin(z, self.origin.z)) {
+                (Some(i), Some(j)) => surface_top(
+                    self.bins[i * self.side + j]
+                        .iter()
+                        .map(|&index| &self.triangles[index as usize]),
+                    x,
+                    z,
+                ),
+                // Outside the binned square, whose clamped edge bins hold only the
+                // triangles reaching into it.
+                _ => surface_top(&self.triangles, x, z),
+            }
+        }
+    }
+
+    /// Half-size of the square around a spawn point the pad tests sample.
+    const SAMPLED_EXTENT: f64 = 4.7;
+
+    /// Each theme's real pad decks (the harbor's inside its whole scenery) around
+    /// the blue and red middle spawn points at scale 1, built once for the tests
+    /// that sample them.
+    pub(crate) fn theme_deck_surfaces() -> &'static [(&'static str, [DeckSurface; 2])] {
+        static SURFACES: LazyLock<Vec<(&'static str, [DeckSurface; 2])>> = LazyLock::new(|| {
+            pad_models()
+                .into_iter()
+                .map(|(theme, pads)| (theme, team_deck_surfaces(&pads, 1.0)))
+                .collect()
+        });
+        &SURFACES
+    }
+
+    /// The deck surfaces around each team's middle spawn point, blue first.
+    fn team_deck_surfaces(pads: &Node, scale: f64) -> [DeckSurface; 2] {
+        [Team::Blue, Team::Red]
+            .map(|team| DeckSurface::near(pads, spawn_positions(team, scale)[1], SAMPLED_EXTENT))
     }
 
     /// Height of a non-vertical triangle above `(x, z)`, if it covers that point.
@@ -455,16 +551,15 @@ pub(crate) mod tests {
 
     /// Every sample on and around one pad per team: a decal lifted there clears
     /// the real deck without floating far above it, and lifts only where a deck is.
-    fn assert_decks_match(theme: &str, pads: &Node, scale: f64) {
+    fn assert_decks_match(theme: &str, surfaces: &[DeckSurface; 2], scale: f64) {
         const STEP: f64 = 0.05;
         const EXTENT: f64 = 4.6;
         // Where a flat-sided footprint stands in for a chevron or a gapped rim.
         const EDGE: f64 = 0.1;
         const MAX_FLOAT: f64 = 0.045;
         let decks = SpawnPadDecks::new(theme, scale);
-        for team in [Team::Blue, Team::Red] {
+        for (team, surface) in [Team::Blue, Team::Red].into_iter().zip(surfaces) {
             let center = spawn_positions(team, scale)[1];
-            let triangles = triangles_near(pads, center, EXTENT);
             let steps = (EXTENT * 2.0 / STEP) as usize;
             // Offset off the exact tier edges the grid would otherwise hit.
             let at = |i: usize, j: usize| {
@@ -480,7 +575,7 @@ pub(crate) mod tests {
                     (0..=steps)
                         .map(|j| {
                             let (x, z) = at(i, j);
-                            surface_top(&triangles, x, z).filter(|&y| y > 0.05)
+                            surface.top(x, z).filter(|&y| y > 0.05)
                         })
                         .collect()
                 })
@@ -515,7 +610,7 @@ pub(crate) mod tests {
     }
 
     /// Each theme's real pad models (the harbor's inside its whole scenery).
-    pub(crate) fn pad_models() -> [(&'static str, Node); 3] {
+    fn pad_models() -> [(&'static str, Node); 3] {
         [
             ("village", create_spawn_pads(1.0)),
             ("harbor", HarborScenery::new().root),
@@ -525,10 +620,11 @@ pub(crate) mod tests {
 
     #[test]
     fn decks_follow_every_themes_spawn_pad_models() {
-        for (theme, pads) in pad_models() {
-            assert_decks_match(theme, &pads, 1.0);
+        for (theme, surfaces) in theme_deck_surfaces() {
+            assert_decks_match(theme, surfaces, 1.0);
         }
-        assert_decks_match("superstress", &create_spawn_pads(0.65), 0.65);
+        let superstress = team_deck_surfaces(&create_spawn_pads(0.65), 0.65);
+        assert_decks_match("superstress", &superstress, 0.65);
     }
 
     #[test]

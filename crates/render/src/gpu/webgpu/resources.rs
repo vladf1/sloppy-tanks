@@ -129,7 +129,7 @@ pub const MIPMAP_SOURCE_ENTRIES: &[wgpu::BindGroupLayoutEntry] =
 /// fragment stage alone. WebKit declares every texture a layout shows a stage in the
 /// Metal code it compiles for that stage, and the first one costs about 45 ms more
 /// per stage on a cold shader cache: with the effect textures visible to it, every
-/// surface and caster vertex stage paid that. `no_vertex_stage_samples_a_texture`
+/// surface and caster vertex stage paid that. `assert_vertex_samples_no_texture`
 /// (`shader.rs`) keeps effects' vertex code off them.
 pub const MATERIAL_ENTRIES: &[wgpu::BindGroupLayoutEntry] = &[
     uniform_entry(0),

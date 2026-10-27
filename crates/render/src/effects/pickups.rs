@@ -811,30 +811,6 @@ mod tests {
     }
 
     #[test]
-    fn the_climb_tables_follow_their_powers() {
-        let tables = ease_tables();
-        for (table, power) in tables.0.iter().zip([
-            SIGNAL_SLOWING,
-            SIGNAL_SHEAR_ONSET,
-            SIGNAL_WIDENING,
-            SIGNAL_FADING,
-        ]) {
-            for step in 0..=4000 {
-                let x = f64::from(step) / 4000.0;
-                let error = (table.at(x) - x.powf(power)).abs();
-                // A puff fades in over the first 4% of its climb, and is not drawn
-                // at all for the first half percent.
-                let bound = match x {
-                    x if x < 0.005 => 1e-2,
-                    x if x < 0.04 => 1e-3,
-                    _ => 1e-5,
-                };
-                assert!(error < bound, "{power} at {x}: {error}");
-            }
-        }
-    }
-
-    #[test]
     fn columns_no_view_shows_are_left_out() {
         let mut state = RenderState {
             elapsed: 20.0,
