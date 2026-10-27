@@ -121,9 +121,25 @@ async function showEnvironment(section) {
   }
 }
 
+let refreshTimer = 0;
+let refreshing = false;
+
+/** Refreshes every list, then again after REFRESH_MS while the tab is visible. A hidden tab
+ * makes no requests at all; showing it again refreshes at once. */
 async function refresh() {
-  await Promise.all([...document.querySelectorAll("[data-environment]")].map(showEnvironment));
-  setTimeout(refresh, REFRESH_MS);
+  refreshing = true;
+  try {
+    await Promise.all([...document.querySelectorAll("[data-environment]")].map(showEnvironment));
+  } finally {
+    refreshing = false;
+  }
+  if (!document.hidden) refreshTimer = setTimeout(refresh, REFRESH_MS);
 }
 
-refresh();
+document.addEventListener("visibilitychange", () => {
+  clearTimeout(refreshTimer);
+  // A refresh under way schedules the next one itself when it ends.
+  if (!document.hidden && !refreshing) void refresh();
+});
+
+void refresh();
