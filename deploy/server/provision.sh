@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
 # Idempotent setup of one game server machine on Ubuntu: Podman, the server's and Caddy's
 # Quadlet units, the image updater, key-only SSH and the firewall. Run as root from a
-# directory holding this script and the other files in deploy/server/, where
-# `node scripts/server.mjs provision` uploads them (it writes the machine's names into
-# the Caddyfile). It starts no server image: the first deploy pins one.
+# directory holding this script and the other files in deploy/server/, with the machine's
+# names written into the Caddyfile: bootstrap.sh fetches them at first boot, or
+# `node scripts/server.mjs provision` uploads them with the machine's server.env. It
+# starts no server image: the first deploy pins one.
 set -euo pipefail
 cd "$(dirname "$0")"
 export DEBIAN_FRONTEND=noninteractive
@@ -18,13 +19,21 @@ apt-get install -y --no-install-recommends podman python3 curl ufw
 printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' \
   'PermitRootLogin prohibit-password' >/etc/ssh/sshd_config.d/10-sloppy-tanks.conf
 sshd -t
-systemctl reload ssh
+# Ubuntu starts sshd per connection through ssh.socket; at first boot none runs yet, and
+# one that starts later reads the new settings.
+systemctl try-reload-or-restart ssh
 
 install -d -m 755 /etc/sloppy-tanks/caddy /var/lib/sloppy-tanks
 install -d -m 700 /var/lib/caddy/data /var/lib/caddy/config
-# A restart ends live rooms, so the server restarts below only if its unit changed.
+# A restart ends live rooms, so the server restarts below only if its unit or settings
+# changed. Without an uploaded server.env the one the user data wrote stays.
 server_unit_changed=false
 cmp -s sloppy-tanks.container /etc/containers/systemd/sloppy-tanks.container || server_unit_changed=true
+if [[ -f server.env ]]; then
+  cmp -s server.env /etc/sloppy-tanks/server.env || server_unit_changed=true
+  install -m 644 server.env /etc/sloppy-tanks/server.env
+fi
+touch /etc/sloppy-tanks/server.env
 # Check the Caddyfile with the Caddy it is for before it replaces a working one.
 caddy_image=$(sed -n 's/^Image=//p' caddy.container)
 podman run --rm --network none --volume "$PWD:/etc/caddy:ro" "$caddy_image" \

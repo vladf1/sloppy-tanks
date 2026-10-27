@@ -6,8 +6,9 @@ directions, sweeps its turret, fires, and sometimes drops mines or switches
 ammunition. Bots are named `bot-<region>-<n>` and occupy real seats.
 
 The `sloppy-tanks-bots` Worker (`https://sloppy-tanks-bots.vova145.workers.dev`)
-targets `SERVER_URL` in `wrangler.jsonc`: the self-hosted game server on the VPS,
-`https://sloppy-tanks-server.fridman.me`. It is separate from the game server and both Pages
+plays on production's game servers, which it finds in the server directory
+(`DIRECTORY_URL` and `SERVER_ENVIRONMENT` in `wrangler.jsonc`): each swarm takes the
+least busy one and joins or creates rooms on standard maps there. It is separate from the game server and both Pages
 sites, and runs on Cloudflare so bots can connect from many regions.
 
 ## How they live
@@ -43,8 +44,8 @@ pnpm run bots -- stop apac              # or no region to stop all
 The root URL serves a control page with the same actions. There is no
 authentication: anyone with the URL can start and stop bots, bounded by the
 32-bot and 6-hour limits per region. Local
-development: `pnpm exec wrangler dev --config bots/wrangler.jsonc` with `SERVER_URL`
-overridden to a local server.
+development: `pnpm exec wrangler dev --config bots/wrangler.jsonc` with `DIRECTORY_URL`
+overridden to a local server (`http://127.0.0.1:8787`), which lists itself.
 
 ## Cost
 

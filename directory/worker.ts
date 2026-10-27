@@ -7,36 +7,32 @@
  *   the entry, `wss://a-b-c-d.nip.io`, so a server can announce only itself. Replies 204.
  * - `GET /servers?environment=production|dev` from the page (or anyone):
  *   `{ "servers": [{ "url", ...announced fields, "seen" }] }`, fewest rooms first.
- * - `GET /`: an HTML overview of every environment's servers and rooms.
+ * - `GET /`: the overview page, static files in public/ that read these lists.
  *
- * Each environment is one Durable Object holding the latest announcement per server in storage.
- * Every request first deletes the entries older than ENTRY_TTL_MS, so the list holds the servers
+ * Each environment is one Durable Object with a SQL table of servers and their latest
+ * announcements. Every request first deletes the rows older than ENTRY_TTL_MS, so the list holds the servers
  * seen in the last 45 s with no timers, alarms or in-memory state: the object hibernates between
  * requests, which keeps its duration billing near zero. There is no authentication.
  *
  * Deploy with `pnpm run directory:deploy`.
  */
 import { DurableObject } from "cloudflare:workers";
-import { renderPage } from "./page";
 import {
+  ENTRY_TTL_MS,
   ENVIRONMENTS,
   MAX_BODY_BYTES,
-  expiredKeys,
   listServers,
   nipUrl,
   parseAnnouncement,
   parseEnvironment,
   type Announcement,
   type ListedServer,
-  type ServerEntry,
 } from "./listing";
 
 interface Env {
-  DIRECTORY: DurableObjectNamespace<ServerDirectory>;
+  DIRECTORY: DurableObjectNamespace<Directory>;
 }
 
-/** `storage.delete` takes at most this many keys a call. */
-const STORAGE_DELETE_LIMIT = 128;
 const PREFLIGHT_MAX_AGE_SECONDS = 86_400;
 // Any page may read the listing, and it changes with every announcement.
 const HEADERS = { "Access-Control-Allow-Origin": "*", "Cache-Control": "no-store" };
@@ -47,7 +43,7 @@ function text(message: string, status: number): Response {
 
 async function announce(
   request: Request,
-  directory: DurableObjectStub<ServerDirectory>,
+  directory: DurableObjectStub<Directory>,
 ): Promise<Response> {
   const url = nipUrl(request.headers.get("CF-Connecting-IP"));
   if (!url) {
@@ -65,24 +61,9 @@ async function announce(
   return new Response(null, { status: 204, headers: HEADERS });
 }
 
-async function overview(env: Env): Promise<Response> {
-  const environments = await Promise.all(
-    ENVIRONMENTS.map(async (name) => ({
-      name,
-      servers: await env.DIRECTORY.get(env.DIRECTORY.idFromName(name)).servers(),
-    })),
-  );
-  return new Response(renderPage(environments, Date.now()), {
-    headers: { ...HEADERS, "Content-Type": "text/html; charset=utf-8" },
-  });
-}
-
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
-    if (url.pathname === "/" && request.method === "GET") {
-      return overview(env);
-    }
     if (url.pathname !== "/servers") {
       return text("Not found", 404);
     }
@@ -114,28 +95,46 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-/** One environment's servers, each stored under its url with when it last announced. */
-export class ServerDirectory extends DurableObject<Env> {
-  async announce(url: string, announcement: Announcement): Promise<void> {
-    await this.liveEntries();
-    const entry: ServerEntry = { ...announcement, seen: Date.now() };
-    await this.ctx.storage.put(url, entry);
+/** One environment's servers: a row each in its SQLite storage, holding the latest
+ * announcement and when it arrived. */
+export class Directory extends DurableObject<Env> {
+  constructor(ctx: DurableObjectState, env: Env) {
+    super(ctx, env);
+    ctx.storage.sql.exec(`CREATE TABLE IF NOT EXISTS servers (
+      url TEXT PRIMARY KEY,
+      seen INTEGER NOT NULL,
+      announcement TEXT NOT NULL
+    )`);
   }
 
-  async servers(): Promise<ListedServer[]> {
-    return listServers(await this.liveEntries());
+  announce(url: string, announcement: Announcement): void {
+    this.dropExpired();
+    this.ctx.storage.sql.exec(
+      "INSERT OR REPLACE INTO servers (url, seen, announcement) VALUES (?, ?, ?)",
+      url,
+      Date.now(),
+      JSON.stringify(announcement),
+    );
   }
 
-  /** The stored entries after deleting those no server announced within ENTRY_TTL_MS. */
-  private async liveEntries(): Promise<Map<string, ServerEntry>> {
-    const entries = await this.ctx.storage.list<ServerEntry>();
-    const expired = expiredKeys(entries, Date.now());
-    for (let start = 0; start < expired.length; start += STORAGE_DELETE_LIMIT) {
-      await this.ctx.storage.delete(expired.slice(start, start + STORAGE_DELETE_LIMIT));
-    }
-    for (const key of expired) {
-      entries.delete(key);
-    }
-    return entries;
+  servers(): ListedServer[] {
+    this.dropExpired();
+    const rows = this.ctx.storage.sql
+      .exec<{ url: string; seen: number; announcement: string }>(
+        "SELECT url, seen, announcement FROM servers",
+      )
+      .toArray();
+    return listServers(
+      rows.map(({ url, seen, announcement }) => ({
+        ...(JSON.parse(announcement) as Announcement),
+        seen,
+        url,
+      })),
+    );
+  }
+
+  /** A server leaves the list ENTRY_TTL_MS after its last announcement. */
+  private dropExpired(): void {
+    this.ctx.storage.sql.exec("DELETE FROM servers WHERE seen < ?", Date.now() - ENTRY_TTL_MS);
   }
 }
