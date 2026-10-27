@@ -1,6 +1,5 @@
 //! What the end-to-end tests share: a server on a free localhost port with its log
-//! captured, and plain HTTP requests to it. Include with `mod support;`.
-#![allow(dead_code)]
+//! captured, and plain HTTP requests to it. Import with `use crate::support;`.
 
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};

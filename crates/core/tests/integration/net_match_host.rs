@@ -157,13 +157,7 @@ fn humans_only_removes_expired_reservations_and_accepts_new_occupants_without_gr
     h.disconnect("bob");
     for _ in 0..601 {
         h.advance();
-        for messages in h.messages.values_mut() {
-            let excess = messages.len().saturating_sub(12);
-            messages.drain(..excess);
-        }
-        for wire in h.wire.values_mut() {
-            wire.clear();
-        }
+        h.forget_messages();
     }
     assert_eq!(h.sim().tanks.len(), 1);
     assert!(!h.sim().world.bodies.contains(bob_body));
