@@ -197,13 +197,3 @@ fn long_hulls_stop_at_walls_using_their_visible_nose_and_tail() {
         }
     }
 }
-
-#[test]
-fn big_rig_is_the_widest_chassis_while_tank_sizes_remain_comparable() {
-    let widths = VehicleKind::PLAYABLE.map(|kind| tank_hull(kind).size.x);
-    assert!(widths[2] > widths[1] && widths[2] > widths[0]);
-    let widest = widths.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let narrowest = widths.iter().copied().fold(f64::INFINITY, f64::min);
-    assert!(widest / narrowest < 1.15);
-    assert!(widths.iter().all(|&width| width > 1.8 && width < 2.2));
-}

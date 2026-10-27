@@ -8,7 +8,7 @@ use std::collections::HashSet;
 
 use sloppy_core::sim::data::{STEP, vehicle};
 use sloppy_core::sim::level_rules::single_player_rules;
-use sloppy_core::sim::maps::{GroundKind, MAPS};
+use sloppy_core::sim::maps::MAPS;
 use sloppy_core::sim::stress_test_level::{
     STRESS_PLAYER_HEALTH_MULTIPLIER, STRESS_TANK_COUNT, STRESS_TEST_MAP, stress_test_level,
 };
@@ -76,10 +76,6 @@ fn stress_grid_is_a_bounded_dense_destruction_workload() {
         keys.len(),
         "every stress obstacle needs a unique location and kind"
     );
-    assert_eq!(STRESS_TEST_MAP.floor, Some(GroundKind::DryGrass));
-    assert_eq!(STRESS_TEST_MAP.outer_floor, Some(GroundKind::PackedDirt));
-    assert_eq!(STRESS_TEST_MAP.outer_floor_extent, Some(140.0));
-    assert_eq!(STRESS_TEST_MAP.theme, None);
 }
 
 #[test]

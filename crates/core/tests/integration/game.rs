@@ -454,6 +454,29 @@ fn a_bot_keeps_its_turret_on_a_visible_target_instead_of_breaching_cover_beside_
     assert!(fired_at_enemy, "the bot fires once its reaction passes");
 }
 
+/// A bot facing weak cover on its route shoots its way through; facing a cottage,
+/// which takes fifteen shells, it drives round instead.
+#[test]
+fn bots_breach_timber_on_their_route_but_never_a_cottage() {
+    let breach = |cover: CoverDef| {
+        let mut s = game();
+        clear(&mut s);
+        let bot = place(&mut s, 2, 0.0, 0.0);
+        place(&mut s, 1, 40.0, 40.0);
+        s.tanks[bot].aim = 0.0;
+        let brain = &mut s.tanks[bot].brain;
+        brain.target = 1;
+        brain.memory = 0.0;
+        brain.decision = 10.0;
+        brain.fire_delay = 0.0;
+        brain.goal = Vec2::new(0.0, 20.0);
+        s.add_cover(&cover);
+        bot_command(&mut s, bot, STEP).fire
+    };
+    assert!(breach(timber(0.0, 12.0)));
+    assert!(!breach(CoverDef::house(0.0, 12.0, 5.0, 6.0, 4.6, 0xb87b4c)));
+}
+
 #[test]
 fn breaching_checks_the_standard_shell_lane_even_when_spread_ammo_is_preferred() {
     let mut s = game();

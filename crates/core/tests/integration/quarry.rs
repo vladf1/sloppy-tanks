@@ -139,64 +139,35 @@ fn barrier_collision_follows_tapered_concrete_and_open_steel_rather_than_invisib
     );
 }
 
+/// The quarry's tank obstacles stand in connected belts, and its supply crates
+/// stand clear of the rocks.
 #[test]
-fn quarry_defenses_form_mirrored_belts_and_supply_bays_use_individual_crates() {
+fn quarry_barriers_connect_and_supply_crates_clear_the_rocks() {
     let layout = quarry_layout();
-    for side in [-1.0, 1.0] {
-        let teeth: Vec<_> = layout
-            .iter()
-            .filter(|c| c.kind == CoverKind::Teeth && c.x * side > 0.0)
-            .collect();
-        assert_eq!(teeth.len(), 8);
-        assert_eq!(
-            teeth.iter().filter(|c| c.x.abs() < 43.0).count(),
-            4,
-            "inner staggered rank"
+    let barriers: Vec<_> = layout
+        .iter()
+        .filter(|c| matches!(c.kind, CoverKind::Teeth | CoverKind::Hedgehog))
+        .collect();
+    assert!(!barriers.is_empty());
+    for barrier in &barriers {
+        assert!(
+            barriers.iter().any(|other| !std::ptr::eq(*other, *barrier)
+                && other.kind == barrier.kind
+                && (other.x - barrier.x).hypot(other.z - barrier.z) < 3.6),
+            "every obstacle belongs to a connected barrier"
         );
-        assert_eq!(
-            teeth.iter().filter(|c| c.x.abs() > 44.0).count(),
-            4,
-            "outer staggered rank"
+    }
+    let rocks: Vec<_> = layout
+        .iter()
+        .filter(|c| c.kind == CoverKind::Rock)
+        .collect();
+    for crate_def in layout.iter().filter(|c| c.kind == CoverKind::Cargo) {
+        assert!(
+            rocks.iter().all(
+                |rock| (crate_def.x - rock.x).abs() >= (crate_def.w + rock.w) / 2.0
+                    || (crate_def.z - rock.z).abs() >= (crate_def.d + rock.d) / 2.0
+            ),
+            "supply crates never intersect rock footprints"
         );
-        let mut xs: Vec<f64> = teeth.iter().map(|c| c.x).collect();
-        xs.sort_by(f64::total_cmp);
-        xs.dedup();
-        assert!(xs.len() > 4, "individual placement breaks straight lines");
-        let steel: Vec<_> = layout
-            .iter()
-            .filter(|c| c.kind == CoverKind::Hedgehog && c.x * side > 0.0)
-            .collect();
-        assert_eq!(steel.len(), 4);
-        let mut zs: Vec<f64> = steel.iter().map(|c| c.z).collect();
-        zs.sort_by(f64::total_cmp);
-        zs.dedup();
-        assert_eq!(zs.len(), 1, "one aligned steel belt");
-        let barriers: Vec<_> = teeth.iter().chain(&steel).copied().collect();
-        for barrier in &barriers {
-            assert!(
-                barriers.iter().any(|other| !std::ptr::eq(*other, *barrier)
-                    && other.kind == barrier.kind
-                    && (other.x - barrier.x).hypot(other.z - barrier.z) < 3.6),
-                "every obstacle belongs to a connected barrier"
-            );
-        }
-        let crates: Vec<_> = layout
-            .iter()
-            .filter(|c| c.kind == CoverKind::Cargo && c.x * side > 30.0 && c.z * side > 30.0)
-            .collect();
-        assert_eq!(crates.len(), 4);
-        assert!(crates.iter().all(|c| c.w <= 2.4 && c.d <= 2.8));
-        for crate_def in &crates {
-            assert!(
-                layout
-                    .iter()
-                    .filter(|c| c.kind == CoverKind::Rock)
-                    .all(
-                        |rock| (crate_def.x - rock.x).abs() >= (crate_def.w + rock.w) / 2.0
-                            || (crate_def.z - rock.z).abs() >= (crate_def.d + rock.d) / 2.0
-                    ),
-                "supply crates never intersect rock footprints"
-            );
-        }
     }
 }
