@@ -257,6 +257,10 @@ pub struct Frame {
     /// Natively, the drawn window frame until [`Frame::present`] shows it.
     #[cfg(not(target_arch = "wasm32"))]
     output: Option<wgpu::SurfaceTexture>,
+    /// Natively, whether the window took the last frame: a covered window gives none,
+    /// and nothing paces frames to its display.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub shown: bool,
 }
 
 impl Frame {
@@ -361,6 +365,8 @@ impl Frame {
             gpu_frames: FrameTracker::new(),
             #[cfg(not(target_arch = "wasm32"))]
             output: None,
+            #[cfg(not(target_arch = "wasm32"))]
+            shown: true,
         };
         frame.view_groups = frame.frame_groups(gpu, &frame.instance_records);
         frame
@@ -633,7 +639,10 @@ impl Frame {
                             .configure(&gpu.device, &self.canvas.config);
                         return;
                     }
-                    _ => return,
+                    _ => {
+                        self.shown = false;
+                        return;
+                    }
                 };
                 let view = output.texture.create_view(&Default::default());
                 let mut encoder = gpu.device.create_command_encoder(&Default::default());
@@ -657,6 +666,7 @@ impl Frame {
         let view = output.texture.create_view(&Default::default());
         overlay(&gpu.device, &gpu.queue, &view);
         gpu.queue.present(output);
+        self.shown = true;
     }
 
     /// Draw a frame into the canvas. The scene and the canvas go in separate command
@@ -691,6 +701,10 @@ impl Frame {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
             wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+                #[cfg(not(target_arch = "wasm32"))]
+                {
+                    self.shown = false;
+                }
                 return Ok(());
             }
             wgpu::CurrentSurfaceTexture::Outdated => {

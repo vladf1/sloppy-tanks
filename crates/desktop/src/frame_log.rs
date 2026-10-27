@@ -46,8 +46,20 @@ impl FrameLog {
         }
     }
 
-    /// Count a frame that ended now.
-    pub fn frame(&mut self, parts: &FrameParts, size: (u32, u32), scene: (u32, u32)) {
+    /// Whether the next frame closes the second (the caller reads the GPU time then).
+    pub fn due(&self) -> bool {
+        self.start.elapsed().as_secs_f64() >= 1.0
+    }
+
+    /// Count a frame that ended now; `gpu_ms` is the engine's smoothed GPU frame time,
+    /// read when the second closes.
+    pub fn frame(
+        &mut self,
+        parts: &FrameParts,
+        size: (u32, u32),
+        scene: (u32, u32),
+        gpu_ms: Option<f64>,
+    ) {
         let now = Instant::now();
         if let Some(last) = self.last {
             self.longest_ms = self.longest_ms.max((now - last).as_secs_f64() * 1000.0);
@@ -63,7 +75,7 @@ impl FrameLog {
         if elapsed >= 1.0 {
             let frames = f64::from(self.frames);
             eprintln!(
-                "fps {:.1} longest {:.1} ms | engine {:.2} (sim {:.2} render {:.2}) overlay {:.2} present {:.2} ms | canvas {}x{} scene {}x{}",
+                "fps {:.1} longest {:.1} ms | engine {:.2} (sim {:.2} render {:.2}) overlay {:.2} present {:.2} gpu {} ms | canvas {}x{} scene {}x{}",
                 frames / elapsed,
                 self.longest_ms,
                 self.engine_ms / frames,
@@ -71,6 +83,7 @@ impl FrameLog {
                 self.render_ms / frames,
                 self.overlay_ms / frames,
                 self.present_ms / frames,
+                gpu_ms.map_or_else(|| "-".to_owned(), |ms| format!("{ms:.2}")),
                 size.0,
                 size.1,
                 scene.0,

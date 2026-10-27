@@ -32,6 +32,8 @@ const STATS_EVERY_FRAMES: u64 = 15;
 /// The window's first size, in points.
 const WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 800.0);
 const MIN_WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(800.0, 560.0);
+/// How often a window that takes no frames tries again.
+const HIDDEN_RECHECK: std::time::Duration = std::time::Duration::from_millis(100);
 /// Battle Setup's status once the arena is ready.
 const READY_STATUS: &str = "Ready when you are.";
 
@@ -102,6 +104,8 @@ struct Session {
     cursor_grabbed: bool,
     /// The window is covered or minimized.
     occluded: bool,
+    /// The window took the last frame.
+    frame_shown: bool,
     frame_index: u64,
     last_frame: f64,
     /// Seconds the HUD's state has advanced since its last refresh.
@@ -159,12 +163,27 @@ impl ApplicationHandler for App {
         }
     }
 
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, cause: winit::event::StartCause) {
+        if let (winit::event::StartCause::ResumeTimeReached { .. }, Some(session)) =
+            (cause, &self.session)
+        {
+            session.window.request_redraw();
+        }
+    }
+
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         use winit::event_loop::ControlFlow;
         match &self.session {
             // A hidden window draws nothing: macOS does not pace a covered Metal layer
             // to the display, so it would spin hundreds of frames a second unseen.
             Some(session) if session.occluded => event_loop.set_control_flow(ControlFlow::Wait),
+            // A window that opened covered gets no occlusion event: while the window
+            // takes no frames, look again a few times a second.
+            Some(session) if !session.frame_shown => {
+                event_loop.set_control_flow(ControlFlow::WaitUntil(
+                    std::time::Instant::now() + HIDDEN_RECHECK,
+                ));
+            }
             Some(session) => {
                 event_loop.set_control_flow(ControlFlow::Poll);
                 session.window.request_redraw();
@@ -246,6 +265,7 @@ impl Session {
             first_person: prefs.first_person,
             cursor_grabbed: false,
             occluded: false,
+            frame_shown: true,
             frame_index: 0,
             last_frame: now_ms(),
             hud_dt: 0.0,
@@ -643,7 +663,12 @@ impl Session {
         let now = now_ms();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
-        if self.failure.is_none() {
+        // A window that takes no frames only looks for its window again: engine frames
+        // there would count as slow ones and lower Auto's graphics quality.
+        if !self.frame_shown && self.in_round && self.phase == Phase::Playing {
+            self.apply(Action::Pause);
+        }
+        if self.failure.is_none() && (self.frame_shown || !self.in_round) {
             let step = if self.in_round {
                 self.battle_frame(now)
             } else {
@@ -702,10 +727,16 @@ impl Session {
             overlay.paint(&painted, device, queue, view, target)
         });
         self.overlay.free_textures(&painted);
+        self.frame_shown = self.game.renderer().frame_shown();
         self.parts.present = now_ms() - present_start;
         if let Some(log) = &mut self.frame_log {
             let scene = self.game.renderer().scene_size();
-            log.frame(&self.parts, target, scene);
+            let gpu_ms = log
+                .due()
+                .then(|| serde_json::from_str::<serde_json::Value>(&self.game.stats_json()).ok())
+                .flatten()
+                .and_then(|stats| stats["quality"]["gpuMs"].as_f64());
+            log.frame(&self.parts, target, scene, gpu_ms);
         }
         let mut quit = false;
         for action in actions {

@@ -1958,6 +1958,12 @@ impl Renderer {
         self.frame.present(&self.gpu, clear, overlay);
     }
 
+    /// Whether the window took the last frame; a covered window takes none.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn frame_shown(&self) -> bool {
+        self.frame.shown
+    }
+
     /// The window surface's texture format, which an overlay draws in.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn surface_format(&self) -> wgpu::TextureFormat {
