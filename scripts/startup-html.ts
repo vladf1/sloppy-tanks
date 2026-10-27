@@ -23,7 +23,7 @@ const lazyEntries = [
  * apply the same state again.
  */
 function initialTabScript(): string {
-  const configured = JSON.stringify(Boolean(process.env.VITE_MULTIPLAYER_URL));
+  const configured = JSON.stringify(Boolean(process.env.VITE_DIRECTORY_URL));
   return `<script>(()=>{const p=new URLSearchParams(location.search);if(!(${configured}||["localhost","127.0.0.1"].includes(location.hostname))||!(p.has("multiplayer")||p.has("room")))return;const s=document.querySelector("#startup-overlay .start");if(!s)return;s.dataset.play="multiplayer";for(const t of s.querySelectorAll('[role="tab"][data-play]')){const on=t.dataset.play==="multiplayer";t.setAttribute("aria-selected",String(on));t.tabIndex=on?0:-1;const panel=document.getElementById(t.getAttribute("aria-controls"));if(panel)panel.hidden=!on}})()</script>`;
 }
 
@@ -107,8 +107,8 @@ export function startupHtml(base: string): Plugin {
           logLevel: "silent",
           base,
           define: {
-            "import.meta.env.VITE_MULTIPLAYER_URL": JSON.stringify(
-              process.env.VITE_MULTIPLAYER_URL ?? "",
+            "import.meta.env.VITE_DIRECTORY_URL": JSON.stringify(
+              process.env.VITE_DIRECTORY_URL ?? "",
             ),
           },
           plugins: [

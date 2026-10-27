@@ -2,13 +2,14 @@
 // Fixture screenshots prove presentation only; they do not represent network combat.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { click, collectErrors, gameUrl, launchChrome } from "./browser-helpers.mjs";
+import { click, collectErrors, gameUrl, launchChrome, localDirectory } from "./browser-helpers.mjs";
 import { openMultiplayerTab, recordRoomFrames } from "./multiplayer-helpers.mjs";
 
 const output = "artifacts/performance/player-ux";
 await mkdir(output, { recursive: true });
 const url = new URL(gameUrl);
-if (process.env.SLOPPY_SERVER) url.searchParams.set("server", process.env.SLOPPY_SERVER);
+if (process.env.SLOPPY_SERVER)
+  url.searchParams.set("directory", localDirectory(process.env.SLOPPY_SERVER));
 url.searchParams.set("multiplayer", "");
 const browser = await launchChrome();
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });

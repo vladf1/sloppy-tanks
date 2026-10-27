@@ -4,12 +4,14 @@
 //! - [`websocket`]: RFC 6455 framing with RFC 7692 permessage-deflate.
 //! - [`room_task`] / [`session`]: one Tokio task per room driving a [`session::RoomSession`]
 //!   on the 50 ms cadence around a [`host::RoomHost`].
+//! - [`directory`]: announcing this server and its rooms to the server directory.
 //! - [`monitor`] / [`dashboard`]: readings, `/stats`, journal lines and `/dashboard`.
 //! - [`match_room`]: the room host, `sloppy_core`'s `MatchHost` behind [`host::RoomHost`].
 //! - [`site`]: the game's own page and assets, served from memory when `SITE_DIR` is set.
 
 pub mod config;
 pub mod dashboard;
+pub mod directory;
 pub mod host;
 pub mod match_room;
 pub mod monitor;

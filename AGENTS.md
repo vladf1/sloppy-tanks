@@ -404,8 +404,9 @@ Single player plays one as an endless team battle (`single_player_rules`);
 switching back applies the standard rules, so every rule a level sets needs a
 standard value there. A room plays one like any map: the host picks it,
 `create_multiplayer_simulation` applies the same setup with the room's round
-rules, and plain `/rooms` (which the traffic bots read) leaves those rooms out
-while Battle Setup asks for `/rooms?debug`. Room clients learn a level
+rules, and plain `/rooms` (which the traffic bots read) leaves those rooms out,
+while the server directory lists every room and Battle Setup shows them only on a
+`?debug` page. Room clients learn a level
 from the replicated scene (`map.theme`, `map.scale`).
 
 The Stress Grid (`stress-test`) is an intentional workload (30 tanks, 75
@@ -455,7 +456,8 @@ offline.
   the repository directory.
 - `deploy:dev` first deploys the dev site's own multiplayer server
   (`scripts/server.mjs deploy --dev`, key-based SSH), which runs on its own
-  Vultr machine (`deploy/servers.json` lists both machines). It resets only the
+  Vultr machines (`deploy/servers.json` lists each environment's machines; the
+  `server:*` commands run on all of them, or one with `--ip`). It resets only the
   dev server's rooms and never touches production's server. Client and server
   must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with
@@ -471,6 +473,11 @@ offline.
   registry cannot serve. Never run `server:auto-update`, `server:rollback` or
   `server:update` for production without being asked. The dev server only changes
   on `deploy:dev` or an explicit `--dev` command.
+- Pages find servers through the server directory, a Cloudflare Worker in
+  `directory/` (`pnpm run directory:deploy`) that every server pushes its rooms to;
+  one deployment serves production and dev by its `environment` parameter, and
+  `server:provision` writes a machine's `DIRECTORY_URL` and `SERVER_ENVIRONMENT` into
+  its unit.
   `pnpm run server:check-if-redeployment-required` (add `--dev` for
   the dev server) compares this checkout with a live server's `/health` and
   exits non-zero when a redeploy is needed. It tells clients-refused (content

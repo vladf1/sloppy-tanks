@@ -7,7 +7,8 @@ import { precompress } from "./precompress.mjs";
 
 /** The multiplayer server's own copy of the game page, `dist-server/`, which its image
  * ships and serves (crates/server/src/site.rs). One copy serves every server: it is built
- * for the site root and joins the server that served it (`VITE_MULTIPLAYER_URL=/`).
+ * for the site root, and its server directory is the page's own origin
+ * (`VITE_DIRECTORY_URL=/`): the server that served it lists itself at `/servers`.
  * `node scripts/server-site.mjs` builds it from the engines `pnpm run wasm:all` built. */
 const repo = fileURLToPath(new URL("..", import.meta.url));
 export const SERVER_SITE_DIRECTORY = join(repo, "dist-server");
@@ -48,7 +49,15 @@ export async function buildServerSite({ buildWasm = false } = {}) {
     {
       cwd: repo,
       stdio: "inherit",
-      env: { ...process.env, DEPLOY_BASE: "/", VITE_MULTIPLAYER_URL: "/", SLOPPY_SERVER_SITE: "1" },
+      // No environment: the server's own `/servers` lists just itself, and the copy's
+      // bytes must be the same for every server.
+      env: {
+        ...process.env,
+        DEPLOY_BASE: "/",
+        VITE_DIRECTORY_URL: "/",
+        VITE_SERVER_ENVIRONMENT: "",
+        SLOPPY_SERVER_SITE: "1",
+      },
     },
   );
   if (vite.error) throw vite.error;

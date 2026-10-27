@@ -6,6 +6,7 @@ use std::process::ExitCode;
 use std::sync::Arc;
 
 use sloppy_server::config::Settings;
+use sloppy_server::directory::DirectoryOptions;
 use sloppy_server::match_room::MatchRoom;
 use sloppy_server::process_stats::CountingAllocator;
 use sloppy_server::protocol::CONTENT_VERSION;
@@ -58,6 +59,7 @@ async fn serve(settings: Settings, site: Option<Arc<Site>>) -> ExitCode {
     let mut options = ServerOptions::new(settings.trust_proxy);
     options.build = settings.build;
     options.site = site;
+    options.directory = settings.directory.map(DirectoryOptions::new);
     if let Some(max_rooms) = settings.max_rooms {
         options.max_rooms = max_rooms;
     }

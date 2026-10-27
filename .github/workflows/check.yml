@@ -13,8 +13,12 @@ on:
         description: Build the site with this DEPLOY_BASE and upload it as the Pages artifact.
         type: string
         default: ""
-      multiplayer-url:
-        description: VITE_MULTIPLAYER_URL for the Pages build.
+      directory-url:
+        description: VITE_DIRECTORY_URL for the Pages build.
+        type: string
+        default: ""
+      server-environment:
+        description: VITE_SERVER_ENVIRONMENT, whose servers the Pages build lists.
         type: string
         default: ""
       build-number:
@@ -47,7 +51,8 @@ jobs:
       - run: pnpm run check:site
         env:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
-          VITE_MULTIPLAYER_URL: ${{ inputs.multiplayer-url }}
+          VITE_DIRECTORY_URL: ${{ inputs.directory-url }}
+          VITE_SERVER_ENVIRONMENT: ${{ inputs.server-environment }}
           SLOPPY_BUILD_NUMBER: ${{ inputs.build-number }}
       # The server's own copy of the page (scripts/server-site.mjs), from the same Wasm:
       # built for the site root and joining the server that serves it, whatever the

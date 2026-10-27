@@ -1,11 +1,14 @@
 import { roomAddress } from "../game/join-screen";
 import type { JoinChoice } from "./room-protocol";
+import { gameServerAddress } from "./server-address";
 
 const PENDING_JOIN_KEY = "sloppy-pending-join";
 
-/** A room picked on Battle Setup and the player's choices for it. */
+/** A room picked on Battle Setup, the server that hosts it, and the player's choices. */
 export interface RoomSelection {
   room: string;
+  /** The game server's WebSocket address, from the server directory. */
+  server: string;
   choice: JoinChoice;
 }
 
@@ -20,13 +23,26 @@ export function joinAfterReload(selection: RoomSelection): void {
   location.assign(roomAddress(selection.room));
 }
 
-/** The stored choices, read once so a later reload of the room page opens Battle Setup.
- * The engine validates them (`NetGame.pending_join`) before joining. */
+/** The stored selection, read once so a later reload of the room page opens Battle Setup.
+ * The engine validates its choices (`NetGame.pending_join`) before joining. */
 export function takePendingJoin(): string | undefined {
   try {
     const saved = sessionStorage.getItem(PENDING_JOIN_KEY) ?? undefined;
     sessionStorage.removeItem(PENDING_JOIN_KEY);
     return saved;
+  } catch {
+    return undefined;
+  }
+}
+
+/** The server stored with the pending join for `room`, checked like a directory listing's
+ * address. */
+export function pendingServer(saved: string | undefined, room: string): string | undefined {
+  try {
+    const selection = JSON.parse(saved ?? "null") as Partial<RoomSelection> | null;
+    return selection?.room === room
+      ? gameServerAddress(selection.server, location.hostname)
+      : undefined;
   } catch {
     return undefined;
   }

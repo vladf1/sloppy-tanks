@@ -236,8 +236,14 @@ fridman.me's Cloudflare zone). The old
 address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run build` and
 the Vite dev server keep the default `/sloppy-tanks/` base.
 
-The workflow sets `VITE_MULTIPLAYER_URL` to the production game server
-(`deploy/servers.json`). It does not deploy that server, but after the site deploys it
+The workflow sets `VITE_DIRECTORY_URL` to the production server directory, so the page
+holds no server address. The directory is a Cloudflare Worker (`directory/`, published with
+`pnpm run directory:deploy`) that every game server pushes its rooms to; the page lists
+every server's rooms from it and connects to the server that hosts the chosen room, or for
+a new room the one with the fewest rooms. A machine pushes its rooms to the directory
+under its environment (production or dev), which `server:provision` writes into its unit
+as `DIRECTORY_URL` and `SERVER_ENVIRONMENT`; the build names the page's as
+`VITE_SERVER_ENVIRONMENT`. The workflow does not deploy the server, but after the site deploys it
 points the server's container image tag `:production` at the commit's image; the dev
 site uses a separate server on its own machine (below). The image also serves the
 game itself at the server's address (<https://sloppy-tanks-server.fridman.me/>) from a
@@ -279,9 +285,9 @@ Cloudflare Worker. Run `pnpm exec wrangler login` first (or provide an API token
 can deploy Workers and their custom domains). The Worker's account, name and domain
 come from `deploy/dev-site/wrangler.jsonc`, independent of the local Git branch. No Git
 commit or push is required. `pnpm run build:dev` builds without publishing.
-The dev build connects the **Multiplayer** tab to the dev multiplayer server, which
-runs on its own machine: the `dev` entry of `deploy/servers.json`, reached at the
-first of its hostnames, now its nip.io name (`wss://1-2-3-4.nip.io`, dashboard at
+The dev build connects the **Multiplayer** tab to the dev directory, where the dev
+multiplayer server lists itself. It runs on its own machine: the `dev` entry of
+`deploy/servers.json`, reached at its nip.io name (`wss://1-2-3-4.nip.io`, dashboard at
 `/dashboard`). `deploy:dev` redeploys that dev server from the same checkout first
 (over SSH) so client and server versions match; production multiplayer is never
 affected.

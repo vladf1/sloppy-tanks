@@ -7,8 +7,9 @@
 # copy's site build, the commit, the build time and the release version
 # (scripts/release-version.mjs).
 
-# The binary is static and makes no outbound TLS connections, so it needs no base
-# image: no shell, libc or CA certificates.
+# The binary is static and bundles the root certificates its one outbound HTTPS client
+# (announcing to the server directory) trusts, so it needs no base image: no shell, libc
+# or CA certificates.
 FROM scratch
 ARG SLOPPY_CONTENT_VERSION
 ARG SLOPPY_SERVER_BUILD
