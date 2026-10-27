@@ -6,6 +6,16 @@ rust-version.workspace = true
 publish.workspace = true
 description = "Native multiplayer server: HTTP, WebSocket rooms and authoritative simulation"
 
+[lib]
+# The crate has no doc examples, so `cargo test` skips the empty rustdoc pass.
+doctest = false
+
+# The binary only parses settings and starts the server; its tests live in the library.
+[[bin]]
+name = "sloppy-server"
+path = "src/main.rs"
+test = false
+
 [dependencies]
 sloppy-core.workspace = true
 serde.workspace = true
