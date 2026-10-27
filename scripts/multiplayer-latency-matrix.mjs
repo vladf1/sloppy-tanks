@@ -9,7 +9,9 @@
  *
  * It starts its own server (`target/server/sloppy-server`, `pnpm run server:build`) on
  * `SLOPPY_MATRIX_PORT` (default 8791) so its byte counts hold only this run; run Vite and
- * pass its URL as `SLOPPY_URL`. `SLOPPY_MATRIX_PARAMS` adds page parameters to both players
+ * pass its URL as `SLOPPY_URL`. `SLOPPY_MATRIX_SERVER=wss://1-2-3-4.nip.io` plays on that
+ * remote server over the real network instead (its `/stats` then counts every room it
+ * holds), and `SLOPPY_MATRIX_REPEAT` runs each condition that many times. `SLOPPY_MATRIX_PARAMS` adds page parameters to both players
  * (`dodge=0` compares without "dodger first", `shooter=0` without "shooter first"). Manual evidence, not a gate: keep it out of
  * `pnpm run check`.
  *
@@ -20,7 +22,14 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
-import { chooseMap, click, collectErrors, gameUrl, launchChrome } from "./browser-helpers.mjs";
+import {
+  chooseMap,
+  click,
+  collectErrors,
+  gameUrl,
+  launchChrome,
+  localDirectory,
+} from "./browser-helpers.mjs";
 import { openMultiplayerTab } from "./multiplayer-helpers.mjs";
 
 const PORT = Number(process.env.SLOPPY_MATRIX_PORT ?? 8791);
@@ -43,7 +52,10 @@ const CONDITIONS = [
 );
 const output = `artifacts/performance/multiplayer/latency-matrix/${LABEL}`;
 await mkdir(output, { recursive: true });
-const serverHttp = `http://127.0.0.1:${PORT}`;
+const REMOTE = process.env.SLOPPY_MATRIX_SERVER;
+const REPEAT = Number(process.env.SLOPPY_MATRIX_REPEAT ?? 1);
+// A page reads its server from a directory, and every server lists itself at `/servers`.
+const serverHttp = REMOTE ? localDirectory(REMOTE) : `http://127.0.0.1:${PORT}`;
 
 let server;
 let serverLog = "";
@@ -85,7 +97,7 @@ async function serverTotals() {
 
 function conditionUrl(condition) {
   const url = new URL(gameUrl);
-  url.searchParams.set("server", `ws://127.0.0.1:${PORT}`);
+  url.searchParams.set("directory", serverHttp);
   for (const key of ["latency", "jitter", "stall"]) {
     if (condition[key]) url.searchParams.set(key, String(condition[key]));
   }
@@ -360,8 +372,14 @@ function rows(result) {
 const browser = await launchChrome();
 const results = [];
 try {
-  await startServer();
-  for (const [index, condition] of CONDITIONS.entries()) {
+  if (!REMOTE) await startServer();
+  const runs = CONDITIONS.flatMap((condition) =>
+    Array.from({ length: REPEAT }, (_, repeat) => ({
+      ...condition,
+      name: REPEAT > 1 ? `${condition.name}-${repeat + 1}` : condition.name,
+    })),
+  );
+  for (const [index, condition] of runs.entries()) {
     console.log(`${condition.name}: ${SECONDS} s on ${MAP}…`);
     const result = await runCondition(browser, condition, index);
     results.push(result);

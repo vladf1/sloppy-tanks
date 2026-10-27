@@ -197,8 +197,10 @@ short bursts through the dev `controls` hook. It records both players' Stats for
 feel and network readings and the server's wire bytes per player under
 `artifacts/performance/multiplayer/latency-matrix/<SLOPPY_MATRIX_LABEL>/`. It starts its
 own server on `SLOPPY_MATRIX_PORT` (default 8791), so run `pnpm run server:build` and
-Vite first and pass Vite's URL as `SLOPPY_URL`. Results vary with the bots' fight; compare
-labels by their sample counts and percentiles, not single runs.
+Vite first and pass Vite's URL as `SLOPPY_URL`; `SLOPPY_MATRIX_SERVER=wss://1-2-3-4.nip.io`
+plays on that machine over the real network instead (the `rtt0` condition adds no delay),
+and `SLOPPY_MATRIX_REPEAT` runs each condition several times. Results vary with the bots'
+fight; compare labels by their sample counts and percentiles, not single runs.
 
 Those parameters delay messages inside the client, so TCP never loses anything, and
 Chrome DevTools' packet loss only affects WebRTC. For real loss below TCP on a Mac,
