@@ -6,6 +6,7 @@ import {
   collectErrors,
   gameUrl,
   launchChrome,
+  localDirectory,
   setTouchMode,
   touchScreen,
 } from "./browser-helpers.mjs";
@@ -18,7 +19,8 @@ import {
 const output = "artifacts/performance/multiplayer/browser";
 await mkdir(output, { recursive: true });
 const url = new URL(gameUrl);
-if (process.env.SLOPPY_SERVER) url.searchParams.set("server", process.env.SLOPPY_SERVER);
+if (process.env.SLOPPY_SERVER)
+  url.searchParams.set("directory", localDirectory(process.env.SLOPPY_SERVER));
 for (const [env, key] of [
   ["SLOPPY_LATENCY", "latency"],
   ["SLOPPY_JITTER", "jitter"],

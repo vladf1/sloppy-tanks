@@ -4,10 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion, serverBuild } from "./content-version.mjs";
-import { gameServer, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
+import { gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 
-/** Operate a game server machine (deploy/servers.json) over SSH; `--dev` picks the dev
- * site's machine, otherwise production's. See crates/server/README.md.
+/** Operate the game server machines (deploy/servers.json) over SSH, one after another;
+ * `--dev` picks the dev site's machines, otherwise production's, and `--ip ADDRESS` one
+ * of them. See crates/server/README.md.
  *
  *   provision                set the machine up (again), then start CI's :production image
  *                            if no server runs (deploy:dev then replaces it on dev)
@@ -25,7 +26,11 @@ const repo = new URL("..", import.meta.url);
 const HEALTH_TIMEOUT_MS = 120_000;
 const [command, argument] = process.argv.slice(2);
 const dev = process.argv.includes("--dev");
-const server = gameServer(dev);
+const ip = option("--ip");
+const servers = gameServers(dev).filter((machine) => !ip || machine.ip === ip);
+if (!servers.length) throw new Error(`No ${dev ? "dev" : "production"} machine has the ip ${ip}`);
+/** The machine the current command runs on. */
+let server;
 
 function run(program, args, options = {}) {
   const result = spawnSync(program, args, { cwd: repo, stdio: "inherit", ...options });
@@ -44,7 +49,7 @@ function option(name) {
 }
 
 /** The server's /health through Caddy, by the name that always reaches this machine. */
-const health = new URL("/health", server.checkUrl);
+let health;
 const readHealth = () =>
   fetch(health, { cache: "no-store", signal: AbortSignal.timeout(10_000) })
     .then((response) => response.json())
@@ -63,7 +68,8 @@ async function waitForHealth(expected, describe) {
   }
 }
 
-/** Uploads deploy/server/ with this machine's names in the Caddyfile, and runs provision.sh. */
+/** Uploads deploy/server/ with this machine's names in the Caddyfile and its directory in
+ * the server's unit, and runs provision.sh. */
 function provision() {
   console.log(
     `Provisioning the ${server.role} server on ${server.ssh} (${server.sites.join(", ")})`,
@@ -72,22 +78,29 @@ function provision() {
   try {
     const files = [
       "provision.sh",
-      "sloppy-tanks.container",
       "caddy.container",
       "sloppy-tanks-update",
       "sloppy-tanks-update.service",
       "sloppy-tanks-update.timer",
     ].map((name) => fileURLToPath(new URL(`../deploy/server/${name}`, import.meta.url)));
-    const caddyfile = readFileSync(new URL("../deploy/server/Caddyfile", import.meta.url), "utf8");
-    writeFileSync(
-      join(staging, "Caddyfile"),
-      caddyfile.replaceAll("{$SITES}", server.sites.join(", ")),
-    );
+    const filled = {
+      Caddyfile: { "{$SITES}": server.sites.join(", ") },
+      "sloppy-tanks.container": {
+        "{$DIRECTORY_URL}": server.directory,
+        "{$SERVER_ENVIRONMENT}": server.role,
+      },
+    };
+    for (const [name, values] of Object.entries(filled)) {
+      let text = readFileSync(new URL(`../deploy/server/${name}`, import.meta.url), "utf8");
+      for (const [placeholder, value] of Object.entries(values))
+        text = text.replaceAll(placeholder, value);
+      writeFileSync(join(staging, name), text);
+    }
     ssh("rm -rf /root/sloppy-tanks-provision && mkdir -p /root/sloppy-tanks-provision");
     run("scp", [
       ...SSH_OPTIONS,
       ...files,
-      join(staging, "Caddyfile"),
+      ...Object.keys(filled).map((name) => join(staging, name)),
       `${server.ssh}:/root/sloppy-tanks-provision/`,
     ]);
   } finally {
@@ -164,62 +177,71 @@ async function printHealth() {
   console.log(`${health}: ${JSON.stringify(await readHealth())}`);
 }
 
-switch (command) {
-  case "provision": {
-    provision();
-    // A fresh machine has no pinned image; one that has keeps running it.
-    if (!succeeds("test -f /var/lib/sloppy-tanks/image")) ssh("sloppy-tanks-update pull");
-    const status = await waitForHealth((status) => !!status.contentVersion, "a /health report");
-    console.log(`The ${server.role} server answers at ${health.origin}: ${JSON.stringify(status)}`);
-    break;
-  }
-  case "update":
-    ssh(`sloppy-tanks-update pull ${imageOption()}`);
-    await printHealth();
-    break;
-  case "deploy":
-    await deploy();
-    break;
-  case "rollback":
-    ssh("sloppy-tanks-update rollback");
-    await printHealth();
-    break;
-  case "auto-update":
-    if (argument === "on") ssh("systemctl enable --now sloppy-tanks-update.timer");
-    else if (argument === "off") ssh("systemctl disable --now sloppy-tanks-update.timer");
-    else if (argument === "resume") ssh("sloppy-tanks-update resume");
-    else {
-      console.error("Usage: pnpm run server:auto-update on|off|resume [--dev]");
-      process.exit(1);
+for (server of servers) {
+  health = new URL("/health", server.checkUrl);
+  await runCommand();
+}
+
+async function runCommand() {
+  switch (command) {
+    case "provision": {
+      provision();
+      // A fresh machine has no pinned image; one that has keeps running it.
+      if (!succeeds("test -f /var/lib/sloppy-tanks/image")) ssh("sloppy-tanks-update pull");
+      const status = await waitForHealth((status) => !!status.contentVersion, "a /health report");
+      console.log(
+        `The ${server.role} server answers at ${health.origin}: ${JSON.stringify(status)}`,
+      );
+      break;
     }
-    ssh("sloppy-tanks-update status");
-    break;
-  case "status":
-    // The image state and auto-update's latest checks.
-    ssh(
-      "systemctl status sloppy-tanks caddy --no-pager; sloppy-tanks-update status && " +
-        "journalctl -u sloppy-tanks-update -n 5 --no-pager --output cat",
-    );
-    break;
-  case "logs":
-    run("ssh", [
-      ...SSH_OPTIONS,
-      "-t",
-      server.ssh,
-      "journalctl -u sloppy-tanks -f -n 50 --output cat",
-    ]);
-    break;
-  case "stats": {
-    const result = ssh("curl -fsS http://127.0.0.1:8787/stats", {
-      stdio: ["inherit", "pipe", "inherit"],
-      encoding: "utf8",
-    });
-    console.log(JSON.stringify(JSON.parse(result.stdout), null, 2));
-    break;
+    case "update":
+      ssh(`sloppy-tanks-update pull ${imageOption()}`);
+      await printHealth();
+      break;
+    case "deploy":
+      await deploy();
+      break;
+    case "rollback":
+      ssh("sloppy-tanks-update rollback");
+      await printHealth();
+      break;
+    case "auto-update":
+      if (argument === "on") ssh("systemctl enable --now sloppy-tanks-update.timer");
+      else if (argument === "off") ssh("systemctl disable --now sloppy-tanks-update.timer");
+      else if (argument === "resume") ssh("sloppy-tanks-update resume");
+      else {
+        console.error("Usage: pnpm run server:auto-update on|off|resume [--dev]");
+        process.exit(1);
+      }
+      ssh("sloppy-tanks-update status");
+      break;
+    case "status":
+      // The image state and auto-update's latest checks.
+      ssh(
+        "systemctl status sloppy-tanks caddy --no-pager; sloppy-tanks-update status && " +
+          "journalctl -u sloppy-tanks-update -n 5 --no-pager --output cat",
+      );
+      break;
+    case "logs":
+      run("ssh", [
+        ...SSH_OPTIONS,
+        "-t",
+        server.ssh,
+        "journalctl -u sloppy-tanks -f -n 50 --output cat",
+      ]);
+      break;
+    case "stats": {
+      const result = ssh("curl -fsS http://127.0.0.1:8787/stats", {
+        stdio: ["inherit", "pipe", "inherit"],
+        encoding: "utf8",
+      });
+      console.log(JSON.stringify(JSON.parse(result.stdout), null, 2));
+      break;
+    }
+    default:
+      console.error(
+        "Usage: node scripts/server.mjs provision|update|deploy|rollback|auto-update|status|logs|stats [--dev] [--ip ADDRESS]",
+      );
+      process.exit(1);
   }
-  default:
-    console.error(
-      "Usage: node scripts/server.mjs provision|update|deploy|rollback|auto-update|status|logs|stats [--dev]",
-    );
-    process.exit(1);
 }

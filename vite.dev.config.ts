@@ -1,12 +1,13 @@
 import { mergeConfig } from "vite";
 import config from "./vite.config.ts";
 import { devSite, devPages } from "./scripts/dev-site.ts";
-import { gameServer } from "./scripts/servers.mjs";
+import { DIRECTORY_URL } from "./scripts/servers.mjs";
 
-// The dev site always offers multiplayer against its own server (deploy/servers.json).
-// Vite reads VITE_* values from process.env after loading this file, and the startup
-// build reads it directly, so setting it here covers both bundles.
-process.env.VITE_MULTIPLAYER_URL = gameServer(true).url;
+// The dev site always offers multiplayer, on the dev servers the directory lists. Vite
+// reads VITE_* values from process.env after loading this file, and the startup build
+// reads the directory directly, so setting them here covers both bundles.
+process.env.VITE_DIRECTORY_URL = DIRECTORY_URL;
+process.env.VITE_SERVER_ENVIRONMENT = "dev";
 // It also keeps the development network tools a room page offers locally: the transport
 // delay parameters and their slider, and the fairness comparisons.
 process.env.VITE_DEV_TOOLS = "1";

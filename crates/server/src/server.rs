@@ -17,6 +17,7 @@ use hyper::service::service_fn;
 use hyper::{Method, Request, Response, StatusCode};
 use hyper_util::rt::{TokioIo, TokioTimer};
 use serde::Serialize;
+use sloppy_core::net::room_list::RoomListing;
 use tokio::net::{TcpListener, ToSocketAddrs};
 use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinHandle;
@@ -24,6 +25,7 @@ use tokio::time::Instant;
 
 use crate::config::BuildInfo;
 use crate::dashboard::{Dashboard, PAGE, PAGE_HEADERS};
+use crate::directory::{self, DirectoryOptions};
 use crate::host::HostFactory;
 use crate::monitor::{
     BusyProbe, LAG_PROBE_INTERVAL_MS, LagRecorder, LiveReading, MonitorInput, READING_INTERVAL_MS,
@@ -69,6 +71,8 @@ pub struct ServerOptions {
     pub log: Log,
     /// The commit and build time `/health` reports beside the build stamps.
     pub build: BuildInfo,
+    /// The server directory to announce this server and its rooms to (`DIRECTORY_URL`).
+    pub directory: Option<DirectoryOptions>,
 }
 
 impl ServerOptions {
@@ -79,6 +83,7 @@ impl ServerOptions {
             max_sockets_per_ip: DEFAULT_MAX_SOCKETS_PER_IP,
             log: Arc::new(|line| println!("{line}")),
             build: BuildInfo::default(),
+            directory: None,
         }
     }
 }
@@ -111,8 +116,8 @@ struct Shared {
     proxied_unreadable: AtomicBool,
 }
 
-/// The multiplayer host: `/health` (and `/health/`), `/rooms`, the `/room/CODE` WebSocket, the public
-/// `/dashboard` and `/stats`.
+/// The multiplayer host: `/health` (and `/health/`), `/rooms`, `/servers`, the `/room/CODE`
+/// WebSocket, the public `/dashboard` and `/stats`, and announcements to the server directory.
 pub struct MultiplayerServer {
     shared: Arc<Shared>,
     address: SocketAddr,
@@ -207,11 +212,22 @@ impl MultiplayerServer {
             terminate,
             proxied_unreadable: AtomicBool::new(false),
         });
-        let tasks = vec![
+        let mut tasks = vec![
             tokio::spawn(accept_loop(shared.clone(), listener)),
             tokio::spawn(monitor_loop(shared.clone())),
             tokio::spawn(lag_probe(lag)),
         ];
+        if let Some(options) = shared.options.directory.clone() {
+            let listed = shared.clone();
+            let listing_json =
+                move || serde_json::to_string(&listing(&listed)).expect("listing serializes");
+            let log = shared.options.log.clone();
+            tasks.push(tokio::spawn(directory::announce(
+                options,
+                listing_json,
+                log,
+            )));
+        }
         Ok(Self {
             shared,
             address,
@@ -361,21 +377,35 @@ fn header_text<'a>(headers: &'a HeaderMap, name: &str) -> &'a str {
         .unwrap_or("")
 }
 
+/// The last entry of the last `name` line: what the local proxy added.
+fn last_hop<'a>(headers: &'a HeaderMap, name: &str) -> Option<&'a str> {
+    headers
+        .get_all(name)
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .next_back()
+        .and_then(|value| value.rsplit(',').next())
+        .map(str::trim)
+        .filter(|hop| !hop.is_empty())
+}
+
 fn client_ip(shared: &Shared, headers: &HeaderMap, peer: SocketAddr) -> String {
-    // The last hop is the last entry of the last `X-Forwarded-For` line.
     if shared.options.trust_proxy
-        && let Some(hop) = headers
-            .get_all("x-forwarded-for")
-            .iter()
-            .filter_map(|value| value.to_str().ok())
-            .next_back()
-            .and_then(|value| value.rsplit(',').next())
-            .map(str::trim)
-            .filter(|hop| !hop.is_empty())
+        && let Some(hop) = last_hop(headers, "x-forwarded-for")
     {
         return hop.to_string();
     }
     peer.ip().to_string()
+}
+
+/// The address this request reached the server at, for `/servers`: its Host, over `wss://`
+/// when a trusted proxy received it over HTTPS (Caddy sets `X-Forwarded-Proto`).
+fn public_url(trust_proxy: bool, headers: &HeaderMap) -> String {
+    let https = trust_proxy
+        && last_hop(headers, "x-forwarded-proto")
+            .is_some_and(|proto| proto.eq_ignore_ascii_case("https"));
+    let scheme = if https { "wss" } else { "ws" };
+    format!("{scheme}://{}", header_text(headers, "host"))
 }
 
 /// The player's address (`ip`, from [`client_ip`]) and source port as a proxy on this
@@ -430,6 +460,48 @@ struct Health<'a> {
     built_at: Option<&'a str>,
 }
 
+fn health(build: &BuildInfo) -> Health<'_> {
+    Health {
+        version: build.release.as_deref(),
+        protocol: PROTOCOL_VERSION,
+        content_version: CONTENT_VERSION,
+        server_build: SERVER_BUILD,
+        commit: build.commit.as_deref(),
+        dirty: build.commit.as_ref().map(|_| build.dirty),
+        built_at: build.built_at.as_deref(),
+    }
+}
+
+/// What the server directory lists for this server: `/health`'s fields and every room,
+/// extra levels included.
+#[derive(Serialize)]
+struct Listing<'a> {
+    #[serde(flatten)]
+    health: Health<'a>,
+    rooms: Vec<RoomListing>,
+}
+
+fn listing(shared: &Shared) -> Listing<'_> {
+    let now = (shared.clock)();
+    Listing {
+        health: health(&shared.options.build),
+        rooms: shared.catalog.lock().expect("catalog").list(now, true),
+    }
+}
+
+/// `/servers`: this server as the directory lists it, so a lone server is its own directory.
+#[derive(Serialize)]
+struct Servers<'a> {
+    servers: [ListedServer<'a>; 1],
+}
+
+#[derive(Serialize)]
+struct ListedServer<'a> {
+    url: String,
+    #[serde(flatten)]
+    listing: Listing<'a>,
+}
+
 async fn route(
     shared: &Arc<Shared>,
     mut request: Request<RequestBody>,
@@ -445,16 +517,7 @@ async fn route(
         // `/health/` too, matching the static page's `/health/` that GitHub Pages redirects to.
         "/health" | "/health/" => {
             // Pretty-printed because operators read it in a browser; /rooms stays compact.
-            let build = &shared.options.build;
-            let health = Health {
-                version: build.release.as_deref(),
-                protocol: PROTOCOL_VERSION,
-                content_version: CONTENT_VERSION,
-                server_build: SERVER_BUILD,
-                commit: build.commit.as_deref(),
-                dirty: build.commit.as_ref().map(|_| build.dirty),
-                built_at: build.built_at.as_deref(),
-            };
+            let health = health(&shared.options.build);
             let body = serde_json::to_string_pretty(&health).expect("health serializes") + "\n";
             reply(200, Reply::Json(body), &[])
         }
@@ -522,7 +585,7 @@ async fn route(
                     .expect("valid response"),
             }
         }
-        "/rooms" => {
+        "/rooms" | "/servers" => {
             let origin = header_text(headers, "origin");
             let cors = [
                 ("Access-Control-Allow-Origin", origin),
@@ -546,6 +609,16 @@ async fn route(
                     Reply::Text("Too many refreshes; try again shortly"),
                     &cors,
                 );
+            }
+            if path == "/servers" {
+                let servers = Servers {
+                    servers: [ListedServer {
+                        url: public_url(shared.options.trust_proxy, headers),
+                        listing: listing(shared),
+                    }],
+                };
+                let json = serde_json::to_string(&servers).expect("servers serialize");
+                return reply(200, Reply::Json(json), &cors);
             }
             // Battle Setup asks for every room. Plain requests, such as the traffic bots',
             // see only rooms on standard maps.
@@ -983,5 +1056,41 @@ async fn lag_probe(recorder: Arc<LagRecorder>) {
         let now = Instant::now();
         recorder.record((now - last).as_secs_f64() * 1000.0);
         last = now;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn servers_url_is_secure_only_behind_a_trusted_proxy_that_received_https() {
+        let headers = |pairs: &[(&'static str, &'static str)]| {
+            let mut map = HeaderMap::new();
+            for (name, value) in pairs {
+                map.append(*name, HeaderValue::from_static(value));
+            }
+            map
+        };
+        let local = headers(&[("host", "127.0.0.1:8787")]);
+        assert_eq!(public_url(true, &local), "ws://127.0.0.1:8787");
+        let proxied = headers(&[
+            ("host", "45-63-56-58.nip.io"),
+            ("x-forwarded-proto", "https"),
+        ]);
+        assert_eq!(public_url(true, &proxied), "wss://45-63-56-58.nip.io");
+        assert_eq!(
+            public_url(false, &proxied),
+            "ws://45-63-56-58.nip.io",
+            "a public listener cannot trust the header"
+        );
+        let plain = headers(&[("host", "example.test"), ("x-forwarded-proto", "http")]);
+        assert_eq!(public_url(true, &plain), "ws://example.test");
+        // The proxy's own hop is the last one; an earlier https from the client is ignored.
+        let spoofed = headers(&[
+            ("host", "example.test"),
+            ("x-forwarded-proto", "https, http"),
+        ]);
+        assert_eq!(public_url(true, &spoofed), "ws://example.test");
     }
 }

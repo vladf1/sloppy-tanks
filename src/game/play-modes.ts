@@ -20,10 +20,10 @@ export interface PlayModeHandlers {
 
 const TAB_KEYS = ["ArrowLeft", "ArrowRight", "Home", "End"];
 
-/** Sites with a game server, and local pages, which use the local one. */
+/** Sites with a server directory, and local pages, which use the local server. */
 export function multiplayerAvailable(): boolean {
   return (
-    !!import.meta.env.VITE_MULTIPLAYER_URL || ["localhost", "127.0.0.1"].includes(location.hostname)
+    !!import.meta.env.VITE_DIRECTORY_URL || ["localhost", "127.0.0.1"].includes(location.hostname)
   );
 }
 
@@ -155,14 +155,14 @@ export function bindPlayModes(
   };
   const openRooms = () => {
     rooms ??= import("../net/room-browser").then((lobby) => {
-      const address = lobby.serverAddress();
-      if (!address) {
+      const directory = lobby.directoryAddress();
+      if (!directory) {
         throw new Error("This site has no multiplayer server");
       }
       return new lobby.RoomBrowser(
         panel,
         setup.querySelector<HTMLElement>(".map-choice")!,
-        address,
+        directory,
         () => handlers.choices(),
         (selection) => handlers.enterRoom(selection, () => lobby.joinAfterReload(selection)),
         link,
