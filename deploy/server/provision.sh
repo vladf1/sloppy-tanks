@@ -19,7 +19,9 @@ apt-get install -y --no-install-recommends podman python3 curl ufw
 printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' \
   'PermitRootLogin prohibit-password' >/etc/ssh/sshd_config.d/10-sloppy-tanks.conf
 sshd -t
-systemctl reload ssh
+# Ubuntu starts sshd per connection through ssh.socket; at first boot none runs yet, and
+# one that starts later reads the new settings.
+systemctl try-reload-or-restart ssh
 
 install -d -m 755 /etc/sloppy-tanks/caddy /var/lib/sloppy-tanks
 install -d -m 700 /var/lib/caddy/data /var/lib/caddy/config
