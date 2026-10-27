@@ -404,8 +404,14 @@ impl TankPredictor {
     /// Matches the obstacles to a received scene: standing cover and stumps, movable
     /// cover at its replicated pose, and every live tank other than the viewer's.
     pub fn sync_scene(&mut self, state: &RenderState) {
+        self.sync_scene_ahead(state, 0.0);
+    }
+
+    /// Like [`Self::sync_scene`] for a world `seconds` ahead of the scene: the other tanks
+    /// are carried that far along their velocities.
+    pub fn sync_scene_ahead(&mut self, state: &RenderState, seconds: f64) {
         self.sync_covers(state);
-        self.sync_tanks(state);
+        self.sync_tanks(state, seconds);
     }
 
     /// Matches the cover to a received scene: standing cover and stumps, and movable cover
@@ -532,14 +538,15 @@ impl TankPredictor {
         }
     }
 
-    /// Places every live tank other than the viewer's as a received scene has it.
-    fn sync_tanks(&mut self, state: &RenderState) {
+    /// Places every live tank other than the viewer's as a received scene has it, carried
+    /// `seconds` along its velocity.
+    fn sync_tanks(&mut self, state: &RenderState, seconds: f64) {
         let sync = self.sync;
         for tank in &state.tanks {
             if tank.id == state.viewer_id || !tank.alive {
                 continue;
             }
-            self.place_other_tank(tank, sync);
+            self.place_other_tank(tank, sync, seconds);
         }
         self.gone.extend(
             self.tanks
@@ -595,7 +602,7 @@ impl TankPredictor {
         body
     }
 
-    fn place_other_tank(&mut self, tank: &RenderTank, sync: u64) {
+    fn place_other_tank(&mut self, tank: &RenderTank, sync: u64, seconds: f64) {
         let rebuild = self
             .tanks
             .get(&tank.id)
@@ -628,8 +635,11 @@ impl TankPredictor {
         other.hull.heading = tank.heading;
         other.speed = tank.speed;
         other.drive = tank.drive;
+        let mut position = tank.position;
+        position.x += tank.velocity.x * seconds;
+        position.z += tank.velocity.z * seconds;
         let body = &mut self.world.bodies[other.body];
-        body.set_translation(to_vector(tank.position), true);
+        body.set_translation(to_vector(position), true);
         body.set_rotation(to_rotation(Quat4::yaw(tank.heading)), true);
         body.set_linvel(to_vector(tank.velocity), true);
         body.set_angvel(Vector::ZERO, true);

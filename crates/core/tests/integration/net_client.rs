@@ -22,7 +22,7 @@ use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::Tank;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
-use sloppy_core::sim::math::{Point3, Vec2};
+use sloppy_core::sim::math::{Point3, Vec2, distance};
 use sloppy_core::sim::render_state::RenderShot;
 use sloppy_core::sim::types::{Driver, SimEvent, SimEventType, Team, VehicleKind, Weapon};
 
@@ -1468,5 +1468,88 @@ fn a_shooter_hits_tanks_where_its_page_drew_them() {
         judged_now.percentile(0.9) > 0.5,
         "{}",
         describe(&judged_now)
+    );
+}
+
+#[test]
+fn a_tank_that_stopped_far_away_is_not_drawn_driving_in_on_its_old_input() {
+    let mut net = Network::new();
+    let delay = DelaySettings {
+        half_ms: 50.0,
+        jitter_ms: 0.0,
+        stall_ms: 0.0,
+    };
+    let alice = net.add(None, Some(delay));
+    let bob = net.add(None, None);
+    let humans_only = RoomSettings {
+        humans_only: true,
+        ..settings(MapId::Harbor)
+    };
+    net.connect(alice, choice("alice", Some(humans_only)));
+    net.run(300.0);
+    net.connect(
+        bob,
+        JoinChoice {
+            team: Some(Team::Red),
+            ..choice("bob", None)
+        },
+    );
+    net.run(1500.0);
+    let alice_id = net.peers[alice].client.control().unwrap().tank_id;
+    let bob_id = net.peers[bob].client.control().unwrap().tank_id;
+    // Bob waits 32 m down a clear lane from Alice, who stays parked.
+    let sim = net.host.simulation.as_mut().unwrap();
+    let (alice_index, bob_index) = (
+        sim.tank_index(alice_id).unwrap(),
+        sim.tank_index(bob_id).unwrap(),
+    );
+    let from = sim.body_translation(sim.tanks[alice_index].body).planar();
+    let lane = (0..32)
+        .map(|step| f64::from(step) * std::f64::consts::TAU / 32.0)
+        .find(|angle| {
+            sim.visible(
+                from,
+                Vec2::new(from.x + 34.0 * angle.sin(), from.z + 34.0 * angle.cos()),
+            )
+        })
+        .expect("some lane is clear");
+    let toward = Vec2::new(-lane.sin(), -lane.cos());
+    set_translation(
+        sim,
+        bob_index,
+        from.x - toward.x * 32.0,
+        0.65,
+        from.z - toward.z * 32.0,
+    );
+    set_linvel(sim, bob_index, 0.0, 0.0, 0.0);
+    // He drives toward her, and a nudge to her hull makes her prediction replay, placing
+    // him driving in her predicted world...
+    net.peers[bob].input.move_x = toward.x;
+    net.peers[bob].input.move_z = toward.z;
+    net.run(400.0);
+    let sim = net.host.simulation.as_mut().unwrap();
+    let at = sim.body_translation(sim.tanks[alice_index].body);
+    set_translation(sim, alice_index, at.x + 0.5, at.y, at.z);
+    set_linvel(sim, alice_index, 0.0, 0.0, 0.0);
+    net.run(200.0);
+    // ...then stops far away, while every snapshot confirms her prediction.
+    net.peers[bob].input.move_x = 0.0;
+    net.peers[bob].input.move_z = 0.0;
+    net.run(500.0);
+    let sim = net.host.simulation.as_ref().unwrap();
+    let stopped = sim.body_translation(sim.tanks[bob_index].body).planar();
+    assert!(distance(stopped, from) > 22.0, "bob stopped far away");
+    let mut nearest = f64::INFINITY;
+    for _ in 0..180 {
+        net.run(FRAME_MS);
+        let display = net.peers[alice].client.display().unwrap();
+        let viewer = display.viewer().unwrap().position.planar();
+        let drawn = display.tanks.iter().find(|tank| tank.id == bob_id).unwrap();
+        nearest = nearest.min(distance(drawn.position.planar(), viewer));
+    }
+    assert!(
+        nearest > 20.0,
+        "bob is drawn {nearest} m from alice, though he stopped {} m away",
+        distance(stopped, from)
     );
 }

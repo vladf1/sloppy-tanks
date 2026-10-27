@@ -32,6 +32,7 @@ use super::replication::TimedEvent;
 use super::shot_paths::{PathEntry, ShotLaunch, ShotPath};
 use crate::sim::combat_rules::COMBAT;
 use crate::sim::data::{STEP, TEAM_COLORS, weapon};
+use crate::sim::hitboxes::HIT_HALF_HEIGHT;
 use crate::sim::math::{Point3, Vec2, angle_delta, distance};
 use crate::sim::projectiles::RocketThrust;
 use crate::sim::render_state::{RenderShot, RenderTank};
@@ -646,8 +647,10 @@ impl OwnShots {
         let phantoms = &mut self.stats.phantom_strikes;
         self.shells.retain_mut(|shell| {
             let tick = own_clock(present, settle, shell.launch_tick());
-            // A strike the host flew past instead never happened: the shell flies on.
+            // A strike the host flew past instead never happened: the shell flies on. One
+            // the host has not launched stays struck: if it never is, the shot never was.
             if let Some(struck) = shell.struck
+                && shell.server_id.is_some()
                 && newest >= struck + STRIKE_CONFIRM_TICKS
                 && shell
                     .legs
@@ -670,9 +673,12 @@ impl OwnShots {
                 .filter(|_| !shell.missed)
                 .and_then(|(at, leg)| {
                     let team = leg.path.launch.team;
+                    // A shell passes over or under a hull beyond the hit box's height.
+                    let height = at.y.unwrap_or(1.0);
                     targets.iter().find(|tank| {
                         tank.alive
                             && tank.team != team
+                            && (height - tank.position.y).abs() <= HIT_HALF_HEIGHT
                             && hull_gap(
                                 tank.kind,
                                 tank.position.planar(),

@@ -16,7 +16,7 @@ use super::types::{Shot, Tank, VehicleKind};
 
 pub const SHELL_HIT_RADIUS: f64 = 0.18;
 /// Combat is planar; visual launcher height does not enlarge the target.
-const HIT_HALF_HEIGHT: f64 = 0.9;
+pub const HIT_HALF_HEIGHT: f64 = 0.9;
 /// Covers floating-point differences between the bound below and Rapier's own ray test.
 const REACH_TOLERANCE: f64 = 0.01;
 
