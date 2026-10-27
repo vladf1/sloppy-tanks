@@ -1,0 +1,129 @@
+<!doctype html>
+<!-- The server directory's overview: every environment's servers and their rooms.
+     overview.js fills it from /servers?environment= and refreshes it every few seconds. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Sloppy Tanks servers</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --muted: #6b7280;
+        --line: #d1d5db;
+        --card: #f9fafb;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --muted: #9ca3af;
+          --line: #374151;
+          --card: #111827;
+        }
+      }
+      body {
+        margin: 0 auto;
+        max-width: 960px;
+        padding: 16px;
+        font: 14px/1.4 system-ui, sans-serif;
+      }
+      h1 {
+        font-size: 20px;
+        margin: 0 0 4px;
+      }
+      h2 {
+        font-size: 16px;
+        margin: 24px 0 8px;
+      }
+      h2 small,
+      .details,
+      .empty,
+      .note {
+        color: var(--muted);
+        font-weight: normal;
+      }
+      h3 {
+        font-size: 14px;
+        margin: 0;
+      }
+      .server {
+        background: var(--card);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 12px;
+        margin: 8px 0;
+        overflow-x: auto;
+      }
+      .details {
+        margin: 2px 0 8px;
+      }
+      table {
+        border-collapse: collapse;
+        width: 100%;
+      }
+      th,
+      td {
+        text-align: left;
+        padding: 4px 8px 4px 0;
+        border-top: 1px solid var(--line);
+        white-space: nowrap;
+      }
+      th {
+        font-weight: 600;
+        border-top: 0;
+      }
+      .empty {
+        margin: 0;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>Sloppy Tanks servers</h1>
+    <p class="note">Game servers announce their rooms here; this page refreshes every 5 s.</p>
+
+    <section data-environment="production">
+      <h2>Production <small></small></h2>
+      <div class="servers"></div>
+      <p class="empty">No servers</p>
+    </section>
+    <section data-environment="dev">
+      <h2>Dev <small></small></h2>
+      <div class="servers"></div>
+      <p class="empty">No servers</p>
+    </section>
+
+    <template id="server">
+      <section class="server">
+        <h3><a data-field="url"></a></h3>
+        <p class="details" data-field="details"></p>
+        <table>
+          <thead>
+            <tr>
+              <th>Room</th>
+              <th>Map</th>
+              <th>Players</th>
+              <th>Phase</th>
+              <th>Score</th>
+              <th>Bots</th>
+              <th>Length</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+        <p class="empty">No rooms</p>
+      </section>
+    </template>
+    <template id="room">
+      <tr>
+        <td data-field="room"></td>
+        <td data-field="map"></td>
+        <td data-field="players"></td>
+        <td data-field="phase"></td>
+        <td data-field="score"></td>
+        <td data-field="bots"></td>
+        <td data-field="length"></td>
+      </tr>
+    </template>
+
+    <script type="module" src="overview.js"></script>
+  </body>
+</html>

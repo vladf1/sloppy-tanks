@@ -11,7 +11,6 @@ import {
   parseEnvironment,
   type ServerEntry,
 } from "../directory/listing";
-import { renderPage } from "../directory/page";
 import type { RoomListing } from "../src/net/room-listing";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -131,44 +130,8 @@ test("servers are listed fewest rooms first, ties by url, at the url they announ
   assert.deepEqual(servers[0], { ...entry([], 4), url: "wss://7-7-7-7.nip.io" });
 });
 
-test("the overview lists every environment's servers and rooms, escaping what servers sent", () => {
-  const now = 100_000;
-  const playing = room("ABCDEFGH", {
-    players: 2,
-    reserved: 3,
-    phase: "playing",
-    time: 125,
-    scores: [4, 1],
-  });
-  const page = renderPage(
-    [
-      {
-        name: "production",
-        servers: [
-          {
-            ...entry([playing], now - 3000),
-            version: "<b>1.1.1.244</b>",
-            url: "wss://1-2-3-4.nip.io",
-          },
-        ],
-      },
-      { name: "dev", servers: [] },
-    ],
-    now,
-  );
-  assert.match(page, /production <small>1 server · 1 room · 2 players<\/small>/);
-  assert.match(page, /href="https:\/\/1-2-3-4\.nip\.io\/dashboard"/);
-  assert.match(
-    page,
-    /v&lt;b&gt;1\.1\.1\.244&lt;\/b&gt; · content 11aac238 · build 5a8e451f · 2 players · seen 3 s ago/,
-  );
-  assert.match(
-    page,
-    /<td>2\/8 \(\+1 reconnecting\)<\/td><td>playing · 2:05 left<\/td><td>4–1<\/td>/,
-  );
-  assert.doesNotMatch(page, /<b>/);
-  assert.match(
-    page,
-    /dev <small>0 servers · 0 rooms · 0 players<\/small><\/h2><p class="empty">No servers<\/p>/,
-  );
+test("the overview page has a section for every environment", () => {
+  const page = read("../directory/public/index.html");
+  const sections = [...page.matchAll(/data-environment="([^"]+)"/g)].map((match) => match[1]);
+  assert.deepEqual(sections.sort(), [...ENVIRONMENTS].sort());
 });

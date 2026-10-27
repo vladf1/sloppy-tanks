@@ -12,4 +12,6 @@
   "durable_objects": { "bindings": [{ "name": "DIRECTORY", "class_name": "ServerDirectory" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ServerDirectory"] }],
   "observability": { "enabled": true },
+  // The overview page; requests for anything else, such as /servers, reach the Worker.
+  "assets": { "directory": "./public" },
 }
