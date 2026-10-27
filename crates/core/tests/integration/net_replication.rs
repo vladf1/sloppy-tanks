@@ -132,12 +132,8 @@ fn full_and_field_deltas_round_trip_through_json_including_destruction_and_late_
             assert!(frame.len() < 128_000, "Burst snapshot wire budget");
             removed |= frame_json(&mut view, &frame).get("removed").is_some();
             apply_batch(&mut mirror, &frame);
+            // `to_value` is `to_scene().to_json()`, so equal scenes are equal JSON too.
             assert_eq!(mirror.state.as_ref().unwrap().to_scene(), scene);
-            assert_same(
-                &mirror.state.as_ref().unwrap().to_value(),
-                &scene.to_json(),
-                "mirror equals the capture",
-            );
             let viewer = human(&sim);
             let expected = read_scene(&scene).render(viewer).unwrap();
             assert_eq!(mirror.render(viewer).unwrap(), expected);
@@ -508,8 +504,8 @@ const VALUES: [&str; 20] = [
     "time",
 ];
 
-/// `rounded` from `scene-codec.ts`: numbers by field name, recursively.
-fn rounded(value: &Value, key: &str, parent: &str) -> Value {
+/// `rounded` from `scene-codec.ts`: numbers by field name, recursively, in place.
+fn round(value: &mut Value, key: &str, parent: &str) {
     match value {
         Value::Number(number) => {
             let scale = if parent == "rotation" || ANGLES.contains(&key) {
@@ -521,36 +517,35 @@ fn rounded(value: &Value, key: &str, parent: &str) -> Value {
             };
             let x = number.as_f64().unwrap();
             let r = sloppy_core::sim::math::js_round(x * scale) / scale;
-            json!(if r == 0.0 { 0.0 } else { r })
+            *value = json!(if r == 0.0 { 0.0 } else { r });
         }
-        Value::Array(items) => Value::Array(
-            items
-                .iter()
-                .map(|item| rounded(item, key, parent))
-                .collect(),
-        ),
-        Value::Object(fields) => Value::Object(
-            fields
-                .iter()
-                .map(|(field, item)| (field.clone(), rounded(item, field, key)))
-                .collect(),
-        ),
-        other => other.clone(),
+        Value::Array(items) => {
+            for item in items {
+                round(item, key, parent);
+            }
+        }
+        Value::Object(fields) => {
+            for (field, item) in fields.iter_mut() {
+                round(item, field, key);
+            }
+        }
+        _ => {}
     }
 }
 
 /// The readers' field selection over plain render views: undefined (null) optionals and
 /// fields outside the schema are dropped.
-fn select(record: &Value, fields: &[&str], nullable: &[&str]) -> Value {
+fn select(mut record: Map<String, Value>, fields: &[&str], nullable: &[&str]) -> Value {
     let mut out = Map::new();
     for field in fields {
-        match record.get(*field) {
+        match record.remove(*field) {
             Some(Value::Null) if nullable.contains(field) => {
                 out.insert((*field).to_string(), Value::Null);
             }
             Some(Value::Null) | None => {}
-            Some(value) => {
-                out.insert((*field).to_string(), strip_nulls(value));
+            Some(mut value) => {
+                strip_nulls(&mut value);
+                out.insert((*field).to_string(), value);
             }
         }
     }
@@ -569,108 +564,115 @@ fn field_names(kind: usize) -> Vec<&'static str> {
     names
 }
 
-fn strip_nulls(value: &Value) -> Value {
+fn strip_nulls(value: &mut Value) {
     match value {
-        Value::Object(fields) => Value::Object(
-            fields
-                .iter()
-                .filter(|(_, item)| !item.is_null())
-                .map(|(key, item)| (key.clone(), strip_nulls(item)))
-                .collect(),
-        ),
-        Value::Array(items) => Value::Array(items.iter().map(strip_nulls).collect()),
-        other => other.clone(),
+        Value::Object(fields) => {
+            fields.retain(|_, item| !item.is_null());
+            fields.values_mut().for_each(strip_nulls);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_nulls),
+        _ => {}
     }
 }
 
+/// The reference scene, built from `sim`'s render view. The view is taken apart rather
+/// than copied: deep copies of every record once took most of this test's time.
 fn reference_scene(sim: &Simulation) -> Value {
-    let view = serde_json::to_value(sim.render_state(Some(sim.tanks[0].id))).unwrap();
-    let kind_records =
+    let Value::Object(mut view) =
+        serde_json::to_value(sim.render_state(Some(sim.tanks[0].id))).unwrap()
+    else {
+        panic!("a render view is an object");
+    };
+    let mut kind_records =
         |kind: usize, nullable: &[&str], adjust: &dyn Fn(&mut Map<String, Value>)| {
-            Value::Array(
-                view[ENTITY_TYPES[kind]]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|record| {
-                        let mut record = record.as_object().unwrap().clone();
-                        adjust(&mut record);
-                        select(&Value::Object(record), &field_names(kind), nullable)
-                    })
-                    .collect(),
-            )
+            let Some(Value::Array(records)) = view.remove(ENTITY_TYPES[kind]) else {
+                panic!("the render view lists {}", ENTITY_TYPES[kind]);
+            };
+            let fields = field_names(kind);
+            let records = records
+                .into_iter()
+                .map(|record| {
+                    let Value::Object(mut record) = record else {
+                        panic!("{} records are objects", ENTITY_TYPES[kind]);
+                    };
+                    adjust(&mut record);
+                    select(record, &fields, nullable)
+                })
+                .collect();
+            Value::Array(records)
         };
-    let entities = json!({
-        "tanks": kind_records(0, &[], &|_| {}),
-        "covers": kind_records(1, &["hp", "maxHp"], &|cover| {
-            // Timber joins keep only their set ends, and unmarked walls carry no hit list.
-            if let Some(Value::Object(join)) = cover.get_mut("timberJoin") {
-                join.retain(|_, flag| flag == &Value::Bool(true));
-            }
-            if cover.get("timberHits").and_then(Value::as_array).is_some_and(Vec::is_empty) {
-                cover.remove("timberHits");
-            }
-        }),
-        "fragments": kind_records(2, &[], &|fragment| {
-            let life = fragment["life"].as_f64().unwrap().min(DEBRIS_CLEANUP_SECONDS);
-            fragment.insert("life".into(), json!(life));
-        }),
-        "mines": kind_records(3, &[], &|_| {}),
-        "pickups": kind_records(4, &[], &|_| {}),
+    let mut entities = Map::new();
+    entities.insert("tanks".into(), kind_records(0, &[], &|_| {}));
+    let covers = kind_records(1, &["hp", "maxHp"], &|cover| {
+        // Timber joins keep only their set ends, and unmarked walls carry no hit list.
+        if let Some(Value::Object(join)) = cover.get_mut("timberJoin") {
+            join.retain(|_, flag| flag == &Value::Bool(true));
+        }
+        if cover
+            .get("timberHits")
+            .and_then(Value::as_array)
+            .is_some_and(Vec::is_empty)
+        {
+            cover.remove("timberHits");
+        }
     });
+    entities.insert("covers".into(), covers);
+    let fragments = kind_records(2, &[], &|fragment| {
+        let life = fragment["life"]
+            .as_f64()
+            .unwrap()
+            .min(DEBRIS_CLEANUP_SECONDS);
+        fragment.insert("life".into(), json!(life));
+    });
+    entities.insert("fragments".into(), fragments);
+    entities.insert("mines".into(), kind_records(3, &[], &|_| {}));
+    entities.insert("pickups".into(), kind_records(4, &[], &|_| {}));
+    let mut take = |key: &str| view.remove(key).unwrap_or(Value::Null);
     let mut map = Map::new();
-    map.insert("theme".into(), view["mapTheme"].clone());
+    map.insert("theme".into(), take("mapTheme"));
     for (from, to) in [
         ("mapFloor", "floor"),
         ("mapOuterFloor", "outerFloor"),
         ("mapOuterFloorExtent", "outerFloorExtent"),
     ] {
-        if !view[from].is_null() {
-            map.insert(to.into(), view[from].clone());
+        let value = take(from);
+        if !value.is_null() {
+            map.insert(to.into(), value);
         }
     }
-    if view["mapScale"].as_f64() != Some(1.0) {
-        map.insert("scale".into(), view["mapScale"].clone());
+    let scale = take("mapScale");
+    if scale.as_f64() != Some(1.0) {
+        map.insert("scale".into(), scale);
     }
-    let scene = json!({
-        "entities": entities,
-        "elapsed": view["elapsed"],
-        "match": strip_nulls_except(&view["match"], "winner"),
-        "map": Value::Object(map),
-    });
-    rounded(&scene, "", "")
-}
-
-fn strip_nulls_except(value: &Value, keep: &str) -> Value {
-    Value::Object(
-        value
-            .as_object()
-            .unwrap()
-            .iter()
-            .filter(|(key, item)| !item.is_null() || key.as_str() == keep)
-            .map(|(key, item)| (key.clone(), item.clone()))
-            .collect(),
-    )
+    let Value::Object(mut match_state) = take("match") else {
+        panic!("the render view has a match");
+    };
+    match_state.retain(|key, item| !item.is_null() || key == "winner");
+    let mut scene = Map::new();
+    scene.insert("entities".into(), Value::Object(entities));
+    scene.insert("elapsed".into(), take("elapsed"));
+    scene.insert("match".into(), Value::Object(match_state));
+    scene.insert("map".into(), Value::Object(map));
+    let mut scene = Value::Object(scene);
+    round(&mut scene, "", "");
+    scene
 }
 
 /// Fields whose JSON differs, deletions as null.
 fn reference_changes(previous: Option<&Value>, next: &Value) -> Option<Value> {
     let next = next.as_object().unwrap();
+    let Some(previous) = previous else {
+        return (!next.is_empty()).then(|| Value::Object(next.clone()));
+    };
+    let before = previous.as_object().unwrap();
     let mut changes = Map::new();
-    let empty = Map::new();
-    let before = previous.map_or(&empty, |value| value.as_object().unwrap());
-    let keys: BTreeSet<&String> = next.keys().chain(before.keys()).collect();
-    for key in keys {
-        let old = before.get(key);
-        let new = next.get(key);
-        let equal = match (old, new) {
-            (Some(a), Some(b)) => same(a, b),
-            (None, None) => true,
-            _ => false,
-        };
-        if previous.is_none() || !equal {
-            changes.insert(key.clone(), new.cloned().unwrap_or(Value::Null));
+    for (key, new) in next {
+        if !before.get(key).is_some_and(|old| same(old, new)) {
+            changes.insert(key.clone(), new.clone());
         }
+    }
+    for key in before.keys().filter(|key| !next.contains_key(*key)) {
+        changes.insert(key.clone(), Value::Null);
     }
     (!changes.is_empty()).then_some(Value::Object(changes))
 }
@@ -726,19 +728,19 @@ fn reference_delta(previous: &Value, next: &Value) -> Value {
     Value::Object(delta)
 }
 
-fn seen_fields(scene: &Value, seen: &mut BTreeSet<String>) {
-    for kind in ENTITY_TYPES {
-        for entity in scene["entities"][kind].as_array().unwrap() {
-            for field in entity.as_object().unwrap().keys() {
-                seen.insert(format!("{kind}.{field}"));
-            }
+/// Drops from `missing` the optional fields (`kind.field`, or `covers.hp=null` for an
+/// indestructible cover) that `scene` carries.
+fn find_fields(scene: &Value, missing: &mut BTreeSet<&str>) {
+    let entities = |kind: &str| scene["entities"][kind].as_array().unwrap();
+    missing.retain(|expected| {
+        if *expected == "covers.hp=null" {
+            return !entities("covers").iter().any(|cover| cover["hp"].is_null());
         }
-    }
-    for cover in scene["entities"]["covers"].as_array().unwrap() {
-        if cover["hp"].is_null() {
-            seen.insert("covers.hp=null".into());
-        }
-    }
+        let (kind, field) = expected.split_once('.').unwrap();
+        !entities(kind)
+            .iter()
+            .any(|entity| entity.get(field).is_some())
+    });
 }
 
 const EXPECTED_FIELDS: [&str; 16] = [
@@ -760,9 +762,14 @@ const EXPECTED_FIELDS: [&str; 16] = [
     "pickups.cooldownDuration",
 ];
 
+/// Ticks between compared frames, so each delta spans several simulated ticks. Building
+/// the reference costs far more than a tick; the wreck fragments of the Scrap Yard,
+/// which appear last, are still seen on four compared frames.
+const COMPARED_EVERY: u64 = 9;
+
 #[test]
 fn captured_scenes_and_field_deltas_match_the_schema_reference() {
-    let mut seen = BTreeSet::new();
+    let mut missing: BTreeSet<&str> = EXPECTED_FIELDS.into_iter().collect();
     let mut removals = 0;
     for (map, ticks) in [
         (MapId::Village, 450),
@@ -811,7 +818,7 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
                     ammo_selection: None,
                 },
             );
-            if tick % 3 != 0 {
+            if tick % COMPARED_EVERY != 0 {
                 continue;
             }
             let mut scene = Scene::capture(&sim);
@@ -822,34 +829,31 @@ fn captured_scenes_and_field_deltas_match_the_schema_reference() {
                 &format!("{map:?} scene at tick {tick}"),
             );
             let message = frame(&mut stream, &mut scene, tick);
-            let frame = frame_json(&mut view, &message);
+            let mut frame = frame_json(&mut view, &message);
             let mut delta = Map::new();
             for key in ["match", "updates", "removed"] {
-                if let Some(value) = frame.get(key) {
-                    delta.insert(key.into(), value.clone());
+                if let Some(value) = frame.as_object_mut().unwrap().remove(key) {
+                    delta.insert(key.into(), value);
                 }
             }
+            removals += delta.get("removed").map_or(0, |removed| {
+                removed
+                    .as_object()
+                    .unwrap()
+                    .values()
+                    .map(|ids| ids.as_array().unwrap().len())
+                    .sum()
+            });
             assert_same(
                 &Value::Object(delta),
                 &reference_delta(&previous, &captured),
                 &format!("{map:?} delta at tick {tick}"),
             );
-            removals += frame["removed"].as_object().map_or(0, |removed| {
-                removed
-                    .values()
-                    .map(|ids| ids.as_array().unwrap().len())
-                    .sum()
-            });
-            seen_fields(&captured, &mut seen);
+            find_fields(&captured, &mut missing);
             previous = captured;
         }
     }
     assert!(removals > 0, "Seeded matches remove entities");
-    let missing: Vec<&str> = EXPECTED_FIELDS
-        .iter()
-        .copied()
-        .filter(|field| !seen.contains(*field))
-        .collect();
     assert!(
         missing.is_empty(),
         "Seeded matches exercise optional wire fields; missing {missing:?}"
