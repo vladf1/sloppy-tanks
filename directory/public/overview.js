@@ -1,10 +1,14 @@
 // Fills the overview (index.html) from each environment's /servers list. Values only ever
 // reach the page as text, through the markup's templates.
 const REFRESH_MS = 5000;
+/** A probe gives up after this, and the server shows as unreachable. */
+const PROBE_TIMEOUT_MS = 3000;
 const ROOM_SEATS = 8;
 
 /** The latest round trip from this browser to each server, in ms (null when unreachable). */
 const latencies = new Map();
+/** Servers with a probe under way, so a slow one never piles up probes. */
+const probing = new Set();
 
 const count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 const players = (server) => server.rooms.reduce((sum, room) => sum + room.players, 0);
@@ -43,14 +47,21 @@ async function measure(url) {
   const health = `${url.replace(/^wss?:/, "https:")}/health`;
   const ping = async () => {
     const start = performance.now();
-    await fetch(health, { mode: "no-cors", cache: "no-store" });
+    await fetch(health, {
+      mode: "no-cors",
+      cache: "no-store",
+      signal: AbortSignal.timeout(PROBE_TIMEOUT_MS),
+    });
     return Math.round(performance.now() - start);
   };
+  probing.add(url);
   try {
     if (!latencies.has(url)) await ping();
     latencies.set(url, await ping());
   } catch {
     latencies.set(url, null);
+  } finally {
+    probing.delete(url);
   }
 }
 
@@ -97,12 +108,14 @@ async function showEnvironment(section) {
     const cards = servers.map(serverCard);
     section.querySelector(".servers").replaceChildren(...cards);
     section.querySelector(":scope > .empty").hidden = !!servers.length;
-    await Promise.all(
-      servers.map(async (server, index) => {
-        await measure(server.url);
+    // The lists refresh on their own clock; each card shows its server's latency once
+    // the probe answers or gives up.
+    servers.forEach((server, index) => {
+      if (probing.has(server.url)) return;
+      void measure(server.url).then(() => {
         cards[index].querySelector('[data-field="latency"]').textContent = latencyText(server.url);
-      }),
-    );
+      });
+    });
   } catch (error) {
     summary.textContent = `unavailable: ${error.message}`;
   }
