@@ -412,3 +412,47 @@ fn a_players_shell_strikes_the_hull_where_its_shooter_saw_it() {
     let (frames, _) = fire(0);
     assert!(kinds(&frames, SimEventType::Impact).is_empty());
 }
+
+/// How many ticks after the host's hit a shell fired `distance` metres ahead of the hull is
+/// drawn striking it, at one frame a tick (60 Hz) with the present `lead` ticks ahead.
+fn strike_lateness(distance: f64, lead: f64) -> f64 {
+    let path = enemy_shell(10.0, 0.0, hull_front() + distance);
+    let hit = reaches(&path, hull_front());
+    let host = host_hits(path);
+    let mut timeline = NetworkTimeline::default();
+    timeline.reset(&RenderState::default(), 0, 0.0, &LivePaths::default());
+    let mut shown = RenderState::default();
+    let mut newest = 0;
+    while newest < hit.ceil() as u64 + 20 {
+        newest += 1;
+        let now = newest as f64 * STEP_MS;
+        let (events, paths) = host(newest);
+        timeline
+            .push(RenderState::default(), newest, events, paths, &NoCover)
+            .unwrap();
+        timeline.arrive(now);
+        let present = newest as f64 + lead;
+        let events = timeline.read(now, 100.0, STEP, &mut shown, Some(&dodger(present)));
+        if events
+            .iter()
+            .any(|event| event.kind == SimEventType::Impact)
+        {
+            return present - hit;
+        }
+    }
+    f64::INFINITY
+}
+
+#[test]
+fn a_close_shell_strikes_within_a_frame_of_the_hit_at_60_hz() {
+    // Drawn ahead, a shell has covered more of its way, so its presence settles over steps;
+    // one step a frame left shells fired from close range behind the present (8 m away
+    // with a 14-tick view delay struck almost three ticks late).
+    for distance in [8.0, 10.0, 15.0, 20.0] {
+        let late = strike_lateness(distance, 14.0);
+        assert!(
+            (-0.5..=1.0).contains(&late),
+            "fired {distance} m away, struck {late} ticks after the hit"
+        );
+    }
+}

@@ -46,6 +46,11 @@ const RECEDE_DISTANCE: f64 = 1.0;
 /// A shell that passed the viewer eases back to the display clock at this share of real
 /// time.
 const LEAVE_PACE: f64 = 0.8;
+/// A shell's presence is settled within a frame by up to this many steps, until a step adds
+/// less than [`PRESENCE_SETTLED`]: drawn further ahead, it has covered more of its way,
+/// so a single step a frame left close shots behind the present at 60 Hz.
+const PRESENCE_STEPS: usize = 8;
+const PRESENCE_SETTLED: f64 = 0.001;
 /// A host effect within this many ticks and metres of a shell's bounce, end or strike is
 /// that one's.
 const STRIKE_TICKS: f64 = 2.0;
@@ -167,6 +172,30 @@ impl Shell {
     ) -> f64 {
         let ahead = (dodger.present - display).max(0.0);
         let leaving = (self.lead - (1.0 - LEAVE_PACE) * elapsed).max(0.0);
+        for _ in 0..PRESENCE_STEPS {
+            let before = self.presence;
+            self.settle(display, ahead, leaving, dodger, &leg_at);
+            if self.receding || self.presence - before < PRESENCE_SETTLED {
+                break;
+            }
+        }
+        self.lead = if self.receding {
+            leaving
+        } else {
+            ahead * self.presence
+        };
+        display + self.lead
+    }
+
+    /// One step of its presence toward where it is drawn.
+    fn settle(
+        &mut self,
+        display: f64,
+        ahead: f64,
+        leaving: f64,
+        dodger: &Dodger,
+        leg_at: &impl Fn(f64) -> Option<DisplayedPath>,
+    ) {
         // Presence is measured where the shell is drawn, so it meets the viewer just as
         // the viewer's present reaches it.
         let guess = display
@@ -203,12 +232,6 @@ impl Shell {
                 }
             }
         }
-        self.lead = if self.receding {
-            leaving
-        } else {
-            ahead * self.presence
-        };
-        display + self.lead
     }
 }
 
@@ -348,19 +371,19 @@ impl NetworkTimeline {
         Ok(())
     }
 
-    /// The shell whose path ended within a couple of ticks of `tick` nearest `point`, within
-    /// `reach` metres.
-    pub fn shell_ending_near(&self, tick: f64, point: Vec2, reach: f64) -> Option<u32> {
+    /// The path of the shell that ended within a couple of ticks of `tick` nearest `point`,
+    /// within `reach` metres.
+    pub fn shell_ending_near(&self, tick: f64, point: Vec2, reach: f64) -> Option<&ShotPath> {
         self.paths
             .iter()
             .filter(|displayed| (displayed.until - tick).abs() <= STRIKE_TICKS)
             .map(|displayed| {
                 let at = displayed.path.at(displayed.until);
-                (displayed.path.id, distance(Vec2::new(at.x, at.z), point))
+                (&displayed.path, distance(Vec2::new(at.x, at.z), point))
             })
             .filter(|(_, gap)| *gap <= reach)
             .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(id, _)| id)
+            .map(|(path, _)| path)
     }
 
     /// Received simulation still ahead of the display; negative while remote poses

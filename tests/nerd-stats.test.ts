@@ -155,6 +155,7 @@ function fixture(network = false) {
       unansweredPresses: 1,
       hitOffsetM: { count: 5, mean: 1.234, p50: 1.1, p95: 2.05, max: 2.1 },
       incomingOffsetM: { count: 4, mean: 0.42, p50: 0.3, p95: 0.9, max: 0.9 },
+      incomingBehindM: { count: 2, mean: 0.87, p50: 0.8, p95: 1.3, max: 1.3 },
       unseenIncoming: 1,
       ownShots: {
         predicted: 14,
@@ -265,6 +266,7 @@ test("network stats use received scene counts and never require a client physics
     assert.ok(text.includes("Own shell error") && text.includes("3.1 cm"));
     assert.ok(text.includes("Hit offset p95") && text.includes("2.05 m"));
     assert.ok(text.includes("Incoming offset") && text.includes("0.42 m"));
+    assert.ok(text.includes("Hit where you were") && text.includes("0.87 m"));
     assert.ok(text.includes("Phantom strikes") && text.includes("2 / 3"));
     assert.ok(text.includes("Debris corrections") && text.includes("2.0 cm/s"));
     assert.ok(

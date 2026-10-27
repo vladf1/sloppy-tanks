@@ -65,6 +65,7 @@ export interface NetworkStatsSource extends RenderStats {
     unansweredPresses: number;
     hitOffsetM: Reading;
     incomingOffsetM: Reading;
+    incomingBehindM: Reading;
     unseenIncoming: number;
     ownShots: {
       predicted: number;
@@ -204,7 +205,12 @@ export function networkStatsSections(
         [
           "Incoming offset",
           feel.incomingOffsetM.count ? `${feel.incomingOffsetM.mean.toFixed(2)} m` : "–",
-          `For each enemy shell that hit you (${feel.incomingOffsetM.count} so far): how close it was drawn to your tank as your own tank reached the moment of the hit; 95th percentile ${feel.incomingOffsetM.p95.toFixed(2)} m. Near zero, a shell you see coming hits where you see it. ${feel.unseenIncoming} more were fired so close that they hit before they could be drawn.`,
+          `For each enemy shell that hit you (${feel.incomingOffsetM.count} so far): how close it was drawn to your tank, where the server judged it, as your own tank reached the moment of the hit; 95th percentile ${feel.incomingOffsetM.p95.toFixed(2)} m. Near zero, a shell you see coming hits where you see it. ${feel.unseenIncoming} more were fired so close that they hit before they could be drawn.`,
+        ],
+        [
+          "Hit where you were",
+          feel.incomingBehindM.count ? `${feel.incomingBehindM.mean.toFixed(2)} m` : "–",
+          `For each other player's shell that hit you (${feel.incomingBehindM.count} so far): the server judged it where that player's screen showed your tank, a moment earlier, so it strikes there, this far from your tank as drawn now; 95th percentile ${feel.incomingBehindM.p95.toFixed(2)} m. It is how far you moved in that moment.`,
         ],
         [
           "Phantom strikes",

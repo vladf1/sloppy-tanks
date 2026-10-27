@@ -664,6 +664,7 @@ impl NetGame {
                 "unansweredPresses": feel.unanswered_presses,
                 "hitOffsetM": summary(&feel.hit_offset),
                 "incomingOffsetM": summary(&feel.incoming_offset),
+                "incomingBehindM": summary(&feel.incoming_behind),
                 "unseenIncoming": feel.unseen_incoming,
                 "ownShots": {
                     "predicted": own.predicted,

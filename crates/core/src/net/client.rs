@@ -1050,11 +1050,16 @@ impl NetworkClient {
                             break;
                         }
                         for (tick, at) in incoming {
-                            if let Some(shell) =
+                            if let Some(path) =
                                 self.timeline
                                     .shell_ending_near(tick, at, INCOMING_SHELL_REACH)
                             {
-                                self.feel.incoming_hit(tick, shell);
+                                self.feel.incoming_hit(
+                                    tick,
+                                    path.id,
+                                    path.launch.rewind,
+                                    Vec2::new(path.x, path.z),
+                                );
                             }
                         }
                         pushed = true;
