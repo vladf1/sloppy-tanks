@@ -271,8 +271,9 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   or growing collection, measure reset and long-run behavior.
 - Rendering is WebGPU (`wgpu` with `Backends::BROWSER_WEBGPU`), with a WebGL2
   fallback: a second engine build (`--no-default-features --features webgl`,
-  `src/generated/engine-webgl/`) on glow, without wgpu. `src/engine.ts` loads it
-  only where the browser gives no WebGPU adapter or device (`?webgl` forces it),
+  `src/generated/engine-webgl/`) on glow, drawing without wgpu (its build compiles
+  wgpu's API crate unused; `crates/render/Cargo.toml` says why). `src/engine.ts` loads
+  it only where the browser gives no WebGPU adapter or device (`?webgl` forces it),
   so a WebGPU page never downloads WebGL code. The renderer core (`gpu/mod.rs` and
   its shared mesh, material, texture and pool stores) builds the same draw lists
   for both; the browser API is one backend module chosen at build time,

@@ -26,6 +26,9 @@ glam.workspace = true
 bytemuck.workspace = true
 naga = { workspace = true, optional = true }
 
+# Not optional in the browser: one feature turns a dependency on for every target, and
+# the browser's `webgpu`, on by default, would then compile wgpu into native test
+# builds. The WebGL engine compiles wgpu's API crate (seconds, once) but never uses it.
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 wgpu = { workspace = true }
 glow = { workspace = true, optional = true }
