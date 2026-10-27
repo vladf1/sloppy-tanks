@@ -4,11 +4,11 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion, serverBuild } from "./content-version.mjs";
-import { gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
+import { DIRECTORY_URL, gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 
-/** Operate the game server machines (deploy/servers.json) over SSH, one after another;
- * `--dev` picks the dev site's machines, otherwise production's, and `--ip ADDRESS` one
- * of them. See crates/server/README.md.
+/** Operate the game server machines over SSH, one after another: the ones the server
+ * directory lists for production, or with `--dev` for the dev site, or with
+ * `--ip ADDRESS` that machine, listed or not. See crates/server/README.md.
  *
  *   provision                set the machine up (again), then start CI's :production image
  *                            if no server runs (deploy:dev then replaces it on dev)
@@ -26,9 +26,7 @@ const repo = new URL("..", import.meta.url);
 const HEALTH_TIMEOUT_MS = 120_000;
 const [command, argument] = process.argv.slice(2);
 const dev = process.argv.includes("--dev");
-const ip = option("--ip");
-const servers = gameServers(dev).filter((machine) => !ip || machine.ip === ip);
-if (!servers.length) throw new Error(`No ${dev ? "dev" : "production"} machine has the ip ${ip}`);
+const servers = await gameServers(dev, option("--ip"));
 /** The machine the current command runs on. */
 let server;
 
@@ -71,9 +69,7 @@ async function waitForHealth(expected, describe) {
 /** Uploads deploy/server/ with this machine's names in the Caddyfile and its settings in
  * server.env, and runs provision.sh. */
 function provision() {
-  console.log(
-    `Provisioning the ${server.role} server on ${server.ssh} (${server.sites.join(", ")})`,
-  );
+  console.log(`Provisioning the ${server.role} server on ${server.ssh} (${server.site})`);
   const staging = mkdtempSync(join(tmpdir(), "sloppy-tanks-provision-"));
   try {
     const files = [
@@ -86,8 +82,8 @@ function provision() {
     ].map((name) => fileURLToPath(new URL(`../deploy/server/${name}`, import.meta.url)));
     const caddyfile = readFileSync(new URL("../deploy/server/Caddyfile", import.meta.url), "utf8");
     const filled = {
-      Caddyfile: caddyfile.replaceAll("{$SITES}", server.sites.join(", ")),
-      "server.env": `SERVER_ENVIRONMENT=${server.role}\nDIRECTORY_URL=${server.directory}\n`,
+      Caddyfile: caddyfile.replaceAll("{$SITES}", server.site),
+      "server.env": `SERVER_ENVIRONMENT=${server.role}\nDIRECTORY_URL=${DIRECTORY_URL}\n`,
     };
     for (const [name, text] of Object.entries(filled)) writeFileSync(join(staging, name), text);
     ssh("rm -rf /root/sloppy-tanks-provision && mkdir -p /root/sloppy-tanks-provision");

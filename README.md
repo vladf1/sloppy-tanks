@@ -280,11 +280,10 @@ can deploy Workers and their custom domains). The Worker's account, name and dom
 come from `deploy/dev-site/wrangler.jsonc`, independent of the local Git branch. No Git
 commit or push is required. `pnpm run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev directory, where the dev
-multiplayer server lists itself. It runs on its own machine: the `dev` entry of
-`deploy/servers.json`, reached at its nip.io name (`wss://1-2-3-4.nip.io`, dashboard at
-`/dashboard`). `deploy:dev` redeploys that dev server from the same checkout first
-(over SSH) so client and server versions match; production multiplayer is never
-affected.
+multiplayer servers list themselves. They run on their own machines, each at its nip.io
+name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` redeploys those
+servers from the same checkout first (over SSH) so client and server versions match;
+production multiplayer is never affected.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.

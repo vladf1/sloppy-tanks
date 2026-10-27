@@ -16,8 +16,12 @@ import { renderPage } from "../directory/page";
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
 test("the directory has one list per game server environment", () => {
-  const machines = JSON.parse(read("../deploy/servers.json")) as Record<string, unknown>;
-  assert.deepEqual([...ENVIRONMENTS].sort(), Object.keys(machines).sort());
+  // The startup scripts name each machine's environment.
+  const scripts = ["production", "dev"].map(
+    (name) =>
+      read(`../deploy/server/cloud-init/${name}.yaml`).match(/SERVER_ENVIRONMENT=(\S+)/)?.[1],
+  );
+  assert.deepEqual([...ENVIRONMENTS].sort(), scripts.sort());
   assert.equal(parseEnvironment("production"), "production");
   assert.equal(parseEnvironment("dev"), "dev");
   for (const value of [null, "", "Production", "staging"]) {

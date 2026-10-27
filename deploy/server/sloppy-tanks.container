@@ -17,7 +17,7 @@ Network=host
 Environment=HOST=127.0.0.1 PORT=8787
 # The machine's settings: SERVER_ENVIRONMENT (production or dev) and DIRECTORY_URL, which
 # the server pushes its rooms to. The provider's user data writes it (bootstrap.sh), or
-# `node scripts/server.mjs provision` from deploy/servers.json.
+# `node scripts/server.mjs provision`.
 EnvironmentFile=/etc/sloppy-tanks/server.env
 # A read-only root without Podman's extra tmpfs mounts, no capabilities, and a memory
 # cap without swap.
