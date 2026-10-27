@@ -1,7 +1,7 @@
 // Build the desktop app (crates/desktop, binary `sloppy-tanks`) into the ignored
 // `artifacts/desktop/`.
 //
-//   node scripts/build-desktop.mjs --mac       # universal Sloppy Tanks.app, zipped
+//   node scripts/build-desktop.mjs --mac       # universal Sloppy Tanks.app, a zip and a .pkg
 //   node scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
 //   node scripts/build-desktop.mjs             # whichever this machine is
 //
@@ -13,8 +13,9 @@
 //
 // The macOS app runs natively on Apple silicon and Intel: both targets are built and
 // joined with `lipo`. It is unsigned apart from an ad-hoc signature, which arm64 needs to
-// run at all. FMA stays off on both (no `target-cpu=native`): fused multiply-adds round
-// differently from the server and the browser's Wasm.
+// run at all, and the installer package beside its zip is unsigned. FMA stays off on both
+// (no `target-cpu=native`): fused multiply-adds round differently from the server and the
+// browser's Wasm.
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -163,13 +164,59 @@ function buildMac() {
   run("codesign", ["--force", "--deep", "--sign", "-", app]);
 
   mkdirSync(output, { recursive: true });
-  const zip = join(output, `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-macOS.zip`);
+  const artifact = join(output, `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-macOS`);
+  const zip = `${artifact}.zip`;
   rmSync(zip, { force: true });
   run("ditto", ["-c", "-k", "--keepParent", app, zip]);
+  const installer = `${artifact}.pkg`;
+  makeInstaller(app, version, installer, scratch);
   rmSync(join(output, `${APP_NAME}.app`), { recursive: true, force: true });
   run("ditto", [app, join(output, `${APP_NAME}.app`)]);
   console.log(`Built ${join(output, `${APP_NAME}.app`)} (universal, ${megabytes(executable)})`);
   console.log(`Built ${zip} (${megabytes(zip)})`);
+  console.log(`Built ${installer} (${megabytes(installer)})`);
+}
+
+/** An unsigned installer package that puts `app` in /Applications, titled for Installer. */
+function makeInstaller(app, version, destination, scratch) {
+  const payload = join(scratch, "pkg-root");
+  mkdirSync(payload, { recursive: true });
+  run("ditto", [app, join(payload, `${APP_NAME}.app`)]);
+  // A relocatable bundle (pkgbuild's default) makes Installer look for the bundle
+  // identifier elsewhere on the disk and replace a copy it finds there (in Downloads, say)
+  // instead of installing into /Applications; the app always goes where the package says.
+  const components = join(scratch, "components.plist");
+  run("pkgbuild", ["--analyze", "--root", payload, components]);
+  run("plutil", ["-replace", "0.BundleIsRelocatable", "-bool", "NO", components]);
+  const component = join(scratch, "SloppyTanks-component.pkg");
+  run("pkgbuild", [
+    ...["--root", payload, "--component-plist", components],
+    ...["--install-location", "/Applications", "--identifier", BUNDLE_ID],
+    ...["--version", version, component],
+  ]);
+  // A distribution around the component package gives Installer the game's name as its
+  // window title, installs for the whole machine and refuses releases the app cannot run on.
+  const distribution = join(scratch, "distribution.xml");
+  run("productbuild", ["--synthesize", "--package", component, distribution]);
+  const synthesized = readFileSync(distribution, "utf8");
+  const extra =
+    `    <title>${APP_NAME}</title>\n` +
+    '    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>\n' +
+    `    <allowed-os-versions><os-version min="${MINIMUM_MACOS}"/></allowed-os-versions>\n`;
+  const opening = /<installer-gui-script[^>]*>\n/;
+  if (!opening.test(synthesized)) {
+    console.error(`productbuild --synthesize wrote no <installer-gui-script> in ${distribution}`);
+    process.exit(1);
+  }
+  writeFileSync(
+    distribution,
+    synthesized.replace(opening, (tag) => tag + extra),
+  );
+  rmSync(destination, { force: true });
+  run("productbuild", [
+    ...["--distribution", distribution, "--package-path", scratch],
+    destination,
+  ]);
 }
 
 function buildWindows() {
