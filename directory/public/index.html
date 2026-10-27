@@ -35,6 +35,7 @@
         margin: 24px 0 8px;
       }
       h2 small,
+      .latency,
       .details,
       .empty,
       .note {
@@ -93,7 +94,7 @@
 
     <template id="server">
       <section class="server">
-        <h3><a data-field="url"></a></h3>
+        <h3><a data-field="url"></a> <span class="latency" data-field="latency"></span></h3>
         <p class="details" data-field="details"></p>
         <table>
           <thead>

@@ -3,6 +3,9 @@
 const REFRESH_MS = 5000;
 const ROOM_SEATS = 8;
 
+/** The latest round trip from this browser to each server, in ms (null when unreachable). */
+const latencies = new Map();
+
 const count = (n, noun) => `${n} ${noun}${n === 1 ? "" : "s"}`;
 const players = (server) => server.rooms.reduce((sum, room) => sum + room.players, 0);
 
@@ -33,6 +36,30 @@ function roomRow(room) {
   });
 }
 
+/** Times a request from this browser to the server's /health. The first request to a server
+ * also pays for DNS, TCP and TLS, so it goes untimed and the next one, over the same
+ * connection, is measured. The response is opaque: only the timing matters. */
+async function measure(url) {
+  const health = `${url.replace(/^wss?:/, "https:")}/health`;
+  const ping = async () => {
+    const start = performance.now();
+    await fetch(health, { mode: "no-cors", cache: "no-store" });
+    return Math.round(performance.now() - start);
+  };
+  try {
+    if (!latencies.has(url)) await ping();
+    latencies.set(url, await ping());
+  } catch {
+    latencies.set(url, null);
+  }
+}
+
+function latencyText(url) {
+  if (!latencies.has(url)) return "";
+  const ms = latencies.get(url);
+  return ms === null ? "unreachable from here" : `${ms} ms from here`;
+}
+
 function serverCard(server) {
   const details = [
     server.version && `v${server.version}`,
@@ -43,6 +70,7 @@ function serverCard(server) {
   ];
   const card = fromTemplate("server", {
     url: server.url,
+    latency: latencyText(server.url),
     details: details.filter(Boolean).join(" · "),
   });
   card.querySelector("a").href = `${server.url.replace(/^wss?:/, "https:")}/dashboard`;
@@ -66,8 +94,15 @@ async function showEnvironment(section) {
       count(rooms, "room"),
       count(servers.reduce((sum, server) => sum + players(server), 0), "player"),
     ].join(" · ");
-    section.querySelector(".servers").replaceChildren(...servers.map(serverCard));
+    const cards = servers.map(serverCard);
+    section.querySelector(".servers").replaceChildren(...cards);
     section.querySelector(":scope > .empty").hidden = !!servers.length;
+    await Promise.all(
+      servers.map(async (server, index) => {
+        await measure(server.url);
+        cards[index].querySelector('[data-field="latency"]').textContent = latencyText(server.url);
+      }),
+    );
   } catch (error) {
     summary.textContent = `unavailable: ${error.message}`;
   }
