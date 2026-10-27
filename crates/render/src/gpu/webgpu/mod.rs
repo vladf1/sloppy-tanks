@@ -261,6 +261,10 @@ pub struct Frame {
     /// and nothing paces frames to its display.
     #[cfg(not(target_arch = "wasm32"))]
     pub shown: bool,
+    /// Natively, the main view's targets still hold the last drawn scene, which a
+    /// window frame without a new one shows again (as a canvas keeps its picture).
+    #[cfg(not(target_arch = "wasm32"))]
+    scene_drawn: bool,
 }
 
 impl Frame {
@@ -367,6 +371,8 @@ impl Frame {
             output: None,
             #[cfg(not(target_arch = "wasm32"))]
             shown: true,
+            #[cfg(not(target_arch = "wasm32"))]
+            scene_drawn: false,
         };
         frame.view_groups = frame.frame_groups(gpu, &frame.instance_records);
         frame
@@ -398,6 +404,10 @@ impl Frame {
             return;
         }
         let (width, height) = scene;
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.scene_drawn = false;
+        }
         self.main_target = ColorTarget::new(gpu, "main view", width, height);
         self.post = PostTargets::new(
             gpu,
@@ -617,12 +627,14 @@ impl Frame {
 
     /// Natively, show the frame [`Self::draw`] drew after `overlay` (the window's
     /// menus and HUD) has drawn over it with the device, the queue and the frame's
-    /// view. Without a drawn frame (the menus between rounds) the overlay draws on
-    /// a window frame cleared to `clear`.
+    /// view. Without a newly drawn frame the overlay draws over the last scene again
+    /// (a room waiting for the server, a skipped frame), or before any scene on a
+    /// window frame cleared to `clear`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn present(
         &mut self,
         gpu: &Gpu,
+        pipelines: &Pipelines,
         clear: wgpu::Color,
         overlay: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView),
     ) {
@@ -639,13 +651,29 @@ impl Frame {
                             .configure(&gpu.device, &self.canvas.config);
                         return;
                     }
-                    _ => {
+                    // Covered: nothing shows, and nothing paces frames to the display.
+                    wgpu::CurrentSurfaceTexture::Occluded => {
                         self.shown = false;
+                        return;
+                    }
+                    // A slow display: try again next frame.
+                    wgpu::CurrentSurfaceTexture::Timeout => return,
+                    error => {
+                        gpu.error.set(format!("Window unavailable: {error:?}"));
                         return;
                     }
                 };
                 let view = output.texture.create_view(&Default::default());
                 let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                if self.scene_drawn {
+                    self.encode_output(&mut encoder, &view, pipelines, &mut RenderStats::default());
+                    gpu.queue.submit([encoder.finish()]);
+                    let view = output.texture.create_view(&Default::default());
+                    overlay(&gpu.device, &gpu.queue, &view);
+                    gpu.queue.present(output);
+                    self.shown = true;
+                    return;
+                }
                 encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                     label: Some("blank window"),
                     color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -695,18 +723,23 @@ impl Frame {
             label: Some("scene"),
         });
         self.encode_scene(&mut encoder, scene, stats);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.scene_drawn = true;
+        }
         let submitted = self.gpu_frames.now_ms();
         gpu.queue.submit([encoder.finish()]);
         let output = match self.canvas.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Timeout | wgpu::CurrentSurfaceTexture::Occluded => {
+            wgpu::CurrentSurfaceTexture::Occluded => {
                 #[cfg(not(target_arch = "wasm32"))]
                 {
                     self.shown = false;
                 }
                 return Ok(());
             }
+            wgpu::CurrentSurfaceTexture::Timeout => return Ok(()),
             wgpu::CurrentSurfaceTexture::Outdated => {
                 self.canvas.surface.configure(device, &self.canvas.config);
                 return Ok(());

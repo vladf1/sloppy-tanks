@@ -185,8 +185,10 @@ struct Session {
     alive: bool,
     first_person: bool,
     cursor_grabbed: bool,
-    /// The window is covered or minimized.
+    /// The window is covered or minimized (macOS says so).
     occluded: bool,
+    /// The window has no area: minimized on Windows, which reports no occlusion.
+    minimized: bool,
     /// The window took the last frame.
     frame_shown: bool,
     frame_index: u64,
@@ -243,17 +245,14 @@ impl ApplicationHandler for App {
         let DeviceEvent::MouseMotion { delta } = event else {
             return;
         };
-        let (window, controls, grabbed) = match &mut self.mode {
-            Some(Mode::Single(session)) => (
-                &session.window,
-                &mut session.controls,
-                session.cursor_grabbed,
-            ),
-            Some(Mode::Room(room)) => (&room.window, &mut room.controls, room.cursor_grabbed),
+        let (controls, grabbed) = match &mut self.mode {
+            Some(Mode::Single(session)) => (&mut session.controls, session.cursor_grabbed),
+            Some(Mode::Room(room)) => (&mut room.controls, room.cursor_grabbed),
             None => return,
         };
         if grabbed {
-            controls.look(delta.0 / window.scale_factor());
+            // Like the page's `movementX`: macOS reports points, Windows raw counts.
+            controls.look(delta.0);
         }
     }
 
@@ -272,7 +271,7 @@ impl ApplicationHandler for App {
         match &mut self.mode {
             // A hidden window draws nothing: macOS does not pace a covered Metal layer
             // to the display, so it would spin hundreds of frames a second unseen.
-            Some(Mode::Single(session)) if session.occluded => {
+            Some(Mode::Single(session)) if session.hidden() => {
                 event_loop.set_control_flow(ControlFlow::Wait);
             }
             // A window that opened covered gets no occlusion event: while the window
@@ -288,7 +287,8 @@ impl ApplicationHandler for App {
             Some(Mode::Room(room)) => {
                 // A hidden window draws no frames; the room's heartbeat runs on anyway.
                 room.network();
-                if room.frame_shown {
+                // A hidden window draws nothing; the heartbeat's timer probes it.
+                if !room.hidden() {
                     room.window.request_redraw();
                 }
                 event_loop.set_control_flow(ControlFlow::WaitUntil(
@@ -405,6 +405,7 @@ impl Session {
             first_person: prefs.first_person,
             cursor_grabbed: false,
             occluded: false,
+            minimized: false,
             frame_shown: true,
             frame_index: 0,
             last_frame: now_ms(),
@@ -455,23 +456,30 @@ impl Session {
         if let WindowEvent::RedrawRequested = event {
             return self.redraw();
         }
-        let consumed = self.overlay.event(event);
+        let battle =
+            self.in_round && self.phase == Phase::Playing && self.ui.settings_draft.is_none();
+        let keys_to_menus = !battle || self.overlay.typing();
+        let consumed = self
+            .overlay
+            .event(event, !self.cursor_grabbed, keys_to_menus);
         let playing = self.in_round && self.phase == Phase::Playing && self.alive;
         match event {
             WindowEvent::CloseRequested => return true,
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.resize(),
-            // Like a hidden page, a hidden window pauses the round.
+            WindowEvent::Resized(size) => {
+                self.minimized = size.width == 0 || size.height == 0;
+                self.hidden_changed();
+                self.resize();
+            }
+            WindowEvent::ScaleFactorChanged { .. } => self.resize(),
             WindowEvent::Occluded(occluded) => {
                 self.occluded = *occluded;
-                if *occluded {
-                    self.controls.clear();
-                    if self.in_round && self.phase == Phase::Playing {
-                        self.apply(Action::Pause);
-                    }
-                }
+                self.hidden_changed();
             }
             // Like the page's blur: held keys let go, the round plays on.
-            WindowEvent::Focused(false) => self.controls.clear(),
+            WindowEvent::Focused(false) => {
+                self.controls.clear();
+                self.hold_pointer();
+            }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
                 self.controls.set_command(
@@ -481,7 +489,9 @@ impl Session {
                 );
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if self.overlay.wants_keyboard() {
+                // Typing goes to the field; a release still reaches the controls, so
+                // a key held when a field took focus never sticks.
+                if self.overlay.typing() && event.state == ElementState::Pressed {
                     return false;
                 }
                 if let PhysicalKey::Code(code) = event.physical_key {
@@ -505,7 +515,9 @@ impl Session {
             // reaches the controls, so fire never sticks.
             WindowEvent::MouseInput { state, button, .. }
                 if *state == ElementState::Released
-                    || (playing && !(consumed || self.overlay.wants_pointer())) =>
+                    || (playing
+                        && (self.cursor_grabbed
+                            || !(consumed || self.overlay.wants_pointer()))) =>
             {
                 self.controls.button(*button, *state);
             }
@@ -518,6 +530,22 @@ impl Session {
             _ => {}
         }
         false
+    }
+
+    /// Whether the window can show nothing: covered, or minimized.
+    fn hidden(&self) -> bool {
+        self.occluded || self.minimized
+    }
+
+    /// Like a hidden page, a hidden window pauses the round and lets the cursor go.
+    fn hidden_changed(&mut self) {
+        if self.hidden() {
+            self.controls.clear();
+            if self.in_round && self.phase == Phase::Playing {
+                self.apply(Action::Pause);
+            }
+        }
+        self.hold_pointer();
     }
 
     fn shortcut(&mut self, shortcut: Shortcut) {
@@ -806,7 +834,8 @@ impl Session {
             && self.first_person
             && self.phase == Phase::Playing
             && self.ui.settings_draft.is_none()
-            && self.window.has_focus();
+            && self.window.has_focus()
+            && !self.hidden();
         grab_pointer(&self.window, wanted, &mut self.cursor_grabbed);
     }
 

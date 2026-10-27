@@ -48,8 +48,23 @@ impl Overlay {
 
     /// Hand a window event to egui; true when egui used it (a click on a button, typing
     /// in a field), so the game should not see it.
-    pub fn event(&mut self, event: &WindowEvent) -> bool {
-        self.input.on_window_event(&self.window, event).consumed
+    ///
+    /// While the cursor is locked for first person the hidden pointer stays parked
+    /// wherever it was, so `pointer` is false and egui sees no pointer events: a
+    /// click there is a shot, as on the page under pointer lock. While the battle has
+    /// the keyboard `keys` is false: a HUD button that took focus would otherwise
+    /// swallow the drive keys, Space and Esc.
+    pub fn event(&mut self, event: &WindowEvent, pointer: bool, keys: bool) -> bool {
+        let skipped = match event {
+            WindowEvent::CursorMoved { .. }
+            | WindowEvent::CursorEntered { .. }
+            | WindowEvent::CursorLeft { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::MouseWheel { .. } => !pointer,
+            WindowEvent::KeyboardInput { .. } | WindowEvent::Ime(_) => !keys,
+            _ => false,
+        };
+        !skipped && self.input.on_window_event(&self.window, event).consumed
     }
 
     /// Whether egui wants the pointer (it is over a window or a widget).
@@ -57,9 +72,9 @@ impl Overlay {
         self.context.egui_wants_pointer_input() || self.context.is_pointer_over_egui()
     }
 
-    /// Whether a text field has the keyboard.
-    pub fn wants_keyboard(&self) -> bool {
-        self.context.egui_wants_keyboard_input()
+    /// Whether a text field has the keyboard (typing a name or a room code).
+    pub fn typing(&self) -> bool {
+        self.context.text_edit_focused()
     }
 
     /// Lay out this frame's UI with `build`.

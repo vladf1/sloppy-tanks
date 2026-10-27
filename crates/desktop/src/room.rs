@@ -73,7 +73,12 @@ pub struct RoomSession {
     pointer_free: bool,
     pub cursor_grabbed: bool,
     /// The window took the last frame; a covered one takes none (see `app.rs`).
-    pub frame_shown: bool,
+    frame_shown: bool,
+    /// macOS reports the window covered, or it has no area (minimized on Windows).
+    occluded: bool,
+    minimized: bool,
+    /// What the room was last told: hidden or shown.
+    told_hidden: bool,
     /// Settings opened during the battle put the tank in a bot's hands until they close.
     resume_after_settings: bool,
     last_poll: f64,
@@ -168,6 +173,9 @@ impl RoomSession {
             pointer_free: true,
             cursor_grabbed: false,
             frame_shown: true,
+            occluded: false,
+            minimized: false,
+            told_hidden: false,
             resume_after_settings: false,
             last_poll: now,
             last_frame: now,
@@ -184,6 +192,36 @@ impl RoomSession {
         }
         session.pump();
         Ok(session)
+    }
+
+    /// Whether the window shows nothing: covered, minimized, or taking no frames.
+    pub fn hidden(&self) -> bool {
+        self.occluded || self.minimized || !self.frame_shown
+    }
+
+    /// Tell the room once whenever the window hides or shows, as a page's
+    /// visibility does; a hidden window lets the cursor go.
+    fn hidden_changed(&mut self) {
+        let hidden = self.hidden();
+        if hidden != self.told_hidden {
+            self.told_hidden = hidden;
+            self.controls.clear();
+            self.game.set_hidden(hidden, now_ms());
+            self.pump();
+        }
+        self.hold_pointer();
+    }
+
+    /// Lock the cursor while first person steers the battle.
+    fn hold_pointer(&mut self) {
+        let wanted = self.first_person
+            && !self.pointer_free
+            && self.menu.in_battle()
+            && self.ui.settings_draft.is_none()
+            && self.window.has_focus()
+            && !self.occluded
+            && !self.minimized;
+        grab_pointer(&self.window, wanted, &mut self.cursor_grabbed);
     }
 
     /// Give the window back: the room's renderer and overlay go, the rest stays.
@@ -322,8 +360,12 @@ impl RoomSession {
         if let WindowEvent::RedrawRequested = event {
             return self.redraw();
         }
-        let consumed = self.overlay.event(event);
         let in_battle = self.menu.in_battle() && !self.menu.joining;
+        let battle = in_battle && !self.menu.menu_open && self.ui.settings_draft.is_none();
+        let keys_to_menus = !battle || self.overlay.typing();
+        let consumed = self
+            .overlay
+            .event(event, !self.cursor_grabbed, keys_to_menus);
         let alive = self.ui.hud.as_ref().is_some_and(|hud| hud.human.alive);
         let playing = in_battle && alive;
         match event {
@@ -332,12 +374,19 @@ impl RoomSession {
                 self.pump();
                 return true;
             }
-            WindowEvent::Resized(_) | WindowEvent::ScaleFactorChanged { .. } => self.resize(),
-            WindowEvent::Focused(false) => self.controls.clear(),
-            WindowEvent::Occluded(hidden) => {
+            WindowEvent::Resized(size) => {
+                self.minimized = size.width == 0 || size.height == 0;
+                self.hidden_changed();
+                self.resize();
+            }
+            WindowEvent::ScaleFactorChanged { .. } => self.resize(),
+            WindowEvent::Focused(false) => {
                 self.controls.clear();
-                self.game.set_hidden(*hidden, now_ms());
-                self.pump();
+                self.hold_pointer();
+            }
+            WindowEvent::Occluded(hidden) => {
+                self.occluded = *hidden;
+                self.hidden_changed();
             }
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
@@ -348,7 +397,9 @@ impl RoomSession {
                 );
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                if self.overlay.wants_keyboard() {
+                // Typing goes to the field; a release still reaches the controls, so
+                // a key held when a field took focus never sticks.
+                if self.overlay.typing() && event.state == ElementState::Pressed {
                     return false;
                 }
                 if let PhysicalKey::Code(code) = event.physical_key {
@@ -372,7 +423,9 @@ impl RoomSession {
             }
             WindowEvent::MouseInput { state, button, .. }
                 if *state == ElementState::Released
-                    || (playing && !(consumed || self.overlay.wants_pointer())) =>
+                    || (playing
+                        && (self.cursor_grabbed
+                            || !(consumed || self.overlay.wants_pointer()))) =>
             {
                 self.controls.button(*button, *state);
             }
@@ -661,7 +714,7 @@ impl RoomSession {
             }
             // A window that takes no frames draws none, as a hidden page does; the
             // heartbeat above runs on.
-            if self.frame_shown
+            if !self.hidden()
                 && let Err(error) = self.frame(now)
             {
                 self.fail(&error);
@@ -683,12 +736,7 @@ impl RoomSession {
         {
             self.ui.stats = serde_json::from_str(&self.game.stats_json(now)).ok();
         }
-        let wanted = self.first_person
-            && !self.pointer_free
-            && self.menu.in_battle()
-            && self.ui.settings_draft.is_none()
-            && self.window.has_focus();
-        grab_pointer(&self.window, wanted, &mut self.cursor_grabbed);
+        self.hold_pointer();
         let view = ui::View {
             in_round: true,
             phase: room_menu::hud_phase(&self.menu),
@@ -704,12 +752,8 @@ impl RoomSession {
             actions = room_menu::draw(context, menu, ui_state, &view, frame_dt);
         });
         self.overlay.present(self.game.renderer(), painted);
-        let shown = self.game.renderer().frame_shown();
-        if shown != self.frame_shown {
-            self.frame_shown = shown;
-            self.game.set_hidden(!shown, now_ms());
-            self.pump();
-        }
+        self.frame_shown = self.game.renderer().frame_shown();
+        self.hidden_changed();
         let mut quit = false;
         for action in actions {
             quit |= self.apply(action);

@@ -1948,14 +1948,15 @@ impl Renderer {
 
     /// Natively, show the frame `render` drew once `overlay` has drawn the window's
     /// menus and HUD over it (with the device, the queue and the frame's view).
-    /// Without a drawn frame (menus between rounds) the overlay draws on `clear`.
+    /// Without a new frame it draws over the last scene again, or before any on `clear`.
     #[cfg(not(target_arch = "wasm32"))]
     pub fn present(
         &mut self,
         clear: wgpu::Color,
         overlay: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView),
     ) {
-        self.frame.present(&self.gpu, clear, overlay);
+        self.frame
+            .present(&self.gpu, &self.pipelines, clear, overlay);
     }
 
     /// Whether the window took the last frame; a covered window takes none.
