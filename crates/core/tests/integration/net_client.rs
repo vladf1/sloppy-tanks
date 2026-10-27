@@ -1365,8 +1365,9 @@ fn enemy_shells_reach_a_dodger_where_its_hull_is_drawn() {
         "enough hits to judge: {}",
         dodging.count
     );
-    // Drawn toward the present, a shell meets the hull as the present reaches its hit...
-    assert!(dodging.percentile(0.9) < 1.0, "{}", describe(&dodging));
+    // Drawn toward the present, a shell meets the hull as the present reaches its hit (its
+    // strike drawn there)...
+    assert!(dodging.percentile(0.9) < 0.5, "{}", describe(&dodging));
     // ...where on the display clock alone it is still about a view delay of flight away.
     assert!(delayed.percentile(0.5) > 2.0, "{}", describe(&delayed));
 }

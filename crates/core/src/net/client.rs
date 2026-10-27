@@ -48,7 +48,7 @@ use std::collections::VecDeque;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::feel_readings::FeelReadings;
+use super::feel_readings::{FeelReadings, ShellEnd};
 use super::fixed_step_clock::SIMULATION_STEP_MS;
 use super::hull_prediction::{
     CorrectionCause, HOLD_TICKS, HeldPose, HostUpdate, HullPrediction, PredictedInput,
@@ -72,19 +72,18 @@ use crate::sim::math::{Point3, Vec2, angle_delta};
 use crate::sim::render_state::RenderState;
 use crate::sim::shooter_rewind::{MAX_REWIND_TICKS, present_share};
 use crate::sim::types::{
-    AmmoSelection, DamageCause, Driver, Match, MatchPhase, SimEvent, SimEventType, Team,
-    VehicleKind, Weapon,
+    AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, VehicleKind, Weapon,
 };
 use crate::sim::weapons::fire_interval;
 
 const RECONNECT_WINDOW_MS: f64 = 30_000.0;
-/// A shell impact this near a tank the viewer hurt (metres) is the hit: its hull's reach
-/// plus how far it moved in the longest rewind.
+/// A shell impact this near a tank the viewer hurt (metres) may be the hit: its hull's
+/// reach plus how far it moved in the longest rewind.
 const OWN_HIT_REACH: f64 = 6.0;
 /// Drawn hull poses kept for incoming players' shells, one a frame at most.
 const MAX_HULL_TRAIL: usize = 64;
-/// A shell that hit the viewer ended this close (metres) to the hull's centre: a direct
-/// hit at its hit box, or a rocket's blast nearby.
+/// A shell that hurt the viewer ended this close (metres) to the hull's centre: a direct
+/// hit at its hit box, or a rocket's blast nearby, which the feel readings tell apart.
 const INCOMING_SHELL_REACH: f64 = 6.0;
 const HEARTBEAT_MS: f64 = 1000.0;
 /// A socket that has not been welcomed, or has heard nothing, for this long is closed.
@@ -1011,6 +1010,10 @@ impl NetworkClient {
                         && self.ready_round == self.round_id
                         && !self.hidden
                     {
+                        let rendered = self.mirror.render(control.tank_id);
+                        if let Ok(state) = &rendered {
+                            self.feel.received(self.mirror.tick as f64, state);
+                        }
                         host.blast |= read_own_events(
                             &mut self.feel,
                             &extras.events,
@@ -1036,7 +1039,7 @@ impl NetworkClient {
                             );
                         }
                         let incoming = shell_hits(&extras.events, control.tank_id);
-                        let pushed_frame = self.mirror.render(control.tank_id).and_then(|state| {
+                        let pushed_frame = rendered.and_then(|state| {
                             self.timeline.push(
                                 state,
                                 self.mirror.tick,
@@ -1050,17 +1053,17 @@ impl NetworkClient {
                             break;
                         }
                         for (tick, at) in incoming {
-                            if let Some(path) =
-                                self.timeline
-                                    .shell_ending_near(tick, at, INCOMING_SHELL_REACH)
-                            {
-                                self.feel.incoming_hit(
-                                    tick,
-                                    path.id,
-                                    path.launch.rewind,
-                                    Vec2::new(path.x, path.z),
-                                );
-                            }
+                            let ends: Vec<ShellEnd> = self
+                                .timeline
+                                .shells_ending_near(tick, at, INCOMING_SHELL_REACH)
+                                .map(|(path, end)| ShellEnd {
+                                    shell: path.id,
+                                    origin: Vec2::new(path.x, path.z),
+                                    rewind: path.launch.rewind,
+                                    at: end,
+                                })
+                                .collect();
+                            self.feel.incoming_hit(tick, control.tank_id, &ends);
                         }
                         pushed = true;
                     }
@@ -1581,8 +1584,15 @@ impl NetworkClient {
         });
         let firing = input.fire && self.active_input();
         let display = self.display.as_ref().expect("filled above");
-        self.feel
-            .frame(now_ms, present, display_tick, firing, ready, display);
+        self.feel.frame(
+            now_ms,
+            present,
+            display_tick,
+            firing,
+            ready,
+            display,
+            &self.timeline.ended,
+        );
         // Own shots the prediction missed still show when the display reaches them.
         for event in &displayed {
             if event.kind == SimEventType::Shot && event.id == Some(viewer_id) {
@@ -1686,20 +1696,17 @@ fn shell_hits(events: &[TimedEvent], viewer_id: u32) -> Vec<(f64, Vec2)> {
             matches!(event.kind, SimEventType::Hurt | SimEventType::Death)
                 && event.id == Some(viewer_id)
                 && event.owner != Some(viewer_id)
-                && event.damage_source.is_some_and(|source| {
-                    matches!(
-                        source.cause,
-                        DamageCause::Standard
-                            | DamageCause::Spread
-                            | DamageCause::Rocket
-                            | DamageCause::Ricochet
-                            | DamageCause::Piercing
-                            | DamageCause::Tow
-                    )
-                })
+                && fired(event)
         })
         .map(|timed| (timed.tick, Vec2::new(timed.event.x, timed.event.z)))
         .collect()
+}
+
+/// Whether a hurt came from a fired round, not a mine, a drum or another blast.
+fn fired(event: &SimEvent) -> bool {
+    event
+        .damage_source
+        .is_some_and(|source| source.cause.fired())
 }
 
 /// Feeds the viewer's own shots and hits in one received frame to the feel readings, and
@@ -1725,12 +1732,13 @@ fn read_own_events(
             SimEventType::Hurt | SimEventType::Death
                 if event.owner == Some(viewer_id)
                     && event.id.is_some_and(|id| id != viewer_id)
-                    && event.team != viewer_team =>
+                    && event.team != viewer_team
+                    && fired(event) =>
             {
-                // The shell's impact on the hull it struck, rewound or not; a blast's
-                // splash has none.
+                // The shell impacts near the hull it hurt; the readings take the one on it,
+                // rewound or not.
                 let victim = Vec2::new(event.x, event.z);
-                let impact = events
+                let impacts: Vec<Vec2> = events
                     .iter()
                     .filter(|other| {
                         other.event.kind == SimEventType::Impact
@@ -1738,13 +1746,8 @@ fn read_own_events(
                     })
                     .map(|other| Vec2::new(other.event.x, other.event.z))
                     .filter(|at| crate::sim::math::distance(*at, victim) <= OWN_HIT_REACH)
-                    .min_by(|a, b| {
-                        crate::sim::math::distance(*a, victim)
-                            .total_cmp(&crate::sim::math::distance(*b, victim))
-                    });
-                if let Some(impact) = impact {
-                    feel.own_hit(*tick, event.id.expect("checked"), impact);
-                }
+                    .collect();
+                feel.own_hit(*tick, event.id.expect("checked"), &impacts);
             }
             SimEventType::Hurt if event.id == Some(viewer_id) => blast = true,
             SimEventType::Explosion => {

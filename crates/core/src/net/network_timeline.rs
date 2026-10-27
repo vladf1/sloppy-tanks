@@ -131,6 +131,8 @@ struct Shell {
     struck: Option<f64>,
     /// It struck the hull where the host flew past: it strikes it no more.
     missed: bool,
+    /// Its end has been drawn: a strike on the viewer's hull, or its path's end.
+    ended: bool,
     /// The host's effects at its bounces and end, shown when it is drawn there.
     events: Vec<TimedEvent>,
 }
@@ -151,6 +153,7 @@ impl Shell {
             forecast,
             struck: None,
             missed: false,
+            ended: false,
             events: Vec::new(),
         }
     }
@@ -257,6 +260,9 @@ pub struct NetworkTimeline {
     last_display: f64,
     /// Strikes on the viewer's hull the host never confirmed, for the statistics.
     pub phantom_strikes: u64,
+    /// The shells whose end the last read drew, by id and team, and where: their impact
+    /// shows there instead of the shell, for the feel readings.
+    pub ended: Vec<(u32, Team, Vec2)>,
 }
 
 fn at_tick(mut state: RenderState, tick: u64) -> RenderState {
@@ -371,19 +377,22 @@ impl NetworkTimeline {
         Ok(())
     }
 
-    /// The path of the shell that ended within a couple of ticks of `tick` nearest `point`,
-    /// within `reach` metres.
-    pub fn shell_ending_near(&self, tick: f64, point: Vec2, reach: f64) -> Option<&ShotPath> {
+    /// The paths of the shells that ended within a couple of ticks of `tick` within `reach`
+    /// metres of `point`, and where each ended.
+    pub fn shells_ending_near(
+        &self,
+        tick: f64,
+        point: Vec2,
+        reach: f64,
+    ) -> impl Iterator<Item = (&ShotPath, Vec2)> {
         self.paths
             .iter()
-            .filter(|displayed| (displayed.until - tick).abs() <= STRIKE_TICKS)
+            .filter(move |displayed| (displayed.until - tick).abs() <= STRIKE_TICKS)
             .map(|displayed| {
                 let at = displayed.path.at(displayed.until);
-                (&displayed.path, distance(Vec2::new(at.x, at.z), point))
+                (&displayed.path, Vec2::new(at.x, at.z))
             })
-            .filter(|(_, gap)| *gap <= reach)
-            .min_by(|a, b| a.1.total_cmp(&b.1))
-            .map(|(path, _)| path)
+            .filter(move |(_, end)| distance(*end, point) <= reach)
     }
 
     /// Received simulation still ahead of the display; negative while remote poses
@@ -438,8 +447,10 @@ impl NetworkTimeline {
         let newest = self.newest_tick as f64;
         let horizon = newest + MAX_EXTRAPOLATION_SECONDS * 1000.0 / SIMULATION_STEP_MS;
         output.shots.clear();
+        self.ended.clear();
         let paths = &self.paths;
         let strikes = &mut self.strikes;
+        let ended = &mut self.ended;
         let mut phantoms = 0;
         for shell in &mut self.shells {
             let id = shell.id;
@@ -469,11 +480,21 @@ impl NetworkTimeline {
             {
                 shell.struck = None;
                 shell.missed = true;
+                shell.ended = false;
                 phantoms += 1;
             }
-            let Some(leg) = leg_at(tick).filter(|leg| tick < leg.until) else {
+            let Some(leg) = leg_at(tick) else {
                 continue;
             };
+            if tick >= leg.until {
+                // Its path ended: its impact there shows now, not the shell.
+                if !shell.ended {
+                    shell.ended = true;
+                    let at = leg.path.at(leg.until);
+                    ended.push((id, shell.team, Vec2::new(at.x, at.z)));
+                }
+                continue;
+            }
             if shell.lead == 0.0 && tick >= horizon {
                 continue;
             }
@@ -513,6 +534,8 @@ impl NetworkTimeline {
                 }) {
                     // It reaches the viewer's hull on the viewer's clock.
                     shell.struck = Some(tick);
+                    shell.ended = true;
+                    ended.push((id, shell.team, Vec2::new(at.x, at.z)));
                     for strike in hull_strike(&leg.path, tick, Vec2::new(at.x, at.z)) {
                         events.push(strike.event.clone());
                         strikes.push_back(strike);

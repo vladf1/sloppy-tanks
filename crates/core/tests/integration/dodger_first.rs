@@ -29,6 +29,8 @@ struct Frame {
     display: f64,
     shots: Vec<RenderShot>,
     events: Vec<SimEvent>,
+    /// Shells whose end the frame drew instead of them, and where.
+    ended: Vec<(u32, Team, Vec2)>,
 }
 
 /// The viewer, at the origin facing +z.
@@ -135,6 +137,7 @@ fn play_as(
             display: timeline.display_tick(),
             shots: shown.shots.clone(),
             events,
+            ended: timeline.ended.clone(),
         });
     }
     (frames, timeline)
@@ -207,6 +210,18 @@ fn an_incoming_shell_meets_the_hull_as_the_present_reaches_the_hit() {
             .all(|frame| frame.shots.is_empty()),
         "gone once it struck"
     );
+    // The strike's frame reports it, on the hull, once: the frame before drew the shell
+    // up to a frame's flight short of it.
+    let ends: Vec<usize> = (0..frames.len())
+        .filter(|&index| !frames[index].ended.is_empty())
+        .collect();
+    assert_eq!(ends, [impacts[0]], "reported where it struck");
+    let (id, team, at) = strike.ended[0];
+    assert_eq!((id, team), (SHELL, Team::Red));
+    assert!(
+        at.x == 0.0 && (0.0..=hull_front()).contains(&at.z),
+        "struck at {at:?}"
+    );
     // The hit itself shows as soon as it arrives, before the display reaches it.
     let hurt = &frames[kinds(&frames, SimEventType::Hurt)[0]];
     assert!(hurt.display < hit, "hurt at display {}", hurt.display);
@@ -227,6 +242,14 @@ fn an_incoming_shell_meets_the_hull_as_the_present_reaches_the_hit() {
     assert!(gap > 2.5, "{gap} m short of the hull");
     let impact = &plain[kinds(&plain, SimEventType::Impact)[0]];
     assert!(impact.display >= hit && impact.present > hit + PRESENT_LEAD);
+    // Its end shows where the host's path ended, as the display reaches it.
+    let end = plain.iter().find(|frame| !frame.ended.is_empty()).unwrap();
+    assert!(
+        (end.ended[0].2.z - hull_front()).abs() < 0.01,
+        "{:?}",
+        end.ended
+    );
+    assert!(end.display >= hit && end.display < hit + 1.0);
 }
 
 #[test]
