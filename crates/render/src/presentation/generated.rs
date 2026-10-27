@@ -1,7 +1,8 @@
 //! Generated textures scenery names by key (`TextureSource::Generated`): the
 //! quarry soil, baked in Rust, and the signs and harbor labels, drawn by the
 //! browser's Canvas 2D (its fonts) from `effects_scenery::canvas_texture` and read
-//! back as an `ImageData`.
+//! back as an `ImageData` (natively by tiny-skia with the system's fonts,
+//! `generated/native.rs`).
 //!
 //! The soil takes about 0.6 s of Wasm, so the page claims it
 //! ([`GeneratedTextures::claim_bake`]) and bakes it in a worker running the engine's
@@ -73,7 +74,7 @@ impl SoilBake {
 #[derive(Default)]
 pub struct GeneratedTextures {
     /// Keys already supplied or baking (read by the browser adapter).
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "native")), allow(dead_code))]
     done: HashSet<&'static str>,
     soil: Option<SoilBake>,
     /// A bake the page runs off the main thread, awaiting [`Self::supply`].
@@ -125,7 +126,7 @@ impl GeneratedTextures {
     }
 
     /// The claimed key the page's pixels answer, once; `None` for a key not awaited.
-    #[cfg_attr(not(target_arch = "wasm32"), allow(dead_code))]
+    #[cfg_attr(not(any(target_arch = "wasm32", feature = "native")), allow(dead_code))]
     fn take_supplied(&mut self, key: &str) -> Option<&'static str> {
         if self.elsewhere == Some(key) {
             self.elsewhere.take()
@@ -135,14 +136,25 @@ impl GeneratedTextures {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
-mod browser {
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
+mod adapter {
     use super::*;
     use crate::gpu::{Renderer, image_data};
-    use sloppy_core::models::effects_scenery::{CanvasOp, CanvasTexture, canvas_texture};
+    use sloppy_core::models::effects_scenery::canvas_texture;
     use sloppy_core::models::node_textures;
     use sloppy_core::scene::{Node, TextureSource};
-    use wasm_bindgen::JsCast;
+
+    #[cfg(target_arch = "wasm32")]
+    use super::browser::draw_canvas;
+    #[cfg(not(target_arch = "wasm32"))]
+    use super::native::draw_canvas;
+
+    fn report(message: String) {
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::error_1(&message.into());
+        #[cfg(not(target_arch = "wasm32"))]
+        eprintln!("{message}");
+    }
 
     impl GeneratedTextures {
         /// Supply the canvas textures a scenery tree uses now, and start baking
@@ -160,9 +172,7 @@ mod browser {
                 } else if let Some(canvas) = canvas_texture(key) {
                     match draw_canvas(&canvas) {
                         Ok(image) => renderer.set_generated_texture(key, image),
-                        Err(error) => web_sys::console::error_1(
-                            &format!("canvas texture {key}: {error:?}").into(),
-                        ),
+                        Err(error) => report(format!("canvas texture {key}: {error:?}")),
                     }
                 }
             }
@@ -170,6 +180,7 @@ mod browser {
 
         /// Upload the pixels of a claimed bake (RGBA8 rows, top first). Returns
         /// whether the key was awaited; a stale result is dropped.
+        #[cfg(target_arch = "wasm32")]
         pub fn supply(
             &mut self,
             renderer: &mut Renderer,
@@ -196,6 +207,24 @@ mod browser {
             Ok(true)
         }
 
+        /// Upload the pixels of a claimed bake (RGBA8 rows, top first). Returns
+        /// whether the key was awaited; a stale result is dropped.
+        #[cfg(not(target_arch = "wasm32"))]
+        pub fn supply(
+            &mut self,
+            renderer: &mut Renderer,
+            key: &str,
+            rgba: &[u8],
+        ) -> Result<bool, String> {
+            let size = QUARRY_SOIL_SIZE as u32;
+            let image = image_data(size, size, rgba).map_err(|error| format!("{key}: {error}"))?;
+            let Some(key) = self.take_supplied(key) else {
+                return Ok(false);
+            };
+            renderer.set_generated_texture(key, image);
+            Ok(true)
+        }
+
         /// Bake one band of pending soil; uploads it once complete.
         pub fn step(&mut self, renderer: &mut Renderer, rows: usize) {
             if let Some(bake) = &mut self.soil
@@ -204,18 +233,24 @@ mod browser {
                 let size = QUARRY_SOIL_SIZE as u32;
                 match image_data(size, size, &pixels) {
                     Ok(image) => renderer.set_generated_texture(QUARRY_SOIL_TEXTURE, image),
-                    Err(error) => web_sys::console::error_1(
-                        &format!("{QUARRY_SOIL_TEXTURE}: {error:?}").into(),
-                    ),
+                    Err(error) => report(format!("{QUARRY_SOIL_TEXTURE}: {error:?}")),
                 }
                 self.soil = None;
             }
         }
     }
+}
+
+#[cfg(target_arch = "wasm32")]
+mod browser {
+    use sloppy_core::models::effects_scenery::{CanvasOp, CanvasTexture};
+    use wasm_bindgen::JsCast;
 
     /// Replay the Canvas 2D steps on a fresh, transparent `OffscreenCanvas` and
     /// read back its RGBA rows (top first, straight alpha).
-    fn draw_canvas(canvas: &CanvasTexture) -> Result<web_sys::ImageData, wasm_bindgen::JsValue> {
+    pub fn draw_canvas(
+        canvas: &CanvasTexture,
+    ) -> Result<web_sys::ImageData, wasm_bindgen::JsValue> {
         let surface = web_sys::OffscreenCanvas::new(canvas.width, canvas.height)?;
         let context: web_sys::OffscreenCanvasRenderingContext2d = surface
             .get_context("2d")?
@@ -273,6 +308,9 @@ mod browser {
         context.get_image_data(0.0, 0.0, canvas.width as f64, canvas.height as f64)
     }
 }
+
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+mod native;
 
 #[cfg(test)]
 mod tests {

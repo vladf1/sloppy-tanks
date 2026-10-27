@@ -15,7 +15,10 @@ impl ErrorSlot {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         if slot.is_none() {
+            #[cfg(target_arch = "wasm32")]
             web_sys::console::error_1(&message.clone().into());
+            #[cfg(not(target_arch = "wasm32"))]
+            eprintln!("{message}");
             *slot = Some(message);
         }
     }
@@ -32,6 +35,8 @@ impl ErrorSlot {
 /// tells an unavailable one from other failures by the prefix (`src/engine.ts`).
 pub const GRAPHICS_API: &str = if cfg!(feature = "webgl") {
     "WebGL"
-} else {
+} else if cfg!(target_arch = "wasm32") {
     "WebGPU"
+} else {
+    "Graphics"
 };

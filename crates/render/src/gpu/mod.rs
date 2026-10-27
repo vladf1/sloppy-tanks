@@ -54,10 +54,13 @@ use webgl as backend;
 use webgpu as backend;
 
 pub use crate::presentation::theme::Atmosphere;
+pub use backend::RenderTarget;
 pub use context::GRAPHICS_API;
 pub use inspect::InstanceState;
 pub use pools::PoolId;
-pub use textures::image_data;
+#[cfg(not(target_arch = "wasm32"))]
+pub use textures::{AssetFiles, set_asset_files};
+pub use textures::{ImageData, image_data};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -1016,11 +1019,11 @@ struct Scene<'a> {
 
 impl Renderer {
     /// Create the device and canvas context. `asset_base` prefixes `TextureSource::File`
-    /// paths (the page's `BASE_URL`). `msaa` multisamples the main view and the water
+    /// paths (the page's `BASE_URL`; natively, of the embedded files). `msaa` multisamples the main view and the water
     /// reflection; it is fixed for the renderer's life, since every pipeline is made
     /// for it. Fails when the build's graphics API is unavailable.
     pub async fn new(
-        canvas: web_sys::HtmlCanvasElement,
+        canvas: RenderTarget,
         asset_base: String,
         msaa: bool,
     ) -> Result<Renderer, String> {
@@ -1275,7 +1278,7 @@ impl Renderer {
 
     /// Supply pixels for `TextureSource::Generated(name)` (rows top to bottom;
     /// see [`image_data`]). Materials using it pick it up on the next frame.
-    pub fn set_generated_texture(&mut self, name: &'static str, image: web_sys::ImageData) {
+    pub fn set_generated_texture(&mut self, name: &'static str, image: ImageData) {
         self.textures.set_generated(name, image);
     }
 
@@ -1941,6 +1944,30 @@ impl Renderer {
 
     pub fn gpu_idle(&self) -> bool {
         self.frame.gpu_idle(&self.gpu)
+    }
+
+    /// Natively, show the frame `render` drew once `overlay` has drawn the window's
+    /// menus and HUD over it (with the device, the queue and the frame's view).
+    /// Without a drawn frame (menus between rounds) the overlay draws on `clear`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn present(
+        &mut self,
+        clear: wgpu::Color,
+        overlay: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView),
+    ) {
+        self.frame.present(&self.gpu, clear, overlay);
+    }
+
+    /// The window surface's texture format, which an overlay draws in.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn surface_format(&self) -> wgpu::TextureFormat {
+        self.gpu.canvas_format
+    }
+
+    /// The device and queue, for an overlay's own resources.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn device(&self) -> (&wgpu::Device, &wgpu::Queue) {
+        (&self.gpu.device, &self.gpu.queue)
     }
 
     /// Start the canvas's frame pacing afresh (`crate::quality`: WebKit keeps a lowered

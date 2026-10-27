@@ -21,6 +21,9 @@ webgl = ["sloppy-render/webgl"]
 # The development labs (`RenderLab`, `EffectsLab`) for tools/*-lab.html. Production
 # builds leave them out; `pnpm run wasm -- --labs` builds them.
 labs = []
+# `Game` and `NetGame` as plain Rust for the desktop shell (`crates/desktop`), drawing
+# with the renderer's native wgpu.
+native = ["sloppy-render/native"]
 
 [dependencies]
 sloppy-core.workspace = true

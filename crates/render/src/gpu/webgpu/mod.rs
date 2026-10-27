@@ -10,17 +10,21 @@ mod precompile;
 mod resources;
 mod textures;
 
-use std::cell::RefCell;
 use std::collections::VecDeque;
-use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, rc::Rc};
+#[cfg(not(target_arch = "wasm32"))]
+use std::{sync::Mutex, time::Instant};
 
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::closure::Closure;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::{JsCast, JsValue};
 use wgpu::util::DeviceExt;
 
-pub use context::{Canvas, Gpu};
+pub use context::{Canvas, Gpu, RenderTarget};
 pub use instance_store::InstanceStore;
 pub use pipelines::Pipelines;
 pub use resources::{MaterialBinding, PageBuffers};
@@ -102,6 +106,7 @@ struct GpuFrames {
     fresh: Option<f64>,
 }
 
+#[cfg(target_arch = "wasm32")]
 /// The completion callbacks of [`GpuFrames`]: one pair of closures serves every frame,
 /// each frame only chaining them onto its `onSubmittedWorkDone` promise. wgpu's own
 /// `on_submitted_work_done` spawns a task with a future and two new promise closures
@@ -115,6 +120,7 @@ struct FrameTracker {
     failed: Option<Closure<dyn FnMut(JsValue)>>,
 }
 
+#[cfg(target_arch = "wasm32")]
 impl FrameTracker {
     fn new() -> Self {
         let frames = Rc::new(RefCell::new(GpuFrames::default()));
@@ -144,8 +150,53 @@ impl FrameTracker {
             .as_ref()
             .map_or(0.0, web_sys::Performance::now)
     }
+
+    fn take_fresh(&self) -> Option<f64> {
+        self.frames.borrow_mut().fresh.take()
+    }
+
+    fn in_flight(&self) -> u32 {
+        self.frames.borrow().submitted.len() as u32
+    }
 }
 
+/// [`GpuFrames`] natively: wgpu runs each frame's completion callback from a device
+/// poll, which [`Frame::draw`] makes every frame.
+#[cfg(not(target_arch = "wasm32"))]
+struct FrameTracker {
+    frames: Arc<Mutex<GpuFrames>>,
+    start: Instant,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl FrameTracker {
+    fn new() -> Self {
+        Self {
+            frames: Arc::default(),
+            start: Instant::now(),
+        }
+    }
+
+    fn now_ms(&self) -> f64 {
+        self.start.elapsed().as_secs_f64() * 1000.0
+    }
+
+    fn lock(frames: &Mutex<GpuFrames>) -> std::sync::MutexGuard<'_, GpuFrames> {
+        frames
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn take_fresh(&self) -> Option<f64> {
+        Self::lock(&self.frames).fresh.take()
+    }
+
+    fn in_flight(&self) -> u32 {
+        Self::lock(&self.frames).submitted.len() as u32
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
 impl Drop for FrameTracker {
     /// Frames still on the GPU settle their promises after the tracker is gone, and a
     /// dropped closure would throw when they do: the two closures are left to them.
@@ -203,6 +254,9 @@ pub struct Frame {
     /// [`Frame::await_gpu`].
     gpu_idle: Arc<AtomicBool>,
     gpu_frames: FrameTracker,
+    /// Natively, the drawn window frame until [`Frame::present`] shows it.
+    #[cfg(not(target_arch = "wasm32"))]
+    output: Option<wgpu::SurfaceTexture>,
 }
 
 impl Frame {
@@ -305,6 +359,8 @@ impl Frame {
             shadow_base_capacity: INITIAL_SHADOW_BASES,
             gpu_idle: Arc::new(AtomicBool::new(true)),
             gpu_frames: FrameTracker::new(),
+            #[cfg(not(target_arch = "wasm32"))]
+            output: None,
         };
         frame.view_groups = frame.frame_groups(gpu, &frame.instance_records);
         frame
@@ -493,8 +549,13 @@ impl Frame {
             .on_submitted_work_done(move || idle.store(true, Ordering::Release));
     }
 
-    /// WebGPU runs wgpu's callbacks from the browser's event loop.
-    pub fn gpu_idle(&self, _gpu: &Gpu) -> bool {
+    /// WebGPU runs wgpu's callbacks from the browser's event loop; natively a poll
+    /// runs those due.
+    pub fn gpu_idle(&self, gpu: &Gpu) -> bool {
+        #[cfg(not(target_arch = "wasm32"))]
+        let _ = gpu.device.poll(wgpu::PollType::Poll);
+        #[cfg(target_arch = "wasm32")]
+        let _ = gpu;
         self.gpu_idle.load(Ordering::Acquire)
     }
 
@@ -510,17 +571,18 @@ impl Frame {
     /// The GPU time of the latest finished frame in milliseconds, once: `None` until a
     /// new sample arrives.
     pub fn take_gpu_frame_ms(&self) -> Option<f64> {
-        self.gpu_frames.frames.borrow_mut().fresh.take()
+        self.gpu_frames.take_fresh()
     }
 
     /// Canvas frames the GPU has not finished. Chrome holds animation frames back
     /// while the GPU is behind; WebKit lets them queue.
     pub fn frames_in_flight(&self) -> u32 {
-        self.gpu_frames.frames.borrow().submitted.len() as u32
+        self.gpu_frames.in_flight()
     }
 
     /// Count a canvas frame whose scene was submitted at `submitted` (ms) as in flight
     /// until the GPU finishes it, and then take its GPU time.
+    #[cfg(target_arch = "wasm32")]
     fn track_frame(&self, gpu: &Gpu, submitted: f64) {
         let tracker = &self.gpu_frames;
         let (Some(queue), Some(on_done), Some(on_failure)) =
@@ -532,6 +594,69 @@ impl Frame {
         let done: js_sys::Promise = queue.on_submitted_work_done().unchecked_into();
         // The promise `then` returns is dropped: nothing waits on it.
         let _ = done.then2(on_done, on_failure);
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    fn track_frame(&self, gpu: &Gpu, submitted: f64) {
+        let frames = self.gpu_frames.frames.clone();
+        let start = self.gpu_frames.start;
+        FrameTracker::lock(&frames).submitted.push_back(submitted);
+        gpu.queue.on_submitted_work_done(move || {
+            let mut frames = FrameTracker::lock(&frames);
+            if let Some(submitted) = frames.submitted.pop_front() {
+                frames.fresh = Some(start.elapsed().as_secs_f64() * 1000.0 - submitted);
+            }
+        });
+    }
+
+    /// Natively, show the frame [`Self::draw`] drew after `overlay` (the window's
+    /// menus and HUD) has drawn over it with the device, the queue and the frame's
+    /// view. Without a drawn frame (the menus between rounds) the overlay draws on
+    /// a window frame cleared to `clear`.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn present(
+        &mut self,
+        gpu: &Gpu,
+        clear: wgpu::Color,
+        overlay: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView),
+    ) {
+        let output = match self.output.take() {
+            Some(output) => output,
+            None => {
+                let _ = gpu.device.poll(wgpu::PollType::Poll);
+                let output = match self.canvas.surface.get_current_texture() {
+                    wgpu::CurrentSurfaceTexture::Success(texture)
+                    | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
+                    wgpu::CurrentSurfaceTexture::Outdated => {
+                        self.canvas
+                            .surface
+                            .configure(&gpu.device, &self.canvas.config);
+                        return;
+                    }
+                    _ => return,
+                };
+                let view = output.texture.create_view(&Default::default());
+                let mut encoder = gpu.device.create_command_encoder(&Default::default());
+                encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                    label: Some("blank window"),
+                    color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                        view: &view,
+                        depth_slice: None,
+                        resolve_target: None,
+                        ops: wgpu::Operations {
+                            load: wgpu::LoadOp::Clear(clear),
+                            store: wgpu::StoreOp::Store,
+                        },
+                    })],
+                    ..Default::default()
+                });
+                gpu.queue.submit([encoder.finish()]);
+                output
+            }
+        };
+        let view = output.texture.create_view(&Default::default());
+        overlay(&gpu.device, &gpu.queue, &view);
+        gpu.queue.present(output);
     }
 
     /// Draw a frame into the canvas. The scene and the canvas go in separate command
@@ -547,6 +672,15 @@ impl Frame {
         stats: &mut RenderStats,
     ) -> Result<(), String> {
         let device = &gpu.device;
+        // Natively a frame the shell never presented shows now, and the poll runs
+        // wgpu's completion callbacks.
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            if let Some(output) = self.output.take() {
+                gpu.queue.present(output);
+            }
+            let _ = device.poll(wgpu::PollType::Poll);
+        }
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scene"),
         });
@@ -571,7 +705,12 @@ impl Frame {
         });
         self.encode_output(&mut encoder, &view, scene.pipelines, stats);
         gpu.queue.submit([encoder.finish()]);
+        #[cfg(target_arch = "wasm32")]
         gpu.queue.present(output);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.output = Some(output);
+        }
         self.track_frame(gpu, submitted);
         Ok(())
     }

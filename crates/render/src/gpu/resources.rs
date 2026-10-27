@@ -569,9 +569,11 @@ impl MaterialStore {
             Effect::Custom { name, params } => effects.id_for(name, params).unwrap_or_else(|| {
                 if !self.warned.contains(name) {
                     self.warned.push(name);
-                    web_sys::console::warn_1(
-                        &format!("Unknown material effect `{name}`; drawing without it").into(),
-                    );
+                    let warning = format!("Unknown material effect `{name}`; drawing without it");
+                    #[cfg(target_arch = "wasm32")]
+                    web_sys::console::warn_1(&warning.into());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    eprintln!("{warning}");
                 }
                 0
             }),

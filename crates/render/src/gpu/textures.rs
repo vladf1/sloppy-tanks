@@ -6,13 +6,20 @@
 //! Three's `flipY` (unless the reference clears `flip_y`), so UV (0,0) is the image's
 //! bottom-left; mip levels are rendered from the level above. Until a texture
 //! arrives, materials sample a white placeholder.
+//!
+//! Natively the files are embedded in the binary ([`set_asset_files`]), decode on a
+//! thread of their own, and upload with `write_texture`.
 
-use std::cell::RefCell;
 use std::collections::HashMap;
-use std::rc::Rc;
+#[cfg(not(target_arch = "wasm32"))]
+use std::sync::{Arc, Mutex, OnceLock};
+#[cfg(target_arch = "wasm32")]
+use std::{cell::RefCell, rc::Rc};
 
 use sloppy_core::scene::{TextureRef, TextureSource, Wrap};
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::JsFuture;
 
 use super::backend::{Frame, Gpu, MaterialBinding, Sampler, Texture, TextureView, Uploader};
@@ -55,16 +62,114 @@ struct TextureEntry {
 
 /// Decoded pixels the backend uploads from.
 pub enum Pixels {
+    #[cfg(target_arch = "wasm32")]
     Bitmap(web_sys::ImageBitmap),
-    Image(web_sys::ImageData),
+    Image(ImageData),
 }
 
 impl Pixels {
     pub fn size(&self) -> (u32, u32) {
         match self {
+            #[cfg(target_arch = "wasm32")]
             Pixels::Bitmap(bitmap) => (bitmap.width(), bitmap.height()),
             Pixels::Image(image) => (image.width(), image.height()),
         }
+    }
+}
+
+/// RGBA8 pixels, rows top first: the browser's `ImageData`.
+#[cfg(target_arch = "wasm32")]
+pub type ImageData = web_sys::ImageData;
+
+/// RGBA8 pixels, rows top first, shared by every texture variant that uploads them.
+#[cfg(not(target_arch = "wasm32"))]
+#[derive(Clone)]
+pub struct ImageData {
+    width: u32,
+    height: u32,
+    pub pixels: Arc<[u8]>,
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+impl ImageData {
+    pub fn width(&self) -> u32 {
+        self.width
+    }
+
+    pub fn height(&self) -> u32 {
+        self.height
+    }
+}
+
+/// RGBA8 rows (top first) as the pixels a generated texture uploads from.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn image_data(width: u32, height: u32, rgba: &[u8]) -> Result<ImageData, String> {
+    if rgba.len() != width as usize * height as usize * 4 {
+        return Err(format!("{} bytes for a {width}x{height} image", rgba.len()));
+    }
+    Ok(ImageData {
+        width,
+        height,
+        pixels: rgba.into(),
+    })
+}
+
+/// The embedded file at a `TextureSource::File` path (relative to `public/`).
+#[cfg(not(target_arch = "wasm32"))]
+pub type AssetFiles = fn(&str) -> Option<&'static [u8]>;
+
+#[cfg(not(target_arch = "wasm32"))]
+static ASSET_FILES: OnceLock<AssetFiles> = OnceLock::new();
+
+/// Where native texture files come from: the binary that embeds them says so once,
+/// before the renderer loads any.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn set_asset_files(files: AssetFiles) {
+    let _ = ASSET_FILES.set(files);
+}
+
+/// The embedded file `path` decoded to RGBA8, rows top first.
+#[cfg(not(target_arch = "wasm32"))]
+fn decode_file(path: &str) -> Result<ImageData, String> {
+    let bytes = ASSET_FILES
+        .get()
+        .and_then(|files| files(path))
+        .ok_or_else(|| format!("{path}: not embedded"))?;
+    let image = image::load_from_memory(bytes).map_err(|error| format!("{path}: {error}"))?;
+    let image = image.into_rgba8();
+    let (width, height) = image.dimensions();
+    image_data(width, height, image.as_raw())
+}
+
+/// Finished loads, filled by the browser's promises or native decode threads.
+#[derive(Clone, Default)]
+struct LoadedQueue(
+    #[cfg(target_arch = "wasm32")] Rc<RefCell<Vec<Loaded>>>,
+    #[cfg(not(target_arch = "wasm32"))] Arc<Mutex<Vec<Loaded>>>,
+);
+
+impl LoadedQueue {
+    fn push(&self, loaded: Loaded) {
+        #[cfg(target_arch = "wasm32")]
+        self.0.borrow_mut().push(loaded);
+        #[cfg(not(target_arch = "wasm32"))]
+        self.0
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(loaded);
+    }
+
+    fn take(&self) -> Vec<Loaded> {
+        #[cfg(target_arch = "wasm32")]
+        let taken = std::mem::take(&mut *self.0.borrow_mut());
+        #[cfg(not(target_arch = "wasm32"))]
+        let taken = std::mem::take(
+            &mut *self
+                .0
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner()),
+        );
+        taken
     }
 }
 
@@ -72,6 +177,7 @@ impl Pixels {
 /// pixels are copied into JavaScript: the upload comes on a later frame, and an
 /// `ImageData` over Wasm memory would by then read whatever reused the freed bytes,
 /// or nothing once the memory grew and detached its buffer.
+#[cfg(target_arch = "wasm32")]
 pub fn image_data(width: u32, height: u32, rgba: &[u8]) -> Result<web_sys::ImageData, JsValue> {
     let pixels = js_sys::Uint8ClampedArray::from(rgba);
     web_sys::ImageData::new_with_js_u8_clamped_array_and_sh(&pixels, width, height)
@@ -84,6 +190,7 @@ struct Loaded {
 
 /// WebGL cannot flip an `ImageBitmap` while uploading it, so that build decodes
 /// files the reference flips upside down instead (`fetch_bitmap`).
+#[cfg(target_arch = "wasm32")]
 const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 
 // Texture files decode in an image element (`HTMLImageElement.decode`), which every
@@ -94,6 +201,7 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 // src/main.ts) and leaves them in a map by URL; the store takes each over once, so
 // every browser downloads a file once. A URL the page did not start, or whose early
 // decode failed, is decoded here.
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen(inline_js = "export function textureImage(url) {
   const images = globalThis.sloppyTextureImages;
   const early = images?.get(url);
@@ -110,6 +218,7 @@ extern "C" {
     fn texture_image(url: &str) -> js_sys::Promise;
 }
 
+#[cfg(target_arch = "wasm32")]
 async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, JsValue> {
     let window = web_sys::window().ok_or("no window")?;
     let image: web_sys::HtmlImageElement = JsFuture::from(texture_image(url)).await?.dyn_into()?;
@@ -126,8 +235,8 @@ async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, J
 
 pub struct TextureStore {
     entries: HashMap<TextureKey, TextureEntry>,
-    loaded: Rc<RefCell<Vec<Loaded>>>,
-    generated: HashMap<&'static str, web_sys::ImageData>,
+    loaded: LoadedQueue,
+    generated: HashMap<&'static str, ImageData>,
     /// Requested textures that a bake draws (`effects::bakes`), until it has.
     bakes: Vec<TextureKey>,
     samplers: HashMap<SamplerKey, Sampler>,
@@ -142,7 +251,7 @@ impl TextureStore {
     pub fn new(gpu: &Gpu, asset_base: String) -> Self {
         Self {
             entries: HashMap::new(),
-            loaded: Rc::default(),
+            loaded: LoadedQueue::default(),
             generated: HashMap::new(),
             bakes: Vec::new(),
             samplers: HashMap::new(),
@@ -168,6 +277,7 @@ impl TextureStore {
             },
         );
         match &key.source {
+            #[cfg(target_arch = "wasm32")]
             TextureSource::File(path) => {
                 let url = format!("{}{}", self.asset_base, path);
                 let loaded = self.loaded.clone();
@@ -176,7 +286,16 @@ impl TextureStore {
                         .await
                         .map(Pixels::Bitmap)
                         .map_err(|error| format!("{url}: {}", js_message(&error)));
-                    loaded.borrow_mut().push(Loaded { key, result });
+                    loaded.push(Loaded { key, result });
+                });
+            }
+            #[cfg(not(target_arch = "wasm32"))]
+            TextureSource::File(path) => {
+                let path = format!("{}{}", self.asset_base, path);
+                let loaded = self.loaded.clone();
+                std::thread::spawn(move || {
+                    let result = decode_file(&path).map(Pixels::Image);
+                    loaded.push(Loaded { key, result });
                 });
             }
             TextureSource::Generated(name) => {
@@ -192,7 +311,7 @@ impl TextureStore {
                     }
                 }
                 if let Some(image) = self.generated.get(name) {
-                    self.loaded.borrow_mut().push(Loaded {
+                    self.loaded.push(Loaded {
                         key,
                         result: Ok(Pixels::Image(image.clone())),
                     });
@@ -205,7 +324,7 @@ impl TextureStore {
 
     /// Provide (or replace) runtime-generated pixels, rows top to bottom like a
     /// canvas. Every variant of the key re-uploads on the next frame.
-    pub fn set_generated(&mut self, name: &'static str, image: web_sys::ImageData) {
+    pub fn set_generated(&mut self, name: &'static str, image: ImageData) {
         let keys: Vec<_> = self
             .entries
             .keys()
@@ -213,7 +332,7 @@ impl TextureStore {
             .cloned()
             .collect();
         for key in keys {
-            self.loaded.borrow_mut().push(Loaded {
+            self.loaded.push(Loaded {
                 key,
                 result: Ok(Pixels::Image(image.clone())),
             });
@@ -228,7 +347,7 @@ impl TextureStore {
         if !self.uploader.ready(gpu) {
             return false;
         }
-        let loaded: Vec<_> = self.loaded.borrow_mut().drain(..).collect();
+        let loaded = self.loaded.take();
         let changed = !loaded.is_empty();
         for Loaded { key, result } in loaded {
             let Some(entry) = self.entries.get_mut(&key) else {
@@ -237,7 +356,10 @@ impl TextureStore {
             entry.loading = false;
             match result {
                 Err(message) => {
+                    #[cfg(target_arch = "wasm32")]
                     web_sys::console::error_1(&format!("Texture failed: {message}").into());
+                    #[cfg(not(target_arch = "wasm32"))]
+                    eprintln!("Texture failed: {message}");
                     self.failures.push(message);
                 }
                 Ok(pixels) => {
@@ -248,12 +370,14 @@ impl TextureStore {
                         1
                     };
                     let flip_y = match &pixels {
+                        #[cfg(target_arch = "wasm32")]
                         Pixels::Bitmap(_) => key.flip_y && !FLIP_BITMAPS_ON_DECODE,
                         Pixels::Image(_) => key.flip_y,
                     };
                     // Replacing the entry's texture drops (destroys) the old one.
                     entry.texture = Some(self.uploader.upload(gpu, &key, &pixels, levels, flip_y));
                     // Both backends copy the pixels at once, so a bitmap can go now.
+                    #[cfg(target_arch = "wasm32")]
                     if let Pixels::Bitmap(bitmap) = pixels {
                         bitmap.close();
                     }
@@ -356,10 +480,17 @@ impl TextureStore {
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 pub fn js_message(value: &JsValue) -> String {
     value
         .dyn_ref::<js_sys::Error>()
         .map(|error| String::from(error.message()))
         .or_else(|| value.as_string())
         .unwrap_or_else(|| format!("{value:?}"))
+}
+
+/// Native errors are already messages.
+#[cfg(not(target_arch = "wasm32"))]
+fn js_message(message: &str) -> String {
+    message.to_owned()
 }

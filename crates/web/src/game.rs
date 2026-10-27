@@ -77,10 +77,11 @@ use crate::events::{PendingEvent, drain_events};
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
 use crate::hud::{HudHuman, Scoreboard, human_json};
 use crate::page::{
-    CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageView, aim, create_view, js_error,
-    now_ms, parse, prepare_result, queue_event,
+    CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError, PageView, aim, create_view,
+    js_error, now_ms, parse, prepare_result, queue_event,
 };
 use crate::stats::presentation_stats;
+use sloppy_render::gpu::RenderTarget;
 
 use glam::Vec2;
 use serde::{Deserialize, Serialize};
@@ -94,9 +95,9 @@ use sloppy_core::sim::level_rules::{single_player_rules, standard_rules};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::match_state::end_battle;
 use sloppy_core::sim::render_state::RenderTank;
-use sloppy_core::sim::round_recap::{
-    Metric, RecordStorage, StorageUnavailable, combat_feats, recap_stats, save_personal_bests,
-};
+use sloppy_core::sim::round_recap::{Metric, combat_feats, recap_stats, save_personal_bests};
+#[cfg(target_arch = "wasm32")]
+use sloppy_core::sim::round_recap::{RecordStorage, StorageUnavailable};
 use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::types::{DamageCause, DamageSource};
@@ -108,6 +109,7 @@ use sloppy_core::sim::{
 use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 mod debug;
@@ -216,14 +218,22 @@ struct GameConfig {
 
 /// Personal bests live in the page's `localStorage`; private browsing or a full
 /// quota only makes them session-only.
+#[cfg(target_arch = "wasm32")]
 struct BrowserStorage(Option<web_sys::Storage>);
 
+/// Natively, personal bests live in a JSON file of the same keys and values
+/// ([`crate::records`]).
+#[cfg(not(target_arch = "wasm32"))]
+use crate::records::FileStorage as BrowserStorage;
+
+#[cfg(target_arch = "wasm32")]
 impl BrowserStorage {
     fn local() -> Self {
         Self(web_sys::window().and_then(|window| window.local_storage().ok().flatten()))
     }
 }
 
+#[cfg(target_arch = "wasm32")]
 impl RecordStorage for BrowserStorage {
     fn get_item(&self, key: &str) -> Result<Option<String>, StorageUnavailable> {
         let storage = self.0.as_ref().ok_or(StorageUnavailable)?;
@@ -236,7 +246,7 @@ impl RecordStorage for BrowserStorage {
     }
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct Game {
     sim: Simulation,
     view: Presentation,
@@ -265,14 +275,12 @@ pub struct Game {
     last_result: Vec<f32>,
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl Game {
     /// Create the renderer on `canvas`, build the chosen arena and begin
     /// preparing it. Rejects when the renderer cannot start.
-    pub async fn create(
-        canvas: web_sys::HtmlCanvasElement,
-        config_json: &str,
-    ) -> Result<Game, JsValue> {
+    pub async fn create(canvas: RenderTarget, config_json: &str) -> Result<Game, PageError> {
+        #[cfg(target_arch = "wasm32")]
         console_error_panic_hook::set_once();
         let config: GameConfig = parse(config_json)?;
         let PageView {
@@ -335,7 +343,7 @@ impl Game {
     // ---------------------------------------------------------- lifecycle
 
     /// Apply Battle Setup choices; rebuilds the arena when they changed.
-    pub fn set_options(&mut self, options_json: &str) -> Result<bool, JsValue> {
+    pub fn set_options(&mut self, options_json: &str) -> Result<bool, PageError> {
         let options: GameOptions = parse(options_json)?;
         if options == self.options && game_choices(&self.sim) == options {
             return Ok(false);
@@ -350,7 +358,7 @@ impl Game {
 
     /// Compile up to `budget` pipelines;
     /// `[compiled, remaining, texturesPending, done, gpuPending]`.
-    pub fn prepare_step(&mut self, budget: u32) -> Result<Vec<f64>, JsValue> {
+    pub fn prepare_step(&mut self, budget: u32) -> Result<Vec<f64>, PageError> {
         if self.prepared {
             return Ok(PREPARED.to_vec());
         }
@@ -377,17 +385,30 @@ impl Game {
 
     /// The pixels of a claimed bake; `false` when the arena no longer waits for them.
     /// They reach the GPU from JS memory, never copied into this instance's heap.
+    #[cfg(target_arch = "wasm32")]
     pub fn supply_texture(
         &mut self,
         key: &str,
         rgba: &js_sys::Uint8Array,
-    ) -> Result<bool, JsValue> {
+    ) -> Result<bool, PageError> {
+        self.view.supply_texture(key, rgba).map_err(js_error)
+    }
+
+    /// The pixels of a claimed bake, baked on the shell's threads.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn supply_texture(&mut self, key: &str, rgba: &[u8]) -> Result<bool, PageError> {
         self.view.supply_texture(key, rgba).map_err(js_error)
     }
 
     /// Bake a claimed texture on the main thread after all (the worker failed).
     pub fn release_texture_bake(&mut self, key: &str) {
         self.view.release_texture_bake(key);
+    }
+
+    /// The renderer, for the desktop shell's overlay and presentation.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn renderer(&mut self) -> &mut sloppy_render::gpu::Renderer {
+        &mut self.view.renderer
     }
 
     /// Begin the round: GO, or PLAY AGAIN after results.
@@ -445,7 +466,7 @@ impl Game {
 
     /// One animation frame: steps the simulation at the fixed rate, routes
     /// events to presentation, and draws. See [`frame_slot`] for the result.
-    pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
+    pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, PageError> {
         let input = InputFrame::from_slice(input);
         // A paced frame runs at its smoothed time; skipped, it only takes the input.
         let in_flight = self.view.renderer.frames_in_flight();
@@ -691,7 +712,7 @@ impl Game {
 
     /// The tank the human respawns in, chosen from the respawn menu mid-round. The
     /// world is kept; Battle Setup's next `set_options` sees the same choice.
-    pub fn set_human_kind(&mut self, kind: &str) -> Result<(), JsValue> {
+    pub fn set_human_kind(&mut self, kind: &str) -> Result<(), PageError> {
         let kind: VehicleKind = serde_json::from_value(Value::from(kind))
             .map_err(|error| js_error(error.to_string()))?;
         if kind == VehicleKind::Humvee {
