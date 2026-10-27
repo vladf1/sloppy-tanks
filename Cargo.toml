@@ -96,6 +96,30 @@ opt-level = 3
 [profile.server.package.wide]
 opt-level = 3
 
+# The desktop app (crates/desktop, `pnpm run desktop`) downloads once, so all of it is
+# optimized for speed. Release's per-package overrides carry over and outrank `"*"`,
+# hence the physics crates are named again.
+[profile.desktop]
+inherits = "release"
+opt-level = 3
+
+[profile.desktop.package."*"]
+opt-level = 3
+
+[profile.desktop.package.rapier3d]
+opt-level = 3
+
+[profile.desktop.package.parry3d]
+opt-level = 3
+
+[profile.desktop.package.nalgebra]
+opt-level = 3
+
+[profile.desktop.package.simba]
+opt-level = 3
+
+[profile.desktop.package.wide]
+opt-level = 3
 
 # Debug builds keep only line tables: panic backtraces still name file and line, while
 # full debug info made Linux test builds link 2-3x slower and the target dir 4x larger.
