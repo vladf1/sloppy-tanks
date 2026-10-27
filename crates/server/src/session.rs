@@ -1,4 +1,4 @@
-//! Socket policy and the 50 ms timer around one [`RoomHost`].
+//! Socket policy and the room timer around one [`RoomHost`].
 //!
 //! A session is plain synchronous state: it never touches the network or a runtime
 //! timer. The server's room task feeds it socket events and calls
@@ -27,9 +27,10 @@ pub const JOIN_TIMEOUT_MS: u64 = 5000;
 /// Active rooms refresh their directory listing this often.
 pub const DIRECTORY_HEARTBEAT_MS: u64 = 20_000;
 pub const MAX_SOCKET_MESSAGES_PER_SECOND: u32 = 65;
-/// The room timer's cadence, core's [`fixed_step_clock::HOST_INTERVAL_MS`]: snapshots
-/// go out at 20 Hz while the simulation steps at 60 Hz inside each callback.
-pub const HOST_INTERVAL_MS: u64 = fixed_step_clock::HOST_INTERVAL_MS as u64;
+/// The room timer's cadence while no round runs, core's
+/// [`fixed_step_clock::HOST_INTERVAL_MS`] rounded up to whole milliseconds. A running
+/// round's timer instead fires as its next batch of ticks falls due.
+pub const HOST_INTERVAL_MS: u64 = fixed_step_clock::HOST_INTERVAL_MS.ceil() as u64;
 
 /// Message types counted by name; anything else counts as `other`, so clients cannot
 /// grow the table.
@@ -222,7 +223,6 @@ pub struct RoomSession<F: HostFactory, S: RoomSocket> {
     failure: Option<&'static str>,
     sockets: BTreeMap<ConnectionId, SocketEntry<S>>,
     deadline_ms: Option<u64>,
-    next_tick_ms: u64,
     last_listed_ms: u64,
     ended: bool,
     load: Load,
@@ -247,7 +247,6 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
             failure: None,
             sockets: BTreeMap::new(),
             deadline_ms: None,
-            next_tick_ms: 0,
             last_listed_ms: 0,
             ended: false,
             load: Load::default(),
@@ -406,7 +405,7 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
         })
     }
 
-    /// The 50 ms timer callback: join timeouts, one host advance, the listing heartbeat.
+    /// The timer callback: join timeouts, one host advance, the listing heartbeat.
     pub fn on_timer(&mut self) {
         self.deadline_ms = None;
         let now = (self.clock)();
@@ -564,17 +563,17 @@ impl<F: HostFactory, S: RoomSocket> RoomSession<F, S> {
     }
 
     fn schedule(&mut self) {
-        // Fixed deadlines keep snapshot batches at 20 Hz; chaining a full interval after
-        // each callback would add simulation time and timer slop to every gap clients
-        // must buffer.
         let now = (self.clock)();
-        // A missed deadline re-anchors one full interval out: an immediate callback would
-        // only resend the snapshot just broadcast. The host's fixed-step clock still owes
-        // the late ticks.
-        self.next_tick_ms += HOST_INTERVAL_MS;
-        if self.next_tick_ms <= now || self.next_tick_ms > now + HOST_INTERVAL_MS {
-            self.next_tick_ms = now + HOST_INTERVAL_MS;
-        }
-        self.deadline_ms = Some(self.next_tick_ms);
+        // A running round's timer fires as its next batch of ticks falls due, rounded up to
+        // the whole millisecond: each tick goes out right after it is due and every batch
+        // holds the same ticks, where a grid of the timer's own drifts against the ticks
+        // and sends some batches empty and others doubled. A host that fell behind gets
+        // its catch-up callback a millisecond later. Between rounds a plain interval does.
+        let wait = self
+            .host
+            .as_ref()
+            .and_then(|host| host.until_next_batch_ms(now))
+            .map_or(HOST_INTERVAL_MS, |wait| (wait.ceil() as u64).max(1));
+        self.deadline_ms = Some(now + wait);
     }
 }

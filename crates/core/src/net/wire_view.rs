@@ -9,7 +9,7 @@
 
 use serde_json::{Map, Value, json};
 
-use super::prediction::HullState;
+use super::prediction::{HullState, MovingBody};
 use super::replication::{
     BinaryMessage, DecodedFrame, StateMirror, TimedEvent, read_binary_message,
 };
@@ -134,6 +134,7 @@ pub fn path_json(entry: &PathEntry) -> Value {
         let launch = &path.launch;
         object.insert("team".into(), Value::from(launch.team.index()));
         object.insert("weapon".into(), Value::from(launch.weapon.as_str()));
+        object.insert("rewind".into(), Value::from(launch.rewind));
         for (key, value) in [
             ("y", launch.y),
             ("visualY", launch.visual_y),
@@ -250,6 +251,7 @@ impl WireView {
                     "ackTick": batch.ack_tick,
                     "ackArrival": batch.ack_arrival,
                     "hull": batch.hull.as_ref().map(HullState::to_json),
+                    "bodies": batch.bodies.iter().map(MovingBody::to_json).collect::<Vec<_>>(),
                     "snapshots": frames,
                 }))
             }

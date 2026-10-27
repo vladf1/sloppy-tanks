@@ -9,6 +9,7 @@ use rapier3d::prelude::{ColliderBuilder, Pose};
 use super::data::group;
 use super::math::{Point3, Vec2, hypot3};
 use super::physics::{interaction_groups, vector};
+use super::shooter_rewind::PastHull;
 use super::simulation::Simulation;
 use super::tank_dimensions::tank_hull;
 use super::types::{Shot, Tank, VehicleKind};
@@ -84,21 +85,32 @@ pub fn tank_contact_collider(kind: VehicleKind) -> ColliderBuilder {
         .restitution(0.0)
 }
 
-/// The tank's planar velocity over a tick that ends at `end`; zero for a zero-length tick.
+/// A hull's planar velocity over a tick from `previous` to `end`; zero for a zero-length
+/// tick.
 #[inline]
-pub(crate) fn sweep_velocity(tank: &Tank, end: Point3, frame_delta: f64) -> Vec2 {
+pub(crate) fn sweep_velocity(previous: Vec2, end: Point3, frame_delta: f64) -> Vec2 {
     if frame_delta > 0.0 {
         Vec2::new(
-            (end.x - tank.previous.x) / frame_delta,
-            (end.z - tank.previous.z) / frame_delta,
+            (end.x - previous.x) / frame_delta,
+            (end.z - previous.z) / frame_delta,
         )
     } else {
         Vec2::ZERO
     }
 }
 
-/// Sweep a shell against the hull, accounting for this tick's tank translation. Callers
-/// testing many shells may pass the live body's current translation read once.
+/// Where a hull is for a shell sweep.
+#[derive(Clone, Copy, Debug)]
+pub enum HullAt<'a> {
+    /// The live body.
+    Body,
+    /// The live body, its translation read once by a caller testing many shells.
+    Translation(Point3),
+    /// Where it was some ticks ago, for a shell that favors its shooter.
+    Past(&'a PastHull),
+}
+
+/// Sweep a shell against the hull, accounting for this tick's tank translation.
 pub fn tank_hit_time(
     simulation: &Simulation,
     shot: &ShotProbe,
@@ -106,13 +118,17 @@ pub fn tank_hit_time(
     limit: f64,
     elapsed: f64,
     frame_delta: f64,
-    translation: Option<Point3>,
+    hull: HullAt,
 ) -> Option<f64> {
     if !tank.alive || shot.ignored == Some(tank.id) {
         return None;
     }
-    let end = translation.unwrap_or_else(|| simulation.body_translation(tank.body));
-    let Vec2 { x: vx, z: vz } = sweep_velocity(tank, end, frame_delta);
+    let (previous, end) = match hull {
+        HullAt::Body => (tank.previous, simulation.body_translation(tank.body)),
+        HullAt::Translation(end) => (tank.previous, end),
+        HullAt::Past(past) => (past.previous, past.end),
+    };
+    let Vec2 { x: vx, z: vz } = sweep_velocity(previous, end, frame_delta);
     // Most lanes pass far from most hulls. If the ray's closest approach to the body within
     // the limit stays beyond the box's reach, Rapier could not report a hit either.
     let dx = end.x - vx * (frame_delta - elapsed) - shot.x;
@@ -133,7 +149,10 @@ pub fn tank_hit_time(
         return None;
     }
     let center = tank_hull(tank.kind).center;
-    let rotation = *simulation.world.bodies[tank.body].rotation();
+    let rotation = match hull {
+        HullAt::Past(past) => past.rotation,
+        _ => *simulation.world.bodies[tank.body].rotation(),
+    };
     // Live tanks rotate only around the vertical axis.
     let (ry, rw) = (rotation.y as f64, rotation.w as f64);
     let cos = 1.0 - 2.0 * ry * ry;

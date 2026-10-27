@@ -1,6 +1,6 @@
-//! Per-room server work for one 50 ms host interval: three fixed steps with the projectile
-//! path recording `MatchHost` does after each, then the scene capture, field diff and
-//! encoding it performs for each snapshot frame.
+//! Per-room server work for one host interval: its fixed steps (`BATCH_TICKS`) with the
+//! projectile path recording `MatchHost` does after each, then the scene capture, field
+//! diff and encoding it performs for each snapshot frame.
 //! `cargo run -p sloppy-core --release --example capture_benchmark -- [output.json]`
 //! seeds each standard map and both extra levels with one idle player, warms up 1200
 //! ticks, then times 400 intervals. Manual evidence, not a CI gate.
@@ -10,6 +10,7 @@ use std::path::PathBuf;
 use std::time::Instant;
 
 use serde_json::{Value, json};
+use sloppy_core::net::fixed_step_clock::BATCH_TICKS;
 use sloppy_core::net::multiplayer_simulation::{MultiplayerOptions, create_multiplayer_simulation};
 use sloppy_core::net::replication::StateStream;
 use sloppy_core::net::scene_codec::Scene;
@@ -19,7 +20,7 @@ use sloppy_core::sim::{PlayerAssignment, Team, VehicleKind};
 
 const WARMUP_TICKS: u64 = 1200;
 const INTERVALS: usize = 400;
-const STEPS_PER_INTERVAL: u64 = 3;
+const STEPS_PER_INTERVAL: u64 = BATCH_TICKS as u64;
 const SEED: f64 = 4242.0;
 const ROOMS: [(&str, MapId); 5] = [
     ("village", MapId::Village),

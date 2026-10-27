@@ -1,8 +1,12 @@
 //! The host's fixed-step clock (`src/net/fixed-step-clock.ts`).
 
-/// The host timer's interval: snapshots go out at 20 Hz.
-pub const HOST_INTERVAL_MS: f64 = 50.0;
 pub const SIMULATION_STEP_MS: f64 = 1000.0 / 60.0;
+/// Simulation ticks per snapshot batch. One sends every tick's state as soon as it is
+/// stepped (60 Hz): a longer interval adds to the playout buffer and to how long a tick
+/// waits before it goes out, which players feel as delay.
+pub const BATCH_TICKS: u32 = 1;
+/// The host timer's interval: one batch of ticks.
+pub const HOST_INTERVAL_MS: f64 = BATCH_TICKS as f64 * SIMULATION_STEP_MS;
 /// Most ticks one timer callback may run to catch up.
 pub const MAX_STEPS_PER_BATCH: u32 = 6;
 /// Owed time beyond this means the host cannot keep up: the room ends instead of
@@ -33,6 +37,15 @@ impl FixedStepClock {
     pub fn arrival_tick(&self, now_ms: f64) -> u64 {
         let owed = self.debt_ms + (now_ms - self.last_ms).max(0.0);
         self.tick + ((owed + CLOCK_EPSILON_MS) / SIMULATION_STEP_MS).floor() as u64 + 1
+    }
+
+    /// Milliseconds from `now_ms` until the next batch of [`BATCH_TICKS`] ticks is
+    /// due, so the host timer can fire as its ticks fall due instead of on a grid of its own:
+    /// a tick then goes out right after it is due, and every batch holds the same number of
+    /// ticks. Zero when they are already owed.
+    pub fn until_next_batch_ms(&self, now_ms: f64) -> f64 {
+        let owed = self.debt_ms + (now_ms - self.last_ms).max(0.0);
+        (HOST_INTERVAL_MS - owed).max(0.0)
     }
 
     /// Runs the ticks now due (at most [`MAX_STEPS_PER_BATCH`]), passing each new tick

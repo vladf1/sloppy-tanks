@@ -40,8 +40,10 @@ pub use super::room_list::RoomPhase;
 
 /// 2: projectiles as paths sent once; 3: binary `full` and `snapshot` messages with fields
 /// as differences; 4: input carries the tick it was predicted from, and snapshots the
-/// acknowledged input's ticks and the viewer's hull.
-pub const PROTOCOL_VERSION: u32 = 4;
+/// acknowledged input's ticks and the viewer's hull; 5: with the hull, the velocities of
+/// the bodies moving near it; 6: input carries the sender's view delay, and a shell's
+/// launch the ticks it rewinds the tanks it meets.
+pub const PROTOCOL_VERSION: u32 = 6;
 /// First byte of a binary baseline message.
 pub const FULL_MESSAGE: u8 = 1;
 /// First byte of a binary snapshot batch.

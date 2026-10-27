@@ -2,7 +2,8 @@
 //! sent once, rather than its position in every frame (Quake 3's missile trajectories).
 //!
 //! A [`ShotPath`] holds a shell's start tick, position and velocity, and the launch data
-//! that never changes (team, weapon, heights, a rocket's thrust). Clients evaluate it at
+//! that never changes (team, weapon, heights, a rocket's thrust, how far a player's shell
+//! rewinds the tanks it meets). Clients evaluate it at
 //! their display tick with [`ShotPath::at`]. The host's [`ShotPathRecorder`] follows every
 //! projectile sweep and starts a new path only when the drawn shell would stray more than
 //! [`PATH_TOLERANCE`] from the simulated one, or would point or move wrongly: at a bounce,
@@ -12,7 +13,8 @@
 //!
 //! On the wire ([`PathEntry::write_binary`]) a path is its shell id, its start tick back
 //! from the frame's in thousandths, and its position and velocity in millimetres; a launch
-//! adds the team, the weapon, a mask of the heights and thrust it has, and those values.
+//! adds the team, the weapon, the rewind in ticks, a mask of the heights and thrust it
+//! has, and those values.
 
 use super::json::{self, POSITION_SCALE};
 use super::scene_codec::{WEAPONS, index_of, read_index};
@@ -22,6 +24,7 @@ use crate::sim::data::STEP;
 use crate::sim::math::angle_delta;
 use crate::sim::projectiles::RocketThrust;
 use crate::sim::render_state::RenderShot;
+use crate::sim::shooter_rewind::MAX_REWIND_TICKS;
 use crate::sim::simulation::Simulation;
 use crate::sim::types::{Shot, Team, Weapon};
 
@@ -46,6 +49,9 @@ pub struct ShotLaunch {
     /// Render launch height.
     pub visual_y: Option<f64>,
     pub thrust: Option<RocketThrust>,
+    /// Ticks a player's shell rewinds the tanks it meets (`sim::shooter_rewind`); zero
+    /// for bots' shells and local play.
+    pub rewind: u32,
 }
 
 /// One leg of a shell's flight from `tick` (fractional) on, rounded as the wire sends it.
@@ -96,7 +102,14 @@ impl ShotPath {
     }
 
     /// The path a shell starting a sweep at `tick` would be drawn on, rounded for the wire.
-    fn starting(shot: &Shot, tick: f64, x: f64, z: f64, thrust: Option<RocketThrust>) -> Self {
+    fn starting(
+        shot: &Shot,
+        tick: f64,
+        x: f64,
+        z: f64,
+        thrust: Option<RocketThrust>,
+        rewind: u32,
+    ) -> Self {
         Self {
             id: shot.id,
             tick: json::position(tick),
@@ -113,6 +126,7 @@ impl ShotPath {
                     acceleration: json::position(thrust.acceleration),
                     top_speed: json::position(thrust.top_speed),
                 }),
+                rewind,
             },
         }
     }
@@ -306,6 +320,7 @@ impl ShotPath {
         let launch = &self.launch;
         put_varint(out, launch.team.index() as u64);
         put_varint(out, index_of(&WEAPONS, launch.weapon) as u64);
+        put_varint(out, u64::from(launch.rewind));
         let has = (u64::from(launch.y.is_some()) * HAS_Y)
             | (u64::from(launch.visual_y.is_some()) * HAS_VISUAL_Y)
             | (u64::from(launch.thrust.is_some()) * HAS_THRUST);
@@ -342,6 +357,10 @@ impl ShotPath {
             _ => return Err("team: Invalid choice".into()),
         };
         let weapon = read_index(reader, &WEAPONS).map_err(|error| format!("weapon: {error}"))?;
+        let rewind = reader.varint32()?;
+        if rewind > MAX_REWIND_TICKS {
+            return Err("rewind: Invalid number".into());
+        }
         let has = reader.varint()?;
         if has & !(HAS_Y | HAS_VISUAL_Y | HAS_THRUST) != 0 {
             return Err("Invalid projectile path".into());
@@ -373,6 +392,7 @@ impl ShotPath {
             y,
             visual_y,
             thrust,
+            rewind,
         };
         Ok(path)
     }
@@ -440,6 +460,7 @@ impl ShotPathRecorder {
             return;
         };
         let thrust = RocketThrust::of(simulation);
+        let rewind = simulation.shooter_rewind.as_ref();
         for sweep in moves.drain(..) {
             let shot = &sweep.shot;
             self.sweep(
@@ -448,6 +469,7 @@ impl ShotPathRecorder {
                 sweep.seconds,
                 sweep.offset,
                 (shot.weapon == Weapon::Rocket).then_some(thrust),
+                rewind.map_or(0, |rewind| rewind.shell_ticks(shot.id)),
             );
         }
         self.retire(&simulation.shots);
@@ -463,6 +485,7 @@ impl ShotPathRecorder {
         seconds: f64,
         offset: f64,
         thrust: Option<RocketThrust>,
+        rewind: u32,
     ) {
         if seconds <= 0.0 {
             return;
@@ -480,8 +503,9 @@ impl ShotPathRecorder {
                 if !strays(&followed.path, shot, start, end, start_x, start_z) {
                     return;
                 }
+                let launch = followed.path.launch;
                 let path =
-                    ShotPath::starting(shot, start, start_x, start_z, followed.path.launch.thrust);
+                    ShotPath::starting(shot, start, start_x, start_z, launch.thrust, launch.rewind);
                 followed.path = path;
                 self.entries.push(PathEntry::Change(path));
             }
@@ -489,7 +513,7 @@ impl ShotPathRecorder {
             // one would vanish mid-flight. A later sweep launches it once a path ends.
             Err(_) if self.followed.len() >= MAX_LIVE_PATHS => {}
             Err(index) => {
-                let path = ShotPath::starting(shot, start, start_x, start_z, thrust);
+                let path = ShotPath::starting(shot, start, start_x, start_z, thrust, rewind);
                 self.followed.insert(
                     index,
                     Followed {

@@ -26,7 +26,9 @@
 //!   firstPerson?, zoom?, hideReticle?, framesInFlight? }` (the view's part is
 //!   `page::create_view`'s). `server` is
 //!   the validated WebSocket origin; `latency`/`jitter`/`stall` are the development
-//!   transport-delay URL parameters (omit them in production).
+//!   transport-delay URL parameters (omit them in production); `dodge: "0"` draws
+//!   incoming shells on the display clock alone and `shooter: "0"` asks the host to
+//!   favor no shooter (development comparisons).
 //! - Actions (`take_actions`, in order): `{type: "open", socket, url}`, `{type: "send",
 //!   socket, text}` (close the socket instead when its `bufferedAmount` exceeds 16 KiB),
 //!   `{type: "close", socket}`, `{type: "saveSeat", token, roomEpoch}`, `{type:
@@ -61,6 +63,8 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use sloppy_core::net::client::{ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat};
 use sloppy_core::net::client_setup::pending_join;
+use sloppy_core::net::feel_readings::Samples;
+use sloppy_core::net::hull_prediction::CorrectionCause;
 use sloppy_core::net::protocol::{
     JoinChoice, RoomPhase, RoomSettings, is_room_code, read_player_kind, read_team,
 };
@@ -109,6 +113,10 @@ struct NetConfig {
     latency: Option<String>,
     jitter: Option<String>,
     stall: Option<String>,
+    /// Development switch: `"0"` draws incoming shells on the display clock alone.
+    dodge: Option<String>,
+    /// Development switch: `"0"` sends no view delay, so the host favors no shooter.
+    shooter: Option<String>,
 }
 
 impl NetConfig {
@@ -156,6 +164,9 @@ pub struct NetGame {
     graphics: Graphics,
     /// The last frame's result, which a frame skipped for the GPU hands back.
     last_result: Vec<f32>,
+    /// Main-thread milliseconds spent applying received messages (including deliveries of
+    /// the development delay) this page session, for the statistics.
+    receive_ms: f64,
 }
 
 #[wasm_bindgen]
@@ -184,6 +195,8 @@ impl NetGame {
             saved_seat: config.saved_seat(),
             delay: config.delay(),
             seed: seed as u32,
+            dodger_first: config.dodge.as_deref() != Some("0"),
+            shooter_first: config.shooter.as_deref() != Some("0"),
         });
         let mut game = NetGame {
             client,
@@ -200,6 +213,7 @@ impl NetGame {
             canvas,
             graphics,
             last_result: vec![0.0; net_frame_slot::LENGTH],
+            receive_ms: 0.0,
         };
         game.canvas.apply(&mut game.view);
         Ok(game)
@@ -244,7 +258,9 @@ impl NetGame {
     /// A binary frame (a baseline or snapshot batch), copied out of the page's
     /// `ArrayBuffer` in one call.
     pub fn socket_binary(&mut self, socket: u32, bytes: &[u8], now: f64) {
+        let start = now_ms();
         self.client.socket_binary(socket, bytes, now);
+        self.receive_ms += now_ms() - start;
     }
 
     pub fn socket_closed(&mut self, socket: u32, code: u16, now: f64) {
@@ -253,7 +269,9 @@ impl NetGame {
 
     /// Heartbeat, reconnect backoff and development delay; at least every 250 ms.
     pub fn poll(&mut self, now: f64) {
+        let start = now_ms();
         self.client.poll(now);
+        self.receive_ms += now_ms() - start;
     }
 
     /// Stop retrying and close the socket (`pagehide`).
@@ -457,7 +475,7 @@ impl NetGame {
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
         let input = InputFrame::from_slice(input);
         // The development delay delivers messages on this clock too.
-        self.client.poll(now);
+        self.poll(now);
         self.drain_client_notices();
         self.view.rig.zoom_by(input.zoom);
         if input.toggle_view {
@@ -619,9 +637,61 @@ impl NetGame {
                 "correctionP95M": network.correction_p95_m,
                 "inputStarts": network.input_starts,
                 "lateInputStarts": network.late_input_starts,
+                "correctionCauses": CorrectionCause::ALL
+                    .iter()
+                    .zip(network.correction_causes)
+                    .map(|(cause, (count, metres_per_second))| {
+                        (
+                            cause.as_str().to_string(),
+                            json!({ "count": count, "mPerS": metres_per_second }),
+                        )
+                    })
+                    .collect::<serde_json::Map<_, _>>(),
+                "receiveMs": self.receive_ms,
+                "corrections": network.corrections,
+                "confirmedSnapshots": network.confirmed_snapshots,
+                "phantomStrikes": network.phantom_strikes,
+            }),
+        );
+        let feel = &self.client.feel;
+        let own = &self.client.own_shots.stats;
+        stats.insert(
+            "feel".into(),
+            json!({
+                "viewDelayMs": summary(&feel.view_delay),
+                "fireToFlashMs": summary(&feel.fire_to_flash),
+                "fireToReportMs": summary(&feel.fire_to_report),
+                "unansweredPresses": feel.unanswered_presses,
+                "hitOffsetM": summary(&feel.hit_offset),
+                "incomingOffsetM": summary(&feel.incoming_offset),
+                "incomingBehindM": summary(&feel.incoming_behind),
+                "unseenIncoming": feel.unseen_incoming,
+                "ownShots": {
+                    "predicted": own.predicted,
+                    "confirmed": own.confirmed,
+                    "unconfirmedShells": own.unconfirmed_shells,
+                    "unpredicted": own.unpredicted,
+                    "phantomStrikes": own.phantom_strikes,
+                    "errorM": summary(&own.error),
+                },
             }),
         );
         Value::Object(stats).to_string()
+    }
+
+    /// Where the ground point `x`, `z` shows on the canvas, as `[x, y]` in normalized
+    /// device coordinates, or empty when it is off screen: for browser checks that aim.
+    pub fn debug_screen_point(&self, x: f64, z: f64) -> Vec<f32> {
+        let point = self
+            .view
+            .rig
+            .camera
+            .project(glam::Vec3::new(x as f32, 0.0, z as f32));
+        if point.z > 0.0 && point.z < 1.0 && point.x.abs() < 1.0 && point.y.abs() < 1.0 {
+            vec![point.x, point.y]
+        } else {
+            Vec::new()
+        }
     }
 
     /// What the browser checks read from `window.sloppyMultiplayer`.
@@ -658,6 +728,11 @@ impl NetGame {
                 "viewer": state.viewer(),
                 "tanks": tanks,
                 "shots": state.shots.len(),
+                "shotList": state
+                    .shots
+                    .iter()
+                    .map(|shot| json!({ "id": shot.id, "team": shot.team, "x": shot.x, "z": shot.z }))
+                    .collect::<Vec<Value>>(),
                 "mines": state.mines.len(),
                 "fragments": state.fragments.len(),
             })
@@ -838,4 +913,16 @@ impl NetGame {
         self.frame_index += 1;
         result
     }
+}
+
+/// A feel reading as the statistics show it: sample count, mean, median, 95th percentile
+/// and largest.
+fn summary(samples: &Samples) -> Value {
+    json!({
+        "count": samples.count,
+        "mean": samples.mean(),
+        "p50": samples.percentile(0.5),
+        "p95": samples.percentile(0.95),
+        "max": samples.largest,
+    })
 }

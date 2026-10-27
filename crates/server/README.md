@@ -4,7 +4,7 @@
 serves `/health`, `/rooms`, `/servers`, `/stats`, `/dashboard` (also at `/`) and the `/room/CODE` WebSocket
 on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 (`src/websocket/`). Each room is a Tokio task (`room_task.rs`) running a
-`RoomSession` (`session.rs`: socket limits, join timeout, the 50 ms timer) around
+`RoomSession` (`session.rs`: socket limits, join timeout, the room timer) around
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
 browser engine runs. Production and the dev site each run it on their own Vultr
 machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
@@ -323,8 +323,10 @@ start, only a direct loopback request without `X-Forwarded-For` (the update
 timer's) samples on demand; others get 503. Traffic figures count
 message bytes before compression (JSON text and binary state); `wire` figures are socket bytes
 after compression, including WebSocket frame and handshake bytes.
-`tickAvgMs`/`tickMaxMs` are the time spent in each 50 ms room timer callback; a
-`debtMs` that keeps rising means the room is falling behind real time.
+`tickAvgMs`/`tickMaxMs` are the time spent in each room timer callback, which
+fires as each simulation tick falls due while a round runs (60 a second; about
+every 17 ms between rounds); a `debtMs` that keeps rising means the room is
+falling behind real time.
 `rttP50Ms`/`rttMaxMs` are the median and highest of the room sockets' lowest TCP
 round trips,
 `retransmitPercent` the share of the window's data segments that were
@@ -340,7 +342,7 @@ counting global allocator.
 updates every second: CPU, the share of time the runtime's worker threads were
 busy, runtime lag percentiles, memory, traffic on the wire and before
 compression, players and rooms, messages per second by type in each direction,
-the slowest room tick against its 50 ms budget, player round trips and
+the slowest room tick against its 17 ms budget, player round trips and
 retransmits, one row per room (with its players' round trips, retransmits and
 input lapses), recent room events and host load, with charts of the last five
 minutes. Message types are

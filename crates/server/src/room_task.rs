@@ -1,5 +1,5 @@
 //! One Tokio task per room: it owns the [`RoomSession`] (and so the host), receives
-//! socket events and runs the session's timer on the 50 ms cadence.
+//! socket events and runs the session's timer when it is due.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicUsize, Ordering};

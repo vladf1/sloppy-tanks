@@ -42,10 +42,10 @@ use crate::socket::{self, Ending, RoomLink, SocketHandle};
 use crate::websocket::{self, Codec, Role, extension};
 use crate::wire::{ConnectionBytes, CountingIo, WireTotals};
 
-/// Live rooms per process. A busy room measured about 3–4 ms of each 50 ms tick on the
-/// one-vCPU VPS, so ten busy rooms use roughly two thirds of it, leaving headroom for
-/// bursts. Raise it with `MAX_ROOMS` on a larger host. Joining an existing room is never
-/// refused by this cap.
+/// Live rooms per process. A busy room measured about 3–4 ms of each 50 ms on the one-vCPU
+/// VPS when it sent 20 batches a second (sending every tick costs more), so ten busy rooms
+/// used roughly two thirds of it, leaving headroom for bursts. Raise it with `MAX_ROOMS` on
+/// a larger host. Joining an existing room is never refused by this cap.
 pub const DEFAULT_MAX_ROOMS: usize = 10;
 /// Concurrent sockets from one IP; covers a 32-bot traffic swarm sharing an egress address.
 pub const DEFAULT_MAX_SOCKETS_PER_IP: usize = 32;

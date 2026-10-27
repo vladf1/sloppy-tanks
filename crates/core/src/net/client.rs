@@ -43,30 +43,49 @@
 //!    page visibility to [`set_hidden`](NetworkClient::set_hidden), `pagehide` to
 //!    [`stop`](NetworkClient::stop).
 
+use std::collections::VecDeque;
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use super::hull_prediction::{HostUpdate, HullPrediction};
+use super::feel_readings::FeelReadings;
+use super::fixed_step_clock::SIMULATION_STEP_MS;
+use super::hull_prediction::{
+    CorrectionCause, HOLD_TICKS, HeldPose, HostUpdate, HullPrediction, PredictedInput,
+};
 use super::input_cadence::InputCadence;
 use super::json;
-use super::network_timeline::NetworkTimeline;
+use super::network_timeline::{Dodger, NetworkTimeline, TRAIL_TICKS};
+use super::own_shots::{Firing, OwnShots};
 use super::player_controls::{Ack, Action, Aim, ControlInput, MAX_QUEUED_ACTIONS, encode_input};
+use super::prediction::Moved;
 use super::protocol::{
     CONTENT_VERSION, Control, JoinChoice, Lobby, MAX_BATCH_FRAMES, MAX_ROOM_MS,
     MAX_SERVER_MESSAGE_BYTES, Message, PROTOCOL_VERSION, ROOM_IDLE_MS, RoomPhase, RoomSettings,
     client_message,
 };
-use super::replication::{BinaryMessage, StateMirror, read_binary_message};
+use super::replication::{BinaryMessage, StateMirror, TimedEvent, read_binary_message};
 use super::schema::{ReadResult, id, parse_record, string, text_length};
 use super::transport_delay::{DelaySettings, TransportDelay};
-use crate::sim::ammunition::step_ammo;
-use crate::sim::math::Vec2;
+use crate::sim::ammunition::{equipped_weapon_for, step_ammo};
+use crate::sim::math::{Point3, Vec2, angle_delta};
 use crate::sim::render_state::RenderState;
+use crate::sim::shooter_rewind::{MAX_REWIND_TICKS, present_share};
 use crate::sim::types::{
-    AmmoSelection, Driver, Match, MatchPhase, SimEvent, SimEventType, Team, Weapon,
+    AmmoSelection, DamageCause, Driver, Match, MatchPhase, SimEvent, SimEventType, Team,
+    VehicleKind, Weapon,
 };
+use crate::sim::weapons::fire_interval;
 
 const RECONNECT_WINDOW_MS: f64 = 30_000.0;
+/// A shell impact this near a tank the viewer hurt (metres) is the hit: its hull's reach
+/// plus how far it moved in the longest rewind.
+const OWN_HIT_REACH: f64 = 6.0;
+/// Drawn hull poses kept for incoming players' shells, one a frame at most.
+const MAX_HULL_TRAIL: usize = 64;
+/// A shell that hit the viewer ended this close (metres) to the hull's centre: a direct
+/// hit at its hit box, or a rocket's blast nearby.
+const INCOMING_SHELL_REACH: f64 = 6.0;
 const HEARTBEAT_MS: f64 = 1000.0;
 /// A socket that has not been welcomed, or has heard nothing, for this long is closed.
 const SILENCE_MS: f64 = 10_000.0;
@@ -74,10 +93,17 @@ const MAX_RETRY_MS: f64 = 5000.0;
 const FIRST_RETRY_MS: f64 = 500.0;
 /// A bot-driven seat asks for its tank back at most this often.
 const RESUME_RETRY_MS: f64 = 1000.0;
-/// A snapshot batch arriving this long after the previous one (three host intervals,
-/// so at least two batches were held up) counts as late in the network statistics.
+/// A snapshot batch arriving this long after the previous one counts as late in the
+/// network statistics: a stall players see, far past any batch interval (several batches
+/// were held up), and the same threshold whatever the send rate.
 const LATE_BATCH_MS: f64 = 150.0;
 const MAX_FRAME_SECONDS: f64 = 0.1;
+/// An explosion this close to the viewer's hull may have pushed it, metres; blast radii
+/// are a few metres.
+const BLAST_REACH: f64 = 8.0;
+/// A crate or piece of debris at rest this close to where the delayed display has it
+/// goes back to the display (metres).
+const HANDBACK_DISTANCE: f64 = 0.02;
 
 /// Why a connection stopped retrying. Each cause offers its own way back into a game.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -221,6 +247,13 @@ pub struct ClientConfig {
     pub delay: Option<DelaySettings>,
     /// Seeds the delay's jitter.
     pub seed: u32,
+    /// Draw shells coming at the viewer toward its present ("dodger first", the
+    /// default); off draws them on the display clock alone (`?dodge=0`).
+    pub dodger_first: bool,
+    /// The host judges this player's shells against the tanks where its screen showed
+    /// them ("shooter first", the default), and its own shells stay in the present; off
+    /// sends no view delay and eases own shells onto the display clock (`?shooter=0`).
+    pub shooter_first: bool,
 }
 
 /// The local controls for one frame, after the page resolved the camera and pointer.
@@ -291,11 +324,29 @@ pub struct NetworkStats {
     /// Acknowledged input changes, and those that reached the host after their tick.
     pub input_starts: u64,
     pub late_input_starts: u64,
+    /// Noticeable corrections by cause: count and metres per second of prediction, in
+    /// [`CorrectionCause::ALL`] order.
+    pub correction_causes: [(u64, f64); CorrectionCause::ALL.len()],
+    /// Of the snapshots counted in `corrections`, those that confirmed the prediction so
+    /// it ran on without a replay.
+    pub confirmed_snapshots: u64,
+    /// Enemy shells drawn striking the predicted hull that the host flew past instead.
+    pub phantom_strikes: u64,
 }
 
 struct Socket {
     id: u32,
     open: bool,
+}
+
+/// The viewer's gun as the newest snapshot has it, with the pending ammo choice.
+#[derive(Clone, Copy, Debug)]
+struct Gun {
+    kind: VehicleKind,
+    weapon: Weapon,
+    team: Team,
+    /// Seconds between shots.
+    interval: f64,
 }
 
 pub struct NetworkClient {
@@ -324,6 +375,8 @@ pub struct NetworkClient {
     // Game state (client.ts).
     mirror: StateMirror,
     timeline: NetworkTimeline,
+    /// The viewer's drawn hull over the last frames: predicted present, position, heading.
+    hull_trail: VecDeque<(f64, Vec2, f64)>,
     control: Option<Control>,
     display: Option<RenderState>,
     ready_round: u64,
@@ -353,8 +406,14 @@ pub struct NetworkClient {
     longest_batch_gap_ms: f64,
     applied_input: i64,
     prediction: HullPrediction,
+    /// The newest batch's hull and when it arrived, for prediction to restart from on the
+    /// next drawn frame: batches arriving together restart it once.
+    pending_hull: Option<(HostUpdate, f64)>,
     /// The newest received scene, refilled for prediction.
     prediction_scene: RenderState,
+    pub feel: FeelReadings,
+    /// The viewer's shots, drawn from the frame they are fired.
+    pub own_shots: OwnShots,
     actions: Vec<ClientAction>,
     notices: Vec<ClientNotice>,
 }
@@ -415,7 +474,11 @@ impl NetworkClient {
             longest_batch_gap_ms: 0.0,
             applied_input: 0,
             prediction: HullPrediction::default(),
+            pending_hull: None,
             prediction_scene: RenderState::default(),
+            feel: FeelReadings::default(),
+            own_shots: OwnShots::default(),
+            hull_trail: VecDeque::new(),
             actions: Vec::new(),
             notices: Vec::new(),
         }
@@ -484,6 +547,10 @@ impl NetworkClient {
     }
 
     pub fn stats(&self, now_ms: f64) -> NetworkStats {
+        let seconds = self.prediction.stats.seconds;
+        let per_second = |metres: f64| {
+            if seconds > 0.0 { metres / seconds } else { 0.0 }
+        };
         NetworkStats {
             rtt_ms: self.rtt_ms,
             received_updates: self.received_updates,
@@ -501,14 +568,16 @@ impl NetworkClient {
             corrections: self.prediction.stats.count,
             correction_total_m: self.prediction.stats.total,
             correction_max_m: self.prediction.stats.largest,
-            correction_m_per_s: if self.prediction.stats.seconds > 0.0 {
-                self.prediction.stats.total / self.prediction.stats.seconds
-            } else {
-                0.0
-            },
+            correction_m_per_s: per_second(self.prediction.stats.total),
             correction_p95_m: self.prediction.stats.p95(),
             input_starts: self.prediction.stats.changes,
             late_input_starts: self.prediction.stats.late_changes,
+            correction_causes: CorrectionCause::ALL.map(|cause| {
+                let tally = self.prediction.stats.cause(cause);
+                (tally.count, per_second(tally.total))
+            }),
+            confirmed_snapshots: self.prediction.stats.confirmed,
+            phantom_strikes: self.timeline.phantom_strikes,
         }
     }
 
@@ -759,6 +828,8 @@ impl NetworkClient {
                     self.notices.push(ClientNotice::ResetFeedback);
                 }
                 self.prediction.reset();
+                self.pending_hull = None;
+                self.own_shots.reset();
                 self.mirror.needs_full = true;
                 self.active = false;
                 self.control = None;
@@ -798,6 +869,8 @@ impl NetworkClient {
                 if lobby.round_id != self.round_id {
                     self.round_id = lobby.round_id;
                     self.prediction.reset();
+                    self.pending_hull = None;
+                    self.own_shots.reset();
                     self.observed_tick = 0;
                     self.mirror.needs_full = true;
                     self.active = false;
@@ -853,6 +926,7 @@ impl NetworkClient {
                 if changed {
                     self.clear_input();
                     self.prediction.clear();
+                    self.pending_hull = None;
                 }
                 let driver = next.driver;
                 self.control = Some(next);
@@ -885,6 +959,9 @@ impl NetworkClient {
                 self.requested_full = false;
                 self.clear_input();
                 self.prediction.clear();
+                self.pending_hull = None;
+                self.own_shots.reset();
+                self.feel.restart();
                 self.reset_display(now_ms)?;
                 if self.ready_round != self.round_id {
                     self.prepare(now_ms);
@@ -894,13 +971,18 @@ impl NetworkClient {
             }
             BinaryMessage::Snapshot(mut batch) => {
                 self.applied_input = i64::try_from(batch.ack).map_err(|_| "Invalid ack")?;
-                let host = HostUpdate {
-                    ack: Ack {
-                        input_seq: self.applied_input,
-                        applied_tick: batch.ack_tick,
-                        arrival_tick: batch.ack_arrival,
-                    },
+                let ack = Ack {
+                    input_seq: self.applied_input,
+                    applied_tick: batch.ack_tick,
+                    arrival_tick: batch.ack_arrival,
+                };
+                let mut host = HostUpdate {
                     hull: batch.hull,
+                    bodies: std::mem::take(&mut batch.bodies),
+                    blast: self
+                        .pending_hull
+                        .as_ref()
+                        .is_some_and(|(pending, _)| pending.blast),
                 };
                 self.last_snapshot_ms = now_ms;
                 if let Some(previous) = self.last_batch_ms.replace(now_ms) {
@@ -918,8 +1000,9 @@ impl NetworkClient {
                     return Ok(());
                 }
                 let mut pushed = false;
+                let gun = self.gun();
                 for _ in 0..batch.count {
-                    let Some(extras) = self.mirror.apply_snapshot(&mut batch) else {
+                    let Some(mut extras) = self.mirror.apply_snapshot(&mut batch) else {
                         self.request_full(now_ms);
                         break;
                     };
@@ -928,28 +1011,138 @@ impl NetworkClient {
                         && self.ready_round == self.round_id
                         && !self.hidden
                     {
+                        host.blast |= read_own_events(
+                            &mut self.feel,
+                            &extras.events,
+                            control.tank_id,
+                            self.display.as_ref(),
+                            host.hull.map(|hull| hull.position.planar()),
+                            now_ms,
+                        );
+                        if let Some(gun) = gun {
+                            for timed in &extras.events {
+                                if timed.event.kind == SimEventType::Shot
+                                    && timed.event.id == Some(control.tank_id)
+                                {
+                                    self.prediction.host_fired(timed.tick as u64, gun.interval);
+                                }
+                            }
+                            self.own_shots.claim(
+                                &mut extras.paths,
+                                &mut extras.events,
+                                gun.team,
+                                control.tank_id,
+                                &self.prediction,
+                            );
+                        }
+                        let incoming = shell_hits(&extras.events, control.tank_id);
                         let pushed_frame = self.mirror.render(control.tank_id).and_then(|state| {
-                            self.timeline
-                                .push(state, self.mirror.tick, extras.events, extras.paths)
+                            self.timeline.push(
+                                state,
+                                self.mirror.tick,
+                                extras.events,
+                                extras.paths,
+                                &self.prediction,
+                            )
                         });
                         if pushed_frame.is_err() {
                             self.request_full(now_ms);
                             break;
+                        }
+                        for (tick, at) in incoming {
+                            if let Some(path) =
+                                self.timeline
+                                    .shell_ending_near(tick, at, INCOMING_SHELL_REACH)
+                            {
+                                self.feel.incoming_hit(
+                                    tick,
+                                    path.id,
+                                    path.launch.rewind,
+                                    Vec2::new(path.x, path.z),
+                                );
+                            }
                         }
                         pushed = true;
                     }
                 }
                 if pushed {
                     self.timeline.arrive(self.last_snapshot_ms);
-                    self.predict_from(host, now_ms)?;
+                    self.prediction.acknowledge(&ack);
+                    self.pending_hull = Some((host, now_ms));
                 }
             }
         }
         Ok(())
     }
 
-    /// Restarts the own hull's prediction from the host's hull in a snapshot batch. A
-    /// bot-driven seat or another life's hull predicts nothing.
+    /// How many ticks the other tanks are drawn behind the predicted present, for the host
+    /// to rewind them by when it judges this player's shells; zero opts out.
+    fn view_ticks(&self, now_ms: f64) -> u32 {
+        let Some(present) = self
+            .prediction
+            .predicted_present(now_ms)
+            .filter(|_| self.config.shooter_first)
+        else {
+            return 0;
+        };
+        (present - self.timeline.display_tick()).round().max(0.0) as u32
+    }
+
+    /// The viewer's predicted hull, for drawing shells coming at it, after recording it in
+    /// the trail of its recent past.
+    fn dodger(&mut self, now_ms: f64) -> Option<Dodger> {
+        let present = self.prediction.predicted_present(now_ms)?;
+        let drawn = self.prediction.drawn(now_ms)?;
+        let control = self.control.as_ref()?;
+        let viewer = self.display.as_ref()?.viewer()?;
+        let position = drawn.position.planar();
+        self.hull_trail
+            .retain(|(tick, ..)| *tick > present - TRAIL_TICKS as f64 - 1.0);
+        if self
+            .hull_trail
+            .back()
+            .is_none_or(|(tick, ..)| *tick < present)
+        {
+            self.hull_trail
+                .push_back((present, position, drawn.heading));
+        }
+        self.hull_trail.retain_back(MAX_HULL_TRAIL);
+        let mut trail = [None; TRAIL_TICKS];
+        for (back, past) in trail.iter_mut().enumerate() {
+            let tick = present - back as f64;
+            *past = self
+                .hull_trail
+                .iter()
+                .min_by(|a, b| (a.0 - tick).abs().total_cmp(&(b.0 - tick).abs()))
+                .filter(|(at, ..)| (at - tick).abs() <= 0.5)
+                .map(|&(_, position, heading)| (position, heading));
+        }
+        Some(Dodger {
+            present,
+            position,
+            heading: drawn.heading,
+            kind: viewer.kind,
+            team: viewer.team,
+            tank_id: control.tank_id,
+            trail,
+        })
+    }
+
+    /// The viewer's gun as the newest snapshot has it.
+    fn gun(&self) -> Option<Gun> {
+        let viewer = self.display.as_ref()?.viewer()?;
+        let selected = self.pending_weapon.unwrap_or(viewer.selected_ammo);
+        let weapon = equipped_weapon_for(viewer.kind, &viewer.ammo, selected);
+        Some(Gun {
+            kind: viewer.kind,
+            weapon,
+            team: viewer.team,
+            interval: fire_interval(weapon, viewer.rapid, viewer.human, viewer.xp),
+        })
+    }
+
+    /// Restarts the own hull's prediction from the host's hull in a snapshot batch that
+    /// arrived at `now_ms`. A bot-driven seat or another life's hull predicts nothing.
     fn predict_from(&mut self, mut host: HostUpdate, now_ms: f64) -> ReadResult<()> {
         let Some(control) = &self.control else {
             return Ok(());
@@ -1274,18 +1467,63 @@ impl NetworkClient {
         {
             return None;
         }
-        // This frame's input drives the predicted hull before it is drawn, rounded as the
-        // host will read it.
-        let drive = if self.active_input() {
+        if let Some((host, arrived_ms)) = self.pending_hull.take()
+            && self.predict_from(host, arrived_ms).is_err()
+        {
+            self.receive_failure();
+            return None;
+        }
+        // This frame's input drives the predicted hull and gun before they are drawn,
+        // rounded as the host will read it.
+        let active = self.active_input();
+        let drive = if active {
             Vec2::new(json::value(input.move_x), json::value(input.move_z))
         } else {
             Vec2::ZERO
         };
-        self.prediction.advance(now_ms, drive);
+        let gun = self.gun();
+        let fired = self.prediction.advance(
+            now_ms,
+            PredictedInput {
+                drive,
+                fire: active && input.fire,
+            },
+            gun.map_or(0.0, |gun| gun.interval),
+        );
+        let mut flashes = Vec::new();
+        if let (Some(gun), Some(control)) = (gun, &self.control) {
+            for shot in fired {
+                // The host aims at the pointer's ground point from its own hull.
+                let aim = match input.aim_point {
+                    Some((x, z)) => (x - shot.position.x).atan2(z - shot.position.z),
+                    None => input.aim_angle,
+                };
+                let firing = Firing {
+                    tick: shot.tick,
+                    position: shot.position,
+                    aim,
+                    kind: gun.kind,
+                    weapon: gun.weapon,
+                    team: gun.team,
+                    tank_id: control.tank_id,
+                };
+                flashes.push((shot.tick, self.own_shots.fire(firing, &self.prediction)));
+            }
+        }
+        self.own_shots.recover(dt);
+        // Incoming shells are drawn toward the hull's present while it is predicted.
+        let dodger = if self.config.dodger_first {
+            self.dodger(now_ms)
+        } else {
+            None
+        };
         // The battle keeps playing behind the in-battle menu too. The timeline overwrites
         // the baseline or last frame in place.
         let display = self.display.get_or_insert_with(RenderState::default);
-        let displayed = self.timeline.read(now_ms, self.rtt_ms, dt, display);
+        let mut displayed = self
+            .timeline
+            .read(now_ms, self.rtt_ms, dt, display, dodger.as_ref());
+        let display_tick = self.timeline.display_tick();
         // The own hull is drawn where prediction has it while the displayed tank lives
         // the predicted life; deaths and respawns still wait for the display clock.
         if let Some(drawn) = self.prediction.drawn(now_ms) {
@@ -1299,10 +1537,64 @@ impl NetworkClient {
                 viewer.previous = Vec2::new(drawn.position.x, drawn.position.z);
                 viewer.velocity = drawn.velocity;
                 viewer.heading = drawn.heading;
+                viewer.recoil = self.own_shots.recoil;
             }
         }
+        // What the hull touches is drawn where the predicted world moves it.
+        let released = draw_held(
+            display,
+            &self.prediction.held(now_ms),
+            self.prediction.predicted_tick(),
+        );
+        for moved in released {
+            self.prediction.release(moved);
+        }
+        // Own shells settle where the host judges them: in the present while it rewinds the
+        // tanks they meet by the whole view delay, else on the display clock plus the
+        // rewind; they strike the enemy hulls as drawn, where it judges them.
+        let own_clock_present = self.prediction.present(now_ms).unwrap_or(display_tick);
+        let rewound = if self.config.shooter_first {
+            (own_clock_present - display_tick).clamp(0.0, f64::from(MAX_REWIND_TICKS))
+        } else {
+            0.0
+        };
+        let RenderState { shots, tanks, .. } = display;
+        let impacts = self.own_shots.draw(
+            own_clock_present,
+            display_tick + rewound,
+            self.mirror.tick as f64,
+            if self.config.shooter_first {
+                tanks
+            } else {
+                &[]
+            },
+            shots,
+        );
         let viewer_id = display.viewer_id;
         let viewer_team = display.viewer().map(|viewer| viewer.team);
+        let present = self.prediction.predicted_present(now_ms);
+        // The gun is ready if its newest known reload ends before a shot sent now arrives.
+        let ready = present.is_some_and(|present| {
+            display.viewer().is_some_and(|viewer| {
+                viewer.cooldown * 1000.0 <= (present - self.mirror.tick as f64) * SIMULATION_STEP_MS
+            })
+        });
+        let firing = input.fire && self.active_input();
+        let display = self.display.as_ref().expect("filled above");
+        self.feel
+            .frame(now_ms, present, display_tick, firing, ready, display);
+        // Own shots the prediction missed still show when the display reaches them.
+        for event in &displayed {
+            if event.kind == SimEventType::Shot && event.id == Some(viewer_id) {
+                self.feel.own_shot_flashed(display_tick, now_ms);
+                self.own_shots.recoil = 1.0;
+            }
+        }
+        displayed.extend(impacts);
+        for (tick, flash) in flashes {
+            self.feel.own_shot_flashed(tick as f64, now_ms);
+            displayed.push(flash);
+        }
         let events = displayed
             .into_iter()
             .map(|event| FrameEvent {
@@ -1369,6 +1661,7 @@ impl NetworkClient {
             },
             fire: input.fire,
             actions: self.pending.clone(),
+            view: self.view_ticks(now_ms),
         };
         if !self.cadence.due(&message, now_ms) {
             return;
@@ -1381,4 +1674,154 @@ impl NetworkClient {
             self.pending_weapon = None;
         }
     }
+}
+
+/// The ticks and places other tanks' shells hit the viewer `viewer_id` (hurt or killed it).
+fn shell_hits(events: &[TimedEvent], viewer_id: u32) -> Vec<(f64, Vec2)> {
+    events
+        .iter()
+        .filter(|timed| {
+            let event = &timed.event;
+            // The viewer's own rocket hurting it flew as an own shell.
+            matches!(event.kind, SimEventType::Hurt | SimEventType::Death)
+                && event.id == Some(viewer_id)
+                && event.owner != Some(viewer_id)
+                && event.damage_source.is_some_and(|source| {
+                    matches!(
+                        source.cause,
+                        DamageCause::Standard
+                            | DamageCause::Spread
+                            | DamageCause::Rocket
+                            | DamageCause::Ricochet
+                            | DamageCause::Piercing
+                            | DamageCause::Tow
+                    )
+                })
+        })
+        .map(|timed| (timed.tick, Vec2::new(timed.event.x, timed.event.z)))
+        .collect()
+}
+
+/// Feeds the viewer's own shots and hits in one received frame to the feel readings, and
+/// says whether the frame holds a blast near the viewer (at `hull`, when known) or a hit
+/// on it, which may have pushed its hull.
+fn read_own_events(
+    feel: &mut FeelReadings,
+    events: &[TimedEvent],
+    viewer_id: u32,
+    display: Option<&RenderState>,
+    hull: Option<Vec2>,
+    now_ms: f64,
+) -> bool {
+    let viewer_team = display
+        .and_then(RenderState::viewer)
+        .map(|viewer| viewer.team);
+    let mut blast = false;
+    for TimedEvent { tick, event, .. } in events {
+        match event.kind {
+            SimEventType::Shot if event.id == Some(viewer_id) => {
+                feel.own_shot_reported(*tick, now_ms);
+            }
+            SimEventType::Hurt | SimEventType::Death
+                if event.owner == Some(viewer_id)
+                    && event.id.is_some_and(|id| id != viewer_id)
+                    && event.team != viewer_team =>
+            {
+                // The shell's impact on the hull it struck, rewound or not; a blast's
+                // splash has none.
+                let victim = Vec2::new(event.x, event.z);
+                let impact = events
+                    .iter()
+                    .filter(|other| {
+                        other.event.kind == SimEventType::Impact
+                            && (other.tick - *tick).abs() <= 1.0
+                    })
+                    .map(|other| Vec2::new(other.event.x, other.event.z))
+                    .filter(|at| crate::sim::math::distance(*at, victim) <= OWN_HIT_REACH)
+                    .min_by(|a, b| {
+                        crate::sim::math::distance(*a, victim)
+                            .total_cmp(&crate::sim::math::distance(*b, victim))
+                    });
+                if let Some(impact) = impact {
+                    feel.own_hit(*tick, event.id.expect("checked"), impact);
+                }
+            }
+            SimEventType::Hurt if event.id == Some(viewer_id) => blast = true,
+            SimEventType::Explosion => {
+                blast |= hull.is_some_and(|hull| {
+                    crate::sim::math::distance(hull, Vec2::new(event.x, event.z)) < BLAST_REACH
+                });
+            }
+            _ => {}
+        }
+    }
+    blast
+}
+
+/// Draws the bodies the predicted hull holds where the predicted world has them, the
+/// newest predicted tick being `tick`: crates and debris outright, other tanks blended in
+/// by how near the viewer's drawn hull they are. Returns the crates and debris that came
+/// to rest where the delayed display has them, which go back to it without a jump.
+fn draw_held(display: &mut RenderState, held: &[HeldPose], tick: u64) -> Vec<Moved> {
+    let mut released = Vec::new();
+    let viewer = display.viewer().map(|viewer| viewer.position.planar());
+    for held in held {
+        let pose = &held.pose;
+        let settled = |drawn: Point3| {
+            tick > held.touched + HOLD_TICKS
+                && pose.resting
+                && crate::sim::math::distance(drawn.planar(), pose.position.planar())
+                    < HANDBACK_DISTANCE
+        };
+        match held.moved {
+            Moved::Tank(id) => {
+                let (Some(viewer), Some(tank)) = (
+                    viewer,
+                    display
+                        .tanks
+                        .iter_mut()
+                        .find(|tank| tank.id == id && tank.alive),
+                ) else {
+                    continue;
+                };
+                let share =
+                    present_share(crate::sim::math::distance(viewer, pose.position.planar()));
+                tank.position = tank.position.lerp(pose.position, share);
+                tank.heading += angle_delta(tank.heading, pose.heading) * share;
+                tank.velocity = tank.velocity.lerp(pose.velocity, share);
+                tank.previous = tank.position.planar();
+            }
+            Moved::Cover(id) => {
+                let Some(cover) = display
+                    .covers
+                    .iter_mut()
+                    .find(|cover| cover.id == id && cover.alive)
+                else {
+                    continue;
+                };
+                if settled(cover.position) {
+                    released.push(held.moved);
+                } else {
+                    cover.position = pose.position;
+                    cover.rotation = pose.rotation;
+                }
+            }
+            Moved::Fragment(id) => {
+                let Some(fragment) = display
+                    .fragments
+                    .iter_mut()
+                    .find(|fragment| fragment.id == id)
+                else {
+                    continue;
+                };
+                if settled(fragment.position) {
+                    released.push(held.moved);
+                } else {
+                    fragment.position = pose.position;
+                    fragment.rotation = pose.rotation;
+                }
+            }
+        }
+    }
+    released
 }

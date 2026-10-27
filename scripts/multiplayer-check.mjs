@@ -30,6 +30,9 @@ for (const [env, key] of [
 }
 /** The client refreshes unchanged input about once per second. */
 const IDLE_WINDOW_MS = 6500;
+/** How soon a changed input must go out: a frame or two, plus any message the dev delay's
+ * stalls (`SLOPPY_STALL`) hold back. */
+const PROMPT_MS = 150 + Number(process.env.SLOPPY_STALL ?? 0);
 const browser = await launchChrome();
 const errors = [],
   pages = [],
@@ -229,7 +232,7 @@ try {
   await alice.waitForTimeout(1200);
   await alice.keyboard.up("d");
   await bob.keyboard.up("a");
-  await alice.waitForTimeout(150);
+  await alice.waitForTimeout(PROMPT_MS);
   observations.after = await Promise.all(pages.map(state));
   observations.movingInputs = aliceFrames.inputs.length - moveStart;
   assert.ok(observations.movingInputs >= 8, "Held movement keeps the active input cadence");
@@ -246,12 +249,12 @@ try {
 
   const aimStart = aliceFrames.inputs.length;
   await alice.mouse.move(600, 260);
-  await alice.waitForTimeout(150);
+  await alice.waitForTimeout(PROMPT_MS);
   assert.ok(aliceFrames.inputs.length > aimStart, "Aim change wakes input sending");
   await alice.mouse.down();
   await alice.waitForTimeout(1500);
   await alice.mouse.up();
-  await alice.waitForTimeout(150);
+  await alice.waitForTimeout(PROMPT_MS);
   assert.ok(
     aliceFrames.inputs.slice(aimStart).filter((input) => input.fire).length >= 5,
     "Held fire is renewed before its lease expires",

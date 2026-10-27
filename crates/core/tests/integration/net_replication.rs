@@ -352,6 +352,7 @@ fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_
         y: Some(1.2),
         visual_y: Some(1.6),
         thrust: None,
+        rewind: 0,
     };
     let launch = PathEntry::Launch(path(900, 0.5, 0.0, 0.0, 30.0, 0.0, ricochet));
     assert!(apply_one(&mut mirror, &paths_frame(1, 3, &[launch])).is_some());
@@ -368,6 +369,7 @@ fn projectile_paths_apply_in_order_inherit_their_launch_and_a_bad_entry_rejects_
         y: None,
         visual_y: None,
         thrust: None,
+        rewind: 0,
     };
     let bounce = PathEntry::Change(path(900, 4.0, 1.75, 0.0, -30.0, 0.0, blank));
     let extras = apply_one(&mut mirror, &paths_frame(2, 6, &[bounce])).unwrap();

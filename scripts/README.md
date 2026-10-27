@@ -188,6 +188,20 @@ sliders for all three in a room, to feel the controls at a changing delay while 
 buffer and the share of frames that ran past the newest snapshot. Browser
 diagnostics exist only in dev builds.
 
+`node scripts/multiplayer-latency-matrix.mjs` measures how a room feels across those
+conditions (round trips of 0, 50, 100 and 200 ms, then 100 ms with jitter and with
+stalls; `SLOPPY_MATRIX_CONDITIONS` picks some). For each, two Chrome players join a
+room with Normal bots on `SLOPPY_MATRIX_MAP` (default village) and for
+`SLOPPY_MATRIX_SECONDS` (default 60) drive, aim at the nearest enemy as drawn and fire
+short bursts through the dev `controls` hook. It records both players' Stats for nerds
+feel and network readings and the server's wire bytes per player under
+`artifacts/performance/multiplayer/latency-matrix/<SLOPPY_MATRIX_LABEL>/`. It starts its
+own server on `SLOPPY_MATRIX_PORT` (default 8791), so run `pnpm run server:build` and
+Vite first and pass Vite's URL as `SLOPPY_URL`; `SLOPPY_MATRIX_SERVER=wss://1-2-3-4.nip.io`
+plays on that machine over the real network instead (the `rtt0` condition adds no delay),
+and `SLOPPY_MATRIX_REPEAT` runs each condition several times. Results vary with the bots'
+fight; compare labels by their sample counts and percentiles, not single runs.
+
 Those parameters delay messages inside the client, so TCP never loses anything, and
 Chrome DevTools' packet loss only affects WebRTC. For real loss below TCP on a Mac,
 `sudo scripts/network/lossy-network.sh on` drops 2% of the packets from the server
@@ -265,7 +279,7 @@ time on an otherwise idle machine, and report sample counts with outliers.
 | `node scripts/profile.mjs before` / `after`                                              | Matched runtime comparison with CPU profiles                                           |
 | `node scripts/frame-pacing-check.mjs`                                                    | First gameplay frame and seeded combat on every map, without discarding a warm-up      |
 | `pnpm run benchmark:loading -- <label>`                                                  | Cold-cache loading of a saved production build at 10 Mbps / 50 ms                      |
-| `cargo run --release -p sloppy-core --example capture_benchmark`                         | Multiplayer host physics, scene capture, diff and encoding per 50 ms room interval     |
+| `cargo run --release -p sloppy-core --example capture_benchmark`                         | Multiplayer host physics, scene capture, diff and encoding per room timer interval     |
 | `cargo run --release -p sloppy-server --example snapshot_bandwidth`                      | Room bytes raw and on the wire, deflate, decode and projectile share; state parity     |
 | `cargo run --release -p sloppy-core --example simulation_benchmark`                      | Headless seeded autoplay tick time on one map                                          |
 | `cargo run --release -p sloppy-core --example bot_skill`                                 | Per-role bot accuracy, damage, kills, stalls and hit response in bots-only matches     |

@@ -8,7 +8,7 @@ use super::bot_strategy::update_bot_goal;
 use super::combat_rules::COMBAT;
 use super::data::weapon;
 use super::difficulty::enemy_difficulty;
-use super::hitboxes::{ShotProbe, tank_hit_time};
+use super::hitboxes::{HullAt, ShotProbe, tank_hit_time};
 use super::humvee_tactics::{humvee_can_fire, humvee_holding_position, steady_humvee_shot};
 use super::math::{Vec2, angle_delta, distance};
 use super::simulation::Simulation;
@@ -46,8 +46,15 @@ pub fn friendly_blocks_shot(
         let mut nearest = range;
         let mut blocked = false;
         for candidate in &simulation.tanks {
-            if let Some(hit) = tank_hit_time(simulation, &probe, candidate, nearest, 0.0, 0.0, None)
-            {
+            if let Some(hit) = tank_hit_time(
+                simulation,
+                &probe,
+                candidate,
+                nearest,
+                0.0,
+                0.0,
+                HullAt::Body,
+            ) {
                 nearest = hit;
                 blocked = candidate.team == tank.team;
             }

@@ -17,7 +17,7 @@ use sloppy_core::sim::ammunition::AMMO_ORDER;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::combat_rules::MINE;
 use sloppy_core::sim::data::{STEP, vehicle, weapon};
-use sloppy_core::sim::hitboxes::{SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
+use sloppy_core::sim::hitboxes::{HullAt, SHELL_HIT_RADIUS, ShotProbe, tank_hit_time};
 use sloppy_core::sim::math::{Random, Vec2};
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_muzzle};
@@ -147,7 +147,8 @@ fn hit_boundaries_match_hull_bounds_plus_shell_radius_on_every_side_of_rotated_h
                             local_shell(&mut s, -5.0, offset, 600.0, 0.0);
                         }
                         let probe = ShotProbe::from(&s.shots.pop().unwrap());
-                        let hit = tank_hit_time(&s, &probe, &s.tanks[0], STEP, 0.0, 0.0, None);
+                        let hit =
+                            tank_hit_time(&s, &probe, &s.tanks[0], STEP, 0.0, 0.0, HullAt::Body);
                         assert_eq!(
                             hit.is_some(),
                             delta < 0.0,
@@ -258,7 +259,15 @@ fn the_hull_reach_bound_preserves_tangent_and_stationary_probes() {
                             for limit in [0.0, 0.1, 8.0] {
                                 let tank = &simulation.tanks[target];
                                 assert_eq!(
-                                    tank_hit_time(&simulation, &probe, tank, limit, 0.0, 0.0, None),
+                                    tank_hit_time(
+                                        &simulation,
+                                        &probe,
+                                        tank,
+                                        limit,
+                                        0.0,
+                                        0.0,
+                                        HullAt::Body
+                                    ),
                                     unbounded_hit_time(&simulation, &probe, tank, limit, 0.0, 0.0),
                                     "{kind:?} heading={heading} side={side} inset={inset} along={along} speed={speed} limit={limit}"
                                 );
@@ -341,7 +350,7 @@ fn the_hull_reach_bound_skips_only_lanes_that_rapier_would_also_miss() {
             let tank = &s.tanks[target];
             let expected = unbounded_hit_time(&s, &probe, tank, limit, elapsed, frame_delta);
             assert_eq!(
-                tank_hit_time(&s, &probe, tank, limit, elapsed, frame_delta, None),
+                tank_hit_time(&s, &probe, tank, limit, elapsed, frame_delta, HullAt::Body),
                 expected,
                 "{kind:?} sample {sample}"
             );

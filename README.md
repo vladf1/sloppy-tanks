@@ -195,7 +195,14 @@ the current match.
 `?debug`: click the bottom-right link or press **N**. Network rows show RTT, received update count/rate, update
 age, server tick and input sequence sent/acknowledged. A received update is one
 full-state message or snapshot batch; an input acknowledgement confirms the
-server processed an input sequence. Render includes GPU geometries and textures.
+server processed an input sequence. Feel rows show how far behind your own tank
+other tanks are drawn (view delay), how long a click takes to show its muzzle
+flash, how many of the shots drawn at once the server fired too and how close
+their shells were to the server's, how far the
+server's impact was from a tank you hit as your screen drew it (the server judges
+your shells where you saw the targets, up to 200 ms back), how far the shells that hit
+you were drawn from your tank just before they struck (enemy shells close in on your
+tank's present), and your tank's prediction corrections by cause. Render includes GPU geometries and textures.
 
 Single-player downloads no multiplayer page code and opens no game-server connection.
 Multiplayer loads its client and UI only on entry and does not run browser physics.
@@ -283,7 +290,11 @@ The dev build connects the **Multiplayer** tab to the dev directory, where the d
 multiplayer servers list themselves. They run on their own machines, each at its nip.io
 name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` redeploys those
 servers from the same checkout first (over SSH) so client and server versions match;
-production multiplayer is never affected.
+production multiplayer is never affected. Unlike production, the dev site keeps the
+development network tools: a room page takes `?latency=`, `?jitter=` and `?stall=`
+(milliseconds of simulated transport delay), `&latencySlider` shows sliders that change
+them mid-battle, and `?dodge=0` / `?shooter=0` turn off the fairness options for
+comparison.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.

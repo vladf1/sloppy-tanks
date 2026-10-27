@@ -18,7 +18,7 @@ use crate::tcp_path::TcpReading;
 use crate::websocket::{Codec, Event};
 use crate::wire::ConnectionBytes;
 
-/// Queued output after which a reader is too slow to follow 20 Hz snapshots; the socket
+/// Queued output after which a reader is too slow to follow the snapshots; the socket
 /// is closed with 4002. Counted like `ws`'s `bufferedAmount`: compressed frames not yet
 /// taken by the kernel plus messages not yet compressed. A final close frame may add
 /// at most one control frame beyond this budget.
