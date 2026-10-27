@@ -109,6 +109,8 @@ pub struct HumanState {
     pub rank_fire_rate: f64,
     pub rank_health: f64,
     pub rank_repair: f64,
+    /// Seconds out of combat before a ranked hull repairs itself.
+    pub repair_delay: f64,
     pub ammo: Vec<AmmoSlot>,
     pub mine_cooldown: f64,
     pub protection: f64,
