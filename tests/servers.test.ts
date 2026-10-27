@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DIRECTORY_URL, gameServer, serverMachine } from "../scripts/servers.mjs";
+import { DIRECTORY_URL, serverMachine } from "../scripts/servers.mjs";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -18,15 +18,11 @@ test("a machine with only a name made from its address is played and checked thr
 test("players use the first hostname while the scripts check by the one made from the address", () => {
   const server = serverMachine("production", {
     ip: "45.63.56.58",
-    hostnames: ["sloppy-tanks-server.fridman.me", "tanks.example.com", "{dashed-ip}.sslip.io"],
+    hostnames: ["play.example.com", "tanks.example.com", "{dashed-ip}.sslip.io"],
   });
-  assert.deepEqual(server.sites, [
-    "sloppy-tanks-server.fridman.me",
-    "tanks.example.com",
-    "45-63-56-58.sslip.io",
-  ]);
-  assert.deepEqual(server.dnsNames, ["sloppy-tanks-server.fridman.me", "tanks.example.com"]);
-  assert.equal(server.url, "wss://sloppy-tanks-server.fridman.me");
+  assert.deepEqual(server.sites, ["play.example.com", "tanks.example.com", "45-63-56-58.sslip.io"]);
+  assert.deepEqual(server.dnsNames, ["play.example.com", "tanks.example.com"]);
+  assert.equal(server.url, "wss://play.example.com");
   assert.equal(server.checkUrl, "https://45-63-56-58.sslip.io");
 });
 
@@ -47,14 +43,13 @@ test("a hostname with any placeholder but {dashed-ip} is refused", () => {
   assert.throws(() => serverMachine("dev", { ip: "45.63.56.58", hostnames: [] }), /no hostnames/);
 });
 
-test("the Pages build reads production's directory, and the traffic bots use its server", () => {
+test("the Pages build and the traffic bots read the server directory", () => {
   assert.equal(
     read("../.github/workflows/deploy.yml").match(/directory-url: (\S+)/)?.[1],
     DIRECTORY_URL,
   );
-  const { url } = gameServer(false);
   assert.equal(
-    read("../bots/wrangler.jsonc").match(/"SERVER_URL": "([^"]+)"/)?.[1],
-    url.replace(/^wss:/, "https:"),
+    read("../bots/wrangler.jsonc").match(/"DIRECTORY_URL": "([^"]+)"/)?.[1],
+    DIRECTORY_URL,
   );
 });

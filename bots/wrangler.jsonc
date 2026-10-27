@@ -6,7 +6,9 @@
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BotSwarm"] }],
   "observability": { "enabled": true },
   "vars": {
-    // The production game server (deploy/servers.json; a test keeps the two equal).
-    "SERVER_URL": "https://sloppy-tanks-server.fridman.me",
+    // The server directory (DIRECTORY_URL in scripts/servers.mjs; a test keeps the two
+    // equal) and the environment whose servers the bots play on.
+    "DIRECTORY_URL": "https://sloppy-tanks-directory.fridman.me",
+    "SERVER_ENVIRONMENT": "production",
   },
 }

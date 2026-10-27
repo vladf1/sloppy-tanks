@@ -2,7 +2,7 @@
   "production": [
     {
       "ip": "108.61.218.248",
-      "hostnames": ["sloppy-tanks-server.fridman.me", "{dashed-ip}.nip.io"]
+      "hostnames": ["{dashed-ip}.nip.io"]
     }
   ],
   "dev": [

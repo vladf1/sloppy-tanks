@@ -7,8 +7,8 @@ on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 `RoomSession` (`session.rs`: socket limits, join timeout, the 50 ms timer) around
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
 browser engine runs. Production and the dev site each run it on their own Vultr
-machine behind Caddy ([Deployment](#deployment)); production's is at
-`wss://sloppy-tanks-server.fridman.me`.
+machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
+the server directory (https://sloppy-tanks-directory.fridman.me) lists them.
 
 ```sh
 pnpm run server:dev        # build for this machine and listen on 127.0.0.1:8787
@@ -148,9 +148,8 @@ Caddy serves every hostname in the list and obtains a Let's Encrypt certificate 
 each. `{dashed-ip}` in a hostname stands for the machine's address with dashes, so
 `{dashed-ip}.nip.io` is its nip.io name (`45-63-56-58.nip.io` resolves to 45.63.56.58;
 sslip.io works the same way). Such a name needs no DNS record of ours, so a machine is
-usable as soon as it is provisioned; any other hostname, such as production's
-`sloppy-tanks-server.fridman.me` (a DNS-only A record at Cloudflare), needs its own record
-pointing at the machine. Players use the first hostname. The scripts reach a machine
+usable as soon as it is provisioned; any other hostname needs its own record pointing at
+the machine. Players use the first hostname. The scripts reach a machine
 over SSH by its ip and check its server through the first hostname made from
 `{dashed-ip}`, which reaches that machine whatever the other names' DNS says; a list
 without one is checked through its first hostname. The Pages workflow and the
@@ -377,8 +376,7 @@ counting global allocator.
 
 ### Dashboard
 
-`/dashboard` (https://sloppy-tanks-server.fridman.me/dashboard for production, the
-dev server's at its own address from `deploy/servers.json`, or
+`/dashboard` (on every server at its own address, linked from the directory's overview, or
 `http://127.0.0.1:8787/dashboard` locally) is a public, read-only page that
 updates every second: CPU, the share of time the runtime's worker threads were
 busy, runtime lag percentiles, memory, traffic on the wire and before

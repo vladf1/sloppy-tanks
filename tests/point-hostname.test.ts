@@ -3,20 +3,17 @@ import assert from "node:assert/strict";
 import { aRecord, cloudflareErrors, zoneFor } from "../scripts/point-hostname.mjs";
 
 test("a hostname belongs to the longest zone it ends with", () => {
-  assert.equal(
-    zoneFor("sloppy-tanks-server.fridman.me", ["example.com", "fridman.me"]),
-    "fridman.me",
-  );
+  assert.equal(zoneFor("play.example.com", ["example.com", "fridman.me"]), "example.com");
   assert.equal(
     zoneFor("a.tesla.fridman.me", ["fridman.me", "tesla.fridman.me"]),
     "tesla.fridman.me",
   );
-  assert.throws(() => zoneFor("sloppy-tanks-server.fridman.me", ["dman.me"]), /no zone/);
+  assert.throws(() => zoneFor("play.example.com", ["dman.me"]), /no zone/);
   assert.equal(zoneFor("fridman.me", ["fridman.me"]), "fridman.me");
 });
 
 test("only a single A record of that name is updated", () => {
-  const hostname = "sloppy-tanks-server.fridman.me";
+  const hostname = "play.example.com";
   const record = { id: "1", type: "A", name: hostname, content: "108.61.218.248" };
   const others = [
     { id: "2", type: "AAAA", name: hostname, content: "::1" },

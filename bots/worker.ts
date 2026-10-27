@@ -2,6 +2,7 @@ import { DurableObject } from "cloudflare:workers";
 import {
   BOT_NAME_PREFIX,
   BotPlayer,
+  MAPS,
   ROOM_SEATS,
   openSeats,
   randomRoomCode,
@@ -12,8 +13,21 @@ import { controlPage } from "./control-page";
 
 interface Env {
   SWARM: DurableObjectNamespace<BotSwarm>;
-  SERVER_URL: string;
+  /** The server directory, whose SERVER_ENVIRONMENT servers the bots play on. */
+  DIRECTORY_URL: string;
+  SERVER_ENVIRONMENT: string;
 }
+
+/** A game server as the directory lists it, with the room fields the bots read. */
+interface ListedServer {
+  url: string;
+  protocol: number;
+  contentVersion: string;
+  rooms: (RoomListingSummary & { mapMode: string })[];
+}
+
+const directoryList = (env: Env) =>
+  `${env.DIRECTORY_URL}/servers?environment=${env.SERVER_ENVIRONMENT}`;
 
 /** Durable Object location hints; each region runs at most one swarm object. */
 const REGIONS = ["wnam", "enam", "sam", "weur", "eeur", "apac", "oc", "afr", "me"] as const;
@@ -90,7 +104,10 @@ export default {
     try {
       if (url.pathname === "/api/status" && request.method === "GET") {
         const regions = await Promise.all(REGIONS.map((name) => swarm(env, name).status()));
-        return json({ server: env.SERVER_URL, regions: regions.filter((item) => item.running) });
+        return json({
+          server: directoryList(env),
+          regions: regions.filter((item) => item.running),
+        });
       }
       if (request.method !== "POST") {
         return json({ error: "Not found" }, 404);
@@ -130,6 +147,8 @@ export class BotSwarm extends DurableObject<Env> {
   private seats: Seat[] = [];
   private timer?: ReturnType<typeof setInterval>;
   private server?: ServerInfo;
+  /** The WebSocket address of the server the swarm plays on, from the directory. */
+  private serverUrl?: string;
   private colo?: string;
   private coloRequested = false;
   private lastMaintainMs = 0;
@@ -269,7 +288,18 @@ export class BotSwarm extends DurableObject<Env> {
       if (!idle.length) {
         return;
       }
-      this.server ??= await this.health();
+      // The swarm plays on one server, the directory's least busy when it picks, until that
+      // server leaves the list or refuses its version.
+      const servers = await this.listServers();
+      let server = servers.find((listed) => listed.url === this.serverUrl);
+      if (!this.server || !server) {
+        server = servers[0];
+        if (!server) {
+          throw new Error(`${directoryList(this.env)} lists no game server`);
+        }
+        this.serverUrl = server.url;
+        this.server = { version: server.protocol, contentVersion: server.contentVersion };
+      }
       for (const [room, until] of this.blocked) {
         if (now >= until) {
           this.blocked.delete(room);
@@ -304,7 +334,9 @@ export class BotSwarm extends DurableObject<Env> {
           pending.set(seat.room, (pending.get(seat.room) ?? 0) + 1);
         }
       }
-      const listed = await this.listRooms();
+      const listed: RoomListingSummary[] = server.rooms.filter((room) =>
+        MAPS.includes(room.mapMode),
+      );
       // Directory writes lag joins; count rooms our bots already sit in even before they appear.
       for (const seat of this.seats) {
         const room = seat.room;
@@ -348,18 +380,12 @@ export class BotSwarm extends DurableObject<Env> {
     }
   }
 
-  private async health(): Promise<ServerInfo> {
-    const response = await fetch(this.env.SERVER_URL + "/health");
-    const health = (await response.json()) as Record<string, unknown>;
-    return { version: Number(health.protocol), contentVersion: String(health.contentVersion) };
-  }
-
-  private async listRooms(): Promise<RoomListingSummary[]> {
-    const response = await fetch(this.env.SERVER_URL + "/rooms");
+  private async listServers(): Promise<ListedServer[]> {
+    const response = await fetch(directoryList(this.env));
     if (!response.ok) {
-      throw new Error(`Room directory ${response.status}: ${await response.text()}`);
+      throw new Error(`Server directory ${response.status}: ${await response.text()}`);
     }
-    return ((await response.json()) as { rooms: RoomListingSummary[] }).rooms;
+    return ((await response.json()) as { servers: ListedServer[] }).servers;
   }
 
   private joinRoom(seat: Seat, room: string, create: boolean): void {
@@ -370,7 +396,9 @@ export class BotSwarm extends DurableObject<Env> {
         // The signal stays bound to the upgraded socket, so the timeout must end with the handshake.
         const abort = new AbortController();
         const timeout = setTimeout(() => abort.abort(), CONNECT_TIMEOUT_MS);
-        const response = await fetch(this.env.SERVER_URL + "/room/" + room, {
+        // Workers open WebSockets through fetch, so the wss: address goes as https:.
+        const address = this.serverUrl!.replace(/^ws/, "http");
+        const response = await fetch(`${address}/room/${room}`, {
           headers: { Upgrade: "websocket" },
           signal: abort.signal,
         }).finally(() => clearTimeout(timeout));
