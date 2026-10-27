@@ -8,8 +8,4 @@ write_files:
       SERVER_ENVIRONMENT=production
       DIRECTORY_URL=https://sloppy-tanks-directory.fridman.me
 runcmd:
-  - [
-      bash,
-      -c,
-      "curl -fsSL --retry 5 https://raw.githubusercontent.com/vladf1/sloppy-tanks/main/deploy/server/bootstrap.sh | bash",
-    ]
+  - curl -fsSL --retry 5 https://raw.githubusercontent.com/vladf1/sloppy-tanks/main/deploy/server/bootstrap.sh | bash
