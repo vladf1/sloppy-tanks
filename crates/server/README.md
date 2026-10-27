@@ -230,8 +230,9 @@ connects to the machines. Fork pull requests build the image without pushing.
 
 ### On a machine
 
-`deploy/server/` holds the setup, which `server:provision` uploads with the
-machine's names written into the Caddyfile:
+`deploy/server/` holds the setup, which `bootstrap.sh` fetches at a new machine's first
+boot, or `server:provision` uploads with the machine's names written into the Caddyfile
+and its settings in `server.env`:
 
 - `provision.sh` installs Podman from Ubuntu's archive, the units and the updater,
   turns off SSH password login and allows only SSH, 80 and 443 through `ufw`. It is
@@ -307,8 +308,21 @@ lobby. Stop load tests before deploying.
 
 ### Machines
 
-To set up a machine, create an Ubuntu 26.04 or 26.10 x64 VPS with a public IPv4 address and
-your SSH key for root, put its address in `deploy/servers.json` and run
+To add a machine, deploy an Ubuntu x64 instance in Vultr with your SSH key and, as its
+startup script (cloud-init user data), `deploy/server/cloud-init/production.yaml` or
+`dev.yaml`, saved once in Vultr's Startup Scripts. At first boot the user data writes
+`/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`, optional
+`EXTRA_HOSTNAMES`) and runs `deploy/server/bootstrap.sh` from the repository's `main`.
+That serves the machine's own nip.io name, runs `provision.sh`, starts CI's
+`:production` image, and the server appears in the directory under its environment
+within a few minutes, with no SSH from here. Add its address to `deploy/servers.json`
+too if `deploy:dev` or the other `server:*` commands should reach it. A changed
+`deploy/server/` file reaches a machine through Vultr's Reinstall, which keeps the
+address and runs the startup script again (then `deploy:dev` on dev), or through
+`server:provision`.
+
+To set up a machine over SSH instead, create an Ubuntu 26.04 or 26.10 x64 VPS with a
+public IPv4 address and your SSH key for root, put its address in `deploy/servers.json` and run
 `pnpm run server:provision` (`--dev` for the dev site's). It installs everything,
 starts CI's `:production` image (on dev, `deploy:dev` then replaces it with the
 checkout's build), and waits until the server answers through Caddy at its nip.io
