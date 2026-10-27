@@ -13,6 +13,7 @@ use glam::{DVec2, DVec3, Quat, Vec3};
 use sloppy_core::geometry::math::smoothstep;
 use sloppy_core::models::{WreckVent, wreck_vents};
 use sloppy_core::sim::data::vehicle;
+use sloppy_core::sim::debris_cleanup::{DEBRIS_CLEANUP_SECONDS, WRECK_FIRE_DIE_DOWN_SECONDS};
 use sloppy_core::sim::render_state::RenderFragment;
 use sloppy_core::sim::{DeathStyle, RenderState, SimEvent, SimEventType, VehicleKind, WreckPart};
 
@@ -103,6 +104,11 @@ const FIRE_LIGHT_HEIGHT: f32 = 3.2;
 const FLAME_COLOR: [f32; 3] = [0.82, 0.78, 0.78];
 /// A cleared wreck's fire and smoke die away this fast (1/s).
 const CLEAR_RATE: f64 = 0.9;
+/// A hull's fire dies down at most this fast (1/s) when its cleanup comes early
+/// (the debris budget fading it): out within the first moments of its sink.
+const DIE_DOWN_RATE: f64 = 4.0;
+/// The smoke left once the fire has died down, thinning on until the hull is gone.
+const DIED_DOWN_SMOKE: f64 = 0.45;
 /// Oily black smoke at the fire, paling to grey as it climbs and spreads.
 const SOOT: u32 = 0x3b3734;
 const SOOT_HIGH: u32 = 0x8c8a88;
@@ -124,6 +130,9 @@ struct Burner {
     burnout: bool,
     /// 0 while the wreck stands; rises to 1 once the tank respawned.
     cleared: f64,
+    /// 1 while the hull has time left; falls to 0 as its cleanup nears, so the
+    /// fire is out before the hull sinks away.
+    fuel: f64,
     /// The hull and turret wreck pieces this fire follows, once found.
     hull: Option<u32>,
     turret: Option<u32>,
@@ -194,6 +203,7 @@ impl Default for Burner {
             seed: 0.0,
             burnout: false,
             cleared: 0.0,
+            fuel: 1.0,
             hull: None,
             turret: None,
             vents: &UNFOUND_VENTS,
@@ -293,12 +303,20 @@ impl WreckFires {
             // A fire burns as long as its hull lies there, and dies with it
             // rather than burning on over empty ground; a fire whose hull was
             // never found goes out when its tank respawns.
-            let standing = match burner.hull {
-                Some(hull) => state.fragments.iter().any(|fragment| fragment.id == hull),
+            let hull = burner
+                .hull
+                .map(|hull| state.fragments.iter().find(|fragment| fragment.id == hull));
+            let standing = match hull {
+                Some(hull) => hull.is_some(),
                 None => burner
                     .id
                     .is_none_or(|id| state.tanks.iter().any(|tank| tank.id == id && !tank.alive)),
             };
+            if let Some(Some(hull)) = hull {
+                let ahead = hull.life - DEBRIS_CLEANUP_SECONDS;
+                let fuel = smoothstep(ahead, 0.0, WRECK_FIRE_DIE_DOWN_SECONDS);
+                burner.fuel = fuel.max(burner.fuel - dt * DIE_DOWN_RATE);
+            }
             if !standing {
                 burner.cleared = (burner.cleared + dt * CLEAR_RATE).min(1.0);
             }
@@ -436,6 +454,7 @@ fn draw(
     let fire = settled
         * (1.0 - smoothstep(age, BURN_SECONDS * 0.55, BURN_SECONDS))
         * left
+        * burner.fuel
         * if burner.burnout { BURNOUT_FIRE } else { 1.0 };
     let flicker = 0.8
         + 0.2 * (time * 13.0 + burner.seed * 40.0).sin() * (time * 7.3 + burner.seed * 9.0).sin();
@@ -444,6 +463,7 @@ fn draw(
     let smoke = settled
         * (1.0 - smoothstep(age, SMOULDER_SECONDS * 0.55, SMOULDER_SECONDS))
         * left
+        * (DIED_DOWN_SMOKE + (1.0 - DIED_DOWN_SMOKE) * burner.fuel)
         * (0.55 + 0.45 * (1.0 - smoothstep(age, BURN_SECONDS * 0.6, BURN_SECONDS)));
     let base = burner.position;
     // Fire burns out of the hull's openings wherever they face; a hull on its
@@ -708,6 +728,7 @@ mod tests {
             wreck: Some(sloppy_core::sim::VehicleKind::default()),
             part: Some(WreckPart::Hull),
             created_at: Some(10.0),
+            life: 10.0,
             position: Point3::new(2.0, 0.6, 1.0),
             ..RenderFragment::default()
         });
@@ -751,5 +772,53 @@ mod tests {
             step(&mut fires, &state, &mut puffs);
         }
         assert_eq!(fires.burners[0].fire, 0.0, "a thrown wreck's fire goes out");
+    }
+
+    /// A wreck at rest with its hull piece, burning in full.
+    fn burning_hull(life: f64) -> (WreckFires, RenderState, PoolBuffer) {
+        let mut state = RenderState::default();
+        let mut death = SimEvent::at(SimEventType::Death, 0.0, 0.0);
+        death.id = Some(3);
+        let mut fires = WreckFires::default();
+        fires.event(&death, &mut CosmeticRandom::seeded(1));
+        state.fragments.push(RenderFragment {
+            id: 40,
+            wreck: Some(sloppy_core::sim::VehicleKind::default()),
+            part: Some(WreckPart::Hull),
+            created_at: Some(0.0),
+            life,
+            position: Point3::new(0.0, 0.6, 0.0),
+            ..RenderFragment::default()
+        });
+        let mut puffs = PoolBuffer::new(64);
+        for _ in 0..60 {
+            step(&mut fires, &state, &mut puffs);
+        }
+        assert!(fires.burners[0].fire > 0.3, "the hull at rest burns");
+        (fires, state, puffs)
+    }
+
+    #[test]
+    fn a_hulls_fire_dies_down_before_it_sinks_away() {
+        let (mut fires, mut state, mut puffs) = burning_hull(4.0);
+        let mut last = f64::MAX;
+        while state.fragments[0].life > DEBRIS_CLEANUP_SECONDS {
+            state.fragments[0].life -= 1.0 / 60.0;
+            step(&mut fires, &state, &mut puffs);
+            let fire = fires.burners[0].fuel;
+            assert!(fire <= last, "the fire only dies down");
+            last = fire;
+        }
+        // The hull is about to sink: its flames are out, and smoke still rises.
+        assert!(fires.burners[0].fire < 1e-3, "{}", fires.burners[0].fire);
+        assert!(!puffs.is_empty(), "the fire smoulders on");
+        // A hull the debris budget fades early still puts its fire out quickly.
+        let (mut fires, mut state, mut puffs) = burning_hull(2.8);
+        state.fragments[0].life = DEBRIS_CLEANUP_SECONDS;
+        for _ in 0..20 {
+            state.fragments[0].life -= 1.0 / 60.0;
+            step(&mut fires, &state, &mut puffs);
+        }
+        assert_eq!(fires.burners[0].fire, 0.0);
     }
 }
