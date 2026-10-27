@@ -1,7 +1,7 @@
 //! Client-side prediction of the viewer's own hull.
 //!
-//! The host sends the viewer its hull bit for bit ([`HullState`]) with every snapshot
-//! batch. [`TankPredictor`] keeps a small Rapier world (the ground, the arena's
+//! The host sends the viewer its hull ([`HullState`]: the position bit for bit, the rest in
+//! units far finer than prediction's tolerances) with every snapshot batch. [`TankPredictor`] keeps a small Rapier world (the ground, the arena's
 //! cover and the other tanks as the newest snapshot placed them) and drives one hull
 //! through the simulation's own drive model at the fixed step, so replaying the inputs
 //! the host has not applied yet reproduces what the host will compute. Everything else
@@ -15,8 +15,8 @@ use serde_json::{Value, json};
 
 use super::own_shots::{CoverCast, CoverHit, Struck};
 use super::scene_codec::{VEHICLE_KINDS, index_of};
-use super::schema::ReadResult;
-use super::wire::{WireReader, put_varint};
+use super::schema::{NUMBER_BOUND, ReadResult};
+use super::wire::{WireReader, put_signed, put_varint, units};
 use crate::sim::damage::tree_stump;
 use crate::sim::data::vehicle;
 use crate::sim::data::{STEP, group};
@@ -36,7 +36,7 @@ use crate::sim::wrecks::wreck_piece_box;
 /// Multiplayer always drives at the standard speed.
 const SPEED_SCALE: f64 = 1.0;
 
-/// The viewer's hull after one host tick, exactly as the host's physics holds it.
+/// The viewer's hull after one host tick, as the host's physics holds it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct HullState {
     pub tick: u64,
@@ -52,35 +52,60 @@ pub struct HullState {
     pub speed: f64,
 }
 
+/// The hull's wire units besides its position: a tenth of a millimetre per second, a
+/// ten-thousandth of a radian per second of spin, a tenth of a microradian of heading and
+/// a tenth of a millisecond of speed pickup, far inside the tolerances a prediction is
+/// confirmed within (centimetres per second, milliradians). The position stays Rapier's
+/// `f32` bit for bit: the ground contact a replay starts with moves a hull placed even a
+/// hundredth of a millimetre off by a millimetre within 200 ms.
+const HULL_VELOCITY_SCALE: f64 = 1e4;
+const HULL_SPIN_SCALE: f64 = 1e4;
+const HULL_HEADING_SCALE: f64 = 1e7;
+const HULL_SPEED_SCALE: f64 = 1e4;
+/// Moving bodies' velocity in millimetres per second and spin in milliradians per
+/// second: their poses replicate in millimetres and ten-thousandths, so finer velocities
+/// would not carry them on any better.
+const BODY_MOTION_SCALE: f64 = 1e3;
+
+fn put_fixed(out: &mut Vec<u8>, value: f64, scale: f64) {
+    put_signed(out, units(value, scale));
+}
+
+fn put_point(out: &mut Vec<u8>, point: Point3, scale: f64) {
+    for value in [point.x, point.y, point.z] {
+        put_fixed(out, value, scale);
+    }
+}
+
 fn put_f32s(out: &mut Vec<u8>, point: Point3) {
     for value in [point.x, point.y, point.z] {
         out.extend_from_slice(&(value as f32).to_le_bytes());
     }
 }
 
-fn finite(value: f64) -> ReadResult<f64> {
+fn read_f32(reader: &mut WireReader<'_>) -> ReadResult<f64> {
+    let value = f32::from_le_bytes(reader.bytes(4)?.try_into().expect("four bytes"));
     if value.is_finite() {
+        Ok(value as f64)
+    } else {
+        Err("Invalid hull number".into())
+    }
+}
+
+fn read_fixed(reader: &mut WireReader<'_>, scale: f64) -> ReadResult<f64> {
+    let value = reader.signed()? as f64 / scale;
+    if value.abs() <= NUMBER_BOUND {
         Ok(value)
     } else {
         Err("Invalid hull number".into())
     }
 }
 
-fn read_f32(reader: &mut WireReader<'_>) -> ReadResult<f64> {
-    let bytes = reader.bytes(4)?;
-    finite(f32::from_le_bytes(bytes.try_into().expect("four bytes")) as f64)
-}
-
-fn read_f64(reader: &mut WireReader<'_>) -> ReadResult<f64> {
-    let bytes = reader.bytes(8)?;
-    finite(f64::from_le_bytes(bytes.try_into().expect("eight bytes")))
-}
-
-fn read_point(reader: &mut WireReader<'_>) -> ReadResult<Point3> {
+fn read_point(reader: &mut WireReader<'_>, scale: f64) -> ReadResult<Point3> {
     Ok(Point3::new(
-        read_f32(reader)?,
-        read_f32(reader)?,
-        read_f32(reader)?,
+        read_fixed(reader, scale)?,
+        read_fixed(reader, scale)?,
+        read_fixed(reader, scale)?,
     ))
 }
 
@@ -104,17 +129,17 @@ impl HullState {
         })
     }
 
-    /// The wire form: the physics values bit for bit, as Rapier's `f32` and the drive
-    /// model's `f64`, little-endian.
+    /// The wire form: tick, life and kind, the position as little-endian `f32`, then the
+    /// rest as signed whole units (`HULL_*_SCALE`).
     pub fn write(&self, out: &mut Vec<u8>) {
         put_varint(out, self.tick);
         put_varint(out, u64::from(self.life));
         out.push(index_of(&VEHICLE_KINDS, self.kind) as u8);
         put_f32s(out, self.position);
-        put_f32s(out, self.velocity);
-        out.extend_from_slice(&(self.spin as f32).to_le_bytes());
-        out.extend_from_slice(&self.heading.to_le_bytes());
-        out.extend_from_slice(&self.speed.to_le_bytes());
+        put_point(out, self.velocity, HULL_VELOCITY_SCALE);
+        put_fixed(out, self.spin, HULL_SPIN_SCALE);
+        put_fixed(out, self.heading, HULL_HEADING_SCALE);
+        put_fixed(out, self.speed, HULL_SPEED_SCALE);
     }
 
     pub fn read(reader: &mut WireReader<'_>) -> ReadResult<Self> {
@@ -128,11 +153,11 @@ impl HullState {
             tick,
             life,
             kind,
-            position: read_point(reader)?,
-            velocity: read_point(reader)?,
-            spin: read_f32(reader)?,
-            heading: read_f64(reader)?,
-            speed: read_f64(reader)?,
+            position: Point3::new(read_f32(reader)?, read_f32(reader)?, read_f32(reader)?),
+            velocity: read_point(reader, HULL_VELOCITY_SCALE)?,
+            spin: read_fixed(reader, HULL_SPIN_SCALE)?,
+            heading: read_fixed(reader, HULL_HEADING_SCALE)?,
+            speed: read_fixed(reader, HULL_SPEED_SCALE)?,
         })
     }
 
@@ -236,15 +261,16 @@ impl MovingBody {
         }
     }
 
-    /// The wire form: kind, id, then velocity and spin as Rapier's `f32`.
+    /// The wire form: kind, id, then velocity and spin as signed whole units
+    /// (`BODY_MOTION_SCALE`).
     pub fn write(&self, out: &mut Vec<u8>) {
         out.push(match self.kind {
             BodyKind::Cover => 0,
             BodyKind::Fragment => 1,
         });
         put_varint(out, u64::from(self.id));
-        put_f32s(out, self.velocity);
-        put_f32s(out, self.spin);
+        put_point(out, self.velocity, BODY_MOTION_SCALE);
+        put_point(out, self.spin, BODY_MOTION_SCALE);
     }
 
     pub fn read(reader: &mut WireReader<'_>) -> ReadResult<Self> {
@@ -256,8 +282,8 @@ impl MovingBody {
         Ok(Self {
             kind,
             id: reader.varint32()?,
-            velocity: read_point(reader)?,
-            spin: read_point(reader)?,
+            velocity: read_point(reader, BODY_MOTION_SCALE)?,
+            spin: read_point(reader, BODY_MOTION_SCALE)?,
         })
     }
 
