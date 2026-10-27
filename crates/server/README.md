@@ -9,8 +9,8 @@ RFC 6455 framing and permessage-deflate
 `RoomSession` (`session.rs`: socket limits, join timeout, the 50 ms timer) around
 `sloppy_core::net::MatchHost`, the same simulation, rules and replication the
 browser engine runs. Production and the dev site each run it on their own Vultr
-machine behind Caddy ([Deployment](#deployment)); production's is at
-`wss://sloppy-tanks-server.fridman.me`.
+machine behind Caddy ([Deployment](#deployment)), at the nip.io name of its address;
+the server directory (https://sloppy-tanks-directory.fridman.me) lists them.
 
 ```sh
 pnpm run server:dev        # build for this machine and listen on 127.0.0.1:8787
@@ -184,26 +184,18 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 
 ## Deployment
 
-Production and the dev site each have their own game server machine, an Ubuntu x64
-VPS at Vultr (26.04 for production, 26.10 for dev), set up identically. `deploy/servers.json` lists both
-(`scripts/servers.mjs` reads it): each machine's public `ip` and its `hostnames`. A
-machine runs the server as a container under Podman, behind Caddy in a container of
-its own, both supervised by systemd through Quadlet units. CI builds the server
-images; production pulls them by hand or automatically, and an SSH deploy from a
-checkout covers the dev server and any time CI or the registry cannot.
+Production and the dev site each run game server machines, Ubuntu x64 VPSes at Vultr set
+up identically. A machine runs the server as a container under Podman, behind Caddy in a
+container of its own, both supervised by systemd through Quadlet units. CI builds the
+server images; production pulls them by hand or automatically, and an SSH deploy from a
+checkout covers the dev servers and any time CI or the registry cannot.
 
-Caddy serves every hostname in the list and obtains a Let's Encrypt certificate for
-each. `{dashed-ip}` in a hostname stands for the machine's address with dashes, so
-`{dashed-ip}.nip.io` is its nip.io name (`45-63-56-58.nip.io` resolves to 45.63.56.58;
-sslip.io works the same way). Such a name needs no DNS record of ours, so a machine is
-usable as soon as it is provisioned; any other hostname, such as production's
-`sloppy-tanks-server.fridman.me` (a DNS-only A record at Cloudflare), needs its own record
-pointing at the machine. Players use the first hostname. The scripts reach a machine
-over SSH by its ip and check its server through the first hostname made from
-`{dashed-ip}`, which reaches that machine whatever the other names' DNS says; a list
-without one is checked through its first hostname. The Pages workflow and the
-traffic bots name production's address too; `tests/servers.test.ts` keeps them equal
-to the list.
+Every machine serves the nip.io name of its address (`45-63-56-58.nip.io` resolves to
+45.63.56.58), for which Caddy obtains a Let's Encrypt certificate, so a machine needs no
+DNS record of ours. There is no list of machines: the server directory lists the ones
+that run, under their environment, and the scripts (`scripts/servers.mjs`) take them from
+it, reaching each over SSH as root at its address. `--ip ADDRESS` names a machine the
+directory does not list, such as one whose server is down or that is still booting.
 
 ### Images and tags
 
@@ -311,59 +303,24 @@ lobby. Stop load tests before deploying.
 To add a machine, deploy an Ubuntu x64 instance in Vultr with your SSH key and, as its
 startup script (cloud-init user data), `deploy/server/cloud-init/production.yaml` or
 `dev.yaml`, saved once in Vultr's Startup Scripts. At first boot the user data writes
-`/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`, optional
-`EXTRA_HOSTNAMES`) and runs `deploy/server/bootstrap.sh` from the repository's `main`.
-That serves the machine's own nip.io name, runs `provision.sh`, starts CI's
-`:production` image, and the server appears in the directory under its environment
-within a few minutes, with no SSH from here. Add its address to `deploy/servers.json`
-too if `deploy:dev` or the other `server:*` commands should reach it. A changed
+`/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`) and runs
+`deploy/server/bootstrap.sh` from the repository's `main`. That serves the machine's own
+nip.io name, runs `provision.sh`, starts CI's `:production` image, and the server appears
+in the directory under its environment within a few minutes, with no SSH from here; from
+then on `deploy:dev` and the other `server:*` commands reach it. A changed
 `deploy/server/` file reaches a machine through Vultr's Reinstall, which keeps the
 address and runs the startup script again (then `deploy:dev` on dev), or through
-`server:provision`.
+`server:provision`. To retire a machine, destroy it: it leaves the directory 45 seconds
+after its server stops.
 
 To set up a machine over SSH instead, create an Ubuntu 26.04 or 26.10 x64 VPS with a
-public IPv4 address and your SSH key for root, put its address in `deploy/servers.json` and run
-`pnpm run server:provision` (`--dev` for the dev site's). It installs everything,
-starts CI's `:production` image (on dev, `deploy:dev` then replaces it with the
-checkout's build), and waits until the server answers through Caddy at its nip.io
-name, which takes about a minute
-while Caddy obtains the certificate. The scripts trust a new machine's host key on
-first contact and refuse a changed one; after replacing a machine at the same
-address, remove the old key with `ssh-keygen -R <ip>`.
-
-A hostname needs only its A record pointing at the machine and its place in the
-list; provision again so Caddy serves it. Keep a `{dashed-ip}` name in every machine's
-list, since moving a machine relies on it. To move production to another machine, put
-its address in production's entry and provision it: players stay on the old machine
-until the hostname's record points at the new one, while the scripts already check
-the new one through its nip.io name.
-
-`pnpm run server:point-hostname` (`--dev` for the dev site's) then moves the first
-hostname with its own record (`--hostname <name>` picks another) through Cloudflare's
-API, where fridman.me's DNS lives: it asks for an API token and the IP, defaulting to
-the machine in the list, sets the existing A record and waits until Google's and
-Cloudflare's resolvers return it; `--dry-run` shows the record and the change without
-making it. The record stays DNS only, not proxied, and the script turns proxying off if
-it finds it on: Caddy answers the ACME challenges itself and serves players' wss
-connections directly; Cloudflare's edge certificates would only cover a proxied record.
-
-```sh
-pnpm run server:provision                   # after changing production's ip in deploy/servers.json
-pnpm run server:point-hostname --dry-run    # shows the record and the change
-pnpm run server:point-hostname              # moves it and waits for public resolvers
-pnpm run server:provision                   # so Caddy obtains the certificate at once
-```
-
-The token is made once and reused; keep it in a password manager and off the machines,
-since it can repoint any record in the zone. Wrangler's login cannot read DNS records,
-so it needs a token of its own: in Cloudflare's dashboard, My Profile > API Tokens >
-Create Token, the "Edit zone DNS" template with Zone Resources set to Include, Specific
-zone, fridman.me. The template's Zone > DNS > Edit is all the script needs. Cloudflare
-shows the token once; it does not expire unless given a TTL.
-
-`SLOPPY_SERVERS` points the scripts at another list, such as one of local test machines:
-Caddy gives names ending in `.local` its own local certificates, and a test list leaves
-out `{dashed-ip}` names, which no certificate authority could reach at a private address.
+public IPv4 address and your SSH key for root and run `pnpm run server:provision --ip ADDRESS`
+(with `--dev` for the dev site). It installs everything, starts CI's `:production` image
+(on dev, `deploy:dev` then replaces it with the checkout's build), and waits until the
+server answers through Caddy at its nip.io name, which takes about a minute while Caddy
+obtains the certificate. The scripts trust a new machine's host key on first contact and
+refuse a changed one; after replacing a machine at the same address, remove the old key
+with `ssh-keygen -R <ip>`.
 
 ## Monitoring
 
@@ -430,8 +387,7 @@ counting global allocator.
 
 ### Dashboard
 
-`/dashboard` (https://sloppy-tanks-server.fridman.me/dashboard for production, the
-dev server's at its own address from `deploy/servers.json`, or
+`/dashboard` (on every server at its own address, linked from the directory's overview, or
 `http://127.0.0.1:8787/dashboard` locally) is a public, read-only page that
 updates every second: CPU, the share of time the runtime's worker threads were
 busy, runtime lag percentiles, memory, traffic on the wire and before

@@ -1,6 +1,6 @@
 // The server directory's rules (worker.ts), free of Cloudflare imports so node tests run them.
 
-/** Each environment lists its own game servers; deploy/servers.json names the same two. */
+/** Each environment lists its own game servers: production's and the dev site's. */
 export const ENVIRONMENTS = ["production", "dev"] as const;
 export type Environment = (typeof ENVIRONMENTS)[number];
 
@@ -28,7 +28,7 @@ export function parseEnvironment(value: string | null): Environment | undefined 
 
 /**
  * Where players reach a server announcing from `ip`: nip.io resolves the dashed name to the
- * address itself (a hostname every game server serves, deploy/servers.json). The directory
+ * address itself (the hostname every game server serves, deploy/server/). The directory
  * takes no address from the body, so a caller can list only the machine it announces from.
  */
 export function nipUrl(ip: string | null): string | undefined {

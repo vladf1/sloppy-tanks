@@ -28,7 +28,8 @@ const MINE_CHANCE = 0.08;
 const AMMO_CHANCE = 0.08;
 const MAX_TURRET_SPEED = 2.5;
 const CREATED_ROUND_MINUTES = 5;
-const MAPS = ["village", "harbor", "quarry"] as const;
+/** The standard maps, which bots create rooms on and join; extra levels are for `?debug`. */
+export const MAPS: readonly string[] = ["village", "harbor", "quarry"];
 const KINDS = ["scout", "balanced", "heavy"] as const;
 const WEAPONS = ["standard", "spread", "rocket", "ricochet", "piercing"] as const;
 const WIRE_SCALE = 1000;

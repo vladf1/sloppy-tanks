@@ -456,8 +456,8 @@ offline.
   the repository directory.
 - `deploy:dev` first deploys the dev site's own multiplayer server
   (`scripts/server.mjs deploy --dev`, key-based SSH), which runs on its own
-  Vultr machines (`deploy/servers.json` lists each environment's machines; the
-  `server:*` commands run on all of them, or one with `--ip`). It resets only the
+  Vultr machines (the `server:*` commands run on every machine the server directory
+  lists for the environment, or on one named with `--ip`). It resets only the
   dev server's rooms and never touches production's server. Client and server
   must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with
@@ -485,9 +485,10 @@ offline.
   dependencies, build settings); `--site` builds and compares the page the server
   serves. Run it after a merge instead of judging by
   which directories changed.
-  Change the machines only through `deploy/servers.json`, `deploy/server/` and the
-  `server:*` scripts described in `crates/server/README.md`. The traffic bots in
-  `bots/` are a Cloudflare Worker that targets the production server;
+  Change the machines only through the Vultr startup scripts
+  (`deploy/server/cloud-init/`), `deploy/server/` and the `server:*` scripts described
+  in `crates/server/README.md`. The traffic bots in `bots/` are a Cloudflare Worker that
+  plays on the production servers the directory lists;
   `pnpm run bots:deploy` publishes them separately.
 - Keep `dist-dev/` and `dist-server/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
