@@ -110,7 +110,7 @@ pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, t
 pnpm run wasm           # release WebGPU engine and its glue into src/generated/engine/
 pnpm run wasm:all       # both engines, the WebGL2 one into src/generated/engine-webgl/
 pnpm test               # page shell, import boundary and traffic-bot tests (needs pnpm run server:build)
-pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace)
+pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace, without the desktop app)
 pnpm run validate       # ten seeded full matches and reset checks
 pnpm run build          # production output in dist/ (builds the Wasm first)
 pnpm run lint:fix       # safe ESLint fixes
@@ -126,6 +126,7 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 | `crates/render`   | Wasm          | The WebGPU/WebGL2 renderer, WGSL shaders, presentation, effects and cameras              |
 | `crates/web`      | Wasm          | The wasm-bindgen API: `Game` (single player) and `NetGame` (a room page)                 |
 | `crates/server`   | native        | The multiplayer server: HTTP, WebSocket rooms, limits, monitor and dashboard             |
+| `crates/desktop`  | macOS/Windows | The desktop app: a native window on wgpu (Metal, Direct3D 12, Vulkan), egui menus, HUD   |
 | `src/`            | browser       | The page shell: menus, HUD, input, touch controls, audio and the room page               |
 
 | Area                           | Starting points                                                                                                               |
@@ -208,6 +209,40 @@ Single-player downloads no multiplayer page code and opens no game-server connec
 Multiplayer loads its client and UI only on entry and does not run browser physics.
 The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
 [server guide](crates/server/README.md) describes local development and deployment.
+
+## Desktop builds
+
+`crates/desktop` is the same game as a native app for macOS and Windows, no browser:
+the Rust `Game` and `NetGame` the page drives, drawn with wgpu on Metal, Direct3D 12 or
+Vulkan, with menus and HUD in egui and the textures and sounds from
+`public/` built into the executable.
+
+```sh
+pnpm run desktop          # the app for this machine
+pnpm run desktop:mac      # universal (Apple silicon and Intel) Sloppy Tanks.app, macOS 11 or newer
+pnpm run desktop:windows  # sloppy-tanks.exe, on Windows with the MSVC build tools
+```
+
+Both land in the ignored `artifacts/desktop/`: the Mac app beside a zip of it for
+sharing, and the Windows executable. Build through the script rather than `cargo build`:
+it stamps the content version multiplayer joins send, which must match the servers'
+(the same one the page carries), as well as the release and commit Battle Setup shows.
+It adds the Apple targets with rustup when they are missing and uses the `desktop`
+Cargo profile, which optimizes everything for speed. `cargo run -p sloppy-desktop`
+works for quick local tries, but servers refuse its unstamped content version. The
+[Desktop app workflow](.github/workflows/desktop.yml) builds both on pull requests that
+touch the crates or assets and on main, and keeps them as run artifacts; Linux CI leaves
+the crate out (`--exclude sloppy-desktop`), since its window and audio crates need
+system libraries there.
+
+The builds are unsigned (the Mac app carries only an ad-hoc signature). The first time,
+right-click the Mac app and choose **Open**, or clear the download quarantine with
+`xattr -dr com.apple.quarantine "Sloppy Tanks.app"`; on Windows, SmartScreen asks once:
+**More info**, then **Run anyway**. Start it with `--debug` (for example
+`"Sloppy Tanks.app/Contents/MacOS/sloppy-tanks" --debug`) for the extra levels a `?debug`
+page offers. Settings and personal bests live in
+`~/Library/Application Support/Sloppy Tanks/` on macOS and `%APPDATA%\Sloppy Tanks\` on
+Windows.
 
 ## Assets
 

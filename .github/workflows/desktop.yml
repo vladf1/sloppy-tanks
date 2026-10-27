@@ -1,0 +1,62 @@
+# The desktop app (crates/desktop): lint and test it on macOS, and build the universal
+# macOS app and the Windows executable through `scripts/build-desktop.mjs`, uploaded as
+# this run's artifacts. Linux CI (check.yml) leaves the crate out, since its window,
+# audio and GPU dependencies need system libraries there; nothing deploys from here.
+# Builds carry the three-part release and the commit: the fourth part is the Pages
+# workflow's run number, which this workflow does not have.
+name: Desktop app
+
+on:
+  pull_request:
+    paths: &paths
+      - "crates/**"
+      - "public/**"
+      - "Cargo.*"
+      - ".cargo/**"
+      - "rust-toolchain.toml"
+      - "scripts/build-desktop.mjs"
+      - ".github/workflows/desktop.yml"
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  macos:
+    name: macOS app (clippy, tests, universal build)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: desktop-macos
+      - run: cargo clippy --locked -p sloppy-desktop --all-targets -- -D warnings
+      - run: cargo test --locked -p sloppy-desktop
+      - run: pnpm run desktop:mac
+      - uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/desktop/Sloppy-Tanks-*-macOS.zip
+          archive: false
+          if-no-files-found: error
+
+  windows:
+    name: Windows app
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: desktop-windows
+      - run: pnpm run desktop:windows
+      - uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/desktop/sloppy-tanks.exe
+          archive: false
+          if-no-files-found: error
