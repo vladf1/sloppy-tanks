@@ -55,7 +55,14 @@
         overflow-x: auto;
       }
       .details {
-        margin: 2px 0 8px;
+        margin: 2px 0;
+      }
+      .details:empty {
+        display: none;
+      }
+      table,
+      .server > .empty {
+        margin-top: 8px;
       }
       table {
         border-collapse: collapse;
@@ -96,6 +103,7 @@
       <section class="server">
         <h3><a data-field="url"></a> <span class="latency" data-field="latency"></span></h3>
         <p class="details" data-field="details"></p>
+        <p class="details" data-field="load"></p>
         <table>
           <thead>
             <tr>

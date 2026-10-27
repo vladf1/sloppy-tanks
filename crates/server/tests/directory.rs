@@ -116,11 +116,15 @@ impl FakeDirectory {
     }
 }
 
-async fn start(url: &str, interval: Duration) -> (MultiplayerServer, String, Lines) {
+async fn start(
+    url: &str,
+    check: Duration,
+    interval: Duration,
+) -> (MultiplayerServer, String, Lines) {
     let lines = Lines::default();
     let mut options = options(&lines);
     options.directory = Some(DirectoryOptions {
-        check: CHECK,
+        check,
         interval,
         timeout: Duration::from_secs(2),
         ..DirectoryOptions::new(DirectoryUrl::parse(url).unwrap())
@@ -154,7 +158,7 @@ fn lines_with(lines: &Lines, text: &str) -> Vec<String> {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn announces_room_changes_at_once_and_an_unchanged_listing_after_the_interval() {
     let (directory, url) = FakeDirectory::start(204).await;
-    let (server, base, lines) = start(&url, INTERVAL).await;
+    let (server, base, lines) = start(&url, CHECK, INTERVAL).await;
     let first = directory
         .wait_for(0, "the first announcement", |_| true)
         .await;
@@ -167,16 +171,11 @@ async fn announces_room_changes_at_once_and_an_unchanged_listing_after_the_inter
         assert_eq!(first.body["protocol"], PROTOCOL_VERSION);
         assert_eq!(first.body["contentVersion"], CONTENT_VERSION);
         assert!(first.body["serverBuild"].is_string());
+        assert!(first.body["startedAt"].as_str().unwrap().ends_with('Z'));
         assert_eq!(first.body["rooms"], Value::Array(Vec::new()));
     }
 
-    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{base}/room/LISTROOM"))
-        .await
-        .unwrap();
-    let join = format!(
-        r#"{{"type":"join","version":{PROTOCOL_VERSION},"contentVersion":"{CONTENT_VERSION}","name":"lister","kind":"balanced"}}"#
-    );
-    socket.send(Message::text(join)).await.unwrap();
+    let mut socket = join(&base, "LISTROOM").await;
     let opened = directory
         .wait_for(first + 1, "the room's announcement", |body| {
             room_codes(body) == ["LISTROOM"]
@@ -187,7 +186,9 @@ async fn announces_room_changes_at_once_and_an_unchanged_listing_after_the_inter
         1
     );
 
-    // The server is its own directory too, with the listing it announces.
+    // The server is its own directory too, with the listing it announces. A `/stats`
+    // sample adds the load figures.
+    server.sample_now().await;
     let servers = get(&base, "/servers", &[("Origin", ORIGIN)]).await;
     assert_eq!(servers.status, 200);
     assert_eq!(servers.headers["access-control-allow-origin"], ORIGIN);
@@ -199,6 +200,11 @@ async fn announces_room_changes_at_once_and_an_unchanged_listing_after_the_inter
     assert_eq!(listed[0]["protocol"], PROTOCOL_VERSION);
     assert_eq!(listed[0]["contentVersion"], CONTENT_VERSION);
     assert_eq!(room_codes(&listed[0]), ["LISTROOM"]);
+    assert!(listed[0]["startedAt"].is_string());
+    assert!(listed[0]["cpuPercent"].as_f64().unwrap() >= 0.0);
+    assert!(listed[0]["cpus"].as_u64().unwrap() >= 1);
+    assert!(listed[0]["rssMB"].as_f64().unwrap() > 0.0);
+    assert!(listed[0]["hostMemoryMB"].as_f64().unwrap() > 0.0);
     let proxied = get(&base, "/servers", &[("X-Forwarded-Proto", "https")]).await;
     let body: Value = serde_json::from_str(&proxied.body).unwrap();
     assert_eq!(body["servers"][0]["url"], format!("wss://{base}"));
@@ -214,12 +220,12 @@ async fn announces_room_changes_at_once_and_an_unchanged_listing_after_the_inter
             room_codes(body).is_empty()
         })
         .await;
-    // Two keepalives of the unchanged listing.
+    // Two keepalives of the unchanged rooms; load figures alone are no news.
     directory
         .wait_for(closed + 2, "a second keepalive", |_| true)
         .await;
     for pair in directory.received.lock().unwrap().windows(2) {
-        if pair[0].body == pair[1].body {
+        if pair[0].body["rooms"] == pair[1].body["rooms"] {
             let gap = pair[1].at - pair[0].at;
             assert!(
                 gap >= INTERVAL,
@@ -235,10 +241,52 @@ async fn announces_room_changes_at_once_and_an_unchanged_listing_after_the_inter
     server.close().await;
 }
 
+async fn join(
+    base: &str,
+    code: &str,
+) -> tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>> {
+    let (mut socket, _) = tokio_tungstenite::connect_async(format!("ws://{base}/room/{code}"))
+        .await
+        .unwrap();
+    let join = format!(
+        r#"{{"type":"join","version":{PROTOCOL_VERSION},"contentVersion":"{CONTENT_VERSION}","name":"lister","kind":"balanced"}}"#
+    );
+    socket.send(Message::text(join)).await.unwrap();
+    socket
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_room_opening_or_closing_is_announced_without_waiting_for_a_check() {
+    let (directory, url) = FakeDirectory::start(204).await;
+    // Only the first check would ever fire within the test.
+    let hour = Duration::from_secs(3600);
+    let (server, base, _) = start(&url, hour, hour).await;
+    let first = directory
+        .wait_for(0, "the first announcement", |_| true)
+        .await;
+    let mut socket = join(&base, "FASTROOM").await;
+    let opened = directory
+        .wait_for(first + 1, "the opened room", |body| {
+            room_codes(body) == ["FASTROOM"]
+        })
+        .await;
+    socket
+        .send(Message::text(r#"{"type":"leave","roundId":0}"#))
+        .await
+        .unwrap();
+    while socket.next().await.is_some_and(|message| message.is_ok()) {}
+    directory
+        .wait_for(opened + 1, "the closed room", |body| {
+            room_codes(body).is_empty()
+        })
+        .await;
+    server.close().await;
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn logs_only_when_announcing_starts_failing_or_works_again() {
     let (directory, url) = FakeDirectory::start(503).await;
-    let (server, _, lines) = start(&url, Duration::from_millis(40)).await;
+    let (server, _, lines) = start(&url, CHECK, Duration::from_millis(40)).await;
     // A failed announcement is retried at every check.
     directory.wait_for(3, "retries", |_| true).await;
     let failures = lines_with(&lines, "cannot announce to the server directory");
