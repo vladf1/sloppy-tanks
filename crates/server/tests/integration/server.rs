@@ -1,11 +1,12 @@
 //! End-to-end checks over real localhost sockets (`tests/node-server.test.ts`), with the
 //! real host in its lobby and a test host that sends large and incompressible messages.
 
-mod support;
-
 use std::sync::Arc;
 use std::time::Duration;
 
+use crate::support::{
+    HttpResponse, Lines, ORIGIN, get, http, options, parse_response, rooms, start_with,
+};
 use bytes::BytesMut;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::Value;
@@ -18,7 +19,6 @@ use sloppy_server::match_room::MatchRoom;
 use sloppy_server::protocol::{CONTENT_VERSION, PROTOCOL_VERSION};
 use sloppy_server::server::MultiplayerServer;
 use sloppy_server::websocket::{Codec, Event, Role, extension};
-use support::{HttpResponse, Lines, ORIGIN, get, http, options, parse_response, rooms, start_with};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::{Error as WsError, Message};
@@ -667,7 +667,8 @@ async fn caps_live_rooms_and_open_sockets_per_address() {
         101,
         "a closed socket frees its address slot"
     );
-    drop(first);
+    // Sockets still open at close hold it for its whole grace period.
+    drop((first, again));
     server.close().await;
 }
 
@@ -680,6 +681,7 @@ async fn a_room_refuses_its_seventeenth_socket() {
     }
     let refused = open(&base, "BUSYROOM", &[]).await;
     assert_eq!(refused.status(), 429);
+    drop(clients);
     server.close().await;
 }
 
@@ -870,6 +872,7 @@ async fn compresses_large_messages_both_ways_with_context_takeover() {
         reading.point.wire_sent_kbps,
         reading.point.sent_kbps
     );
+    drop(client);
     server.close().await;
 }
 
