@@ -80,20 +80,12 @@ function fail(field: string): never {
   throw new Error(`Invalid announcement: ${field}`);
 }
 
-/** Keys of the entries no server has announced within ENTRY_TTL_MS. */
-export function expiredKeys(entries: Map<string, ServerEntry>, now: number): string[] {
-  return [...entries].filter(([, entry]) => now - entry.seen > ENTRY_TTL_MS).map(([key]) => key);
-}
-
 /**
  * The listing the page reads, fewest rooms first: the page creates rooms on the first compatible
- * server, so this order is the whole of the matchmaking. Ties go by url to keep the order stable,
- * and the stored key's url follows the spread so an announced `url` field cannot replace it.
+ * server, so this order is the whole of the matchmaking. Ties go by url to keep the order stable.
  */
-export function listServers(entries: Map<string, ServerEntry>): ListedServer[] {
-  return [...entries]
-    .map(([url, entry]) => ({ ...entry, url }))
-    .sort(
-      (a, b) => a.rooms.length - b.rooms.length || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0),
-    );
+export function listServers(servers: ListedServer[]): ListedServer[] {
+  return [...servers].sort(
+    (a, b) => a.rooms.length - b.rooms.length || (a.url < b.url ? -1 : a.url > b.url ? 1 : 0),
+  );
 }

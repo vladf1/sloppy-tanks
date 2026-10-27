@@ -2,14 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import {
-  ENTRY_TTL_MS,
   ENVIRONMENTS,
-  expiredKeys,
   listServers,
   nipUrl,
   parseAnnouncement,
   parseEnvironment,
-  type ServerEntry,
+  type ListedServer,
 } from "../directory/listing";
 import type { RoomListing } from "../src/net/room-listing";
 
@@ -35,7 +33,12 @@ const health = {
   contentVersion: "11aac2382af5a93fd5d30531",
   serverBuild: "5a8e451fb56078b8714b650a",
 };
-const entry = (rooms: RoomListing[], seen: number): ServerEntry => ({ ...health, rooms, seen });
+const server = (url: string, rooms: RoomListing[]): ListedServer => ({
+  ...health,
+  rooms,
+  seen: 1,
+  url,
+});
 
 test("the directory has one list per game server environment", () => {
   // The startup scripts name each machine's environment.
@@ -100,26 +103,15 @@ test("an announcement keeps its declared /health fields and rooms checked as the
   }
 });
 
-test("entries not announced within the time to live expire", () => {
-  const now = 1_000_000;
-  const entries = new Map<string, ServerEntry>([
-    ["wss://1-1-1-1.nip.io", entry([], now)],
-    ["wss://2-2-2-2.nip.io", entry([], now - ENTRY_TTL_MS)],
-    ["wss://3-3-3-3.nip.io", entry([], now - ENTRY_TTL_MS - 1)],
+test("servers are listed fewest rooms first, ties by url", () => {
+  const servers = listServers([
+    server("wss://9-9-9-9.nip.io", [room("AAAAAAAA"), room("BBBBBBBB")]),
+    server("wss://5-5-5-5.nip.io", [room("CCCCCCCC")]),
+    server("wss://3-3-3-3.nip.io", [room("DDDDDDDD")]),
+    server("wss://7-7-7-7.nip.io", []),
   ]);
-  assert.deepEqual(expiredKeys(entries, now), ["wss://3-3-3-3.nip.io"]);
-});
-
-test("servers are listed fewest rooms first, ties by url, at the url they announced from", () => {
-  const entries = new Map<string, ServerEntry>([
-    ["wss://9-9-9-9.nip.io", entry([room("AAAAAAAA"), room("BBBBBBBB")], 1)],
-    ["wss://5-5-5-5.nip.io", entry([room("CCCCCCCC")], 2)],
-    ["wss://3-3-3-3.nip.io", entry([room("DDDDDDDD")], 3)],
-    ["wss://7-7-7-7.nip.io", entry([], 4)],
-  ]);
-  const servers = listServers(entries);
   assert.deepEqual(
-    servers.map((server) => server.url),
+    servers.map((listed) => listed.url),
     [
       "wss://7-7-7-7.nip.io",
       "wss://3-3-3-3.nip.io",
@@ -127,7 +119,6 @@ test("servers are listed fewest rooms first, ties by url, at the url they announ
       "wss://9-9-9-9.nip.io",
     ],
   );
-  assert.deepEqual(servers[0], { ...entry([], 4), url: "wss://7-7-7-7.nip.io" });
 });
 
 test("the overview page has a section for every environment", () => {
