@@ -1,0 +1,15 @@
+{
+  "$schema": "../tools/deploy/node_modules/wrangler/config-schema.json",
+  "name": "sloppy-tanks-directory",
+  "account_id": "b49a59dfb5edf913223ad13eeab8d740",
+  // No newer than the pinned wrangler's local runtime supports, so `wrangler dev` runs it.
+  "compatibility_date": "2026-09-23",
+  "main": "worker.ts",
+  // Game servers and the page reach the directory only through its custom domain.
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "sloppy-tanks-directory.fridman.me", "custom_domain": true }],
+  "durable_objects": { "bindings": [{ "name": "DIRECTORY", "class_name": "ServerDirectory" }] },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["ServerDirectory"] }],
+  "observability": { "enabled": true },
+}

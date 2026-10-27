@@ -26,10 +26,12 @@ jobs:
       # The repository's Pages custom domain, sloppy-tanks.fridman.me, serves the site at
       # its root; fridman.me/sloppy-tanks/ redirects there.
       deploy-base: /
-      # The production game server's address in deploy/servers.json (a test keeps the two
-      # equal). Game changes on main need the server to run this commit's image
-      # (promote-server below), or players are told to reload.
-      multiplayer-url: wss://sloppy-tanks-server.fridman.me
+      # The server directory and its production servers (DIRECTORY_URL in
+      # scripts/servers.mjs; a test keeps the two equal). Game changes on main need the
+      # server to run this commit's image (promote-server below), or players are told to
+      # reload.
+      directory-url: https://sloppy-tanks-directory.fridman.me
+      server-environment: production
       # The build number players and /health see: this workflow's run number, which
       # GitHub increments on every run (a re-run keeps it).
       build-number: ${{ github.run_number }}

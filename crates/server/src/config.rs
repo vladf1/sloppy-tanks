@@ -1,5 +1,7 @@
 //! Settings from the environment.
 
+use crate::directory::DirectoryUrl;
+
 const DEFAULT_HOST: &str = "127.0.0.1";
 const DEFAULT_PORT: u16 = 8787;
 /// Commits show abbreviated, like the page's `/health`.
@@ -48,11 +50,16 @@ pub struct Settings {
     pub max_rooms: Option<usize>,
     /// Take the client IP from the last `X-Forwarded-For` hop (the local reverse proxy).
     pub trust_proxy: bool,
+    /// `DIRECTORY_URL`, the server directory's base address, with `SERVER_ENVIRONMENT`,
+    /// the environment that lists this server: where it announces itself. An unset or
+    /// empty `DIRECTORY_URL` announces nothing.
+    pub directory: Option<DirectoryUrl>,
     pub build: BuildInfo,
 }
 
 impl Settings {
-    /// Reads `HOST`, `PORT`, `MAX_ROOMS` and the [`BuildInfo`] stamps. A typo must stop
+    /// Reads `HOST`, `PORT`, `MAX_ROOMS`, `DIRECTORY_URL`, `SERVER_ENVIRONMENT` and the
+    /// [`BuildInfo`] stamps. A typo must stop
     /// startup, not silently turn a limit off.
     pub fn from_env(lookup: impl Fn(&str) -> Option<String>) -> Result<Self, String> {
         let host = lookup("HOST").unwrap_or_else(|| DEFAULT_HOST.to_string());
@@ -72,11 +79,34 @@ impl Settings {
                 _ => return Err("MAX_ROOMS must be a positive integer".into()),
             },
         };
+        let directory = match lookup("DIRECTORY_URL").filter(|text| !text.is_empty()) {
+            None => None,
+            Some(base) => {
+                let environment = lookup("SERVER_ENVIRONMENT").unwrap_or_default();
+                if environment.is_empty()
+                    || !environment
+                        .chars()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+                {
+                    return Err("SERVER_ENVIRONMENT must name this server's environment, \
+                        such as production or dev"
+                        .into());
+                }
+                if base.contains(['?', '#']) {
+                    return Err("DIRECTORY_URL must be the directory's base address".into());
+                }
+                let base = base.trim_end_matches('/');
+                Some(DirectoryUrl::parse(&format!(
+                    "{base}/servers?environment={environment}"
+                ))?)
+            }
+        };
         Ok(Self {
             host,
             port,
             max_rooms,
             trust_proxy,
+            directory,
             build: BuildInfo::from_env(&lookup),
         })
     }
@@ -101,6 +131,7 @@ mod tests {
         assert_eq!((settings.host.as_str(), settings.port), ("127.0.0.1", 8787));
         assert!(settings.trust_proxy);
         assert_eq!(settings.max_rooms, None);
+        assert_eq!(settings.directory, None);
     }
 
     #[test]
@@ -117,6 +148,30 @@ mod tests {
         assert!(settings(&[("MAX_ROOMS", "0")]).is_err());
         assert!(settings(&[("MAX_ROOMS", "ten")]).is_err());
         assert!(settings(&[("PORT", "http")]).is_err());
+    }
+
+    #[test]
+    fn announces_under_its_environment_and_ignores_an_empty_directory() {
+        let dev = |url| settings(&[("DIRECTORY_URL", url), ("SERVER_ENVIRONMENT", "dev")]);
+        let directory = dev("https://sloppy-tanks-directory.fridman.me/")
+            .unwrap()
+            .directory;
+        assert_eq!(
+            directory.map(|url| url.to_string()).as_deref(),
+            Some("https://sloppy-tanks-directory.fridman.me/servers?environment=dev")
+        );
+        assert!(dev("http://127.0.0.1:8790").unwrap().directory.is_some());
+        // Provisioning writes an empty value for machines that must not announce themselves.
+        assert_eq!(dev("").unwrap().directory, None);
+        assert!(dev("wss://example.com").is_err());
+        assert!(dev("example.com").is_err());
+        assert!(dev("https://example.com/servers?environment=dev").is_err());
+        assert!(settings(&[("DIRECTORY_URL", "https://example.com")]).is_err());
+        let staging = [
+            ("DIRECTORY_URL", "https://example.com"),
+            ("SERVER_ENVIRONMENT", "Staging?"),
+        ];
+        assert!(settings(&staging).is_err());
     }
 
     #[test]

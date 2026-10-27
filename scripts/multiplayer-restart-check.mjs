@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { mkdir, writeFile } from "node:fs/promises";
 import { setTimeout as wait } from "node:timers/promises";
-import { chooseMap, click, gameUrl, launchChrome } from "./browser-helpers.mjs";
+import { chooseMap, click, gameUrl, launchChrome, localDirectory } from "./browser-helpers.mjs";
 import { waitForRoomBrowser } from "./multiplayer-helpers.mjs";
 
 const output = "artifacts/performance/multiplayer/restart";
@@ -11,7 +11,7 @@ const url = new URL(gameUrl);
 // Other sessions may hold the usual local ports; SLOPPY_RESTART_PORT picks another.
 const PORT = Number(process.env.SLOPPY_RESTART_PORT ?? 8790);
 url.searchParams.set("multiplayer", "");
-url.searchParams.set("server", `ws://127.0.0.1:${PORT}`);
+url.searchParams.set("directory", localDirectory(`ws://127.0.0.1:${PORT}`));
 let server,
   logs = "";
 const errors = [];
@@ -116,7 +116,8 @@ try {
   assert.equal(await page.locator("#connection-retry").isVisible(), false);
   await page.screenshot({ path: `${output}/room-closed.png` });
   await click(page, "#connection-setup");
-  await page.locator("#room-list").waitFor();
+  // With the server gone the room list is empty, and an empty list takes no height.
+  await page.locator("#multiplayer-panel").waitFor();
   assert.deepEqual(errors, []);
   console.log(
     "Server crash and restart: connection recovers to a fresh lobby; reused round number prepares the new map and clears feedback; a graceful restart shows the room-closed dialog and returns to Battle Setup.",

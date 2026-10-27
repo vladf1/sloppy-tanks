@@ -1,7 +1,7 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { gameServer, serverMachine } from "../scripts/servers.mjs";
+import { DIRECTORY_URL, gameServer, serverMachine } from "../scripts/servers.mjs";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -12,6 +12,7 @@ test("a machine with only a name made from its address is played and checked thr
   assert.equal(server.url, "wss://45-63-56-58.nip.io");
   assert.equal(server.checkUrl, "https://45-63-56-58.nip.io");
   assert.equal(server.ssh, "root@45.63.56.58");
+  assert.equal(server.directory, "https://sloppy-tanks-directory.fridman.me");
 });
 
 test("players use the first hostname while the scripts check by the one made from the address", () => {
@@ -46,9 +47,12 @@ test("a hostname with any placeholder but {dashed-ip} is refused", () => {
   assert.throws(() => serverMachine("dev", { ip: "45.63.56.58", hostnames: [] }), /no hostnames/);
 });
 
-test("the Pages build and the traffic bots use production's address from deploy/servers.json", () => {
+test("the Pages build reads production's directory, and the traffic bots use its server", () => {
+  assert.equal(
+    read("../.github/workflows/deploy.yml").match(/directory-url: (\S+)/)?.[1],
+    DIRECTORY_URL,
+  );
   const { url } = gameServer(false);
-  assert.equal(read("../.github/workflows/deploy.yml").match(/multiplayer-url: (\S+)/)?.[1], url);
   assert.equal(
     read("../bots/wrangler.jsonc").match(/"SERVER_URL": "([^"]+)"/)?.[1],
     url.replace(/^wss:/, "https:"),

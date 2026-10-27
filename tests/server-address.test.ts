@@ -1,29 +1,50 @@
 import { test } from "bun:test";
 import assert from "node:assert/strict";
-import { resolveServerAddress } from "../src/net/server-address";
+import { gameServerAddress, resolveDirectoryAddress } from "../src/net/server-address";
 
-const invalid = /Invalid multiplayer server configuration/;
+const invalid = /Invalid server directory configuration/;
+const directory = "https://directory.example";
 
-test("server address prefers the override, then the build URL, then the local server", () => {
-  assert.equal(resolveServerAddress(null, undefined, "localhost")?.href, "ws://127.0.0.1:8787/");
-  assert.equal(resolveServerAddress(null, "", "127.0.0.1")?.href, "ws://127.0.0.1:8787/");
-  assert.equal(resolveServerAddress(null, undefined, "sloppy-tanks.example"), undefined);
+test("the directory is the override, then the build's, then the local server", () => {
+  const local = "http://127.0.0.1:8787/servers?environment=production";
+  assert.equal(resolveDirectoryAddress(null, undefined, undefined, "localhost")?.href, local);
+  assert.equal(resolveDirectoryAddress(null, "", "", "127.0.0.1")?.href, local);
+  assert.equal(resolveDirectoryAddress(null, undefined, "dev", "sloppy-tanks.example"), undefined);
   assert.equal(
-    resolveServerAddress(null, "wss://play.example/", "sloppy-tanks.example")?.href,
-    "wss://play.example/",
+    resolveDirectoryAddress(null, directory, "dev", "sloppy-tanks.example")?.href,
+    "https://directory.example/servers?environment=dev",
   );
   assert.equal(
-    resolveServerAddress("ws://127.0.0.1:9000", "wss://play.example", "localhost")?.href,
-    "ws://127.0.0.1:9000/",
+    resolveDirectoryAddress("http://127.0.0.1:9000", directory, "dev", "localhost")?.href,
+    "http://127.0.0.1:9000/servers?environment=dev",
   );
-  assert.equal(resolveServerAddress(null, 42, "site.example"), undefined);
+  assert.equal(resolveDirectoryAddress(null, 42, undefined, "site.example"), undefined);
 });
 
-test("server address rejects insecure, credentialed and decorated endpoints", () => {
-  assert.throws(() => resolveServerAddress(null, "ws://play.example", "site.example"), invalid);
-  assert.throws(() => resolveServerAddress("wss://a:b@b.example", null, "localhost"), invalid);
-  assert.throws(() => resolveServerAddress("wss://a@b.example", null, "localhost"), invalid);
-  assert.throws(() => resolveServerAddress("wss://b.example/?x", null, "localhost"), invalid);
-  assert.throws(() => resolveServerAddress("wss://b.example/#x", null, "localhost"), invalid);
-  assert.throws(() => resolveServerAddress("https://b.example", null, "localhost"), invalid);
+test("the directory is a base address, https off a local page", () => {
+  for (const [address, hostname] of [
+    ["http://directory.example", "site.example"],
+    ["https://a:b@b.example", "localhost"],
+    ["https://b.example/?environment=dev", "localhost"],
+    ["https://b.example/#x", "localhost"],
+    ["wss://b.example", "localhost"],
+  ]) {
+    assert.throws(() => resolveDirectoryAddress(address, null, "dev", hostname), invalid, address);
+  }
+});
+
+test("a listed game server must be a plain wss address off a local page", () => {
+  assert.equal(gameServerAddress("wss://1-2-3-4.nip.io", "site.example"), "wss://1-2-3-4.nip.io");
+  assert.equal(gameServerAddress("ws://127.0.0.1:8787/", "localhost"), "ws://127.0.0.1:8787");
+  for (const url of [
+    "ws://1-2-3-4.nip.io",
+    "https://1-2-3-4.nip.io",
+    "wss://a@b.example",
+    "wss://b.example/?x",
+    "wss://b.example/#x",
+    "not a url",
+    42,
+  ]) {
+    assert.throws(() => gameServerAddress(url, "site.example"), /Invalid game server address/);
+  }
 });

@@ -143,7 +143,9 @@ export async function openMultiplayerTab(page) {
   await waitForRoomBrowser(page);
 }
 
-/** The lazily loaded room list fills in a saved or random name when it is ready. */
+/** The lazily loaded room list fills in a saved or random name when it is ready, and
+ * enables Create room once the directory's first list says where a new room opens. */
 export async function waitForRoomBrowser(page) {
   await page.waitForFunction(() => document.querySelector("#player-name")?.value);
+  await page.locator("#create-room:enabled").waitFor({ state: "attached" });
 }

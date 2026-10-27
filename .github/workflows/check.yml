@@ -13,8 +13,12 @@ on:
         description: Build the site with this DEPLOY_BASE and upload it as the Pages artifact.
         type: string
         default: ""
-      multiplayer-url:
-        description: MULTIPLAYER_URL for the Pages build.
+      directory-url:
+        description: VITE_DIRECTORY_URL for the Pages build.
+        type: string
+        default: ""
+      server-environment:
+        description: VITE_SERVER_ENVIRONMENT, whose servers the Pages build lists.
         type: string
         default: ""
       build-number:
@@ -45,7 +49,8 @@ jobs:
       - run: bun run check:site
         env:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
-          MULTIPLAYER_URL: ${{ inputs.multiplayer-url }}
+          VITE_DIRECTORY_URL: ${{ inputs.directory-url }}
+          VITE_SERVER_ENVIRONMENT: ${{ inputs.server-environment }}
           SLOPPY_BUILD_NUMBER: ${{ inputs.build-number }}
       - if: inputs.deploy-base
         uses: actions/configure-pages@v6

@@ -25,6 +25,14 @@ const webglOnly = Boolean(process.env.SLOPPY_WEBGL);
  * is current, this is a half-second Cargo no-op. A check of another host's page plays
  * that host's build, so only local dev servers rebuild.
  */
+/** The `?directory=` a check passes for a local game server at WebSocket address
+ * `server`: a lone server is its own directory. */
+export function localDirectory(server) {
+  const url = new URL(server);
+  url.protocol = url.protocol === "wss:" ? "https:" : "http:";
+  return url.origin;
+}
+
 export function buildWebglEngine() {
   if (!["127.0.0.1", "localhost", "[::1]"].includes(new URL(gameUrl).hostname)) return;
   const build = spawnSync(

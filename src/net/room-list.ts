@@ -1,5 +1,6 @@
 import type { Difficulty } from "../game/engine-api";
 import { MAP_IDS, type MapId } from "../game/map-options";
+import { gameServerAddress } from "./server-address";
 import {
   MAX_ROUND_MINUTES,
   ROOM_CODE,
@@ -9,10 +10,11 @@ import {
 } from "./room-protocol";
 
 export const MAX_LISTED_ROOMS = 256;
+export const MAX_LISTED_SERVERS = 16;
 const DIFFICULTIES: readonly Difficulty[] = ["easy", "normal", "hard"];
 const PHASES: readonly RoomPhase[] = ["lobby", "playing", "results"];
 
-/** Public metadata for one room, as `/rooms` lists it. Never names, player ids or tokens. */
+/** Public metadata for one room, as a server lists it. Never names, player ids or tokens. */
 export interface RoomListing {
   room: string;
   contentVersion: string;
@@ -85,13 +87,58 @@ function readRoomListing(value: unknown): RoomListing {
   };
 }
 
-/** The `/rooms` response: `{ rooms: RoomListing[] }`, at most MAX_LISTED_ROOMS. */
-export function readRoomList(value: unknown): RoomListing[] {
-  const rooms = (value as { rooms?: unknown } | null)?.rooms;
+/** A server's `rooms`: at most MAX_LISTED_ROOMS listings. */
+function readRooms(rooms: unknown): RoomListing[] {
   if (!Array.isArray(rooms) || rooms.length > MAX_LISTED_ROOMS) {
     fail("rooms");
   }
   return rooms.map(readRoomListing);
+}
+
+/** A game server as the directory lists it: its WebSocket address and the content version
+ * it plays. */
+export interface ServerListing {
+  url: string;
+  contentVersion: string;
+}
+
+/** An open room and the address of the server that hosts it. */
+export interface HostedRoom extends RoomListing {
+  server: string;
+}
+
+export interface ServerList {
+  /** Fewest rooms first, the order a new room prefers. */
+  servers: ServerListing[];
+  /** Every server's rooms, the fullest first. */
+  rooms: HostedRoom[];
+}
+
+/** The directory's `{ servers: [{ url, contentVersion, rooms, ... }] }`, at most
+ * MAX_LISTED_SERVERS. Server addresses follow `gameServerAddress` for a page on
+ * `hostname`. Throws on anything malformed. */
+export function readServerList(value: unknown, hostname: string): ServerList {
+  const entries = (value as { servers?: unknown } | null)?.servers;
+  if (!Array.isArray(entries) || entries.length > MAX_LISTED_SERVERS) {
+    fail("servers");
+  }
+  const servers: ServerListing[] = [];
+  const rooms: HostedRoom[] = [];
+  for (const value of entries) {
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      fail("server");
+    }
+    const entry = value as Record<string, unknown>;
+    const url = gameServerAddress(entry.url, hostname);
+    const contentVersion = entry.contentVersion;
+    if (typeof contentVersion !== "string") {
+      fail("server contentVersion");
+    }
+    servers.push({ url, contentVersion });
+    rooms.push(...readRooms(entry.rooms).map((room) => ({ ...room, server: url })));
+  }
+  rooms.sort((a, b) => b.players - a.players || a.room.localeCompare(b.room));
+  return { servers, rooms };
 }
 
 /** A battle under way first, then a lobby, then a room between rounds. */
