@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { busiestOpenRoom, type RoomListing } from "../src/net/room-list";
+import { busiestOpenRoom, readServerList, type RoomListing } from "../src/net/room-list";
 import { steppedMinutes } from "../src/net/room-protocol";
 
 const room = (code: string, phase: RoomListing["phase"], players: number): RoomListing => ({
@@ -37,6 +37,56 @@ test("with no open room a phone creates one", () => {
   assert.equal(
     busiestOpenRoom([], () => true),
     undefined,
+  );
+});
+
+test("the directory's servers keep their order, and their rooms list together, fullest first", () => {
+  const list = readServerList(
+    {
+      servers: [
+        {
+          url: "wss://1-1-1-1.nip.io",
+          contentVersion: "old",
+          rooms: [room("OLDROOM2", "playing", 3)],
+        },
+        {
+          url: "wss://2-2-2-2.nip.io",
+          contentVersion: "current",
+          serverBuild: "ignored",
+          rooms: [room("NEWROOM2", "lobby", 1), room("NEWROOM3", "playing", 5)],
+        },
+      ],
+    },
+    "sloppy-tanks.example",
+  );
+  assert.deepEqual(list.servers, [
+    { url: "wss://1-1-1-1.nip.io", contentVersion: "old" },
+    { url: "wss://2-2-2-2.nip.io", contentVersion: "current" },
+  ]);
+  assert.deepEqual(
+    list.rooms.map((listing) => [listing.room, listing.server]),
+    [
+      ["NEWROOM3", "wss://2-2-2-2.nip.io"],
+      ["OLDROOM2", "wss://1-1-1-1.nip.io"],
+      ["NEWROOM2", "wss://2-2-2-2.nip.io"],
+    ],
+  );
+});
+
+test("a malformed directory list is refused whole", () => {
+  const site = "sloppy-tanks.example";
+  assert.throws(() => readServerList({ rooms: [] }, site), /servers/);
+  assert.throws(
+    () =>
+      readServerList(
+        { servers: [{ url: "ws://1-1-1-1.nip.io", contentVersion: "x", rooms: [] }] },
+        site,
+      ),
+    /Invalid game server address/,
+  );
+  assert.throws(
+    () => readServerList({ servers: [{ url: "wss://1-1-1-1.nip.io", contentVersion: "x" }] }, site),
+    /rooms/,
   );
 });
 

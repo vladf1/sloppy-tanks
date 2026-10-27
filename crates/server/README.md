@@ -1,7 +1,7 @@
 # Multiplayer server
 
 `sloppy-server` is one native Rust process that hosts every room in memory. It
-serves `/health`, `/rooms`, `/stats`, `/dashboard` (also at `/`) and the `/room/CODE` WebSocket
+serves `/health`, `/rooms`, `/servers`, `/stats`, `/dashboard` (also at `/`) and the `/room/CODE` WebSocket
 on Tokio and hyper, with its own RFC 6455 framing and permessage-deflate
 (`src/websocket/`). Each room is a Tokio task (`room_task.rs`) running a
 `RoomSession` (`session.rs`: socket limits, join timeout, the 50 ms timer) around
@@ -25,7 +25,8 @@ production's server; see `bots/README.md`.
 
 Tests: `cargo test -p sloppy-server` covers settings, limits, the WebSocket codec
 and deflate, sessions, the monitor and dashboard, and end-to-end rooms through
-an independent client (`tests/server.rs`, `tests/match_room.rs`). Reconnect, host
+an independent client (`tests/server.rs`, `tests/match_room.rs`), and announcing to a
+fake server directory (`tests/directory.rs`). Reconnect, host
 transfer, expiry and replication live in `crates/core/tests/integration/net_*.rs`.
 `tests/traffic-bots.test.ts` in `pnpm test` drives the built binary with the
 TypeScript traffic bots.
@@ -60,10 +61,12 @@ accepted in production builds.
 
 Settings come from the environment:
 
-| Variable        | Default              | Meaning                                                     |
-| --------------- | -------------------- | ----------------------------------------------------------- |
-| `HOST` / `PORT` | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks |
-| `MAX_ROOMS`     | `10`                 | Live rooms; new room codes beyond it get 503                |
+| Variable             | Default              | Meaning                                                             |
+| -------------------- | -------------------- | ------------------------------------------------------------------- |
+| `HOST` / `PORT`      | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks         |
+| `MAX_ROOMS`          | `10`                 | Live rooms; new room codes beyond it get 503                        |
+| `DIRECTORY_URL`      | none                 | Where to announce this server's rooms; unset or empty: none         |
+| `SERVER_ENVIRONMENT` | none                 | The environment that lists this server, needed with `DIRECTORY_URL` |
 
 A malformed value stops startup instead of silently turning a limit off. A loopback
 listener rate-limits by the last `X-Forwarded-For` hop, which Caddy sets.
@@ -101,6 +104,25 @@ disconnected-empty rooms are removed immediately and stale entries expire after
 refreshed. The client refreshes every five seconds while the visible browser
 dialog is open, and stops on joining, creating or leaving the page. Ordinary
 single player never loads or polls it.
+
+`GET /servers` answers in the server directory's format with this one server, so a lone
+local server is its own directory: `{"servers":[{"url":…,…}]}`, where the entry holds
+`url`, the address the request came in on (`wss://` when Caddy received it over HTTPS,
+otherwise `ws://`, with the request's host), `/health`'s fields and `rooms`, every room
+including extra levels. It shares `/rooms`'s CORS headers and rate limit.
+
+With `DIRECTORY_URL` set to the directory's base address
+(`https://sloppy-tanks-directory.fridman.me`) and `SERVER_ENVIRONMENT` to the environment
+that lists the server (`production` or `dev`), the server PUTs the same listing, without
+`url`, to `/servers?environment=` there as JSON. It compares the listing
+every 2 seconds and sends it when it changed since the directory last accepted it, or 15
+seconds after that, so the directory sees rooms appear and end within seconds and knows
+the server is still up; each request has 5 seconds. A failing directory is retried at
+every check and logged only when announcing starts failing or works again. The
+directory takes the server's address from the request's source IP, so the server
+connects to it over IPv4 only. TLS is rustls on Graviola's pure-Rust cryptography with
+Mozilla's root certificates compiled in (`webpki-roots`), which keeps the binary free of
+C code and the image free of a CA store.
 
 The server checks 8-character room codes, protocol/content versions, message sizes
 (4096 bytes) and rates (65 messages/second/socket) before accepting authority. It

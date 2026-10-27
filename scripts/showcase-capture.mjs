@@ -173,7 +173,7 @@ try {
     const offline = await deviceContext({ width: WIDTH, height: HEIGHT });
     const rooms = await offline.newPage();
     await seedGame(rooms, SEED);
-    await rooms.goto(`${base}?map=village&server=ws://127.0.0.1:9${webglQuery}`);
+    await rooms.goto(`${base}?map=village&directory=http://127.0.0.1:9${webglQuery}`);
     await menuReady(rooms, { timeout: 120_000 });
     await rooms.locator("#tab-multiplayer").click();
     await rooms.waitForTimeout(2500);

@@ -2,9 +2,9 @@ import { readFileSync } from "node:fs";
 import { isIP } from "node:net";
 
 /**
- * The multiplayer game servers: one machine each for production and the dev site, listed
- * in deploy/servers.json and set up by deploy/server/ (crates/server/README.md). Each entry
- * has the machine's public `ip`, which every script reaches it by over SSH as root, and
+ * The multiplayer game servers: the machines of production and of the dev site, listed
+ * in deploy/servers.json and set up by deploy/server/ (crates/server/README.md). Each
+ * machine has its public `ip`, which every script reaches it by over SSH as root, and
  * the `hostnames` Caddy serves; nothing else differs between the machines.
  *
  * `{dashed-ip}` in a hostname stands for the address with dashes: `{dashed-ip}.nip.io`
@@ -23,6 +23,11 @@ const list = JSON.parse(readFileSync(listFile, "utf8"));
 /** The server's container image in the GitHub Container Registry. CI pushes it and moves
  * :production; the machines pull it (deploy/server/sloppy-tanks-update names it too). */
 export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
+
+/** The server directory (directory/worker.ts): each machine pushes its rooms there, and the
+ * pages of its site read every server's rooms from there, each under its environment, the
+ * role (production or dev). */
+export const DIRECTORY_URL = "https://sloppy-tanks-directory.fridman.me";
 
 /**
  * accept-new trusts a fresh machine's host key on first contact, so a new one needs no
@@ -47,10 +52,16 @@ export const SSH_OPTIONS = [
 
 const DASHED_IP = "{dashed-ip}";
 
-/** The production server, or with `dev` the dev site's. */
-export function gameServer(dev) {
+/** The production machines, or with `dev` the dev site's. An environment lists one
+ * machine or several. */
+export function gameServers(dev) {
   const role = dev ? "dev" : "production";
-  return serverMachine(role, list[role]);
+  return [list[role]].flat().map((machine) => serverMachine(role, machine));
+}
+
+/** The environment's first machine, the one the traffic bots and the redeploy check use. */
+export function gameServer(dev) {
+  return gameServers(dev)[0];
 }
 
 /** How the scripts reach a machine from its deploy/servers.json entry. */
@@ -74,8 +85,11 @@ export function serverMachine(role, { ip, hostnames }) {
     sites,
     /** The hostnames that need their own DNS record pointing at `ip`. */
     dnsNames: hostnames.filter((name) => !fromIp(name)),
-    /** The WebSocket address players' pages use. */
+    /** The WebSocket address by the first hostname, which the traffic bots use. */
     url: `wss://${sites[0]}`,
+    /** The directory this machine pushes its rooms to. A machine from another list
+     * (SLOPPY_SERVERS, such as a local test VM) pushes nowhere, so players never see it. */
+    directory: process.env.SLOPPY_SERVERS ? "" : DIRECTORY_URL,
     /** Where the scripts check the server through Caddy: the name that reaches this machine. */
     checkUrl: `https://${machineName ?? sites[0]}`,
   };
