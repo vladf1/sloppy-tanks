@@ -470,12 +470,8 @@ impl Session {
                     }
                 }
             }
-            WindowEvent::Focused(false) => {
-                self.controls.clear();
-                if self.in_round && self.phase == Phase::Playing {
-                    self.apply(Action::Pause);
-                }
-            }
+            // Like the page's blur: held keys let go, the round plays on.
+            WindowEvent::Focused(false) => self.controls.clear(),
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
                 self.controls.set_command(

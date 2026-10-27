@@ -1,4 +1,4 @@
-//! The wgpu device (the browser's WebGPU, or natively Metal, Direct3D 12 or Vulkan),
+//! The wgpu device (the browser's WebGPU, or natively Metal or Direct3D 12),
 //! its canvas or window surface and the size-dependent frame attachments.
 //! GPU validation errors and device loss go to the renderer's [`ErrorSlot`].
 
@@ -133,12 +133,14 @@ impl Gpu {
     }
 }
 
-/// The graphics APIs wgpu may draw with: the browser's WebGPU, or natively Metal,
-/// Direct3D 12 or Vulkan.
+/// The graphics APIs wgpu may draw with: the browser's WebGPU, or natively Metal or
+/// Direct3D 12. Not Vulkan: its swapchain must match the window's pixels, while the
+/// canvas caps its pixel ratio (a Windows display scaled past 150% would refuse it),
+/// and wgpu could pick it over Direct3D 12, which every Windows 10 machine has.
 #[cfg(target_arch = "wasm32")]
 const BACKENDS: wgpu::Backends = wgpu::Backends::BROWSER_WEBGPU;
 #[cfg(not(target_arch = "wasm32"))]
-const BACKENDS: wgpu::Backends = wgpu::Backends::PRIMARY;
+const BACKENDS: wgpu::Backends = wgpu::Backends::METAL.union(wgpu::Backends::DX12);
 
 /// `GPUTextureUsage.TRANSIENT_ATTACHMENT` where the browser has it (Safari 26 and
 /// Chrome do): an attachment cleared and discarded within its pass then lives only
@@ -160,7 +162,7 @@ fn transient_usage() -> wgpu::TextureUsages {
 }
 
 /// Native wgpu always has the usage; where the GPU cannot keep an attachment in tile
-/// memory (Direct3D 12, desktop Vulkan) it is an ordinary attachment.
+/// memory (Direct3D 12) it is an ordinary attachment.
 #[cfg(not(target_arch = "wasm32"))]
 fn transient_usage() -> wgpu::TextureUsages {
     wgpu::TextureUsages::TRANSIENT_ATTACHMENT

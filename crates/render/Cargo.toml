@@ -16,7 +16,7 @@ webgpu = ["wgpu?/webgpu"]
 # The WebGL2 fallback: its own backend on glow (`gpu/webgl/`), with the WGSL
 # translated to GLSL ES by naga. Wins over `webgpu` when both are enabled.
 webgl = ["dep:glow", "dep:naga"]
-# The desktop builds: wgpu on Metal, Direct3D 12 or Vulkan in a native window, the
+# The desktop builds: wgpu on Metal or Direct3D 12 in a native window, the
 # texture files decoded here and canvas text drawn with the system's fonts.
 native = ["dep:wgpu", "dep:image", "dep:tiny-skia", "dep:ab_glyph"]
 
@@ -55,7 +55,7 @@ web-sys = { workspace = true, features = [
 
 # Optional natively, so native test builds, which never draw, compile no wgpu.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-wgpu = { workspace = true, optional = true, features = ["std", "parking_lot", "metal", "dx12", "vulkan"] }
+wgpu = { workspace = true, optional = true, features = ["std", "parking_lot", "metal", "dx12"] }
 image = { version = "0.25", optional = true, default-features = false, features = ["webp"] }
 tiny-skia = { version = "0.12", optional = true, default-features = false, features = ["std", "simd"] }
 ab_glyph = { version = "0.2", optional = true }

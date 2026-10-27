@@ -6,7 +6,7 @@
 //! target sizes) compile
 //! natively and carry the unit tests. The `gpu` module draws with `wgpu` on the
 //! browser's WebGPU, with the `webgl` feature glow on WebGL2, or with the `native`
-//! feature `wgpu` on Metal, Direct3D 12 or Vulkan (the desktop builds).
+//! feature `wgpu` on Metal or Direct3D 12 (the desktop builds).
 
 /// The WGSL file at each path under `src/`, one after another, embedded without
 /// comments or blank lines (`build.rs`): the shader text the binary carries.

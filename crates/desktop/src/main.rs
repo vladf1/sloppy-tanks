@@ -1,5 +1,5 @@
 //! Sloppy Tanks on macOS and Windows: the game in a native window, drawn with wgpu on
-//! Metal, Direct3D 12 or Vulkan, its menus and HUD in egui. No browser: the shell
+//! Metal or Direct3D 12, its menus and HUD in egui. No browser: the shell
 //! replaces the page's TypeScript (`src/`) and drives the same Rust `Game` the page
 //! does (`crates/web`).
 

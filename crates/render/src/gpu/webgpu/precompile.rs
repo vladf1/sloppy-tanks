@@ -19,7 +19,7 @@
 //!
 //! The WebGL backend has its own background compile (`webgl/programs.rs`).
 //!
-//! Natively (Metal, Direct3D 12, Vulkan) wgpu compiles each pipeline on the spot while
+//! Natively (Metal, Direct3D 12) wgpu compiles each pipeline on the spot while
 //! the arena prepares behind the loading screen, so the precompiler there only keeps
 //! the same interface ([`native`]).
 

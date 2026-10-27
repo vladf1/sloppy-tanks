@@ -126,7 +126,7 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 | `crates/render`   | Wasm          | The WebGPU/WebGL2 renderer, WGSL shaders, presentation, effects and cameras              |
 | `crates/web`      | Wasm          | The wasm-bindgen API: `Game` (single player) and `NetGame` (a room page)                 |
 | `crates/server`   | native        | The multiplayer server: HTTP, WebSocket rooms, limits, monitor and dashboard             |
-| `crates/desktop`  | macOS/Windows | The desktop app: a native window on wgpu (Metal, Direct3D 12, Vulkan), egui menus, HUD   |
+| `crates/desktop`  | macOS/Windows | The desktop app: a native window on wgpu (Metal, Direct3D 12), egui menus, HUD           |
 | `src/`            | browser       | The page shell: menus, HUD, input, touch controls, audio and the room page               |
 
 | Area                           | Starting points                                                                                                               |
@@ -213,8 +213,8 @@ The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
 ## Desktop builds
 
 `crates/desktop` is the same game as a native app for macOS and Windows, no browser:
-the Rust `Game` and `NetGame` the page drives, drawn with wgpu on Metal, Direct3D 12 or
-Vulkan, with menus and HUD in egui and the textures and sounds from
+the Rust `Game` and `NetGame` the page drives, drawn with wgpu on Metal or Direct3D 12,
+with menus and HUD in egui and the textures and sounds from
 `public/` built into the executable.
 
 ```sh

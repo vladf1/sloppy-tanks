@@ -45,7 +45,7 @@ the server:
   effects and replication must not come back into TypeScript; the import
   boundary tests (`tests/*-imports.test.ts`) allowlist the shell modules.
 - `crates/desktop` (native, macOS and Windows): the other shell, binary
-  `sloppy-tanks`. A winit window drawn by wgpu on Metal, Direct3D 12 or Vulkan
+  `sloppy-tanks`. A winit window drawn by wgpu on Metal or Direct3D 12
   (`sloppy-render`'s `native` feature), egui menus and HUD, and the same `Game`
   and `NetGame` the page drives (`sloppy-web`'s `native` feature). Game rules stay
   out of both shells.
