@@ -25,6 +25,20 @@
       "runtimeExecutable": "./target/server/sloppy-server",
       "runtimeArgs": [],
       "port": 8787
+    },
+    {
+      "name": "directory",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "exec",
+        "wrangler",
+        "dev",
+        "--config",
+        "directory/wrangler.jsonc",
+        "--port",
+        "8794"
+      ],
+      "port": 8794
     }
   ]
 }
