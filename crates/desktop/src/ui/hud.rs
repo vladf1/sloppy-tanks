@@ -36,7 +36,8 @@ pub fn hud(context: &egui::Context, state: &mut UiState, view: &View, actions: &
         kill_feed(context, state);
         toast(context, state);
         hit_feedback(context, state);
-        if !hud.human.alive {
+        // A room draws its own respawn card: tanks are chosen between battles there.
+        if !hud.human.alive && !view.room {
             respawn(context, &hud, view, actions);
         }
     }

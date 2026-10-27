@@ -57,6 +57,7 @@ pub fn battle_setup(
                 );
             });
             ui.add_space(8.0);
+            let multiplayer = super::rooms::play_tabs(ui, &mut state.rooms);
             ui.label(
                 RichText::new("TANK")
                     .font(theme::bold_font(13.0))
@@ -87,6 +88,11 @@ pub fn battle_setup(
                     }
                 }
             });
+            if multiplayer {
+                super::rooms::multiplayer(ui, &mut state.rooms, view, &prefs, actions);
+                footer(ui, view, actions);
+                return;
+            }
             ui.label(
                 RichText::new("BATTLE")
                     .font(theme::bold_font(13.0))
@@ -147,4 +153,19 @@ pub fn battle_setup(
         actions.push(Action::SettingsSaved(Box::new(prefs)));
         actions.push(Action::OptionsChanged);
     }
+}
+
+/// Settings, Quit and the build line under the Multiplayer tab.
+fn footer(ui: &mut egui::Ui, view: &View, actions: &mut Vec<Action>) {
+    ui.vertical_centered(|ui| {
+        ui.horizontal(|ui| {
+            if ui.button("Settings").clicked() {
+                actions.push(Action::OpenSettings);
+            }
+            if ui.button("Quit").clicked() {
+                actions.push(Action::Quit);
+            }
+        });
+        ui.label(RichText::new(view.build).size(11.0).color(TEXT_DIM));
+    });
 }

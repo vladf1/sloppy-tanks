@@ -61,7 +61,7 @@ pub fn pause(
 }
 
 /// The keyboard reference in the pause menu.
-const CONTROLS: &[(&str, &str)] = &[
+pub const CONTROLS: &[(&str, &str)] = &[
     ("W A S D / arrows", "Drive"),
     ("Mouse", "Aim"),
     ("Left button / Space", "Fire"),
