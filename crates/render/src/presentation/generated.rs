@@ -46,15 +46,26 @@ pub struct SoilBake {
 impl SoilBake {
     /// Bake the next band; returns the finished pixels after the last one.
     pub fn step(&mut self, rows: usize) -> Option<Vec<u8>> {
-        let end = (self.rows + rows.max(1)).min(QUARRY_SOIL_SIZE);
+        self.step_rows(rows, QUARRY_SOIL_SIZE, |start, end| {
+            bake_quarry_ground(sand_accum(), start, end)
+        })
+    }
+
+    /// The band bookkeeping of [`Self::step`] for a square texture of `size` rows,
+    /// whose rows `[start, end)` `bake_rows` bakes.
+    fn step_rows(
+        &mut self,
+        rows: usize,
+        size: usize,
+        bake_rows: impl FnOnce(usize, usize) -> Vec<u8>,
+    ) -> Option<Vec<u8>> {
+        let end = (self.rows + rows.max(1)).min(size);
         if self.pixels.is_empty() {
-            self.pixels
-                .reserve_exact(QUARRY_SOIL_SIZE * QUARRY_SOIL_SIZE * 4);
+            self.pixels.reserve_exact(size * size * 4);
         }
-        self.pixels
-            .extend_from_slice(&bake_quarry_ground(sand_accum(), self.rows, end));
+        self.pixels.extend_from_slice(&bake_rows(self.rows, end));
         self.rows = end;
-        (self.rows == QUARRY_SOIL_SIZE).then(|| std::mem::take(&mut self.pixels))
+        (self.rows == size).then(|| std::mem::take(&mut self.pixels))
     }
 }
 
@@ -299,7 +310,7 @@ mod tests {
         textures.release_bake(QUARRY_SOIL_TEXTURE);
         assert!(textures.busy() && !textures.baking_elsewhere());
         assert_eq!(textures.claim_bake(), None, "handed back");
-        textures.soil.as_mut().unwrap().step(SOIL_ROWS_PER_STEP);
+        textures.soil.as_mut().unwrap().step(1);
         assert_eq!(textures.claim_bake(), None, "half-baked here");
         assert!(GeneratedTextures::default().claim_bake().is_none());
     }
@@ -307,11 +318,11 @@ mod tests {
     /// Every texture a theme's scenery has baked is one the page may start early.
     #[test]
     fn theme_bakes_are_what_the_scenery_bakes() {
-        use crate::presentation::model_catalog::scenery;
+        use crate::presentation::model_catalog::shared_scenery::shared_scenery;
         use sloppy_core::models::node_textures;
         use sloppy_core::scene::TextureSource;
         for theme in [Theme::Village, Theme::Harbor, Theme::Quarry] {
-            let model = scenery(theme).expect("standard theme");
+            let model = shared_scenery(theme);
             let baked: Vec<&str> = node_textures(&model.root)
                 .into_iter()
                 .filter_map(|source| match source {
@@ -325,16 +336,39 @@ mod tests {
         assert!(theme_bakes("stress-test").is_empty());
     }
 
+    /// The bands' rows follow one another, the last one stops at the texture's
+    /// edge and the pixels come back once, whole. (That the soil bake itself is
+    /// independent of the band split is pinned in `sloppy_core`.)
     #[test]
-    fn banded_soil_matches_the_whole_bake() {
+    fn banded_soil_bakes_every_row_once_in_order() {
+        const SIZE: usize = 11;
+        let row_pixels = |start: usize, end: usize| -> Vec<u8> {
+            (start..end)
+                .flat_map(|row| (0..SIZE * 4).map(move |byte| (row * 31 + byte) as u8))
+                .collect()
+        };
         let mut bake = SoilBake::default();
+        let mut bands = Vec::new();
         let mut result = None;
-        let mut steps = 0;
-        while result.is_none() {
-            result = bake.step(SOIL_ROWS_PER_STEP * 3 + 7);
-            steps += 1;
+        for _ in 0..SIZE {
+            result = bake.step_rows(3, SIZE, |start, end| {
+                bands.push((start, end));
+                row_pixels(start, end)
+            });
+            if result.is_some() {
+                break;
+            }
         }
-        assert_eq!(steps, QUARRY_SOIL_SIZE.div_ceil(SOIL_ROWS_PER_STEP * 3 + 7));
-        assert!(result.unwrap() == bake_quarry_ground(sand_accum(), 0, QUARRY_SOIL_SIZE));
+        assert_eq!(bands, [(0, 3), (3, 6), (6, 9), (9, 11)]);
+        assert!(result.unwrap() == row_pixels(0, SIZE));
+        assert!(bake.pixels.is_empty());
+        // A zero-row step still advances, so the loading screen always finishes.
+        let mut bake = SoilBake::default();
+        assert!(bake.step_rows(0, SIZE, row_pixels).is_none());
+        assert_eq!(bake.rows, 1);
+        // The real soil's first band is its first rows.
+        let mut bake = SoilBake::default();
+        assert!(bake.step(1).is_none());
+        assert!(bake.pixels == bake_quarry_ground(sand_accum(), 0, 1));
     }
 }

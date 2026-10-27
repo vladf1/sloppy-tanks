@@ -51,6 +51,11 @@ fn duel() -> (Simulation, u32, u32) {
 /// Alice, her view `view` ticks behind, fires once at `aim` on tick [`FIRE`]; Bob moves
 /// on tick `moves`. The tick her shell hit him, if it did.
 fn shell_hits_bob(view: u32, aim: f64, moves: u64) -> Option<u64> {
+    shell_hits_bob_after(view, aim, moves, false)
+}
+
+/// As [`shell_hits_bob`], with Alice destroyed the tick after she fires when `killed`.
+fn shell_hits_bob_after(view: u32, aim: f64, moves: u64, killed: bool) -> Option<u64> {
     let (mut sim, alice, bob) = duel();
     sim.shooter_rewind
         .as_mut()
@@ -61,6 +66,11 @@ fn shell_hits_bob(view: u32, aim: f64, moves: u64) -> Option<u64> {
     for tick in 0..FIRE + 120 {
         let x = if tick < moves { 0.0 } else { MOVED };
         place_tank(&mut sim, bob_index, x, RANGE, Some(90f64.to_radians()));
+        if killed && tick == FIRE + 1 {
+            let life = sim.tanks[bob_index].life;
+            sim.damage_tank(0, f64::INFINITY, bob, Team::Red, Some(life), None);
+            assert!(!sim.tanks[0].alive, "alice is destroyed");
+        }
         let mut command = VehicleCommand::idle_aiming(aim);
         command.fire = tick == FIRE;
         sim.events.clear();
@@ -106,4 +116,15 @@ fn a_rewind_stops_at_the_cap() {
     // where it saw him.
     let moves = hit - u64::from(MAX_REWIND_TICKS) - 2;
     assert_eq!(shell_hits_bob(2 * MAX_REWIND_TICKS, 0.0, moves), None);
+}
+
+#[test]
+fn a_destroyed_shooters_shell_still_meets_a_tank_where_she_saw_it() {
+    let hit = shell_hits_bob(0, 0.0, u64::MAX).expect("a standing target is hit");
+    // Her screen shows every tank on the delayed display once her hull is gone.
+    assert_eq!(
+        shell_hits_bob_after(MAX_REWIND_TICKS, 0.0, hit - 1, true),
+        Some(hit)
+    );
+    assert_eq!(shell_hits_bob_after(0, 0.0, hit - 1, true), None);
 }

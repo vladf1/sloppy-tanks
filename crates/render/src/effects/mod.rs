@@ -661,7 +661,10 @@ mod tests {
         }
         let dt = 1.0 / 60.0;
         let mut peak = EffectStats::default();
-        for frame in 0..60 * 30 {
+        // Every pool but the track marks peaks by frame 760 (particles by 30, wood
+        // by 60); the marks keep rising to their 24 s lifetime, a bound the track
+        // tests hold through buffer wraps.
+        for frame in 0..60 * 20 {
             state.elapsed = frame as f64 * dt;
             for tank in &mut state.tanks {
                 tank.previous.x = tank.position.x;

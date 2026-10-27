@@ -6,8 +6,8 @@
 //! reset's new round has refilled what it could; the page set must settle, not keep
 //! growing.
 
-use sloppy_render::effects::random::CosmeticRandom;
-use sloppy_render::mesh_pages::{PageFamily, PageKind, PagePlanner};
+use crate::effects::random::CosmeticRandom;
+use crate::mesh_pages::{PageFamily, PageKind, PagePlanner};
 
 const SURFACE: PageFamily = PageFamily::Surface;
 const FAMILIES: [PageFamily; 3] = [SURFACE, PageFamily::Shadow, PageFamily::Index];
@@ -85,11 +85,11 @@ enum Event {
     End,
 }
 
-/// `fixtures/stress-mesh-uploads.txt`, which `fixtures/record-mesh-uploads.mjs`
+/// `tests/fixtures/stress-mesh-uploads.txt`, which `record-mesh-uploads.mjs` beside it
 /// records, with repeated uploads expanded.
 fn recorded_session() -> Vec<Event> {
     let mut events = Vec::new();
-    for line in include_str!("fixtures/stress-mesh-uploads.txt").lines() {
+    for line in include_str!("../../tests/fixtures/stress-mesh-uploads.txt").lines() {
         let words: Vec<&str> = line.split_whitespace().collect();
         match words.as_slice() {
             [] | ["#", ..] => {}

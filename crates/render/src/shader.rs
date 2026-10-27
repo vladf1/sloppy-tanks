@@ -900,21 +900,48 @@ pub(crate) mod webgl_check {
         }
     }
 
-    /// A surface or shadow variant as the WebGL build assembles and translates it.
-    pub fn translate_variant(label: &str, key: &ShaderKey, effects: &EffectRegistry) {
-        let code = shader_source_for(key, effects, InstanceSource::Texture);
-        translate_for_webgl(&format!("{label} {key:?}"), &code);
+    /// Validate a variant as this build assembles it, and each of its WebGPU stages
+    /// alone, check that it keeps no loop and that its vertex stage samples no
+    /// texture, then translate its WebGL build. Returns its WebGPU stages.
+    pub fn check_variant(label: &str, key: &ShaderKey, effects: &EffectRegistry) -> StageSources {
+        let label = format!("{label} {key:?}");
+        let code = shader_source(key, effects);
+        validate(&label, &code);
+        assert_no_loop(&label, &code);
+        let (vertex, fragment) = key.entry_points();
+        let stages = StageSources::of(&code, vertex, fragment);
+        validate_stages(&label, &stages);
+        assert_vertex_samples_no_texture(&label, &stages);
+        translate_for_webgl(
+            &label,
+            &shader_source_for(key, effects, InstanceSource::Texture),
+        );
+        stages
     }
 
-    /// Validate a variant as this build assembles it, and each of its WebGPU stages
-    /// alone, then translate its WebGL build.
-    pub fn check_variant(label: &str, key: &ShaderKey, effects: &EffectRegistry) {
-        validate(&format!("{label} {key:?}"), &shader_source(key, effects));
-        validate_stages(
-            &format!("{label} {key:?}"),
-            &StageSources::variant(key, effects),
+    /// WebKit guards every WGSL loop with a volatile counter that keeps Metal from
+    /// unrolling it (`specialize.rs`), which cost the village's main view 15 times
+    /// its GPU time there: every loop a shader runs is one the specializer unrolls.
+    pub fn assert_no_loop(label: &str, code: &str) {
+        let kept = ["for", "loop", "while"].iter().find_map(|word| {
+            code.match_indices(word)
+                .map(|(i, _)| i)
+                .find(|&i| specialize::word_at(code.as_bytes(), i, word))
+        });
+        assert!(
+            kept.is_none(),
+            "{label} keeps a loop: {}",
+            &code[kept.unwrap_or(0)..(kept.unwrap_or(0) + 80).min(code.len())]
         );
-        translate_variant(label, key, effects);
+    }
+
+    /// The WebGPU layouts show textures to the fragment stage alone (`resources.rs`
+    /// says why), so a vertex stage, effects' vertex code included, samples none.
+    pub fn assert_vertex_samples_no_texture(label: &str, stages: &StageSources) {
+        assert!(
+            !stages.vertex.contains("texture") && !stages.vertex.contains("sampler"),
+            "the vertex stage of {label} samples a texture"
+        );
     }
 
     /// Validate each stage module of a pipeline on its own.
@@ -926,9 +953,11 @@ pub(crate) mod webgl_check {
     }
 
     /// Check effect `id` for both builds in the variants its materials use: basic
-    /// and lit, with and without an alpha test, and the shadow pass.
+    /// and lit, with and without an alpha test, and the shadow pass. A lit surface
+    /// and a fading, alpha-tested caster share their vertex stage source.
     pub fn validate_effect(effects: &EffectRegistry, id: u16) {
         let effect = effects.get(id).expect("a registered effect");
+        let mut lit_vertex = None;
         for (lit, alpha_test) in [(false, false), (true, false), (true, true), (false, true)] {
             let key = ShaderKey {
                 pass: Pass::Main,
@@ -937,8 +966,18 @@ pub(crate) mod webgl_check {
                 effect: id,
                 ..ShaderKey::default()
             };
-            check_variant(effect.name, &key, effects);
+            let stages = check_variant(effect.name, &key, effects);
+            if lit && !alpha_test {
+                lit_vertex = Some(stages.vertex);
+            }
         }
+        let fading_caster = ShaderKey {
+            pass: Pass::Shadow,
+            alpha_test: true,
+            shadow_fade: true,
+            effect: id,
+            ..ShaderKey::default()
+        };
         for alpha_test in [false, true] {
             let shadow = ShaderKey {
                 pass: Pass::Shadow,
@@ -947,7 +986,21 @@ pub(crate) mod webgl_check {
                 effect: id,
                 ..ShaderKey::default()
             };
-            check_variant(effect.name, &shadow, effects);
+            let stages = check_variant(effect.name, &shadow, effects);
+            if shadow == fading_caster {
+                assert_eq!(lit_vertex.as_ref(), Some(&stages.vertex), "{}", effect.name);
+            }
+        }
+        if !effect.shadow_fade {
+            // Not a caster this effect's materials draw, but one its vertex code
+            // must still serve alike.
+            let label = format!("{} {fading_caster:?}", effect.name);
+            let code = shader_source(&fading_caster, effects);
+            assert_no_loop(&label, &code);
+            let (vertex, fragment) = fading_caster.entry_points();
+            let stages = StageSources::of(&code, vertex, fragment);
+            assert_vertex_samples_no_texture(&label, &stages);
+            assert_eq!(lit_vertex.as_ref(), Some(&stages.vertex), "{label}");
         }
     }
 }
@@ -996,6 +1049,42 @@ mod tests {
         translate_for_webgl("occlusion", &occlusion_source(false, 4));
     }
 
+    /// The binary embeds the WGSL files without their comments (`build.rs`): the
+    /// browser never sees them, and as written they were about 190 KB of each
+    /// engine's download.
+    #[test]
+    fn embedded_shaders_carry_no_comments_or_blank_lines() {
+        let fixed = [
+            COMMON_WGSL,
+            MATERIAL_WGSL,
+            STANDARD_WGSL,
+            SHADOW_WGSL,
+            WATER_WGSL,
+            OUTPUT_WGSL,
+            SKY_WGSL,
+            OCCLUSION_WGSL,
+            MIPMAP_WGSL,
+            SHADOW_MERGED_WGSL,
+            SHADOW_CUTOUT_WGSL,
+        ];
+        // An effect's code may all be shared hooks.
+        let effects = crate::effects::BUILTIN_EFFECTS
+            .iter()
+            .chain(crate::presentation::PRESENTATION_EFFECTS.iter())
+            .flat_map(|effect| [effect.wgsl, effect.shared_vertex, effect.shared_surface])
+            .filter(|source| !source.is_empty());
+        for source in fixed.into_iter().chain(effects) {
+            assert!(!source.is_empty());
+            assert!(!source.contains("//") && !source.contains("/*"));
+            assert!(
+                source
+                    .lines()
+                    .all(|line| !line.trim().is_empty() && line == line.trim_end())
+            );
+            assert!(source.ends_with('\n'));
+        }
+    }
+
     #[test]
     fn fixed_shaders_are_valid_wgsl() {
         validate("water", &water_source());
@@ -1033,71 +1122,15 @@ mod tests {
             let stages = StageSources::of(&code, vertex, fragment);
             webgl_check::validate_stages(vertex, &stages);
         }
-    }
-
-    #[test]
-    fn surface_and_shadow_passes_share_vertex_stage_sources() {
-        let mut effects = EffectRegistry::default();
-        for effect in crate::presentation::PRESENTATION_EFFECTS {
-            effects.register(effect);
-        }
-        let count =
-            crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
-        for effect in 0..=count as u16 {
-            let main = ShaderKey {
-                effect,
-                lit: true,
-                ..ShaderKey::default()
-            };
-            let shadow = ShaderKey {
-                pass: Pass::Shadow,
-                alpha_test: true,
-                shadow_fade: true,
-                effect,
-                ..ShaderKey::default()
-            };
-            assert_eq!(
-                StageSources::variant(&main, &effects).vertex,
-                StageSources::variant(&shadow, &effects).vertex,
-                "effect {effect}",
-            );
-        }
-    }
-
-    /// The WebGPU layouts show textures to the fragment stage alone (`resources.rs`
-    /// says why), so a vertex stage, effects' vertex code included, samples none.
-    #[test]
-    fn no_vertex_stage_samples_a_texture() {
-        let mut effects = EffectRegistry::default();
-        for effect in crate::presentation::PRESENTATION_EFFECTS {
-            effects.register(effect);
-        }
-        let count =
-            crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
-        for effect in 0..=count as u16 {
-            let mut keys: Vec<ShaderKey> = [(false, false), (true, true)]
-                .into_iter()
-                .map(|(lit, alpha_test)| ShaderKey {
-                    lit,
-                    alpha_test,
-                    effect,
-                    ..ShaderKey::default()
-                })
-                .collect();
-            keys.push(ShaderKey {
-                pass: Pass::Shadow,
-                alpha_test: true,
-                shadow_fade: true,
-                effect,
-                ..ShaderKey::default()
-            });
-            for key in keys {
-                let vertex = StageSources::variant(&key, &effects).vertex;
-                assert!(
-                    !vertex.contains("texture") && !vertex.contains("sampler"),
-                    "the vertex stage of {key:?} samples a texture"
-                );
-            }
+        for (label, code) in [
+            ("water", water_source()),
+            ("sky", sky_source()),
+            ("output", output_source()),
+            ("occlusion", occlusion_source(true, 2)),
+            ("shadow merged", shadow_merged_source()),
+            ("shadow cutout", shadow_cutout_source()),
+        ] {
+            webgl_check::assert_no_loop(label, &code);
         }
     }
 
@@ -1183,59 +1216,6 @@ mod tests {
             1,
             "one vertex stage for every surface variant and caster"
         );
-    }
-
-    /// WebKit guards every WGSL loop with a volatile counter that keeps Metal from
-    /// unrolling it (`specialize.rs`), which cost the village's main view 15 times
-    /// its GPU time there: every loop a shader runs is one the specializer unrolls.
-    #[test]
-    fn no_shader_keeps_a_loop() {
-        let mut effects = EffectRegistry::default();
-        for effect in crate::presentation::PRESENTATION_EFFECTS {
-            effects.register(effect);
-        }
-        let mut sources = vec![
-            ("water".to_owned(), water_source()),
-            ("sky".to_owned(), sky_source()),
-            ("output".to_owned(), output_source()),
-            ("occlusion".to_owned(), occlusion_source(true, 2)),
-            ("shadow merged".to_owned(), shadow_merged_source()),
-            ("shadow cutout".to_owned(), shadow_cutout_source()),
-        ];
-        let count =
-            crate::effects::BUILTIN_EFFECTS.len() + crate::presentation::PRESENTATION_EFFECTS.len();
-        for effect in 0..=count as u16 {
-            for (lit, alpha_test) in [(false, false), (true, false), (true, true)] {
-                let key = ShaderKey {
-                    lit,
-                    alpha_test,
-                    effect,
-                    ..ShaderKey::default()
-                };
-                sources.push((format!("{key:?}"), shader_source(&key, &effects)));
-            }
-            let caster = ShaderKey {
-                pass: Pass::Shadow,
-                alpha_test: true,
-                shadow_fade: true,
-                effect,
-                ..ShaderKey::default()
-            };
-            sources.push((format!("{caster:?}"), shader_source(&caster, &effects)));
-        }
-        for (label, code) in sources {
-            let bytes = code.as_bytes();
-            let kept = (0..bytes.len()).find(|&i| {
-                ["for", "loop", "while"]
-                    .iter()
-                    .any(|word| specialize::word_at(bytes, i, word))
-            });
-            assert!(
-                kept.is_none(),
-                "{label} keeps a loop: {}",
-                &code[kept.unwrap_or(0)..(kept.unwrap_or(0) + 80).min(code.len())]
-            );
-        }
     }
 
     /// The aerial haze's light (the sky gradient and the ranges it looks up) is added
@@ -1332,6 +1312,19 @@ mod tests {
         }
         assert!(features.0 & MaterialFeatures::FOG == 0);
         assert!(MaterialFeatures::of(&plain).0 & MaterialFeatures::FOG != 0);
+        // Emissive and bump maps apply to standard materials only.
+        let unlit = Material {
+            map: None,
+            ..Material::basic(0xffffff)
+        };
+        let unlit_featured = Material {
+            emissive_map: featured.emissive_map.clone(),
+            bump_map: featured.bump_map.clone(),
+            ..unlit
+        };
+        let features = MaterialFeatures::of(&unlit_featured);
+        assert!(features.0 & MaterialFeatures::EMISSIVE_MAP == 0);
+        assert!(features.0 & MaterialFeatures::BUMP == 0);
     }
 
     /// On WebGPU shadow reception is a lit part's uniform setting; the WebGL build,
@@ -1359,19 +1352,6 @@ mod tests {
         assert!(source(true, gpu).contains("material_has(MATERIAL_RECEIVE_SHADOW)"));
         assert!(source(true, gl).contains("fn sun_shadow("));
         assert!(!source(false, gl).contains("fn sun_shadow("));
-    }
-
-    #[test]
-    fn emissive_and_bump_maps_only_apply_to_standard_materials() {
-        let atlas = TextureRef::file("atlas.webp");
-        let unlit = Material {
-            emissive_map: Some(atlas.clone()),
-            bump_map: Some(atlas),
-            ..Material::basic(0xffffff)
-        };
-        let features = MaterialFeatures::of(&unlit);
-        assert!(features.0 & MaterialFeatures::EMISSIVE_MAP == 0);
-        assert!(features.0 & MaterialFeatures::BUMP == 0);
     }
 
     #[test]

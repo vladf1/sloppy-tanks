@@ -15,9 +15,10 @@ use sloppy_core::net::wire::WireReader;
 use sloppy_core::sim::Simulation;
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::data::STEP;
+use sloppy_core::sim::hitboxes::HIT_HALF_HEIGHT;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::math::Point3;
-use sloppy_core::sim::render_state::RenderShot;
+use sloppy_core::sim::render_state::{RenderShot, RenderTank};
 use sloppy_core::sim::types::{
     AmmoInventory, CoverKind, PlayerAssignment, SimEventType, Team, VehicleCommand, VehicleKind,
     Weapon,
@@ -303,4 +304,103 @@ fn a_shell_the_host_launched_a_tick_late_glides_onto_its_path() {
         last.z,
         on_path.z
     );
+}
+
+/// Alice fires down the barrel at an enemy broadside 5 m ahead whose hull centre is
+/// `under` metres below the shell's lane, drawing ten ticks ahead of the host's newest;
+/// the host launches the shell (flying on past the hull) when `launched`. The impacts
+/// drawn, whether the shell was drawn after one, and the shots.
+fn strike_ahead(under: f64, launched: bool) -> (usize, bool, OwnShots) {
+    let (sim, viewer) = alone(VehicleKind::Balanced);
+    let cover = predictor(&sim, viewer);
+    let position = sim.body_translation(sim.tanks[0].body);
+    let mut own = OwnShots::default();
+    own.fire(
+        Firing {
+            tick: 100,
+            position,
+            aim: 0.0,
+            kind: VehicleKind::Balanced,
+            weapon: Weapon::Standard,
+            team: Team::Blue,
+            tank_id: viewer,
+        },
+        &cover,
+    );
+    let predicted = drawn_at(&mut own, 99.0)[0];
+    let enemy = RenderTank {
+        id: 99,
+        kind: VehicleKind::Balanced,
+        team: Team::Red,
+        alive: true,
+        position: Point3::new(position.x, predicted.y.unwrap() - under, position.z + 5.0),
+        heading: std::f64::consts::FRAC_PI_2,
+        ..RenderTank::default()
+    };
+    let (mut impacts, mut flew_on) = (0, false);
+    for quarter in 0..100 {
+        let present = 99.0 + f64::from(quarter) * 0.25;
+        let newest = present - 10.0;
+        if launched && newest == 100.0 {
+            let host = ShotPath {
+                id: 77,
+                tick: 99.0,
+                x: predicted.x,
+                z: predicted.z,
+                vx: predicted.vx,
+                vz: predicted.vz,
+                launch: sloppy_core::net::shot_paths::ShotLaunch {
+                    team: Team::Blue,
+                    weapon: Weapon::Standard,
+                    y: predicted.y,
+                    visual_y: predicted.visual_y,
+                    thrust: None,
+                    rewind: 0,
+                },
+            };
+            own.claim(
+                &mut vec![PathEntry::Launch(host)],
+                &mut Vec::new(),
+                Team::Blue,
+                viewer,
+                &cover,
+            );
+        }
+        let mut shots = Vec::new();
+        let due = own.draw(
+            present,
+            present,
+            newest,
+            std::slice::from_ref(&enemy),
+            &mut shots,
+        );
+        impacts += due
+            .iter()
+            .filter(|event| event.kind == SimEventType::Impact)
+            .count();
+        flew_on |= impacts > 0 && !shots.is_empty();
+    }
+    (impacts, flew_on, own)
+}
+
+#[test]
+fn a_strike_the_host_flew_past_flies_on_but_one_it_never_launched_stays_struck() {
+    let (impacts, flew_on, own) = strike_ahead(0.0, true);
+    assert_eq!(impacts, 1, "struck ahead of the host");
+    assert_eq!(own.stats.phantom_strikes, 1, "the host flew past");
+    assert!(flew_on, "the shell flies on as the host's did");
+    let (impacts, flew_on, own) = strike_ahead(0.0, false);
+    assert_eq!(impacts, 1, "struck ahead of the host");
+    assert_eq!(own.stats.phantom_strikes, 0, "no host flight to undo it");
+    assert!(!flew_on, "a shell the host never fired stays struck");
+    assert_eq!(own.stats.unconfirmed_shells, 1);
+}
+
+#[test]
+fn an_own_shell_passes_over_a_hull_below_the_hit_box_as_on_the_host() {
+    let (impacts, _, _) = strike_ahead(HIT_HALF_HEIGHT - 0.05, true);
+    assert_eq!(impacts, 1, "within the hit box's height");
+    let (impacts, _, own) = strike_ahead(HIT_HALF_HEIGHT + 0.05, true);
+    assert_eq!(impacts, 0, "over it");
+    assert_eq!(own.stats.phantom_strikes, 0);
 }

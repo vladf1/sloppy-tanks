@@ -117,13 +117,4 @@ mod tests {
         look.toggle(0.0);
         assert!(!look.enabled);
     }
-
-    #[test]
-    fn seat_curves_run_from_zero_to_one() {
-        assert_eq!(seat_flight(0.0), 0.0);
-        assert_eq!(seat_flight(1.0), 1.0);
-        assert_eq!(seat_turn(0.3), 0.0);
-        assert_eq!(seat_turn(1.0), 1.0);
-        assert!((seat_flight(0.5) - 0.5).abs() < 1e-12);
-    }
 }

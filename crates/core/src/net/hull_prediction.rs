@@ -56,8 +56,8 @@ const CONFIRM_POSITION: f64 = 0.005;
 const CONFIRM_VELOCITY: f64 = 0.05;
 const CONFIRM_HEADING: f64 = 0.002;
 /// Another tank, movable cover or solid debris this close to the host's hull makes a
-/// snapshot replay even when it confirms the prediction: the replay places them as
-/// replicated, which a held prediction does not.
+/// snapshot replay even when it confirms the prediction: the replay steps them with the
+/// hull from where they were replicated, which a held prediction does not.
 const MOVER_REACH: f64 = 8.0;
 /// Other tanks this close to the hull (metres) are predicted in the present for drawing
 /// too: a tank about to be rammed must be drawn where the hull will meet it.
@@ -420,13 +420,21 @@ impl HullPrediction {
             }
             self.offset = Some(self.target_offset.max(estimate));
         }
-        // A prediction the host confirms runs on: replaying it would reproduce it.
+        // A prediction the host confirms runs on: replaying it would reproduce it. The other
+        // tanks still follow the scene, carried to the predicted tick, so none drives on a
+        // stale input into the reach where it is drawn in the present; one drawn there
+        // already replays, to glide off its correction.
         if !restart
             && !update.blast
             && let Some(difference) = predicted.and_then(|pose| agreement(&pose, &hull))
             && !movers_near(scene, hull.position)
+            && !self
+                .held
+                .iter()
+                .any(|held| matches!(held.moved, Moved::Tank(_)))
         {
-            self.predictor.sync_covers(scene);
+            self.predictor
+                .sync_scene_ahead(scene, (self.tick - hull.tick) as f64 * STEP);
             self.touched = HullContacts::default();
             self.stats.confirmed += 1;
             self.stats.record(difference, CorrectionCause::Other);

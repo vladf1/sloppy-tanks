@@ -574,6 +574,9 @@ pub fn stream_shared_indices(
 }
 
 #[cfg(test)]
+mod session_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::effects::random::CosmeticRandom;
