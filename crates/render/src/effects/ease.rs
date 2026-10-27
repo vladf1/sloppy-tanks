@@ -31,7 +31,8 @@ mod tests {
 
     #[test]
     fn tables_follow_their_powers() {
-        for power in [0.55, 0.8, 0.85, 1.1, 1.4, 1.6] {
+        // The wreck columns' and the pickup signal smoke's powers among them.
+        for power in [0.55, 0.8, 0.85, 1.1, 1.4, 1.6, 1.8] {
             let table = EaseTable::new(power);
             for step in 0..=4000 {
                 let x = f64::from(step) / 4000.0;

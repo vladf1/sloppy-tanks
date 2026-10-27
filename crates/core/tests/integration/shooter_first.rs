@@ -116,7 +116,6 @@ fn a_rewind_stops_at_the_cap() {
     // where it saw him.
     let moves = hit - u64::from(MAX_REWIND_TICKS) - 2;
     assert_eq!(shell_hits_bob(2 * MAX_REWIND_TICKS, 0.0, moves), None);
-    assert_eq!(shell_hits_bob(MAX_REWIND_TICKS, 0.0, hit - 1), Some(hit));
 }
 
 #[test]

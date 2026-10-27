@@ -419,34 +419,6 @@ mod tests {
     use super::*;
 
     #[test]
-    fn primitives_match_three_counts() {
-        let cube = geometry(&GeometrySpec::Box {
-            width: 2.0,
-            height: 2.0,
-            depth: 2.0,
-        });
-        assert_eq!(cube.positions.len(), 24);
-        assert_eq!(cube.triangle_count(), 12);
-        // BoxGeometry's first vertex: +X face, top-left corner.
-        assert_eq!(cube.positions[0], [1.0, 1.0, 1.0]);
-        assert_eq!(cube.uvs[0], [0.0, 1.0]);
-        let sphere = geometry(&GeometrySpec::Sphere {
-            radius: 1.0,
-            width_segments: 32,
-            height_segments: 16,
-        });
-        assert_eq!(sphere.positions.len(), 33 * 17);
-        assert_eq!(sphere.triangle_count(), 32 * 16 * 2 - 64);
-        let ground = geometry(&GeometrySpec::Ground { extent: 40.0 });
-        assert_eq!(ground.positions.len(), 17 * 17);
-        // Rotated flat like Three's rotateX(-π/2), which leaves y a rounding error off 0.
-        let [x, y, z] = ground.positions[0];
-        assert_eq!([x, z], [-20.0, -20.0]);
-        assert!(y.abs() < 1e-6);
-        assert_eq!(ground.uvs[0], [-2.5, -2.5]);
-    }
-
-    #[test]
     fn scene_spec_parses() {
         let json = r#"{
             "background": 11193282, "fog": {"color": 11193282, "near": 20, "far": 80},

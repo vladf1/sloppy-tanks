@@ -382,42 +382,49 @@ pub fn smoke_instances(smoke: &Node) -> Vec<crate::model::InstanceData> {
         .collect()
 }
 
+/// Each standard theme's scenery, built once for the tests that read it.
+#[cfg(test)]
+pub(crate) mod shared_scenery {
+    use super::{SceneryModel, Theme, scenery};
+    use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
+
+    const THEMES: [Theme; 3] = [Theme::Village, Theme::Harbor, Theme::Quarry];
+
+    /// `theme`'s scenery at time 0. A test that animates it holds the lock and
+    /// returns it to time 0.
+    pub(crate) fn shared_scenery(theme: Theme) -> MutexGuard<'static, SceneryModel> {
+        static MODELS: [OnceLock<Mutex<SceneryModel>>; 3] = [const { OnceLock::new() }; 3];
+        let index = THEMES
+            .iter()
+            .position(|&standard| standard == theme)
+            .expect("a standard theme");
+        MODELS[index]
+            .get_or_init(|| Mutex::new(scenery(theme).expect("standard scenery")))
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use super::shared_scenery::shared_scenery;
     use super::*;
-    use sloppy_core::models::{cover_damage_stage, tree_branch_stage};
     use sloppy_core::sim::render_state::RenderCover;
 
     #[test]
-    fn damage_stages_follow_cover_model_ts() {
-        assert_eq!(cover_damage_stage(CoverKind::Cargo, 100.0, 100.0), 0);
-        assert_eq!(cover_damage_stage(CoverKind::Cargo, 50.0, 100.0), 1);
-        assert_eq!(cover_damage_stage(CoverKind::Cargo, 30.0, 100.0), 2);
-        assert_eq!(cover_damage_stage(CoverKind::Timber, 100.0, 100.0), 0);
-        assert_eq!(cover_damage_stage(CoverKind::Timber, 60.0, 100.0), 1);
-        assert_eq!(cover_damage_stage(CoverKind::Timber, 30.0, 100.0), 2);
-        assert_eq!(cover_damage_stage(CoverKind::Timber, 10.0, 100.0), 3);
-        assert_eq!(cover_damage_stage(CoverKind::House, 100.0, 100.0), 0);
-        assert_eq!(cover_damage_stage(CoverKind::House, 60.0, 100.0), 1);
-        assert_eq!(cover_damage_stage(CoverKind::House, 20.0, 100.0), 2);
-        assert_eq!(cover_damage_stage(CoverKind::Tower, 1.0, 100.0), 0);
-        assert_eq!(tree_branch_stage(1.0), 0);
-        assert_eq!(tree_branch_stage(0.5), 1);
-        assert_eq!(tree_branch_stage(0.35), 2);
-    }
-
-    #[test]
     fn scenery_splits_movers_water_and_smoke() {
-        let village = scenery(Theme::Village).expect("village");
+        let village = shared_scenery(Theme::Village);
         assert_eq!(village.movers.len(), 1);
         assert!(matches!(village.water, Some(SceneryWater::Creek(_))));
         assert!(village.smoke.is_some());
         assert!(village.root.find(WATERWHEEL).is_none());
-        let harbor = scenery(Theme::Harbor).expect("harbor");
+        drop(village);
+        let harbor = shared_scenery(Theme::Harbor);
         assert!(matches!(harbor.water, Some(SceneryWater::Harbor(_))));
         // Four crane loads, two tugs and the beacons; the moored ships are static.
         assert_eq!(harbor.movers.len(), 7);
-        let quarry = scenery(Theme::Quarry).expect("quarry");
+        drop(harbor);
+        let quarry = shared_scenery(Theme::Quarry);
         assert!(quarry.movers.is_empty() && quarry.water.is_none());
         assert!(scenery(Theme::Custom).is_none());
     }
@@ -455,7 +462,7 @@ mod tests {
         }
         let floor = f64::from(super::super::theme::SHADOW_RECEIVER_FLOOR);
         for theme in [Theme::Village, Theme::Harbor, Theme::Quarry] {
-            let mut model = scenery(theme).expect("scenery");
+            let mut model = shared_scenery(theme);
             let still = lowest_receiver(&model.root, DMat4::IDENTITY);
             assert!(still > floor, "{theme:?}: a receiver at {still:.2} m");
             // Ships bob and crane loads sway: sample the animation of what moves.
@@ -467,6 +474,7 @@ mod tests {
                     assert!(lowest > floor, "{theme:?}: a receiver at {lowest:.2} m");
                 }
             }
+            model.scenery.update(0.0);
         }
     }
 
@@ -482,11 +490,11 @@ mod tests {
                 + node.children.iter().map(drawables).sum::<usize>()
         }
         for theme in [Theme::Village, Theme::Harbor, Theme::Quarry] {
-            let model = scenery(theme).expect("scenery");
+            let model = shared_scenery(theme);
             assert_eq!(drawables(model.scenery.root()), 0, "{theme:?}");
             assert!(drawables(&model.root) > 0, "{theme:?}");
         }
-        let village = scenery(Theme::Village).expect("village");
+        let village = shared_scenery(Theme::Village);
         let smoke = village.scenery.root().find(CHIMNEY_SMOKE_NODE);
         assert!(smoke.is_some_and(|smoke| smoke.drawable.is_some()));
     }

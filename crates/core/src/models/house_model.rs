@@ -5442,10 +5442,6 @@ mod tests {
                 let mut group = Node::group("");
                 house(&mut group, x, z, w, d, h, stage, hits);
                 let count = triangles(&group);
-                println!(
-                    "{x} {z} {:?} stage {stage}: {count}",
-                    HouseDesign::of(x, z, w, d, h).style.form
-                );
                 let floors = if h >= crate::sim::house_layout::TWO_STOREY {
                     9_000
                 } else {
@@ -5469,11 +5465,16 @@ mod tests {
 
     #[test]
     fn collapse_pieces_and_heaps_draw_once_a_finish() {
-        for (x, z, w, d, h) in [
-            (-45.0, -39.0, 5.0, 6.0, 4.6),
-            (45.0, 39.0, 5.0, 6.0, 4.6),
-            (17.0, 46.0, 7.0, 5.0, 5.2),
-        ] {
+        // One cottage with a shingled roof and one without cover every branch.
+        let cottages = village();
+        let shingled = |&(x, z, w, d, h): &(f64, f64, f64, f64, f64)| {
+            HouseDesign::of(x, z, w, d, h).style.cover == RoofCover::Shingles
+        };
+        let picks = [
+            cottages.iter().find(|c| shingled(c)),
+            cottages.iter().find(|c| !shingled(c)),
+        ];
+        for &(x, z, w, d, h) in picks.map(|pick| pick.expect("both roof covers in the village")) {
             let pieces = house_pieces(x, z, w, d, h, &[]);
             let design = HouseDesign::of(x, z, w, d, h);
             assert_eq!(pieces.len(), design.pieces().len());
@@ -5491,11 +5492,11 @@ mod tests {
                     assert_eq!(draws(node), 2, "{piece:?}");
                 }
             }
-
-            let mut heap = Node::group("");
-            house_heap(&mut heap, x, z, w, d - HOUSE_HEAP.depth, 77.0 * 512.0);
-            batch(&mut heap.children[0]);
-            assert_eq!(draws(&heap), 2, "heap");
         }
+        let (x, z, w, d, _) = cottages[0];
+        let mut heap = Node::group("");
+        house_heap(&mut heap, x, z, w, d - HOUSE_HEAP.depth, 77.0 * 512.0);
+        batch(&mut heap.children[0]);
+        assert_eq!(draws(&heap), 2, "heap");
     }
 }

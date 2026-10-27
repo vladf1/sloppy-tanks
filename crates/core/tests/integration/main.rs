@@ -17,7 +17,6 @@ mod destruction_physics;
 mod difficulty;
 mod dodger_first;
 mod driving;
-mod fixtures_smoke;
 mod game;
 mod hit_registration;
 mod house_destruction;

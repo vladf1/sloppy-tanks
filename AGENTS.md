@@ -15,7 +15,8 @@ turn this file into a second directory listing.
   a Rust unit test beside the code, a module of `crates/core/tests/integration/`
   (one test binary; a new file directly under `tests/` would be another binary to
   compile and link on every engine edit) for engine and net behavior, a
-  `crates/server/tests/` file for the server, `tests/*.test.ts` for the page shell.
+  module of `crates/server/tests/integration/` for the server, `tests/*.test.ts`
+  for the page shell.
 - Establish a reproducible failure or a matched before/after measurement
   before doing a broad refactor or performance change.
 - Keep tests fast and deterministic. Prefer fixed-step loops, scoped random

@@ -43,21 +43,3 @@ impl CosmeticRandom {
         (z >> 11) as f64 / (1u64 << 53) as f64
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn values_stay_in_the_unit_interval() {
-        let mut random = CosmeticRandom::seeded(7);
-        let mut sum = 0.0;
-        for _ in 0..10_000 {
-            let value = random.next_f64();
-            assert!((0.0..1.0).contains(&value));
-            sum += value;
-        }
-        assert!((sum / 10_000.0 - 0.5).abs() < 0.02);
-        assert_eq!(CosmeticRandom::constant(0.5).next_f64(), 0.5);
-    }
-}

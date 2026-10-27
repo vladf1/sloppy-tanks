@@ -603,7 +603,7 @@ mod tests {
 
     #[test]
     fn mines_lie_on_every_spawn_pad_deck_and_on_open_ground_as_before() {
-        use crate::effects::spawn_pad_decks::tests::{pad_models, surface_top, triangles_near};
+        use crate::effects::spawn_pad_decks::tests::theme_deck_surfaces;
         use glam::DMat4;
         use sloppy_core::geometry::node_bounds;
         use sloppy_core::sim::arena::spawn_positions;
@@ -613,23 +613,23 @@ mod tests {
         const MAX_FLOAT: f64 = 0.06;
         let bottom = node_bounds(&mine(Team::Red), DMat4::IDENTITY).min.y;
         assert!(bottom > 0.0, "the mine sits on the ground");
-        for (theme, pads) in pad_models() {
+        // Every sample, with the mine's rim around it, lies within the surfaces.
+        for (theme, surfaces) in theme_deck_surfaces() {
             let decks = SpawnPadDecks::new(theme, 1.0);
-            for team in [Team::Blue, Team::Red] {
+            for (team, surface) in [Team::Blue, Team::Red].into_iter().zip(surfaces) {
                 let center = spawn_positions(team, 1.0)[1];
-                let triangles = triangles_near(&pads, center, STEP * f64::from(SPAN) + 1.0);
                 let mut on_pad = 0;
                 for i in -SPAN..=SPAN {
                     for j in -SPAN..=SPAN {
                         let x = center.x + f64::from(i) * STEP + 0.013;
                         let z = center.z + f64::from(j) * STEP + 0.017;
                         // The highest deck anywhere under the mine's disc.
-                        let mut deck = 0.0_f64;
-                        for ring in 0..=3 {
+                        let mut deck = surface.top(x, z).unwrap_or(0.0_f64).max(0.0);
+                        for ring in 1..=3 {
                             let r = MINE_RADIUS * f64::from(ring) / 3.0;
                             for k in 0..32 {
                                 let a = f64::from(k) * std::f64::consts::TAU / 32.0;
-                                let top = surface_top(&triangles, x + r * a.sin(), z + r * a.cos());
+                                let top = surface.top(x + r * a.sin(), z + r * a.cos());
                                 deck = deck.max(top.unwrap_or(0.0));
                             }
                         }

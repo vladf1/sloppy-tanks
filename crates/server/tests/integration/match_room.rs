@@ -3,16 +3,14 @@
 //! streams baselines and snapshots, acknowledges input, lists itself as playing, and a
 //! dropped player rejoins the same seat.
 
-mod support;
-
 use std::time::Duration;
 
+use crate::support::{rooms, start_with};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
 use sloppy_core::net::wire_view::WireView;
 use sloppy_server::match_room::MatchRoom;
 use sloppy_server::protocol::{CONTENT_VERSION, PROTOCOL_VERSION};
-use support::{rooms, start_with};
 use tokio::net::TcpStream;
 use tokio_tungstenite::tungstenite::Message;
 use tokio_tungstenite::{MaybeTlsStream, WebSocketStream};
@@ -126,8 +124,8 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
     bob.next("full").await;
     assert_eq!(bob_welcome["hostId"], welcome["playerId"]);
 
-    // Drive for a second at the browser's 20 Hz and wait for the ack.
-    for seq in 1..=20 {
+    // Drive with a few inputs, well inside the input rate limit, and wait for the ack.
+    for seq in 1..=5 {
         let tick = alice
             .messages
             .iter()
@@ -142,7 +140,6 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
                 "aim": { "angle": 0.5 }, "fire": true,
             }))
             .await;
-        tokio::time::sleep(Duration::from_millis(50)).await;
         alice
             .send(json!({ "type": "ping", "roundId": 1, "t": seq * 50, "observedTick": tick }))
             .await;
@@ -197,5 +194,7 @@ async fn a_created_room_plays_streams_acks_input_and_keeps_a_dropped_seat() {
     assert_eq!(control["driver"], "human");
     back.next("full").await;
     back.next("snapshot").await;
+    // Sockets still open at close hold it for its whole grace period.
+    drop((alice, back));
     server.close().await;
 }

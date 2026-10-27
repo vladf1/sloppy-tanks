@@ -8,6 +8,8 @@ description = "Browser entry points: the game loop, input commands and network s
 
 [lib]
 crate-type = ["cdylib", "rlib"]
+# The crate has no doc examples, so `cargo test` skips the empty rustdoc pass.
+doctest = false
 
 [features]
 default = ["webgpu"]

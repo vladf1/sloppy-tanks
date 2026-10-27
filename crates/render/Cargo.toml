@@ -6,6 +6,10 @@ rust-version.workspace = true
 publish.workspace = true
 description = "Sloppy Tanks renderer: handwritten WGSL drawn through WebGPU (wgpu), or WebGL2 (glow) as the fallback"
 
+[lib]
+# The crate has no doc examples, so `cargo test` skips the empty rustdoc pass.
+doctest = false
+
 [features]
 default = ["webgpu"]
 webgpu = ["dep:wgpu", "wgpu/webgpu"]

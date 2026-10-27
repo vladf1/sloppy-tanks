@@ -1,10 +1,9 @@
 //! Generated meshes compared with the Three.js r185 generators. Expected values were
 //! printed by running the same Three.js constructors and operations in Node: vertex
 //! and index counts, and FNV-1a hashes over the f32 bit patterns of every position,
-//! normal and UV (and over every index), so any single differing bit fails. A few
-//! plain sample values keep failures readable. Outlines that Three.js built from
-//! arcs and Béziers are kept as the points it sampled from them, which is all
-//! `ShapeGeometry` and `ExtrudeGeometry` read.
+//! normal and UV (and over every index), so any single differing bit fails.
+//! Outlines that Three.js built from arcs and Béziers are kept as the points it
+//! sampled from them, which is all `ShapeGeometry` and `ExtrudeGeometry` read.
 
 use std::f64::consts::PI;
 
@@ -312,32 +311,6 @@ fn generated_meshes_match_three_js_bit_for_bit() {
         assert_eq!(name, expected_name);
         assert_eq!(summary(mesh), *expected, "{name}");
     }
-}
-
-#[test]
-fn sample_values_match_three_js() {
-    let meshes = generated();
-    let mesh = |name: &str| &meshes.iter().find(|(n, _)| *n == name).unwrap().1;
-    let wide = |v: [f64; 3]| v.map(|x| x as f32);
-
-    let boxed = mesh("box");
-    assert_eq!(boxed.positions[0], [0.6, 0.25, 1.0]);
-    assert_eq!(&boxed.indices.as_ref().unwrap()[..6], &[0, 4, 1, 4, 5, 1]);
-
-    let belt = mesh("extrude_belt");
-    assert_eq!(
-        belt.positions[299],
-        wide([
-            0.27000001072883606,
-            -0.31875553727149963,
-            0.9854102730751038
-        ])
-    );
-    assert_eq!(belt.uvs[299], [-0.985_410_3, 0.46]);
-
-    let ico = mesh("icosahedron_detail");
-    assert_eq!(ico.uvs[120], [0.941_930_1, 0.333_333_34]);
-    assert_eq!(ico.normals[120], [0.809_017, -0.5, 0.309_017]);
 }
 
 #[test]

@@ -1,13 +1,12 @@
 //! Announcing to the server directory against a fake directory on localhost, and
 //! `/servers`, the same listing served by the server itself.
 
-mod support;
-
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicU16, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use crate::support::{Lines, ORIGIN, get, http, options};
 use bytes::Bytes;
 use futures_util::{SinkExt, StreamExt};
 use http_body_util::{BodyExt, Empty};
@@ -21,13 +20,12 @@ use sloppy_server::directory::{DirectoryOptions, DirectoryUrl};
 use sloppy_server::match_room::MatchRoom;
 use sloppy_server::protocol::{CONTENT_VERSION, PROTOCOL_VERSION};
 use sloppy_server::server::MultiplayerServer;
-use support::{Lines, ORIGIN, get, http, options};
 use tokio::net::TcpListener;
 use tokio_tungstenite::tungstenite::Message;
 
 const WAIT: Duration = Duration::from_secs(5);
 const CHECK: Duration = Duration::from_millis(20);
-const INTERVAL: Duration = Duration::from_millis(300);
+const INTERVAL: Duration = Duration::from_millis(100);
 
 /// One request the fake directory received.
 struct Received {

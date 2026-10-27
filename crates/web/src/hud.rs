@@ -159,7 +159,7 @@ struct HudScore<'a> {
 mod tests {
     use super::*;
     use serde_json::json;
-    use sloppy_core::sim::{RenderState, Simulation, SimulationSetup, Team, VehicleCommand};
+    use sloppy_core::sim::{RenderState, Simulation, SimulationSetup, Team};
 
     #[test]
     fn self_repair_requires_a_living_wounded_veteran_past_the_delay() {
@@ -176,27 +176,55 @@ mod tests {
         assert!(!self_repair_active(true, 1.0, 100.0, 100.0, REPAIR_DELAY));
     }
 
+    /// Single player serializes the simulation's tanks and a room its replicated
+    /// copies: both give the same scoreboard, in roster order, with names escaped.
     #[test]
     fn local_and_replicated_scoreboards_match() {
         let mut simulation = Simulation::new(4242.0, SimulationSetup::default());
-        simulation.start();
-        for _ in 0..120 {
-            simulation.step(VehicleCommand::default(), true);
-        }
         let tank = &mut simulation.tanks[0];
         tank.name = "Quote \" slash \\ newline\n火".into();
-        tank.kills = 7;
-        tank.deaths = 2;
+        tank.team = Team::Red;
+        tank.kind = VehicleKind::Humvee;
+        tank.human = true;
+        tank.kills = 12;
+        tank.deaths = 3;
         tank.xp = 500.0;
         tank.alive = false;
         let mut state = RenderState::default();
         simulation.fill_render_state(&mut state, None);
+        let text = serde_json::to_string(&Scoreboard::Simulated(&simulation.tanks)).unwrap();
         assert_eq!(
-            serde_json::to_string(&Scoreboard::Simulated(&simulation.tanks)).unwrap(),
+            text,
             serde_json::to_string(&Scoreboard::Rendered(&state.tanks)).unwrap(),
         );
+        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
+        let tanks = &simulation.tanks;
+        assert_eq!(
+            value[0],
+            json!({
+                "id": tanks[0].id,
+                "name": tanks[0].name,
+                "kills": 12,
+                "deaths": 3,
+                "team": 1,
+                "kind": "humvee",
+                "human": true
+            })
+        );
+        let ids: Vec<_> = value
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|score| score["id"].as_u64().unwrap())
+            .collect();
+        let roster: Vec<_> = tanks.iter().map(|tank| u64::from(tank.id)).collect();
+        assert_eq!(ids, roster);
         assert_eq!(
             serde_json::to_string(&Scoreboard::Simulated(&[])).unwrap(),
+            "[]"
+        );
+        assert_eq!(
+            serde_json::to_string(&Scoreboard::Rendered(&[])).unwrap(),
             "[]"
         );
     }
@@ -228,49 +256,6 @@ mod tests {
         assert_eq!(human["healthRatio"], json!(0.5));
         assert_eq!(human["repairDelay"], json!(REPAIR_DELAY));
         assert_eq!(human["ammo"][2]["count"], json!(2.0));
-    }
-
-    #[test]
-    fn borrowed_scoreboard_preserves_order_escaping_and_empty_lists() {
-        let tanks = [
-            RenderTank {
-                id: 7,
-                name: "Quote \" slash \\ newline\n火".into(),
-                team: Team::Red,
-                kind: VehicleKind::Humvee,
-                human: true,
-                alive: false,
-                kills: 12,
-                deaths: 3,
-                xp: 0.0,
-                ..RenderTank::default()
-            },
-            RenderTank {
-                id: 2,
-                name: "Second".into(),
-                ..RenderTank::default()
-            },
-        ];
-        let text = serde_json::to_string(&Scoreboard::Rendered(&tanks)).unwrap();
-        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(
-            value[0],
-            json!({
-                "id": 7,
-                "name": tanks[0].name,
-                "kills": 12,
-                "deaths": 3,
-                "team": 1,
-                "kind": "humvee",
-                "human": true
-            })
-        );
-        assert_eq!(value[1]["id"], json!(2));
-        assert_eq!(
-            serde_json::to_string(&Scoreboard::Rendered(&[])).unwrap(),
-            "[]"
-        );
-        let human = serde_json::to_value(human_json(&tanks[0], 100.0)).unwrap();
         // A Humvee fires its TOW, which no ammo slot offers.
         assert_eq!(
             equipped_weapon_for(
@@ -280,6 +265,12 @@ mod tests {
             ),
             Weapon::Tow
         );
+        let humvee = RenderTank {
+            kind: VehicleKind::Humvee,
+            alive: false,
+            ..RenderTank::default()
+        };
+        let human = serde_json::to_value(human_json(&humvee, 100.0)).unwrap();
         assert!(
             human["ammo"]
                 .as_array()

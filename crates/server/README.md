@@ -25,8 +25,8 @@ production's server; see `bots/README.md`.
 
 Tests: `cargo test -p sloppy-server` covers settings, limits, the WebSocket codec
 and deflate, sessions, the monitor and dashboard, and end-to-end rooms through
-an independent client (`tests/server.rs`, `tests/match_room.rs`), and announcing to a
-fake server directory (`tests/directory.rs`). Reconnect, host
+an independent client (`server`, `match_room`), and announcing to a fake server
+directory (`directory`): modules of the one test binary `tests/integration/`. Reconnect, host
 transfer, expiry and replication live in `crates/core/tests/integration/net_*.rs`.
 `tests/traffic-bots.test.ts` in `pnpm test` drives the built binary with the
 TypeScript traffic bots.

@@ -18,6 +18,8 @@ const LOOSE: f64 = 3.0;
 const CLEARANCE: f64 = 0.04;
 /// Edge of the grid cells that index triangles by x/z, in metres.
 const CELL: f64 = 2.0;
+/// The piece of every triangle that is not a stone's.
+const SURFACE: usize = usize::MAX;
 
 /// One connected piece of a mesh (triangles sharing corners), in world space.
 struct Piece {
@@ -85,6 +87,13 @@ impl World {
     }
 
     fn add_mesh(&mut self, corners: &[DVec3], indices: &[u32], stones: bool) {
+        // Anything else is only ever a surface under a stone, so it needs no pieces.
+        if !stones {
+            for t in indices.as_chunks::<3>().0 {
+                self.add_triangle([t[0], t[1], t[2]].map(|i| corners[i as usize]), SURFACE);
+            }
+            return;
+        }
         let mut parent: Vec<usize> = (0..corners.len()).collect();
         let mut first: HashMap<[i64; 3], usize> = HashMap::new();
         for (i, p) in corners.iter().enumerate() {
@@ -122,18 +131,7 @@ impl World {
             self.pieces[piece].triangles += 1;
             self.pieces[piece].lo = self.pieces[piece].lo.min(lo);
             self.pieces[piece].hi = self.pieces[piece].hi.max(hi);
-            let id = self.triangles.len();
-            self.triangles.push((triangle, piece));
-            // Far backdrop faces are hundreds of metres wide and hold no stones.
-            if hi.x - lo.x > 400.0 || hi.z - lo.z > 400.0 {
-                continue;
-            }
-            let ((x0, z0), (x1, z1)) = (cell(lo.x, lo.z), cell(hi.x, hi.z));
-            for gx in x0.max(-200)..=x1.min(200) {
-                for gz in z0.max(-200)..=z1.min(200) {
-                    self.cells.entry((gx, gz)).or_default().push(id);
-                }
-            }
+            self.add_triangle(triangle, piece);
         }
         for (i, p) in corners.iter().enumerate() {
             if let Some(&piece) = piece_of.get(&root(&mut parent, i)) {
@@ -141,6 +139,23 @@ impl World {
                 if p.y <= piece.lo.y + (piece.hi.y - piece.lo.y) / 8.0 + 1e-6 {
                     piece.underside.push(*p);
                 }
+            }
+        }
+    }
+
+    fn add_triangle(&mut self, triangle: [DVec3; 3], piece: usize) {
+        let lo = triangle[0].min(triangle[1]).min(triangle[2]);
+        let hi = triangle[0].max(triangle[1]).max(triangle[2]);
+        let id = self.triangles.len();
+        self.triangles.push((triangle, piece));
+        // Far backdrop faces are hundreds of metres wide and hold no stones.
+        if hi.x - lo.x > 400.0 || hi.z - lo.z > 400.0 {
+            return;
+        }
+        let ((x0, z0), (x1, z1)) = (cell(lo.x, lo.z), cell(hi.x, hi.z));
+        for gx in x0.max(-200)..=x1.min(200) {
+            for gz in z0.max(-200)..=z1.min(200) {
+                self.cells.entry((gx, gz)).or_default().push(id);
             }
         }
     }
@@ -202,13 +217,19 @@ impl World {
     }
 }
 
+/// The map's scenery, as the renderer places it.
+fn scenery(theme: MapTheme, stones: impl Fn(&Node, &str) -> bool) -> World {
+    let mut world = World::default();
+    world.add(build_scenery(theme).root(), DMat4::IDENTITY, &stones, "");
+    world
+}
+
 /// The map's scenery and its standing cover, as the renderer places them.
 fn world(map: MapId, theme: MapTheme, stones: impl Fn(&Node, &str) -> bool) -> World {
     let mut simulation = Simulation::with_seed(417.0);
     simulation.map_mode = map;
     simulation.reset(None);
-    let mut world = World::default();
-    world.add(build_scenery(theme).root(), DMat4::IDENTITY, &stones, "");
+    let mut world = scenery(theme, &stones);
     for cover in &simulation.covers {
         let shape = CoverShape {
             kind: cover.kind,
@@ -250,7 +271,7 @@ fn quarry_sandstone_stones_rest_on_the_ground_rock_or_heap_under_them() {
 #[test]
 fn village_creek_bank_stones_rest_on_the_drawn_terrain() {
     // The bank stones are the landscape's 20-face icosahedra.
-    let world = world(MapId::Village, MapTheme::Village, |_, path| {
+    let world = scenery(MapTheme::Village, |_, path| {
         path.contains("pine-valley-landscape")
     });
     let hanging = world.hanging(Some(20));
