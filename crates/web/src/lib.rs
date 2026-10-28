@@ -5,6 +5,7 @@
 //!
 //! - [`Game`] (`game.rs`): single-player play, one call per frame.
 //! - [`NetGame`] (`net_game.rs`): one multiplayer room page, one call per frame.
+//! - [`nerd_rows`]: the Stats for nerds rows both shells lay out.
 //! - [`WireView`]: binary room messages as the former JSON, for the Node checks.
 //! - `RenderLab` (`lab.rs`) and `EffectsLab` (`effects_lab.rs`): the development labs of
 //!   `tools/render-lab.html` and `tools/effects-lab.html`, built only with the `labs` feature.
@@ -16,6 +17,7 @@ pub mod events;
 pub mod frame_clock;
 pub mod hud;
 pub mod lab_scene;
+pub mod nerd_rows;
 pub mod recap;
 pub mod room_notices;
 

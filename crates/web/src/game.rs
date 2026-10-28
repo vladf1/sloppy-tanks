@@ -56,9 +56,11 @@
 //!   human's stats, ammo, rank, cooldowns, effects, scoreboard, and the round
 //!   recap once results show. The first recap of a result saves personal bests
 //!   in `localStorage` and reports them (`best`, `improved`, `persisted`).
-//! - `stats_json() -> JSON`: Stats for nerds (frame/sim/render ms, draw calls,
-//!   triangles, GPU resources, bodies and their sleep state, shots, pickups,
-//!   fragments, particles, pixel ratio).
+//! - `stats_json() -> JSON`: Stats for nerds' readings (frame/sim/render ms, draw
+//!   calls, triangles, GPU resources, bodies and their sleep state, shots, pickups,
+//!   fragments, particles, pixel ratio), for diagnostics.
+//! - `nerd_stats_json() -> JSON`: the Stats for nerds panel's sections, `[{ title,
+//!   rows: [{ label, value, hint }] }]` ([`crate::nerd_rows`]).
 //! - `resize(css_width, css_height, pixel_ratio, exact)`: the drawing buffer is
 //!   the CSS size times the pixel ratio, capped at 1.5; `exact` draws at exactly the
 //!   CSS size (ratio 1). The scene renders at the graphics quality's scale of it.
@@ -75,18 +77,20 @@
 //!
 //! A Rust shell (the desktop app) reads the same values typed rather than as JSON:
 //! `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]), `hud` ([`Hud`]),
-//! `take_events` ([`EventBatch`]), `camera` ([`CameraPreferences`]) and `gpu_ms`.
+//! `take_events` ([`EventBatch`]), `camera` ([`CameraPreferences`]), `nerd_stats`
+//! ([`StatsSection`]) and `gpu_ms`.
 
 use crate::Shell;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
 use crate::hud::{Hud, simulation_hud};
+use crate::nerd_rows::{GameStats, StatsSection, game_sections};
 use crate::page::{
     CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
     PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
 };
 use crate::recap::{RoundRecap, round_recap};
-use crate::stats::presentation_stats;
+use crate::stats::{frame_readings, presentation_stats, renderer_readings};
 use sloppy_render::gpu::RenderTarget;
 
 use glam::Vec2;
@@ -200,6 +204,23 @@ fn options_setup(options: &GameOptions) -> SimulationSetup {
     .merged(level_rules)
 }
 
+/// Fixed, dynamic and sleeping (dynamic) bodies in the physics world.
+fn body_counts(sim: &Simulation) -> (usize, usize, usize) {
+    let (mut fixed, mut dynamic, mut sleeping) = (0, 0, 0);
+    for (_, body) in sim.world.bodies.iter() {
+        if body.is_fixed() {
+            fixed += 1;
+        }
+        if body.is_dynamic() {
+            dynamic += 1;
+            if body.is_sleeping() {
+                sleeping += 1;
+            }
+        }
+    }
+    (fixed, dynamic, sleeping)
+}
+
 /// `Game.create`'s choices besides the view configuration (`page::ViewConfig`). They
 /// follow `initialGameOptions`: the map a link requests or the player last chose, which
 /// stands only where extra levels are offered.
@@ -265,7 +286,6 @@ impl RecordStorage for BrowserStorage {
 pub struct Game {
     /// The shell drawing this game, for the wording the page and the desktop app say
     /// differently.
-    #[expect(dead_code, reason = "Phase 2 reads it when the engine writes HUD text")]
     shell: Shell,
     sim: Simulation,
     view: Presentation,
@@ -554,23 +574,12 @@ impl Game {
         serde_json::to_string(&self.hud()).unwrap_or_default()
     }
 
-    /// Stats for nerds, as JSON.
+    /// Stats for nerds' readings, as JSON, for diagnostics and the frame recorder.
     pub fn stats_json(&mut self) -> String {
         let effects = self.view.effects.systems.stats();
         let mut stats = presentation_stats(&self.view, &self.times);
         let sim = &self.sim;
-        let (mut fixed, mut dynamic, mut sleeping) = (0, 0, 0);
-        for (_, body) in sim.world.bodies.iter() {
-            if body.is_fixed() {
-                fixed += 1;
-            }
-            if body.is_dynamic() {
-                dynamic += 1;
-                if body.is_sleeping() {
-                    sleeping += 1;
-                }
-            }
-        }
+        let (fixed, dynamic, sleeping) = body_counts(sim);
         let simulation = json!({
             "fixedBodies": fixed,
             "dynamicBodies": dynamic,
@@ -595,6 +604,12 @@ impl Game {
             stats.extend(rows);
         }
         Value::Object(stats).to_string()
+    }
+
+    /// Stats for nerds' sections and rows as JSON ([`StatsSection`]), for the panel's
+    /// refreshes.
+    pub fn nerd_stats_json(&mut self) -> String {
+        serde_json::to_string(&self.nerd_stats()).expect("stats rows serialize")
     }
 
     /// The canvas's CSS size and the device pixel ratio.
@@ -1004,6 +1019,38 @@ impl Game {
     /// The chosen view and clamped overhead zoom.
     pub fn camera(&self) -> CameraPreferences {
         CameraPreferences::of(&self.view.rig)
+    }
+
+    /// Stats for nerds' sections and rows, read from the game now.
+    pub fn nerd_stats(&mut self) -> Vec<StatsSection> {
+        let particles = self.view.effects.systems.stats().particles;
+        let sim = &self.sim;
+        let (fixed, dynamic, sleeping) = body_counts(sim);
+        let count = |count: usize| count as u64;
+        let stats = GameStats {
+            frame: frame_readings(&self.times),
+            renderer: renderer_readings(
+                &self.view.renderer,
+                &self.graphics,
+                self.canvas.pixel_ratio(),
+            ),
+            bodies: count(sim.world.bodies.len()),
+            fixed_bodies: count(fixed),
+            dynamic_bodies: count(dynamic),
+            sleeping_bodies: count(sleeping),
+            colliders: count(sim.world.colliders.len()),
+            tanks: count(sim.tanks.len()),
+            tanks_alive: count(sim.tanks.iter().filter(|tank| tank.alive).count()),
+            mines: count(sim.mines.len()),
+            pickups: count(sim.pickups.len()),
+            pickups_ready: count(sim.pickups.iter().filter(|pickup| pickup.available).count()),
+            shots: count(sim.shots.len()),
+            particles: particles.into(),
+            fragments: count(sim.fragments.len()),
+            max_fragments: count(sim.max_fragments),
+            elapsed: sim.elapsed,
+        };
+        game_sections(&stats, self.shell)
     }
 
     /// The GPU's smoothed frame time in milliseconds, once sampled.
