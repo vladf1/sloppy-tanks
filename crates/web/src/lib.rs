@@ -26,6 +26,8 @@ pub mod room_text;
 pub mod sounds;
 
 #[cfg(test)]
+mod page_catalog_tests;
+#[cfg(test)]
 mod page_json_tests;
 
 /// Which shell draws the game. The two say a few things differently on purpose ("in this
