@@ -103,21 +103,22 @@ function plist(entries) {
   );
 }
 
-/** The app icon from the web app's 512-pixel one, at every size up to it. */
+/** The app icon in macOS's shape (`crates/desktop/examples/app_icon.rs`: the web app's
+ * art in a rounded square with Apple's margin and shadow), at every size. */
 function makeIcns(destination, scratch) {
   const iconset = join(scratch, "AppIcon.iconset");
-  mkdirSync(iconset, { recursive: true });
-  const source = join(root, "public/icons/icon-512.png");
-  for (const size of [16, 32, 128, 256, 512]) {
-    for (const scale of [1, 2]) {
-      const pixels = size * scale;
-      if (pixels > 512) continue;
-      const name = `icon_${size}x${size}${scale === 2 ? "@2x" : ""}.png`;
-      run("sips", ["-z", `${pixels}`, `${pixels}`, source, "--out", join(iconset, name)], {
-        stdio: "ignore",
-      });
-    }
-  }
+  rmSync(iconset, { recursive: true, force: true });
+  run("cargo", [
+    "run",
+    "--locked",
+    "-q",
+    "-p",
+    "sloppy-desktop",
+    "--example",
+    "app_icon",
+    "--",
+    iconset,
+  ]);
   run("iconutil", ["--convert", "icns", "--output", destination, iconset]);
 }
 

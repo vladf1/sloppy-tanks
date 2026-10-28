@@ -63,15 +63,28 @@ fn main() {
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it"));
     std::fs::write(out.join("assets.rs"), table).expect("OUT_DIR is writable");
 
-    // The executable's icon, from the web app's (Windows' largest icon size is 256).
+    // The executable's icon, from the web app's, at each size Windows draws it (taskbar,
+    // title bar, Explorer's views up to 256), so none is scaled down from the largest.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") {
         #[cfg(windows)]
         {
-            let icon = image::open(public.join("icons/icon-512.png"))
-                .expect("the app icon decodes")
-                .resize(256, 256, image::imageops::FilterType::Lanczos3);
+            use image::codecs::ico::{IcoEncoder, IcoFrame};
+            let source =
+                image::open(public.join("icons/icon-512.png")).expect("the app icon decodes");
+            let frames: Vec<IcoFrame> = [16, 24, 32, 48, 64, 128, 256]
+                .into_iter()
+                .map(|size| {
+                    let pixels = source
+                        .resize_exact(size, size, image::imageops::FilterType::Lanczos3)
+                        .into_rgba8();
+                    IcoFrame::as_png(pixels.as_raw(), size, size, image::ExtendedColorType::Rgba8)
+                        .expect("an icon frame encodes")
+                })
+                .collect();
             let path = out.join("icon.ico");
-            icon.save_with_format(&path, image::ImageFormat::Ico)
+            let file = std::fs::File::create(&path).expect("OUT_DIR is writable");
+            IcoEncoder::new(file)
+                .encode_images(&frames)
                 .expect("the icon encodes");
             let mut resource = winresource::WindowsResource::new();
             resource.set_icon(path.to_str().expect("a UTF-8 path"));
