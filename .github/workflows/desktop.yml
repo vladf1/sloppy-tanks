@@ -5,6 +5,11 @@
 # libraries there; nothing deploys from here.
 # Builds carry the three-part release and the commit: the fourth part is the Pages
 # workflow's run number, which this workflow does not have.
+# On main and manual runs the macOS app and package are signed with the Developer ID
+# certificates and notarized with the App Store Connect API key in the repository's
+# secrets (MACOS_CERTIFICATES, a base64 .p12 with both identities, and its
+# MACOS_CERTIFICATES_PASSWORD; NOTARY_API_KEY, the .p8's text, NOTARY_API_KEY_ID and
+# NOTARY_API_ISSUER). Pull requests, and runs without the secrets, sign ad hoc.
 name: Desktop app
 
 on:
@@ -40,7 +45,36 @@ jobs:
           cargo-cache: desktop-macos
       - run: cargo clippy --locked -p sloppy-desktop --all-targets -- -D warnings
       - run: cargo test --locked -p sloppy-desktop
+      - name: Signing keychain
+        if: github.event_name != 'pull_request'
+        env:
+          CERTIFICATES: ${{ secrets.MACOS_CERTIFICATES }}
+          CERTIFICATES_PASSWORD: ${{ secrets.MACOS_CERTIFICATES_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.NOTARY_API_KEY }}
+        run: |
+          if [ -z "$CERTIFICATES" ]; then
+            echo "No signing secrets: the app is signed ad hoc."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$CERTIFICATES" | base64 --decode > "$RUNNER_TEMP/certificates.p12"
+          security import "$RUNNER_TEMP/certificates.p12" -k "$keychain" \
+            -P "$CERTIFICATES_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          rm "$RUNNER_TEMP/certificates.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          if [ -n "$NOTARY_KEY" ]; then
+            printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
+            echo "SLOPPY_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+          fi
       - run: pnpm run desktop:mac
+        env:
+          SLOPPY_NOTARY_KEY_ID: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_KEY_ID || '' }}
+          SLOPPY_NOTARY_ISSUER: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_ISSUER || '' }}
       - uses: actions/upload-artifact@v7
         with:
           path: artifacts/desktop/Sloppy-Tanks-*-macOS.zip
@@ -51,6 +85,11 @@ jobs:
           path: artifacts/desktop/Sloppy-Tanks-*-macOS.pkg
           archive: false
           if-no-files-found: error
+      - name: Remove the signing keychain
+        if: always() && github.event_name != 'pull_request'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8"
 
   windows:
     name: Windows app

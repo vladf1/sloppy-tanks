@@ -12,10 +12,19 @@
 // Setup's build line. The `desktop` profile (Cargo.toml) optimizes everything for speed.
 //
 // The macOS app runs natively on Apple silicon and Intel: both targets are built and
-// joined with `lipo`. It is unsigned apart from an ad-hoc signature, which arm64 needs to
-// run at all, and the installer package beside its zip is unsigned. FMA stays off on both
-// (no `target-cpu=native`): fused multiply-adds round differently from the server and the
-// browser's Wasm.
+// joined with `lipo`. FMA stays off on both (no `target-cpu=native`): fused
+// multiply-adds round differently from the server and the browser's Wasm.
+//
+// Signing follows what the machine holds. With a "Developer ID Application" identity in
+// the keychain the app is signed for distribution (hardened runtime, secure timestamp),
+// and with a "Developer ID Installer" one the package too; with notarization
+// credentials both then go to Apple's notary service and get its ticket stapled, so
+// Gatekeeper opens them without a warning, offline too. The credentials are a
+// `notarytool` keychain profile (`SLOPPY_NOTARY_PROFILE`, default "sloppy-tanks") or, in
+// CI, an App Store Connect API key (`SLOPPY_NOTARY_KEY` file, `SLOPPY_NOTARY_KEY_ID`,
+// `SLOPPY_NOTARY_ISSUER`). `SLOPPY_MAC_APP_IDENTITY` and `SLOPPY_MAC_INSTALLER_IDENTITY`
+// pick an identity when there are several. Without an identity the app gets only the
+// ad-hoc signature arm64 needs to run at all, and the package none.
 import { spawnSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -47,6 +56,12 @@ function run(command, args, options = {}) {
     process.exit(result.status ?? 1);
   }
   return result;
+}
+
+/** A command's output and whether it succeeded, without stopping the build. */
+function attempt(command, args) {
+  const result = spawnSync(command, args, { cwd: root, encoding: "utf8" });
+  return { ok: result.status === 0, output: `${result.stdout ?? ""}${result.stderr ?? ""}` };
 }
 
 /** A command's trimmed output, or "" when it fails (no Git, no rustup). */
@@ -122,6 +137,66 @@ function makeIcns(destination, scratch) {
   run("iconutil", ["--convert", "icns", "--output", destination, iconset]);
 }
 
+/** The keychain's first identity named `kind` ("Developer ID Application"), or the one
+ * `override` names. */
+function identity(kind, override, policy) {
+  if (override) return override;
+  const listed = capture("security", ["find-identity", "-v", ...policy]);
+  return listed.match(new RegExp(`"(${kind}: [^"]+)"`))?.[1] ?? null;
+}
+
+/** How this machine signs and notarizes the macOS app (see the top of the file). */
+function macSigning() {
+  const app = identity("Developer ID Application", process.env.SLOPPY_MAC_APP_IDENTITY, [
+    "-p",
+    "codesigning",
+  ]);
+  const installer = identity(
+    "Developer ID Installer",
+    process.env.SLOPPY_MAC_INSTALLER_IDENTITY,
+    [],
+  );
+  const {
+    SLOPPY_NOTARY_KEY: key,
+    SLOPPY_NOTARY_KEY_ID: keyId,
+    SLOPPY_NOTARY_ISSUER: issuer,
+  } = process.env;
+  let notary = null;
+  if (key && keyId && issuer) {
+    notary = ["--key", key, "--key-id", keyId, "--issuer", issuer];
+  } else {
+    const profile = process.env.SLOPPY_NOTARY_PROFILE ?? "sloppy-tanks";
+    if (attempt("xcrun", ["notarytool", "history", "--keychain-profile", profile]).ok) {
+      notary = ["--keychain-profile", profile];
+    }
+  }
+  return { app, installer, notary: app ? notary : null };
+}
+
+/** Send `file` to Apple's notary service, wait for its verdict and staple its ticket to
+ * `staple` (the file itself, or the app a zip carried). Stops the build if Apple refuses
+ * it, with the service's log. */
+function notarize(file, staple, notary) {
+  console.log(`Notarizing ${file}…`);
+  const submitted = attempt("xcrun", [
+    ...["notarytool", "submit", file, ...notary],
+    ...["--wait", "--output-format", "json"],
+  ]);
+  const result = (() => {
+    try {
+      return JSON.parse(submitted.output.slice(submitted.output.indexOf("{")));
+    } catch {
+      return {};
+    }
+  })();
+  if (result.status !== "Accepted") {
+    console.error(`Notarization of ${file} was not accepted:\n${submitted.output}`);
+    if (result.id) run("xcrun", ["notarytool", "log", result.id, ...notary]);
+    process.exit(1);
+  }
+  run("xcrun", ["stapler", "staple", staple]);
+}
+
 function buildMac() {
   if (process.platform !== "darwin") {
     console.error("The macOS app needs a Mac (lipo, sips, iconutil, codesign).");
@@ -160,17 +235,41 @@ function buildMac() {
     }),
   );
   writeFileSync(join(contents, "PkgInfo"), "APPL????");
-  // Apple silicon refuses unsigned code; an ad-hoc signature (no identity) is enough for
-  // a downloaded app the player opens past Gatekeeper.
-  run("codesign", ["--force", "--deep", "--sign", "-", app]);
+  const signing = macSigning();
+  if (signing.app) {
+    // Distribution signing: the hardened runtime notarization requires, and a secure
+    // timestamp so the signature outlives the certificate.
+    run("codesign", [
+      ...["--force", "--options", "runtime", "--timestamp"],
+      ...["--sign", signing.app, app],
+    ]);
+    run("codesign", ["--verify", "--strict", "--verbose=2", app]);
+  } else {
+    // Apple silicon refuses unsigned code; an ad-hoc signature (no identity) is enough
+    // for an app the player opens past Gatekeeper.
+    console.warn("No Developer ID Application identity: the app gets an ad-hoc signature.");
+    run("codesign", ["--force", "--deep", "--sign", "-", app]);
+  }
 
   mkdirSync(output, { recursive: true });
   const artifact = join(output, `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-macOS`);
   const zip = `${artifact}.zip`;
   rmSync(zip, { force: true });
   run("ditto", ["-c", "-k", "--keepParent", app, zip]);
+  if (signing.notary) {
+    // The zip carries the app to the notary; the zip shipped is made again from the
+    // stapled app.
+    notarize(zip, app, signing.notary);
+    rmSync(zip, { force: true });
+    run("ditto", ["-c", "-k", "--keepParent", app, zip]);
+  } else if (signing.app) {
+    console.warn("No notarization credentials: the signed app is not notarized.");
+  }
   const installer = `${artifact}.pkg`;
-  makeInstaller(app, version, installer, scratch);
+  makeInstaller(app, version, installer, scratch, signing.installer);
+  if (signing.notary && signing.installer) {
+    notarize(installer, installer, signing.notary);
+  }
   rmSync(join(output, `${APP_NAME}.app`), { recursive: true, force: true });
   run("ditto", [app, join(output, `${APP_NAME}.app`)]);
   console.log(`Built ${join(output, `${APP_NAME}.app`)} (universal, ${megabytes(executable)})`);
@@ -178,8 +277,9 @@ function buildMac() {
   console.log(`Built ${installer} (${megabytes(installer)})`);
 }
 
-/** An unsigned installer package that puts `app` in /Applications, titled for Installer. */
-function makeInstaller(app, version, destination, scratch) {
+/** An installer package that puts `app` in /Applications, titled for Installer; signed
+ * with `identity` when there is one. */
+function makeInstaller(app, version, destination, scratch, identity) {
   const payload = join(scratch, "pkg-root");
   mkdirSync(payload, { recursive: true });
   run("ditto", [app, join(payload, `${APP_NAME}.app`)]);
@@ -214,8 +314,12 @@ function makeInstaller(app, version, destination, scratch) {
     synthesized.replace(opening, (tag) => tag + extra),
   );
   rmSync(destination, { force: true });
+  if (!identity) {
+    console.warn("No Developer ID Installer identity: the package is unsigned.");
+  }
   run("productbuild", [
     ...["--distribution", distribution, "--package-path", scratch],
+    ...(identity ? ["--sign", identity, "--timestamp"] : []),
     destination,
   ]);
 }
