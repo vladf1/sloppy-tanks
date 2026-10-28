@@ -46,22 +46,14 @@ impl GameOptions {
     /// levels are offered (`?debug`), else the village does, and it plays its own team
     /// battle whatever format the player keeps for the standard maps
     /// (`bindGameOptions`).
-    pub fn offered(self, extra_levels: bool) -> GameOptions {
-        let map_mode = if extra_levels || !is_extra_level(self.map_mode) {
-            self.map_mode
-        } else {
-            MapId::Village
-        };
-        let game_mode = if is_extra_level(map_mode) {
-            GameMode::Team
-        } else {
-            self.game_mode
-        };
-        GameOptions {
-            map_mode,
-            game_mode,
-            ..self
+    pub fn offered(mut self, extra_levels: bool) -> GameOptions {
+        if !extra_levels && is_extra_level(self.map_mode) {
+            self.map_mode = MapId::Village;
         }
+        if is_extra_level(self.map_mode) {
+            self.game_mode = GameMode::Team;
+        }
+        self
     }
 }
 

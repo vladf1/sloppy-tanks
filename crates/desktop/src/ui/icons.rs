@@ -443,31 +443,9 @@ impl Art {
     }
 
     /// Paint the render of a player's `kind` in `team`'s paint, fit inside `rect` at
-    /// `scale` of its height and centred.
+    /// `scale` of its height and centred; `mirrored` faces it the other way, like CSS
+    /// `scaleX(-1)` on a setup poster.
     pub fn tank(
-        &self,
-        painter: &egui::Painter,
-        kind: VehicleKind,
-        team: Team,
-        rect: Rect,
-        scale: f32,
-    ) {
-        self.tank_image(painter, kind, team, rect, scale, false);
-    }
-
-    /// A tank facing the other side of a setup poster, like CSS `scaleX(-1)`.
-    pub fn tank_mirrored(
-        &self,
-        painter: &egui::Painter,
-        kind: VehicleKind,
-        team: Team,
-        rect: Rect,
-        scale: f32,
-    ) {
-        self.tank_image(painter, kind, team, rect, scale, true);
-    }
-
-    fn tank_image(
         &self,
         painter: &egui::Painter,
         kind: VehicleKind,

@@ -227,13 +227,9 @@ pub fn stepped_minutes(minutes: impl Into<f64>, step: i32) -> u32 {
         f64::from(DEFAULT_ROUND_MINUTES)
     };
     let step = f64::from(step);
-    // Up: the multiple at or below, then one step; down: the multiple at or above, then
-    // one step back.
-    let next = if step > 0.0 {
-        (current / step).floor() * step + step
-    } else {
-        (current / -step).ceil() * -step + step
-    };
+    // Flooring by the signed step finds the multiple at or below going up and at or
+    // above going down; then one step.
+    let next = (current / step).floor() * step + step;
     // `max` before `min` also turns a zero step's NaN into the shortest length.
     next.max(1.0).min(f64::from(MAX_ROUND_MINUTES)) as u32
 }
