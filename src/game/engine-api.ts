@@ -2,7 +2,7 @@
  * and frame-result slots, and the shapes of its JSON reports. This module imports
  * only types, so shell modules can use it without loading the engine. */
 import type { MapId } from "./map-options";
-import type { EndCause, Lobby } from "../net/room-protocol";
+import type { Lobby } from "../net/room-protocol";
 
 /** Slots of the packed raw input frame (`sloppy_render::presentation::input::slot`).
  * Booleans are 0 or 1; one-shot slots count presses since the previous frame. */
@@ -66,20 +66,6 @@ export type VehicleKind = "scout" | "balanced" | "heavy" | "humvee";
 export type PlayerVehicleKind = Exclude<VehicleKind, "humvee">;
 export type GameMode = "team" | "solo";
 export type Difficulty = "easy" | "normal" | "hard";
-export type CoverKind =
-  | "rock"
-  | "teeth"
-  | "hedgehog"
-  | "container"
-  | "cargo"
-  | "house"
-  | "tree"
-  | "timber"
-  | "concrete"
-  | "drum"
-  | "tower"
-  | "rubble"
-  | "boundary";
 export type DamageCause = Weapon | "mine" | "drum" | "interception" | "explosion";
 export type EventType =
   | "debris-impact"
@@ -97,18 +83,10 @@ export type EventType =
   | "promotion"
   | "shatter";
 
-export interface Point {
-  x: number;
-  z: number;
-}
-
 export interface MatchState {
   phase: Phase;
-  time: number;
   scores: [number, number];
-  overtime: boolean;
   endedEarly?: boolean;
-  winner: Team | null;
   round: number;
 }
 
@@ -121,7 +99,6 @@ export type RoomStatus =
 /** Why a room stopped for good, with the dialog's title and buttons. `retry` joins again
  * and is null where that cannot work; `setup` leaves for Battle Setup. */
 export interface RoomEnding {
-  cause: EndCause;
   text: string;
   title: string;
   retry: string | null;
@@ -139,7 +116,6 @@ export interface RoomMenuText {
 /** A player who joined the room or came back, as a kill feed line. */
 export interface RoomArrival {
   text: string;
-  team: Team;
 }
 
 /** A new lobby: the wire record, the viewer's id in it, the menu's words for it and who
@@ -158,15 +134,15 @@ export interface DeathReport {
    * ordnance. */
   killer: string | null;
   self: boolean;
-  cause: DamageCause | null;
   /** The weapon's label, such as "Rocket blast", or null when it is unknown. */
   weapon: string | null;
   /** The weapon's icon: a `HUD_ICONS` symbol after its `hud-` prefix. */
   icon: string;
-  /** The killer's vehicle name, team and kills, when the scoreboard knows them. */
+  /** The killer's vehicle name and team, when the scoreboard knows them. */
   killerVehicle?: string;
   killerTeam?: Team;
-  killerKills?: number;
+  /** The killer's kills as a tag, "Their 3rd kill", once they have one. */
+  killerTally?: string;
   /** All of it as a sentence, for the toast and the respawn card's status line. */
   sentence: string;
 }
@@ -188,20 +164,12 @@ export interface EngineFeedRow {
   ownDeath: boolean;
 }
 
-/** A simulation event as `drain_events` reports it. */
+/** A simulation event as `drain_events` reports it: its kind, its tank and its label,
+ * with what the viewer sees of it. */
 export interface EngineEvent {
   type: EventType;
-  x: number;
-  z: number;
   id?: number;
-  owner?: number;
-  team?: Team;
-  weapon?: Weapon;
   label?: string;
-  coverKind?: CoverKind;
-  damageSource?: { cause: DamageCause; origin: Point };
-  /** The human's own hit on an enemy. */
-  playerHit: boolean;
   /** The event concerns the human's tank. */
   own: boolean;
   /** Clockwise screen angle (radians) of damage the human took, or null. */
@@ -240,9 +208,6 @@ export interface PlannedSound {
 }
 
 export interface EventBatch {
-  listener: Point;
-  /** World X/Z of screen right; first person turns it with the view. */
-  listenerRight: Point;
   events: EngineEvent[];
   /** The events' sounds in the order to start them, already rate-limited. */
   sounds: PlannedSound[];
@@ -264,27 +229,12 @@ export interface HumanState {
   hp: number;
   maxHp: number;
   healthRatio: number;
-  healthColor: number;
   rank: number;
   rankName: string;
-  rankDamage: number;
-  rankFireRate: number;
-  rankHealth: number;
-  rankRepair: number;
-  /** Seconds out of combat before a veteran repairs. */
-  repairDelay: number;
   ammo: AmmoSlot[];
   mineCooldown: number;
-  protection: number;
-  shield: number;
-  shieldPoints: number;
-  rapid: number;
-  speed: number;
-  laser: number;
   respawn: number;
   kills: number;
-  deaths: number;
-  selfRepair: boolean;
   /** How the hull reads at a glance, at the overhead bar's thresholds. */
   hullTone: "healthy" | "damaged" | "critical";
   /** The tank panel's hull colour along its ramp (sRGB hex). */
@@ -309,9 +259,10 @@ export interface ActiveEffect {
 export interface ScorePill {
   /** The goal under the clock; null in a room. */
   objective: string | null;
-  /** "NEXT KILL" in overtime; the clock shows `seconds` otherwise. */
-  clockLabel: string | null;
-  seconds: number;
+  /** Overtime, which waits for the next kill. */
+  overtime: boolean;
+  /** "NEXT KILL" in overtime, the time as m:ss otherwise. */
+  clock: string;
 }
 
 export interface ScoreboardRow {
@@ -319,39 +270,11 @@ export interface ScoreboardRow {
   name: string;
   kills: number;
   deaths: number;
-  team: Team;
-  kind: VehicleKind;
-  /** A player's tank rather than a bot's. */
-  human: boolean;
 }
 
-export type RecapMetric =
-  | "kills"
-  | "damage"
-  | "bestLife"
-  | "rank"
-  | "busiestMinute"
-  | "longestLife"
-  | "multikill"
-  | "clutchKills"
-  | "revengeKills"
-  | "posthumousKills"
-  | "mineKills"
-  | "coverDestroyed"
-  | "pickups";
-
-/** The finished round's report; the engine decides feats and personal bests. */
+/** The finished round's feats and report; the engine decides both. */
 export interface RecapState {
-  stats: Record<RecapMetric, number>;
-  best: Record<RecapMetric, number>;
-  improved: RecapMetric[];
-  persisted: boolean;
   feats: { title: string; detail: string }[];
-  shots: number;
-  directHits: number;
-  damageTaken: number;
-  shieldAbsorbed: number;
-  rankNames: string[];
   report: BattleReport;
 }
 
@@ -403,7 +326,6 @@ export interface PauseReport {
 /** `hud_json`: everything the HUD and menus show. */
 export interface HudState {
   match: MatchState;
-  elapsed: number;
   gameMode: GameMode;
   endlessMatch: boolean;
   mapMode: MapId;
@@ -412,7 +334,6 @@ export interface HudState {
   humanTeam: Team;
   scoreLimit: number;
   teamNames: [string, string];
-  activeEnemies: number;
   speedTuning: { "tank-speed": number; "bullet-speed": number };
   human: HumanState;
   scoreboard: ScoreboardRow[];
@@ -475,34 +396,18 @@ export interface EngineStats {
   triangles: number;
   shadowDrawCalls: number;
   reflectionDrawCalls: number;
-  shadowTriangles: number;
-  reflectionTriangles: number;
-  mainTriangles: number;
   pipelines: number;
   latePipelines: number;
   meshes: number;
   materials: number;
   textures: number;
-  texturesPending: number;
   buffers: number;
   instances: number;
   gpuBytes: number;
   /** Mesh page bytes no mesh uses, included in `gpuBytes`. */
   meshSlackBytes: number;
   bodies: number;
-  fixedBodies: number;
-  dynamicBodies: number;
-  sleepingBodies: number;
   colliders: number;
   shots: number;
-  mines: number;
   fragments: number;
-  maxFragments: number;
-  tanks: number;
-  tanksAlive: number;
-  pickups: number;
-  pickupsReady: number;
-  particles: number;
-  elapsed: number;
-  pixelRatio: number;
 }

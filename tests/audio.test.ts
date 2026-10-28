@@ -34,8 +34,6 @@ test("the page plays the engine's planned sounds in order, with their gain and p
     }),
   ) as unknown as AudioSystem["sounds"];
   const batch: EventBatch = {
-    listener: { x: 0, z: 0 },
-    listenerRight: { x: 1, z: 0 },
     events: [],
     sounds: [
       { sound: "hit", gain: 0.14, pan: 0 },

@@ -167,7 +167,6 @@ export function showDamageRing(
   indicator.hidden = false;
 }
 
-/** Writes `text` into the element `#id` under `root`, unless it already shows it. */
 /** Set an attribute unless it already holds `value`. */
 function setAttributeIfChanged(element: Element, name: string, value: string): void {
   if (element.getAttribute(name) !== value) {
@@ -175,6 +174,7 @@ function setAttributeIfChanged(element: Element, name: string, value: string): v
   }
 }
 
+/** Writes `text` into the element `#id` under `root`, unless it already shows it. */
 export function setText(root: ParentNode, id: string, text: string): void {
   const node = root.querySelector(`#${id}`);
   if (node && node.textContent !== text) {

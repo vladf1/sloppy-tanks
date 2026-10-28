@@ -5,7 +5,6 @@
 use egui::{Align2, Color32, Id, LayerId, Order, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
 use sloppy_core::sim::{GameMode, Team};
-use sloppy_web::battle_report::ordinal;
 use sloppy_web::catalog::TANK_CARDS;
 use sloppy_web::hud::Hud;
 
@@ -239,11 +238,8 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
     if let Some(vehicle) = report.killer_vehicle {
         tags.push((None, vehicle.to_owned()));
     }
-    if let Some(kills) = report.killer_kills.filter(|kills| *kills > 0) {
-        tags.push((
-            Some("skull"),
-            format!("THEIR {} KILL", ordinal(u64::from(kills))),
-        ));
+    if let Some(tally) = &report.killer_tally {
+        tags.push((Some("skull"), tally.to_ascii_uppercase()));
     }
     let center_y = y + 12.5;
     for (index, (icon, tag)) in tags.iter().enumerate() {

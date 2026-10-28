@@ -1,23 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import type { BattleReport, HudState, PauseReport } from "../src/game/engine-api";
-import { hudMarkup, menuMarkup, ordinal, scoreMarkup } from "../src/game/ui-markup";
-
-test("ordinals read as places: 1st, 2nd, 11th, 21st", () => {
-  assert.deepEqual([1, 2, 3, 4, 11, 12, 13, 21, 22, 101, 111].map(ordinal), [
-    "1ST",
-    "2ND",
-    "3RD",
-    "4TH",
-    "11TH",
-    "12TH",
-    "13TH",
-    "21ST",
-    "22ND",
-    "101ST",
-    "111TH",
-  ]);
-});
+import { hudMarkup, menuMarkup, scoreMarkup } from "../src/game/ui-markup";
 
 /** A team battle's HUD state, three kills to four, as the menus read it; at results with
  * the engine's `report`. */
@@ -34,19 +18,14 @@ function teamBattle(overrides: {
     rankName: "Rookie",
     alive: overrides.alive ?? true,
     kills: 2,
-    deaths: 1,
   };
   return {
     match: {
       phase: overrides.phase,
       scores: [3, 4],
-      time: 284,
-      overtime: false,
-      winner: overrides.endedEarly ? null : 1,
       endedEarly: overrides.endedEarly ?? false,
       round: 1,
     },
-    elapsed: 16,
     gameMode: "team",
     endlessMatch: false,
     mapName: "Pine Village",
@@ -54,11 +33,8 @@ function teamBattle(overrides: {
     humanTeam: 1,
     scoreLimit: 100,
     teamNames: ["BLUE", "RED"],
-    activeEnemies: 6,
     human,
-    scoreboard: [
-      { id: 1, name: "YOU", kills: 2, deaths: 1, team: 1, kind: "balanced", human: true },
-    ],
+    scoreboard: [{ id: 1, name: "YOU", kills: 2, deaths: 1 }],
     recap:
       overrides.phase === "results"
         ? {
@@ -165,15 +141,11 @@ test("a solo run's loss leads its sentence with the death that ended it", () => 
     gameMode: "solo",
   } as HudState;
   const markup = menuMarkup(solo, {
-    report: {
-      killer: "<Rex>",
-      self: false,
-      cause: "standard",
-      weapon: "Standard shell",
-      icon: "standard",
-      sentence: "<Rex> destroyed you with a standard shell.",
-    },
-    text: "<Rex> destroyed you with a standard shell.",
+    killer: "<Rex>",
+    self: false,
+    weapon: "Standard shell",
+    icon: "standard",
+    sentence: "<Rex> destroyed you with a standard shell.",
   });
   assert.match(
     markup,
@@ -184,17 +156,21 @@ test("a solo run's loss leads its sentence with the death that ended it", () => 
 
 test("the respawn card names who destroyed the tank in plain words", () => {
   const markup = menuMarkup(teamBattle({ phase: "playing", alive: false }), {
-    report: {
-      killer: "THUNDERCLAP",
-      self: false,
-      cause: "standard",
-      weapon: "Standard shell",
-      icon: "standard",
-      sentence: "THUNDERCLAP destroyed you with a standard shell.",
-    },
-    text: "THUNDERCLAP destroyed you with a standard shell.",
+    killer: "THUNDERCLAP",
+    self: false,
+    weapon: "Standard shell",
+    icon: "standard",
+    killerVehicle: "BIG RIG",
+    killerTeam: 1,
+    killerTally: "Their 3rd kill",
+    sentence: "THUNDERCLAP destroyed you with a standard shell.",
   });
-  assert.match(markup, /<small>DESTROYED BY<\/small><b>THUNDERCLAP<\/b>/);
+  assert.match(
+    markup,
+    /<div class="wrecked-by side-red"><small>DESTROYED BY<\/small><b>THUNDERCLAP<\/b>/,
+  );
+  assert.match(markup, /<span class="killer-tag">BIG RIG<\/span>/);
+  assert.match(markup, /killer-tag-icon"[^]*?<\/svg>Their 3rd kill<\/span>/);
   assert.doesNotMatch(markup, /WRECKED/);
 });
 

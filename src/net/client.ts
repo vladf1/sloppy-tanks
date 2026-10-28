@@ -67,7 +67,7 @@ type Notice =
   | { type: "notice"; text: string }
   | ({ type: "ended" } & RoomEnding)
   | ({ type: "lobby" } & RoomLobby)
-  | { type: "result"; match: Match; team: number }
+  | { type: "result"; match: Match }
   | { type: "resetFeedback" | "clearInput" | "reveal" | "prepare" | "baselineShown" }
   | { type: "arenaFailed"; error: string };
 
@@ -404,7 +404,7 @@ export async function startMultiplayer(
         ui.lobby(notice);
         break;
       case "result":
-        ui.result(notice.match, notice.team);
+        ui.result(notice.match);
         break;
       case "resetFeedback":
         ui.resetFeedback();

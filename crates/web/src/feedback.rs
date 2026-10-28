@@ -11,6 +11,7 @@ use serde::Serialize;
 use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::{DamageCause, SimEvent, SimEventType, Team};
 
+use crate::battle_report::ordinal;
 use crate::hud::Scoreboard;
 
 /// The kill feed's name for the viewer, and for ordnance nobody owns (the yard's drums,
@@ -74,6 +75,10 @@ pub struct DeathReport {
     pub killer_team: Option<Team>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub killer_kills: Option<u32>,
+    /// The killer's kills as the respawn card tags them, "Their 3rd kill", once they
+    /// have one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub killer_tally: Option<String>,
     /// The whole of it as a sentence, such as "Bob destroyed you with a rocket blast.";
     /// an unreported weapon is left out rather than called unknown.
     pub sentence: String,
@@ -227,6 +232,12 @@ fn death_report(event: &SimEvent, scoreboard: &Scoreboard) -> DeathReport {
         killer_vehicle: killer.as_ref().map(|row| vehicle(row.kind).name),
         killer_team: killer.as_ref().map(|row| row.team),
         killer_kills: killer.as_ref().map(|row| row.kills),
+        killer_tally: killer.as_ref().filter(|row| row.kills > 0).map(|row| {
+            format!(
+                "Their {} kill",
+                ordinal(u64::from(row.kills)).to_ascii_lowercase()
+            )
+        }),
         killer: killer.map(|row| row.name.into_owned()),
         own_goal,
         cause,
@@ -285,7 +296,6 @@ mod tests {
             deaths: 0,
             team,
             kind,
-            human: false,
         };
         Scoreboard::Kept(vec![
             row(VIEWER, "Player", 0, Team::Red, VehicleKind::Balanced),
@@ -379,6 +389,7 @@ mod tests {
                 "killerVehicle": "BIG RIG",
                 "killerTeam": 0,
                 "killerKills": 3,
+                "killerTally": "Their 3rd kill",
                 "sentence": "Bob <b>literal</b> destroyed you with a rocket blast.",
             })
         );
@@ -432,7 +443,6 @@ mod tests {
             deaths: 0,
             team: Team::Blue,
             kind: VehicleKind::Scout,
-            human: true,
         }]);
         let kill = |id: u32, owner: Option<u32>| {
             let event = SimEvent {

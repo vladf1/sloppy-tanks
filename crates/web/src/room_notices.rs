@@ -3,7 +3,7 @@
 //! preparing the arena.
 
 use serde_json::{Value, json};
-use sloppy_core::net::client::{ClientNotice, EndCause};
+use sloppy_core::net::client::ClientNotice;
 use sloppy_core::net::protocol::Lobby;
 use sloppy_core::sim::{Match, Team};
 
@@ -100,7 +100,6 @@ impl RoomNotice {
             RoomNotice::Notice(text) => json!({ "type": "notice", "text": text }),
             RoomNotice::Ended(ending) => json!({
                 "type": "ended",
-                "cause": ending.cause.map_or("renderer", EndCause::as_str),
                 "text": ending.text,
                 "title": ending.title,
                 "retry": ending.retry,
@@ -121,9 +120,7 @@ impl RoomNotice {
                     "arrivals": arrivals,
                 })
             }
-            RoomNotice::Result { outcome, team } => {
-                json!({ "type": "result", "match": outcome, "team": team })
-            }
+            RoomNotice::Result { outcome, .. } => json!({ "type": "result", "match": outcome }),
             RoomNotice::ResetFeedback => json!({ "type": "resetFeedback" }),
             RoomNotice::ClearInput => json!({ "type": "clearInput" }),
             RoomNotice::Reveal => json!({ "type": "reveal" }),

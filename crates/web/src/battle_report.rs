@@ -7,6 +7,7 @@
 //! result shows; pause's facts are made when the pause menu asks ([`pause_report`]).
 
 use std::cmp::Ordering;
+use std::fmt;
 
 use serde::Serialize;
 use sloppy_core::sim::math::js_round;
@@ -385,7 +386,7 @@ fn metric_value(recap: &RoundRecap, metric: Metric, value: f64) -> String {
             let index = (value.max(0.0).floor() as usize).min(last);
             recap.rank_names.get(index).unwrap_or(&"Rookie").to_string()
         }
-        Metric::LongestLife => duration(value),
+        Metric::LongestLife => duration(value).to_string(),
         _ => thousands(value),
     }
 }
@@ -594,7 +595,7 @@ pub fn pause_report(hud: &Hud) -> PauseReport {
     PauseReport {
         tally: solo.then(|| SoloTally {
             kills: human.kills,
-            survived: duration(hud.elapsed),
+            survived: duration(hud.elapsed).to_string(),
         }),
         standing: (!solo).then(|| pause_standing(hud)),
         facts: vec![
@@ -646,9 +647,8 @@ fn pause_standing(hud: &Hud) -> Standing {
     Standing { text, tone }
 }
 
-/// `m:ss`, the menus' one clock format. Negative times read 0:00; the page's former
-/// formatter wrote them as "-1:-5".
-pub fn duration(seconds: f64) -> String {
+/// `m:ss`, the menus' and the HUD's one clock format. Negative times read 0:00.
+pub fn duration(seconds: f64) -> impl fmt::Display {
     round_recap::duration(seconds.max(0.0))
 }
 
@@ -801,7 +801,6 @@ mod tests {
             deaths,
             team,
             kind: VehicleKind::Balanced,
-            human: id == 1,
         }
     }
 
@@ -1347,12 +1346,13 @@ mod tests {
 
     #[test]
     fn clocks_and_counts_have_one_format() {
-        assert_eq!(duration(95.0), "1:35");
-        assert_eq!(duration(5.9), "0:05");
-        assert_eq!(duration(600.0), "10:00");
+        let clock = |seconds: f64| duration(seconds).to_string();
+        assert_eq!(clock(95.0), "1:35");
+        assert_eq!(clock(5.9), "0:05");
+        assert_eq!(clock(600.0), "10:00");
         // A clock never reads below zero.
-        assert_eq!(duration(-5.0), "0:00");
-        assert_eq!(duration(f64::NAN), "0:00");
+        assert_eq!(clock(-5.0), "0:00");
+        assert_eq!(clock(f64::NAN), "0:00");
         assert_eq!(thousands(0.0), "0");
         assert_eq!(thousands(999.0), "999");
         assert_eq!(thousands(1234.0), "1,234");

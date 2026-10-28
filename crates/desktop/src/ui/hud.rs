@@ -22,12 +22,6 @@ const CRITICAL_HEALTH: f64 = 0.25;
 /// The screen edge the HUD keeps clear.
 const EDGE: f32 = 16.0;
 
-/// `m:ss`.
-pub fn clock(seconds: f64) -> String {
-    let seconds = seconds.max(0.0) as u64;
-    format!("{}:{:02}", seconds / 60, seconds % 60)
-}
-
 /// The painter under every HUD area: shades, feed, toast and hit feedback.
 fn backdrop(context: &egui::Context) -> Painter {
     context.layer_painter(LayerId::new(Order::Background, Id::unique("hud backdrop")))
@@ -164,10 +158,8 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) {
         match_state.scores.map(|score| format!("{score}"))
     };
     let pill = &hud.score_pill;
-    let overtime = pill.clock_label.is_some();
-    let time = pill
-        .clock_label
-        .map_or_else(|| clock(pill.seconds), str::to_owned);
+    let overtime = pill.overtime;
+    let time = pill.clock().to_string();
     let objective = pill
         .objective
         .map(|objective| objective.to_string())

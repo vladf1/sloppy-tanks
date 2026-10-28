@@ -60,7 +60,6 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
             deaths: DEATHS[index],
             team: Team::from_index(usize::from(index >= 6)),
             kind: KINDS[index % 3],
-            human: index == 0,
         })
         .collect();
     let results = phase == MatchPhase::Results;
@@ -161,8 +160,6 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
             }],
             shots: 31,
             direct_hits: 19,
-            damage_taken: 260.0,
-            shield_absorbed: 40.0,
             rank_names: vec!["Rookie", "Gunner", "Veteran", "Ace"],
             ..RoundRecap::default()
         };
@@ -403,6 +400,7 @@ fn scenarios() -> Vec<Scenario> {
         killer_vehicle: Some("BIG RIG"),
         killer_team: Some(Team::Red),
         killer_kills: Some(3),
+        killer_tally: Some("Their 3rd kill".into()),
         sentence: "Crank destroyed you with a rocket blast.".into(),
     });
     list.push(Scenario {

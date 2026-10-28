@@ -47,6 +47,9 @@ pub struct Ending {
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Arrival {
     pub text: String,
+    /// The team whose colour the desktop app draws the line in; the page shows the text
+    /// alone.
+    #[serde(skip)]
     pub team: Team,
 }
 

@@ -89,8 +89,6 @@ fn seeded_match() -> Simulation {
     let combat = &mut sim.combat_record;
     combat.shots = 31;
     combat.direct_hits = 17;
-    combat.damage_taken = 238.5;
-    combat.shield_absorbed = 40.0;
     combat.busiest_minute = 3;
     combat.multikill = 3;
     combat.revenge_kills = 1;
