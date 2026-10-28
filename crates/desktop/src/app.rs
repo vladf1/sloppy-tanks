@@ -174,6 +174,7 @@ pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
         zoom: prefs.zoom,
         graphics: prefs.graphics.name().into(),
         device: "desktop".into(),
+        shell: sloppy_web::Shell::Desktop,
         ..ViewConfig::default()
     }
 }

@@ -62,6 +62,7 @@
 //! `prepare` ([`PrepareStatus`]), `hud` ([`RoomHud`]), `take_events` ([`EventBatch`]),
 //! `camera` ([`CameraPreferences`]) and `gpu_ms`.
 
+use crate::Shell;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
 
 use glam::Vec2;
@@ -162,6 +163,10 @@ struct PendingArena {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct NetGame {
+    /// The shell drawing this game, for the wording the page and the desktop app say
+    /// differently.
+    #[expect(dead_code, reason = "Phase 2 reads it when the engine writes HUD text")]
+    shell: Shell,
     client: NetworkClient,
     view: Presentation,
     commands: CommandBuilder,
@@ -719,6 +724,7 @@ impl NetGame {
             graphics,
             seed,
             pacing,
+            shell,
         } = create_view(canvas, view_config).await?;
         let client = NetworkClient::new(ClientConfig {
             server_url: config.server.clone(),
@@ -742,6 +748,7 @@ impl NetGame {
             times: FrameTimes::default(),
             pacing,
             canvas,
+            shell,
             graphics,
             last_result: vec![0.0; net_frame_slot::LENGTH],
             receive_ms: 0.0,

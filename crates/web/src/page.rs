@@ -18,6 +18,7 @@ use sloppy_render::quality::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsValue;
 
+use crate::Shell;
 use crate::events::PendingEvent;
 use crate::frame_clock::{FramePacing, FrameTimes};
 
@@ -269,7 +270,7 @@ fn multisampled(device: &str, setting: &str) -> bool {
 
 /// The configuration both game types take: `{ seed?, assetBase, cssWidth?, cssHeight?,
 /// pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?, device?,
-/// framesInFlight? }`. `framesInFlight` runs frames only while fewer are on the GPU,
+/// framesInFlight?, shell? }`. `framesInFlight` runs frames only while fewer are on the GPU,
 /// for browsers that queue a WebGPU canvas's frames without holding animation frames
 /// back ([`FramePacing`]; 0, the default, leaves the pacing to the browser).
 #[derive(Clone, Debug, Deserialize, Default)]
@@ -288,6 +289,8 @@ pub struct ViewConfig {
     /// "desktop", "tablet" or "phone" (`src/game/graphics.ts`).
     pub device: String,
     pub frames_in_flight: u32,
+    /// The page by default; the desktop app says so.
+    pub shell: Shell,
 }
 
 /// What [`create_view`] sets up for a game type.
@@ -299,6 +302,7 @@ pub struct PageView {
     /// The configured seed, or a random one.
     pub seed: f64,
     pub pacing: FramePacing,
+    pub shell: Shell,
 }
 
 /// The renderer on `canvas` and its presentation with the saved camera preferences, the
@@ -345,6 +349,7 @@ pub async fn create_view(canvas: RenderTarget, config: ViewConfig) -> Result<Pag
         graphics,
         seed,
         pacing: FramePacing::new(config.frames_in_flight),
+        shell: config.shell,
     })
 }
 

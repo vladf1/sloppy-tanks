@@ -77,6 +77,7 @@
 //! `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]), `hud` ([`Hud`]),
 //! `take_events` ([`EventBatch`]), `camera` ([`CameraPreferences`]) and `gpu_ms`.
 
+use crate::Shell;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
 use crate::hud::{Hud, simulation_hud};
@@ -262,6 +263,10 @@ impl RecordStorage for BrowserStorage {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct Game {
+    /// The shell drawing this game, for the wording the page and the desktop app say
+    /// differently.
+    #[expect(dead_code, reason = "Phase 2 reads it when the engine writes HUD text")]
+    shell: Shell,
     sim: Simulation,
     view: Presentation,
     state: RenderState,
@@ -896,6 +901,7 @@ impl Game {
             graphics,
             seed,
             pacing,
+            shell,
         } = create_view(canvas, view_config).await?;
         let mut options =
             initial_game_options(seed, config.map, config.extra_levels, config.difficulty);
@@ -933,6 +939,7 @@ impl Game {
             prepared: true,
             events: Vec::new(),
             canvas,
+            shell,
             times: FrameTimes::default(),
             graphics,
             hud_tank: RenderTank::default(),

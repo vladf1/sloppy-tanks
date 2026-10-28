@@ -22,6 +22,19 @@ pub mod room_notices;
 #[cfg(test)]
 mod page_json_tests;
 
+/// Which shell draws the game. The two say a few things differently on purpose ("in this
+/// browser" or "on this computer", RELOAD or BATTLE SETUP); everything else they show
+/// is the same text from this crate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Shell {
+    /// The browser page (`src/`).
+    #[default]
+    Page,
+    /// The desktop app (`crates/desktop`).
+    Desktop,
+}
+
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 mod effects_lab;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
