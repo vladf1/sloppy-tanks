@@ -13,9 +13,11 @@ use std::time::{Duration, Instant};
 
 use sloppy_core::net::client::POLL_MS;
 use sloppy_core::sim::game_options::GameOptions;
+use sloppy_core::sim::speed_tuning::SpeedSetting;
 use sloppy_core::sim::{MatchPhase, SimEventType, Team};
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::presentation::PrepareStatus;
+use sloppy_render::quality::DeviceClass;
 use sloppy_render::wgpu;
 use sloppy_web::hud::Loading;
 use sloppy_web::{Game, GameConfig, ViewConfig, frame_slot};
@@ -173,8 +175,8 @@ pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
         pixel_ratio: Some(scale),
         first_person: prefs.first_person,
         zoom: prefs.zoom,
-        graphics: prefs.graphics.name().into(),
-        device: "desktop".into(),
+        graphics: prefs.graphics,
+        device: DeviceClass::Desktop,
         shell: sloppy_web::Shell::Desktop,
         ..ViewConfig::default()
     }
@@ -450,8 +452,8 @@ impl Session {
         let view = view_config(&window, &prefs);
         let mut game = pollster::block_on(Game::create_with(target, view, config))?;
         let hud = game.hud().into_owned();
-        game.set_speed("tank-speed", prefs.tank_speed);
-        game.set_speed("bullet-speed", prefs.bullet_speed);
+        game.set_speed(SpeedSetting::TankSpeed, prefs.tank_speed);
+        game.set_speed(SpeedSetting::BulletSpeed, prefs.bullet_speed);
         let overlay = Overlay::new(window.clone(), game.renderer());
         let human_team = hud.human_team;
         let mut session = Self {
@@ -694,7 +696,7 @@ impl Session {
             Action::NextTank(kind) => {
                 self.prefs.tank = kind;
                 self.prefs.save();
-                if let Err(error) = self.game.set_human_kind(kind.as_str()) {
+                if let Err(error) = self.game.set_human_kind(kind) {
                     eprintln!("{error}");
                 }
                 self.prepared_options = self.wanted_options();
@@ -743,13 +745,17 @@ impl Session {
     fn save_settings(&mut self, prefs: Preferences) {
         let old = std::mem::replace(&mut self.prefs, prefs);
         if old.graphics != self.prefs.graphics {
-            self.game.set_graphics(self.prefs.graphics.name());
+            self.game.set_graphics(self.prefs.graphics);
         }
         if old.tank_speed != self.prefs.tank_speed {
-            self.prefs.tank_speed = self.game.set_speed("tank-speed", self.prefs.tank_speed);
+            self.prefs.tank_speed = self
+                .game
+                .set_speed(SpeedSetting::TankSpeed, self.prefs.tank_speed);
         }
         if old.bullet_speed != self.prefs.bullet_speed {
-            self.prefs.bullet_speed = self.game.set_speed("bullet-speed", self.prefs.bullet_speed);
+            self.prefs.bullet_speed = self
+                .game
+                .set_speed(SpeedSetting::BulletSpeed, self.prefs.bullet_speed);
         }
         if let Some(audio) = &mut self.audio {
             audio.set_volume(self.prefs.volume);

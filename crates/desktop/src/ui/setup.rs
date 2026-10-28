@@ -7,7 +7,6 @@ use egui::{
     StrokeKind, Vec2, pos2, vec2,
 };
 
-use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::{GameMode, Team, VehicleKind};
 use sloppy_web::catalog::{
     BATTLE_FORMATS, BattleFormat, DIFFICULTY_OPTIONS, DifficultyOption, MAP_CARDS, MapCard,
@@ -1070,7 +1069,7 @@ pub fn battle_setup(
                 // multiplayer it is the new room's, and an open room chosen shows its own.
                 let heading = paint::section_label(&painter, pos2(inner.left(), 208.0), "MAP");
                 let room_map = if multiplayer {
-                    state.rooms.selected_map().map(str::to_owned)
+                    state.rooms.selected_map()
                 } else {
                     None
                 };
@@ -1089,9 +1088,7 @@ pub fn battle_setup(
                         0.0,
                     );
                 }
-                let shown_map = room_map
-                    .as_deref()
-                    .map_or(Some(options.map_mode), MapId::parse);
+                let shown_map = room_map.unwrap_or(options.map_mode);
                 let maps: Vec<&MapCard> = MAP_CARDS
                     .iter()
                     .filter(|map| view.debug || !map.extra())
@@ -1130,7 +1127,7 @@ pub fn battle_setup(
                         art,
                         rect,
                         map,
-                        shown_map == Some(map.id),
+                        shown_map == map.id,
                         !locked && response.hovered(),
                     );
                     if !locked && response.clicked() {

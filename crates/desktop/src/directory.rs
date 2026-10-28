@@ -8,13 +8,7 @@ use std::sync::mpsc::{Receiver, TryRecvError, channel};
 use std::time::Duration;
 
 use serde_json::Value;
-pub use sloppy_core::net::protocol::{read_room_code, room_code, stepped_minutes};
-// Only the UI snapshots build a server list by hand.
-#[cfg(test)]
-pub use sloppy_core::net::room_list::ServerListing;
-use sloppy_core::net::room_list::split_address;
-// The Multiplayer tab calls a listed room, with the server that hosts it, a `RoomListing`.
-pub use sloppy_core::net::room_list::{HostedRoom as RoomListing, ROOM_SEATS, ServerList};
+use sloppy_core::net::room_list::{ServerList, split_address};
 
 /// The production directory, unless the build names another (`SLOPPY_DIRECTORY_URL`).
 pub const DEFAULT_DIRECTORY: &str = match option_env!("SLOPPY_DIRECTORY_URL") {
@@ -115,7 +109,7 @@ fn fetch(address: &str, local: bool) -> Result<ServerList, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sloppy_core::net::protocol::is_room_code;
+    use sloppy_core::net::protocol::{is_room_code, room_code};
 
     #[test]
     fn the_directory_needs_https_except_on_this_machine() {

@@ -68,7 +68,8 @@
 //! `create_with`, `join` ([`JoinChoice`]), `choose_seat`, `set_rules` ([`RoomSettings`]),
 //! `take_room_actions` ([`ClientAction`]), `take_room_notices` ([`RoomNotice`]),
 //! `prepare` ([`PrepareStatus`]), `hud` ([`RoomHud`]), `take_events` ([`EventBatch`]),
-//! `camera` ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]) and `gpu_ms`.
+//! `camera` ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms` and
+//! `set_graphics` (the setting itself).
 
 use crate::Shell;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
@@ -92,6 +93,7 @@ use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::{MatchPhase, RenderState, Team, VehicleKind, Weapon};
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::{PrepareStatus, Presentation};
+use sloppy_render::quality::GraphicsSetting;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -404,7 +406,15 @@ impl NetGame {
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
+    #[cfg(target_arch = "wasm32")]
     pub fn set_graphics(&mut self, setting: &str) {
+        self.graphics
+            .set_setting(&mut self.view.renderer, GraphicsSetting::parse(setting));
+    }
+
+    /// The Settings dialog's Graphics choice.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_graphics(&mut self, setting: GraphicsSetting) {
         self.graphics.set_setting(&mut self.view.renderer, setting);
     }
 

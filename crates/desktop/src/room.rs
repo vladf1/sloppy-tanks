@@ -567,7 +567,7 @@ impl RoomSession {
     fn save_settings(&mut self, prefs: Preferences) {
         let old = std::mem::replace(&mut self.prefs, prefs);
         if old.graphics != self.prefs.graphics {
-            self.game.set_graphics(self.prefs.graphics.name());
+            self.game.set_graphics(self.prefs.graphics);
         }
         if let Some(audio) = &mut self.audio {
             audio.set_volume(self.prefs.volume);
@@ -686,7 +686,7 @@ impl RoomSession {
                 }
                 for event in &batch.events {
                     self.ui.event(event);
-                    self.menu.event(event, &self.ui);
+                    self.menu.event(event);
                 }
             }
         } else if value(slot::EVENTS) > 0.0 {

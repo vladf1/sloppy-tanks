@@ -83,10 +83,12 @@
 //!   `game/debug.rs`.
 //! - `error() -> string | undefined`: the first GPU error, if any.
 //!
-//! A Rust shell (the desktop app) reads the same values typed rather than as JSON:
-//! `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]), `loading`
-//! ([`Loading`]), `hud` ([`Hud`]), `take_events` ([`EventBatch`]), `camera`
-//! ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]) and `gpu_ms`.
+//! A Rust shell (the desktop app) passes and reads the same values typed rather than as
+//! JSON or names: `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]),
+//! `loading` ([`Loading`]), `hud` ([`Hud`]), `take_events` ([`EventBatch`]), `camera`
+//! ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms`, and
+//! `set_graphics`, `set_human_kind` and `set_speed` with the setting, tank and speed
+//! themselves.
 
 use crate::Shell;
 use crate::battle_report::pause_report;
@@ -129,6 +131,7 @@ use sloppy_core::sim::{
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::presentation::{PrepareStatus, Presentation};
+use sloppy_render::quality::GraphicsSetting;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -642,7 +645,15 @@ impl Game {
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
+    #[cfg(target_arch = "wasm32")]
     pub fn set_graphics(&mut self, setting: &str) {
+        self.graphics
+            .set_setting(&mut self.view.renderer, GraphicsSetting::parse(setting));
+    }
+
+    /// The Settings dialog's Graphics choice.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_graphics(&mut self, setting: GraphicsSetting) {
         self.graphics.set_setting(&mut self.view.renderer, setting);
     }
 
@@ -659,26 +670,34 @@ impl Game {
         self.camera().to_vec()
     }
 
-    /// The tank the human respawns in, chosen from the respawn menu mid-round. The
-    /// world is kept; Battle Setup's next `set_options` sees the same choice.
+    /// The tank the human respawns in, chosen from the respawn menu mid-round, by name.
+    #[cfg(target_arch = "wasm32")]
     pub fn set_human_kind(&mut self, kind: &str) -> Result<(), PageError> {
         let kind: VehicleKind = serde_json::from_value(Value::from(kind))
             .map_err(|error| js_error(error.to_string()))?;
-        if kind == VehicleKind::Humvee {
-            return Err(js_error("The player cannot drive a Humvee"));
-        }
-        self.sim.human_kind = kind;
-        self.options.human_kind = kind;
-        Ok(())
+        self.respawn_in(kind)
+    }
+
+    /// The tank the human respawns in, chosen from the respawn menu mid-round.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_human_kind(&mut self, kind: VehicleKind) -> Result<(), PageError> {
+        self.respawn_in(kind)
     }
 
     /// "tank-speed" or "bullet-speed"; returns the scale in effect.
+    #[cfg(target_arch = "wasm32")]
     pub fn set_speed(&mut self, key: &str, value: f64) -> f64 {
         let key = match key {
             "tank-speed" => SpeedSetting::TankSpeed,
             "bullet-speed" => SpeedSetting::BulletSpeed,
             _ => return 1.0,
         };
+        tune_speed(&mut self.sim, key, value)
+    }
+
+    /// A speed scale; returns the scale in effect.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_speed(&mut self, key: SpeedSetting, value: f64) -> f64 {
         tune_speed(&mut self.sim, key, value)
     }
 
@@ -1108,6 +1127,17 @@ impl Game {
 }
 
 impl Game {
+    /// The respawn menu's tank. The world is kept; Battle Setup's next `set_options` sees
+    /// the same choice.
+    fn respawn_in(&mut self, kind: VehicleKind) -> Result<(), PageError> {
+        if kind == VehicleKind::Humvee {
+            return Err(js_error("The player cannot drive a Humvee"));
+        }
+        self.sim.human_kind = kind;
+        self.options.human_kind = kind;
+        Ok(())
+    }
+
     fn human_index(&self) -> usize {
         self.sim.human_index().unwrap_or(0)
     }
