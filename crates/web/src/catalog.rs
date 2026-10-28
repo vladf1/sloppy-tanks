@@ -179,11 +179,6 @@ pub const TANK_CARDS: [TankCard; VehicleKind::PLAYABLE.len()] = [
     },
 ];
 
-/// The card of a tank a player drives; `None` for the bots' Humvee.
-pub fn tank_card(kind: VehicleKind) -> Option<&'static TankCard> {
-    TANK_CARDS.iter().find(|card| card.kind == kind)
-}
-
 /// An ammunition the HUD's rack offers (`AMMO_OPTIONS` in `ammo-options.ts`); its label
 /// and colour are the weapon's.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -333,7 +328,6 @@ mod tests {
         }
         let kinds: Vec<VehicleKind> = TANK_CARDS.iter().map(|card| card.kind).collect();
         assert_eq!(kinds, VehicleKind::PLAYABLE);
-        assert!(tank_card(VehicleKind::Humvee).is_none());
         let weapons: Vec<Weapon> = AMMO_OPTIONS.iter().map(|option| option.weapon).collect();
         assert_eq!(weapons, AMMO_ORDER);
     }

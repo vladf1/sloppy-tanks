@@ -685,13 +685,13 @@ pub fn ordinal(value: u64) -> String {
 }
 
 /// "1 kill", "0 deaths", "3 kills": a count and its noun, one vocabulary across the menus.
-pub fn count_line(count: u32, noun: &str) -> String {
+fn count_line(count: u32, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
 /// "BLUE" as the report says it: "Blue team". Team names are ASCII; ASCII case keeps
 /// Unicode's case tables out of the Wasm.
-pub fn team_label(name: &str) -> String {
+fn team_label(name: &str) -> String {
     let (first, rest) = name.split_at(name.chars().next().map_or(0, char::len_utf8));
     format!(
         "{}{} team",
@@ -701,7 +701,7 @@ pub fn team_label(name: &str) -> String {
 }
 
 /// The team ahead, or none when the scores are level.
-pub fn leading_team(scores: [u32; 2]) -> Option<Team> {
+fn leading_team(scores: [u32; 2]) -> Option<Team> {
     match scores[0].cmp(&scores[1]) {
         Ordering::Equal => None,
         Ordering::Greater => Some(Team::Blue),
@@ -710,7 +710,7 @@ pub fn leading_team(scores: [u32; 2]) -> Option<Team> {
 }
 
 /// Where a team battle stands for the viewer's `team`: who leads and by how much.
-pub fn standing_line(scores: [u32; 2], team: Team, names: &[&str; 2]) -> String {
+fn standing_line(scores: [u32; 2], team: Team, names: &[&str; 2]) -> String {
     match leading_team(scores) {
         None => format!("Level at {} each", scores[0]),
         Some(leader) => {
@@ -728,7 +728,7 @@ pub fn standing_line(scores: [u32; 2], team: Team, names: &[&str; 2]) -> String 
 /// compare as the page's `localeCompare` ordered ASCII names: letters alike whatever
 /// their case, then lower case first. Other letters follow by code point, which keeps
 /// Unicode's case tables out of the Wasm for a tie on kills and wrecks.
-pub fn by_score(a: &HudScore, b: &HudScore) -> Ordering {
+fn by_score(a: &HudScore, b: &HudScore) -> Ordering {
     fn folded(name: &str) -> impl Iterator<Item = u8> + '_ {
         name.bytes().map(|byte| byte.to_ascii_lowercase())
     }
@@ -748,7 +748,7 @@ fn ranked<'a>(rows: &'a [HudScore<'a>], team: Team) -> Vec<&'a HudScore<'a>> {
 
 /// Where the viewer stands on their own team's board, by kills then fewest wrecks:
 /// 1-based place and the team's size, or none when the viewer is not listed.
-pub fn team_place(rows: &[HudScore], viewer: u32) -> Option<(usize, usize)> {
+fn team_place(rows: &[HudScore], viewer: u32) -> Option<(usize, usize)> {
     let row = rows.iter().find(|row| row.id == viewer)?;
     let team = ranked(rows, row.team);
     let place = team.iter().position(|other| other.id == viewer)? + 1;
@@ -757,7 +757,7 @@ pub fn team_place(rows: &[HudScore], viewer: u32) -> Option<(usize, usize)> {
 
 /// The round's most valuable tank: the most kills, fewest wrecks breaking a tie; none
 /// before anyone scores.
-pub fn most_valuable(rows: &[HudScore]) -> Option<u32> {
+fn most_valuable(rows: &[HudScore]) -> Option<u32> {
     rows.iter()
         .min_by(|a, b| by_score(a, b))
         .filter(|row| row.kills > 0)
