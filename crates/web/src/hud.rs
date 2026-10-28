@@ -17,12 +17,12 @@ use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon_for, has_ammo_for
 use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES, vehicle};
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::match_state::new_match;
 use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
 use sloppy_core::sim::{
-    AmmoInventory, GameMode, Match, MatchPhase, RenderState, Simulation, Tank, Team, VehicleKind,
-    Weapon,
+    AmmoInventory, GameMode, Match, RenderState, Simulation, Tank, Team, VehicleKind, Weapon,
 };
 use sloppy_render::presentation::hud::{HealthColor, health_bar_state};
 
@@ -57,15 +57,7 @@ pub struct Hud<'a> {
 impl Default for Hud<'_> {
     /// A team battle of the village before its first round, with an empty scoreboard.
     fn default() -> Self {
-        let match_state = Match {
-            phase: MatchPhase::Ready,
-            time: 0.0,
-            scores: [0, 0],
-            overtime: false,
-            ended_early: None,
-            winner: None,
-            round: 0,
-        };
+        let match_state = new_match(0);
         Hud {
             score_pill: ScorePill::local(&match_state, GameMode::Team, false, 0.0, SCORE_LIMIT),
             match_state,
