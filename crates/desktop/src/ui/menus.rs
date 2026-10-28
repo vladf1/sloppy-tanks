@@ -9,14 +9,14 @@ use egui::{
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
-use super::respawn::ordinal;
 use super::theme::{GOLD, GOLD_HOT, RED, TEXT_LABEL, bold_font, display_font};
 use super::{Action, PauseTab, UiState, View};
 use crate::preferences::Preferences;
 use sloppy_core::sim::speed_tuning::{MAX_SPEED_SCALE, MIN_SPEED_SCALE};
 use sloppy_core::sim::{GameMode, MatchPhase, Team};
-use sloppy_web::catalog::{GRAPHICS_OPTIONS, difficulty_name};
-use sloppy_web::hud::{Hud, HudScore};
+use sloppy_web::battle_report::{PauseFact, PauseReport, StandingTone, pause_report};
+use sloppy_web::catalog::GRAPHICS_OPTIONS;
+use sloppy_web::hud::Hud;
 
 /// Room inside a dialog's plate: sides, top and bottom.
 pub const DIALOG_PADDING: [f32; 3] = [30.0, 26.0, 28.0];
@@ -210,64 +210,6 @@ pub fn score_plates(
     Rect::from_min_size(pos2(left, top), vec2(total, height))
 }
 
-/// `m:ss`.
-pub fn duration(seconds: f64) -> String {
-    let seconds = seconds.max(0.0);
-    format!(
-        "{}:{:02}",
-        (seconds / 60.0).floor(),
-        (seconds % 60.0).floor() as u64
-    )
-}
-
-/// "1 kill", "3 kills".
-pub fn count_line(count: u32, noun: &str) -> String {
-    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
-}
-
-/// "BLUE" as the report says it: "Blue team".
-pub fn team_label(name: &str) -> String {
-    let mut chars = name.chars();
-    let first = chars
-        .next()
-        .map(|c| c.to_uppercase().to_string())
-        .unwrap_or_default();
-    format!("{first}{} team", chars.as_str().to_lowercase())
-}
-
-/// The leading team, or none when level.
-pub fn leading_team(scores: [u32; 2]) -> Option<Team> {
-    match scores[0].cmp(&scores[1]) {
-        std::cmp::Ordering::Equal => None,
-        std::cmp::Ordering::Greater => Some(Team::Blue),
-        std::cmp::Ordering::Less => Some(Team::Red),
-    }
-}
-
-/// Who leads and by how much (`standingLine`).
-pub fn standing_line(scores: [u32; 2], team: Team, names: &[&str; 2]) -> String {
-    match leading_team(scores) {
-        None => format!("Level at {} each", scores[0]),
-        Some(leader) => {
-            let margin = scores[0].abs_diff(scores[1]);
-            let side = if leader == team {
-                "Your team".to_owned()
-            } else {
-                team_label(names[leader.index()])
-            };
-            format!("{side} leads by {margin}")
-        }
-    }
-}
-
-/// The scoreboard's order: most kills, then fewest wrecks, then by name.
-pub fn by_score(a: &HudScore, b: &HudScore) -> std::cmp::Ordering {
-    b.kills
-        .cmp(&a.kills)
-        .then(a.deaths.cmp(&b.deaths))
-        .then(a.name.cmp(&b.name))
-}
-
 /// The dialog's eyebrow, title and the score beside it; returns the height used.
 pub fn dialog_head(
     painter: &Painter,
@@ -393,14 +335,15 @@ pub(super) fn controls_card(painter: &Painter, origin: Pos2, width: f32, columns
 }
 
 /// A grid of facts: caption, value and an optional qualifier per cell.
-fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[(&str, String, String)]) -> f32 {
+fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[PauseFact]) -> f32 {
     let columns = 3;
     let rows = cells.len().div_ceil(columns);
     let cell_height = 107.5;
     let cell_width = (width - (columns - 1) as f32) / columns as f32;
     let total = Rect::from_min_size(origin, vec2(width, rows as f32 * (cell_height + 1.0) - 1.0));
     painter.rect_filled(total, 12, hexa(0x9fd0ff, 0.08));
-    for (index, (caption, value, note)) in cells.iter().enumerate() {
+    for (index, fact) in cells.iter().enumerate() {
+        let (caption, value, note) = (fact.label, &fact.value, fact.note);
         let column = index % columns;
         let row = index / columns;
         let cell = Rect::from_min_size(
@@ -461,25 +404,14 @@ fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[(&str, String, St
     total.height()
 }
 
-/// Where the viewer stands on their team's board: place and the team's size.
-fn team_place(rows: &[HudScore], viewer: u32) -> Option<(usize, usize)> {
-    let row = rows.iter().find(|row| row.id == viewer)?;
-    let mut team: Vec<&HudScore> = rows.iter().filter(|other| other.team == row.team).collect();
-    team.sort_by(|a, b| by_score(a, b));
-    let place = team.iter().position(|other| other.id == viewer)? + 1;
-    Some((place, team.len()))
-}
-
 /// Pause's battle tab: a solo run's tally, then the clock, the tank and the round.
-fn battle_pane(painter: &Painter, origin: Pos2, width: f32, hud: &Hud) -> f32 {
-    let human = &hud.human;
-    let solo = hud.game_mode == GameMode::Solo;
+fn battle_pane(painter: &Painter, origin: Pos2, width: f32, pause: &PauseReport) -> f32 {
     let mut y = origin.y;
-    if solo {
+    if let Some(tally) = &pause.tally {
         let half = (width - 10.0) / 2.0;
         for (index, (value, caption)) in [
-            (format!("{}", human.kills), "KILLS"),
-            (duration(hud.elapsed), "SURVIVED"),
+            (tally.kills.to_string(), "KILLS"),
+            (tally.survived.clone(), "SURVIVED"),
         ]
         .into_iter()
         .enumerate()
@@ -517,58 +449,7 @@ fn battle_pane(painter: &Painter, origin: Pos2, width: f32, hud: &Hud) -> f32 {
         }
         y += 72.0;
     }
-    let clock = if hud.endless_match {
-        format!("{} played", duration(hud.elapsed))
-    } else if hud.match_state.overtime {
-        "Overtime · next kill wins".to_owned()
-    } else {
-        format!("{} left", duration(hud.match_state.time.ceil()))
-    };
-    let objective = if solo {
-        ("Survive".to_owned(), "One life".to_owned())
-    } else if hud.endless_match {
-        ("Endless battle".to_owned(), String::new())
-    } else {
-        (format!("First to {}", hud.score_limit), String::new())
-    };
-    let difficulty = difficulty_name(hud.difficulty).to_owned();
-    let rows: Vec<HudScore> = hud.scoreboard.rows().collect();
-    let last = if solo {
-        (
-            "Bots",
-            format!("{}", hud.active_enemies),
-            "active".to_owned(),
-        )
-    } else if let Some((place, of)) = team_place(&rows, human.id) {
-        (
-            "Team rank",
-            format!("{} of {of}", ordinal(place as u64).to_lowercase()),
-            "by kills".to_owned(),
-        )
-    } else {
-        (
-            "Bots",
-            format!("{}", hud.active_enemies),
-            "active".to_owned(),
-        )
-    };
-    let cells = [
-        ("Objective", objective.0, objective.1),
-        ("Clock", clock, String::new()),
-        ("Difficulty", difficulty, String::new()),
-        (
-            "Your tank",
-            human.vehicle_name.to_owned(),
-            human.rank_name.to_owned(),
-        ),
-        (
-            "Kills / deaths",
-            format!("{} / {}", human.kills, human.deaths),
-            "this battle".to_owned(),
-        ),
-        last,
-    ];
-    y += facts(painter, pos2(origin.x, y), width, &cells);
+    y += facts(painter, pos2(origin.x, y), width, &pause.facts);
     y - origin.y
 }
 
@@ -641,6 +522,7 @@ pub fn pause(
     dim_backdrop(context);
     let solo = hud.game_mode == GameMode::Solo;
     let mode = if solo { "SOLO ASSAULT" } else { "TEAM BATTLE" };
+    let pause = pause_report(&hud);
     let mut tab = state.pause_tab;
     let hidden = state.settings_draft.is_some();
     if hidden {
@@ -683,19 +565,11 @@ pub fn pause(
                     hex(0xc4dbee),
                     0.0,
                 );
-            } else {
-                let scores = hud.match_state.scores;
-                let mut line = standing_line(scores, hud.human_team, &hud.team_names);
-                if !hud.endless_match && hud.score_limit > 0 && !hud.match_state.overtime {
-                    let needed = hud
-                        .score_limit
-                        .saturating_sub(scores[hud.human_team.index()]);
-                    line = format!("{line} · {} to win", count_line(needed, "kill"));
-                }
-                let tone = match leading_team(scores) {
-                    None => hex(0xa9c0d8),
-                    Some(leader) if leader == hud.human_team => hex(0x5fe39a),
-                    Some(_) => hex(0xff4d5e),
+            } else if let Some(standing) = &pause.standing {
+                let tone = match standing.tone {
+                    StandingTone::Level => hex(0xa9c0d8),
+                    StandingTone::Ahead => hex(0x5fe39a),
+                    StandingTone::Behind => hex(0xff4d5e),
                 };
                 let dot = pos2(origin.x + 4.0, y + 10.0);
                 painter.circle_filled(dot, 7.0, paint::fade(tone, 0.25));
@@ -704,7 +578,7 @@ pub fn pause(
                     painter,
                     pos2(origin.x + 17.0, y + 10.0),
                     Align2::LEFT_CENTER,
-                    &line,
+                    &standing.text,
                     egui::FontId::proportional(15.0),
                     hex(0xd5e3f0),
                     0.0,
@@ -729,7 +603,7 @@ pub fn pause(
             let pane_height: f32 = if solo { 72.0 + 216.0 } else { 216.0 };
             match tab {
                 PauseTab::Battle => {
-                    battle_pane(painter, pos2(origin.x, y), width, &hud);
+                    battle_pane(painter, pos2(origin.x, y), width, &pause);
                 }
                 PauseTab::Controls => {
                     controls_card(painter, pos2(origin.x, y), width, 2);

@@ -2,7 +2,7 @@ import { bindPress } from "./button-input";
 import { AMMO_OPTIONS, type AmmoWeapon } from "./ammo-options";
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
 import { bindPlayModes, initialPlayMode } from "./play-modes";
-import type { EngineEvent, HudState } from "./engine-api";
+import type { EngineEvent, HudState, PauseReport } from "./engine-api";
 import {
   type DeathReport,
   type FeedRow,
@@ -46,6 +46,8 @@ export interface UIActions {
   graphics(): string;
   setGraphics(setting: string): void;
   selectAmmo(weapon: AmmoWeapon): void;
+  /** Pause's facts and standing line from the engine, read as the pause menu opens. */
+  pauseReport(): PauseReport;
 }
 
 /** The DOM HUD, menus and battle report, drawn from the engine's HUD state. */
@@ -196,7 +198,8 @@ export class UI {
     } else {
       // In play the menus are away: the respawn card has a layer of its own.
       const death = this.deathCause ? { report: this.deathReport!, text: this.deathCause } : null;
-      this.overlay.innerHTML = phase === "playing" ? "" : menuMarkup(state, death);
+      const pause = phase === "paused" ? this.actions.pauseReport() : null;
+      this.overlay.innerHTML = phase === "playing" ? "" : menuMarkup(state, death, pause);
       bindDialogTabs(this.overlay);
       this.drawRecapTank(state);
     }

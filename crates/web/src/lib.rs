@@ -12,6 +12,7 @@
 
 #![recursion_limit = "256"]
 
+pub mod battle_report;
 pub mod catalog;
 pub mod events;
 pub mod frame_clock;

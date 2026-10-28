@@ -20,6 +20,7 @@ use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::round_recap::{RecordStorage, StorageUnavailable};
 use sloppy_core::sim::{Match, MatchPhase, SimEvent, Simulation, SimulationSetup, Team, Weapon};
 
+use crate::Shell;
 use crate::events::{PendingEvent, drain_events};
 use crate::hud::{room_hud, simulation_hud};
 use crate::recap::round_recap;
@@ -233,7 +234,7 @@ fn page_json() -> BTreeMap<&'static str, String> {
 
     end_battle(&mut sim.match_state);
     let mut storage = SavedBests(r#"{"kills":9,"damage":250,"bestLife":2,"rank":"high"}"#);
-    let recap = round_recap(&sim, &mut storage);
+    let recap = round_recap(&sim, &mut storage, Shell::Page);
     let hud = simulation_hud(&sim, &mut tank, Some(&recap));
     let text = serde_json::to_string(&hud).unwrap();
     assert_eq!(serde_json::to_string(&hud.into_owned()).unwrap(), text);

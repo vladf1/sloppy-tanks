@@ -13,6 +13,7 @@ use sloppy_core::sim::round_recap::{Feat, Metric, RecapStats};
 use sloppy_core::sim::{DamageCause, GameMode, MatchPhase, Team, VehicleKind, Weapon};
 use sloppy_render::wgpu;
 use sloppy_web::Shell;
+use sloppy_web::battle_report::{battle_report, pause_report};
 use sloppy_web::hud::{Hud, HudAmmo, HudHuman, HudScore, Scoreboard};
 use sloppy_web::nerd_rows::{
     GameStats, NetworkRates, NetworkSampler, RoomStats, game_sections, room_sections,
@@ -107,38 +108,6 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
             ..HudHuman::default()
         },
         scoreboard: Scoreboard::Kept(rows),
-        recap: results.then(|| {
-            Cow::Owned(RoundRecap {
-                stats: metrics(&[
-                    (Metric::Kills, 7.0),
-                    (Metric::Damage, 1840.0),
-                    (Metric::BestLife, 4.0),
-                    (Metric::Rank, 2.0),
-                    (Metric::LongestLife, 154.0),
-                    (Metric::Multikill, 3.0),
-                    (Metric::ClutchKills, 1.0),
-                    (Metric::MineKills, 1.0),
-                    (Metric::Pickups, 5.0),
-                ]),
-                best: metrics(&[
-                    (Metric::Kills, 11.0),
-                    (Metric::Damage, 1500.0),
-                    (Metric::BestLife, 5.0),
-                    (Metric::LongestLife, 200.0),
-                ]),
-                improved: vec![Metric::Damage],
-                persisted: true,
-                feats: vec![Feat {
-                    title: "Last stand".into(),
-                    detail: "A kill at 12% hull".into(),
-                }],
-                shots: 31,
-                direct_hits: 19,
-                damage_taken: 260.0,
-                shield_absorbed: 40.0,
-                rank_names: vec!["Rookie", "Gunner", "Veteran", "Ace"],
-            })
-        }),
         ..Hud::default()
     };
     hud.match_state.phase = phase;
@@ -147,6 +116,41 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
     hud.match_state.ended_early = Some(results && !solo);
     hud.match_state.winner = (!solo).then_some(Team::Blue);
     hud.match_state.round = 1;
+    if results {
+        let mut recap = RoundRecap {
+            stats: metrics(&[
+                (Metric::Kills, 7.0),
+                (Metric::Damage, 1840.0),
+                (Metric::BestLife, 4.0),
+                (Metric::Rank, 2.0),
+                (Metric::LongestLife, 154.0),
+                (Metric::Multikill, 3.0),
+                (Metric::ClutchKills, 1.0),
+                (Metric::MineKills, 1.0),
+                (Metric::Pickups, 5.0),
+            ]),
+            best: metrics(&[
+                (Metric::Kills, 11.0),
+                (Metric::Damage, 1500.0),
+                (Metric::BestLife, 5.0),
+                (Metric::LongestLife, 200.0),
+            ]),
+            improved: vec![Metric::Damage],
+            persisted: true,
+            feats: vec![Feat {
+                title: "Last stand".into(),
+                detail: "A kill at 12% hull".into(),
+            }],
+            shots: 31,
+            direct_hits: 19,
+            damage_taken: 260.0,
+            shield_absorbed: 40.0,
+            rank_names: vec!["Rookie", "Gunner", "Veteran", "Ace"],
+            ..RoundRecap::default()
+        };
+        recap.report = battle_report(&hud, &recap, Shell::Desktop);
+        hud.recap = Some(Cow::Owned(recap));
+    }
     hud
 }
 
@@ -556,6 +560,7 @@ fn snapshots() {
             "size": size,
             "scale": SCALE,
             "hud": state.hud,
+            "pause": state.hud.as_ref().map(pause_report),
             "stats": stats,
             "networkSample": network_sample,
             "ready": state.ready,

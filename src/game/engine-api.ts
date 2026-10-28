@@ -242,6 +242,52 @@ export interface RecapState {
   damageTaken: number;
   shieldAbsorbed: number;
   rankNames: string[];
+  report: BattleReport;
+}
+
+/** How the round came out for the viewer: the results dialog's `data-outcome`. A battle
+ * the player ended is called by where the team stood. */
+export type Outcome =
+  "won" | "lost" | "draw" | "ended" | "ended-ahead" | "ended-behind" | "ended-even";
+
+/** A stat tile of the battle report. A record stars its footer. */
+export interface ReportTile {
+  label: string;
+  hint: string;
+  value: string;
+  footer: string;
+  record: boolean;
+  standout: boolean;
+}
+
+export interface BoardTeam {
+  /** "Blue team". */
+  label: string;
+  /** The team's tank ids, most kills first. */
+  tanks: number[];
+}
+
+/** The battle report in words (`crates/web/src/battle_report.rs`); the page lays it out. */
+export interface BattleReport {
+  outcome: Outcome;
+  title: string;
+  /** A solo run's loss says "One more run?", led by the death's sentence. */
+  lede: string;
+  /** Kills (the hero tile) first, then the featured metrics and accuracy. */
+  tiles: ReportTile[];
+  /** The hero tile's line; `meter` fills toward the best, none for a record or a tie. */
+  progress: { text: string; record: boolean; meter: number | null };
+  details: { label: string; hint: string; value: string; record: boolean }[];
+  /** `record` is starred and bold before `text`; a warning has none. */
+  note: { record: string | null; text: string } | null;
+  board: { teams: [BoardTeam, BoardTeam]; mvp: number | null };
+}
+
+/** `pause_json`: pause's facts, and a team battle's line under its title. */
+export interface PauseReport {
+  tally: { kills: number; survived: string } | null;
+  standing: { text: string; tone: "ahead" | "behind" | "level" } | null;
+  facts: { label: string; value: string; note: string }[];
 }
 
 /** `hud_json`: everything the HUD and menus show. */

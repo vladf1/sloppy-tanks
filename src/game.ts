@@ -22,6 +22,7 @@ import {
   PHASES,
   type EventBatch,
   type HudState,
+  type PauseReport,
   type Phase,
   type StatsSection,
 } from "./game/engine-api";
@@ -388,6 +389,7 @@ export async function prepareGame(
         controls.ammoSelection = weapon;
       }
     },
+    pauseReport: () => JSON.parse(game.pause_json()) as PauseReport,
   });
   // The damage ring wraps the tank on screen.
   const viewer = { x: NaN, y: NaN };

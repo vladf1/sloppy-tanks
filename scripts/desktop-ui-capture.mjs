@@ -209,6 +209,8 @@ try {
           graphics: () => "auto",
           setGraphics: noop,
           selectAmmo: noop,
+          // Builds that word pause in the engine read its facts here.
+          pauseReport: () => fixture.pause,
         });
         window.__gauntletCurrent = ui;
         state.speedTuning = { "tank-speed": 1, "bullet-speed": 1 };
