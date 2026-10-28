@@ -5,6 +5,7 @@
 use egui::{Align2, Color32, Id, LayerId, Order, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
 use sloppy_core::sim::{GameMode, Team};
+use sloppy_web::battle_report::ordinal;
 use sloppy_web::catalog::TANK_CARDS;
 use sloppy_web::hud::Hud;
 
@@ -13,22 +14,6 @@ use super::paint::{self, fade, hex, hexa};
 use super::setup::vehicle_card;
 use super::theme::{GOLD, GOLD_HOT, bold_font, display_font};
 use super::{Action, UiState, View};
-
-/// 1ST, 2ND, 3RD, 4TH … 11TH, 12TH, 13TH, 21ST.
-pub fn ordinal(value: u64) -> String {
-    let tens = value % 100;
-    let suffix = if (11..=13).contains(&tens) {
-        "TH"
-    } else {
-        match value % 10 {
-            1 => "ST",
-            2 => "ND",
-            3 => "RD",
-            _ => "TH",
-        }
-    };
-    format!("{value}{suffix}")
-}
 
 /// The card's widest, and the room it keeps from the screen's bottom edge.
 const CARD_WIDTH: f32 = 720.0;
