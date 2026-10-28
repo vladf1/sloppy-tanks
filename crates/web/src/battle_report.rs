@@ -101,7 +101,6 @@ impl Outcome {
 
 /// The battle report of a finished round.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct BattleReport {
     pub outcome: Outcome,
     /// VICTORY, LEAD HELD, TANK DESTROYED …
@@ -122,7 +121,6 @@ pub struct BattleReport {
 
 /// A stat tile.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ReportTile {
     pub label: &'static str,
     /// The explanation on hover.
@@ -139,7 +137,6 @@ pub struct ReportTile {
 
 /// The hero tile's line under the kills.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct BestProgress {
     pub text: String,
     /// A record set or tied, starred in gold.
@@ -151,7 +148,6 @@ pub struct BestProgress {
 
 /// A highlight below the tiles.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ReportDetail {
     pub label: &'static str,
     pub hint: String,
@@ -163,7 +159,6 @@ pub struct ReportDetail {
 /// The line under the report about personal bests, which are kept per mode, map and
 /// difficulty.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ReportNote {
     /// "2 NEW PERSONAL BESTS", starred and set in bold; none for a warning.
     pub record: Option<String>,
@@ -173,7 +168,6 @@ pub struct ReportNote {
 
 /// The team scoreboard: each team's tanks by score and the round's most valuable tank.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct ReportBoard {
     pub teams: [BoardTeam; 2],
     /// The MVP's tank id; none before anyone scores.
@@ -181,7 +175,6 @@ pub struct ReportBoard {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct BoardTeam {
     /// "Blue team".
     pub label: String,
@@ -191,7 +184,6 @@ pub struct BoardTeam {
 
 /// Pause's battle tab and the line under its title.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PauseReport {
     /// A solo run's tally; none in a team battle.
     pub tally: Option<SoloTally>,
@@ -201,7 +193,6 @@ pub struct PauseReport {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct SoloTally {
     pub kills: u32,
     /// The time survived, `m:ss`.
@@ -210,7 +201,6 @@ pub struct SoloTally {
 
 /// Who leads and by how much, and the kills the viewer's team still needs.
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct Standing {
     pub text: String,
     pub tone: StandingTone,
@@ -226,7 +216,6 @@ pub enum StandingTone {
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
 pub struct PauseFact {
     pub label: &'static str,
     pub value: String,
