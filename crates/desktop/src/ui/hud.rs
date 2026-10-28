@@ -85,6 +85,20 @@ pub fn hud(
             (1.0 - age / HIT_FLASH_SECONDS) as f32,
         );
     }
+    if state.cockpit {
+        paint::vignette_at(
+            &painter,
+            screen,
+            pos2(screen.center().x, screen.top() + screen.height() * 0.46),
+            vec2(0.8, 0.76),
+            &[
+                (0.66, Color32::TRANSPARENT),
+                (0.9, hexa(0x0a121a, 0.6)),
+                (1.0, hexa(0x05090d, 0.8)),
+            ],
+            1.0,
+        );
+    }
     // A soft shade along the top edge keeps the score, buttons and feed legible.
     painter.add(paint::vgradient(
         Rect::from_min_size(screen.min, vec2(screen.width(), 120.0)),
@@ -94,7 +108,7 @@ pub fn hud(
             (1.0, Color32::TRANSPARENT),
         ],
     ));
-    score_bar(&painter, screen, &hud);
+    score_bar(&painter, screen, &hud, view.room);
     kill_feed(&painter, art, screen, state);
     if playing {
         toast(&painter, screen, state);
@@ -135,11 +149,11 @@ fn team_plate(x: f32, width: f32, height: f32, left_side: bool) -> Vec<Pos2> {
 
 /// The score hangs from the top edge: two team plates cut toward the clock between
 /// them, each with a bar filling toward the score limit; your side carries gold.
-fn score_bar(painter: &Painter, screen: Rect, hud: &HudState) {
+fn score_bar(painter: &Painter, screen: Rect, hud: &HudState, room: bool) {
     let solo = hud.game_mode == "solo";
     let match_state = &hud.match_state;
-    let no_limit = solo || hud.endless_match;
-    let height = 54.0;
+    let no_limit = room || solo || hud.endless_match;
+    let height = if room { 55.0 } else { 62.0 };
     let top = screen.top();
     let label_font = bold_font(14.0);
     let score_font = display_font(38.0);
@@ -166,7 +180,9 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState) {
     } else {
         clock(match_state.time.ceil())
     };
-    let objective = if solo {
+    let objective = if room {
+        String::new()
+    } else if solo {
         "SURVIVE · ONE LIFE".to_owned()
     } else if hud.endless_match {
         "ENDLESS STRESS".to_owned()
@@ -214,7 +230,7 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState) {
             hexa(0xffffff, 0.2),
             hexa(0xffffff, 0.0),
         ));
-        let yours = !solo && team == hud.human_team as usize;
+        let yours = !room && !solo && team == hud.human_team as usize;
         if yours {
             painter.add(paint::gradient_polygon(
                 &[
@@ -362,7 +378,7 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState) {
     };
     paint::shadowed(
         painter,
-        pos2(center, top + 20.0),
+        pos2(center, top + if room { height / 2.0 } else { 20.0 }),
         Align2::CENTER_CENTER,
         &time,
         time_font,
@@ -402,9 +418,17 @@ fn toolbar(
                 "expand"
             },
             if view.prefs.fullscreen {
-                "Exit fullscreen (F11)"
+                if cfg!(target_os = "macos") {
+                    "Exit fullscreen (Cmd+F)"
+                } else {
+                    "Exit fullscreen (F11)"
+                }
             } else {
-                "Enter fullscreen (F11)"
+                if cfg!(target_os = "macos") {
+                    "Enter fullscreen (Cmd+F)"
+                } else {
+                    "Enter fullscreen (F11)"
+                }
             },
         ),
         ("pause", "Pause (Esc)"),
@@ -429,8 +453,9 @@ fn toolbar(
                     .on_hover_text(*tip);
                 let lit = index == 0 && state.cockpit;
                 if lit {
-                    painter.add(paint::vgradient(
+                    painter.add(paint::rounded_vgradient(
                         cell.shrink(2.0),
+                        [7.0; 4],
                         &[(0.0, GOLD_HOT), (1.0, GOLD)],
                     ));
                 } else if response.hovered() {
@@ -479,7 +504,12 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, state: &UiState) {
     let width = 336.0_f32.min(screen.width() * 0.42);
     let row_height = 30.0;
     let right = screen.right() - EDGE;
-    for (index, entry) in state.kill_feed.iter().enumerate() {
+    let lines = if state.cockpit {
+        2
+    } else {
+        super::KILL_FEED_LINES
+    };
+    for (index, entry) in state.kill_feed.iter().take(lines).enumerate() {
         let top = screen.top() + 74.0 + index as f32 * (row_height + 4.0);
         let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, row_height));
         let side = |team: Option<u8>| match team {
@@ -793,13 +823,13 @@ fn effects(state: &UiState, human: &HumanState) -> Vec<Effect> {
     list
 }
 
-const STATUS_WIDTH: f32 = 150.0;
+const STATUS_WIDTH: f32 = 128.0;
 const SLOT_WIDTH: f32 = 36.0;
 const SELECTED_SLOT_WIDTH: f32 = 100.0;
 const SLOT_GAP: f32 = 4.0;
 const MINE_WIDTH: f32 = 42.0;
 const COMPASS_WIDTH: f32 = 68.0;
-const PANEL_HEIGHT: f32 = 66.0;
+const PANEL_HEIGHT: f32 = 65.4;
 
 /// The tank panel: hull on the left, the ammunition rack and the mine socket on the
 /// right, on an armour plate tinted by your team; power-up tabs stand on its top
@@ -836,7 +866,7 @@ fn tank_panel(
         STATUS_WIDTH + 10.0 + 10.0 + strip_width + 10.0 + 10.0 + MINE_WIDTH,
         PANEL_HEIGHT,
     );
-    let padding = [13.0, 9.0, 10.0, 9.0];
+    let padding = [14.0, 10.0, 11.0, 10.0];
     let plate_size = vec2(
         inner.x + padding[0] + padding[2],
         inner.y + padding[1] + padding[3],
@@ -1546,4 +1576,58 @@ fn damage_ring(painter: &Painter, screen: Rect, state: &UiState) {
         fade(hexa(0xff2a3a, 0.25), alpha),
     );
     painter.add(Shape::mesh(pointer));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn collect_text(shape: &Shape, text: &mut Vec<String>) {
+        match shape {
+            Shape::Text(shape) => text.push(shape.galley.job.text.clone()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_text(shape, text)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn room_score_omits_the_single_player_objective_and_team_tab() {
+        let context = egui::Context::default();
+        theme::install(&context);
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0));
+        let hud = HudState {
+            game_mode: "team".into(),
+            team_names: ["BLUE".into(), "RED".into()],
+            score_limit: 100.0,
+            match_state: crate::engine_api::MatchState {
+                scores: [42.0, 37.0],
+                time: 188.0,
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        for room in [false, true] {
+            let mut output = context.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |context| score_bar(&backdrop(context), screen, &hud, room),
+            );
+            // This shape-only test has no GPU painter to consume texture updates.
+            output.textures_delta.clear();
+            let mut labels = Vec::new();
+            for shape in output.shapes {
+                collect_text(&shape.shape, &mut labels);
+            }
+            for expected in ["BLUE", "RED", "42", "37", "3:08"] {
+                assert!(
+                    labels.iter().any(|text| text == expected),
+                    "{expected} stays in both HUDs"
+                );
+            }
+            assert_eq!(labels.iter().any(|text| text == "FIRST TO 100"), !room);
+            assert_eq!(labels.iter().any(|text| text == "YOUR TEAM"), !room);
+        }
+    }
 }
