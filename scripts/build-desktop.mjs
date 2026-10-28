@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
+import { verifyDesktopIcon } from "./generate-desktop-icon.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const output = join(root, "artifacts/desktop");
@@ -128,35 +129,6 @@ function plist(entries) {
   );
 }
 
-/** The app icon in macOS's shape (`crates/desktop/examples/app_icon.rs`: the web app's
- * art in a rounded square with Apple's margin and shadow), at every size. */
-function makeIcns(destination, scratch) {
-  const iconset = join(scratch, "AppIcon.iconset");
-  rmSync(iconset, { recursive: true, force: true });
-  // The content stamp is a compiler input in sloppy-core. Keep it the same as the
-  // app build so generating its icon does not rebuild the engine without the stamp.
-  run(
-    "cargo",
-    [
-      "run",
-      "--locked",
-      "--profile",
-      PROFILE,
-      "--target",
-      MAC_TARGET,
-      "-q",
-      "-p",
-      "sloppy-desktop",
-      "--example",
-      "app_icon",
-      "--",
-      iconset,
-    ],
-    { env: { ...process.env, ...stamps } },
-  );
-  run("iconutil", ["--convert", "icns", "--output", destination, iconset]);
-}
-
 /** The keychain's first identity named `kind` ("Developer ID Application"), or the one
  * `override` names. */
 function identity(kind, override, policy) {
@@ -222,6 +194,7 @@ function buildMac() {
     console.error("The macOS app needs a Mac (sips, iconutil, codesign).");
     process.exit(1);
   }
+  const appIcon = verifyDesktopIcon();
   ensureTargets([MAC_TARGET]);
   const binary = build(MAC_TARGET);
 
@@ -233,7 +206,7 @@ function buildMac() {
   mkdirSync(join(contents, "Resources"), { recursive: true });
   const executable = join(contents, "MacOS", BINARY);
   copyFileSync(binary, executable);
-  makeIcns(join(contents, "Resources", "AppIcon.icns"), scratch);
+  copyFileSync(appIcon, join(contents, "Resources", "AppIcon.icns"));
   const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   writeFileSync(
     join(contents, "Info.plist"),

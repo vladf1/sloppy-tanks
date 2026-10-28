@@ -23,6 +23,7 @@ on:
       - ".cargo/**"
       - "rust-toolchain.toml"
       - "scripts/build-desktop.mjs"
+      - "scripts/generate-desktop-icon.mjs"
       - "scripts/content-version.mjs"
       - "scripts/release-version.mjs"
       - "package.json"
