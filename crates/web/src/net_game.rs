@@ -84,8 +84,6 @@ use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat,
 };
 use sloppy_core::net::client_setup::pending_join;
-use sloppy_core::net::feel_readings::Samples;
-use sloppy_core::net::hull_prediction::CorrectionCause;
 use sloppy_core::net::protocol::{
     JoinChoice, RoomPhase, RoomSettings, is_room_code, read_player_kind, read_team,
 };
@@ -101,8 +99,7 @@ use wasm_bindgen::prelude::*;
 use crate::frame_clock::{FramePacing, FrameTimes};
 use crate::hud::{EffectTimers, RoomHud, Scoreboard, room_hud};
 use crate::nerd_rows::{
-    CauseStats, ConnectionStats, FeelStats, NetworkSampler, OwnShotStats, RoomStats, SceneStats,
-    StatsSection, Summary, room_sections,
+    ConnectionStats, FeelStats, NetworkSampler, RoomStats, SceneStats, StatsSection, room_sections,
 };
 use crate::page::{
     CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
@@ -592,66 +589,10 @@ impl NetGame {
         if let Some(scene) = self.scene_stats() {
             stats.insert("scene".into(), json!(scene));
         }
-        let network = self.client.stats(now);
-        stats.insert(
-            "network".into(),
-            json!({
-                "rttMs": network.rtt_ms,
-                "receivedUpdates": network.received_updates,
-                "snapshotAgeMs": network.snapshot_age_ms,
-                "bufferMs": network.buffer_ms,
-                "marginMs": network.margin_ms,
-                "underrun": network.underrun,
-                "serverTick": network.server_tick,
-                "inputSeq": network.input_seq,
-                "inputAck": network.input_ack,
-                "connected": network.connected,
-                "lateBatches": network.late_batches,
-                "longestBatchGapMs": network.longest_batch_gap_ms,
-                "predictionLeadMs": network.prediction_lead_ms,
-                "correctionMPerS": network.correction_m_per_s,
-                "correctionP95M": network.correction_p95_m,
-                "inputStarts": network.input_starts,
-                "lateInputStarts": network.late_input_starts,
-                "correctionCauses": CorrectionCause::ALL
-                    .iter()
-                    .zip(network.correction_causes)
-                    .map(|(cause, (count, metres_per_second))| {
-                        (
-                            cause.as_str().to_string(),
-                            json!({ "count": count, "mPerS": metres_per_second }),
-                        )
-                    })
-                    .collect::<serde_json::Map<_, _>>(),
-                "receiveMs": self.receive_ms,
-                "corrections": network.corrections,
-                "confirmedSnapshots": network.confirmed_snapshots,
-                "phantomStrikes": network.phantom_strikes,
-            }),
-        );
-        let feel = &self.client.feel;
-        let own = &self.client.own_shots.stats;
-        stats.insert(
-            "feel".into(),
-            json!({
-                "viewDelayMs": summary(&feel.view_delay),
-                "fireToFlashMs": summary(&feel.fire_to_flash),
-                "fireToReportMs": summary(&feel.fire_to_report),
-                "unansweredPresses": feel.unanswered_presses,
-                "hitOffsetM": summary(&feel.hit_offset),
-                "incomingOffsetM": summary(&feel.incoming_offset),
-                "incomingBehindM": summary(&feel.incoming_behind),
-                "unseenIncoming": feel.unseen_incoming,
-                "ownShots": {
-                    "predicted": own.predicted,
-                    "confirmed": own.confirmed,
-                    "unconfirmedShells": own.unconfirmed_shells,
-                    "unpredicted": own.unpredicted,
-                    "phantomStrikes": own.phantom_strikes,
-                    "errorM": summary(&own.error),
-                },
-            }),
-        );
+        let network = ConnectionStats::new(&self.client.stats(now), self.receive_ms);
+        stats.insert("network".into(), json!(network));
+        let feel = FeelStats::new(&self.client.feel, &self.client.own_shots.stats);
+        stats.insert("feel".into(), json!(feel));
         Value::Object(stats).to_string()
     }
 
@@ -887,9 +828,6 @@ impl NetGame {
     /// Stats for nerds' sections and rows at `now`; the update rate is measured since
     /// the previous call.
     pub fn nerd_stats(&mut self, now: f64) -> Vec<StatsSection> {
-        let network = self.client.stats(now);
-        let feel = &self.client.feel;
-        let own = &self.client.own_shots.stats;
         let stats = RoomStats {
             frame: frame_readings(&self.times),
             renderer: renderer_readings(
@@ -898,47 +836,8 @@ impl NetGame {
                 self.canvas.pixel_ratio(),
             ),
             scene: self.scene_stats(),
-            network: ConnectionStats {
-                rtt_ms: network.rtt_ms,
-                received_updates: network.received_updates,
-                snapshot_age_ms: network.snapshot_age_ms,
-                buffer_ms: network.buffer_ms,
-                margin_ms: network.margin_ms,
-                underrun: network.underrun,
-                server_tick: network.server_tick,
-                input_seq: network.input_seq,
-                input_ack: network.input_ack,
-                connected: network.connected,
-                late_batches: network.late_batches,
-                longest_batch_gap_ms: network.longest_batch_gap_ms,
-                prediction_lead_ms: network.prediction_lead_ms,
-                correction_m_per_s: network.correction_m_per_s,
-                correction_p95_m: network.correction_p95_m,
-                input_starts: network.input_starts,
-                late_input_starts: network.late_input_starts,
-                correction_causes: network
-                    .correction_causes
-                    .map(|(count, m_per_s)| CauseStats { count, m_per_s }),
-                receive_ms: self.receive_ms,
-                phantom_strikes: network.phantom_strikes,
-            },
-            feel: FeelStats {
-                view_delay_ms: Summary::from(&feel.view_delay),
-                fire_to_flash_ms: Summary::from(&feel.fire_to_flash),
-                fire_to_report_ms: Summary::from(&feel.fire_to_report),
-                hit_offset_m: Summary::from(&feel.hit_offset),
-                incoming_offset_m: Summary::from(&feel.incoming_offset),
-                incoming_behind_m: Summary::from(&feel.incoming_behind),
-                unseen_incoming: feel.unseen_incoming,
-                own_shots: OwnShotStats {
-                    predicted: own.predicted,
-                    confirmed: own.confirmed,
-                    unconfirmed_shells: own.unconfirmed_shells,
-                    unpredicted: own.unpredicted,
-                    phantom_strikes: own.phantom_strikes,
-                    error_m: Summary::from(&own.error),
-                },
-            },
+            network: ConnectionStats::new(&self.client.stats(now), self.receive_ms),
+            feel: FeelStats::new(&self.client.feel, &self.client.own_shots.stats),
         };
         let rates = self.network_sampler.sample(now, &stats.network);
         room_sections(&stats, rates, self.shell)
@@ -1125,16 +1024,4 @@ impl NetGame {
         self.frame_index += 1;
         result
     }
-}
-
-/// A feel reading as the statistics show it: sample count, mean, median, 95th percentile
-/// and largest.
-fn summary(samples: &Samples) -> Value {
-    json!({
-        "count": samples.count,
-        "mean": samples.mean(),
-        "p50": samples.percentile(0.5),
-        "p95": samples.percentile(0.95),
-        "max": samples.largest,
-    })
 }

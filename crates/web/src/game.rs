@@ -97,7 +97,7 @@ use crate::feedback::event_feedback;
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
 use crate::frame_slot::{self, phase_code};
 use crate::hud::{EffectTimers, Hud, Loading, Scoreboard, simulation_hud};
-use crate::nerd_rows::{GameStats, StatsSection, game_sections};
+use crate::nerd_rows::{GameStats, SceneStats, StatsSection, game_sections};
 use crate::page::{
     CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
     PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
@@ -1047,21 +1047,23 @@ impl Game {
                 &self.graphics,
                 self.canvas.pixel_ratio(),
             ),
+            scene: SceneStats {
+                tanks: count(sim.tanks.len()),
+                alive: count(sim.tanks.iter().filter(|tank| tank.alive).count()),
+                mines: count(sim.mines.len()),
+                pickups: count(sim.pickups.len()),
+                pickups_ready: count(sim.pickups.iter().filter(|pickup| pickup.available).count()),
+                shots: count(sim.shots.len()),
+                fragments: count(sim.fragments.len()),
+                elapsed: sim.elapsed,
+            },
             bodies: count(sim.world.bodies.len()),
             fixed_bodies: count(fixed),
             dynamic_bodies: count(dynamic),
             sleeping_bodies: count(sleeping),
             colliders: count(sim.world.colliders.len()),
-            tanks: count(sim.tanks.len()),
-            tanks_alive: count(sim.tanks.iter().filter(|tank| tank.alive).count()),
-            mines: count(sim.mines.len()),
-            pickups: count(sim.pickups.len()),
-            pickups_ready: count(sim.pickups.iter().filter(|pickup| pickup.available).count()),
-            shots: count(sim.shots.len()),
             particles: particles.into(),
-            fragments: count(sim.fragments.len()),
             max_fragments: count(sim.max_fragments),
-            elapsed: sim.elapsed,
         };
         game_sections(&stats, self.shell)
     }
