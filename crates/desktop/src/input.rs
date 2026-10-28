@@ -3,7 +3,7 @@
 //! [`Controls::take_input`] hands them to the engine, which applies them on its next
 //! simulation tick.
 
-use sloppy_render::presentation::input::{InputFrame, slot};
+use sloppy_render::presentation::input::InputFrame;
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 use winit::keyboard::KeyCode;
 
@@ -254,45 +254,5 @@ mod tests {
         );
         controls.key(KeyCode::KeyW, ElementState::Pressed, false, true);
         assert!(!controls.take_input().up);
-    }
-}
-
-/// `frame`'s packed input (`sloppy_render::presentation::input::slot`).
-pub fn pack(input: &InputFrame) -> [f32; slot::LENGTH] {
-    let flag = |on: bool| if on { 1.0 } else { 0.0 };
-    let mut packed = [0.0; slot::LENGTH];
-    packed[slot::UP] = flag(input.up);
-    packed[slot::DOWN] = flag(input.down);
-    packed[slot::LEFT] = flag(input.left);
-    packed[slot::RIGHT] = flag(input.right);
-    packed[slot::TOUCH_MOVE_X] = input.touch_move.0 as f32;
-    packed[slot::TOUCH_MOVE_Z] = input.touch_move.1 as f32;
-    packed[slot::FIRE] = flag(input.fire);
-    packed[slot::MINE] = flag(input.mine);
-    packed[slot::AMMO_SLOT] = f32::from(input.ammo_slot);
-    packed[slot::AMMO_STEP] = f32::from(input.ammo_step);
-    packed[slot::POINTER_X] = input.pointer.0;
-    packed[slot::POINTER_Y] = input.pointer.1;
-    packed[slot::STICK_TURN] = input.stick_turn;
-    packed[slot::LOOK_PIXELS] = input.look_pixels as f32;
-    packed[slot::ZOOM] = input.zoom as f32;
-    packed[slot::TOGGLE_VIEW] = flag(input.toggle_view);
-    packed[slot::WHEEL_AMMO] = f32::from(input.wheel_ammo);
-    packed
-}
-
-#[cfg(test)]
-mod pack_tests {
-    use super::*;
-
-    #[test]
-    fn packing_round_trips_through_the_engine_reader() {
-        let mut controls = Controls::default();
-        controls.key(KeyCode::KeyD, ElementState::Pressed, false, true);
-        controls.key(KeyCode::KeyE, ElementState::Pressed, false, true);
-        controls.aim_at((50.0, 25.0), (100.0, 100.0));
-        controls.wheel(MouseScrollDelta::LineDelta(0.0, 1.0), true, true);
-        let input = controls.take_input();
-        assert_eq!(InputFrame::from_slice(&pack(&input)), input);
     }
 }

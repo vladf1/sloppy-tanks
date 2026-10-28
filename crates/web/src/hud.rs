@@ -16,7 +16,8 @@ use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
 use sloppy_core::sim::{
-    AmmoInventory, GameMode, Match, RenderState, Simulation, Tank, Team, VehicleKind, Weapon,
+    AmmoInventory, GameMode, Match, MatchPhase, RenderState, Simulation, Tank, Team, VehicleKind,
+    Weapon,
 };
 use sloppy_render::presentation::hud::health_bar_state;
 
@@ -43,6 +44,37 @@ pub struct Hud<'a> {
     pub scoreboard: Scoreboard<'a>,
     /// The finished round's recap, while results show.
     pub recap: Option<Cow<'a, RoundRecap>>,
+}
+
+impl Default for Hud<'_> {
+    /// A team battle of the village before its first round, with an empty scoreboard.
+    fn default() -> Self {
+        Hud {
+            match_state: Match {
+                phase: MatchPhase::Ready,
+                time: 0.0,
+                scores: [0, 0],
+                overtime: false,
+                ended_early: None,
+                winner: None,
+                round: 0,
+            },
+            elapsed: 0.0,
+            game_mode: GameMode::Team,
+            endless_match: false,
+            map_mode: MapId::Village,
+            map_name: String::new(),
+            difficulty: Difficulty::Normal,
+            human_team: Team::Blue,
+            score_limit: SCORE_LIMIT,
+            team_names: TEAM_NAMES,
+            active_enemies: 0,
+            speed_tuning: SpeedTuning::default(),
+            human: HudHuman::default(),
+            scoreboard: Scoreboard::Kept(Vec::new()),
+            recap: None,
+        }
+    }
 }
 
 impl Hud<'_> {

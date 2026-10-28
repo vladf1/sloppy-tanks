@@ -4,109 +4,146 @@
 //! default: `SLOPPY_UI_SNAPSHOTS=<dir> cargo test -p sloppy-desktop --release
 //! snapshots -- --ignored`.
 
+use std::borrow::Cow;
+
 use egui_wgpu::ScreenDescriptor;
 use serde_json::json;
+use sloppy_core::sim::ammunition::AMMO_ORDER;
+use sloppy_core::sim::round_recap::{Feat, Metric, RecapStats};
+use sloppy_core::sim::{DamageCause, GameMode, MatchPhase, Team, VehicleKind, Weapon};
 use sloppy_render::wgpu;
+use sloppy_web::hud::{Hud, HudAmmo, HudHuman, HudScore, Scoreboard};
+use sloppy_web::recap::RoundRecap;
 
 use super::{DeathReport, KillFeedEntry, PauseTab, Toast, ToastTone, UiState, View};
-use crate::engine_api::{HudState, Phase};
 use crate::preferences::Preferences;
 
 /// The window's size in points, and its pixels per point.
 const SIZE: [f32; 2] = [1280.0, 800.0];
 const SCALE: f32 = 2.0;
 
-fn hud(phase: &str, solo: bool, alive: bool, ratio: f64) -> HudState {
+fn metrics(values: &[(Metric, f64)]) -> RecapStats {
+    let mut stats = RecapStats::default();
+    for &(metric, value) in values {
+        stats.set(metric, value);
+    }
+    stats
+}
+
+fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
     const NAMES: [&str; 12] = [
         "YOU", "Rusty", "Dozer", "Spud", "Gravel", "Boomer", "Mortar", "Tusk", "Crank", "Biscuit",
         "Hatch", "Dent",
     ];
     const KILLS: [u32; 12] = [7, 9, 3, 2, 1, 0, 8, 4, 4, 2, 1, 0];
     const DEATHS: [u32; 12] = [3, 2, 4, 5, 2, 6, 3, 3, 4, 5, 2, 7];
-    const KINDS: [&str; 3] = ["balanced", "heavy", "scout"];
-    let rows: Vec<_> = (0..12)
-        .map(|index| {
-            let (name, kills, deaths) = (NAMES[index], KILLS[index], DEATHS[index]);
-            let (team, kind) = (u8::from(index >= 6), KINDS[index % 3]);
-            json!({
-                "id": index + 1,
-                "name": name,
-                "kills": kills,
-                "deaths": deaths,
-                "team": team,
-                "kind": kind,
-                "human": index == 0,
-            })
+    const KINDS: [VehicleKind; 3] = [
+        VehicleKind::Balanced,
+        VehicleKind::Heavy,
+        VehicleKind::Scout,
+    ];
+    let rows = (0..12)
+        .map(|index| HudScore {
+            id: index as u32 + 1,
+            name: Cow::Borrowed(NAMES[index]),
+            kills: KILLS[index],
+            deaths: DEATHS[index],
+            team: Team::from_index(usize::from(index >= 6)),
+            kind: KINDS[index % 3],
+            human: index == 0,
         })
         .collect();
-    let value = json!({
-        "match": {
-            "phase": phase,
-            "time": 187.4,
-            "scores": [if solo { 0 } else { 42 }, if solo { 0 } else { 37 }],
-            "overtime": false,
-            "endedEarly": phase == "results" && !solo,
-            "winner": if solo { serde_json::Value::Null } else { json!(0) },
-            "round": 1,
-        },
-        "elapsed": 312.0,
-        "gameMode": if solo { "solo" } else { "team" },
-        "endlessMatch": false,
-        "mapMode": "village",
-        "mapName": "Pine Village",
-        "difficulty": "normal",
-        "humanTeam": 0,
-        "scoreLimit": 100,
-        "teamNames": ["BLUE", "RED"],
-        "activeEnemies": 6,
-        "speedTuning": {"tank-speed": 1.0, "bullet-speed": 1.0},
-        "human": {
-            "id": 1,
-            "kind": "balanced",
-            "vehicleName": "BRUISER",
-            "alive": alive,
-            "hp": 100.0 * ratio,
-            "maxHp": 100.0,
-            "healthRatio": ratio,
-            "rank": 2,
-            "rankName": "Veteran",
-            "rankDamage": 1.1,
-            "rankFireRate": 1.08,
-            "rankHealth": 1.1,
-            "rankRepair": 0.02,
-            "repairDelay": 4,
-            "ammo": [
-                {"weapon": "standard", "count": null, "selected": false, "available": true},
-                {"weapon": "spread", "count": 6, "selected": false, "available": true},
-                {"weapon": "rocket", "count": 3, "selected": true, "available": true},
-                {"weapon": "ricochet", "count": 0, "selected": false, "available": false},
-                {"weapon": "piercing", "count": 0, "selected": false, "available": false},
-            ],
-            "mineCooldown": 4.2,
-            "protection": 0.0,
-            "shield": 9.0,
-            "shieldPoints": 24.0,
-            "rapid": 6.0,
-            "speed": 0.0,
-            "laser": 0.0,
-            "respawn": 2.4,
-            "kills": 7,
-            "deaths": 3,
-            "selfRepair": true,
-        },
-        "scoreboard": rows,
-        "recap": if phase == "results" { json!({
-            "stats": {"kills": 7, "damage": 1840, "bestLife": 4, "rank": 2, "longestLife": 154,
-                      "multikill": 3, "clutchKills": 1, "mineKills": 1, "pickups": 5},
-            "best": {"kills": 11, "damage": 1500, "bestLife": 5, "longestLife": 200},
-            "improved": ["damage"],
-            "persisted": true,
-            "feats": [{"title": "Last stand", "detail": "A kill at 12% hull"}],
-            "shots": 31, "directHits": 19, "damageTaken": 260, "shieldAbsorbed": 40,
-            "rankNames": ["Rookie", "Gunner", "Veteran", "Ace"],
-        }) } else { serde_json::Value::Null },
+    let results = phase == MatchPhase::Results;
+    let mut ammo = AMMO_ORDER.map(|weapon| HudAmmo {
+        weapon,
+        count: weapon.special().map(|_| 0.0),
+        selected: false,
+        available: weapon == Weapon::Standard,
     });
-    serde_json::from_value(value).expect("a HUD state")
+    ammo[1] = HudAmmo {
+        count: Some(6.0),
+        available: true,
+        ..ammo[1]
+    };
+    ammo[2] = HudAmmo {
+        count: Some(3.0),
+        selected: true,
+        available: true,
+        ..ammo[2]
+    };
+    let mut hud = Hud {
+        elapsed: 312.0,
+        game_mode: if solo { GameMode::Solo } else { GameMode::Team },
+        map_name: "Pine Village".into(),
+        active_enemies: 6,
+        human: HudHuman {
+            id: 1,
+            kind: VehicleKind::Balanced,
+            vehicle_name: "BRUISER",
+            alive,
+            hp: 100.0 * ratio,
+            max_hp: 100.0,
+            health_ratio: ratio,
+            rank: 2,
+            rank_name: "Veteran",
+            rank_damage: 1.1,
+            rank_fire_rate: 1.08,
+            rank_health: 1.1,
+            rank_repair: 0.02,
+            repair_delay: 4.0,
+            ammo,
+            mine_cooldown: 4.2,
+            shield: 9.0,
+            shield_points: 24.0,
+            rapid: 6.0,
+            respawn: 2.4,
+            kills: 7,
+            deaths: 3,
+            self_repair: true,
+            ..HudHuman::default()
+        },
+        scoreboard: Scoreboard::Kept(rows),
+        recap: results.then(|| {
+            Cow::Owned(RoundRecap {
+                stats: metrics(&[
+                    (Metric::Kills, 7.0),
+                    (Metric::Damage, 1840.0),
+                    (Metric::BestLife, 4.0),
+                    (Metric::Rank, 2.0),
+                    (Metric::LongestLife, 154.0),
+                    (Metric::Multikill, 3.0),
+                    (Metric::ClutchKills, 1.0),
+                    (Metric::MineKills, 1.0),
+                    (Metric::Pickups, 5.0),
+                ]),
+                best: metrics(&[
+                    (Metric::Kills, 11.0),
+                    (Metric::Damage, 1500.0),
+                    (Metric::BestLife, 5.0),
+                    (Metric::LongestLife, 200.0),
+                ]),
+                improved: vec![Metric::Damage],
+                persisted: true,
+                feats: vec![Feat {
+                    title: "Last stand".into(),
+                    detail: "A kill at 12% hull".into(),
+                }],
+                shots: 31,
+                direct_hits: 19,
+                damage_taken: 260.0,
+                shield_absorbed: 40.0,
+                rank_names: vec!["Rookie", "Gunner", "Veteran", "Ace"],
+            })
+        }),
+        ..Hud::default()
+    };
+    hud.match_state.phase = phase;
+    hud.match_state.time = 187.4;
+    hud.match_state.scores = if solo { [0, 0] } else { [42, 37] };
+    hud.match_state.ended_early = Some(results && !solo);
+    hud.match_state.winner = (!solo).then_some(Team::Blue);
+    hud.match_state.round = 1;
+    hud
 }
 
 fn feedback(state: &mut UiState) {
@@ -114,9 +151,9 @@ fn feedback(state: &mut UiState) {
         KillFeedEntry {
             killer: "YOU".into(),
             victim: "Tusk".into(),
-            killer_team: Some(0),
-            victim_team: Some(1),
-            cause: Some("rocket".into()),
+            killer_team: Some(Team::Blue),
+            victim_team: Some(Team::Red),
+            cause: Some(DamageCause::Rocket),
             own_kill: true,
             own_death: false,
             age: 0.8,
@@ -124,9 +161,9 @@ fn feedback(state: &mut UiState) {
         KillFeedEntry {
             killer: "Crank".into(),
             victim: "Dozer".into(),
-            killer_team: Some(1),
-            victim_team: Some(0),
-            cause: Some("standard".into()),
+            killer_team: Some(Team::Red),
+            victim_team: Some(Team::Blue),
+            cause: Some(DamageCause::Standard),
             own_kill: false,
             own_death: false,
             age: 2.0,
@@ -135,8 +172,8 @@ fn feedback(state: &mut UiState) {
             killer: "YARD".into(),
             victim: "Biscuit".into(),
             killer_team: None,
-            victim_team: Some(1),
-            cause: Some("drum".into()),
+            victim_team: Some(Team::Red),
+            cause: Some(DamageCause::Drum),
             own_kill: false,
             own_death: false,
             age: 3.0,
@@ -159,14 +196,14 @@ fn feedback(state: &mut UiState) {
 struct Scenario {
     name: &'static str,
     in_round: bool,
-    phase: Phase,
+    phase: MatchPhase,
     state: UiState,
 }
 
 fn scenarios() -> Vec<Scenario> {
     let mut list = Vec::new();
     let mut setup = UiState {
-        hud: Some(hud("ready", false, true, 1.0)),
+        hud: Some(hud(MatchPhase::Ready, false, true, 1.0)),
         status: "Shaders loaded: 31 of 40".into(),
         ..UiState::default()
     };
@@ -174,15 +211,15 @@ fn scenarios() -> Vec<Scenario> {
     list.push(Scenario {
         name: "battle-setup",
         in_round: false,
-        phase: Phase::Ready,
+        phase: MatchPhase::Ready,
         state: setup,
     });
     list.push(Scenario {
         name: "battle-setup-ready",
         in_round: false,
-        phase: Phase::Ready,
+        phase: MatchPhase::Ready,
         state: UiState {
-            hud: Some(hud("ready", false, true, 1.0)),
+            hud: Some(hud(MatchPhase::Ready, false, true, 1.0)),
             ready: true,
             ..UiState::default()
         },
@@ -218,9 +255,9 @@ fn scenarios() -> Vec<Scenario> {
         list.push(Scenario {
             name,
             in_round: false,
-            phase: Phase::Ready,
+            phase: MatchPhase::Ready,
             state: UiState {
-                hud: Some(hud("ready", false, true, 1.0)),
+                hud: Some(hud(MatchPhase::Ready, false, true, 1.0)),
                 ready: true,
                 rooms: super::rooms::answered(rooms),
                 ..UiState::default()
@@ -228,18 +265,18 @@ fn scenarios() -> Vec<Scenario> {
         });
     }
     let mut playing = UiState {
-        hud: Some(hud("playing", false, true, 0.48)),
+        hud: Some(hud(MatchPhase::Playing, false, true, 0.48)),
         ..UiState::default()
     };
     feedback(&mut playing);
     list.push(Scenario {
         name: "hud",
         in_round: true,
-        phase: Phase::Playing,
+        phase: MatchPhase::Playing,
         state: playing,
     });
     let mut critical = UiState {
-        hud: Some(hud("playing", true, true, 0.18)),
+        hud: Some(hud(MatchPhase::Playing, true, true, 0.18)),
         ..UiState::default()
     };
     feedback(&mut critical);
@@ -250,11 +287,11 @@ fn scenarios() -> Vec<Scenario> {
     list.push(Scenario {
         name: "hud-solo-first-person-critical",
         in_round: true,
-        phase: Phase::Playing,
+        phase: MatchPhase::Playing,
         state: critical,
     });
     let mut dead = UiState {
-        hud: Some(hud("playing", false, false, 0.0)),
+        hud: Some(hud(MatchPhase::Playing, false, false, 0.0)),
         ..UiState::default()
     };
     feedback(&mut dead);
@@ -263,34 +300,34 @@ fn scenarios() -> Vec<Scenario> {
     dead.death = Some(DeathReport {
         killer: Some("Crank".into()),
         own_goal: false,
-        cause: Some("rocket".into()),
-        weapon: Some("Rocket blast".into()),
-        killer_vehicle: Some("BIG RIG".into()),
-        killer_team: Some(1),
-        killer_kills: Some(3.0),
+        cause: Some(DamageCause::Rocket),
+        weapon: Some("Rocket blast"),
+        killer_vehicle: Some("BIG RIG"),
+        killer_team: Some(Team::Red),
+        killer_kills: Some(3),
         sentence: "Crank destroyed you with a rocket blast.".into(),
     });
     list.push(Scenario {
         name: "respawn",
         in_round: true,
-        phase: Phase::Playing,
+        phase: MatchPhase::Playing,
         state: dead,
     });
     list.push(Scenario {
         name: "pause",
         in_round: true,
-        phase: Phase::Paused,
+        phase: MatchPhase::Paused,
         state: UiState {
-            hud: Some(hud("paused", false, true, 0.7)),
+            hud: Some(hud(MatchPhase::Paused, false, true, 0.7)),
             ..UiState::default()
         },
     });
     list.push(Scenario {
         name: "pause-controls",
         in_round: true,
-        phase: Phase::Paused,
+        phase: MatchPhase::Paused,
         state: UiState {
-            hud: Some(hud("paused", false, true, 0.7)),
+            hud: Some(hud(MatchPhase::Paused, false, true, 0.7)),
             pause_tab: PauseTab::Controls,
             ..UiState::default()
         },
@@ -298,9 +335,9 @@ fn scenarios() -> Vec<Scenario> {
     list.push(Scenario {
         name: "settings",
         in_round: true,
-        phase: Phase::Paused,
+        phase: MatchPhase::Paused,
         state: UiState {
-            hud: Some(hud("paused", false, true, 0.7)),
+            hud: Some(hud(MatchPhase::Paused, false, true, 0.7)),
             settings_draft: Some(Preferences::default()),
             ..UiState::default()
         },
@@ -308,18 +345,18 @@ fn scenarios() -> Vec<Scenario> {
     list.push(Scenario {
         name: "results-team",
         in_round: true,
-        phase: Phase::Results,
+        phase: MatchPhase::Results,
         state: UiState {
-            hud: Some(hud("results", false, true, 0.7)),
+            hud: Some(hud(MatchPhase::Results, false, true, 0.7)),
             ..UiState::default()
         },
     });
     list.push(Scenario {
         name: "results-solo",
         in_round: true,
-        phase: Phase::Results,
+        phase: MatchPhase::Results,
         state: UiState {
-            hud: Some(hud("results", true, false, 0.0)),
+            hud: Some(hud(MatchPhase::Results, true, false, 0.0)),
             ..UiState::default()
         },
     });
@@ -335,7 +372,7 @@ fn scenarios() -> Vec<Scenario> {
         "fragments": 12, "maxFragments": 80, "elapsed": 187.4, "pixelRatio": 2,
     });
     let mut nerd = UiState {
-        hud: Some(hud("playing", false, true, 0.9)),
+        hud: Some(hud(MatchPhase::Playing, false, true, 0.9)),
         show_nerd_stats: true,
         stats: Some(stats.clone()),
         ..UiState::default()
@@ -344,7 +381,7 @@ fn scenarios() -> Vec<Scenario> {
     list.push(Scenario {
         name: "hud-nerd-stats",
         in_round: true,
-        phase: Phase::Playing,
+        phase: MatchPhase::Playing,
         state: nerd,
     });
     let summary = |count: u32, mean: f64, p95: f64, max: f64| serde_json::json!({"count": count, "mean": mean, "p50": mean, "p95": p95, "max": max});
@@ -380,7 +417,7 @@ fn scenarios() -> Vec<Scenario> {
             "phantomStrikes": 0, "errorM": summary(45, 0.03, 0.07, 0.12)},
     });
     let mut room_nerd = UiState {
-        hud: Some(hud("playing", false, true, 0.9)),
+        hud: Some(hud(MatchPhase::Playing, false, true, 0.9)),
         show_nerd_stats: true,
         stats: Some(room_stats),
         ..UiState::default()
@@ -398,7 +435,7 @@ fn scenarios() -> Vec<Scenario> {
     list.push(Scenario {
         name: "room-nerd-stats",
         in_round: true,
-        phase: Phase::Playing,
+        phase: MatchPhase::Playing,
         state: room_nerd,
     });
     for name in [
@@ -417,19 +454,13 @@ fn scenarios() -> Vec<Scenario> {
     ] {
         let menu = super::room_menu::snapshot_menu(name);
         let phase = super::room_menu::hud_phase(&menu);
-        let phase_name = match phase {
-            Phase::Playing => "playing",
-            Phase::Paused => "paused",
-            Phase::Results => "results",
-            Phase::Ready => "ready",
-        };
         list.push(Scenario {
             name,
             in_round: menu.in_battle(),
             phase,
             state: UiState {
                 hud: Some(hud(
-                    phase_name,
+                    phase,
                     false,
                     name != "room-respawn",
                     if name == "room-respawn" { 0.0 } else { 0.7 },

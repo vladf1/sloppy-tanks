@@ -131,13 +131,21 @@ impl TankCard {
     /// The hit points bar: a share of the toughest tank's, to two places as the page
     /// writes it.
     pub fn hit_points_share(&self) -> f32 {
-        let most = TANK_CARDS.iter().map(TankCard::hit_points).max().unwrap_or(1);
+        let most = TANK_CARDS
+            .iter()
+            .map(TankCard::hit_points)
+            .max()
+            .unwrap_or(1);
         hundredths(f64::from(self.hit_points()) / f64::from(most))
     }
 
     /// The speed bar: a share of the fastest tank's shown speed.
     pub fn speed_share(&self) -> f32 {
-        let most = TANK_CARDS.iter().map(TankCard::km_per_hour).max().unwrap_or(1);
+        let most = TANK_CARDS
+            .iter()
+            .map(TankCard::km_per_hour)
+            .max()
+            .unwrap_or(1);
         hundredths(f64::from(self.km_per_hour()) / f64::from(most))
     }
 }

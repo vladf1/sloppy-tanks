@@ -11,7 +11,6 @@ mod assets;
 mod audio;
 mod bakes;
 mod directory;
-mod engine_api;
 mod frame_log;
 mod input;
 mod overlay;

@@ -7,154 +7,20 @@ use egui::{
     StrokeKind, Vec2, pos2, vec2,
 };
 
+use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::{GameMode, Team, VehicleKind};
+use sloppy_web::catalog::{
+    BATTLE_FORMATS, BattleFormat, DIFFICULTY_OPTIONS, DifficultyOption, MAP_CARDS, MapCard,
+    TANK_CARDS, TankCard,
+};
+
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, fade, hex, hexa, mix};
 use super::theme::{GOLD, TEXT_DIM, bold_font, display_font};
 use super::{Action, UiState, View};
 
-/// A tank a player drives: id, name, class line, hit points, km/h, and each as a share
-/// of the best (the card's bars), its class colour and its size in the card.
-pub struct Tank {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub class: &'static str,
-    /// The class in one word, for the respawn card's smaller cards.
-    pub short_class: &'static str,
-    pub hit_points: u32,
-    pub speed: u32,
-    pub hit_points_share: f32,
-    pub speed_share: f32,
-    pub color: u32,
-    pub scale: f32,
-}
-
-pub const TANKS: [Tank; 3] = [
-    Tank {
-        id: "scout",
-        name: "SKIPPER",
-        class: "LIGHT SCOUT",
-        short_class: "SCOUT",
-        hit_points: 80,
-        speed: 40,
-        hit_points_share: 0.57,
-        speed_share: 1.0,
-        color: 0x5fd8ff,
-        scale: 0.8,
-    },
-    Tank {
-        id: "balanced",
-        name: "BRUISER",
-        class: "BALANCED TANK",
-        short_class: "BALANCED",
-        hit_points: 100,
-        speed: 32,
-        hit_points_share: 0.71,
-        speed_share: 0.8,
-        color: 0xffcf38,
-        scale: 0.94,
-    },
-    Tank {
-        id: "heavy",
-        name: "BIG RIG",
-        class: "HEAVY TANK",
-        short_class: "HEAVY",
-        hit_points: 140,
-        speed: 24,
-        hit_points_share: 1.0,
-        speed_share: 0.6,
-        color: 0xff8a4c,
-        scale: 1.1,
-    },
-];
-
-/// A map choice: id, name, line, symbol and tint (`map-options.ts`).
-pub struct MapChoice {
-    pub id: &'static str,
-    pub name: &'static str,
-    pub description: &'static str,
-    pub icon: &'static str,
-    pub tint: u32,
-}
-
-/// The standard maps: id, name (the app checks a saved map against them).
-pub const MAPS: [(&str, &str); 3] = [
-    ("village", "Pine Village"),
-    ("harbor", "Harbor Havoc"),
-    ("quarry", "Dusty Dig"),
-];
-
-/// The standard maps' cards.
-pub const MAP_CHOICES: [MapChoice; 3] = [
-    MapChoice {
-        id: "village",
-        name: "Pine Village",
-        description: "Quiet lanes. Loud tanks.",
-        icon: "village",
-        tint: 0x2f7d4f,
-    },
-    MapChoice {
-        id: "harbor",
-        name: "Harbor Havoc",
-        description: "Salt air. Hot steel.",
-        icon: "harbor",
-        tint: 0x2c6fa8,
-    },
-    MapChoice {
-        id: "quarry",
-        name: "Dusty Dig",
-        description: "Open pits. Dig a shortcut.",
-        icon: "quarry",
-        tint: 0xa8733a,
-    },
-];
-
-/// The extra levels: id, name.
-pub const EXTRA_MAPS: [(&str, &str); 2] = [
-    ("stress-test", "Stress Grid"),
-    ("superstress", "Scrap Yard"),
-];
-
-/// The extra levels a `--debug` run offers.
-pub const EXTRA_MAP_CHOICES: [MapChoice; 2] = [
-    MapChoice {
-        id: "stress-test",
-        name: "Stress Grid",
-        description: "30 tanks · 75 destructibles",
-        icon: "stress",
-        tint: 0x6a5ea8,
-    },
-    MapChoice {
-        id: "superstress",
-        name: "Scrap Yard",
-        description: "Compact yard · cover rebuilds",
-        icon: "yard",
-        tint: 0x8a5a44,
-    },
-];
-
-/// The battle formats: id, name and line.
-pub const BATTLES: [(&str, &str, &str); 2] = [
-    ("team", "Team Battle", "6 vs 6 · Respawns · First to 100"),
-    ("solo", "Solo Assault", "Survive endless enemies"),
-];
-
-pub const DIFFICULTIES: [(&str, &str, &str); 3] = [
-    (
-        "easy",
-        "Easy",
-        "Slower, less accurate bots · you take 10% less damage",
-    ),
-    (
-        "normal",
-        "Normal",
-        "Bots aim well and react fast · the intended fight",
-    ),
-    (
-        "hard",
-        "Hard",
-        "Sharp, fast-reloading bots · you take 15% more damage",
-    ),
-];
+/// How far an unavailable battle format fades (`.choice-card:has(input:disabled)`).
+const UNAVAILABLE_OPACITY: f32 = 0.45;
 
 /// The essentials on one line under the dialog; the pause menu lists every control.
 const KEY_HINTS: [(&[&str], &str); 6] = [
@@ -310,8 +176,8 @@ pub fn vehicle_card(
     painter: &Painter,
     art: &Art,
     rect: Rect,
-    tank: &Tank,
-    team: u8,
+    tank: &TankCard,
+    team: Team,
     selected: bool,
     hovered: bool,
     compact: bool,
@@ -358,7 +224,7 @@ pub fn vehicle_card(
         painter,
         rect.min + vec2(padding, 10.0),
         Align2::LEFT_TOP,
-        tank.name,
+        tank.name(),
         display_font(name_size),
         Color32::WHITE,
         0.5,
@@ -382,13 +248,9 @@ pub fn vehicle_card(
         }
     } else {
         // The class tag, led by a dot in the class's colour.
-        let class = if compact {
-            tank.short_class
-        } else {
-            tank.class
-        };
+        let class = tank.class.to_uppercase();
         let class_font = bold_font(11.0);
-        let class_width = paint::text_width(painter, class, class_font.clone(), 0.4) + 26.0;
+        let class_width = paint::text_width(painter, &class, class_font.clone(), 0.4) + 26.0;
         let tag = Rect::from_min_size(
             pos2(rect.right() - padding - class_width, rect.top() + 15.0),
             vec2(class_width, 19.0),
@@ -404,7 +266,7 @@ pub fn vehicle_card(
             painter,
             pos2(tag.left() + 18.0, tag.center().y),
             Align2::LEFT_CENTER,
-            class,
+            &class,
             class_font,
             tag_ink,
             0.4,
@@ -427,7 +289,7 @@ pub fn vehicle_card(
             ),
         )
     };
-    let scale = if !compact && tank.id == "heavy" {
+    let scale = if !compact && tank.kind == VehicleKind::Heavy {
         1.0
     } else {
         tank.scale
@@ -439,7 +301,7 @@ pub fn vehicle_card(
     ));
     art.tank(
         &painter.with_clip_rect(rect.shrink(1.0)),
-        tank.id,
+        tank.kind,
         team,
         stage,
         scale * 1.05,
@@ -450,10 +312,10 @@ pub fn vehicle_card(
         let half = (rect.width() - 2.0 * padding - 16.0) / 2.0;
         for (index, (label, share)) in [
             (
-                format!("{} HIT POINTS", tank.hit_points),
-                tank.hit_points_share,
+                format!("{} HIT POINTS", tank.hit_points()),
+                tank.hit_points_share(),
             ),
-            (format!("{} KM/H", tank.speed), tank.speed_share),
+            (format!("{} KM/H", tank.km_per_hour()), tank.speed_share()),
         ]
         .into_iter()
         .enumerate()
@@ -564,11 +426,11 @@ fn map_card(
     painter: &Painter,
     art: &Art,
     rect: Rect,
-    map: &MapChoice,
-    extra: bool,
+    map: &MapCard,
     selected: bool,
     hovered: bool,
 ) {
+    let extra = map.extra();
     choice_frame(painter, rect, selected, hovered);
     let tint = hex(map.tint);
     let clip = painter.with_clip_rect(rect.shrink(1.0));
@@ -589,7 +451,7 @@ fn map_card(
             Color32::WHITE,
         );
     } else {
-        let art_name = format!("art-{}", map.id);
+        let art_name = format!("art-{}", map.id.as_str());
         let height = rect.height() * 0.8;
         let size = vec2(height * art.aspect(&art_name), height);
         let place = Rect::from_min_size(
@@ -615,7 +477,7 @@ fn map_card(
         painter,
         rect.min + vec2(12.0, 17.0),
         Align2::LEFT_TOP,
-        map.name,
+        map.name(),
         bold_font(15.0),
         Color32::WHITE,
         0.0,
@@ -637,7 +499,7 @@ fn map_card(
         painter,
         pos2(rect.left() + 12.0, rect.top() + 38.0),
         Align2::LEFT_TOP,
-        map.description,
+        map.short_description.unwrap_or(map.description),
         egui::FontId::proportional(12.0),
         hex(0xc9def0),
         0.0,
@@ -646,17 +508,18 @@ fn map_card(
     choice_ring(painter, rect, selected);
 }
 
-/// A battle format card (`.battle-choice`): a tall poster of tanks over its name, the
-/// player's side in their team's colour.
+/// A battle format card (`.battle-choice`): a tall poster of tanks over its name and
+/// `detail`, the player's side in their team's colour.
 fn battle_card(
     painter: &Painter,
     art: &Art,
     rect: Rect,
-    battle: (&str, &str, &str),
+    battle: &BattleFormat,
+    detail: &str,
     selected: bool,
     hovered: bool,
 ) {
-    let (id, name, detail) = battle;
+    let (team, name) = (battle.mode == GameMode::Team, battle.name);
     choice_frame(painter, rect, selected, hovered);
     let clip = painter.with_clip_rect(rect.shrink(1.0));
     let at =
@@ -664,7 +527,7 @@ fn battle_card(
     let width = rect.width();
     let height = rect.height();
     // The authored scene washes distinguish a two-sided fight from a lone tank.
-    let glows: &[(f32, f32, f32, f32, u32, f32)] = if id == "team" {
+    let glows: &[(f32, f32, f32, f32, u32, f32)] = if team {
         &[
             (1.0, 0.1, 0.6, 0.7, 0xff4d5e, 0.30),
             (0.0, 0.1, 0.6, 0.7, 0x3ea6ff, 0.28),
@@ -687,15 +550,15 @@ fn battle_card(
         rect,
         &[(0.55, Color32::TRANSPARENT), (1.0, hexa(0x050c1a, 0.6))],
     ));
-    if id == "team" {
+    if team {
         // Authored poster colours stay fixed: blue below, red above.
         let art_height = height - 68.0;
         let tank_width = width * 0.66;
         let tank_height = tank_width * 300.0 / 560.0;
         art.tank(
             &clip,
-            "heavy",
-            1,
+            VehicleKind::Heavy,
+            Team::Red,
             at(
                 width * 0.98 - tank_width,
                 6.0 + art_height * 0.06,
@@ -706,8 +569,8 @@ fn battle_card(
         );
         art.tank_mirrored(
             &clip,
-            "balanced",
-            0,
+            VehicleKind::Balanced,
+            Team::Blue,
             at(
                 width * 0.02,
                 6.0 + art_height * 0.96 - tank_height,
@@ -732,13 +595,13 @@ fn battle_card(
         let art_height = 152.0_f32.min(height - 68.0);
         let art_top = height - 62.0 - ((height - 220.0) / 2.0).max(0.0) - art_height;
         for (kind, x_share, y_share, size_share) in [
-            ("scout", 0.07, 0.08, 0.36),
-            ("balanced", 0.37, 0.0, 0.30),
-            ("heavy", 0.0, 0.10, 0.36),
+            (VehicleKind::Scout, 0.07, 0.08, 0.36),
+            (VehicleKind::Balanced, 0.37, 0.0, 0.30),
+            (VehicleKind::Heavy, 0.0, 0.10, 0.36),
         ] {
             let tank_height = art_height * size_share;
             let tank_width = tank_height * 560.0 / 300.0;
-            let left = if kind == "heavy" {
+            let left = if kind == VehicleKind::Heavy {
                 width * 0.93 - tank_width
             } else {
                 width * x_share
@@ -746,7 +609,7 @@ fn battle_card(
             art.tank(
                 &clip,
                 kind,
-                0,
+                Team::Blue,
                 at(
                     left,
                     art_top + art_height * y_share,
@@ -760,8 +623,8 @@ fn battle_card(
         let tank_width = tank_height * 560.0 / 300.0;
         art.tank(
             &clip,
-            "balanced",
-            1,
+            VehicleKind::Balanced,
+            Team::Red,
             at(
                 (width - tank_width) / 2.0,
                 art_top + art_height - tank_height,
@@ -799,11 +662,11 @@ fn difficulty_segment(
     painter: &Painter,
     rect: Rect,
     level: usize,
-    entry: (&str, &str, &str),
+    entry: &DifficultyOption,
     selected: bool,
     hovered: bool,
 ) {
-    let (_, name, detail) = entry;
+    let (name, detail) = (entry.name, entry.detail);
     choice_frame(painter, rect, selected, hovered);
     let galley = paint::wrapped(
         painter,
@@ -1064,7 +927,10 @@ pub fn battle_setup(
     let mut prefs = view.prefs.clone();
     let screen = context.content_rect();
     let time = context.input(|input| input.time);
-    let human_team = state.hud.as_ref().map_or(0, |hud| hud.human_team);
+    let human_team = state.hud.as_ref().map_or(Team::Blue, |hud| hud.human_team);
+    // What single player would play: a saved extra level only with the debug tools,
+    // and as its own team battle.
+    let options = prefs.game_options(human_team, view.debug);
     let wide = screen.width() >= 1500.0 && screen.height() >= 860.0;
     let design = if wide { WIDE_DESIGN } else { DESIGN };
     let extra_width = design.x - DESIGN.x;
@@ -1160,13 +1026,13 @@ pub fn battle_setup(
                 0.0,
             );
             tray(&painter, tank_well, true, false);
-            for (index, tank) in TANKS.iter().enumerate() {
+            for (index, tank) in TANK_CARDS.iter().enumerate() {
                 let rect = Rect::from_min_size(
                     pos2(72.0, 206.0 + index as f32 * (165.5 + extra_height / 3.0)),
                     vec2(246.0 + garage_growth, 158.0 + extra_height / 3.0),
                 );
                 let response = ui
-                    .interact(rect, Id::unique(("setup tank", tank.id)), Sense::click())
+                    .interact(rect, Id::unique(("setup tank", tank.kind)), Sense::click())
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 vehicle_card(
                     &painter,
@@ -1174,12 +1040,12 @@ pub fn battle_setup(
                     rect,
                     tank,
                     human_team,
-                    prefs.tank == tank.id,
+                    prefs.tank == tank.kind,
                     response.hovered(),
                     false,
                 );
                 if response.clicked() {
-                    prefs.tank = tank.id.into();
+                    prefs.tank = tank.kind;
                 }
             }
 
@@ -1232,16 +1098,12 @@ pub fn battle_setup(
                         0.0,
                     );
                 }
-                let shown_map = room_map.as_deref().unwrap_or(&prefs.map).to_owned();
-                let maps: Vec<(&MapChoice, bool)> = MAP_CHOICES
+                let shown_map = room_map
+                    .as_deref()
+                    .map_or(Some(options.map_mode), MapId::parse);
+                let maps: Vec<&MapCard> = MAP_CARDS
                     .iter()
-                    .map(|map| (map, false))
-                    .chain(
-                        view.debug
-                            .then_some(EXTRA_MAP_CHOICES.iter().map(|map| (map, true)))
-                            .into_iter()
-                            .flatten(),
-                    )
+                    .filter(|map| view.debug || !map.extra())
                     .collect();
                 let map_well =
                     Rect::from_min_max(pos2(inner.left(), 235.0), pos2(inner.right(), 317.0));
@@ -1249,7 +1111,7 @@ pub fn battle_setup(
                 let row = map_well.shrink(5.0);
                 let map_width =
                     (row.width() - CARD_GAP * (maps.len() - 1) as f32) / maps.len() as f32;
-                for (index, (map, extra)) in maps.into_iter().enumerate() {
+                for (index, map) in maps.into_iter().enumerate() {
                     let rect = Rect::from_min_size(
                         pos2(
                             row.left() + index as f32 * (map_width + CARD_GAP),
@@ -1277,12 +1139,11 @@ pub fn battle_setup(
                         art,
                         rect,
                         map,
-                        extra,
-                        shown_map == map.id,
+                        shown_map == Some(map.id),
                         !locked && response.hovered(),
                     );
                     if !locked && response.clicked() {
-                        prefs.map = map.id.into();
+                        prefs.map = map.id;
                     }
                 }
             }
@@ -1311,7 +1172,7 @@ pub fn battle_setup(
                     14,
                     hexa(0x071328, 0.85),
                 );
-                for (index, battle) in BATTLES.iter().enumerate() {
+                for (index, battle) in BATTLE_FORMATS.iter().enumerate() {
                     let rect = Rect::from_min_size(
                         pos2(
                             inner.left() + 5.0 + index as f32 * ((left_width - 16.0) / 2.0 + 6.0),
@@ -1319,19 +1180,36 @@ pub fn battle_setup(
                         ),
                         vec2((left_width - 16.0) / 2.0, 326.0 + extra_height),
                     );
-                    let response = ui
-                        .interact(rect, Id::unique(("setup battle", battle.0)), Sense::click())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    // An extra level plays its own team battle; Solo Assault waits for a
+                    // standard map (`showBattleFormat`).
+                    let unavailable = battle.unavailable_on(options.map_mode);
+                    let id = Id::unique(("setup battle", battle.mode));
+                    let response = match &unavailable {
+                        Some(tip) => ui
+                            .interact(rect, id, Sense::hover())
+                            .on_hover_cursor(egui::CursorIcon::NotAllowed)
+                            .on_hover_text(tip),
+                        None => ui
+                            .interact(rect, id, Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand),
+                    };
+                    let mut card_painter = painter.clone();
+                    if unavailable.is_some() {
+                        card_painter.multiply_opacity(UNAVAILABLE_OPACITY);
+                    }
                     battle_card(
-                        &painter,
+                        &card_painter,
                         art,
                         rect,
-                        *battle,
-                        prefs.game_mode == battle.0,
-                        response.hovered(),
+                        battle,
+                        &battle.detail_on(options.map_mode),
+                        options.game_mode == battle.mode,
+                        unavailable.is_none() && response.hovered(),
                     );
-                    if response.clicked() {
-                        prefs.game_mode = battle.0.into();
+                    // The format kept for the standard maps changes only by choosing one
+                    // there, never by the extra level's own team battle.
+                    if response.clicked() && options.game_mode != battle.mode {
+                        prefs.game_mode = battle.mode;
                     }
                 }
                 // DIFFICULTY, and GO under it.
@@ -1344,7 +1222,7 @@ pub fn battle_setup(
                     14,
                     hexa(0x071328, 0.85),
                 );
-                for (index, entry) in DIFFICULTIES.iter().enumerate() {
+                for (index, entry) in DIFFICULTY_OPTIONS.iter().enumerate() {
                     let rect = Rect::from_min_size(
                         pos2(
                             right_left + 5.0,
@@ -1355,7 +1233,7 @@ pub fn battle_setup(
                     let response = ui
                         .interact(
                             rect,
-                            Id::unique(("setup difficulty", entry.0)),
+                            Id::unique(("setup difficulty", entry.difficulty)),
                             Sense::click(),
                         )
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -1363,12 +1241,12 @@ pub fn battle_setup(
                         &painter,
                         rect,
                         index,
-                        *entry,
-                        prefs.difficulty == entry.0,
+                        entry,
+                        prefs.difficulty == entry.difficulty,
                         response.hovered(),
                     );
                     if response.clicked() {
-                        prefs.difficulty = entry.0.into();
+                        prefs.difficulty = entry.difficulty;
                     }
                 }
                 let go = Rect::from_min_size(
