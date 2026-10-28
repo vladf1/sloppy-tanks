@@ -9,10 +9,8 @@ use std::sync::Arc;
 
 use sloppy_core::net::client::{ClientAction, POLL_MS, SavedSeat};
 use sloppy_core::net::protocol::RoomPhase;
-use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES};
+use sloppy_core::sim::Team;
 use sloppy_core::sim::map_options::map_option_for;
-use sloppy_core::sim::simulation::SpeedTuning;
-use sloppy_core::sim::{GameMode, Team};
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::wgpu;
 use sloppy_web::hud::Hud;
@@ -595,31 +593,20 @@ impl RoomSession {
             .map(|row| row.team)
             .or(self.menu.team())
             .unwrap_or(Team::Blue);
-        let settings = self.menu.lobby.as_ref().map(|lobby| lobby.settings);
-        let hud = Hud {
+        // The default HUD is a team battle with the standard score limit and team names.
+        let mut hud = Hud {
             match_state: room.match_state.clone(),
-            elapsed: 0.0,
-            game_mode: GameMode::Team,
-            endless_match: false,
-            map_mode: settings
-                .map(|settings| settings.map_mode)
-                .unwrap_or_default(),
-            map_name: settings
-                .map(|settings| map_option_for(settings.map_mode).name.to_owned())
-                .unwrap_or_default(),
-            difficulty: settings
-                .map(|settings| settings.difficulty)
-                .unwrap_or_default(),
             human_team,
-            score_limit: SCORE_LIMIT,
-            team_names: TEAM_NAMES,
-            active_enemies: 0,
-            speed_tuning: SpeedTuning::default(),
             human: room.human,
             scoreboard: room.scoreboard.into_owned(),
-            recap: None,
             score_pill: room.score_pill,
+            ..Hud::default()
         };
+        if let Some(lobby) = &self.menu.lobby {
+            hud.map_mode = lobby.settings.map_mode;
+            hud.map_name = map_option_for(lobby.settings.map_mode).name.to_owned();
+            hud.difficulty = lobby.settings.difficulty;
+        }
         self.ui.tick(self.hud_dt);
         self.hud_dt = 0.0;
         self.ui.hud = Some(hud);

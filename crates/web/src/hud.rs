@@ -173,7 +173,8 @@ pub fn room_hud<'a>(state: &'a RenderState, timers: &mut EffectTimers) -> Option
     })
 }
 
-fn hud_ammo(
+/// The ammo rack's slots for a `kind` of tank carrying `ammo`, with `equipped` selected.
+pub fn hud_ammo(
     kind: VehicleKind,
     ammo: &AmmoInventory,
     equipped: Weapon,
@@ -280,12 +281,8 @@ impl Scoreboard<'_> {
                 kind: tank.kind,
             }))
             .chain(kept.iter().map(|row| HudScore {
-                id: row.id,
                 name: Cow::Borrowed(&row.name),
-                kills: row.kills,
-                deaths: row.deaths,
-                team: row.team,
-                kind: row.kind,
+                ..*row
             }))
     }
 
@@ -698,30 +695,16 @@ impl ScorePill {
         }
     }
 
-    /// What the clock says.
-    pub fn clock(self) -> PillClock {
-        PillClock(self)
-    }
-}
-
-/// The score pill's clock as it reads: [`NEXT_KILL`] in overtime, the time as m:ss
-/// otherwise, written straight into the HUD's text.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PillClock(ScorePill);
-
-impl fmt::Display for PillClock {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        if self.0.overtime {
-            formatter.write_str(NEXT_KILL)
-        } else {
-            write!(formatter, "{}", duration(self.0.seconds))
-        }
-    }
-}
-
-impl Serialize for PillClock {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
+    /// What the clock says: [`NEXT_KILL`] in overtime, the time as m:ss otherwise,
+    /// written straight into the HUD's text.
+    pub fn clock(self) -> impl fmt::Display {
+        fmt::from_fn(move |formatter| {
+            if self.overtime {
+                formatter.write_str(NEXT_KILL)
+            } else {
+                write!(formatter, "{}", duration(self.seconds))
+            }
+        })
     }
 }
 
@@ -731,7 +714,7 @@ impl Serialize for ScorePill {
         let mut pill = serializer.serialize_struct("ScorePill", 3)?;
         pill.serialize_field("objective", &self.objective)?;
         pill.serialize_field("overtime", &self.overtime)?;
-        pill.serialize_field("clock", &self.clock())?;
+        pill.serialize_field("clock", &format_args!("{}", self.clock()))?;
         pill.end()
     }
 }
