@@ -5,6 +5,7 @@
 import { readFile } from "node:fs/promises";
 import { chromium } from "playwright";
 import { headless } from "./browser-helpers.mjs";
+import { generateDesktopIcon } from "./generate-desktop-icon.mjs";
 
 /** Apple's Home Screen size, then the manifest's two standard sizes. */
 const ICONS = [
@@ -40,3 +41,4 @@ try {
 } finally {
   await browser.close();
 }
+await generateDesktopIcon();

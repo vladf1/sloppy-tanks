@@ -31,6 +31,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
+import { verifyDesktopIcon } from "./generate-desktop-icon.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const output = join(root, "artifacts/desktop");
@@ -90,7 +91,17 @@ function ensureTargets(targets) {
 function build(target) {
   run(
     "cargo",
-    ["build", "--locked", "--profile", PROFILE, "--target", target, "-p", "sloppy-desktop"],
+    [
+      "build",
+      "--locked",
+      "--timings",
+      "--profile",
+      PROFILE,
+      "--target",
+      target,
+      "-p",
+      "sloppy-desktop",
+    ],
     { env: { ...process.env, ...stamps } },
   );
   const extension = target.includes("windows") ? ".exe" : "";
@@ -116,25 +127,6 @@ function plist(entries) {
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
     `<plist version="1.0">\n<dict>\n${values}\n</dict>\n</plist>\n`
   );
-}
-
-/** The app icon in macOS's shape (`crates/desktop/examples/app_icon.rs`: the web app's
- * art in a rounded square with Apple's margin and shadow), at every size. */
-function makeIcns(destination, scratch) {
-  const iconset = join(scratch, "AppIcon.iconset");
-  rmSync(iconset, { recursive: true, force: true });
-  run("cargo", [
-    "run",
-    "--locked",
-    "-q",
-    "-p",
-    "sloppy-desktop",
-    "--example",
-    "app_icon",
-    "--",
-    iconset,
-  ]);
-  run("iconutil", ["--convert", "icns", "--output", destination, iconset]);
 }
 
 /** The keychain's first identity named `kind` ("Developer ID Application"), or the one
@@ -199,7 +191,14 @@ function notarize(file, staple, notary) {
 
 function buildMac() {
   if (process.platform !== "darwin") {
-    console.error("The macOS app needs a Mac (sips, iconutil, codesign).");
+    console.error("The macOS app needs a Mac (codesign, productbuild, notarytool).");
+    process.exit(1);
+  }
+  let appIcon;
+  try {
+    appIcon = verifyDesktopIcon();
+  } catch (error) {
+    console.error(error.message);
     process.exit(1);
   }
   ensureTargets([MAC_TARGET]);
@@ -213,7 +212,7 @@ function buildMac() {
   mkdirSync(join(contents, "Resources"), { recursive: true });
   const executable = join(contents, "MacOS", BINARY);
   copyFileSync(binary, executable);
-  makeIcns(join(contents, "Resources", "AppIcon.icns"), scratch);
+  copyFileSync(appIcon, join(contents, "Resources", "AppIcon.icns"));
   const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   writeFileSync(
     join(contents, "Info.plist"),
