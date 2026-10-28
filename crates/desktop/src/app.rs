@@ -16,21 +16,22 @@ use sloppy_render::gpu::RenderTarget;
 use sloppy_render::wgpu;
 use sloppy_web::{Game, frame_slot};
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, ElementState, Touch, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::audio::Audio;
 use crate::bakes::{self, Bake};
 use crate::engine_api::{EventBatch, HudState, Phase};
 use crate::frame_log::{FrameLog, FrameParts};
+use crate::hardware_keys::HardwareKeys;
 use crate::input::{Controls, Shortcut, pack};
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
 use crate::room::{POLL_MS, RoomSession, SavedSeats};
 use crate::room_api::RoomSelection;
+use crate::touch::{Fingers, Play};
 use crate::ui::rooms::RoomsState;
 use crate::ui::{self, Action, UiState};
 
@@ -39,8 +40,10 @@ const PREPARE_BUDGET: u32 = 4;
 /// Frames between Stats for nerds readings.
 const STATS_EVERY_FRAMES: u64 = 15;
 /// The window's first size, in points.
-const WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 800.0);
-const MIN_WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(1100.0, 720.0);
+#[cfg(not(target_os = "ios"))]
+const WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1280.0, 800.0);
+#[cfg(not(target_os = "ios"))]
+const MIN_WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1100.0, 720.0);
 /// How often a window that takes no frames tries again.
 const HIDDEN_RECHECK: Duration = Duration::from_millis(100);
 /// Battle Setup's status once the arena is ready.
@@ -154,6 +157,17 @@ fn build_line() -> String {
     )
 }
 
+/// The window's size in pixels as the renderer and egui draw it. On iOS winit's inner
+/// size is only the safe area, while the view and its Metal layer cover the screen
+/// (egui-winit lays out on the whole screen and keeps the insets apart).
+pub fn drawable_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
+    if cfg!(target_os = "ios") {
+        window.outer_size()
+    } else {
+        window.inner_size()
+    }
+}
+
 /// The engine's clock, in milliseconds (the origin `Game` and `NetGame` read too).
 pub fn now_ms() -> f64 {
     sloppy_web::clock_start().elapsed().as_secs_f64() * 1000.0
@@ -206,6 +220,10 @@ struct Session {
     seats: SavedSeats,
     /// CREATE ROOM or JOIN ROOM: the app hands the window to the room.
     pending_room: Option<RoomSelection>,
+    /// Which fingers the menus own, on a touch screen.
+    fingers: Fingers,
+    /// An iPad's keyboard, read each frame.
+    hardware_keys: HardwareKeys,
 }
 
 impl ApplicationHandler for App {
@@ -269,6 +287,21 @@ impl ApplicationHandler for App {
         }
     }
 
+    /// iOS takes the screen away for a moment (Control Center, the app switcher, a
+    /// call): fingers let go and single player pauses, as a hidden window does.
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        match &mut self.mode {
+            Some(Mode::Single(session)) => {
+                session.controls.clear();
+                if session.in_round && session.phase == Phase::Playing {
+                    session.apply(Action::Pause);
+                }
+            }
+            Some(Mode::Room(room)) => room.controls.clear(),
+            None => {}
+        }
+    }
+
     /// The app ends however it was asked to (the macOS menu's Quit included): a room
     /// says it is leaving first.
     fn exiting(&mut self, _event_loop: &ActiveEventLoop) {
@@ -316,19 +349,16 @@ impl ApplicationHandler for App {
 impl Session {
     fn new(event_loop: &ActiveEventLoop, options: &Options) -> Result<Self, String> {
         let prefs = Preferences::load();
-        let mut attributes = Window::default_attributes()
-            .with_title("Sloppy Tanks")
-            .with_inner_size(WINDOW_SIZE)
-            .with_min_inner_size(MIN_WINDOW_SIZE)
-            .with_window_icon(window_icon());
-        if prefs.fullscreen {
-            attributes = attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
-        }
         let window = Arc::new(
             event_loop
-                .create_window(attributes)
+                .create_window(window_attributes(&prefs))
                 .map_err(|error| error.to_string())?,
         );
+        #[cfg(target_os = "ios")]
+        {
+            crate::ios::attach_to_scene(&window);
+            crate::ios::listen_for_keys(&window);
+        }
         let mut rooms = RoomsState::default();
         if let Some(directory) = &options.directory {
             rooms.directory.clone_from(directory);
@@ -359,7 +389,7 @@ impl Session {
             frame_log,
             autoplay,
         } = shell;
-        let size = window.inner_size();
+        let size = drawable_size(&window);
         let scale = window.scale_factor();
         let logical = size.to_logical::<f64>(scale);
         let target = RenderTarget {
@@ -381,7 +411,7 @@ impl Session {
             "firstPerson": prefs.first_person,
             "zoom": prefs.zoom,
             "graphics": prefs.graphics,
-            "device": "desktop",
+            "device": crate::DEVICE,
             "autoplay": autoplay,
         });
         let mut game = pollster::block_on(Game::create(target, &config.to_string()))?;
@@ -426,6 +456,8 @@ impl Session {
             parts: FrameParts::default(),
             seats,
             pending_room: None,
+            fingers: Fingers::default(),
+            hardware_keys: HardwareKeys::default(),
             prefs,
         };
         session.ui.starting = autoplay;
@@ -467,6 +499,12 @@ impl Session {
         if let WindowEvent::RedrawRequested = event {
             return self.redraw();
         }
+        if crate::TOUCH
+            && let WindowEvent::Touch(touch) = event
+            && !self.route_touch(touch)
+        {
+            return false;
+        }
         let battle =
             self.in_round && self.phase == Phase::Playing && self.ui.settings_draft.is_none();
         let keys_to_menus = !battle || self.overlay.typing();
@@ -500,23 +538,12 @@ impl Session {
                 );
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                // Typing goes to the field; a release still reaches the controls, so
-                // a key held when a field took focus never sticks.
-                if self.overlay.typing() && event.state == ElementState::Pressed {
-                    return false;
-                }
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    if code == KeyCode::KeyQ && self.modifiers.super_key() {
-                        return true;
-                    }
-                    let shortcut = self.controls.key(code, event.state, event.repeat, playing);
-                    if let Some(shortcut) = shortcut {
-                        self.shortcut(shortcut);
-                    }
+                    return self.key(code, event.state, event.repeat);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let size = self.window.inner_size();
+                let size = drawable_size(&self.window);
                 self.controls.aim_at(
                     (position.x, position.y),
                     (f64::from(size.width), f64::from(size.height)),
@@ -541,6 +568,63 @@ impl Session {
             _ => {}
         }
         false
+    }
+
+    /// Apply what an iPad's keyboard pressed and released since the last frame; true
+    /// when the app should quit.
+    fn hardware_keys(&mut self) -> bool {
+        let Some((keys, command)) = self.hardware_keys.changes(&self.window) else {
+            return false;
+        };
+        self.controls.set_command(command);
+        keys.into_iter().fold(false, |quit, (code, state)| {
+            self.key(code, state, false) || quit
+        })
+    }
+
+    /// A key went down or up; true when the app should quit.
+    fn key(&mut self, code: KeyCode, state: ElementState, repeat: bool) -> bool {
+        // Typing goes to the field; a release still reaches the controls, so a key
+        // held when a field took focus never sticks.
+        if self.overlay.typing() && state == ElementState::Pressed {
+            return false;
+        }
+        if code == KeyCode::KeyQ && self.modifiers.super_key() {
+            return true;
+        }
+        let playing = self.in_round && self.phase == Phase::Playing && self.alive;
+        if let Some(shortcut) = self.controls.key(code, state, repeat, playing) {
+            self.shortcut(shortcut);
+        }
+        false
+    }
+
+    /// The touch controls while the player can act on a touch screen.
+    fn touch_play(&self) -> Option<Play> {
+        let acting = self.in_round
+            && self.phase == Phase::Playing
+            && self.alive
+            && self.ui.settings_draft.is_none();
+        Play::live(
+            &self.overlay.context,
+            acting,
+            self.first_person,
+            self.ui.hud.as_ref(),
+        )
+    }
+
+    /// Hand a finger to the touch controls or the menus; true when egui should see it.
+    fn route_touch(&mut self, touch: &Touch) -> bool {
+        let play = self.touch_play();
+        let context = &self.overlay.context;
+        self.fingers.route(
+            touch,
+            self.window.scale_factor(),
+            play.as_ref(),
+            |point| context.layer_id_at(point).is_some(),
+            context.viewport_rect().size(),
+            &mut self.controls,
+        )
     }
 
     /// Whether the window can show nothing: covered, or minimized.
@@ -580,13 +664,15 @@ impl Session {
                     self.ui.show_nerd_stats = !self.ui.show_nerd_stats;
                 }
             }
+            // An iPad app always fills the screen.
+            Shortcut::Fullscreen if crate::TOUCH => {}
             Shortcut::Fullscreen => self.apply(Action::ToggleFullscreen),
         }
     }
 
     /// Render at the window's size in points times its scale (the engine caps it).
     fn resize(&mut self) {
-        let size = self.window.inner_size();
+        let size = drawable_size(&self.window);
         let scale = self.window.scale_factor();
         let logical = size.to_logical::<f64>(scale);
         self.game
@@ -807,6 +893,7 @@ impl Session {
 
     /// One engine frame of the round; its events and HUD reach the screens.
     fn battle_frame(&mut self, now: f64) -> Result<(), String> {
+        self.controls.stick_turns = crate::TOUCH && self.first_person;
         let input = self.controls.take_input();
         let zoomed = input.zoom != 0.0;
         let result = self.game.frame(now, &pack(&input))?;
@@ -853,7 +940,9 @@ impl Session {
 
     /// Grab the cursor while first person steers, so the mouse turns the view.
     fn hold_pointer(&mut self) {
-        let wanted = self.in_round
+        // A finger turns the first-person view on a touch screen.
+        let wanted = !crate::TOUCH
+            && self.in_round
             && self.first_person
             && self.phase == Phase::Playing
             && self.ui.settings_draft.is_none()
@@ -867,6 +956,7 @@ impl Session {
         let now = now_ms();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        let mut quit = self.hardware_keys();
         // A window that takes no frames only looks for its window again: engine frames
         // there would count as slow ones and lower Auto's graphics quality.
         if !self.frame_shown && self.in_round && self.phase == Phase::Playing {
@@ -896,6 +986,11 @@ impl Session {
             self.ui.stats = serde_json::from_str(&self.game.stats_json()).ok();
         }
         self.hold_pointer();
+        self.ui.touch = self.touch_play().map(|_| ui::touch::TouchView {
+            input: self.controls.touch,
+            first_person: self.first_person,
+            learned: self.fingers.learned,
+        });
         let view = ui::View {
             in_round: self.in_round,
             phase: self.phase,
@@ -930,7 +1025,6 @@ impl Session {
                 .and_then(|stats| stats["quality"]["gpuMs"].as_f64());
             log.frame(&self.parts, target, scene, gpu_ms);
         }
-        let mut quit = false;
         for action in actions {
             quit |= action == Action::Quit;
             self.apply(action);
@@ -960,7 +1054,36 @@ pub fn grab_pointer(window: &Window, wanted: bool, grabbed: &mut bool) {
     }
 }
 
+/// A resizable window at its first size, or fullscreen as the player left it.
+#[cfg(not(target_os = "ios"))]
+fn window_attributes(prefs: &Preferences) -> WindowAttributes {
+    let attributes = Window::default_attributes()
+        .with_title("Sloppy Tanks")
+        .with_inner_size(WINDOW_SIZE)
+        .with_min_inner_size(MIN_WINDOW_SIZE)
+        .with_window_icon(window_icon());
+    if prefs.fullscreen {
+        attributes.with_fullscreen(Some(Fullscreen::Borderless(None)))
+    } else {
+        attributes
+    }
+}
+
+/// The iPad's whole screen, held sideways (the menus and HUD need a landscape
+/// window), with no status bar; the system's edge swipes wait for a second swipe, so a
+/// thumb on the stick or the toolbar stays in the game.
+#[cfg(target_os = "ios")]
+fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
+    use winit::platform::ios::{ScreenEdge, ValidOrientations, WindowAttributesExtIOS};
+    Window::default_attributes()
+        .with_valid_orientations(ValidOrientations::Landscape)
+        .with_prefers_status_bar_hidden(true)
+        .with_prefers_home_indicator_hidden(true)
+        .with_preferred_screen_edges_deferring_system_gestures(ScreenEdge::ALL)
+}
+
 /// The window's icon (Windows and Linux show it; macOS takes the bundle's).
+#[cfg(not(target_os = "ios"))]
 fn window_icon() -> Option<winit::window::Icon> {
     let image = image::load_from_memory(crate::assets::file("icons/icon-192.png")?).ok()?;
     let image = image.into_rgba8();

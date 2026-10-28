@@ -44,11 +44,14 @@ the server:
   controls, audio and the room page's DOM. Game rules, simulation, rendering,
   effects and replication must not come back into TypeScript; the import
   boundary tests (`tests/*-imports.test.ts`) allowlist the shell modules.
-- `crates/desktop` (native, macOS and Windows): the other shell, binary
+- `crates/desktop` (native, macOS, Windows and iPad): the other shell, binary
   `sloppy-tanks`. A winit window drawn by wgpu on Metal or Direct3D 12
   (`sloppy-render`'s `native` feature), egui menus and HUD, and the same `Game`
   and `NetGame` the page drives (`sloppy-web`'s `native` feature). Game rules stay
-  out of both shells.
+  out of both shells. The iPad build is the same crate for `aarch64-apple-ios`
+  (`TOUCH` in `main.rs`): touch controls painted in egui (`touch.rs`,
+  `ui/touch.rs`), no Quit or fullscreen, and `ios.rs` for what winit 0.30 lacks
+  there (the UIScene life cycle iOS 27 requires, hardware keyboard presses).
 
 ## Code style
 
@@ -111,6 +114,7 @@ cargo test --workspace --exclude sloppy-desktop --test integration navigation:: 
 node --import tsx --test tests/foo.test.ts    # focused page-shell test
 pnpm run validate                     # seeded headless matches and reset checks
 pnpm run desktop                      # the desktop app for this Mac or Windows PC into artifacts/desktop/
+pnpm run ipad:simulator -- --install  # the iPad app, opened in a booted iPad simulator
 pnpm run dev                          # browser work; use the printed URL
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
 ```

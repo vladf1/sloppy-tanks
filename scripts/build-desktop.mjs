@@ -1,9 +1,15 @@
 // Build the desktop app (crates/desktop, binary `sloppy-tanks`) into the ignored
-// `artifacts/desktop/`.
+// `artifacts/desktop/`, or the same app for iPad into `artifacts/ipad/`.
 //
 //   node scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, a zip and a .pkg
 //   node scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
 //   node scripts/build-desktop.mjs             # whichever this machine is
+//   node scripts/build-desktop.mjs --ipad              # Sloppy Tanks.app and an .ipa for iPads
+//   node scripts/build-desktop.mjs --ipad-simulator    # the app for Xcode's iPad simulators
+//
+// Add `--install` to an iPad build to install and open it on the first connected iPad
+// (`SLOPPY_IOS_DEVICE` names another device) or on a booted iPad simulator (one is
+// booted when none is).
 //
 // Like the browser engine and the server, the app is stamped with the content version
 // multiplayer joins send (`SLOPPY_CONTENT_VERSION`), so only a build through this script
@@ -25,8 +31,24 @@
 // `SLOPPY_NOTARY_ISSUER`). `SLOPPY_MAC_APP_IDENTITY` and `SLOPPY_MAC_INSTALLER_IDENTITY`
 // pick an identity when there are several. Without an identity the app gets only the
 // ad-hoc signature arm64 needs to run at all, and the package none.
+//
+// An iPad build for devices is signed with an "Apple Development" identity and the
+// provisioning profile Xcode keeps for it whose app ID covers the bundle identifier
+// (the team's wildcard profile does); `SLOPPY_IOS_PROFILE` names a profile file and
+// `SLOPPY_IOS_IDENTITY` an identity instead. Without them the app is signed ad hoc and
+// installs on no device. Simulator builds need no signing.
 import { spawnSync } from "node:child_process";
-import { copyFileSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import {
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "./content-version.mjs";
@@ -44,6 +66,13 @@ const BUNDLE_ID = "me.fridman.sloppy-tanks";
 const MINIMUM_MACOS = "11.0";
 const MAC_TARGET = "aarch64-apple-darwin";
 const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
+// The iPad app needs Metal and the landscape full-screen window iPadOS 16 gives every
+// iPad since 2017.
+const MINIMUM_IPADOS = "16.0";
+const IPAD_TARGET = "aarch64-apple-ios";
+const IPAD_SIMULATOR_TARGET = "aarch64-apple-ios-sim";
+// The launch screen's colour, Battle Setup's backdrop (`theme::BACKDROP`).
+const LAUNCH_BACKGROUND = [0x0a, 0x15, 0x27];
 
 /** Run `command` from the repository root and exit the process unless it succeeds. */
 function run(command, args, options = {}) {
@@ -88,7 +117,7 @@ function ensureTargets(targets) {
 }
 
 /** Build the app for `target` and return its executable's path. */
-function build(target) {
+function build(target, env = {}) {
   run(
     "cargo",
     [
@@ -102,7 +131,7 @@ function build(target) {
       "-p",
       "sloppy-desktop",
     ],
-    { env: { ...process.env, ...stamps } },
+    { env: { ...process.env, ...stamps, ...env } },
   );
   const extension = target.includes("windows") ? ".exe" : "";
   return join(root, "target", target, PROFILE, BINARY + extension);
@@ -112,20 +141,29 @@ function megabytes(path) {
   return `${(statSync(path).size / 1e6).toFixed(1)} MB`;
 }
 
+/** A property list of `entries`: strings, booleans, integers, arrays and objects. */
 function plist(entries) {
   const escape = (text) =>
     text.replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;");
-  const values = Object.entries(entries)
-    .map(([key, value]) => {
-      const element =
-        typeof value === "boolean" ? `<${value}/>` : `<string>${escape(value)}</string>`;
-      return `\t<key>${key}</key>\n\t${element}`;
-    })
-    .join("\n");
+  const element = (value, indent) => {
+    if (typeof value === "boolean") return `<${value}/>`;
+    if (typeof value === "number") return `<integer>${value}</integer>`;
+    if (typeof value === "string") return `<string>${escape(value)}</string>`;
+    const inner = `${indent}\t`;
+    if (Array.isArray(value)) {
+      const items = value.map((item) => `${inner}${element(item, inner)}`).join("\n");
+      return `<array>\n${items}\n${indent}</array>`;
+    }
+    return `<dict>\n${dictionary(value, inner)}\n${indent}</dict>`;
+  };
+  const dictionary = (object, indent) =>
+    Object.entries(object)
+      .map(([key, value]) => `${indent}<key>${key}</key>\n${indent}${element(value, indent)}`)
+      .join("\n");
   return (
     '<?xml version="1.0" encoding="UTF-8"?>\n' +
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
-    `<plist version="1.0">\n<dict>\n${values}\n</dict>\n</plist>\n`
+    `<plist version="1.0">\n<dict>\n${dictionary(entries, "\t")}\n</dict>\n</plist>\n`
   );
 }
 
@@ -340,9 +378,307 @@ function buildWindows() {
   console.log(`Built ${destination} (${megabytes(destination)})`);
 }
 
+/** A provisioning profile's fields, or null when it cannot be read. */
+function readProfile(file, scratch) {
+  const decoded = join(scratch, "profile.plist");
+  if (!attempt("security", ["cms", "-D", "-i", file, "-o", decoded]).ok) return null;
+  const field = (key, format = "raw") =>
+    capture("plutil", ["-extract", key, format, "-o", "-", decoded]);
+  const certificates = [];
+  for (let index = 0; ; index += 1) {
+    const certificate = field(`DeveloperCertificates.${index}`);
+    if (!certificate) break;
+    certificates.push(
+      createHash("sha1").update(Buffer.from(certificate, "base64")).digest("hex").toUpperCase(),
+    );
+  }
+  return {
+    file,
+    name: field("Name"),
+    appId: field("Entitlements.application-identifier"),
+    team: field("TeamIdentifier.0"),
+    platforms: field("Platform", "json"),
+    expires: new Date(field("ExpirationDate")),
+    debuggable: field("Entitlements.get-task-allow") === "true",
+    // App Store profiles list no devices and install on none.
+    devices: field("ProvisionedDevices", "json") !== "",
+    certificates,
+  };
+}
+
+/** The keychain's code-signing identities: SHA-1 and name. */
+function signingIdentities() {
+  const listed = capture("security", ["find-identity", "-v", "-p", "codesigning"]);
+  return [...listed.matchAll(/\) ([0-9A-F]{40}) "([^"]+)"/g)].map(([, hash, name]) => ({
+    hash,
+    name,
+  }));
+}
+
+/** The profile and identity that sign the iPad app for devices (see the top of the
+ * file), or null. */
+function iosSigning(scratch) {
+  const identities = signingIdentities().filter(({ name }) =>
+    process.env.SLOPPY_IOS_IDENTITY
+      ? name === process.env.SLOPPY_IOS_IDENTITY || name.startsWith(process.env.SLOPPY_IOS_IDENTITY)
+      : /^(Apple|iPhone) Development: /.test(name),
+  );
+  const home = process.env.HOME ?? "";
+  const folders = [
+    join(home, "Library/Developer/Xcode/UserData/Provisioning Profiles"),
+    join(home, "Library/MobileDevice/Provisioning Profiles"),
+  ];
+  const files = process.env.SLOPPY_IOS_PROFILE
+    ? [process.env.SLOPPY_IOS_PROFILE]
+    : folders.flatMap((folder) =>
+        existsSync(folder)
+          ? readdirSync(folder)
+              .filter((name) => name.endsWith(".mobileprovision"))
+              .map((name) => join(folder, name))
+          : [],
+      );
+  const candidates = [];
+  for (const file of files) {
+    const profile = readProfile(file, scratch);
+    if (!profile || !profile.platforms.includes("iOS") || !profile.devices) continue;
+    if (!(profile.expires > new Date())) continue;
+    const wanted = `${profile.team}.${BUNDLE_ID}`;
+    const covers =
+      profile.appId === wanted ||
+      (profile.appId.endsWith("*") && wanted.startsWith(profile.appId.slice(0, -1)));
+    const identity = identities.find(({ hash }) => profile.certificates.includes(hash));
+    if (covers && identity) candidates.push({ profile, identity, exact: profile.appId === wanted });
+  }
+  // An app ID of its own beats a wildcard; then the longest-lived profile.
+  candidates.sort(
+    (a, b) => Number(b.exact) - Number(a.exact) || b.profile.expires - a.profile.expires,
+  );
+  return candidates[0] ?? null;
+}
+
+/** The app icon and launch colour as an asset catalog, compiled into `app` by actool;
+ * returns the Info.plist entries actool wrote for them. */
+function compileAssets(app, scratch, platform) {
+  const catalog = join(scratch, "Assets.xcassets");
+  const info = { info: { author: "xcode", version: 1 } };
+  const iconSet = join(catalog, "AppIcon.appiconset");
+  mkdirSync(iconSet, { recursive: true });
+  writeFileSync(join(catalog, "Contents.json"), JSON.stringify(info));
+  // iPadOS draws every size from one 1024-point square, the web app's artwork scaled up.
+  run("sips", [
+    ...["-z", "1024", "1024", join(root, "public/icons/icon-512.png")],
+    ...["--out", join(iconSet, "icon-1024.png")],
+  ]);
+  writeFileSync(
+    join(iconSet, "Contents.json"),
+    JSON.stringify({
+      ...info,
+      images: [
+        { filename: "icon-1024.png", idiom: "universal", platform: "ios", size: "1024x1024" },
+      ],
+    }),
+  );
+  const colorSet = join(catalog, "LaunchBackground.colorset");
+  mkdirSync(colorSet, { recursive: true });
+  const [red, green, blue] = LAUNCH_BACKGROUND.map((channel) => `0x${channel.toString(16)}`);
+  writeFileSync(
+    join(colorSet, "Contents.json"),
+    JSON.stringify({
+      ...info,
+      colors: [
+        {
+          idiom: "universal",
+          color: { "color-space": "srgb", components: { red, green, blue, alpha: "1.000" } },
+        },
+      ],
+    }),
+  );
+  const partial = join(scratch, "assets-info.plist");
+  run("xcrun", [
+    ...["actool", catalog, "--compile", app, "--platform", platform],
+    ...["--minimum-deployment-target", MINIMUM_IPADOS, "--target-device", "ipad"],
+    ...["--app-icon", "AppIcon", "--output-partial-info-plist", partial],
+    ...["--output-format", "human-readable-text", "--notices", "--warnings"],
+  ]);
+  return JSON.parse(capture("plutil", ["-convert", "json", "-o", "-", partial]) || "{}");
+}
+
+function buildIpad(simulator) {
+  if (process.platform !== "darwin") {
+    console.error("The iPad app builds on a Mac with Xcode (actool, codesign).");
+    process.exit(1);
+  }
+  const target = simulator ? IPAD_SIMULATOR_TARGET : IPAD_TARGET;
+  const platform = simulator ? "iphonesimulator" : "iphoneos";
+  ensureTargets([target]);
+  const binary = build(target, { IPHONEOS_DEPLOYMENT_TARGET: MINIMUM_IPADOS });
+
+  const scratch = join(
+    root,
+    "target",
+    PROFILE,
+    simulator ? "ipad-simulator-bundle" : "ipad-bundle",
+  );
+  rmSync(scratch, { recursive: true, force: true });
+  const app = join(scratch, `${APP_NAME}.app`);
+  mkdirSync(app, { recursive: true });
+  copyFileSync(binary, join(app, BINARY));
+  const assets = compileAssets(app, scratch, platform);
+  const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
+  const landscape = ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"];
+  writeFileSync(
+    join(app, "Info.plist"),
+    plist({
+      CFBundleDevelopmentRegion: "en",
+      CFBundleDisplayName: APP_NAME,
+      CFBundleExecutable: BINARY,
+      CFBundleIdentifier: BUNDLE_ID,
+      CFBundleInfoDictionaryVersion: "6.0",
+      CFBundleName: APP_NAME,
+      CFBundlePackageType: "APPL",
+      CFBundleShortVersionString: version,
+      CFBundleVersion: stamps.SLOPPY_RELEASE,
+      CFBundleSupportedPlatforms: [simulator ? "iPhoneSimulator" : "iPhoneOS"],
+      LSApplicationCategoryType: "public.app-category.action-games",
+      LSRequiresIPhoneOS: true,
+      MinimumOSVersion: MINIMUM_IPADOS,
+      // iPad only: the menus and HUD need a landscape screen of 1024 points or more.
+      UIDeviceFamily: [2],
+      UIRequiredDeviceCapabilities: ["arm64", "metal"],
+      UIRequiresFullScreen: true,
+      UISupportedInterfaceOrientations: landscape,
+      "UISupportedInterfaceOrientations~ipad": landscape,
+      UIStatusBarHidden: true,
+      UIApplicationSupportsIndirectInputEvents: true,
+      UILaunchScreen: { UIColorName: "LaunchBackground" },
+      // Apps built with the iOS 27 SDK launch only with the scene life cycle; the app
+      // puts winit's window into this one scene (crates/desktop/src/ios.rs).
+      UIApplicationSceneManifest: {
+        UIApplicationSupportsMultipleScenes: false,
+        UISceneConfigurations: {
+          UIWindowSceneSessionRoleApplication: [{ UISceneConfigurationName: "Default" }],
+        },
+      },
+      // TLS to the game servers is the only encryption, which export rules exempt.
+      ITSAppUsesNonExemptEncryption: false,
+      ...assets,
+    }),
+  );
+  writeFileSync(join(app, "PkgInfo"), "APPL????");
+
+  const signing = simulator ? null : iosSigning(scratch);
+  if (signing) {
+    const { profile, identity } = signing;
+    copyFileSync(profile.file, join(app, "embedded.mobileprovision"));
+    const entitlements = join(scratch, "entitlements.plist");
+    writeFileSync(
+      entitlements,
+      plist({
+        "application-identifier": `${profile.team}.${BUNDLE_ID}`,
+        "com.apple.developer.team-identifier": profile.team,
+        "get-task-allow": profile.debuggable,
+      }),
+    );
+    console.log(`Signing with ${identity.name} and the profile "${profile.name}".`);
+    run("codesign", [
+      ...["--force", "--sign", identity.hash, "--entitlements", entitlements],
+      ...["--generate-entitlement-der", app],
+    ]);
+    run("codesign", ["--verify", "--strict", "--verbose=2", app]);
+  } else {
+    if (!simulator) {
+      console.warn(
+        "No Apple Development identity with a provisioning profile for " +
+          `${BUNDLE_ID}: the app is signed ad hoc and installs on no iPad.`,
+      );
+    }
+    run("codesign", ["--force", "--sign", "-", app]);
+  }
+
+  const folder = join(root, simulator ? "artifacts/ipad-simulator" : "artifacts/ipad");
+  mkdirSync(folder, { recursive: true });
+  const built = join(folder, `${APP_NAME}.app`);
+  rmSync(built, { recursive: true, force: true });
+  run("ditto", [app, built]);
+  console.log(`Built ${built} (${megabytes(join(app, BINARY))})`);
+  const artifact = join(
+    folder,
+    `${APP_NAME.replaceAll(" ", "-")}-${stamps.SLOPPY_RELEASE}-iPad${simulator ? "-Simulator" : ""}`,
+  );
+  if (simulator) {
+    const zip = `${artifact}.zip`;
+    rmSync(zip, { force: true });
+    run("ditto", ["-c", "-k", "--keepParent", app, zip]);
+    console.log(`Built ${zip} (${megabytes(zip)})`);
+  } else {
+    // An .ipa is the app in a Payload folder, zipped: what Apple Configurator, Xcode's
+    // Devices window and over-the-air installs take.
+    const payload = join(scratch, "ipa");
+    mkdirSync(join(payload, "Payload"), { recursive: true });
+    run("ditto", [app, join(payload, "Payload", `${APP_NAME}.app`)]);
+    const ipa = `${artifact}.ipa`;
+    rmSync(ipa, { force: true });
+    run("ditto", ["-c", "-k", "--norsrc", "--keepParent", join(payload, "Payload"), ipa]);
+    console.log(`Built ${ipa} (${megabytes(ipa)})`);
+  }
+  if (process.argv.includes("--install")) {
+    if (simulator) installOnSimulator(built);
+    else installOnIpad(built);
+  }
+}
+
+/** Install `app` on the booted iPad simulator (booting one if none is) and open it. */
+function installOnSimulator(app) {
+  const listed = JSON.parse(capture("xcrun", ["simctl", "list", "devices", "available", "--json"]));
+  const ipads = Object.values(listed.devices ?? {})
+    .flat()
+    .filter((device) => device.name.startsWith("iPad"));
+  let device = ipads.find((candidate) => candidate.state === "Booted");
+  if (!device) {
+    device = ipads[0];
+    if (!device) {
+      console.error("No iPad simulator: add one in Xcode's Devices and Simulators window.");
+      process.exit(1);
+    }
+    run("xcrun", ["simctl", "boot", device.udid]);
+  }
+  run("xcrun", ["simctl", "install", device.udid, app]);
+  run("xcrun", ["simctl", "launch", device.udid, BUNDLE_ID]);
+  console.log(`Opened on ${device.name} (simulator).`);
+}
+
+/** Install `app` on the first connected iPad, or the device `SLOPPY_IOS_DEVICE` names,
+ * and open it. */
+function installOnIpad(app) {
+  let device = process.env.SLOPPY_IOS_DEVICE;
+  if (!device) {
+    const listing = join(root, "target", PROFILE, "ipad-bundle", "devices.json");
+    run("xcrun", ["devicectl", "list", "devices", "--quiet", "--json-output", listing]);
+    const devices = JSON.parse(readFileSync(listing, "utf8")).result?.devices ?? [];
+    const ipad = devices.find(
+      (candidate) =>
+        candidate.hardwareProperties?.deviceType === "iPad" &&
+        candidate.hardwareProperties?.reality === "physical" &&
+        candidate.connectionProperties?.pairingState === "paired",
+    );
+    if (!ipad) {
+      console.error(
+        "No paired iPad is connected: set SLOPPY_IOS_DEVICE to a device's name or UDID.",
+      );
+      process.exit(1);
+    }
+    device = ipad.hardwareProperties.udid;
+  }
+  run("xcrun", ["devicectl", "device", "install", "app", "--device", device, app]);
+  run("xcrun", ["devicectl", "device", "process", "launch", "--device", device, BUNDLE_ID]);
+}
+
 const mac = process.argv.includes("--mac");
 const windows = process.argv.includes("--windows");
-if (mac || (!windows && process.platform === "darwin")) buildMac();
+const ipad = process.argv.includes("--ipad");
+const ipadSimulator = process.argv.includes("--ipad-simulator");
+if (ipad || ipadSimulator) buildIpad(ipadSimulator);
+else if (mac || (!windows && process.platform === "darwin")) buildMac();
 else if (windows || process.platform === "win32") buildWindows();
 else {
   console.error("Desktop builds are for macOS and Windows: pass --mac or --windows.");

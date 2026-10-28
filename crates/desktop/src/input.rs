@@ -1,16 +1,35 @@
-//! Keyboard and mouse for the engine (`src/game/controls.ts`): continuous input stays
-//! held, one-shot presses (a mine, an ammo choice, a wheel step) queue until
-//! [`Controls::take_input`] hands them to the engine, which applies them on its next
-//! simulation tick.
+//! Keyboard, mouse and touch for the engine (`src/game/controls.ts`,
+//! `touch-input.ts`): continuous input stays held, one-shot presses (a mine, an ammo
+//! choice, a wheel step) queue until [`Controls::take_input`] hands them to the engine,
+//! which applies them on its next simulation tick.
 
 use sloppy_render::presentation::input::{InputFrame, slot};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 use winit::keyboard::KeyCode;
 
-/// Metres of zoom per Shift + wheel notch.
-const ZOOM_STEP: f64 = 2.0;
+/// Metres of zoom per Shift + wheel notch, and per touch zoom key.
+pub const ZOOM_STEP: f64 = 2.0;
 /// Ammunition slots, keys 1-5 (`AMMO_ORDER`).
 const AMMO_SLOTS: u8 = 5;
+/// Points from the drive stick's origin to a full push (`STICK_RADIUS`).
+pub const STICK_RADIUS: f32 = 58.0;
+/// The share of a full push that drives nothing, so a resting thumb stays put.
+const STICK_DEADZONE: f64 = 0.12;
+
+/// The fingers that drive and fire (`TouchInput`): the drive stick's finger and its
+/// push, and the finger on the arena, which aims there and fires while it is down.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TouchInput {
+    /// The stick's finger and the point its push is measured from, in points.
+    pub drive: Option<(u64, (f32, f32))>,
+    /// The arena's finger and its last x in points, for first person's look.
+    pub arena: Option<(u64, f64)>,
+    /// The finger's offset from the stick's origin in stick radii (x right, y down);
+    /// the knob follows it to the rim.
+    pub knob: (f32, f32),
+    /// The push past the dead zone, length ≤ 1 (x right, z down).
+    pub push: (f64, f64),
+}
 
 /// What a key press asks of the shell rather than the tank.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,18 +64,101 @@ pub struct Controls {
     pub toggle_view: bool,
     /// A modifier is held: keys are shortcuts, not controls.
     command: bool,
+    pub touch: TouchInput,
+    /// First person on touch: the stick's sideways push turns the view and only its
+    /// forward push drives (no strafing).
+    pub stick_turns: bool,
 }
 
 impl Controls {
-    /// Clear held and queued input (a menu opened, the window lost focus, death).
+    /// Clear held and queued input (a menu opened, the window lost focus, death). A
+    /// finger still down then drives and fires nothing until it lifts.
     pub fn clear(&mut self) {
         let pointer = self.pointer;
         let command = self.command;
+        let stick_turns = self.stick_turns;
         *self = Self {
             pointer,
             command,
+            stick_turns,
             ..Self::default()
         };
+    }
+
+    /// A finger landed on the drive stick: its push is measured from `origin`.
+    pub fn begin_drive(&mut self, finger: u64, origin: (f32, f32), at: (f32, f32)) {
+        if self.touch.drive.is_none() {
+            self.touch.drive = Some((finger, origin));
+            self.move_drive(finger, at);
+        }
+    }
+
+    /// The stick's finger moved to `at` (points).
+    pub fn move_drive(&mut self, finger: u64, at: (f32, f32)) {
+        let Some((owner, origin)) = self.touch.drive else {
+            return;
+        };
+        if owner != finger {
+            return;
+        }
+        let x = (at.0 - origin.0) / STICK_RADIUS;
+        let y = (at.1 - origin.1) / STICK_RADIUS;
+        self.touch.knob = (x, y);
+        let distance = f64::from(x.hypot(y));
+        let speed = ((distance.min(1.0) - STICK_DEADZONE) / (1.0 - STICK_DEADZONE)).max(0.0);
+        self.touch.push = if distance > 0.0 {
+            (
+                f64::from(x) / distance * speed,
+                f64::from(y) / distance * speed,
+            )
+        } else {
+            (0.0, 0.0)
+        };
+    }
+
+    /// A finger landed on the open arena at `at` on a screen of `size` (points): the
+    /// turret turns there and fires until it lifts.
+    pub fn begin_arena(&mut self, finger: u64, at: (f64, f64), size: (f64, f64)) {
+        if self.touch.arena.is_none() {
+            self.touch.arena = Some((finger, at.0));
+            self.aim_at(at, size);
+        }
+    }
+
+    /// The arena's finger moved: it aims where it is, and its sideways travel turns
+    /// the first-person view (the engine reads each in its own view only).
+    pub fn move_arena(&mut self, finger: u64, at: (f64, f64), size: (f64, f64)) {
+        let Some((owner, last_x)) = self.touch.arena else {
+            return;
+        };
+        if owner != finger {
+            return;
+        }
+        self.look += at.0 - last_x;
+        self.touch.arena = Some((owner, at.0));
+        self.aim_at(at, size);
+    }
+
+    /// A finger lifted: the stick it held springs back, or the shot it held stops.
+    pub fn end_touch(&mut self, finger: u64) {
+        if self.touch.drive.is_some_and(|(owner, _)| owner == finger) {
+            self.touch.drive = None;
+            self.touch.knob = (0.0, 0.0);
+            self.touch.push = (0.0, 0.0);
+        }
+        if self.touch.arena.is_some_and(|(owner, _)| owner == finger) {
+            self.touch.arena = None;
+        }
+    }
+
+    /// The touch mine button.
+    pub fn drop_mine(&mut self) {
+        self.mine = true;
+    }
+
+    /// The touch zoom keys: metres out (positive) or in.
+    pub fn zoom_by(&mut self, metres: f64) {
+        self.zoom += metres;
     }
 
     /// Cmd on macOS, Ctrl on Windows (or Alt): game keys are not shortcuts then.
@@ -134,7 +236,8 @@ impl Controls {
         }
     }
 
-    /// The cursor at `(x, y)` in a window of `size` (both physical pixels).
+    /// The cursor or a finger at `(x, y)` in a window of `size` (both in pixels, or
+    /// both in points).
     pub fn aim_at(&mut self, (x, y): (f64, f64), (width, height): (f64, f64)) {
         if width > 0.0 && height > 0.0 {
             self.pointer = (
@@ -156,18 +259,19 @@ impl Controls {
 
     /// This frame's raw control state; the one-shot presses are consumed.
     pub fn take_input(&mut self) -> InputFrame {
+        let (push_x, push_z) = self.touch.push;
         let frame = InputFrame {
             up: self.up.contains(&true),
             down: self.down.contains(&true),
             left: self.left.contains(&true),
             right: self.right.contains(&true),
-            touch_move: (0.0, 0.0),
-            fire: self.fire_key || self.fire_button,
+            touch_move: (if self.stick_turns { 0.0 } else { push_x }, push_z),
+            fire: self.fire_key || self.fire_button || self.touch.arena.is_some(),
             mine: self.mine,
             ammo_slot: self.ammo_slot,
             ammo_step: self.ammo_step,
             pointer: self.pointer,
-            stick_turn: 0.0,
+            stick_turn: if self.stick_turns { push_x as f32 } else { 0.0 },
             look_pixels: self.look,
             zoom: self.zoom,
             toggle_view: self.toggle_view,
@@ -242,6 +346,71 @@ mod tests {
         assert_eq!(controls.take_input().pointer, (-1.0, 1.0));
         controls.aim_at((150.0, 75.0), (200.0, 100.0));
         assert_eq!(controls.take_input().pointer, (0.5, -0.5));
+    }
+
+    #[test]
+    fn the_stick_drives_past_its_dead_zone_and_springs_back() {
+        let mut controls = Controls::default();
+        controls.begin_drive(7, (100.0, 100.0), (100.0, 100.0 + STICK_RADIUS * 0.1));
+        assert_eq!(controls.take_input().touch_move, (0.0, 0.0));
+        // Another finger cannot take the stick over.
+        controls.begin_drive(8, (0.0, 0.0), (0.0, 0.0));
+        controls.move_drive(7, (100.0, 100.0 - STICK_RADIUS * 2.0));
+        let (x, z) = controls.take_input().touch_move;
+        assert_eq!(x, 0.0);
+        assert!(
+            (z + 1.0).abs() < 1e-9,
+            "a push past the rim is full speed: {z}"
+        );
+        assert_eq!(controls.touch.knob, (0.0, -2.0));
+        controls.end_touch(8);
+        assert_ne!(controls.take_input().touch_move, (0.0, 0.0));
+        controls.end_touch(7);
+        assert_eq!(controls.take_input().touch_move, (0.0, 0.0));
+    }
+
+    #[test]
+    fn first_person_turns_with_the_stick_instead_of_strafing() {
+        let mut controls = Controls {
+            stick_turns: true,
+            ..Controls::default()
+        };
+        controls.begin_drive(1, (0.0, 0.0), (STICK_RADIUS, 0.0));
+        let input = controls.take_input();
+        assert_eq!(input.touch_move, (0.0, 0.0));
+        assert_eq!(input.stick_turn, 1.0);
+        controls.clear();
+        assert!(
+            controls.stick_turns,
+            "a cleared frame keeps the view's mode"
+        );
+    }
+
+    #[test]
+    fn an_arena_finger_aims_fires_and_looks_until_it_lifts() {
+        let mut controls = Controls::default();
+        controls.begin_arena(3, (150.0, 75.0), (200.0, 100.0));
+        controls.move_arena(3, (160.0, 75.0), (200.0, 100.0));
+        let input = controls.take_input();
+        assert!(input.fire);
+        assert_eq!(input.pointer, (0.6, -0.5));
+        assert_eq!(input.look_pixels, 10.0);
+        controls.end_touch(3);
+        assert!(!controls.take_input().fire);
+    }
+
+    #[test]
+    fn a_cleared_finger_drives_nothing_until_it_lifts() {
+        let mut controls = Controls::default();
+        controls.begin_drive(1, (0.0, 0.0), (STICK_RADIUS, 0.0));
+        controls.begin_arena(2, (10.0, 10.0), (100.0, 100.0));
+        controls.clear();
+        controls.move_drive(1, (0.0, STICK_RADIUS));
+        controls.move_arena(2, (20.0, 10.0), (100.0, 100.0));
+        let input = controls.take_input();
+        assert_eq!(input.touch_move, (0.0, 0.0));
+        assert!(!input.fire);
+        assert_eq!(input.look_pixels, 0.0);
     }
 
     #[test]

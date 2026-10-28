@@ -77,10 +77,21 @@ impl Gpu {
             .await
             .map_err(|error| format!("{api} adapter unavailable: {error}"))?;
         let bloom_format = bloom_format(adapter.features());
+        // WebGPU's defaults, but no more inter-stage variables than the adapter has:
+        // the iOS simulator's Metal offers 15 of the 16, and the shaders fit in 15.
+        // Browsers, Macs and iPads offer at least 16, so they get the defaults.
+        let defaults = wgpu::Limits::default();
+        let required_limits = wgpu::Limits {
+            max_inter_stage_shader_variables: defaults
+                .max_inter_stage_shader_variables
+                .min(adapter.limits().max_inter_stage_shader_variables),
+            ..defaults
+        };
         let (device, queue) = adapter
             .request_device(&wgpu::DeviceDescriptor {
                 label: Some("Sloppy Tanks renderer"),
                 required_features: adapter.features() & wgpu::Features::RG11B10UFLOAT_RENDERABLE,
+                required_limits,
                 ..Default::default()
             })
             .await

@@ -1,7 +1,7 @@
-//! Sloppy Tanks on macOS and Windows: the game in a native window, drawn with wgpu on
-//! Metal or Direct3D 12, its menus and HUD in egui. No browser: the shell
+//! Sloppy Tanks on macOS, Windows and iPad: the game in a native window, drawn with
+//! wgpu on Metal or Direct3D 12, its menus and HUD in egui. No browser: the shell
 //! replaces the page's TypeScript (`src/`) and drives the same Rust `Game` the page
-//! does (`crates/web`).
+//! does (`crates/web`). The iPad plays it with touch controls (`touch.rs`).
 
 // A Windows release build opens no console window.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
@@ -13,14 +13,25 @@ mod bakes;
 mod directory;
 mod engine_api;
 mod frame_log;
+mod hardware_keys;
 mod input;
+#[cfg(target_os = "ios")]
+mod ios;
 mod overlay;
 mod preferences;
 mod room;
 mod room_api;
 mod sockets;
 mod surface_layers;
+mod touch;
 mod ui;
+
+/// The iPad plays by touch, with no keyboard, pointer lock, window size or Quit;
+/// Macs and PCs play with keyboard and mouse.
+pub const TOUCH: bool = cfg!(target_os = "ios");
+/// The engine's device class (`quality.rs`): a tablet starts a tier lower and draws
+/// single-sampled.
+pub const DEVICE: &str = if TOUCH { "tablet" } else { "desktop" };
 
 fn main() {
     sloppy_render::gpu::set_asset_files(assets::file);

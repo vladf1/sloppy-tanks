@@ -157,7 +157,7 @@ pub const DIFFICULTIES: [(&str, &str, &str); 3] = [
 ];
 
 /// The essentials on one line under the dialog; the pause menu lists every control.
-const KEY_HINTS: [(&[&str], &str); 6] = [
+const KEY_HINTS: &[(&[&str], &str)] = &[
     (&["W", "A", "S", "D"], "Drive"),
     (&["Mouse"], "Aim"),
     (&["Left click"], "Fire"),
@@ -166,14 +166,23 @@ const KEY_HINTS: [(&[&str], &str); 6] = [
     (&["Esc"], "All controls"),
 ];
 
+/// The same line on a touch screen.
+const TOUCH_HINTS: &[(&[&str], &str)] = &[
+    (&["Left stick"], "Drive"),
+    (&["Touch the arena"], "Aim & fire"),
+    (&["Mine button"], "Mine"),
+    (&["Eye button"], "First person"),
+];
+
 /// The dusk battlefield behind Battle Setup: sky, a warm horizon, ridges, two tanks
 /// on watch and a vignette.
 fn backdrop(context: &egui::Context, art: &Art) {
-    let painter = context.layer_painter(LayerId::new(
-        Order::Background,
-        Id::unique("setup backdrop"),
-    ));
-    let screen = context.content_rect();
+    // The whole screen, under an iPad's home indicator too.
+    let painter = paint::full_screen(
+        context,
+        LayerId::new(Order::Background, Id::unique("setup backdrop")),
+    );
+    let screen = context.viewport_rect();
     painter.add(paint::vgradient(
         screen,
         &[
@@ -1433,9 +1442,10 @@ fn key_strip(painter: &Painter, center: egui::Pos2) {
             + 5.0
             + paint::text_width(painter, label, bold_font(12.0), 0.4)
     };
-    let total = KEY_HINTS.iter().map(hint_width).sum::<f32>() + gap * (KEY_HINTS.len() - 1) as f32;
+    let hints = if crate::TOUCH { TOUCH_HINTS } else { KEY_HINTS };
+    let total = hints.iter().map(hint_width).sum::<f32>() + gap * (hints.len() - 1) as f32;
     let mut x = center.x - total / 2.0;
-    for hint in &KEY_HINTS {
+    for hint in hints {
         for key in hint.0 {
             let width = paint::kbd_width(painter, key, size);
             paint::kbd(painter, pos2(x + width / 2.0, center.y), key, size);
@@ -1455,15 +1465,25 @@ fn key_strip(painter: &Painter, center: egui::Pos2) {
     }
 }
 
-/// Settings and Quit on a small plate at the header's right.
+/// Settings and Quit on a small plate at the header's right. An iPad app never
+/// quits itself, so there it is Settings alone, at the plate's right end.
 fn corner_buttons(ui: &mut egui::Ui, art: &Art, rect: Rect, actions: &mut Vec<Action>) {
     let button = 38.0;
     let painter = ui.painter().clone();
+    let buttons: &[(&str, &str)] = if crate::TOUCH {
+        &[("gear", "Settings")]
+    } else {
+        &[("gear", "Settings"), ("power", "Quit Sloppy Tanks")]
+    };
+    let rect = Rect::from_min_max(
+        pos2(
+            rect.right() - button * buttons.len() as f32 - 6.0,
+            rect.top(),
+        ),
+        rect.max,
+    );
     paint::plate(&painter, rect, 9.0, None);
-    for (index, (icon, tip)) in [("gear", "Settings"), ("power", "Quit Sloppy Tanks")]
-        .into_iter()
-        .enumerate()
-    {
+    for (index, &(icon, tip)) in buttons.iter().enumerate() {
         let cell = Rect::from_min_size(
             rect.min + vec2(3.0 + index as f32 * button, 3.0),
             Vec2::splat(button),

@@ -13,19 +13,21 @@ use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES};
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::wgpu;
 use sloppy_web::{NetGame, net_frame_slot as slot};
-use winit::event::{ElementState, WindowEvent};
+use winit::event::{ElementState, Touch, WindowEvent};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Fullscreen, Window};
 
-use crate::app::{Shell, grab_pointer, now_ms};
+use crate::app::{Shell, drawable_size, grab_pointer, now_ms};
 use crate::audio::Audio;
 use crate::bakes::{self, Bake};
 use crate::engine_api::{EventBatch, HudState};
+use crate::hardware_keys::HardwareKeys;
 use crate::input::{Controls, Shortcut, pack};
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
 use crate::room_api::{RoomAction, RoomNotice, RoomSelection};
 use crate::sockets::{SocketEvent, Sockets};
+use crate::touch::{Fingers, Play};
 use crate::ui::room_menu::{self, RoomMenu};
 use crate::ui::{self, Action, UiState};
 
@@ -93,6 +95,10 @@ pub struct RoomSession {
     stopped: bool,
     /// Battle Setup is wanted, with this reason to show there.
     pub exit: Option<String>,
+    /// Which fingers the menus own, on a touch screen.
+    fingers: Fingers,
+    /// An iPad's keyboard, read each frame.
+    hardware_keys: HardwareKeys,
 }
 
 impl RoomSession {
@@ -101,7 +107,7 @@ impl RoomSession {
     /// reason to show on Battle Setup.
     pub fn new(shell: Shell, selection: RoomSelection) -> Result<Self, Box<(Shell, String)>> {
         let window = shell.window.clone();
-        let size = window.inner_size();
+        let size = drawable_size(&window);
         let scale = window.scale_factor();
         let logical = size.to_logical::<f64>(scale);
         let seat_key = seat_key(&selection);
@@ -120,7 +126,7 @@ impl RoomSession {
             "firstPerson": shell.prefs.first_person,
             "zoom": shell.prefs.zoom,
             "graphics": shell.prefs.graphics,
-            "device": "desktop",
+            "device": crate::DEVICE,
         });
         let target = RenderTarget {
             window: wgpu::SurfaceTarget::from(window.clone()),
@@ -189,6 +195,8 @@ impl RoomSession {
             frame_index: 0,
             stopped: false,
             exit: None,
+            fingers: Fingers::default(),
+            hardware_keys: HardwareKeys::default(),
         };
         if session.audio.is_none() {
             session.audio = Audio::new();
@@ -220,7 +228,9 @@ impl RoomSession {
 
     /// Lock the cursor while first person steers the battle.
     fn hold_pointer(&mut self) {
-        let wanted = self.first_person
+        // A finger turns the first-person view on a touch screen.
+        let wanted = !crate::TOUCH
+            && self.first_person
             && !self.pointer_free
             && self.menu.in_battle()
             && self.ui.settings_draft.is_none()
@@ -385,6 +395,12 @@ impl RoomSession {
         if let WindowEvent::RedrawRequested = event {
             return self.redraw();
         }
+        if crate::TOUCH
+            && let WindowEvent::Touch(touch) = event
+            && !self.route_touch(touch)
+        {
+            return false;
+        }
         let in_battle = self.menu.in_battle() && !self.menu.joining;
         let battle = in_battle && !self.menu.menu_open && self.ui.settings_draft.is_none();
         let keys_to_menus = !battle || self.overlay.typing();
@@ -421,24 +437,12 @@ impl RoomSession {
                 );
             }
             WindowEvent::KeyboardInput { event, .. } => {
-                // Typing goes to the field; a release still reaches the controls, so
-                // a key held when a field took focus never sticks.
-                if self.overlay.typing() && event.state == ElementState::Pressed {
-                    return false;
-                }
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    if code == KeyCode::KeyQ && self.modifiers.super_key() {
-                        self.quit();
-                        return true;
-                    }
-                    let shortcut = self.controls.key(code, event.state, event.repeat, playing);
-                    if let Some(shortcut) = shortcut {
-                        self.shortcut(shortcut);
-                    }
+                    return self.key(code, event.state, event.repeat);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let size = self.window.inner_size();
+                let size = drawable_size(&self.window);
                 self.controls.aim_at(
                     (position.x, position.y),
                     (f64::from(size.width), f64::from(size.height)),
@@ -461,6 +465,67 @@ impl RoomSession {
         false
     }
 
+    /// Apply what an iPad's keyboard pressed and released since the last frame; true
+    /// when the app should quit.
+    fn hardware_keys(&mut self) -> bool {
+        let Some((keys, command)) = self.hardware_keys.changes(&self.window) else {
+            return false;
+        };
+        self.controls.set_command(command);
+        keys.into_iter().fold(false, |quit, (code, state)| {
+            self.key(code, state, false) || quit
+        })
+    }
+
+    /// A key went down or up; true when the app should quit.
+    fn key(&mut self, code: KeyCode, state: ElementState, repeat: bool) -> bool {
+        // Typing goes to the field; a release still reaches the controls, so a key
+        // held when a field took focus never sticks.
+        if self.overlay.typing() && state == ElementState::Pressed {
+            return false;
+        }
+        if code == KeyCode::KeyQ && self.modifiers.super_key() {
+            self.quit();
+            return true;
+        }
+        let alive = self.ui.hud.as_ref().is_some_and(|hud| hud.human.alive);
+        let playing = self.menu.in_battle() && !self.menu.joining && alive;
+        if let Some(shortcut) = self.controls.key(code, state, repeat, playing) {
+            self.shortcut(shortcut);
+        }
+        false
+    }
+
+    /// The touch controls while the player can act on a touch screen.
+    fn touch_play(&self) -> Option<Play> {
+        let alive = self.ui.hud.as_ref().is_some_and(|hud| hud.human.alive);
+        let acting = self.menu.in_battle()
+            && !self.menu.joining
+            && !self.menu.menu_open
+            && self.ui.settings_draft.is_none()
+            && alive;
+        Play::live(
+            &self.overlay.context,
+            acting,
+            self.first_person,
+            self.ui.hud.as_ref(),
+        )
+    }
+
+    /// Hand a finger to the touch controls or the menus; true when egui should see it.
+    fn route_touch(&mut self, touch: &Touch) -> bool {
+        let play = self.touch_play();
+        let context = &self.overlay.context;
+        self.fingers.route(
+            touch,
+            self.window.scale_factor(),
+            play.as_ref(),
+            |point| context.layer_id_at(point).is_some(),
+            context.viewport_rect().size(),
+            &mut self.controls,
+        )
+    }
+
     fn shortcut(&mut self, shortcut: Shortcut) {
         match shortcut {
             Shortcut::Escape => {
@@ -480,6 +545,8 @@ impl RoomSession {
                     self.ui.show_nerd_stats = !self.ui.show_nerd_stats;
                 }
             }
+            // An iPad app always fills the screen.
+            Shortcut::Fullscreen if crate::TOUCH => {}
             Shortcut::Fullscreen => {
                 self.apply(Action::ToggleFullscreen);
             }
@@ -487,7 +554,7 @@ impl RoomSession {
     }
 
     fn resize(&mut self) {
-        let size = self.window.inner_size();
+        let size = drawable_size(&self.window);
         let scale = self.window.scale_factor();
         let logical = size.to_logical::<f64>(scale);
         self.game.resize(logical.width, logical.height, scale);
@@ -670,6 +737,7 @@ impl RoomSession {
 
     /// One engine frame: input in, the drawn scene, its events and HUD out.
     fn frame(&mut self, now: f64) -> Result<(), String> {
+        self.controls.stick_turns = crate::TOUCH && self.first_person;
         let input = self.controls.take_input();
         let camera_input = input.zoom != 0.0 || input.toggle_view;
         let result = self.game.frame(now, &pack(&input))?;
@@ -727,6 +795,7 @@ impl RoomSession {
         let now = now_ms();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        let mut quit = self.hardware_keys();
         if !self.stopped {
             self.network();
             if self.preparing {
@@ -760,6 +829,11 @@ impl RoomSession {
             ui::nerd_stats::sample_network(&mut self.ui, now);
         }
         self.hold_pointer();
+        self.ui.touch = self.touch_play().map(|_| ui::touch::TouchView {
+            input: self.controls.touch,
+            first_person: self.first_person,
+            learned: self.fingers.learned,
+        });
         let view = ui::View {
             in_round: true,
             phase: room_menu::hud_phase(&self.menu),
@@ -777,7 +851,6 @@ impl RoomSession {
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
         self.hidden_changed();
-        let mut quit = false;
         for action in actions {
             quit |= self.apply(action);
         }

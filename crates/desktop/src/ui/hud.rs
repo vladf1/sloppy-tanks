@@ -39,7 +39,10 @@ pub fn clock(seconds: f64) -> String {
 
 /// The painter under every HUD area: shades, feed, toast and hit feedback.
 fn backdrop(context: &egui::Context) -> Painter {
-    context.layer_painter(LayerId::new(Order::Background, Id::unique("hud backdrop")))
+    paint::full_screen(
+        context,
+        LayerId::new(Order::Background, Id::unique("hud backdrop")),
+    )
 }
 
 pub fn hud(
@@ -52,6 +55,8 @@ pub fn hud(
     let Some(hud) = state.hud.clone() else { return };
     let playing = view.phase == Phase::Playing;
     let screen = context.content_rect();
+    // Edge effects cover the whole screen; the HUD keeps to the safe area within it.
+    let viewport = context.viewport_rect();
     let painter = backdrop(context);
     let time = context.input(|input| input.time);
     let human = &hud.human;
@@ -61,7 +66,7 @@ pub fn hud(
         let beat = ((time / 1.6 * std::f64::consts::TAU).cos() * 0.5 + 0.5) as f32;
         paint::vignette(
             &painter,
-            screen,
+            viewport,
             vec2(0.8, 0.75),
             &[
                 (0.58, Color32::TRANSPARENT),
@@ -75,7 +80,7 @@ pub fn hud(
         // A hit flashes the screen's rim, never the middle where the fight is.
         paint::vignette(
             &painter,
-            screen,
+            viewport,
             vec2(0.85, 0.8),
             &[
                 (0.7, Color32::TRANSPARENT),
@@ -88,8 +93,11 @@ pub fn hud(
     if state.cockpit {
         paint::vignette_at(
             &painter,
-            screen,
-            pos2(screen.center().x, screen.top() + screen.height() * 0.46),
+            viewport,
+            pos2(
+                viewport.center().x,
+                viewport.top() + viewport.height() * 0.46,
+            ),
             vec2(0.8, 0.76),
             &[
                 (0.66, Color32::TRANSPARENT),
@@ -101,7 +109,7 @@ pub fn hud(
     }
     // A soft shade along the top edge keeps the score, buttons and feed legible.
     painter.add(paint::vgradient(
-        Rect::from_min_size(screen.min, vec2(screen.width(), 120.0)),
+        Rect::from_min_size(viewport.min, vec2(viewport.width(), 120.0)),
         &[
             (0.0, hexa(0x030a18, 0.45)),
             (0.55, hexa(0x030a18, 0.15)),
@@ -116,6 +124,9 @@ pub fn hud(
         if human.alive {
             damage_ring(&painter, screen, state);
         }
+    }
+    if let Some(touch) = state.touch.filter(|_| playing && human.alive) {
+        super::touch::controls(context, art, state, &touch);
     }
     // The respawn card rises into place over a third of a second.
     let rise = context.animate_bool_with_time(Id::unique("respawn rise"), !human.alive, 0.32);
@@ -408,32 +419,31 @@ fn toolbar(
     if state.settings_draft.is_some() {
         return;
     }
-    let button = 38.0;
-    let buttons = [
-        ("eye", "First-person view (V)"),
-        (
-            if view.prefs.fullscreen {
-                "collapse"
-            } else {
-                "expand"
-            },
-            if view.prefs.fullscreen {
-                if cfg!(target_os = "macos") {
-                    "Exit fullscreen (Cmd+F)"
-                } else {
-                    "Exit fullscreen (F11)"
-                }
-            } else {
-                if cfg!(target_os = "macos") {
-                    "Enter fullscreen (Cmd+F)"
-                } else {
-                    "Enter fullscreen (F11)"
-                }
-            },
-        ),
-        ("pause", "Pause (Esc)"),
-        ("gear", "Settings"),
-    ];
+    // Thumb-sized on a touch screen, which has no fullscreen to toggle.
+    let button = if crate::TOUCH { 46.0 } else { 38.0 };
+    let fullscreen = (
+        if view.prefs.fullscreen {
+            "collapse"
+        } else {
+            "expand"
+        },
+        match (view.prefs.fullscreen, cfg!(target_os = "macos")) {
+            (true, true) => "Exit fullscreen (Cmd+F)",
+            (true, false) => "Exit fullscreen (F11)",
+            (false, true) => "Enter fullscreen (Cmd+F)",
+            (false, false) => "Enter fullscreen (F11)",
+        },
+        Action::ToggleFullscreen,
+    );
+    let buttons: Vec<(&str, &str, Action)> = [
+        Some(("eye", "First-person view (V)", Action::ToggleView)),
+        (!crate::TOUCH).then_some(fullscreen),
+        Some(("pause", "Pause (Esc)", Action::Pause)),
+        Some(("gear", "Settings", Action::OpenSettings)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     let size = vec2(button * buttons.len() as f32 + 6.0, button + 6.0);
     let origin = pos2(screen.right() - EDGE - size.x, screen.top() + 14.0);
     egui::Area::new(Id::unique("hud toolbar"))
@@ -443,14 +453,14 @@ fn toolbar(
             let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
             let painter = ui.painter().clone();
             paint::plate(&painter, rect, 9.0, None);
-            for (index, (icon, tip)) in buttons.iter().enumerate() {
+            for (index, (icon, tip, action)) in buttons.into_iter().enumerate() {
                 let cell = Rect::from_min_size(
                     rect.min + vec2(3.0 + index as f32 * button, 3.0),
                     Vec2::splat(button),
                 );
                 let response = ui
                     .interact(cell, Id::unique(("hud tool", index)), Sense::click())
-                    .on_hover_text(*tip);
+                    .on_hover_text(tip);
                 let lit = index == 0 && state.cockpit;
                 if lit {
                     painter.add(paint::rounded_vgradient(
@@ -484,15 +494,10 @@ fn toolbar(
                     tint,
                 );
                 if response.clicked() {
-                    actions.push(match index {
-                        0 => Action::ToggleView,
-                        1 => Action::ToggleFullscreen,
-                        2 => Action::Pause,
-                        _ => {
-                            state.resume_after_settings = true;
-                            Action::OpenSettings
-                        }
-                    });
+                    if action == Action::OpenSettings {
+                        state.resume_after_settings = true;
+                    }
+                    actions.push(action);
                 }
             }
         });
@@ -830,6 +835,19 @@ const SLOT_GAP: f32 = 4.0;
 const MINE_WIDTH: f32 = 42.0;
 const COMPASS_WIDTH: f32 = 68.0;
 const PANEL_HEIGHT: f32 = 65.4;
+/// A round's key on a touch screen: wide enough for a thumb.
+const TOUCH_SLOT_WIDTH: f32 = 52.0;
+
+/// The width of a round's key in the rack: the loaded one names itself.
+fn slot_width(selected: bool) -> f32 {
+    if selected {
+        SELECTED_SLOT_WIDTH
+    } else if crate::TOUCH {
+        TOUCH_SLOT_WIDTH
+    } else {
+        SLOT_WIDTH
+    }
+}
 
 /// The tank panel: hull on the left, the ammunition rack and the mine socket on the
 /// right, on an armour plate tinted by your team; power-up tabs stand on its top
@@ -850,20 +868,23 @@ fn tank_panel(
     let strip_width = AMMO
         .iter()
         .map(|(weapon, ..)| {
-            let selected = human
-                .ammo
-                .iter()
-                .any(|slot| slot.weapon == *weapon && slot.selected);
-            if selected {
-                SELECTED_SLOT_WIDTH
-            } else {
-                SLOT_WIDTH
-            }
+            slot_width(
+                human
+                    .ammo
+                    .iter()
+                    .any(|slot| slot.weapon == *weapon && slot.selected),
+            )
         })
         .sum::<f32>()
         + SLOT_GAP * (AMMO.len() - 1) as f32;
+    // A touch screen has its own mine button.
+    let socket = if crate::TOUCH {
+        0.0
+    } else {
+        10.0 + 10.0 + MINE_WIDTH
+    };
     let inner = vec2(
-        STATUS_WIDTH + 10.0 + 10.0 + strip_width + 10.0 + 10.0 + MINE_WIDTH,
+        STATUS_WIDTH + 10.0 + 10.0 + strip_width + socket,
         PANEL_HEIGHT,
     );
     let padding = [14.0, 10.0, 11.0, 10.0];
@@ -873,7 +894,15 @@ fn tank_panel(
     );
     let compass = state.cockpit;
     let size = plate_size + vec2(if compass { COMPASS_WIDTH } else { 0.0 }, 0.0);
-    let origin = pos2(screen.left() + EDGE, screen.bottom() - EDGE - size.y);
+    let left = if crate::TOUCH {
+        // Between the drive stick and the mine button, so it never covers the
+        // arena's middle or sits under a thumb.
+        let (from, to) = crate::touch::TouchLayout::of(context).panel_span();
+        (from + (to - from - size.x) / 2.0).max(from)
+    } else {
+        screen.left() + EDGE
+    };
+    let origin = pos2(left, screen.bottom() - EDGE - size.y);
     egui::Area::new(Id::unique("tank panel"))
         .fixed_pos(origin)
         .order(Order::Middle)
@@ -932,19 +961,21 @@ fn tank_panel(
             x += 10.0;
             let strip = Rect::from_min_size(pos2(x, content.top()), vec2(strip_width, inner.y));
             ammo_rack(ui, &painter, art, strip, human, playing, actions);
-            x = strip.right() + 10.0;
-            painter.line_segment(
-                [pos2(x, content.top()), pos2(x, content.bottom())],
-                Stroke::new(1.0, hexa(0xffffff, 0.09)),
-            );
-            x += 10.0;
-            mine_socket(
-                &painter,
-                art,
-                Rect::from_min_size(pos2(x, content.top()), vec2(MINE_WIDTH, inner.y)),
-                state,
-                human,
-            );
+            if !crate::TOUCH {
+                x = strip.right() + 10.0;
+                painter.line_segment(
+                    [pos2(x, content.top()), pos2(x, content.bottom())],
+                    Stroke::new(1.0, hexa(0xffffff, 0.09)),
+                );
+                x += 10.0;
+                mine_socket(
+                    &painter,
+                    art,
+                    Rect::from_min_size(pos2(x, content.top()), vec2(MINE_WIDTH, inner.y)),
+                    state,
+                    human,
+                );
+            }
             effect_tabs(&painter, art, plate_rect, state, human);
             if let Some((notice, _)) = &state.ammo_notice {
                 ammo_notice(&painter, plate_rect, notice, screen);
@@ -1112,11 +1143,7 @@ fn ammo_rack(
         let selected = slot.is_some_and(|slot| slot.selected);
         let available = slot.is_some_and(|slot| slot.available);
         let count = slot.and_then(|slot| slot.count);
-        let width = if selected {
-            SELECTED_SLOT_WIDTH
-        } else {
-            SLOT_WIDTH
-        };
+        let width = slot_width(selected);
         let rect = Rect::from_min_size(pos2(x, strip.top()), vec2(width, strip.height()));
         x += width + SLOT_GAP;
         let color = hex(*color);
@@ -1208,24 +1235,30 @@ fn ammo_rack(
                 rect.width() - 14.0,
             );
         } else {
-            // The key at the top, the icon and the count under it.
-            let key = format!("{}", index + 1);
-            let key_rect =
-                Rect::from_center_size(pos2(rect.center().x, rect.top() + 11.0), vec2(16.0, 15.0));
-            painter.rect_filled(key_rect, 3, hexa(0xffffff, 0.12));
-            paint::text(
-                painter,
-                key_rect.center(),
-                Align2::CENTER_CENTER,
-                &key,
-                bold_font(12.0),
-                hex(0xf2f7fc),
-                0.0,
-            );
+            // The key at the top, the icon and the count under it; a touch screen has
+            // no keys, so its icon rises into their place.
+            if !crate::TOUCH {
+                let key = format!("{}", index + 1);
+                let key_rect = Rect::from_center_size(
+                    pos2(rect.center().x, rect.top() + 11.0),
+                    vec2(16.0, 15.0),
+                );
+                painter.rect_filled(key_rect, 3, hexa(0xffffff, 0.12));
+                paint::text(
+                    painter,
+                    key_rect.center(),
+                    Align2::CENTER_CENTER,
+                    &key,
+                    bold_font(12.0),
+                    hex(0xf2f7fc),
+                    0.0,
+                );
+            }
+            let icon_y = rect.top() + if crate::TOUCH { 24.0 } else { 33.0 };
             art.icon(
                 painter,
                 weapon,
-                Rect::from_center_size(pos2(rect.center().x, rect.top() + 33.0), Vec2::splat(20.0)),
+                Rect::from_center_size(pos2(rect.center().x, icon_y), Vec2::splat(20.0)),
                 color,
             );
             let count_pos = pos2(rect.center().x, rect.bottom() - 10.0);
@@ -1482,7 +1515,10 @@ fn compass_dial(painter: &Painter, rect: Rect, hull_angle: f64) {
     );
     painter.circle_filled(center, 7.5, hex(0x0b1a33));
     painter.circle_filled(center, 5.5, GOLD);
-    paint::kbd(painter, pos2(center.x, rect.bottom() - 13.0), "V", 12.0);
+    // The key that leaves first person; a touch screen has the eye button instead.
+    if !crate::TOUCH {
+        paint::kbd(painter, pos2(center.x, rect.bottom() - 13.0), "V", 12.0);
+    }
 }
 
 /// Incoming damage: a glowing wedge on a ring round the player's tank, turned toward

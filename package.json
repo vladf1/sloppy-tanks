@@ -27,6 +27,8 @@
     "desktop": "node scripts/build-desktop.mjs",
     "desktop:mac": "node scripts/build-desktop.mjs --mac",
     "desktop:windows": "node scripts/build-desktop.mjs --windows",
+    "ipad": "node scripts/build-desktop.mjs --ipad",
+    "ipad:simulator": "node scripts/build-desktop.mjs --ipad-simulator",
     "check:browser": "node scripts/browser-checks.mjs",
     "check:desktop-ui": "node scripts/desktop-ui-gauntlet.mjs",
     "generate:textures": "node --import tsx scripts/generate-textures.ts && node scripts/optimize-textures.mjs && pnpm run generate:pickup-atlas",
