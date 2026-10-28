@@ -1,15 +1,6 @@
-import {
-  countLine,
-  duration,
-  escapeHtml,
-  recapMarkup,
-  scoreboardMarkup,
-  standingLine,
-  teamLabel,
-  teamPlace,
-} from "./round-recap";
+import { escapeHtml, recapMarkup, scoreboardMarkup } from "./round-recap";
 import { AMMO_OPTIONS } from "./ammo-options";
-import type { HudState } from "./engine-api";
+import type { HudState, PauseReport } from "./engine-api";
 import type { DeathReport } from "./hud-feedback";
 import { CLOSE_ICON, SETTINGS_BUTTON } from "./settings-dialog";
 
@@ -203,24 +194,9 @@ export function teamOutcome(
   return leader === null ? "draw" : leader === team ? "won" : "lost";
 }
 
-/** Whether the viewer's team is ahead, behind or level, for the standing line's colour. */
-export function standingTone(
-  scores: readonly number[],
-  team: number,
-): "ahead" | "behind" | "level" {
-  const leader = leadingTeam(scores);
-  return leader === null ? "level" : leader === team ? "ahead" : "behind";
-}
-
 function leadingTeam(scores: readonly number[]): number | null {
   return scores[0] === scores[1] ? null : scores[0] > scores[1] ? 0 : 1;
 }
-
-const OUTCOME_TITLES = { won: "VICTORY", lost: "DEFEAT", draw: "DRAW" } as const;
-/** A battle ended before its limit, by where the viewer's team stood: a confident call of
- * the standing, never a victory the limit never decided. An "ended early" tag beside it
- * and the line under it say the rest. */
-const EARLY_TITLES = { ahead: "LEAD HELD", behind: "CUT SHORT", even: "STALEMATE" } as const;
 
 /** Small marks leading the dialogs' buttons, drawn in the button's text colour. */
 const actionIcon = (path: string) =>
@@ -237,104 +213,65 @@ const ACTION_ICONS = {
   setup: actionIcon("M4 4h7v7H4zm9 0h7v7h-7zM4 13h7v7H4zm9 0h7v7h-7z"),
 };
 
-/** Pause's first tab: where the battle stands. A solo run's tally, then the clock and
- * the viewer's tank and round so far. */
-function pauseOverviewMarkup(hud: HudState): string {
-  const viewer = hud.human;
-  const solo = hud.gameMode === "solo";
-  const clock = hud.endlessMatch
-    ? `${duration(hud.elapsed)} played`
-    : hud.match.overtime
-      ? "Overtime · next kill wins"
-      : `${duration(Math.ceil(hud.match.time))} left`;
-  // A team battle's score is on the header's plates already; the body adds only facts.
-  const objective = solo
-    ? `<div class="pause-objective solo"><div><b>${viewer.kills}</b><small>KILLS</small></div><div><b>${duration(hud.elapsed)}</b><small>SURVIVED</small></div></div>`
+/** Pause's first tab: where the battle stands, in the engine's words. A solo run's tally,
+ * then the clock and the viewer's tank and round so far. A team battle's score is on the
+ * header's plates already; the body adds only facts. */
+function pauseOverviewMarkup(pause: PauseReport): string {
+  const { tally } = pause;
+  const objective = tally
+    ? `<div class="pause-objective solo"><div><b>${tally.kills}</b><small>KILLS</small></div><div><b>${tally.survived}</b><small>SURVIVED</small></div></div>`
     : "";
-  const place = solo ? null : teamPlace(hud.scoreboard, viewer.id);
-  const fact = (label: string, value: string, note = "") =>
-    `<div><dt>${label}</dt><dd>${value}${note ? `<small>${note}</small>` : ""}</dd></div>`;
+  const fact = ({ label, value, note }: PauseReport["facts"][number]) =>
+    `<div><dt>${label}</dt><dd>${escapeHtml(value)}${note ? `<small>${escapeHtml(note)}</small>` : ""}</dd></div>`;
   return `${objective}
-    <dl class="pause-facts">${fact("Objective", solo ? "Survive" : hud.endlessMatch ? "Endless battle" : `First to ${hud.scoreLimit}`, solo ? "One life" : "")}${fact("Clock", clock)}${fact("Difficulty", hud.difficulty[0].toUpperCase() + hud.difficulty.slice(1))}${fact("Your tank", escapeHtml(viewer.vehicleName), escapeHtml(viewer.rankName))}${fact("Kills / deaths", `${viewer.kills} / ${viewer.deaths}`, "this battle")}${place ? fact("Team rank", `${ordinal(place.place).toLowerCase()} of ${place.of}`, "by kills") : fact("Bots", String(hud.activeEnemies), "active")}</dl>`;
+    <dl class="pause-facts">${pause.facts.map(fact).join("")}</dl>`;
 }
 
-/** Pause's line under its title: who leads, in words, and how many kills your team
- * still needs (none in an endless battle or overtime, where the next kill decides). */
-export function pauseStanding(hud: HudState): string {
-  const standing = standingLine(hud.match.scores, hud.humanTeam, hud.teamNames);
-  if (hud.endlessMatch || !hud.scoreLimit || hud.match.overtime) {
-    return standing;
-  }
-  const needed = Math.max(0, hud.scoreLimit - hud.match.scores[hud.humanTeam]);
-  return `${standing} · ${countLine(needed, "kill")} to win`;
-}
-
-export function menuMarkup(hud: HudState, death: DeathNotice | null): string {
+/** The menu for the battle's phase: pause (with `pause`, the engine's `pause_json`), the
+ * battle report, or the respawn card. */
+export function menuMarkup(
+  hud: HudState,
+  death: DeathNotice | null,
+  pause: PauseReport | null = null,
+): string {
   const viewer = hud.human;
   const phase = hud.match.phase;
   const solo = hud.gameMode === "solo";
   const mode = solo ? "SOLO ASSAULT" : "TEAM BATTLE";
   if (phase === "paused") {
+    const standing = pause?.standing;
     return `
       <section class="menu compact pause-menu" aria-labelledby="pause-title">
         <button id="pause-close" class="dialog-close" type="button" aria-label="Resume the battle" title="Resume (Esc)">${CLOSE_ICON}</button>
-        <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span></div><div class="dialog-title"><h2 id="pause-title">PAUSED</h2>${solo ? "" : scoreMarkup(hud.match.scores, "Score", hud.teamNames, hud.humanTeam)}</div>${solo ? `<p class="dialog-lede">The battle waits until you resume.</p>` : `<p class="dialog-standing" data-tone="${standingTone(hud.match.scores, hud.humanTeam)}">${pauseStanding(hud)}</p>`}</header>
+        <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span></div><div class="dialog-title"><h2 id="pause-title">PAUSED</h2>${solo ? "" : scoreMarkup(hud.match.scores, "Score", hud.teamNames, hud.humanTeam)}</div>${solo ? `<p class="dialog-lede">The battle waits until you resume.</p>` : standing ? `<p class="dialog-standing" data-tone="${standing.tone}">${standing.text}</p>` : ""}</header>
         <div class="dialog-tabs" role="tablist" aria-label="Pause"><button type="button" role="tab" id="pause-tab-battle" aria-selected="true" aria-controls="pause-battle">BATTLE</button><button type="button" role="tab" id="pause-tab-controls" aria-selected="false" aria-controls="pause-controls" tabindex="-1">CONTROLS</button></div>
-        <div class="dialog-pane" id="pause-battle" role="tabpanel" aria-labelledby="pause-tab-battle">${pauseOverviewMarkup(hud)}</div>
+        <div class="dialog-pane" id="pause-battle" role="tabpanel" aria-labelledby="pause-tab-battle">${pause ? pauseOverviewMarkup(pause) : ""}</div>
         <div class="dialog-pane" id="pause-controls" role="tabpanel" aria-labelledby="pause-tab-controls" hidden>${controlsMarkup()}</div>
         <div class="menu-actions pause-actions"><button id="resume" class="primary">${ACTION_ICONS.resume}RESUME</button>
         <button id="pause-settings" class="secondary" type="button" aria-haspopup="dialog">${ACTION_ICONS.settings}SETTINGS</button>
         <button id="end-battle" class="secondary danger" title="End the battle and see the report">${ACTION_ICONS.end}END BATTLE</button></div>
         </section>`;
   } else if (phase === "results") {
+    // The engine words the outcome, the report and the board's order once results show.
+    const recap = hud.recap;
+    if (!recap) {
+      return "";
+    }
+    const { report } = recap;
     const endedEarly = !!hud.match.endedEarly;
     const scores = hud.match.scores;
     const team = hud.humanTeam;
     const side = team === 0 ? "blue" : "red";
-    let outcome: string;
-    let title: string;
-    let lede: string;
-    if (solo) {
-      const survived = hud.match.winner === team;
-      outcome = endedEarly ? "ended" : survived ? "won" : "lost";
-      title = endedEarly ? "BATTLE ENDED" : survived ? "SURVIVED" : "TANK DESTROYED";
-      lede = endedEarly
-        ? "Run ended early."
-        : survived
-          ? "Ten minutes. One tank. Still standing."
-          : `${death ? escapeHtml(death.text) + " " : ""}One more run?`;
-    } else {
-      // A battle the player stopped before the limit has no winner: it is called by where
-      // the viewer's team stood when it ended, never a victory or a defeat the score never
-      // decided.
-      const leader = leadingTeam(scores);
-      const standing = leader === null ? "even" : leader === team ? "ahead" : "behind";
-      outcome = endedEarly
-        ? `ended-${standing}`
-        : teamOutcome(scores, team, hud.match.winner, endedEarly);
-      title = endedEarly
-        ? EARLY_TITLES[standing]
-        : OUTCOME_TITLES[outcome as keyof typeof OUTCOME_TITLES];
-      // The plates carry the scores; the sentence is about the team alone and names who
-      // was ahead and by how much, never the scores in a second order. The viewer's own
-      // kills and deaths are in the tiles and the board below.
-      const sideName = (index: number) =>
-        index === team ? "Your team" : teamLabel(hud.teamNames[index]);
-      const winner = hud.match.winner ?? 0;
-      const margin = Math.abs(scores[0] - scores[1]);
-      lede = endedEarly
-        ? leader === null
-          ? "The teams were level when you ended the battle."
-          : leader === team
-            ? `Your team led by ${countLine(margin, "kill")} when you ended the battle.`
-            : `${teamLabel(hud.teamNames[leader])} led by ${countLine(margin, "kill")} when you ended the battle.`
-        : `${sideName(winner)} took the round${hud.match.overtime ? " in overtime" : margin ? ` by ${margin}` : ""}.`;
-    }
-    return `<section class="menu compact results" data-outcome="${outcome}" data-team="${side}" aria-labelledby="results-title">
+    // A solo run's loss leads with the death that ended it.
+    const lede =
+      solo && report.outcome === "lost" && death
+        ? `${escapeHtml(death.text)} ${report.lede}`
+        : report.lede;
+    return `<section class="menu compact results" data-outcome="${report.outcome}" data-team="${side}" aria-labelledby="results-title">
       <header class="dialog-head results-banner"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span>${endedEarly && !solo ? `<span class="early-tag">ENDED EARLY</span>` : ""}</div>
-      <div class="dialog-title"><h2 id="results-title">${title}</h2>${solo ? "" : scoreMarkup(scores, "Final score", hud.teamNames, team)}</div>
+      <div class="dialog-title"><h2 id="results-title">${report.title}</h2>${solo ? "" : scoreMarkup(scores, "Final score", hud.teamNames, team)}</div>
       <p class="dialog-lede">${lede}</p></header>
-      <div class="results-body${solo ? "" : " with-board"}"><div class="results-you">${hud.recap ? recapMarkup(hud, hud.recap) : ""}</div>${solo ? "" : scoreboardMarkup(hud.scoreboard, viewer.id, hud.teamNames, scores)}</div>
+      <div class="results-body${solo ? "" : " with-board"}"><div class="results-you">${recapMarkup(recap)}</div>${solo ? "" : scoreboardMarkup(hud.scoreboard, report.board, viewer.id, hud.teamNames, scores)}</div>
       <div class="menu-actions"><button id="play-again" class="primary">${ACTION_ICONS.again}PLAY AGAIN</button>
       <button id="restart" class="secondary">${ACTION_ICONS.setup}BATTLE SETUP</button></div>
     </section>`;

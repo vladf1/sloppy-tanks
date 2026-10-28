@@ -13,7 +13,7 @@ use sloppy_core::sim::round_recap::{Feat, Metric, RecapStats};
 use sloppy_core::sim::{DamageCause, GameMode, MatchPhase, Team, VehicleKind, Weapon};
 use sloppy_render::wgpu;
 use sloppy_web::Shell;
-use sloppy_web::battle_report::battle_report;
+use sloppy_web::battle_report::{battle_report, pause_report};
 use sloppy_web::hud::{Hud, HudAmmo, HudHuman, HudScore, Scoreboard};
 use sloppy_web::recap::RoundRecap;
 
@@ -523,6 +523,7 @@ fn snapshots() {
             "size": size,
             "scale": SCALE,
             "hud": state.hud,
+            "pause": state.hud.as_ref().map(pause_report),
             "stats": state.stats,
             "networkSample": state.network_sample,
             "ready": state.ready,
