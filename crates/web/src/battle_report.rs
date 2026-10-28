@@ -20,62 +20,24 @@ use crate::hud::{Hud, HudScore};
 use crate::recap::RoundRecap;
 
 /// Each metric's label and, on hover, its explanation, so the report itself reads at a
-/// glance. In report order.
-const METRICS: [(Metric, &str, &str); 13] = [
-    (Metric::Kills, "Kills", "Enemy tanks destroyed"),
-    (
-        Metric::Damage,
-        "Damage dealt",
-        "Enemy hull damage, no overkill",
-    ),
-    (
-        Metric::BestLife,
-        "Best spree",
-        "Most kills in a single life",
-    ),
-    (Metric::Rank, "Top rank", "Peak rank across all lives"),
-    (
-        Metric::BusiestMinute,
-        "Busiest minute",
-        "Most kills within any 60 seconds",
-    ),
-    (
-        Metric::LongestLife,
-        "Longest life",
-        "Longest time alive, pauses excluded",
-    ),
-    (
-        Metric::Multikill,
-        "Best multikill",
-        "Most kills within any 5 seconds",
-    ),
-    (
-        Metric::ClutchKills,
-        "Clutch kills",
-        "Kills at 25% hull or less",
-    ),
-    (
-        Metric::RevengeKills,
-        "Revenge kills",
-        "Kills on your last killer",
-    ),
-    (
-        Metric::PosthumousKills,
-        "Grave kills",
-        "Kills by a previous life's ordnance",
-    ),
-    (
-        Metric::MineKills,
-        "Mine kills",
-        "Kills from mine explosions",
-    ),
-    (
-        Metric::CoverDestroyed,
-        "Cover razed",
-        "Destructible objects you finished",
-    ),
-    (Metric::Pickups, "Pickups", "Ammo and power-ups collected"),
-];
+/// glance. The report lists metrics in `Metric::ALL` order.
+fn label(metric: Metric) -> (&'static str, &'static str) {
+    match metric {
+        Metric::Kills => ("Kills", "Enemy tanks destroyed"),
+        Metric::Damage => ("Damage dealt", "Enemy hull damage, no overkill"),
+        Metric::BestLife => ("Best spree", "Most kills in a single life"),
+        Metric::Rank => ("Top rank", "Peak rank across all lives"),
+        Metric::BusiestMinute => ("Busiest minute", "Most kills within any 60 seconds"),
+        Metric::LongestLife => ("Longest life", "Longest time alive, pauses excluded"),
+        Metric::Multikill => ("Best multikill", "Most kills within any 5 seconds"),
+        Metric::ClutchKills => ("Clutch kills", "Kills at 25% hull or less"),
+        Metric::RevengeKills => ("Revenge kills", "Kills on your last killer"),
+        Metric::PosthumousKills => ("Grave kills", "Kills by a previous life's ordnance"),
+        Metric::MineKills => ("Mine kills", "Kills from mine explosions"),
+        Metric::CoverDestroyed => ("Cover razed", "Destructible objects you finished"),
+        Metric::Pickups => ("Pickups", "Ammo and power-ups collected"),
+    }
+}
 
 /// The hero tile and the tiles beside it; peak rank shows with the tank, and the other
 /// metrics list below only when they happened.
@@ -322,39 +284,24 @@ fn outcome(hud: &Hud) -> (Outcome, &'static str, String) {
     let leader = leading_team(scores);
     let margin = scores[0].abs_diff(scores[1]);
     if ended_early {
-        return match leader {
-            None => (
-                Outcome::EndedEven,
-                "STALEMATE",
-                "The teams were level when you ended the battle.".into(),
-            ),
-            Some(leader) if leader == team => (
-                Outcome::EndedAhead,
-                "LEAD HELD",
-                format!(
-                    "Your team led by {} when you ended the battle.",
-                    count_line(margin, "kill")
-                ),
-            ),
-            Some(leader) => (
-                Outcome::EndedBehind,
-                "CUT SHORT",
-                format!(
-                    "{} led by {} when you ended the battle.",
-                    team_label(hud.team_names[leader.index()]),
-                    count_line(margin, "kill")
-                ),
+        let (outcome, title) = match leader {
+            None => (Outcome::EndedEven, "STALEMATE"),
+            Some(leader) if leader == team => (Outcome::EndedAhead, "LEAD HELD"),
+            Some(_) => (Outcome::EndedBehind, "CUT SHORT"),
+        };
+        let lede = match leader {
+            None => "The teams were level when you ended the battle.".to_owned(),
+            Some(leader) => format!(
+                "{} led by {} when you ended the battle.",
+                side_label(leader, team, &hud.team_names),
+                count_line(margin, "kill")
             ),
         };
+        return (outcome, title, lede);
     }
     // The plates carry the scores; the sentence names who was ahead and by how much,
     // never the scores in a second order.
-    let side = state.winner.unwrap_or(Team::Blue);
-    let side = if side == team {
-        "Your team".to_owned()
-    } else {
-        team_label(hud.team_names[side.index()])
-    };
+    let side = side_label(state.winner.unwrap_or(Team::Blue), team, &hud.team_names);
     let how = if state.overtime {
         " in overtime".to_owned()
     } else if margin > 0 {
@@ -368,13 +315,6 @@ fn outcome(hud: &Hud) -> (Outcome, &'static str, String) {
         Some(winner) if winner == team => (Outcome::Won, "VICTORY", lede),
         Some(_) => (Outcome::Lost, "DEFEAT", lede),
     }
-}
-
-fn label(metric: Metric) -> (&'static str, &'static str) {
-    METRICS
-        .iter()
-        .find(|(key, ..)| *key == metric)
-        .map_or(("", ""), |&(_, label, hint)| (label, hint))
 }
 
 /// A metric's value as the report says it: a rank by name, a time as `m:ss`, a count
@@ -464,35 +404,22 @@ fn standout(recap: &RoundRecap) -> Option<Lit> {
 fn best_progress(kills: f64, best: f64, improved: bool) -> BestProgress {
     // A meter only measures a gap: a record or a tie is named in gold, with no bar that
     // fills toward nothing.
-    if improved {
-        BestProgress {
-            text: "NEW PERSONAL BEST".into(),
-            record: true,
-            meter: None,
-        }
+    let (text, record, meter) = if improved {
+        ("NEW PERSONAL BEST".to_owned(), true, None)
     } else if best > kills {
-        BestProgress {
-            text: format!(
-                "{} short of your best · {}",
-                thousands(best - kills),
-                thousands(best)
-            ),
-            record: false,
-            meter: Some((kills / best).clamp(0.0, 1.0)),
-        }
+        let short = thousands(best - kills);
+        let text = format!("{short} short of your best · {}", thousands(best));
+        (text, false, Some((kills / best).clamp(0.0, 1.0)))
     } else if kills > 0.0 {
         // The kills beside it already say the number: the line only names the record.
-        BestProgress {
-            text: "Ties your personal best".into(),
-            record: true,
-            meter: None,
-        }
+        ("Ties your personal best".to_owned(), true, None)
     } else {
-        BestProgress {
-            text: "No kills this round".into(),
-            record: false,
-            meter: Some(0.0),
-        }
+        ("No kills this round".to_owned(), false, Some(0.0))
+    };
+    BestProgress {
+        text,
+        record,
+        meter,
     }
 }
 
@@ -508,12 +435,13 @@ fn details(recap: &RoundRecap) -> Vec<ReportDetail> {
             || (NOTABLE.contains(&metric) && recap.stats.get(metric) >= threshold)
     };
     // New bests lead; the rest keep the report's order.
-    let (mut details, rest): (Vec<ReportDetail>, Vec<ReportDetail>) = METRICS
-        .iter()
-        .filter(|&&(metric, ..)| {
+    let (mut details, rest): (Vec<ReportDetail>, Vec<ReportDetail>) = Metric::ALL
+        .into_iter()
+        .filter(|&metric| {
             !FEATURED.contains(&metric) && recap.stats.get(metric) > 0.0 && notable(metric)
         })
-        .map(|&(metric, label, hint)| {
+        .map(|metric| {
+            let (label, hint) = label(metric);
             let record = recap.improved.contains(&metric);
             ReportDetail {
                 label,
@@ -536,26 +464,21 @@ fn details(recap: &RoundRecap) -> Vec<ReportDetail> {
 /// something happened, or when they could not be kept.
 fn note(hud: &Hud, recap: &RoundRecap, shell: Shell) -> Option<ReportNote> {
     let bests = recap.improved.len();
-    if !recap.persisted {
+    let (record, text) = if !recap.persisted {
         let place = match shell {
             Shell::Page => "in this browser",
             Shell::Desktop => "on this computer",
         };
-        Some(ReportNote {
-            record: None,
-            text: format!("Personal bests couldn't be saved {place}"),
-        })
+        (None, format!("Personal bests couldn't be saved {place}"))
     } else if bests > 0 {
-        Some(ReportNote {
-            record: Some(format!(
-                "{bests} NEW PERSONAL BEST{}",
-                if bests == 1 { "" } else { "S" }
-            )),
-            text: format!("on {} · {}", hud.map_name, difficulty_name(hud.difficulty)),
-        })
+        let plural = if bests == 1 { "" } else { "S" };
+        let record = format!("{bests} NEW PERSONAL BEST{plural}");
+        let place = format!("on {} · {}", hud.map_name, difficulty_name(hud.difficulty));
+        (Some(record), place)
     } else {
-        None
-    }
+        return None;
+    };
+    Some(ReportNote { record, text })
 }
 
 /// Pause's facts and standing for the battle `hud` shows: a solo run's tally, then the
@@ -581,51 +504,31 @@ pub fn pause_report(hud: &Hud) -> PauseReport {
     let rows: Vec<HudScore> = hud.scoreboard.rows().collect();
     let place = (!solo).then(|| team_place(&rows, human.id)).flatten();
     let last = match place {
-        Some((place, of)) => PauseFact {
-            label: "Team rank",
-            value: format!("{} of {of}", ordinal(place as u64).to_ascii_lowercase()),
-            note: "by kills",
-        },
-        None => PauseFact {
-            label: "Bots",
-            value: hud.active_enemies.to_string(),
-            note: "active",
-        },
+        Some((place, of)) => {
+            let place = ordinal(place as u64).to_ascii_lowercase();
+            ("Team rank", format!("{place} of {of}"), "by kills")
+        }
+        None => ("Bots", hud.active_enemies.to_string(), "active"),
     };
+    let difficulty = difficulty_name(hud.difficulty).to_owned();
+    let kills_deaths = format!("{} / {}", human.kills, human.deaths);
+    let facts = [
+        ("Objective", objective, if solo { "One life" } else { "" }),
+        ("Clock", clock, ""),
+        ("Difficulty", difficulty, ""),
+        ("Your tank", human.vehicle_name.to_owned(), human.rank_name),
+        ("Kills / deaths", kills_deaths, "this battle"),
+        last,
+    ];
     PauseReport {
         tally: solo.then(|| SoloTally {
             kills: human.kills,
             survived: duration(hud.elapsed).to_string(),
         }),
         standing: (!solo).then(|| pause_standing(hud)),
-        facts: vec![
-            PauseFact {
-                label: "Objective",
-                value: objective,
-                note: if solo { "One life" } else { "" },
-            },
-            PauseFact {
-                label: "Clock",
-                value: clock,
-                note: "",
-            },
-            PauseFact {
-                label: "Difficulty",
-                value: difficulty_name(hud.difficulty).to_owned(),
-                note: "",
-            },
-            PauseFact {
-                label: "Your tank",
-                value: human.vehicle_name.to_owned(),
-                note: human.rank_name,
-            },
-            PauseFact {
-                label: "Kills / deaths",
-                value: format!("{} / {}", human.kills, human.deaths),
-                note: "this battle",
-            },
-            last,
-        ],
+        facts: facts
+            .map(|(label, value, note)| PauseFact { label, value, note })
+            .into(),
     }
 }
 
@@ -685,19 +588,32 @@ pub fn ordinal(value: u64) -> String {
 }
 
 /// "1 kill", "0 deaths", "3 kills": a count and its noun, one vocabulary across the menus.
-fn count_line(count: u32, noun: &str) -> String {
+pub fn count_line(count: u32, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
-/// "BLUE" as the report says it: "Blue team". Team names are ASCII; ASCII case keeps
+/// "BIG RIG" in a sentence: "Big Rig". Team and tank names are ASCII; ASCII case keeps
 /// Unicode's case tables out of the Wasm.
+pub fn title_case(name: &str) -> String {
+    let words = name.split(' ').map(|word| {
+        let (first, rest) = word.split_at(word.chars().next().map_or(0, char::len_utf8));
+        first.to_ascii_uppercase() + &rest.to_ascii_lowercase()
+    });
+    words.collect::<Vec<_>>().join(" ")
+}
+
+/// "BLUE" as the report says it: "Blue team".
 fn team_label(name: &str) -> String {
-    let (first, rest) = name.split_at(name.chars().next().map_or(0, char::len_utf8));
-    format!(
-        "{}{} team",
-        first.to_ascii_uppercase(),
-        rest.to_ascii_lowercase()
-    )
+    format!("{} team", title_case(name))
+}
+
+/// The `side` as the viewer on `team` reads it: "Your team", or "Blue team".
+fn side_label(side: Team, team: Team, names: &[&str; 2]) -> String {
+    if side == team {
+        "Your team".to_owned()
+    } else {
+        team_label(names[side.index()])
+    }
 }
 
 /// The team ahead, or none when the scores are level.
@@ -713,14 +629,11 @@ fn leading_team(scores: [u32; 2]) -> Option<Team> {
 fn standing_line(scores: [u32; 2], team: Team, names: &[&str; 2]) -> String {
     match leading_team(scores) {
         None => format!("Level at {} each", scores[0]),
-        Some(leader) => {
-            let side = if leader == team {
-                "Your team".to_owned()
-            } else {
-                team_label(names[leader.index()])
-            };
-            format!("{side} leads by {}", scores[0].abs_diff(scores[1]))
-        }
+        Some(leader) => format!(
+            "{} leads by {}",
+            side_label(leader, team, names),
+            scores[0].abs_diff(scores[1])
+        ),
     }
 }
 
@@ -1330,6 +1243,7 @@ mod tests {
             ["0 deaths", "1 death", "2 kills"]
         );
         assert_eq!(team_label("BLUE"), "Blue team");
+        assert_eq!(title_case("BIG RIG"), "Big Rig");
     }
 
     #[test]

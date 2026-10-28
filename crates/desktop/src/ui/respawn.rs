@@ -161,16 +161,12 @@ pub fn card(
 fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
     let death = state.death.as_ref();
     let (label, name) = match death {
-        None => ("YOUR TANK".to_owned(), "DESTROYED".to_owned()),
-        Some(report) if report.own_goal => ("OWN GOAL".to_owned(), "YOU".to_owned()),
-        Some(report) => (
-            "DESTROYED BY".to_owned(),
-            report
-                .killer
-                .clone()
-                .unwrap_or_else(|| "THE YARD".to_owned())
-                .to_uppercase(),
-        ),
+        None => ("YOUR TANK", "DESTROYED".to_owned()),
+        Some(report) if report.own_goal => ("OWN GOAL", "YOU".to_owned()),
+        Some(report) => {
+            let killer = report.killer.as_deref().unwrap_or("THE YARD");
+            ("DESTROYED BY", killer.to_uppercase())
+        }
     };
     let name_color = match death.and_then(|report| report.killer_team) {
         Some(Team::Blue) => hex(0x9ad6ff),
@@ -181,7 +177,7 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
         painter,
         rect.min,
         Align2::LEFT_TOP,
-        &label,
+        label,
         bold_font(12.0),
         hex(0xff8592),
         2.4,
