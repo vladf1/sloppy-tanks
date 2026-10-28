@@ -18,6 +18,7 @@ pub mod hud;
 pub mod lab_scene;
 pub mod recap;
 pub mod room_notices;
+pub mod room_text;
 pub mod sounds;
 
 #[cfg(test)]

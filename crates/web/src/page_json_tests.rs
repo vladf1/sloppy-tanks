@@ -1,7 +1,8 @@
 //! The engine JSON the page parses, pinned byte for byte for a seeded game
 //! (`tests/fixtures/page-json.json`): `hud_json` while playing and at Results with the
-//! round recap, `drain_events`, and a room's HUD, actions and notices. The desktop shell
-//! reads the same values typed, so changing how it reads them must leave this text alone.
+//! round recap, `drain_events`, and a room's HUD, actions and notices with the room
+//! menu's words. The desktop shell reads the same values typed, so changing how it reads
+//! them must leave this text alone.
 //! Rerun with `SLOPPY_UPDATE_FIXTURES=1` after a deliberate change to the page's JSON or
 //! to the seeded arena.
 //!
@@ -13,17 +14,19 @@ use std::collections::BTreeMap;
 
 use serde_json::{Value, json};
 use sloppy_core::net::client::{ClientAction, ClientNotice, EndCause};
-use sloppy_core::net::protocol::Lobby;
+use sloppy_core::net::protocol::{Lobby, RoomPhase};
 use sloppy_core::net::schema::parse_record;
 use sloppy_core::sim::match_state::end_battle;
 use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::round_recap::{RecordStorage, StorageUnavailable};
 use sloppy_core::sim::{Match, MatchPhase, SimEvent, Simulation, SimulationSetup, Team, Weapon};
 
+use crate::Shell;
 use crate::events::{PendingEvent, drain_events};
 use crate::hud::{room_hud, simulation_hud};
 use crate::recap::round_recap;
 use crate::room_notices::RoomNotice;
+use crate::room_text::RoomText;
 use crate::sounds::SoundPlanner;
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/page-json.json");
@@ -180,15 +183,43 @@ fn notices() -> Value {
         },
         ClientNotice::ShowBaseline { baseline: 7 },
     ];
-    let notices = notices
+    let mut text = RoomText::default();
+    let mut notices: Vec<RoomNotice> = notices
         .into_iter()
-        .filter_map(|notice| RoomNotice::from_client(notice, "p1"))
+        .filter_map(|notice| RoomNotice::from_client(notice, "p1", &mut text, Shell::Page))
         .chain([
             RoomNotice::Prepare,
             RoomNotice::ArenaFailed("No adapter".into()),
             RoomNotice::BaselineShown,
-        ]);
-    Value::Array(notices.map(|notice| notice.to_value()).collect())
+        ])
+        .collect();
+    // The room menu's other words: once back in the room, a newcomer in the feed, a
+    // drop's dialog during a battle and the renderer's own ending.
+    let mut lobby = Lobby::read(&lobby).unwrap();
+    let mut newcomer = lobby.players[0].clone();
+    newcomer.player_id = "p2".into();
+    newcomer.name = "Crank".into();
+    newcomer.team = Team::Blue;
+    lobby.players.push(newcomer);
+    lobby.phase = RoomPhase::Playing;
+    let later = [
+        ClientNotice::Status {
+            text: "Connected".into(),
+            connected: true,
+        },
+        ClientNotice::Lobby(lobby),
+        ClientNotice::Status {
+            text: "Reconnecting…".into(),
+            connected: false,
+        },
+    ];
+    notices.extend(
+        later
+            .into_iter()
+            .filter_map(|notice| RoomNotice::from_client(notice, "p1", &mut text, Shell::Page)),
+    );
+    notices.push(RoomNotice::Ended(text.renderer_stopped(Shell::Page)));
+    Value::Array(notices.iter().map(RoomNotice::to_value).collect())
 }
 
 fn actions() -> Vec<ClientAction> {

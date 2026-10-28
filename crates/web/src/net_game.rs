@@ -35,8 +35,13 @@
 //!   "forgetSeat"}`. Report socket events with `socket_opened`, `socket_message` (text
 //!   frames), `socket_binary` (binary frames, as a `Uint8Array`; set the socket's
 //!   `binaryType` to `"arraybuffer"`) and `socket_closed` (close code).
-//! - Notices (`take_notices`): `status {text, connected}`, `notice {text}`, `ended {cause,
-//!   text}`, `lobby {lobby, playerId}` (the wire lobby record), `result {match, team}`,
+//! - Notices (`take_notices`): `status {text, connected, title?, message?}` (the
+//!   connection dialog's words while not connected), `notice {text}`, `ended {cause,
+//!   text, title, retry, setup}` (the dialog's title and buttons, `retry` null where
+//!   joining again cannot work; `cause: "renderer"` after `renderer_failed`), `lobby
+//!   {lobby, playerId, menu: {title, hint, summary}, arrivals: [{text, team}]}` (the wire
+//!   lobby record, the room menu's words for it and the feed lines of players who joined
+//!   or came back), `result {match, team}`,
 //!   `resetFeedback`, `clearInput`, `reveal`, `prepare` (run `prepare_step` between tasks
 //!   until it reports done; while it reports `gpuPending`, wait on a short timer),
 //!   `arenaFailed {error}` and `baselineShown` (the arena drew the first frames of a new
@@ -51,8 +56,8 @@
 //!   displayed scene's counts and a `network` block (RTT, updates, playout buffer, late
 //!   batches, ticks, input seq/ack).
 //! - Intents: `choose`, `settings`, `start`, `pause`, `resume`, `end`, `rejoin`,
-//!   `leave`, `select_ammo`, `set_hidden`, `stop` (`pagehide`), `toggle_first_person`,
-//!   `resize`.
+//!   `leave`, `select_ammo`, `set_hidden`, `stop` (`pagehide`), `renderer_failed`,
+//!   `toggle_first_person`, `resize`.
 //! - `camera_preferences() -> Float64Array [firstPerson, zoom]`: the chosen view
 //!   and clamped overhead zoom, for the page to save after a camera input.
 //!
@@ -93,6 +98,7 @@ use crate::page::{
     PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
 };
 use crate::room_notices::RoomNotice;
+use crate::room_text::RoomText;
 use crate::stats::presentation_stats;
 use sloppy_render::gpu::RenderTarget;
 
@@ -166,7 +172,6 @@ struct PendingArena {
 pub struct NetGame {
     /// The shell drawing this game, for the wording the page and the desktop app say
     /// differently.
-    #[expect(dead_code, reason = "Phase 2 reads it when the engine writes HUD text")]
     shell: Shell,
     client: NetworkClient,
     view: Presentation,
@@ -179,6 +184,8 @@ pub struct NetGame {
     /// The sounds drained events play, on the frame clock.
     sounds: SoundPlanner,
     notices: Vec<RoomNotice>,
+    /// What the room menu said so far, for the words of the next notices.
+    room_text: RoomText,
     frame_index: u64,
     times: FrameTimes,
     pacing: FramePacing,
@@ -261,6 +268,15 @@ impl NetGame {
         self.client.stop();
     }
 
+    /// The shell's renderer failed (a GPU error or a lost device): give up the
+    /// connection, and end the room with an `ended` notice that says so.
+    pub fn renderer_failed(&mut self) {
+        self.client.stop();
+        self.drain_client_notices();
+        let ending = self.room_text.renderer_stopped(self.shell);
+        self.notice(RoomNotice::Ended(ending));
+    }
+
     // ---------------------------------------------------------- room intents
 
     /// Change team (`team` < 0: auto) or tank between battles.
@@ -316,12 +332,20 @@ impl NetGame {
         ));
     }
 
+    /// End the battle as host. Its results then say it ended, since this seat has the
+    /// menu open and gets no final state.
     pub fn end(&mut self, now: f64) {
+        // Notices already received keep the words of before.
+        self.drain_client_notices();
+        self.room_text.ending_round();
         self.commands.clear();
         self.client.end(now);
     }
 
+    /// Join the stopped room again; the connection dialog reads RECONNECTING.
     pub fn rejoin(&mut self, now: f64) {
+        self.drain_client_notices();
+        self.room_text.rejoining();
         self.client.rejoin(now);
     }
 
@@ -750,6 +774,7 @@ impl NetGame {
             events: Vec::new(),
             sounds: SoundPlanner::default(),
             notices: Vec::new(),
+            room_text: RoomText::default(),
             frame_index: 0,
             times: FrameTimes::default(),
             pacing,
@@ -892,7 +917,12 @@ impl NetGame {
                 }
                 _ => {}
             }
-            if let Some(notice) = RoomNotice::from_client(notice, &self.client.player_id) {
+            if let Some(notice) = RoomNotice::from_client(
+                notice,
+                &self.client.player_id,
+                &mut self.room_text,
+                self.shell,
+            ) {
                 self.notice(notice);
             }
         }

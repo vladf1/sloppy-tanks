@@ -5,7 +5,6 @@
 //! players list and the respawn card).
 
 use egui::{Align2, Color32, FontId, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use sloppy_core::net::client::EndCause;
 use sloppy_core::net::protocol::{Lobby, MAX_ROUND_MINUTES, Player, RoomPhase, RoomSettings};
 use sloppy_core::sim::data::{TEAM_NAMES, vehicle};
 use sloppy_core::sim::difficulty::Difficulty;
@@ -13,6 +12,7 @@ use sloppy_core::sim::map_options::{MAP_OPTIONS, map_option_for};
 use sloppy_core::sim::{Match, MatchPhase, SimEventType, Team, VehicleKind};
 use sloppy_web::catalog::{DIFFICULTY_OPTIONS, TANK_CARDS, difficulty_name, map_card};
 use sloppy_web::events::PendingEvent;
+use sloppy_web::room_text::{Arrival, ConnectionDialog, Ending, MenuText};
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
@@ -24,32 +24,13 @@ const COPIED_SECONDS: f64 = 2.0;
 /// Tanks per team, bots included, on a standard map; extra levels name their own.
 const STANDARD_TEAM_TANKS: usize = 6;
 
-/// Whether the room's socket is live, being (re)connected, or has given up.
+/// Whether the room's socket is live, being (re)connected, or has given up, with the
+/// engine's words for the connection dialog.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Link {
     Live,
-    Connecting {
-        title: String,
-        text: String,
-    },
-    /// Why the client stopped retrying; `None` when the renderer stopped instead.
-    Ended {
-        cause: Option<EndCause>,
-        text: String,
-    },
-}
-
-/// The heading of each connection end, and the retry it offers besides Battle Setup.
-fn ending(cause: Option<EndCause>) -> (&'static str, Option<&'static str>) {
-    match cause {
-        Some(EndCause::Lost) => ("CONNECTION LOST", Some("TRY AGAIN")),
-        Some(EndCause::Rejected) => ("DISCONNECTED", Some("TRY AGAIN")),
-        Some(EndCause::SeatExpired) => ("SEAT EXPIRED", Some("JOIN AGAIN")),
-        Some(EndCause::OtherTab) => ("PLAYING ELSEWHERE", Some("PLAY HERE")),
-        Some(EndCause::RoomEnded) => ("ROOM CLOSED", None),
-        Some(EndCause::Outdated) => ("GAME UPDATED", None),
-        None => ("RENDERER STOPPED", None),
-    }
+    Connecting(ConnectionDialog),
+    Ended(Ending),
 }
 
 /// A tank's name in a sentence: "Big Rig" for BIG RIG.
@@ -76,12 +57,12 @@ pub struct RoomMenu {
     /// The latest status line while joining or reconnecting.
     pub status: String,
     pub lobby: Option<Lobby>,
+    /// The engine's title, hint and rule chips for the lobby.
+    pub text: MenuText,
     pub player_id: String,
     pub link: Link,
-    /// The finished round as the viewer's tank played it.
+    /// The finished round as the viewer's tank played it, for its final score.
     pub outcome: Option<(Match, Team)>,
-    /// The round this host ended early: its seat had the menu open, so no final state.
-    pub ended_round: Option<u64>,
     /// The in-battle menu is open.
     pub menu_open: bool,
     editing_rules: bool,
@@ -103,13 +84,14 @@ impl RoomMenu {
             creating,
             status: "Connecting to room…".into(),
             lobby: None,
+            text: MenuText::default(),
             player_id: String::new(),
-            link: Link::Connecting {
-                title: "CONNECTING".into(),
-                text: "Connecting to the room…".into(),
-            },
+            // The joining card covers the dialog until the engine reveals the room.
+            link: Link::Connecting(ConnectionDialog {
+                title: "CONNECTING",
+                message: "Connecting to the room…".into(),
+            }),
             outcome: None,
-            ended_round: None,
             menu_open: false,
             editing_rules: false,
             editing_choice: false,
@@ -125,19 +107,23 @@ impl RoomMenu {
         use serde_json::json;
         let link = match &self.link {
             Link::Live => json!({"kind": "live"}),
-            Link::Connecting { title, text } => {
-                json!({"kind": "connecting", "title": title, "text": text})
+            Link::Connecting(dialog) => {
+                json!({"kind": "connecting", "title": dialog.title, "text": dialog.message})
             }
-            Link::Ended { cause, text } => json!({
+            Link::Ended(ending) => json!({
                 "kind": "ended",
-                "cause": cause.map_or("renderer", EndCause::as_str),
-                "text": text,
+                "cause": ending.cause.map_or("renderer", |cause| cause.as_str()),
+                "text": ending.text,
+                "title": ending.title,
+                "retry": ending.retry,
+                "setup": ending.setup,
             }),
         };
         json!({
             "room": self.room, "playerId": self.player_id, "joining": self.joining,
             "creating": self.creating, "status": self.status, "link": link,
             "lobby": self.lobby.as_ref().map(|lobby| serde_json::from_str::<serde_json::Value>(&lobby.to_json()).expect("a lobby JSON")),
+            "menu": self.text,
             "outcome": self.outcome.as_ref().map(|(state, team)| json!({"match": state, "team": team})),
             "menuOpen": self.menu_open, "editingRules": self.editing_rules, "editingChoice": self.editing_choice,
             "controlsOpen": self.controls_open, "notice": self.notice, "deathCause": self.death_cause,
@@ -168,64 +154,40 @@ impl RoomMenu {
         self.mine().map(|player| player.team)
     }
 
-    /// Connection progress: live, or a dialog that says the socket is down.
-    pub fn status(&mut self, text: &str, connected: bool) {
+    /// Connection progress: live, or the dialog that says the socket is down.
+    pub fn status(&mut self, text: &str, dialog: Option<ConnectionDialog>) {
         self.status = text.to_owned();
-        if connected {
-            self.link = Link::Live;
-        } else {
-            let title = match &self.link {
-                Link::Live => "CONNECTION LOST".to_owned(),
-                Link::Connecting { title, .. } => title.clone(),
-                Link::Ended { .. } => "RECONNECTING".to_owned(),
-            };
-            self.link = Link::Connecting {
-                title,
-                text: text.to_owned(),
-            };
-        }
+        self.link = dialog.map_or(Link::Live, Link::Connecting);
     }
 
-    /// The connection ended for `cause`, or the renderer stopped (`None`).
-    pub fn ended(&mut self, cause: Option<EndCause>, text: String) {
-        self.link = Link::Ended { cause, text };
+    /// The connection ended, or the renderer stopped.
+    pub fn ended(&mut self, ending: Ending) {
+        self.link = Link::Ended(ending);
     }
 
-    /// A new lobby: who joined or came back goes to the feed.
-    pub fn lobby(&mut self, lobby: Lobby, player_id: String, ui: &mut UiState) {
-        if let Some(previous) = self
-            .lobby
-            .as_ref()
-            .filter(|previous| previous.room_epoch == lobby.room_epoch)
-        {
-            for player in &lobby.players {
-                let before = previous
-                    .players
-                    .iter()
-                    .find(|item| item.player_id == player.player_id);
-                if player.player_id != player_id
-                    && player.connected
-                    && !before.is_some_and(|before| before.connected)
-                {
-                    let what = if before.is_some() {
-                        " reconnected".to_owned()
-                    } else {
-                        format!(" joined {} team", team_word(player.team))
-                    };
-                    ui.kill_feed.push(KillFeedEntry {
-                        killer: player.name.clone() + &what,
-                        killer_team: Some(player.team),
-                        victim: String::new(),
-                        victim_team: None,
-                        cause: None,
-                        own_kill: false,
-                        own_death: false,
-                        age: 0.0,
-                    });
-                    if ui.kill_feed.len() > super::KILL_FEED_LINES {
-                        ui.kill_feed.remove(0);
-                    }
-                }
+    /// A new lobby with the engine's words for it: who joined or came back goes to the
+    /// feed.
+    pub fn lobby(
+        &mut self,
+        lobby: Lobby,
+        player_id: String,
+        text: MenuText,
+        arrivals: Vec<Arrival>,
+        ui: &mut UiState,
+    ) {
+        for arrival in arrivals {
+            ui.kill_feed.push(KillFeedEntry {
+                killer: arrival.text,
+                killer_team: Some(arrival.team),
+                victim: String::new(),
+                victim_team: None,
+                cause: None,
+                own_kill: false,
+                own_death: false,
+                age: 0.0,
+            });
+            if ui.kill_feed.len() > super::KILL_FEED_LINES {
+                ui.kill_feed.remove(0);
             }
         }
         if lobby.phase != RoomPhase::Results {
@@ -238,6 +200,7 @@ impl RoomMenu {
             self.menu_open = false;
         }
         self.lobby = Some(lobby);
+        self.text = text;
         self.player_id = player_id;
     }
 
@@ -277,23 +240,6 @@ impl RoomMenu {
             }
             SimEventType::Respawn => self.death_cause.clear(),
             _ => {}
-        }
-    }
-
-    /// Victory or defeat when the final state arrived; a neutral heading otherwise.
-    fn results_title(&self) -> &'static str {
-        match &self.outcome {
-            None if self.ended_round.is_some()
-                && self.ended_round == self.lobby.as_ref().map(|lobby| lobby.round_id) =>
-            {
-                "BATTLE ENDED"
-            }
-            None => "ROUND COMPLETE",
-            Some((outcome, _)) if outcome.ended_early == Some(true) || outcome.winner.is_none() => {
-                "BATTLE ENDED"
-            }
-            Some((outcome, team)) if outcome.winner == Some(*team) => "VICTORY",
-            Some(_) => "DEFEAT",
         }
     }
 }
@@ -484,35 +430,21 @@ fn joining(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut Ve
 
 /// The connection dropped (reconnecting by itself) or ended (the way back that fits).
 fn connection(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut Vec<Action>) {
-    let playing = menu.phase() == RoomPhase::Playing;
-    let humans_only = menu
-        .lobby
-        .as_ref()
-        .is_some_and(|lobby| lobby.settings.humans_only);
     room_dialog(context, "connection", 480.0, |ui| match &menu.link {
-        Link::Connecting { title, text } => {
-            room_heading(ui, &menu.room, title, Color32::WHITE);
-            let mut text = text.clone();
-            if playing {
-                text += if humans_only {
-                    " Your tank sits idle until you're back."
-                } else {
-                    " A bot drives your tank until you're back."
-                };
-            }
-            paragraph(ui, &text, hex(0xc4dbee));
+        Link::Connecting(dialog) => {
+            room_heading(ui, &menu.room, dialog.title, Color32::WHITE);
+            paragraph(ui, &dialog.message, hex(0xc4dbee));
             ui.add(egui::Spinner::new().color(GOLD));
             let width = ui.available_width();
             if action(ui, art, "LEAVE ROOM", ButtonStyle::Secondary, width) {
                 actions.push(Action::RoomLeave);
             }
         }
-        Link::Ended { cause, text } => {
-            let (title, retry) = ending(*cause);
-            room_heading(ui, &menu.room, title, Color32::WHITE);
-            paragraph(ui, text, hex(0xc4dbee));
+        Link::Ended(ending) => {
+            room_heading(ui, &menu.room, ending.title, Color32::WHITE);
+            paragraph(ui, &ending.text, hex(0xc4dbee));
             let width = ui.available_width();
-            if let Some(retry) = retry
+            if let Some(retry) = ending.retry
                 && action(ui, art, retry, ButtonStyle::Primary, width)
             {
                 actions.push(Action::RoomRejoin);
@@ -520,15 +452,15 @@ fn connection(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut
             if action(
                 ui,
                 art,
-                "BATTLE SETUP",
-                if retry.is_some() {
+                ending.setup,
+                if ending.retry.is_some() {
                     ButtonStyle::Secondary
                 } else {
                     ButtonStyle::Primary
                 },
                 width,
             ) {
-                actions.push(Action::RoomSetup(text.clone()));
+                actions.push(Action::RoomSetup(ending.text.clone()));
             }
         }
         Link::Live => {}
@@ -550,14 +482,10 @@ fn room_menu(
     let host = lobby.host_id == menu.player_id;
     let playing = lobby.phase == RoomPhase::Playing;
     let alone = lobby.players.len() == 1;
+    let text = menu.text.clone();
     room_dialog(context, "room", 560.0, |ui| {
-        let title = match lobby.phase {
-            RoomPhase::Playing => "BATTLE IN PROGRESS",
-            RoomPhase::Results => menu.results_title(),
-            RoomPhase::Lobby => "LOBBY",
-        };
         let header_origin = ui.cursor().min;
-        room_heading(ui, &menu.room, title, Color32::WHITE);
+        room_heading(ui, &menu.room, text.title, Color32::WHITE);
         let copy = if menu.copied > 0.0 {
             "Link copied"
         } else {
@@ -589,12 +517,12 @@ fn room_menu(
                 outcome.scores,
             );
         }
-        paragraph(ui, &heading_hint(&lobby, host, alone), hex(0xc4dbee));
+        paragraph(ui, &text.hint, hex(0xc4dbee));
         if !menu.notice.is_empty() {
             paragraph(ui, &menu.notice, GOLD);
         }
         if playing {
-            summary(ui, &lobby);
+            summary(ui, &text.summary);
         }
         if lobby.phase == RoomPhase::Results {
             scoreboard(ui, &lobby, &menu.player_id);
@@ -627,7 +555,6 @@ fn room_menu(
                 width
             };
             if host && playing && action(ui, art, "END BATTLE", ButtonStyle::Danger, half) {
-                menu.ended_round = Some(lobby.round_id);
                 actions.push(Action::RoomEnd);
             }
             if action(
@@ -751,25 +678,15 @@ fn room_scores(painter: &egui::Painter, right_center: egui::Pos2, scores: [u32; 
 }
 
 /// Read-only rule chips, in the room menu's own dark wells.
-fn summary(ui: &mut Ui, lobby: &Lobby) {
+fn summary(ui: &mut Ui, chips: &[String]) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-    summary_at(ui.painter(), rect.min, lobby);
+    summary_at(ui.painter(), rect.min, chips);
 }
 
-fn summary_at(painter: &egui::Painter, origin: egui::Pos2, lobby: &Lobby) {
-    let settings = &lobby.settings;
-    let bots = if settings.humans_only {
-        "No bots".to_owned()
-    } else {
-        format!("{} bots", difficulty_name(settings.difficulty))
-    };
+fn summary_at(painter: &egui::Painter, origin: egui::Pos2, chips: &[String]) {
     let mut x = origin.x;
-    for text in [
-        map_option_for(settings.map_mode).name.to_owned(),
-        bots,
-        format!("{} min", settings.round_minutes),
-    ] {
-        let width = paint::text_width(painter, &text, bold_font(12.0), 0.0) + 22.0;
+    for text in chips {
+        let width = paint::text_width(painter, text, bold_font(12.0), 0.0) + 22.0;
         let rect = Rect::from_min_size(pos2(x, origin.y), vec2(width, 27.0));
         x = rect.right() + 6.0;
         painter.rect_filled(rect, 14, hexa(0x050d1c, 0.8));
@@ -783,45 +700,11 @@ fn summary_at(painter: &egui::Painter, origin: egui::Pos2, lobby: &Lobby) {
             painter,
             rect.center(),
             Align2::CENTER_CENTER,
-            &text,
+            text,
             bold_font(12.0),
             hex(0xeef6fb),
             0.0,
         );
-    }
-}
-
-fn heading_hint(lobby: &Lobby, host: bool, alone: bool) -> String {
-    let next = if lobby.phase == RoomPhase::Results {
-        "the next battle"
-    } else {
-        "the battle"
-    };
-    let host_name = lobby
-        .players
-        .iter()
-        .find(|player| player.player_id == lobby.host_id)
-        .map_or("the host", |player| player.name.as_str());
-    match lobby.phase {
-        RoomPhase::Playing if lobby.settings.humans_only => {
-            "The battle keeps going. Your tank sits idle and vulnerable while this menu is open."
-                .into()
-        }
-        RoomPhase::Playing => {
-            "The battle keeps going. A bot drives your tank while this menu is open.".into()
-        }
-        _ if !host => {
-            format!("You stay in this room with everyone. Waiting for {host_name} to start {next}.")
-        }
-        _ if alone => {
-            format!("You're the only one here. Share the invite link, or start {next} on your own.")
-        }
-        RoomPhase::Results => {
-            "Everyone stays in this room. Play again to keep the teams together.".into()
-        }
-        RoomPhase::Lobby => {
-            "Everyone stays in this room. Start the battle to keep the teams together.".into()
-        }
     }
 }
 
@@ -848,7 +731,7 @@ fn next_battle(
         2.5,
     );
     let (rules_line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-    summary_at(ui.painter(), rules_line.min, lobby);
+    summary_at(ui.painter(), rules_line.min, &menu.text.summary);
     if host {
         let label = if menu.editing_rules {
             "Done"
@@ -1416,9 +1299,13 @@ pub fn hud_phase(menu: &RoomMenu) -> MatchPhase {
     }
 }
 
-/// The same room and seats in each UI capture, with no socket or running server.
+/// The same room and seats in each UI capture, with no socket or running server; the
+/// words are the engine's for that room.
 #[cfg(test)]
 pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
+    use sloppy_core::net::client::EndCause;
+    use sloppy_web::Shell;
+    use sloppy_web::room_text;
     let players: Vec<Player> = [
         (
             "viewer",
@@ -1494,16 +1381,20 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
             menu.status = "Shaders loaded: 31 of 40".into();
         }
         "room-reconnecting" => {
-            menu.link = Link::Connecting {
-                title: "RECONNECTING".into(),
-                text: "Connecting to the room…".into(),
-            }
+            menu.link = Link::Connecting(ConnectionDialog {
+                title: "RECONNECTING",
+                message: room_text::connecting_message(
+                    "Connecting to the room…",
+                    menu.lobby.as_ref(),
+                ),
+            })
         }
         "room-connection-ended" => {
-            menu.link = Link::Ended {
-                cause: Some(EndCause::Lost),
-                text: "The connection to the room was lost. Try joining again.".into(),
-            }
+            menu.link = Link::Ended(room_text::ending(
+                Some(EndCause::Lost),
+                "The connection to the room was lost. Try joining again.".into(),
+                Shell::Desktop,
+            ))
         }
         "room-pause" => menu.menu_open = true,
         "room-results" => {
@@ -1525,6 +1416,9 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
         "room-controls" => menu.controls_open = true,
         "room-respawn" => menu.death_cause = "Crank destroyed you with a rocket blast.".into(),
         _ => {}
+    }
+    if let Some(lobby) = &menu.lobby {
+        menu.text = room_text::menu_text(lobby, &menu.player_id, menu.outcome.as_ref(), None);
     }
     menu
 }
@@ -1666,7 +1560,6 @@ mod tests {
         let mut pause = Screen::new("room-pause");
         assert_eq!(pause.click("RESUME"), [Action::Resume]);
         assert_eq!(pause.click("END BATTLE"), [Action::RoomEnd]);
-        assert_eq!(pause.menu.ended_round, Some(1));
         assert_eq!(pause.click("LEAVE ROOM"), [Action::RoomLeave]);
         let mut results = Screen::new("room-results");
         assert_eq!(results.click("PLAY AGAIN"), [Action::RoomStart]);
