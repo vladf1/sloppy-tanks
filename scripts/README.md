@@ -5,6 +5,61 @@ check` covers formatting, lint, types, the site and server builds, clippy and th
 and page-shell tests. A passing gate does not verify controls, menu transitions,
 rendering or cleanup, so run the matching browser check when changing those paths.
 
+## Desktop UI gauntlet
+
+This is a manual builder/critic loop against the actual production web interface,
+using native GPU snapshots and production JavaScript with identical fixture data.
+It covers setup/loading, multiplayer setup, team/solo HUD, first person and damage,
+respawn, pause/controls, Settings, team/solo results, room host/guest/rules/choices,
+room pause/results/connection states, and both Stats for nerds panels.
+
+Invoke the repository skill as `$ui-parity-gauntlet` in Codex or
+`/ui-parity-gauntlet` in Claude Code. The shared instructions live in
+[`.agents/skills/ui-parity-gauntlet`](../.agents/skills/ui-parity-gauntlet/SKILL.md);
+`.claude/skills/ui-parity-gauntlet` is a relative symlink to that folder. Both
+entry points stay in this repository, with no global skill installation.
+
+```sh
+pnpm run check:desktop-ui -- --round first
+# After fixing the critic's findings, reuse the frozen reference:
+pnpm run check:desktop-ui -- --round second
+```
+
+Run on a Mac with Metal and installed Chrome. The default sizes are 1280×800 and
+1600×900 points at 2× resolution. `--sizes 1100x720` checks the native minimum too;
+the web's stacked layout there is not a native acceptance requirement. `--out`
+changes the evidence root. `--refresh-reference` deliberately captures a new
+production build or changed fixtures; do not use it just to clear a failed review.
+Build logs, fixture JSON, PNGs, production release/commit and asset hashes, randomized
+A/B contact sheets and an HTML report stay under ignored `artifacts/performance/desktop-ui/`.
+
+The production capture exposes the UI constructors in intercepted local response
+copies, holds gameplay after startup, and feeds those real renderers the native
+snapshot fixtures. It changes no production files and creates no production rooms.
+Animation is held and the 3D arena is replaced by a flat backdrop in both shells.
+This isolates shell fidelity; use a real app play-through for compositing, input,
+animation and gameplay. The native Fullscreen/Quit controls and the platform's own
+font rasterization are expected differences. A transient native joining card need
+not reproduce the web's page-reload mechanics.
+
+The lead agent acts as builder and integrator. After each capture, give a separate,
+read-only critic the PNG contact sheets and the reference, without the builder's
+self-assessment. The critic must inspect every scenario, record observable gaps
+with priority and file/line evidence, and return **fix** or **accept within reason**.
+Fix supported findings, run native tests/clippy, then capture a new round and judge
+again. A completed capture records `needs-independent-review`, never an automatic
+pass. Record the critic's verdict and any accepted platform differences beside
+`round.json`; stop only when the evidence supports acceptance, the user interrupts,
+or a real blocker is recorded. Screenshots are evidence, not a substitute for tests.
+
+The stages also run separately:
+
+```sh
+SLOPPY_UI_SNAPSHOTS=artifacts/performance/desktop-ui/native cargo test --locked -p sloppy-desktop --profile desktop snapshots -- --ignored
+node scripts/desktop-ui-capture.mjs --native artifacts/performance/desktop-ui/native --out artifacts/performance/desktop-ui/reference
+node scripts/desktop-ui-report.mjs artifacts/performance/desktop-ui/native artifacts/performance/desktop-ui/reference artifacts/performance/desktop-ui/review
+```
+
 ## Browser checks
 
 Start `pnpm run dev` and pass the URL it prints. Every check drives installed

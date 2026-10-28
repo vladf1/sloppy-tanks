@@ -28,6 +28,7 @@
     "desktop:mac": "node scripts/build-desktop.mjs --mac",
     "desktop:windows": "node scripts/build-desktop.mjs --windows",
     "check:browser": "node scripts/browser-checks.mjs",
+    "check:desktop-ui": "node scripts/desktop-ui-gauntlet.mjs",
     "generate:textures": "node --import tsx scripts/generate-textures.ts && node scripts/optimize-textures.mjs && pnpm run generate:pickup-atlas",
     "optimize:textures": "node scripts/optimize-textures.mjs",
     "generate:previews": "pnpm run wasm:labs && node scripts/generate-previews.mjs",

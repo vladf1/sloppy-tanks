@@ -219,6 +219,8 @@ The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
 the Rust `Game` and `NetGame` the page drives, drawn with wgpu on Metal or Direct3D 12,
 with menus and HUD in egui and the textures and sounds from
 `public/` built into the executable.
+The window opens at 1280×800 points and has a minimum of 1100×720. Its menus and HUD
+follow the web edition's desktop layout; fullscreen and Quit are native controls.
 
 ```sh
 pnpm run desktop          # the app for this machine

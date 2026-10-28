@@ -53,7 +53,7 @@ pub fn card(
     ));
     let width = (screen.width() - 48.0).min(CARD_WIDTH);
     let head_height = 96.0;
-    let cards_height = 132.0;
+    let cards_height = 170.0;
     let height = 14.0 + head_height + 12.0 + 40.0 + cards_height + 16.0;
     let origin = pos2(
         screen.center().x - width / 2.0,

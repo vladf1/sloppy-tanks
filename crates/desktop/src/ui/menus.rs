@@ -10,7 +10,7 @@ use egui::{
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
 use super::respawn::ordinal;
-use super::theme::{GOLD, GOLD_HOT, RED, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
+use super::theme::{GOLD, GOLD_HOT, RED, TEXT_LABEL, bold_font, display_font};
 use super::{Action, PauseTab, UiState, View};
 use crate::engine_api::{HudState, ScoreboardRow};
 use crate::preferences::Preferences;
@@ -38,6 +38,17 @@ pub fn dialog(
     width: f32,
     build: impl FnOnce(&mut Ui, &Painter, Pos2, f32) -> f32,
 ) {
+    dialog_with_padding(context, id, width, DIALOG_PADDING, build);
+}
+
+/// Dialogs with their own CSS padding keep that padding independent of their width.
+pub(super) fn dialog_with_padding(
+    context: &egui::Context,
+    id: &str,
+    width: f32,
+    padding: [f32; 3],
+    build: impl FnOnce(&mut Ui, &Painter, Pos2, f32) -> f32,
+) {
     let screen = context.content_rect();
     let width = width.min(screen.width() - 32.0);
     egui::Area::new(Id::unique(id))
@@ -48,7 +59,7 @@ pub fn dialog(
             let origin = ui.cursor().min;
             let painter = ui.painter().clone();
             let slot = painter.add(Shape::Noop);
-            let [side, top, bottom] = DIALOG_PADDING;
+            let [side, top, bottom] = padding;
             let content = build(ui, &painter, origin + vec2(side, top), width - 2.0 * side);
             let rect = Rect::from_min_size(origin, vec2(width, top + content + bottom));
             // A soft shadow: a few widening, faint layers under the plate.
@@ -291,93 +302,100 @@ pub fn dialog_head(
 
 /// One line of the controls card: what it does, its keys and a note.
 pub const CONTROLS: &[(&str, &[&str], &str)] = &[
-    ("Drive", &["W", "A", "S", "D"], "or arrows"),
+    ("Drive", &["W", "A", "S", "D"], ""),
     ("Aim", &["Mouse"], ""),
-    ("Fire", &["Left click"], "hold · or Space"),
+    ("Fire", &["Left click"], "hold"),
     ("Drop mine", &["Right click"], ""),
     ("Ammo", &["Q", "E", "1–5"], "or wheel"),
     ("Zoom", &["Shift", "Wheel"], ""),
     ("First person", &["V"], "turret follows mouse"),
-    (
-        "Fullscreen",
-        if cfg!(target_os = "macos") {
-            &["Cmd", "F"]
-        } else {
-            &["F11"]
-        },
-        "",
-    ),
     ("Pause", &["Esc"], ""),
 ];
 
 /// The controls card's lines and its tip; returns the height used.
-fn controls_card(painter: &Painter, origin: Pos2, width: f32) -> f32 {
-    let line = 28.0;
+pub(super) fn controls_card(painter: &Painter, origin: Pos2, width: f32, columns: usize) -> f32 {
+    let line = 40.0;
+    let padding = vec2(18.0, 10.0);
+    let gap = 26.0;
+    let column_width = (width - 2.0 * padding.x - gap * (columns - 1) as f32) / columns as f32;
+    let rows = CONTROLS.len().div_ceil(columns);
+    let height = padding.y + rows as f32 * line + 12.0 + 23.0 + 12.0;
+    let well = Rect::from_min_size(origin, vec2(width, height));
+    painter.rect_filled(well, 12, hexa(0x050d1c, 0.8));
     for (index, (action, keys, note)) in CONTROLS.iter().enumerate() {
-        let y = origin.y + index as f32 * line + line / 2.0;
-        if index % 2 == 0 {
-            painter.rect_filled(
-                Rect::from_min_size(pos2(origin.x, y - line / 2.0), vec2(width, line)),
-                6,
-                hexa(0xffffff, 0.025),
-            );
-        }
+        let left = origin.x + padding.x + (index % columns) as f32 * (column_width + gap);
+        let y = origin.y + padding.y + (index / columns) as f32 * line + line / 2.0;
+        painter.line_segment(
+            [
+                pos2(left, y + line / 2.0),
+                pos2(left + column_width, y + line / 2.0),
+            ],
+            Stroke::new(1.0, hexa(0x9fd0ff, 0.07)),
+        );
         paint::text(
             painter,
-            pos2(origin.x + 12.0, y),
+            pos2(left, y),
             Align2::LEFT_CENTER,
             action,
-            bold_font(13.5),
-            hex(0xdbe9f6),
-            0.4,
+            bold_font(13.0),
+            hex(0xd6e6f5),
+            0.0,
         );
-        let mut x = origin.x + 150.0;
+        let mut x = left + 106.0;
         for key in *keys {
             let key_width = paint::kbd_width(painter, key, 12.0);
             paint::kbd(painter, pos2(x + key_width / 2.0, y), key, 12.0);
             x += key_width + 4.0;
         }
         if !note.is_empty() {
+            let note_painter = painter.with_clip_rect(Rect::from_min_max(
+                pos2(x + 6.0, y - line / 2.0),
+                pos2(left + column_width, y + line / 2.0),
+            ));
             paint::text(
-                painter,
+                &note_painter,
                 pos2(x + 6.0, y),
                 Align2::LEFT_CENTER,
                 note,
-                egui::FontId::proportional(12.0),
-                TEXT_DIM,
+                egui::FontId::proportional(11.5),
+                hex(0x8eaac4),
                 0.0,
             );
         }
     }
-    let tip_y = origin.y + CONTROLS.len() as f32 * line + 16.0;
-    let tip = Rect::from_min_size(pos2(origin.x, tip_y - 9.0), vec2(34.0, 18.0));
-    painter.rect_filled(tip, 4, GOLD);
+    let tip_y = origin.y + padding.y + rows as f32 * line + 12.0 + 11.5;
+    let tip = Rect::from_min_size(pos2(origin.x + padding.x, tip_y - 11.5), vec2(35.0, 23.0));
+    painter.add(paint::rounded_vgradient(
+        tip,
+        [4.0; 4],
+        &[(0.0, GOLD_HOT), (1.0, GOLD)],
+    ));
     paint::text(
         painter,
         tip.center(),
         Align2::CENTER_CENTER,
         "TIP",
-        bold_font(11.0),
+        bold_font(12.0),
         hex(0x1a2233),
-        1.0,
+        1.5,
     );
     paint::text(
         painter,
         pos2(tip.right() + 10.0, tip_y),
         Align2::LEFT_CENTER,
         "Crates refill special ammo. Standard shells never run out.",
-        egui::FontId::proportional(13.0),
+        egui::FontId::proportional(12.5),
         hex(0xc4dbee),
         0.0,
     );
-    CONTROLS.len() as f32 * line + 30.0
+    height
 }
 
 /// A grid of facts: caption, value and an optional qualifier per cell.
 fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[(&str, String, String)]) -> f32 {
     let columns = 3;
     let rows = cells.len().div_ceil(columns);
-    let cell_height = 84.0;
+    let cell_height = 107.5;
     let cell_width = (width - (columns - 1) as f32) / columns as f32;
     let total = Rect::from_min_size(origin, vec2(width, rows as f32 * (cell_height + 1.0) - 1.0));
     painter.rect_filled(total, 12, hexa(0x9fd0ff, 0.08));
@@ -630,13 +648,14 @@ pub fn pause(
     if hidden {
         return;
     }
-    dialog(
+    dialog_with_padding(
         context,
         "pause menu",
-        600.0,
+        780.0,
+        [42.0, 34.0, 36.0],
         |ui, painter, origin, width| {
             let close = Rect::from_min_size(
-                pos2(origin.x + width + 30.0 - 46.0, origin.y - 26.0 + 12.0),
+                pos2(origin.x + width + 42.0 - 46.0, origin.y - 34.0 + 12.0),
                 Vec2::splat(34.0),
             );
             if paint::close_button(ui, art, close, Id::unique("pause close"))
@@ -691,7 +710,7 @@ pub fn pause(
                     0.0,
                 );
             }
-            y += 30.0;
+            y += 30.0 + 18.0;
             if let Some(picked) = tabs(
                 ui,
                 painter,
@@ -707,22 +726,25 @@ pub fn pause(
             }
             y += 38.0 + 14.0;
             // Both panes share one height, so switching tabs never moves the buttons.
-            let pane_height: f32 = if solo { 72.0 + 169.0 } else { 169.0 };
-            let pane_height = pane_height.max(CONTROLS.len() as f32 * 28.0 + 30.0);
+            let pane_height: f32 = if solo { 72.0 + 216.0 } else { 216.0 };
             match tab {
                 PauseTab::Battle => {
                     battle_pane(painter, pos2(origin.x, y), width, &hud);
                 }
                 PauseTab::Controls => {
-                    controls_card(painter, pos2(origin.x, y), width);
+                    controls_card(painter, pos2(origin.x, y), width, 2);
                 }
             }
             y += pane_height + 20.0;
             let button_height = 48.0;
+            let end_width = 160.0;
+            let action_gap = 10.0;
+            let secondary_width = (width - end_width - 32.0 - action_gap) / 2.4;
+            let resume_width = secondary_width * 1.4;
             if paint::button_at(
                 ui,
                 art,
-                Rect::from_min_size(pos2(origin.x, y), vec2(170.0, button_height)),
+                Rect::from_min_size(pos2(origin.x, y), vec2(end_width, button_height)),
                 "END BATTLE",
                 Some("end"),
                 ButtonStyle::Danger,
@@ -733,16 +755,23 @@ pub fn pause(
             {
                 actions.push(Action::EndBattle);
             }
+            painter.line_segment(
+                [
+                    pos2(origin.x + end_width + 12.0, y + 8.0),
+                    pos2(origin.x + end_width + 12.0, y + button_height - 8.0),
+                ],
+                Stroke::new(1.0, hexa(0x9fd0ff, 0.18)),
+            );
             let resume = Rect::from_min_size(
-                pos2(origin.x + width - 180.0, y),
-                vec2(180.0, button_height),
+                pos2(origin.x + end_width + 32.0, y),
+                vec2(resume_width, button_height),
             );
             if paint::button_at(
                 ui,
                 art,
                 Rect::from_min_size(
-                    pos2(resume.left() - 10.0 - 150.0, y),
-                    vec2(150.0, button_height),
+                    pos2(resume.right() + action_gap, y),
+                    vec2(secondary_width, button_height),
                 ),
                 "SETTINGS",
                 Some("sliders"),
@@ -796,8 +825,8 @@ fn setting_label(painter: &Painter, pos: Pos2, name: &str, note: &str) {
         pos + vec2(0.0, 19.0),
         Align2::LEFT_TOP,
         note,
-        egui::FontId::proportional(12.0),
-        hex(0xa9c0d8),
+        egui::FontId::proportional(13.0),
+        hex(0xb7cde1),
         0.0,
     );
 }
@@ -809,12 +838,12 @@ fn group_label(painter: &Painter, pos: Pos2, width: f32, label: &str) -> Rect {
         pos,
         Align2::LEFT_CENTER,
         label,
-        bold_font(12.0),
+        bold_font(13.0),
         TEXT_LABEL,
         2.0,
     );
     painter.line_segment(
-        [pos2(rect.right() + 12.0, pos.y), pos2(pos.x + width, pos.y)],
+        [pos2(pos.x, pos.y + 18.0), pos2(pos.x + width, pos.y + 18.0)],
         Stroke::new(1.0, hexa(0x9fd0ff, 0.14)),
     );
     rect
@@ -833,10 +862,10 @@ fn slider(
     default: f64,
     ends: (&str, &str),
 ) {
-    let output = Rect::from_min_size(pos2(rect.right() - 54.0, rect.top()), vec2(54.0, 26.0));
+    let output = Rect::from_min_size(pos2(rect.right() - 58.0, rect.top()), vec2(58.0, 26.0));
     let track = Rect::from_min_max(
-        pos2(rect.left() + 8.0, rect.top() + 11.0),
-        pos2(output.left() - 18.0, rect.top() + 15.0),
+        pos2(rect.left(), rect.top() + 10.0),
+        pos2(output.left() - 18.0, rect.top() + 16.0),
     );
     let hit = Rect::from_min_max(
         pos2(track.left() - 8.0, rect.top()),
@@ -851,7 +880,7 @@ fn slider(
         *value = (raw / 0.05).round() * 0.05;
     }
     let share = ((*value - range.0) / (range.1 - range.0)).clamp(0.0, 1.0) as f32;
-    painter.rect_filled(track, 2, hexa(0xffffff, 0.12));
+    painter.rect_filled(track, 3, hex(0x5d7898));
     painter.add(paint::hgradient(
         Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),
         &[(0.0, hex(0xff9d1c)), (1.0, GOLD)],
@@ -860,28 +889,22 @@ fn slider(
     let notch_x = track.left() + track.width() * notch_share;
     painter.line_segment(
         [
-            pos2(notch_x, track.top() - 5.0),
-            pos2(notch_x, track.bottom() + 5.0),
+            pos2(notch_x, track.bottom() + 3.0),
+            pos2(notch_x, track.bottom() + 10.0),
         ],
         Stroke::new(2.0, hexa(0xdbe9f6, 0.5)),
     );
     let thumb = pos2(track.left() + track.width() * share, track.center().y);
     let hot = response.hovered() || response.dragged();
-    painter.circle_filled(thumb, if hot { 10.0 } else { 9.0 }, GOLD_HOT);
-    painter.circle_stroke(thumb, 9.0, Stroke::new(2.0, hex(0xc97d0e)));
-    painter.rect_filled(output, 6, hexa(0x020812, 0.6));
-    painter.rect_stroke(
-        output,
-        6,
-        Stroke::new(1.0, hexa(0x9fd0ff, 0.2)),
-        StrokeKind::Inside,
-    );
+    painter.circle_filled(thumb, if hot { 14.0 } else { 13.0 }, hexa(0xffcf38, 0.15));
+    painter.circle_filled(thumb, if hot { 10.0 } else { 9.0 }, GOLD);
+    painter.circle_stroke(thumb, 7.5, Stroke::new(3.0, hex(0xfff7d6)));
     paint::text(
         painter,
-        output.center(),
-        Align2::CENTER_CENTER,
+        pos2(output.right(), output.center().y),
+        Align2::RIGHT_CENTER,
         &format!("{}%", (*value * 100.0).round()),
-        bold_font(13.0),
+        bold_font(16.0),
         Color32::WHITE,
         0.0,
     );
@@ -894,10 +917,66 @@ fn slider(
             pos2(x, track.bottom() + 8.0),
             align,
             text,
-            egui::FontId::proportional(11.0),
-            hex(0x8fa8c0),
+            bold_font(13.0),
+            hex(0xb7cde1),
             0.0,
         );
+    }
+}
+
+/// A named choice lifts out of its dark well in gold, like `.setting-choice`.
+fn setting_choice(
+    ui: &mut Ui,
+    painter: &Painter,
+    well: Rect,
+    id: &str,
+    choices: &[(&str, &str)],
+    chosen: &mut String,
+) {
+    painter.rect_filled(well, 10, hexa(0x050d1c, 0.8));
+    let segment = (well.width() - 6.0 - 3.0 * (choices.len() - 1) as f32) / choices.len() as f32;
+    for (index, (value, label)) in choices.iter().enumerate() {
+        let rect = Rect::from_min_size(
+            pos2(
+                well.left() + 3.0 + index as f32 * (segment + 3.0),
+                well.top() + 3.0,
+            ),
+            vec2(segment, 32.0),
+        );
+        let response = ui.interact(rect, Id::unique((id, index)), Sense::click());
+        let selected = *chosen == *value;
+        if selected {
+            painter.add(paint::rounded_vgradient(
+                rect,
+                [7.0; 4],
+                &[(0.0, GOLD_HOT), (1.0, GOLD)],
+            ));
+            painter.line_segment(
+                [
+                    pos2(rect.left() + 7.0, rect.bottom() - 1.0),
+                    pos2(rect.right() - 7.0, rect.bottom() - 1.0),
+                ],
+                Stroke::new(2.0, hex(0xc97d0e)),
+            );
+        } else if response.hovered() {
+            painter.rect_filled(rect, 7, hexa(0xffffff, 0.07));
+        }
+        paint::text(
+            painter,
+            rect.center(),
+            Align2::CENTER_CENTER,
+            label,
+            bold_font(13.0),
+            if selected {
+                hex(0x1a2233)
+            } else {
+                hex(0xb9cfe2)
+            },
+            0.0,
+        );
+        if response.clicked() {
+            *chosen = (*value).into();
+        }
     }
 }
 
@@ -946,223 +1025,247 @@ pub fn settings(
         return;
     };
     // The pause menu dims the arena already while it waits under Settings.
-    if !(view.in_round && view.phase == crate::engine_api::Phase::Paused) {
+    if view.room || !(view.in_round && view.phase == crate::engine_api::Phase::Paused) {
         dim_backdrop(context);
     }
     let mut close = None;
     if context.input(|input| input.key_pressed(egui::Key::Escape)) {
         close = Some(false);
     }
-    dialog(context, "settings", 520.0, |ui, painter, origin, width| {
-        let close_rect = Rect::from_min_size(
-            pos2(origin.x + width + 30.0 - 46.0, origin.y - 26.0 + 12.0),
-            Vec2::splat(34.0),
-        );
-        if paint::close_button(ui, art, close_rect, Id::unique("settings close"))
-            .on_hover_text("Close without saving (Esc)")
-            .clicked()
-        {
-            close = Some(false);
-        }
-        let eyebrow = if view.in_round {
-            "SINGLE PLAYER"
-        } else {
-            "BATTLE SETUP"
-        };
-        let mut y = origin.y
-            + dialog_head(
-                painter,
-                origin,
-                width,
-                eyebrow,
-                "SETTINGS",
-                Color32::WHITE,
-                None,
-            )
-            + 12.0;
-        let control_x = origin.x + width * 0.42;
-        let control_width = width * 0.58;
-        // Sound.
-        group_label(painter, pos2(origin.x, y + 8.0), width, "SOUND");
-        y += 26.0;
-        setting_label(
-            painter,
-            pos2(origin.x, y),
-            "Sound",
-            "Effects and engine noise",
-        );
-        slider(
-            ui,
-            painter,
-            Rect::from_min_size(pos2(control_x, y), vec2(control_width, 44.0)),
-            "volume",
-            &mut draft.volume,
-            (0.0, 1.0),
-            0.6,
-            ("Mute", "Loud"),
-        );
-        y += 54.0;
-        // Display.
-        group_label(painter, pos2(origin.x, y + 8.0), width, "DISPLAY");
-        y += 26.0;
-        setting_label(
-            painter,
-            pos2(origin.x, y),
-            "Graphics",
-            "Auto keeps the frame rate smooth",
-        );
-        let well = Rect::from_min_size(pos2(control_x, y), vec2(control_width, 34.0));
-        painter.rect_filled(well, 8, hexa(0x020812, 0.5));
-        let segment = (well.width() - 8.0) / GRAPHICS.len() as f32;
-        for (index, (value, label)) in GRAPHICS.iter().enumerate() {
-            let rect = Rect::from_min_size(
-                pos2(well.left() + 4.0 + index as f32 * segment, well.top() + 4.0),
-                vec2(segment, 26.0),
+    dialog_with_padding(
+        context,
+        "settings",
+        700.0,
+        [38.0, 30.0, 32.0],
+        |ui, painter, origin, width| {
+            let close_rect = Rect::from_min_size(
+                pos2(origin.x + width + 38.0 - 46.0, origin.y - 30.0 + 12.0),
+                Vec2::splat(34.0),
             );
-            let response = ui.interact(rect, Id::unique(("graphics", index)), Sense::click());
-            let selected = draft.graphics == *value;
-            if selected {
-                painter.add(paint::vgradient(
-                    rect.shrink2(vec2(0.0, 0.0)),
-                    &[(0.0, GOLD_HOT), (1.0, GOLD)],
-                ));
-            } else if response.hovered() {
-                painter.rect_filled(rect, 6, hexa(0xffffff, 0.08));
+            if paint::close_button(ui, art, close_rect, Id::unique("settings close"))
+                .on_hover_text("Close without saving (Esc)")
+                .clicked()
+            {
+                close = Some(false);
             }
-            paint::text(
+            let eyebrow = if view.room {
+                "MULTIPLAYER"
+            } else if view.in_round {
+                "SINGLE PLAYER"
+            } else {
+                "BATTLE SETUP"
+            };
+            let mut y = origin.y
+                + dialog_head(
+                    painter,
+                    origin,
+                    width,
+                    eyebrow,
+                    "SETTINGS",
+                    Color32::WHITE,
+                    None,
+                )
+                + 12.0;
+            let control_width = 376.0_f32.min(width * 0.61);
+            let control_x = origin.x + width - control_width;
+            // Sound.
+            group_label(painter, pos2(origin.x, y + 8.0), width, "SOUND");
+            y += 34.0;
+            setting_label(
                 painter,
-                rect.center(),
-                Align2::CENTER_CENTER,
-                label,
-                bold_font(13.0),
-                if selected {
-                    hex(0x1a2233)
-                } else {
-                    hex(0xdbe9f6)
-                },
-                0.4,
+                pos2(origin.x, y),
+                "Sound",
+                "Effects and engine noise",
             );
-            if response.clicked() {
-                draft.graphics = (*value).into();
-            }
-        }
-        y += 50.0;
-        setting_label(
-            painter,
-            pos2(origin.x, y),
-            "Fullscreen",
-            "Fill the screen (F11)",
-        );
-        switch(
-            ui,
-            painter,
-            Rect::from_min_size(pos2(origin.x + width - 46.0, y + 4.0), vec2(46.0, 26.0)),
-            "fullscreen",
-            &mut draft.fullscreen,
-        );
-        y += 46.0;
-        setting_label(
-            painter,
-            pos2(origin.x, y),
-            "Debug tools",
-            "Extra levels, and Stats for nerds on N in battle",
-        );
-        switch(
-            ui,
-            painter,
-            Rect::from_min_size(pos2(origin.x + width - 46.0, y + 4.0), vec2(46.0, 26.0)),
-            "debug tools",
-            &mut draft.debug,
-        );
-        y += 50.0;
-        // Battle speed: single player tunes its own battle.
-        let heading = group_label(
-            painter,
-            pos2(origin.x, y + 8.0),
-            width - 130.0,
-            "BATTLE SPEED",
-        );
-        let reset = Rect::from_min_size(pos2(origin.x + width - 120.0, y - 4.0), vec2(120.0, 24.0));
-        let _ = heading;
-        let response = ui
-            .interact(reset, Id::unique("speeds reset"), Sense::click())
-            .on_hover_text("Both speeds back to 100%");
-        let ink = if response.hovered() {
-            Color32::WHITE
-        } else {
-            TEXT_LABEL
-        };
-        art.icon(
-            painter,
-            "reset",
-            Rect::from_center_size(
-                pos2(reset.left() + 10.0, reset.center().y),
-                Vec2::splat(14.0),
-            ),
-            ink,
-        );
-        paint::text(
-            painter,
-            pos2(reset.left() + 22.0, reset.center().y),
-            Align2::LEFT_CENTER,
-            "Reset to 100%",
-            bold_font(12.0),
-            ink,
-            0.4,
-        );
-        if response.clicked() {
-            draft.tank_speed = 1.0;
-            draft.bullet_speed = 1.0;
-        }
-        y += 26.0;
-        for (name, note, value, id) in [
-            (
-                "Tank base speed",
-                "How fast every tank drives",
-                &mut draft.tank_speed,
-                "tank speed",
-            ),
-            (
-                "Projectile base speed",
-                "How fast shells and rockets fly",
-                &mut draft.bullet_speed,
-                "bullet speed",
-            ),
-        ] {
-            setting_label(painter, pos2(origin.x, y), name, note);
             slider(
                 ui,
                 painter,
                 Rect::from_min_size(pos2(control_x, y), vec2(control_width, 44.0)),
-                id,
-                value,
-                (0.5, 2.0),
-                1.0,
-                ("Slower", "Faster"),
+                "volume",
+                &mut draft.volume,
+                (0.0, 1.0),
+                0.6,
+                ("Mute", "Loud"),
             );
-            y += 54.0;
-        }
-        y += 10.0;
-        let height = 48.0;
-        let save = Rect::from_min_size(pos2(origin.x + width - 150.0, y), vec2(150.0, height));
-        if paint::button_at(ui, art, save, "SAVE", None, ButtonStyle::Primary, true).clicked() {
-            close = Some(true);
-        }
-        if paint::button_at(
-            ui,
-            art,
-            Rect::from_min_size(pos2(save.left() - 140.0, y), vec2(130.0, height)),
-            "CANCEL",
-            None,
-            ButtonStyle::Secondary,
-            true,
-        )
-        .clicked()
-        {
-            close = Some(false);
-        }
-        y + height - origin.y
-    });
+            y += 62.0;
+            // Display.
+            group_label(painter, pos2(origin.x, y + 8.0), width, "DISPLAY");
+            y += 34.0;
+            setting_label(
+                painter,
+                pos2(origin.x, y),
+                "Graphics",
+                "Auto keeps the frame rate smooth",
+            );
+            setting_choice(
+                ui,
+                painter,
+                Rect::from_min_size(pos2(control_x, y), vec2(control_width, 38.0)),
+                "graphics",
+                &GRAPHICS,
+                &mut draft.graphics,
+            );
+            y += 50.0;
+            setting_label(
+                painter,
+                pos2(origin.x, y),
+                "Fullscreen",
+                if cfg!(target_os = "macos") {
+                    "Fill the screen (Cmd+F)"
+                } else {
+                    "Fill the screen (F11)"
+                },
+            );
+            switch(
+                ui,
+                painter,
+                Rect::from_min_size(pos2(origin.x + width - 46.0, y + 4.0), vec2(46.0, 26.0)),
+                "fullscreen",
+                &mut draft.fullscreen,
+            );
+            y += 46.0;
+            group_label(painter, pos2(origin.x, y + 8.0), width, "DEVELOPER");
+            y += 34.0;
+            setting_label(
+                painter,
+                pos2(origin.x, y),
+                "Debug tools",
+                "Extra levels and Stats for nerds",
+            );
+            let mut debug = if draft.debug { "on" } else { "off" }.to_owned();
+            setting_choice(
+                ui,
+                painter,
+                Rect::from_min_size(pos2(control_x, y), vec2(control_width, 38.0)),
+                "debug tools",
+                &[("off", "Off"), ("on", "On")],
+                &mut debug,
+            );
+            draft.debug = debug == "on";
+            y += 58.0;
+            if !view.room {
+                // Battle speed: single player tunes its own battle.
+                group_label(painter, pos2(origin.x, y + 8.0), width, "BATTLE SPEED");
+                let reset =
+                    Rect::from_min_size(pos2(origin.x + width - 143.0, y - 7.0), vec2(143.0, 30.0));
+                let changed = draft.tank_speed != 1.0 || draft.bullet_speed != 1.0;
+                let response = ui
+                    .interact(
+                        reset,
+                        Id::unique("speeds reset"),
+                        if changed {
+                            Sense::click()
+                        } else {
+                            Sense::hover()
+                        },
+                    )
+                    .on_hover_text("Both speeds back to 100%");
+                painter.rect_filled(
+                    reset,
+                    8,
+                    if changed {
+                        hexa(0xffcf38, 0.1)
+                    } else {
+                        Color32::TRANSPARENT
+                    },
+                );
+                painter.rect_stroke(
+                    reset,
+                    8,
+                    Stroke::new(
+                        1.0,
+                        if changed {
+                            hexa(0xffcf38, 0.4)
+                        } else {
+                            hexa(0x9fd0ff, 0.2)
+                        },
+                    ),
+                    StrokeKind::Inside,
+                );
+                let ink = if !changed {
+                    hex(0x8ea6bd)
+                } else if response.hovered() {
+                    Color32::WHITE
+                } else {
+                    GOLD_HOT
+                };
+                art.icon(
+                    painter,
+                    "reset",
+                    Rect::from_center_size(
+                        pos2(reset.left() + 18.0, reset.center().y),
+                        Vec2::splat(14.0),
+                    ),
+                    ink,
+                );
+                paint::text(
+                    painter,
+                    pos2(reset.left() + 32.0, reset.center().y),
+                    Align2::LEFT_CENTER,
+                    "Reset to 100%",
+                    bold_font(13.0),
+                    ink,
+                    0.0,
+                );
+                if changed && response.clicked() {
+                    draft.tank_speed = 1.0;
+                    draft.bullet_speed = 1.0;
+                }
+                y += 26.0;
+                for (name, note, value, id) in [
+                    (
+                        "Tank base speed",
+                        "How fast every tank drives",
+                        &mut draft.tank_speed,
+                        "tank speed",
+                    ),
+                    (
+                        "Projectile base speed",
+                        "How fast shells and rockets fly",
+                        &mut draft.bullet_speed,
+                        "bullet speed",
+                    ),
+                ] {
+                    setting_label(painter, pos2(origin.x, y), name, note);
+                    slider(
+                        ui,
+                        painter,
+                        Rect::from_min_size(pos2(control_x, y), vec2(control_width, 44.0)),
+                        id,
+                        value,
+                        (0.5, 2.0),
+                        1.0,
+                        ("Slower", "Faster"),
+                    );
+                    y += 54.0;
+                }
+            }
+            y += 10.0;
+            let height = 48.0;
+            let save_width = (width - 10.0) * 0.645;
+            let save = Rect::from_min_size(pos2(origin.x, y), vec2(save_width, height));
+            if paint::button_at(ui, art, save, "SAVE", None, ButtonStyle::Primary, true).clicked() {
+                close = Some(true);
+            }
+            if paint::button_at(
+                ui,
+                art,
+                Rect::from_min_size(
+                    pos2(save.right() + 10.0, y),
+                    vec2(width - save_width - 10.0, height),
+                ),
+                "CANCEL",
+                None,
+                ButtonStyle::Secondary,
+                true,
+            )
+            .clicked()
+            {
+                close = Some(false);
+            }
+            y + height - origin.y
+        },
+    );
     match close {
         Some(true) => actions.push(Action::SettingsSaved(Box::new(draft))),
         Some(false) => {}
