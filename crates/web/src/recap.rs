@@ -2,13 +2,19 @@
 
 use serde::{Serialize, Serializer};
 use sloppy_core::sim::Simulation;
+use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::round_recap::{
     Feat, Metric, RecapStats, RecordStorage, combat_feats, recap_stats, save_personal_bests,
 };
 use sloppy_core::sim::veterancy::RANKS;
 
+use crate::Shell;
+use crate::battle_report::{BattleReport, battle_report};
+use crate::hud::simulation_hud;
+
 /// The finished round as the results screen reports it: the human's statistics, the
-/// personal bests for this mode, map and difficulty, and the feats the engine chose.
+/// personal bests for this mode, map and difficulty, the feats the engine chose, and the
+/// battle report that words them.
 ///
 /// The page's recap was once a JSON value, whose object keys sort, so the fields and the
 /// metrics within `stats` and `best` serialize in the order of their names.
@@ -27,6 +33,7 @@ pub struct RoundRecap {
     /// Whether the new bests were saved.
     pub persisted: bool,
     pub rank_names: Vec<&'static str>,
+    pub report: BattleReport,
     pub shield_absorbed: f64,
     pub shots: u32,
     #[serde(serialize_with = "metric_values")]
@@ -34,8 +41,8 @@ pub struct RoundRecap {
 }
 
 /// The finished round's recap, saving personal bests for this mode, map and difficulty
-/// in `storage`.
-pub fn round_recap(sim: &Simulation, storage: &mut impl RecordStorage) -> RoundRecap {
+/// in `storage`, and its report as `shell` words it.
+pub fn round_recap(sim: &Simulation, storage: &mut impl RecordStorage, shell: Shell) -> RoundRecap {
     let stats = recap_stats(sim);
     let combat = &sim.combat_record;
     let key = format!(
@@ -45,7 +52,7 @@ pub fn round_recap(sim: &Simulation, storage: &mut impl RecordStorage) -> RoundR
         sim.difficulty.as_str(),
     );
     let records = save_personal_bests(storage, &key, &stats);
-    RoundRecap {
+    let mut recap = RoundRecap {
         best: records.best,
         damage_taken: combat.damage_taken,
         direct_hits: combat.direct_hits,
@@ -53,10 +60,14 @@ pub fn round_recap(sim: &Simulation, storage: &mut impl RecordStorage) -> RoundR
         improved: records.improved,
         persisted: records.persisted,
         rank_names: RANKS.iter().map(|rank| rank.name).collect(),
+        report: BattleReport::default(),
         shield_absorbed: combat.shield_absorbed,
         shots: combat.shots,
         stats,
-    }
+    };
+    let hud = simulation_hud(sim, &mut RenderTank::default(), None);
+    recap.report = battle_report(&hud, &recap, shell);
+    recap
 }
 
 /// Each metric by its key, the keys in alphabetical order.

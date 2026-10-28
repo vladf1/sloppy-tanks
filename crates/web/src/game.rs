@@ -55,7 +55,9 @@
 //! - `hud_json() -> JSON`: match, scores, score limit, team names, clock, the
 //!   human's stats, ammo, rank, cooldowns, effects, scoreboard, and the round
 //!   recap once results show. The first recap of a result saves personal bests
-//!   in `localStorage` and reports them (`best`, `improved`, `persisted`).
+//!   in `localStorage` and reports them (`best`, `improved`, `persisted`), with the
+//!   battle report in words (`report`, `crate::battle_report`).
+//! - `pause_json() -> JSON`: the pause menu's facts and standing line.
 //! - `stats_json() -> JSON`: Stats for nerds (frame/sim/render ms, draw calls,
 //!   triangles, GPU resources, bodies and their sleep state, shots, pickups,
 //!   fragments, particles, pixel ratio).
@@ -78,6 +80,7 @@
 //! `take_events` ([`EventBatch`]), `camera` ([`CameraPreferences`]) and `gpu_ms`.
 
 use crate::Shell;
+use crate::battle_report::pause_report;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
 use crate::hud::{Hud, simulation_hud};
@@ -265,7 +268,6 @@ impl RecordStorage for BrowserStorage {
 pub struct Game {
     /// The shell drawing this game, for the wording the page and the desktop app say
     /// differently.
-    #[expect(dead_code, reason = "Phase 2 reads it when the engine writes HUD text")]
     shell: Shell,
     sim: Simulation,
     view: Presentation,
@@ -552,6 +554,11 @@ impl Game {
     pub fn hud_json(&mut self) -> String {
         // Written straight to text: the page reads this every few frames.
         serde_json::to_string(&self.hud()).unwrap_or_default()
+    }
+
+    /// Pause's facts and the line under its title, as JSON, read as the pause menu opens.
+    pub fn pause_json(&mut self) -> String {
+        serde_json::to_string(&pause_report(&self.hud())).unwrap_or_default()
     }
 
     /// Stats for nerds, as JSON.
@@ -985,7 +992,11 @@ impl Game {
     /// bests and reports them in the recap.
     pub fn hud(&mut self) -> Hud<'_> {
         if self.sim.match_state.phase == MatchPhase::Results && self.recap.is_none() {
-            self.recap = Some(round_recap(&self.sim, &mut BrowserStorage::local()));
+            self.recap = Some(round_recap(
+                &self.sim,
+                &mut BrowserStorage::local(),
+                self.shell,
+            ));
         }
         let recap = if self.sim.match_state.phase == MatchPhase::Results {
             self.recap.as_ref()
