@@ -24,6 +24,7 @@ use crate::events::{PendingEvent, drain_events};
 use crate::hud::{room_hud, simulation_hud};
 use crate::recap::round_recap;
 use crate::room_notices::RoomNotice;
+use crate::sounds::SoundPlanner;
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/page-json.json");
 const SEED: f64 = 20261028.0;
@@ -214,9 +215,11 @@ fn page_json() -> BTreeMap<&'static str, String> {
     let mut texts = BTreeMap::new();
     let mut sim = seeded_match();
     let mut events = events(sim.human().id);
+    let mut sounds = SoundPlanner::default();
+    sounds.set_clock(1000.0);
     texts.insert(
         "events",
-        drain_events(&mut events, (12.5, -3.25), (0.6, -0.8)),
+        drain_events(&mut events, (12.5, -3.25), (0.6, -0.8), &mut sounds),
     );
     let mut tank = RenderTank::default();
     let hud = simulation_hud(&sim, &mut tank, None);

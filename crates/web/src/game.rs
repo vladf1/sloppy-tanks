@@ -49,9 +49,11 @@
 //!   back the last result; the frames that run take an even clock
 //!   ([`crate::frame_clock::FramePacing`]).
 //! - `drain_events() -> JSON`: `{ listener: {x, z}, listenerRight: {x, z},
-//!   events: [SimEvent & { playerHit, own, damageAngle }] }` for audio and HUD;
-//!   `damageAngle` is the clockwise screen angle (radians) of damage the viewer
-//!   took, or null.
+//!   events: [SimEvent & { playerHit, own, damageAngle }], sounds: [{ sound, gain,
+//!   pan }] }` for audio and HUD; `damageAngle` is the clockwise screen angle (radians)
+//!   of damage the viewer took, or null. `sounds` are the file names to play, in
+//!   order, with their linear gain and stereo pan ([`crate::sounds`], rate-limited on
+//!   `frame`'s clock).
 //! - `hud_json() -> JSON`: match, scores, score limit, team names, clock, the
 //!   human's stats, ammo, rank, cooldowns, effects, scoreboard, and the round
 //!   recap once results show. The first recap of a result saves personal bests
@@ -86,6 +88,7 @@ use crate::page::{
     PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
 };
 use crate::recap::{RoundRecap, round_recap};
+use crate::sounds::SoundPlanner;
 use crate::stats::presentation_stats;
 use sloppy_render::gpu::RenderTarget;
 
@@ -283,6 +286,8 @@ pub struct Game {
     /// Warmed and first frames drawn; false while pipelines compile.
     prepared: bool,
     events: Vec<PendingEvent>,
+    /// The sounds drained events play, on the frame clock.
+    sounds: SoundPlanner,
     canvas: CanvasSize,
     times: FrameTimes,
     graphics: Graphics,
@@ -414,6 +419,7 @@ impl Game {
     /// events to presentation, and draws. See [`frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, PageError> {
         let input = InputFrame::from_slice(input);
+        self.sounds.set_clock(now);
         // A paced frame runs at its smoothed time; skipped, it only takes the input.
         let in_flight = self.view.renderer.frames_in_flight();
         let Some(now) = self.pacing.frame_time(now, in_flight) else {
@@ -545,7 +551,8 @@ impl Game {
     /// Pending events for audio and HUD, as JSON.
     pub fn drain_events(&mut self) -> String {
         let (x, z) = self.human_position();
-        drain_events(&mut self.events, (x, z), self.view.rig.listener_right)
+        let right = self.view.rig.listener_right;
+        drain_events(&mut self.events, (x, z), right, &mut self.sounds)
     }
 
     /// Everything the page HUD and menus show, as JSON.
@@ -938,6 +945,7 @@ impl Game {
             frame_index: 0,
             prepared: true,
             events: Vec::new(),
+            sounds: SoundPlanner::default(),
             canvas,
             shell,
             times: FrameTimes::default(),
@@ -998,7 +1006,8 @@ impl Game {
     /// Pending events for audio and HUD, heard from the human's tank.
     pub fn take_events(&mut self) -> EventBatch {
         let (x, z) = self.human_position();
-        take_events(&mut self.events, (x, z), self.view.rig.listener_right)
+        let right = self.view.rig.listener_right;
+        take_events(&mut self.events, (x, z), right, &mut self.sounds)
     }
 
     /// The chosen view and clamped overhead zoom.

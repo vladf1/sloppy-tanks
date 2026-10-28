@@ -64,6 +64,7 @@
 
 use crate::Shell;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
+use crate::sounds::SoundPlanner;
 
 use glam::Vec2;
 use serde::Deserialize;
@@ -175,6 +176,8 @@ pub struct NetGame {
     baseline: Option<u32>,
     prepared: bool,
     events: Vec<PendingEvent>,
+    /// The sounds drained events play, on the frame clock.
+    sounds: SoundPlanner,
     notices: Vec<RoomNotice>,
     frame_index: u64,
     times: FrameTimes,
@@ -443,6 +446,7 @@ impl NetGame {
     /// events to presentation and draw. See [`net_frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, PageError> {
         let input = InputFrame::from_slice(input);
+        self.sounds.set_clock(now);
         // The development delay delivers messages on this clock too.
         self.poll(now);
         self.drain_client_notices();
@@ -524,7 +528,8 @@ impl NetGame {
     /// Displayed events for audio and HUD, as JSON (`Game.drain_events()`'s shape).
     pub fn drain_events(&mut self) -> String {
         let listener = self.listener();
-        drain_events(&mut self.events, listener, self.view.rig.listener_right)
+        let right = self.view.rig.listener_right;
+        drain_events(&mut self.events, listener, right, &mut self.sounds)
     }
 
     /// The HUD for the displayed scene (`Game.hud_json()`'s `match`, `human` and
@@ -743,6 +748,7 @@ impl NetGame {
             baseline: None,
             prepared: false,
             events: Vec::new(),
+            sounds: SoundPlanner::default(),
             notices: Vec::new(),
             frame_index: 0,
             times: FrameTimes::default(),
@@ -830,7 +836,8 @@ impl NetGame {
     /// Displayed events for audio and HUD, heard from the viewer's tank.
     pub fn take_events(&mut self) -> EventBatch {
         let listener = self.listener();
-        take_events(&mut self.events, listener, self.view.rig.listener_right)
+        let right = self.view.rig.listener_right;
+        take_events(&mut self.events, listener, right, &mut self.sounds)
     }
 
     /// The chosen view and clamped overhead zoom.

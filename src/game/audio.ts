@@ -1,56 +1,16 @@
 import { Howl, Howler } from "howler";
-import type { CoverKind, EventBatch, EventType, Point, Weapon } from "./engine-api";
+import type { EventBatch, SoundName } from "./engine-api";
 
-/** The parts of an engine event that choose and place a sound. */
-export interface SoundEvent {
-  type: EventType;
-  x: number;
-  z: number;
-  weapon?: Weapon;
-  coverKind?: CoverKind;
-}
-
-const AUDIO = {
-  hitIntervalMs: 80,
-  botShotIntervalMs: 35,
-  explosionIntervalMs: 70,
-  destructionIntervalMs: 80,
-  laserIntervalMs: 50,
-  audibleDistance: 38,
-  fadeDistance: 40,
-  stereoDistance: 25,
-} as const;
-
-const sound = (name: string, pool = 12) =>
+const sound = (name: SoundName, pool = 12) =>
   new Howl({
     src: [`${import.meta.env.BASE_URL}audio/${name}.mp3`],
     format: ["mp3"],
     pool,
     volume: 0.25,
   });
-const shotSounds = {
-  standard: "shot",
-  spread: "shot-spread",
-  rocket: "shot-rocket",
-  tow: "shot-rocket",
-  ricochet: "shot-ricochet",
-  piercing: "shot-piercing",
-} as const satisfies Record<Weapon, string>;
 
-/** Drums emit a separate blast event; do not play a second sound for their shell. A shell
- * bursting a loose crate or watchtower piece breaks wood. */
-export function destructionSound(event: SoundEvent): "wood-break" | "rubble-break" | null {
-  if (event.type === "shatter") {
-    return "wood-break";
-  }
-  if (event.type !== "destroy" || event.coverKind === "drum") {
-    return null;
-  }
-  return event.coverKind === "tree" || event.coverKind === "timber" || event.coverKind === "cargo"
-    ? "wood-break"
-    : "rubble-break";
-}
-
+/** Plays the sounds the engine plans for each event batch (`crates/web/src/sounds.rs`:
+ * which sound, how loud and where, rate-limited on the frame clock). */
 export class AudioSystem {
   sounds = {
     shot: sound("shot", 16),
@@ -66,15 +26,8 @@ export class AudioSystem {
     hit: sound("hit"),
     laser: sound("laser"),
     promotion: sound("promotion", 2),
-  };
+  } satisfies Record<SoundName, Howl>;
   enabled = false;
-  lastExplosion = -Infinity;
-  lastDestruction = -Infinity;
-  lastShot = -Infinity;
-  lastHit = -Infinity;
-  lastLaser = -Infinity;
-  /** World X/Z of screen right; first person turns it with the view. */
-  listenerRight = { x: 1, z: 0 };
   start(): void {
     this.enabled = true;
     void Howler.ctx?.resume();
@@ -82,83 +35,16 @@ export class AudioSystem {
   volume(v: number): void {
     Howler.volume(v);
   }
-  /** Play one frame's drained engine events from the human's position. */
+  /** Start one frame's planned sounds; nothing plays before `start`. */
   play(batch: EventBatch): void {
-    this.listenerRight = batch.listenerRight;
-    for (const event of batch.events) {
-      this.event(event, batch.listener, event.playerHit, event.own);
-    }
-  }
-  event(event: SoundEvent, listener: Point, playerHit = false, playerEvent = false): void {
     if (!this.enabled) {
       return;
     }
-    const now = performance.now();
-    // One quiet, centered tick even when several spread pellets land together.
-    if (playerHit && now - this.lastHit >= AUDIO.hitIntervalMs) {
-      this.lastHit = now;
-      const id = this.sounds.hit.play();
-      this.sounds.hit.volume(0.14, id);
-      this.sounds.hit.stereo(0, id);
+    for (const { sound, gain, pan } of batch.sounds) {
+      const effect = this.sounds[sound];
+      const id = effect.play();
+      effect.volume(gain, id);
+      effect.stereo(pan, id);
     }
-    const d = Math.hypot(event.x - listener.x, event.z - listener.z);
-    if (d > AUDIO.audibleDistance) {
-      return;
-    }
-    const shot = event.type === "shot";
-    const explosion = event.type === "explosion" || event.type === "death";
-    const destruction = destructionSound(event);
-    if (shot && !playerEvent && now - this.lastShot < AUDIO.botShotIntervalMs) {
-      return;
-    }
-    if (explosion && now - this.lastExplosion < AUDIO.explosionIntervalMs) {
-      return;
-    }
-    if (destruction && now - this.lastDestruction < AUDIO.destructionIntervalMs) {
-      return;
-    }
-    if (event.type === "laser" && now - this.lastLaser < AUDIO.laserIntervalMs) {
-      return;
-    }
-    const key =
-      destruction ??
-      (shot
-        ? shotSounds[event.weapon ?? "standard"]
-        : explosion
-          ? "explosion"
-          : event.type === "pickup"
-            ? "pickup"
-            : event.type === "promotion" && playerEvent
-              ? "promotion"
-              : event.type === "laser"
-                ? "laser"
-                : event.type === "impact" || event.type === "ricochet"
-                  ? "impact"
-                  : null);
-    if (!key) {
-      return;
-    }
-    if (shot) {
-      this.lastShot = now;
-    }
-    if (explosion) {
-      this.lastExplosion = now;
-    }
-    if (event.type === "laser") {
-      this.lastLaser = now;
-    }
-    if (destruction) {
-      this.lastDestruction = now;
-    }
-    const effect = this.sounds[key];
-    const id = effect.play();
-    effect.volume(
-      (explosion ? 0.45 : destruction ? 0.24 : shot ? 0.25 : event.type === "laser" ? 0.12 : 0.18) *
-        Math.max(0.05, 1 - d / AUDIO.fadeDistance),
-      id,
-    );
-    const right = this.listenerRight;
-    const across = (event.x - listener.x) * right.x + (event.z - listener.z) * right.z;
-    effect.stereo(Math.max(-1, Math.min(1, across / AUDIO.stereoDistance)), id);
   }
 }

@@ -131,11 +131,38 @@ export interface EngineEvent {
   damageAngle: number | null;
 }
 
+/** A battle sound, the file `audio/<name>.mp3`. */
+export type SoundName =
+  | "shot"
+  | "shot-spread"
+  | "shot-rocket"
+  | "shot-ricochet"
+  | "shot-piercing"
+  | "explosion"
+  | "wood-break"
+  | "rubble-break"
+  | "impact"
+  | "pickup"
+  | "hit"
+  | "laser"
+  | "promotion";
+
+/** A sound the engine chose for the batch's events (`crates/web/src/sounds.rs`). */
+export interface PlannedSound {
+  sound: SoundName;
+  /** Linear volume before the master volume. */
+  gain: number;
+  /** Stereo position, -1 left to 1 right. */
+  pan: number;
+}
+
 export interface EventBatch {
   listener: Point;
   /** World X/Z of screen right; first person turns it with the view. */
   listenerRight: Point;
   events: EngineEvent[];
+  /** The events' sounds in the order to start them, already rate-limited. */
+  sounds: PlannedSound[];
 }
 
 export interface AmmoSlot {
