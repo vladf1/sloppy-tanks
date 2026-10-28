@@ -8,15 +8,18 @@
 //! The game types fill the readings ([`GameStats`], [`RoomStats`]) from the frame clock,
 //! the renderer, the simulation and the network client only when a shell polls the
 //! panel, a few times a second. The readings also read `stats_json`'s shape, for tests
-//! and the desktop's picture fixtures. Numbers have one format in both shells: whole
-//! counts with thousands separators ("12,408"), pairs as "9 / 12".
+//! and the desktop's picture fixtures, and a room's scene, connection and feel write its
+//! records there. Numbers have one format in both shells: whole counts with thousands
+//! separators ("12,408"), pairs as "9 / 12".
 
 use std::borrow::Cow;
 use std::collections::HashMap;
 
-use serde::{Deserialize, Deserializer, Serialize};
-use sloppy_core::net::feel_readings::Samples;
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
+use sloppy_core::net::client::NetworkStats;
+use sloppy_core::net::feel_readings::{FeelReadings, Samples};
 use sloppy_core::net::hull_prediction::CorrectionCause;
+use sloppy_core::net::own_shots;
 
 use crate::Shell;
 use crate::battle_report::thousands;
@@ -93,24 +96,17 @@ pub struct GameStats {
     pub frame: FrameStats,
     #[serde(flatten)]
     pub renderer: RendererStats,
+    #[serde(flatten)]
+    pub scene: SceneStats,
     pub bodies: u64,
     pub fixed_bodies: u64,
     pub dynamic_bodies: u64,
     /// Dynamic bodies only.
     pub sleeping_bodies: u64,
     pub colliders: u64,
-    pub tanks: u64,
-    pub tanks_alive: u64,
-    pub mines: u64,
-    pub pickups: u64,
-    pub pickups_ready: u64,
-    pub shots: u64,
     /// Chips, sparks and leaves; smoke has buffers of its own.
     pub particles: u64,
-    pub fragments: u64,
     pub max_fragments: u64,
-    /// Simulation seconds since the round started.
-    pub elapsed: f64,
 }
 
 /// A room's readings: the frame clock, the renderer, the displayed scene and the
@@ -128,23 +124,27 @@ pub struct RoomStats {
     pub feel: FeelStats,
 }
 
-/// The counts of a room's displayed scene; its physics runs on the server.
+/// The counts of the scene: the simulation's, or a room's displayed one, whose physics
+/// runs on the server (a room's `stats_json` `scene` record).
 #[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct SceneStats {
     pub tanks: u64,
+    /// Single player's readings call it `tanksAlive`.
+    #[serde(alias = "tanksAlive")]
     pub alive: u64,
     pub mines: u64,
     pub pickups: u64,
     pub pickups_ready: u64,
     pub shots: u64,
     pub fragments: u64,
+    /// Simulation seconds since the round started.
     pub elapsed: f64,
 }
 
 /// The game-server connection (core's `NetworkStats`) and the main thread's time
-/// applying what arrived.
-#[derive(Clone, Debug, Default, Deserialize)]
+/// applying what arrived: a room's `stats_json` `network` record.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct ConnectionStats {
     pub rtt_ms: f64,
@@ -162,6 +162,10 @@ pub struct ConnectionStats {
     pub late_batches: u64,
     pub longest_batch_gap_ms: f64,
     pub prediction_lead_ms: f64,
+    /// Snapshots that corrected a continuing prediction, and those of them that confirmed
+    /// it, so it ran on without a replay.
+    pub corrections: u64,
+    pub confirmed_snapshots: u64,
     /// Prediction corrections in metres per second of driving, and the 95th percentile
     /// of recent ones in metres.
     pub correction_m_per_s: f64,
@@ -170,36 +174,76 @@ pub struct ConnectionStats {
     pub late_input_starts: u64,
     /// Noticeable corrections by cause, in [`CorrectionCause::ALL`] order (`stats_json`
     /// keys them by name).
-    #[serde(deserialize_with = "causes_by_name")]
-    pub correction_causes: [CauseStats; CorrectionCause::ALL.len()],
+    #[serde(serialize_with = "named_causes", deserialize_with = "causes_by_name")]
+    pub correction_causes: Causes,
     /// Main-thread milliseconds spent applying received messages this session.
     pub receive_ms: f64,
     /// Enemy shells drawn striking the predicted hull that the server flew past.
     pub phantom_strikes: u64,
 }
 
+impl ConnectionStats {
+    /// The client's readings, and `receive_ms` spent applying what arrived.
+    pub fn new(network: &NetworkStats, receive_ms: f64) -> Self {
+        Self {
+            rtt_ms: network.rtt_ms,
+            received_updates: network.received_updates,
+            snapshot_age_ms: network.snapshot_age_ms,
+            buffer_ms: network.buffer_ms,
+            margin_ms: network.margin_ms,
+            underrun: network.underrun,
+            server_tick: network.server_tick,
+            input_seq: network.input_seq,
+            input_ack: network.input_ack,
+            connected: network.connected,
+            late_batches: network.late_batches,
+            longest_batch_gap_ms: network.longest_batch_gap_ms,
+            prediction_lead_ms: network.prediction_lead_ms,
+            corrections: network.corrections,
+            confirmed_snapshots: network.confirmed_snapshots,
+            correction_m_per_s: network.correction_m_per_s,
+            correction_p95_m: network.correction_p95_m,
+            input_starts: network.input_starts,
+            late_input_starts: network.late_input_starts,
+            correction_causes: network
+                .correction_causes
+                .map(|(count, m_per_s)| CauseStats { count, m_per_s }),
+            receive_ms,
+            phantom_strikes: network.phantom_strikes,
+        }
+    }
+}
+
 /// Corrections put down to one cause: how many, and metres per second of driving.
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct CauseStats {
     pub count: u64,
     pub m_per_s: f64,
 }
 
-fn causes_by_name<'de, D: Deserializer<'de>>(
-    deserializer: D,
-) -> Result<[CauseStats; CorrectionCause::ALL.len()], D::Error> {
+type Causes = [CauseStats; CorrectionCause::ALL.len()];
+
+fn causes_by_name<'de, D: Deserializer<'de>>(deserializer: D) -> Result<Causes, D::Error> {
     let by_name = HashMap::<String, CauseStats>::deserialize(deserializer)?;
     Ok(CorrectionCause::ALL.map(|cause| by_name.get(cause.as_str()).copied().unwrap_or_default()))
 }
 
-/// How play feels over the connection (core's `FeelReadings` and own-shot counts).
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+fn named_causes<S: Serializer>(causes: &Causes, serializer: S) -> Result<S::Ok, S::Error> {
+    let names = CorrectionCause::ALL.map(CorrectionCause::as_str);
+    serializer.collect_map(names.iter().zip(causes))
+}
+
+/// How play feels over the connection (core's `FeelReadings` and own-shot counts): a
+/// room's `stats_json` `feel` record.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct FeelStats {
     pub view_delay_ms: Summary,
     pub fire_to_flash_ms: Summary,
     pub fire_to_report_ms: Summary,
+    /// Presses that got no shot.
+    pub unanswered_presses: u64,
     pub hit_offset_m: Summary,
     pub incoming_offset_m: Summary,
     pub incoming_behind_m: Summary,
@@ -208,8 +252,32 @@ pub struct FeelStats {
     pub own_shots: OwnShotStats,
 }
 
+impl FeelStats {
+    /// The client's feel readings and its own shots' counts.
+    pub fn new(feel: &FeelReadings, own: &own_shots::OwnShotStats) -> Self {
+        Self {
+            view_delay_ms: Summary::from(&feel.view_delay),
+            fire_to_flash_ms: Summary::from(&feel.fire_to_flash),
+            fire_to_report_ms: Summary::from(&feel.fire_to_report),
+            unanswered_presses: feel.unanswered_presses,
+            hit_offset_m: Summary::from(&feel.hit_offset),
+            incoming_offset_m: Summary::from(&feel.incoming_offset),
+            incoming_behind_m: Summary::from(&feel.incoming_behind),
+            unseen_incoming: feel.unseen_incoming,
+            own_shots: OwnShotStats {
+                predicted: own.predicted,
+                confirmed: own.confirmed,
+                unconfirmed_shells: own.unconfirmed_shells,
+                unpredicted: own.unpredicted,
+                phantom_strikes: own.phantom_strikes,
+                error_m: Summary::from(&own.error),
+            },
+        }
+    }
+}
+
 /// The viewer's own shots drawn the moment they fired, against the server's.
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", default)]
 pub struct OwnShotStats {
     pub predicted: u64,
@@ -220,12 +288,13 @@ pub struct OwnShotStats {
     pub error_m: Summary,
 }
 
-/// One feel reading: its sample count, mean, 95th percentile and largest.
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+/// One feel reading: its sample count, mean, median, 95th percentile and largest.
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(default)]
 pub struct Summary {
     pub count: u64,
     pub mean: f64,
+    pub p50: f64,
     pub p95: f64,
     pub max: f64,
 }
@@ -235,6 +304,7 @@ impl From<&Samples> for Summary {
         Self {
             count: samples.count,
             mean: samples.mean(),
+            p50: samples.percentile(0.5),
             p95: samples.percentile(0.95),
             max: samples.largest,
         }
@@ -279,25 +349,21 @@ impl NetworkSampler {
 pub fn game_sections(stats: &GameStats, shell: Shell) -> Vec<StatsSection> {
     let mut render = renderer_rows(&stats.renderer, shell);
     render.extend(memory_rows(&stats.renderer));
-    let mut battle = field_rows(
-        (stats.tanks_alive, stats.tanks),
-        stats.mines,
-        (stats.pickups_ready, stats.pickups),
-        stats.shots,
+    let battle = battle_rows(
+        &stats.scene,
+        [
+            row(
+                "Visual particles",
+                grouped(stats.particles),
+                "Active chips, sparks and leaves. Smoke uses separate buffers.",
+            ),
+            row(
+                "Debris bodies",
+                pair(stats.scene.fragments, stats.max_fragments),
+                "Physics debris pieces alive out of the pool cap.",
+            ),
+        ],
     );
-    battle.extend([
-        row(
-            "Visual particles",
-            grouped(stats.particles),
-            "Active chips, sparks and leaves. Smoke uses separate buffers.",
-        ),
-        row(
-            "Debris bodies",
-            pair(stats.fragments, stats.max_fragments),
-            "Physics debris pieces alive out of the pool cap.",
-        ),
-        sim_time_row(stats.elapsed),
-    ]);
     vec![
         section("Performance", performance_rows(&stats.frame, false, shell)),
         section("Physics", physics_rows(stats)),
@@ -310,21 +376,14 @@ pub fn game_sections(stats: &GameStats, shell: Shell) -> Vec<StatsSection> {
 /// A room's panel; `rates` come from the room's [`NetworkSampler`].
 pub fn room_sections(stats: &RoomStats, rates: NetworkRates, shell: Shell) -> Vec<StatsSection> {
     let battle = stats.scene.map_or_else(Vec::new, |scene| {
-        let mut rows = field_rows(
-            (scene.alive, scene.tanks),
-            scene.mines,
-            (scene.pickups_ready, scene.pickups),
-            scene.shots,
-        );
-        rows.extend([
-            row(
+        battle_rows(
+            &scene,
+            [row(
                 "Debris bodies",
                 grouped(scene.fragments),
                 "Debris pieces in the received scene; server physics allocation is not measured here.",
-            ),
-            sim_time_row(scene.elapsed),
-        ]);
-        rows
+            )],
+        )
     });
     vec![
         section("Performance", performance_rows(&stats.frame, true, shell)),
@@ -397,14 +456,6 @@ fn capitalized(word: &str) -> String {
         .next()
         .map(|first| first.to_uppercase().collect::<String>() + chars.as_str())
         .unwrap_or_default()
-}
-
-/// What each shell calls the time since it started: reloading starts a page over.
-const fn session(shell: Shell) -> &'static str {
-    match shell {
-        Shell::Page => "this page session",
-        Shell::Desktop => "this session",
-    }
 }
 
 fn performance_rows(frame: &FrameStats, room: bool, shell: Shell) -> Vec<StatsRow> {
@@ -588,35 +639,34 @@ fn memory_rows(renderer: &RendererStats) -> [StatsRow; 2] {
     ]
 }
 
-/// The Battle rows both panels open with: tanks alive, mines, pickups and shots.
-fn field_rows(
-    (alive, tanks): (u64, u64),
-    mines: u64,
-    (ready, pickups): (u64, u64),
-    shots: u64,
-) -> Vec<StatsRow> {
-    vec![
+/// Both panels' Battle rows: tanks alive, mines, pickups and shots, each panel's own
+/// `debris` rows (single player's count particles too), then the sim time.
+fn battle_rows(scene: &SceneStats, debris: impl IntoIterator<Item = StatsRow>) -> Vec<StatsRow> {
+    let mut rows = vec![
         row(
             "Tanks",
-            pair(alive, tanks),
+            pair(scene.alive, scene.tanks),
             "Tanks alive out of total spawned.",
         ),
-        row("Mines", grouped(mines), "Live mines on the field."),
+        row("Mines", grouped(scene.mines), "Live mines on the field."),
         row(
             "Pickups ready",
-            pair(ready, pickups),
+            pair(scene.pickups_ready, scene.pickups),
             "Pickups available now out of total placed.",
         ),
-        row("Projectiles", grouped(shots), "Shots currently flying."),
-    ]
-}
-
-fn sim_time_row(elapsed: f64) -> StatsRow {
-    row(
+        row(
+            "Projectiles",
+            grouped(scene.shots),
+            "Shots currently flying.",
+        ),
+    ];
+    rows.extend(debris);
+    rows.push(row(
         "Sim time",
-        format!("{elapsed:.1}s"),
+        format!("{:.1}s", scene.elapsed),
         "Elapsed simulation time since the round started.",
-    )
+    ));
+    rows
 }
 
 fn configuration_rows(renderer: &RendererStats, shell: Shell) -> Vec<StatsRow> {
@@ -655,10 +705,11 @@ fn network_rows(
     rates: NetworkRates,
     shell: Shell,
 ) -> Vec<StatsRow> {
-    let session = session(shell);
-    let program = match shell {
-        Shell::Page => "page",
-        Shell::Desktop => "app",
+    // What each shell calls the time since it started (reloading starts a page over),
+    // and itself.
+    let (session, program) = match shell {
+        Shell::Page => ("this page session", "page"),
+        Shell::Desktop => ("this session", "app"),
     };
     let mut rows = vec![
         row(
