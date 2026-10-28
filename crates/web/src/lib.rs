@@ -11,6 +11,7 @@
 
 #![recursion_limit = "256"]
 
+pub mod catalog;
 pub mod events;
 pub mod frame_clock;
 pub mod hud;
