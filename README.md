@@ -236,7 +236,9 @@ page carries), as well as the release and commit Battle Setup shows. It adds the
 and Windows targets with rustup when they are missing and uses the `desktop` Cargo profile, which
 optimizes everything for speed with fat LTO and one codegen unit. Pull-request artifacts use
 ThinLTO and parallel code generation to compile faster; main's releases and local builds
-keep the full release optimization. `cargo run -p sloppy-desktop` works for quick local
+keep the full release optimization. CI keeps separate caches for these compiler settings:
+each PR's first app build seeds its ThinLTO cache, and later pushes reuse it. Release
+builds use the fat-LTO cache from main. `cargo run -p sloppy-desktop` works for quick local
 tries, but servers refuse its unstamped content version. The
 [Desktop app workflow](.github/workflows/desktop.yml) builds both on pull requests that
 touch the crates or assets and on main, and keeps them as run artifacts, along with Cargo's
