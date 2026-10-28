@@ -128,7 +128,8 @@ commands, as `test:rust` and `rust:clippy` have it: `-p sloppy-core` alone, or t
 desktop crate's features, resolve different dependency features and compile Rapier
 and its stack a second time. Linux CI leaves `sloppy-desktop` out, since its window,
 audio and GPU crates need system libraries there; `.github/workflows/desktop.yml`
-lints, tests and builds it on macOS and Windows. Build the app through
+lints, tests and builds it on macOS and Windows, and publishes main's notarized builds
+as the latest GitHub release. Build the app through
 `pnpm run desktop` (`desktop:mac`, `desktop:windows`), which stamps the content
 version multiplayer needs. `tests/traffic-bots.test.ts` drives the built server binary
 (`pnpm run server:build`).

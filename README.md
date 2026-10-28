@@ -53,6 +53,9 @@ To try a build on a phone or tablet, `pnpm run tunnel` builds the game and print
 
 ## Play
 
+The game also comes as a desktop app for Apple silicon Macs and Windows: download it
+from the [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest).
+
 Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 
 - **Team Battle:** six versus six, with respawns. First to 100 kills or the highest score after five minutes wins; a timed tie enters next-kill overtime.
@@ -234,7 +237,14 @@ tries, but servers refuse its unstamped content version. The
 [Desktop app workflow](.github/workflows/desktop.yml) builds both on pull requests that
 touch the crates or assets and on main, and keeps them as run artifacts; Linux CI leaves
 the crate out (`--exclude sloppy-desktop`), since its window and audio crates need
-system libraries there.
+system libraries there. Main's builds also replace the repository's
+[latest release](https://github.com/vladf1/sloppy-tanks/releases/latest), under file
+names that stay the same, so these links always fetch the newest:
+[Mac installer](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-macOS.pkg),
+[Mac app (zip)](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-macOS.zip)
+and [Windows](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-Windows.exe).
+The release job publishes only a Mac app and package that carry a stapled notarization
+ticket.
 
 Mac builds from main, and local ones on a Mac holding the Developer ID certificates and
 a `notarytool` profile, are signed and notarized, so the `.pkg` and the zip open without

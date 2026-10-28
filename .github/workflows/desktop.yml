@@ -2,14 +2,16 @@
 # silicon macOS app (zipped and as an installer package) and the Windows executable through
 # `scripts/build-desktop.mjs`, uploaded as this run's artifacts. Linux CI (check.yml)
 # leaves the crate out, since its window, audio and GPU dependencies need system
-# libraries there; nothing deploys from here.
+# libraries there.
 # Builds carry the three-part release and the commit: the fourth part is the Pages
 # workflow's run number, which this workflow does not have.
-# On main and manual runs the macOS app and package are signed with the Developer ID
-# certificates and notarized with the App Store Connect API key in the repository's
-# secrets (MACOS_CERTIFICATES, a base64 .p12 with both identities, and its
+# On main the macOS app and package are signed with the Developer ID certificates and
+# notarized with the App Store Connect API key in the repository's secrets
+# (MACOS_CERTIFICATES, a base64 .p12 with both identities, and its
 # MACOS_CERTIFICATES_PASSWORD; NOTARY_API_KEY, the .p8's text, NOTARY_API_KEY_ID and
-# NOTARY_API_ISSUER). Pull requests, and runs without the secrets, sign ad hoc.
+# NOTARY_API_ISSUER), and the builds replace the repository's latest release, whose
+# file names stay the same so its download links do too. Pull requests sign ad hoc and
+# publish nothing.
 name: Desktop app
 
 on:
@@ -75,6 +77,13 @@ jobs:
         env:
           SLOPPY_NOTARY_KEY_ID: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_KEY_ID || '' }}
           SLOPPY_NOTARY_ISSUER: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_ISSUER || '' }}
+      # The build falls back to an ad-hoc signature without the secrets; a release must
+      # not. A stapled ticket means Developer ID signing and notarization both happened.
+      - name: Check the notarization
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          xcrun stapler validate "artifacts/desktop/Sloppy Tanks.app"
+          xcrun stapler validate artifacts/desktop/Sloppy-Tanks-*-macOS.pkg
       - uses: actions/upload-artifact@v7
         with:
           path: artifacts/desktop/Sloppy-Tanks-*-macOS.zip
@@ -105,3 +114,50 @@ jobs:
           path: artifacts/desktop/sloppy-tanks.exe
           archive: false
           if-no-files-found: error
+
+  release:
+    name: Latest release
+    needs: [macos, windows]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: package.json
+          sparse-checkout-cone-mode: false
+      # skip-decompress keeps the Mac zip as the zip players download.
+      - uses: actions/download-artifact@v8
+        with:
+          path: downloads
+          merge-multiple: true
+          skip-decompress: true
+      - name: Publish the builds
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          commit="${GITHUB_SHA::7}"
+          tag="desktop-v$version-$commit"
+          mkdir release
+          cp downloads/Sloppy-Tanks-*-macOS.pkg release/Sloppy-Tanks-macOS.pkg
+          cp downloads/Sloppy-Tanks-*-macOS.zip release/Sloppy-Tanks-macOS.zip
+          cp downloads/sloppy-tanks.exe release/Sloppy-Tanks-Windows.exe
+          cat > notes.md <<NOTES
+          Sloppy Tanks $version for the desktop, built from $commit on main.
+
+          - **macOS** (Apple silicon, macOS 11 or newer): \`Sloppy-Tanks-macOS.pkg\` installs the app in Applications, and \`Sloppy-Tanks-macOS.zip\` holds the app itself. Both are signed and notarized.
+          - **Windows** (64-bit Windows 10 or newer): \`Sloppy-Tanks-Windows.exe\` runs as it is. It is unsigned, so SmartScreen asks once: **More info**, then **Run anyway**.
+
+          Multiplayer needs the game version the servers run: when an update reaches them, download the new release.
+          NOTES
+          # A re-run of this commit replaces its own release.
+          gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$tag" release/* --target "$GITHUB_SHA" --latest \
+            --title "Sloppy Tanks $version desktop ($commit)" --notes-file notes.md
+          # One release at a time: the one just published replaces the ones before it.
+          gh release list --limit 100 --json tagName --jq '.[].tagName' |
+            grep '^desktop-v' | grep -vx "$tag" |
+            while read -r old; do gh release delete "$old" --cleanup-tag --yes; done
