@@ -77,18 +77,13 @@ pub fn take_events(
     }
 }
 
-/// Write directly to JSON without copying events into intermediate object maps. The
-/// queue keeps its allocation, and the returned text owns everything the page reads.
-pub fn drain_events(
-    events: &mut Vec<PendingEvent>,
-    listener: (f64, f64),
-    listener_right: (f64, f64),
-    sounds: &mut SoundPlanner,
-) -> String {
-    let batch = take_events(events, listener, listener_right, sounds);
+/// `batch` as the page reads it, written directly to JSON without copying events into
+/// intermediate object maps. The `queue` it was taken from gets its allocation back, and
+/// the returned text owns everything the page reads.
+pub fn batch_json(batch: EventBatch, queue: &mut Vec<PendingEvent>) -> String {
     let text = serde_json::to_string(&batch).expect("page events serialize");
-    *events = batch.events;
-    events.clear();
+    *queue = batch.events;
+    queue.clear();
     text
 }
 
@@ -105,7 +100,8 @@ mod tests {
         listener_right: (f64, f64),
     ) -> Value {
         let mut sounds = SoundPlanner::default();
-        let text = drain_events(events, listener, listener_right, &mut sounds);
+        let batch = take_events(events, listener, listener_right, &mut sounds);
+        let text = batch_json(batch, events);
         serde_json::from_str(&text).unwrap()
     }
 

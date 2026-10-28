@@ -567,7 +567,7 @@ impl RoomSession {
     fn save_settings(&mut self, prefs: Preferences) {
         let old = std::mem::replace(&mut self.prefs, prefs);
         if old.graphics != self.prefs.graphics {
-            self.game.set_graphics(self.prefs.graphics);
+            self.game.set_graphics_setting(self.prefs.graphics);
         }
         if let Some(audio) = &mut self.audio {
             audio.set_volume(self.prefs.volume);

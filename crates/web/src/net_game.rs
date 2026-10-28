@@ -69,10 +69,10 @@
 //! `take_room_actions` ([`ClientAction`]), `take_room_notices` ([`RoomNotice`]),
 //! `prepare` ([`PrepareStatus`]), `hud` ([`RoomHud`]), `take_events` ([`EventBatch`]),
 //! `camera` ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms` and
-//! `set_graphics` (the setting itself).
+//! `set_graphics_setting` (the setting itself).
 
 use crate::Shell;
-use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
+use crate::events::{EventBatch, PendingEvent, batch_json, take_events};
 use crate::feedback::event_feedback;
 use crate::net_frame_slot;
 use crate::sounds::SoundPlanner;
@@ -376,7 +376,7 @@ impl NetGame {
     }
 
     pub fn camera_preferences(&self) -> Vec<f64> {
-        self.camera().to_vec()
+        self.view.rig.preferences().to_vec()
     }
 
     pub fn resize(&mut self, css_width: f64, css_height: f64, pixel_ratio: f64) {
@@ -393,14 +393,7 @@ impl NetGame {
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
     #[cfg(target_arch = "wasm32")]
     pub fn set_graphics(&mut self, setting: &str) {
-        self.graphics
-            .set_setting(&mut self.view.renderer, GraphicsSetting::parse(setting));
-    }
-
-    /// The Settings dialog's Graphics choice.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn set_graphics(&mut self, setting: GraphicsSetting) {
-        self.graphics.set_setting(&mut self.view.renderer, setting);
+        self.set_graphics_setting(GraphicsSetting::parse(setting));
     }
 
     // ---------------------------------------------------------- queries
@@ -566,9 +559,7 @@ impl NetGame {
 
     /// Displayed events for audio and HUD, as JSON (`Game.drain_events()`'s shape).
     pub fn drain_events(&mut self) -> String {
-        let listener = self.listener();
-        let right = self.view.rig.listener_right;
-        drain_events(&mut self.events, listener, right, &mut self.sounds)
+        batch_json(self.take_events(), &mut self.events)
     }
 
     /// The HUD for the displayed scene (`Game.hud_json()`'s `match`, `human`,
@@ -882,6 +873,11 @@ impl NetGame {
     /// The chosen view and clamped overhead zoom.
     pub fn camera(&self) -> CameraPreferences {
         CameraPreferences::of(&self.view.rig)
+    }
+
+    /// The Settings dialog's Graphics choice.
+    pub fn set_graphics_setting(&mut self, setting: GraphicsSetting) {
+        self.graphics.set_setting(&mut self.view.renderer, setting);
     }
 
     /// Stats for nerds' sections and rows at `now`; the update rate is measured since

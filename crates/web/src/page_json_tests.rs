@@ -22,7 +22,7 @@ use sloppy_core::sim::round_recap::{RecordStorage, StorageUnavailable};
 use sloppy_core::sim::{Match, MatchPhase, SimEvent, Simulation, SimulationSetup, Team, Weapon};
 
 use crate::Shell;
-use crate::events::{PendingEvent, drain_events};
+use crate::events::{PendingEvent, batch_json, take_events};
 use crate::feedback::event_feedback;
 use crate::hud::{EffectTimers, Scoreboard, room_hud, simulation_hud};
 use crate::recap::round_recap;
@@ -258,7 +258,10 @@ fn page_json() -> BTreeMap<&'static str, String> {
     sounds.set_clock(1000.0);
     texts.insert(
         "events",
-        drain_events(&mut events, (12.5, -3.25), (0.6, -0.8), &mut sounds),
+        batch_json(
+            take_events(&mut events, (12.5, -3.25), (0.6, -0.8), &mut sounds),
+            &mut events,
+        ),
     );
     let mut tank = RenderTank::default();
     let hud = simulation_hud(&sim, &mut tank, None, &mut EffectTimers::default());

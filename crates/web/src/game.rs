@@ -87,12 +87,12 @@
 //! JSON or names: `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]),
 //! `loading` ([`Loading`]), `hud` ([`Hud`]), `take_events` ([`EventBatch`]), `camera`
 //! ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms`, and
-//! `set_graphics`, `set_human_kind` and `set_speed` with the setting, tank and speed
-//! themselves.
+//! `set_graphics_setting`, `respawn_in` and `set_speed_scale` with the setting, tank and
+//! speed themselves.
 
 use crate::Shell;
 use crate::battle_report::pause_report;
-use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
+use crate::events::{EventBatch, PendingEvent, batch_json, take_events};
 use crate::feedback::event_feedback;
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
 use crate::frame_slot::{self, phase_code};
@@ -538,9 +538,7 @@ impl Game {
 
     /// Pending events for audio and HUD, as JSON.
     pub fn drain_events(&mut self) -> String {
-        let (x, z) = self.human_position();
-        let right = self.view.rig.listener_right;
-        drain_events(&mut self.events, (x, z), right, &mut self.sounds)
+        batch_json(self.take_events(), &mut self.events)
     }
 
     /// Everything the page HUD and menus show, as JSON.
@@ -593,14 +591,7 @@ impl Game {
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
     #[cfg(target_arch = "wasm32")]
     pub fn set_graphics(&mut self, setting: &str) {
-        self.graphics
-            .set_setting(&mut self.view.renderer, GraphicsSetting::parse(setting));
-    }
-
-    /// The Settings dialog's Graphics choice.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn set_graphics(&mut self, setting: GraphicsSetting) {
-        self.graphics.set_setting(&mut self.view.renderer, setting);
+        self.set_graphics_setting(GraphicsSetting::parse(setting));
     }
 
     /// Enter or leave first person (only while playing); returns whether it is on.
@@ -613,7 +604,7 @@ impl Game {
     }
 
     pub fn camera_preferences(&self) -> Vec<f64> {
-        self.camera().to_vec()
+        self.view.rig.preferences().to_vec()
     }
 
     /// The tank the human respawns in, chosen from the respawn menu mid-round, by name.
@@ -621,12 +612,6 @@ impl Game {
     pub fn set_human_kind(&mut self, kind: &str) -> Result<(), PageError> {
         let kind: VehicleKind = serde_json::from_value(Value::from(kind))
             .map_err(|error| js_error(error.to_string()))?;
-        self.respawn_in(kind)
-    }
-
-    /// The tank the human respawns in, chosen from the respawn menu mid-round.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn set_human_kind(&mut self, kind: VehicleKind) -> Result<(), PageError> {
         self.respawn_in(kind)
     }
 
@@ -638,13 +623,7 @@ impl Game {
             "bullet-speed" => SpeedSetting::BulletSpeed,
             _ => return 1.0,
         };
-        tune_speed(&mut self.sim, key, value)
-    }
-
-    /// A speed scale; returns the scale in effect.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn set_speed(&mut self, key: SpeedSetting, value: f64) -> f64 {
-        tune_speed(&mut self.sim, key, value)
+        self.set_speed_scale(key, value)
     }
 
     pub fn error(&self) -> Option<String> {
@@ -1034,6 +1013,27 @@ impl Game {
         CameraPreferences::of(&self.view.rig)
     }
 
+    /// The Settings dialog's Graphics choice.
+    pub fn set_graphics_setting(&mut self, setting: GraphicsSetting) {
+        self.graphics.set_setting(&mut self.view.renderer, setting);
+    }
+
+    /// The tank the human respawns in, chosen from the respawn menu mid-round. The world
+    /// is kept; Battle Setup's next `set_options` sees the same choice.
+    pub fn respawn_in(&mut self, kind: VehicleKind) -> Result<(), PageError> {
+        if kind == VehicleKind::Humvee {
+            return Err(js_error("The player cannot drive a Humvee"));
+        }
+        self.sim.human_kind = kind;
+        self.options.human_kind = kind;
+        Ok(())
+    }
+
+    /// A speed scale; returns the scale in effect.
+    pub fn set_speed_scale(&mut self, key: SpeedSetting, value: f64) -> f64 {
+        tune_speed(&mut self.sim, key, value)
+    }
+
     /// Stats for nerds' sections and rows, read from the game now.
     pub fn nerd_stats(&mut self) -> Vec<StatsSection> {
         let particles = self.view.effects.systems.stats().particles;
@@ -1073,17 +1073,6 @@ impl Game {
 }
 
 impl Game {
-    /// The respawn menu's tank. The world is kept; Battle Setup's next `set_options` sees
-    /// the same choice.
-    fn respawn_in(&mut self, kind: VehicleKind) -> Result<(), PageError> {
-        if kind == VehicleKind::Humvee {
-            return Err(js_error("The player cannot drive a Humvee"));
-        }
-        self.sim.human_kind = kind;
-        self.options.human_kind = kind;
-        Ok(())
-    }
-
     fn human_index(&self) -> usize {
         self.sim.human_index().unwrap_or(0)
     }
