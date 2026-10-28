@@ -71,7 +71,11 @@ export function debugPage(search: string): boolean {
  * preference, read here because this module imports nothing). */
 export function savedDebug(): boolean {
   try {
-    return globalThis.localStorage?.getItem("sloppy-debug") === "on";
+    // Typed here: the build scripts that also import this module have no DOM types.
+    const { localStorage } = globalThis as {
+      localStorage?: { getItem(key: string): string | null };
+    };
+    return localStorage?.getItem("sloppy-debug") === "on";
   } catch {
     return false;
   }
