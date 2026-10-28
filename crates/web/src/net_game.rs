@@ -45,8 +45,8 @@
 //!   control state of `Game.frame` (`sloppy_render::presentation::input::slot`); command
 //!   building, aiming and the input cadence run here.
 //! - `drain_events()` has the shape of `Game.drain_events()`; `hud_json()` carries
-//!   `Game.hud_json()`'s `match`, `human` and `scoreboard` (the room lobby has the
-//!   results).
+//!   `Game.hud_json()`'s `match`, `human`, `scoreboard` and `scorePill` (the room lobby
+//!   has the results).
 //! - `stats_json(now)`: `Game.stats_json()`'s renderer, frame and pixel ratio rows, the
 //!   displayed scene's counts and a `network` block (RTT, updates, playout buffer, late
 //!   batches, ticks, input seq/ack).
@@ -64,6 +64,7 @@
 
 use crate::Shell;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
+use crate::feedback::event_feedback;
 
 use glam::Vec2;
 use serde::Deserialize;
@@ -86,7 +87,7 @@ use sloppy_render::presentation::{PrepareStatus, Presentation};
 use wasm_bindgen::prelude::*;
 
 use crate::frame_clock::{FramePacing, FrameTimes};
-use crate::hud::{RoomHud, room_hud};
+use crate::hud::{EffectTimers, RoomHud, Scoreboard, room_hud};
 use crate::page::{
     CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
     PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
@@ -176,6 +177,8 @@ pub struct NetGame {
     prepared: bool,
     events: Vec<PendingEvent>,
     notices: Vec<RoomNotice>,
+    /// How long the viewer's effects have run, which their timer rings drain from.
+    effect_timers: EffectTimers,
     frame_index: u64,
     times: FrameTimes,
     pacing: FramePacing,
@@ -490,13 +493,21 @@ impl NetGame {
         } = self;
         let drawn = match client.frame(now, &local) {
             Some(frame) => {
+                let scoreboard = Scoreboard::Rendered(&frame.state.tanks);
                 for displayed in frame.events {
+                    let feedback = event_feedback(
+                        &displayed.event,
+                        displayed.own,
+                        frame.state.viewer_id,
+                        &scoreboard,
+                    );
                     queue_event(
                         events,
                         view,
                         displayed.event,
                         displayed.player_hit,
                         displayed.own,
+                        feedback,
                     );
                 }
                 let render_start = now_ms();
@@ -527,9 +538,9 @@ impl NetGame {
         drain_events(&mut self.events, listener, self.view.rig.listener_right)
     }
 
-    /// The HUD for the displayed scene (`Game.hud_json()`'s `match`, `human` and
-    /// `scoreboard`), or `null` before the first scene.
-    pub fn hud_json(&self) -> String {
+    /// The HUD for the displayed scene (`Game.hud_json()`'s `match`, `human`,
+    /// `scoreboard` and `scorePill`), or `null` before the first scene.
+    pub fn hud_json(&mut self) -> String {
         let Some(hud) = self.hud() else {
             return "null".into();
         };
@@ -744,6 +755,7 @@ impl NetGame {
             prepared: false,
             events: Vec::new(),
             notices: Vec::new(),
+            effect_timers: EffectTimers::default(),
             frame_index: 0,
             times: FrameTimes::default(),
             pacing,
@@ -823,8 +835,11 @@ impl NetGame {
     }
 
     /// The HUD for the displayed scene, or `None` before the first scene.
-    pub fn hud(&self) -> Option<RoomHud<'_>> {
-        self.client.display().and_then(room_hud)
+    pub fn hud(&mut self) -> Option<RoomHud<'_>> {
+        let timers = &mut self.effect_timers;
+        self.client
+            .display()
+            .and_then(|state| room_hud(state, timers))
     }
 
     /// Displayed events for audio and HUD, heard from the viewer's tank.

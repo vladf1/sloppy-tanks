@@ -15,10 +15,10 @@ pub mod setup;
 pub mod theme;
 
 use sloppy_core::net::protocol::RoomSettings;
-use sloppy_core::sim::data::vehicle;
 use sloppy_core::sim::{DamageCause, MatchPhase, SimEventType, Team, VehicleKind};
 use sloppy_web::events::PendingEvent;
-use sloppy_web::hud::{Hud, Scoreboard};
+pub use sloppy_web::feedback::{DeathReport, ToastTone};
+use sloppy_web::hud::Hud;
 
 use crate::preferences::Preferences;
 use crate::room_api::RoomSelection;
@@ -63,7 +63,8 @@ pub enum Action {
     RoomRules(RoomSettings),
 }
 
-/// One line of the kill feed (`FeedRow` in `hud-feedback.ts`).
+/// One line of the kill feed: the engine's row (`sloppy_web::feedback::FeedRow`), or a
+/// room's notice in the killer's place.
 #[derive(Clone, Debug)]
 pub struct KillFeedEntry {
     /// The names shown: "YOU" for the viewer, "YARD" for nobody's ordnance.
@@ -82,31 +83,7 @@ pub struct KillFeedEntry {
     pub age: f64,
 }
 
-/// What wrecked the viewer's tank, for the respawn card (`DeathReport`).
-#[derive(Clone, Debug, Default)]
-pub struct DeathReport {
-    /// The killer's name; `None` for the yard or a departed player.
-    pub killer: Option<String>,
-    /// The viewer's own ordnance.
-    pub own_goal: bool,
-    pub cause: Option<DamageCause>,
-    /// The weapon's label, such as "Rocket blast".
-    pub weapon: Option<&'static str>,
-    pub killer_vehicle: Option<&'static str>,
-    pub killer_team: Option<Team>,
-    pub killer_kills: Option<u32>,
-    /// The sentence the toast and a solo report say.
-    pub sentence: String,
-}
-
-/// The tone a toast takes: its rule lines' and text's colours.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToastTone {
-    Pickup,
-    Promotion,
-    Death,
-}
-
+/// A notice over the field: the engine's toast, and how long it has shown.
 #[derive(Clone, Debug)]
 pub struct Toast {
     pub text: String,
@@ -158,6 +135,8 @@ pub struct UiState {
     pub settings_draft: Option<Preferences>,
     /// Battle Setup's status line (preparation progress, errors).
     pub status: String,
+    /// The share of the arena's shaders loaded while the status line counts them.
+    pub progress: Option<f32>,
     /// The arena for the chosen options is ready.
     pub ready: bool,
     /// GO was pressed and the round is about to start.
@@ -186,8 +165,6 @@ pub struct UiState {
     pub hull_ghost_wait: f64,
     /// The longest mine cooldown seen, so the mine dial fills from empty.
     pub mine_total: f64,
-    /// The longest time seen on each timed effect, so its ring drains from full.
-    pub effect_longest: [f64; 5],
     pub pause_tab: PauseTab,
     /// Settings were opened from the battle, which carries on when they close.
     pub resume_after_settings: bool,
@@ -210,72 +187,6 @@ pub struct View<'a> {
     pub debug: bool,
     /// A multiplayer room: no single-player respawn choice.
     pub room: bool,
-}
-
-/// The damage labels of the respawn card and the death sentence (`DAMAGE_LABELS`).
-pub fn damage_label(cause: DamageCause) -> &'static str {
-    match cause {
-        DamageCause::Standard => "Standard shell",
-        DamageCause::Spread => "Spread shot",
-        DamageCause::Rocket => "Rocket blast",
-        DamageCause::Tow => "TOW missile",
-        DamageCause::Ricochet => "Ricochet shell",
-        DamageCause::Piercing => "Piercing shell",
-        DamageCause::Mine => "Mine explosion",
-        DamageCause::Drum => "Exploding barrel",
-        DamageCause::Interception => "Shell collision blast",
-        DamageCause::Explosion => "Explosion",
-    }
-}
-
-/// What wrecked the viewer, from its death event (`deathReport` and `deathCause`).
-pub fn death_report(event: &PendingEvent, scoreboard: &Scoreboard) -> DeathReport {
-    let event = &event.event;
-    let own_goal = event.owner.is_some() && event.owner == event.id;
-    let killer = if own_goal {
-        None
-    } else {
-        event.owner.and_then(|owner| scoreboard.row(owner))
-    };
-    let cause = event.damage_source.map(|source| source.cause);
-    let weapon = cause.map(damage_label);
-    let with = weapon.map(|label| {
-        let article = if label.starts_with(['A', 'E', 'I', 'O', 'U']) {
-            "an"
-        } else {
-            "a"
-        };
-        format!("{article} {}", label.to_lowercase())
-    });
-    let sentence = match (own_goal, &killer, &with) {
-        (true, _, Some(with)) => format!("You destroyed yourself with {with}."),
-        (true, _, None) => "You destroyed yourself.".to_owned(),
-        (false, Some(killer), Some(with)) => format!("{} destroyed you with {with}.", killer.name),
-        (false, Some(killer), None) => format!("{} destroyed you.", killer.name),
-        (false, None, Some(with)) => format!("You were destroyed by {with}."),
-        (false, None, None) => "You were destroyed.".to_owned(),
-    };
-    DeathReport {
-        killer_vehicle: killer.as_ref().map(|row| vehicle(row.kind).name),
-        killer_team: killer.as_ref().map(|row| row.team),
-        killer_kills: killer.as_ref().map(|row| row.kills),
-        killer: killer.map(|row| row.name.into_owned()),
-        own_goal,
-        cause,
-        weapon,
-        sentence,
-    }
-}
-
-/// The share of a timed effect left, against the longest time seen since it began
-/// (`effectShare`), which [`UiState::tick`] keeps.
-pub fn effect_share(longest: f64, seconds: f64) -> f64 {
-    let full = longest.max(seconds);
-    if full > 0.0 {
-        (seconds / full).min(1.0)
-    } else {
-        1.0
-    }
 }
 
 impl UiState {
@@ -329,21 +240,6 @@ impl UiState {
             if human.mine_cooldown > 0.0 {
                 self.mine_total = self.mine_total.max(human.mine_cooldown);
             }
-            // An effect that ended forgets its length, so the next pickup starts full.
-            let timed = [
-                human.protection,
-                human.shield,
-                human.rapid,
-                human.speed,
-                human.laser,
-            ];
-            for (longest, seconds) in self.effect_longest.iter_mut().zip(timed) {
-                *longest = if seconds > 0.0 {
-                    longest.max(seconds)
-                } else {
-                    0.0
-                };
-            }
         }
     }
 
@@ -364,26 +260,29 @@ impl UiState {
         }
     }
 
-    /// Show an engine event's feedback (`UI.event` in `ui.ts`): kill feed lines, toasts,
-    /// the ammunition notice, the hit flash, the damage ring and the death report.
+    /// Show an engine event's feedback (`UI.event` in `ui.ts`): the kill feed row, toast
+    /// and death report the engine attached, the ammunition notice, the hit flash and
+    /// the damage ring.
     pub fn event(&mut self, pending: &PendingEvent) {
         let Some(hud) = &self.hud else { return };
-        let viewer = hud.human.id;
         let alive = hud.human.alive;
         if self.round != hud.match_state.round {
             self.round = hud.match_state.round;
             self.reset_feedback();
         }
-        let hud = self.hud.as_ref().expect("checked above");
         let event = &pending.event;
-        let mine = pending.own || event.id == Some(viewer);
-        if mine {
+        let feedback = &pending.feedback;
+        if pending.own {
             match event.kind {
                 SimEventType::Hurt => self.hit_flash = Some(0.0),
                 SimEventType::Notice if alive => {
                     if let Some(label) = &event.label {
                         self.ammo_notice = Some((label.clone(), 0.0));
                     }
+                }
+                SimEventType::Respawn => {
+                    self.death = None;
+                    self.damage_ring = None;
                 }
                 _ => {}
             }
@@ -392,71 +291,36 @@ impl UiState {
             {
                 self.damage_ring = Some((angle, 0.0));
             }
-            match event.kind {
-                SimEventType::Death => {
-                    let report = death_report(pending, &hud.scoreboard);
-                    self.toast = Some(Toast {
-                        text: report.sentence.clone(),
-                        tone: ToastTone::Death,
-                        age: 0.0,
-                        duration: TOAST_SECONDS,
-                    });
-                    self.death = Some(report);
-                    self.respawn_total = 0.0;
-                    self.ammo_notice = None;
-                }
-                SimEventType::Respawn => {
-                    self.death = None;
-                    self.damage_ring = None;
-                }
-                SimEventType::Pickup | SimEventType::Promotion => {
-                    let pickup = event.kind == SimEventType::Pickup;
-                    self.toast = Some(Toast {
-                        text: event.label.clone().unwrap_or_default(),
-                        tone: if pickup {
-                            ToastTone::Pickup
-                        } else {
-                            ToastTone::Promotion
-                        },
-                        age: 0.0,
-                        duration: if pickup {
-                            PICKUP_TOAST_SECONDS
-                        } else {
-                            TOAST_SECONDS
-                        },
-                    });
-                }
-                _ => {}
+            if let Some(report) = &feedback.death_report {
+                self.death = Some(report.clone());
+                self.respawn_total = 0.0;
+                self.ammo_notice = None;
             }
         }
-        if event.kind == SimEventType::Death {
-            let name = |id: Option<u32>| {
-                if id == Some(viewer) {
-                    "YOU".to_owned()
+        if let Some(toast) = &feedback.toast {
+            self.toast = Some(Toast {
+                text: toast.text.clone(),
+                tone: toast.tone,
+                age: 0.0,
+                duration: if toast.tone == ToastTone::Pickup {
+                    PICKUP_TOAST_SECONDS
                 } else {
-                    id.and_then(|id| hud.scoreboard.row(id))
-                        .map_or_else(|| "YARD".to_owned(), |row| row.name.into_owned())
-                }
-            };
-            // The victim's team comes with the event; allies take no hull damage from
-            // each other, so the killer is on the other side unless the tank destroyed
-            // itself or the yard did it (`killFeedSides`).
-            let victim_team = event.team;
-            let killer_team = match event.owner {
-                None => None,
-                Some(owner) if Some(owner) == event.id => victim_team,
-                Some(_) => victim_team.map(Team::opponent),
-            };
+                    TOAST_SECONDS
+                },
+            });
+        }
+        if let Some(row) = &feedback.feed {
+            let [killer, victim] = row.names.clone();
             self.kill_feed.insert(
                 0,
                 KillFeedEntry {
-                    killer: name(event.owner),
-                    victim: name(event.id),
-                    killer_team,
-                    victim_team,
-                    cause: event.damage_source.map(|source| source.cause),
-                    own_kill: event.owner == Some(viewer) && event.id != Some(viewer),
-                    own_death: mine,
+                    killer,
+                    victim,
+                    killer_team: row.sides[0].team(),
+                    victim_team: row.sides[1].team(),
+                    cause: row.cause,
+                    own_kill: row.own_kill,
+                    own_death: row.own_death,
                     age: 0.0,
                 },
             );
@@ -474,7 +338,6 @@ impl UiState {
         self.death = None;
         self.respawn_total = 0.0;
         self.mine_total = 0.0;
-        self.effect_longest = [0.0; 5];
         self.hull_ghost = 1.0;
         self.hull_ghost_wait = 0.0;
         self.pause_tab = PauseTab::Battle;

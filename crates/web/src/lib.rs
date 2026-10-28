@@ -13,6 +13,7 @@
 
 pub mod catalog;
 pub mod events;
+pub mod feedback;
 pub mod frame_clock;
 pub mod hud;
 pub mod lab_scene;

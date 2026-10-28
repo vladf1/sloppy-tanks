@@ -698,15 +698,6 @@ fn difficulty_segment(
     choice_ring(painter, rect, selected);
 }
 
-/// "Shaders loaded: 12 of 40" as a share.
-fn shader_progress(status: &str) -> Option<f32> {
-    let rest = status.strip_prefix("Shaders loaded: ")?;
-    let (done, total) = rest.split_once(" of ")?;
-    let done: f32 = done.trim().parse().ok()?;
-    let total: f32 = total.trim().parse().ok()?;
-    (total > 0.0).then(|| (done / total).clamp(0.0, 1.0))
-}
-
 /// Desktop sheets at the web layout's normal and wide breakpoints. Shorter windows
 /// scale the sheet down as `fitPanels` does, without enlarging its typography.
 const DESIGN: Vec2 = vec2(1280.0, 800.0);
@@ -876,7 +867,7 @@ fn status_line(painter: &Painter, right: egui::Pos2, state: &UiState, time: f64)
     }
     let track = Rect::from_min_size(right - vec2(72.0, -6.0), vec2(72.0, 3.0));
     painter.rect_filled(track, 2, hexa(0xffffff, 0.1));
-    match shader_progress(&state.status) {
+    match state.progress {
         Some(share) => {
             painter.rect_filled(
                 Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),

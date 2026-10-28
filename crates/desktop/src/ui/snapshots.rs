@@ -11,8 +11,13 @@ use serde_json::json;
 use sloppy_core::sim::ammunition::AMMO_ORDER;
 use sloppy_core::sim::round_recap::{Feat, Metric, RecapStats};
 use sloppy_core::sim::{DamageCause, GameMode, MatchPhase, Team, VehicleKind, Weapon};
+use sloppy_render::presentation::hud::health_bar_state;
 use sloppy_render::wgpu;
-use sloppy_web::hud::{Hud, HudAmmo, HudHuman, HudScore, Scoreboard};
+use sloppy_web::feedback::cause_icon;
+use sloppy_web::hud::{
+    EffectTimers, Hud, HudAmmo, HudHuman, HudScore, HullTone, Loading, ScorePill, Scoreboard,
+    hull_ramp, rank_title,
+};
 use sloppy_web::recap::RoundRecap;
 
 use super::{DeathReport, KillFeedEntry, PauseTab, Toast, ToastTone, UiState, View};
@@ -143,6 +148,19 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
     hud.match_state.ended_early = Some(results && !solo);
     hud.match_state.winner = (!solo).then_some(Team::Blue);
     hud.match_state.round = 1;
+    // What the engine reads from the values above.
+    let human = &mut hud.human;
+    human.hull_tone = HullTone::of(health_bar_state(human.hp, human.max_hp).tone);
+    human.hull_ramp = hull_ramp(ratio);
+    human.rank_title = rank_title(human.rank);
+    human.effects = EffectTimers::default().effects(human);
+    hud.score_pill = ScorePill::local(
+        &hud.match_state,
+        hud.game_mode,
+        hud.endless_match,
+        hud.elapsed,
+        hud.score_limit,
+    );
     hud
 }
 
@@ -188,7 +206,13 @@ fn feedback(state: &mut UiState) {
     state.ammo_notice = Some(("Out of spread shells: back to Standard".into(), 0.5));
     state.damage_ring = Some((0.9, 0.3));
     state.viewer = Some((0.0, -0.1));
-    state.effect_longest = [0.0, 15.0, 10.0, 0.0, 0.0];
+    // The shield and rapid fire have run a while: their rings have drained.
+    if let Some(hud) = &mut state.hud {
+        let mut timers = EffectTimers {
+            longest: [0.0, 15.0, 10.0, 0.0, 0.0],
+        };
+        hud.human.effects = timers.effects(&hud.human);
+    }
     state.mine_total = 8.0;
     state.hull_ghost = 0.62;
 }
@@ -202,9 +226,14 @@ struct Scenario {
 
 fn scenarios() -> Vec<Scenario> {
     let mut list = Vec::new();
+    let loading = Loading::Shaders {
+        loaded: 31,
+        total: 40,
+    };
     let mut setup = UiState {
         hud: Some(hud(MatchPhase::Ready, false, true, 1.0)),
-        status: "Shaders loaded: 31 of 40".into(),
+        status: loading.to_string(),
+        progress: loading.progress(),
         ..UiState::default()
     };
     setup.ready = false;
@@ -302,6 +331,7 @@ fn scenarios() -> Vec<Scenario> {
         own_goal: false,
         cause: Some(DamageCause::Rocket),
         weapon: Some("Rocket blast"),
+        icon: "rocket",
         killer_vehicle: Some("BIG RIG"),
         killer_team: Some(Team::Red),
         killer_kills: Some(3),
@@ -470,6 +500,14 @@ fn scenarios() -> Vec<Scenario> {
             },
         });
     }
+    // A room's score pill has no goal line under its clock.
+    for scenario in &mut list {
+        if scenario.name.starts_with("room-")
+            && let Some(hud) = &mut scenario.state.hud
+        {
+            hud.score_pill = ScorePill::room(&hud.match_state);
+        }
+    }
     list
 }
 
@@ -526,25 +564,19 @@ fn snapshots() {
             "hullAngle": state.hull_angle,
             "hullGhost": state.hull_ghost,
             "respawnTotal": state.respawn_total,
-            "effectLongest": state.effect_longest,
             "mineTotal": state.mine_total,
             "ammoNotice": state.ammo_notice,
             "hitFlash": state.hit_flash,
             "damageRing": state.damage_ring,
             "viewer": state.viewer,
-            "death": state.death.as_ref().map(|death| json!({
-                "killer": death.killer, "self": death.own_goal, "cause": death.cause,
-                "weapon": death.weapon, "killerVehicle": death.killer_vehicle,
-                "killerTeam": death.killer_team, "killerKills": death.killer_kills,
-            })),
+            "death": state.death,
             "toast": state.toast.as_ref().map(|toast| json!({
-                "text": toast.text, "tone": match toast.tone {
-                    ToastTone::Pickup => "pickup", ToastTone::Promotion => "promotion", ToastTone::Death => "death",
-                }, "age": toast.age, "duration": toast.duration,
+                "text": toast.text, "tone": toast.tone, "age": toast.age, "duration": toast.duration,
             })),
             "feed": state.kill_feed.iter().map(|entry| json!({
                 "killer": entry.killer, "victim": entry.victim, "killerTeam": entry.killer_team,
-                "victimTeam": entry.victim_team, "cause": entry.cause, "ownKill": entry.own_kill,
+                "victimTeam": entry.victim_team, "cause": entry.cause,
+                "icon": cause_icon(entry.cause), "ownKill": entry.own_kill,
                 "ownDeath": entry.own_death, "age": entry.age,
             })).collect::<Vec<_>>(),
         });

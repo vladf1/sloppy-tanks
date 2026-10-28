@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2};
-use sloppy_core::sim::{DamageCause, Team, VehicleKind};
+use sloppy_core::sim::{Team, VehicleKind};
 
 /// How a layer of an icon is painted.
 #[derive(Clone, Copy)]
@@ -370,22 +370,6 @@ const SOURCES: &[Source] = &[
         ],
     },
 ];
-
-/// The kill-feed and notice icon for each way to destroy a tank (`CAUSE_ICONS`); a
-/// kill without a reported weapon shows the generic wreck mark.
-pub fn cause_icon(cause: Option<DamageCause>) -> &'static str {
-    match cause {
-        Some(DamageCause::Standard) => "standard",
-        Some(DamageCause::Spread) => "spread",
-        Some(DamageCause::Rocket | DamageCause::Tow) => "rocket",
-        Some(DamageCause::Ricochet) => "ricochet",
-        Some(DamageCause::Piercing) => "piercing",
-        Some(DamageCause::Mine) => "mine",
-        Some(DamageCause::Drum) => "drum",
-        Some(DamageCause::Interception | DamageCause::Explosion) => "blast",
-        None => "skull",
-    }
-}
 
 /// The tank sheet's size, and one tank's cell in it: a column per tank, a row per team.
 const SHEET_SIZE: [f32; 2] = [1920.0, 800.0];

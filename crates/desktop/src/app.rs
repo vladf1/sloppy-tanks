@@ -17,6 +17,7 @@ use sloppy_core::sim::{MatchPhase, SimEventType, Team};
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::presentation::PrepareStatus;
 use sloppy_render::wgpu;
+use sloppy_web::hud::Loading;
 use sloppy_web::{Game, GameConfig, ViewConfig, frame_slot};
 use winit::application::ApplicationHandler;
 use winit::dpi::LogicalSize;
@@ -189,8 +190,8 @@ enum Progress {
     /// frames; that is not loading, so Battle Setup keeps showing it is ready rather
     /// than flicker through the loading lines.
     Warming,
-    /// Loading, with the status line to show when there is a new one.
-    Loading(Option<String>),
+    /// Loading, with the engine's status line.
+    Loading(Loading),
 }
 
 /// Preparing the chosen arena, and building what it left for later.
@@ -198,8 +199,6 @@ enum Progress {
 struct Preparation {
     /// The prepared options' arena is still preparing.
     preparing: bool,
-    /// Pipelines compiled since it began.
-    compiled: u32,
     /// The library's wrecks, which preparation leaves for later, build a step a redraw
     /// once the ready menu has painted, as the page builds them between tasks: built on
     /// first use instead, they would hitch the battle.
@@ -210,36 +209,16 @@ impl Preparation {
     /// A new arena to prepare.
     fn restart(&mut self) {
         self.preparing = true;
-        self.compiled = 0;
     }
 
-    /// Take one `prepare` step's status.
-    fn advance(&mut self, status: &PrepareStatus) -> Progress {
-        self.compiled += status.compiled;
+    /// Take one `prepare` step's status and the engine's line for it.
+    fn advance(&mut self, status: &PrepareStatus, line: Option<Loading>) -> Progress {
         if status.ready {
             self.preparing = false;
             self.prebuilding = true;
             return Progress::Ready;
         }
-        if self.compiled == 0 && status.remaining == 0 && status.textures_pending == 0 {
-            return Progress::Warming;
-        }
-        Progress::Loading(if status.remaining > 0 {
-            Some(format!(
-                "Shaders loaded: {} of {}",
-                self.compiled,
-                self.compiled + status.remaining
-            ))
-        } else if status.gpu_pending {
-            Some("Compiling shaders…".into())
-        } else if status.textures_pending > 0 {
-            Some(format!(
-                "Loading textures… {} left",
-                status.textures_pending
-            ))
-        } else {
-            None
-        })
+        line.map_or(Progress::Warming, Progress::Loading)
     }
 
     /// Build the next of the wrecks with `step` while any remain; it says whether more
@@ -684,6 +663,7 @@ impl Session {
                 } else {
                     self.ui.starting = true;
                     self.ui.status = "Preparing your arena…".into();
+                    self.ui.progress = None;
                 }
             }
             Action::Resume => {
@@ -853,17 +833,17 @@ impl Session {
             self.game.supply_texture(&key, &pixels)?;
         }
         let status = self.game.prepare(PREPARE_BUDGET)?;
-        match self.preparation.advance(&status) {
+        match self.preparation.advance(&status, self.game.loading()) {
             Progress::Ready => {
                 self.ui.ready = true;
                 self.ui.status = READY_STATUS.into();
+                self.ui.progress = None;
             }
             Progress::Warming => {}
             Progress::Loading(line) => {
                 self.ui.ready = false;
-                if let Some(line) = line {
-                    self.ui.status = line;
-                }
+                self.ui.status = line.to_string();
+                self.ui.progress = line.progress();
             }
         }
         Ok(())
@@ -1060,12 +1040,19 @@ mod tests {
                 more
             });
         };
+        let shaders = Loading::Shaders {
+            loaded: 4,
+            total: 10,
+        };
         assert_eq!(
-            preparation.advance(&status(4, 6, false)),
-            Progress::Loading(Some("Shaders loaded: 4 of 10".into()))
+            preparation.advance(&status(4, 6, false), Some(shaders)),
+            Progress::Loading(shaders)
         );
         redraw(&mut preparation, true);
-        assert_eq!(preparation.advance(&status(6, 0, true)), Progress::Ready);
+        assert_eq!(
+            preparation.advance(&status(6, 0, true), None),
+            Progress::Ready
+        );
         assert!(!preparation.preparing);
         for more in [true, true, false, true] {
             redraw(&mut preparation, more);
@@ -1085,14 +1072,11 @@ mod tests {
     fn a_rebuild_that_only_warms_up_keeps_battle_setup_ready() {
         let mut preparation = Preparation::default();
         preparation.restart();
-        assert_eq!(preparation.advance(&status(0, 0, false)), Progress::Warming);
-        let textures = PrepareStatus {
-            textures_pending: 2,
-            ..PrepareStatus::default()
-        };
+        // The engine has no line for a step that only warms up.
         assert_eq!(
-            preparation.advance(&textures),
-            Progress::Loading(Some("Loading textures… 2 left".into()))
+            preparation.advance(&status(0, 0, false), None),
+            Progress::Warming
         );
+        assert!(preparation.preparing);
     }
 }

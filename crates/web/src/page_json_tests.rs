@@ -21,7 +21,8 @@ use sloppy_core::sim::round_recap::{RecordStorage, StorageUnavailable};
 use sloppy_core::sim::{Match, MatchPhase, SimEvent, Simulation, SimulationSetup, Team, Weapon};
 
 use crate::events::{PendingEvent, drain_events};
-use crate::hud::{room_hud, simulation_hud};
+use crate::feedback::event_feedback;
+use crate::hud::{EffectTimers, Scoreboard, room_hud, simulation_hud};
 use crate::recap::round_recap;
 use crate::room_notices::RoomNotice;
 
@@ -94,8 +95,10 @@ fn seeded_match() -> Simulation {
     sim
 }
 
-/// One of each event kind with every optional field among them, and the viewer's flags.
-fn events(human: u32) -> Vec<PendingEvent> {
+/// One of each event kind with every optional field among them, the viewer's flags and
+/// the feedback for the tanks of `sim`, ending with the viewer's death.
+fn events(sim: &Simulation) -> Vec<PendingEvent> {
+    let human = sim.human().id;
     let other = human + 1;
     let events = json!([
         {"type": "shot", "x": 1.5, "z": -2.25, "id": human, "owner": human, "ownerLife": 2,
@@ -123,16 +126,23 @@ fn events(human: u32) -> Vec<PendingEvent> {
             "color": 0x5fd8ff},
         {"type": "promotion", "x": 0.0, "z": 0.0, "id": human, "label": "VETERAN"},
         {"type": "respawn", "x": -40.0, "z": 30.0, "id": other, "team": 1},
+        {"type": "death", "x": 3.0, "z": 4.0, "id": human, "owner": other, "team": 0,
+            "damageSource": {"cause": "rocket", "origin": {"x": 6.0, "z": 8.5}}},
     ]);
+    let scoreboard = Scoreboard::Simulated(&sim.tanks);
     serde_json::from_value::<Vec<SimEvent>>(events)
         .unwrap()
         .into_iter()
         .enumerate()
-        .map(|(index, event)| PendingEvent {
-            player_hit: index == 2 || index == 3,
-            own: event.id == Some(human),
-            damage_angle: (index == 1).then_some(-0.75),
-            event,
+        .map(|(index, event)| {
+            let own = event.id == Some(human);
+            PendingEvent {
+                player_hit: index == 2 || index == 3,
+                own,
+                damage_angle: (index == 1).then_some(-0.75),
+                feedback: event_feedback(&event, own, human, &scoreboard),
+                event,
+            }
         })
         .collect()
 }
@@ -213,25 +223,26 @@ fn actions() -> Vec<ClientAction> {
 fn page_json() -> BTreeMap<&'static str, String> {
     let mut texts = BTreeMap::new();
     let mut sim = seeded_match();
-    let mut events = events(sim.human().id);
+    let mut events = events(&sim);
     texts.insert(
         "events",
         drain_events(&mut events, (12.5, -3.25), (0.6, -0.8)),
     );
     let mut tank = RenderTank::default();
-    let hud = simulation_hud(&sim, &mut tank, None);
+    let hud = simulation_hud(&sim, &mut tank, None, &mut EffectTimers::default());
     let text = serde_json::to_string(&hud).unwrap();
     // A copy the desktop keeps between reads reads the same.
     assert_eq!(serde_json::to_string(&hud.into_owned()).unwrap(), text);
     texts.insert("hud", text);
     let state = sim.render_state(None);
-    let room = serde_json::to_string(&room_hud(&state).unwrap()).unwrap();
+    let room = room_hud(&state, &mut EffectTimers::default()).unwrap();
+    let room = serde_json::to_string(&room).unwrap();
     texts.insert("roomHud", room);
 
     end_battle(&mut sim.match_state);
     let mut storage = SavedBests(r#"{"kills":9,"damage":250,"bestLife":2,"rank":"high"}"#);
     let recap = round_recap(&sim, &mut storage);
-    let hud = simulation_hud(&sim, &mut tank, Some(&recap));
+    let hud = simulation_hud(&sim, &mut tank, Some(&recap), &mut EffectTimers::default());
     let text = serde_json::to_string(&hud).unwrap();
     assert_eq!(serde_json::to_string(&hud.into_owned()).unwrap(), text);
     texts.insert("resultsHud", text);

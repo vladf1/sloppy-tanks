@@ -3,6 +3,8 @@
 use serde::Serialize;
 use sloppy_core::sim::{SimEvent, Vec2};
 
+use crate::feedback::EventFeedback;
+
 /// A simulation cue with the viewer-relative feedback the page needs.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -15,6 +17,9 @@ pub struct PendingEvent {
     pub own: bool,
     /// The clockwise screen angle (radians) of damage the viewer took.
     pub damage_angle: Option<f64>,
+    /// The death report, kill-feed row and toast the event brings, if any.
+    #[serde(flatten)]
+    pub feedback: EventFeedback,
 }
 
 /// The events waiting since the last drain, with where the viewer listens from.
@@ -97,6 +102,7 @@ mod tests {
             player_hit: true,
             own: false,
             damage_angle: Some(-0.75),
+            feedback: EventFeedback::default(),
         }];
         let capacity = events.capacity();
         let value: Value =
@@ -135,6 +141,7 @@ mod tests {
                 player_hit: false,
                 own: true,
                 damage_angle: None,
+                feedback: EventFeedback::default(),
             })
             .collect();
         let value: Value =

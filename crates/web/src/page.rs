@@ -20,6 +20,7 @@ use wasm_bindgen::JsValue;
 
 use crate::Shell;
 use crate::events::PendingEvent;
+use crate::feedback::EventFeedback;
 use crate::frame_clock::{FramePacing, FrameTimes};
 
 /// The HUD refreshes (`hud_json`) every this many frames.
@@ -382,13 +383,14 @@ pub fn prepare_result(status: &PrepareStatus) -> Vec<f64> {
 }
 
 /// Show `event` and queue it for `drain_events` with the screen angle of damage the
-/// viewer took, dropping the oldest event once the queue is full.
+/// viewer took and its HUD `feedback`, dropping the oldest event once the queue is full.
 pub fn queue_event(
     events: &mut Vec<PendingEvent>,
     view: &mut Presentation,
     event: SimEvent,
     player_hit: bool,
     own: bool,
+    feedback: EventFeedback,
 ) {
     view.event(&event, player_hit);
     let hurt = matches!(event.kind, SimEventType::Hurt | SimEventType::Death);
@@ -401,6 +403,7 @@ pub fn queue_event(
         player_hit,
         own,
         damage_angle,
+        feedback,
     });
 }
 

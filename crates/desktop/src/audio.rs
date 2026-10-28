@@ -350,6 +350,7 @@ mod tests {
             player_hit: false,
             own: false,
             damage_angle: None,
+            feedback: Default::default(),
         }
     }
 
