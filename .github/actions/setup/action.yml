@@ -32,7 +32,18 @@ runs:
       shell: bash
       run: |
         rustup toolchain install
-        rustup show active-toolchain
+        active="$(rustup show active-toolchain)"
+        echo "$active"
+        active="${active%% *}"
+        # rust-cache hashes every installed compiler. An unused toolchain in a new
+        # runner image must not invalidate the pinned compiler's dependency cache.
+        # These are ephemeral CI runners; keep the pinned toolchain as their default.
+        rustup default "$active"
+        while read -r toolchain _; do
+          if [ "$toolchain" != "$active" ]; then
+            rustup toolchain uninstall "$toolchain"
+          fi
+        done < <(rustup toolchain list --quiet)
     # Caches from main are visible to every pull request, so main's deploy run, which
     # runs these same jobs, keeps them warm. A run saves only when it missed an exact
     # key (a Cargo.lock, manifest or toolchain change). The action's key skips the root
