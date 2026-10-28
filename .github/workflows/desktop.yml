@@ -1,5 +1,5 @@
-# The desktop app (crates/desktop): lint and test it on macOS, and build the universal
-# macOS app (zipped and as an installer package) and the Windows executable through
+# The desktop app (crates/desktop): lint and test it on macOS, and build the Apple
+# silicon macOS app (zipped and as an installer package) and the Windows executable through
 # `scripts/build-desktop.mjs`, uploaded as this run's artifacts. Linux CI (check.yml)
 # leaves the crate out, since its window, audio and GPU dependencies need system
 # libraries there; nothing deploys from here.
@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
   macos:
-    name: macOS app (clippy, tests, universal build)
+    name: macOS app (clippy, tests, build)
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7

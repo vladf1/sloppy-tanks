@@ -1,7 +1,7 @@
 // Build the desktop app (crates/desktop, binary `sloppy-tanks`) into the ignored
 // `artifacts/desktop/`.
 //
-//   node scripts/build-desktop.mjs --mac       # universal Sloppy Tanks.app, a zip and a .pkg
+//   node scripts/build-desktop.mjs --mac       # Sloppy Tanks.app for Apple silicon, a zip and a .pkg
 //   node scripts/build-desktop.mjs --windows   # sloppy-tanks.exe (on a Windows host)
 //   node scripts/build-desktop.mjs             # whichever this machine is
 //
@@ -11,9 +11,9 @@
 // `SLOPPY_BUILD_NUMBER` as its fourth part) and the commit (`SLOPPY_COMMIT`) for Battle
 // Setup's build line. The `desktop` profile (Cargo.toml) optimizes everything for speed.
 //
-// The macOS app runs natively on Apple silicon and Intel: both targets are built and
-// joined with `lipo`. FMA stays off on both (no `target-cpu=native`): fused
-// multiply-adds round differently from the server and the browser's Wasm.
+// The macOS app is built for Apple silicon only; Intel Macs play in the browser. FMA
+// stays off (no `target-cpu=native`): fused multiply-adds round differently from the
+// server and the browser's Wasm.
 //
 // Signing follows what the machine holds. With a "Developer ID Application" identity in
 // the keychain the app is signed for distribution (hardened runtime, secure timestamp),
@@ -41,7 +41,7 @@ const BUNDLE_ID = "me.fridman.sloppy-tanks";
 // wgpu's Metal backend and winit support macOS 10.13 and up; 11 (Big Sur) is the first
 // release that runs on Apple silicon, and older ones no longer get Xcode or security fixes.
 const MINIMUM_MACOS = "11.0";
-const MAC_TARGETS = ["aarch64-apple-darwin", "x86_64-apple-darwin"];
+const MAC_TARGET = "aarch64-apple-darwin";
 const WINDOWS_TARGET = "x86_64-pc-windows-msvc";
 
 /** Run `command` from the repository root and exit the process unless it succeeds. */
@@ -199,11 +199,11 @@ function notarize(file, staple, notary) {
 
 function buildMac() {
   if (process.platform !== "darwin") {
-    console.error("The macOS app needs a Mac (lipo, sips, iconutil, codesign).");
+    console.error("The macOS app needs a Mac (sips, iconutil, codesign).");
     process.exit(1);
   }
-  ensureTargets(MAC_TARGETS);
-  const binaries = MAC_TARGETS.map(build);
+  ensureTargets([MAC_TARGET]);
+  const binary = build(MAC_TARGET);
 
   const scratch = join(root, "target", PROFILE, "bundle");
   rmSync(scratch, { recursive: true, force: true });
@@ -212,7 +212,7 @@ function buildMac() {
   mkdirSync(join(contents, "MacOS"), { recursive: true });
   mkdirSync(join(contents, "Resources"), { recursive: true });
   const executable = join(contents, "MacOS", BINARY);
-  run("lipo", ["-create", "-output", executable, ...binaries]);
+  copyFileSync(binary, executable);
   makeIcns(join(contents, "Resources", "AppIcon.icns"), scratch);
   const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   writeFileSync(
@@ -272,7 +272,7 @@ function buildMac() {
   }
   rmSync(join(output, `${APP_NAME}.app`), { recursive: true, force: true });
   run("ditto", [app, join(output, `${APP_NAME}.app`)]);
-  console.log(`Built ${join(output, `${APP_NAME}.app`)} (universal, ${megabytes(executable)})`);
+  console.log(`Built ${join(output, `${APP_NAME}.app`)} (Apple silicon, ${megabytes(executable)})`);
   console.log(`Built ${zip} (${megabytes(zip)})`);
   console.log(`Built ${installer} (${megabytes(installer)})`);
 }
@@ -296,10 +296,14 @@ function makeInstaller(app, version, destination, scratch, identity) {
     ...["--version", version, component],
   ]);
   // A distribution around the component package gives Installer the game's name as its
-  // window title, installs for the whole machine and refuses releases the app cannot run on.
+  // window title, installs for the whole machine and refuses Macs and releases the app
+  // cannot run on (`--synthesize` allows Intel Macs whatever the app is built for).
   const distribution = join(scratch, "distribution.xml");
   run("productbuild", ["--synthesize", "--package", component, distribution]);
-  const synthesized = readFileSync(distribution, "utf8");
+  const synthesized = readFileSync(distribution, "utf8").replace(
+    /hostArchitectures="[^"]*"/,
+    'hostArchitectures="arm64"',
+  );
   const extra =
     `    <title>${APP_NAME}</title>\n` +
     '    <domains enable_anywhere="false" enable_currentUserHome="false" enable_localSystem="true"/>\n' +
