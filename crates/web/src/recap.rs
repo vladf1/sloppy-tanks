@@ -10,7 +10,7 @@ use sloppy_core::sim::veterancy::RANKS;
 
 use crate::Shell;
 use crate::battle_report::{BattleReport, battle_report};
-use crate::hud::simulation_hud;
+use crate::hud::{EffectTimers, simulation_hud};
 
 /// The finished round as the results screen reports it: the human's statistics, the
 /// personal bests for this mode, map and difficulty, the feats the engine chose, and the
@@ -65,7 +65,13 @@ pub fn round_recap(sim: &Simulation, storage: &mut impl RecordStorage, shell: Sh
         shots: combat.shots,
         stats,
     };
-    let hud = simulation_hud(sim, &mut RenderTank::default(), None);
+    // The report reads the match and the scoreboard, not how long effects have run.
+    let hud = simulation_hud(
+        sim,
+        &mut RenderTank::default(),
+        None,
+        &mut EffectTimers::default(),
+    );
     recap.report = battle_report(&hud, &recap, shell);
     recap
 }

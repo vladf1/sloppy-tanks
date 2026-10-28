@@ -4,10 +4,6 @@ import { AMMO_ORDER } from "../game/ammo-options";
 import {
   FEED_ROWS,
   type FeedRow,
-  deathCause,
-  isOwnKill,
-  killFeedNames,
-  killFeedSides,
   newFeedRow,
   placeDamageRing,
   setText,
@@ -38,9 +34,10 @@ import {
 } from "./room-protocol";
 import "./multiplayer.css";
 
-/** The engine's HUD record for the viewer's tank and the scoreboard. The engine works
- * out health colours, ranks and ammo, so the page only displays them. */
-export type Hud = Pick<HudState, "match" | "human" | "scoreboard">;
+/** The engine's HUD record for the viewer's tank, the scoreboard and the score pill. The
+ * engine works out health colours, ranks, effects and ammo, so the page only displays
+ * them. */
+export type Hud = Pick<HudState, "match" | "human" | "scoreboard" | "scorePill">;
 
 /** Battle Setup's tank cards (`battle-setup.html`), as the room menu names them; the
  * engine owns the vehicles' stats. */
@@ -599,19 +596,16 @@ export class NetworkUI {
     this.feed.unshift(newFeedRow(names, ownKill, details));
     this.feed.length = Math.min(FEED_ROWS, this.feed.length);
   }
-  event(event: EngineEvent, hud: Hud): void {
-    const viewerId = hud.human.id;
+  /** One drained engine event, with the feedback the engine attached. */
+  event(event: EngineEvent): void {
     const damageAngle = event.damageAngle;
-    if (event.type === "death") {
-      this.addFeed(killFeedNames(event, viewerId, hud.scoreboard), isOwnKill(event, viewerId), {
-        cause: event.damageSource?.cause,
-        sides: killFeedSides(event),
-        ownDeath: event.id === viewerId,
-      });
+    if (event.feed) {
+      const { names, ownKill, ...details } = event.feed;
+      this.addFeed(names, ownKill, details);
     }
-    if (event.id === viewerId) {
-      if (event.type === "death") {
-        this.deathCause = deathCause(event, hud.scoreboard);
+    if (event.own) {
+      if (event.deathReport) {
+        this.deathCause = event.deathReport.sentence;
         this.set("toast", "");
         this.toastTime = 0;
       } else if (event.label) {
@@ -643,8 +637,7 @@ export class NetworkUI {
     this.root.querySelector<HTMLElement>("#hud")!.style.opacity = "1";
     this.set("score0", String(match.scores[0]));
     this.set("score1", String(match.scores[1]));
-    const seconds = Math.max(0, Math.ceil(match.time));
-    this.set("time", match.overtime ? "NEXT KILL" : duration(seconds));
+    this.set("time", hud.scorePill.clockLabel ?? duration(hud.scorePill.seconds));
     showTankStatus(this.root, tank, !tank.alive || !connected || this.menu);
     this.root
       .querySelector("#hud")!

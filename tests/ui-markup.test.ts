@@ -165,7 +165,14 @@ test("a solo run's loss leads its sentence with the death that ended it", () => 
     gameMode: "solo",
   } as HudState;
   const markup = menuMarkup(solo, {
-    report: { killer: "<Rex>", self: false, cause: "standard", weapon: "Standard shell" },
+    report: {
+      killer: "<Rex>",
+      self: false,
+      cause: "standard",
+      weapon: "Standard shell",
+      icon: "standard",
+      sentence: "<Rex> destroyed you with a standard shell.",
+    },
     text: "<Rex> destroyed you with a standard shell.",
   });
   assert.match(
@@ -177,7 +184,14 @@ test("a solo run's loss leads its sentence with the death that ended it", () => 
 
 test("the respawn card names who destroyed the tank in plain words", () => {
   const markup = menuMarkup(teamBattle({ phase: "playing", alive: false }), {
-    report: { killer: "THUNDERCLAP", self: false, cause: "standard", weapon: "Standard shell" },
+    report: {
+      killer: "THUNDERCLAP",
+      self: false,
+      cause: "standard",
+      weapon: "Standard shell",
+      icon: "standard",
+      sentence: "THUNDERCLAP destroyed you with a standard shell.",
+    },
     text: "THUNDERCLAP destroyed you with a standard shell.",
   });
   assert.match(markup, /<small>DESTROYED BY<\/small><b>THUNDERCLAP<\/b>/);

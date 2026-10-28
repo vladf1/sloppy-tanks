@@ -37,6 +37,9 @@
 //!   warms every variant, then draws the first frames and reports `done = 1`.
 //!   `gpuPending = 1` while only the GPU is working (background compiles or the
 //!   warm-up): poll on a short timer then rather than a task.
+//! - `loading_status() -> string | undefined`: Battle Setup's line for the latest
+//!   `prepare_step` ("Shaders loaded: 12 of 40"), or none once ready or while a
+//!   rebuild only warms up ([`Loading`]).
 //! - `start()`: begin the round (GO, PLAY AGAIN). `resume()`: continue a pause.
 //!   `pause()`: pause a playing round. `restart()`: a fresh world for Battle
 //!   Setup (phase `ready`; prepare again). `end_battle()`: END BATTLE.
@@ -49,13 +52,14 @@
 //!   back the last result; the frames that run take an even clock
 //!   ([`crate::frame_clock::FramePacing`]).
 //! - `drain_events() -> JSON`: `{ listener: {x, z}, listenerRight: {x, z},
-//!   events: [SimEvent & { playerHit, own, damageAngle }], sounds: [{ sound, gain,
-//!   pan }] }` for audio and HUD; `damageAngle` is the clockwise screen angle (radians)
-//!   of damage the viewer took, or null. `sounds` are the file names to play, in
+//!   events: [SimEvent & { playerHit, own, damageAngle, deathReport?, feed?, toast? }],
+//!   sounds: [{ sound, gain, pan }] }` for audio and HUD; `damageAngle` is the clockwise
+//!   screen angle (radians) of damage the viewer took, or null, and the rest is the
+//!   event's HUD feedback ([`crate::feedback`]). `sounds` are the file names to play, in
 //!   order, with their linear gain and stereo pan ([`crate::sounds`], rate-limited on
 //!   `frame`'s clock).
-//! - `hud_json() -> JSON`: match, scores, score limit, team names, clock, the
-//!   human's stats, ammo, rank, cooldowns, effects, scoreboard, and the round
+//! - `hud_json() -> JSON`: match, scores, score limit, team names, the score pill, the
+//!   human's stats, ammo, rank, hull tone, cooldowns, effects, scoreboard, and the round
 //!   recap once results show. The first recap of a result saves personal bests
 //!   in `localStorage` and reports them (`best`, `improved`, `persisted`), with the
 //!   battle report in words (`report`, `crate::battle_report`).
@@ -80,15 +84,16 @@
 //! - `error() -> string | undefined`: the first GPU error, if any.
 //!
 //! A Rust shell (the desktop app) reads the same values typed rather than as JSON:
-//! `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]), `hud` ([`Hud`]),
-//! `take_events` ([`EventBatch`]), `camera` ([`CameraPreferences`]), `nerd_stats`
-//! ([`StatsSection`]) and `gpu_ms`.
+//! `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]), `loading`
+//! ([`Loading`]), `hud` ([`Hud`]), `take_events` ([`EventBatch`]), `camera`
+//! ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]) and `gpu_ms`.
 
 use crate::Shell;
 use crate::battle_report::pause_report;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
+use crate::feedback::event_feedback;
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
-use crate::hud::{Hud, simulation_hud};
+use crate::hud::{EffectTimers, Hud, Loading, Scoreboard, simulation_hud};
 use crate::nerd_rows::{GameStats, StatsSection, game_sections};
 use crate::page::{
     CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
@@ -308,6 +313,10 @@ pub struct Game {
     frame_index: u64,
     /// Warmed and first frames drawn; false while pipelines compile.
     prepared: bool,
+    /// Pipelines created since the arena began preparing, and Battle Setup's line for
+    /// the latest step.
+    prepare_compiled: u32,
+    loading: Option<Loading>,
     events: Vec<PendingEvent>,
     /// The sounds drained events play, on the frame clock.
     sounds: SoundPlanner,
@@ -316,6 +325,8 @@ pub struct Game {
     graphics: Graphics,
     /// The human's tank as the HUD reads it, refilled from the simulation each read.
     hud_tank: RenderTank,
+    /// How long the human's effects have run, which their timer rings drain from.
+    effect_timers: EffectTimers,
     /// The finished round's recap; personal bests are saved once per result.
     recap: Option<RoundRecap>,
     /// The last frame's result, which a frame skipped for the GPU hands back.
@@ -343,6 +354,11 @@ impl Game {
     /// `[compiled, remaining, texturesPending, done, gpuPending]`.
     pub fn prepare_step(&mut self, budget: u32) -> Result<Vec<f64>, PageError> {
         self.prepare(budget).map(|status| prepare_result(&status))
+    }
+
+    /// Battle Setup's line for the latest `prepare_step`, if it has one.
+    pub fn loading_status(&self) -> Option<String> {
+        self.loading.map(|line| line.to_string())
     }
 
     /// Build one of the models preparation left for after the arena is ready (the
@@ -967,6 +983,8 @@ impl Game {
             completed_rounds: 0,
             frame_index: 0,
             prepared: true,
+            prepare_compiled: 0,
+            loading: None,
             events: Vec::new(),
             sounds: SoundPlanner::default(),
             canvas,
@@ -974,6 +992,7 @@ impl Game {
             times: FrameTimes::default(),
             graphics,
             hud_tank: RenderTank::default(),
+            effect_timers: EffectTimers::default(),
             recap: None,
             last_result: vec![0.0; frame_slot::LENGTH],
         };
@@ -1004,6 +1023,17 @@ impl Game {
             return Ok(PREPARED);
         }
         let status = self.view.prepare_step(budget.max(1)).map_err(js_error)?;
+        self.prepare_compiled += status.compiled;
+        self.loading = if status.ready {
+            None
+        } else {
+            Loading::of(
+                self.prepare_compiled,
+                status.remaining,
+                status.textures_pending,
+                status.gpu_pending,
+            )
+        };
         if status.ready {
             self.fill_state();
             self.view.finish_prepare(&self.state).map_err(js_error)?;
@@ -1027,7 +1057,18 @@ impl Game {
         } else {
             None
         };
-        simulation_hud(&self.sim, &mut self.hud_tank, recap)
+        simulation_hud(
+            &self.sim,
+            &mut self.hud_tank,
+            recap,
+            &mut self.effect_timers,
+        )
+    }
+
+    /// Battle Setup's line for the latest `prepare` step: `None` once the arena is
+    /// ready, and while a rebuild that reused everything only warms up.
+    pub fn loading(&self) -> Option<Loading> {
+        self.loading
     }
 
     /// Pending events for audio and HUD, heard from the human's tank.
@@ -1160,6 +1201,8 @@ impl Game {
         self.sim.set_wreck_view(Some(self.view.wreck_view()));
         self.view.begin_prepare(&self.state);
         self.prepared = false;
+        self.prepare_compiled = 0;
+        self.loading = None;
         self.recap = None;
         self.events.clear();
         self.steps.reset();
@@ -1177,7 +1220,16 @@ impl Game {
                 && event.owner == Some(human_id)
                 && event.team != Some(human_team);
             let own = event.id == Some(human_id);
-            queue_event(&mut self.events, &mut self.view, event, player_hit, own);
+            let scoreboard = Scoreboard::Simulated(&self.sim.tanks);
+            let feedback = event_feedback(&event, own, human_id, &scoreboard);
+            queue_event(
+                &mut self.events,
+                &mut self.view,
+                event,
+                player_hit,
+                own,
+                feedback,
+            );
         }
         // Keep the simulation's allocation for the next tick.
         if self.sim.events.is_empty() {

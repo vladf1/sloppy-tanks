@@ -9,7 +9,7 @@ use sloppy_web::battle_report::ordinal;
 use sloppy_web::catalog::TANK_CARDS;
 use sloppy_web::hud::Hud;
 
-use super::icons::{Art, cause_icon};
+use super::icons::Art;
 use super::paint::{self, fade, hex, hexa};
 use super::setup::vehicle_card;
 use super::theme::{GOLD, GOLD_HOT, bold_font, display_font};
@@ -217,7 +217,7 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
         );
         art.icon(
             painter,
-            cause_icon(report.cause),
+            report.icon,
             Rect::from_center_size(pos2(chip.left() + 15.0, chip.center().y), Vec2::splat(18.0)),
             hex(0xff7c88),
         );

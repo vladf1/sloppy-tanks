@@ -618,6 +618,7 @@ impl RoomSession {
             human: room.human,
             scoreboard: room.scoreboard.into_owned(),
             recap: None,
+            score_pill: room.score_pill,
         };
         self.ui.tick(self.hud_dt);
         self.hud_dt = 0.0;

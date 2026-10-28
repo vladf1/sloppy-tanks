@@ -487,7 +487,7 @@ export async function startMultiplayer(
     audio.play(drained);
     for (const event of drained.events) {
       if (hud) {
-        ui.event(event, hud);
+        ui.event(event);
       }
       onEvent?.(event);
     }

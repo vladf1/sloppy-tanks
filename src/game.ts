@@ -125,7 +125,6 @@ export async function prepareGame(
     return arenaPreparation;
   }
   async function updateArena(): Promise<void> {
-    let total = 0;
     for (;;) {
       if (inRound) {
         return;
@@ -145,7 +144,6 @@ export async function prepareGame(
         void bakeAhead(engineModule(), mapTextureBakes(next.mapMode));
         game.set_options(JSON.stringify(next));
         prepared = next;
-        total = 0;
       }
       // Compile a few pipelines per task until the world's shaders, textures and
       // first frames are ready, or the choices change again.
@@ -156,25 +154,17 @@ export async function prepareGame(
           break;
         }
         startTextureBake(game, engineModule());
-        const [compiled, remaining, texturesPending, done, waitingForGpu] =
-          game.prepare_step(PREPARE_BUDGET);
+        const [, , , done, waitingForGpu] = game.prepare_step(PREPARE_BUDGET);
         gpuPending = waitingForGpu === 1;
-        total += compiled;
         if (done) {
           return;
         }
-        // A rebuild that reuses every pipeline and texture still waits for its warm-up
-        // frames; that is not loading, so the menu keeps showing it is ready.
-        if (total === 0 && remaining === 0 && texturesPending === 0) {
-          continue;
+        // None while a rebuild that reuses every pipeline and texture waits for its
+        // warm-up frames: that is not loading, so the menu keeps showing it is ready.
+        const status = game.loading_status();
+        if (status) {
+          reportShaders(status);
         }
-        reportShaders(
-          remaining > 0
-            ? `Shaders loaded: ${total} of ${total + remaining}`
-            : gpuPending
-              ? "Compiling shaders…"
-              : `Loading textures… ${texturesPending} left`,
-        );
       }
     }
   }
@@ -500,9 +490,8 @@ export async function prepareGame(
         const batch = JSON.parse(game.drain_events()) as EventBatch;
         counters.events += batch.events.length;
         audio().play(batch);
-        // A death names its killer, who may have joined since the last HUD update.
-        const state =
-          hud && !batch.events.some((event) => event.type === "death") ? hud : readHud();
+        // The engine names a death's killer itself, so the last HUD serves.
+        const state = hud ?? readHud();
         for (const event of batch.events) {
           ui.event(event, state);
         }
