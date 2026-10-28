@@ -128,30 +128,23 @@ impl TankCard {
         (vehicle(self.kind).speed * KM_PER_HOUR).round() as u32
     }
 
-    /// The hit points bar: a share of the toughest tank's, to two places as the page
-    /// writes it.
+    /// The hit points bar: a share of the toughest tank's.
     pub fn hit_points_share(&self) -> f32 {
-        let most = TANK_CARDS
-            .iter()
-            .map(TankCard::hit_points)
-            .max()
-            .unwrap_or(1);
-        hundredths(f64::from(self.hit_points()) / f64::from(most))
+        self.share_of_most(TankCard::hit_points)
     }
 
     /// The speed bar: a share of the fastest tank's shown speed.
     pub fn speed_share(&self) -> f32 {
-        let most = TANK_CARDS
-            .iter()
-            .map(TankCard::km_per_hour)
-            .max()
-            .unwrap_or(1);
-        hundredths(f64::from(self.km_per_hour()) / f64::from(most))
+        self.share_of_most(TankCard::km_per_hour)
     }
-}
 
-fn hundredths(share: f64) -> f32 {
-    ((share * 100.0).round() / 100.0) as f32
+    /// This tank's `stat` as a share of the most any tank has, to two places as the page
+    /// writes it.
+    fn share_of_most(&self, stat: fn(&TankCard) -> u32) -> f32 {
+        let most = TANK_CARDS.iter().map(stat).max().unwrap_or(1);
+        let share = f64::from(stat(self)) / f64::from(most);
+        ((share * 100.0).round() / 100.0) as f32
+    }
 }
 
 /// The tanks a player drives, lightest first.

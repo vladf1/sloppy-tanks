@@ -414,6 +414,7 @@ fn recap_body(
             vec2(300.0, 158.0),
         ),
         1.0,
+        false,
     );
     let (kills, small_tiles) = match report.tiles.split_first() {
         Some((kills, rest)) => (kills.value.as_str(), rest),

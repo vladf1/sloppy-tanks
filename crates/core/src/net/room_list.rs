@@ -15,7 +15,7 @@ use super::protocol::{
     CONTENT_VERSION, DIFFICULTIES, MAP_MODES, MAX_ROUND_MINUTES, PHASES, is_room_code,
 };
 use super::scene_codec::name;
-use super::schema::{MAX_SAFE_INTEGER, ReadResult, number_in, text_length};
+use super::schema::{ReadResult, boolean, choice, id, number_in, string};
 use crate::sim::difficulty::Difficulty;
 use crate::sim::map_options::MapId;
 
@@ -103,52 +103,36 @@ impl HostedRoom {
             .and_then(Value::as_str)
             .filter(|room| is_room_code(room))
             .ok_or_else(|| fail("room"))?;
-        let content_version = entry
-            .get("contentVersion")
-            .and_then(Value::as_str)
-            .filter(|version| (1..=MAX_CONTENT_VERSION_LENGTH).contains(&text_length(version)))
-            .ok_or_else(|| fail("contentVersion"))?;
-        let time = entry
-            .get("time")
-            .and_then(Value::as_f64)
-            .filter(|time| (0.0..=f64::from(MAX_ROUND_MINUTES * 60)).contains(time))
-            .ok_or_else(|| fail("time"))?;
+        let content_version = string(entry.get("contentVersion"), MAX_CONTENT_VERSION_LENGTH, 1)
+            .map_err(|_| fail("contentVersion"))?;
+        let longest_round = f64::from(MAX_ROUND_MINUTES * 60);
+        let time =
+            number_in(entry.get("time"), 0.0, longest_round, false).map_err(|_| fail("time"))?;
         let scores = match entry.get("scores") {
             Some(Value::Array(scores)) if scores.len() <= MAX_SCORES => scores,
             _ => return Err(fail("scores")),
         };
-        let humans_only = entry
-            .get("humansOnly")
-            .and_then(Value::as_bool)
-            .ok_or_else(|| fail("humansOnly"))?;
-        let whole_number = |value: Option<&Value>, min: f64, max: f64, key: &str| {
-            number_in(value, min, max, true).map_err(|_| fail(key))
+        let humans_only = boolean(entry.get("humansOnly")).map_err(|_| fail("humansOnly"))?;
+        let whole_number = |key: &str, min: f64, max: f64| {
+            number_in(entry.get(key), min, max, true).map_err(|_| fail(key))
         };
         let seats = f64::from(ROOM_SEATS);
         Ok(Self {
             room: room.to_owned(),
-            content_version: content_version.to_owned(),
-            map_mode: named(entry.get("mapMode"), &MAP_MODES).ok_or_else(|| fail("mapMode"))?,
-            difficulty: named(entry.get("difficulty"), &DIFFICULTIES)
-                .ok_or_else(|| fail("difficulty"))?,
+            content_version,
+            map_mode: choice(entry.get("mapMode"), &MAP_MODES).map_err(|_| fail("mapMode"))?,
+            difficulty: choice(entry.get("difficulty"), &DIFFICULTIES)
+                .map_err(|_| fail("difficulty"))?,
             humans_only,
-            round_minutes: whole_number(
-                entry.get("roundMinutes"),
-                1.0,
-                f64::from(MAX_ROUND_MINUTES),
-                "roundMinutes",
-            )? as u32,
-            players: whole_number(entry.get("players"), 0.0, seats, "players")? as u32,
-            reserved: whole_number(entry.get("reserved"), 0.0, seats, "reserved")? as u32,
-            phase: named(entry.get("phase"), &PHASES).ok_or_else(|| fail("phase"))?,
-            round_id: whole_number(entry.get("roundId"), 0.0, MAX_SAFE_INTEGER, "roundId")? as u64,
+            round_minutes: whole_number("roundMinutes", 1.0, f64::from(MAX_ROUND_MINUTES))? as u32,
+            players: whole_number("players", 0.0, seats)? as u32,
+            reserved: whole_number("reserved", 0.0, seats)? as u32,
+            phase: choice(entry.get("phase"), &PHASES).map_err(|_| fail("phase"))?,
+            round_id: id(entry.get("roundId")).map_err(|_| fail("roundId"))?,
             time,
             scores: scores
                 .iter()
-                .map(|score| {
-                    whole_number(Some(score), 0.0, MAX_SAFE_INTEGER, "scores")
-                        .map(|score| score as u64)
-                })
+                .map(|score| id(Some(score)).map_err(|_| fail("scores")))
                 .collect::<ReadResult<_>>()?,
             server: server.to_owned(),
         })
@@ -158,15 +142,6 @@ impl HostedRoom {
     pub fn joinable(&self) -> bool {
         self.reserved < ROOM_SEATS && self.content_version == CONTENT_VERSION
     }
-}
-
-/// The option `value` names, when it names one of `options`.
-fn named<T: Copy>(value: Option<&Value>, options: &[(&str, T)]) -> Option<T> {
-    let text = value?.as_str()?;
-    options
-        .iter()
-        .find(|(name, _)| *name == text)
-        .map(|&(_, option)| option)
 }
 
 /// A server's `rooms` (`readRooms`): at most [`MAX_LISTED_ROOMS`] listings, each hosted
@@ -276,21 +251,16 @@ pub fn split_address(address: &str) -> Option<(&str, &str)> {
 /// A DNS name or IPv4 address, or an IPv6 address in brackets. Refusing every other
 /// character also refuses credentials (`user@host`).
 fn is_host(host: &str) -> bool {
-    match host
+    let ipv6 = host
         .strip_prefix('[')
-        .and_then(|inner| inner.strip_suffix(']'))
-    {
-        Some(ipv6) => {
-            !ipv6.is_empty()
-                && ipv6
-                    .bytes()
-                    .all(|byte| byte.is_ascii_hexdigit() || byte == b':' || byte == b'.')
-        }
-        None => {
-            !host.is_empty()
-                && host
-                    .bytes()
-                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_'))
-        }
-    }
+        .and_then(|inner| inner.strip_suffix(']'));
+    let (name, allowed): (&str, fn(u8) -> bool) = match ipv6 {
+        Some(ipv6) => (ipv6, |byte| {
+            byte.is_ascii_hexdigit() || matches!(byte, b':' | b'.')
+        }),
+        None => (host, |byte| {
+            byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_')
+        }),
+    };
+    !name.is_empty() && name.bytes().all(allowed)
 }

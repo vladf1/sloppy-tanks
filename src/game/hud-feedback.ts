@@ -187,25 +187,16 @@ export function cssColor(rgb: number): string {
   return `#${rgb.toString(16).padStart(6, "0")}`;
 }
 
-/** Each effect's mark in its chip's text. The chips draw their own colour dot instead
- * (small font sets lack these symbols), so the marks stay in the text for readers only. */
-const EFFECT_MARKS: Record<ActiveEffect["kind"], string> = {
-  spawn: "",
-  shield: "◇ ",
-  rapid: "» ",
-  boost: "ϟ ",
-  laser: "✧ ",
-  repair: "",
-};
-
-/** Each effect's icon in its timer ring (`HUD_ICONS`). */
-const EFFECT_ICONS: Record<ActiveEffect["kind"], string> = {
-  spawn: "hud-shield",
-  shield: "hud-shield",
-  rapid: "hud-rapid",
-  boost: "hud-boost",
-  laser: "hud-target",
-  repair: "hud-repair",
+/** Each effect's icon in its timer ring (`HUD_ICONS`) and mark in its chip's text. The
+ * chips draw their own colour dot instead of the mark (small font sets lack these
+ * symbols), so the marks stay in the text for readers only. */
+const EFFECT_ART: Record<ActiveEffect["kind"], { icon: string; mark: string }> = {
+  spawn: { icon: "hud-shield", mark: "" },
+  shield: { icon: "hud-shield", mark: "◇ " },
+  rapid: { icon: "hud-rapid", mark: "» " },
+  boost: { icon: "hud-boost", mark: "ϟ " },
+  laser: { icon: "hud-target", mark: "✧ " },
+  repair: { icon: "hud-repair", mark: "" },
 };
 
 /** The effect chips docked on the tank panel, rebuilt only when their text changes: each
@@ -231,12 +222,12 @@ function showEffects(root: ParentNode, effects: readonly ActiveEffect[]): void {
       ring.setAttribute("class", "effect-ring");
       ring.setAttribute("aria-hidden", "true");
       const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-      use.setAttribute("href", `#${EFFECT_ICONS[kind]}`);
+      use.setAttribute("href", `#${EFFECT_ART[kind].icon}`);
       ring.append(use);
       chip.append(ring);
-      if (EFFECT_MARKS[kind]) {
+      if (EFFECT_ART[kind].mark) {
         const mark = document.createElement("i");
-        mark.textContent = EFFECT_MARKS[kind];
+        mark.textContent = EFFECT_ART[kind].mark;
         chip.append(mark);
       }
       const label = document.createElement("b");

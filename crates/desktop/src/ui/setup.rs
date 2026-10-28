@@ -304,6 +304,7 @@ pub fn vehicle_card(
         team,
         stage,
         scale * 1.05,
+        false,
     );
     {
         // Hull and speed as bars that fill by each tank's share of the best.
@@ -565,8 +566,9 @@ fn battle_card(
                 tank_height,
             ),
             1.0,
+            false,
         );
-        art.tank_mirrored(
+        art.tank(
             &clip,
             VehicleKind::Balanced,
             Team::Blue,
@@ -577,6 +579,7 @@ fn battle_card(
                 tank_height,
             ),
             1.0,
+            true,
         );
         let versus = rect.min + vec2(width / 2.0, 6.0 + art_height / 2.0);
         painter.circle_filled(versus, 22.0, hex(0x10264a));
@@ -616,6 +619,7 @@ fn battle_card(
                     tank_height,
                 ),
                 1.0,
+                false,
             );
         }
         let tank_height = art_height * 0.8;
@@ -631,6 +635,7 @@ fn battle_card(
                 tank_height,
             ),
             1.0,
+            false,
         );
     }
     paint::shadowed(
@@ -665,11 +670,10 @@ fn difficulty_segment(
     selected: bool,
     hovered: bool,
 ) {
-    let (name, detail) = (entry.name, entry.detail);
     choice_frame(painter, rect, selected, hovered);
     let galley = paint::wrapped(
         painter,
-        detail,
+        entry.detail,
         egui::FontId::proportional(12.5),
         hex(0xd0e4f3),
         rect.width() - 94.0,
@@ -679,7 +683,7 @@ fn difficulty_segment(
         painter,
         rect.min + vec2(18.0, content_top),
         Align2::LEFT_TOP,
-        &name.to_uppercase(),
+        &entry.name.to_uppercase(),
         display_font(24.0),
         Color32::WHITE,
         0.5,
@@ -839,15 +843,10 @@ fn difficulty_bars(painter: &Painter, rect: Rect, level: usize, selected: bool) 
     let width = rect.width() / 4.0;
     for bar in 0..3 {
         let height = rect.height() * [10.0 / 24.0, 17.0 / 24.0, 1.0][bar];
+        let left = rect.left() + bar as f32 * (rect.width() - width) / 2.0;
         let column = Rect::from_min_max(
-            pos2(
-                rect.left() + bar as f32 * (rect.width() - width) / 2.0,
-                rect.bottom() - height,
-            ),
-            pos2(
-                rect.left() + bar as f32 * (rect.width() - width) / 2.0 + width,
-                rect.bottom(),
-            ),
+            pos2(left, rect.bottom() - height),
+            pos2(left + width, rect.bottom()),
         );
         let lit = bar <= level;
         let color = if lit {
@@ -866,28 +865,20 @@ fn status_line(painter: &Painter, right: egui::Pos2, state: &UiState, time: f64)
     }
     let track = Rect::from_min_size(right - vec2(72.0, -6.0), vec2(72.0, 3.0));
     painter.rect_filled(track, 2, hexa(0xffffff, 0.1));
-    match state.progress {
-        Some(share) => {
-            painter.rect_filled(
-                Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),
-                2,
-                GOLD,
-            );
-        }
+    // The share loaded, or a sweep while there is none to show.
+    let fill = match state.progress {
+        Some(share) => Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),
         None => {
             let sweep = (time * 0.6).fract() as f32;
             let width = track.width() * 0.35;
             let left = track.left() - width + (track.width() + width) * sweep;
-            painter.rect_filled(
-                Rect::from_min_max(
-                    pos2(left.max(track.left()), track.top()),
-                    pos2((left + width).min(track.right()), track.bottom()),
-                ),
-                2,
-                GOLD,
-            );
+            Rect::from_min_max(
+                pos2(left.max(track.left()), track.top()),
+                pos2((left + width).min(track.right()), track.bottom()),
+            )
         }
-    }
+    };
+    painter.rect_filled(fill, 2, GOLD);
     let status = if state.starting {
         "Rolling out…"
     } else if state.status.is_empty() {
@@ -1068,11 +1059,7 @@ pub fn battle_setup(
                 // MAP over the panel's width; extra levels share the row on `--debug`. In
                 // multiplayer it is the new room's, and an open room chosen shows its own.
                 let heading = paint::section_label(&painter, pos2(inner.left(), 208.0), "MAP");
-                let room_map = if multiplayer {
-                    state.rooms.selected_map()
-                } else {
-                    None
-                };
+                let room_map = state.rooms.selected_map().filter(|_| multiplayer);
                 if multiplayer {
                     paint::text(
                         &painter,
@@ -1108,19 +1095,12 @@ pub fn battle_setup(
                         vec2(map_width, row.height()),
                     );
                     let locked = room_map.is_some();
-                    let response = ui.interact(
-                        rect,
-                        Id::unique(("setup map", map.id)),
-                        if locked {
-                            Sense::hover()
-                        } else {
-                            Sense::click()
-                        },
-                    );
+                    let id = Id::unique(("setup map", map.id));
                     let response = if locked {
-                        response
+                        ui.interact(rect, id, Sense::hover())
                     } else {
-                        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                        ui.interact(rect, id, Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand)
                     };
                     map_card(
                         &painter,

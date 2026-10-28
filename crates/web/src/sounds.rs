@@ -104,28 +104,16 @@ pub struct PlannedSound {
     pub pan: f64,
 }
 
-/// The frame clock and when each throttled kind last played, in milliseconds.
-#[derive(Clone, Debug)]
+/// The frame clock and when each throttled kind last played, in milliseconds (`None`
+/// before it first plays).
+#[derive(Clone, Debug, Default)]
 pub struct SoundPlanner {
     now: f64,
-    hit: f64,
-    shot: f64,
-    explosion: f64,
-    destruction: f64,
-    laser: f64,
-}
-
-impl Default for SoundPlanner {
-    fn default() -> Self {
-        Self {
-            now: 0.0,
-            hit: f64::NEG_INFINITY,
-            shot: f64::NEG_INFINITY,
-            explosion: f64::NEG_INFINITY,
-            destruction: f64::NEG_INFINITY,
-            laser: f64::NEG_INFINITY,
-        }
-    }
+    hit: Option<f64>,
+    shot: Option<f64>,
+    explosion: Option<f64>,
+    destruction: Option<f64>,
+    laser: Option<f64>,
 }
 
 impl SoundPlanner {
@@ -162,7 +150,7 @@ impl SoundPlanner {
         let event = &pending.event;
         // One quiet, centred tick even when several spread pellets land together.
         if pending.player_hit && ready(self.hit, now, HIT_INTERVAL_MS) {
-            self.hit = now;
+            self.hit = Some(now);
             sounds.push(PlannedSound {
                 sound: Sound::Hit,
                 gain: HIT_GAIN,
@@ -173,60 +161,45 @@ impl SoundPlanner {
         if distance > AUDIBLE_DISTANCE {
             return;
         }
-        let kind = event.kind;
-        let shot = kind == SimEventType::Shot;
-        let explosion = matches!(kind, SimEventType::Explosion | SimEventType::Death);
-        let laser = kind == SimEventType::Laser;
-        let destruction = destruction_sound(kind, event.cover_kind);
-        if (shot && !pending.own && !ready(self.shot, now, BOT_SHOT_INTERVAL_MS))
-            || (explosion && !ready(self.explosion, now, EXPLOSION_INTERVAL_MS))
-            || (destruction.is_some() && !ready(self.destruction, now, DESTRUCTION_INTERVAL_MS))
-            || (laser && !ready(self.laser, now, LASER_INTERVAL_MS))
-        {
-            return;
-        }
-        let sound = if destruction.is_some() {
-            destruction
-        } else if shot {
-            Some(shot_sound(event.weapon))
-        } else if explosion {
-            Some(Sound::Explosion)
-        } else {
-            match kind {
-                SimEventType::Pickup => Some(Sound::Pickup),
-                SimEventType::Promotion if pending.own => Some(Sound::Promotion),
-                SimEventType::Laser => Some(Sound::Laser),
-                SimEventType::Impact | SimEventType::Ricochet => Some(Sound::Impact),
-                _ => None,
+        // The sound, its kind's gain, and for a throttled kind when it last played and
+        // how long it waits. A silent event (a drum's shell, another tank's promotion)
+        // spends no interval.
+        let (sound, kind_gain, throttle) = match event.kind {
+            SimEventType::Shot => (
+                shot_sound(event.weapon),
+                SHOT_GAIN,
+                Some((&mut self.shot, BOT_SHOT_INTERVAL_MS)),
+            ),
+            SimEventType::Explosion | SimEventType::Death => (
+                Sound::Explosion,
+                EXPLOSION_GAIN,
+                Some((&mut self.explosion, EXPLOSION_INTERVAL_MS)),
+            ),
+            SimEventType::Laser => (
+                Sound::Laser,
+                LASER_GAIN,
+                Some((&mut self.laser, LASER_INTERVAL_MS)),
+            ),
+            SimEventType::Shatter | SimEventType::Destroy => {
+                let Some(sound) = destruction_sound(event.kind, event.cover_kind) else {
+                    return;
+                };
+                let throttle = (&mut self.destruction, DESTRUCTION_INTERVAL_MS);
+                (sound, DESTRUCTION_GAIN, Some(throttle))
             }
+            SimEventType::Pickup => (Sound::Pickup, OTHER_GAIN, None),
+            SimEventType::Promotion if pending.own => (Sound::Promotion, OTHER_GAIN, None),
+            SimEventType::Impact | SimEventType::Ricochet => (Sound::Impact, OTHER_GAIN, None),
+            _ => return,
         };
-        // A silent event (a drum's shell, another tank's promotion) spends no interval.
-        let Some(sound) = sound else {
-            return;
-        };
-        if shot {
-            self.shot = now;
+        if let Some((last, interval)) = throttle {
+            // The player's own shots always play, and restart the bots' interval.
+            let own_shot = pending.own && event.kind == SimEventType::Shot;
+            if !own_shot && !ready(*last, now, interval) {
+                return;
+            }
+            *last = Some(now);
         }
-        if explosion {
-            self.explosion = now;
-        }
-        if laser {
-            self.laser = now;
-        }
-        if destruction.is_some() {
-            self.destruction = now;
-        }
-        let kind_gain = if explosion {
-            EXPLOSION_GAIN
-        } else if destruction.is_some() {
-            DESTRUCTION_GAIN
-        } else if shot {
-            SHOT_GAIN
-        } else if laser {
-            LASER_GAIN
-        } else {
-            OTHER_GAIN
-        };
         sounds.push(PlannedSound {
             sound,
             gain: kind_gain * distance_gain(distance),
@@ -236,8 +209,8 @@ impl SoundPlanner {
 }
 
 /// Whether a kind that last played at `last` may play again at `now`.
-fn ready(last: f64, now: f64, interval: f64) -> bool {
-    now - last >= interval
+fn ready(last: Option<f64>, now: f64, interval: f64) -> bool {
+    last.is_none_or(|last| now - last >= interval)
 }
 
 /// A weapon's firing sound; a shot that names none fired a standard shell.

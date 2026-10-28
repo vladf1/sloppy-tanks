@@ -174,24 +174,17 @@ pub fn event_feedback(
     let label = || event.label.clone().unwrap_or_default();
     let toast = match event.kind {
         _ if !own => None,
-        SimEventType::Pickup => Some(Toast {
-            text: label(),
-            tone: ToastTone::Pickup,
-        }),
-        SimEventType::Promotion => Some(Toast {
-            text: label(),
-            tone: ToastTone::Promotion,
-        }),
-        SimEventType::Death => death_report.as_ref().map(|report| Toast {
-            text: report.sentence.clone(),
-            tone: ToastTone::Death,
-        }),
+        SimEventType::Pickup => Some((label(), ToastTone::Pickup)),
+        SimEventType::Promotion => Some((label(), ToastTone::Promotion)),
+        SimEventType::Death => death_report
+            .as_ref()
+            .map(|report| (report.sentence.clone(), ToastTone::Death)),
         _ => None,
     };
     EventFeedback {
         feed: death.then(|| feed_row(event, own, viewer, scoreboard)),
         death_report,
-        toast,
+        toast: toast.map(|(text, tone)| Toast { text, tone }),
     }
 }
 
@@ -206,15 +199,9 @@ fn death_report(event: &SimEvent, scoreboard: &Scoreboard) -> DeathReport {
     let cause = event.damage_source.map(|source| source.cause);
     let weapon = cause.map(damage_label);
     let with = weapon.map(|label| {
-        let vowel = label
-            .chars()
-            .next()
-            .is_some_and(|first| "aeiouAEIOU".contains(first));
-        format!(
-            "{} {}",
-            if vowel { "an" } else { "a" },
-            label.to_lowercase()
-        )
+        let label = label.to_lowercase();
+        let vowel = label.starts_with(['a', 'e', 'i', 'o', 'u']);
+        format!("{} {label}", if vowel { "an" } else { "a" })
     });
     let name = killer
         .as_ref()
