@@ -46,13 +46,8 @@ impl FrameLog {
         }
     }
 
-    /// Whether the next frame closes the second (the caller reads the GPU time then).
-    pub fn due(&self) -> bool {
-        self.start.elapsed().as_secs_f64() >= 1.0
-    }
-
     /// Count a frame that ended now; `gpu_ms` is the engine's smoothed GPU frame time,
-    /// read when the second closes.
+    /// which the line closing the second reports.
     pub fn frame(
         &mut self,
         parts: &FrameParts,

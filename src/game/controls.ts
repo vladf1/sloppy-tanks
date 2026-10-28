@@ -3,7 +3,7 @@ import { AMMO_ORDER } from "./ammo-options";
 import { INPUT, type Weapon } from "./engine-api";
 const PRIMARY_BUTTON = 0;
 const SECONDARY_BUTTON = 2;
-const ZOOM_STEP = 2;
+export const ZOOM_STEP = 2;
 /** Browsers may release a captured pointer on Esc just before delivering the key;
  * a key this soon after the release belongs to the same press. */
 const ESC_RELEASE_WINDOW_MS = 250;

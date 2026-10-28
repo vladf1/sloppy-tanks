@@ -702,6 +702,22 @@ pub enum DamageCause {
 }
 
 impl DamageCause {
+    /// The serialized name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            DamageCause::Standard => "standard",
+            DamageCause::Spread => "spread",
+            DamageCause::Rocket => "rocket",
+            DamageCause::Ricochet => "ricochet",
+            DamageCause::Piercing => "piercing",
+            DamageCause::Tow => "tow",
+            DamageCause::Mine => "mine",
+            DamageCause::Drum => "drum",
+            DamageCause::Interception => "interception",
+            DamageCause::Explosion => "explosion",
+        }
+    }
+
     /// Whether the damage came from a fired round (rocket splash included), rather than a
     /// mine, a drum, an interception or another explosion.
     pub const fn fired(self) -> bool {

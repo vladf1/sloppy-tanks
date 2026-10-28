@@ -167,7 +167,6 @@ try {
         cooldown: 0,
       });
       window.soundCalls = [];
-      window.sloppy.audio.lastShot = performance.now();
     }, weapon);
     await page.mouse.down();
     await advance();
@@ -220,7 +219,6 @@ try {
       window.sloppy.game.debug_clear_shots();
       window.engine.setTank(enemy, { hp: 100 });
       window.engine.setHuman({ hp: 100 });
-      window.sloppy.audio.lastHit = -Infinity;
       window.soundCalls = [];
     },
     { enemy: ids.enemy },
@@ -247,9 +245,6 @@ try {
   await advance(12);
   shown = await reticle();
   assert.deepEqual([shown.scale, shown.confirmed, shown.reloading], [1, false, true]);
-  await page.evaluate(() => {
-    window.sloppy.audio.lastHit = -Infinity;
-  });
   await damage(ids.enemy, 999, ids.human, ids.humanTeam);
   await advance(1);
   assert.ok(Math.abs((await reticle()).scale - 1.2) < 1e-6);

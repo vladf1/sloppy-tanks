@@ -1,213 +1,44 @@
-//! The battle report (`round-recap.ts` and the results branch of `menuMarkup`): the
-//! outcome and its sentence, the round's feats, the hero kills tile measured against
-//! the personal best, the stat tiles with the standout lit, notable highlights, the
-//! personal-bests note, and the team scoreboard with the MVP and the viewer's row.
+//! The battle report (the results branch of `menuMarkup`), laid out from the words
+//! `sloppy_web::battle_report` chose: the outcome and its sentence, the round's feats,
+//! the hero kills tile measured against the personal best, the stat tiles with the
+//! standout lit, notable highlights, the personal-bests note, and the team scoreboard
+//! with the MVP and the viewer's row.
 
 use egui::{
     Align2, Color32, CornerRadius, Painter, Pos2, Rect, Stroke, StrokeKind, Vec2, pos2, vec2,
 };
 
 use super::icons::Art;
-use super::menus::{
-    by_score, count_line, dialog_with_padding, dim_backdrop, duration, leading_team, score_plates,
-    team_label,
-};
+use super::menus::{dialog_with_padding, dim_backdrop, score_plates};
 use super::paint::{self, ButtonStyle, fade, hex, hexa};
 use super::theme::{GOLD, GOLD_HOT, bold_font, display_font};
 use super::{Action, UiState, View};
-use crate::engine_api::{HudState, RecapState, ScoreboardRow};
+use sloppy_core::sim::{GameMode, Team};
+use sloppy_web::battle_report::{BattleReport, Outcome};
+use sloppy_web::hud::{Hud, HudScore};
+use sloppy_web::recap::RoundRecap;
 
-/// Each metric's label and explanation, in report order (`METRICS`).
-const METRICS: [(&str, &str, &str); 13] = [
-    ("kills", "Kills", "Enemy tanks destroyed"),
-    ("damage", "Damage dealt", "Enemy hull damage, no overkill"),
-    ("bestLife", "Best spree", "Most kills in a single life"),
-    ("rank", "Top rank", "Peak rank across all lives"),
-    (
-        "busiestMinute",
-        "Busiest minute",
-        "Most kills within any 60 seconds",
-    ),
-    (
-        "longestLife",
-        "Longest life",
-        "Longest time alive, pauses excluded",
-    ),
-    (
-        "multikill",
-        "Best multikill",
-        "Most kills within any 5 seconds",
-    ),
-    ("clutchKills", "Clutch kills", "Kills at 25% hull or less"),
-    ("revengeKills", "Revenge kills", "Kills on your last killer"),
-    (
-        "posthumousKills",
-        "Grave kills",
-        "Kills by a previous life's ordnance",
-    ),
-    ("mineKills", "Mine kills", "Kills from mine explosions"),
-    (
-        "coverDestroyed",
-        "Cover razed",
-        "Destructible objects you finished",
-    ),
-    ("pickups", "Pickups", "Ammo and power-ups collected"),
-];
-/// The hero tile and the tiles beside it.
-const FEATURED: [&str; 4] = ["kills", "damage", "bestLife", "longestLife"];
-/// The metrics worth a line when they happened (a multikill from three kills).
-const NOTABLE: [&str; 7] = [
-    "rank",
-    "multikill",
-    "clutchKills",
-    "revengeKills",
-    "posthumousKills",
-    "mineKills",
-    "coverDestroyed",
-];
-const NOTABLE_MULTIKILL: f64 = 3.0;
-const MAX_DETAILS: usize = 3;
-/// Accuracy worth lighting, over enough shots, and a spree worth lighting.
-const STANDOUT_ACCURACY: f64 = 0.6;
-const STANDOUT_SHOTS: f64 = 5.0;
-const STANDOUT_SPREE: f64 = 3.0;
-
-fn label(metric: &str) -> (&'static str, &'static str) {
-    METRICS
-        .iter()
-        .find(|(key, ..)| *key == metric)
-        .map_or(("", ""), |(_, label, hint)| (*label, *hint))
-}
-
-/// 1234 as "1,234".
-fn thousands(value: f64) -> String {
-    let digits = format!("{}", value.round().abs() as u64);
-    let mut out = String::new();
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    if value < 0.0 { format!("-{out}") } else { out }
-}
-
-fn format_metric(recap: &RecapState, metric: &str, value: f64) -> String {
-    match metric {
-        "rank" => recap
-            .rank_names
-            .get((value.max(0.0) as usize).min(recap.rank_names.len().saturating_sub(1)))
-            .cloned()
-            .unwrap_or_else(|| "Rookie".to_owned()),
-        "longestLife" => duration(value),
-        _ => thousands(value),
-    }
-}
-
-/// The one small tile lit as the round's standout (`standoutTile`).
-fn standout(recap: &RecapState) -> &'static str {
-    let stat = |key: &str| recap.stats.get(key).copied().unwrap_or(0.0);
-    if let Some(record) = FEATURED[1..]
-        .iter()
-        .find(|metric| recap.improved.iter().any(|improved| improved == *metric))
-    {
-        return record;
-    }
-    if recap.shots >= STANDOUT_SHOTS && recap.direct_hits / recap.shots >= STANDOUT_ACCURACY {
-        return "accuracy";
-    }
-    if stat("bestLife") >= STANDOUT_SPREE {
-        return "bestLife";
-    }
-    ""
-}
-
-/// The outcome's title, its colour, the sentence under it and whether it ended early.
-fn outcome(state: &UiState, hud: &HudState) -> (&'static str, Color32, String) {
-    let match_state = &hud.match_state;
-    let team = hud.human_team;
-    let ended_early = match_state.ended_early;
-    let lost_color = hex(0xff6b7a);
-    if hud.game_mode == "solo" {
-        let survived = match_state.winner == Some(team);
-        return if ended_early {
-            (
-                "BATTLE ENDED",
-                Color32::WHITE,
-                "Run ended early.".to_owned(),
-            )
-        } else if survived {
-            (
-                "SURVIVED",
-                GOLD_HOT,
-                "Ten minutes. One tank. Still standing.".to_owned(),
-            )
-        } else {
-            let death = state
-                .death
-                .as_ref()
-                .map(|report| format!("{} ", report.sentence))
-                .unwrap_or_default();
-            (
-                "TANK DESTROYED",
-                lost_color,
-                format!("{death}One more run?"),
-            )
-        };
-    }
-    let scores = match_state.scores;
-    let leader = leading_team(scores);
-    let margin = (scores[0] - scores[1]).abs();
-    if ended_early {
-        // A battle stopped before the limit is called by where the viewer's team stood.
-        return match leader {
-            None => (
-                "STALEMATE",
-                Color32::WHITE,
-                "The teams were level when you ended the battle.".to_owned(),
-            ),
-            Some(leader) if leader == team => (
-                "LEAD HELD",
-                GOLD_HOT,
-                format!(
-                    "Your team led by {} when you ended the battle.",
-                    count_line(margin, "kill")
-                ),
-            ),
-            Some(leader) => (
-                "CUT SHORT",
-                lost_color,
-                format!(
-                    "{} led by {} when you ended the battle.",
-                    team_label(&hud.team_names[leader as usize]),
-                    count_line(margin, "kill")
-                ),
-            ),
-        };
-    }
-    let winner = match_state.winner.or(leader);
-    let side = |index: u8| {
-        if index == team {
-            "Your team".to_owned()
-        } else {
-            team_label(&hud.team_names[index.min(1) as usize])
-        }
-    };
-    let how = if match_state.overtime {
-        " in overtime".to_owned()
-    } else if margin > 0.0 {
-        format!(" by {margin}")
+/// The outcome's title colour: gold for a win or a lead held, the team's pale tone or red
+/// for a loss, white for the rest.
+fn title_color(outcome: Outcome, team: Team) -> Color32 {
+    if outcome.won() {
+        GOLD_HOT
+    } else if outcome.lost() && team == Team::Blue {
+        hex(0x9cc6ef)
+    } else if outcome.lost() {
+        hex(0xff6b7a)
     } else {
-        String::new()
-    };
-    let lede = format!(
-        "{} took the round{how}.",
-        side(match_state.winner.unwrap_or(0))
-    );
-    match winner {
-        None => ("DRAW", Color32::WHITE, lede),
-        Some(winner) if winner == team => ("VICTORY", GOLD_HOT, lede),
-        Some(_) => ("DEFEAT", lost_color, lede),
+        Color32::WHITE
+    }
+}
+
+/// The sentence under the title. A solo run's loss leads with the death that ended it.
+fn lede(state: &UiState, hud: &Hud, report: &BattleReport) -> String {
+    match &state.death {
+        Some(death) if hud.game_mode == GameMode::Solo && report.outcome == Outcome::Lost => {
+            format!("{} {}", death.sentence, report.lede)
+        }
+        _ => report.lede.clone(),
     }
 }
 
@@ -219,36 +50,34 @@ pub fn results(
     actions: &mut Vec<Action>,
 ) {
     let Some(hud) = state.hud.clone() else { return };
+    let Some(recap) = hud.recap.as_deref() else {
+        return;
+    };
     if state.settings_draft.is_some() {
         return;
     }
     dim_backdrop(context);
-    let solo = hud.game_mode == "solo";
-    let (title, title_color, lede) = outcome(state, &hud);
+    let solo = hud.game_mode == GameMode::Solo;
+    let report = &recap.report;
+    let title = report.title;
+    let lede = lede(state, &hud, report);
     let mode = if solo { "SOLO ASSAULT" } else { "TEAM BATTLE" };
     let width = 1080.0;
     let compact = context.content_rect().height() <= 800.0;
-    let ended_early = hud.match_state.ended_early;
+    let ended_early = hud.match_state.ended_early.unwrap_or(false);
     dialog_with_padding(
         context,
         "results",
         width,
         [30.0, 0.0, if compact { 18.0 } else { 24.0 }],
         |ui, painter, origin, width| {
-            let won = matches!(title, "VICTORY" | "SURVIVED" | "LEAD HELD");
-            let lost = matches!(title, "DEFEAT" | "TANK DESTROYED" | "CUT SHORT");
+            let won = report.outcome.won();
             let side = if won {
                 hex(0xffb21c)
             } else {
                 super::theme::team_color(hud.human_team)
             };
-            let title_color = if won {
-                GOLD_HOT
-            } else if lost && hud.human_team == 0 {
-                hex(0x9cc6ef)
-            } else {
-                title_color
-            };
+            let title_color = title_color(report.outcome, hud.human_team);
             let inset_top = if compact { 14.0 } else { 22.0 };
             let inset_bottom = if compact { 12.0 } else { 18.0 };
             let title_size = if compact { 56.0 } else { 72.0 };
@@ -426,18 +255,15 @@ pub fn results(
             } else {
                 (width - 18.0) * 1.25 / 2.25
             };
-            let mut body = 0.0f32;
-            if let Some(recap) = &hud.recap {
-                body = recap_body(
-                    painter,
-                    art,
-                    pos2(origin.x, y),
-                    you_width,
-                    &hud,
-                    recap,
-                    compact,
-                );
-            }
+            let mut body = recap_body(
+                painter,
+                art,
+                pos2(origin.x, y),
+                you_width,
+                &hud,
+                recap,
+                compact,
+            );
             if !solo {
                 let board_left = origin.x + you_width + 18.0;
                 body = body.max(board(
@@ -445,6 +271,7 @@ pub fn results(
                     pos2(board_left, y),
                     origin.x + width - board_left,
                     &hud,
+                    report,
                     body,
                 ));
             }
@@ -495,13 +322,11 @@ fn recap_body(
     art: &Art,
     origin: Pos2,
     width: f32,
-    hud: &HudState,
-    recap: &RecapState,
+    hud: &Hud,
+    recap: &RoundRecap,
     compact: bool,
 ) -> f32 {
-    let stat = |key: &str| recap.stats.get(key).copied().unwrap_or(0.0);
-    let best = |key: &str| recap.best.get(key).copied().unwrap_or(0.0);
-    let improved = |key: &str| recap.improved.iter().any(|metric| metric == key);
+    let report = &recap.report;
     let mut y = origin.y;
     // Feats are little gold report slips, wrapping as a row before the stat tiles.
     let feat_height = if compact { 39.0 } else { 43.0 };
@@ -575,27 +400,31 @@ fn recap_body(
         &[(0.0, hexa(0xffcf38, 0.15)), (0.7, Color32::TRANSPARENT)],
     ));
     let tank_width = 270.0;
-    let tank_team = if hud.game_mode == "solo" {
-        0
+    let tank_team = if hud.game_mode == GameMode::Solo {
+        Team::Blue
     } else {
         hud.human_team
     };
     art.tank(
         &painter.with_clip_rect(hero),
-        &hud.human.kind,
+        hud.human.kind,
         tank_team,
         Rect::from_min_size(
             pos2(hero.right() - 292.0, hero.bottom() - 138.0),
             vec2(300.0, 158.0),
         ),
         1.0,
+        false,
     );
-    let kills = stat("kills");
+    let (kills, small_tiles) = match report.tiles.split_first() {
+        Some((kills, rest)) => (kills.value.as_str(), rest),
+        None => ("0", &[][..]),
+    };
     let number = paint::shadowed(
         painter,
         pos2(hero.left() + 18.0, hero.center().y + 2.0),
         Align2::LEFT_CENTER,
-        &thousands(kills),
+        kills,
         display_font(if compact { 58.0 } else { 84.0 }),
         GOLD_HOT,
         0.5,
@@ -624,7 +453,6 @@ fn recap_body(
         text_x
     };
     let progress_width = (hero.right() - tank_width - progress_x - 8.0).clamp(80.0, 300.0);
-    let record_kills = best("kills");
     let line_y = if inline_progress {
         hero.center().y + 9.0
     } else {
@@ -663,81 +491,35 @@ fn recap_body(
             1.0,
         );
     };
-    if improved("kills") {
-        star_line("NEW PERSONAL BEST");
-    } else if record_kills > kills {
-        meter(kills / record_kills);
+    let progress = &report.progress;
+    if progress.record {
+        star_line(&progress.text.to_uppercase());
+    } else {
+        if let Some(share) = progress.meter {
+            meter(share);
+        }
         paint::text_fit(
             painter,
             pos2(progress_x, line_y),
             Align2::LEFT_CENTER,
-            &format!(
-                "{} SHORT OF YOUR BEST · {}",
-                record_kills - kills,
-                thousands(record_kills)
-            ),
+            &progress.text.to_uppercase(),
             bold_font(12.5),
             hex(0xdbe8f4),
             0.2,
             progress_width,
         );
-    } else if kills > 0.0 {
-        star_line("TIES YOUR PERSONAL BEST");
-    } else {
-        meter(0.0);
-        paint::text(
-            painter,
-            pos2(progress_x, line_y),
-            Align2::LEFT_CENTER,
-            "NO KILLS THIS ROUND",
-            bold_font(12.5),
-            hex(0xdbe8f4),
-            0.2,
-        );
     }
     y = hero.bottom() + 8.0;
     // The small tiles.
-    let lit = standout(recap);
     let tile_width = (width - 3.0 * 8.0) / 4.0;
-    let hit_rate = if recap.shots > 0.0 {
-        format!("{}%", (recap.direct_hits / recap.shots * 100.0).round())
-    } else {
-        "—".to_owned()
-    };
-    let mut tiles: Vec<(&str, &str, String, String, bool)> = FEATURED[1..]
-        .iter()
-        .map(|metric| {
-            let record = improved(metric);
-            let footer = if record {
-                "NEW BEST".to_owned()
-            } else if best(metric) > stat(metric) {
-                format!("BEST {}", format_metric(recap, metric, best(metric)))
-            } else {
-                String::new()
-            };
-            (
-                *metric,
-                label(metric).0,
-                format_metric(recap, metric, stat(metric)),
-                footer,
-                record,
-            )
-        })
-        .collect();
-    tiles.push((
-        "accuracy",
-        "Accuracy",
-        hit_rate,
-        format!("{} / {} HITS", recap.direct_hits, recap.shots),
-        false,
-    ));
     let tile_height = if compact { 78.0 } else { 83.0 };
-    for (index, (key, caption, value, footer, record)) in tiles.into_iter().enumerate() {
+    for (index, tile) in small_tiles.iter().enumerate() {
+        let (caption, value, footer) = (tile.label, &tile.value, &tile.footer);
+        let (record, standout) = (tile.record, tile.standout);
         let rect = Rect::from_min_size(
             pos2(origin.x + index as f32 * (tile_width + 8.0), y),
             vec2(tile_width, tile_height),
         );
-        let standout = key == lit;
         if record {
             paint::glass(
                 painter,
@@ -788,7 +570,7 @@ fn recap_body(
                 rect.top() + if compact { 41.0 } else { 44.0 },
             ),
             Align2::CENTER_CENTER,
-            &value,
+            value,
             display_font(28.0),
             if standout { GOLD_HOT } else { Color32::WHITE },
             0.5,
@@ -800,7 +582,7 @@ fn recap_body(
             } else {
                 egui::FontId::proportional(12.0)
             };
-            let width_text = paint::text_width(painter, &footer, font.clone(), 0.0)
+            let width_text = paint::text_width(painter, footer, font.clone(), 0.0)
                 + if record { 16.0 } else { 0.0 };
             let mut x = rect.center().x - width_text / 2.0;
             if record {
@@ -816,7 +598,7 @@ fn recap_body(
                 painter,
                 pos2(x, rect.bottom() - 15.0),
                 Align2::LEFT_CENTER,
-                &footer,
+                footer,
                 font,
                 color,
                 0.0,
@@ -825,30 +607,14 @@ fn recap_body(
     }
     y += tile_height;
     // The highlights beyond the tiles, new bests first.
-    let notable = |metric: &str| {
-        improved(metric)
-            || (NOTABLE.contains(&metric)
-                && stat(metric)
-                    >= if metric == "multikill" {
-                        NOTABLE_MULTIKILL
-                    } else {
-                        1.0
-                    })
-    };
-    let mut extras: Vec<(&str, bool)> = METRICS
-        .iter()
-        .map(|(key, ..)| *key)
-        .filter(|metric| !FEATURED.contains(metric) && stat(metric) > 0.0 && notable(metric))
-        .map(|metric| (metric, improved(metric)))
-        .collect();
-    extras.sort_by_key(|(_, record)| !*record);
-    extras.truncate(MAX_DETAILS);
+    let extras = &report.details;
     if !extras.is_empty() {
         y += 10.0;
         let strip = Rect::from_min_size(pos2(origin.x, y), vec2(width, 46.0));
         painter.rect_filled(strip, 10, hexa(0x9fd0ff, 0.08));
         let cell_width = (width - (extras.len() - 1) as f32) / extras.len() as f32;
-        for (index, (metric, record)) in extras.iter().enumerate() {
+        for (index, detail) in extras.iter().enumerate() {
+            let record = &detail.record;
             let cell = Rect::from_min_size(
                 pos2(origin.x + index as f32 * (cell_width + 1.0), y),
                 vec2(cell_width, 46.0),
@@ -864,12 +630,12 @@ fn recap_body(
                 painter,
                 pos2(cell.center().x, cell.top() + 14.0),
                 Align2::CENTER_CENTER,
-                &label(metric).0.to_uppercase(),
+                &detail.label.to_uppercase(),
                 bold_font(11.0),
                 hex(0xa6c4d8),
                 1.0,
             );
-            let value = format_metric(recap, metric, stat(metric)).to_uppercase();
+            let value = detail.value.to_uppercase();
             let value_width = paint::text_width(painter, &value, display_font(19.0), 0.4)
                 + if *record { 16.0 } else { 0.0 };
             let mut x = cell.center().x - value_width / 2.0;
@@ -894,28 +660,16 @@ fn recap_body(
         }
         y += 46.0;
     }
-    // Records are kept per mode, map and difficulty; mention them only when something
-    // happened.
-    let bests = recap.improved.len();
-    let note = if !recap.persisted {
-        Some("Personal bests couldn't be saved on this computer".to_owned())
-    } else if bests > 0 {
-        let mut difficulty = hud.difficulty.clone();
-        if let Some(first) = difficulty.get_mut(0..1) {
-            first.make_ascii_uppercase();
-        }
-        Some(format!(
-            "{bests} NEW PERSONAL BEST{} on {} · {difficulty}",
-            if bests == 1 { "" } else { "S" },
-            hud.map_name
-        ))
-    } else {
-        None
-    };
-    if let Some(note) = note {
+    // What the round did to the personal bests, or that they could not be kept.
+    if let Some(note) = &report.note {
+        let record = note.record.is_some();
+        let note = match &note.record {
+            Some(bests) => format!("{bests} {}", note.text),
+            None => note.text.clone(),
+        };
         y += 12.0;
         let mut x = origin.x;
-        if recap.persisted {
+        if record {
             art.icon(
                 painter,
                 "star",
@@ -930,26 +684,12 @@ fn recap_body(
             Align2::LEFT_CENTER,
             &note,
             egui::FontId::proportional(11.5),
-            if recap.persisted {
-                GOLD_HOT
-            } else {
-                hex(0xa9c2d8)
-            },
+            if record { GOLD_HOT } else { hex(0xa9c2d8) },
             0.4,
         );
         y += 16.0;
     }
     y - origin.y
-}
-
-/// The round's most valuable tank: most kills, fewest wrecks breaking a tie.
-fn most_valuable(rows: &[ScoreboardRow]) -> Option<u32> {
-    let mut sorted: Vec<&ScoreboardRow> = rows.iter().collect();
-    sorted.sort_by(|a, b| by_score(a, b));
-    sorted
-        .first()
-        .filter(|row| row.kills > 0.0)
-        .map(|row| row.id)
 }
 
 /// A small tag in a board row.
@@ -987,22 +727,28 @@ fn board_tag(painter: &Painter, right: Pos2, text: &str, mvp: bool, yours: bool)
 
 /// The team scoreboard: each team's tanks by kills with their wrecks, the viewer's
 /// row lit and the MVP tagged; returns the height used.
-fn board(painter: &Painter, origin: Pos2, width: f32, hud: &HudState, minimum_height: f32) -> f32 {
-    let mvp = most_valuable(&hud.scoreboard);
+fn board(
+    painter: &Painter,
+    origin: Pos2,
+    width: f32,
+    hud: &Hud,
+    report: &BattleReport,
+    minimum_height: f32,
+) -> f32 {
+    let rows: Vec<HudScore> = hud.scoreboard.rows().collect();
+    let mvp = report.board.mvp;
     let viewer = hud.human.id;
     let gap = 8.0;
     let team_width = (width - gap) / 2.0;
-    let largest = (0..2)
-        .map(|team| hud.scoreboard.iter().filter(|row| row.team == team).count())
-        .max()
-        .unwrap_or(0);
+    let teams = &report.board.teams;
+    let largest = teams.iter().map(|team| team.tanks.len()).max().unwrap_or(0);
     let row_height = if largest <= 8 { 30.0 } else { 22.0 };
     let body_height = (largest.max(1) as f32 * row_height + 6.0)
         .max(minimum_height - 34.0 - if mvp.is_some() { 30.0 } else { 0.0 });
     let row_height = (body_height - 6.0) / largest.max(1) as f32;
-    for team in 0..2u8 {
-        let x = origin.x + team as f32 * (team_width + gap);
-        let side = if team == 0 {
+    for team in [Team::Blue, Team::Red] {
+        let x = origin.x + team.index() as f32 * (team_width + gap);
+        let side = if team == Team::Blue {
             hex(0x3ea6ff)
         } else {
             hex(0xff5367)
@@ -1041,7 +787,7 @@ fn board(painter: &Painter, origin: Pos2, width: f32, hud: &HudState, minimum_he
             painter,
             pos2(header.left() + 12.0, header.center().y),
             Align2::LEFT_CENTER,
-            &hud.team_names[team as usize].to_uppercase(),
+            &hud.team_names[team.index()].to_uppercase(),
             bold_font(13.0),
             Color32::WHITE,
             2.0,
@@ -1065,13 +811,11 @@ fn board(painter: &Painter, origin: Pos2, width: f32, hud: &HudState, minimum_he
             Stroke::new(1.0, hexa(0xa6dfff, 0.12)),
             StrokeKind::Inside,
         );
-        let mut members: Vec<&ScoreboardRow> = hud
-            .scoreboard
+        let members = teams[team.index()]
+            .tanks
             .iter()
-            .filter(|row| row.team == team)
-            .collect();
-        members.sort_by(|a, b| by_score(a, b));
-        for (index, row) in members.iter().enumerate() {
+            .filter_map(|&id| rows.iter().find(|row| row.id == id));
+        for (index, row) in members.enumerate() {
             let line = Rect::from_min_size(
                 pos2(x, header.bottom() + 3.0 + index as f32 * row_height),
                 vec2(team_width, row_height),

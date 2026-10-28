@@ -5,16 +5,44 @@
 //!
 //! - [`Game`] (`game.rs`): single-player play, one call per frame.
 //! - [`NetGame`] (`net_game.rs`): one multiplayer room page, one call per frame.
+//! - [`nerd_rows`]: the Stats for nerds rows both shells lay out.
 //! - [`WireView`]: binary room messages as the former JSON, for the Node checks.
 //! - `RenderLab` (`lab.rs`) and `EffectsLab` (`effects_lab.rs`): the development labs of
 //!   `tools/render-lab.html` and `tools/effects-lab.html`, built only with the `labs` feature.
 
 #![recursion_limit = "256"]
 
+pub mod battle_report;
+pub mod catalog;
 pub mod events;
+pub mod feedback;
 pub mod frame_clock;
+mod frame_slots;
 pub mod hud;
 pub mod lab_scene;
+pub mod nerd_rows;
+pub mod recap;
+pub mod room_notices;
+pub mod room_text;
+pub mod sounds;
+
+#[cfg(test)]
+mod page_catalog_tests;
+#[cfg(test)]
+mod page_json_tests;
+
+/// Which shell draws the game. The two say a few things differently on purpose ("in this
+/// browser" or "on this computer", RELOAD or BATTLE SETUP); everything else they show
+/// is the same text from this crate.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Shell {
+    /// The browser page (`src/`).
+    #[default]
+    Page,
+    /// The desktop app (`crates/desktop`).
+    Desktop,
+}
 
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 mod effects_lab;
@@ -33,12 +61,15 @@ mod stats;
 
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 pub use effects_lab::EffectsLab;
+pub use frame_slots::{frame_slot, net_frame_slot};
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
-pub use game::{Game, frame_slot};
+pub use game::{Game, GameConfig};
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 pub use lab::RenderLab;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
-pub use net_game::{NetGame, net_frame_slot};
+pub use net_game::{NetConfig, NetGame};
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
+pub use page::{CameraPreferences, ViewConfig};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
 pub use page::{PageError, clock_start};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]

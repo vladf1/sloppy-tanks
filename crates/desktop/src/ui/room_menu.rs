@@ -5,52 +5,33 @@
 //! players list and the respawn card).
 
 use egui::{Align2, Color32, FontId, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use sloppy_core::net::protocol::{Lobby, MAX_ROUND_MINUTES, Player, RoomPhase};
-use sloppy_core::sim::types::Team;
+use sloppy_core::net::protocol::{Lobby, MAX_ROUND_MINUTES, Player, RoomPhase, RoomSettings};
+use sloppy_core::sim::data::{TEAM_NAMES, vehicle};
+use sloppy_core::sim::difficulty::Difficulty;
+use sloppy_core::sim::map_options::{MAP_OPTIONS, map_option_for};
+use sloppy_core::sim::{Match, MatchPhase, SimEventType, Team};
+use sloppy_web::battle_report::{count_line, title_case};
+use sloppy_web::catalog::{DIFFICULTY_OPTIONS, TANK_CARDS, difficulty_name, map_card};
+use sloppy_web::events::PendingEvent;
+use sloppy_web::room_text::{Arrival, ConnectionDialog, Ending, MenuText, team_word};
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
-use super::rooms::map_name;
-use super::setup::{EXTRA_MAPS, MAPS, TANKS};
 use super::theme::{GOLD, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
 use super::{Action, KillFeedEntry, UiState, View, hud, menus};
-use crate::engine_api::{EngineEvent, MatchState, Phase};
-use crate::room_api::RoomRules;
 
 /// Seconds "Code copied" shows on its button.
 const COPIED_SECONDS: f64 = 2.0;
 /// Tanks per team, bots included, on a standard map; extra levels name their own.
 const STANDARD_TEAM_TANKS: usize = 6;
-/// Tanks per team on the extra levels (`teamTanks` in `map-options.ts`).
-const EXTRA_TEAM_TANKS: usize = 15;
-const TEAM_NAMES: [&str; 2] = ["BLUE", "RED"];
 
-/// Whether the room's socket is live, being (re)connected, or has given up.
+/// Whether the room's socket is live, being (re)connected, or has given up, with the
+/// engine's words for the connection dialog.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Link {
     Live,
-    Connecting {
-        title: String,
-        text: String,
-    },
-    /// `cause` is the client's `EndCause`.
-    Ended {
-        cause: String,
-        text: String,
-    },
-}
-
-/// The heading of each connection end, and the retry it offers besides Battle Setup.
-fn ending(cause: &str) -> (&'static str, Option<&'static str>) {
-    match cause {
-        "lost" => ("CONNECTION LOST", Some("TRY AGAIN")),
-        "rejected" => ("DISCONNECTED", Some("TRY AGAIN")),
-        "seat-expired" => ("SEAT EXPIRED", Some("JOIN AGAIN")),
-        "other-tab" => ("PLAYING ELSEWHERE", Some("PLAY HERE")),
-        "room-ended" => ("ROOM CLOSED", None),
-        "outdated" => ("GAME UPDATED", None),
-        _ => ("RENDERER STOPPED", None),
-    }
+    Connecting(ConnectionDialog),
+    Ended(Ending),
 }
 
 /// What the room's screens show besides the HUD's state.
@@ -62,12 +43,12 @@ pub struct RoomMenu {
     /// The latest status line while joining or reconnecting.
     pub status: String,
     pub lobby: Option<Lobby>,
+    /// The engine's title, hint and rule chips for the lobby.
+    pub text: MenuText,
     pub player_id: String,
     pub link: Link,
-    /// The finished round as the viewer's tank played it.
-    pub outcome: Option<(MatchState, u8)>,
-    /// The round this host ended early: its seat had the menu open, so no final state.
-    pub ended_round: Option<u64>,
+    /// The finished round as the viewer's tank played it, for its final score.
+    pub outcome: Option<(Match, Team)>,
     /// The in-battle menu is open.
     pub menu_open: bool,
     editing_rules: bool,
@@ -89,13 +70,14 @@ impl RoomMenu {
             creating,
             status: "Connecting to room…".into(),
             lobby: None,
+            text: MenuText::default(),
             player_id: String::new(),
-            link: Link::Connecting {
-                title: "CONNECTING".into(),
-                text: "Connecting to the room…".into(),
-            },
+            // The joining card covers the dialog until the engine reveals the room.
+            link: Link::Connecting(ConnectionDialog {
+                title: "CONNECTING",
+                message: "Connecting to the room…".into(),
+            }),
             outcome: None,
-            ended_round: None,
             menu_open: false,
             editing_rules: false,
             editing_choice: false,
@@ -111,15 +93,23 @@ impl RoomMenu {
         use serde_json::json;
         let link = match &self.link {
             Link::Live => json!({"kind": "live"}),
-            Link::Connecting { title, text } => {
-                json!({"kind": "connecting", "title": title, "text": text})
+            Link::Connecting(dialog) => {
+                json!({"kind": "connecting", "title": dialog.title, "text": dialog.message})
             }
-            Link::Ended { cause, text } => json!({"kind": "ended", "cause": cause, "text": text}),
+            Link::Ended(ending) => json!({
+                "kind": "ended",
+                "cause": ending.cause.map_or("renderer", |cause| cause.as_str()),
+                "text": ending.text,
+                "title": ending.title,
+                "retry": ending.retry,
+                "setup": ending.setup,
+            }),
         };
         json!({
             "room": self.room, "playerId": self.player_id, "joining": self.joining,
             "creating": self.creating, "status": self.status, "link": link,
             "lobby": self.lobby.as_ref().map(|lobby| serde_json::from_str::<serde_json::Value>(&lobby.to_json()).expect("a lobby JSON")),
+            "menu": self.text,
             "outcome": self.outcome.as_ref().map(|(state, team)| json!({"match": state, "team": team})),
             "menuOpen": self.menu_open, "editingRules": self.editing_rules, "editingChoice": self.editing_choice,
             "controlsOpen": self.controls_open, "notice": self.notice, "deathCause": self.death_cause,
@@ -146,67 +136,44 @@ impl RoomMenu {
     }
 
     /// The viewer's team, for the score bar.
-    pub fn team(&self) -> Option<u8> {
-        self.mine().map(|player| player.team.index() as u8)
+    pub fn team(&self) -> Option<Team> {
+        self.mine().map(|player| player.team)
     }
 
-    /// Connection progress: live, or a dialog that says the socket is down.
-    pub fn status(&mut self, text: &str, connected: bool) {
+    /// Connection progress: live, or the dialog that says the socket is down.
+    pub fn status(&mut self, text: &str, dialog: Option<ConnectionDialog>) {
         self.status = text.to_owned();
-        if connected {
-            self.link = Link::Live;
-        } else {
-            let title = match &self.link {
-                Link::Live => "CONNECTION LOST".to_owned(),
-                Link::Connecting { title, .. } => title.clone(),
-                Link::Ended { .. } => "RECONNECTING".to_owned(),
-            };
-            self.link = Link::Connecting {
-                title,
-                text: text.to_owned(),
-            };
-        }
+        self.link = dialog.map_or(Link::Live, Link::Connecting);
     }
 
-    pub fn ended(&mut self, cause: String, text: String) {
-        self.link = Link::Ended { cause, text };
+    /// The connection ended, or the renderer stopped.
+    pub fn ended(&mut self, ending: Ending) {
+        self.link = Link::Ended(ending);
     }
 
-    /// A new lobby: who joined or came back goes to the feed.
-    pub fn lobby(&mut self, lobby: Lobby, player_id: String, ui: &mut UiState) {
-        if let Some(previous) = self
-            .lobby
-            .as_ref()
-            .filter(|previous| previous.room_epoch == lobby.room_epoch)
-        {
-            for player in &lobby.players {
-                let before = previous
-                    .players
-                    .iter()
-                    .find(|item| item.player_id == player.player_id);
-                if player.player_id != player_id
-                    && player.connected
-                    && !before.is_some_and(|before| before.connected)
-                {
-                    let what = if before.is_some() {
-                        " reconnected".to_owned()
-                    } else {
-                        format!(" joined {} team", team_word(player.team))
-                    };
-                    ui.kill_feed.push(KillFeedEntry {
-                        killer: player.name.clone() + &what,
-                        killer_team: Some(player.team.index() as u8),
-                        victim: String::new(),
-                        victim_team: None,
-                        cause: None,
-                        own_kill: false,
-                        own_death: false,
-                        age: 0.0,
-                    });
-                    if ui.kill_feed.len() > super::KILL_FEED_LINES {
-                        ui.kill_feed.remove(0);
-                    }
-                }
+    /// A new lobby with the engine's words for it: who joined or came back goes to the
+    /// feed.
+    pub fn lobby(
+        &mut self,
+        lobby: Lobby,
+        player_id: String,
+        text: MenuText,
+        arrivals: Vec<Arrival>,
+        ui: &mut UiState,
+    ) {
+        for arrival in arrivals {
+            ui.kill_feed.push(KillFeedEntry {
+                killer: arrival.text,
+                killer_team: Some(arrival.team),
+                victim: String::new(),
+                victim_team: None,
+                cause: None,
+                own_kill: false,
+                own_death: false,
+                age: 0.0,
+            });
+            if ui.kill_feed.len() > super::KILL_FEED_LINES {
+                ui.kill_feed.remove(0);
             }
         }
         if lobby.phase != RoomPhase::Results {
@@ -219,76 +186,18 @@ impl RoomMenu {
             self.menu_open = false;
         }
         self.lobby = Some(lobby);
+        self.text = text;
         self.player_id = player_id;
     }
 
-    /// An engine event's room feedback: the death cause on the respawn card.
-    pub fn event(&mut self, event: &EngineEvent, ui: &UiState) {
-        let Some(hud) = &ui.hud else { return };
-        let viewer = hud.human.id;
-        if event.id != Some(viewer) {
-            return;
+    /// An engine event's room feedback: the engine's death sentence on the respawn card,
+    /// until the viewer's tank respawns.
+    pub fn event(&mut self, pending: &PendingEvent) {
+        if let Some(report) = &pending.feedback.death_report {
+            self.death_cause.clone_from(&report.sentence);
+        } else if pending.own && pending.event.kind == SimEventType::Respawn {
+            self.death_cause.clear();
         }
-        match event.kind.as_str() {
-            "death" => {
-                let weapon = event
-                    .damage_source
-                    .as_ref()
-                    .map(|source| source.cause.to_lowercase())
-                    .filter(|cause| !cause.is_empty())
-                    .map(|cause| {
-                        let article = if cause.starts_with(['a', 'e', 'i', 'o', 'u']) {
-                            "an"
-                        } else {
-                            "a"
-                        };
-                        format!(" with {article} {cause}")
-                    })
-                    .unwrap_or_default();
-                let killer = hud
-                    .scoreboard
-                    .iter()
-                    .find(|row| Some(row.id) == event.owner)
-                    .map(|row| row.name.clone());
-                self.death_cause = if event.owner == Some(viewer) {
-                    format!("You destroyed yourself{weapon}.")
-                } else if let Some(killer) = killer {
-                    format!("{killer} destroyed you{weapon}.")
-                } else {
-                    "You were destroyed.".into()
-                };
-            }
-            "respawn" => self.death_cause.clear(),
-            _ => {}
-        }
-    }
-
-    /// Victory or defeat when the final state arrived; a neutral heading otherwise.
-    fn results_title(&self) -> &'static str {
-        match &self.outcome {
-            None if self.ended_round.is_some()
-                && self.ended_round == self.lobby.as_ref().map(|lobby| lobby.round_id) =>
-            {
-                "BATTLE ENDED"
-            }
-            None => "ROUND COMPLETE",
-            Some((outcome, _)) if outcome.ended_early || outcome.winner.is_none() => "BATTLE ENDED",
-            Some((outcome, team)) if outcome.winner == Some(*team) => "VICTORY",
-            Some(_) => "DEFEAT",
-        }
-    }
-}
-
-fn team_word(team: Team) -> &'static str {
-    if team == Team::Blue { "Blue" } else { "Red" }
-}
-
-fn tank_name(kind: &str) -> &str {
-    match kind {
-        "scout" => "Skipper",
-        "balanced" => "Bruiser",
-        "heavy" => "Big Rig",
-        _ => kind,
     }
 }
 
@@ -474,35 +383,21 @@ fn joining(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut Ve
 
 /// The connection dropped (reconnecting by itself) or ended (the way back that fits).
 fn connection(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut Vec<Action>) {
-    let playing = menu.phase() == RoomPhase::Playing;
-    let humans_only = menu
-        .lobby
-        .as_ref()
-        .is_some_and(|lobby| lobby.settings.humans_only);
     room_dialog(context, "connection", 480.0, |ui| match &menu.link {
-        Link::Connecting { title, text } => {
-            room_heading(ui, &menu.room, title, Color32::WHITE);
-            let mut text = text.clone();
-            if playing {
-                text += if humans_only {
-                    " Your tank sits idle until you're back."
-                } else {
-                    " A bot drives your tank until you're back."
-                };
-            }
-            paragraph(ui, &text, hex(0xc4dbee));
+        Link::Connecting(dialog) => {
+            room_heading(ui, &menu.room, dialog.title, Color32::WHITE);
+            paragraph(ui, &dialog.message, hex(0xc4dbee));
             ui.add(egui::Spinner::new().color(GOLD));
             let width = ui.available_width();
             if action(ui, art, "LEAVE ROOM", ButtonStyle::Secondary, width) {
                 actions.push(Action::RoomLeave);
             }
         }
-        Link::Ended { cause, text } => {
-            let (title, retry) = ending(cause);
-            room_heading(ui, &menu.room, title, Color32::WHITE);
-            paragraph(ui, text, hex(0xc4dbee));
+        Link::Ended(ending) => {
+            room_heading(ui, &menu.room, ending.title, Color32::WHITE);
+            paragraph(ui, &ending.text, hex(0xc4dbee));
             let width = ui.available_width();
-            if let Some(retry) = retry
+            if let Some(retry) = ending.retry
                 && action(ui, art, retry, ButtonStyle::Primary, width)
             {
                 actions.push(Action::RoomRejoin);
@@ -510,15 +405,15 @@ fn connection(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut
             if action(
                 ui,
                 art,
-                "BATTLE SETUP",
-                if retry.is_some() {
+                ending.setup,
+                if ending.retry.is_some() {
                     ButtonStyle::Secondary
                 } else {
                     ButtonStyle::Primary
                 },
                 width,
             ) {
-                actions.push(Action::RoomSetup(text.clone()));
+                actions.push(Action::RoomSetup(ending.text.clone()));
             }
         }
         Link::Live => {}
@@ -540,14 +435,10 @@ fn room_menu(
     let host = lobby.host_id == menu.player_id;
     let playing = lobby.phase == RoomPhase::Playing;
     let alone = lobby.players.len() == 1;
+    let text = menu.text.clone();
     room_dialog(context, "room", 560.0, |ui| {
-        let title = match lobby.phase {
-            RoomPhase::Playing => "BATTLE IN PROGRESS",
-            RoomPhase::Results => menu.results_title(),
-            RoomPhase::Lobby => "LOBBY",
-        };
         let header_origin = ui.cursor().min;
-        room_heading(ui, &menu.room, title, Color32::WHITE);
+        room_heading(ui, &menu.room, text.title, Color32::WHITE);
         let copy = if menu.copied > 0.0 {
             "Link copied"
         } else {
@@ -579,12 +470,12 @@ fn room_menu(
                 outcome.scores,
             );
         }
-        paragraph(ui, &heading_hint(&lobby, host, alone), hex(0xc4dbee));
+        paragraph(ui, &text.hint, hex(0xc4dbee));
         if !menu.notice.is_empty() {
             paragraph(ui, &menu.notice, GOLD);
         }
         if playing {
-            summary(ui, &lobby);
+            summary(ui, &text.summary);
         }
         if lobby.phase == RoomPhase::Results {
             scoreboard(ui, &lobby, &menu.player_id);
@@ -617,7 +508,6 @@ fn room_menu(
                 width
             };
             if host && playing && action(ui, art, "END BATTLE", ButtonStyle::Danger, half) {
-                menu.ended_round = Some(lobby.round_id);
                 actions.push(Action::RoomEnd);
             }
             if action(
@@ -680,7 +570,7 @@ fn room_menu(
 }
 
 /// Room results show only the final numbers; team labels belong to single player's score plates.
-fn room_scores(painter: &egui::Painter, right_center: egui::Pos2, scores: [f64; 2]) {
+fn room_scores(painter: &egui::Painter, right_center: egui::Pos2, scores: [u32; 2]) {
     let font = display_font(34.0);
     let widths = scores.map(|score| {
         (paint::text_width(painter, &score.to_string(), font.clone(), 0.0) + 28.0).max(58.0)
@@ -741,30 +631,15 @@ fn room_scores(painter: &egui::Painter, right_center: egui::Pos2, scores: [f64; 
 }
 
 /// Read-only rule chips, in the room menu's own dark wells.
-fn summary(ui: &mut Ui, lobby: &Lobby) {
+fn summary(ui: &mut Ui, chips: &[String]) {
     let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-    summary_at(ui.painter(), rect.min, lobby);
+    summary_at(ui.painter(), rect.min, chips);
 }
 
-fn summary_at(painter: &egui::Painter, origin: egui::Pos2, lobby: &Lobby) {
-    let settings = &lobby.settings;
-    let difficulty = settings.difficulty.as_str();
-    let bots = if settings.humans_only {
-        "No bots".to_owned()
-    } else {
-        format!(
-            "{}{} bots",
-            difficulty[..1].to_uppercase(),
-            &difficulty[1..]
-        )
-    };
+fn summary_at(painter: &egui::Painter, origin: egui::Pos2, chips: &[String]) {
     let mut x = origin.x;
-    for text in [
-        map_name(settings.map_mode.as_str()).to_owned(),
-        bots,
-        format!("{} min", settings.round_minutes),
-    ] {
-        let width = paint::text_width(painter, &text, bold_font(12.0), 0.0) + 22.0;
+    for text in chips {
+        let width = paint::text_width(painter, text, bold_font(12.0), 0.0) + 22.0;
         let rect = Rect::from_min_size(pos2(x, origin.y), vec2(width, 27.0));
         x = rect.right() + 6.0;
         painter.rect_filled(rect, 14, hexa(0x050d1c, 0.8));
@@ -778,45 +653,11 @@ fn summary_at(painter: &egui::Painter, origin: egui::Pos2, lobby: &Lobby) {
             painter,
             rect.center(),
             Align2::CENTER_CENTER,
-            &text,
+            text,
             bold_font(12.0),
             hex(0xeef6fb),
             0.0,
         );
-    }
-}
-
-fn heading_hint(lobby: &Lobby, host: bool, alone: bool) -> String {
-    let next = if lobby.phase == RoomPhase::Results {
-        "the next battle"
-    } else {
-        "the battle"
-    };
-    let host_name = lobby
-        .players
-        .iter()
-        .find(|player| player.player_id == lobby.host_id)
-        .map_or("the host", |player| player.name.as_str());
-    match lobby.phase {
-        RoomPhase::Playing if lobby.settings.humans_only => {
-            "The battle keeps going. Your tank sits idle and vulnerable while this menu is open."
-                .into()
-        }
-        RoomPhase::Playing => {
-            "The battle keeps going. A bot drives your tank while this menu is open.".into()
-        }
-        _ if !host => {
-            format!("You stay in this room with everyone. Waiting for {host_name} to start {next}.")
-        }
-        _ if alone => {
-            format!("You're the only one here. Share the invite link, or start {next} on your own.")
-        }
-        RoomPhase::Results => {
-            "Everyone stays in this room. Play again to keep the teams together.".into()
-        }
-        RoomPhase::Lobby => {
-            "Everyone stays in this room. Start the battle to keep the teams together.".into()
-        }
     }
 }
 
@@ -831,8 +672,7 @@ fn next_battle(
     actions: &mut Vec<Action>,
 ) {
     let settings = &lobby.settings;
-    let map_id = settings.map_mode.as_str();
-    let extra = EXTRA_MAPS.iter().any(|(id, _)| *id == map_id);
+    let extra = map_option_for(settings.map_mode).extra;
     let (label, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::hover());
     paint::text(
         ui.painter(),
@@ -844,7 +684,7 @@ fn next_battle(
         2.5,
     );
     let (rules_line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
-    summary_at(ui.painter(), rules_line.min, lobby);
+    summary_at(ui.painter(), rules_line.min, &menu.text.summary);
     if host {
         let label = if menu.editing_rules {
             "Done"
@@ -862,54 +702,39 @@ fn next_battle(
         }
     }
     if host && menu.editing_rules {
-        let current = RoomRules {
-            map_mode: map_id.to_owned(),
-            difficulty: settings.difficulty.as_str().to_owned(),
-            humans_only: settings.humans_only,
-            round_minutes: settings.round_minutes,
-        };
-        let mut rules = current.clone();
+        let current: RoomSettings = *settings;
+        let mut rules = current;
         ui.columns(3, |columns| {
             form_label(&mut columns[0], "MAP");
-            let offered = if debug || extra { &EXTRA_MAPS[..] } else { &[] };
             let width = columns[0].available_width();
             egui::ComboBox::from_id_salt("room map")
                 .width(width)
-                .selected_text(map_name(&rules.map_mode))
+                .selected_text(map_option_for(rules.map_mode).name)
                 .show_ui(&mut columns[0], |ui| {
-                    for (id, label) in MAPS.iter().chain(offered) {
-                        ui.selectable_value(&mut rules.map_mode, (*id).into(), *label);
+                    // The extra levels with the debug tools, or while the room plays one.
+                    for option in MAP_OPTIONS
+                        .iter()
+                        .filter(|map| debug || extra || !map.extra)
+                    {
+                        ui.selectable_value(&mut rules.map_mode, option.id, option.name);
                     }
                 });
             form_label(&mut columns[1], "BOTS");
-            let mut bots = if rules.humans_only {
-                "none"
-            } else {
-                &rules.difficulty
-            }
-            .to_owned();
+            // `None`: humans only.
+            let mut bots: Option<Difficulty> = (!rules.humans_only).then_some(rules.difficulty);
             let width = columns[1].available_width();
             egui::ComboBox::from_id_salt("room bots")
                 .width(width)
-                .selected_text(match bots.as_str() {
-                    "easy" => "Easy",
-                    "hard" => "Hard",
-                    "none" => "None",
-                    _ => "Normal",
-                })
+                .selected_text(bots.map_or("None", difficulty_name))
                 .show_ui(&mut columns[1], |ui| {
-                    for (id, label) in [
-                        ("easy", "Easy"),
-                        ("normal", "Normal"),
-                        ("hard", "Hard"),
-                        ("none", "None"),
-                    ] {
-                        ui.selectable_value(&mut bots, id.into(), label);
+                    for option in &DIFFICULTY_OPTIONS {
+                        ui.selectable_value(&mut bots, Some(option.difficulty), option.name);
                     }
+                    ui.selectable_value(&mut bots, None, "None");
                 });
-            rules.humans_only = bots == "none";
-            if !rules.humans_only {
-                rules.difficulty = bots;
+            rules.humans_only = bots.is_none();
+            if let Some(difficulty) = bots {
+                rules.difficulty = difficulty;
             }
             form_label(&mut columns[2], "MINUTES");
             let width = columns[2].available_width();
@@ -926,6 +751,7 @@ fn next_battle(
     }
 
     if let Some(mine) = menu.mine().cloned() {
+        let tank_name = title_case(vehicle(mine.kind).name);
         let (choice_line, _) =
             ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
         let label = paint::text(
@@ -941,11 +767,7 @@ fn next_battle(
             ui.painter(),
             pos2(label.right() + 4.0, choice_line.center().y),
             Align2::LEFT_CENTER,
-            &format!(
-                "{} · {}",
-                team_word(mine.team),
-                tank_name(mine.kind.as_str())
-            ),
+            &format!("{} · {tank_name}", team_word(mine.team)),
             bold_font(13.0),
             hex(0xf5faff),
             0.0,
@@ -965,10 +787,10 @@ fn next_battle(
             menu.editing_choice = !menu.editing_choice;
         }
         if menu.editing_choice {
-            let team = Some(mine.team.index() as u8);
-            let kind = mine.kind.as_str();
+            let team = Some(mine.team);
+            let kind = mine.kind;
             let mut picked_team = team;
-            let mut picked_kind = kind.to_owned();
+            let mut picked_kind = kind;
             ui.columns(2, |columns| {
                 form_label(&mut columns[0], "TEAM");
                 let width = columns[0].available_width();
@@ -978,8 +800,8 @@ fn next_battle(
                     .show_ui(&mut columns[0], |ui| {
                         for (choice, label) in [
                             (None, "Auto · fewer humans"),
-                            (Some(0), "Blue"),
-                            (Some(1), "Red"),
+                            (Some(Team::Blue), "Blue"),
+                            (Some(Team::Red), "Red"),
                         ] {
                             ui.selectable_value(&mut picked_team, choice, label);
                         }
@@ -988,10 +810,10 @@ fn next_battle(
                 let width = columns[1].available_width();
                 egui::ComboBox::from_id_salt("player tank")
                     .width(width)
-                    .selected_text(tank_name(kind))
+                    .selected_text(&tank_name)
                     .show_ui(&mut columns[1], |ui| {
-                        for tank in TANKS {
-                            ui.selectable_value(&mut picked_kind, tank.id.to_owned(), tank.name);
+                        for tank in &TANK_CARDS {
+                            ui.selectable_value(&mut picked_kind, tank.kind, tank.name());
                         }
                     });
             });
@@ -1098,41 +920,32 @@ fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
 
 /// Both teams' players, with the seats bots or nobody fill.
 fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
-    let extra = EXTRA_MAPS
-        .iter()
-        .any(|(id, _)| *id == lobby.settings.map_mode.as_str());
-    let team_tanks = if extra && !lobby.settings.humans_only {
-        EXTRA_TEAM_TANKS
-    } else {
-        STANDARD_TEAM_TANKS
-    };
+    // An extra level brings its own roster (`teamTanks`), unless only humans play.
+    let team_tanks = map_card(lobby.settings.map_mode)
+        .team_tanks
+        .filter(|_| !lobby.settings.humans_only)
+        .map_or(STANDARD_TEAM_TANKS, |tanks| tanks as usize);
     let width = ui.available_width();
     let column_width = (width - 10.0) / 2.0;
-    let longest = (0..2)
-        .map(|side| {
-            lobby
-                .players
-                .iter()
-                .filter(|player| player.team.index() == side)
-                .count()
-        })
-        .max()
-        .unwrap_or(0);
-    let height = 49.0 + longest as f32 * 30.0;
-    let (whole, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    for (side, name) in TEAM_NAMES.iter().enumerate() {
-        let members: Vec<&Player> = lobby
+    let teams = [Team::Blue, Team::Red].map(|team| {
+        lobby
             .players
             .iter()
-            .filter(|player| player.team.index() == side)
-            .collect();
-        let open = team_tanks.saturating_sub(members.len());
-        let fill = match (lobby.settings.humans_only, open) {
-            (true, 1) => "1 open seat".to_owned(),
-            (true, open) => format!("{open} open seats"),
-            (false, 1) => "1 bot".to_owned(),
-            (false, open) => format!("{open} bots"),
-        };
+            .filter(|player| player.team == team)
+            .collect::<Vec<&Player>>()
+    });
+    let longest = teams.iter().map(Vec::len).max().unwrap_or(0);
+    // Bots take the empty places, or they stay open seats when only humans play.
+    let empty_seat = if lobby.settings.humans_only {
+        "open seat"
+    } else {
+        "bot"
+    };
+    let height = 49.0 + longest as f32 * 30.0;
+    let (whole, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    for (side, (name, members)) in TEAM_NAMES.iter().zip(&teams).enumerate() {
+        let open = team_tanks.saturating_sub(members.len()) as u32;
+        let fill = count_line(open, empty_seat);
         let rect = Rect::from_min_size(
             whole.min + vec2(side as f32 * (column_width + 10.0), 0.0),
             vec2(column_width, height),
@@ -1258,9 +1071,8 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                     .hud
                     .as_ref()?
                     .scoreboard
-                    .iter()
-                    .find(|row| row.id == tank)
-                    .map(|row| row.kills as u32)
+                    .row(tank)
+                    .map(|row| row.kills)
             })
             .unwrap_or(player.kills)
     };
@@ -1426,20 +1238,23 @@ fn respawn(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
 }
 
 /// The phase the HUD and the pause logic see.
-pub fn hud_phase(menu: &RoomMenu) -> Phase {
+pub fn hud_phase(menu: &RoomMenu) -> MatchPhase {
     match menu.phase() {
-        RoomPhase::Playing if menu.in_battle() => Phase::Playing,
-        RoomPhase::Playing => Phase::Paused,
-        RoomPhase::Results => Phase::Results,
-        RoomPhase::Lobby => Phase::Ready,
+        RoomPhase::Playing if menu.in_battle() => MatchPhase::Playing,
+        RoomPhase::Playing => MatchPhase::Paused,
+        RoomPhase::Results => MatchPhase::Results,
+        RoomPhase::Lobby => MatchPhase::Ready,
     }
 }
 
-/// The same room and seats in each UI capture, with no socket or running server.
+/// The same room and seats in each UI capture, with no socket or running server; the
+/// words are the engine's for that room.
 #[cfg(test)]
 pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
-    use sloppy_core::net::protocol::RoomSettings;
-    use sloppy_core::sim::types::VehicleKind;
+    use sloppy_core::net::client::EndCause;
+    use sloppy_core::sim::VehicleKind;
+    use sloppy_web::Shell;
+    use sloppy_web::room_text;
     let players: Vec<Player> = [
         (
             "viewer",
@@ -1515,28 +1330,34 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
             menu.status = "Shaders loaded: 31 of 40".into();
         }
         "room-reconnecting" => {
-            menu.link = Link::Connecting {
-                title: "RECONNECTING".into(),
-                text: "Connecting to the room…".into(),
-            }
+            menu.link = Link::Connecting(ConnectionDialog {
+                title: "RECONNECTING",
+                message: room_text::connecting_message(
+                    "Connecting to the room…",
+                    menu.lobby.as_ref(),
+                ),
+            })
         }
         "room-connection-ended" => {
-            menu.link = Link::Ended {
-                cause: "lost".into(),
-                text: "The connection to the room was lost. Try joining again.".into(),
-            }
+            menu.link = Link::Ended(room_text::ending(
+                Some(EndCause::Lost),
+                "The connection to the room was lost. Try joining again.".into(),
+                Shell::Desktop,
+            ))
         }
         "room-pause" => menu.menu_open = true,
         "room-results" => {
             menu.outcome = Some((
-                MatchState {
-                    phase: Phase::Results,
-                    scores: [42.0, 37.0],
-                    winner: Some(0),
+                Match {
+                    phase: MatchPhase::Results,
+                    time: 0.0,
+                    scores: [42, 37],
+                    overtime: false,
+                    ended_early: None,
+                    winner: Some(Team::Blue),
                     round: 1,
-                    ..MatchState::default()
                 },
-                0,
+                Team::Blue,
             ))
         }
         "room-lobby-rules" => menu.editing_rules = true,
@@ -1544,6 +1365,9 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
         "room-controls" => menu.controls_open = true,
         "room-respawn" => menu.death_cause = "Crank destroyed you with a rocket blast.".into(),
         _ => {}
+    }
+    if let Some(lobby) = &menu.lobby {
+        menu.text = room_text::menu_text(lobby, &menu.player_id, menu.outcome.as_ref(), None);
     }
     menu
 }
@@ -1685,7 +1509,6 @@ mod tests {
         let mut pause = Screen::new("room-pause");
         assert_eq!(pause.click("RESUME"), [Action::Resume]);
         assert_eq!(pause.click("END BATTLE"), [Action::RoomEnd]);
-        assert_eq!(pause.menu.ended_round, Some(1));
         assert_eq!(pause.click("LEAVE ROOM"), [Action::RoomLeave]);
         let mut results = Screen::new("room-results");
         assert_eq!(results.click("PLAY AGAIN"), [Action::RoomStart]);

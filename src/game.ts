@@ -20,10 +20,11 @@ import {
   FRAME,
   INPUT,
   PHASES,
-  type EngineStats,
   type EventBatch,
   type HudState,
+  type PauseReport,
   type Phase,
+  type StatsSection,
 } from "./game/engine-api";
 import { sameGameOptions, type GameOptions } from "./game/game-options";
 import {
@@ -35,7 +36,7 @@ import {
   startingGraphics,
 } from "./game/player-preferences";
 import { debugPage, isExtraLevel } from "./game/map-options";
-import { NerdStats, engineStatsSections } from "./game/nerd-stats";
+import { NerdStats } from "./game/nerd-stats";
 import { savedVolume } from "./game/settings-dialog";
 import type { PreparedGame } from "./game/start-menu";
 import { PREPARE_BUDGET, afterPaint, nextPrepareStep, stepBetweenTasks } from "./game/task-yield";
@@ -124,7 +125,6 @@ export async function prepareGame(
     return arenaPreparation;
   }
   async function updateArena(): Promise<void> {
-    let total = 0;
     for (;;) {
       if (inRound) {
         return;
@@ -144,7 +144,6 @@ export async function prepareGame(
         void bakeAhead(engineModule(), mapTextureBakes(next.mapMode));
         game.set_options(JSON.stringify(next));
         prepared = next;
-        total = 0;
       }
       // Compile a few pipelines per task until the world's shaders, textures and
       // first frames are ready, or the choices change again.
@@ -155,25 +154,17 @@ export async function prepareGame(
           break;
         }
         startTextureBake(game, engineModule());
-        const [compiled, remaining, texturesPending, done, waitingForGpu] =
-          game.prepare_step(PREPARE_BUDGET);
+        const [, , , done, waitingForGpu] = game.prepare_step(PREPARE_BUDGET);
         gpuPending = waitingForGpu === 1;
-        total += compiled;
         if (done) {
           return;
         }
-        // A rebuild that reuses every pipeline and texture still waits for its warm-up
-        // frames; that is not loading, so the menu keeps showing it is ready.
-        if (total === 0 && remaining === 0 && texturesPending === 0) {
-          continue;
+        // None while a rebuild that reuses every pipeline and texture waits for its
+        // warm-up frames: that is not loading, so the menu keeps showing it is ready.
+        const status = game.loading_status();
+        if (status) {
+          reportShaders(status);
         }
-        reportShaders(
-          remaining > 0
-            ? `Shaders loaded: ${total} of ${total + remaining}`
-            : gpuPending
-              ? "Compiling shaders…"
-              : `Loading textures… ${texturesPending} left`,
-        );
       }
     }
   }
@@ -187,7 +178,7 @@ export async function prepareGame(
   const stats = debugPage(location.search)
     ? new NerdStats(
         root,
-        () => engineStatsSections(JSON.parse(game.stats_json()) as EngineStats),
+        () => JSON.parse(game.nerd_stats_json()) as StatsSection[],
         () => active && !root.classList.contains("menu-ready"),
       )
     : undefined;
@@ -388,6 +379,7 @@ export async function prepareGame(
         controls.ammoSelection = weapon;
       }
     },
+    pauseReport: () => JSON.parse(game.pause_json()) as PauseReport,
   });
   // The damage ring wraps the tank on screen.
   const viewer = { x: NaN, y: NaN };
@@ -498,9 +490,8 @@ export async function prepareGame(
         const batch = JSON.parse(game.drain_events()) as EventBatch;
         counters.events += batch.events.length;
         audio().play(batch);
-        // A death names its killer, who may have joined since the last HUD update.
-        const state =
-          hud && !batch.events.some((event) => event.type === "death") ? hud : readHud();
+        // The engine names a death's killer itself, so the last HUD serves.
+        const state = hud ?? readHud();
         for (const event of batch.events) {
           ui.event(event, state);
         }
@@ -511,7 +502,7 @@ export async function prepareGame(
         controls.aimWaitsForClick,
       );
       if (ran) {
-        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+        stats?.frame(now);
         recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
       }
       hudDt += result[FRAME.dt];

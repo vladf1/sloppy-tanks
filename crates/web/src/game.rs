@@ -37,6 +37,9 @@
 //!   warms every variant, then draws the first frames and reports `done = 1`.
 //!   `gpuPending = 1` while only the GPU is working (background compiles or the
 //!   warm-up): poll on a short timer then rather than a task.
+//! - `loading_status() -> string | undefined`: Battle Setup's line for the latest
+//!   `prepare_step` ("Shaders loaded: 12 of 40"), or none once ready or while a
+//!   rebuild only warms up ([`Loading`]).
 //! - `start()`: begin the round (GO, PLAY AGAIN). `resume()`: continue a pause.
 //!   `pause()`: pause a playing round. `restart()`: a fresh world for Battle
 //!   Setup (phase `ready`; prepare again). `end_battle()`: END BATTLE.
@@ -48,17 +51,24 @@
 //!   many frames still on the GPU is skipped (its presses wait for the next) and hands
 //!   back the last result; the frames that run take an even clock
 //!   ([`crate::frame_clock::FramePacing`]).
-//! - `drain_events() -> JSON`: `{ listener: {x, z}, listenerRight: {x, z},
-//!   events: [SimEvent & { playerHit, own, damageAngle }] }` for audio and HUD;
-//!   `damageAngle` is the clockwise screen angle (radians) of damage the viewer
-//!   took, or null.
-//! - `hud_json() -> JSON`: match, scores, score limit, team names, clock, the
-//!   human's stats, ammo, rank, cooldowns, effects, scoreboard, and the round
+//! - `drain_events() -> JSON`: `{ events: [{ type, id?, label?, own, damageAngle,
+//!   deathReport?, feed?, toast? }], sounds: [{ sound, gain, pan }] }` for audio and HUD;
+//!   `own` marks the viewer's tank's events, `damageAngle` is the clockwise screen angle
+//!   (radians) of damage the viewer took, or null, and the rest is the event's HUD
+//!   feedback ([`crate::feedback`]). `sounds` are the file names to play, in order, with
+//!   their linear gain and stereo pan ([`crate::sounds`], rate-limited on `frame`'s
+//!   clock).
+//! - `hud_json() -> JSON`: match, scores, score limit, team names, the score pill, the
+//!   human's stats, ammo, rank, hull tone, cooldowns, effects, scoreboard, and the round
 //!   recap once results show. The first recap of a result saves personal bests
-//!   in `localStorage` and reports them (`best`, `improved`, `persisted`).
-//! - `stats_json() -> JSON`: Stats for nerds (frame/sim/render ms, draw calls,
-//!   triangles, GPU resources, bodies and their sleep state, shots, pickups,
-//!   fragments, particles, pixel ratio).
+//!   in `localStorage` and reports them (`best`, `improved`, `persisted`), with the
+//!   battle report in words (`report`, `crate::battle_report`).
+//! - `pause_json() -> JSON`: the pause menu's facts and standing line.
+//! - `stats_json() -> JSON`: frame/sim/render ms, the renderer's draw calls, triangles
+//!   and GPU resources, the graphics quality and the physics bodies, colliders, shots,
+//!   fragments and standing covers, for diagnostics and the frame recorder.
+//! - `nerd_stats_json() -> JSON`: the Stats for nerds panel's sections, `[{ title,
+//!   rows: [{ label, value, hint }] }]` ([`crate::nerd_rows`]).
 //! - `resize(css_width, css_height, pixel_ratio, exact)`: the drawing buffer is
 //!   the CSS size times the pixel ratio, capped at 1.5; `exact` draws at exactly the
 //!   CSS size (ratio 1). The scene renders at the graphics quality's scale of it.
@@ -72,22 +82,38 @@
 //! - `debug_*`: the dev `window.sloppy` hooks below and the fixture hooks of
 //!   `game/debug.rs`.
 //! - `error() -> string | undefined`: the first GPU error, if any.
+//!
+//! A Rust shell (the desktop app) passes and reads the same values typed rather than as
+//! JSON or names: `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]),
+//! `loading` ([`Loading`]), `hud` ([`Hud`]), `take_events` ([`EventBatch`]), `camera`
+//! ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms`, and
+//! `set_graphics_setting`, `respawn_in` and `set_speed_scale` with the setting, tank and
+//! speed themselves.
 
-use crate::events::{PendingEvent, drain_events};
+use crate::Shell;
+use crate::battle_report::pause_report;
+use crate::events::{EventBatch, PendingEvent, batch_json, take_events};
+use crate::feedback::event_feedback;
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
-use crate::hud::{HudHuman, Scoreboard, human_json};
+use crate::frame_slot::{self, phase_code};
+use crate::hud::{EffectTimers, Hud, Loading, Scoreboard, simulation_hud};
+use crate::nerd_rows::{GameStats, SceneStats, StatsSection, game_sections};
 use crate::page::{
-    CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError, PageView, aim, create_view,
-    js_error, now_ms, parse, prepare_result, queue_event,
+    CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
+    PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
 };
-use crate::stats::presentation_stats;
+use crate::recap::{RoundRecap, round_recap};
+use crate::sounds::SoundPlanner;
+use crate::stats::{frame_readings, presentation_stats, renderer_readings};
 use sloppy_render::gpu::RenderTarget;
 
 use glam::Vec2;
-use serde::{Deserialize, Serialize};
+use serde::de::DeserializeOwned;
+use serde::de::value::StringDeserializer;
+use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::data::{SCORE_LIMIT, STEP, TEAM_NAMES};
+use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::extra_levels::extra_level;
 use sloppy_core::sim::game_options::{GameOptions, game_choices, initial_game_options};
@@ -95,20 +121,18 @@ use sloppy_core::sim::level_rules::{single_player_rules, standard_rules};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::match_state::end_battle;
 use sloppy_core::sim::render_state::RenderTank;
-use sloppy_core::sim::round_recap::{Metric, combat_feats, recap_stats, save_personal_bests};
 #[cfg(target_arch = "wasm32")]
 use sloppy_core::sim::round_recap::{RecordStorage, StorageUnavailable};
-use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::types::{DamageCause, DamageSource};
-use sloppy_core::sim::veterancy::RANKS;
 use sloppy_core::sim::{
-    CoverKind, FragmentShape, GameMode, Match, MatchPhase, RenderState, Shot, SimEventType,
-    Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
+    CoverKind, FragmentShape, GameMode, MatchPhase, RenderState, Shot, SimEventType, Simulation,
+    SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
 };
-use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
+use sloppy_render::presentation::{PrepareStatus, Presentation};
+use sloppy_render::quality::GraphicsSetting;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -121,69 +145,6 @@ const FIRST_ROUND: u32 = 3;
 const AUTOPLAY_AIM_RANGE: f64 = 14.0;
 const AUTOPLAY_MIN_AIM_RANGE: f64 = 7.0;
 const AUTOPLAY_MAX_AIM_RANGE: f64 = 26.0;
-
-/// Slots of `frame`'s result.
-pub mod frame_slot {
-    /// 0 ready, 1 playing, 2 paused, 3 results.
-    pub const PHASE: usize = 0;
-    pub const HUMAN_ALIVE: usize = 1;
-    /// Show the first-person cockpit HUD (from the start of the flight in).
-    pub const COCKPIT: usize = 2;
-    /// The hull's clockwise screen angle with the turret straight up (compass).
-    pub const HULL_ANGLE: usize = 3;
-    /// Events waiting for `drain_events`.
-    pub const EVENTS: usize = 4;
-    /// 1 when the page should drop held input (paused, dead, results).
-    pub const CLEAR_INPUT: usize = 5;
-    /// 1 on frames the HUD should refresh (`hud_json`).
-    pub const HUD_DUE: usize = 6;
-    pub const SIM_MS: usize = 7;
-    pub const RENDER_MS: usize = 8;
-    /// 1 while first person is enabled (the page captures the pointer).
-    pub const FIRST_PERSON: usize = 9;
-    /// This frame's capped delta in seconds (the HUD advances its timers by it).
-    pub const DT: usize = 10;
-    // Slots 11 and 12 are the room page's own (`net_frame_slot`).
-    /// The viewer's tank on screen (NDC, y up) for the damage ring; NaN in first
-    /// person or off screen.
-    pub const VIEWER_X: usize = 13;
-    pub const VIEWER_Y: usize = 14;
-    /// 1 when the frame ran; 0 when it was skipped while the GPU still ran earlier
-    /// frames (`framesInFlight`), and the other slots repeat the last frame's.
-    pub const RAN: usize = 15;
-    pub const LENGTH: usize = 16;
-}
-
-/// `Game.hud_json`: the page HUD's view of the match and the human's tank.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Hud<'a> {
-    #[serde(rename = "match")]
-    match_state: &'a Match,
-    elapsed: f64,
-    game_mode: GameMode,
-    endless_match: bool,
-    map_mode: MapId,
-    map_name: String,
-    difficulty: Difficulty,
-    human_team: Team,
-    score_limit: u32,
-    team_names: [&'static str; 2],
-    active_enemies: usize,
-    speed_tuning: &'a SpeedTuning,
-    human: HudHuman,
-    scoreboard: Scoreboard<'a>,
-    recap: Option<&'a Value>,
-}
-
-fn phase_code(phase: MatchPhase) -> f32 {
-    match phase {
-        MatchPhase::Ready => 0.0,
-        MatchPhase::Playing => 1.0,
-        MatchPhase::Paused => 2.0,
-        MatchPhase::Results => 3.0,
-    }
-}
 
 /// Battle Setup's choices with the map's level rules: extra levels bring their own
 /// arena and play endless.
@@ -203,17 +164,52 @@ fn options_setup(options: &GameOptions) -> SimulationSetup {
     .merged(level_rules)
 }
 
-/// `Game.create`'s choices besides the view configuration (`page::create_view`).
-#[derive(Deserialize, Default)]
+/// Fixed, dynamic and sleeping (dynamic) bodies in the physics world.
+fn body_counts(sim: &Simulation) -> (usize, usize, usize) {
+    let (mut fixed, mut dynamic, mut sleeping) = (0, 0, 0);
+    for (_, body) in sim.world.bodies.iter() {
+        if body.is_fixed() {
+            fixed += 1;
+        }
+        if body.is_dynamic() {
+            dynamic += 1;
+            if body.is_sleeping() {
+                sleeping += 1;
+            }
+        }
+    }
+    (fixed, dynamic, sleeping)
+}
+
+/// `Game.create`'s choices besides the view configuration (`page::ViewConfig`). They
+/// follow `initialGameOptions`: the map a link requests or the player last chose, which
+/// stands only where extra levels are offered.
+#[derive(Clone, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct GameConfig {
-    map: Option<String>,
-    difficulty: Option<String>,
-    extra_levels: bool,
-    human_kind: Option<VehicleKind>,
-    human_team: Option<Team>,
-    game_mode: Option<GameMode>,
-    autoplay: bool,
+pub struct GameConfig {
+    #[serde(deserialize_with = "known_choice")]
+    pub map: Option<MapId>,
+    #[serde(deserialize_with = "known_choice")]
+    pub difficulty: Option<Difficulty>,
+    pub extra_levels: bool,
+    pub human_kind: Option<VehicleKind>,
+    pub human_team: Option<Team>,
+    pub game_mode: Option<GameMode>,
+    /// The human's tank drives itself (`?autoplay`).
+    pub autoplay: bool,
+}
+
+/// A choice by its name; a name this build does not know reads as none, as
+/// `initialGameOptions` ignores an unknown `?map=`.
+fn known_choice<'de, D, T>(deserializer: D) -> Result<Option<T>, D::Error>
+where
+    D: Deserializer<'de>,
+    T: DeserializeOwned,
+{
+    let name = Option::<String>::deserialize(deserializer)?;
+    Ok(name.and_then(|name| {
+        T::deserialize(StringDeserializer::<serde::de::value::Error>::new(name)).ok()
+    }))
 }
 
 /// Personal bests live in the page's `localStorage`; private browsing or a full
@@ -248,6 +244,9 @@ impl RecordStorage for BrowserStorage {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct Game {
+    /// The shell drawing this game, for the wording the page and the desktop app say
+    /// differently.
+    shell: Shell,
     sim: Simulation,
     view: Presentation,
     state: RenderState,
@@ -263,14 +262,22 @@ pub struct Game {
     frame_index: u64,
     /// Warmed and first frames drawn; false while pipelines compile.
     prepared: bool,
+    /// Pipelines created since the arena began preparing, and Battle Setup's line for
+    /// the latest step.
+    prepare_compiled: u32,
+    loading: Option<Loading>,
     events: Vec<PendingEvent>,
+    /// The sounds drained events play, on the frame clock.
+    sounds: SoundPlanner,
     canvas: CanvasSize,
     times: FrameTimes,
     graphics: Graphics,
     /// The human's tank as the HUD reads it, refilled from the simulation each read.
     hud_tank: RenderTank,
+    /// How long the human's effects have run, which their timer rings drain from.
+    effect_timers: EffectTimers,
     /// The finished round's recap; personal bests are saved once per result.
-    recap: Option<Value>,
+    recap: Option<RoundRecap>,
     /// The last frame's result, which a frame skipped for the GPU hands back.
     last_result: Vec<f32>,
 }
@@ -282,93 +289,25 @@ impl Game {
     pub async fn create(canvas: RenderTarget, config_json: &str) -> Result<Game, PageError> {
         #[cfg(target_arch = "wasm32")]
         console_error_panic_hook::set_once();
-        let config: GameConfig = parse(config_json)?;
-        let PageView {
-            mut view,
-            canvas,
-            graphics,
-            seed,
-            pacing,
-        } = create_view(canvas, config_json).await?;
-        let mut options = initial_game_options(
-            seed,
-            config.map.as_deref(),
-            config.extra_levels,
-            config.difficulty.as_deref(),
-        );
-        if let Some(kind) = config.human_kind {
-            options.human_kind = kind;
-        }
-        if let Some(team) = config.human_team {
-            options.human_team = team;
-        }
-        if let Some(mode) = config.game_mode {
-            options.game_mode = mode;
-        }
-        let setup = options_setup(&options).merged(SimulationSetup {
-            round: Some(FIRST_ROUND),
-            ..SimulationSetup::default()
-        });
-        let sim = Simulation::new(seed, setup);
-        let state = sim.render_state(None);
-        view.build_scenery(&state.map_theme);
-        let mut game = Game {
-            sim,
-            view,
-            state,
-            options,
-            commands: CommandBuilder::default(),
-            steps: StepClock::default(),
-            pacing,
-            active: false,
-            autoplay: config.autoplay,
-            overview: false,
-            auto_rounds: false,
-            completed_rounds: 0,
-            frame_index: 0,
-            prepared: true,
-            events: Vec::new(),
-            canvas,
-            times: FrameTimes::default(),
-            graphics,
-            hud_tank: RenderTank::default(),
-            recap: None,
-            last_result: vec![0.0; frame_slot::LENGTH],
-        };
-        game.canvas.apply(&mut game.view);
-        game.reset_view();
-        Ok(game)
+        Self::create_with(canvas, parse(config_json)?, parse(config_json)?).await
     }
 
     // ---------------------------------------------------------- lifecycle
 
     /// Apply Battle Setup choices; rebuilds the arena when they changed.
     pub fn set_options(&mut self, options_json: &str) -> Result<bool, PageError> {
-        let options: GameOptions = parse(options_json)?;
-        if options == self.options && game_choices(&self.sim) == options {
-            return Ok(false);
-        }
-        self.options = options;
-        options_setup(&options).apply(&mut self.sim);
-        self.sim.reset(None);
-        self.commands.clear();
-        self.reset_view();
-        Ok(true)
+        Ok(self.set_game_options(&parse(options_json)?))
     }
 
     /// Compile up to `budget` pipelines;
     /// `[compiled, remaining, texturesPending, done, gpuPending]`.
     pub fn prepare_step(&mut self, budget: u32) -> Result<Vec<f64>, PageError> {
-        if self.prepared {
-            return Ok(PREPARED.to_vec());
-        }
-        let status = self.view.prepare_step(budget.max(1)).map_err(js_error)?;
-        if status.ready {
-            self.fill_state();
-            self.view.finish_prepare(&self.state).map_err(js_error)?;
-            self.prepared = true;
-        }
-        Ok(prepare_result(&status))
+        self.prepare(budget).map(|status| prepare_result(&status))
+    }
+
+    /// Battle Setup's line for the latest `prepare_step`, if it has one.
+    pub fn loading_status(&self) -> Option<String> {
+        self.loading.map(|line| line.to_string())
     }
 
     /// Build one of the models preparation left for after the arena is ready (the
@@ -468,6 +407,7 @@ impl Game {
     /// events to presentation, and draws. See [`frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, PageError> {
         let input = InputFrame::from_slice(input);
+        self.sounds.set_clock(now);
         // A paced frame runs at its smoothed time; skipped, it only takes the input.
         let in_flight = self.view.renderer.frames_in_flight();
         let Some(now) = self.pacing.frame_time(now, in_flight) else {
@@ -598,86 +538,42 @@ impl Game {
 
     /// Pending events for audio and HUD, as JSON.
     pub fn drain_events(&mut self) -> String {
-        let (x, z) = self.human_position();
-        drain_events(&mut self.events, (x, z), self.view.rig.listener_right)
+        batch_json(self.take_events(), &mut self.events)
     }
 
     /// Everything the page HUD and menus show, as JSON.
     pub fn hud_json(&mut self) -> String {
-        if self.sim.match_state.phase == MatchPhase::Results && self.recap.is_none() {
-            self.recap = Some(self.finish_recap());
-        }
-        let sim = &self.sim;
-        // From the simulation, not the last frame's state: debug hooks change tanks
-        // between frames.
-        sim.fill_tank(&mut self.hud_tank, sim.human());
-        let recap = if sim.match_state.phase == MatchPhase::Results {
-            self.recap.as_ref()
-        } else {
-            None
-        };
-        let hud = Hud {
-            match_state: &sim.match_state,
-            elapsed: sim.elapsed,
-            game_mode: sim.game_mode,
-            endless_match: sim.endless_match,
-            map_mode: sim.map_mode,
-            map_name: sim.map_name(),
-            difficulty: sim.difficulty,
-            human_team: sim.human_team,
-            score_limit: SCORE_LIMIT,
-            team_names: TEAM_NAMES,
-            active_enemies: sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
-            speed_tuning: &sim.speed_tuning,
-            human: human_json(&self.hud_tank, sim.elapsed),
-            scoreboard: Scoreboard::Simulated(&sim.tanks),
-            recap,
-        };
         // Written straight to text: the page reads this every few frames.
-        serde_json::to_string(&hud).unwrap_or_default()
+        serde_json::to_string(&self.hud()).unwrap_or_default()
     }
 
-    /// Stats for nerds, as JSON.
+    /// Pause's facts and the line under its title, as JSON, read as the pause menu opens.
+    pub fn pause_json(&mut self) -> String {
+        serde_json::to_string(&pause_report(&self.hud())).unwrap_or_default()
+    }
+
+    /// Stats for nerds' readings, as JSON, for diagnostics and the frame recorder.
     pub fn stats_json(&mut self) -> String {
-        let effects = self.view.effects.systems.stats();
         let mut stats = presentation_stats(&self.view, &self.times);
         let sim = &self.sim;
-        let (mut fixed, mut dynamic, mut sleeping) = (0, 0, 0);
-        for (_, body) in sim.world.bodies.iter() {
-            if body.is_fixed() {
-                fixed += 1;
-            }
-            if body.is_dynamic() {
-                dynamic += 1;
-                if body.is_sleeping() {
-                    sleeping += 1;
-                }
-            }
-        }
         let simulation = json!({
-            "fixedBodies": fixed,
-            "dynamicBodies": dynamic,
-            "sleepingBodies": sleeping,
-            "tanksAlive": sim.tanks.iter().filter(|tank| tank.alive).count(),
-            "pickups": sim.pickups.len(),
-            "pickupsReady": sim.pickups.iter().filter(|pickup| pickup.available).count(),
-            "maxFragments": sim.max_fragments,
-            "particles": effects.particles,
-            "elapsed": sim.elapsed,
-            "pixelRatio": self.canvas.pixel_ratio(),
             "quality": self.graphics.stats(&self.view.renderer, self.canvas.pixel_ratio()),
             "bodies": sim.world.bodies.len(),
             "colliders": sim.world.colliders.len(),
             "shots": sim.shots.len(),
-            "mines": sim.mines.len(),
             "fragments": sim.fragments.len(),
             "covers": sim.covers.iter().filter(|cover| cover.alive).count(),
-            "tanks": sim.tanks.len(),
         });
         if let Value::Object(rows) = simulation {
             stats.extend(rows);
         }
         Value::Object(stats).to_string()
+    }
+
+    /// Stats for nerds' sections and rows as JSON ([`StatsSection`]), for the panel's
+    /// refreshes.
+    pub fn nerd_stats_json(&mut self) -> String {
+        serde_json::to_string(&self.nerd_stats()).expect("stats rows serialize")
     }
 
     /// The canvas's CSS size and the device pixel ratio.
@@ -693,8 +589,9 @@ impl Game {
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
+    #[cfg(target_arch = "wasm32")]
     pub fn set_graphics(&mut self, setting: &str) {
-        self.graphics.set_setting(&mut self.view.renderer, setting);
+        self.set_graphics_setting(GraphicsSetting::parse(setting));
     }
 
     /// Enter or leave first person (only while playing); returns whether it is on.
@@ -710,27 +607,23 @@ impl Game {
         self.view.rig.preferences().to_vec()
     }
 
-    /// The tank the human respawns in, chosen from the respawn menu mid-round. The
-    /// world is kept; Battle Setup's next `set_options` sees the same choice.
+    /// The tank the human respawns in, chosen from the respawn menu mid-round, by name.
+    #[cfg(target_arch = "wasm32")]
     pub fn set_human_kind(&mut self, kind: &str) -> Result<(), PageError> {
         let kind: VehicleKind = serde_json::from_value(Value::from(kind))
             .map_err(|error| js_error(error.to_string()))?;
-        if kind == VehicleKind::Humvee {
-            return Err(js_error("The player cannot drive a Humvee"));
-        }
-        self.sim.human_kind = kind;
-        self.options.human_kind = kind;
-        Ok(())
+        self.respawn_in(kind)
     }
 
     /// "tank-speed" or "bullet-speed"; returns the scale in effect.
+    #[cfg(target_arch = "wasm32")]
     pub fn set_speed(&mut self, key: &str, value: f64) -> f64 {
         let key = match key {
             "tank-speed" => SpeedSetting::TankSpeed,
             "bullet-speed" => SpeedSetting::BulletSpeed,
             _ => return 1.0,
         };
-        tune_speed(&mut self.sim, key, value)
+        self.set_speed_scale(key, value)
     }
 
     pub fn error(&self) -> Option<String> {
@@ -969,6 +862,218 @@ impl Game {
     }
 }
 
+/// The calls above that cross the boundary as JSON or packed numbers, typed for a Rust
+/// shell (the desktop app); the page's getters serialize these same values.
+impl Game {
+    /// `create` with the view and the game's configuration as values.
+    pub async fn create_with(
+        canvas: RenderTarget,
+        view_config: ViewConfig,
+        config: GameConfig,
+    ) -> Result<Game, PageError> {
+        let PageView {
+            mut view,
+            canvas,
+            graphics,
+            seed,
+            pacing,
+            shell,
+        } = create_view(canvas, view_config).await?;
+        let mut options =
+            initial_game_options(seed, config.map, config.extra_levels, config.difficulty);
+        if let Some(kind) = config.human_kind {
+            options.human_kind = kind;
+        }
+        if let Some(team) = config.human_team {
+            options.human_team = team;
+        }
+        if let Some(mode) = config.game_mode {
+            options.game_mode = mode;
+        }
+        let options = options.offered(config.extra_levels);
+        let setup = options_setup(&options).merged(SimulationSetup {
+            round: Some(FIRST_ROUND),
+            ..SimulationSetup::default()
+        });
+        let sim = Simulation::new(seed, setup);
+        let state = sim.render_state(None);
+        view.build_scenery(&state.map_theme);
+        let mut game = Game {
+            sim,
+            view,
+            state,
+            options,
+            commands: CommandBuilder::default(),
+            steps: StepClock::default(),
+            pacing,
+            active: false,
+            autoplay: config.autoplay,
+            overview: false,
+            auto_rounds: false,
+            completed_rounds: 0,
+            frame_index: 0,
+            prepared: true,
+            prepare_compiled: 0,
+            loading: None,
+            events: Vec::new(),
+            sounds: SoundPlanner::default(),
+            canvas,
+            shell,
+            times: FrameTimes::default(),
+            graphics,
+            hud_tank: RenderTank::default(),
+            effect_timers: EffectTimers::default(),
+            recap: None,
+            last_result: vec![0.0; frame_slot::LENGTH],
+        };
+        game.canvas.apply(&mut game.view);
+        game.reset_view();
+        Ok(game)
+    }
+
+    /// Apply Battle Setup choices; rebuilds the arena when they changed and returns
+    /// whether it did.
+    pub fn set_game_options(&mut self, options: &GameOptions) -> bool {
+        let options = *options;
+        if options == self.options && game_choices(&self.sim) == options {
+            return false;
+        }
+        self.options = options;
+        options_setup(&options).apply(&mut self.sim);
+        self.sim.reset(None);
+        self.commands.clear();
+        self.reset_view();
+        true
+    }
+
+    /// Compile up to `budget` pipelines; once nothing remains, warm every variant and
+    /// draw the first frames.
+    pub fn prepare(&mut self, budget: u32) -> Result<PrepareStatus, PageError> {
+        if self.prepared {
+            return Ok(PREPARED);
+        }
+        let status = self.view.prepare_step(budget.max(1)).map_err(js_error)?;
+        self.prepare_compiled += status.compiled;
+        self.loading = if status.ready {
+            None
+        } else {
+            Loading::of(
+                self.prepare_compiled,
+                status.remaining,
+                status.textures_pending,
+                status.gpu_pending,
+            )
+        };
+        if status.ready {
+            self.fill_state();
+            self.view.finish_prepare(&self.state).map_err(js_error)?;
+            self.prepared = true;
+        }
+        Ok(status)
+    }
+
+    /// Everything the HUD and menus show. The first read of a result saves personal
+    /// bests and reports them in the recap.
+    pub fn hud(&mut self) -> Hud<'_> {
+        if self.sim.match_state.phase == MatchPhase::Results && self.recap.is_none() {
+            self.recap = Some(round_recap(
+                &self.sim,
+                &mut BrowserStorage::local(),
+                self.shell,
+            ));
+        }
+        let recap = if self.sim.match_state.phase == MatchPhase::Results {
+            self.recap.as_ref()
+        } else {
+            None
+        };
+        simulation_hud(
+            &self.sim,
+            &mut self.hud_tank,
+            recap,
+            &mut self.effect_timers,
+        )
+    }
+
+    /// Battle Setup's line for the latest `prepare` step: `None` once the arena is
+    /// ready, and while a rebuild that reused everything only warms up.
+    pub fn loading(&self) -> Option<Loading> {
+        self.loading
+    }
+
+    /// Pending events for audio and HUD, heard from the human's tank.
+    pub fn take_events(&mut self) -> EventBatch {
+        let (x, z) = self.human_position();
+        let right = self.view.rig.listener_right;
+        take_events(&mut self.events, (x, z), right, &mut self.sounds)
+    }
+
+    /// The chosen view and clamped overhead zoom.
+    pub fn camera(&self) -> CameraPreferences {
+        CameraPreferences::of(&self.view.rig)
+    }
+
+    /// The Settings dialog's Graphics choice.
+    pub fn set_graphics_setting(&mut self, setting: GraphicsSetting) {
+        self.graphics.set_setting(&mut self.view.renderer, setting);
+    }
+
+    /// The tank the human respawns in, chosen from the respawn menu mid-round. The world
+    /// is kept; Battle Setup's next `set_options` sees the same choice.
+    pub fn respawn_in(&mut self, kind: VehicleKind) -> Result<(), PageError> {
+        if kind == VehicleKind::Humvee {
+            return Err(js_error("The player cannot drive a Humvee"));
+        }
+        self.sim.human_kind = kind;
+        self.options.human_kind = kind;
+        Ok(())
+    }
+
+    /// A speed scale; returns the scale in effect.
+    pub fn set_speed_scale(&mut self, key: SpeedSetting, value: f64) -> f64 {
+        tune_speed(&mut self.sim, key, value)
+    }
+
+    /// Stats for nerds' sections and rows, read from the game now.
+    pub fn nerd_stats(&mut self) -> Vec<StatsSection> {
+        let particles = self.view.effects.systems.stats().particles;
+        let sim = &self.sim;
+        let (fixed, dynamic, sleeping) = body_counts(sim);
+        let count = |count: usize| count as u64;
+        let stats = GameStats {
+            frame: frame_readings(&self.times),
+            renderer: renderer_readings(
+                &self.view.renderer,
+                &self.graphics,
+                self.canvas.pixel_ratio(),
+            ),
+            scene: SceneStats {
+                tanks: count(sim.tanks.len()),
+                alive: count(sim.tanks.iter().filter(|tank| tank.alive).count()),
+                mines: count(sim.mines.len()),
+                pickups: count(sim.pickups.len()),
+                pickups_ready: count(sim.pickups.iter().filter(|pickup| pickup.available).count()),
+                shots: count(sim.shots.len()),
+                fragments: count(sim.fragments.len()),
+                elapsed: sim.elapsed,
+            },
+            bodies: count(sim.world.bodies.len()),
+            fixed_bodies: count(fixed),
+            dynamic_bodies: count(dynamic),
+            sleeping_bodies: count(sleeping),
+            colliders: count(sim.world.colliders.len()),
+            particles: particles.into(),
+            max_fragments: count(sim.max_fragments),
+        };
+        game_sections(&stats, self.shell)
+    }
+
+    /// The GPU's smoothed frame time in milliseconds, once sampled.
+    pub fn gpu_ms(&self) -> Option<f64> {
+        self.graphics.gpu_ms()
+    }
+}
+
 impl Game {
     fn human_index(&self) -> usize {
         self.sim.human_index().unwrap_or(0)
@@ -1041,40 +1146,6 @@ impl Game {
         }
     }
 
-    /// The results screen's recap, saving personal bests for this mode, map and
-    /// difficulty once.
-    fn finish_recap(&self) -> Value {
-        let sim = &self.sim;
-        let stats = recap_stats(sim);
-        let combat = &sim.combat_record;
-        let label = |value: Value| value.as_str().map(str::to_owned).unwrap_or_default();
-        let key = format!(
-            "sloppy-records-v1:{}:{}:{}",
-            label(json!(sim.game_mode)),
-            sim.map_name(),
-            label(json!(sim.difficulty)),
-        );
-        let records = save_personal_bests(&mut BrowserStorage::local(), &key, &stats);
-        let metrics = |values: &sloppy_core::sim::round_recap::RecapStats| {
-            Metric::ALL
-                .iter()
-                .map(|&metric| (metric.key().to_string(), Value::from(values.get(metric))))
-                .collect::<serde_json::Map<String, Value>>()
-        };
-        json!({
-            "stats": metrics(&stats),
-            "best": metrics(&records.best),
-            "improved": records.improved.iter().map(|metric| metric.key()).collect::<Vec<_>>(),
-            "persisted": records.persisted,
-            "feats": combat_feats(&stats, combat.shots, combat.direct_hits),
-            "shots": combat.shots,
-            "directHits": combat.direct_hits,
-            "damageTaken": combat.damage_taken,
-            "shieldAbsorbed": combat.shield_absorbed,
-            "rankNames": RANKS.iter().map(|rank| rank.name).collect::<Vec<_>>(),
-        })
-    }
-
     /// Rebuild the presentation for the simulation's current world and begin
     /// preparing it.
     fn reset_view(&mut self) {
@@ -1083,6 +1154,8 @@ impl Game {
         self.sim.set_wreck_view(Some(self.view.wreck_view()));
         self.view.begin_prepare(&self.state);
         self.prepared = false;
+        self.prepare_compiled = 0;
+        self.loading = None;
         self.recap = None;
         self.events.clear();
         self.steps.reset();
@@ -1100,7 +1173,16 @@ impl Game {
                 && event.owner == Some(human_id)
                 && event.team != Some(human_team);
             let own = event.id == Some(human_id);
-            queue_event(&mut self.events, &mut self.view, event, player_hit, own);
+            let scoreboard = Scoreboard::Simulated(&self.sim.tanks);
+            let feedback = event_feedback(&event, own, human_id, &scoreboard);
+            queue_event(
+                &mut self.events,
+                &mut self.view,
+                event,
+                player_hit,
+                own,
+                feedback,
+            );
         }
         // Keep the simulation's allocation for the next tick.
         if self.sim.events.is_empty() {
