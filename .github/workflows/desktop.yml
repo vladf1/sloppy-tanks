@@ -62,7 +62,8 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
-          cargo-cache: desktop-macos
+          # Step-level profile overrides are not visible when setup hashes the cache.
+          cargo-cache: desktop-macos-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
           node-dependencies: "false"
       - name: Signing keychain
         if: github.event_name != 'pull_request'
@@ -133,7 +134,7 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
-          cargo-cache: desktop-windows
+          cargo-cache: desktop-windows-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
           node-dependencies: "false"
       - run: node scripts/build-desktop.mjs --windows
         env:
