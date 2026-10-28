@@ -9,8 +9,7 @@ import {
   teamPlace,
 } from "./round-recap";
 import { AMMO_OPTIONS } from "./ammo-options";
-import type { HudState } from "./engine-api";
-import type { DeathReport } from "./hud-feedback";
+import type { DeathReport, HudState } from "./engine-api";
 import { CLOSE_ICON, SETTINGS_BUTTON } from "./settings-dialog";
 
 /** The HUD's icons, drawn once and placed with `<use>`: the ammunition and kill-feed
@@ -39,20 +38,6 @@ const HUD_ICONS = `<svg class="icon-sprite" aria-hidden="true" focusable="false"
 <symbol id="hud-lock" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2.5a5 5 0 0 1 5 5V10h1.2c.9 0 1.6.7 1.6 1.6v8.3c0 .9-.7 1.6-1.6 1.6H5.8c-.9 0-1.6-.7-1.6-1.6v-8.3c0-.9.7-1.6 1.6-1.6H7V7.5a5 5 0 0 1 5-5zm0 2.6a2.4 2.4 0 0 0-2.4 2.4V10h4.8V7.5A2.4 2.4 0 0 0 12 5.1zm0 8.2a1.7 1.7 0 0 0-.9 3.1v2h1.8v-2a1.7 1.7 0 0 0-.9-3.1z"/></symbol>
 <symbol id="hud-skull" viewBox="0 0 24 24"><path fill-rule="evenodd" d="M12 2c5 0 8.5 3.4 8.5 8.1 0 2.6-1.1 4.5-3 5.6V19a1.5 1.5 0 0 1-1.5 1.5h-1.2V18h-1.6v2.5h-2.4V18H9.2v2.5H8A1.5 1.5 0 0 1 6.5 19v-3.3c-1.9-1.1-3-3-3-5.6C3.5 5.4 7 2 12 2zM8.6 9.2a2 2 0 1 0 0 4 2 2 0 0 0 0-4zm6.8 0a2 2 0 1 0 0 4 2 2 0 0 0 0-4zM12 13.4l-1.3 2.3h2.6z"/></symbol>
 </svg>`;
-
-/** The kill-feed and notice icon for each way to destroy a tank. */
-export const CAUSE_ICONS: Record<string, string> = {
-  standard: "hud-standard",
-  spread: "hud-spread",
-  rocket: "hud-rocket",
-  tow: "hud-rocket",
-  ricochet: "hud-ricochet",
-  piercing: "hud-piercing",
-  mine: "hud-mine",
-  drum: "hud-drum",
-  interception: "hud-blast",
-  explosion: "hud-blast",
-};
 
 /** An SVG reference to one of `HUD_ICONS`, for markup strings. */
 export function hudIcon(id: string, className = "hud-icon"): string {
@@ -147,10 +132,9 @@ export function wreckedByMarkup(death: DeathReport | null): string {
   if (!death) {
     return `<div class="wrecked-by"><small>YOUR TANK</small><b>DESTROYED</b></div>`;
   }
-  const icon = death.cause ? CAUSE_ICONS[death.cause] : undefined;
   const tags = [
     death.weapon
-      ? `<span class="wrecked-weapon">${icon ? hudIcon(icon, "wrecked-icon") : ""}${death.weapon}</span>`
+      ? `<span class="wrecked-weapon">${hudIcon(`hud-${death.icon}`, "wrecked-icon")}${death.weapon}</span>`
       : "",
     death.killerVehicle && !death.self
       ? `<span class="killer-tag">${death.killerVehicle}</span>`

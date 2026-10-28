@@ -88,7 +88,14 @@ test("a battle ended early is called by where the team stood, never won", () => 
 
 test("the respawn card names who destroyed the tank in plain words", () => {
   const markup = menuMarkup(teamBattle({ phase: "playing", alive: false }), {
-    report: { killer: "THUNDERCLAP", self: false, cause: "standard", weapon: "Standard shell" },
+    report: {
+      killer: "THUNDERCLAP",
+      self: false,
+      cause: "standard",
+      weapon: "Standard shell",
+      icon: "standard",
+      sentence: "THUNDERCLAP destroyed you with a standard shell.",
+    },
     text: "THUNDERCLAP destroyed you with a standard shell.",
   });
   assert.match(markup, /<small>DESTROYED BY<\/small><b>THUNDERCLAP<\/b>/);

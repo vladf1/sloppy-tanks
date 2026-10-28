@@ -111,6 +111,43 @@ export interface MatchState {
   round: number;
 }
 
+/** What wrecked the viewer's tank, for the respawn card (`DeathReport` in
+ * `crates/web/src/feedback.rs`). */
+export interface DeathReport {
+  /** The killer's name; null for the yard, a departed player or the viewer's own
+   * ordnance. */
+  killer: string | null;
+  self: boolean;
+  cause: DamageCause | null;
+  /** The weapon's label, such as "Rocket blast", or null when it is unknown. */
+  weapon: string | null;
+  /** The weapon's icon: a `HUD_ICONS` symbol after its `hud-` prefix. */
+  icon: string;
+  /** The killer's vehicle name, team and kills, when the scoreboard knows them. */
+  killerVehicle?: string;
+  killerTeam?: Team;
+  killerKills?: number;
+  /** All of it as a sentence, for the toast and the respawn card's status line. */
+  sentence: string;
+}
+
+/** Which side a kill-feed name is drawn in: a team's colour, or neutral for the yard. */
+export type FeedSide = "blue" | "red" | "neutral";
+
+/** A kill-feed row as the engine reports it on a death. */
+export interface EngineFeedRow {
+  /** Killer and victim: "YOU" for the viewer, "YARD" for nobody's ordnance. */
+  names: [string, string];
+  sides: [FeedSide, FeedSide];
+  cause?: DamageCause;
+  /** The weapon's icon: a `HUD_ICONS` symbol after its `hud-` prefix. */
+  icon: string;
+  /** The viewer destroyed someone else (by tank identity, not by name). */
+  ownKill: boolean;
+  /** The viewer's own wreck. */
+  ownDeath: boolean;
+}
+
 /** A simulation event as `drain_events` reports it. */
 export interface EngineEvent {
   type: EventType;
@@ -129,6 +166,12 @@ export interface EngineEvent {
   own: boolean;
   /** Clockwise screen angle (radians) of damage the human took, or null. */
   damageAngle: number | null;
+  /** The human's death: who and what wrecked it. */
+  deathReport?: DeathReport;
+  /** Every tank's death: its kill-feed row. */
+  feed?: EngineFeedRow;
+  /** The human's pickups, promotions and death: the toast over the field. */
+  toast?: { text: string; tone: "pickup" | "promotion" | "death" };
 }
 
 export interface EventBatch {
@@ -175,6 +218,33 @@ export interface HumanState {
   kills: number;
   deaths: number;
   selfRepair: boolean;
+  /** How the hull reads at a glance, at the overhead bar's thresholds. */
+  hullTone: "healthy" | "damaged" | "critical";
+  /** The tank panel's hull colour along its ramp (sRGB hex). */
+  hullRamp: number;
+  /** The rank's benefits, for its tooltip. */
+  rankTitle: string;
+  /** The timed power-ups and protections running, in the chips' order. */
+  effects: ActiveEffect[];
+}
+
+/** One running power-up or protection, as the tank panel's chips show it. */
+export interface ActiveEffect {
+  kind: "spawn" | "shield" | "rapid" | "boost" | "laser" | "repair";
+  name: string;
+  /** What is left: seconds, shield points and seconds, or nothing. */
+  detail: string;
+  /** The share of its time left, for its timer ring; 1 for a lasting effect. */
+  share: number;
+}
+
+/** The score pill between the team plates. */
+export interface ScorePill {
+  /** The goal under the clock; null in a room. */
+  objective: string | null;
+  /** "NEXT KILL" in overtime; the clock shows `seconds` otherwise. */
+  clockLabel: string | null;
+  seconds: number;
 }
 
 export interface ScoreboardRow {
@@ -234,6 +304,7 @@ export interface HudState {
   human: HumanState;
   scoreboard: ScoreboardRow[];
   recap: RecapState | null;
+  scorePill: ScorePill;
 }
 
 /** `stats_json().quality`: the graphics tier and the dynamic render scale

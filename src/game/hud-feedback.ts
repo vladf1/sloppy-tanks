@@ -1,141 +1,21 @@
 import { AMMO_OPTIONS } from "./ammo-options";
-import type { DamageCause, EngineEvent, HumanState, Team, VehicleKind } from "./engine-api";
-import { CAUSE_ICONS } from "./ui-markup";
+import type { ActiveEffect, EngineFeedRow, FeedSide, HumanState } from "./engine-api";
 
 /** The kill feed shows this many of its newest rows. */
 export const FEED_ROWS = 3;
 
-const DAMAGE_LABELS: Record<DamageCause, string> = {
-  standard: "Standard shell",
-  spread: "Spread shot",
-  rocket: "Rocket blast",
-  tow: "TOW missile",
-  ricochet: "Ricochet shell",
-  piercing: "Piercing shell",
-  mine: "Mine explosion",
-  drum: "Exploding barrel",
-  interception: "Shell collision blast",
-  explosion: "Explosion",
-};
-
-/** The vehicles' names, as Battle Setup and the HUD show them. */
-export const VEHICLE_NAMES: Record<VehicleKind, string> = {
-  scout: "SKIPPER",
-  balanced: "BRUISER",
-  heavy: "BIG RIG",
-  humvee: "HUNTER",
-};
-
-/** A scoreboard row as the death report reads it; rooms may leave out the details. */
-interface KillerRow {
-  id: number;
-  name: string;
-  kills?: number;
-  team?: Team;
-  kind?: VehicleKind;
-}
-
-/** What wrecked the viewer's tank, for the respawn card: the killer's name (null for
- * the yard, a departed player or the viewer's own ordnance), what they drive and how
- * many kills they have, and the weapon, when the engine reported one. */
-export interface DeathReport {
-  killer: string | null;
-  self: boolean;
-  cause: DamageCause | null;
-  /** The weapon's label, such as "Rocket blast", or null when it is unknown. */
-  weapon: string | null;
-  /** The killer's vehicle name, team and kills, when the scoreboard knows them. */
-  killerVehicle?: string;
-  killerTeam?: Team;
-  killerKills?: number;
-}
-
-export function deathReport(event: EngineEvent, scoreboard: readonly KillerRow[]): DeathReport {
-  const self = event.owner !== undefined && event.owner === event.id;
-  const killer = self ? undefined : scoreboard.find((tank) => tank.id === event.owner);
-  const cause = event.damageSource?.cause ?? null;
-  return {
-    killer: killer?.name ?? null,
-    self,
-    cause,
-    weapon: cause ? DAMAGE_LABELS[cause] : null,
-    ...(killer?.kind ? { killerVehicle: VEHICLE_NAMES[killer.kind] } : {}),
-    ...(killer?.team !== undefined ? { killerTeam: killer.team } : {}),
-    ...(killer?.kills !== undefined ? { killerKills: killer.kills } : {}),
-  };
-}
-
-/** Both HUDs describe the authoritative damage source, including self and yard damage.
- * An unreported weapon is left out rather than called unknown. */
-export function deathCause(
-  event: EngineEvent,
-  scoreboard: readonly { id: number; name: string }[],
-): string {
-  const { killer, self, weapon: label } = deathReport(event, scoreboard);
-  const weapon = label ? `${/^[aeiou]/i.test(label) ? "an" : "a"} ${label.toLowerCase()}` : "";
-  if (self) {
-    return weapon ? `You destroyed yourself with ${weapon}.` : "You destroyed yourself.";
-  }
-  if (killer) {
-    return weapon ? `${killer} destroyed you with ${weapon}.` : `${killer} destroyed you.`;
-  }
-  return weapon ? `You were destroyed by ${weapon}.` : "You were destroyed.";
-}
-
-/** The killer and victim of a kill-feed row, as both HUDs name them. */
-export function killFeedNames(
-  event: Pick<EngineEvent, "id" | "owner">,
-  viewerId: number,
-  scoreboard: readonly { id: number; name: string }[],
-): string[] {
-  const name = (id: number | undefined) =>
-    id === viewerId ? "YOU" : (scoreboard.find((tank) => tank.id === id)?.name ?? "YARD");
-  return [name(event.owner), name(event.id)];
-}
-
-/** Whether the viewer destroyed someone else. Decided by tank identity, not by the displayed
- * names, since another player may be called "YOU". */
-export function isOwnKill(event: Pick<EngineEvent, "id" | "owner">, viewerId: number): boolean {
-  return event.owner === viewerId && event.id !== viewerId;
-}
-
-/** Which side a kill-feed name is drawn in: a team's colour, or neutral for the yard. */
-export type FeedSide = "blue" | "red" | "neutral";
-
-/** The killer's and victim's sides of a death, for colouring the feed. The victim's team
- * comes with the event; allies take no hull damage from each other, so the killer is on
- * the other side unless the tank destroyed itself or the yard did it. */
-export function killFeedSides(event: Pick<EngineEvent, "id" | "owner" | "team">): FeedSide[] {
-  const side = (team: number | undefined): FeedSide =>
-    team === 0 ? "blue" : team === 1 ? "red" : "neutral";
-  const victim = side(event.team);
-  const killer =
-    event.owner === undefined
-      ? "neutral"
-      : event.owner === event.id
-        ? victim
-        : side(event.team === undefined ? undefined : 1 - event.team);
-  return [killer, victim];
-}
-
-/** One kill-feed row: the names to show and how long it stays (seconds). `seq` tells two
- * otherwise identical rows apart, such as the same kill twice in one window. `cause`
- * picks the weapon icon between the names and `sides` their colours; `ownDeath` marks
- * the viewer's own wreck, which the feed highlights like the viewer's kills. */
+/** One kill-feed row: the engine's names, sides, weapon icon and highlights
+ * (`EngineFeedRow`), or a notice's one name, and how long it stays (seconds). `seq`
+ * tells two otherwise identical rows apart, such as the same kill twice in one window. */
 export interface FeedRow {
   names: string[];
   ownKill: boolean;
   time: number;
   seq: number;
-  cause?: DamageCause;
+  cause?: EngineFeedRow["cause"];
+  icon?: string;
   sides?: FeedSide[];
   ownDeath?: boolean;
-}
-
-/** The weapon icon between a kill-feed row's names. Every kill gets one, so every row
- * reads the same way; a kill without a reported weapon shows the generic wreck mark. */
-export function feedIcon(cause: DamageCause | undefined): string {
-  return (cause && CAUSE_ICONS[cause]) || "hud-skull";
 }
 
 let lastFeedSeq = 0;
@@ -143,23 +23,23 @@ let lastFeedSeq = 0;
 export function newFeedRow(
   names: string[],
   ownKill = false,
-  details: Pick<FeedRow, "cause" | "sides" | "ownDeath"> = {},
+  details: Pick<FeedRow, "cause" | "icon" | "sides" | "ownDeath"> = {},
 ): FeedRow {
   return { names, ownKill, time: 5, seq: ++lastFeedSeq, ...details };
 }
 
 /** Shows a feed row: one name for a notice, or killer and victim with the weapon's icon
- * between. Icons are SVG shapes because small font sets, such as Tesla's browser, lack
- * symbol glyphs and draw a missing-glyph box instead. Every row has one plate; the
- * viewer's own kills and wreck carry its highlight. `entering` marks the newest row,
+ * between (the wreck mark if a row names none). Icons are SVG shapes because small font
+ * sets, such as Tesla's browser, lack symbol glyphs and draw a missing-glyph box
+ * instead. Every row has one plate; the viewer's own kills and wreck carry its highlight. `entering` marks the newest row,
  * which plays the pop-in; its animation starts when the row's element is new to the
  * page, which `showFeed` makes sure of. */
 export function showFeedRow(
   row: HTMLElement,
-  feedRow: Pick<FeedRow, "names" | "ownKill" | "seq" | "cause" | "sides" | "ownDeath">,
+  feedRow: Pick<FeedRow, "names" | "ownKill" | "seq" | "cause" | "icon" | "sides" | "ownDeath">,
   entering = false,
 ): void {
-  const { names, ownKill, cause, sides = [], ownDeath = false } = feedRow;
+  const { names, ownKill, cause, icon = "skull", sides = [], ownDeath = false } = feedRow;
   const key = `${feedRow.seq}\n${names.join("\n")}\n${cause ?? ""}\n${sides.join(" ")}\n${ownDeath}`;
   if (row.dataset.names === key) {
     return;
@@ -187,7 +67,7 @@ export function showFeedRow(
     mark.setAttribute("class", "feed-weapon");
     mark.dataset.cause = cause ?? "wreck";
     const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-    use.setAttribute("href", `#${feedIcon(cause)}`);
+    use.setAttribute("href", `#hud-${icon}`);
     mark.append(use);
     mark.setAttribute("role", "img");
     mark.setAttribute("aria-label", "destroyed");
@@ -302,75 +182,13 @@ export function setText(root: ParentNode, id: string, text: string): void {
   }
 }
 
-/** How the hull reads at a glance: healthy, damaged or critical, at the overhead bar's
- * thresholds (`health_bar_state` in the renderer), so both bars change colour together. */
-export type HullTone = "healthy" | "damaged" | "critical";
-
-export function hullTone(ratio: number): HullTone {
-  return ratio <= 0.3 ? "critical" : ratio <= 0.6 ? "damaged" : "healthy";
+/** The CSS colour of an sRGB hex number, such as the engine's hull ramp. */
+export function cssColor(rgb: number): string {
+  return `#${rgb.toString(16).padStart(6, "0")}`;
 }
 
-/** The tank panel's hull colour along its ramp: green while the hull is sound, through
- * amber and orange to red as it drains, so every hit visibly moves the colour toward
- * danger rather than holding one tone between thresholds. Stops are hull shares. */
-const HULL_RAMP: readonly [number, readonly [number, number, number]][] = [
-  [0.25, [0xff, 0x4d, 0x5e]],
-  [0.4, [0xff, 0x86, 0x36]],
-  [0.55, [0xf5, 0xc8, 0x3c]],
-  [0.7, [0x5f, 0xe3, 0x9a]],
-];
-
-export function hullColor(ratio: number): string {
-  const share = Math.min(1, Math.max(0, ratio));
-  let upper = HULL_RAMP.findIndex(([stop]) => share <= stop);
-  if (upper === -1) {
-    upper = HULL_RAMP.length - 1;
-  }
-  const [stopHigh, high] = HULL_RAMP[upper];
-  const [stopLow, low] = HULL_RAMP[Math.max(0, upper - 1)];
-  const t =
-    stopHigh === stopLow ? 1 : Math.min(1, Math.max(0, (share - stopLow) / (stopHigh - stopLow)));
-  const channel = (index: number) =>
-    Math.round(low[index] + (high[index] - low[index]) * t)
-      .toString(16)
-      .padStart(2, "0");
-  return `#${channel(0)}${channel(1)}${channel(2)}`;
-}
-
-/** One timed power-up or protection, as the tank panel's chips show it. */
-export interface ActiveEffect {
-  kind: "spawn" | "shield" | "rapid" | "boost" | "laser" | "repair";
-  name: string;
-  /** What is left: seconds, shield points, or nothing for a lasting effect. */
-  detail: string;
-}
-
-export function activeEffects(
-  tank: Pick<
-    HumanState,
-    "protection" | "shield" | "shieldPoints" | "rapid" | "speed" | "laser" | "selfRepair"
-  >,
-): ActiveEffect[] {
-  const seconds = (time: number) => `${Math.ceil(time)}s`;
-  const effects: (ActiveEffect | null)[] = [
-    tank.protection > 0 ? { kind: "spawn", name: "SPAWN SHIELD", detail: "" } : null,
-    tank.shield > 0
-      ? {
-          kind: "shield",
-          name: "SHIELD",
-          detail: `${Math.ceil(tank.shieldPoints)} HP · ${seconds(tank.shield)}`,
-        }
-      : null,
-    tank.rapid > 0 ? { kind: "rapid", name: "RAPID", detail: seconds(tank.rapid) } : null,
-    tank.speed > 0 ? { kind: "boost", name: "BOOST", detail: seconds(tank.speed) } : null,
-    tank.laser > 0 ? { kind: "laser", name: "LASER DEFENSE", detail: seconds(tank.laser) } : null,
-    tank.selfRepair ? { kind: "repair", name: "SELF-REPAIR", detail: "" } : null,
-  ];
-  return effects.filter((effect): effect is ActiveEffect => effect !== null);
-}
-
-/** Each effect's mark in the text line. The chips draw their own colour dot instead (small
- * font sets lack these symbols), so the marks stay in the text for readers only. */
+/** Each effect's mark in its chip's text. The chips draw their own colour dot instead
+ * (small font sets lack these symbols), so the marks stay in the text for readers only. */
 const EFFECT_MARKS: Record<ActiveEffect["kind"], string> = {
   spawn: "",
   shield: "◇ ",
@@ -390,69 +208,24 @@ const EFFECT_ICONS: Record<ActiveEffect["kind"], string> = {
   repair: "hud-repair",
 };
 
-/** Seconds left on each timed effect; untimed effects (self-repair) have none. */
-function effectSeconds(tank: HumanState, kind: ActiveEffect["kind"]): number | null {
-  switch (kind) {
-    case "spawn":
-      return tank.protection;
-    case "shield":
-      return tank.shield;
-    case "rapid":
-      return tank.rapid;
-    case "boost":
-      return tank.speed;
-    case "laser":
-      return tank.laser;
-    default:
-      return null;
-  }
-}
-
-/** The longest time seen on each effect since it was picked up, so its ring drains from
- * full whatever the pickup's duration. */
-const effectLongest = new Map<ActiveEffect["kind"], number>();
-
-/** The share of an effect's time left, 1 for an untimed one, learning its full length
- * from the longest time seen since it began. */
-export function effectShare(
-  longest: Map<ActiveEffect["kind"], number>,
-  kind: ActiveEffect["kind"],
-  seconds: number | null,
-): number {
-  if (seconds === null) {
-    return 1;
-  }
-  const full = Math.max(longest.get(kind) ?? 0, seconds);
-  longest.set(kind, full);
-  return full > 0 ? Math.min(1, seconds / full) : 1;
-}
-
 /** The effect chips docked on the tank panel, rebuilt only when their text changes: each
  * a timer ring round its icon (stepping once a second with the countdown), its name and
- * what is left. Their text, separators included, reads as `effectsLabel`. */
-function showEffects(root: ParentNode, tank: HumanState): void {
+ * what is left. */
+function showEffects(root: ParentNode, effects: readonly ActiveEffect[]): void {
   const list = root.querySelector<HTMLElement>("#effects");
   if (!list) {
     return;
   }
-  const effects = activeEffects(tank);
   const key = effects.map(({ kind, detail }) => `${kind}:${detail}`).join("|");
   if (list.dataset.key === key) {
     return;
   }
   list.dataset.key = key;
-  // An effect that ended forgets its length, so the next pickup's ring starts full.
-  for (const kind of effectLongest.keys()) {
-    if (!effects.some((effect) => effect.kind === kind)) {
-      effectLongest.delete(kind);
-    }
-  }
   list.replaceChildren(
-    ...effects.flatMap(({ kind, name, detail }, index) => {
+    ...effects.flatMap(({ kind, name, detail, share }, index) => {
       const chip = document.createElement("span");
       chip.className = "effect";
       chip.dataset.kind = kind;
-      const share = effectShare(effectLongest, kind, effectSeconds(tank, kind));
       chip.style.setProperty("--left", share.toFixed(3));
       const ring = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       ring.setAttribute("class", "effect-ring");
@@ -488,12 +261,12 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
   // The panel updates every few frames: attributes are written only when they change,
   // since every write, even of the same value, invalidates the panel's style.
   setAttributeIfChanged(rank, "data-rank", String(tank.rank));
-  setAttributeIfChanged(rank, "title", rankTitle(tank));
+  setAttributeIfChanged(rank, "title", tank.rankTitle);
   setText(root, "hp-max", `/ ${Math.round(tank.maxHp)}`);
   // The bar's colour follows the hull's state, not the team: a full hull never reads as
   // danger.
   const width = `${tank.healthRatio * 100}%`;
-  const tone = hullTone(tank.healthRatio);
+  const tone = tank.hullTone;
   for (const bar of root.querySelectorAll<HTMLElement>(".hull-bar")) {
     if (bar.dataset.tone !== tone) {
       bar.dataset.tone = tone;
@@ -510,7 +283,7 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
     }
   }
   // Every hull readout under `root` takes the ramp's colour from one property.
-  const ramp = hullColor(tank.healthRatio);
+  const ramp = cssColor(tank.hullRamp);
   if (root instanceof HTMLElement && root.style.getPropertyValue("--hull-ramp") !== ramp) {
     root.style.setProperty("--hull-ramp", ramp);
   }
@@ -538,7 +311,7 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
     }
   });
   showMine(root, tank.mineCooldown);
-  showEffects(root, tank);
+  showEffects(root, tank.effects);
   root
     .querySelector(".status")!
     .classList.toggle("critical-health", tank.alive && tank.healthRatio < 0.25);
@@ -564,27 +337,4 @@ function showMine(root: ParentNode, cooldown: number): void {
   if (dial && dial.style.getPropertyValue("--armed") !== value) {
     dial.style.setProperty("--armed", value);
   }
-}
-
-/** The active effects as one line of text, for screen readers and logs. */
-export function effectsLabel(
-  tank: Pick<
-    HumanState,
-    "protection" | "shield" | "shieldPoints" | "rapid" | "speed" | "laser" | "selfRepair"
-  >,
-): string {
-  return activeEffects(tank)
-    .map(({ kind, name, detail }) => `${EFFECT_MARKS[kind]}${name}${detail ? " " + detail : ""}`)
-    .join("  ");
-}
-
-export function rankTitle(
-  tank: Pick<
-    HumanState,
-    "rank" | "rankDamage" | "rankFireRate" | "rankHealth" | "rankRepair" | "repairDelay"
-  >,
-): string {
-  return tank.rank === 0
-    ? "Earn XP from enemy hull damage and kills. Ranks reset on respawn."
-    : `+${Math.round((tank.rankDamage - 1) * 100)}% damage · +${Math.round((tank.rankFireRate - 1) * 100)}% fire rate · +${Math.round((tank.rankHealth - 1) * 100)}% hull${tank.rankRepair ? ` · repairs ${tank.rankRepair * 100}% hull/s after ${tank.repairDelay}s out of combat` : ""}`;
 }

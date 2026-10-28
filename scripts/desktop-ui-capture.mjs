@@ -227,6 +227,7 @@ try {
           ownKill: entry.ownKill,
           ownDeath: entry.ownDeath,
           cause: entry.cause,
+          icon: entry.icon,
           sides: [entry.killerTeam, entry.victimTeam].map((side) =>
             side === 0 ? "blue" : side === 1 ? "red" : "neutral",
           ),
@@ -239,7 +240,10 @@ try {
         }
         ui.hurtFlashTime = fixture.hitFlash === null ? 0 : 0.6 - fixture.hitFlash;
         if (fixture.damageRing) {
-          ui.event({ type: "hurt", id: state.human.id, damageAngle: fixture.damageRing[0] }, state);
+          ui.event(
+            { type: "hurt", id: state.human.id, own: true, damageAngle: fixture.damageRing[0] },
+            state,
+          );
           ui.damageTime = 1.2 - fixture.damageRing[1];
           ui.hurtFlashTime = fixture.hitFlash === null ? 0 : 0.6 - fixture.hitFlash;
         }

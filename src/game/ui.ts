@@ -2,15 +2,9 @@ import { bindPress } from "./button-input";
 import { AMMO_OPTIONS, type AmmoWeapon } from "./ammo-options";
 import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-options";
 import { bindPlayModes, initialPlayMode } from "./play-modes";
-import type { EngineEvent, HudState } from "./engine-api";
+import type { DeathReport, EngineEvent, HudState } from "./engine-api";
 import {
-  type DeathReport,
   type FeedRow,
-  deathCause,
-  deathReport,
-  isOwnKill,
-  killFeedNames,
-  killFeedSides,
   newFeedRow,
   placeDamageRing,
   setText,
@@ -28,6 +22,9 @@ import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 export const MENU_READY_STATUS = "Arena ready";
 /** Seconds the red screen-edge flash fades over after the player's hull is hit. */
 const HURT_FLASH_TIME = 0.6;
+/** Seconds a pickup's toast shows, and a promotion's or the player's death's. */
+const PICKUP_TOAST_TIME = 1.5;
+const TOAST_TIME = 2;
 /** Below this share of its hull the tank's HUD warns, like the status panel's pulse. */
 const CRITICAL_HEALTH = 0.25;
 
@@ -317,15 +314,15 @@ export class UI {
   refresh(): void {
     this.lastPhase = "";
   }
-  /** One drained engine event; `state` names the tanks it mentions. */
+  /** One drained engine event, with the feedback the engine attached; `state` is the
+   * latest HUD. */
   event(event: EngineEvent, state: HudState): void {
     this.syncRound(state.match.round);
-    const human = state.human;
-    if (event.id === human.id) {
+    if (event.own) {
       if (event.type === "hurt") {
         this.hurtFlashTime = HURT_FLASH_TIME;
       }
-      if (event.type === "notice" && human.alive) {
+      if (event.type === "notice" && state.human.alive) {
         this.hud.querySelector("#ammo-notice")!.textContent = event.label ?? "";
         this.ammoNoticeTime = 3;
       }
@@ -336,9 +333,9 @@ export class UI {
           this.damageTime = 1.2;
         }
       }
-      if (event.type === "death") {
-        this.deathCause = deathCause(event, state.scoreboard);
-        this.deathReport = deathReport(event, state.scoreboard);
+      if (event.deathReport) {
+        this.deathCause = event.deathReport.sentence;
+        this.deathReport = event.deathReport;
         this.respawnTotal = 0;
         this.hud.querySelector("#ammo-notice")!.textContent = "";
       }
@@ -347,34 +344,27 @@ export class UI {
         this.deathReport = null;
         this.damageTime = 0;
       }
-      if (event.type === "pickup" || event.type === "promotion" || event.type === "death") {
-        // A fresh element pops in from the start, also over a toast still showing;
-        // restarting the old one's entrance would need a forced style and layout pass.
-        const toast = this.toast.cloneNode(false) as HTMLElement;
-        toast.textContent = event.type === "death" ? this.deathCause : (event.label ?? "");
-        toast.dataset.tone = event.type;
-        toast.classList.add("visible");
-        this.toast.replaceWith(toast);
-        this.toast = toast;
-        this.toastTime = event.type === "pickup" ? 1.5 : 2;
-      }
     }
-    if (event.type === "death") {
-      const names = killFeedNames(event, human.id, state.scoreboard);
-      const ownKill = isOwnKill(event, human.id);
-      this.feedRows.unshift(
-        newFeedRow(names, ownKill, {
-          cause: event.damageSource?.cause,
-          sides: killFeedSides(event),
-          ownDeath: event.id === human.id,
-        }),
-      );
+    if (event.toast) {
+      // A fresh element pops in from the start, also over a toast still showing;
+      // restarting the old one's entrance would need a forced style and layout pass.
+      const toast = this.toast.cloneNode(false) as HTMLElement;
+      toast.textContent = event.toast.text;
+      toast.dataset.tone = event.toast.tone;
+      toast.classList.add("visible");
+      this.toast.replaceWith(toast);
+      this.toast = toast;
+      this.toastTime = event.toast.tone === "pickup" ? PICKUP_TOAST_TIME : TOAST_TIME;
+    }
+    if (event.feed) {
+      const { names, ownKill, ...details } = event.feed;
+      this.feedRows.unshift(newFeedRow(names, ownKill, details));
     }
   }
   update(state: HudState, dt: number): void {
     this.state = state;
     const tank = state.human;
-    const { match, elapsed } = state;
+    const { match } = state;
     const dead = !tank.alive;
     this.syncRound(match.round);
     if (match.phase === "playing") {
@@ -445,17 +435,13 @@ export class UI {
     if ((this.hud.dataset.team ?? "") !== side) {
       this.hud.dataset.team = side;
     }
-    scoreboard.classList.toggle("overtime", !state.endlessMatch && match.overtime);
+    const pill = state.scorePill;
+    scoreboard.classList.toggle("overtime", pill.clockLabel !== null);
     // A phone's score pill has room for the goal alone; its pause menu adds the rule.
-    const soloObjective = isPhone() ? "SURVIVE" : "SURVIVE · ONE LIFE";
-    set(
-      "objective",
-      solo ? soloObjective : state.endlessMatch ? "ENDLESS STRESS" : `FIRST TO ${state.scoreLimit}`,
-    );
+    set("objective", solo && isPhone() ? "SURVIVE" : (pill.objective ?? ""));
     set("score0", String(solo ? tank.kills : match.scores[0]));
     set("score1", String(match.scores[1]));
-    const sec = state.endlessMatch ? Math.floor(elapsed) : Math.ceil(match.time);
-    set("time", !state.endlessMatch && match.overtime ? "NEXT KILL" : duration(sec));
+    set("time", pill.clockLabel ?? duration(pill.seconds));
     showTankStatus(this.hud, tank, dead || match.phase !== "playing");
     set("respawn-count", String(Math.ceil(tank.respawn)));
     if (dead) {
