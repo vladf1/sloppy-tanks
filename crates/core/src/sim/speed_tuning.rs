@@ -3,8 +3,9 @@
 use super::simulation::Simulation;
 use super::tank_lifecycle::soft_ccd_prediction;
 
-const MIN_SCALE: f64 = 0.5;
-const MAX_SCALE: f64 = 2.0;
+/// The range of a speed scale, which the Settings sliders offer.
+pub const MIN_SPEED_SCALE: f64 = 0.5;
+pub const MAX_SPEED_SCALE: f64 = 2.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SpeedSetting {
@@ -17,7 +18,7 @@ pub fn tune_speed(simulation: &mut Simulation, key: SpeedSetting, value: f64) ->
     let scale = if simulation.multiplayer() {
         1.0
     } else if value.is_finite() {
-        MIN_SCALE.max(MAX_SCALE.min(value))
+        MIN_SPEED_SCALE.max(MAX_SPEED_SCALE.min(value))
     } else {
         1.0
     };

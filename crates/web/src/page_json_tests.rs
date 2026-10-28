@@ -23,9 +23,7 @@ use sloppy_core::sim::{Match, MatchPhase, SimEvent, Simulation, SimulationSetup,
 use crate::events::{PendingEvent, drain_events};
 use crate::hud::{room_hud, simulation_hud};
 use crate::recap::round_recap;
-use crate::room_notices::{
-    arena_failed_notice, baseline_shown_notice, page_notice, prepare_notice,
-};
+use crate::room_notices::RoomNotice;
 
 const FIXTURE: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/page-json.json");
 const SEED: f64 = 20261028.0;
@@ -181,16 +179,15 @@ fn notices() -> Value {
         },
         ClientNotice::ShowBaseline { baseline: 7 },
     ];
-    let mut values: Vec<Value> = notices
-        .iter()
-        .filter_map(|notice| page_notice(notice, "p1"))
-        .collect();
-    values.extend([
-        prepare_notice(),
-        arena_failed_notice("No adapter"),
-        baseline_shown_notice(),
-    ]);
-    Value::Array(values)
+    let notices = notices
+        .into_iter()
+        .filter_map(|notice| RoomNotice::from_client(notice, "p1"))
+        .chain([
+            RoomNotice::Prepare,
+            RoomNotice::ArenaFailed("No adapter".into()),
+            RoomNotice::BaselineShown,
+        ]);
+    Value::Array(notices.map(|notice| notice.to_value()).collect())
 }
 
 fn actions() -> Vec<ClientAction> {
@@ -222,8 +219,11 @@ fn page_json() -> BTreeMap<&'static str, String> {
         drain_events(&mut events, (12.5, -3.25), (0.6, -0.8)),
     );
     let mut tank = RenderTank::default();
-    let hud = serde_json::to_string(&simulation_hud(&sim, &mut tank, None)).unwrap();
-    texts.insert("hud", hud);
+    let hud = simulation_hud(&sim, &mut tank, None);
+    let text = serde_json::to_string(&hud).unwrap();
+    // A copy the desktop keeps between reads reads the same.
+    assert_eq!(serde_json::to_string(&hud.into_owned()).unwrap(), text);
+    texts.insert("hud", text);
     let state = sim.render_state(None);
     let room = serde_json::to_string(&room_hud(&state).unwrap()).unwrap();
     texts.insert("roomHud", room);
@@ -231,8 +231,10 @@ fn page_json() -> BTreeMap<&'static str, String> {
     end_battle(&mut sim.match_state);
     let mut storage = SavedBests(r#"{"kills":9,"damage":250,"bestLife":2,"rank":"high"}"#);
     let recap = round_recap(&sim, &mut storage);
-    let results = serde_json::to_string(&simulation_hud(&sim, &mut tank, Some(&recap))).unwrap();
-    texts.insert("resultsHud", results);
+    let hud = simulation_hud(&sim, &mut tank, Some(&recap));
+    let text = serde_json::to_string(&hud).unwrap();
+    assert_eq!(serde_json::to_string(&hud.into_owned()).unwrap(), text);
+    texts.insert("resultsHud", text);
 
     texts.insert("actions", serde_json::to_string(&actions()).unwrap());
     texts.insert("notices", notices().to_string());

@@ -4,22 +4,40 @@ use serde::Serialize;
 use sloppy_core::sim::{SimEvent, Vec2};
 
 /// A simulation cue with the viewer-relative feedback the page needs.
-#[derive(Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct PendingEvent {
     #[serde(flatten)]
     pub event: SimEvent,
+    /// The viewer's shot hurt or destroyed an enemy (the hit tick).
     pub player_hit: bool,
+    /// The event happened to the viewer's tank.
     pub own: bool,
+    /// The clockwise screen angle (radians) of damage the viewer took.
     pub damage_angle: Option<f64>,
 }
 
-#[derive(Serialize)]
+/// The events waiting since the last drain, with where the viewer listens from.
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
-struct EventBatch<'a> {
-    listener: Vec2,
-    listener_right: Vec2,
-    events: &'a [PendingEvent],
+pub struct EventBatch {
+    pub listener: Vec2,
+    /// World X/Z of screen right, which pans the sounds.
+    pub listener_right: Vec2,
+    pub events: Vec<PendingEvent>,
+}
+
+/// The waiting events as a batch heard from `listener`; the queue starts again empty.
+pub fn take_events(
+    events: &mut Vec<PendingEvent>,
+    listener: (f64, f64),
+    listener_right: (f64, f64),
+) -> EventBatch {
+    EventBatch {
+        listener: Vec2::new(listener.0, listener.1),
+        listener_right: Vec2::new(listener_right.0, listener_right.1),
+        events: std::mem::take(events),
+    }
 }
 
 /// Write directly to JSON without copying events into intermediate object maps. The
@@ -29,12 +47,9 @@ pub fn drain_events(
     listener: (f64, f64),
     listener_right: (f64, f64),
 ) -> String {
-    let text = serde_json::to_string(&EventBatch {
-        listener: Vec2::new(listener.0, listener.1),
-        listener_right: Vec2::new(listener_right.0, listener_right.1),
-        events,
-    })
-    .expect("page events serialize");
+    let batch = take_events(events, listener, listener_right);
+    let text = serde_json::to_string(&batch).expect("page events serialize");
+    *events = batch.events;
     events.clear();
     text
 }

@@ -11,12 +11,10 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use futures_util::{SinkExt, StreamExt};
+use sloppy_core::net::client::MAX_BUFFERED_BYTES;
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_tungstenite::tungstenite::{Message, Utf8Bytes};
 
-/// A socket this far behind on sends is closed and reconnected instead
-/// (`MAX_BUFFERED_BYTES`, the page's `bufferedAmount` limit).
-pub const MAX_BUFFERED_BYTES: usize = 16_384;
 /// Connecting and the opening handshake give up after this long.
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 /// A close this side started waits this long for the server's close frame.

@@ -18,6 +18,7 @@ mod difficulty;
 mod dodger_first;
 mod driving;
 mod game;
+mod game_options;
 mod hit_registration;
 mod house_destruction;
 mod humvee;

@@ -58,6 +58,18 @@ pub enum GameMode {
     Solo,
 }
 
+impl GameMode {
+    pub const ALL: [GameMode; 2] = [GameMode::Team, GameMode::Solo];
+
+    /// The serialized name.
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            GameMode::Team => "team",
+            GameMode::Solo => "solo",
+        }
+    }
+}
+
 /// Playtest speed scales; multiplayer always uses 1.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 pub struct SpeedTuning {

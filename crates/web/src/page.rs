@@ -25,8 +25,37 @@ use crate::frame_clock::{FramePacing, FrameTimes};
 pub const HUD_UPDATE_EVERY_FRAMES: u64 = 4;
 /// Events waiting for `drain_events`; a hidden HUD must not grow this without bound.
 const MAX_PENDING_EVENTS: usize = 2048;
-/// `prepare_step`'s result when nothing is left to prepare.
-pub const PREPARED: [f64; 5] = [0.0, 0.0, 0.0, 1.0, 0.0];
+/// Preparation's status when nothing is left to prepare.
+pub const PREPARED: PrepareStatus = PrepareStatus {
+    compiled: 0,
+    remaining: 0,
+    textures_pending: 0,
+    gpu_pending: false,
+    ready: true,
+};
+
+/// The view the player chose, which the page saves after a camera input.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraPreferences {
+    pub first_person: bool,
+    /// The overhead zoom, clamped to the camera's range.
+    pub zoom: f64,
+}
+
+impl CameraPreferences {
+    pub fn of(rig: &CameraRig) -> Self {
+        let [first_person, zoom] = rig.preferences();
+        Self {
+            first_person: first_person == 1.0,
+            zoom,
+        }
+    }
+
+    /// `camera_preferences`' `[firstPerson, zoom]`.
+    pub fn to_vec(self) -> Vec<f64> {
+        vec![f64::from(u8::from(self.first_person)), self.zoom]
+    }
+}
 
 /// What a failed call rejects with: a JS `Error` on the page, its message natively.
 #[cfg(target_arch = "wasm32")]
@@ -190,6 +219,11 @@ impl Graphics {
         self.controller.round_started();
     }
 
+    /// The GPU's frame time in milliseconds, smoothed over recent samples, once sampled.
+    pub fn gpu_ms(&self) -> Option<f64> {
+        self.gpu_ms
+    }
+
     /// Stats for nerds' `quality` rows: the setting, tier, render scale, the scene's
     /// size and the recent changes.
     pub fn stats(&self, renderer: &Renderer, pixel_ratio: f64) -> Value {
@@ -238,22 +272,22 @@ fn multisampled(device: &str, setting: &str) -> bool {
 /// framesInFlight? }`. `framesInFlight` runs frames only while fewer are on the GPU,
 /// for browsers that queue a WebGPU canvas's frames without holding animation frames
 /// back ([`FramePacing`]; 0, the default, leaves the pacing to the browser).
-#[derive(Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct ViewConfig {
-    seed: Option<f64>,
-    asset_base: String,
-    css_width: Option<f64>,
-    css_height: Option<f64>,
-    pixel_ratio: Option<f64>,
-    first_person: bool,
-    zoom: Option<f64>,
-    hide_reticle: bool,
+pub struct ViewConfig {
+    pub seed: Option<f64>,
+    pub asset_base: String,
+    pub css_width: Option<f64>,
+    pub css_height: Option<f64>,
+    pub pixel_ratio: Option<f64>,
+    pub first_person: bool,
+    pub zoom: Option<f64>,
+    pub hide_reticle: bool,
     /// The saved Graphics setting; Auto when absent.
-    graphics: String,
+    pub graphics: String,
     /// "desktop", "tablet" or "phone" (`src/game/graphics.ts`).
-    device: String,
-    frames_in_flight: u32,
+    pub device: String,
+    pub frames_in_flight: u32,
 }
 
 /// What [`create_view`] sets up for a game type.
@@ -268,10 +302,9 @@ pub struct PageView {
 }
 
 /// The renderer on `canvas` and its presentation with the saved camera preferences, the
-/// canvas size to apply, the graphics quality, the seed (random when `config_json` has
-/// none) and the frame pacing. Rejects when the renderer cannot start.
-pub async fn create_view(canvas: RenderTarget, config_json: &str) -> Result<PageView, PageError> {
-    let config: ViewConfig = parse(config_json)?;
+/// canvas size to apply, the graphics quality, the seed (random when `config` has none)
+/// and the frame pacing. Rejects when the renderer cannot start.
+pub async fn create_view(canvas: RenderTarget, config: ViewConfig) -> Result<PageView, PageError> {
     let seed = config.seed.unwrap_or_else(|| (random() * 1e9).floor());
     #[cfg(target_arch = "wasm32")]
     let client = (canvas.client_width(), canvas.client_height());

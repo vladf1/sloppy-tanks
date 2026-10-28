@@ -39,11 +39,13 @@ mod stats;
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 pub use effects_lab::EffectsLab;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
-pub use game::{Game, frame_slot};
+pub use game::{Game, GameConfig, frame_slot};
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 pub use lab::RenderLab;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
-pub use net_game::{NetGame, net_frame_slot};
+pub use net_game::{NetConfig, NetGame, net_frame_slot};
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
+pub use page::{CameraPreferences, ViewConfig};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
 pub use page::{PageError, clock_start};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
