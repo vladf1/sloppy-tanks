@@ -17,12 +17,12 @@ use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon_for, has_ammo_for
 use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES, vehicle};
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
+use sloppy_core::sim::match_state::new_match;
 use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
 use sloppy_core::sim::{
-    AmmoInventory, GameMode, Match, MatchPhase, RenderState, Simulation, Tank, Team, VehicleKind,
-    Weapon,
+    AmmoInventory, GameMode, Match, RenderState, Simulation, Tank, Team, VehicleKind, Weapon,
 };
 use sloppy_render::presentation::hud::{HealthColor, health_bar_state};
 
@@ -57,15 +57,7 @@ pub struct Hud<'a> {
 impl Default for Hud<'_> {
     /// A team battle of the village before its first round, with an empty scoreboard.
     fn default() -> Self {
-        let match_state = Match {
-            phase: MatchPhase::Ready,
-            time: 0.0,
-            scores: [0, 0],
-            overtime: false,
-            ended_early: None,
-            winner: None,
-            round: 0,
-        };
+        let match_state = new_match(0);
         Hud {
             score_pill: ScorePill::local(&match_state, GameMode::Team, false, 0.0, SCORE_LIMIT),
             match_state,
@@ -173,7 +165,8 @@ pub fn room_hud<'a>(state: &'a RenderState, timers: &mut EffectTimers) -> Option
     })
 }
 
-fn hud_ammo(
+/// The ammo rack's slots for a `kind` of tank carrying `ammo`, with `equipped` selected.
+pub fn hud_ammo(
     kind: VehicleKind,
     ammo: &AmmoInventory,
     equipped: Weapon,
@@ -280,12 +273,8 @@ impl Scoreboard<'_> {
                 kind: tank.kind,
             }))
             .chain(kept.iter().map(|row| HudScore {
-                id: row.id,
                 name: Cow::Borrowed(&row.name),
-                kills: row.kills,
-                deaths: row.deaths,
-                team: row.team,
-                kind: row.kind,
+                ..*row
             }))
     }
 
@@ -698,30 +687,16 @@ impl ScorePill {
         }
     }
 
-    /// What the clock says.
-    pub fn clock(self) -> PillClock {
-        PillClock(self)
-    }
-}
-
-/// The score pill's clock as it reads: [`NEXT_KILL`] in overtime, the time as m:ss
-/// otherwise, written straight into the HUD's text.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PillClock(ScorePill);
-
-impl fmt::Display for PillClock {
-    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
-        if self.0.overtime {
-            formatter.write_str(NEXT_KILL)
-        } else {
-            write!(formatter, "{}", duration(self.0.seconds))
-        }
-    }
-}
-
-impl Serialize for PillClock {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.collect_str(self)
+    /// What the clock says: [`NEXT_KILL`] in overtime, the time as m:ss otherwise,
+    /// written straight into the HUD's text.
+    pub fn clock(self) -> impl fmt::Display {
+        fmt::from_fn(move |formatter| {
+            if self.overtime {
+                formatter.write_str(NEXT_KILL)
+            } else {
+                write!(formatter, "{}", duration(self.seconds))
+            }
+        })
     }
 }
 
@@ -731,7 +706,7 @@ impl Serialize for ScorePill {
         let mut pill = serializer.serialize_struct("ScorePill", 3)?;
         pill.serialize_field("objective", &self.objective)?;
         pill.serialize_field("overtime", &self.overtime)?;
-        pill.serialize_field("clock", &self.clock())?;
+        pill.serialize_field("clock", &format_args!("{}", self.clock()))?;
         pill.end()
     }
 }

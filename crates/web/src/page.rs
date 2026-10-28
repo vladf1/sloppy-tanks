@@ -53,11 +53,6 @@ impl CameraPreferences {
             zoom,
         }
     }
-
-    /// `camera_preferences`' `[firstPerson, zoom]`.
-    pub fn to_vec(self) -> Vec<f64> {
-        vec![f64::from(u8::from(self.first_person)), self.zoom]
-    }
 }
 
 /// What a failed call rejects with: a JS `Error` on the page, its message natively.

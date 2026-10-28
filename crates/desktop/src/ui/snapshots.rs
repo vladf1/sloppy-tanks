@@ -10,18 +10,19 @@ use egui_wgpu::ScreenDescriptor;
 use serde_json::json;
 use sloppy_core::net::protocol::RoomPhase;
 use sloppy_core::net::room_list::HostedRoom;
-use sloppy_core::sim::ammunition::AMMO_ORDER;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::round_recap::{Feat, Metric, RecapStats};
-use sloppy_core::sim::{DamageCause, GameMode, MatchPhase, Team, VehicleKind, Weapon};
+use sloppy_core::sim::{
+    AmmoInventory, DamageCause, GameMode, MatchPhase, Team, VehicleKind, Weapon,
+};
 use sloppy_render::presentation::hud::health_bar_state;
 use sloppy_render::wgpu;
 use sloppy_web::Shell;
 use sloppy_web::battle_report::{battle_report, pause_report};
 use sloppy_web::feedback::cause_icon;
 use sloppy_web::hud::{
-    EffectTimers, Hud, HudAmmo, HudHuman, HudScore, HullTone, Loading, ScorePill, Scoreboard,
+    EffectTimers, Hud, HudHuman, HudScore, HullTone, Loading, ScorePill, Scoreboard, hud_ammo,
     hull_ramp, rank_title,
 };
 use sloppy_web::nerd_rows::{
@@ -67,23 +68,12 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
         })
         .collect();
     let results = phase == MatchPhase::Results;
-    let mut ammo = AMMO_ORDER.map(|weapon| HudAmmo {
-        weapon,
-        count: weapon.special().map(|_| 0.0),
-        selected: false,
-        available: weapon == Weapon::Standard,
-    });
-    ammo[1] = HudAmmo {
-        count: Some(6.0),
-        available: true,
-        ..ammo[1]
+    let carried = AmmoInventory {
+        spread: 6.0,
+        rocket: 3.0,
+        ..AmmoInventory::default()
     };
-    ammo[2] = HudAmmo {
-        count: Some(3.0),
-        selected: true,
-        available: true,
-        ..ammo[2]
-    };
+    let ammo = hud_ammo(VehicleKind::Balanced, &carried, Weapon::Rocket);
     let mut hud = Hud {
         elapsed: 312.0,
         game_mode: if solo { GameMode::Solo } else { GameMode::Team },
@@ -174,37 +164,22 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
 }
 
 fn feedback(state: &mut UiState) {
+    // The viewer's kill, another tank's, and a drum's that nobody owns.
+    let line = |killer: &str, victim: &str, teams: [Option<Team>; 2], cause, age| KillFeedEntry {
+        killer: killer.into(),
+        victim: victim.into(),
+        killer_team: teams[0],
+        victim_team: teams[1],
+        cause: Some(cause),
+        own_kill: killer == "YOU",
+        own_death: false,
+        age,
+    };
+    let (blue, red) = (Some(Team::Blue), Some(Team::Red));
     state.kill_feed = vec![
-        KillFeedEntry {
-            killer: "YOU".into(),
-            victim: "Tusk".into(),
-            killer_team: Some(Team::Blue),
-            victim_team: Some(Team::Red),
-            cause: Some(DamageCause::Rocket),
-            own_kill: true,
-            own_death: false,
-            age: 0.8,
-        },
-        KillFeedEntry {
-            killer: "Crank".into(),
-            victim: "Dozer".into(),
-            killer_team: Some(Team::Red),
-            victim_team: Some(Team::Blue),
-            cause: Some(DamageCause::Standard),
-            own_kill: false,
-            own_death: false,
-            age: 2.0,
-        },
-        KillFeedEntry {
-            killer: "YARD".into(),
-            victim: "Biscuit".into(),
-            killer_team: None,
-            victim_team: Some(Team::Red),
-            cause: Some(DamageCause::Drum),
-            own_kill: false,
-            own_death: false,
-            age: 3.0,
-        },
+        line("YOU", "Tusk", [blue, red], DamageCause::Rocket, 0.8),
+        line("Crank", "Dozer", [red, blue], DamageCause::Standard, 2.0),
+        line("YARD", "Biscuit", [None, red], DamageCause::Drum, 3.0),
     ];
     state.toast = Some(Toast {
         text: "+3 ROCKETS".into(),
@@ -293,35 +268,32 @@ struct Scenario {
     state: UiState,
 }
 
+/// A screen in `phase` with [`hud`]'s HUD for it, in a round unless Battle Setup shows.
+fn screen(name: &'static str, phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Scenario {
+    Scenario {
+        name,
+        in_round: phase != MatchPhase::Ready,
+        phase,
+        state: UiState {
+            hud: Some(hud(phase, solo, alive, ratio)),
+            ..UiState::default()
+        },
+    }
+}
+
 fn scenarios() -> Vec<Scenario> {
     let mut list = Vec::new();
     let loading = Loading::Shaders {
         loaded: 31,
         total: 40,
     };
-    let mut setup = UiState {
-        hud: Some(hud(MatchPhase::Ready, false, true, 1.0)),
-        status: loading.to_string(),
-        progress: loading.progress(),
-        ..UiState::default()
-    };
-    setup.ready = false;
-    list.push(Scenario {
-        name: "battle-setup",
-        in_round: false,
-        phase: MatchPhase::Ready,
-        state: setup,
-    });
-    list.push(Scenario {
-        name: "battle-setup-ready",
-        in_round: false,
-        phase: MatchPhase::Ready,
-        state: UiState {
-            hud: Some(hud(MatchPhase::Ready, false, true, 1.0)),
-            ready: true,
-            ..UiState::default()
-        },
-    });
+    let mut setup = screen("battle-setup", MatchPhase::Ready, false, true, 1.0);
+    setup.state.status = loading.to_string();
+    setup.state.progress = loading.progress();
+    list.push(setup);
+    let mut setup_ready = screen("battle-setup-ready", MatchPhase::Ready, false, true, 1.0);
+    setup_ready.state.ready = true;
+    list.push(setup_ready);
     let room = |code: &str, map: MapId, players: u32, reserved: u32, phase: RoomPhase| HostedRoom {
         room: code.into(),
         content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
@@ -348,49 +320,31 @@ fn scenarios() -> Vec<Scenario> {
             ],
         ),
     ] {
-        list.push(Scenario {
-            name,
-            in_round: false,
-            phase: MatchPhase::Ready,
-            state: UiState {
-                hud: Some(hud(MatchPhase::Ready, false, true, 1.0)),
-                ready: true,
-                rooms: super::rooms::answered(rooms),
-                ..UiState::default()
-            },
-        });
+        let mut multiplayer = screen(name, MatchPhase::Ready, false, true, 1.0);
+        multiplayer.state.ready = true;
+        multiplayer.state.rooms = super::rooms::answered(rooms);
+        list.push(multiplayer);
     }
-    let mut playing = UiState {
-        hud: Some(hud(MatchPhase::Playing, false, true, 0.48)),
-        ..UiState::default()
-    };
-    feedback(&mut playing);
-    list.push(Scenario {
-        name: "hud",
-        in_round: true,
-        phase: MatchPhase::Playing,
-        state: playing,
-    });
-    let mut critical = UiState {
-        hud: Some(hud(MatchPhase::Playing, true, true, 0.18)),
-        ..UiState::default()
-    };
-    feedback(&mut critical);
-    critical.cockpit = true;
-    critical.hull_angle = 0.6;
-    critical.hit_flash = Some(0.1);
-    critical.toast = None;
-    list.push(Scenario {
-        name: "hud-solo-first-person-critical",
-        in_round: true,
-        phase: MatchPhase::Playing,
-        state: critical,
-    });
-    let mut dead = UiState {
-        hud: Some(hud(MatchPhase::Playing, false, false, 0.0)),
-        ..UiState::default()
-    };
-    feedback(&mut dead);
+    let mut playing = screen("hud", MatchPhase::Playing, false, true, 0.48);
+    feedback(&mut playing.state);
+    list.push(playing);
+    let mut critical = screen(
+        "hud-solo-first-person-critical",
+        MatchPhase::Playing,
+        true,
+        true,
+        0.18,
+    );
+    let state = &mut critical.state;
+    feedback(state);
+    state.cockpit = true;
+    state.hull_angle = 0.6;
+    state.hit_flash = Some(0.1);
+    state.toast = None;
+    list.push(critical);
+    let mut respawn = screen("respawn", MatchPhase::Playing, false, false, 0.0);
+    let dead = &mut respawn.state;
+    feedback(dead);
     dead.respawn_total = 4.0;
     dead.toast = None;
     dead.death = Some(DeathReport {
@@ -405,93 +359,35 @@ fn scenarios() -> Vec<Scenario> {
         killer_tally: Some("Their 3rd kill".into()),
         sentence: "Crank destroyed you with a rocket blast.".into(),
     });
-    list.push(Scenario {
-        name: "respawn",
-        in_round: true,
-        phase: MatchPhase::Playing,
-        state: dead,
-    });
-    list.push(Scenario {
-        name: "pause",
-        in_round: true,
-        phase: MatchPhase::Paused,
-        state: UiState {
-            hud: Some(hud(MatchPhase::Paused, false, true, 0.7)),
-            ..UiState::default()
-        },
-    });
-    list.push(Scenario {
-        name: "pause-controls",
-        in_round: true,
-        phase: MatchPhase::Paused,
-        state: UiState {
-            hud: Some(hud(MatchPhase::Paused, false, true, 0.7)),
-            pause_tab: PauseTab::Controls,
-            ..UiState::default()
-        },
-    });
-    list.push(Scenario {
-        name: "settings",
-        in_round: true,
-        phase: MatchPhase::Paused,
-        state: UiState {
-            hud: Some(hud(MatchPhase::Paused, false, true, 0.7)),
-            settings_draft: Some(Preferences::default()),
-            ..UiState::default()
-        },
-    });
-    list.push(Scenario {
-        name: "results-team",
-        in_round: true,
-        phase: MatchPhase::Results,
-        state: UiState {
-            hud: Some(hud(MatchPhase::Results, false, true, 0.7)),
-            ..UiState::default()
-        },
-    });
-    list.push(Scenario {
-        name: "results-solo",
-        in_round: true,
-        phase: MatchPhase::Results,
-        state: UiState {
-            hud: Some(hud(MatchPhase::Results, true, false, 0.0)),
-            ..UiState::default()
-        },
-    });
+    list.push(respawn);
+    list.push(screen("pause", MatchPhase::Paused, false, true, 0.7));
+    let mut controls = screen("pause-controls", MatchPhase::Paused, false, true, 0.7);
+    controls.state.pause_tab = PauseTab::Controls;
+    list.push(controls);
+    let mut settings = screen("settings", MatchPhase::Paused, false, true, 0.7);
+    settings.state.settings_draft = Some(Preferences::default());
+    list.push(settings);
+    let team_results = screen("results-team", MatchPhase::Results, false, true, 0.7);
+    let solo_results = screen("results-solo", MatchPhase::Results, true, false, 0.0);
+    list.extend([team_results, solo_results]);
     let (game_readings, room_readings) = nerd_readings();
     let game_stats: GameStats =
         serde_json::from_value(game_readings).expect("single player's readings");
-    let mut nerd = UiState {
-        hud: Some(hud(MatchPhase::Playing, false, true, 0.9)),
-        show_nerd_stats: true,
-        stats: Some(game_sections(&game_stats, Shell::Desktop)),
-        ..UiState::default()
-    };
-    nerd.hull_ghost = 0.9;
-    list.push(Scenario {
-        name: "hud-nerd-stats",
-        in_round: true,
-        phase: MatchPhase::Playing,
-        state: nerd,
-    });
     let room_stats: RoomStats = serde_json::from_value(room_readings).expect("a room's readings");
-    let mut room_nerd = UiState {
-        hud: Some(hud(MatchPhase::Playing, false, true, 0.9)),
-        show_nerd_stats: true,
-        stats: Some(room_sections(
-            &room_stats,
-            room_rates(&room_stats),
-            Shell::Desktop,
-        )),
-        ..UiState::default()
-    };
-    room_nerd.hull_ghost = 0.9;
-    list.push(Scenario {
-        name: "room-nerd-stats",
-        in_round: true,
-        phase: MatchPhase::Playing,
-        state: room_nerd,
-    });
+    let rates = room_rates(&room_stats);
+    for (name, sections) in [
+        ("hud-nerd-stats", game_sections(&game_stats, Shell::Desktop)),
+        (
+            "room-nerd-stats",
+            room_sections(&room_stats, rates, Shell::Desktop),
+        ),
+    ] {
+        let mut nerd = screen(name, MatchPhase::Playing, false, true, 0.9);
+        nerd.state.show_nerd_stats = true;
+        nerd.state.stats = Some(sections);
+        nerd.state.hull_ghost = 0.9;
+        list.push(nerd);
+    }
     for name in [
         "room-lobby",
         "room-lobby-guest",
@@ -508,21 +404,11 @@ fn scenarios() -> Vec<Scenario> {
     ] {
         let menu = super::room_menu::snapshot_menu(name);
         let phase = super::room_menu::hud_phase(&menu);
-        list.push(Scenario {
-            name,
-            in_round: menu.in_battle(),
-            phase,
-            state: UiState {
-                hud: Some(hud(
-                    phase,
-                    false,
-                    name != "room-respawn",
-                    if name == "room-respawn" { 0.0 } else { 0.7 },
-                )),
-                settings_draft: (name == "room-settings").then(Preferences::default),
-                ..UiState::default()
-            },
-        });
+        let dead = name == "room-respawn";
+        let mut room = screen(name, phase, false, !dead, if dead { 0.0 } else { 0.7 });
+        room.in_round = menu.in_battle();
+        room.state.settings_draft = (name == "room-settings").then(Preferences::default);
+        list.push(room);
     }
     // A room's score pill has no goal line under its clock.
     for scenario in &mut list {
