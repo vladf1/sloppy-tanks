@@ -16,23 +16,16 @@ use sloppy_core::net::room_list::{HostedRoom, MAX_LISTED_ROOMS, MAX_LISTED_SERVE
 use sloppy_core::sim::MatchPhase;
 use sloppy_core::sim::bot_personalities::BOT_NAMES;
 use sloppy_core::sim::data::TEAM_NAMES;
-use sloppy_render::presentation::input::slot;
+use sloppy_render::presentation::input::{ZOOM_STEP, slot};
 
 use crate::catalog::{AMMO_OPTIONS, BATTLE_FORMATS, DIFFICULTY_OPTIONS, MAP_CARDS, TANK_CARDS};
+use crate::frame_slot::{self, phase_code};
+use crate::net_frame_slot;
 
 const FIXTURE: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/fixtures/page-catalog.json"
 );
-
-/// `Game` and `NetGame` compile only for the page and the desktop (`wasm32` or the
-/// `native` feature), which native test builds leave out, so their frame tables are read
-/// from the source.
-const GAME_SOURCE: &str = include_str!("game.rs");
-const NET_GAME_SOURCE: &str = include_str!("net_game.rs");
-/// The Rust copy of the page's zoom step is the desktop shell's (`crates/desktop` reads
-/// the wheel itself), which this crate cannot depend on.
-const DESKTOP_INPUT_SOURCE: &str = include_str!("../../desktop/src/input.rs");
 
 fn catalog() -> Value {
     json!({
@@ -59,7 +52,7 @@ fn catalog() -> Value {
         "frameSlots": frame_slots(),
         "netFrameSlots": net_frame_slots(),
         "phases": phases(),
-        "zoomStep": desktop_zoom_step(),
+        "zoomStep": ZOOM_STEP,
         "roomConnection": {
             "pollMs": POLL_MS,
             "maxBufferedBytes": MAX_BUFFERED_BYTES,
@@ -206,115 +199,66 @@ fn input_slots() -> Value {
     })
 }
 
-/// `frame_slot` in `game.rs`, by the page's camel-case names.
+/// `frame_slot` by the page's names.
 fn frame_slots() -> Value {
-    camel_case_keys(slot_constants(module_body(GAME_SOURCE, "frame_slot"), &[]))
+    json!({
+        "phase": frame_slot::PHASE,
+        "humanAlive": frame_slot::HUMAN_ALIVE,
+        "cockpit": frame_slot::COCKPIT,
+        "hullAngle": frame_slot::HULL_ANGLE,
+        "events": frame_slot::EVENTS,
+        "clearInput": frame_slot::CLEAR_INPUT,
+        "hudDue": frame_slot::HUD_DUE,
+        "simMs": frame_slot::SIM_MS,
+        "renderMs": frame_slot::RENDER_MS,
+        "firstPerson": frame_slot::FIRST_PERSON,
+        "dt": frame_slot::DT,
+        "viewerX": frame_slot::VIEWER_X,
+        "viewerY": frame_slot::VIEWER_Y,
+        "ran": frame_slot::RAN,
+        "length": frame_slot::LENGTH,
+    })
 }
 
-/// `net_frame_slot` in `net_game.rs`, with the slots it shares from `frame_slot`.
+/// `net_frame_slot` by the room page's names, the slots it shares with `frame_slot`
+/// included.
 fn net_frame_slots() -> Value {
-    let shared = slot_constants(module_body(GAME_SOURCE, "frame_slot"), &[]);
-    camel_case_keys(slot_constants(
-        module_body(NET_GAME_SOURCE, "net_frame_slot"),
-        &shared,
-    ))
+    json!({
+        "cockpit": net_frame_slot::COCKPIT,
+        "hullAngle": net_frame_slot::HULL_ANGLE,
+        "events": net_frame_slot::EVENTS,
+        "hudDue": net_frame_slot::HUD_DUE,
+        "simMs": net_frame_slot::SIM_MS,
+        "renderMs": net_frame_slot::RENDER_MS,
+        "firstPerson": net_frame_slot::FIRST_PERSON,
+        "dt": net_frame_slot::DT,
+        "drawn": net_frame_slot::DRAWN,
+        "pointerFree": net_frame_slot::POINTER_FREE,
+        "viewerX": net_frame_slot::VIEWER_X,
+        "viewerY": net_frame_slot::VIEWER_Y,
+        "ran": net_frame_slot::RAN,
+        "length": net_frame_slot::LENGTH,
+    })
 }
 
-/// The match phase numbers `frame_slot::PHASE` carries (`phase_code`), by serialized name.
+/// The number `frame_slot::PHASE` carries for each match phase, by its serialized name.
 fn phases() -> Value {
-    let body = module_body(GAME_SOURCE, "frame_slot");
-    let start = body
-        .find("fn phase_code")
-        .expect("frame_slot has phase_code");
-    let mut phases = serde_json::Map::new();
-    for line in body[start..].lines().skip(1) {
-        let line = line.trim();
-        if line == "}" {
-            break;
-        }
-        let Some((variant, code)) = line.strip_prefix("MatchPhase::").and_then(|arm| {
-            let (variant, code) = arm.split_once(" => ")?;
-            Some((variant, code.strip_suffix(',')?))
-        }) else {
-            continue;
-        };
-        let name = variant.to_lowercase();
-        let phase: MatchPhase = serde_json::from_value(json!(name)).expect("a match phase");
-        assert_eq!(serde_json::to_value(phase).unwrap(), json!(name));
-        let code: f32 = code.parse().expect("a phase number");
-        phases.insert(name, json!(code as u32));
-    }
-    assert_eq!(phases.len(), 4, "every match phase has a number");
-    Value::Object(phases)
-}
-
-fn desktop_zoom_step() -> f64 {
-    let prefix = "const ZOOM_STEP: f64 = ";
-    DESKTOP_INPUT_SOURCE
-        .lines()
-        .find_map(|line| line.strip_prefix(prefix)?.strip_suffix(';'))
-        .expect("the desktop names its zoom step")
-        .parse()
-        .expect("a number")
-}
-
-/// The source of `pub mod name { ... }`, a module at the file's top level.
-fn module_body<'a>(source: &'a str, name: &str) -> &'a str {
-    let start = source
-        .find(&format!("\npub mod {name} {{"))
-        .unwrap_or_else(|| panic!("no top-level `pub mod {name}`"));
-    let body = &source[start + 1..];
-    &body[..body.find("\n}").expect("the module closes")]
-}
-
-/// A slot module's `pub const NAME: usize = N;` items, and the names its `pub use`
-/// re-exports from `shared`.
-fn slot_constants(body: &str, shared: &[(String, usize)]) -> Vec<(String, usize)> {
-    let mut slots = Vec::new();
-    for line in body.lines().map(str::trim) {
-        if let Some(item) = line.strip_prefix("pub const ") {
-            let (name, value) = item
-                .strip_suffix(';')
-                .and_then(|item| item.split_once(": usize = "))
-                .unwrap_or_else(|| panic!("a slot is `NAME: usize = N`: {line}"));
-            let value = value.parse().unwrap_or_else(|_| panic!("a number: {line}"));
-            slots.push((name.to_owned(), value));
-        }
-    }
-    if let Some(start) = body.find("pub use ") {
-        let names = &body[start..];
-        let names = &names[names.find('{').unwrap() + 1..names.find('}').unwrap()];
-        for name in names
-            .split(',')
-            .map(str::trim)
-            .filter(|name| !name.is_empty())
-        {
-            let (_, value) = shared
-                .iter()
-                .find(|(shared, _)| shared == name)
-                .unwrap_or_else(|| panic!("{name} is a shared slot"));
-            slots.push((name.to_owned(), *value));
-        }
-    }
-    slots
-}
-
-/// `HULL_ANGLE` as the page's `hullAngle`.
-fn camel_case_keys(slots: Vec<(String, usize)>) -> Value {
-    let camel_case = |name: &str| {
-        let mut words = name.split('_').map(str::to_lowercase);
-        let first = words.next().unwrap_or_default();
-        words.fold(first, |mut camel, word| {
-            let mut letters = word.chars();
-            camel.extend(letters.next().map(|c| c.to_ascii_uppercase()));
-            camel.extend(letters);
-            camel
-        })
-    };
+    let phases = [
+        MatchPhase::Ready,
+        MatchPhase::Playing,
+        MatchPhase::Paused,
+        MatchPhase::Results,
+    ];
     Value::Object(
-        slots
+        phases
             .into_iter()
-            .map(|(name, value)| (camel_case(&name), json!(value)))
+            .map(|phase| {
+                let name = serde_json::to_value(phase).unwrap();
+                (
+                    name.as_str().unwrap().to_owned(),
+                    json!(phase_code(phase) as u32),
+                )
+            })
             .collect(),
     )
 }

@@ -7,6 +7,9 @@
 use sloppy_core::sim::ammunition::{AMMO_ORDER, AMMO_SCROLL_INTERVAL_MS};
 use sloppy_core::sim::{AmmoSelection, VehicleCommand};
 
+/// Metres of zoom per Shift + wheel notch (the page's `ZOOM_STEP`, `controls.ts`).
+pub const ZOOM_STEP: f64 = 2.0;
+
 /// Slots of the packed input frame. Booleans are 0 or 1.
 pub mod slot {
     /// W/↑, S/↓, A/←, D/→ held.
@@ -33,7 +36,7 @@ pub mod slot {
     /// Horizontal mouse travel in CSS pixels since the last frame, for first
     /// person; the page leaves it 0 while a freed cursor waits for a click.
     pub const LOOK_PIXELS: usize = 13;
-    /// Zoom change in metres (shift-wheel ±2, pinch).
+    /// Zoom change in metres (shift-wheel ±[`ZOOM_STEP`](super::ZOOM_STEP), pinch).
     pub const ZOOM: usize = 14;
     /// 1 when V or the view button toggled first person.
     pub const TOGGLE_VIEW: usize = 15;

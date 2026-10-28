@@ -17,6 +17,7 @@ pub mod catalog;
 pub mod events;
 pub mod feedback;
 pub mod frame_clock;
+mod frame_slots;
 pub mod hud;
 pub mod lab_scene;
 pub mod nerd_rows;
@@ -60,12 +61,13 @@ mod stats;
 
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 pub use effects_lab::EffectsLab;
+pub use frame_slots::{frame_slot, net_frame_slot};
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
-pub use game::{Game, GameConfig, frame_slot};
+pub use game::{Game, GameConfig};
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 pub use lab::RenderLab;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
-pub use net_game::{NetConfig, NetGame, net_frame_slot};
+pub use net_game::{NetConfig, NetGame};
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub use page::{CameraPreferences, ViewConfig};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]

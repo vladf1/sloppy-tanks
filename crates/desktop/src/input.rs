@@ -3,12 +3,10 @@
 //! [`Controls::take_input`] hands them to the engine, which applies them on its next
 //! simulation tick.
 
-use sloppy_render::presentation::input::InputFrame;
+use sloppy_render::presentation::input::{InputFrame, ZOOM_STEP};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 use winit::keyboard::KeyCode;
 
-/// Metres of zoom per Shift + wheel notch.
-const ZOOM_STEP: f64 = 2.0;
 /// Ammunition slots, keys 1-5 (`AMMO_ORDER`).
 const AMMO_SLOTS: u8 = 5;
 

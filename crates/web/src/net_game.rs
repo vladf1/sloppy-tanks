@@ -74,6 +74,7 @@
 use crate::Shell;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
 use crate::feedback::event_feedback;
+use crate::net_frame_slot;
 use crate::sounds::SoundPlanner;
 
 use glam::Vec2;
@@ -114,22 +115,6 @@ use sloppy_render::gpu::RenderTarget;
 
 /// Notices waiting for `take_notices`; a hidden HUD must not grow this without bound.
 const MAX_PENDING_NOTICES: usize = 256;
-
-/// Slots of `frame`'s result. Slots 2-4, 6-10 and 13-15 are `Game.frame`'s, except that
-/// `SIM_MS` times interpolation, input and event routing, and `HUD_DUE` needs a drawn
-/// frame and is also due while events wait. Slots 0, 1 and 5 stay 0.
-pub mod net_frame_slot {
-    pub use crate::game::frame_slot::{
-        COCKPIT, DT, EVENTS, FIRST_PERSON, HUD_DUE, HULL_ANGLE, RAN, RENDER_MS, SIM_MS, VIEWER_X,
-        VIEWER_Y,
-    };
-    /// 1 when the arena drew this frame.
-    pub const DRAWN: usize = 11;
-    /// 1 when the page should free a captured pointer: a menu, a drop or no battle.
-    /// A death keeps it captured for the respawn.
-    pub const POINTER_FREE: usize = 12;
-    pub const LENGTH: usize = 16;
-}
 
 /// `NetGame.create`'s room settings besides the view configuration
 /// (`page::ViewConfig`).
