@@ -264,7 +264,21 @@ export interface QualityStats {
   }[];
 }
 
-/** `stats_json`: Stats for nerds. */
+/** A row of `nerd_stats_json()`: the engine writes the value and what it means. */
+export interface StatsRow {
+  label: string;
+  value: string;
+  hint: string;
+}
+
+/** `nerd_stats_json()`: the Stats for nerds panel's sections in order
+ * (`crates/web/src/nerd_rows.rs`). */
+export interface StatsSection {
+  title: string;
+  rows: StatsRow[];
+}
+
+/** `stats_json`: Stats for nerds' readings, for diagnostics and the frame recorder. */
 export interface EngineStats {
   frameMs: number;
   fps: number;

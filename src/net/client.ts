@@ -19,13 +19,13 @@ import {
   type EngineEvent,
   type EventBatch,
   type MatchState as Match,
+  type StatsSection,
 } from "../game/engine-api";
 import { printDebugHelp } from "../game/debug-console";
 import { debugPage } from "../game/map-options";
 import { NerdStats } from "../game/nerd-stats";
 import { WireLog } from "./wire-log";
 import { NetworkUI, type Hud } from "./network-ui";
-import { networkStatsSections, type NetworkStatsSource } from "./network-stats";
 import {
   ROOM_CODE,
   TRANSPORT_DELAY_PARAMS,
@@ -58,8 +58,6 @@ const LATENCY_SLIDER_PARAM = "latencySlider";
 const POLL_MS = 250;
 /** A socket this far behind on sends is closed and reconnected instead. */
 const MAX_BUFFERED_BYTES = 16_384;
-/** Renderer resolution cap from the display pixel ratio (`CAMERA.max_pixel_ratio`). */
-const MAX_PIXEL_RATIO = 1.5;
 
 type Action =
   | { type: "open"; socket: number; url: string }
@@ -293,10 +291,7 @@ export async function startMultiplayer(
   const stats = debugPage(location.search)
     ? new NerdStats(
         root,
-        networkStatsSections(
-          (now) => JSON.parse(game.stats_json(now)) as NetworkStatsSource,
-          () => Math.min(devicePixelRatio, MAX_PIXEL_RATIO),
-        ),
+        () => JSON.parse(game.nerd_stats_json(performance.now())) as StatsSection[],
         () => lastResult[FRAME.drawn] === 1 && !ui.menu && phase === "playing",
         { network: true },
       )
@@ -566,7 +561,7 @@ export async function startMultiplayer(
       );
       // Frames the engine skipped while the GPU caught up are not shown frames.
       if (result[FRAME.ran]) {
-        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+        stats?.frame(now);
       }
     } else if (result[FRAME.events] > 0) {
       game.drain_events();
