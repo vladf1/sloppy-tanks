@@ -252,7 +252,7 @@ fn scenarios() -> Vec<Scenario> {
         state: UiState {
             hud: Some(hud("paused", false, true, 0.7)),
             settings_draft: Some(Preferences {
-                nerd_stats: true,
+                debug: true,
                 ..Preferences::default()
             }),
             ..UiState::default()
@@ -321,7 +321,7 @@ fn snapshots() {
     let width = (SIZE[0] * SCALE) as u32;
     let height = (SIZE[1] * SCALE) as u32;
     let prefs = Preferences {
-        nerd_stats: true,
+        debug: true,
         ..Preferences::default()
     };
     for mut scenario in scenarios() {
@@ -333,7 +333,8 @@ fn snapshots() {
             phase: scenario.phase,
             prefs: &prefs,
             build: "v0.1.0 · dev",
-            debug: false,
+            // Stats for nerds show only with the debug tools on.
+            debug: scenario.name == "hud-nerd-stats",
             room: false,
         };
         // A few passes: new areas size themselves on their first frame.

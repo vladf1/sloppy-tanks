@@ -60,8 +60,19 @@ export function isExtraLevel(id: MapId): id is ExtraLevelId {
   return "extra" in mapOption(id)!;
 }
 
-/** A page opened with `?debug`: nerd stats, extra levels in the map lists, and the
- * console aids `printDebugHelp` lists. */
+/** Debug tools: Stats for nerds, extra levels in the map lists, and the console aids
+ * `printDebugHelp` lists. A page opened with `?debug` has them, and so does every page
+ * once Settings turns them on. */
 export function debugPage(search: string): boolean {
-  return new URLSearchParams(search).has("debug");
+  return new URLSearchParams(search).has("debug") || savedDebug();
+}
+
+/** The Settings dialog's Debug tools, remembered between visits (the `debug` player
+ * preference, read here because this module imports nothing). */
+export function savedDebug(): boolean {
+  try {
+    return globalThis.localStorage?.getItem("sloppy-debug") === "on";
+  } catch {
+    return false;
+  }
 }

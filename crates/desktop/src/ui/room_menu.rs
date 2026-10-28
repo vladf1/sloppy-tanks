@@ -311,7 +311,7 @@ pub fn draw(
         menus::settings(context, state, &art, view, &mut actions);
     }
     state.art = Some(art);
-    if state.show_nerd_stats && view.prefs.nerd_stats {
+    if state.show_nerd_stats && view.debug {
         super::nerd_stats::panel(context, state);
     }
     actions

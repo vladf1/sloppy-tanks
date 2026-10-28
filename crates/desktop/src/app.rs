@@ -576,7 +576,7 @@ impl Session {
                 }
             }
             Shortcut::NerdStats => {
-                if self.prefs.nerd_stats {
+                if self.debug || self.prefs.debug {
                     self.ui.show_nerd_stats = !self.ui.show_nerd_stats;
                 }
             }
@@ -890,7 +890,7 @@ impl Session {
             self.ui.tick(0.0);
         }
         if self.ui.show_nerd_stats
-            && self.prefs.nerd_stats
+            && (self.debug || self.prefs.debug)
             && self.frame_index.is_multiple_of(STATS_EVERY_FRAMES)
         {
             self.ui.stats = serde_json::from_str(&self.game.stats_json()).ok();
@@ -901,7 +901,7 @@ impl Session {
             phase: self.phase,
             prefs: &self.prefs,
             build: &self.build,
-            debug: self.debug,
+            debug: self.debug || self.prefs.debug,
             room: false,
         };
         let ui_state = &mut self.ui;

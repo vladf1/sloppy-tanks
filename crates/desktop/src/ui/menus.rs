@@ -1064,15 +1064,15 @@ pub fn settings(
         setting_label(
             painter,
             pos2(origin.x, y),
-            "Stats for nerds",
-            "Press N in battle to show or hide them",
+            "Debug tools",
+            "Extra levels, and Stats for nerds on N in battle",
         );
         switch(
             ui,
             painter,
             Rect::from_min_size(pos2(origin.x + width - 46.0, y + 4.0), vec2(46.0, 26.0)),
-            "nerd stats",
-            &mut draft.nerd_stats,
+            "debug tools",
+            &mut draft.debug,
         );
         y += 50.0;
         // Battle speed: single player tunes its own battle.

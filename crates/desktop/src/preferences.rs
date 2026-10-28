@@ -29,8 +29,9 @@ pub struct Preferences {
     /// "auto", "high", "medium" or "low".
     pub graphics: String,
     pub player_name: String,
-    /// Stats for nerds may show (N toggles them in a round).
-    pub nerd_stats: bool,
+    /// Debug tools: the extra levels and Stats for nerds (N in battle), as `?debug`
+    /// gives the page and `--debug` the app.
+    pub debug: bool,
     pub fullscreen: bool,
 }
 
@@ -48,7 +49,7 @@ impl Default for Preferences {
             bullet_speed: 1.0,
             graphics: "auto".into(),
             player_name: String::new(),
-            nerd_stats: false,
+            debug: false,
             fullscreen: false,
         }
     }
