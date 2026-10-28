@@ -1,5 +1,5 @@
-# The desktop app (crates/desktop): lint and test it on macOS, and build the Apple
-# silicon macOS app (zipped and as an installer package) and the Windows executable through
+# The desktop app (crates/desktop): lint and test it on macOS beside the builds of
+# the Apple silicon app (zipped and as an installer package) and Windows executable through
 # `scripts/build-desktop.mjs`, uploaded as this run's artifacts. Linux CI (check.yml)
 # leaves the crate out, since its window, audio and GPU dependencies need system
 # libraries there.
@@ -109,6 +109,12 @@ jobs:
           path: artifacts/desktop/Sloppy-Tanks-*-macOS.pkg
           archive: false
           if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cargo-timings-macos
+          path: target/cargo-timings/
+          if-no-files-found: ignore
       - name: Remove the signing keychain
         if: always() && github.event_name != 'pull_request'
         run: |
@@ -130,6 +136,12 @@ jobs:
           path: artifacts/desktop/sloppy-tanks.exe
           archive: false
           if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cargo-timings-windows
+          path: target/cargo-timings/
+          if-no-files-found: ignore
 
   release:
     name: Latest release

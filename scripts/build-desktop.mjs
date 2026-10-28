@@ -90,7 +90,17 @@ function ensureTargets(targets) {
 function build(target) {
   run(
     "cargo",
-    ["build", "--locked", "--profile", PROFILE, "--target", target, "-p", "sloppy-desktop"],
+    [
+      "build",
+      "--locked",
+      "--timings",
+      "--profile",
+      PROFILE,
+      "--target",
+      target,
+      "-p",
+      "sloppy-desktop",
+    ],
     { env: { ...process.env, ...stamps } },
   );
   const extension = target.includes("windows") ? ".exe" : "";
