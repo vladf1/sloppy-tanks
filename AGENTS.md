@@ -47,8 +47,11 @@ the server:
 - `crates/desktop` (native, macOS and Windows): the other shell, binary
   `sloppy-tanks`. A winit window drawn by wgpu on Metal or Direct3D 12
   (`sloppy-render`'s `native` feature), egui menus and HUD, and the same `Game`
-  and `NetGame` the page drives (`sloppy-web`'s `native` feature). Game rules stay
-  out of both shells.
+  and `NetGame` the page drives (`sloppy-web`'s `native` feature). It reads their
+  values typed (the second `impl` block of `game.rs` and `net_game.rs`), never the
+  JSON they write for the page, and takes Battle Setup's tables from
+  `sloppy_web::catalog` and `sloppy-core`; `crates/web/tests/fixtures/page-json.json`
+  pins the page's JSON byte for byte. Game rules stay out of both shells.
 
 ## Code style
 
