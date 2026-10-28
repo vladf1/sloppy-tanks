@@ -746,15 +746,8 @@ impl Frame {
         stats: &mut RenderStats,
     ) -> Result<(), String> {
         let device = &gpu.device;
-        // Natively a frame the shell never presented shows now, and the poll runs
-        // wgpu's completion callbacks.
         #[cfg(not(target_arch = "wasm32"))]
-        {
-            if let Some(output) = self.output.take() {
-                gpu.queue.present(output);
-            }
-            let _ = device.poll(wgpu::PollType::Poll);
-        }
+        let _ = device.poll(wgpu::PollType::Poll);
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scene"),
         });
@@ -765,7 +758,17 @@ impl Frame {
         }
         let submitted = self.gpu_frames.now_ms();
         gpu.queue.submit([encoder.finish()]);
-        let output = match self.canvas.surface.get_current_texture() {
+        // Natively a second draw before the shell presents (preparation draws the first
+        // frames twice) draws into the same window frame: showing the first one would
+        // flash the bare arena without the menus over it.
+        #[cfg(not(target_arch = "wasm32"))]
+        let held = self.output.take();
+        #[cfg(target_arch = "wasm32")]
+        let held = None;
+        let output = match held.map_or_else(
+            || self.canvas.surface.get_current_texture(),
+            wgpu::CurrentSurfaceTexture::Success,
+        ) {
             wgpu::CurrentSurfaceTexture::Success(texture)
             | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
             wgpu::CurrentSurfaceTexture::Occluded => {
