@@ -107,6 +107,31 @@ impl InputFrame {
             wheel_ammo: sign(get(slot::WHEEL_AMMO)),
         }
     }
+
+    /// The packed frame [`from_slice`](Self::from_slice) reads, for a shell that gathers
+    /// its controls in Rust (the desktop app).
+    pub fn pack(&self) -> [f32; slot::LENGTH] {
+        let flag = |on: bool| if on { 1.0 } else { 0.0 };
+        let mut packed = [0.0; slot::LENGTH];
+        packed[slot::UP] = flag(self.up);
+        packed[slot::DOWN] = flag(self.down);
+        packed[slot::LEFT] = flag(self.left);
+        packed[slot::RIGHT] = flag(self.right);
+        packed[slot::TOUCH_MOVE_X] = self.touch_move.0 as f32;
+        packed[slot::TOUCH_MOVE_Z] = self.touch_move.1 as f32;
+        packed[slot::FIRE] = flag(self.fire);
+        packed[slot::MINE] = flag(self.mine);
+        packed[slot::AMMO_SLOT] = f32::from(self.ammo_slot);
+        packed[slot::AMMO_STEP] = f32::from(self.ammo_step);
+        packed[slot::POINTER_X] = self.pointer.0;
+        packed[slot::POINTER_Y] = self.pointer.1;
+        packed[slot::STICK_TURN] = self.stick_turn;
+        packed[slot::LOOK_PIXELS] = self.look_pixels as f32;
+        packed[slot::ZOOM] = self.zoom as f32;
+        packed[slot::TOGGLE_VIEW] = flag(self.toggle_view);
+        packed[slot::WHEEL_AMMO] = f32::from(self.wheel_ammo);
+        packed
+    }
 }
 
 /// Queued one-shot actions between frames and ticks (`Controls` state).
@@ -180,6 +205,31 @@ mod tests {
             data[index] = value;
         }
         data
+    }
+
+    #[test]
+    fn a_packed_frame_reads_back_as_itself() {
+        let input = InputFrame {
+            right: true,
+            up: true,
+            touch_move: (0.5, -0.25),
+            fire: true,
+            mine: true,
+            ammo_slot: 4,
+            ammo_step: -1,
+            pointer: (0.5, -0.75),
+            stick_turn: 0.25,
+            look_pixels: -12.0,
+            zoom: 2.0,
+            toggle_view: true,
+            wheel_ammo: 1,
+            ..InputFrame::default()
+        };
+        assert_eq!(InputFrame::from_slice(&input.pack()), input);
+        assert_eq!(
+            InputFrame::from_slice(&InputFrame::default().pack()),
+            InputFrame::default()
+        );
     }
 
     #[test]

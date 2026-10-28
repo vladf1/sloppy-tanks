@@ -14,17 +14,9 @@ use super::theme::{self, GOLD, GOLD_HOT, bold_font, display_font};
 use super::{
     Action, DAMAGE_RING_SECONDS, HIT_FLASH_SECONDS, ToastTone, UiState, View, effect_share,
 };
-use crate::engine_api::{HudState, HumanState, Phase};
-
-/// The ammunition the rack offers, in selection order (keys 1–5): weapon, label,
-/// name and colour (`AMMO_OPTIONS`).
-pub const AMMO: [(&str, &str, &str, u32); 5] = [
-    ("standard", "STANDARD", "Standard shells", 0xffdf00),
-    ("spread", "SPREAD", "Spread shot", 0xff38d4),
-    ("rocket", "ROCKET", "Breaching rockets", 0xff591c),
-    ("ricochet", "RICOCHET", "Ricochet shells", 0xb19afc),
-    ("piercing", "PIERCING", "Piercing shells", 0x54e6dc),
-];
+use sloppy_core::sim::{GameMode, MatchPhase, Team};
+use sloppy_web::catalog::AMMO_OPTIONS;
+use sloppy_web::hud::{Hud, HudHuman};
 
 /// Below this share of its hull the tank's HUD warns.
 const CRITICAL_HEALTH: f64 = 0.25;
@@ -50,7 +42,7 @@ pub fn hud(
     actions: &mut Vec<Action>,
 ) {
     let Some(hud) = state.hud.clone() else { return };
-    let playing = view.phase == Phase::Playing;
+    let playing = view.phase == MatchPhase::Playing;
     let screen = context.content_rect();
     let painter = backdrop(context);
     let time = context.input(|input| input.time);
@@ -149,8 +141,8 @@ fn team_plate(x: f32, width: f32, height: f32, left_side: bool) -> Vec<Pos2> {
 
 /// The score hangs from the top edge: two team plates cut toward the clock between
 /// them, each with a bar filling toward the score limit; your side carries gold.
-fn score_bar(painter: &Painter, screen: Rect, hud: &HudState, room: bool) {
-    let solo = hud.game_mode == "solo";
+fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) {
+    let solo = hud.game_mode == GameMode::Solo;
     let match_state = &hud.match_state;
     let no_limit = room || solo || hud.endless_match;
     let height = if room { 55.0 } else { 62.0 };
@@ -165,7 +157,7 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState, room: bool) {
     let labels = if solo {
         ["KILLS".to_owned(), String::new()]
     } else {
-        hud.team_names.clone().map(|name| name.to_uppercase())
+        hud.team_names.map(str::to_uppercase)
     };
     let scores = if solo {
         [format!("{}", hud.human.kills), String::new()]
@@ -230,7 +222,7 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState, room: bool) {
             hexa(0xffffff, 0.2),
             hexa(0xffffff, 0.0),
         ));
-        let yours = !room && !solo && team == hud.human_team as usize;
+        let yours = !room && !solo && team == hud.human_team.index();
         if yours {
             painter.add(paint::gradient_polygon(
                 &[
@@ -291,8 +283,8 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState, room: bool) {
                     pos2(x + width - 22.0, top + height - 4.0),
                 )
             };
-            let share =
-                (match_state.scores[team] / hud.score_limit.max(1.0)).clamp(0.0, 1.0) as f32;
+            let share = (f64::from(match_state.scores[team]) / f64::from(hud.score_limit.max(1)))
+                .clamp(0.0, 1.0) as f32;
             painter.rect_filled(
                 track,
                 2,
@@ -512,9 +504,9 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, state: &UiState) {
     for (index, entry) in state.kill_feed.iter().take(lines).enumerate() {
         let top = screen.top() + 74.0 + index as f32 * (row_height + 4.0);
         let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, row_height));
-        let side = |team: Option<u8>| match team {
-            Some(0) => hex(0x3d9cff),
-            Some(_) => hex(0xff4d63),
+        let side = |team: Option<Team>| match team {
+            Some(Team::Blue) => hex(0x3d9cff),
+            Some(Team::Red) => hex(0xff4d63),
             None => hex(0xc9b994),
         };
         let from = side(entry.killer_team);
@@ -628,7 +620,7 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, state: &UiState) {
         };
         art.icon(
             painter,
-            cause_icon(entry.cause.as_deref()),
+            cause_icon(entry.cause),
             Rect::from_center_size(center, Vec2::splat(22.0)),
             icon_tint,
         );
@@ -727,7 +719,7 @@ fn hull_tone(ratio: f64) -> HullTone {
 }
 
 /// The rank's tooltip (`rankTitle`).
-fn rank_title(human: &HumanState) -> String {
+fn rank_title(human: &HudHuman) -> String {
     if human.rank == 0 {
         return "Earn XP from enemy hull damage and kills. Ranks reset on respawn.".to_owned();
     }
@@ -758,7 +750,7 @@ struct Effect {
     share: f64,
 }
 
-fn effects(state: &UiState, human: &HumanState) -> Vec<Effect> {
+fn effects(state: &UiState, human: &HudHuman) -> Vec<Effect> {
     let seconds = |time: f64| format!("{}s", time.ceil());
     let longest = &state.effect_longest;
     let mut list = Vec::new();
@@ -841,19 +833,19 @@ fn tank_panel(
     art: &Art,
     screen: Rect,
     state: &UiState,
-    hud: &HudState,
+    hud: &Hud,
     playing: bool,
     time: f64,
     actions: &mut Vec<Action>,
 ) {
     let human = &hud.human;
-    let strip_width = AMMO
+    let strip_width = AMMO_OPTIONS
         .iter()
-        .map(|(weapon, ..)| {
+        .map(|option| {
             let selected = human
                 .ammo
                 .iter()
-                .any(|slot| slot.weapon == *weapon && slot.selected);
+                .any(|slot| slot.weapon == option.weapon && slot.selected);
             if selected {
                 SELECTED_SLOT_WIDTH
             } else {
@@ -861,7 +853,7 @@ fn tank_panel(
             }
         })
         .sum::<f32>()
-        + SLOT_GAP * (AMMO.len() - 1) as f32;
+        + SLOT_GAP * (AMMO_OPTIONS.len() - 1) as f32;
     let inner = vec2(
         STATUS_WIDTH + 10.0 + 10.0 + strip_width + 10.0 + 10.0 + MINE_WIDTH,
         PANEL_HEIGHT,
@@ -881,7 +873,7 @@ fn tank_panel(
             let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
             let painter = ui.painter().clone();
             // A soft shade in the corner behind the panel.
-            let team_tint = if hud.game_mode == "solo" {
+            let team_tint = if hud.game_mode == GameMode::Solo {
                 None
             } else {
                 Some(theme::team_color(hud.human_team))
@@ -960,7 +952,7 @@ fn hull_status(
     art: &Art,
     rect: Rect,
     state: &UiState,
-    human: &HumanState,
+    human: &HudHuman,
     playing: bool,
     time: f64,
 ) {
@@ -1101,14 +1093,15 @@ fn ammo_rack(
     painter: &Painter,
     art: &Art,
     strip: Rect,
-    human: &HumanState,
+    human: &HudHuman,
     playing: bool,
     actions: &mut Vec<Action>,
 ) {
     painter.rect_filled(strip, 8, hexa(0x020812, 0.35));
     let mut x = strip.left();
-    for (index, (weapon, label, name, color)) in AMMO.iter().enumerate() {
-        let slot = human.ammo.iter().find(|slot| slot.weapon == *weapon);
+    for (index, option) in AMMO_OPTIONS.iter().enumerate() {
+        let (weapon, label, name) = (option.weapon.as_str(), option.label(), option.name);
+        let slot = human.ammo.iter().find(|slot| slot.weapon == option.weapon);
         let selected = slot.is_some_and(|slot| slot.selected);
         let available = slot.is_some_and(|slot| slot.available);
         let count = slot.and_then(|slot| slot.count);
@@ -1119,7 +1112,7 @@ fn ammo_rack(
         };
         let rect = Rect::from_min_size(pos2(x, strip.top()), vec2(width, strip.height()));
         x += width + SLOT_GAP;
-        let color = hex(*color);
+        let color = hex(option.color());
         let count_text = match count {
             None => "unlimited".to_owned(),
             Some(count) => format!("{count} remaining"),
@@ -1256,7 +1249,7 @@ fn ammo_rack(
 }
 
 /// The mine socket: armed, or a dial that refills while the seconds count down.
-fn mine_socket(painter: &Painter, art: &Art, rect: Rect, state: &UiState, human: &HumanState) {
+fn mine_socket(painter: &Painter, art: &Art, rect: Rect, state: &UiState, human: &HudHuman) {
     let cooling = human.mine_cooldown > 0.0;
     let total = state.mine_total.max(human.mine_cooldown);
     let armed = if cooling && total > 0.0 {
@@ -1323,7 +1316,7 @@ fn mine_socket(painter: &Painter, art: &Art, rect: Rect, state: &UiState, human:
 
 /// Active power-ups: tabs docked on the panel's top edge over the rack, growing
 /// leftward, each a timer ring round its icon, its name and what is left.
-fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, state: &UiState, human: &HumanState) {
+fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, state: &UiState, human: &HudHuman) {
     let list = effects(state, human);
     let mut right = plate.right() - 12.0;
     let height = 32.0;
@@ -1595,17 +1588,9 @@ mod tests {
         let context = egui::Context::default();
         theme::install(&context);
         let screen = Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0));
-        let hud = HudState {
-            game_mode: "team".into(),
-            team_names: ["BLUE".into(), "RED".into()],
-            score_limit: 100.0,
-            match_state: crate::engine_api::MatchState {
-                scores: [42.0, 37.0],
-                time: 188.0,
-                ..Default::default()
-            },
-            ..Default::default()
-        };
+        let mut hud = Hud::default();
+        hud.match_state.scores = [42, 37];
+        hud.match_state.time = 188.0;
         for room in [false, true] {
             let mut output = context.run_pass(
                 egui::RawInput {

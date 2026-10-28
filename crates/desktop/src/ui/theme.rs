@@ -3,6 +3,7 @@
 //! display type and the platform's UI face for the rest, like the page's system-ui.
 
 use egui::{Color32, FontData, FontDefinitions, FontFamily, Stroke};
+use sloppy_core::sim::Team;
 use sloppy_render::system_fonts::{FontStyle, system_font};
 
 pub const INK_0: Color32 = Color32::from_rgb(0x05, 0x0a, 0x14);
@@ -37,9 +38,12 @@ pub fn bold_font(size: f32) -> egui::FontId {
     egui::FontId::new(size, FontFamily::Name("bold".into()))
 }
 
-/// The colour of `team` (0 blue, 1 red).
-pub fn team_color(team: u8) -> Color32 {
-    if team == 0 { BLUE } else { RED }
+/// The colour of `team`.
+pub fn team_color(team: Team) -> Color32 {
+    match team {
+        Team::Blue => BLUE,
+        Team::Red => RED,
+    }
 }
 
 /// Fonts and visuals for the whole interface.

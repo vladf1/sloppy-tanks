@@ -1,12 +1,152 @@
 //! Shared page HUD records and ammo, repair and scoreboard rules for local and room play.
+//!
+//! The page reads them as `hud_json`; the desktop shell reads the same values typed.
+//! Read, they borrow the simulation or the displayed scene, so the page's frequent
+//! `hud_json` copies nothing on the way to its text; [`Hud::into_owned`] keeps one between
+//! reads.
+
+use std::borrow::Cow;
 
 use serde::{Serialize, Serializer};
 use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon_for, has_ammo_for};
-use sloppy_core::sim::data::vehicle;
+use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES, vehicle};
+use sloppy_core::sim::difficulty::Difficulty;
+use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::render_state::RenderTank;
+use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
-use sloppy_core::sim::{AmmoInventory, Tank, Team, VehicleKind, Weapon};
+use sloppy_core::sim::{
+    AmmoInventory, GameMode, Match, MatchPhase, RenderState, Simulation, Tank, Team, VehicleKind,
+    Weapon,
+};
 use sloppy_render::presentation::hud::health_bar_state;
+
+use crate::recap::RoundRecap;
+
+/// `Game.hud_json`: the page HUD's view of the match and the human's tank.
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hud<'a> {
+    #[serde(rename = "match")]
+    pub match_state: Match,
+    pub elapsed: f64,
+    pub game_mode: GameMode,
+    pub endless_match: bool,
+    pub map_mode: MapId,
+    pub map_name: String,
+    pub difficulty: Difficulty,
+    pub human_team: Team,
+    pub score_limit: u32,
+    pub team_names: [&'static str; 2],
+    pub active_enemies: usize,
+    pub speed_tuning: SpeedTuning,
+    pub human: HudHuman,
+    pub scoreboard: Scoreboard<'a>,
+    /// The finished round's recap, while results show.
+    pub recap: Option<Cow<'a, RoundRecap>>,
+}
+
+impl Default for Hud<'_> {
+    /// A team battle of the village before its first round, with an empty scoreboard.
+    fn default() -> Self {
+        Hud {
+            match_state: Match {
+                phase: MatchPhase::Ready,
+                time: 0.0,
+                scores: [0, 0],
+                overtime: false,
+                ended_early: None,
+                winner: None,
+                round: 0,
+            },
+            elapsed: 0.0,
+            game_mode: GameMode::Team,
+            endless_match: false,
+            map_mode: MapId::Village,
+            map_name: String::new(),
+            difficulty: Difficulty::Normal,
+            human_team: Team::Blue,
+            score_limit: SCORE_LIMIT,
+            team_names: TEAM_NAMES,
+            active_enemies: 0,
+            speed_tuning: SpeedTuning::default(),
+            human: HudHuman::default(),
+            scoreboard: Scoreboard::Kept(Vec::new()),
+            recap: None,
+        }
+    }
+}
+
+impl Hud<'_> {
+    /// A copy that outlives the game it was read from.
+    pub fn into_owned(self) -> Hud<'static> {
+        Hud {
+            match_state: self.match_state,
+            elapsed: self.elapsed,
+            game_mode: self.game_mode,
+            endless_match: self.endless_match,
+            map_mode: self.map_mode,
+            map_name: self.map_name,
+            difficulty: self.difficulty,
+            human_team: self.human_team,
+            score_limit: self.score_limit,
+            team_names: self.team_names,
+            active_enemies: self.active_enemies,
+            speed_tuning: self.speed_tuning,
+            human: self.human,
+            scoreboard: self.scoreboard.into_owned(),
+            recap: self.recap.map(|recap| Cow::Owned(recap.into_owned())),
+        }
+    }
+}
+
+/// Single player's HUD. The human's tank as the HUD reads it is refilled into `tank`
+/// from the simulation, not the last frame's state: debug hooks change tanks between
+/// frames. `recap` is the finished round's, while results show.
+pub fn simulation_hud<'a>(
+    sim: &'a Simulation,
+    tank: &mut RenderTank,
+    recap: Option<&'a RoundRecap>,
+) -> Hud<'a> {
+    sim.fill_tank(tank, sim.human());
+    Hud {
+        match_state: sim.match_state.clone(),
+        elapsed: sim.elapsed,
+        game_mode: sim.game_mode,
+        endless_match: sim.endless_match,
+        map_mode: sim.map_mode,
+        map_name: sim.map_name(),
+        difficulty: sim.difficulty,
+        human_team: sim.human_team,
+        score_limit: SCORE_LIMIT,
+        team_names: TEAM_NAMES,
+        active_enemies: sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
+        speed_tuning: sim.speed_tuning,
+        human: human_json(tank, sim.elapsed),
+        scoreboard: Scoreboard::Simulated(&sim.tanks),
+        recap: recap.map(Cow::Borrowed),
+    }
+}
+
+/// `NetGame.hud_json`: a room's HUD for the displayed scene; the room lobby has the
+/// rest.
+#[derive(Clone, Debug, Serialize)]
+pub struct RoomHud<'a> {
+    #[serde(rename = "match")]
+    pub match_state: &'a Match,
+    pub human: HudHuman,
+    pub scoreboard: Scoreboard<'a>,
+}
+
+/// The room HUD for `state`, or `None` before the scene has its viewer.
+pub fn room_hud(state: &RenderState) -> Option<RoomHud<'_>> {
+    let viewer = state.viewer()?;
+    Some(RoomHud {
+        match_state: &state.match_state,
+        human: human_json(viewer, state.elapsed),
+        scoreboard: Scoreboard::Rendered(&state.tanks),
+    })
+}
 
 fn hud_ammo(
     kind: VehicleKind,
@@ -72,87 +212,142 @@ pub fn human_json(tank: &RenderTank, elapsed: f64) -> HudHuman {
 }
 
 /// Every tank's name and kills (`hud_json().scoreboard`), from replicated or simulated
-/// tanks.
+/// tanks, or rows kept between reads.
+#[derive(Clone, Debug)]
 pub enum Scoreboard<'a> {
     Rendered(&'a [RenderTank]),
     Simulated(&'a [Tank]),
+    Kept(Vec<HudScore<'static>>),
 }
 
-impl Serialize for Scoreboard<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+impl Scoreboard<'_> {
+    /// Every tank's row, in roster order.
+    pub fn rows(&self) -> impl Iterator<Item = HudScore<'_>> {
+        // One chain over the three sources, two of them empty, rather than a boxed
+        // iterator: the page serializes this every few frames.
+        let (rendered, simulated, kept): (&[RenderTank], &[Tank], &[HudScore]) = match self {
+            Self::Rendered(tanks) => (*tanks, &[], &[]),
+            Self::Simulated(tanks) => (&[], *tanks, &[]),
+            Self::Kept(rows) => (&[], &[], rows.as_slice()),
+        };
+        rendered
+            .iter()
+            .map(|tank| HudScore {
+                id: tank.id,
+                name: Cow::Borrowed(&tank.name),
+                kills: tank.kills,
+                deaths: tank.deaths,
+                team: tank.team,
+                kind: tank.kind,
+                human: tank.human,
+            })
+            .chain(simulated.iter().map(|tank| HudScore {
+                id: tank.id,
+                name: Cow::Borrowed(&tank.name),
+                kills: tank.kills,
+                deaths: tank.deaths,
+                team: tank.team,
+                kind: tank.kind,
+                human: tank.human,
+            }))
+            .chain(kept.iter().map(|row| HudScore {
+                id: row.id,
+                name: Cow::Borrowed(&row.name),
+                kills: row.kills,
+                deaths: row.deaths,
+                team: row.team,
+                kind: row.kind,
+                human: row.human,
+            }))
+    }
+
+    /// The tank `id`'s row.
+    pub fn row(&self, id: u32) -> Option<HudScore<'_>> {
+        self.rows().find(|row| row.id == id)
+    }
+
+    /// Rows that outlive the tanks they were read from.
+    pub fn into_owned(self) -> Scoreboard<'static> {
         match self {
-            Self::Rendered(tanks) => serializer.collect_seq(tanks.iter().map(|tank| HudScore {
-                id: tank.id,
-                name: &tank.name,
-                kills: tank.kills,
-                deaths: tank.deaths,
-                team: tank.team,
-                kind: tank.kind,
-                human: tank.human,
-            })),
-            Self::Simulated(tanks) => serializer.collect_seq(tanks.iter().map(|tank| HudScore {
-                id: tank.id,
-                name: &tank.name,
-                kills: tank.kills,
-                deaths: tank.deaths,
-                team: tank.team,
-                kind: tank.kind,
-                human: tank.human,
-            })),
+            Self::Kept(rows) => Scoreboard::Kept(rows),
+            borrowed => Scoreboard::Kept(borrowed.rows().map(HudScore::into_owned).collect()),
         }
     }
 }
 
-#[derive(Serialize)]
+impl Serialize for Scoreboard<'_> {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_seq(self.rows())
+    }
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct HudHuman {
-    id: u32,
-    kind: VehicleKind,
-    vehicle_name: &'static str,
-    alive: bool,
-    hp: f64,
-    max_hp: f64,
-    health_ratio: f64,
-    health_color: u32,
-    rank: usize,
-    rank_name: &'static str,
-    rank_damage: f64,
-    rank_fire_rate: f64,
-    rank_health: f64,
-    rank_repair: f64,
-    repair_delay: f64,
-    ammo: [HudAmmo; AMMO_ORDER.len()],
-    mine_cooldown: f64,
-    protection: f64,
-    shield: f64,
-    shield_points: f64,
-    rapid: f64,
-    speed: f64,
-    laser: f64,
-    respawn: f64,
-    kills: u32,
-    deaths: u32,
-    self_repair: bool,
+    pub id: u32,
+    pub kind: VehicleKind,
+    pub vehicle_name: &'static str,
+    pub alive: bool,
+    pub hp: f64,
+    pub max_hp: f64,
+    pub health_ratio: f64,
+    pub health_color: u32,
+    pub rank: usize,
+    pub rank_name: &'static str,
+    pub rank_damage: f64,
+    pub rank_fire_rate: f64,
+    pub rank_health: f64,
+    pub rank_repair: f64,
+    /// Seconds out of combat before a ranked hull repairs itself.
+    pub repair_delay: f64,
+    /// One slot per entry of `AMMO_ORDER`.
+    pub ammo: [HudAmmo; AMMO_ORDER.len()],
+    pub mine_cooldown: f64,
+    pub protection: f64,
+    pub shield: f64,
+    pub shield_points: f64,
+    pub rapid: f64,
+    pub speed: f64,
+    pub laser: f64,
+    pub respawn: f64,
+    pub kills: u32,
+    pub deaths: u32,
+    pub self_repair: bool,
 }
 
-#[derive(Serialize)]
-struct HudAmmo {
-    weapon: Weapon,
-    count: Option<f64>,
-    selected: bool,
-    available: bool,
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize)]
+pub struct HudAmmo {
+    pub weapon: Weapon,
+    /// `None` for unlimited Standard shells.
+    pub count: Option<f64>,
+    pub selected: bool,
+    pub available: bool,
 }
 
-#[derive(Serialize)]
-struct HudScore<'a> {
-    id: u32,
-    name: &'a str,
-    kills: u32,
-    deaths: u32,
-    team: Team,
-    kind: VehicleKind,
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct HudScore<'a> {
+    pub id: u32,
+    pub name: Cow<'a, str>,
+    pub kills: u32,
+    pub deaths: u32,
+    pub team: Team,
+    pub kind: VehicleKind,
     /// A player's tank rather than a bot's, which the battle report marks.
-    human: bool,
+    pub human: bool,
+}
+
+impl HudScore<'_> {
+    pub fn into_owned(self) -> HudScore<'static> {
+        HudScore {
+            id: self.id,
+            name: Cow::Owned(self.name.into_owned()),
+            kills: self.kills,
+            deaths: self.deaths,
+            team: self.team,
+            kind: self.kind,
+            human: self.human,
+        }
+    }
 }
 
 #[cfg(test)]

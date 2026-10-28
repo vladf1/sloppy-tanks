@@ -9,7 +9,8 @@ use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle};
 use kira::track::MainTrackBuilder;
 use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Panning, Tween};
 
-use crate::engine_api::{EngineEvent, EventBatch, Point};
+use sloppy_core::sim::{CoverKind, SimEventType, Vec2, Weapon};
+use sloppy_web::events::{EventBatch, PendingEvent};
 
 const HIT_INTERVAL: Duration = Duration::from_millis(80);
 const BOT_SHOT_INTERVAL: Duration = Duration::from_millis(35);
@@ -101,26 +102,27 @@ impl Sound {
     }
 }
 
-/// A weapon's firing sound; `None` for a weapon this build does not know.
-fn shot_sound(weapon: Option<&str>) -> Option<Sound> {
-    match weapon.unwrap_or("standard") {
-        "standard" => Some(Sound::Shot),
-        "spread" => Some(Sound::ShotSpread),
-        "rocket" | "tow" => Some(Sound::ShotRocket),
-        "ricochet" => Some(Sound::ShotRicochet),
-        "piercing" => Some(Sound::ShotPiercing),
-        _ => None,
+/// A weapon's firing sound; a shot that names none fired a standard shell.
+fn shot_sound(weapon: Option<Weapon>) -> Sound {
+    match weapon.unwrap_or_default() {
+        Weapon::Standard => Sound::Shot,
+        Weapon::Spread => Sound::ShotSpread,
+        Weapon::Rocket | Weapon::Tow => Sound::ShotRocket,
+        Weapon::Ricochet => Sound::ShotRicochet,
+        Weapon::Piercing => Sound::ShotPiercing,
     }
 }
 
 /// Drums emit a separate blast event, so their shell plays nothing of its own. A shell
 /// bursting a loose crate or watchtower piece (`shatter`) breaks wood.
-fn destruction_sound(kind: &str, cover_kind: Option<&str>) -> Option<Sound> {
+fn destruction_sound(kind: SimEventType, cover_kind: Option<CoverKind>) -> Option<Sound> {
     match (kind, cover_kind) {
-        ("shatter", _) => Some(Sound::WoodBreak),
-        ("destroy", Some("drum")) => None,
-        ("destroy", Some("tree" | "timber" | "cargo")) => Some(Sound::WoodBreak),
-        ("destroy", _) => Some(Sound::RubbleBreak),
+        (SimEventType::Shatter, _) => Some(Sound::WoodBreak),
+        (SimEventType::Destroy, Some(CoverKind::Drum)) => None,
+        (SimEventType::Destroy, Some(CoverKind::Tree | CoverKind::Timber | CoverKind::Cargo)) => {
+            Some(Sound::WoodBreak)
+        }
+        (SimEventType::Destroy, _) => Some(Sound::RubbleBreak),
         _ => None,
     }
 }
@@ -131,7 +133,7 @@ fn distance_gain(distance: f64) -> f64 {
 }
 
 /// Stereo position from how far the event lies along screen right.
-fn stereo_pan(event: Point, listener: Point, right: Point) -> f64 {
+fn stereo_pan(event: Vec2, listener: Vec2, right: Vec2) -> f64 {
     let across = (event.x - listener.x) * right.x + (event.z - listener.z) * right.z;
     (across / STEREO_DISTANCE).clamp(-1.0, 1.0)
 }
@@ -171,15 +173,16 @@ struct Voice {
 /// the player's hit tick first, then the event's own sound if it is near enough and its
 /// kind has not played too recently.
 fn plan_event(
-    event: &EngineEvent,
-    listener: Point,
-    right: Point,
+    pending: &PendingEvent,
+    listener: Vec2,
+    right: Vec2,
     now: Instant,
     limits: &mut RateLimits,
 ) -> [Option<Voice>; 2] {
+    let event = &pending.event;
     let mut voices = [None, None];
     // One quiet, centred tick even when several spread pellets land together.
-    if event.player_hit && ready(limits.hit, now, HIT_INTERVAL) {
+    if pending.player_hit && ready(limits.hit, now, HIT_INTERVAL) {
         limits.hit = Some(now);
         voices[0] = Some(Voice {
             sound: Sound::Hit,
@@ -191,12 +194,12 @@ fn plan_event(
     if distance > AUDIBLE_DISTANCE {
         return voices;
     }
-    let kind = event.kind.as_str();
-    let shot = kind == "shot";
-    let explosion = kind == "explosion" || kind == "death";
-    let laser = kind == "laser";
-    let destruction = destruction_sound(kind, event.cover_kind.as_deref());
-    if (shot && !event.own && !ready(limits.shot, now, BOT_SHOT_INTERVAL))
+    let kind = event.kind;
+    let shot = kind == SimEventType::Shot;
+    let explosion = matches!(kind, SimEventType::Explosion | SimEventType::Death);
+    let laser = kind == SimEventType::Laser;
+    let destruction = destruction_sound(kind, event.cover_kind);
+    if (shot && !pending.own && !ready(limits.shot, now, BOT_SHOT_INTERVAL))
         || (explosion && !ready(limits.explosion, now, EXPLOSION_INTERVAL))
         || (destruction.is_some() && !ready(limits.destruction, now, DESTRUCTION_INTERVAL))
         || (laser && !ready(limits.laser, now, LASER_INTERVAL))
@@ -206,15 +209,15 @@ fn plan_event(
     let sound = if destruction.is_some() {
         destruction
     } else if shot {
-        shot_sound(event.weapon.as_deref())
+        Some(shot_sound(event.weapon))
     } else if explosion {
         Some(Sound::Explosion)
     } else {
         match kind {
-            "pickup" => Some(Sound::Pickup),
-            "promotion" if event.own => Some(Sound::Promotion),
-            "laser" => Some(Sound::Laser),
-            "impact" | "ricochet" => Some(Sound::Impact),
+            SimEventType::Pickup => Some(Sound::Pickup),
+            SimEventType::Promotion if pending.own => Some(Sound::Promotion),
+            SimEventType::Laser => Some(Sound::Laser),
+            SimEventType::Impact | SimEventType::Ricochet => Some(Sound::Impact),
             _ => None,
         }
     };
@@ -247,14 +250,7 @@ fn plan_event(
     voices[1] = Some(Voice {
         sound,
         gain: kind_gain * distance_gain(distance),
-        pan: stereo_pan(
-            Point {
-                x: event.x,
-                z: event.z,
-            },
-            listener,
-            right,
-        ),
+        pan: stereo_pan(Vec2::new(event.x, event.z), listener, right),
     });
     voices
 }
@@ -343,29 +339,21 @@ fn decode(sound: Sound) -> Option<StaticSoundData> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sloppy_core::sim::SimEvent;
 
-    const ORIGIN: Point = Point { x: 0.0, z: 0.0 };
-    const RIGHT: Point = Point { x: 1.0, z: 0.0 };
+    const ORIGIN: Vec2 = Vec2 { x: 0.0, z: 0.0 };
+    const RIGHT: Vec2 = Vec2 { x: 1.0, z: 0.0 };
 
-    fn event(kind: &str, x: f64, z: f64) -> EngineEvent {
-        EngineEvent {
-            kind: kind.into(),
-            x,
-            z,
-            id: None,
-            owner: None,
-            team: None,
-            weapon: None,
-            label: None,
-            cover_kind: None,
-            damage_source: None,
+    fn event(kind: SimEventType, x: f64, z: f64) -> PendingEvent {
+        PendingEvent {
+            event: SimEvent::at(kind, x, z),
             player_hit: false,
             own: false,
             damage_angle: None,
         }
     }
 
-    fn plan(event: &EngineEvent, now: Instant, limits: &mut RateLimits) -> Option<Voice> {
+    fn plan(event: &PendingEvent, now: Instant, limits: &mut RateLimits) -> Option<Voice> {
         plan_event(event, ORIGIN, RIGHT, now, limits)[1]
     }
 
@@ -389,65 +377,74 @@ mod tests {
 
     #[test]
     fn pan_follows_screen_right_and_clamps() {
-        assert!((stereo_pan(Point { x: 12.5, z: 3.0 }, ORIGIN, RIGHT) - 0.5).abs() < 1e-12);
-        assert_eq!(stereo_pan(Point { x: -30.0, z: 0.0 }, ORIGIN, RIGHT), -1.0);
+        assert!((stereo_pan(Vec2::new(12.5, 3.0), ORIGIN, RIGHT) - 0.5).abs() < 1e-12);
+        assert_eq!(stereo_pan(Vec2::new(-30.0, 0.0), ORIGIN, RIGHT), -1.0);
         // First person turned a quarter: screen right is world -Z.
-        let turned = Point { x: 0.0, z: -1.0 };
-        assert_eq!(stereo_pan(Point { x: 0.0, z: 50.0 }, ORIGIN, turned), -1.0);
+        let turned = Vec2::new(0.0, -1.0);
+        assert_eq!(stereo_pan(Vec2::new(0.0, 50.0), ORIGIN, turned), -1.0);
     }
 
     #[test]
     fn destruction_breaks_wood_or_rubble_and_drums_stay_silent() {
-        assert_eq!(destruction_sound("shatter", None), Some(Sound::WoodBreak));
-        for wood in ["tree", "timber", "cargo"] {
+        assert_eq!(
+            destruction_sound(SimEventType::Shatter, None),
+            Some(Sound::WoodBreak)
+        );
+        for wood in [CoverKind::Tree, CoverKind::Timber, CoverKind::Cargo] {
             assert_eq!(
-                destruction_sound("destroy", Some(wood)),
+                destruction_sound(SimEventType::Destroy, Some(wood)),
                 Some(Sound::WoodBreak)
             );
         }
         assert_eq!(
-            destruction_sound("destroy", Some("house")),
+            destruction_sound(SimEventType::Destroy, Some(CoverKind::House)),
             Some(Sound::RubbleBreak)
         );
-        assert_eq!(destruction_sound("destroy", None), Some(Sound::RubbleBreak));
-        assert_eq!(destruction_sound("destroy", Some("drum")), None);
-        assert_eq!(destruction_sound("impact", Some("tree")), None);
+        assert_eq!(
+            destruction_sound(SimEventType::Destroy, None),
+            Some(Sound::RubbleBreak)
+        );
+        assert_eq!(
+            destruction_sound(SimEventType::Destroy, Some(CoverKind::Drum)),
+            None
+        );
+        assert_eq!(
+            destruction_sound(SimEventType::Impact, Some(CoverKind::Tree)),
+            None
+        );
     }
 
     #[test]
     fn events_choose_their_sound_and_kind_gain() {
         let now = Instant::now();
-        let mut shot = event("shot", 0.0, 0.0);
-        shot.weapon = Some("tow".into());
-        let voice = plan(&shot, now, &mut RateLimits::default()).unwrap();
+        let fresh = || RateLimits::default();
+        let mut shot = event(SimEventType::Shot, 0.0, 0.0);
+        shot.event.weapon = Some(Weapon::Tow);
+        let voice = plan(&shot, now, &mut fresh()).unwrap();
         assert_eq!((voice.sound, voice.gain), (Sound::ShotRocket, 0.25));
-        let voice = plan(&event("death", 0.0, 0.0), now, &mut RateLimits::default()).unwrap();
+        let voice = plan(&event(SimEventType::Death, 0.0, 0.0), now, &mut fresh()).unwrap();
         assert_eq!((voice.sound, voice.gain), (Sound::Explosion, 0.45));
-        let voice = plan(
-            &event("ricochet", 0.0, 0.0),
-            now,
-            &mut RateLimits::default(),
-        )
-        .unwrap();
+        let ricochet = event(SimEventType::Ricochet, 0.0, 0.0);
+        let voice = plan(&ricochet, now, &mut fresh()).unwrap();
         assert_eq!((voice.sound, voice.gain), (Sound::Impact, 0.18));
-        let voice = plan(&event("laser", 0.0, 0.0), now, &mut RateLimits::default()).unwrap();
+        let voice = plan(&event(SimEventType::Laser, 0.0, 0.0), now, &mut fresh()).unwrap();
         assert_eq!((voice.sound, voice.gain), (Sound::Laser, 0.12));
-        let mut promotion = event("promotion", 0.0, 0.0);
-        assert_eq!(plan(&promotion, now, &mut RateLimits::default()), None);
+        let mut promotion = event(SimEventType::Promotion, 0.0, 0.0);
+        assert_eq!(plan(&promotion, now, &mut fresh()), None);
         promotion.own = true;
         assert_eq!(
-            plan(&promotion, now, &mut RateLimits::default()).map(|voice| voice.sound),
+            plan(&promotion, now, &mut fresh()).map(|voice| voice.sound),
             Some(Sound::Promotion)
         );
         assert_eq!(
-            plan(&event("spawn", 0.0, 0.0), now, &mut RateLimits::default()),
+            plan(&event(SimEventType::Respawn, 0.0, 0.0), now, &mut fresh()),
             None
         );
     }
 
     #[test]
     fn far_events_are_silent_but_the_hit_tick_still_plays_centred() {
-        let mut hit = event("impact", 39.0, 0.0);
+        let mut hit = event(SimEventType::Impact, 39.0, 0.0);
         hit.player_hit = true;
         let voices = plan_event(
             &hit,
@@ -473,23 +470,23 @@ mod tests {
     fn rate_limits_throttle_bots_but_not_the_players_shots() {
         let start = Instant::now();
         let mut limits = RateLimits::default();
-        let bot = event("shot", 0.0, 0.0);
+        let bot = event(SimEventType::Shot, 0.0, 0.0);
         assert!(plan(&bot, start, &mut limits).is_some());
         let soon = start + Duration::from_millis(20);
         assert!(plan(&bot, soon, &mut limits).is_none());
-        let mut own = event("shot", 0.0, 0.0);
+        let mut own = event(SimEventType::Shot, 0.0, 0.0);
         own.own = true;
         assert!(plan(&own, soon, &mut limits).is_some());
         // The player's shot also restarts the bot interval.
         assert!(plan(&bot, start + Duration::from_millis(40), &mut limits).is_none());
         assert!(plan(&bot, start + Duration::from_millis(55), &mut limits).is_some());
 
-        let blast = event("explosion", 0.0, 0.0);
+        let blast = event(SimEventType::Explosion, 0.0, 0.0);
         assert!(plan(&blast, start, &mut limits).is_some());
         assert!(plan(&blast, start + Duration::from_millis(69), &mut limits).is_none());
         assert!(plan(&blast, start + Duration::from_millis(70), &mut limits).is_some());
 
-        let mut hit = event("impact", 0.0, 0.0);
+        let mut hit = event(SimEventType::Impact, 0.0, 0.0);
         hit.player_hit = true;
         let mut limits = RateLimits::default();
         let ticks = [0, 40, 80, 100].map(|ms| {
@@ -506,12 +503,14 @@ mod tests {
     }
 
     #[test]
-    fn a_silent_event_does_not_spend_its_kinds_interval() {
+    fn a_silent_drum_does_not_spend_the_destruction_interval() {
         let start = Instant::now();
         let mut limits = RateLimits::default();
-        let mut unknown = event("shot", 0.0, 0.0);
-        unknown.weapon = Some("unknown".into());
-        assert!(plan(&unknown, start, &mut limits).is_none());
-        assert!(plan(&event("shot", 0.0, 0.0), start, &mut limits).is_some());
+        let mut drum = event(SimEventType::Destroy, 0.0, 0.0);
+        drum.event.cover_kind = Some(CoverKind::Drum);
+        assert!(plan(&drum, start, &mut limits).is_none());
+        let mut house = event(SimEventType::Destroy, 0.0, 0.0);
+        house.event.cover_kind = Some(CoverKind::House);
+        assert!(plan(&house, start, &mut limits).is_some());
     }
 }

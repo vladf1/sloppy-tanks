@@ -6,6 +6,7 @@
 use std::collections::HashMap;
 
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2};
+use sloppy_core::sim::{DamageCause, Team, VehicleKind};
 
 /// How a layer of an icon is painted.
 #[derive(Clone, Copy)]
@@ -372,17 +373,17 @@ const SOURCES: &[Source] = &[
 
 /// The kill-feed and notice icon for each way to destroy a tank (`CAUSE_ICONS`); a
 /// kill without a reported weapon shows the generic wreck mark.
-pub fn cause_icon(cause: Option<&str>) -> &'static str {
+pub fn cause_icon(cause: Option<DamageCause>) -> &'static str {
     match cause {
-        Some("standard") => "standard",
-        Some("spread") => "spread",
-        Some("rocket" | "tow") => "rocket",
-        Some("ricochet") => "ricochet",
-        Some("piercing") => "piercing",
-        Some("mine") => "mine",
-        Some("drum") => "drum",
-        Some("interception" | "explosion") => "blast",
-        _ => "skull",
+        Some(DamageCause::Standard) => "standard",
+        Some(DamageCause::Spread) => "spread",
+        Some(DamageCause::Rocket | DamageCause::Tow) => "rocket",
+        Some(DamageCause::Ricochet) => "ricochet",
+        Some(DamageCause::Piercing) => "piercing",
+        Some(DamageCause::Mine) => "mine",
+        Some(DamageCause::Drum) => "drum",
+        Some(DamageCause::Interception | DamageCause::Explosion) => "blast",
+        None => "skull",
     }
 }
 
@@ -457,9 +458,16 @@ impl Art {
             .map_or(1.0, |source| source.view[2] / source.view[3])
     }
 
-    /// Paint the render of `kind` ("scout", "balanced", "heavy") in `team`'s paint, fit
-    /// inside `rect` at `scale` of its height and centred.
-    pub fn tank(&self, painter: &egui::Painter, kind: &str, team: u8, rect: Rect, scale: f32) {
+    /// Paint the render of a player's `kind` in `team`'s paint, fit inside `rect` at
+    /// `scale` of its height and centred.
+    pub fn tank(
+        &self,
+        painter: &egui::Painter,
+        kind: VehicleKind,
+        team: Team,
+        rect: Rect,
+        scale: f32,
+    ) {
         self.tank_image(painter, kind, team, rect, scale, false);
     }
 
@@ -467,8 +475,8 @@ impl Art {
     pub fn tank_mirrored(
         &self,
         painter: &egui::Painter,
-        kind: &str,
-        team: u8,
+        kind: VehicleKind,
+        team: Team,
         rect: Rect,
         scale: f32,
     ) {
@@ -478,21 +486,22 @@ impl Art {
     fn tank_image(
         &self,
         painter: &egui::Painter,
-        kind: &str,
-        team: u8,
+        kind: VehicleKind,
+        team: Team,
         rect: Rect,
         scale: f32,
         mirrored: bool,
     ) {
         let Some(texture) = &self.tanks else { return };
+        // The sheet has the player's tanks; a Humvee shows as the middle one.
         let (column, origin) = match kind {
-            "scout" => (0.0, [64.0, 38.0]),
-            "heavy" => (2.0, [58.5, 32.5]),
-            _ => (1.0, [75.5, 31.0]),
+            VehicleKind::Scout => (0.0, [64.0, 38.0]),
+            VehicleKind::Heavy => (2.0, [58.5, 32.5]),
+            VehicleKind::Balanced | VehicleKind::Humvee => (1.0, [75.5, 31.0]),
         };
         let min = [
             column * SHEET_CELL[0] + origin[0],
-            f32::from(team.min(1)) * SHEET_CELL[1] + origin[1],
+            team.index() as f32 * SHEET_CELL[1] + origin[1],
         ];
         let mut uv = Rect::from_min_max(
             pos2(min[0] / SHEET_SIZE[0], min[1] / SHEET_SIZE[1]),

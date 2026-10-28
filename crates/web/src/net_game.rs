@@ -55,13 +55,21 @@
 //!   `resize`.
 //! - `camera_preferences() -> Float64Array [firstPerson, zoom]`: the chosen view
 //!   and clamped overhead zoom, for the page to save after a camera input.
+//!
+//! A Rust shell (the desktop app) passes and reads the same values typed:
+//! `create_with`, `join` ([`JoinChoice`]), `choose_seat`, `set_rules` ([`RoomSettings`]),
+//! `take_room_actions` ([`ClientAction`]), `take_room_notices` ([`RoomNotice`]),
+//! `prepare` ([`PrepareStatus`]), `hud` ([`RoomHud`]), `take_events` ([`EventBatch`]),
+//! `camera` ([`CameraPreferences`]) and `gpu_ms`.
 
-use crate::events::{PendingEvent, drain_events};
+use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
 
 use glam::Vec2;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sloppy_core::net::client::{ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat};
+use sloppy_core::net::client::{
+    ClientAction, ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat,
+};
 use sloppy_core::net::client_setup::pending_join;
 use sloppy_core::net::feel_readings::Samples;
 use sloppy_core::net::hull_prediction::CorrectionCause;
@@ -70,18 +78,19 @@ use sloppy_core::net::protocol::{
 };
 use sloppy_core::net::schema::{parse_record, text_length};
 use sloppy_core::net::transport_delay::DelaySettings;
-use sloppy_core::sim::{MatchPhase, RenderState, Weapon};
-use sloppy_render::presentation::Presentation;
+use sloppy_core::sim::{MatchPhase, RenderState, Team, VehicleKind, Weapon};
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
+use sloppy_render::presentation::{PrepareStatus, Presentation};
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use crate::frame_clock::{FramePacing, FrameTimes};
-use crate::hud::{HudHuman, Scoreboard, human_json};
+use crate::hud::{RoomHud, room_hud};
 use crate::page::{
-    CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError, PageView, aim, create_view,
-    js_error, now_ms, parse, prepare_result, queue_event,
+    CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
+    PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
 };
+use crate::room_notices::RoomNotice;
 use crate::stats::presentation_stats;
 use sloppy_render::gpu::RenderTarget;
 
@@ -105,20 +114,23 @@ pub mod net_frame_slot {
 }
 
 /// `NetGame.create`'s room settings besides the view configuration
-/// (`page::create_view`).
-#[derive(Deserialize, Default)]
+/// (`page::ViewConfig`).
+#[derive(Clone, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct NetConfig {
-    server: String,
-    room: String,
-    saved_seat: Option<SavedSeat>,
-    latency: Option<String>,
-    jitter: Option<String>,
-    stall: Option<String>,
+pub struct NetConfig {
+    /// The server's validated WebSocket origin.
+    pub server: String,
+    pub room: String,
+    /// A seat this player held in the room before a reload.
+    pub saved_seat: Option<SavedSeat>,
+    /// The development transport delay parameters; omitted in production.
+    pub latency: Option<String>,
+    pub jitter: Option<String>,
+    pub stall: Option<String>,
     /// Development switch: `"0"` draws incoming shells on the display clock alone.
-    dodge: Option<String>,
+    pub dodge: Option<String>,
     /// Development switch: `"0"` sends no view delay, so the host favors no shooter.
-    shooter: Option<String>,
+    pub shooter: Option<String>,
 }
 
 impl NetConfig {
@@ -158,7 +170,7 @@ pub struct NetGame {
     baseline: Option<u32>,
     prepared: bool,
     events: Vec<PendingEvent>,
-    notices: Vec<Value>,
+    notices: Vec<RoomNotice>,
     frame_index: u64,
     times: FrameTimes,
     pacing: FramePacing,
@@ -178,45 +190,7 @@ impl NetGame {
     pub async fn create(canvas: RenderTarget, config_json: &str) -> Result<NetGame, PageError> {
         #[cfg(target_arch = "wasm32")]
         console_error_panic_hook::set_once();
-        let config: NetConfig = parse(config_json)?;
-        if !is_room_code(&config.room) {
-            return Err(js_error("Invalid room code"));
-        }
-        let PageView {
-            view,
-            canvas,
-            graphics,
-            seed,
-            pacing,
-        } = create_view(canvas, config_json).await?;
-        let client = NetworkClient::new(ClientConfig {
-            server_url: config.server.clone(),
-            room: config.room.clone(),
-            saved_seat: config.saved_seat(),
-            delay: config.delay(),
-            seed: seed as u32,
-            dodger_first: config.dodge.as_deref() != Some("0"),
-            shooter_first: config.shooter.as_deref() != Some("0"),
-        });
-        let mut game = NetGame {
-            client,
-            view,
-            commands: CommandBuilder::default(),
-            arena: None,
-            baseline: None,
-            prepared: false,
-            events: Vec::new(),
-            notices: Vec::new(),
-            frame_index: 0,
-            times: FrameTimes::default(),
-            pacing,
-            canvas,
-            graphics,
-            last_result: vec![0.0; net_frame_slot::LENGTH],
-            receive_ms: 0.0,
-        };
-        game.canvas.apply(&mut game.view);
-        Ok(game)
+        Self::create_with(canvas, parse(config_json)?, parse(config_json)?).await
     }
 
     /// The choices Battle Setup stored for `room` before reloading into it, as `JoinChoice`
@@ -231,20 +205,20 @@ impl NetGame {
     pub fn connect(&mut self, choice_json: &str, now: f64) -> Result<(), PageError> {
         let choice =
             JoinChoice::read(&parse_record(choice_json).map_err(js_error)?).map_err(js_error)?;
-        self.client.connect(choice, now);
+        self.join(choice, now);
         Ok(())
     }
 
     /// Socket and storage work for the page, as a JSON array (see the module docs).
     pub fn take_actions(&mut self) -> String {
-        serde_json::to_string(&self.client.take_actions()).expect("client actions serialize")
+        serde_json::to_string(&self.take_room_actions()).expect("client actions serialize")
     }
 
     /// UI notices as a JSON array (see the module docs). Arena preparation and baseline
     /// requests are handled here and surface as `prepare` and `baselineShown`.
     pub fn take_notices(&mut self) -> String {
-        self.drain_client_notices();
-        Value::Array(std::mem::take(&mut self.notices)).to_string()
+        let notices = self.take_room_notices();
+        Value::Array(notices.iter().map(RoomNotice::to_value).collect()).to_string()
     }
 
     pub fn socket_opened(&mut self, socket: u32, now: f64) {
@@ -289,15 +263,14 @@ impl NetGame {
         } else {
             Some(read_team(Some(&Value::from(team))).map_err(js_error)?)
         };
-        self.client.choose(team, kind, now);
-        Ok(())
+        self.choose_seat(team, kind, now)
     }
 
     /// The host's rules: `{ mapMode, difficulty, humansOnly, roundMinutes }`.
     pub fn settings(&mut self, settings_json: &str, now: f64) -> Result<(), PageError> {
         let settings = RoomSettings::read(&parse_record(settings_json).map_err(js_error)?)
             .map_err(js_error)?;
-        self.client.settings(settings, now);
+        self.set_rules(settings, now);
         Ok(())
     }
 
@@ -372,7 +345,7 @@ impl NetGame {
     }
 
     pub fn camera_preferences(&self) -> Vec<f64> {
-        self.view.rig.preferences().to_vec()
+        self.camera().to_vec()
     }
 
     pub fn resize(&mut self, css_width: f64, css_height: f64, pixel_ratio: f64) {
@@ -416,29 +389,7 @@ impl NetGame {
     /// tells the room the arena is ready. The seat stays suspended until then, so a
     /// shader compile that takes seconds never makes the room drop this connection.
     pub fn prepare_step(&mut self, budget: u32, now: f64) -> Vec<f64> {
-        if self.arena.is_none() {
-            return PREPARED.to_vec();
-        }
-        let status = match self.view.prepare_step(budget.max(1)) {
-            Ok(status) => status,
-            Err(error) => {
-                self.arena_failed(error);
-                return PREPARED.to_vec();
-            }
-        };
-        if status.ready
-            && let Some(arena) = self.arena.take()
-        {
-            match self.view.finish_prepare(&arena.state) {
-                Ok(()) => {
-                    self.prepared = true;
-                    self.client
-                        .arena_prepared(arena.round_id, &arena.room_epoch, now);
-                }
-                Err(error) => self.arena_failed(error),
-            }
-        }
-        prepare_result(&status)
+        prepare_result(&self.prepare(budget, now))
     }
 
     /// Build one of the models preparation left for after the arena is ready (the
@@ -567,42 +518,17 @@ impl NetGame {
 
     /// Displayed events for audio and HUD, as JSON (`Game.drain_events()`'s shape).
     pub fn drain_events(&mut self) -> String {
-        let (x, z) =
-            self.client
-                .display()
-                .and_then(RenderState::viewer)
-                .map_or((0.0, 0.0), |viewer| {
-                    if viewer.alive {
-                        (viewer.position.x, viewer.position.z)
-                    } else {
-                        (viewer.previous.x, viewer.previous.z)
-                    }
-                });
-        drain_events(&mut self.events, (x, z), self.view.rig.listener_right)
+        let listener = self.listener();
+        drain_events(&mut self.events, listener, self.view.rig.listener_right)
     }
 
     /// The HUD for the displayed scene (`Game.hud_json()`'s `match`, `human` and
     /// `scoreboard`), or `null` before the first scene.
     pub fn hud_json(&self) -> String {
-        let Some(state) = self.client.display() else {
+        let Some(hud) = self.hud() else {
             return "null".into();
         };
-        let Some(viewer) = state.viewer() else {
-            return "null".into();
-        };
-        #[derive(serde::Serialize)]
-        struct Hud<'a> {
-            #[serde(rename = "match")]
-            match_state: &'a sloppy_core::sim::Match,
-            human: HudHuman,
-            scoreboard: Scoreboard<'a>,
-        }
-        serde_json::to_string(&Hud {
-            match_state: &state.match_state,
-            human: human_json(viewer, state.elapsed),
-            scoreboard: Scoreboard::Rendered(&state.tanks),
-        })
-        .expect("room HUD serializes")
+        serde_json::to_string(&hud).expect("room HUD serializes")
     }
 
     /// Stats for nerds: renderer and frame rows, the displayed scene and the network.
@@ -775,39 +701,170 @@ impl NetGame {
     }
 }
 
+/// The calls above that cross the boundary as JSON or packed numbers, typed for a Rust
+/// shell (the desktop app); the page's getters serialize these same values.
 impl NetGame {
-    fn notice(&mut self, notice: Value) {
+    /// `create` with the view and the room's configuration as values.
+    pub async fn create_with(
+        canvas: RenderTarget,
+        view_config: ViewConfig,
+        config: NetConfig,
+    ) -> Result<NetGame, PageError> {
+        if !is_room_code(&config.room) {
+            return Err(js_error("Invalid room code"));
+        }
+        let PageView {
+            view,
+            canvas,
+            graphics,
+            seed,
+            pacing,
+        } = create_view(canvas, view_config).await?;
+        let client = NetworkClient::new(ClientConfig {
+            server_url: config.server.clone(),
+            room: config.room.clone(),
+            saved_seat: config.saved_seat(),
+            delay: config.delay(),
+            seed: seed as u32,
+            dodger_first: config.dodge.as_deref() != Some("0"),
+            shooter_first: config.shooter.as_deref() != Some("0"),
+        });
+        let mut game = NetGame {
+            client,
+            view,
+            commands: CommandBuilder::default(),
+            arena: None,
+            baseline: None,
+            prepared: false,
+            events: Vec::new(),
+            notices: Vec::new(),
+            frame_index: 0,
+            times: FrameTimes::default(),
+            pacing,
+            canvas,
+            graphics,
+            last_result: vec![0.0; net_frame_slot::LENGTH],
+            receive_ms: 0.0,
+        };
+        game.canvas.apply(&mut game.view);
+        Ok(game)
+    }
+
+    /// Join the room with `choice`.
+    pub fn join(&mut self, choice: JoinChoice, now: f64) {
+        self.client.connect(choice, now);
+    }
+
+    /// Change team (`None`: the side with fewer humans) or tank between battles; a
+    /// player cannot drive a Humvee.
+    pub fn choose_seat(
+        &mut self,
+        team: Option<Team>,
+        kind: VehicleKind,
+        now: f64,
+    ) -> Result<(), PageError> {
+        if !VehicleKind::PLAYABLE.contains(&kind) {
+            return Err(js_error("Invalid choice"));
+        }
+        self.client.choose(team, kind, now);
+        Ok(())
+    }
+
+    /// The host's rules for the next battle.
+    pub fn set_rules(&mut self, settings: RoomSettings, now: f64) {
+        self.client.settings(settings, now);
+    }
+
+    /// Socket and storage work, in order (see the module docs).
+    pub fn take_room_actions(&mut self) -> Vec<ClientAction> {
+        self.client.take_actions()
+    }
+
+    /// UI notices, in order. Arena preparation and baseline requests are handled here
+    /// and surface as `Prepare` and `BaselineShown`.
+    pub fn take_room_notices(&mut self) -> Vec<RoomNotice> {
+        self.drain_client_notices();
+        std::mem::take(&mut self.notices)
+    }
+
+    /// Create up to `budget` background-compiled pipelines for the arena `Prepare` asked
+    /// for (see `prepare_step`).
+    pub fn prepare(&mut self, budget: u32, now: f64) -> PrepareStatus {
+        if self.arena.is_none() {
+            return PREPARED;
+        }
+        let status = match self.view.prepare_step(budget.max(1)) {
+            Ok(status) => status,
+            Err(error) => {
+                self.arena_failed(error);
+                return PREPARED;
+            }
+        };
+        if status.ready
+            && let Some(arena) = self.arena.take()
+        {
+            match self.view.finish_prepare(&arena.state) {
+                Ok(()) => {
+                    self.prepared = true;
+                    self.client
+                        .arena_prepared(arena.round_id, &arena.room_epoch, now);
+                }
+                Err(error) => self.arena_failed(error),
+            }
+        }
+        status
+    }
+
+    /// The HUD for the displayed scene, or `None` before the first scene.
+    pub fn hud(&self) -> Option<RoomHud<'_>> {
+        self.client.display().and_then(room_hud)
+    }
+
+    /// Displayed events for audio and HUD, heard from the viewer's tank.
+    pub fn take_events(&mut self) -> EventBatch {
+        let listener = self.listener();
+        take_events(&mut self.events, listener, self.view.rig.listener_right)
+    }
+
+    /// The chosen view and clamped overhead zoom.
+    pub fn camera(&self) -> CameraPreferences {
+        CameraPreferences::of(&self.view.rig)
+    }
+
+    /// The GPU's smoothed frame time in milliseconds, once sampled.
+    pub fn gpu_ms(&self) -> Option<f64> {
+        self.graphics.gpu_ms()
+    }
+}
+
+impl NetGame {
+    fn notice(&mut self, notice: RoomNotice) {
         if self.notices.len() >= MAX_PENDING_NOTICES {
             self.notices.remove(0);
         }
         self.notices.push(notice);
     }
 
+    /// Where the viewer hears the displayed events: its tank, or where it died.
+    fn listener(&self) -> (f64, f64) {
+        self.client
+            .display()
+            .and_then(RenderState::viewer)
+            .map_or((0.0, 0.0), |viewer| {
+                if viewer.alive {
+                    (viewer.position.x, viewer.position.z)
+                } else {
+                    (viewer.previous.x, viewer.previous.z)
+                }
+            })
+    }
+
     /// Turn client notices into page notices; arena and baseline requests go to the
     /// presentation here.
     fn drain_client_notices(&mut self) {
         for notice in self.client.take_notices() {
-            let value = match notice {
-                ClientNotice::Status { text, connected } => {
-                    json!({ "type": "status", "text": text, "connected": connected })
-                }
-                ClientNotice::Notice(text) => json!({ "type": "notice", "text": text }),
-                ClientNotice::Ended { cause, text } => {
-                    json!({ "type": "ended", "cause": cause.as_str(), "text": text })
-                }
-                ClientNotice::Lobby(lobby) => {
-                    let lobby: Value = serde_json::from_str(&lobby.to_json()).unwrap_or_default();
-                    json!({ "type": "lobby", "lobby": lobby, "playerId": self.client.player_id })
-                }
-                ClientNotice::Result { outcome, team } => {
-                    json!({ "type": "result", "match": outcome, "team": team })
-                }
-                ClientNotice::ResetFeedback => json!({ "type": "resetFeedback" }),
-                ClientNotice::ClearInput => {
-                    self.commands.clear();
-                    json!({ "type": "clearInput" })
-                }
-                ClientNotice::Reveal => json!({ "type": "reveal" }),
+            match notice {
+                ClientNotice::ClearInput => self.commands.clear(),
                 ClientNotice::PrepareArena {
                     round_id,
                     room_epoch,
@@ -819,8 +876,11 @@ impl NetGame {
                     self.baseline = Some(baseline);
                     continue;
                 }
-            };
-            self.notice(value);
+                _ => {}
+            }
+            if let Some(notice) = RoomNotice::from_client(notice, &self.client.player_id) {
+                self.notice(notice);
+            }
         }
     }
 
@@ -840,13 +900,13 @@ impl NetGame {
             room_epoch,
             state,
         });
-        self.notice(json!({ "type": "prepare" }));
+        self.notice(RoomNotice::Prepare);
     }
 
     fn arena_failed(&mut self, error: String) {
         self.arena = None;
         self.client.arena_failed();
-        self.notice(json!({ "type": "arenaFailed", "error": error }));
+        self.notice(RoomNotice::ArenaFailed(error));
     }
 
     /// A full state makes presentation rebuild every model. Draw the first frames before
@@ -865,7 +925,7 @@ impl NetGame {
         self.events.clear();
         self.client.baseline_shown(baseline, now);
         self.drain_client_notices();
-        self.notice(json!({ "type": "baselineShown" }));
+        self.notice(RoomNotice::BaselineShown);
         Ok(())
     }
 

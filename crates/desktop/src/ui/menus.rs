@@ -12,8 +12,11 @@ use super::paint::{self, ButtonStyle, hex, hexa};
 use super::respawn::ordinal;
 use super::theme::{GOLD, GOLD_HOT, RED, TEXT_LABEL, bold_font, display_font};
 use super::{Action, PauseTab, UiState, View};
-use crate::engine_api::{HudState, ScoreboardRow};
 use crate::preferences::Preferences;
+use sloppy_core::sim::speed_tuning::{MAX_SPEED_SCALE, MIN_SPEED_SCALE};
+use sloppy_core::sim::{GameMode, MatchPhase, Team};
+use sloppy_web::catalog::{GRAPHICS_OPTIONS, difficulty_name};
+use sloppy_web::hud::{Hud, HudScore};
 
 /// Room inside a dialog's plate: sides, top and bottom.
 pub const DIALOG_PADDING: [f32; 3] = [30.0, 26.0, 28.0];
@@ -84,15 +87,15 @@ pub(super) fn dialog_with_padding(
 pub fn score_plates(
     painter: &Painter,
     right_center: Pos2,
-    scores: [f64; 2],
-    names: &[String; 2],
-    team: u8,
+    scores: [u32; 2],
+    names: &[&str; 2],
+    team: Team,
 ) -> Rect {
     let score_font = display_font(34.0);
     let name_font = bold_font(11.0);
     let label = |index: usize| {
         let name = names[index].to_uppercase();
-        if index == team as usize {
+        if index == team.index() {
             format!("{name} · YOU")
         } else {
             name
@@ -218,8 +221,8 @@ pub fn duration(seconds: f64) -> String {
 }
 
 /// "1 kill", "3 kills".
-pub fn count_line(count: f64, noun: &str) -> String {
-    format!("{count} {noun}{}", if count == 1.0 { "" } else { "s" })
+pub fn count_line(count: u32, noun: &str) -> String {
+    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
 /// "BLUE" as the report says it: "Blue team".
@@ -233,26 +236,24 @@ pub fn team_label(name: &str) -> String {
 }
 
 /// The leading team, or none when level.
-pub fn leading_team(scores: [f64; 2]) -> Option<u8> {
-    if scores[0] == scores[1] {
-        None
-    } else if scores[0] > scores[1] {
-        Some(0)
-    } else {
-        Some(1)
+pub fn leading_team(scores: [u32; 2]) -> Option<Team> {
+    match scores[0].cmp(&scores[1]) {
+        std::cmp::Ordering::Equal => None,
+        std::cmp::Ordering::Greater => Some(Team::Blue),
+        std::cmp::Ordering::Less => Some(Team::Red),
     }
 }
 
 /// Who leads and by how much (`standingLine`).
-pub fn standing_line(scores: [f64; 2], team: u8, names: &[String; 2]) -> String {
+pub fn standing_line(scores: [u32; 2], team: Team, names: &[&str; 2]) -> String {
     match leading_team(scores) {
         None => format!("Level at {} each", scores[0]),
         Some(leader) => {
-            let margin = (scores[0] - scores[1]).abs();
+            let margin = scores[0].abs_diff(scores[1]);
             let side = if leader == team {
                 "Your team".to_owned()
             } else {
-                team_label(&names[leader as usize])
+                team_label(names[leader.index()])
             };
             format!("{side} leads by {margin}")
         }
@@ -260,10 +261,10 @@ pub fn standing_line(scores: [f64; 2], team: u8, names: &[String; 2]) -> String 
 }
 
 /// The scoreboard's order: most kills, then fewest wrecks, then by name.
-pub fn by_score(a: &ScoreboardRow, b: &ScoreboardRow) -> std::cmp::Ordering {
+pub fn by_score(a: &HudScore, b: &HudScore) -> std::cmp::Ordering {
     b.kills
-        .total_cmp(&a.kills)
-        .then(a.deaths.total_cmp(&b.deaths))
+        .cmp(&a.kills)
+        .then(a.deaths.cmp(&b.deaths))
         .then(a.name.cmp(&b.name))
 }
 
@@ -275,7 +276,7 @@ pub fn dialog_head(
     eyebrow: &str,
     title: &str,
     title_color: Color32,
-    score: Option<(&HudState, [f64; 2])>,
+    score: Option<(&Hud, [u32; 2])>,
 ) -> f32 {
     paint::eyebrow(painter, origin, eyebrow);
     let title_top = origin.y + 22.0;
@@ -461,19 +462,18 @@ fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[(&str, String, St
 }
 
 /// Where the viewer stands on their team's board: place and the team's size.
-fn team_place(rows: &[ScoreboardRow], viewer: u32) -> Option<(usize, usize)> {
+fn team_place(rows: &[HudScore], viewer: u32) -> Option<(usize, usize)> {
     let row = rows.iter().find(|row| row.id == viewer)?;
-    let mut team: Vec<&ScoreboardRow> =
-        rows.iter().filter(|other| other.team == row.team).collect();
+    let mut team: Vec<&HudScore> = rows.iter().filter(|other| other.team == row.team).collect();
     team.sort_by(|a, b| by_score(a, b));
     let place = team.iter().position(|other| other.id == viewer)? + 1;
     Some((place, team.len()))
 }
 
 /// Pause's battle tab: a solo run's tally, then the clock, the tank and the round.
-fn battle_pane(painter: &Painter, origin: Pos2, width: f32, hud: &HudState) -> f32 {
+fn battle_pane(painter: &Painter, origin: Pos2, width: f32, hud: &Hud) -> f32 {
     let human = &hud.human;
-    let solo = hud.game_mode == "solo";
+    let solo = hud.game_mode == GameMode::Solo;
     let mut y = origin.y;
     if solo {
         let half = (width - 10.0) / 2.0;
@@ -531,17 +531,15 @@ fn battle_pane(painter: &Painter, origin: Pos2, width: f32, hud: &HudState) -> f
     } else {
         (format!("First to {}", hud.score_limit), String::new())
     };
-    let mut difficulty = hud.difficulty.clone();
-    if let Some(first) = difficulty.get_mut(0..1) {
-        first.make_ascii_uppercase();
-    }
+    let difficulty = difficulty_name(hud.difficulty).to_owned();
+    let rows: Vec<HudScore> = hud.scoreboard.rows().collect();
     let last = if solo {
         (
             "Bots",
             format!("{}", hud.active_enemies),
             "active".to_owned(),
         )
-    } else if let Some((place, of)) = team_place(&hud.scoreboard, human.id) {
+    } else if let Some((place, of)) = team_place(&rows, human.id) {
         (
             "Team rank",
             format!("{} of {of}", ordinal(place as u64).to_lowercase()),
@@ -560,8 +558,8 @@ fn battle_pane(painter: &Painter, origin: Pos2, width: f32, hud: &HudState) -> f
         ("Difficulty", difficulty, String::new()),
         (
             "Your tank",
-            human.vehicle_name.clone(),
-            human.rank_name.clone(),
+            human.vehicle_name.to_owned(),
+            human.rank_name.to_owned(),
         ),
         (
             "Kills / deaths",
@@ -641,7 +639,7 @@ pub fn pause(
 ) {
     let Some(hud) = state.hud.clone() else { return };
     dim_backdrop(context);
-    let solo = hud.game_mode == "solo";
+    let solo = hud.game_mode == GameMode::Solo;
     let mode = if solo { "SOLO ASSAULT" } else { "TEAM BATTLE" };
     let mut tab = state.pause_tab;
     let hidden = state.settings_draft.is_some();
@@ -688,8 +686,10 @@ pub fn pause(
             } else {
                 let scores = hud.match_state.scores;
                 let mut line = standing_line(scores, hud.human_team, &hud.team_names);
-                if !hud.endless_match && hud.score_limit > 0.0 && !hud.match_state.overtime {
-                    let needed = (hud.score_limit - scores[hud.human_team as usize]).max(0.0);
+                if !hud.endless_match && hud.score_limit > 0 && !hud.match_state.overtime {
+                    let needed = hud
+                        .score_limit
+                        .saturating_sub(scores[hud.human_team.index()]);
                     line = format!("{line} · {} to win", count_line(needed, "kill"));
                 }
                 let tone = match leading_team(scores) {
@@ -800,14 +800,6 @@ pub fn pause(
     );
     state.pause_tab = tab;
 }
-
-/// Graphics choices: value, label.
-const GRAPHICS: [(&str, &str); 4] = [
-    ("auto", "Auto"),
-    ("high", "High"),
-    ("medium", "Medium"),
-    ("low", "Low"),
-];
 
 /// A setting's name with its note under it, at the row's left.
 fn setting_label(painter: &Painter, pos: Pos2, name: &str, note: &str) {
@@ -925,13 +917,13 @@ fn slider(
 }
 
 /// A named choice lifts out of its dark well in gold, like `.setting-choice`.
-fn setting_choice(
+fn setting_choice<T: Copy + PartialEq>(
     ui: &mut Ui,
     painter: &Painter,
     well: Rect,
     id: &str,
-    choices: &[(&str, &str)],
-    chosen: &mut String,
+    choices: &[(T, &str)],
+    chosen: &mut T,
 ) {
     painter.rect_filled(well, 10, hexa(0x050d1c, 0.8));
     let segment = (well.width() - 6.0 - 3.0 * (choices.len() - 1) as f32) / choices.len() as f32;
@@ -975,7 +967,7 @@ fn setting_choice(
             0.0,
         );
         if response.clicked() {
-            *chosen = (*value).into();
+            *chosen = *value;
         }
     }
 }
@@ -1025,7 +1017,7 @@ pub fn settings(
         return;
     };
     // The pause menu dims the arena already while it waits under Settings.
-    if view.room || !(view.in_round && view.phase == crate::engine_api::Phase::Paused) {
+    if view.room || !(view.in_round && view.phase == MatchPhase::Paused) {
         dim_backdrop(context);
     }
     let mut close = None;
@@ -1102,7 +1094,7 @@ pub fn settings(
                 painter,
                 Rect::from_min_size(pos2(control_x, y), vec2(control_width, 38.0)),
                 "graphics",
-                &GRAPHICS,
+                &GRAPHICS_OPTIONS,
                 &mut draft.graphics,
             );
             y += 50.0;
@@ -1132,16 +1124,14 @@ pub fn settings(
                 "Debug tools",
                 "Extra levels and Stats for nerds",
             );
-            let mut debug = if draft.debug { "on" } else { "off" }.to_owned();
             setting_choice(
                 ui,
                 painter,
                 Rect::from_min_size(pos2(control_x, y), vec2(control_width, 38.0)),
                 "debug tools",
-                &[("off", "Off"), ("on", "On")],
-                &mut debug,
+                &[(false, "Off"), (true, "On")],
+                &mut draft.debug,
             );
-            draft.debug = debug == "on";
             y += 58.0;
             if !view.room {
                 // Battle speed: single player tunes its own battle.
@@ -1233,7 +1223,7 @@ pub fn settings(
                         Rect::from_min_size(pos2(control_x, y), vec2(control_width, 44.0)),
                         id,
                         value,
-                        (0.5, 2.0),
+                        (MIN_SPEED_SCALE, MAX_SPEED_SCALE),
                         1.0,
                         ("Slower", "Faster"),
                     );

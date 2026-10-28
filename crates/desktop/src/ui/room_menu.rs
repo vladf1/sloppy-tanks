@@ -5,25 +5,24 @@
 //! players list and the respawn card).
 
 use egui::{Align2, Color32, FontId, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
-use sloppy_core::net::protocol::{Lobby, MAX_ROUND_MINUTES, Player, RoomPhase};
-use sloppy_core::sim::types::Team;
+use sloppy_core::net::client::EndCause;
+use sloppy_core::net::protocol::{Lobby, MAX_ROUND_MINUTES, Player, RoomPhase, RoomSettings};
+use sloppy_core::sim::data::{TEAM_NAMES, vehicle};
+use sloppy_core::sim::difficulty::Difficulty;
+use sloppy_core::sim::map_options::{MAP_OPTIONS, map_option_for};
+use sloppy_core::sim::{Match, MatchPhase, SimEventType, Team, VehicleKind};
+use sloppy_web::catalog::{DIFFICULTY_OPTIONS, TANK_CARDS, difficulty_name, map_card};
+use sloppy_web::events::PendingEvent;
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
-use super::rooms::map_name;
-use super::setup::{EXTRA_MAPS, MAPS, TANKS};
 use super::theme::{GOLD, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
 use super::{Action, KillFeedEntry, UiState, View, hud, menus};
-use crate::engine_api::{EngineEvent, MatchState, Phase};
-use crate::room_api::RoomRules;
 
 /// Seconds "Code copied" shows on its button.
 const COPIED_SECONDS: f64 = 2.0;
 /// Tanks per team, bots included, on a standard map; extra levels name their own.
 const STANDARD_TEAM_TANKS: usize = 6;
-/// Tanks per team on the extra levels (`teamTanks` in `map-options.ts`).
-const EXTRA_TEAM_TANKS: usize = 15;
-const TEAM_NAMES: [&str; 2] = ["BLUE", "RED"];
 
 /// Whether the room's socket is live, being (re)connected, or has given up.
 #[derive(Clone, Debug, PartialEq)]
@@ -33,24 +32,39 @@ pub enum Link {
         title: String,
         text: String,
     },
-    /// `cause` is the client's `EndCause`.
+    /// Why the client stopped retrying; `None` when the renderer stopped instead.
     Ended {
-        cause: String,
+        cause: Option<EndCause>,
         text: String,
     },
 }
 
 /// The heading of each connection end, and the retry it offers besides Battle Setup.
-fn ending(cause: &str) -> (&'static str, Option<&'static str>) {
+fn ending(cause: Option<EndCause>) -> (&'static str, Option<&'static str>) {
     match cause {
-        "lost" => ("CONNECTION LOST", Some("TRY AGAIN")),
-        "rejected" => ("DISCONNECTED", Some("TRY AGAIN")),
-        "seat-expired" => ("SEAT EXPIRED", Some("JOIN AGAIN")),
-        "other-tab" => ("PLAYING ELSEWHERE", Some("PLAY HERE")),
-        "room-ended" => ("ROOM CLOSED", None),
-        "outdated" => ("GAME UPDATED", None),
-        _ => ("RENDERER STOPPED", None),
+        Some(EndCause::Lost) => ("CONNECTION LOST", Some("TRY AGAIN")),
+        Some(EndCause::Rejected) => ("DISCONNECTED", Some("TRY AGAIN")),
+        Some(EndCause::SeatExpired) => ("SEAT EXPIRED", Some("JOIN AGAIN")),
+        Some(EndCause::OtherTab) => ("PLAYING ELSEWHERE", Some("PLAY HERE")),
+        Some(EndCause::RoomEnded) => ("ROOM CLOSED", None),
+        Some(EndCause::Outdated) => ("GAME UPDATED", None),
+        None => ("RENDERER STOPPED", None),
     }
+}
+
+/// A tank's name in a sentence: "Big Rig" for BIG RIG.
+fn tank_name(kind: VehicleKind) -> String {
+    vehicle(kind)
+        .name
+        .split(' ')
+        .map(|word| {
+            let mut letters = word.chars();
+            letters.next().map_or_else(String::new, |first| {
+                first.to_string() + &letters.as_str().to_lowercase()
+            })
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 /// What the room's screens show besides the HUD's state.
@@ -65,7 +79,7 @@ pub struct RoomMenu {
     pub player_id: String,
     pub link: Link,
     /// The finished round as the viewer's tank played it.
-    pub outcome: Option<(MatchState, u8)>,
+    pub outcome: Option<(Match, Team)>,
     /// The round this host ended early: its seat had the menu open, so no final state.
     pub ended_round: Option<u64>,
     /// The in-battle menu is open.
@@ -114,7 +128,11 @@ impl RoomMenu {
             Link::Connecting { title, text } => {
                 json!({"kind": "connecting", "title": title, "text": text})
             }
-            Link::Ended { cause, text } => json!({"kind": "ended", "cause": cause, "text": text}),
+            Link::Ended { cause, text } => json!({
+                "kind": "ended",
+                "cause": cause.map_or("renderer", EndCause::as_str),
+                "text": text,
+            }),
         };
         json!({
             "room": self.room, "playerId": self.player_id, "joining": self.joining,
@@ -146,8 +164,8 @@ impl RoomMenu {
     }
 
     /// The viewer's team, for the score bar.
-    pub fn team(&self) -> Option<u8> {
-        self.mine().map(|player| player.team.index() as u8)
+    pub fn team(&self) -> Option<Team> {
+        self.mine().map(|player| player.team)
     }
 
     /// Connection progress: live, or a dialog that says the socket is down.
@@ -168,7 +186,8 @@ impl RoomMenu {
         }
     }
 
-    pub fn ended(&mut self, cause: String, text: String) {
+    /// The connection ended for `cause`, or the renderer stopped (`None`).
+    pub fn ended(&mut self, cause: Option<EndCause>, text: String) {
         self.link = Link::Ended { cause, text };
     }
 
@@ -195,7 +214,7 @@ impl RoomMenu {
                     };
                     ui.kill_feed.push(KillFeedEntry {
                         killer: player.name.clone() + &what,
-                        killer_team: Some(player.team.index() as u8),
+                        killer_team: Some(player.team),
                         victim: String::new(),
                         victim_team: None,
                         cause: None,
@@ -223,20 +242,19 @@ impl RoomMenu {
     }
 
     /// An engine event's room feedback: the death cause on the respawn card.
-    pub fn event(&mut self, event: &EngineEvent, ui: &UiState) {
+    pub fn event(&mut self, pending: &PendingEvent, ui: &UiState) {
         let Some(hud) = &ui.hud else { return };
+        let event = &pending.event;
         let viewer = hud.human.id;
         if event.id != Some(viewer) {
             return;
         }
-        match event.kind.as_str() {
-            "death" => {
+        match event.kind {
+            SimEventType::Death => {
                 let weapon = event
                     .damage_source
-                    .as_ref()
-                    .map(|source| source.cause.to_lowercase())
-                    .filter(|cause| !cause.is_empty())
-                    .map(|cause| {
+                    .map(|source| {
+                        let cause = source.cause.as_str();
                         let article = if cause.starts_with(['a', 'e', 'i', 'o', 'u']) {
                             "an"
                         } else {
@@ -245,11 +263,10 @@ impl RoomMenu {
                         format!(" with {article} {cause}")
                     })
                     .unwrap_or_default();
-                let killer = hud
-                    .scoreboard
-                    .iter()
-                    .find(|row| Some(row.id) == event.owner)
-                    .map(|row| row.name.clone());
+                let killer = event
+                    .owner
+                    .and_then(|owner| hud.scoreboard.row(owner))
+                    .map(|row| row.name.into_owned());
                 self.death_cause = if event.owner == Some(viewer) {
                     format!("You destroyed yourself{weapon}.")
                 } else if let Some(killer) = killer {
@@ -258,7 +275,7 @@ impl RoomMenu {
                     "You were destroyed.".into()
                 };
             }
-            "respawn" => self.death_cause.clear(),
+            SimEventType::Respawn => self.death_cause.clear(),
             _ => {}
         }
     }
@@ -272,7 +289,9 @@ impl RoomMenu {
                 "BATTLE ENDED"
             }
             None => "ROUND COMPLETE",
-            Some((outcome, _)) if outcome.ended_early || outcome.winner.is_none() => "BATTLE ENDED",
+            Some((outcome, _)) if outcome.ended_early == Some(true) || outcome.winner.is_none() => {
+                "BATTLE ENDED"
+            }
             Some((outcome, team)) if outcome.winner == Some(*team) => "VICTORY",
             Some(_) => "DEFEAT",
         }
@@ -281,15 +300,6 @@ impl RoomMenu {
 
 fn team_word(team: Team) -> &'static str {
     if team == Team::Blue { "Blue" } else { "Red" }
-}
-
-fn tank_name(kind: &str) -> &str {
-    match kind {
-        "scout" => "Skipper",
-        "balanced" => "Bruiser",
-        "heavy" => "Big Rig",
-        _ => kind,
-    }
 }
 
 /// The room's plate keeps the same width and padding as `multiplayer.css`; only
@@ -498,7 +508,7 @@ fn connection(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut
             }
         }
         Link::Ended { cause, text } => {
-            let (title, retry) = ending(cause);
+            let (title, retry) = ending(*cause);
             room_heading(ui, &menu.room, title, Color32::WHITE);
             paragraph(ui, text, hex(0xc4dbee));
             let width = ui.available_width();
@@ -680,7 +690,7 @@ fn room_menu(
 }
 
 /// Room results show only the final numbers; team labels belong to single player's score plates.
-fn room_scores(painter: &egui::Painter, right_center: egui::Pos2, scores: [f64; 2]) {
+fn room_scores(painter: &egui::Painter, right_center: egui::Pos2, scores: [u32; 2]) {
     let font = display_font(34.0);
     let widths = scores.map(|score| {
         (paint::text_width(painter, &score.to_string(), font.clone(), 0.0) + 28.0).max(58.0)
@@ -748,19 +758,14 @@ fn summary(ui: &mut Ui, lobby: &Lobby) {
 
 fn summary_at(painter: &egui::Painter, origin: egui::Pos2, lobby: &Lobby) {
     let settings = &lobby.settings;
-    let difficulty = settings.difficulty.as_str();
     let bots = if settings.humans_only {
         "No bots".to_owned()
     } else {
-        format!(
-            "{}{} bots",
-            difficulty[..1].to_uppercase(),
-            &difficulty[1..]
-        )
+        format!("{} bots", difficulty_name(settings.difficulty))
     };
     let mut x = origin.x;
     for text in [
-        map_name(settings.map_mode.as_str()).to_owned(),
+        map_option_for(settings.map_mode).name.to_owned(),
         bots,
         format!("{} min", settings.round_minutes),
     ] {
@@ -831,8 +836,7 @@ fn next_battle(
     actions: &mut Vec<Action>,
 ) {
     let settings = &lobby.settings;
-    let map_id = settings.map_mode.as_str();
-    let extra = EXTRA_MAPS.iter().any(|(id, _)| *id == map_id);
+    let extra = map_option_for(settings.map_mode).extra;
     let (label, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::hover());
     paint::text(
         ui.painter(),
@@ -862,54 +866,39 @@ fn next_battle(
         }
     }
     if host && menu.editing_rules {
-        let current = RoomRules {
-            map_mode: map_id.to_owned(),
-            difficulty: settings.difficulty.as_str().to_owned(),
-            humans_only: settings.humans_only,
-            round_minutes: settings.round_minutes,
-        };
-        let mut rules = current.clone();
+        let current: RoomSettings = *settings;
+        let mut rules = current;
         ui.columns(3, |columns| {
             form_label(&mut columns[0], "MAP");
-            let offered = if debug || extra { &EXTRA_MAPS[..] } else { &[] };
             let width = columns[0].available_width();
             egui::ComboBox::from_id_salt("room map")
                 .width(width)
-                .selected_text(map_name(&rules.map_mode))
+                .selected_text(map_option_for(rules.map_mode).name)
                 .show_ui(&mut columns[0], |ui| {
-                    for (id, label) in MAPS.iter().chain(offered) {
-                        ui.selectable_value(&mut rules.map_mode, (*id).into(), *label);
+                    // The extra levels with the debug tools, or while the room plays one.
+                    for option in MAP_OPTIONS
+                        .iter()
+                        .filter(|map| debug || extra || !map.extra)
+                    {
+                        ui.selectable_value(&mut rules.map_mode, option.id, option.name);
                     }
                 });
             form_label(&mut columns[1], "BOTS");
-            let mut bots = if rules.humans_only {
-                "none"
-            } else {
-                &rules.difficulty
-            }
-            .to_owned();
+            // `None`: humans only.
+            let mut bots: Option<Difficulty> = (!rules.humans_only).then_some(rules.difficulty);
             let width = columns[1].available_width();
             egui::ComboBox::from_id_salt("room bots")
                 .width(width)
-                .selected_text(match bots.as_str() {
-                    "easy" => "Easy",
-                    "hard" => "Hard",
-                    "none" => "None",
-                    _ => "Normal",
-                })
+                .selected_text(bots.map_or("None", difficulty_name))
                 .show_ui(&mut columns[1], |ui| {
-                    for (id, label) in [
-                        ("easy", "Easy"),
-                        ("normal", "Normal"),
-                        ("hard", "Hard"),
-                        ("none", "None"),
-                    ] {
-                        ui.selectable_value(&mut bots, id.into(), label);
+                    for option in &DIFFICULTY_OPTIONS {
+                        ui.selectable_value(&mut bots, Some(option.difficulty), option.name);
                     }
+                    ui.selectable_value(&mut bots, None, "None");
                 });
-            rules.humans_only = bots == "none";
-            if !rules.humans_only {
-                rules.difficulty = bots;
+            rules.humans_only = bots.is_none();
+            if let Some(difficulty) = bots {
+                rules.difficulty = difficulty;
             }
             form_label(&mut columns[2], "MINUTES");
             let width = columns[2].available_width();
@@ -941,11 +930,7 @@ fn next_battle(
             ui.painter(),
             pos2(label.right() + 4.0, choice_line.center().y),
             Align2::LEFT_CENTER,
-            &format!(
-                "{} · {}",
-                team_word(mine.team),
-                tank_name(mine.kind.as_str())
-            ),
+            &format!("{} · {}", team_word(mine.team), tank_name(mine.kind)),
             bold_font(13.0),
             hex(0xf5faff),
             0.0,
@@ -965,10 +950,10 @@ fn next_battle(
             menu.editing_choice = !menu.editing_choice;
         }
         if menu.editing_choice {
-            let team = Some(mine.team.index() as u8);
-            let kind = mine.kind.as_str();
+            let team = Some(mine.team);
+            let kind = mine.kind;
             let mut picked_team = team;
-            let mut picked_kind = kind.to_owned();
+            let mut picked_kind = kind;
             ui.columns(2, |columns| {
                 form_label(&mut columns[0], "TEAM");
                 let width = columns[0].available_width();
@@ -978,8 +963,8 @@ fn next_battle(
                     .show_ui(&mut columns[0], |ui| {
                         for (choice, label) in [
                             (None, "Auto · fewer humans"),
-                            (Some(0), "Blue"),
-                            (Some(1), "Red"),
+                            (Some(Team::Blue), "Blue"),
+                            (Some(Team::Red), "Red"),
                         ] {
                             ui.selectable_value(&mut picked_team, choice, label);
                         }
@@ -990,8 +975,8 @@ fn next_battle(
                     .width(width)
                     .selected_text(tank_name(kind))
                     .show_ui(&mut columns[1], |ui| {
-                        for tank in TANKS {
-                            ui.selectable_value(&mut picked_kind, tank.id.to_owned(), tank.name);
+                        for tank in &TANK_CARDS {
+                            ui.selectable_value(&mut picked_kind, tank.kind, tank.name());
                         }
                     });
             });
@@ -1098,14 +1083,11 @@ fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
 
 /// Both teams' players, with the seats bots or nobody fill.
 fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
-    let extra = EXTRA_MAPS
-        .iter()
-        .any(|(id, _)| *id == lobby.settings.map_mode.as_str());
-    let team_tanks = if extra && !lobby.settings.humans_only {
-        EXTRA_TEAM_TANKS
-    } else {
-        STANDARD_TEAM_TANKS
-    };
+    // An extra level brings its own roster (`teamTanks`), unless only humans play.
+    let team_tanks = map_card(lobby.settings.map_mode)
+        .team_tanks
+        .filter(|_| !lobby.settings.humans_only)
+        .map_or(STANDARD_TEAM_TANKS, |tanks| tanks as usize);
     let width = ui.available_width();
     let column_width = (width - 10.0) / 2.0;
     let longest = (0..2)
@@ -1258,9 +1240,8 @@ fn players(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
                     .hud
                     .as_ref()?
                     .scoreboard
-                    .iter()
-                    .find(|row| row.id == tank)
-                    .map(|row| row.kills as u32)
+                    .row(tank)
+                    .map(|row| row.kills)
             })
             .unwrap_or(player.kills)
     };
@@ -1426,20 +1407,18 @@ fn respawn(context: &egui::Context, menu: &RoomMenu, state: &UiState) {
 }
 
 /// The phase the HUD and the pause logic see.
-pub fn hud_phase(menu: &RoomMenu) -> Phase {
+pub fn hud_phase(menu: &RoomMenu) -> MatchPhase {
     match menu.phase() {
-        RoomPhase::Playing if menu.in_battle() => Phase::Playing,
-        RoomPhase::Playing => Phase::Paused,
-        RoomPhase::Results => Phase::Results,
-        RoomPhase::Lobby => Phase::Ready,
+        RoomPhase::Playing if menu.in_battle() => MatchPhase::Playing,
+        RoomPhase::Playing => MatchPhase::Paused,
+        RoomPhase::Results => MatchPhase::Results,
+        RoomPhase::Lobby => MatchPhase::Ready,
     }
 }
 
 /// The same room and seats in each UI capture, with no socket or running server.
 #[cfg(test)]
 pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
-    use sloppy_core::net::protocol::RoomSettings;
-    use sloppy_core::sim::types::VehicleKind;
     let players: Vec<Player> = [
         (
             "viewer",
@@ -1522,21 +1501,23 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
         }
         "room-connection-ended" => {
             menu.link = Link::Ended {
-                cause: "lost".into(),
+                cause: Some(EndCause::Lost),
                 text: "The connection to the room was lost. Try joining again.".into(),
             }
         }
         "room-pause" => menu.menu_open = true,
         "room-results" => {
             menu.outcome = Some((
-                MatchState {
-                    phase: Phase::Results,
-                    scores: [42.0, 37.0],
-                    winner: Some(0),
+                Match {
+                    phase: MatchPhase::Results,
+                    time: 0.0,
+                    scores: [42, 37],
+                    overtime: false,
+                    ended_early: None,
+                    winner: Some(Team::Blue),
                     round: 1,
-                    ..MatchState::default()
                 },
-                0,
+                Team::Blue,
             ))
         }
         "room-lobby-rules" => menu.editing_rules = true,
