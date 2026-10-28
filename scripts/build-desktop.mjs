@@ -133,21 +133,27 @@ function plist(entries) {
 function makeIcns(destination, scratch) {
   const iconset = join(scratch, "AppIcon.iconset");
   rmSync(iconset, { recursive: true, force: true });
-  run("cargo", [
-    "run",
-    "--locked",
-    "--profile",
-    PROFILE,
-    "--target",
-    MAC_TARGET,
-    "-q",
-    "-p",
-    "sloppy-desktop",
-    "--example",
-    "app_icon",
-    "--",
-    iconset,
-  ]);
+  // The content stamp is a compiler input in sloppy-core. Keep it the same as the
+  // app build so generating its icon does not rebuild the engine without the stamp.
+  run(
+    "cargo",
+    [
+      "run",
+      "--locked",
+      "--profile",
+      PROFILE,
+      "--target",
+      MAC_TARGET,
+      "-q",
+      "-p",
+      "sloppy-desktop",
+      "--example",
+      "app_icon",
+      "--",
+      iconset,
+    ],
+    { env: { ...process.env, ...stamps } },
+  );
   run("iconutil", ["--convert", "icns", "--output", destination, iconset]);
 }
 
