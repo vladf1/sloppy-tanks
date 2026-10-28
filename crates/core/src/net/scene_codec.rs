@@ -24,7 +24,7 @@ use super::wire::{
 };
 use crate::sim::crate_layout::CratePiece;
 use crate::sim::data::STEP;
-use crate::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
+use crate::sim::debris_cleanup::replicated_life;
 use crate::sim::debris_physics::DebrisMaterial;
 use crate::sim::house_layout::{HousePart, HousePiece};
 use crate::sim::map_options::{MapId, is_extra_level};
@@ -884,9 +884,11 @@ fn write_fragment(record: &mut WireRecord, simulation: &Simulation, fragment: &F
         simulation.body_translation(fragment.body),
     );
     set_rotation(record, ROTATION_X, simulation.body_rotation(fragment.body));
-    // Clients read life only for the final fade, so a steady value until then keeps
-    // every settled piece out of the per-frame deltas.
-    record.set_fixed(LIFE, fragment.life.min(DEBRIS_CLEANUP_SECONDS), TIMER_SCALE);
+    record.set_fixed(
+        LIFE,
+        replicated_life(fragment.life, fragment.wreck.is_some()),
+        TIMER_SCALE,
+    );
     record.set_fixed(SIZE, fragment.size, POSITION_SCALE);
     record.set_count(COLOR, u64::from(fragment.color));
     set_choice(record, SHAPE, &FRAGMENT_SHAPES, fragment.shape);

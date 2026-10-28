@@ -69,6 +69,9 @@ To try a build on a phone or tablet, `bun run tunnel` builds the game and prints
 
 ## Play
 
+The game also comes as a desktop app for Apple silicon Macs and Windows: download it
+from the [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest).
+
 Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 
 - **Team Battle:** six versus six, with respawns. First to 100 kills or the highest score after five minutes wins; a timed tie enters next-kill overtime.
@@ -126,7 +129,7 @@ bun run check          # the CI gate: formatting, Wasm and Vite builds, lint, ty
 bun run wasm           # release WebGPU engine and its glue into src/generated/engine/
 bun run wasm:all       # both engines, the WebGL2 one into src/generated/engine-webgl/
 bun run test               # page shell, import boundary and traffic-bot tests (needs bun run server:build)
-bun run test:rust      # simulation, net, renderer and server tests (cargo test --workspace)
+bun run test:rust      # simulation, net, renderer and server tests (cargo test --workspace, without the desktop app)
 bun run validate       # ten seeded full matches and reset checks
 bun run build          # production output in dist/ (builds the Wasm first)
 bun run lint:fix       # safe ESLint fixes
@@ -142,6 +145,7 @@ bun run check:browser  # browser checks against a running dev server (set SLOPPY
 | `crates/render`   | Wasm          | The WebGPU/WebGL2 renderer, WGSL shaders, presentation, effects and cameras              |
 | `crates/web`      | Wasm          | The wasm-bindgen API: `Game` (single player) and `NetGame` (a room page)                 |
 | `crates/server`   | native        | The multiplayer server: HTTP, WebSocket rooms, limits, monitor and dashboard             |
+| `crates/desktop`  | macOS/Windows | The desktop app: a native window on wgpu (Metal, Direct3D 12), egui menus, HUD           |
 | `src/`            | browser       | The page shell: menus, HUD, input, touch controls, audio and the room page               |
 
 | Area                           | Starting points                                                                                                               |
@@ -224,6 +228,50 @@ Single-player downloads no multiplayer page code and opens no game-server connec
 Multiplayer loads its client and UI only on entry and does not run browser physics.
 The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
 [server guide](crates/server/README.md) describes local development and deployment.
+
+## Desktop builds
+
+`crates/desktop` is the same game as a native app for macOS and Windows, no browser:
+the Rust `Game` and `NetGame` the page drives, drawn with wgpu on Metal or Direct3D 12,
+with menus and HUD in egui and the textures and sounds from
+`public/` built into the executable.
+
+```sh
+bun run desktop          # the app for this machine
+bun run desktop:mac      # Sloppy Tanks.app for Apple silicon, macOS 11 or newer
+bun run desktop:windows  # sloppy-tanks.exe, on Windows with the MSVC build tools
+```
+
+Both land in the ignored `artifacts/desktop/`: the Mac app beside a zip of it and an
+installer package (`.pkg`, which puts it in `/Applications`) for sharing, and the
+Windows executable. Build through the script rather than `cargo build`: it stamps the
+content version multiplayer joins send, which must match the servers' (the same one the
+page carries), as well as the release and commit Battle Setup shows. It adds the Apple silicon
+and Windows targets with rustup when they are missing and uses the `desktop` Cargo profile, which
+optimizes everything for speed. `cargo run -p sloppy-desktop` works for quick local
+tries, but servers refuse its unstamped content version. The
+[Desktop app workflow](.github/workflows/desktop.yml) builds both on pull requests that
+touch the crates or assets and on main, and keeps them as run artifacts; Linux CI leaves
+the crate out (`--exclude sloppy-desktop`), since its window and audio crates need
+system libraries there. Main's builds also replace the repository's
+[latest release](https://github.com/vladf1/sloppy-tanks/releases/latest), under file
+names that stay the same, so these links always fetch the newest:
+[Mac installer](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-macOS.pkg),
+[Mac app (zip)](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-macOS.zip)
+and [Windows](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-Windows.exe).
+The release job publishes only a Mac app and package that carry a stapled notarization
+ticket.
+
+Mac builds from main, and local ones on a Mac holding the Developer ID certificates and
+a `notarytool` profile, are signed and notarized, so the `.pkg` and the zip open without
+a warning. Pull request builds carry only an ad-hoc signature: the first time,
+right-click the package or the app and choose **Open**, or, once macOS has refused it,
+choose **Open Anyway** in System Settings → Privacy & Security. The Windows executable
+is unsigned, so SmartScreen asks once: **More info**, then **Run anyway**. Start it with
+`--debug` (for example `"Sloppy Tanks.app/Contents/MacOS/sloppy-tanks" --debug`) for
+the extra levels a `?debug` page offers. Settings and personal bests live in
+`~/Library/Application Support/Sloppy Tanks/` on macOS and `%APPDATA%\Sloppy Tanks\` on
+Windows.
 
 ## Assets
 

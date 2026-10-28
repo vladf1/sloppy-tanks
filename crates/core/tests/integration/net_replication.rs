@@ -20,7 +20,9 @@ use sloppy_core::net::shot_paths::{PathEntry, ShotLaunch, ShotPath};
 use sloppy_core::net::wire::{WireRecord, put_signed, put_varint, write_changes};
 use sloppy_core::net::wire_view::WireView;
 use sloppy_core::sim::Simulation;
-use sloppy_core::sim::debris_cleanup::DEBRIS_CLEANUP_SECONDS;
+use sloppy_core::sim::debris_cleanup::{
+    DEBRIS_CLEANUP_SECONDS, WRECK_FIRE_DIE_DOWN_SECONDS, replicated_life,
+};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::types::{
     CoverKind, FragmentShape, PlayerAssignment, Team, VehicleCommand, VehicleKind, Weapon,
@@ -312,6 +314,15 @@ fn debris_life_reaches_clients_only_once_its_final_fade_begins() {
     assert_eq!(
         life_update(&mut stream, &sim, 2).as_f64(),
         Some(DEBRIS_CLEANUP_SECONDS / 2.0)
+    );
+    // A wreck piece's life arrives early enough for its fire to die down first.
+    sim.fragments[0].wreck = Some(VehicleKind::default());
+    sim.fragments[0].life = 4.0;
+    life_update(&mut stream, &sim, 3);
+    sim.fragments[0].life = DEBRIS_CLEANUP_SECONDS + WRECK_FIRE_DIE_DOWN_SECONDS / 2.0;
+    assert_eq!(
+        life_update(&mut stream, &sim, 4).as_f64(),
+        Some(DEBRIS_CLEANUP_SECONDS + WRECK_FIRE_DIE_DOWN_SECONDS / 2.0)
     );
 }
 
@@ -705,10 +716,10 @@ fn reference_scene(sim: &Simulation) -> Value {
     });
     entities.insert("covers".into(), covers);
     let fragments = kind_records(2, &[], &|fragment| {
-        let life = fragment["life"]
-            .as_f64()
-            .unwrap()
-            .min(DEBRIS_CLEANUP_SECONDS);
+        let life = replicated_life(
+            fragment["life"].as_f64().unwrap(),
+            fragment.get("wreck").is_some_and(|wreck| !wreck.is_null()),
+        );
         fragment.insert("life".into(), json!(life));
     });
     entities.insert("fragments".into(), fragments);

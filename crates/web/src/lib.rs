@@ -1,5 +1,7 @@
 //! wasm-bindgen exports for the page: a thin, coarse-grained API over the shared core
 //! and the renderer. Hot loops and game state stay on this side of the boundary.
+//! With the `native` feature the same `Game` and `NetGame` serve the desktop shell
+//! (`crates/desktop`) as plain Rust.
 //!
 //! - [`Game`] (`game.rs`): single-player play, one call per frame.
 //! - [`NetGame`] (`net_game.rs`): one multiplayer room page, one call per frame.
@@ -16,25 +18,31 @@ pub mod lab_scene;
 
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 mod effects_lab;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod game;
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 mod lab;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod net_game;
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod page;
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+mod records;
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod stats;
 
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 pub use effects_lab::EffectsLab;
-#[cfg(target_arch = "wasm32")]
-pub use game::Game;
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
+pub use game::{Game, frame_slot};
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 pub use lab::RenderLab;
-#[cfg(target_arch = "wasm32")]
-pub use net_game::NetGame;
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
+pub use net_game::{NetGame, net_frame_slot};
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+pub use page::{PageError, clock_start};
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+pub use records::set_records_file;
 
 /// One connection's binary room messages as the JSON protocol sent them (see
 /// `sloppy_core::net::wire_view`), for the Node checks that follow a room's state

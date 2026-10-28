@@ -28,10 +28,10 @@ pub mod theme;
 pub mod view_settings;
 pub mod wreck_library;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod view;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub use view::{PrepareStatus, Presentation};
 
 use crate::effects::{EffectDefinition, effect};

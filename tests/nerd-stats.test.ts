@@ -405,3 +405,25 @@ test("the panel is offered on a ?debug page only", () => {
   assert.equal(debugPage("?debug"), true);
   assert.equal(debugPage("?room=ABCD2345&debug"), true);
 });
+
+test("Settings' remembered Debug tools make every page a debug page", () => {
+  const saved = new Map<string, string>();
+  const storage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  Object.defineProperty(globalThis, "localStorage", {
+    configurable: true,
+    value: { getItem: (key: string) => saved.get(key) ?? null },
+  });
+  try {
+    saved.set("sloppy-debug", "off");
+    assert.equal(debugPage("?room=ABCD2345"), false);
+    saved.set("sloppy-debug", "on");
+    assert.equal(debugPage(""), true);
+    assert.equal(debugPage("?room=ABCD2345"), true);
+  } finally {
+    if (storage) {
+      Object.defineProperty(globalThis, "localStorage", storage);
+    } else {
+      delete (globalThis as { localStorage?: Storage }).localStorage;
+    }
+  }
+});

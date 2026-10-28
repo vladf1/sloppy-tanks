@@ -1,5 +1,6 @@
 import type { HudState } from "./engine-api";
-import { GRAPHICS_SETTINGS, savedPreference } from "./player-preferences";
+import { savedDebug } from "./map-options";
+import { GRAPHICS_SETTINGS, savedPreference, savePreference } from "./player-preferences";
 
 type SpeedKey = keyof HudState["speedTuning"];
 
@@ -19,9 +20,14 @@ const TOUCH_MODES = [
   ["on", "On"],
   ["off", "Off"],
 ] as const;
+/** The Debug tools' choices. */
+const DEBUG_MODES = [
+  ["off", "Off"],
+  ["on", "On"],
+] as const;
 /** The settings offered as a few named choices, each a segmented control; the hidden
  * select behind it holds the value Save reads. */
-const CHOICE_IDS = ["touch-mode", "graphics"] as const;
+const CHOICE_IDS = ["touch-mode", "graphics", "debug"] as const;
 type ChoiceId = (typeof CHOICE_IDS)[number];
 
 /** The HUD's corner button that opens the dialog. */
@@ -128,6 +134,8 @@ function settingsMarkup(eyebrow: string, speeds: boolean): string {
     ${choiceRow("touch-mode", "Touch controls", "Auto shows them on touchscreens", TOUCH_MODES)}
     <div class="setting-group-label"><span>DISPLAY</span></div>
     ${choiceRow("graphics", "Graphics", "Auto keeps the frame rate smooth", GRAPHICS_SETTINGS)}
+    <div class="setting-group-label"><span>DEVELOPER</span></div>
+    ${choiceRow("debug", "Debug tools", "Extra levels and Stats for nerds; saving reloads the page", DEBUG_MODES)}
     ${speeds ? `<div class="setting-group-label"><span>BATTLE SPEED</span><button class="group-action speeds-reset" type="button" title="Both speeds back to 100%"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M4 12a8 8 0 1 0 2.4-5.7M4 4v4.5h4.5" /></svg>Reset to 100%</button></div>${speedRows}` : ""}
     </div>
     <div class="menu-actions"><button class="primary settings-save" type="button">SAVE</button><button class="secondary settings-cancel" type="button">CANCEL</button></div>
@@ -170,8 +178,12 @@ export class SettingsDialog {
       exit.addEventListener("click", () => this.close());
     }
     this.dialog.querySelector(".settings-save")!.addEventListener("click", () => {
-      this.save();
+      const reload = this.save();
       this.close();
+      // Most debug tools are set up as the page loads.
+      if (reload) {
+        location.reload();
+      }
     });
     this.dialog.querySelector(".speeds-reset")?.addEventListener("click", () => {
       for (const key of Object.keys(SPEED_LABELS)) {
@@ -215,13 +227,19 @@ export class SettingsDialog {
     return this.dialog.querySelector<HTMLInputElement | HTMLSelectElement>("#" + id)!.value;
   }
 
-  private save(): void {
+  /** Apply every choice; true when the Debug tools changed, which the page applies by
+   * loading again. */
+  private save(): boolean {
+    const debug = this.value("debug") === "on";
+    const debugChanged = debug !== savedDebug();
+    savePreference("debug", debug ? "on" : "off");
     this.handlers.setTouchMode(this.value("touch-mode"));
     this.handlers.setGraphics(this.value("graphics"));
     this.handlers.setVolume(Number(this.value("volume")));
     for (const key of Object.keys(SPEED_LABELS) as SpeedKey[]) {
       this.handlers.speeds?.set(key, Number(this.value(key)));
     }
+    return debugChanged;
   }
 
   private show(id: string, value: number): void {
@@ -265,6 +283,7 @@ export class SettingsDialog {
     }
     this.choose("touch-mode", this.handlers.touchMode());
     this.choose("graphics", this.handlers.graphics());
+    this.choose("debug", savedDebug() ? "on" : "off");
     this.show("volume", savedVolume());
     const speeds = this.handlers.speeds?.get();
     for (const key of Object.keys(SPEED_LABELS) as SpeedKey[]) {

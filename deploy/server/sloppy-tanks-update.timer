@@ -1,4 +1,4 @@
-# Auto-update: off until `bun run server:auto-update on` enables this timer.
+# Auto-update: provision.sh enables it on production unless `server:auto-update off` was run.
 [Unit]
 Description=Check for a new production server image every two minutes
 

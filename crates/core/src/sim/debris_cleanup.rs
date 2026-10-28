@@ -6,6 +6,9 @@ use super::types::Fragment;
 
 /// The last second sinks and fades, without shrinking or blocking tanks.
 pub const DEBRIS_CLEANUP_SECONDS: f64 = 1.0;
+/// A wreck piece's fire dies down over this long just before its cleanup, so the
+/// flames are out before the hull sinks rather than burning on over a vanishing one.
+pub const WRECK_FIRE_DIE_DOWN_SECONDS: f64 = 1.5;
 /// Pieces this near a player are kept in preference to distant ones.
 const NEARBY_DISTANCE: f64 = 25.0;
 /// A kill's wreck is the battle's history: the pool gives up every chip, plank
@@ -121,6 +124,17 @@ pub fn prepare_debris_cleanup(simulation: &mut Simulation) {
     for &(_, index) in ranked.iter().take(excess) {
         simulation.fragments[index].life = DEBRIS_CLEANUP_SECONDS;
     }
+}
+
+/// The life a room replicates: steady until the final fade (for a wreck piece, until
+/// its fire starts dying down), so every settled piece stays out of the per-frame deltas.
+pub fn replicated_life(life: f64, wreck: bool) -> f64 {
+    let ahead = if wreck {
+        WRECK_FIRE_DIE_DOWN_SECONDS
+    } else {
+        0.0
+    };
+    life.min(DEBRIS_CLEANUP_SECONDS + ahead)
 }
 
 /// Smoothstep progress through the final fade, for presentation.
