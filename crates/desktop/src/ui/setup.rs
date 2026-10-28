@@ -466,7 +466,7 @@ pub fn vehicle_card(
 
 /// A selectable card's frame (`.choice-card`): lit glass with a gold glow when chosen,
 /// a darker well otherwise.
-fn choice_frame(painter: &Painter, rect: Rect, selected: bool, hovered: bool) {
+pub(super) fn choice_frame(painter: &Painter, rect: Rect, selected: bool, hovered: bool) {
     let radius = CornerRadius::same(10);
     if selected {
         painter.rect_filled(rect.expand(4.0), 14, hexa(0xffcf38, 0.08));
@@ -501,7 +501,7 @@ fn choice_frame(painter: &Painter, rect: Rect, selected: bool, hovered: bool) {
     }
 }
 
-fn choice_ring(painter: &Painter, rect: Rect, selected: bool) {
+pub(super) fn choice_ring(painter: &Painter, rect: Rect, selected: bool) {
     let radius = CornerRadius::same(10);
     if selected {
         painter.rect_stroke(rect, radius, Stroke::new(2.0, GOLD), StrokeKind::Inside);
@@ -745,10 +745,10 @@ const TAB_WIDTH: f32 = 432.0;
 const CARD_GAP: f32 = 7.0;
 
 /// The tray's glass: the tank well and the panels share it, joined to their tabs.
-fn tray(painter: &Painter, rect: Rect, open_corner: bool) {
+fn tray(painter: &Painter, rect: Rect, open_left: bool, open_right: bool) {
     let radius = CornerRadius {
-        nw: if open_corner { 0 } else { 16 },
-        ne: 16,
+        nw: if open_left { 0 } else { 16 },
+        ne: if open_right { 0 } else { 16 },
         sw: 16,
         se: 16,
     };
@@ -1018,7 +1018,7 @@ pub fn battle_setup(
                 hex(0xd3e7f5),
                 0.0,
             );
-            tray(&painter, TANK_WELL, true);
+            tray(&painter, TANK_WELL, true, false);
             for (index, tank) in TANKS.iter().enumerate() {
                 let rect = Rect::from_min_size(
                     pos2(72.0, 206.0 + index as f32 * 165.5),
@@ -1062,19 +1062,33 @@ pub fn battle_setup(
                     state.rooms.multiplayer = tab.0;
                 }
             }
-            tray(&painter, PANELS, !multiplayer);
+            tray(&painter, PANELS, !multiplayer, multiplayer);
             let inner = PANELS.shrink(14.0);
-            if multiplayer {
-                let mut rooms_ui = ui.new_child(egui::UiBuilder::new().max_rect(inner));
-                egui::ScrollArea::vertical()
-                    .id_salt("setup rooms")
-                    .max_height(inner.height())
-                    .show(&mut rooms_ui, |ui| {
-                        super::rooms::multiplayer(ui, &mut state.rooms, view, &prefs, actions);
-                    });
-            } else {
-                // MAP over the panel's width; extra levels share the row on `--debug`.
-                paint::section_label(&painter, pos2(inner.left(), 208.0), "MAP");
+            {
+                // MAP over the panel's width; extra levels share the row on `--debug`. In
+                // multiplayer it is the new room's, and an open room chosen shows its own.
+                let heading = paint::section_label(&painter, pos2(inner.left(), 208.0), "MAP");
+                let room_map = if multiplayer {
+                    state.rooms.selected_map().map(str::to_owned)
+                } else {
+                    None
+                };
+                if multiplayer {
+                    paint::text(
+                        &painter,
+                        pos2(heading.right() + 10.0, heading.center().y + 1.0),
+                        Align2::LEFT_CENTER,
+                        if room_map.is_some() {
+                            "The room's map"
+                        } else {
+                            "For your new room"
+                        },
+                        egui::FontId::proportional(13.0),
+                        hex(0xd3e7f5),
+                        0.0,
+                    );
+                }
+                let shown_map = room_map.as_deref().unwrap_or(&prefs.map).to_owned();
                 let maps: Vec<(&MapChoice, bool)> = MAP_CHOICES
                     .iter()
                     .map(|map| (map, false))
@@ -1096,22 +1110,38 @@ pub fn battle_setup(
                         ),
                         vec2(map_width, row.height()),
                     );
-                    let response = ui
-                        .interact(rect, Id::unique(("setup map", map.id)), Sense::click())
-                        .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    let locked = room_map.is_some();
+                    let response = ui.interact(
+                        rect,
+                        Id::unique(("setup map", map.id)),
+                        if locked {
+                            Sense::hover()
+                        } else {
+                            Sense::click()
+                        },
+                    );
+                    let response = if locked {
+                        response
+                    } else {
+                        response.on_hover_cursor(egui::CursorIcon::PointingHand)
+                    };
                     map_card(
                         &painter,
                         art,
                         rect,
                         map,
                         extra,
-                        prefs.map == map.id,
-                        response.hovered(),
+                        shown_map == map.id,
+                        !locked && response.hovered(),
                     );
-                    if response.clicked() {
+                    if !locked && response.clicked() {
                         prefs.map = map.id.into();
                     }
                 }
+            }
+            if multiplayer {
+                super::rooms::multiplayer(ui, art, &mut state.rooms, view, &prefs, actions);
+            } else {
                 // BATTLE: two posters down the panel's height.
                 paint::section_label(&painter, pos2(inner.left(), 330.0), "BATTLE");
                 status_line(&painter, pos2(876.0, 334.0), state, time);

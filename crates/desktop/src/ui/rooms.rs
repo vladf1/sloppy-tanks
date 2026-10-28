@@ -5,10 +5,15 @@
 
 use std::time::{Duration, Instant};
 
-use egui::RichText;
+use egui::{
+    Align2, Color32, Id, Painter, Pos2, Rect, RichText, Sense, Shape, Stroke, StrokeKind, pos2,
+    vec2,
+};
 
+use super::icons::Art;
+use super::paint::{self, ButtonStyle, fade, hex, hexa, mix};
 use super::setup::{EXTRA_MAPS, MAPS};
-use super::theme::{self, GOLD, RED, TEXT_DIM, display_font};
+use super::theme::{GOLD, bold_font, display_font};
 use super::{Action, View};
 use crate::directory::{
     self, DEFAULT_DIRECTORY, DirectoryRequest, ROOM_SEATS, RoomListing, ServerList,
@@ -220,14 +225,6 @@ pub fn map_name(id: &str) -> &str {
         .map_or(id, |(_, name)| name)
 }
 
-fn label(ui: &mut egui::Ui, text: &str) {
-    ui.label(
-        RichText::new(text)
-            .font(theme::bold_font(13.0))
-            .color(theme::TEXT_LABEL),
-    );
-}
-
 /// One open room's lines (`RoomBrowser.render`).
 fn room_lines(room: &RoomListing) -> (String, String) {
     let title = format!(
@@ -275,17 +272,296 @@ fn room_lines(room: &RoomListing) -> (String, String) {
     (title, detail)
 }
 
-/// The Multiplayer tab below the tank and map choices, in place of single player's
-/// battle format, difficulty and GO.
+/// Where the tab's parts sit on Battle Setup's 1280 × 800 canvas (`#multiplayer-panel`
+/// on the page at that size), under the map row.
+const ROOMS_HEAD: Pos2 = pos2(364.0, 330.0);
+const ROOM_LIST: Rect = Rect::from_min_max(pos2(364.0, 357.0), pos2(881.0, 617.0));
+const NEW_ROOM: Rect = Rect::from_min_max(pos2(369.0, 362.0), pos2(876.0, 451.0));
+const STATUS_WELL: Rect = Rect::from_min_max(pos2(364.0, 631.0), pos2(881.0, 693.0));
+const NAME_FIELD: Rect = Rect::from_min_max(pos2(904.0, 357.0), pos2(1206.0, 399.0));
+const TEAM_WELL: Rect = Rect::from_min_max(pos2(904.0, 440.0), pos2(1206.0, 618.0));
+const ACTION: Rect = Rect::from_min_max(pos2(904.0, 631.0), pos2(1206.0, 693.0));
+/// An open room's row.
+const ROOM_ROW_HEIGHT: f32 = 34.0;
+/// Light grey-blue of the page's small print in the room list.
+const SMALL_INK: u32 = 0xb6cedf;
+
+/// The teams: choice, name, line and the colours of its dot.
+const TEAMS: [(Option<u8>, &str, &str, [u32; 2]); 3] = [
+    (
+        None,
+        "Auto",
+        "Joins the side with fewer players",
+        [0x4ea3ff, 0xff6f5e],
+    ),
+    (
+        Some(0),
+        "Blue",
+        "Always the blue team",
+        [0x4ea3ff, 0x4ea3ff],
+    ),
+    (Some(1), "Red", "Always the red team", [0xff6f5e, 0xff6f5e]),
+];
+
+impl RoomsState {
+    /// The map of the open room chosen, which the map row shows instead of the player's.
+    pub fn selected_map(&self) -> Option<&str> {
+        self.list
+            .rooms
+            .iter()
+            .find(|room| room.room == self.selected)
+            .map(|room| room.map_mode.as_str())
+    }
+}
+
+/// A drawn radio: a dark socket that lights a gold dot when chosen.
+fn radio(painter: &Painter, center: Pos2, chosen: bool) {
+    painter.circle_filled(center, 9.0, hex(0x050d1c));
+    if chosen {
+        painter.circle_filled(center, 9.0, fade(GOLD, 0.25));
+        painter.circle_filled(center, 5.0, GOLD);
+        painter.circle_filled(center, 4.0, hex(0xffe58a));
+        painter.circle_stroke(center, 8.25, Stroke::new(1.5, GOLD));
+    } else {
+        painter.circle_stroke(center, 8.25, Stroke::new(1.5, hexa(0x8bb9dc, 0.4)));
+    }
+}
+
+/// A sunken well: the page's dark inset panels (`--well`).
+fn well(painter: &Painter, rect: Rect, radius: u8) {
+    painter.rect_filled(rect, radius, hexa(0x071328, 0.85));
+    painter.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(1.0, hexa(0x000000, 0.35)),
+        StrokeKind::Inside,
+    );
+}
+
+/// A small square button with `glyph` drawn by `draw`; true when clicked.
+fn icon_button(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    id: &str,
+    enabled: bool,
+    tip: &str,
+    draw: impl FnOnce(&Painter, Rect, Color32),
+) -> bool {
+    let response = ui
+        .interact(rect, Id::unique(("rooms button", id)), Sense::click())
+        .on_hover_text(tip);
+    let painter = ui.painter();
+    let hovered = enabled && response.hovered();
+    painter.rect_filled(rect, 7, hexa(0xb7d7ed, if hovered { 0.16 } else { 0.08 }));
+    let ink = if !enabled {
+        hexa(0xb6cedf, 0.4)
+    } else if hovered {
+        Color32::WHITE
+    } else {
+        hex(SMALL_INK)
+    };
+    draw(painter, rect, ink);
+    enabled && response.clicked()
+}
+
+/// A text field in a sunken well, like the page's inputs.
+fn field(
+    ui: &mut egui::Ui,
+    rect: Rect,
+    text: &mut String,
+    limit: usize,
+    hint: &str,
+    size: f32,
+) -> egui::Response {
+    well(ui.painter(), rect, 9);
+    let inner = rect.shrink2(vec2(12.0, 0.0));
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
+    child
+        .centered_and_justified(|ui| {
+            ui.add(
+                egui::TextEdit::singleline(text)
+                    .frame(egui::Frame::NONE)
+                    .char_limit(limit)
+                    .font(bold_font(size))
+                    .text_color(hex(0xf5faff))
+                    .hint_text(RichText::new(hint).color(hexa(0xb6cedf, 0.6)))
+                    .align(egui::Align2::LEFT_CENTER),
+            )
+        })
+        .inner
+}
+
+/// The Multiplayer tab under the map row, where single player shows its battle format,
+/// difficulty and GO (`#multiplayer-panel`, laid out as the page at 1280 × 800).
 pub fn multiplayer(
     ui: &mut egui::Ui,
+    art: &Art,
     state: &mut RoomsState,
     view: &View,
     prefs: &Preferences,
     actions: &mut Vec<Action>,
 ) {
     state.poll(view.debug);
-    let name = state
+    let time = ui.input(|input| input.time);
+    let painter = ui.painter().clone();
+
+    // ROOMS, its count and refresh, and a room code typed in (the page's invite link).
+    let heading = paint::section_label(&painter, ROOMS_HEAD, "ROOMS");
+    let count = state.list.rooms.len().to_string();
+    let badge = Rect::from_min_size(
+        pos2(heading.right() + 8.0, ROOMS_HEAD.y + 2.0),
+        vec2(
+            paint::text_width(&painter, &count, bold_font(12.0), 0.0) + 10.0,
+            17.0,
+        ),
+    );
+    painter.rect_filled(badge, 4, hexa(0xb7d7ed, 0.11));
+    paint::text(
+        &painter,
+        badge.center(),
+        Align2::CENTER_CENTER,
+        &count,
+        bold_font(12.0),
+        hex(0xc4dfef),
+        0.0,
+    );
+    let refresh = Rect::from_min_size(
+        pos2(badge.right() + 8.0, ROOMS_HEAD.y - 2.0),
+        vec2(24.0, 24.0),
+    );
+    let busy = state.request.is_some();
+    if icon_button(
+        ui,
+        refresh,
+        "refresh",
+        !busy,
+        "Refresh rooms",
+        |painter, rect, ink| {
+            let center = rect.center();
+            let turn = if busy { time as f32 * 6.0 } else { 0.0 };
+            paint::arc(
+                painter,
+                center,
+                5.5,
+                -2.4 + turn,
+                4.6,
+                Stroke::new(1.8, ink),
+            );
+            let tip = center + vec2((2.2 + turn).cos(), (2.2 + turn).sin()) * 5.5;
+            painter.add(Shape::convex_polygon(
+                vec![
+                    tip + vec2(-3.0, -1.0),
+                    tip + vec2(2.5, -2.5),
+                    tip + vec2(0.5, 3.0),
+                ],
+                ink,
+                Stroke::NONE,
+            ));
+        },
+    ) {
+        state.next_poll = None;
+    }
+    let code_field = Rect::from_min_max(pos2(712.0, 327.0), pos2(814.0, 353.0));
+    let typed = field(ui, code_field, &mut state.code, 8, "Room code", 13.0);
+    let entered = typed.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+    let find = Rect::from_min_max(pos2(820.0, 327.0), pos2(881.0, 353.0));
+    let found = paint::button_at(
+        ui,
+        art,
+        find,
+        "FIND",
+        None,
+        ButtonStyle::Secondary,
+        !state.code.trim().is_empty(),
+    )
+    .on_hover_text("Find the room with this code")
+    .clicked();
+    if found || entered {
+        match directory::read_room_code(&state.code) {
+            Some(code) => {
+                state.code.clone_from(&code);
+                state.notice.clear();
+                state.link = Some(code);
+                state.follow_link();
+                if state.link.is_some() {
+                    // Not listed yet: look again now.
+                    state.next_poll = None;
+                }
+            }
+            None => state.notice = "A room code is 8 letters and digits.".into(),
+        }
+    }
+
+    // The room list: the new room's card, then the open rooms or why there are none.
+    well(&painter, ROOM_LIST, 14);
+    new_room_card(ui, state, prefs);
+    let rows = Rect::from_min_max(
+        pos2(NEW_ROOM.left(), NEW_ROOM.bottom() + 6.0),
+        pos2(NEW_ROOM.right(), ROOM_LIST.bottom() - 5.0),
+    );
+    if state.list.rooms.is_empty() {
+        empty_rooms(ui, art, rows, state, time);
+    } else {
+        let mut rows_ui = ui.new_child(egui::UiBuilder::new().max_rect(rows));
+        egui::ScrollArea::vertical()
+            .id_salt("open rooms")
+            .max_height(rows.height())
+            .auto_shrink([false, false])
+            .show(&mut rows_ui, |ui| room_rows(ui, state));
+    }
+
+    // The status well: what the action will do, or what is wrong.
+    let (message, hint) = state.prompt();
+    painter.rect_filled(STATUS_WELL, 10, hex(0x0a1a33));
+    painter.rect_stroke(
+        STATUS_WELL,
+        10,
+        Stroke::new(1.0, hexa(0x9fd0ff, 0.08)),
+        StrokeKind::Inside,
+    );
+    let dot = pos2(STATUS_WELL.left() + 22.0, STATUS_WELL.center().y);
+    let dot_color = match state.state {
+        ListState::Offline { .. } => hex(0xff6f5e),
+        ListState::Loading if state.list.servers.is_empty() => {
+            mix(GOLD, hex(0xffe58a), (0.5 + 0.5 * (time * 4.0).sin()) as f32)
+        }
+        _ => hex(0x8ff0b0),
+    };
+    painter.circle_filled(dot, 10.0, fade(dot_color, 0.2));
+    painter.circle_filled(dot, 4.5, dot_color);
+    let copy_left = STATUS_WELL.left() + 42.0;
+    let copy_width = STATUS_WELL.right() - copy_left - 12.0;
+    let (message_y, hint_y) = if hint.is_empty() {
+        (STATUS_WELL.center().y, 0.0)
+    } else {
+        (STATUS_WELL.top() + 22.0, STATUS_WELL.top() + 39.0)
+    };
+    paint::text_fit(
+        &painter,
+        pos2(copy_left, message_y),
+        Align2::LEFT_CENTER,
+        message.lines().last().unwrap_or_default(),
+        egui::FontId::proportional(12.5),
+        hex(0xe6f1fb),
+        0.0,
+        copy_width,
+    );
+    if !hint.is_empty() {
+        paint::text_fit(
+            &painter,
+            pos2(copy_left, hint_y),
+            Align2::LEFT_CENTER,
+            &hint,
+            egui::FontId::proportional(12.0),
+            hex(0xa9c0d8),
+            0.0,
+            copy_width,
+        );
+    }
+
+    // YOUR NAME.
+    paint::section_label(&painter, pos2(NAME_FIELD.left(), ROOMS_HEAD.y), "YOUR NAME");
+    let mut name = state
         .name
         .get_or_insert_with(|| {
             preferred_player_name(
@@ -294,183 +570,409 @@ pub fn multiplayer(
             )
         })
         .clone();
-    ui.horizontal(|ui| {
-        label(ui, &format!("ROOMS · {}", state.list.rooms.len()));
-        let busy = state.request.is_some();
-        if ui
-            .add_enabled(!busy, egui::Button::new("⟳").small())
-            .on_hover_text("Refresh rooms")
-            .clicked()
-        {
-            state.next_poll = None;
-        }
-    });
-    egui::Frame::group(ui.style()).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        let new_room = format!("New room on {}", map_name(&prefs.map));
-        if ui
-            .radio(state.selected.is_empty(), RichText::new(new_room).strong())
-            .clicked()
-        {
-            state.choose("");
-        }
-        ui.horizontal(|ui| {
-            ui.add_space(24.0);
-            ui.label(RichText::new("Length").color(TEXT_DIM));
-            let mut minutes = state.round_minutes;
-            if ui.small_button("−").clicked() {
-                minutes = directory::stepped_minutes(minutes, -LENGTH_STEP);
-            }
-            ui.label(RichText::new(format!("{minutes} min")).strong());
-            if ui.small_button("+").clicked() {
-                minutes = directory::stepped_minutes(minutes, LENGTH_STEP);
-            }
-            ui.add_space(12.0);
-            let mut humans_only = state.humans_only;
-            ui.checkbox(&mut humans_only, "Humans only")
-                .on_hover_text("No bots fill the teams; empty seats stay empty");
-            if minutes != state.round_minutes || humans_only != state.humans_only {
-                state.round_minutes = minutes;
-                state.humans_only = humans_only;
-                // Editing the new room's rules chooses the new room.
-                state.choose("");
-            }
-        });
-        ui.separator();
-        egui::ScrollArea::vertical()
-            .max_height(150.0)
-            .auto_shrink([false, true])
-            .show(ui, |ui| room_rows(ui, state));
-    });
-    ui.horizontal(|ui| {
-        ui.label(RichText::new("Join by code").color(TEXT_DIM));
-        let field = ui.add(
-            egui::TextEdit::singleline(&mut state.code)
-                .char_limit(8)
-                .desired_width(110.0)
-                .hint_text("ABCD2345"),
+    field(
+        ui,
+        Rect::from_min_max(
+            NAME_FIELD.min,
+            pos2(NAME_FIELD.right() - 30.0, NAME_FIELD.bottom()),
+        ),
+        &mut name,
+        MAX_PLAYER_NAME_LENGTH,
+        "Tank driver",
+        15.0,
+    );
+    painter.rect_stroke(
+        NAME_FIELD,
+        9,
+        Stroke::new(0.5, hexa(0x92b4cf, 0.19)),
+        StrokeKind::Inside,
+    );
+    // The pencil that says the name can be typed over.
+    let pencil = pos2(NAME_FIELD.right() - 18.0, NAME_FIELD.center().y);
+    let ink = Stroke::new(1.6, hex(SMALL_INK));
+    painter.line_segment([pencil + vec2(-5.0, 5.0), pencil + vec2(4.0, -4.0)], ink);
+    painter.line_segment([pencil + vec2(-5.0, 5.0), pencil + vec2(-6.0, 6.5)], ink);
+    painter.line_segment([pencil + vec2(2.5, -5.5), pencil + vec2(5.5, -2.5)], ink);
+    state.name = Some(name);
+
+    // TEAM.
+    paint::section_label(&painter, pos2(TEAM_WELL.left(), 413.0), "TEAM");
+    well(&painter, TEAM_WELL, 14);
+    for (index, (team, name, line, colors)) in TEAMS.into_iter().enumerate() {
+        let rect = Rect::from_min_size(
+            pos2(
+                TEAM_WELL.left() + 5.0,
+                TEAM_WELL.top() + 5.0 + index as f32 * 58.0,
+            ),
+            vec2(TEAM_WELL.width() - 10.0, 52.0),
         );
-        let entered = field.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-        if ui.button("FIND").clicked() || entered {
-            match directory::read_room_code(&state.code) {
-                Some(code) => {
-                    state.code.clone_from(&code);
-                    state.notice.clear();
-                    state.link = Some(code);
-                    state.follow_link();
-                    if state.link.is_some() {
-                        // Not listed yet: look again now.
-                        state.next_poll = None;
-                    }
-                }
-                None => state.notice = "A room code is 8 letters and digits.".into(),
-            }
+        let response = ui
+            .interact(rect, Id::unique(("team", index)), Sense::click())
+            .on_hover_cursor(egui::CursorIcon::PointingHand);
+        let chosen = state.team == team;
+        super::setup::choice_frame(&painter, rect, chosen, response.hovered());
+        let dot = pos2(rect.left() + 26.0, rect.center().y);
+        let [left, right] = colors.map(hex);
+        // A half-and-half dot for Auto.
+        painter.circle_filled(dot, 8.0, right);
+        if left != right {
+            let half: Vec<Pos2> = (0..=16)
+                .map(|step| {
+                    let angle =
+                        std::f32::consts::FRAC_PI_2 + step as f32 / 16.0 * std::f32::consts::PI;
+                    dot + vec2(angle.cos(), angle.sin()) * 8.0
+                })
+                .collect();
+            painter.add(Shape::convex_polygon(half, left, Stroke::NONE));
         }
-    });
-    ui.horizontal(|ui| {
-        label(ui, "YOUR NAME");
-        let mut typed = name.clone();
-        ui.add(
-            egui::TextEdit::singleline(&mut typed)
-                .char_limit(MAX_PLAYER_NAME_LENGTH)
-                .desired_width(180.0)
-                .hint_text("Tank driver"),
+        painter.circle_stroke(dot, 8.0, Stroke::new(1.0, hexa(0xffffff, 0.35)));
+        paint::text(
+            &painter,
+            pos2(rect.left() + 43.0, rect.top() + 18.0),
+            Align2::LEFT_CENTER,
+            name,
+            bold_font(15.0),
+            Color32::WHITE,
+            0.0,
         );
-        state.name = Some(typed);
-        ui.add_space(8.0);
-        label(ui, "TEAM");
-        for (team, text) in [(None, "Auto"), (Some(0), "Blue"), (Some(1), "Red")] {
-            let response = ui.selectable_label(state.team == team, text);
-            let response = if team.is_none() {
-                response.on_hover_text("Joins the side with fewer players")
-            } else {
-                response
-            };
-            if response.clicked() {
-                state.team = team;
-            }
+        paint::text(
+            &painter,
+            pos2(rect.left() + 43.0, rect.top() + 35.0),
+            Align2::LEFT_CENTER,
+            line,
+            egui::FontId::proportional(12.0),
+            hex(0xd0e4f3),
+            0.0,
+        );
+        super::setup::choice_ring(&painter, rect, chosen);
+        if response.clicked() {
+            state.team = team;
         }
-    });
-    ui.add_space(6.0);
-    let (message, hint) = state.prompt();
-    ui.vertical_centered(|ui| {
-        let offline = matches!(state.state, ListState::Offline { .. });
-        ui.label(RichText::new(message).color(if offline { RED } else { theme::TEXT }));
-        if !hint.is_empty() {
-            ui.label(RichText::new(hint).size(12.0).color(TEXT_DIM));
-        }
-        ui.add_space(4.0);
-        let joining = !state.selected.is_empty();
-        let label = if joining { "JOIN ROOM" } else { "CREATE ROOM" };
-        let enabled = if joining {
-            true
-        } else {
-            state.list.new_room_server().is_some()
-        };
-        let button = egui::Button::new(
-            RichText::new(label)
-                .font(display_font(28.0))
-                .color(theme::INK_0),
-        )
-        .fill(GOLD)
-        .min_size([220.0, 46.0].into());
-        if ui.add_enabled(enabled, button).clicked()
-            && let Some(selection) = selection(state, prefs)
-        {
-            actions.push(Action::JoinRoom(Box::new(selection)));
-        }
-    });
+    }
+
+    // CREATE ROOM or JOIN ROOM.
+    let joining = !state.selected.is_empty();
+    let enabled = joining || state.list.new_room_server().is_some();
+    if paint::button_at(
+        ui,
+        art,
+        ACTION,
+        if joining { "JOIN ROOM" } else { "CREATE ROOM" },
+        None,
+        ButtonStyle::Primary,
+        enabled,
+    )
+    .clicked()
+        && let Some(selection) = selection(state, prefs)
+    {
+        actions.push(Action::JoinRoom(Box::new(selection)));
+    }
 }
 
-fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
-    if state.list.rooms.is_empty() {
-        ui.vertical_centered(|ui| match &state.state {
-            ListState::Loading => {
-                ui.add(egui::Spinner::new());
-                ui.label(RichText::new("Scanning for open rooms…").color(TEXT_DIM));
-            }
-            ListState::Ready => {
-                ui.label(RichText::new("No open rooms right now").strong());
-                ui.label(
-                    RichText::new("Be the first: create a room and invite friends.")
-                        .size(12.0)
-                        .color(TEXT_DIM),
-                );
-            }
-            ListState::Offline { .. } => {
-                ui.label(RichText::new("Can't reach the game server").strong());
-                ui.label(
-                    RichText::new("Rooms list here once it answers.")
-                        .size(12.0)
-                        .color(TEXT_DIM),
-                );
-                ui.horizontal(|ui| {
-                    if ui.button("BATTLE THE BOTS").clicked() {
-                        state.multiplayer = false;
-                    }
-                    if ui.button("RETRY NOW").clicked() {
-                        state.next_poll = None;
-                    }
-                });
-            }
-        });
-        return;
+/// The new room's card: its map, what it holds, and its length and humans-only rules.
+fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences) {
+    let chosen = state.selected.is_empty();
+    let response = ui
+        .interact(NEW_ROOM, Id::unique("new room"), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    let painter = ui.painter().clone();
+    if chosen {
+        painter.rect_filled(NEW_ROOM.expand(3.0), 13, hexa(0xffcf38, 0.08));
+        painter.rect_filled(NEW_ROOM, 10, hex(0x22477a));
+        painter.rect_stroke(NEW_ROOM, 10, Stroke::new(2.0, GOLD), StrokeKind::Inside);
+    } else {
+        painter.rect_filled(
+            NEW_ROOM,
+            10,
+            if response.hovered() {
+                hex(0x143060)
+            } else {
+                hex(0x10264a)
+            },
+        );
     }
+    if response.clicked() {
+        state.choose("");
+    }
+    radio(
+        &painter,
+        pos2(NEW_ROOM.left() + 19.0, NEW_ROOM.top() + 25.0),
+        chosen,
+    );
+    let title = paint::text(
+        &painter,
+        pos2(NEW_ROOM.left() + 38.0, NEW_ROOM.top() + 16.0),
+        Align2::LEFT_CENTER,
+        "New room on ",
+        bold_font(14.0),
+        Color32::WHITE,
+        0.0,
+    );
+    paint::text(
+        &painter,
+        pos2(title.right(), title.center().y),
+        Align2::LEFT_CENTER,
+        map_name(&prefs.map),
+        bold_font(14.0),
+        GOLD,
+        0.0,
+    );
+    paint::text(
+        &painter,
+        pos2(NEW_ROOM.left() + 38.0, NEW_ROOM.top() + 35.0),
+        Align2::LEFT_CENTER,
+        &format!("Up to {ROOM_SEATS} players · Invite friends with its room code"),
+        egui::FontId::proportional(12.0),
+        hex(SMALL_INK),
+        0.0,
+    );
+    // LENGTH: a stepper in its well.
+    let rule_y = NEW_ROOM.top() + 67.0;
+    paint::text(
+        &painter,
+        pos2(NEW_ROOM.left() + 38.0, rule_y),
+        Align2::LEFT_CENTER,
+        "LENGTH",
+        bold_font(12.0),
+        hex(SMALL_INK),
+        0.8,
+    );
+    let stepper = Rect::from_min_size(
+        pos2(NEW_ROOM.left() + 103.0, rule_y - 17.0),
+        vec2(124.0, 34.0),
+    );
+    well(&painter, stepper, 9);
+    let mut minutes = state.round_minutes;
+    let step = |ui: &mut egui::Ui, left: f32, glyph: &str, id: &str| {
+        let rect = Rect::from_min_size(pos2(left, stepper.top() + 2.0), vec2(28.0, 30.0));
+        let response = ui.interact(rect, Id::unique(("length", id)), Sense::click());
+        ui.painter().rect_filled(
+            rect,
+            7,
+            hexa(0xffffff, if response.hovered() { 0.12 } else { 0.06 }),
+        );
+        paint::text(
+            ui.painter(),
+            rect.center(),
+            Align2::CENTER_CENTER,
+            glyph,
+            bold_font(17.0),
+            hex(0xe6f1fb),
+            0.0,
+        );
+        response.clicked()
+    };
+    if step(ui, stepper.left() + 2.0, "−", "less") {
+        minutes = directory::stepped_minutes(minutes, -LENGTH_STEP);
+    }
+    if step(ui, stepper.right() - 30.0, "+", "more") {
+        minutes = directory::stepped_minutes(minutes, LENGTH_STEP);
+    }
+    paint::text(
+        &painter,
+        pos2(stepper.left() + 47.0, rule_y),
+        Align2::CENTER_CENTER,
+        &minutes.to_string(),
+        bold_font(15.0),
+        hex(0xf5faff),
+        0.0,
+    );
+    paint::text(
+        &painter,
+        pos2(stepper.left() + 63.0, rule_y + 1.0),
+        Align2::LEFT_CENTER,
+        "min",
+        egui::FontId::proportional(12.0),
+        hex(SMALL_INK),
+        0.0,
+    );
+    // HUMANS ONLY: a switch.
+    let switch = Rect::from_min_size(
+        pos2(NEW_ROOM.left() + 241.0, rule_y - 10.0),
+        vec2(34.0, 20.0),
+    );
+    let switch_area = Rect::from_min_max(switch.min, pos2(switch.right() + 112.0, switch.bottom()));
+    let toggled = ui
+        .interact(switch_area, Id::unique("humans only"), Sense::click())
+        .on_hover_text("No bots fill the teams; empty seats stay empty")
+        .clicked();
+    let mut humans_only = state.humans_only;
+    if toggled {
+        humans_only = !humans_only;
+    }
+    if humans_only {
+        painter.rect_filled(switch, 10, GOLD);
+        painter.circle_filled(
+            pos2(switch.right() - 10.0, switch.center().y),
+            7.0,
+            Color32::WHITE,
+        );
+    } else {
+        painter.rect_filled(switch, 10, hex(0x050d1c));
+        painter.rect_stroke(
+            switch,
+            10,
+            Stroke::new(1.0, hexa(0x8bb9dc, 0.4)),
+            StrokeKind::Inside,
+        );
+        painter.circle_filled(
+            pos2(switch.left() + 10.0, switch.center().y),
+            7.0,
+            hex(0x8ea7bd),
+        );
+    }
+    paint::text(
+        &painter,
+        pos2(switch.right() + 7.0, rule_y),
+        Align2::LEFT_CENTER,
+        "HUMANS ONLY",
+        bold_font(12.0),
+        hex(SMALL_INK),
+        0.8,
+    );
+    if minutes != state.round_minutes || humans_only != state.humans_only {
+        state.round_minutes = minutes;
+        state.humans_only = humans_only;
+        // Editing the new room's rules chooses the new room.
+        state.choose("");
+    }
+}
+
+/// No open rooms: still looking, none open, or the server out of reach.
+fn empty_rooms(ui: &mut egui::Ui, art: &Art, area: Rect, state: &mut RoomsState, time: f64) {
+    let painter = ui.painter().clone();
+    let ink = hex(0x8eaac4);
+    let center = pos2(area.center().x, area.top() + 47.0);
+    painter.circle_stroke(center, 21.75, Stroke::new(2.0, ink));
+    painter.circle_stroke(center, 12.0, Stroke::new(2.0, fade(ink, 0.6)));
+    let sweep = if matches!(state.state, ListState::Loading) {
+        time as f32 * 3.0
+    } else {
+        -0.8
+    };
+    painter.line_segment(
+        [center, center + vec2(sweep.cos(), sweep.sin()) * 21.0],
+        Stroke::new(2.0, ink),
+    );
+    let (title, line) = match &state.state {
+        ListState::Loading => (
+            "SCANNING FOR OPEN ROOMS…",
+            "Pick your tank and map meanwhile.",
+        ),
+        ListState::Ready => (
+            "NO OPEN ROOMS RIGHT NOW",
+            "Be the first: create a room and invite friends.",
+        ),
+        ListState::Offline { .. } => (
+            "CAN'T REACH THE GAME SERVER",
+            "Rooms list here once it answers.",
+        ),
+    };
+    paint::shadowed(
+        &painter,
+        pos2(area.center().x, area.top() + 101.0),
+        Align2::CENTER_CENTER,
+        title,
+        display_font(24.0),
+        hex(0xf2f8fd),
+        0.5,
+    );
+    paint::text(
+        &painter,
+        pos2(area.center().x, area.top() + 131.0),
+        Align2::CENTER_CENTER,
+        line,
+        egui::FontId::proportional(14.0),
+        hex(0xb9cde0),
+        0.0,
+    );
+    if matches!(state.state, ListState::Offline { .. }) {
+        for (index, label) in ["BATTLE THE BOTS", "RETRY NOW"].into_iter().enumerate() {
+            let rect = Rect::from_center_size(
+                pos2(
+                    area.center().x + (index as f32 - 0.5) * 168.0,
+                    area.top() + 162.0,
+                ),
+                vec2(156.0, 30.0),
+            );
+            let clicked =
+                paint::button_at(ui, art, rect, label, None, ButtonStyle::Secondary, true)
+                    .clicked();
+            if clicked && index == 0 {
+                state.multiplayer = false;
+            } else if clicked {
+                state.next_poll = None;
+            }
+        }
+    }
+}
+
+/// The open rooms, one line each, chosen like the new room.
+fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
+    ui.spacing_mut().item_spacing = vec2(0.0, 2.0);
     let rooms = state.list.rooms.clone();
     for room in &rooms {
         let (title, detail) = room_lines(room);
-        ui.add_enabled_ui(room.joinable(), |ui| {
-            if ui
-                .radio(state.selected == room.room, RichText::new(title).strong())
-                .clicked()
-            {
-                state.choose(&room.room);
-            }
-        });
-        ui.horizontal(|ui| {
-            ui.add_space(24.0);
-            ui.label(RichText::new(detail).size(12.0).color(TEXT_DIM));
-        });
+        let joinable = room.joinable();
+        let (rect, response) = ui.allocate_exact_size(
+            vec2(ui.available_width(), ROOM_ROW_HEIGHT),
+            if joinable {
+                Sense::click()
+            } else {
+                Sense::hover()
+            },
+        );
+        let painter = ui.painter();
+        let chosen = state.selected == room.room;
+        if chosen {
+            painter.rect_filled(rect, 10, hex(0x22477a));
+            painter.rect_stroke(rect, 10, Stroke::new(2.0, GOLD), StrokeKind::Inside);
+        } else if joinable && response.hovered() {
+            painter.rect_filled(rect, 10, hex(0x143060));
+        }
+        let alpha = if joinable { 1.0 } else { 0.5 };
+        radio(painter, pos2(rect.left() + 19.0, rect.center().y), chosen);
+        let title_rect = paint::text(
+            painter,
+            pos2(rect.left() + 38.0, rect.center().y),
+            Align2::LEFT_CENTER,
+            &title,
+            bold_font(14.0),
+            fade(Color32::WHITE, alpha),
+            0.0,
+        );
+        paint::text_fit(
+            painter,
+            pos2(title_rect.right() + 10.0, rect.center().y + 1.0),
+            Align2::LEFT_CENTER,
+            &detail,
+            egui::FontId::proportional(12.0),
+            fade(hex(SMALL_INK), alpha),
+            0.0,
+            (rect.right() - 10.0 - title_rect.right() - 10.0).max(0.0),
+        );
+        if joinable && response.clicked() {
+            state.choose(&room.room);
+        }
+    }
+}
+
+/// The tab as the UI snapshots show it: the directory has answered with `rooms`.
+#[cfg(test)]
+pub fn answered(rooms: Vec<RoomListing>) -> RoomsState {
+    RoomsState {
+        multiplayer: true,
+        list: ServerList {
+            servers: vec![directory::ServerListing {
+                url: "wss://example.test".into(),
+                content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
+            }],
+            rooms,
+        },
+        state: ListState::Ready,
+        next_poll: Some(Instant::now() + Duration::from_secs(3600)),
+        name: Some("STEELTOE".into()),
+        ..RoomsState::default()
     }
 }
 

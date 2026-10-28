@@ -177,6 +177,46 @@ fn scenarios() -> Vec<Scenario> {
         phase: Phase::Ready,
         state: setup,
     });
+    let room = |code: &str, map: &str, players: u32, reserved: u32, phase: &str| {
+        crate::directory::RoomListing {
+            room: code.into(),
+            content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
+            map_mode: map.into(),
+            difficulty: "normal".into(),
+            humans_only: players > 3,
+            round_minutes: 20,
+            players,
+            reserved,
+            phase: phase.into(),
+            round_id: 1,
+            time: 754.0,
+            scores: vec![14, 9],
+            server: "wss://example.test".into(),
+        }
+    };
+    for (name, rooms) in [
+        ("multiplayer-empty", Vec::new()),
+        (
+            "multiplayer-rooms",
+            vec![
+                room("KQ7M2XHP", "harbor", 8, 8, "playing"),
+                room("TR4WNB9C", "village", 3, 3, "playing"),
+                room("ZP2HDA7L", "quarry", 1, 1, "lobby"),
+            ],
+        ),
+    ] {
+        list.push(Scenario {
+            name,
+            in_round: false,
+            phase: Phase::Ready,
+            state: UiState {
+                hud: Some(hud("ready", false, true, 1.0)),
+                ready: true,
+                rooms: super::rooms::answered(rooms),
+                ..UiState::default()
+            },
+        });
+    }
     let mut playing = UiState {
         hud: Some(hud("playing", false, true, 0.48)),
         ..UiState::default()
@@ -290,7 +330,7 @@ fn scenarios() -> Vec<Scenario> {
     let mut nerd = UiState {
         hud: Some(hud("playing", false, true, 0.9)),
         show_nerd_stats: true,
-        stats: Some(stats),
+        stats: Some(stats.clone()),
         ..UiState::default()
     };
     nerd.hull_ghost = 0.9;
@@ -299,6 +339,60 @@ fn scenarios() -> Vec<Scenario> {
         in_round: true,
         phase: Phase::Playing,
         state: nerd,
+    });
+    let summary = |count: u32, mean: f64, p95: f64, max: f64| serde_json::json!({"count": count, "mean": mean, "p50": mean, "p95": p95, "max": max});
+    let mut room_stats = stats.clone();
+    room_stats["scene"] = serde_json::json!({
+        "tanks": 8, "alive": 7, "mines": 2, "pickups": 6, "pickupsReady": 5, "shots": 4,
+        "fragments": 9, "elapsed": 412.6,
+    });
+    room_stats["network"] = serde_json::json!({
+        "rttMs": 38.4, "receivedUpdates": 12408, "snapshotAgeMs": 21.0, "bufferMs": 62.0,
+        "marginMs": 18.0, "underrun": 0.004, "serverTick": 24756, "inputSeq": 24790,
+        "inputAck": 24781, "connected": true, "lateBatches": 3, "longestBatchGapMs": 71.0,
+        "predictionLeadMs": 54.0, "correctionMPerS": 0.031, "correctionP95M": 0.042,
+        "inputStarts": 211, "lateInputStarts": 2, "receiveMs": 2480.0, "corrections": 96,
+        "confirmedSnapshots": 12390, "phantomStrikes": 0,
+        "correctionCauses": {
+            "blast": {"count": 12, "mPerS": 0.012}, "tank": {"count": 30, "mPerS": 0.009},
+            "cover": {"count": 4, "mPerS": 0.003}, "debris": {"count": 9, "mPerS": 0.004},
+            "crate": {"count": 1, "mPerS": 0.001}, "lateInput": {"count": 2, "mPerS": 0.001},
+            "other": {"count": 38, "mPerS": 0.001},
+        },
+    });
+    room_stats["feel"] = serde_json::json!({
+        "viewDelayMs": summary(240, 91.0, 104.0, 130.0),
+        "fireToFlashMs": summary(46, 17.0, 25.0, 33.0),
+        "fireToReportMs": summary(46, 58.0, 70.0, 88.0),
+        "unansweredPresses": 0,
+        "hitOffsetM": summary(21, 0.08, 0.19, 0.31),
+        "incomingOffsetM": summary(14, 0.11, 0.24, 0.4),
+        "incomingBehindM": summary(14, 0.35, 0.62, 0.9),
+        "unseenIncoming": 1,
+        "ownShots": {"predicted": 46, "confirmed": 45, "unconfirmedShells": 1, "unpredicted": 0,
+            "phantomStrikes": 0, "errorM": summary(45, 0.03, 0.07, 0.12)},
+    });
+    let mut room_nerd = UiState {
+        hud: Some(hud("playing", false, true, 0.9)),
+        show_nerd_stats: true,
+        stats: Some(room_stats),
+        ..UiState::default()
+    };
+    room_nerd.hull_ghost = 0.9;
+    // Two readings a second apart give the per-second rows their rates.
+    let latest = room_nerd.stats.clone();
+    let mut earlier = latest.clone().expect("the room has stats");
+    earlier["network"]["receivedUpdates"] = 12_378.into();
+    earlier["network"]["receiveMs"] = 2_478.0.into();
+    room_nerd.stats = Some(earlier);
+    super::nerd_stats::sample_network(&mut room_nerd, 0.0);
+    room_nerd.stats = latest;
+    super::nerd_stats::sample_network(&mut room_nerd, 1_000.0);
+    list.push(Scenario {
+        name: "room-nerd-stats",
+        in_round: true,
+        phase: Phase::Playing,
+        state: room_nerd,
     });
     list
 }
@@ -334,7 +428,7 @@ fn snapshots() {
             prefs: &prefs,
             build: "v0.1.0 · dev",
             // Stats for nerds show only with the debug tools on.
-            debug: scenario.name == "hud-nerd-stats",
+            debug: scenario.name.ends_with("nerd-stats"),
             room: false,
         };
         // A few passes: new areas size themselves on their first frame.

@@ -159,6 +159,10 @@ pub struct UiState {
     pub show_nerd_stats: bool,
     /// The engine's latest `stats_json`, while the nerd stats show.
     pub stats: Option<serde_json::Value>,
+    /// A room's last network reading, which its update rate is measured from.
+    pub network_sample: Option<nerd_stats::NetworkSample>,
+    /// Stats for nerds' sections the player opened or folded.
+    pub nerd_sections: std::collections::BTreeMap<&'static str, bool>,
     /// First person is on (the cockpit compass shows).
     pub cockpit: bool,
     /// The hull's clockwise screen angle (the compass).
