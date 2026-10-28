@@ -148,9 +148,10 @@ try {
             { get: (target, key) => target[key] ?? noop },
           );
           const ui = new window.__gauntletNetworkUI(root, room.room, actions);
-          ui.status("", true);
+          ui.status({ text: "", connected: true });
           if (room.outcome) ui.result(room.outcome.match, room.outcome.team);
-          ui.lobby(room.lobby, room.playerId);
+          // The engine's words for the room travel in the fixture, as in its notices.
+          ui.lobby({ lobby: room.lobby, playerId: room.playerId, menu: room.menu, arrivals: [] });
           ui.setMenu(room.menuOpen);
           ui.editingRules = room.editingRules;
           ui.editingChoice = room.editingChoice;

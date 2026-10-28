@@ -23,14 +23,15 @@ import type {
   HudState,
   MatchState,
   PlayerVehicleKind,
+  RoomEnding,
+  RoomLobby,
+  RoomStatus,
   Weapon,
 } from "../game/engine-api";
 import {
   MAX_ROUND_MINUTES,
   PLAYER_KINDS,
   isPlayerKind,
-  type ConnectionEnd,
-  type EndCause,
   type JoinChoice,
   type Lobby,
   type Player,
@@ -75,16 +76,6 @@ export interface NetworkActions {
   graphics(): string;
   setGraphics(setting: string): void;
 }
-/** The heading of each connection end, and the retry it offers besides Battle Setup. */
-const ENDINGS: Record<EndCause, { title: string; retry?: string }> = {
-  lost: { title: "CONNECTION LOST", retry: "TRY AGAIN" },
-  rejected: { title: "DISCONNECTED", retry: "TRY AGAIN" },
-  "seat-expired": { title: "SEAT EXPIRED", retry: "JOIN AGAIN" },
-  "other-tab": { title: "PLAYING IN ANOTHER TAB", retry: "PLAY HERE" },
-  "room-ended": { title: "ROOM CLOSED" },
-  outdated: { title: "GAME UPDATED" },
-  renderer: { title: "RENDERER STOPPED" },
-};
 /** Seconds the invite button says the link was copied. */
 const COPIED_TIME = 2000;
 const MENU_MARKUP = `<section class="menu network-menu" aria-labelledby="network-title">
@@ -156,11 +147,9 @@ export class NetworkUI {
    * wraps it. */
   viewerPoint: ScreenPoint | null = null;
   /** Whether the socket is live, being (re)connected, or has given up. */
-  private link: "live" | "connecting" | ConnectionEnd = "connecting";
-  /** The finished round, read from the final replicated state. */
+  private link: "live" | "connecting" | RoomEnding = "connecting";
+  /** The finished round, read from the final replicated state, for its final score. */
   private outcome?: { match: MatchState; team: number };
-  /** The round this host ended early; its seat had the menu open, so no final state came. */
-  private endedRound?: number;
   /** Between battles the rules and your team and tank stay folded until asked for. */
   private editingRules = false;
   private editingChoice = false;
@@ -214,17 +203,12 @@ export class NetworkUI {
       },
     });
     this.on("start-match", () => this.actions.start());
-    this.on("network-end", () => {
-      this.endedRound = this.lastLobby?.roundId;
-      this.actions.end();
-    });
+    this.on("network-end", () => this.actions.end());
     this.on("network-resume", () => this.actions.resume());
     this.on("leave-room", () => this.actions.leave());
     this.on("connection-leave", () => this.actions.leave());
-    this.on("connection-retry", () => {
-      this.showConnecting("RECONNECTING", "Connecting to the room…");
-      this.actions.rejoin();
-    });
+    // The engine's next status puts up RECONNECTING.
+    this.on("connection-retry", () => this.actions.rejoin());
     this.on("connection-setup", () => {
       if (typeof this.link === "object") {
         this.actions.setup(this.link.text);
@@ -316,17 +300,13 @@ export class NetworkUI {
   }
   /** Connection progress. While the socket is down the room menu gives way to a dialog
    * that says so; its only choice is to leave, since reconnecting is automatic. */
-  status(text: string, connected: boolean): void {
-    this.set("network-status", connected ? text : "");
-    if (connected) {
+  status(status: RoomStatus): void {
+    this.set("network-status", status.connected ? status.text : "");
+    if (status.connected) {
       this.link = "live";
       this.render();
     } else {
-      // A drop from a live room is news; later attempts only update the message.
-      this.showConnecting(
-        this.link === "live" ? "CONNECTION LOST" : this.element("connection-title").textContent,
-        text,
-      );
+      this.showConnecting(status.title, status.message);
     }
   }
   /** A one-line answer in the room menu, such as a copied link or a full team. */
@@ -334,55 +314,35 @@ export class NetworkUI {
     this.set("network-message", text);
   }
   /** The connection gave up. Offer what can still work for this cause. */
-  ended(end: ConnectionEnd): void {
+  ended(end: RoomEnding): void {
     this.link = end;
-    const ending = ENDINGS[end.cause];
-    this.set("connection-title", ending.title);
+    this.set("connection-title", end.title);
     this.set("connection-message", end.text);
     const retry = this.button("connection-retry");
-    retry.hidden = !ending.retry;
-    retry.textContent = ending.retry ?? "";
+    retry.hidden = !end.retry;
+    retry.textContent = end.retry ?? "";
     const setup = this.button("connection-setup");
     setup.hidden = false;
-    setup.className = ending.retry ? "secondary" : "primary";
-    setup.textContent =
-      end.cause === "outdated" || end.cause === "renderer" ? "RELOAD" : "BATTLE SETUP";
+    setup.className = end.retry ? "secondary" : "primary";
+    setup.textContent = end.setup;
     this.button("connection-leave").hidden = true;
     this.panel.querySelector<HTMLElement>(".network-connection .startup-track")!.hidden = true;
     this.render();
   }
-  private showConnecting(title: string, text: string): void {
+  private showConnecting(title: string, message: string): void {
     this.link = "connecting";
     this.set("connection-title", title);
-    const playing = this.lastLobby?.phase === "playing";
-    this.set(
-      "connection-message",
-      text +
-        (!playing
-          ? ""
-          : this.lastLobby!.settings.humansOnly
-            ? " Your tank sits idle until you're back."
-            : " A bot drives your tank until you're back."),
-    );
+    this.set("connection-message", message);
     this.button("connection-retry").hidden = true;
     this.button("connection-setup").hidden = true;
     this.button("connection-leave").hidden = false;
     this.panel.querySelector<HTMLElement>(".network-connection .startup-track")!.hidden = false;
     this.render();
   }
-  lobby(lobby: Lobby, playerId: string): void {
-    if (this.lastLobby?.roomEpoch === lobby.roomEpoch) {
-      for (const player of lobby.players) {
-        const previous = this.lastLobby.players.find((item) => item.playerId === player.playerId);
-        if (player.playerId !== playerId && player.connected && !previous?.connected) {
-          this.addFeed([
-            player.name +
-              (previous
-                ? " reconnected"
-                : " joined " + (player.team === 0 ? "Blue" : "Red") + " team"),
-          ]);
-        }
-      }
+  /** A new lobby with the engine's words for it; who joined or came back goes to the feed. */
+  lobby({ lobby, playerId, menu, arrivals }: RoomLobby): void {
+    for (const arrival of arrivals) {
+      this.addFeed([arrival.text]);
     }
     this.lastLobby = lobby;
     const host = lobby.hostId === playerId;
@@ -398,8 +358,10 @@ export class NetworkUI {
     this.canEditRules = host && !playing;
     const alone = lobby.players.length === 1;
     this.panel.querySelector<HTMLElement>(".network-menu")!.dataset.phase = lobby.phase;
-    this.renderHeading(lobby, host, alone);
-    this.renderSummary(lobby);
+    this.set("network-title", menu.title);
+    this.set("network-hint", menu.hint);
+    this.renderScore();
+    this.renderSummary(menu.summary);
     this.element("next-label").hidden = playing;
     this.element("choice-line").hidden = playing;
     const mine = lobby.players.find((player) => player.playerId === playerId);
@@ -434,51 +396,9 @@ export class NetworkUI {
     }
     this.render();
   }
-  private renderHeading(lobby: Lobby, host: boolean, alone: boolean): void {
-    const next = lobby.phase === "results" ? "the next battle" : "the battle";
-    const hostName = lobby.players.find((player) => player.playerId === lobby.hostId)?.name;
-    const hint =
-      lobby.phase === "playing"
-        ? lobby.settings.humansOnly
-          ? "The battle keeps going. Your tank sits idle and vulnerable while this menu is open."
-          : "The battle keeps going. A bot drives your tank while this menu is open."
-        : !host
-          ? "You stay in this room with everyone. Waiting for " +
-            (hostName ?? "the host") +
-            " to start " +
-            next +
-            "."
-          : alone
-            ? "You're the only one here. Share the invite link, or start " + next + " on your own."
-            : "Everyone stays in this room. " +
-              (lobby.phase === "results" ? "Play again" : "Start the battle") +
-              " to keep the teams together.";
-    this.set("network-hint", hint);
-    this.set(
-      "network-title",
-      lobby.phase === "playing"
-        ? "BATTLE IN PROGRESS"
-        : lobby.phase === "results"
-          ? this.resultsTitle()
-          : "LOBBY",
-    );
-    this.renderScore();
-  }
   /** The round that just ended, as the viewer's tank played it. */
   result(match: MatchState, team: number): void {
     this.outcome = { match, team };
-  }
-  /** Victory or defeat when the final state arrived. A player who joined during the
-   * results, or had the menu open as the round ended, gets a neutral heading. */
-  private resultsTitle(): string {
-    const outcome = this.outcome;
-    if (!outcome) {
-      return this.endedRound === this.lastLobby?.roundId ? "BATTLE ENDED" : "ROUND COMPLETE";
-    }
-    if (outcome.match.endedEarly || outcome.match.winner === null) {
-      return "BATTLE ENDED";
-    }
-    return outcome.match.winner === outcome.team ? "VICTORY" : "DEFEAT";
   }
   private renderScore(): void {
     const match = this.lastLobby?.phase === "results" ? this.outcome?.match : undefined;
@@ -506,14 +426,7 @@ export class NetworkUI {
     select.append(group);
   }
   /** The room's rules as read-only chips: the arena, the bots and the match length. */
-  private renderSummary(lobby: Lobby): void {
-    const settings = lobby.settings;
-    const map = mapOption(settings.mapMode);
-    const arena = (map?.name ?? settings.mapMode) + (map && "extra" in map ? " · Extra level" : "");
-    const bots = settings.humansOnly
-      ? "No bots"
-      : settings.difficulty[0].toUpperCase() + settings.difficulty.slice(1) + " bots";
-    const chips = [arena, bots, settings.roundMinutes + " min"];
+  private renderSummary(chips: string[]): void {
     const summary = this.element("network-summary");
     if (summary.textContent !== chips.join("")) {
       summary.replaceChildren(

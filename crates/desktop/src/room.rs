@@ -317,19 +317,25 @@ impl RoomSession {
 
     fn handle(&mut self, notice: RoomNotice) {
         match notice {
-            RoomNotice::Status { text, connected } => self.menu.status(&text, connected),
+            RoomNotice::Status { text, dialog } => self.menu.status(&text, dialog),
             RoomNotice::Notice(text) => self.menu.notice = text,
-            RoomNotice::Ended { cause, text } => {
+            RoomNotice::Ended(ending) => {
                 self.controls.clear();
                 // A join still behind the joining card reports on Battle Setup.
                 if self.menu.joining {
-                    self.leave_to_setup(text);
+                    self.leave_to_setup(ending.text);
                 } else {
-                    self.menu.ended(Some(cause), text);
+                    self.menu.ended(ending);
                 }
             }
-            RoomNotice::Lobby { lobby, player_id } => {
-                self.menu.lobby(*lobby, player_id, &mut self.ui);
+            RoomNotice::Lobby {
+                lobby,
+                player_id,
+                menu,
+                arrivals,
+            } => {
+                self.menu
+                    .lobby(*lobby, player_id, menu, arrivals, &mut self.ui);
             }
             RoomNotice::Result { outcome, team } => self.menu.outcome = Some((outcome, team)),
             RoomNotice::ResetFeedback => {
@@ -504,13 +510,8 @@ impl RoomSession {
                 self.pump();
                 self.leave_to_setup(String::new());
             }
-            Action::RoomRejoin => {
-                self.menu.link = room_menu::Link::Connecting {
-                    title: "RECONNECTING".into(),
-                    text: "Connecting to the room…".into(),
-                };
-                self.game.rejoin(now);
-            }
+            // The engine's next status puts up RECONNECTING.
+            Action::RoomRejoin => self.game.rejoin(now),
             Action::RoomSetup(notice) => self.leave_to_setup(notice),
             Action::RoomChoose { team, kind } => match self.game.choose_seat(team, kind, now) {
                 Ok(()) => {
@@ -693,17 +694,13 @@ impl RoomSession {
         Ok(())
     }
 
-    /// The renderer stopped: give up the connection and say so.
+    /// The renderer stopped: give up the connection, and the engine says so.
     fn fail(&mut self, error: &str) {
         eprintln!("The room stopped: {error}");
         self.stopped = true;
         self.controls.clear();
-        self.game.stop();
+        self.game.renderer_failed();
         self.pump();
-        self.menu.ended(
-            None,
-            "The renderer stopped. Go back to Battle Setup to play again.".into(),
-        );
     }
 
     /// Run a frame and show it; true when the player chose to quit.

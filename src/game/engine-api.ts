@@ -2,6 +2,7 @@
  * and frame-result slots, and the shapes of its JSON reports. This module imports
  * only types, so shell modules can use it without loading the engine. */
 import type { MapId } from "./map-options";
+import type { EndCause, Lobby } from "../net/room-protocol";
 
 /** Slots of the packed raw input frame (`sloppy_render::presentation::input::slot`).
  * Booleans are 0 or 1; one-shot slots count presses since the previous frame. */
@@ -109,6 +110,45 @@ export interface MatchState {
   endedEarly?: boolean;
   winner: Team | null;
   round: number;
+}
+
+/** `NetGame.take_notices`' connection progress, with the connection dialog's words while
+ * the socket is down. The room menu's words come from `crates/web/src/room_text.rs`. */
+export type RoomStatus =
+  | { text: string; connected: true }
+  | { text: string; connected: false; title: string; message: string };
+
+/** Why a room stopped for good, with the dialog's title and buttons. `retry` joins again
+ * and is null where that cannot work; `setup` leaves for Battle Setup. */
+export interface RoomEnding {
+  cause: EndCause;
+  text: string;
+  title: string;
+  retry: string | null;
+  setup: string;
+}
+
+/** The room menu's words for a lobby. */
+export interface RoomMenuText {
+  title: string;
+  hint: string;
+  /** The rules as chips: the arena, the bots and the match length. */
+  summary: string[];
+}
+
+/** A player who joined the room or came back, as a kill feed line. */
+export interface RoomArrival {
+  text: string;
+  team: Team;
+}
+
+/** A new lobby: the wire record, the viewer's id in it, the menu's words for it and who
+ * joined or came back since the last one. */
+export interface RoomLobby {
+  lobby: Lobby;
+  playerId: string;
+  menu: RoomMenuText;
+  arrivals: RoomArrival[];
 }
 
 /** A simulation event as `drain_events` reports it. */

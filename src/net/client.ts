@@ -19,6 +19,9 @@ import {
   type EngineEvent,
   type EventBatch,
   type MatchState as Match,
+  type RoomEnding,
+  type RoomLobby,
+  type RoomStatus,
   type StatsSection,
 } from "../game/engine-api";
 import { printDebugHelp } from "../game/debug-console";
@@ -26,13 +29,7 @@ import { debugPage } from "../game/map-options";
 import { NerdStats } from "../game/nerd-stats";
 import { WireLog } from "./wire-log";
 import { NetworkUI, type Hud } from "./network-ui";
-import {
-  ROOM_CODE,
-  TRANSPORT_DELAY_PARAMS,
-  type ConnectionEnd,
-  type JoinChoice,
-  type Lobby,
-} from "./room-protocol";
+import { ROOM_CODE, TRANSPORT_DELAY_PARAMS, type JoinChoice, type Lobby } from "./room-protocol";
 import { pendingServer, takePendingJoin, type RoomSelection } from "./pending-join";
 
 /** `NetGame.frame` result slots (`net_frame_slot` in `crates/web/src/net_game.rs`). */
@@ -66,10 +63,10 @@ type Action =
   | { type: "saveSeat"; token: string; roomEpoch: string }
   | { type: "forgetSeat" };
 type Notice =
-  | { type: "status"; text: string; connected: boolean }
+  | ({ type: "status" } & RoomStatus)
   | { type: "notice"; text: string }
-  | ({ type: "ended" } & ConnectionEnd)
-  | { type: "lobby"; lobby: Lobby; playerId: string }
+  | ({ type: "ended" } & RoomEnding)
+  | ({ type: "lobby" } & RoomLobby)
   | { type: "result"; match: Match; team: number }
   | { type: "resetFeedback" | "clearInput" | "reveal" | "prepare" | "baselineShown" }
   | { type: "arenaFailed"; error: string };
@@ -304,9 +301,9 @@ export async function startMultiplayer(
       resize();
     }
   };
-  const showStatus = (text: string, connected: boolean) => {
-    ui.status(text, connected);
-    joining?.status(text);
+  const showStatus = (status: RoomStatus) => {
+    ui.status(status);
+    joining?.status(status.text);
   };
 
   // A `?debug` page logs its traffic as JSON for the console (`sloppy.wire`).
@@ -387,7 +384,7 @@ export async function startMultiplayer(
   const handle = (notice: Notice) => {
     switch (notice.type) {
       case "status":
-        showStatus(notice.text, notice.connected);
+        showStatus(notice);
         break;
       case "notice":
         ui.notice(notice.text);
@@ -404,7 +401,7 @@ export async function startMultiplayer(
         break;
       case "lobby":
         phase = notice.lobby.phase;
-        ui.lobby(notice.lobby, notice.playerId);
+        ui.lobby(notice);
         break;
       case "result":
         ui.result(notice.match, notice.team);
@@ -498,19 +495,16 @@ export async function startMultiplayer(
   let stopped = false;
   let frames = 0;
   /** A GPU validation error or device loss: stop drawing, give up the connection and
-   * say so, rather than throwing every frame behind a frozen view. */
+   * say so (the engine's `ended` notice), rather than throwing every frame behind a
+   * frozen view. */
   const fail = (error: unknown) => {
     stopped = true;
     console.error("The room page stopped", error);
     clearInterval(poll);
     controls.clear();
     controls.holdPointer(false, true);
-    game.stop();
+    game.renderer_failed();
     pump();
-    ui.ended({
-      cause: "renderer",
-      text: "The renderer stopped. Reload the page to play again.",
-    });
   };
   const loop = (now: number) => {
     if (stopped) {

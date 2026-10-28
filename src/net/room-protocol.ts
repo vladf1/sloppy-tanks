@@ -69,10 +69,6 @@ export type EndCause =
   /** The renderer reported a GPU error or lost the device; only a reload recovers. */
   | "renderer"
   | "rejected";
-export interface ConnectionEnd {
-  cause: EndCause;
-  text: string;
-}
 
 /** Dev-only URL parameters that add transport delay to the room connection. */
 export const TRANSPORT_DELAY_PARAMS = ["latency", "jitter", "stall"] as const;
