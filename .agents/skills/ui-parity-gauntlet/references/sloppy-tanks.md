@@ -63,12 +63,14 @@ absolute path and normal approved file operations; do not edit the primary check
 as a fallback. A task-specific `CARGO_TARGET_DIR` can reuse an existing build cache
 when appropriate, without changing repository Cargo config.
 
-Useful final checks (keep the desktop scope; no browser game source changes implied):
+Use CI’s default profiles for final checks so egui’s debug assertions run; the
+optimized capture build does not exercise them. Keep validation in the desktop
+scope unless other source changed:
 
 ```sh
 cargo fmt --all --check
-cargo clippy --locked -p sloppy-desktop --profile desktop --all-targets -- -D warnings
-cargo test --locked -p sloppy-desktop --profile desktop
+cargo clippy --locked -p sloppy-desktop --all-targets -- -D warnings
+cargo test --locked -p sloppy-desktop
 pnpm exec prettier --check scripts/desktop-ui-*.mjs
 pnpm exec eslint scripts/desktop-ui-*.mjs --max-warnings 0
 git diff --check

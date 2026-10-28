@@ -1605,9 +1605,11 @@ mod tests {
                 room: true,
             };
             let mut actions = Vec::new();
-            let output = self.context.run_pass(input, |context| {
+            let mut output = self.context.run_pass(input, |context| {
                 actions = draw(context, &mut self.menu, &mut self.state, &view, 0.0);
             });
+            // These interaction tests inspect shapes without uploading textures.
+            output.textures_delta.clear();
             (actions, output)
         }
 

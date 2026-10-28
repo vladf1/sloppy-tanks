@@ -1607,13 +1607,15 @@ mod tests {
             ..Default::default()
         };
         for room in [false, true] {
-            let output = context.run_pass(
+            let mut output = context.run_pass(
                 egui::RawInput {
                     screen_rect: Some(screen),
                     ..Default::default()
                 },
                 |context| score_bar(&backdrop(context), screen, &hud, room),
             );
+            // This shape-only test has no GPU painter to consume texture updates.
+            output.textures_delta.clear();
             let mut labels = Vec::new();
             for shape in output.shapes {
                 collect_text(&shape.shape, &mut labels);
