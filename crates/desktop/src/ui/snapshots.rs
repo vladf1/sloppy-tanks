@@ -164,37 +164,22 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
 }
 
 fn feedback(state: &mut UiState) {
+    // The viewer's kill, another tank's, and a drum's that nobody owns.
+    let line = |killer: &str, victim: &str, teams: [Option<Team>; 2], cause, age| KillFeedEntry {
+        killer: killer.into(),
+        victim: victim.into(),
+        killer_team: teams[0],
+        victim_team: teams[1],
+        cause: Some(cause),
+        own_kill: killer == "YOU",
+        own_death: false,
+        age,
+    };
+    let (blue, red) = (Some(Team::Blue), Some(Team::Red));
     state.kill_feed = vec![
-        KillFeedEntry {
-            killer: "YOU".into(),
-            victim: "Tusk".into(),
-            killer_team: Some(Team::Blue),
-            victim_team: Some(Team::Red),
-            cause: Some(DamageCause::Rocket),
-            own_kill: true,
-            own_death: false,
-            age: 0.8,
-        },
-        KillFeedEntry {
-            killer: "Crank".into(),
-            victim: "Dozer".into(),
-            killer_team: Some(Team::Red),
-            victim_team: Some(Team::Blue),
-            cause: Some(DamageCause::Standard),
-            own_kill: false,
-            own_death: false,
-            age: 2.0,
-        },
-        KillFeedEntry {
-            killer: "YARD".into(),
-            victim: "Biscuit".into(),
-            killer_team: None,
-            victim_team: Some(Team::Red),
-            cause: Some(DamageCause::Drum),
-            own_kill: false,
-            own_death: false,
-            age: 3.0,
-        },
+        line("YOU", "Tusk", [blue, red], DamageCause::Rocket, 0.8),
+        line("Crank", "Dozer", [red, blue], DamageCause::Standard, 2.0),
+        line("YARD", "Biscuit", [None, red], DamageCause::Drum, 3.0),
     ];
     state.toast = Some(Toast {
         text: "+3 ROCKETS".into(),
