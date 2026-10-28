@@ -136,8 +136,6 @@ export function wreckedByMarkup(death: DeathReport | null): string {
   return `<div class="wrecked-by${death.self ? " self" : ""}${side}"><small>${label}</small><b>${name}</b>${tags ? `<div class="wrecked-tags">${tags}</div>` : ""}</div>`;
 }
 
-export { escapeHtml };
-
 /** Both teams' scores as a pair of plates, for pause and the battle report; the viewer's
  * side carries the in-match scoreboard's gold rim and says YOU beside its name. */
 export function scoreMarkup(

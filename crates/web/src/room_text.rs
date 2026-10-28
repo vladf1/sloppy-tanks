@@ -106,9 +106,11 @@ impl RoomText {
         })
     }
 
-    /// The client gave up for `cause`.
-    pub fn ended(&mut self, cause: EndCause, text: String, shell: Shell) -> Ending {
-        self.end(ending(Some(cause), text, shell))
+    /// The client gave up for `cause` (`None`: the renderer stopped).
+    pub fn ended(&mut self, cause: Option<EndCause>, text: String, shell: Shell) -> Ending {
+        let ending = ending(cause, text, shell);
+        self.dropped = Some(ending.title);
+        ending
     }
 
     /// The shell's renderer failed (a GPU error or a lost device).
@@ -117,12 +119,7 @@ impl RoomText {
             Shell::Page => "The renderer stopped. Reload the page to play again.",
             Shell::Desktop => "The renderer stopped. Go back to Battle Setup to play again.",
         };
-        self.end(ending(None, text.into(), shell))
-    }
-
-    fn end(&mut self, ending: Ending) -> Ending {
-        self.dropped = Some(ending.title);
-        ending
+        self.ended(None, text.into(), shell)
     }
 
     /// The player asked to join the stopped room again.
@@ -159,13 +156,10 @@ pub fn ending(cause: Option<EndCause>, text: String, shell: Shell) -> Ending {
         Some(EndCause::Lost) => ("CONNECTION LOST", Some("TRY AGAIN")),
         Some(EndCause::Rejected) => ("DISCONNECTED", Some("TRY AGAIN")),
         Some(EndCause::SeatExpired) => ("SEAT EXPIRED", Some("JOIN AGAIN")),
-        Some(EndCause::OtherTab) => (
-            match shell {
-                Shell::Page => "PLAYING IN ANOTHER TAB",
-                Shell::Desktop => "PLAYING ELSEWHERE",
-            },
-            Some("PLAY HERE"),
-        ),
+        Some(EndCause::OtherTab) if shell == Shell::Page => {
+            ("PLAYING IN ANOTHER TAB", Some("PLAY HERE"))
+        }
+        Some(EndCause::OtherTab) => ("PLAYING ELSEWHERE", Some("PLAY HERE")),
         Some(EndCause::RoomEnded) => ("ROOM CLOSED", None),
         Some(EndCause::Outdated) => ("GAME UPDATED", None),
         None => ("RENDERER STOPPED", None),
@@ -222,7 +216,8 @@ pub fn arrivals(previous: Option<&Lobby>, lobby: &Lobby, player_id: &str) -> Vec
         .collect()
 }
 
-fn team_word(team: Team) -> &'static str {
+/// The team as the room menu names it in a sentence: "Blue" or "Red".
+pub fn team_word(team: Team) -> &'static str {
     match team {
         Team::Blue => "Blue",
         Team::Red => "Red",
@@ -436,9 +431,9 @@ mod tests {
             title(text.status("Still trying", false)),
             Some("CONNECTION LOST")
         );
-        let ending = text.ended(EndCause::Lost, "Gone".into(), Shell::Page);
+        let ending = text.ended(Some(EndCause::Lost), "Gone".into(), Shell::Page);
         assert_eq!(ending.title, "CONNECTION LOST");
-        text.ended(EndCause::SeatExpired, "Expired".into(), Shell::Page);
+        text.ended(Some(EndCause::SeatExpired), "Expired".into(), Shell::Page);
         // A later drop keeps the ending's title until the player asks to join again.
         assert_eq!(title(text.status("Retrying", false)), Some("SEAT EXPIRED"));
         text.rejoining();

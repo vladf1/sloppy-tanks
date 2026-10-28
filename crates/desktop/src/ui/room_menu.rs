@@ -9,10 +9,11 @@ use sloppy_core::net::protocol::{Lobby, MAX_ROUND_MINUTES, Player, RoomPhase, Ro
 use sloppy_core::sim::data::{TEAM_NAMES, vehicle};
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::{MAP_OPTIONS, map_option_for};
-use sloppy_core::sim::{Match, MatchPhase, SimEventType, Team, VehicleKind};
+use sloppy_core::sim::{Match, MatchPhase, SimEventType, Team};
+use sloppy_web::battle_report::{count_line, title_case};
 use sloppy_web::catalog::{DIFFICULTY_OPTIONS, TANK_CARDS, difficulty_name, map_card};
 use sloppy_web::events::PendingEvent;
-use sloppy_web::room_text::{Arrival, ConnectionDialog, Ending, MenuText};
+use sloppy_web::room_text::{Arrival, ConnectionDialog, Ending, MenuText, team_word};
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
@@ -31,21 +32,6 @@ pub enum Link {
     Live,
     Connecting(ConnectionDialog),
     Ended(Ending),
-}
-
-/// A tank's name in a sentence: "Big Rig" for BIG RIG.
-fn tank_name(kind: VehicleKind) -> String {
-    vehicle(kind)
-        .name
-        .split(' ')
-        .map(|word| {
-            let mut letters = word.chars();
-            letters.next().map_or_else(String::new, |first| {
-                first.to_string() + &letters.as_str().to_lowercase()
-            })
-        })
-        .collect::<Vec<_>>()
-        .join(" ")
 }
 
 /// What the room's screens show besides the HUD's state.
@@ -213,10 +199,6 @@ impl RoomMenu {
             self.death_cause.clear();
         }
     }
-}
-
-fn team_word(team: Team) -> &'static str {
-    if team == Team::Blue { "Blue" } else { "Red" }
 }
 
 /// The room's plate keeps the same width and padding as `multiplayer.css`; only
@@ -769,6 +751,7 @@ fn next_battle(
     }
 
     if let Some(mine) = menu.mine().cloned() {
+        let tank_name = title_case(vehicle(mine.kind).name);
         let (choice_line, _) =
             ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
         let label = paint::text(
@@ -784,7 +767,7 @@ fn next_battle(
             ui.painter(),
             pos2(label.right() + 4.0, choice_line.center().y),
             Align2::LEFT_CENTER,
-            &format!("{} · {}", team_word(mine.team), tank_name(mine.kind)),
+            &format!("{} · {tank_name}", team_word(mine.team)),
             bold_font(13.0),
             hex(0xf5faff),
             0.0,
@@ -827,7 +810,7 @@ fn next_battle(
                 let width = columns[1].available_width();
                 egui::ComboBox::from_id_salt("player tank")
                     .width(width)
-                    .selected_text(tank_name(kind))
+                    .selected_text(&tank_name)
                     .show_ui(&mut columns[1], |ui| {
                         for tank in &TANK_CARDS {
                             ui.selectable_value(&mut picked_kind, tank.kind, tank.name());
@@ -944,31 +927,25 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
         .map_or(STANDARD_TEAM_TANKS, |tanks| tanks as usize);
     let width = ui.available_width();
     let column_width = (width - 10.0) / 2.0;
-    let longest = (0..2)
-        .map(|side| {
-            lobby
-                .players
-                .iter()
-                .filter(|player| player.team.index() == side)
-                .count()
-        })
-        .max()
-        .unwrap_or(0);
-    let height = 49.0 + longest as f32 * 30.0;
-    let (whole, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
-    for (side, name) in TEAM_NAMES.iter().enumerate() {
-        let members: Vec<&Player> = lobby
+    let teams = [Team::Blue, Team::Red].map(|team| {
+        lobby
             .players
             .iter()
-            .filter(|player| player.team.index() == side)
-            .collect();
-        let open = team_tanks.saturating_sub(members.len());
-        let fill = match (lobby.settings.humans_only, open) {
-            (true, 1) => "1 open seat".to_owned(),
-            (true, open) => format!("{open} open seats"),
-            (false, 1) => "1 bot".to_owned(),
-            (false, open) => format!("{open} bots"),
-        };
+            .filter(|player| player.team == team)
+            .collect::<Vec<&Player>>()
+    });
+    let longest = teams.iter().map(Vec::len).max().unwrap_or(0);
+    // Bots take the empty places, or they stay open seats when only humans play.
+    let empty_seat = if lobby.settings.humans_only {
+        "open seat"
+    } else {
+        "bot"
+    };
+    let height = 49.0 + longest as f32 * 30.0;
+    let (whole, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    for (side, (name, members)) in TEAM_NAMES.iter().zip(&teams).enumerate() {
+        let open = team_tanks.saturating_sub(members.len()) as u32;
+        let fill = count_line(open, empty_seat);
         let rect = Rect::from_min_size(
             whole.min + vec2(side as f32 * (column_width + 10.0), 0.0),
             vec2(column_width, height),
@@ -1275,6 +1252,7 @@ pub fn hud_phase(menu: &RoomMenu) -> MatchPhase {
 #[cfg(test)]
 pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
     use sloppy_core::net::client::EndCause;
+    use sloppy_core::sim::VehicleKind;
     use sloppy_web::Shell;
     use sloppy_web::room_text;
     let players: Vec<Player> = [
