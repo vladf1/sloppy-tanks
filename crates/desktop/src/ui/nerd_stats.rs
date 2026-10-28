@@ -9,7 +9,7 @@ use serde_json::Value;
 
 use super::UiState;
 use super::paint::{self, hex, hexa};
-use super::theme::{GOLD, TEXT_LABEL, bold_font, display_font};
+use super::theme::{TEXT_LABEL, bold_font, display_font};
 
 /// A row: label, value and what it means (shown on hover; empty for none).
 type Row = (String, String, String);
@@ -46,6 +46,8 @@ fn capitalized(word: &str) -> String {
 /// What a room's panel measures between two readings: the snapshot batches received
 /// and the main thread's time applying them.
 #[derive(Clone, Copy, Debug, Default)]
+#[cfg_attr(test, derive(serde::Serialize))]
+#[cfg_attr(test, serde(rename_all = "camelCase"))]
 pub struct NetworkSample {
     at_ms: f64,
     updates: f64,
@@ -370,11 +372,6 @@ fn render_rows(stats: &Value) -> Vec<Row> {
             "GPU draw calls issued per rendered frame.",
         ),
         row(
-            "Shadow / reflection draws",
-            format!("{} / {}", n("shadowDrawCalls"), n("reflectionDrawCalls")),
-            "",
-        ),
-        row(
             "Triangles / frame",
             grouped(n("triangles")),
             "Triangles submitted per rendered frame.",
@@ -386,11 +383,6 @@ fn render_rows(stats: &Value) -> Vec<Row> {
             "",
         ),
         row("Main triangles", grouped(n("mainTriangles")), ""),
-        row(
-            "Pipelines",
-            format!("{} ({} late)", n("pipelines"), n("latePipelines")),
-            "Render pipelines created; late ones compiled during play rather than while the arena prepared.",
-        ),
         row("GPU geometries", grouped(n("meshes")), ""),
         row("GPU textures", grouped(n("textures")), ""),
         row("GPU memory", megabytes("gpuBytes"), ""),
@@ -406,6 +398,37 @@ fn sections(stats: &Value, sample: NetworkSample) -> Vec<(&'static str, Vec<Row>
         format!("{}", n("pixelRatio")),
         "Renderer resolution multiplier, capped from the display's.",
     )];
+    let network = stats["network"].is_object();
+    let time = |key: &str, precision: usize| {
+        stats[key]
+            .as_f64()
+            .map_or("—".to_owned(), |value| format!("{value:.precision$} ms"))
+    };
+    let performance = vec![
+        row(
+            "FPS",
+            stats["fps"]
+                .as_f64()
+                .filter(|fps| *fps > 0.0)
+                .map_or("—".to_owned(), |fps| format!("{fps:.0}")),
+            "Frames drawn per second.",
+        ),
+        row("Frame interval", time("frameMs", 1), "Time between frames."),
+        row(
+            if network {
+                "Update CPU / frame"
+            } else {
+                "Sim CPU / frame"
+            },
+            time("simMs", 2),
+            "Main-thread time updating the game per frame. Excludes GPU work.",
+        ),
+        row(
+            "Render CPU / frame",
+            time("renderMs", 2),
+            "Main-thread time building and encoding a frame; the GPU driver's own work counts here too, where a browser does it in its GPU process.",
+        ),
+    ];
     if stats["network"].is_object() {
         let scene = &stats["scene"];
         let s = |key: &str| number(scene, key);
@@ -441,41 +464,18 @@ fn sections(stats: &Value, sample: NetworkSample) -> Vec<(&'static str, Vec<Row>
         } else {
             Vec::new()
         };
+        let mut render = render_rows(stats);
+        // Rooms show the same client rendering counters as the page; allocation
+        // estimates belong to the single-player engine's panel.
+        render.truncate(render.len() - 2);
         return vec![
+            ("PERFORMANCE", performance),
             ("NETWORK", network_rows(stats, sample)),
-            ("RENDER", render_rows(stats)),
+            ("RENDER", render),
             ("BATTLE", battle),
             ("CONFIGURATION", configuration),
         ];
     }
-    let ms = |key: &str| format!("{:.2} ms", n(key));
-    let fps = n("fps");
-    let performance = vec![
-        row(
-            "FPS",
-            if fps > 0.0 {
-                format!("{fps:.0}")
-            } else {
-                "—".into()
-            },
-            "Frames drawn per second.",
-        ),
-        row(
-            "Frame interval",
-            format!("{:.1} ms", n("frameMs")),
-            "Time between frames.",
-        ),
-        row(
-            "Sim CPU / frame",
-            ms("simMs"),
-            "Main-thread time stepping the simulation per frame.",
-        ),
-        row(
-            "Render CPU / frame",
-            ms("renderMs"),
-            "Main-thread time building and encoding a frame; the GPU driver's own work counts here too, where a browser does it in its GPU process.",
-        ),
-    ];
     let dynamic = n("dynamicBodies");
     let sleeping = n("sleepingBodies");
     let physics = vec![
@@ -530,12 +530,13 @@ fn sections(stats: &Value, sample: NetworkSample) -> Vec<(&'static str, Vec<Row>
     ]
 }
 
-const PANEL_WIDTH: f32 = 300.0;
-const ROW_HEIGHT: f32 = 16.0;
-const SECTION_HEAD: f32 = 22.0;
-const HEADER_HEIGHT: f32 = 38.0;
-/// The panel hangs under the kill feed's three rows, clear of them.
-const NERD_STATS_TOP: f32 = 190.0;
+/// The web panel is 32 monospace characters plus 24 pixels, at 11px type.
+const PANEL_COLUMNS: f32 = 32.0;
+const ROW_HEIGHT: f32 = 16.5;
+const SECTION_HEAD: f32 = 20.8;
+const SECTION_GAP: f32 = 6.0;
+const HEADER_HEIGHT: f32 = 37.0;
+const PANEL_PADDING: f32 = 7.0;
 
 /// Whether `section` shows its rows: every one but Configuration until folded, as the
 /// page's panel opens.
@@ -553,73 +554,84 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
     };
     let list = sections(&stats, state.network_sample.unwrap_or_default());
     let screen = context.content_rect();
-    let max_height = (screen.height() - NERD_STATS_TOP - 24.0).max(160.0);
+    let row_font = egui::FontId::monospace(11.0);
+    let font_painter = context.layer_painter(egui::LayerId::background());
+    let character_width = paint::text_width(&font_painter, "0", row_font.clone(), 0.0);
+    let panel_width = (PANEL_COLUMNS * character_width + 24.0).min(screen.width() - 16.0);
+    let rows: f32 = list
+        .iter()
+        .map(|(title, rows)| {
+            SECTION_HEAD
+                + if section_open(state, title) {
+                    rows.len() as f32 * ROW_HEIGHT
+                } else {
+                    0.0
+                }
+        })
+        .sum();
+    let height = (HEADER_HEIGHT + rows + SECTION_GAP * (list.len() - 1) as f32 + PANEL_PADDING)
+        .min(screen.height() - 24.0);
     let mut toggled = None;
     let mut closed = false;
     egui::Area::new(Id::unique("nerd stats"))
         .order(Order::Foreground)
         .fixed_pos(pos2(
-            screen.right() - 16.0 - PANEL_WIDTH,
-            screen.top() + NERD_STATS_TOP,
+            screen.right() - 8.0 - panel_width,
+            screen.bottom() - 5.0 - height,
         ))
         .show(context, |ui| {
-            let rows: f32 = list
-                .iter()
-                .map(|(title, rows)| {
-                    SECTION_HEAD
-                        + if section_open(state, title) {
-                            rows.len() as f32 * ROW_HEIGHT
-                        } else {
-                            0.0
-                        }
-                })
-                .sum();
-            let height = (HEADER_HEIGHT + rows + 12.0).min(max_height);
-            let rect = Rect::from_min_size(ui.cursor().min, vec2(PANEL_WIDTH, height));
+            let rect = Rect::from_min_size(ui.cursor().min, vec2(panel_width, height));
             let painter = ui.painter().clone();
-            painter.rect_filled(rect, 10, hexa(0x050b16, 0.86));
+            painter.add(paint::rounded_vgradient(
+                rect,
+                [12.0; 4],
+                &[(0.0, hexa(0x11264a, 0.94)), (1.0, hexa(0x08142a, 0.95))],
+            ));
             painter.rect_stroke(
                 rect,
-                10,
-                Stroke::new(1.0, hexa(0x9fd0ff, 0.2)),
+                12,
+                Stroke::new(1.0, hexa(0x9fd0ff, 0.15)),
                 StrokeKind::Inside,
             );
-            let left = rect.left() + 12.0;
-            let right = rect.right() - 12.0;
+            let left = rect.left() + 13.0;
+            let header = Rect::from_min_max(
+                rect.min,
+                pos2(rect.right() - 44.0, rect.top() + HEADER_HEIGHT),
+            );
             paint::text(
                 &painter,
-                pos2(left, rect.top() + 10.0),
+                pos2(left, rect.top() + 12.0),
                 Align2::LEFT_TOP,
                 "Stats for Nerds",
                 display_font(20.0),
                 Color32::WHITE,
                 0.4,
             );
-            // The header stays while the rows scroll, so the close button does too.
+            closed |= ui
+                .interact(header, Id::unique("nerd stats title"), Sense::click())
+                .clicked();
+            // The header stays while the rows scroll, including the full 44px close target.
             let close =
-                Rect::from_center_size(pos2(right - 8.0, rect.top() + 21.0), vec2(22.0, 22.0));
-            let close_response = ui
+                Rect::from_min_size(pos2(rect.right() - 44.0, rect.top()), vec2(44.0, 44.0));
+            let response = ui
                 .interact(close, Id::unique("nerd stats close"), Sense::click())
                 .on_hover_text("Hide (N)");
-            let ink = if close_response.hovered() {
-                Color32::WHITE
-            } else {
-                hex(0xb6cedf)
-            };
-            let cross = 5.0;
-            for (from, to) in [
-                (vec2(-cross, -cross), vec2(cross, cross)),
-                (vec2(-cross, cross), vec2(cross, -cross)),
-            ] {
-                painter.line_segment(
-                    [close.center() + from, close.center() + to],
-                    Stroke::new(2.0, ink),
-                );
+            if response.hovered() {
+                painter.rect_filled(close, 6, hexa(0xffffff, 0.12));
             }
-            closed = close_response.clicked();
+            paint::text(
+                &painter,
+                close.center(),
+                Align2::CENTER_CENTER,
+                "×",
+                egui::FontId::proportional(24.0),
+                hex(0xeeeeee),
+                0.0,
+            );
+            closed |= response.clicked();
             let body = Rect::from_min_max(
-                pos2(rect.left(), rect.top() + HEADER_HEIGHT),
-                pos2(rect.right(), rect.bottom() - 6.0),
+                pos2(rect.left() + PANEL_PADDING, rect.top() + HEADER_HEIGHT),
+                pos2(rect.right() - PANEL_PADDING, rect.bottom() - PANEL_PADDING),
             );
             let mut body_ui = ui.new_child(egui::UiBuilder::new().max_rect(body));
             egui::ScrollArea::vertical()
@@ -628,47 +640,44 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
                 .auto_shrink([false, true])
                 .show(&mut body_ui, |ui| {
                     ui.spacing_mut().item_spacing = vec2(0.0, 0.0);
-                    let width = PANEL_WIDTH - 24.0;
-                    for (title, rows) in &list {
+                    let width = body.width();
+                    for (index, (title, rows)) in list.iter().enumerate() {
+                        if index > 0 {
+                            ui.add_space(SECTION_GAP);
+                        }
                         let open = section_open(state, title);
                         let (head, response) =
-                            ui.allocate_exact_size(vec2(PANEL_WIDTH, SECTION_HEAD), Sense::click());
+                            ui.allocate_exact_size(vec2(width, SECTION_HEAD), Sense::click());
                         let painter = ui.painter();
-                        let x = head.left() + 12.0;
+                        let x = head.left() + 5.0;
                         let tip = pos2(x + 4.0, head.center().y);
                         let arrow = if open {
                             vec![
-                                tip + vec2(-4.0, -2.5),
-                                tip + vec2(4.0, -2.5),
+                                tip + vec2(-3.5, -2.5),
+                                tip + vec2(3.5, -2.5),
                                 tip + vec2(0.0, 3.0),
                             ]
                         } else {
                             vec![
-                                tip + vec2(-2.0, -4.0),
-                                tip + vec2(3.5, 0.0),
-                                tip + vec2(-2.0, 4.0),
+                                tip + vec2(-2.0, -3.5),
+                                tip + vec2(3.0, 0.0),
+                                tip + vec2(-2.0, 3.5),
                             ]
                         };
-                        painter.add(egui::Shape::convex_polygon(arrow, GOLD, Stroke::NONE));
-                        let heading = paint::text(
+                        let color = if response.hovered() {
+                            Color32::WHITE
+                        } else {
+                            TEXT_LABEL
+                        };
+                        painter.add(egui::Shape::convex_polygon(arrow, color, Stroke::NONE));
+                        paint::text(
                             painter,
                             pos2(x + 13.0, head.center().y),
                             Align2::LEFT_CENTER,
                             title,
-                            bold_font(11.0),
-                            if response.hovered() {
-                                Color32::WHITE
-                            } else {
-                                TEXT_LABEL
-                            },
-                            1.6,
-                        );
-                        painter.line_segment(
-                            [
-                                pos2(heading.right() + 10.0, head.center().y),
-                                pos2(x + width, head.center().y),
-                            ],
-                            Stroke::new(1.0, hexa(0x9fd0ff, 0.12)),
+                            bold_font(10.5),
+                            color,
+                            1.5,
                         );
                         if response.clicked() {
                             toggled = Some((*title, !open));
@@ -677,31 +686,15 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
                             continue;
                         }
                         for (label, value, hint) in rows {
-                            let (line, response) = ui
-                                .allocate_exact_size(vec2(PANEL_WIDTH, ROW_HEIGHT), Sense::hover());
-                            if response.hovered() {
-                                ui.painter().rect_filled(
-                                    line.shrink2(vec2(6.0, 0.0)),
-                                    3,
-                                    hexa(0xffffff, 0.05),
-                                );
-                            }
+                            let (line, response) =
+                                ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
                             paint::text(
                                 ui.painter(),
-                                pos2(line.left() + 12.0, line.center().y),
+                                pos2(line.left() + 5.0, line.center().y),
                                 Align2::LEFT_CENTER,
-                                label,
-                                egui::FontId::proportional(12.0),
-                                hex(0xa9c0d8),
-                                0.0,
-                            );
-                            paint::text(
-                                ui.painter(),
-                                pos2(line.left() + 12.0 + width, line.center().y),
-                                Align2::RIGHT_CENTER,
-                                value,
-                                bold_font(12.0),
-                                Color32::WHITE,
+                                &format!("{label:20} {value}"),
+                                row_font.clone(),
+                                hex(0xe6eef8),
                                 0.0,
                             );
                             if !hint.is_empty() {
@@ -725,7 +718,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_rooms_panel_leads_with_its_network_rows() {
+    fn a_room_keeps_performance_before_its_network_rows() {
         let stats = serde_json::json!({
             "network": {
                 "rttMs": 42.4,
@@ -739,8 +732,17 @@ mod tests {
         });
         let list = sections(&stats, NetworkSample::default());
         let titles: Vec<_> = list.iter().map(|(title, _)| *title).collect();
-        assert_eq!(titles, ["NETWORK", "RENDER", "BATTLE", "CONFIGURATION"]);
-        let network = &list[0].1;
+        assert_eq!(
+            titles,
+            [
+                "PERFORMANCE",
+                "NETWORK",
+                "RENDER",
+                "BATTLE",
+                "CONFIGURATION"
+            ]
+        );
+        let network = &list[1].1;
         let value = |label: &str| {
             network
                 .iter()
@@ -751,7 +753,9 @@ mod tests {
         assert_eq!(value("Blast corrections").as_deref(), Some("1.2 cm/s"));
         assert_eq!(value("Fire to flash").as_deref(), Some("–"));
         assert_eq!(value("Connection").as_deref(), Some("Connected"));
-        assert_eq!(list[2].1[0].1, "9 / 12");
+        assert_eq!(list[3].1[0].1, "9 / 12");
+        assert_eq!(list[0].1[2].0, "Update CPU / frame");
+        assert!(!list[2].1.iter().any(|row| row.0 == "GPU memory"));
     }
 
     #[test]

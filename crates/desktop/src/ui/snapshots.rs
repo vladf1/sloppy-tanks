@@ -177,6 +177,16 @@ fn scenarios() -> Vec<Scenario> {
         phase: Phase::Ready,
         state: setup,
     });
+    list.push(Scenario {
+        name: "battle-setup-ready",
+        in_round: false,
+        phase: Phase::Ready,
+        state: UiState {
+            hud: Some(hud("ready", false, true, 1.0)),
+            ready: true,
+            ..UiState::default()
+        },
+    });
     let room = |code: &str, map: &str, players: u32, reserved: u32, phase: &str| {
         crate::directory::RoomListing {
             room: code.into(),
@@ -291,10 +301,7 @@ fn scenarios() -> Vec<Scenario> {
         phase: Phase::Paused,
         state: UiState {
             hud: Some(hud("paused", false, true, 0.7)),
-            settings_draft: Some(Preferences {
-                debug: true,
-                ..Preferences::default()
-            }),
+            settings_draft: Some(Preferences::default()),
             ..UiState::default()
         },
     });
@@ -318,7 +325,7 @@ fn scenarios() -> Vec<Scenario> {
     });
     let stats = json!({
         "fps": 60, "frameMs": 16.7, "simMs": 0.82, "renderMs": 2.31, "graphicsApi": "WebGPU",
-        "quality": {"setting": "auto", "tier": "high", "scale": 1.0, "scene": [2560, 1600], "gpuMs": 4.2},
+        "quality": {"setting": "auto", "tier": "high", "scale": 1.0, "scene": [2560, 1600], "gpuMs": 4.2, "renderRatio": 2.0, "changes": 0},
         "drawCalls": 412, "shadowDrawCalls": 96, "reflectionDrawCalls": 0, "triangles": 812345,
         "shadowTriangles": 210000, "reflectionTriangles": 0, "mainTriangles": 602345,
         "pipelines": 58, "latePipelines": 0, "meshes": 340, "textures": 61,
@@ -394,6 +401,44 @@ fn scenarios() -> Vec<Scenario> {
         phase: Phase::Playing,
         state: room_nerd,
     });
+    for name in [
+        "room-lobby",
+        "room-lobby-guest",
+        "room-lobby-rules",
+        "room-lobby-choice",
+        "room-pause",
+        "room-results",
+        "room-joining",
+        "room-reconnecting",
+        "room-connection-ended",
+        "room-respawn",
+        "room-controls",
+        "room-settings",
+    ] {
+        let menu = super::room_menu::snapshot_menu(name);
+        let phase = super::room_menu::hud_phase(&menu);
+        let phase_name = match phase {
+            Phase::Playing => "playing",
+            Phase::Paused => "paused",
+            Phase::Results => "results",
+            Phase::Ready => "ready",
+        };
+        list.push(Scenario {
+            name,
+            in_round: menu.in_battle(),
+            phase,
+            state: UiState {
+                hud: Some(hud(
+                    phase_name,
+                    false,
+                    name != "room-respawn",
+                    if name == "room-respawn" { 0.0 } else { 0.7 },
+                )),
+                settings_draft: (name == "room-settings").then(Preferences::default),
+                ..UiState::default()
+            },
+        });
+    }
     list
 }
 
@@ -404,6 +449,17 @@ fn snapshots() {
         return;
     };
     std::fs::create_dir_all(&directory).expect("the snapshot folder");
+    let size = std::env::var("SLOPPY_UI_SIZE")
+        .ok()
+        .and_then(|value| {
+            let (width, height) = value.split_once('x')?;
+            Some([width.parse::<f32>().ok()?, height.parse::<f32>().ok()?])
+        })
+        .unwrap_or(SIZE);
+    assert!(
+        size.iter()
+            .all(|value| value.is_finite() && (320.0..=4096.0).contains(value))
+    );
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -412,13 +468,60 @@ fn snapshots() {
         pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor::default()))
             .expect("a GPU device");
     let format = wgpu::TextureFormat::Rgba8UnormSrgb;
-    let width = (SIZE[0] * SCALE) as u32;
-    let height = (SIZE[1] * SCALE) as u32;
+    let width = (size[0] * SCALE) as u32;
+    let height = (size[1] * SCALE) as u32;
     let prefs = Preferences {
-        debug: true,
+        debug: false,
+        player_name: "Driver".into(),
         ..Preferences::default()
     };
     for mut scenario in scenarios() {
+        let is_room = scenario.name.starts_with("room-");
+        let mut room_menu = is_room.then(|| super::room_menu::snapshot_menu(scenario.name));
+        let state = &scenario.state;
+        let fixture = json!({
+            "name": scenario.name,
+            "room": room_menu.as_ref().map(super::room_menu::RoomMenu::snapshot_fixture),
+            "rooms": state.rooms.snapshot_rooms(),
+            "playerName": state.rooms.snapshot_player_name(),
+            "size": size,
+            "scale": SCALE,
+            "hud": state.hud,
+            "stats": state.stats,
+            "networkSample": state.network_sample,
+            "ready": state.ready,
+            "status": state.status,
+            "cockpit": state.cockpit,
+            "hullAngle": state.hull_angle,
+            "hullGhost": state.hull_ghost,
+            "respawnTotal": state.respawn_total,
+            "effectLongest": state.effect_longest,
+            "mineTotal": state.mine_total,
+            "ammoNotice": state.ammo_notice,
+            "hitFlash": state.hit_flash,
+            "damageRing": state.damage_ring,
+            "viewer": state.viewer,
+            "death": state.death.as_ref().map(|death| json!({
+                "killer": death.killer, "self": death.own_goal, "cause": death.cause,
+                "weapon": death.weapon, "killerVehicle": death.killer_vehicle,
+                "killerTeam": death.killer_team, "killerKills": death.killer_kills,
+            })),
+            "toast": state.toast.as_ref().map(|toast| json!({
+                "text": toast.text, "tone": match toast.tone {
+                    ToastTone::Pickup => "pickup", ToastTone::Promotion => "promotion", ToastTone::Death => "death",
+                }, "age": toast.age, "duration": toast.duration,
+            })),
+            "feed": state.kill_feed.iter().map(|entry| json!({
+                "killer": entry.killer, "victim": entry.victim, "killerTeam": entry.killer_team,
+                "victimTeam": entry.victim_team, "cause": entry.cause, "ownKill": entry.own_kill,
+                "ownDeath": entry.own_death, "age": entry.age,
+            })).collect::<Vec<_>>(),
+        });
+        std::fs::write(
+            std::path::Path::new(&directory).join(format!("{}.json", scenario.name)),
+            serde_json::to_vec_pretty(&fixture).expect("a fixture"),
+        )
+        .expect("the fixture saved");
         let context = egui::Context::default();
         super::theme::install(&context);
         let mut painter = egui_wgpu::Renderer::new(&device, format, Default::default());
@@ -429,7 +532,7 @@ fn snapshots() {
             build: "v0.1.0 · dev",
             // Stats for nerds show only with the debug tools on.
             debug: scenario.name.ends_with("nerd-stats"),
-            room: false,
+            room: is_room,
         };
         // A few passes: new areas size themselves on their first frame.
         let mut output = None;
@@ -437,14 +540,18 @@ fn snapshots() {
             let input = egui::RawInput {
                 screen_rect: Some(egui::Rect::from_min_size(
                     egui::Pos2::ZERO,
-                    egui::vec2(SIZE[0], SIZE[1]),
+                    egui::vec2(size[0], size[1]),
                 )),
                 time: Some(10.0 + f64::from(frame) / 30.0),
                 ..Default::default()
             };
             context.set_pixels_per_point(SCALE);
             output = Some(context.run_pass(input, |context| {
-                super::draw(context, &mut scenario.state, &view);
+                if let Some(menu) = &mut room_menu {
+                    super::room_menu::draw(context, menu, &mut scenario.state, &view, 0.0);
+                } else {
+                    super::draw(context, &mut scenario.state, &view);
+                }
             }));
             if let Some(output) = &mut output {
                 for (id, deltas) in &output.textures_delta.set {

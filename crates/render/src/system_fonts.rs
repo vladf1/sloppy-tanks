@@ -29,6 +29,17 @@ fn candidates(family: &str, style: FontStyle) -> Vec<(&'static str, bool)> {
     let black = style.weight >= 800;
     let bold = style.weight >= 600;
     match family.to_ascii_lowercase().as_str() {
+        "system-ui" => {
+            #[cfg(target_os = "macos")]
+            return vec![("SFNS.ttf", false)];
+            #[cfg(not(target_os = "macos"))]
+            if bold {
+                vec![("segoeuib.ttf", false), ("arialbd.ttf", false)]
+            } else {
+                vec![("segoeui.ttf", false), ("arial.ttf", false)]
+            }
+        }
+        "monospace" => vec![("SFNSMono.ttf", false), ("consola.ttf", false)],
         "georgia" => match (bold, style.italic) {
             (true, true) => vec![("Georgia Bold Italic.ttf", true), ("georgiaz.ttf", true)],
             (true, false) => vec![("Georgia Bold.ttf", false), ("georgiab.ttf", false)],

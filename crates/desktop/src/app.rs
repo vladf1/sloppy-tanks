@@ -40,7 +40,7 @@ const PREPARE_BUDGET: u32 = 4;
 const STATS_EVERY_FRAMES: u64 = 15;
 /// The window's first size, in points.
 const WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 800.0);
-const MIN_WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(800.0, 560.0);
+const MIN_WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(1100.0, 720.0);
 /// How often a window that takes no frames tries again.
 const HIDDEN_RECHECK: Duration = Duration::from_millis(100);
 /// Battle Setup's status once the arena is ready.

@@ -5,6 +5,7 @@
 use serde::Deserialize;
 
 #[derive(Clone, Copy, Debug, Default, Deserialize, PartialEq, Eq)]
+#[cfg_attr(test, derive(serde::Serialize))]
 #[serde(rename_all = "camelCase")]
 pub enum Phase {
     #[default]
@@ -34,6 +35,7 @@ pub struct Point {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct MatchState {
     pub phase: Phase,
     pub time: f64,
@@ -84,6 +86,7 @@ pub struct EventBatch {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct AmmoSlot {
     pub weapon: String,
     /// `None` for unlimited Standard shells.
@@ -94,6 +97,7 @@ pub struct AmmoSlot {
 
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct HumanState {
     pub id: u32,
     pub kind: String,
@@ -126,6 +130,7 @@ pub struct HumanState {
 
 #[derive(Clone, Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct ScoreboardRow {
     pub id: u32,
     pub name: String,
@@ -136,6 +141,7 @@ pub struct ScoreboardRow {
 }
 
 #[derive(Clone, Debug, Deserialize)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct Feat {
     pub title: String,
     pub detail: String,
@@ -144,6 +150,7 @@ pub struct Feat {
 /// The finished round's report; the engine decides feats and personal bests.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct RecapState {
     pub stats: std::collections::BTreeMap<String, f64>,
     pub best: std::collections::BTreeMap<String, f64>,
@@ -160,6 +167,7 @@ pub struct RecapState {
 /// `hud_json`: everything the HUD and menus show.
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase", default)]
+#[cfg_attr(test, derive(serde::Serialize))]
 pub struct HudState {
     #[serde(rename = "match")]
     pub match_state: MatchState,

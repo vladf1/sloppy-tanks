@@ -460,6 +460,30 @@ impl Art {
     /// Paint the render of `kind` ("scout", "balanced", "heavy") in `team`'s paint, fit
     /// inside `rect` at `scale` of its height and centred.
     pub fn tank(&self, painter: &egui::Painter, kind: &str, team: u8, rect: Rect, scale: f32) {
+        self.tank_image(painter, kind, team, rect, scale, false);
+    }
+
+    /// A tank facing the other side of a setup poster, like CSS `scaleX(-1)`.
+    pub fn tank_mirrored(
+        &self,
+        painter: &egui::Painter,
+        kind: &str,
+        team: u8,
+        rect: Rect,
+        scale: f32,
+    ) {
+        self.tank_image(painter, kind, team, rect, scale, true);
+    }
+
+    fn tank_image(
+        &self,
+        painter: &egui::Painter,
+        kind: &str,
+        team: u8,
+        rect: Rect,
+        scale: f32,
+        mirrored: bool,
+    ) {
         let Some(texture) = &self.tanks else { return };
         let (column, origin) = match kind {
             "scout" => (0.0, [64.0, 38.0]),
@@ -470,13 +494,16 @@ impl Art {
             column * SHEET_CELL[0] + origin[0],
             f32::from(team.min(1)) * SHEET_CELL[1] + origin[1],
         ];
-        let uv = Rect::from_min_max(
+        let mut uv = Rect::from_min_max(
             pos2(min[0] / SHEET_SIZE[0], min[1] / SHEET_SIZE[1]),
             pos2(
                 (min[0] + PREVIEW_SIZE[0]) / SHEET_SIZE[0],
                 (min[1] + PREVIEW_SIZE[1]) / SHEET_SIZE[1],
             ),
         );
+        if mirrored {
+            std::mem::swap(&mut uv.min.x, &mut uv.max.x);
+        }
         let aspect = PREVIEW_SIZE[0] / PREVIEW_SIZE[1];
         let mut height = rect.height() * scale;
         if height * aspect > rect.width() * scale {
