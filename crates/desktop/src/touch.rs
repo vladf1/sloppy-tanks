@@ -83,6 +83,15 @@ impl Play {
     }
 }
 
+/// Whether `point` is on one of egui's areas: a menu, the HUD's toolbar or tank panel.
+/// egui spans the safe area with an interactable background layer of its own (so
+/// panels can catch clicks), and the arena lies under it, so that layer does not count.
+pub fn over_ui(context: &egui::Context, point: Pos2) -> bool {
+    context
+        .layer_id_at(point)
+        .is_some_and(|layer| layer.order != egui::Order::Background)
+}
+
 /// Which fingers egui owns; the controls track their own in [`Controls::touch`].
 #[derive(Default)]
 pub struct Fingers {
@@ -277,6 +286,54 @@ mod tests {
             "first person has no zoom keys: the finger aims there"
         );
         assert_eq!(input.zoom, 0.0);
+    }
+
+    /// Two passes of a screen with one HUD button at its top right, as the toolbar is:
+    /// egui hit-tests against the areas the last pass showed.
+    fn hud_context() -> egui::Context {
+        let context = egui::Context::default();
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, SCREEN)),
+                ..Default::default()
+            };
+            let mut output = context.run_pass(input, |context| {
+                egui::Area::new(egui::Id::unique("toolbar"))
+                    .fixed_pos(pos2(1000.0, 10.0))
+                    .order(egui::Order::Middle)
+                    .show(context, |ui| {
+                        ui.allocate_exact_size(Vec2::new(150.0, 46.0), egui::Sense::click());
+                    });
+            });
+            // No painter takes the font atlas here.
+            output.textures_delta.clear();
+        }
+        context
+    }
+
+    #[test]
+    fn the_arena_under_egui_background_is_not_ui() {
+        let context = hud_context();
+        assert!(
+            context.layer_id_at(pos2(600.0, 400.0)).is_some(),
+            "egui's background layer covers the arena"
+        );
+        assert!(!over_ui(&context, pos2(600.0, 400.0)));
+        assert!(over_ui(&context, pos2(1050.0, 30.0)));
+    }
+
+    #[test]
+    fn an_arena_finger_fires_past_egui_and_a_button_finger_does_not() {
+        let context = hud_context();
+        let mut fingers = Fingers::default();
+        let mut controls = Controls::default();
+        let play = play();
+        let over = |point| over_ui(&context, point);
+        let shot = touch(1, TouchPhase::Started, 600.0, 400.0);
+        assert!(!fingers.route(&shot, 1.0, Some(&play), over, SCREEN, &mut controls));
+        assert!(controls.take_input().fire);
+        let tap = touch(2, TouchPhase::Started, 1050.0, 30.0);
+        assert!(fingers.route(&tap, 1.0, Some(&play), over, SCREEN, &mut controls));
     }
 
     #[test]

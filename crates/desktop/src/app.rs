@@ -621,7 +621,7 @@ impl Session {
             touch,
             self.window.scale_factor(),
             play.as_ref(),
-            |point| context.layer_id_at(point).is_some(),
+            |point| crate::touch::over_ui(context, point),
             context.viewport_rect().size(),
             &mut self.controls,
         )
