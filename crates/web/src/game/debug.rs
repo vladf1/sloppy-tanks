@@ -65,9 +65,11 @@ use sloppy_core::sim::{
 };
 use sloppy_render::camera::PerspectiveCamera;
 use sloppy_render::gpu::{InstanceId, Lifetime, ModelId};
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use super::{Game, js_error, parse};
+use crate::page::PageError;
 
 /// A bot that should hold still waits this long before deciding anything.
 const FROZEN_BRAIN_SECONDS: f64 = 999.0;
@@ -210,7 +212,7 @@ macro_rules! apply {
     };
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl Game {
     /// Switch passes, lights and effect pools off for a same-page A/B measurement:
     /// `{ pools: [label...], bloom, occlusion, sky, lights, atmosphere, effects: [name...] }`,
@@ -221,7 +223,7 @@ impl Game {
         self.view.renderer.debug_set_scene_load(load);
     }
 
-    pub fn debug_set_off(&mut self, off_json: &str) -> Result<(), JsValue> {
+    pub fn debug_set_off(&mut self, off_json: &str) -> Result<(), PageError> {
         let off: DebugOffSpec = parse(off_json)?;
         self.view.renderer.debug_off = sloppy_render::gpu::DebugOff {
             pools: off.pools,
@@ -295,7 +297,7 @@ impl Game {
         }
     }
 
-    pub fn debug_set_tank(&mut self, id: u32, patch_json: &str) -> Result<(), JsValue> {
+    pub fn debug_set_tank(&mut self, id: u32, patch_json: &str) -> Result<(), PageError> {
         let patch: TankPatch = parse(patch_json)?;
         let index = self
             .sim
@@ -340,7 +342,7 @@ impl Game {
     }
 
     /// Add a bot tank; returns its id.
-    pub fn debug_add_tank(&mut self, team: u8, kind: &str) -> Result<u32, JsValue> {
+    pub fn debug_add_tank(&mut self, team: u8, kind: &str) -> Result<u32, PageError> {
         let kind: VehicleKind = serde_json::from_value(Value::from(kind))
             .map_err(|error| js_error(error.to_string()))?;
         let slot = self.sim.tanks.len();
@@ -413,7 +415,7 @@ impl Game {
     }
 
     /// Add a cover and its navigation footprint; returns its id.
-    pub fn debug_add_cover(&mut self, spec_json: &str) -> Result<u32, JsValue> {
+    pub fn debug_add_cover(&mut self, spec_json: &str) -> Result<u32, PageError> {
         let spec: CoverSpec = parse(spec_json)?;
         let index = self.sim.add_cover(&CoverDef::new(
             spec.kind,
@@ -429,7 +431,7 @@ impl Game {
         Ok(self.sim.covers[index].id)
     }
 
-    pub fn debug_set_sim(&mut self, patch_json: &str) -> Result<(), JsValue> {
+    pub fn debug_set_sim(&mut self, patch_json: &str) -> Result<(), PageError> {
         let patch: SimPatch = parse(patch_json)?;
         let sim = &mut self.sim;
         apply!(sim, patch, elapsed, game_mode, reinforcement_delay);
@@ -460,7 +462,7 @@ impl Game {
     }
 
     /// Replace every pickup; each gets a fresh id.
-    pub fn debug_set_pickups(&mut self, pickups_json: &str) -> Result<Vec<u32>, JsValue> {
+    pub fn debug_set_pickups(&mut self, pickups_json: &str) -> Result<Vec<u32>, PageError> {
         let specs: Vec<PickupSpec> = parse(pickups_json)?;
         let sim = &mut self.sim;
         sim.pickups = specs
@@ -482,7 +484,7 @@ impl Game {
     }
 
     /// Put a shell in flight; returns its id.
-    pub fn debug_add_shot(&mut self, shot_json: &str) -> Result<u32, JsValue> {
+    pub fn debug_add_shot(&mut self, shot_json: &str) -> Result<u32, PageError> {
         let spec: ShotSpec = parse(shot_json)?;
         let id = self.sim.allocate_id();
         self.sim.shots.push(Shot {
@@ -590,7 +592,7 @@ impl Game {
         dt: f64,
         overview: bool,
         camera: Vec<f32>,
-    ) -> Result<(), JsValue> {
+    ) -> Result<(), PageError> {
         self.fill_state();
         self.route_events();
         // Effects the game's camera does not see may show from the fixed pose.
@@ -757,7 +759,7 @@ impl Game {
     /// model position and bar height, and whether drawing left the room's snapshot
     /// and random stream untouched. The single-player world is restored afterwards
     /// (prepare it again before playing).
-    pub fn debug_seats(&mut self, seed: f64) -> Result<String, JsValue> {
+    pub fn debug_seats(&mut self, seed: f64) -> Result<String, PageError> {
         let players = [
             ("alice", "Alice", Team::Blue, VehicleKind::Scout),
             ("bob", "Bob", Team::Red, VehicleKind::Heavy),

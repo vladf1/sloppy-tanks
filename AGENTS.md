@@ -25,7 +25,8 @@ turn this file into a second directory listing.
 
 ## Layout
 
-One implementation of the game, in Rust, shared by the browser and the server:
+One implementation of the game, in Rust, shared by the browser, the desktop app and
+the server:
 
 - `crates/core` (native and Wasm): `sim/` simulation, rules, bots, navigation,
   maps and levels on Rapier; `geometry/` and `models/` meshes and model trees
@@ -43,6 +44,11 @@ One implementation of the game, in Rust, shared by the browser and the server:
   controls, audio and the room page's DOM. Game rules, simulation, rendering,
   effects and replication must not come back into TypeScript; the import
   boundary tests (`tests/*-imports.test.ts`) allowlist the shell modules.
+- `crates/desktop` (native, macOS and Windows): the other shell, binary
+  `sloppy-tanks`. A winit window drawn by wgpu on Metal or Direct3D 12
+  (`sloppy-render`'s `native` feature), egui menus and HUD, and the same `Game`
+  and `NetGame` the page drives (`sloppy-web`'s `native` feature). Game rules stay
+  out of both shells.
 
 ## Code style
 
@@ -101,9 +107,10 @@ whether Kache was on when reporting build times.
 pnpm run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests
 pnpm run wasm                         # release WebGPU engine into src/generated/engine/; rerun after Rust/WGSL edits
 pnpm run wasm:webgl                   # the WebGL2 fallback engine; before trying ?webgl after an edit
-cargo test --workspace --test integration navigation::   # one area of the core tests (add --release for seeded matches)
+cargo test --workspace --exclude sloppy-desktop --test integration navigation::   # one area of the core tests (add --release for seeded matches)
 node --import tsx --test tests/foo.test.ts    # focused page-shell test
 pnpm run validate                     # seeded headless matches and reset checks
+pnpm run desktop                      # the desktop app for this Mac or Windows PC into artifacts/desktop/
 pnpm run dev                          # browser work; use the printed URL
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
 ```
@@ -116,9 +123,15 @@ SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ pnpm run check:browser
 (`src/generated/engine-webgl/`) alone unless its glue is missing or the engine's
 API changed, because building it doubles the compile work of every edit; the
 browser checks that play it rebuild it first, and `build` builds both
-(`pnpm run wasm:all`). Keep `--workspace` on focused cargo commands: `-p sloppy-core`
-alone resolves different dependency features and compiles Rapier and its stack a
-second time. `tests/traffic-bots.test.ts` drives the built server binary
+(`pnpm run wasm:all`). Keep `--workspace --exclude sloppy-desktop` on focused cargo
+commands, as `test:rust` and `rust:clippy` have it: `-p sloppy-core` alone, or the
+desktop crate's features, resolve different dependency features and compile Rapier
+and its stack a second time. Linux CI leaves `sloppy-desktop` out, since its window,
+audio and GPU crates need system libraries there; `.github/workflows/desktop.yml`
+lints, tests and builds it on macOS and Windows, and publishes main's notarized builds
+as the latest GitHub release. Build the app through
+`pnpm run desktop` (`desktop:mac`, `desktop:windows`), which stamps the content
+version multiplayer needs. `tests/traffic-bots.test.ts` drives the built server binary
 (`pnpm run server:build`).
 
 A successful Rust/TypeScript/build/test gate does not prove controls, menu
@@ -259,8 +272,9 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   or growing collection, measure reset and long-run behavior.
 - Rendering is WebGPU (`wgpu` with `Backends::BROWSER_WEBGPU`), with a WebGL2
   fallback: a second engine build (`--no-default-features --features webgl`,
-  `src/generated/engine-webgl/`) on glow, without wgpu. `src/engine.ts` loads it
-  only where the browser gives no WebGPU adapter or device (`?webgl` forces it),
+  `src/generated/engine-webgl/`) on glow, drawing without wgpu (its build compiles
+  wgpu's API crate unused; `crates/render/Cargo.toml` says why). `src/engine.ts` loads
+  it only where the browser gives no WebGPU adapter or device (`?webgl` forces it),
   so a WebGPU page never downloads WebGL code. The renderer core (`gpu/mod.rs` and
   its shared mesh, material, texture and pool stores) builds the same draw lists
   for both; the browser API is one backend module chosen at build time,

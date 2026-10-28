@@ -1,5 +1,6 @@
 //! WebGPU textures: `copyExternalImageToTexture` uploads of decoded files and
-//! generated `ImageData`, mip levels rendered from the level above, and samplers.
+//! generated `ImageData` (natively `write_texture` of decoded RGBA8), mip levels
+//! rendered from the level above, and samplers.
 
 use std::collections::HashMap;
 
@@ -38,6 +39,8 @@ fn bake_spec(bake: &TextureBake) -> PipelineSpec {
 }
 
 /// A bake's pipeline while it compiles in the background, then compiled.
+// A native pipeline is one pointer; the few bakes are not worth boxing their specs.
+#[cfg_attr(not(target_arch = "wasm32"), allow(clippy::large_enum_variant))]
 enum BakePipeline {
     Compiling(PipelineSpec, StageSources, Background),
     Ready(wgpu::RenderPipeline),
@@ -311,10 +314,40 @@ impl Uploader {
                 | wgpu::TextureUsages::RENDER_ATTACHMENT,
             view_formats: &[],
         });
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            let Pixels::Image(image) = pixels;
+            let row = width as usize * 4;
+            let flipped: Vec<u8>;
+            let rows = if flip_y {
+                flipped = image
+                    .pixels
+                    .chunks_exact(row)
+                    .rev()
+                    .flatten()
+                    .copied()
+                    .collect();
+                &flipped[..]
+            } else {
+                &image.pixels[..]
+            };
+            gpu.queue.write_texture(
+                texture.as_image_copy(),
+                rows,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(width * 4),
+                    rows_per_image: None,
+                },
+                size,
+            );
+        }
+        #[cfg(target_arch = "wasm32")]
         let source = match pixels {
             Pixels::Bitmap(bitmap) => wgpu::ExternalImageSource::ImageBitmap(bitmap.clone()),
             Pixels::Image(image) => wgpu::ExternalImageSource::ImageData(image.clone()),
         };
+        #[cfg(target_arch = "wasm32")]
         gpu.queue.copy_external_image_to_texture(
             &wgpu::CopyExternalImageSourceInfo {
                 source,

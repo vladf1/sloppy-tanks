@@ -73,15 +73,17 @@ use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::{MatchPhase, RenderState, Weapon};
 use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use crate::frame_clock::{FramePacing, FrameTimes};
 use crate::hud::{HudHuman, Scoreboard, human_json};
 use crate::page::{
-    CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageView, aim, create_view, js_error,
-    now_ms, parse, prepare_result, queue_event,
+    CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError, PageView, aim, create_view,
+    js_error, now_ms, parse, prepare_result, queue_event,
 };
 use crate::stats::presentation_stats;
+use sloppy_render::gpu::RenderTarget;
 
 /// Notices waiting for `take_notices`; a hidden HUD must not grow this without bound.
 const MAX_PENDING_NOTICES: usize = 256;
@@ -146,7 +148,7 @@ struct PendingArena {
     state: RenderState,
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct NetGame {
     client: NetworkClient,
     view: Presentation,
@@ -169,14 +171,12 @@ pub struct NetGame {
     receive_ms: f64,
 }
 
-#[wasm_bindgen]
+#[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 impl NetGame {
     /// Create the renderer on `canvas` and the room session (not yet connected).
     /// Rejects when the renderer cannot start or the configuration is invalid.
-    pub async fn create(
-        canvas: web_sys::HtmlCanvasElement,
-        config_json: &str,
-    ) -> Result<NetGame, JsValue> {
+    pub async fn create(canvas: RenderTarget, config_json: &str) -> Result<NetGame, PageError> {
+        #[cfg(target_arch = "wasm32")]
         console_error_panic_hook::set_once();
         let config: NetConfig = parse(config_json)?;
         if !is_room_code(&config.room) {
@@ -228,7 +228,7 @@ impl NetGame {
     // ---------------------------------------------------------- connection
 
     /// Join the room with `choice_json` (`{ name, kind, team?, create?, existingRoom? }`).
-    pub fn connect(&mut self, choice_json: &str, now: f64) -> Result<(), JsValue> {
+    pub fn connect(&mut self, choice_json: &str, now: f64) -> Result<(), PageError> {
         let choice =
             JoinChoice::read(&parse_record(choice_json).map_err(js_error)?).map_err(js_error)?;
         self.client.connect(choice, now);
@@ -282,7 +282,7 @@ impl NetGame {
     // ---------------------------------------------------------- room intents
 
     /// Change team (`team` < 0: auto) or tank between battles.
-    pub fn choose(&mut self, team: i32, kind: &str, now: f64) -> Result<(), JsValue> {
+    pub fn choose(&mut self, team: i32, kind: &str, now: f64) -> Result<(), PageError> {
         let kind = read_player_kind(Some(&Value::from(kind))).map_err(js_error)?;
         let team = if team < 0 {
             None
@@ -294,7 +294,7 @@ impl NetGame {
     }
 
     /// The host's rules: `{ mapMode, difficulty, humansOnly, roundMinutes }`.
-    pub fn settings(&mut self, settings_json: &str, now: f64) -> Result<(), JsValue> {
+    pub fn settings(&mut self, settings_json: &str, now: f64) -> Result<(), PageError> {
         let settings = RoomSettings::read(&parse_record(settings_json).map_err(js_error)?)
             .map_err(js_error)?;
         self.client.settings(settings, now);
@@ -455,11 +455,18 @@ impl NetGame {
 
     /// The pixels of a claimed bake; `false` when the arena no longer waits for them.
     /// They reach the GPU from JS memory, never copied into this instance's heap.
+    #[cfg(target_arch = "wasm32")]
     pub fn supply_texture(
         &mut self,
         key: &str,
         rgba: &js_sys::Uint8Array,
-    ) -> Result<bool, JsValue> {
+    ) -> Result<bool, PageError> {
+        self.view.supply_texture(key, rgba).map_err(js_error)
+    }
+
+    /// The pixels of a claimed bake, baked on the shell's threads.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn supply_texture(&mut self, key: &str, rgba: &[u8]) -> Result<bool, PageError> {
         self.view.supply_texture(key, rgba).map_err(js_error)
     }
 
@@ -468,11 +475,17 @@ impl NetGame {
         self.view.release_texture_bake(key);
     }
 
+    /// The renderer, for the desktop shell's overlay and presentation.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn renderer(&mut self) -> &mut sloppy_render::gpu::Renderer {
+        &mut self.view.renderer
+    }
+
     // ---------------------------------------------------------- frame
 
     /// One animation frame: advance the interpolated display, send input due now, route
     /// events to presentation and draw. See [`net_frame_slot`] for the result.
-    pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, JsValue> {
+    pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, PageError> {
         let input = InputFrame::from_slice(input);
         // The development delay delivers messages on this clock too.
         self.poll(now);
@@ -838,7 +851,7 @@ impl NetGame {
 
     /// A full state makes presentation rebuild every model. Draw the first frames before
     /// the arena takes input again, as the TypeScript `showBaseline` did.
-    fn show_baseline(&mut self, baseline: u32, now: f64) -> Result<(), JsValue> {
+    fn show_baseline(&mut self, baseline: u32, now: f64) -> Result<(), PageError> {
         let Self { client, view, .. } = self;
         let Some(display) = client.display() else {
             return Ok(());

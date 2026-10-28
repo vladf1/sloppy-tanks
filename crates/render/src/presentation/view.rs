@@ -188,6 +188,7 @@ const DEBRIS_SHAPES: [FragmentShape; 10] = [
     FragmentShape::DrumLid,
 ];
 
+#[cfg(target_arch = "wasm32")]
 thread_local! {
     // Looked up once: the house preparation reads the clock after each step.
     static PERFORMANCE: Option<web_sys::Performance> =
@@ -195,8 +196,20 @@ thread_local! {
 }
 
 /// The page clock (`performance.now()`), in milliseconds.
+#[cfg(target_arch = "wasm32")]
 fn now_ms() -> f64 {
     PERFORMANCE.with(|performance| performance.as_ref().map_or(0.0, |p| p.now()))
+}
+
+/// Milliseconds since the process's first reading.
+#[cfg(not(target_arch = "wasm32"))]
+fn now_ms() -> f64 {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    START
+        .get_or_init(std::time::Instant::now)
+        .elapsed()
+        .as_secs_f64()
+        * 1000.0
 }
 
 /// World heights of the eight corners of `bounds` under `world`.
@@ -1489,7 +1502,14 @@ impl Presentation {
     }
 
     /// The pixels of a claimed bake; `false` when the key was no longer awaited.
+    #[cfg(target_arch = "wasm32")]
     pub fn supply_texture(&mut self, key: &str, rgba: &js_sys::Uint8Array) -> Result<bool, String> {
+        self.textures.supply(&mut self.renderer, key, rgba)
+    }
+
+    /// The pixels of a claimed bake; `false` when the key was no longer awaited.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn supply_texture(&mut self, key: &str, rgba: &[u8]) -> Result<bool, String> {
         self.textures.supply(&mut self.renderer, key, rgba)
     }
 

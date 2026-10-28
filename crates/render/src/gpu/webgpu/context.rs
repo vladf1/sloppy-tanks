@@ -1,4 +1,5 @@
-//! Browser WebGPU device, canvas surface and the size-dependent frame attachments.
+//! The wgpu device (the browser's WebGPU, or natively Metal or Direct3D 12),
+//! its canvas or window surface and the size-dependent frame attachments.
 //! GPU validation errors and device loss go to the renderer's [`ErrorSlot`].
 
 use std::rc::Rc;
@@ -34,24 +35,43 @@ pub struct Canvas {
     pub config: wgpu::SurfaceConfiguration,
 }
 
+/// What the renderer draws into: the page's canvas.
+#[cfg(target_arch = "wasm32")]
+pub type RenderTarget = web_sys::HtmlCanvasElement;
+
+/// What the renderer draws into natively: a window and its size in device pixels.
+#[cfg(not(target_arch = "wasm32"))]
+pub struct RenderTarget {
+    pub window: wgpu::SurfaceTarget<'static>,
+    pub width: u32,
+    pub height: u32,
+}
+
 impl Gpu {
-    pub async fn new(
-        canvas: web_sys::HtmlCanvasElement,
-        msaa: bool,
-    ) -> Result<(Self, Canvas), String> {
+    pub async fn new(target: RenderTarget, msaa: bool) -> Result<(Self, Canvas), String> {
         let api = GRAPHICS_API;
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
-            backends: wgpu::Backends::BROWSER_WEBGPU,
+            backends: BACKENDS,
             ..wgpu::InstanceDescriptor::new_without_display_handle()
         });
-        let width = canvas.width().max(1);
-        let height = canvas.height().max(1);
+        #[cfg(target_arch = "wasm32")]
+        let (width, height) = (target.width().max(1), target.height().max(1));
+        #[cfg(not(target_arch = "wasm32"))]
+        let (width, height) = (target.width.max(1), target.height.max(1));
+        // A window's surface exists first natively, so the adapter is one that can
+        // present to it.
+        #[cfg(not(target_arch = "wasm32"))]
+        let surface = instance
+            .create_surface(target.window)
+            .map_err(|error| format!("{api} window unavailable: {error}"))?;
         // WebGPU claims the canvas only once it has a device: a page whose WebGPU
         // device fails falls back to WebGL on the same canvas (`src/engine.ts`), and a
         // canvas with a WebGPU context has no WebGL one.
         let adapter = instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
+                #[cfg(not(target_arch = "wasm32"))]
+                compatible_surface: Some(&surface),
                 ..Default::default()
             })
             .await
@@ -65,8 +85,9 @@ impl Gpu {
             })
             .await
             .map_err(|error| format!("{api} device unavailable: {error}"))?;
+        #[cfg(target_arch = "wasm32")]
         let surface = instance
-            .create_surface(wgpu::SurfaceTarget::Canvas(canvas))
+            .create_surface(wgpu::SurfaceTarget::Canvas(target))
             .map_err(|error| format!("{api} canvas unavailable: {error}"))?;
         let error = ErrorSlot::default();
         let lost = error.clone();
@@ -80,11 +101,10 @@ impl Gpu {
             validation.set(format!("{api} error: {error}"));
         }));
         // Every WebGPU canvas offers rgba8unorm and bgra8unorm (wgpu's browser backend
-        // lists both), so this never fails once WebGPU has claimed the canvas, where
-        // the page could no longer fall back.
+        // lists both), so this fails only for a native window no adapter presents to.
         let mut config = surface
             .get_default_config(&adapter, width, height)
-            .expect("a WebGPU canvas offers rgba8unorm and bgra8unorm");
+            .ok_or_else(|| format!("{api} cannot present to this window"))?;
         // The output pass encodes sRGB itself (Three's sRGBTransferOETF), so the
         // canvas keeps its preferred non-sRGB format.
         config.format = config.format.remove_srgb_suffix();
@@ -113,11 +133,21 @@ impl Gpu {
     }
 }
 
+/// The graphics APIs wgpu may draw with: the browser's WebGPU, or natively Metal or
+/// Direct3D 12. Not Vulkan: its swapchain must match the window's pixels, while the
+/// canvas caps its pixel ratio (a Windows display scaled past 150% would refuse it),
+/// and wgpu could pick it over Direct3D 12, which every Windows 10 machine has.
+#[cfg(target_arch = "wasm32")]
+const BACKENDS: wgpu::Backends = wgpu::Backends::BROWSER_WEBGPU;
+#[cfg(not(target_arch = "wasm32"))]
+const BACKENDS: wgpu::Backends = wgpu::Backends::METAL.union(wgpu::Backends::DX12);
+
 /// `GPUTextureUsage.TRANSIENT_ATTACHMENT` where the browser has it (Safari 26 and
 /// Chrome do): an attachment cleared and discarded within its pass then lives only
 /// in tile memory and holds no memory at all on tiling GPUs (Apple's, phones').
 /// wgpu passes usage bits through to the browser, which rejects a bit it does not
 /// know, so older browsers get plain attachments.
+#[cfg(target_arch = "wasm32")]
 fn transient_usage() -> wgpu::TextureUsages {
     let transient = wgpu::TextureUsages::TRANSIENT_ATTACHMENT;
     let offered = js_sys::Reflect::get(&js_sys::global(), &"GPUTextureUsage".into())
@@ -129,6 +159,13 @@ fn transient_usage() -> wgpu::TextureUsages {
     } else {
         wgpu::TextureUsages::empty()
     }
+}
+
+/// Native wgpu always has the usage; where the GPU cannot keep an attachment in tile
+/// memory (Direct3D 12) it is an ordinary attachment.
+#[cfg(not(target_arch = "wasm32"))]
+fn transient_usage() -> wgpu::TextureUsages {
+    wgpu::TextureUsages::TRANSIENT_ATTACHMENT
 }
 
 /// Bytes a texture holds in memory: none for a transient attachment.

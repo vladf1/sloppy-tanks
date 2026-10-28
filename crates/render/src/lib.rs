@@ -4,8 +4,9 @@
 //! Pure CPU parts (color management, cameras and picking, model preparation and
 //! batching, mesh page placement, draw-list building, shader assembly, render
 //! target sizes) compile
-//! natively and carry the unit tests. The `gpu` module is browser-only: `wgpu` on
-//! WebGPU, or with the `webgl` feature glow on WebGL2.
+//! natively and carry the unit tests. The `gpu` module draws with `wgpu` on the
+//! browser's WebGPU, with the `webgl` feature glow on WebGL2, or with the `native`
+//! feature `wgpu` on Metal or Direct3D 12 (the desktop builds).
 
 /// The WGSL file at each path under `src/`, one after another, embedded without
 /// comments or blank lines (`build.rs`): the shader text the binary carries.
@@ -31,8 +32,14 @@ pub mod shader;
 pub mod shadow_merge;
 pub mod target_memory;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub mod gpu;
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+pub mod system_fonts;
+
+/// The wgpu the native renderer draws with, for the shell's overlay.
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+pub use wgpu;
 
 #[cfg(all(
     target_arch = "wasm32",
@@ -40,5 +47,5 @@ pub mod gpu;
 ))]
 compile_error!("the browser renderer needs the `webgpu` or the `webgl` feature");
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub use gpu::GRAPHICS_API;

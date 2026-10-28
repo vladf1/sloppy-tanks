@@ -3,7 +3,8 @@ import { isPhone } from "./phone-mode";
 
 type Preference = "tank" | "game-mode" | "map" | "difficulty" | "camera" | "zoom" | Setting;
 /** The Settings dialog's choices, and the name a player joins rooms with. */
-type Setting = "volume" | "tank-speed" | "bullet-speed" | "touch" | "graphics" | "player-name";
+type Setting =
+  "volume" | "tank-speed" | "bullet-speed" | "touch" | "graphics" | "player-name" | "debug";
 
 /** The Settings dialog's Graphics choices: Auto adapts the engine's quality tier and
  * render scale to the frame rate; the others fix the tier at full resolution. */

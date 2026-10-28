@@ -1,0 +1,163 @@
+# The desktop app (crates/desktop): lint and test it on macOS, and build the Apple
+# silicon macOS app (zipped and as an installer package) and the Windows executable through
+# `scripts/build-desktop.mjs`, uploaded as this run's artifacts. Linux CI (check.yml)
+# leaves the crate out, since its window, audio and GPU dependencies need system
+# libraries there.
+# Builds carry the three-part release and the commit: the fourth part is the Pages
+# workflow's run number, which this workflow does not have.
+# On main the macOS app and package are signed with the Developer ID certificates and
+# notarized with the App Store Connect API key in the repository's secrets
+# (MACOS_CERTIFICATES, a base64 .p12 with both identities, and its
+# MACOS_CERTIFICATES_PASSWORD; NOTARY_API_KEY, the .p8's text, NOTARY_API_KEY_ID and
+# NOTARY_API_ISSUER), and the builds replace the repository's latest release, whose
+# file names stay the same so its download links do too. Pull requests sign ad hoc and
+# publish nothing.
+name: Desktop app
+
+on:
+  pull_request:
+    paths: &paths
+      - "crates/**"
+      - "public/**"
+      - "Cargo.*"
+      - ".cargo/**"
+      - "rust-toolchain.toml"
+      - "scripts/build-desktop.mjs"
+      - ".github/workflows/desktop.yml"
+  push:
+    branches: [main]
+    paths: *paths
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: desktop-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  macos:
+    name: macOS app (clippy, tests, build)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: desktop-macos
+      - run: cargo clippy --locked -p sloppy-desktop --all-targets -- -D warnings
+      - run: cargo test --locked -p sloppy-desktop
+      - name: Signing keychain
+        if: github.event_name != 'pull_request'
+        env:
+          CERTIFICATES: ${{ secrets.MACOS_CERTIFICATES }}
+          CERTIFICATES_PASSWORD: ${{ secrets.MACOS_CERTIFICATES_PASSWORD }}
+          NOTARY_KEY: ${{ secrets.NOTARY_API_KEY }}
+        run: |
+          if [ -z "$CERTIFICATES" ]; then
+            echo "No signing secrets: the app is signed ad hoc."
+            exit 0
+          fi
+          keychain="$RUNNER_TEMP/signing.keychain-db"
+          password="$(uuidgen)"
+          security create-keychain -p "$password" "$keychain"
+          security set-keychain-settings -lut 21600 "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          printf '%s' "$CERTIFICATES" | base64 --decode > "$RUNNER_TEMP/certificates.p12"
+          security import "$RUNNER_TEMP/certificates.p12" -k "$keychain" \
+            -P "$CERTIFICATES_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productbuild
+          rm "$RUNNER_TEMP/certificates.p12"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
+          security list-keychains -d user -s "$keychain" $(security list-keychains -d user | tr -d '"')
+          if [ -n "$NOTARY_KEY" ]; then
+            printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
+            echo "SLOPPY_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
+          fi
+      - run: pnpm run desktop:mac
+        env:
+          SLOPPY_NOTARY_KEY_ID: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_KEY_ID || '' }}
+          SLOPPY_NOTARY_ISSUER: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_ISSUER || '' }}
+      # The build falls back to an ad-hoc signature without the secrets; a release must
+      # not. A stapled ticket means Developer ID signing and notarization both happened.
+      - name: Check the notarization
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: |
+          xcrun stapler validate "artifacts/desktop/Sloppy Tanks.app"
+          xcrun stapler validate artifacts/desktop/Sloppy-Tanks-*-macOS.pkg
+      - uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/desktop/Sloppy-Tanks-*-macOS.zip
+          archive: false
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/desktop/Sloppy-Tanks-*-macOS.pkg
+          archive: false
+          if-no-files-found: error
+      - name: Remove the signing keychain
+        if: always() && github.event_name != 'pull_request'
+        run: |
+          security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
+          rm -f "$RUNNER_TEMP/notary.p8"
+
+  windows:
+    name: Windows app
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: desktop-windows
+      - run: pnpm run desktop:windows
+      - uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/desktop/sloppy-tanks.exe
+          archive: false
+          if-no-files-found: error
+
+  release:
+    name: Latest release
+    needs: [macos, windows]
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: package.json
+          sparse-checkout-cone-mode: false
+      # skip-decompress keeps the Mac zip as the zip players download.
+      - uses: actions/download-artifact@v8
+        with:
+          path: downloads
+          merge-multiple: true
+          skip-decompress: true
+      - name: Publish the builds
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          commit="${GITHUB_SHA::7}"
+          tag="desktop-v$version-$commit"
+          mkdir release
+          cp downloads/Sloppy-Tanks-*-macOS.pkg release/Sloppy-Tanks-macOS.pkg
+          cp downloads/Sloppy-Tanks-*-macOS.zip release/Sloppy-Tanks-macOS.zip
+          cp downloads/sloppy-tanks.exe release/Sloppy-Tanks-Windows.exe
+          cat > notes.md <<NOTES
+          Sloppy Tanks $version for the desktop, built from $commit on main.
+
+          - **macOS** (Apple silicon, macOS 11 or newer): \`Sloppy-Tanks-macOS.pkg\` installs the app in Applications, and \`Sloppy-Tanks-macOS.zip\` holds the app itself. Both are signed and notarized.
+          - **Windows** (64-bit Windows 10 or newer): \`Sloppy-Tanks-Windows.exe\` runs as it is. It is unsigned, so SmartScreen asks once: **More info**, then **Run anyway**.
+
+          Multiplayer needs the game version the servers run: when an update reaches them, download the new release.
+          NOTES
+          # A re-run of this commit replaces its own release.
+          gh release delete "$tag" --cleanup-tag --yes 2>/dev/null || true
+          gh release create "$tag" release/* --target "$GITHUB_SHA" --latest \
+            --title "Sloppy Tanks $version desktop ($commit)" --notes-file notes.md
+          # One release at a time: the one just published replaces the ones before it.
+          gh release list --limit 100 --json tagName --jq '.[].tagName' |
+            grep '^desktop-v' | grep -vx "$tag" |
+            while read -r old; do gh release delete "$old" --cleanup-tag --yes; done

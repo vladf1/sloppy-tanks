@@ -7,7 +7,7 @@ use glam::Vec2;
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sloppy_core::sim::{SimEvent, SimEventType};
-use sloppy_render::gpu::Renderer;
+use sloppy_render::gpu::{RenderTarget, Renderer};
 use sloppy_render::presentation::camera_rig::CameraRig;
 use sloppy_render::presentation::input::InputFrame;
 use sloppy_render::presentation::view_settings::CAMERA;
@@ -15,6 +15,7 @@ use sloppy_render::presentation::{PrepareStatus, Presentation};
 use sloppy_render::quality::{
     DeviceClass, GraphicsSetting, QualityController, Tier, starting_tier,
 };
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsValue;
 
 use crate::events::PendingEvent;
@@ -27,23 +28,51 @@ const MAX_PENDING_EVENTS: usize = 2048;
 /// `prepare_step`'s result when nothing is left to prepare.
 pub const PREPARED: [f64; 5] = [0.0, 0.0, 0.0, 1.0, 0.0];
 
-pub fn js_error(message: impl Into<String>) -> JsValue {
+/// What a failed call rejects with: a JS `Error` on the page, its message natively.
+#[cfg(target_arch = "wasm32")]
+pub type PageError = JsValue;
+#[cfg(not(target_arch = "wasm32"))]
+pub type PageError = String;
+
+#[cfg(target_arch = "wasm32")]
+pub fn js_error(message: impl Into<String>) -> PageError {
     js_sys::Error::new(&message.into()).into()
 }
 
+#[cfg(not(target_arch = "wasm32"))]
+pub fn js_error(message: impl Into<String>) -> PageError {
+    message.into()
+}
+
 /// Page JSON, rejected with serde's message when it does not fit `T`.
-pub fn parse<'a, T: Deserialize<'a>>(json: &'a str) -> Result<T, JsValue> {
+pub fn parse<'a, T: Deserialize<'a>>(json: &'a str) -> Result<T, PageError> {
     serde_json::from_str(json).map_err(|error| js_error(error.to_string()))
 }
 
+#[cfg(target_arch = "wasm32")]
 thread_local! {
     // Looked up once: each frame reads the clock several times.
     static PERFORMANCE: Option<web_sys::Performance> =
         web_sys::window().and_then(|window| window.performance());
 }
 
+#[cfg(target_arch = "wasm32")]
 pub fn now_ms() -> f64 {
     PERFORMANCE.with(|performance| performance.as_ref().map_or(0.0, |p| p.now()))
+}
+
+/// Milliseconds since the process's first reading: the clock natively, where the
+/// shell passes frame times from the same origin ([`clock_start`]).
+#[cfg(not(target_arch = "wasm32"))]
+pub fn now_ms() -> f64 {
+    clock_start().elapsed().as_secs_f64() * 1000.0
+}
+
+/// The origin of [`now_ms`] natively.
+#[cfg(not(target_arch = "wasm32"))]
+pub fn clock_start() -> std::time::Instant {
+    static START: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    *START.get_or_init(std::time::Instant::now)
 }
 
 /// The canvas's CSS size and the device pixel ratio, which size the drawing buffer.
@@ -241,20 +270,24 @@ pub struct PageView {
 /// The renderer on `canvas` and its presentation with the saved camera preferences, the
 /// canvas size to apply, the graphics quality, the seed (random when `config_json` has
 /// none) and the frame pacing. Rejects when the renderer cannot start.
-pub async fn create_view(
-    canvas: web_sys::HtmlCanvasElement,
-    config_json: &str,
-) -> Result<PageView, JsValue> {
+pub async fn create_view(canvas: RenderTarget, config_json: &str) -> Result<PageView, PageError> {
     let config: ViewConfig = parse(config_json)?;
-    let seed = config
-        .seed
-        .unwrap_or_else(|| (js_sys::Math::random() * 1e9).floor());
+    let seed = config.seed.unwrap_or_else(|| (random() * 1e9).floor());
+    #[cfg(target_arch = "wasm32")]
+    let client = (canvas.client_width(), canvas.client_height());
+    // A window's size natively is in device pixels.
+    #[cfg(not(target_arch = "wasm32"))]
+    let client = {
+        let ratio = config.pixel_ratio.unwrap_or(1.0);
+        (
+            (f64::from(canvas.width) / ratio) as i32,
+            (f64::from(canvas.height) / ratio) as i32,
+        )
+    };
     let size = CanvasSize {
         css: Vec2::new(
-            config.css_width.unwrap_or(f64::from(canvas.client_width())) as f32,
-            config
-                .css_height
-                .unwrap_or(f64::from(canvas.client_height())) as f32,
+            config.css_width.unwrap_or(f64::from(client.0)) as f32,
+            config.css_height.unwrap_or(f64::from(client.1)) as f32,
         ),
         device_pixel_ratio: config.pixel_ratio.unwrap_or(1.0),
         exact: false,
@@ -280,6 +313,22 @@ pub async fn create_view(
         seed,
         pacing: FramePacing::new(config.frames_in_flight),
     })
+}
+
+/// A uniform draw in `[0, 1)` for an unseeded game.
+#[cfg(target_arch = "wasm32")]
+fn random() -> f64 {
+    js_sys::Math::random()
+}
+
+/// A uniform draw in `[0, 1)` for an unseeded game, from the standard library's
+/// per-process random hash keys.
+#[cfg(not(target_arch = "wasm32"))]
+fn random() -> f64 {
+    use std::hash::{BuildHasher, Hasher};
+    let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
+    hasher.write_u128(clock_start().elapsed().as_nanos());
+    (hasher.finish() >> 11) as f64 / (1u64 << 53) as f64
 }
 
 /// `prepare_step`'s `[compiled, remaining, texturesPending, done, gpuPending]`.

@@ -359,10 +359,10 @@ impl EffectSystems {
     }
 }
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub use browser::Effects;
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
 mod browser {
     use sloppy_core::sim::RenderState;
 
