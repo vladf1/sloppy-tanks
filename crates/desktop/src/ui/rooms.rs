@@ -14,17 +14,18 @@ use super::icons::Art;
 use super::paint::{self, ButtonStyle, fade, hex, hexa, mix};
 use super::theme::{GOLD, bold_font, display_font};
 use super::{Action, View};
-use crate::directory::{
-    self, DEFAULT_DIRECTORY, DirectoryRequest, ROOM_SEATS, RoomListing, ServerList,
-};
+use crate::directory::{self, DEFAULT_DIRECTORY, DirectoryRequest};
 use crate::preferences::Preferences;
 use crate::room_api::{RoomSelection, player_name, preferred_player_name};
 use sloppy_core::net::protocol::{
-    DEFAULT_ROUND_MINUTES, JoinChoice, MAX_PLAYER_NAME_LENGTH, RoomSettings,
+    DEFAULT_ROUND_MINUTES, JoinChoice, MAX_PLAYER_NAME_LENGTH, RoomPhase, RoomSettings,
+    read_room_code, room_code, stepped_minutes,
 };
+use sloppy_core::net::room_list::{HostedRoom, ROOM_SEATS, ServerList};
 use sloppy_core::sim::Team;
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::{MapId, is_extra_level, map_option_for};
+use sloppy_web::battle_report::duration;
 
 /// The list refreshes this often while the tab shows.
 const REFRESH: Duration = Duration::from_secs(5);
@@ -167,7 +168,7 @@ impl RoomsState {
                 let linked = self.linked_room.clone();
                 list.rooms.retain(|room| {
                     extra_levels
-                        || !MapId::parse(&room.map_mode).is_some_and(is_extra_level)
+                        || !is_extra_level(room.map_mode)
                         || linked.as_deref() == Some(room.room.as_str())
                 });
                 self.list = list;
@@ -267,42 +268,35 @@ impl RoomsState {
     }
 }
 
-/// The map's name for a listed map id, or the id this build does not know.
-fn map_name(id: &str) -> &str {
-    MapId::parse(id).map_or(id, |id| map_option_for(id).name)
-}
-
 /// One open room's lines (`RoomBrowser.render`).
-fn room_lines(room: &RoomListing) -> (String, String) {
+fn room_lines(room: &HostedRoom) -> (String, String) {
     let title = format!(
         "{}{} · {}/{ROOM_SEATS} players",
-        map_name(&room.map_mode),
-        if MapId::parse(&room.map_mode).is_some_and(is_extra_level) {
+        map_option_for(room.map_mode).name,
+        if is_extra_level(room.map_mode) {
             " (EXTRA)"
         } else {
             ""
         },
         room.players
     );
-    let seconds = room.time.ceil() as u64;
-    let phase = match room.phase.as_str() {
-        "playing" => format!(
-            "{}:{:02} left · {}",
-            seconds / 60,
-            seconds % 60,
+    let phase = match room.phase {
+        RoomPhase::Playing => format!(
+            "{} left · {}",
+            duration(room.time.ceil()),
             room.scores
                 .iter()
                 .map(u64::to_string)
                 .collect::<Vec<_>>()
                 .join("–")
         ),
-        "lobby" => "In lobby".into(),
-        _ => "Between rounds".into(),
+        RoomPhase::Lobby => "In lobby".into(),
+        RoomPhase::Results => "Between rounds".into(),
     };
     let bots = if room.humans_only {
         "Humans only".to_owned()
     } else {
-        format!("Bots: {}", room.difficulty)
+        format!("Bots: {}", room.difficulty.as_str())
     };
     let mut detail = format!(
         "{} · {bots} · {} min · {phase}",
@@ -348,12 +342,12 @@ const TEAMS: [(Option<Team>, &str, &str, [u32; 2]); 3] = [
 
 impl RoomsState {
     /// The map of the open room chosen, which the map row shows instead of the player's.
-    pub fn selected_map(&self) -> Option<&str> {
+    pub fn selected_map(&self) -> Option<MapId> {
         self.list
             .rooms
             .iter()
             .find(|room| room.room == self.selected)
-            .map(|room| room.map_mode.as_str())
+            .map(|room| room.map_mode)
     }
 }
 
@@ -560,7 +554,7 @@ pub fn multiplayer(
     .on_hover_text("Find the room with this code")
     .clicked();
     if found || entered {
-        match directory::read_room_code(&state.code) {
+        match read_room_code(&state.code) {
             Some(code) => {
                 state.code.clone_from(&code);
                 state.find_room(code);
@@ -844,10 +838,10 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room
         response.clicked()
     };
     if step(ui, stepper.left() + 2.0, "−", "less") {
-        minutes = directory::stepped_minutes(minutes, -LENGTH_STEP);
+        minutes = stepped_minutes(minutes, -LENGTH_STEP);
     }
     if step(ui, stepper.right() - 30.0, "+", "more") {
-        minutes = directory::stepped_minutes(minutes, LENGTH_STEP);
+        minutes = stepped_minutes(minutes, LENGTH_STEP);
     }
     paint::text(
         &painter,
@@ -1040,11 +1034,11 @@ fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
 
 /// The tab as the UI snapshots show it: the directory has answered with `rooms`.
 #[cfg(test)]
-pub fn answered(rooms: Vec<RoomListing>) -> RoomsState {
+pub fn answered(rooms: Vec<HostedRoom>) -> RoomsState {
     RoomsState {
         multiplayer: true,
         list: ServerList {
-            servers: vec![directory::ServerListing {
+            servers: vec![sloppy_core::net::room_list::ServerListing {
                 url: "wss://example.test".into(),
                 content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
             }],
@@ -1073,11 +1067,7 @@ fn selection(state: &mut RoomsState, prefs: &Preferences, map: MapId) -> Option<
             humans_only: state.humans_only,
             round_minutes: state.round_minutes,
         };
-        (
-            directory::room_code(directory::random_bytes()),
-            server,
-            Some(create),
-        )
+        (room_code(directory::random_bytes()), server, Some(create))
     } else {
         let listing = state
             .list
@@ -1103,17 +1093,17 @@ fn selection(state: &mut RoomsState, prefs: &Preferences, map: MapId) -> Option<
 mod tests {
     use super::*;
 
-    fn listing(code: &str, map: MapId) -> RoomListing {
-        RoomListing {
+    fn listing(code: &str, map: MapId) -> HostedRoom {
+        HostedRoom {
             room: code.into(),
             content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
-            map_mode: map.as_str().into(),
-            difficulty: "normal".into(),
+            map_mode: map,
+            difficulty: Difficulty::Normal,
             humans_only: false,
             round_minutes: 20,
             players: 2,
             reserved: 2,
-            phase: "playing".into(),
+            phase: RoomPhase::Playing,
             round_id: 1,
             time: 300.0,
             scores: vec![3, 4],

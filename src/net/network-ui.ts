@@ -13,7 +13,6 @@ import {
   type ScreenPoint,
 } from "../game/hud-feedback";
 import { debugPage, isExtraLevel, MAP_OPTIONS, mapOption } from "../game/map-options";
-import { duration } from "../game/round-recap";
 import type {
   EngineEvent,
   HudState,
@@ -146,7 +145,7 @@ export class NetworkUI {
   /** Whether the socket is live, being (re)connected, or has given up. */
   private link: "live" | "connecting" | RoomEnding = "connecting";
   /** The finished round, read from the final replicated state, for its final score. */
-  private outcome?: { match: MatchState; team: number };
+  private outcome?: MatchState;
   /** Between battles the rules and your team and tank stay folded until asked for. */
   private editingRules = false;
   private editingChoice = false;
@@ -393,12 +392,12 @@ export class NetworkUI {
     }
     this.render();
   }
-  /** The round that just ended, as the viewer's tank played it. */
-  result(match: MatchState, team: number): void {
-    this.outcome = { match, team };
+  /** The round that just ended, for its final score. */
+  result(match: MatchState): void {
+    this.outcome = match;
   }
   private renderScore(): void {
-    const match = this.lastLobby?.phase === "results" ? this.outcome?.match : undefined;
+    const match = this.lastLobby?.phase === "results" ? this.outcome : undefined;
     this.element("network-score").hidden = !match;
     if (match) {
       this.set("final-blue", String(match.scores[0]));
@@ -637,7 +636,7 @@ export class NetworkUI {
     this.root.querySelector<HTMLElement>("#hud")!.style.opacity = "1";
     this.set("score0", String(match.scores[0]));
     this.set("score1", String(match.scores[1]));
-    this.set("time", hud.scorePill.clockLabel ?? duration(hud.scorePill.seconds));
+    this.set("time", hud.scorePill.clock);
     showTankStatus(this.root, tank, !tank.alive || !connected || this.menu);
     this.root
       .querySelector("#hud")!

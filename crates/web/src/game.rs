@@ -51,22 +51,22 @@
 //!   many frames still on the GPU is skipped (its presses wait for the next) and hands
 //!   back the last result; the frames that run take an even clock
 //!   ([`crate::frame_clock::FramePacing`]).
-//! - `drain_events() -> JSON`: `{ listener: {x, z}, listenerRight: {x, z},
-//!   events: [SimEvent & { playerHit, own, damageAngle, deathReport?, feed?, toast? }],
-//!   sounds: [{ sound, gain, pan }] }` for audio and HUD; `damageAngle` is the clockwise
-//!   screen angle (radians) of damage the viewer took, or null, and the rest is the
-//!   event's HUD feedback ([`crate::feedback`]). `sounds` are the file names to play, in
-//!   order, with their linear gain and stereo pan ([`crate::sounds`], rate-limited on
-//!   `frame`'s clock).
+//! - `drain_events() -> JSON`: `{ events: [{ type, id?, label?, own, damageAngle,
+//!   deathReport?, feed?, toast? }], sounds: [{ sound, gain, pan }] }` for audio and HUD;
+//!   `own` marks the viewer's tank's events, `damageAngle` is the clockwise screen angle
+//!   (radians) of damage the viewer took, or null, and the rest is the event's HUD
+//!   feedback ([`crate::feedback`]). `sounds` are the file names to play, in order, with
+//!   their linear gain and stereo pan ([`crate::sounds`], rate-limited on `frame`'s
+//!   clock).
 //! - `hud_json() -> JSON`: match, scores, score limit, team names, the score pill, the
 //!   human's stats, ammo, rank, hull tone, cooldowns, effects, scoreboard, and the round
 //!   recap once results show. The first recap of a result saves personal bests
 //!   in `localStorage` and reports them (`best`, `improved`, `persisted`), with the
 //!   battle report in words (`report`, `crate::battle_report`).
 //! - `pause_json() -> JSON`: the pause menu's facts and standing line.
-//! - `stats_json() -> JSON`: Stats for nerds' readings (frame/sim/render ms, draw
-//!   calls, triangles, GPU resources, bodies and their sleep state, shots, pickups,
-//!   fragments, particles, pixel ratio), for diagnostics.
+//! - `stats_json() -> JSON`: frame/sim/render ms, the renderer's draw calls, triangles
+//!   and GPU resources, the graphics quality and the physics bodies, colliders, shots,
+//!   fragments and standing covers, for diagnostics and the frame recorder.
 //! - `nerd_stats_json() -> JSON`: the Stats for nerds panel's sections, `[{ title,
 //!   rows: [{ label, value, hint }] }]` ([`crate::nerd_rows`]).
 //! - `resize(css_width, css_height, pixel_ratio, exact)`: the drawing buffer is
@@ -83,10 +83,12 @@
 //!   `game/debug.rs`.
 //! - `error() -> string | undefined`: the first GPU error, if any.
 //!
-//! A Rust shell (the desktop app) reads the same values typed rather than as JSON:
-//! `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]), `loading`
-//! ([`Loading`]), `hud` ([`Hud`]), `take_events` ([`EventBatch`]), `camera`
-//! ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]) and `gpu_ms`.
+//! A Rust shell (the desktop app) passes and reads the same values typed rather than as
+//! JSON or names: `create_with`, `set_game_options`, `prepare` ([`PrepareStatus`]),
+//! `loading` ([`Loading`]), `hud` ([`Hud`]), `take_events` ([`EventBatch`]), `camera`
+//! ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms`, and
+//! `set_graphics`, `set_human_kind` and `set_speed` with the setting, tank and speed
+//! themselves.
 
 use crate::Shell;
 use crate::battle_report::pause_report;
@@ -129,6 +131,7 @@ use sloppy_core::sim::{
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::view_settings::CAMERA;
 use sloppy_render::presentation::{PrepareStatus, Presentation};
+use sloppy_render::quality::GraphicsSetting;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -607,29 +610,15 @@ impl Game {
 
     /// Stats for nerds' readings, as JSON, for diagnostics and the frame recorder.
     pub fn stats_json(&mut self) -> String {
-        let effects = self.view.effects.systems.stats();
         let mut stats = presentation_stats(&self.view, &self.times);
         let sim = &self.sim;
-        let (fixed, dynamic, sleeping) = body_counts(sim);
         let simulation = json!({
-            "fixedBodies": fixed,
-            "dynamicBodies": dynamic,
-            "sleepingBodies": sleeping,
-            "tanksAlive": sim.tanks.iter().filter(|tank| tank.alive).count(),
-            "pickups": sim.pickups.len(),
-            "pickupsReady": sim.pickups.iter().filter(|pickup| pickup.available).count(),
-            "maxFragments": sim.max_fragments,
-            "particles": effects.particles,
-            "elapsed": sim.elapsed,
-            "pixelRatio": self.canvas.pixel_ratio(),
             "quality": self.graphics.stats(&self.view.renderer, self.canvas.pixel_ratio()),
             "bodies": sim.world.bodies.len(),
             "colliders": sim.world.colliders.len(),
             "shots": sim.shots.len(),
-            "mines": sim.mines.len(),
             "fragments": sim.fragments.len(),
             "covers": sim.covers.iter().filter(|cover| cover.alive).count(),
-            "tanks": sim.tanks.len(),
         });
         if let Value::Object(rows) = simulation {
             stats.extend(rows);
@@ -656,7 +645,15 @@ impl Game {
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
+    #[cfg(target_arch = "wasm32")]
     pub fn set_graphics(&mut self, setting: &str) {
+        self.graphics
+            .set_setting(&mut self.view.renderer, GraphicsSetting::parse(setting));
+    }
+
+    /// The Settings dialog's Graphics choice.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_graphics(&mut self, setting: GraphicsSetting) {
         self.graphics.set_setting(&mut self.view.renderer, setting);
     }
 
@@ -673,26 +670,34 @@ impl Game {
         self.camera().to_vec()
     }
 
-    /// The tank the human respawns in, chosen from the respawn menu mid-round. The
-    /// world is kept; Battle Setup's next `set_options` sees the same choice.
+    /// The tank the human respawns in, chosen from the respawn menu mid-round, by name.
+    #[cfg(target_arch = "wasm32")]
     pub fn set_human_kind(&mut self, kind: &str) -> Result<(), PageError> {
         let kind: VehicleKind = serde_json::from_value(Value::from(kind))
             .map_err(|error| js_error(error.to_string()))?;
-        if kind == VehicleKind::Humvee {
-            return Err(js_error("The player cannot drive a Humvee"));
-        }
-        self.sim.human_kind = kind;
-        self.options.human_kind = kind;
-        Ok(())
+        self.respawn_in(kind)
+    }
+
+    /// The tank the human respawns in, chosen from the respawn menu mid-round.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_human_kind(&mut self, kind: VehicleKind) -> Result<(), PageError> {
+        self.respawn_in(kind)
     }
 
     /// "tank-speed" or "bullet-speed"; returns the scale in effect.
+    #[cfg(target_arch = "wasm32")]
     pub fn set_speed(&mut self, key: &str, value: f64) -> f64 {
         let key = match key {
             "tank-speed" => SpeedSetting::TankSpeed,
             "bullet-speed" => SpeedSetting::BulletSpeed,
             _ => return 1.0,
         };
+        tune_speed(&mut self.sim, key, value)
+    }
+
+    /// A speed scale; returns the scale in effect.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_speed(&mut self, key: SpeedSetting, value: f64) -> f64 {
         tune_speed(&mut self.sim, key, value)
     }
 
@@ -1122,6 +1127,17 @@ impl Game {
 }
 
 impl Game {
+    /// The respawn menu's tank. The world is kept; Battle Setup's next `set_options` sees
+    /// the same choice.
+    fn respawn_in(&mut self, kind: VehicleKind) -> Result<(), PageError> {
+        if kind == VehicleKind::Humvee {
+            return Err(js_error("The player cannot drive a Humvee"));
+        }
+        self.sim.human_kind = kind;
+        self.options.human_kind = kind;
+        Ok(())
+    }
+
     fn human_index(&self) -> usize {
         self.sim.human_index().unwrap_or(0)
     }

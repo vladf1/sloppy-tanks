@@ -5,29 +5,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { recapMarkup, scoreboardMarkup } from "../src/game/round-recap";
-import type {
-  BattleReport,
-  RecapMetric,
-  RecapState,
-  ReportTile,
-  ScoreboardRow,
-} from "../src/game/engine-api";
-
-const zero = (): Record<RecapMetric, number> => ({
-  kills: 0,
-  damage: 0,
-  bestLife: 0,
-  rank: 0,
-  busiestMinute: 0,
-  longestLife: 0,
-  multikill: 0,
-  clutchKills: 0,
-  revengeKills: 0,
-  posthumousKills: 0,
-  mineKills: 0,
-  coverDestroyed: 0,
-  pickups: 0,
-});
+import type { BattleReport, RecapState, ReportTile, ScoreboardRow } from "../src/game/engine-api";
 
 const stat = (label: string, value: string, more: Partial<ReportTile> = {}): ReportTile => ({
   label,
@@ -66,19 +44,7 @@ function report(overrides: Partial<BattleReport> = {}): BattleReport {
 }
 
 function recap(overrides: Partial<BattleReport> = {}, feats: RecapState["feats"] = []): RecapState {
-  return {
-    stats: zero(),
-    best: zero(),
-    improved: [],
-    persisted: true,
-    feats,
-    shots: 0,
-    directHits: 0,
-    damageTaken: 0,
-    shieldAbsorbed: 0,
-    rankNames: ["Rookie", "Veteran", "Elite", "Heroic"],
-    report: report(overrides),
-  };
+  return { feats, report: report(overrides) };
 }
 
 test("the hero tile carries the kills, the progress line and the tank", () => {
@@ -150,15 +116,20 @@ test("a warning note shows plainly", () => {
   );
 });
 
-const row = (id: number, name: string, team: 0 | 1, kills: number, deaths: number) =>
-  ({ id, name, team, kills, deaths, kind: "balanced", human: id === 1 }) as ScoreboardRow;
+// The board's teams come from the engine's report, not from the rows.
+const row = (id: number, name: string, kills: number, deaths: number): ScoreboardRow => ({
+  id,
+  name,
+  kills,
+  deaths,
+});
 
 test("the scoreboard lists each team in the engine's order, lights the viewer and its MVP", () => {
   const rows = [
-    row(1, "You", 1, 2, 1),
-    row(2, "Ace", 0, 2, 0),
-    row(3, "Bob <b>", 0, 0, 2),
-    row(4, "Cat", 1, 3, 4),
+    row(1, "You", 2, 1),
+    row(2, "Ace", 2, 0),
+    row(3, "Bob <b>", 0, 2),
+    row(4, "Cat", 3, 4),
   ];
   const board: BattleReport["board"] = {
     teams: [

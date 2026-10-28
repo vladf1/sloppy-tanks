@@ -13,7 +13,6 @@ import {
   showTankStatus,
   type ScreenPoint,
 } from "./hud-feedback";
-import { duration } from "./round-recap";
 import { hudIcon, hudMarkup, menuMarkup, respawnMarkup, wreckedByMarkup } from "./ui-markup";
 import { fitPanels } from "./panel-fit";
 import { isPhone } from "./phone-mode";
@@ -61,8 +60,7 @@ export class UI {
   ammoNoticeTime = 0;
   damageTime = 0;
   hurtFlashTime = 0;
-  deathCause = "";
-  /** The killer and weapon of the viewer's latest death, for the respawn card. */
+  /** Who and what wrecked the viewer last, for the respawn card; null once it respawns. */
   deathReport: DeathReport | null = null;
   /** The respawn countdown's length when it started, so its bar drains to zero. */
   respawnTotal = 0;
@@ -194,9 +192,9 @@ export class UI {
       fitPanels(this.overlay);
     } else {
       // In play the menus are away: the respawn card has a layer of its own.
-      const death = this.deathCause ? { report: this.deathReport!, text: this.deathCause } : null;
       const pause = phase === "paused" ? this.actions.pauseReport() : null;
-      this.overlay.innerHTML = phase === "playing" ? "" : menuMarkup(state, death, pause);
+      this.overlay.innerHTML =
+        phase === "playing" ? "" : menuMarkup(state, this.deathReport, pause);
       bindDialogTabs(this.overlay);
       this.drawRecapTank(state);
     }
@@ -263,10 +261,8 @@ export class UI {
       return;
     }
     if (layer.firstElementChild) {
-      layer.querySelector(".wrecked-by")!.outerHTML = wreckedByMarkup(
-        this.deathCause ? this.deathReport : null,
-      );
-      layer.querySelector("#death-cause")!.textContent = this.deathCause;
+      layer.querySelector(".wrecked-by")!.outerHTML = wreckedByMarkup(this.deathReport);
+      layer.querySelector("#death-cause")!.textContent = this.deathReport?.sentence ?? "";
       syncGameOptions(layer, this.choices);
     }
     this.respawnShow = requestAnimationFrame(() => {
@@ -304,7 +300,6 @@ export class UI {
     }
     this.lastRound = round;
     this.lastPhase = "";
-    this.deathCause = "";
     this.deathReport = null;
     this.damageTime = 0;
     this.hurtFlashTime = 0;
@@ -337,13 +332,11 @@ export class UI {
         }
       }
       if (event.deathReport) {
-        this.deathCause = event.deathReport.sentence;
         this.deathReport = event.deathReport;
         this.respawnTotal = 0;
         this.hud.querySelector("#ammo-notice")!.textContent = "";
       }
       if (event.type === "respawn") {
-        this.deathCause = "";
         this.deathReport = null;
         this.damageTime = 0;
       }
@@ -439,12 +432,12 @@ export class UI {
       this.hud.dataset.team = side;
     }
     const pill = state.scorePill;
-    scoreboard.classList.toggle("overtime", pill.clockLabel !== null);
+    scoreboard.classList.toggle("overtime", pill.overtime);
     // A phone's score pill has room for the goal alone; its pause menu adds the rule.
     set("objective", solo && isPhone() ? "SURVIVE" : (pill.objective ?? ""));
     set("score0", String(solo ? tank.kills : match.scores[0]));
     set("score1", String(match.scores[1]));
-    set("time", pill.clockLabel ?? duration(pill.seconds));
+    set("time", pill.clock);
     showTankStatus(this.hud, tank, dead || match.phase !== "playing");
     set("respawn-count", String(Math.ceil(tank.respawn)));
     if (dead) {

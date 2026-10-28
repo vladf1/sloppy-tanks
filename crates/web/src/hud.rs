@@ -11,6 +11,7 @@ use std::borrow::Cow;
 use std::fmt;
 use std::sync::LazyLock;
 
+use serde::ser::SerializeStruct;
 use serde::{Serialize, Serializer};
 use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon_for, has_ammo_for};
 use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES, vehicle};
@@ -25,6 +26,7 @@ use sloppy_core::sim::{
 };
 use sloppy_render::presentation::hud::{HealthColor, health_bar_state};
 
+use crate::battle_report::duration;
 use crate::recap::RoundRecap;
 
 /// `Game.hud_json`: the page HUD's view of the match and the human's tank.
@@ -212,7 +214,6 @@ pub fn human_json(tank: &RenderTank, elapsed: f64, timers: &mut EffectTimers) ->
         hp: tank.hp,
         max_hp: tank.max_hp,
         health_ratio: health.ratio,
-        health_color: health.color,
         rank,
         rank_name: stats.name,
         rank_damage: stats.damage,
@@ -269,7 +270,6 @@ impl Scoreboard<'_> {
                 deaths: tank.deaths,
                 team: tank.team,
                 kind: tank.kind,
-                human: tank.human,
             })
             .chain(simulated.iter().map(|tank| HudScore {
                 id: tank.id,
@@ -278,7 +278,6 @@ impl Scoreboard<'_> {
                 deaths: tank.deaths,
                 team: tank.team,
                 kind: tank.kind,
-                human: tank.human,
             }))
             .chain(kept.iter().map(|row| HudScore {
                 id: row.id,
@@ -287,7 +286,6 @@ impl Scoreboard<'_> {
                 deaths: row.deaths,
                 team: row.team,
                 kind: row.kind,
-                human: row.human,
             }))
     }
 
@@ -321,7 +319,6 @@ pub struct HudHuman {
     pub hp: f64,
     pub max_hp: f64,
     pub health_ratio: f64,
-    pub health_color: u32,
     pub rank: usize,
     pub rank_name: &'static str,
     pub rank_damage: f64,
@@ -369,9 +366,9 @@ pub struct HudScore<'a> {
     pub kills: u32,
     pub deaths: u32,
     pub team: Team,
+    /// The tank the death report names; the page never shows it.
+    #[serde(skip)]
     pub kind: VehicleKind,
-    /// A player's tank rather than a bot's, which the battle report marks.
-    pub human: bool,
 }
 
 impl HudScore<'_> {
@@ -383,7 +380,6 @@ impl HudScore<'_> {
             deaths: self.deaths,
             team: self.team,
             kind: self.kind,
-            human: self.human,
         }
     }
 }
@@ -657,12 +653,11 @@ impl Serialize for Objective {
 }
 
 /// The score pill between the team plates: its clock and the goal under it.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ScorePill {
     pub objective: Option<Objective>,
-    /// [`NEXT_KILL`] in overtime; the clock shows `seconds` as m:ss otherwise.
-    pub clock_label: Option<&'static str>,
+    /// Overtime: the clock says [`NEXT_KILL`] until a kill decides the match.
+    pub overtime: bool,
     /// Whole seconds: the time left, or the time survived in an endless battle.
     pub seconds: f64,
 }
@@ -685,7 +680,7 @@ impl ScorePill {
         };
         ScorePill {
             objective: Some(objective),
-            clock_label: (!endless && match_state.overtime).then_some(NEXT_KILL),
+            overtime: !endless && match_state.overtime,
             seconds: if endless {
                 elapsed.max(0.0).floor()
             } else {
@@ -698,9 +693,46 @@ impl ScorePill {
     pub fn room(match_state: &Match) -> Self {
         ScorePill {
             objective: None,
-            clock_label: match_state.overtime.then_some(NEXT_KILL),
+            overtime: match_state.overtime,
             seconds: whole(match_state.time).max(0.0),
         }
+    }
+
+    /// What the clock says.
+    pub fn clock(self) -> PillClock {
+        PillClock(self)
+    }
+}
+
+/// The score pill's clock as it reads: [`NEXT_KILL`] in overtime, the time as m:ss
+/// otherwise, written straight into the HUD's text.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PillClock(ScorePill);
+
+impl fmt::Display for PillClock {
+    fn fmt(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+        if self.0.overtime {
+            formatter.write_str(NEXT_KILL)
+        } else {
+            write!(formatter, "{}", duration(self.0.seconds))
+        }
+    }
+}
+
+impl Serialize for PillClock {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(self)
+    }
+}
+
+/// The page reads the pill's goal, its clock's text and whether overtime lights it.
+impl Serialize for ScorePill {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let mut pill = serializer.serialize_struct("ScorePill", 3)?;
+        pill.serialize_field("objective", &self.objective)?;
+        pill.serialize_field("overtime", &self.overtime)?;
+        pill.serialize_field("clock", &self.clock())?;
+        pill.end()
     }
 }
 
@@ -819,8 +851,6 @@ mod tests {
                 "kills": 12,
                 "deaths": 3,
                 "team": 1,
-                "kind": "humvee",
-                "human": true
             })
         );
         let ids: Vec<_> = value
@@ -1057,22 +1087,22 @@ mod tests {
             let pill = ScorePill::local(&match_at(187.4, overtime), game_mode, endless, 312.6, 100);
             (
                 pill.objective.map(|goal| goal.to_string()),
-                pill.clock_label,
-                pill.seconds,
+                pill.overtime,
+                pill.clock().to_string(),
             )
         };
         assert_eq!(
             pill(GameMode::Team, false, false),
-            (Some("FIRST TO 100".into()), None, 188.0)
+            (Some("FIRST TO 100".into()), false, "3:08".into())
         );
         assert_eq!(
             pill(GameMode::Team, false, true),
-            (Some("FIRST TO 100".into()), Some("NEXT KILL"), 188.0)
+            (Some("FIRST TO 100".into()), true, "NEXT KILL".into())
         );
         // An endless level counts the time survived and has no overtime.
         assert_eq!(
             pill(GameMode::Team, true, true),
-            (Some("ENDLESS STRESS".into()), None, 312.0)
+            (Some("ENDLESS STRESS".into()), false, "5:12".into())
         );
         assert_eq!(
             pill(GameMode::Solo, false, false).0.as_deref(),
@@ -1081,9 +1111,11 @@ mod tests {
         let room = ScorePill::room(&match_at(-0.25, true));
         assert_eq!(
             serde_json::to_value(room).unwrap(),
-            json!({"objective": null, "clockLabel": "NEXT KILL", "seconds": 0.0})
+            json!({"objective": null, "overtime": true, "clock": "NEXT KILL"})
         );
         assert!(room.seconds.is_sign_positive());
+        let room = ScorePill::room(&match_at(-0.25, false));
+        assert_eq!(room.clock().to_string(), "0:00");
     }
 
     #[test]

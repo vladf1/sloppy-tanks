@@ -54,22 +54,6 @@ export interface JoinChoice {
   existingRoom?: boolean;
 }
 
-/** Why a connection stopped retrying. Each cause offers its own way back into a game. */
-export type EndCause =
-  /** The server stayed unreachable for the whole reconnect window. */
-  | "lost"
-  /** The room itself is gone: a server restart, a time limit or a server fault. */
-  | "room-ended"
-  /** The server let the seat go; joining again takes a new one. */
-  | "seat-expired"
-  /** The same seat connected from another tab, which now drives the tank. */
-  | "other-tab"
-  /** This page and the server run different game versions. */
-  | "outdated"
-  /** The renderer reported a GPU error or lost the device; only a reload recovers. */
-  | "renderer"
-  | "rejected";
-
 /** Dev-only URL parameters that add transport delay to the room connection. */
 export const TRANSPORT_DELAY_PARAMS = ["latency", "jitter", "stall"] as const;
 

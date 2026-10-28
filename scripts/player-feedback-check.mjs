@@ -59,18 +59,7 @@ try {
       base,
       /** Show an event about the player, then the HUD it left. */
       announce(hud, fields) {
-        event(
-          {
-            id: hud.human.id,
-            x: 0,
-            z: 0,
-            own: true,
-            playerHit: false,
-            damageAngle: null,
-            ...fields,
-          },
-          hud,
-        );
+        event({ id: hud.human.id, own: true, damageAngle: null, ...fields }, hud);
         update(hud, 0, true);
       },
       restore() {
@@ -92,10 +81,9 @@ try {
           deathReport: {
             killer,
             self: killer === null,
-            cause,
             weapon,
             icon: cause,
-            ...(killer === null ? {} : { killerTeam: 1, killerKills: 1 }),
+            ...(killer === null ? {} : { killerTeam: 1, killerTally: "Their 1st kill" }),
             sentence,
           },
           feed: {
@@ -116,22 +104,10 @@ try {
       alive: true,
       hp: 18,
       healthRatio: 0.18,
-      healthColor: 0xff6655,
       rank: 2,
       rankName: "Elite",
-      rankDamage: 1.2,
-      rankFireRate: 1.15,
-      rankHealth: 1.15,
-      rankRepair: 0.01,
-      repairDelay: 5,
-      protection: 0,
-      shield: 4.2,
-      shieldPoints: 80,
-      rapid: 3.2,
-      speed: 2.2,
-      laser: 1.2,
-      selfRepair: true,
-      // What the engine reads from the values above (`crates/web/src/hud.rs`).
+      // The engine's words for an Elite tank at 18% hull with every effect running
+      // (`crates/web/src/hud.rs`).
       hullTone: "critical",
       hullRamp: 0xff4d5e,
       rankTitle:
@@ -171,9 +147,7 @@ try {
     hud.scoreboard.push({ id: owner, name: "Rival <b>literal</b>", team: 1, kills: 1, deaths: 0 });
     fixture.announce(hud, {
       type: "death",
-      owner,
       damageAngle: Math.PI / 3,
-      damageSource: { cause: "rocket", origin: { x: 1, z: 1 } },
       ...fixture.deathFeedback(
         "Rival <b>literal</b>",
         "rocket",
@@ -204,8 +178,6 @@ try {
     window.sloppyMultiplayer.ui.resetFeedback();
     fixture.announce(hud, {
       type: "death",
-      owner: killer.id,
-      damageSource: { cause: "rocket", origin: { x: 1, z: 1 } },
       ...fixture.deathFeedback(
         killer.name,
         "rocket",
@@ -239,9 +211,7 @@ try {
     const fixture = window.playerFeedbackFixture;
     fixture.announce(fixture.dead, {
       type: "death",
-      owner: fixture.dead.human.id,
       damageAngle: 0,
-      damageSource: { cause: "mine", origin: { x: 0, z: 0 } },
       ...fixture.deathFeedback(
         null,
         "mine",

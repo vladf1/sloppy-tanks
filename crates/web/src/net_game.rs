@@ -36,12 +36,12 @@
 //!   frames), `socket_binary` (binary frames, as a `Uint8Array`; set the socket's
 //!   `binaryType` to `"arraybuffer"`) and `socket_closed` (close code).
 //! - Notices (`take_notices`): `status {text, connected, title?, message?}` (the
-//!   connection dialog's words while not connected), `notice {text}`, `ended {cause,
-//!   text, title, retry, setup}` (the dialog's title and buttons, `retry` null where
-//!   joining again cannot work; `cause: "renderer"` after `renderer_failed`), `lobby
-//!   {lobby, playerId, menu: {title, hint, summary}, arrivals: [{text, team}]}` (the wire
-//!   lobby record, the room menu's words for it and the feed lines of players who joined
-//!   or came back), `result {match, team}`,
+//!   connection dialog's words while not connected), `notice {text}`, `ended {text,
+//!   title, retry, setup}` (the dialog's title and buttons, `retry` null where joining
+//!   again cannot work; also after `renderer_failed`), `lobby {lobby, playerId, menu:
+//!   {title, hint, summary}, arrivals: [{text}]}` (the wire lobby record, the room
+//!   menu's words for it and the feed lines of players who joined or came back),
+//!   `result {match}` (the finished round's final score),
 //!   `resetFeedback`, `clearInput`, `reveal`, `prepare` (run `prepare_step` between tasks
 //!   until it reports done; while it reports `gpuPending`, wait on a short timer),
 //!   `arenaFailed {error}` and `baselineShown` (the arena drew the first frames of a new
@@ -52,9 +52,10 @@
 //! - `drain_events()` has the shape of `Game.drain_events()`; `hud_json()` carries
 //!   `Game.hud_json()`'s `match`, `human`, `scoreboard` and `scorePill` (the room lobby
 //!   has the results).
-//! - `stats_json(now)`: `Game.stats_json()`'s renderer, frame and pixel ratio rows, the
-//!   displayed scene's counts and a `network` block (RTT, updates, playout buffer, late
-//!   batches, ticks, input seq/ack).
+//! - `stats_json(now)`: `Game.stats_json()`'s renderer and frame readings, the
+//!   displayed scene's counts, a `network` block (RTT, updates, playout buffer, late
+//!   batches, ticks, input seq/ack) and a `feel` block, for diagnostics and the
+//!   latency matrix.
 //! - `nerd_stats_json(now)`: the Stats for nerds panel's sections, as
 //!   `Game.nerd_stats_json()`; the update rate is measured between calls.
 //! - Intents: `choose`, `settings`, `start`, `pause`, `resume`, `end`, `rejoin`,
@@ -67,7 +68,8 @@
 //! `create_with`, `join` ([`JoinChoice`]), `choose_seat`, `set_rules` ([`RoomSettings`]),
 //! `take_room_actions` ([`ClientAction`]), `take_room_notices` ([`RoomNotice`]),
 //! `prepare` ([`PrepareStatus`]), `hud` ([`RoomHud`]), `take_events` ([`EventBatch`]),
-//! `camera` ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]) and `gpu_ms`.
+//! `camera` ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms` and
+//! `set_graphics` (the setting itself).
 
 use crate::Shell;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
@@ -91,6 +93,7 @@ use sloppy_core::net::transport_delay::DelaySettings;
 use sloppy_core::sim::{MatchPhase, RenderState, Team, VehicleKind, Weapon};
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use sloppy_render::presentation::{PrepareStatus, Presentation};
+use sloppy_render::quality::GraphicsSetting;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
@@ -403,7 +406,15 @@ impl NetGame {
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
+    #[cfg(target_arch = "wasm32")]
     pub fn set_graphics(&mut self, setting: &str) {
+        self.graphics
+            .set_setting(&mut self.view.renderer, GraphicsSetting::parse(setting));
+    }
+
+    /// The Settings dialog's Graphics choice.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn set_graphics(&mut self, setting: GraphicsSetting) {
         self.graphics.set_setting(&mut self.view.renderer, setting);
     }
 
@@ -588,7 +599,6 @@ impl NetGame {
     /// network, for diagnostics and the network checks.
     pub fn stats_json(&self, now: f64) -> String {
         let mut stats = presentation_stats(&self.view, &self.times);
-        stats.insert("pixelRatio".into(), self.canvas.pixel_ratio().into());
         stats.insert(
             "quality".into(),
             self.graphics

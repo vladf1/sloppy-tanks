@@ -23,7 +23,6 @@ use crate::hud::{EffectTimers, simulation_hud};
 pub struct RoundRecap {
     #[serde(serialize_with = "metric_values")]
     pub best: RecapStats,
-    pub damage_taken: f64,
     pub direct_hits: u32,
     #[serde(serialize_with = "feats")]
     pub feats: Vec<Feat>,
@@ -34,7 +33,6 @@ pub struct RoundRecap {
     pub persisted: bool,
     pub rank_names: Vec<&'static str>,
     pub report: BattleReport,
-    pub shield_absorbed: f64,
     pub shots: u32,
     #[serde(serialize_with = "metric_values")]
     pub stats: RecapStats,
@@ -54,14 +52,12 @@ pub fn round_recap(sim: &Simulation, storage: &mut impl RecordStorage, shell: Sh
     let records = save_personal_bests(storage, &key, &stats);
     let mut recap = RoundRecap {
         best: records.best,
-        damage_taken: combat.damage_taken,
         direct_hits: combat.direct_hits,
         feats: combat_feats(&stats, combat.shots, combat.direct_hits),
         improved: records.improved,
         persisted: records.persisted,
         rank_names: RANKS.iter().map(|rank| rank.name).collect(),
         report: BattleReport::default(),
-        shield_absorbed: combat.shield_absorbed,
         shots: combat.shots,
         stats,
     };

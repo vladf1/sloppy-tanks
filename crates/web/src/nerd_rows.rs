@@ -19,6 +19,7 @@ use sloppy_core::net::feel_readings::Samples;
 use sloppy_core::net::hull_prediction::CorrectionCause;
 
 use crate::Shell;
+use crate::battle_report::thousands;
 
 /// One row: what it counts, its value and what it means.
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -360,17 +361,9 @@ fn whole(value: f64) -> i64 {
     (value + 0.5).floor() as i64
 }
 
-/// 1234567 as "1,234,567".
+/// A count as "1,234,567", the menus' one number format.
 fn grouped(count: u64) -> String {
-    let digits = count.to_string();
-    let mut out = String::with_capacity(digits.len() + digits.len() / 3);
-    for (index, digit) in digits.chars().enumerate() {
-        if index > 0 && (digits.len() - index).is_multiple_of(3) {
-            out.push(',');
-        }
-        out.push(digit);
-    }
-    out
+    thousands(count as f64)
 }
 
 fn pair(first: impl std::fmt::Display, second: impl std::fmt::Display) -> String {

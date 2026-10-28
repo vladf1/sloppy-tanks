@@ -4,7 +4,7 @@
 //! Frame timing is [`crate::frame_clock`].
 
 use glam::Vec2;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use sloppy_core::sim::{SimEvent, SimEventType};
 use sloppy_render::gpu::{RenderTarget, Renderer};
@@ -149,19 +149,17 @@ pub struct Graphics {
 }
 
 impl Graphics {
-    /// Start from `setting` ("auto", "high", "medium", "low") on `device` ("desktop",
-    /// "tablet", "phone"), and draw at the controller's first rung.
-    pub fn new(renderer: &mut Renderer, setting: &str, device: &str, pixel_ratio: f64) -> Self {
+    /// Start from `setting` on `device`, and draw at the controller's first rung.
+    pub fn new(
+        renderer: &mut Renderer,
+        setting: GraphicsSetting,
+        device: DeviceClass,
+        pixel_ratio: f64,
+    ) -> Self {
         let webgl = sloppy_render::GRAPHICS_API == "WebGL";
-        let start = starting_tier(
-            DeviceClass::parse(device),
-            renderer.max_texture_size(),
-            webgl,
-        );
-        let class = DeviceClass::parse(device);
-        let mut controller =
-            QualityController::new(GraphicsSetting::parse(setting), start, pixel_ratio);
-        if class != DeviceClass::Desktop {
+        let start = starting_tier(device, renderer.max_texture_size(), webgl);
+        let mut controller = QualityController::new(setting, start, pixel_ratio);
+        if device != DeviceClass::Desktop {
             controller = controller.with_deep_floor();
         }
         let graphics = Self {
@@ -204,8 +202,8 @@ impl Graphics {
     }
 
     /// The Settings dialog's Graphics choice.
-    pub fn set_setting(&mut self, renderer: &mut Renderer, setting: &str) {
-        if self.controller.set_setting(GraphicsSetting::parse(setting)) {
+    pub fn set_setting(&mut self, renderer: &mut Renderer, setting: GraphicsSetting) {
+        if self.controller.set_setting(setting) {
             self.apply(renderer);
         }
     }
@@ -280,9 +278,8 @@ impl Graphics {
 /// made for it: desktops do; touch tablets and phones draw single-sampled, since four
 /// samples of the HDR target and its depth cost a tile-based mobile GPU dearly in
 /// fill and bandwidth, unless the player chose High.
-fn multisampled(device: &str, setting: &str) -> bool {
-    DeviceClass::parse(device) == DeviceClass::Desktop
-        || GraphicsSetting::parse(setting) == GraphicsSetting::Fixed(Tier::High)
+fn multisampled(device: DeviceClass, setting: GraphicsSetting) -> bool {
+    device == DeviceClass::Desktop || setting == GraphicsSetting::Fixed(Tier::High)
 }
 
 /// The configuration both game types take: `{ seed?, assetBase, cssWidth?, cssHeight?,
@@ -301,13 +298,27 @@ pub struct ViewConfig {
     pub first_person: bool,
     pub zoom: Option<f64>,
     pub hide_reticle: bool,
-    /// The saved Graphics setting; Auto when absent.
-    pub graphics: String,
-    /// "desktop", "tablet" or "phone" (`src/game/graphics.ts`).
-    pub device: String,
+    /// The saved Graphics setting ("auto", "high", "medium", "low"); Auto when absent
+    /// or unknown.
+    #[serde(deserialize_with = "graphics_setting")]
+    pub graphics: GraphicsSetting,
+    /// "desktop", "tablet" or "phone" (`src/game/graphics.ts`); a desktop when absent or
+    /// unknown.
+    #[serde(deserialize_with = "device_class")]
+    pub device: DeviceClass,
     pub frames_in_flight: u32,
     /// The page by default; the desktop app says so.
     pub shell: Shell,
+}
+
+fn graphics_setting<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<GraphicsSetting, D::Error> {
+    Ok(GraphicsSetting::parse(&String::deserialize(deserializer)?))
+}
+
+fn device_class<'de, D: Deserializer<'de>>(deserializer: D) -> Result<DeviceClass, D::Error> {
+    Ok(DeviceClass::parse(&String::deserialize(deserializer)?))
 }
 
 /// What [`create_view`] sets up for a game type.
@@ -346,14 +357,14 @@ pub async fn create_view(canvas: RenderTarget, config: ViewConfig) -> Result<Pag
         device_pixel_ratio: config.pixel_ratio.unwrap_or(1.0),
         exact: false,
     };
-    let msaa = multisampled(&config.device, &config.graphics);
+    let msaa = multisampled(config.device, config.graphics);
     let mut renderer = Renderer::new(canvas, config.asset_base, msaa)
         .await
         .map_err(js_error)?;
     let graphics = Graphics::new(
         &mut renderer,
-        &config.graphics,
-        &config.device,
+        config.graphics,
+        config.device,
         size.pixel_ratio(),
     );
     let mut view = Presentation::new(renderer, seed.to_bits());

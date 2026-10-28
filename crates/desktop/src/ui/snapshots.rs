@@ -8,7 +8,11 @@ use std::borrow::Cow;
 
 use egui_wgpu::ScreenDescriptor;
 use serde_json::json;
+use sloppy_core::net::protocol::RoomPhase;
+use sloppy_core::net::room_list::HostedRoom;
 use sloppy_core::sim::ammunition::AMMO_ORDER;
+use sloppy_core::sim::difficulty::Difficulty;
+use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::round_recap::{Feat, Metric, RecapStats};
 use sloppy_core::sim::{DamageCause, GameMode, MatchPhase, Team, VehicleKind, Weapon};
 use sloppy_render::presentation::hud::health_bar_state;
@@ -60,7 +64,6 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
             deaths: DEATHS[index],
             team: Team::from_index(usize::from(index >= 6)),
             kind: KINDS[index % 3],
-            human: index == 0,
         })
         .collect();
     let results = phase == MatchPhase::Results;
@@ -161,8 +164,6 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
             }],
             shots: 31,
             direct_hits: 19,
-            damage_taken: 260.0,
-            shield_absorbed: 40.0,
             rank_names: vec!["Rookie", "Gunner", "Veteran", "Ace"],
             ..RoundRecap::default()
         };
@@ -321,31 +322,29 @@ fn scenarios() -> Vec<Scenario> {
             ..UiState::default()
         },
     });
-    let room = |code: &str, map: &str, players: u32, reserved: u32, phase: &str| {
-        crate::directory::RoomListing {
-            room: code.into(),
-            content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
-            map_mode: map.into(),
-            difficulty: "normal".into(),
-            humans_only: players > 3,
-            round_minutes: 20,
-            players,
-            reserved,
-            phase: phase.into(),
-            round_id: 1,
-            time: 754.0,
-            scores: vec![14, 9],
-            server: "wss://example.test".into(),
-        }
+    let room = |code: &str, map: MapId, players: u32, reserved: u32, phase: RoomPhase| HostedRoom {
+        room: code.into(),
+        content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
+        map_mode: map,
+        difficulty: Difficulty::Normal,
+        humans_only: players > 3,
+        round_minutes: 20,
+        players,
+        reserved,
+        phase,
+        round_id: 1,
+        time: 754.0,
+        scores: vec![14, 9],
+        server: "wss://example.test".into(),
     };
     for (name, rooms) in [
         ("multiplayer-empty", Vec::new()),
         (
             "multiplayer-rooms",
             vec![
-                room("KQ7M2XHP", "harbor", 8, 8, "playing"),
-                room("TR4WNB9C", "village", 3, 3, "playing"),
-                room("ZP2HDA7L", "quarry", 1, 1, "lobby"),
+                room("KQ7M2XHP", MapId::Harbor, 8, 8, RoomPhase::Playing),
+                room("TR4WNB9C", MapId::Village, 3, 3, RoomPhase::Playing),
+                room("ZP2HDA7L", MapId::Quarry, 1, 1, RoomPhase::Lobby),
             ],
         ),
     ] {
@@ -403,6 +402,7 @@ fn scenarios() -> Vec<Scenario> {
         killer_vehicle: Some("BIG RIG"),
         killer_team: Some(Team::Red),
         killer_kills: Some(3),
+        killer_tally: Some("Their 3rd kill".into()),
         sentence: "Crank destroyed you with a rocket blast.".into(),
     });
     list.push(Scenario {

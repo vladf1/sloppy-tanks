@@ -112,13 +112,6 @@ export function controlsMarkup(): string {
 
 /** Who wrecked the viewer, for the respawn card: the killer's name in their team's
  * colour, and tags for the weapon, the tank they drive and their kills so far. */
-/** 1st, 2nd, 3rd, 4th … 11th, 12th, 13th, 21st. */
-export function ordinal(value: number): string {
-  const tens = value % 100;
-  const suffix = tens >= 11 && tens <= 13 ? "TH" : (["TH", "ST", "ND", "RD"][value % 10] ?? "TH");
-  return `${value}${suffix}`;
-}
-
 export function wreckedByMarkup(death: DeathReport | null): string {
   if (!death) {
     return `<div class="wrecked-by"><small>YOUR TANK</small><b>DESTROYED</b></div>`;
@@ -130,8 +123,8 @@ export function wreckedByMarkup(death: DeathReport | null): string {
     death.killerVehicle && !death.self
       ? `<span class="killer-tag">${death.killerVehicle}</span>`
       : "",
-    death.killerKills && !death.self
-      ? `<span class="killer-tag">${hudIcon("hud-skull", "killer-tag-icon")}Their ${ordinal(death.killerKills).toLowerCase()} kill</span>`
+    death.killerTally && !death.self
+      ? `<span class="killer-tag">${hudIcon("hud-skull", "killer-tag-icon")}${death.killerTally}</span>`
       : "",
   ].join("");
   const [label, name] = death.self
@@ -145,16 +138,8 @@ export function wreckedByMarkup(death: DeathReport | null): string {
 
 export { escapeHtml };
 
-/** The death the respawn card and a solo report describe: its parts and its sentence. */
-export interface DeathNotice {
-  report: DeathReport;
-  text: string;
-}
-
-/** The live or final score on team plates named under the numbers, for pause and the
- * battle report. */
-/** Both teams' scores as a pair of plates; the viewer's side carries the in-match
- * scoreboard's gold rim and says YOU beside its name. */
+/** Both teams' scores as a pair of plates, for pause and the battle report; the viewer's
+ * side carries the in-match scoreboard's gold rim and says YOU beside its name. */
 export function scoreMarkup(
   scores: readonly number[],
   label: string,
@@ -164,22 +149,6 @@ export function scoreMarkup(
   const plate = (index: number, side: string) =>
     `<span class="${side}${index === team ? " yours" : ""}">${scores[index]}<small>${names[index]}${index === team ? "<em> · YOU</em>" : ""}</small></span>`;
   return `<div class="dialog-score" aria-label="${label}">${plate(0, "blue")}<i>:</i>${plate(1, "red")}</div>`;
-}
-
-/** How a team battle came out for the viewer's team. A battle ended early goes to the
- * side ahead when it ended; level scores are a draw. */
-export function teamOutcome(
-  scores: readonly number[],
-  team: number,
-  winner: number | null,
-  endedEarly: boolean,
-): "won" | "lost" | "draw" {
-  const leader = endedEarly || winner === null ? leadingTeam(scores) : winner;
-  return leader === null ? "draw" : leader === team ? "won" : "lost";
-}
-
-function leadingTeam(scores: readonly number[]): number | null {
-  return scores[0] === scores[1] ? null : scores[0] > scores[1] ? 0 : 1;
 }
 
 /** Small marks leading the dialogs' buttons, drawn in the button's text colour. */
@@ -212,10 +181,10 @@ function pauseOverviewMarkup(pause: PauseReport): string {
 }
 
 /** The menu for the battle's phase: pause (with `pause`, the engine's `pause_json`), the
- * battle report, or the respawn card. */
+ * battle report, or the respawn card; `death` is the viewer's latest. */
 export function menuMarkup(
   hud: HudState,
-  death: DeathNotice | null,
+  death: DeathReport | null,
   pause: PauseReport | null = null,
 ): string {
   const viewer = hud.human;
@@ -249,7 +218,7 @@ export function menuMarkup(
     // A solo run's loss leads with the death that ended it.
     const lede =
       solo && report.outcome === "lost" && death
-        ? `${escapeHtml(death.text)} ${report.lede}`
+        ? `${escapeHtml(death.sentence)} ${report.lede}`
         : report.lede;
     return `<section class="menu compact results" data-outcome="${report.outcome}" data-team="${side}" aria-labelledby="results-title">
       <header class="dialog-head results-banner"><div class="dialog-eyebrow"><span class="eyebrow">${mode} · ${hud.mapName.toUpperCase()}</span>${endedEarly && !solo ? `<span class="early-tag">ENDED EARLY</span>` : ""}</div>
@@ -267,10 +236,10 @@ export function menuMarkup(
 
 /** The respawn card: who wrecked the tank, the countdown and the choice of the next
  * tank (whose cards the page appends). */
-export function respawnMarkup(death: DeathNotice | null): string {
+export function respawnMarkup(death: DeathReport | null): string {
   return `
       <section class="menu respawn" aria-labelledby="respawn-title">
-        <header class="respawn-head">${wreckedByMarkup(death?.report ?? null)}
+        <header class="respawn-head">${wreckedByMarkup(death)}
           <div class="respawn-timer" id="respawn-fill"><h2 id="respawn-title">RESPAWN IN</h2><div class="respawn-ring"><span id="respawn-count">3</span></div></div>
         </header>
         <p class="respawn-pick">Choose your next tank<small>It rolls out when the timer ends</small></p>

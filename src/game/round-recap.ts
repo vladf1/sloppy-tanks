@@ -1,10 +1,5 @@
 import type { BattleReport, RecapState, ReportTile, ScoreboardRow } from "./engine-api";
 
-/** The HUD clock's `m:ss`. */
-export function duration(seconds: number): string {
-  return `${Math.floor(seconds / 60)}:${String(Math.floor(seconds % 60)).padStart(2, "0")}`;
-}
-
 /** The battle report's feats, stat tiles and details for a finished round, in the
  * engine's words (`recap.report`). Kills comes first: the report draws it as the hero
  * tile, with the tank (drawn in by the page) and the kills measured against the best. */

@@ -204,42 +204,13 @@ impl RoomMenu {
         self.player_id = player_id;
     }
 
-    /// An engine event's room feedback: the death cause on the respawn card.
-    pub fn event(&mut self, pending: &PendingEvent, ui: &UiState) {
-        let Some(hud) = &ui.hud else { return };
-        let event = &pending.event;
-        let viewer = hud.human.id;
-        if event.id != Some(viewer) {
-            return;
-        }
-        match event.kind {
-            SimEventType::Death => {
-                let weapon = event
-                    .damage_source
-                    .map(|source| {
-                        let cause = source.cause.as_str();
-                        let article = if cause.starts_with(['a', 'e', 'i', 'o', 'u']) {
-                            "an"
-                        } else {
-                            "a"
-                        };
-                        format!(" with {article} {cause}")
-                    })
-                    .unwrap_or_default();
-                let killer = event
-                    .owner
-                    .and_then(|owner| hud.scoreboard.row(owner))
-                    .map(|row| row.name.into_owned());
-                self.death_cause = if event.owner == Some(viewer) {
-                    format!("You destroyed yourself{weapon}.")
-                } else if let Some(killer) = killer {
-                    format!("{killer} destroyed you{weapon}.")
-                } else {
-                    "You were destroyed.".into()
-                };
-            }
-            SimEventType::Respawn => self.death_cause.clear(),
-            _ => {}
+    /// An engine event's room feedback: the engine's death sentence on the respawn card,
+    /// until the viewer's tank respawns.
+    pub fn event(&mut self, pending: &PendingEvent) {
+        if let Some(report) = &pending.feedback.death_report {
+            self.death_cause.clone_from(&report.sentence);
+        } else if pending.own && pending.event.kind == SimEventType::Respawn {
+            self.death_cause.clear();
         }
     }
 }

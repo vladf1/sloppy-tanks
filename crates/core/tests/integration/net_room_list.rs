@@ -40,18 +40,27 @@ fn read_one(listing: Value) -> Result<HostedRoom, String> {
     HostedRoom::read(&listing, SERVER)
 }
 
+/// The option `name` names among `options`.
+fn named<T: Copy>(options: &[(&str, T)], name: &str) -> T {
+    options
+        .iter()
+        .find(|(option, _)| *option == name)
+        .map(|&(_, value)| value)
+        .expect("a listed name")
+}
+
 /// What a client reads back from a listing the server wrote.
 fn hosted(listing: &RoomListing, server: &str) -> HostedRoom {
     HostedRoom {
         room: listing.room.clone(),
         content_version: listing.content_version.clone(),
-        map_mode: listing.map_mode.clone(),
-        difficulty: listing.difficulty.clone(),
+        map_mode: named(&MAP_MODES, &listing.map_mode),
+        difficulty: named(&DIFFICULTIES, &listing.difficulty),
         humans_only: listing.humans_only,
         round_minutes: listing.round_minutes,
         players: listing.players,
         reserved: listing.reserved,
-        phase: listing.phase.as_str().to_owned(),
+        phase: listing.phase,
         round_id: listing.round_id,
         time: f64::from(listing.time),
         scores: listing.scores.map(u64::from).to_vec(),

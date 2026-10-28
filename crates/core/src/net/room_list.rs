@@ -16,6 +16,8 @@ use super::protocol::{
 };
 use super::scene_codec::name;
 use super::schema::{MAX_SAFE_INTEGER, ReadResult, number_in, text_length};
+use crate::sim::difficulty::Difficulty;
+use crate::sim::map_options::MapId;
 
 /// Most rooms `/rooms` lists; the least recently refreshed listing is evicted beyond it.
 pub const MAX_LISTED_ROOMS: usize = 256;
@@ -69,19 +71,19 @@ pub struct RoomListing {
 /// A listing as a client reads it from the directory, with the server that hosts it
 /// (`HostedRoom`). It keeps what the TypeScript reader accepts, which is wider than what
 /// the server writes: `time` may be fractional and `scores` hold up to two safe integers.
-/// `map_mode`, `difficulty` and `phase` each hold a name from [`MAP_MODES`],
+/// `map_mode`, `difficulty` and `phase` are read by the names of [`MAP_MODES`],
 /// [`DIFFICULTIES`] and [`PHASES`].
 #[derive(Clone, Debug, PartialEq)]
 pub struct HostedRoom {
     pub room: String,
     pub content_version: String,
-    pub map_mode: String,
-    pub difficulty: String,
+    pub map_mode: MapId,
+    pub difficulty: Difficulty,
     pub humans_only: bool,
     pub round_minutes: u32,
     pub players: u32,
     pub reserved: u32,
-    pub phase: String,
+    pub phase: RoomPhase,
     pub round_id: u64,
     /// Seconds left in the round.
     pub time: f64,
@@ -158,13 +160,13 @@ impl HostedRoom {
     }
 }
 
-/// The name of one of `options`, when `value` is one.
-fn named<T>(value: Option<&Value>, options: &[(&str, T)]) -> Option<String> {
+/// The option `value` names, when it names one of `options`.
+fn named<T: Copy>(value: Option<&Value>, options: &[(&str, T)]) -> Option<T> {
     let text = value?.as_str()?;
     options
         .iter()
         .find(|(name, _)| *name == text)
-        .map(|(name, _)| (*name).to_owned())
+        .map(|&(_, option)| option)
 }
 
 /// A server's `rooms` (`readRooms`): at most [`MAX_LISTED_ROOMS`] listings, each hosted
