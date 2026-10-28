@@ -408,8 +408,9 @@ guarantees for other devices.
   each tank is drawn over black and over white to recover its coverage; a soft
   contact shadow, the track footprint projected through the same view, is painted
   under each tank.
-- `generate-desktop-icon.mjs` (`pnpm run generate:desktop-icon`, on a Mac) derives
-  `public/icons/mac-app.icns` from the web app's tank icon. The checked-in icon and its
+- `generate-desktop-icon.mjs` (`pnpm run generate:desktop-icon`, on any OS) derives
+  `assets/desktop/mac-app.icns` from the web app's tank icon; `generate:app-icons`
+  regenerates it after the web icons. The checked-in icon and its
   source hashes let desktop packaging copy it without invoking Cargo or installing
   the image library in CI; see `assets/texture-sources/README.md`.
 - `startup-html.ts` inlines the Battle Setup menu into `index.html`, and

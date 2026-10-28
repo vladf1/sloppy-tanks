@@ -191,10 +191,16 @@ function notarize(file, staple, notary) {
 
 function buildMac() {
   if (process.platform !== "darwin") {
-    console.error("The macOS app needs a Mac (sips, iconutil, codesign).");
+    console.error("The macOS app needs a Mac (codesign, productbuild, notarytool).");
     process.exit(1);
   }
-  const appIcon = verifyDesktopIcon();
+  let appIcon;
+  try {
+    appIcon = verifyDesktopIcon();
+  } catch (error) {
+    console.error(error.message);
+    process.exit(1);
+  }
   ensureTargets([MAC_TARGET]);
   const binary = build(MAC_TARGET);
 

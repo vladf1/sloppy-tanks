@@ -234,12 +234,15 @@ Windows executable. Build through the script rather than `cargo build`: it stamp
 content version multiplayer joins send, which must match the servers' (the same one the
 page carries), as well as the release and commit Battle Setup shows. It adds the Apple silicon
 and Windows targets with rustup when they are missing and uses the `desktop` Cargo profile, which
-optimizes everything for speed with ThinLTO and parallel code generation. `cargo run -p sloppy-desktop` works for quick local
+optimizes everything for speed with fat LTO and one codegen unit. Pull-request artifacts use
+ThinLTO and parallel code generation to compile faster; main's releases and local builds
+keep the full release optimization. `cargo run -p sloppy-desktop` works for quick local
 tries, but servers refuse its unstamped content version. The
 [Desktop app workflow](.github/workflows/desktop.yml) builds both on pull requests that
 touch the crates or assets and on main, and keeps them as run artifacts, along with Cargo's
 compilation timing reports. macOS clippy and shell tests run alongside the app builds in
-the `desktop-check` profile, without optimizing the GPU and window dependencies. Linux CI leaves
+the `desktop-check` profile, without optimizing the GPU and window dependencies, while
+retaining workspace line tables for panic backtraces. Linux CI leaves
 the crate out (`--exclude sloppy-desktop`), since its window and audio crates need
 system libraries there. Main's builds also replace the repository's
 [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest), under file

@@ -39,14 +39,19 @@ roads, cottages or fields.
 
 ## macOS app icon
 
-`public/icons/mac-app.icns` is generated from the existing `public/icons/icon-512.png`
+`assets/desktop/mac-app.icns` is generated from the existing `public/icons/icon-512.png`
 by `scripts/generate-desktop-icon.mjs`, using the project's Node canvas library and
-macOS's `iconutil`. It retains the original app icon's rounded square, margin and
-shadow. Run `pnpm run generate:desktop-icon` on a Mac after changing the source icon
-or generator, and commit the `.icns` and `mac-app-icon.json` together. The JSON records
-source, generator and output hashes; packaging and a page-shell test reject a stale
-asset. Normal desktop builds only verify and copy it, without running an image
-generator or compiling a Rust example.
+a portable ICNS writer. It retains the original app icon's rounded square, margin and
+shadow, halving the canvas at each step to keep small entries smooth. Run
+`pnpm run generate:desktop-icon` on any supported OS after changing the source icon
+or drawing recipe; `pnpm run generate:app-icons` regenerates it automatically after
+the web icons. Commit the `.icns` and adjacent `mac-app-icon.json` together. The JSON
+records source, drawing recipe and output hashes; bump the recipe's version when
+changing the drawing algorithm. Comment, formatting and verifier edits do not stale
+the icon. Packaging and a page-shell test reject stale assets and name the changed
+inputs. Normal desktop builds only verify and copy it, without running an image
+generator or compiling a Rust example. Desktop-only assets stay outside `public/`
+so web deployments do not carry them.
 
 ## Encoding
 

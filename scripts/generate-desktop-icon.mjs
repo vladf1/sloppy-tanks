@@ -1,92 +1,121 @@
-// The Mac app's icon, derived from the web app's existing tank artwork. Run on a
-// Mac after changing the source art; packaging copies the checked-in .icns file.
-import { spawnSync } from "node:child_process";
+// The Mac app's icon, derived from the web app's existing tank artwork. Generation
+// works on any OS; packaging copies the checked-in .icns file.
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
 const source = new URL("../public/icons/icon-512.png", import.meta.url);
-const icon = new URL("../public/icons/mac-app.icns", import.meta.url);
-const provenance = new URL("../assets/texture-sources/mac-app-icon.json", import.meta.url);
-// Apple's icon grid, unchanged from the original Rust generator.
-const CANVAS = 1024;
-const BODY = 824;
-const RADIUS = 185.4;
-const SHADOW_DROP = 10;
-const SHADOW_BLUR = 12;
-const SHADOW_ALPHA = 0.35;
-const SIZES = [16, 32, 128, 256, 512];
+const icon = new URL("../assets/desktop/mac-app.icns", import.meta.url);
+const provenance = new URL("../assets/desktop/mac-app-icon.json", import.meta.url);
+// Apple's icon grid. Bump version when changing the drawing/scaling algorithm;
+// wording, formatting and verification changes do not change the artwork.
+const RECIPE = {
+  version: 2,
+  canvas: 1024,
+  body: 824,
+  radius: 185.4,
+  shadowDrop: 10,
+  shadowBlur: 12,
+  shadowAlpha: 0.35,
+  entries: [
+    ["icp4", 16],
+    ["ic11", 32],
+    ["icp5", 32],
+    ["ic12", 64],
+    ["ic07", 128],
+    ["ic13", 256],
+    ["ic08", 256],
+    ["ic14", 512],
+    ["ic09", 512],
+    ["ic10", 1024],
+  ],
+};
 
 function hash(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-function fingerprints() {
+function fingerprints(source, icon) {
   return {
     sourceSha256: hash(readFileSync(source)),
-    generatorSha256: hash(readFileSync(new URL(import.meta.url), "utf8").replaceAll("\r\n", "\n")),
+    recipeSha256: hash(JSON.stringify(RECIPE)),
     iconSha256: hash(readFileSync(icon)),
   };
 }
 
 /** Refuse stale artwork rather than silently shipping the previous icon. Uses only
  * Node built-ins, so packaging needs no image library or dependency install. */
-export function verifyDesktopIcon() {
-  const expected = JSON.parse(readFileSync(provenance, "utf8"));
-  const actual = fingerprints();
-  if (Object.keys(actual).some((key) => actual[key] !== expected[key])) {
-    throw new Error("The Mac icon is stale. Run pnpm run generate:desktop-icon on a Mac.");
+export function verifyDesktopIcon(paths = {}) {
+  const {
+    source: sourcePath = source,
+    icon: iconPath = icon,
+    provenance: provenancePath = provenance,
+  } = paths;
+  const expected = JSON.parse(readFileSync(provenancePath, "utf8"));
+  const actual = fingerprints(sourcePath, iconPath);
+  const mismatches = Object.keys(actual).filter((key) => actual[key] !== expected[key]);
+  if (mismatches.length) {
+    throw new Error(
+      `The Mac icon differs: ${mismatches.join(", ")}. Run pnpm run generate:desktop-icon and commit the icon and provenance.`,
+    );
   }
-  return fileURLToPath(icon);
+  return fileURLToPath(iconPath);
 }
 
-async function generate() {
-  if (process.platform !== "darwin") {
-    throw new Error("Generating the Mac icon needs macOS's iconutil.");
-  }
+export async function generateDesktopIcon(
+  destination = new URL("../assets/desktop/", import.meta.url),
+) {
+  const icon = new URL("mac-app.icns", destination);
+  const provenance = new URL("mac-app-icon.json", destination);
   // The existing artwork dependency is needed only when regenerating the asset.
   const { createCanvas, loadImage } = await import("@napi-rs/canvas");
   const image = await loadImage(fileURLToPath(source));
-  const body = createCanvas(BODY, BODY);
+  const { canvas: size, body: bodySize, radius, shadowDrop, shadowBlur, shadowAlpha } = RECIPE;
+  const body = createCanvas(bodySize, bodySize);
   const bodyContext = body.getContext("2d");
   bodyContext.imageSmoothingQuality = "high";
   bodyContext.beginPath();
-  bodyContext.roundRect(0, 0, BODY, BODY, RADIUS);
+  bodyContext.roundRect(0, 0, bodySize, bodySize, radius);
   bodyContext.clip();
-  bodyContext.drawImage(image, 0, 0, BODY, BODY);
+  bodyContext.drawImage(image, 0, 0, bodySize, bodySize);
 
-  const canvas = createCanvas(CANVAS, CANVAS);
+  let canvas = createCanvas(size, size);
   const context = canvas.getContext("2d");
-  context.shadowColor = `rgba(0, 0, 0, ${SHADOW_ALPHA})`;
+  context.shadowColor = `rgba(0, 0, 0, ${shadowAlpha})`;
   // Canvas shadowBlur uses half its value as the Gaussian standard deviation.
-  context.shadowBlur = SHADOW_BLUR * 2;
-  context.shadowOffsetY = SHADOW_DROP;
-  const inset = (CANVAS - BODY) / 2;
+  context.shadowBlur = shadowBlur * 2;
+  context.shadowOffsetY = shadowDrop;
+  const inset = (size - bodySize) / 2;
   context.drawImage(body, inset, inset);
 
-  const iconset = new URL("../target/desktop-icon/AppIcon.iconset/", import.meta.url);
-  rmSync(iconset, { recursive: true, force: true });
-  mkdirSync(iconset, { recursive: true });
-  for (const size of SIZES) {
-    for (const scale of [1, 2]) {
-      const pixels = size * scale;
-      const output = createCanvas(pixels, pixels);
-      const scaled = output.getContext("2d");
-      scaled.imageSmoothingQuality = "high";
-      scaled.drawImage(canvas, 0, 0, pixels, pixels);
-      const name = `icon_${size}x${size}${scale === 2 ? "@2x" : ""}.png`;
-      writeFileSync(new URL(name, iconset), output.toBuffer("image/png"));
-    }
+  // Halve at each step so small icons average all source pixels instead of
+  // sampling a few distant ones in a single 32:1 or 64:1 reduction.
+  const images = new Map([[size, canvas.toBuffer("image/png")]]);
+  while (canvas.width > 16) {
+    const pixels = canvas.width / 2;
+    const output = createCanvas(pixels, pixels);
+    const scaled = output.getContext("2d");
+    scaled.imageSmoothingQuality = "high";
+    scaled.drawImage(canvas, 0, 0, pixels, pixels);
+    images.set(pixels, output.toBuffer("image/png"));
+    canvas = output;
   }
-  const result = spawnSync(
-    "iconutil",
-    ["--convert", "icns", "--output", fileURLToPath(icon), fileURLToPath(iconset)],
-    { stdio: "inherit" },
-  );
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`iconutil exited with ${result.status}`);
-  writeFileSync(provenance, JSON.stringify(fingerprints(), null, 2) + "\n");
+  // Modern ICNS entries are PNGs with an eight-byte type/length header. Keeping
+  // the container in Node avoids macOS-only iconutil during asset generation.
+  const chunks = RECIPE.entries.map(([type, pixels]) => {
+    const png = images.get(pixels);
+    const header = Buffer.alloc(8);
+    header.write(type, 0, "ascii");
+    header.writeUInt32BE(8 + png.length, 4);
+    return Buffer.concat([header, png]);
+  });
+  const header = Buffer.alloc(8);
+  header.write("icns", 0, "ascii");
+  header.writeUInt32BE(8 + chunks.reduce((sum, chunk) => sum + chunk.length, 0), 4);
+  mkdirSync(new URL(".", icon), { recursive: true });
+  writeFileSync(icon, Buffer.concat([header, ...chunks]));
+  writeFileSync(provenance, JSON.stringify(fingerprints(source, icon), null, 2) + "\n");
   console.log(`Generated ${fileURLToPath(icon)}`);
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) await generate();
+if (process.argv[1] === fileURLToPath(import.meta.url)) await generateDesktopIcon();

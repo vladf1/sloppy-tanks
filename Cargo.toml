@@ -102,10 +102,6 @@ opt-level = 3
 [profile.desktop]
 inherits = "release"
 opt-level = 3
-# Unlike a Wasm download, the app can afford parallel code generation and ThinLTO.
-# Fat LTO with one codegen unit serializes the large renderer/physics link.
-lto = "thin"
-codegen-units = 16
 
 [profile.desktop.package."*"]
 opt-level = 3
@@ -130,7 +126,6 @@ opt-level = 3
 # to run them; clippy and tests share this profile in CI.
 [profile.desktop-check]
 inherits = "dev"
-debug = false
 
 [profile.desktop-check.package."*"]
 opt-level = 0

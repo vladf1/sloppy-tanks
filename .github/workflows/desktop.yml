@@ -19,6 +19,7 @@ on:
     paths: &paths
       - "crates/**"
       - "public/**"
+      - "assets/desktop/**"
       - "Cargo.*"
       - ".cargo/**"
       - "rust-toolchain.toml"
@@ -91,6 +92,9 @@ jobs:
           fi
       - run: node scripts/build-desktop.mjs --mac
         env:
+          # PR artifacts favor compile time; main/local builds retain release's fat LTO.
+          CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
+          CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
           SLOPPY_NOTARY_KEY_ID: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_KEY_ID || '' }}
           SLOPPY_NOTARY_ISSUER: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_ISSUER || '' }}
       # The build falls back to an ad-hoc signature without the secrets; a release must
@@ -132,6 +136,9 @@ jobs:
           cargo-cache: desktop-windows
           node-dependencies: "false"
       - run: node scripts/build-desktop.mjs --windows
+        env:
+          CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
+          CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
       - uses: actions/upload-artifact@v7
         with:
           path: artifacts/desktop/sloppy-tanks.exe
@@ -163,6 +170,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: downloads
+          pattern: "{Sloppy-Tanks-*-macOS.zip,Sloppy-Tanks-*-macOS.pkg,sloppy-tanks.exe}"
           merge-multiple: true
           skip-decompress: true
       - name: Publish the builds
