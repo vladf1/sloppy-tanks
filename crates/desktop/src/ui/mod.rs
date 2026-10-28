@@ -28,8 +28,6 @@ pub enum Action {
     EndBattle,
     /// BATTLE SETUP from the results or the pause menu: a fresh world.
     BattleSetup,
-    /// A Battle Setup choice changed (the preferences hold it).
-    OptionsChanged,
     /// The respawn card picked the next life's tank.
     NextTank(String),
     SelectAmmo(u8),

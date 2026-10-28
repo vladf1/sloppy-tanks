@@ -54,6 +54,63 @@ pub fn vgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
     Shape::mesh(mesh)
 }
 
+/// A vertical gradient through `stops` filling `rect` with its corners rounded by
+/// `radius` (north-west, north-east, south-west, south-east), as one mesh: a gradient
+/// laid over a rounded fill leaves bands where the two differ near the corners.
+pub fn rounded_vgradient(rect: Rect, radius: [f32; 4], stops: &[(f32, Color32)]) -> Shape {
+    const ARC_STEPS: usize = 8;
+    let [nw, ne, sw, se] = radius.map(|r| r.min(rect.width() / 2.0).min(rect.height() / 2.0));
+    // How far a corner of radius `r` pulls the edge in at `depth` into its band.
+    let inset = |r: f32, depth: f32| {
+        if depth >= r {
+            0.0
+        } else {
+            r - (r * r - (r - depth) * (r - depth)).max(0.0).sqrt()
+        }
+    };
+    let color_at = |share: f32| {
+        let mut previous = stops[0];
+        for &stop in stops {
+            if share <= stop.0 {
+                let span = (stop.0 - previous.0).max(f32::EPSILON);
+                return mix(previous.1, stop.1, (share - previous.0) / span);
+            }
+            previous = stop;
+        }
+        previous.1
+    };
+    let mut ys: Vec<f32> = stops
+        .iter()
+        .map(|(share, _)| rect.top() + rect.height() * share)
+        .collect();
+    let top_band = nw.max(ne);
+    let bottom_band = sw.max(se);
+    for step in 0..=ARC_STEPS {
+        let t = step as f32 / ARC_STEPS as f32;
+        ys.push(rect.top() + top_band * t);
+        ys.push(rect.bottom() - bottom_band * t);
+    }
+    ys.retain(|y| (rect.top()..=rect.bottom()).contains(y));
+    ys.sort_by(f32::total_cmp);
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+    let mut mesh = Mesh::default();
+    for (index, &y) in ys.iter().enumerate() {
+        let from_top = y - rect.top();
+        let from_bottom = rect.bottom() - y;
+        let left = rect.left() + inset(nw, from_top).max(inset(sw, from_bottom));
+        let right = rect.right() - inset(ne, from_top).max(inset(se, from_bottom));
+        let color = color_at((y - rect.top()) / rect.height().max(f32::EPSILON));
+        mesh.colored_vertex(pos2(left, y), color);
+        mesh.colored_vertex(pos2(right, y), color);
+        if index > 0 {
+            let base = (index as u32 - 1) * 2;
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base + 1, base + 3, base + 2);
+        }
+    }
+    Shape::mesh(mesh)
+}
+
 /// A horizontal gradient over `rect` through `stops` (share of the width, colour).
 pub fn hgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
     let mut mesh = Mesh::default();

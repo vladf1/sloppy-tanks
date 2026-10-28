@@ -220,25 +220,6 @@ pub fn map_name(id: &str) -> &str {
         .map_or(id, |(_, name)| name)
 }
 
-/// The tab row at the top of Battle Setup; true when Multiplayer shows.
-pub fn play_tabs(ui: &mut egui::Ui, state: &mut RoomsState) -> bool {
-    ui.horizontal(|ui| {
-        for (multiplayer, label) in [(false, "SINGLE PLAYER"), (true, "MULTIPLAYER")] {
-            let text = RichText::new(label).font(display_font(18.0));
-            if ui
-                .add_sized(
-                    [266.0, 30.0],
-                    egui::Button::selectable(state.multiplayer == multiplayer, text),
-                )
-                .clicked()
-            {
-                state.multiplayer = multiplayer;
-            }
-        }
-    });
-    state.multiplayer
-}
-
 fn label(ui: &mut egui::Ui, text: &str) {
     ui.label(
         RichText::new(text)

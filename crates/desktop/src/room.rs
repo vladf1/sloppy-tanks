@@ -585,7 +585,6 @@ impl RoomSession {
             Action::Start
             | Action::EndBattle
             | Action::BattleSetup
-            | Action::OptionsChanged
             | Action::NextTank(_)
             | Action::JoinRoom(_) => {}
         }

@@ -178,6 +178,8 @@ struct Session {
     prepared_options: String,
     /// Preparation of the prepared options' arena is still running.
     preparing: bool,
+    /// Battle Setup choices that have been on screen for a frame, ready to rebuild for.
+    options_shown: Option<String>,
     compiled: u32,
     /// A round is on (the HUD shows; frames run).
     in_round: bool,
@@ -406,6 +408,7 @@ impl Session {
             build,
             prepared_options: String::new(),
             preparing: true,
+            options_shown: None,
             compiled: 0,
             in_round: false,
             phase: Phase::Ready,
@@ -626,9 +629,6 @@ impl Session {
                 self.compiled = 0;
                 self.refresh_hud();
             }
-            Action::OptionsChanged => {
-                self.ui.ready = false;
-            }
             Action::NextTank(kind) => {
                 self.prefs.tank = kind;
                 self.prefs.save();
@@ -739,6 +739,12 @@ impl Session {
     fn prepare(&mut self) -> Result<(), String> {
         let wanted = self.wanted_options();
         if wanted != self.prepared_options {
+            // The rebuild holds this thread for a moment: the player's new choice, or
+            // GO's LOADING…, shows first, as the page waits for a paint.
+            if self.options_shown.as_ref() != Some(&wanted) {
+                self.options_shown = Some(wanted);
+                return Ok(());
+            }
             self.game.set_options(&wanted)?;
             self.prepared_options = wanted;
             self.preparing = true;
@@ -776,7 +782,16 @@ impl Session {
             self.preparing = false;
             self.ui.ready = true;
             self.ui.status = READY_STATUS.into();
-        } else if remaining > 0.0 {
+            return Ok(());
+        }
+        // A rebuild that reuses every pipeline and texture still waits for its warm-up
+        // frames; that is not loading, so Battle Setup keeps showing it is ready rather
+        // than flicker through the loading lines.
+        if self.compiled == 0 && remaining == 0.0 && textures == 0.0 {
+            return Ok(());
+        }
+        self.ui.ready = false;
+        if remaining > 0.0 {
             self.ui.status = format!(
                 "Shaders loaded: {} of {}",
                 self.compiled,
