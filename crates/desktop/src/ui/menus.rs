@@ -343,7 +343,6 @@ fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[PauseFact]) -> f3
     let total = Rect::from_min_size(origin, vec2(width, rows as f32 * (cell_height + 1.0) - 1.0));
     painter.rect_filled(total, 12, hexa(0x9fd0ff, 0.08));
     for (index, fact) in cells.iter().enumerate() {
-        let (caption, value, note) = (fact.label, &fact.value, fact.note);
         let column = index % columns;
         let row = index / columns;
         let cell = Rect::from_min_size(
@@ -373,7 +372,7 @@ fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[PauseFact]) -> f3
             painter,
             pos2(cell.center().x, cell.top() + 16.0),
             Align2::CENTER_TOP,
-            &caption.to_uppercase(),
+            &fact.label.to_uppercase(),
             bold_font(12.0),
             hex(0xa9c6dc),
             1.4,
@@ -382,18 +381,18 @@ fn facts(painter: &Painter, origin: Pos2, width: f32, cells: &[PauseFact]) -> f3
             painter,
             pos2(cell.center().x, cell.top() + 35.0),
             Align2::CENTER_TOP,
-            value,
-            display_font(if value.len() > 14 { 20.0 } else { 28.0 }),
+            &fact.value,
+            display_font(if fact.value.len() > 14 { 20.0 } else { 28.0 }),
             Color32::WHITE,
             0.4,
             cell.width() - 16.0,
         );
-        if !note.is_empty() {
+        if !fact.note.is_empty() {
             paint::text_fit(
                 painter,
                 pos2(cell.center().x, cell.top() + 68.0),
                 Align2::CENTER_TOP,
-                &note.to_uppercase(),
+                &fact.note.to_uppercase(),
                 bold_font(12.0),
                 hex(0xa9c6dc),
                 1.0,

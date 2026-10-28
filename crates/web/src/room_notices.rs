@@ -63,7 +63,7 @@ impl RoomNotice {
             }
             ClientNotice::Notice(text) => RoomNotice::Notice(text),
             ClientNotice::Ended { cause, text } => {
-                RoomNotice::Ended(room_text.ended(cause, text, shell))
+                RoomNotice::Ended(room_text.ended(Some(cause), text, shell))
             }
             ClientNotice::Lobby(lobby) => {
                 let (menu, arrivals) = room_text.lobby(&lobby, player_id);

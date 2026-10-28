@@ -740,11 +740,8 @@ fn board(
     let viewer = hud.human.id;
     let gap = 8.0;
     let team_width = (width - gap) / 2.0;
-    let largest = [Team::Blue, Team::Red]
-        .map(|team| rows.iter().filter(|row| row.team == team).count())
-        .into_iter()
-        .max()
-        .unwrap_or(0);
+    let teams = &report.board.teams;
+    let largest = teams.iter().map(|team| team.tanks.len()).max().unwrap_or(0);
     let row_height = if largest <= 8 { 30.0 } else { 22.0 };
     let body_height = (largest.max(1) as f32 * row_height + 6.0)
         .max(minimum_height - 34.0 - if mvp.is_some() { 30.0 } else { 0.0 });
@@ -814,7 +811,7 @@ fn board(
             Stroke::new(1.0, hexa(0xa6dfff, 0.12)),
             StrokeKind::Inside,
         );
-        let members = report.board.teams[team.index()]
+        let members = teams[team.index()]
             .tanks
             .iter()
             .filter_map(|&id| rows.iter().find(|row| row.id == id));
