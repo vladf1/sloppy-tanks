@@ -288,14 +288,9 @@ pub fn battle_report(hud: &Hud, recap: &RoundRecap, shell: Shell) -> BattleRepor
         details: details(recap),
         note: note(hud, recap, shell),
         board: ReportBoard {
-            teams: [Team::Blue, Team::Red].map(|team| {
-                let mut members: Vec<&HudScore> =
-                    rows.iter().filter(|row| row.team == team).collect();
-                members.sort_by(|a, b| by_score(a, b));
-                BoardTeam {
-                    label: team_label(hud.team_names[team.index()]),
-                    tanks: members.iter().map(|row| row.id).collect(),
-                }
+            teams: [Team::Blue, Team::Red].map(|team| BoardTeam {
+                label: team_label(hud.team_names[team.index()]),
+                tanks: ranked(&rows, team).iter().map(|row| row.id).collect(),
             }),
             mvp: most_valuable(&rows),
         },
@@ -511,7 +506,8 @@ fn details(recap: &RoundRecap) -> Vec<ReportDetail> {
         recap.improved.contains(&metric)
             || (NOTABLE.contains(&metric) && recap.stats.get(metric) >= threshold)
     };
-    let mut details: Vec<ReportDetail> = METRICS
+    // New bests lead; the rest keep the report's order.
+    let (mut details, rest): (Vec<ReportDetail>, Vec<ReportDetail>) = METRICS
         .iter()
         .filter(|&&(metric, ..)| {
             !FEATURED.contains(&metric) && recap.stats.get(metric) > 0.0 && notable(metric)
@@ -529,9 +525,8 @@ fn details(recap: &RoundRecap) -> Vec<ReportDetail> {
                 record,
             }
         })
-        .collect();
-    // New bests lead; the rest keep the report's order.
-    details.sort_by_key(|detail| !detail.record);
+        .partition(|detail| detail.record);
+    details.extend(rest);
     details.truncate(MAX_DETAILS);
     details
 }
@@ -587,7 +582,7 @@ pub fn pause_report(hud: &Hud) -> PauseReport {
     let last = match place {
         Some((place, of)) => PauseFact {
             label: "Team rank",
-            value: format!("{} of {of}", ordinal(place as u64).to_lowercase()),
+            value: format!("{} of {of}", ordinal(place as u64).to_ascii_lowercase()),
             note: "by kills",
         },
         None => PauseFact {
@@ -694,16 +689,15 @@ pub fn count_line(count: u32, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
-/// "BLUE" as the report says it: "Blue team".
+/// "BLUE" as the report says it: "Blue team". Team names are ASCII; ASCII case keeps
+/// Unicode's case tables out of the Wasm.
 pub fn team_label(name: &str) -> String {
-    let mut chars = name.chars();
-    let first: String = chars
-        .next()
-        .map(char::to_uppercase)
-        .into_iter()
-        .flatten()
-        .collect();
-    format!("{first}{} team", chars.as_str().to_lowercase())
+    let (first, rest) = name.split_at(name.chars().next().map_or(0, char::len_utf8));
+    format!(
+        "{}{} team",
+        first.to_ascii_uppercase(),
+        rest.to_ascii_lowercase()
+    )
 }
 
 /// The team ahead, or none when the scores are level.
@@ -731,27 +725,32 @@ pub fn standing_line(scores: [u32; 2], team: Team, names: &[&str; 2]) -> String 
 }
 
 /// The scoreboard's order: most kills first, then fewest wrecks, then by name. Names
-/// compare as the page's `localeCompare` orders player names: letters alike whatever
-/// their case, then lower case first.
+/// compare as the page's `localeCompare` ordered ASCII names: letters alike whatever
+/// their case, then lower case first. Other letters follow by code point, which keeps
+/// Unicode's case tables out of the Wasm for a tie on kills and wrecks.
 pub fn by_score(a: &HudScore, b: &HudScore) -> Ordering {
-    let folded = |name: &str| {
-        name.chars()
-            .flat_map(char::to_lowercase)
-            .collect::<Vec<_>>()
-    };
+    fn folded(name: &str) -> impl Iterator<Item = u8> + '_ {
+        name.bytes().map(|byte| byte.to_ascii_lowercase())
+    }
     b.kills
         .cmp(&a.kills)
         .then(a.deaths.cmp(&b.deaths))
-        .then_with(|| folded(&a.name).cmp(&folded(&b.name)))
+        .then_with(|| folded(&a.name).cmp(folded(&b.name)))
         .then_with(|| b.name.cmp(&a.name))
+}
+
+/// `team`'s rows in the scoreboard's order, ties in roster order.
+fn ranked<'a>(rows: &'a [HudScore<'a>], team: Team) -> Vec<&'a HudScore<'a>> {
+    let mut members: Vec<&HudScore> = rows.iter().filter(|row| row.team == team).collect();
+    members.sort_by(|a, b| by_score(a, b));
+    members
 }
 
 /// Where the viewer stands on their own team's board, by kills then fewest wrecks:
 /// 1-based place and the team's size, or none when the viewer is not listed.
 pub fn team_place(rows: &[HudScore], viewer: u32) -> Option<(usize, usize)> {
     let row = rows.iter().find(|row| row.id == viewer)?;
-    let mut team: Vec<&HudScore> = rows.iter().filter(|other| other.team == row.team).collect();
-    team.sort_by(|a, b| by_score(a, b));
+    let team = ranked(rows, row.team);
     let place = team.iter().position(|other| other.id == viewer)? + 1;
     Some((place, team.len()))
 }
