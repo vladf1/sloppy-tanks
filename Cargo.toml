@@ -102,6 +102,10 @@ opt-level = 3
 [profile.desktop]
 inherits = "release"
 opt-level = 3
+# Unlike a Wasm download, the app can afford parallel code generation and ThinLTO.
+# Fat LTO with one codegen unit serializes the large renderer/physics link.
+lto = "thin"
+codegen-units = 16
 
 [profile.desktop.package."*"]
 opt-level = 3
@@ -120,6 +124,16 @@ opt-level = 3
 
 [profile.desktop.package.wide]
 opt-level = 3
+
+# Desktop shell tests exercise input, menus, audio decisions and sockets, not long
+# physics matches. Do not optimize its entire GPU/window/audio dependency graph just
+# to run them; clippy and tests share this profile in CI.
+[profile.desktop-check]
+inherits = "dev"
+debug = false
+
+[profile.desktop-check.package."*"]
+opt-level = 0
 
 # Debug builds keep only line tables: panic backtraces still name file and line, while
 # full debug info made Linux test builds link 2-3x slower and the target dir 4x larger.

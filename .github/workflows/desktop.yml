@@ -23,6 +23,10 @@ on:
       - ".cargo/**"
       - "rust-toolchain.toml"
       - "scripts/build-desktop.mjs"
+      - "scripts/content-version.mjs"
+      - "scripts/release-version.mjs"
+      - "package.json"
+      - ".github/actions/setup/**"
       - ".github/workflows/desktop.yml"
   push:
     branches: [main]
@@ -37,16 +41,27 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  macos-check:
+    name: macOS clippy and tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: desktop-macos-check
+          node-dependencies: "false"
+      - run: cargo clippy --locked --profile desktop-check -p sloppy-desktop --all-targets -- -D warnings
+      - run: cargo test --locked --profile desktop-check -p sloppy-desktop
+
   macos:
-    name: macOS app (clippy, tests, build)
+    name: macOS app
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
           cargo-cache: desktop-macos
-      - run: cargo clippy --locked -p sloppy-desktop --all-targets -- -D warnings
-      - run: cargo test --locked -p sloppy-desktop
+          node-dependencies: "false"
       - name: Signing keychain
         if: github.event_name != 'pull_request'
         env:
@@ -73,7 +88,7 @@ jobs:
             printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
             echo "SLOPPY_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
           fi
-      - run: pnpm run desktop:mac
+      - run: node scripts/build-desktop.mjs --mac
         env:
           SLOPPY_NOTARY_KEY_ID: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_KEY_ID || '' }}
           SLOPPY_NOTARY_ISSUER: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_ISSUER || '' }}
@@ -108,7 +123,8 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           cargo-cache: desktop-windows
-      - run: pnpm run desktop:windows
+          node-dependencies: "false"
+      - run: node scripts/build-desktop.mjs --windows
       - uses: actions/upload-artifact@v7
         with:
           path: artifacts/desktop/sloppy-tanks.exe
@@ -117,7 +133,7 @@ jobs:
 
   release:
     name: Latest release
-    needs: [macos, windows]
+    needs: [macos-check, macos, windows]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:

@@ -11,15 +11,19 @@ inputs:
   wasm-bindgen:
     description: Install the wasm-bindgen CLI, which only the Wasm engine build needs.
     default: "false"
+  node-dependencies:
+    description: Install the page toolchain and dependencies; desktop packaging only needs Node.
+    default: "true"
 runs:
   using: composite
   steps:
     - uses: pnpm/action-setup@v6
+      if: inputs.node-dependencies == 'true'
     - uses: actions/setup-node@v7
       with:
         node-version: 24
         check-latest: true
-        cache: pnpm
+        cache: ${{ inputs.node-dependencies == 'true' && 'pnpm' || '' }}
         cache-dependency-path: |
           pnpm-lock.yaml
           tools/lint/pnpm-lock.yaml
@@ -52,4 +56,5 @@ runs:
       shell: bash
       run: cargo install wasm-bindgen-cli --version 0.2.129 --locked --bin wasm-bindgen
     - run: pnpm install --frozen-lockfile
+      if: inputs.node-dependencies == 'true'
       shell: bash

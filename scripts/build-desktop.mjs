@@ -126,6 +126,10 @@ function makeIcns(destination, scratch) {
   run("cargo", [
     "run",
     "--locked",
+    "--profile",
+    PROFILE,
+    "--target",
+    MAC_TARGET,
     "-q",
     "-p",
     "sloppy-desktop",
