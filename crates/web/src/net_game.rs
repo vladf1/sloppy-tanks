@@ -50,6 +50,8 @@
 //! - `stats_json(now)`: `Game.stats_json()`'s renderer, frame and pixel ratio rows, the
 //!   displayed scene's counts and a `network` block (RTT, updates, playout buffer, late
 //!   batches, ticks, input seq/ack).
+//! - `nerd_stats_json(now)`: the Stats for nerds panel's sections, as
+//!   `Game.nerd_stats_json()`; the update rate is measured between calls.
 //! - Intents: `choose`, `settings`, `start`, `pause`, `resume`, `end`, `rejoin`,
 //!   `leave`, `select_ammo`, `set_hidden`, `stop` (`pagehide`), `toggle_first_person`,
 //!   `resize`.
@@ -60,7 +62,7 @@
 //! `create_with`, `join` ([`JoinChoice`]), `choose_seat`, `set_rules` ([`RoomSettings`]),
 //! `take_room_actions` ([`ClientAction`]), `take_room_notices` ([`RoomNotice`]),
 //! `prepare` ([`PrepareStatus`]), `hud` ([`RoomHud`]), `take_events` ([`EventBatch`]),
-//! `camera` ([`CameraPreferences`]) and `gpu_ms`.
+//! `camera` ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]) and `gpu_ms`.
 
 use crate::Shell;
 use crate::events::{EventBatch, PendingEvent, drain_events, take_events};
@@ -88,12 +90,16 @@ use wasm_bindgen::prelude::*;
 
 use crate::frame_clock::{FramePacing, FrameTimes};
 use crate::hud::{RoomHud, room_hud};
+use crate::nerd_rows::{
+    CauseStats, ConnectionStats, FeelStats, NetworkSampler, OwnShotStats, RoomStats, SceneStats,
+    StatsSection, Summary, room_sections,
+};
 use crate::page::{
     CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
     PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
 };
 use crate::room_notices::RoomNotice;
-use crate::stats::presentation_stats;
+use crate::stats::{frame_readings, presentation_stats, renderer_readings};
 use sloppy_render::gpu::RenderTarget;
 
 /// Notices waiting for `take_notices`; a hidden HUD must not grow this without bound.
@@ -166,7 +172,6 @@ struct PendingArena {
 pub struct NetGame {
     /// The shell drawing this game, for the wording the page and the desktop app say
     /// differently.
-    #[expect(dead_code, reason = "Phase 2 reads it when the engine writes HUD text")]
     shell: Shell,
     client: NetworkClient,
     view: Presentation,
@@ -189,6 +194,8 @@ pub struct NetGame {
     /// Main-thread milliseconds spent applying received messages (including deliveries of
     /// the development delay) this page session, for the statistics.
     receive_ms: f64,
+    /// The previous Stats for nerds reading, which the update rate is measured from.
+    network_sampler: NetworkSampler,
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
@@ -541,7 +548,8 @@ impl NetGame {
         serde_json::to_string(&hud).expect("room HUD serializes")
     }
 
-    /// Stats for nerds: renderer and frame rows, the displayed scene and the network.
+    /// Stats for nerds' readings: renderer and frame rows, the displayed scene and the
+    /// network, for diagnostics and the network checks.
     pub fn stats_json(&self, now: f64) -> String {
         let mut stats = presentation_stats(&self.view, &self.times);
         stats.insert("pixelRatio".into(), self.canvas.pixel_ratio().into());
@@ -550,20 +558,8 @@ impl NetGame {
             self.graphics
                 .stats(&self.view.renderer, self.canvas.pixel_ratio()),
         );
-        if let Some(state) = self.client.display() {
-            stats.insert(
-                "scene".into(),
-                json!({
-                    "tanks": state.tanks.len(),
-                    "alive": state.tanks.iter().filter(|tank| tank.alive).count(),
-                    "mines": state.mines.len(),
-                    "pickups": state.pickups.len(),
-                    "pickupsReady": state.pickups.iter().filter(|pickup| pickup.available).count(),
-                    "shots": state.shots.len(),
-                    "fragments": state.fragments.len(),
-                    "elapsed": state.elapsed,
-                }),
-            );
+        if let Some(scene) = self.scene_stats() {
+            stats.insert("scene".into(), json!(scene));
         }
         let network = self.client.stats(now);
         stats.insert(
@@ -626,6 +622,12 @@ impl NetGame {
             }),
         );
         Value::Object(stats).to_string()
+    }
+
+    /// Stats for nerds' sections and rows as JSON ([`StatsSection`]) at `now`, for the
+    /// panel's refreshes, which the update rate is measured between.
+    pub fn nerd_stats_json(&mut self, now: f64) -> String {
+        serde_json::to_string(&self.nerd_stats(now)).expect("stats rows serialize")
     }
 
     /// Where the ground point `x`, `z` shows on the canvas, as `[x, y]` in normalized
@@ -758,6 +760,7 @@ impl NetGame {
             graphics,
             last_result: vec![0.0; net_frame_slot::LENGTH],
             receive_ms: 0.0,
+            network_sampler: NetworkSampler::default(),
         };
         game.canvas.apply(&mut game.view);
         Ok(game)
@@ -845,6 +848,66 @@ impl NetGame {
         CameraPreferences::of(&self.view.rig)
     }
 
+    /// Stats for nerds' sections and rows at `now`; the update rate is measured since
+    /// the previous call.
+    pub fn nerd_stats(&mut self, now: f64) -> Vec<StatsSection> {
+        let network = self.client.stats(now);
+        let feel = &self.client.feel;
+        let own = &self.client.own_shots.stats;
+        let stats = RoomStats {
+            frame: frame_readings(&self.times),
+            renderer: renderer_readings(
+                &self.view.renderer,
+                &self.graphics,
+                self.canvas.pixel_ratio(),
+            ),
+            scene: self.scene_stats(),
+            network: ConnectionStats {
+                rtt_ms: network.rtt_ms,
+                received_updates: network.received_updates,
+                snapshot_age_ms: network.snapshot_age_ms,
+                buffer_ms: network.buffer_ms,
+                margin_ms: network.margin_ms,
+                underrun: network.underrun,
+                server_tick: network.server_tick,
+                input_seq: network.input_seq,
+                input_ack: network.input_ack,
+                connected: network.connected,
+                late_batches: network.late_batches,
+                longest_batch_gap_ms: network.longest_batch_gap_ms,
+                prediction_lead_ms: network.prediction_lead_ms,
+                correction_m_per_s: network.correction_m_per_s,
+                correction_p95_m: network.correction_p95_m,
+                input_starts: network.input_starts,
+                late_input_starts: network.late_input_starts,
+                correction_causes: network
+                    .correction_causes
+                    .map(|(count, m_per_s)| CauseStats { count, m_per_s }),
+                receive_ms: self.receive_ms,
+                phantom_strikes: network.phantom_strikes,
+            },
+            feel: FeelStats {
+                view_delay_ms: Summary::from(&feel.view_delay),
+                fire_to_flash_ms: Summary::from(&feel.fire_to_flash),
+                fire_to_report_ms: Summary::from(&feel.fire_to_report),
+                hit_offset_m: Summary::from(&feel.hit_offset),
+                incoming_offset_m: Summary::from(&feel.incoming_offset),
+                incoming_behind_m: Summary::from(&feel.incoming_behind),
+                unseen_incoming: feel.unseen_incoming,
+                own_shots: OwnShotStats {
+                    predicted: own.predicted,
+                    confirmed: own.confirmed,
+                    unconfirmed_shells: own.unconfirmed_shells,
+                    unpredicted: own.unpredicted,
+                    phantom_strikes: own.phantom_strikes,
+                    error_m: Summary::from(&own.error),
+                },
+            },
+        };
+        let rates = self.network_sampler.sample(now, &stats.network);
+        room_sections(&stats, rates, self.shell)
+    }
+
     /// The GPU's smoothed frame time in milliseconds, once sampled.
     pub fn gpu_ms(&self) -> Option<f64> {
         self.graphics.gpu_ms()
@@ -852,6 +915,27 @@ impl NetGame {
 }
 
 impl NetGame {
+    /// The displayed scene's counts, once a scene shows.
+    fn scene_stats(&self) -> Option<SceneStats> {
+        let count = |count: usize| count as u64;
+        self.client.display().map(|state| SceneStats {
+            tanks: count(state.tanks.len()),
+            alive: count(state.tanks.iter().filter(|tank| tank.alive).count()),
+            mines: count(state.mines.len()),
+            pickups: count(state.pickups.len()),
+            pickups_ready: count(
+                state
+                    .pickups
+                    .iter()
+                    .filter(|pickup| pickup.available)
+                    .count(),
+            ),
+            shots: count(state.shots.len()),
+            fragments: count(state.fragments.len()),
+            elapsed: state.elapsed,
+        })
+    }
+
     fn notice(&mut self, notice: RoomNotice) {
         if self.notices.len() >= MAX_PENDING_NOTICES {
             self.notices.remove(0);

@@ -12,7 +12,11 @@ use sloppy_core::sim::ammunition::AMMO_ORDER;
 use sloppy_core::sim::round_recap::{Feat, Metric, RecapStats};
 use sloppy_core::sim::{DamageCause, GameMode, MatchPhase, Team, VehicleKind, Weapon};
 use sloppy_render::wgpu;
+use sloppy_web::Shell;
 use sloppy_web::hud::{Hud, HudAmmo, HudHuman, HudScore, Scoreboard};
+use sloppy_web::nerd_rows::{
+    GameStats, NetworkRates, NetworkSampler, RoomStats, game_sections, room_sections,
+};
 use sloppy_web::recap::RoundRecap;
 
 use super::{DeathReport, KillFeedEntry, PauseTab, Toast, ToastTone, UiState, View};
@@ -193,6 +197,66 @@ fn feedback(state: &mut UiState) {
     state.hull_ghost = 0.62;
 }
 
+/// Stats for nerds' readings in `stats_json`'s shape, single player's and a room's: the
+/// panels' rows are written from them, and the fixtures carry them for the page's
+/// capture.
+fn nerd_readings() -> (serde_json::Value, serde_json::Value) {
+    let stats = json!({
+        "fps": 60, "frameMs": 16.7, "simMs": 0.82, "renderMs": 2.31, "graphicsApi": "WebGPU",
+        "quality": {"setting": "auto", "tier": "high", "scale": 1.0, "scene": [2560, 1600], "gpuMs": 4.2, "renderRatio": 2.0, "changes": 0},
+        "drawCalls": 412, "shadowDrawCalls": 96, "reflectionDrawCalls": 0, "triangles": 812345,
+        "shadowTriangles": 210000, "reflectionTriangles": 0, "mainTriangles": 602345,
+        "pipelines": 58, "latePipelines": 0, "meshes": 340, "textures": 61,
+        "gpuBytes": 187654321.0, "meshSlackBytes": 3456789.0, "bodies": 412, "fixedBodies": 300,
+        "dynamicBodies": 112, "sleepingBodies": 70, "colliders": 640, "tanksAlive": 11, "tanks": 12,
+        "mines": 3, "pickupsReady": 4, "pickups": 6, "shots": 9, "particles": 230,
+        "fragments": 12, "maxFragments": 80, "elapsed": 187.4, "pixelRatio": 2,
+    });
+    let summary = |count: u32, mean: f64, p95: f64, max: f64| serde_json::json!({"count": count, "mean": mean, "p50": mean, "p95": p95, "max": max});
+    let mut room_stats = stats.clone();
+    room_stats["scene"] = serde_json::json!({
+        "tanks": 8, "alive": 7, "mines": 2, "pickups": 6, "pickupsReady": 5, "shots": 4,
+        "fragments": 9, "elapsed": 412.6,
+    });
+    room_stats["network"] = serde_json::json!({
+        "rttMs": 38.4, "receivedUpdates": 12408, "snapshotAgeMs": 21.0, "bufferMs": 62.0,
+        "marginMs": 18.0, "underrun": 0.004, "serverTick": 24756, "inputSeq": 24790,
+        "inputAck": 24781, "connected": true, "lateBatches": 3, "longestBatchGapMs": 71.0,
+        "predictionLeadMs": 54.0, "correctionMPerS": 0.031, "correctionP95M": 0.042,
+        "inputStarts": 211, "lateInputStarts": 2, "receiveMs": 2480.0, "corrections": 96,
+        "confirmedSnapshots": 12390, "phantomStrikes": 0,
+        "correctionCauses": {
+            "blast": {"count": 12, "mPerS": 0.012}, "tank": {"count": 30, "mPerS": 0.009},
+            "cover": {"count": 4, "mPerS": 0.003}, "debris": {"count": 9, "mPerS": 0.004},
+            "crate": {"count": 1, "mPerS": 0.001}, "lateInput": {"count": 2, "mPerS": 0.001},
+            "other": {"count": 38, "mPerS": 0.001},
+        },
+    });
+    room_stats["feel"] = serde_json::json!({
+        "viewDelayMs": summary(240, 91.0, 104.0, 130.0),
+        "fireToFlashMs": summary(46, 17.0, 25.0, 33.0),
+        "fireToReportMs": summary(46, 58.0, 70.0, 88.0),
+        "unansweredPresses": 0,
+        "hitOffsetM": summary(21, 0.08, 0.19, 0.31),
+        "incomingOffsetM": summary(14, 0.11, 0.24, 0.4),
+        "incomingBehindM": summary(14, 0.35, 0.62, 0.9),
+        "unseenIncoming": 1,
+        "ownShots": {"predicted": 46, "confirmed": 45, "unconfirmedShells": 1, "unpredicted": 0,
+            "phantomStrikes": 0, "errorM": summary(45, 0.03, 0.07, 0.12)},
+    });
+    (stats, room_stats)
+}
+
+/// A room's update rates from two readings a second apart.
+fn room_rates(latest: &RoomStats) -> NetworkRates {
+    let mut earlier = latest.network.clone();
+    earlier.received_updates = 12_378;
+    earlier.receive_ms = 2_478.0;
+    let mut sampler = NetworkSampler::default();
+    sampler.sample(0.0, &earlier);
+    sampler.sample(1_000.0, &latest.network)
+}
+
 struct Scenario {
     name: &'static str,
     in_round: bool,
@@ -360,21 +424,13 @@ fn scenarios() -> Vec<Scenario> {
             ..UiState::default()
         },
     });
-    let stats = json!({
-        "fps": 60, "frameMs": 16.7, "simMs": 0.82, "renderMs": 2.31, "graphicsApi": "WebGPU",
-        "quality": {"setting": "auto", "tier": "high", "scale": 1.0, "scene": [2560, 1600], "gpuMs": 4.2, "renderRatio": 2.0, "changes": 0},
-        "drawCalls": 412, "shadowDrawCalls": 96, "reflectionDrawCalls": 0, "triangles": 812345,
-        "shadowTriangles": 210000, "reflectionTriangles": 0, "mainTriangles": 602345,
-        "pipelines": 58, "latePipelines": 0, "meshes": 340, "textures": 61,
-        "gpuBytes": 187654321.0, "meshSlackBytes": 3456789.0, "bodies": 412, "fixedBodies": 300,
-        "dynamicBodies": 112, "sleepingBodies": 70, "colliders": 640, "tanksAlive": 11, "tanks": 12,
-        "mines": 3, "pickupsReady": 4, "pickups": 6, "shots": 9, "particles": 230,
-        "fragments": 12, "maxFragments": 80, "elapsed": 187.4, "pixelRatio": 2,
-    });
+    let (game_readings, room_readings) = nerd_readings();
+    let game_stats: GameStats =
+        serde_json::from_value(game_readings).expect("single player's readings");
     let mut nerd = UiState {
         hud: Some(hud(MatchPhase::Playing, false, true, 0.9)),
         show_nerd_stats: true,
-        stats: Some(stats.clone()),
+        stats: Some(game_sections(&game_stats, Shell::Desktop)),
         ..UiState::default()
     };
     nerd.hull_ghost = 0.9;
@@ -384,54 +440,18 @@ fn scenarios() -> Vec<Scenario> {
         phase: MatchPhase::Playing,
         state: nerd,
     });
-    let summary = |count: u32, mean: f64, p95: f64, max: f64| serde_json::json!({"count": count, "mean": mean, "p50": mean, "p95": p95, "max": max});
-    let mut room_stats = stats.clone();
-    room_stats["scene"] = serde_json::json!({
-        "tanks": 8, "alive": 7, "mines": 2, "pickups": 6, "pickupsReady": 5, "shots": 4,
-        "fragments": 9, "elapsed": 412.6,
-    });
-    room_stats["network"] = serde_json::json!({
-        "rttMs": 38.4, "receivedUpdates": 12408, "snapshotAgeMs": 21.0, "bufferMs": 62.0,
-        "marginMs": 18.0, "underrun": 0.004, "serverTick": 24756, "inputSeq": 24790,
-        "inputAck": 24781, "connected": true, "lateBatches": 3, "longestBatchGapMs": 71.0,
-        "predictionLeadMs": 54.0, "correctionMPerS": 0.031, "correctionP95M": 0.042,
-        "inputStarts": 211, "lateInputStarts": 2, "receiveMs": 2480.0, "corrections": 96,
-        "confirmedSnapshots": 12390, "phantomStrikes": 0,
-        "correctionCauses": {
-            "blast": {"count": 12, "mPerS": 0.012}, "tank": {"count": 30, "mPerS": 0.009},
-            "cover": {"count": 4, "mPerS": 0.003}, "debris": {"count": 9, "mPerS": 0.004},
-            "crate": {"count": 1, "mPerS": 0.001}, "lateInput": {"count": 2, "mPerS": 0.001},
-            "other": {"count": 38, "mPerS": 0.001},
-        },
-    });
-    room_stats["feel"] = serde_json::json!({
-        "viewDelayMs": summary(240, 91.0, 104.0, 130.0),
-        "fireToFlashMs": summary(46, 17.0, 25.0, 33.0),
-        "fireToReportMs": summary(46, 58.0, 70.0, 88.0),
-        "unansweredPresses": 0,
-        "hitOffsetM": summary(21, 0.08, 0.19, 0.31),
-        "incomingOffsetM": summary(14, 0.11, 0.24, 0.4),
-        "incomingBehindM": summary(14, 0.35, 0.62, 0.9),
-        "unseenIncoming": 1,
-        "ownShots": {"predicted": 46, "confirmed": 45, "unconfirmedShells": 1, "unpredicted": 0,
-            "phantomStrikes": 0, "errorM": summary(45, 0.03, 0.07, 0.12)},
-    });
+    let room_stats: RoomStats = serde_json::from_value(room_readings).expect("a room's readings");
     let mut room_nerd = UiState {
         hud: Some(hud(MatchPhase::Playing, false, true, 0.9)),
         show_nerd_stats: true,
-        stats: Some(room_stats),
+        stats: Some(room_sections(
+            &room_stats,
+            room_rates(&room_stats),
+            Shell::Desktop,
+        )),
         ..UiState::default()
     };
     room_nerd.hull_ghost = 0.9;
-    // Two readings a second apart give the per-second rows their rates.
-    let latest = room_nerd.stats.clone();
-    let mut earlier = latest.clone().expect("the room has stats");
-    earlier["network"]["receivedUpdates"] = 12_378.into();
-    earlier["network"]["receiveMs"] = 2_478.0.into();
-    room_nerd.stats = Some(earlier);
-    super::nerd_stats::sample_network(&mut room_nerd, 0.0);
-    room_nerd.stats = latest;
-    super::nerd_stats::sample_network(&mut room_nerd, 1_000.0);
     list.push(Scenario {
         name: "room-nerd-stats",
         in_round: true,
@@ -506,7 +526,25 @@ fn snapshots() {
         player_name: "Driver".into(),
         ..Preferences::default()
     };
+    let (game_readings, room_readings) = nerd_readings();
     for mut scenario in scenarios() {
+        // The page's capture draws its own panel from the same readings and rates.
+        let (stats, network_sample) = match scenario.name {
+            "hud-nerd-stats" => (Some(game_readings.clone()), None),
+            "room-nerd-stats" => {
+                let room: RoomStats =
+                    serde_json::from_value(room_readings.clone()).expect("a room's readings");
+                let rates = room_rates(&room);
+                (
+                    Some(room_readings.clone()),
+                    Some(json!({
+                        "rate": rates.updates_per_second,
+                        "receiveShare": rates.receive_ms_per_second / 1000.0,
+                    })),
+                )
+            }
+            _ => (None, None),
+        };
         let is_room = scenario.name.starts_with("room-");
         let mut room_menu = is_room.then(|| super::room_menu::snapshot_menu(scenario.name));
         let state = &scenario.state;
@@ -518,8 +556,8 @@ fn snapshots() {
             "size": size,
             "scale": SCALE,
             "hud": state.hud,
-            "stats": state.stats,
-            "networkSample": state.network_sample,
+            "stats": stats,
+            "networkSample": network_sample,
             "ready": state.ready,
             "status": state.status,
             "cockpit": state.cockpit,

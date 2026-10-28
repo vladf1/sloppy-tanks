@@ -21,6 +21,7 @@ use wasm_bindgen::JsValue;
 use crate::Shell;
 use crate::events::PendingEvent;
 use crate::frame_clock::{FramePacing, FrameTimes};
+use crate::nerd_rows::QualityStats;
 
 /// The HUD refreshes (`hud_json`) every this many frames.
 pub const HUD_UPDATE_EVERY_FRAMES: u64 = 4;
@@ -225,7 +226,22 @@ impl Graphics {
         self.gpu_ms
     }
 
-    /// Stats for nerds' `quality` rows: the setting, tier, render scale, the scene's
+    /// The setting, tier and render scale Stats for nerds' Render rows show.
+    pub fn quality_stats(&self, renderer: &Renderer, pixel_ratio: f64) -> QualityStats {
+        let (tier, scale) = renderer.quality();
+        let (width, height) = renderer.scene_size();
+        QualityStats {
+            setting: self.controller.setting().name().into(),
+            tier: tier.name().into(),
+            scale: f64::from(scale),
+            render_ratio: f64::from(scale) * pixel_ratio,
+            scene: [width, height],
+            gpu_ms: self.gpu_ms,
+            changes: self.controller.changes(),
+        }
+    }
+
+    /// `stats_json`'s `quality` record: the setting, tier, render scale, the scene's
     /// size and the recent changes.
     pub fn stats(&self, renderer: &Renderer, pixel_ratio: f64) -> Value {
         let (tier, scale) = renderer.quality();

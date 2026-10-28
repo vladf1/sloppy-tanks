@@ -20,10 +20,10 @@ import {
   FRAME,
   INPUT,
   PHASES,
-  type EngineStats,
   type EventBatch,
   type HudState,
   type Phase,
+  type StatsSection,
 } from "./game/engine-api";
 import { sameGameOptions, type GameOptions } from "./game/game-options";
 import {
@@ -35,7 +35,7 @@ import {
   startingGraphics,
 } from "./game/player-preferences";
 import { debugPage, isExtraLevel } from "./game/map-options";
-import { NerdStats, engineStatsSections } from "./game/nerd-stats";
+import { NerdStats } from "./game/nerd-stats";
 import { savedVolume } from "./game/settings-dialog";
 import type { PreparedGame } from "./game/start-menu";
 import { PREPARE_BUDGET, afterPaint, nextPrepareStep, stepBetweenTasks } from "./game/task-yield";
@@ -187,7 +187,7 @@ export async function prepareGame(
   const stats = debugPage(location.search)
     ? new NerdStats(
         root,
-        () => engineStatsSections(JSON.parse(game.stats_json()) as EngineStats),
+        () => JSON.parse(game.nerd_stats_json()) as StatsSection[],
         () => active && !root.classList.contains("menu-ready"),
       )
     : undefined;
@@ -511,7 +511,7 @@ export async function prepareGame(
         controls.aimWaitsForClick,
       );
       if (ran) {
-        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+        stats?.frame(now);
         recorder.capture(now, frameMs, result[FRAME.simMs], result[FRAME.renderMs]);
       }
       hudDt += result[FRAME.dt];

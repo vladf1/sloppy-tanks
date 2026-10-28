@@ -163,10 +163,8 @@ pub struct UiState {
     /// GO was pressed and the round is about to start.
     pub starting: bool,
     pub show_nerd_stats: bool,
-    /// The engine's latest `stats_json`, while the nerd stats show.
-    pub stats: Option<serde_json::Value>,
-    /// A room's last network reading, which its update rate is measured from.
-    pub network_sample: Option<nerd_stats::NetworkSample>,
+    /// The engine's latest Stats for nerds rows, while the nerd stats show.
+    pub stats: Option<Vec<sloppy_web::nerd_rows::StatsSection>>,
     /// Stats for nerds' sections the player opened or folded.
     pub nerd_sections: std::collections::BTreeMap<&'static str, bool>,
     /// First person is on (the cockpit compass shows).

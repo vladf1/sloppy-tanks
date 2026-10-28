@@ -963,7 +963,7 @@ impl Session {
             && self.debug_tools()
             && self.frame_index.is_multiple_of(STATS_EVERY_FRAMES)
         {
-            self.ui.stats = serde_json::from_str(&self.game.stats_json()).ok();
+            self.ui.stats = Some(self.game.nerd_stats());
         }
         self.hold_pointer();
         let view = ui::View {

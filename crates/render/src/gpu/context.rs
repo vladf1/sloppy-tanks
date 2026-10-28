@@ -31,12 +31,17 @@ impl ErrorSlot {
     }
 }
 
-/// The browser API this build draws with; startup errors name it, and the page
-/// tells an unavailable one from other failures by the prefix (`src/engine.ts`).
+/// The graphics API this build draws with; startup errors and Stats for nerds name it,
+/// and the page tells an unavailable one from other failures by the prefix
+/// (`src/engine.ts`). Natively wgpu offers each system one backend (`BACKENDS`).
 pub const GRAPHICS_API: &str = if cfg!(feature = "webgl") {
     "WebGL"
 } else if cfg!(target_arch = "wasm32") {
     "WebGPU"
+} else if cfg!(target_os = "macos") {
+    "Metal"
+} else if cfg!(target_os = "windows") {
+    "Direct3D 12"
 } else {
     "Graphics"
 };
