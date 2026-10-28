@@ -1,12 +1,88 @@
 //! Shared page HUD records and ammo, repair and scoreboard rules for local and room play.
 
 use serde::{Serialize, Serializer};
+use serde_json::Value;
 use sloppy_core::sim::ammunition::{AMMO_ORDER, equipped_weapon_for, has_ammo_for};
-use sloppy_core::sim::data::vehicle;
+use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES, vehicle};
+use sloppy_core::sim::difficulty::Difficulty;
+use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::render_state::RenderTank;
+use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
-use sloppy_core::sim::{AmmoInventory, Tank, Team, VehicleKind, Weapon};
+use sloppy_core::sim::{
+    AmmoInventory, GameMode, Match, RenderState, Simulation, Tank, Team, VehicleKind, Weapon,
+};
 use sloppy_render::presentation::hud::health_bar_state;
+
+/// `Game.hud_json`: the page HUD's view of the match and the human's tank.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct Hud<'a> {
+    #[serde(rename = "match")]
+    match_state: &'a Match,
+    elapsed: f64,
+    game_mode: GameMode,
+    endless_match: bool,
+    map_mode: MapId,
+    map_name: String,
+    difficulty: Difficulty,
+    human_team: Team,
+    score_limit: u32,
+    team_names: [&'static str; 2],
+    active_enemies: usize,
+    speed_tuning: &'a SpeedTuning,
+    human: HudHuman,
+    scoreboard: Scoreboard<'a>,
+    recap: Option<&'a Value>,
+}
+
+/// Single player's HUD. The human's tank as the HUD reads it is refilled into `tank`
+/// from the simulation, not the last frame's state: debug hooks change tanks between
+/// frames. `recap` is the finished round's, while results show.
+pub fn simulation_hud<'a>(
+    sim: &'a Simulation,
+    tank: &mut RenderTank,
+    recap: Option<&'a Value>,
+) -> Hud<'a> {
+    sim.fill_tank(tank, sim.human());
+    Hud {
+        match_state: &sim.match_state,
+        elapsed: sim.elapsed,
+        game_mode: sim.game_mode,
+        endless_match: sim.endless_match,
+        map_mode: sim.map_mode,
+        map_name: sim.map_name(),
+        difficulty: sim.difficulty,
+        human_team: sim.human_team,
+        score_limit: SCORE_LIMIT,
+        team_names: TEAM_NAMES,
+        active_enemies: sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
+        speed_tuning: &sim.speed_tuning,
+        human: human_json(tank, sim.elapsed),
+        scoreboard: Scoreboard::Simulated(&sim.tanks),
+        recap,
+    }
+}
+
+/// `NetGame.hud_json`: a room's HUD for the displayed scene; the room lobby has the
+/// rest.
+#[derive(Serialize)]
+pub struct RoomHud<'a> {
+    #[serde(rename = "match")]
+    match_state: &'a Match,
+    human: HudHuman,
+    scoreboard: Scoreboard<'a>,
+}
+
+/// The room HUD for `state`, or `None` before the scene has its viewer.
+pub fn room_hud(state: &RenderState) -> Option<RoomHud<'_>> {
+    let viewer = state.viewer()?;
+    Some(RoomHud {
+        match_state: &state.match_state,
+        human: human_json(viewer, state.elapsed),
+        scoreboard: Scoreboard::Rendered(&state.tanks),
+    })
+}
 
 fn hud_ammo(
     kind: VehicleKind,

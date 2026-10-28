@@ -77,10 +77,13 @@ use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
 use wasm_bindgen::prelude::*;
 
 use crate::frame_clock::{FramePacing, FrameTimes};
-use crate::hud::{HudHuman, Scoreboard, human_json};
+use crate::hud::room_hud;
 use crate::page::{
     CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError, PageView, aim, create_view,
     js_error, now_ms, parse, prepare_result, queue_event,
+};
+use crate::room_notices::{
+    arena_failed_notice, baseline_shown_notice, page_notice, prepare_notice,
 };
 use crate::stats::presentation_stats;
 use sloppy_render::gpu::RenderTarget;
@@ -584,25 +587,10 @@ impl NetGame {
     /// The HUD for the displayed scene (`Game.hud_json()`'s `match`, `human` and
     /// `scoreboard`), or `null` before the first scene.
     pub fn hud_json(&self) -> String {
-        let Some(state) = self.client.display() else {
+        let Some(hud) = self.client.display().and_then(room_hud) else {
             return "null".into();
         };
-        let Some(viewer) = state.viewer() else {
-            return "null".into();
-        };
-        #[derive(serde::Serialize)]
-        struct Hud<'a> {
-            #[serde(rename = "match")]
-            match_state: &'a sloppy_core::sim::Match,
-            human: HudHuman,
-            scoreboard: Scoreboard<'a>,
-        }
-        serde_json::to_string(&Hud {
-            match_state: &state.match_state,
-            human: human_json(viewer, state.elapsed),
-            scoreboard: Scoreboard::Rendered(&state.tanks),
-        })
-        .expect("room HUD serializes")
+        serde_json::to_string(&hud).expect("room HUD serializes")
     }
 
     /// Stats for nerds: renderer and frame rows, the displayed scene and the network.
@@ -787,27 +775,8 @@ impl NetGame {
     /// presentation here.
     fn drain_client_notices(&mut self) {
         for notice in self.client.take_notices() {
-            let value = match notice {
-                ClientNotice::Status { text, connected } => {
-                    json!({ "type": "status", "text": text, "connected": connected })
-                }
-                ClientNotice::Notice(text) => json!({ "type": "notice", "text": text }),
-                ClientNotice::Ended { cause, text } => {
-                    json!({ "type": "ended", "cause": cause.as_str(), "text": text })
-                }
-                ClientNotice::Lobby(lobby) => {
-                    let lobby: Value = serde_json::from_str(&lobby.to_json()).unwrap_or_default();
-                    json!({ "type": "lobby", "lobby": lobby, "playerId": self.client.player_id })
-                }
-                ClientNotice::Result { outcome, team } => {
-                    json!({ "type": "result", "match": outcome, "team": team })
-                }
-                ClientNotice::ResetFeedback => json!({ "type": "resetFeedback" }),
-                ClientNotice::ClearInput => {
-                    self.commands.clear();
-                    json!({ "type": "clearInput" })
-                }
-                ClientNotice::Reveal => json!({ "type": "reveal" }),
+            match notice {
+                ClientNotice::ClearInput => self.commands.clear(),
                 ClientNotice::PrepareArena {
                     round_id,
                     room_epoch,
@@ -819,8 +788,11 @@ impl NetGame {
                     self.baseline = Some(baseline);
                     continue;
                 }
-            };
-            self.notice(value);
+                _ => {}
+            }
+            if let Some(value) = page_notice(&notice, &self.client.player_id) {
+                self.notice(value);
+            }
         }
     }
 
@@ -840,13 +812,13 @@ impl NetGame {
             room_epoch,
             state,
         });
-        self.notice(json!({ "type": "prepare" }));
+        self.notice(prepare_notice());
     }
 
     fn arena_failed(&mut self, error: String) {
         self.arena = None;
         self.client.arena_failed();
-        self.notice(json!({ "type": "arenaFailed", "error": error }));
+        self.notice(arena_failed_notice(&error));
     }
 
     /// A full state makes presentation rebuild every model. Draw the first frames before
@@ -865,7 +837,7 @@ impl NetGame {
         self.events.clear();
         self.client.baseline_shown(baseline, now);
         self.drain_client_notices();
-        self.notice(json!({ "type": "baselineShown" }));
+        self.notice(baseline_shown_notice());
         Ok(())
     }
 

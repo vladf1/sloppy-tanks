@@ -75,36 +75,32 @@
 
 use crate::events::{PendingEvent, drain_events};
 use crate::frame_clock::{FramePacing, FrameTimes, StepClock};
-use crate::hud::{HudHuman, Scoreboard, human_json};
+use crate::hud::simulation_hud;
 use crate::page::{
     CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError, PageView, aim, create_view,
     js_error, now_ms, parse, prepare_result, queue_event,
 };
+use crate::recap::round_recap;
 use crate::stats::presentation_stats;
 use sloppy_render::gpu::RenderTarget;
 
 use glam::Vec2;
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use serde_json::{Value, json};
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::data::{SCORE_LIMIT, STEP, TEAM_NAMES};
-use sloppy_core::sim::difficulty::Difficulty;
+use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::extra_levels::extra_level;
 use sloppy_core::sim::game_options::{GameOptions, game_choices, initial_game_options};
 use sloppy_core::sim::level_rules::{single_player_rules, standard_rules};
-use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::match_state::end_battle;
 use sloppy_core::sim::render_state::RenderTank;
-use sloppy_core::sim::round_recap::{Metric, combat_feats, recap_stats, save_personal_bests};
 #[cfg(target_arch = "wasm32")]
 use sloppy_core::sim::round_recap::{RecordStorage, StorageUnavailable};
-use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::speed_tuning::{SpeedSetting, tune_speed};
 use sloppy_core::sim::types::{DamageCause, DamageSource};
-use sloppy_core::sim::veterancy::RANKS;
 use sloppy_core::sim::{
-    CoverKind, FragmentShape, GameMode, Match, MatchPhase, RenderState, Shot, SimEventType,
-    Simulation, SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
+    CoverKind, FragmentShape, GameMode, MatchPhase, RenderState, Shot, SimEventType, Simulation,
+    SimulationSetup, Team, VehicleCommand, VehicleKind, Weapon,
 };
 use sloppy_render::presentation::Presentation;
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
@@ -152,28 +148,6 @@ pub mod frame_slot {
     /// frames (`framesInFlight`), and the other slots repeat the last frame's.
     pub const RAN: usize = 15;
     pub const LENGTH: usize = 16;
-}
-
-/// `Game.hud_json`: the page HUD's view of the match and the human's tank.
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct Hud<'a> {
-    #[serde(rename = "match")]
-    match_state: &'a Match,
-    elapsed: f64,
-    game_mode: GameMode,
-    endless_match: bool,
-    map_mode: MapId,
-    map_name: String,
-    difficulty: Difficulty,
-    human_team: Team,
-    score_limit: u32,
-    team_names: [&'static str; 2],
-    active_enemies: usize,
-    speed_tuning: &'a SpeedTuning,
-    human: HudHuman,
-    scoreboard: Scoreboard<'a>,
-    recap: Option<&'a Value>,
 }
 
 fn phase_code(phase: MatchPhase) -> f32 {
@@ -605,34 +579,15 @@ impl Game {
     /// Everything the page HUD and menus show, as JSON.
     pub fn hud_json(&mut self) -> String {
         if self.sim.match_state.phase == MatchPhase::Results && self.recap.is_none() {
-            self.recap = Some(self.finish_recap());
+            self.recap = Some(round_recap(&self.sim, &mut BrowserStorage::local()));
         }
         let sim = &self.sim;
-        // From the simulation, not the last frame's state: debug hooks change tanks
-        // between frames.
-        sim.fill_tank(&mut self.hud_tank, sim.human());
         let recap = if sim.match_state.phase == MatchPhase::Results {
             self.recap.as_ref()
         } else {
             None
         };
-        let hud = Hud {
-            match_state: &sim.match_state,
-            elapsed: sim.elapsed,
-            game_mode: sim.game_mode,
-            endless_match: sim.endless_match,
-            map_mode: sim.map_mode,
-            map_name: sim.map_name(),
-            difficulty: sim.difficulty,
-            human_team: sim.human_team,
-            score_limit: SCORE_LIMIT,
-            team_names: TEAM_NAMES,
-            active_enemies: sim.tanks.iter().filter(|t| !t.human && t.alive).count(),
-            speed_tuning: &sim.speed_tuning,
-            human: human_json(&self.hud_tank, sim.elapsed),
-            scoreboard: Scoreboard::Simulated(&sim.tanks),
-            recap,
-        };
+        let hud = simulation_hud(sim, &mut self.hud_tank, recap);
         // Written straight to text: the page reads this every few frames.
         serde_json::to_string(&hud).unwrap_or_default()
     }
@@ -1039,40 +994,6 @@ impl Game {
                 ..Shot::default()
             });
         }
-    }
-
-    /// The results screen's recap, saving personal bests for this mode, map and
-    /// difficulty once.
-    fn finish_recap(&self) -> Value {
-        let sim = &self.sim;
-        let stats = recap_stats(sim);
-        let combat = &sim.combat_record;
-        let label = |value: Value| value.as_str().map(str::to_owned).unwrap_or_default();
-        let key = format!(
-            "sloppy-records-v1:{}:{}:{}",
-            label(json!(sim.game_mode)),
-            sim.map_name(),
-            label(json!(sim.difficulty)),
-        );
-        let records = save_personal_bests(&mut BrowserStorage::local(), &key, &stats);
-        let metrics = |values: &sloppy_core::sim::round_recap::RecapStats| {
-            Metric::ALL
-                .iter()
-                .map(|&metric| (metric.key().to_string(), Value::from(values.get(metric))))
-                .collect::<serde_json::Map<String, Value>>()
-        };
-        json!({
-            "stats": metrics(&stats),
-            "best": metrics(&records.best),
-            "improved": records.improved.iter().map(|metric| metric.key()).collect::<Vec<_>>(),
-            "persisted": records.persisted,
-            "feats": combat_feats(&stats, combat.shots, combat.direct_hits),
-            "shots": combat.shots,
-            "directHits": combat.direct_hits,
-            "damageTaken": combat.damage_taken,
-            "shieldAbsorbed": combat.shield_absorbed,
-            "rankNames": RANKS.iter().map(|rank| rank.name).collect::<Vec<_>>(),
-        })
     }
 
     /// Rebuild the presentation for the simulation's current world and begin

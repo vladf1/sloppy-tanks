@@ -15,6 +15,11 @@ pub mod events;
 pub mod frame_clock;
 pub mod hud;
 pub mod lab_scene;
+pub mod recap;
+pub mod room_notices;
+
+#[cfg(test)]
+mod page_json_tests;
 
 #[cfg(all(target_arch = "wasm32", feature = "labs"))]
 mod effects_lab;
