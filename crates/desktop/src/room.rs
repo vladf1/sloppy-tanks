@@ -740,8 +740,7 @@ impl RoomSession {
             && (self.debug || self.prefs.debug)
             && self.frame_index.is_multiple_of(STATS_EVERY_FRAMES)
         {
-            self.ui.stats = serde_json::from_str(&self.game.stats_json(now)).ok();
-            ui::nerd_stats::sample_network(&mut self.ui, now);
+            self.ui.stats = Some(self.game.nerd_stats(now));
         }
         self.hold_pointer();
         let view = ui::View {
