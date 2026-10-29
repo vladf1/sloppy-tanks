@@ -14,11 +14,11 @@ on:
         type: string
         default: ""
       directory-url:
-        description: VITE_DIRECTORY_URL for the Pages build.
+        description: SLOPPY_DIRECTORY_URL for the Pages build.
         type: string
         default: ""
       server-environment:
-        description: VITE_SERVER_ENVIRONMENT, whose servers the Pages build lists.
+        description: SLOPPY_SERVER_ENVIRONMENT, whose servers the Pages build lists.
         type: string
         default: ""
       build-number:
@@ -53,8 +53,8 @@ jobs:
       - run: pnpm run check:site
         env:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
-          VITE_DIRECTORY_URL: ${{ inputs.directory-url }}
-          VITE_SERVER_ENVIRONMENT: ${{ inputs.server-environment }}
+          SLOPPY_DIRECTORY_URL: ${{ inputs.directory-url }}
+          SLOPPY_SERVER_ENVIRONMENT: ${{ inputs.server-environment }}
           SLOPPY_BUILD_NUMBER: ${{ inputs.build-number }}
       - if: inputs.deploy-base
         uses: actions/configure-pages@v6

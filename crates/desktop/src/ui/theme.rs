@@ -1,8 +1,10 @@
 //! The battle interface's look in egui (`src/style.css`): dark steel-glass plates with
 //! a steel hairline, gold for what is selected, blue and red for the teams, Impact for
-//! display type and the platform's UI face for the rest, like the page's system-ui.
+//! display type and the platform's UI face for the rest, like the page's system-ui. A
+//! page cannot read the system's fonts, so there the build embeds its own
+//! (`public/fonts/`): Anton (OFL) for Impact and Roboto (Apache 2.0) for the UI face.
 
-use egui::{Color32, FontData, FontDefinitions, FontFamily, Stroke};
+use egui::{Color32, FontData, FontDefinitions, FontFamily, FontTweak, Stroke};
 use sloppy_core::sim::Team;
 use sloppy_render::system_fonts::{FontStyle, system_font};
 
@@ -46,12 +48,86 @@ pub fn team_color(team: Team) -> Color32 {
     }
 }
 
+/// Anton drawn in Impact's place, so text the layout measured in Impact fits: its
+/// capitals scaled to Impact's as the native app draws them (measured on Battle Setup).
+const ANTON_SCALE: f32 = 0.975;
+/// Impact's line box (`hhea`, in em), which Anton takes at that scale: egui places text
+/// by its line box, and Anton's own (1.176 em up, 0.329 down) put centred and
+/// bottom-aligned text a quarter em off.
+const IMPACT_ASCENT: f32 = 2066.0 / 2048.0;
+const IMPACT_DESCENT: f32 = 432.0 / 2048.0;
+
+/// The embedded face for `family` in `style`, where the build carries one (a page's),
+/// with how to draw it in that family's place.
+fn embedded_font(family: &str, style: FontStyle) -> Option<(Vec<u8>, FontTweak)> {
+    let (file, tweak) = match (family, style.weight >= 600) {
+        ("system-ui" | "sans-serif", false) => ("fonts/Roboto-Regular.ttf", FontTweak::default()),
+        ("system-ui" | "sans-serif", true) => ("fonts/Roboto-Bold.ttf", FontTweak::default()),
+        ("Impact", _) => {
+            let mut bytes = crate::assets::file("fonts/Anton-Regular.ttf")?.to_vec();
+            set_line_box(
+                &mut bytes,
+                IMPACT_ASCENT / ANTON_SCALE,
+                IMPACT_DESCENT / ANTON_SCALE,
+            )?;
+            let tweak = FontTweak {
+                scale: ANTON_SCALE,
+                ..FontTweak::default()
+            };
+            return Some((bytes, tweak));
+        }
+        _ => return None,
+    };
+    Some((crate::assets::file(file)?.to_vec(), tweak))
+}
+
+/// Give the TrueType font in `bytes` a line box `ascent` em above the baseline and
+/// `descent` em below it with no gap, in every table a reader may take it from (`hhea`,
+/// and `OS/2`'s typographic and Windows metrics). `None` when a table is missing.
+fn set_line_box(bytes: &mut [u8], ascent: f32, descent: f32) -> Option<()> {
+    let read =
+        |bytes: &[u8], at: usize| Some(u16::from_be_bytes([*bytes.get(at)?, *bytes.get(at + 1)?]));
+    let table = |bytes: &[u8], tag: &[u8; 4]| {
+        let count = usize::from(read(bytes, 4)?);
+        (0..count).find_map(|index| {
+            let entry = 12 + 16 * index;
+            (bytes.get(entry..entry + 4)? == tag).then(|| {
+                let offset = bytes.get(entry + 8..entry + 12)?;
+                Some(u32::from_be_bytes(offset.try_into().ok()?) as usize)
+            })?
+        })
+    };
+    let units = f32::from(read(bytes, table(bytes, b"head")? + 18)?);
+    let up = (ascent * units).round() as i16;
+    let down = (descent * units).round() as i16;
+    let hhea = table(bytes, b"hhea")?;
+    let os2 = table(bytes, b"OS/2")?;
+    let mut write = |at: usize, value: i16| -> Option<()> {
+        bytes
+            .get_mut(at..at + 2)?
+            .copy_from_slice(&value.to_be_bytes());
+        Some(())
+    };
+    write(hhea + 4, up)?;
+    write(hhea + 6, -down)?;
+    write(hhea + 8, 0)?;
+    write(os2 + 68, up)?;
+    write(os2 + 70, -down)?;
+    write(os2 + 72, 0)?;
+    // usWinAscent and usWinDescent are unsigned, the descent counted downwards.
+    write(os2 + 74, up)?;
+    write(os2 + 76, down)
+}
+
 /// Fonts and visuals for the whole interface.
 pub fn install(context: &egui::Context) {
     let mut fonts = FontDefinitions::default();
     let mut add = |name: &str, family: &str, style: FontStyle| {
-        if let Some((bytes, _)) = system_font(family, style) {
-            let mut data = FontData::from_owned(bytes);
+        if let Some((bytes, tweak)) = system_font(family, style)
+            .map(|(bytes, _)| (bytes, FontTweak::default()))
+            .or_else(|| embedded_font(family, style))
+        {
+            let mut data = FontData::from_owned(bytes).tweak(tweak);
             for axis in data.variation_axes() {
                 if axis.tag == egui::epaint::text::Tag::new(b"wght") {
                     data.tweak.coords.push(axis.tag, f32::from(style.weight));
@@ -127,4 +203,48 @@ pub fn install(context: &egui::Context) {
     style.spacing.button_padding = egui::vec2(12.0, 6.0);
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
     context.set_global_style(style);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// The page's Anton must lay out like Impact, which the screens were measured in:
+    /// with its own line box, centred and bottom-aligned text sat a quarter em high.
+    #[test]
+    fn the_embedded_anton_takes_impacts_line_box() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../public/fonts/Anton-Regular.ttf");
+        let mut bytes = std::fs::read(path).expect("public/fonts holds Anton");
+        set_line_box(
+            &mut bytes,
+            IMPACT_ASCENT / ANTON_SCALE,
+            IMPACT_DESCENT / ANTON_SCALE,
+        )
+        .expect("Anton has head, hhea and OS/2 tables");
+        let mut fonts = FontDefinitions::default();
+        let tweak = FontTweak {
+            scale: ANTON_SCALE,
+            ..FontTweak::default()
+        };
+        fonts.font_data.insert(
+            "anton".into(),
+            FontData::from_owned(bytes).tweak(tweak).into(),
+        );
+        fonts.families.insert(display(), vec!["anton".into()]);
+        let context = egui::Context::default();
+        context.set_fonts(fonts);
+        let size = 100.0;
+        let mut row = 0.0;
+        let mut output = context.run_pass(egui::RawInput::default(), |context| {
+            row = context.fonts_mut(|fonts| fonts.row_height(&display_font(size)));
+        });
+        // No painter takes the font atlas here.
+        output.textures_delta.clear();
+        let impact = size * (IMPACT_ASCENT + IMPACT_DESCENT);
+        assert!(
+            (row - impact).abs() <= 1.0,
+            "Anton's line is {row} points tall at {size}, Impact's {impact}"
+        );
+    }
 }

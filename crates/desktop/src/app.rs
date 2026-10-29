@@ -6,10 +6,12 @@
 //! One engine owns the window's surface at a time: single player's `Game` behind Battle
 //! Setup ([`Session`]), or a multiplayer room's `NetGame` ([`RoomSession`]). Joining a
 //! room drops the game and its renderer first and keeps the rest of the shell
-//! ([`Shell`]); leaving the room does the reverse.
+//! ([`Shell`]); leaving the room does the reverse. An engine starts as a [`Task`]:
+//! natively at once, in a page once the browser has given it a GPU device.
 
+use std::future::Future;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use sloppy_core::net::client::POLL_MS;
 use sloppy_core::sim::game_options::GameOptions;
@@ -18,9 +20,9 @@ use sloppy_core::sim::{MatchPhase, SimEventType, Team};
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::presentation::PrepareStatus;
 use sloppy_render::quality::DeviceClass;
-use sloppy_render::wgpu;
 use sloppy_web::hud::Loading;
-use sloppy_web::{Game, GameConfig, ViewConfig, frame_slot};
+use sloppy_web::{Game, GameConfig, PageError, ViewConfig, frame_slot};
+use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
@@ -34,6 +36,7 @@ use crate::overlay::Overlay;
 use crate::preferences::Preferences;
 use crate::room::{RoomSession, SavedSeats};
 use crate::room_api::RoomSelection;
+use crate::tasks::Task;
 use crate::touch::Play;
 use crate::ui::rooms::RoomsState;
 use crate::ui::{self, Action, UiState};
@@ -42,9 +45,9 @@ use crate::window_input::{Battle, Request, WindowInput};
 /// Pipelines created per preparation step; the menu redraws between steps.
 const PREPARE_BUDGET: u32 = 4;
 /// The window's first size, in points.
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
 const WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1280.0, 800.0);
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
 const MIN_WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1100.0, 720.0);
 /// How often a window that takes no frames tries again.
 const HIDDEN_RECHECK: Duration = Duration::from_millis(100);
@@ -68,6 +71,19 @@ pub struct Options {
 enum Mode {
     Single(Box<Session>),
     Room(Box<RoomSession>),
+    /// The next engine is starting; none when it could not.
+    Starting(Task<Option<Mode>>),
+}
+
+impl Mode {
+    /// The window's size may have changed while the engine started.
+    fn resize(&mut self) {
+        match self {
+            Mode::Single(session) => session.resize(),
+            Mode::Room(room) => room.resize(),
+            Mode::Starting(_) => {}
+        }
+    }
 }
 
 pub struct App {
@@ -86,50 +102,90 @@ impl App {
     /// Hand the window to the other engine when the one playing asks: a room Battle
     /// Setup chose, or Battle Setup after a room. False when no engine could start.
     fn switch_engine(&mut self) -> bool {
-        let wants_room =
-            matches!(&self.mode, Some(Mode::Single(session)) if session.pending_room.is_some());
-        let wants_setup = matches!(&self.mode, Some(Mode::Room(room)) if room.exit.is_some());
-        if !wants_room && !wants_setup {
-            return true;
-        }
-        let shell = match self.mode.take() {
-            Some(Mode::Single(mut session)) => {
-                let selection = session.pending_room.take();
-                let shell = session.into_shell();
-                crate::surface_layers::release(&shell.window);
-                match selection.map(|selection| RoomSession::new(shell, selection)) {
-                    Some(Ok(room)) => {
-                        self.mode = Some(Mode::Room(Box::new(room)));
-                        return true;
-                    }
-                    Some(Err(failed)) => {
-                        let (mut shell, notice) = *failed;
-                        crate::surface_layers::release(&shell.window);
-                        shell.rooms.returned_from("", &notice);
-                        shell
-                    }
-                    None => return false,
+        match self.mode.take() {
+            Some(Mode::Single(mut session)) => match session.pending_room.take() {
+                Some(selection) => {
+                    let shell = session.into_shell();
+                    crate::surface_layers::release(&shell.window);
+                    self.launch(join_room(shell, selection))
                 }
+                None => {
+                    self.mode = Some(Mode::Single(session));
+                    true
+                }
+            },
+            Some(Mode::Room(mut room)) => match room.exit.take() {
+                Some(notice) => {
+                    let code = room.room().to_owned();
+                    let mut shell = room.into_shell();
+                    crate::surface_layers::release(&shell.window);
+                    shell.rooms.returned_from(&code, &notice);
+                    self.launch(single_player(shell))
+                }
+                None => {
+                    self.mode = Some(Mode::Room(room));
+                    true
+                }
+            },
+            mode => {
+                self.mode = mode;
+                self.started()
             }
-            Some(Mode::Room(mut room)) => {
-                let notice = room.exit.take().unwrap_or_default();
-                let code = room.room().to_owned();
-                let mut shell = room.into_shell();
-                crate::surface_layers::release(&shell.window);
-                shell.rooms.returned_from(&code, &notice);
-                shell
-            }
-            None => return false,
+        }
+    }
+
+    /// Start the next engine on the window; false when none could start.
+    fn launch(&mut self, engine: impl Future<Output = Option<Mode>> + 'static) -> bool {
+        self.mode = Some(Mode::Starting(Task::on_main_thread(engine)));
+        self.started()
+    }
+
+    /// Hand the window to the engine that was starting, once it has; false when none
+    /// could start.
+    fn started(&mut self) -> bool {
+        let Some(Mode::Starting(task)) = &self.mode else {
+            return true;
         };
-        match Session::start(shell) {
-            Ok(session) => {
-                self.mode = Some(Mode::Single(Box::new(session)));
+        match task.take() {
+            None => true,
+            Some(None) => false,
+            Some(Some(mut mode)) => {
+                mode.resize();
+                self.mode = Some(mode);
                 true
             }
-            Err(error) => {
-                eprintln!("Sloppy Tanks could not start: {error}");
-                false
-            }
+        }
+    }
+}
+
+/// Single player on the shell's window; none when it could not start.
+async fn single_player(shell: Shell) -> Option<Mode> {
+    let window = shell.window.clone();
+    let session = Session::start(shell).await;
+    // A page waits for no event: the first frame wakes it.
+    window.request_redraw();
+    match session {
+        Ok(session) => Some(Mode::Single(Box::new(session))),
+        Err(error) => {
+            eprintln!("Sloppy Tanks could not start: {error}");
+            None
+        }
+    }
+}
+
+/// The room Battle Setup chose; Battle Setup again, saying why, when it fails.
+async fn join_room(shell: Shell, selection: RoomSelection) -> Option<Mode> {
+    let window = shell.window.clone();
+    match RoomSession::new(shell, selection).await {
+        Ok(room) => {
+            window.request_redraw();
+            Some(Mode::Room(Box::new(room)))
+        }
+        Err(failed) => {
+            let (mut shell, notice) = *failed;
+            crate::surface_layers::release(&shell.window);
+            shell.rooms.returned_from("", &notice);
+            single_player(shell).await
         }
     }
 }
@@ -171,9 +227,20 @@ pub fn drawable_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
 }
 
 /// The window's size in points and its pixels per point, as the engines' `resize`
-/// takes them (the page's CSS size and device pixel ratio).
+/// takes them (the page's CSS size and device pixel ratio). In a page it is the canvas's
+/// CSS box: under an emulated pixel ratio (DevTools' devices, Playwright) the browser
+/// reports the canvas's device pixels as CSS pixels, so winit's size is off by that ratio
+/// while its pointer positions are not.
 pub fn css_size(window: &Window) -> (f64, f64, f64) {
     let scale = window.scale_factor();
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::WindowExtWebSys;
+        if let Some(canvas) = window.canvas() {
+            let (width, height) = (canvas.client_width(), canvas.client_height());
+            return (f64::from(width), f64::from(height), scale);
+        }
+    }
     let logical = drawable_size(window).to_logical::<f64>(scale);
     (logical.width, logical.height, scale)
 }
@@ -191,7 +258,39 @@ pub fn set_fullscreen(window: &Window, prefs: &mut Preferences, fullscreen: bool
 
 /// The engine's clock, in milliseconds (the origin `Game` and `NetGame` read too).
 pub fn now_ms() -> f64 {
-    sloppy_web::clock_start().elapsed().as_secs_f64() * 1000.0
+    sloppy_web::now_ms()
+}
+
+/// An engine's error in words: natively its message, in a page a JS `Error`'s.
+pub fn engine_error(error: PageError) -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Error::from(error).message().into()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        error
+    }
+}
+
+/// What an engine draws into: the window natively, its canvas in a page.
+pub fn render_target(window: &Arc<Window>) -> Result<RenderTarget, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let size = drawable_size(window);
+        Ok(RenderTarget {
+            window: sloppy_render::wgpu::SurfaceTarget::from(window.clone()),
+            width: size.width,
+            height: size.height,
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::WindowExtWebSys;
+        window
+            .canvas()
+            .ok_or_else(|| "The page has no canvas".to_owned())
+    }
 }
 
 /// The view configuration both engines take for `window`, with the player's camera
@@ -319,12 +418,15 @@ impl ApplicationHandler for App {
         if self.mode.is_some() {
             return;
         }
-        match Session::new(event_loop, &self.options) {
-            Ok(session) => self.mode = Some(Mode::Single(Box::new(session))),
+        let started = match Session::shell(event_loop, &self.options) {
+            Ok(shell) => self.launch(single_player(shell)),
             Err(error) => {
                 eprintln!("Sloppy Tanks could not start: {error}");
-                event_loop.exit();
+                false
             }
+        };
+        if !started {
+            event_loop.exit();
         }
     }
 
@@ -334,10 +436,14 @@ impl ApplicationHandler for App {
         _window: WindowId,
         event: WindowEvent,
     ) {
+        if !self.started() {
+            event_loop.exit();
+            return;
+        }
         let quit = match &mut self.mode {
             Some(Mode::Single(session)) => session.window_event(&event),
             Some(Mode::Room(room)) => room.window_event(&event),
-            None => return,
+            Some(Mode::Starting(_)) | None => return,
         };
         if quit || !self.switch_engine() {
             event_loop.exit();
@@ -356,7 +462,7 @@ impl ApplicationHandler for App {
         let input = match &mut self.mode {
             Some(Mode::Single(session)) => &mut session.input,
             Some(Mode::Room(room)) => &mut room.input,
-            None => return,
+            Some(Mode::Starting(_)) | None => return,
         };
         if input.cursor_grabbed {
             // Like the page's `movementX`: macOS reports points, Windows raw counts.
@@ -371,7 +477,7 @@ impl ApplicationHandler for App {
         match &self.mode {
             Some(Mode::Single(session)) => session.window.request_redraw(),
             Some(Mode::Room(room)) => room.window.request_redraw(),
-            None => {}
+            Some(Mode::Starting(_)) | None => {}
         }
     }
 
@@ -386,7 +492,7 @@ impl ApplicationHandler for App {
                 }
             }
             Some(Mode::Room(room)) => room.input.controls.clear(),
-            None => {}
+            Some(Mode::Starting(_)) | None => {}
         }
     }
 
@@ -399,6 +505,10 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.started() {
+            event_loop.exit();
+            return;
+        }
         match &mut self.mode {
             // A hidden window draws nothing: macOS does not pace a covered Metal layer
             // to the display, so it would spin hundreds of frames a second unseen.
@@ -429,13 +539,15 @@ impl ApplicationHandler for App {
                     event_loop.exit();
                 }
             }
-            None => {}
+            // The starting engine wakes the loop when it is ready.
+            Some(Mode::Starting(_)) | None => event_loop.set_control_flow(ControlFlow::Wait),
         }
     }
 }
 
 impl Session {
-    fn new(event_loop: &ActiveEventLoop, options: &Options) -> Result<Self, String> {
+    /// The window and the shell around it, from the saved choices and `options`.
+    fn shell(event_loop: &ActiveEventLoop, options: &Options) -> Result<Shell, String> {
         let prefs = Preferences::load();
         let window = Arc::new(
             event_loop
@@ -451,7 +563,7 @@ impl Session {
         if let Some(directory) = &options.directory {
             rooms.directory.clone_from(directory);
         }
-        Self::start(Shell {
+        Ok(Shell {
             window,
             prefs,
             audio: None,
@@ -465,7 +577,7 @@ impl Session {
     }
 
     /// Single player on the shell's window: the arena prepares behind Battle Setup.
-    fn start(shell: Shell) -> Result<Self, String> {
+    async fn start(shell: Shell) -> Result<Self, String> {
         let Shell {
             window,
             prefs,
@@ -477,12 +589,7 @@ impl Session {
             frame_log,
             autoplay,
         } = shell;
-        let size = drawable_size(&window);
-        let target = RenderTarget {
-            window: wgpu::SurfaceTarget::from(window.clone()),
-            width: size.width,
-            height: size.height,
-        };
+        let target = render_target(&window)?;
         // The team is the seed's to draw.
         let extra_levels = debug || prefs.debug;
         let options = prefs.game_options(Team::Blue, extra_levels);
@@ -496,11 +603,13 @@ impl Session {
             autoplay,
         };
         let view = view_config(&window, &prefs);
-        let mut game = pollster::block_on(Game::create_with(target, view, config))?;
+        let mut game = Game::create_with(target, view, config)
+            .await
+            .map_err(engine_error)?;
         let hud = game.hud().into_owned();
         game.set_speed_scale(SpeedSetting::TankSpeed, prefs.tank_speed);
         game.set_speed_scale(SpeedSetting::BulletSpeed, prefs.bullet_speed);
-        let overlay = Overlay::new(window.clone(), game.renderer());
+        let overlay = Overlay::new(window.clone(), game.renderer())?;
         let human_team = hud.human_team;
         let mut session = Self {
             human_team,
@@ -682,7 +791,7 @@ impl Session {
     }
 
     /// Render at the window's size in points times its scale (the engine caps it).
-    fn resize(&mut self) {
+    pub fn resize(&mut self) {
         let (width, height, scale) = css_size(&self.window);
         self.game.resize(width, height, scale, false);
     }
@@ -727,7 +836,7 @@ impl Session {
                 self.prefs.tank = kind;
                 self.prefs.save();
                 if let Err(error) = self.game.respawn_in(kind) {
-                    eprintln!("{error}");
+                    eprintln!("{}", engine_error(error));
                 }
                 self.prepared_options = self.wanted_options();
             }
@@ -857,9 +966,11 @@ impl Session {
         {
             let key = bake.key.clone();
             self.bake = None;
-            self.game.supply_texture(&key, &pixels)?;
+            self.game
+                .supply_pixels(&key, &pixels)
+                .map_err(engine_error)?;
         }
-        let status = self.game.prepare(PREPARE_BUDGET)?;
+        let status = self.game.prepare(PREPARE_BUDGET).map_err(engine_error)?;
         match self.preparation.advance(&status, self.game.loading()) {
             Progress::Ready => {
                 self.ui.ready = true;
@@ -880,7 +991,7 @@ impl Session {
     fn battle_frame(&mut self, now: f64) -> Result<(), String> {
         let input = self.input.take_input(self.first_person);
         let zoomed = input.zoom != 0.0;
-        let result = self.game.frame(now, &input.pack())?;
+        let result = self.game.frame(now, &input.pack()).map_err(engine_error)?;
         self.parts.engine = now_ms() - now;
         self.parts.sim = f64::from(result.get(frame_slot::SIM_MS).copied().unwrap_or(0.0));
         self.parts.render = f64::from(result.get(frame_slot::RENDER_MS).copied().unwrap_or(0.0));
@@ -1037,7 +1148,7 @@ pub fn grab_pointer(window: &Window, wanted: bool, grabbed: &mut bool) {
 }
 
 /// A resizable window at its first size, or fullscreen as the player left it.
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
 fn window_attributes(prefs: &Preferences) -> WindowAttributes {
     let attributes = Window::default_attributes()
         .with_title("Sloppy Tanks")
@@ -1064,8 +1175,18 @@ fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
         .with_preferred_screen_edges_deferring_system_gestures(ScreenEdge::ALL)
 }
 
+/// A canvas filling the page (`index.html` sizes it). Fullscreen waits for the
+/// player's click: a page may not take the screen by itself.
+#[cfg(target_arch = "wasm32")]
+fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
+    use winit::platform::web::WindowAttributesExtWebSys;
+    Window::default_attributes()
+        .with_title("Sloppy Tanks")
+        .with_append(true)
+}
+
 /// The window's icon (Windows and Linux show it; macOS takes the bundle's).
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
 fn window_icon() -> Option<winit::window::Icon> {
     let image = image::load_from_memory(crate::assets::file("icons/icon-192.png")?).ok()?;
     let image = image.into_rgba8();

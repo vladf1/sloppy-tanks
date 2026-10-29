@@ -368,6 +368,12 @@ pub struct Frame {
     /// Signalled once the GPU has run everything before the last [`Self::await_gpu`].
     fence: Option<glow::Fence>,
     frames: u32,
+    /// The canvas frame waits for [`Frame::present`], as the WebGPU backend's does
+    /// (`Renderer::present_late`).
+    pub late_present: bool,
+    /// The main view's target still holds the last drawn scene, which a canvas frame
+    /// without a new one shows again.
+    scene_drawn: bool,
 }
 
 impl Frame {
@@ -441,6 +447,8 @@ impl Frame {
             no_attributes: gpu.created(unsafe { gl.create_vertex_array() }, "vertex array"),
             fence: None,
             frames: 0,
+            late_present: false,
+            scene_drawn: false,
         }
     }
 
@@ -471,6 +479,7 @@ impl Frame {
         }
         let (width, height) = scene;
         // Replacing the targets deletes the old ones.
+        self.scene_drawn = false;
         self.main = ColorTarget::new(gpu, "main view", width, height, true);
         self.bloom = BloomLevels::new(gpu, width, height);
         self.occlusion = OcclusionTarget::new(gpu, width, height);
@@ -612,10 +621,41 @@ impl Frame {
             gpu.check_error("drawing");
         }
         self.draw_scene(gpu, scene, stats);
+        self.scene_drawn = true;
+        // Under the shell's overlay the canvas waits for `present`.
+        if self.late_present {
+            return Ok(());
+        }
         gpu.bind_framebuffer(None);
         gpu.viewport(self.canvas.0, self.canvas.1);
-        self.draw_output(gpu, scene, stats);
+        self.draw_output(gpu, scene.pipelines, stats);
         Ok(())
+    }
+
+    /// Under `late_present`, a canvas frame: the scene [`Self::draw`] drew last through
+    /// the output pass (before any, the canvas cleared to `clear`) with `overlay` (the
+    /// shell's menus and HUD) drawn over it at the canvas's size, after which the context
+    /// is the backend's again. The browser shows the canvas once the page yields.
+    pub fn present(
+        &mut self,
+        gpu: &Gpu,
+        pipelines: &Pipelines,
+        clear: [f32; 3],
+        overlay: impl FnOnce((u32, u32)),
+    ) {
+        gpu.bind_framebuffer(None);
+        gpu.viewport(self.canvas.0, self.canvas.1);
+        if self.scene_drawn {
+            // The output pass's draw is not counted: the frame's stats were taken.
+            self.draw_output(gpu, pipelines, &mut RenderStats::default());
+        } else {
+            gpu.clear(Some(clear));
+        }
+        // The overlay uploads its own textures, unflipped; the backend's bitmaps leave
+        // uploads flipped.
+        gpu.set_flip_y(false);
+        overlay(self.canvas);
+        gpu.reclaim();
     }
 
     /// Draw every pass once, the output into an offscreen probe, so the browser
@@ -625,7 +665,7 @@ impl Frame {
         let probe = storage(gpu, glow::RGBA8, 1, 4, 4);
         let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, probe);
         gpu.viewport(4, 4);
-        self.draw_output(gpu, scene, stats);
+        self.draw_output(gpu, scene.pipelines, stats);
         unsafe {
             gpu.gl.delete_framebuffer(framebuffer);
             gpu.gl.delete_texture(probe);
@@ -801,9 +841,9 @@ impl Frame {
 
     /// Draw the resolved main view into the bound framebuffer through the output
     /// transform.
-    fn draw_output(&self, gpu: &Gpu, scene: &Scene, stats: &mut RenderStats) {
-        let pipeline = &scene.pipelines.fixed().output;
-        gpu.use_program(scene.pipelines.program(pipeline.program).raw);
+    fn draw_output(&self, gpu: &Gpu, pipelines: &Pipelines, stats: &mut RenderStats) {
+        let pipeline = &pipelines.fixed().output;
+        gpu.use_program(pipelines.program(pipeline.program).raw);
         gpu.set_raster(&pipeline.raster);
         gpu.bind_uniform_block(block::OUTPUT, self.output_uniform);
         // The main view's uniform, for the haze the output adds.

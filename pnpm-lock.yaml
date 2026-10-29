@@ -165,10 +165,6 @@ settings:
 importers:
 
   .:
-    dependencies:
-      howler:
-        specifier: 2.2.4
-        version: 2.2.4
     devDependencies:
       '@cloudflare/workers-types':
         specifier: 5.20260923.1
@@ -182,21 +178,12 @@ importers:
       '@napi-rs/canvas':
         specifier: ^1.0.8
         version: 1.0.8
-      '@tweakpane/core':
-        specifier: 2.0.5
-        version: 2.0.5
-      '@types/howler':
-        specifier: 2.2.13
-        version: 2.2.13
       '@types/node':
         specifier: 26.4.1
         version: 26.4.1
       '@types/ws':
         specifier: 8.18.1
         version: 8.18.1
-      esbuild:
-        specifier: 0.28.2
-        version: 0.28.2
       eslint:
         specifier: 10.10.0
         version: 10.10.0(supports-color@10.2.2)
@@ -215,9 +202,6 @@ importers:
       tsx:
         specifier: 4.23.13
         version: 4.23.13
-      tweakpane:
-        specifier: 4.0.5
-        version: 4.0.5
       typescript:
         specifier: 7.0.2
         version: 7.0.2
@@ -1046,17 +1030,11 @@ packages:
   '@speed-highlight/core@1.2.24':
     resolution: {integrity: sha512-qeW2e1l78afw8VhRPfPQ1Gjj+KU5XFQ/OFV5ti6eTa9bruO7mJyZtA4vw0ofqmA3tKCkROE9xLk3VZoeRc98nw==}
 
-  '@tweakpane/core@2.0.5':
-    resolution: {integrity: sha512-punBgD5rKCF5vcNo6BsSOXiDR/NSs9VM7SG65QSLJIxfRaGgj54ree9zQW6bO3pNFf3AogiGgaNODUVQRk9YqQ==}
-
   '@types/esrecurse@4.3.1':
     resolution: {integrity: sha512-xJBAbDifo5hpffDBuHl0Y8ywswbiAp/Wi7Y/GtAgSlZyIABppyurxVueOPE8LUQOxdlgi6Zqce7uoEpqNTeiUw==}
 
   '@types/estree@1.0.9':
     resolution: {integrity: sha512-GhdPgy1el4/ImP05X05Uw4cw2/M93BCUmnEvWZNStlCzEKME4Fkk+YpoA5OiHNQmoS7Cafb8Xa3Pya8m1Qrzeg==}
-
-  '@types/howler@2.2.13':
-    resolution: {integrity: sha512-40+EBjqIHHrC4VShlz/7i0lBUsE3QkgzZinQQji74Hd8sBkJZUBaT7LWFLK6rcabsDOOQpoMbEJvtaFQwxOu/g==}
 
   '@types/json-schema@7.0.15':
     resolution: {integrity: sha512-5+fP8P8MFNC+AyZCDxrB2pkZFPGzqQWUzpSeuuVLvm8VMcorNYavBqoFcxK8bQz4Qsbn4oUEEem4wDLfcysGHA==}
@@ -1357,9 +1335,6 @@ packages:
   hookified@2.2.0:
     resolution: {integrity: sha512-p/LgFzRN5FeoD3DLS6bkUapeye6E4SI6yJs6KetENd18S+FBthqYq2amJUWpt5z0EQwwHemidjY5OqJGEKm5uA==}
 
-  howler@2.2.4:
-    resolution: {integrity: sha512-iARIBPgcQrwtEr+tALF+rapJ8qSc+Set2GJQl7xT1MQzWaVkFebdJhR3alVlSiUf5U7nAANKuj3aWpwerocD5w==}
-
   ignore@5.3.2:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
     engines: {node: '>= 4'}
@@ -1603,9 +1578,6 @@ packages:
     resolution: {integrity: sha512-BL5MGkRln6aDYhb0xbQlEAGw743BaZYWdbWtdJOBriYJboKgUUYCadFp2/FpBBZquBC/ezNBn7wMMPx7FDZUDw==}
     engines: {node: '>=18.0.0'}
     hasBin: true
-
-  tweakpane@4.0.5:
-    resolution: {integrity: sha512-rxEXdSI+ArlG1RyO6FghC4ZUX8JkEfz8F3v1JuteXSV0pEtHJzyo07fcDG+NsJfN5L39kSbCYbB9cBGHyuI/tQ==}
 
   type-check@0.4.0:
     resolution: {integrity: sha512-XleUoc9uwGXqjWwXaUTZAmzMcFZ5858QA2vvx1Ur5xIcixXIP+8LnFDgRplU30us6teqdlskFfu+ae4K79Ooew==}
@@ -2225,13 +2197,9 @@ snapshots:
 
   '@speed-highlight/core@1.2.24': {}
 
-  '@tweakpane/core@2.0.5': {}
-
   '@types/esrecurse@4.3.1': {}
 
   '@types/estree@1.0.9': {}
-
-  '@types/howler@2.2.13': {}
 
   '@types/json-schema@7.0.15': {}
 
@@ -2524,8 +2492,6 @@ snapshots:
 
   hookified@2.2.0: {}
 
-  howler@2.2.4: {}
-
   ignore@5.3.2: {}
 
   imurmurhash@0.1.4: {}
@@ -2759,8 +2725,6 @@ snapshots:
       esbuild: 0.28.2
     optionalDependencies:
       fsevents: 2.3.3
-
-  tweakpane@4.0.5: {}
 
   type-check@0.4.0:
     dependencies:

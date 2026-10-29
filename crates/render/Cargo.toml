@@ -11,10 +11,12 @@ description = "Sloppy Tanks renderer: handwritten WGSL drawn through WebGPU (wgp
 doctest = false
 
 [features]
-default = ["webgpu"]
-webgpu = ["wgpu?/webgpu"]
+# A browser build names its graphics backend; neither is a default, so native builds
+# (the tests, and the desktop app's `native`) compile no browser backend. `webgpu`
+# draws with wgpu on the browser's WebGPU.
+webgpu = ["wgpu/webgpu"]
 # The WebGL2 fallback: its own backend on glow (`gpu/webgl/`), with the WGSL
-# translated to GLSL ES by naga. Wins over `webgpu` when both are enabled.
+# translated to GLSL ES by naga, and no wgpu. Wins over `webgpu` when both are enabled.
 webgl = ["dep:glow", "dep:naga"]
 # The desktop builds: wgpu on Metal or Direct3D 12 in a native window, the
 # texture files decoded here and canvas text drawn with the system's fonts.
@@ -26,11 +28,9 @@ glam.workspace = true
 bytemuck.workspace = true
 naga = { workspace = true, optional = true }
 
-# Not optional in the browser: one feature turns a dependency on for every target, and
-# the browser's `webgpu`, on by default, would then compile wgpu into native test
-# builds. The WebGL engine compiles wgpu's API crate (seconds, once) but never uses it.
+# wgpu only in the browser's WebGPU build (`webgpu`).
 [target.'cfg(target_arch = "wasm32")'.dependencies]
-wgpu = { workspace = true }
+wgpu = { workspace = true, optional = true }
 glow = { workspace = true, optional = true }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true

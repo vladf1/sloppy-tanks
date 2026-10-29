@@ -11,15 +11,15 @@ use sloppy_core::net::client::{ClientAction, POLL_MS, SavedSeat};
 use sloppy_core::net::protocol::RoomPhase;
 use sloppy_core::sim::Team;
 use sloppy_core::sim::map_options::map_option_for;
-use sloppy_render::gpu::RenderTarget;
-use sloppy_render::wgpu;
 use sloppy_web::hud::Hud;
 use sloppy_web::room_notices::RoomNotice;
 use sloppy_web::{NetConfig, NetGame, net_frame_slot as slot};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-use crate::app::{Shell, css_size, drawable_size, now_ms, set_fullscreen, view_config};
+use crate::app::{
+    Shell, css_size, engine_error, now_ms, render_target, set_fullscreen, view_config,
+};
 use crate::audio::Audio;
 use crate::bakes::{self, Bake};
 use crate::input::Shortcut;
@@ -89,31 +89,37 @@ impl RoomSession {
     /// Join `selection`'s room on the window `shell` holds. The window's surface must be
     /// free (single player's renderer dropped). On failure the shell comes back with the
     /// reason to show on Battle Setup.
-    pub fn new(shell: Shell, selection: RoomSelection) -> Result<Self, Box<(Shell, String)>> {
+    pub async fn new(shell: Shell, selection: RoomSelection) -> Result<Self, Box<(Shell, String)>> {
         let window = shell.window.clone();
-        let size = drawable_size(&window);
         let config = NetConfig {
             server: selection.server.clone(),
             room: selection.room.clone(),
             saved_seat: shell.seats.get(&seat_key(&selection)).cloned(),
             ..NetConfig::default()
         };
-        let target = RenderTarget {
-            window: wgpu::SurfaceTarget::from(window.clone()),
-            width: size.width,
-            height: size.height,
-        };
         let view = view_config(&window, &shell.prefs);
-        let mut game = match pollster::block_on(NetGame::create_with(target, view, config)) {
+        let created = match render_target(&window) {
+            Ok(target) => NetGame::create_with(target, view, config)
+                .await
+                .map_err(engine_error),
+            Err(error) => Err(error),
+        };
+        let mut game = match created {
             Ok(game) => game,
             Err(error) => {
                 eprintln!("The room's renderer could not start: {error}");
                 return Err(Box::new((shell, ARENA_FAILED.into())));
             }
         };
+        let overlay = match Overlay::new(window.clone(), game.renderer()) {
+            Ok(overlay) => overlay,
+            Err(error) => {
+                eprintln!("The room's menus could not draw: {error}");
+                return Err(Box::new((shell, ARENA_FAILED.into())));
+            }
+        };
         let now = now_ms();
         game.join(selection.choice.clone(), now);
-        let overlay = Overlay::new(window.clone(), game.renderer());
         let Shell {
             prefs,
             audio,
@@ -453,7 +459,7 @@ impl RoomSession {
         }
     }
 
-    fn resize(&mut self) {
+    pub fn resize(&mut self) {
         let (width, height, scale) = css_size(&self.window);
         self.game.resize(width, height, scale);
     }
@@ -497,7 +503,7 @@ impl RoomSession {
                     self.prefs.tank = kind;
                     self.prefs.save();
                 }
-                Err(error) => eprintln!("Invalid room choice: {error}"),
+                Err(error) => eprintln!("Invalid room choice: {}", engine_error(error)),
             },
             Action::RoomRules(rules) => self.game.set_rules(rules, now),
             Action::SelectAmmo(slot) => {
@@ -602,8 +608,8 @@ impl RoomSession {
         {
             let key = bake.key.clone();
             self.bake = None;
-            if let Err(error) = self.game.supply_texture(&key, &pixels) {
-                eprintln!("{error}");
+            if let Err(error) = self.game.supply_pixels(&key, &pixels) {
+                eprintln!("{}", engine_error(error));
             }
         }
         let status = self.game.prepare(PREPARE_BUDGET, now);
@@ -620,7 +626,7 @@ impl RoomSession {
     fn frame(&mut self, now: f64) -> Result<(), String> {
         let input = self.input.take_input(self.first_person);
         let camera_input = input.zoom != 0.0 || input.toggle_view;
-        let result = self.game.frame(now, &input.pack())?;
+        let result = self.game.frame(now, &input.pack()).map_err(engine_error)?;
         if let Some(error) = self.game.error() {
             return Err(error);
         }

@@ -12,11 +12,10 @@ crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [features]
-default = ["webgpu"]
+# A browser build names its graphics backend (`scripts/build-wasm.mjs`): `webgpu`, or
+# `webgl` for the WebGL2 engine. Neither is a default, so the native tests and the
+# desktop app's `native` compile no browser backend.
 webgpu = ["sloppy-render/webgpu"]
-# The WebGL2 fallback engine (`pnpm run wasm` builds it with
-# `--no-default-features --features webgl`); the page loads it only where WebGPU
-# is unavailable.
 webgl = ["sloppy-render/webgl"]
 # The development labs (`RenderLab`, `EffectsLab`) for tools/*-lab.html. Production
 # builds leave them out; `pnpm run wasm -- --labs` builds them.

@@ -1,62 +1,89 @@
-// Build the browser engine: release Wasm for `sloppy-web`, then its wasm-bindgen
-// glue into the ignored `src/generated/engine/`. Pages import
-// `src/generated/engine/engine.js` and the binary through Vite's `?url`, and
-// initialize with `init({ module_or_path: wasmUrl })`. Vite does not compile Rust:
-// rerun this after Rust or WGSL edits.
+// Build the Wasm the pages load: release builds and their wasm-bindgen glue in the
+// ignored `src/generated/`. Vite does not compile Rust: rerun this after Rust or WGSL
+// edits.
 //
-// A second build renders with WebGL2 instead of WebGPU (`sloppy-web`'s `webgl`
-// feature) into `src/generated/engine-webgl/engine-webgl.js` and `engine-webgl_bg.wasm`;
-// src/engine.ts loads it only where WebGPU is unavailable. Its own file names keep its
-// binary apart from the WebGPU one in the bundle. Rebuilding it doubled the compile work
-// of every edit while agents play WebGPU, so by default only the WebGPU engine is built,
-// and the WebGL one too only when its glue is missing (Vite resolves its import) or its
-// API no longer matches (tsc checks both against the page). `--webgl` builds the WebGL
-// engine alone, for `?webgl` and the browser checks that play it; `--all` builds both,
-// as `pnpm run build` does. Two builds run at once, the WebGL one in its own target
-// directory (`target/webgl`) so neither waits on the other's Cargo lock.
+// By default it builds the game page: the desktop app's egui shell (`crates/desktop`,
+// its `sloppy-tanks` binary) for wasm32, into `src/generated/shell/`, which `index.html`
+// imports; the glue finds its binary beside itself, and Vite bundles that as an asset.
+// The page loads a second build where the browser gives no WebGPU adapter (`?webgl`
+// forces it): the shell's `webgl` feature, into `src/generated/shell-webgl/`, in its own
+// target directory (`target/webgl`) since both binaries share a name. Building it doubles
+// the compile work of an edit, so by default it is built only while its glue is
+// missing (Vite resolves the page's import of it); `--webgl` builds it alone, for trying
+// `?webgl` after an edit.
+// `--engine` builds the `sloppy-web` engine alone instead, into `src/generated/engine/`:
+// the game preview (`tools/game-preview.html`), the `tests/*.browser.html` fixtures and
+// the Node multiplayer checks' `WireView` (`scripts/wire-view.mjs`) use it. `--all`
+// builds both, as `pnpm run build` does for the type check. `--labs` builds the engine
+// with the development labs (`RenderLab`, `EffectsLab`, the `labs` feature of
+// `sloppy-web`) into `src/generated/engine-labs/`, so a lab build never replaces the
+// engine the fixtures load.
+//
+// Every build names its graphics backend (`webgpu` or `webgl`): none is a crate default.
+// The shell lists the servers of `SLOPPY_SERVER_ENVIRONMENT` (production unless set;
+// `build:dev` sets `dev`) from `SLOPPY_DIRECTORY_URL`, both read when it compiles.
 //
 // Cargo runs from the repository root so `.cargo/config.toml` (SIMD) applies.
 // Setup: rustup's wasm32-unknown-unknown target and `wasm-bindgen-cli` 0.2.129,
 // matching the `wasm-bindgen` crate pin.
 //
 // Like the server build, the Wasm is stamped with the content version clients and the
-// server must share (`SLOPPY_CONTENT_VERSION`): multiplayer joins send it. The same stamp
-// goes to `src/generated/engine/content-version.js` for Battle Setup's room list, which
-// runs before the engine loads.
-//
-// `--labs` adds the development labs (`RenderLab`, `EffectsLab`, the `labs` feature of
-// `sloppy-web`) and writes their glue to `src/generated/engine-labs/` instead, so a lab
-// build never replaces the production engine that the game, `pnpm run build` and the dev
-// server load.
-import { spawn } from "node:child_process";
+// server must share (`SLOPPY_CONTENT_VERSION`): multiplayer joins send it. The shell
+// also carries the release and commit Battle Setup shows, as the desktop app does, and
+// its content version goes to `src/generated/shell/content-version` for the page's
+// `/health` (`scripts/page-health.ts`).
+import { spawn, spawnSync } from "node:child_process";
 import { existsSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "./content-version.mjs";
+import { releaseVersion } from "./release-version.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
-const labs = process.argv.includes("--labs");
-const all = process.argv.includes("--all");
-const webglOnly = process.argv.includes("--webgl");
 const version = await contentVersion();
 
-const WEBGPU = {
-  features: [],
-  targetDir: "target",
+const SHELL = {
+  package: "sloppy-desktop",
+  binary: "sloppy-tanks",
+  features: ["--features", "webgpu"],
+  dir: "src/generated/shell",
+  outName: "sloppy-tanks",
+};
+const SHELL_WEBGL = {
+  package: "sloppy-desktop",
+  binary: "sloppy-tanks",
+  features: ["--features", "webgl"],
+  targetDir: "target/webgl",
+  dir: "src/generated/shell-webgl",
+  outName: "sloppy-tanks-webgl",
+};
+const ENGINE = {
+  package: "sloppy-web",
+  binary: "sloppy_web",
+  features: ["--features", "webgpu"],
   dir: "src/generated/engine",
   outName: "engine",
 };
-const WEBGL = {
-  features: ["--no-default-features", "--features", "webgl"],
-  targetDir: "target/webgl",
-  dir: "src/generated/engine-webgl",
-  outName: "engine-webgl",
-};
 const LABS = {
-  features: ["--features", "labs"],
-  targetDir: "target",
+  package: "sloppy-web",
+  binary: "sloppy_web",
+  features: ["--features", "webgpu,labs"],
   dir: "src/generated/engine-labs",
   outName: "engine",
+};
+
+/** A command's trimmed output, or "" when it fails. */
+function capture(command, args) {
+  const result = spawnSync(command, args, { cwd: root, encoding: "utf8" });
+  return result.status === 0 ? result.stdout.trim() : "";
+}
+
+const commit = capture("git", ["rev-parse", "--short", "HEAD"]) || "unknown";
+const dirty = capture("git", ["status", "--porcelain"]) !== "";
+const stamps = {
+  SLOPPY_CONTENT_VERSION: version,
+  SLOPPY_RELEASE: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
+  SLOPPY_COMMIT: dirty ? `${commit}-dirty` : commit,
 };
 
 /** Run `command` from the repository root; rejects unless it succeeds. */
@@ -65,7 +92,7 @@ function run(command, args) {
     const child = spawn(command, args, {
       cwd: root,
       stdio: "inherit",
-      env: { ...process.env, SLOPPY_CONTENT_VERSION: version },
+      env: { ...process.env, ...stamps },
     });
     child.on("error", (error) =>
       reject(
@@ -80,9 +107,9 @@ function run(command, args) {
   });
 }
 
-/** Build `sloppy-web` with `features` in `targetDir`, then write its glue as `outName`
- * in `dir`. */
-async function buildEngine({ features, targetDir, dir, outName }) {
+/** Build `package` with `features` in `targetDir`, then write the glue of its `binary`
+ * as `outName` in `dir`. */
+async function build({ package: name, binary, features, targetDir = "target", dir, outName }) {
   await run("cargo", [
     "build",
     "--locked",
@@ -92,11 +119,11 @@ async function buildEngine({ features, targetDir, dir, outName }) {
     "--target-dir",
     targetDir,
     "-p",
-    "sloppy-web",
+    name,
     ...features,
   ]);
   await run("wasm-bindgen", [
-    `${targetDir}/wasm32-unknown-unknown/release/sloppy_web.wasm`,
+    `${targetDir}/wasm32-unknown-unknown/release/${binary}.wasm`,
     "--target",
     "web",
     "--out-dir",
@@ -106,59 +133,31 @@ async function buildEngine({ features, targetDir, dir, outName }) {
   ]);
 }
 
-/** Build `engines` at once; exits the process if any fails. */
-async function buildEngines(engines) {
-  // Cargo creates a missing target directory under a temporary name and renames it into
-  // place, so on a fresh checkout the outer build could replace `target/` while the
-  // inner one works in it. Both exist before either build starts.
-  for (const { targetDir } of engines) {
-    await mkdir(fileURLToPath(new URL(`../${targetDir}`, import.meta.url)), { recursive: true });
+const webglGlue = existsSync(
+  fileURLToPath(new URL(`../${SHELL_WEBGL.dir}/${SHELL_WEBGL.outName}.js`, import.meta.url)),
+);
+const builds = process.argv.includes("--labs")
+  ? [LABS]
+  : process.argv.includes("--engine")
+    ? [ENGINE]
+    : process.argv.includes("--webgl")
+      ? [SHELL_WEBGL]
+      : process.argv.includes("--all")
+        ? [SHELL, SHELL_WEBGL, ENGINE]
+        : webglGlue
+          ? [SHELL]
+          : [SHELL, SHELL_WEBGL];
+try {
+  for (const target of builds) {
+    await build(target);
   }
-  const results = await Promise.allSettled(engines.map(buildEngine));
-  const failure = results.find((result) => result.status === "rejected");
-  if (failure) {
-    console.error(failure.reason.message);
-    process.exit(1);
-  }
+} catch (error) {
+  console.error(error.message);
+  process.exit(1);
 }
-
-/** The page-facing declarations of an engine's glue (its classes and functions), without
- * the Wasm exports that follow them and differ between builds; undefined until the glue
- * and binary exist. */
-async function publicApi({ dir, outName }) {
-  const path = (suffix) => fileURLToPath(new URL(`../${dir}/${outName}${suffix}`, import.meta.url));
-  if (![".js", "_bg.wasm", ".d.ts"].every((suffix) => existsSync(path(suffix)))) {
-    return undefined;
-  }
-  const types = await readFile(path(".d.ts"), "utf8");
-  return types.split("export type InitInput")[0];
-}
-
-/** The engines `--labs`, `--webgl` or `--all` ask for; by default the WebGPU one, with
- * the WebGL one beside it while its glue is missing. */
-async function requestedEngines() {
-  if (labs) return [LABS];
-  if (webglOnly) return [WEBGL];
-  if (all || (await publicApi(WEBGL)) === undefined) return [WEBGPU, WEBGL];
-  return [WEBGPU];
-}
-
-const engines = await requestedEngines();
-await buildEngines(engines);
-// The page and tsc treat both glues as one API, so a WebGPU build that changed it
-// rebuilds the WebGL engine as well.
-if (engines.length === 1 && engines[0] === WEBGPU) {
-  if ((await publicApi(WEBGPU)) !== (await publicApi(WEBGL))) {
-    console.log("The WebGL engine's API no longer matches the WebGPU engine's: building it too.");
-    await buildEngines([WEBGL]);
-  }
-}
-if (!webglOnly) {
-  const stamp = fileURLToPath(new URL(`../${engines[0].dir}/content-version`, import.meta.url));
+if (builds.includes(SHELL)) {
   await writeFile(
-    `${stamp}.js`,
-    "// Generated by scripts/build-wasm.mjs: the content version this engine joins with.\n" +
-      `export const CONTENT_VERSION = ${JSON.stringify(version)};\n`,
+    fileURLToPath(new URL(`../${SHELL.dir}/content-version`, import.meta.url)),
+    version,
   );
-  await writeFile(`${stamp}.d.ts`, "export declare const CONTENT_VERSION: string;\n");
 }

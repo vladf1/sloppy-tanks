@@ -4,31 +4,75 @@ version = "0.1.0"
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
-description = "Sloppy Tanks for macOS, Windows and iPad: the game in a native window, no browser"
+description = "Sloppy Tanks for macOS, Windows, iPad and the web: the game's egui shell over the shared engine"
 
 [[bin]]
 name = "sloppy-tanks"
 path = "src/main.rs"
 
+[features]
+# The page's graphics backend, which its build names (`scripts/build-wasm.mjs`):
+# `webgpu`, egui drawn with egui-wgpu, or `webgl` for browsers without WebGPU, egui drawn
+# with egui_glow. The native app needs neither: it draws with wgpu on Metal or Direct3D 12.
+webgpu = ["sloppy-web/webgpu", "dep:egui-wgpu"]
+webgl = ["sloppy-web/webgl", "dep:egui_glow"]
+
 [dependencies]
 sloppy-core.workspace = true
-sloppy-render = { workspace = true, features = ["native"] }
-sloppy-web = { path = "../web", default-features = false, features = ["native"] }
 glam.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 winit = "0.30"
-pollster = "0.4"
 egui = "0.37"
 egui-winit = { version = "0.37", default-features = false, features = ["links"] }
-egui-wgpu = { version = "0.37", default-features = false }
 kira = { version = "0.12", default-features = false, features = ["cpal", "mp3"] }
+image = { version = "0.25", default-features = false, features = ["webp", "png"] }
+# `Instant` that the browser has too (std's natively).
+web-time = "1"
+
+# Natively the engine draws with wgpu on Metal or Direct3D 12, sockets and HTTP run on
+# threads, and the choices live in a file.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+sloppy-render = { workspace = true, features = ["native"] }
+sloppy-web = { path = "../web", features = ["native"] }
+egui-wgpu = { version = "0.37", default-features = false }
+pollster = "0.4"
 tokio = { version = "1", default-features = false, features = ["rt", "net", "time", "sync", "macros"] }
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 dirs = "6"
-image = { version = "0.25", default-features = false, features = ["webp", "png"] }
+
+# In a page (`pnpm run wasm`, the web version): the browser's WebGPU, WebSocket, fetch
+# and localStorage.
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+sloppy-render.workspace = true
+sloppy-web = { path = "../web" }
+egui-wgpu = { version = "0.37", default-features = false, optional = true }
+# A page cannot read the system's font files (`ui/theme.rs`): egui's own faces.
+egui = { version = "0.37", features = ["default_fonts"] }
+egui_glow = { version = "0.37", optional = true, default-features = false }
+wasm-bindgen.workspace = true
+wasm-bindgen-futures.workspace = true
+js-sys.workspace = true
+console_error_panic_hook.workspace = true
+web-sys = { workspace = true, features = [
+  "AbortSignal",
+  "BinaryType",
+  "CloseEvent",
+  "Document",
+  "Element",
+  "Event",
+  "HtmlCanvasElement",
+  "Location",
+  "MessageEvent",
+  "Request",
+  "RequestInit",
+  "Response",
+  "Storage",
+  "WebSocket",
+  "Window",
+] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
@@ -37,8 +81,9 @@ objc2 = "0.6"
 objc2 = "0.6"
 objc2-core-foundation = { version = "0.3", default-features = false, features = ["std", "CFCGTypes"] }
 
-# iOS has no clipboard arboard can reach (it would build its Linux backend there).
-[target.'cfg(not(target_os = "ios"))'.dependencies]
+# iOS has no clipboard arboard can reach (it would build its Linux backend there), and
+# a page's clipboard is the browser's.
+[target.'cfg(not(any(target_os = "ios", target_arch = "wasm32")))'.dependencies]
 egui-winit = { version = "0.37", default-features = false, features = ["clipboard", "links"] }
 
 [target.'cfg(windows)'.build-dependencies]

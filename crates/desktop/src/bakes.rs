@@ -1,6 +1,6 @@
 //! Generated textures baked off the main thread (`src/game/texture-bake.ts`): the
 //! engine hands out a bake (`claim_texture_bake`), its rows split across threads, and
-//! the pixels return through `supply_texture` on a later frame.
+//! the pixels return through `supply_pixels` on a later frame.
 
 use std::sync::mpsc::{Receiver, channel};
 
@@ -14,9 +14,9 @@ pub struct Bake {
 }
 
 /// Start baking `key` across the machine's cores; `None` for a key the shell cannot
-/// bake (the engine then bakes it itself).
+/// bake (the engine then bakes it itself), and in a page, which has no threads.
 pub fn start(key: String) -> Option<Bake> {
-    if key != QUARRY_SOIL_TEXTURE {
+    if key != QUARRY_SOIL_TEXTURE || cfg!(target_arch = "wasm32") {
         return None;
     }
     let (sender, pixels) = channel();

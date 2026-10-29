@@ -3,7 +3,9 @@
 //! seconds while the tab shows, a new room's rules, the player's name and team, and
 //! CREATE ROOM or JOIN ROOM. A room code typed in stands in for the browser's invite link.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+
+use web_time::Instant;
 
 use egui::{
     Align2, Color32, Id, Painter, Pos2, Rect, RichText, Sense, Shape, Stroke, StrokeKind, pos2,

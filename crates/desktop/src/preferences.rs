@@ -1,6 +1,8 @@
 //! The player's choices between launches (`src/game/player-preferences.ts`): one JSON
-//! file in the platform's settings folder, beside the personal bests.
+//! file in the platform's settings folder, beside the personal bests; in a page, the
+//! same JSON in its `localStorage`.
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::path::PathBuf;
 
 use serde::de::DeserializeOwned;
@@ -14,6 +16,7 @@ use sloppy_render::quality::GraphicsSetting;
 
 /// The folder of the settings and records files: `~/Library/Application Support/Sloppy
 /// Tanks` on macOS, `%APPDATA%\Sloppy Tanks` on Windows.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn data_directory() -> Option<PathBuf> {
     dirs::config_dir().map(|directory| directory.join("Sloppy Tanks"))
 }
@@ -70,30 +73,63 @@ impl Default for Preferences {
     }
 }
 
-impl Preferences {
-    fn path() -> Option<PathBuf> {
-        data_directory().map(|directory| directory.join("settings.json"))
-    }
+/// The saved settings' text.
+#[cfg(not(target_arch = "wasm32"))]
+fn settings_path() -> Option<PathBuf> {
+    data_directory().map(|directory| directory.join("settings.json"))
+}
 
+#[cfg(not(target_arch = "wasm32"))]
+fn read_settings() -> Option<String> {
+    std::fs::read_to_string(settings_path()?).ok()
+}
+
+/// Keep the settings' text; a folder that cannot be written keeps them for this run.
+#[cfg(not(target_arch = "wasm32"))]
+fn write_settings(text: &str) {
+    let Some(path) = settings_path() else { return };
+    if let Some(directory) = path.parent() {
+        let _ = std::fs::create_dir_all(directory);
+    }
+    let _ = std::fs::write(path, text);
+}
+
+/// The page's `localStorage` key, apart from the page shell's own choices.
+#[cfg(target_arch = "wasm32")]
+const SETTINGS_KEY: &str = "sloppy-shell-settings";
+
+#[cfg(target_arch = "wasm32")]
+fn local_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.local_storage().ok().flatten()
+}
+
+#[cfg(target_arch = "wasm32")]
+fn read_settings() -> Option<String> {
+    local_storage()?.get_item(SETTINGS_KEY).ok().flatten()
+}
+
+/// Keep the settings' text; private browsing or a full quota keeps them for this run.
+#[cfg(target_arch = "wasm32")]
+fn write_settings(text: &str) {
+    if let Some(storage) = local_storage() {
+        let _ = storage.set_item(SETTINGS_KEY, text);
+    }
+}
+
+impl Preferences {
     /// The saved choices; malformed or missing ones take their defaults.
     pub fn load() -> Self {
-        Self::path()
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .map_or_else(Self::default, |text| Self::read(&text))
+        read_settings().map_or_else(Self::default, |text| Self::read(&text))
     }
 
     fn read(text: &str) -> Self {
         serde_json::from_str(text).unwrap_or_default()
     }
 
-    /// Save the choices; a folder that cannot be written keeps them for this run.
+    /// Save the choices.
     pub fn save(&self) {
-        let Some(path) = Self::path() else { return };
-        if let Some(directory) = path.parent() {
-            let _ = std::fs::create_dir_all(directory);
-        }
         if let Ok(text) = serde_json::to_string_pretty(self) {
-            let _ = std::fs::write(path, text);
+            write_settings(&text);
         }
     }
 

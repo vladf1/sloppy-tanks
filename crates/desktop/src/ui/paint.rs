@@ -657,6 +657,21 @@ pub fn close_button(ui: &mut Ui, art: &Art, rect: Rect, id: egui::Id) -> Respons
     response
 }
 
+/// What a layer drawn smaller to fit a small screen (a phone) keeps of its shapes: the
+/// screen as that layer sees it, at down to a third of its size.
+pub fn shrunk_clip(screen: Rect) -> Rect {
+    screen.expand2(screen.size() * 3.0)
+}
+
+/// Draw `layer` at `scale` about `anchor`, which stays put: a part of the interface
+/// shrinks to fit a small screen rather than run off it. Its widgets still click.
+pub fn shrink_about(context: &egui::Context, layer: egui::LayerId, anchor: Pos2, scale: f32) {
+    context.set_transform_layer(
+        layer,
+        egui::emath::TSTransform::new(anchor.to_vec2() * (1.0 - scale), scale),
+    );
+}
+
 /// A section label with its gold accent bar (`.setup-label`).
 pub fn section_label(painter: &Painter, pos: Pos2, label: &str) -> Rect {
     let bar = Rect::from_min_size(pos + vec2(0.0, 2.0), vec2(4.0, 15.0));

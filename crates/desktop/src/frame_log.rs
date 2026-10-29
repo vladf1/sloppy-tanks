@@ -1,7 +1,7 @@
 //! `--frame-log`: once a second, the frame rate and where a frame's time went, on
 //! stderr. Evidence for frame-rate work, not a player feature.
 
-use std::time::Instant;
+use web_time::Instant;
 
 /// One second's frames.
 pub struct FrameLog {

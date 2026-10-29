@@ -289,12 +289,14 @@ pub struct Frame {
     gpu_frames: FrameTracker,
     /// Natively, whether the window took the last frame: a covered window gives none,
     /// and nothing paces frames to its display.
-    #[cfg(not(target_arch = "wasm32"))]
     pub shown: bool,
     /// Natively, the main view's targets still hold the last drawn scene, which a
     /// window frame without a new one shows again (as a canvas keeps its picture).
-    #[cfg(not(target_arch = "wasm32"))]
     scene_drawn: bool,
+    /// In the browser, the canvas frame waits for [`Frame::present`] as a window's does
+    /// natively (`Renderer::present_late`).
+    #[cfg(target_arch = "wasm32")]
+    pub late_present: bool,
 }
 
 impl Frame {
@@ -400,10 +402,10 @@ impl Frame {
             gpu_frames: FrameTracker::new(),
             #[cfg(not(target_arch = "wasm32"))]
             gpu_frames: FrameTracker::new(device),
-            #[cfg(not(target_arch = "wasm32"))]
             shown: true,
-            #[cfg(not(target_arch = "wasm32"))]
             scene_drawn: false,
+            #[cfg(target_arch = "wasm32")]
+            late_present: false,
         };
         frame.view_groups = frame.frame_groups(gpu, &frame.instance_records);
         frame
@@ -435,10 +437,7 @@ impl Frame {
             return;
         }
         let (width, height) = scene;
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.scene_drawn = false;
-        }
+        self.scene_drawn = false;
         self.main_target = ColorTarget::new(gpu, "main view", width, height);
         self.post = PostTargets::new(
             gpu,
@@ -656,7 +655,8 @@ impl Frame {
         });
     }
 
-    /// Natively, show a window frame: the scene [`Self::draw`] drew last through the
+    /// Natively (and in the browser under `late_present`), show a window frame: the
+    /// scene [`Self::draw`] drew last through the
     /// output pass (or, before any scene, the window cleared to `clear`), with
     /// `overlay` (the window's menus and HUD) drawn over it with the device, the queue
     /// and the frame's view. The window's frame is taken only here, as late as can be:
@@ -664,7 +664,6 @@ impl Frame {
     /// time, and a frame drawn twice (preparation's first frames) shows once. Without a
     /// new scene (a room waiting for the server) the last one shows again, as a canvas
     /// keeps its picture.
-    #[cfg(not(target_arch = "wasm32"))]
     pub fn present(
         &mut self,
         gpu: &Gpu,
@@ -739,20 +738,17 @@ impl Frame {
             label: Some("scene"),
         });
         self.encode_scene(&mut encoder, scene, stats);
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.scene_drawn = true;
-        }
         let submitted = self.gpu_frames.now_ms();
         gpu.queue.submit([encoder.finish()]);
-        // Natively the window's frame waits for `present`.
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            self.track_frame(gpu, submitted);
-            Ok(())
-        }
+        // Natively, and under the browser's overlay shell, the window's frame waits for
+        // `present`.
         #[cfg(target_arch = "wasm32")]
-        self.draw_canvas(gpu, scene, stats, submitted)
+        if !self.late_present {
+            return self.draw_canvas(gpu, scene, stats, submitted);
+        }
+        self.scene_drawn = true;
+        self.track_frame(gpu, submitted);
+        Ok(())
     }
 
     /// The browser's canvas frame: the output pass into it, then present.

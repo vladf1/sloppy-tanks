@@ -378,10 +378,26 @@ const SHEET_CELL: [f32; 2] = [640.0, 400.0];
 /// chassis sizes stay comparable.
 const PREVIEW_SIZE: [f32; 2] = [560.0, 300.0];
 
-/// The textures the screens draw: icons by name and the tank sheet.
+/// The textures the screens draw: icons by name, the tank sheet and the logo.
 pub struct Art {
     icons: HashMap<&'static str, TextureHandle>,
     tanks: Option<TextureHandle>,
+    logo: Option<TextureHandle>,
+}
+
+/// The logo, `previews/logo.webp`: the page's `.setup-brand` (SLOPPY over TANKS in
+/// Impact, tilted, with its shadows) captured at 3x from the production site with a
+/// margin around its layout box, in CSS pixels, for the tilt and the shadows.
+const LOGO_SIZE: egui::Vec2 = egui::vec2(152.0, 104.0);
+const LOGO_MARGIN: f32 = 24.0;
+
+/// A preview image embedded under `public/` as an egui texture.
+fn preview(context: &egui::Context, path: &str, name: &str) -> Option<TextureHandle> {
+    let image = image::load_from_memory(crate::assets::file(path)?).ok()?;
+    let image = image.into_rgba8();
+    let size = [image.width() as usize, image.height() as usize];
+    let pixels = ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+    Some(context.load_texture(name, pixels, TextureOptions::LINEAR))
 }
 
 impl Art {
@@ -398,15 +414,24 @@ impl Art {
                 (source.name, texture)
             })
             .collect();
-        let tanks = crate::assets::file("previews/tanks.webp")
-            .and_then(|bytes| image::load_from_memory(bytes).ok())
-            .map(|image| {
-                let image = image.into_rgba8();
-                let size = [image.width() as usize, image.height() as usize];
-                let pixels = ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-                context.load_texture("tank previews", pixels, TextureOptions::LINEAR)
-            });
-        Self { icons, tanks }
+        Self {
+            icons,
+            tanks: preview(context, "previews/tanks.webp", "tank previews"),
+            logo: preview(context, "previews/logo.webp", "logo"),
+        }
+    }
+
+    /// Paint the logo with its layout box's top-left at `origin`, as the page places
+    /// `.setup-brand`.
+    pub fn logo(&self, painter: &egui::Painter, origin: Pos2) {
+        if let Some(texture) = &self.logo {
+            painter.image(
+                texture.id(),
+                Rect::from_min_size(origin - egui::Vec2::splat(LOGO_MARGIN), LOGO_SIZE),
+                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
+                Color32::WHITE,
+            );
+        }
     }
 
     /// Paint icon `name` into `rect`, tinted (white keeps a coloured icon's colours).

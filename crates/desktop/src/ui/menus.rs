@@ -22,6 +22,10 @@ use sloppy_web::hud::Hud;
 
 /// Room inside a dialog's plate: sides, top and bottom.
 pub const DIALOG_PADDING: [f32; 3] = [30.0, 26.0, 28.0];
+/// The narrowest a dialog lays out; a narrower or shorter screen (a phone) shows it
+/// smaller instead, with the margin around it.
+const MIN_DIALOG_WIDTH: f32 = 560.0;
+const DIALOG_MARGIN: f32 = 16.0;
 
 /// The arena stays readable behind a dialog, softened and darkest at the edges.
 pub fn dim_backdrop(context: &egui::Context) {
@@ -58,12 +62,14 @@ pub(super) fn dialog_with_padding(
     build: impl FnOnce(&mut Ui, &Painter, Pos2, f32) -> f32,
 ) {
     let screen = context.content_rect();
-    let width = width.min(screen.width() - 32.0);
-    egui::Area::new(Id::unique(id))
+    let room = screen.shrink(DIALOG_MARGIN).size();
+    let width = width.min(room.x.max(MIN_DIALOG_WIDTH));
+    let shown = egui::Area::new(Id::unique(id))
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
         .order(Order::Foreground)
         .constrain(false)
         .show(context, |ui| {
+            ui.set_clip_rect(paint::shrunk_clip(screen));
             let origin = ui.cursor().min;
             let painter = ui.painter().clone();
             let slot = painter.add(Shape::Noop);
@@ -85,6 +91,9 @@ pub(super) fn dialog_with_padding(
             painter.set(slot, Shape::Vec(shapes));
             ui.allocate_rect(rect, Sense::hover());
         });
+    let size = shown.response.rect.size();
+    let scale = (room.x / size.x).min(room.y / size.y).min(1.0);
+    paint::shrink_about(context, shown.response.layer_id, screen.center(), scale);
 }
 
 /// The score on two team plates, the viewer's side rimmed in gold and saying YOU;

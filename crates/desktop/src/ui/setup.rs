@@ -17,6 +17,7 @@ use super::icons::Art;
 use super::paint::{self, ButtonStyle, fade, hex, hexa, mix};
 use super::theme::{GOLD, TEXT_DIM, bold_font, display_font};
 use super::{Action, UiState, View};
+use crate::preferences::Preferences;
 
 /// How far an unavailable battle format fades (`.choice-card:has(input:disabled)`).
 const UNAVAILABLE_OPACITY: f32 = 0.45;
@@ -120,44 +121,8 @@ fn backdrop(context: &egui::Context, art: &Art) {
     );
 }
 
-/// The logo: SLOPPY over a bigger gold TANKS, tilted like a stencil slapped on.
-fn logo(painter: &Painter, origin: egui::Pos2) -> f32 {
-    let angle = (-4.0f32).to_radians();
-    let sloppy = paint::galley(
-        painter,
-        "SLOPPY",
-        display_font(27.0),
-        Color32::WHITE,
-        0.3,
-        f32::INFINITY,
-    );
-    let tanks = paint::galley(
-        painter,
-        "TANKS",
-        display_font(41.0),
-        GOLD,
-        0.3,
-        f32::INFINITY,
-    );
-    let width = sloppy.size().x.max(tanks.size().x);
-    let place =
-        |galley: std::sync::Arc<egui::Galley>, pos: egui::Pos2, color: Color32, shadow: Color32| {
-            painter.add(
-                egui::epaint::TextShape::new(pos + vec2(0.0, 3.0), galley.clone(), shadow)
-                    .with_override_text_color(shadow)
-                    .with_angle(angle),
-            );
-            painter.add(egui::epaint::TextShape::new(pos, galley, color).with_angle(angle));
-        };
-    place(
-        sloppy,
-        origin + vec2(2.0, 4.0),
-        Color32::WHITE,
-        hex(0x0b1a30),
-    );
-    place(tanks, origin + vec2(0.0, 25.0), GOLD, hex(0x7a4a0a));
-    width + 6.0
-}
+/// The narrowest tank card with room for its hull and speed line.
+const SPEC_LINE_WIDTH: f32 = 200.0;
 
 /// A tank card: a little showroom with a spotlight on the tank, its name and class,
 /// and its hull and speed as bars. The chosen tank glows gold.
@@ -208,9 +173,12 @@ pub fn vehicle_card(
         vec2(rect.width() * 0.6, rect.height() * 0.55),
         &[(0.0, spot), (0.7, Color32::TRANSPARENT)],
     ));
-    let padding = if compact { 10.0 } else { 14.0 };
-    let name_size = if compact { 22.0 } else { 24.0 };
-    paint::shadowed(
+    // A card too narrow for its labels (a phone's row of three) shows the name and the
+    // tank alone.
+    let narrow = rect.width() < SPEC_LINE_WIDTH;
+    let padding = if compact || narrow { 10.0 } else { 14.0 };
+    let name_size = if compact || narrow { 20.0 } else { 24.0 };
+    let name = paint::shadowed(
         painter,
         rect.min + vec2(padding, 10.0),
         Align2::LEFT_TOP,
@@ -220,11 +188,12 @@ pub fn vehicle_card(
         0.5,
     );
     if compact {
-        if selected {
-            let next = Rect::from_min_size(
-                pos2(rect.right() - 61.0, rect.top() + 10.0),
-                vec2(51.0, 19.0),
-            );
+        let next = Rect::from_min_size(
+            pos2(rect.right() - 61.0, rect.top() + 10.0),
+            vec2(51.0, 19.0),
+        );
+        // Where the name leaves no room, the gold ring alone says which comes next.
+        if selected && name.right() + 6.0 <= next.left() {
             painter.rect_filled(next, 4, GOLD);
             paint::text(
                 painter,
@@ -236,7 +205,7 @@ pub fn vehicle_card(
                 1.4,
             );
         }
-    } else {
+    } else if !narrow {
         // The class tag, led by a dot in the class's colour.
         let class = tank.class.to_uppercase();
         let class_font = bold_font(11.0);
@@ -245,29 +214,36 @@ pub fn vehicle_card(
             pos2(rect.right() - padding - class_width, rect.top() + 15.0),
             vec2(class_width, 19.0),
         );
+        // A wide display face leaves the tag no room beside the name.
+        let fits = name.right() + 8.0 <= tag.left();
         let (tag_fill, tag_ink, dot) = if selected {
             (GOLD, hex(0x1a2233), hex(0x1a2233))
         } else {
             (hexa(0xffffff, 0.07), hex(0xcfe3f5), hex(tank.color))
         };
-        painter.rect_filled(tag, 5, tag_fill);
-        painter.circle_filled(pos2(tag.left() + 10.0, tag.center().y), 3.0, dot);
-        paint::text(
-            painter,
-            pos2(tag.left() + 18.0, tag.center().y),
-            Align2::LEFT_CENTER,
-            &class,
-            class_font,
-            tag_ink,
-            0.4,
-        );
+        if fits {
+            painter.rect_filled(tag, 5, tag_fill);
+            painter.circle_filled(pos2(tag.left() + 10.0, tag.center().y), 3.0, dot);
+            paint::text(
+                painter,
+                pos2(tag.left() + 18.0, tag.center().y),
+                Align2::LEFT_CENTER,
+                &class,
+                class_font,
+                tag_ink,
+                0.4,
+            );
+        }
     }
     // The tank, tucked under the name line, sized by its class.
     let spec_height = 26.0;
-    let stage = if compact {
+    let stage = if compact || narrow {
         Rect::from_min_max(
             pos2(rect.left() + 6.0, rect.top() + 31.0),
-            pos2(rect.right() - 6.0, rect.bottom() - 40.0),
+            pos2(
+                rect.right() - 6.0,
+                rect.bottom() - if narrow { 6.0 } else { 40.0 },
+            ),
         )
     } else {
         // The desktop garage keeps its picture above the specification line.
@@ -297,8 +273,8 @@ pub fn vehicle_card(
         scale * 1.05,
         false,
     );
-    {
-        // Hull and speed as bars that fill by each tank's share of the best.
+    // Hull and speed as bars that fill by each tank's share of the best.
+    if !narrow {
         let spec_top = rect.bottom() - spec_height - 11.0;
         let half = (rect.width() - 2.0 * padding - 16.0) / 2.0;
         for (index, (label, share)) in [
@@ -486,16 +462,19 @@ fn map_card(
             0.8,
         );
     }
-    paint::text_fit(
-        painter,
-        pos2(rect.left() + 12.0, rect.top() + 38.0),
-        Align2::LEFT_TOP,
-        map.short_description.unwrap_or(map.description),
-        egui::FontId::proportional(12.0),
-        hex(0xc9def0),
-        0.0,
-        text_width,
-    );
+    // A phone's row of three has room for the name alone.
+    if rect.width() >= SPEC_LINE_WIDTH {
+        paint::text_fit(
+            painter,
+            pos2(rect.left() + 12.0, rect.top() + 38.0),
+            Align2::LEFT_TOP,
+            map.short_description.unwrap_or(map.description),
+            egui::FontId::proportional(12.0),
+            hex(0xc9def0),
+            0.0,
+            text_width,
+        );
+    }
     choice_ring(painter, rect, selected);
 }
 
@@ -629,12 +608,14 @@ fn battle_card(
             false,
         );
     }
+    // A phone's half-width poster takes a smaller title.
+    let title_size = if width < 240.0 { 18.0 } else { 24.0 };
     paint::shadowed(
         painter,
-        rect.min + vec2(16.0, rect.height() - 57.0),
+        rect.min + vec2(16.0, rect.height() - 33.0 - title_size),
         Align2::LEFT_TOP,
         &name.to_uppercase(),
-        display_font(24.0),
+        display_font(title_size),
         Color32::WHITE,
         0.5,
     );
@@ -651,6 +632,9 @@ fn battle_card(
     choice_ring(painter, rect, selected);
 }
 
+/// The narrowest difficulty level that says what it changes.
+const DIFFICULTY_DETAIL_WIDTH: f32 = 200.0;
+
 /// A difficulty level (`.difficulty-setting .segment`): its name, what it changes and
 /// its strength bars.
 fn difficulty_segment(
@@ -662,6 +646,25 @@ fn difficulty_segment(
     hovered: bool,
 ) {
     choice_frame(painter, rect, selected, hovered);
+    if rect.width() < DIFFICULTY_DETAIL_WIDTH {
+        // A phone's row of three: the name over its bars.
+        paint::shadowed(
+            painter,
+            rect.center_top() + vec2(0.0, 9.0),
+            Align2::CENTER_TOP,
+            &entry.name.to_uppercase(),
+            display_font(19.0),
+            Color32::WHITE,
+            0.5,
+        );
+        let bars = Rect::from_center_size(
+            pos2(rect.center().x, rect.bottom() - 17.0),
+            vec2(26.0, 18.0),
+        );
+        difficulty_bars(painter, bars, level, selected);
+        choice_ring(painter, rect, selected);
+        return;
+    }
     let galley = paint::wrapped(
         painter,
         entry.detail,
@@ -763,21 +766,28 @@ fn folder_tab(painter: &Painter, rect: Rect, open: bool, edge: Color32) {
     }
 }
 
-/// A play tab: its badge, its name and what it is (`.play-tab`).
+/// A play tab: its badge, its name and what it is (`.play-tab`); `compact` (a phone's
+/// half width) leaves out what it is.
 fn play_tab(
     ui: &mut egui::Ui,
     painter: &Painter,
     rect: Rect,
     (multiplayer, name, line): (bool, &str, &str),
     open: bool,
+    compact: bool,
 ) -> bool {
     let response = ui
         .interact(rect, Id::unique(("play tab", multiplayer)), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     folder_tab(painter, rect, open, GOLD);
+    let badge_size = if compact { 28.0 } else { 34.0 };
     let badge = Rect::from_min_size(
-        rect.min + vec2(16.0, rect.height() / 2.0 - 17.0),
-        vec2(34.0, 34.0),
+        rect.min
+            + vec2(
+                if compact { 10.0 } else { 16.0 },
+                (rect.height() - badge_size) / 2.0,
+            ),
+        Vec2::splat(badge_size),
     );
     let ink = if open { hex(0x1a2233) } else { hex(0xc9dbec) };
     if open {
@@ -809,13 +819,19 @@ fn play_tab(
     }
     let title = paint::shadowed(
         painter,
-        pos2(badge.right() + 12.0, rect.center().y + 1.0),
+        pos2(
+            badge.right() + if compact { 8.0 } else { 12.0 },
+            rect.center().y + 1.0,
+        ),
         Align2::LEFT_CENTER,
         name,
-        display_font(23.0),
+        display_font(if compact { 17.0 } else { 23.0 }),
         if open { Color32::WHITE } else { hex(0xc9dbec) },
-        0.6,
+        if compact { 0.3 } else { 0.6 },
     );
+    if compact {
+        return response.clicked();
+    }
     paint::text(
         painter,
         pos2(title.right() + 12.0, rect.center().y + 3.0),
@@ -898,6 +914,26 @@ pub fn battle_setup(
     backdrop(context, art);
     let mut prefs = view.prefs.clone();
     let screen = context.content_rect();
+    if screen.width() < DESIGN.x * MIN_SCALE || screen.height() < DESIGN.y * MIN_SCALE {
+        compact_setup(context, state, art, view, &mut prefs, actions);
+    } else {
+        sheet(context, state, art, view, &mut prefs, actions);
+    }
+    if prefs != *view.prefs {
+        actions.push(Action::SettingsSaved(Box::new(prefs)));
+    }
+}
+
+/// Battle Setup's sheet, scaled to the window.
+fn sheet(
+    context: &egui::Context,
+    state: &mut UiState,
+    art: &Art,
+    view: &View,
+    prefs: &mut Preferences,
+    actions: &mut Vec<Action>,
+) {
+    let screen = context.content_rect();
     let time = context.input(|input| input.time);
     let human_team = state.hud.as_ref().map_or(Team::Blue, |hud| hud.human_team);
     // What single player would play: a saved extra level only with the debug tools,
@@ -964,7 +1000,8 @@ pub fn battle_setup(
                 ],
                 Stroke::new(1.0, hexa(0xffffff, 0.11)),
             );
-            logo(&painter, pos2(71.0, 48.0));
+            // Where the page's sheet puts `.setup-brand` at 1280 × 800.
+            art.logo(&painter, pos2(71.0, 53.0));
             corner_buttons(
                 ui,
                 art,
@@ -979,7 +1016,7 @@ pub fn battle_setup(
                 3,
                 GOLD,
             );
-            paint::text(
+            let title = paint::text(
                 &painter,
                 TANK_TAB.min + vec2(34.0, 31.0),
                 Align2::LEFT_CENTER,
@@ -988,15 +1025,22 @@ pub fn battle_setup(
                 Color32::WHITE,
                 1.0,
             );
-            paint::text(
-                &painter,
-                TANK_TAB.min + vec2(154.0, 31.0),
-                Align2::LEFT_CENTER,
-                "Both modes",
-                egui::FontId::proportional(13.0),
-                hex(0xd3e7f5),
-                0.0,
-            );
+            // Beside the title where the display face leaves room (Impact does).
+            let note = egui::FontId::proportional(13.0);
+            let note_left = title.right().max(TANK_TAB.left() + 144.0) + 10.0;
+            if note_left + paint::text_width(&painter, "Both modes", note.clone(), 0.0)
+                <= TANK_TAB.right() - 8.0
+            {
+                paint::text(
+                    &painter,
+                    pos2(note_left, TANK_TAB.top() + 31.0),
+                    Align2::LEFT_CENTER,
+                    "Both modes",
+                    note,
+                    hex(0xd3e7f5),
+                    0.0,
+                );
+            }
             tray(&painter, tank_well, true, false);
             for (index, tank) in TANK_CARDS.iter().enumerate() {
                 let rect = Rect::from_min_size(
@@ -1037,7 +1081,7 @@ pub fn battle_setup(
                 } else {
                     Rect::from_min_size(pos2(left, 141.0), vec2(tab_width, 52.0))
                 };
-                if play_tab(ui, &painter, rect, tab, open) {
+                if play_tab(ui, &painter, rect, tab, open, false) {
                     state.rooms.multiplayer = tab.0;
                 }
             }
@@ -1112,7 +1156,7 @@ pub fn battle_setup(
                     art,
                     &mut state.rooms,
                     view,
-                    &prefs,
+                    prefs,
                     Rect::from_min_max(
                         pos2(inner.left(), 330.0),
                         pos2(inner.right(), 693.0 + extra_height),
@@ -1254,9 +1298,284 @@ pub fn battle_setup(
             0.4,
         );
     }
-    if prefs != *view.prefs {
-        actions.push(Action::SettingsSaved(Box::new(prefs)));
-    }
+}
+
+/// The compact column's widest, its margin and the gap between its rows.
+const COMPACT_WIDTH: f32 = 560.0;
+const COMPACT_MARGIN: f32 = 12.0;
+const ROW_GAP: f32 = 12.0;
+/// Row heights in the compact column.
+const COMPACT_TANK_HEIGHT: f32 = 112.0;
+const COMPACT_MAP_HEIGHT: f32 = 62.0;
+const COMPACT_BATTLE_HEIGHT: f32 = 150.0;
+const COMPACT_DIFFICULTY_HEIGHT: f32 = 62.0;
+const COMPACT_GO_HEIGHT: f32 = 56.0;
+/// The Multiplayer tab's panel in the compact column.
+const COMPACT_ROOMS_HEIGHT: f32 = 560.0;
+
+/// Battle Setup as one column where the sheet does not fit at its smallest scale (a
+/// phone either way up, a small window): the same choices in rows of cards, which
+/// scroll when taller than the screen, without the key strip.
+fn compact_setup(
+    context: &egui::Context,
+    state: &mut UiState,
+    art: &Art,
+    view: &View,
+    prefs: &mut Preferences,
+    actions: &mut Vec<Action>,
+) {
+    let screen = context.content_rect();
+    let time = context.input(|input| input.time);
+    let human_team = state.hud.as_ref().map_or(Team::Blue, |hud| hud.human_team);
+    let options = prefs.game_options(human_team, view.debug);
+    let multiplayer = state.rooms.multiplayer;
+    let maps: Vec<&MapCard> = MAP_CARDS
+        .iter()
+        .filter(|map| view.debug || !map.extra())
+        .collect();
+    let map_rows = maps.len().div_ceil(3);
+    let width = (screen.width() - 2.0 * COMPACT_MARGIN).min(COMPACT_WIDTH);
+    let label = 30.0;
+    let below_maps = if multiplayer {
+        COMPACT_ROOMS_HEIGHT
+    } else {
+        2.0 * (label + ROW_GAP)
+            + COMPACT_BATTLE_HEIGHT
+            + COMPACT_DIFFICULTY_HEIGHT
+            + COMPACT_GO_HEIGHT
+    };
+    let tray_height = 10.0
+        + 2.0 * (label + ROW_GAP)
+        + COMPACT_TANK_HEIGHT
+        + map_rows as f32 * (COMPACT_MAP_HEIGHT + CARD_GAP)
+        + below_maps
+        + 10.0;
+    let header = 82.0;
+    let tabs = 50.0;
+    let height = COMPACT_MARGIN + header + tabs + tray_height + 34.0;
+    egui::Area::new(Id::unique("compact battle setup"))
+        .fixed_pos(screen.min)
+        .order(Order::Middle)
+        .show(context, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(screen.height())
+                .min_scrolled_height(screen.height())
+                .show(ui, |ui| {
+                    let (canvas, _) =
+                        ui.allocate_exact_size(vec2(screen.width(), height), Sense::hover());
+                    let painter = ui.painter().clone();
+                    let left = canvas.center().x - width / 2.0;
+                    let mut y = canvas.top() + COMPACT_MARGIN;
+                    let row = |y: f32, height: f32| {
+                        Rect::from_min_size(pos2(left, y), vec2(width, height))
+                    };
+                    art.logo(&painter, pos2(left + 6.0, y + 10.0));
+                    corner_buttons(
+                        ui,
+                        art,
+                        Rect::from_min_size(pos2(left + width - 82.0, y + 8.0), vec2(82.0, 44.0)),
+                        actions,
+                    );
+                    y += header;
+
+                    // The play tabs over the tray.
+                    let tab_width = (width - 6.0) / 2.0;
+                    for (index, tab) in [(false, "SINGLE PLAYER", ""), (true, "MULTIPLAYER", "")]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let open = multiplayer == tab.0;
+                        let tab_left = left + index as f32 * (width - tab_width);
+                        let rect = if open {
+                            Rect::from_min_size(pos2(tab_left, y), vec2(tab_width, tabs))
+                        } else {
+                            Rect::from_min_size(
+                                pos2(tab_left, y + 6.0),
+                                vec2(tab_width, tabs - 7.0),
+                            )
+                        };
+                        if play_tab(ui, &painter, rect, tab, open, true) {
+                            state.rooms.multiplayer = tab.0;
+                        }
+                    }
+                    y += tabs - 1.0;
+                    let tray_rect = row(y, tray_height);
+                    tray(&painter, tray_rect, !multiplayer, multiplayer);
+                    let inner = tray_rect.shrink(10.0);
+                    let cells = |y: f32, count: usize, height: f32| {
+                        let cell = (inner.width() - CARD_GAP * (count - 1) as f32) / count as f32;
+                        (0..count).map(move |index| {
+                            Rect::from_min_size(
+                                pos2(inner.left() + index as f32 * (cell + CARD_GAP), y),
+                                vec2(cell, height),
+                            )
+                        })
+                    };
+                    y = inner.top() + 2.0;
+
+                    paint::section_label(&painter, pos2(inner.left(), y), "YOUR TANK");
+                    y += label;
+                    for (tank, rect) in TANK_CARDS.iter().zip(cells(y, 3, COMPACT_TANK_HEIGHT)) {
+                        let response = ui
+                            .interact(rect, Id::unique(("setup tank", tank.kind)), Sense::click())
+                            .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        vehicle_card(
+                            &painter,
+                            art,
+                            rect,
+                            tank,
+                            human_team,
+                            prefs.tank == tank.kind,
+                            response.hovered(),
+                            false,
+                        );
+                        if response.clicked() {
+                            prefs.tank = tank.kind;
+                        }
+                    }
+                    y += COMPACT_TANK_HEIGHT + ROW_GAP;
+
+                    // MAP: an open room chosen on the Multiplayer tab shows its own.
+                    paint::section_label(&painter, pos2(inner.left(), y), "MAP");
+                    y += label;
+                    let room_map = state.rooms.selected_map().filter(|_| multiplayer);
+                    let shown_map = room_map.unwrap_or(options.map_mode);
+                    for chunk in maps.chunks(3) {
+                        for (map, rect) in chunk.iter().zip(cells(y, 3, COMPACT_MAP_HEIGHT)) {
+                            let locked = room_map.is_some();
+                            let id = Id::unique(("setup map", map.id));
+                            let response = if locked {
+                                ui.interact(rect, id, Sense::hover())
+                            } else {
+                                ui.interact(rect, id, Sense::click())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand)
+                            };
+                            map_card(
+                                &painter,
+                                art,
+                                rect,
+                                map,
+                                shown_map == map.id,
+                                !locked && response.hovered(),
+                            );
+                            if !locked && response.clicked() {
+                                prefs.map = map.id;
+                            }
+                        }
+                        y += COMPACT_MAP_HEIGHT + CARD_GAP;
+                    }
+                    y += ROW_GAP - CARD_GAP;
+
+                    if multiplayer {
+                        super::rooms::multiplayer(
+                            ui,
+                            art,
+                            &mut state.rooms,
+                            view,
+                            prefs,
+                            Rect::from_min_size(
+                                pos2(inner.left(), y),
+                                vec2(inner.width(), COMPACT_ROOMS_HEIGHT),
+                            ),
+                            actions,
+                        );
+                    } else {
+                        paint::section_label(&painter, pos2(inner.left(), y), "BATTLE");
+                        status_line(&painter, pos2(inner.right(), y + 4.0), state, time);
+                        y += label;
+                        for (battle, rect) in
+                            BATTLE_FORMATS
+                                .iter()
+                                .zip(cells(y, 2, COMPACT_BATTLE_HEIGHT))
+                        {
+                            let unavailable = battle.unavailable_on(options.map_mode);
+                            let id = Id::unique(("setup battle", battle.mode));
+                            let response = match &unavailable {
+                                Some(tip) => {
+                                    ui.interact(rect, id, Sense::hover()).on_hover_text(tip)
+                                }
+                                None => ui
+                                    .interact(rect, id, Sense::click())
+                                    .on_hover_cursor(egui::CursorIcon::PointingHand),
+                            };
+                            let mut card_painter = painter.clone();
+                            if unavailable.is_some() {
+                                card_painter.multiply_opacity(UNAVAILABLE_OPACITY);
+                            }
+                            battle_card(
+                                &card_painter,
+                                art,
+                                rect,
+                                battle,
+                                &battle.detail_on(options.map_mode),
+                                options.game_mode == battle.mode,
+                                unavailable.is_none() && response.hovered(),
+                            );
+                            if response.clicked() && options.game_mode != battle.mode {
+                                prefs.game_mode = battle.mode;
+                            }
+                        }
+                        y += COMPACT_BATTLE_HEIGHT + ROW_GAP;
+
+                        paint::section_label(&painter, pos2(inner.left(), y), "DIFFICULTY");
+                        y += label;
+                        for ((index, entry), rect) in DIFFICULTY_OPTIONS
+                            .iter()
+                            .enumerate()
+                            .zip(cells(y, 3, COMPACT_DIFFICULTY_HEIGHT))
+                        {
+                            let response = ui
+                                .interact(
+                                    rect,
+                                    Id::unique(("setup difficulty", entry.difficulty)),
+                                    Sense::click(),
+                                )
+                                .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            difficulty_segment(
+                                &painter,
+                                rect,
+                                index,
+                                entry,
+                                prefs.difficulty == entry.difficulty,
+                                response.hovered(),
+                            );
+                            if response.clicked() {
+                                prefs.difficulty = entry.difficulty;
+                            }
+                        }
+                        y += COMPACT_DIFFICULTY_HEIGHT + ROW_GAP;
+
+                        let go = Rect::from_min_size(
+                            pos2(inner.left(), y),
+                            vec2(inner.width(), COMPACT_GO_HEIGHT),
+                        );
+                        let mut go_ui = ui.new_child(egui::UiBuilder::new().max_rect(go));
+                        let label = if state.starting { "LOADING…" } else { "GO!" };
+                        if paint::button(
+                            &mut go_ui,
+                            art,
+                            label,
+                            None,
+                            ButtonStyle::Primary,
+                            go.size(),
+                            !state.starting,
+                        )
+                        .clicked()
+                        {
+                            actions.push(Action::Start);
+                        }
+                    }
+                    paint::text(
+                        &painter,
+                        pos2(canvas.center().x, tray_rect.bottom() + 16.0),
+                        Align2::CENTER_CENTER,
+                        view.build,
+                        egui::FontId::proportional(10.0),
+                        fade(TEXT_DIM, 0.7),
+                        0.4,
+                    );
+                });
+        });
 }
 
 /// The controls' essentials as key caps on one line.
@@ -1297,15 +1616,15 @@ fn key_strip(painter: &Painter, center: egui::Pos2) {
     }
 }
 
-/// Settings and Quit on a small plate at the header's right. An iPad app never
-/// quits itself, so there it is Settings alone, at the plate's right end.
+/// Settings and Quit on a small plate at the header's right. An iPad app or a page
+/// never quits itself, so there it is Settings alone, at the plate's right end.
 fn corner_buttons(ui: &mut egui::Ui, art: &Art, rect: Rect, actions: &mut Vec<Action>) {
     let button = 38.0;
     let painter = ui.painter().clone();
-    let buttons: &[(&str, &str)] = if crate::TOUCH {
-        &[("gear", "Settings")]
-    } else {
+    let buttons: &[(&str, &str)] = if crate::QUITS {
         &[("gear", "Settings"), ("power", "Quit Sloppy Tanks")]
+    } else {
+        &[("gear", "Settings")]
     };
     let rect = Rect::from_min_max(
         pos2(

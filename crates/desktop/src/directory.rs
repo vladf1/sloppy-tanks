@@ -1,22 +1,29 @@
 //! The server directory (`src/net/server-address.ts`): which game servers run, the
 //! content version each plays and their open rooms. Battle Setup's Multiplayer tab reads
-//! it off the main thread every few seconds. Reading and checking the answer, room codes
+//! it beside the frames every few seconds. Reading and checking the answer, room codes
 //! and the length stepper are `sloppy-core`'s (`net::room_list`, `net::protocol`); this
 //! fetches the answer and owns the directory's address.
 
-use std::sync::mpsc::{Receiver, TryRecvError, channel};
+use std::sync::mpsc::TryRecvError;
 use std::time::Duration;
 
 use serde_json::Value;
 use sloppy_core::net::room_list::{ServerList, split_address};
 
-/// The production directory, unless the build names another (`SLOPPY_DIRECTORY_URL`).
+use crate::tasks::Background;
+
+/// The production directory, unless the build names another (`SLOPPY_DIRECTORY_URL`;
+/// empty, as CI passes for a pull request, names none).
 pub const DEFAULT_DIRECTORY: &str = match option_env!("SLOPPY_DIRECTORY_URL") {
-    Some(url) => url,
-    None => "https://sloppy-tanks-directory.fridman.me",
+    Some(url) if !url.is_empty() => url,
+    _ => "https://sloppy-tanks-directory.fridman.me",
 };
-/// The environment whose servers the app lists.
-const ENVIRONMENT: &str = "production";
+/// The environment whose servers the app lists: production's, unless the build names
+/// another (`SLOPPY_SERVER_ENVIRONMENT`, `dev` for the dev site).
+const ENVIRONMENT: &str = match option_env!("SLOPPY_SERVER_ENVIRONMENT") {
+    Some(environment) if !environment.is_empty() => environment,
+    _ => "production",
+};
 /// A directory request that has not answered by now has failed.
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -45,6 +52,7 @@ pub fn is_local_directory(base: &str) -> bool {
 }
 
 /// Eight bytes from the standard library's per-process random hash keys.
+#[cfg(not(target_arch = "wasm32"))]
 pub fn random_bytes() -> [u8; 8] {
     use std::hash::{BuildHasher, Hasher};
     let mut hasher = std::collections::hash_map::RandomState::new().build_hasher();
@@ -56,20 +64,35 @@ pub fn random_bytes() -> [u8; 8] {
     hasher.finish().to_le_bytes()
 }
 
-/// A directory request running on its own thread.
+/// Eight bytes from the browser's random draws (a page has no per-process hash keys).
+#[cfg(target_arch = "wasm32")]
+pub fn random_bytes() -> [u8; 8] {
+    let draw = || (js_sys::Math::random() * f64::from(u32::MAX)) as u32;
+    let (high, low) = (draw(), draw());
+    (u64::from(high) << 32 | u64::from(low)).to_le_bytes()
+}
+
+const TIMED_OUT: &str = "The room list timed out";
+const UNAVAILABLE: &str = "Rooms unavailable";
+const UNREACHABLE: &str = "Can't reach the game server";
+
+/// A directory request running beside the frames.
 pub struct DirectoryRequest {
-    answer: Receiver<Result<ServerList, String>>,
+    answer: Background<Result<ServerList, String>>,
 }
 
 impl DirectoryRequest {
     /// GET the servers listed at `base` (see [`servers_address`]).
     pub fn start(base: &str) -> Self {
-        let (sender, answer) = channel();
         let address = servers_address(base);
         let local = is_local_directory(base);
-        std::thread::spawn(move || {
-            let result = address.and_then(|address| fetch(&address, local));
-            let _ = sender.send(result);
+        let answer = Background::spawn(async move {
+            let value = get_json(&address?).await?;
+            let list = ServerList::read(&value, local)?;
+            if list.servers.is_empty() {
+                return Err("No game server is running".into());
+            }
+            Ok(list)
         });
         Self { answer }
     }
@@ -77,33 +100,71 @@ impl DirectoryRequest {
     /// The answer once it has come: the list, or why there is none in words a player
     /// reads.
     pub fn answer(&self) -> Option<Result<ServerList, String>> {
-        match self.answer.try_recv() {
+        match self.answer.answer() {
             Ok(answer) => Some(answer),
             Err(TryRecvError::Empty) => None,
-            Err(TryRecvError::Disconnected) => Some(Err("Rooms unavailable".into())),
+            Err(TryRecvError::Disconnected) => Some(Err(UNAVAILABLE.into())),
         }
     }
 }
 
-fn fetch(address: &str, local: bool) -> Result<ServerList, String> {
+/// GET `address` as JSON, or why not in words a player reads; natively it blocks its
+/// thread.
+#[cfg(not(target_arch = "wasm32"))]
+async fn get_json(address: &str) -> Result<Value, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
         .timeout_global(Some(LIST_TIMEOUT))
         .build()
         .into();
     let mut response = agent.get(address).call().map_err(|error| match error {
-        ureq::Error::Timeout(_) => "The room list timed out".to_owned(),
-        ureq::Error::StatusCode(_) => "Rooms unavailable".to_owned(),
-        _ => "Can't reach the game server".to_owned(),
+        ureq::Error::Timeout(_) => TIMED_OUT.to_owned(),
+        ureq::Error::StatusCode(_) => UNAVAILABLE.to_owned(),
+        _ => UNREACHABLE.to_owned(),
     })?;
-    let value: Value = response
+    response
         .body_mut()
         .read_json()
-        .map_err(|_| "Rooms unavailable".to_owned())?;
-    let list = ServerList::read(&value, local)?;
-    if list.servers.is_empty() {
-        return Err("No game server is running".into());
+        .map_err(|_| UNAVAILABLE.to_owned())
+}
+
+/// GET `address` as JSON with the page's `fetch`, or why not in words a player reads.
+#[cfg(target_arch = "wasm32")]
+async fn get_json(address: &str) -> Result<Value, String> {
+    use wasm_bindgen::{JsCast, JsValue};
+    use wasm_bindgen_futures::JsFuture;
+    let timed_out = |error: &JsValue| {
+        js_sys::Reflect::get(error, &"name".into())
+            .ok()
+            .and_then(|name| name.as_string())
+            .is_some_and(|name| name == "TimeoutError")
+    };
+    let window = web_sys::window().ok_or(UNREACHABLE)?;
+    let init = web_sys::RequestInit::new();
+    let timeout = web_sys::AbortSignal::timeout_with_u32(LIST_TIMEOUT.as_millis() as u32);
+    init.set_signal(Some(&timeout));
+    let response = JsFuture::from(window.fetch_with_str_and_init(address, &init))
+        .await
+        .map_err(|error| {
+            if timed_out(&error) {
+                TIMED_OUT
+            } else {
+                UNREACHABLE
+            }
+        })?;
+    let response: web_sys::Response = response.dyn_into().map_err(|_| UNREACHABLE)?;
+    if !response.ok() {
+        return Err(UNAVAILABLE.into());
     }
-    Ok(list)
+    let text = JsFuture::from(response.text().map_err(|_| UNAVAILABLE)?)
+        .await
+        .map_err(|error| {
+            if timed_out(&error) {
+                TIMED_OUT
+            } else {
+                UNAVAILABLE
+            }
+        })?;
+    serde_json::from_str(&text.as_string().unwrap_or_default()).map_err(|_| UNAVAILABLE.into())
 }
 
 #[cfg(test)]

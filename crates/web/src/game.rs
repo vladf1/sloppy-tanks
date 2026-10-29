@@ -333,21 +333,9 @@ impl Game {
         self.view.supply_texture(key, rgba).map_err(js_error)
     }
 
-    /// The pixels of a claimed bake, baked on the shell's threads.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn supply_texture(&mut self, key: &str, rgba: &[u8]) -> Result<bool, PageError> {
-        self.view.supply_texture(key, rgba).map_err(js_error)
-    }
-
     /// Bake a claimed texture on the main thread after all (the worker failed).
     pub fn release_texture_bake(&mut self, key: &str) {
         self.view.release_texture_bake(key);
-    }
-
-    /// The renderer, for the desktop shell's overlay and presentation.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn renderer(&mut self) -> &mut sloppy_render::gpu::Renderer {
-        &mut self.view.renderer
     }
 
     /// Begin the round: GO, or PLAY AGAIN after results.
@@ -865,6 +853,18 @@ impl Game {
 /// The calls above that cross the boundary as JSON or packed numbers, typed for a Rust
 /// shell (the desktop app); the page's getters serialize these same values.
 impl Game {
+    /// The pixels of a claimed bake, baked on the shell's threads.
+    pub fn supply_pixels(&mut self, key: &str, rgba: &[u8]) -> Result<bool, PageError> {
+        #[cfg(target_arch = "wasm32")]
+        let rgba = &js_sys::Uint8Array::from(rgba);
+        self.view.supply_texture(key, rgba).map_err(js_error)
+    }
+
+    /// The renderer, for the desktop shell's overlay and presentation.
+    pub fn renderer(&mut self) -> &mut sloppy_render::gpu::Renderer {
+        &mut self.view.renderer
+    }
+
     /// `create` with the view and the game's configuration as values.
     pub async fn create_with(
         canvas: RenderTarget,

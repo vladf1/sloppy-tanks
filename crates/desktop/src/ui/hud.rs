@@ -20,6 +20,10 @@ use sloppy_web::hud::{EffectKind, Hud, HudHuman, HullTone};
 
 /// The screen edge the HUD keeps clear.
 const EDGE: f32 = 16.0;
+/// The gap between the score bar and the toolbar moved under it on a narrow screen.
+const STACK_GAP: f32 = 8.0;
+/// The kill feed's place under the toolbar where they sit side by side.
+const FEED_TOP: f32 = 74.0;
 
 /// The painter under every HUD area: shades, feed, toast and hit feedback.
 fn backdrop(context: &egui::Context) -> Painter {
@@ -100,11 +104,31 @@ pub fn hud(
             (1.0, Color32::TRANSPARENT),
         ],
     ));
-    score_bar(&painter, screen, &hud, view.room);
-    kill_feed(&painter, art, screen, state);
+    // The score bar shrinks to the screen's width; where the toolbar would cover it, the
+    // toolbar and the feed move under it.
+    let score_layer = LayerId::new(Order::Middle, Id::unique("score bar"));
+    let mut score_painter = context.layer_painter(score_layer);
+    score_painter.set_clip_rect(paint::shrunk_clip(screen));
+    let score = score_bar(&score_painter, screen, &hud, view.room);
+    let fit = ((screen.width() - 2.0 * EDGE) / score.width()).min(1.0);
+    paint::shrink_about(context, score_layer, score.center_top(), fit);
+    let score_right = score.center().x + score.width() * fit / 2.0;
+    let tools = toolbar_size();
+    let stacked = score_right + STACK_GAP > screen.right() - EDGE - tools.x;
+    let toolbar_top = if stacked {
+        score.top() + score.height() * fit + STACK_GAP
+    } else {
+        screen.top() + 14.0
+    };
+    let feed_top = if stacked {
+        toolbar_top + tools.y + STACK_GAP
+    } else {
+        screen.top() + FEED_TOP
+    };
+    kill_feed(&painter, art, screen, feed_top, state);
     if playing {
         toast(&painter, screen, state);
-        toolbar(context, art, screen, state, view, actions);
+        toolbar(context, art, screen, toolbar_top, state, view, actions);
         if human.alive {
             damage_ring(&painter, screen, state);
         }
@@ -144,7 +168,8 @@ fn team_plate(x: f32, width: f32, height: f32, left_side: bool) -> Vec<Pos2> {
 
 /// The score hangs from the top edge: two team plates cut toward the clock between
 /// them, each with a bar filling toward the score limit; your side carries gold.
-fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) {
+/// The score bar; returns where it is.
+fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
     let solo = hud.game_mode == GameMode::Solo;
     let match_state = &hud.match_state;
     let no_limit = room || solo || hud.endless_match;
@@ -379,13 +404,28 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) {
         GOLD_HOT,
         1.2,
     );
+    // With the YOUR TEAM tab under a plate.
+    Rect::from_min_size(pos2(left, top), vec2(total, height + 26.0))
 }
 
 /// The corner toolbar: first person, fullscreen, pause and settings on one plate.
+/// Thumb-sized on a touch screen, which has no fullscreen to toggle.
+const fn toolbar_button() -> f32 {
+    if crate::TOUCH { 46.0 } else { 38.0 }
+}
+
+/// The toolbar's plate: first person, fullscreen (not on a touch screen), pause and
+/// settings.
+fn toolbar_size() -> Vec2 {
+    let count = if crate::TOUCH { 3.0 } else { 4.0 };
+    vec2(toolbar_button() * count + 6.0, toolbar_button() + 6.0)
+}
+
 fn toolbar(
     context: &egui::Context,
     art: &Art,
     screen: Rect,
+    top: f32,
     state: &mut UiState,
     view: &View,
     actions: &mut Vec<Action>,
@@ -393,8 +433,7 @@ fn toolbar(
     if state.settings_draft.is_some() {
         return;
     }
-    // Thumb-sized on a touch screen, which has no fullscreen to toggle.
-    let button = if crate::TOUCH { 46.0 } else { 38.0 };
+    let button = toolbar_button();
     let fullscreen = (
         if view.prefs.fullscreen {
             "collapse"
@@ -418,8 +457,8 @@ fn toolbar(
     .into_iter()
     .flatten()
     .collect();
-    let size = vec2(button * buttons.len() as f32 + 6.0, button + 6.0);
-    let origin = pos2(screen.right() - EDGE - size.x, screen.top() + 14.0);
+    let size = toolbar_size();
+    let origin = pos2(screen.right() - EDGE - size.x, top);
     egui::Area::new(Id::unique("hud toolbar"))
         .fixed_pos(origin)
         .order(Order::Middle)
@@ -479,13 +518,14 @@ fn toolbar(
 
 /// The kill feed: killer, weapon, victim, newest on top, one fixed-width steel plate
 /// per row with each side's team as a bright edge at its end.
-fn kill_feed(painter: &Painter, art: &Art, screen: Rect, state: &UiState) {
+fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiState) {
     let width = 336.0_f32.min(screen.width() * 0.42);
     let row_height = 30.0;
     let right = screen.right() - EDGE;
     let lines = if state.cockpit { 2 } else { super::FEED_LINES };
+    let first = top;
     for (index, entry) in state.kill_feed.iter().take(lines).enumerate() {
-        let top = screen.top() + 74.0 + index as f32 * (row_height + 4.0);
+        let top = first + index as f32 * (row_height + 4.0);
         let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, row_height));
         let side = |team: Option<Team>| match team {
             Some(Team::Blue) => hex(0x3d9cff),
@@ -745,10 +785,19 @@ fn tank_panel(
         screen.left() + EDGE
     };
     let origin = pos2(left, screen.bottom() - EDGE - size.y);
+    // A narrow screen (a phone) shows the whole panel smaller, its corner in place.
+    let fit = ((screen.right() - EDGE - left) / size.x).min(1.0);
+    paint::shrink_about(
+        context,
+        LayerId::new(Order::Middle, Id::unique("tank panel")),
+        pos2(left, screen.bottom() - EDGE),
+        fit,
+    );
     egui::Area::new(Id::unique("tank panel"))
         .fixed_pos(origin)
         .order(Order::Middle)
         .show(context, |ui| {
+            ui.set_clip_rect(paint::shrunk_clip(screen));
             let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
             let painter = ui.painter().clone();
             // A soft shade in the corner behind the panel.
@@ -1489,7 +1538,9 @@ mod tests {
                     screen_rect: Some(screen),
                     ..Default::default()
                 },
-                |context| score_bar(&backdrop(context), screen, &hud, room),
+                |context| {
+                    score_bar(&backdrop(context), screen, &hud, room);
+                },
             );
             // This shape-only test has no GPU painter to consume texture updates.
             output.textures_delta.clear();

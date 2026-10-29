@@ -5,7 +5,16 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { launchChrome, menuReady } from "./browser-helpers.mjs";
+import { launchChrome } from "./browser-helpers.mjs";
+
+/** Wait until the production page's Battle Setup is ready to start a round. */
+function menuReady(page, options) {
+  return page.waitForFunction(
+    () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
+    null,
+    options,
+  );
+}
 
 const arguments_ = process.argv.slice(2);
 const option = (name, fallback) => {

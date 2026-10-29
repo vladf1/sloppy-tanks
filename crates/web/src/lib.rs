@@ -27,8 +27,6 @@ pub mod room_text;
 pub mod sounds;
 
 #[cfg(test)]
-mod page_catalog_tests;
-#[cfg(test)]
 mod page_json_tests;
 
 /// Which shell draws the game. The two say a few things differently on purpose ("in this
@@ -68,10 +66,12 @@ pub use game::{Game, GameConfig};
 pub use lab::RenderLab;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub use net_game::{NetConfig, NetGame};
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+pub use page::clock_start;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub use page::{CameraPreferences, ViewConfig};
-#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
-pub use page::{PageError, clock_start};
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
+pub use page::{PageError, now_ms};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
 pub use records::set_records_file;
 

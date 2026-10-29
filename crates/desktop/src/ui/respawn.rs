@@ -17,6 +17,9 @@ use super::{Action, UiState, View};
 /// The card's widest, and the room it keeps from the screen's bottom edge.
 const CARD_WIDTH: f32 = 720.0;
 const BOTTOM_ROOM: f32 = 48.0;
+/// The score bar's room above the card, which a short screen (a phone on its side)
+/// keeps by showing the card smaller.
+const TOP_ROOM: f32 = 96.0;
 
 /// The card, risen by `rise` (0 to 1) into place.
 #[allow(clippy::too_many_arguments)]
@@ -46,10 +49,18 @@ pub fn card(
         screen.center().x - width / 2.0,
         screen.bottom() - BOTTOM_ROOM - height + (1.0 - rise) * 24.0,
     );
+    let fit = ((screen.height() - BOTTOM_ROOM - TOP_ROOM) / height).min(1.0);
+    paint::shrink_about(
+        context,
+        LayerId::new(Order::Middle, Id::unique("respawn card")),
+        origin + vec2(width / 2.0, height),
+        fit,
+    );
     egui::Area::new(Id::unique("respawn card"))
         .fixed_pos(origin)
         .order(Order::Middle)
         .show(context, |ui| {
+            ui.set_clip_rect(paint::shrunk_clip(screen));
             let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
             let painter = ui.painter().clone();
             paint::plate(&painter, rect, 14.0, None);
@@ -88,6 +99,7 @@ pub fn card(
                     pos2(rect.left() + 22.0, rect.top() + 14.0),
                     pos2(rect.right() - timer_width, head.bottom() - 10.0),
                 ),
+                rect.right() - 18.0,
                 state,
             );
             countdown(
@@ -157,8 +169,9 @@ pub fn card(
 }
 
 /// The killer: a red eyebrow, their name in their team's colour, and tags for the
-/// weapon, their tank and their tally.
-fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
+/// weapon, their tank and their tally, as many as fit before `line_right` (a phone's
+/// card has room for fewer).
+fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, line_right: f32, state: &UiState) {
     let death = state.death.as_ref();
     let (label, name) = match death {
         None => ("YOUR TANK", "DESTROYED".to_owned()),
@@ -239,6 +252,12 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
     }
     let center_y = y + 12.5;
     for (index, (icon, tag)) in tags.iter().enumerate() {
+        let width = paint::text_width(painter, tag, bold_font(12.0), 1.0)
+            + if index > 0 { 10.0 } else { 0.0 }
+            + if icon.is_some() { 18.0 } else { 0.0 };
+        if x + width > line_right {
+            break;
+        }
         if index > 0 {
             painter.circle_filled(pos2(x, center_y), 2.0, hexa(0x9fd0ff, 0.33));
             x += 10.0;

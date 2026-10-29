@@ -582,9 +582,9 @@ struct ClassEntry {
     /// Whether its shadow and occlusion-depth draws need its own material bound
     /// ([`ShaderKey::reads_own_material`]); most depth-only casters do not. WebGL
     /// reads it from the linked program instead.
-    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    #[cfg_attr(feature = "webgl", allow(dead_code))]
     shadow_material: bool,
-    #[cfg_attr(not(feature = "webgpu"), allow(dead_code))]
+    #[cfg_attr(feature = "webgl", allow(dead_code))]
     depth_material: bool,
     /// Parts using this class that cast shadows.
     casters: u32,
@@ -1946,10 +1946,11 @@ impl Renderer {
         self.frame.gpu_idle(&self.gpu)
     }
 
-    /// Natively, show the frame `render` drew once `overlay` has drawn the window's
-    /// menus and HUD over it (with the device, the queue and the frame's view).
-    /// Without a new frame it draws over the last scene again, or before any on `clear`.
-    #[cfg(not(target_arch = "wasm32"))]
+    /// Natively, and in the browser once [`Self::present_late`] asked for it, show the
+    /// frame `render` drew once `overlay` has drawn the window's menus and HUD over it
+    /// (with the device, the queue and the frame's view). Without a new frame it draws
+    /// over the last scene again, or before any on `clear`.
+    #[cfg(not(feature = "webgl"))]
     pub fn present(
         &mut self,
         clear: wgpu::Color,
@@ -1959,20 +1960,49 @@ impl Renderer {
             .present(&self.gpu, &self.pipelines, clear, overlay);
     }
 
+    /// The browser's canvas shows each frame [`Self::present`] shows, with what the
+    /// shell drew over it, rather than as soon as `render` drew it: the desktop shell's
+    /// egui menus and HUD in a page.
+    #[cfg(target_arch = "wasm32")]
+    pub fn present_late(&mut self) {
+        self.frame.late_present = true;
+    }
+
+    /// On WebGL, show the frame `render` drew (or before any, the canvas cleared to
+    /// `clear`) once `overlay` has drawn the shell's menus and HUD over it into the
+    /// canvas, given at its size in pixels; see [`Self::present_late`].
+    #[cfg(feature = "webgl")]
+    pub fn present(&mut self, clear: [f32; 3], overlay: impl FnOnce((u32, u32))) {
+        self.frame
+            .present(&self.gpu, &self.pipelines, clear, overlay);
+    }
+
+    /// A WebGL canvas takes every frame.
+    #[cfg(feature = "webgl")]
+    pub fn frame_shown(&self) -> bool {
+        true
+    }
+
+    /// The canvas's WebGL2 context, for the shell's overlay to draw with.
+    #[cfg(feature = "webgl")]
+    pub fn webgl_context(&self) -> web_sys::WebGl2RenderingContext {
+        self.gpu.raw_context()
+    }
+
     /// Whether the window took the last frame; a covered window takes none.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(feature = "webgl"))]
     pub fn frame_shown(&self) -> bool {
         self.frame.shown
     }
 
     /// The window surface's texture format, which an overlay draws in.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(feature = "webgl"))]
     pub fn surface_format(&self) -> wgpu::TextureFormat {
         self.gpu.canvas_format
     }
 
     /// The device and queue, for an overlay's own resources.
-    #[cfg(not(target_arch = "wasm32"))]
+    #[cfg(not(feature = "webgl"))]
     pub fn device(&self) -> (&wgpu::Device, &wgpu::Queue) {
         (&self.gpu.device, &self.gpu.queue)
     }

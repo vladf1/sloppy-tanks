@@ -10,7 +10,7 @@ use winit::event::{ElementState, Touch, WindowEvent};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::Window;
 
-use crate::app::{drawable_size, grab_pointer};
+use crate::app::{css_size, grab_pointer};
 use crate::hardware_keys::HardwareKeys;
 use crate::input::{Controls, Shortcut};
 use crate::overlay::Overlay;
@@ -84,11 +84,9 @@ impl WindowInput {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let size = drawable_size(window);
-                self.controls.aim_at(
-                    (position.x, position.y),
-                    (f64::from(size.width), f64::from(size.height)),
-                );
+                let (width, height, scale) = css_size(window);
+                self.controls
+                    .aim_at((position.x, position.y), (width * scale, height * scale));
             }
             // A press on a menu or the HUD's buttons is not a shot; a release always
             // reaches the controls, so fire never sticks.
@@ -172,9 +170,9 @@ impl WindowInput {
         self.controls.take_input()
     }
 
-    /// What the touch controls show this frame, while they are live.
+    /// What the touch controls show this frame, while they are live on a touch screen.
     pub fn touch_view(&self, live: bool, first_person: bool) -> Option<TouchView> {
-        live.then_some(TouchView {
+        (crate::TOUCH && live).then_some(TouchView {
             input: self.controls.touch,
             first_person,
             learned: self.fingers.learned,

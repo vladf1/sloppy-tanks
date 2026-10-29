@@ -7,6 +7,9 @@ use std::path::{Path, PathBuf};
 
 /// The `public/` folders the native game reads.
 const EMBEDDED: &[&str] = &["textures", "audio", "previews", "icons"];
+/// In a page the renderer fetches the textures from the site like the page's engine, and
+/// the interface brings its own fonts (a page cannot read the system's).
+const EMBEDDED_IN_PAGE: &[&str] = &["audio", "previews", "fonts"];
 
 fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
     let Ok(entries) = std::fs::read_dir(directory) else {
@@ -16,10 +19,9 @@ fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
         let path = entry.path();
         if path.is_dir() {
             collect(&path, files);
-        } else if path
-            .extension()
-            .is_some_and(|extension| matches!(extension.to_str(), Some("webp" | "mp3" | "png")))
-        {
+        } else if path.extension().is_some_and(|extension| {
+            matches!(extension.to_str(), Some("webp" | "mp3" | "png" | "ttf"))
+        }) {
             files.push(path);
         }
     }
@@ -32,7 +34,8 @@ fn main() {
         .canonicalize()
         .expect("public/ exists");
     let mut files = Vec::new();
-    for folder in EMBEDDED {
+    let page = std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
+    for folder in if page { EMBEDDED_IN_PAGE } else { EMBEDDED } {
         let directory = public.join(folder);
         println!("cargo:rerun-if-changed={}", directory.display());
         collect(&directory, &mut files);
@@ -69,6 +72,10 @@ fn main() {
     // launch. Its executable asks for the Mac's main-thread stack instead.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
         println!("cargo:rustc-link-arg-bins=-Wl,-stack_size,0x800000");
+    }
+    // Wasm gives its one stack 1 MB, which the shell's start-up overflowed the same way.
+    if page {
+        println!("cargo:rustc-link-arg-bins=-zstack-size=0x800000");
     }
 
     // The executable's icon, from the web app's, at each size Windows draws it (taskbar,
