@@ -23,6 +23,9 @@ ip=$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
 sed -i "s/{\$SITES}/${ip//./-}.nip.io/" "$work/Caddyfile"
 
 bash "$work/provision.sh"
-# A fresh machine has no pinned image; one that has keeps running it.
-[[ -f /var/lib/sloppy-tanks/image ]] || sloppy-tanks-update pull
+# A fresh machine has no pinned image; one that has keeps running it. A dev machine
+# created before anything was published to :dev has nothing to start yet: provisioning
+# turned auto-update on, which starts the server once a publish moves the tag.
+[[ -f /var/lib/sloppy-tanks/image ]] || sloppy-tanks-update pull ||
+  echo "No server image to start yet; auto-update starts it once its tag exists" >&2
 rm -rf "$work"

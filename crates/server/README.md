@@ -254,9 +254,12 @@ or `server:update --dev --image`) lasts until the next publish moves `:dev`.
 
 `server:publish --dev` runs `server:deploy-check`, points `:dev` at the package's image
 of the checkout's server build if it has one, or else builds the image here with Docker
-and pushes it as `dev-<serverBuild>` and `:dev`, then waits until every dev server
-reports the checkout's build through Caddy: the next check, then the restart. It needs
-no SSH, but Docker logged in to ghcr.io with a token that can write packages, once:
+and pushes it as `dev-<serverBuild>` and `:dev`, then waits until every dev server the
+directory lists reports the checkout's build through Caddy: the next check, then the
+restart. It pushes before it looks: with no dev server listed (a new machine that found
+nothing on `:dev` yet runs none) it has nothing to wait for, and the machine starts the
+build by itself. It needs no SSH, but Docker logged in to ghcr.io with a token that can
+write packages, once:
 
 ```sh
 gh auth refresh -h github.com -s write:packages
@@ -294,10 +297,13 @@ startup script (cloud-init user data), `deploy/server/cloud-init/production.yaml
 nip.io name, runs `provision.sh`, starts the image its environment follows (`:production`,
 or dev's latest publish on `:dev`), and the server appears in the directory under its
 environment within a few minutes, with no SSH from here; from then on `deploy:dev` and
-the other `server:*` commands reach it. A changed `deploy/server/` file reaches a machine
-through Vultr's Reinstall, which keeps the address and runs the startup script again, or
-through `server:provision`. To retire a machine, destroy it: it leaves the directory 45
-seconds after its server stops.
+the other `server:*` commands reach it. A dev machine created before anything was
+published to `:dev` boots without a server and starts one within 15 seconds of the first
+publish. A changed `deploy/server/` file reaches a machine once it is on `main`: destroy
+the machine and create it again with the same startup script, or use Vultr's Reinstall,
+which keeps the address and runs the startup script again (`server:provision` does it
+over SSH). To retire a machine, destroy it: it leaves the directory 45 seconds after its
+server stops.
 
 To set up a machine over SSH instead, create an Ubuntu 26.04 x64 VPS with a public
 IPv4 address and your SSH key for root and run `pnpm run server:provision --ip ADDRESS`

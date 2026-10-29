@@ -30,7 +30,14 @@ const HEALTH_TIMEOUT_MS = 120_000;
 const AUTO_UPDATE_OFF = "/var/lib/sloppy-tanks/auto-update-off";
 const [command, argument] = process.argv.slice(2);
 const dev = process.argv.includes("--dev");
-const servers = await gameServers(dev, option("--ip"));
+/** What a publish pushed, for every machine to switch to. It pushes before looking for
+ * machines: a new dev machine whose first pull found no :dev yet runs no server, so the
+ * directory does not list it, and it starts this build by itself. */
+const published = command === "publish" ? await publish() : undefined;
+const servers = await gameServers(dev, option("--ip"), command === "publish");
+if (published && servers.length === 0) {
+  console.log("The directory lists no dev server yet; a new one starts this build by itself.");
+}
 /** The machine the current command runs on. */
 let server;
 
@@ -207,9 +214,6 @@ async function printHealth() {
   console.log(`${health}: ${JSON.stringify(await readHealth())}`);
 }
 
-/** What a publish pushed, once for every machine to switch to. */
-let published;
-
 for (server of servers) {
   health = new URL("/health", server.checkUrl);
   await runCommand();
@@ -218,7 +222,6 @@ for (server of servers) {
 async function runCommand() {
   switch (command) {
     case "publish": {
-      published ??= await publish();
       const { version, build } = published;
       console.log(`Waiting for ${health.origin}, which checks :dev every 15 seconds`);
       await waitForHealth(

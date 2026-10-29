@@ -43,14 +43,15 @@ export const SSH_OPTIONS = [
 export const environment = (dev) => (dev ? "dev" : "production");
 
 /** The machines the directory lists for production, or with `dev` the dev site's; with
- * `ip`, that one machine, listed or not (one whose server is down, or still booting). */
-export async function gameServers(dev, ip) {
+ * `ip`, that one machine, listed or not (one whose server is down, or still booting).
+ * Listing none is an error unless `noneListed` allows it. */
+export async function gameServers(dev, ip, noneListed = false) {
   if (ip) return [serverMachine(environment(dev), ip)];
   const list = `${DIRECTORY_URL}/servers?environment=${environment(dev)}`;
   const response = await fetch(list, { signal: AbortSignal.timeout(10_000) });
   if (!response.ok) throw new Error(`${list} answered ${response.status}`);
   const { servers } = await response.json();
-  if (!servers.length) {
+  if (!servers.length && !noneListed) {
     throw new Error(`${list} lists no running server; name a machine with --ip`);
   }
   return servers.map(({ url }) =>
