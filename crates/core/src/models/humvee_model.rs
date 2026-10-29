@@ -192,6 +192,7 @@ mod tests {
 
     use super::*;
     use crate::models::{Team, tank_model};
+    use crate::scene::Drawable;
 
     /// Triangles allowed for a whole Humvee: body, four wheels, shields, launcher.
     const TRIANGLE_BUDGET: usize = 15_000;
@@ -218,12 +219,61 @@ mod tests {
         assert!(distinct.len() <= MESH_BUDGET, "{} meshes", distinct.len());
     }
 
+    /// The drawables of two models built alike, paired in tree order, once every
+    /// node is checked to sit in the same place in both.
+    fn paired_parts<'a>(
+        blue: &'a Node,
+        red: &'a Node,
+        pairs: &mut Vec<(&'a Drawable, &'a Drawable)>,
+    ) {
+        let placement = |node: &Node| {
+            (
+                node.name.clone(),
+                node.position,
+                node.rotation,
+                node.scale,
+                node.visible,
+                node.children.len(),
+            )
+        };
+        assert_eq!(placement(blue), placement(red), "a part moved for one team");
+        match (&blue.drawable, &red.drawable) {
+            (Some(b), Some(r)) => pairs.push((b, r)),
+            (None, None) => {}
+            _ => panic!("part {:?} is drawn for one team only", blue.name),
+        }
+        for (b, r) in blue.children.iter().zip(&red.children) {
+            paired_parts(b, r, pairs);
+        }
+    }
+
+    /// The simulation measures every vehicle's hit box and muzzle from its blue
+    /// model, so a red Humvee must have the same parts in the same places: only the
+    /// hood insignia's shape and the paint material may tell the teams apart.
     #[test]
     fn teams_differ_only_in_paint_and_insignia() {
-        let (blue, blue_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Blue));
-        let (red, red_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Red));
-        assert_eq!(blue_meshes.len(), red_meshes.len());
+        let blue = tank_model(VehicleKind::Humvee, Team::Blue);
+        let red = tank_model(VehicleKind::Humvee, Team::Red);
+        let mut pairs = Vec::new();
+        paired_parts(&blue, &red, &mut pairs);
+        let reshaped: Vec<_> = pairs
+            .iter()
+            .filter(|(b, r)| b.mesh != r.mesh || b.instances != r.instances)
+            .map(|(b, r)| (b.mesh.triangle_count(), r.mesh.triangle_count()))
+            .collect();
         let insignia = |team| hood_insignia(team).triangle_count();
-        assert_eq!(blue - insignia(Team::Blue), red - insignia(Team::Red));
+        assert_eq!(
+            reshaped,
+            [(insignia(Team::Blue), insignia(Team::Red))],
+            "only the insignia changes shape"
+        );
+        let mut repainted: Vec<(&Material, &Material)> = Vec::new();
+        for (b, r) in &pairs {
+            let pair = (&*b.material, &*r.material);
+            if pair.0 != pair.1 && !repainted.contains(&pair) {
+                repainted.push(pair);
+            }
+        }
+        assert_eq!(repainted.len(), 1, "only the paint material differs");
     }
 }
