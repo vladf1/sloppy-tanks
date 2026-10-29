@@ -1,6 +1,7 @@
-# Auto-update: provision.sh enables it on production unless `server:auto-update off` was run.
+# Auto-update: provision.sh enables it unless `server:auto-update off` was run, and on dev
+# replaces the interval with 15 seconds.
 [Unit]
-Description=Check for a new production server image every two minutes
+Description=Check for a new server image every two minutes
 
 [Timer]
 OnBootSec=2min

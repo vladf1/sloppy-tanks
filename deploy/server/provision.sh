@@ -42,12 +42,25 @@ install -m 644 Caddyfile /etc/sloppy-tanks/caddy/Caddyfile
 install -m 755 sloppy-tanks-update /usr/local/bin/sloppy-tanks-update
 install -m 644 sloppy-tanks-update.service sloppy-tanks-update.timer /etc/systemd/system/
 install -m 644 sloppy-tanks.container caddy.container /etc/containers/systemd/
+# Dev's machines check :dev every 15 seconds, so a publish from a developer's checkout is
+# live within moments; production keeps the timer's two minutes. The empty assignment
+# clears the timer's interval before setting dev's, and AccuracySec lets it fire on time
+# rather than anywhere within systemd's default minute.
+timer_override=/etc/systemd/system/sloppy-tanks-update.timer.d/dev.conf
+if grep -qx 'SERVER_ENVIRONMENT=dev' /etc/sloppy-tanks/server.env; then
+  install -d /etc/systemd/system/sloppy-tanks-update.timer.d
+  printf '%s\n' '[Timer]' 'OnUnitActiveSec=' 'OnUnitActiveSec=15s' 'RandomizedDelaySec=0' \
+    'AccuracySec=1s' >"$timer_override"
+else
+  rm -f "$timer_override"
+fi
 systemctl daemon-reload
-# Production follows :production by default; `pnpm run server:auto-update off` leaves a
-# marker that keeps it off through later provisioning. Dev never auto-updates.
-if grep -qx 'SERVER_ENVIRONMENT=production' /etc/sloppy-tanks/server.env &&
-  [[ ! -f /var/lib/sloppy-tanks/auto-update-off ]]; then
-  systemctl enable --now sloppy-tanks-update.timer
+# Every machine follows its environment's tag by default; `pnpm run server:auto-update off`
+# leaves a marker that keeps it off through later provisioning. The restart applies a
+# changed interval.
+if [[ ! -f /var/lib/sloppy-tanks/auto-update-off ]]; then
+  systemctl enable sloppy-tanks-update.timer
+  systemctl restart sloppy-tanks-update.timer
 fi
 
 # Caddy reloads its config in place, keeping players connected, unless its unit names

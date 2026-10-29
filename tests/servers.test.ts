@@ -1,7 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
-import { DIRECTORY_URL, serverMachine } from "../scripts/servers.mjs";
+import {
+  DEV_SERVER_IMAGE,
+  DIRECTORY_URL,
+  SERVER_IMAGE,
+  serverMachine,
+} from "../scripts/servers.mjs";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -29,4 +34,15 @@ test("the Pages build, the traffic bots and the startup scripts use one server d
       DIRECTORY_URL,
     );
   }
+});
+
+test("the machines pull from the packages the scripts push to, dev's apart from CI's", () => {
+  const updater = read("../deploy/server/sloppy-tanks-update");
+  assert.equal(updater.match(/^REGISTRY=(\S+)$/m)?.[1], SERVER_IMAGE);
+  assert.equal(updater.match(/^DEV_REGISTRY=(\S+)$/m)?.[1], DEV_SERVER_IMAGE);
+  assert.notEqual(DEV_SERVER_IMAGE, SERVER_IMAGE);
+  assert.equal(
+    read("../.github/workflows/check.yml").match(/SERVER_IMAGE: (\S+)/)?.[1],
+    SERVER_IMAGE,
+  );
 });

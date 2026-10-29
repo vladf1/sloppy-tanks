@@ -483,10 +483,12 @@ offline.
   changes. Use this when asked to publish the dev site. Do not publish it to
   production or change the production GitHub Pages workflow, and never upload
   the repository directory.
-- `deploy:dev` first deploys the dev site's own multiplayer server
-  (`scripts/server.mjs deploy --dev`, key-based SSH), which runs on its own
-  Vultr machines (the `server:*` commands run on every machine the server directory
-  lists for the environment, or on one named with `--ip`). It resets only the
+- `deploy:dev` first publishes the dev site's own multiplayer server
+  (`scripts/server.mjs publish --dev`: it pushes the checkout's image to the dev
+  package `ghcr.io/vladf1/sloppy-tanks-server-dev`, never CI's, and moves `:dev`,
+  which the dev machines check every 15 seconds), which runs on its own Vultr
+  machines (the other `server:*` commands run over SSH on every machine the server
+  directory lists for the environment, or on one named with `--ip`). It resets only the
   dev server's rooms and never touches production's server. Client and server
   must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with

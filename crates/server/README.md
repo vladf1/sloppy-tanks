@@ -142,9 +142,10 @@ minute. A socket whose unsent output passes about 2 MB is closed with 4002.
 
 Production and the dev site each run game server machines, Ubuntu x64 VPSes at Vultr set
 up identically. A machine runs the server as a container under Podman, behind Caddy in a
-container of its own, both supervised by systemd through Quadlet units. CI builds the
-server images; production pulls them by hand or automatically, and an SSH deploy from a
-checkout covers the dev servers and any time CI or the registry cannot.
+container of its own, both supervised by systemd through Quadlet units. CI builds
+production's server images, which production pulls by hand or automatically; a developer
+publishes the dev servers' images from a checkout, which the dev servers pull by
+themselves; and an SSH deploy from a checkout covers any time CI or the registry cannot.
 
 Every machine serves the nip.io name of its address (`45-63-56-58.nip.io` resolves to
 45.63.56.58), for which Caddy obtains a Let's Encrypt certificate, so a machine needs no
@@ -173,6 +174,13 @@ records as a label and as `SLOPPY_RELEASE` for `/health` and the dashboard. When
 first ships a server build a pull request already built, it restamps that image's
 release, commit and time over the same binary layer; later builds keep them. Pull requests never move `production`, and nothing in CI
 connects to the machines. Fork pull requests build the image without pushing.
+
+The dev servers' images go to a package of their own,
+`ghcr.io/vladf1/sloppy-tanks-server-dev` (public as well), which CI never reads:
+`server:publish --dev`, which `deploy:dev` runs, pushes a checkout's build there as
+`<serverBuild>` and moves `dev`. In CI's package such a build, possibly from uncommitted
+files and a developer's toolchain, could reach `production`, since CI only retags a
+server build its package already holds.
 
 ### On a machine
 
@@ -205,9 +213,13 @@ and its settings in `server.env`:
   (its labels); otherwise it restores the previous image. It keeps the current and
   previous image (tagged `sloppy-tanks-pinned:current` and `:previous`) and prunes
   the rest.
-- `sloppy-tanks-update.timer` is auto-update. It follows `:production`, so
-  provisioning turns it on for production's machines, unless
-  `server:auto-update off` turned it off there, and leaves it off on dev's.
+- `sloppy-tanks-update.timer` is auto-update. It follows the tag of the machine's
+  environment (`SERVER_ENVIRONMENT`): `:production` every two minutes, or the dev
+  package's `:dev` every 15 seconds (a drop-in provisioning writes on dev). A check reads
+  the tag's digest with two small requests (an anonymous token and the manifest's
+  headers) and pulls only when it has moved; one that cannot reach the registry changes
+  nothing, and the journal hears only when checks start failing or work again.
+  Provisioning turns it on unless `server:auto-update off` turned it off there.
 
 ### Deploying
 
@@ -215,8 +227,9 @@ and its settings in `server.env`:
 pnpm run server:update                # pull :production and switch now
 pnpm run server:update --image pr-12  # pull another tag (or full image name) and pin it
 pnpm run server:update --dev --image pr-12   # try a pull request's server on the dev server
+pnpm run server:publish --dev         # build here, push to the dev package's :dev, wait
 pnpm run server:rollback              # switch back to the previous image
-pnpm run server:auto-update on|off    # production follows :production by itself (default), or not
+pnpm run server:auto-update on|off    # follow the environment's tag by itself (default), or not
 pnpm run server:auto-update resume    # lift a hold (below) so auto-update follows again
 pnpm run server:deploy                # SSH fallback: build here, copy the image, switch
 pnpm run server:provision             # set a machine up, or again after editing deploy/server/*
@@ -224,16 +237,36 @@ pnpm run server:provision             # set a machine up, or again after editing
 
 Each acts on production's machine; `--dev` picks the dev site's.
 
-With auto-update on, as production's machines are by default, the timer checks
+With auto-update on, as every machine is by default, production's timer checks
 `:production` every two minutes. A new image waits until nobody holds a seat (the
 `players` count in `/stats`), or at most four hours for a server-only change and ten
 minutes after a content change, when the new site is already sending visitors a
 reload message. Anything other than following
 `:production` leaves a hold: an SSH deploy, a rollback or pulling another tag pins
 that image, and auto-update skips its checks until `server:auto-update resume` or
-`server:update`. `server:status` shows the pinned and previous image, any hold or
-pending update and auto-update's latest checks. The dev server never auto-updates;
-it changes only on `deploy:dev`, `server:deploy --dev` or `server:update --dev`.
+`server:update`. An image that fails its health check is not tried again until the
+tag moves or `server:update` pulls it. `server:status` shows the pinned and previous
+image, any hold, pending update or failed image, and auto-update's latest checks.
+
+Dev's machines check `:dev` every 15 seconds and switch at once, whoever is playing, as
+a deploy always did there. A hold on dev (`server:deploy --dev`, `server:rollback --dev`
+or `server:update --dev --image`) lasts until the next publish moves `:dev`.
+
+`server:publish --dev` runs `server:deploy-check`, builds the image here with Docker,
+pushes it to the dev package as its server build and `:dev` (or only moves `:dev` when
+the package already holds that build), and waits until every dev server reports the
+checkout's build through Caddy: the next check, then the restart. It needs no SSH, but
+Docker logged in to ghcr.io with a token that can write packages, once:
+
+```sh
+gh auth refresh -h github.com -s write:packages
+gh auth token | docker login ghcr.io --username "$(gh api user -q .login)" --password-stdin
+```
+
+GHCR takes only classic tokens, which `gh`'s is; a classic personal access token with
+`write:packages` works too. A package GHCR creates on a first push is private: make
+`sloppy-tanks-server-dev` public once in its package settings, since the dev machines pull
+without credentials.
 
 `server:deploy` builds the image here with Docker (`server:build-docker-image`),
 streams it to the machine with `docker save | ssh podman load` and switches to it,
@@ -243,10 +276,10 @@ production it refuses a checkout that is not a clean `origin/main`; `--force`
 overrides that. It finishes once the server reports the checkout's build through
 Caddy.
 
-`pnpm run deploy:dev` deploys the dev server first (`scripts/server.mjs deploy
---dev`), waits until its `/health` reports the checkout's build, then uploads the dev
-site; it never touches production's machine. It refuses to upload a build without
-the multiplayer entry.
+`pnpm run deploy:dev` publishes the dev server first (`scripts/server.mjs publish
+--dev`), which waits until the dev servers' `/health` reports the checkout's build, then
+uploads the dev site; it never touches production's machine. It refuses to upload a
+build without the multiplayer entry.
 
 A restart or deploy ends every live room. Stopping the container sends `SIGTERM`
 and allows 10 seconds before killing it; the graceful handler sends `room-reset`
@@ -260,20 +293,19 @@ startup script (cloud-init user data), `deploy/server/cloud-init/production.yaml
 `dev.yaml`, saved once in Vultr's Startup Scripts. At first boot the user data writes
 `/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`) and runs
 `deploy/server/bootstrap.sh` from the repository's `main`. That serves the machine's own
-nip.io name, runs `provision.sh`, starts CI's `:production` image, and the server appears
-in the directory under its environment within a few minutes, with no SSH from here; from
-then on `deploy:dev` and the other `server:*` commands reach it. A changed
-`deploy/server/` file reaches a machine through Vultr's Reinstall, which keeps the
-address and runs the startup script again (then `deploy:dev` on dev), or through
-`server:provision`. To retire a machine, destroy it: it leaves the directory 45 seconds
-after its server stops.
+nip.io name, runs `provision.sh`, starts the image its environment follows (`:production`,
+or dev's latest publish on `:dev`), and the server appears in the directory under its
+environment within a few minutes, with no SSH from here; from then on `deploy:dev` and
+the other `server:*` commands reach it. A changed `deploy/server/` file reaches a machine
+through Vultr's Reinstall, which keeps the address and runs the startup script again, or
+through `server:provision`. To retire a machine, destroy it: it leaves the directory 45
+seconds after its server stops.
 
 To set up a machine over SSH instead, create an Ubuntu 26.04 x64 VPS with a public
 IPv4 address and your SSH key for root and run `pnpm run server:provision --ip ADDRESS`
-(with `--dev` for the dev site). It installs everything, starts CI's `:production` image
-(on dev, `deploy:dev` then replaces it with the checkout's build), and waits until the
-server answers through Caddy at its nip.io name, which takes about a minute while Caddy
-obtains the certificate. The scripts trust a new machine's host key on first contact and
+(with `--dev` for the dev site). It installs everything, starts the image the machine
+follows, and waits until the server answers through Caddy at its nip.io name, which takes
+about a minute while Caddy obtains the certificate. The scripts trust a new machine's host key on first contact and
 refuse a changed one; after replacing a machine at the same address, remove the old key
 with `ssh-keygen -R <ip>`.
 

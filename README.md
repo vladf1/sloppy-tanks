@@ -364,17 +364,20 @@ The build separates the interactive menu from the engine and audio. Battle Setup
 `pnpm run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes it to the separate `sloppy-tanks-dev`
 Cloudflare Worker. Run `pnpm exec wrangler login` first (or provide an API token that
-can deploy Workers and their custom domains). The Worker's account, name and domain
-come from `deploy/dev-site/wrangler.jsonc`, independent of the local Git branch. No Git
-commit or push is required. `pnpm run build:dev` builds without publishing.
+can deploy Workers and their custom domains), and log Docker in to ghcr.io once with a
+token that can write packages (`crates/server/README.md` shows how with `gh`). The
+Worker's account, name and domain come from `deploy/dev-site/wrangler.jsonc`,
+independent of the local Git branch. No Git commit or push is required.
+`pnpm run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev directory, where the dev
 multiplayer servers list themselves. They run on their own machines, each at its nip.io
-name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` redeploys those
-servers from the same checkout first (over SSH) so client and server versions match;
-production multiplayer is never affected. Unlike production, the dev site keeps the
-development network tools: a room page takes `?latency=`, `?jitter=` and `?stall=`
-(milliseconds of simulated transport delay), `&latencySlider` shows sliders that change
-them mid-battle, and `?dodge=0` / `?shooter=0` turn off the fairness options for
+name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` first pushes
+the same checkout's server image to the dev package's `:dev` tag, which those servers
+check every 15 seconds and switch to by themselves, and waits for them, so client and
+server versions match; production multiplayer is never affected. Unlike production, the
+dev site keeps the development network tools: a room page takes `?latency=`, `?jitter=`
+and `?stall=` (milliseconds of simulated transport delay), `&latencySlider` shows sliders
+that change them mid-battle, and `?dodge=0` / `?shooter=0` turn off the fairness options for
 comparison.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of

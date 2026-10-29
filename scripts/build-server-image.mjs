@@ -13,7 +13,9 @@ import { isNumberedRelease, releaseVersion } from "./release-version.mjs";
  * came from. Locally it is `sloppy-tanks-server:<build>` and `:latest`. CI passes
  * `--registry ghcr.io/vladf1/sloppy-tanks-server --push` and moving tags such as
  * `--tag pr-12`; when the registry already holds that build (a change outside the
- * server), it only adds the tags instead of rebuilding.
+ * server), it only adds the tags instead of rebuilding. `node scripts/server.mjs publish
+ * --dev` pushes a checkout's build the same way to the dev package
+ * (`ghcr.io/vladf1/sloppy-tanks-server-dev`, `--tag dev`), never to CI's.
  *
  * Main's builds also pass `--build-number`, the Pages workflow's run number, which
  * completes the release version (`1.1.0.628`, scripts/release-version.mjs) the image

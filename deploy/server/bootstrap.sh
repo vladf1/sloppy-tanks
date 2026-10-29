@@ -4,8 +4,9 @@
 # The user data writes /etc/sloppy-tanks/server.env first (SERVER_ENVIRONMENT, production
 # or dev, and DIRECTORY_URL), which the server's unit reads. This fetches deploy/server/
 # from the repository at SLOPPY_REF (main), serves the nip.io name of the machine's IPv4
-# address, runs provision.sh and starts CI's :production image; the server then appears
-# in the directory under its environment.
+# address, runs provision.sh and starts the image its environment follows (CI's
+# :production, or dev's latest publish on :dev); the server then appears in the directory
+# under its environment.
 set -euo pipefail
 SOURCE="https://raw.githubusercontent.com/vladf1/sloppy-tanks/${SLOPPY_REF:-main}/deploy/server"
 FILES=(provision.sh Caddyfile caddy.container sloppy-tanks.container
