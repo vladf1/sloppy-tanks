@@ -254,9 +254,9 @@ or `server:update --dev --image`) lasts until the next publish moves `:dev`.
 of the checkout's server build if it has one, or else builds the image here with Docker
 and pushes it as `dev-<serverBuild>` and `:dev`, then waits until every dev server the
 directory lists reports the checkout's build through Caddy: the next check, then the
-restart. It pushes before it looks: with no dev server listed (a new machine that found
-nothing on `:dev` yet runs none) it has nothing to wait for, and the machine starts the
-build by itself. It needs no SSH, but Docker logged in to ghcr.io with a token that can
+restart. It pushes before it looks: with no dev server listed (none exists, or one is
+still booting) it has nothing to wait for, and a booting machine starts the build by
+itself. It needs no SSH, but Docker logged in to ghcr.io with a token that can
 write packages, once:
 
 ```sh
@@ -296,7 +296,8 @@ starts the image its environment follows (`:production`, or dev's latest publish
 `:dev`). The server appears in the directory under its environment within a few minutes,
 once Caddy has its certificate, with no SSH from here; from then on `deploy:dev` and the
 other `server:*` commands reach it. A dev machine created before anything was published
-to `:dev` boots without a server and starts one within 15 seconds of the first publish.
+to `:dev` starts production's image instead, so it is up and listed, and switches to the
+first publish within 15 seconds; that fallback is no hold, since it still follows `:dev`.
 
 Machines are never set up again in place: a changed `deploy/server/` file reaches a
 machine once it is on `main` and the machine is created again, by destroying it and

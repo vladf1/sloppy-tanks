@@ -3,7 +3,8 @@
 # state. bootstrap.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
 # scripts call it over SSH and sloppy-tanks-update.timer runs `auto`.
 #
-#   sloppy-tanks-update pull [REF]    pull REF (default the followed tag) and switch now
+#   sloppy-tanks-update pull [REF]    pull REF (default the followed tag, or on a dev machine
+#                                     production's while :dev holds nothing) and switch now
 #   sloppy-tanks-update local IMAGE   switch to an image already loaded here (SSH deploy)
 #   sloppy-tanks-update rollback      switch back to the previous image
 #   sloppy-tanks-update resume        let auto-update follow its tag again
@@ -282,18 +283,30 @@ status() {
 
 case $command in
   pull)
-    ref=${2:-$follow}
+    requested=${2:-$follow}
+    ref=$requested
     # Pulling the followed tag records its digest, so a hold set afterwards lasts until the
     # tag moves again rather than until the next check.
     digest=""
     if [[ $ref == "$follow" ]]; then digest=$(remote_digest) || true; fi
+    # A dev machine created before anything was published to :dev runs production's server
+    # meanwhile, so it is up and listed; auto-update still follows :dev and switches to the
+    # first publish.
+    if [[ $ref == "$follow" && -z $digest && $environment == dev ]]; then
+      ref=$REGISTRY:production
+      echo "Nothing to read on $follow; starting $ref until a publish moves it"
+    fi
     podman pull --quiet "$ref" >/dev/null
     new=$(image_id "$ref")
     if [[ -n $digest ]]; then echo "$digest $new" >"$followed_file"; fi
     # Only following the tag releases a hold; any other image is a pin. A failed switch
     # exits here (set -e) and leaves the hold as it was.
     switch_to "$new"
-    if [[ $ref == "$follow" ]]; then rm -f "$hold_file" "$pending_file"; else hold "Pulled $ref" "$new"; fi
+    if [[ $requested == "$follow" ]]; then
+      rm -f "$hold_file" "$pending_file"
+    else
+      hold "Pulled $ref" "$new"
+    fi
     ;;
   local)
     new=$(image_id "${2:?local needs an image}")
