@@ -521,7 +521,7 @@ async fn streams_the_dashboard_without_revealing_room_codes() {
     assert_eq!(page.status, 200);
     assert!(page.headers["content-type"].starts_with("text/html"));
     assert!(page.headers["content-security-policy"].contains("frame-ancestors 'none'"));
-    assert!(page.body.contains("<title>Sloppy Tanks server</title>"));
+    assert!(page.body.contains("<title>Sloppy Tanks - unknown</title>"));
 
     let mut player = open(&base, "DASHROOM", &[]).await.client();
     player.send(&join("player")).await;

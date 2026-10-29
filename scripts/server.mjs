@@ -125,7 +125,7 @@ async function deploy() {
 
 /** Builds the server image from this checkout and pushes it as dev-<server build> and :dev
  * (or points :dev at an image of that server build the registry already holds). The dev
- * machines check :dev every 15 seconds and switch to it by themselves, so publishing needs
+ * machines check :dev every 10 seconds and switch to it by themselves, so publishing needs
  * registry access but no SSH. Returns what their /health reports once they run it. */
 async function publish() {
   if (!dev) {
@@ -180,7 +180,7 @@ async function runCommand() {
   switch (command) {
     case "publish": {
       const { version, build } = published;
-      console.log(`Waiting for ${health.origin}, which checks :dev every 15 seconds`);
+      console.log(`Waiting for ${health.origin}, which checks :dev every 10 seconds`);
       await waitForHealth(
         (status) => status.contentVersion === version && status.serverBuild === build,
         `content ${version}, build ${build} (pnpm run server:status --dev shows why not)`,

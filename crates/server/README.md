@@ -61,12 +61,12 @@ accepted in production builds.
 
 Settings come from the environment:
 
-| Variable             | Default              | Meaning                                                             |
-| -------------------- | -------------------- | ------------------------------------------------------------------- |
-| `HOST` / `PORT`      | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks         |
-| `MAX_ROOMS`          | `10`                 | Live rooms; new room codes beyond it get 503                        |
-| `DIRECTORY_URL`      | none                 | Where to announce this server's rooms; unset or empty: none         |
-| `SERVER_ENVIRONMENT` | none                 | The environment that lists this server, needed with `DIRECTORY_URL` |
+| Variable             | Default              | Meaning                                                                                      |
+| -------------------- | -------------------- | -------------------------------------------------------------------------------------------- |
+| `HOST` / `PORT`      | `127.0.0.1` / `8787` | Listener; on a machine only Caddy is public; `PORT=0` picks                                  |
+| `MAX_ROOMS`          | `10`                 | Live rooms; new room codes beyond it get 503                                                 |
+| `DIRECTORY_URL`      | none                 | Where to announce this server's rooms; unset or empty: none                                  |
+| `SERVER_ENVIRONMENT` | none                 | The environment that lists this server, needed with `DIRECTORY_URL`; it titles the dashboard |
 
 A malformed value stops startup instead of silently turning a limit off. A loopback
 listener rate-limits by the last `X-Forwarded-For` hop, which Caddy sets.
@@ -214,7 +214,7 @@ created ([Machines](#machines)):
   the rest.
 - `sloppy-tanks-update.timer` is auto-update. It follows the tag of the machine's
   environment (`SERVER_ENVIRONMENT`): `:production` every two minutes, or `:dev` every
-  15 seconds (a drop-in `bootstrap.sh` writes on dev). A check reads the tag's digest
+  10 seconds (a drop-in `bootstrap.sh` writes on dev). A check reads the tag's digest
   with two small requests (an anonymous token and the manifest's headers) and pulls
   only when it has moved; one that cannot reach the registry changes nothing, and the
   journal hears only when checks start failing or work again. `bootstrap.sh` turns it
@@ -246,7 +246,7 @@ that image, and auto-update skips its checks until `server:auto-update resume` o
 tag moves or `server:update` pulls it. `server:status` shows the pinned and previous
 image, any hold, pending update or failed image, and auto-update's latest checks.
 
-Dev's machines check `:dev` every 15 seconds and switch as soon as it moves, without
+Dev's machines check `:dev` every 10 seconds and switch as soon as it moves, without
 looking at who is playing. A hold on dev (`server:deploy --dev`, `server:rollback --dev`
 or `server:update --dev --image`) lasts until the next publish moves `:dev`.
 
@@ -297,7 +297,7 @@ starts the image its environment follows (`:production`, or dev's latest publish
 once Caddy has its certificate, with no SSH from here; from then on `deploy:dev` and the
 other `server:*` commands reach it. A dev machine created before anything was published
 to `:dev` starts production's image instead, so it is up and listed, and switches to the
-first publish within 15 seconds; that fallback is no hold, since it still follows `:dev`.
+first publish within 10 seconds; that fallback is no hold, since it still follows `:dev`.
 
 Machines are never set up again in place: a changed `deploy/server/` file reaches a
 machine once it is on `main` and the machine is created again, by destroying it and
@@ -374,8 +374,9 @@ counting global allocator.
 ### Dashboard
 
 `/dashboard` (on every server at its own address, linked from the directory's overview, or
-`http://127.0.0.1:8787/dashboard` locally) is a public, read-only page that
-updates every second: CPU, the share of time the runtime's worker threads were
+`http://127.0.0.1:8787/dashboard` locally) is a public, read-only page, titled with
+the server's environment (`Sloppy Tanks - dev`, or `unknown` without
+`SERVER_ENVIRONMENT`), that updates every second: CPU, the share of time the runtime's worker threads were
 busy, runtime lag percentiles, memory, traffic on the wire and before
 compression, players and rooms, messages per second by type in each direction,
 the slowest room tick against its 17 ms budget, player round trips and

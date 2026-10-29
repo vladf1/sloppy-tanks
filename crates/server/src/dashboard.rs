@@ -32,7 +32,9 @@ const MB: u64 = 1024 * 1024;
 
 /// The page, plain HTML and script. Its charts load uPlot from jsDelivr, pinned by version
 /// and subresource integrity; without the library it still shows everything else.
-pub const PAGE: &str = include_str!("dashboard.html");
+const PAGE: &str = include_str!("dashboard.html");
+/// What a server without `SERVER_ENVIRONMENT` calls its environment on the page.
+const UNKNOWN_ENVIRONMENT: &str = "unknown";
 pub const PAGE_HEADERS: [(&str, &str); 6] = [
     ("Content-Type", "text/html; charset=utf-8"),
     ("Cache-Control", "no-store"),
@@ -46,6 +48,13 @@ pub const PAGE_HEADERS: [(&str, &str); 6] = [
     ("X-Content-Type-Options", "nosniff"),
     ("X-Robots-Tag", "noindex"),
 ];
+
+/// The page titled with the server's environment, filled in before it is served so the
+/// heading never changes once shown. Settings allow only lowercase letters, digits and
+/// hyphens in an environment, so it needs no escaping.
+pub fn page(environment: Option<&str>) -> String {
+    PAGE.replace("%ENVIRONMENT%", environment.unwrap_or(UNKNOWN_ENVIRONMENT))
+}
 
 pub fn mask_room(code: &str) -> String {
     let shown: String = code.chars().take(SHOWN_CODE_CHARS).collect();
@@ -109,7 +118,7 @@ impl Dashboard {
                 "serverBuild": SERVER_BUILD,
                 "release": self.build.release,
                 "commit": self.build.commit,
-                "environment": process_stats::environment(),
+                "system": process_stats::system(),
                 "startedAtMs": monitor.started_ms(),
                 "maxRooms": self.max_rooms,
                 "cpus": process_stats::cpu_count(),
@@ -209,6 +218,13 @@ mod tests {
     fn masks_all_but_the_first_three_characters() {
         assert_eq!(mask_room("DASHROOM"), "DAS•••••");
         assert_eq!(mask_room(""), "");
-        assert!(PAGE.contains("<title>Sloppy Tanks server</title>"));
+    }
+
+    #[test]
+    fn titles_the_page_with_the_environment() {
+        assert!(page(Some("dev")).contains("<title>Sloppy Tanks - dev</title>"));
+        assert!(page(Some("dev")).contains("<h1>Sloppy Tanks - dev</h1>"));
+        assert!(page(None).contains("<title>Sloppy Tanks - unknown</title>"));
+        assert!(!page(None).contains("%ENVIRONMENT%"));
     }
 }

@@ -170,15 +170,15 @@ pub fn host_memory() -> (u64, u64) {
 /// Where the process runs, for the dashboard, such as "Linux 7.0.0". The server image
 /// holds no OS files, so only a host shows its distribution; a container shares its
 /// host's kernel.
-pub fn environment() -> String {
+pub fn system() -> String {
     let read = |path| std::fs::read_to_string(path).ok();
-    describe_environment(
+    describe_system(
         read("/etc/os-release").as_deref(),
         read("/proc/sys/kernel/osrelease").as_deref(),
     )
 }
 
-fn describe_environment(os_release: Option<&str>, kernel_release: Option<&str>) -> String {
+fn describe_system(os_release: Option<&str>, kernel_release: Option<&str>) -> String {
     let mut parts: Vec<String> = os_release
         .and_then(|text| {
             text.lines()
@@ -201,7 +201,7 @@ mod tests {
     #[test]
     fn describes_a_container_by_its_kernel() {
         assert_eq!(
-            describe_environment(None, Some("7.0.0-14-generic\n")),
+            describe_system(None, Some("7.0.0-14-generic\n")),
             "Linux 7.0.0-14-generic"
         );
     }
@@ -210,10 +210,10 @@ mod tests {
     fn describes_a_host_with_its_distribution() {
         let os_release = "NAME=\"Ubuntu\"\nPRETTY_NAME=\"Ubuntu 26.04.1 LTS\"\nID=ubuntu\n";
         assert_eq!(
-            describe_environment(Some(os_release), Some("7.0.0-14-generic\n")),
+            describe_system(Some(os_release), Some("7.0.0-14-generic\n")),
             "Ubuntu 26.04.1 LTS · Linux 7.0.0-14-generic"
         );
-        assert_eq!(describe_environment(None, None), std::env::consts::OS);
+        assert_eq!(describe_system(None, None), std::env::consts::OS);
     }
 
     #[test]

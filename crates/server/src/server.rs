@@ -24,7 +24,7 @@ use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
 use crate::config::BuildInfo;
-use crate::dashboard::{Dashboard, PAGE, PAGE_HEADERS};
+use crate::dashboard::{self, Dashboard, PAGE_HEADERS};
 use crate::directory::{self, DirectoryOptions};
 use crate::host::HostFactory;
 use crate::monitor::{
@@ -74,6 +74,8 @@ pub struct ServerOptions {
     pub build: BuildInfo,
     /// The server directory to announce this server and its rooms to (`DIRECTORY_URL`).
     pub directory: Option<DirectoryOptions>,
+    /// The environment this server serves (`SERVER_ENVIRONMENT`), which titles the dashboard.
+    pub environment: Option<String>,
 }
 
 impl ServerOptions {
@@ -85,6 +87,7 @@ impl ServerOptions {
             log: Arc::new(|line| println!("{line}")),
             build: BuildInfo::default(),
             directory: None,
+            environment: None,
         }
     }
 }
@@ -111,6 +114,8 @@ struct Shared {
     wire: Arc<WireTotals>,
     monitor: Arc<Mutex<ServerMonitor>>,
     dashboard: Mutex<Dashboard>,
+    /// The dashboard page, titled with the environment once at startup.
+    dashboard_page: Bytes,
     stopping: AtomicBool,
     terminate: watch::Sender<bool>,
     /// The last reading of proxied connections failed; logged once until one succeeds.
@@ -194,6 +199,7 @@ impl MultiplayerServer {
         let (terminate, _) = watch::channel(false);
         let max_rooms = options.max_rooms;
         let build = options.build.clone();
+        let dashboard_page = Bytes::from(dashboard::page(options.environment.as_deref()));
         let shared = Arc::new(Shared {
             options,
             clock,
@@ -212,6 +218,7 @@ impl MultiplayerServer {
             wire: Arc::default(),
             monitor,
             dashboard: Mutex::new(Dashboard::new(max_rooms, build)),
+            dashboard_page,
             stopping: AtomicBool::new(false),
             terminate,
             proxied_unreadable: AtomicBool::new(false),
@@ -593,7 +600,9 @@ async fn route(
             for (name, value) in PAGE_HEADERS {
                 response = response.header(name, value);
             }
-            response.body(text_body(PAGE)).expect("valid response")
+            response
+                .body(text_body(shared.dashboard_page.clone()))
+                .expect("valid response")
         }
         "/dashboard/stream" => {
             let ip = client_ip(shared, headers, peer);

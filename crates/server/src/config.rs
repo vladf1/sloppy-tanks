@@ -54,6 +54,8 @@ pub struct Settings {
     /// the environment that lists this server: where it announces itself. An unset or
     /// empty `DIRECTORY_URL` announces nothing.
     pub directory: Option<DirectoryUrl>,
+    /// `SERVER_ENVIRONMENT`, when set: production or dev.
+    pub environment: Option<String>,
     pub build: BuildInfo,
 }
 
@@ -79,19 +81,26 @@ impl Settings {
                 _ => return Err("MAX_ROOMS must be a positive integer".into()),
             },
         };
+        let environment = lookup("SERVER_ENVIRONMENT").filter(|text| !text.is_empty());
+        if environment.as_deref().is_some_and(|name| {
+            !name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        }) {
+            return Err(
+                "SERVER_ENVIRONMENT must be lowercase letters, digits and hyphens, \
+                such as production or dev"
+                    .into(),
+            );
+        }
         let directory = match lookup("DIRECTORY_URL").filter(|text| !text.is_empty()) {
             None => None,
             Some(base) => {
-                let environment = lookup("SERVER_ENVIRONMENT").unwrap_or_default();
-                if environment.is_empty()
-                    || !environment
-                        .chars()
-                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
-                {
+                let Some(environment) = &environment else {
                     return Err("SERVER_ENVIRONMENT must name this server's environment, \
                         such as production or dev"
                         .into());
-                }
+                };
                 if base.contains(['?', '#']) {
                     return Err("DIRECTORY_URL must be the directory's base address".into());
                 }
@@ -107,6 +116,7 @@ impl Settings {
             max_rooms,
             trust_proxy,
             directory,
+            environment,
             build: BuildInfo::from_env(&lookup),
         })
     }
@@ -132,6 +142,7 @@ mod tests {
         assert!(settings.trust_proxy);
         assert_eq!(settings.max_rooms, None);
         assert_eq!(settings.directory, None);
+        assert_eq!(settings.environment, None);
     }
 
     #[test]
@@ -172,6 +183,13 @@ mod tests {
             ("SERVER_ENVIRONMENT", "Staging?"),
         ];
         assert!(settings(&staging).is_err());
+        // The dashboard names the environment even when nothing is announced.
+        let local = settings(&[("SERVER_ENVIRONMENT", "dev")]).unwrap();
+        assert_eq!(
+            (local.environment.as_deref(), local.directory),
+            (Some("dev"), None)
+        );
+        assert!(settings(&[("SERVER_ENVIRONMENT", "Staging?")]).is_err());
     }
 
     #[test]

@@ -1,4 +1,4 @@
-# Auto-update: bootstrap.sh enables it, and on dev replaces the interval with 15 seconds;
+# Auto-update: bootstrap.sh enables it, and on dev replaces the interval with 10 seconds;
 # `server:auto-update off` stops it until `on` or the machine is created again.
 [Unit]
 Description=Check for a new server image every two minutes

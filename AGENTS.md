@@ -486,7 +486,7 @@ offline.
 - `deploy:dev` first publishes the dev site's own multiplayer server
   (`scripts/server.mjs publish --dev`: it pushes the checkout's image as
   `dev-<serverBuild>`, never the bare build tag CI reuses, and moves `:dev`, which the
-  dev machines check every 15 seconds), which runs on its own Vultr
+  dev machines check every 10 seconds), which runs on its own Vultr
   machines (the other `server:*` commands run over SSH on every machine the server
   directory lists for the environment, or on one named with `--ip`). It resets only the
   dev server's rooms and never touches production's server. Client and server

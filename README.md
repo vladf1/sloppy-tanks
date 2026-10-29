@@ -372,7 +372,7 @@ independent of the local Git branch. No Git commit or push is required.
 The dev build connects the **Multiplayer** tab to the dev directory, where the dev
 multiplayer servers list themselves. They run on their own machines, each at its nip.io
 name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` first pushes
-the same checkout's server image as its `:dev` tag, which those servers check every 15
+the same checkout's server image as its `:dev` tag, which those servers check every 10
 seconds and switch to by themselves, and waits for them, so client and server versions
 match; production multiplayer is never affected. Unlike production, the
 dev site keeps the development network tools: a room page takes `?latency=`, `?jitter=`
