@@ -77,12 +77,38 @@ pub const MAX_ROOM_MS: u64 = 4 * 60 * 60_000;
 /// endless next-kill overtime still cannot hold a room open forever.
 pub const MAX_BATTLE_OVERRUN_MS: u64 = (MAX_ROUND_MINUTES as u64 + 30) * 60_000;
 
+/// Characters in a room code.
+pub const ROOM_CODE_LENGTH: usize = 8;
+/// The letters a new room code draws from: no look-alikes (0/O, 1/I). A typed code may
+/// still hold O or I, which [`is_room_code`] accepts.
+pub const ROOM_CODE_ALPHABET: &[u8; 32] = b"ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+
 /// Room codes are eight characters from an alphabet without look-alikes (`/^[A-Z2-9]{8}$/`).
 pub fn is_room_code(code: &str) -> bool {
-    code.len() == 8
+    code.len() == ROOM_CODE_LENGTH
         && code
             .bytes()
             .all(|byte| byte.is_ascii_uppercase() || (b'2'..=b'9').contains(&byte))
+}
+
+/// A new room code from random bytes (`newRoomCode`): each byte's low five bits pick a
+/// letter.
+pub fn room_code(random: [u8; ROOM_CODE_LENGTH]) -> String {
+    random
+        .iter()
+        .map(|byte| char::from(ROOM_CODE_ALPHABET[usize::from(byte & 31)]))
+        .collect()
+}
+
+/// A typed or linked room code as the server spells it, without spaces and in upper
+/// case, or `None` when it is not one.
+pub fn read_room_code(text: &str) -> Option<String> {
+    let code = text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .collect::<String>()
+        .to_uppercase();
+    is_room_code(&code).then_some(code)
 }
 
 pub const PLAYER_KINDS: [(&str, VehicleKind); 3] = [
@@ -188,6 +214,24 @@ impl RoomSettings {
             .boolean("humansOnly", self.humans_only)
             .int("roundMinutes", u64::from(self.round_minutes));
     }
+}
+
+/// The new room's length after one press of Battle Setup's stepper (`steppedMinutes`):
+/// the next multiple of `step` minutes in that direction, whole minutes from 1 to
+/// [`MAX_ROUND_MINUTES`]. Minutes that are not a number count as the default length.
+pub fn stepped_minutes(minutes: impl Into<f64>, step: i32) -> u32 {
+    let minutes = minutes.into();
+    let current = if minutes.is_finite() {
+        minutes
+    } else {
+        f64::from(DEFAULT_ROUND_MINUTES)
+    };
+    let step = f64::from(step);
+    // Flooring by the signed step finds the multiple at or below going up and at or
+    // above going down; then one step.
+    let next = (current / step).floor() * step + step;
+    // `max` before `min` also turns a zero step's NaN into the shortest length.
+    next.max(1.0).min(f64::from(MAX_ROUND_MINUTES)) as u32
 }
 
 /// A `join` request (`joinReader`).

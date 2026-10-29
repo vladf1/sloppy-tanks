@@ -258,11 +258,19 @@ pub fn combat_feats(stats: &RecapStats, shots: u32, direct_hits: u32) -> Vec<Fea
     feats
 }
 
-/// `m:ss`.
-pub fn duration(seconds: f64) -> String {
-    format!(
-        "{}:{:02}",
-        (seconds / 60.0).floor(),
-        (seconds % 60.0).floor() as i64
-    )
+/// `seconds` as `m:ss`, written straight into the text that shows it.
+pub fn duration(seconds: f64) -> impl std::fmt::Display {
+    struct Clock(f64);
+    impl std::fmt::Display for Clock {
+        fn fmt(&self, formatter: &mut std::fmt::Formatter) -> std::fmt::Result {
+            let seconds = self.0;
+            write!(
+                formatter,
+                "{}:{:02}",
+                (seconds / 60.0).floor(),
+                (seconds % 60.0).floor() as i64
+            )
+        }
+    }
+    Clock(seconds)
 }

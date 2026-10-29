@@ -7,32 +7,32 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::json;
+use sloppy_core::net::client::{ClientAction, POLL_MS, SavedSeat};
 use sloppy_core::net::protocol::RoomPhase;
-use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES};
+use sloppy_core::sim::Team;
+use sloppy_core::sim::map_options::map_option_for;
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::wgpu;
-use sloppy_web::{NetGame, net_frame_slot as slot};
+use sloppy_web::hud::Hud;
+use sloppy_web::room_notices::RoomNotice;
+use sloppy_web::{NetConfig, NetGame, net_frame_slot as slot};
 use winit::event::{ElementState, Touch, WindowEvent};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::{Fullscreen, Window};
 
-use crate::app::{Shell, drawable_size, grab_pointer, now_ms};
+use crate::app::{Shell, drawable_size, grab_pointer, now_ms, view_config};
 use crate::audio::Audio;
 use crate::bakes::{self, Bake};
-use crate::engine_api::{EventBatch, HudState};
 use crate::hardware_keys::HardwareKeys;
-use crate::input::{Controls, Shortcut, pack};
+use crate::input::{Controls, Shortcut};
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
-use crate::room_api::{RoomAction, RoomNotice, RoomSelection};
+use crate::room_api::RoomSelection;
 use crate::sockets::{SocketEvent, Sockets};
 use crate::touch::{Fingers, Play};
 use crate::ui::room_menu::{self, RoomMenu};
 use crate::ui::{self, Action, UiState};
 
-/// The engine asks for timers at least this often (heartbeat, reconnect backoff).
-pub const POLL_MS: f64 = 250.0;
 /// Pipelines created per preparation step; the joining card redraws between steps.
 const PREPARE_BUDGET: u32 = 4;
 /// Frames between Stats for nerds readings.
@@ -40,14 +40,8 @@ const STATS_EVERY_FRAMES: u64 = 15;
 /// Why a room that could not load sends the player back to Battle Setup.
 const ARENA_FAILED: &str = "The arena could not load. Try again, or play single player.";
 
-/// A seat the server issued, kept for this run (the page's `sessionStorage`).
-#[derive(Clone, Debug)]
-pub struct SavedSeat {
-    pub token: String,
-    pub room_epoch: String,
-}
-
-/// Seats by server and room.
+/// Seats the server issued, kept for this run by server and room (the page's
+/// `sessionStorage`).
 pub type SavedSeats = HashMap<String, SavedSeat>;
 
 pub struct RoomSession {
@@ -108,34 +102,19 @@ impl RoomSession {
     pub fn new(shell: Shell, selection: RoomSelection) -> Result<Self, Box<(Shell, String)>> {
         let window = shell.window.clone();
         let size = drawable_size(&window);
-        let scale = window.scale_factor();
-        let logical = size.to_logical::<f64>(scale);
-        let seat_key = seat_key(&selection);
-        let saved = shell
-            .seats
-            .get(&seat_key)
-            .map(|seat| json!({ "token": seat.token, "roomEpoch": seat.room_epoch }));
-        let config = json!({
-            "server": selection.server,
-            "room": selection.room,
-            "savedSeat": saved,
-            "assetBase": "",
-            "cssWidth": logical.width,
-            "cssHeight": logical.height,
-            "pixelRatio": scale,
-            "firstPerson": shell.prefs.first_person,
-            "zoom": shell.prefs.zoom,
-            // No overhead reticle on a touch screen, as in single player.
-            "hideReticle": crate::TOUCH,
-            "graphics": shell.prefs.graphics,
-            "device": crate::DEVICE,
-        });
+        let config = NetConfig {
+            server: selection.server.clone(),
+            room: selection.room.clone(),
+            saved_seat: shell.seats.get(&seat_key(&selection)).cloned(),
+            ..NetConfig::default()
+        };
         let target = RenderTarget {
             window: wgpu::SurfaceTarget::from(window.clone()),
             width: size.width,
             height: size.height,
         };
-        let mut game = match pollster::block_on(NetGame::create(target, &config.to_string())) {
+        let view = view_config(&window, &shell.prefs);
+        let mut game = match pollster::block_on(NetGame::create_with(target, view, config)) {
             Ok(game) => game,
             Err(error) => {
                 eprintln!("The room's renderer could not start: {error}");
@@ -143,13 +122,7 @@ impl RoomSession {
             }
         };
         let now = now_ms();
-        if let Err(error) = game.connect(&selection.choice_json(), now) {
-            eprintln!("The room choice was refused: {error}");
-            return Err(Box::new((
-                shell,
-                "Choose your tank and join the room again.".into(),
-            )));
-        }
+        game.join(selection.choice.clone(), now);
         let overlay = Overlay::new(window.clone(), game.renderer());
         let Shell {
             prefs,
@@ -174,7 +147,7 @@ impl RoomSession {
                 rooms,
                 ..UiState::default()
             },
-            menu: RoomMenu::new(&selection.room, selection.create.is_some()),
+            menu: RoomMenu::new(&selection.room, selection.choice.create.is_some()),
             selection,
             seats,
             debug,
@@ -302,11 +275,11 @@ impl RoomSession {
         }
         self.pumping = true;
         loop {
-            let actions = RoomAction::parse_all(&self.game.take_actions());
+            let actions = self.game.take_room_actions();
             for action in &actions {
                 self.perform(action);
             }
-            let notices = RoomNotice::parse_all(&self.game.take_notices());
+            let notices = self.game.take_room_notices();
             let done = actions.is_empty() && notices.is_empty();
             for notice in notices {
                 self.handle(notice);
@@ -330,12 +303,12 @@ impl RoomSession {
         self.sockets.close_all_and_wait();
     }
 
-    fn perform(&mut self, action: &RoomAction) {
+    fn perform(&mut self, action: &ClientAction) {
         match action {
-            RoomAction::Open { socket, url } => self.sockets.open(*socket, url.clone()),
-            RoomAction::Send { socket, text } => self.sockets.send(*socket, text.clone()),
-            RoomAction::Close { socket } => self.sockets.close(*socket),
-            RoomAction::SaveSeat { token, room_epoch } => {
+            ClientAction::OpenSocket { socket, url } => self.sockets.open(*socket, url.clone()),
+            ClientAction::Send { socket, text } => self.sockets.send(*socket, text.clone()),
+            ClientAction::CloseSocket { socket } => self.sockets.close(*socket),
+            ClientAction::SaveSeat { token, room_epoch } => {
                 self.seats.insert(
                     seat_key(&self.selection),
                     SavedSeat {
@@ -344,7 +317,7 @@ impl RoomSession {
                     },
                 );
             }
-            RoomAction::ForgetSeat => {
+            ClientAction::ForgetSeat => {
                 self.seats.remove(&seat_key(&self.selection));
             }
         }
@@ -352,19 +325,25 @@ impl RoomSession {
 
     fn handle(&mut self, notice: RoomNotice) {
         match notice {
-            RoomNotice::Status { text, connected } => self.menu.status(&text, connected),
+            RoomNotice::Status { text, dialog } => self.menu.status(&text, dialog),
             RoomNotice::Notice(text) => self.menu.notice = text,
-            RoomNotice::Ended { cause, text } => {
+            RoomNotice::Ended(ending) => {
                 self.controls.clear();
                 // A join still behind the joining card reports on Battle Setup.
                 if self.menu.joining {
-                    self.leave_to_setup(text);
+                    self.leave_to_setup(ending.text);
                 } else {
-                    self.menu.ended(cause, text);
+                    self.menu.ended(ending);
                 }
             }
-            RoomNotice::Lobby { lobby, player_id } => {
-                self.menu.lobby(*lobby, player_id, &mut self.ui);
+            RoomNotice::Lobby {
+                lobby,
+                player_id,
+                menu,
+                arrivals,
+            } => {
+                self.menu
+                    .lobby(*lobby, player_id, menu, arrivals, &mut self.ui);
             }
             RoomNotice::Result { outcome, team } => self.menu.outcome = Some((outcome, team)),
             RoomNotice::ResetFeedback => {
@@ -563,9 +542,9 @@ impl RoomSession {
     }
 
     fn save_camera(&mut self) {
-        let camera = self.game.camera_preferences();
-        self.prefs.first_person = camera.first().is_some_and(|&on| on == 1.0);
-        self.prefs.zoom = camera.get(1).copied();
+        let camera = self.game.camera();
+        self.prefs.first_person = camera.first_person;
+        self.prefs.zoom = Some(camera.zoom);
         self.prefs.save();
     }
 
@@ -596,29 +575,17 @@ impl RoomSession {
                 self.pump();
                 self.leave_to_setup(String::new());
             }
-            Action::RoomRejoin => {
-                self.menu.link = room_menu::Link::Connecting {
-                    title: "RECONNECTING".into(),
-                    text: "Connecting to the room…".into(),
-                };
-                self.game.rejoin(now);
-            }
+            // The engine's next status puts up RECONNECTING.
+            Action::RoomRejoin => self.game.rejoin(now),
             Action::RoomSetup(notice) => self.leave_to_setup(notice),
-            Action::RoomChoose { team, kind } => {
-                let team = team.map_or(-1, i32::from);
-                match self.game.choose(team, &kind, now) {
-                    Ok(()) => {
-                        self.prefs.tank = kind;
-                        self.prefs.save();
-                    }
-                    Err(error) => eprintln!("Invalid room choice: {error}"),
+            Action::RoomChoose { team, kind } => match self.game.choose_seat(team, kind, now) {
+                Ok(()) => {
+                    self.prefs.tank = kind;
+                    self.prefs.save();
                 }
-            }
-            Action::RoomRules(rules) => {
-                if let Err(error) = self.game.settings(&rules.to_json().to_string(), now) {
-                    eprintln!("Invalid room settings: {error}");
-                }
-            }
+                Err(error) => eprintln!("Invalid room choice: {error}"),
+            },
+            Action::RoomRules(rules) => self.game.set_rules(rules, now),
             Action::SelectAmmo(slot) => {
                 if self.menu.in_battle() {
                     self.controls.select_ammo(slot);
@@ -665,7 +632,7 @@ impl RoomSession {
     fn save_settings(&mut self, prefs: Preferences) {
         let old = std::mem::replace(&mut self.prefs, prefs);
         if old.graphics != self.prefs.graphics {
-            self.game.set_graphics(&self.prefs.graphics);
+            self.game.set_graphics_setting(self.prefs.graphics);
         }
         if let Some(audio) = &mut self.audio {
             audio.set_volume(self.prefs.volume);
@@ -680,26 +647,32 @@ impl RoomSession {
         self.prefs.save();
     }
 
-    /// The engine's HUD with what a room's score bar needs besides.
+    /// The engine's HUD with what a room's score bar needs besides: a room plays a team
+    /// battle on the lobby's map and difficulty.
     fn refresh_hud(&mut self) {
-        let Some(mut hud) = HudState::parse(&self.game.hud_json()) else {
+        let Some(room) = self.game.hud() else {
             return;
         };
-        hud.game_mode = "team".into();
-        hud.team_names = TEAM_NAMES.map(str::to_owned);
-        hud.score_limit = f64::from(SCORE_LIMIT);
-        let viewer = hud.human.id;
-        hud.human_team = hud
+        let viewer = room.human.id;
+        let human_team = room
             .scoreboard
-            .iter()
-            .find(|row| row.id == viewer)
+            .row(viewer)
             .map(|row| row.team)
             .or(self.menu.team())
-            .unwrap_or(0);
+            .unwrap_or(Team::Blue);
+        // The default HUD is a team battle with the standard score limit and team names.
+        let mut hud = Hud {
+            match_state: room.match_state.clone(),
+            human_team,
+            human: room.human,
+            scoreboard: room.scoreboard.into_owned(),
+            score_pill: room.score_pill,
+            ..Hud::default()
+        };
         if let Some(lobby) = &self.menu.lobby {
-            hud.map_mode = lobby.settings.map_mode.as_str().to_owned();
-            hud.map_name = ui::rooms::map_name(&hud.map_mode).to_owned();
-            hud.difficulty = lobby.settings.difficulty.as_str().to_owned();
+            hud.map_mode = lobby.settings.map_mode;
+            hud.map_name = map_option_for(lobby.settings.map_mode).name.to_owned();
+            hud.difficulty = lobby.settings.difficulty;
         }
         self.ui.tick(self.hud_dt);
         self.hud_dt = 0.0;
@@ -725,13 +698,11 @@ impl RoomSession {
                 eprintln!("{error}");
             }
         }
-        let status = self.game.prepare_step(PREPARE_BUDGET, now);
-        let [compiled, remaining, _, done, _] =
-            [0, 1, 2, 3, 4].map(|index| status.get(index).copied().unwrap_or(0.0));
-        if done == 1.0 {
+        let status = self.game.prepare(PREPARE_BUDGET, now);
+        if status.ready {
             self.preparing = false;
             self.prebuilding = true;
-        } else if self.menu.joining && (compiled > 0.0 || remaining > 0.0) {
+        } else if self.menu.joining && (status.compiled > 0 || status.remaining > 0) {
             self.menu.status = "Preparing the arena…".into();
         }
         self.pump();
@@ -742,7 +713,7 @@ impl RoomSession {
         self.controls.stick_turns = crate::TOUCH && self.first_person;
         let input = self.controls.take_input();
         let camera_input = input.zoom != 0.0 || input.toggle_view;
-        let result = self.game.frame(now, &pack(&input))?;
+        let result = self.game.frame(now, &input.pack())?;
         if let Some(error) = self.game.error() {
             return Err(error);
         }
@@ -764,32 +735,28 @@ impl RoomSession {
                 self.refresh_hud();
             }
             if value(slot::EVENTS) > 0.0 {
-                let batch = EventBatch::parse(&self.game.drain_events());
+                let batch = self.game.take_events();
                 if let Some(audio) = &mut self.audio {
                     audio.play(&batch);
                 }
                 for event in &batch.events {
                     self.ui.event(event);
-                    self.menu.event(event, &self.ui);
+                    self.menu.event(event);
                 }
             }
         } else if value(slot::EVENTS) > 0.0 {
-            self.game.drain_events();
+            self.game.take_events();
         }
         Ok(())
     }
 
-    /// The renderer stopped: give up the connection and say so.
+    /// The renderer stopped: give up the connection, and the engine says so.
     fn fail(&mut self, error: &str) {
         eprintln!("The room stopped: {error}");
         self.stopped = true;
         self.controls.clear();
-        self.game.stop();
+        self.game.renderer_failed();
         self.pump();
-        self.menu.ended(
-            "renderer".into(),
-            "The renderer stopped. Go back to Battle Setup to play again.".into(),
-        );
     }
 
     /// Run a frame and show it; true when the player chose to quit.
@@ -827,8 +794,7 @@ impl RoomSession {
             && (self.debug || self.prefs.debug)
             && self.frame_index.is_multiple_of(STATS_EVERY_FRAMES)
         {
-            self.ui.stats = serde_json::from_str(&self.game.stats_json(now)).ok();
-            ui::nerd_stats::sample_network(&mut self.ui, now);
+            self.ui.stats = Some(self.game.nerd_stats(now));
         }
         self.hold_pointer();
         self.ui.touch = self.touch_play().map(|_| ui::touch::TouchView {

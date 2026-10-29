@@ -1,9 +1,11 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { NerdStats, engineStatsSections } from "../src/game/nerd-stats";
-import type { EngineStats } from "../src/game/engine-api";
+import { NerdStats } from "../src/game/nerd-stats";
+import type { StatsSection } from "../src/game/engine-api";
 import { debugPage } from "../src/game/map-options";
-import { networkStatsSections, type NetworkStatsSource } from "../src/net/network-stats";
+
+// The rows' text and hints are the engine's (`crates/web/src/nerd_rows.rs`, tested
+// there); the page lays them out.
 
 type Listener = () => void;
 
@@ -60,14 +62,34 @@ class StubElement {
   }
 }
 
-const SECTION_TITLES = ["Performance", "Physics", "Render", "Battle", "Configuration"];
-/** The expanded panel's width (`#nerd-stats.expanded` in style.css); longer rows are cut off. */
-const PANEL_COLUMNS = 32;
-
-function assertRowsFit(container: StubElement): void {
-  for (const row of container.querySelectorAll("pre")) {
-    assert.ok(row.textContent.length <= PANEL_COLUMNS, `"${row.textContent}" fits the panel`);
-  }
+/** A room's sections as `NetGame.nerd_stats_json()` writes them. */
+function roomSections(updates: number): StatsSection[] {
+  return [
+    {
+      title: "Performance",
+      rows: [{ label: "FPS", value: "60", hint: "Rendered frames per second." }],
+    },
+    {
+      title: "Network",
+      rows: [
+        { label: "RTT", value: "42 ms", hint: "Measured round-trip time to the game server." },
+        {
+          label: "Updates received",
+          value: String(updates),
+          hint: `Full-state messages and snapshot batches (${updates} so far).`,
+        },
+      ],
+    },
+    {
+      title: "Render",
+      rows: [{ label: "Graphics API", value: "WebGPU", hint: "WebGPU, or WebGL." }],
+    },
+    { title: "Battle", rows: [] },
+    {
+      title: "Configuration",
+      rows: [{ label: "Pixel ratio", value: "1.5", hint: "Renderer resolution multiplier." }],
+    },
+  ];
 }
 
 function fixture(network = false) {
@@ -84,133 +106,14 @@ function fixture(network = false) {
   };
   Object.defineProperty(globalThis, "window", { value: win, configurable: true });
   Object.defineProperty(globalThis, "document", { value: doc, configurable: true });
-  // The renderer's counters, which a room and single player report alike.
-  const render = {
-    graphicsApi: "WebGPU",
-    quality: {
-      setting: "auto",
-      tier: "medium",
-      scale: 0.667,
-      renderRatio: 1,
-      scene: [1180, 820],
-      gpuMs: 6.25,
-      changes: 2,
-      log: [],
-    } as EngineStats["quality"],
-    drawCalls: 42,
-    triangles: 628263,
-    shadowTriangles: 241429,
-    reflectionTriangles: 192922,
-    mainTriangles: 193912,
-    meshes: 9,
-    textures: 11,
-  };
-  // A room's `NetGame.stats_json()`: the received scene and the network timeline.
-  const room: NetworkStatsSource = {
-    ...render,
-    scene: {
-      tanks: 3,
-      alive: 2,
-      mines: 2,
-      pickups: 2,
-      pickupsReady: 1,
-      shots: 3,
-      fragments: 1,
-      elapsed: 12.34,
-    },
-    network: {
-      rttMs: 42,
-      receivedUpdates: 7,
-      snapshotAgeMs: 12,
-      bufferMs: 80,
-      marginMs: 20,
-      underrun: 0,
-      serverTick: 900,
-      inputSeq: 10,
-      inputAck: 9,
-      connected: true,
-      lateBatches: 3,
-      longestBatchGapMs: 412.4,
-      predictionLeadMs: 120,
-      correctionMPerS: 0.04,
-      correctionP95M: 0.03,
-      inputStarts: 25,
-      lateInputStarts: 2,
-      correctionCauses: {
-        blast: { count: 1, mPerS: 0.002 },
-        tank: { count: 3, mPerS: 0.012 },
-        crate: { count: 0, mPerS: 0 },
-        debris: { count: 2, mPerS: 0.02 },
-        cover: { count: 0, mPerS: 0 },
-        lateInput: { count: 0, mPerS: 0 },
-        other: { count: 1, mPerS: 0.006 },
-      },
-      receiveMs: 140,
-      phantomStrikes: 2,
-    },
-    feel: {
-      viewDelayMs: { count: 600, mean: 211, p50: 210, p95: 230, max: 260 },
-      fireToFlashMs: { count: 12, mean: 196.4, p50: 190, p95: 240, max: 251 },
-      fireToReportMs: { count: 12, mean: 118, p50: 115, p95: 150, max: 160 },
-      unansweredPresses: 1,
-      hitOffsetM: { count: 5, mean: 1.234, p50: 1.1, p95: 2.05, max: 2.1 },
-      incomingOffsetM: { count: 4, mean: 0.42, p50: 0.3, p95: 0.9, max: 0.9 },
-      incomingBehindM: { count: 2, mean: 0.87, p50: 0.8, p95: 1.3, max: 1.3 },
-      unseenIncoming: 1,
-      ownShots: {
-        predicted: 14,
-        confirmed: 13,
-        unconfirmedShells: 1,
-        unpredicted: 2,
-        errorM: { count: 13, mean: 0.031, p50: 0.02, p95: 0.08, max: 0.1 },
-        phantomStrikes: 3,
-      },
-    },
-  };
-  const engine = {
-    bodies: 10,
-    fixedBodies: 6,
-    dynamicBodies: 4,
-    sleepingBodies: 1,
-    colliders: 4,
-    ...render,
-    gpuBytes: 412.3 * 1048576,
-    meshSlackBytes: 12.5 * 1048576,
-    tanks: 3,
-    tanksAlive: 2,
-    mines: 2,
-    pickups: 2,
-    pickupsReady: 1,
-    shots: 3,
-    particles: 3,
-    fragments: 1,
-    maxFragments: 8,
-    elapsed: 12.34,
-    pixelRatio: 1.5,
-  } as EngineStats;
   const root = new StubElement("DIV");
   let reads = 0;
-  const stats = network
-    ? new NerdStats(
-        root as unknown as HTMLElement,
-        networkStatsSections(
-          () => {
-            reads++;
-            return room;
-          },
-          () => 2,
-        ),
-        () => true,
-        { network: true },
-      )
-    : new NerdStats(
-        root as unknown as HTMLElement,
-        () => {
-          reads++;
-          return engineStatsSections(engine);
-        },
-        () => true,
-      );
+  const stats = new NerdStats(
+    root as unknown as HTMLElement,
+    () => roomSections(++reads),
+    () => true,
+    { network },
+  );
   assert.ok(created.length > 0);
   const panel = created[0];
   assert.equal(panel.tagName, "ASIDE");
@@ -227,11 +130,14 @@ function fixture(network = false) {
   assert.equal(button.attributes.get("aria-controls"), container.id);
   assert.equal(button.attributes.get("aria-keyshortcuts"), "N");
   assert.equal(container.hidden, true);
+  const rowText = (label: string) =>
+    container.querySelectorAll("pre").find((row) => row.textContent.startsWith(label));
   return {
     panel,
     button,
     container,
     stats,
+    rowText,
     get reads() {
       return reads;
     },
@@ -242,141 +148,60 @@ function fixture(network = false) {
   };
 }
 
-test("network stats use received scene counts and never require a client physics world", () => {
+test("the open panel lays out the engine's sections and refreshes twice a second", () => {
   const f = fixture(true);
   try {
-    assert.equal(f.reads, 0, "closed diagnostics do not sample the source");
+    assert.equal(f.reads, 0, "a closed panel does not read the engine");
     f.button.click();
     assert.equal(f.reads, 1);
     assert.equal(f.button.attributes.get("aria-expanded"), "true");
-    const titles = f.container
-      .querySelectorAll("details")
-      .map((section) => section.querySelector("summary")?.textContent);
-    assert.ok(titles.includes("Network"));
-    assert.ok(!titles.includes("Physics"));
-    const text = f.container
-      .querySelectorAll("pre")
-      .map((row) => row.textContent)
-      .join("\n");
-    assert.ok(text.includes("RTT") && text.includes("42 ms"));
-    assert.ok(text.includes("Input seq sent / ack") && text.includes("10 / 9"));
-    assert.ok(text.includes("Late input starts") && text.includes("2 / 25"));
-    assert.ok(text.includes("Fire to flash") && text.includes("196 ms"));
-    assert.ok(text.includes("Own shots on time") && text.includes("13 / 14"));
-    assert.ok(text.includes("Own shell error") && text.includes("3.1 cm"));
-    assert.ok(text.includes("Hit offset p95") && text.includes("2.05 m"));
-    assert.ok(text.includes("Incoming offset") && text.includes("0.42 m"));
-    assert.ok(text.includes("Hit where you were") && text.includes("0.87 m"));
-    assert.ok(text.includes("Phantom strikes") && text.includes("2 / 3"));
-    assert.ok(text.includes("Debris corrections") && text.includes("2.0 cm/s"));
-    assert.ok(
-      text.includes("Late batches") &&
-        text.includes("Longest batch gap") &&
-        text.includes("412 ms"),
-    );
-    assert.ok(text.includes("Reflection triangles") && text.includes("192,922"));
-    assert.ok(text.includes("Graphics setting") && text.includes("Auto"));
-    assert.ok(text.includes("Quality tier") && text.includes("Medium"));
-    assert.ok(text.includes("Render scale") && text.includes("67%"));
-    assert.ok(text.includes("Scene pixels") && text.includes("1180×820"));
-    assert.ok(text.includes("GPU frame time") && text.includes("6.3 ms"));
-    assertRowsFit(f.container);
-    assert.ok(text.includes("2 / 3"), "Tanks alive come from the received scene");
-    assert.ok(text.includes("Update CPU / frame"));
-    assert.ok(!text.includes("Sim CPU / frame"));
-    f.stats.frame(1, 1, 2);
-    f.stats.frame(501, 1, 2);
-    assert.equal(f.reads, 2);
-    f.button.click();
-    assert.equal(f.container.hidden, true);
-    assert.equal(f.button.attributes.get("aria-expanded"), "false");
-    f.stats.frame(1001, 1, 2);
-    assert.equal(f.reads, 2);
-  } finally {
-    f.dispose();
-  }
-});
-
-test("panel has one open section per group with the expected rows", () => {
-  const f = fixture();
-  try {
-    f.button.click();
-    assert.equal(f.container.hidden, false);
     const sections = f.container.querySelectorAll("details");
     assert.deepEqual(
       sections.map((section) => section.querySelector("summary")?.textContent),
-      SECTION_TITLES,
+      ["Performance", "Network", "Render", "Battle", "Configuration"],
     );
     for (const section of sections) {
       const title = section.querySelector("summary")?.textContent;
       assert.equal(section.open, title !== "Configuration", `${title} open state`);
     }
-    const bodies = f.container.querySelectorAll("pre");
-    assert.equal(bodies.length, 31);
-    assertRowsFit(f.container);
-    const renderRows = sections
-      .find((section) => section.querySelector("summary")?.textContent === "Render")!
-      .querySelectorAll("pre")
-      .map((row) => row.textContent);
-    assert.ok(renderRows.some((row) => row.startsWith("GPU geometries")));
-    assert.ok(renderRows.some((row) => row.startsWith("GPU textures")));
-    assert.ok(!bodies.some((row) => row.textContent.startsWith("Backend")));
-    for (const body of bodies) {
-      assert.ok(body.title.length > 0, `row missing tooltip: ${body.textContent}`);
-    }
-    const tipOf = (label: string): string => {
-      const row = bodies.find((body) => body.textContent.startsWith(label));
-      assert.ok(row, `missing row: ${label}`);
-      return row.title;
-    };
-    assert.ok(tipOf("Draw calls / frame").includes("per rendered frame"));
-    assert.ok(tipOf("Graphics API").includes("WebGL"));
-    assert.ok(tipOf("GPU geometries").includes("uploaded to the GPU"));
-    assert.ok(tipOf("GPU textures").includes("uploaded to the GPU"));
-    const text = bodies.map((body) => body.textContent).join("\n");
-    for (const row of [
-      "Pixel ratio",
-      "12.3s",
-      "Tanks",
-      "2 / 3",
-      "Mines",
-      "Pickups ready",
-      "1 / 2",
-      "GPU geometries",
-      "GPU textures",
-      "GPU memory",
-      "412.3 MB",
-      "Mesh page slack",
-      "12.5 MB",
-      "Fixed / dynamic",
-      "6 / 4",
-      "Awake / sleeping",
-      "3 / 1",
-      "1 / 8",
-      "Graphics API",
-      "WebGPU",
-      "Draw calls / frame",
-      "Triangles / frame",
-      "628,263",
-      "Shadow triangles",
-      "241,429",
-      "Reflection triangles",
-      "192,922",
-      "Main triangles",
-      "193,912",
-      "Quality tier",
-      "Render scale",
-    ]) {
-      assert.ok(text.includes(row), `missing row content: ${row}`);
-    }
-    assert.ok(!text.includes("Score"));
-    assert.ok(!text.includes("per rendered frame")); // tooltip lives on title, not rows
-    assert.ok(f.container.title.includes("per rendered frame"));
-    assert.ok(!text.includes("Map "));
-    assert.ok(!text.includes("Seed"));
-    assert.ok(f.container.title.includes("Pickups ready"));
+    const rtt = f.rowText("RTT");
+    assert.equal(rtt?.textContent, "RTT                  42 ms");
+    assert.equal(rtt?.title, "Measured round-trip time to the game server.");
+    assert.equal(f.rowText("Updates received")?.title.includes("(1 so far)"), true);
+    f.stats.frame(1);
+    f.stats.frame(400);
+    assert.equal(f.reads, 1, "no refresh within half a second");
+    f.stats.frame(501);
+    assert.equal(f.reads, 2);
+    // Rows update in place, hints with their values.
+    assert.equal(f.container.querySelectorAll("pre").length, 5);
+    assert.equal(f.rowText("Updates received")?.textContent, "Updates received     2");
+    assert.equal(f.rowText("Updates received")?.title.includes("(2 so far)"), true);
+    f.button.click();
+    assert.equal(f.container.hidden, true);
+    assert.equal(f.button.attributes.get("aria-expanded"), "false");
+    f.stats.frame(1001);
+    f.stats.frame(2001);
+    assert.equal(f.reads, 2, "a closed panel stops reading");
   } finally {
     f.dispose();
+  }
+});
+
+test("each panel explains its counters as a whole", () => {
+  const room = fixture(true);
+  try {
+    assert.ok(!room.container.title.includes("Awake/sleeping"));
+    assert.ok(room.container.title.includes("per rendered frame"));
+  } finally {
+    room.dispose();
+  }
+  const single = fixture();
+  try {
+    assert.ok(single.container.title.includes("Awake/sleeping"));
+    assert.ok(single.container.title.includes("Pickups ready"));
+  } finally {
+    single.dispose();
   }
 });
 

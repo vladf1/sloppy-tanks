@@ -1,75 +1,51 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { AudioSystem, destructionSound } from "../src/game/audio";
-import type { CoverKind } from "../src/game/engine-api";
+import { AudioSystem } from "../src/game/audio";
+import type { EventBatch } from "../src/game/engine-api";
 
-test("cover destruction uses material sounds while drums defer to their blast", () => {
-  for (const kind of ["tree", "timber", "cargo"] as const) {
-    assert.equal(destructionSound({ type: "destroy", coverKind: kind, x: 0, z: 0 }), "wood-break");
-  }
-  for (const kind of ["tower", "rock", "concrete", "house"] as CoverKind[]) {
-    assert.equal(
-      destructionSound({ type: "destroy", coverKind: kind, x: 0, z: 0 }),
-      "rubble-break",
-    );
-  }
-  assert.equal(destructionSound({ type: "destroy", coverKind: "drum", x: 0, z: 0 }), null);
-  assert.equal(destructionSound({ type: "death", x: 0, z: 0 }), null);
-  // A shell bursting a loose crate or watchtower board.
-  for (const kind of ["cargo", "tower"] as const) {
-    assert.equal(destructionSound({ type: "shatter", coverKind: kind, x: 0, z: 0 }), "wood-break");
-  }
-});
-
-test("scenery sound throttling does not swallow a vehicle explosion", () => {
-  // Exercise routing without creating browser audio nodes or loading assets.
+// The engine chooses, rate-limits and places the sounds (`crates/web/src/sounds.rs`
+// tests); the page only starts them.
+test("the page plays the engine's planned sounds in order, with their gain and pan, once started", () => {
+  // Exercise playback without creating browser audio nodes or loading assets.
   const audio = Object.create(AudioSystem.prototype) as AudioSystem;
-  const played: string[] = [];
-  audio.enabled = true;
-  audio.lastExplosion =
-    audio.lastDestruction =
-    audio.lastShot =
-    audio.lastHit =
-    audio.lastLaser =
-      -Infinity;
-  audio.listenerRight = { x: 1, z: 0 };
+  const played: [string, number, number][] = [];
+  audio.enabled = false;
   audio.sounds = Object.fromEntries(
-    ["wood-break", "rubble-break", "explosion"].map((name) => [
-      name,
-      {
-        play: () => {
-          played.push(name);
-          return 1;
+    ["hit", "explosion"].map((name) => {
+      let id = 0;
+      const voices = new Map<number, [string, number, number]>();
+      return [
+        name,
+        {
+          play: () => {
+            const voice: [string, number, number] = [name, NaN, NaN];
+            voices.set(++id, voice);
+            played.push(voice);
+            return id;
+          },
+          volume: (gain: number, voice: number) => {
+            voices.get(voice)![1] = gain;
+          },
+          stereo: (pan: number, voice: number) => {
+            voices.get(voice)![2] = pan;
+          },
         },
-        volume: () => {},
-        stereo: () => {},
-      },
-    ]),
-  ) as AudioSystem["sounds"];
-  const listener = { x: 0, z: 0 };
-  audio.event({ type: "destroy", coverKind: "tree", ...listener }, listener);
-  audio.event({ type: "death", ...listener }, listener);
-  assert.deepEqual(played, ["wood-break", "explosion"]);
-  audio.lastExplosion = -Infinity;
-  audio.event({ type: "destroy", coverKind: "drum", ...listener }, listener);
-  audio.event({ type: "explosion", coverKind: "drum", ...listener }, listener);
-  assert.deepEqual(played, ["wood-break", "explosion", "explosion"]);
-});
-
-test("stereo pans along the listener's right, which first person turns with the view", () => {
-  const audio = Object.create(AudioSystem.prototype) as AudioSystem;
-  const pans: number[] = [];
+      ];
+    }),
+  ) as unknown as AudioSystem["sounds"];
+  const batch: EventBatch = {
+    events: [],
+    sounds: [
+      { sound: "hit", gain: 0.14, pan: 0 },
+      { sound: "explosion", gain: 0.3, pan: -0.5 },
+    ],
+  };
+  audio.play(batch);
+  assert.deepEqual(played, [], "silent until the first gesture starts audio");
   audio.enabled = true;
-  audio.lastExplosion = -Infinity;
-  audio.sounds = {
-    explosion: { play: () => 1, volume: () => {}, stereo: (pan: number) => pans.push(pan) },
-  } as unknown as AudioSystem["sounds"];
-  const listener = { x: 0, z: 0 };
-  audio.listenerRight = { x: 1, z: 0 };
-  audio.event({ type: "explosion", x: 0, z: 30 }, listener);
-  // Facing +X, screen right is +Z.
-  audio.lastExplosion = -Infinity;
-  audio.listenerRight = { x: 0, z: 1 };
-  audio.event({ type: "explosion", x: 0, z: 30 }, listener);
-  assert.deepEqual(pans, [0, 1]);
+  audio.play(batch);
+  assert.deepEqual(played, [
+    ["hit", 0.14, 0],
+    ["explosion", 0.3, -0.5],
+  ]);
 });

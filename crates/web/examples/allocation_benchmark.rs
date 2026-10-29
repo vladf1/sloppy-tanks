@@ -19,7 +19,7 @@ use sloppy_core::net::shot_paths::{LivePaths, ShotPathRecorder};
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::{PlayerAssignment, RenderState, Team, VehicleKind};
 use sloppy_render::effects::EffectSystems;
-use sloppy_web::hud::{Scoreboard, human_json};
+use sloppy_web::hud::{EffectTimers, Scoreboard, human_json};
 
 struct CountingAllocator;
 static COUNTING: AtomicBool = AtomicBool::new(false);
@@ -181,7 +181,11 @@ fn main() {
                     scoreboard: S,
                 }
                 serde_json::to_string(&HudParts {
-                    human: human_json(state.viewer().expect("viewer"), state.elapsed),
+                    human: human_json(
+                        state.viewer().expect("viewer"),
+                        state.elapsed,
+                        &mut EffectTimers::default(),
+                    ),
                     scoreboard: Scoreboard::Rendered(&state.tanks),
                 })
                 .unwrap()

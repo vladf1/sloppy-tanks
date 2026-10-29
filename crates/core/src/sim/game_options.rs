@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::difficulty::{Difficulty, parse_difficulty};
+use super::difficulty::Difficulty;
 use super::map_options::{MapId, is_extra_level};
 use super::math::Random;
 use super::simulation::{GameMode, Simulation};
@@ -22,9 +22,9 @@ pub struct GameOptions {
 /// player's GO needs no rebuild. Extra levels are offered only with `?debug`.
 pub fn initial_game_options(
     seed: f64,
-    requested_map: Option<&str>,
+    requested_map: Option<MapId>,
     extra_levels: bool,
-    difficulty: Option<&str>,
+    difficulty: Option<Difficulty>,
 ) -> GameOptions {
     GameOptions {
         human_kind: VehicleKind::Balanced,
@@ -35,10 +35,25 @@ pub fn initial_game_options(
         },
         game_mode: GameMode::Team,
         map_mode: requested_map
-            .and_then(MapId::parse)
             .filter(|&option| extra_levels || !is_extra_level(option))
             .unwrap_or(MapId::Village),
-        difficulty: parse_difficulty(difficulty),
+        difficulty: difficulty.unwrap_or_default(),
+    }
+}
+
+impl GameOptions {
+    /// These choices as Battle Setup plays them. An extra level stands only where extra
+    /// levels are offered (`?debug`), else the village does, and it plays its own team
+    /// battle whatever format the player keeps for the standard maps
+    /// (`bindGameOptions`).
+    pub fn offered(mut self, extra_levels: bool) -> GameOptions {
+        if !extra_levels && is_extra_level(self.map_mode) {
+            self.map_mode = MapId::Village;
+        }
+        if is_extra_level(self.map_mode) {
+            self.game_mode = GameMode::Team;
+        }
+        self
     }
 }
 

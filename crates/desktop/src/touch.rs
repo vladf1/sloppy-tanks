@@ -10,8 +10,10 @@ use std::collections::HashSet;
 use egui::{Pos2, Rect, Vec2, pos2};
 use winit::event::{Touch, TouchPhase};
 
-use crate::engine_api::HudState;
-use crate::input::{Controls, ZOOM_STEP};
+use sloppy_render::presentation::input::ZOOM_STEP;
+use sloppy_web::hud::Hud;
+
+use crate::input::Controls;
 
 /// The drive stick's square, and how far a touch off its centre moves the stick's
 /// origin under the thumb.
@@ -73,7 +75,7 @@ impl Play {
         context: &egui::Context,
         acting: bool,
         first_person: bool,
-        hud: Option<&HudState>,
+        hud: Option<&Hud<'_>>,
     ) -> Option<Self> {
         (crate::TOUCH && acting).then(|| Self {
             layout: TouchLayout::of(context),

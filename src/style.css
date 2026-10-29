@@ -652,8 +652,8 @@ body:has(#settings[open]) .hud-actions {
   font-variant-numeric: tabular-nums;
   text-shadow: 0 2px 6px #0007;
 }
-/* Below a full hull the number takes the ramp's colour (`hullColor`), lightened to
-   stay legible: green through amber and orange to red as the hull drains. */
+/* Below a full hull the number takes the ramp's colour (the engine's `hullRamp`),
+   lightened to stay legible: green through amber and orange to red as the hull drains. */
 .hull-readout:not([data-tone="healthy"]) b {
   color: color-mix(in srgb, var(--hull-ramp, #ff9a3c) 72%, #fff);
 }

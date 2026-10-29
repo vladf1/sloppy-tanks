@@ -12,15 +12,20 @@ use egui::{
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, fade, hex, hexa, mix};
-use super::setup::{EXTRA_MAPS, MAPS};
 use super::theme::{GOLD, bold_font, display_font};
 use super::{Action, View};
-use crate::directory::{
-    self, DEFAULT_DIRECTORY, DirectoryRequest, ROOM_SEATS, RoomListing, ServerList,
-};
+use crate::directory::{self, DEFAULT_DIRECTORY, DirectoryRequest};
 use crate::preferences::Preferences;
-use crate::room_api::{RoomRules, RoomSelection, preferred_player_name};
-use sloppy_core::net::protocol::{DEFAULT_ROUND_MINUTES, MAX_PLAYER_NAME_LENGTH};
+use crate::room_api::{RoomSelection, player_name, preferred_player_name};
+use sloppy_core::net::protocol::{
+    DEFAULT_ROUND_MINUTES, JoinChoice, MAX_PLAYER_NAME_LENGTH, RoomPhase, RoomSettings,
+    read_room_code, room_code, stepped_minutes,
+};
+use sloppy_core::net::room_list::{HostedRoom, ROOM_SEATS, ServerList};
+use sloppy_core::sim::Team;
+use sloppy_core::sim::difficulty::Difficulty;
+use sloppy_core::sim::map_options::{MapId, is_extra_level, map_option_for};
+use sloppy_web::battle_report::duration;
 
 /// The list refreshes this often while the tab shows.
 const REFRESH: Duration = Duration::from_secs(5);
@@ -57,13 +62,16 @@ pub struct RoomsState {
     /// `None` until first shown, then the name typed (saved on joining).
     name: Option<String>,
     /// `None`: the side with fewer humans.
-    team: Option<u8>,
+    team: Option<Team>,
     round_minutes: u32,
     humans_only: bool,
     /// The room code typed in.
     code: String,
     /// A room to select once the directory lists it: one just left, or a typed code.
     link: Option<String>,
+    /// The room a code or a return named, which stays listed even on an extra level
+    /// after the link is followed (the page's fixed `linkedRoom`).
+    linked_room: Option<String>,
     /// Shown instead of the usual prompt until the player picks a room.
     notice: String,
 }
@@ -84,6 +92,7 @@ impl Default for RoomsState {
             humans_only: true,
             code: String::new(),
             link: None,
+            linked_room: None,
             notice: String::new(),
         }
     }
@@ -118,8 +127,21 @@ impl RoomsState {
     pub fn returned_from(&mut self, room: &str, notice: &str) {
         self.multiplayer = true;
         self.link = (!room.is_empty()).then(|| room.to_owned());
+        self.linked_room.clone_from(&self.link);
         self.notice = notice.to_owned();
         self.next_poll = None;
+    }
+
+    /// Select the room with `code` once the directory lists it (the page's invite link).
+    fn find_room(&mut self, code: String) {
+        self.notice.clear();
+        self.link = Some(code);
+        self.linked_room.clone_from(&self.link);
+        self.follow_link();
+        if self.link.is_some() {
+            // Not listed yet: look again now.
+            self.next_poll = None;
+        }
     }
 
     /// Ask the directory when it is time, and take its answer once it comes.
@@ -127,41 +149,47 @@ impl RoomsState {
         let now = Instant::now();
         if let Some(answer) = self.request.as_ref().and_then(DirectoryRequest::answer) {
             self.request = None;
-            self.next_poll = Some(now + REFRESH);
-            match answer {
-                Ok(mut list) => {
-                    let link = self.link.clone();
-                    list.rooms.retain(|room| {
-                        extra_levels
-                            || !EXTRA_MAPS.iter().any(|(id, _)| *id == room.map_mode)
-                            || link.as_deref() == Some(room.room.as_str())
-                    });
-                    self.list = list;
-                    self.state = ListState::Ready;
-                    self.follow_link();
-                }
-                Err(reason) => {
-                    self.list = ServerList::default();
-                    self.state = ListState::Offline {
-                        reason,
-                        retry: now + REFRESH,
-                    };
-                }
-            }
-            if !self
-                .list
-                .rooms
-                .iter()
-                .any(|room| room.room == self.selected && room.joinable())
-            {
-                self.selected.clear();
-            }
+            self.listed(answer, extra_levels, now);
         }
         if self.request.is_none() && self.next_poll.is_none_or(|at| now >= at) {
             self.request = Some(DirectoryRequest::start(&self.directory));
             if self.state != ListState::Ready {
                 self.state = ListState::Loading;
             }
+        }
+    }
+
+    /// Take the directory's answer at `now`. Rooms on extra levels show only with
+    /// `extra_levels`, or when a code or a return named them.
+    fn listed(&mut self, answer: Result<ServerList, String>, extra_levels: bool, now: Instant) {
+        self.next_poll = Some(now + REFRESH);
+        match answer {
+            Ok(mut list) => {
+                let linked = self.linked_room.clone();
+                list.rooms.retain(|room| {
+                    extra_levels
+                        || !is_extra_level(room.map_mode)
+                        || linked.as_deref() == Some(room.room.as_str())
+                });
+                self.list = list;
+                self.state = ListState::Ready;
+                self.follow_link();
+            }
+            Err(reason) => {
+                self.list = ServerList::default();
+                self.state = ListState::Offline {
+                    reason,
+                    retry: now + REFRESH,
+                };
+            }
+        }
+        if !self
+            .list
+            .rooms
+            .iter()
+            .any(|room| room.room == self.selected && room.joinable())
+        {
+            self.selected.clear();
         }
     }
 
@@ -240,45 +268,35 @@ impl RoomsState {
     }
 }
 
-/// The map's name for a map id.
-pub fn map_name(id: &str) -> &str {
-    MAPS.iter()
-        .chain(&EXTRA_MAPS)
-        .find(|(map, _)| *map == id)
-        .map_or(id, |(_, name)| name)
-}
-
 /// One open room's lines (`RoomBrowser.render`).
-fn room_lines(room: &RoomListing) -> (String, String) {
+fn room_lines(room: &HostedRoom) -> (String, String) {
     let title = format!(
         "{}{} · {}/{ROOM_SEATS} players",
-        map_name(&room.map_mode),
-        if EXTRA_MAPS.iter().any(|(id, _)| *id == room.map_mode) {
+        map_option_for(room.map_mode).name,
+        if is_extra_level(room.map_mode) {
             " (EXTRA)"
         } else {
             ""
         },
         room.players
     );
-    let seconds = room.time.ceil() as u64;
-    let phase = match room.phase.as_str() {
-        "playing" => format!(
-            "{}:{:02} left · {}",
-            seconds / 60,
-            seconds % 60,
+    let phase = match room.phase {
+        RoomPhase::Playing => format!(
+            "{} left · {}",
+            duration(room.time.ceil()),
             room.scores
                 .iter()
                 .map(u64::to_string)
                 .collect::<Vec<_>>()
                 .join("–")
         ),
-        "lobby" => "In lobby".into(),
-        _ => "Between rounds".into(),
+        RoomPhase::Lobby => "In lobby".into(),
+        RoomPhase::Results => "Between rounds".into(),
     };
     let bots = if room.humans_only {
         "Humans only".to_owned()
     } else {
-        format!("Bots: {}", room.difficulty)
+        format!("Bots: {}", room.difficulty.as_str())
     };
     let mut detail = format!(
         "{} · {bots} · {} min · {phase}",
@@ -301,7 +319,7 @@ const ROOM_ROW_HEIGHT: f32 = 34.0;
 const SMALL_INK: u32 = 0xb6cedf;
 
 /// The teams: choice, name, line and the colours of its dot.
-const TEAMS: [(Option<u8>, &str, &str, [u32; 2]); 3] = [
+const TEAMS: [(Option<Team>, &str, &str, [u32; 2]); 3] = [
     (
         None,
         "Auto",
@@ -309,22 +327,27 @@ const TEAMS: [(Option<u8>, &str, &str, [u32; 2]); 3] = [
         [0x4ea3ff, 0xff6f5e],
     ),
     (
-        Some(0),
+        Some(Team::Blue),
         "Blue",
         "Always the blue team",
         [0x4ea3ff, 0x4ea3ff],
     ),
-    (Some(1), "Red", "Always the red team", [0xff6f5e, 0xff6f5e]),
+    (
+        Some(Team::Red),
+        "Red",
+        "Always the red team",
+        [0xff6f5e, 0xff6f5e],
+    ),
 ];
 
 impl RoomsState {
     /// The map of the open room chosen, which the map row shows instead of the player's.
-    pub fn selected_map(&self) -> Option<&str> {
+    pub fn selected_map(&self) -> Option<MapId> {
         self.list
             .rooms
             .iter()
             .find(|room| room.room == self.selected)
-            .map(|room| room.map_mode.as_str())
+            .map(|room| room.map_mode)
     }
 }
 
@@ -447,6 +470,9 @@ pub fn multiplayer(
         vec2(right_width, 62.0),
     );
     state.poll(view.debug);
+    // A new room opens on the map single player would play: a saved extra level only
+    // with the debug tools.
+    let new_room_map = prefs.game_options(Team::Blue, view.debug).map_mode;
     let time = ui.input(|input| input.time);
     let painter = ui.painter().clone();
 
@@ -528,16 +554,10 @@ pub fn multiplayer(
     .on_hover_text("Find the room with this code")
     .clicked();
     if found || entered {
-        match directory::read_room_code(&state.code) {
+        match read_room_code(&state.code) {
             Some(code) => {
                 state.code.clone_from(&code);
-                state.notice.clear();
-                state.link = Some(code);
-                state.follow_link();
-                if state.link.is_some() {
-                    // Not listed yet: look again now.
-                    state.next_poll = None;
-                }
+                state.find_room(code);
             }
             None => state.notice = "A room code is 8 letters and digits.".into(),
         }
@@ -545,7 +565,7 @@ pub fn multiplayer(
 
     // The room list: the new room's card, then the open rooms or why there are none.
     well(&painter, room_list, 14);
-    new_room_card(ui, state, prefs, new_room);
+    new_room_card(ui, state, new_room_map, new_room);
     let rows = Rect::from_min_max(
         pos2(new_room.left(), new_room.bottom() + 6.0),
         pos2(new_room.right(), room_list.bottom() - 5.0),
@@ -718,14 +738,14 @@ pub fn multiplayer(
         enabled,
     )
     .clicked()
-        && let Some(selection) = selection(state, prefs)
+        && let Some(selection) = selection(state, prefs, new_room_map)
     {
         actions.push(Action::JoinRoom(Box::new(selection)));
     }
 }
 
 /// The new room's card: its map, what it holds, and its length and humans-only rules.
-fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences, new_room: Rect) {
+fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room: Rect) {
     let chosen = state.selected.is_empty();
     let response = ui
         .interact(new_room, Id::unique("new room"), Sense::click())
@@ -767,7 +787,7 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences,
         &painter,
         pos2(title.right(), title.center().y),
         Align2::LEFT_CENTER,
-        map_name(&prefs.map),
+        map_option_for(map).name,
         bold_font(14.0),
         GOLD,
         0.0,
@@ -818,10 +838,10 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences,
         response.clicked()
     };
     if step(ui, stepper.left() + 2.0, "−", "less") {
-        minutes = directory::stepped_minutes(minutes, -LENGTH_STEP);
+        minutes = stepped_minutes(minutes, -LENGTH_STEP);
     }
     if step(ui, stepper.right() - 30.0, "+", "more") {
-        minutes = directory::stepped_minutes(minutes, LENGTH_STEP);
+        minutes = stepped_minutes(minutes, LENGTH_STEP);
     }
     paint::text(
         &painter,
@@ -1014,11 +1034,11 @@ fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
 
 /// The tab as the UI snapshots show it: the directory has answered with `rooms`.
 #[cfg(test)]
-pub fn answered(rooms: Vec<RoomListing>) -> RoomsState {
+pub fn answered(rooms: Vec<HostedRoom>) -> RoomsState {
     RoomsState {
         multiplayer: true,
         list: ServerList {
-            servers: vec![directory::ServerListing {
+            servers: vec![sloppy_core::net::room_list::ServerListing {
                 url: "wss://example.test".into(),
                 content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
             }],
@@ -1031,26 +1051,23 @@ pub fn answered(rooms: Vec<RoomListing>) -> RoomsState {
     }
 }
 
-/// What CREATE ROOM or JOIN ROOM asks for, or `None` when the choice cannot play.
-fn selection(state: &mut RoomsState, prefs: &Preferences) -> Option<RoomSelection> {
-    let name = state.name.clone().unwrap_or_default().trim().to_owned();
+/// What CREATE ROOM or JOIN ROOM asks for, or `None` when the choice cannot play. A new
+/// room opens on `map`.
+fn selection(state: &mut RoomsState, prefs: &Preferences, map: MapId) -> Option<RoomSelection> {
+    let name = player_name(state.name.as_deref().unwrap_or_default());
     if name.is_empty() {
         state.notice = "Enter a name to play.".into();
         return None;
     }
     let (room, server, create) = if state.selected.is_empty() {
         let server = state.list.new_room_server()?.to_owned();
-        let create = RoomRules {
-            map_mode: prefs.map.clone(),
-            difficulty: "normal".into(),
+        let create = RoomSettings {
+            map_mode: map,
+            difficulty: Difficulty::Normal,
             humans_only: state.humans_only,
             round_minutes: state.round_minutes,
         };
-        (
-            directory::room_code(directory::random_bytes()),
-            server,
-            Some(create),
-        )
+        (room_code(directory::random_bytes()), server, Some(create))
     } else {
         let listing = state
             .list
@@ -1062,9 +1079,87 @@ fn selection(state: &mut RoomsState, prefs: &Preferences) -> Option<RoomSelectio
     Some(RoomSelection {
         room,
         server,
-        name,
-        kind: prefs.tank.clone(),
-        team: state.team,
-        create,
+        choice: JoinChoice {
+            name,
+            kind: prefs.tank,
+            team: state.team,
+            existing_room: create.is_none().then_some(true),
+            create,
+        },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listing(code: &str, map: MapId) -> HostedRoom {
+        HostedRoom {
+            room: code.into(),
+            content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
+            map_mode: map,
+            difficulty: Difficulty::Normal,
+            humans_only: false,
+            round_minutes: 20,
+            players: 2,
+            reserved: 2,
+            phase: RoomPhase::Playing,
+            round_id: 1,
+            time: 300.0,
+            scores: vec![3, 4],
+            server: "wss://example.test".into(),
+        }
+    }
+
+    fn rooms(state: &RoomsState) -> Vec<&str> {
+        state
+            .list
+            .rooms
+            .iter()
+            .map(|room| room.room.as_str())
+            .collect()
+    }
+
+    /// A room on an extra level, picked by its code without the debug tools, stays
+    /// listed and chosen after the refresh that found it; before, following the code
+    /// forgot it, and the next refresh hid the room.
+    #[test]
+    fn a_room_found_by_code_stays_listed_on_an_extra_level() {
+        let answer = || {
+            Ok(ServerList {
+                rooms: vec![
+                    listing("ABCDEFGH", MapId::Superstress),
+                    listing("JKLMNPQR", MapId::StressTest),
+                    listing("STUVWXYZ", MapId::Harbor),
+                ],
+                ..answered(Vec::new()).list
+            })
+        };
+        let mut state = answered(Vec::new());
+        state.find_room("ABCDEFGH".into());
+        assert!(state.notice.contains("isn't open"), "{}", state.notice);
+        let now = Instant::now();
+        for refresh in 0..3 {
+            state.listed(answer(), false, now);
+            assert_eq!(rooms(&state), ["ABCDEFGH", "STUVWXYZ"], "refresh {refresh}");
+            assert_eq!(state.selected, "ABCDEFGH");
+        }
+        // The debug tools list every room.
+        state.listed(answer(), true, now);
+        assert_eq!(rooms(&state).len(), 3);
+    }
+
+    #[test]
+    fn a_room_left_stays_listed_when_it_plays_an_extra_level() {
+        let mut state = answered(Vec::new());
+        state.returned_from("ABCDEFGH", "");
+        let list = ServerList {
+            rooms: vec![listing("ABCDEFGH", MapId::StressTest)],
+            ..answered(Vec::new()).list
+        };
+        for _ in 0..2 {
+            state.listed(Ok(list.clone()), false, Instant::now());
+            assert_eq!(rooms(&state), ["ABCDEFGH"]);
+        }
+    }
 }

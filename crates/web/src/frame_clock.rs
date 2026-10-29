@@ -20,6 +20,9 @@ const MAX_LAG_MS: f64 = 1000.0 / 60.0;
 const INTERVAL_SMOOTHING: f64 = 0.1;
 /// Longer gaps between running frames are stalls, not pace.
 const PACED_INTERVAL_LIMIT_MS: f64 = MAX_FRAME_DELTA_SECONDS * MILLISECONDS_PER_SECOND;
+/// Each frame moves the averages Stats for nerds shows this share of the way to its own
+/// times.
+const AVERAGE_SMOOTHING: f64 = 0.05;
 
 /// The animation-frame clock and the timings of the last frame.
 #[derive(Clone, Copy, Debug, Default)]
@@ -31,12 +34,17 @@ pub struct FrameTimes {
     pub render_ms: f64,
     /// Exponential average of frame time for the fps readout.
     pub average_ms: f64,
+    /// Exponential averages of the simulation and render times, for Stats for nerds;
+    /// they start at the first times measured.
+    pub average_sim_ms: f64,
+    pub average_render_ms: f64,
 }
 
 impl FrameTimes {
     /// Move the clock to the frame at `now` and return its capped delta in seconds. A
     /// queued timestamp can precede a slow rebuild; time never runs backwards.
     pub fn advance(&mut self, now: f64) -> f64 {
+        self.average_frame_work();
         let last = self.last_ms.unwrap_or(now);
         let raw = ((now - last) / MILLISECONDS_PER_SECOND).max(0.0);
         self.last_ms = Some(last.max(now));
@@ -48,9 +56,24 @@ impl FrameTimes {
         }
         self.frame_ms = raw * MILLISECONDS_PER_SECOND;
         if raw > 0.0 {
-            self.average_ms += (self.frame_ms - self.average_ms) * 0.05;
+            self.average_ms += (self.frame_ms - self.average_ms) * AVERAGE_SMOOTHING;
         }
         raw.min(MAX_FRAME_DELTA_SECONDS)
+    }
+
+    /// The game types time a frame's simulation and drawing as it runs, so the previous
+    /// frame's times are final when the next one starts: they join the averages then.
+    fn average_frame_work(&mut self) {
+        if self.last_ms.is_none() {
+            return;
+        }
+        if self.average_sim_ms == 0.0 && self.average_render_ms == 0.0 {
+            self.average_sim_ms = self.sim_ms;
+            self.average_render_ms = self.render_ms;
+            return;
+        }
+        self.average_sim_ms += (self.sim_ms - self.average_sim_ms) * AVERAGE_SMOOTHING;
+        self.average_render_ms += (self.render_ms - self.average_render_ms) * AVERAGE_SMOOTHING;
     }
 
     pub fn fps(&self) -> f64 {
@@ -242,6 +265,24 @@ mod tests {
         assert_eq!(times.advance(5000.0), MAX_FRAME_DELTA_SECONDS);
         times.last_ms = Some(f64::NEG_INFINITY);
         assert_eq!(times.advance(6000.0), MAX_FRAME_DELTA_SECONDS);
+    }
+
+    #[test]
+    fn frame_work_averages_start_at_the_first_frame_and_follow_later_ones() {
+        let mut times = FrameTimes::default();
+        times.advance(0.0);
+        times.sim_ms = 2.0;
+        times.render_ms = 4.0;
+        times.advance(16.0);
+        assert_eq!((times.average_sim_ms, times.average_render_ms), (2.0, 4.0));
+        for frame in 2..400 {
+            times.sim_ms = 1.0;
+            times.render_ms = 3.0;
+            times.advance(f64::from(frame) * 16.0);
+        }
+        assert!((times.average_sim_ms - 1.0).abs() < 1e-6);
+        assert!((times.average_render_ms - 3.0).abs() < 1e-6);
+        assert!((times.fps() - 62.5).abs() < 1e-6);
     }
 
     /// The frames a page paced at `limit` runs over `ticks` animation frames `period` ms

@@ -4,28 +4,15 @@
 
 use egui::{Align2, Color32, Id, LayerId, Order, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
-use super::icons::{Art, cause_icon};
+use sloppy_core::sim::{GameMode, Team};
+use sloppy_web::catalog::TANK_CARDS;
+use sloppy_web::hud::Hud;
+
+use super::icons::Art;
 use super::paint::{self, fade, hex, hexa};
-use super::setup::{TANKS, vehicle_card};
+use super::setup::vehicle_card;
 use super::theme::{GOLD, GOLD_HOT, bold_font, display_font};
 use super::{Action, UiState, View};
-use crate::engine_api::HudState;
-
-/// 1ST, 2ND, 3RD, 4TH … 11TH, 12TH, 13TH, 21ST.
-pub fn ordinal(value: u64) -> String {
-    let tens = value % 100;
-    let suffix = if (11..=13).contains(&tens) {
-        "TH"
-    } else {
-        match value % 10 {
-            1 => "ST",
-            2 => "ND",
-            3 => "RD",
-            _ => "TH",
-        }
-    };
-    format!("{value}{suffix}")
-}
 
 /// The card's widest, and the room it keeps from the screen's bottom edge.
 const CARD_WIDTH: f32 = 720.0;
@@ -38,7 +25,7 @@ pub fn card(
     art: &Art,
     screen: Rect,
     state: &UiState,
-    hud: &HudState,
+    hud: &Hud,
     view: &View,
     rise: f32,
     actions: &mut Vec<Action>,
@@ -135,12 +122,12 @@ pub fn card(
             y += 40.0;
             let gap = 10.0;
             let card_width = (width - 36.0 - 2.0 * gap) / 3.0;
-            let team = if hud.game_mode == "solo" {
-                0
+            let team = if hud.game_mode == GameMode::Solo {
+                Team::Blue
             } else {
                 hud.human_team
             };
-            for (index, tank) in TANKS.iter().enumerate() {
+            for (index, tank) in TANK_CARDS.iter().enumerate() {
                 let card_rect = Rect::from_min_size(
                     pos2(rect.left() + 18.0 + index as f32 * (card_width + gap), y),
                     vec2(card_width, cards_height),
@@ -148,7 +135,7 @@ pub fn card(
                 let response = ui
                     .interact(
                         card_rect,
-                        Id::unique(("respawn tank", tank.id)),
+                        Id::unique(("respawn tank", tank.kind)),
                         Sense::click(),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -158,12 +145,12 @@ pub fn card(
                     card_rect,
                     tank,
                     team,
-                    view.prefs.tank == tank.id,
+                    view.prefs.tank == tank.kind,
                     response.hovered(),
                     true,
                 );
-                if response.clicked() && view.prefs.tank != tank.id {
-                    actions.push(Action::NextTank(tank.id.into()));
+                if response.clicked() && view.prefs.tank != tank.kind {
+                    actions.push(Action::NextTank(tank.kind));
                 }
             }
         });
@@ -174,27 +161,23 @@ pub fn card(
 fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
     let death = state.death.as_ref();
     let (label, name) = match death {
-        None => ("YOUR TANK".to_owned(), "DESTROYED".to_owned()),
-        Some(report) if report.own_goal => ("OWN GOAL".to_owned(), "YOU".to_owned()),
-        Some(report) => (
-            "DESTROYED BY".to_owned(),
-            report
-                .killer
-                .clone()
-                .unwrap_or_else(|| "THE YARD".to_owned())
-                .to_uppercase(),
-        ),
+        None => ("YOUR TANK", "DESTROYED".to_owned()),
+        Some(report) if report.own_goal => ("OWN GOAL", "YOU".to_owned()),
+        Some(report) => {
+            let killer = report.killer.as_deref().unwrap_or("THE YARD");
+            ("DESTROYED BY", killer.to_uppercase())
+        }
     };
     let name_color = match death.and_then(|report| report.killer_team) {
-        Some(0) => hex(0x9ad6ff),
-        Some(_) => hex(0xffa0a9),
+        Some(Team::Blue) => hex(0x9ad6ff),
+        Some(Team::Red) => hex(0xffa0a9),
         None => Color32::WHITE,
     };
     paint::text(
         painter,
         rect.min,
         Align2::LEFT_TOP,
-        &label,
+        label,
         bold_font(12.0),
         hex(0xff8592),
         2.4,
@@ -212,7 +195,7 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
     let Some(report) = death else { return };
     let mut x = rect.left();
     let y = name_rect.bottom() + 6.0;
-    if let Some(weapon) = &report.weapon {
+    if let Some(weapon) = report.weapon {
         let label = weapon.to_uppercase();
         let text_width = paint::text_width(painter, &label, bold_font(12.0), 1.0);
         let chip = Rect::from_min_size(pos2(x, y), vec2(text_width + 36.0, 25.0));
@@ -229,7 +212,7 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
         );
         art.icon(
             painter,
-            cause_icon(report.cause.as_deref()),
+            report.icon,
             Rect::from_center_size(pos2(chip.left() + 15.0, chip.center().y), Vec2::splat(18.0)),
             hex(0xff7c88),
         );
@@ -248,14 +231,11 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
         return;
     }
     let mut tags: Vec<(Option<&str>, String)> = Vec::new();
-    if let Some(vehicle) = &report.killer_vehicle {
-        tags.push((None, vehicle.clone()));
+    if let Some(vehicle) = report.killer_vehicle {
+        tags.push((None, vehicle.to_owned()));
     }
-    if let Some(kills) = report.killer_kills.filter(|kills| *kills > 0.0) {
-        tags.push((
-            Some("skull"),
-            format!("THEIR {} KILL", ordinal(kills as u64)),
-        ));
+    if let Some(tally) = &report.killer_tally {
+        tags.push((Some("skull"), tally.to_ascii_uppercase()));
     }
     let center_y = y + 12.5;
     for (index, (icon, tag)) in tags.iter().enumerate() {
@@ -287,7 +267,7 @@ fn wrecked_by(painter: &egui::Painter, art: &Art, rect: Rect, state: &UiState) {
 
 /// The countdown: its caption over a gold rule draining toward the ring, and the ring
 /// with the seconds in gold.
-fn countdown(painter: &egui::Painter, rect: Rect, state: &UiState, hud: &HudState) {
+fn countdown(painter: &egui::Painter, rect: Rect, state: &UiState, hud: &Hud) {
     let left = hud.human.respawn.max(0.0);
     let total = state.respawn_total.max(left);
     let share = if total > 0.0 {

@@ -38,20 +38,30 @@ the server:
 - `crates/web` (Wasm cdylib): the wasm-bindgen API. `Game` runs single player
   and `NetGame` a room page, one coarse call per frame; the `labs` feature adds
   the development `RenderLab` and `EffectsLab`, and `webgl` (without the default
-  `webgpu`) makes the WebGL2 fallback engine.
+  `webgpu`) makes the WebGL2 fallback engine. It also produces everything both
+  shells show in words or play: the HUD's text (`hud.rs`), the death report, kill
+  feed and toasts (`feedback.rs`), the battle report and pause facts
+  (`battle_report.rs`), the sounds to play (`sounds.rs`), Stats for nerds
+  (`nerd_rows.rs`), the room menu's text (`room_text.rs`) and Battle Setup's
+  display tables (`catalog.rs`).
 - `crates/server` (native): the multiplayer server ([guide](crates/server/README.md)).
 - `src/` is the TypeScript page shell only: menus, HUD, input gathering, touch
-  controls, audio and the room page's DOM. Game rules, simulation, rendering,
-  effects and replication must not come back into TypeScript; the import
-  boundary tests (`tests/*-imports.test.ts`) allowlist the shell modules.
+  controls, audio and the room page's DOM. It lays out and plays what `sloppy-web`
+  produces and derives none of it. Game rules, simulation, rendering, effects and
+  replication must not come back into TypeScript; the import boundary tests
+  (`tests/*-imports.test.ts`) allowlist the shell modules.
 - `crates/desktop` (native, macOS, Windows and iPad): the other shell, binary
   `sloppy-tanks`. A winit window drawn by wgpu on Metal or Direct3D 12
   (`sloppy-render`'s `native` feature), egui menus and HUD, and the same `Game`
-  and `NetGame` the page drives (`sloppy-web`'s `native` feature). Game rules stay
-  out of both shells. The iPad build is the same crate for `aarch64-apple-ios`
-  (`TOUCH` in `main.rs`): touch controls painted in egui (`touch.rs`,
-  `ui/touch.rs`), no Quit or fullscreen, and `ios.rs` for what winit 0.30 lacks
-  there (the UIScene life cycle iOS 27 requires, hardware keyboard presses).
+  and `NetGame` the page drives (`sloppy-web`'s `native` feature). It passes and
+  reads their values typed (the second `impl` block of `game.rs` and `net_game.rs`),
+  never the JSON or names they take and write for the page, and like the page only
+  lays out and plays what they produce; `crates/web/tests/fixtures/page-json.json`
+  pins the page's JSON byte for byte. Game rules stay out of both shells. The iPad
+  build is the same crate for `aarch64-apple-ios` (`TOUCH` in `main.rs`): touch
+  controls painted in egui (`touch.rs`, `ui/touch.rs`), no Quit or fullscreen, and
+  `ios.rs` for what winit 0.30 lacks there (the UIScene life cycle iOS 27 requires,
+  hardware keyboard presses).
 
 ## Code style
 

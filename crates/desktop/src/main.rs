@@ -11,7 +11,6 @@ mod assets;
 mod audio;
 mod bakes;
 mod directory;
-mod engine_api;
 mod frame_log;
 mod hardware_keys;
 mod input;
@@ -26,12 +25,9 @@ mod surface_layers;
 mod touch;
 mod ui;
 
-/// The iPad plays by touch, with no keyboard, pointer lock, window size or Quit;
-/// Macs and PCs play with keyboard and mouse.
+/// The iPad plays by touch (a hardware keyboard too), with no pointer lock, window
+/// size or Quit; Macs and PCs play with keyboard and mouse.
 pub const TOUCH: bool = cfg!(target_os = "ios");
-/// The engine's device class (`quality.rs`): a tablet starts a tier lower and draws
-/// single-sampled.
-pub const DEVICE: &str = if TOUCH { "tablet" } else { "desktop" };
 
 fn main() {
     sloppy_render::gpu::set_asset_files(assets::file);

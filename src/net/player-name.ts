@@ -2,7 +2,7 @@ import { savedPreference, savePreference } from "../game/player-preferences";
 
 /** Battle Setup suggests a random bot name before the engine loads; the same list is the
  * bots' roster in `crates/core/src/sim/bot_personalities.rs`. */
-const DEFAULT_NAMES = [
+export const DEFAULT_NAMES = [
   "IRON JACK",
   "SIDEWINDER",
   "NITRO",
