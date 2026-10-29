@@ -109,7 +109,6 @@ fn fetch(address: &str, local: bool) -> Result<ServerList, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sloppy_core::net::protocol::{is_room_code, room_code};
 
     #[test]
     fn the_directory_needs_https_except_on_this_machine() {
@@ -135,8 +134,10 @@ mod tests {
         assert!(servers_address(DEFAULT_DIRECTORY).is_ok());
     }
 
+    /// Players creating rooms at the same moment must not share a code, so every draw
+    /// is new. Two honest draws of eight bytes agree about once in 2^64.
     #[test]
     fn a_new_room_code_comes_from_fresh_random_bytes() {
-        assert!(is_room_code(&room_code(random_bytes())));
+        assert_ne!(random_bytes(), random_bytes(), "a constant or reused seed");
     }
 }

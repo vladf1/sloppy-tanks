@@ -56,6 +56,9 @@ jobs:
           node-dependencies: "false"
       - run: cargo clippy --locked --profile desktop-check -p sloppy-desktop --all-targets -- -D warnings
       - run: cargo test --locked --profile desktop-check -p sloppy-desktop
+      # The renderer's and the engine API's desktop-only modules build only with their
+      # `native` feature, which the Linux test run leaves off.
+      - run: cargo test --locked --profile desktop-check -p sloppy-render -p sloppy-web --features sloppy-render/native,sloppy-web/native --lib
 
   macos:
     name: macOS app

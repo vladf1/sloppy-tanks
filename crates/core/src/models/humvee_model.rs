@@ -218,12 +218,39 @@ mod tests {
         assert!(distinct.len() <= MESH_BUDGET, "{} meshes", distinct.len());
     }
 
+    /// The simulation measures every vehicle's hit box and muzzle from its blue
+    /// model, so a red Humvee must draw the same parts in the same places: only the
+    /// hood insignia's shape and the paint material may tell the teams apart.
     #[test]
     fn teams_differ_only_in_paint_and_insignia() {
-        let (blue, blue_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Blue));
-        let (red, red_meshes) = meshes(&tank_model(VehicleKind::Humvee, Team::Red));
-        assert_eq!(blue_meshes.len(), red_meshes.len());
+        let parts = |team| {
+            let mut parts = Vec::new();
+            tank_model(VehicleKind::Humvee, team).traverse(DMat4::IDENTITY, &mut |part, world| {
+                if let Some(drawn) = &part.drawable {
+                    parts.push((world, drawn.clone()));
+                }
+            });
+            parts
+        };
+        let (blue, red) = (parts(Team::Blue), parts(Team::Red));
+        assert_eq!(blue.len(), red.len(), "a part is drawn for one team only");
         let insignia = |team| hood_insignia(team).triangle_count();
-        assert_eq!(blue - insignia(Team::Blue), red - insignia(Team::Red));
+        let (mut reshaped, mut paints) = (0, Vec::new());
+        for ((place, b), (red_place, r)) in blue.iter().zip(&red) {
+            assert_eq!(place, red_place, "a part moved for one team");
+            if b.mesh != r.mesh || b.instances != r.instances {
+                assert_eq!(
+                    (b.mesh.triangle_count(), r.mesh.triangle_count()),
+                    (insignia(Team::Blue), insignia(Team::Red)),
+                    "only the insignia changes shape"
+                );
+                reshaped += 1;
+            }
+            if b.material != r.material && !paints.contains(&(&b.material, &r.material)) {
+                paints.push((&b.material, &r.material));
+            }
+        }
+        assert_eq!(reshaped, 1, "only the insignia changes shape");
+        assert_eq!(paints.len(), 1, "only the paint material differs");
     }
 }

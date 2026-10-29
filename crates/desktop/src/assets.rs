@@ -13,10 +13,32 @@ pub fn file(path: &str) -> Option<&'static [u8]> {
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
+    /// The models name their textures by page path, so every texture the page serves
+    /// must be embedded under that path for the app to draw it.
     #[test]
-    fn every_texture_the_arenas_name_is_embedded() {
-        assert!(super::file("textures/houses/brick.webp").is_some());
-        assert!(super::file("audio/shot.mp3").is_some());
+    fn every_texture_in_public_is_embedded_by_its_page_path() {
+        let public = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../public");
+        let mut directories = vec![public.join("textures")];
+        let mut textures = 0;
+        while let Some(directory) = directories.pop() {
+            for entry in std::fs::read_dir(&directory).expect("a texture folder") {
+                let path = entry.expect("a texture folder entry").path();
+                if path.is_dir() {
+                    directories.push(path);
+                } else if path
+                    .extension()
+                    .is_some_and(|extension| extension == "webp")
+                {
+                    let relative = path.strip_prefix(&public).expect("under public/");
+                    let key = relative.to_string_lossy().replace('\\', "/");
+                    assert!(super::file(&key).is_some(), "{key} is not embedded");
+                    textures += 1;
+                }
+            }
+        }
+        assert!(textures > 0, "public/textures holds the game's textures");
         assert!(super::file("textures/missing.webp").is_none());
     }
 }

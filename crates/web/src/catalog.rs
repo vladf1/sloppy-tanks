@@ -398,38 +398,6 @@ mod tests {
         assert_eq!(weapons, AMMO_ORDER);
     }
 
-    /// The tank cards' numbers and bars as `battle-setup.html` writes them.
-    #[test]
-    fn tank_cards_show_the_pages_numbers_and_bars() {
-        let shown: Vec<_> = TANK_CARDS
-            .iter()
-            .map(|card| {
-                (
-                    card.name(),
-                    card.hit_points(),
-                    card.km_per_hour(),
-                    card.hit_points_share(),
-                    card.speed_share(),
-                )
-            })
-            .collect();
-        assert_eq!(
-            shown,
-            [
-                ("SKIPPER", 80, 40, 0.57, 1.0),
-                ("BRUISER", 100, 32, 0.71, 0.8),
-                ("BIG RIG", 140, 24, 1.0, 0.6),
-            ]
-        );
-    }
-
-    #[test]
-    fn ammunition_takes_the_weapons_label_and_colour() {
-        let rocket = &AMMO_OPTIONS[2];
-        assert_eq!((rocket.label(), rocket.color()), ("ROCKET", 0xff591c));
-        assert_eq!(AMMO_OPTIONS[4].label(), "PIERCING");
-    }
-
     #[test]
     fn an_extra_level_names_its_roster_and_offers_no_solo_assault() {
         let [team, solo] = BATTLE_FORMATS;

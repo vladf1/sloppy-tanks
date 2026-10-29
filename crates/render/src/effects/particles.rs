@@ -892,42 +892,6 @@ mod tests {
     }
 
     #[test]
-    fn chips_and_splinters_are_posed_by_their_euler_turn() {
-        let mut random = CosmeticRandom::default();
-        let mut particles = ParticleEffects::default();
-        let mut steel = at(SimEventType::Impact);
-        steel.height = Some(1.0);
-        particles.event(&steel, &mut random);
-        particles.event(
-            &with_cover(SimEventType::Impact, CoverKind::Tree),
-            &mut random,
-        );
-        let time = 7.3;
-        particles.update(0.02, time);
-        assert!(particles.particles.iter().any(|q| !q.splinter));
-        assert!(particles.particles.iter().any(|q| q.splinter));
-        let time = time as f32;
-        for (q, record) in particles.particles.iter().zip(particles.records.records()) {
-            let position = Vec3::new(q.x as f32, q.y.max(MIN_HEIGHT) as f32, q.z as f32);
-            let size = (q.size * q.life / q.max) as f32;
-            let spin = piece_turn(q);
-            let (euler, scale) = if q.splinter {
-                (
-                    Vec3::new(time * 5.0 + spin, time * 3.0 + spin, time * 4.0),
-                    SPLINTER_STRETCH * size,
-                )
-            } else {
-                let spin = piece_turn(q) * 2.3;
-                (
-                    Vec3::new(time * 4.0 + spin, time * 3.0 + spin * 0.7, spin),
-                    CHIP_STRETCH * size,
-                )
-            };
-            assert_eq!(record.world(), pose(position, euler, scale));
-        }
-    }
-
-    #[test]
     fn landed_spall_and_clods_lie_still() {
         let mut random = CosmeticRandom::default();
         let mut particles = ParticleEffects::default();

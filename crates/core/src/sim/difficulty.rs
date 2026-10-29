@@ -61,13 +61,6 @@ pub const fn difficulty_tuning(difficulty: Difficulty) -> &'static DifficultyTun
     }
 }
 
-/// A menu or link difficulty name; anything else is the default.
-pub fn parse_difficulty(value: Option<&str>) -> Difficulty {
-    value
-        .and_then(|name| Difficulty::ALL.into_iter().find(|d| d.as_str() == name))
-        .unwrap_or_default()
-}
-
 /// Allies retain the original behavior; mode-specific Solo tuning still applies.
 pub fn enemy_difficulty(simulation: &Simulation, tank: &Tank) -> &'static DifficultyTuning {
     difficulty_tuning(

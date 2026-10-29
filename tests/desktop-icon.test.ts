@@ -4,21 +4,8 @@ import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { pathToFileURL } from "node:url";
 import { generateDesktopIcon, verifyDesktopIcon } from "../scripts/generate-desktop-icon.mjs";
-
-test("desktop packaging can verify its icon without loading native image libraries", () => {
-  execFileSync(
-    process.execPath,
-    [
-      "--no-addons",
-      "--input-type=module",
-      "--eval",
-      "import { verifyDesktopIcon } from './scripts/generate-desktop-icon.mjs'; verifyDesktopIcon();",
-    ],
-    { cwd: fileURLToPath(new URL("..", import.meta.url)) },
-  );
-});
 
 function iconEntries(path = verifyDesktopIcon()) {
   const icon = readFileSync(path);

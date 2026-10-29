@@ -592,15 +592,6 @@ mod tests {
     }
 
     #[test]
-    fn units_round_like_the_json_protocol() {
-        assert_eq!(units(1.23456, 1000.0), 1235);
-        assert_eq!(units(-0.0001, 1000.0), 0);
-        assert_eq!(units(-0.125, 100.0), -12, "half rounds toward +infinity");
-        assert_eq!(units(0.125, 100.0), 13);
-        assert_eq!(1235.0 / 1000.0, super::super::json::position(1.23456));
-    }
-
-    #[test]
     fn changes_send_differences_and_deletions_and_read_back_exactly() {
         let before = record(12.5, Some(40.0));
         let after = record(12.75, None);

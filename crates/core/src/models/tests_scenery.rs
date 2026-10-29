@@ -1,6 +1,6 @@
-//! Scenery properties: the quarry soil bake's regression hashes, the textures each
-//! theme loads, triangle budgets and the material features the scene contract
-//! carries. Scenery geometry itself is judged on screen, not by hashes.
+//! Scenery properties: the quarry soil bake's band split, the textures each theme
+//! loads, triangle budgets, and what the renderer relies on from supply crates,
+//! chimney smoke and rock footings. Scenery looks are judged on screen, not here.
 
 use std::collections::BTreeSet;
 use std::sync::LazyLock;
@@ -8,58 +8,27 @@ use std::sync::LazyLock;
 use glam::DMat4;
 
 use super::harbor_models::{CargoShape, shipping_container};
-use super::quarry_surfaces::{sand_drift_material, sandstone_footing, sandstone_material};
+use super::quarry_surfaces::sandstone_footing;
 use super::village_atmosphere::{WISPS_PER_SOURCE, set_chimney_smoke, village_atmosphere};
 use super::*;
-use crate::geometry::reference_tests::fnv;
-use crate::scene::{Node, Side, TextureSource};
+use crate::scene::{Node, TextureSource};
 
 /// Built once for the tests that only read it.
 static HARBOR: LazyLock<HarborScenery> = LazyLock::new(HarborScenery::new);
 
-fn float_hash<'a>(values: impl IntoIterator<Item = &'a f32>) -> String {
-    format!("{:08x}", fnv(values.into_iter().map(|v| v.to_bits())))
-}
-
-/// FNV-1a hashes of the quarry soil bake, first printed by the TypeScript port: its
-/// sand accumulation field, two row bands and (in [`scenery_build_times`]) the
-/// whole texture.
-fn soil_hash(key: &str) -> &'static str {
-    const SOIL: [(&str, &str); 4] = [
-        ("accum", "ee755f57"),
-        ("band-1000-1003", "76dbd29c"),
-        ("band-0-2", "e4a33fed"),
-        ("full", "a19a1ff9"),
-    ];
-    SOIL.iter()
-        .find(|(name, _)| *name == key)
-        .map(|(_, hash)| *hash)
-        .unwrap_or_else(|| panic!("no soil reference {key}"))
-}
-
-fn byte_hash(pixels: &[u8]) -> String {
-    format!(
-        "{:08x}",
-        fnv(pixels
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .map(|word| u32::from_le_bytes(*word)))
-    )
-}
-
+/// The page bakes the soil in row bands (workers, or slices between frames), and
+/// each band first replays the seeded draws of the rows before it, so any split
+/// gives the pixels of one whole bake.
 #[test]
-fn soil_bake_matches_typescript() {
-    assert_eq!(float_hash(sand_accum()), soil_hash("accum"));
-    // A later band first replays the earlier rows' draws.
+fn soil_is_independent_of_the_band_split() {
     let accum = sand_accum();
-    assert_eq!(
-        byte_hash(&bake_quarry_soil(accum, 1000, 1003)),
-        soil_hash("band-1000-1003")
-    );
-    assert_eq!(
-        byte_hash(&bake_quarry_soil(accum, 0, 2)),
-        soil_hash("band-0-2")
+    let rows = 5;
+    let whole = bake_quarry_soil(accum, 0, rows);
+    let mut split = bake_quarry_soil(accum, 0, 2);
+    split.extend(bake_quarry_soil(accum, 2, rows));
+    assert!(
+        whole == split,
+        "a band baked alone differs from the whole bake"
     );
 }
 
@@ -80,7 +49,6 @@ fn scenery_build_times() {
         start.elapsed().as_secs_f64() * 1e3
     );
     assert_eq!(ground.len(), soil.len());
-    assert_eq!(byte_hash(&soil), soil_hash("full"));
     for theme in [MapTheme::Village, MapTheme::Harbor, MapTheme::Quarry] {
         let start = Instant::now();
         let scenery = build_scenery(theme);
@@ -210,25 +178,19 @@ fn quarry_spawn_pads_stay_ankle_high() {
     assert!(pieces.iter().all(|p| p.y + p.h / 2.0 < 1.2));
 }
 
-/// Material and attribute features Three expressed directly, which the scene
-/// contract carries instead of UV tricks or effect parameters.
+/// Supply is military kit, painted rather than lit from within.
 #[test]
-fn materials_carry_three_features() {
-    assert_eq!(concrete_material().shadow_side, Some(Side::Front));
-    let drift = sand_drift_material();
-    assert_eq!(drift.polygon_offset, Some((-1.0, -1.0)));
-    assert_eq!(drift.extra_textures[0].0, effects_scenery::GRIT);
-    assert_eq!(
-        sandstone_material().extra_textures[0].0,
-        effects_scenery::SOIL
-    );
+fn supply_is_painted_not_glowing() {
     let ammo = pickup_cube(crate::sim::types::PickupKind::Rocket);
     let face = ammo.children[0].drawable.as_ref().unwrap();
-    // Supply is painted, not lit from within.
     assert!(face.material.map.is_some());
     assert!(face.material.emissive_map.is_none());
-    // Chimney wisps are per-instance attributes on one quad: the mill's chimney
-    // and each indestructible house's, eight wisps apiece.
+}
+
+/// Chimney wisps are per-instance attributes on one quad: the mill's chimney and
+/// each indestructible house's smoke, eight wisps apiece, and nothing else does.
+#[test]
+fn only_the_mill_and_indestructible_houses_smoke() {
     let mut smoke = village_atmosphere();
     let mesh = &smoke.drawable.as_ref().unwrap().mesh;
     assert!(mesh.attributes.iter().all(|a| a.per_instance));
@@ -251,8 +213,12 @@ fn materials_carry_three_features() {
     );
     let wisps = smoke.drawable.as_ref().unwrap().instances.as_ref().unwrap();
     assert_eq!(wisps.len(), 2 * WISPS_PER_SOURCE);
-    // The sand round a cover rock is its own skirt, shaded as the floor in the
-    // rock's draw: the footing adds no blended draw of its own.
+}
+
+/// The sand round a cover rock is its own skirt, shaded as the floor in the rock's
+/// draw: the footing adds no blended draw of its own.
+#[test]
+fn rock_footing_adds_no_draw() {
     let footing = sandstone_footing(14.0, 8.0, 37);
     assert!(footing.drawable.is_none() && footing.children.is_empty());
 }

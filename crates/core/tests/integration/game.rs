@@ -7,9 +7,10 @@ use crate::support;
 use sloppy_core::sim::ai::{bot_command, friendly_blocks_shot};
 use sloppy_core::sim::arena::CoverDef;
 use sloppy_core::sim::bot_personalities::BotPersonality;
+use sloppy_core::sim::combat_rules::COMBAT;
 use sloppy_core::sim::data::{STEP, vehicle};
 use sloppy_core::sim::match_state::{award_kill, new_match, tick_match};
-use sloppy_core::sim::math::Vec2;
+use sloppy_core::sim::math::{Vec2, distance};
 use sloppy_core::sim::navigation::Navigation;
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::projectiles::step_projectiles;
@@ -78,7 +79,7 @@ fn reused_navigation_searches_recover_from_unreachable_goals_and_changed_topolog
 }
 
 #[test]
-fn few_hit_combat_friendly_safety_exactly_once_kills_and_attribution() {
+fn allied_damage_is_ignored_and_a_kill_scores_and_credits_its_killer_exactly_once() {
     let mut s = game();
     let (a, b) = (0, 1);
     let ally_id = s.tanks[2].id;
@@ -151,16 +152,41 @@ fn respawn_occurs_after_three_seconds_with_protection_and_selected_class() {
 fn drum_chain_kills_keep_the_initiating_team_and_self_kills_do_not_score() {
     let mut s = game();
     clear(&mut s);
-    let a = place(&mut s, 0, -20.0, 0.0);
+    // The initiator stands clear of the drum it shoots, but inside the blast of the
+    // second drum that one sets off, which also takes the enemy beside it.
+    let a = place(&mut s, 0, 4.0, 5.0);
     let b = place(&mut s, 1, 6.0, 0.0);
+    s.tanks[a].hp = 10.0;
     s.tanks[b].hp = 20.0;
     let d1 = s.add_cover(&drum(0.0));
     let d2 = s.add_cover(&drum(4.0));
+    let reach = |s: &Simulation, drum: usize| {
+        distance(
+            s.tank_planar(a),
+            Vec2::new(s.covers[drum].x, s.covers[drum].z),
+        )
+    };
+    assert!(reach(&s, d1) > COMBAT.drum_blast_radius);
+    assert!(reach(&s, d2) < COMBAT.drum_blast_radius);
     let (id, team) = (s.tanks[a].id, s.tanks[a].team);
     s.damage_cover(d1, 40.0, id, team, None, None);
     assert!(!s.covers[d2].alive);
     assert!(!s.tanks[b].alive);
-    assert_eq!(s.tanks[a].kills, 1);
+    assert!(!s.tanks[a].alive, "the chain kills its initiator too");
+    assert_eq!(
+        s.tanks[a].kills, 1,
+        "the enemy is a kill, its own death is not"
+    );
+    assert_eq!(
+        s.match_state.scores[team.index()],
+        1,
+        "the enemy's death scores"
+    );
+    assert_eq!(
+        s.match_state.scores[team.opponent().index()],
+        0,
+        "the self-kill scores for neither team"
+    );
     assert_eq!(s.destroyed, 2);
 }
 

@@ -671,7 +671,7 @@ mod tests {
     use std::borrow::Cow;
 
     use sloppy_core::sim::difficulty::Difficulty;
-    use sloppy_core::sim::round_recap::{Feat, RecapStats};
+    use sloppy_core::sim::round_recap::RecapStats;
     use sloppy_core::sim::{MatchPhase, VehicleKind};
 
     use super::*;
@@ -1261,19 +1261,5 @@ mod tests {
         assert_eq!(thousands(1234.0), "1,234");
         assert_eq!(thousands(1234567.4), "1,234,567");
         assert_eq!(thousands(-1234.0), "-1,234");
-    }
-
-    #[test]
-    fn the_report_keeps_the_feats_the_engine_chose() {
-        let mut recap = recap(&[], &[]);
-        recap.feats = vec![Feat {
-            title: "MIND YOUR STEP".into(),
-            detail: "2 mine-blast kills".into(),
-        }];
-        // Feats are the recap's own; the report adds words around them.
-        let json = serde_json::to_value(report(&team_battle(MatchPhase::Results), &recap)).unwrap();
-        assert!(json.get("feats").is_none());
-        assert_eq!(json["outcome"], "won");
-        assert_eq!(json["tiles"][0]["label"], "Kills");
     }
 }

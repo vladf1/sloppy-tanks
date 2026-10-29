@@ -186,22 +186,30 @@ mod tests {
         assert_eq!(Preferences::read("not json"), Preferences::default());
     }
 
+    /// Each saved choice lands in its own field and the debug tools decide what is
+    /// offered; what `offered` makes of an extra level is core's rule, tested there.
     #[test]
-    fn a_saved_extra_level_plays_only_with_the_debug_tools_and_as_a_team_battle() {
+    fn saved_choices_reach_the_battle_with_the_debug_tools_deciding_what_is_offered() {
         let prefs = Preferences {
-            map: MapId::StressTest,
+            tank: VehicleKind::Scout,
             game_mode: GameMode::Solo,
+            map: MapId::StressTest,
+            difficulty: Difficulty::Hard,
             ..Preferences::default()
         };
-        let options = prefs.game_options(Team::Red, false);
-        assert_eq!(
-            (options.map_mode, options.game_mode, options.human_team),
-            (MapId::Village, GameMode::Solo, Team::Red)
-        );
-        let options = prefs.game_options(Team::Red, true);
-        assert_eq!(
-            (options.map_mode, options.game_mode),
-            (MapId::StressTest, GameMode::Team)
-        );
+        let saved = GameOptions {
+            human_kind: VehicleKind::Scout,
+            human_team: Team::Red,
+            game_mode: GameMode::Solo,
+            map_mode: MapId::StressTest,
+            difficulty: Difficulty::Hard,
+        };
+        for extra_levels in [false, true] {
+            assert_eq!(
+                prefs.game_options(Team::Red, extra_levels),
+                saved.offered(extra_levels),
+                "extra levels offered: {extra_levels}"
+            );
+        }
     }
 }
