@@ -68,8 +68,9 @@ ufw allow 443/tcp
 ufw --force enable
 
 # The first image pins the server's unit, which Quadlet generates only then. A dev machine
-# created before anything was published to :dev has nothing to start yet: auto-update
-# starts the server once a publish moves the tag.
+# created before anything was published to :dev starts production's image, which
+# auto-update replaces at the first publish. Should the registry not answer now, the
+# rest of the setup stands and auto-update starts the server once it can read the tag.
 [[ -f /var/lib/sloppy-tanks/image ]] || sloppy-tanks-update pull ||
-  echo "No server image to start yet; auto-update starts it once its tag exists" >&2
+  echo "Could not pull a server image; auto-update starts one once it can read its tag" >&2
 rm -rf "$work"
