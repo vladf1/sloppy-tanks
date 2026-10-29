@@ -483,10 +483,12 @@ offline.
   changes. Use this when asked to publish the dev site. Do not publish it to
   production or change the production GitHub Pages workflow, and never upload
   the repository directory.
-- `deploy:dev` first deploys the dev site's own multiplayer server
-  (`scripts/server.mjs deploy --dev`, key-based SSH), which runs on its own
-  Vultr machines (the `server:*` commands run on every machine the server directory
-  lists for the environment, or on one named with `--ip`). It resets only the
+- `deploy:dev` first publishes the dev site's own multiplayer server
+  (`scripts/server.mjs publish --dev`: it pushes the checkout's image as
+  `dev-<serverBuild>`, never the bare build tag CI reuses, and moves `:dev`, which the
+  dev machines check every 15 seconds), which runs on its own Vultr
+  machines (the other `server:*` commands run over SSH on every machine the server
+  directory lists for the environment, or on one named with `--ip`). It resets only the
   dev server's rooms and never touches production's server. Client and server
   must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with
@@ -503,8 +505,8 @@ offline.
 - Pages find servers through the server directory, a Cloudflare Worker in
   `directory/` (`pnpm run directory:deploy`) that every server pushes its rooms to;
   one deployment serves production and dev by its `environment` parameter, and
-  `server:provision` writes a machine's `DIRECTORY_URL` and `SERVER_ENVIRONMENT` into
-  its unit.
+  a machine's startup script (`deploy/server/cloud-init/`) writes its `DIRECTORY_URL`
+  and `SERVER_ENVIRONMENT`.
   `pnpm run server:check-if-redeployment-required` (add `--dev` for
   the dev server) compares this checkout with a live server's `/health` and
   exits non-zero when a redeploy is needed. It tells clients-refused (content

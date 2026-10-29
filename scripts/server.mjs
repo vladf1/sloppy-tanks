@@ -1,33 +1,36 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { contentVersion, serverBuild } from "./content-version.mjs";
-import { DIRECTORY_URL, gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
+import { gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 
-/** Operate the game server machines over SSH, one after another: the ones the server
- * directory lists for production, or with `--dev` for the dev site, or with
- * `--ip ADDRESS` that machine, listed or not. See crates/server/README.md.
+/** Operate the game server machines, one after another and over SSH except for
+ * `publish`: the ones the server directory lists for production, or with `--dev` for the
+ * dev site, or with `--ip ADDRESS` that machine, listed or not. See crates/server/README.md.
  *
- *   provision                set the machine up (again), then start CI's :production image
- *                            if no server runs (deploy:dev then replaces it on dev)
- *   update [--image TAG]     pull an image CI published (default :production) and switch
- *   deploy [--force]         build the image here, copy it over SSH and switch (dev's
- *                            deploy; production's fallback, from a clean origin/main)
+ *   publish --dev            build the image here and push it as :dev, which the dev
+ *                            machines follow; wait until each serves it
+ *   update [--image TAG]     pull an image CI published (default the followed tag) and switch
+ *   deploy [--force]         build the image here, copy it over SSH and switch (the SSH
+ *                            fallback; for production only from a clean origin/main)
  *   rollback                 switch back to the previous image
  *   auto-update on|off|resume
  *   status | logs | stats
  *
  * deploy/server/sloppy-tanks-update on the machine does every switch: it restarts the
  * server, checks /health there and restores the previous image if the new one fails.
- * Anything but following :production leaves a hold that auto-update respects. */
+ * Anything but following the tag leaves a hold that auto-update respects (on dev, until
+ * the next publish). */
 const repo = new URL("..", import.meta.url);
 const HEALTH_TIMEOUT_MS = 120_000;
-const AUTO_UPDATE_OFF = "/var/lib/sloppy-tanks/auto-update-off";
 const [command, argument] = process.argv.slice(2);
 const dev = process.argv.includes("--dev");
-const servers = await gameServers(dev, option("--ip"));
+/** What a publish pushed, for every machine to switch to. It pushes before looking for
+ * machines: a new dev machine whose first pull found no :dev yet runs no server, so the
+ * directory does not list it, and it starts this build by itself. */
+const published = command === "publish" ? await publish() : undefined;
+const servers = await gameServers(dev, option("--ip"), command === "publish");
+if (published && servers.length === 0) {
+  console.log("The directory lists no dev server yet; a new one starts this build by itself.");
+}
 /** The machine the current command runs on. */
 let server;
 
@@ -38,8 +41,6 @@ function run(program, args, options = {}) {
   return result;
 }
 const ssh = (script, options) => run("ssh", [...SSH_OPTIONS, server.ssh, script], options);
-const succeeds = (script) =>
-  spawnSync("ssh", [...SSH_OPTIONS, server.ssh, script], { stdio: "ignore" }).status === 0;
 const git = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
 
 function option(name) {
@@ -65,39 +66,6 @@ async function waitForHealth(expected, describe) {
       throw new Error(`${health} reports ${JSON.stringify(status)}; expected ${describe}`);
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-}
-
-/** Uploads deploy/server/ with this machine's names in the Caddyfile and its settings in
- * server.env, and runs provision.sh. */
-function provision() {
-  console.log(`Provisioning the ${server.role} server on ${server.ssh} (${server.site})`);
-  const staging = mkdtempSync(join(tmpdir(), "sloppy-tanks-provision-"));
-  try {
-    const files = [
-      "provision.sh",
-      "sloppy-tanks.container",
-      "caddy.container",
-      "sloppy-tanks-update",
-      "sloppy-tanks-update.service",
-      "sloppy-tanks-update.timer",
-    ].map((name) => fileURLToPath(new URL(`../deploy/server/${name}`, import.meta.url)));
-    const caddyfile = readFileSync(new URL("../deploy/server/Caddyfile", import.meta.url), "utf8");
-    const filled = {
-      Caddyfile: caddyfile.replaceAll("{$SITES}", server.site),
-      "server.env": `SERVER_ENVIRONMENT=${server.role}\nDIRECTORY_URL=${DIRECTORY_URL}\n`,
-    };
-    for (const [name, text] of Object.entries(filled)) writeFileSync(join(staging, name), text);
-    ssh("rm -rf /root/sloppy-tanks-provision && mkdir -p /root/sloppy-tanks-provision");
-    run("scp", [
-      ...SSH_OPTIONS,
-      ...files,
-      ...Object.keys(filled).map((name) => join(staging, name)),
-      `${server.ssh}:/root/sloppy-tanks-provision/`,
-    ]);
-  } finally {
-    rmSync(staging, { recursive: true, force: true });
-  }
-  ssh("bash /root/sloppy-tanks-provision/provision.sh");
 }
 
 /** Streams `docker save` here into `podman load` on the machine. */
@@ -156,6 +124,42 @@ async function deploy() {
   console.log(`The ${server.role} server is live at ${server.url}`);
 }
 
+/** Builds the server image from this checkout and pushes it as dev-<server build> and :dev
+ * (or points :dev at an image of that server build the registry already holds). The dev
+ * machines check :dev every 15 seconds and switch to it by themselves, so publishing needs
+ * registry access but no SSH. Returns what their /health reports once they run it. */
+async function publish() {
+  if (!dev) {
+    console.error("publish is for the dev servers (--dev); production runs CI's images.");
+    process.exit(1);
+  }
+  const version = await contentVersion();
+  const build = await serverBuild();
+  console.log(`Publishing the dev server (content ${version}, build ${build}) as :dev`);
+  const result = spawnSync(
+    "node",
+    [
+      "scripts/build-server-image.mjs",
+      "--registry",
+      SERVER_IMAGE,
+      "--push",
+      "--dev",
+      "--tag",
+      "dev",
+    ],
+    { cwd: repo, stdio: "inherit" },
+  );
+  if (result.status !== 0) {
+    console.error(
+      "Publishing needs Docker logged in to ghcr.io with a token that can write packages:\n" +
+        "  gh auth refresh -h github.com -s write:packages\n" +
+        '  gh auth token | docker login ghcr.io --username "$(gh api user -q .login)" --password-stdin',
+    );
+    process.exit(result.status ?? 1);
+  }
+  return { version, build };
+}
+
 /** A registry tag such as `pr-12`, or a full image name. */
 function imageOption() {
   const value = option("--image");
@@ -175,14 +179,14 @@ for (server of servers) {
 
 async function runCommand() {
   switch (command) {
-    case "provision": {
-      provision();
-      // A fresh machine has no pinned image; one that has keeps running it.
-      if (!succeeds("test -f /var/lib/sloppy-tanks/image")) ssh("sloppy-tanks-update pull");
-      const status = await waitForHealth((status) => !!status.contentVersion, "a /health report");
-      console.log(
-        `The ${server.role} server answers at ${health.origin}: ${JSON.stringify(status)}`,
+    case "publish": {
+      const { version, build } = published;
+      console.log(`Waiting for ${health.origin}, which checks :dev every 15 seconds`);
+      await waitForHealth(
+        (status) => status.contentVersion === version && status.serverBuild === build,
+        `content ${version}, build ${build} (pnpm run server:status --dev shows why not)`,
       );
+      console.log(`The dev server is live at ${server.url}`);
       break;
     }
     case "update":
@@ -197,12 +201,9 @@ async function runCommand() {
       await printHealth();
       break;
     case "auto-update":
-      // The marker keeps an operator's "off" through provisioning, which turns
-      // production's timer on otherwise.
-      if (argument === "on")
-        ssh(`rm -f ${AUTO_UPDATE_OFF} && systemctl enable --now sloppy-tanks-update.timer`);
-      else if (argument === "off")
-        ssh(`touch ${AUTO_UPDATE_OFF} && systemctl disable --now sloppy-tanks-update.timer`);
+      // A machine created again starts with auto-update on (bootstrap.sh).
+      if (argument === "on") ssh("systemctl enable --now sloppy-tanks-update.timer");
+      else if (argument === "off") ssh("systemctl disable --now sloppy-tanks-update.timer");
       else if (argument === "resume") ssh("sloppy-tanks-update resume");
       else {
         console.error("Usage: pnpm run server:auto-update on|off|resume [--dev]");
@@ -235,7 +236,7 @@ async function runCommand() {
     }
     default:
       console.error(
-        "Usage: node scripts/server.mjs provision|update|deploy|rollback|auto-update|status|logs|stats [--dev] [--ip ADDRESS]",
+        "Usage: node scripts/server.mjs publish|update|deploy|rollback|auto-update|status|logs|stats [--dev] [--ip ADDRESS]",
       );
       process.exit(1);
   }

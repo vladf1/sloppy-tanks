@@ -329,8 +329,8 @@ holds no server address. The directory is a Cloudflare Worker (`directory/`, pub
 `pnpm run directory:deploy`) that every game server pushes its rooms to; the page lists
 every server's rooms from it and connects to the server that hosts the chosen room, or for
 a new room the one with the fewest rooms. A machine pushes its rooms to the directory
-under its environment (production or dev), which `server:provision` writes into its unit
-as `DIRECTORY_URL` and `SERVER_ENVIRONMENT`; the build names the page's as
+under its environment (production or dev), which its startup script
+(`deploy/server/cloud-init/`) writes as `DIRECTORY_URL` and `SERVER_ENVIRONMENT`; the build names the page's as
 `VITE_SERVER_ENVIRONMENT`. The workflow does not deploy the server, but after the site deploys it
 points the server's container image tag `:production` at the commit's image; the dev
 site uses a separate server on its own machine (below). A
@@ -364,17 +364,20 @@ The build separates the interactive menu from the engine and audio. Battle Setup
 `pnpm run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes it to the separate `sloppy-tanks-dev`
 Cloudflare Worker. Run `pnpm exec wrangler login` first (or provide an API token that
-can deploy Workers and their custom domains). The Worker's account, name and domain
-come from `deploy/dev-site/wrangler.jsonc`, independent of the local Git branch. No Git
-commit or push is required. `pnpm run build:dev` builds without publishing.
+can deploy Workers and their custom domains), and log Docker in to ghcr.io once with a
+token that can write packages (`crates/server/README.md` shows how with `gh`). The
+Worker's account, name and domain come from `deploy/dev-site/wrangler.jsonc`,
+independent of the local Git branch. No Git commit or push is required.
+`pnpm run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev directory, where the dev
 multiplayer servers list themselves. They run on their own machines, each at its nip.io
-name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` redeploys those
-servers from the same checkout first (over SSH) so client and server versions match;
-production multiplayer is never affected. Unlike production, the dev site keeps the
-development network tools: a room page takes `?latency=`, `?jitter=` and `?stall=`
-(milliseconds of simulated transport delay), `&latencySlider` shows sliders that change
-them mid-battle, and `?dodge=0` / `?shooter=0` turn off the fairness options for
+name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` first pushes
+the same checkout's server image as its `:dev` tag, which those servers check every 15
+seconds and switch to by themselves, and waits for them, so client and server versions
+match; production multiplayer is never affected. Unlike production, the
+dev site keeps the development network tools: a room page takes `?latency=`, `?jitter=`
+and `?stall=` (milliseconds of simulated transport delay), `&latencySlider` shows sliders
+that change them mid-battle, and `?dodge=0` / `?shooter=0` turn off the fairness options for
 comparison.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of

@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
-# A game server machine's first-boot setup, run by cloud-init from the provider's user
-# data (deploy/server/cloud-init/), so a new machine needs no SSH from a developer's Mac.
-# The user data writes /etc/sloppy-tanks/server.env first (SERVER_ENVIRONMENT, production
-# or dev, and DIRECTORY_URL), which the server's unit reads. This fetches deploy/server/
-# from the repository at SLOPPY_REF (main), serves the nip.io name of the machine's IPv4
-# address, runs provision.sh and starts CI's :production image; the server then appears
-# in the directory under its environment.
+# A game server machine's whole setup, run as root by cloud-init at its first boot from the
+# provider's user data (deploy/server/cloud-init/), so a machine needs no SSH from a
+# developer's Mac: a change here reaches a machine when it is created again. The user data
+# writes /etc/sloppy-tanks/server.env first (SERVER_ENVIRONMENT, production or dev, and
+# DIRECTORY_URL), which the server's unit and the updater read. This fetches the other
+# files in deploy/server/ from the repository at SLOPPY_REF (main), installs Podman, the
+# server's and Caddy's Quadlet units and the image updater, allows key-only SSH and only
+# SSH, 80 and 443 through ufw, serves the nip.io name of the machine's IPv4 address and
+# starts the image its environment follows (CI's :production, or dev's latest publish on
+# :dev); the server then appears in the directory under its environment.
 set -euo pipefail
+export DEBIAN_FRONTEND=noninteractive
 SOURCE="https://raw.githubusercontent.com/vladf1/sloppy-tanks/${SLOPPY_REF:-main}/deploy/server"
-FILES=(provision.sh Caddyfile caddy.container sloppy-tanks.container
+FILES=(Caddyfile caddy.container sloppy-tanks.container
   sloppy-tanks-update sloppy-tanks-update.service sloppy-tanks-update.timer)
 
 work=$(mktemp -d)
@@ -21,7 +25,51 @@ done
 ip=$(ip -4 route get 1.1.1.1 | sed -n 's/.* src \([0-9.]*\).*/\1/p')
 sed -i "s/{\$SITES}/${ip//./-}.nip.io/" "$work/Caddyfile"
 
-bash "$work/provision.sh"
-# A fresh machine has no pinned image; one that has keeps running it.
-[[ -f /var/lib/sloppy-tanks/image ]] || sloppy-tanks-update pull
+# The recommended packages (Buildah, CRIU, docker-compose, GnuPG, rootless networking)
+# are not needed to run prebuilt images as root. python3 parses /stats for auto-update.
+apt-get update
+apt-get install -y --no-install-recommends podman python3 curl ufw
+
+# Keys only: the provider's root password stays usable from its web console. Earlier
+# files win in sshd_config.d, so this one overrides cloud-init's.
+printf '%s\n' 'PasswordAuthentication no' 'KbdInteractiveAuthentication no' \
+  'PermitRootLogin prohibit-password' >/etc/ssh/sshd_config.d/10-sloppy-tanks.conf
+sshd -t
+# Ubuntu starts sshd per connection through ssh.socket; at first boot none runs yet, and
+# one that starts later reads the new settings.
+systemctl try-reload-or-restart ssh
+
+install -d -m 755 /etc/sloppy-tanks/caddy /var/lib/sloppy-tanks
+install -d -m 700 /var/lib/caddy/data /var/lib/caddy/config
+install -m 644 "$work/Caddyfile" /etc/sloppy-tanks/caddy/Caddyfile
+install -m 755 "$work/sloppy-tanks-update" /usr/local/bin/sloppy-tanks-update
+install -m 644 "$work/sloppy-tanks-update.service" "$work/sloppy-tanks-update.timer" \
+  /etc/systemd/system/
+install -m 644 "$work/sloppy-tanks.container" "$work/caddy.container" /etc/containers/systemd/
+# Dev's machines check :dev every 15 seconds, so a publish from a developer's checkout is
+# live within moments; production keeps the timer's two minutes. The empty assignment
+# clears the timer's interval before setting dev's, and AccuracySec lets it fire on time
+# rather than anywhere within systemd's default minute.
+if grep -qx 'SERVER_ENVIRONMENT=dev' /etc/sloppy-tanks/server.env; then
+  install -d /etc/systemd/system/sloppy-tanks-update.timer.d
+  printf '%s\n' '[Timer]' 'OnUnitActiveSec=' 'OnUnitActiveSec=15s' 'RandomizedDelaySec=0' \
+    'AccuracySec=1s' >/etc/systemd/system/sloppy-tanks-update.timer.d/dev.conf
+fi
+systemctl daemon-reload
+systemctl enable --now sloppy-tanks-update.timer
+# Caddy's unit pulls its pinned image at this first start; later starts find it here.
+systemctl start caddy
+
+# Caddy needs 80 for the Let's Encrypt HTTP challenge and 443 for wss. The containers use
+# host networking, so Podman publishes no ports around ufw.
+ufw allow OpenSSH
+ufw allow 80/tcp
+ufw allow 443/tcp
+ufw --force enable
+
+# The first image pins the server's unit, which Quadlet generates only then. A dev machine
+# created before anything was published to :dev has nothing to start yet: auto-update
+# starts the server once a publish moves the tag.
+[[ -f /var/lib/sloppy-tanks/image ]] || sloppy-tanks-update pull ||
+  echo "No server image to start yet; auto-update starts it once its tag exists" >&2
 rm -rf "$work"
