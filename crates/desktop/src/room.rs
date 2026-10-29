@@ -328,7 +328,7 @@ impl RoomSession {
                 self.menu
                     .lobby(*lobby, player_id, menu, arrivals, &mut self.ui);
             }
-            RoomNotice::Result { outcome, team } => self.menu.outcome = Some((outcome, team)),
+            RoomNotice::Result(outcome) => self.menu.outcome = Some(outcome),
             RoomNotice::ResetFeedback => {
                 self.ui.reset_feedback();
                 self.menu.death_cause.clear();

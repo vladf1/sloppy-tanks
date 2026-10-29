@@ -32,8 +32,6 @@ pub struct ConnectionDialog {
 /// The connection dialog once the room stopped for good, and the ways back it offers.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Ending {
-    /// Why the client stopped retrying; `None` when the shell's renderer stopped.
-    pub cause: Option<EndCause>,
     pub text: String,
     pub title: &'static str,
     /// The button that joins the room again, for the causes where that can work.
@@ -168,7 +166,6 @@ pub fn ending(cause: Option<EndCause>, text: String, shell: Shell) -> Ending {
     // its own Battle Setup.
     let reload = shell == Shell::Page && matches!(cause, Some(EndCause::Outdated) | None);
     Ending {
-        cause,
         text,
         title,
         retry,

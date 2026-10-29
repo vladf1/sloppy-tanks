@@ -46,7 +46,7 @@ pub struct RoomMenu {
     pub player_id: String,
     pub link: Link,
     /// The finished round as the viewer's tank played it, for its final score.
-    pub outcome: Option<(Match, Team)>,
+    pub outcome: Option<Match>,
     /// The in-battle menu is open.
     pub menu_open: bool,
     editing_rules: bool,
@@ -96,7 +96,6 @@ impl RoomMenu {
             }
             Link::Ended(ending) => json!({
                 "kind": "ended",
-                "cause": ending.cause.map_or("renderer", |cause| cause.as_str()),
                 "text": ending.text,
                 "title": ending.title,
                 "retry": ending.retry,
@@ -108,7 +107,7 @@ impl RoomMenu {
             "creating": self.creating, "status": self.status, "link": link,
             "lobby": self.lobby.as_ref().map(|lobby| serde_json::from_str::<serde_json::Value>(&lobby.to_json()).expect("a lobby JSON")),
             "menu": self.text,
-            "outcome": self.outcome.as_ref().map(|(state, team)| json!({"match": state, "team": team})),
+            "outcome": self.outcome.as_ref().map(sloppy_web::hud::PageMatch::from),
             "menuOpen": self.menu_open, "editingRules": self.editing_rules, "editingChoice": self.editing_choice,
             "controlsOpen": self.controls_open, "notice": self.notice, "deathCause": self.death_cause,
         })
@@ -456,7 +455,7 @@ fn room_menu(
             menu.notice = "Invite link copied. Send it to your friends.".into();
         }
         if lobby.phase == RoomPhase::Results
-            && let Some((outcome, _)) = &menu.outcome
+            && let Some(outcome) = &menu.outcome
         {
             room_scores(
                 ui.painter(),
@@ -1344,18 +1343,15 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
         }
         "room-pause" => menu.menu_open = true,
         "room-results" => {
-            menu.outcome = Some((
-                Match {
-                    phase: MatchPhase::Results,
-                    time: 0.0,
-                    scores: [42, 37],
-                    overtime: false,
-                    ended_early: None,
-                    winner: Some(Team::Blue),
-                    round: 1,
-                },
-                Team::Blue,
-            ))
+            menu.outcome = Some(Match {
+                phase: MatchPhase::Results,
+                time: 0.0,
+                scores: [42, 37],
+                overtime: false,
+                ended_early: None,
+                winner: Some(Team::Blue),
+                round: 1,
+            })
         }
         "room-lobby-rules" => menu.editing_rules = true,
         "room-lobby-choice" => menu.editing_choice = true,
@@ -1364,7 +1360,9 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
         _ => {}
     }
     if let Some(lobby) = &menu.lobby {
-        menu.text = room_text::menu_text(lobby, &menu.player_id, menu.outcome.as_ref(), None);
+        // The viewer plays on blue.
+        let outcome = menu.outcome.clone().map(|state| (state, Team::Blue));
+        menu.text = room_text::menu_text(lobby, &menu.player_id, outcome.as_ref(), None);
     }
     menu
 }

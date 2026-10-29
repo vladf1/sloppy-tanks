@@ -89,11 +89,6 @@ fn hud(phase: MatchPhase, solo: bool, alive: bool, ratio: f64) -> Hud<'static> {
             health_ratio: ratio,
             rank: 2,
             rank_name: "Veteran",
-            rank_damage: 1.1,
-            rank_fire_rate: 1.08,
-            rank_health: 1.1,
-            rank_repair: 0.02,
-            repair_delay: 4.0,
             ammo,
             mine_cooldown: 4.2,
             shield: 9.0,
@@ -201,10 +196,9 @@ fn feedback(state: &mut UiState) {
     state.hull_ghost = 0.62;
 }
 
-/// Stats for nerds' readings in `stats_json`'s shape, single player's and a room's: the
-/// panels' rows are written from them, and the fixtures carry them for the page's
-/// capture.
-fn nerd_readings() -> (serde_json::Value, serde_json::Value) {
+/// Stats for nerds' readings in `stats_json`'s shape, single player's and a room's, which
+/// both shells' panels write their rows from.
+fn nerd_readings() -> (GameStats, RoomStats) {
     let stats = json!({
         "fps": 60, "frameMs": 16.7, "simMs": 0.82, "renderMs": 2.31, "graphicsApi": "WebGPU",
         "quality": {"setting": "auto", "tier": "high", "scale": 1.0, "scene": [2560, 1600], "gpuMs": 4.2, "renderRatio": 2.0, "changes": 0},
@@ -248,7 +242,10 @@ fn nerd_readings() -> (serde_json::Value, serde_json::Value) {
         "ownShots": {"predicted": 46, "confirmed": 45, "unconfirmedShells": 1, "unpredicted": 0,
             "phantomStrikes": 0, "errorM": summary(45, 0.03, 0.07, 0.12)},
     });
-    (stats, room_stats)
+    (
+        serde_json::from_value(stats).expect("single player's readings"),
+        serde_json::from_value(room_stats).expect("a room's readings"),
+    )
 }
 
 /// A room's update rates from two readings a second apart.
@@ -350,12 +347,10 @@ fn scenarios() -> Vec<Scenario> {
     dead.death = Some(DeathReport {
         killer: Some("Crank".into()),
         own_goal: false,
-        cause: Some(DamageCause::Rocket),
         weapon: Some("Rocket blast"),
         icon: "rocket",
         killer_vehicle: Some("BIG RIG"),
         killer_team: Some(Team::Red),
-        killer_kills: Some(3),
         killer_tally: Some("Their 3rd kill".into()),
         sentence: "Crank destroyed you with a rocket blast.".into(),
     });
@@ -370,10 +365,7 @@ fn scenarios() -> Vec<Scenario> {
     let team_results = screen("results-team", MatchPhase::Results, false, true, 0.7);
     let solo_results = screen("results-solo", MatchPhase::Results, true, false, 0.0);
     list.extend([team_results, solo_results]);
-    let (game_readings, room_readings) = nerd_readings();
-    let game_stats: GameStats =
-        serde_json::from_value(game_readings).expect("single player's readings");
-    let room_stats: RoomStats = serde_json::from_value(room_readings).expect("a room's readings");
+    let (game_stats, room_stats) = nerd_readings();
     let rates = room_rates(&room_stats);
     for (name, sections) in [
         ("hud-nerd-stats", game_sections(&game_stats, Shell::Desktop)),
@@ -454,24 +446,18 @@ fn snapshots() {
         player_name: "Driver".into(),
         ..Preferences::default()
     };
-    let (game_readings, room_readings) = nerd_readings();
+    let (game_stats, room_stats) = nerd_readings();
     for mut scenario in scenarios() {
-        // The page's capture draws its own panel from the same readings and rates.
-        let (stats, network_sample) = match scenario.name {
-            "hud-nerd-stats" => (Some(game_readings.clone()), None),
-            "room-nerd-stats" => {
-                let room: RoomStats =
-                    serde_json::from_value(room_readings.clone()).expect("a room's readings");
-                let rates = room_rates(&room);
-                (
-                    Some(room_readings.clone()),
-                    Some(json!({
-                        "rate": rates.updates_per_second,
-                        "receiveShare": rates.receive_ms_per_second / 1000.0,
-                    })),
-                )
-            }
-            _ => (None, None),
+        // The page's capture fills its own panel with the page's rows for the same
+        // readings and rates.
+        let stats = match scenario.name {
+            "hud-nerd-stats" => Some(game_sections(&game_stats, Shell::Page)),
+            "room-nerd-stats" => Some(room_sections(
+                &room_stats,
+                room_rates(&room_stats),
+                Shell::Page,
+            )),
+            _ => None,
         };
         let is_room = scenario.name.starts_with("room-");
         let mut room_menu = is_room.then(|| super::room_menu::snapshot_menu(scenario.name));
@@ -486,7 +472,6 @@ fn snapshots() {
             "hud": state.hud,
             "pause": state.hud.as_ref().map(pause_report),
             "stats": stats,
-            "networkSample": network_sample,
             "ready": state.ready,
             "status": state.status,
             "cockpit": state.cockpit,

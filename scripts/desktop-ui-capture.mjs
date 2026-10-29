@@ -53,18 +53,7 @@ try {
     const ui = source.match(/([\w$]+)=class\{choices;actions;overlay;respawnLayer;hud;toast;feed;/);
     if (ui) body += `\n;globalThis.__gauntletUI = ${ui[1]};`;
     const networkUI = source.match(/([\w$]+)=class\{root;actions;canvas;panel;lastLobby;/);
-    if (networkUI) {
-      body += `\n;globalThis.__gauntletNetworkUI = ${networkUI[1]};`;
-      const before = source.slice(0, source.indexOf("return{Network:"));
-      const stats = before
-        .match(/function ([\w$]+)\([^)]*\)\{[^]*$/g)
-        ?.at(-1)
-        ?.match(/^function ([\w$]+)/);
-      // The last declaration before Network is its data adapter. Fail closed on drift.
-      const declaration = before.slice(before.lastIndexOf("function ")).match(/^function ([\w$]+)/);
-      assert.ok(stats && declaration, "Find the room stats adapter");
-      body += `\n;globalThis.__gauntletNetworkStats = ${declaration[1]};`;
-    }
+    if (networkUI) body += `\n;globalThis.__gauntletNetworkUI = ${networkUI[1]};`;
     if (source.includes("`nerd-stats`")) modules.add(route.request().url());
     sources.push({
       url: route.request().url(),
@@ -109,19 +98,16 @@ try {
       .build-label{visibility:hidden}`,
   });
   assert.equal(await page.evaluate(() => typeof window.__gauntletUI), "function");
+  assert.equal(await page.evaluate(() => typeof window.__gauntletNetworkUI), "function");
   assert.equal(modules.size, 1, "Find exactly one production HUD/stats module");
   const moduleUrl = [...modules][0];
   await page.evaluate(async (url) => {
-    const exports = Object.values(await import(url));
-    const find = (predicate) => {
-      const found = exports.filter((value) => typeof value === "function" && predicate(value));
-      if (found.length !== 1) throw new Error("Production UI exports changed; update capture");
-      return found[0];
-    };
-    window.__gauntletNerd = find((value) => value.prototype?.frame && value.prototype?.refresh);
-    window.__gauntletStats = find(
-      (value) => value.toString().includes("Physics:") && value.toString().includes("Colliders"),
+    // Stats for nerds lays out the engine's rows, which the fixtures carry.
+    const found = Object.values(await import(url)).filter(
+      (value) => typeof value === "function" && value.prototype?.frame && value.prototype?.refresh,
     );
+    if (found.length !== 1) throw new Error("Production UI exports changed; update capture");
+    window.__gauntletNerd = found[0];
   }, moduleUrl);
 
   for (const fixture of fixtures) {
@@ -149,7 +135,7 @@ try {
           );
           const ui = new window.__gauntletNetworkUI(root, room.room, actions);
           ui.status({ text: "", connected: true });
-          if (room.outcome) ui.result(room.outcome.match, room.outcome.team);
+          if (room.outcome) ui.result(room.outcome);
           // The engine's words for the room travel in the fixture, as in its notices.
           ui.lobby({ lobby: room.lobby, playerId: room.playerId, menu: room.menu, arrivals: [] });
           ui.setMenu(room.menuOpen);
@@ -158,43 +144,22 @@ try {
           ui.renderEditing();
           if (room.link.kind === "connecting") ui.showConnecting(room.link.title, room.link.text);
           if (room.link.kind === "ended") ui.ended(room.link);
-          ui.update(state, 0, room.link.kind === "live");
-          ui.deathCause = room.deathCause;
+          // The respawn card says the engine's sentence from the viewer's death event.
+          if (room.deathCause) {
+            const deathReport = { sentence: room.deathCause };
+            ui.event({ type: "death", own: true, damageAngle: null, deathReport });
+          }
           ui.update(state, 0, room.link.kind === "live");
           if (fixture.name === "room-settings") root.querySelector("#settings-open").click();
           root.querySelector(".network-help").open = room.controlsOpen;
           if (fixture.stats) {
-            let reading = structuredClone(fixture.stats);
-            const source = window.__gauntletNetworkStats(
-              () => reading,
-              () => fixture.scale,
-            );
-            const originalClock = Object.getOwnPropertyDescriptor(performance, "now");
-            let clock = 1000;
-            let sections;
-            try {
-              Object.defineProperty(performance, "now", { configurable: true, value: () => clock });
-              reading.network.receivedUpdates -= fixture.networkSample?.rate ?? 0;
-              reading.network.receiveMs -= (fixture.networkSample?.receiveShare ?? 0) * 1000;
-              source();
-              clock = 2000;
-              reading = fixture.stats;
-              sections = source();
-            } finally {
-              if (originalClock) Object.defineProperty(performance, "now", originalClock);
-              else delete performance.now;
-            }
             const stats = new window.__gauntletNerd(
               root,
-              () => sections,
+              () => fixture.stats,
               () => true,
               { network: true },
             );
             stats.button.click();
-            stats.frames = 60;
-            stats.simTotal = 60 * fixture.stats.simMs;
-            stats.renderTotal = 60 * fixture.stats.renderMs;
-            stats.refresh(fixture.stats.frameMs);
           }
           return;
         }
@@ -210,11 +175,9 @@ try {
           graphics: () => "auto",
           setGraphics: noop,
           selectAmmo: noop,
-          // Builds that word pause in the engine read its facts here.
           pauseReport: () => fixture.pause,
         });
         window.__gauntletCurrent = ui;
-        state.speedTuning = { "tank-speed": 1, "bullet-speed": 1 };
         ui.update(state, 0);
         document.querySelector("#startup-overlay")?.remove();
         ui.viewerPoint = () =>
@@ -222,7 +185,6 @@ try {
             ? { x: fixture.viewer[0], y: fixture.viewer[1] }
             : null;
         ui.deathReport = fixture.death;
-        ui.deathCause = fixture.death ? "Crank destroyed you with a rocket blast." : "";
         ui.respawnTotal = fixture.respawnTotal;
         ui.lastPhase = "";
         ui.feedRows = fixture.feed.map((entry, index) => ({
@@ -319,14 +281,10 @@ try {
           document.querySelector("#nerd-stats")?.remove();
           const stats = new window.__gauntletNerd(
             root,
-            () => window.__gauntletStats(fixture.stats),
+            () => fixture.stats,
             () => true,
           );
           stats.button.click();
-          stats.frames = 60;
-          stats.simTotal = 60 * fixture.stats.simMs;
-          stats.renderTotal = 60 * fixture.stats.renderMs;
-          stats.refresh(fixture.stats.frameMs);
         }
       },
       { ...fixture, referenceContentVersion: health.contentVersion },

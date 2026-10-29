@@ -5,9 +5,10 @@
 use serde_json::{Value, json};
 use sloppy_core::net::client::ClientNotice;
 use sloppy_core::net::protocol::Lobby;
-use sloppy_core::sim::{Match, Team};
+use sloppy_core::sim::Match;
 
 use crate::Shell;
+use crate::hud::PageMatch;
 use crate::room_text::{Arrival, ConnectionDialog, Ending, MenuText, RoomText};
 
 /// UI work for the room page, in order.
@@ -32,7 +33,7 @@ pub enum RoomNotice {
         arrivals: Vec<Arrival>,
     },
     /// The finished round as the viewer's tank played it; precedes its results lobby.
-    Result { outcome: Match, team: Team },
+    Result(Match),
     /// A new room instance or round: clear the kill feed and damage indicators.
     ResetFeedback,
     /// Drop held keys, clicks and pending ammo choices.
@@ -76,7 +77,7 @@ impl RoomNotice {
             }
             ClientNotice::Result { outcome, team } => {
                 room_text.result(&outcome, team);
-                RoomNotice::Result { outcome, team }
+                RoomNotice::Result(outcome)
             }
             ClientNotice::ResetFeedback => RoomNotice::ResetFeedback,
             ClientNotice::ClearInput => RoomNotice::ClearInput,
@@ -120,7 +121,9 @@ impl RoomNotice {
                     "arrivals": arrivals,
                 })
             }
-            RoomNotice::Result { outcome, .. } => json!({ "type": "result", "match": outcome }),
+            RoomNotice::Result(outcome) => {
+                json!({ "type": "result", "match": PageMatch::from(outcome) })
+            }
             RoomNotice::ResetFeedback => json!({ "type": "resetFeedback" }),
             RoomNotice::ClearInput => json!({ "type": "clearInput" }),
             RoomNotice::Reveal => json!({ "type": "reveal" }),

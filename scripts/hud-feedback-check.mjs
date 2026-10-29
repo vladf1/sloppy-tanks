@@ -297,7 +297,9 @@ try {
   let collected = false;
   for (let frame = 0; frame < 120 && !collected; frame++) {
     await advance(1);
-    collected = (await page.evaluate(() => window.sloppy.hud().human.laser)) > 0;
+    collected = await page.evaluate(() =>
+      window.sloppy.hud().human.effects.some((effect) => effect.kind === "laser"),
+    );
   }
   await page.keyboard.up("w");
   assert.ok(collected, "W-key driving must reach the laser pickup within two seconds");

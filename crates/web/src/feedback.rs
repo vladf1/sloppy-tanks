@@ -80,18 +80,15 @@ pub struct DeathReport {
     /// The viewer's own ordnance did it.
     #[serde(rename = "self")]
     pub own_goal: bool,
-    pub cause: Option<DamageCause>,
     /// The weapon's label, such as "Rocket blast", when the engine reported one.
     pub weapon: Option<&'static str>,
     /// The weapon's icon ([`cause_icon`]).
     pub icon: &'static str,
-    /// The killer's vehicle name, team and kills so far, when the scoreboard knows them.
+    /// The killer's vehicle name and team, when the scoreboard knows them.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub killer_vehicle: Option<&'static str>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub killer_team: Option<Team>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub killer_kills: Option<u32>,
     /// The killer's kills as the respawn card tags them, "Their 3rd kill", once they
     /// have one.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -235,7 +232,6 @@ fn death_report(event: &SimEvent, scoreboard: &Scoreboard) -> DeathReport {
     DeathReport {
         killer_vehicle: killer.as_ref().map(|row| vehicle(row.kind).name),
         killer_team: killer.as_ref().map(|row| row.team),
-        killer_kills: killer.as_ref().map(|row| row.kills),
         killer_tally: killer.as_ref().filter(|row| row.kills > 0).map(|row| {
             format!(
                 "Their {} kill",
@@ -244,7 +240,6 @@ fn death_report(event: &SimEvent, scoreboard: &Scoreboard) -> DeathReport {
         }),
         killer: killer.map(|row| row.name.into_owned()),
         own_goal,
-        cause,
         weapon,
         icon: cause_icon(cause),
         sentence,
@@ -387,12 +382,10 @@ mod tests {
             json!({
                 "killer": "Bob <b>literal</b>",
                 "self": false,
-                "cause": "rocket",
                 "weapon": "Rocket blast",
                 "icon": "rocket",
                 "killerVehicle": "BIG RIG",
                 "killerTeam": 0,
-                "killerKills": 3,
                 "killerTally": "Their 3rd kill",
                 "sentence": "Bob <b>literal</b> destroyed you with a rocket blast.",
             })
@@ -403,7 +396,6 @@ mod tests {
             json!({
                 "killer": null,
                 "self": true,
-                "cause": null,
                 "weapon": null,
                 "icon": "skull",
                 "sentence": "You destroyed yourself.",
