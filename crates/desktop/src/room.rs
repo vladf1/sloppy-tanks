@@ -16,25 +16,24 @@ use sloppy_render::wgpu;
 use sloppy_web::hud::Hud;
 use sloppy_web::room_notices::RoomNotice;
 use sloppy_web::{NetConfig, NetGame, net_frame_slot as slot};
-use winit::event::{ElementState, WindowEvent};
-use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::{Fullscreen, Window};
+use winit::event::WindowEvent;
+use winit::window::Window;
 
-use crate::app::{Shell, grab_pointer, now_ms, view_config};
+use crate::app::{Shell, css_size, drawable_size, now_ms, set_fullscreen, view_config};
 use crate::audio::Audio;
 use crate::bakes::{self, Bake};
-use crate::input::{Controls, Shortcut};
+use crate::input::Shortcut;
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
 use crate::room_api::RoomSelection;
 use crate::sockets::{SocketEvent, Sockets};
+use crate::touch::Play;
 use crate::ui::room_menu::{self, RoomMenu};
 use crate::ui::{self, Action, UiState};
+use crate::window_input::{Battle, Request, WindowInput};
 
 /// Pipelines created per preparation step; the joining card redraws between steps.
 const PREPARE_BUDGET: u32 = 4;
-/// Frames between Stats for nerds readings.
-const STATS_EVERY_FRAMES: u64 = 15;
 /// Why a room that could not load sends the player back to Battle Setup.
 const ARENA_FAILED: &str = "The arena could not load. Try again, or play single player.";
 
@@ -47,8 +46,7 @@ pub struct RoomSession {
     game: NetGame,
     overlay: Overlay,
     sockets: Sockets,
-    pub controls: Controls,
-    modifiers: ModifiersState,
+    pub input: WindowInput,
     prefs: Preferences,
     audio: Option<Audio>,
     ui: UiState,
@@ -65,7 +63,6 @@ pub struct RoomSession {
     first_person: bool,
     /// The engine says the pointer is free: a menu, a drop or no battle.
     pointer_free: bool,
-    pub cursor_grabbed: bool,
     /// The window took the last frame; a covered one takes none (see `app.rs`).
     frame_shown: bool,
     /// macOS reports the window covered, or it has no area (minimized on Windows).
@@ -82,7 +79,6 @@ pub struct RoomSession {
     last_poll: f64,
     last_frame: f64,
     hud_dt: f64,
-    frame_index: u64,
     /// The renderer stopped; the room is given up.
     stopped: bool,
     /// Battle Setup is wanted, with this reason to show there.
@@ -95,7 +91,7 @@ impl RoomSession {
     /// reason to show on Battle Setup.
     pub fn new(shell: Shell, selection: RoomSelection) -> Result<Self, Box<(Shell, String)>> {
         let window = shell.window.clone();
-        let size = window.inner_size();
+        let size = drawable_size(&window);
         let config = NetConfig {
             server: selection.server.clone(),
             room: selection.room.clone(),
@@ -132,8 +128,7 @@ impl RoomSession {
             game,
             overlay,
             sockets: Sockets::default(),
-            controls: Controls::default(),
-            modifiers: ModifiersState::default(),
+            input: WindowInput::default(),
             first_person: prefs.first_person,
             prefs,
             audio,
@@ -150,7 +145,6 @@ impl RoomSession {
             prebuilding: false,
             bake: None,
             pointer_free: true,
-            cursor_grabbed: false,
             frame_shown: true,
             occluded: false,
             minimized: false,
@@ -161,7 +155,6 @@ impl RoomSession {
             last_poll: now,
             last_frame: now,
             hud_dt: 0.0,
-            frame_index: 0,
             stopped: false,
             exit: None,
         };
@@ -186,7 +179,7 @@ impl RoomSession {
         let hidden = self.hidden();
         if hidden != self.told_hidden {
             self.told_hidden = hidden;
-            self.controls.clear();
+            self.input.controls.clear();
             self.game.set_hidden(hidden, now_ms());
             self.pump();
         }
@@ -202,7 +195,7 @@ impl RoomSession {
             && self.window.has_focus()
             && !self.occluded
             && !self.minimized;
-        grab_pointer(&self.window, wanted, &mut self.cursor_grabbed);
+        self.input.hold_pointer(&self.window, wanted);
     }
 
     /// Give the window back: the room's renderer and overlay go, the rest stays.
@@ -318,7 +311,7 @@ impl RoomSession {
             RoomNotice::Status { text, dialog } => self.menu.status(&text, dialog),
             RoomNotice::Notice(text) => self.menu.notice = text,
             RoomNotice::Ended(ending) => {
-                self.controls.clear();
+                self.input.controls.clear();
                 // A join still behind the joining card reports on Battle Setup.
                 if self.menu.joining {
                     self.leave_to_setup(ending.text);
@@ -340,7 +333,7 @@ impl RoomSession {
                 self.ui.reset_feedback();
                 self.menu.death_cause.clear();
             }
-            RoomNotice::ClearInput => self.controls.clear(),
+            RoomNotice::ClearInput => self.input.controls.clear(),
             RoomNotice::Reveal => {
                 self.menu.joining = false;
                 self.resize();
@@ -366,14 +359,15 @@ impl RoomSession {
         if let WindowEvent::RedrawRequested = event {
             return self.redraw();
         }
-        let in_battle = self.menu.in_battle() && !self.menu.joining;
-        let battle = in_battle && !self.menu.menu_open && self.ui.settings_draft.is_none();
-        let keys_to_menus = !battle || self.overlay.typing();
-        let consumed = self
-            .overlay
-            .event(event, !self.cursor_grabbed, keys_to_menus);
-        let alive = self.ui.hud.as_ref().is_some_and(|hud| hud.human.alive);
-        let playing = in_battle && alive;
+        let battle = self.battle();
+        let request = self
+            .input
+            .event(&self.window, &mut self.overlay, event, &battle);
+        if let Some(request) = request
+            && self.request(request)
+        {
+            return true;
+        }
         match event {
             WindowEvent::CloseRequested => {
                 self.quit();
@@ -386,60 +380,52 @@ impl RoomSession {
             }
             WindowEvent::ScaleFactorChanged { .. } => self.resize(),
             WindowEvent::Focused(false) => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.hold_pointer();
             }
             WindowEvent::Occluded(hidden) => {
                 self.occluded = *hidden;
                 self.hidden_changed();
             }
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = modifiers.state();
-                self.controls.set_command(
-                    self.modifiers.super_key()
-                        || self.modifiers.control_key()
-                        || self.modifiers.alt_key(),
-                );
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Typing goes to the field; a release still reaches the controls, so
-                // a key held when a field took focus never sticks.
-                if self.overlay.typing() && event.state == ElementState::Pressed {
-                    return false;
-                }
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    if code == KeyCode::KeyQ && self.modifiers.super_key() {
-                        self.quit();
-                        return true;
-                    }
-                    let shortcut = self.controls.key(code, event.state, event.repeat, playing);
-                    if let Some(shortcut) = shortcut {
-                        self.shortcut(shortcut);
-                    }
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let size = self.window.inner_size();
-                self.controls.aim_at(
-                    (position.x, position.y),
-                    (f64::from(size.width), f64::from(size.height)),
-                );
-            }
-            WindowEvent::MouseInput { state, button, .. }
-                if *state == ElementState::Released
-                    || (playing
-                        && (self.cursor_grabbed
-                            || !(consumed || self.overlay.wants_pointer()))) =>
-            {
-                self.controls.button(*button, *state);
-            }
-            WindowEvent::MouseWheel { delta, .. } if !self.overlay.wants_pointer() && in_battle => {
-                self.controls
-                    .wheel(*delta, self.modifiers.shift_key(), playing);
-            }
             _ => {}
         }
         false
+    }
+
+    /// Where the battle stands, for the window's input. Whether the player can act is
+    /// the engine's to say (`activeInput`, as the page asks it).
+    fn battle(&self) -> Battle {
+        let in_battle = self.menu.in_battle() && !self.menu.joining;
+        Battle {
+            keys: in_battle && self.ui.settings_draft.is_none(),
+            playing: self.game.active_input(),
+            wheel: in_battle,
+            touch: Play::live(
+                &self.overlay.context,
+                self.touch_live(),
+                self.first_person,
+                self.ui.hud.as_ref(),
+            ),
+        }
+    }
+
+    /// Whether the touch controls show: the player can act, with no dialog open.
+    fn touch_live(&self) -> bool {
+        self.game.active_input() && self.ui.settings_draft.is_none()
+    }
+
+    /// Do what input asked; true when the app should quit.
+    fn request(&mut self, request: Request) -> bool {
+        match request {
+            Request::Quit => {
+                self.quit();
+                true
+            }
+            Request::Shortcut(shortcut) => {
+                self.shortcut(shortcut);
+                false
+            }
+        }
     }
 
     fn shortcut(&mut self, shortcut: Shortcut) {
@@ -468,17 +454,12 @@ impl RoomSession {
     }
 
     fn resize(&mut self) {
-        let size = self.window.inner_size();
-        let scale = self.window.scale_factor();
-        let logical = size.to_logical::<f64>(scale);
-        self.game.resize(logical.width, logical.height, scale);
+        let (width, height, scale) = css_size(&self.window);
+        self.game.resize(width, height, scale);
     }
 
     fn save_camera(&mut self) {
-        let camera = self.game.camera();
-        self.prefs.first_person = camera.first_person;
-        self.prefs.zoom = Some(camera.zoom);
-        self.prefs.save();
+        self.prefs.save_camera(self.game.camera());
     }
 
     fn apply(&mut self, action: Action) -> bool {
@@ -488,19 +469,19 @@ impl RoomSession {
                 if self.menu.in_battle() && self.game.pause(now) {
                     self.menu.menu_open = true;
                     self.menu.notice.clear();
-                    self.controls.clear();
+                    self.input.controls.clear();
                 }
             }
             Action::Resume => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.menu.menu_open = self.game.resume(now);
             }
             Action::RoomStart => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.game.start(now);
             }
             Action::RoomEnd => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.game.end(now);
             }
             Action::RoomLeave => {
@@ -521,7 +502,7 @@ impl RoomSession {
             Action::RoomRules(rules) => self.game.set_rules(rules, now),
             Action::SelectAmmo(slot) => {
                 if self.menu.in_battle() {
-                    self.controls.select_ammo(slot);
+                    self.input.controls.select_ammo(slot);
                 }
             }
             Action::ToggleView => {
@@ -532,10 +513,7 @@ impl RoomSession {
             }
             Action::ToggleFullscreen => {
                 let fullscreen = self.window.fullscreen().is_none();
-                self.window
-                    .set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
-                self.prefs.fullscreen = fullscreen;
-                self.prefs.save();
+                set_fullscreen(&self.window, &mut self.prefs, fullscreen);
             }
             Action::OpenSettings => {
                 if self.menu.in_battle() {
@@ -571,11 +549,8 @@ impl RoomSession {
             audio.set_volume(self.prefs.volume);
         }
         if old.fullscreen != self.prefs.fullscreen {
-            self.window.set_fullscreen(
-                self.prefs
-                    .fullscreen
-                    .then_some(Fullscreen::Borderless(None)),
-            );
+            let fullscreen = self.prefs.fullscreen;
+            set_fullscreen(&self.window, &mut self.prefs, fullscreen);
         }
         self.prefs.save();
     }
@@ -643,7 +618,7 @@ impl RoomSession {
 
     /// One engine frame: input in, the drawn scene, its events and HUD out.
     fn frame(&mut self, now: f64) -> Result<(), String> {
-        let input = self.controls.take_input();
+        let input = self.input.take_input(self.first_person);
         let camera_input = input.zoom != 0.0 || input.toggle_view;
         let result = self.game.frame(now, &input.pack())?;
         if let Some(error) = self.game.error() {
@@ -686,7 +661,7 @@ impl RoomSession {
     fn fail(&mut self, error: &str) {
         eprintln!("The room stopped: {error}");
         self.stopped = true;
-        self.controls.clear();
+        self.input.controls.clear();
         self.game.renderer_failed();
         self.pump();
     }
@@ -696,6 +671,14 @@ impl RoomSession {
         let now = now_ms();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        let playing = self.battle().playing;
+        let mut quit = false;
+        for request in self
+            .input
+            .hardware_keys(&self.window, &self.overlay, playing)
+        {
+            quit |= self.request(request);
+        }
         if !self.stopped {
             self.network();
             if self.preparing {
@@ -711,7 +694,6 @@ impl RoomSession {
                 self.fail(&error);
             }
         }
-        self.frame_index += 1;
         if !self.menu.in_battle() {
             self.ui.tick(frame_dt);
         }
@@ -721,13 +703,11 @@ impl RoomSession {
                 self.apply(Action::Resume);
             }
         }
-        if self.ui.show_nerd_stats
-            && (self.debug || self.prefs.debug)
-            && self.frame_index.is_multiple_of(STATS_EVERY_FRAMES)
-        {
+        if self.ui.stats_due(now, self.debug || self.prefs.debug) {
             self.ui.stats = Some(self.game.nerd_stats(now));
         }
         self.hold_pointer();
+        self.ui.touch = self.input.touch_view(self.touch_live(), self.first_person);
         let view = ui::View {
             in_round: true,
             phase: room_menu::hud_phase(&self.menu),
@@ -745,7 +725,6 @@ impl RoomSession {
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
         self.hidden_changed();
-        let mut quit = false;
         for action in actions {
             quit |= self.apply(action);
         }

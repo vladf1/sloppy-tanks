@@ -7,7 +7,8 @@ const LINK_LABEL = "nerd stats";
 const PANEL_TITLE = "Stats for Nerds";
 /** Rows show a label padded to this many columns, then the value. */
 const LABEL_COLUMNS = 20;
-/** The open panel refreshes this often while frames run. */
+/** The open panel refreshes this often while frames run (the desktop app's too,
+ * `crates/web/src/nerd_rows.rs`, pinned by `tests/page-catalog.test.ts`). */
 const REFRESH_MS = 500;
 
 /** Stats for nerds: the engine's sections and rows (`nerd_stats_json`) in folding

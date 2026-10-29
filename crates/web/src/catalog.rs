@@ -5,8 +5,9 @@
 //! them.
 //!
 //! The page keeps its own copies (`src/game/map-options.ts`, `ammo-options.ts`, the
-//! cards of `battle-setup.html`, `GRAPHICS_SETTINGS`), since it shows Battle Setup before
-//! the engine loads; the values here are the ones it shows.
+//! cards and key strips of `battle-setup.html`, the controls lists of `ui-markup.ts`,
+//! `GRAPHICS_SETTINGS`), since it shows Battle Setup before the engine loads; the values
+//! here are the ones it shows, and the page catalog pins its copies to them.
 
 use sloppy_core::sim::GameMode;
 use sloppy_core::sim::ammunition::AMMO_ORDER;
@@ -304,6 +305,78 @@ pub const GRAPHICS_OPTIONS: [(GraphicsSetting, &str); 4] = [
     (GraphicsSetting::Fixed(Tier::High), "High"),
     (GraphicsSetting::Fixed(Tier::Medium), "Medium"),
     (GraphicsSetting::Fixed(Tier::Low), "Low"),
+];
+
+/// The sound volume the Settings dialog starts at and marks on its slider, and the step
+/// its sliders move in (volume and the battle speeds, whose range is core's
+/// `MIN_SPEED_SCALE` to `MAX_SPEED_SCALE`).
+pub const DEFAULT_VOLUME: f64 = 0.6;
+pub const SLIDER_STEP: f64 = 0.05;
+
+/// One line of the controls lists (`ControlLine` in `ui-markup.ts`): what it does, its
+/// keys, and a note after them.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ControlLine {
+    pub action: &'static str,
+    pub keys: &'static [&'static str],
+    pub note: &'static str,
+}
+
+const fn line(action: &'static str, keys: &'static [&'static str]) -> ControlLine {
+    ControlLine {
+        action,
+        keys,
+        note: "",
+    }
+}
+
+const fn noted(
+    action: &'static str,
+    keys: &'static [&'static str],
+    note: &'static str,
+) -> ControlLine {
+    ControlLine { action, keys, note }
+}
+
+/// Keyboard and mouse, as the pause menu and the room menu list them.
+pub const KEYBOARD_CONTROLS: [ControlLine; 8] = [
+    line("Drive", &["W", "A", "S", "D"]),
+    line("Aim", &["Mouse"]),
+    noted("Fire", &["Left click"], "hold"),
+    line("Drop mine", &["Right click"]),
+    noted("Ammo", &["Q", "E", "1–5"], "or wheel"),
+    line("Zoom", &["Shift", "Wheel"]),
+    noted("First person", &["V"], "turret follows mouse"),
+    line("Pause", &["Esc"]),
+];
+
+/// The same moves on a touch screen.
+pub const TOUCH_CONTROLS: [ControlLine; 6] = [
+    line("Drive", &["Left stick"]),
+    line("Aim and fire", &["Touch the arena"]),
+    line("Drop mine", &["Mine button"]),
+    line("Ammo", &["Tap a round"]),
+    line("Zoom", &["−", "+"]),
+    noted("First person", &["Eye button"], "stick sideways turns"),
+];
+
+/// Battle Setup's line of essentials under its dialog (`.key-strip` in
+/// `battle-setup.html`), keys and what they do; the pause menu lists every control.
+pub const KEY_STRIP: [(&[&str], &str); 6] = [
+    (&["W", "A", "S", "D"], "Drive"),
+    (&["Mouse"], "Aim"),
+    (&["Left click"], "Fire"),
+    (&["Right click"], "Mine"),
+    (&["Q", "E"], "Ammo"),
+    (&["Esc"], "All controls"),
+];
+
+/// The same line on a touch screen (`.touch-strip`).
+pub const TOUCH_STRIP: [(&[&str], &str); 4] = [
+    (&["Left stick"], "Drive"),
+    (&["Touch the arena"], "Aim & fire"),
+    (&["Mine button"], "Mine"),
+    (&["Eye button"], "First person"),
 ];
 
 #[cfg(test)]

@@ -1,8 +1,22 @@
 import { AMMO_OPTIONS } from "./ammo-options";
 import type { ActiveEffect, EngineFeedRow, FeedSide, HumanState } from "./engine-api";
 
-/** The kill feed shows this many of its newest rows. */
+// How much HUD feedback shows and for how many seconds: the desktop app times it the
+// same (`crates/web/src/feedback.rs`, pinned by `tests/page-catalog.test.ts`).
+/** The kill feed shows this many of its newest rows, each this long. */
 export const FEED_ROWS = 3;
+export const FEED_TIME = 5;
+/** The red screen-edge flash fades over this long after the player's hull is hit. */
+export const HURT_FLASH_TIME = 0.6;
+/** The damage ring round the player's tank shows this long. */
+export const DAMAGE_RING_TIME = 1.2;
+/** An ammunition notice shows above the tank panel this long. */
+export const AMMO_NOTICE_TIME = 3;
+/** A pickup's toast shows this long, and a promotion's or the player's death's. */
+export const PICKUP_TOAST_TIME = 1.5;
+export const TOAST_TIME = 2;
+/** Below this share of its hull the tank's HUD warns, like the status panel's pulse. */
+export const CRITICAL_HEALTH = 0.25;
 
 /** One kill-feed row: the engine's names, sides, weapon icon and highlights
  * (`EngineFeedRow`), or a notice's one name, and how long it stays (seconds). `seq`
@@ -25,7 +39,7 @@ export function newFeedRow(
   ownKill = false,
   details: Pick<FeedRow, "cause" | "icon" | "sides" | "ownDeath"> = {},
 ): FeedRow {
-  return { names, ownKill, time: 5, seq: ++lastFeedSeq, ...details };
+  return { names, ownKill, time: FEED_TIME, seq: ++lastFeedSeq, ...details };
 }
 
 /** Shows a feed row: one name for a notice, or killer and victim with the weapon's icon
@@ -305,7 +319,7 @@ export function showTankStatus(root: ParentNode, tank: HumanState, slotsDisabled
   showEffects(root, tank.effects);
   root
     .querySelector(".status")!
-    .classList.toggle("critical-health", tank.alive && tank.healthRatio < 0.25);
+    .classList.toggle("critical-health", tank.alive && tank.healthRatio < CRITICAL_HEALTH);
 }
 
 /** The longest mine cooldown seen, so the mine dial drains from full whatever the rules. */

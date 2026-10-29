@@ -48,6 +48,116 @@
       "name": "Solo Assault"
     }
   ],
+  "controls": {
+    "keyStrip": [
+      {
+        "keys": ["W", "A", "S", "D"],
+        "label": "Drive"
+      },
+      {
+        "keys": ["Mouse"],
+        "label": "Aim"
+      },
+      {
+        "keys": ["Left click"],
+        "label": "Fire"
+      },
+      {
+        "keys": ["Right click"],
+        "label": "Mine"
+      },
+      {
+        "keys": ["Q", "E"],
+        "label": "Ammo"
+      },
+      {
+        "keys": ["Esc"],
+        "label": "All controls"
+      }
+    ],
+    "keyboard": [
+      {
+        "action": "Drive",
+        "keys": ["W", "A", "S", "D"]
+      },
+      {
+        "action": "Aim",
+        "keys": ["Mouse"]
+      },
+      {
+        "action": "Fire",
+        "keys": ["Left click"],
+        "note": "hold"
+      },
+      {
+        "action": "Drop mine",
+        "keys": ["Right click"]
+      },
+      {
+        "action": "Ammo",
+        "keys": ["Q", "E", "1–5"],
+        "note": "or wheel"
+      },
+      {
+        "action": "Zoom",
+        "keys": ["Shift", "Wheel"]
+      },
+      {
+        "action": "First person",
+        "keys": ["V"],
+        "note": "turret follows mouse"
+      },
+      {
+        "action": "Pause",
+        "keys": ["Esc"]
+      }
+    ],
+    "touch": [
+      {
+        "action": "Drive",
+        "keys": ["Left stick"]
+      },
+      {
+        "action": "Aim and fire",
+        "keys": ["Touch the arena"]
+      },
+      {
+        "action": "Drop mine",
+        "keys": ["Mine button"]
+      },
+      {
+        "action": "Ammo",
+        "keys": ["Tap a round"]
+      },
+      {
+        "action": "Zoom",
+        "keys": ["−", "+"]
+      },
+      {
+        "action": "First person",
+        "keys": ["Eye button"],
+        "note": "stick sideways turns"
+      }
+    ],
+    "touchStrip": [
+      {
+        "keys": ["Left stick"],
+        "label": "Drive"
+      },
+      {
+        "keys": ["Touch the arena"],
+        "label": "Aim & fire"
+      },
+      {
+        "keys": ["Mine button"],
+        "label": "Mine"
+      },
+      {
+        "keys": ["Eye button"],
+        "label": "First person"
+      }
+    ]
+  },
   "difficulties": [
     {
       "detail": "Slower, less accurate bots · you take 10% less damage",
@@ -81,6 +191,16 @@
     "simMs": 7,
     "viewerX": 13,
     "viewerY": 14
+  },
+  "hudFeedback": {
+    "ammoNoticeSeconds": 3.0,
+    "criticalHull": 0.25,
+    "damageRingSeconds": 1.2,
+    "feedLines": 3,
+    "feedSeconds": 5.0,
+    "hitFlashSeconds": 0.6,
+    "pickupToastSeconds": 1.5,
+    "toastSeconds": 2.0
   },
   "inputSlots": {
     "ammoSlot": 8,
@@ -143,6 +263,7 @@
       "tint": "#8a5a44"
     }
   ],
+  "nerdStatsRefreshMs": 500.0,
   "netFrameSlots": {
     "cockpit": 2,
     "drawn": 11,
@@ -273,6 +394,11 @@
     "playerKinds": ["scout", "balanced", "heavy"],
     "seats": 8
   },
+  "settings": {
+    "defaultVolume": 0.6,
+    "sliderStep": 0.05,
+    "speedRange": [0.5, 2.0]
+  },
   "tanks": [
     {
       "class": "Light scout",
@@ -306,5 +432,18 @@
     }
   ],
   "teamNames": ["BLUE", "RED"],
+  "teamSlots": 6,
+  "touchStick": {
+    "anchorShift": 22.0,
+    "deadZone": 0.12,
+    "pushes": [
+      [0.05, 0.0, 0.0, 0.0],
+      [0.5, 0.0, 0.4318181818181818, 0.0],
+      [0.0, -0.3, 0.0, -0.20454545454545453],
+      [0.6, -0.8, 0.6, -0.8],
+      [3.0, 4.0, 0.6, 0.8]
+    ],
+    "radius": 58.0
+  },
   "zoomStep": 2.0
 }

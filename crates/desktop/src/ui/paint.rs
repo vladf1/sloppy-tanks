@@ -451,6 +451,14 @@ pub fn timer_ring(
     );
 }
 
+/// A painter on `layer` over the whole screen: egui's own clip to the safe area, so on
+/// an iPad a fill would stop short of the home indicator's strip.
+pub fn full_screen(context: &egui::Context, layer: egui::LayerId) -> Painter {
+    let mut painter = context.layer_painter(layer);
+    painter.set_clip_rect(context.viewport_rect());
+    painter
+}
+
 /// An elliptical vignette over `rect`: the radial gradient `stops` (share of the
 /// ellipse's radii `radii`, a share of the rect's size, and colour), at `opacity`.
 pub fn vignette(

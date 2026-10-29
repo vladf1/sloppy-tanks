@@ -15,7 +15,9 @@ use crate::preferences::Preferences;
 use sloppy_core::sim::speed_tuning::{MAX_SPEED_SCALE, MIN_SPEED_SCALE};
 use sloppy_core::sim::{GameMode, MatchPhase, Team};
 use sloppy_web::battle_report::{PauseFact, PauseReport, StandingTone, pause_report};
-use sloppy_web::catalog::GRAPHICS_OPTIONS;
+use sloppy_web::catalog::{
+    ControlLine, DEFAULT_VOLUME, GRAPHICS_OPTIONS, KEYBOARD_CONTROLS, SLIDER_STEP, TOUCH_CONTROLS,
+};
 use sloppy_web::hud::Hud;
 
 /// Room inside a dialog's plate: sides, top and bottom.
@@ -23,10 +25,13 @@ pub const DIALOG_PADDING: [f32; 3] = [30.0, 26.0, 28.0];
 
 /// The arena stays readable behind a dialog, softened and darkest at the edges.
 pub fn dim_backdrop(context: &egui::Context) {
-    let painter = context.layer_painter(LayerId::new(Order::Background, Id::unique("dialog dim")));
+    let painter = paint::full_screen(
+        context,
+        LayerId::new(Order::Background, Id::unique("dialog dim")),
+    );
     paint::vignette(
         &painter,
-        context.content_rect(),
+        context.viewport_rect(),
         vec2(0.7, 0.7),
         &[(0.0, hexa(0x071224, 0.24)), (1.0, hexa(0x030812, 0.77))],
         1.0,
@@ -243,29 +248,22 @@ pub fn dialog_head(
     22.0 + 58.0
 }
 
-/// One line of the controls card: what it does, its keys and a note.
-pub const CONTROLS: &[(&str, &[&str], &str)] = &[
-    ("Drive", &["W", "A", "S", "D"], ""),
-    ("Aim", &["Mouse"], ""),
-    ("Fire", &["Left click"], "hold"),
-    ("Drop mine", &["Right click"], ""),
-    ("Ammo", &["Q", "E", "1–5"], "or wheel"),
-    ("Zoom", &["Shift", "Wheel"], ""),
-    ("First person", &["V"], "turret follows mouse"),
-    ("Pause", &["Esc"], ""),
-];
-
 /// The controls card's lines and its tip; returns the height used.
 pub(super) fn controls_card(painter: &Painter, origin: Pos2, width: f32, columns: usize) -> f32 {
     let line = 40.0;
     let padding = vec2(18.0, 10.0);
     let gap = 26.0;
     let column_width = (width - 2.0 * padding.x - gap * (columns - 1) as f32) / columns as f32;
-    let rows = CONTROLS.len().div_ceil(columns);
+    let controls: &[ControlLine] = if crate::TOUCH {
+        &TOUCH_CONTROLS
+    } else {
+        &KEYBOARD_CONTROLS
+    };
+    let rows = controls.len().div_ceil(columns);
     let height = padding.y + rows as f32 * line + 12.0 + 23.0 + 12.0;
     let well = Rect::from_min_size(origin, vec2(width, height));
     painter.rect_filled(well, 12, hexa(0x050d1c, 0.8));
-    for (index, (action, keys, note)) in CONTROLS.iter().enumerate() {
+    for (index, ControlLine { action, keys, note }) in controls.iter().enumerate() {
         let left = origin.x + padding.x + (index % columns) as f32 * (column_width + gap);
         let y = origin.y + padding.y + (index / columns) as f32 * line + line / 2.0;
         painter.line_segment(
@@ -742,7 +740,7 @@ fn slider(
     {
         let t = ((pointer.x - track.left()) / track.width()).clamp(0.0, 1.0) as f64;
         let raw = range.0 + t * (range.1 - range.0);
-        *value = (raw / 0.05).round() * 0.05;
+        *value = (raw / SLIDER_STEP).round() * SLIDER_STEP;
     }
     let share = ((*value - range.0) / (range.1 - range.0)).clamp(0.0, 1.0) as f32;
     painter.rect_filled(track, 3, hex(0x5d7898));
@@ -949,7 +947,7 @@ pub fn settings(
                 "volume",
                 &mut draft.volume,
                 (0.0, 1.0),
-                0.6,
+                DEFAULT_VOLUME,
                 ("Mute", "Loud"),
             );
             y += 62.0;
@@ -971,24 +969,27 @@ pub fn settings(
                 &mut draft.graphics,
             );
             y += 50.0;
-            setting_label(
-                painter,
-                pos2(origin.x, y),
-                "Fullscreen",
-                if cfg!(target_os = "macos") {
-                    "Fill the screen (Cmd+F)"
-                } else {
-                    "Fill the screen (F11)"
-                },
-            );
-            switch(
-                ui,
-                painter,
-                Rect::from_min_size(pos2(origin.x + width - 46.0, y + 4.0), vec2(46.0, 26.0)),
-                "fullscreen",
-                &mut draft.fullscreen,
-            );
-            y += 46.0;
+            // An iPad app always fills the screen.
+            if !crate::TOUCH {
+                setting_label(
+                    painter,
+                    pos2(origin.x, y),
+                    "Fullscreen",
+                    if cfg!(target_os = "macos") {
+                        "Fill the screen (Cmd+F)"
+                    } else {
+                        "Fill the screen (F11)"
+                    },
+                );
+                switch(
+                    ui,
+                    painter,
+                    Rect::from_min_size(pos2(origin.x + width - 46.0, y + 4.0), vec2(46.0, 26.0)),
+                    "fullscreen",
+                    &mut draft.fullscreen,
+                );
+                y += 46.0;
+            }
             group_label(painter, pos2(origin.x, y + 8.0), width, "DEVELOPER");
             y += 34.0;
             setting_label(

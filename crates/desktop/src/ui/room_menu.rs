@@ -5,6 +5,7 @@
 //! players list and the respawn card).
 
 use egui::{Align2, Color32, FontId, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use sloppy_core::net::multiplayer_simulation::TEAM_SLOTS;
 use sloppy_core::net::protocol::{Lobby, MAX_ROUND_MINUTES, Player, RoomPhase, RoomSettings};
 use sloppy_core::sim::data::{TEAM_NAMES, vehicle};
 use sloppy_core::sim::difficulty::Difficulty;
@@ -22,9 +23,6 @@ use super::{Action, KillFeedEntry, UiState, View, hud, menus};
 
 /// Seconds "Code copied" shows on its button.
 const COPIED_SECONDS: f64 = 2.0;
-/// Tanks per team, bots included, on a standard map; extra levels name their own.
-const STANDARD_TEAM_TANKS: usize = 6;
-
 /// Whether the room's socket is live, being (re)connected, or has given up, with the
 /// engine's words for the connection dialog.
 #[derive(Clone, Debug, PartialEq)]
@@ -161,7 +159,7 @@ impl RoomMenu {
         ui: &mut UiState,
     ) {
         for arrival in arrivals {
-            ui.kill_feed.push(KillFeedEntry {
+            ui.push_feed(KillFeedEntry {
                 killer: arrival.text,
                 killer_team: Some(arrival.team),
                 victim: String::new(),
@@ -171,9 +169,6 @@ impl RoomMenu {
                 own_death: false,
                 age: 0.0,
             });
-            if ui.kill_feed.len() > super::KILL_FEED_LINES {
-                ui.kill_feed.remove(0);
-            }
         }
         if lobby.phase != RoomPhase::Results {
             self.outcome = None;
@@ -344,6 +339,8 @@ pub fn draw(
     state.art = Some(art);
     if state.show_nerd_stats && view.debug {
         super::nerd_stats::panel(context, state);
+    } else if view.debug {
+        super::nerd_stats::link(context, state);
     }
     actions
 }
@@ -923,7 +920,7 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
     let team_tanks = map_card(lobby.settings.map_mode)
         .team_tanks
         .filter(|_| !lobby.settings.humans_only)
-        .map_or(STANDARD_TEAM_TANKS, |tanks| tanks as usize);
+        .map_or(TEAM_SLOTS, |tanks| tanks as usize);
     let width = ui.available_width();
     let column_width = (width - 10.0) / 2.0;
     let teams = [Team::Blue, Team::Red].map(|team| {

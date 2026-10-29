@@ -3,6 +3,23 @@ import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
 import { AMMO_OPTIONS } from "../src/game/ammo-options";
 import { ZOOM_STEP } from "../src/game/controls";
+import {
+  AMMO_NOTICE_TIME,
+  CRITICAL_HEALTH,
+  DAMAGE_RING_TIME,
+  FEED_ROWS,
+  FEED_TIME,
+  HURT_FLASH_TIME,
+  PICKUP_TOAST_TIME,
+  TOAST_TIME,
+} from "../src/game/hud-feedback";
+import {
+  STICK_ANCHOR_SHIFT,
+  STICK_DEADZONE,
+  STICK_RADIUS,
+  TouchInput,
+} from "../src/game/touch-input";
+import { KEYBOARD_CONTROLS, TOUCH_CONTROLS } from "../src/game/ui-markup";
 import { FRAME, INPUT, PHASES } from "../src/game/engine-api";
 import { MAP_IDS, MAP_OPTIONS } from "../src/game/map-options";
 import { DEFAULT_NAMES, preferredPlayerName, rememberPlayerName } from "../src/net/player-name";
@@ -59,7 +76,36 @@ interface PageCatalog {
   netFrameSlots: Slots;
   phases: Slots;
   zoomStep: number;
+  touchStick: {
+    radius: number;
+    anchorShift: number;
+    deadZone: number;
+    pushes: [number, number, number, number][];
+  };
+  hudFeedback: {
+    feedLines: number;
+    feedSeconds: number;
+    hitFlashSeconds: number;
+    damageRingSeconds: number;
+    ammoNoticeSeconds: number;
+    pickupToastSeconds: number;
+    toastSeconds: number;
+    criticalHull: number;
+  };
+  nerdStatsRefreshMs: number;
+  settings: { defaultVolume: number; sliderStep: number; speedRange: number[] };
+  teamSlots: number;
+  controls: {
+    keyboard: unknown[];
+    touch: unknown[];
+    keyStrip: KeyHint[];
+    touchStrip: KeyHint[];
+  };
   roomConnection: { pollMs: number; maxBufferedBytes: number };
+}
+interface KeyHint {
+  keys: string[];
+  label: string;
 }
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
@@ -77,6 +123,21 @@ function moduleConstant(path: string, name: string): unknown {
       .replace(/(\w+):/g, '"$1":')
       .replace(/(\d)_(\d)/g, "$1$2")
       .replace(/,(\s*[}\]])/g, "$1"),
+  );
+}
+
+/** A key strip of `battle-setup.html` (`.key-strip`, `.touch-strip`): each hint's key caps
+ * and the words after them. */
+function keyStrip(name: string): KeyHint[] {
+  const block = new RegExp(`<div class="menu-help ${name}">([\\s\\S]*?)</div>`).exec(
+    battleSetup,
+  )?.[1];
+  assert.ok(block, `battle-setup.html has a ${name}`);
+  return [...block.matchAll(/<span class="keys">([\s\S]*?)<\/span\s*>([^<]*)<\/span/g)].map(
+    ([, keys = "", label = ""]) => ({
+      keys: [...keys.matchAll(/<kbd>([^<]*)<\/kbd>/g)].map(([, key = ""]) => key),
+      label: label.trim().replaceAll("&amp;", "&"),
+    }),
   );
 }
 
@@ -245,21 +306,79 @@ test("zoom step and the room connection's timers", () => {
   assert.equal(moduleConstant("../src/net/client.ts", "MAX_BUFFERED_BYTES"), maxBufferedBytes);
 });
 
+test("the touch stick's sizes and dead zone", () => {
+  const { radius, anchorShift, deadZone, pushes } = catalog.touchStick;
+  assert.equal(STICK_RADIUS, radius);
+  assert.equal(STICK_ANCHOR_SHIFT, anchorShift);
+  assert.equal(STICK_DEADZONE, deadZone);
+  for (const [x, y, moveX, moveZ] of pushes) {
+    const touch = new TouchInput();
+    touch.begin("drive", 1);
+    touch.moveStick(1, x, y);
+    assert.ok(Math.abs(touch.moveX - moveX) < 1e-12, `moveX for ${x}, ${y}`);
+    assert.ok(Math.abs(touch.moveZ - moveZ) < 1e-12, `moveZ for ${x}, ${y}`);
+  }
+});
+
+test("HUD feedback timings and the critical hull", () => {
+  assert.deepEqual(
+    {
+      feedLines: FEED_ROWS,
+      feedSeconds: FEED_TIME,
+      hitFlashSeconds: HURT_FLASH_TIME,
+      damageRingSeconds: DAMAGE_RING_TIME,
+      ammoNoticeSeconds: AMMO_NOTICE_TIME,
+      pickupToastSeconds: PICKUP_TOAST_TIME,
+      toastSeconds: TOAST_TIME,
+      criticalHull: CRITICAL_HEALTH,
+    },
+    catalog.hudFeedback,
+  );
+});
+
+test("settings, a room's seats per team and the stats refresh", () => {
+  const settings = "../src/game/settings-dialog.ts";
+  assert.equal(moduleConstant(settings, "DEFAULT_VOLUME"), catalog.settings.defaultVolume);
+  assert.equal(moduleConstant(settings, "SLIDER_STEP"), catalog.settings.sliderStep);
+  assert.deepEqual(moduleConstant(settings, "SPEED_RANGE"), catalog.settings.speedRange);
+  assert.equal(
+    moduleConstant("../src/net/network-ui.ts", "STANDARD_TEAM_TANKS"),
+    catalog.teamSlots,
+  );
+  assert.equal(
+    moduleConstant("../src/game/nerd-stats.ts", "REFRESH_MS"),
+    catalog.nerdStatsRefreshMs,
+  );
+});
+
+test("the controls lists and Battle Setup's key strips", () => {
+  assert.deepEqual(KEYBOARD_CONTROLS, catalog.controls.keyboard);
+  assert.deepEqual(TOUCH_CONTROLS, catalog.controls.touch);
+  assert.deepEqual(keyStrip("key-strip"), catalog.controls.keyStrip);
+  assert.deepEqual(keyStrip("touch-strip"), catalog.controls.touchStrip);
+});
+
 test("every section of the fixture is checked here", () => {
   assert.deepEqual(Object.keys(catalog).sort(), [
     "ammo",
     "battleFormats",
+    "controls",
     "difficulties",
     "frameSlots",
+    "hudFeedback",
     "inputSlots",
     "maps",
+    "nerdStatsRefreshMs",
     "netFrameSlots",
     "phases",
     "playerNames",
     "roomConnection",
     "rooms",
+    "settings",
     "tanks",
     "teamNames",
+    "teamSlots",
+    "touchStick",
     "zoomStep",
   ]);
 });

@@ -13,6 +13,7 @@ pub mod room_menu;
 pub mod rooms;
 pub mod setup;
 pub mod theme;
+pub mod touch;
 
 use sloppy_core::net::protocol::RoomSettings;
 use sloppy_core::sim::{DamageCause, MatchPhase, SimEventType, Team, VehicleKind};
@@ -101,18 +102,10 @@ pub enum PauseTab {
     Controls,
 }
 
-/// Seconds a kill feed line shows.
-pub const KILL_FEED_SECONDS: f64 = 5.0;
-/// Kill feed lines at most.
-pub const KILL_FEED_LINES: usize = 3;
-/// Seconds a pickup's toast shows, and a promotion's or death's.
-pub const PICKUP_TOAST_SECONDS: f64 = 1.5;
-pub const TOAST_SECONDS: f64 = 2.0;
-/// Seconds an ammunition notice shows above the tank panel.
-pub const AMMO_NOTICE_SECONDS: f64 = 3.0;
-/// Seconds the hit flash and the damage ring show.
-pub const HIT_FLASH_SECONDS: f64 = 0.6;
-pub const DAMAGE_RING_SECONDS: f64 = 1.2;
+pub use sloppy_web::feedback::{
+    AMMO_NOTICE_SECONDS, DAMAGE_RING_SECONDS, FEED_LINES, FEED_SECONDS, HIT_FLASH_SECONDS,
+    PICKUP_TOAST_SECONDS, TOAST_SECONDS,
+};
 /// The hull bar's ghost waits this long after a hit, then trails down over the next.
 const HULL_GHOST_DELAY: f64 = 0.35;
 const HULL_GHOST_SECONDS: f64 = 0.55;
@@ -142,8 +135,10 @@ pub struct UiState {
     /// GO was pressed and the round is about to start.
     pub starting: bool,
     pub show_nerd_stats: bool,
-    /// The engine's latest Stats for nerds rows, while the nerd stats show.
+    /// The engine's latest Stats for nerds rows, while the nerd stats show, and when
+    /// they were read (the engine's clock, milliseconds).
     pub stats: Option<Vec<sloppy_web::nerd_rows::StatsSection>>,
+    pub stats_read_at: f64,
     /// Stats for nerds' sections the player opened or folded.
     pub nerd_sections: std::collections::BTreeMap<&'static str, bool>,
     /// First person is on (the cockpit compass shows).
@@ -172,6 +167,11 @@ pub struct UiState {
     pub round: u32,
     /// The icons and tank renders, made on the first frame.
     pub art: Option<icons::Art>,
+    /// The touch controls this frame, while the player can act on a touch screen.
+    pub touch: Option<touch::TouchView>,
+    /// Seconds the touch controls have shown since they last appeared, for the fire
+    /// hint.
+    pub touch_shown: f64,
 }
 
 /// What the app tells the screens about where things stand.
@@ -193,7 +193,7 @@ impl UiState {
         for entry in &mut self.kill_feed {
             entry.age += dt;
         }
-        self.kill_feed.retain(|entry| entry.age < KILL_FEED_SECONDS);
+        self.kill_feed.retain(|entry| entry.age < FEED_SECONDS);
         if let Some(toast) = &mut self.toast {
             toast.age += dt;
         }
@@ -230,6 +230,11 @@ impl UiState {
             self.damage_ring = None;
         }
         self.trail_hull_ghost(dt);
+        self.touch_shown = if self.touch.is_some() {
+            self.touch_shown + dt
+        } else {
+            0.0
+        };
         if let Some(hud) = &self.hud {
             let human = &hud.human;
             if !human.alive {
@@ -309,21 +314,38 @@ impl UiState {
         }
         if let Some(row) = &feedback.feed {
             let [killer, victim] = row.names.clone();
-            self.kill_feed.insert(
-                0,
-                KillFeedEntry {
-                    killer,
-                    victim,
-                    killer_team: row.sides[0].team(),
-                    victim_team: row.sides[1].team(),
-                    cause: row.cause,
-                    own_kill: row.own_kill,
-                    own_death: row.own_death,
-                    age: 0.0,
-                },
-            );
-            self.kill_feed.truncate(KILL_FEED_LINES);
+            self.push_feed(KillFeedEntry {
+                killer,
+                victim,
+                killer_team: row.sides[0].team(),
+                victim_team: row.sides[1].team(),
+                cause: row.cause,
+                own_kill: row.own_kill,
+                own_death: row.own_death,
+                age: 0.0,
+            });
         }
+    }
+
+    /// Put a line on top of the kill feed, the newest first, and let the oldest go past
+    /// its last line (`showFeed`).
+    pub fn push_feed(&mut self, entry: KillFeedEntry) {
+        self.kill_feed.insert(0, entry);
+        self.kill_feed.truncate(FEED_LINES);
+    }
+
+    /// Whether the open Stats for nerds panel wants fresh rows now: at once when it
+    /// opens, then every `REFRESH_MS`, as the page's panel refreshes.
+    pub fn stats_due(&mut self, now: f64, debug: bool) -> bool {
+        if !(self.show_nerd_stats && debug) {
+            self.stats_read_at = f64::NEG_INFINITY;
+            return false;
+        }
+        let due = now - self.stats_read_at >= sloppy_web::nerd_rows::REFRESH_MS;
+        if due {
+            self.stats_read_at = now;
+        }
+        due
     }
 
     /// Forget a round's feedback.
@@ -373,9 +395,43 @@ pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Ac
     state.settings_were_open = settings_open;
     if state.show_nerd_stats && view.debug {
         nerd_stats::panel(context, state);
+    } else if view.debug && view.in_round {
+        nerd_stats::link(context, state);
     }
     actions
 }
 
 #[cfg(test)]
 mod snapshots;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(name: &str) -> KillFeedEntry {
+        KillFeedEntry {
+            killer: name.to_owned(),
+            victim: String::new(),
+            killer_team: None,
+            victim_team: None,
+            cause: None,
+            own_kill: false,
+            own_death: false,
+            age: 0.0,
+        }
+    }
+
+    #[test]
+    fn the_newest_feed_line_is_on_top_and_the_oldest_leaves() {
+        let mut state = UiState::default();
+        for name in ["first", "second", "third", "arrival"] {
+            state.push_feed(line(name));
+        }
+        let names: Vec<&str> = state
+            .kill_feed
+            .iter()
+            .map(|entry| entry.killer.as_str())
+            .collect();
+        assert_eq!(names, ["arrival", "third", "second"]);
+    }
+}

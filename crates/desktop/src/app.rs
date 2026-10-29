@@ -22,30 +22,30 @@ use sloppy_render::wgpu;
 use sloppy_web::hud::Loading;
 use sloppy_web::{Game, GameConfig, ViewConfig, frame_slot};
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::audio::Audio;
 use crate::bakes::{self, Bake};
 use crate::frame_log::{FrameLog, FrameParts};
-use crate::input::{Controls, Shortcut};
+use crate::input::Shortcut;
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
 use crate::room::{RoomSession, SavedSeats};
 use crate::room_api::RoomSelection;
+use crate::touch::Play;
 use crate::ui::rooms::RoomsState;
 use crate::ui::{self, Action, UiState};
+use crate::window_input::{Battle, Request, WindowInput};
 
 /// Pipelines created per preparation step; the menu redraws between steps.
 const PREPARE_BUDGET: u32 = 4;
-/// Frames between Stats for nerds readings.
-const STATS_EVERY_FRAMES: u64 = 15;
 /// The window's first size, in points.
-const WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 800.0);
-const MIN_WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(1100.0, 720.0);
+#[cfg(not(target_os = "ios"))]
+const WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1280.0, 800.0);
+#[cfg(not(target_os = "ios"))]
+const MIN_WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1100.0, 720.0);
 /// How often a window that takes no frames tries again.
 const HIDDEN_RECHECK: Duration = Duration::from_millis(100);
 /// Battle Setup's status once the arena is ready.
@@ -159,6 +159,36 @@ fn build_line() -> String {
     )
 }
 
+/// The window's size in pixels as the renderer and egui draw it. On iOS winit's inner
+/// size is only the safe area, while the view and its Metal layer cover the screen
+/// (egui-winit lays out on the whole screen and keeps the insets apart).
+pub fn drawable_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
+    if cfg!(target_os = "ios") {
+        window.outer_size()
+    } else {
+        window.inner_size()
+    }
+}
+
+/// The window's size in points and its pixels per point, as the engines' `resize`
+/// takes them (the page's CSS size and device pixel ratio).
+pub fn css_size(window: &Window) -> (f64, f64, f64) {
+    let scale = window.scale_factor();
+    let logical = drawable_size(window).to_logical::<f64>(scale);
+    (logical.width, logical.height, scale)
+}
+
+/// Fill the screen or give the window back, as `prefs` say, and keep the choice. An
+/// iPad app always fills the screen.
+pub fn set_fullscreen(window: &Window, prefs: &mut Preferences, fullscreen: bool) {
+    if crate::TOUCH {
+        return;
+    }
+    window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+    prefs.fullscreen = fullscreen;
+    prefs.save();
+}
+
 /// The engine's clock, in milliseconds (the origin `Game` and `NetGame` read too).
 pub fn now_ms() -> f64 {
     sloppy_web::clock_start().elapsed().as_secs_f64() * 1000.0
@@ -167,16 +197,23 @@ pub fn now_ms() -> f64 {
 /// The view configuration both engines take for `window`, with the player's camera
 /// and graphics choices.
 pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
-    let scale = window.scale_factor();
-    let logical = window.inner_size().to_logical::<f64>(scale);
+    let (width, height, scale) = css_size(window);
     ViewConfig {
-        css_width: Some(logical.width),
-        css_height: Some(logical.height),
+        css_width: Some(width),
+        css_height: Some(height),
         pixel_ratio: Some(scale),
         first_person: prefs.first_person,
         zoom: prefs.zoom,
+        // Touch screens draw no overhead reticle (`startingCamera`): a finger aims
+        // where it is, so the mark sat under it and stuck where it lifted.
+        hide_reticle: crate::TOUCH,
         graphics: prefs.graphics,
-        device: DeviceClass::Desktop,
+        // A tablet starts a tier lower and draws single-sampled (`quality.rs`).
+        device: if crate::TOUCH {
+            DeviceClass::Tablet
+        } else {
+            DeviceClass::Desktop
+        },
         shell: sloppy_web::Shell::Desktop,
         ..ViewConfig::default()
     }
@@ -238,8 +275,7 @@ struct Session {
     window: Arc<Window>,
     game: Game,
     overlay: Overlay,
-    controls: Controls,
-    modifiers: ModifiersState,
+    input: WindowInput,
     prefs: Preferences,
     ui: UiState,
     audio: Option<Audio>,
@@ -258,14 +294,12 @@ struct Session {
     phase: MatchPhase,
     alive: bool,
     first_person: bool,
-    cursor_grabbed: bool,
     /// The window is covered or minimized (macOS says so).
     occluded: bool,
     /// The window has no area: minimized on Windows, which reports no occlusion.
     minimized: bool,
     /// The window took the last frame.
     frame_shown: bool,
-    frame_index: u64,
     last_frame: f64,
     /// Seconds the HUD's state has advanced since its last refresh.
     hud_dt: f64,
@@ -319,14 +353,14 @@ impl ApplicationHandler for App {
         let DeviceEvent::MouseMotion { delta } = event else {
             return;
         };
-        let (controls, grabbed) = match &mut self.mode {
-            Some(Mode::Single(session)) => (&mut session.controls, session.cursor_grabbed),
-            Some(Mode::Room(room)) => (&mut room.controls, room.cursor_grabbed),
+        let input = match &mut self.mode {
+            Some(Mode::Single(session)) => &mut session.input,
+            Some(Mode::Room(room)) => &mut room.input,
             None => return,
         };
-        if grabbed {
+        if input.cursor_grabbed {
             // Like the page's `movementX`: macOS reports points, Windows raw counts.
-            controls.look(delta.0);
+            input.controls.look(delta.0);
         }
     }
 
@@ -337,6 +371,21 @@ impl ApplicationHandler for App {
         match &self.mode {
             Some(Mode::Single(session)) => session.window.request_redraw(),
             Some(Mode::Room(room)) => room.window.request_redraw(),
+            None => {}
+        }
+    }
+
+    /// iOS takes the screen away for a moment (Control Center, the app switcher, a
+    /// call): fingers let go and single player pauses, as a hidden window does.
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        match &mut self.mode {
+            Some(Mode::Single(session)) => {
+                session.input.controls.clear();
+                if session.in_round && session.phase == MatchPhase::Playing {
+                    session.apply(Action::Pause);
+                }
+            }
+            Some(Mode::Room(room)) => room.input.controls.clear(),
             None => {}
         }
     }
@@ -388,19 +437,16 @@ impl ApplicationHandler for App {
 impl Session {
     fn new(event_loop: &ActiveEventLoop, options: &Options) -> Result<Self, String> {
         let prefs = Preferences::load();
-        let mut attributes = Window::default_attributes()
-            .with_title("Sloppy Tanks")
-            .with_inner_size(WINDOW_SIZE)
-            .with_min_inner_size(MIN_WINDOW_SIZE)
-            .with_window_icon(window_icon());
-        if prefs.fullscreen {
-            attributes = attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
-        }
         let window = Arc::new(
             event_loop
-                .create_window(attributes)
+                .create_window(window_attributes(&prefs))
                 .map_err(|error| error.to_string())?,
         );
+        #[cfg(target_os = "ios")]
+        {
+            crate::ios::attach_to_scene(&window);
+            crate::ios::listen_for_keys(&window);
+        }
         let mut rooms = RoomsState::default();
         if let Some(directory) = &options.directory {
             rooms.directory.clone_from(directory);
@@ -431,7 +477,7 @@ impl Session {
             frame_log,
             autoplay,
         } = shell;
-        let size = window.inner_size();
+        let size = drawable_size(&window);
         let target = RenderTarget {
             window: wgpu::SurfaceTarget::from(window.clone()),
             width: size.width,
@@ -461,8 +507,7 @@ impl Session {
             window,
             game,
             overlay,
-            controls: Controls::default(),
-            modifiers: ModifiersState::default(),
+            input: WindowInput::default(),
             ui: UiState {
                 hud: Some(hud),
                 status: "Building the arena…".into(),
@@ -480,11 +525,9 @@ impl Session {
             phase: MatchPhase::Ready,
             alive: true,
             first_person: prefs.first_person,
-            cursor_grabbed: false,
             occluded: false,
             minimized: false,
             frame_shown: true,
-            frame_index: 0,
             last_frame: now_ms(),
             hud_dt: 0.0,
             failure: None,
@@ -531,13 +574,15 @@ impl Session {
         if let WindowEvent::RedrawRequested = event {
             return self.redraw();
         }
-        let battle =
-            self.in_round && self.phase == MatchPhase::Playing && self.ui.settings_draft.is_none();
-        let keys_to_menus = !battle || self.overlay.typing();
-        let consumed = self
-            .overlay
-            .event(event, !self.cursor_grabbed, keys_to_menus);
-        let playing = self.in_round && self.phase == MatchPhase::Playing && self.alive;
+        let battle = self.battle();
+        let request = self
+            .input
+            .event(&self.window, &mut self.overlay, event, &battle);
+        if let Some(request) = request
+            && self.request(request)
+        {
+            return true;
+        }
         match event {
             WindowEvent::CloseRequested => return true,
             WindowEvent::Resized(size) => {
@@ -552,59 +597,47 @@ impl Session {
             }
             // Like the page's blur: held keys let go, the round plays on.
             WindowEvent::Focused(false) => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.hold_pointer();
-            }
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = modifiers.state();
-                self.controls.set_command(
-                    self.modifiers.super_key()
-                        || self.modifiers.control_key()
-                        || self.modifiers.alt_key(),
-                );
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Typing goes to the field; a release still reaches the controls, so
-                // a key held when a field took focus never sticks.
-                if self.overlay.typing() && event.state == ElementState::Pressed {
-                    return false;
-                }
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    if code == KeyCode::KeyQ && self.modifiers.super_key() {
-                        return true;
-                    }
-                    let shortcut = self.controls.key(code, event.state, event.repeat, playing);
-                    if let Some(shortcut) = shortcut {
-                        self.shortcut(shortcut);
-                    }
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let size = self.window.inner_size();
-                self.controls.aim_at(
-                    (position.x, position.y),
-                    (f64::from(size.width), f64::from(size.height)),
-                );
-            }
-            // A press on a menu or the HUD's buttons is not a shot; a release always
-            // reaches the controls, so fire never sticks.
-            WindowEvent::MouseInput { state, button, .. }
-                if *state == ElementState::Released
-                    || (playing
-                        && (self.cursor_grabbed
-                            || !(consumed || self.overlay.wants_pointer()))) =>
-            {
-                self.controls.button(*button, *state);
-            }
-            WindowEvent::MouseWheel { delta, .. }
-                if !self.overlay.wants_pointer() && self.in_round =>
-            {
-                self.controls
-                    .wheel(*delta, self.modifiers.shift_key(), playing);
             }
             _ => {}
         }
         false
+    }
+
+    /// Where the battle stands, for the window's input.
+    fn battle(&self) -> Battle {
+        let playing = self.in_round && self.phase == MatchPhase::Playing;
+        Battle {
+            keys: playing && self.ui.settings_draft.is_none(),
+            playing: playing && self.alive,
+            wheel: self.in_round,
+            touch: Play::live(
+                &self.overlay.context,
+                self.touch_live(),
+                self.first_person,
+                self.ui.hud.as_ref(),
+            ),
+        }
+    }
+
+    /// Whether the touch controls show: the player can act, with no dialog open.
+    fn touch_live(&self) -> bool {
+        self.in_round
+            && self.phase == MatchPhase::Playing
+            && self.alive
+            && self.ui.settings_draft.is_none()
+    }
+
+    /// Do what input asked; true when the app should quit.
+    fn request(&mut self, request: Request) -> bool {
+        match request {
+            Request::Quit => true,
+            Request::Shortcut(shortcut) => {
+                self.shortcut(shortcut);
+                false
+            }
+        }
     }
 
     /// Whether the window can show nothing: covered, or minimized.
@@ -615,7 +648,7 @@ impl Session {
     /// Like a hidden page, a hidden window pauses the round and lets the cursor go.
     fn hidden_changed(&mut self) {
         if self.hidden() {
-            self.controls.clear();
+            self.input.controls.clear();
             if self.in_round && self.phase == MatchPhase::Playing {
                 self.apply(Action::Pause);
             }
@@ -650,11 +683,8 @@ impl Session {
 
     /// Render at the window's size in points times its scale (the engine caps it).
     fn resize(&mut self) {
-        let size = self.window.inner_size();
-        let scale = self.window.scale_factor();
-        let logical = size.to_logical::<f64>(scale);
-        self.game
-            .resize(logical.width, logical.height, scale, false);
+        let (width, height, scale) = css_size(&self.window);
+        self.game.resize(width, height, scale, false);
     }
 
     fn apply(&mut self, action: Action) {
@@ -669,14 +699,14 @@ impl Session {
                 }
             }
             Action::Resume => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.game.resume();
                 self.refresh_hud();
             }
             Action::Pause => {
                 if self.phase == MatchPhase::Playing {
                     self.game.pause();
-                    self.controls.clear();
+                    self.input.controls.clear();
                     self.refresh_hud();
                 }
             }
@@ -685,7 +715,7 @@ impl Session {
                 self.refresh_hud();
             }
             Action::BattleSetup => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.game.restart();
                 self.in_round = false;
                 self.ui.reset_feedback();
@@ -703,7 +733,7 @@ impl Session {
             }
             Action::SelectAmmo(slot) => {
                 if self.phase == MatchPhase::Playing && self.alive {
-                    self.controls.select_ammo(slot);
+                    self.input.controls.select_ammo(slot);
                 }
             }
             Action::ToggleView => {
@@ -712,10 +742,7 @@ impl Session {
             }
             Action::ToggleFullscreen => {
                 let fullscreen = self.window.fullscreen().is_none();
-                self.window
-                    .set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
-                self.prefs.fullscreen = fullscreen;
-                self.prefs.save();
+                set_fullscreen(&self.window, &mut self.prefs, fullscreen);
             }
             Action::OpenSettings => {
                 if self.in_round && self.phase == MatchPhase::Playing {
@@ -761,20 +788,14 @@ impl Session {
             audio.set_volume(self.prefs.volume);
         }
         if old.fullscreen != self.prefs.fullscreen {
-            self.window.set_fullscreen(
-                self.prefs
-                    .fullscreen
-                    .then_some(Fullscreen::Borderless(None)),
-            );
+            let fullscreen = self.prefs.fullscreen;
+            set_fullscreen(&self.window, &mut self.prefs, fullscreen);
         }
         self.prefs.save();
     }
 
     fn save_camera(&mut self) {
-        let camera = self.game.camera();
-        self.prefs.first_person = camera.first_person;
-        self.prefs.zoom = Some(camera.zoom);
-        self.prefs.save();
+        self.prefs.save_camera(self.game.camera());
     }
 
     fn refresh_hud(&mut self) {
@@ -790,7 +811,7 @@ impl Session {
         self.in_round = true;
         self.ui.starting = false;
         self.ui.reset_feedback();
-        self.controls.clear();
+        self.input.controls.clear();
         self.hud_dt = 0.0;
         self.game.start();
         if self.audio.is_none() {
@@ -857,7 +878,7 @@ impl Session {
 
     /// One engine frame of the round; its events and HUD reach the screens.
     fn battle_frame(&mut self, now: f64) -> Result<(), String> {
-        let input = self.controls.take_input();
+        let input = self.input.take_input(self.first_person);
         let zoomed = input.zoom != 0.0;
         let result = self.game.frame(now, &input.pack())?;
         self.parts.engine = now_ms() - now;
@@ -878,7 +899,7 @@ impl Session {
         let viewer = (slot(frame_slot::VIEWER_X), slot(frame_slot::VIEWER_Y));
         self.ui.viewer = (viewer.0.is_finite() && viewer.1.is_finite()).then_some(viewer);
         if slot(frame_slot::CLEAR_INPUT) == 1.0 {
-            self.controls.clear();
+            self.input.controls.clear();
         }
         if slot(frame_slot::EVENTS) > 0.0 {
             let batch = self.game.take_events();
@@ -913,7 +934,7 @@ impl Session {
             && self.ui.settings_draft.is_none()
             && self.window.has_focus()
             && !self.hidden();
-        grab_pointer(&self.window, wanted, &mut self.cursor_grabbed);
+        self.input.hold_pointer(&self.window, wanted);
     }
 
     /// Run a frame and show it; true when the player chose to quit.
@@ -921,6 +942,14 @@ impl Session {
         let now = now_ms();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        let playing = self.battle().playing;
+        let mut quit = false;
+        for request in self
+            .input
+            .hardware_keys(&self.window, &self.overlay, playing)
+        {
+            quit |= self.request(request);
+        }
         // A window that takes no frames only looks for its window again: engine frames
         // there would count as slow ones and lower Auto's graphics quality.
         if !self.frame_shown && self.in_round && self.phase == MatchPhase::Playing {
@@ -939,19 +968,16 @@ impl Session {
                 self.failure = Some(error);
             }
         }
-        self.frame_index += 1;
         if !self.in_round {
             self.ui.tick(frame_dt);
         } else if self.phase != MatchPhase::Playing {
             self.ui.tick(0.0);
         }
-        if self.ui.show_nerd_stats
-            && self.debug_tools()
-            && self.frame_index.is_multiple_of(STATS_EVERY_FRAMES)
-        {
+        if self.ui.stats_due(now, self.debug_tools()) {
             self.ui.stats = Some(self.game.nerd_stats());
         }
         self.hold_pointer();
+        self.ui.touch = self.input.touch_view(self.touch_live(), self.first_person);
         let view = ui::View {
             in_round: self.in_round,
             phase: self.phase,
@@ -981,7 +1007,6 @@ impl Session {
             let scene = self.game.renderer().scene_size();
             log.frame(&self.parts, target, scene, self.game.gpu_ms());
         }
-        let mut quit = false;
         for action in actions {
             quit |= action == Action::Quit;
             self.apply(action);
@@ -1011,7 +1036,36 @@ pub fn grab_pointer(window: &Window, wanted: bool, grabbed: &mut bool) {
     }
 }
 
+/// A resizable window at its first size, or fullscreen as the player left it.
+#[cfg(not(target_os = "ios"))]
+fn window_attributes(prefs: &Preferences) -> WindowAttributes {
+    let attributes = Window::default_attributes()
+        .with_title("Sloppy Tanks")
+        .with_inner_size(WINDOW_SIZE)
+        .with_min_inner_size(MIN_WINDOW_SIZE)
+        .with_window_icon(window_icon());
+    if prefs.fullscreen {
+        attributes.with_fullscreen(Some(Fullscreen::Borderless(None)))
+    } else {
+        attributes
+    }
+}
+
+/// The iPad's whole screen, held sideways (the menus and HUD need a landscape
+/// window), with no status bar; the system's edge swipes wait for a second swipe, so a
+/// thumb on the stick or the toolbar stays in the game.
+#[cfg(target_os = "ios")]
+fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
+    use winit::platform::ios::{ScreenEdge, ValidOrientations, WindowAttributesExtIOS};
+    Window::default_attributes()
+        .with_valid_orientations(ValidOrientations::Landscape)
+        .with_prefers_status_bar_hidden(true)
+        .with_prefers_home_indicator_hidden(true)
+        .with_preferred_screen_edges_deferring_system_gestures(ScreenEdge::ALL)
+}
+
 /// The window's icon (Windows and Linux show it; macOS takes the bundle's).
+#[cfg(not(target_os = "ios"))]
 fn window_icon() -> Option<winit::window::Icon> {
     let image = image::load_from_memory(crate::assets::file("icons/icon-192.png")?).ok()?;
     let image = image.into_rgba8();

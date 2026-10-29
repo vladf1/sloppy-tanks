@@ -7,8 +7,27 @@
 use sloppy_core::sim::ammunition::{AMMO_ORDER, AMMO_SCROLL_INTERVAL_MS};
 use sloppy_core::sim::{AmmoSelection, VehicleCommand};
 
-/// Metres of zoom per Shift + wheel notch (the page's `ZOOM_STEP`, `controls.ts`).
+/// Metres of zoom per Shift + wheel notch or touch zoom key (the page's `ZOOM_STEP`,
+/// `controls.ts`).
 pub const ZOOM_STEP: f64 = 2.0;
+
+/// The touch drive stick (`touch-input.ts`): CSS pixels (points) from its origin to a
+/// full push, how far a touch off its centre moves that origin under the thumb, and the
+/// share of a full push that drives nothing, so a resting thumb stays put.
+pub const STICK_RADIUS: f32 = 58.0;
+pub const STICK_ANCHOR_SHIFT: f32 = 22.0;
+pub const STICK_DEAD_ZONE: f64 = 0.12;
+
+/// The drive a stick pushed `(x, y)` stick radii from its origin gives (x right, z
+/// down): its direction, at a speed rising from the dead zone's edge to full at the rim.
+pub fn stick_push(x: f64, y: f64) -> (f64, f64) {
+    let distance = x.hypot(y);
+    if distance == 0.0 {
+        return (0.0, 0.0);
+    }
+    let speed = ((distance.min(1.0) - STICK_DEAD_ZONE) / (1.0 - STICK_DEAD_ZONE)).max(0.0);
+    (x / distance * speed, y / distance * speed)
+}
 
 /// Slots of the packed input frame. Booleans are 0 or 1.
 pub mod slot {

@@ -13,7 +13,12 @@ const SPEED_NOTES: Record<SpeedKey, string> = {
   "tank-speed": "How fast every tank drives",
   "bullet-speed": "How fast shells and rockets fly",
 };
+// The desktop app's Settings use the same values (`crates/web/src/catalog.rs` and core's
+// speed range), pinned by `tests/page-catalog.test.ts`.
 const DEFAULT_VOLUME = 0.6;
+/** The battle speeds' range, and the step the sliders move in. */
+const SPEED_RANGE = [0.5, 2];
+const SLIDER_STEP = 0.05;
 /** The touch preference's choices. */
 const TOUCH_MODES = [
   ["auto", "Auto"],
@@ -120,7 +125,7 @@ function settingsMarkup(eyebrow: string, speeds: boolean): string {
   const speedRows = (Object.keys(SPEED_LABELS) as SpeedKey[])
     .map(
       (key) =>
-        `<label class="setting-row slider-row" for="${key}"><span>${SPEED_LABELS[key]}<small>${SPEED_NOTES[key]}</small></span><input id="${key}" type="range" min="0.5" max="2" step="0.05" value="1" style="${defaultMark(0.5, 2, 1)}" title="Default 100%"><output id="${key}-value" for="${key}">100%</output>${sliderScale("Slower", "Faster", defaultMark(0.5, 2, 1))}</label>`,
+        `<label class="setting-row slider-row" for="${key}"><span>${SPEED_LABELS[key]}<small>${SPEED_NOTES[key]}</small></span><input id="${key}" type="range" min="${SPEED_RANGE[0]}" max="${SPEED_RANGE[1]}" step="${SLIDER_STEP}" value="1" style="${defaultMark(SPEED_RANGE[0], SPEED_RANGE[1], 1)}" title="Default 100%"><output id="${key}-value" for="${key}">100%</output>${sliderScale("Slower", "Faster", defaultMark(SPEED_RANGE[0], SPEED_RANGE[1], 1))}</label>`,
     )
     .join("");
   // The dialog itself takes focus when it opens, so no control starts out ringed as if
@@ -130,7 +135,7 @@ function settingsMarkup(eyebrow: string, speeds: boolean): string {
     <header class="dialog-head"><div class="dialog-eyebrow"><span class="eyebrow">${eyebrow}</span></div><div class="dialog-title"><h2 id="settings-title">SETTINGS</h2></div></header>
     <div class="setting-rows">
     <div class="setting-group-label"><span>SOUND &amp; INPUT</span></div>
-    <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="0.05" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output>${sliderScale("Mute", "Loud", defaultMark(0, 1, DEFAULT_VOLUME))}</label>
+    <label class="setting-row slider-row" for="volume"><span>Sound<small>Effects and engine noise</small></span><input id="volume" type="range" min="0" max="1" step="${SLIDER_STEP}" style="${defaultMark(0, 1, DEFAULT_VOLUME)}"><output id="volume-value" for="volume"></output>${sliderScale("Mute", "Loud", defaultMark(0, 1, DEFAULT_VOLUME))}</label>
     ${choiceRow("touch-mode", "Touch controls", "Auto shows them on touchscreens", TOUCH_MODES)}
     <div class="setting-group-label"><span>DISPLAY</span></div>
     ${choiceRow("graphics", "Graphics", "Auto keeps the frame rate smooth", GRAPHICS_SETTINGS)}

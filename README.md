@@ -54,7 +54,8 @@ To try a build on a phone or tablet, `pnpm run tunnel` builds the game and print
 ## Play
 
 The game also comes as a desktop app for Apple silicon Macs and Windows: download it
-from the [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest).
+from the [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest). The
+same app builds for iPad (see [iPad](#ipad)).
 
 Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 
@@ -240,7 +241,8 @@ keep the full release optimization. CI keeps separate caches for these compiler 
 each PR's first app build seeds its ThinLTO cache, and later pushes reuse it. Release
 builds use the fat-LTO cache from main. `cargo run -p sloppy-desktop` works for quick local
 tries, but servers refuse its unstamped content version. The
-[Desktop app workflow](.github/workflows/desktop.yml) builds both on pull requests that
+[Desktop app workflow](.github/workflows/desktop.yml) builds both, and the iPad app for
+the simulator, on pull requests that
 touch the crates or assets and on main, and keeps them as run artifacts, along with Cargo's
 compilation timing reports. macOS clippy and shell tests run alongside the app builds in
 the `desktop-check` profile, without optimizing the GPU and window dependencies, while
@@ -254,6 +256,28 @@ names that stay the same, so these links always fetch the newest:
 and [Windows](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-Windows.exe).
 The release job publishes only a Mac app and package that carry a stapled notarization
 ticket.
+
+### iPad
+
+The same crate builds as an iPad app (iPadOS 16 or newer, landscape, full screen), with
+the web edition's tablet touch controls: the drive stick in the bottom-left corner, a
+finger on the arena to aim and fire, and the mine button with − / + zoom in the
+bottom-right corner. A hardware keyboard plays as on a Mac (arrows or WASD, Space, 1–5,
+Q/E, V). There is no Quit or fullscreen, and single player pauses when the app leaves the
+screen. It needs a Mac with Xcode:
+
+```sh
+pnpm run ipad                         # artifacts/ipad/: Sloppy Tanks.app and an .ipa for devices
+pnpm run ipad -- --install            # also install and open it on the connected iPad
+pnpm run ipad:simulator -- --install  # artifacts/ipad-simulator/, opened in an iPad simulator
+```
+
+A device build is signed with an Apple Development identity and the provisioning profile
+Xcode keeps for the bundle identifier (the team's wildcard profile covers it), and
+installs only on the devices that profile lists; `SLOPPY_IOS_PROFILE` and
+`SLOPPY_IOS_IDENTITY` choose others, and `SLOPPY_IOS_DEVICE` the iPad to install on.
+Simulator builds need no signing. Like the Mac app it carries the content version, so it
+joins the same multiplayer servers.
 
 Mac builds from main, and local ones on a Mac holding the Developer ID certificates and
 a `notarytool` profile, are signed and notarized, so the `.pkg` and the zip open without
