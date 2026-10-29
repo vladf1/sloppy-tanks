@@ -167,10 +167,54 @@ async fn single_player(shell: Shell) -> Option<Mode> {
     match session {
         Ok(session) => Some(Mode::Single(Box::new(session))),
         Err(error) => {
-            eprintln!("Sloppy Tanks could not start: {error}");
+            startup_failed(&error);
             None
         }
     }
+}
+
+/// No engine could start: natively the app ends, saying why on stderr. A browser can
+/// offer a WebGPU adapter and still fail to make the engine's device, so a page's WebGPU
+/// build hands over to its WebGL2 one (`index.html` loads that for `?webgl`), as the
+/// page's engine fell back before; otherwise the page says why, in place of the canvas.
+fn startup_failed(error: &str) {
+    eprintln!("Sloppy Tanks could not start: {error}");
+    #[cfg(target_arch = "wasm32")]
+    {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        web_sys::console::error_1(&format!("Sloppy Tanks could not start: {error}").into());
+        let location = window.location();
+        if cfg!(not(feature = "webgl"))
+            && let Ok(url) = location.href().and_then(|href| web_sys::Url::new(&href))
+            && !url.search_params().has("webgl")
+        {
+            url.search_params().append("webgl", "");
+            if location.replace(&url.href()).is_ok() {
+                return;
+            }
+        }
+        if let Some(body) = window.document().and_then(|document| document.body()) {
+            body.set_text_content(Some(&format!(
+                "Sloppy Tanks could not start in this browser: {error}"
+            )));
+            let _ = body.set_attribute("style", STARTUP_FAILURE_STYLE);
+        }
+    }
+}
+
+/// The page's words when no engine could start: light on the backdrop, wrapped.
+#[cfg(target_arch = "wasm32")]
+const STARTUP_FAILURE_STYLE: &str =
+    "color:#f4f9ff;font:16px/1.5 system-ui,sans-serif;padding:24px;white-space:pre-wrap";
+
+/// The page's browser, by its user agent string.
+#[cfg(target_arch = "wasm32")]
+fn user_agent() -> String {
+    web_sys::window()
+        .and_then(|window| window.navigator().user_agent().ok())
+        .unwrap_or_default()
 }
 
 /// The room Battle Setup chose; Battle Setup again, saying why, when it fails.
@@ -314,6 +358,9 @@ pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
             DeviceClass::Desktop
         },
         shell: sloppy_web::Shell::Desktop,
+        // A page in WebKit holds the GPU's backlog to two frames itself.
+        #[cfg(target_arch = "wasm32")]
+        frames_in_flight: sloppy_web::frame_clock::browser_frames_in_flight(&user_agent()),
         ..ViewConfig::default()
     }
 }
@@ -421,7 +468,7 @@ impl ApplicationHandler for App {
         let started = match Session::shell(event_loop, &self.options) {
             Ok(shell) => self.launch(single_player(shell)),
             Err(error) => {
-                eprintln!("Sloppy Tanks could not start: {error}");
+                startup_failed(&error);
                 false
             }
         };

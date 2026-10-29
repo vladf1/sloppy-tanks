@@ -39,7 +39,8 @@
   <body>
     <noscript>This game needs JavaScript enabled to load the arena.</noscript>
     <!-- The desktop app's egui shell built for the page (`pnpm run wasm`): on WebGPU, or
-         its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it).
+         its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it;
+         the WebGPU build reloads with it when its engine cannot start after all).
          It fetches the textures from the site beside this page. -->
     <script type="module">
       const forceWebgl = new URLSearchParams(location.search).has("webgl");
