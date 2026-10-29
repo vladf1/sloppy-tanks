@@ -74,10 +74,16 @@ opt-level = "s"
 opt-level = 3
 
 # The native multiplayer server favors speed and keeps unwinding, so one room's
-# panic can be contained without ending every other room in the process.
+# panic can be contained without ending every other room in the process. Thin LTO over
+# 16 codegen units rather than release's fat LTO in one rebuilt the musl server after a
+# server-only change in about 6 s instead of 35, and a room's server work
+# (capture_benchmark) stayed within noise: +1% on an M-series Mac, +0.9% ± 8% on the
+# dev VPS.
 [profile.server]
 inherits = "release"
 opt-level = 3
+lto = "thin"
+codegen-units = 16
 panic = "unwind"
 strip = false
 
