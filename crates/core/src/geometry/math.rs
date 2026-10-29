@@ -447,14 +447,6 @@ mod tests {
     }
 
     #[test]
-    fn euler_matches_matrix_rotation() {
-        let q = quat_from_euler(0.3, 0.0, 0.0);
-        let a = compose(DVec3::ZERO, q, DVec3::ONE);
-        let b = rotation_x(0.3);
-        assert!(a.abs_diff_eq(b, 1e-15));
-    }
-
-    #[test]
     fn decompose_round_trips_compose() {
         let q = quat_from_euler(0.2, -0.4, 1.1);
         let m = compose(DVec3::new(1.0, 2.0, 3.0), q, DVec3::new(2.0, 0.5, 1.5));

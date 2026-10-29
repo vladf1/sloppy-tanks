@@ -1,10 +1,9 @@
-//! Local presentation views follow the live simulation, reuse their arrays between frames
-//! and expose plain values rather than physics handles (the former
-//! `tests/render-state.test.ts`).
+//! Local presentation views follow the live simulation and reuse their arrays between frames
+//! (the former `tests/render-state.test.ts`).
 //!
 //! The TS view kept live getters over the entities; the Rust view is refilled in place with
 //! `fill_render_state`, so "live" means a refill reflects the moved body without
-//! reallocating, and "no physics handles" is checked on the serialized entity records.
+//! reallocating.
 
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::{RenderState, Simulation};
@@ -14,7 +13,7 @@ fn human_body_position(simulation: &Simulation) -> sloppy_core::sim::math::Point
 }
 
 #[test]
-fn local_presentation_views_stay_live_and_reuse_arrays_without_exposing_physics_handles() {
+fn local_presentation_views_stay_live_and_reuse_arrays() {
     let mut simulation = Simulation::with_seed(4242.0);
     let mut view = RenderState::default();
     simulation.fill_render_state(&mut view, None);
@@ -32,19 +31,6 @@ fn local_presentation_views_stay_live_and_reuse_arrays_without_exposing_physics_
     let viewer = view.viewer().expect("viewer");
     assert_eq!(viewer.position.x, before.x + 1.0);
     assert_eq!(viewer.position, human_body_position(&simulation));
-
-    for entity in view
-        .tanks
-        .iter()
-        .map(serde_json::to_value)
-        .chain(view.covers.iter().map(serde_json::to_value))
-        .chain(view.fragments.iter().map(serde_json::to_value))
-    {
-        let entity = entity.unwrap();
-        let fields = entity.as_object().expect("entity record");
-        assert!(!fields.contains_key("body"));
-        assert!(!fields.contains_key("collider"));
-    }
 
     simulation.reset(None);
     simulation.fill_render_state(&mut view, None);

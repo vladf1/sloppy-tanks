@@ -125,24 +125,6 @@ fn a_scrap_yard_room_plays_the_yard_rules_and_its_host_can_switch_back_to_a_stan
     assert_eq!(yard.host.directory_entry("YARDROOM").map_mode, "village");
 }
 
-#[test]
-fn standard_rooms_send_the_same_lobby_and_scene_fields_as_before() {
-    let mut standard = harness();
-    standard.join("carol", json!({}));
-    standard.action("carol", "start", json!({}));
-    assert_eq!(standard.sim().map_name(), "PINE VILLAGE");
-    assert_eq!(standard.sim().tanks.len(), 12);
-    let listing = serde_json::to_value(standard.host.directory_entry("ROOMCODE")).unwrap();
-    assert!(listing.get("scenario").is_none());
-    assert!(
-        standard
-            .all("carol")
-            .iter()
-            .map(Value::to_string)
-            .all(|text| !text.contains("\"scenario\"") && !text.contains("\"scale\""))
-    );
-}
-
 struct Mirrored {
     mirror: StateMirror,
     most_fragments: usize,

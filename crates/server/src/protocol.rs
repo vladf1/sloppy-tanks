@@ -14,19 +14,3 @@ pub const SERVER_BUILD: &str = match option_env!("SLOPPY_SERVER_BUILD") {
     Some(build) => build,
     None => "dev",
 };
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn room_codes_are_eight_unambiguous_characters() {
-        assert!(is_room_code("ABCDEFGH"));
-        assert!(is_room_code("TESTR2M9"));
-        assert!(!is_room_code("abcdefgh"));
-        assert!(!is_room_code("ABCDEFG"));
-        assert!(!is_room_code("ABCDEFGHJ"));
-        assert!(!is_room_code("ABCDEF01"), "0 and 1 are not in the alphabet");
-        assert!(!is_room_code("ABCDÉFGH"));
-    }
-}

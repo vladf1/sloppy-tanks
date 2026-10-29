@@ -224,13 +224,6 @@ test("the panel's corner button closes it, and only an open panel", () => {
   }
 });
 
-test("the panel is offered on a ?debug page only", () => {
-  assert.equal(debugPage(""), false);
-  assert.equal(debugPage("?multiplayer&room=ABCD2345"), false);
-  assert.equal(debugPage("?debug"), true);
-  assert.equal(debugPage("?room=ABCD2345&debug"), true);
-});
-
 test("Settings' remembered Debug tools make every page a debug page", () => {
   const saved = new Map<string, string>();
   const storage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");

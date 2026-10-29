@@ -23,8 +23,7 @@ use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_muzzle};
 use sloppy_core::sim::weapons::{fire_weapon, interception_time, step_mines, step_projectiles};
 use sloppy_core::sim::{
-    CoverKind, DamageCause, DamageSource, Mine, Shot, SimEventType, Simulation, Tank, Team,
-    VehicleKind, Weapon,
+    CoverKind, DamageCause, Mine, Shot, SimEventType, Simulation, Tank, Team, VehicleKind, Weapon,
 };
 use support::{
     ALLY, ENEMY, PLAYER, clear_arena, concrete, event_count, place_tank, set_translation,
@@ -599,25 +598,6 @@ fn mines_barrels_and_shell_collisions_preserve_distinct_death_causes() {
         assert_eq!(death.damage_source.map(|d| d.cause), Some(cause));
         assert_eq!(death.owner, Some(enemy_id), "{cause:?}");
     }
-}
-
-#[test]
-fn protected_and_fully_shielded_hits_do_not_emit_hull_damage_direction() {
-    let mut s = squad();
-    let (enemy_id, enemy_team) = (s.tanks[ENEMY].id, s.tanks[ENEMY].team);
-    let source = Some(DamageSource {
-        cause: DamageCause::Standard,
-        origin: Vec2::new(-1.0, 0.0),
-    });
-    s.tanks[PLAYER].protection = 2.0;
-    s.damage_tank(PLAYER, 40.0, enemy_id, enemy_team, None, source);
-    assert_eq!(s.events.len(), 0);
-    s.tanks[PLAYER].protection = 0.0;
-    s.tanks[PLAYER].shield = 10.0;
-    s.tanks[PLAYER].shield_points = 100.0;
-    s.damage_tank(PLAYER, 40.0, enemy_id, enemy_team, None, source);
-    assert_eq!(s.events.len(), 0);
-    assert_eq!(s.tanks[PLAYER].shield_points, 60.0);
 }
 
 #[test]

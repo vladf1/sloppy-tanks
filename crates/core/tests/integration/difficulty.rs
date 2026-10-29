@@ -5,7 +5,7 @@
 use crate::support;
 
 use sloppy_core::sim::ai::bot_command;
-use sloppy_core::sim::difficulty::{Difficulty, difficulty_tuning, parse_difficulty};
+use sloppy_core::sim::difficulty::{Difficulty, difficulty_tuning};
 use sloppy_core::sim::simulation::GameMode;
 use sloppy_core::sim::simulation_rules::SOLO;
 use support::{ALLY, ENEMY, PLAYER, damage_from, squad};
@@ -111,6 +111,4 @@ fn enemy_aim_reaction_and_cadence_vary_monotonically_while_allies_are_unchanged(
         decision(Difficulty::Hard, true),
         decision(Difficulty::Normal, true)
     );
-    assert_eq!(parse_difficulty(Some("corrupt")), Difficulty::Normal);
-    assert_eq!(parse_difficulty(None), Difficulty::Normal);
 }

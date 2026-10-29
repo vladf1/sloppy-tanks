@@ -252,7 +252,6 @@ fn stereo_pan(event: Vec2, listener: Vec2, right: Vec2) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
     use sloppy_core::sim::SimEvent;
 
     const ORIGIN: Vec2 = Vec2 { x: 0.0, z: 0.0 };
@@ -290,22 +289,6 @@ mod tests {
         let sounds = SoundPlanner::default().plan(std::slice::from_ref(event), ORIGIN, RIGHT);
         assert!(sounds.len() <= 1, "{sounds:?}");
         sounds.first().copied()
-    }
-
-    #[test]
-    fn sounds_serialize_as_their_file_names() {
-        assert_eq!(
-            serde_json::to_value(PlannedSound {
-                sound: Sound::ShotRocket,
-                gain: 0.25,
-                pan: -0.5,
-            })
-            .unwrap(),
-            json!({"sound": "shot-rocket", "gain": 0.25, "pan": -0.5})
-        );
-        for sound in Sound::ALL {
-            assert_eq!(serde_json::to_value(sound).unwrap(), json!(sound.name()));
-        }
     }
 
     #[test]

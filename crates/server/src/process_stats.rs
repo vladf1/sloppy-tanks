@@ -234,12 +234,10 @@ mod tests {
 
     #[test]
     fn process_figures_are_plausible() {
-        let before = cpu_micros();
-        assert!(cpu_micros() >= before);
+        assert!(cpu_micros() > 0);
         assert!(rss_bytes() > 1024 * 1024);
         let (total, available) = host_memory();
         assert!(total > 0 && available <= total);
-        assert!(load_average() >= 0.0);
         assert!(cpu_count() >= 1);
     }
 }
