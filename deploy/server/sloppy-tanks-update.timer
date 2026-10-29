@@ -1,6 +1,7 @@
-# Auto-update: provision.sh enables it on production unless `server:auto-update off` was run.
+# Auto-update: bootstrap.sh enables it, and on dev replaces the interval with 10 seconds;
+# `server:auto-update off` stops it until `on` or the machine is created again.
 [Unit]
-Description=Check for a new production server image every two minutes
+Description=Check for a new server image every two minutes
 
 [Timer]
 OnBootSec=2min

@@ -59,18 +59,7 @@ try {
       base,
       /** Show an event about the player, then the HUD it left. */
       announce(hud, fields) {
-        event(
-          {
-            id: hud.human.id,
-            x: 0,
-            z: 0,
-            own: true,
-            playerHit: false,
-            damageAngle: null,
-            ...fields,
-          },
-          hud,
-        );
+        event({ id: hud.human.id, own: true, damageAngle: null, ...fields }, hud);
         update(hud, 0, true);
       },
       restore() {
@@ -85,6 +74,28 @@ try {
         update(hud, 0, true);
         return hud;
       },
+      /** The feedback the engine attaches to the viewer's death by `killer` (null for
+       * its own ordnance) with `cause` (`crates/web/src/feedback.rs`). */
+      deathFeedback(killer, cause, weapon, sentence) {
+        return {
+          deathReport: {
+            killer,
+            self: killer === null,
+            weapon,
+            icon: cause,
+            ...(killer === null ? {} : { killerTeam: 1, killerTally: "Their 1st kill" }),
+            sentence,
+          },
+          feed: {
+            names: [killer ?? "YOU", "YOU"],
+            sides: [killer === null ? "blue" : "red", "blue"],
+            cause,
+            icon: cause,
+            ownKill: false,
+            ownDeath: true,
+          },
+        };
+      },
     };
   });
 
@@ -93,21 +104,21 @@ try {
       alive: true,
       hp: 18,
       healthRatio: 0.18,
-      healthColor: 0xff6655,
       rank: 2,
       rankName: "Elite",
-      rankDamage: 1.2,
-      rankFireRate: 1.15,
-      rankHealth: 1.15,
-      rankRepair: 0.01,
-      repairDelay: 5,
-      protection: 0,
-      shield: 4.2,
-      shieldPoints: 80,
-      rapid: 3.2,
-      speed: 2.2,
-      laser: 1.2,
-      selfRepair: true,
+      // The engine's words for an Elite tank at 18% hull with every effect running
+      // (`crates/web/src/hud.rs`).
+      hullTone: "critical",
+      hullRamp: 0xff4d5e,
+      rankTitle:
+        "+20% damage · +15% fire rate · +15% hull · repairs 1% hull/s after 5s out of combat",
+      effects: [
+        { kind: "shield", name: "SHIELD", detail: "80 HP · 5s", share: 1 },
+        { kind: "rapid", name: "RAPID", detail: "4s", share: 0.8 },
+        { kind: "boost", name: "BOOST", detail: "3s", share: 0.6 },
+        { kind: "laser", name: "LASER DEFENSE", detail: "2s", share: 0.4 },
+        { kind: "repair", name: "SELF-REPAIR", detail: "", share: 1 },
+      ],
     });
   });
   assert.equal(
@@ -133,12 +144,16 @@ try {
     const hud = structuredClone(fixture.base);
     Object.assign(hud.human, { alive: false, hp: 0, healthRatio: 0, respawn: 2.4 });
     const owner = Math.max(...hud.scoreboard.map((tank) => tank.id)) + 1;
-    hud.scoreboard.push({ id: owner, name: "Rival <b>literal</b>", team: 1, kills: 1, deaths: 0 });
+    hud.scoreboard.push({ id: owner, name: "Rival <b>literal</b>", kills: 1, deaths: 0 });
     fixture.announce(hud, {
       type: "death",
-      owner,
       damageAngle: Math.PI / 3,
-      damageSource: { cause: "rocket", origin: { x: 1, z: 1 } },
+      ...fixture.deathFeedback(
+        "Rival <b>literal</b>",
+        "rocket",
+        "Rocket blast",
+        "Rival <b>literal</b> destroyed you with a rocket blast.",
+      ),
     });
     fixture.dead = hud;
   });
@@ -163,8 +178,12 @@ try {
     window.sloppyMultiplayer.ui.resetFeedback();
     fixture.announce(hud, {
       type: "death",
-      owner: killer.id,
-      damageSource: { cause: "rocket", origin: { x: 1, z: 1 } },
+      ...fixture.deathFeedback(
+        killer.name,
+        "rocket",
+        "Rocket blast",
+        "Iron Badger destroyed you with a rocket blast.",
+      ),
     });
   });
   await page.screenshot({
@@ -192,9 +211,13 @@ try {
     const fixture = window.playerFeedbackFixture;
     fixture.announce(fixture.dead, {
       type: "death",
-      owner: fixture.dead.human.id,
       damageAngle: 0,
-      damageSource: { cause: "mine", origin: { x: 0, z: 0 } },
+      ...fixture.deathFeedback(
+        null,
+        "mine",
+        "Mine explosion",
+        "You destroyed yourself with a mine explosion.",
+      ),
     });
   });
   assert.equal(

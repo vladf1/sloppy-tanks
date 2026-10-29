@@ -1,6 +1,8 @@
-# The desktop app (crates/desktop): lint and test it on macOS, and build the Apple
-# silicon macOS app (zipped and as an installer package) and the Windows executable through
-# `scripts/build-desktop.mjs`, uploaded as this run's artifacts. Linux CI (check.yml)
+# The desktop app (crates/desktop): lint and test it on macOS beside the builds of
+# the Apple silicon app (zipped and as an installer package), the Windows executable and
+# the iPad app for Xcode's simulators through `scripts/build-desktop.mjs`, uploaded as
+# this run's artifacts. iPad builds for devices need a provisioning profile, so they are
+# made on a developer's Mac (`bun run ipad`). Linux CI (check.yml)
 # leaves the crate out, since its window, audio and GPU dependencies need system
 # libraries there.
 # Builds carry the three-part release and the commit: the fourth part is the Pages
@@ -19,10 +21,17 @@ on:
     paths: &paths
       - "crates/**"
       - "public/**"
+      - "assets/desktop/**"
       - "Cargo.*"
       - ".cargo/**"
       - "rust-toolchain.toml"
+      - ".bun-version"
       - "scripts/build-desktop.mjs"
+      - "scripts/generate-desktop-icon.mjs"
+      - "scripts/content-version.mjs"
+      - "scripts/release-version.mjs"
+      - "package.json"
+      - ".github/actions/setup/**"
       - ".github/workflows/desktop.yml"
   push:
     branches: [main]
@@ -37,16 +46,31 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  macos:
-    name: macOS app (clippy, tests, build)
+  macos-check:
+    name: macOS clippy and tests
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
-          cargo-cache: desktop-macos
-      - run: cargo clippy --locked -p sloppy-desktop --all-targets -- -D warnings
-      - run: cargo test --locked -p sloppy-desktop
+          cargo-cache: desktop-macos-check
+          js-dependencies: "false"
+      - run: cargo clippy --locked --profile desktop-check -p sloppy-desktop --all-targets -- -D warnings
+      - run: cargo test --locked --profile desktop-check -p sloppy-desktop
+      # The renderer's and the engine API's desktop-only modules build only with their
+      # `native` feature, which the Linux test run leaves off.
+      - run: cargo test --locked --profile desktop-check -p sloppy-render -p sloppy-web --features sloppy-render/native,sloppy-web/native --lib
+
+  macos:
+    name: macOS app
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          # Step-level profile overrides are not visible when setup hashes the cache.
+          cargo-cache: desktop-macos-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
+          js-dependencies: "false"
       - name: Signing keychain
         if: github.event_name != 'pull_request'
         env:
@@ -73,8 +97,11 @@ jobs:
             printf '%s' "$NOTARY_KEY" > "$RUNNER_TEMP/notary.p8"
             echo "SLOPPY_NOTARY_KEY=$RUNNER_TEMP/notary.p8" >> "$GITHUB_ENV"
           fi
-      - run: bun run desktop:mac
+      - run: bun scripts/build-desktop.mjs --mac
         env:
+          # PR artifacts favor compile time; main/local builds retain release's fat LTO.
+          CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
+          CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
           SLOPPY_NOTARY_KEY_ID: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_KEY_ID || '' }}
           SLOPPY_NOTARY_ISSUER: ${{ github.event_name != 'pull_request' && secrets.NOTARY_API_ISSUER || '' }}
       # The build falls back to an ad-hoc signature without the secrets; a release must
@@ -94,11 +121,40 @@ jobs:
           path: artifacts/desktop/Sloppy-Tanks-*-macOS.pkg
           archive: false
           if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cargo-timings-macos
+          path: target/cargo-timings/
+          if-no-files-found: ignore
       - name: Remove the signing keychain
         if: always() && github.event_name != 'pull_request'
         run: |
           security delete-keychain "$RUNNER_TEMP/signing.keychain-db" 2>/dev/null || true
           rm -f "$RUNNER_TEMP/notary.p8"
+
+  ipad:
+    name: iPad app (simulator)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup
+        with:
+          cargo-cache: ipad-simulator-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
+          js-dependencies: "false"
+      # The iOS targets stay out of rust-toolchain.toml, which is part of the content
+      # version; the build script adds its own, and clippy needs the simulator's first.
+      - run: rustup target add aarch64-apple-ios-sim
+      - run: cargo clippy --locked --profile desktop-check --target aarch64-apple-ios-sim -p sloppy-desktop --all-targets -- -D warnings
+      - run: bun scripts/build-desktop.mjs --ipad-simulator
+        env:
+          CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
+          CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
+      - uses: actions/upload-artifact@v7
+        with:
+          path: artifacts/ipad-simulator/Sloppy-Tanks-*-iPad-Simulator.zip
+          archive: false
+          if-no-files-found: error
 
   windows:
     name: Windows app
@@ -107,17 +163,27 @@ jobs:
       - uses: actions/checkout@v7
       - uses: ./.github/actions/setup
         with:
-          cargo-cache: desktop-windows
-      - run: bun run desktop:windows
+          cargo-cache: desktop-windows-${{ github.event_name == 'pull_request' && 'thin-16' || 'fat-1' }}
+          js-dependencies: "false"
+      - run: bun scripts/build-desktop.mjs --windows
+        env:
+          CARGO_PROFILE_DESKTOP_LTO: ${{ github.event_name == 'pull_request' && 'thin' || 'fat' }}
+          CARGO_PROFILE_DESKTOP_CODEGEN_UNITS: ${{ github.event_name == 'pull_request' && '16' || '1' }}
       - uses: actions/upload-artifact@v7
         with:
           path: artifacts/desktop/sloppy-tanks.exe
           archive: false
           if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: cargo-timings-windows
+          path: target/cargo-timings/
+          if-no-files-found: ignore
 
   release:
     name: Latest release
-    needs: [macos, windows]
+    needs: [macos-check, macos, windows]
     if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     permissions:
@@ -134,6 +200,7 @@ jobs:
       - uses: actions/download-artifact@v8
         with:
           path: downloads
+          pattern: "{Sloppy-Tanks-*-macOS.zip,Sloppy-Tanks-*-macOS.pkg,sloppy-tanks.exe}"
           merge-multiple: true
           skip-decompress: true
       - name: Publish the builds

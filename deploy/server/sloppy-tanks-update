@@ -1,20 +1,23 @@
 #!/usr/bin/env bash
 # Switches the machine's game server to a container image and keeps its pinned-image
-# state. provision.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
+# state. bootstrap.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
 # scripts call it over SSH and sloppy-tanks-update.timer runs `auto`.
 #
-#   sloppy-tanks-update pull [REF]    pull REF (default :production) and switch now
+#   sloppy-tanks-update pull [REF]    pull REF (default the followed tag, or on a dev machine
+#                                     production's while :dev holds nothing) and switch now
 #   sloppy-tanks-update local IMAGE   switch to an image already loaded here (SSH deploy)
 #   sloppy-tanks-update rollback      switch back to the previous image
-#   sloppy-tanks-update resume        let auto-update follow :production again
+#   sloppy-tanks-update resume        let auto-update follow its tag again
 #   sloppy-tanks-update auto          the timer's check (see auto below)
 #   sloppy-tanks-update status
 #
 # The sloppy-tanks unit runs the image ID in /var/lib/sloppy-tanks/image, so a crash or
 # reboot restarts exactly what was running, and only this script changes it, restarting
 # in the same step. The Quadlet unit reads the pin from a drop-in this script writes
-# beside it. Anything but `pull` of :production leaves a hold that auto-update respects
-# until `resume` or such a pull.
+# beside it. A machine follows its environment's tag: production's :production, which CI
+# moves, or dev's :dev, which `bun scripts/server.mjs publish --dev` moves from a
+# developer's checkout. Anything but `pull` of that tag leaves a hold that auto-update
+# respects until `resume` or such a pull, and on dev until the next publish.
 set -euo pipefail
 
 REGISTRY=ghcr.io/vladf1/sloppy-tanks-server
@@ -31,6 +34,9 @@ HEALTH_TIMEOUT_SECONDS=60
 # visitors a reload message, so it waits only briefly.
 MAX_WAIT_SERVER_ONLY_SECONDS=14400
 MAX_WAIT_CONTENT_SECONDS=600
+# Every kind of manifest a tag can name (CI pushes a manifest list, a local push may push
+# an image manifest or an OCI index), so a check reads the digest of whatever is there.
+MANIFEST_TYPES=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json
 
 usage() {
   echo "usage: sloppy-tanks-update pull [REF]|local IMAGE|rollback|resume|auto|status" >&2
@@ -42,7 +48,23 @@ image_file=$STATE/image
 previous_file=$STATE/previous
 hold_file=$STATE/hold
 pending_file=$STATE/pending
+# The followed tag's manifest digest and image ID at its latest pull.
+followed_file=$STATE/followed
+# Present while checks cannot read the followed tag from the registry.
+failing_file=$STATE/check-failing
+# The last image that failed its health check. Auto-update does not try it again, which
+# would restart the server at every check; the next image on the tag, or a `pull`, does.
+failed_file=$STATE/failed
 mkdir -p "$STATE"
+
+# The machine's environment (server.env, which the provider's user data writes)
+# names the tag auto-update follows.
+environment=$(sed -n 's/^SERVER_ENVIRONMENT=//p' /etc/sloppy-tanks/server.env 2>/dev/null || true)
+if [[ $environment == dev ]]; then
+  follow=$REGISTRY:dev
+else
+  follow=$REGISTRY:production
+fi
 
 # One change at a time. The timer skips a check while another runs.
 exec 9>/run/lock/sloppy-tanks-update.lock
@@ -78,18 +100,47 @@ use_pin() {
 
 # Every load or pull leaves an image tagged with its build, which a plain prune (untagged
 # images only) never frees. Untag the server images the server neither runs nor could
-# roll back to, keeping :production for a pending auto-update, then prune what is left
-# untagged (Caddy's image stays tagged). Podman lists every name of a matching image, so
-# only the registry's tags are considered.
+# roll back to, keeping the followed tag for a pending auto-update, then prune what is
+# left untagged (Caddy's image stays tagged). Podman lists every name of a matching image,
+# so only the registry's tags are considered.
 remove_old_images() {
   local keep ref id
   keep=$(pinned "$image_file"; pinned "$previous_file")
   podman image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$REGISTRY" |
     while read -r ref id; do
-      if [[ $ref != "$REGISTRY":* || $ref == *:\<none\> || $ref == "$REGISTRY:production" ]]; then continue; fi
+      if [[ $ref != "$REGISTRY":* || $ref == *:\<none\> || $ref == "$follow" ]]; then continue; fi
       if ! grep -qxF "$id" <<<"$keep"; then podman image rm "$ref" >/dev/null || true; fi
     done
   podman image prune --force >/dev/null
+}
+
+# The followed tag's manifest digest in the registry: GHCR's anonymous token and one
+# manifest HEAD, so a check every few seconds pulls only after the tag has moved.
+remote_digest() {
+  local repository=${follow%:*} host name token
+  host=${repository%%/*}
+  name=${repository#*/}
+  token=$(curl -fsS --max-time 5 "https://$host/token?scope=repository:$name:pull" 2>/dev/null |
+    sed -n 's/.*"token":"\([^"]*\)".*/\1/p') || return 1
+  [[ -n $token ]] || return 1
+  curl -fsS --max-time 5 --head --header "Authorization: Bearer $token" \
+    --header "Accept: $MANIFEST_TYPES" "https://$host/v2/$name/manifests/${follow##*:}" 2>/dev/null |
+    tr -d '\r' | sed -n 's/^docker-content-digest: *//Ip' | grep .
+}
+
+# A check that cannot reach the registry changes nothing: the pinned image keeps running.
+# The journal hears when checks start failing and when they work again, not every check.
+check_failed() {
+  if [[ ! -f $failing_file ]]; then
+    echo "Cannot read $follow from the registry; checking again quietly" >&2
+    touch "$failing_file"
+  fi
+}
+check_worked() {
+  if [[ -f $failing_file ]]; then
+    rm -f "$failing_file"
+    echo "Reading $follow from the registry works again"
+  fi
 }
 
 # /health reports the stamps of the process that answers, so a match means the new
@@ -123,10 +174,12 @@ switch_to() {
   systemctl restart "$UNIT"
   if healthy "$new"; then
     echo "$UNIT runs $(describe "$new")"
+    rm -f "$failed_file"
     remove_old_images
     return 0
   fi
   echo "$UNIT did not report $(describe "$new") within ${HEALTH_TIMEOUT_SECONDS}s" >&2
+  echo "$new" >"$failed_file"
   if [[ -n $current && $current != "$new" ]]; then
     keep_as "$image_file" current "$current"
     use_pin "$current"
@@ -141,27 +194,53 @@ switch_to() {
   return 1
 }
 
-# The timer's check. It follows :production unless a hold is set, and restarts only when
-# nobody holds a seat or the pending image has waited its maximum.
+# The timer's check. It follows the environment's tag unless a hold is set. Production
+# restarts only when nobody holds a seat or the pending image has waited its maximum. Dev
+# switches as soon as :dev moves, without asking who plays, and a publish there ends a
+# hold: whoever published wants that build running now.
 auto() {
-  if [[ -f $hold_file ]]; then
+  if [[ -f $hold_file && $environment != dev ]]; then
     echo "Holding: $(cat "$hold_file")"
     return 0
   fi
-  podman pull --quiet "$REGISTRY:production" >/dev/null
-  local new current now first=0 pending=""
-  new=$(image_id "$REGISTRY:production")
+  local digest followed="" new=""
+  if ! digest=$(remote_digest); then
+    check_failed
+    return 0
+  fi
+  if [[ -f $followed_file ]]; then read -r followed new <"$followed_file" || true; fi
+  if [[ $digest != "$followed" ]]; then
+    if ! podman pull --quiet "$follow" >/dev/null; then
+      check_failed
+      return 0
+    fi
+    new=$(image_id "$follow")
+    echo "$digest $new" >"$followed_file"
+    if [[ -f $hold_file ]]; then
+      echo "A new $follow ends the hold: $(cat "$hold_file")"
+      rm -f "$hold_file"
+    fi
+  fi
+  check_worked
+  if [[ -f $hold_file ]]; then return 0; fi
+  local current failed="" now first=0 pending=""
   current=$(pinned "$image_file")
-  if [[ $new == "$current" ]]; then
+  if [[ -f $failed_file ]]; then failed=$(cat "$failed_file"); fi
+  if [[ $new == "$current" || $new == "$failed" ]]; then
     rm -f "$pending_file"
     return 0
+  fi
+  if [[ $environment == dev ]]; then
+    echo "New image on $follow: $(describe "$new")"
+    switch_to "$new"
+    return
   fi
   now=$(date +%s)
   if [[ -f $pending_file ]]; then read -r pending first <"$pending_file" || true; fi
   if [[ $pending != "$new" ]]; then
     first=$now
     echo "$new $now" >"$pending_file"
-    echo "New production image $(describe "$new")"
+    echo "New image on $follow: $(describe "$new")"
   fi
   local max=$MAX_WAIT_SERVER_ONLY_SECONDS
   if [[ -z $current || $(label "$new" $LABELS.content-version) != "$(label "$current" $LABELS.content-version)" ]]; then
@@ -190,7 +269,11 @@ status() {
   echo "running:  ${current:+$(describe "$current")}"
   echo "previous: ${previous:+$(describe "$previous")}"
   if [[ -f $hold_file ]]; then echo "hold:     $(cat "$hold_file")"; fi
-  echo "auto:     $(systemctl is-enabled sloppy-tanks-update.timer 2>/dev/null || true)"
+  echo "auto:     $(systemctl is-enabled sloppy-tanks-update.timer 2>/dev/null || true), following $follow"
+  if [[ -f $failing_file ]]; then
+    echo "registry: no answer for $follow since $(date -u -r "$failing_file" +%FT%TZ)"
+  fi
+  if [[ -f $failed_file ]]; then echo "failed:   $(describe "$(cat "$failed_file")")"; fi
   if [[ -f $pending_file ]]; then
     local pending first
     read -r pending first <"$pending_file" || true
@@ -200,13 +283,30 @@ status() {
 
 case $command in
   pull)
-    ref=${2:-$REGISTRY:production}
+    requested=${2:-$follow}
+    ref=$requested
+    # Pulling the followed tag records its digest, so a hold set afterwards lasts until the
+    # tag moves again rather than until the next check.
+    digest=""
+    if [[ $ref == "$follow" ]]; then digest=$(remote_digest) || true; fi
+    # A dev machine created before anything was published to :dev runs production's server
+    # meanwhile, so it is up and listed; auto-update still follows :dev and switches to the
+    # first publish.
+    if [[ $ref == "$follow" && -z $digest && $environment == dev ]]; then
+      ref=$REGISTRY:production
+      echo "Nothing to read on $follow; starting $ref until a publish moves it"
+    fi
     podman pull --quiet "$ref" >/dev/null
     new=$(image_id "$ref")
-    # Only following :production releases a hold; any other image is a pin. A failed
-    # switch exits here (set -e) and leaves the hold as it was.
+    if [[ -n $digest ]]; then echo "$digest $new" >"$followed_file"; fi
+    # Only following the tag releases a hold; any other image is a pin. A failed switch
+    # exits here (set -e) and leaves the hold as it was.
     switch_to "$new"
-    if [[ $ref == "$REGISTRY:production" ]]; then rm -f "$hold_file" "$pending_file"; else hold "Pulled $ref" "$new"; fi
+    if [[ $requested == "$follow" ]]; then
+      rm -f "$hold_file" "$pending_file"
+    else
+      hold "Pulled $ref" "$new"
+    fi
     ;;
   local)
     new=$(image_id "${2:?local needs an image}")
@@ -221,7 +321,7 @@ case $command in
     ;;
   resume)
     rm -f "$hold_file"
-    echo "Auto-update follows :production again (if enabled)"
+    echo "Auto-update follows $follow again (if enabled)"
     ;;
   auto) auto ;;
   status) status ;;

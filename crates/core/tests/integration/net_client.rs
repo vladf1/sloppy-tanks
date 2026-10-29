@@ -1331,8 +1331,12 @@ fn shells_that_hit(dodger_first: bool) -> (Samples, u64) {
 
 #[test]
 fn enemy_shells_reach_a_dodger_where_its_hull_is_drawn() {
-    let (dodging, unseen) = shells_that_hit(true);
-    let (delayed, unseen_delayed) = shells_that_hit(false);
+    // The two minutes of battle are independent, so they play at once.
+    let ((dodging, unseen), (delayed, unseen_delayed)) = std::thread::scope(|scope| {
+        let dodging = scope.spawn(|| shells_that_hit(true));
+        let delayed = shells_that_hit(false);
+        (dodging.join().expect("the dodger-first battle"), delayed)
+    });
     let describe = |samples: &Samples| {
         format!(
             "{} hits, p50 {:.2} m, p90 {:.2} m, largest {:.2} m",
@@ -1424,8 +1428,15 @@ fn shots_that_hit(shooter_first: bool) -> Samples {
 
 #[test]
 fn a_shooter_hits_tanks_where_its_page_drew_them() {
-    let favored = shots_that_hit(true);
-    let judged_now = shots_that_hit(false);
+    // The two minutes of battle are independent, so they play at once.
+    let (favored, judged_now) = std::thread::scope(|scope| {
+        let favored = scope.spawn(|| shots_that_hit(true));
+        let judged_now = shots_that_hit(false);
+        (
+            favored.join().expect("the shooter-first battle"),
+            judged_now,
+        )
+    });
     let describe = |samples: &Samples| {
         format!(
             "{} hits, p50 {:.2} m, p90 {:.2} m, largest {:.2} m",

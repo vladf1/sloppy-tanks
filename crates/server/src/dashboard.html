@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <meta name="robots" content="noindex" />
-    <title>Sloppy Tanks server</title>
+    <title>Sloppy Tanks - %ENVIRONMENT%</title>
     <link
       rel="stylesheet"
       href="https://cdn.jsdelivr.net/npm/uplot@1.6.32/dist/uPlot.min.css"
@@ -120,8 +120,8 @@
         border-radius: 50%;
         background: var(--muted);
       }
-      .status[data-state="live"]::before {
-        background: var(--good);
+      .status[hidden] {
+        display: none;
       }
       .status[data-state="waiting"]::before {
         background: var(--warning);
@@ -377,8 +377,8 @@
   <body>
     <main>
       <div class="top">
-        <h1>Sloppy Tanks server</h1>
-        <span class="status" id="status" data-state="waiting" role="status">Connecting…</span>
+        <h1>Sloppy Tanks - %ENVIRONMENT%</h1>
+        <span class="status" id="status" data-state="connecting" role="status" hidden></span>
         <span class="meta" id="meta"></span>
       </div>
       <section class="tiles" id="tiles" aria-label="Current load"></section>
@@ -466,6 +466,7 @@
       const HISTORY_FALLBACK_MS = 300_000;
       /** A reading older than this means the stream has stalled. */
       const STALE_MS = 5000;
+      const PAGE_TITLE = document.title;
       const RETRY_MS = 5000;
       const TICK_BUDGET_MS = 1000 / 60;
 
@@ -1086,19 +1087,20 @@
           server.commit ? `commit ${server.commit}` : null,
           `content ${server.contentVersion}`,
           `protocol ${server.protocolVersion}`,
-          server.runtime,
-          server.environment,
+          server.system,
           `updated ${clock(reading.atMs)}`,
           `up ${span((reading.atMs - server.startedAtMs) / 1000)}`,
         ]
           .filter(Boolean)
           .join(" · ");
-        document.title = `${reading.players} players · Sloppy Tanks server`;
+        document.title = `${reading.players} players · ${PAGE_TITLE}`;
       }
 
+      // The pill shows only while the stream is not live.
       function setStatus(kind, text) {
         $("status").dataset.state = kind;
         $("status").textContent = text;
+        $("status").hidden = kind === "live";
       }
       let source = null,
         retry = null;
@@ -1113,7 +1115,7 @@
           state.events = hello.events;
           state.latest = hello.reading ?? null;
           state.receivedMs = Date.now();
-          setStatus("live", "Live");
+          setStatus("live", "");
           renderEvents();
           render();
         });
@@ -1133,7 +1135,7 @@
             renderEvents();
           }
           state.receivedMs = Date.now();
-          setStatus("live", "Live");
+          setStatus("live", "");
           render();
         });
         source.addEventListener("error", () => {

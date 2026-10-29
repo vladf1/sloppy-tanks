@@ -103,10 +103,8 @@ impl Overlay {
         view: &wgpu::TextureView,
         target: (u32, u32),
     ) {
-        let logical = self
-            .window
-            .inner_size()
-            .to_logical::<f32>(self.window.scale_factor());
+        let logical =
+            crate::app::drawable_size(&self.window).to_logical::<f32>(self.window.scale_factor());
         let screen = ScreenDescriptor {
             size_in_pixels: [target.0, target.1],
             pixels_per_point: if logical.width > 0.0 {

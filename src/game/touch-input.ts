@@ -2,6 +2,11 @@
  * there and fires while it is down. */
 export type TouchKind = "drive" | "arena";
 export type TouchMode = "auto" | "on" | "off";
+/** The drive stick: CSS pixels from its origin to a full push, how far a touch off its
+ * centre moves that origin under the thumb, and the share of a full push that drives
+ * nothing. The engine's values (`presentation/input.rs`), pinned by the page catalog. */
+export const STICK_RADIUS = 58;
+export const STICK_ANCHOR_SHIFT = 22;
 export const STICK_DEADZONE = 0.12;
 
 /** Pointer ownership and normalized input, independent of rendering and display Hz. */

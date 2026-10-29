@@ -8,38 +8,25 @@ use egui::{
     Stroke, StrokeKind, Vec2, pos2, vec2,
 };
 
-use super::icons::{Art, cause_icon};
+use super::icons::Art;
 use super::paint::{self, fade, hex, hexa, mix};
 use super::theme::{self, GOLD, GOLD_HOT, bold_font, display_font};
-use super::{
-    Action, DAMAGE_RING_SECONDS, HIT_FLASH_SECONDS, ToastTone, UiState, View, effect_share,
-};
-use crate::engine_api::{HudState, HumanState, Phase};
+use super::{Action, DAMAGE_RING_SECONDS, HIT_FLASH_SECONDS, ToastTone, UiState, View};
+use sloppy_core::sim::{GameMode, MatchPhase, Team};
+use sloppy_web::catalog::AMMO_OPTIONS;
+use sloppy_web::feedback::CRITICAL_HULL;
+use sloppy_web::feedback::cause_icon;
+use sloppy_web::hud::{EffectKind, Hud, HudHuman, HullTone};
 
-/// The ammunition the rack offers, in selection order (keys 1–5): weapon, label,
-/// name and colour (`AMMO_OPTIONS`).
-pub const AMMO: [(&str, &str, &str, u32); 5] = [
-    ("standard", "STANDARD", "Standard shells", 0xffdf00),
-    ("spread", "SPREAD", "Spread shot", 0xff38d4),
-    ("rocket", "ROCKET", "Breaching rockets", 0xff591c),
-    ("ricochet", "RICOCHET", "Ricochet shells", 0xb19afc),
-    ("piercing", "PIERCING", "Piercing shells", 0x54e6dc),
-];
-
-/// Below this share of its hull the tank's HUD warns.
-const CRITICAL_HEALTH: f64 = 0.25;
 /// The screen edge the HUD keeps clear.
 const EDGE: f32 = 16.0;
 
-/// `m:ss`.
-pub fn clock(seconds: f64) -> String {
-    let seconds = seconds.max(0.0) as u64;
-    format!("{}:{:02}", seconds / 60, seconds % 60)
-}
-
 /// The painter under every HUD area: shades, feed, toast and hit feedback.
 fn backdrop(context: &egui::Context) -> Painter {
-    context.layer_painter(LayerId::new(Order::Background, Id::unique("hud backdrop")))
+    paint::full_screen(
+        context,
+        LayerId::new(Order::Background, Id::unique("hud backdrop")),
+    )
 }
 
 pub fn hud(
@@ -50,18 +37,20 @@ pub fn hud(
     actions: &mut Vec<Action>,
 ) {
     let Some(hud) = state.hud.clone() else { return };
-    let playing = view.phase == Phase::Playing;
+    let playing = view.phase == MatchPhase::Playing;
     let screen = context.content_rect();
+    // Edge effects cover the whole screen; the HUD keeps to the safe area within it.
+    let viewport = context.viewport_rect();
     let painter = backdrop(context);
     let time = context.input(|input| input.time);
     let human = &hud.human;
-    let critical = playing && human.alive && human.health_ratio < CRITICAL_HEALTH;
+    let critical = playing && human.alive && human.health_ratio < CRITICAL_HULL;
     if critical {
         // A slow red pulse at the screen's edges while the hull is critical.
         let beat = ((time / 1.6 * std::f64::consts::TAU).cos() * 0.5 + 0.5) as f32;
         paint::vignette(
             &painter,
-            screen,
+            viewport,
             vec2(0.8, 0.75),
             &[
                 (0.58, Color32::TRANSPARENT),
@@ -75,7 +64,7 @@ pub fn hud(
         // A hit flashes the screen's rim, never the middle where the fight is.
         paint::vignette(
             &painter,
-            screen,
+            viewport,
             vec2(0.85, 0.8),
             &[
                 (0.7, Color32::TRANSPARENT),
@@ -85,16 +74,33 @@ pub fn hud(
             (1.0 - age / HIT_FLASH_SECONDS) as f32,
         );
     }
+    if state.cockpit {
+        paint::vignette_at(
+            &painter,
+            viewport,
+            pos2(
+                viewport.center().x,
+                viewport.top() + viewport.height() * 0.46,
+            ),
+            vec2(0.8, 0.76),
+            &[
+                (0.66, Color32::TRANSPARENT),
+                (0.9, hexa(0x0a121a, 0.6)),
+                (1.0, hexa(0x05090d, 0.8)),
+            ],
+            1.0,
+        );
+    }
     // A soft shade along the top edge keeps the score, buttons and feed legible.
     painter.add(paint::vgradient(
-        Rect::from_min_size(screen.min, vec2(screen.width(), 120.0)),
+        Rect::from_min_size(viewport.min, vec2(viewport.width(), 120.0)),
         &[
             (0.0, hexa(0x030a18, 0.45)),
             (0.55, hexa(0x030a18, 0.15)),
             (1.0, Color32::TRANSPARENT),
         ],
     ));
-    score_bar(&painter, screen, &hud);
+    score_bar(&painter, screen, &hud, view.room);
     kill_feed(&painter, art, screen, state);
     if playing {
         toast(&painter, screen, state);
@@ -102,6 +108,9 @@ pub fn hud(
         if human.alive {
             damage_ring(&painter, screen, state);
         }
+    }
+    if let Some(touch) = state.touch.filter(|_| playing && human.alive) {
+        super::touch::controls(context, art, state, &touch);
     }
     // The respawn card rises into place over a third of a second.
     let rise = context.animate_bool_with_time(Id::unique("respawn rise"), !human.alive, 0.32);
@@ -135,11 +144,11 @@ fn team_plate(x: f32, width: f32, height: f32, left_side: bool) -> Vec<Pos2> {
 
 /// The score hangs from the top edge: two team plates cut toward the clock between
 /// them, each with a bar filling toward the score limit; your side carries gold.
-fn score_bar(painter: &Painter, screen: Rect, hud: &HudState) {
-    let solo = hud.game_mode == "solo";
+fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) {
+    let solo = hud.game_mode == GameMode::Solo;
     let match_state = &hud.match_state;
-    let no_limit = solo || hud.endless_match;
-    let height = 54.0;
+    let no_limit = room || solo || hud.endless_match;
+    let height = if room { 55.0 } else { 62.0 };
     let top = screen.top();
     let label_font = bold_font(14.0);
     let score_font = display_font(38.0);
@@ -151,28 +160,20 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState) {
     let labels = if solo {
         ["KILLS".to_owned(), String::new()]
     } else {
-        hud.team_names.clone().map(|name| name.to_uppercase())
+        hud.team_names.map(str::to_uppercase)
     };
     let scores = if solo {
         [format!("{}", hud.human.kills), String::new()]
     } else {
         match_state.scores.map(|score| format!("{score}"))
     };
-    let overtime = !hud.endless_match && match_state.overtime;
-    let time = if overtime {
-        "NEXT KILL".to_owned()
-    } else if hud.endless_match {
-        clock(hud.elapsed.floor())
-    } else {
-        clock(match_state.time.ceil())
-    };
-    let objective = if solo {
-        "SURVIVE · ONE LIFE".to_owned()
-    } else if hud.endless_match {
-        "ENDLESS STRESS".to_owned()
-    } else {
-        format!("FIRST TO {}", hud.score_limit)
-    };
+    let pill = &hud.score_pill;
+    let overtime = pill.overtime;
+    let time = pill.clock().to_string();
+    let objective = pill
+        .objective
+        .map(|objective| objective.to_string())
+        .unwrap_or_default();
     let objective_width = paint::text_width(painter, &objective, bold_font(13.0), 1.2);
     let clock_width = (objective_width + 24.0).max(136.0) + if solo { 12.0 } else { 0.0 };
     let widths = [
@@ -214,7 +215,7 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState) {
             hexa(0xffffff, 0.2),
             hexa(0xffffff, 0.0),
         ));
-        let yours = !solo && team == hud.human_team as usize;
+        let yours = !room && !solo && team == hud.human_team.index();
         if yours {
             painter.add(paint::gradient_polygon(
                 &[
@@ -275,8 +276,8 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState) {
                     pos2(x + width - 22.0, top + height - 4.0),
                 )
             };
-            let share =
-                (match_state.scores[team] / hud.score_limit.max(1.0)).clamp(0.0, 1.0) as f32;
+            let share = (f64::from(match_state.scores[team]) / f64::from(hud.score_limit.max(1)))
+                .clamp(0.0, 1.0) as f32;
             painter.rect_filled(
                 track,
                 2,
@@ -362,7 +363,7 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &HudState) {
     };
     paint::shadowed(
         painter,
-        pos2(center, top + 20.0),
+        pos2(center, top + if room { height / 2.0 } else { 20.0 }),
         Align2::CENTER_CENTER,
         &time,
         time_font,
@@ -392,24 +393,31 @@ fn toolbar(
     if state.settings_draft.is_some() {
         return;
     }
-    let button = 38.0;
-    let buttons = [
-        ("eye", "First-person view (V)"),
-        (
-            if view.prefs.fullscreen {
-                "collapse"
-            } else {
-                "expand"
-            },
-            if view.prefs.fullscreen {
-                "Exit fullscreen (F11)"
-            } else {
-                "Enter fullscreen (F11)"
-            },
-        ),
-        ("pause", "Pause (Esc)"),
-        ("gear", "Settings"),
-    ];
+    // Thumb-sized on a touch screen, which has no fullscreen to toggle.
+    let button = if crate::TOUCH { 46.0 } else { 38.0 };
+    let fullscreen = (
+        if view.prefs.fullscreen {
+            "collapse"
+        } else {
+            "expand"
+        },
+        match (view.prefs.fullscreen, cfg!(target_os = "macos")) {
+            (true, true) => "Exit fullscreen (Cmd+F)",
+            (true, false) => "Exit fullscreen (F11)",
+            (false, true) => "Enter fullscreen (Cmd+F)",
+            (false, false) => "Enter fullscreen (F11)",
+        },
+        Action::ToggleFullscreen,
+    );
+    let buttons: Vec<(&str, &str, Action)> = [
+        Some(("eye", "First-person view (V)", Action::ToggleView)),
+        (!crate::TOUCH).then_some(fullscreen),
+        Some(("pause", "Pause (Esc)", Action::Pause)),
+        Some(("gear", "Settings", Action::OpenSettings)),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     let size = vec2(button * buttons.len() as f32 + 6.0, button + 6.0);
     let origin = pos2(screen.right() - EDGE - size.x, screen.top() + 14.0);
     egui::Area::new(Id::unique("hud toolbar"))
@@ -419,18 +427,19 @@ fn toolbar(
             let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
             let painter = ui.painter().clone();
             paint::plate(&painter, rect, 9.0, None);
-            for (index, (icon, tip)) in buttons.iter().enumerate() {
+            for (index, (icon, tip, action)) in buttons.into_iter().enumerate() {
                 let cell = Rect::from_min_size(
                     rect.min + vec2(3.0 + index as f32 * button, 3.0),
                     Vec2::splat(button),
                 );
                 let response = ui
                     .interact(cell, Id::unique(("hud tool", index)), Sense::click())
-                    .on_hover_text(*tip);
+                    .on_hover_text(tip);
                 let lit = index == 0 && state.cockpit;
                 if lit {
-                    painter.add(paint::vgradient(
+                    painter.add(paint::rounded_vgradient(
                         cell.shrink(2.0),
+                        [7.0; 4],
                         &[(0.0, GOLD_HOT), (1.0, GOLD)],
                     ));
                 } else if response.hovered() {
@@ -459,15 +468,10 @@ fn toolbar(
                     tint,
                 );
                 if response.clicked() {
-                    actions.push(match index {
-                        0 => Action::ToggleView,
-                        1 => Action::ToggleFullscreen,
-                        2 => Action::Pause,
-                        _ => {
-                            state.resume_after_settings = true;
-                            Action::OpenSettings
-                        }
-                    });
+                    if action == Action::OpenSettings {
+                        state.resume_after_settings = true;
+                    }
+                    actions.push(action);
                 }
             }
         });
@@ -479,12 +483,13 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, state: &UiState) {
     let width = 336.0_f32.min(screen.width() * 0.42);
     let row_height = 30.0;
     let right = screen.right() - EDGE;
-    for (index, entry) in state.kill_feed.iter().enumerate() {
+    let lines = if state.cockpit { 2 } else { super::FEED_LINES };
+    for (index, entry) in state.kill_feed.iter().take(lines).enumerate() {
         let top = screen.top() + 74.0 + index as f32 * (row_height + 4.0);
         let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, row_height));
-        let side = |team: Option<u8>| match team {
-            Some(0) => hex(0x3d9cff),
-            Some(_) => hex(0xff4d63),
+        let side = |team: Option<Team>| match team {
+            Some(Team::Blue) => hex(0x3d9cff),
+            Some(Team::Red) => hex(0xff4d63),
             None => hex(0xc9b994),
         };
         let from = side(entry.killer_team);
@@ -598,7 +603,7 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, state: &UiState) {
         };
         art.icon(
             painter,
-            cause_icon(entry.cause.as_deref()),
+            cause_icon(entry.cause),
             Rect::from_center_size(center, Vec2::splat(22.0)),
             icon_tint,
         );
@@ -654,152 +659,37 @@ fn toast(painter: &Painter, screen: Rect, state: &UiState) {
     painter.galley(at.min, galley, color);
 }
 
-/// The hull's colour along its ramp (`hullColor`): green while sound, through amber
-/// and orange to red as it drains.
-pub fn hull_ramp(ratio: f64) -> Color32 {
-    const RAMP: [(f64, u32); 4] = [
-        (0.25, 0xff4d5e),
-        (0.4, 0xff8636),
-        (0.55, 0xf5c83c),
-        (0.7, 0x5fe39a),
-    ];
-    let share = ratio.clamp(0.0, 1.0);
-    let upper = RAMP
-        .iter()
-        .position(|(stop, _)| share <= *stop)
-        .unwrap_or(RAMP.len() - 1);
-    let (high_stop, high) = RAMP[upper];
-    let (low_stop, low) = RAMP[upper.saturating_sub(1)];
-    let t = if high_stop == low_stop {
-        1.0
-    } else {
-        ((share - low_stop) / (high_stop - low_stop)).clamp(0.0, 1.0)
-    };
-    mix(hex(low), hex(high), t as f32)
-}
-
-/// Healthy, damaged or critical, at the overhead bar's thresholds.
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum HullTone {
-    Healthy,
-    Damaged,
-    Critical,
-}
-
-fn hull_tone(ratio: f64) -> HullTone {
-    if ratio <= 0.3 {
-        HullTone::Critical
-    } else if ratio <= 0.6 {
-        HullTone::Damaged
-    } else {
-        HullTone::Healthy
+/// Each effect's icon and colour on its tab.
+fn effect_art(kind: EffectKind) -> (&'static str, u32) {
+    match kind {
+        EffectKind::Spawn | EffectKind::Shield => ("shield", 0x6fe6ff),
+        EffectKind::Rapid => ("rapid", 0xffb547),
+        EffectKind::Boost => ("boost", 0x9dff6a),
+        EffectKind::Laser => ("target", 0xff6fd8),
+        EffectKind::Repair => ("repair", 0x8ff0b0),
     }
 }
 
-/// The rank's tooltip (`rankTitle`).
-fn rank_title(human: &HumanState) -> String {
-    if human.rank == 0 {
-        return "Earn XP from enemy hull damage and kills. Ranks reset on respawn.".to_owned();
-    }
-    let percent = |value: f64| ((value - 1.0) * 100.0).round();
-    let repair = if human.rank_repair > 0.0 {
-        format!(
-            " · repairs {}% hull/s after {}s out of combat",
-            (human.rank_repair * 100.0).round(),
-            human.repair_delay
-        )
-    } else {
-        String::new()
-    };
-    format!(
-        "+{}% damage · +{}% fire rate · +{}% hull{repair}",
-        percent(human.rank_damage),
-        percent(human.rank_fire_rate),
-        percent(human.rank_health)
-    )
-}
-
-/// One timed power-up or protection, as the panel's tabs show it.
-struct Effect {
-    name: &'static str,
-    detail: String,
-    icon: &'static str,
-    color: u32,
-    share: f64,
-}
-
-fn effects(state: &UiState, human: &HumanState) -> Vec<Effect> {
-    let seconds = |time: f64| format!("{}s", time.ceil());
-    let longest = &state.effect_longest;
-    let mut list = Vec::new();
-    if human.protection > 0.0 {
-        list.push(Effect {
-            name: "SPAWN SHIELD",
-            detail: String::new(),
-            icon: "shield",
-            color: 0x6fe6ff,
-            share: effect_share(longest[0], human.protection),
-        });
-    }
-    if human.shield > 0.0 {
-        list.push(Effect {
-            name: "SHIELD",
-            detail: format!(
-                "{} HP · {}",
-                human.shield_points.ceil(),
-                seconds(human.shield)
-            ),
-            icon: "shield",
-            color: 0x6fe6ff,
-            share: effect_share(longest[1], human.shield),
-        });
-    }
-    if human.rapid > 0.0 {
-        list.push(Effect {
-            name: "RAPID",
-            detail: seconds(human.rapid),
-            icon: "rapid",
-            color: 0xffb547,
-            share: effect_share(longest[2], human.rapid),
-        });
-    }
-    if human.speed > 0.0 {
-        list.push(Effect {
-            name: "BOOST",
-            detail: seconds(human.speed),
-            icon: "boost",
-            color: 0x9dff6a,
-            share: effect_share(longest[3], human.speed),
-        });
-    }
-    if human.laser > 0.0 {
-        list.push(Effect {
-            name: "LASER DEFENSE",
-            detail: seconds(human.laser),
-            icon: "target",
-            color: 0xff6fd8,
-            share: effect_share(longest[4], human.laser),
-        });
-    }
-    if human.self_repair {
-        list.push(Effect {
-            name: "SELF-REPAIR",
-            detail: String::new(),
-            icon: "repair",
-            color: 0x8ff0b0,
-            share: 1.0,
-        });
-    }
-    list
-}
-
-const STATUS_WIDTH: f32 = 150.0;
+const STATUS_WIDTH: f32 = 128.0;
 const SLOT_WIDTH: f32 = 36.0;
 const SELECTED_SLOT_WIDTH: f32 = 100.0;
 const SLOT_GAP: f32 = 4.0;
 const MINE_WIDTH: f32 = 42.0;
 const COMPASS_WIDTH: f32 = 68.0;
-const PANEL_HEIGHT: f32 = 66.0;
+const PANEL_HEIGHT: f32 = 65.4;
+/// A round's key on a touch screen: wide enough for a thumb.
+const TOUCH_SLOT_WIDTH: f32 = 52.0;
+
+/// The width of a round's key in the rack: the loaded one names itself.
+fn slot_width(selected: bool) -> f32 {
+    if selected {
+        SELECTED_SLOT_WIDTH
+    } else if crate::TOUCH {
+        TOUCH_SLOT_WIDTH
+    } else {
+        SLOT_WIDTH
+    }
+}
 
 /// The tank panel: hull on the left, the ammunition rack and the mine socket on the
 /// right, on an armour plate tinted by your team; power-up tabs stand on its top
@@ -811,39 +701,50 @@ fn tank_panel(
     art: &Art,
     screen: Rect,
     state: &UiState,
-    hud: &HudState,
+    hud: &Hud,
     playing: bool,
     time: f64,
     actions: &mut Vec<Action>,
 ) {
     let human = &hud.human;
-    let strip_width = AMMO
+    let strip_width = AMMO_OPTIONS
         .iter()
-        .map(|(weapon, ..)| {
-            let selected = human
-                .ammo
-                .iter()
-                .any(|slot| slot.weapon == *weapon && slot.selected);
-            if selected {
-                SELECTED_SLOT_WIDTH
-            } else {
-                SLOT_WIDTH
-            }
+        .map(|option| {
+            slot_width(
+                human
+                    .ammo
+                    .iter()
+                    .any(|slot| slot.weapon == option.weapon && slot.selected),
+            )
         })
         .sum::<f32>()
-        + SLOT_GAP * (AMMO.len() - 1) as f32;
+        + SLOT_GAP * (AMMO_OPTIONS.len() - 1) as f32;
+    // A touch screen has its own mine button.
+    let socket = if crate::TOUCH {
+        0.0
+    } else {
+        10.0 + 10.0 + MINE_WIDTH
+    };
     let inner = vec2(
-        STATUS_WIDTH + 10.0 + 10.0 + strip_width + 10.0 + 10.0 + MINE_WIDTH,
+        STATUS_WIDTH + 10.0 + 10.0 + strip_width + socket,
         PANEL_HEIGHT,
     );
-    let padding = [13.0, 9.0, 10.0, 9.0];
+    let padding = [14.0, 10.0, 11.0, 10.0];
     let plate_size = vec2(
         inner.x + padding[0] + padding[2],
         inner.y + padding[1] + padding[3],
     );
     let compass = state.cockpit;
     let size = plate_size + vec2(if compass { COMPASS_WIDTH } else { 0.0 }, 0.0);
-    let origin = pos2(screen.left() + EDGE, screen.bottom() - EDGE - size.y);
+    let left = if crate::TOUCH {
+        // Between the drive stick and the mine button, so it never covers the
+        // arena's middle or sits under a thumb.
+        let (from, to) = crate::touch::TouchLayout::of(context).panel_span();
+        (from + (to - from - size.x) / 2.0).max(from)
+    } else {
+        screen.left() + EDGE
+    };
+    let origin = pos2(left, screen.bottom() - EDGE - size.y);
     egui::Area::new(Id::unique("tank panel"))
         .fixed_pos(origin)
         .order(Order::Middle)
@@ -851,13 +752,12 @@ fn tank_panel(
             let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
             let painter = ui.painter().clone();
             // A soft shade in the corner behind the panel.
-            let team_tint = if hud.game_mode == "solo" {
+            let team_tint = if hud.game_mode == GameMode::Solo {
                 None
             } else {
                 Some(theme::team_color(hud.human_team))
             };
-            let tone = hull_tone(human.health_ratio);
-            let tint = match tone {
+            let tint = match human.hull_tone {
                 HullTone::Critical => Some(hex(0xff2a40)),
                 HullTone::Damaged => Some(hex(0xff8a2a)),
                 HullTone::Healthy => team_tint,
@@ -902,20 +802,22 @@ fn tank_panel(
             x += 10.0;
             let strip = Rect::from_min_size(pos2(x, content.top()), vec2(strip_width, inner.y));
             ammo_rack(ui, &painter, art, strip, human, playing, actions);
-            x = strip.right() + 10.0;
-            painter.line_segment(
-                [pos2(x, content.top()), pos2(x, content.bottom())],
-                Stroke::new(1.0, hexa(0xffffff, 0.09)),
-            );
-            x += 10.0;
-            mine_socket(
-                &painter,
-                art,
-                Rect::from_min_size(pos2(x, content.top()), vec2(MINE_WIDTH, inner.y)),
-                state,
-                human,
-            );
-            effect_tabs(&painter, art, plate_rect, state, human);
+            if !crate::TOUCH {
+                x = strip.right() + 10.0;
+                painter.line_segment(
+                    [pos2(x, content.top()), pos2(x, content.bottom())],
+                    Stroke::new(1.0, hexa(0xffffff, 0.09)),
+                );
+                x += 10.0;
+                mine_socket(
+                    &painter,
+                    art,
+                    Rect::from_min_size(pos2(x, content.top()), vec2(MINE_WIDTH, inner.y)),
+                    state,
+                    human,
+                );
+            }
+            effect_tabs(&painter, art, plate_rect, human);
             if let Some((notice, _)) = &state.ammo_notice {
                 ammo_notice(&painter, plate_rect, notice, screen);
             }
@@ -930,11 +832,11 @@ fn hull_status(
     art: &Art,
     rect: Rect,
     state: &UiState,
-    human: &HumanState,
+    human: &HudHuman,
     playing: bool,
     time: f64,
 ) {
-    let critical = playing && human.alive && human.health_ratio < CRITICAL_HEALTH;
+    let critical = playing && human.alive && human.health_ratio < CRITICAL_HULL;
     if critical {
         let beat = (0.5 - 0.5 * (time / 1.6 * std::f64::consts::TAU).cos()) as f32;
         painter.rect_filled(
@@ -943,8 +845,8 @@ fn hull_status(
             hexa(0xff3b4a, 0.06 + 0.14 * beat),
         );
     }
-    let ramp = hull_ramp(human.health_ratio);
-    let tone = hull_tone(human.health_ratio);
+    let ramp = hex(human.hull_ramp);
+    let tone = human.hull_tone;
     // The tank's name and its rank.
     let name = human.vehicle_name.to_uppercase();
     let name_rect = paint::text_fit(
@@ -989,7 +891,7 @@ fn hull_status(
         rank_rect.width() - 6.0,
     );
     ui.interact(rank_rect, Id::unique("rank"), Sense::hover())
-        .on_hover_text(rank_title(human));
+        .on_hover_text(human.rank_title);
     // The hull readout: its icon, the number in the ramp's colour and the maximum.
     let readout_y = rect.top() + 36.0;
     art.icon(
@@ -1071,25 +973,22 @@ fn ammo_rack(
     painter: &Painter,
     art: &Art,
     strip: Rect,
-    human: &HumanState,
+    human: &HudHuman,
     playing: bool,
     actions: &mut Vec<Action>,
 ) {
     painter.rect_filled(strip, 8, hexa(0x020812, 0.35));
     let mut x = strip.left();
-    for (index, (weapon, label, name, color)) in AMMO.iter().enumerate() {
-        let slot = human.ammo.iter().find(|slot| slot.weapon == *weapon);
+    for (index, option) in AMMO_OPTIONS.iter().enumerate() {
+        let (weapon, label, name) = (option.weapon.as_str(), option.label(), option.name);
+        let slot = human.ammo.iter().find(|slot| slot.weapon == option.weapon);
         let selected = slot.is_some_and(|slot| slot.selected);
         let available = slot.is_some_and(|slot| slot.available);
         let count = slot.and_then(|slot| slot.count);
-        let width = if selected {
-            SELECTED_SLOT_WIDTH
-        } else {
-            SLOT_WIDTH
-        };
+        let width = slot_width(selected);
         let rect = Rect::from_min_size(pos2(x, strip.top()), vec2(width, strip.height()));
         x += width + SLOT_GAP;
-        let color = hex(*color);
+        let color = hex(option.color());
         let count_text = match count {
             None => "unlimited".to_owned(),
             Some(count) => format!("{count} remaining"),
@@ -1178,24 +1077,30 @@ fn ammo_rack(
                 rect.width() - 14.0,
             );
         } else {
-            // The key at the top, the icon and the count under it.
-            let key = format!("{}", index + 1);
-            let key_rect =
-                Rect::from_center_size(pos2(rect.center().x, rect.top() + 11.0), vec2(16.0, 15.0));
-            painter.rect_filled(key_rect, 3, hexa(0xffffff, 0.12));
-            paint::text(
-                painter,
-                key_rect.center(),
-                Align2::CENTER_CENTER,
-                &key,
-                bold_font(12.0),
-                hex(0xf2f7fc),
-                0.0,
-            );
+            // The key at the top, the icon and the count under it; a touch screen has
+            // no keys, so its icon rises into their place.
+            if !crate::TOUCH {
+                let key = format!("{}", index + 1);
+                let key_rect = Rect::from_center_size(
+                    pos2(rect.center().x, rect.top() + 11.0),
+                    vec2(16.0, 15.0),
+                );
+                painter.rect_filled(key_rect, 3, hexa(0xffffff, 0.12));
+                paint::text(
+                    painter,
+                    key_rect.center(),
+                    Align2::CENTER_CENTER,
+                    &key,
+                    bold_font(12.0),
+                    hex(0xf2f7fc),
+                    0.0,
+                );
+            }
+            let icon_y = rect.top() + if crate::TOUCH { 24.0 } else { 33.0 };
             art.icon(
                 painter,
                 weapon,
-                Rect::from_center_size(pos2(rect.center().x, rect.top() + 33.0), Vec2::splat(20.0)),
+                Rect::from_center_size(pos2(rect.center().x, icon_y), Vec2::splat(20.0)),
                 color,
             );
             let count_pos = pos2(rect.center().x, rect.bottom() - 10.0);
@@ -1226,7 +1131,7 @@ fn ammo_rack(
 }
 
 /// The mine socket: armed, or a dial that refills while the seconds count down.
-fn mine_socket(painter: &Painter, art: &Art, rect: Rect, state: &UiState, human: &HumanState) {
+fn mine_socket(painter: &Painter, art: &Art, rect: Rect, state: &UiState, human: &HudHuman) {
     let cooling = human.mine_cooldown > 0.0;
     let total = state.mine_total.max(human.mine_cooldown);
     let armed = if cooling && total > 0.0 {
@@ -1293,18 +1198,19 @@ fn mine_socket(painter: &Painter, art: &Art, rect: Rect, state: &UiState, human:
 
 /// Active power-ups: tabs docked on the panel's top edge over the rack, growing
 /// leftward, each a timer ring round its icon, its name and what is left.
-fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, state: &UiState, human: &HumanState) {
-    let list = effects(state, human);
+fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, human: &HudHuman) {
     let mut right = plate.right() - 12.0;
     let height = 32.0;
     let font = bold_font(13.0);
-    for effect in list.iter().rev() {
-        let color = hex(effect.color);
+    for effect in human.effects.iter().rev() {
+        let (icon, color) = effect_art(effect.kind);
+        let color = hex(color);
+        let detail = effect.detail.to_string();
         let name_width = paint::text_width(painter, effect.name, font.clone(), 1.0);
-        let detail_width = if effect.detail.is_empty() {
+        let detail_width = if detail.is_empty() {
             0.0
         } else {
-            paint::text_width(painter, &effect.detail, font.clone(), 0.4) + 5.0
+            paint::text_width(painter, &detail, font.clone(), 0.4) + 5.0
         };
         let width = 8.0 + 26.0 + 7.0 + name_width + detail_width + 16.0;
         let rect = Rect::from_min_max(
@@ -1340,7 +1246,7 @@ fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, state: &UiState, human
         paint::timer_ring(painter, ring, 10.5, 3.0, effect.share as f32, color);
         art.icon(
             painter,
-            effect.icon,
+            icon,
             Rect::from_center_size(ring, Vec2::splat(13.0)),
             color,
         );
@@ -1354,12 +1260,12 @@ fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, state: &UiState, human
             color,
             1.0,
         );
-        if !effect.detail.is_empty() {
+        if !detail.is_empty() {
             paint::text(
                 painter,
                 pos2(name.right() + 5.0, ring.y),
                 Align2::LEFT_CENTER,
-                &effect.detail,
+                &detail,
                 font.clone(),
                 Color32::WHITE,
                 0.4,
@@ -1452,7 +1358,10 @@ fn compass_dial(painter: &Painter, rect: Rect, hull_angle: f64) {
     );
     painter.circle_filled(center, 7.5, hex(0x0b1a33));
     painter.circle_filled(center, 5.5, GOLD);
-    paint::kbd(painter, pos2(center.x, rect.bottom() - 13.0), "V", 12.0);
+    // The key that leaves first person; a touch screen has the eye button instead.
+    if !crate::TOUCH {
+        paint::kbd(painter, pos2(center.x, rect.bottom() - 13.0), "V", 12.0);
+    }
 }
 
 /// Incoming damage: a glowing wedge on a ring round the player's tank, turned toward
@@ -1546,4 +1455,56 @@ fn damage_ring(painter: &Painter, screen: Rect, state: &UiState) {
         fade(hexa(0xff2a3a, 0.25), alpha),
     );
     painter.add(Shape::mesh(pointer));
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sloppy_web::hud::ScorePill;
+
+    fn collect_text(shape: &Shape, text: &mut Vec<String>) {
+        match shape {
+            Shape::Text(shape) => text.push(shape.galley.job.text.clone()),
+            Shape::Vec(shapes) => shapes.iter().for_each(|shape| collect_text(shape, text)),
+            _ => {}
+        }
+    }
+
+    #[test]
+    fn room_score_omits_the_single_player_objective_and_team_tab() {
+        let context = egui::Context::default();
+        theme::install(&context);
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0));
+        let mut hud = Hud::default();
+        hud.match_state.scores = [42, 37];
+        hud.match_state.time = 188.0;
+        for room in [false, true] {
+            hud.score_pill = if room {
+                ScorePill::room(&hud.match_state)
+            } else {
+                ScorePill::local(&hud.match_state, GameMode::Team, false, 0.0, 100)
+            };
+            let mut output = context.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    ..Default::default()
+                },
+                |context| score_bar(&backdrop(context), screen, &hud, room),
+            );
+            // This shape-only test has no GPU painter to consume texture updates.
+            output.textures_delta.clear();
+            let mut labels = Vec::new();
+            for shape in output.shapes {
+                collect_text(&shape.shape, &mut labels);
+            }
+            for expected in ["BLUE", "RED", "42", "37", "3:08"] {
+                assert!(
+                    labels.iter().any(|text| text == expected),
+                    "{expected} stays in both HUDs"
+                );
+            }
+            assert_eq!(labels.iter().any(|text| text == "FIRST TO 100"), !room);
+            assert_eq!(labels.iter().any(|text| text == "YOUR TEAM"), !room);
+        }
+    }
 }

@@ -19,20 +19,17 @@ import {
   type EngineEvent,
   type EventBatch,
   type MatchState as Match,
+  type RoomEnding,
+  type RoomLobby,
+  type RoomStatus,
+  type StatsSection,
 } from "../game/engine-api";
 import { printDebugHelp } from "../game/debug-console";
 import { debugPage } from "../game/map-options";
 import { NerdStats } from "../game/nerd-stats";
 import { WireLog } from "./wire-log";
 import { NetworkUI, type Hud } from "./network-ui";
-import { networkStatsSections, type NetworkStatsSource } from "./network-stats";
-import {
-  ROOM_CODE,
-  TRANSPORT_DELAY_PARAMS,
-  type ConnectionEnd,
-  type JoinChoice,
-  type Lobby,
-} from "./room-protocol";
+import { ROOM_CODE, TRANSPORT_DELAY_PARAMS, type JoinChoice, type Lobby } from "./room-protocol";
 import { pendingServer, takePendingJoin, type RoomSelection } from "./pending-join";
 
 /** `NetGame.frame` result slots (`net_frame_slot` in `crates/web/src/net_game.rs`). */
@@ -58,8 +55,6 @@ const LATENCY_SLIDER_PARAM = "latencySlider";
 const POLL_MS = 250;
 /** A socket this far behind on sends is closed and reconnected instead. */
 const MAX_BUFFERED_BYTES = 16_384;
-/** Renderer resolution cap from the display pixel ratio (`CAMERA.max_pixel_ratio`). */
-const MAX_PIXEL_RATIO = 1.5;
 
 type Action =
   | { type: "open"; socket: number; url: string }
@@ -68,11 +63,11 @@ type Action =
   | { type: "saveSeat"; token: string; roomEpoch: string }
   | { type: "forgetSeat" };
 type Notice =
-  | { type: "status"; text: string; connected: boolean }
+  | ({ type: "status" } & RoomStatus)
   | { type: "notice"; text: string }
-  | ({ type: "ended" } & ConnectionEnd)
-  | { type: "lobby"; lobby: Lobby; playerId: string }
-  | { type: "result"; match: Match; team: number }
+  | ({ type: "ended" } & RoomEnding)
+  | ({ type: "lobby" } & RoomLobby)
+  | { type: "result"; match: Match }
   | { type: "resetFeedback" | "clearInput" | "reveal" | "prepare" | "baselineShown" }
   | { type: "arenaFailed"; error: string };
 
@@ -293,10 +288,7 @@ export async function startMultiplayer(
   const stats = debugPage(location.search)
     ? new NerdStats(
         root,
-        networkStatsSections(
-          (now) => JSON.parse(game.stats_json(now)) as NetworkStatsSource,
-          () => Math.min(devicePixelRatio, MAX_PIXEL_RATIO),
-        ),
+        () => JSON.parse(game.nerd_stats_json(performance.now())) as StatsSection[],
         () => lastResult[FRAME.drawn] === 1 && !ui.menu && phase === "playing",
         { network: true },
       )
@@ -309,9 +301,9 @@ export async function startMultiplayer(
       resize();
     }
   };
-  const showStatus = (text: string, connected: boolean) => {
-    ui.status(text, connected);
-    joining?.status(text);
+  const showStatus = (status: RoomStatus) => {
+    ui.status(status);
+    joining?.status(status.text);
   };
 
   // A `?debug` page logs its traffic as JSON for the console (`sloppy.wire`).
@@ -392,7 +384,7 @@ export async function startMultiplayer(
   const handle = (notice: Notice) => {
     switch (notice.type) {
       case "status":
-        showStatus(notice.text, notice.connected);
+        showStatus(notice);
         break;
       case "notice":
         ui.notice(notice.text);
@@ -409,10 +401,10 @@ export async function startMultiplayer(
         break;
       case "lobby":
         phase = notice.lobby.phase;
-        ui.lobby(notice.lobby, notice.playerId);
+        ui.lobby(notice);
         break;
       case "result":
-        ui.result(notice.match, notice.team);
+        ui.result(notice.match);
         break;
       case "resetFeedback":
         ui.resetFeedback();
@@ -495,7 +487,7 @@ export async function startMultiplayer(
     audio.play(drained);
     for (const event of drained.events) {
       if (hud) {
-        ui.event(event, hud);
+        ui.event(event);
       }
       onEvent?.(event);
     }
@@ -503,19 +495,16 @@ export async function startMultiplayer(
   let stopped = false;
   let frames = 0;
   /** A GPU validation error or device loss: stop drawing, give up the connection and
-   * say so, rather than throwing every frame behind a frozen view. */
+   * say so (the engine's `ended` notice), rather than throwing every frame behind a
+   * frozen view. */
   const fail = (error: unknown) => {
     stopped = true;
     console.error("The room page stopped", error);
     clearInterval(poll);
     controls.clear();
     controls.holdPointer(false, true);
-    game.stop();
+    game.renderer_failed();
     pump();
-    ui.ended({
-      cause: "renderer",
-      text: "The renderer stopped. Reload the page to play again.",
-    });
   };
   const loop = (now: number) => {
     if (stopped) {
@@ -566,7 +555,7 @@ export async function startMultiplayer(
       );
       // Frames the engine skipped while the GPU caught up are not shown frames.
       if (result[FRAME.ran]) {
-        stats?.frame(now, result[FRAME.simMs], result[FRAME.renderMs]);
+        stats?.frame(now);
       }
     } else if (result[FRAME.events] > 0) {
       game.drain_events();

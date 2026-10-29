@@ -15,7 +15,8 @@
 //! - [`shot_paths`]: projectile trajectories, recorded by the host and drawn by clients.
 //! - [`wire`]: varints and records of quantized fields; [`wire_view`]: binary messages as
 //!   the former JSON, for tests and tools.
-//! - [`room_list`]: public directory listings.
+//! - [`room_list`]: public directory listings, as the host writes them and a client reads
+//!   the directory's answer.
 //! - [`schema`] / [`json`]: TypeScript-compatible readers and number formatting.
 //!
 //! Client side (browser, through the web crate):

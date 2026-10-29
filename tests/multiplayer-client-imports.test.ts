@@ -42,7 +42,6 @@ const SHELL = new Set([
   "src/net/multiplayer.css",
   ...[
     "client",
-    "network-stats",
     "network-ui",
     "pending-join",
     "player-name",

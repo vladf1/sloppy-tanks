@@ -1,5 +1,5 @@
-# Installed to /etc/sloppy-tanks/caddy/ by provision.sh, with the site address below
-# replaced by the nip.io name of the machine's address (bootstrap.sh or server.mjs).
+# Installed to /etc/sloppy-tanks/caddy/ by bootstrap.sh, with the site address below
+# replaced by the nip.io name of the machine's address.
 # Caddy obtains a certificate for each and forwards WebSocket upgrades as-is.
 # X-Client-Port (with X-Forwarded-For) names the player's end of Caddy's socket to them,
 # which the game server reads its TCP round trip and retransmissions from.

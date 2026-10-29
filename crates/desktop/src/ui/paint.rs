@@ -6,8 +6,8 @@ use std::sync::Arc;
 
 use egui::text::{LayoutJob, TextFormat, TextWrapping};
 use egui::{
-    Align2, Color32, CornerRadius, FontId, Galley, Mesh, Painter, Pos2, Rect, Response, Sense,
-    Shape, Stroke, StrokeKind, Ui, Vec2, pos2, vec2,
+    Align2, Color32, FontId, Galley, Mesh, Painter, Pos2, Rect, Response, Sense, Shape, Stroke,
+    StrokeKind, Ui, Vec2, pos2, vec2,
 };
 
 use super::icons::Art;
@@ -276,15 +276,17 @@ pub fn glass(
     bottom: Color32,
     edge: Color32,
 ) {
-    let radius = CornerRadius::same(radius.round() as u8);
-    // The gradient under a rounded frame: the corners are small enough that a rect
-    // gradient inset by the radius plus a solid rounded rect reads as one.
-    painter.rect_filled(rect, radius, mix(top, bottom, 0.5));
-    painter.add(vgradient(
-        rect.shrink2(vec2(0.0, f32::from(radius.nw).min(rect.height() / 2.0))),
+    painter.add(rounded_vgradient(
+        rect,
+        [radius; 4],
         &[(0.0, top), (1.0, bottom)],
     ));
-    painter.rect_stroke(rect, radius, Stroke::new(1.0, edge), StrokeKind::Inside);
+    painter.rect_stroke(
+        rect,
+        radius.round() as u8,
+        Stroke::new(1.0, edge),
+        StrokeKind::Inside,
+    );
 }
 
 /// Text laid out on one line, `spacing` points between letters, cut with an ellipsis
@@ -381,11 +383,12 @@ pub fn text_width(painter: &Painter, text: &str, font: FontId, spacing: f32) -> 
 /// A key cap (`kbd`) centred at `center`; returns its rect.
 pub fn kbd(painter: &Painter, center: Pos2, label: &str, size: f32) -> Rect {
     let font = bold_font(size);
-    let width = text_width(painter, label, font.clone(), 0.4).max(size * 1.2) + size * 0.8;
-    let rect = Rect::from_center_size(center, vec2(width, size + 4.0));
+    let width = kbd_width(painter, label, size);
+    let rect = Rect::from_center_size(center, vec2(width, size * 1.3 + 10.0));
     painter.rect_filled(rect.translate(vec2(0.0, 1.0)), 4, hex(0x050c18));
-    painter.add(vgradient(
+    painter.add(rounded_vgradient(
         rect.shrink(0.5),
+        [4.0; 4],
         &[(0.0, hex(0x3d659e)), (1.0, hex(0x1f3b66))],
     ));
     painter.rect_stroke(
@@ -408,7 +411,7 @@ pub fn kbd(painter: &Painter, center: Pos2, label: &str, size: f32) -> Rect {
 
 /// The width a key cap for `label` takes.
 pub fn kbd_width(painter: &Painter, label: &str, size: f32) -> f32 {
-    text_width(painter, label, bold_font(size), 0.4).max(size * 1.2) + size * 0.8
+    (text_width(painter, label, bold_font(size), 0.4) + 16.0).max(24.0)
 }
 
 /// An arc of `radius` from `start` (radians clockwise from straight up) over `sweep`.
@@ -448,6 +451,14 @@ pub fn timer_ring(
     );
 }
 
+/// A painter on `layer` over the whole screen: egui's own clip to the safe area, so on
+/// an iPad a fill would stop short of the home indicator's strip.
+pub fn full_screen(context: &egui::Context, layer: egui::LayerId) -> Painter {
+    let mut painter = context.layer_painter(layer);
+    painter.set_clip_rect(context.viewport_rect());
+    painter
+}
+
 /// An elliptical vignette over `rect`: the radial gradient `stops` (share of the
 /// ellipse's radii `radii`, a share of the rect's size, and colour), at `opacity`.
 pub fn vignette(
@@ -457,10 +468,21 @@ pub fn vignette(
     stops: &[(f32, Color32)],
     opacity: f32,
 ) {
+    vignette_at(painter, rect, rect.center(), radii, stops, opacity);
+}
+
+/// A vignette with an offset optical centre, as the cockpit's CSS uses.
+pub fn vignette_at(
+    painter: &Painter,
+    rect: Rect,
+    center: Pos2,
+    radii: Vec2,
+    stops: &[(f32, Color32)],
+    opacity: f32,
+) {
     if opacity <= 0.0 {
         return;
     }
-    let center = rect.center();
     let radius = vec2(rect.width() * radii.x, rect.height() * radii.y);
     let segments = 48;
     let mut mesh = Mesh::default();
@@ -559,38 +581,17 @@ pub fn button(
             } else {
                 hex(0x6e5a24)
             };
-            painter.add(vgradient(
-                rect.shrink2(vec2(0.0, 6.0)),
-                &[(0.0, top), (0.48, middle), (1.0, bottom)],
+            painter.add(rounded_vgradient(
+                rect,
+                [10.0; 4],
+                &[
+                    (0.0, top),
+                    (0.48, middle),
+                    (0.91, bottom),
+                    (0.92, hex(0xc97d0e)),
+                    (1.0, hex(0xc97d0e)),
+                ],
             ));
-            painter.rect_filled(
-                Rect::from_min_max(rect.left_top(), pos2(rect.right(), rect.top() + 7.0)),
-                CornerRadius {
-                    nw: 10,
-                    ne: 10,
-                    sw: 0,
-                    se: 0,
-                },
-                top,
-            );
-            painter.rect_filled(
-                Rect::from_min_max(pos2(rect.left(), rect.bottom() - 7.0), rect.right_bottom()),
-                CornerRadius {
-                    nw: 0,
-                    ne: 0,
-                    sw: 10,
-                    se: 10,
-                },
-                hex(0xc97d0e),
-            );
-            painter.rect_filled(
-                Rect::from_min_max(
-                    pos2(rect.left(), rect.bottom() - 7.0),
-                    pos2(rect.right(), rect.bottom() - 3.0),
-                ),
-                0,
-                bottom,
-            );
         }
         ButtonStyle::Secondary | ButtonStyle::Danger => {
             painter.rect_filled(rect, 10, hexa(0xffffff, if hovered { 0.09 } else { 0.035 }));

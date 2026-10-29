@@ -1,6 +1,6 @@
 //! Embeds the game's runtime files from `public/` (textures, sounds, the menu's tank
-//! previews and the icon) as a sorted table `src/assets.rs` looks paths up in, and on
-//! Windows gives the executable its icon.
+//! previews and the icon) as a sorted table `src/assets.rs` looks paths up in, on
+//! Windows gives the executable its icon, and on iOS a Mac-sized main-thread stack.
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -62,6 +62,14 @@ fn main() {
     table.push_str("];\n");
     let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it"));
     std::fs::write(out.join("assets.rs"), table).expect("OUT_DIR is writable");
+
+    // iOS gives an app's main thread a 1 MB stack where macOS gives 8 MB, and the
+    // engine's start-up (`Session::start` through `Game::create` to `Presentation::new`)
+    // takes about 700 KB of it below UIKit's frames: the iPad app overflowed it at
+    // launch. Its executable asks for the Mac's main-thread stack instead.
+    if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
+        println!("cargo:rustc-link-arg-bins=-Wl,-stack_size,0x800000");
+    }
 
     // The executable's icon, from the web app's, at each size Windows draws it (taskbar,
     // title bar, Explorer's views up to 256), so none is scaled down from the largest.

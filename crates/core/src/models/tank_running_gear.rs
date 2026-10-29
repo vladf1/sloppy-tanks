@@ -1334,14 +1334,20 @@ mod tests {
         }
     }
 
+    /// Belt meshes store f32 positions, so a belt measured exactly at the ground or
+    /// the reach may read a rounding step off it.
+    const MESH_ROUNDING: f64 = 1e-6;
+
     /// The belt scrolls in its shader, so nothing in the model moves: the tread
     /// group stays empty and the belt rests on the ground inside the track's reach.
+    /// The hit box is measured from the hull bounds, which the fenders span to the
+    /// reach, so a belt past the reach would grow every tank's hit box.
     #[test]
     fn belt_rests_on_the_ground_within_the_track_reach() {
         for kind in VehicleKind::PLAYABLE {
+            let reach = super::track_reach(super::super::chassis(kind, Team::Blue, [0; 3]).length);
             let model = tank_model(kind, Team::Blue);
             let hull = model.find(part::HULL).unwrap();
-            let bounds = node_bounds(hull, DMat4::IDENTITY);
             assert!(hull.find(part::TRACK_GROUP).unwrap().children.is_empty());
             let belts: Vec<_> = hull
                 .children
@@ -1357,12 +1363,14 @@ mod tests {
             for belt in belts {
                 let own = node_bounds(belt, DMat4::IDENTITY);
                 assert!(
-                    (own.min.y - super::TRACK_GROUND).abs() < 1e-6,
+                    (own.min.y - super::TRACK_GROUND).abs() < MESH_ROUNDING,
                     "{kind:?} rests"
                 );
                 assert!(
-                    own.min.z >= bounds.min.z && own.max.z <= bounds.max.z,
-                    "{kind:?}"
+                    own.min.z >= -reach - MESH_ROUNDING && own.max.z <= reach + MESH_ROUNDING,
+                    "{kind:?} belt spans {:.4}..{:.4}, past the reach {reach:.4}",
+                    own.min.z,
+                    own.max.z
                 );
             }
         }

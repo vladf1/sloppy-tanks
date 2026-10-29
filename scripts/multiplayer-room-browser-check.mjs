@@ -188,7 +188,7 @@ try {
       .locator("#nerd-stats pre")
       .filter({ hasText: /^Updates received/ })
       .innerText()
-      .then((text) => Number(text.match(/\d+$/)[0]));
+      .then((text) => Number(text.match(/[\d,]+$/)[0].replaceAll(",", "")));
   const before = await count();
   await alice.page.waitForTimeout(1200);
   assert.ok((await count()) > before, "Received-update counter advances");

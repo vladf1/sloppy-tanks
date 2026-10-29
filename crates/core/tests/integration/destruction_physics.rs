@@ -1244,92 +1244,61 @@ fn large_wreck_pieces_land_on_each_other_and_settle_instead_of_interpenetrating(
 }
 
 #[test]
-fn all_substantial_debris_shares_contacts_stacks_across_categories_and_excludes_small_scraps() {
-    let groups = [group::PUSHABLE_DEBRIS, group::TIMBER_DEBRIS, group::WRECK];
-    for a in groups {
-        for b in groups {
-            assert!(collides(a, b));
-        }
-        for b in [group::FRAGMENT, group::COVER_QUERY, group::STEERING_QUERY] {
-            assert!(!collides(a, b));
-        }
-        for b in [
-            group::GROUND,
-            group::COVER,
-            group::MOVABLE_COVER,
-            group::TANK,
-            group::DEBRIS_QUERY,
-        ] {
-            assert!(collides(a, b));
-        }
+fn substantial_debris_contacts_itself_the_field_and_tanks_but_not_scraps_or_cover_and_steering_rays()
+ {
+    // Pushable scenery, timber and wreck pieces share one membership (`data.rs`).
+    let debris = group::WRECK;
+    assert!(collides(debris, debris));
+    for other in [group::FRAGMENT, group::COVER_QUERY, group::STEERING_QUERY] {
+        assert!(!collides(debris, other));
     }
-    let mut s = arena();
-    let bodies: Vec<_> = groups
-        .iter()
-        .enumerate()
-        .map(|(i, &groups)| {
-            let body = s
-                .world
-                .insert_body(RigidBodyBuilder::dynamic().translation(vector(
-                    0.0,
-                    0.52 + i as f64 * 2.0,
-                    0.0,
-                )));
-            s.world.insert_collider(
-                ColliderBuilder::cuboid(1.0, 0.5, 1.0)
-                    .collision_groups(interaction_groups(groups))
-                    .friction(0.8),
-                Some(body),
-            );
-            body
-        })
-        .collect();
-    for _ in 0..480 {
-        s.world.step();
-    }
-    for (i, &body) in bodies.iter().enumerate() {
-        let y = s.body_translation(body).y;
-        assert!((y - (0.5 + i as f64)).abs() < 0.06, "layer {i} at {y}");
-        assert!(sleeping(&s, body));
+    for other in [
+        group::GROUND,
+        group::COVER,
+        group::MOVABLE_COVER,
+        group::TANK,
+        group::DEBRIS_QUERY,
+    ] {
+        assert!(collides(debris, other));
     }
 }
 
 #[test]
 fn shells_clear_low_debris_to_hit_a_tank_but_upright_debris_intercepts_the_same_trajectory() {
-    for groups in [group::PUSHABLE_DEBRIS, group::TIMBER_DEBRIS, group::WRECK] {
-        for upright in [false, true] {
-            let mut s = arena();
-            let target = s.add_tank(Team::Red, false, VehicleKind::Balanced, 0);
-            s.tanks[target].protection = 0.0;
-            let target_body = s.tanks[target].body;
-            park(&mut s, target_body, 2.0, 0.65, 0.0);
-            let half = if upright { 1.0 } else { 0.125 };
-            let body = s
-                .world
-                .insert_body(RigidBodyBuilder::dynamic().translation(vector(-1.0, half, 0.0)));
-            s.world.insert_collider(
-                ColliderBuilder::cuboid(0.5, half as f32, 0.5)
-                    .collision_groups(interaction_groups(groups))
-                    .mass(0.3),
-                Some(body),
-            );
-            let id = s.allocate_id();
-            let mut debris = Fragment::new(id, body, 8.0, 1.0, 0x805336);
-            debris.dimensions = Some(Point3::new(1.0, 2.0 * half, 1.0));
-            debris.material = Some(DebrisMaterial::Wood);
-            s.fragments.push(debris);
-            s.world.bodies[body].sleep();
-            s.world.step();
-            let hp = s.tanks[target].hp;
-            shot(&mut s, Weapon::Standard, 1.0);
-            assert_eq!(s.shots.len(), 0);
-            assert_eq!(s.tanks[target].hp, if upright { hp } else { hp - 40.0 });
-            assert_eq!(
-                s.body_linvel(body).x > 0.0,
-                upright,
-                "only an actual debris hit pushes it"
-            );
-        }
+    // Pushable scenery, timber and wreck pieces share one membership (`data.rs`), so one
+    // of them stands for all.
+    for upright in [false, true] {
+        let mut s = arena();
+        let target = s.add_tank(Team::Red, false, VehicleKind::Balanced, 0);
+        s.tanks[target].protection = 0.0;
+        let target_body = s.tanks[target].body;
+        park(&mut s, target_body, 2.0, 0.65, 0.0);
+        let half = if upright { 1.0 } else { 0.125 };
+        let body = s
+            .world
+            .insert_body(RigidBodyBuilder::dynamic().translation(vector(-1.0, half, 0.0)));
+        s.world.insert_collider(
+            ColliderBuilder::cuboid(0.5, half as f32, 0.5)
+                .collision_groups(interaction_groups(group::TIMBER_DEBRIS))
+                .mass(0.3),
+            Some(body),
+        );
+        let id = s.allocate_id();
+        let mut debris = Fragment::new(id, body, 8.0, 1.0, 0x805336);
+        debris.dimensions = Some(Point3::new(1.0, 2.0 * half, 1.0));
+        debris.material = Some(DebrisMaterial::Wood);
+        s.fragments.push(debris);
+        s.world.bodies[body].sleep();
+        s.world.step();
+        let hp = s.tanks[target].hp;
+        shot(&mut s, Weapon::Standard, 1.0);
+        assert_eq!(s.shots.len(), 0);
+        assert_eq!(s.tanks[target].hp, if upright { hp } else { hp - 40.0 });
+        assert_eq!(
+            s.body_linvel(body).x > 0.0,
+            upright,
+            "only an actual debris hit pushes it"
+        );
     }
 }
 

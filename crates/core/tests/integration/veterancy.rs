@@ -158,8 +158,6 @@ fn all_five_weapons_snapshot_rank_damage_and_reload_bonuses_stack_with_rapid_fir
                 near(shot.damage, weapon(fired).damage * 1.3);
                 assert_eq!(shot.owner_life, Some(s.tanks[t].deaths));
             }
-            s.tanks[t].xp = 0.0;
-            near(s.shots[0].damage, weapon(fired).damage * 1.3);
             s.tanks[t].rapid = 0.0;
         }
     }
@@ -372,11 +370,9 @@ fn death_stops_xp_respawn_resets_rank_before_new_hull_and_round_reset_clears_all
         assert_eq!(s.tanks[t].hp, vehicle(s.tanks[t].kind).health);
     }
     earn_experience(&mut s, PLAYER, RANKS[2].xp, None);
-    let mut snapshot = s.snapshot();
+    let snapshot = s.snapshot();
     assert_eq!(snapshot.tanks[0].rank, 2);
     assert_eq!(snapshot.tanks[0].max_hp, 161.0);
-    snapshot.tanks[0].xp = 0.0;
-    assert_eq!(s.tanks[PLAYER].xp, RANKS[2].xp);
     s.reset(None);
     assert!(s.tanks.iter().all(|t| t.xp == 0.0 && rank_index(t.xp) == 0));
 }

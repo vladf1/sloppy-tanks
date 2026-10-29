@@ -35,8 +35,13 @@
 //!   "forgetSeat"}`. Report socket events with `socket_opened`, `socket_message` (text
 //!   frames), `socket_binary` (binary frames, as a `Uint8Array`; set the socket's
 //!   `binaryType` to `"arraybuffer"`) and `socket_closed` (close code).
-//! - Notices (`take_notices`): `status {text, connected}`, `notice {text}`, `ended {cause,
-//!   text}`, `lobby {lobby, playerId}` (the wire lobby record), `result {match, team}`,
+//! - Notices (`take_notices`): `status {text, connected, title?, message?}` (the
+//!   connection dialog's words while not connected), `notice {text}`, `ended {text,
+//!   title, retry, setup}` (the dialog's title and buttons, `retry` null where joining
+//!   again cannot work; also after `renderer_failed`), `lobby {lobby, playerId, menu:
+//!   {title, hint, summary}, arrivals: [{text}]}` (the wire lobby record, the room
+//!   menu's words for it and the feed lines of players who joined or came back),
+//!   `result {match}` (the finished round's final score),
 //!   `resetFeedback`, `clearInput`, `reveal`, `prepare` (run `prepare_step` between tasks
 //!   until it reports done; while it reports `gpuPending`, wait on a short timer),
 //!   `arenaFailed {error}` and `baselineShown` (the arena drew the first frames of a new
@@ -45,80 +50,87 @@
 //!   control state of `Game.frame` (`sloppy_render::presentation::input::slot`); command
 //!   building, aiming and the input cadence run here.
 //! - `drain_events()` has the shape of `Game.drain_events()`; `hud_json()` carries
-//!   `Game.hud_json()`'s `match`, `human` and `scoreboard` (the room lobby has the
-//!   results).
-//! - `stats_json(now)`: `Game.stats_json()`'s renderer, frame and pixel ratio rows, the
-//!   displayed scene's counts and a `network` block (RTT, updates, playout buffer, late
-//!   batches, ticks, input seq/ack).
+//!   `Game.hud_json()`'s `match`, `human`, `scoreboard` and `scorePill` (the room lobby
+//!   has the results).
+//! - `stats_json(now)`: `Game.stats_json()`'s renderer and frame readings, the
+//!   displayed scene's counts, a `network` block (RTT, updates, playout buffer, late
+//!   batches, ticks, input seq/ack) and a `feel` block, for diagnostics and the
+//!   latency matrix.
+//! - `nerd_stats_json(now)`: the Stats for nerds panel's sections, as
+//!   `Game.nerd_stats_json()`; the update rate is measured between calls.
 //! - Intents: `choose`, `settings`, `start`, `pause`, `resume`, `end`, `rejoin`,
-//!   `leave`, `select_ammo`, `set_hidden`, `stop` (`pagehide`), `toggle_first_person`,
-//!   `resize`.
+//!   `leave`, `select_ammo`, `set_hidden`, `stop` (`pagehide`), `renderer_failed`,
+//!   `toggle_first_person`, `resize`.
 //! - `camera_preferences() -> Float64Array [firstPerson, zoom]`: the chosen view
 //!   and clamped overhead zoom, for the page to save after a camera input.
+//!
+//! A Rust shell (the desktop app) passes and reads the same values typed:
+//! `create_with`, `join` ([`JoinChoice`]), `choose_seat`, `set_rules` ([`RoomSettings`]),
+//! `take_room_actions` ([`ClientAction`]), `take_room_notices` ([`RoomNotice`]),
+//! `prepare` ([`PrepareStatus`]), `hud` ([`RoomHud`]), `take_events` ([`EventBatch`]),
+//! `camera` ([`CameraPreferences`]), `nerd_stats` ([`StatsSection`]), `gpu_ms` and
+//! `set_graphics_setting` (the setting itself).
 
-use crate::events::{PendingEvent, drain_events};
+use crate::Shell;
+use crate::events::{EventBatch, PendingEvent, batch_json, take_events};
+use crate::feedback::event_feedback;
+use crate::net_frame_slot;
+use crate::sounds::SoundPlanner;
 
 use glam::Vec2;
 use serde::Deserialize;
 use serde_json::{Value, json};
-use sloppy_core::net::client::{ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat};
+use sloppy_core::net::client::{
+    ClientAction, ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat,
+};
 use sloppy_core::net::client_setup::pending_join;
-use sloppy_core::net::feel_readings::Samples;
-use sloppy_core::net::hull_prediction::CorrectionCause;
 use sloppy_core::net::protocol::{
     JoinChoice, RoomPhase, RoomSettings, is_room_code, read_player_kind, read_team,
 };
 use sloppy_core::net::schema::{parse_record, text_length};
 use sloppy_core::net::transport_delay::DelaySettings;
-use sloppy_core::sim::{MatchPhase, RenderState, Weapon};
-use sloppy_render::presentation::Presentation;
+use sloppy_core::sim::{MatchPhase, RenderState, Team, VehicleKind, Weapon};
 use sloppy_render::presentation::input::{CommandBuilder, InputFrame};
+use sloppy_render::presentation::{PrepareStatus, Presentation};
+use sloppy_render::quality::GraphicsSetting;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
 use crate::frame_clock::{FramePacing, FrameTimes};
-use crate::hud::{HudHuman, Scoreboard, human_json};
-use crate::page::{
-    CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError, PageView, aim, create_view,
-    js_error, now_ms, parse, prepare_result, queue_event,
+use crate::hud::{EffectTimers, RoomHud, Scoreboard, room_hud};
+use crate::nerd_rows::{
+    ConnectionStats, FeelStats, NetworkSampler, RoomStats, SceneStats, StatsSection, room_sections,
 };
-use crate::stats::presentation_stats;
+use crate::page::{
+    CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
+    PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
+};
+use crate::room_notices::RoomNotice;
+use crate::room_text::RoomText;
+use crate::stats::{frame_readings, presentation_stats, renderer_readings};
 use sloppy_render::gpu::RenderTarget;
 
 /// Notices waiting for `take_notices`; a hidden HUD must not grow this without bound.
 const MAX_PENDING_NOTICES: usize = 256;
 
-/// Slots of `frame`'s result. Slots 2-4, 6-10 and 13-15 are `Game.frame`'s, except that
-/// `SIM_MS` times interpolation, input and event routing, and `HUD_DUE` needs a drawn
-/// frame and is also due while events wait. Slots 0, 1 and 5 stay 0.
-pub mod net_frame_slot {
-    pub use crate::game::frame_slot::{
-        COCKPIT, DT, EVENTS, FIRST_PERSON, HUD_DUE, HULL_ANGLE, RAN, RENDER_MS, SIM_MS, VIEWER_X,
-        VIEWER_Y,
-    };
-    /// 1 when the arena drew this frame.
-    pub const DRAWN: usize = 11;
-    /// 1 when the page should free a captured pointer: a menu, a drop or no battle.
-    /// A death keeps it captured for the respawn.
-    pub const POINTER_FREE: usize = 12;
-    pub const LENGTH: usize = 16;
-}
-
 /// `NetGame.create`'s room settings besides the view configuration
-/// (`page::create_view`).
-#[derive(Deserialize, Default)]
+/// (`page::ViewConfig`).
+#[derive(Clone, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct NetConfig {
-    server: String,
-    room: String,
-    saved_seat: Option<SavedSeat>,
-    latency: Option<String>,
-    jitter: Option<String>,
-    stall: Option<String>,
+pub struct NetConfig {
+    /// The server's validated WebSocket origin.
+    pub server: String,
+    pub room: String,
+    /// A seat this player held in the room before a reload.
+    pub saved_seat: Option<SavedSeat>,
+    /// The development transport delay parameters; omitted in production.
+    pub latency: Option<String>,
+    pub jitter: Option<String>,
+    pub stall: Option<String>,
     /// Development switch: `"0"` draws incoming shells on the display clock alone.
-    dodge: Option<String>,
+    pub dodge: Option<String>,
     /// Development switch: `"0"` sends no view delay, so the host favors no shooter.
-    shooter: Option<String>,
+    pub shooter: Option<String>,
 }
 
 impl NetConfig {
@@ -150,6 +162,9 @@ struct PendingArena {
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
 pub struct NetGame {
+    /// The shell drawing this game, for the wording the page and the desktop app say
+    /// differently.
+    shell: Shell,
     client: NetworkClient,
     view: Presentation,
     commands: CommandBuilder,
@@ -158,7 +173,13 @@ pub struct NetGame {
     baseline: Option<u32>,
     prepared: bool,
     events: Vec<PendingEvent>,
-    notices: Vec<Value>,
+    /// The sounds drained events play, on the frame clock.
+    sounds: SoundPlanner,
+    notices: Vec<RoomNotice>,
+    /// What the room menu said so far, for the words of the next notices.
+    room_text: RoomText,
+    /// How long the viewer's effects have run, which their timer rings drain from.
+    effect_timers: EffectTimers,
     frame_index: u64,
     times: FrameTimes,
     pacing: FramePacing,
@@ -169,6 +190,8 @@ pub struct NetGame {
     /// Main-thread milliseconds spent applying received messages (including deliveries of
     /// the development delay) this page session, for the statistics.
     receive_ms: f64,
+    /// The previous Stats for nerds reading, which the update rate is measured from.
+    network_sampler: NetworkSampler,
 }
 
 #[cfg_attr(target_arch = "wasm32", wasm_bindgen)]
@@ -178,45 +201,7 @@ impl NetGame {
     pub async fn create(canvas: RenderTarget, config_json: &str) -> Result<NetGame, PageError> {
         #[cfg(target_arch = "wasm32")]
         console_error_panic_hook::set_once();
-        let config: NetConfig = parse(config_json)?;
-        if !is_room_code(&config.room) {
-            return Err(js_error("Invalid room code"));
-        }
-        let PageView {
-            view,
-            canvas,
-            graphics,
-            seed,
-            pacing,
-        } = create_view(canvas, config_json).await?;
-        let client = NetworkClient::new(ClientConfig {
-            server_url: config.server.clone(),
-            room: config.room.clone(),
-            saved_seat: config.saved_seat(),
-            delay: config.delay(),
-            seed: seed as u32,
-            dodger_first: config.dodge.as_deref() != Some("0"),
-            shooter_first: config.shooter.as_deref() != Some("0"),
-        });
-        let mut game = NetGame {
-            client,
-            view,
-            commands: CommandBuilder::default(),
-            arena: None,
-            baseline: None,
-            prepared: false,
-            events: Vec::new(),
-            notices: Vec::new(),
-            frame_index: 0,
-            times: FrameTimes::default(),
-            pacing,
-            canvas,
-            graphics,
-            last_result: vec![0.0; net_frame_slot::LENGTH],
-            receive_ms: 0.0,
-        };
-        game.canvas.apply(&mut game.view);
-        Ok(game)
+        Self::create_with(canvas, parse(config_json)?, parse(config_json)?).await
     }
 
     /// The choices Battle Setup stored for `room` before reloading into it, as `JoinChoice`
@@ -231,20 +216,20 @@ impl NetGame {
     pub fn connect(&mut self, choice_json: &str, now: f64) -> Result<(), PageError> {
         let choice =
             JoinChoice::read(&parse_record(choice_json).map_err(js_error)?).map_err(js_error)?;
-        self.client.connect(choice, now);
+        self.join(choice, now);
         Ok(())
     }
 
     /// Socket and storage work for the page, as a JSON array (see the module docs).
     pub fn take_actions(&mut self) -> String {
-        serde_json::to_string(&self.client.take_actions()).expect("client actions serialize")
+        serde_json::to_string(&self.take_room_actions()).expect("client actions serialize")
     }
 
     /// UI notices as a JSON array (see the module docs). Arena preparation and baseline
     /// requests are handled here and surface as `prepare` and `baselineShown`.
     pub fn take_notices(&mut self) -> String {
-        self.drain_client_notices();
-        Value::Array(std::mem::take(&mut self.notices)).to_string()
+        let notices = self.take_room_notices();
+        Value::Array(notices.iter().map(RoomNotice::to_value).collect()).to_string()
     }
 
     pub fn socket_opened(&mut self, socket: u32, now: f64) {
@@ -279,6 +264,15 @@ impl NetGame {
         self.client.stop();
     }
 
+    /// The shell's renderer failed (a GPU error or a lost device): give up the
+    /// connection, and end the room with an `ended` notice that says so.
+    pub fn renderer_failed(&mut self) {
+        self.client.stop();
+        self.drain_client_notices();
+        let ending = self.room_text.renderer_stopped(self.shell);
+        self.notice(RoomNotice::Ended(ending));
+    }
+
     // ---------------------------------------------------------- room intents
 
     /// Change team (`team` < 0: auto) or tank between battles.
@@ -289,15 +283,14 @@ impl NetGame {
         } else {
             Some(read_team(Some(&Value::from(team))).map_err(js_error)?)
         };
-        self.client.choose(team, kind, now);
-        Ok(())
+        self.choose_seat(team, kind, now)
     }
 
     /// The host's rules: `{ mapMode, difficulty, humansOnly, roundMinutes }`.
     pub fn settings(&mut self, settings_json: &str, now: f64) -> Result<(), PageError> {
         let settings = RoomSettings::read(&parse_record(settings_json).map_err(js_error)?)
             .map_err(js_error)?;
-        self.client.settings(settings, now);
+        self.set_rules(settings, now);
         Ok(())
     }
 
@@ -335,12 +328,20 @@ impl NetGame {
         ));
     }
 
+    /// End the battle as host. Its results then say it ended, since this seat has the
+    /// menu open and gets no final state.
     pub fn end(&mut self, now: f64) {
+        // Notices already received keep the words of before.
+        self.drain_client_notices();
+        self.room_text.ending_round();
         self.commands.clear();
         self.client.end(now);
     }
 
+    /// Join the stopped room again; the connection dialog reads RECONNECTING.
     pub fn rejoin(&mut self, now: f64) {
+        self.drain_client_notices();
+        self.room_text.rejoining();
         self.client.rejoin(now);
     }
 
@@ -387,8 +388,9 @@ impl NetGame {
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
+    #[cfg(target_arch = "wasm32")]
     pub fn set_graphics(&mut self, setting: &str) {
-        self.graphics.set_setting(&mut self.view.renderer, setting);
+        self.set_graphics_setting(GraphicsSetting::parse(setting));
     }
 
     // ---------------------------------------------------------- queries
@@ -416,29 +418,7 @@ impl NetGame {
     /// tells the room the arena is ready. The seat stays suspended until then, so a
     /// shader compile that takes seconds never makes the room drop this connection.
     pub fn prepare_step(&mut self, budget: u32, now: f64) -> Vec<f64> {
-        if self.arena.is_none() {
-            return PREPARED.to_vec();
-        }
-        let status = match self.view.prepare_step(budget.max(1)) {
-            Ok(status) => status,
-            Err(error) => {
-                self.arena_failed(error);
-                return PREPARED.to_vec();
-            }
-        };
-        if status.ready
-            && let Some(arena) = self.arena.take()
-        {
-            match self.view.finish_prepare(&arena.state) {
-                Ok(()) => {
-                    self.prepared = true;
-                    self.client
-                        .arena_prepared(arena.round_id, &arena.room_epoch, now);
-                }
-                Err(error) => self.arena_failed(error),
-            }
-        }
-        prepare_result(&status)
+        prepare_result(&self.prepare(budget, now))
     }
 
     /// Build one of the models preparation left for after the arena is ready (the
@@ -487,6 +467,7 @@ impl NetGame {
     /// events to presentation and draw. See [`net_frame_slot`] for the result.
     pub fn frame(&mut self, now: f64, input: &[f32]) -> Result<Vec<f32>, PageError> {
         let input = InputFrame::from_slice(input);
+        self.sounds.set_clock(now);
         // The development delay delivers messages on this clock too.
         self.poll(now);
         self.drain_client_notices();
@@ -534,13 +515,21 @@ impl NetGame {
         } = self;
         let drawn = match client.frame(now, &local) {
             Some(frame) => {
+                let scoreboard = Scoreboard::Rendered(&frame.state.tanks);
                 for displayed in frame.events {
+                    let feedback = event_feedback(
+                        &displayed.event,
+                        displayed.own,
+                        frame.state.viewer_id,
+                        &scoreboard,
+                    );
                     queue_event(
                         events,
                         view,
                         displayed.event,
                         displayed.player_hit,
                         displayed.own,
+                        feedback,
                     );
                 }
                 let render_start = now_ms();
@@ -567,129 +556,41 @@ impl NetGame {
 
     /// Displayed events for audio and HUD, as JSON (`Game.drain_events()`'s shape).
     pub fn drain_events(&mut self) -> String {
-        let (x, z) =
-            self.client
-                .display()
-                .and_then(RenderState::viewer)
-                .map_or((0.0, 0.0), |viewer| {
-                    if viewer.alive {
-                        (viewer.position.x, viewer.position.z)
-                    } else {
-                        (viewer.previous.x, viewer.previous.z)
-                    }
-                });
-        drain_events(&mut self.events, (x, z), self.view.rig.listener_right)
+        batch_json(self.take_events(), &mut self.events)
     }
 
-    /// The HUD for the displayed scene (`Game.hud_json()`'s `match`, `human` and
-    /// `scoreboard`), or `null` before the first scene.
-    pub fn hud_json(&self) -> String {
-        let Some(state) = self.client.display() else {
+    /// The HUD for the displayed scene (`Game.hud_json()`'s `match`, `human`,
+    /// `scoreboard` and `scorePill`), or `null` before the first scene.
+    pub fn hud_json(&mut self) -> String {
+        let Some(hud) = self.hud() else {
             return "null".into();
         };
-        let Some(viewer) = state.viewer() else {
-            return "null".into();
-        };
-        #[derive(serde::Serialize)]
-        struct Hud<'a> {
-            #[serde(rename = "match")]
-            match_state: &'a sloppy_core::sim::Match,
-            human: HudHuman,
-            scoreboard: Scoreboard<'a>,
-        }
-        serde_json::to_string(&Hud {
-            match_state: &state.match_state,
-            human: human_json(viewer, state.elapsed),
-            scoreboard: Scoreboard::Rendered(&state.tanks),
-        })
-        .expect("room HUD serializes")
+        serde_json::to_string(&hud).expect("room HUD serializes")
     }
 
-    /// Stats for nerds: renderer and frame rows, the displayed scene and the network.
+    /// Stats for nerds' readings: renderer and frame rows, the displayed scene and the
+    /// network, for diagnostics and the network checks.
     pub fn stats_json(&self, now: f64) -> String {
         let mut stats = presentation_stats(&self.view, &self.times);
-        stats.insert("pixelRatio".into(), self.canvas.pixel_ratio().into());
         stats.insert(
             "quality".into(),
             self.graphics
                 .stats(&self.view.renderer, self.canvas.pixel_ratio()),
         );
-        if let Some(state) = self.client.display() {
-            stats.insert(
-                "scene".into(),
-                json!({
-                    "tanks": state.tanks.len(),
-                    "alive": state.tanks.iter().filter(|tank| tank.alive).count(),
-                    "mines": state.mines.len(),
-                    "pickups": state.pickups.len(),
-                    "pickupsReady": state.pickups.iter().filter(|pickup| pickup.available).count(),
-                    "shots": state.shots.len(),
-                    "fragments": state.fragments.len(),
-                    "elapsed": state.elapsed,
-                }),
-            );
+        if let Some(scene) = self.scene_stats() {
+            stats.insert("scene".into(), json!(scene));
         }
-        let network = self.client.stats(now);
-        stats.insert(
-            "network".into(),
-            json!({
-                "rttMs": network.rtt_ms,
-                "receivedUpdates": network.received_updates,
-                "snapshotAgeMs": network.snapshot_age_ms,
-                "bufferMs": network.buffer_ms,
-                "marginMs": network.margin_ms,
-                "underrun": network.underrun,
-                "serverTick": network.server_tick,
-                "inputSeq": network.input_seq,
-                "inputAck": network.input_ack,
-                "connected": network.connected,
-                "lateBatches": network.late_batches,
-                "longestBatchGapMs": network.longest_batch_gap_ms,
-                "predictionLeadMs": network.prediction_lead_ms,
-                "correctionMPerS": network.correction_m_per_s,
-                "correctionP95M": network.correction_p95_m,
-                "inputStarts": network.input_starts,
-                "lateInputStarts": network.late_input_starts,
-                "correctionCauses": CorrectionCause::ALL
-                    .iter()
-                    .zip(network.correction_causes)
-                    .map(|(cause, (count, metres_per_second))| {
-                        (
-                            cause.as_str().to_string(),
-                            json!({ "count": count, "mPerS": metres_per_second }),
-                        )
-                    })
-                    .collect::<serde_json::Map<_, _>>(),
-                "receiveMs": self.receive_ms,
-                "corrections": network.corrections,
-                "confirmedSnapshots": network.confirmed_snapshots,
-                "phantomStrikes": network.phantom_strikes,
-            }),
-        );
-        let feel = &self.client.feel;
-        let own = &self.client.own_shots.stats;
-        stats.insert(
-            "feel".into(),
-            json!({
-                "viewDelayMs": summary(&feel.view_delay),
-                "fireToFlashMs": summary(&feel.fire_to_flash),
-                "fireToReportMs": summary(&feel.fire_to_report),
-                "unansweredPresses": feel.unanswered_presses,
-                "hitOffsetM": summary(&feel.hit_offset),
-                "incomingOffsetM": summary(&feel.incoming_offset),
-                "incomingBehindM": summary(&feel.incoming_behind),
-                "unseenIncoming": feel.unseen_incoming,
-                "ownShots": {
-                    "predicted": own.predicted,
-                    "confirmed": own.confirmed,
-                    "unconfirmedShells": own.unconfirmed_shells,
-                    "unpredicted": own.unpredicted,
-                    "phantomStrikes": own.phantom_strikes,
-                    "errorM": summary(&own.error),
-                },
-            }),
-        );
+        let network = ConnectionStats::new(&self.client.stats(now), self.receive_ms);
+        stats.insert("network".into(), json!(network));
+        let feel = FeelStats::new(&self.client.feel, &self.client.own_shots.stats);
+        stats.insert("feel".into(), json!(feel));
         Value::Object(stats).to_string()
+    }
+
+    /// Stats for nerds' sections and rows as JSON ([`StatsSection`]) at `now`, for the
+    /// panel's refreshes, which the update rate is measured between.
+    pub fn nerd_stats_json(&mut self, now: f64) -> String {
+        serde_json::to_string(&self.nerd_stats(now)).expect("stats rows serialize")
     }
 
     /// Where the ground point `x`, `z` shows on the canvas, as `[x, y]` in normalized
@@ -775,39 +676,224 @@ impl NetGame {
     }
 }
 
+/// The calls above that cross the boundary as JSON or packed numbers, typed for a Rust
+/// shell (the desktop app); the page's getters serialize these same values.
 impl NetGame {
-    fn notice(&mut self, notice: Value) {
+    /// `create` with the view and the room's configuration as values.
+    pub async fn create_with(
+        canvas: RenderTarget,
+        view_config: ViewConfig,
+        config: NetConfig,
+    ) -> Result<NetGame, PageError> {
+        if !is_room_code(&config.room) {
+            return Err(js_error("Invalid room code"));
+        }
+        let PageView {
+            view,
+            canvas,
+            graphics,
+            seed,
+            pacing,
+            shell,
+        } = create_view(canvas, view_config).await?;
+        let client = NetworkClient::new(ClientConfig {
+            server_url: config.server.clone(),
+            room: config.room.clone(),
+            saved_seat: config.saved_seat(),
+            delay: config.delay(),
+            seed: seed as u32,
+            dodger_first: config.dodge.as_deref() != Some("0"),
+            shooter_first: config.shooter.as_deref() != Some("0"),
+        });
+        let mut game = NetGame {
+            client,
+            view,
+            commands: CommandBuilder::default(),
+            arena: None,
+            baseline: None,
+            prepared: false,
+            events: Vec::new(),
+            sounds: SoundPlanner::default(),
+            notices: Vec::new(),
+            room_text: RoomText::default(),
+            effect_timers: EffectTimers::default(),
+            frame_index: 0,
+            times: FrameTimes::default(),
+            pacing,
+            canvas,
+            shell,
+            graphics,
+            last_result: vec![0.0; net_frame_slot::LENGTH],
+            receive_ms: 0.0,
+            network_sampler: NetworkSampler::default(),
+        };
+        game.canvas.apply(&mut game.view);
+        Ok(game)
+    }
+
+    /// Join the room with `choice`.
+    pub fn join(&mut self, choice: JoinChoice, now: f64) {
+        self.client.connect(choice, now);
+    }
+
+    /// Change team (`None`: the side with fewer humans) or tank between battles; a
+    /// player cannot drive a Humvee.
+    pub fn choose_seat(
+        &mut self,
+        team: Option<Team>,
+        kind: VehicleKind,
+        now: f64,
+    ) -> Result<(), PageError> {
+        if !VehicleKind::PLAYABLE.contains(&kind) {
+            return Err(js_error("Invalid choice"));
+        }
+        self.client.choose(team, kind, now);
+        Ok(())
+    }
+
+    /// The host's rules for the next battle.
+    pub fn set_rules(&mut self, settings: RoomSettings, now: f64) {
+        self.client.settings(settings, now);
+    }
+
+    /// Socket and storage work, in order (see the module docs).
+    pub fn take_room_actions(&mut self) -> Vec<ClientAction> {
+        self.client.take_actions()
+    }
+
+    /// UI notices, in order. Arena preparation and baseline requests are handled here
+    /// and surface as `Prepare` and `BaselineShown`.
+    pub fn take_room_notices(&mut self) -> Vec<RoomNotice> {
+        self.drain_client_notices();
+        std::mem::take(&mut self.notices)
+    }
+
+    /// Create up to `budget` background-compiled pipelines for the arena `Prepare` asked
+    /// for (see `prepare_step`).
+    pub fn prepare(&mut self, budget: u32, now: f64) -> PrepareStatus {
+        if self.arena.is_none() {
+            return PREPARED;
+        }
+        let status = match self.view.prepare_step(budget.max(1)) {
+            Ok(status) => status,
+            Err(error) => {
+                self.arena_failed(error);
+                return PREPARED;
+            }
+        };
+        if status.ready
+            && let Some(arena) = self.arena.take()
+        {
+            match self.view.finish_prepare(&arena.state) {
+                Ok(()) => {
+                    self.prepared = true;
+                    self.client
+                        .arena_prepared(arena.round_id, &arena.room_epoch, now);
+                }
+                Err(error) => self.arena_failed(error),
+            }
+        }
+        status
+    }
+
+    /// The HUD for the displayed scene, or `None` before the first scene.
+    pub fn hud(&mut self) -> Option<RoomHud<'_>> {
+        let timers = &mut self.effect_timers;
+        self.client
+            .display()
+            .and_then(|state| room_hud(state, timers))
+    }
+
+    /// Displayed events for audio and HUD, heard from the viewer's tank.
+    pub fn take_events(&mut self) -> EventBatch {
+        let listener = self.listener();
+        let right = self.view.rig.listener_right;
+        take_events(&mut self.events, listener, right, &mut self.sounds)
+    }
+
+    /// The chosen view and clamped overhead zoom.
+    pub fn camera(&self) -> CameraPreferences {
+        CameraPreferences::of(&self.view.rig)
+    }
+
+    /// The Settings dialog's Graphics choice.
+    pub fn set_graphics_setting(&mut self, setting: GraphicsSetting) {
+        self.graphics.set_setting(&mut self.view.renderer, setting);
+    }
+
+    /// Stats for nerds' sections and rows at `now`; the update rate is measured since
+    /// the previous call.
+    pub fn nerd_stats(&mut self, now: f64) -> Vec<StatsSection> {
+        let stats = RoomStats {
+            frame: frame_readings(&self.times),
+            renderer: renderer_readings(
+                &self.view.renderer,
+                &self.graphics,
+                self.canvas.pixel_ratio(),
+            ),
+            scene: self.scene_stats(),
+            network: ConnectionStats::new(&self.client.stats(now), self.receive_ms),
+            feel: FeelStats::new(&self.client.feel, &self.client.own_shots.stats),
+        };
+        let rates = self.network_sampler.sample(now, &stats.network);
+        room_sections(&stats, rates, self.shell)
+    }
+
+    /// The GPU's smoothed frame time in milliseconds, once sampled.
+    pub fn gpu_ms(&self) -> Option<f64> {
+        self.graphics.gpu_ms()
+    }
+}
+
+impl NetGame {
+    /// The displayed scene's counts, once a scene shows.
+    fn scene_stats(&self) -> Option<SceneStats> {
+        let count = |count: usize| count as u64;
+        self.client.display().map(|state| SceneStats {
+            tanks: count(state.tanks.len()),
+            alive: count(state.tanks.iter().filter(|tank| tank.alive).count()),
+            mines: count(state.mines.len()),
+            pickups: count(state.pickups.len()),
+            pickups_ready: count(
+                state
+                    .pickups
+                    .iter()
+                    .filter(|pickup| pickup.available)
+                    .count(),
+            ),
+            shots: count(state.shots.len()),
+            fragments: count(state.fragments.len()),
+            elapsed: state.elapsed,
+        })
+    }
+
+    fn notice(&mut self, notice: RoomNotice) {
         if self.notices.len() >= MAX_PENDING_NOTICES {
             self.notices.remove(0);
         }
         self.notices.push(notice);
     }
 
+    /// Where the viewer hears the displayed events: its tank, or where it died.
+    fn listener(&self) -> (f64, f64) {
+        self.client
+            .display()
+            .and_then(RenderState::viewer)
+            .map_or((0.0, 0.0), |viewer| {
+                if viewer.alive {
+                    (viewer.position.x, viewer.position.z)
+                } else {
+                    (viewer.previous.x, viewer.previous.z)
+                }
+            })
+    }
+
     /// Turn client notices into page notices; arena and baseline requests go to the
     /// presentation here.
     fn drain_client_notices(&mut self) {
         for notice in self.client.take_notices() {
-            let value = match notice {
-                ClientNotice::Status { text, connected } => {
-                    json!({ "type": "status", "text": text, "connected": connected })
-                }
-                ClientNotice::Notice(text) => json!({ "type": "notice", "text": text }),
-                ClientNotice::Ended { cause, text } => {
-                    json!({ "type": "ended", "cause": cause.as_str(), "text": text })
-                }
-                ClientNotice::Lobby(lobby) => {
-                    let lobby: Value = serde_json::from_str(&lobby.to_json()).unwrap_or_default();
-                    json!({ "type": "lobby", "lobby": lobby, "playerId": self.client.player_id })
-                }
-                ClientNotice::Result { outcome, team } => {
-                    json!({ "type": "result", "match": outcome, "team": team })
-                }
-                ClientNotice::ResetFeedback => json!({ "type": "resetFeedback" }),
-                ClientNotice::ClearInput => {
-                    self.commands.clear();
-                    json!({ "type": "clearInput" })
-                }
-                ClientNotice::Reveal => json!({ "type": "reveal" }),
+            match notice {
+                ClientNotice::ClearInput => self.commands.clear(),
                 ClientNotice::PrepareArena {
                     round_id,
                     room_epoch,
@@ -819,8 +905,16 @@ impl NetGame {
                     self.baseline = Some(baseline);
                     continue;
                 }
-            };
-            self.notice(value);
+                _ => {}
+            }
+            if let Some(notice) = RoomNotice::from_client(
+                notice,
+                &self.client.player_id,
+                &mut self.room_text,
+                self.shell,
+            ) {
+                self.notice(notice);
+            }
         }
     }
 
@@ -840,13 +934,13 @@ impl NetGame {
             room_epoch,
             state,
         });
-        self.notice(json!({ "type": "prepare" }));
+        self.notice(RoomNotice::Prepare);
     }
 
     fn arena_failed(&mut self, error: String) {
         self.arena = None;
         self.client.arena_failed();
-        self.notice(json!({ "type": "arenaFailed", "error": error }));
+        self.notice(RoomNotice::ArenaFailed(error));
     }
 
     /// A full state makes presentation rebuild every model. Draw the first frames before
@@ -865,7 +959,7 @@ impl NetGame {
         self.events.clear();
         self.client.baseline_shown(baseline, now);
         self.drain_client_notices();
-        self.notice(json!({ "type": "baselineShown" }));
+        self.notice(RoomNotice::BaselineShown);
         Ok(())
     }
 
@@ -926,16 +1020,4 @@ impl NetGame {
         self.frame_index += 1;
         result
     }
-}
-
-/// A feel reading as the statistics show it: sample count, mean, median, 95th percentile
-/// and largest.
-fn summary(samples: &Samples) -> Value {
-    json!({
-        "count": samples.count,
-        "mean": samples.mean(),
-        "p50": samples.percentile(0.5),
-        "p95": samples.percentile(0.95),
-        "max": samples.largest,
-    })
 }

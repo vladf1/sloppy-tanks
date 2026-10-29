@@ -4,7 +4,7 @@
 //! Frame timing is [`crate::frame_clock`].
 
 use glam::Vec2;
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use sloppy_core::sim::{SimEvent, SimEventType};
 use sloppy_render::gpu::{RenderTarget, Renderer};
@@ -18,15 +18,42 @@ use sloppy_render::quality::{
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::JsValue;
 
+use crate::Shell;
 use crate::events::PendingEvent;
+use crate::feedback::EventFeedback;
 use crate::frame_clock::{FramePacing, FrameTimes};
+use crate::nerd_rows::QualityStats;
 
 /// The HUD refreshes (`hud_json`) every this many frames.
 pub const HUD_UPDATE_EVERY_FRAMES: u64 = 4;
 /// Events waiting for `drain_events`; a hidden HUD must not grow this without bound.
 const MAX_PENDING_EVENTS: usize = 2048;
-/// `prepare_step`'s result when nothing is left to prepare.
-pub const PREPARED: [f64; 5] = [0.0, 0.0, 0.0, 1.0, 0.0];
+/// Preparation's status when nothing is left to prepare.
+pub const PREPARED: PrepareStatus = PrepareStatus {
+    compiled: 0,
+    remaining: 0,
+    textures_pending: 0,
+    gpu_pending: false,
+    ready: true,
+};
+
+/// The view the player chose, which the page saves after a camera input.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CameraPreferences {
+    pub first_person: bool,
+    /// The overhead zoom, clamped to the camera's range.
+    pub zoom: f64,
+}
+
+impl CameraPreferences {
+    pub fn of(rig: &CameraRig) -> Self {
+        let [first_person, zoom] = rig.preferences();
+        Self {
+            first_person: first_person == 1.0,
+            zoom,
+        }
+    }
+}
 
 /// What a failed call rejects with: a JS `Error` on the page, its message natively.
 #[cfg(target_arch = "wasm32")]
@@ -117,19 +144,17 @@ pub struct Graphics {
 }
 
 impl Graphics {
-    /// Start from `setting` ("auto", "high", "medium", "low") on `device` ("desktop",
-    /// "tablet", "phone"), and draw at the controller's first rung.
-    pub fn new(renderer: &mut Renderer, setting: &str, device: &str, pixel_ratio: f64) -> Self {
+    /// Start from `setting` on `device`, and draw at the controller's first rung.
+    pub fn new(
+        renderer: &mut Renderer,
+        setting: GraphicsSetting,
+        device: DeviceClass,
+        pixel_ratio: f64,
+    ) -> Self {
         let webgl = sloppy_render::GRAPHICS_API == "WebGL";
-        let start = starting_tier(
-            DeviceClass::parse(device),
-            renderer.max_texture_size(),
-            webgl,
-        );
-        let class = DeviceClass::parse(device);
-        let mut controller =
-            QualityController::new(GraphicsSetting::parse(setting), start, pixel_ratio);
-        if class != DeviceClass::Desktop {
+        let start = starting_tier(device, renderer.max_texture_size(), webgl);
+        let mut controller = QualityController::new(setting, start, pixel_ratio);
+        if device != DeviceClass::Desktop {
             controller = controller.with_deep_floor();
         }
         let graphics = Self {
@@ -172,8 +197,8 @@ impl Graphics {
     }
 
     /// The Settings dialog's Graphics choice.
-    pub fn set_setting(&mut self, renderer: &mut Renderer, setting: &str) {
-        if self.controller.set_setting(GraphicsSetting::parse(setting)) {
+    pub fn set_setting(&mut self, renderer: &mut Renderer, setting: GraphicsSetting) {
+        if self.controller.set_setting(setting) {
             self.apply(renderer);
         }
     }
@@ -190,7 +215,27 @@ impl Graphics {
         self.controller.round_started();
     }
 
-    /// Stats for nerds' `quality` rows: the setting, tier, render scale, the scene's
+    /// The GPU's frame time in milliseconds, smoothed over recent samples, once sampled.
+    pub fn gpu_ms(&self) -> Option<f64> {
+        self.gpu_ms
+    }
+
+    /// The setting, tier and render scale Stats for nerds' Render rows show.
+    pub fn quality_stats(&self, renderer: &Renderer, pixel_ratio: f64) -> QualityStats {
+        let (tier, scale) = renderer.quality();
+        let (width, height) = renderer.scene_size();
+        QualityStats {
+            setting: self.controller.setting().name().into(),
+            tier: tier.name().into(),
+            scale: f64::from(scale),
+            render_ratio: f64::from(scale) * pixel_ratio,
+            scene: [width, height],
+            gpu_ms: self.gpu_ms,
+            changes: self.controller.changes(),
+        }
+    }
+
+    /// `stats_json`'s `quality` record: the setting, tier, render scale, the scene's
     /// size and the recent changes.
     pub fn stats(&self, renderer: &Renderer, pixel_ratio: f64) -> Value {
         let (tier, scale) = renderer.quality();
@@ -228,32 +273,47 @@ impl Graphics {
 /// made for it: desktops do; touch tablets and phones draw single-sampled, since four
 /// samples of the HDR target and its depth cost a tile-based mobile GPU dearly in
 /// fill and bandwidth, unless the player chose High.
-fn multisampled(device: &str, setting: &str) -> bool {
-    DeviceClass::parse(device) == DeviceClass::Desktop
-        || GraphicsSetting::parse(setting) == GraphicsSetting::Fixed(Tier::High)
+fn multisampled(device: DeviceClass, setting: GraphicsSetting) -> bool {
+    device == DeviceClass::Desktop || setting == GraphicsSetting::Fixed(Tier::High)
 }
 
 /// The configuration both game types take: `{ seed?, assetBase, cssWidth?, cssHeight?,
 /// pixelRatio?, firstPerson?, zoom?, hideReticle?, graphics?, device?,
-/// framesInFlight? }`. `framesInFlight` runs frames only while fewer are on the GPU,
+/// framesInFlight?, shell? }`. `framesInFlight` runs frames only while fewer are on the GPU,
 /// for browsers that queue a WebGPU canvas's frames without holding animation frames
 /// back ([`FramePacing`]; 0, the default, leaves the pacing to the browser).
-#[derive(Deserialize, Default)]
+#[derive(Clone, Debug, Deserialize, Default)]
 #[serde(rename_all = "camelCase", default)]
-struct ViewConfig {
-    seed: Option<f64>,
-    asset_base: String,
-    css_width: Option<f64>,
-    css_height: Option<f64>,
-    pixel_ratio: Option<f64>,
-    first_person: bool,
-    zoom: Option<f64>,
-    hide_reticle: bool,
-    /// The saved Graphics setting; Auto when absent.
-    graphics: String,
-    /// "desktop", "tablet" or "phone" (`src/game/graphics.ts`).
-    device: String,
-    frames_in_flight: u32,
+pub struct ViewConfig {
+    pub seed: Option<f64>,
+    pub asset_base: String,
+    pub css_width: Option<f64>,
+    pub css_height: Option<f64>,
+    pub pixel_ratio: Option<f64>,
+    pub first_person: bool,
+    pub zoom: Option<f64>,
+    pub hide_reticle: bool,
+    /// The saved Graphics setting ("auto", "high", "medium", "low"); Auto when absent
+    /// or unknown.
+    #[serde(deserialize_with = "graphics_setting")]
+    pub graphics: GraphicsSetting,
+    /// "desktop", "tablet" or "phone" (`src/game/graphics.ts`); a desktop when absent or
+    /// unknown.
+    #[serde(deserialize_with = "device_class")]
+    pub device: DeviceClass,
+    pub frames_in_flight: u32,
+    /// The page by default; the desktop app says so.
+    pub shell: Shell,
+}
+
+fn graphics_setting<'de, D: Deserializer<'de>>(
+    deserializer: D,
+) -> Result<GraphicsSetting, D::Error> {
+    Ok(GraphicsSetting::parse(&String::deserialize(deserializer)?))
+}
+
+fn device_class<'de, D: Deserializer<'de>>(deserializer: D) -> Result<DeviceClass, D::Error> {
+    Ok(DeviceClass::parse(&String::deserialize(deserializer)?))
 }
 
 /// What [`create_view`] sets up for a game type.
@@ -265,13 +325,13 @@ pub struct PageView {
     /// The configured seed, or a random one.
     pub seed: f64,
     pub pacing: FramePacing,
+    pub shell: Shell,
 }
 
 /// The renderer on `canvas` and its presentation with the saved camera preferences, the
-/// canvas size to apply, the graphics quality, the seed (random when `config_json` has
-/// none) and the frame pacing. Rejects when the renderer cannot start.
-pub async fn create_view(canvas: RenderTarget, config_json: &str) -> Result<PageView, PageError> {
-    let config: ViewConfig = parse(config_json)?;
+/// canvas size to apply, the graphics quality, the seed (random when `config` has none)
+/// and the frame pacing. Rejects when the renderer cannot start.
+pub async fn create_view(canvas: RenderTarget, config: ViewConfig) -> Result<PageView, PageError> {
     let seed = config.seed.unwrap_or_else(|| (random() * 1e9).floor());
     #[cfg(target_arch = "wasm32")]
     let client = (canvas.client_width(), canvas.client_height());
@@ -292,14 +352,14 @@ pub async fn create_view(canvas: RenderTarget, config_json: &str) -> Result<Page
         device_pixel_ratio: config.pixel_ratio.unwrap_or(1.0),
         exact: false,
     };
-    let msaa = multisampled(&config.device, &config.graphics);
+    let msaa = multisampled(config.device, config.graphics);
     let mut renderer = Renderer::new(canvas, config.asset_base, msaa)
         .await
         .map_err(js_error)?;
     let graphics = Graphics::new(
         &mut renderer,
-        &config.graphics,
-        &config.device,
+        config.graphics,
+        config.device,
         size.pixel_ratio(),
     );
     let mut view = Presentation::new(renderer, seed.to_bits());
@@ -312,6 +372,7 @@ pub async fn create_view(canvas: RenderTarget, config_json: &str) -> Result<Page
         graphics,
         seed,
         pacing: FramePacing::new(config.frames_in_flight),
+        shell: config.shell,
     })
 }
 
@@ -344,13 +405,14 @@ pub fn prepare_result(status: &PrepareStatus) -> Vec<f64> {
 }
 
 /// Show `event` and queue it for `drain_events` with the screen angle of damage the
-/// viewer took, dropping the oldest event once the queue is full.
+/// viewer took and its HUD `feedback`, dropping the oldest event once the queue is full.
 pub fn queue_event(
     events: &mut Vec<PendingEvent>,
     view: &mut Presentation,
     event: SimEvent,
     player_hit: bool,
     own: bool,
+    feedback: EventFeedback,
 ) {
     view.event(&event, player_hit);
     let hurt = matches!(event.kind, SimEventType::Hurt | SimEventType::Death);
@@ -363,6 +425,7 @@ pub fn queue_event(
         player_hit,
         own,
         damage_angle,
+        feedback,
     });
 }
 

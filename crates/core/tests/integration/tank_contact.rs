@@ -109,13 +109,37 @@ fn boosted_tanks_stop_at_visible_hull_edges_in_head_on_and_side_contacts_includi
 fn model_sized_contact_collider_is_recreated_on_class_changing_respawn_and_cleaned_on_death() {
     let mut s = Simulation::with_seed(123.0);
     let t = s.human_index().expect("human");
-    let count = s.world.colliders.len();
+    let (bodies, count) = (s.world.bodies.len(), s.world.colliders.len());
+    let old_body = s.tanks[t].body;
+    let old_colliders = s.world.bodies[old_body].colliders().to_vec();
+    assert_eq!(old_colliders.len(), 2, "a hull and a contact box");
     let hull = &s.world.colliders[s.tanks[t].collider];
     let (restitution, friction) = (hull.restitution(), hull.friction());
     s.tanks[t].protection = 0.0;
-    s.damage_tank(t, 1000.0, 999, Team::Red, None, None);
+    let enemy_team = s.tanks[t].team.opponent();
+    s.damage_tank(t, 1000.0, 999, enemy_team, None, None);
+    assert!(!s.tanks[t].alive, "an enemy's blow kills the tank");
+    // The dead tank's body leaves the world with both its colliders; only its wreck
+    // pieces, each one body with one box, take their place.
+    assert!(!s.world.bodies.contains(old_body), "death removes the body");
+    for collider in old_colliders {
+        assert!(
+            !s.world.colliders.contains(collider),
+            "death removes the body's colliders"
+        );
+    }
+    let wreck: Vec<_> = s.fragments.iter().filter(|f| f.wreck.is_some()).collect();
+    assert!(!wreck.is_empty(), "the tank leaves a wreck");
+    for piece in &wreck {
+        assert_eq!(s.world.bodies[piece.body].colliders().len(), 1);
+    }
+    let pieces = wreck.len();
+    assert_eq!(s.world.bodies.len(), bodies - 1 + pieces);
+    assert_eq!(s.world.colliders.len(), count - 2 + pieces);
     s.human_kind = VehicleKind::Heavy;
     s.respawn(t, None);
+    assert_eq!(s.world.bodies.len(), bodies + pieces, "one new tank body");
+    assert_eq!(s.world.colliders.len(), count + pieces);
     let body = &s.world.bodies[s.tanks[t].body];
     assert_eq!(body.colliders().len(), 2);
     let hull = &s.world.colliders[s.tanks[t].collider];

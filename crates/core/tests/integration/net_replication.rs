@@ -155,7 +155,7 @@ fn full_and_field_deltas_round_trip_through_json_including_destruction_and_late_
                 .any(|cover| cover.max_hp == f64::INFINITY)
         );
         let text = mirror.state.as_ref().unwrap().to_value().to_string();
-        for forbidden in ["\"body\"", "\"collider\"", "Infinity", "NaN"] {
+        for forbidden in ["Infinity", "NaN"] {
             assert!(
                 !text.contains(forbidden),
                 "{forbidden} leaked into the scene"

@@ -13,10 +13,16 @@ pub mod room_menu;
 pub mod rooms;
 pub mod setup;
 pub mod theme;
+pub mod touch;
 
-use crate::engine_api::{EngineEvent, HudState, Phase, ScoreboardRow};
+use sloppy_core::net::protocol::RoomSettings;
+use sloppy_core::sim::{DamageCause, MatchPhase, SimEventType, Team, VehicleKind};
+use sloppy_web::events::PendingEvent;
+pub use sloppy_web::feedback::{DeathReport, ToastTone};
+use sloppy_web::hud::Hud;
+
 use crate::preferences::Preferences;
-use crate::room_api::{RoomRules, RoomSelection};
+use crate::room_api::RoomSelection;
 
 /// What the player asked for this frame.
 #[derive(Clone, Debug, PartialEq)]
@@ -29,7 +35,7 @@ pub enum Action {
     /// BATTLE SETUP from the results or the pause menu: a fresh world.
     BattleSetup,
     /// The respawn card picked the next life's tank.
-    NextTank(String),
+    NextTank(VehicleKind),
     SelectAmmo(u8),
     ToggleView,
     ToggleFullscreen,
@@ -51,24 +57,25 @@ pub enum Action {
     RoomSetup(String),
     /// Team (`None`: the side with fewer humans) and tank for the next battle.
     RoomChoose {
-        team: Option<u8>,
-        kind: String,
+        team: Option<Team>,
+        kind: VehicleKind,
     },
     /// The host's rules for the next battle.
-    RoomRules(RoomRules),
+    RoomRules(RoomSettings),
 }
 
-/// One line of the kill feed (`FeedRow` in `hud-feedback.ts`).
+/// One line of the kill feed: the engine's row (`sloppy_web::feedback::FeedRow`), or a
+/// room's notice in the killer's place.
 #[derive(Clone, Debug)]
 pub struct KillFeedEntry {
     /// The names shown: "YOU" for the viewer, "YARD" for nobody's ordnance.
     pub killer: String,
     pub victim: String,
     /// Each name's side: a team, or neutral for the yard.
-    pub killer_team: Option<u8>,
-    pub victim_team: Option<u8>,
+    pub killer_team: Option<Team>,
+    pub victim_team: Option<Team>,
     /// The damage cause, for the weapon icon between the names.
-    pub cause: Option<String>,
+    pub cause: Option<DamageCause>,
     /// The viewer destroyed someone else.
     pub own_kill: bool,
     /// The viewer's own wreck.
@@ -77,31 +84,7 @@ pub struct KillFeedEntry {
     pub age: f64,
 }
 
-/// What wrecked the viewer's tank, for the respawn card (`DeathReport`).
-#[derive(Clone, Debug, Default)]
-pub struct DeathReport {
-    /// The killer's name; `None` for the yard or a departed player.
-    pub killer: Option<String>,
-    /// The viewer's own ordnance.
-    pub own_goal: bool,
-    pub cause: Option<String>,
-    /// The weapon's label, such as "Rocket blast".
-    pub weapon: Option<String>,
-    pub killer_vehicle: Option<String>,
-    pub killer_team: Option<u8>,
-    pub killer_kills: Option<f64>,
-    /// The sentence the toast and a solo report say.
-    pub sentence: String,
-}
-
-/// The tone a toast takes: its rule lines' and text's colours.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ToastTone {
-    Pickup,
-    Promotion,
-    Death,
-}
-
+/// A notice over the field: the engine's toast, and how long it has shown.
 #[derive(Clone, Debug)]
 pub struct Toast {
     pub text: String,
@@ -119,18 +102,10 @@ pub enum PauseTab {
     Controls,
 }
 
-/// Seconds a kill feed line shows.
-pub const KILL_FEED_SECONDS: f64 = 5.0;
-/// Kill feed lines at most.
-pub const KILL_FEED_LINES: usize = 3;
-/// Seconds a pickup's toast shows, and a promotion's or death's.
-pub const PICKUP_TOAST_SECONDS: f64 = 1.5;
-pub const TOAST_SECONDS: f64 = 2.0;
-/// Seconds an ammunition notice shows above the tank panel.
-pub const AMMO_NOTICE_SECONDS: f64 = 3.0;
-/// Seconds the hit flash and the damage ring show.
-pub const HIT_FLASH_SECONDS: f64 = 0.6;
-pub const DAMAGE_RING_SECONDS: f64 = 1.2;
+pub use sloppy_web::feedback::{
+    AMMO_NOTICE_SECONDS, DAMAGE_RING_SECONDS, FEED_LINES, FEED_SECONDS, HIT_FLASH_SECONDS,
+    PICKUP_TOAST_SECONDS, TOAST_SECONDS,
+};
 /// The hull bar's ghost waits this long after a hit, then trails down over the next.
 const HULL_GHOST_DELAY: f64 = 0.35;
 const HULL_GHOST_SECONDS: f64 = 0.55;
@@ -139,7 +114,8 @@ const HULL_GHOST_SECONDS: f64 = 0.55;
 /// events drive, and which dialog is open.
 #[derive(Default)]
 pub struct UiState {
-    pub hud: Option<HudState>,
+    /// The engine's HUD as of its last refresh.
+    pub hud: Option<Hud<'static>>,
     pub kill_feed: Vec<KillFeedEntry>,
     pub toast: Option<Toast>,
     /// The latest ammunition notice and its age.
@@ -152,15 +128,17 @@ pub struct UiState {
     pub settings_draft: Option<Preferences>,
     /// Battle Setup's status line (preparation progress, errors).
     pub status: String,
+    /// The share of the arena's shaders loaded while the status line counts them.
+    pub progress: Option<f32>,
     /// The arena for the chosen options is ready.
     pub ready: bool,
     /// GO was pressed and the round is about to start.
     pub starting: bool,
     pub show_nerd_stats: bool,
-    /// The engine's latest `stats_json`, while the nerd stats show.
-    pub stats: Option<serde_json::Value>,
-    /// A room's last network reading, which its update rate is measured from.
-    pub network_sample: Option<nerd_stats::NetworkSample>,
+    /// The engine's latest Stats for nerds rows, while the nerd stats show, and when
+    /// they were read (the engine's clock, milliseconds).
+    pub stats: Option<Vec<sloppy_web::nerd_rows::StatsSection>>,
+    pub stats_read_at: f64,
     /// Stats for nerds' sections the player opened or folded.
     pub nerd_sections: std::collections::BTreeMap<&'static str, bool>,
     /// First person is on (the cockpit compass shows).
@@ -180,8 +158,6 @@ pub struct UiState {
     pub hull_ghost_wait: f64,
     /// The longest mine cooldown seen, so the mine dial fills from empty.
     pub mine_total: f64,
-    /// The longest time seen on each timed effect, so its ring drains from full.
-    pub effect_longest: [f64; 5],
     pub pause_tab: PauseTab,
     /// Settings were opened from the battle, which carries on when they close.
     pub resume_after_settings: bool,
@@ -191,12 +167,17 @@ pub struct UiState {
     pub round: u32,
     /// The icons and tank renders, made on the first frame.
     pub art: Option<icons::Art>,
+    /// The touch controls this frame, while the player can act on a touch screen.
+    pub touch: Option<touch::TouchView>,
+    /// Seconds the touch controls have shown since they last appeared, for the fire
+    /// hint.
+    pub touch_shown: f64,
 }
 
 /// What the app tells the screens about where things stand.
 pub struct View<'a> {
     pub in_round: bool,
-    pub phase: Phase,
+    pub phase: MatchPhase,
     pub prefs: &'a Preferences,
     /// The release and commit line under Battle Setup.
     pub build: &'a str,
@@ -206,92 +187,13 @@ pub struct View<'a> {
     pub room: bool,
 }
 
-/// The damage labels of the respawn card and the death sentence (`DAMAGE_LABELS`).
-pub fn damage_label(cause: &str) -> Option<&'static str> {
-    Some(match cause {
-        "standard" => "Standard shell",
-        "spread" => "Spread shot",
-        "rocket" => "Rocket blast",
-        "tow" => "TOW missile",
-        "ricochet" => "Ricochet shell",
-        "piercing" => "Piercing shell",
-        "mine" => "Mine explosion",
-        "drum" => "Exploding barrel",
-        "interception" => "Shell collision blast",
-        "explosion" => "Explosion",
-        _ => return None,
-    })
-}
-
-/// The vehicles' names, as Battle Setup and the HUD show them.
-pub fn vehicle_name(kind: &str) -> &'static str {
-    match kind {
-        "scout" => "SKIPPER",
-        "heavy" => "BIG RIG",
-        "humvee" => "HUNTER",
-        _ => "BRUISER",
-    }
-}
-
-/// What wrecked the viewer, from its death event (`deathReport` and `deathCause`).
-pub fn death_report(event: &EngineEvent, scoreboard: &[ScoreboardRow]) -> DeathReport {
-    let own_goal = event.owner.is_some() && event.owner == event.id;
-    let killer = if own_goal {
-        None
-    } else {
-        scoreboard.iter().find(|row| Some(row.id) == event.owner)
-    };
-    let cause = event
-        .damage_source
-        .as_ref()
-        .map(|source| source.cause.clone());
-    let weapon = cause.as_deref().and_then(damage_label);
-    let with = weapon.map(|label| {
-        let article = if label.starts_with(['A', 'E', 'I', 'O', 'U']) {
-            "an"
-        } else {
-            "a"
-        };
-        format!("{article} {}", label.to_lowercase())
-    });
-    let sentence = match (own_goal, killer, &with) {
-        (true, _, Some(with)) => format!("You destroyed yourself with {with}."),
-        (true, _, None) => "You destroyed yourself.".to_owned(),
-        (false, Some(killer), Some(with)) => format!("{} destroyed you with {with}.", killer.name),
-        (false, Some(killer), None) => format!("{} destroyed you.", killer.name),
-        (false, None, Some(with)) => format!("You were destroyed by {with}."),
-        (false, None, None) => "You were destroyed.".to_owned(),
-    };
-    DeathReport {
-        killer: killer.map(|row| row.name.clone()),
-        own_goal,
-        cause,
-        weapon: weapon.map(str::to_owned),
-        killer_vehicle: killer.map(|row| vehicle_name(&row.kind).to_owned()),
-        killer_team: killer.map(|row| row.team),
-        killer_kills: killer.map(|row| row.kills),
-        sentence,
-    }
-}
-
-/// The share of a timed effect left, against the longest time seen since it began
-/// (`effectShare`), which [`UiState::tick`] keeps.
-pub fn effect_share(longest: f64, seconds: f64) -> f64 {
-    let full = longest.max(seconds);
-    if full > 0.0 {
-        (seconds / full).min(1.0)
-    } else {
-        1.0
-    }
-}
-
 impl UiState {
     /// Advance the HUD's own timers by `dt` seconds.
     pub fn tick(&mut self, dt: f64) {
         for entry in &mut self.kill_feed {
             entry.age += dt;
         }
-        self.kill_feed.retain(|entry| entry.age < KILL_FEED_SECONDS);
+        self.kill_feed.retain(|entry| entry.age < FEED_SECONDS);
         if let Some(toast) = &mut self.toast {
             toast.age += dt;
         }
@@ -328,6 +230,11 @@ impl UiState {
             self.damage_ring = None;
         }
         self.trail_hull_ghost(dt);
+        self.touch_shown = if self.touch.is_some() {
+            self.touch_shown + dt
+        } else {
+            0.0
+        };
         if let Some(hud) = &self.hud {
             let human = &hud.human;
             if !human.alive {
@@ -335,21 +242,6 @@ impl UiState {
             }
             if human.mine_cooldown > 0.0 {
                 self.mine_total = self.mine_total.max(human.mine_cooldown);
-            }
-            // An effect that ended forgets its length, so the next pickup starts full.
-            let timed = [
-                human.protection,
-                human.shield,
-                human.rapid,
-                human.speed,
-                human.laser,
-            ];
-            for (longest, seconds) in self.effect_longest.iter_mut().zip(timed) {
-                *longest = if seconds > 0.0 {
-                    longest.max(seconds)
-                } else {
-                    0.0
-                };
             }
         }
     }
@@ -371,108 +263,89 @@ impl UiState {
         }
     }
 
-    /// Show an engine event's feedback (`UI.event` in `ui.ts`): kill feed lines, toasts,
-    /// the ammunition notice, the hit flash, the damage ring and the death report.
-    pub fn event(&mut self, event: &EngineEvent) {
+    /// Show an engine event's feedback (`UI.event` in `ui.ts`): the kill feed row, toast
+    /// and death report the engine attached, the ammunition notice, the hit flash and
+    /// the damage ring.
+    pub fn event(&mut self, pending: &PendingEvent) {
         let Some(hud) = &self.hud else { return };
-        let viewer = hud.human.id;
         let alive = hud.human.alive;
         if self.round != hud.match_state.round {
             self.round = hud.match_state.round;
             self.reset_feedback();
         }
-        let hud = self.hud.as_ref().expect("checked above");
-        let mine = event.own || event.id == Some(viewer);
-        if mine {
-            match event.kind.as_str() {
-                "hurt" => self.hit_flash = Some(0.0),
-                "notice" if alive => {
+        let event = &pending.event;
+        let feedback = &pending.feedback;
+        if pending.own {
+            match event.kind {
+                SimEventType::Hurt => self.hit_flash = Some(0.0),
+                SimEventType::Notice if alive => {
                     if let Some(label) = &event.label {
                         self.ammo_notice = Some((label.clone(), 0.0));
                     }
                 }
-                _ => {}
-            }
-            if matches!(event.kind.as_str(), "hurt" | "death")
-                && let Some(angle) = event.damage_angle
-            {
-                self.damage_ring = Some((angle, 0.0));
-            }
-            match event.kind.as_str() {
-                "death" => {
-                    let report = death_report(event, &hud.scoreboard);
-                    self.toast = Some(Toast {
-                        text: report.sentence.clone(),
-                        tone: ToastTone::Death,
-                        age: 0.0,
-                        duration: TOAST_SECONDS,
-                    });
-                    self.death = Some(report);
-                    self.respawn_total = 0.0;
-                    self.ammo_notice = None;
-                }
-                "respawn" => {
+                SimEventType::Respawn => {
                     self.death = None;
                     self.damage_ring = None;
                 }
-                "pickup" | "promotion" => {
-                    let pickup = event.kind == "pickup";
-                    self.toast = Some(Toast {
-                        text: event.label.clone().unwrap_or_default(),
-                        tone: if pickup {
-                            ToastTone::Pickup
-                        } else {
-                            ToastTone::Promotion
-                        },
-                        age: 0.0,
-                        duration: if pickup {
-                            PICKUP_TOAST_SECONDS
-                        } else {
-                            TOAST_SECONDS
-                        },
-                    });
-                }
                 _ => {}
             }
+            if matches!(event.kind, SimEventType::Hurt | SimEventType::Death)
+                && let Some(angle) = pending.damage_angle
+            {
+                self.damage_ring = Some((angle, 0.0));
+            }
+            if let Some(report) = &feedback.death_report {
+                self.death = Some(report.clone());
+                self.respawn_total = 0.0;
+                self.ammo_notice = None;
+            }
         }
-        if event.kind == "death" {
-            let name = |id: Option<u32>| {
-                if id == Some(viewer) {
-                    "YOU".to_owned()
+        if let Some(toast) = &feedback.toast {
+            self.toast = Some(Toast {
+                text: toast.text.clone(),
+                tone: toast.tone,
+                age: 0.0,
+                duration: if toast.tone == ToastTone::Pickup {
+                    PICKUP_TOAST_SECONDS
                 } else {
-                    hud.scoreboard
-                        .iter()
-                        .find(|row| Some(row.id) == id)
-                        .map_or_else(|| "YARD".to_owned(), |row| row.name.clone())
-                }
-            };
-            // The victim's team comes with the event; allies take no hull damage from
-            // each other, so the killer is on the other side unless the tank destroyed
-            // itself or the yard did it (`killFeedSides`).
-            let victim_team = event.team;
-            let killer_team = match event.owner {
-                None => None,
-                Some(owner) if Some(owner) == event.id => victim_team,
-                Some(_) => victim_team.map(|team| 1 - team.min(1)),
-            };
-            self.kill_feed.insert(
-                0,
-                KillFeedEntry {
-                    killer: name(event.owner),
-                    victim: name(event.id),
-                    killer_team,
-                    victim_team,
-                    cause: event
-                        .damage_source
-                        .as_ref()
-                        .map(|source| source.cause.clone()),
-                    own_kill: event.owner == Some(viewer) && event.id != Some(viewer),
-                    own_death: mine,
-                    age: 0.0,
+                    TOAST_SECONDS
                 },
-            );
-            self.kill_feed.truncate(KILL_FEED_LINES);
+            });
         }
+        if let Some(row) = &feedback.feed {
+            let [killer, victim] = row.names.clone();
+            self.push_feed(KillFeedEntry {
+                killer,
+                victim,
+                killer_team: row.sides[0].team(),
+                victim_team: row.sides[1].team(),
+                cause: row.cause,
+                own_kill: row.own_kill,
+                own_death: row.own_death,
+                age: 0.0,
+            });
+        }
+    }
+
+    /// Put a line on top of the kill feed, the newest first, and let the oldest go past
+    /// its last line (`showFeed`).
+    pub fn push_feed(&mut self, entry: KillFeedEntry) {
+        self.kill_feed.insert(0, entry);
+        self.kill_feed.truncate(FEED_LINES);
+    }
+
+    /// Whether the open Stats for nerds panel wants fresh rows now: at once when it
+    /// opens, then every `REFRESH_MS`, as the page's panel refreshes.
+    pub fn stats_due(&mut self, now: f64, debug: bool) -> bool {
+        if !(self.show_nerd_stats && debug) {
+            self.stats_read_at = f64::NEG_INFINITY;
+            return false;
+        }
+        let due = now - self.stats_read_at >= sloppy_web::nerd_rows::REFRESH_MS;
+        if due {
+            self.stats_read_at = now;
+        }
+        due
     }
 
     /// Forget a round's feedback.
@@ -485,7 +358,6 @@ impl UiState {
         self.death = None;
         self.respawn_total = 0.0;
         self.mine_total = 0.0;
-        self.effect_longest = [0.0; 5];
         self.hull_ghost = 1.0;
         self.hull_ghost_wait = 0.0;
         self.pause_tab = PauseTab::Battle;
@@ -500,9 +372,11 @@ pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Ac
         setup::battle_setup(context, state, &art, view, &mut actions);
     } else {
         match view.phase {
-            Phase::Paused => menus::pause(context, state, &art, view, &mut actions),
-            Phase::Results => recap::results(context, state, &art, view, &mut actions),
-            Phase::Playing | Phase::Ready => hud::hud(context, state, &art, view, &mut actions),
+            MatchPhase::Paused => menus::pause(context, state, &art, view, &mut actions),
+            MatchPhase::Results => recap::results(context, state, &art, view, &mut actions),
+            MatchPhase::Playing | MatchPhase::Ready => {
+                hud::hud(context, state, &art, view, &mut actions);
+            }
         }
     }
     if state.settings_draft.is_some() {
@@ -514,16 +388,50 @@ pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Ac
         // Settings opened from the battle's toolbar paused it; closing them, however
         // they closed, carries it on.
         state.resume_after_settings = false;
-        if view.in_round && view.phase == Phase::Paused {
+        if view.in_round && view.phase == MatchPhase::Paused {
             actions.push(Action::Resume);
         }
     }
     state.settings_were_open = settings_open;
     if state.show_nerd_stats && view.debug {
         nerd_stats::panel(context, state);
+    } else if view.debug && view.in_round {
+        nerd_stats::link(context, state);
     }
     actions
 }
 
 #[cfg(test)]
 mod snapshots;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn line(name: &str) -> KillFeedEntry {
+        KillFeedEntry {
+            killer: name.to_owned(),
+            victim: String::new(),
+            killer_team: None,
+            victim_team: None,
+            cause: None,
+            own_kill: false,
+            own_death: false,
+            age: 0.0,
+        }
+    }
+
+    #[test]
+    fn the_newest_feed_line_is_on_top_and_the_oldest_leaves() {
+        let mut state = UiState::default();
+        for name in ["first", "second", "third", "arrival"] {
+            state.push_feed(line(name));
+        }
+        let names: Vec<&str> = state
+            .kill_feed
+            .iter()
+            .map(|entry| entry.killer.as_str())
+            .collect();
+        assert_eq!(names, ["arrival", "third", "second"]);
+    }
+}

@@ -1,0 +1,4 @@
+interface:
+  display_name: "UI Parity Gauntlet"
+  short_description: "Match Sloppy Tanks desktop UI to the production web app"
+  default_prompt: "Use $ui-parity-gauntlet to match the Sloppy Tanks native UI to production as closely as reasonable, including HUD, settings, dialogs and Stats for nerds."

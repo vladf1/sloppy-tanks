@@ -12,8 +12,8 @@ import {
 // directory Worker (directory/listing.ts), so it imports nothing tied to the browser.
 
 export const MAX_LISTED_ROOMS = 256;
-const DIFFICULTIES: readonly Difficulty[] = ["easy", "normal", "hard"];
-const PHASES: readonly RoomPhase[] = ["lobby", "playing", "results"];
+export const DIFFICULTIES: readonly Difficulty[] = ["easy", "normal", "hard"];
+export const PHASES: readonly RoomPhase[] = ["lobby", "playing", "results"];
 
 /** Public metadata for one room, as a server lists it. Never names, player ids or tokens. */
 export interface RoomListing {

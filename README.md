@@ -70,7 +70,8 @@ To try a build on a phone or tablet, `bun run tunnel` builds the game and prints
 ## Play
 
 The game also comes as a desktop app for Apple silicon Macs and Windows: download it
-from the [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest).
+from the [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest). The
+same app builds for iPad (see [iPad](#ipad)).
 
 Choose Skipper, Bruiser or Big Rig, then select a map and difficulty:
 
@@ -235,6 +236,8 @@ The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
 the Rust `Game` and `NetGame` the page drives, drawn with wgpu on Metal or Direct3D 12,
 with menus and HUD in egui and the textures and sounds from
 `public/` built into the executable.
+The window opens at 1280×800 points and has a minimum of 1100×720. Its menus and HUD
+follow the web edition's desktop layout; fullscreen and Quit are native controls.
 
 ```sh
 bun run desktop          # the app for this machine
@@ -248,10 +251,18 @@ Windows executable. Build through the script rather than `cargo build`: it stamp
 content version multiplayer joins send, which must match the servers' (the same one the
 page carries), as well as the release and commit Battle Setup shows. It adds the Apple silicon
 and Windows targets with rustup when they are missing and uses the `desktop` Cargo profile, which
-optimizes everything for speed. `cargo run -p sloppy-desktop` works for quick local
+optimizes everything for speed with fat LTO and one codegen unit. Pull-request artifacts use
+ThinLTO and parallel code generation to compile faster; main's releases and local builds
+keep the full release optimization. CI keeps separate caches for these compiler settings:
+each PR's first app build seeds its ThinLTO cache, and later pushes reuse it. Release
+builds use the fat-LTO cache from main. `cargo run -p sloppy-desktop` works for quick local
 tries, but servers refuse its unstamped content version. The
-[Desktop app workflow](.github/workflows/desktop.yml) builds both on pull requests that
-touch the crates or assets and on main, and keeps them as run artifacts; Linux CI leaves
+[Desktop app workflow](.github/workflows/desktop.yml) builds both, and the iPad app for
+the simulator, on pull requests that
+touch the crates or assets and on main, and keeps them as run artifacts, along with Cargo's
+compilation timing reports. macOS clippy and shell tests run alongside the app builds in
+the `desktop-check` profile, without optimizing the GPU and window dependencies, while
+retaining workspace line tables for panic backtraces. Linux CI leaves
 the crate out (`--exclude sloppy-desktop`), since its window and audio crates need
 system libraries there. Main's builds also replace the repository's
 [latest release](https://github.com/vladf1/sloppy-tanks/releases/latest), under file
@@ -261,6 +272,28 @@ names that stay the same, so these links always fetch the newest:
 and [Windows](https://github.com/vladf1/sloppy-tanks/releases/latest/download/Sloppy-Tanks-Windows.exe).
 The release job publishes only a Mac app and package that carry a stapled notarization
 ticket.
+
+### iPad
+
+The same crate builds as an iPad app (iPadOS 16 or newer, landscape, full screen), with
+the web edition's tablet touch controls: the drive stick in the bottom-left corner, a
+finger on the arena to aim and fire, and the mine button with − / + zoom in the
+bottom-right corner. A hardware keyboard plays as on a Mac (arrows or WASD, Space, 1–5,
+Q/E, V). There is no Quit or fullscreen, and single player pauses when the app leaves the
+screen. It needs a Mac with Xcode:
+
+```sh
+bun run ipad                         # artifacts/ipad/: Sloppy Tanks.app and an .ipa for devices
+bun run ipad -- --install            # also install and open it on the connected iPad
+bun run ipad:simulator -- --install  # artifacts/ipad-simulator/, opened in an iPad simulator
+```
+
+A device build is signed with an Apple Development identity and the provisioning profile
+Xcode keeps for the bundle identifier (the team's wildcard profile covers it), and
+installs only on the devices that profile lists; `SLOPPY_IOS_PROFILE` and
+`SLOPPY_IOS_IDENTITY` choose others, and `SLOPPY_IOS_DEVICE` the iPad to install on.
+Simulator builds need no signing. Like the Mac app it carries the content version, so it
+joins the same multiplayer servers.
 
 Mac builds from main, and local ones on a Mac holding the Developer ID certificates and
 a `notarytool` profile, are signed and notarized, so the `.pkg` and the zip open without
@@ -312,8 +345,8 @@ holds no server address. The directory is a Cloudflare Worker (`directory/`, pub
 `bun run directory:deploy`) that every game server pushes its rooms to; the page lists
 every server's rooms from it and connects to the server that hosts the chosen room, or for
 a new room the one with the fewest rooms. A machine pushes its rooms to the directory
-under its environment (production or dev), which `server:provision` writes into its unit
-as `DIRECTORY_URL` and `SERVER_ENVIRONMENT`; the build names the page's as
+under its environment (production or dev), which its startup script
+(`deploy/server/cloud-init/`) writes as `DIRECTORY_URL` and `SERVER_ENVIRONMENT`; the build names the page's as
 `VITE_SERVER_ENVIRONMENT`. The workflow does not deploy the server, but after the site deploys it
 points the server's container image tag `:production` at the commit's image; the dev
 site uses a separate server on its own machine (below). A
@@ -347,17 +380,20 @@ The build separates the interactive menu from the engine and audio. Battle Setup
 `bun run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes it to the separate `sloppy-tanks-dev`
 Cloudflare Worker. Run `bun run wrangler login` first (or provide an API token that
-can deploy Workers and their custom domains). The Worker's account, name and domain
-come from `deploy/dev-site/wrangler.jsonc`, independent of the local Git branch. No Git
-commit or push is required. `bun run build:dev` builds without publishing.
+can deploy Workers and their custom domains), and log Docker in to ghcr.io once with a
+token that can write packages (`crates/server/README.md` shows how with `gh`). The
+Worker's account, name and domain come from `deploy/dev-site/wrangler.jsonc`,
+independent of the local Git branch. No Git commit or push is required.
+`bun run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev directory, where the dev
 multiplayer servers list themselves. They run on their own machines, each at its nip.io
-name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` redeploys those
-servers from the same checkout first (over SSH) so client and server versions match;
-production multiplayer is never affected. Unlike production, the dev site keeps the
-development network tools: a room page takes `?latency=`, `?jitter=` and `?stall=`
-(milliseconds of simulated transport delay), `&latencySlider` shows sliders that change
-them mid-battle, and `?dodge=0` / `?shooter=0` turn off the fairness options for
+name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` first pushes
+the same checkout's server image as its `:dev` tag, which those servers check every 10
+seconds and switch to by themselves, and waits for them, so client and server versions
+match; production multiplayer is never affected. Unlike production, the
+dev site keeps the development network tools: a room page takes `?latency=`, `?jitter=`
+and `?stall=` (milliseconds of simulated transport delay), `&latencySlider` shows sliders
+that change them mid-battle, and `?dodge=0` / `?shooter=0` turn off the fairness options for
 comparison.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of

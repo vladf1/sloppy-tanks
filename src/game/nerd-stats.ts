@@ -1,169 +1,19 @@
 import { typingOrShortcut } from "./controls";
-import type { EngineStats } from "./engine-api";
-
-export type StatsRow = [label: string, value: string | number, tip: string];
-/** Rows per panel section; Performance is measured by the panel itself. */
-export type StatsSections = Partial<Record<string, StatsRow[]>>;
-
-const SINGLE_PLAYER_SECTIONS = ["Performance", "Physics", "Render", "Battle", "Configuration"];
-const NETWORK_SECTIONS = ["Performance", "Network", "Render", "Battle", "Configuration"];
-
-/** The renderer counts both panels show. */
-export type RenderStats = Pick<
-  EngineStats,
-  | "graphicsApi"
-  | "quality"
-  | "drawCalls"
-  | "triangles"
-  | "shadowTriangles"
-  | "reflectionTriangles"
-  | "mainTriangles"
-  | "meshes"
-  | "textures"
->;
-
-const capitalized = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
-
-/** Both panels' Render rows. One row per scene pass: the expanded panel is 32 characters
- * wide, too narrow for the three counts on one row. */
-export function renderRows(stats: RenderStats): StatsRow[] {
-  const { quality } = stats;
-  return [
-    [
-      "Graphics API",
-      stats.graphicsApi,
-      "WebGPU, or WebGL where the browser offers no WebGPU (or the page has ?webgl).",
-    ],
-    [
-      "Graphics setting",
-      capitalized(quality.setting),
-      "The Settings dialog's Graphics choice. Auto lowers the quality tier and the render scale while frames run slow and raises them again once they keep up.",
-    ],
-    [
-      "Quality tier",
-      capitalized(quality.tier),
-      "The optional per-pixel features in use: High is the full picture; Medium drops fine ground and cloud detail and ambient occlusion; Low also drops bloom and halves the shadow map.",
-    ],
-    [
-      "Render scale",
-      `${Math.round(quality.scale * 100)}%`,
-      `The 3D scene's resolution against the canvas's drawing buffer, ${quality.renderRatio.toFixed(2)} scene pixels per CSS pixel; the output pass upsamples it. ${quality.changes} automatic changes this session.`,
-    ],
-    [
-      "Scene pixels",
-      quality.scene.join("×"),
-      "The 3D scene's width and height in pixels before the upsampling.",
-    ],
-    [
-      "GPU frame time",
-      quality.gpuMs === null ? "—" : `${quality.gpuMs.toFixed(1)} ms`,
-      "How long the GPU takes to finish a frame, from its scene's submission until WebGPU reports it done (more when the GPU was still busy with the frame before). Auto lowers the quality only while this is what slows frames. Not reported on WebGL.",
-    ],
-    ["Draw calls / frame", stats.drawCalls, "GPU draw calls issued per rendered frame."],
-    [
-      "Triangles / frame",
-      stats.triangles.toLocaleString(),
-      "Triangles submitted per rendered frame.",
-    ],
-    [
-      "Shadow triangles",
-      stats.shadowTriangles.toLocaleString(),
-      "Triangles submitted to the shadow map pass per rendered frame.",
-    ],
-    [
-      "Reflection triangles",
-      stats.reflectionTriangles.toLocaleString(),
-      "Triangles submitted to the reflection pass per rendered frame.",
-    ],
-    [
-      "Main triangles",
-      stats.mainTriangles.toLocaleString(),
-      "Triangles submitted to the main scene pass per rendered frame.",
-    ],
-    [
-      "GPU geometries",
-      stats.meshes,
-      "Distinct meshes currently uploaded to the GPU, sharing a few mesh page buffers. Changes on map load, not per frame.",
-    ],
-    [
-      "GPU textures",
-      stats.textures,
-      "Textures currently uploaded to the GPU. Changes on map load, not per frame.",
-    ],
-  ];
-}
-
-/** The single-player panel's rows from the engine's `stats_json`. */
-export function engineStatsSections(stats: EngineStats): StatsSections {
-  return {
-    Physics: [
-      ["Bodies", stats.bodies, "Rigid bodies in the physics world."],
-      [
-        "Fixed / dynamic",
-        `${stats.fixedBodies} / ${stats.dynamicBodies}`,
-        "Static bodies versus simulated bodies.",
-      ],
-      [
-        "Awake / sleeping",
-        `${stats.dynamicBodies - stats.sleepingBodies} / ${stats.sleepingBodies}`,
-        "Simulated bodies awake versus sleeping. Dynamic bodies only.",
-      ],
-      ["Colliders", stats.colliders, "Collision shapes in the physics world."],
-    ],
-    Render: [
-      ...renderRows(stats),
-      [
-        "GPU memory",
-        `${(stats.gpuBytes / 1048576).toFixed(1)} MB`,
-        "Estimated GPU memory for mesh pages, textures, render targets, the shadow map and instances.",
-      ],
-      [
-        "Mesh page slack",
-        `${(stats.meshSlackBytes / 1048576).toFixed(1)} MB`,
-        "Mesh page space no mesh uses, included in GPU memory.",
-      ],
-    ],
-    Battle: [
-      ["Tanks", `${stats.tanksAlive} / ${stats.tanks}`, "Tanks alive out of total spawned."],
-      ["Mines", stats.mines, "Live mines on the field."],
-      [
-        "Pickups ready",
-        `${stats.pickupsReady} / ${stats.pickups}`,
-        "Pickups available now out of total placed.",
-      ],
-      ["Projectiles", stats.shots, "Shots currently flying."],
-      [
-        "Visual particles",
-        stats.particles,
-        "Active chips, sparks and leaves. Smoke uses separate buffers.",
-      ],
-      [
-        "Debris bodies",
-        `${stats.fragments} / ${stats.maxFragments}`,
-        "Physics debris pieces alive out of the pool cap.",
-      ],
-      [
-        "Sim time",
-        `${stats.elapsed.toFixed(1)}s`,
-        "Elapsed simulation time since the round started.",
-      ],
-    ],
-    Configuration: [
-      [
-        "Pixel ratio",
-        stats.pixelRatio,
-        "Renderer resolution multiplier, capped from the display pixel ratio.",
-      ],
-    ],
-  };
-}
+import type { StatsSection } from "./engine-api";
 
 /** The corner link that opens the panel (phones shorten it to "nerds" in CSS), and the
  * panel's title once open. */
 const LINK_LABEL = "nerd stats";
 const PANEL_TITLE = "Stats for Nerds";
+/** Rows show a label padded to this many columns, then the value. */
+const LABEL_COLUMNS = 20;
+/** The open panel refreshes this often while frames run (the desktop app's too,
+ * `crates/web/src/nerd_rows.rs`, pinned by `tests/page-catalog.test.ts`). */
+const REFRESH_MS = 500;
 
-/** Counts refresh twice a second, only while the panel is open. */
+/** Stats for nerds: the engine's sections and rows (`nerd_stats_json`) in folding
+ * sections, each row explained on hover. Rows refresh twice a second, only while the
+ * panel is open. */
 export class NerdStats {
   private readonly element: HTMLElement;
   private readonly button: HTMLButtonElement;
@@ -172,23 +22,18 @@ export class NerdStats {
     string,
     { list: HTMLElement; rows: Map<string, HTMLPreElement> }
   >();
-  private readonly network: boolean;
   private open = false;
   private start = 0;
-  private frames = 0;
-  private simTotal = 0;
-  private renderTotal = 0;
 
-  /** `source` reports the panel's rows when it refreshes; `active` says whether the
-   * panel may open (a round is on screen). A room's panel shows network rows instead
-   * of physics, which runs on the server. */
+  /** `source` reports the panel's sections when it refreshes; `active` says whether the
+   * panel may open (a round is on screen). A room's panel (`network`) shows network rows
+   * instead of physics, which runs on the server. */
   constructor(
     root: HTMLElement,
-    private readonly source: () => StatsSections | undefined,
+    private readonly source: () => StatsSection[] | undefined,
     private readonly active: () => boolean,
     { network = false }: { network?: boolean } = {},
   ) {
-    this.network = network;
     this.element = document.createElement("aside");
     this.element.id = "nerd-stats";
     this.element.setAttribute("aria-label", "Game statistics");
@@ -214,17 +59,7 @@ export class NerdStats {
     this.details.hidden = true;
     this.element.append(head, this.details);
     root.append(this.element);
-    for (const title of this.network ? NETWORK_SECTIONS : SINGLE_PLAYER_SECTIONS) {
-      const section = document.createElement("details");
-      section.open = title !== "Configuration";
-      const heading = document.createElement("summary");
-      heading.textContent = title;
-      const list = document.createElement("div");
-      section.append(heading, list);
-      this.details.append(section);
-      this.sections.set(title, { list, rows: new Map() });
-    }
-    this.details.title = this.network
+    this.details.title = network
       ? "CPU timings are frame averages, not GPU time or CPU utilization. Sim time is elapsed simulation time. Pickups ready counts available/total. Draw calls and triangles are per rendered frame."
       : "Awake/sleeping counts include dynamic bodies only. CPU timings are frame averages, not GPU time or CPU utilization. Sim time is elapsed simulation time. Pickups ready counts available/total. Draw calls and triangles are per rendered frame. GPU geometries, textures and memory change on map load, not per frame. Visual particles count chips, sparks and leaves; smoke has separate buffers.";
     const toggle = () => {
@@ -236,7 +71,7 @@ export class NerdStats {
       this.button.setAttribute("aria-expanded", String(this.open));
       this.button.textContent = this.open ? PANEL_TITLE : LINK_LABEL;
       this.details.hidden = !this.open;
-      this.reset();
+      this.start = 0;
       if (this.open) {
         this.refresh();
       }
@@ -257,15 +92,13 @@ export class NerdStats {
       event.preventDefault();
       toggle();
     });
-    document.addEventListener("visibilitychange", () => this.reset());
+    document.addEventListener("visibilitychange", () => {
+      this.start = 0;
+    });
   }
 
-  private reset(): void {
-    this.start = 0;
-    this.frames = this.simTotal = this.renderTotal = 0;
-  }
-
-  frame(now: number, simCost: number, renderCost: number): void {
+  /** A frame ran at `now`: refresh once `REFRESH_MS` have passed. */
+  frame(now: number): void {
     if (!this.open || document.hidden) {
       return;
     }
@@ -273,60 +106,45 @@ export class NerdStats {
       this.start = now;
       return;
     }
-    this.frames++;
-    this.simTotal += simCost;
-    this.renderTotal += renderCost;
-    if (now - this.start < 500) {
+    if (now - this.start < REFRESH_MS) {
       return;
     }
-    this.refresh((now - this.start) / this.frames);
-    this.reset();
+    this.refresh();
+    this.start = 0;
   }
 
-  private refresh(frameMs?: number): void {
+  private refresh(): void {
     const sections = this.source();
     if (!sections) {
       return;
     }
-    const performance: StatsRow[] = [
-      [
-        "FPS",
-        frameMs ? Math.round(1000 / frameMs) : "—",
-        "Rendered frames per second, averaged over the sampling window.",
-      ],
-      [
-        "Frame interval",
-        frameMs ? `${frameMs.toFixed(1)} ms` : "—",
-        "Average wall-clock time per frame over the sampling window.",
-      ],
-      [
-        this.network ? "Update CPU / frame" : "Sim CPU / frame",
-        this.frames ? `${(this.simTotal / this.frames).toFixed(2)} ms` : "—",
-        this.network
-          ? "Client interpolation, input and effect update CPU time per frame. Excludes message decoding and server physics."
-          : "Average CPU time spent stepping the simulation per frame. Excludes GPU work.",
-      ],
-      [
-        "Render CPU / frame",
-        this.frames ? `${(this.renderTotal / this.frames).toFixed(2)} ms` : "—",
-        "Average CPU time spent submitting draw calls per frame. Excludes GPU work.",
-      ],
-    ];
-    for (const [title, rows] of Object.entries({ Performance: performance, ...sections })) {
-      const target = this.sections.get(title);
-      if (!target || !rows) {
-        continue;
-      }
-      for (const [label, value, tip] of rows) {
+    for (const { title, rows } of sections) {
+      const target = this.sections.get(title) ?? this.addSection(title);
+      for (const { label, value, hint } of rows) {
         let row = target.rows.get(label);
         if (!row) {
           row = document.createElement("pre");
-          row.title = tip;
           target.list.append(row);
           target.rows.set(label, row);
         }
-        row.textContent = `${label.padEnd(20)} ${value}`;
+        // Hints carry counts ("12 so far"), so they refresh with the values.
+        row.title = hint;
+        row.textContent = `${label.padEnd(LABEL_COLUMNS)} ${value}`;
       }
     }
+  }
+
+  /** Sections appear in the engine's order, folded only for Configuration. */
+  private addSection(title: string) {
+    const section = document.createElement("details");
+    section.open = title !== "Configuration";
+    const heading = document.createElement("summary");
+    heading.textContent = title;
+    const list = document.createElement("div");
+    section.append(heading, list);
+    this.details.append(section);
+    const target = { list, rows: new Map<string, HTMLPreElement>() };
+    this.sections.set(title, target);
+    return target;
   }
 }

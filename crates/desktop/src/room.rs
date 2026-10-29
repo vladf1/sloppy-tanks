@@ -7,45 +7,38 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use serde_json::json;
+use sloppy_core::net::client::{ClientAction, POLL_MS, SavedSeat};
 use sloppy_core::net::protocol::RoomPhase;
-use sloppy_core::sim::data::{SCORE_LIMIT, TEAM_NAMES};
+use sloppy_core::sim::Team;
+use sloppy_core::sim::map_options::map_option_for;
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::wgpu;
-use sloppy_web::{NetGame, net_frame_slot as slot};
-use winit::event::{ElementState, WindowEvent};
-use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::{Fullscreen, Window};
+use sloppy_web::hud::Hud;
+use sloppy_web::room_notices::RoomNotice;
+use sloppy_web::{NetConfig, NetGame, net_frame_slot as slot};
+use winit::event::WindowEvent;
+use winit::window::Window;
 
-use crate::app::{Shell, grab_pointer, now_ms};
+use crate::app::{Shell, css_size, drawable_size, now_ms, set_fullscreen, view_config};
 use crate::audio::Audio;
 use crate::bakes::{self, Bake};
-use crate::engine_api::{EventBatch, HudState};
-use crate::input::{Controls, Shortcut, pack};
+use crate::input::Shortcut;
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
-use crate::room_api::{RoomAction, RoomNotice, RoomSelection};
+use crate::room_api::RoomSelection;
 use crate::sockets::{SocketEvent, Sockets};
+use crate::touch::Play;
 use crate::ui::room_menu::{self, RoomMenu};
 use crate::ui::{self, Action, UiState};
+use crate::window_input::{Battle, Request, WindowInput};
 
-/// The engine asks for timers at least this often (heartbeat, reconnect backoff).
-pub const POLL_MS: f64 = 250.0;
 /// Pipelines created per preparation step; the joining card redraws between steps.
 const PREPARE_BUDGET: u32 = 4;
-/// Frames between Stats for nerds readings.
-const STATS_EVERY_FRAMES: u64 = 15;
 /// Why a room that could not load sends the player back to Battle Setup.
 const ARENA_FAILED: &str = "The arena could not load. Try again, or play single player.";
 
-/// A seat the server issued, kept for this run (the page's `sessionStorage`).
-#[derive(Clone, Debug)]
-pub struct SavedSeat {
-    pub token: String,
-    pub room_epoch: String,
-}
-
-/// Seats by server and room.
+/// Seats the server issued, kept for this run by server and room (the page's
+/// `sessionStorage`).
 pub type SavedSeats = HashMap<String, SavedSeat>;
 
 pub struct RoomSession {
@@ -53,8 +46,7 @@ pub struct RoomSession {
     game: NetGame,
     overlay: Overlay,
     sockets: Sockets,
-    pub controls: Controls,
-    modifiers: ModifiersState,
+    pub input: WindowInput,
     prefs: Preferences,
     audio: Option<Audio>,
     ui: UiState,
@@ -71,7 +63,6 @@ pub struct RoomSession {
     first_person: bool,
     /// The engine says the pointer is free: a menu, a drop or no battle.
     pointer_free: bool,
-    pub cursor_grabbed: bool,
     /// The window took the last frame; a covered one takes none (see `app.rs`).
     frame_shown: bool,
     /// macOS reports the window covered, or it has no area (minimized on Windows).
@@ -88,7 +79,6 @@ pub struct RoomSession {
     last_poll: f64,
     last_frame: f64,
     hud_dt: f64,
-    frame_index: u64,
     /// The renderer stopped; the room is given up.
     stopped: bool,
     /// Battle Setup is wanted, with this reason to show there.
@@ -101,33 +91,20 @@ impl RoomSession {
     /// reason to show on Battle Setup.
     pub fn new(shell: Shell, selection: RoomSelection) -> Result<Self, Box<(Shell, String)>> {
         let window = shell.window.clone();
-        let size = window.inner_size();
-        let scale = window.scale_factor();
-        let logical = size.to_logical::<f64>(scale);
-        let seat_key = seat_key(&selection);
-        let saved = shell
-            .seats
-            .get(&seat_key)
-            .map(|seat| json!({ "token": seat.token, "roomEpoch": seat.room_epoch }));
-        let config = json!({
-            "server": selection.server,
-            "room": selection.room,
-            "savedSeat": saved,
-            "assetBase": "",
-            "cssWidth": logical.width,
-            "cssHeight": logical.height,
-            "pixelRatio": scale,
-            "firstPerson": shell.prefs.first_person,
-            "zoom": shell.prefs.zoom,
-            "graphics": shell.prefs.graphics,
-            "device": "desktop",
-        });
+        let size = drawable_size(&window);
+        let config = NetConfig {
+            server: selection.server.clone(),
+            room: selection.room.clone(),
+            saved_seat: shell.seats.get(&seat_key(&selection)).cloned(),
+            ..NetConfig::default()
+        };
         let target = RenderTarget {
             window: wgpu::SurfaceTarget::from(window.clone()),
             width: size.width,
             height: size.height,
         };
-        let mut game = match pollster::block_on(NetGame::create(target, &config.to_string())) {
+        let view = view_config(&window, &shell.prefs);
+        let mut game = match pollster::block_on(NetGame::create_with(target, view, config)) {
             Ok(game) => game,
             Err(error) => {
                 eprintln!("The room's renderer could not start: {error}");
@@ -135,13 +112,7 @@ impl RoomSession {
             }
         };
         let now = now_ms();
-        if let Err(error) = game.connect(&selection.choice_json(), now) {
-            eprintln!("The room choice was refused: {error}");
-            return Err(Box::new((
-                shell,
-                "Choose your tank and join the room again.".into(),
-            )));
-        }
+        game.join(selection.choice.clone(), now);
         let overlay = Overlay::new(window.clone(), game.renderer());
         let Shell {
             prefs,
@@ -157,8 +128,7 @@ impl RoomSession {
             game,
             overlay,
             sockets: Sockets::default(),
-            controls: Controls::default(),
-            modifiers: ModifiersState::default(),
+            input: WindowInput::default(),
             first_person: prefs.first_person,
             prefs,
             audio,
@@ -166,7 +136,7 @@ impl RoomSession {
                 rooms,
                 ..UiState::default()
             },
-            menu: RoomMenu::new(&selection.room, selection.create.is_some()),
+            menu: RoomMenu::new(&selection.room, selection.choice.create.is_some()),
             selection,
             seats,
             debug,
@@ -175,7 +145,6 @@ impl RoomSession {
             prebuilding: false,
             bake: None,
             pointer_free: true,
-            cursor_grabbed: false,
             frame_shown: true,
             occluded: false,
             minimized: false,
@@ -186,7 +155,6 @@ impl RoomSession {
             last_poll: now,
             last_frame: now,
             hud_dt: 0.0,
-            frame_index: 0,
             stopped: false,
             exit: None,
         };
@@ -211,7 +179,7 @@ impl RoomSession {
         let hidden = self.hidden();
         if hidden != self.told_hidden {
             self.told_hidden = hidden;
-            self.controls.clear();
+            self.input.controls.clear();
             self.game.set_hidden(hidden, now_ms());
             self.pump();
         }
@@ -227,7 +195,7 @@ impl RoomSession {
             && self.window.has_focus()
             && !self.occluded
             && !self.minimized;
-        grab_pointer(&self.window, wanted, &mut self.cursor_grabbed);
+        self.input.hold_pointer(&self.window, wanted);
     }
 
     /// Give the window back: the room's renderer and overlay go, the rest stays.
@@ -290,11 +258,11 @@ impl RoomSession {
         }
         self.pumping = true;
         loop {
-            let actions = RoomAction::parse_all(&self.game.take_actions());
+            let actions = self.game.take_room_actions();
             for action in &actions {
                 self.perform(action);
             }
-            let notices = RoomNotice::parse_all(&self.game.take_notices());
+            let notices = self.game.take_room_notices();
             let done = actions.is_empty() && notices.is_empty();
             for notice in notices {
                 self.handle(notice);
@@ -318,12 +286,12 @@ impl RoomSession {
         self.sockets.close_all_and_wait();
     }
 
-    fn perform(&mut self, action: &RoomAction) {
+    fn perform(&mut self, action: &ClientAction) {
         match action {
-            RoomAction::Open { socket, url } => self.sockets.open(*socket, url.clone()),
-            RoomAction::Send { socket, text } => self.sockets.send(*socket, text.clone()),
-            RoomAction::Close { socket } => self.sockets.close(*socket),
-            RoomAction::SaveSeat { token, room_epoch } => {
+            ClientAction::OpenSocket { socket, url } => self.sockets.open(*socket, url.clone()),
+            ClientAction::Send { socket, text } => self.sockets.send(*socket, text.clone()),
+            ClientAction::CloseSocket { socket } => self.sockets.close(*socket),
+            ClientAction::SaveSeat { token, room_epoch } => {
                 self.seats.insert(
                     seat_key(&self.selection),
                     SavedSeat {
@@ -332,7 +300,7 @@ impl RoomSession {
                     },
                 );
             }
-            RoomAction::ForgetSeat => {
+            ClientAction::ForgetSeat => {
                 self.seats.remove(&seat_key(&self.selection));
             }
         }
@@ -340,26 +308,32 @@ impl RoomSession {
 
     fn handle(&mut self, notice: RoomNotice) {
         match notice {
-            RoomNotice::Status { text, connected } => self.menu.status(&text, connected),
+            RoomNotice::Status { text, dialog } => self.menu.status(&text, dialog),
             RoomNotice::Notice(text) => self.menu.notice = text,
-            RoomNotice::Ended { cause, text } => {
-                self.controls.clear();
+            RoomNotice::Ended(ending) => {
+                self.input.controls.clear();
                 // A join still behind the joining card reports on Battle Setup.
                 if self.menu.joining {
-                    self.leave_to_setup(text);
+                    self.leave_to_setup(ending.text);
                 } else {
-                    self.menu.ended(cause, text);
+                    self.menu.ended(ending);
                 }
             }
-            RoomNotice::Lobby { lobby, player_id } => {
-                self.menu.lobby(*lobby, player_id, &mut self.ui);
+            RoomNotice::Lobby {
+                lobby,
+                player_id,
+                menu,
+                arrivals,
+            } => {
+                self.menu
+                    .lobby(*lobby, player_id, menu, arrivals, &mut self.ui);
             }
-            RoomNotice::Result { outcome, team } => self.menu.outcome = Some((outcome, team)),
+            RoomNotice::Result(outcome) => self.menu.outcome = Some(outcome),
             RoomNotice::ResetFeedback => {
                 self.ui.reset_feedback();
                 self.menu.death_cause.clear();
             }
-            RoomNotice::ClearInput => self.controls.clear(),
+            RoomNotice::ClearInput => self.input.controls.clear(),
             RoomNotice::Reveal => {
                 self.menu.joining = false;
                 self.resize();
@@ -385,14 +359,15 @@ impl RoomSession {
         if let WindowEvent::RedrawRequested = event {
             return self.redraw();
         }
-        let in_battle = self.menu.in_battle() && !self.menu.joining;
-        let battle = in_battle && !self.menu.menu_open && self.ui.settings_draft.is_none();
-        let keys_to_menus = !battle || self.overlay.typing();
-        let consumed = self
-            .overlay
-            .event(event, !self.cursor_grabbed, keys_to_menus);
-        let alive = self.ui.hud.as_ref().is_some_and(|hud| hud.human.alive);
-        let playing = in_battle && alive;
+        let battle = self.battle();
+        let request = self
+            .input
+            .event(&self.window, &mut self.overlay, event, &battle);
+        if let Some(request) = request
+            && self.request(request)
+        {
+            return true;
+        }
         match event {
             WindowEvent::CloseRequested => {
                 self.quit();
@@ -405,60 +380,52 @@ impl RoomSession {
             }
             WindowEvent::ScaleFactorChanged { .. } => self.resize(),
             WindowEvent::Focused(false) => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.hold_pointer();
             }
             WindowEvent::Occluded(hidden) => {
                 self.occluded = *hidden;
                 self.hidden_changed();
             }
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = modifiers.state();
-                self.controls.set_command(
-                    self.modifiers.super_key()
-                        || self.modifiers.control_key()
-                        || self.modifiers.alt_key(),
-                );
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Typing goes to the field; a release still reaches the controls, so
-                // a key held when a field took focus never sticks.
-                if self.overlay.typing() && event.state == ElementState::Pressed {
-                    return false;
-                }
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    if code == KeyCode::KeyQ && self.modifiers.super_key() {
-                        self.quit();
-                        return true;
-                    }
-                    let shortcut = self.controls.key(code, event.state, event.repeat, playing);
-                    if let Some(shortcut) = shortcut {
-                        self.shortcut(shortcut);
-                    }
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let size = self.window.inner_size();
-                self.controls.aim_at(
-                    (position.x, position.y),
-                    (f64::from(size.width), f64::from(size.height)),
-                );
-            }
-            WindowEvent::MouseInput { state, button, .. }
-                if *state == ElementState::Released
-                    || (playing
-                        && (self.cursor_grabbed
-                            || !(consumed || self.overlay.wants_pointer()))) =>
-            {
-                self.controls.button(*button, *state);
-            }
-            WindowEvent::MouseWheel { delta, .. } if !self.overlay.wants_pointer() && in_battle => {
-                self.controls
-                    .wheel(*delta, self.modifiers.shift_key(), playing);
-            }
             _ => {}
         }
         false
+    }
+
+    /// Where the battle stands, for the window's input. Whether the player can act is
+    /// the engine's to say (`activeInput`, as the page asks it).
+    fn battle(&self) -> Battle {
+        let in_battle = self.menu.in_battle() && !self.menu.joining;
+        Battle {
+            keys: in_battle && self.ui.settings_draft.is_none(),
+            playing: self.game.active_input(),
+            wheel: in_battle,
+            touch: Play::live(
+                &self.overlay.context,
+                self.touch_live(),
+                self.first_person,
+                self.ui.hud.as_ref(),
+            ),
+        }
+    }
+
+    /// Whether the touch controls show: the player can act, with no dialog open.
+    fn touch_live(&self) -> bool {
+        self.game.active_input() && self.ui.settings_draft.is_none()
+    }
+
+    /// Do what input asked; true when the app should quit.
+    fn request(&mut self, request: Request) -> bool {
+        match request {
+            Request::Quit => {
+                self.quit();
+                true
+            }
+            Request::Shortcut(shortcut) => {
+                self.shortcut(shortcut);
+                false
+            }
+        }
     }
 
     fn shortcut(&mut self, shortcut: Shortcut) {
@@ -487,17 +454,12 @@ impl RoomSession {
     }
 
     fn resize(&mut self) {
-        let size = self.window.inner_size();
-        let scale = self.window.scale_factor();
-        let logical = size.to_logical::<f64>(scale);
-        self.game.resize(logical.width, logical.height, scale);
+        let (width, height, scale) = css_size(&self.window);
+        self.game.resize(width, height, scale);
     }
 
     fn save_camera(&mut self) {
-        let camera = self.game.camera_preferences();
-        self.prefs.first_person = camera.first().is_some_and(|&on| on == 1.0);
-        self.prefs.zoom = camera.get(1).copied();
-        self.prefs.save();
+        self.prefs.save_camera(self.game.camera());
     }
 
     fn apply(&mut self, action: Action) -> bool {
@@ -507,19 +469,19 @@ impl RoomSession {
                 if self.menu.in_battle() && self.game.pause(now) {
                     self.menu.menu_open = true;
                     self.menu.notice.clear();
-                    self.controls.clear();
+                    self.input.controls.clear();
                 }
             }
             Action::Resume => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.menu.menu_open = self.game.resume(now);
             }
             Action::RoomStart => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.game.start(now);
             }
             Action::RoomEnd => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.game.end(now);
             }
             Action::RoomLeave => {
@@ -527,32 +489,20 @@ impl RoomSession {
                 self.pump();
                 self.leave_to_setup(String::new());
             }
-            Action::RoomRejoin => {
-                self.menu.link = room_menu::Link::Connecting {
-                    title: "RECONNECTING".into(),
-                    text: "Connecting to the room…".into(),
-                };
-                self.game.rejoin(now);
-            }
+            // The engine's next status puts up RECONNECTING.
+            Action::RoomRejoin => self.game.rejoin(now),
             Action::RoomSetup(notice) => self.leave_to_setup(notice),
-            Action::RoomChoose { team, kind } => {
-                let team = team.map_or(-1, i32::from);
-                match self.game.choose(team, &kind, now) {
-                    Ok(()) => {
-                        self.prefs.tank = kind;
-                        self.prefs.save();
-                    }
-                    Err(error) => eprintln!("Invalid room choice: {error}"),
+            Action::RoomChoose { team, kind } => match self.game.choose_seat(team, kind, now) {
+                Ok(()) => {
+                    self.prefs.tank = kind;
+                    self.prefs.save();
                 }
-            }
-            Action::RoomRules(rules) => {
-                if let Err(error) = self.game.settings(&rules.to_json().to_string(), now) {
-                    eprintln!("Invalid room settings: {error}");
-                }
-            }
+                Err(error) => eprintln!("Invalid room choice: {error}"),
+            },
+            Action::RoomRules(rules) => self.game.set_rules(rules, now),
             Action::SelectAmmo(slot) => {
                 if self.menu.in_battle() {
-                    self.controls.select_ammo(slot);
+                    self.input.controls.select_ammo(slot);
                 }
             }
             Action::ToggleView => {
@@ -563,10 +513,7 @@ impl RoomSession {
             }
             Action::ToggleFullscreen => {
                 let fullscreen = self.window.fullscreen().is_none();
-                self.window
-                    .set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
-                self.prefs.fullscreen = fullscreen;
-                self.prefs.save();
+                set_fullscreen(&self.window, &mut self.prefs, fullscreen);
             }
             Action::OpenSettings => {
                 if self.menu.in_battle() {
@@ -596,41 +543,44 @@ impl RoomSession {
     fn save_settings(&mut self, prefs: Preferences) {
         let old = std::mem::replace(&mut self.prefs, prefs);
         if old.graphics != self.prefs.graphics {
-            self.game.set_graphics(&self.prefs.graphics);
+            self.game.set_graphics_setting(self.prefs.graphics);
         }
         if let Some(audio) = &mut self.audio {
             audio.set_volume(self.prefs.volume);
         }
         if old.fullscreen != self.prefs.fullscreen {
-            self.window.set_fullscreen(
-                self.prefs
-                    .fullscreen
-                    .then_some(Fullscreen::Borderless(None)),
-            );
+            let fullscreen = self.prefs.fullscreen;
+            set_fullscreen(&self.window, &mut self.prefs, fullscreen);
         }
         self.prefs.save();
     }
 
-    /// The engine's HUD with what a room's score bar needs besides.
+    /// The engine's HUD with what a room's score bar needs besides: a room plays a team
+    /// battle on the lobby's map and difficulty.
     fn refresh_hud(&mut self) {
-        let Some(mut hud) = HudState::parse(&self.game.hud_json()) else {
+        let Some(room) = self.game.hud() else {
             return;
         };
-        hud.game_mode = "team".into();
-        hud.team_names = TEAM_NAMES.map(str::to_owned);
-        hud.score_limit = f64::from(SCORE_LIMIT);
-        let viewer = hud.human.id;
-        hud.human_team = hud
+        let viewer = room.human.id;
+        let human_team = room
             .scoreboard
-            .iter()
-            .find(|row| row.id == viewer)
+            .row(viewer)
             .map(|row| row.team)
             .or(self.menu.team())
-            .unwrap_or(0);
+            .unwrap_or(Team::Blue);
+        // The default HUD is a team battle with the standard score limit and team names.
+        let mut hud = Hud {
+            match_state: room.match_state.clone(),
+            human_team,
+            human: room.human,
+            scoreboard: room.scoreboard.into_owned(),
+            score_pill: room.score_pill,
+            ..Hud::default()
+        };
         if let Some(lobby) = &self.menu.lobby {
-            hud.map_mode = lobby.settings.map_mode.as_str().to_owned();
-            hud.map_name = ui::rooms::map_name(&hud.map_mode).to_owned();
-            hud.difficulty = lobby.settings.difficulty.as_str().to_owned();
+            hud.map_mode = lobby.settings.map_mode;
+            hud.map_name = map_option_for(lobby.settings.map_mode).name.to_owned();
+            hud.difficulty = lobby.settings.difficulty;
         }
         self.ui.tick(self.hud_dt);
         self.hud_dt = 0.0;
@@ -656,13 +606,11 @@ impl RoomSession {
                 eprintln!("{error}");
             }
         }
-        let status = self.game.prepare_step(PREPARE_BUDGET, now);
-        let [compiled, remaining, _, done, _] =
-            [0, 1, 2, 3, 4].map(|index| status.get(index).copied().unwrap_or(0.0));
-        if done == 1.0 {
+        let status = self.game.prepare(PREPARE_BUDGET, now);
+        if status.ready {
             self.preparing = false;
             self.prebuilding = true;
-        } else if self.menu.joining && (compiled > 0.0 || remaining > 0.0) {
+        } else if self.menu.joining && (status.compiled > 0 || status.remaining > 0) {
             self.menu.status = "Preparing the arena…".into();
         }
         self.pump();
@@ -670,9 +618,9 @@ impl RoomSession {
 
     /// One engine frame: input in, the drawn scene, its events and HUD out.
     fn frame(&mut self, now: f64) -> Result<(), String> {
-        let input = self.controls.take_input();
+        let input = self.input.take_input(self.first_person);
         let camera_input = input.zoom != 0.0 || input.toggle_view;
-        let result = self.game.frame(now, &pack(&input))?;
+        let result = self.game.frame(now, &input.pack())?;
         if let Some(error) = self.game.error() {
             return Err(error);
         }
@@ -694,32 +642,28 @@ impl RoomSession {
                 self.refresh_hud();
             }
             if value(slot::EVENTS) > 0.0 {
-                let batch = EventBatch::parse(&self.game.drain_events());
+                let batch = self.game.take_events();
                 if let Some(audio) = &mut self.audio {
                     audio.play(&batch);
                 }
                 for event in &batch.events {
                     self.ui.event(event);
-                    self.menu.event(event, &self.ui);
+                    self.menu.event(event);
                 }
             }
         } else if value(slot::EVENTS) > 0.0 {
-            self.game.drain_events();
+            self.game.take_events();
         }
         Ok(())
     }
 
-    /// The renderer stopped: give up the connection and say so.
+    /// The renderer stopped: give up the connection, and the engine says so.
     fn fail(&mut self, error: &str) {
         eprintln!("The room stopped: {error}");
         self.stopped = true;
-        self.controls.clear();
-        self.game.stop();
+        self.input.controls.clear();
+        self.game.renderer_failed();
         self.pump();
-        self.menu.ended(
-            "renderer".into(),
-            "The renderer stopped. Go back to Battle Setup to play again.".into(),
-        );
     }
 
     /// Run a frame and show it; true when the player chose to quit.
@@ -727,6 +671,14 @@ impl RoomSession {
         let now = now_ms();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        let playing = self.battle().playing;
+        let mut quit = false;
+        for request in self
+            .input
+            .hardware_keys(&self.window, &self.overlay, playing)
+        {
+            quit |= self.request(request);
+        }
         if !self.stopped {
             self.network();
             if self.preparing {
@@ -742,7 +694,6 @@ impl RoomSession {
                 self.fail(&error);
             }
         }
-        self.frame_index += 1;
         if !self.menu.in_battle() {
             self.ui.tick(frame_dt);
         }
@@ -752,14 +703,11 @@ impl RoomSession {
                 self.apply(Action::Resume);
             }
         }
-        if self.ui.show_nerd_stats
-            && (self.debug || self.prefs.debug)
-            && self.frame_index.is_multiple_of(STATS_EVERY_FRAMES)
-        {
-            self.ui.stats = serde_json::from_str(&self.game.stats_json(now)).ok();
-            ui::nerd_stats::sample_network(&mut self.ui, now);
+        if self.ui.stats_due(now, self.debug || self.prefs.debug) {
+            self.ui.stats = Some(self.game.nerd_stats(now));
         }
         self.hold_pointer();
+        self.ui.touch = self.input.touch_view(self.touch_live(), self.first_person);
         let view = ui::View {
             in_round: true,
             phase: room_menu::hud_phase(&self.menu),
@@ -777,7 +725,6 @@ impl RoomSession {
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
         self.hidden_changed();
-        let mut quit = false;
         for action in actions {
             quit |= self.apply(action);
         }

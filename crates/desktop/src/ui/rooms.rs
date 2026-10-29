@@ -12,15 +12,20 @@ use egui::{
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, fade, hex, hexa, mix};
-use super::setup::{EXTRA_MAPS, MAPS};
 use super::theme::{GOLD, bold_font, display_font};
 use super::{Action, View};
-use crate::directory::{
-    self, DEFAULT_DIRECTORY, DirectoryRequest, ROOM_SEATS, RoomListing, ServerList,
-};
+use crate::directory::{self, DEFAULT_DIRECTORY, DirectoryRequest};
 use crate::preferences::Preferences;
-use crate::room_api::{RoomRules, RoomSelection, preferred_player_name};
-use sloppy_core::net::protocol::{DEFAULT_ROUND_MINUTES, MAX_PLAYER_NAME_LENGTH};
+use crate::room_api::{RoomSelection, player_name, preferred_player_name};
+use sloppy_core::net::protocol::{
+    DEFAULT_ROUND_MINUTES, JoinChoice, MAX_PLAYER_NAME_LENGTH, RoomPhase, RoomSettings,
+    read_room_code, room_code, stepped_minutes,
+};
+use sloppy_core::net::room_list::{HostedRoom, ROOM_SEATS, ServerList};
+use sloppy_core::sim::Team;
+use sloppy_core::sim::difficulty::Difficulty;
+use sloppy_core::sim::map_options::{MapId, is_extra_level, map_option_for};
+use sloppy_web::battle_report::duration;
 
 /// The list refreshes this often while the tab shows.
 const REFRESH: Duration = Duration::from_secs(5);
@@ -57,13 +62,16 @@ pub struct RoomsState {
     /// `None` until first shown, then the name typed (saved on joining).
     name: Option<String>,
     /// `None`: the side with fewer humans.
-    team: Option<u8>,
+    team: Option<Team>,
     round_minutes: u32,
     humans_only: bool,
     /// The room code typed in.
     code: String,
     /// A room to select once the directory lists it: one just left, or a typed code.
     link: Option<String>,
+    /// The room a code or a return named, which stays listed even on an extra level
+    /// after the link is followed (the page's fixed `linkedRoom`).
+    linked_room: Option<String>,
     /// Shown instead of the usual prompt until the player picks a room.
     notice: String,
 }
@@ -84,19 +92,56 @@ impl Default for RoomsState {
             humans_only: true,
             code: String::new(),
             link: None,
+            linked_room: None,
             notice: String::new(),
         }
     }
 }
 
 impl RoomsState {
+    #[cfg(test)]
+    pub(super) fn snapshot_player_name(&self) -> Option<&str> {
+        self.name.as_deref()
+    }
+
+    #[cfg(test)]
+    pub(super) fn snapshot_rooms(&self) -> Vec<serde_json::Value> {
+        self.list
+            .rooms
+            .iter()
+            .map(|room| {
+                serde_json::json!({
+                    "room": room.room, "contentVersion": room.content_version,
+                    "mapMode": room.map_mode, "difficulty": room.difficulty,
+                    "humansOnly": room.humans_only, "roundMinutes": room.round_minutes,
+                    "players": room.players, "reserved": room.reserved, "phase": room.phase,
+                    "roundId": room.round_id, "time": room.time, "scores": room.scores,
+                    "server": room.server,
+                })
+            })
+            .collect()
+    }
+
     /// Come back from `room` with `notice` saying why: the tab shows with the room
     /// selected once the directory lists it.
     pub fn returned_from(&mut self, room: &str, notice: &str) {
         self.multiplayer = true;
         self.link = (!room.is_empty()).then(|| room.to_owned());
+        self.linked_room.clone_from(&self.link);
         self.notice = notice.to_owned();
         self.next_poll = None;
+    }
+
+    /// Select the room with `code` once the directory lists it (the page's invite link).
+    fn find_room(&mut self, code: String) {
+        self.notice.clear();
+        self.link = Some(code);
+        self.linked_room.clone_from(&self.link);
+        self.follow_link();
+        if self.link.is_some() {
+            // Not listed yet: look again now.
+            self.next_poll = None;
+        }
     }
 
     /// Ask the directory when it is time, and take its answer once it comes.
@@ -104,41 +149,47 @@ impl RoomsState {
         let now = Instant::now();
         if let Some(answer) = self.request.as_ref().and_then(DirectoryRequest::answer) {
             self.request = None;
-            self.next_poll = Some(now + REFRESH);
-            match answer {
-                Ok(mut list) => {
-                    let link = self.link.clone();
-                    list.rooms.retain(|room| {
-                        extra_levels
-                            || !EXTRA_MAPS.iter().any(|(id, _)| *id == room.map_mode)
-                            || link.as_deref() == Some(room.room.as_str())
-                    });
-                    self.list = list;
-                    self.state = ListState::Ready;
-                    self.follow_link();
-                }
-                Err(reason) => {
-                    self.list = ServerList::default();
-                    self.state = ListState::Offline {
-                        reason,
-                        retry: now + REFRESH,
-                    };
-                }
-            }
-            if !self
-                .list
-                .rooms
-                .iter()
-                .any(|room| room.room == self.selected && room.joinable())
-            {
-                self.selected.clear();
-            }
+            self.listed(answer, extra_levels, now);
         }
         if self.request.is_none() && self.next_poll.is_none_or(|at| now >= at) {
             self.request = Some(DirectoryRequest::start(&self.directory));
             if self.state != ListState::Ready {
                 self.state = ListState::Loading;
             }
+        }
+    }
+
+    /// Take the directory's answer at `now`. Rooms on extra levels show only with
+    /// `extra_levels`, or when a code or a return named them.
+    fn listed(&mut self, answer: Result<ServerList, String>, extra_levels: bool, now: Instant) {
+        self.next_poll = Some(now + REFRESH);
+        match answer {
+            Ok(mut list) => {
+                let linked = self.linked_room.clone();
+                list.rooms.retain(|room| {
+                    extra_levels
+                        || !is_extra_level(room.map_mode)
+                        || linked.as_deref() == Some(room.room.as_str())
+                });
+                self.list = list;
+                self.state = ListState::Ready;
+                self.follow_link();
+            }
+            Err(reason) => {
+                self.list = ServerList::default();
+                self.state = ListState::Offline {
+                    reason,
+                    retry: now + REFRESH,
+                };
+            }
+        }
+        if !self
+            .list
+            .rooms
+            .iter()
+            .any(|room| room.room == self.selected && room.joinable())
+        {
+            self.selected.clear();
         }
     }
 
@@ -217,45 +268,35 @@ impl RoomsState {
     }
 }
 
-/// The map's name for a map id.
-pub fn map_name(id: &str) -> &str {
-    MAPS.iter()
-        .chain(&EXTRA_MAPS)
-        .find(|(map, _)| *map == id)
-        .map_or(id, |(_, name)| name)
-}
-
 /// One open room's lines (`RoomBrowser.render`).
-fn room_lines(room: &RoomListing) -> (String, String) {
+fn room_lines(room: &HostedRoom) -> (String, String) {
     let title = format!(
         "{}{} · {}/{ROOM_SEATS} players",
-        map_name(&room.map_mode),
-        if EXTRA_MAPS.iter().any(|(id, _)| *id == room.map_mode) {
+        map_option_for(room.map_mode).name,
+        if is_extra_level(room.map_mode) {
             " (EXTRA)"
         } else {
             ""
         },
         room.players
     );
-    let seconds = room.time.ceil() as u64;
-    let phase = match room.phase.as_str() {
-        "playing" => format!(
-            "{}:{:02} left · {}",
-            seconds / 60,
-            seconds % 60,
+    let phase = match room.phase {
+        RoomPhase::Playing => format!(
+            "{} left · {}",
+            duration(room.time.ceil()),
             room.scores
                 .iter()
                 .map(u64::to_string)
                 .collect::<Vec<_>>()
                 .join("–")
         ),
-        "lobby" => "In lobby".into(),
-        _ => "Between rounds".into(),
+        RoomPhase::Lobby => "In lobby".into(),
+        RoomPhase::Results => "Between rounds".into(),
     };
     let bots = if room.humans_only {
         "Humans only".to_owned()
     } else {
-        format!("Bots: {}", room.difficulty)
+        format!("Bots: {}", room.difficulty.as_str())
     };
     let mut detail = format!(
         "{} · {bots} · {} min · {phase}",
@@ -272,22 +313,13 @@ fn room_lines(room: &RoomListing) -> (String, String) {
     (title, detail)
 }
 
-/// Where the tab's parts sit on Battle Setup's 1280 × 800 canvas (`#multiplayer-panel`
-/// on the page at that size), under the map row.
-const ROOMS_HEAD: Pos2 = pos2(364.0, 330.0);
-const ROOM_LIST: Rect = Rect::from_min_max(pos2(364.0, 357.0), pos2(881.0, 617.0));
-const NEW_ROOM: Rect = Rect::from_min_max(pos2(369.0, 362.0), pos2(876.0, 451.0));
-const STATUS_WELL: Rect = Rect::from_min_max(pos2(364.0, 631.0), pos2(881.0, 693.0));
-const NAME_FIELD: Rect = Rect::from_min_max(pos2(904.0, 357.0), pos2(1206.0, 399.0));
-const TEAM_WELL: Rect = Rect::from_min_max(pos2(904.0, 440.0), pos2(1206.0, 618.0));
-const ACTION: Rect = Rect::from_min_max(pos2(904.0, 631.0), pos2(1206.0, 693.0));
 /// An open room's row.
 const ROOM_ROW_HEIGHT: f32 = 34.0;
 /// Light grey-blue of the page's small print in the room list.
 const SMALL_INK: u32 = 0xb6cedf;
 
 /// The teams: choice, name, line and the colours of its dot.
-const TEAMS: [(Option<u8>, &str, &str, [u32; 2]); 3] = [
+const TEAMS: [(Option<Team>, &str, &str, [u32; 2]); 3] = [
     (
         None,
         "Auto",
@@ -295,22 +327,27 @@ const TEAMS: [(Option<u8>, &str, &str, [u32; 2]); 3] = [
         [0x4ea3ff, 0xff6f5e],
     ),
     (
-        Some(0),
+        Some(Team::Blue),
         "Blue",
         "Always the blue team",
         [0x4ea3ff, 0x4ea3ff],
     ),
-    (Some(1), "Red", "Always the red team", [0xff6f5e, 0xff6f5e]),
+    (
+        Some(Team::Red),
+        "Red",
+        "Always the red team",
+        [0xff6f5e, 0xff6f5e],
+    ),
 ];
 
 impl RoomsState {
     /// The map of the open room chosen, which the map row shows instead of the player's.
-    pub fn selected_map(&self) -> Option<&str> {
+    pub fn selected_map(&self) -> Option<MapId> {
         self.list
             .rooms
             .iter()
             .find(|room| room.room == self.selected)
-            .map(|room| room.map_mode.as_str())
+            .map(|room| room.map_mode)
     }
 }
 
@@ -399,17 +436,51 @@ pub fn multiplayer(
     state: &mut RoomsState,
     view: &View,
     prefs: &Preferences,
+    bounds: Rect,
     actions: &mut Vec<Action>,
 ) {
+    // The two columns share Battle Setup's geometry; widening the sheet adds room
+    // without scaling its fonts or its controls.
+    let extra_height = bounds.height() - 363.0;
+    let right_width = 302.0 + (bounds.width() - 842.0) * 1.22 / 3.22;
+    let right_left = bounds.right() - right_width;
+    let rooms_head = bounds.min;
+    let room_list = Rect::from_min_max(
+        bounds.min + vec2(0.0, 27.0),
+        pos2(right_left - 23.0, bounds.bottom() - 76.0),
+    );
+    let new_room = Rect::from_min_size(
+        room_list.min + vec2(5.0, 5.0),
+        vec2(room_list.width() - 10.0, 89.0),
+    );
+    let status_well = Rect::from_min_max(
+        pos2(bounds.left(), bounds.bottom() - 62.0),
+        pos2(room_list.right(), bounds.bottom()),
+    );
+    let name_field = Rect::from_min_size(
+        pos2(right_left, bounds.top() + 27.0),
+        vec2(right_width, 42.0),
+    );
+    let team_well = Rect::from_min_max(
+        pos2(right_left, bounds.top() + 110.0),
+        pos2(bounds.right(), bounds.bottom() - 75.0),
+    );
+    let action = Rect::from_min_size(
+        pos2(right_left, bounds.bottom() - 62.0),
+        vec2(right_width, 62.0),
+    );
     state.poll(view.debug);
+    // A new room opens on the map single player would play: a saved extra level only
+    // with the debug tools.
+    let new_room_map = prefs.game_options(Team::Blue, view.debug).map_mode;
     let time = ui.input(|input| input.time);
     let painter = ui.painter().clone();
 
     // ROOMS, its count and refresh, and a room code typed in (the page's invite link).
-    let heading = paint::section_label(&painter, ROOMS_HEAD, "ROOMS");
+    let heading = paint::section_label(&painter, rooms_head, "ROOMS");
     let count = state.list.rooms.len().to_string();
     let badge = Rect::from_min_size(
-        pos2(heading.right() + 8.0, ROOMS_HEAD.y + 2.0),
+        pos2(heading.right() + 8.0, rooms_head.y + 2.0),
         vec2(
             paint::text_width(&painter, &count, bold_font(12.0), 0.0) + 10.0,
             17.0,
@@ -426,7 +497,7 @@ pub fn multiplayer(
         0.0,
     );
     let refresh = Rect::from_min_size(
-        pos2(badge.right() + 8.0, ROOMS_HEAD.y - 2.0),
+        pos2(badge.right() + 8.0, rooms_head.y - 2.0),
         vec2(24.0, 24.0),
     );
     let busy = state.request.is_some();
@@ -461,10 +532,16 @@ pub fn multiplayer(
     ) {
         state.next_poll = None;
     }
-    let code_field = Rect::from_min_max(pos2(712.0, 327.0), pos2(814.0, 353.0));
+    let code_field = Rect::from_min_size(
+        pos2(room_list.right() - 169.0, rooms_head.y - 3.0),
+        vec2(102.0, 26.0),
+    );
     let typed = field(ui, code_field, &mut state.code, 8, "Room code", 13.0);
     let entered = typed.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
-    let find = Rect::from_min_max(pos2(820.0, 327.0), pos2(881.0, 353.0));
+    let find = Rect::from_min_size(
+        pos2(room_list.right() - 61.0, rooms_head.y - 3.0),
+        vec2(61.0, 26.0),
+    );
     let found = paint::button_at(
         ui,
         art,
@@ -477,27 +554,21 @@ pub fn multiplayer(
     .on_hover_text("Find the room with this code")
     .clicked();
     if found || entered {
-        match directory::read_room_code(&state.code) {
+        match read_room_code(&state.code) {
             Some(code) => {
                 state.code.clone_from(&code);
-                state.notice.clear();
-                state.link = Some(code);
-                state.follow_link();
-                if state.link.is_some() {
-                    // Not listed yet: look again now.
-                    state.next_poll = None;
-                }
+                state.find_room(code);
             }
             None => state.notice = "A room code is 8 letters and digits.".into(),
         }
     }
 
     // The room list: the new room's card, then the open rooms or why there are none.
-    well(&painter, ROOM_LIST, 14);
-    new_room_card(ui, state, prefs);
+    well(&painter, room_list, 14);
+    new_room_card(ui, state, new_room_map, new_room);
     let rows = Rect::from_min_max(
-        pos2(NEW_ROOM.left(), NEW_ROOM.bottom() + 6.0),
-        pos2(NEW_ROOM.right(), ROOM_LIST.bottom() - 5.0),
+        pos2(new_room.left(), new_room.bottom() + 6.0),
+        pos2(new_room.right(), room_list.bottom() - 5.0),
     );
     if state.list.rooms.is_empty() {
         empty_rooms(ui, art, rows, state, time);
@@ -512,14 +583,14 @@ pub fn multiplayer(
 
     // The status well: what the action will do, or what is wrong.
     let (message, hint) = state.prompt();
-    painter.rect_filled(STATUS_WELL, 10, hex(0x0a1a33));
+    painter.rect_filled(status_well, 10, hex(0x0a1a33));
     painter.rect_stroke(
-        STATUS_WELL,
+        status_well,
         10,
         Stroke::new(1.0, hexa(0x9fd0ff, 0.08)),
         StrokeKind::Inside,
     );
-    let dot = pos2(STATUS_WELL.left() + 22.0, STATUS_WELL.center().y);
+    let dot = pos2(status_well.left() + 22.0, status_well.center().y);
     let dot_color = match state.state {
         ListState::Offline { .. } => hex(0xff6f5e),
         ListState::Loading if state.list.servers.is_empty() => {
@@ -529,12 +600,12 @@ pub fn multiplayer(
     };
     painter.circle_filled(dot, 10.0, fade(dot_color, 0.2));
     painter.circle_filled(dot, 4.5, dot_color);
-    let copy_left = STATUS_WELL.left() + 42.0;
-    let copy_width = STATUS_WELL.right() - copy_left - 12.0;
+    let copy_left = status_well.left() + 42.0;
+    let copy_width = status_well.right() - copy_left - 12.0;
     let (message_y, hint_y) = if hint.is_empty() {
-        (STATUS_WELL.center().y, 0.0)
+        (status_well.center().y, 0.0)
     } else {
-        (STATUS_WELL.top() + 22.0, STATUS_WELL.top() + 39.0)
+        (status_well.top() + 22.0, status_well.top() + 39.0)
     };
     paint::text_fit(
         &painter,
@@ -560,7 +631,7 @@ pub fn multiplayer(
     }
 
     // YOUR NAME.
-    paint::section_label(&painter, pos2(NAME_FIELD.left(), ROOMS_HEAD.y), "YOUR NAME");
+    paint::section_label(&painter, pos2(name_field.left(), rooms_head.y), "YOUR NAME");
     let mut name = state
         .name
         .get_or_insert_with(|| {
@@ -573,8 +644,8 @@ pub fn multiplayer(
     field(
         ui,
         Rect::from_min_max(
-            NAME_FIELD.min,
-            pos2(NAME_FIELD.right() - 30.0, NAME_FIELD.bottom()),
+            name_field.min,
+            pos2(name_field.right() - 30.0, name_field.bottom()),
         ),
         &mut name,
         MAX_PLAYER_NAME_LENGTH,
@@ -582,13 +653,13 @@ pub fn multiplayer(
         15.0,
     );
     painter.rect_stroke(
-        NAME_FIELD,
+        name_field,
         9,
         Stroke::new(0.5, hexa(0x92b4cf, 0.19)),
         StrokeKind::Inside,
     );
     // The pencil that says the name can be typed over.
-    let pencil = pos2(NAME_FIELD.right() - 18.0, NAME_FIELD.center().y);
+    let pencil = pos2(name_field.right() - 18.0, name_field.center().y);
     let ink = Stroke::new(1.6, hex(SMALL_INK));
     painter.line_segment([pencil + vec2(-5.0, 5.0), pencil + vec2(4.0, -4.0)], ink);
     painter.line_segment([pencil + vec2(-5.0, 5.0), pencil + vec2(-6.0, 6.5)], ink);
@@ -596,15 +667,19 @@ pub fn multiplayer(
     state.name = Some(name);
 
     // TEAM.
-    paint::section_label(&painter, pos2(TEAM_WELL.left(), 413.0), "TEAM");
-    well(&painter, TEAM_WELL, 14);
+    paint::section_label(
+        &painter,
+        pos2(team_well.left(), team_well.top() - 27.0),
+        "TEAM",
+    );
+    well(&painter, team_well, 14);
     for (index, (team, name, line, colors)) in TEAMS.into_iter().enumerate() {
         let rect = Rect::from_min_size(
             pos2(
-                TEAM_WELL.left() + 5.0,
-                TEAM_WELL.top() + 5.0 + index as f32 * 58.0,
+                team_well.left() + 5.0,
+                team_well.top() + 5.0 + index as f32 * (58.0 + extra_height / 3.0),
             ),
-            vec2(TEAM_WELL.width() - 10.0, 52.0),
+            vec2(team_well.width() - 10.0, 52.0 + extra_height / 3.0),
         );
         let response = ui
             .interact(rect, Id::unique(("team", index)), Sense::click())
@@ -656,33 +731,33 @@ pub fn multiplayer(
     if paint::button_at(
         ui,
         art,
-        ACTION,
+        action,
         if joining { "JOIN ROOM" } else { "CREATE ROOM" },
         None,
         ButtonStyle::Primary,
         enabled,
     )
     .clicked()
-        && let Some(selection) = selection(state, prefs)
+        && let Some(selection) = selection(state, prefs, new_room_map)
     {
         actions.push(Action::JoinRoom(Box::new(selection)));
     }
 }
 
 /// The new room's card: its map, what it holds, and its length and humans-only rules.
-fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences) {
+fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room: Rect) {
     let chosen = state.selected.is_empty();
     let response = ui
-        .interact(NEW_ROOM, Id::unique("new room"), Sense::click())
+        .interact(new_room, Id::unique("new room"), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
     let painter = ui.painter().clone();
     if chosen {
-        painter.rect_filled(NEW_ROOM.expand(3.0), 13, hexa(0xffcf38, 0.08));
-        painter.rect_filled(NEW_ROOM, 10, hex(0x22477a));
-        painter.rect_stroke(NEW_ROOM, 10, Stroke::new(2.0, GOLD), StrokeKind::Inside);
+        painter.rect_filled(new_room.expand(3.0), 13, hexa(0xffcf38, 0.08));
+        painter.rect_filled(new_room, 10, hex(0x22477a));
+        painter.rect_stroke(new_room, 10, Stroke::new(2.0, GOLD), StrokeKind::Inside);
     } else {
         painter.rect_filled(
-            NEW_ROOM,
+            new_room,
             10,
             if response.hovered() {
                 hex(0x143060)
@@ -696,12 +771,12 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences)
     }
     radio(
         &painter,
-        pos2(NEW_ROOM.left() + 19.0, NEW_ROOM.top() + 25.0),
+        pos2(new_room.left() + 19.0, new_room.top() + 25.0),
         chosen,
     );
     let title = paint::text(
         &painter,
-        pos2(NEW_ROOM.left() + 38.0, NEW_ROOM.top() + 16.0),
+        pos2(new_room.left() + 38.0, new_room.top() + 16.0),
         Align2::LEFT_CENTER,
         "New room on ",
         bold_font(14.0),
@@ -712,14 +787,14 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences)
         &painter,
         pos2(title.right(), title.center().y),
         Align2::LEFT_CENTER,
-        map_name(&prefs.map),
+        map_option_for(map).name,
         bold_font(14.0),
         GOLD,
         0.0,
     );
     paint::text(
         &painter,
-        pos2(NEW_ROOM.left() + 38.0, NEW_ROOM.top() + 35.0),
+        pos2(new_room.left() + 38.0, new_room.top() + 35.0),
         Align2::LEFT_CENTER,
         &format!("Up to {ROOM_SEATS} players · Invite friends with its room code"),
         egui::FontId::proportional(12.0),
@@ -727,10 +802,10 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences)
         0.0,
     );
     // LENGTH: a stepper in its well.
-    let rule_y = NEW_ROOM.top() + 67.0;
+    let rule_y = new_room.top() + 67.0;
     paint::text(
         &painter,
-        pos2(NEW_ROOM.left() + 38.0, rule_y),
+        pos2(new_room.left() + 38.0, rule_y),
         Align2::LEFT_CENTER,
         "LENGTH",
         bold_font(12.0),
@@ -738,7 +813,7 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences)
         0.8,
     );
     let stepper = Rect::from_min_size(
-        pos2(NEW_ROOM.left() + 103.0, rule_y - 17.0),
+        pos2(new_room.left() + 103.0, rule_y - 17.0),
         vec2(124.0, 34.0),
     );
     well(&painter, stepper, 9);
@@ -763,10 +838,10 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences)
         response.clicked()
     };
     if step(ui, stepper.left() + 2.0, "−", "less") {
-        minutes = directory::stepped_minutes(minutes, -LENGTH_STEP);
+        minutes = stepped_minutes(minutes, -LENGTH_STEP);
     }
     if step(ui, stepper.right() - 30.0, "+", "more") {
-        minutes = directory::stepped_minutes(minutes, LENGTH_STEP);
+        minutes = stepped_minutes(minutes, LENGTH_STEP);
     }
     paint::text(
         &painter,
@@ -788,7 +863,7 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, prefs: &Preferences)
     );
     // HUMANS ONLY: a switch.
     let switch = Rect::from_min_size(
-        pos2(NEW_ROOM.left() + 241.0, rule_y - 10.0),
+        pos2(new_room.left() + 241.0, rule_y - 10.0),
         vec2(34.0, 20.0),
     );
     let switch_area = Rect::from_min_max(switch.min, pos2(switch.right() + 112.0, switch.bottom()));
@@ -959,11 +1034,11 @@ fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
 
 /// The tab as the UI snapshots show it: the directory has answered with `rooms`.
 #[cfg(test)]
-pub fn answered(rooms: Vec<RoomListing>) -> RoomsState {
+pub fn answered(rooms: Vec<HostedRoom>) -> RoomsState {
     RoomsState {
         multiplayer: true,
         list: ServerList {
-            servers: vec![directory::ServerListing {
+            servers: vec![sloppy_core::net::room_list::ServerListing {
                 url: "wss://example.test".into(),
                 content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
             }],
@@ -976,26 +1051,23 @@ pub fn answered(rooms: Vec<RoomListing>) -> RoomsState {
     }
 }
 
-/// What CREATE ROOM or JOIN ROOM asks for, or `None` when the choice cannot play.
-fn selection(state: &mut RoomsState, prefs: &Preferences) -> Option<RoomSelection> {
-    let name = state.name.clone().unwrap_or_default().trim().to_owned();
+/// What CREATE ROOM or JOIN ROOM asks for, or `None` when the choice cannot play. A new
+/// room opens on `map`.
+fn selection(state: &mut RoomsState, prefs: &Preferences, map: MapId) -> Option<RoomSelection> {
+    let name = player_name(state.name.as_deref().unwrap_or_default());
     if name.is_empty() {
         state.notice = "Enter a name to play.".into();
         return None;
     }
     let (room, server, create) = if state.selected.is_empty() {
         let server = state.list.new_room_server()?.to_owned();
-        let create = RoomRules {
-            map_mode: prefs.map.clone(),
-            difficulty: "normal".into(),
+        let create = RoomSettings {
+            map_mode: map,
+            difficulty: Difficulty::Normal,
             humans_only: state.humans_only,
             round_minutes: state.round_minutes,
         };
-        (
-            directory::room_code(directory::random_bytes()),
-            server,
-            Some(create),
-        )
+        (room_code(directory::random_bytes()), server, Some(create))
     } else {
         let listing = state
             .list
@@ -1007,9 +1079,87 @@ fn selection(state: &mut RoomsState, prefs: &Preferences) -> Option<RoomSelectio
     Some(RoomSelection {
         room,
         server,
-        name,
-        kind: prefs.tank.clone(),
-        team: state.team,
-        create,
+        choice: JoinChoice {
+            name,
+            kind: prefs.tank,
+            team: state.team,
+            existing_room: create.is_none().then_some(true),
+            create,
+        },
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn listing(code: &str, map: MapId) -> HostedRoom {
+        HostedRoom {
+            room: code.into(),
+            content_version: sloppy_core::net::protocol::CONTENT_VERSION.into(),
+            map_mode: map,
+            difficulty: Difficulty::Normal,
+            humans_only: false,
+            round_minutes: 20,
+            players: 2,
+            reserved: 2,
+            phase: RoomPhase::Playing,
+            round_id: 1,
+            time: 300.0,
+            scores: vec![3, 4],
+            server: "wss://example.test".into(),
+        }
+    }
+
+    fn rooms(state: &RoomsState) -> Vec<&str> {
+        state
+            .list
+            .rooms
+            .iter()
+            .map(|room| room.room.as_str())
+            .collect()
+    }
+
+    /// A room on an extra level, picked by its code without the debug tools, stays
+    /// listed and chosen after the refresh that found it; before, following the code
+    /// forgot it, and the next refresh hid the room.
+    #[test]
+    fn a_room_found_by_code_stays_listed_on_an_extra_level() {
+        let answer = || {
+            Ok(ServerList {
+                rooms: vec![
+                    listing("ABCDEFGH", MapId::Superstress),
+                    listing("JKLMNPQR", MapId::StressTest),
+                    listing("STUVWXYZ", MapId::Harbor),
+                ],
+                ..answered(Vec::new()).list
+            })
+        };
+        let mut state = answered(Vec::new());
+        state.find_room("ABCDEFGH".into());
+        assert!(state.notice.contains("isn't open"), "{}", state.notice);
+        let now = Instant::now();
+        for refresh in 0..3 {
+            state.listed(answer(), false, now);
+            assert_eq!(rooms(&state), ["ABCDEFGH", "STUVWXYZ"], "refresh {refresh}");
+            assert_eq!(state.selected, "ABCDEFGH");
+        }
+        // The debug tools list every room.
+        state.listed(answer(), true, now);
+        assert_eq!(rooms(&state).len(), 3);
+    }
+
+    #[test]
+    fn a_room_left_stays_listed_when_it_plays_an_extra_level() {
+        let mut state = answered(Vec::new());
+        state.returned_from("ABCDEFGH", "");
+        let list = ServerList {
+            rooms: vec![listing("ABCDEFGH", MapId::StressTest)],
+            ..answered(Vec::new()).list
+        };
+        for _ in 0..2 {
+            state.listed(Ok(list.clone()), false, Instant::now());
+            assert_eq!(rooms(&state), ["ABCDEFGH"]);
+        }
+    }
 }

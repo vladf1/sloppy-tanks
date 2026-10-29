@@ -148,6 +148,13 @@ pub fn room_end_text(reason: &str) -> String {
     }
 }
 
+/// The longest a shell may leave between [`NetworkClient::poll`] calls, in milliseconds:
+/// the heartbeat, reconnect backoff and development delay run on it.
+pub const POLL_MS: f64 = 250.0;
+/// A socket this far behind on sends (the page's `bufferedAmount`) is closed and
+/// reconnected instead of sent to.
+pub const MAX_BUFFERED_BYTES: usize = 16_384;
+
 /// Fatal server error codes that are not a plain rejection.
 fn fatal_cause(code: Option<&str>) -> EndCause {
     match code {

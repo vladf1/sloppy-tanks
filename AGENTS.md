@@ -38,17 +38,30 @@ the server:
 - `crates/web` (Wasm cdylib): the wasm-bindgen API. `Game` runs single player
   and `NetGame` a room page, one coarse call per frame; the `labs` feature adds
   the development `RenderLab` and `EffectsLab`, and `webgl` (without the default
-  `webgpu`) makes the WebGL2 fallback engine.
+  `webgpu`) makes the WebGL2 fallback engine. It also produces everything both
+  shells show in words or play: the HUD's text (`hud.rs`), the death report, kill
+  feed and toasts (`feedback.rs`), the battle report and pause facts
+  (`battle_report.rs`), the sounds to play (`sounds.rs`), Stats for nerds
+  (`nerd_rows.rs`), the room menu's text (`room_text.rs`) and Battle Setup's
+  display tables (`catalog.rs`).
 - `crates/server` (native): the multiplayer server ([guide](crates/server/README.md)).
 - `src/` is the TypeScript page shell only: menus, HUD, input gathering, touch
-  controls, audio and the room page's DOM. Game rules, simulation, rendering,
-  effects and replication must not come back into TypeScript; the import
-  boundary tests (`tests/*-imports.test.ts`) allowlist the shell modules.
-- `crates/desktop` (native, macOS and Windows): the other shell, binary
+  controls, audio and the room page's DOM. It lays out and plays what `sloppy-web`
+  produces and derives none of it. Game rules, simulation, rendering, effects and
+  replication must not come back into TypeScript; the import boundary tests
+  (`tests/*-imports.test.ts`) allowlist the shell modules.
+- `crates/desktop` (native, macOS, Windows and iPad): the other shell, binary
   `sloppy-tanks`. A winit window drawn by wgpu on Metal or Direct3D 12
   (`sloppy-render`'s `native` feature), egui menus and HUD, and the same `Game`
-  and `NetGame` the page drives (`sloppy-web`'s `native` feature). Game rules stay
-  out of both shells.
+  and `NetGame` the page drives (`sloppy-web`'s `native` feature). It passes and
+  reads their values typed (the second `impl` block of `game.rs` and `net_game.rs`),
+  never the JSON or names they take and write for the page, and like the page only
+  lays out and plays what they produce; `crates/web/tests/fixtures/page-json.json`
+  pins the page's JSON byte for byte. Game rules stay out of both shells. The iPad
+  build is the same crate for `aarch64-apple-ios` (`TOUCH` in `main.rs`): touch
+  controls painted in egui (`touch.rs`, `ui/touch.rs`), no Quit or fullscreen, and
+  `ios.rs` for what winit 0.30 lacks there (the UIScene life cycle iOS 27 requires,
+  hardware keyboard presses).
 
 ## Code style
 
@@ -116,6 +129,7 @@ cargo test --workspace --exclude sloppy-desktop --test integration navigation:: 
 bun test tests/foo.test.ts    # focused page-shell test
 bun run validate                     # seeded headless matches and reset checks
 bun run desktop                      # the desktop app for this Mac or Windows PC into artifacts/desktop/
+bun run ipad:simulator -- --install  # the iPad app, opened in a booted iPad simulator
 bun run dev                          # browser work; use the printed URL
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ bun run check:browser
 ```
@@ -474,10 +488,12 @@ offline.
   changes. Use this when asked to publish the dev site. Do not publish it to
   production or change the production GitHub Pages workflow, and never upload
   the repository directory.
-- `deploy:dev` first deploys the dev site's own multiplayer server
-  (`scripts/server.mjs deploy --dev`, key-based SSH), which runs on its own
-  Vultr machines (the `server:*` commands run on every machine the server directory
-  lists for the environment, or on one named with `--ip`). It resets only the
+- `deploy:dev` first publishes the dev site's own multiplayer server
+  (`scripts/server.mjs publish --dev`: it pushes the checkout's image as
+  `dev-<serverBuild>`, never the bare build tag CI reuses, and moves `:dev`, which the
+  dev machines check every 10 seconds), which runs on its own Vultr
+  machines (the other `server:*` commands run over SSH on every machine the server
+  directory lists for the environment, or on one named with `--ip`). It resets only the
   dev server's rooms and never touches production's server. Client and server
   must agree on a content hash of the `crates/core` sources, the crates they
   resolve to and `rust-toolchain.toml` (list them with
@@ -494,8 +510,8 @@ offline.
 - Pages find servers through the server directory, a Cloudflare Worker in
   `directory/` (`bun run directory:deploy`) that every server pushes its rooms to;
   one deployment serves production and dev by its `environment` parameter, and
-  `server:provision` writes a machine's `DIRECTORY_URL` and `SERVER_ENVIRONMENT` into
-  its unit.
+  a machine's startup script (`deploy/server/cloud-init/`) writes its `DIRECTORY_URL`
+  and `SERVER_ENVIRONMENT`.
   `bun run server:check-if-redeployment-required` (add `--dev` for
   the dev server) compares this checkout with a live server's `/health` and
   exits non-zero when a redeploy is needed. It tells clients-refused (content

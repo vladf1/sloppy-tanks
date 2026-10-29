@@ -11,36 +11,41 @@
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use serde_json::json;
+use sloppy_core::net::client::POLL_MS;
+use sloppy_core::sim::game_options::GameOptions;
+use sloppy_core::sim::speed_tuning::SpeedSetting;
+use sloppy_core::sim::{MatchPhase, SimEventType, Team};
 use sloppy_render::gpu::RenderTarget;
+use sloppy_render::presentation::PrepareStatus;
+use sloppy_render::quality::DeviceClass;
 use sloppy_render::wgpu;
-use sloppy_web::{Game, frame_slot};
+use sloppy_web::hud::Loading;
+use sloppy_web::{Game, GameConfig, ViewConfig, frame_slot};
 use winit::application::ApplicationHandler;
-use winit::dpi::LogicalSize;
-use winit::event::{DeviceEvent, DeviceId, ElementState, WindowEvent};
+use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
-use winit::window::{CursorGrabMode, Fullscreen, Window, WindowId};
+use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::audio::Audio;
 use crate::bakes::{self, Bake};
-use crate::engine_api::{EventBatch, HudState, Phase};
 use crate::frame_log::{FrameLog, FrameParts};
-use crate::input::{Controls, Shortcut, pack};
+use crate::input::Shortcut;
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
-use crate::room::{POLL_MS, RoomSession, SavedSeats};
+use crate::room::{RoomSession, SavedSeats};
 use crate::room_api::RoomSelection;
+use crate::touch::Play;
 use crate::ui::rooms::RoomsState;
 use crate::ui::{self, Action, UiState};
+use crate::window_input::{Battle, Request, WindowInput};
 
 /// Pipelines created per preparation step; the menu redraws between steps.
 const PREPARE_BUDGET: u32 = 4;
-/// Frames between Stats for nerds readings.
-const STATS_EVERY_FRAMES: u64 = 15;
 /// The window's first size, in points.
-const WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(1280.0, 800.0);
-const MIN_WINDOW_SIZE: LogicalSize<f64> = LogicalSize::new(800.0, 560.0);
+#[cfg(not(target_os = "ios"))]
+const WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1280.0, 800.0);
+#[cfg(not(target_os = "ios"))]
+const MIN_WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1100.0, 720.0);
 /// How often a window that takes no frames tries again.
 const HIDDEN_RECHECK: Duration = Duration::from_millis(100);
 /// Battle Setup's status once the arena is ready.
@@ -154,9 +159,115 @@ fn build_line() -> String {
     )
 }
 
+/// The window's size in pixels as the renderer and egui draw it. On iOS winit's inner
+/// size is only the safe area, while the view and its Metal layer cover the screen
+/// (egui-winit lays out on the whole screen and keeps the insets apart).
+pub fn drawable_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
+    if cfg!(target_os = "ios") {
+        window.outer_size()
+    } else {
+        window.inner_size()
+    }
+}
+
+/// The window's size in points and its pixels per point, as the engines' `resize`
+/// takes them (the page's CSS size and device pixel ratio).
+pub fn css_size(window: &Window) -> (f64, f64, f64) {
+    let scale = window.scale_factor();
+    let logical = drawable_size(window).to_logical::<f64>(scale);
+    (logical.width, logical.height, scale)
+}
+
+/// Fill the screen or give the window back, as `prefs` say, and keep the choice. An
+/// iPad app always fills the screen.
+pub fn set_fullscreen(window: &Window, prefs: &mut Preferences, fullscreen: bool) {
+    if crate::TOUCH {
+        return;
+    }
+    window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
+    prefs.fullscreen = fullscreen;
+    prefs.save();
+}
+
 /// The engine's clock, in milliseconds (the origin `Game` and `NetGame` read too).
 pub fn now_ms() -> f64 {
     sloppy_web::clock_start().elapsed().as_secs_f64() * 1000.0
+}
+
+/// The view configuration both engines take for `window`, with the player's camera
+/// and graphics choices.
+pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
+    let (width, height, scale) = css_size(window);
+    ViewConfig {
+        css_width: Some(width),
+        css_height: Some(height),
+        pixel_ratio: Some(scale),
+        first_person: prefs.first_person,
+        zoom: prefs.zoom,
+        // Touch screens draw no overhead reticle (`startingCamera`): a finger aims
+        // where it is, so the mark sat under it and stuck where it lifted.
+        hide_reticle: crate::TOUCH,
+        graphics: prefs.graphics,
+        // A tablet starts a tier lower and draws single-sampled (`quality.rs`).
+        device: if crate::TOUCH {
+            DeviceClass::Tablet
+        } else {
+            DeviceClass::Desktop
+        },
+        shell: sloppy_web::Shell::Desktop,
+        ..ViewConfig::default()
+    }
+}
+
+/// What preparing the arena behind Battle Setup has reached (`prepareArena` in
+/// `game.ts`).
+#[derive(Debug, PartialEq)]
+enum Progress {
+    /// The arena is compiled, warm and drawn.
+    Ready,
+    /// A rebuild that reuses every pipeline and texture still waits for its warm-up
+    /// frames; that is not loading, so Battle Setup keeps showing it is ready rather
+    /// than flicker through the loading lines.
+    Warming,
+    /// Loading, with the engine's status line.
+    Loading(Loading),
+}
+
+/// Preparing the chosen arena, and building what it left for later.
+#[derive(Debug, Default)]
+struct Preparation {
+    /// The prepared options' arena is still preparing.
+    preparing: bool,
+    /// The library's wrecks, which preparation leaves for later, build a step a redraw
+    /// once the ready menu has painted, as the page builds them between tasks: built on
+    /// first use instead, they would hitch the battle.
+    prebuilding: bool,
+}
+
+impl Preparation {
+    /// A new arena to prepare.
+    fn restart(&mut self) {
+        self.preparing = true;
+    }
+
+    /// Take one `prepare` step's status and the engine's line for it.
+    fn advance(&mut self, status: &PrepareStatus, line: Option<Loading>) -> Progress {
+        if status.ready {
+            self.preparing = false;
+            self.prebuilding = true;
+            return Progress::Ready;
+        }
+        line.map_or(Progress::Warming, Progress::Loading)
+    }
+
+    /// Build the next of the wrecks with `step` while any remain; it says whether more
+    /// do. Preparation reaches readiness in a redraw before that redraw paints the
+    /// ready menu, so the first step waits for the next redraw.
+    fn prebuild(&mut self, step: impl FnOnce() -> bool) {
+        if self.prebuilding {
+            self.prebuilding = step();
+        }
+    }
 }
 
 /// The window, its game and everything around it.
@@ -164,8 +275,7 @@ struct Session {
     window: Arc<Window>,
     game: Game,
     overlay: Overlay,
-    controls: Controls,
-    modifiers: ModifiersState,
+    input: WindowInput,
     prefs: Preferences,
     ui: UiState,
     audio: Option<Audio>,
@@ -173,27 +283,23 @@ struct Session {
     debug: bool,
     build: String,
     /// The team the engine drew for the player (`initial_game_options`).
-    human_team: u8,
-    /// The options the engine's world was built with, and those wanted now.
-    prepared_options: String,
-    /// Preparation of the prepared options' arena is still running.
-    preparing: bool,
+    human_team: Team,
+    /// The options the engine's world was built with.
+    prepared_options: GameOptions,
+    preparation: Preparation,
     /// Battle Setup choices that have been on screen for a frame, ready to rebuild for.
-    options_shown: Option<String>,
-    compiled: u32,
+    options_shown: Option<GameOptions>,
     /// A round is on (the HUD shows; frames run).
     in_round: bool,
-    phase: Phase,
+    phase: MatchPhase,
     alive: bool,
     first_person: bool,
-    cursor_grabbed: bool,
     /// The window is covered or minimized (macOS says so).
     occluded: bool,
     /// The window has no area: minimized on Windows, which reports no occlusion.
     minimized: bool,
     /// The window took the last frame.
     frame_shown: bool,
-    frame_index: u64,
     last_frame: f64,
     /// Seconds the HUD's state has advanced since its last refresh.
     hud_dt: f64,
@@ -247,14 +353,14 @@ impl ApplicationHandler for App {
         let DeviceEvent::MouseMotion { delta } = event else {
             return;
         };
-        let (controls, grabbed) = match &mut self.mode {
-            Some(Mode::Single(session)) => (&mut session.controls, session.cursor_grabbed),
-            Some(Mode::Room(room)) => (&mut room.controls, room.cursor_grabbed),
+        let input = match &mut self.mode {
+            Some(Mode::Single(session)) => &mut session.input,
+            Some(Mode::Room(room)) => &mut room.input,
             None => return,
         };
-        if grabbed {
+        if input.cursor_grabbed {
             // Like the page's `movementX`: macOS reports points, Windows raw counts.
-            controls.look(delta.0);
+            input.controls.look(delta.0);
         }
     }
 
@@ -265,6 +371,21 @@ impl ApplicationHandler for App {
         match &self.mode {
             Some(Mode::Single(session)) => session.window.request_redraw(),
             Some(Mode::Room(room)) => room.window.request_redraw(),
+            None => {}
+        }
+    }
+
+    /// iOS takes the screen away for a moment (Control Center, the app switcher, a
+    /// call): fingers let go and single player pauses, as a hidden window does.
+    fn suspended(&mut self, _event_loop: &ActiveEventLoop) {
+        match &mut self.mode {
+            Some(Mode::Single(session)) => {
+                session.input.controls.clear();
+                if session.in_round && session.phase == MatchPhase::Playing {
+                    session.apply(Action::Pause);
+                }
+            }
+            Some(Mode::Room(room)) => room.input.controls.clear(),
             None => {}
         }
     }
@@ -316,19 +437,16 @@ impl ApplicationHandler for App {
 impl Session {
     fn new(event_loop: &ActiveEventLoop, options: &Options) -> Result<Self, String> {
         let prefs = Preferences::load();
-        let mut attributes = Window::default_attributes()
-            .with_title("Sloppy Tanks")
-            .with_inner_size(WINDOW_SIZE)
-            .with_min_inner_size(MIN_WINDOW_SIZE)
-            .with_window_icon(window_icon());
-        if prefs.fullscreen {
-            attributes = attributes.with_fullscreen(Some(Fullscreen::Borderless(None)));
-        }
         let window = Arc::new(
             event_loop
-                .create_window(attributes)
+                .create_window(window_attributes(&prefs))
                 .map_err(|error| error.to_string())?,
         );
+        #[cfg(target_os = "ios")]
+        {
+            crate::ios::attach_to_scene(&window);
+            crate::ios::listen_for_keys(&window);
+        }
         let mut rooms = RoomsState::default();
         if let Some(directory) = &options.directory {
             rooms.directory.clone_from(directory);
@@ -359,43 +477,37 @@ impl Session {
             frame_log,
             autoplay,
         } = shell;
-        let size = window.inner_size();
-        let scale = window.scale_factor();
-        let logical = size.to_logical::<f64>(scale);
+        let size = drawable_size(&window);
         let target = RenderTarget {
             window: wgpu::SurfaceTarget::from(window.clone()),
             width: size.width,
             height: size.height,
         };
-        let extra = !ui::setup::MAPS.iter().any(|(id, _)| *id == prefs.map);
-        let config = json!({
-            "assetBase": "",
-            "map": prefs.map,
-            "difficulty": prefs.difficulty,
-            "extraLevels": debug || extra,
-            "humanKind": prefs.tank,
-            "gameMode": prefs.game_mode,
-            "cssWidth": logical.width,
-            "cssHeight": logical.height,
-            "pixelRatio": scale,
-            "firstPerson": prefs.first_person,
-            "zoom": prefs.zoom,
-            "graphics": prefs.graphics,
-            "device": "desktop",
-            "autoplay": autoplay,
-        });
-        let mut game = pollster::block_on(Game::create(target, &config.to_string()))?;
-        let hud = HudState::parse(&game.hud_json()).unwrap_or_default();
-        game.set_speed("tank-speed", prefs.tank_speed);
-        game.set_speed("bullet-speed", prefs.bullet_speed);
+        // The team is the seed's to draw.
+        let extra_levels = debug || prefs.debug;
+        let options = prefs.game_options(Team::Blue, extra_levels);
+        let config = GameConfig {
+            map: Some(options.map_mode),
+            difficulty: Some(options.difficulty),
+            extra_levels,
+            human_kind: Some(options.human_kind),
+            human_team: None,
+            game_mode: Some(options.game_mode),
+            autoplay,
+        };
+        let view = view_config(&window, &prefs);
+        let mut game = pollster::block_on(Game::create_with(target, view, config))?;
+        let hud = game.hud().into_owned();
+        game.set_speed_scale(SpeedSetting::TankSpeed, prefs.tank_speed);
+        game.set_speed_scale(SpeedSetting::BulletSpeed, prefs.bullet_speed);
         let overlay = Overlay::new(window.clone(), game.renderer());
+        let human_team = hud.human_team;
         let mut session = Self {
-            human_team: hud.human_team,
+            human_team,
             window,
             game,
             overlay,
-            controls: Controls::default(),
-            modifiers: ModifiersState::default(),
+            input: WindowInput::default(),
             ui: UiState {
                 hud: Some(hud),
                 status: "Building the arena…".into(),
@@ -406,19 +518,16 @@ impl Session {
             bake: None,
             debug,
             build,
-            prepared_options: String::new(),
-            preparing: true,
+            prepared_options: prefs.game_options(human_team, extra_levels),
+            preparation: Preparation::default(),
             options_shown: None,
-            compiled: 0,
             in_round: false,
-            phase: Phase::Ready,
+            phase: MatchPhase::Ready,
             alive: true,
             first_person: prefs.first_person,
-            cursor_grabbed: false,
             occluded: false,
             minimized: false,
             frame_shown: true,
-            frame_index: 0,
             last_frame: now_ms(),
             hud_dt: 0.0,
             failure: None,
@@ -429,7 +538,7 @@ impl Session {
             prefs,
         };
         session.ui.starting = autoplay;
-        session.prepared_options = session.wanted_options();
+        session.preparation.restart();
         Ok(session)
     }
 
@@ -450,16 +559,14 @@ impl Session {
         }
     }
 
-    /// Battle Setup's choices as `set_options` takes them.
-    fn wanted_options(&self) -> String {
-        json!({
-            "humanKind": self.prefs.tank,
-            "humanTeam": self.human_team,
-            "gameMode": self.prefs.game_mode,
-            "mapMode": self.prefs.map,
-            "difficulty": self.prefs.difficulty,
-        })
-        .to_string()
+    /// The debug tools (extra levels, Stats for nerds): `--debug`, or Settings.
+    fn debug_tools(&self) -> bool {
+        self.debug || self.prefs.debug
+    }
+
+    /// Battle Setup's choices as the engine plays them.
+    fn wanted_options(&self) -> GameOptions {
+        self.prefs.game_options(self.human_team, self.debug_tools())
     }
 
     /// Handle a window event; true when the app should quit.
@@ -467,13 +574,15 @@ impl Session {
         if let WindowEvent::RedrawRequested = event {
             return self.redraw();
         }
-        let battle =
-            self.in_round && self.phase == Phase::Playing && self.ui.settings_draft.is_none();
-        let keys_to_menus = !battle || self.overlay.typing();
-        let consumed = self
-            .overlay
-            .event(event, !self.cursor_grabbed, keys_to_menus);
-        let playing = self.in_round && self.phase == Phase::Playing && self.alive;
+        let battle = self.battle();
+        let request = self
+            .input
+            .event(&self.window, &mut self.overlay, event, &battle);
+        if let Some(request) = request
+            && self.request(request)
+        {
+            return true;
+        }
         match event {
             WindowEvent::CloseRequested => return true,
             WindowEvent::Resized(size) => {
@@ -488,59 +597,47 @@ impl Session {
             }
             // Like the page's blur: held keys let go, the round plays on.
             WindowEvent::Focused(false) => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.hold_pointer();
-            }
-            WindowEvent::ModifiersChanged(modifiers) => {
-                self.modifiers = modifiers.state();
-                self.controls.set_command(
-                    self.modifiers.super_key()
-                        || self.modifiers.control_key()
-                        || self.modifiers.alt_key(),
-                );
-            }
-            WindowEvent::KeyboardInput { event, .. } => {
-                // Typing goes to the field; a release still reaches the controls, so
-                // a key held when a field took focus never sticks.
-                if self.overlay.typing() && event.state == ElementState::Pressed {
-                    return false;
-                }
-                if let PhysicalKey::Code(code) = event.physical_key {
-                    if code == KeyCode::KeyQ && self.modifiers.super_key() {
-                        return true;
-                    }
-                    let shortcut = self.controls.key(code, event.state, event.repeat, playing);
-                    if let Some(shortcut) = shortcut {
-                        self.shortcut(shortcut);
-                    }
-                }
-            }
-            WindowEvent::CursorMoved { position, .. } => {
-                let size = self.window.inner_size();
-                self.controls.aim_at(
-                    (position.x, position.y),
-                    (f64::from(size.width), f64::from(size.height)),
-                );
-            }
-            // A press on a menu or the HUD's buttons is not a shot; a release always
-            // reaches the controls, so fire never sticks.
-            WindowEvent::MouseInput { state, button, .. }
-                if *state == ElementState::Released
-                    || (playing
-                        && (self.cursor_grabbed
-                            || !(consumed || self.overlay.wants_pointer()))) =>
-            {
-                self.controls.button(*button, *state);
-            }
-            WindowEvent::MouseWheel { delta, .. }
-                if !self.overlay.wants_pointer() && self.in_round =>
-            {
-                self.controls
-                    .wheel(*delta, self.modifiers.shift_key(), playing);
             }
             _ => {}
         }
         false
+    }
+
+    /// Where the battle stands, for the window's input.
+    fn battle(&self) -> Battle {
+        let playing = self.in_round && self.phase == MatchPhase::Playing;
+        Battle {
+            keys: playing && self.ui.settings_draft.is_none(),
+            playing: playing && self.alive,
+            wheel: self.in_round,
+            touch: Play::live(
+                &self.overlay.context,
+                self.touch_live(),
+                self.first_person,
+                self.ui.hud.as_ref(),
+            ),
+        }
+    }
+
+    /// Whether the touch controls show: the player can act, with no dialog open.
+    fn touch_live(&self) -> bool {
+        self.in_round
+            && self.phase == MatchPhase::Playing
+            && self.alive
+            && self.ui.settings_draft.is_none()
+    }
+
+    /// Do what input asked; true when the app should quit.
+    fn request(&mut self, request: Request) -> bool {
+        match request {
+            Request::Quit => true,
+            Request::Shortcut(shortcut) => {
+                self.shortcut(shortcut);
+                false
+            }
+        }
     }
 
     /// Whether the window can show nothing: covered, or minimized.
@@ -551,8 +648,8 @@ impl Session {
     /// Like a hidden page, a hidden window pauses the round and lets the cursor go.
     fn hidden_changed(&mut self) {
         if self.hidden() {
-            self.controls.clear();
-            if self.in_round && self.phase == Phase::Playing {
+            self.input.controls.clear();
+            if self.in_round && self.phase == MatchPhase::Playing {
                 self.apply(Action::Pause);
             }
         }
@@ -564,14 +661,14 @@ impl Session {
             Shortcut::Escape => {
                 if self.ui.settings_draft.is_some() {
                     self.ui.settings_draft = None;
-                } else if self.in_round && self.phase == Phase::Playing {
+                } else if self.in_round && self.phase == MatchPhase::Playing {
                     self.apply(Action::Pause);
-                } else if self.in_round && self.phase == Phase::Paused {
+                } else if self.in_round && self.phase == MatchPhase::Paused {
                     self.apply(Action::Resume);
                 }
             }
             Shortcut::ToggleView => {
-                if self.in_round && self.phase == Phase::Playing {
+                if self.in_round && self.phase == MatchPhase::Playing {
                     self.apply(Action::ToggleView);
                 }
             }
@@ -586,32 +683,30 @@ impl Session {
 
     /// Render at the window's size in points times its scale (the engine caps it).
     fn resize(&mut self) {
-        let size = self.window.inner_size();
-        let scale = self.window.scale_factor();
-        let logical = size.to_logical::<f64>(scale);
-        self.game
-            .resize(logical.width, logical.height, scale, false);
+        let (width, height, scale) = css_size(&self.window);
+        self.game.resize(width, height, scale, false);
     }
 
     fn apply(&mut self, action: Action) {
         match action {
             Action::Start => {
-                if self.in_round && self.phase == Phase::Results {
+                if self.in_round && self.phase == MatchPhase::Results {
                     self.begin_round();
                 } else {
                     self.ui.starting = true;
                     self.ui.status = "Preparing your arena…".into();
+                    self.ui.progress = None;
                 }
             }
             Action::Resume => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.game.resume();
                 self.refresh_hud();
             }
             Action::Pause => {
-                if self.phase == Phase::Playing {
+                if self.phase == MatchPhase::Playing {
                     self.game.pause();
-                    self.controls.clear();
+                    self.input.controls.clear();
                     self.refresh_hud();
                 }
             }
@@ -620,26 +715,25 @@ impl Session {
                 self.refresh_hud();
             }
             Action::BattleSetup => {
-                self.controls.clear();
+                self.input.controls.clear();
                 self.game.restart();
                 self.in_round = false;
                 self.ui.reset_feedback();
                 self.ui.starting = false;
-                self.preparing = true;
-                self.compiled = 0;
+                self.preparation.restart();
                 self.refresh_hud();
             }
             Action::NextTank(kind) => {
                 self.prefs.tank = kind;
                 self.prefs.save();
-                if let Err(error) = self.game.set_human_kind(&self.prefs.tank) {
+                if let Err(error) = self.game.respawn_in(kind) {
                     eprintln!("{error}");
                 }
                 self.prepared_options = self.wanted_options();
             }
             Action::SelectAmmo(slot) => {
-                if self.phase == Phase::Playing && self.alive {
-                    self.controls.select_ammo(slot);
+                if self.phase == MatchPhase::Playing && self.alive {
+                    self.input.controls.select_ammo(slot);
                 }
             }
             Action::ToggleView => {
@@ -648,13 +742,10 @@ impl Session {
             }
             Action::ToggleFullscreen => {
                 let fullscreen = self.window.fullscreen().is_none();
-                self.window
-                    .set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
-                self.prefs.fullscreen = fullscreen;
-                self.prefs.save();
+                set_fullscreen(&self.window, &mut self.prefs, fullscreen);
             }
             Action::OpenSettings => {
-                if self.in_round && self.phase == Phase::Playing {
+                if self.in_round && self.phase == MatchPhase::Playing {
                     self.apply(Action::Pause);
                 }
                 ui::menus::open_settings(&mut self.ui, &self.prefs);
@@ -662,7 +753,7 @@ impl Session {
             Action::SettingsSaved(prefs) => self.save_settings(*prefs),
             Action::Quit => {}
             Action::JoinRoom(selection) => {
-                self.prefs.player_name.clone_from(&selection.name);
+                self.prefs.player_name.clone_from(&selection.choice.name);
                 self.prefs.save();
                 self.pending_room = Some(*selection);
             }
@@ -681,49 +772,46 @@ impl Session {
     fn save_settings(&mut self, prefs: Preferences) {
         let old = std::mem::replace(&mut self.prefs, prefs);
         if old.graphics != self.prefs.graphics {
-            self.game.set_graphics(&self.prefs.graphics);
+            self.game.set_graphics_setting(self.prefs.graphics);
         }
         if old.tank_speed != self.prefs.tank_speed {
-            self.prefs.tank_speed = self.game.set_speed("tank-speed", self.prefs.tank_speed);
+            self.prefs.tank_speed = self
+                .game
+                .set_speed_scale(SpeedSetting::TankSpeed, self.prefs.tank_speed);
         }
         if old.bullet_speed != self.prefs.bullet_speed {
-            self.prefs.bullet_speed = self.game.set_speed("bullet-speed", self.prefs.bullet_speed);
+            self.prefs.bullet_speed = self
+                .game
+                .set_speed_scale(SpeedSetting::BulletSpeed, self.prefs.bullet_speed);
         }
         if let Some(audio) = &mut self.audio {
             audio.set_volume(self.prefs.volume);
         }
         if old.fullscreen != self.prefs.fullscreen {
-            self.window.set_fullscreen(
-                self.prefs
-                    .fullscreen
-                    .then_some(Fullscreen::Borderless(None)),
-            );
+            let fullscreen = self.prefs.fullscreen;
+            set_fullscreen(&self.window, &mut self.prefs, fullscreen);
         }
         self.prefs.save();
     }
 
     fn save_camera(&mut self) {
-        let camera = self.game.camera_preferences();
-        self.prefs.first_person = camera.first().is_some_and(|&on| on == 1.0);
-        self.prefs.zoom = camera.get(1).copied();
-        self.prefs.save();
+        self.prefs.save_camera(self.game.camera());
     }
 
     fn refresh_hud(&mut self) {
-        if let Some(hud) = HudState::parse(&self.game.hud_json()) {
-            self.phase = hud.match_state.phase;
-            self.alive = hud.human.alive;
-            self.ui.tick(self.hud_dt);
-            self.hud_dt = 0.0;
-            self.ui.hud = Some(hud);
-        }
+        let hud = self.game.hud().into_owned();
+        self.phase = hud.match_state.phase;
+        self.alive = hud.human.alive;
+        self.ui.tick(self.hud_dt);
+        self.hud_dt = 0.0;
+        self.ui.hud = Some(hud);
     }
 
     fn begin_round(&mut self) {
         self.in_round = true;
         self.ui.starting = false;
         self.ui.reset_feedback();
-        self.controls.clear();
+        self.input.controls.clear();
         self.hud_dt = 0.0;
         self.game.start();
         if self.audio.is_none() {
@@ -745,15 +833,12 @@ impl Session {
                 self.options_shown = Some(wanted);
                 return Ok(());
             }
-            self.game.set_options(&wanted)?;
+            self.game.set_game_options(&wanted);
             self.prepared_options = wanted;
-            self.preparing = true;
-            self.compiled = 0;
-            if let Some(hud) = HudState::parse(&self.game.hud_json()) {
-                self.ui.hud = Some(hud);
-            }
+            self.preparation.restart();
+            self.ui.hud = Some(self.game.hud().into_owned());
         }
-        if !self.preparing {
+        if !self.preparation.preparing {
             if self.ui.starting {
                 self.begin_round();
             }
@@ -774,42 +859,28 @@ impl Session {
             self.bake = None;
             self.game.supply_texture(&key, &pixels)?;
         }
-        let status = self.game.prepare_step(PREPARE_BUDGET)?;
-        let [compiled, remaining, textures, done, gpu] =
-            [0, 1, 2, 3, 4].map(|index| status.get(index).copied().unwrap_or(0.0));
-        self.compiled += compiled as u32;
-        if done == 1.0 {
-            self.preparing = false;
-            self.ui.ready = true;
-            self.ui.status = READY_STATUS.into();
-            return Ok(());
-        }
-        // A rebuild that reuses every pipeline and texture still waits for its warm-up
-        // frames; that is not loading, so Battle Setup keeps showing it is ready rather
-        // than flicker through the loading lines.
-        if self.compiled == 0 && remaining == 0.0 && textures == 0.0 {
-            return Ok(());
-        }
-        self.ui.ready = false;
-        if remaining > 0.0 {
-            self.ui.status = format!(
-                "Shaders loaded: {} of {}",
-                self.compiled,
-                self.compiled + remaining as u32
-            );
-        } else if gpu == 1.0 {
-            self.ui.status = "Compiling shaders…".into();
-        } else if textures > 0.0 {
-            self.ui.status = format!("Loading textures… {textures} left");
+        let status = self.game.prepare(PREPARE_BUDGET)?;
+        match self.preparation.advance(&status, self.game.loading()) {
+            Progress::Ready => {
+                self.ui.ready = true;
+                self.ui.status = READY_STATUS.into();
+                self.ui.progress = None;
+            }
+            Progress::Warming => {}
+            Progress::Loading(line) => {
+                self.ui.ready = false;
+                self.ui.status = line.to_string();
+                self.ui.progress = line.progress();
+            }
         }
         Ok(())
     }
 
     /// One engine frame of the round; its events and HUD reach the screens.
     fn battle_frame(&mut self, now: f64) -> Result<(), String> {
-        let input = self.controls.take_input();
+        let input = self.input.take_input(self.first_person);
         let zoomed = input.zoom != 0.0;
-        let result = self.game.frame(now, &pack(&input))?;
+        let result = self.game.frame(now, &input.pack())?;
         self.parts.engine = now_ms() - now;
         self.parts.sim = f64::from(result.get(frame_slot::SIM_MS).copied().unwrap_or(0.0));
         self.parts.render = f64::from(result.get(frame_slot::RENDER_MS).copied().unwrap_or(0.0));
@@ -820,7 +891,7 @@ impl Session {
             self.save_camera();
         }
         let slot = |index: usize| result.get(index).copied().unwrap_or(0.0);
-        self.phase = Phase::from_slot(slot(frame_slot::PHASE));
+        self.phase = frame_slot::phase(slot(frame_slot::PHASE));
         self.alive = slot(frame_slot::HUMAN_ALIVE) == 1.0;
         self.first_person = slot(frame_slot::FIRST_PERSON) == 1.0;
         self.ui.cockpit = slot(frame_slot::COCKPIT) == 1.0;
@@ -828,15 +899,19 @@ impl Session {
         let viewer = (slot(frame_slot::VIEWER_X), slot(frame_slot::VIEWER_Y));
         self.ui.viewer = (viewer.0.is_finite() && viewer.1.is_finite()).then_some(viewer);
         if slot(frame_slot::CLEAR_INPUT) == 1.0 {
-            self.controls.clear();
+            self.input.controls.clear();
         }
         if slot(frame_slot::EVENTS) > 0.0 {
-            let batch = EventBatch::parse(&self.game.drain_events());
+            let batch = self.game.take_events();
             if let Some(audio) = &mut self.audio {
                 audio.play(&batch);
             }
             // A death names its killer, who may have joined since the last refresh.
-            if batch.events.iter().any(|event| event.kind == "death") {
+            if batch
+                .events
+                .iter()
+                .any(|pending| pending.event.kind == SimEventType::Death)
+            {
                 self.refresh_hud();
             }
             for event in &batch.events {
@@ -855,11 +930,11 @@ impl Session {
     fn hold_pointer(&mut self) {
         let wanted = self.in_round
             && self.first_person
-            && self.phase == Phase::Playing
+            && self.phase == MatchPhase::Playing
             && self.ui.settings_draft.is_none()
             && self.window.has_focus()
             && !self.hidden();
-        grab_pointer(&self.window, wanted, &mut self.cursor_grabbed);
+        self.input.hold_pointer(&self.window, wanted);
     }
 
     /// Run a frame and show it; true when the player chose to quit.
@@ -867,12 +942,22 @@ impl Session {
         let now = now_ms();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        let playing = self.battle().playing;
+        let mut quit = false;
+        for request in self
+            .input
+            .hardware_keys(&self.window, &self.overlay, playing)
+        {
+            quit |= self.request(request);
+        }
         // A window that takes no frames only looks for its window again: engine frames
         // there would count as slow ones and lower Auto's graphics quality.
-        if !self.frame_shown && self.in_round && self.phase == Phase::Playing {
+        if !self.frame_shown && self.in_round && self.phase == MatchPhase::Playing {
             self.apply(Action::Pause);
         }
         if self.failure.is_none() && (self.frame_shown || !self.in_round) {
+            let game = &mut self.game;
+            self.preparation.prebuild(|| game.prebuild_step());
             let step = if self.in_round {
                 self.battle_frame(now)
             } else {
@@ -883,25 +968,22 @@ impl Session {
                 self.failure = Some(error);
             }
         }
-        self.frame_index += 1;
         if !self.in_round {
             self.ui.tick(frame_dt);
-        } else if self.phase != Phase::Playing {
+        } else if self.phase != MatchPhase::Playing {
             self.ui.tick(0.0);
         }
-        if self.ui.show_nerd_stats
-            && (self.debug || self.prefs.debug)
-            && self.frame_index.is_multiple_of(STATS_EVERY_FRAMES)
-        {
-            self.ui.stats = serde_json::from_str(&self.game.stats_json()).ok();
+        if self.ui.stats_due(now, self.debug_tools()) {
+            self.ui.stats = Some(self.game.nerd_stats());
         }
         self.hold_pointer();
+        self.ui.touch = self.input.touch_view(self.touch_live(), self.first_person);
         let view = ui::View {
             in_round: self.in_round,
             phase: self.phase,
             prefs: &self.prefs,
             build: &self.build,
-            debug: self.debug || self.prefs.debug,
+            debug: self.debug_tools(),
             room: false,
         };
         let ui_state = &mut self.ui;
@@ -923,14 +1005,8 @@ impl Session {
         self.parts.present = now_ms() - present_start;
         if let Some(log) = &mut self.frame_log {
             let scene = self.game.renderer().scene_size();
-            let gpu_ms = log
-                .due()
-                .then(|| serde_json::from_str::<serde_json::Value>(&self.game.stats_json()).ok())
-                .flatten()
-                .and_then(|stats| stats["quality"]["gpuMs"].as_f64());
-            log.frame(&self.parts, target, scene, gpu_ms);
+            log.frame(&self.parts, target, scene, self.game.gpu_ms());
         }
-        let mut quit = false;
         for action in actions {
             quit |= action == Action::Quit;
             self.apply(action);
@@ -960,10 +1036,107 @@ pub fn grab_pointer(window: &Window, wanted: bool, grabbed: &mut bool) {
     }
 }
 
+/// A resizable window at its first size, or fullscreen as the player left it.
+#[cfg(not(target_os = "ios"))]
+fn window_attributes(prefs: &Preferences) -> WindowAttributes {
+    let attributes = Window::default_attributes()
+        .with_title("Sloppy Tanks")
+        .with_inner_size(WINDOW_SIZE)
+        .with_min_inner_size(MIN_WINDOW_SIZE)
+        .with_window_icon(window_icon());
+    if prefs.fullscreen {
+        attributes.with_fullscreen(Some(Fullscreen::Borderless(None)))
+    } else {
+        attributes
+    }
+}
+
+/// The iPad's whole screen, held sideways (the menus and HUD need a landscape
+/// window), with no status bar; the system's edge swipes wait for a second swipe, so a
+/// thumb on the stick or the toolbar stays in the game.
+#[cfg(target_os = "ios")]
+fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
+    use winit::platform::ios::{ScreenEdge, ValidOrientations, WindowAttributesExtIOS};
+    Window::default_attributes()
+        .with_valid_orientations(ValidOrientations::Landscape)
+        .with_prefers_status_bar_hidden(true)
+        .with_prefers_home_indicator_hidden(true)
+        .with_preferred_screen_edges_deferring_system_gestures(ScreenEdge::ALL)
+}
+
 /// The window's icon (Windows and Linux show it; macOS takes the bundle's).
+#[cfg(not(target_os = "ios"))]
 fn window_icon() -> Option<winit::window::Icon> {
     let image = image::load_from_memory(crate::assets::file("icons/icon-192.png")?).ok()?;
     let image = image.into_rgba8();
     let (width, height) = image.dimensions();
     winit::window::Icon::from_rgba(image.into_raw(), width, height).ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn status(compiled: u32, remaining: u32, ready: bool) -> PrepareStatus {
+        PrepareStatus {
+            compiled,
+            remaining,
+            ready,
+            ..PrepareStatus::default()
+        }
+    }
+
+    /// Single player builds the library's wrecks once the arena is ready and its menu
+    /// has painted, a step a redraw, as the page does; before, nothing built them until
+    /// a battle needed one.
+    #[test]
+    fn the_wrecks_build_after_the_ready_arena_a_step_a_redraw() {
+        let mut preparation = Preparation::default();
+        preparation.restart();
+        let steps = std::cell::Cell::new(0);
+        let redraw = |preparation: &mut Preparation, more: bool| {
+            preparation.prebuild(|| {
+                steps.set(steps.get() + 1);
+                more
+            });
+        };
+        let shaders = Loading::Shaders {
+            loaded: 4,
+            total: 10,
+        };
+        assert_eq!(
+            preparation.advance(&status(4, 6, false), Some(shaders)),
+            Progress::Loading(shaders)
+        );
+        redraw(&mut preparation, true);
+        assert_eq!(
+            preparation.advance(&status(6, 0, true), None),
+            Progress::Ready
+        );
+        assert!(!preparation.preparing);
+        for more in [true, true, false, true] {
+            redraw(&mut preparation, more);
+        }
+        assert_eq!(
+            steps.get(),
+            3,
+            "three steps after the ready arena, then none"
+        );
+        // A new arena does not build them again.
+        preparation.restart();
+        redraw(&mut preparation, true);
+        assert_eq!(steps.get(), 3);
+    }
+
+    #[test]
+    fn a_rebuild_that_only_warms_up_keeps_battle_setup_ready() {
+        let mut preparation = Preparation::default();
+        preparation.restart();
+        // The engine has no line for a step that only warms up.
+        assert_eq!(
+            preparation.advance(&status(0, 0, false), None),
+            Progress::Warming
+        );
+        assert!(preparation.preparing);
+    }
 }

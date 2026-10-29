@@ -1,4 +1,4 @@
-# Installed to /etc/containers/systemd/ by provision.sh. Quadlet turns it into
+# Installed to /etc/containers/systemd/ by bootstrap.sh. Quadlet turns it into
 # sloppy-tanks.service, which runs the server under Podman with no daemon beside it.
 [Unit]
 Description=Sloppy Tanks multiplayer server
@@ -16,8 +16,8 @@ Pull=never
 Network=host
 Environment=HOST=127.0.0.1 PORT=8787
 # The machine's settings: SERVER_ENVIRONMENT (production or dev) and DIRECTORY_URL, which
-# the server pushes its rooms to. The provider's user data writes it (bootstrap.sh), or
-# `bun scripts/server.mjs provision`.
+# the server pushes its rooms to. The provider's user data writes it
+# (deploy/server/cloud-init/).
 EnvironmentFile=/etc/sloppy-tanks/server.env
 # A read-only root without Podman's extra tmpfs mounts, no capabilities, and a memory
 # cap without swap.
