@@ -29,7 +29,7 @@ if (!index.includes('id="tab-multiplayer"') || !hasDirectory) {
 
 // Clients and the server reject each other unless both were built from the same
 // game/network sources, so publish the dev server from this checkout first. It runs on
-// its own machines, which follow the dev package's :dev, so this never touches
+// its own machines, which follow the server image's :dev tag, so this never touches
 // production's. The publish waits until every dev server reports this checkout's build.
 run("node", ["scripts/server.mjs", "publish", "--dev"]);
 

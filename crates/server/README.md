@@ -175,12 +175,12 @@ first ships a server build a pull request already built, it restamps that image'
 release, commit and time over the same binary layer; later builds keep them. Pull requests never move `production`, and nothing in CI
 connects to the machines. Fork pull requests build the image without pushing.
 
-The dev servers' images go to a package of their own,
-`ghcr.io/vladf1/sloppy-tanks-server-dev` (public as well), which CI never reads:
-`server:publish --dev`, which `deploy:dev` runs, pushes a checkout's build there as
-`<serverBuild>` and moves `dev`. In CI's package such a build, possibly from uncommitted
-files and a developer's toolchain, could reach `production`, since CI only retags a
-server build its package already holds.
+The dev servers follow the same package's `dev` tag. `server:publish --dev`, which
+`deploy:dev` runs, points it at the package's image of the checkout's server build when
+there is one (CI's `<serverBuild>`, or an earlier publish's), and otherwise pushes the
+checkout's build as `dev-<serverBuild>` and `dev`. A dev build never takes the bare
+`<serverBuild>` tag: CI only retags an image it finds there, so a developer's build,
+possibly from uncommitted files and their own toolchain, could reach `production`.
 
 ### On a machine
 
@@ -214,8 +214,8 @@ and its settings in `server.env`:
   previous image (tagged `sloppy-tanks-pinned:current` and `:previous`) and prunes
   the rest.
 - `sloppy-tanks-update.timer` is auto-update. It follows the tag of the machine's
-  environment (`SERVER_ENVIRONMENT`): `:production` every two minutes, or the dev
-  package's `:dev` every 15 seconds (a drop-in provisioning writes on dev). A check reads
+  environment (`SERVER_ENVIRONMENT`): `:production` every two minutes, or `:dev` every
+  15 seconds (a drop-in provisioning writes on dev). A check reads
   the tag's digest with two small requests (an anonymous token and the manifest's
   headers) and pulls only when it has moved; one that cannot reach the registry changes
   nothing, and the journal hears only when checks start failing or work again.
@@ -227,7 +227,7 @@ and its settings in `server.env`:
 pnpm run server:update                # pull :production and switch now
 pnpm run server:update --image pr-12  # pull another tag (or full image name) and pin it
 pnpm run server:update --dev --image pr-12   # try a pull request's server on the dev server
-pnpm run server:publish --dev         # build here, push to the dev package's :dev, wait
+pnpm run server:publish --dev         # build here, push it as :dev, wait for the dev servers
 pnpm run server:rollback              # switch back to the previous image
 pnpm run server:auto-update on|off    # follow the environment's tag by itself (default), or not
 pnpm run server:auto-update resume    # lift a hold (below) so auto-update follows again
@@ -248,15 +248,15 @@ that image, and auto-update skips its checks until `server:auto-update resume` o
 tag moves or `server:update` pulls it. `server:status` shows the pinned and previous
 image, any hold, pending update or failed image, and auto-update's latest checks.
 
-Dev's machines check `:dev` every 15 seconds and switch at once, whoever is playing, as
-a deploy always did there. A hold on dev (`server:deploy --dev`, `server:rollback --dev`
+Dev's machines check `:dev` every 15 seconds and switch as soon as it moves, without
+looking at who is playing. A hold on dev (`server:deploy --dev`, `server:rollback --dev`
 or `server:update --dev --image`) lasts until the next publish moves `:dev`.
 
-`server:publish --dev` runs `server:deploy-check`, builds the image here with Docker,
-pushes it to the dev package as its server build and `:dev` (or only moves `:dev` when
-the package already holds that build), and waits until every dev server reports the
-checkout's build through Caddy: the next check, then the restart. It needs no SSH, but
-Docker logged in to ghcr.io with a token that can write packages, once:
+`server:publish --dev` runs `server:deploy-check`, points `:dev` at the package's image
+of the checkout's server build if it has one, or else builds the image here with Docker
+and pushes it as `dev-<serverBuild>` and `:dev`, then waits until every dev server
+reports the checkout's build through Caddy: the next check, then the restart. It needs
+no SSH, but Docker logged in to ghcr.io with a token that can write packages, once:
 
 ```sh
 gh auth refresh -h github.com -s write:packages
@@ -264,9 +264,7 @@ gh auth token | docker login ghcr.io --username "$(gh api user -q .login)" --pas
 ```
 
 GHCR takes only classic tokens, which `gh`'s is; a classic personal access token with
-`write:packages` works too. A package GHCR creates on a first push is private: make
-`sloppy-tanks-server-dev` public once in its package settings, since the dev machines pull
-without credentials.
+`write:packages` works too.
 
 `server:deploy` builds the image here with Docker (`server:build-docker-image`),
 streams it to the machine with `docker save | ssh podman load` and switches to it,

@@ -4,13 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion, serverBuild } from "./content-version.mjs";
-import {
-  DEV_SERVER_IMAGE,
-  DIRECTORY_URL,
-  gameServers,
-  SERVER_IMAGE,
-  SSH_OPTIONS,
-} from "./servers.mjs";
+import { DIRECTORY_URL, gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 
 /** Operate the game server machines, one after another and over SSH except for
  * `publish`: the ones the server directory lists for production, or with `--dev` for the
@@ -18,8 +12,8 @@ import {
  *
  *   provision                set the machine up (again), then start the image it follows
  *                            (:production, or on dev :dev) if no server runs
- *   publish --dev            build the image here and push it to the dev package's :dev,
- *                            which the dev machines follow; wait until each serves it
+ *   publish --dev            build the image here and push it as :dev, which the dev
+ *                            machines follow; wait until each serves it
  *   update [--image TAG]     pull an image CI published (default the followed tag) and switch
  *   deploy [--force]         build the image here, copy it over SSH and switch (the SSH
  *                            fallback; for production only from a clean origin/main)
@@ -165,10 +159,10 @@ async function deploy() {
   console.log(`The ${server.role} server is live at ${server.url}`);
 }
 
-/** Builds the server image from this checkout and pushes it to the dev package as its
- * server build and :dev. The dev machines check :dev every 15 seconds and switch to it by
- * themselves, so publishing needs registry access but no SSH. Returns what their /health
- * reports once they run it. */
+/** Builds the server image from this checkout and pushes it as dev-<server build> and :dev
+ * (or points :dev at an image of that server build the registry already holds). The dev
+ * machines check :dev every 15 seconds and switch to it by themselves, so publishing needs
+ * registry access but no SSH. Returns what their /health reports once they run it. */
 async function publish() {
   if (!dev) {
     console.error("publish is for the dev servers (--dev); production runs CI's images.");
@@ -179,7 +173,15 @@ async function publish() {
   console.log(`Publishing the dev server (content ${version}, build ${build}) as :dev`);
   const result = spawnSync(
     "node",
-    ["scripts/build-server-image.mjs", "--registry", DEV_SERVER_IMAGE, "--push", "--tag", "dev"],
+    [
+      "scripts/build-server-image.mjs",
+      "--registry",
+      SERVER_IMAGE,
+      "--push",
+      "--dev",
+      "--tag",
+      "dev",
+    ],
     { cwd: repo, stdio: "inherit" },
   );
   if (result.status !== 0) {

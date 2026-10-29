@@ -13,9 +13,12 @@ import { isNumberedRelease, releaseVersion } from "./release-version.mjs";
  * came from. Locally it is `sloppy-tanks-server:<build>` and `:latest`. CI passes
  * `--registry ghcr.io/vladf1/sloppy-tanks-server --push` and moving tags such as
  * `--tag pr-12`; when the registry already holds that build (a change outside the
- * server), it only adds the tags instead of rebuilding. `node scripts/server.mjs publish
- * --dev` pushes a checkout's build the same way to the dev package
- * (`ghcr.io/vladf1/sloppy-tanks-server-dev`, `--tag dev`), never to CI's.
+ * server), it only adds the tags instead of rebuilding.
+ *
+ * `node scripts/server.mjs publish --dev` passes `--dev --tag dev` for the dev servers: a
+ * developer's build is tagged `dev-<build>` instead, since CI would take an image tagged
+ * with the bare build for its own and could promote it to :production. A dev publish
+ * reuses CI's image of the same server build when there is one, else its own earlier one.
  *
  * Main's builds also pass `--build-number`, the Pages workflow's run number, which
  * completes the release version (`1.1.0.628`, scripts/release-version.mjs) the image
@@ -50,19 +53,20 @@ const RELEASE_LABEL = "me.fridman.sloppy-tanks.release";
 const name = option("--registry")[0] ?? LOCAL_IMAGE;
 const release = releaseVersion(option("--build-number")[0]);
 const push = process.argv.includes("--push");
+const dev = process.argv.includes("--dev");
 const version = await contentVersion();
 const build = await serverBuild();
 const commit = git("rev-parse", "HEAD") + (git("status", "--porcelain") ? "-dirty" : "");
-const image = `${name}:${build}`;
+const image = `${name}:${dev ? "dev-" : ""}${build}`;
 const extraTags = [...option("--tag"), ...(push ? [] : ["latest"])].map((tag) => `${name}:${tag}`);
 
 const builtAt = new Date().toISOString();
 
-/** The published image's labels, or `undefined` when the registry does not hold it. */
-function publishedLabels() {
+/** A published image's labels, or `undefined` when the registry does not hold it. */
+function publishedLabels(ref) {
   const result = spawnSync(
     "docker",
-    ["buildx", "imagetools", "inspect", image, "--format", "{{json .Image}}"],
+    ["buildx", "imagetools", "inspect", ref, "--format", "{{json .Image}}"],
     { cwd: repo, encoding: "utf8" },
   );
   if (result.status !== 0) return undefined;
@@ -71,8 +75,17 @@ function publishedLabels() {
   return (config.config ?? config["linux/amd64"]?.config)?.Labels ?? {};
 }
 
-const labels = push ? publishedLabels() : undefined;
-const published = labels !== undefined;
+/** The published image to add the tags to, the first one the registry holds. */
+let source;
+let labels;
+for (const ref of push ? (dev ? [`${name}:${build}`, image] : [image]) : []) {
+  labels = publishedLabels(ref);
+  if (labels !== undefined) {
+    source = ref;
+    break;
+  }
+}
+const published = source !== undefined;
 if (published && isNumberedRelease(release) && !isNumberedRelease(labels[RELEASE_LABEL])) {
   console.log(`${image} has no build number yet; stamping release ${release}`);
   // Only metadata changes: the new image shares the published binary layer.
@@ -96,10 +109,10 @@ if (published && isNumberedRelease(release) && !isNumberedRelease(labels[RELEASE
   );
   if (result.status !== 0) process.exit(result.status ?? 1);
 } else if (published) {
-  console.log(`${image} is already published; adding tags only`);
+  console.log(`${source} is already published; adding tags only`);
   if (extraTags.length > 0) {
     const tagArgs = extraTags.flatMap((tag) => ["--tag", tag]);
-    const result = run("docker", ["buildx", "imagetools", "create", ...tagArgs, image]);
+    const result = run("docker", ["buildx", "imagetools", "create", ...tagArgs, source]);
     if (result.status !== 0) process.exit(result.status ?? 1);
   }
 } else {

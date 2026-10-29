@@ -9,14 +9,9 @@ import { isIP } from "node:net";
  * through that name.
  */
 /** The server's container image in the GitHub Container Registry. CI pushes it and moves
- * :production; the machines pull it (deploy/server/sloppy-tanks-update names it too). */
+ * :production, `node scripts/server.mjs publish --dev` pushes a checkout's build and moves
+ * :dev, and the machines pull it (deploy/server/sloppy-tanks-update names it too). */
 export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
-
-/** The dev servers' images, which `node scripts/server.mjs publish --dev` pushes from a
- * checkout, moving :dev for the dev machines to follow. A package of its own, because CI
- * only retags a server build that SERVER_IMAGE already holds, so a local build there could
- * reach production. */
-export const DEV_SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server-dev";
 
 /** The server directory (directory/worker.ts): each machine pushes its rooms there, and the
  * pages of its site read every server's rooms from there, each under its environment, the

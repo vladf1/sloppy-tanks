@@ -20,10 +20,6 @@
 set -euo pipefail
 
 REGISTRY=ghcr.io/vladf1/sloppy-tanks-server
-# The dev servers' images, built on developers' machines. They have a package of their
-# own because CI only retags a server build its package already holds, so a dev build
-# there could reach production.
-DEV_REGISTRY=ghcr.io/vladf1/sloppy-tanks-server-dev
 UNIT=sloppy-tanks
 # The server's loopback port (sloppy-tanks.container), which Caddy forwards to.
 PORT=8787
@@ -37,8 +33,6 @@ HEALTH_TIMEOUT_SECONDS=60
 # visitors a reload message, so it waits only briefly.
 MAX_WAIT_SERVER_ONLY_SECONDS=14400
 MAX_WAIT_CONTENT_SECONDS=600
-# Whoever publishes to :dev wants that build running now, as an SSH deploy had it.
-MAX_WAIT_DEV_SECONDS=0
 # Every kind of manifest a tag can name (CI pushes a manifest list, a local push may push
 # an image manifest or an OCI index), so a check reads the digest of whatever is there.
 MANIFEST_TYPES=application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json
@@ -66,7 +60,7 @@ mkdir -p "$STATE"
 # names the tag auto-update follows.
 environment=$(sed -n 's/^SERVER_ENVIRONMENT=//p' /etc/sloppy-tanks/server.env 2>/dev/null || true)
 if [[ $environment == dev ]]; then
-  follow=$DEV_REGISTRY:dev
+  follow=$REGISTRY:dev
 else
   follow=$REGISTRY:production
 fi
@@ -107,17 +101,15 @@ use_pin() {
 # images only) never frees. Untag the server images the server neither runs nor could
 # roll back to, keeping the followed tag for a pending auto-update, then prune what is
 # left untagged (Caddy's image stays tagged). Podman lists every name of a matching image,
-# so only each registry's own tags are considered.
+# so only the registry's tags are considered.
 remove_old_images() {
-  local keep registry ref id
+  local keep ref id
   keep=$(pinned "$image_file"; pinned "$previous_file")
-  for registry in "$REGISTRY" "$DEV_REGISTRY"; do
-    podman image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$registry" |
-      while read -r ref id; do
-        if [[ $ref != "$registry":* || $ref == *:\<none\> || $ref == "$follow" ]]; then continue; fi
-        if ! grep -qxF "$id" <<<"$keep"; then podman image rm "$ref" >/dev/null || true; fi
-      done
-  done
+  podman image ls --no-trunc --format '{{.Repository}}:{{.Tag}} {{.ID}}' "$REGISTRY" |
+    while read -r ref id; do
+      if [[ $ref != "$REGISTRY":* || $ref == *:\<none\> || $ref == "$follow" ]]; then continue; fi
+      if ! grep -qxF "$id" <<<"$keep"; then podman image rm "$ref" >/dev/null || true; fi
+    done
   podman image prune --force >/dev/null
 }
 
@@ -201,9 +193,10 @@ switch_to() {
   return 1
 }
 
-# The timer's check. It follows the environment's tag unless a hold is set, and restarts
-# only when nobody holds a seat or the pending image has waited its maximum. On dev a
-# publish moves :dev, and that replaces a hold: the developer wants that build now.
+# The timer's check. It follows the environment's tag unless a hold is set. Production
+# restarts only when nobody holds a seat or the pending image has waited its maximum. Dev
+# switches as soon as :dev moves, without asking who plays, and a publish there ends a
+# hold: whoever published wants that build running now.
 auto() {
   if [[ -f $hold_file && $environment != dev ]]; then
     echo "Holding: $(cat "$hold_file")"
@@ -236,6 +229,11 @@ auto() {
     rm -f "$pending_file"
     return 0
   fi
+  if [[ $environment == dev ]]; then
+    echo "New image on $follow: $(describe "$new")"
+    switch_to "$new"
+    return
+  fi
   now=$(date +%s)
   if [[ -f $pending_file ]]; then read -r pending first <"$pending_file" || true; fi
   if [[ $pending != "$new" ]]; then
@@ -244,9 +242,7 @@ auto() {
     echo "New image on $follow: $(describe "$new")"
   fi
   local max=$MAX_WAIT_SERVER_ONLY_SECONDS
-  if [[ $environment == dev ]]; then
-    max=$MAX_WAIT_DEV_SECONDS
-  elif [[ -z $current || $(label "$new" $LABELS.content-version) != "$(label "$current" $LABELS.content-version)" ]]; then
+  if [[ -z $current || $(label "$new" $LABELS.content-version) != "$(label "$current" $LABELS.content-version)" ]]; then
     max=$MAX_WAIT_CONTENT_SECONDS
   fi
   # The top-level count: each room in /stats has a "players" field too. A server that
