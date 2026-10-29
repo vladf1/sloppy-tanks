@@ -1,17 +1,11 @@
 import { spawn, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { contentVersion, serverBuild } from "./content-version.mjs";
-import { DIRECTORY_URL, gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
+import { gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers.mjs";
 
 /** Operate the game server machines, one after another and over SSH except for
  * `publish`: the ones the server directory lists for production, or with `--dev` for the
  * dev site, or with `--ip ADDRESS` that machine, listed or not. See crates/server/README.md.
  *
- *   provision                set the machine up (again), then start the image it follows
- *                            (:production, or on dev :dev) if no server runs
  *   publish --dev            build the image here and push it as :dev, which the dev
  *                            machines follow; wait until each serves it
  *   update [--image TAG]     pull an image CI published (default the followed tag) and switch
@@ -27,7 +21,6 @@ import { DIRECTORY_URL, gameServers, SERVER_IMAGE, SSH_OPTIONS } from "./servers
  * the next publish). */
 const repo = new URL("..", import.meta.url);
 const HEALTH_TIMEOUT_MS = 120_000;
-const AUTO_UPDATE_OFF = "/var/lib/sloppy-tanks/auto-update-off";
 const [command, argument] = process.argv.slice(2);
 const dev = process.argv.includes("--dev");
 /** What a publish pushed, for every machine to switch to. It pushes before looking for
@@ -48,8 +41,6 @@ function run(program, args, options = {}) {
   return result;
 }
 const ssh = (script, options) => run("ssh", [...SSH_OPTIONS, server.ssh, script], options);
-const succeeds = (script) =>
-  spawnSync("ssh", [...SSH_OPTIONS, server.ssh, script], { stdio: "ignore" }).status === 0;
 const git = (...args) => spawnSync("git", args, { cwd: repo, encoding: "utf8" });
 
 function option(name) {
@@ -75,39 +66,6 @@ async function waitForHealth(expected, describe) {
       throw new Error(`${health} reports ${JSON.stringify(status)}; expected ${describe}`);
     await new Promise((resolve) => setTimeout(resolve, 2000));
   }
-}
-
-/** Uploads deploy/server/ with this machine's names in the Caddyfile and its settings in
- * server.env, and runs provision.sh. */
-function provision() {
-  console.log(`Provisioning the ${server.role} server on ${server.ssh} (${server.site})`);
-  const staging = mkdtempSync(join(tmpdir(), "sloppy-tanks-provision-"));
-  try {
-    const files = [
-      "provision.sh",
-      "sloppy-tanks.container",
-      "caddy.container",
-      "sloppy-tanks-update",
-      "sloppy-tanks-update.service",
-      "sloppy-tanks-update.timer",
-    ].map((name) => fileURLToPath(new URL(`../deploy/server/${name}`, import.meta.url)));
-    const caddyfile = readFileSync(new URL("../deploy/server/Caddyfile", import.meta.url), "utf8");
-    const filled = {
-      Caddyfile: caddyfile.replaceAll("{$SITES}", server.site),
-      "server.env": `SERVER_ENVIRONMENT=${server.role}\nDIRECTORY_URL=${DIRECTORY_URL}\n`,
-    };
-    for (const [name, text] of Object.entries(filled)) writeFileSync(join(staging, name), text);
-    ssh("rm -rf /root/sloppy-tanks-provision && mkdir -p /root/sloppy-tanks-provision");
-    run("scp", [
-      ...SSH_OPTIONS,
-      ...files,
-      ...Object.keys(filled).map((name) => join(staging, name)),
-      `${server.ssh}:/root/sloppy-tanks-provision/`,
-    ]);
-  } finally {
-    rmSync(staging, { recursive: true, force: true });
-  }
-  ssh("bash /root/sloppy-tanks-provision/provision.sh");
 }
 
 /** Streams `docker save` here into `podman load` on the machine. */
@@ -231,16 +189,6 @@ async function runCommand() {
       console.log(`The dev server is live at ${server.url}`);
       break;
     }
-    case "provision": {
-      provision();
-      // A fresh machine has no pinned image; one that has keeps running it.
-      if (!succeeds("test -f /var/lib/sloppy-tanks/image")) ssh("sloppy-tanks-update pull");
-      const status = await waitForHealth((status) => !!status.contentVersion, "a /health report");
-      console.log(
-        `The ${server.role} server answers at ${health.origin}: ${JSON.stringify(status)}`,
-      );
-      break;
-    }
     case "update":
       ssh(`sloppy-tanks-update pull ${imageOption()}`);
       await printHealth();
@@ -253,12 +201,9 @@ async function runCommand() {
       await printHealth();
       break;
     case "auto-update":
-      // The marker keeps an operator's "off" through provisioning, which turns the timer
-      // on otherwise.
-      if (argument === "on")
-        ssh(`rm -f ${AUTO_UPDATE_OFF} && systemctl enable --now sloppy-tanks-update.timer`);
-      else if (argument === "off")
-        ssh(`touch ${AUTO_UPDATE_OFF} && systemctl disable --now sloppy-tanks-update.timer`);
+      // A machine created again starts with auto-update on (bootstrap.sh).
+      if (argument === "on") ssh("systemctl enable --now sloppy-tanks-update.timer");
+      else if (argument === "off") ssh("systemctl disable --now sloppy-tanks-update.timer");
       else if (argument === "resume") ssh("sloppy-tanks-update resume");
       else {
         console.error("Usage: pnpm run server:auto-update on|off|resume [--dev]");
@@ -291,7 +236,7 @@ async function runCommand() {
     }
     default:
       console.error(
-        "Usage: node scripts/server.mjs provision|publish|update|deploy|rollback|auto-update|status|logs|stats [--dev] [--ip ADDRESS]",
+        "Usage: node scripts/server.mjs publish|update|deploy|rollback|auto-update|status|logs|stats [--dev] [--ip ADDRESS]",
       );
       process.exit(1);
   }

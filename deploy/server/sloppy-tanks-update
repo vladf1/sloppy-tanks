@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Switches the machine's game server to a container image and keeps its pinned-image
-# state. provision.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
+# state. bootstrap.sh installs it as /usr/local/bin/sloppy-tanks-update; the server:*
 # scripts call it over SSH and sloppy-tanks-update.timer runs `auto`.
 #
 #   sloppy-tanks-update pull [REF]    pull REF (default the followed tag) and switch now
@@ -56,7 +56,7 @@ failing_file=$STATE/check-failing
 failed_file=$STATE/failed
 mkdir -p "$STATE"
 
-# The machine's environment (server.env, from the provider's user data or provisioning)
+# The machine's environment (server.env, which the provider's user data writes)
 # names the tag auto-update follows.
 environment=$(sed -n 's/^SERVER_ENVIRONMENT=//p' /etc/sloppy-tanks/server.env 2>/dev/null || true)
 if [[ $environment == dev ]]; then

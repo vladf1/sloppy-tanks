@@ -329,8 +329,8 @@ holds no server address. The directory is a Cloudflare Worker (`directory/`, pub
 `pnpm run directory:deploy`) that every game server pushes its rooms to; the page lists
 every server's rooms from it and connects to the server that hosts the chosen room, or for
 a new room the one with the fewest rooms. A machine pushes its rooms to the directory
-under its environment (production or dev), which `server:provision` writes into its unit
-as `DIRECTORY_URL` and `SERVER_ENVIRONMENT`; the build names the page's as
+under its environment (production or dev), which its startup script
+(`deploy/server/cloud-init/`) writes as `DIRECTORY_URL` and `SERVER_ENVIRONMENT`; the build names the page's as
 `VITE_SERVER_ENVIRONMENT`. The workflow does not deploy the server, but after the site deploys it
 points the server's container image tag `:production` at the commit's image; the dev
 site uses a separate server on its own machine (below). A

@@ -184,15 +184,14 @@ possibly from uncommitted files and their own toolchain, could reach `production
 
 ### On a machine
 
-`deploy/server/` holds the setup, which `bootstrap.sh` fetches at a new machine's first
-boot, or `server:provision` uploads with the machine's names written into the Caddyfile
-and its settings in `server.env`:
+`deploy/server/` holds a machine's setup, which reaches it only when the machine is
+created ([Machines](#machines)):
 
-- `provision.sh` installs Podman from Ubuntu's archive, the units and the updater,
-  turns off SSH password login and allows only SSH, 80 and 443 through `ufw`. It is
-  safe to run again: it validates the Caddyfile with the pinned Caddy before
-  replacing the live one, reloads Caddy in place (restarting it only for a new Caddy
-  image) and restarts the server only when its unit changed.
+- `bootstrap.sh` is the whole setup, run once by the startup script at first boot. It
+  fetches the other files below from the repository's `main`, writes the machine's
+  nip.io name into the Caddyfile, installs Podman from Ubuntu's archive, the units and
+  the updater, turns off SSH password login, allows only SSH, 80 and 443 through `ufw`
+  and starts the image the machine follows.
 - `sloppy-tanks.container` is the server's Quadlet unit in
   `/etc/containers/systemd/`, from which systemd generates `sloppy-tanks.service`.
   It runs the image on loopback port 8787 with a read-only root, no capabilities, no new privileges and a 700 MB memory cap without
@@ -205,8 +204,8 @@ and its settings in `server.env`:
   containers use host networking, so the server keeps its loopback listener behind
   Caddy, Caddy sees players' real addresses, and Podman publishes no ports around
   `ufw`. Caddy's config is `/etc/sloppy-tanks/caddy/Caddyfile`; its certificates
-  stay in `/var/lib/caddy/` across restarts and upgrades. To upgrade Caddy, change
-  the image in `caddy.container` and provision again.
+  stay in `/var/lib/caddy/` across restarts. To upgrade Caddy, change the image in
+  `caddy.container` and create the machines again.
 - `sloppy-tanks-update` (installed in `/usr/local/bin`) is the only thing that
   changes the pin. It pins the new image, restarts the service and waits up to 60
   seconds for `/health` to report the image's content version and server build
@@ -215,11 +214,11 @@ and its settings in `server.env`:
   the rest.
 - `sloppy-tanks-update.timer` is auto-update. It follows the tag of the machine's
   environment (`SERVER_ENVIRONMENT`): `:production` every two minutes, or `:dev` every
-  15 seconds (a drop-in provisioning writes on dev). A check reads
-  the tag's digest with two small requests (an anonymous token and the manifest's
-  headers) and pulls only when it has moved; one that cannot reach the registry changes
-  nothing, and the journal hears only when checks start failing or work again.
-  Provisioning turns it on unless `server:auto-update off` turned it off there.
+  15 seconds (a drop-in `bootstrap.sh` writes on dev). A check reads the tag's digest
+  with two small requests (an anonymous token and the manifest's headers) and pulls
+  only when it has moved; one that cannot reach the registry changes nothing, and the
+  journal hears only when checks start failing or work again. `bootstrap.sh` turns it
+  on; `server:auto-update off` turns it off until `on` or the machine is created again.
 
 ### Deploying
 
@@ -232,7 +231,6 @@ pnpm run server:rollback              # switch back to the previous image
 pnpm run server:auto-update on|off    # follow the environment's tag by itself (default), or not
 pnpm run server:auto-update resume    # lift a hold (below) so auto-update follows again
 pnpm run server:deploy                # SSH fallback: build here, copy the image, switch
-pnpm run server:provision             # set a machine up, or again after editing deploy/server/*
 ```
 
 Each acts on production's machine; `--dev` picks the dev site's.
@@ -293,25 +291,20 @@ To add a machine, deploy an Ubuntu x64 instance in Vultr with your SSH key and, 
 startup script (cloud-init user data), `deploy/server/cloud-init/production.yaml` or
 `dev.yaml`, saved once in Vultr's Startup Scripts. At first boot the user data writes
 `/etc/sloppy-tanks/server.env` (`SERVER_ENVIRONMENT`, `DIRECTORY_URL`) and runs
-`deploy/server/bootstrap.sh` from the repository's `main`. That serves the machine's own
-nip.io name, runs `provision.sh`, starts the image its environment follows (`:production`,
-or dev's latest publish on `:dev`), and the server appears in the directory under its
-environment within a few minutes, with no SSH from here; from then on `deploy:dev` and
-the other `server:*` commands reach it. A dev machine created before anything was
-published to `:dev` boots without a server and starts one within 15 seconds of the first
-publish. A changed `deploy/server/` file reaches a machine once it is on `main`: destroy
-the machine and create it again with the same startup script, or use Vultr's Reinstall,
-which keeps the address and runs the startup script again (`server:provision` does it
-over SSH). To retire a machine, destroy it: it leaves the directory 45 seconds after its
-server stops.
+`deploy/server/bootstrap.sh` from the repository's `main`, which sets the machine up and
+starts the image its environment follows (`:production`, or dev's latest publish on
+`:dev`). The server appears in the directory under its environment within a few minutes,
+once Caddy has its certificate, with no SSH from here; from then on `deploy:dev` and the
+other `server:*` commands reach it. A dev machine created before anything was published
+to `:dev` boots without a server and starts one within 15 seconds of the first publish.
 
-To set up a machine over SSH instead, create an Ubuntu 26.04 x64 VPS with a public
-IPv4 address and your SSH key for root and run `pnpm run server:provision --ip ADDRESS`
-(with `--dev` for the dev site). It installs everything, starts the image the machine
-follows, and waits until the server answers through Caddy at its nip.io name, which takes
-about a minute while Caddy obtains the certificate. The scripts trust a new machine's host key on first contact and
-refuse a changed one; after replacing a machine at the same address, remove the old key
-with `ssh-keygen -R <ip>`.
+Machines are never set up again in place: a changed `deploy/server/` file reaches a
+machine once it is on `main` and the machine is created again, by destroying it and
+deploying a new one with the same startup script, or by Vultr's Reinstall, which keeps
+the address. To retire a machine, destroy it: it leaves the directory 45 seconds after
+its server stops. The scripts trust a new machine's host key on first contact and refuse
+a changed one, so after a Reinstall, or a new machine at an old address, remove the old
+key with `ssh-keygen -R <ip>`.
 
 ## Monitoring
 
