@@ -13,6 +13,7 @@ use support::{ALLY, ENEMY, PLAYER, clear_arena, concrete, event_count, place_tan
 
 /// How far from a mine a tank stands to be inside its trigger radius.
 const IN_RANGE: f64 = 2.0;
+const _: () = assert!(IN_RANGE < MINE.trigger_radius);
 
 fn arena() -> Simulation {
     let mut s = Simulation::with_seed(123.0);
@@ -132,7 +133,6 @@ fn shooting_a_mine_chains_nearby_mines_once_and_credits_the_shooter() {
 
 #[test]
 fn mines_arm_after_delay_ignore_allies_and_preserve_original_owner() {
-    assert!(IN_RANGE < MINE.trigger_radius);
     let mut s = squad();
     // The layer sits on its mine with an ally parked beside it and an enemy beside it
     // too while it arms.
