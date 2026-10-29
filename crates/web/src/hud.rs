@@ -7,7 +7,7 @@
 //! `hud_json` copies nothing on the way to its text; [`Hud::into_owned`] keeps one between
 //! reads.
 
-use std::borrow::Cow;
+use std::borrow::{Borrow, Cow};
 use std::fmt;
 use std::sync::LazyLock;
 
@@ -22,7 +22,8 @@ use sloppy_core::sim::render_state::RenderTank;
 use sloppy_core::sim::simulation::SpeedTuning;
 use sloppy_core::sim::veterancy::{RANKS, REPAIR_DELAY, rank_index};
 use sloppy_core::sim::{
-    AmmoInventory, GameMode, Match, RenderState, Simulation, Tank, Team, VehicleKind, Weapon,
+    AmmoInventory, GameMode, Match, MatchPhase, RenderState, Simulation, Tank, Team, VehicleKind,
+    Weapon,
 };
 use sloppy_render::presentation::hud::{HealthColor, health_bar_state};
 
@@ -33,8 +34,10 @@ use crate::recap::RoundRecap;
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Hud<'a> {
-    #[serde(rename = "match")]
+    #[serde(rename = "match", serialize_with = "page_match")]
     pub match_state: Match,
+    /// The match clock, for pause's facts and an endless battle's score pill.
+    #[serde(skip)]
     pub elapsed: f64,
     pub game_mode: GameMode,
     pub endless_match: bool,
@@ -44,6 +47,8 @@ pub struct Hud<'a> {
     pub human_team: Team,
     pub score_limit: u32,
     pub team_names: [&'static str; 2],
+    /// The enemy tanks alive, for pause's facts.
+    #[serde(skip)]
     pub active_enemies: usize,
     pub speed_tuning: SpeedTuning,
     pub human: HudHuman,
@@ -144,7 +149,7 @@ pub fn simulation_hud<'a>(
 /// rest.
 #[derive(Clone, Debug, Serialize)]
 pub struct RoomHud<'a> {
-    #[serde(rename = "match")]
+    #[serde(rename = "match", serialize_with = "page_match")]
     pub match_state: &'a Match,
     pub human: HudHuman,
     pub scoreboard: Scoreboard<'a>,
@@ -163,6 +168,34 @@ pub fn room_hud<'a>(state: &'a RenderState, timers: &mut EffectTimers) -> Option
         scoreboard: Scoreboard::Rendered(&state.tanks),
         score_pill: ScorePill::room(&state.match_state),
     })
+}
+
+/// A match as the page reads it (`MatchState` in `src/game/engine-api.ts`): the engine
+/// words its clock, overtime and winner itself, in the score pill, the battle report and
+/// the room menu's title.
+#[derive(Clone, Copy, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PageMatch {
+    phase: MatchPhase,
+    scores: [u32; 2],
+    #[serde(skip_serializing_if = "Option::is_none")]
+    ended_early: Option<bool>,
+    round: u32,
+}
+
+impl From<&Match> for PageMatch {
+    fn from(state: &Match) -> Self {
+        PageMatch {
+            phase: state.phase,
+            scores: state.scores,
+            ended_early: state.ended_early,
+            round: state.round,
+        }
+    }
+}
+
+fn page_match<S: Serializer>(state: &impl Borrow<Match>, serializer: S) -> Result<S::Ok, S::Error> {
+    PageMatch::from(state.borrow()).serialize(serializer)
 }
 
 /// The ammo rack's slots for a `kind` of tank carrying `ammo`, with `equipped` selected.
@@ -209,11 +242,6 @@ pub fn human_json(tank: &RenderTank, elapsed: f64, timers: &mut EffectTimers) ->
         health_ratio: health.ratio,
         rank,
         rank_name: stats.name,
-        rank_damage: stats.damage,
-        rank_fire_rate: stats.fire_rate,
-        rank_health: stats.health,
-        rank_repair: stats.repair,
-        repair_delay: REPAIR_DELAY,
         ammo,
         mine_cooldown: tank.mine_cooldown,
         protection: tank.protection,
@@ -310,25 +338,30 @@ pub struct HudHuman {
     pub health_ratio: f64,
     pub rank: usize,
     pub rank_name: &'static str,
-    pub rank_damage: f64,
-    pub rank_fire_rate: f64,
-    pub rank_health: f64,
-    pub rank_repair: f64,
-    /// Seconds out of combat before a ranked hull repairs itself.
-    pub repair_delay: f64,
     /// One slot per entry of `AMMO_ORDER`.
     pub ammo: [HudAmmo; AMMO_ORDER.len()],
     pub mine_cooldown: f64,
+    // Seconds left on each timed effect, the shield's points and whether veteran
+    // self-repair runs: `effects` words them for the chips.
+    #[serde(skip)]
     pub protection: f64,
+    #[serde(skip)]
     pub shield: f64,
+    #[serde(skip)]
     pub shield_points: f64,
+    #[serde(skip)]
     pub rapid: f64,
+    #[serde(skip)]
     pub speed: f64,
+    #[serde(skip)]
     pub laser: f64,
+    #[serde(skip)]
+    pub self_repair: bool,
     pub respawn: f64,
     pub kills: u32,
+    /// For pause's facts.
+    #[serde(skip)]
     pub deaths: u32,
-    pub self_repair: bool,
     /// How the hull reads at a glance.
     pub hull_tone: HullTone,
     /// The tank panel's hull colour along its ramp ([`hull_ramp`]), sRGB hex.
@@ -354,8 +387,10 @@ pub struct HudScore<'a> {
     pub name: Cow<'a, str>,
     pub kills: u32,
     pub deaths: u32,
+    /// The team and tank the death report names and the boards rank by; the page reads
+    /// the reports.
+    #[serde(skip)]
     pub team: Team,
-    /// The tank the death report names; the page never shows it.
     #[serde(skip)]
     pub kind: VehicleKind,
 }
@@ -825,7 +860,6 @@ mod tests {
                 "name": tanks[0].name,
                 "kills": 12,
                 "deaths": 3,
-                "team": 1,
             })
         );
         let ids: Vec<_> = value
@@ -872,7 +906,6 @@ mod tests {
             serde_json::to_value(human_json(&tank, 0.0, &mut EffectTimers::default())).unwrap();
         assert_eq!(human["ammo"][2]["selected"], json!(true));
         assert_eq!(human["healthRatio"], json!(0.5));
-        assert_eq!(human["repairDelay"], json!(REPAIR_DELAY));
         assert_eq!(human["ammo"][2]["count"], json!(2.0));
         // A Humvee fires its TOW, which no ammo slot offers.
         assert_eq!(
@@ -898,7 +931,6 @@ mod tests {
                 .all(|slot| slot["selected"] == json!(false))
         );
         assert_eq!(human["ammo"][0]["count"], serde_json::Value::Null);
-        assert_eq!(human["selfRepair"], json!(false));
     }
 
     #[test]

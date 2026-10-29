@@ -144,7 +144,7 @@ try {
     const hud = structuredClone(fixture.base);
     Object.assign(hud.human, { alive: false, hp: 0, healthRatio: 0, respawn: 2.4 });
     const owner = Math.max(...hud.scoreboard.map((tank) => tank.id)) + 1;
-    hud.scoreboard.push({ id: owner, name: "Rival <b>literal</b>", team: 1, kills: 1, deaths: 0 });
+    hud.scoreboard.push({ id: owner, name: "Rival <b>literal</b>", kills: 1, deaths: 0 });
     fixture.announce(hud, {
       type: "death",
       damageAngle: Math.PI / 3,

@@ -14,27 +14,31 @@ use crate::hud::{EffectTimers, simulation_hud};
 
 /// The finished round as the results screen reports it: the human's statistics, the
 /// personal bests for this mode, map and difficulty, the feats the engine chose, and the
-/// battle report that words them.
+/// battle report that words them. The page reads the feats and the report.
 ///
-/// The page's recap was once a JSON value, whose object keys sort, so the fields and the
-/// metrics within `stats` and `best` serialize in the order of their names.
+/// The page's recap was once a JSON value, whose object keys sort, so its fields
+/// serialize in the order of their names.
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RoundRecap {
-    #[serde(serialize_with = "metric_values")]
+    #[serde(skip)]
     pub best: RecapStats,
+    #[serde(skip)]
     pub direct_hits: u32,
     #[serde(serialize_with = "feats")]
     pub feats: Vec<Feat>,
     /// The metrics this round improved, in `Metric::ALL` order.
-    #[serde(serialize_with = "metric_keys")]
+    #[serde(skip)]
     pub improved: Vec<Metric>,
     /// Whether the new bests were saved.
+    #[serde(skip)]
     pub persisted: bool,
+    #[serde(skip)]
     pub rank_names: Vec<&'static str>,
     pub report: BattleReport,
+    #[serde(skip)]
     pub shots: u32,
-    #[serde(serialize_with = "metric_values")]
+    #[serde(skip)]
     pub stats: RecapStats,
 }
 
@@ -70,21 +74,6 @@ pub fn round_recap(sim: &Simulation, storage: &mut impl RecordStorage, shell: Sh
     );
     recap.report = battle_report(&hud, &recap, shell);
     recap
-}
-
-/// Each metric by its key, the keys in alphabetical order.
-fn metric_values<S: Serializer>(values: &RecapStats, serializer: S) -> Result<S::Ok, S::Error> {
-    let mut metrics = Metric::ALL;
-    metrics.sort_by_key(|metric| metric.key());
-    serializer.collect_map(
-        metrics
-            .iter()
-            .map(|&metric| (metric.key(), values.get(metric))),
-    )
-}
-
-fn metric_keys<S: Serializer>(metrics: &[Metric], serializer: S) -> Result<S::Ok, S::Error> {
-    serializer.collect_seq(metrics.iter().map(|metric| metric.key()))
 }
 
 /// A feat with its keys in alphabetical order.

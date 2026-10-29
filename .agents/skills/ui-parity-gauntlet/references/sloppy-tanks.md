@@ -100,7 +100,8 @@ Known comparison traps:
 - Match player names, host roles, ready controls and room compatibility. Native test
   builds use a `test-content` sentinel; translate only that compatibility sentinel
   to the captured build's content version, preserving incompatible/full-room cases.
-- Stats rates need the same prior sample, not only the same latest counters.
+- Stats for nerds fixtures carry the page's own rows (`nerd_rows` for `Shell::Page`),
+  written from the readings and rates the native panel shows.
 - Set room results before applying the final lobby when the production renderer
   computes its heading during `lobby()`. Supply death cause for room respawn.
 - First person uses a null viewer point for edge damage feedback and an active eye
