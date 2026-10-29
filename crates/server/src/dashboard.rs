@@ -109,8 +109,6 @@ impl Dashboard {
                 "serverBuild": SERVER_BUILD,
                 "release": self.build.release,
                 "commit": self.build.commit,
-                // The crate version never changes; `release` is the version that does.
-                "runtime": "Rust server",
                 "environment": process_stats::environment(),
                 "startedAtMs": monitor.started_ms(),
                 "maxRooms": self.max_rooms,

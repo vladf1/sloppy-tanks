@@ -120,8 +120,8 @@
         border-radius: 50%;
         background: var(--muted);
       }
-      .status[data-state="live"]::before {
-        background: var(--good);
+      .status[hidden] {
+        display: none;
       }
       .status[data-state="waiting"]::before {
         background: var(--warning);
@@ -1086,7 +1086,6 @@
           server.commit ? `commit ${server.commit}` : null,
           `content ${server.contentVersion}`,
           `protocol ${server.protocolVersion}`,
-          server.runtime,
           server.environment,
           `updated ${clock(reading.atMs)}`,
           `up ${span((reading.atMs - server.startedAtMs) / 1000)}`,
@@ -1096,9 +1095,11 @@
         document.title = `${reading.players} players · Sloppy Tanks server`;
       }
 
+      // The pill shows only while the stream is not live.
       function setStatus(kind, text) {
         $("status").dataset.state = kind;
         $("status").textContent = text;
+        $("status").hidden = kind === "live";
       }
       let source = null,
         retry = null;
@@ -1113,7 +1114,7 @@
           state.events = hello.events;
           state.latest = hello.reading ?? null;
           state.receivedMs = Date.now();
-          setStatus("live", "Live");
+          setStatus("live", "");
           renderEvents();
           render();
         });
@@ -1133,7 +1134,7 @@
             renderEvents();
           }
           state.receivedMs = Date.now();
-          setStatus("live", "Live");
+          setStatus("live", "");
           render();
         });
         source.addEventListener("error", () => {
