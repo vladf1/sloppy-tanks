@@ -314,7 +314,7 @@ Worker (`directory/`, published with `pnpm run directory:deploy`) that every gam
 pushes its rooms to; the page lists every server's rooms from it and connects to the
 server that hosts the chosen room, or for a new room the one with the fewest rooms. A
 machine pushes its rooms to the directory under its environment (production or dev),
-which `server:provision` writes into its unit as `DIRECTORY_URL` and
+which its startup script (`deploy/server/cloud-init/`) writes as `DIRECTORY_URL` and
 `SERVER_ENVIRONMENT`; the shell lists the environment its build names in
 `SLOPPY_SERVER_ENVIRONMENT`: production's, and `dev` for the dev site (`build:dev`). The workflow does not deploy the server, but after the site deploys it
 points the server's container image tag `:production` at the commit's image; the dev
@@ -350,14 +350,17 @@ Brotli compression.
 `pnpm run deploy:dev` runs the normal checks, builds the current local checkout
 (including uncommitted changes), and publishes it to the separate `sloppy-tanks-dev`
 Cloudflare Worker. Run `pnpm exec wrangler login` first (or provide an API token that
-can deploy Workers and their custom domains). The Worker's account, name and domain
-come from `deploy/dev-site/wrangler.jsonc`, independent of the local Git branch. No Git
-commit or push is required. `pnpm run build:dev` builds without publishing.
-The dev multiplayer servers list themselves in the directory under the dev environment.
-They run on their own machines, each at its nip.io name (`wss://1-2-3-4.nip.io`,
-dashboard at `/dashboard`). `deploy:dev` redeploys those servers from the same checkout
-first (over SSH) so client and server versions match; production multiplayer is never
-affected.
+can deploy Workers and their custom domains), and log Docker in to ghcr.io once with a
+token that can write packages (`crates/server/README.md` shows how with `gh`). The
+Worker's account, name and domain come from `deploy/dev-site/wrangler.jsonc`,
+independent of the local Git branch. No Git commit or push is required.
+`pnpm run build:dev` builds without publishing.
+The dev build connects the **Multiplayer** tab to the dev servers, which list themselves in
+the directory under the dev environment. They run on their own machines, each at its nip.io
+name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` first pushes
+the same checkout's server image as its `:dev` tag, which those servers check every 10
+seconds and switch to by themselves, and waits for them, so client and server versions
+match; production multiplayer is never affected.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.

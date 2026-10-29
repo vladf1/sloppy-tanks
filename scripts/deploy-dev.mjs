@@ -15,9 +15,9 @@ const info = JSON.parse(
 
 // Clients and the server reject each other unless both were built from the same
 // game/network sources, so publish the dev server from this checkout first. It runs on
-// its own machine, so this never touches production's. The deploy waits until the dev
-// server reports this checkout's content version.
-run("node", ["scripts/server.mjs", "deploy", "--dev"]);
+// its own machines, which follow the server image's :dev tag, so this never touches
+// production's. The publish waits until every dev server reports this checkout's build.
+run("node", ["scripts/server.mjs", "publish", "--dev"]);
 
 const build = `${info.commit}${info.dirty ? ", local changes" : ""}`;
 console.log(`Publishing dev build ${info.builtAt} (${build})`);
