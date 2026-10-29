@@ -4,11 +4,15 @@
 
 use crate::support;
 
+use sloppy_core::sim::combat_rules::MINE;
 use sloppy_core::sim::data::STEP;
 use sloppy_core::sim::physics::vector;
 use sloppy_core::sim::weapons::{place_mine, step_mines, step_projectiles};
 use sloppy_core::sim::{Mine, Shot, SimEventType, Simulation, Team, VehicleKind};
-use support::{clear_arena, concrete, event_count, place_tank};
+use support::{ALLY, ENEMY, PLAYER, clear_arena, concrete, event_count, place_tank, squad};
+
+/// How far from a mine a tank stands to be inside its trigger radius.
+const IN_RANGE: f64 = 2.0;
 
 fn arena() -> Simulation {
     let mut s = Simulation::with_seed(123.0);
@@ -128,17 +132,37 @@ fn shooting_a_mine_chains_nearby_mines_once_and_credits_the_shooter() {
 
 #[test]
 fn mines_arm_after_delay_ignore_allies_and_preserve_original_owner() {
-    let mut s = duel(0.0, 1.0);
-    s.tanks[1].hp = 40.0;
-    place_mine(&mut s, 0);
+    assert!(IN_RANGE < MINE.trigger_radius);
+    let mut s = squad();
+    // The layer sits on its mine with an ally parked beside it and an enemy beside it
+    // too while it arms.
+    place_tank(&mut s, ALLY, IN_RANGE, 0.0, None);
+    place_tank(&mut s, ENEMY, -IN_RANGE, 0.0, None);
+    let (layer_hp, ally_hp) = (s.tanks[PLAYER].hp, s.tanks[ALLY].hp);
+    place_mine(&mut s, PLAYER);
     assert_eq!(s.mines.len(), 1);
     step_mines(&mut s, 0.5);
-    assert!(s.tanks[1].alive);
-    assert_eq!(s.mines.len(), 1);
+    assert_eq!(s.mines.len(), 1, "an arming mine waits out the enemy");
+    // The enemy backs off; the armed mine has only its layer and an ally in range.
+    place_tank(&mut s, ENEMY, 0.0, 14.0, None);
     step_mines(&mut s, 0.4);
+    assert_eq!(s.mines.len(), 1, "an armed mine ignores its own team");
+    assert!(s.mines[0].arm <= 0.0, "the mine is armed");
+    assert_eq!(s.tanks[PLAYER].hp, layer_hp);
+    assert_eq!(s.tanks[ALLY].hp, ally_hp);
+    // The layer drives off, and the enemy coming back sets the mine off: the layer's kill.
+    place_tank(&mut s, PLAYER, 0.0, -14.0, None);
+    s.tanks[ENEMY].hp = 40.0;
+    place_tank(&mut s, ENEMY, -IN_RANGE, 0.0, None);
+    step_mines(&mut s, STEP);
     assert_eq!(s.mines.len(), 0);
-    assert!(!s.tanks[1].alive);
-    assert_eq!(s.match_state.scores[0], 1);
+    assert!(!s.tanks[ENEMY].alive);
+    assert!(s.tanks[ALLY].alive, "the blast spares the ally");
+    assert_eq!(s.tanks[ALLY].hp, ally_hp);
+    let team = s.tanks[PLAYER].team;
+    assert_eq!(s.match_state.scores[team.index()], 1);
+    assert_eq!(s.match_state.scores[team.opponent().index()], 0);
+    assert_eq!(s.tanks[PLAYER].kills, 1, "the layer is credited");
 }
 
 #[test]

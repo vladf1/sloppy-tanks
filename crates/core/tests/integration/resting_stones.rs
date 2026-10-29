@@ -20,6 +20,11 @@ const CLEARANCE: f64 = 0.04;
 const CELL: f64 = 2.0;
 /// The piece of every triangle that is not a stone's.
 const SURFACE: usize = usize::MAX;
+/// At least this many loose stones are checked (about 4,150 sandstone pieces in the
+/// quarry; 212 of the 220 creek-bank stones, the rest being boulders), so a renamed
+/// effect or group, or reshaped stones, cannot leave a check with nothing to examine.
+const QUARRY_STONES: usize = 4000;
+const BANK_STONES: usize = 200;
 
 /// One connected piece of a mesh (triangles sharing corners), in world space.
 struct Piece {
@@ -180,10 +185,12 @@ impl World {
             .collect()
     }
 
-    /// Loose stones whose underside stands clear of every surface under it, with
-    /// that clearance; a stone wholly under a surface (buried) is not hanging.
-    /// Only pieces of `triangles` triangles count as stones, when given.
-    fn hanging(&self, triangles: Option<usize>) -> Vec<(DVec3, f64)> {
+    /// How many loose stones there are, and those whose underside stands clear of
+    /// every surface under it, with that clearance; a stone wholly under a surface
+    /// (buried) is not hanging. Only pieces of `triangles` triangles count as
+    /// stones, when given.
+    fn hanging(&self, triangles: Option<usize>) -> (usize, Vec<(DVec3, f64)>) {
+        let mut stones = 0;
         let mut hanging = Vec::new();
         for (i, piece) in self.pieces.iter().enumerate() {
             let size = piece.hi - piece.lo;
@@ -193,6 +200,7 @@ impl World {
             {
                 continue;
             }
+            stones += 1;
             let centre = (piece.lo + piece.hi) / 2.0;
             let mut clearance = f64::INFINITY;
             let mut buried = false;
@@ -213,7 +221,7 @@ impl World {
                 hanging.push((piece.lo, clearance));
             }
         }
-        hanging
+        (stones, hanging)
     }
 }
 
@@ -260,7 +268,11 @@ fn quarry_sandstone_stones_rest_on_the_ground_rock_or_heap_under_them() {
             |d| matches!(&d.material.effect, Effect::Custom { name, .. } if *name == SANDSTONE),
         )
     });
-    let hanging = world.hanging(None);
+    let (stones, hanging) = world.hanging(None);
+    assert!(
+        stones >= QUARRY_STONES,
+        "only {stones} loose sandstone pieces found to check"
+    );
     assert!(
         hanging.is_empty(),
         "{} stones hang in the air: {hanging:?}",
@@ -274,7 +286,11 @@ fn village_creek_bank_stones_rest_on_the_drawn_terrain() {
     let world = scenery(MapTheme::Village, |_, path| {
         path.contains("pine-valley-landscape")
     });
-    let hanging = world.hanging(Some(20));
+    let (stones, hanging) = world.hanging(Some(20));
+    assert!(
+        stones >= BANK_STONES,
+        "only {stones} creek-bank stones found to check"
+    );
     assert!(
         hanging.is_empty(),
         "{} stones hang in the air: {hanging:?}",

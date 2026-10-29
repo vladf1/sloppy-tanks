@@ -6,17 +6,22 @@ use crate::support;
 
 use glam::DVec3;
 use sloppy_core::sim::arena::CoverDef;
-use sloppy_core::sim::data::{STEP, group};
+use sloppy_core::sim::data::{STEP, group, weapon};
 use sloppy_core::sim::house_layout::{
     HOUSE_HEALTH, HOUSE_HEAP, HouseDesign, HousePart, HousePiece, is_house_heap,
 };
 
 use sloppy_core::sim::math::{Random, Vec2};
-use sloppy_core::sim::{CoverKind, DamageCause, FragmentShape, SimEventType, Simulation, Team};
+use sloppy_core::sim::{
+    CoverKind, DamageCause, FragmentShape, SimEventType, Simulation, Team, Weapon,
+};
 use support::{clear_arena, collider_groups, event_count, idle};
 
 /// A standard shell's damage.
-const SHELL: f64 = 40.0;
+const SHELL: f64 = weapon(Weapon::Standard).damage;
+/// Standard shells it takes to level a cottage: a deliberate effort, not the work of
+/// stray fire, and the reason bots drive round cottages rather than breach them.
+const COTTAGE_SHELLS: usize = 15;
 
 fn village() -> Simulation {
     let mut s = Simulation::with_seed(2024.0);
@@ -69,8 +74,7 @@ fn every_village_cottage_takes_fifteen_shells_and_keeps_their_marks() {
         assert_eq!(s.covers[house].max_hp, HOUSE_HEALTH);
     }
     let house = all[0];
-    let shells = (HOUSE_HEALTH / SHELL).ceil() as usize;
-    for i in 1..shells {
+    for i in 1..COTTAGE_SHELLS {
         shell(&mut s, house);
         assert!(s.covers[house].alive, "standing after {i} shells");
     }
@@ -80,8 +84,7 @@ fn every_village_cottage_takes_fifteen_shells_and_keeps_their_marks() {
         "it keeps the marks of the first shells to hit it"
     );
     shell(&mut s, house);
-    assert!(!s.covers[house].alive, "down after {shells} shells");
-    assert!(shells >= 10, "levelling a cottage is a deliberate effort");
+    assert!(!s.covers[house].alive, "down after {COTTAGE_SHELLS} shells");
 }
 
 /// An empty arena with one cottage where the village's first one stands.
