@@ -14,11 +14,10 @@ use super::theme::{self, GOLD, GOLD_HOT, bold_font, display_font};
 use super::{Action, DAMAGE_RING_SECONDS, HIT_FLASH_SECONDS, ToastTone, UiState, View};
 use sloppy_core::sim::{GameMode, MatchPhase, Team};
 use sloppy_web::catalog::AMMO_OPTIONS;
+use sloppy_web::feedback::CRITICAL_HULL;
 use sloppy_web::feedback::cause_icon;
 use sloppy_web::hud::{EffectKind, Hud, HudHuman, HullTone};
 
-/// Below this share of its hull the tank's HUD warns.
-const CRITICAL_HEALTH: f64 = 0.25;
 /// The screen edge the HUD keeps clear.
 const EDGE: f32 = 16.0;
 
@@ -45,7 +44,7 @@ pub fn hud(
     let painter = backdrop(context);
     let time = context.input(|input| input.time);
     let human = &hud.human;
-    let critical = playing && human.alive && human.health_ratio < CRITICAL_HEALTH;
+    let critical = playing && human.alive && human.health_ratio < CRITICAL_HULL;
     if critical {
         // A slow red pulse at the screen's edges while the hull is critical.
         let beat = ((time / 1.6 * std::f64::consts::TAU).cos() * 0.5 + 0.5) as f32;
@@ -484,11 +483,7 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, state: &UiState) {
     let width = 336.0_f32.min(screen.width() * 0.42);
     let row_height = 30.0;
     let right = screen.right() - EDGE;
-    let lines = if state.cockpit {
-        2
-    } else {
-        super::KILL_FEED_LINES
-    };
+    let lines = if state.cockpit { 2 } else { super::FEED_LINES };
     for (index, entry) in state.kill_feed.iter().take(lines).enumerate() {
         let top = screen.top() + 74.0 + index as f32 * (row_height + 4.0);
         let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, row_height));
@@ -841,7 +836,7 @@ fn hull_status(
     playing: bool,
     time: f64,
 ) {
-    let critical = playing && human.alive && human.health_ratio < CRITICAL_HEALTH;
+    let critical = playing && human.alive && human.health_ratio < CRITICAL_HULL;
     if critical {
         let beat = (0.5 - 0.5 * (time / 1.6 * std::f64::consts::TAU).cos()) as f32;
         painter.rect_filled(

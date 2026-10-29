@@ -8,6 +8,7 @@
 
 use serde_json::{Value, json};
 use sloppy_core::net::client::{MAX_BUFFERED_BYTES, POLL_MS};
+use sloppy_core::net::multiplayer_simulation::TEAM_SLOTS;
 use sloppy_core::net::protocol::{
     DEFAULT_ROUND_MINUTES, DIFFICULTIES, MAP_MODES, MAX_PLAYER_NAME_LENGTH, MAX_ROUND_MINUTES,
     PHASES, PLAYER_KINDS, ROOM_CODE_ALPHABET, ROOM_CODE_LENGTH, is_room_code,
@@ -16,9 +17,19 @@ use sloppy_core::net::room_list::{HostedRoom, MAX_LISTED_ROOMS, MAX_LISTED_SERVE
 use sloppy_core::sim::MatchPhase;
 use sloppy_core::sim::bot_personalities::BOT_NAMES;
 use sloppy_core::sim::data::TEAM_NAMES;
-use sloppy_render::presentation::input::{ZOOM_STEP, slot};
+use sloppy_core::sim::speed_tuning::{MAX_SPEED_SCALE, MIN_SPEED_SCALE};
+use sloppy_render::presentation::input::{
+    STICK_ANCHOR_SHIFT, STICK_DEAD_ZONE, STICK_RADIUS, ZOOM_STEP, slot, stick_push,
+};
 
-use crate::catalog::{AMMO_OPTIONS, BATTLE_FORMATS, DIFFICULTY_OPTIONS, MAP_CARDS, TANK_CARDS};
+use crate::catalog::{
+    AMMO_OPTIONS, BATTLE_FORMATS, ControlLine, DEFAULT_VOLUME, DIFFICULTY_OPTIONS, KEY_STRIP,
+    KEYBOARD_CONTROLS, MAP_CARDS, SLIDER_STEP, TANK_CARDS, TOUCH_CONTROLS, TOUCH_STRIP,
+};
+use crate::feedback::{
+    AMMO_NOTICE_SECONDS, CRITICAL_HULL, DAMAGE_RING_SECONDS, FEED_LINES, FEED_SECONDS,
+    HIT_FLASH_SECONDS, PICKUP_TOAST_SECONDS, TOAST_SECONDS,
+};
 use crate::frame_slot::{self, phase_code};
 use crate::net_frame_slot;
 
@@ -53,11 +64,70 @@ fn catalog() -> Value {
         "netFrameSlots": net_frame_slots(),
         "phases": phases(),
         "zoomStep": ZOOM_STEP,
+        "touchStick": touch_stick(),
+        "hudFeedback": {
+            "feedLines": FEED_LINES,
+            "feedSeconds": FEED_SECONDS,
+            "hitFlashSeconds": HIT_FLASH_SECONDS,
+            "damageRingSeconds": DAMAGE_RING_SECONDS,
+            "ammoNoticeSeconds": AMMO_NOTICE_SECONDS,
+            "pickupToastSeconds": PICKUP_TOAST_SECONDS,
+            "toastSeconds": TOAST_SECONDS,
+            "criticalHull": CRITICAL_HULL,
+        },
+        "nerdStatsRefreshMs": crate::nerd_rows::REFRESH_MS,
+        "settings": {
+            "defaultVolume": DEFAULT_VOLUME,
+            "sliderStep": SLIDER_STEP,
+            "speedRange": [MIN_SPEED_SCALE, MAX_SPEED_SCALE],
+        },
+        "teamSlots": TEAM_SLOTS,
+        "controls": {
+            "keyboard": KEYBOARD_CONTROLS.map(control_line),
+            "touch": TOUCH_CONTROLS.map(control_line),
+            "keyStrip": KEY_STRIP.map(key_hint),
+            "touchStrip": TOUCH_STRIP.map(key_hint),
+        },
         "roomConnection": {
             "pollMs": POLL_MS,
             "maxBufferedBytes": MAX_BUFFERED_BYTES,
         },
     })
+}
+
+/// The drive stick's sizes and a few pushes through its dead zone, `[x, y, moveX,
+/// moveZ]` in stick radii: the page's `TouchInput.moveStick` must give the same.
+fn touch_stick() -> Value {
+    let pushes = [
+        (0.05, 0.0),
+        (0.5, 0.0),
+        (0.0, -0.3),
+        (0.6, -0.8),
+        (3.0, 4.0),
+    ]
+    .map(|(x, y)| {
+        let (move_x, move_z) = stick_push(x, y);
+        json!([x, y, move_x, move_z])
+    });
+    json!({
+        "radius": STICK_RADIUS,
+        "anchorShift": STICK_ANCHOR_SHIFT,
+        "deadZone": STICK_DEAD_ZONE,
+        "pushes": pushes,
+    })
+}
+
+/// A controls list's line as the page's `ControlLine` writes it: no note when none.
+fn control_line(line: ControlLine) -> Value {
+    if line.note.is_empty() {
+        json!({ "action": line.action, "keys": line.keys })
+    } else {
+        json!({ "action": line.action, "keys": line.keys, "note": line.note })
+    }
+}
+
+fn key_hint((keys, label): (&[&str], &str)) -> Value {
+    json!({ "keys": keys, "label": label })
 }
 
 /// The map cards in the shape of the page's `MAP_OPTIONS`, which names `extra` and

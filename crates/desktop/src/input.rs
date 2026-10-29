@@ -3,16 +3,12 @@
 //! choice, a wheel step) queue until [`Controls::take_input`] hands them to the engine,
 //! which applies them on its next simulation tick.
 
-use sloppy_render::presentation::input::{InputFrame, ZOOM_STEP};
+use sloppy_render::presentation::input::{InputFrame, STICK_RADIUS, ZOOM_STEP, stick_push};
 use winit::event::{ElementState, MouseButton, MouseScrollDelta};
 use winit::keyboard::KeyCode;
 
 /// Ammunition slots, keys 1-5 (`AMMO_ORDER`).
 const AMMO_SLOTS: u8 = 5;
-/// Points from the drive stick's origin to a full push (`STICK_RADIUS`).
-pub const STICK_RADIUS: f32 = 58.0;
-/// The share of a full push that drives nothing, so a resting thumb stays put.
-const STICK_DEADZONE: f64 = 0.12;
 
 /// The fingers that drive and fire (`TouchInput`): the drive stick's finger and its
 /// push, and the finger on the arena, which aims there and fires while it is down.
@@ -102,16 +98,7 @@ impl Controls {
         let x = (at.0 - origin.0) / STICK_RADIUS;
         let y = (at.1 - origin.1) / STICK_RADIUS;
         self.touch.knob = (x, y);
-        let distance = f64::from(x.hypot(y));
-        let speed = ((distance.min(1.0) - STICK_DEADZONE) / (1.0 - STICK_DEADZONE)).max(0.0);
-        self.touch.push = if distance > 0.0 {
-            (
-                f64::from(x) / distance * speed,
-                f64::from(y) / distance * speed,
-            )
-        } else {
-            (0.0, 0.0)
-        };
+        self.touch.push = stick_push(f64::from(x), f64::from(y));
     }
 
     /// A finger landed on the open arena at `at` on a screen of `size` (points): the

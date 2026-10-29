@@ -1,9 +1,7 @@
 import "../touch-controls.css";
 import { bindPress } from "./button-input";
-import type { Controls } from "./controls";
-
-const STICK_RADIUS = 58;
-const ANCHOR_SHIFT = 22;
+import { type Controls, ZOOM_STEP } from "./controls";
+import { STICK_ANCHOR_SHIFT, STICK_RADIUS } from "./touch-input";
 
 /** One overlay for the game lifetime; round resets only clear pointer state. */
 export class TouchControls {
@@ -62,8 +60,8 @@ export class TouchControls {
         "afterbegin",
         `<button type="button" class="quiet touch-zoom" id="zoom-out" aria-label="Zoom out">−</button><button type="button" class="quiet touch-zoom" id="zoom-in" aria-label="Zoom in">+</button>`,
       );
-    bindPress(root.querySelector("#zoom-out")!, () => zoom(2));
-    bindPress(root.querySelector("#zoom-in")!, () => zoom(-2));
+    bindPress(root.querySelector("#zoom-out")!, () => zoom(ZOOM_STEP));
+    bindPress(root.querySelector("#zoom-in")!, () => zoom(-ZOOM_STEP));
   }
 
   private readonly resized = () => this.controls.clear();
@@ -122,8 +120,14 @@ export class TouchControls {
       const rect = element.getBoundingClientRect();
       const centerX = rect.left + rect.width / 2;
       const centerY = rect.top + rect.height / 2;
-      const dx = Math.max(-ANCHOR_SHIFT, Math.min(ANCHOR_SHIFT, event.clientX - centerX));
-      const dy = Math.max(-ANCHOR_SHIFT, Math.min(ANCHOR_SHIFT, event.clientY - centerY));
+      const dx = Math.max(
+        -STICK_ANCHOR_SHIFT,
+        Math.min(STICK_ANCHOR_SHIFT, event.clientX - centerX),
+      );
+      const dy = Math.max(
+        -STICK_ANCHOR_SHIFT,
+        Math.min(STICK_ANCHOR_SHIFT, event.clientY - centerY),
+      );
       this.origin = { x: centerX + dx, y: centerY + dy };
       base.style.transform = `translate(${dx}px, ${dy}px)`;
       element.setPointerCapture(event.pointerId);

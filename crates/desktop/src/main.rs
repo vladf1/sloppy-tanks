@@ -24,6 +24,7 @@ mod sockets;
 mod surface_layers;
 mod touch;
 mod ui;
+mod window_input;
 
 /// The iPad plays by touch (a hardware keyboard too), with no pointer lock, window
 /// size or Quit; Macs and PCs play with keyboard and mouse.

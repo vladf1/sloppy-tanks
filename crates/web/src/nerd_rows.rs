@@ -24,6 +24,10 @@ use sloppy_core::net::own_shots;
 use crate::Shell;
 use crate::battle_report::thousands;
 
+/// The open panel refreshes this often, in milliseconds, whatever the frame rate
+/// (`REFRESH_MS` in `nerd-stats.ts`).
+pub const REFRESH_MS: f64 = 500.0;
+
 /// One row: what it counts, its value and what it means.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct StatsRow {

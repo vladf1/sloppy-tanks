@@ -14,6 +14,23 @@ use sloppy_core::sim::{DamageCause, SimEvent, SimEventType, Team};
 use crate::battle_report::ordinal;
 use crate::hud::Scoreboard;
 
+// How much HUD feedback shows and for how many seconds, the same in both shells. The
+// page keeps copies (`src/game/hud-feedback.ts`), pinned by the page catalog.
+/// The kill feed shows this many of its newest lines, each this long.
+pub const FEED_LINES: usize = 3;
+pub const FEED_SECONDS: f64 = 5.0;
+/// The hit flash at the screen's rim fades over this long, and the damage ring round
+/// the viewer's tank shows this long.
+pub const HIT_FLASH_SECONDS: f64 = 0.6;
+pub const DAMAGE_RING_SECONDS: f64 = 1.2;
+/// An ammunition notice shows above the tank panel this long.
+pub const AMMO_NOTICE_SECONDS: f64 = 3.0;
+/// A pickup's toast shows this long, and a promotion's or the viewer's death's.
+pub const PICKUP_TOAST_SECONDS: f64 = 1.5;
+pub const TOAST_SECONDS: f64 = 2.0;
+/// Below this share of its hull the tank's HUD warns.
+pub const CRITICAL_HULL: f64 = 0.25;
+
 /// The kill feed's name for the viewer, and for ordnance nobody owns (the yard's drums,
 /// or a player who has left).
 pub const VIEWER_NAME: &str = "YOU";

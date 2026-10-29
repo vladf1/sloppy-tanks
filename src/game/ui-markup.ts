@@ -69,8 +69,10 @@ interface ControlLine {
   note?: string;
 }
 
+// The controls lists the desktop app shows too (`crates/web/src/catalog.rs`), pinned by
+// `tests/page-catalog.test.ts`.
 /** Keyboard and mouse, as the pause menu and the room menu list them. */
-const KEYBOARD_CONTROLS: ControlLine[] = [
+export const KEYBOARD_CONTROLS: ControlLine[] = [
   { action: "Drive", keys: ["W", "A", "S", "D"] },
   { action: "Aim", keys: ["Mouse"] },
   { action: "Fire", keys: ["Left click"], note: "hold" },
@@ -82,7 +84,7 @@ const KEYBOARD_CONTROLS: ControlLine[] = [
 ];
 
 /** The same moves on a touchscreen. */
-const TOUCH_CONTROLS: ControlLine[] = [
+export const TOUCH_CONTROLS: ControlLine[] = [
   { action: "Drive", keys: ["Left stick"] },
   { action: "Aim and fire", keys: ["Touch the arena"] },
   { action: "Drop mine", keys: ["Mine button"] },

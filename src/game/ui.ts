@@ -4,14 +4,20 @@ import { bindGameOptions, syncGameOptions, type GameOptions } from "./game-optio
 import { bindPlayModes, initialPlayMode } from "./play-modes";
 import type { DeathReport, EngineEvent, HudState, PauseReport } from "./engine-api";
 import {
+  AMMO_NOTICE_TIME,
+  CRITICAL_HEALTH,
+  DAMAGE_RING_TIME,
   type FeedRow,
+  HURT_FLASH_TIME,
   newFeedRow,
+  PICKUP_TOAST_TIME,
   placeDamageRing,
   setText,
   showDamageRing,
   showFeed,
   showTankStatus,
   type ScreenPoint,
+  TOAST_TIME,
 } from "./hud-feedback";
 import { hudIcon, hudMarkup, menuMarkup, respawnMarkup, wreckedByMarkup } from "./ui-markup";
 import { fitPanels } from "./panel-fit";
@@ -19,13 +25,6 @@ import { isPhone } from "./phone-mode";
 import { bindDialogTabs, SettingsDialog } from "./settings-dialog";
 /** The in-game battle setup's status once its arena is prepared. */
 export const MENU_READY_STATUS = "Arena ready";
-/** Seconds the red screen-edge flash fades over after the player's hull is hit. */
-const HURT_FLASH_TIME = 0.6;
-/** Seconds a pickup's toast shows, and a promotion's or the player's death's. */
-const PICKUP_TOAST_TIME = 1.5;
-const TOAST_TIME = 2;
-/** Below this share of its hull the tank's HUD warns, like the status panel's pulse. */
-const CRITICAL_HEALTH = 0.25;
 
 export interface UIActions {
   start(): void;
@@ -322,13 +321,13 @@ export class UI {
       }
       if (event.type === "notice" && state.human.alive) {
         this.hud.querySelector("#ammo-notice")!.textContent = event.label ?? "";
-        this.ammoNoticeTime = 3;
+        this.ammoNoticeTime = AMMO_NOTICE_TIME;
       }
       if (event.type === "hurt" || event.type === "death") {
         const indicator = this.hud.querySelector<HTMLElement>("#damage-direction")!;
         if (event.damageAngle !== null) {
           showDamageRing(indicator, event.damageAngle, this.viewerPoint());
-          this.damageTime = 1.2;
+          this.damageTime = DAMAGE_RING_TIME;
         }
       }
       if (event.deathReport) {

@@ -9,8 +9,8 @@ use egui::{
 
 use sloppy_core::sim::{GameMode, Team, VehicleKind};
 use sloppy_web::catalog::{
-    BATTLE_FORMATS, BattleFormat, DIFFICULTY_OPTIONS, DifficultyOption, MAP_CARDS, MapCard,
-    TANK_CARDS, TankCard,
+    BATTLE_FORMATS, BattleFormat, DIFFICULTY_OPTIONS, DifficultyOption, KEY_STRIP, MAP_CARDS,
+    MapCard, TANK_CARDS, TOUCH_STRIP, TankCard,
 };
 
 use super::icons::Art;
@@ -20,24 +20,6 @@ use super::{Action, UiState, View};
 
 /// How far an unavailable battle format fades (`.choice-card:has(input:disabled)`).
 const UNAVAILABLE_OPACITY: f32 = 0.45;
-
-/// The essentials on one line under the dialog; the pause menu lists every control.
-const KEY_HINTS: &[(&[&str], &str)] = &[
-    (&["W", "A", "S", "D"], "Drive"),
-    (&["Mouse"], "Aim"),
-    (&["Left click"], "Fire"),
-    (&["Right click"], "Mine"),
-    (&["Q", "E"], "Ammo"),
-    (&["Esc"], "All controls"),
-];
-
-/// The same line on a touch screen.
-const TOUCH_HINTS: &[(&[&str], &str)] = &[
-    (&["Left stick"], "Drive"),
-    (&["Touch the arena"], "Aim & fire"),
-    (&["Mine button"], "Mine"),
-    (&["Eye button"], "First person"),
-];
 
 /// The dusk battlefield behind Battle Setup: sky, a warm horizon, ridges, two tanks
 /// on watch and a vignette.
@@ -1288,7 +1270,11 @@ fn key_strip(painter: &Painter, center: egui::Pos2) {
             + 5.0
             + paint::text_width(painter, label, bold_font(12.0), 0.4)
     };
-    let hints = if crate::TOUCH { TOUCH_HINTS } else { KEY_HINTS };
+    let hints: &[(&[&str], &str)] = if crate::TOUCH {
+        &TOUCH_STRIP
+    } else {
+        &KEY_STRIP
+    };
     let total = hints.iter().map(hint_width).sum::<f32>() + gap * (hints.len() - 1) as f32;
     let mut x = center.x - total / 2.0;
     for hint in hints {

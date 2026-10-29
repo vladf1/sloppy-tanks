@@ -102,6 +102,8 @@ function capture(command, args) {
 
 const commit = capture("git", ["rev-parse", "--short", "HEAD"]) || "unknown";
 const dirty = capture("git", ["status", "--porcelain"]) !== "";
+// The three-part version in package.json, the bundles' short version.
+const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
 const stamps = {
   SLOPPY_CONTENT_VERSION: await contentVersion(),
   SLOPPY_RELEASE: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
@@ -165,6 +167,23 @@ function plist(entries) {
     '<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n' +
     `<plist version="1.0">\n<dict>\n${dictionary(entries, "\t")}\n</dict>\n</plist>\n`
   );
+}
+
+/** The Info.plist entries the Mac and iPad bundles share: the app's name, identifier,
+ * executable and versions. */
+function bundleInfo() {
+  return {
+    CFBundleDevelopmentRegion: "en",
+    CFBundleDisplayName: APP_NAME,
+    CFBundleExecutable: BINARY,
+    CFBundleIdentifier: BUNDLE_ID,
+    CFBundleInfoDictionaryVersion: "6.0",
+    CFBundleName: APP_NAME,
+    CFBundlePackageType: "APPL",
+    CFBundleShortVersionString: version,
+    CFBundleVersion: stamps.SLOPPY_RELEASE,
+    LSApplicationCategoryType: "public.app-category.action-games",
+  };
 }
 
 /** The keychain's first identity named `kind` ("Developer ID Application"), or the one
@@ -251,21 +270,11 @@ function buildMac() {
   const executable = join(contents, "MacOS", BINARY);
   copyFileSync(binary, executable);
   copyFileSync(appIcon, join(contents, "Resources", "AppIcon.icns"));
-  const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   writeFileSync(
     join(contents, "Info.plist"),
     plist({
-      CFBundleDevelopmentRegion: "en",
-      CFBundleDisplayName: APP_NAME,
-      CFBundleExecutable: BINARY,
+      ...bundleInfo(),
       CFBundleIconFile: "AppIcon",
-      CFBundleIdentifier: BUNDLE_ID,
-      CFBundleInfoDictionaryVersion: "6.0",
-      CFBundleName: APP_NAME,
-      CFBundlePackageType: "APPL",
-      CFBundleShortVersionString: version,
-      CFBundleVersion: stamps.SLOPPY_RELEASE,
-      LSApplicationCategoryType: "public.app-category.action-games",
       LSMinimumSystemVersion: MINIMUM_MACOS,
       NSHighResolutionCapable: true,
       NSSupportsAutomaticGraphicsSwitching: true,
@@ -524,22 +533,12 @@ function buildIpad(simulator) {
   mkdirSync(app, { recursive: true });
   copyFileSync(binary, join(app, BINARY));
   const assets = compileAssets(app, scratch, platform);
-  const { version } = JSON.parse(readFileSync(join(root, "package.json"), "utf8"));
   const landscape = ["UIInterfaceOrientationLandscapeLeft", "UIInterfaceOrientationLandscapeRight"];
   writeFileSync(
     join(app, "Info.plist"),
     plist({
-      CFBundleDevelopmentRegion: "en",
-      CFBundleDisplayName: APP_NAME,
-      CFBundleExecutable: BINARY,
-      CFBundleIdentifier: BUNDLE_ID,
-      CFBundleInfoDictionaryVersion: "6.0",
-      CFBundleName: APP_NAME,
-      CFBundlePackageType: "APPL",
-      CFBundleShortVersionString: version,
-      CFBundleVersion: stamps.SLOPPY_RELEASE,
+      ...bundleInfo(),
       CFBundleSupportedPlatforms: [simulator ? "iPhoneSimulator" : "iPhoneOS"],
-      LSApplicationCategoryType: "public.app-category.action-games",
       LSRequiresIPhoneOS: true,
       MinimumOSVersion: MINIMUM_IPADOS,
       // iPad only: the menus and HUD need a landscape screen of 1024 points or more.

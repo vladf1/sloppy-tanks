@@ -59,7 +59,7 @@ impl Default for Preferences {
             difficulty: Difficulty::Normal,
             first_person: false,
             zoom: None,
-            volume: 0.6,
+            volume: sloppy_web::catalog::DEFAULT_VOLUME,
             tank_speed: 1.0,
             bullet_speed: 1.0,
             graphics: GraphicsSetting::Auto,
@@ -95,6 +95,13 @@ impl Preferences {
         if let Ok(text) = serde_json::to_string_pretty(self) {
             let _ = std::fs::write(path, text);
         }
+    }
+
+    /// Keep the view the player chose (`savedCameraPreferences`).
+    pub fn save_camera(&mut self, camera: sloppy_web::CameraPreferences) {
+        self.first_person = camera.first_person;
+        self.zoom = Some(camera.zoom);
+        self.save();
     }
 
     /// The choices as single player plays them, on `human_team`: an extra level only

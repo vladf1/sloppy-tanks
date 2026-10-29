@@ -11,8 +11,9 @@ use super::UiState;
 use super::icons::Art;
 use super::paint::{self, hex, hexa};
 use super::theme::{GOLD, GOLD_HOT, bold_font};
-use crate::input::{STICK_RADIUS, TouchInput};
+use crate::input::TouchInput;
 use crate::touch::{MINE_RADIUS, STICK_SIZE, TouchLayout, ZOOM_RADIUS};
+use sloppy_render::presentation::input::STICK_RADIUS;
 
 /// The stick's base ring and knob radii.
 const BASE_RADIUS: f32 = STICK_SIZE / 2.0 - 18.0;
@@ -77,7 +78,7 @@ fn drop_shadow(painter: &Painter, center: Pos2, radius: f32) {
 fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
     let held = input.drive.is_some();
     let center = layout.stick.center();
-    // Held, the base moves under the thumb (up to `ANCHOR_SHIFT`) and the knob follows
+    // Held, the base moves under the thumb (up to `STICK_ANCHOR_SHIFT`) and the knob follows
     // the finger to the rim.
     let base = match input.drive {
         Some((_, origin)) => pos2(origin.0, origin.1),

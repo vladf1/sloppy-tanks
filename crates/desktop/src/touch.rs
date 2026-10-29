@@ -10,15 +10,14 @@ use std::collections::HashSet;
 use egui::{Pos2, Rect, Vec2, pos2};
 use winit::event::{Touch, TouchPhase};
 
-use sloppy_render::presentation::input::ZOOM_STEP;
+use sloppy_render::presentation::input::{STICK_ANCHOR_SHIFT, ZOOM_STEP};
 use sloppy_web::hud::Hud;
 
 use crate::input::Controls;
 
-/// The drive stick's square, and how far a touch off its centre moves the stick's
-/// origin under the thumb.
+/// The drive stick's square (its radius and dead zone are the engine's), and the mine
+/// button's and zoom keys' radii.
 pub const STICK_SIZE: f32 = 176.0;
-pub const ANCHOR_SHIFT: f32 = 22.0;
 pub const MINE_RADIUS: f32 = 38.0;
 pub const ZOOM_RADIUS: f32 = 26.0;
 /// The controls' distance from the screen's sides and bottom, or from the safe area's
@@ -129,8 +128,10 @@ impl Fingers {
                 let on = |center: Pos2, radius: f32| center.distance(point) <= radius;
                 if layout.stick.contains(point) {
                     let center = layout.stick.center();
-                    let shift = (point - center)
-                        .clamp(Vec2::splat(-ANCHOR_SHIFT), Vec2::splat(ANCHOR_SHIFT));
+                    let shift = (point - center).clamp(
+                        Vec2::splat(-STICK_ANCHOR_SHIFT),
+                        Vec2::splat(STICK_ANCHOR_SHIFT),
+                    );
                     let origin = center + shift;
                     controls.begin_drive(touch.id, (origin.x, origin.y), (point.x, point.y));
                 } else if on(layout.mine, MINE_RADIUS) {

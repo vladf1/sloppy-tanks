@@ -47,7 +47,8 @@ const TANK_LABELS: Record<PlayerVehicleKind, { name: string; tag: string }> = {
 };
 const TEAM_NAMES = ["BLUE", "RED"] as const;
 
-/** Tanks per team, bots included, on a standard map; extra levels name their own. */
+/** Tanks per team, bots included, on a standard map; extra levels name their own (core's
+ * `TEAM_SLOTS`, pinned by `tests/page-catalog.test.ts`). */
 const STANDARD_TEAM_TANKS = 6;
 
 /** The in-room menu. Players choose their name, and first team and tank, on Battle Setup. */
@@ -478,7 +479,8 @@ export class NetworkUI {
       const name = document.createElement("strong");
       const fill = document.createElement("small");
       name.textContent = TEAM_NAMES[side] + " TEAM";
-      const open = teamTanks - members.length;
+      // More humans than a level's own roster leave no seat, not fewer than none.
+      const open = Math.max(0, teamTanks - members.length);
       fill.textContent = lobby.settings.humansOnly
         ? open + (open === 1 ? " open seat" : " open seats")
         : open + (open === 1 ? " bot" : " bots");
