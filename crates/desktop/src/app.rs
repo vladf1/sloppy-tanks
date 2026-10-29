@@ -410,6 +410,9 @@ impl Session {
             "pixelRatio": scale,
             "firstPerson": prefs.first_person,
             "zoom": prefs.zoom,
+            // Touch screens draw no overhead reticle (`startingCamera`): a finger aims
+            // where it is, so the mark sat under it and stuck where it lifted.
+            "hideReticle": crate::TOUCH,
             "graphics": prefs.graphics,
             "device": crate::DEVICE,
             "autoplay": autoplay,

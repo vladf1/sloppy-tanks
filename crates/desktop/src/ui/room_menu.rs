@@ -436,6 +436,8 @@ pub fn draw(
     state.art = Some(art);
     if state.show_nerd_stats && view.debug {
         super::nerd_stats::panel(context, state);
+    } else if view.debug {
+        super::nerd_stats::link(context, state);
     }
     actions
 }

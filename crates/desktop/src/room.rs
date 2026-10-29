@@ -125,6 +125,8 @@ impl RoomSession {
             "pixelRatio": scale,
             "firstPerson": shell.prefs.first_person,
             "zoom": shell.prefs.zoom,
+            // No overhead reticle on a touch screen, as in single player.
+            "hideReticle": crate::TOUCH,
             "graphics": shell.prefs.graphics,
             "device": crate::DEVICE,
         });

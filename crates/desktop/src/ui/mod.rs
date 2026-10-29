@@ -532,6 +532,8 @@ pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Ac
     state.settings_were_open = settings_open;
     if state.show_nerd_stats && view.debug {
         nerd_stats::panel(context, state);
+    } else if view.debug && view.in_round {
+        nerd_stats::link(context, state);
     }
     actions
 }
