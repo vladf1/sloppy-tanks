@@ -1,0 +1,130 @@
+// The page's choice of graphics backend and its fallbacks: a normal load downloads only
+// the WebGPU shell; `?webgl`, a browser without WebGPU and an adapter that refuses all
+// load only the WebGL2 one; a device that fails after an adapter reloads once into
+// `?webgl`; and with neither backend the loading view says why, with no reload loop.
+// Each case plays a round on the backend it ends on (Stats for nerds' Graphics API).
+import assert from "node:assert/strict";
+import { mkdirSync } from "node:fs";
+import {
+  clickWidget,
+  gameUrl,
+  launchChrome,
+  collectErrors,
+  nextFrame,
+  untilState,
+} from "./browser-helpers.mjs";
+
+const out = "artifacts/performance/webgl-check";
+mkdirSync(out, { recursive: true });
+
+/** Browser failures each case stages before the page runs. */
+const STAGED = {
+  normal: () => {},
+  noWebgpu: () => {
+    delete Navigator.prototype.gpu;
+  },
+  noAdapter: () => {
+    GPU.prototype.requestAdapter = async () => null;
+  },
+  deviceFails: () => {
+    GPUAdapter.prototype.requestDevice = async () => {
+      throw new Error("staged device failure");
+    };
+  },
+  neither: () => {
+    GPUAdapter.prototype.requestDevice = async () => {
+      throw new Error("staged device failure");
+    };
+    const getContext = HTMLCanvasElement.prototype.getContext;
+    HTMLCanvasElement.prototype.getContext = function (kind, ...rest) {
+      return kind === "webgl2" ? null : getContext.call(this, kind, ...rest);
+    };
+  },
+};
+
+const CASES = [
+  { name: "normal", stage: "normal", query: "", wasm: ["sloppy-tanks_bg"], api: "WebGPU" },
+  { name: "forced WebGL", stage: "normal", query: "webgl", wasm: ["webgl_bg"], api: "WebGL" },
+  { name: "no WebGPU", stage: "noWebgpu", query: "", wasm: ["webgl_bg"], api: "WebGL" },
+  { name: "no adapter", stage: "noAdapter", query: "", wasm: ["webgl_bg"], api: "WebGL" },
+  {
+    name: "device fails",
+    stage: "deviceFails",
+    query: "",
+    wasm: ["sloppy-tanks_bg", "webgl_bg"],
+    api: "WebGL",
+  },
+  {
+    name: "neither backend",
+    stage: "neither",
+    query: "",
+    wasm: ["sloppy-tanks_bg", "webgl_bg"],
+    api: null,
+  },
+];
+
+const browser = await launchChrome();
+try {
+  for (const { name, stage, query, wasm, api } of CASES) {
+    const context = await browser.newContext({
+      viewport: { width: 1280, height: 800 },
+      deviceScaleFactor: 1,
+    });
+    await context.addInitScript(STAGED[stage]);
+    const page = await context.newPage();
+    const errors = [];
+    collectErrors(page, errors);
+    const downloads = [];
+    page.on("request", (request) => {
+      const url = new URL(request.url());
+      const file = url.pathname.split("/").pop();
+      // The dev server answers a `?url` import with a module naming the file.
+      if (file.endsWith(".wasm") && !url.searchParams.has("import")) downloads.push(file);
+    });
+    let navigations = 0;
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) navigations += 1;
+    });
+    const url = new URL(gameUrl);
+    url.search = query ? `automation&${query}` : "automation";
+    await page.goto(url.href);
+    await page.waitForFunction(() => document.documentElement.dataset.shell, null, {
+      timeout: 60000,
+    });
+    const shell = await page.evaluate(() => document.documentElement.dataset.shell);
+    await page.screenshot({ path: `${out}/${name.replaceAll(" ", "-")}.png` });
+    const fetched = wasm.map((part) => downloads.filter((file) => file.includes(part)).length);
+    assert.deepEqual(
+      fetched,
+      wasm.map(() => 1),
+      `${name}: downloads ${downloads.join(", ")}`,
+    );
+    assert.equal(downloads.length, wasm.length, `${name}: downloads ${downloads.join(", ")}`);
+    if (api) {
+      assert.equal(shell, "ready", `${name}: the shell started`);
+      await untilState(page, (state) => state.ready, { what: `${name}: the arena` });
+      await clickWidget(page, "GO!");
+      const state = await untilState(page, (state) => state.inRound, {
+        extras: ["nerd"],
+        what: `${name}: the round`,
+      });
+      const rows = state.extras.nerd.flatMap((section) => section.rows ?? []);
+      const graphics = rows.find((row) => row.label === "Graphics API")?.value;
+      assert.equal(graphics, api, `${name}: Graphics API`);
+      assert.equal((await nextFrame(page)).error, null, `${name}: renderer errors`);
+    } else {
+      assert.equal(shell, "failed", `${name}: the loading view says it failed`);
+      const text = await page.evaluate(() => document.getElementById("boot").innerText);
+      assert.match(text, /could not start/i, `${name}: ${text}`);
+      // Give a reload loop time to show itself.
+      await page.waitForTimeout(3000);
+      assert.ok(navigations <= 2, `${name}: ${navigations} navigations`);
+    }
+    assert.deepEqual(errors, [], `${name}: page errors`);
+    console.log(`webgl-check: ${name}: ${api ?? "failed as it should"} (${downloads.join(", ")})`);
+    await context.close();
+  }
+  console.log("webgl-check: backend choice and fallbacks passed");
+} finally {
+  await browser.close();
+}
