@@ -703,8 +703,6 @@ impl RoomSession {
         if status.ready {
             self.preparing = false;
             self.prebuilding = true;
-        } else if self.menu.joining && (status.compiled > 0 || status.remaining > 0) {
-            self.menu.status = "Preparing the arena…".into();
         }
         self.pump();
     }
