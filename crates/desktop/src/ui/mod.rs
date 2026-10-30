@@ -2,6 +2,7 @@
 //! state (`src/game/ui.ts` and its parts). They never change the game themselves:
 //! each returns the [`Action`]s the player chose, which the app applies.
 
+pub mod backdrop;
 pub mod hud;
 pub mod icons;
 pub mod menus;

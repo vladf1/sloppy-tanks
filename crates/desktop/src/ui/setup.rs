@@ -3,8 +3,8 @@
 //! tank cards, the map, the battle format and difficulty, the status well and GO.
 
 use egui::{
-    Align2, Color32, CornerRadius, Id, LayerId, Mesh, Order, Painter, Pos2, Rect, Sense, Shape,
-    Stroke, StrokeKind, Vec2, pos2, vec2,
+    Align2, Color32, CornerRadius, Id, LayerId, Order, Painter, Pos2, Rect, Sense, Shape, Stroke,
+    StrokeKind, Vec2, pos2, vec2,
 };
 
 use sloppy_core::sim::{GameMode, Team, VehicleKind};
@@ -21,105 +21,6 @@ use crate::preferences::Preferences;
 
 /// How far an unavailable battle format fades (`.choice-card:has(input:disabled)`).
 const UNAVAILABLE_OPACITY: f32 = 0.45;
-
-/// The dusk battlefield behind Battle Setup: sky, a warm horizon, ridges, two tanks
-/// on watch and a vignette.
-fn backdrop(context: &egui::Context, art: &Art) {
-    // The whole screen, under an iPad's home indicator too.
-    let painter = paint::full_screen(
-        context,
-        LayerId::new(Order::Background, Id::unique("setup backdrop")),
-    );
-    let screen = context.viewport_rect();
-    painter.add(paint::vgradient(
-        screen,
-        &[
-            (0.0, hex(0x060c1a)),
-            (0.42, hex(0x0f2347)),
-            (0.6, hex(0x2a3d6b)),
-            (0.7, hex(0x5a4a6a)),
-            (0.78, hex(0x1a2338)),
-            (1.0, hex(0x070f1d)),
-        ],
-    ));
-    let at = |x: f32, y: f32| {
-        pos2(
-            screen.left() + screen.width() * x,
-            screen.top() + screen.height() * y,
-        )
-    };
-    painter.add(paint::radial(
-        at(0.5, 0.0),
-        vec2(screen.width() * 0.7, screen.height() * 0.6),
-        &[(0.0, hexa(0x1d3f7a, 0.4)), (0.7, Color32::TRANSPARENT)],
-    ));
-    painter.add(paint::radial(
-        at(0.5, 0.7),
-        vec2(screen.width() * 0.9, screen.height() * 0.45),
-        &[(0.0, hexa(0xff7a3d, 0.18)), (0.75, Color32::TRANSPARENT)],
-    ));
-    painter.add(paint::radial(
-        at(0.5, 0.66),
-        vec2(screen.width() * 0.55, screen.height() * 0.3),
-        &[(0.0, hexa(0xffb35c, 0.33)), (0.7, Color32::TRANSPARENT)],
-    ));
-    // Three ridges, far to near, as height fields.
-    let ridge = |base: f32, waves: [(f32, f32, f32); 3], top: Color32, bottom: Color32| {
-        let steps = 96;
-        let mut mesh = Mesh::default();
-        for step in 0..=steps {
-            let t = step as f32 / steps as f32;
-            let y = base
-                + waves
-                    .iter()
-                    .map(|(amplitude, frequency, phase)| amplitude * (t * frequency + phase).sin())
-                    .sum::<f32>();
-            let x = screen.left() + screen.width() * t;
-            mesh.colored_vertex(pos2(x, screen.top() + screen.height() * y), top);
-            mesh.colored_vertex(pos2(x, screen.bottom()), bottom);
-            if step > 0 {
-                let index = (step as u32 - 1) * 2;
-                mesh.add_triangle(index, index + 1, index + 2);
-                mesh.add_triangle(index + 1, index + 3, index + 2);
-            }
-        }
-        Shape::mesh(mesh)
-    };
-    painter.add(ridge(
-        0.7,
-        [(0.03, 7.0, 0.4), (0.015, 17.0, 1.3), (0.006, 41.0, 0.2)],
-        hex(0x3a4f86),
-        hex(0x22325a),
-    ));
-    painter.add(ridge(
-        0.77,
-        [(0.025, 5.0, 2.1), (0.012, 13.0, 0.7), (0.005, 37.0, 1.1)],
-        hex(0x1b2a4c),
-        hex(0x121d36),
-    ));
-    painter.add(ridge(
-        0.85,
-        [(0.02, 4.0, 4.0), (0.01, 11.0, 2.5), (0.004, 29.0, 0.4)],
-        hex(0x0d1730),
-        hex(0x070d19),
-    ));
-    let tank_height = (screen.height() * 0.09).clamp(36.0, 90.0);
-    let tank_size = vec2(tank_height * art.aspect("backdrop-tank"), tank_height);
-    let left = Rect::from_min_size(at(0.04, 0.83) - vec2(0.0, tank_height * 0.6), tank_size);
-    art.icon(&painter, "backdrop-tank", left, hex(0x070d19));
-    let right = Rect::from_min_size(
-        at(0.96, 0.82) - vec2(tank_size.x * 1.1, tank_height * 0.7),
-        tank_size * 1.1,
-    );
-    art.icon_flipped(&painter, "backdrop-tank", right, hex(0x070d19));
-    paint::vignette(
-        &painter,
-        screen,
-        vec2(0.8, 0.8),
-        &[(0.55, Color32::TRANSPARENT), (1.0, hexa(0x02050b, 0.8))],
-        1.0,
-    );
-}
 
 /// The narrowest tank card with room for its hull and speed line.
 const SPEC_LINE_WIDTH: f32 = 200.0;
@@ -1270,7 +1171,7 @@ pub fn battle_setup(
     view: &View,
     actions: &mut Vec<Action>,
 ) {
-    backdrop(context, art);
+    super::backdrop::backdrop(context, art);
     let mut prefs = view.prefs.clone();
     let screen = context.content_rect();
     if crate::touch::phone() {

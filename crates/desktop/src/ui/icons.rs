@@ -559,6 +559,14 @@ impl Art {
         }
     }
 
+    /// Icon `name`'s view box: its left, top, width and height in its drawing's units.
+    pub fn view(&self, name: &str) -> [f32; 4] {
+        SOURCES
+            .iter()
+            .find(|source| source.name == name)
+            .map_or([0.0, 0.0, 1.0, 1.0], |source| source.view)
+    }
+
     /// The width over height of icon `name`.
     pub fn aspect(&self, name: &str) -> f32 {
         SOURCES
