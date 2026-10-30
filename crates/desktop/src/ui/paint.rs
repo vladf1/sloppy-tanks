@@ -656,20 +656,38 @@ pub fn button(
     response
 }
 
-/// A round icon button (the dialogs' corner X).
+/// The dialogs' corner X (`.dialog-close`): a small steel key, a faint fill in a
+/// hairline ring, that lights up under the pointer.
 pub fn close_button(ui: &mut Ui, art: &Art, rect: Rect, id: egui::Id) -> Response {
     let response = ui.interact(rect, id, Sense::click());
     labelled(&response, true, "Close");
     let painter = ui.painter();
-    if response.hovered() {
-        painter.rect_filled(rect, 8, hexa(0xffffff, 0.08));
-    }
-    let tint = if response.hovered() {
+    let hovered = response.hovered();
+    painter.rect_filled(rect, 7, hexa(0xffffff, if hovered { 0.13 } else { 0.06 }));
+    painter.rect_stroke(
+        rect,
+        7,
+        Stroke::new(
+            1.0,
+            if hovered {
+                hex(0xcfe8fa)
+            } else {
+                hexa(0x9fd0ff, 0.2)
+            },
+        ),
+        StrokeKind::Inside,
+    );
+    let tint = if hovered {
         Color32::WHITE
     } else {
-        hex(0xc4d5e7)
+        hex(0xc9dcee)
     };
-    art.icon(painter, "close", rect.shrink(rect.width() * 0.22), tint);
+    art.icon(
+        painter,
+        "close",
+        Rect::from_center_size(rect.center(), Vec2::splat(18.0)),
+        tint,
+    );
     response
 }
 
