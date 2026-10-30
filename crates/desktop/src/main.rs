@@ -104,7 +104,8 @@ fn arguments() -> Vec<String> {
 }
 
 /// What the command line or a page's link asks for: the page's flags (`?debug`,
-/// `?autoplay`, `?map=<id>`, `?multiplayer`, `?room=<CODE>`) and, with `development`
+/// `?autoplay`, `?map=<id>`, `?multiplayer`, `?room=<CODE>`, `?seed=<n>`,
+/// `?automation`) and, with `development`
 /// (`links::development`), `?directory=<url>` and the rooms' network tools
 /// (`?latency=&jitter=&stall=` in milliseconds, `?dodge=0`, `?shooter=0`).
 fn options(arguments: &[String], development: bool) -> app::Options {
@@ -128,6 +129,7 @@ fn options(arguments: &[String], development: bool) -> app::Options {
         // In any case; a code that cannot be one is still named in the room list's answer.
         room: value("--room")
             .map(|code| read_room_code(&code).unwrap_or_else(|| code.trim().to_uppercase())),
+        seed: value("--seed").and_then(|seed| seed.parse().ok()),
         network: NetworkTools {
             latency: tool("--latency"),
             jitter: tool("--jitter"),

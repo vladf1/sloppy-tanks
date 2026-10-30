@@ -298,6 +298,7 @@ impl RoomSession {
             seats,
             frame_log: false,
             autoplay: false,
+            seed: None,
         }
     }
 

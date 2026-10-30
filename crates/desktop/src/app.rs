@@ -78,6 +78,9 @@ pub struct Options {
     pub room: Option<String>,
     /// The development network tools every room this run joins takes.
     pub network: NetworkTools,
+    /// `--seed <n>`: the first single-player arena's seed in place of a random one, for
+    /// measurements that compare builds on the same match.
+    pub seed: Option<f64>,
 }
 
 /// Which engine has the window.
@@ -255,6 +258,8 @@ pub struct Shell {
     pub frame_log: bool,
     /// `--autoplay`, for the first single-player round only.
     pub autoplay: bool,
+    /// `--seed`, for the first single-player arena only.
+    pub seed: Option<f64>,
 }
 
 /// The release line Battle Setup shows.
@@ -649,6 +654,7 @@ impl Session {
             seats: SavedSeats::default(),
             frame_log: options.frame_log,
             autoplay: options.autoplay,
+            seed: options.seed,
         })
     }
 
@@ -664,6 +670,7 @@ impl Session {
             seats,
             frame_log,
             autoplay,
+            seed,
         } = shell;
         let target = render_target(&window)?;
         // The team is the seed's to draw.
@@ -678,7 +685,10 @@ impl Session {
             game_mode: Some(options.game_mode),
             autoplay,
         };
-        let view = view_config(&window, &prefs);
+        let view = ViewConfig {
+            seed,
+            ..view_config(&window, &prefs)
+        };
         let mut game = Game::create_with(target, view, config)
             .await
             .map_err(engine_error)?;
@@ -741,6 +751,7 @@ impl Session {
             seats: self.seats,
             frame_log: self.frame_log.is_some(),
             autoplay: false,
+            seed: None,
         }
     }
 
