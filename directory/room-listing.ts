@@ -1,15 +1,16 @@
 // One room's public listing as a game server announces it, and its checks, so one bad
 // announcement cannot spoil the list. The limits mirror the engine's room list
-// (`crates/core/src/net/room_list.rs`).
+// (`crates/core/src/net/room_list.rs`); `tests/ts-copies.test.ts` pins them to it.
 
-const MAX_LISTED_ROOMS = 256;
-const ROOM_CODE = /^[A-Z2-9]{8}$/;
+export const MAX_LISTED_ROOMS = 256;
+export const ROOM_CODE = /^[A-Z2-9]{8}$/;
 /** Human seats in a room. */
-const ROOM_SEATS = 8;
-const MAX_ROUND_MINUTES = 99;
-const MAP_IDS = ["village", "harbor", "quarry", "stress-test", "superstress"] as const;
-const DIFFICULTIES = ["easy", "normal", "hard"] as const;
-const PHASES = ["lobby", "playing", "results"] as const;
+export const ROOM_SEATS = 8;
+export const MAX_ROUND_MINUTES = 99;
+export const MAX_CONTENT_VERSION_LENGTH = 128;
+export const MAP_IDS = ["village", "harbor", "quarry", "stress-test", "superstress"] as const;
+export const DIFFICULTIES = ["easy", "normal", "hard"] as const;
+export const PHASES = ["lobby", "playing", "results"] as const;
 
 /** Public metadata for one room, as a server lists it. Never names, player ids or tokens. */
 export interface RoomListing {
@@ -53,7 +54,7 @@ function readRoomListing(value: unknown): RoomListing {
   if (
     typeof contentVersion !== "string" ||
     contentVersion.length < 1 ||
-    contentVersion.length > 128
+    contentVersion.length > MAX_CONTENT_VERSION_LENGTH
   ) {
     fail("contentVersion");
   }

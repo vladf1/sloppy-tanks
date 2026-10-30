@@ -28,6 +28,8 @@ pub mod sounds;
 
 #[cfg(test)]
 mod page_json_tests;
+#[cfg(test)]
+mod ts_copies_tests;
 
 /// Where the game runs, for the few things a page and the app say differently on purpose
 /// ("in this browser" or "on this computer", RELOAD or BATTLE SETUP); everything else
