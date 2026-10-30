@@ -47,6 +47,9 @@ export class PilotSeat {
   private readonly sockets = new Map<number, PilotSocket>();
   /** Sockets asked for and not yet open. */
   private readonly opening = new Set<number>();
+  /** Counts stops: a new engine gives out the same handles and socket ids again, so a
+   * socket's events are the current pilot's only while this has not moved on. */
+  private lifetime = 0;
 
   constructor(
     /** What the pilot starts with; a room's maker stops creating once the room exists. */
@@ -89,6 +92,7 @@ export class PilotSeat {
 
   /** Forgets the pilot and its sockets, as after a trap or at the end of a run. */
   stop(): void {
+    this.lifetime++;
     this.close();
     if (this.handle) {
       try {
@@ -150,10 +154,11 @@ export class PilotSeat {
 
   private open(socket: number, url: string): void {
     const handle = this.handle;
+    const lifetime = this.lifetime;
     // Events of a socket this seat no longer holds (closed, or a restarted pilot's) are
     // dropped; the engine also ignores ids that are not its current socket.
     const current = () =>
-      this.handle === handle && (this.sockets.has(socket) || this.opening.has(socket));
+      this.lifetime === lifetime && (this.sockets.has(socket) || this.opening.has(socket));
     this.opening.add(socket);
     const report = (call: () => void) => {
       try {
@@ -179,7 +184,7 @@ export class PilotSeat {
       })
       .then(
         (opened) => {
-          if (this.handle !== handle || !this.opening.delete(socket)) {
+          if (this.lifetime !== lifetime || !this.opening.delete(socket)) {
             opened.close(1000, "Pilot stopped");
             return;
           }
@@ -188,7 +193,7 @@ export class PilotSeat {
         },
         (error: unknown) => {
           this.lastError = error instanceof Error ? error.message : String(error);
-          if (this.handle === handle && this.opening.delete(socket)) {
+          if (this.lifetime === lifetime && this.opening.delete(socket)) {
             report(() =>
               this.host.engine().closed(handle, socket, ABNORMAL_CLOSE, this.host.now()),
             );

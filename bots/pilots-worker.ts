@@ -7,6 +7,7 @@
  */
 
 import { DurableObject } from "cloudflare:workers";
+import { PilotEngine } from "./pilot-engine";
 import type { Connect } from "./pilot-seat";
 import { PilotSquad, readBrain, type DirectoryServer, type PilotBrain } from "./pilot-squad";
 import {
@@ -200,7 +201,7 @@ export class PilotSwarm extends DurableObject<Env> {
         host: run.host,
         brain: run.brain,
       },
-      pilotModule,
+      () => new PilotEngine(pilotModule),
       connectPilot,
     );
     this.timer ??= setInterval(() => {

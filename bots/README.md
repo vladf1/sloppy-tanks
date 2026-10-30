@@ -74,13 +74,13 @@ pnpm run pilots:deploy                                        # build the engine
 pnpm run bots -- start wnam 2 --room ABCD2345 --hunt vlad     # hunt vlad in that room
 pnpm run bots -- start weur 1 --room ABCD2345 --escort vlad   # fight beside vlad
 pnpm run bots -- start apac 3 --brain --host --map harbor     # make a room, play there
-pnpm run bots -- start enam 4 --brain                         # join the fullest open room
+pnpm run bots -- start enam 4 --brain                         # join the fullest room with 4 free seats
 pnpm run bots -- start wnam 2 --room ABCD2345 --hunt vlad --skill hard --kind heavy --env dev
 ```
 
 - **Room.** All of a region's pilots play one room: the `--room` code (on the server the
   directory lists it on), a new room (`--host`, on `--map`) whose first pilot creates it
-  and hosts it, or else the fullest open standard room.
+  and hosts it, or else the fullest open standard room with a seat for every pilot.
 - **Missions.** `--hunt NAME` takes the other side from NAME and comes after them.
   `--mission hunt` goes after the nearest player on the other team. `--escort NAME` takes
   NAME's side and follows them. Plain `--brain` plays `skirmish`. Pilots switch sides by
@@ -90,8 +90,9 @@ pnpm run bots -- start wnam 2 --room ABCD2345 --hunt vlad --skill hard --kind he
   corrections and phantom hits (shells drawn hitting that the server flew past).
 - **Recovery.** A pilot whose connection gave up rejoins after 15 seconds, taking back a
   seat the server still holds. A room that ended or refuses the pilots makes the region
-  choose again. A Rust panic traps the Wasm instance: the region starts a new one and
-  every pilot takes its seat back (`restarts` in the status).
+  choose again; one that turns a pilot away while another plays there (a full room) only
+  makes that pilot try again later. A Rust panic traps the Wasm instance: the region
+  starts a new one and every pilot takes its seat back (`restarts` in the status).
 - **Content version.** The engine is game code, stamped with the checkout's content
   version. A server running another version refuses its pilots, and the region reports
   both versions. Deploy the pilots Worker (`pnpm run pilots:deploy`) from the commit the

@@ -7,7 +7,7 @@
  */
 
 import { MAPS, ROOM_SEATS, randomRoomCode } from "./bot-player";
-import { PilotEngine, PilotEngineError } from "./pilot-engine";
+import { PilotEngineError, type PilotEngine } from "./pilot-engine";
 import { PilotSeat, type Connect, type PilotHost } from "./pilot-seat";
 
 export const PILOT_NAME_PREFIX = "pilot-";
@@ -53,8 +53,9 @@ export interface DirectoryServer {
 
 /** A pilot whose connection gave up joins again this long after. */
 const REJOIN_MS = 15_000;
-/** Connection ends after which the pilot's room is gone or refuses it: pick a room again. */
-const ROOM_GONE = new Set(["room-ended", "rejected", "outdated"]);
+/** Connection ends after which the pilot's room is gone for every pilot: pick a room again.
+ * A rejection is one too unless another pilot plays there ({@link PilotSquad.roomGone}). */
+const ROOM_GONE = new Set(["room-ended", "outdated"]);
 
 function choose<T extends string>(value: unknown, options: readonly T[], label: string): T {
   const found = options.find((option) => option === value);
@@ -95,7 +96,8 @@ export class PilotSquad {
 
   constructor(
     private readonly config: SquadConfig,
-    private readonly module: WebAssembly.Module,
+    /** A fresh engine, at the start and after a trap. */
+    private readonly createEngine: () => PilotEngine,
     connect: Connect,
     private readonly now: () => number = Date.now,
   ) {
@@ -158,13 +160,14 @@ export class PilotSquad {
         if (now - endedAt < REJOIN_MS) {
           continue;
         }
-        if (ROOM_GONE.has(seat.ended.cause)) {
+        if (this.roomGone(seat)) {
           // The room is over for every pilot: choose again next time.
           this.lastError = `${seat.name}: ${seat.ended.text}`;
           this.reset();
           return;
         }
         // A seat the server may still hold is taken back; the engine forgets one it lost.
+        // A pilot the room turned away tries again, as a seat may have come free.
         seat.stop();
         this.endedAt.delete(seat);
       }
@@ -215,8 +218,25 @@ export class PilotSquad {
   }
 
   private currentEngine(): PilotEngine {
-    this.engine ??= new PilotEngine(this.module);
+    this.engine ??= this.createEngine();
     return this.engine;
+  }
+
+  /** Whether a pilot's connection ended in a way that sends every pilot elsewhere. A room
+   * that refuses one pilot while another plays there is full for that one alone. */
+  private roomGone(seat: PilotSeat): boolean {
+    const cause = seat.ended?.cause;
+    if (cause === "rejected") {
+      return !this.seats.some(
+        (other) =>
+          other !== seat &&
+          other.handle &&
+          !other.ended &&
+          other.report !== undefined &&
+          other.report.phase !== "connecting",
+      );
+    }
+    return !!cause && ROOM_GONE.has(cause);
   }
 
   /** The pilots leave the room they were in, to choose one again. */
@@ -254,7 +274,7 @@ export class PilotSquad {
     const version = this.contentVersion;
     const mismatch = (other: string | undefined) =>
       `The pilot engine plays content ${version} but the server runs ${other ?? "nothing"}: ` +
-      "deploy the bots (pnpm run bots:deploy) from the commit the server runs";
+      "deploy the pilots (pnpm run pilots:deploy) from the commit the server runs";
     const { room, host } = this.config;
     if (room) {
       const server = servers.find((listed) => listed.rooms.some((entry) => entry.room === room));
@@ -279,17 +299,20 @@ export class PilotSquad {
       this.choose(randomRoomCode(), compatible[0].url, true);
       return;
     }
+    // Only a room with a seat for every pilot: the squad plays together.
     const open = compatible
       .flatMap((server) => server.rooms.map((entry) => ({ ...entry, url: server.url })))
       .filter(
         (entry) =>
           entry.contentVersion === version &&
           MAPS.includes(entry.mapMode) &&
-          entry.reserved < ROOM_SEATS,
+          entry.reserved + this.config.pilots <= ROOM_SEATS,
       )
       .sort((a, b) => b.reserved - a.reserved || a.room.localeCompare(b.room));
     if (!open.length) {
-      this.lastError = "No open room to join: give a room code, or let the pilots create one";
+      this.lastError =
+        `No open room has ${this.config.pilots} free seats: ` +
+        "give a room code, or let the pilots create one";
       return;
     }
     this.choose(open[0].room, open[0].url, false);
