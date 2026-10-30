@@ -529,6 +529,13 @@ pub fn labelled(response: &Response, enabled: bool, label: &str) {
         .widget_info(|| egui::WidgetInfo::labeled(egui::accesskit::Role::Button, enabled, label));
 }
 
+/// A card, tab or switch that is on or off, named like [`labelled`].
+pub fn labelled_choice(response: &Response, enabled: bool, selected: bool, label: &str) {
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(egui::accesskit::Role::Button, enabled, selected, label)
+    });
+}
+
 /// A dialog button with an optional leading icon, `size` wide and tall.
 pub fn button(
     ui: &mut Ui,

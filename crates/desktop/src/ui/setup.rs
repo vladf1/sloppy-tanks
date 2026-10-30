@@ -818,6 +818,11 @@ fn folder_tab(painter: &Painter, rect: Rect, open: bool, edge: Color32) {
     }
 }
 
+/// A map's name, as its card shows it.
+fn map_name(id: sloppy_core::sim::map_options::MapId) -> &'static str {
+    sloppy_core::sim::map_options::map_option_for(id).name
+}
+
 /// A play tab: its badge, its name and what it is (`.play-tab`); `compact` (a phone's
 /// half width) leaves out what it is.
 fn play_tab(
@@ -831,6 +836,7 @@ fn play_tab(
     let response = ui
         .interact(rect, Id::unique(("play tab", multiplayer)), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+    paint::labelled_choice(&response, true, open, name);
     folder_tab(painter, rect, open, GOLD);
     let badge_size = if compact { 28.0 } else { 34.0 };
     let badge = Rect::from_min_size(
@@ -1077,6 +1083,7 @@ fn sheet(
                 let response = ui
                     .interact(rect, Id::unique(("setup tank", tank.kind)), Sense::click())
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
+                paint::labelled_choice(&response, true, prefs.tank == tank.kind, tank.name());
                 vehicle_card(
                     &painter,
                     art,
@@ -1165,6 +1172,12 @@ fn sheet(
                         ui.interact(rect, id, Sense::click())
                             .on_hover_cursor(egui::CursorIcon::PointingHand)
                     };
+                    paint::labelled_choice(
+                        &response,
+                        !locked,
+                        shown_map == map.id,
+                        map_name(map.id),
+                    );
                     map_card(
                         &painter,
                         art,
@@ -1224,6 +1237,12 @@ fn sheet(
                             .interact(rect, id, Sense::click())
                             .on_hover_cursor(egui::CursorIcon::PointingHand),
                     };
+                    paint::labelled_choice(
+                        &response,
+                        unavailable.is_none(),
+                        options.game_mode == battle.mode,
+                        battle.name,
+                    );
                     let mut card_painter = painter.clone();
                     if unavailable.is_some() {
                         card_painter.multiply_opacity(UNAVAILABLE_OPACITY);
@@ -1268,6 +1287,12 @@ fn sheet(
                             Sense::click(),
                         )
                         .on_hover_cursor(egui::CursorIcon::PointingHand);
+                    paint::labelled_choice(
+                        &response,
+                        true,
+                        prefs.difficulty == entry.difficulty,
+                        entry.name,
+                    );
                     difficulty_segment(
                         &painter,
                         rect,
@@ -1449,6 +1474,12 @@ fn compact_setup(
                         let response = ui
                             .interact(rect, Id::unique(("setup tank", tank.kind)), Sense::click())
                             .on_hover_cursor(egui::CursorIcon::PointingHand);
+                        paint::labelled_choice(
+                            &response,
+                            true,
+                            prefs.tank == tank.kind,
+                            tank.name(),
+                        );
                         vehicle_card(
                             &painter,
                             art,
@@ -1479,6 +1510,12 @@ fn compact_setup(
                                 ui.interact(rect, id, Sense::click())
                                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                             };
+                            paint::labelled_choice(
+                                &response,
+                                !locked,
+                                shown_map == map.id,
+                                map_name(map.id),
+                            );
                             map_card(
                                 &painter,
                                 art,
@@ -1527,6 +1564,12 @@ fn compact_setup(
                                     .interact(rect, id, Sense::click())
                                     .on_hover_cursor(egui::CursorIcon::PointingHand),
                             };
+                            paint::labelled_choice(
+                                &response,
+                                unavailable.is_none(),
+                                options.game_mode == battle.mode,
+                                battle.name,
+                            );
                             let mut card_painter = painter.clone();
                             if unavailable.is_some() {
                                 card_painter.multiply_opacity(UNAVAILABLE_OPACITY);
@@ -1560,6 +1603,12 @@ fn compact_setup(
                                     Sense::click(),
                                 )
                                 .on_hover_cursor(egui::CursorIcon::PointingHand);
+                            paint::labelled_choice(
+                                &response,
+                                true,
+                                prefs.difficulty == entry.difficulty,
+                                entry.name,
+                            );
                             difficulty_segment(
                                 &painter,
                                 rect,
@@ -1754,6 +1803,12 @@ fn phone_setup(
                                 Id::unique(("setup tank", tank.kind)),
                                 Sense::click(),
                             );
+                            paint::labelled_choice(
+                                &response,
+                                true,
+                                prefs.tank == tank.kind,
+                                tank.name(),
+                            );
                             phone_tank_card(
                                 &painter,
                                 art,
@@ -1861,6 +1916,12 @@ fn phone_setup(
                             } else {
                                 ui.interact(rect, id, Sense::click())
                             };
+                            paint::labelled_choice(
+                                &response,
+                                !locked,
+                                shown_map == map.id,
+                                map_name(map.id),
+                            );
                             map_card(&painter, art, rect, map, shown_map == map.id, false);
                             if !locked && response.clicked() {
                                 prefs.map = map.id;
@@ -1924,6 +1985,12 @@ fn phone_setup(
                             Sense::click()
                         };
                         let response = ui.interact(rect, id, sense);
+                        paint::labelled_choice(
+                            &response,
+                            unavailable.is_none(),
+                            options.game_mode == battle.mode,
+                            battle.name,
+                        );
                         let mut key_painter = painter.clone();
                         if unavailable.is_some() {
                             key_painter.multiply_opacity(UNAVAILABLE_OPACITY);
@@ -2210,6 +2277,7 @@ fn corner_buttons(ui: &mut egui::Ui, art: &Art, rect: Rect, actions: &mut Vec<Ac
         let response = ui
             .interact(cell, Id::unique(("setup corner", index)), Sense::click())
             .on_hover_text(tip);
+        paint::labelled(&response, true, tip);
         if response.hovered() {
             painter.rect_filled(cell.shrink(1.0), 7, hexa(0xffffff, 0.08));
         }

@@ -31,7 +31,7 @@ try {
   // Battle Setup's choices reach the saved record and the arena.
   await clickWidget(page, "Harbor Havoc");
   await clickWidget(page, "SKIPPER");
-  await clickWidget(page, "HARD");
+  await clickWidget(page, "Hard");
   let state = await untilState(
     page,
     (state) => state.prefs.map === "harbor" && state.prefs.tank === "scout" && state.ready,
@@ -71,9 +71,11 @@ try {
     what: "a shot",
   });
 
-  // The wheel zooms; V switches to first person and back.
+  // Shift and the wheel zoom; V switches to first person and back.
   const zoom = state.extras.debug.view.zoom;
+  await page.keyboard.down("Shift");
   await page.mouse.wheel(0, 400);
+  await page.keyboard.up("Shift");
   state = await untilState(page, (state) => state.extras.debug.view.zoom !== zoom, {
     extras: ["debug"],
     what: "the wheel's zoom",

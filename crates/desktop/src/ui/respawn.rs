@@ -151,6 +151,7 @@ pub fn card(
                         Sense::click(),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
+                paint::labelled(&response, true, tank.name());
                 vehicle_card(
                     &painter,
                     art,
@@ -229,6 +230,7 @@ pub fn strip(
                     Id::unique(("respawn strip tank", tank.kind)),
                     Sense::click(),
                 );
+                paint::labelled(&response, true, tank.name());
                 vehicle_card(
                     &painter,
                     art,

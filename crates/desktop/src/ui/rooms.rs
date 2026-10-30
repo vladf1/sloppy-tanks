@@ -472,6 +472,7 @@ fn icon_button(
     let response = ui
         .interact(rect, Id::unique(("rooms button", id)), Sense::click())
         .on_hover_text(tip);
+    paint::labelled(&response, enabled, tip);
     let painter = ui.painter();
     let hovered = enabled && response.hovered();
     painter.rect_filled(rect, 7, hexa(0xb7d7ed, if hovered { 0.16 } else { 0.08 }));
@@ -772,6 +773,7 @@ pub fn multiplayer(
             .interact(rect, Id::unique(("team", index)), Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
         let chosen = state.team == team;
+        paint::labelled_choice(&response, true, chosen, name);
         super::setup::choice_frame(&painter, rect, chosen, response.hovered());
         let dot = pos2(rect.left() + 26.0, rect.center().y);
         let [left, right] = colors.map(hex);
@@ -934,6 +936,7 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room
     let response = ui
         .interact(new_room, Id::unique("new room"), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+    paint::labelled_choice(&response, true, chosen, "New room");
     let painter = ui.painter().clone();
     if chosen {
         painter.rect_filled(new_room.expand(3.0), 13, hexa(0xffcf38, 0.08));
@@ -1005,6 +1008,15 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room
     let step = |ui: &mut egui::Ui, left: f32, glyph: &str, id: &str| {
         let rect = Rect::from_min_size(pos2(left, stepper.top() + 2.0), vec2(28.0, 30.0));
         let response = ui.interact(rect, Id::unique(("length", id)), Sense::click());
+        paint::labelled(
+            &response,
+            true,
+            if id == "less" {
+                "Fewer minutes"
+            } else {
+                "More minutes"
+            },
+        );
         ui.painter().rect_filled(
             rect,
             7,
@@ -1051,10 +1063,11 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room
         vec2(34.0, 20.0),
     );
     let switch_area = Rect::from_min_max(switch.min, pos2(switch.right() + 112.0, switch.bottom()));
-    let toggled = ui
+    let response = ui
         .interact(switch_area, Id::unique("humans only"), Sense::click())
-        .on_hover_text("No bots fill the teams; empty seats stay empty")
-        .clicked();
+        .on_hover_text("No bots fill the teams; empty seats stay empty");
+    paint::labelled_choice(&response, true, state.humans_only, "Humans only");
+    let toggled = response.clicked();
     let mut humans_only = state.humans_only;
     if toggled {
         humans_only = !humans_only;
@@ -1183,6 +1196,7 @@ fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
         );
         let painter = ui.painter();
         let chosen = state.selected == room.room;
+        paint::labelled_choice(&response, joinable, chosen, &room.room);
         if chosen {
             painter.rect_filled(rect, 10, hex(0x22477a));
             painter.rect_stroke(rect, 10, Stroke::new(2.0, GOLD), StrokeKind::Inside);

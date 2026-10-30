@@ -265,6 +265,7 @@ fn paragraph(ui: &mut Ui, text: &str, color: Color32) {
 fn text_button(ui: &mut Ui, text: &str) -> egui::Response {
     let width = paint::text_width(ui.painter(), text, bold_font(12.0), 0.2) + 24.0;
     let (rect, response) = ui.allocate_exact_size(vec2(width, 28.0), Sense::click());
+    paint::labelled(&response, true, text);
     paint_text_button(ui.painter(), rect, text, response.hovered());
     response
 }
@@ -303,6 +304,7 @@ fn text_button_at(ui: &mut Ui, right: f32, top: f32, text: &str, id: &str) -> bo
     let width = paint::text_width(ui.painter(), text, bold_font(12.0), 0.2) + 24.0;
     let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, 28.0));
     let response = ui.interact(rect, Id::unique(id), Sense::click());
+    paint::labelled(&response, true, text);
     paint_text_button(ui.painter(), rect, text, response.hovered());
     response.clicked()
 }

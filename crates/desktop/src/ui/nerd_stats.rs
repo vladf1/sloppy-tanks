@@ -48,6 +48,7 @@ pub fn link(context: &egui::Context, state: &mut UiState) {
                 .allocate_exact_size(target.size(), Sense::click())
                 .1
                 .on_hover_text("Stats for Nerds (N)");
+            paint::labelled(&response, true, "Stats for Nerds");
             paint::shadowed(
                 ui.painter(),
                 label.left_center(),
@@ -138,6 +139,7 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
             let response = ui
                 .interact(close, Id::unique("nerd stats close"), Sense::click())
                 .on_hover_text("Hide (N)");
+            paint::labelled(&response, true, "Hide Stats for Nerds");
             if response.hovered() {
                 painter.rect_filled(close, 6, hexa(0xffffff, 0.12));
             }
@@ -170,6 +172,7 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
                         let open = section_open(state, section.title);
                         let (head, response) =
                             ui.allocate_exact_size(vec2(width, SECTION_HEAD), Sense::click());
+                        paint::labelled_choice(&response, true, open, section.title);
                         let painter = ui.painter();
                         let x = head.left() + 5.0;
                         let tip = pos2(x + 4.0, head.center().y);

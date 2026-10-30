@@ -526,6 +526,7 @@ fn tabs<T: Copy + PartialEq>(
         x = rect.right() + 4.0;
         let response = ui.interact(rect, Id::unique(("dialog tab", index)), Sense::click());
         let selected = *value == chosen;
+        paint::labelled_choice(&response, true, selected, label);
         if selected {
             painter.add(paint::vgradient(
                 rect,
@@ -858,6 +859,7 @@ fn slider(
         pos2(track.right() + 8.0, rect.top() + 26.0),
     );
     let response = ui.interact(hit, Id::unique(("slider", id)), Sense::click_and_drag());
+    response.widget_info(|| egui::WidgetInfo::slider(true, *value, id));
     if (response.dragged() || response.clicked())
         && let Some(pointer) = response.interact_pointer_pos()
     {
@@ -931,6 +933,7 @@ fn setting_choice<T: Copy + PartialEq>(
         );
         let response = ui.interact(rect, Id::unique((id, index)), Sense::click());
         let selected = *chosen == *value;
+        paint::labelled_choice(&response, true, selected, &format!("{id}: {label}"));
         if selected {
             painter.add(paint::rounded_vgradient(
                 rect,
@@ -969,6 +972,7 @@ fn setting_choice<T: Copy + PartialEq>(
 /// An on/off switch; returns whether it was flipped.
 fn switch(ui: &mut Ui, painter: &Painter, rect: Rect, id: &str, on: &mut bool) {
     let response = ui.interact(rect, Id::unique(("switch", id)), Sense::click());
+    paint::labelled_choice(&response, true, *on, id);
     if response.clicked() {
         *on = !*on;
     }
@@ -1189,6 +1193,7 @@ pub fn settings(
                         },
                     )
                     .on_hover_text("Both speeds back to 100%");
+                paint::labelled(&response, changed, "Reset speeds");
                 painter.rect_filled(
                     reset,
                     8,

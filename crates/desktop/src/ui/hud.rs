@@ -441,6 +441,11 @@ fn phone_keys(
             .enumerate()
             {
                 let response = ui.interact(rect, Id::unique(("phone key", index)), Sense::click());
+                paint::labelled(
+                    &response,
+                    true,
+                    if index == 0 { "Switch view" } else { "Pause" },
+                );
                 let lit = index == 0 && state.cockpit;
                 phone_key(&painter, rect, corners, lit);
                 art.icon(
@@ -852,6 +857,7 @@ fn toolbar(
                 let response = ui
                     .interact(cell, Id::unique(("hud tool", index)), Sense::click())
                     .on_hover_text(tip);
+                paint::labelled(&response, true, tip);
                 let lit = index == 0 && state.cockpit;
                 if lit {
                     painter.add(paint::rounded_vgradient(
@@ -1473,6 +1479,7 @@ fn ammo_rack(
             .interact(rect, Id::unique(("ammo slot", index)), Sense::click())
             .on_hover_text(format!("{}: {name} · {count_text}", index + 1));
         let usable = playing && human.alive && available;
+        paint::labelled_choice(&response, usable, selected, name);
         if !available {
             // A ghost of what a crate would load.
             art.icon(

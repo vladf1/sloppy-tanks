@@ -10,6 +10,9 @@ export const headless = !process.env.SLOPPY_HEADED;
 /** The Vite dev server under test; `pnpm run dev` prints it. */
 export const gameUrl = process.env.SLOPPY_URL ?? "http://127.0.0.1:5173/sloppy-tanks/";
 
+/** SLOPPY_WEBGL=1 opens the game on its WebGL2 build (`?webgl`, `openShell`). */
+const webglOnly = Boolean(process.env.SLOPPY_WEBGL);
+
 /** Headless Chrome whose pages keep their timers and frames while another page is in front. */
 export function launchChrome() {
   return chromium.launch({
@@ -59,14 +62,16 @@ export async function launchGame({
 
 /**
  * Open the game page with its automation hook (`?automation`, the shell's
- * `crates/desktop/src/automation.rs`) and wait for the shell's first frame. `query` adds
+ * `crates/desktop/src/automation.rs`), on WebGL2 with SLOPPY_WEBGL=1, and wait for the
+ * shell's first frame. `query` adds
  * the page's own parameters (`"debug&map=harbor"`). Throws if the shell failed to start.
  * @param {import("playwright").Page} page
  * @param {string} [query]
  */
 export async function openShell(page, query = "") {
   const url = new URL(gameUrl);
-  url.search = query ? `automation&${query}` : "automation";
+  const parameters = ["automation", ...(webglOnly ? ["webgl"] : []), ...(query ? [query] : [])];
+  url.search = parameters.join("&");
   await page.goto(url.href);
   await page.waitForFunction(() => document.documentElement.dataset.shell, null, {
     timeout: 60000,
@@ -119,7 +124,8 @@ export async function findWidget(page, label) {
 
 /**
  * Click the middle of the widget labelled `label` with the real mouse, at its CSS
- * coordinates, once a frame shows it. Returns the widget.
+ * coordinates, once a frame shows it, and wait for the frame that takes the click.
+ * Returns the widget.
  * @param {import("playwright").Page} page
  * @param {string | RegExp} label
  * @param {{ timeout?: number }} [options]
@@ -130,6 +136,8 @@ export async function clickWidget(page, label, { timeout = 15000 } = {}) {
     const widget = await findWidget(page, label);
     if (widget?.enabled) {
       await page.mouse.click(widget.x + widget.width / 2, widget.y + widget.height / 2);
+      // egui reads one click per widget a frame: let it see this one before the next.
+      await nextFrame(page);
       return widget;
     }
     if (Date.now() - start > timeout) {
