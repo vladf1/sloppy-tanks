@@ -55,7 +55,11 @@ pub struct Overlay {
 }
 
 impl Overlay {
-    pub fn new(window: Arc<Window>, renderer: &Renderer) -> Result<Self, String> {
+    /// The overlay over `renderer`'s frames. In a page the canvas then shows each frame
+    /// once the overlay has drawn over it, not as soon as the scene is drawn.
+    pub fn new(window: Arc<Window>, renderer: &mut Renderer) -> Result<Self, String> {
+        #[cfg(target_arch = "wasm32")]
+        renderer.present_late();
         let context = egui::Context::default();
         crate::ui::theme::install(&context);
         let input = egui_winit::State::new(

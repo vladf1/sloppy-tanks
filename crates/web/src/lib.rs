@@ -29,16 +29,17 @@ pub mod sounds;
 #[cfg(test)]
 mod page_json_tests;
 
-/// Which shell draws the game. The two say a few things differently on purpose ("in this
-/// browser" or "on this computer", RELOAD or BATTLE SETUP); everything else they show
-/// is the same text from this crate.
+/// Where the game runs, for the few things a page and the app say differently on purpose
+/// ("in this browser" or "on this computer", RELOAD or BATTLE SETUP); everything else
+/// they show is the same text from this crate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Shell {
-    /// The browser page (`src/`).
+    /// A browser page: the egui shell built for wasm32 (`crates/desktop`), or the
+    /// engine's fixture pages.
     #[default]
     Page,
-    /// The desktop app (`crates/desktop`).
+    /// The native app (`crates/desktop`) on macOS, Windows or iPad.
     Desktop,
 }
 
