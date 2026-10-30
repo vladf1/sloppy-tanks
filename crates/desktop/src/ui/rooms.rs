@@ -32,6 +32,8 @@ use sloppy_core::sim::map_options::{MapId, is_extra_level, map_option_for};
 use sloppy_web::battle_report::duration;
 
 /// The list refreshes this often while the tab shows.
+/// Room the name field keeps at its right end for its pencil.
+const PENCIL_ROOM: f32 = 18.0;
 const REFRESH: Duration = Duration::from_secs(5);
 /// Minutes one press of the length stepper moves.
 const LENGTH_STEP: i32 = 5;
@@ -487,17 +489,20 @@ fn icon_button(
     enabled && response.clicked()
 }
 
-/// A text field in a sunken well, like the page's inputs.
+/// A text field in a sunken well, like the page's inputs, leaving `icon_room` at its
+/// right end for an icon drawn over the well.
 fn field(
     ui: &mut egui::Ui,
     rect: Rect,
+    icon_room: f32,
     text: &mut String,
     limit: usize,
     hint: &str,
     size: f32,
 ) -> egui::Response {
     well(ui.painter(), rect, 9);
-    let inner = rect.shrink2(vec2(12.0, 0.0));
+    let mut inner = rect.shrink2(vec2(12.0, 0.0));
+    inner.max.x -= icon_room;
     let mut child = ui.new_child(egui::UiBuilder::new().max_rect(inner));
     child
         .centered_and_justified(|ui| {
@@ -622,7 +627,7 @@ pub fn multiplayer(
         pos2(room_list.right() - 169.0, rooms_head.y - 3.0),
         vec2(102.0, 26.0),
     );
-    let typed = field(ui, code_field, &mut state.code, 8, "Room code", 13.0);
+    let typed = field(ui, code_field, 0.0, &mut state.code, 8, "Room code", 13.0);
     let entered = typed.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
     let find = Rect::from_min_size(
         pos2(room_list.right() - 61.0, rooms_head.y - 3.0),
@@ -729,12 +734,11 @@ pub fn multiplayer(
             )
         })
         .clone();
+    // The pencil sits inside the field, at its right end.
     field(
         ui,
-        Rect::from_min_max(
-            name_field.min,
-            pos2(name_field.right() - 30.0, name_field.bottom()),
-        ),
+        name_field,
+        PENCIL_ROOM,
         &mut name,
         MAX_PLAYER_NAME_LENGTH,
         "Tank driver",
