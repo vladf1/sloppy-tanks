@@ -145,10 +145,14 @@ version multiplayer needs. `tests/traffic-bots.test.ts` drives the built server 
 
 A successful Rust/TypeScript/build/test gate does not prove controls, menu
 transitions, rendering, or cleanup: play the changed path in the page (`pnpm run dev`)
-or the desktop app. The page draws everything on one canvas, so a browser check sees
-pixels, not DOM; the engine fixtures (`scripts/fixtures-check.mjs`, `scripts/README.md`)
-are the remaining browser checks. Keep them passing: fix or delete a check that no
-longer matches the game rather than leaving it broken. Checks launch headless Chrome
+or the desktop app. The page draws everything on one canvas, so a browser check has
+no DOM to query: it opens the page with `?automation` and reads the shell's state and
+its labelled widgets (egui's AccessKit tree, in CSS pixels) through `window.sloppyShell`
+(`crates/desktop/src/automation.rs`), then plays it with real mouse, keyboard and touch
+input at those coordinates. A new clickable widget names itself (`paint::labelled`,
+`paint::labelled_choice`) so checks can find it. `pnpm run check:browser` runs the
+checks and the engine fixtures (`scripts/README.md`). Keep them passing: fix or delete a
+check that no longer matches the game rather than leaving it broken. Checks launch headless Chrome
 through the shared `headless` flag so they never pop windows over the user's desktop;
 only `SLOPPY_HEADED=1` opens a visible window.
 

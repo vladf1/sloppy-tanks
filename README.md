@@ -1,6 +1,6 @@
 # Sloppy Tanks
 
-A browser tank game with destructible cover, team battles and solo survival. The game is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom renderer draws handwritten WGSL through WebGPU (`wgpu`), and the desktop app's egui shell, built for the page, draws the menus and HUD and plays the sound. Multiplayer rooms run the same Rust simulation in a native Rust server.
+A browser tank game with destructible cover, team battles and solo survival. The game is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom renderer draws handwritten WGSL through WebGPU (`wgpu`), or WebGL2 where the browser has no WebGPU, and the desktop app's egui shell, built for the page, draws the menus and HUD and plays the sound. Multiplayer rooms run the same Rust simulation in a native Rust server.
 
 ## Run
 
@@ -56,7 +56,7 @@ shows the download and, when the game cannot start, why, with a retry; the shell
 to it and to measurements through `crates/desktop/src/page.rs` (the root's `data-shell`
 and `sloppy:*` performance marks).
 
-Rendering needs WebGPU (HTTPS or localhost, and a supporting browser and GPU).
+The page draws with WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU) and with WebGL2 otherwise; `?webgl` forces WebGL2. It downloads only the build it plays.
 
 To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
 
