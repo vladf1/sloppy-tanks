@@ -45,6 +45,12 @@ the server:
   (`nerd_rows.rs`), the room menu's text (`room_text.rs`) and Battle Setup's
   display tables (`catalog.rs`).
 - `crates/server` (native): the multiplayer server ([guide](crates/server/README.md)).
+- `crates/pilot` (native and Wasm): pilots ([guide](crates/pilot/README.md)), players that
+  join a room through `NetworkClient` and play with the bot brain on a never-stepped
+  `Simulation` refilled from the displayed scene. It drives the core's public API and
+  changes no game rule. Its command line is `pnpm run pilot`, and its Wasm engine runs the
+  bots Worker's `--brain` regions (`bots/pilot-*.ts`). Like the page and the server it is
+  stamped with the content version, so it plays only on servers built from the same core.
 - `src/` is the TypeScript page shell only: menus, HUD, input gathering, touch
   controls, audio and the room page's DOM. It lays out and plays what `sloppy-web`
   produces and derives none of it. Game rules, simulation, rendering, effects and

@@ -5,7 +5,7 @@ export const controlPage = `<!doctype html>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
-<title>Traffic Bots</title>
+<title>Traffic Bots and Pilots</title>
 <style>
   :root { color-scheme: light dark; --bg: #f6f6f3; --fg: #1d1d1b; --muted: #6b6b66; --line: #d8d8d2; --accent: #2f6f4f; --bad: #a33; }
   @media (prefers-color-scheme: dark) { :root { --bg: #161615; --fg: #ececea; --muted: #9a9a94; --line: #34342f; --accent: #6fbf8f; --bad: #e77; } }
@@ -25,11 +25,15 @@ export const controlPage = `<!doctype html>
   .error { color: var(--bad); }
   .muted { color: var(--muted); }
   section { margin-top: 20px; }
+  fieldset { display: flex; flex-wrap: wrap; gap: 8px; align-items: end; border: 1px solid var(--line); border-radius: 6px; padding: 8px; margin: 0; }
+  fieldset[disabled] { opacity: 0.5; }
+  legend { color: var(--muted); font-size: 12px; }
 </style>
 </head>
 <body>
 <main>
-  <h1>Traffic bots</h1>
+  <h1>Traffic bots and pilots</h1>
+  <p class="muted">Traffic bots drive at random to load a server. Pilots play: the bot brain drives each one through the browser's own network client, from the region it runs in. Hunt a player to have pilots take the other side and come after them; escort one to have them follow and fight beside them.</p>
   <form id="start">
     <label>Region <select id="region">
       <option value="wnam">wnam: Western N. America</option><option value="enam">enam: Eastern N. America</option>
@@ -37,11 +41,22 @@ export const controlPage = `<!doctype html>
       <option value="eeur">eeur: Eastern Europe</option><option value="apac">apac: Asia-Pacific</option>
       <option value="oc">oc: Oceania</option><option value="afr">afr: Africa</option><option value="me">me: Middle East</option>
     </select></label>
-    <label>Bots <input id="bots" type="number" min="1" max="32" value="1"></label>
+    <label>Bots or pilots <input id="bots" type="number" min="1" max="32" value="1"></label>
     <label>Minutes <input id="minutes" type="number" min="1" max="360" value="5"></label>
     <label>Per room <input id="perRoom" type="number" min="1" max="8" value="1"></label>
     <label>Room code (optional) <input id="room" size="10" maxlength="8"></label>
     <label><span><input id="host" type="checkbox"> Create rooms when none are open</span></label>
+    <label><span><input id="brain" type="checkbox"> Pilots (bot brain, at most 8)</span></label>
+    <fieldset id="pilotOptions" disabled>
+      <legend>Pilots</legend>
+      <label>Mission <select id="mission"><option value="skirmish">skirmish</option><option value="hunt">hunt</option><option value="escort">escort</option></select></label>
+      <label>Player name <input id="player" size="12" maxlength="24" placeholder="for hunt or escort"></label>
+      <label>Skill <select id="skill"><option>easy</option><option selected>normal</option><option>hard</option></select></label>
+      <label>Tank <select id="kind"><option>scout</option><option selected>balanced</option><option>heavy</option></select></label>
+      <label>Style <select id="style"><option value="">by tank</option><option>scout</option><option>guard</option><option>sniper</option><option>heavy</option><option>minelayer</option><option>support</option><option>artillery</option></select></label>
+      <label>Map of a created room <select id="map"><option>village</option><option>harbor</option><option>quarry</option></select></label>
+      <label>Servers <select id="environment"><option value="">the Worker's</option><option>production</option><option>dev</option></select></label>
+    </fieldset>
     <button>Start</button>
     <button type="button" class="secondary" id="stop">Stop region</button>
     <button type="button" class="secondary" id="stopAll">Stop all</button>
@@ -63,6 +78,38 @@ async function api(path, body) {
 }
 function say(text, error) { $("message").textContent = text; $("message").className = error ? "error" : "muted"; }
 const kb = (bytes) => (bytes / 1024).toFixed(1);
+const ms = (value) => (value == null ? "" : Math.round(value));
+const metres = (value) => (value == null ? "" : value.toFixed(2));
+const TEAMS = ["blue", "red"];
+$("brain").addEventListener("change", () => { $("pilotOptions").disabled = !$("brain").checked; });
+function table(head, rows) {
+  const table = document.createElement("table");
+  const top = document.createElement("tr");
+  for (const name of head) { const th = document.createElement("th"); th.textContent = name; top.append(th); }
+  table.append(top);
+  for (const values of rows) { const row = document.createElement("tr"); row.append(...values.map(cell)); table.append(row); }
+  const scroll = document.createElement("div");
+  scroll.className = "scroll";
+  scroll.append(table);
+  return scroll;
+}
+function pilotSection(region, section) {
+  const squad = region.pilots;
+  const info = document.createElement("p");
+  info.className = "muted";
+  info.textContent = (region.config.brain.mission) + " · " + region.config.brain.skill + " " + region.config.brain.kind + " · room " + (squad.room || "choosing") + (squad.server ? " on " + squad.server : "") + " · engine content " + (squad.contentVersion || "?") + (squad.restarts ? " · engine restarts " + squad.restarts : "");
+  section.append(info);
+  if (squad.lastError) { const p = document.createElement("p"); p.className = "error"; p.textContent = squad.lastError; section.append(p); }
+  section.append(table(
+    ["Pilot", "Phase", "Team", "K/D", "Hits (players)", "Taken (players)", "RTT ms", "View delay ms", "Fire→flash ms", "Hit offset m", "Corr p95 m", "Phantom hits", "Late batches", "Last"],
+    squad.pilots.map((pilot) => {
+      const r = pilot.report;
+      if (!r) return [pilot.name, "starting", "", "", "", "", "", "", "", "", "", "", "", pilot.lastError];
+      const f = r.feel;
+      return [pilot.name, r.phase, TEAMS[r.team] ?? "", r.scoreKills + "/" + r.scoreDeaths, r.tally.hits + " (" + r.tally.playerHits + ")", r.tally.hitsTaken + " (" + r.tally.playerHitsTaken + ")", ms(f.rttMs), ms(f.viewDelayMs.mean), ms(f.fireToFlashMs.mean), metres(f.hitOffsetM.mean), metres(f.correctionP95M), f.phantomStrikes, f.lateBatches, pilot.lastError ?? r.endedText ?? r.notice ?? r.status];
+    }),
+  ));
+}
 function cell(value) { const td = document.createElement("td"); td.textContent = value ?? ""; return td; }
 function render(status) {
   const root = $("regions");
@@ -73,10 +120,15 @@ function render(status) {
     const heading = document.createElement("h2");
     heading.style.fontSize = "16px";
     const left = Math.max(0, Math.round((region.config.stopAt - Date.now()) / 60000));
-    heading.textContent = region.region + " (colo " + (region.colo || "?") + ") · " + region.bots.filter((b) => b.connected).length + "/" + region.config.bots +
-      " connected · rooms " + (region.rooms.join(", ") || "none") + " · in " + kb(region.bytesInPerSecond) + " KiB/s, out " + kb(region.bytesOutPerSecond) + " KiB/s · stops in " + left + " min";
+    if (region.pilots) {
+      heading.textContent = region.region + " (colo " + (region.colo || "?") + ") · " + region.pilots.pilots.filter((p) => p.connected).length + "/" + region.config.bots + " pilots connected · stops in " + left + " min";
+    } else {
+      heading.textContent = region.region + " (colo " + (region.colo || "?") + ") · " + region.bots.filter((b) => b.connected).length + "/" + region.config.bots +
+        " connected · rooms " + (region.rooms.join(", ") || "none") + " · in " + kb(region.bytesInPerSecond) + " KiB/s, out " + kb(region.bytesOutPerSecond) + " KiB/s · stops in " + left + " min";
+    }
     section.append(heading);
     if (region.lastError) { const p = document.createElement("p"); p.className = "error"; p.textContent = region.lastError; section.append(p); }
+    if (region.pilots) { pilotSection(region, section); $("regions").append(section); continue; }
     const table = document.createElement("table");
     const head = document.createElement("tr");
     for (const name of ["Bot", "Room", "Phase", "RTT ms", "Inputs", "Rounds", "In KiB", "Out KiB", "Last error"]) { const th = document.createElement("th"); th.textContent = name; head.append(th); }
@@ -99,7 +151,11 @@ async function refresh() {
 $("start").addEventListener("submit", async (event) => {
   event.preventDefault();
   try {
-    await api("start", { region: $("region").value, bots: Number($("bots").value), minutes: Number($("minutes").value), perRoom: Number($("perRoom").value), room: $("room").value.trim() || undefined, host: $("host").checked });
+    const brain = $("brain").checked;
+    const mission = $("mission").value === "skirmish" ? "skirmish" : $("mission").value + ($("player").value.trim() ? ":" + $("player").value.trim() : "");
+    await api("start", { region: $("region").value, bots: Number($("bots").value), minutes: Number($("minutes").value), perRoom: Number($("perRoom").value), room: $("room").value.trim() || undefined, host: $("host").checked,
+      ...(brain ? { brain: true, mission, skill: $("skill").value, kind: $("kind").value, style: $("style").value || undefined, map: $("map").value } : {}),
+      environment: $("environment").value || undefined });
     await refresh();
   } catch (error) { say(error.message, true); }
 });

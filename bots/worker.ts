@@ -10,6 +10,10 @@ import {
   type ServerInfo,
 } from "./bot-player";
 import { controlPage } from "./control-page";
+import type { Connect } from "./pilot-seat";
+import { PilotSquad, readBrain, type PilotBrain } from "./pilot-squad";
+// Built by scripts/build-pilot.mjs, which `pnpm run bots:deploy` runs first.
+import pilotModule from "./generated/sloppy_pilot.wasm";
 
 interface Env {
   SWARM: DurableObjectNamespace<BotSwarm>;
@@ -26,13 +30,20 @@ interface ListedServer {
   rooms: (RoomListingSummary & { mapMode: string })[];
 }
 
-const directoryList = (env: Env) =>
-  `${env.DIRECTORY_URL}/servers?environment=${env.SERVER_ENVIRONMENT}`;
+/** The directory environments a run may play on; the Worker's own by default. */
+const ENVIRONMENTS = ["production", "dev"] as const;
+const directoryList = (env: Env, environment?: string) =>
+  `${env.DIRECTORY_URL}/servers?environment=${environment ?? env.SERVER_ENVIRONMENT}`;
 
 /** Durable Object location hints; each region runs at most one swarm object. */
 const REGIONS = ["wnam", "enam", "sam", "weur", "eeur", "apac", "oc", "afr", "me"] as const;
 type Region = (typeof REGIONS)[number];
 const MAX_BOTS_PER_REGION = 32;
+// Each pilot runs a copy of the arena's physics and the browser's client in the region's
+// one Wasm instance; a room has eight seats anyway.
+const MAX_PILOTS_PER_REGION = 8;
+// Pilots play at about the frame rate of a slow browser tab; their input goes out at 20 Hz.
+const PILOT_TICK_MS = 33;
 const DEFAULT_MINUTES = 5;
 // Every running bot keeps its Durable Object awake and billed for wall time, so runs always end.
 const MAX_MINUTES = 6 * 60;
@@ -54,6 +65,10 @@ interface SwarmConfig {
   /** When no listed room has space, create a bot room instead of waiting for people. */
   host: boolean;
   perRoom: number;
+  /** Pilots instead of traffic bots: `bots` players run by the bot brain. */
+  brain?: PilotBrain;
+  /** The directory environment to play on, when not the Worker's own. */
+  environment?: (typeof ENVIRONMENTS)[number];
 }
 interface Seat {
   bot: BotPlayer;
@@ -119,13 +134,25 @@ export default {
         if (room !== undefined && !/^[A-Z2-9]{8}$/.test(room)) {
           throw new Error("room must be an 8-character room code");
         }
+        const brain = body.brain === true ? readBrain(body) : undefined;
+        const environment =
+          body.environment === undefined
+            ? undefined
+            : ENVIRONMENTS.find((name) => name === body.environment);
+        if (body.environment !== undefined && !environment) {
+          throw new Error("environment must be one of " + ENVIRONMENTS.join(", "));
+        }
         const config: SwarmConfig = {
           region: region(body.region),
-          bots: integer(body.bots, 1, 1, MAX_BOTS_PER_REGION, "bots"),
+          bots: brain
+            ? integer(body.bots, 1, 1, MAX_PILOTS_PER_REGION, "pilots")
+            : integer(body.bots, 1, 1, MAX_BOTS_PER_REGION, "bots"),
           stopAt: now + integer(body.minutes, DEFAULT_MINUTES, 1, MAX_MINUTES, "minutes") * 60_000,
           room,
           host: body.host === true,
           perRoom: integer(body.perRoom, 1, 1, ROOM_SEATS, "perRoom"),
+          brain,
+          environment,
         };
         return json(await swarm(env, config.region).start(config));
       }
@@ -141,10 +168,33 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
+/** A pilot's socket: Workers open WebSockets through fetch, so a wss: address goes as https:. */
+const connectPilot: Connect = async (url, events) => {
+  // The signal stays bound to the upgraded socket, so the timeout must end with the handshake.
+  const abort = new AbortController();
+  const timeout = setTimeout(() => abort.abort(), CONNECT_TIMEOUT_MS);
+  const response = await fetch(url.replace(/^ws/, "http"), {
+    headers: { Upgrade: "websocket" },
+    signal: abort.signal,
+  }).finally(() => clearTimeout(timeout));
+  const socket = response.webSocket;
+  if (!socket) {
+    throw new Error(`The room refused the pilot: ${response.status} ${await response.text()}`);
+  }
+  socket.binaryType = "arraybuffer";
+  socket.accept();
+  socket.addEventListener("message", (event) => events.message(event.data as string | ArrayBuffer));
+  socket.addEventListener("close", (event) => events.close(event.code));
+  socket.addEventListener("error", () => events.close(1006));
+  return socket;
+};
+
 /** Runs one region's bots. Its outbound sockets keep it awake only while a run is configured. */
 export class BotSwarm extends DurableObject<Env> {
   private config?: SwarmConfig;
   private seats: Seat[] = [];
+  /** The run's pilots, when it runs pilots rather than traffic bots. */
+  private squad?: PilotSquad;
   private timer?: ReturnType<typeof setInterval>;
   private server?: ServerInfo;
   /** The WebSocket address of the server the swarm plays on, from the directory. */
@@ -230,12 +280,17 @@ export class BotSwarm extends DurableObject<Env> {
       bytesInPerSecond: Math.round(bytesIn / elapsed),
       bytesOutPerSecond: Math.round(bytesOut / elapsed),
       bots,
+      pilots: this.squad?.summary() ?? null,
     };
   }
 
   private run(): void {
     const config = this.config;
     if (!config) {
+      return;
+    }
+    if (config.brain) {
+      this.runPilots(config, config.brain);
       return;
     }
     if (!this.seats.length) {
@@ -263,6 +318,31 @@ export class BotSwarm extends DurableObject<Env> {
         void this.maintain(now);
       }
     }, TICK_MS);
+    this.requestColo();
+  }
+
+  /** Pilots tick every frame and look for their room every few seconds. */
+  private runPilots(config: SwarmConfig, brain: PilotBrain): void {
+    this.squad ??= new PilotSquad(
+      { region: config.region, pilots: config.bots, room: config.room, host: config.host, brain },
+      pilotModule,
+      connectPilot,
+    );
+    this.timer ??= setInterval(() => {
+      const now = Date.now();
+      if (!this.config || now >= this.config.stopAt) {
+        void this.stop();
+        return;
+      }
+      this.squad?.tick();
+      if (now - this.lastMaintainMs >= MAINTAIN_MS) {
+        void this.maintain(now);
+      }
+    }, PILOT_TICK_MS);
+    this.requestColo();
+  }
+
+  private requestColo(): void {
     if (!this.coloRequested) {
       // Location hints are best-effort; report where the swarm actually runs.
       this.coloRequested = true;
@@ -276,6 +356,19 @@ export class BotSwarm extends DurableObject<Env> {
   /** Assigns idle bots to rooms: their previous seat, the configured room, open rooms, or a new room. */
   private async maintain(now: number): Promise<void> {
     if (this.maintaining || !this.config) {
+      return;
+    }
+    if (this.squad) {
+      this.maintaining = true;
+      this.lastMaintainMs = now;
+      try {
+        this.squad.maintain(await this.listServers());
+        this.lastError = undefined;
+      } catch (error) {
+        this.lastError = error instanceof Error ? error.message : String(error);
+      } finally {
+        this.maintaining = false;
+      }
       return;
     }
     this.maintaining = true;
@@ -295,7 +388,7 @@ export class BotSwarm extends DurableObject<Env> {
       if (!this.server || !server) {
         server = servers[0];
         if (!server) {
-          throw new Error(`${directoryList(this.env)} lists no game server`);
+          throw new Error(`${directoryList(this.env, config.environment)} lists no game server`);
         }
         this.serverUrl = server.url;
         this.server = { version: server.protocol, contentVersion: server.contentVersion };
@@ -381,7 +474,7 @@ export class BotSwarm extends DurableObject<Env> {
   }
 
   private async listServers(): Promise<ListedServer[]> {
-    const response = await fetch(directoryList(this.env));
+    const response = await fetch(directoryList(this.env, this.config?.environment));
     if (!response.ok) {
       throw new Error(`Server directory ${response.status}: ${await response.text()}`);
     }
@@ -473,6 +566,8 @@ export class BotSwarm extends DurableObject<Env> {
   private release(): void {
     clearInterval(this.timer ?? null);
     this.timer = undefined;
+    this.squad?.stop();
+    this.squad = undefined;
     for (const seat of this.seats) {
       this.disconnect(seat);
     }
