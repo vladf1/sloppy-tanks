@@ -3,6 +3,7 @@
 //! the tank panel with its hull, ammunition rack, mine socket and effect tabs, the
 //! cockpit compass, and the hit feedback (edge flash, damage ring, critical pulse).
 
+use egui::emath::TSTransform;
 use egui::{
     Align2, Color32, CornerRadius, Id, LayerId, Mesh, Order, Painter, Pos2, Rect, Sense, Shape,
     Stroke, StrokeKind, Vec2, pos2, vec2,
@@ -688,7 +689,8 @@ fn team_plate(x: f32, width: f32, height: f32, left_side: bool) -> Vec<Pos2> {
 fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
     let solo = hud.game_mode == GameMode::Solo;
     let match_state = &hud.match_state;
-    let no_limit = room || solo || hud.endless_match;
+    // A room's plates race toward its limit too (`ui.ts`: `no-limit` is solo or endless).
+    let no_limit = solo || hud.endless_match;
     let height = if room { 55.0 } else { 62.0 };
     // The phone edition draws its own score.
     let tablet = crate::touch::screen();
@@ -873,10 +875,12 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
             };
             let share = (f64::from(match_state.scores[team]) / f64::from(hud.score_limit.max(1)))
                 .clamp(0.0, 1.0) as f32;
+            // A room names no side YOUR TEAM, but your side's track keeps its gold tint.
+            let your_track = !solo && team == hud.human_team.index();
             painter.rect_filled(
                 track,
                 2,
-                if yours {
+                if your_track {
                     hexa(0x1a1200, 0.54)
                 } else {
                     hexa(0x0a1428, 0.33)
@@ -888,7 +892,7 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
             } else {
                 Rect::from_min_max(track.min, pos2(track.left() + fill_width, track.bottom()))
             };
-            let color = if yours { GOLD_HOT } else { Color32::WHITE };
+            let color = if your_track { GOLD_HOT } else { Color32::WHITE };
             painter.rect_filled(fill.expand(1.5), 3, fade(color, 0.3));
             painter.rect_filled(fill, 2, color);
         }
@@ -1139,6 +1143,8 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
     for (index, entry) in entries.take(lines).enumerate() {
         let top = first + index as f32 * (row_height + 4.0);
         let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, row_height));
+        // The row's shapes from here on, which its entrance scales.
+        let row_start = painter.add(Shape::Noop);
         let side = |team: Option<Team>| match team {
             Some(Team::Blue) => hex(0x3d9cff),
             Some(Team::Red) => hex(0xff4d63),
@@ -1259,7 +1265,86 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
             Rect::from_center_size(center, Vec2::splat(22.0)),
             icon_tint,
         );
+        // The newest row grows in from its right edge, drawn only: the rows under it
+        // keep their places.
+        let scale = if index == 0 {
+            feed_entrance(newest_row_age(painter.ctx(), entry.age), entry.own_kill)
+        } else {
+            1.0
+        };
+        if scale != 1.0 {
+            let anchor = pos2(rect.right(), rect.center().y).to_vec2();
+            let transform = TSTransform::new(anchor * (1.0 - scale), scale);
+            let row_end = painter.add(Shape::Noop);
+            painter.ctx().graphics_mut(|layers| {
+                layers
+                    .entry(painter.layer_id())
+                    .transform_after_rounding_range(row_start, row_end, transform);
+            });
+        }
     }
+}
+
+/// The newest feed row's entrance: a row grows from 0.9 over 0.35 s (`feed-in`), and
+/// the viewer's own kill pops from 0.86 past full size and back over 0.6 s
+/// (`own-kill-pop`), each step on its CSS curve.
+const FEED_IN: (f64, f32) = (0.35, 0.9);
+const FEED_IN_CURVE: [f32; 4] = [0.2, 0.9, 0.3, 1.15];
+const OWN_KILL_POP: (f64, [f32; 3]) = (0.6, [0.86, 1.03, 1.0]);
+const OWN_KILL_POP_PEAK: f32 = 0.45;
+const OWN_KILL_POP_CURVE: [f32; 4] = [0.2, 1.4, 0.4, 1.0];
+
+/// The newest row's age on the shell's clock: the feed's own ages advance only with
+/// the HUD's refresh, a few frames apart, which would step a short entrance. A row
+/// younger than the newest one before it is a new row.
+fn newest_row_age(context: &egui::Context, age: f64) -> f64 {
+    let now = context.input(|input| input.time);
+    context.data_mut(|data| {
+        let (shown, start) = data.get_temp_mut_or(Id::unique("newest feed row"), (age, now - age));
+        if age < *shown {
+            *start = now - age;
+        }
+        *shown = age;
+        now - *start
+    })
+}
+
+/// The newest row's scale at `age` seconds.
+fn feed_entrance(age: f64, own_kill: bool) -> f32 {
+    if own_kill {
+        let (duration, [from, peak, to]) = OWN_KILL_POP;
+        let share = (age / duration).clamp(0.0, 1.0) as f32;
+        if share < OWN_KILL_POP_PEAK {
+            let eased = cubic_bezier(OWN_KILL_POP_CURVE, share / OWN_KILL_POP_PEAK);
+            from + (peak - from) * eased
+        } else {
+            let step = (share - OWN_KILL_POP_PEAK) / (1.0 - OWN_KILL_POP_PEAK);
+            peak + (to - peak) * cubic_bezier(OWN_KILL_POP_CURVE, step)
+        }
+    } else {
+        let (duration, from) = FEED_IN;
+        let share = (age / duration).clamp(0.0, 1.0) as f32;
+        from + (1.0 - from) * cubic_bezier(FEED_IN_CURVE, share)
+    }
+}
+
+/// CSS `cubic-bezier(x1, y1, x2, y2)` at time `t`: the curve's x solved for `t` by
+/// halving, then its y there.
+pub(super) fn cubic_bezier([x1, y1, x2, y2]: [f32; 4], t: f32) -> f32 {
+    let along = |s: f32, a: f32, b: f32| {
+        let u = 1.0 - s;
+        3.0 * u * u * s * a + 3.0 * u * s * s * b + s * s * s
+    };
+    let (mut low, mut high) = (0.0f32, 1.0f32);
+    for _ in 0..24 {
+        let middle = (low + high) / 2.0;
+        if along(middle, x1, x2) < t {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    along((low + high) / 2.0, y1, y2)
 }
 
 /// The newest feed row's brightness at `age` seconds (`feed-recent`): 1.3 times over
@@ -2169,8 +2254,13 @@ fn ammo_rack(
         let response = ui
             .interact(rect, Id::unique(("ammo slot", index)), Sense::click())
             .on_hover_text(format!("{}: {name} · {count_text}", index + 1));
-        let usable = playing && human.alive && available;
+        // Every slot loads while the tank plays, an empty one too: the engine answers
+        // that it is empty (`hud-feedback.ts` disables the slots only off play).
+        let usable = playing && human.alive;
         paint::labelled_choice(&response, usable, selected, name);
+        if usable && response.clicked() {
+            actions.push(Action::SelectAmmo(index as u8 + 1));
+        }
         if !available {
             if touch.is_some() && after_ghost {
                 ghost_seam(painter, rect);
@@ -2230,15 +2320,12 @@ fn ammo_rack(
         } else if selected {
             // The icon and the count share the row over the round's name.
             let middle = (rect.top() + LOADED_ROW_TOP + rect.bottom() - LOADED_ROW_FOOT) / 2.0;
-            art.icon(
-                painter,
-                weapon,
-                Rect::from_center_size(
-                    pos2(rect.left() + LOADED_SIDE + LOADED_ICON / 2.0, middle),
-                    Vec2::splat(LOADED_ICON),
-                ),
-                color,
+            let icon = Rect::from_center_size(
+                pos2(rect.left() + LOADED_SIDE + LOADED_ICON / 2.0, middle),
+                Vec2::splat(LOADED_ICON),
             );
+            loaded_icon_glow(painter, art, weapon, icon, color);
+            art.icon(painter, weapon, icon, color);
             let count_pos = pos2(rect.right() - LOADED_SIDE, middle);
             count_mark(
                 painter,
@@ -2289,9 +2376,6 @@ fn ammo_rack(
                 theme::TEXT,
             );
         }
-        if usable && response.clicked() {
-            actions.push(Action::SelectAmmo(index as u8 + 1));
-        }
     }
 }
 
@@ -2317,15 +2401,14 @@ fn touch_key_face(
     } else {
         TOUCH_COUNT_SIZE
     };
-    art.icon(
-        painter,
-        option.weapon.as_str(),
-        Rect::from_center_size(
-            pos2(rect.center().x, (top + bottom - foot) / 2.0),
-            Vec2::splat(TOUCH_KEY_ICON),
-        ),
-        color,
+    let icon = Rect::from_center_size(
+        pos2(rect.center().x, (top + bottom - foot) / 2.0),
+        Vec2::splat(TOUCH_KEY_ICON),
     );
+    if selected {
+        loaded_icon_glow(painter, art, option.weapon.as_str(), icon, color);
+    }
+    art.icon(painter, option.weapon.as_str(), icon, color);
     if selected {
         count_mark(
             painter,
@@ -2357,6 +2440,28 @@ fn touch_key_face(
             TOUCH_COUNT_SIZE,
             theme::TEXT,
         );
+    }
+}
+
+/// The loaded round's icon glow (`.ammo-slot.selected .ammo-icon`: `drop-shadow(0 0 5px
+/// <colour 70%>)`, a blur of a 2.5 px deviation): rings of copies at these distances,
+/// each ring taking the share of the blur's weight that falls round it, in this many
+/// directions.
+const LOADED_GLOW_RINGS: [(f32, f32); 4] =
+    [(1.25, 0.245), (2.5, 0.297), (3.75, 0.242), (5.25, 0.216)];
+const LOADED_GLOW_OPACITY: f32 = 0.7;
+const LOADED_GLOW_DIRECTIONS: usize = 12;
+
+/// The loaded round's icon, faint in its colour, spread round itself as a glow: the
+/// copies' alphas add up to the blur's weights.
+fn loaded_icon_glow(painter: &Painter, art: &Art, weapon: &str, icon: Rect, color: Color32) {
+    for (distance, share) in LOADED_GLOW_RINGS {
+        let alpha = LOADED_GLOW_OPACITY * share / LOADED_GLOW_DIRECTIONS as f32;
+        for direction in 0..LOADED_GLOW_DIRECTIONS {
+            let angle = std::f32::consts::TAU * direction as f32 / LOADED_GLOW_DIRECTIONS as f32;
+            let offset = Vec2::angled(angle) * distance;
+            art.icon(painter, weapon, icon.translate(offset), fade(color, alpha));
+        }
     }
 }
 
@@ -2515,6 +2620,10 @@ fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, human: &HudHuman) {
     }
 }
 
+/// The ammunition notice's gap over the panel (`.combat-notices`: `bottom: calc(100% +
+/// 10px)`).
+const NOTICE_GAP: f32 = 10.0;
+
 /// The ammunition notice over the panel whose top is `plate_top`, from `left` and at
 /// most the `room` of its column wide.
 fn ammo_notice(painter: &Painter, left: f32, plate_top: f32, room: f32, notice: &str) {
@@ -2522,7 +2631,7 @@ fn ammo_notice(painter: &Painter, left: f32, plate_top: f32, room: f32, notice: 
     let max = room.min(600.0) - 24.0;
     let galley = paint::galley(painter, notice, font, GOLD_HOT, 0.0, max);
     let size = galley.size() + vec2(23.0, 14.0);
-    let rect = Rect::from_min_size(pos2(left, plate_top - 42.0 - size.y), size);
+    let rect = Rect::from_min_size(pos2(left, plate_top - NOTICE_GAP - size.y), size);
     painter.rect_filled(rect.translate(vec2(0.0, 4.0)), 8, hexa(0, 0.3));
     painter.add(paint::vgradient(
         rect,
@@ -2753,5 +2862,63 @@ mod tests {
             assert_eq!(labels.iter().any(|text| text == "FIRST TO 100"), !room);
             assert_eq!(labels.iter().any(|text| text == "YOUR TEAM"), !room);
         }
+    }
+
+    #[test]
+    fn an_empty_ammo_slot_still_loads_on_a_click() {
+        let context = egui::Context::default();
+        theme::install(&context);
+        let art = Art::new(&context);
+        let mut human = HudHuman {
+            alive: true,
+            ..HudHuman::default()
+        };
+        for (slot, option) in human.ammo.iter_mut().zip(AMMO_OPTIONS) {
+            slot.weapon = option.weapon;
+            slot.selected = option.weapon == Weapon::Standard;
+            slot.available = option.weapon == Weapon::Standard;
+        }
+        let strip = Rect::from_min_size(pos2(100.0, 600.0), vec2(400.0, 54.0));
+        // The rocket's slot, empty: past the loaded slot and the spread's.
+        let rocket = pos2(
+            strip.left() + slot_width(true) + slot_width(false) + 2.0 * SLOT_GAP + 10.0,
+            strip.center().y,
+        );
+        let screen = Rect::from_min_size(Pos2::ZERO, vec2(1280.0, 800.0));
+        let mut time = 0.0;
+        let mut frame = |events: Vec<egui::Event>| {
+            time += 1.0 / 60.0;
+            let mut actions = Vec::new();
+            let mut output = context.run_pass(
+                egui::RawInput {
+                    screen_rect: Some(screen),
+                    time: Some(time),
+                    events,
+                    ..Default::default()
+                },
+                |context| {
+                    egui::Area::new(Id::unique("rack"))
+                        .fixed_pos(Pos2::ZERO)
+                        .show(context, |ui| {
+                            let painter = ui.painter().clone();
+                            ammo_rack(ui, &painter, &art, strip, &human, true, None, &mut actions);
+                        });
+                },
+            );
+            output.textures_delta.clear();
+            actions
+        };
+        // An area's first pass only sizes it.
+        frame(Vec::new());
+        frame(Vec::new());
+        let press = |pressed| egui::Event::PointerButton {
+            pos: rocket,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        };
+        frame(vec![egui::Event::PointerMoved(rocket), press(true)]);
+        let actions = frame(vec![press(false)]);
+        assert_eq!(actions, vec![Action::SelectAmmo(3)]);
     }
 }
