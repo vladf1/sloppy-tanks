@@ -661,16 +661,12 @@ fn recap_body(
         vec2(hero.width() * 0.7, hero.height() * 0.9),
         &[(0.0, hexa(0xffcf38, 0.15)), (0.7, Color32::TRANSPARENT)],
     ));
-    let tank_team = if hud.game_mode == GameMode::Solo {
-        Team::Blue
-    } else {
-        hud.human_team
-    };
-    // `.recap-tank`: 300 by 158, 8 past the tile's right and 20 under its foot, clipped.
+    // `.recap-tank`: 300 by 158, 8 past the tile's right and 20 under its foot, clipped;
+    // in the player's own colours, a solo run's too (`drawRecapTank`).
     art.tank(
         &painter.with_clip_rect(hero),
         hud.human.kind,
-        tank_team,
+        hud.human_team,
         Rect::from_min_size(
             pos2(hero.right() - 292.0, hero.bottom() - 138.0),
             vec2(300.0, 158.0),
