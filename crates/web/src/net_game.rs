@@ -83,7 +83,6 @@ use serde_json::{Value, json};
 use sloppy_core::net::client::{
     ClientAction, ClientConfig, ClientNotice, LocalInput, NetworkClient, SavedSeat,
 };
-use sloppy_core::net::client_setup::pending_join;
 use sloppy_core::net::protocol::{
     JoinChoice, RoomPhase, RoomSettings, is_room_code, read_player_kind, read_team,
 };
@@ -203,12 +202,6 @@ impl NetGame {
         #[cfg(target_arch = "wasm32")]
         console_error_panic_hook::set_once();
         Self::create_with(canvas, parse(config_json)?, parse(config_json)?).await
-    }
-
-    /// The choices Battle Setup stored for `room` before reloading into it, as `JoinChoice`
-    /// JSON, or undefined when the saved text is missing, for another room, or invalid.
-    pub fn pending_join(saved: Option<String>, room: &str) -> Option<String> {
-        pending_join(saved.as_deref(), room).map(|choice| choice.to_json())
     }
 
     // ---------------------------------------------------------- connection
