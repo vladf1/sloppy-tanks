@@ -272,8 +272,10 @@ try {
     last.intervals <= second.intervals,
     `intervals: ${second.intervals} → ${last.intervals}`,
   );
+  // A leak leaves at least one object a cycle; when the collector last ran moves a count
+  // by one either way (187 or 188 buffers alike), so a smaller rise is not one.
   const leftAlive = Object.entries(last.gpuObjects).filter(
-    ([kind, count]) => count > (second.gpuObjects[kind] ?? 0),
+    ([kind, count]) => count - (second.gpuObjects[kind] ?? 0) >= CYCLES - 2,
   );
   assert.deepEqual(leftAlive, [], "GPU objects left alive by each cycle");
   assert.equal(observations.singlePlayerListRequests, 0, "single player polls no room list");
