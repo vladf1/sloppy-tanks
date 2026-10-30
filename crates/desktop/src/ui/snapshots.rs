@@ -471,11 +471,13 @@ fn snapshots() {
             .hud
             .as_ref()
             .is_some_and(|hud| hud.human.alive);
-        if phone && scenario.phase == MatchPhase::Playing && alive {
+        // A wreck keeps only the zoom pair.
+        if phone && scenario.phase == MatchPhase::Playing {
             scenario.state.touch = Some(super::touch::TouchView {
                 input: Default::default(),
                 first_person: scenario.state.cockpit,
                 learned: false,
+                acting: alive,
             });
         }
         let state = &scenario.state;

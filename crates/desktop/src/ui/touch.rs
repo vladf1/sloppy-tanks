@@ -5,7 +5,9 @@
 //! painted, not widgets: `crate::touch` hit-tests the same layout, so egui never sees
 //! the fingers that use them.
 
-use egui::{Align2, Color32, Id, LayerId, Order, Painter, Pos2, Rect, Stroke, Vec2, pos2, vec2};
+use egui::{
+    Align2, Color32, Id, LayerId, Mesh, Order, Painter, Pos2, Rect, Shape, Stroke, Vec2, pos2, vec2,
+};
 
 use super::UiState;
 use super::icons::Art;
@@ -20,6 +22,11 @@ use sloppy_render::presentation::input::STICK_RADIUS;
 const BASE_INSET: f32 = 18.0;
 const PHONE_BASE_INSET: f32 = 14.0;
 const KNOB_RADIUS: f32 = 27.0;
+/// The knob's light rim, where the light on its domed face sits (a share of the face's
+/// height from its top), and the radius of its grip ring.
+const KNOB_RIM: f32 = 2.0;
+const KNOB_LIGHT_TOP: f32 = 0.28;
+const KNOB_GRIP: f32 = 17.0;
 /// The mine key's navy face inside its gold rim.
 const MINE_FACE: f32 = 34.4;
 /// Seconds the fire hint shows each time the controls appear, and its fade.
@@ -27,6 +34,9 @@ const HINT_SECONDS: f64 = 9.0;
 const HINT_FADE: f64 = 0.5;
 /// Seconds one pulse of the hint's target ring takes.
 const HINT_PULSE: f64 = 1.6;
+/// The hint's target ring's border, and how far inside it the gold dot keeps.
+const HINT_RING_BORDER: f32 = 3.0;
+const HINT_DOT_INSET: f32 = 7.0;
 /// The fire hint's top on a phone held upright: under the top row of keys and the kill
 /// feed's first row.
 const PHONE_UPRIGHT_HINT_TOP: f32 = 102.0;
@@ -41,15 +51,32 @@ pub struct TouchView {
     pub first_person: bool,
     /// The player has touched the arena: the fire hint has done its job.
     pub learned: bool,
+    /// The player can act; a wreck shows only the zoom pair (`#hud.dead`).
+    pub acting: bool,
 }
 
 /// Paint the touch controls over the arena. A phone's zoom pair is the HUD's, in its
-/// top row.
-pub fn controls(context: &egui::Context, art: &Art, state: &UiState, touch: &TouchView) {
-    let painter = context.layer_painter(LayerId::new(Order::Middle, Id::unique("touch controls")));
+/// top row. A wreck's zoom pair goes on the HUD's `backdrop`, under the respawn card
+/// that covers part of it on an upright tablet.
+pub fn controls(
+    context: &egui::Context,
+    art: &Art,
+    state: &UiState,
+    touch: &TouchView,
+    backdrop: &Painter,
+) {
+    let painter = if touch.acting {
+        context.layer_painter(LayerId::new(Order::Middle, Id::unique("touch controls")))
+    } else {
+        backdrop.clone()
+    };
     let layout = TouchLayout::of(context);
-    stick(&painter, &layout, &touch.input);
-    if let (Some(hud), Some(mine)) = (&state.hud, layout.mine) {
+    if touch.acting {
+        stick(&painter, &layout, &touch.input);
+    }
+    if touch.acting
+        && let (Some(hud), Some(mine)) = (&state.hud, layout.mine)
+    {
         let cooldown = hud.human.mine_cooldown;
         let total = state.mine_total.max(cooldown);
         let ready = if cooldown > 0.0 && total > 0.0 {
@@ -65,7 +92,7 @@ pub fn controls(context: &egui::Context, art: &Art, state: &UiState, touch: &Tou
         zoom_key(&painter, layout.zoom_out.center(), "−");
     }
     let shown = state.touch_shown;
-    if !touch.learned && !touch.first_person && shown < HINT_SECONDS + HINT_FADE {
+    if touch.acting && !touch.learned && !touch.first_person && shown < HINT_SECONDS + HINT_FADE {
         let opacity = (1.0 - (shown - HINT_SECONDS).max(0.0) / HINT_FADE) as f32;
         fire_hint(context, &painter, opacity);
     }
@@ -84,6 +111,90 @@ fn drop_shadow(painter: &Painter, center: Pos2, radius: f32) {
     ));
 }
 
+/// A disc of `radius` filled with a radial gradient centred on `light`, which need not
+/// be its centre (`radial-gradient(circle at …)`): `stops` are shares of `reach`, where
+/// the gradient ends. Its edge fades over a point, as egui's own shapes do.
+pub(super) fn lit_disc(
+    center: Pos2,
+    radius: f32,
+    light: Pos2,
+    reach: f32,
+    stops: &[(f32, Color32)],
+) -> Shape {
+    const RINGS: u32 = 12;
+    const SEGMENTS: u32 = 48;
+    const FEATHER: f32 = 1.0;
+    let color_at = |point: Pos2| {
+        let share = point.distance(light) / reach;
+        let mut previous = stops[0];
+        for &stop in stops {
+            if share <= stop.0 {
+                let span = (stop.0 - previous.0).max(f32::EPSILON);
+                return paint::mix(previous.1, stop.1, (share - previous.0) / span);
+            }
+            previous = stop;
+        }
+        previous.1
+    };
+    let mut mesh = Mesh::default();
+    mesh.colored_vertex(center, color_at(center));
+    // The last ring is the feather's outside, its colours gone to nothing.
+    for ring in 1..=RINGS + 1 {
+        let distance = if ring > RINGS {
+            radius + FEATHER / 2.0
+        } else {
+            (radius - FEATHER / 2.0) * ring as f32 / RINGS as f32
+        };
+        for segment in 0..SEGMENTS {
+            let angle = segment as f32 / SEGMENTS as f32 * std::f32::consts::TAU;
+            let direction = vec2(angle.cos(), angle.sin());
+            let color = if ring > RINGS {
+                Color32::TRANSPARENT
+            } else {
+                color_at(center + direction * distance)
+            };
+            mesh.colored_vertex(center + direction * distance, color);
+        }
+    }
+    for segment in 0..SEGMENTS {
+        mesh.add_triangle(0, 1 + segment, 1 + (segment + 1) % SEGMENTS);
+    }
+    for ring in 0..RINGS {
+        for segment in 0..SEGMENTS {
+            let a = 1 + ring * SEGMENTS + segment;
+            let b = 1 + ring * SEGMENTS + (segment + 1) % SEGMENTS;
+            mesh.add_triangle(a, b, a + SEGMENTS);
+            mesh.add_triangle(b, b + SEGMENTS, a + SEGMENTS);
+        }
+    }
+    Shape::mesh(mesh)
+}
+
+/// An inset shade along a disc's top edge (`depth` above zero) or bottom edge (below):
+/// `color` at the rim, fading out `depth` in, like a CSS `inset` box shadow moved
+/// vertically.
+pub(super) fn inner_edge(center: Pos2, radius: f32, depth: f32, color: Color32) -> Shape {
+    const STEPS: u32 = 32;
+    let mut mesh = Mesh::default();
+    for step in 0..=STEPS {
+        let x = radius * (2.0 * step as f32 / STEPS as f32 - 1.0);
+        let half = (radius * radius - x * x).max(0.0).sqrt();
+        let (rim, inner) = if depth > 0.0 {
+            (-half, (depth - half).min(half))
+        } else {
+            (half, (half + depth).max(-half))
+        };
+        mesh.colored_vertex(center + vec2(x, rim), color);
+        mesh.colored_vertex(center + vec2(x, inner), Color32::TRANSPARENT);
+        if step > 0 {
+            let base = (step - 1) * 2;
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base + 1, base + 3, base + 2);
+        }
+    }
+    Shape::mesh(mesh)
+}
+
 fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
     let phone = crate::touch::phone();
     let held = input.drive.is_some();
@@ -96,14 +207,18 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
         Some((_, origin)) => pos2(origin.0, origin.1),
         None => center,
     };
+    // The faint ring round the knob sits at 39% of the way to the base's corner (a
+    // `circle` gradient reaches its box's farthest corner), clear of the knob: its 12%
+    // light over the navy there.
+    let corner = (base_radius - 2.0) * std::f32::consts::SQRT_2 / base_radius;
     painter.add(paint::radial(
         base,
         Vec2::splat(base_radius),
         &[
             (0.0, hexa(0x0a1730, 0.2)),
-            (0.38, hexa(0x0a1730, 0.32)),
-            (0.39, hexa(0xdff0ff, 0.12)),
-            (0.41, hexa(0x0a1730, 0.36)),
+            (0.38 * corner, hexa(0x0a1730, 0.38)),
+            (0.39 * corner, hexa(0x414f66, 0.46)),
+            (0.41 * corner, hexa(0x0a1730, 0.4)),
             (1.0, hexa(0x0a1730, 0.55)),
         ],
     ));
@@ -164,26 +279,30 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
     if held {
         painter.circle_filled(knob, KNOB_RADIUS + 8.0, hexa(0x6fd2ff, 0.18));
     }
-    // A domed glass cap: lit from above its middle, dark at the rim.
-    painter.circle_filled(knob, KNOB_RADIUS, hex(0x12274a));
-    painter.add(paint::radial(
-        knob - vec2(0.0, KNOB_RADIUS * 0.2),
-        Vec2::splat(KNOB_RADIUS * 0.78),
-        &[
-            (0.0, hex(0x6f97c4)),
-            (0.55, hex(0x2b4f7f)),
-            (1.0, hex(0x12274a)),
-        ],
-    ));
-    painter.circle_stroke(
-        knob,
-        KNOB_RADIUS * 0.49,
-        Stroke::new(1.5, hexa(0xffffff, 0.25)),
-    );
-    painter.circle_stroke(
+    // A domed glass cap inside its 2 px rim (`circle at 50% 28%` of the face, out to its
+    // farthest corner): lit across its upper half, dark only toward the rim, with a
+    // light edge along its top and a shade along its bottom.
+    let face = KNOB_RADIUS - KNOB_RIM;
+    let light = knob - vec2(0.0, face * (1.0 - 2.0 * KNOB_LIGHT_TOP));
+    let reach = face.hypot(face * (1.0 + (1.0 - 2.0 * KNOB_LIGHT_TOP)));
+    painter.add(lit_disc(
         knob,
         KNOB_RADIUS,
-        Stroke::new(2.0, if held { Color32::WHITE } else { hex(0xe8f4ff) }),
+        light,
+        reach,
+        &[
+            (0.0, hex(0x6f97c4)),
+            (0.45, hex(0x2b4f7f)),
+            (0.8, hex(0x12274a)),
+        ],
+    ));
+    painter.add(inner_edge(knob, face, 3.0, hexa(0xffffff, 0.28)));
+    painter.add(inner_edge(knob, face, -7.0, hexa(0x000000, 0.3)));
+    painter.circle_stroke(knob, KNOB_GRIP, Stroke::new(1.2, hexa(0xffffff, 0.18)));
+    painter.circle_stroke(
+        knob,
+        KNOB_RADIUS - KNOB_RIM / 2.0,
+        Stroke::new(KNOB_RIM, if held { Color32::WHITE } else { hex(0xe8f4ff) }),
     );
     // The stick's name on a small dark tag under its rim; a phone's corner has no room.
     if phone {
@@ -367,10 +486,13 @@ fn fire_hint(context: &egui::Context, painter: &Painter, opacity: f32) {
     );
     painter.circle_stroke(
         center,
-        ring / 2.0 - 1.5,
-        Stroke::new(3.0, alpha(Color32::WHITE)),
+        (ring - HINT_RING_BORDER) / 2.0,
+        Stroke::new(HINT_RING_BORDER, alpha(Color32::WHITE)),
     );
-    painter.circle_filled(center, ring / 2.0 - 7.0, alpha(GOLD));
+    // The dot sits 7 px inside the ring's 3 px border, in a dark 2 px outline.
+    let dot = ring / 2.0 - HINT_RING_BORDER - HINT_DOT_INSET;
+    painter.circle_filled(center, dot + 2.0, alpha(hexa(0x06102a, 0.6)));
+    painter.circle_filled(center, dot, alpha(GOLD));
     let text_left = center.x + ring / 2.0 + 9.0;
     let title_height = title.size().y;
     painter.galley_with_override_text_color(

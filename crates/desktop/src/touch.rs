@@ -301,25 +301,40 @@ impl PhoneBar {
     }
 }
 
-/// The touch controls while the player can act: alive, in a running battle, no menu.
+/// Which touch controls a battle shows (`touch-controls.css`, `#hud.dead`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Showing {
+    /// None: no battle is running, or a dialog is over it.
+    Nothing,
+    /// The zoom pair alone, while the player's tank is a wreck waiting to respawn.
+    Zoom,
+    /// All of them: the player can act.
+    All,
+}
+
+/// The touch controls in a running battle with no menu: all of them while the player
+/// can act, the zoom pair alone while the tank is a wreck.
 pub struct Play {
     pub layout: TouchLayout,
     pub first_person: bool,
     pub mine_ready: bool,
+    /// The player can act: the stick, the mine button and the arena take fingers.
+    pub acting: bool,
 }
 
 impl Play {
     /// The controls on `context`'s screen, or `None` while they are hidden.
     pub fn live(
         context: &egui::Context,
-        acting: bool,
+        showing: Showing,
         first_person: bool,
         hud: Option<&Hud<'_>>,
     ) -> Option<Self> {
-        (screen() && acting).then(|| Self {
+        (screen() && showing != Showing::Nothing).then(|| Self {
             layout: TouchLayout::of(context),
             first_person,
             mine_ready: hud.is_none_or(|hud| hud.human.mine_cooldown <= 0.0),
+            acting: showing == Showing::All,
         })
     }
 }
@@ -366,8 +381,28 @@ impl Fingers {
                 };
                 let layout = &play.layout;
                 let on = |center: Pos2, radius: f32| center.distance(point) <= radius;
-                let zoom_keys = !play.first_person;
-                if layout.stick.contains(point) {
+                // First person has no zoom keys.
+                let zoom = if play.first_person {
+                    None
+                } else if layout.zoom_in.contains(point) {
+                    Some(-ZOOM_STEP)
+                } else if layout.zoom_out.contains(point) {
+                    Some(ZOOM_STEP)
+                } else {
+                    None
+                };
+                if !play.acting {
+                    // A wreck's player keeps only the zoom pair, which lies under the
+                    // respawn card where the two meet (an upright tablet): the card
+                    // keeps its fingers.
+                    match zoom.filter(|_| !over_ui(point)) {
+                        Some(amount) => controls.zoom_by(amount),
+                        None => {
+                            self.menus.insert(touch.id);
+                            return true;
+                        }
+                    }
+                } else if layout.stick.contains(point) {
                     let center = layout.stick.center();
                     let shift = (point - center).clamp(
                         Vec2::splat(-STICK_ANCHOR_SHIFT),
@@ -379,10 +414,8 @@ impl Fingers {
                     if play.mine_ready {
                         controls.drop_mine();
                     }
-                } else if zoom_keys && layout.zoom_in.contains(point) {
-                    controls.zoom_by(-ZOOM_STEP);
-                } else if zoom_keys && layout.zoom_out.contains(point) {
-                    controls.zoom_by(ZOOM_STEP);
+                } else if let Some(amount) = zoom {
+                    controls.zoom_by(amount);
                 } else if over_ui(point) {
                     self.menus.insert(touch.id);
                     return true;
@@ -396,7 +429,8 @@ impl Fingers {
                 if self.menus.contains(&touch.id) {
                     return true;
                 }
-                if play.is_some() {
+                // A thumb still on the stick when the tank is wrecked lets go of it.
+                if play.is_some_and(|play| play.acting) {
                     controls.move_drive(touch.id, (point.x, point.y));
                     controls.move_arena(touch.id, at, size);
                 } else {
@@ -439,6 +473,7 @@ mod tests {
             layout: TouchLayout::new(screen, screen, false),
             first_person: false,
             mine_ready: true,
+            acting: true,
         }
     }
 
@@ -583,6 +618,56 @@ mod tests {
         assert_eq!(input.zoom, 0.0);
     }
 
+    /// While the tank is a wreck the zoom pair still zooms, except where the respawn
+    /// card lies over it; every other finger, the stick's corner included, is egui's,
+    /// and a thumb left on the stick lets go of it.
+    #[test]
+    fn a_wrecks_player_keeps_only_the_zoom_pair() {
+        let mut fingers = Fingers::default();
+        let mut controls = Controls::default();
+        let stick = play().layout.stick.center();
+        let thumb = touch(
+            1,
+            TouchPhase::Started,
+            f64::from(stick.x),
+            f64::from(stick.y),
+        );
+        assert!(!fingers.route(&thumb, 1.0, Some(&play()), |_| false, SCREEN, &mut controls));
+        let push = touch(1, TouchPhase::Moved, f64::from(stick.x), 0.0);
+        assert!(!fingers.route(&push, 1.0, Some(&play()), |_| false, SCREEN, &mut controls));
+        let wreck = Play {
+            acting: false,
+            ..play()
+        };
+        let zoom_in = wreck.layout.zoom_in.center();
+        // The card's edge covers the zoom pair's left half.
+        let card = |point: Pos2| point.x < zoom_in.x;
+        let press = |fingers: &mut Fingers, controls: &mut Controls, id, at: Pos2| {
+            let touch = touch(id, TouchPhase::Started, f64::from(at.x), f64::from(at.y));
+            fingers.route(&touch, 1.0, Some(&wreck), card, SCREEN, controls)
+        };
+        assert!(!press(
+            &mut fingers,
+            &mut controls,
+            2,
+            zoom_in + vec2(10.0, 0.0)
+        ));
+        assert!(press(
+            &mut fingers,
+            &mut controls,
+            3,
+            zoom_in - vec2(10.0, 0.0)
+        ));
+        assert!(press(&mut fingers, &mut controls, 4, stick));
+        assert!(press(&mut fingers, &mut controls, 5, pos2(600.0, 400.0)));
+        let held = touch(1, TouchPhase::Moved, f64::from(stick.x), 10.0);
+        assert!(!fingers.route(&held, 1.0, Some(&wreck), card, SCREEN, &mut controls));
+        let input = controls.take_input();
+        assert_eq!(input.zoom, -ZOOM_STEP);
+        assert!(!input.fire);
+        assert_eq!(input.touch_move, (0.0, 0.0));
+    }
+
     /// Two passes of a screen with one HUD button at its top right, as the toolbar is:
     /// egui hit-tests against the areas the last pass showed.
     fn hud_context() -> egui::Context {
@@ -658,6 +743,7 @@ mod tests {
             layout: TouchLayout::new(screen, screen, true),
             first_person: false,
             mine_ready: true,
+            acting: true,
         };
         let mut fingers = Fingers::default();
         let mut controls = Controls::default();

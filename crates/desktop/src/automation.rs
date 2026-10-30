@@ -49,7 +49,8 @@ pub struct State {
     pub status: String,
     /// The Settings dialog is open.
     pub settings: bool,
-    /// The touch controls show.
+    /// The player's touch controls show (a wreck keeps only the zoom pair, which does
+    /// not count).
     pub touch_controls: bool,
     /// The touch screen layout is on.
     pub touch_screen: bool,

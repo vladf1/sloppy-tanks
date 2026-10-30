@@ -246,8 +246,9 @@ pub fn hud(
             }
         }
     }
-    if let Some(touch) = state.touch.filter(|_| playing && human.alive) {
-        super::touch::controls(context, art, state, &touch);
+    // A wreck keeps the zoom pair (`#hud.dead` hides only the stick and the mine).
+    if let Some(touch) = state.touch.filter(|_| playing) {
+        super::touch::controls(context, art, state, &touch, &painter);
     }
     // The respawn card rises into place over a third of a second.
     let rise = context.animate_bool_with_time(Id::unique("respawn rise"), !human.alive, 0.32);
@@ -319,8 +320,8 @@ fn phone_hud(
             damage_ring(&painter, screen, state);
         }
     }
-    if let Some(touch) = state.touch.filter(|_| playing && human.alive) {
-        super::touch::controls(context, art, state, &touch);
+    if let Some(touch) = state.touch.filter(|_| playing) {
+        super::touch::controls(context, art, state, &touch, &painter);
     }
     let rise = context.animate_bool_with_time(Id::unique("respawn rise"), !human.alive, 0.32);
     if human.alive {
@@ -1143,24 +1144,32 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
             Some(Team::Red) => hex(0xff4d63),
             None => hex(0xc9b994),
         };
-        let from = side(entry.killer_team);
-        let to = side(entry.victim_team);
+        // The newest row stays a little brighter for a few seconds (`feed-recent`): its
+        // own colours, never a wash over them.
+        let brightness = if index == 0 {
+            feed_brightness(entry.age)
+        } else {
+            1.0
+        };
+        let lit = |color: Color32| brighten(color, brightness);
+        let from = lit(side(entry.killer_team));
+        let to = lit(side(entry.victim_team));
         let own = entry.own_kill || entry.own_death;
-        let frame = if entry.own_death { hex(0xff5d70) } else { GOLD };
+        let frame = lit(if entry.own_death { hex(0xff5d70) } else { GOLD });
         if own {
             painter.rect_filled(rect.expand(3.0), 5, fade(frame, 0.18));
         }
         let top_color = if own {
-            mix(hex(0x1f2735), frame, 0.24)
+            mix(lit(hex(0x1f2735)), frame, 0.24)
         } else {
-            hex(0x1f2735)
+            lit(hex(0x1f2735))
         };
         painter.add(paint::vgradient(
             rect,
             &[
                 (0.0, top_color),
-                (if own { 0.85 } else { 1.0 }, hex(0x11161f)),
-                (1.0, hex(0x11161f)),
+                (if own { 0.85 } else { 1.0 }, lit(hex(0x11161f))),
+                (1.0, lit(hex(0x11161f))),
             ],
         ));
         painter.add(paint::hgradient(
@@ -1187,18 +1196,10 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
                 rect.left_top() + vec2(edge, 0.5),
                 rect.right_top() + vec2(-edge, 0.5),
             ],
-            Stroke::new(1.0, hexa(0xffffff, 0.15)),
+            Stroke::new(1.0, lit(hexa(0xffffff, 0.15))),
         );
         if own {
             painter.rect_stroke(rect, 3, Stroke::new(2.0, frame), StrokeKind::Inside);
-        }
-        // The newest row flashes in, then stays a little brighter for a few seconds.
-        if index == 0 {
-            let flash =
-                (1.0 - entry.age / 0.35).max(0.0) * 0.35 + if entry.age < 1.4 { 0.06 } else { 0.0 };
-            if flash > 0.0 {
-                painter.rect_filled(rect, 3, hexa(0xffffff, flash as f32));
-            }
         }
         let opacity = if own {
             1.0
@@ -1208,16 +1209,16 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
         let center = rect.center();
         let name_width = (width - 32.0 - 26.0 - 16.0) / 2.0;
         let font = bold_font(13.5);
-        let killer_color = if entry.own_kill {
+        let killer_color = lit(if entry.own_kill {
             GOLD_HOT
         } else {
             Color32::WHITE
-        };
-        let victim_color = if entry.own_death {
+        });
+        let victim_color = lit(if entry.own_death {
             hex(0xff9aa5)
         } else {
             Color32::WHITE
-        };
+        });
         for (name, color, pos, align) in [
             (
                 &entry.killer,
@@ -1250,7 +1251,7 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
         let icon_tint = if own {
             Color32::WHITE
         } else {
-            fade(hex(0xb9cbe0), opacity)
+            fade(lit(hex(0xb9cbe0)), opacity)
         };
         art.icon(
             painter,
@@ -1259,6 +1260,30 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
             icon_tint,
         );
     }
+}
+
+/// The newest feed row's brightness at `age` seconds (`feed-recent`): 1.3 times over
+/// the first 45% of 3.2 s, then easing out to plain. Its entrance's brighter flash
+/// (`feed-in`) never shows on the page: the later animation wins the filter.
+fn feed_brightness(age: f64) -> f32 {
+    const BRIGHT: f32 = 1.3;
+    const HOLD: f64 = 1.44;
+    const END: f64 = 3.2;
+    if age >= END {
+        return 1.0;
+    }
+    let share = ((age - HOLD) / (END - HOLD)).max(0.0) as f32;
+    // Close to CSS `ease-out` over the fade.
+    let eased = 1.0 - (1.0 - share).powf(1.7);
+    BRIGHT + (1.0 - BRIGHT) * eased
+}
+
+/// `color` under CSS `filter: brightness(factor)`: each channel scaled, kept within
+/// what its opacity allows.
+fn brighten(color: Color32, factor: f32) -> Color32 {
+    let [red, green, blue, alpha] = color.to_array();
+    let channel = |value: u8| (f32::from(value) * factor).round().min(f32::from(alpha)) as u8;
+    Color32::from_rgba_premultiplied(channel(red), channel(green), channel(blue), alpha)
 }
 
 /// Notices (pickups in cyan, promotions in gold, the viewer's death in red) in a
@@ -1347,6 +1372,16 @@ const STATUS_WIDTH: f32 = 128.0;
 const SLOT_WIDTH: f32 = 36.0;
 const SELECTED_SLOT_WIDTH: f32 = 100.0;
 const SLOT_GAP: f32 = 4.0;
+const SLOT_RADIUS: f32 = 8.0;
+/// The loaded round's slot (`.ammo-slot.selected`): its glow's width (a CSS blur of
+/// 14 px: egui fades it linearly, so half again as much); the border and padding over
+/// its icon's row and beside it, the name's line, padding and border under it, and its
+/// icon.
+const LOADED_GLOW_BLUR: u8 = 21;
+const LOADED_ROW_TOP: f32 = 17.0;
+const LOADED_ROW_FOOT: f32 = 20.8;
+const LOADED_SIDE: f32 = 10.0;
+const LOADED_ICON: f32 = 24.0;
 const MINE_WIDTH: f32 = 42.0;
 const COMPASS_WIDTH: f32 = 68.0;
 const PANEL_HEIGHT: f32 = 65.4;
@@ -1985,8 +2020,11 @@ fn hull_bar(painter: &Painter, bar: Rect, state: &UiState, human: &HudHuman) {
 /// the stroke; and how far under the digits' middle it sits, on the type's maths axis.
 const INFINITY_WIDTH: f32 = 0.62;
 const INFINITY_HEIGHT: f32 = 0.37;
-const INFINITY_STROKE: f32 = 0.05;
+const INFINITY_STROKE: f32 = 0.045;
 const INFINITY_DROP: f32 = 1.0;
+/// The share of a third harmonic in the ∞'s sideways sweep, which puts each loop's top
+/// over its middle: a text face's loops are round, not teardrops meeting in an X.
+const INFINITY_ROUND: f32 = 0.1716;
 
 /// A round's count in type of `size` at `pos`: its number, or for an unlimited round a
 /// thin ∞, as the display face (which has none) falls back to a light text face's.
@@ -1999,19 +2037,21 @@ fn count_mark(
     color: Color32,
 ) {
     let Some(count) = count else {
-        const STEPS: usize = 48;
+        const STEPS: usize = 64;
         let half = vec2(INFINITY_WIDTH, INFINITY_HEIGHT) * size / 2.0;
         let outer = (INFINITY_WIDTH + INFINITY_STROKE) * size;
         let center = align.anchor_size(pos, vec2(outer, 0.0)).center() + vec2(0.0, INFINITY_DROP);
         let points = (0..STEPS)
             .map(|step| {
                 let turn = step as f32 / STEPS as f32 * std::f32::consts::TAU;
-                center + vec2(half.x * turn.cos(), half.y * (2.0 * turn).sin())
+                let sweep =
+                    (turn.cos() + INFINITY_ROUND * (3.0 * turn).cos()) / (1.0 + INFINITY_ROUND);
+                center + vec2(half.x * sweep, half.y * (2.0 * turn).sin())
             })
             .collect();
         painter.add(Shape::closed_line(
             points,
-            Stroke::new(INFINITY_STROKE * size, Color32::WHITE),
+            Stroke::new(INFINITY_STROKE * size, color),
         ));
         return;
     };
@@ -2024,6 +2064,55 @@ fn count_mark(
         color,
         0.0,
     );
+}
+
+/// The loaded round's slot face: navy from top to bottom, under the round's colour as a
+/// soft light spreading from its top edge 30% of the way along (`radial-gradient(ellipse
+/// 90% 80% at 30% 0, …)`), as one mesh inside the slot's rounded corners.
+fn loaded_face(rect: Rect, color: Color32) -> Shape {
+    const COLUMNS: u32 = 16;
+    const ROWS: u32 = 12;
+    const CORNER_STEPS: u32 = 6;
+    let light = pos2(rect.left() + rect.width() * 0.3, rect.top());
+    let reach = vec2(rect.width() * 0.9, rect.height() * 0.8);
+    let color_at = |point: Pos2| {
+        let depth = (point.y - rect.top()) / rect.height();
+        let navy = mix(hex(0x1a3863), hex(0x0a1830), depth);
+        let distance = ((point - light) / reach).length();
+        mix(navy, color, 0.3 * (1.0 - distance / 0.75).max(0.0))
+    };
+    // How far a corner pulls the side in at `depth` from the top or bottom edge.
+    let inset = |depth: f32| {
+        let rise = (SLOT_RADIUS - depth).max(0.0);
+        SLOT_RADIUS - (SLOT_RADIUS * SLOT_RADIUS - rise * rise).sqrt()
+    };
+    let mut ys: Vec<f32> = (0..=ROWS)
+        .map(|row| rect.top() + rect.height() * row as f32 / ROWS as f32)
+        .chain((1..CORNER_STEPS).flat_map(|step| {
+            let depth = SLOT_RADIUS * step as f32 / CORNER_STEPS as f32;
+            [rect.top() + depth, rect.bottom() - depth]
+        }))
+        .collect();
+    ys.sort_by(f32::total_cmp);
+    ys.dedup_by(|a, b| (*a - *b).abs() < 0.01);
+    let mut mesh = Mesh::default();
+    for (row, &y) in ys.iter().enumerate() {
+        let side = inset((y - rect.top()).min(rect.bottom() - y));
+        let (left, right) = (rect.left() + side, rect.right() - side);
+        for column in 0..=COLUMNS {
+            let point = pos2(left + (right - left) * column as f32 / COLUMNS as f32, y);
+            mesh.colored_vertex(point, color_at(point));
+        }
+        if row > 0 {
+            let above = (row as u32 - 1) * (COLUMNS + 1);
+            let below = row as u32 * (COLUMNS + 1);
+            for column in 0..COLUMNS {
+                mesh.add_triangle(above + column, above + column + 1, below + column);
+                mesh.add_triangle(above + column + 1, below + column + 1, below + column);
+            }
+        }
+    }
+    Shape::mesh(mesh)
 }
 
 /// Ghost sockets side by side share the rack's one channel, split by a hairline that
@@ -2102,20 +2191,23 @@ fn ammo_rack(
             continue;
         }
         after_ghost = false;
-        let radius = CornerRadius::same(8);
-        painter.rect_filled(rect, radius, hex(0x081427));
+        let radius = CornerRadius::same(SLOT_RADIUS as u8);
         if selected {
-            painter.add(paint::vgradient(
-                rect.shrink2(vec2(0.0, 4.0)),
-                &[
-                    (0.0, mix(hex(0x1a3863), color, 0.3)),
-                    (0.6, hex(0x10264a)),
-                    (1.0, hex(0x0a1830)),
-                ],
-            ));
-            painter.rect_filled(rect.expand(3.0), 10, fade(color, 0.12));
-            painter.rect_stroke(rect, radius, Stroke::new(2.0, color), StrokeKind::Inside);
+            // The round's glow under the slot, its navy face, and its colour as a
+            // border with a 1 px ring outside it.
+            painter.add(
+                egui::epaint::Shadow {
+                    offset: [0, 0],
+                    blur: LOADED_GLOW_BLUR,
+                    spread: 0,
+                    color: fade(color, 0.35),
+                }
+                .as_shape(rect, radius),
+            );
+            painter.add(loaded_face(rect, color));
+            painter.rect_stroke(rect, radius, Stroke::new(2.0, color), StrokeKind::Middle);
         } else {
+            painter.rect_filled(rect, radius, hex(0x081427));
             painter.add(paint::vgradient(
                 rect.shrink2(vec2(0.0, 4.0)),
                 &[(0.0, hex(0x11284a)), (1.0, hex(0x081427))],
@@ -2136,13 +2228,18 @@ fn ammo_rack(
         if let Some(rack) = touch {
             touch_key_face(painter, art, rect, rack, option, selected, count, color);
         } else if selected {
+            // The icon and the count share the row over the round's name.
+            let middle = (rect.top() + LOADED_ROW_TOP + rect.bottom() - LOADED_ROW_FOOT) / 2.0;
             art.icon(
                 painter,
                 weapon,
-                Rect::from_min_size(rect.min + vec2(9.0, 14.0), Vec2::splat(24.0)),
+                Rect::from_center_size(
+                    pos2(rect.left() + LOADED_SIDE + LOADED_ICON / 2.0, middle),
+                    Vec2::splat(LOADED_ICON),
+                ),
                 color,
             );
-            let count_pos = pos2(rect.right() - 9.0, rect.top() + 26.0);
+            let count_pos = pos2(rect.right() - LOADED_SIDE, middle);
             count_mark(
                 painter,
                 count_pos,
