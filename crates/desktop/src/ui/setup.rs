@@ -376,15 +376,16 @@ pub(super) fn choice_frame(painter: &Painter, rect: Rect, selected: bool, hovere
             ],
         ));
     } else {
-        painter.rect_filled(
-            rect,
-            10,
-            if hovered {
-                hex(0x1b3966)
-            } else {
-                hex(0x10264a)
-            },
-        );
+        painter.rect_filled(rect, 10, card_fill(hovered));
+    }
+}
+
+/// An unchosen card's fill (`--card`, `--card-hover`).
+fn card_fill(hovered: bool) -> Color32 {
+    if hovered {
+        hex(0x1b3966)
+    } else {
+        hex(0x10264a)
     }
 }
 
@@ -417,7 +418,7 @@ fn map_card(
     let clip = painter.with_clip_rect(rect.shrink(1.0));
     clip.add(paint::vgradient(
         rect,
-        &[(0.3, Color32::TRANSPARENT), (1.0, fade(tint, 0.6))],
+        &[(0.3, Color32::TRANSPARENT), (1.0, fade(tint, 0.5))],
     ));
     if extra {
         let tile = Rect::from_center_size(
@@ -433,25 +434,32 @@ fn map_card(
         );
     } else {
         let art_name = format!("art-{}", map.id.as_str());
-        let height = rect.height() * 0.8;
+        let height = rect.height() * 0.74;
         let size = vec2(height * art.aspect(&art_name), height);
         let place = Rect::from_min_size(
             pos2(rect.right() - size.x + 6.0, rect.bottom() - size.y),
             size,
         );
         art.icon(&clip, &art_name, place, Color32::WHITE);
-        // The art fades in from behind the text.
-        let base = if selected {
-            hex(0x163a68)
-        } else if hovered {
-            hex(0x122d55)
-        } else {
-            hex(0x0e2242)
-        };
+        // The art fades in from a scrim that runs solid under the text, so the two never
+        // touch.
+        let scrim = hex(0x0b1b36);
+        let from_right = |inset: f32| ((rect.width() - inset) / rect.width()).max(0.0);
         clip.add(paint::hgradient(
-            Rect::from_min_max(pos2(rect.right() - 150.0, rect.top()), rect.max),
-            &[(0.0, base), (0.6, fade(base, 0.0))],
+            rect,
+            &[
+                (0.0, scrim),
+                (from_right(150.0), scrim),
+                (from_right(60.0), Color32::TRANSPARENT),
+                (1.0, Color32::TRANSPARENT),
+            ],
         ));
+    }
+    // Until it is chosen the card shows its scene layer at part strength: the card's own
+    // fill over it at the rest makes the same blend.
+    if !selected {
+        let strength = if hovered { 0.8 } else { 0.55 };
+        clip.rect_filled(rect, 10, fade(card_fill(hovered), 1.0 - strength));
     }
     let text_width = rect.width() - 24.0;
     // A phone's row of three, or its short cards held sideways, have room for the name

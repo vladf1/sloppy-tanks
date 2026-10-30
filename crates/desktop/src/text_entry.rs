@@ -90,6 +90,22 @@ pub fn keeps_browser_action(key: &str, modifiers: Modifiers) -> bool {
     }
 }
 
+/// Whether a key pressed on the canvas is the browser's: one held with Cmd, Ctrl or
+/// Alt (reload, the address bar, zoom, back, find), as the old page's controls left
+/// them (`typingOrShortcut`), or a function key other than F11, the game's fullscreen
+/// (reload, the developer tools). winit's canvas cancels every key's default, so the
+/// page keeps these from reaching it at all; the modifier keys themselves still do,
+/// which keeps winit's modifiers right.
+pub fn browser_shortcut(code: &str, ctrl: bool, meta: bool, alt: bool) -> bool {
+    let modifier = ["Control", "Meta", "Alt", "Shift", "OS"]
+        .iter()
+        .any(|name| code.starts_with(name));
+    let function_key = code
+        .strip_prefix('F')
+        .is_some_and(|number| !number.is_empty() && number.bytes().all(|b| b.is_ascii_digit()));
+    !modifier && (ctrl || meta || alt || (function_key && code != "F11"))
+}
+
 /// The browser's key event as egui's: its key by name (`"a"`, `"Enter"`) and its
 /// physical key by code (`"KeyA"`), which egui's shortcuts fall back on.
 pub fn key_event(
@@ -210,6 +226,8 @@ mod page {
         document: Document,
         heard: Rc<RefCell<Heard>>,
         listeners: Vec<(&'static str, Listener)>,
+        /// The document's listener that keeps the browser's shortcuts from the canvas.
+        shortcuts: Option<Listener>,
         selection: Selection,
         /// The caret the element sits at, in points.
         caret: Option<egui::Rect>,
@@ -232,6 +250,7 @@ mod page {
                 document,
                 heard: Rc::default(),
                 listeners: Vec::new(),
+                shortcuts: None,
                 selection: Selection::default(),
                 caret: None,
             };
@@ -239,6 +258,7 @@ mod page {
             entry.listen_for_text();
             entry.listen_for_clipboard();
             entry.listen_for_focus();
+            entry.listen_for_shortcuts();
             Some(entry)
         }
 
@@ -489,6 +509,38 @@ mod page {
             }
         }
 
+        /// A browser shortcut pressed on the canvas (`browser_shortcut`) stops on its way
+        /// down to it, so winit, which cancels the default of every key it hears, never
+        /// does: Cmd+R reloads and Cmd+plus zooms as on any page.
+        fn listen_for_shortcuts(&mut self) {
+            let canvas = self.canvas.clone();
+            let closure = Listener::new(move |event: web_sys::Event| {
+                let event: &KeyboardEvent = event.unchecked_ref();
+                let on_canvas = event.target().is_some_and(|target| same(&target, &canvas));
+                if on_canvas
+                    && super::browser_shortcut(
+                        &event.code(),
+                        event.ctrl_key(),
+                        event.meta_key(),
+                        event.alt_key(),
+                    )
+                {
+                    event.stop_propagation();
+                }
+            });
+            if self
+                .document
+                .add_event_listener_with_callback_and_bool(
+                    "keydown",
+                    closure.as_ref().unchecked_ref(),
+                    true,
+                )
+                .is_ok()
+            {
+                self.shortcuts = Some(closure);
+            }
+        }
+
         /// The element's focus as egui's window focus: the page's window losing it
         /// while a field types (another tab, another app), or the player putting the
         /// keyboard away. Focus moving between the element and the canvas is neither:
@@ -529,6 +581,13 @@ mod page {
                 let _ = self
                     .input
                     .remove_event_listener_with_callback(kind, closure.as_ref().unchecked_ref());
+            }
+            if let Some(closure) = &self.shortcuts {
+                let _ = self.document.remove_event_listener_with_callback_and_bool(
+                    "keydown",
+                    closure.as_ref().unchecked_ref(),
+                    true,
+                );
             }
             self.input.remove();
         }
@@ -748,6 +807,33 @@ mod tests {
         let shift_ctrl = modifiers(false, true, true, false, false);
         assert!(!clipboard_shortcut("v", shift_ctrl));
         assert!(!keeps_browser_action("z", shift_ctrl), "redo is egui's");
+    }
+
+    #[test]
+    fn the_browser_keeps_its_shortcuts_and_the_game_its_keys() {
+        for (code, ctrl, meta, alt) in [
+            ("KeyR", false, true, false),
+            ("KeyR", true, false, false),
+            ("Equal", false, true, false),
+            ("BracketLeft", false, true, false),
+            ("ArrowLeft", false, false, true),
+            ("F5", false, false, false),
+            ("F12", false, false, false),
+        ] {
+            assert!(
+                browser_shortcut(code, ctrl, meta, alt),
+                "{code} is the browser's"
+            );
+        }
+        for code in ["KeyW", "Space", "Digit2", "Escape", "Tab", "F11", "KeyF"] {
+            assert!(
+                !browser_shortcut(code, false, false, false),
+                "{code} is the game's"
+            );
+        }
+        // Pressing Cmd itself still tells winit that it is down.
+        assert!(!browser_shortcut("MetaLeft", false, true, false));
+        assert!(!browser_shortcut("ControlRight", true, false, false));
     }
 
     #[test]
