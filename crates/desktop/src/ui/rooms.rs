@@ -37,6 +37,13 @@ const PENCIL_ROOM: f32 = 18.0;
 const REFRESH: Duration = Duration::from_secs(5);
 /// Minutes one press of the length stepper moves.
 const LENGTH_STEP: i32 = 5;
+/// The width of a stood-down action's stripes.
+const DISABLED_STRIPE: f32 = 8.0;
+/// CREATE ROOM and JOIN ROOM's type (`.room-action .primary`).
+const ROOM_ACTION_LETTERING: paint::Lettering = paint::Lettering::Display {
+    size: 26.0,
+    spacing: 2.0,
+};
 
 /// The tab's words where a page and the app differ: a page invites with its link and
 /// takes a new game version by loading again (`battle-setup.html`, `room-browser.ts`); a
@@ -489,6 +496,60 @@ fn icon_button(
     enabled && response.clicked()
 }
 
+/// Refresh (the page's `#refresh-rooms` icon, 15 px of its 24-unit view): a ring open
+/// at its top right, where an arrowhead turns it on, `turn` radians round while busy.
+fn refresh_icon(painter: &Painter, center: Pos2, turn: f32, ink: Color32) {
+    const UNIT: f32 = 15.0 / 24.0;
+    let stroke = Stroke::new(2.4 * UNIT, ink);
+    // The ring from its right end clockwise round to its top right.
+    paint::arc(
+        painter,
+        center,
+        7.5 * UNIT,
+        std::f32::consts::FRAC_PI_2 + turn,
+        std::f32::consts::PI * 1.75,
+        stroke,
+    );
+    let (sin, cos) = turn.sin_cos();
+    let at = |x: f32, y: f32| center + vec2(x * cos - y * sin, x * sin + y * cos) * UNIT;
+    painter.add(Shape::line(
+        vec![at(7.5, -7.5), at(7.5, -3.5), at(3.5, -3.5)],
+        stroke,
+    ));
+}
+
+/// The name field's pencil (the page's filled 24-unit pencil, drawn in `rect`): its body
+/// and point, and the cap beyond a gap.
+fn pencil_icon(painter: &Painter, rect: Rect) {
+    let at = |x: f32, y: f32| rect.min + vec2(x, y) * (rect.width() / 24.0);
+    let ink = hex(0x90b4d4);
+    painter.add(Shape::convex_polygon(
+        vec![
+            at(15.2, 4.4),
+            at(19.6, 8.8),
+            at(9.0, 19.4),
+            at(3.7, 20.3),
+            at(4.6, 15.0),
+        ],
+        ink,
+        Stroke::NONE,
+    ));
+    painter.add(Shape::convex_polygon(
+        vec![
+            at(16.6, 3.0),
+            at(18.1, 1.5),
+            at(19.0, 1.1),
+            at(19.9, 1.5),
+            at(22.5, 4.1),
+            at(22.9, 5.0),
+            at(22.5, 5.9),
+            at(21.0, 7.4),
+        ],
+        ink,
+        Stroke::NONE,
+    ));
+}
+
 /// A text field in a sunken well, like the page's inputs, leaving `icon_room` at its
 /// right end for an icon drawn over the well. Its id is its hint's, not egui's count of
 /// the widgets before it: the room list above it changes as the directory answers, and a
@@ -522,46 +583,208 @@ fn field(
         .inner
 }
 
+/// A section heading's row over its well (`.setup-label` and its margin).
+pub const HEADING_ROW: f32 = 27.0;
+/// The name field's height.
+pub const NAME_FIELD_HEIGHT: f32 = 42.0;
+/// The wells' padding and the gap between the choices in them.
+const WELL_PADDING: f32 = 5.0;
+const WELL_GAP: f32 = 6.0;
+/// The new room's card with its rules on a line of their own, as the garage's narrower
+/// room list has it.
+const NEW_ROOM_WRAPPED_HEIGHT: f32 = 89.0;
+/// A line of the new room's rules, where HUMANS ONLY takes one under LENGTH.
+const RULE_ROW: f32 = 34.0;
+/// The widest the rules (LENGTH, its stepper, HUMANS ONLY) take at a card's right end.
+const ROOM_RULES_WIDTH: f32 = 334.0;
+/// The room the new room's name and line keep beside its rules before the rules take a
+/// line of their own.
+const NEW_ROOM_COPY_MIN: f32 = 180.0;
+/// The new room's text: its name's line and each line of what it holds (`.room-row`).
+const NEW_ROOM_NAME_LINE: f32 = 19.0;
+const NEW_ROOM_LINE: f32 = 16.8;
+/// A team choice's name line and each line of what it means, and its padding.
+const TEAM_NAME_LINE: f32 = 18.0;
+const TEAM_LINE: f32 = 15.6;
+const TEAM_PADDING: f32 = 5.0;
+/// From a team choice's left edge to its name, past the swatch.
+const TEAM_COPY_LEFT: f32 = 44.0;
+/// An empty list's message: the radar, its title and its line, and the offline state's
+/// two buttons under them (`.room-empty`).
+const EMPTY_ROOMS_HEIGHT: f32 = 150.0;
+const OFFLINE_ROOMS_HEIGHT: f32 = 180.0;
+/// The offline state's two keys at their widest, and the gap between them.
+const OFFLINE_KEY_WIDTH: f32 = 156.0;
+const OFFLINE_KEY_GAP: f32 = 12.0;
+
+/// Where the Multiplayer tab's parts go: the ROOMS heading over the room list and the
+/// status well under it; YOUR NAME and TEAM beside or under them, over the action.
+#[derive(Clone, Copy)]
+pub struct MultiplayerLayout {
+    pub rooms_heading: Pos2,
+    pub room_list: Rect,
+    /// The new room's rules take a line under its name rather than sharing its row.
+    pub rules_below: bool,
+    pub status_well: Rect,
+    pub name_field: Rect,
+    pub team_well: Rect,
+    pub action: Rect,
+}
+
+impl MultiplayerLayout {
+    /// The garage's panel (laid out as the page at 1280 × 800): the room list beside the
+    /// name and team. Widening the sheet adds room without scaling fonts or controls.
+    pub fn garage(bounds: Rect) -> Self {
+        let right_width = 302.0 + (bounds.width() - 842.0) * 1.22 / 3.22;
+        let right_left = bounds.right() - right_width;
+        let room_list = Rect::from_min_max(
+            bounds.min + vec2(0.0, HEADING_ROW),
+            pos2(right_left - 23.0, bounds.bottom() - 76.0),
+        );
+        Self {
+            rooms_heading: bounds.min,
+            room_list,
+            rules_below: true,
+            status_well: Rect::from_min_max(
+                pos2(bounds.left(), bounds.bottom() - 62.0),
+                pos2(room_list.right(), bounds.bottom()),
+            ),
+            name_field: Rect::from_min_size(
+                pos2(right_left, bounds.top() + HEADING_ROW),
+                vec2(right_width, NAME_FIELD_HEIGHT),
+            ),
+            team_well: Rect::from_min_max(
+                pos2(right_left, bounds.top() + 110.0),
+                pos2(bounds.right(), bounds.bottom() - 75.0),
+            ),
+            action: Rect::from_min_size(
+                pos2(right_left, bounds.bottom() - 62.0),
+                vec2(right_width, 62.0),
+            ),
+        }
+    }
+}
+
+/// Whether the new room's rules leave its name and line too little room in a card
+/// `width` wide, and take a line of their own.
+pub fn rules_below(width: f32) -> bool {
+    width - 38.0 - ROOM_RULES_WIDTH - 12.0 < NEW_ROOM_COPY_MIN
+}
+
+/// Whether a card `width` wide is too narrow for its rules on one line under its name,
+/// and HUMANS ONLY takes a line under LENGTH (a narrow window's one column).
+fn rules_split(width: f32) -> bool {
+    width < 38.0 + ROOM_RULES_WIDTH + 12.0
+}
+
+/// The new room's card height in a card `width` wide.
+fn new_room_height(painter: &Painter, width: f32, rules_below: bool) -> f32 {
+    if rules_below {
+        return NEW_ROOM_WRAPPED_HEIGHT + if rules_split(width) { RULE_ROW } else { 0.0 };
+    }
+    let lines = new_room_line(painter, width - 38.0 - ROOM_RULES_WIDTH - 12.0)
+        .rows
+        .len();
+    12.0 + NEW_ROOM_NAME_LINE + 2.0 + lines as f32 * NEW_ROOM_LINE
+}
+
+/// What a new room holds, wrapped at `width`.
+fn new_room_line(painter: &Painter, width: f32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        format!("Up to {ROOM_SEATS} players · {}", WORDS.invite_card),
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(12.0),
+            color: hex(SMALL_INK),
+            line_height: Some(NEW_ROOM_LINE),
+            ..Default::default()
+        },
+    );
+    job.wrap.max_width =
+        paint::wrap_width(painter, &job.text, egui::FontId::proportional(12.0), width);
+    painter.layout_job(job)
+}
+
+/// The room list's least height in a one-column layout, where it shows all it holds: the
+/// new room's card and the open rooms or why there are none.
+pub fn room_list_height(painter: &Painter, state: &RoomsState, width: f32) -> f32 {
+    let card = width - 2.0 * WELL_PADDING;
+    let rows = if state.list.rooms.is_empty() {
+        if matches!(state.state, ListState::Offline { .. }) {
+            OFFLINE_ROOMS_HEIGHT
+        } else {
+            EMPTY_ROOMS_HEIGHT
+        }
+    } else {
+        state.list.rooms.len() as f32 * (ROOM_ROW_HEIGHT + 2.0)
+    };
+    2.0 * WELL_PADDING + new_room_height(painter, card, rules_below(card)) + WELL_GAP + rows
+}
+
+/// What a team choice says it means, wrapped to a choice `width` wide.
+fn team_line(painter: &Painter, line: &str, width: f32) -> std::sync::Arc<egui::Galley> {
+    let mut job = egui::text::LayoutJob::single_section(
+        line.to_owned(),
+        egui::TextFormat {
+            font_id: egui::FontId::proportional(12.0),
+            color: hex(0xd0e4f3),
+            line_height: Some(TEAM_LINE),
+            ..Default::default()
+        },
+    );
+    job.wrap.max_width = paint::wrap_width(
+        painter,
+        line,
+        egui::FontId::proportional(12.0),
+        width - TEAM_COPY_LEFT - 14.0,
+    );
+    painter.layout_job(job)
+}
+
+/// Each team choice's least height in a well `width` wide.
+fn team_heights(painter: &Painter, width: f32) -> [f32; 3] {
+    TEAMS.map(|(_, _, line, _)| {
+        let lines = team_line(painter, line, width - 2.0 * WELL_PADDING)
+            .rows
+            .len();
+        2.0 * TEAM_PADDING + TEAM_NAME_LINE + lines as f32 * TEAM_LINE
+    })
+}
+
+/// The TEAM well's least height at `width`.
+pub fn team_well_height(painter: &Painter, width: f32) -> f32 {
+    2.0 * WELL_PADDING + 2.0 * WELL_GAP + team_heights(painter, width).iter().sum::<f32>()
+}
+
 /// The Multiplayer tab under the map row, where single player shows its battle format,
-/// difficulty and GO (`#multiplayer-panel`, laid out as the page at 1280 × 800).
+/// difficulty and GO (`#multiplayer-panel`), its parts where `layout` puts them.
 pub fn multiplayer(
     ui: &mut egui::Ui,
     art: &Art,
     state: &mut RoomsState,
     view: &View,
     prefs: &Preferences,
-    bounds: Rect,
+    layout: &MultiplayerLayout,
     actions: &mut Vec<Action>,
 ) {
-    // The two columns share Battle Setup's geometry; widening the sheet adds room
-    // without scaling its fonts or its controls.
-    let extra_height = bounds.height() - 363.0;
-    let right_width = 302.0 + (bounds.width() - 842.0) * 1.22 / 3.22;
-    let right_left = bounds.right() - right_width;
-    let rooms_head = bounds.min;
-    let room_list = Rect::from_min_max(
-        bounds.min + vec2(0.0, 27.0),
-        pos2(right_left - 23.0, bounds.bottom() - 76.0),
-    );
+    let MultiplayerLayout {
+        rooms_heading: rooms_head,
+        room_list,
+        rules_below,
+        status_well,
+        name_field,
+        team_well,
+        action,
+    } = *layout;
     let new_room = Rect::from_min_size(
-        room_list.min + vec2(5.0, 5.0),
-        vec2(room_list.width() - 10.0, 89.0),
-    );
-    let status_well = Rect::from_min_max(
-        pos2(bounds.left(), bounds.bottom() - 62.0),
-        pos2(room_list.right(), bounds.bottom()),
-    );
-    let name_field = Rect::from_min_size(
-        pos2(right_left, bounds.top() + 27.0),
-        vec2(right_width, 42.0),
-    );
-    let team_well = Rect::from_min_max(
-        pos2(right_left, bounds.top() + 110.0),
-        pos2(bounds.right(), bounds.bottom() - 75.0),
-    );
-    let action = Rect::from_min_size(
-        pos2(right_left, bounds.bottom() - 62.0),
-        vec2(right_width, 62.0),
+        room_list.min + vec2(WELL_PADDING, WELL_PADDING),
+        vec2(
+            room_list.width() - 2.0 * WELL_PADDING,
+            new_room_height(
+                ui.painter(),
+                room_list.width() - 2.0 * WELL_PADDING,
+                rules_below,
+            ),
+        ),
     );
     state.poll(view.debug);
     // A new room opens on the map single player would play: a saved extra level only
@@ -602,26 +825,8 @@ pub fn multiplayer(
         !busy,
         "Refresh rooms",
         |painter, rect, ink| {
-            let center = rect.center();
             let turn = if busy { time as f32 * 6.0 } else { 0.0 };
-            paint::arc(
-                painter,
-                center,
-                5.5,
-                -2.4 + turn,
-                4.6,
-                Stroke::new(1.8, ink),
-            );
-            let tip = center + vec2((2.2 + turn).cos(), (2.2 + turn).sin()) * 5.5;
-            painter.add(Shape::convex_polygon(
-                vec![
-                    tip + vec2(-3.0, -1.0),
-                    tip + vec2(2.5, -2.5),
-                    tip + vec2(0.5, 3.0),
-                ],
-                ink,
-                Stroke::NONE,
-            ));
+            refresh_icon(painter, rect.center(), turn, ink);
         },
     ) {
         state.next_poll = None;
@@ -659,7 +864,7 @@ pub fn multiplayer(
 
     // The room list: the new room's card, then the open rooms or why there are none.
     well(&painter, room_list, 14);
-    new_room_card(ui, state, new_room_map, new_room);
+    new_room_card(ui, state, new_room_map, new_room, rules_below);
     let rows = Rect::from_min_max(
         pos2(new_room.left(), new_room.bottom() + 6.0),
         pos2(new_room.right(), room_list.bottom() - 5.0),
@@ -727,7 +932,11 @@ pub fn multiplayer(
     }
 
     // YOUR NAME.
-    paint::section_label(&painter, pos2(name_field.left(), rooms_head.y), "YOUR NAME");
+    paint::section_label(
+        &painter,
+        pos2(name_field.left(), name_field.top() - HEADING_ROW),
+        "YOUR NAME",
+    );
     let mut name = state
         .name
         .get_or_insert_with(|| {
@@ -753,29 +962,37 @@ pub fn multiplayer(
         Stroke::new(0.5, hexa(0x92b4cf, 0.19)),
         StrokeKind::Inside,
     );
-    // The pencil that says the name can be typed over.
-    let pencil = pos2(name_field.right() - 18.0, name_field.center().y);
-    let ink = Stroke::new(1.6, hex(SMALL_INK));
-    painter.line_segment([pencil + vec2(-5.0, 5.0), pencil + vec2(4.0, -4.0)], ink);
-    painter.line_segment([pencil + vec2(-5.0, 5.0), pencil + vec2(-6.0, 6.5)], ink);
-    painter.line_segment([pencil + vec2(2.5, -5.5), pencil + vec2(5.5, -2.5)], ink);
+    pencil_icon(
+        &painter,
+        Rect::from_min_size(
+            pos2(
+                name_field.right() - 13.0 - 16.0,
+                name_field.center().y - 8.0,
+            ),
+            vec2(16.0, 16.0),
+        ),
+    );
     state.name = Some(name);
 
-    // TEAM.
+    // TEAM: each choice its least height and an equal share of what the well has more.
     paint::section_label(
         &painter,
-        pos2(team_well.left(), team_well.top() - 27.0),
+        pos2(team_well.left(), team_well.top() - HEADING_ROW),
         "TEAM",
     );
     well(&painter, team_well, 14);
+    let heights = team_heights(&painter, team_well.width());
+    let spare = (team_well.height() - team_well_height(&painter, team_well.width())).max(0.0);
+    let mut top = team_well.top() + WELL_PADDING;
     for (index, (team, name, line, colors)) in TEAMS.into_iter().enumerate() {
         let rect = Rect::from_min_size(
-            pos2(
-                team_well.left() + 5.0,
-                team_well.top() + 5.0 + index as f32 * (58.0 + extra_height / 3.0),
+            pos2(team_well.left() + WELL_PADDING, top),
+            vec2(
+                team_well.width() - 2.0 * WELL_PADDING,
+                heights[index] + spare / 3.0,
             ),
-            vec2(team_well.width() - 10.0, 52.0 + extra_height / 3.0),
         );
+        top = rect.bottom() + WELL_GAP;
         let response = ui
             .interact(rect, Id::unique(("team", index)), Sense::click())
             .on_hover_cursor(egui::CursorIcon::PointingHand);
@@ -797,23 +1014,25 @@ pub fn multiplayer(
             painter.add(Shape::convex_polygon(half, left, Stroke::NONE));
         }
         painter.circle_stroke(dot, 8.0, Stroke::new(1.0, hexa(0xffffff, 0.35)));
+        // The name over what it means, centred in the choice however tall it stands.
+        let meaning = team_line(&painter, line, rect.width());
+        let copy_top = rect.center().y - (TEAM_NAME_LINE + meaning.size().y) / 2.0;
         paint::text(
             &painter,
-            pos2(rect.left() + 43.0, rect.top() + 18.0),
+            pos2(
+                rect.left() + TEAM_COPY_LEFT,
+                copy_top + TEAM_NAME_LINE / 2.0,
+            ),
             Align2::LEFT_CENTER,
             name,
             bold_font(15.0),
             Color32::WHITE,
             0.0,
         );
-        paint::text(
-            &painter,
-            pos2(rect.left() + 43.0, rect.top() + 35.0),
-            Align2::LEFT_CENTER,
-            line,
-            egui::FontId::proportional(12.0),
-            hex(0xd0e4f3),
-            0.0,
+        painter.galley(
+            pos2(rect.left() + TEAM_COPY_LEFT, copy_top + TEAM_NAME_LINE),
+            meaning,
+            Color32::WHITE,
         );
         super::setup::choice_ring(&painter, rect, chosen);
         if response.clicked() {
@@ -822,22 +1041,96 @@ pub fn multiplayer(
     }
 
     // CREATE ROOM or JOIN ROOM.
-    let joining = !state.selected.is_empty();
-    let enabled = joining || state.list.new_room_server().is_some();
-    if paint::button_at(
-        ui,
-        art,
-        action,
-        if joining { "JOIN ROOM" } else { "CREATE ROOM" },
-        None,
-        ButtonStyle::Primary,
-        enabled,
-    )
-    .clicked()
+    if room_action(ui, art, action, state)
         && let Some(selection) = selection(state, prefs, new_room_map)
     {
         actions.push(Action::JoinRoom(Box::new(selection)));
     }
+}
+
+/// CREATE ROOM, or JOIN ROOM with an open room chosen, in `rect`; true when pressed.
+/// With no server to create on it stands down (`.room-action .primary:disabled`): dark
+/// glass and grey type, and offline a lock and why under its name.
+fn room_action(ui: &mut egui::Ui, art: &Art, rect: Rect, state: &RoomsState) -> bool {
+    let joining = !state.selected.is_empty();
+    let label = if joining { "JOIN ROOM" } else { "CREATE ROOM" };
+    if joining || state.list.new_room_server().is_some() {
+        return paint::action_button(ui, art, rect, label, ROOM_ACTION_LETTERING, true).clicked();
+    }
+    let response = ui.interact(rect, Id::unique("room action"), Sense::hover());
+    paint::labelled(&response, false, label);
+    let painter = ui.painter();
+    let offline = matches!(state.state, ListState::Offline { .. });
+    let (fill, ring, ink) = if offline {
+        (hex(0x081428), hexa(0xb7d7ed, 0.12), hex(0x8ea4ba))
+    } else {
+        (hex(0x0a1830), hexa(0xb7d7ed, 0.18), hex(0xa3b9ce))
+    };
+    painter.rect_filled(rect, 12, fill);
+    // Faint diagonal stripes, as a key that cannot be pressed.
+    let stripes = painter.with_clip_rect(rect.shrink(1.0));
+    let mut x = rect.left() - rect.height();
+    while x < rect.right() {
+        stripes.add(Shape::convex_polygon(
+            vec![
+                pos2(x, rect.bottom()),
+                pos2(x + DISABLED_STRIPE, rect.bottom()),
+                pos2(x + DISABLED_STRIPE + rect.height(), rect.top()),
+                pos2(x + rect.height(), rect.top()),
+            ],
+            hexa(0xffffff, 0.024),
+            Stroke::NONE,
+        ));
+        x += 2.0 * DISABLED_STRIPE;
+    }
+    painter.rect_stroke(rect, 12, Stroke::new(1.0, ring), StrokeKind::Inside);
+    let font = display_font(26.0);
+    if !offline {
+        paint::text(
+            painter,
+            rect.center(),
+            Align2::CENTER_CENTER,
+            label,
+            font,
+            ink,
+            2.0,
+        );
+        return false;
+    }
+    let reason = "Waits for the game server";
+    let reason_font = bold_font(12.0);
+    let copy = paint::text_width(painter, label, font.clone(), 2.0).max(paint::text_width(
+        painter,
+        reason,
+        reason_font.clone(),
+        0.6,
+    ));
+    let left = rect.center().x - (20.0 + 12.0 + copy) / 2.0;
+    art.icon(
+        painter,
+        "lock",
+        Rect::from_center_size(pos2(left + 10.0, rect.center().y), vec2(20.0, 20.0)),
+        ink,
+    );
+    paint::text(
+        painter,
+        pos2(left + 32.0, rect.center().y - 8.0),
+        Align2::LEFT_CENTER,
+        label,
+        font,
+        ink,
+        2.0,
+    );
+    paint::text(
+        painter,
+        pos2(left + 32.0, rect.center().y + 14.0),
+        Align2::LEFT_CENTER,
+        reason,
+        reason_font,
+        hex(0xb9cde0),
+        0.6,
+    );
+    false
 }
 
 /// Of the rooms that can take a player, the one a phone joins (`busiestOpenRoom`): a
@@ -919,26 +1212,22 @@ pub fn phone_multiplayer(
             copy_width,
         );
     }
-    let joining = !state.selected.is_empty();
-    let enabled = joining || state.list.new_room_server().is_some();
-    if paint::button_at(
-        ui,
-        art,
-        action,
-        if joining { "JOIN ROOM" } else { "CREATE ROOM" },
-        None,
-        ButtonStyle::Primary,
-        enabled,
-    )
-    .clicked()
+    if room_action(ui, art, action, state)
         && let Some(selection) = selection(state, prefs, new_room_map)
     {
         actions.push(Action::JoinRoom(Box::new(selection)));
     }
 }
 
-/// The new room's card: its map, what it holds, and its length and humans-only rules.
-fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room: Rect) {
+/// The new room's card: its map, what it holds, and its length and humans-only rules,
+/// at the card's right end or, `rules_below`, on a line of their own under its name.
+fn new_room_card(
+    ui: &mut egui::Ui,
+    state: &mut RoomsState,
+    map: MapId,
+    new_room: Rect,
+    rules_below: bool,
+) {
     let chosen = state.selected.is_empty();
     let response = ui
         .interact(new_room, Id::unique("new room"), Sense::click())
@@ -963,14 +1252,30 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room
     if response.clicked() {
         state.choose("");
     }
-    radio(
-        &painter,
-        pos2(new_room.left() + 19.0, new_room.top() + 25.0),
-        chosen,
-    );
+    let copy_left = new_room.left() + 38.0;
+    let (radio_y, name_y, line_width, rules_left, rule_y) = if rules_below {
+        (
+            new_room.top() + 25.0,
+            new_room.top() + 16.0,
+            f32::INFINITY,
+            copy_left,
+            new_room.top() + 67.0,
+        )
+    } else {
+        let line_width = new_room.right() - 12.0 - ROOM_RULES_WIDTH - copy_left;
+        let block = NEW_ROOM_NAME_LINE + 2.0 + new_room_line(&painter, line_width).size().y;
+        (
+            new_room.center().y,
+            new_room.center().y - block / 2.0 + NEW_ROOM_NAME_LINE / 2.0,
+            line_width,
+            new_room.right() - 12.0 - ROOM_RULES_WIDTH,
+            new_room.center().y,
+        )
+    };
+    radio(&painter, pos2(new_room.left() + 19.0, radio_y), chosen);
     let title = paint::text(
         &painter,
-        pos2(new_room.left() + 38.0, new_room.top() + 16.0),
+        pos2(copy_left, name_y),
         Align2::LEFT_CENTER,
         "New room on ",
         bold_font(14.0),
@@ -986,30 +1291,22 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room
         GOLD,
         0.0,
     );
-    paint::text(
-        &painter,
-        pos2(new_room.left() + 38.0, new_room.top() + 35.0),
-        Align2::LEFT_CENTER,
-        &format!("Up to {ROOM_SEATS} players · {}", WORDS.invite_card),
-        egui::FontId::proportional(12.0),
-        hex(SMALL_INK),
-        0.0,
+    painter.galley(
+        pos2(copy_left, name_y + NEW_ROOM_NAME_LINE / 2.0 + 2.0),
+        new_room_line(&painter, line_width),
+        Color32::WHITE,
     );
     // LENGTH: a stepper in its well.
-    let rule_y = new_room.top() + 67.0;
     paint::text(
         &painter,
-        pos2(new_room.left() + 38.0, rule_y),
+        pos2(rules_left, rule_y),
         Align2::LEFT_CENTER,
         "LENGTH",
         bold_font(12.0),
         hex(SMALL_INK),
         0.8,
     );
-    let stepper = Rect::from_min_size(
-        pos2(new_room.left() + 103.0, rule_y - 17.0),
-        vec2(124.0, 34.0),
-    );
+    let stepper = Rect::from_min_size(pos2(rules_left + 65.0, rule_y - 17.0), vec2(124.0, 34.0));
     well(&painter, stepper, 9);
     let mut minutes = state.round_minutes;
     let step = |ui: &mut egui::Ui, left: f32, glyph: &str, id: &str| {
@@ -1064,11 +1361,13 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room
         hex(SMALL_INK),
         0.0,
     );
-    // HUMANS ONLY: a switch.
-    let switch = Rect::from_min_size(
-        pos2(new_room.left() + 241.0, rule_y - 10.0),
-        vec2(34.0, 20.0),
-    );
+    // HUMANS ONLY: a switch after the stepper, or under LENGTH in a narrow card.
+    let (switch_left, switch_y) = if rules_below && rules_split(new_room.width()) {
+        (rules_left, rule_y + RULE_ROW)
+    } else {
+        (rules_left + 203.0, rule_y)
+    };
+    let switch = Rect::from_min_size(pos2(switch_left, switch_y - 10.0), vec2(34.0, 20.0));
     let switch_area = Rect::from_min_max(switch.min, pos2(switch.right() + 112.0, switch.bottom()));
     let response = ui
         .interact(switch_area, Id::unique("humans only"), Sense::click())
@@ -1102,7 +1401,7 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room
     }
     paint::text(
         &painter,
-        pos2(switch.right() + 7.0, rule_y),
+        pos2(switch.right() + 7.0, switch_y),
         Align2::LEFT_CENTER,
         "HUMANS ONLY",
         bold_font(12.0),
@@ -1166,13 +1465,15 @@ fn empty_rooms(ui: &mut egui::Ui, art: &Art, area: Rect, state: &mut RoomsState,
         0.0,
     );
     if matches!(state.state, ListState::Offline { .. }) {
+        // The two keys side by side, narrower where a narrow list leaves less room.
+        let key_width = OFFLINE_KEY_WIDTH.min((area.width() - OFFLINE_KEY_GAP) / 2.0);
         for (index, label) in ["BATTLE THE BOTS", "RETRY NOW"].into_iter().enumerate() {
             let rect = Rect::from_center_size(
                 pos2(
-                    area.center().x + (index as f32 - 0.5) * 168.0,
+                    area.center().x + (index as f32 - 0.5) * (key_width + OFFLINE_KEY_GAP),
                     area.top() + 162.0,
                 ),
-                vec2(156.0, 30.0),
+                vec2(key_width, 30.0),
             );
             let clicked =
                 paint::button_at(ui, art, rect, label, None, ButtonStyle::Secondary, true)

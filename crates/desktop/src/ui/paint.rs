@@ -373,6 +373,14 @@ pub fn text_fit(
     rect
 }
 
+/// The width to wrap `text` at in a box `width` wide: as a page's text, never narrower
+/// than its longest word, which overflows rather than breaks.
+pub fn wrap_width(painter: &Painter, text: &str, font: FontId, width: f32) -> f32 {
+    text.split_whitespace()
+        .map(|word| text_width(painter, word, font.clone(), 0.0))
+        .fold(width, f32::max)
+}
+
 /// The width `text` takes.
 pub fn text_width(painter: &Painter, text: &str, font: FontId, spacing: f32) -> f32 {
     galley(painter, text, font, Color32::WHITE, spacing, f32::INFINITY)
@@ -536,6 +544,15 @@ pub fn labelled_choice(response: &Response, enabled: bool, selected: bool, label
     });
 }
 
+/// The type on a button: a dialog's bold capitals (`.primary`, 15 px with 1.5 px between
+/// letters), or a Battle Setup action's display face at its own size and spacing
+/// (`.start #start` 40 px by 4, `.room-action .primary` 26 px by 2).
+#[derive(Clone, Copy, PartialEq)]
+pub enum Lettering {
+    Dialog,
+    Display { size: f32, spacing: f32 },
+}
+
 /// A dialog button with an optional leading icon, `size` wide and tall.
 pub fn button(
     ui: &mut Ui,
@@ -545,6 +562,51 @@ pub fn button(
     style: ButtonStyle,
     size: Vec2,
     enabled: bool,
+) -> Response {
+    lettered_button(
+        ui,
+        art,
+        label,
+        icon,
+        style,
+        size,
+        enabled,
+        Lettering::Dialog,
+    )
+}
+
+/// A gold action filling `rect` with its label in `lettering` (GO, CREATE ROOM).
+pub fn action_button(
+    ui: &mut Ui,
+    art: &Art,
+    rect: Rect,
+    label: &str,
+    lettering: Lettering,
+    enabled: bool,
+) -> Response {
+    let mut child = ui.new_child(egui::UiBuilder::new().max_rect(rect));
+    lettered_button(
+        &mut child,
+        art,
+        label,
+        None,
+        ButtonStyle::Primary,
+        rect.size(),
+        enabled,
+        lettering,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lettered_button(
+    ui: &mut Ui,
+    art: &Art,
+    label: &str,
+    icon: Option<&str>,
+    style: ButtonStyle,
+    size: Vec2,
+    enabled: bool,
+    lettering: Lettering,
 ) -> Response {
     let (rect, response) = ui.allocate_exact_size(
         size,
@@ -618,15 +680,9 @@ pub fn button(
             painter.rect_stroke(rect, 10, Stroke::new(1.5, rim), StrokeKind::Inside);
         }
     }
-    let font = if style == ButtonStyle::Primary && size.y >= 52.0 {
-        display_font(size.y * 0.5)
-    } else {
-        bold_font(15.0)
-    };
-    let spacing = if style == ButtonStyle::Primary && size.y >= 52.0 {
-        1.0
-    } else {
-        1.5
+    let (font, spacing) = match lettering {
+        Lettering::Dialog => (bold_font(15.0), 1.5),
+        Lettering::Display { size, spacing } => (display_font(size), spacing),
     };
     let label_width = text_width(painter, label, font.clone(), spacing);
     let icon_size = 16.0;

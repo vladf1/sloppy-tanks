@@ -133,7 +133,7 @@ const MAP_ART_VIEW: [f32; 4] = [60.0, 0.0, 180.0, 80.0];
 /// at 41 px on 0.82 lines, with their `text-shadow`s, tilted about the centre of its
 /// layout box (CSS pixels: TANKS's width in Impact by the two lines). The view keeps
 /// the room around the box for the tilt and the shadows that the page's capture had.
-const LOGO_BOX: [f32; 2] = [104.36, 55.76];
+pub const LOGO_BOX: [f32; 2] = [104.36, 55.76];
 const LOGO_MARGIN: f32 = 24.0;
 const LOGO_VIEW: [f32; 4] = [-LOGO_MARGIN, -LOGO_MARGIN, 152.0, 104.0];
 
@@ -524,8 +524,13 @@ impl Art {
     /// Paint the logo with its layout box's top-left at `origin`, as the page places
     /// `.setup-brand`.
     pub fn logo(&self, painter: &egui::Painter, origin: Pos2) {
+        self.logo_scaled(painter, origin, 1.0);
+    }
+
+    /// The logo at `scale` of its size, as a narrow window's smaller `.setup-brand`.
+    pub fn logo_scaled(&self, painter: &egui::Painter, origin: Pos2, scale: f32) {
         let [x, y, width, height] = LOGO_VIEW;
-        let rect = Rect::from_min_size(origin + vec2(x, y), vec2(width, height));
+        let rect = Rect::from_min_size(origin + vec2(x, y) * scale, vec2(width, height) * scale);
         self.icon(painter, "logo", rect, Color32::WHITE);
     }
 
