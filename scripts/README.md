@@ -98,13 +98,15 @@ server on a free port from `SLOPPY_SERVER_BIN` (default `target/server/sloppy-se
 which `node scripts/build-server.mjs` builds with the content version the page plays) and
 stage outages through `installProbes()` (dropped sockets, a hidden page).
 
-| Check                   | Covers                                                                                                                                                                                       |
-| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shell-check.mjs`       | Battle Setup's choices, GO, driving, firing, zoom, first person, pause, Settings, the report, a second round                                                                                 |
-| `webgl-check.mjs`       | The backend choice: WebGPU, `?webgl`, the fallbacks to WebGL2, and the failure view                                                                                                          |
-| `multiplayer-check.mjs` | Two players: create, invite link, join by link and by code, both drive, the dev delay, a socket drop, leaving, a reload's seat, a crash and restart, ROOM CLOSED, an outdated server's rooms |
-| `lifecycle-check.mjs`   | Five single player → room → leave cycles on one page: sockets, listeners, GPU objects and Wasm memory stay bounded, no stuck key; a hidden page pauses, a hidden room keeps its seat         |
-| `webkit-check.mjs`      | Playwright WebKit at iPad and desktop sizes: startup, GO, W's frame rate, no late pipelines, frame gaps (printed; fails only on a stall over 250 ms)                                         |
+| Check                   | Covers                                                                                                                                                                                                |
+| ----------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shell-check.mjs`       | Battle Setup's choices, GO, driving, firing, zoom, first person, pause, Settings, the report, a second round                                                                                          |
+| `webgl-check.mjs`       | The backend choice: WebGPU, `?webgl`, the fallbacks to WebGL2, and the failure view                                                                                                                   |
+| `multiplayer-check.mjs` | Two players: create, invite link, join by link and by code, both drive, the dev delay, a socket drop, leaving, a reload's seat, a crash and restart, ROOM CLOSED, an outdated server's rooms          |
+| `lifecycle-check.mjs`   | Five single player → room → leave cycles on one page: sockets, listeners, GPU objects and Wasm memory stay bounded, no stuck key; a hidden page pauses, a hidden room keeps its seat                  |
+| `webkit-check.mjs`      | Playwright WebKit at iPad and desktop sizes: startup, GO, W's frame rate, no late pipelines, frame gaps (printed; fails only on a stall over 250 ms)                                                  |
+| `text-fields-check.mjs` | Typing, clipboard shortcuts, Enter, Escape and IME text in the name and room code fields, and on a touch screen the focus a soft keyboard needs, in Chrome and WebKit (`webkit-tablet` runs one case) |
+| `firefox-check.mjs`     | The installed Firefox, headless over WebDriver BiDi: startup, GO, driving, the pause (skipped without Firefox)                                                                                        |
 
 The dev server serves interactive fixtures, listed on the dev site's
 `/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html` and

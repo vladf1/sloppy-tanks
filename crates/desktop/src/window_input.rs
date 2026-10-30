@@ -151,7 +151,9 @@ impl WindowInput {
         playing: bool,
     ) -> Option<Request> {
         // Typing goes to the field; a release still reaches the controls, so a key
-        // held when a field took focus never sticks.
+        // held when a field took focus never sticks. (In a page the field's own element
+        // takes the keys from the canvas, whose `Focused(false)` lets go of held ones:
+        // `text_entry.rs`.)
         if overlay.typing() && state == ElementState::Pressed {
             return None;
         }

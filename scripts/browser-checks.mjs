@@ -12,6 +12,7 @@ const checks = [
   { script: "shell-check.mjs" },
   { script: "webgl-check.mjs" },
   { script: "firefox-check.mjs" },
+  { script: "text-fields-check.mjs" },
   { script: "fixtures-check.mjs" },
   { script: "multiplayer-check.mjs", server: true },
   { script: "lifecycle-check.mjs", server: true },

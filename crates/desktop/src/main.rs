@@ -39,6 +39,7 @@ mod room_api;
 mod sockets;
 mod surface_layers;
 mod tasks;
+mod text_entry;
 mod touch;
 mod ui;
 mod window_input;
