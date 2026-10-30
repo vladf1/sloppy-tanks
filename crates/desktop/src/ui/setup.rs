@@ -45,7 +45,15 @@ pub fn vehicle_card(
     // tank alone.
     let narrow = rect.width() < SPEC_LINE_WIDTH;
     let padding = if compact || narrow { 10.0 } else { 14.0 };
-    let name_size = if compact || narrow { 20.0 } else { 24.0 };
+    // The phone's respawn strip, compact and narrow, sets its names at 15 px
+    // (`.phone .respawn .vehicle strong`).
+    let name_size = if compact && narrow {
+        15.0
+    } else if compact || narrow {
+        20.0
+    } else {
+        24.0
+    };
     let name = paint::shadowed(
         painter,
         rect.min + vec2(padding, 10.0),
