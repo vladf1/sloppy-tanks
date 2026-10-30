@@ -337,8 +337,9 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   display frame: those builds judge a reset canvas on its first frames at the GPU's
   clock of the moment, and an Apple GPU clocks down while frames are held (5-6 ms of
   village work spanned 21-25 ms at 30 fps), so resetting then drops the canvas lower.
-  Measure with Graphics pinned (localStorage `sloppy-graphics`) or
-  `debug_set_scene_load`, since Auto otherwise changes what is being timed.
+  Measure with Graphics pinned (the `graphics` field of the page's localStorage
+  `sloppy-shell-settings`, Settings in the app) or `debug_set_scene_load`, since Auto
+  otherwise changes what is being timed.
 - WebKit (Safari, every iPad) guards each WGSL loop with a volatile
   forward-progress counter, so Metal cannot unroll it and arrays or vector lanes
   indexed by the loop counter spill to memory: per-pixel loops ran 15-45x slower
