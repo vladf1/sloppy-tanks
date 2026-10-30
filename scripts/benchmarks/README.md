@@ -1,8 +1,9 @@
 # Host download benchmarks
 
 This folder contains HTTP-only comparisons of the live Sloppy Tanks hosts: the GitHub
-Pages production site and the Cloudflare Workers dev site. The dev site serves a
-development build, so compare shared static assets rather than its game chunk.
+Pages production site and the Cloudflare Workers dev site. The dev site serves its own
+build (the dev server directory compiled in), so its shell Wasm differs a little from
+production's; compare like files.
 
 ## Run
 
@@ -18,8 +19,9 @@ This is a manual benchmark. It is intentionally excluded from the repository-wid
 
 ## Scope and method
 
-- 13 alternating rounds per deployment.
-- Each round requests the HTML entry, favicon, tank preview atlas, hashed game chunk, and every texture (including the pickup atlas) and audio file the script lists.
+- 13 alternating rounds per deployment and graphics backend.
+- A page load is the HTML entry, its module (`assets/main-*.js`), one build of the egui shell (its glue, `assets/sloppy-tanks-*.js`, and Wasm, `assets/sloppy-tanks_bg-*.wasm`; or the WebGL2 build's `sloppy-tanks-webgl-*` pair), the favicon and the village's textures the script lists. The script discovers the hashed names from the live HTML, module and glue, so it needs a page built from the egui shell (PR 125 on); the sounds, tank previews and fonts are inside the Wasm.
+- Each round requests the WebGPU load and the WebGL2 load of each deployment as separate batches.
 - Optional Harbor/Quarry-only assets and unused public files are not part of the default `/` startup graph.
 - Each resource is fetched concurrently using a fresh curl process with HTTP/2, IPv4, no local cache, and `Accept-Encoding: br, gzip`.
 - Response bodies are consumed as raw encoded data so wire-byte totals include the encoding negotiated by each host.
