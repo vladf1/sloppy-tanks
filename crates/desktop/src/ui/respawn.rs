@@ -2,12 +2,14 @@
 //! wrecked the tank with tags for the weapon, their tank and their tally, the
 //! countdown ring, and the choice of the next life's tank.
 
+use egui::emath::TSTransform;
 use egui::{Align2, Color32, Id, LayerId, Order, Rect, Sense, Stroke, Vec2, pos2, vec2};
 
 use sloppy_core::sim::{GameMode, Team};
 use sloppy_web::catalog::TANK_CARDS;
 use sloppy_web::hud::Hud;
 
+use super::hud::cubic_bezier;
 use super::icons::Art;
 use super::paint::{self, fade, hex, hexa};
 use super::setup::vehicle_card;
@@ -472,9 +474,12 @@ fn countdown(
     } else {
         0.0
     };
+    let seconds = left.ceil();
     let radius = size.ring / 2.0;
     let ring = pos2(rect.right() - radius, rect.center().y);
     let disc = Rect::from_center_size(ring, Vec2::splat(size.ring));
+    // The ring's shapes from here on, which its beat scales.
+    let ring_start = painter.add(egui::Shape::Noop);
     // A gold glow round the ring and a dark hairline at its edge.
     painter.add(
         egui::epaint::Shadow {
@@ -512,12 +517,12 @@ fn countdown(
         Vec2::splat(size.digit * 0.6),
         &[(0.0, hexa(0xffcf38, 0.3)), (1.0, Color32::TRANSPARENT)],
     ));
-    let seconds = format!("{}", left.ceil());
+    let digits = format!("{seconds}");
     paint::text(
         painter,
         ring + vec2(0.0, 2.0),
         Align2::CENTER_CENTER,
-        &seconds,
+        &digits,
         display_font(size.digit),
         hex(0x7a5a00),
         0.0,
@@ -526,11 +531,22 @@ fn countdown(
         painter,
         ring,
         Align2::CENTER_CENTER,
-        &seconds,
+        &digits,
         display_font(size.digit),
         GOLD_HOT,
         0.0,
     );
+    // The ring beats as each second begins, drawn only: its caption keeps its place.
+    let pulse = beat(painter.ctx(), seconds);
+    if pulse != 1.0 {
+        let ring_end = painter.add(egui::Shape::Noop);
+        let transform = TSTransform::new(ring.to_vec2() * (1.0 - pulse), pulse);
+        painter.ctx().graphics_mut(|layers| {
+            layers
+                .entry(painter.layer_id())
+                .transform_after_rounding_range(ring_start, ring_end, transform);
+        });
+    }
     // The caption's line and the rule under it, centred on the ring together.
     let line = size.caption * 1.2;
     let block = line + RULE_GAP + RULE_HEIGHT;
@@ -554,4 +570,31 @@ fn countdown(
         Rect::from_min_max(pos2(rule.right() - fill, rule.top()), rule.max),
         &[(0.0, GOLD_DEEP), (1.0, GOLD_HOT)],
     ));
+}
+
+/// The ring's beat (`@keyframes respawn-beat`): it starts each second this much larger
+/// and settles to its size over this share of the second, on CSS's
+/// `cubic-bezier(0.2, 0.8, 0.3, 1)`.
+const BEAT_SWELL: f32 = 0.08;
+const BEAT_SETTLE: f64 = 0.3;
+const BEAT_CURVE: [f32; 4] = [0.2, 0.8, 0.3, 1.0];
+/// A frame gap this long means the ring was gone: a new countdown beats from its start.
+const BEAT_RESTART: f64 = 0.5;
+
+/// The ring's scale this frame. The shell's clock beats once a second; its phase is
+/// the moment the count last changed, so each beat lands as a new second shows.
+fn beat(context: &egui::Context, seconds: f64) -> f32 {
+    let now = context.input(|input| input.time);
+    let start = context.data_mut(|data| {
+        let (shown, start, seen) =
+            data.get_temp_mut_or(Id::unique("respawn beat"), (seconds, now, now));
+        if *shown != seconds || now - *seen > BEAT_RESTART {
+            *shown = seconds;
+            *start = now;
+        }
+        *seen = now;
+        *start
+    });
+    let settled = ((now - start).rem_euclid(1.0) / BEAT_SETTLE).min(1.0) as f32;
+    1.0 + BEAT_SWELL * (1.0 - cubic_bezier(BEAT_CURVE, settled))
 }

@@ -26,6 +26,14 @@ const UNAVAILABLE_OPACITY: f32 = 0.45;
 const SPEC_LINE_WIDTH: f32 = 200.0;
 /// The shortest map card with room for its line under its name.
 const MAP_DETAIL_HEIGHT: f32 = 56.0;
+/// The phone respawn strip's tank picture: its box's inset at the sides and from the
+/// card's top (the padding and the name's line, less the picture's tuck), its height,
+/// and the share of it down to the point the class's scale grows the tank from
+/// (`.respawn .vehicle`, `.respawn .tank-preview`).
+const STRIP_PREVIEW_SIDE: f32 = 12.0;
+const STRIP_PREVIEW_TOP: f32 = 23.0;
+const STRIP_PREVIEW: f32 = 48.0;
+const STRIP_PREVIEW_ORIGIN: f32 = 0.85;
 
 /// A tank card: a little showroom with a spotlight on the tank, its name and class,
 /// and its hull and speed as bars. The chosen tank glows gold.
@@ -113,7 +121,22 @@ pub fn vehicle_card(
     }
     // The tank, tucked under the name line, sized by its class.
     let spec_height = 26.0;
-    let stage = if compact || narrow {
+    let class_scale = if !compact && tank.kind == VehicleKind::Heavy {
+        1.0
+    } else {
+        tank.scale
+    };
+    let stage = if compact && narrow {
+        // The phone's respawn strip (`.phone .respawn .tank-preview`): a 48 px box under
+        // the name, the tank fit to it and scaled by its class about a point low in it.
+        let frame = Rect::from_min_size(
+            rect.min + vec2(STRIP_PREVIEW_SIDE, STRIP_PREVIEW_TOP),
+            vec2(rect.width() - 2.0 * STRIP_PREVIEW_SIDE, STRIP_PREVIEW),
+        );
+        let origin = frame.top() + STRIP_PREVIEW * STRIP_PREVIEW_ORIGIN;
+        let middle = origin + (frame.center().y - origin) * class_scale;
+        Rect::from_center_size(pos2(frame.center().x, middle), frame.size())
+    } else if compact || narrow {
         Rect::from_min_max(
             pos2(rect.left() + 6.0, rect.top() + 31.0),
             pos2(
@@ -131,22 +154,20 @@ pub fn vehicle_card(
             ),
         )
     };
-    let scale = if !compact && tank.kind == VehicleKind::Heavy {
-        1.0
-    } else {
-        tank.scale
-    } * if hovered { 1.05 } else { 1.0 };
+    let scale = class_scale * if hovered { 1.05 } else { 1.0 };
     painter.add(paint::radial(
         pos2(stage.center().x, stage.bottom() - stage.height() * 0.12),
         vec2(stage.height() * 1.2 * scale, stage.height() * 0.16),
         &[(0.0, hexa(0x020a14, 0.55)), (1.0, Color32::TRANSPARENT)],
     ));
+    // The strip's tanks take their class's scale alone (`.vehicle .tank-preview`).
+    let growth = if compact && narrow { 1.0 } else { 1.05 };
     art.tank(
         &painter.with_clip_rect(rect.shrink(1.0)),
         tank.kind,
         team,
         stage,
-        scale * 1.05,
+        scale * growth,
         false,
     );
     // Hull and speed as bars that fill by each tank's share of the best.
@@ -2871,16 +2892,20 @@ fn go_button(
 /// and the room it keeps between rows and inside the tray.
 const PHONE_MARGIN: f32 = 8.0;
 const PHONE_PADDING: f32 = 12.0;
-/// An upright phone's sheet padding: top, sides and bottom (`.phone .menu.start`).
-const PHONE_UPRIGHT_PADDING: [f32; 3] = [14.0, 16.0, 30.0];
+/// An upright phone's sheet padding: top, sides and bottom (`.phone .menu.start`; the
+/// bottom's 30 px lie inside the sheet's 1 px border).
+const PHONE_UPRIGHT_PADDING: [f32; 3] = [14.0, 16.0, 31.0];
 const PHONE_GAP: f32 = 8.0;
 const PHONE_TRAY_PADDING: f32 = 10.0;
-/// Its rows: a section heading, the play tabs, the battle formats' least and most height
-/// upright, and GO (taller under an upright phone's thumb). A primary button this tall
-/// takes the display face.
+/// Upright, the tray's 1 px border round its padding.
+const PHONE_TRAY_BORDER: f32 = 1.0;
+/// Its rows: a section heading, the play tabs, the battle formats' least height (upright
+/// they take the room the screen has beyond the rest, `.phone #single-panel`), and GO
+/// (taller under an upright phone's thumb). A primary button this tall takes the display
+/// face.
 const PHONE_LABEL: f32 = 26.0;
 const PHONE_TABS: f32 = 50.0;
-const PHONE_FORMATS: (f32, f32) = (50.0, 53.0);
+const PHONE_FORMATS: f32 = 50.0;
 const PHONE_UPRIGHT_GO: f32 = 64.0;
 /// Held sideways, the last row: the formats' (or the room's status) well, as tall as a
 /// format key and its padding (`.phone .start .battle-choice .choice-card`), and beside it
@@ -2889,11 +2914,10 @@ const PHONE_UPRIGHT_GO: f32 = 64.0;
 const PHONE_SIDEWAYS_ROW: f32 = 62.0;
 const PHONE_SIDEWAYS_GO: f32 = 56.0;
 const PHONE_SIDEWAYS_ROOM_ACTION: f32 = 50.0;
-/// An upright phone's logo (`.phone .setup-brand`: TANKS at 46 px against 41), the room
-/// over it beyond the sheet's padding (the page's is 14 inside a 1 px border), and under
-/// it to YOUR TANK (the header's 6 px padding and the 10 px gap after it).
+/// An upright phone's logo (`.phone .setup-brand`: TANKS at 46 px against 41), right
+/// under the sheet's padding, and the room under it to YOUR TANK (the header's 6 px
+/// padding and the 10 px gap after it).
 const PHONE_LOGO_SCALE: f32 = 46.0 / 41.0;
-const PHONE_LOGO_ABOVE: f32 = 3.0;
 const PHONE_LOGO_BELOW: f32 = 16.0;
 /// The Home Screen tip's line in an iPhone's browser.
 const PHONE_TIP: f32 = 18.0;
@@ -2913,6 +2937,12 @@ const PHONE_CARD_PADDING: [f32; 2] = [10.0, 12.0];
 const PHONE_NAME_LINE: f32 = 20.4;
 const PHONE_TAG_HEIGHT: f32 = 17.6;
 const PHONE_ROW_GAP: f32 = 4.0;
+/// A short (sideways) card's padding above, at the sides and below, its picture's
+/// height, and how far the picture tucks up into the name's line (`.phone .start
+/// .vehicle`, `.phone .menu.start .tank-preview`).
+const PHONE_SHORT_CARD_PADDING: [f32; 3] = [8.0, 10.0, 4.0];
+const PHONE_SHORT_PREVIEW: f32 = 42.0;
+const PHONE_SHORT_PREVIEW_TUCK: f32 = 4.0;
 /// Its hull and speed lines: a label's line and its bar, the two rows' whole height with
 /// production's gaps and closed up, and the least box the tank keeps over them.
 const PHONE_SPEC_LABEL: f32 = 12.6;
@@ -3002,13 +3032,13 @@ fn phone_setup(
         // The tanks' and the maps' wells, and upright the formats'.
         + 2.0 * WELL_PADDING * if upright { 3.0 } else { 2.0 }
         + if upright {
-            PHONE_LOGO_ABOVE + logo.y + PHONE_LOGO_BELOW + 2.0 * PHONE_GAP + PHONE_FORMATS.0
+            logo.y + PHONE_LOGO_BELOW + 2.0 * PHONE_GAP + PHONE_FORMATS + 2.0 * PHONE_TRAY_BORDER
         } else {
             0.0
         };
-    // What the screen has beyond the least: the tanks grow, then the maps, then upright
-    // the formats; what is left goes round the logo, so GO stays at the bottom with no
-    // empty band over it. Sideways the sheet centres.
+    // What the screen has beyond the least: the tanks grow, then the maps, and upright
+    // the formats take the rest, so GO stays at the bottom with no empty band over it.
+    // Sideways the sheet centres.
     let least = fixed + tank_range.0 + maps_height(map_range.0);
     let room = (screen.height() - least).max(0.0);
     let mut spare = room;
@@ -3020,11 +3050,10 @@ fn phone_setup(
     let tank_height = tank_range.0 + grow(tank_range.1 - tank_range.0);
     let rows = map_rows as f32;
     let map_height = map_range.0 + grow((map_range.1 - map_range.0) * rows) / rows;
-    let (formats_height, logo_band) = if upright {
-        let formats = PHONE_FORMATS.0 + grow(PHONE_FORMATS.1 - PHONE_FORMATS.0);
-        (formats, logo.y + grow(f32::INFINITY))
+    let formats_height = if upright {
+        PHONE_FORMATS + grow(f32::INFINITY)
     } else {
-        (PHONE_FORMATS.0, 0.0)
+        PHONE_FORMATS
     };
     let needed = least + room - spare;
     let page = needed.max(screen.height());
@@ -3114,16 +3143,12 @@ fn phone_setup(
                         y + tip
                     };
                     if upright {
-                        y += PHONE_LOGO_ABOVE;
                         art.logo_scaled(
                             &painter,
-                            pos2(
-                                canvas.center().x - logo.x / 2.0,
-                                y + (logo_band - logo.y) / 2.0,
-                            ),
+                            pos2(canvas.center().x - logo.x / 2.0, y),
                             PHONE_LOGO_SCALE,
                         );
-                        y = home_screen_tip(y + logo_band) + PHONE_LOGO_BELOW;
+                        y = home_screen_tip(y + logo.y) + PHONE_LOGO_BELOW;
                         y = tank_row(ui, y, left, width) + PHONE_GAP;
                     } else {
                         y = home_screen_tip(y);
@@ -3152,7 +3177,10 @@ fn phone_setup(
                         pos2(left + width, sheet.bottom() - pad_bottom),
                     );
                     tray(&painter, tray_rect, true, true);
-                    let inner = tray_rect.shrink(PHONE_TRAY_PADDING);
+                    let inner = tray_rect.shrink2(vec2(
+                        PHONE_TRAY_PADDING,
+                        PHONE_TRAY_PADDING + if upright { PHONE_TRAY_BORDER } else { 0.0 },
+                    ));
                     y = inner.top();
                     if !upright {
                         y = tank_row(ui, y, inner.left(), inner.width());
@@ -3329,7 +3357,7 @@ fn phone_setup(
 /// A phone's tank card (`.phone .start .vehicle`). Upright, a narrow card: the name, the
 /// class in a small tag led by its colour's dot, the tank, and its hull and speed as
 /// bars the card's width, the only way a new player tells the tanks apart. Sideways, a
-/// short card: the name and the tank beside it.
+/// short card: the name over a small picture of the tank.
 fn phone_tank_card(
     painter: &Painter,
     art: &Art,
@@ -3354,15 +3382,21 @@ fn phone_tank_card(
         0.5,
     );
     if !tall {
+        // The picture's box spans the card under the name, tucked up into its line, and
+        // the tank sits in it at its class's scale, centred.
+        let [pad_top, pad_x, pad_bottom] = PHONE_SHORT_CARD_PADDING;
+        let bottom = rect.bottom() - pad_bottom;
+        let top = (bottom - PHONE_SHORT_PREVIEW)
+            .max(rect.top() + pad_top + PHONE_NAME_LINE - PHONE_SHORT_PREVIEW_TUCK);
         art.tank(
             &painter.with_clip_rect(rect.shrink(1.0)),
             tank.kind,
             team,
             Rect::from_min_max(
-                pos2(rect.left() + rect.width() * 0.4, rect.top() + 6.0),
-                pos2(rect.right() - 6.0, rect.bottom() - 4.0),
+                pos2(rect.left() + pad_x, top),
+                pos2(rect.right() - pad_x, bottom),
             ),
-            tank.scale * 0.85,
+            tank.scale,
             false,
         );
         showroom_ring(painter, rect, selected);
