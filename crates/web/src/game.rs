@@ -271,6 +271,8 @@ pub struct Game {
     /// The sounds drained events play, on the frame clock.
     sounds: SoundPlanner,
     canvas: CanvasSize,
+    /// A dialog the page blurred the arena behind is open (`set_backdrop_blur`).
+    backdrop_blur: bool,
     times: FrameTimes,
     graphics: Graphics,
     /// The human's tank as the HUD reads it, refilled from the simulation each read.
@@ -575,6 +577,7 @@ impl Game {
         self.canvas.apply(&mut self.view);
         self.graphics
             .set_pixel_ratio(&mut self.view.renderer, self.canvas.pixel_ratio());
+        self.set_backdrop_blur(self.backdrop_blur);
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
@@ -917,6 +920,7 @@ impl Game {
             events: Vec::new(),
             sounds: SoundPlanner::default(),
             canvas,
+            backdrop_blur: false,
             shell,
             times: FrameTimes::default(),
             graphics,
@@ -1070,6 +1074,15 @@ impl Game {
     /// The GPU's smoothed frame time in milliseconds, once sampled.
     pub fn gpu_ms(&self) -> Option<f64> {
         self.graphics.gpu_ms()
+    }
+
+    /// Blur and desaturate the arena while a dialog is over it (pause, the results,
+    /// Settings), as the page's dialog backdrop did; from the next frame shown.
+    pub fn set_backdrop_blur(&mut self, on: bool) {
+        self.backdrop_blur = on;
+        self.view
+            .renderer
+            .set_backdrop_blur(self.canvas.backdrop_blur(on));
     }
 }
 

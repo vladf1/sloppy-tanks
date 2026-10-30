@@ -35,10 +35,10 @@
 //!   box for pixel probes; `size <= 0` removes it).
 //! - `debug_set_scene_load(load)`: render the scene at `load` times its size on top of
 //!   the graphics quality's scale (GPU load for measurements; 1 restores it).
-//! - `debug_set_off({ pools, bloom, occlusion, sky, lights, atmosphere, ground, effects })`:
-//!   switch effect pools (by label), post passes, point lights, the atmosphere, its ground
-//!   variation or main-view draws of custom effects (by name) off, for same-page A/B
-//!   timing of one frame redrawn.
+//! - `debug_set_off({ pools, bloom, occlusion, sky, lights, atmosphere, ground, backdrop,
+//!   effects })`: switch effect pools (by label), post passes, point lights, the
+//!   atmosphere, its ground variation, the dialog backdrop's blur or main-view draws of
+//!   custom effects (by name) off, for same-page A/B timing of one frame redrawn.
 //! - `debug_set_frames_in_flight(limit)`: run frames only while fewer than `limit` are on
 //!   the GPU (0 runs every frame at its timestamp), for a same-page A/B of the pacing.
 //! - `debug_seats(seed)`: two player seats on a room simulation, each drawn from its
@@ -203,6 +203,7 @@ struct DebugOffSpec {
     lights: bool,
     atmosphere: bool,
     ground: bool,
+    backdrop: bool,
     effects: Vec<String>,
 }
 
@@ -233,6 +234,7 @@ impl Game {
             lights: off.lights,
             atmosphere: off.atmosphere,
             ground: off.ground,
+            backdrop: off.backdrop,
             effects: off.effects,
         };
         Ok(())

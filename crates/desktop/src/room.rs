@@ -855,6 +855,10 @@ impl RoomSession {
         let painted = self.overlay.run(|context| {
             actions = room_menu::draw(context, menu, ui_state, &view, frame_dt);
         });
+        // The room's menus dim the arena, which the page also blurred behind them.
+        let dialog =
+            self.menu.joining || !self.menu.in_battle() || self.ui.settings_draft.is_some();
+        self.game.set_backdrop_blur(dialog);
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
         if self.frame_shown {

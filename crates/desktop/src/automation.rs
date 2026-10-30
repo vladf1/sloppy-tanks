@@ -184,6 +184,9 @@ pub enum Command {
     GiveAmmo(f64),
     KillHuman,
     Soak(f64),
+    /// Switch passes and effects off for a same-page A/B measurement, as JSON
+    /// (`Game::debug_set_off`): a string, or an object the check passes.
+    Off(String),
     /// A room's transport delay, milliseconds (`?latency`, `?jitter`, `?stall`).
     Latency {
         latency: f64,
@@ -221,6 +224,11 @@ impl Command {
             "giveAmmo" => Self::GiveAmmo(number(0, 5.0)?),
             "killHuman" => Self::KillHuman,
             "soak" => Self::Soak(number(0, 1200.0)?),
+            "off" => Self::Off(match args.first() {
+                Some(Value::String(json)) => json.clone(),
+                Some(value) => value.to_string(),
+                None => "{}".into(),
+            }),
             "latency" => Self::Latency {
                 latency: number(0, 0.0)?,
                 jitter: number(1, 0.0)?,
@@ -604,6 +612,10 @@ mod tests {
                 jitter: 10.0,
                 stall: 0.0
             })
+        );
+        assert_eq!(
+            Command::parse("off", &[serde_json::json!({ "backdrop": true })]),
+            Ok(Command::Off(r#"{"backdrop":true}"#.into()))
         );
         assert!(Command::parse("zoom", &["far".into()]).is_err());
         assert!(Command::parse("teleport", &[]).is_err());

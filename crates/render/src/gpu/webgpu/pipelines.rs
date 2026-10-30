@@ -246,6 +246,18 @@ fn occlusion_blur_spec() -> PipelineSpec {
     )
 }
 
+/// The dialog backdrop's blur passes: the bloom's fragment stage, drawn as
+/// `BloomPass::BackdropRows` and `BackdropColumns`, into the canvas's format.
+fn backdrop_spec(canvas_format: wgpu::TextureFormat) -> PipelineSpec {
+    post_spec(
+        "backdrop blur",
+        LayoutKind::Bloom,
+        "vs_post",
+        "fs_bloom",
+        canvas_format.into(),
+    )
+}
+
 fn shadow_merged_spec(side: Side, cutout: bool) -> PipelineSpec {
     let (label, layout, vertex_entry) = if cutout {
         ("shadow cutout", LayoutKind::Surface, "vs_shadow_cutout")
@@ -424,6 +436,7 @@ impl Pipelines {
         }
         specs.push((occlusion_spec(), &occlusion));
         specs.push((occlusion_blur_spec(), &output));
+        specs.push((backdrop_spec(canvas_format), &output));
         for &side in &SHADOW_MERGED_SIDES {
             specs.push((shadow_merged_spec(side, false), &merged));
         }
@@ -491,12 +504,14 @@ impl Pipelines {
         let bloom = [(); 3].map(|_| next("bloom pipeline"));
         let occlusion = next("occlusion pipeline");
         let occlusion_blur = next("occlusion blur pipeline");
+        let backdrop = next("backdrop blur pipeline");
         self.fixed = Some(FixedPipelines {
             output,
             sky,
             bloom,
             occlusion,
             occlusion_blur,
+            backdrop,
             shadow_merged: created.collect(),
         });
     }

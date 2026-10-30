@@ -295,6 +295,50 @@ impl Drop for BloomLevels {
     }
 }
 
+/// The dialog backdrop's two targets, the canvas's size: the output pass's picture and
+/// its blur along the rows, each an RGBA8 texture with its framebuffer. Their rows run
+/// bottom-up like the canvas's, since the output pass draws into the first as into the
+/// canvas. Made while a dialog blurs the arena, dropped with the blur or a new canvas
+/// size; dropping deletes them.
+struct BackdropTargets {
+    gpu: Gpu,
+    size: (u32, u32),
+    picture: (glow::Texture, glow::Framebuffer),
+    rows: (glow::Texture, glow::Framebuffer),
+}
+
+impl BackdropTargets {
+    fn new(gpu: &Gpu, size: (u32, u32)) -> Self {
+        let target = |label| {
+            let texture = storage(gpu, glow::RGBA8, 1, size.0, size.1);
+            let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, texture);
+            check_framebuffer(gpu, label);
+            (texture, framebuffer)
+        };
+        Self {
+            gpu: gpu.clone(),
+            size,
+            picture: target("backdrop picture"),
+            rows: target("backdrop rows"),
+        }
+    }
+
+    fn bytes(&self) -> u64 {
+        2 * u64::from(self.size.0 * self.size.1) * 4
+    }
+}
+
+impl Drop for BackdropTargets {
+    fn drop(&mut self) {
+        for (texture, framebuffer) in [self.picture, self.rows] {
+            unsafe {
+                self.gpu.gl.delete_framebuffer(framebuffer);
+                self.gpu.gl.delete_texture(texture);
+            }
+        }
+    }
+}
+
 /// A square depth texture and the framebuffer drawing into it: the sun shadow map
 /// and the cached fixed-scenery shadow.
 struct DepthTarget {
@@ -360,6 +404,10 @@ pub struct Frame {
     view_uniforms: [glow::Buffer; VIEW_COUNT],
     output_uniform: glow::Buffer,
     occlusion_uniform: glow::Buffer,
+    /// The output uniform last written blurs the arena behind a dialog, and the
+    /// targets that blur draws through while it does.
+    backdrop_on: bool,
+    backdrop: Option<BackdropTargets>,
     instance_records: InstanceStore,
     shadow_bases: glow::Buffer,
     shadow_base_capacity: u32,
@@ -437,6 +485,8 @@ impl Frame {
             view_uniforms: [0, 1, 2].map(|_| uniform(size_of::<FrameUniform>() as u64)),
             output_uniform: uniform(size_of::<OutputUniform>() as u64),
             occlusion_uniform: uniform(size_of::<OcclusionUniform>() as u64),
+            backdrop_on: false,
+            backdrop: None,
             instance_records: InstanceStore::new(gpu, "instances", instances),
             shadow_bases: gpu.create_buffer(
                 glow::ARRAY_BUFFER,
@@ -473,6 +523,7 @@ impl Frame {
             gpu.canvas.set_width(canvas.0);
             gpu.canvas.set_height(canvas.1);
             self.canvas = canvas;
+            self.backdrop = None;
         }
         if self.scene_size() == scene {
             return;
@@ -530,13 +581,17 @@ impl Frame {
         }
     }
 
-    pub fn write_output(&self, gpu: &Gpu, mut uniform: OutputUniform) {
+    pub fn write_output(&mut self, gpu: &Gpu, mut uniform: OutputUniform) {
         // The canvas's rows run bottom-up: top-down row = height - y.
         uniform.settings[1] = self.canvas.1 as f32;
         uniform.settings[2] = -1.0;
         // WebGL's weaker devices skip the sharpening's four extra taps per pixel.
         uniform.detail[0] = 0.0;
         gpu.write_buffer(self.output_uniform, 0, bytemuck::bytes_of(&uniform));
+        self.backdrop_on = uniform.backdrop[0] > 0.0;
+        if !self.backdrop_on {
+            self.backdrop = None;
+        }
     }
 
     pub fn write_occlusion(&self, gpu: &Gpu, uniform: &OcclusionUniform) {
@@ -556,7 +611,8 @@ impl Frame {
             .flatten()
             .map(|map| u64::from(map.size) * u64::from(map.size) * 4)
             .sum::<u64>();
-        main + self.bloom.bytes() + occlusion + depth + shadow
+        let backdrop = self.backdrop.as_ref().map_or(0, BackdropTargets::bytes);
+        main + self.bloom.bytes() + occlusion + depth + shadow + backdrop
     }
 
     /// Upload this frame's merged shadow bases.
@@ -626,9 +682,7 @@ impl Frame {
         if self.late_present {
             return Ok(());
         }
-        gpu.bind_framebuffer(None);
-        gpu.viewport(self.canvas.0, self.canvas.1);
-        self.draw_output(gpu, scene.pipelines, stats);
+        self.draw_canvas(gpu, scene.pipelines, stats);
         Ok(())
     }
 
@@ -643,12 +697,12 @@ impl Frame {
         clear: [f32; 3],
         overlay: impl FnOnce((u32, u32)),
     ) {
-        gpu.bind_framebuffer(None);
-        gpu.viewport(self.canvas.0, self.canvas.1);
         if self.scene_drawn {
-            // The output pass's draw is not counted: the frame's stats were taken.
-            self.draw_output(gpu, pipelines, &mut RenderStats::default());
+            // The output pass's draws are not counted: the frame's stats were taken.
+            self.draw_canvas(gpu, pipelines, &mut RenderStats::default());
         } else {
+            gpu.bind_framebuffer(None);
+            gpu.viewport(self.canvas.0, self.canvas.1);
             gpu.clear(Some(clear));
         }
         // The overlay uploads its own textures, unflipped; the backend's bitmaps leave
@@ -666,6 +720,15 @@ impl Frame {
         let framebuffer = texture_framebuffer(gpu, glow::COLOR_ATTACHMENT0, probe);
         gpu.viewport(4, 4);
         self.draw_output(gpu, scene.pipelines, stats);
+        // The dialog backdrop's blur, from the scene's frame: the program has drawn into
+        // the canvas's format before the first dialog opens.
+        self.draw_backdrop_pass(
+            gpu,
+            scene.pipelines,
+            BloomPass::BackdropColumns,
+            self.main.resolved,
+            Some(framebuffer),
+        );
         unsafe {
             gpu.gl.delete_framebuffer(framebuffer);
             gpu.gl.delete_texture(probe);
@@ -837,6 +900,63 @@ impl Frame {
             pass(BloomPass::Up, levels[level + 1].0, level);
         }
         stats.draw_calls += 2 * BLOOM_LEVELS as u32 - 1;
+    }
+
+    /// The output pass into the canvas, left bound at its size. Behind a dialog it draws
+    /// into the backdrop's picture instead, which the blur along the rows reads and the
+    /// blur down the columns draws into the canvas from.
+    fn draw_canvas(&mut self, gpu: &Gpu, pipelines: &Pipelines, stats: &mut RenderStats) {
+        let (width, height) = self.canvas;
+        if !self.backdrop_on {
+            gpu.bind_framebuffer(None);
+            gpu.viewport(width, height);
+            self.draw_output(gpu, pipelines, stats);
+            return;
+        }
+        if self
+            .backdrop
+            .as_ref()
+            .is_none_or(|targets| targets.size != self.canvas)
+        {
+            self.backdrop = Some(BackdropTargets::new(gpu, self.canvas));
+        }
+        let targets = self.backdrop.as_ref().expect("made above");
+        let (picture, rows) = (targets.picture, targets.rows);
+        gpu.bind_framebuffer(Some(picture.1));
+        gpu.viewport(width, height);
+        self.draw_output(gpu, pipelines, stats);
+        self.draw_backdrop_pass(
+            gpu,
+            pipelines,
+            BloomPass::BackdropRows,
+            picture.0,
+            Some(rows.1),
+        );
+        self.draw_backdrop_pass(gpu, pipelines, BloomPass::BackdropColumns, rows.0, None);
+        stats.draw_calls += 2;
+    }
+
+    /// One of the dialog backdrop's blur passes from `source` into `framebuffer`, at the
+    /// viewport bound.
+    fn draw_backdrop_pass(
+        &self,
+        gpu: &Gpu,
+        pipelines: &Pipelines,
+        pass: BloomPass,
+        source: glow::Texture,
+        framebuffer: Option<glow::Framebuffer>,
+    ) {
+        let blur = &pipelines.fixed().backdrop;
+        let program = pipelines.program(blur.program);
+        gpu.bind_framebuffer(framebuffer);
+        gpu.use_program(program.raw);
+        program.set_first_instance(gpu, pass as u32);
+        gpu.set_raster(&blur.raster);
+        gpu.bind_uniform_block(block::OUTPUT, self.output_uniform);
+        gpu.bind_texture(unit::SOURCE, source);
+        gpu.bind_sampler(unit::SOURCE, Some(self.linear_sampler));
+        gpu.bind_vertex_array(Some(self.no_attributes));
+        unsafe { gpu.gl.draw_arrays(glow::TRIANGLES, 0, 3) };
     }
 
     /// Draw the resolved main view into the bound framebuffer through the output
