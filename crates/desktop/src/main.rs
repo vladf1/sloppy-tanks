@@ -29,11 +29,8 @@ mod touch;
 mod ui;
 mod window_input;
 
-/// The iPad plays by touch (a hardware keyboard too), with no pointer lock, window
-/// size or Quit; Macs and PCs play with keyboard and mouse.
-pub const TOUCH: bool = cfg!(target_os = "ios");
 /// The app may quit itself: not on an iPad, nor in a page.
-pub const QUITS: bool = !TOUCH && cfg!(not(target_arch = "wasm32"));
+pub const QUITS: bool = cfg!(not(any(target_os = "ios", target_arch = "wasm32")));
 
 fn main() {
     // A page fetches the textures from its site and keeps records in `localStorage`.
@@ -45,7 +42,10 @@ fn main() {
         }
     }
     #[cfg(target_arch = "wasm32")]
-    console_error_panic_hook::set_once();
+    {
+        console_error_panic_hook::set_once();
+        touch::detect();
+    }
     let arguments = arguments();
     let flag = |name: &str| arguments.iter().any(|argument| argument == name);
     let options = app::Options {

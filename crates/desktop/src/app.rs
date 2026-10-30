@@ -292,7 +292,7 @@ pub fn css_size(window: &Window) -> (f64, f64, f64) {
 /// Fill the screen or give the window back, as `prefs` say, and keep the choice. An
 /// iPad app always fills the screen.
 pub fn set_fullscreen(window: &Window, prefs: &mut Preferences, fullscreen: bool) {
-    if crate::TOUCH {
+    if crate::touch::screen() {
         return;
     }
     window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
@@ -349,10 +349,10 @@ pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
         zoom: prefs.zoom,
         // Touch screens draw no overhead reticle (`startingCamera`): a finger aims
         // where it is, so the mark sat under it and stuck where it lifted.
-        hide_reticle: crate::TOUCH,
+        hide_reticle: crate::touch::screen(),
         graphics: prefs.graphics,
         // A tablet starts a tier lower and draws single-sampled (`quality.rs`).
-        device: if crate::TOUCH {
+        device: if crate::touch::screen() {
             DeviceClass::Tablet
         } else {
             DeviceClass::Desktop

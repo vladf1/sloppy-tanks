@@ -1,4 +1,5 @@
-//! Touch play on the iPad (`touch-controls.ts`): the drive stick in the bottom-left
+//! Touch play on the iPad and on a page's touch screen (`touch-controls.ts`): the drive
+//! stick in the bottom-left
 //! corner, the mine button with the zoom pair stacked over it in the bottom-right, and
 //! a finger anywhere else on the arena aims there and fires while it is down. Each
 //! finger belongs to whatever it first touched: one that lands on a control or the
@@ -6,6 +7,7 @@
 //! a thumb drives, and one that lands on a menu or a HUD button stays egui's.
 
 use std::collections::HashSet;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use egui::{Pos2, Rect, Vec2, pos2};
 use winit::event::{Touch, TouchPhase};
@@ -14,6 +16,45 @@ use sloppy_render::presentation::input::{STICK_ANCHOR_SHIFT, ZOOM_STEP};
 use sloppy_web::hud::Hud;
 
 use crate::input::Controls;
+
+/// Whether this device plays by touch: the iPad app, and a page on a touch screen. Touch
+/// play has the touch controls, a tablet's graphics and no reticle, and no pointer lock,
+/// fullscreen or Quit; Macs and PCs play with keyboard and mouse.
+pub fn screen() -> bool {
+    TOUCH_SCREEN.load(Ordering::Relaxed)
+}
+
+static TOUCH_SCREEN: AtomicBool = AtomicBool::new(cfg!(target_os = "ios"));
+
+/// In a page, take the browser's word for a touch screen, as the page's own shell did: a
+/// coarse primary pointer (a tablet, a car's screen) or iPadOS Safari, which presents
+/// itself as a Mac with touch points. A touch laptop's primary pointer is fine, so it
+/// plays with keyboard and mouse until a finger touches the page ([`touched`]).
+#[cfg(target_arch = "wasm32")]
+pub fn detect() {
+    let Some(window) = web_sys::window() else {
+        return;
+    };
+    let navigator = window.navigator();
+    let ipad = navigator
+        .user_agent()
+        .is_ok_and(|agent| agent.contains("Macintosh"))
+        && navigator.max_touch_points() > 1;
+    let coarse = window
+        .match_media("(pointer: coarse)")
+        .ok()
+        .flatten()
+        .is_some_and(|query| query.matches());
+    TOUCH_SCREEN.store(ipad || coarse, Ordering::Relaxed);
+}
+
+/// A finger touched the screen: a page plays by touch from now on, as on a touch screen
+/// its browser did not report. The desktop app keeps its keyboard and mouse.
+pub fn touched() {
+    if cfg!(target_arch = "wasm32") {
+        TOUCH_SCREEN.store(true, Ordering::Relaxed);
+    }
+}
 
 /// The drive stick's square (its radius and dead zone are the engine's), and the mine
 /// button's and zoom keys' radii.
@@ -76,7 +117,7 @@ impl Play {
         first_person: bool,
         hud: Option<&Hud<'_>>,
     ) -> Option<Self> {
-        (crate::TOUCH && acting).then(|| Self {
+        (screen() && acting).then(|| Self {
             layout: TouchLayout::of(context),
             first_person,
             mine_ready: hud.is_none_or(|hud| hud.human.mine_cooldown <= 0.0),

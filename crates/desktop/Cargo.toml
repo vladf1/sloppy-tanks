@@ -67,6 +67,7 @@ web-sys = { workspace = true, features = [
   "HtmlCanvasElement",
   "HtmlElement",
   "Location",
+  "MediaQueryList",
   "MessageEvent",
   "Navigator",
   "Request",

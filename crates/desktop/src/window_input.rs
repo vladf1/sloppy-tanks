@@ -61,11 +61,13 @@ impl WindowInput {
         event: &WindowEvent,
         battle: &Battle,
     ) -> Option<Request> {
-        if crate::TOUCH
-            && let WindowEvent::Touch(touch) = event
-            && !self.route_touch(window, overlay, touch, battle.touch.as_ref())
-        {
-            return None;
+        if let WindowEvent::Touch(touch) = event {
+            crate::touch::touched();
+            if crate::touch::screen()
+                && !self.route_touch(window, overlay, touch, battle.touch.as_ref())
+            {
+                return None;
+            }
         }
         let keys_to_menus = !battle.keys || overlay.typing();
         let consumed = overlay.event(event, !self.cursor_grabbed, keys_to_menus);
@@ -166,13 +168,13 @@ impl WindowInput {
     /// This frame's input for the engine. First person on a touch screen turns the view
     /// with the stick's sideways push.
     pub fn take_input(&mut self, first_person: bool) -> InputFrame {
-        self.controls.stick_turns = crate::TOUCH && first_person;
+        self.controls.stick_turns = crate::touch::screen() && first_person;
         self.controls.take_input()
     }
 
     /// What the touch controls show this frame, while they are live on a touch screen.
     pub fn touch_view(&self, live: bool, first_person: bool) -> Option<TouchView> {
-        (crate::TOUCH && live).then_some(TouchView {
+        (crate::touch::screen() && live).then_some(TouchView {
             input: self.controls.touch,
             first_person,
             learned: self.fingers.learned,
@@ -182,6 +184,10 @@ impl WindowInput {
     /// Lock the cursor while first person steers with the mouse, or let it go. A finger
     /// turns the view on a touch screen, which has no cursor to lock.
     pub fn hold_pointer(&mut self, window: &Window, wanted: bool) {
-        grab_pointer(window, wanted && !crate::TOUCH, &mut self.cursor_grabbed);
+        grab_pointer(
+            window,
+            wanted && !crate::touch::screen(),
+            &mut self.cursor_grabbed,
+        );
     }
 }

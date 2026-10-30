@@ -54,9 +54,9 @@ the server:
   reads their values typed (the second `impl` block of `game.rs` and `net_game.rs`),
   never their JSON (`crates/web/tests/fixtures/page-json.json` pins that byte for
   byte), and only lays out and plays what they produce. Game rules stay out of the
-  shell. The iPad build is the same crate for `aarch64-apple-ios` (`TOUCH` in
-  `main.rs`): touch controls painted in egui (`touch.rs`, `ui/touch.rs`), no Quit or
-  fullscreen, and `ios.rs` for what winit 0.30 lacks there (the UIScene life cycle
+  shell. The iPad build is the same crate for `aarch64-apple-ios`, which plays by touch
+  (`touch::screen`, true there and in a page on a touch screen): touch controls painted
+  in egui (`touch.rs`, `ui/touch.rs`), no Quit or fullscreen, and `ios.rs` for what winit 0.30 lacks there (the UIScene life cycle
   iOS 27 requires, hardware keyboard presses).
 
 ## Code style

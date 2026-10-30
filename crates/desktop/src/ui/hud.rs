@@ -24,6 +24,9 @@ const EDGE: f32 = 16.0;
 const STACK_GAP: f32 = 8.0;
 /// The kill feed's place under the toolbar where they sit side by side.
 const FEED_TOP: f32 = 74.0;
+/// The narrowest gap between the drive stick and the mine button, as a share of the
+/// tank panel's width, that the panel sits in on a touch screen.
+const MIN_PANEL_GAP_SHARE: f32 = 0.75;
 
 /// The painter under every HUD area: shades, feed, toast and hit feedback.
 fn backdrop(context: &egui::Context) -> Painter {
@@ -410,14 +413,14 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
 
 /// The corner toolbar: first person, fullscreen, pause and settings on one plate.
 /// Thumb-sized on a touch screen, which has no fullscreen to toggle.
-const fn toolbar_button() -> f32 {
-    if crate::TOUCH { 46.0 } else { 38.0 }
+fn toolbar_button() -> f32 {
+    if crate::touch::screen() { 46.0 } else { 38.0 }
 }
 
 /// The toolbar's plate: first person, fullscreen (not on a touch screen), pause and
 /// settings.
 fn toolbar_size() -> Vec2 {
-    let count = if crate::TOUCH { 3.0 } else { 4.0 };
+    let count = if crate::touch::screen() { 3.0 } else { 4.0 };
     vec2(toolbar_button() * count + 6.0, toolbar_button() + 6.0)
 }
 
@@ -450,7 +453,7 @@ fn toolbar(
     );
     let buttons: Vec<(&str, &str, Action)> = [
         Some(("eye", "First-person view (V)", Action::ToggleView)),
-        (!crate::TOUCH).then_some(fullscreen),
+        (!crate::touch::screen()).then_some(fullscreen),
         Some(("pause", "Pause (Esc)", Action::Pause)),
         Some(("gear", "Settings", Action::OpenSettings)),
     ]
@@ -724,7 +727,7 @@ const TOUCH_SLOT_WIDTH: f32 = 52.0;
 fn slot_width(selected: bool) -> f32 {
     if selected {
         SELECTED_SLOT_WIDTH
-    } else if crate::TOUCH {
+    } else if crate::touch::screen() {
         TOUCH_SLOT_WIDTH
     } else {
         SLOT_WIDTH
@@ -760,7 +763,7 @@ fn tank_panel(
         .sum::<f32>()
         + SLOT_GAP * (AMMO_OPTIONS.len() - 1) as f32;
     // A touch screen has its own mine button.
-    let socket = if crate::TOUCH {
+    let socket = if crate::touch::screen() {
         0.0
     } else {
         10.0 + 10.0 + MINE_WIDTH
@@ -776,21 +779,39 @@ fn tank_panel(
     );
     let compass = state.cockpit;
     let size = plate_size + vec2(if compass { COMPASS_WIDTH } else { 0.0 }, 0.0);
-    let left = if crate::TOUCH {
-        // Between the drive stick and the mine button, so it never covers the
-        // arena's middle or sits under a thumb.
-        let (from, to) = crate::touch::TouchLayout::of(context).panel_span();
-        (from + (to - from - size.x) / 2.0).max(from)
+    // Where its bottom-left corner sits and the width it has. On a touch screen it sits
+    // between the drive stick and the mine button, so it never covers the arena's middle
+    // or sits under a thumb; where that gap is too narrow for it (a phone held upright)
+    // it stands over the controls at the screen's width.
+    let (corner, room) = if crate::touch::screen() {
+        let layout = crate::touch::TouchLayout::of(context);
+        let (from, to) = layout.panel_span();
+        if to - from >= size.x * MIN_PANEL_GAP_SHARE {
+            let left = (from + (to - from - size.x) / 2.0).max(from);
+            (pos2(left, screen.bottom() - EDGE), to - from)
+        } else {
+            let top = layout
+                .stick
+                .top()
+                .min(layout.zoom_in.y - crate::touch::ZOOM_RADIUS);
+            (
+                pos2(screen.left() + EDGE, top - STACK_GAP),
+                screen.width() - 2.0 * EDGE,
+            )
+        }
     } else {
-        screen.left() + EDGE
+        (
+            pos2(screen.left() + EDGE, screen.bottom() - EDGE),
+            screen.width() - 2.0 * EDGE,
+        )
     };
-    let origin = pos2(left, screen.bottom() - EDGE - size.y);
+    let origin = corner - vec2(0.0, size.y);
     // A narrow screen (a phone) shows the whole panel smaller, its corner in place.
-    let fit = ((screen.right() - EDGE - left) / size.x).min(1.0);
+    let fit = (room / size.x).min(1.0);
     paint::shrink_about(
         context,
         LayerId::new(Order::Middle, Id::unique("tank panel")),
-        pos2(left, screen.bottom() - EDGE),
+        corner,
         fit,
     );
     egui::Area::new(Id::unique("tank panel"))
@@ -851,7 +872,7 @@ fn tank_panel(
             x += 10.0;
             let strip = Rect::from_min_size(pos2(x, content.top()), vec2(strip_width, inner.y));
             ammo_rack(ui, &painter, art, strip, human, playing, actions);
-            if !crate::TOUCH {
+            if !crate::touch::screen() {
                 x = strip.right() + 10.0;
                 painter.line_segment(
                     [pos2(x, content.top()), pos2(x, content.bottom())],
@@ -1128,7 +1149,7 @@ fn ammo_rack(
         } else {
             // The key at the top, the icon and the count under it; a touch screen has
             // no keys, so its icon rises into their place.
-            if !crate::TOUCH {
+            if !crate::touch::screen() {
                 let key = format!("{}", index + 1);
                 let key_rect = Rect::from_center_size(
                     pos2(rect.center().x, rect.top() + 11.0),
@@ -1145,7 +1166,7 @@ fn ammo_rack(
                     0.0,
                 );
             }
-            let icon_y = rect.top() + if crate::TOUCH { 24.0 } else { 33.0 };
+            let icon_y = rect.top() + if crate::touch::screen() { 24.0 } else { 33.0 };
             art.icon(
                 painter,
                 weapon,
@@ -1408,7 +1429,7 @@ fn compass_dial(painter: &Painter, rect: Rect, hull_angle: f64) {
     painter.circle_filled(center, 7.5, hex(0x0b1a33));
     painter.circle_filled(center, 5.5, GOLD);
     // The key that leaves first person; a touch screen has the eye button instead.
-    if !crate::TOUCH {
+    if !crate::touch::screen() {
         paint::kbd(painter, pos2(center.x, rect.bottom() - 13.0), "V", 12.0);
     }
 }

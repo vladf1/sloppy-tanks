@@ -39,7 +39,7 @@ pub fn link(context: &egui::Context, state: &mut UiState) {
         vec2(width, 14.0),
     );
     // The page's 5px padding, and a little more for a finger.
-    let target = label.expand(if crate::TOUCH { 10.0 } else { 5.0 });
+    let target = label.expand(if crate::touch::screen() { 10.0 } else { 5.0 });
     egui::Area::new(Id::unique("nerd stats link"))
         .order(Order::Foreground)
         .fixed_pos(target.min)

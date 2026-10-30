@@ -1589,7 +1589,7 @@ fn key_strip(painter: &Painter, center: egui::Pos2) {
             + 5.0
             + paint::text_width(painter, label, bold_font(12.0), 0.4)
     };
-    let hints: &[(&[&str], &str)] = if crate::TOUCH {
+    let hints: &[(&[&str], &str)] = if crate::touch::screen() {
         &TOUCH_STRIP
     } else {
         &KEY_STRIP

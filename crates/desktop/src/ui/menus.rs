@@ -263,7 +263,7 @@ pub(super) fn controls_card(painter: &Painter, origin: Pos2, width: f32, columns
     let padding = vec2(18.0, 10.0);
     let gap = 26.0;
     let column_width = (width - 2.0 * padding.x - gap * (columns - 1) as f32) / columns as f32;
-    let controls: &[ControlLine] = if crate::TOUCH {
+    let controls: &[ControlLine] = if crate::touch::screen() {
         &TOUCH_CONTROLS
     } else {
         &KEYBOARD_CONTROLS
@@ -979,7 +979,7 @@ pub fn settings(
             );
             y += 50.0;
             // An iPad app always fills the screen.
-            if !crate::TOUCH {
+            if !crate::touch::screen() {
                 setting_label(
                     painter,
                     pos2(origin.x, y),

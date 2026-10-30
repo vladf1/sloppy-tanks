@@ -26,13 +26,19 @@
         overflow: hidden;
         background: #0a1527;
       }
-      /* winit appends the shell's canvas; it fills the page and takes the keys. */
+      /* winit appends the shell's canvas; it fills the page and takes the keys. On a
+         touch screen fingers drive the game: no scrolling, zooming, selection, callout
+         or tap flash. */
       canvas {
         display: block;
         width: 100vw;
         height: 100vh;
         outline: none;
         touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
       }
     </style>
   </head>
