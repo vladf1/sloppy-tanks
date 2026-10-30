@@ -79,9 +79,9 @@ node scripts/desktop-ui-report.mjs artifacts/performance/desktop-ui/native artif
 ## Browser checks
 
 The game page is the desktop crate's egui shell (`index.html`, `pnpm run wasm`), drawn on
-one canvas, so no check drives its menus through the DOM. What remains in a browser are the
-engine fixtures: start `pnpm run dev` and pass the URL it prints. Checks drive installed
-Google Chrome headless with an isolated profile, so no window takes focus; set
+one canvas, so no check drives its menus through the DOM. Start `pnpm run dev` and pass the
+URL it prints. Checks drive installed Google Chrome (`webkit-check.mjs` Playwright's
+WebKit) headless with an isolated profile, so no window takes focus; set
 `SLOPPY_HEADED=1` to watch one in a visible window. Each exits non-zero on failure and
 writes screenshots and results to the ignored `artifacts/performance/`. Shared setup lives
 in `browser-helpers.mjs` (`launchChrome()`, `launchGame()`, `collectErrors()`).
@@ -89,6 +89,22 @@ in `browser-helpers.mjs` (`launchChrome()`, `launchGame()`, `collectErrors()`).
 ```sh
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/fixtures-check.mjs
 ```
+
+The page's own checks open it with `?automation` and play it with real input at the
+coordinates of the widgets its hook lists (`crates/desktop/src/automation.rs`;
+`openShell()`, `clickWidget()`, `untilState()`). `pnpm run check:browser` runs them all;
+`SLOPPY_WEBGL=1` plays them on the WebGL2 build. The room checks start their own game
+server on a free port from `SLOPPY_SERVER_BIN` (default `target/server/sloppy-server`,
+which `node scripts/build-server.mjs` builds with the content version the page plays) and
+stage outages through `installProbes()` (dropped sockets, a hidden page).
+
+| Check                   | Covers                                                                                                                                                                                       |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shell-check.mjs`       | Battle Setup's choices, GO, driving, firing, zoom, first person, pause, Settings, the report, a second round                                                                                 |
+| `webgl-check.mjs`       | The backend choice: WebGPU, `?webgl`, the fallbacks to WebGL2, and the failure view                                                                                                          |
+| `multiplayer-check.mjs` | Two players: create, invite link, join by link and by code, both drive, the dev delay, a socket drop, leaving, a reload's seat, a crash and restart, ROOM CLOSED, an outdated server's rooms |
+| `lifecycle-check.mjs`   | Five single player → room → leave cycles on one page: sockets, listeners, GPU objects and Wasm memory stay bounded, no stuck key; a hidden page pauses, a hidden room keeps its seat         |
+| `webkit-check.mjs`      | Playwright WebKit at iPad and desktop sizes: startup, GO, W's frame rate, no late pipelines, frame gaps (printed; fails only on a stall over 250 ms)                                         |
 
 The dev server serves interactive fixtures, listed on the dev site's
 `/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html` and
