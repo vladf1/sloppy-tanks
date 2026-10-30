@@ -831,6 +831,7 @@ fn play_tab(
     let response = ui
         .interact(rect, Id::unique(("play tab", multiplayer)), Sense::click())
         .on_hover_cursor(egui::CursorIcon::PointingHand);
+    paint::labelled(&response, true, name);
     folder_tab(painter, rect, open, GOLD);
     let badge_size = if compact { 28.0 } else { 34.0 };
     let badge = Rect::from_min_size(

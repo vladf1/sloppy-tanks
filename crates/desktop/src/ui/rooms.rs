@@ -486,7 +486,10 @@ fn icon_button(
     enabled && response.clicked()
 }
 
-/// A text field in a sunken well, like the page's inputs.
+/// A text field in a sunken well, like the page's inputs. Its id is its hint's, not
+/// egui's count of the widgets before it: the room list above it changes as the
+/// directory answers, and a field whose id moved would drop the click that focuses it
+/// and its cursor.
 fn field(
     ui: &mut egui::Ui,
     rect: Rect,
@@ -502,6 +505,7 @@ fn field(
         .centered_and_justified(|ui| {
             ui.add(
                 egui::TextEdit::singleline(text)
+                    .id(Id::unique(("text field", hint)))
                     .frame(egui::Frame::NONE)
                     .char_limit(limit)
                     .font(bold_font(size))

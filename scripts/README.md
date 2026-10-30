@@ -90,6 +90,14 @@ in `browser-helpers.mjs` (`launchChrome()`, `launchGame()`, `collectErrors()`).
 SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/fixtures-check.mjs
 ```
 
+The shell's own checks play the page through its automation hook (`?automation`,
+`crates/desktop/src/automation.rs`), which lists the widgets egui labels, and press them
+with real mouse, keyboard and touch input: `shell-check.mjs` (Battle Setup, a round, pause,
+Settings, the report and a reset), `webgl-check.mjs` (the backend choice and its
+fallbacks) and `text-fields-check.mjs` (the text fields' typing, clipboard shortcuts,
+Enter, Escape and IME text, and on a touch screen the focus a soft keyboard needs, in
+Chrome and Playwright's WebKit; name cases such as `webkit-tablet` to run only those).
+
 The dev server serves interactive fixtures, listed on the dev site's
 `/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html` and
 `tools/tank-surface-check.html`, plus a link to the game with `?debug`, whose

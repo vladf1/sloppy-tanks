@@ -52,6 +52,12 @@ pub struct Overlay {
     input: egui_winit::State,
     painter: Painter,
     window: Arc<Window>,
+    /// The browser's text entry under egui's text fields (`text_entry.rs`).
+    #[cfg(target_arch = "wasm32")]
+    text_entry: Option<crate::text_entry::TextEntry>,
+    /// The mouse's last position, in points, where its button lets go.
+    #[cfg(target_arch = "wasm32")]
+    pointer: Option<egui::Pos2>,
 }
 
 impl Overlay {
@@ -62,6 +68,17 @@ impl Overlay {
         renderer.present_late();
         let context = egui::Context::default();
         crate::ui::theme::install(&context);
+        // A page's system is its browser's to say: Cmd is a Mac's command key (egui-winit
+        // reads it for the canvas's shortcuts, the text entry for its own).
+        #[cfg(target_arch = "wasm32")]
+        let mac = {
+            let agent = web_sys::window()
+                .and_then(|window| window.navigator().user_agent().ok())
+                .unwrap_or_default();
+            let os = egui::os::OperatingSystem::from_user_agent(&agent);
+            context.set_os(os);
+            os.is_mac()
+        };
         // Checks find widgets by their labels in egui's AccessKit tree.
         if crate::automation::enabled() {
             context.enable_accesskit();
@@ -75,11 +92,22 @@ impl Overlay {
             None,
         );
         let painter = painter(renderer)?;
+        #[cfg(target_arch = "wasm32")]
+        let text_entry = {
+            use winit::platform::web::WindowExtWebSys;
+            window
+                .canvas()
+                .and_then(|canvas| crate::text_entry::TextEntry::new(canvas, mac))
+        };
         Ok(Self {
             context,
             input,
             painter,
             window,
+            #[cfg(target_arch = "wasm32")]
+            text_entry,
+            #[cfg(target_arch = "wasm32")]
+            pointer: None,
         })
     }
 
@@ -101,7 +129,55 @@ impl Overlay {
             WindowEvent::KeyboardInput { .. } | WindowEvent::Ime(_) => !keys,
             _ => false,
         };
-        !skipped && self.input.on_window_event(&self.window, event).consumed
+        #[cfg(target_arch = "wasm32")]
+        if let Some(entry) = &self.text_entry {
+            // What a text field's element heard came first.
+            entry.hand_over(self.input.egui_input_mut());
+            // The canvas handing the keys to the element is not the page losing focus:
+            // egui would hide the field's caret and let go of its held keys.
+            if matches!(event, WindowEvent::Focused(false)) && entry.has_focus() {
+                return false;
+            }
+        }
+        let consumed = !skipped && self.input.on_window_event(&self.window, event).consumed;
+        #[cfg(target_arch = "wasm32")]
+        if !skipped {
+            self.focus_text_on_release(event);
+        }
+        consumed
+    }
+
+    /// A press let go on a text field: its element takes the page's focus inside the
+    /// browser's gesture, the only time iOS brings up its keyboard for it (the frame's
+    /// focus comes too late there).
+    #[cfg(target_arch = "wasm32")]
+    fn focus_text_on_release(&mut self, event: &WindowEvent) {
+        use winit::event::{ElementState, MouseButton, TouchPhase};
+        let scale = self.window.scale_factor();
+        let point = |position: winit::dpi::PhysicalPosition<f64>| {
+            let logical = position.to_logical::<f32>(scale);
+            egui::pos2(logical.x, logical.y)
+        };
+        let released = match event {
+            WindowEvent::CursorMoved { position, .. } => {
+                self.pointer = Some(point(*position));
+                None
+            }
+            WindowEvent::MouseInput {
+                state: ElementState::Released,
+                button: MouseButton::Left,
+                ..
+            } => self.pointer,
+            WindowEvent::Touch(touch) if touch.phase == TouchPhase::Ended => {
+                Some(point(touch.location))
+            }
+            _ => None,
+        };
+        if let (Some(point), Some(entry)) = (released, &self.text_entry)
+            && crate::text_entry::field_at(&self.context, point)
+        {
+            entry.focus();
+        }
     }
 
     /// Whether egui wants the pointer (it is over a window or a widget).
@@ -117,6 +193,10 @@ impl Overlay {
     /// Lay out this frame's UI with `build`, on the window's size in points as the
     /// engines take it.
     pub fn run(&mut self, build: impl FnMut(&egui::Context)) -> Painted {
+        #[cfg(target_arch = "wasm32")]
+        if let Some(entry) = &self.text_entry {
+            entry.before_pass(&self.context, self.input.egui_input_mut());
+        }
         let mut input = self.input.take_egui_input(&self.window);
         let (width, height, _) = crate::app::css_size(&self.window);
         input.screen_rect = Some(egui::Rect::from_min_size(
@@ -126,6 +206,10 @@ impl Overlay {
         let mut output = self.context.run_pass(input, build);
         if let Some(update) = output.platform_output.accesskit_update.take() {
             crate::automation::seen(&self.context, &update);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(entry) = &mut self.text_entry {
+            entry.after_pass(&self.context, &mut output.platform_output);
         }
         self.input
             .handle_platform_output(&self.window, output.platform_output);
