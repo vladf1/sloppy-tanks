@@ -12,11 +12,13 @@ use super::icons::Art;
 use super::paint::{self, hex, hexa};
 use super::theme::{GOLD, GOLD_HOT, bold_font};
 use crate::input::TouchInput;
-use crate::touch::{MINE_RADIUS, STICK_SIZE, TouchLayout, ZOOM_RADIUS};
+use crate::touch::{MINE_RADIUS, TouchLayout, ZOOM_RADIUS};
 use sloppy_render::presentation::input::STICK_RADIUS;
 
-/// The stick's base ring and knob radii.
-const BASE_RADIUS: f32 = STICK_SIZE / 2.0 - 18.0;
+/// How far the stick's base ring sits inside its square (a phone's smaller one keeps
+/// more of its ring), and the knob's radius.
+const BASE_INSET: f32 = 18.0;
+const PHONE_BASE_INSET: f32 = 14.0;
 const KNOB_RADIUS: f32 = 27.0;
 /// The mine key's navy face inside its gold rim.
 const MINE_FACE: f32 = 34.4;
@@ -25,6 +27,9 @@ const HINT_SECONDS: f64 = 9.0;
 const HINT_FADE: f64 = 0.5;
 /// Seconds one pulse of the hint's target ring takes.
 const HINT_PULSE: f64 = 1.6;
+/// The fire hint's top on a phone held upright: under the top row of keys and the kill
+/// feed's first row.
+const PHONE_UPRIGHT_HINT_TOP: f32 = 102.0;
 
 /// What the touch controls show this frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -35,12 +40,13 @@ pub struct TouchView {
     pub learned: bool,
 }
 
-/// Paint the touch controls over the arena.
+/// Paint the touch controls over the arena. A phone's zoom pair is the HUD's, in its
+/// top row.
 pub fn controls(context: &egui::Context, art: &Art, state: &UiState, touch: &TouchView) {
     let painter = context.layer_painter(LayerId::new(Order::Middle, Id::unique("touch controls")));
     let layout = TouchLayout::of(context);
     stick(&painter, &layout, &touch.input);
-    if let Some(hud) = &state.hud {
+    if let (Some(hud), Some(mine)) = (&state.hud, layout.mine) {
         let cooldown = hud.human.mine_cooldown;
         let total = state.mine_total.max(cooldown);
         let ready = if cooldown > 0.0 && total > 0.0 {
@@ -48,12 +54,12 @@ pub fn controls(context: &egui::Context, art: &Art, state: &UiState, touch: &Tou
         } else {
             1.0
         };
-        mine_key(&painter, art, layout.mine, cooldown, ready);
+        mine_key(&painter, art, mine, cooldown, ready);
     }
-    if !touch.first_person {
-        // The first-person view sits in the turret and has no zoom.
-        zoom_key(&painter, layout.zoom_in, "+");
-        zoom_key(&painter, layout.zoom_out, "−");
+    // The first-person view sits in the turret and has no zoom.
+    if !crate::touch::phone() && !touch.first_person {
+        zoom_key(&painter, layout.zoom_in.center(), "+");
+        zoom_key(&painter, layout.zoom_out.center(), "−");
     }
     let shown = state.touch_shown;
     if !touch.learned && !touch.first_person && shown < HINT_SECONDS + HINT_FADE {
@@ -76,8 +82,11 @@ fn drop_shadow(painter: &Painter, center: Pos2, radius: f32) {
 }
 
 fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
+    let phone = crate::touch::phone();
     let held = input.drive.is_some();
     let center = layout.stick.center();
+    let base_radius =
+        layout.stick.width() / 2.0 - if phone { PHONE_BASE_INSET } else { BASE_INSET };
     // Held, the base moves under the thumb (up to `STICK_ANCHOR_SHIFT`) and the knob follows
     // the finger to the rim.
     let base = match input.drive {
@@ -86,7 +95,7 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
     };
     painter.add(paint::radial(
         base,
-        Vec2::splat(BASE_RADIUS),
+        Vec2::splat(base_radius),
         &[
             (0.0, hexa(0x0a1730, 0.2)),
             (0.38, hexa(0x0a1730, 0.32)),
@@ -97,12 +106,12 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
     ));
     painter.circle_stroke(
         base,
-        BASE_RADIUS - 1.0,
+        base_radius - 1.0,
         Stroke::new(1.0, hexa(0x000000, 0.4)),
     );
     painter.circle_stroke(
         base,
-        BASE_RADIUS,
+        base_radius,
         Stroke::new(
             2.0,
             if held {
@@ -115,7 +124,7 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
     if held {
         painter.circle_stroke(
             base,
-            BASE_RADIUS + 3.0,
+            base_radius + 3.0,
             Stroke::new(4.0, hexa(0xdff0ff, 0.15)),
         );
     }
@@ -123,7 +132,7 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
     let tick = hexa(0xbfe2ff, 0.4);
     for (dx, dy) in [(0.0, -1.0), (0.0, 1.0), (-1.0, 0.0), (1.0, 0.0)] {
         let direction = vec2(dx, dy);
-        let outer = base + direction * (BASE_RADIUS - 6.0);
+        let outer = base + direction * (base_radius - 6.0);
         painter.line_segment([outer, outer - direction * 8.0], Stroke::new(2.0, tick));
     }
     let (x, y) = input.knob;
@@ -139,7 +148,7 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
             paint::arc(
                 painter,
                 base,
-                BASE_RADIUS + 1.0,
+                base_radius + 1.0,
                 angle - std::f32::consts::FRAC_PI_4,
                 std::f32::consts::FRAC_PI_2,
                 Stroke::new(width, color),
@@ -173,7 +182,10 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
         KNOB_RADIUS,
         Stroke::new(2.0, if held { Color32::WHITE } else { hex(0xe8f4ff) }),
     );
-    // The stick's name on a small dark tag under its rim.
+    // The stick's name on a small dark tag under its rim; a phone's corner has no room.
+    if phone {
+        return;
+    }
     let label = pos2(center.x, layout.stick.bottom() + 6.0);
     let text = paint::galley(
         painter,
@@ -290,13 +302,21 @@ fn zoom_key(painter: &Painter, center: Pos2, label: &str) {
 }
 
 /// How to aim and fire: a tag in the top-left corner, the one corner no HUD and no
-/// thumb uses, with a target ring that breathes.
+/// thumb uses, with a target ring that breathes. A phone's tighter corner has the tag
+/// level with its score; held upright, where the zoom pair takes that corner, under it.
 fn fire_hint(context: &egui::Context, painter: &Painter, opacity: f32) {
     let viewport = context.viewport_rect();
     let content = context.content_rect();
+    let (left, top) = if !crate::touch::phone() {
+        (24.0, 14.0)
+    } else if viewport.height() > viewport.width() {
+        (10.0, PHONE_UPRIGHT_HINT_TOP)
+    } else {
+        (10.0, 6.0)
+    };
     let origin = pos2(
-        (viewport.left() + 24.0).max(content.left()),
-        (viewport.top() + 14.0).max(content.top()),
+        (viewport.left() + left).max(content.left()),
+        (viewport.top() + top).max(content.top()),
     );
     let title = paint::galley(
         painter,

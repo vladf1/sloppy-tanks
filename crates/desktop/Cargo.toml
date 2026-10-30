@@ -73,6 +73,7 @@ web-sys = { workspace = true, features = [
   "Request",
   "RequestInit",
   "Response",
+  "Screen",
   "Storage",
   "Url",
   "UrlSearchParams",

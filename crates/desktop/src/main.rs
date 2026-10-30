@@ -42,12 +42,11 @@ fn main() {
         }
     }
     #[cfg(target_arch = "wasm32")]
-    {
-        console_error_panic_hook::set_once();
-        touch::detect();
-    }
+    console_error_panic_hook::set_once();
     let arguments = arguments();
     let flag = |name: &str| arguments.iter().any(|argument| argument == name);
+    // `--phone` (a page's `?phone`) plays the phone edition anywhere.
+    touch::detect(flag("--phone"));
     let options = app::Options {
         debug: flag("--debug"),
         frame_log: flag("--frame-log"),

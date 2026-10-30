@@ -1,58 +1,170 @@
 //! Touch play on the iPad and on a page's touch screen (`touch-controls.ts`): the drive
-//! stick in the bottom-left
-//! corner, the mine button with the zoom pair stacked over it in the bottom-right, and
-//! a finger anywhere else on the arena aims there and fires while it is down. Each
-//! finger belongs to whatever it first touched: one that lands on a control or the
+//! stick in the bottom-left corner, the mine button with the zoom pair stacked over it in
+//! the bottom-right (a phone's edition has no mines, and its zoom pair joins the top
+//! row), and a finger anywhere else on the arena aims there and fires while it is down.
+//! Each finger belongs to whatever it first touched: one that lands on a control or the
 //! arena never reaches egui, so a second finger still presses the HUD's buttons while
 //! a thumb drives, and one that lands on a menu or a HUD button stays egui's.
+//!
+//! The device's class is decided once, when the app starts (`player-preferences.ts`,
+//! `index.html`'s head script): it picks the phone edition, the graphics the engine
+//! starts with and whether the overhead reticle shows.
 
 use std::collections::HashSet;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
-use egui::{Pos2, Rect, Vec2, pos2};
+use egui::{Pos2, Rect, Vec2, pos2, vec2};
 use winit::event::{Touch, TouchPhase};
 
 use sloppy_render::presentation::input::{STICK_ANCHOR_SHIFT, ZOOM_STEP};
+use sloppy_render::quality::DeviceClass;
 use sloppy_web::hud::Hud;
 
 use crate::input::Controls;
+use crate::preferences::TouchSetting;
 
-/// Whether this device plays by touch: the iPad app, and a page on a touch screen. Touch
-/// play has the touch controls, a tablet's graphics and no reticle, and no pointer lock,
-/// fullscreen or Quit; Macs and PCs play with keyboard and mouse.
+/// Whether this device plays by touch: the iPad app, the phone edition, and a page on a
+/// touch screen as Settings' Touch controls say (Auto: the browser reported one, or a
+/// finger touched the page). Touch play has the touch controls and no pointer lock;
+/// Macs and PCs play with keyboard and mouse.
 pub fn screen() -> bool {
-    TOUCH_SCREEN.load(Ordering::Relaxed)
+    plays_by_touch(
+        cfg!(target_os = "ios") || phone(),
+        setting(),
+        TOUCH_DETECTED.load(Ordering::Relaxed),
+    )
 }
 
-static TOUCH_SCREEN: AtomicBool = AtomicBool::new(cfg!(target_os = "ios"));
+/// The rule [`screen`] applies: a device that has no other controls always plays by
+/// touch; elsewhere the setting decides, and Auto follows what was `detected`. A touch
+/// never overrides Off.
+fn plays_by_touch(touch_only: bool, setting: TouchSetting, detected: bool) -> bool {
+    touch_only
+        || match setting {
+            TouchSetting::On => true,
+            TouchSetting::Off => false,
+            TouchSetting::Auto => detected,
+        }
+}
 
-/// In a page, take the browser's word for a touch screen, as the page's own shell did: a
-/// coarse primary pointer (a tablet, a car's screen) or iPadOS Safari, which presents
-/// itself as a Mac with touch points. A touch laptop's primary pointer is fine, so it
-/// plays with keyboard and mouse until a finger touches the page ([`touched`]).
+/// Whether Settings offers Touch controls: in a page, but not in the phone edition,
+/// which has no other controls. The iPad app always plays by touch, and the desktop app
+/// with keyboard and mouse (macOS has no touch screens; Windows' are left to the page).
+pub fn offers_setting() -> bool {
+    cfg!(target_arch = "wasm32") && !phone()
+}
+
+/// The kind of device the app runs on, as the app started.
+pub fn device() -> DeviceClass {
+    match DEVICE.load(Ordering::Relaxed) {
+        TABLET => DeviceClass::Tablet,
+        PHONE => DeviceClass::Phone,
+        _ => DeviceClass::Desktop,
+    }
+}
+
+/// The phone edition: a coarse pointer on a small screen, or `?phone` (`--phone`).
+pub fn phone() -> bool {
+    device() == DeviceClass::Phone
+}
+
+const DESKTOP: u8 = 0;
+const TABLET: u8 = 1;
+const PHONE: u8 = 2;
+/// A coarse pointer on a screen whose shorter side is under this many CSS pixels is a
+/// phone. The screen's, not the window's: turning the phone keeps the same edition.
 #[cfg(target_arch = "wasm32")]
-pub fn detect() {
-    let Some(window) = web_sys::window() else {
-        return;
-    };
-    let navigator = window.navigator();
-    let ipad = navigator
-        .user_agent()
-        .is_ok_and(|agent| agent.contains("Macintosh"))
-        && navigator.max_touch_points() > 1;
-    let coarse = window
-        .match_media("(pointer: coarse)")
-        .ok()
-        .flatten()
-        .is_some_and(|query| query.matches());
-    TOUCH_SCREEN.store(ipad || coarse, Ordering::Relaxed);
+const PHONE_SCREEN_SIDE: i32 = 600;
+
+static DEVICE: AtomicU8 = AtomicU8::new(if cfg!(target_os = "ios") {
+    TABLET
+} else {
+    DESKTOP
+});
+static TOUCH_DETECTED: AtomicBool = AtomicBool::new(cfg!(target_os = "ios"));
+static SETTING: AtomicU8 = AtomicU8::new(0);
+
+fn setting() -> TouchSetting {
+    match SETTING.load(Ordering::Relaxed) {
+        1 => TouchSetting::On,
+        2 => TouchSetting::Off,
+        _ => TouchSetting::Auto,
+    }
 }
 
-/// A finger touched the screen: a page plays by touch from now on, as on a touch screen
-/// its browser did not report. The desktop app keeps its keyboard and mouse.
+/// The saved Touch controls choice (`Preferences::load` and `save` keep it current).
+pub fn set_setting(touch: TouchSetting) {
+    let value = match touch {
+        TouchSetting::Auto => 0,
+        TouchSetting::On => 1,
+        TouchSetting::Off => 2,
+    };
+    SETTING.store(value, Ordering::Relaxed);
+}
+
+/// The device class from what the browser says, as the page's shell decided it: the
+/// phone edition for a coarse pointer on a small screen; a tablet for another coarse
+/// primary pointer (a tablet, a car's screen) or iPadOS Safari, which presents itself as
+/// a Mac with touch points; otherwise a desktop. A touch laptop's primary pointer is
+/// fine, so on Auto it plays with keyboard and mouse until a finger touches the page
+/// ([`touched`]). `phone` (`?phone`) asks for the phone edition anywhere.
+pub fn detect(phone: bool) {
+    #[cfg(target_arch = "wasm32")]
+    let (phone, touch) = {
+        let Some(window) = web_sys::window() else {
+            return;
+        };
+        let navigator = window.navigator();
+        let agent = navigator.user_agent().unwrap_or_default();
+        let ipad = agent.contains("Macintosh") && navigator.max_touch_points() > 1;
+        let matches = |query: &str| {
+            window
+                .match_media(query)
+                .ok()
+                .flatten()
+                .is_some_and(|query| query.matches())
+        };
+        let coarse = matches("(pointer: coarse)");
+        let small = window.screen().is_ok_and(|screen| {
+            let side = |size: Result<i32, _>| size.unwrap_or(i32::MAX);
+            side(screen.width()).min(side(screen.height())) < PHONE_SCREEN_SIDE
+        });
+        let phone = phone || (coarse && small);
+        // Opened from the Home Screen (`navigator.standalone` on iOS) the game has no
+        // browser bars to hide.
+        let home_screen_app = matches("(display-mode: standalone)")
+            || js_sys::Reflect::get(&navigator, &"standalone".into())
+                .is_ok_and(|standalone| standalone.as_bool() == Some(true));
+        let iphone = agent.contains("iPhone") || agent.contains("iPod");
+        HOME_SCREEN_TIP.store(phone && iphone && !home_screen_app, Ordering::Relaxed);
+        (phone, ipad || coarse)
+    };
+    #[cfg(not(target_arch = "wasm32"))]
+    let touch = cfg!(target_os = "ios");
+    let class = if phone {
+        PHONE
+    } else if touch {
+        TABLET
+    } else {
+        DESKTOP
+    };
+    DEVICE.store(class, Ordering::Relaxed);
+    TOUCH_DETECTED.store(touch, Ordering::Relaxed);
+}
+
+/// An iPhone's browser cannot hide its bars for a page, so the phone edition's Battle
+/// Setup suggests the Home Screen there (`offer-home-screen`).
+pub fn home_screen_tip() -> bool {
+    HOME_SCREEN_TIP.load(Ordering::Relaxed)
+}
+
+static HOME_SCREEN_TIP: AtomicBool = AtomicBool::new(false);
+
+/// A finger touched the screen: on Auto a page plays by touch from now on, as on a touch
+/// screen its browser did not report. The desktop app keeps its keyboard and mouse.
 pub fn touched() {
     if cfg!(target_arch = "wasm32") {
-        TOUCH_SCREEN.store(true, Ordering::Relaxed);
+        TOUCH_DETECTED.store(true, Ordering::Relaxed);
     }
 }
 
@@ -65,40 +177,120 @@ pub const ZOOM_RADIUS: f32 = 26.0;
 /// edge where that is further in.
 const SIDE: f32 = 24.0;
 const BOTTOM: f32 = 28.0;
+/// A phone's smaller stick, nearer its corner.
+pub const PHONE_STICK_SIZE: f32 = 150.0;
+const PHONE_STICK_MARGIN: f32 = 12.0;
 
 /// Where the touch controls sit, in points.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TouchLayout {
     pub stick: Rect,
-    pub mine: Pos2,
-    pub zoom_in: Pos2,
-    pub zoom_out: Pos2,
+    /// The mine button's centre; a phone's edition has no mines.
+    pub mine: Option<Pos2>,
+    /// The zoom keys: round keys over the mine button, or a phone's pair in its top row.
+    pub zoom_in: Rect,
+    pub zoom_out: Rect,
 }
 
 impl TouchLayout {
-    /// The layout on a screen of `viewport` whose safe area is `content`.
-    pub fn new(viewport: Rect, content: Rect) -> Self {
+    /// The layout on a screen of `viewport` whose safe area is `content`; `phone`: the
+    /// phone edition's.
+    pub fn new(viewport: Rect, content: Rect, phone: bool) -> Self {
+        if phone {
+            let left = (viewport.left() + PHONE_STICK_MARGIN).max(content.left());
+            let bottom = (viewport.bottom() - PHONE_STICK_MARGIN).min(content.bottom());
+            let bar = PhoneBar::new(viewport, content);
+            return Self {
+                stick: Rect::from_min_size(
+                    pos2(left, bottom - PHONE_STICK_SIZE),
+                    Vec2::splat(PHONE_STICK_SIZE),
+                ),
+                mine: None,
+                zoom_in: bar.zoom_in,
+                zoom_out: bar.zoom_out,
+            };
+        }
         let left = (viewport.left() + SIDE).max(content.left());
         let right = (viewport.right() - SIDE).min(content.right());
         let bottom = (viewport.bottom() - BOTTOM).min(content.bottom());
         let x = right - MINE_RADIUS;
+        let key = |y: f32| Rect::from_center_size(pos2(x, y), Vec2::splat(2.0 * ZOOM_RADIUS));
         Self {
             stick: Rect::from_min_size(pos2(left, bottom - STICK_SIZE), Vec2::splat(STICK_SIZE)),
             // The mine sits level with the stick's centre; the zoom pair over it, one
             // family of thumb buttons.
-            mine: pos2(x, bottom - 50.0 - MINE_RADIUS),
-            zoom_out: pos2(x, bottom - 136.0 - ZOOM_RADIUS),
-            zoom_in: pos2(x, bottom - 196.0 - ZOOM_RADIUS),
+            mine: Some(pos2(x, bottom - 50.0 - MINE_RADIUS)),
+            zoom_out: key(bottom - 136.0 - ZOOM_RADIUS),
+            zoom_in: key(bottom - 196.0 - ZOOM_RADIUS),
+        }
+    }
+
+    pub fn of(context: &egui::Context) -> Self {
+        Self::new(context.viewport_rect(), context.content_rect(), phone())
+    }
+
+    /// The room between the stick and the mine button (or the screen's edge) that the
+    /// tank panel takes.
+    pub fn panel_span(&self, right: f32) -> (f32, f32) {
+        let end = self.mine.map_or(right, |mine| mine.x - MINE_RADIUS - 12.0);
+        (self.stick.right() + 12.0, end)
+    }
+}
+
+/// The phone's row of keys over the arena: one key's side, a thumb's gap between keys
+/// that stand apart, and their distance from the top and the sides.
+pub const PHONE_KEY: f32 = 44.0;
+const PHONE_KEY_GAP: f32 = 10.0;
+const PHONE_BAR_TOP: f32 = 6.0;
+const PHONE_BAR_SIDE: f32 = 20.0;
+const PHONE_BAR_SIDE_UPRIGHT: f32 = 8.0;
+
+/// The phone's top row (`.phone .hud-actions`): held sideways, the zoom pair, first
+/// person and pause stand together in the right corner, a thumb's gap apart; held
+/// upright the row splits, the zoom pair in the left corner and first person with pause
+/// in the right, so the score fits between them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PhoneBar {
+    pub zoom_out: Rect,
+    pub zoom_in: Rect,
+    pub view: Rect,
+    pub pause: Rect,
+    /// Held upright: the pairs stand in opposite corners.
+    pub upright: bool,
+}
+
+impl PhoneBar {
+    pub fn new(viewport: Rect, content: Rect) -> Self {
+        let upright = viewport.height() > viewport.width();
+        let top = (viewport.top() + PHONE_BAR_TOP).max(content.top());
+        let key = |left: f32| Rect::from_min_size(pos2(left, top), Vec2::splat(PHONE_KEY));
+        if upright {
+            let left = (viewport.left() + PHONE_BAR_SIDE_UPRIGHT).max(content.left());
+            let right = (viewport.right() - PHONE_BAR_SIDE_UPRIGHT).min(content.right());
+            return Self {
+                zoom_out: key(left),
+                zoom_in: key(left + PHONE_KEY),
+                view: key(right - 2.0 * PHONE_KEY),
+                pause: key(right - PHONE_KEY),
+                upright,
+            };
+        }
+        // Clear of a landscape phone's rounded corner and notch.
+        let right = (viewport.right() - PHONE_BAR_SIDE).min(content.right() - 8.0);
+        let pause = key(right - PHONE_KEY);
+        let view = pause.translate(vec2(-PHONE_KEY - PHONE_KEY_GAP, 0.0));
+        let zoom_in = view.translate(vec2(-PHONE_KEY - PHONE_KEY_GAP, 0.0));
+        Self {
+            zoom_out: zoom_in.translate(vec2(-PHONE_KEY, 0.0)),
+            zoom_in,
+            view,
+            pause,
+            upright,
         }
     }
 
     pub fn of(context: &egui::Context) -> Self {
         Self::new(context.viewport_rect(), context.content_rect())
-    }
-
-    /// The room between the stick and the mine button that the tank panel takes.
-    pub fn panel_span(&self) -> (f32, f32) {
-        (self.stick.right() + 12.0, self.mine.x - MINE_RADIUS - 12.0)
     }
 }
 
@@ -167,6 +359,7 @@ impl Fingers {
                 };
                 let layout = &play.layout;
                 let on = |center: Pos2, radius: f32| center.distance(point) <= radius;
+                let zoom_keys = !play.first_person;
                 if layout.stick.contains(point) {
                     let center = layout.stick.center();
                     let shift = (point - center).clamp(
@@ -175,13 +368,13 @@ impl Fingers {
                     );
                     let origin = center + shift;
                     controls.begin_drive(touch.id, (origin.x, origin.y), (point.x, point.y));
-                } else if on(layout.mine, MINE_RADIUS) {
+                } else if layout.mine.is_some_and(|mine| on(mine, MINE_RADIUS)) {
                     if play.mine_ready {
                         controls.drop_mine();
                     }
-                } else if !play.first_person && on(layout.zoom_in, ZOOM_RADIUS) {
+                } else if zoom_keys && layout.zoom_in.contains(point) {
                     controls.zoom_by(-ZOOM_STEP);
-                } else if !play.first_person && on(layout.zoom_out, ZOOM_RADIUS) {
+                } else if zoom_keys && layout.zoom_out.contains(point) {
                     controls.zoom_by(ZOOM_STEP);
                 } else if over_ui(point) {
                     self.menus.insert(touch.id);
@@ -236,7 +429,7 @@ mod tests {
     fn play() -> Play {
         let screen = Rect::from_min_size(Pos2::ZERO, SCREEN);
         Play {
-            layout: TouchLayout::new(screen, screen),
+            layout: TouchLayout::new(screen, screen, false),
             first_person: false,
             mine_ready: true,
         }
@@ -245,18 +438,63 @@ mod tests {
     #[test]
     fn the_layout_keeps_the_controls_in_their_corners() {
         let screen = Rect::from_min_size(Pos2::ZERO, SCREEN);
-        let layout = TouchLayout::new(screen, screen);
+        let layout = TouchLayout::new(screen, screen, false);
         assert_eq!(layout.stick.left_bottom(), pos2(24.0, 792.0));
-        assert_eq!(layout.mine, pos2(1118.0, 704.0));
-        assert!(layout.zoom_in.y < layout.zoom_out.y && layout.zoom_out.y < layout.mine.y);
+        let mine = layout.mine.expect("a tablet's mine button");
+        assert_eq!(mine, pos2(1118.0, 704.0));
+        assert!(layout.zoom_in.center().y < layout.zoom_out.center().y);
+        assert!(layout.zoom_out.bottom() < mine.y - MINE_RADIUS);
         // A safe area further in than the margins moves them in.
         let content = Rect::from_min_max(pos2(0.0, 24.0), pos2(1180.0, 800.0));
-        assert_eq!(TouchLayout::new(screen, content).stick.bottom(), 792.0);
+        assert_eq!(
+            TouchLayout::new(screen, content, false).stick.bottom(),
+            792.0
+        );
         let content = Rect::from_min_max(pos2(30.0, 0.0), pos2(1180.0, 780.0));
         assert_eq!(
-            TouchLayout::new(screen, content).stick.left_bottom(),
+            TouchLayout::new(screen, content, false).stick.left_bottom(),
             pos2(30.0, 780.0)
         );
+    }
+
+    /// The phone edition at its smallest screen either way up: the smaller stick in its
+    /// corner, no mine, and the top row's keys thumb-sized, on screen and apart.
+    #[test]
+    fn a_phone_keeps_the_stick_and_its_top_row_apart_both_ways_up() {
+        for size in [vec2(852.0, 393.0), vec2(393.0, 852.0)] {
+            let screen = Rect::from_min_size(Pos2::ZERO, size);
+            let layout = TouchLayout::new(screen, screen, true);
+            assert_eq!(layout.mine, None);
+            assert_eq!(layout.stick.left_bottom(), pos2(12.0, size.y - 12.0));
+            assert_eq!(layout.stick.width(), PHONE_STICK_SIZE);
+            let bar = PhoneBar::new(screen, screen);
+            assert_eq!(
+                (layout.zoom_in, layout.zoom_out),
+                (bar.zoom_in, bar.zoom_out)
+            );
+            let keys = [bar.zoom_out, bar.zoom_in, bar.view, bar.pause];
+            for (index, key) in keys.iter().enumerate() {
+                assert!(
+                    screen.contains_rect(*key),
+                    "{size:?}: key {index} on screen"
+                );
+                assert!(key.width() >= 44.0 && key.height() >= 44.0);
+                assert!(!key.intersects(layout.stick));
+                for other in &keys[index + 1..] {
+                    let overlap = key.intersect(*other);
+                    assert!(overlap.width() <= 0.0 || overlap.height() <= 0.0);
+                }
+            }
+            assert!(bar.zoom_out.left() < bar.zoom_in.left());
+            if bar.upright {
+                assert!(bar.zoom_in.right() < size.x / 2.0 && bar.view.left() > size.x / 2.0);
+            } else {
+                // A thumb's gap between the zoom pair, first person and pause.
+                assert!(bar.view.left() - bar.zoom_in.right() >= 10.0);
+                assert!(bar.pause.left() - bar.view.right() >= 10.0);
+                assert!(bar.zoom_out.left() > size.x / 2.0);
+            }
+        }
     }
 
     #[test]
@@ -311,17 +549,23 @@ mod tests {
             };
             fingers.route(&lift, 1.0, Some(play), |_| false, SCREEN, controls);
         };
-        press(&mut fingers, &mut controls, &play, play.layout.mine);
-        press(&mut fingers, &mut controls, &play, play.layout.zoom_in);
+        let mine = play.layout.mine.expect("a tablet's mine button");
+        press(&mut fingers, &mut controls, &play, mine);
+        press(
+            &mut fingers,
+            &mut controls,
+            &play,
+            play.layout.zoom_in.center(),
+        );
         let input = controls.take_input();
         assert!(input.mine && !input.fire);
         assert_eq!(input.zoom, -ZOOM_STEP);
         // A mine still reloading and the zoom of first person do nothing.
         play.mine_ready = false;
         play.first_person = true;
-        press(&mut fingers, &mut controls, &play, play.layout.mine);
+        press(&mut fingers, &mut controls, &play, mine);
         assert!(!controls.take_input().mine);
-        let at = play.layout.zoom_out;
+        let at = play.layout.zoom_out.center();
         let held = touch(5, TouchPhase::Started, f64::from(at.x), f64::from(at.y));
         fingers.route(&held, 1.0, Some(&play), |_| false, SCREEN, &mut controls);
         let input = controls.take_input();
@@ -378,6 +622,88 @@ mod tests {
         assert!(controls.take_input().fire);
         let tap = touch(2, TouchPhase::Started, 1050.0, 30.0);
         assert!(fingers.route(&tap, 1.0, Some(&play), over, SCREEN, &mut controls));
+    }
+
+    #[test]
+    fn the_setting_decides_touch_play_where_the_device_has_other_controls() {
+        use TouchSetting::{Auto, Off, On};
+        for detected in [false, true] {
+            // The iPad app and the phone edition have no other controls.
+            for setting in [Auto, On, Off] {
+                assert!(plays_by_touch(true, setting, detected));
+            }
+            assert!(plays_by_touch(false, On, detected));
+            assert!(
+                !plays_by_touch(false, Off, detected),
+                "a touch never overrides Off"
+            );
+            assert_eq!(plays_by_touch(false, Auto, detected), detected);
+        }
+    }
+
+    /// On a phone a thumb drives while another finger aims and fires, the top row's zoom
+    /// keys step the camera, and lifting each finger lets go of only what it held.
+    #[test]
+    fn a_phone_drives_and_fires_at_once_and_zooms_from_its_top_row() {
+        let size = vec2(852.0, 393.0);
+        let screen = Rect::from_min_size(Pos2::ZERO, size);
+        let play = Play {
+            layout: TouchLayout::new(screen, screen, true),
+            first_person: false,
+            mine_ready: true,
+        };
+        let mut fingers = Fingers::default();
+        let mut controls = Controls::default();
+        // Physical pixels at three device pixels a point.
+        let mut route = |controls: &mut Controls, id, phase, point: Pos2| {
+            let touch = touch(
+                id,
+                phase,
+                f64::from(point.x) * 3.0,
+                f64::from(point.y) * 3.0,
+            );
+            fingers.route(&touch, 3.0, Some(&play), |_| false, size, controls)
+        };
+        let stick = play.layout.stick.center();
+        let shot = pos2(700.0, 170.0);
+        assert!(!route(&mut controls, 1, TouchPhase::Started, stick));
+        assert!(!route(
+            &mut controls,
+            1,
+            TouchPhase::Moved,
+            stick + vec2(58.0, 0.0)
+        ));
+        assert!(!route(&mut controls, 2, TouchPhase::Started, shot));
+        // A second arena finger cannot take the aim from the firing one.
+        assert!(!route(
+            &mut controls,
+            3,
+            TouchPhase::Started,
+            pos2(100.0, 170.0)
+        ));
+        assert!(!route(
+            &mut controls,
+            3,
+            TouchPhase::Moved,
+            pos2(120.0, 170.0)
+        ));
+        let zoom_out = play.layout.zoom_out.center();
+        assert!(!route(&mut controls, 4, TouchPhase::Started, zoom_out));
+        assert!(!route(&mut controls, 4, TouchPhase::Ended, zoom_out));
+        let input = controls.take_input();
+        assert!(input.fire && input.touch_move.0 > 0.9);
+        assert!(
+            input.pointer.0 > 0.6,
+            "the first arena finger aims: {:?}",
+            input.pointer
+        );
+        assert_eq!(input.zoom, ZOOM_STEP);
+        // A cancelled finger stops firing; the thumb still drives until it lifts.
+        assert!(!route(&mut controls, 2, TouchPhase::Cancelled, shot));
+        let input = controls.take_input();
+        assert!(!input.fire && input.touch_move.0 > 0.9);
+        assert!(!route(&mut controls, 1, TouchPhase::Ended, stick));
+        assert_eq!(controls.take_input().touch_move, (0.0, 0.0));
     }
 
     #[test]

@@ -6,13 +6,13 @@
 //! does there.
 
 use sloppy_render::presentation::input::InputFrame;
-use winit::event::{ElementState, Touch, WindowEvent};
+use winit::event::{ElementState, Touch, TouchPhase, WindowEvent};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::Window;
 
 use crate::app::{css_size, grab_pointer};
 use crate::hardware_keys::HardwareKeys;
-use crate::input::{Controls, Shortcut};
+use crate::input::{Controls, Shortcut, TouchInput};
 use crate::overlay::Overlay;
 use crate::touch::{Fingers, Play};
 use crate::ui::touch::TouchView;
@@ -46,6 +46,10 @@ pub struct WindowInput {
     pub cursor_grabbed: bool,
     /// Which fingers the menus own, on a touch screen.
     fingers: Fingers,
+    /// The last press was a finger's: with touch play, a finger turns the first-person
+    /// view, which a pointer lock would freeze; a mouse on the same device (a touch
+    /// laptop) still looks with the lock (`fingerLooks`).
+    finger_last: bool,
     /// An iPad's keyboard, read each frame.
     hardware_keys: HardwareKeys,
 }
@@ -63,11 +67,21 @@ impl WindowInput {
     ) -> Option<Request> {
         if let WindowEvent::Touch(touch) = event {
             crate::touch::touched();
+            if touch.phase == TouchPhase::Started {
+                self.finger_last = true;
+            }
             if crate::touch::screen()
                 && !self.route_touch(window, overlay, touch, battle.touch.as_ref())
             {
                 return None;
             }
+        }
+        if let WindowEvent::MouseInput {
+            state: ElementState::Pressed,
+            ..
+        } = event
+        {
+            self.finger_last = false;
         }
         let keys_to_menus = !battle.keys || overlay.typing();
         let consumed = overlay.event(event, !self.cursor_grabbed, keys_to_menus);
@@ -90,6 +104,9 @@ impl WindowInput {
                 self.controls
                     .aim_at((position.x, position.y), (width * scale, height * scale));
             }
+            // A turned phone or a browser's bars changed the screen under the fingers:
+            // the stick and the shot let go until they press again (`resized`).
+            WindowEvent::Resized(_) => self.controls.touch = TouchInput::default(),
             // A press on a menu or the HUD's buttons is not a shot; a release always
             // reaches the controls, so fire never sticks.
             WindowEvent::MouseInput { state, button, .. }
@@ -181,13 +198,11 @@ impl WindowInput {
         })
     }
 
-    /// Lock the cursor while first person steers with the mouse, or let it go. A finger
-    /// turns the view on a touch screen, which has no cursor to lock.
+    /// Lock the cursor while first person steers with the mouse, or let it go. With
+    /// touch play a finger turns the view, which a lock would freeze, until a mouse
+    /// presses again.
     pub fn hold_pointer(&mut self, window: &Window, wanted: bool) {
-        grab_pointer(
-            window,
-            wanted && !crate::touch::screen(),
-            &mut self.cursor_grabbed,
-        );
+        let finger_looks = self.finger_last && crate::touch::screen();
+        grab_pointer(window, wanted && !finger_looks, &mut self.cursor_grabbed);
     }
 }

@@ -412,15 +412,19 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
 }
 
 /// The corner toolbar: first person, fullscreen, pause and settings on one plate.
-/// Thumb-sized on a touch screen, which has no fullscreen to toggle.
+/// Thumb-sized on a touch screen.
 fn toolbar_button() -> f32 {
     if crate::touch::screen() { 46.0 } else { 38.0 }
 }
 
-/// The toolbar's plate: first person, fullscreen (not on a touch screen), pause and
+/// The toolbar's plate: first person, fullscreen (not in the iPad app), pause and
 /// settings.
 fn toolbar_size() -> Vec2 {
-    let count = if crate::touch::screen() { 3.0 } else { 4.0 };
+    let count = if crate::app::offers_fullscreen() {
+        4.0
+    } else {
+        3.0
+    };
     vec2(toolbar_button() * count + 6.0, toolbar_button() + 6.0)
 }
 
@@ -453,7 +457,7 @@ fn toolbar(
     );
     let buttons: Vec<(&str, &str, Action)> = [
         Some(("eye", "First-person view (V)", Action::ToggleView)),
-        (!crate::touch::screen()).then_some(fullscreen),
+        crate::app::offers_fullscreen().then_some(fullscreen),
         Some(("pause", "Pause (Esc)", Action::Pause)),
         Some(("gear", "Settings", Action::OpenSettings)),
     ]
@@ -785,15 +789,12 @@ fn tank_panel(
     // it stands over the controls at the screen's width.
     let (corner, room) = if crate::touch::screen() {
         let layout = crate::touch::TouchLayout::of(context);
-        let (from, to) = layout.panel_span();
+        let (from, to) = layout.panel_span(screen.right() - EDGE);
         if to - from >= size.x * MIN_PANEL_GAP_SHARE {
             let left = (from + (to - from - size.x) / 2.0).max(from);
             (pos2(left, screen.bottom() - EDGE), to - from)
         } else {
-            let top = layout
-                .stick
-                .top()
-                .min(layout.zoom_in.y - crate::touch::ZOOM_RADIUS);
+            let top = layout.stick.top().min(layout.zoom_in.top());
             (
                 pos2(screen.left() + EDGE, top - STACK_GAP),
                 screen.width() - 2.0 * EDGE,

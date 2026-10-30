@@ -28,11 +28,13 @@
       }
       /* winit appends the shell's canvas; it fills the page and takes the keys. On a
          touch screen fingers drive the game: no scrolling, zooming, selection, callout
-         or tap flash. */
+         or tap flash. Its height follows a phone browser's bars as they show and hide
+         (`dvh`), so the drive stick never sits under them. */
       canvas {
         display: block;
         width: 100vw;
         height: 100vh;
+        height: 100dvh;
         outline: none;
         touch-action: none;
         user-select: none;
