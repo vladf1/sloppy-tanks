@@ -1,11 +1,11 @@
 //! The screens' artwork: the page's SVG icons (`HUD_ICONS` and `CAUSE_ICONS` in
-//! `ui-markup.ts`, Battle Setup's symbols and map art) rasterized once into egui
+//! `ui-markup.ts`, Battle Setup's logo, symbols and map art) rasterized once into egui
 //! textures, and Battle Setup's tank renders (`previews/tanks.webp`). Shapes rather
 //! than font glyphs, since the system's text faces lack most symbols.
 
 use std::collections::HashMap;
 
-use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2};
+use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
 use sloppy_core::sim::{Team, VehicleKind};
 
 /// How a layer of an icon is painted.
@@ -17,6 +17,13 @@ enum Paint {
     EvenOdd,
     /// Stroked this wide, with round joins and caps.
     Stroke(f32),
+    /// Filled `offset` away and blurred, at `opacity`: a CSS shadow, whose `blur`
+    /// radius is twice the Gaussian's deviation.
+    Shadow {
+        offset: [f32; 2],
+        blur: f32,
+        opacity: f32,
+    },
 }
 
 /// One `<path>` of an icon, in its colour (white for icons the screens tint).
@@ -58,11 +65,50 @@ const fn colored(color: u32, path: &'static str) -> Layer {
     }
 }
 
-/// An icon: its name, SVG view box (x, y, width, height), texels per unit and layers.
+/// CSS `text-shadow: <offset> <blur> <color>` at `opacity` (the colour's alpha).
+const fn shadow(
+    offset: [f32; 2],
+    blur: f32,
+    color: u32,
+    opacity: f32,
+    path: &'static str,
+) -> Layer {
+    Layer {
+        paint: Paint::Shadow {
+            offset,
+            blur,
+            opacity,
+        },
+        color,
+        path,
+    }
+}
+
+/// CSS `transform: rotate(..) skewX(..)` about `centre`, in degrees and view units.
+#[derive(Clone, Copy)]
+struct Tilt {
+    rotate: f32,
+    skew_x: f32,
+    centre: [f32; 2],
+}
+
+impl Tilt {
+    fn apply(self, point: Pos2) -> Pos2 {
+        let [centre_x, centre_y] = self.centre;
+        let y = point.y - centre_y;
+        let x = point.x - centre_x + self.skew_x.to_radians().tan() * y;
+        let (sin, cos) = self.rotate.to_radians().sin_cos();
+        pos2(centre_x + cos * x - sin * y, centre_y + sin * x + cos * y)
+    }
+}
+
+/// An icon: its name, SVG view box (x, y, width, height), texels per unit, the
+/// transform its layers are drawn through, if any, and its layers.
 struct Source {
     name: &'static str,
     view: [f32; 4],
     scale: f32,
+    tilt: Option<Tilt>,
     layers: &'static [Layer],
 }
 
@@ -75,12 +121,21 @@ const fn icon(name: &'static str, layers: &'static [Layer]) -> Source {
         name,
         view: ICON_VIEW,
         scale: ICON_SCALE,
+        tilt: None,
         layers,
     }
 }
 
 /// A map card's landscape (`.map-row .choice-card` in `style.css`), right half only.
 const MAP_ART_VIEW: [f32; 4] = [60.0, 0.0, 180.0, 80.0];
+
+/// Battle Setup's logo, the page's `.setup-brand`: SLOPPY at 27 px over a gold TANKS
+/// at 41 px on 0.82 lines, with their `text-shadow`s, tilted about the centre of its
+/// layout box (CSS pixels: TANKS's width in Impact by the two lines). The view keeps
+/// the room around the box for the tilt and the shadows that the page's capture had.
+const LOGO_BOX: [f32; 2] = [104.36, 55.76];
+const LOGO_MARGIN: f32 = 24.0;
+const LOGO_VIEW: [f32; 4] = [-LOGO_MARGIN, -LOGO_MARGIN, 152.0, 104.0];
 
 const SOURCES: &[Source] = &[
     // The ammunition and kill-feed weapons: every one points right, the way the feed
@@ -303,6 +358,7 @@ const SOURCES: &[Source] = &[
         name: "backdrop-tank",
         view: [0.0, 0.0, 132.0, 52.0],
         scale: 3.0,
+        tilt: None,
         layers: &[fill(
             "M6 36h108a8 8 0 0 1 0 16H6a8 8 0 0 1 0-16zM0 36l9-11h102l9 11zM34 25l6-13 37-2 9 6v9zM84 13h46v4H84z",
         )],
@@ -311,6 +367,7 @@ const SOURCES: &[Source] = &[
         name: "art-village",
         view: MAP_ART_VIEW,
         scale: 2.0,
+        tilt: None,
         layers: &[
             colored(0x3c8a52, "M60 80c20-22 50-30 90-28s70 12 90 4v24z"),
             colored(0x2a6a40, "M100 80c25-14 60-18 90-12s40 4 50 0v12z"),
@@ -340,6 +397,7 @@ const SOURCES: &[Source] = &[
         name: "art-harbor",
         view: MAP_ART_VIEW,
         scale: 2.0,
+        tilt: None,
         layers: &[
             colored(
                 0xe0aa35,
@@ -361,6 +419,7 @@ const SOURCES: &[Source] = &[
         name: "art-quarry",
         view: MAP_ART_VIEW,
         scale: 2.0,
+        tilt: None,
         layers: &[
             colored(0xc98f4e, "M110 80V44l14-6h30l8 10h20l10-14h28l20 12v34z"),
             colored(0xa8703a, "M110 80V58h30l6-6h40l8 8h46v20z"),
@@ -369,7 +428,56 @@ const SOURCES: &[Source] = &[
             colored(0x7a4e28, "M128 70h8l3 4h-14zM206 66h10l2 5h-14z"),
         ],
     },
+    // Each word paints its shadows under it, the second word over the first.
+    Source {
+        name: "logo",
+        view: LOGO_VIEW,
+        scale: 3.0,
+        tilt: Some(Tilt {
+            rotate: -4.0,
+            skew_x: -6.0,
+            centre: [LOGO_BOX[0] / 2.0, LOGO_BOX[1] / 2.0],
+        }),
+        layers: &[
+            shadow([0.0, 6.0], 18.0, 0x000000, 0xaa as f32 / 255.0, LOGO_SLOPPY),
+            shadow([0.0, 3.0], 0.0, 0x0b1a30, 1.0, LOGO_SLOPPY),
+            colored(0xffffff, LOGO_SLOPPY),
+            shadow([0.0, 6.0], 22.0, 0xff9d1c, 0x55 as f32 / 255.0, LOGO_TANKS),
+            shadow([0.0, 3.0], 0.0, 0x7a4a0a, 1.0, LOGO_TANKS),
+            colored(0xffcf38, LOGO_TANKS),
+        ],
+    },
 ];
+
+// The logo's words in its layout box (CSS pixels, y down): Anton's outlines, each letter
+// stretched into the box the page's Impact gave it. Written by
+// `scripts/generate-logo-outlines.ts`; edit the fit there.
+const LOGO_SLOPPY: &str = concat!(
+    // S
+    "M7.15 22.5q-3.51 0-5.09-1.51-1.57-1.52-1.57-4.79v-2.27h5.31v2.85q0 0.7 0.23 1.06 0.23 0.37 0.79 0.37 0.61 0 0.83-0.29 0.22-0.29 0.22-1.01 0-0.97-0.22-1.6-0.22-0.64-0.77-1.23-0.55-0.58-1.54-1.38l-2.26-1.84q-2.59-2.09-2.59-4.8 0-2.82 1.54-4.31 1.55-1.49 4.45-1.49 3.53 0 5.03 1.63 1.5 1.63 1.5 5.07h-5.46v-1.64q0-0.37-0.24-0.57-0.24-0.2-0.68-0.2-0.53 0-0.76 0.24-0.23 0.24-0.23 0.62 0 0.41 0.27 0.91 0.27 0.49 1.09 1.15l2.9 2.39q0.88 0.71 1.63 1.52 0.74 0.8 1.19 1.87 0.46 1.08 0.46 2.62 0 3.08-1.35 4.86-1.35 1.77-4.68 1.77z",
+    // L
+    "M15.22 22.05v-21.35h4.56v17.45h4.36v3.9z",
+    // O
+    "M31.64 22.5q-3.11 0-4.76-1.61-1.66-1.6-1.66-4.62v-10.22q0-2.84 1.64-4.31 1.65-1.48 4.78-1.48 3.13 0 4.78 1.48 1.64 1.47 1.64 4.31v10.22q0 3.02-1.66 4.62-1.65 1.61-4.76 1.61zM31.68 18.21q0.99 0 0.99-1.73v-10.5q0-1.43-0.96-1.43-1.1 0-1.1 1.46v10.49q0 0.95 0.25 1.33 0.25 0.38 0.82 0.38z",
+    // P
+    "M40.43 22.05v-21.35h6.48q2.04 0 3.24 0.81 1.21 0.8 1.72 2.27 0.52 1.47 0.52 3.48 0 1.94-0.43 3.39-0.44 1.46-1.56 2.26-1.12 0.81-3.16 0.81h-1.78v8.33zM45.46 9.63h0.11q1.23 0 1.5-0.6 0.27-0.59 0.27-1.84 0-1.16-0.27-1.75-0.26-0.58-1.24-0.58h-0.37z",
+    // P
+    "M54.28 22.05v-21.35h6.48q2.04 0 3.24 0.81 1.21 0.8 1.72 2.27 0.52 1.47 0.52 3.48 0 1.94-0.43 3.39-0.44 1.46-1.56 2.26-1.12 0.81-3.16 0.81h-1.78v8.33zM59.31 9.63h0.11q1.23 0 1.5-0.6 0.27-0.59 0.27-1.84 0-1.16-0.27-1.75-0.26-0.58-1.24-0.58h-0.37z",
+    // Y
+    "M70.89 22.05v-7.06l-4.07-14.29h5.33l1.27 6.96 1.27-6.96h5.32l-4.05 14.29v7.06z",
+);
+const LOGO_TANKS: &str = concat!(
+    // T
+    "M4.94 55.08v-25.79h-4.87v-6.62h18.42v6.62h-4.87v25.79z",
+    // A
+    "M17.12 55.08l3.85-32.41h13.73l3.78 32.41h-7.91l-0.56-5.15h-4.28l-0.49 5.15zM26.33 44.35h3.03l-1.67-15.75h0.09z",
+    // N
+    "M40.19 55.08v-32.41h8.12l3.19 15.05-0.19-15.05h7.7v32.41h-7.74l-3.48-15.72 0.19 15.72z",
+    // K
+    "M62.69 55.08v-32.41h8.18l-0.18 12.55 3.38-12.55h8.34l-4.43 14.86 5.33 17.55h-8.58l-3.99-15.22 0.17 15.22z",
+    // S
+    "M93.78 55.76q-5.34 0-7.72-2.3-2.39-2.3-2.39-7.27v-3.45h8.06v4.34q0 1.06 0.35 1.61 0.34 0.55 1.2 0.55 0.92 0 1.25-0.44 0.34-0.43 0.34-1.53 0-1.47-0.33-2.43-0.33-0.97-1.17-1.86-0.83-0.89-2.33-2.11l-3.43-2.78q-3.94-3.18-3.94-7.29 0-4.28 2.34-6.55 2.35-2.26 6.75-2.26 5.36 0 7.64 2.47 2.27 2.47 2.27 7.71h-8.28v-2.5q0-0.55-0.36-0.86-0.37-0.3-1.03-0.3-0.81 0-1.16 0.36-0.35 0.36-0.35 0.95 0 0.62 0.41 1.37 0.4 0.74 1.65 1.75l4.4 3.62q1.34 1.09 2.47 2.31 1.13 1.22 1.82 2.85 0.69 1.63 0.69 3.97 0 4.69-2.05 7.38-2.05 2.69-7.1 2.69z",
+);
 
 /// The tank sheet's size, and one tank's cell in it: a column per tank, a row per team.
 const SHEET_SIZE: [f32; 2] = [1920.0, 800.0];
@@ -378,18 +486,11 @@ const SHEET_CELL: [f32; 2] = [640.0, 400.0];
 /// chassis sizes stay comparable.
 const PREVIEW_SIZE: [f32; 2] = [560.0, 300.0];
 
-/// The textures the screens draw: icons by name, the tank sheet and the logo.
+/// The textures the screens draw: icons by name and the tank sheet.
 pub struct Art {
     icons: HashMap<&'static str, TextureHandle>,
     tanks: Option<TextureHandle>,
-    logo: Option<TextureHandle>,
 }
-
-/// The logo, `previews/logo.webp`: the page's `.setup-brand` (SLOPPY over TANKS in
-/// Impact, tilted, with its shadows) captured at 3x from the production site with a
-/// margin around its layout box, in CSS pixels, for the tilt and the shadows.
-const LOGO_SIZE: egui::Vec2 = egui::vec2(152.0, 104.0);
-const LOGO_MARGIN: f32 = 24.0;
 
 /// A preview image embedded under `public/` as an egui texture.
 fn preview(context: &egui::Context, path: &str, name: &str) -> Option<TextureHandle> {
@@ -417,21 +518,15 @@ impl Art {
         Self {
             icons,
             tanks: preview(context, "previews/tanks.webp", "tank previews"),
-            logo: preview(context, "previews/logo.webp", "logo"),
         }
     }
 
     /// Paint the logo with its layout box's top-left at `origin`, as the page places
     /// `.setup-brand`.
     pub fn logo(&self, painter: &egui::Painter, origin: Pos2) {
-        if let Some(texture) = &self.logo {
-            painter.image(
-                texture.id(),
-                Rect::from_min_size(origin - egui::Vec2::splat(LOGO_MARGIN), LOGO_SIZE),
-                Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
-                Color32::WHITE,
-            );
-        }
+        let [x, y, width, height] = LOGO_VIEW;
+        let rect = Rect::from_min_size(origin + vec2(x, y), vec2(width, height));
+        self.icon(painter, "logo", rect, Color32::WHITE);
     }
 
     /// Paint icon `name` into `rect`, tinted (white keeps a coloured icon's colours).
@@ -529,23 +624,39 @@ fn rasterize(source: &Source) -> ColorImage {
         if let Paint::Stroke(width) = layer.paint {
             polygons = outline(&polygons, width / 2.0);
         }
+        let (offset, blur, opacity) = match layer.paint {
+            Paint::Shadow {
+                offset,
+                blur,
+                opacity,
+            } => (egui::Vec2::from(offset), blur, opacity),
+            _ => (egui::Vec2::ZERO, 0.0, 1.0),
+        };
+        // A shadow moves in the layer's own axes, before the tilt, like CSS.
         let transformed: Vec<Vec<Pos2>> = polygons
             .into_iter()
             .map(|(points, _)| {
                 points
                     .into_iter()
-                    .map(|point| pos2((point.x - x) * source.scale, (point.y - y) * source.scale))
+                    .map(|point| {
+                        let point = point + offset;
+                        let point = source.tilt.map_or(point, |tilt| tilt.apply(point));
+                        pos2((point.x - x) * source.scale, (point.y - y) * source.scale)
+                    })
                     .collect()
             })
             .collect();
-        let coverage = fill_coverage(&transformed, even_odd, size);
+        let mut coverage = fill_coverage(&transformed, even_odd, size);
+        if blur > 0.0 {
+            gaussian_blur(&mut coverage, size, blur / 2.0 * source.scale);
+        }
         let color = [
             ((layer.color >> 16) & 0xff) as f32 / 255.0,
             ((layer.color >> 8) & 0xff) as f32 / 255.0,
             (layer.color & 0xff) as f32 / 255.0,
         ];
         for (pixel, alpha) in rgba.iter_mut().zip(coverage) {
-            let alpha = alpha.min(1.0);
+            let alpha = alpha.min(1.0) * opacity;
             if alpha <= 0.0 {
                 continue;
             }
@@ -572,22 +683,27 @@ const SUBROWS: usize = 4;
 /// Each texel's covered share by `polygons` (closed implicitly).
 fn fill_coverage(polygons: &[Vec<Pos2>], even_odd: bool, size: [usize; 2]) -> Vec<f32> {
     let [width, height] = size;
-    let mut edges = Vec::new();
+    // The edges crossing each texel row, so that a row only looks at its own.
+    let mut edges: Vec<Vec<(Pos2, Pos2)>> = vec![Vec::new(); height];
+    let row = |y: f32| (y.max(0.0) as usize).min(height);
     for polygon in polygons {
         for (index, &from) in polygon.iter().enumerate() {
             let to = polygon[(index + 1) % polygon.len()];
             if from.y != to.y {
-                edges.push((from, to));
+                let rows = row(from.y.min(to.y).floor())..row(from.y.max(to.y).ceil());
+                for row_edges in &mut edges[rows] {
+                    row_edges.push((from, to));
+                }
             }
         }
     }
     let mut coverage = vec![0.0f32; width * height];
     let mut crossings: Vec<(f32, i32)> = Vec::new();
-    for row in 0..height {
+    for (row, row_edges) in edges.iter().enumerate() {
         for sub in 0..SUBROWS {
             let y = row as f32 + (sub as f32 + 0.5) / SUBROWS as f32;
             crossings.clear();
-            for &(from, to) in &edges {
+            for &(from, to) in row_edges {
                 let (low, high) = if from.y < to.y {
                     (from, to)
                 } else {
@@ -631,6 +747,76 @@ fn add_span(line: &mut [f32], start: f32, end: f32) {
         let overlap = end.min(texel as f32 + 1.0) - start.max(texel as f32);
         if overlap > 0.0 {
             *value += overlap * share;
+        }
+    }
+}
+
+/// Blur `coverage`, `size` texels, by a Gaussian `deviation` texels wide: three box
+/// blurs each way, whose variances add up to its. Nothing is drawn outside.
+fn gaussian_blur(coverage: &mut [f32], size: [usize; 2], deviation: f32) {
+    // A box of 2r + 1 texels has a variance of r(r + 1) / 3: the three take the two
+    // whole radii round the one that would do alone, as many of each as come closest.
+    let variance = |radius: usize| (radius * (radius + 1)) as f32 / 3.0;
+    let small = (((1.0 + 4.0 * deviation * deviation).sqrt() - 1.0) / 2.0).floor() as usize;
+    let large = ((deviation * deviation - 3.0 * variance(small))
+        / (variance(small + 1) - variance(small)))
+    .round()
+    .clamp(0.0, 3.0) as usize;
+    let width = size[0];
+    let mut line = Vec::new();
+    for pass in 0..3 {
+        let radius = if pass < large { small + 1 } else { small };
+        if radius == 0 {
+            continue;
+        }
+        for row in coverage.chunks_exact_mut(width) {
+            box_blur_row(row, radius, &mut line);
+        }
+        box_blur_columns(coverage, width, radius);
+    }
+}
+
+/// Average each value over the `2 * radius + 1` around it, with a running sum.
+fn box_blur_row(values: &mut [f32], radius: usize, line: &mut Vec<f32>) {
+    line.clear();
+    line.extend_from_slice(values);
+    let share = 1.0 / (2 * radius + 1) as f32;
+    let mut sum: f32 = line.iter().take(radius).sum();
+    for (index, value) in values.iter_mut().enumerate() {
+        if let Some(entering) = line.get(index + radius) {
+            sum += entering;
+        }
+        *value = sum * share;
+        if index >= radius {
+            sum -= line[index - radius];
+        }
+    }
+}
+
+/// `box_blur_row` down every column at once, a row at a time, so that the running
+/// sums stay in cache.
+fn box_blur_columns(values: &mut [f32], width: usize, radius: usize) {
+    let source = values.to_vec();
+    let rows: Vec<&[f32]> = source.chunks_exact(width).collect();
+    let share = 1.0 / (2 * radius + 1) as f32;
+    let mut sums = vec![0.0f32; width];
+    let add = |sums: &mut [f32], row: &[f32], sign: f32| {
+        for (sum, value) in sums.iter_mut().zip(row) {
+            *sum += sign * value;
+        }
+    };
+    for row in rows.iter().take(radius) {
+        add(&mut sums, row, 1.0);
+    }
+    for (index, out) in values.chunks_exact_mut(width).enumerate() {
+        if let Some(entering) = rows.get(index + radius) {
+            add(&mut sums, entering, 1.0);
+        }
+        for (value, sum) in out.iter_mut().zip(&sums) {
+            *value = sum * share;
+        }
+        if index >= radius {
+            add(&mut sums, rows[index - radius], -1.0);
         }
     }
 }
@@ -951,5 +1137,31 @@ mod tests {
         };
         assert!(at(12.0, 5.5) > 200);
         assert!(at(12.0, 8.8) < 40);
+    }
+
+    #[test]
+    fn a_blur_keeps_the_ink_and_spreads_it_by_the_deviation() {
+        let size = [121, 121];
+        for deviation in [1.5, 6.0, 12.0] {
+            let mut coverage = vec![0.0; size[0] * size[1]];
+            coverage[60 * size[0] + 60] = 1.0;
+            gaussian_blur(&mut coverage, size, deviation);
+            let total: f32 = coverage.iter().sum();
+            let spread = |axis: fn(usize) -> usize| {
+                coverage
+                    .iter()
+                    .enumerate()
+                    .map(|(index, value)| (axis(index) as f32 - 60.0).powi(2) * value)
+                    .sum::<f32>()
+                    .sqrt()
+            };
+            assert!((total - 1.0).abs() < 1e-3, "{deviation}: {total}");
+            for measured in [spread(|index| index % 121), spread(|index| index / 121)] {
+                assert!(
+                    (measured / deviation - 1.0).abs() < 0.06,
+                    "{deviation}: {measured}"
+                );
+            }
+        }
     }
 }
