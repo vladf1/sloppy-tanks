@@ -112,12 +112,12 @@ impl WindowInput {
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let (width, height, scale) = css_size(window);
-                self.controls
-                    .aim_at((position.x, position.y), (width * scale, height * scale));
-                self.cursor = Some(egui::pos2(
-                    (position.x / scale) as f32,
-                    (position.y / scale) as f32,
-                ));
+                self.cursor_moved(
+                    &overlay.context,
+                    (position.x, position.y),
+                    (width, height),
+                    scale,
+                );
             }
             // A turned phone or a browser's bars changed the screen under the fingers:
             // the stick and the shot let go until they press again (`resized`).
@@ -153,6 +153,25 @@ impl WindowInput {
             _ => {}
         }
         None
+    }
+
+    /// The cursor moved to `position` (pixels) in a window `size` points wide and tall at
+    /// `scale` pixels a point. The aim follows it over the arena and holds while it is on
+    /// egui's areas (a menu, the HUD's toolbar), as the page's arena never hears a pointer
+    /// over `#pause`: hovering Pause must not swing the turret toward it.
+    fn cursor_moved(
+        &mut self,
+        context: &egui::Context,
+        position: (f64, f64),
+        (width, height): (f64, f64),
+        scale: f64,
+    ) {
+        let cursor = egui::pos2((position.0 / scale) as f32, (position.1 / scale) as f32);
+        self.cursor = Some(cursor);
+        if self.pointer.held() || !crate::touch::over_ui(context, cursor) {
+            self.controls
+                .aim_at(position, (width * scale, height * scale));
+        }
     }
 
     /// What an iPad's keyboard pressed and released since the last frame asked for.
@@ -273,5 +292,51 @@ impl WindowInput {
         if !pointer_lock::apply(window, grab) {
             self.pointer.refused();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use egui::{Pos2, Rect, Vec2, pos2};
+
+    const SCREEN: Vec2 = Vec2::new(1200.0, 800.0);
+
+    /// Two passes of a screen with one HUD button at its top right, as the toolbar is:
+    /// egui hit-tests against the areas the last pass showed.
+    fn hud_context() -> egui::Context {
+        let context = egui::Context::default();
+        for _ in 0..2 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, SCREEN)),
+                ..Default::default()
+            };
+            let mut output = context.run_pass(input, |context| {
+                egui::Area::new(egui::Id::unique("toolbar"))
+                    .fixed_pos(pos2(1000.0, 10.0))
+                    .order(egui::Order::Middle)
+                    .show(context, |ui| {
+                        ui.allocate_exact_size(Vec2::new(150.0, 46.0), egui::Sense::click());
+                    });
+            });
+            // No painter takes the font atlas here.
+            output.textures_delta.clear();
+        }
+        context
+    }
+
+    #[test]
+    fn the_aim_holds_while_the_cursor_is_over_a_hud_button() {
+        let context = hud_context();
+        let mut input = WindowInput::default();
+        let size = (f64::from(SCREEN.x), f64::from(SCREEN.y));
+        // At 2 pixels a point: the arena's middle, then the toolbar's button.
+        input.cursor_moved(&context, (1200.0, 800.0), size, 2.0);
+        assert_eq!(input.controls.take_input().pointer, (0.0, 0.0));
+        input.cursor_moved(&context, (2100.0, 60.0), size, 2.0);
+        assert_eq!(input.controls.take_input().pointer, (0.0, 0.0));
+        assert_eq!(input.cursor, Some(pos2(1050.0, 30.0)));
+        input.cursor_moved(&context, (1800.0, 400.0), size, 2.0);
+        assert_eq!(input.controls.take_input().pointer, (0.5, 0.5));
     }
 }

@@ -726,6 +726,15 @@ fn battle_card(
     let clip = painter.with_clip_rect(rect.shrink(1.0));
     let at =
         |x: f32, y: f32, w: f32, h: f32| Rect::from_min_size(rect.min + vec2(x, y), vec2(w, h));
+    // Under the pointer the player's tanks step toward the fight (`translateX(-4px)`,
+    // the mirrored blue one the other way), springing a little past it.
+    let step = BATTLE_HOVER_STEP
+        * painter.ctx().animate_bool_with_time_and_easing(
+            Id::unique(("battle step", name)),
+            hovered,
+            BATTLE_HOVER_STEP_SECONDS,
+            egui::emath::easing::back_out,
+        );
     let width = rect.width();
     let height = rect.height();
     battle_scene(&clip, rect, team);
@@ -739,7 +748,7 @@ fn battle_card(
             VehicleKind::Heavy,
             Team::Red,
             at(
-                width * 0.98 - tank_width,
+                width * 0.98 - tank_width - step,
                 6.0 + art_height * team_art.red_top,
                 tank_width,
                 tank_height,
@@ -752,7 +761,7 @@ fn battle_card(
             VehicleKind::Balanced,
             Team::Blue,
             at(
-                width * 0.02,
+                width * 0.02 + step,
                 6.0 + art_height * (1.0 - team_art.blue_bottom) - tank_height,
                 tank_width,
                 tank_height,
@@ -808,7 +817,7 @@ fn battle_card(
             VehicleKind::Balanced,
             Team::Red,
             at(
-                (width - tank_width) / 2.0,
+                (width - tank_width) / 2.0 - step,
                 art_top + art_height - tank_height,
                 tank_width,
                 tank_height,
@@ -837,7 +846,21 @@ fn battle_card(
         rect.width() - 32.0,
     );
     choice_ring(painter, rect, selected);
+    // An unchosen poster answers the pointer with a light rim, so it reads as a choice.
+    if hovered && !selected {
+        painter.rect_stroke(
+            rect,
+            CornerRadius::same(10),
+            Stroke::new(2.0, hexa(0xcfe8ff, 0x59 as f32 / 255.0)),
+            StrokeKind::Inside,
+        );
+    }
 }
+
+/// How far a battle poster's tanks step under the pointer, and how long they take
+/// (`.mode-tank`'s `transition: transform 0.25s`).
+const BATTLE_HOVER_STEP: f32 = 4.0;
+const BATTLE_HOVER_STEP_SECONDS: f32 = 0.25;
 
 /// A battle poster's title (`.battle-choice .choice-card b`).
 const BATTLE_TITLE_SIZE: f32 = 24.0;
@@ -1265,9 +1288,11 @@ fn player_icon(painter: &Painter, rect: Rect, multiplayer: bool, ink: Color32) {
     }
 }
 
-/// Strength bars for a difficulty: one, two or three lit in its colour.
+/// Strength bars for a difficulty: one, two or three lit in its colour, muted unless it
+/// is the chosen level (`.difficulty-setting .segment::after`, `--pip-on`).
 fn difficulty_bars(painter: &Painter, rect: Rect, level: usize, selected: bool) {
-    let colors = [hex(0x5fe39a), GOLD, hex(0xff5a4f)];
+    let chosen = [hex(0x5fe39a), GOLD, hex(0xff5d6c)];
+    let muted = [hex(0x3fae74), hex(0xc99a22), hex(0xc8404f)];
     let width = rect.width() / 4.0;
     for bar in 0..3 {
         let height = rect.height() * [10.0 / 24.0, 17.0 / 24.0, 1.0][bar];
@@ -1276,21 +1301,34 @@ fn difficulty_bars(painter: &Painter, rect: Rect, level: usize, selected: bool) 
             pos2(left, rect.bottom() - height),
             pos2(left + width, rect.bottom()),
         );
-        let lit = bar <= level;
-        let color = if lit {
-            colors[level]
+        let color = if bar > level {
+            hexa(0xffffff, 0x1f as f32 / 255.0)
+        } else if selected {
+            chosen[level]
         } else {
-            hexa(0x9fd0ff, if selected { 0.22 } else { 0.16 })
+            muted[level]
         };
         painter.rect_filled(column, 2, color);
     }
 }
 
-/// The status line's progress track, the gap before it, and how far under the line's
-/// anchor its text's middle sits.
+/// The status line's progress track (`.startup-track`: 4 px), the gap before it, and how
+/// far under the line's anchor its text's middle sits; the dot before the text and the
+/// room it keeps (`#startup-status::before`, `padding-left: 16px`), and its type's
+/// spacing.
 const STATUS_TRACK: f32 = 72.0;
+const STATUS_TRACK_HEIGHT: f32 = 4.0;
 const STATUS_TRACK_GAP: f32 = 10.0;
 const STATUS_TEXT_DROP: f32 = 7.5;
+const STATUS_DOT: f32 = 8.0;
+const STATUS_DOT_ROOM: f32 = 16.0;
+const STATUS_SPACING: f32 = 0.4;
+/// The sweep while there is no share to show: its width as a share of the track, and
+/// one crossing's time (`startup-sweep 1.4s ease-in-out`, from `-100%` to `365%` of
+/// itself).
+const STATUS_SWEEP_WIDTH: f32 = 0.38;
+const STATUS_SWEEP_SECONDS: f64 = 1.4;
+const STATUS_SWEEP_TRAVEL: f32 = 4.65;
 
 /// What the arena is doing while it prepares, or nothing once it is ready.
 fn status_text(state: &UiState) -> Option<&str> {
@@ -1305,46 +1343,81 @@ fn status_text(state: &UiState) -> Option<&str> {
     }
 }
 
-/// The status line's width: its text, the gap and the track.
+/// The status line's width: its dot, text, the gap and the track.
 fn status_line_width(painter: &Painter, state: &UiState) -> f32 {
     status_text(state).map_or(0.0, |status| {
-        paint::text_width(painter, status, bold_font(12.0), 0.2) + STATUS_TRACK_GAP + STATUS_TRACK
+        STATUS_DOT_ROOM
+            + paint::text_width(painter, status, bold_font(12.0), STATUS_SPACING)
+            + STATUS_TRACK_GAP
+            + STATUS_TRACK
     })
 }
 
 /// While the arena prepares, its progress on one slim line ending at `right` (the BATTLE
-/// heading's line, or one column's own row); gone once ready.
+/// heading's line, or one column's own row), in gold with a dot (`#startup-status`) and
+/// a glowing track; gone once ready.
 fn status_line(painter: &Painter, right: egui::Pos2, state: &UiState, time: f64) {
     let Some(status) = status_text(state) else {
         return;
     };
     let track = Rect::from_min_size(
-        right - vec2(STATUS_TRACK, 1.5 - STATUS_TEXT_DROP),
-        vec2(STATUS_TRACK, 3.0),
+        right - vec2(STATUS_TRACK, STATUS_TRACK_HEIGHT / 2.0 - STATUS_TEXT_DROP),
+        vec2(STATUS_TRACK, STATUS_TRACK_HEIGHT),
     );
-    painter.rect_filled(track, 2, hexa(0xffffff, 0.1));
-    // The share loaded, or a sweep while there is none to show.
-    let fill = match state.progress {
-        Some(share) => Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),
+    painter.rect_filled(track, 2, hexa(0x88b9dc, 0x1a as f32 / 255.0));
+    // The share loaded, or a sweep while there is none to show, each glowing
+    // (`box-shadow: 0 0 10px #ffcf3899`) within the track, which hides what overflows.
+    let (fill, stops) = match state.progress {
+        Some(share) => (
+            Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),
+            [(0.0, GOLD), (0.5, GOLD), (1.0, super::theme::GOLD_HOT)],
+        ),
         None => {
-            let sweep = (time * 0.6).fract() as f32;
-            let width = track.width() * 0.35;
-            let left = track.left() - width + (track.width() + width) * sweep;
-            Rect::from_min_max(
-                pos2(left.max(track.left()), track.top()),
-                pos2((left + width).min(track.right()), track.bottom()),
+            let phase = (time / STATUS_SWEEP_SECONDS).fract() as f32;
+            let width = track.width() * STATUS_SWEEP_WIDTH;
+            let left = track.left() - width
+                + width * STATUS_SWEEP_TRAVEL * egui::emath::easing::cubic_in_out(phase);
+            (
+                Rect::from_min_size(pos2(left, track.top()), vec2(width, track.height())),
+                [
+                    (0.0, Color32::TRANSPARENT),
+                    (0.5, GOLD),
+                    (1.0, super::theme::GOLD_HOT),
+                ],
             )
         }
     };
-    painter.rect_filled(fill, 2, GOLD);
+    let clip = painter.with_clip_rect(track.intersect(painter.clip_rect()));
+    clip.add(
+        egui::epaint::Shadow {
+            offset: [0, 0],
+            blur: 15,
+            spread: 0,
+            color: hexa(0xffcf38, 0x99 as f32 / 255.0),
+        }
+        .as_shape(fill, 2),
+    );
+    clip.add(paint::hgradient(fill, &stops));
+    let text_right = track.left() - STATUS_TRACK_GAP;
+    let text_width = paint::text_width(painter, status, bold_font(12.0), STATUS_SPACING);
+    let dot = pos2(
+        text_right - text_width - STATUS_DOT_ROOM + STATUS_DOT / 2.0,
+        track.center().y,
+    );
+    painter.circle_filled(
+        dot,
+        STATUS_DOT / 2.0 + 3.0,
+        hexa(0xffcf38, 0x26 as f32 / 255.0),
+    );
+    painter.circle_filled(dot, STATUS_DOT / 2.0, GOLD);
     paint::text(
         painter,
-        pos2(track.left() - STATUS_TRACK_GAP, track.center().y),
+        pos2(text_right, track.center().y),
         Align2::RIGHT_CENTER,
         status,
         bold_font(12.0),
-        hex(0xdbe9f6),
-        0.2,
+        GOLD,
+        STATUS_SPACING,
     );
 }
 

@@ -72,11 +72,15 @@
           opacity 0.25s,
           display 0.25s allow-discrete;
       }
-      /* It fades out over the game, which takes the taps and clicks meanwhile. */
+      /* Its sky fades out over the game, which takes the taps and clicks meanwhile; the
+         logo and the card go at once, or they would ghost over Battle Setup. */
       [data-shell="ready"] #boot {
         display: none;
         opacity: 0;
         pointer-events: none;
+      }
+      [data-shell="ready"] #boot > * {
+        visibility: hidden;
       }
       .boot-brand {
         display: grid;
@@ -104,6 +108,8 @@
           0 6px 22px #ff9d1c55;
       }
       .boot-card {
+        display: flex;
+        flex-direction: column;
         box-sizing: border-box;
         width: min(380px, calc(100vw - 48px));
         padding: 13px 16px 14px;
@@ -182,24 +188,71 @@
         overflow-y: auto;
         color: #f4f9ff;
       }
+      /* The game's gold action (`.primary`, as Battle Setup's TRY AGAIN): a lit slab with
+         a ledge under it and a warm glow, brighter and lifted under the pointer, a glint
+         crossing it once, pressed down onto a thinner ledge. */
       #boot-retry {
+        position: relative;
+        display: block;
+        width: 100%;
+        min-height: 62px;
         margin-top: 14px;
-        padding: 9px 26px;
+        padding: 8px 24px;
+        overflow: hidden;
         border: 0;
-        border-radius: 8px;
-        color: #2a1600;
-        background: linear-gradient(180deg, #ffe58a, #ffcf38 45%, #ff9d1c);
+        border-radius: 12px;
+        color: #1a2233;
+        background: linear-gradient(180deg, #ffe46e 0%, #ffcf38 48%, #f4a91a 100%);
+        box-shadow:
+          inset 0 1px #fff9,
+          inset 0 -3px #c97d0e,
+          0 8px 24px #ffb21c33;
+        text-shadow: 0 1px #fff6;
         font:
-          400 17px/1 Impact,
+          400 16px/1 Impact,
           Haettenschweiler,
           "Arial Narrow Bold",
           sans-serif;
-        letter-spacing: 1px;
+        letter-spacing: 4px;
         cursor: pointer;
+        transition:
+          filter 0.12s,
+          transform 0.12s,
+          box-shadow 0.12s;
+      }
+      #boot-retry::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -40%;
+        width: 30%;
+        background: linear-gradient(90deg, transparent, #ffffff8c, transparent);
+        transform: skewX(-20deg) translateX(-120%);
+        pointer-events: none;
+      }
+      #boot-retry:hover {
+        filter: brightness(1.07);
+        box-shadow:
+          inset 0 1px #fff9,
+          inset 0 -3px #c97d0e,
+          0 10px 30px #ffb21c66;
+        transform: translateY(-1px);
+      }
+      #boot-retry:hover::after {
+        transform: skewX(-20deg) translateX(560%);
+        transition: transform 0.6s ease;
+      }
+      #boot-retry:active {
+        transform: translateY(1px);
+        box-shadow:
+          inset 0 1px #fff9,
+          inset 0 -1px #c97d0e,
+          0 4px 12px #ffb21c44;
       }
       #boot-retry:focus-visible {
-        outline: 2px solid #ffe58a;
-        outline-offset: 2px;
+        outline: 3px solid #fff;
+        outline-offset: 3px;
       }
       [data-shell="failed"] #boot-status {
         color: #ffb2a7;
@@ -207,8 +260,19 @@
       [data-shell="failed"] #boot-status::before {
         box-shadow: 0 0 0 3px #ffb2a720;
       }
+      /* The track stays, under the words and filled with the failure's colour. */
       [data-shell="failed"] .boot-track {
-        display: none;
+        order: 1;
+      }
+      [data-shell="failed"] #boot-retry {
+        order: 2;
+      }
+      [data-shell="failed"] #boot-bar {
+        width: 100%;
+        background: #ffb2a7;
+        box-shadow: none;
+        opacity: 1;
+        animation: none;
       }
     </style>
   </head>
@@ -216,12 +280,12 @@
     <div id="boot">
       <div class="boot-brand" aria-hidden="true"><b>SLOPPY</b><b>TANKS</b></div>
       <div class="boot-card" role="status">
-        <p id="boot-status">Loading the game…</p>
+        <p id="boot-status">Loading game…</p>
         <div class="boot-track"><span id="boot-bar"></span></div>
         <p id="boot-note" class="boot-more" hidden></p>
         <p id="boot-hint" class="boot-more" hidden></p>
         <noscript><p class="boot-more">This game needs JavaScript enabled.</p></noscript>
-        <button id="boot-retry" type="button" hidden>RETRY</button>
+        <button id="boot-retry" type="button" hidden>TRY AGAIN</button>
       </div>
     </div>
     <!-- The desktop app's egui shell built for the page (`pnpm run wasm`): on WebGPU, or
@@ -269,23 +333,36 @@
       const OFFLINE = "Check your connection, then try again.";
       const OLD_BROWSER = "Update your browser, or try another one.";
       const GRAPHICS = /\b(WebGPU|WebGL) (adapter|device|canvas|window) unavailable/;
-      /** Say why the game cannot go on, with a retry; the first reason stands. */
-      const fail = (reason, help) => {
+      const UNLOADED = "The arena could not load. Please try again.";
+      /** Say why the game cannot go on, with a retry; the first reason stands. A `detail`
+       * the player cannot act on (a browser's own error) goes to the console and to
+       * `#boot-note`'s `data-detail` for the checks, with `headline` (or the usual
+       * heading) and no `reason` shown in its place. */
+      const fail = (reason, help, { headline, detail } = {}) => {
         if (failed) return;
         failed = true;
         clearTimeout(stall);
         root.dataset.shell = "failed";
-        status.textContent = performance.getEntriesByName("sloppy:first-frame").length
-          ? "Sloppy Tanks stopped"
-          : "Sloppy Tanks could not start";
+        if (detail) console.error(detail);
+        note.dataset.detail = detail ?? reason;
+        status.textContent =
+          headline ??
+          (performance.getEntriesByName("sloppy:first-frame").length
+            ? "Sloppy Tanks stopped"
+            : "Sloppy Tanks could not start");
         status.parentElement.setAttribute("role", "alert");
         show(note, reason);
+        delete view.dataset.progress;
+        bar.style.width = "";
         const graphics =
           "Turn on hardware acceleration in your browser's settings, or try another browser.";
         show(hint, help ?? (GRAPHICS.test(reason) ? graphics : "Reload to try again."));
         retry.hidden = false;
-        retry.focus();
+        // Enter retries, without a ring that would read as the button being chosen.
+        retry.focus({ focusVisible: false });
       };
+      /** The game's code or binary did not arrive: production's words, the detail kept. */
+      const unloaded = (detail) => fail("", OFFLINE, { headline: UNLOADED, detail });
       const message = (error) => (error instanceof Error ? error.message : String(error));
       // The shell's own word (a panic, no graphics), or a trap that stopped it without
       // one (out of memory). So does a browser error thrown through the shell's Wasm
@@ -362,7 +439,7 @@
       if (typeof WebAssembly !== "object") {
         fail("This browser cannot run WebAssembly.", OLD_BROWSER);
       } else {
-        say("Loading the game…");
+        say("Loading game…");
         const forceWebgl = new URLSearchParams(location.search).has("webgl");
         const adapter =
           !forceWebgl && navigator.gpu && (await navigator.gpu.requestAdapter().catch(() => null));
@@ -388,7 +465,7 @@
             }),
           ]);
         } catch (error) {
-          fail(message(error), OFFLINE);
+          unloaded(message(error));
         }
         if (init) {
           try {
@@ -396,15 +473,16 @@
             performance.mark("sloppy:shell-started");
           } catch (error) {
             if (!(await complete)) {
-              console.error(error);
-              fail("The game did not download completely.", OFFLINE);
+              unloaded(`The game did not download completely: ${message(error)}`);
             } else if (error instanceof WebAssembly.CompileError) {
-              fail(`This browser cannot run the game: ${error.message}`, OLD_BROWSER);
+              fail("This browser cannot run the game.", OLD_BROWSER, {
+                detail: `This browser cannot run the game: ${error.message}`,
+              });
             } else if (error instanceof WebAssembly.RuntimeError) {
               trapped(error);
             } else {
               // An exception in its start, or a binary from another build (a stale cache).
-              fail(`The game could not start: ${message(error)}`);
+              fail("", undefined, { detail: `The game could not start: ${message(error)}` });
             }
           }
         }
