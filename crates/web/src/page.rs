@@ -7,7 +7,7 @@ use glam::Vec2;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use sloppy_core::sim::{SimEvent, SimEventType};
-use sloppy_render::gpu::{RenderTarget, Renderer};
+use sloppy_render::gpu::{BACKDROP_BLUR_CSS_PX, RenderTarget, Renderer};
 use sloppy_render::presentation::camera_rig::CameraRig;
 use sloppy_render::presentation::input::InputFrame;
 use sloppy_render::presentation::view_settings::CAMERA;
@@ -126,6 +126,15 @@ impl CanvasSize {
             1.0
         } else {
             self.device_pixel_ratio.min(CAMERA.max_pixel_ratio)
+        }
+    }
+
+    /// The renderer's blur behind a dialog in drawing-buffer pixels (`on`), or none.
+    pub fn backdrop_blur(&self, on: bool) -> f32 {
+        if on {
+            BACKDROP_BLUR_CSS_PX * self.pixel_ratio() as f32
+        } else {
+            0.0
         }
     }
 

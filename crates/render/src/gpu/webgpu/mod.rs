@@ -281,6 +281,10 @@ pub struct Frame {
     output_uniform: wgpu::Buffer,
     occlusion_uniform: wgpu::Buffer,
     post: PostTargets,
+    /// The output uniform last written blurs the arena behind a dialog, and the
+    /// targets that blur draws through while it does.
+    backdrop_on: bool,
+    backdrop: Option<BackdropTargets>,
     shadow_base_buffer: wgpu::Buffer,
     shadow_base_capacity: u32,
     /// Set once the GPU has run everything submitted before the last
@@ -395,6 +399,8 @@ impl Frame {
             output_uniform,
             occlusion_uniform,
             post,
+            backdrop_on: false,
+            backdrop: None,
             shadow_base_buffer: base_buffer(device, INITIAL_SHADOW_BASES),
             shadow_base_capacity: INITIAL_SHADOW_BASES,
             gpu_idle: Arc::new(AtomicBool::new(true)),
@@ -432,6 +438,7 @@ impl Frame {
         if (config.width, config.height) != canvas {
             (config.width, config.height) = canvas;
             self.canvas.surface.configure(&gpu.device, config);
+            self.backdrop = None;
         }
         if self.scene_size() == scene {
             return;
@@ -548,12 +555,16 @@ impl Frame {
         }
     }
 
-    pub fn write_output(&self, gpu: &Gpu, mut uniform: OutputUniform) {
+    pub fn write_output(&mut self, gpu: &Gpu, mut uniform: OutputUniform) {
         // The canvas's rows run top-down like the HDR target's: row = 0 + 1 × y.
         uniform.settings[1] = 0.0;
         uniform.settings[2] = 1.0;
         gpu.queue
             .write_buffer(&self.output_uniform, 0, bytemuck::bytes_of(&uniform));
+        self.backdrop_on = uniform.backdrop[0] > 0.0;
+        if !self.backdrop_on {
+            self.backdrop = None;
+        }
     }
 
     pub fn write_occlusion(&self, gpu: &Gpu, uniform: &OcclusionUniform) {
@@ -569,7 +580,8 @@ impl Frame {
             .flatten()
             .map(|map| context::texture_bytes(&map.texture))
             .sum::<u64>();
-        self.main_target.bytes() + self.post.bytes + shadow
+        let backdrop = self.backdrop.as_ref().map_or(0, |targets| targets.bytes);
+        self.main_target.bytes() + self.post.bytes + backdrop + shadow
     }
 
     /// Upload this frame's merged shadow bases.
@@ -697,7 +709,13 @@ impl Frame {
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         if self.scene_drawn {
             // The output pass's draw is not counted: the frame's stats were taken.
-            self.encode_output(&mut encoder, &view, pipelines, &mut RenderStats::default());
+            self.encode_output(
+                gpu,
+                &mut encoder,
+                &view,
+                pipelines,
+                &mut RenderStats::default(),
+            );
         } else {
             encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
                 label: Some("blank window"),
@@ -777,7 +795,7 @@ impl Frame {
         let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("output"),
         });
-        self.encode_output(&mut encoder, &view, scene.pipelines, stats);
+        self.encode_output(gpu, &mut encoder, &view, scene.pipelines, stats);
         gpu.queue.submit([encoder.finish()]);
         gpu.queue.present(output);
         self.track_frame(gpu, submitted);
@@ -802,7 +820,18 @@ impl Frame {
             label: Some("warm-up"),
         });
         self.encode_scene(&mut encoder, scene, stats);
-        self.encode_output(&mut encoder, &probe_view, scene.pipelines, stats);
+        self.encode_output(gpu, &mut encoder, &probe_view, scene.pipelines, stats);
+        // The dialog backdrop's blur, from the scene's frame: its pipeline state is
+        // ready before the first dialog opens.
+        post_draw(
+            &mut encoder,
+            "warm-up backdrop",
+            &scene.pipelines.fixed().backdrop,
+            &self.post.frame_group,
+            &probe_view,
+            false,
+            BloomPass::BackdropColumns as u32,
+        );
         gpu.queue.submit([encoder.finish()]);
         probe.destroy();
     }
@@ -1056,13 +1085,73 @@ impl Frame {
         stats.occlusion_triangles = stats.triangles - triangles;
     }
 
-    /// Draw `main_target` into `output` through the output transform.
+    /// Draw `main_target` into `output` through the output transform. Behind a dialog
+    /// the output pass draws into the backdrop's targets instead and blurs along their
+    /// rows, in a command buffer of its own submitted here, and `encoder` gets the blur
+    /// down the columns into `output`: WebKit paces a canvas by the GPU time of the
+    /// command buffers that write it ([`Self::draw`]).
     fn encode_output(
         &mut self,
+        gpu: &Gpu,
         encoder: &mut wgpu::CommandEncoder,
         output: &wgpu::TextureView,
         pipelines: &Pipelines,
         stats: &mut RenderStats,
+    ) {
+        if !self.backdrop_on {
+            self.output_pass(encoder, output, pipelines);
+            stats.draw_calls += 1;
+            return;
+        }
+        let size = self.size();
+        if self
+            .backdrop
+            .as_ref()
+            .is_none_or(|targets| targets.size != size)
+        {
+            self.backdrop = Some(BackdropTargets::new(
+                gpu,
+                size,
+                &self.output_uniform,
+                &self.linear_sampler,
+            ));
+        }
+        let targets = self.backdrop.as_ref().expect("made above");
+        let blur = &pipelines.fixed().backdrop;
+        let mut picture = gpu
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("backdrop"),
+            });
+        self.output_pass(&mut picture, &targets.picture.1, pipelines);
+        post_draw(
+            &mut picture,
+            "backdrop rows",
+            blur,
+            &targets.picture_group,
+            &targets.rows.1,
+            false,
+            BloomPass::BackdropRows as u32,
+        );
+        gpu.queue.submit([picture.finish()]);
+        post_draw(
+            encoder,
+            "backdrop columns",
+            blur,
+            &targets.rows_group,
+            output,
+            false,
+            BloomPass::BackdropColumns as u32,
+        );
+        stats.draw_calls += 3;
+    }
+
+    /// The output pass from `main_target` into `output`.
+    fn output_pass(
+        &self,
+        encoder: &mut wgpu::CommandEncoder,
+        output: &wgpu::TextureView,
+        pipelines: &Pipelines,
     ) {
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("output"),
@@ -1083,7 +1172,6 @@ impl Frame {
         pass.set_pipeline(&pipelines.fixed().output);
         pass.set_bind_group(0, &self.post.output_group, &[]);
         pass.draw(0..3, 0..1);
-        stats.draw_calls += 1;
     }
 }
 
@@ -1302,6 +1390,77 @@ impl Drop for PostTargets {
         }
         self.occlusion.destroy();
         self.occlusion_blurred.0.destroy();
+    }
+}
+
+/// The dialog backdrop's two targets, the canvas's size and format: the output pass's
+/// picture, and its blur along the rows, with the bind groups of the blur passes that
+/// read them. Made while a dialog blurs the arena, dropped with the blur or a new canvas
+/// size; dropping destroys the textures.
+struct BackdropTargets {
+    size: (u32, u32),
+    picture: (wgpu::Texture, wgpu::TextureView),
+    rows: (wgpu::Texture, wgpu::TextureView),
+    picture_group: wgpu::BindGroup,
+    rows_group: wgpu::BindGroup,
+    bytes: u64,
+}
+
+impl BackdropTargets {
+    fn new(
+        gpu: &Gpu,
+        size: (u32, u32),
+        output_uniform: &wgpu::Buffer,
+        sampler: &wgpu::Sampler,
+    ) -> Self {
+        let device = &gpu.device;
+        let usage = wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING;
+        let target = |label| {
+            let texture = texture_2d(device, label, size.0, size.1, gpu.canvas_format, 1, usage);
+            let view = texture.create_view(&Default::default());
+            (texture, view)
+        };
+        let picture = target("backdrop picture");
+        let rows = target("backdrop rows");
+        // The bloom passes' layout: the source, the output uniform and a linear sampler.
+        let group = |view: &wgpu::TextureView| {
+            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                label: Some("backdrop"),
+                layout: &gpu.layouts.bloom,
+                entries: &[
+                    wgpu::BindGroupEntry {
+                        binding: 0,
+                        resource: wgpu::BindingResource::TextureView(view),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 1,
+                        resource: output_uniform.as_entire_binding(),
+                    },
+                    wgpu::BindGroupEntry {
+                        binding: 2,
+                        resource: wgpu::BindingResource::Sampler(sampler),
+                    },
+                ],
+            })
+        };
+        let picture_group = group(&picture.1);
+        let rows_group = group(&rows.1);
+        let bytes = context::texture_bytes(&picture.0) + context::texture_bytes(&rows.0);
+        Self {
+            size,
+            picture,
+            rows,
+            picture_group,
+            rows_group,
+            bytes,
+        }
+    }
+}
+
+impl Drop for BackdropTargets {
+    fn drop(&mut self) {
+        self.picture.0.destroy();
+        self.rows.0.destroy();
     }
 }
 

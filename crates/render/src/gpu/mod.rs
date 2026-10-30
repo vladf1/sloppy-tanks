@@ -404,9 +404,9 @@ struct FrameUniform {
     cloud_tiles: [f32; 4],
 }
 
-/// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade and the
-/// upscale from the scene's size to the canvas's. The backend fills in the row
-/// mapping (`settings.y`, `settings.z`).
+/// WGSL `Output` (`output.wgsl`): exposure, bloom, occlusion, the grade, the
+/// upscale from the scene's size to the canvas's and the dialog backdrop's blur. The
+/// backend fills in the row mapping (`settings.y`, `settings.z`).
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Pod, Zeroable)]
 struct OutputUniform {
@@ -421,6 +421,41 @@ struct OutputUniform {
     highlights: [f32; 4],
     detail: [f32; 4],
     curve: [f32; 4],
+    backdrop: [f32; 4],
+    backdrop_offsets: [f32; 4],
+    backdrop_weights: [f32; 4],
+}
+
+/// The page's dialog backdrop, `backdrop-filter: blur(2px) saturate(0.9)`: the arena
+/// behind pause, the results, Settings and a room's menu blurs by a Gaussian of this
+/// standard deviation in CSS pixels, then keeps this share of its saturation (CSS
+/// `saturate()`).
+pub const BACKDROP_BLUR_CSS_PX: f32 = 2.0;
+const BACKDROP_SATURATION: f32 = 0.9;
+
+/// The backdrop blur's weights for one of its separable passes (`backdrop_blur` in
+/// `output.wgsl`): the centre texel's, and for each of the bilinear taps either side
+/// the distance in texels and weight of the texel pair it reads, so two texels cost
+/// one tap. Four pairs reach eight texels, over 2.8 standard deviations of the widest
+/// blur the canvas's pixel ratio gives (`CAMERA.max_pixel_ratio` 1.5: 3 pixels); the
+/// weights sum to one.
+fn backdrop_kernel(sigma: f32) -> ([f32; 4], [f32; 4], [f32; 4]) {
+    let gaussian = |x: f32| (-0.5 * (x / sigma).powi(2)).exp();
+    let mut offsets = [0.0; 4];
+    let mut weights = [0.0; 4];
+    for (pair, (offset, weight)) in offsets.iter_mut().zip(&mut weights).enumerate() {
+        let near = (2 * pair + 1) as f32;
+        let (a, b) = (gaussian(near), gaussian(near + 1.0));
+        *weight = a + b;
+        *offset = (near * a + (near + 1.0) * b) / (a + b);
+    }
+    let total = 1.0 + 2.0 * weights.iter().sum::<f32>();
+    let centre = 1.0 / total;
+    (
+        [centre, BACKDROP_SATURATION, 0.0, 0.0],
+        offsets,
+        weights.map(|weight| weight / total),
+    )
 }
 
 /// The cast shadow's blocker search (`standard.wgsl` `search_casters`): the steepest
@@ -658,6 +693,8 @@ struct FixedPipelines<P> {
     /// Screen-space ambient occlusion, and its blur for the output pass.
     occlusion: P,
     occlusion_blur: P,
+    /// The dialog backdrop's blur passes, into the canvas's format.
+    backdrop: P,
     /// Merged casters, depth-only then alpha-tested, indexed by
     /// `shadow_merged_index`.
     shadow_merged: Vec<P>,
@@ -665,7 +702,7 @@ struct FixedPipelines<P> {
 
 impl<P> FixedPipelines<P> {
     fn count(&self) -> usize {
-        7 + self.shadow_merged.len()
+        8 + self.shadow_merged.len()
     }
 }
 
@@ -679,6 +716,10 @@ enum BloomPass {
     /// The occlusion's blur for the output pass (`FixedPipelines::occlusion_blur`),
     /// which shares the stage.
     OcclusionBlur = 3,
+    /// The dialog backdrop's blur along the rows of the output pass's picture, then
+    /// down its columns and desaturated into the canvas (`FixedPipelines::backdrop`).
+    BackdropRows = 4,
+    BackdropColumns = 5,
 }
 
 /// A merged, depth-only caster mesh (`shadow_merge.rs`).
@@ -967,6 +1008,9 @@ pub struct Renderer {
     /// The quality controller asked for a canvas pacing reset that the next frame
     /// free of queued ones performs.
     pacing_reset_due: bool,
+    /// The dialog backdrop's blur in canvas pixels of standard deviation; 0 while no
+    /// dialog blurs the arena.
+    backdrop_blur: f32,
     /// Development switches a measurement flips within one page (`debug_set_off`).
     pub debug_off: DebugOff,
 }
@@ -984,6 +1028,8 @@ pub struct DebugOff {
     pub atmosphere: bool,
     /// The ground's macro relief, tone and bounce (`ground_macro`).
     pub ground: bool,
+    /// The dialog backdrop's blur: the arena shows sharp behind a dialog.
+    pub backdrop: bool,
     /// Custom effects whose draws the main view skips; "lit" and "unlit" name
     /// the plain standard and basic materials, "shadowed" every receiver.
     pub effects: Vec<String>,
@@ -1081,6 +1127,7 @@ impl Renderer {
             requested_shadow_size: sun_shadow.map_size,
             scene_load: 1.0,
             pacing_reset_due: false,
+            backdrop_blur: 0.0,
             debug_off: DebugOff::default(),
             frame,
             gpu,
@@ -1131,6 +1178,19 @@ impl Renderer {
     /// The tier and render scale in effect.
     pub fn quality(&self) -> (Tier, f32) {
         (self.tier, self.render_scale)
+    }
+
+    /// Blur the arena behind a dialog by a Gaussian of `sigma` canvas pixels
+    /// ([`BACKDROP_BLUR_CSS_PX`] times the canvas's pixel ratio) and desaturate it, as
+    /// the page's dialog backdrop did; 0 shows it sharp, and costs nothing. It takes
+    /// effect at the next canvas frame, with or without a new scene: a dialog's first
+    /// frame shows it blurred.
+    pub fn set_backdrop_blur(&mut self, sigma: f32) {
+        if sigma != self.backdrop_blur {
+            self.backdrop_blur = sigma;
+            let uniform = self.output_uniform();
+            self.frame.write_output(&self.gpu, uniform);
+        }
     }
 
     /// The largest texture edge the GPU offers.
@@ -2394,7 +2454,7 @@ impl Renderer {
         }
     }
 
-    /// The output pass's exposure, bloom, occlusion, grade and upscale.
+    /// The output pass's exposure, bloom, occlusion, grade, upscale and backdrop blur.
     fn output_uniform(&self) -> OutputUniform {
         let a = &self.atmosphere;
         let on = a.enabled;
@@ -2409,6 +2469,12 @@ impl Renderer {
         let [lr, lg, lb] = grade.lift;
         let [gr, gg, gb] = grade.gamma;
         let [nr, ng, nb] = grade.gain;
+        let (backdrop, backdrop_offsets, backdrop_weights) =
+            if self.backdrop_blur > 0.0 && !self.debug_off.backdrop {
+                backdrop_kernel(self.backdrop_blur)
+            } else {
+                ([0.0; 4], [0.0; 4], [0.0; 4])
+            };
         OutputUniform {
             settings: [
                 self.environment.exposure * if on { a.exposure } else { 1.0 },
@@ -2448,6 +2514,9 @@ impl Renderer {
             } else {
                 tone_curve(&Tone::ACES)
             },
+            backdrop,
+            backdrop_offsets,
+            backdrop_weights,
         }
     }
 
@@ -2533,7 +2602,8 @@ impl Renderer {
         views[REFLECTION_VIEW].quality[3] = 1.0;
         views[SHADOW_VIEW].quality[3] = 1.0;
         self.frame.write_views(&self.gpu, &views);
-        self.frame.write_output(&self.gpu, self.output_uniform());
+        let output = self.output_uniform();
+        self.frame.write_output(&self.gpu, output);
         if self.occlusion_on() {
             self.frame
                 .write_occlusion(&self.gpu, &self.occlusion_uniform());

@@ -1135,6 +1135,14 @@ impl Session {
         Ok(())
     }
 
+    /// A dialog dims the arena this frame (pause, the results, Settings during a round),
+    /// which the page also blurred behind it. Battle Setup hides the arena.
+    fn dialog_over_arena(&self) -> bool {
+        self.in_round
+            && (matches!(self.phase, MatchPhase::Paused | MatchPhase::Results)
+                || self.ui.settings_draft.is_some())
+    }
+
     /// Grab the cursor while first person steers, so the mouse turns the view; a death
     /// keeps it (`pointer_lock.rs`).
     fn hold_pointer(&mut self) {
@@ -1222,6 +1230,10 @@ impl Session {
             }
             Command::Soak(seconds) => serde_json::from_str(&game.debug_soak(seconds))
                 .map_err(|error| error.to_string())?,
+            Command::Off(ref off) => {
+                game.debug_set_off(off).map_err(engine_error)?;
+                Value::Null
+            }
             Command::Latency { .. } => return Err("single player has no connection".into()),
         })
     }
@@ -1295,6 +1307,7 @@ impl Session {
         let target = self.game.renderer().size();
         let present_start = now_ms();
         self.parts.overlay = present_start - overlay_start;
+        self.game.set_backdrop_blur(self.dialog_over_arena());
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
         self.parts.present = now_ms() - present_start;

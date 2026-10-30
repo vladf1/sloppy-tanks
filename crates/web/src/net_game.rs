@@ -184,6 +184,8 @@ pub struct NetGame {
     times: FrameTimes,
     pacing: FramePacing,
     canvas: CanvasSize,
+    /// A dialog the page blurred the arena behind is open (`set_backdrop_blur`).
+    backdrop_blur: bool,
     graphics: Graphics,
     /// The last frame's result, which a frame skipped for the GPU hands back.
     last_result: Vec<f32>,
@@ -379,6 +381,7 @@ impl NetGame {
         self.canvas.apply(&mut self.view);
         self.graphics
             .set_pixel_ratio(&mut self.view.renderer, self.canvas.pixel_ratio());
+        self.set_backdrop_blur(self.backdrop_blur);
     }
 
     /// The Settings dialog's Graphics choice: "auto", "high", "medium" or "low".
@@ -713,6 +716,7 @@ impl NetGame {
             times: FrameTimes::default(),
             pacing,
             canvas,
+            backdrop_blur: false,
             shell,
             graphics,
             last_result: vec![0.0; net_frame_slot::LENGTH],
@@ -834,6 +838,16 @@ impl NetGame {
     /// The GPU's smoothed frame time in milliseconds, once sampled.
     pub fn gpu_ms(&self) -> Option<f64> {
         self.graphics.gpu_ms()
+    }
+
+    /// Blur and desaturate the arena while a dialog is over it (the room's menu, the
+    /// connection's, Settings), as the page's dialog backdrop did; from the next frame
+    /// shown.
+    pub fn set_backdrop_blur(&mut self, on: bool) {
+        self.backdrop_blur = on;
+        self.view
+            .renderer
+            .set_backdrop_blur(self.canvas.backdrop_blur(on));
     }
 }
 
