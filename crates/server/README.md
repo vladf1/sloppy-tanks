@@ -12,16 +12,15 @@ the server directory (https://sloppy-tanks-directory.fridman.me) lists them.
 
 ```sh
 pnpm run server:dev        # build for this machine and listen on 127.0.0.1:8787
-pnpm run dev               # in another terminal; open ?multiplayer on the printed URL
+pnpm run dev               # in another terminal; open the printed URL with ?directory=http://127.0.0.1:8787
 ```
 
-The client uses `ws://127.0.0.1:8787` locally. `pnpm run server:check:players`
-runs real player sockets on all maps against a running server;
-`SLOPPY_SERVER_URL=wss://sloppy-tanks-server.fridman.me` tests production's.
-`pnpm run check:multiplayer` drives two Chrome contexts; `SLOPPY_SERVER` selects
-a remote server for that browser check. For sustained traffic from other
-regions, the traffic bots (a separate Cloudflare Worker) join open rooms on
-production's server; see `bots/README.md`.
+The page lists the rooms of the server directory it is given (`?directory=`, the app's
+`--directory`), and a local server answers as its own directory, so the page then plays on
+`ws://127.0.0.1:8787`. `pnpm run server:check:players` runs real player sockets on all
+maps against a running server; `SLOPPY_SERVER_URL=wss://sloppy-tanks-server.fridman.me`
+tests production's. For sustained traffic from other regions, the traffic bots (a
+separate Cloudflare Worker) join open rooms on production's server; see `bots/README.md`.
 
 Tests: `cargo test -p sloppy-server` covers settings, limits, the WebSocket codec
 and deflate, sessions, the monitor and dashboard, and end-to-end rooms through

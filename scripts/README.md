@@ -7,11 +7,25 @@ cleanup, so play the changed path in the page or the desktop app.
 
 ## Desktop UI gauntlet
 
-This is a manual builder/critic loop against the actual production web interface,
-using native GPU snapshots and production JavaScript with identical fixture data.
-It covers setup/loading, multiplayer setup, team/solo HUD, first person and damage,
-respawn, pause/controls, Settings, team/solo results, room host/guest/rules/choices,
-room pause/results/connection states, and both Stats for nerds panels.
+This is a manual builder/critic loop against the web interface the egui shell replaced:
+the TypeScript/DOM page's production build of `90423be0` (the last main commit before
+PR 125, which production served until then), built locally and frozen, using native GPU
+snapshots and that build's own JavaScript with identical fixture data. It covers
+setup/loading, multiplayer setup, team/solo HUD, first person and damage, respawn,
+pause/controls, Settings, team/solo results, room host/guest/rules/choices, room
+pause/results/connection states, and both Stats for nerds panels.
+
+Build the reference once per checkout (the capture checks the build's `/health`
+commit):
+
+```sh
+git worktree add --detach artifacts/performance/web-shell/baseline-main 90423be0
+(cd artifacts/performance/web-shell/baseline-main && pnpm install && pnpm run build)
+```
+
+`--reference-dist <dist>` names another copy of that build, and `--reference <url>` a
+served page (the live site captured this way until production switched shells; it now
+serves the egui page itself, which the capture cannot instrument).
 
 Invoke the repository skill as `$ui-parity-gauntlet` in Codex or
 `/ui-parity-gauntlet` in Claude Code. The shared instructions live in
@@ -28,14 +42,16 @@ pnpm run check:desktop-ui -- --round second
 Run on a Mac with Metal and installed Chrome. The default sizes are 1280×800 and
 1600×900 points at 2× resolution. `--sizes 1100x720` checks the native minimum too;
 the web's stacked layout there is not a native acceptance requirement. `--out`
-changes the evidence root. `--refresh-reference` deliberately captures a new
-production build or changed fixtures; do not use it just to clear a failed review.
-Build logs, fixture JSON, PNGs, production release/commit and asset hashes, randomized
-A/B contact sheets and an HTML report stay under ignored `artifacts/performance/desktop-ui/`.
+changes the evidence root. `--refresh-reference` deliberately captures the reference
+again for changed fixtures (the same frozen build, so a fixture repair keeps the
+reference's identity); do not use it just to clear a failed review. Build logs, fixture
+JSON, PNGs, the reference's release/commit and asset hashes, randomized A/B contact
+sheets and an HTML report stay under ignored `artifacts/performance/desktop-ui/`.
 
-The production capture exposes the UI constructors in intercepted local response
-copies, holds gameplay after startup, and feeds those real renderers the native
-snapshot fixtures. It changes no production files and creates no production rooms.
+The capture serves the reference build on a local port, exposes its UI constructors in
+intercepted response copies, holds gameplay after startup, and feeds those real
+renderers the native snapshot fixtures. It changes no reference files and creates no
+rooms.
 Animation is held and the 3D arena is replaced by a flat backdrop in both shells.
 This isolates shell fidelity; use a real app play-through for compositing, input,
 animation and gameplay. The native Fullscreen/Quit controls and the platform's own

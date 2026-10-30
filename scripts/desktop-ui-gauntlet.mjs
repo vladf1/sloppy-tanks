@@ -20,6 +20,10 @@ const base = resolve(root, value("--out", "artifacts/performance/desktop-ui"));
 const label = value("--round", new Date().toISOString().replaceAll(/[:.]/g, "-"));
 assert.match(label, /^[\w.-]+$/, "Round names use letters, digits, dots, underscores or dashes");
 const sizes = value("--sizes", "1280x800,1600x900").split(",");
+// The reference page: the frozen pre-migration build (desktop-ui-capture.mjs), or another.
+const referenceArgs = ["--reference", "--reference-dist"].flatMap((flag) =>
+  args.includes(flag) ? [flag, value(flag)] : [],
+);
 for (const size of sizes) assert.match(size, /^\d{3,4}x\d{3,4}$/);
 const output = resolve(base, label);
 assert.ok(!existsSync(output), "Choose a fresh --round name; evidence is never overwritten");
@@ -102,6 +106,7 @@ for (const size of sizes) {
       native,
       "--out",
       reference,
+      ...referenceArgs,
     ]);
     await writeFile(lock, JSON.stringify({ fixtures, directory: reference }, null, 2));
   } else {
@@ -109,7 +114,7 @@ for (const size of sizes) {
     assert.equal(
       saved.fixtures,
       fixtures,
-      "Fixtures changed. Review the change and use --refresh-reference to capture matching production states.",
+      "Fixtures changed. Review the change and use --refresh-reference to capture the reference's matching states.",
     );
     reference = saved.directory;
   }
