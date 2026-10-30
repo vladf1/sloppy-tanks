@@ -6,7 +6,9 @@
 //! keeps the lock, so the respawn needs no click (a browser re-locks only after one, and
 //! shows its notice again), and Esc frees it to pick the next tank.
 
-use winit::window::{CursorGrabMode, Window};
+#[cfg(not(target_arch = "wasm32"))]
+use winit::window::CursorGrabMode;
+use winit::window::Window;
 
 /// A browser may release the lock on Esc just before it delivers the key; a key this
 /// soon after the release belongs to the same press.
@@ -169,11 +171,40 @@ pub fn apply(window: &Window, grab: Grab) -> bool {
             captured
         }
         Grab::Release => {
-            let _ = window.set_cursor_grab(CursorGrabMode::None);
+            release(window);
             window.set_cursor_visible(true);
             true
         }
     }
+}
+
+/// Give the cursor back. iPadOS Safari has no Pointer Lock at all, and winit's release
+/// calls `document.exitPointerLock()` regardless: the error it throws there unwinds
+/// through the shell mid-event and stops it for good, so a page calls it only where the
+/// browser has it.
+pub fn release(window: &Window) {
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = window;
+        if let Some(document) = web_sys::window().and_then(|window| window.document())
+            && let Some(exit) = method(&document, "exitPointerLock")
+        {
+            let _ = exit.call0(&document);
+        }
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let _ = window.set_cursor_grab(CursorGrabMode::None);
+    }
+}
+
+/// `target`'s method `name`, where the browser has it.
+#[cfg(target_arch = "wasm32")]
+fn method(target: &wasm_bindgen::JsValue, name: &str) -> Option<js_sys::Function> {
+    use wasm_bindgen::JsCast;
+    js_sys::Reflect::get(target, &name.into())
+        .ok()
+        .and_then(|method| method.dyn_into().ok())
 }
 
 /// Ask for the lock. A page's browser answers later and may refuse (it wants a click,
@@ -182,7 +213,7 @@ pub fn apply(window: &Window, grab: Grab) -> bool {
 fn request_lock(window: &Window) -> bool {
     #[cfg(target_arch = "wasm32")]
     {
-        use js_sys::{Function, Reflect};
+        use js_sys::Function;
         use wasm_bindgen::{JsCast, JsValue, prelude::Closure};
         use winit::platform::web::WindowExtWebSys;
         thread_local! {
@@ -191,11 +222,6 @@ fn request_lock(window: &Window) -> bool {
                 .into_js_value()
                 .unchecked_into();
         }
-        let method = |target: &JsValue, name: &str| {
-            Reflect::get(target, &name.into())
-                .ok()
-                .and_then(|method| method.dyn_into::<Function>().ok())
-        };
         let Some(canvas) = window.canvas() else {
             return false;
         };

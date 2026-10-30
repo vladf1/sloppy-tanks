@@ -288,10 +288,18 @@
       };
       const message = (error) => (error instanceof Error ? error.message : String(error));
       // The shell's own word (a panic, no graphics), or a trap that stopped it without
-      // one (out of memory).
+      // one (out of memory). So does a browser error thrown through the shell's Wasm
+      // frames (`wasm-function[n]` in every engine's stack): it skips Rust's cleanup and
+      // leaves the shell mid-event, drawing no further frame.
       addEventListener("sloppy:failed", (event) => fail(String(event.detail)));
+      const THROUGH_WASM = /wasm-function\[/;
       const trapped = (error) => {
-        if (error instanceof WebAssembly.RuntimeError) fail(`The game stopped: ${error.message}`);
+        if (
+          error instanceof WebAssembly.RuntimeError ||
+          (error instanceof Error && THROUGH_WASM.test(error.stack ?? ""))
+        ) {
+          fail(`The game stopped: ${error.message}`);
+        }
       };
       addEventListener("error", (event) => trapped(event.error));
       addEventListener("unhandledrejection", (event) => trapped(event.reason));

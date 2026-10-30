@@ -27,7 +27,7 @@ use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
+use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::audio::Audio;
 use crate::automation::{self, Command, Extra};
@@ -740,7 +740,7 @@ impl Session {
 
     /// Give the window up: the game, its renderer and the overlay go, the rest stays.
     fn into_shell(self) -> Shell {
-        let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+        crate::pointer_lock::release(&self.window);
         self.window.set_cursor_visible(true);
         Shell {
             window: self.window,

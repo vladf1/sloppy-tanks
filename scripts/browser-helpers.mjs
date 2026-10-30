@@ -120,11 +120,33 @@ export async function openAddress(page, address) {
 /**
  * The shell's state after its next presented frame, with the engine's JSON for each of
  * `extras` (`"hud"`, `"stats"`, `"nerd"`, `"debug"`, `"snapshot"`) in `state.extras`.
+ * Throws with the page's reason once its loading view says the shell stopped, which
+ * draws no further frame.
  * @param {import("playwright").Page} page
  * @param {string[]} [extras]
  */
 export function nextFrame(page, extras = []) {
-  return page.evaluate((wanted) => window.sloppyShell.frame(wanted), extras);
+  return page.evaluate(
+    (wanted) =>
+      new Promise((resolve, reject) => {
+        const root = document.documentElement;
+        const stopped = () => {
+          if (root.dataset.shell !== "failed") return false;
+          reject(
+            new Error(`the shell stopped: ${document.getElementById("boot-note")?.textContent}`),
+          );
+          return true;
+        };
+        if (stopped()) return;
+        const watch = new MutationObserver(() => stopped() && watch.disconnect());
+        watch.observe(root, { attributes: true, attributeFilter: ["data-shell"] });
+        window.sloppyShell
+          .frame(wanted)
+          .then(resolve, reject)
+          .finally(() => watch.disconnect());
+      }),
+    extras,
+  );
 }
 
 /**

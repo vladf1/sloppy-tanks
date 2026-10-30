@@ -1,14 +1,14 @@
 // Two players in a room on a local game server, each in its own headless Chrome context,
-// through the page's canvas: one creates the room (its address names it, its seat waits
-// in sessionStorage), copies the invite link and the other joins by it; both drive and
-// see each other move, and the battle polls no room list. The development delay slows
-// the round trips; a socket drop shows the reconnect dialog and recovers the seat. The
-// second leaves for Battle Setup's Multiplayer tab, comes back by typing the code, and a
-// reload takes its reserved seat again rather than a third. The host ends the battle and
-// plays again. A server crash shows CONNECTION LOST and reconnects to the restarted
-// server, and a graceful stop shows ROOM CLOSED with the way back to Battle Setup. A
-// directory that lists a server of another content version shows its room as not
-// joinable and offers no new room.
+// through the page's canvas: one creates the room in a browser without Pointer Lock, as
+// iPadOS Safari is (its address names it, its seat waits in sessionStorage), copies the
+// invite link and the other joins by it; both drive and see each other move, and the
+// battle polls no room list. The development delay slows the round trips; a socket drop
+// shows the reconnect dialog and recovers the seat. The second leaves for Battle Setup's
+// Multiplayer tab, comes back by typing the code, and a reload takes its reserved seat
+// again rather than a third. The host ends the battle and plays again. A server crash
+// shows CONNECTION LOST and reconnects to the restarted server, and a graceful stop
+// shows ROOM CLOSED with the way back to Battle Setup. A directory that lists a server of
+// another content version shows its room as not joinable and offers no new room.
 //
 // The check starts and stops its own server (`SLOPPY_SERVER_BIN`, default the build of
 // `node scripts/build-server.mjs`) on a free port; SLOPPY_WEBGL=1 plays it on WebGL2.
@@ -58,8 +58,11 @@ const observations = {};
 const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const query = (page) => new URL(page.url()).searchParams;
 
-/** A player in a fresh context, its errors collected under `name`. */
-async function player(name) {
+/**
+ * A player in a fresh context, its errors collected under `name`. Without `pointerLock`
+ * the browser has no Pointer Lock API at all, as iPadOS Safari has none.
+ */
+async function player(name, { pointerLock = true } = {}) {
   const context = await browser.newContext({
     viewport: { width: 1280, height: 800 },
     deviceScaleFactor: 1,
@@ -68,6 +71,13 @@ async function player(name) {
     origin: new URL(gameUrl).origin,
   });
   await installProbes(context);
+  if (!pointerLock) {
+    await context.addInitScript(() => {
+      delete Element.prototype.requestPointerLock;
+      delete Document.prototype.exitPointerLock;
+      delete Document.prototype.pointerLockElement;
+    });
+  }
   const page = await context.newPage();
   page.on("pageerror", (error) => errors.push(`${name}: ${error.message}`));
   page.on("console", (message) => {
@@ -149,7 +159,7 @@ async function noRendererErrors(pages, when) {
 
 try {
   // A creates a humans-only room on the Blue team; its battle starts at once.
-  const a = await player("a");
+  const a = await player("a", { pointerLock: false });
   await openShell(a, `directory=${server.directory}&multiplayer`);
   await untilState(a, (state) => state.multiplayerTab, { what: "the Multiplayer tab" });
   await clickWidget(a, "Blue");
