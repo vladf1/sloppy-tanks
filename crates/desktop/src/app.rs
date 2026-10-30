@@ -30,6 +30,7 @@ use winit::event_loop::{ActiveEventLoop, ControlFlow};
 use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::audio::Audio;
+use crate::automation::{self, Command, Extra};
 use crate::bakes::{self, Bake};
 use crate::frame_log::{FrameLog, FrameParts};
 use crate::input::Shortcut;
@@ -1124,11 +1125,74 @@ impl Session {
         self.input.hold_pointer(&self.window, wanted);
     }
 
+    /// What a check reads of this frame (`automation.rs`).
+    fn automation_state(&mut self) -> automation::State {
+        automation::State {
+            engine: "single",
+            in_round: self.in_round,
+            phase: automation::phase_name(self.phase),
+            alive: self.alive,
+            first_person: self.first_person,
+            multiplayer_tab: self.ui.rooms.multiplayer,
+            ready: self.ui.ready,
+            status: self.ui.status.clone(),
+            settings: self.ui.settings_draft.is_some(),
+            touch_controls: self.ui.touch.is_some(),
+            touch_screen: crate::touch::screen(),
+            failure: self.failure.clone(),
+            error: self.game.error(),
+            prefs: serde_json::to_value(&self.prefs).unwrap_or_default(),
+            ..automation::State::default()
+        }
+    }
+
+    /// Run a check's debug command on the engine, as the old page's `window.sloppy` did.
+    fn command(&mut self, command: &Command) -> Result<serde_json::Value, String> {
+        use serde_json::Value;
+        let game = &mut self.game;
+        Ok(match *command {
+            Command::Autoplay(on) => game.debug_set_autoplay(on).into(),
+            Command::Overview(on) => {
+                game.debug_set_overview(on);
+                Value::Null
+            }
+            Command::AutoRounds(on) => game.debug_set_auto_rounds(on).into(),
+            Command::Zoom(zoom) => game.debug_set_zoom(zoom).into(),
+            Command::Reflections(strength) => {
+                game.debug_set_reflections(strength);
+                Value::Null
+            }
+            Command::Stress => {
+                game.debug_stress();
+                Value::Null
+            }
+            Command::Collapse => {
+                game.debug_collapse();
+                Value::Null
+            }
+            Command::GiveAmmo(count) => {
+                game.debug_give_ammo(count);
+                Value::Null
+            }
+            Command::KillHuman => {
+                game.debug_kill_human();
+                Value::Null
+            }
+            Command::Soak(seconds) => serde_json::from_str(&game.debug_soak(seconds))
+                .map_err(|error| error.to_string())?,
+            Command::Latency { .. } => return Err("single player has no connection".into()),
+        })
+    }
+
     /// Run a frame and show it; true when the player chose to quit.
     fn redraw(&mut self) -> bool {
-        let now = now_ms();
+        let now = automation::now();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        for pending in automation::take_commands() {
+            let answer = self.command(&pending.command);
+            pending.answer(answer);
+        }
         let playing = self.battle().playing;
         let mut quit = false;
         for request in self
@@ -1193,6 +1257,20 @@ impl Session {
         self.frame_shown = self.game.renderer().frame_shown();
         if self.frame_shown {
             crate::page::frame_presented();
+            if automation::enabled() {
+                let state = self.automation_state();
+                let game = &mut self.game;
+                automation::presented(state, |extra| {
+                    let json = match extra {
+                        Extra::Hud => game.hud_json(),
+                        Extra::Stats => game.stats_json(),
+                        Extra::Nerd => game.nerd_stats_json(),
+                        Extra::Debug => game.debug_json(),
+                        Extra::Snapshot => game.debug_snapshot(),
+                    };
+                    serde_json::from_str(&json).unwrap_or_default()
+                });
+            }
         }
         self.parts.present = now_ms() - present_start;
         if let Some(log) = &mut self.frame_log {

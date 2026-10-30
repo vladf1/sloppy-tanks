@@ -522,6 +522,13 @@ pub enum ButtonStyle {
     Danger,
 }
 
+/// Name a painted button for assistive technology and the page's checks, which find
+/// it by `label` in egui's AccessKit tree (`automation.rs`).
+pub fn labelled(response: &Response, enabled: bool, label: &str) {
+    response
+        .widget_info(|| egui::WidgetInfo::labeled(egui::accesskit::Role::Button, enabled, label));
+}
+
 /// A dialog button with an optional leading icon, `size` wide and tall.
 pub fn button(
     ui: &mut Ui,
@@ -540,6 +547,7 @@ pub fn button(
             Sense::hover()
         },
     );
+    labelled(&response, enabled, label);
     let hovered = enabled && response.hovered();
     let pressed = enabled && response.is_pointer_button_down_on();
     let rect = rect.translate(vec2(
@@ -644,6 +652,7 @@ pub fn button(
 /// A round icon button (the dialogs' corner X).
 pub fn close_button(ui: &mut Ui, art: &Art, rect: Rect, id: egui::Id) -> Response {
     let response = ui.interact(rect, id, Sense::click());
+    labelled(&response, true, "Close");
     let painter = ui.painter();
     if response.hovered() {
         painter.rect_filled(rect, 8, hexa(0xffffff, 0.08));

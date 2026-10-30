@@ -62,6 +62,10 @@ impl Overlay {
         renderer.present_late();
         let context = egui::Context::default();
         crate::ui::theme::install(&context);
+        // Checks find widgets by their labels in egui's AccessKit tree.
+        if crate::automation::enabled() {
+            context.enable_accesskit();
+        }
         let input = egui_winit::State::new(
             context.clone(),
             egui::ViewportId::ROOT,
@@ -119,7 +123,10 @@ impl Overlay {
             egui::Pos2::ZERO,
             egui::vec2(width as f32, height as f32),
         ));
-        let output = self.context.run_pass(input, build);
+        let mut output = self.context.run_pass(input, build);
+        if let Some(update) = output.platform_output.accesskit_update.take() {
+            crate::automation::seen(&self.context, &update);
+        }
         self.input
             .handle_platform_output(&self.window, output.platform_output);
         Painted {

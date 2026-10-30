@@ -12,12 +12,12 @@ the server directory (https://sloppy-tanks-directory.fridman.me) lists them.
 
 ```sh
 pnpm run server:dev        # build for this machine and listen on 127.0.0.1:8787
-pnpm run dev               # in another terminal; open the printed URL with ?directory=http://127.0.0.1:8787
+pnpm run dev               # in another terminal; open ?multiplayer on the printed URL
 ```
 
-The page lists the rooms of the server directory it is given (`?directory=`, the app's
-`--directory`), and a local server answers as its own directory, so the page then plays on
-`ws://127.0.0.1:8787`. `pnpm run server:check:players` runs real player sockets on all
+A page on this machine lists this server's rooms (it answers as its own directory) and
+plays on `ws://127.0.0.1:8787`, unless the build names a directory; `?directory=` (the
+app's `--directory`) names another. `pnpm run server:check:players` runs real player sockets on all
 maps against a running server; `SLOPPY_SERVER_URL=wss://sloppy-tanks-server.fridman.me`
 tests production's. For sustained traffic from other regions, the traffic bots (a
 separate Cloudflare Worker) join open rooms on production's server; see `bots/README.md`.

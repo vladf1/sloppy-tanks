@@ -22,6 +22,7 @@ use crate::app::{
     Shell, css_size, engine_error, now_ms, render_target, set_fullscreen, view_config,
 };
 use crate::audio::Audio;
+use crate::automation::{self, Command, Extra};
 use crate::bakes::{self, Bake};
 use crate::input::Shortcut;
 use crate::overlay::Overlay;
@@ -747,11 +748,60 @@ impl RoomSession {
         self.pump();
     }
 
+    /// What a check reads of this frame (`automation.rs`).
+    fn automation_state(&mut self, now: f64) -> automation::State {
+        let menu = &self.menu;
+        automation::State {
+            engine: "room",
+            in_round: true,
+            phase: automation::phase_name(room_menu::hud_phase(menu)),
+            alive: self.ui.hud.as_ref().is_none_or(|hud| hud.human.alive),
+            first_person: self.first_person,
+            settings: self.ui.settings_draft.is_some(),
+            touch_controls: self.ui.touch.is_some(),
+            touch_screen: crate::touch::screen(),
+            failure: self.stopped.then(|| "The renderer stopped.".into()),
+            error: self.game.error(),
+            prefs: serde_json::to_value(&self.prefs).unwrap_or_default(),
+            room: Some(serde_json::json!({
+                "code": menu.room,
+                "phase": format!("{:?}", menu.phase()),
+                "link": format!("{:?}", menu.link),
+                "menuOpen": menu.menu_open,
+                "joining": menu.joining,
+                "status": menu.status,
+                "players": menu.lobby.as_ref().map(|lobby| lobby.players.len()),
+                "polledAt": self.last_poll,
+                "now": now,
+            })),
+            ..automation::State::default()
+        }
+    }
+
+    /// Run a check's debug command: a room's engine takes only the network tools.
+    fn command(&mut self, command: &Command) -> Result<serde_json::Value, String> {
+        match *command {
+            Command::Latency {
+                latency,
+                jitter,
+                stall,
+            } => {
+                self.game.set_transport_delay(latency, jitter, stall);
+                Ok(serde_json::Value::Null)
+            }
+            ref other => Err(format!("a room cannot run {other:?}")),
+        }
+    }
+
     /// Run a frame and show it; true when the player chose to quit.
     fn redraw(&mut self) -> bool {
-        let now = now_ms();
+        let now = automation::now();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        for pending in automation::take_commands() {
+            let answer = self.command(&pending.command);
+            pending.answer(answer);
+        }
         let playing = self.battle().playing;
         let mut quit = false;
         for request in self
@@ -807,6 +857,19 @@ impl RoomSession {
         self.frame_shown = self.game.renderer().frame_shown();
         if self.frame_shown {
             crate::page::frame_presented();
+            if automation::enabled() {
+                let state = self.automation_state(now);
+                let game = &mut self.game;
+                automation::presented(state, |extra| {
+                    let json = match extra {
+                        Extra::Hud => game.hud_json(),
+                        Extra::Stats => game.stats_json(now),
+                        Extra::Nerd => game.nerd_stats_json(now),
+                        Extra::Debug | Extra::Snapshot => game.debug_json(),
+                    };
+                    serde_json::from_str(&json).unwrap_or_default()
+                });
+            }
         }
         self.hidden_changed();
         for action in actions {

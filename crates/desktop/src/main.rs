@@ -10,6 +10,7 @@
 mod app;
 mod assets;
 mod audio;
+mod automation;
 mod bakes;
 mod directory;
 mod frame_log;
@@ -63,7 +64,11 @@ fn main() {
         }));
         touch::detect();
     }
-    let options = options(&arguments(), links::development());
+    let arguments = arguments();
+    if arguments.iter().any(|argument| argument == "--automation") {
+        automation::enable();
+    }
+    let options = options(&arguments, links::development());
     let event_loop = winit::event_loop::EventLoop::new().expect("an event loop");
     let app = app::App::new(options);
     run(event_loop, app);
