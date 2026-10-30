@@ -15,7 +15,7 @@ use sloppy_web::catalog::{
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, fade, hex, hexa, mix};
-use super::theme::{GOLD, TEXT_DIM, bold_font, display_font};
+use super::theme::{GOLD, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
 use super::{Action, UiState, View};
 use crate::preferences::Preferences;
 
@@ -123,6 +123,8 @@ fn backdrop(context: &egui::Context, art: &Art) {
 
 /// The narrowest tank card with room for its hull and speed line.
 const SPEC_LINE_WIDTH: f32 = 200.0;
+/// The shortest map card with room for its line under its name.
+const MAP_DETAIL_HEIGHT: f32 = 56.0;
 
 /// A tank card: a little showroom with a spotlight on the tank, its name and class,
 /// and its hull and speed as bars. The chosen tank glows gold.
@@ -137,42 +139,7 @@ pub fn vehicle_card(
     hovered: bool,
     compact: bool,
 ) {
-    let rect = if hovered && !selected {
-        rect.translate(vec2(0.0, -2.0))
-    } else {
-        rect
-    };
-    let radius = CornerRadius::same(10);
-    if selected {
-        painter.rect_filled(rect.expand(4.0), 14, hexa(0xffcf38, 0.12));
-    }
-    let (top, bottom, spot) = if selected {
-        (hex(0x1f4a80), hex(0x0e2546), hexa(0xffd36a, 0.23))
-    } else if hovered {
-        (hex(0x183a6a), hex(0x0c1d3a), hexa(0x4f93db, 0.33))
-    } else {
-        (hex(0x14305a), hex(0x0a1830), hexa(0x3d7cc2, 0.27))
-    };
-    painter.rect_filled(rect, radius, bottom);
-    painter.add(paint::vgradient(
-        rect.shrink2(vec2(0.0, 10.0)),
-        &[(0.0, top), (1.0, bottom)],
-    ));
-    painter.rect_filled(
-        Rect::from_min_size(rect.min, vec2(rect.width(), 10.0)),
-        CornerRadius {
-            nw: 10,
-            ne: 10,
-            sw: 0,
-            se: 0,
-        },
-        top,
-    );
-    painter.add(paint::radial(
-        pos2(rect.center().x, rect.top() + rect.height() * 0.42),
-        vec2(rect.width() * 0.6, rect.height() * 0.55),
-        &[(0.0, spot), (0.7, Color32::TRANSPARENT)],
-    ));
+    let rect = showroom(painter, rect, selected, hovered);
     // A card too narrow for its labels (a phone's row of three) shows the name and the
     // tank alone.
     let narrow = rect.width() < SPEC_LINE_WIDTH;
@@ -334,6 +301,53 @@ pub fn vehicle_card(
             ));
         }
     }
+    showroom_ring(painter, rect, selected);
+}
+
+/// A tank card's showroom: its glass, lit by a spotlight, and a gold glow when chosen.
+/// A hovered card lifts; returns where it is drawn.
+fn showroom(painter: &Painter, rect: Rect, selected: bool, hovered: bool) -> Rect {
+    let rect = if hovered && !selected {
+        rect.translate(vec2(0.0, -2.0))
+    } else {
+        rect
+    };
+    if selected {
+        painter.rect_filled(rect.expand(4.0), 14, hexa(0xffcf38, 0.12));
+    }
+    let (top, bottom, spot) = if selected {
+        (hex(0x1f4a80), hex(0x0e2546), hexa(0xffd36a, 0.23))
+    } else if hovered {
+        (hex(0x183a6a), hex(0x0c1d3a), hexa(0x4f93db, 0.33))
+    } else {
+        (hex(0x14305a), hex(0x0a1830), hexa(0x3d7cc2, 0.27))
+    };
+    painter.rect_filled(rect, CornerRadius::same(10), bottom);
+    painter.add(paint::vgradient(
+        rect.shrink2(vec2(0.0, 10.0)),
+        &[(0.0, top), (1.0, bottom)],
+    ));
+    painter.rect_filled(
+        Rect::from_min_size(rect.min, vec2(rect.width(), 10.0)),
+        CornerRadius {
+            nw: 10,
+            ne: 10,
+            sw: 0,
+            se: 0,
+        },
+        top,
+    );
+    painter.add(paint::radial(
+        pos2(rect.center().x, rect.top() + rect.height() * 0.42),
+        vec2(rect.width() * 0.6, rect.height() * 0.55),
+        &[(0.0, spot), (0.7, Color32::TRANSPARENT)],
+    ));
+    rect
+}
+
+/// The showroom's edge: the chosen tank's gold ring, or a faint line.
+fn showroom_ring(painter: &Painter, rect: Rect, selected: bool) {
+    let radius = CornerRadius::same(10);
     if selected {
         painter.rect_stroke(rect, radius, Stroke::new(2.0, GOLD), StrokeKind::Inside);
     } else {
@@ -440,9 +454,17 @@ fn map_card(
         ));
     }
     let text_width = rect.width() - 24.0;
+    // A phone's row of three, or its short cards held sideways, have room for the name
+    // alone, in the card's middle.
+    let detail = rect.width() >= SPEC_LINE_WIDTH && rect.height() >= MAP_DETAIL_HEIGHT;
+    let name_top = if detail {
+        17.0
+    } else {
+        (rect.height() - 18.0) / 2.0
+    };
     let name = paint::shadowed(
         painter,
-        rect.min + vec2(12.0, 17.0),
+        rect.min + vec2(12.0, name_top),
         Align2::LEFT_TOP,
         map.name(),
         bold_font(15.0),
@@ -462,8 +484,7 @@ fn map_card(
             0.8,
         );
     }
-    // A phone's row of three has room for the name alone.
-    if rect.width() >= SPEC_LINE_WIDTH {
+    if detail {
         paint::text_fit(
             painter,
             pos2(rect.left() + 12.0, rect.top() + 38.0),
@@ -709,6 +730,37 @@ const TANK_WELL: Rect = Rect::from_min_max(pos2(60.0, 194.0), pos2(331.0, 708.0)
 const PANELS: Rect = Rect::from_min_max(pos2(350.0, 194.0), pos2(1220.0, 708.0));
 const CARD_GAP: f32 = 7.0;
 
+/// The menu's own glass (`.menu.start`) under the whole sheet.
+fn sheet_glass(painter: &Painter, frame: Rect) {
+    painter.rect_filled(
+        frame.translate(vec2(0.0, 30.0)).expand(10.0),
+        26,
+        hexa(0, 0.35),
+    );
+    painter.add(paint::rounded_vgradient(
+        frame,
+        [16.0; 4],
+        &[
+            (0.0, hexa(0x12294c, 0.9)),
+            (0.6, hexa(0x091629, 0.94)),
+            (1.0, hexa(0x070f1f, 0.96)),
+        ],
+    ));
+    painter.rect_stroke(
+        frame,
+        16,
+        Stroke::new(0.5, hexa(0xa9d4ff, 0.18)),
+        StrokeKind::Inside,
+    );
+    painter.line_segment(
+        [
+            frame.left_top() + vec2(16.0, 0.5),
+            frame.right_top() + vec2(-16.0, 0.5),
+        ],
+        Stroke::new(1.0, hexa(0xffffff, 0.11)),
+    );
+}
+
 /// The tray's glass: the tank well and the panels share it, joined to their tabs.
 fn tray(painter: &Painter, rect: Rect, open_left: bool, open_right: bool) {
     let radius = CornerRadius {
@@ -914,7 +966,9 @@ pub fn battle_setup(
     backdrop(context, art);
     let mut prefs = view.prefs.clone();
     let screen = context.content_rect();
-    if screen.width() < DESIGN.x * MIN_SCALE || screen.height() < DESIGN.y * MIN_SCALE {
+    if crate::touch::phone() {
+        phone_setup(context, state, art, view, &mut prefs, actions);
+    } else if screen.width() < DESIGN.x * MIN_SCALE || screen.height() < DESIGN.y * MIN_SCALE {
         compact_setup(context, state, art, view, &mut prefs, actions);
     } else {
         sheet(context, state, art, view, &mut prefs, actions);
@@ -972,34 +1026,7 @@ fn sheet(
             ui.set_clip_rect(canvas);
             let _ = ui.allocate_rect(canvas, Sense::hover());
             let painter = ui.painter().clone();
-            // The menu's own glass.
-            painter.rect_filled(
-                frame.translate(vec2(0.0, 30.0)).expand(10.0),
-                26,
-                hexa(0, 0.35),
-            );
-            painter.add(paint::rounded_vgradient(
-                frame,
-                [16.0; 4],
-                &[
-                    (0.0, hexa(0x12294c, 0.9)),
-                    (0.6, hexa(0x091629, 0.94)),
-                    (1.0, hexa(0x070f1f, 0.96)),
-                ],
-            ));
-            painter.rect_stroke(
-                frame,
-                16,
-                Stroke::new(0.5, hexa(0xa9d4ff, 0.18)),
-                StrokeKind::Inside,
-            );
-            painter.line_segment(
-                [
-                    frame.left_top() + vec2(16.0, 0.5),
-                    frame.right_top() + vec2(-16.0, 0.5),
-                ],
-                Stroke::new(1.0, hexa(0xffffff, 0.11)),
-            );
+            sheet_glass(&painter, frame);
             // Where the page's sheet puts `.setup-brand` at 1280 × 800.
             art.logo(&painter, pos2(71.0, 53.0));
             corner_buttons(
@@ -1576,6 +1603,545 @@ fn compact_setup(
                     );
                 });
         });
+}
+
+/// A phone's Battle Setup: the sheet's distance from the screen's edges, its padding,
+/// and the room it keeps between rows and inside the tray.
+const PHONE_MARGIN: f32 = 8.0;
+const PHONE_PADDING: f32 = 12.0;
+const PHONE_GAP: f32 = 8.0;
+const PHONE_TRAY_PADDING: f32 = 10.0;
+/// Its rows: a section heading, the play tabs, the battle formats' least and most height
+/// upright, and GO (taller under an upright phone's thumb). A primary button this tall
+/// takes the display face.
+const PHONE_LABEL: f32 = 26.0;
+const PHONE_TABS: f32 = 50.0;
+const PHONE_FORMATS: (f32, f32) = (50.0, 72.0);
+const PHONE_GO: f32 = 52.0;
+const PHONE_UPRIGHT_GO: f32 = 64.0;
+/// The logo's box over an upright phone's sheet.
+const PHONE_LOGO: Vec2 = vec2(104.0, 56.0);
+/// The Home Screen tip's line in an iPhone's browser.
+const PHONE_TIP: f32 = 18.0;
+/// Tank and map cards' least and most height, upright (narrow tank cards, maps with
+/// their lines where they have the room) and sideways (short cards with their names
+/// alone). Upright the least fits an iPhone's Safari with its bars (393×659).
+const PHONE_UPRIGHT_TANK: (f32, f32) = (110.0, 200.0);
+const PHONE_UPRIGHT_MAP: (f32, f32) = (48.0, 76.0);
+const PHONE_SIDEWAYS_TANK: (f32, f32) = (56.0, 90.0);
+const PHONE_SIDEWAYS_MAP: (f32, f32) = (40.0, 48.0);
+/// A phone's tank card at least this tall stands its labels over the tank.
+const PHONE_TALL_CARD: f32 = 110.0;
+/// A tall phone card's hull or speed line: its label over its bar.
+const SPEC_ROW: f32 = 17.0;
+
+/// Battle Setup on a phone (`.phone` rules in `style.css`): the tank, the map and the
+/// battle format, single player's bots always Easy, and multiplayer one action that joins
+/// the busiest open room or creates one; no difficulty, room list, name or Settings.
+/// Held upright the tank comes first, over the tabs, the maps stack, and GO sits at the
+/// bottom under the thumb; held sideways the tabs head the sheet and each choice is one
+/// row, GO beside the formats.
+fn phone_setup(
+    context: &egui::Context,
+    state: &mut UiState,
+    art: &Art,
+    view: &View,
+    prefs: &mut Preferences,
+    actions: &mut Vec<Action>,
+) {
+    let screen = context.content_rect();
+    let time = context.input(|input| input.time);
+    let upright = screen.height() > screen.width();
+    let human_team = state.hud.as_ref().map_or(Team::Blue, |hud| hud.human_team);
+    let options = prefs.game_options(human_team, view.debug);
+    let multiplayer = state.rooms.multiplayer;
+    let maps: Vec<&MapCard> = MAP_CARDS
+        .iter()
+        .filter(|map| view.debug || !map.extra())
+        .collect();
+    let inset = PHONE_MARGIN + PHONE_PADDING;
+    let width = screen.width() - 2.0 * inset;
+    let go_height = if upright { PHONE_UPRIGHT_GO } else { PHONE_GO };
+    let (tank_range, map_rows, map_range) = if upright {
+        (PHONE_UPRIGHT_TANK, maps.len(), PHONE_UPRIGHT_MAP)
+    } else {
+        (
+            PHONE_SIDEWAYS_TANK,
+            maps.len().div_ceil(3),
+            PHONE_SIDEWAYS_MAP,
+        )
+    };
+    let maps_height = |map: f32| map_rows as f32 * (map + CARD_GAP) - CARD_GAP;
+    // Everything but the rows that grow: upright the logo, the tanks, the tabs and the
+    // tray of maps, formats and GO; sideways the tabs over a tray of tanks, maps and the
+    // formats beside GO.
+    let tip = if crate::touch::home_screen_tip() {
+        PHONE_TIP
+    } else {
+        0.0
+    };
+    let fixed = 2.0 * inset + PHONE_TABS - 1.0
+        + tip
+        + 2.0 * PHONE_TRAY_PADDING
+        + 2.0 * (PHONE_LABEL + PHONE_GAP)
+        + go_height
+        + if upright {
+            PHONE_LOGO.y + 3.0 * PHONE_GAP + PHONE_FORMATS.0
+        } else {
+            0.0
+        };
+    // What the screen has beyond the least: the tanks grow, then the maps, then upright
+    // the formats; what is left goes round the logo, so GO stays at the bottom with no
+    // empty band over it. Sideways the sheet centres.
+    let least = fixed + tank_range.0 + maps_height(map_range.0);
+    let room = (screen.height() - least).max(0.0);
+    let mut spare = room;
+    let mut grow = |most: f32| {
+        let step = spare.min(most);
+        spare -= step;
+        step
+    };
+    let tank_height = tank_range.0 + grow(tank_range.1 - tank_range.0);
+    let rows = map_rows as f32;
+    let map_height = map_range.0 + grow((map_range.1 - map_range.0) * rows) / rows;
+    let (formats_height, logo_band) = if upright {
+        let formats = PHONE_FORMATS.0 + grow(PHONE_FORMATS.1 - PHONE_FORMATS.0);
+        (formats, PHONE_LOGO.y + grow(f32::INFINITY))
+    } else {
+        (PHONE_FORMATS.0, 0.0)
+    };
+    let needed = least + room - spare;
+    let page = needed.max(screen.height());
+    let top = (page - needed) / 2.0;
+    egui::Area::new(Id::unique("phone battle setup"))
+        .fixed_pos(screen.min)
+        .order(Order::Middle)
+        .show(context, |ui| {
+            egui::ScrollArea::vertical()
+                .max_height(screen.height())
+                .min_scrolled_height(screen.height())
+                .show(ui, |ui| {
+                    let (canvas, _) =
+                        ui.allocate_exact_size(vec2(screen.width(), page), Sense::hover());
+                    let painter = ui.painter().clone();
+                    let sheet = Rect::from_min_size(
+                        pos2(canvas.left(), canvas.top() + top),
+                        vec2(screen.width(), needed),
+                    )
+                    .shrink(PHONE_MARGIN);
+                    sheet_glass(&painter, sheet);
+                    let left = sheet.left() + PHONE_PADDING;
+                    let mut y = sheet.top() + PHONE_PADDING;
+                    let cells = |y: f32, left: f32, width: f32, count: usize, height: f32| {
+                        let cell = (width - CARD_GAP * (count - 1) as f32) / count as f32;
+                        (0..count).map(move |index| {
+                            Rect::from_min_size(
+                                pos2(left + index as f32 * (cell + CARD_GAP), y),
+                                vec2(cell, height),
+                            )
+                        })
+                    };
+                    let mut tank_row = |ui: &mut egui::Ui, y: f32, left: f32, width: f32| {
+                        paint::section_label(&painter, pos2(left, y), "YOUR TANK");
+                        let y = y + PHONE_LABEL;
+                        for (tank, rect) in
+                            TANK_CARDS.iter().zip(cells(y, left, width, 3, tank_height))
+                        {
+                            let response = ui.interact(
+                                rect,
+                                Id::unique(("setup tank", tank.kind)),
+                                Sense::click(),
+                            );
+                            phone_tank_card(
+                                &painter,
+                                art,
+                                rect,
+                                tank,
+                                human_team,
+                                prefs.tank == tank.kind,
+                            );
+                            if response.clicked() {
+                                prefs.tank = tank.kind;
+                            }
+                        }
+                        y + tank_height + PHONE_GAP
+                    };
+                    // An iPhone's browser suggests the Home Screen: a line under the logo,
+                    // since it is about the whole game; sideways it alone heads the sheet.
+                    let home_screen_tip = |y: f32| {
+                        if tip > 0.0 {
+                            paint::text(
+                                &painter,
+                                pos2(canvas.center().x, y + tip / 2.0),
+                                Align2::CENTER_CENTER,
+                                "Play full screen: Share, then Add to Home Screen",
+                                egui::FontId::proportional(13.0),
+                                TEXT_LABEL,
+                                0.0,
+                            );
+                        }
+                        y + tip
+                    };
+                    if upright {
+                        art.logo(
+                            &painter,
+                            pos2(
+                                canvas.center().x - PHONE_LOGO.x / 2.0,
+                                y + (logo_band - PHONE_LOGO.y) / 2.0,
+                            ),
+                        );
+                        y = home_screen_tip(y + logo_band) + PHONE_GAP;
+                        y = tank_row(ui, y, left, width) + PHONE_GAP;
+                    } else {
+                        y = home_screen_tip(y);
+                    }
+                    // The play tabs span the sheet's top edge over the tray.
+                    let tab_width = (width - 6.0) / 2.0;
+                    for (index, tab) in [(false, "SINGLE PLAYER", ""), (true, "MULTIPLAYER", "")]
+                        .into_iter()
+                        .enumerate()
+                    {
+                        let open = multiplayer == tab.0;
+                        let tab_left = left + index as f32 * (width - tab_width);
+                        // The other tab stands lower, still a thumb's height.
+                        let rect = if open {
+                            Rect::from_min_size(pos2(tab_left, y), vec2(tab_width, PHONE_TABS))
+                        } else {
+                            Rect::from_min_size(
+                                pos2(tab_left, y + 5.0),
+                                vec2(tab_width, PHONE_TABS - 6.0),
+                            )
+                        };
+                        if play_tab(ui, &painter, rect, tab, open, true) {
+                            state.rooms.multiplayer = tab.0;
+                        }
+                    }
+                    y += PHONE_TABS - 1.0;
+                    let tray_rect = Rect::from_min_max(
+                        pos2(left, y),
+                        pos2(left + width, sheet.bottom() - PHONE_PADDING),
+                    );
+                    tray(&painter, tray_rect, true, true);
+                    let inner = tray_rect.shrink(PHONE_TRAY_PADDING);
+                    y = inner.top();
+                    if !upright {
+                        y = tank_row(ui, y, inner.left(), inner.width());
+                    }
+
+                    // MAP: an open room the phone picked shows its own.
+                    let heading = paint::section_label(&painter, pos2(inner.left(), y), "MAP");
+                    let room_map = state.rooms.selected_map().filter(|_| multiplayer);
+                    if multiplayer {
+                        paint::text(
+                            &painter,
+                            pos2(heading.right() + 10.0, heading.center().y + 1.0),
+                            Align2::LEFT_CENTER,
+                            if room_map.is_some() {
+                                "The room's map"
+                            } else {
+                                "For your new room"
+                            },
+                            egui::FontId::proportional(12.0),
+                            hex(0xd3e7f5),
+                            0.0,
+                        );
+                    }
+                    y += PHONE_LABEL;
+                    let shown_map = room_map.unwrap_or(options.map_mode);
+                    let per_row = if upright { 1 } else { 3 };
+                    for chunk in maps.chunks(per_row) {
+                        let row = cells(y, inner.left(), inner.width(), per_row, map_height);
+                        for (map, rect) in chunk.iter().zip(row) {
+                            let locked = room_map.is_some();
+                            let id = Id::unique(("setup map", map.id));
+                            let response = if locked {
+                                ui.interact(rect, id, Sense::hover())
+                            } else {
+                                ui.interact(rect, id, Sense::click())
+                            };
+                            map_card(&painter, art, rect, map, shown_map == map.id, false);
+                            if !locked && response.clicked() {
+                                prefs.map = map.id;
+                            }
+                        }
+                        y += map_height + CARD_GAP;
+                    }
+                    y += PHONE_GAP - CARD_GAP;
+
+                    // The formats (or the room's status) and the action under them, or
+                    // held sideways beside them.
+                    let (choices, action) = if upright {
+                        (
+                            Rect::from_min_size(
+                                pos2(inner.left(), y),
+                                vec2(inner.width(), formats_height),
+                            ),
+                            Rect::from_min_max(
+                                pos2(inner.left(), inner.bottom() - go_height),
+                                inner.max,
+                            ),
+                        )
+                    } else {
+                        let third = (inner.width() - 2.0 * CARD_GAP) / 3.0;
+                        (
+                            Rect::from_min_size(
+                                pos2(inner.left(), y),
+                                vec2(inner.width() - third - CARD_GAP, go_height),
+                            ),
+                            Rect::from_min_size(
+                                pos2(inner.right() - third, y),
+                                vec2(third, go_height),
+                            ),
+                        )
+                    };
+                    if multiplayer {
+                        super::rooms::phone_multiplayer(
+                            ui,
+                            art,
+                            &mut state.rooms,
+                            view,
+                            prefs,
+                            choices,
+                            action,
+                            actions,
+                        );
+                        return;
+                    }
+                    for (battle, rect) in BATTLE_FORMATS.iter().zip(cells(
+                        choices.top(),
+                        choices.left(),
+                        choices.width(),
+                        2,
+                        choices.height(),
+                    )) {
+                        let unavailable = battle.unavailable_on(options.map_mode);
+                        let id = Id::unique(("setup battle", battle.mode));
+                        let sense = if unavailable.is_some() {
+                            Sense::hover()
+                        } else {
+                            Sense::click()
+                        };
+                        let response = ui.interact(rect, id, sense);
+                        let mut key_painter = painter.clone();
+                        if unavailable.is_some() {
+                            key_painter.multiply_opacity(UNAVAILABLE_OPACITY);
+                        }
+                        format_key(
+                            &key_painter,
+                            rect,
+                            battle,
+                            options.game_mode == battle.mode,
+                            upright,
+                        );
+                        if response.clicked() && options.game_mode != battle.mode {
+                            prefs.game_mode = battle.mode;
+                        }
+                    }
+                    let mut go_ui = ui.new_child(egui::UiBuilder::new().max_rect(action));
+                    let label = if state.starting { "LOADING…" } else { "GO!" };
+                    if paint::button(
+                        &mut go_ui,
+                        art,
+                        label,
+                        None,
+                        ButtonStyle::Primary,
+                        action.size(),
+                        !state.starting,
+                    )
+                    .clicked()
+                    {
+                        actions.push(Action::Start);
+                    }
+                    phone_status_pill(&painter, action, state, time);
+                });
+        });
+}
+
+/// A phone's tank card (`.phone .start .vehicle`). Upright, a narrow card: the name, the
+/// class in a small tag led by its colour's dot, the tank, and its hull and speed as
+/// bars the card's width, the only way a new player tells the tanks apart. Sideways, a
+/// short card: the name and the tank beside it.
+fn phone_tank_card(
+    painter: &Painter,
+    art: &Art,
+    rect: Rect,
+    tank: &TankCard,
+    team: Team,
+    selected: bool,
+) {
+    let rect = showroom(painter, rect, selected, false);
+    let tall = rect.height() >= PHONE_TALL_CARD;
+    let name = paint::shadowed(
+        painter,
+        rect.min + vec2(10.0, 9.0),
+        Align2::LEFT_TOP,
+        tank.name(),
+        display_font(17.0),
+        Color32::WHITE,
+        0.5,
+    );
+    let stage = if tall {
+        let class = tank.short_class.to_uppercase();
+        let font = bold_font(10.5);
+        let tag = Rect::from_min_size(
+            pos2(rect.left() + 10.0, name.bottom() + 2.0),
+            vec2(
+                paint::text_width(painter, &class, font.clone(), 0.2) + 20.0,
+                16.0,
+            ),
+        );
+        painter.rect_filled(tag, 4, hexa(0xffffff, 0.06));
+        painter.rect_stroke(
+            tag,
+            4,
+            Stroke::new(1.0, hexa(0xffffff, 0.1)),
+            StrokeKind::Inside,
+        );
+        painter.rect_filled(
+            Rect::from_center_size(pos2(tag.left() + 8.0, tag.center().y), Vec2::splat(5.0)),
+            0,
+            hex(tank.color),
+        );
+        paint::text(
+            painter,
+            pos2(tag.left() + 14.0, tag.center().y),
+            Align2::LEFT_CENTER,
+            &class,
+            font,
+            hex(0xdbe8f4),
+            0.2,
+        );
+        // Hull and speed, each a label over a bar the card's width.
+        let bars_top = rect.bottom() - 8.0 - 2.0 * SPEC_ROW;
+        for (index, (label, share)) in [
+            (format!("{} HP", tank.hit_points()), tank.hit_points_share()),
+            (format!("{} KM/H", tank.km_per_hour()), tank.speed_share()),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let top = bars_top + index as f32 * SPEC_ROW;
+            paint::text(
+                painter,
+                pos2(rect.left() + 10.0, top),
+                Align2::LEFT_TOP,
+                &label,
+                bold_font(10.5),
+                hex(0xdbe9f6),
+                0.0,
+            );
+            let track = Rect::from_min_size(
+                pos2(rect.left() + 10.0, top + 12.0),
+                vec2(rect.width() - 20.0, 3.0),
+            );
+            painter.rect_filled(track, 2, hexa(0xffffff, 0.09));
+            let (from, to) = if index == 0 {
+                (hex(0x6fc6ff), hex(0xb8e4ff))
+            } else {
+                (GOLD, super::theme::GOLD_HOT)
+            };
+            painter.add(paint::hgradient(
+                Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),
+                &[(0.0, from), (1.0, to)],
+            ));
+        }
+        Rect::from_min_max(
+            pos2(rect.left() + 4.0, tag.bottom() + 2.0),
+            pos2(rect.right() - 4.0, bars_top - 2.0),
+        )
+    } else {
+        Rect::from_min_max(
+            pos2(rect.left() + rect.width() * 0.4, rect.top() + 6.0),
+            pos2(rect.right() - 6.0, rect.bottom() - 4.0),
+        )
+    };
+    art.tank(
+        &painter.with_clip_rect(rect.shrink(1.0)),
+        tank.kind,
+        team,
+        stage,
+        tank.scale * if tall { 1.0 } else { 0.85 },
+        false,
+    );
+    showroom_ring(painter, rect, selected);
+}
+
+/// A phone's battle format: a key with its name alone, which says what it is without the
+/// posters' art or a BATTLE heading; centred upright, where the two share the room over
+/// GO, and at the left held sideways.
+fn format_key(painter: &Painter, rect: Rect, battle: &BattleFormat, selected: bool, upright: bool) {
+    choice_frame(painter, rect, selected, false);
+    let (at, align) = if upright {
+        (rect.center(), Align2::CENTER_CENTER)
+    } else {
+        (rect.left_center() + vec2(12.0, 0.0), Align2::LEFT_CENTER)
+    };
+    paint::shadowed(
+        painter,
+        at,
+        align,
+        &battle.name.to_uppercase(),
+        display_font(19.0),
+        Color32::WHITE,
+        0.5,
+    );
+    choice_ring(painter, rect, selected);
+}
+
+/// While the arena prepares, a slim pill over GO's top edge with the status and its
+/// progress, so it takes no row of its own; gone once the arena is ready.
+fn phone_status_pill(painter: &Painter, go: Rect, state: &UiState, time: f64) {
+    if state.ready && !state.starting {
+        return;
+    }
+    let status = if state.starting {
+        "Rolling out…"
+    } else if state.status.is_empty() {
+        "Loading game…"
+    } else {
+        &state.status
+    };
+    let font = bold_font(11.0);
+    let text_width = paint::text_width(painter, status, font.clone(), 0.2);
+    let pill = Rect::from_center_size(
+        go.center_top(),
+        vec2((text_width + 24.0).min(go.width() * 2.0), 26.0),
+    );
+    painter.rect_filled(pill, 13, hexa(0x050d1c, 0.94));
+    painter.rect_stroke(
+        pill,
+        13,
+        Stroke::new(1.0, hexa(0x9fd0ff, 0.18)),
+        StrokeKind::Inside,
+    );
+    paint::text_fit(
+        painter,
+        pill.center() - vec2(0.0, 2.0),
+        Align2::CENTER_CENTER,
+        status,
+        font,
+        hex(0xdbe9f6),
+        0.2,
+        pill.width() - 16.0,
+    );
+    let track = Rect::from_min_max(
+        pos2(pill.left() + 12.0, pill.bottom() - 6.0),
+        pos2(pill.right() - 12.0, pill.bottom() - 4.0),
+    );
+    painter.rect_filled(track, 1, hexa(0xffffff, 0.1));
+    let fill = match state.progress {
+        Some(share) => Rect::from_min_size(track.min, vec2(track.width() * share, track.height())),
+        None => {
+            let sweep = (time * 0.6).fract() as f32;
+            let width = track.width() * 0.35;
+            let left = track.left() - width + (track.width() + width) * sweep;
+            Rect::from_min_max(
+                pos2(left.max(track.left()), track.top()),
+                pos2((left + width).min(track.right()), track.bottom()),
+            )
+        }
+    };
+    painter.rect_filled(fill, 1, GOLD);
 }
 
 /// The controls' essentials as key caps on one line.

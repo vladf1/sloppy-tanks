@@ -193,6 +193,21 @@ impl RoomsState {
         {
             self.selected.clear();
         }
+        if crate::touch::phone() {
+            self.pick_for_phone();
+        }
+    }
+
+    /// A phone shows no room list (`autoPick`): each answer picks again, as rooms fill,
+    /// empty and finish their battles, unless a room link chose the room.
+    fn pick_for_phone(&mut self) {
+        let linked = !self.selected.is_empty()
+            && self.linked_room.as_deref() == Some(self.selected.as_str());
+        if !linked {
+            self.selected = busiest_open_room(&self.list.rooms)
+                .map(|room| room.room.clone())
+                .unwrap_or_default();
+        }
     }
 
     /// Select the linked room if it can take a player; otherwise say why not. A room
@@ -343,6 +358,18 @@ const TEAMS: [(Option<Team>, &str, &str, [u32; 2]); 3] = [
 ];
 
 impl RoomsState {
+    /// The status dot's colour: red offline, a pulsing gold while the first list loads,
+    /// green once it answers.
+    fn status_color(&self, time: f64) -> Color32 {
+        match self.state {
+            ListState::Offline { .. } => hex(0xff6f5e),
+            ListState::Loading if self.list.servers.is_empty() => {
+                mix(GOLD, hex(0xffe58a), (0.5 + 0.5 * (time * 4.0).sin()) as f32)
+            }
+            _ => hex(0x8ff0b0),
+        }
+    }
+
     /// The map of the open room chosen, which the map row shows instead of the player's.
     pub fn selected_map(&self) -> Option<MapId> {
         self.list
@@ -593,13 +620,7 @@ pub fn multiplayer(
         StrokeKind::Inside,
     );
     let dot = pos2(status_well.left() + 22.0, status_well.center().y);
-    let dot_color = match state.state {
-        ListState::Offline { .. } => hex(0xff6f5e),
-        ListState::Loading if state.list.servers.is_empty() => {
-            mix(GOLD, hex(0xffe58a), (0.5 + 0.5 * (time * 4.0).sin()) as f32)
-        }
-        _ => hex(0x8ff0b0),
-    };
+    let dot_color = state.status_color(time);
     painter.circle_filled(dot, 10.0, fade(dot_color, 0.2));
     painter.circle_filled(dot, 4.5, dot_color);
     let copy_left = status_well.left() + 42.0;
@@ -728,6 +749,103 @@ pub fn multiplayer(
     }
 
     // CREATE ROOM or JOIN ROOM.
+    let joining = !state.selected.is_empty();
+    let enabled = joining || state.list.new_room_server().is_some();
+    if paint::button_at(
+        ui,
+        art,
+        action,
+        if joining { "JOIN ROOM" } else { "CREATE ROOM" },
+        None,
+        ButtonStyle::Primary,
+        enabled,
+    )
+    .clicked()
+        && let Some(selection) = selection(state, prefs, new_room_map)
+    {
+        actions.push(Action::JoinRoom(Box::new(selection)));
+    }
+}
+
+/// Of the rooms that can take a player, the one a phone joins (`busiestOpenRoom`): a
+/// battle under way first, then a lobby, then a room between rounds; among those the
+/// one with the most players, the directory's order deciding a tie.
+fn busiest_open_room(rooms: &[HostedRoom]) -> Option<&HostedRoom> {
+    let phase_order = |phase: RoomPhase| match phase {
+        RoomPhase::Playing => 0,
+        RoomPhase::Lobby => 1,
+        RoomPhase::Results => 2,
+    };
+    rooms
+        .iter()
+        .filter(|room| room.joinable())
+        .min_by_key(|room| (phase_order(room.phase), std::cmp::Reverse(room.players)))
+}
+
+/// A phone's Multiplayer tab: no room list, name or rules, only the status well in
+/// `status` and one action in `action`, which joins the busiest open room the phone
+/// picked or, with none open, creates a room on the chosen map. The new room waits for
+/// the first list, which also says whether a room is open.
+#[allow(clippy::too_many_arguments)]
+pub fn phone_multiplayer(
+    ui: &mut egui::Ui,
+    art: &Art,
+    state: &mut RoomsState,
+    view: &View,
+    prefs: &Preferences,
+    status: Rect,
+    action: Rect,
+    actions: &mut Vec<Action>,
+) {
+    state.poll(view.debug);
+    let new_room_map = prefs.game_options(Team::Blue, view.debug).map_mode;
+    if state.name.is_none() {
+        state.name = Some(preferred_player_name(
+            &prefs.player_name,
+            u64::from_le_bytes(directory::random_bytes()),
+        ));
+    }
+    let time = ui.input(|input| input.time);
+    let painter = ui.painter().clone();
+    well(&painter, status, 12);
+    let (message, hint) = state.prompt();
+    let dot = pos2(status.left() + 20.0, status.center().y);
+    let dot_color = state.status_color(time);
+    painter.circle_filled(dot, 9.0, fade(dot_color, 0.2));
+    painter.circle_filled(dot, 4.0, dot_color);
+    let copy_left = status.left() + 38.0;
+    let copy_width = status.right() - copy_left - 10.0;
+    // The hints speak of the room list a phone has not got; offline, the reason and the
+    // next try still show.
+    let offline = matches!(state.state, ListState::Offline { .. });
+    let two_lines = offline && status.height() >= 44.0;
+    let message_y = if two_lines {
+        status.center().y - 8.0
+    } else {
+        status.center().y
+    };
+    paint::text_fit(
+        &painter,
+        pos2(copy_left, message_y),
+        Align2::LEFT_CENTER,
+        message.lines().last().unwrap_or_default(),
+        egui::FontId::proportional(12.5),
+        hex(0xe6f1fb),
+        0.0,
+        copy_width,
+    );
+    if two_lines {
+        paint::text_fit(
+            &painter,
+            pos2(copy_left, status.center().y + 9.0),
+            Align2::LEFT_CENTER,
+            &hint,
+            egui::FontId::proportional(11.5),
+            hex(0xa9c0d8),
+            0.0,
+            copy_width,
+        );
+    }
     let joining = !state.selected.is_empty();
     let enabled = joining || state.list.new_room_server().is_some();
     if paint::button_at(
@@ -1063,10 +1181,17 @@ fn selection(state: &mut RoomsState, prefs: &Preferences, map: MapId) -> Option<
     }
     let (room, server, create) = if state.selected.is_empty() {
         let server = state.list.new_room_server()?.to_owned();
+        // A phone offers no room rules: its room fills its teams with bots, Easy as its
+        // single player's.
+        let phone = crate::touch::phone();
         let create = RoomSettings {
             map_mode: map,
-            difficulty: Difficulty::Normal,
-            humans_only: state.humans_only,
+            difficulty: if phone {
+                Difficulty::Easy
+            } else {
+                Difficulty::Normal
+            },
+            humans_only: state.humans_only && !phone,
             round_minutes: state.round_minutes,
         };
         (room_code(directory::random_bytes()), server, Some(create))
@@ -1163,5 +1288,66 @@ mod tests {
             state.listed(Ok(list.clone()), false, Instant::now());
             assert_eq!(rooms(&state), ["ABCDEFGH"]);
         }
+    }
+
+    /// A phone joins a battle under way before a lobby or a room between rounds, the
+    /// fullest first, and never a full room or one of another version.
+    #[test]
+    fn a_phone_picks_the_busiest_open_room_preferring_a_battle_under_way() {
+        let room = |code: &str, players, phase| HostedRoom {
+            players,
+            reserved: players,
+            phase,
+            ..listing(code, MapId::Village)
+        };
+        let full = room("FULLROOM", ROOM_SEATS, RoomPhase::Playing);
+        let other_version = HostedRoom {
+            content_version: "another".into(),
+            ..room("OLDGAME1", ROOM_SEATS - 1, RoomPhase::Playing)
+        };
+        let between = room("RESULTS1", ROOM_SEATS - 1, RoomPhase::Results);
+        let lobby = room("LOBBYONE", ROOM_SEATS - 2, RoomPhase::Lobby);
+        let quiet = room("QUIETONE", 2, RoomPhase::Playing);
+        let busy = room("BUSYONE1", 5, RoomPhase::Playing);
+        let pick = |rooms: &[&HostedRoom]| {
+            let rooms: Vec<HostedRoom> = rooms.iter().map(|&room| room.clone()).collect();
+            busiest_open_room(&rooms).map(|room| room.room.clone())
+        };
+        assert_eq!(
+            pick(&[&full, &other_version, &between, &lobby, &quiet, &busy]).as_deref(),
+            Some("BUSYONE1")
+        );
+        assert_eq!(pick(&[&between, &lobby]).as_deref(), Some("LOBBYONE"));
+        assert_eq!(pick(&[&between]).as_deref(), Some("RESULTS1"));
+        assert_eq!(
+            pick(&[&full, &other_version]),
+            None,
+            "none open: create one"
+        );
+        // A tie keeps the directory's order.
+        let twin = room("TWINROOM", 5, RoomPhase::Playing);
+        assert_eq!(pick(&[&twin, &busy]).as_deref(), Some("TWINROOM"));
+    }
+
+    /// Each refresh picks again as rooms change, but a room a link chose stays chosen.
+    #[test]
+    fn a_phone_picks_again_on_each_refresh_unless_a_link_chose_the_room() {
+        let mut state = answered(vec![listing("QUIETONE", MapId::Harbor)]);
+        state.pick_for_phone();
+        assert_eq!(state.selected, "QUIETONE");
+        state.list.rooms.insert(
+            0,
+            HostedRoom {
+                players: 6,
+                reserved: 6,
+                ..listing("BUSYONE1", MapId::Village)
+            },
+        );
+        state.pick_for_phone();
+        assert_eq!(state.selected, "BUSYONE1");
+        state.returned_from("QUIETONE", "");
+        state.follow_link();
+        state.pick_for_phone();
+        assert_eq!(state.selected, "QUIETONE", "the link's room stays chosen");
     }
 }

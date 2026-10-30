@@ -431,6 +431,11 @@ fn snapshots() {
         size.iter()
             .all(|value| value.is_finite() && (320.0..=4096.0).contains(value))
     );
+    // `SLOPPY_UI_PHONE=1`: the phone edition's screens, its touch controls showing.
+    let phone = std::env::var_os("SLOPPY_UI_PHONE").is_some();
+    if phone {
+        crate::touch::detect(true);
+    }
     let instance = wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle());
     let adapter =
         pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions::default()))
@@ -461,6 +466,18 @@ fn snapshots() {
         };
         let is_room = scenario.name.starts_with("room-");
         let mut room_menu = is_room.then(|| super::room_menu::snapshot_menu(scenario.name));
+        let alive = scenario
+            .state
+            .hud
+            .as_ref()
+            .is_some_and(|hud| hud.human.alive);
+        if phone && scenario.phase == MatchPhase::Playing && alive {
+            scenario.state.touch = Some(super::touch::TouchView {
+                input: Default::default(),
+                first_person: scenario.state.cockpit,
+                learned: false,
+            });
+        }
         let state = &scenario.state;
         let fixture = json!({
             "name": scenario.name,

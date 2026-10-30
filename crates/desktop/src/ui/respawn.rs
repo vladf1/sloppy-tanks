@@ -168,6 +168,84 @@ pub fn card(
         });
 }
 
+/// The phone's respawn strip's widest, its distance from the bottom edge, and the
+/// height of its countdown and of its tank cards.
+const STRIP_WIDTH: f32 = 520.0;
+const STRIP_BOTTOM: f32 = 10.0;
+const STRIP_HEAD: f32 = 56.0;
+const STRIP_CARDS: f32 = 84.0;
+
+/// The phone's respawn card (`.phone .menu.respawn`): a low strip of the countdown and
+/// small tank cards, so the arena stays in view; the notice mid-screen says what
+/// destroyed the tank. Risen by `rise` (0 to 1) into place.
+#[allow(clippy::too_many_arguments)]
+pub fn strip(
+    context: &egui::Context,
+    art: &Art,
+    screen: Rect,
+    state: &UiState,
+    hud: &Hud,
+    view: &View,
+    rise: f32,
+    actions: &mut Vec<Action>,
+) {
+    let width = (screen.width() - 24.0).min(STRIP_WIDTH);
+    let height = 8.0 + STRIP_HEAD + 8.0 + STRIP_CARDS + 12.0;
+    let origin = pos2(
+        screen.center().x - width / 2.0,
+        screen.bottom() - STRIP_BOTTOM - height + (1.0 - rise) * 24.0,
+    );
+    egui::Area::new(Id::unique("respawn strip"))
+        .fixed_pos(origin)
+        .order(Order::Middle)
+        .show(context, |ui| {
+            let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+            let painter = ui.painter().clone();
+            paint::plate(&painter, rect, 14.0, None);
+            countdown(
+                &painter,
+                Rect::from_center_size(
+                    pos2(rect.center().x, rect.top() + 8.0 + STRIP_HEAD / 2.0),
+                    vec2(230.0, STRIP_HEAD),
+                ),
+                state,
+                hud,
+            );
+            let gap = 8.0;
+            let card_width = (width - 28.0 - 2.0 * gap) / 3.0;
+            let top = rect.top() + 8.0 + STRIP_HEAD + 8.0;
+            let team = if hud.game_mode == GameMode::Solo {
+                Team::Blue
+            } else {
+                hud.human_team
+            };
+            for (index, tank) in TANK_CARDS.iter().enumerate() {
+                let card_rect = Rect::from_min_size(
+                    pos2(rect.left() + 14.0 + index as f32 * (card_width + gap), top),
+                    vec2(card_width, STRIP_CARDS),
+                );
+                let response = ui.interact(
+                    card_rect,
+                    Id::unique(("respawn strip tank", tank.kind)),
+                    Sense::click(),
+                );
+                vehicle_card(
+                    &painter,
+                    art,
+                    card_rect,
+                    tank,
+                    team,
+                    view.prefs.tank == tank.kind,
+                    false,
+                    true,
+                );
+                if response.clicked() && view.prefs.tank != tank.kind {
+                    actions.push(Action::NextTank(tank.kind));
+                }
+            }
+        });
+}
+
 /// The killer: a red eyebrow, their name in their team's colour, and tags for the
 /// weapon, their tank and their tally, as many as fit before `line_right` (a phone's
 /// card has room for fewer).

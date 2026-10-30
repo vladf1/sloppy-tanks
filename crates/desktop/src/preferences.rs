@@ -161,14 +161,19 @@ impl Preferences {
     }
 
     /// The choices as single player plays them, on `human_team`: an extra level only
-    /// where extra levels are offered, and as its own team battle.
+    /// where extra levels are offered, and as its own team battle. A phone's bots are
+    /// always Easy; the saved difficulty stays for a larger screen.
     pub fn game_options(&self, human_team: Team, extra_levels: bool) -> GameOptions {
         GameOptions {
             human_kind: self.tank,
             human_team,
             game_mode: self.game_mode,
             map_mode: self.map,
-            difficulty: self.difficulty,
+            difficulty: if crate::touch::phone() {
+                Difficulty::Easy
+            } else {
+                self.difficulty
+            },
         }
         .offered(extra_levels)
     }
