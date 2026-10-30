@@ -176,17 +176,14 @@ async fn single_player(shell: Shell) -> Option<Mode> {
 /// No engine could start: natively the app ends, saying why on stderr. A browser can
 /// offer a WebGPU adapter and still fail to make the engine's device, so a page's WebGPU
 /// build hands over to its WebGL2 one (`index.html` loads that for `?webgl`), as the
-/// page's engine fell back before; otherwise the page says why, in place of the canvas.
+/// page's engine fell back before; otherwise the page's loading view says why.
 fn startup_failed(error: &str) {
     eprintln!("Sloppy Tanks could not start: {error}");
     #[cfg(target_arch = "wasm32")]
     {
-        let Some(window) = web_sys::window() else {
-            return;
-        };
         web_sys::console::error_1(&format!("Sloppy Tanks could not start: {error}").into());
-        let location = window.location();
         if cfg!(not(feature = "webgl"))
+            && let Some(location) = web_sys::window().map(|window| window.location())
             && let Ok(url) = location.href().and_then(|href| web_sys::Url::new(&href))
             && !url.search_params().has("webgl")
         {
@@ -195,19 +192,9 @@ fn startup_failed(error: &str) {
                 return;
             }
         }
-        if let Some(body) = window.document().and_then(|document| document.body()) {
-            body.set_text_content(Some(&format!(
-                "Sloppy Tanks could not start in this browser: {error}"
-            )));
-            let _ = body.set_attribute("style", STARTUP_FAILURE_STYLE);
-        }
+        crate::page::failed(error);
     }
 }
-
-/// The page's words when no engine could start: light on the backdrop, wrapped.
-#[cfg(target_arch = "wasm32")]
-const STARTUP_FAILURE_STYLE: &str =
-    "color:#f4f9ff;font:16px/1.5 system-ui,sans-serif;padding:24px;white-space:pre-wrap";
 
 /// The page's browser, by its user agent string.
 #[cfg(target_arch = "wasm32")]
@@ -970,6 +957,7 @@ impl Session {
         self.input.controls.clear();
         self.hud_dt = 0.0;
         self.game.start();
+        crate::page::round_started();
         if self.audio.is_none() {
             self.audio = Audio::new();
             if let Some(audio) = &mut self.audio {
@@ -1009,13 +997,18 @@ impl Session {
             }
         }
         if let Some(bake) = &self.bake
-            && let Some(pixels) = bake.finished()
+            && let Some(baked) = bake.finished()
         {
             let key = bake.key.clone();
             self.bake = None;
-            self.game
-                .supply_pixels(&key, &pixels)
-                .map_err(engine_error)?;
+            match baked {
+                Ok(pixels) => {
+                    self.game
+                        .supply_pixels(&key, &pixels)
+                        .map_err(engine_error)?;
+                }
+                Err(_) => self.game.release_texture_bake(&key),
+            }
         }
         let status = self.game.prepare(PREPARE_BUDGET).map_err(engine_error)?;
         match self.preparation.advance(&status, self.game.loading()) {
@@ -1023,6 +1016,7 @@ impl Session {
                 self.ui.ready = true;
                 self.ui.status = READY_STATUS.into();
                 self.ui.progress = None;
+                crate::page::arena_ready();
             }
             Progress::Warming => {}
             Progress::Loading(line) => {
@@ -1123,6 +1117,8 @@ impl Session {
             };
             if let Err(error) = step {
                 eprintln!("The game stopped: {error}");
+                // A page offers a reload over the shell's own words.
+                crate::page::failed(&format!("The renderer stopped: {error}"));
                 self.failure = Some(error);
             }
         }
@@ -1160,6 +1156,9 @@ impl Session {
         self.parts.overlay = present_start - overlay_start;
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
+        if self.frame_shown {
+            crate::page::frame_presented();
+        }
         self.parts.present = now_ms() - present_start;
         if let Some(log) = &mut self.frame_log {
             let scene = self.game.renderer().scene_size();

@@ -61,8 +61,11 @@ web-sys = { workspace = true, features = [
   "BinaryType",
   "CloseEvent",
   "console",
+  "CustomEvent",
+  "CustomEventInit",
   "Document",
   "Element",
+  "ErrorEvent",
   "Event",
   "HtmlCanvasElement",
   "HtmlElement",
@@ -70,6 +73,7 @@ web-sys = { workspace = true, features = [
   "MediaQueryList",
   "MessageEvent",
   "Navigator",
+  "Performance",
   "Request",
   "RequestInit",
   "Response",
@@ -78,6 +82,7 @@ web-sys = { workspace = true, features = [
   "UrlSearchParams",
   "WebSocket",
   "Window",
+  "Worker",
 ] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
