@@ -126,20 +126,29 @@ pnpm run server:build && pnpm run pilot:build && node --import tsx --test tests/
   real server binary over real sockets, and pins the report's JSON shape that the control
   page reads.
 
+## Build
+
+`pnpm run pilot:build` compiles the engine with the `pilot` profile in the root
+`Cargo.toml`: release optimization without LTO, in 16 codegen units. The browser's
+release profile spends about 40 s of every build on its fat-LTO link to save download
+size, which a Worker does not need. Without it, the dependencies compile once (about 70 s
+cold on 4 cores) and stay cached. A change to the pilot crate then rebuilds in about 2 s,
+and a change to `crates/core` in about 23 s instead of 45 s.
+
 ## Cost
 
 These are rough measurements from a shared Linux container. The pilots ran in Node's V8
-with the release (size-optimized) Wasm, at 30 frames a second, with the server on the
-same machine:
+at 30 frames a second, with the server on the same machine:
 
 | Measurement                      | Value                             |
 | -------------------------------- | --------------------------------- |
 | CPU per pilot (village)          | about 60–80 ms per second of play |
 | CPU for 8 pilots in one instance | about half a core                 |
 | Wasm memory, 8 pilots            | 18 MiB                            |
-| Engine size                      | 2.5 MB (870 KB gzipped)           |
+| Engine size                      | 2.7 MB without LTO (2.5 MB with)  |
 
-A speed-optimized build (`opt-level = 3`) measured 20–30% less CPU in two of four runs,
-which is within this machine's noise. That is not proven yet. Most of the cost is
-probably the client's own hull prediction (a Rapier world stepped at 60 Hz, as in the
-browser) plus the model's query refresh.
+Dropping LTO cost no measurable CPU: 8 pilots took about 60 ms per pilot-second with
+either build, over three alternating runs each. An `opt-level = 3` build measured 20–30%
+less CPU in two of four runs, which is within this machine's noise. That is not proven
+yet. Most of the cost is probably the client's own hull prediction (a Rapier world
+stepped at 60 Hz, as in the browser) plus the model's query refresh.

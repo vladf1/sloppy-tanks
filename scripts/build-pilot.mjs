@@ -1,6 +1,7 @@
-// Build the pilot engine for the bots Worker: `sloppy-pilot`'s library as release Wasm
-// into the ignored `bots/generated/sloppy_pilot.wasm`, which `bots/worker.ts` imports
-// and `pnpm run bots:deploy` bundles. The module imports nothing (`crates/pilot/src/abi.rs`),
+// Build the pilot engine for the bots Worker: `sloppy-pilot`'s library as Wasm (the
+// `pilot` profile in Cargo.toml: release without LTO, which builds far faster) into the
+// ignored `bots/generated/sloppy_pilot.wasm`, which `bots/worker.ts` imports and
+// `pnpm run bots:deploy` bundles. The module imports nothing (`crates/pilot/src/abi.rs`),
 // so it needs no wasm-bindgen glue.
 //
 // Like the browser engine it is stamped with the content version (`SLOPPY_CONTENT_VERSION`)
@@ -23,7 +24,8 @@ await new Promise((resolve, reject) => {
     [
       "build",
       "--locked",
-      "--release",
+      "--profile",
+      "pilot",
       "--target",
       "wasm32-unknown-unknown",
       "-p",
@@ -42,7 +44,7 @@ await new Promise((resolve, reject) => {
   );
 });
 await mkdir(fileURLToPath(new URL("../bots/generated/", import.meta.url)), { recursive: true });
-await copyFile(`${root}target/wasm32-unknown-unknown/release/sloppy_pilot.wasm`, output);
+await copyFile(`${root}target/wasm32-unknown-unknown/pilot/sloppy_pilot.wasm`, output);
 const { size } = await stat(output);
 console.log(
   `Pilot engine: bots/generated/sloppy_pilot.wasm, ${(size / 1024).toFixed(0)} KiB, content ${version}`,
