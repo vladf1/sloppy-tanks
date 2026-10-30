@@ -2867,18 +2867,29 @@ const PHONE_TRAY_PADDING: f32 = 10.0;
 const PHONE_LABEL: f32 = 26.0;
 const PHONE_TABS: f32 = 50.0;
 const PHONE_FORMATS: (f32, f32) = (50.0, 72.0);
-const PHONE_GO: f32 = 52.0;
 const PHONE_UPRIGHT_GO: f32 = 64.0;
-/// The logo's box over an upright phone's sheet.
-const PHONE_LOGO: Vec2 = vec2(104.0, 56.0);
+/// Held sideways, the last row: the formats' (or the room's status) well, as tall as a
+/// format key and its padding (`.phone .start .battle-choice .choice-card`), and beside it
+/// GO (its 40 px face and padding) and CREATE ROOM (`.phone .room-action .primary`)
+/// standing on the row's foot.
+const PHONE_SIDEWAYS_ROW: f32 = 62.0;
+const PHONE_SIDEWAYS_GO: f32 = 56.0;
+const PHONE_SIDEWAYS_ROOM_ACTION: f32 = 50.0;
+/// An upright phone's logo (`.phone .setup-brand`: TANKS at 46 px against 41), the room
+/// over it beyond the sheet's padding (the page's is 14 inside a 1 px border), and under
+/// it to YOUR TANK (the header's 6 px padding and the 10 px gap after it).
+const PHONE_LOGO_SCALE: f32 = 46.0 / 41.0;
+const PHONE_LOGO_ABOVE: f32 = 3.0;
+const PHONE_LOGO_BELOW: f32 = 16.0;
 /// The Home Screen tip's line in an iPhone's browser.
 const PHONE_TIP: f32 = 18.0;
 /// Tank and map cards' least and most height, upright (narrow tank cards, maps with
 /// their lines where they have the room) and sideways (short cards with their names
-/// alone). Upright the least fits an iPhone's Safari with its bars (393×659).
+/// alone, at most the page's: the name over a 42 px picture). Upright the least fits an
+/// iPhone's Safari with its bars (393×659).
 const PHONE_UPRIGHT_TANK: (f32, f32) = (110.0, 200.0);
 const PHONE_UPRIGHT_MAP: (f32, f32) = (48.0, 76.0);
-const PHONE_SIDEWAYS_TANK: (f32, f32) = (56.0, 90.0);
+const PHONE_SIDEWAYS_TANK: (f32, f32) = (56.0, 72.0);
 const PHONE_SIDEWAYS_MAP: (f32, f32) = (40.0, 48.0);
 /// A phone's tank card at least this tall stands its labels over the tank.
 const PHONE_TALL_CARD: f32 = 110.0;
@@ -2940,7 +2951,13 @@ fn phone_setup(
         .collect();
     let inset = PHONE_MARGIN + PHONE_PADDING;
     let width = screen.width() - 2.0 * inset;
-    let go_height = if upright { PHONE_UPRIGHT_GO } else { PHONE_GO };
+    // Upright GO is the last row; sideways the formats' well is, GO beside it.
+    let action_row = if upright {
+        PHONE_UPRIGHT_GO
+    } else {
+        PHONE_SIDEWAYS_ROW
+    };
+    let logo = vec2(LOGO_BOX[0], LOGO_BOX[1]) * PHONE_LOGO_SCALE;
     let (tank_range, map_rows, map_range) = if upright {
         (PHONE_UPRIGHT_TANK, maps.len(), PHONE_UPRIGHT_MAP)
     } else {
@@ -2963,11 +2980,11 @@ fn phone_setup(
         + tip
         + 2.0 * PHONE_TRAY_PADDING
         + 2.0 * (PHONE_LABEL + PHONE_GAP)
-        + go_height
+        + action_row
         // The tanks' and the maps' wells, and upright the formats'.
         + 2.0 * WELL_PADDING * if upright { 3.0 } else { 2.0 }
         + if upright {
-            PHONE_LOGO.y + 3.0 * PHONE_GAP + PHONE_FORMATS.0
+            PHONE_LOGO_ABOVE + logo.y + PHONE_LOGO_BELOW + 2.0 * PHONE_GAP + PHONE_FORMATS.0
         } else {
             0.0
         };
@@ -2987,7 +3004,7 @@ fn phone_setup(
     let map_height = map_range.0 + grow((map_range.1 - map_range.0) * rows) / rows;
     let (formats_height, logo_band) = if upright {
         let formats = PHONE_FORMATS.0 + grow(PHONE_FORMATS.1 - PHONE_FORMATS.0);
-        (formats, PHONE_LOGO.y + grow(f32::INFINITY))
+        (formats, logo.y + grow(f32::INFINITY))
     } else {
         (PHONE_FORMATS.0, 0.0)
     };
@@ -3079,14 +3096,16 @@ fn phone_setup(
                         y + tip
                     };
                     if upright {
-                        art.logo(
+                        y += PHONE_LOGO_ABOVE;
+                        art.logo_scaled(
                             &painter,
                             pos2(
-                                canvas.center().x - PHONE_LOGO.x / 2.0,
-                                y + (logo_band - PHONE_LOGO.y) / 2.0,
+                                canvas.center().x - logo.x / 2.0,
+                                y + (logo_band - logo.y) / 2.0,
                             ),
+                            PHONE_LOGO_SCALE,
                         );
-                        y = home_screen_tip(y + logo_band) + PHONE_GAP;
+                        y = home_screen_tip(y + logo_band) + PHONE_LOGO_BELOW;
                         y = tank_row(ui, y, left, width) + PHONE_GAP;
                     } else {
                         y = home_screen_tip(y);
@@ -3204,20 +3223,25 @@ fn phone_setup(
                                 vec2(inner.width(), formats_height + 2.0 * WELL_PADDING),
                             ),
                             Rect::from_min_max(
-                                pos2(inner.left(), inner.bottom() - go_height),
+                                pos2(inner.left(), inner.bottom() - action_row),
                                 inner.max,
                             ),
                         )
                     } else {
                         let third = (inner.width() - 2.0 * CARD_GAP) / 3.0;
+                        let action_height = if multiplayer {
+                            PHONE_SIDEWAYS_ROOM_ACTION
+                        } else {
+                            PHONE_SIDEWAYS_GO
+                        };
                         (
                             Rect::from_min_size(
                                 pos2(inner.left(), y),
-                                vec2(inner.width() - third - CARD_GAP, go_height),
+                                vec2(inner.width() - third - CARD_GAP, action_row),
                             ),
                             Rect::from_min_size(
-                                pos2(inner.right() - third, y),
-                                vec2(third, go_height),
+                                pos2(inner.right() - third, y + action_row - action_height),
+                                vec2(third, action_height),
                             ),
                         )
                     };

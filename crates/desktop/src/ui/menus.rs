@@ -32,6 +32,12 @@ const DIALOG_MARGIN: f32 = 16.0;
 const PHONE_PAUSE_WIDTH: f32 = 420.0;
 const PHONE_PAUSE_PADDING: [f32; 3] = [22.0, 22.0, 22.0];
 pub const PHONE_BUTTON_HEIGHT: f32 = 52.0;
+/// Pause's END BATTLE (`.pause-actions #end-battle`): a phone's at its label's width with
+/// this padding each side (the page's 16, less the 4 its icon tucks into it, shared), and
+/// on every screen the margin that sets it apart from RESUME, a hairline this far out.
+const END_BATTLE_PADDING: f32 = 14.0;
+const END_BATTLE_MARGIN: f32 = 22.0;
+const END_BATTLE_HAIRLINE: f32 = 12.0;
 /// The corner X (`.dialog-close`): its side and its inset from the plate's top-right.
 const CLOSE_SIZE: f32 = 32.0;
 const CLOSE_INSET: f32 = 12.0;
@@ -117,19 +123,10 @@ pub(super) fn dialog_with_padding(
             let [side, top, bottom] = padding;
             let content = build(ui, &painter, origin + vec2(side, top), width - 2.0 * side);
             let rect = Rect::from_min_size(origin, vec2(width, top + content + bottom));
-            // A soft shadow: a few widening, faint layers under the plate.
-            let mut shapes: Vec<Shape> = [6.0, 14.0, 24.0]
-                .into_iter()
-                .map(|spread| {
-                    Shape::rect_filled(
-                        rect.translate(vec2(0.0, 16.0)).expand(spread),
-                        spread as u8,
-                        hexa(0x000000, 0.1),
-                    )
-                })
-                .collect();
-            shapes.extend(paint::plate_shapes(rect, 14.0, None));
-            painter.set(slot, Shape::Vec(shapes));
+            // No drop shadow: the page's armour plate clips its own box shadow away
+            // (`:is(.menu:not(.start), .settings)` keeps only inset ones under its
+            // `clip-path`), so the plate sits straight on the blurred arena.
+            painter.set(slot, Shape::Vec(paint::plate_shapes(rect, 14.0, None)));
             ui.allocate_rect(rect, Sense::hover());
         });
     let size = shown.response.rect.size();
@@ -202,6 +199,17 @@ fn draw_centred(painter: &Painter, top_center: Pos2, galley: Arc<Galley>) -> f32
 /// The room between the score plates, and how far each plate's outer side slants.
 const SCORE_COLON: f32 = 18.0;
 const PLATE_SLANT: f32 = 10.0;
+/// The glow under the viewer's gold rim (`inset 0 14px 16px -12px #ffcf3880`): the gold's
+/// opacity at each depth under the plate's top as that blurred inset shadow falls off.
+const YOURS_GLOW: [(f32, f32); 7] = [
+    (3.0, 0.225),
+    (5.0, 0.177),
+    (8.0, 0.113),
+    (11.0, 0.065),
+    (14.0, 0.033),
+    (18.0, 0.011),
+    (22.0, 0.0),
+];
 
 /// A score plate's name, with YOU on the viewer's side.
 fn plate_label(names: &[&str; 2], team: Team, index: usize) -> String {
@@ -293,13 +301,23 @@ pub fn score_plates(
             (hex(0xff5367), hex(0xb01b33))
         };
         painter.add(paint::gradient_polygon(&band(0.0, height), light, deep));
+        // The glossy top half (`#ffffff33` to clear at 50%).
+        painter.add(paint::gradient_polygon(
+            &band(0.0, height / 2.0),
+            hexa(0xffffff, 0.2),
+            Color32::TRANSPARENT,
+        ));
         let center = x + width / 2.0 + if index == 0 { 5.0 } else { -5.0 };
         if index == team as usize {
-            painter.add(paint::gradient_polygon(
-                &band(3.0, 16.0),
-                hexa(0xffcf38, 0.45),
-                hexa(0xffcf38, 0.0),
-            ));
+            // The soft gold glow under the rim, band by band down its fall-off.
+            for pair in YOURS_GLOW.windows(2) {
+                let [(from, from_alpha), (to, to_alpha)] = [pair[0], pair[1]];
+                painter.add(paint::gradient_polygon(
+                    &band(from, to),
+                    hexa(0xffcf38, from_alpha),
+                    hexa(0xffcf38, to_alpha),
+                ));
+            }
             painter.add(Shape::convex_polygon(
                 band(0.0, 3.0).to_vec(),
                 GOLD,
@@ -867,7 +885,8 @@ pub fn pause(
             let button_height = 48.0;
             let end_width = 160.0;
             let action_gap = 10.0;
-            let secondary_width = (width - end_width - 32.0 - action_gap) / 2.4;
+            let resume_left = origin.x + end_width + END_BATTLE_MARGIN + action_gap;
+            let secondary_width = (origin.x + width - resume_left - action_gap) / 2.4;
             let resume_width = secondary_width * 1.4;
             if paint::button_at(
                 ui,
@@ -883,17 +902,16 @@ pub fn pause(
             {
                 actions.push(Action::EndBattle);
             }
+            let hairline = origin.x + end_width + END_BATTLE_HAIRLINE;
             painter.line_segment(
                 [
-                    pos2(origin.x + end_width + 12.0, y + 8.0),
-                    pos2(origin.x + end_width + 12.0, y + button_height - 8.0),
+                    pos2(hairline, y + 8.0),
+                    pos2(hairline, y + button_height - 8.0),
                 ],
                 Stroke::new(1.0, hexa(0x9fd0ff, 0.18)),
             );
-            let resume = Rect::from_min_size(
-                pos2(origin.x + end_width + 32.0, y),
-                vec2(resume_width, button_height),
-            );
+            let resume =
+                Rect::from_min_size(pos2(resume_left, y), vec2(resume_width, button_height));
             if paint::button_at(
                 ui,
                 art,
@@ -929,8 +947,9 @@ pub fn pause(
     state.pause_tab = tab;
 }
 
-/// A phone's pause actions at `origin`: END BATTLE beside RESUME, SETTINGS under them,
-/// each a full thumb's height. Returns the height used.
+/// A phone's pause actions at `origin`: END BATTLE at its own width, set apart from RESUME
+/// behind a hairline as on a wider dialog, and SETTINGS under them, each a full thumb's
+/// height. Returns the height used.
 fn phone_pause_actions(
     ui: &mut Ui,
     art: &Art,
@@ -940,7 +959,17 @@ fn phone_pause_actions(
 ) -> f32 {
     let height = PHONE_BUTTON_HEIGHT;
     let gap = 10.0;
-    let end_width = (width - gap) * 0.45;
+    let end_width =
+        paint::button_content_width(ui.painter(), "END BATTLE", true) + 2.0 * END_BATTLE_PADDING;
+    let resume_left = origin.x + end_width + END_BATTLE_MARGIN + gap;
+    let hairline = origin.x + end_width + END_BATTLE_HAIRLINE;
+    ui.painter().line_segment(
+        [
+            pos2(hairline, origin.y + 8.0),
+            pos2(hairline, origin.y + height - 8.0),
+        ],
+        Stroke::new(1.0, hexa(0x9fd0ff, 0.18)),
+    );
     let row =
         |left: f32, width: f32, top: f32| Rect::from_min_size(pos2(left, top), vec2(width, height));
     let buttons = [
@@ -952,11 +981,7 @@ fn phone_pause_actions(
             Action::EndBattle,
         ),
         (
-            row(
-                origin.x + end_width + gap,
-                width - end_width - gap,
-                origin.y,
-            ),
+            row(resume_left, origin.x + width - resume_left, origin.y),
             "RESUME",
             "resume",
             ButtonStyle::Primary,

@@ -127,8 +127,16 @@ pub fn hgradient(rect: Rect, stops: &[(f32, Color32)]) -> Shape {
     Shape::mesh(mesh)
 }
 
+/// How wide a slanted edge of [`gradient_polygon`] fades out, centred on the edge: a
+/// physical pixel on the 2× screens most players have, as egui feathers its own shapes.
+const EDGE_FEATHER: f32 = 0.5;
+
 /// A convex polygon filled with a vertical gradient from `top` to `bottom` of its
-/// bounds (a fan from its centre, which interpolates a vertical ramp exactly).
+/// bounds (a fan from its centre, which interpolates a vertical ramp exactly). Its
+/// slanted edges fade out over [`EDGE_FEATHER`], as a browser smooths a `clip-path`,
+/// where unfeathered triangles leave stairs; its level and upright edges stay crisp, so
+/// shapes that share one (a plate and its band, the HUD's plates and clock) leave no
+/// seam between them.
 pub fn gradient_polygon(points: &[Pos2], top: Color32, bottom: Color32) -> Shape {
     let bounds = Rect::from_points(points);
     let color = |y: f32| {
@@ -139,18 +147,70 @@ pub fn gradient_polygon(points: &[Pos2], top: Color32, bottom: Color32) -> Shape
         };
         mix(top, bottom, t)
     };
+    let count = points.len();
+    if count < 3 {
+        return Shape::Noop;
+    }
+    // Each edge's outward normal and how far its fade reaches each way.
+    let clockwise = (0..count)
+        .map(|index| {
+            let a = points[index] - points[0];
+            let b = points[(index + 1) % count] - points[0];
+            a.x * b.y - b.x * a.y
+        })
+        .sum::<f32>()
+        >= 0.0;
+    let edges: Vec<(Vec2, f32)> = (0..count)
+        .map(|index| {
+            let along = points[(index + 1) % count] - points[index];
+            let normal = vec2(along.y, -along.x).normalized();
+            let normal = if clockwise { normal } else { -normal };
+            let slanted = along.x.abs() > 0.01 && along.y.abs() > 0.01;
+            (normal, if slanted { EDGE_FEATHER / 2.0 } else { 0.0 })
+        })
+        .collect();
+    // A corner moves to where its two edges' offset lines cross, so the fade keeps
+    // each edge's own width and a crisp edge stays put.
+    let offset = |index: usize| {
+        let (before, reach_before) = edges[(index + count - 1) % count];
+        let (after, reach_after) = edges[index];
+        let determinant = before.x * after.y - before.y * after.x;
+        if determinant.abs() < 1e-3 {
+            return before * reach_before.max(reach_after);
+        }
+        let shift = vec2(
+            (reach_before * after.y - reach_after * before.y) / determinant,
+            (before.x * reach_after - after.x * reach_before) / determinant,
+        );
+        // A sharp corner's crossing runs far out; keep it near the corner.
+        let most = 4.0 * EDGE_FEATHER;
+        if shift.length() > most {
+            shift.normalized() * most
+        } else {
+            shift
+        }
+    };
     let mut mesh = Mesh::default();
     let center = points
         .iter()
         .fold(Vec2::ZERO, |sum, point| sum + point.to_vec2())
-        / points.len().max(1) as f32;
+        / count.max(1) as f32;
     mesh.colored_vertex(center.to_pos2(), color(center.y));
-    for point in points {
-        mesh.colored_vertex(*point, color(point.y));
+    // Each corner as an inner vertex in the gradient's colour and an outer one faded out.
+    for (index, point) in points.iter().enumerate() {
+        let shift = offset(index);
+        let inner = *point - shift;
+        mesh.colored_vertex(inner, color(inner.y));
+        mesh.colored_vertex(*point + shift, Color32::TRANSPARENT);
     }
-    let count = points.len() as u32;
+    let count = count as u32;
     for index in 0..count {
-        mesh.add_triangle(0, 1 + index, 1 + (index + 1) % count);
+        let next = (index + 1) % count;
+        let (inner, outer) = (1 + 2 * index, 2 + 2 * index);
+        let (next_inner, next_outer) = (1 + 2 * next, 2 + 2 * next);
+        mesh.add_triangle(0, inner, next_inner);
+        mesh.add_triangle(inner, outer, next_outer);
+        mesh.add_triangle(inner, next_outer, next_inner);
     }
     Shape::mesh(mesh)
 }
@@ -553,6 +613,36 @@ pub enum Lettering {
     Display { size: f32, spacing: f32 },
 }
 
+impl Lettering {
+    /// The face and the room between letters.
+    fn font(self) -> (FontId, f32) {
+        match self {
+            Lettering::Dialog => (bold_font(15.0), 1.5),
+            Lettering::Display { size, spacing } => (display_font(size), spacing),
+        }
+    }
+}
+
+/// A button's leading icon (`.action-icon`) and the room after it.
+const BUTTON_ICON: f32 = 16.0;
+const BUTTON_ICON_GAP: f32 = 8.0;
+
+/// The width a dialog button's label takes, its icon (`icon`) included: a button sized
+/// to its content adds its padding to this.
+pub fn button_content_width(painter: &Painter, label: &str, icon: bool) -> f32 {
+    content_width(painter, label, icon, Lettering::Dialog)
+}
+
+fn content_width(painter: &Painter, label: &str, icon: bool, lettering: Lettering) -> f32 {
+    let (font, spacing) = lettering.font();
+    let icon_width = if icon {
+        BUTTON_ICON + BUTTON_ICON_GAP
+    } else {
+        0.0
+    };
+    text_width(painter, label, font, spacing) + icon_width
+}
+
 /// A dialog button with an optional leading icon, `size` wide and tall.
 pub fn button(
     ui: &mut Ui,
@@ -680,25 +770,20 @@ fn lettered_button(
             painter.rect_stroke(rect, 10, Stroke::new(1.5, rim), StrokeKind::Inside);
         }
     }
-    let (font, spacing) = match lettering {
-        Lettering::Dialog => (bold_font(15.0), 1.5),
-        Lettering::Display { size, spacing } => (display_font(size), spacing),
-    };
-    let label_width = text_width(painter, label, font.clone(), spacing);
-    let icon_size = 16.0;
-    let total = label_width + icon.map_or(0.0, |_| icon_size + 8.0);
+    let (font, spacing) = lettering.font();
+    let total = content_width(painter, label, icon.is_some(), lettering);
     let mut x = rect.center().x - total / 2.0;
     if let Some(icon) = icon {
         art.icon(
             painter,
             icon,
             Rect::from_center_size(
-                pos2(x + icon_size / 2.0, rect.center().y),
-                Vec2::splat(icon_size),
+                pos2(x + BUTTON_ICON / 2.0, rect.center().y),
+                Vec2::splat(BUTTON_ICON),
             ),
             ink,
         );
-        x += icon_size + 8.0;
+        x += BUTTON_ICON + BUTTON_ICON_GAP;
     }
     text(
         painter,
