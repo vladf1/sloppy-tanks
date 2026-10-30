@@ -59,6 +59,10 @@ pub struct State {
     pub prefs: Value,
     /// The room: its code and the room menu's phase.
     pub room: Option<Value>,
+    /// The frame's parts in milliseconds (`frame_log::FrameParts`), single player's: the engine's
+    /// frame and its simulation and render times, egui's layout and tessellation
+    /// (`overlay`) and drawing the overlay and showing the frame (`present`).
+    pub parts: Option<Value>,
     /// The engine's JSON a `frame(extras)` asked for.
     pub extras: serde_json::Map<String, Value>,
 }

@@ -1075,8 +1075,10 @@ impl Session {
     fn battle_frame(&mut self, now: f64) -> Result<(), String> {
         let input = self.input.take_input(self.first_person);
         let zoomed = input.zoom != 0.0;
+        // `now` is the game's clock, which a check may hold (`automation.rs`).
+        let engine_start = now_ms();
         let result = self.game.frame(now, &input.pack()).map_err(engine_error)?;
-        self.parts.engine = now_ms() - now;
+        self.parts.engine = now_ms() - engine_start;
         self.parts.sim = f64::from(result.get(frame_slot::SIM_MS).copied().unwrap_or(0.0));
         self.parts.render = f64::from(result.get(frame_slot::RENDER_MS).copied().unwrap_or(0.0));
         if let Some(error) = self.game.error() {
@@ -1149,6 +1151,13 @@ impl Session {
             failure: self.failure.clone(),
             error: self.game.error(),
             prefs: serde_json::to_value(&self.prefs).unwrap_or_default(),
+            parts: Some(serde_json::json!({
+                "engine": self.parts.engine,
+                "sim": self.parts.sim,
+                "render": self.parts.render,
+                "overlay": self.parts.overlay,
+                "present": self.parts.present,
+            })),
             ..automation::State::default()
         }
     }
@@ -1262,6 +1271,7 @@ impl Session {
         self.parts.overlay = present_start - overlay_start;
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
+        self.parts.present = now_ms() - present_start;
         if self.frame_shown {
             crate::page::frame_presented();
             if automation::enabled() {
@@ -1279,7 +1289,6 @@ impl Session {
                 });
             }
         }
-        self.parts.present = now_ms() - present_start;
         if let Some(log) = &mut self.frame_log {
             let scene = self.game.renderer().scene_size();
             log.frame(&self.parts, target, scene, self.game.gpu_ms());
