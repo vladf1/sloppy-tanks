@@ -292,7 +292,7 @@ pub(super) fn choice_frame(painter: &Painter, rect: Rect, selected: bool, hovere
 /// Until it is chosen a card shows its scene layer at part strength (`.choice-card::before`,
 /// 55%, or 80% hovered): the card's own fill over it at the rest makes the same blend.
 fn dim_unchosen_scene(clip: &Painter, rect: Rect, hovered: bool) {
-    let strength = if hovered { 0.8 } else { 0.55 };
+    let strength = if hovered { 0.8 } else { UNCHOSEN_SCENE };
     clip.rect_filled(rect, 10, fade(card_fill(hovered), 1.0 - strength));
 }
 
@@ -337,19 +337,37 @@ const PHONE_MAP_ART_COLUMN: f32 = 150.0;
 /// A map's whole scene, width over height, of which its art is the right three quarters.
 const MAP_SCENE_ASPECT: f32 = 3.0;
 
-/// A map card: its name and line over its landscape, washed in the map's tint.
+/// A map card: its name and line over its landscape, washed in the map's tint. `chosen`
+/// is the player's own map; while an open room is chosen, `room_map` holds that room's
+/// map, which shows as fixed, and every other map is out of play.
 #[allow(clippy::too_many_arguments)]
 fn map_card(
     painter: &Painter,
     art: &Art,
     rect: Rect,
     map: &MapCard,
-    selected: bool,
+    chosen: bool,
+    room_map: Option<sloppy_core::sim::map_options::MapId>,
     hovered: bool,
     layout: MapLayout,
 ) {
     let extra = map.extra();
-    choice_frame(painter, rect, selected, hovered);
+    let fixed = room_map == Some(map.id);
+    let out_of_play = room_map.is_some() && !fixed;
+    let first_shape = out_of_play.then(|| next_shape(painter));
+    if fixed {
+        // The room's map reads as fixed rather than chosen: the chosen fill without its
+        // sheen or glow, and a muted ring under the scene in place of the gold one.
+        painter.rect_filled(rect, 10, CARD_SELECTED);
+        room_map_ring(
+            painter,
+            rect,
+            if extra { (0.0, 0.0) } else { map_scrim(layout) },
+        );
+    } else {
+        // The player's own map, out of play, loses its fill and ring.
+        choice_frame(painter, rect, chosen && !out_of_play, hovered);
+    }
     let tint = hex(map.tint);
     let clip = painter.with_clip_rect(rect.shrink(1.0));
     clip.add(paint::vgradient(
@@ -373,11 +391,12 @@ fn map_card(
         // is solid to and clear from, from the right (`var(--art) right -6px bottom /
         // auto 74%` under `#0b1b36 calc(100% - 150px), transparent calc(100% - 60px)`).
         let art_name = format!("art-{}", map.id.as_str());
-        let (share, past_edge, scrim_solid, scrim_clear) = match layout {
-            MapLayout::Row => (0.74, 6.0, 150.0, 60.0),
-            MapLayout::Phone => (0.96, 10.0, 180.0, 100.0),
-            MapLayout::Narrow { .. } => (0.46, 0.0, 0.0, 0.0),
+        let (share, past_edge) = match layout {
+            MapLayout::Row => (0.74, 6.0),
+            MapLayout::Phone => (0.96, 10.0),
+            MapLayout::Narrow { .. } => (0.46, 0.0),
         };
+        let (scrim_solid, scrim_clear) = map_scrim(layout);
         let height = rect.height() * share;
         let size = vec2(height * art.aspect(&art_name), height);
         let place = if let MapLayout::Narrow { .. } = layout {
@@ -411,7 +430,9 @@ fn map_card(
             ));
         }
     }
-    if !selected {
+    if fixed && !chosen {
+        clip.rect_filled(rect, 10, fade(CARD_SELECTED, 1.0 - UNCHOSEN_SCENE));
+    } else if !chosen {
         dim_unchosen_scene(&clip, rect, hovered);
     }
     let text_width = rect.width() - 24.0;
@@ -460,8 +481,9 @@ fn map_card(
             0.8,
         );
     }
+    let mut words_right = name.right();
     if detail {
-        paint::text_fit(
+        let line = paint::text_fit(
             painter,
             pos2(
                 rect.left() + MAP_PADDING,
@@ -474,8 +496,145 @@ fn map_card(
             0.0,
             text_width,
         );
+        words_right = words_right.max(line.right());
     }
-    choice_ring(painter, rect, selected);
+    if fixed {
+        room_map_lock(painter, rect, words_right, layout);
+    } else if !(out_of_play && chosen) {
+        choice_ring(painter, rect, chosen && !out_of_play);
+    }
+    if let Some(first) = first_shape {
+        put_out_of_play(painter, first);
+    }
+}
+
+/// The chosen card's fill (`--card-selected`).
+const CARD_SELECTED: Color32 = Color32::from_rgb(0x22, 0x47, 0x7a);
+/// An unchosen card's scene strength (`.choice-card::before`).
+const UNCHOSEN_SCENE: f32 = 0.55;
+/// While an open room is chosen the other maps fade (`opacity: .4; filter: saturate(.4)`).
+const OUT_OF_PLAY_OPACITY: f32 = 0.4;
+const OUT_OF_PLAY_SATURATION: f32 = 0.4;
+/// The room map's lock (its drawing's 16 by 18 units) and its gap after the words.
+const LOCK_SIZE: Vec2 = vec2(16.0, 18.0);
+const LOCK_GAP: f32 = 12.0;
+/// A phone's sideways map cards keep this much at their right (`.phone .map-choice
+/// .choice-card`), so the lock may sit over the art there.
+const PHONE_SIDEWAYS_MAP_PADDING: f32 = 10.0;
+
+/// Where a map card's scrim under its words is solid to and clear from, from its right
+/// (`#0b1b36 calc(100% - 150px), transparent calc(100% - 60px)`); none in a narrow
+/// window's buttons.
+fn map_scrim(layout: MapLayout) -> (f32, f32) {
+    match layout {
+        MapLayout::Row => (150.0, 60.0),
+        MapLayout::Phone => (180.0, 100.0),
+        MapLayout::Narrow { .. } => (0.0, 0.0),
+    }
+}
+
+/// The room's map's muted 2px ring. It lies under the card's scene, so the scrim
+/// (`scrim`, as `map_scrim` gives it) hides it under the words and lets it through by
+/// the art.
+fn room_map_ring(painter: &Painter, rect: Rect, scrim: (f32, f32)) {
+    const WIDTH: f32 = 2.0;
+    let mut points = Vec::new();
+    egui::epaint::tessellator::path::rounded_rectangle(
+        &mut points,
+        egui::epaint::RoundedRect::new(rect.shrink(WIDTH / 2.0), 10.0 - WIDTH / 2.0),
+    );
+    let (solid, clear) = scrim;
+    let stroke = if solid > 0.0 {
+        let (hidden_to, shown_from) = (rect.right() - solid, rect.right() - clear);
+        egui::epaint::PathStroke::new_uv(WIDTH, move |_, point| {
+            fade(
+                TEXT_DIM,
+                ((point.x - hidden_to) / (shown_from - hidden_to)).clamp(0.0, 1.0),
+            )
+        })
+    } else {
+        egui::epaint::PathStroke::new(WIDTH, TEXT_DIM)
+    };
+    painter.add(egui::epaint::PathShape {
+        points,
+        closed: true,
+        fill: Color32::TRANSPARENT,
+        stroke,
+    });
+}
+
+/// The room's map's lock, a flex item after the card's words (`.room-map::after`): at the
+/// end of the words' column, or past it where the words run longer. A narrow window's
+/// card stacks its words in a column, where the empty lock takes no width and none shows.
+fn room_map_lock(painter: &Painter, rect: Rect, words_right: f32, layout: MapLayout) {
+    let column_end = match layout {
+        MapLayout::Narrow { .. } => return,
+        MapLayout::Phone => rect.right() - PHONE_MAP_ART_COLUMN,
+        MapLayout::Row if crate::touch::phone() => rect.right() - PHONE_SIDEWAYS_MAP_PADDING,
+        MapLayout::Row => rect.right() - MAP_ART_COLUMN,
+    };
+    let left = (column_end - LOCK_SIZE.x).max(words_right + LOCK_GAP);
+    let lock = Rect::from_min_size(pos2(left, rect.center().y - LOCK_SIZE.y / 2.0), LOCK_SIZE);
+    let at = |x: f32, y: f32| lock.min + vec2(x, y);
+    // `M4 8V5.5a4 4 0 0 1 8 0V8` stroked 2 wide over a 14 by 10 body rounded 2.
+    let mut shackle = vec![at(4.0, 8.0)];
+    shackle.extend((0..=LOCK_ARC_STEPS).map(|step| {
+        let angle = std::f32::consts::PI * (1.0 - step as f32 / LOCK_ARC_STEPS as f32);
+        at(8.0 + 4.0 * angle.cos(), 5.5 - 4.0 * angle.sin())
+    }));
+    shackle.push(at(12.0, 8.0));
+    painter.add(Shape::line(shackle, Stroke::new(2.0, TEXT_DIM)));
+    painter.rect_filled(
+        Rect::from_min_size(at(1.0, 8.0), vec2(14.0, 10.0)),
+        2,
+        TEXT_DIM,
+    );
+}
+
+/// Segments in the lock's shackle arc.
+const LOCK_ARC_STEPS: u32 = 12;
+
+/// Where the next shape `painter` paints lands in its layer.
+fn next_shape(painter: &Painter) -> egui::layers::ShapeIdx {
+    painter
+        .ctx()
+        .graphics_mut(|graphics| graphics.entry(painter.layer_id()).next_idx())
+}
+
+/// Fade and desaturate everything `painter`'s layer took from `first` on, as CSS's
+/// `opacity` and `saturate()` would the element that painted it.
+fn put_out_of_play(painter: &Painter, first: egui::layers::ShapeIdx) {
+    painter.ctx().graphics_mut(|graphics| {
+        let list = graphics.entry(painter.layer_id());
+        for index in first.0..list.next_idx().0 {
+            list.mutate_shape(egui::layers::ShapeIdx(index), |clipped| {
+                egui::epaint::shape_transform::adjust_colors(&mut clipped.shape, |color| {
+                    if *color != Color32::PLACEHOLDER {
+                        *color = out_of_play_color(*color);
+                    }
+                });
+            });
+        }
+    });
+}
+
+/// `color` through `saturate(OUT_OF_PLAY_SATURATION)` (the filter's sRGB matrix, which
+/// premultiplied alpha passes through) and then `OUT_OF_PLAY_OPACITY`.
+fn out_of_play_color(color: Color32) -> Color32 {
+    let s = OUT_OF_PLAY_SATURATION;
+    let [r, g, b, a] = color.to_array().map(f32::from);
+    let saturated = [
+        (0.213 + 0.787 * s) * r + (0.715 - 0.715 * s) * g + (0.072 - 0.072 * s) * b,
+        (0.213 - 0.213 * s) * r + (0.715 + 0.285 * s) * g + (0.072 - 0.072 * s) * b,
+        (0.213 - 0.213 * s) * r + (0.715 - 0.715 * s) * g + (0.072 + 0.928 * s) * b,
+    ];
+    let channel = |value: f32| (value.clamp(0.0, a) * OUT_OF_PLAY_OPACITY).round() as u8;
+    Color32::from_rgba_premultiplied(
+        channel(saturated[0]),
+        channel(saturated[1]),
+        channel(saturated[2]),
+        channel(a),
+    )
 }
 
 /// Team Battle's poster: each tank's width as a share of the poster's, how far down the
@@ -1344,7 +1503,7 @@ fn sheet(
                         pos2(heading.right() + 10.0, heading.center().y + 1.0),
                         Align2::LEFT_CENTER,
                         if room_map.is_some() {
-                            "The room's map"
+                            "The room you join keeps its own"
                         } else {
                             "For your new room"
                         },
@@ -1392,7 +1551,8 @@ fn sheet(
                         art,
                         rect,
                         map,
-                        shown_map == map.id,
+                        options.map_mode == map.id,
+                        room_map,
                         !locked && response.hovered(),
                         MapLayout::Row,
                     );
@@ -2537,7 +2697,7 @@ fn draw_stack(
             pos2(heading.right() + 10.0, heading.center().y + 1.0),
             Align2::LEFT_CENTER,
             if room_map.is_some() {
-                "The room's map"
+                "The room you join keeps its own"
             } else {
                 "For your new room"
             },
@@ -2578,7 +2738,8 @@ fn draw_stack(
                 art,
                 rect,
                 map,
-                shown_map == map.id,
+                options.map_mode == map.id,
+                room_map,
                 !locked && response.hovered(),
                 window.map_layout(),
             );
@@ -3167,7 +3328,7 @@ fn phone_setup(
                             pos2(heading.right() + 10.0, heading.center().y + 1.0),
                             Align2::LEFT_CENTER,
                             if room_map.is_some() {
-                                "The room's map"
+                                "The room you join keeps its own"
                             } else {
                                 "For your new room"
                             },
@@ -3216,7 +3377,8 @@ fn phone_setup(
                                 art,
                                 rect,
                                 map,
-                                shown_map == map.id,
+                                options.map_mode == map.id,
+                                room_map,
                                 false,
                                 if upright {
                                     MapLayout::Phone

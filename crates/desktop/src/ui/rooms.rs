@@ -1219,6 +1219,10 @@ pub fn phone_multiplayer(
     }
 }
 
+/// How far the new room's rules fade while an open room is chosen
+/// (`.new-room:not(:has(#new-room:checked)) .room-rules`).
+const UNCHOSEN_RULES_OPACITY: f32 = 0.55;
+
 /// The new room's card: its map, what it holds, and its length and humans-only rules,
 /// at the card's right end or, `rules_below`, on a line of their own under its name.
 fn new_room_card(
@@ -1296,9 +1300,14 @@ fn new_room_card(
         new_room_line(&painter, line_width),
         Color32::WHITE,
     );
+    // The rules fade while an open room is chosen.
+    let mut rules = painter.clone();
+    if !chosen {
+        rules.multiply_opacity(UNCHOSEN_RULES_OPACITY);
+    }
     // LENGTH: a stepper in its well.
     paint::text(
-        &painter,
+        &rules,
         pos2(rules_left, rule_y),
         Align2::LEFT_CENTER,
         "LENGTH",
@@ -1307,7 +1316,7 @@ fn new_room_card(
         0.8,
     );
     let stepper = Rect::from_min_size(pos2(rules_left + 65.0, rule_y - 17.0), vec2(124.0, 34.0));
-    well(&painter, stepper, 9);
+    well(&rules, stepper, 9);
     let mut minutes = state.round_minutes;
     let step = |ui: &mut egui::Ui, left: f32, glyph: &str, id: &str| {
         let rect = Rect::from_min_size(pos2(left, stepper.top() + 2.0), vec2(28.0, 30.0));
@@ -1321,13 +1330,13 @@ fn new_room_card(
                 "More minutes"
             },
         );
-        ui.painter().rect_filled(
+        rules.rect_filled(
             rect,
             7,
             hexa(0xffffff, if response.hovered() { 0.12 } else { 0.06 }),
         );
         paint::text(
-            ui.painter(),
+            &rules,
             rect.center(),
             Align2::CENTER_CENTER,
             glyph,
@@ -1344,7 +1353,7 @@ fn new_room_card(
         minutes = stepped_minutes(minutes, LENGTH_STEP);
     }
     paint::text(
-        &painter,
+        &rules,
         pos2(stepper.left() + 47.0, rule_y),
         Align2::CENTER_CENTER,
         &minutes.to_string(),
@@ -1353,7 +1362,7 @@ fn new_room_card(
         0.0,
     );
     paint::text(
-        &painter,
+        &rules,
         pos2(stepper.left() + 63.0, rule_y + 1.0),
         Align2::LEFT_CENTER,
         "min",
@@ -1379,28 +1388,28 @@ fn new_room_card(
         humans_only = !humans_only;
     }
     if humans_only {
-        painter.rect_filled(switch, 10, GOLD);
-        painter.circle_filled(
+        rules.rect_filled(switch, 10, GOLD);
+        rules.circle_filled(
             pos2(switch.right() - 10.0, switch.center().y),
             7.0,
             Color32::WHITE,
         );
     } else {
-        painter.rect_filled(switch, 10, hex(0x050d1c));
-        painter.rect_stroke(
+        rules.rect_filled(switch, 10, hex(0x050d1c));
+        rules.rect_stroke(
             switch,
             10,
             Stroke::new(1.0, hexa(0x8bb9dc, 0.4)),
             StrokeKind::Inside,
         );
-        painter.circle_filled(
+        rules.circle_filled(
             pos2(switch.left() + 10.0, switch.center().y),
             7.0,
             hex(0x8ea7bd),
         );
     }
     paint::text(
-        &painter,
+        &rules,
         pos2(switch.right() + 7.0, switch_y),
         Align2::LEFT_CENTER,
         "HUMANS ONLY",
@@ -1505,11 +1514,10 @@ fn room_rows(ui: &mut egui::Ui, state: &mut RoomsState) {
         let painter = ui.painter();
         let chosen = state.selected == room.room;
         paint::labelled_choice(&response, joinable, chosen, &room.room);
-        if chosen {
-            painter.rect_filled(rect, 10, hex(0x22477a));
-            painter.rect_stroke(rect, 10, Stroke::new(2.0, GOLD), StrokeKind::Inside);
-        } else if joinable && response.hovered() {
-            painter.rect_filled(rect, 10, hex(0x143060));
+        // A listed room shows its choice by its radio alone, with no fill or ring
+        // (`.start #room-list .room-row` outranks the chosen card's rule).
+        if joinable && response.hovered() {
+            painter.rect_filled(rect, 10, hex(0x1b3966));
         }
         let alpha = if joinable { 1.0 } else { 0.5 };
         radio(painter, pos2(rect.left() + 19.0, rect.center().y), chosen);
