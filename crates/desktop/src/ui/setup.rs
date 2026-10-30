@@ -2212,16 +2212,17 @@ fn stack_layout(
             )
         }
     });
-    let corner_center = if corner_in_logo_row {
-        top + LOGO_ABOVE + logo_size.y / 2.0
+    // In the tabs' row the plate keeps the same gap from the tray under it as from the
+    // tabs beside it: centred on the open tab, which reaches down into the tray, its
+    // edge all but touched the tray's.
+    let corner_top = if corner_in_logo_row {
+        top + LOGO_ABOVE + (logo_size.y - CORNER_PLATE_HEIGHT) / 2.0
     } else {
-        tabs[usize::from(rooms.multiplayer)].center().y
+        let centred = tabs[usize::from(rooms.multiplayer)].center().y - CORNER_PLATE_HEIGHT / 2.0;
+        centred.min(tray_top - CORNER_GAP - CORNER_PLATE_HEIGHT)
     };
     let corner = Rect::from_min_size(
-        pos2(
-            content_right - corner_width,
-            corner_center - CORNER_PLATE_HEIGHT / 2.0,
-        ),
+        pos2(content_right - corner_width, corner_top),
         vec2(corner_width, CORNER_PLATE_HEIGHT),
     );
 
