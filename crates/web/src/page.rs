@@ -363,11 +363,6 @@ pub async fn create_view(canvas: RenderTarget, config: ViewConfig) -> Result<Pag
     let mut renderer = Renderer::new(canvas, config.asset_base, msaa)
         .await
         .map_err(js_error)?;
-    // The desktop shell in a page draws its egui over each frame before it shows.
-    #[cfg(target_arch = "wasm32")]
-    if config.shell == Shell::Desktop {
-        renderer.present_late();
-    }
     let graphics = Graphics::new(
         &mut renderer,
         config.graphics,

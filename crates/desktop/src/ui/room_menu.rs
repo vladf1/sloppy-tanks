@@ -20,6 +20,9 @@ use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
 use super::theme::{GOLD, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
 use super::{Action, KillFeedEntry, UiState, View, hud, menus};
+use crate::links;
+use crate::tasks::Background;
+use std::sync::mpsc::TryRecvError;
 
 /// Seconds "Code copied" shows on its button.
 const COPIED_SECONDS: f64 = 2.0;
@@ -56,6 +59,8 @@ pub struct RoomMenu {
     pub notice: String,
     /// Seconds left on "Code copied".
     copied: f64,
+    /// The invite link on its way to the clipboard, which a page's browser may refuse.
+    copying: Option<Background<bool>>,
     /// Who destroyed the viewer, while the respawn card shows.
     pub death_cause: String,
 }
@@ -82,6 +87,7 @@ impl RoomMenu {
             controls_open: false,
             notice: String::new(),
             copied: 0.0,
+            copying: None,
             death_cause: String::new(),
         }
     }
@@ -111,6 +117,24 @@ impl RoomMenu {
             "menuOpen": self.menu_open, "editingRules": self.editing_rules, "editingChoice": self.editing_choice,
             "controlsOpen": self.controls_open, "notice": self.notice, "deathCause": self.death_cause,
         })
+    }
+
+    /// Say whether the invite link reached the clipboard, once that is known.
+    fn copy_answered(&mut self) {
+        let Some(answer) = self.copying.as_ref().map(Background::answer) else {
+            return;
+        };
+        match answer {
+            Err(TryRecvError::Empty) => return,
+            Ok(true) => {
+                self.copied = COPIED_SECONDS;
+                self.notice = "Invite link copied. Send it to your friends.".into();
+            }
+            Ok(false) | Err(TryRecvError::Disconnected) => {
+                self.notice = "Copy the address from your browser to invite friends.".into();
+            }
+        }
+        self.copying = None;
     }
 
     pub fn phase(&self) -> RoomPhase {
@@ -311,6 +335,7 @@ pub fn draw(
 ) -> Vec<Action> {
     let mut actions = Vec::new();
     menu.copied = (menu.copied - dt).max(0.0);
+    menu.copy_answered();
     let art = state
         .art
         .take()
@@ -409,7 +434,11 @@ fn connection(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut
                 },
                 width,
             ) {
-                actions.push(Action::RoomSetup(ending.text.clone()));
+                actions.push(if ending.reload {
+                    Action::Reload
+                } else {
+                    Action::RoomSetup(ending.text.clone())
+                });
             }
         }
         Link::Live => {}
@@ -447,12 +476,9 @@ fn room_menu(
             copy,
             "copy room invite",
         ) {
-            ui.ctx().copy_text(format!(
-                "https://sloppy-tanks.fridman.me/?room={}",
-                menu.room
-            ));
-            menu.copied = COPIED_SECONDS;
-            menu.notice = "Invite link copied. Send it to your friends.".into();
+            let link = links::invite_link(&menu.room);
+            menu.copying = Some(links::copy_text(ui.ctx(), link));
+            menu.copy_answered();
         }
         if lobby.phase == RoomPhase::Results
             && let Some(outcome) = &menu.outcome

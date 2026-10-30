@@ -12,23 +12,38 @@ use sloppy_core::net::room_list::{ServerList, split_address};
 
 use crate::tasks::Background;
 
-/// The production directory, unless the build names another (`SLOPPY_DIRECTORY_URL`;
-/// empty, as CI passes for a pull request, names none).
-pub const DEFAULT_DIRECTORY: &str = match option_env!("SLOPPY_DIRECTORY_URL") {
-    Some(url) if !url.is_empty() => url,
-    _ => "https://sloppy-tanks-directory.fridman.me",
+/// The directory the build names (`SLOPPY_DIRECTORY_URL`; empty, as CI passes for a pull
+/// request, names none).
+const BUILD_DIRECTORY: Option<&str> = match option_env!("SLOPPY_DIRECTORY_URL") {
+    Some(url) if !url.is_empty() => Some(url),
+    _ => None,
 };
+const PRODUCTION_DIRECTORY: &str = "https://sloppy-tanks-directory.fridman.me";
+/// A game server on this machine (`pnpm run server:dev`), which is its own directory.
+const LOCAL_SERVER: &str = "http://127.0.0.1:8787";
 /// The environment whose servers the app lists: production's, unless the build names
 /// another (`SLOPPY_SERVER_ENVIRONMENT`, `dev` for the dev site).
-const ENVIRONMENT: &str = match option_env!("SLOPPY_SERVER_ENVIRONMENT") {
+pub const ENVIRONMENT: &str = match option_env!("SLOPPY_SERVER_ENVIRONMENT") {
     Some(environment) if !environment.is_empty() => environment,
     _ => "production",
 };
 /// A directory request that has not answered by now has failed.
 pub const LIST_TIMEOUT: Duration = Duration::from_secs(8);
 
-fn is_local_host(host: &str) -> bool {
+pub fn is_local_host(host: &str) -> bool {
     matches!(host, "localhost" | "127.0.0.1" | "[::1]")
+}
+
+/// The directory to list rooms from unless `--directory` names another: the build's,
+/// else production's, or for a page on this machine the local server
+/// (`resolveDirectoryAddress`).
+pub fn default_directory() -> String {
+    let local = if crate::links::local_page() {
+        LOCAL_SERVER
+    } else {
+        PRODUCTION_DIRECTORY
+    };
+    BUILD_DIRECTORY.unwrap_or(local).to_owned()
 }
 
 /// The directory's `/servers` address for `base`: `http:` or `https:` without
@@ -191,8 +206,10 @@ mod tests {
         assert!(servers_address("ftp://localhost").is_err());
         assert!(is_local_directory("http://localhost:8790"));
         assert!(is_local_directory("http://[::1]:8790/"));
-        assert!(!is_local_directory(DEFAULT_DIRECTORY));
-        assert!(servers_address(DEFAULT_DIRECTORY).is_ok());
+        // The app is no page on this machine: it lists a directory that needs `https:`.
+        assert!(!is_local_directory(&default_directory()));
+        assert!(servers_address(&default_directory()).is_ok());
+        assert!(servers_address(LOCAL_SERVER).is_ok());
     }
 
     /// Players creating rooms at the same moment must not share a code, so every draw

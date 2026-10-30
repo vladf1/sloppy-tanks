@@ -17,6 +17,7 @@ mod hardware_keys;
 mod input;
 #[cfg(target_os = "ios")]
 mod ios;
+mod links;
 mod overlay;
 mod page;
 mod preferences;
@@ -29,6 +30,11 @@ mod tasks;
 mod touch;
 mod ui;
 mod window_input;
+
+use sloppy_core::net::protocol::read_room_code;
+use sloppy_core::sim::map_options::MapId;
+
+use crate::room::NetworkTools;
 
 /// The app may quit itself: not on an iPad, nor in a page.
 pub const QUITS: bool = cfg!(not(any(target_os = "ios", target_arch = "wasm32")));
@@ -57,47 +63,60 @@ fn main() {
         }));
         touch::detect();
     }
-    let arguments = arguments();
-    let flag = |name: &str| arguments.iter().any(|argument| argument == name);
-    let options = app::Options {
-        debug: flag("--debug"),
-        frame_log: flag("--frame-log"),
-        autoplay: flag("--autoplay"),
-        directory: arguments
-            .iter()
-            .position(|argument| argument == "--directory")
-            .and_then(|index| arguments.get(index + 1).cloned()),
-    };
+    let options = options(&arguments(), links::development());
     let event_loop = winit::event_loop::EventLoop::new().expect("an event loop");
     let app = app::App::new(options);
     run(event_loop, app);
 }
 
 /// The command line; in a page its query, `?debug&directory=<url>` reading as
-/// `--debug --directory <url>`.
+/// `--debug --directory <url>` (`links::query_arguments`).
 fn arguments() -> Vec<String> {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        std::env::args().collect()
+        std::env::args().skip(1).collect()
     }
     #[cfg(target_arch = "wasm32")]
     {
         let query = web_sys::window()
             .and_then(|window| window.location().search().ok())
             .unwrap_or_default();
-        let mut arguments = vec![String::new()];
-        for pair in query.trim_start_matches('?').split('&') {
-            let (name, value) = pair.split_once('=').unwrap_or((pair, ""));
-            if !name.is_empty() {
-                arguments.push(format!("--{name}"));
-            }
-            if let Ok(value) = js_sys::decode_uri_component(value)
-                && value.length() > 0
-            {
-                arguments.push(value.into());
-            }
-        }
+        links::query_arguments(query.trim_start_matches('?'))
+    }
+}
+
+/// What the command line or a page's link asks for: the page's flags (`?debug`,
+/// `?autoplay`, `?map=<id>`, `?multiplayer`, `?room=<CODE>`) and, with `development`
+/// (`links::development`), `?directory=<url>` and the rooms' network tools
+/// (`?latency=&jitter=&stall=` in milliseconds, `?dodge=0`, `?shooter=0`).
+fn options(arguments: &[String], development: bool) -> app::Options {
+    let flag = |name: &str| arguments.iter().any(|argument| argument == name);
+    let value = |name: &str| {
         arguments
+            .iter()
+            .position(|argument| argument == name)
+            .and_then(|index| arguments.get(index + 1))
+            .filter(|value| !value.starts_with("--"))
+            .cloned()
+    };
+    let tool = |name: &str| value(name).filter(|_| development);
+    app::Options {
+        debug: flag("--debug"),
+        frame_log: flag("--frame-log"),
+        autoplay: flag("--autoplay"),
+        directory: tool("--directory"),
+        map: value("--map").and_then(|id| MapId::parse(&id)),
+        multiplayer: flag("--multiplayer"),
+        // In any case; a code that cannot be one is still named in the room list's answer.
+        room: value("--room")
+            .map(|code| read_room_code(&code).unwrap_or_else(|| code.trim().to_uppercase())),
+        network: NetworkTools {
+            latency: tool("--latency"),
+            jitter: tool("--jitter"),
+            stall: tool("--stall"),
+            dodge: tool("--dodge"),
+            shooter: tool("--shooter"),
+        },
     }
 }
 
@@ -114,4 +133,56 @@ fn run(event_loop: winit::event_loop::EventLoop<()>, mut app: app::App) {
 fn run(event_loop: winit::event_loop::EventLoop<()>, app: app::App) {
     use winit::platform::web::EventLoopExtWebSys;
     event_loop.spawn_app(app);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn link(query: &str, development: bool) -> app::Options {
+        options(&links::query_arguments(query), development)
+    }
+
+    #[test]
+    fn a_link_opens_its_map_tab_or_room() {
+        let invite = link("room=abcd2345&debug", false);
+        assert_eq!(invite.room.as_deref(), Some("ABCD2345"));
+        assert!(invite.debug && !invite.multiplayer);
+        assert_eq!(link("room=%20x%20", false).room.as_deref(), Some("X"));
+        assert_eq!(link("room=", false).room, None);
+
+        let tab = link("multiplayer=&map=stress-test", false);
+        assert!(tab.multiplayer && tab.room.is_none());
+        assert_eq!(tab.map, Some(MapId::StressTest));
+        assert_eq!(link("map=atlantis", false).map, None);
+        assert!(link("autoplay", false).autoplay);
+    }
+
+    /// The directory and the network tools are a developer's: a production page's link
+    /// cannot point its rooms elsewhere or slow them down.
+    #[test]
+    fn the_development_parameters_need_a_development_run() {
+        let query = "directory=http%3A%2F%2F127.0.0.1%3A8784&latency=120&jitter=10&stall=200\
+                     &dodge=0&shooter=0";
+        let production = link(query, false);
+        assert_eq!(production.directory, None);
+        assert_eq!(production.network, NetworkTools::default());
+        let development = link(query, true);
+        assert_eq!(
+            development.directory.as_deref(),
+            Some("http://127.0.0.1:8784")
+        );
+        assert_eq!(
+            development.network,
+            NetworkTools {
+                latency: Some("120".into()),
+                jitter: Some("10".into()),
+                stall: Some("200".into()),
+                dodge: Some("0".into()),
+                shooter: Some("0".into()),
+            }
+        );
+        // A flag with no value takes none from the next one.
+        assert_eq!(link("directory&debug", true).directory, None);
+    }
 }

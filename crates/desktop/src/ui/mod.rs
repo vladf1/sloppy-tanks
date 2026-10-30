@@ -55,6 +55,8 @@ pub enum Action {
     RoomRejoin,
     /// BATTLE SETUP once the connection ended, with the reason to show there.
     RoomSetup(String),
+    /// RELOAD once the connection ended where only a new page recovers (a page's).
+    Reload,
     /// Team (`None`: the side with fewer humans) and tank for the next battle.
     RoomChoose {
         team: Option<Team>,
@@ -370,6 +372,7 @@ pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Ac
     let art = state.art.take().unwrap_or_else(|| icons::Art::new(context));
     if !view.in_round {
         setup::battle_setup(context, state, &art, view, &mut actions);
+        state.rooms.remember_tab();
     } else {
         match view.phase {
             MatchPhase::Paused => menus::pause(context, state, &art, view, &mut actions),
