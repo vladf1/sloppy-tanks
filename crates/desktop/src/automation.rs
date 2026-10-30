@@ -171,6 +171,9 @@ impl Extra {
 /// A debug action, the old `window.sloppy` method of the same name.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Command {
+    /// GO, as Battle Setup's button presses it, without moving the pointer the
+    /// player's turret follows.
+    Start,
     Autoplay(bool),
     Overview(bool),
     AutoRounds(bool),
@@ -203,6 +206,7 @@ impl Command {
                 .ok_or_else(|| format!("{name}: the argument is not true or false"))
         };
         Ok(match name {
+            "start" => Self::Start,
             "autoplay" => Self::Autoplay(flag()?),
             "overview" => Self::Overview(flag()?),
             "autoRounds" => Self::AutoRounds(flag()?),
@@ -587,6 +591,7 @@ mod tests {
     #[test]
     fn commands_read_like_the_old_debug_api() {
         assert_eq!(Command::parse("killHuman", &[]), Ok(Command::KillHuman));
+        assert_eq!(Command::parse("start", &[]), Ok(Command::Start));
         assert_eq!(Command::parse("giveAmmo", &[]), Ok(Command::GiveAmmo(5.0)));
         assert_eq!(
             Command::parse("overview", &[Value::Bool(false)]),

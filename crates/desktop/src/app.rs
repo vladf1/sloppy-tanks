@@ -1186,8 +1186,13 @@ impl Session {
     /// Run a check's debug command on the engine, as the old page's `window.sloppy` did.
     fn command(&mut self, command: &Command) -> Result<serde_json::Value, String> {
         use serde_json::Value;
+        if *command == Command::Start {
+            self.apply(Action::Start);
+            return Ok(Value::Null);
+        }
         let game = &mut self.game;
         Ok(match *command {
+            Command::Start => Value::Null,
             Command::Autoplay(on) => game.debug_set_autoplay(on).into(),
             Command::Overview(on) => {
                 game.debug_set_overview(on);

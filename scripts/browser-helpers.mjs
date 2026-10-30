@@ -203,7 +203,7 @@ export async function clickWidget(page, label, { timeout = 15000 } = {}) {
 }
 
 /**
- * Run a debug command of the hook (the old `window.sloppy` methods: `killHuman`,
+ * Run a debug command of the hook (the old `window.sloppy` methods: `start`, `killHuman`,
  * `giveAmmo`, `overview`, `autoplay`, `zoom`, `soak`, a room's `latency`).
  * @param {import("playwright").Page} page
  * @param {string} name
