@@ -59,6 +59,10 @@ pub fn results(
     dim_backdrop(context);
     let solo = hud.game_mode == GameMode::Solo;
     let report = &recap.report;
+    if crate::touch::phone() {
+        phone_results(context, art, &hud, report, actions);
+        return;
+    }
     let title = report.title;
     let lede = lede(state, &hud, report);
     let mode = if solo { "SOLO ASSAULT" } else { "TEAM BATTLE" };
@@ -315,6 +319,113 @@ pub fn results(
         },
     );
 }
+
+/// A phone's battle report (`.phone .menu.results`): the outcome on one line over its
+/// score, in a band of the side's light that runs edge to edge over its rule, then
+/// PLAY AGAIN and BATTLE SETUP.
+fn phone_results(
+    context: &egui::Context,
+    art: &Art,
+    hud: &Hud,
+    report: &BattleReport,
+    actions: &mut Vec<Action>,
+) {
+    let solo = hud.game_mode == GameMode::Solo;
+    dialog_with_padding(
+        context,
+        "results",
+        PHONE_RESULTS_WIDTH,
+        [20.0, 0.0, 18.0],
+        |ui, painter, origin, width| {
+            let won = report.outcome.won();
+            let side = if won {
+                hex(0xffb21c)
+            } else {
+                super::theme::team_color(hud.human_team)
+            };
+            let title_size = 40.0;
+            let title_top = origin.y + 18.0;
+            let score_top = title_top + title_size * 0.95 + 10.0;
+            let banner_bottom = if solo {
+                score_top + 6.0
+            } else {
+                score_top + 54.0 + 16.0
+            };
+            let banner = Rect::from_min_max(
+                pos2(origin.x - 20.0, origin.y),
+                pos2(origin.x + width + 20.0, banner_bottom),
+            );
+            painter.add(paint::vgradient(
+                banner,
+                &[(0.0, hex(0x172e52)), (1.0, hex(0x10233f))],
+            ));
+            painter.with_clip_rect(banner).add(paint::radial(
+                banner.center_top(),
+                vec2(banner.width() * 0.7, banner.height() * 1.4),
+                &[
+                    (0.0, fade(side, if won { 0.3 } else { 0.14 })),
+                    (0.7, Color32::TRANSPARENT),
+                ],
+            ));
+            painter.add(paint::hgradient(
+                Rect::from_min_max(pos2(banner.left(), banner.bottom() - 2.0), banner.max),
+                &[
+                    (0.0, Color32::TRANSPARENT),
+                    (0.5, side),
+                    (1.0, Color32::TRANSPARENT),
+                ],
+            ));
+            let center = banner.center().x;
+            paint::text_fit(
+                painter,
+                pos2(center, title_top),
+                Align2::CENTER_TOP,
+                report.title,
+                display_font(title_size),
+                title_color(report.outcome, hud.human_team),
+                2.0,
+                width,
+            );
+            if !solo {
+                let scores = hud.match_state.scores;
+                let plates = super::menus::score_plates_width(
+                    painter,
+                    scores,
+                    &hud.team_names,
+                    hud.human_team,
+                );
+                score_plates(
+                    painter,
+                    pos2(center + plates / 2.0, score_top + 27.0),
+                    scores,
+                    &hud.team_names,
+                    hud.human_team,
+                );
+            }
+            let height = super::menus::PHONE_BUTTON_HEIGHT;
+            let mut y = banner_bottom + 16.0;
+            for (label, icon, style, action) in [
+                ("PLAY AGAIN", "again", ButtonStyle::Primary, Action::Start),
+                (
+                    "BATTLE SETUP",
+                    "setup",
+                    ButtonStyle::Secondary,
+                    Action::BattleSetup,
+                ),
+            ] {
+                let rect = Rect::from_min_size(pos2(origin.x, y), vec2(width, height));
+                if paint::button_at(ui, art, rect, label, Some(icon), style, true).clicked() {
+                    actions.push(action);
+                }
+                y += height + 10.0;
+            }
+            y - 10.0 - origin.y
+        },
+    );
+}
+
+/// A phone's battle report's width.
+const PHONE_RESULTS_WIDTH: f32 = 400.0;
 
 /// The viewer's part of the report; returns the height used.
 fn recap_body(

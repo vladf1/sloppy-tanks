@@ -56,9 +56,13 @@ the server:
   never their JSON (`crates/web/tests/fixtures/page-json.json` pins that byte for
   byte), and only lays out and plays what they produce. Game rules stay out of the
   shell. The iPad build is the same crate for `aarch64-apple-ios`, which plays by touch
-  (`touch::screen`, true there and in a page on a touch screen): touch controls painted
-  in egui (`touch.rs`, `ui/touch.rs`), no Quit or fullscreen, and `ios.rs` for what winit 0.30 lacks there (the UIScene life cycle
-  iOS 27 requires, hardware keyboard presses).
+  (`touch::screen`: true there, in the phone edition, and in a page on a touch screen as
+  Settings' Touch controls say): touch controls painted in egui (`touch.rs`,
+  `ui/touch.rs`), no Quit or fullscreen, and `ios.rs` for what winit 0.30 lacks there
+  (the UIScene life cycle iOS 27 requires, hardware keyboard presses). The device class
+  (`touch::device`: desktop, tablet or phone) is decided once at startup and picks the
+  engine's starting graphics, the reticle and the phone edition, whose screens are
+  separate `phone_*` layouts beside the full ones; keep that edition limited.
 
 ## Code style
 

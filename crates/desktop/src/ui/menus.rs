@@ -11,7 +11,7 @@ use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
 use super::theme::{GOLD, GOLD_HOT, RED, TEXT_LABEL, bold_font, display_font};
 use super::{Action, PauseTab, UiState, View};
-use crate::preferences::Preferences;
+use crate::preferences::{Preferences, TouchSetting};
 use sloppy_core::sim::speed_tuning::{MAX_SPEED_SCALE, MIN_SPEED_SCALE};
 use sloppy_core::sim::{GameMode, MatchPhase, Team};
 use sloppy_web::battle_report::{PauseFact, PauseReport, StandingTone, pause_report};
@@ -26,6 +26,21 @@ pub const DIALOG_PADDING: [f32; 3] = [30.0, 26.0, 28.0];
 /// smaller instead, with the margin around it.
 const MIN_DIALOG_WIDTH: f32 = 560.0;
 const DIALOG_MARGIN: f32 = 16.0;
+/// A phone's pause dialog: its width and padding, and its buttons' height.
+const PHONE_PAUSE_WIDTH: f32 = 420.0;
+const PHONE_PAUSE_PADDING: [f32; 3] = [22.0, 22.0, 22.0];
+pub const PHONE_BUTTON_HEIGHT: f32 = 52.0;
+/// A phone's Settings dialog, and the room a setting's name takes over its control.
+const PHONE_SETTINGS_WIDTH: f32 = 420.0;
+const STACKED_LABEL: f32 = 38.0;
+/// The eyebrow's line over a dialog's title (`dialog_head`).
+const EYEBROW_LINE: f32 = 22.0;
+/// Settings' Touch controls choices (`TOUCH_MODES`).
+const TOUCH_SETTINGS: [(TouchSetting, &str); 3] = [
+    (TouchSetting::Auto, "Auto"),
+    (TouchSetting::On, "On"),
+    (TouchSetting::Off, "Off"),
+];
 
 /// The arena stays readable behind a dialog, softened and darkest at the edges.
 pub fn dim_backdrop(context: &egui::Context) {
@@ -96,6 +111,49 @@ pub(super) fn dialog_with_padding(
     paint::shrink_about(context, shown.response.layer_id, screen.center(), scale);
 }
 
+/// The room between the score plates.
+const SCORE_COLON: f32 = 18.0;
+
+/// A score plate's name, with YOU on the viewer's side.
+fn plate_label(names: &[&str; 2], team: Team, index: usize) -> String {
+    let name = names[index].to_uppercase();
+    if index == team.index() {
+        format!("{name} · YOU")
+    } else {
+        name
+    }
+}
+
+/// Each score plate's width: its score or its name, whichever is wider.
+fn plate_widths(painter: &Painter, scores: [u32; 2], names: &[&str; 2], team: Team) -> [f32; 2] {
+    [0, 1].map(|index| {
+        let score = paint::text_width(
+            painter,
+            &format!("{}", scores[index]),
+            display_font(34.0),
+            0.0,
+        );
+        let name = paint::text_width(
+            painter,
+            &plate_label(names, team, index),
+            bold_font(11.0),
+            1.6,
+        );
+        score.max(name).max(30.0) + 28.0 + 10.0
+    })
+}
+
+/// The width [`score_plates`] takes, to centre them.
+pub fn score_plates_width(
+    painter: &Painter,
+    scores: [u32; 2],
+    names: &[&str; 2],
+    team: Team,
+) -> f32 {
+    let [left, right] = plate_widths(painter, scores, names, team);
+    left + SCORE_COLON + right
+}
+
 /// The score on two team plates, the viewer's side rimmed in gold and saying YOU;
 /// anchored by its right edge's middle. Returns its rect.
 pub fn score_plates(
@@ -107,27 +165,11 @@ pub fn score_plates(
 ) -> Rect {
     let score_font = display_font(34.0);
     let name_font = bold_font(11.0);
-    let label = |index: usize| {
-        let name = names[index].to_uppercase();
-        if index == team.index() {
-            format!("{name} · YOU")
-        } else {
-            name
-        }
-    };
-    let widths = [0, 1].map(|index| {
-        let score = paint::text_width(
-            painter,
-            &format!("{}", scores[index]),
-            score_font.clone(),
-            0.0,
-        );
-        let name = paint::text_width(painter, &label(index), name_font.clone(), 1.6);
-        score.max(name).max(30.0) + 28.0 + 10.0
-    });
+    let label = |index: usize| plate_label(names, team, index);
+    let widths = plate_widths(painter, scores, names, team);
     let height = 54.0;
-    let colon = 18.0;
-    let total = widths[0] + colon + widths[1];
+    let total = widths[0] + SCORE_COLON + widths[1];
+    let colon = SCORE_COLON;
     let left = right_center.x - total;
     let top = right_center.y - height / 2.0;
     for index in 0..2 {
@@ -235,7 +277,7 @@ pub fn dialog_head(
     score: Option<(&Hud, [u32; 2])>,
 ) -> f32 {
     paint::eyebrow(painter, origin, eyebrow);
-    let title_top = origin.y + 22.0;
+    let title_top = origin.y + EYEBROW_LINE;
     paint::shadowed(
         painter,
         pos2(origin.x, title_top),
@@ -254,7 +296,7 @@ pub fn dialog_head(
             hud.human_team,
         );
     }
-    22.0 + 58.0
+    EYEBROW_LINE + 58.0
 }
 
 /// The controls card's lines and its tip; returns the height used.
@@ -534,14 +576,25 @@ pub fn pause(
     if hidden {
         return;
     }
+    // A phone's pause is the title and score, the battle's facts and the actions: no
+    // eyebrow and no Controls tab (its only controls are on screen).
+    let phone = crate::touch::phone();
+    let (dialog_width, padding) = if phone {
+        (PHONE_PAUSE_WIDTH, PHONE_PAUSE_PADDING)
+    } else {
+        (780.0, [42.0, 34.0, 36.0])
+    };
     dialog_with_padding(
         context,
         "pause menu",
-        780.0,
-        [42.0, 34.0, 36.0],
+        dialog_width,
+        padding,
         |ui, painter, origin, width| {
             let close = Rect::from_min_size(
-                pos2(origin.x + width + 42.0 - 46.0, origin.y - 34.0 + 12.0),
+                pos2(
+                    origin.x + width + padding[0] - 46.0,
+                    origin.y - padding[1] + 12.0,
+                ),
                 Vec2::splat(34.0),
             );
             if paint::close_button(ui, art, close, Id::unique("pause close"))
@@ -551,12 +604,18 @@ pub fn pause(
                 actions.push(Action::Resume);
             }
             let eyebrow = format!("{mode} · {}", hud.map_name.to_uppercase());
-            let mut y = origin.y;
+            // The head keeps its eyebrow's line; a phone's starts at the title.
+            let head = if phone {
+                origin - vec2(0.0, EYEBROW_LINE)
+            } else {
+                origin
+            };
+            let mut y = head.y;
             y += dialog_head(
                 painter,
-                origin,
+                head,
                 width,
-                &eyebrow,
+                if phone { "" } else { &eyebrow },
                 "PAUSED",
                 Color32::WHITE,
                 (!solo).then_some((&hud, hud.match_state.scores)),
@@ -590,7 +649,13 @@ pub fn pause(
                     0.0,
                 );
             }
-            y += 30.0 + 18.0;
+            y += 30.0;
+            if phone {
+                y += 6.0 + battle_pane(painter, pos2(origin.x, y), width, &pause) + 18.0;
+                return y + phone_pause_actions(ui, art, pos2(origin.x, y), width, actions)
+                    - origin.y;
+            }
+            y += 18.0;
             if let Some(picked) = tabs(
                 ui,
                 painter,
@@ -679,6 +744,55 @@ pub fn pause(
         },
     );
     state.pause_tab = tab;
+}
+
+/// A phone's pause actions at `origin`: END BATTLE beside RESUME, SETTINGS under them,
+/// each a full thumb's height. Returns the height used.
+fn phone_pause_actions(
+    ui: &mut Ui,
+    art: &Art,
+    origin: Pos2,
+    width: f32,
+    actions: &mut Vec<Action>,
+) -> f32 {
+    let height = PHONE_BUTTON_HEIGHT;
+    let gap = 10.0;
+    let end_width = (width - gap) * 0.45;
+    let row =
+        |left: f32, width: f32, top: f32| Rect::from_min_size(pos2(left, top), vec2(width, height));
+    let buttons = [
+        (
+            row(origin.x, end_width, origin.y),
+            "END BATTLE",
+            "end",
+            ButtonStyle::Danger,
+            Action::EndBattle,
+        ),
+        (
+            row(
+                origin.x + end_width + gap,
+                width - end_width - gap,
+                origin.y,
+            ),
+            "RESUME",
+            "resume",
+            ButtonStyle::Primary,
+            Action::Resume,
+        ),
+        (
+            row(origin.x, width, origin.y + height + gap),
+            "SETTINGS",
+            "sliders",
+            ButtonStyle::Secondary,
+            Action::OpenSettings,
+        ),
+    ];
+    for (rect, label, icon, style, action) in buttons {
+        if paint::button_at(ui, art, rect, label, Some(icon), style, true).clicked() {
+            actions.push(action);
+        }
+    }
+    2.0 * height + gap
 }
 
 /// A setting's name with its note under it, at the row's left.
@@ -904,14 +1018,26 @@ pub fn settings(
     if context.input(|input| input.key_pressed(egui::Key::Escape)) {
         close = Some(false);
     }
+    // A phone's narrow dialog stands each control under its name, the row's full width,
+    // so its text and handles keep a finger's size.
+    let stacked = crate::touch::phone();
+    let (dialog_width, padding) = if stacked {
+        (PHONE_SETTINGS_WIDTH, PHONE_PAUSE_PADDING)
+    } else {
+        (700.0, [38.0, 30.0, 32.0])
+    };
+    let under = if stacked { STACKED_LABEL } else { 0.0 };
     dialog_with_padding(
         context,
         "settings",
-        700.0,
-        [38.0, 30.0, 32.0],
+        dialog_width,
+        padding,
         |ui, painter, origin, width| {
             let close_rect = Rect::from_min_size(
-                pos2(origin.x + width + 38.0 - 46.0, origin.y - 30.0 + 12.0),
+                pos2(
+                    origin.x + width + padding[0] - 46.0,
+                    origin.y - padding[1] + 12.0,
+                ),
                 Vec2::splat(34.0),
             );
             if paint::close_button(ui, art, close_rect, Id::unique("settings close"))
@@ -938,10 +1064,24 @@ pub fn settings(
                     None,
                 )
                 + 12.0;
-            let control_width = 376.0_f32.min(width * 0.61);
-            let control_x = origin.x + width - control_width;
-            // Sound.
-            group_label(painter, pos2(origin.x, y + 8.0), width, "SOUND");
+            let (control_x, control_width) = if stacked {
+                (origin.x, width)
+            } else {
+                let control_width = 376.0_f32.min(width * 0.61);
+                (origin.x + width - control_width, control_width)
+            };
+            // Where a row's control sits: beside its name, or under it.
+            let control = |y: f32, height: f32| {
+                Rect::from_min_size(pos2(control_x, y + under), vec2(control_width, height))
+            };
+            // Sound, and a page's touch controls.
+            let touch_setting = crate::touch::offers_setting();
+            let group = if touch_setting {
+                "SOUND & INPUT"
+            } else {
+                "SOUND"
+            };
+            group_label(painter, pos2(origin.x, y + 8.0), width, group);
             y += 34.0;
             setting_label(
                 painter,
@@ -952,14 +1092,31 @@ pub fn settings(
             slider(
                 ui,
                 painter,
-                Rect::from_min_size(pos2(control_x, y), vec2(control_width, 44.0)),
+                control(y, 44.0),
                 "volume",
                 &mut draft.volume,
                 (0.0, 1.0),
                 DEFAULT_VOLUME,
                 ("Mute", "Loud"),
             );
-            y += 62.0;
+            y += 62.0 + under;
+            if touch_setting {
+                setting_label(
+                    painter,
+                    pos2(origin.x, y),
+                    "Touch controls",
+                    "Auto shows them on touchscreens",
+                );
+                setting_choice(
+                    ui,
+                    painter,
+                    control(y, 38.0),
+                    "touch controls",
+                    &TOUCH_SETTINGS,
+                    &mut draft.touch,
+                );
+                y += 50.0 + under;
+            }
             // Display.
             group_label(painter, pos2(origin.x, y + 8.0), width, "DISPLAY");
             y += 34.0;
@@ -972,14 +1129,13 @@ pub fn settings(
             setting_choice(
                 ui,
                 painter,
-                Rect::from_min_size(pos2(control_x, y), vec2(control_width, 38.0)),
+                control(y, 38.0),
                 "graphics",
                 &GRAPHICS_OPTIONS,
                 &mut draft.graphics,
             );
-            y += 50.0;
-            // An iPad app always fills the screen.
-            if !crate::touch::screen() {
+            y += 50.0 + under;
+            if crate::app::offers_fullscreen() {
                 setting_label(
                     painter,
                     pos2(origin.x, y),
@@ -1010,12 +1166,12 @@ pub fn settings(
             setting_choice(
                 ui,
                 painter,
-                Rect::from_min_size(pos2(control_x, y), vec2(control_width, 38.0)),
+                control(y, 38.0),
                 "debug tools",
                 &[(false, "Off"), (true, "On")],
                 &mut draft.debug,
             );
-            y += 58.0;
+            y += 58.0 + under;
             if !view.room {
                 // Battle speed: single player tunes its own battle.
                 group_label(painter, pos2(origin.x, y + 8.0), width, "BATTLE SPEED");
@@ -1103,18 +1259,18 @@ pub fn settings(
                     slider(
                         ui,
                         painter,
-                        Rect::from_min_size(pos2(control_x, y), vec2(control_width, 44.0)),
+                        control(y, 44.0),
                         id,
                         value,
                         (MIN_SPEED_SCALE, MAX_SPEED_SCALE),
                         1.0,
                         ("Slower", "Faster"),
                     );
-                    y += 54.0;
+                    y += 54.0 + under;
                 }
             }
             y += 10.0;
-            let height = 48.0;
+            let height = if stacked { PHONE_BUTTON_HEIGHT } else { 48.0 };
             let save_width = (width - 10.0) * 0.645;
             let save = Rect::from_min_size(pos2(origin.x, y), vec2(save_width, height));
             if paint::button_at(ui, art, save, "SAVE", None, ButtonStyle::Primary, true).clicked() {

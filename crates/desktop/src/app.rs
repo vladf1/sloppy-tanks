@@ -296,10 +296,15 @@ pub fn css_size(window: &Window) -> (f64, f64, f64) {
     (logical.width, logical.height, scale)
 }
 
-/// Fill the screen or give the window back, as `prefs` say, and keep the choice. An
-/// iPad app always fills the screen.
+/// Whether the player may choose fullscreen: not in the iPad app, which always fills the
+/// screen, nor in the phone edition, whose top row keeps only its few keys.
+pub fn offers_fullscreen() -> bool {
+    !cfg!(target_os = "ios") && !crate::touch::phone()
+}
+
+/// Fill the screen or give the window back, as `prefs` say, and keep the choice.
 pub fn set_fullscreen(window: &Window, prefs: &mut Preferences, fullscreen: bool) {
-    if crate::touch::screen() {
+    if !offers_fullscreen() {
         return;
     }
     window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
@@ -344,26 +349,29 @@ pub fn render_target(window: &Arc<Window>) -> Result<RenderTarget, String> {
     }
 }
 
+/// A phone's overhead camera starts this far out until the player zooms
+/// (`startingCamera`): its small screen shows more of the arena than the default's.
+const PHONE_ZOOM: f64 = 40.0;
+
 /// The view configuration both engines take for `window`, with the player's camera
 /// and graphics choices.
 pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
     let (width, height, scale) = css_size(window);
+    let device = crate::touch::device();
     ViewConfig {
         css_width: Some(width),
         css_height: Some(height),
         pixel_ratio: Some(scale),
         first_person: prefs.first_person,
-        zoom: prefs.zoom,
-        // Touch screens draw no overhead reticle (`startingCamera`): a finger aims
+        zoom: prefs
+            .zoom
+            .or((device == DeviceClass::Phone).then_some(PHONE_ZOOM)),
+        // Touch devices draw no overhead reticle (`startingCamera`): a finger aims
         // where it is, so the mark sat under it and stuck where it lifted.
-        hide_reticle: crate::touch::screen(),
+        hide_reticle: device != DeviceClass::Desktop,
         graphics: prefs.graphics,
-        // A tablet starts a tier lower and draws single-sampled (`quality.rs`).
-        device: if crate::touch::screen() {
-            DeviceClass::Tablet
-        } else {
-            DeviceClass::Desktop
-        },
+        // Tablets and phones start a tier lower and draw single-sampled (`quality.rs`).
+        device,
         // A page words what only a page does (RELOAD, "in this browser") as the page did.
         shell: if cfg!(target_arch = "wasm32") {
             sloppy_web::Shell::Page

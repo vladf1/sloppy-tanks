@@ -52,12 +52,13 @@ pub struct Preferences {
     /// gives the page and `--debug` the app.
     pub debug: bool,
     pub fullscreen: bool,
+    /// A page's touch controls (`touch-mode.ts`); see [`crate::touch::screen`].
     #[serde(deserialize_with = "or_default")]
     pub touch: TouchSetting,
 }
 
-/// Whether the touch controls show (`src/game/touch-mode.ts`): Auto once a finger
-/// touches the screen.
+/// Settings' Touch controls: Auto shows them on a touch screen (the browser says so, or
+/// a finger touches the page); On and Off hold whatever the screen is.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum TouchSetting {
@@ -169,9 +170,12 @@ fn write_settings(text: &str) {
 }
 
 impl Preferences {
-    /// The saved choices; malformed or missing ones take their defaults.
+    /// The saved choices; malformed or missing ones take their defaults. The touch
+    /// setting applies from here on.
     pub fn load() -> Self {
-        read_settings().map_or_else(Self::default, |text| Self::read(&text))
+        let prefs = read_settings().map_or_else(Self::default, |text| Self::read(&text));
+        crate::touch::set_setting(prefs.touch);
+        prefs
     }
 
     fn read(text: &str) -> Self {
@@ -237,8 +241,10 @@ impl Preferences {
         })
     }
 
-    /// Save the choices.
+    /// Save the choices; a changed touch setting applies once kept, as the rest of
+    /// Settings does.
     pub fn save(&self) {
+        crate::touch::set_setting(self.touch);
         if let Ok(text) = serde_json::to_string_pretty(self) {
             write_settings(&text);
         }
@@ -252,14 +258,19 @@ impl Preferences {
     }
 
     /// The choices as single player plays them, on `human_team`: an extra level only
-    /// where extra levels are offered, and as its own team battle.
+    /// where extra levels are offered, and as its own team battle. A phone's bots are
+    /// always Easy; the saved difficulty stays for a larger screen.
     pub fn game_options(&self, human_team: Team, extra_levels: bool) -> GameOptions {
         GameOptions {
             human_kind: self.tank,
             human_team,
             game_mode: self.game_mode,
             map_mode: self.map,
-            difficulty: self.difficulty,
+            difficulty: if crate::touch::phone() {
+                Difficulty::Easy
+            } else {
+                self.difficulty
+            },
         }
         .offered(extra_levels)
     }
@@ -312,15 +323,17 @@ mod tests {
             difficulty: Difficulty::Hard,
             graphics: GraphicsSetting::parse("low"),
             volume: 0.25,
+            touch: TouchSetting::Off,
             ..Preferences::default()
         };
         let text = serde_json::to_string(&prefs).unwrap();
         assert!(text.contains(r#""map":"quarry""#) && text.contains(r#""graphics":"low""#));
+        assert!(text.contains(r#""touch":"off""#));
         assert_eq!(Preferences::read(&text), prefs);
 
         let edited = Preferences::read(
             r#"{"tank": "humvee", "gameMode": "duel", "map": "atlantis", "difficulty": 3,
-                "graphics": "ultra", "volume": 0.25, "playerName": "Vlad"}"#,
+                "graphics": "ultra", "volume": 0.25, "playerName": "Vlad", "touch": "always"}"#,
         );
         assert_eq!(
             edited,

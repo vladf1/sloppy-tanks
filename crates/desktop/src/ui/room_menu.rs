@@ -345,7 +345,10 @@ pub fn draw(
     } else {
         if menu.in_battle() {
             hud::hud(context, state, &art, view, &mut actions);
-            players(context, menu, state);
+            // A phone's arena keeps to its own few parts.
+            if !crate::touch::phone() {
+                players(context, menu, state);
+            }
             if state.hud.as_ref().is_some_and(|hud| !hud.human.alive) {
                 respawn(context, menu, state);
             }
@@ -461,6 +464,11 @@ fn room_menu(
     let playing = lobby.phase == RoomPhase::Playing;
     let alone = lobby.players.len() == 1;
     let text = menu.text.clone();
+    // A phone gets the short menu: the room, what is happening, the results and the
+    // actions. Rules, team and tank changes and the controls need a larger screen (a
+    // phone keeps the tank it chose in Battle Setup); the teams show only in the lobby,
+    // where they say who the battle waits for.
+    let phone = crate::touch::phone();
     room_dialog(context, "room", 560.0, |ui| {
         let header_origin = ui.cursor().min;
         room_heading(ui, &menu.room, text.title, Color32::WHITE);
@@ -502,8 +510,10 @@ fn room_menu(
         if lobby.phase == RoomPhase::Results {
             scoreboard(ui, &lobby, &menu.player_id);
         }
-        roster(ui, &lobby, &menu.player_id, playing);
-        if !playing {
+        if !phone || lobby.phase == RoomPhase::Lobby {
+            roster(ui, &lobby, &menu.player_id, playing);
+        }
+        if !playing && !phone {
             ui.add_space(4.0);
             ui.separator();
             next_battle(ui, menu, &lobby, host, view.debug, actions);
@@ -556,6 +566,9 @@ fn room_menu(
         ui.horizontal(|ui| {
             if text_button(ui, "Settings").clicked() {
                 actions.push(Action::OpenSettings);
+            }
+            if phone {
+                return;
             }
             // The fold arrow is painted: the page's fonts have no ▸ or ▾.
             const ARROW_ROOM: f32 = 13.0;

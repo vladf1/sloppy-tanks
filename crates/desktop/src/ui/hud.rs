@@ -16,7 +16,7 @@ use sloppy_core::sim::{GameMode, MatchPhase, Team};
 use sloppy_web::catalog::AMMO_OPTIONS;
 use sloppy_web::feedback::CRITICAL_HULL;
 use sloppy_web::feedback::cause_icon;
-use sloppy_web::hud::{EffectKind, Hud, HudHuman, HullTone};
+use sloppy_web::hud::{EffectKind, Hud, HudHuman, HullTone, Objective};
 
 /// The screen edge the HUD keeps clear.
 const EDGE: f32 = 16.0;
@@ -24,6 +24,10 @@ const EDGE: f32 = 16.0;
 const STACK_GAP: f32 = 8.0;
 /// The kill feed's place under the toolbar where they sit side by side.
 const FEED_TOP: f32 = 74.0;
+/// A phone's feed rows, its notices' place down the screen and their widest.
+const PHONE_FEED_WIDTH: f32 = 300.0;
+const PHONE_TOAST_TOP: f32 = 0.22;
+const PHONE_TOAST_MARGIN: f32 = 48.0;
 /// The narrowest gap between the drive stick and the mine button, as a share of the
 /// tank panel's width, that the panel sits in on a touch screen.
 const MIN_PANEL_GAP_SHARE: f32 = 0.75;
@@ -107,6 +111,10 @@ pub fn hud(
             (1.0, Color32::TRANSPARENT),
         ],
     ));
+    if crate::touch::phone() {
+        phone_hud(context, art, state, &hud, view, actions);
+        return;
+    }
     // The score bar shrinks to the screen's width; where the toolbar would cover it, the
     // toolbar and the feed move under it.
     let score_layer = LayerId::new(Order::Middle, Id::unique("score bar"));
@@ -147,6 +155,369 @@ pub fn hud(
         // A room draws its own respawn card: tanks are chosen between battles there.
         super::respawn::card(context, art, screen, state, &hud, view, rise, actions);
     }
+}
+
+/// The phone's HUD (`.phone #hud`): only what a small screen carries over the arena.
+/// The score pill and the row of keys share the top edge, the drive stick holds the
+/// bottom-left corner and a touch on the arena aims and fires; the feed keeps the
+/// viewer's own kills, notices flash mid-screen, and first person shows the hull compass
+/// over a small hull plate. Overhead, the bar over the player's tank is the hull readout.
+fn phone_hud(
+    context: &egui::Context,
+    art: &Art,
+    state: &mut UiState,
+    hud: &Hud,
+    view: &View,
+    actions: &mut Vec<Action>,
+) {
+    let playing = view.phase == MatchPhase::Playing;
+    let screen = context.content_rect();
+    let painter = backdrop(context);
+    let keys = crate::touch::PhoneBar::of(context);
+    let score_painter =
+        context.layer_painter(LayerId::new(Order::Middle, Id::unique("phone score")));
+    phone_score(&score_painter, screen, keys.view.top(), hud, view.room);
+    kill_feed(&painter, art, screen, keys.view.bottom() + 10.0, state);
+    let human = &hud.human;
+    if playing {
+        toast(&painter, screen, state);
+        phone_keys(context, art, &keys, state, actions);
+        if human.alive {
+            damage_ring(&painter, screen, state);
+        }
+    }
+    if let Some(touch) = state.touch.filter(|_| playing && human.alive) {
+        super::touch::controls(context, art, state, &touch);
+    }
+    let rise = context.animate_bool_with_time(Id::unique("respawn rise"), !human.alive, 0.32);
+    if human.alive {
+        if state.cockpit {
+            phone_cockpit(&painter, art, screen, state, human);
+        }
+    } else if playing && !view.room {
+        super::respawn::strip(context, art, screen, state, hud, view, rise, actions);
+    }
+}
+
+/// The corners of a phone key or plate that round: none, its left pair, its right pair,
+/// or all four (`[nw, ne, sw, se]`).
+const SQUARE: [f32; 4] = [0.0; 4];
+const LEFT_ROUND: [f32; 4] = [PHONE_CORNER, 0.0, PHONE_CORNER, 0.0];
+const RIGHT_ROUND: [f32; 4] = [0.0, PHONE_CORNER, 0.0, PHONE_CORNER];
+const ALL_ROUND: [f32; 4] = [PHONE_CORNER; 4];
+/// The phone's keys and score pill share this corner (`--hud-corner`).
+const PHONE_CORNER: f32 = 10.0;
+
+fn corner_radius([nw, ne, sw, se]: [f32; 4]) -> CornerRadius {
+    CornerRadius {
+        nw: nw as u8,
+        ne: ne as u8,
+        sw: sw as u8,
+        se: se as u8,
+    }
+}
+
+/// The phone's score pill (`.phone #hud .scoreboard`), a key's height at the top's
+/// middle: blue score, the clock with the goal under it, red score. The team colours
+/// stand in for the names; your side's plate wears a gold rim and a YOU tag. A solo
+/// run's pill is its kills and the clock.
+fn phone_score(painter: &Painter, screen: Rect, top: f32, hud: &Hud, room: bool) {
+    let solo = hud.game_mode == GameMode::Solo;
+    let height = crate::touch::PHONE_KEY;
+    let score_font = display_font(19.0);
+    let tag_font = bold_font(11.0);
+    let small_font = bold_font(10.0);
+    let pill = &hud.score_pill;
+    // A phone's pill has room for the goal alone; its pause menu adds the rule.
+    let objective = pill.objective.map(|objective| match objective {
+        Objective::Survive => "SURVIVE".to_owned(),
+        objective => objective.to_string(),
+    });
+    let time = pill.clock().to_string();
+    let (time_font, time_color) = if pill.overtime {
+        (bold_font(12.0), hex(0xff8a96))
+    } else {
+        (display_font(16.0), Color32::WHITE)
+    };
+    // Each plate's score, the tag under it and whether it is your side.
+    let plates: Vec<(String, Option<&str>, bool)> = if solo {
+        vec![(hud.human.kills.to_string(), Some("KILLS"), false)]
+    } else {
+        [Team::Blue, Team::Red]
+            .into_iter()
+            .map(|team| {
+                let yours = !room && team == hud.human_team;
+                let score = hud.match_state.scores[team.index()].to_string();
+                (score, yours.then_some("YOU"), yours)
+            })
+            .collect()
+    };
+    let plate_width = |(score, tag, _): &(String, Option<&str>, bool)| {
+        let tag = tag.map_or(0.0, |tag| {
+            paint::text_width(painter, tag, tag_font.clone(), 1.2) + 10.0
+        });
+        (paint::text_width(painter, score, score_font.clone(), 0.0).max(tag) + 20.0).max(40.0)
+    };
+    let objective_width = objective.as_deref().map_or(0.0, |objective| {
+        paint::text_width(painter, objective, small_font.clone(), 0.9)
+    });
+    let clock_width =
+        (paint::text_width(painter, &time, time_font.clone(), 0.0).max(objective_width) + 12.0)
+            .max(48.0);
+    let widths: Vec<f32> = plates.iter().map(plate_width).collect();
+    let total = widths.iter().sum::<f32>() + clock_width;
+    let mut x = screen.center().x - total / 2.0;
+    let upper = top + 16.0;
+    let lower = top + 33.0;
+    for (index, (score, tag, yours)) in plates.iter().enumerate() {
+        let rect = Rect::from_min_size(pos2(x, top), vec2(widths[index], height));
+        let corners = if index == 0 { LEFT_ROUND } else { RIGHT_ROUND };
+        let (light, deep) = if index == 0 {
+            (hex(0x2f8ff2), hex(0x1252b0))
+        } else {
+            (hex(0xff5367), hex(0xb01b33))
+        };
+        painter.add(paint::rounded_vgradient(
+            rect,
+            corners,
+            &[(0.0, light), (1.0, deep)],
+        ));
+        if *yours {
+            let rim = [corners[0], corners[1], 0.0, 0.0];
+            painter.add(paint::rounded_vgradient(
+                Rect::from_min_size(rect.min, vec2(rect.width(), 3.0)),
+                rim,
+                &[(0.0, GOLD), (1.0, GOLD)],
+            ));
+        }
+        let score_y = if tag.is_some() {
+            upper
+        } else {
+            rect.center().y
+        };
+        paint::shadowed(
+            painter,
+            pos2(rect.center().x, score_y),
+            Align2::CENTER_CENTER,
+            score,
+            score_font.clone(),
+            Color32::WHITE,
+            0.0,
+        );
+        if let Some(tag) = tag {
+            let width = paint::text_width(painter, tag, tag_font.clone(), 1.2) + 10.0;
+            let badge = Rect::from_center_size(pos2(rect.center().x, lower), vec2(width, 15.0));
+            let ink = if *yours {
+                painter.add(paint::rounded_vgradient(
+                    badge,
+                    [3.0; 4],
+                    &[(0.0, GOLD_HOT), (1.0, GOLD)],
+                ));
+                hex(0x10213a)
+            } else {
+                painter.rect_filled(badge, 3, hexa(0xffffff, 0.18));
+                Color32::WHITE
+            };
+            paint::text(
+                painter,
+                badge.center(),
+                Align2::CENTER_CENTER,
+                tag,
+                tag_font.clone(),
+                ink,
+                1.2,
+            );
+        }
+        x = rect.right();
+        if index == 0 {
+            // The clock between the plates, or after a solo run's only plate.
+            let clock = Rect::from_min_size(pos2(x, top), vec2(clock_width, height));
+            painter.add(paint::rounded_vgradient(
+                clock,
+                if solo { RIGHT_ROUND } else { SQUARE },
+                &[(0.0, hex(0x0f2140)), (1.0, hex(0x07111f))],
+            ));
+            let time_y = if objective.is_some() {
+                upper
+            } else {
+                clock.center().y
+            };
+            paint::shadowed(
+                painter,
+                pos2(clock.center().x, time_y),
+                Align2::CENTER_CENTER,
+                &time,
+                time_font.clone(),
+                time_color,
+                0.0,
+            );
+            if let Some(objective) = &objective {
+                paint::text(
+                    painter,
+                    pos2(clock.center().x, lower),
+                    Align2::CENTER_CENTER,
+                    objective,
+                    small_font.clone(),
+                    GOLD_HOT,
+                    0.9,
+                );
+            }
+            x = clock.right();
+        }
+    }
+}
+
+/// One glass key of the phone's top row, its rounded corners as `corners` say; `lit`
+/// (first person on) in gold.
+fn phone_key(painter: &Painter, rect: Rect, corners: [f32; 4], lit: bool) {
+    let radius = corner_radius(corners);
+    painter.rect_filled(rect.translate(vec2(0.0, 4.0)), radius, hexa(0x000000, 0.25));
+    let stops = if lit {
+        [(0.0, GOLD_HOT), (1.0, GOLD)]
+    } else {
+        [(0.0, hexa(0x13284a, 0.9)), (1.0, hexa(0x08142a, 0.95))]
+    };
+    painter.add(paint::rounded_vgradient(rect, corners, &stops));
+    painter.rect_stroke(
+        rect,
+        radius,
+        Stroke::new(1.0, theme::PLATE_EDGE),
+        StrokeKind::Inside,
+    );
+}
+
+/// The phone's top row: the zoom pair (which the touch controls hit-test, so a thumb on
+/// them never reaches egui), first person and pause. First person has no zoom.
+fn phone_keys(
+    context: &egui::Context,
+    art: &Art,
+    keys: &crate::touch::PhoneBar,
+    state: &mut UiState,
+    actions: &mut Vec<Action>,
+) {
+    if state.settings_draft.is_some() {
+        return;
+    }
+    let painter = context.layer_painter(LayerId::new(Order::Middle, Id::unique("phone keys")));
+    let divider = |x: f32, rect: Rect| {
+        painter.line_segment(
+            [pos2(x, rect.top() + 9.0), pos2(x, rect.bottom() - 9.0)],
+            Stroke::new(1.0, hexa(0x9fd0ff, 0.14)),
+        );
+    };
+    if state.touch.is_some_and(|touch| !touch.first_person) {
+        phone_key(&painter, keys.zoom_out, LEFT_ROUND, false);
+        phone_key(&painter, keys.zoom_in, RIGHT_ROUND, false);
+        divider(keys.zoom_in.left(), keys.zoom_in);
+        for (rect, label) in [(keys.zoom_out, "−"), (keys.zoom_in, "+")] {
+            paint::text(
+                &painter,
+                rect.center(),
+                Align2::CENTER_CENTER,
+                label,
+                bold_font(18.0),
+                hex(0xc9d9ea),
+                0.0,
+            );
+        }
+    }
+    // Held upright first person and pause are one pair; held sideways two keys apart.
+    let (view_corners, pause_corners) = if keys.upright {
+        (LEFT_ROUND, RIGHT_ROUND)
+    } else {
+        (ALL_ROUND, ALL_ROUND)
+    };
+    let both = keys.view.union(keys.pause);
+    egui::Area::new(Id::unique("phone keys"))
+        .fixed_pos(both.min)
+        .order(Order::Middle)
+        .show(context, |ui| {
+            ui.allocate_exact_size(both.size(), Sense::hover());
+            for (index, (rect, corners, icon, action)) in [
+                (keys.view, view_corners, "eye", Action::ToggleView),
+                (keys.pause, pause_corners, "pause", Action::Pause),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                let response = ui.interact(rect, Id::unique(("phone key", index)), Sense::click());
+                let lit = index == 0 && state.cockpit;
+                phone_key(&painter, rect, corners, lit);
+                art.icon(
+                    &painter,
+                    icon,
+                    Rect::from_center_size(rect.center(), Vec2::splat(18.0)),
+                    if lit { hex(0x10233c) } else { hex(0xe9f2fb) },
+                );
+                if response.clicked() {
+                    actions.push(action);
+                }
+            }
+            if keys.upright {
+                divider(keys.pause.left(), keys.pause);
+            }
+        });
+}
+
+/// First person on a phone (`.phone #hud.first-person .bottom`): the hull compass low in
+/// the middle, between the drive stick and the thumb that turns the view, over a small
+/// hull plate, since from inside the turret the bar over the tank is out of sight.
+fn phone_cockpit(painter: &Painter, art: &Art, screen: Rect, state: &UiState, human: &HudHuman) {
+    let ramp = hex(human.hull_ramp);
+    let hp = format!("{}", human.hp.max(0.0).ceil());
+    let number_font = display_font(20.0);
+    let number_width = paint::text_width(painter, &hp, number_font.clone(), 0.0);
+    let bar_width = 60.0;
+    let width = 12.0 + 16.0 + 4.0 + number_width + 8.0 + bar_width + 12.0;
+    let plate = Rect::from_center_size(
+        pos2(screen.center().x, screen.bottom() - 10.0 - 15.5),
+        vec2(width, 31.0),
+    );
+    paint::plate(painter, plate, 6.0, None);
+    let middle = plate.center().y;
+    art.icon(
+        painter,
+        "hull",
+        Rect::from_center_size(pos2(plate.left() + 20.0, middle), Vec2::splat(16.0)),
+        ramp,
+    );
+    paint::shadowed(
+        painter,
+        pos2(plate.left() + 32.0, middle),
+        Align2::LEFT_CENTER,
+        &hp,
+        number_font,
+        Color32::WHITE,
+        0.0,
+    );
+    let bar = Rect::from_min_size(
+        pos2(plate.right() - 12.0 - bar_width, middle - 3.5),
+        vec2(bar_width, 7.0),
+    );
+    painter.rect_filled(bar, 3, hex(0x030913));
+    let share = human.health_ratio.clamp(0.0, 1.0) as f32;
+    painter.rect_filled(
+        Rect::from_min_size(bar.min, vec2(bar.width() * share, bar.height())),
+        3,
+        ramp,
+    );
+    for segment in 1..10 {
+        let x = bar.left() + bar.width() * segment as f32 / 10.0;
+        painter.rect_filled(
+            Rect::from_min_max(pos2(x - 1.0, bar.top()), pos2(x, bar.bottom())),
+            0,
+            hex(0x030913),
+        );
+    }
+    // The compass in its ring over the plate.
+    let center = pos2(plate.center().x, plate.top() - 6.0 - 24.0);
+    painter.circle_filled(center, 24.0, hexa(0x050d1c, 0.85));
+    painter.circle_stroke(center, 24.0, Stroke::new(1.0, theme::PLATE_EDGE));
+    compass_dial(
+        painter,
+        Rect::from_min_size(pos2(center.x - 32.0, center.y - 28.0), vec2(68.0, 56.0)),
+        state.hull_angle,
+    );
 }
 
 /// One team's plate on the score bar: its slanted outline toward the clock.
@@ -412,15 +783,19 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
 }
 
 /// The corner toolbar: first person, fullscreen, pause and settings on one plate.
-/// Thumb-sized on a touch screen, which has no fullscreen to toggle.
+/// Thumb-sized on a touch screen.
 fn toolbar_button() -> f32 {
     if crate::touch::screen() { 46.0 } else { 38.0 }
 }
 
-/// The toolbar's plate: first person, fullscreen (not on a touch screen), pause and
+/// The toolbar's plate: first person, fullscreen (not in the iPad app), pause and
 /// settings.
 fn toolbar_size() -> Vec2 {
-    let count = if crate::touch::screen() { 3.0 } else { 4.0 };
+    let count = if crate::app::offers_fullscreen() {
+        4.0
+    } else {
+        3.0
+    };
     vec2(toolbar_button() * count + 6.0, toolbar_button() + 6.0)
 }
 
@@ -453,7 +828,7 @@ fn toolbar(
     );
     let buttons: Vec<(&str, &str, Action)> = [
         Some(("eye", "First-person view (V)", Action::ToggleView)),
-        (!crate::touch::screen()).then_some(fullscreen),
+        crate::app::offers_fullscreen().then_some(fullscreen),
         Some(("pause", "Pause (Esc)", Action::Pause)),
         Some(("gear", "Settings", Action::OpenSettings)),
     ]
@@ -520,14 +895,26 @@ fn toolbar(
 }
 
 /// The kill feed: killer, weapon, victim, newest on top, one fixed-width steel plate
-/// per row with each side's team as a bright edge at its end.
+/// per row with each side's team as a bright edge at its end. A phone's keeps only the
+/// viewer's own kills, under its right-hand keys.
 fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiState) {
-    let width = 336.0_f32.min(screen.width() * 0.42);
+    let phone = crate::touch::phone();
+    let (width, right) = if phone {
+        (
+            PHONE_FEED_WIDTH.min(screen.width() - 16.0),
+            screen.right() - 8.0,
+        )
+    } else {
+        (336.0_f32.min(screen.width() * 0.42), screen.right() - EDGE)
+    };
     let row_height = 30.0;
-    let right = screen.right() - EDGE;
     let lines = if state.cockpit { 2 } else { super::FEED_LINES };
     let first = top;
-    for (index, entry) in state.kill_feed.iter().take(lines).enumerate() {
+    let entries = state
+        .kill_feed
+        .iter()
+        .filter(|entry| !phone || entry.own_kill);
+    for (index, entry) in entries.take(lines).enumerate() {
         let top = first + index as f32 * (row_height + 4.0);
         let rect = Rect::from_min_size(pos2(right - width, top), vec2(width, row_height));
         let side = |team: Option<Team>| match team {
@@ -657,7 +1044,9 @@ fn kill_feed(painter: &Painter, art: &Art, screen: Rect, top: f32, state: &UiSta
 /// fixed slot under the score, on a band that fades out at both ends.
 fn toast(painter: &Painter, screen: Rect, state: &UiState) {
     let Some(toast) = &state.toast else { return };
-    if toast.text.is_empty() {
+    let phone = crate::touch::phone();
+    // The respawn card names the killer; a phone's small strip leaves that to the notice.
+    if toast.text.is_empty() || (toast.tone == ToastTone::Death && !phone) {
         return;
     }
     let (rule, color, size) = match toast.tone {
@@ -665,23 +1054,43 @@ fn toast(painter: &Painter, screen: Rect, state: &UiState) {
         ToastTone::Promotion => (hexa(0xffcf38, 0.4), GOLD_HOT, 17.0),
         ToastTone::Death => (hexa(0xff4d5e, 0.53), hex(0xffd6da), 14.0),
     };
+    // A phone's notices flash mid-screen, smaller.
+    let (size, spacing, padding, max) = if phone {
+        (
+            12.0,
+            1.0,
+            vec2(28.0, 14.0),
+            screen.width() - PHONE_TOAST_MARGIN,
+        )
+    } else {
+        (
+            size,
+            1.4,
+            vec2(88.0, 16.0),
+            (screen.width() - 40.0).min(720.0),
+        )
+    };
     let font = bold_font(size);
-    let max = (screen.width() - 40.0).min(720.0) - 88.0;
-    let galley = paint::galley(painter, &toast.text, font.clone(), color, 1.4, max);
+    let max = max - padding.x;
+    let galley = paint::galley(painter, &toast.text, font.clone(), color, spacing, max);
     // The entrance settles from a slightly smaller band.
     let grow = 0.92 + 0.08 * ((toast.age / 0.25).min(1.0) as f32);
-    let size = vec2(galley.size().x + 88.0, galley.size().y + 16.0) * vec2(grow, 1.0);
-    let rect = Rect::from_center_size(
-        pos2(screen.center().x, screen.top() + 150.0 + size.y / 2.0),
-        size,
-    );
+    let size = (galley.size() + padding) * vec2(grow, 1.0);
+    let top = if phone {
+        screen.top() + screen.height() * PHONE_TOAST_TOP
+    } else {
+        screen.top() + 150.0
+    };
+    let rect = Rect::from_center_size(pos2(screen.center().x, top + size.y / 2.0), size);
     let band = hexa(0x08142a, 0.91);
+    // The band fades out at both ends, past a phone's tighter text.
+    let edge = if phone { 0.06 } else { 0.16 };
     painter.add(paint::hgradient(
         rect,
         &[
             (0.0, Color32::TRANSPARENT),
-            (0.16, band),
-            (0.84, band),
+            (edge, band),
+            (1.0 - edge, band),
             (1.0, Color32::TRANSPARENT),
         ],
     ));
@@ -690,13 +1099,13 @@ fn toast(painter: &Painter, screen: Rect, state: &UiState) {
             Rect::from_min_max(pos2(rect.left(), y - 0.5), pos2(rect.right(), y + 0.5)),
             &[
                 (0.0, Color32::TRANSPARENT),
-                (0.16, rule),
-                (0.84, rule),
+                (edge, rule),
+                (1.0 - edge, rule),
                 (1.0, Color32::TRANSPARENT),
             ],
         ));
     }
-    let shadow = paint::galley(painter, &toast.text, font, hexa(0, 0.6), 1.4, max);
+    let shadow = paint::galley(painter, &toast.text, font, hexa(0, 0.6), spacing, max);
     let at = Align2::CENTER_CENTER.anchor_size(rect.center(), galley.size());
     painter.galley(at.min + vec2(0.0, 2.0), shadow, Color32::BLACK);
     painter.galley(at.min, galley, color);
@@ -785,15 +1194,12 @@ fn tank_panel(
     // it stands over the controls at the screen's width.
     let (corner, room) = if crate::touch::screen() {
         let layout = crate::touch::TouchLayout::of(context);
-        let (from, to) = layout.panel_span();
+        let (from, to) = layout.panel_span(screen.right() - EDGE);
         if to - from >= size.x * MIN_PANEL_GAP_SHARE {
             let left = (from + (to - from - size.x) / 2.0).max(from);
             (pos2(left, screen.bottom() - EDGE), to - from)
         } else {
-            let top = layout
-                .stick
-                .top()
-                .min(layout.zoom_in.y - crate::touch::ZOOM_RADIUS);
+            let top = layout.stick.top().min(layout.zoom_in.top());
             (
                 pos2(screen.left() + EDGE, top - STACK_GAP),
                 screen.width() - 2.0 * EDGE,

@@ -73,10 +73,12 @@ fn main() {
             console_error_panic_hook::hook(info);
             page::failed(&format!("The game stopped: {info}"));
         }));
-        touch::detect();
     }
     let arguments = arguments();
-    if arguments.iter().any(|argument| argument == "--automation") {
+    let flag = |name: &str| arguments.iter().any(|argument| argument == name);
+    // `--phone` (a page's `?phone`) plays the phone edition anywhere.
+    touch::detect(flag("--phone"));
+    if flag("--automation") {
         automation::enable();
     }
     let options = options(&arguments, links::development());
