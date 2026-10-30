@@ -165,14 +165,19 @@ disclose sample counts instead of reporting a clean percentile that discarded
 a slow run.
 
 Separate page runs of one build drift 2x on a developer Mac, so compare render
-CPU (`renderMs`, the engine's presentation and `Renderer::render`) between builds
-loaded at once: debug-API static bundles (`NODE_ENV=development pnpm exec vite
-build --minify false`) served cross-origin isolated for 5 µs timer resolution, one
-page per build, seeded, with the overview camera; hold the game's `loop`, step
-every page through the same timestamps in alternating 40-frame blocks, wait for
-the GPU before each frame, pair frame _n_ across builds and report the mean paired
-difference ± two standard errors over blocks. Run it again with the page order
-reversed, since the first page created tends to be faster. Call counts (wrapping
+CPU (`renderMs`, the engine's presentation and `Renderer::render`, or a whole frame's
+animation-frame callbacks, which include egui's layout and drawing) between builds
+loaded at once: static builds served cross-origin isolated for 5 µs timer
+resolution, one page per build opened with `?automation&seed=<n>` (the same match
+in every build), with the overview camera and the round started by the hook's
+`start`, not a click (the turret follows the pointer); hold the page's animation
+frames from GO (honour `cancelAnimationFrame`: winit cancels before asking again)
+and the shell's clock (`sloppyShell.hold`), step every page through the same
+timestamps in alternating 40-frame blocks, wait for the GPU before each frame, pair
+frame _n_ across builds and report the mean paired difference ± two standard errors
+over blocks. Check the scenes match (tank poses, draw counts) before trusting it.
+Run it again with the page order reversed, since the first page created tends to be
+faster. Call counts (wrapping
 the WebGPU or WebGL prototypes) and profiles (CDP profiler, which runs pages
 about twice as fast) explain a result but never time one; the GPU process's CPU,
 sampled with `ps` over fresh browsers, is a separate measurement.
