@@ -173,10 +173,10 @@ pub struct UiState {
     pub round: u32,
     /// The icons and tank renders, made on the first frame.
     pub art: Option<icons::Art>,
-    /// The touch controls this frame, while the player can act on a touch screen.
+    /// The touch controls this frame, while any show on a touch screen.
     pub touch: Option<touch::TouchView>,
-    /// Seconds the touch controls have shown since they last appeared, for the fire
-    /// hint.
+    /// Seconds the player's touch controls have shown since they last appeared, for the
+    /// fire hint.
     pub touch_shown: f64,
 }
 
@@ -236,7 +236,7 @@ impl UiState {
             self.damage_ring = None;
         }
         self.trail_hull_ghost(dt);
-        self.touch_shown = if self.touch.is_some() {
+        self.touch_shown = if self.touch.is_some_and(|touch| touch.acting) {
             self.touch_shown + dt
         } else {
             0.0

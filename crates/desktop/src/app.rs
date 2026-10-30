@@ -40,7 +40,7 @@ use crate::preferences::Preferences;
 use crate::room::{NetworkTools, RoomSession, SavedSeats};
 use crate::room_api::RoomSelection;
 use crate::tasks::Task;
-use crate::touch::Play;
+use crate::touch::{Play, Showing};
 use crate::ui::rooms::RoomsState;
 use crate::ui::{self, Action, UiState};
 use crate::window_input::{Battle, Request, WindowInput};
@@ -811,19 +811,23 @@ impl Session {
             wheel: self.in_round,
             touch: Play::live(
                 &self.overlay.context,
-                self.touch_live(),
+                self.touch_showing(),
                 self.first_person,
                 self.ui.hud.as_ref(),
             ),
         }
     }
 
-    /// Whether the touch controls show: the player can act, with no dialog open.
-    fn touch_live(&self) -> bool {
-        self.in_round
-            && self.phase == MatchPhase::Playing
-            && self.alive
-            && self.ui.settings_draft.is_none()
+    /// Which touch controls show in a running battle with no dialog open: all of them
+    /// while the player can act, the zoom pair alone while the tank is a wreck.
+    fn touch_showing(&self) -> Showing {
+        if !self.in_round || self.phase != MatchPhase::Playing || self.ui.settings_draft.is_some() {
+            Showing::Nothing
+        } else if self.alive {
+            Showing::All
+        } else {
+            Showing::Zoom
+        }
     }
 
     /// Do what input asked; true when the app should quit.
@@ -1171,7 +1175,7 @@ impl Session {
             ready: self.ui.ready,
             status: self.ui.status.clone(),
             settings: self.ui.settings_draft.is_some(),
-            touch_controls: self.ui.touch.is_some(),
+            touch_controls: self.ui.touch.is_some_and(|touch| touch.acting),
             touch_screen: crate::touch::screen(),
             touch_layout: crate::touch::screen()
                 .then(|| (&crate::touch::TouchLayout::of(&self.overlay.context)).into()),
@@ -1284,7 +1288,9 @@ impl Session {
             self.ui.stats = Some(self.game.nerd_stats());
         }
         self.hold_pointer();
-        self.ui.touch = self.input.touch_view(self.touch_live(), self.first_person);
+        self.ui.touch = self
+            .input
+            .touch_view(self.touch_showing(), self.first_person);
         let view = ui::View {
             in_round: self.in_round,
             phase: self.phase,

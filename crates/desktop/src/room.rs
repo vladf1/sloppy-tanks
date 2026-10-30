@@ -29,7 +29,7 @@ use crate::overlay::Overlay;
 use crate::preferences::Preferences;
 use crate::room_api::RoomSelection;
 use crate::sockets::{SocketEvent, Sockets};
-use crate::touch::Play;
+use crate::touch::{Play, Showing};
 use crate::ui::room_menu::{self, RoomMenu};
 use crate::ui::{self, Action, UiState};
 use crate::window_input::{Battle, Request, WindowInput};
@@ -478,16 +478,26 @@ impl RoomSession {
             wheel: in_battle,
             touch: Play::live(
                 &self.overlay.context,
-                self.touch_live(),
+                self.touch_showing(),
                 self.first_person,
                 self.ui.hud.as_ref(),
             ),
         }
     }
 
-    /// Whether the touch controls show: the player can act, with no dialog open.
-    fn touch_live(&self) -> bool {
-        self.game.active_input() && self.ui.settings_draft.is_none()
+    /// Which touch controls show with no dialog open: all of them while the player can
+    /// act, the zoom pair alone while the tank is a wreck in the battle.
+    fn touch_showing(&self) -> Showing {
+        let wrecked = self.ui.hud.as_ref().is_some_and(|hud| !hud.human.alive);
+        if self.ui.settings_draft.is_some() {
+            Showing::Nothing
+        } else if self.game.active_input() {
+            Showing::All
+        } else if self.menu.in_battle() && !self.menu.joining && wrecked {
+            Showing::Zoom
+        } else {
+            Showing::Nothing
+        }
     }
 
     /// Do what input asked; true when the app should quit.
@@ -760,7 +770,7 @@ impl RoomSession {
             alive: self.ui.hud.as_ref().is_none_or(|hud| hud.human.alive),
             first_person: self.first_person,
             settings: self.ui.settings_draft.is_some(),
-            touch_controls: self.ui.touch.is_some(),
+            touch_controls: self.ui.touch.is_some_and(|touch| touch.acting),
             touch_screen: crate::touch::screen(),
             failure: self.stopped.then(|| "The renderer stopped.".into()),
             error: self.game.error(),
@@ -840,7 +850,9 @@ impl RoomSession {
             self.ui.stats = Some(self.game.nerd_stats(now));
         }
         self.hold_pointer();
-        self.ui.touch = self.input.touch_view(self.touch_live(), self.first_person);
+        self.ui.touch = self
+            .input
+            .touch_view(self.touch_showing(), self.first_person);
         let view = ui::View {
             in_round: true,
             phase: room_menu::hud_phase(&self.menu),

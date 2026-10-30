@@ -15,7 +15,7 @@ use crate::hardware_keys::HardwareKeys;
 use crate::input::{Controls, Shortcut, TouchInput};
 use crate::overlay::Overlay;
 use crate::pointer_lock::{self, PointerLock};
-use crate::touch::{Fingers, Play};
+use crate::touch::{Fingers, Play, Showing};
 use crate::ui::touch::TouchView;
 
 /// Where the battle stands, as input needs to know it.
@@ -228,12 +228,13 @@ impl WindowInput {
         self.controls.take_input()
     }
 
-    /// What the touch controls show this frame, while they are live on a touch screen.
-    pub fn touch_view(&self, live: bool, first_person: bool) -> Option<TouchView> {
-        (crate::touch::screen() && live).then_some(TouchView {
+    /// What the touch controls show this frame, while any show on a touch screen.
+    pub fn touch_view(&self, showing: Showing, first_person: bool) -> Option<TouchView> {
+        (crate::touch::screen() && showing != Showing::Nothing).then_some(TouchView {
             input: self.controls.touch,
             first_person,
             learned: self.fingers.learned,
+            acting: showing == Showing::All,
         })
     }
 
