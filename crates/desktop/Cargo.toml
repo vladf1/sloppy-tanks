@@ -49,8 +49,6 @@ dirs = "6"
 sloppy-render.workspace = true
 sloppy-web = { path = "../web" }
 egui-wgpu = { version = "0.37", default-features = false, optional = true }
-# A page cannot read the system's font files (`ui/theme.rs`): egui's own faces.
-egui = { version = "0.37", features = ["default_fonts"] }
 egui_glow = { version = "0.37", optional = true, default-features = false }
 wasm-bindgen.workspace = true
 wasm-bindgen-futures.workspace = true

@@ -72,6 +72,14 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
     let font_painter = context.layer_painter(egui::LayerId::background());
     let character_width = paint::text_width(&font_painter, "0", row_font.clone(), 0.0);
     let panel_width = (PANEL_COLUMNS * character_width + 24.0).min(screen.width() - 16.0);
+    // Values start one space past the widest label, measured, since a page has no
+    // monospace face to pad labels in.
+    let value_column = list
+        .iter()
+        .flat_map(|section| &section.rows)
+        .map(|row| paint::text_width(&font_painter, row.label, row_font.clone(), 0.0))
+        .fold(0.0, f32::max)
+        + paint::text_width(&font_painter, "0", row_font.clone(), 0.0);
     let rows: f32 = list
         .iter()
         .map(|section| {
@@ -202,15 +210,18 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
                         for row in &section.rows {
                             let (line, response) =
                                 ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
-                            paint::text(
-                                ui.painter(),
-                                pos2(line.left() + 5.0, line.center().y),
-                                Align2::LEFT_CENTER,
-                                &format!("{:20} {}", row.label, row.value),
-                                row_font.clone(),
-                                hex(0xe6eef8),
-                                0.0,
-                            );
+                            for (x, text) in [(0.0, row.label), (value_column, row.value.as_str())]
+                            {
+                                paint::text(
+                                    ui.painter(),
+                                    pos2(line.left() + 5.0 + x, line.center().y),
+                                    Align2::LEFT_CENTER,
+                                    text,
+                                    row_font.clone(),
+                                    hex(0xe6eef8),
+                                    0.0,
+                                );
+                            }
                             response.on_hover_text(row.hint.as_ref());
                         }
                     }

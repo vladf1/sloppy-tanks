@@ -557,23 +557,38 @@ fn room_menu(
             if text_button(ui, "Settings").clicked() {
                 actions.push(Action::OpenSettings);
             }
+            // The fold arrow is painted: the page's fonts have no ▸ or ▾.
+            const ARROW_ROOM: f32 = 13.0;
             let controls_width =
-                paint::text_width(ui.painter(), "▸ Controls", bold_font(12.0), 0.0);
+                ARROW_ROOM + paint::text_width(ui.painter(), "Controls", bold_font(12.0), 0.0);
             ui.add_space(((width - controls_width) / 2.0 - 85.0).max(0.0));
-            let label = if menu.controls_open {
-                "▾ Controls"
-            } else {
-                "▸ Controls"
-            };
             let (rect, response) =
                 ui.allocate_exact_size(vec2(controls_width, 22.0), Sense::click());
+            paint::labelled(&response, true, "Controls");
+            let color = hex(0x9fbcd2);
+            let tip = pos2(rect.left() + 4.0, rect.center().y);
+            let arrow = if menu.controls_open {
+                vec![
+                    tip + vec2(-3.5, -2.5),
+                    tip + vec2(3.5, -2.5),
+                    tip + vec2(0.0, 3.0),
+                ]
+            } else {
+                vec![
+                    tip + vec2(-2.0, -3.5),
+                    tip + vec2(3.0, 0.0),
+                    tip + vec2(-2.0, 3.5),
+                ]
+            };
+            ui.painter()
+                .add(egui::Shape::convex_polygon(arrow, color, Stroke::NONE));
             paint::text(
                 ui.painter(),
-                rect.center(),
-                Align2::CENTER_CENTER,
-                label,
+                pos2(rect.left() + ARROW_ROOM, rect.center().y),
+                Align2::LEFT_CENTER,
+                "Controls",
                 bold_font(12.0),
-                hex(0x9fbcd2),
+                color,
                 0.0,
             );
             if response.clicked() {
@@ -1521,7 +1536,7 @@ mod tests {
         assert!(screen.menu.editing_rules);
         assert!(screen.click("Done").is_empty());
         assert!(!screen.menu.editing_rules);
-        assert!(screen.click("▸ Controls").is_empty());
+        assert!(screen.click("Controls").is_empty());
         assert!(screen.menu.controls_open);
     }
 

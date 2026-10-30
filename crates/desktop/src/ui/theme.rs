@@ -159,15 +159,22 @@ pub fn install(context: &egui::Context) {
             .expect("egui has a proportional family")
             .insert(0, "ui".into());
     }
-    if has_mono {
-        fonts
-            .families
-            .get_mut(&FontFamily::Monospace)
-            .expect("egui has a monospace family")
-            .insert(0, "ui-mono".into());
+    // Monospace falls back to the UI face: a page has no monospace face of its own
+    // (Stats for nerds measures its columns in the face it gets).
+    let monospace = fonts
+        .families
+        .get_mut(&FontFamily::Monospace)
+        .expect("egui has a monospace family");
+    if has_ui {
+        monospace.insert(0, "ui".into());
     }
+    if has_mono {
+        monospace.insert(0, "ui-mono".into());
+    }
+    // A glyph the bold or display face lacks comes from the UI face.
     let with = |first: Option<&str>| {
         let mut family: Vec<String> = first.map(str::to_owned).into_iter().collect();
+        family.extend(has_ui.then(|| "ui".to_owned()));
         family.extend(fallback.iter().cloned());
         family
     };
