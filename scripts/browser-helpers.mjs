@@ -150,8 +150,8 @@ export async function clickWidget(page, label, { timeout = 15000 } = {}) {
  * @param {...unknown} args
  */
 export function shellDebug(page, name, ...args) {
-  return page.evaluate(([command, rest]) => window.sloppyShell.debug(command, ...rest), [
-    name,
-    args,
-  ]);
+  return page.evaluate(
+    ([command, rest]) => window.sloppyShell.debug(command, ...rest),
+    [name, args],
+  );
 }

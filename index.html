@@ -323,6 +323,26 @@
         return { response, complete };
       };
 
+      // Safari starts an AudioContext made outside a gesture suspended, and the shell makes
+      // its sound on the frame after GO (audio.rs): resume each on the player's next press,
+      // as the old page's Howler did.
+      const AudioContext = window.AudioContext ?? window.webkitAudioContext;
+      if (AudioContext) {
+        const contexts = [];
+        window.AudioContext = class extends AudioContext {
+          constructor(...options) {
+            super(...options);
+            contexts.push(this);
+          }
+        };
+        const resume = () => {
+          for (const context of contexts) if (context.state === "suspended") context.resume();
+        };
+        for (const type of ["pointerdown", "pointerup", "keydown", "touchend"]) {
+          addEventListener(type, resume, { capture: true });
+        }
+      }
+
       // The shell bakes generated textures in workers that run its module (bakes.rs).
       window.sloppyBakeWorker = () =>
         new Worker(new URL("/src/bake-worker.ts", import.meta.url), { type: "module" });
