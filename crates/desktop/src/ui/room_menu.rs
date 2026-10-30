@@ -4,13 +4,17 @@
 //! dialog when the connection drops or ends, and the battle HUD's room parts (the
 //! players list and the respawn card).
 
-use egui::{Align2, Color32, FontId, Id, Rect, Sense, Stroke, StrokeKind, Ui, pos2, vec2};
+use egui::text::{LayoutJob, TextFormat};
+use egui::{
+    Align2, Color32, FontId, Id, LayerId, Mesh, Order, Painter, Pos2, Rect, Sense, Shape, Stroke,
+    StrokeKind, Ui, pos2, vec2,
+};
 use sloppy_core::net::multiplayer_simulation::TEAM_SLOTS;
 use sloppy_core::net::protocol::{Lobby, MAX_ROUND_MINUTES, Player, RoomPhase, RoomSettings};
 use sloppy_core::sim::data::{TEAM_NAMES, vehicle};
 use sloppy_core::sim::difficulty::Difficulty;
 use sloppy_core::sim::map_options::{MAP_OPTIONS, map_option_for};
-use sloppy_core::sim::{Match, MatchPhase, SimEventType, Team};
+use sloppy_core::sim::{Match, MatchPhase, SimEventType, Team, VehicleKind};
 use sloppy_web::battle_report::{count_line, title_case};
 use sloppy_web::catalog::{DIFFICULTY_OPTIONS, TANK_CARDS, difficulty_name, map_card};
 use sloppy_web::events::PendingEvent;
@@ -18,7 +22,7 @@ use sloppy_web::room_text::{Arrival, ConnectionDialog, Ending, MenuText, team_wo
 
 use super::icons::Art;
 use super::paint::{self, ButtonStyle, hex, hexa};
-use super::theme::{GOLD, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
+use super::theme::{GOLD, GOLD_HOT, TEXT, TEXT_DIM, TEXT_LABEL, bold_font, display_font};
 use super::{Action, KillFeedEntry, UiState, View, hud, menus};
 use crate::links;
 use crate::tasks::Background;
@@ -26,6 +30,49 @@ use std::sync::mpsc::TryRecvError;
 
 /// Seconds "Code copied" shows on its button.
 const COPIED_SECONDS: f64 = 2.0;
+/// What a join says while the room loads, in this order (`join-screen.ts`): the seat
+/// first, then the arena until the room can draw it.
+const CONNECTING_STATUS: &str = "Connecting to room…";
+const PREPARING_STATUS: &str = "Preparing the arena…";
+/// The gap between a room dialog's parts (`.network-menu`), between the lines of its
+/// head (`.dialog-head`), between NEXT BATTLE's rows and its actions' rows.
+const ROOM_GAP: f32 = 16.0;
+const HEAD_GAP: f32 = 6.0;
+const ROW_GAP: f32 = 10.0;
+/// The head's eyebrow line, as tall as the invite button when that stands beside it;
+/// the title's line (50 px at 0.95), and the lede's (13 px at 1.5).
+const EYEBROW_LINE: f32 = 15.0;
+const TEXT_BUTTON_HEIGHT: f32 = 28.0;
+const TITLE_LINE: f32 = 47.5;
+const LEDE_LINE: f32 = 19.5;
+/// The room menu's text colour (`--text` in `.network-menu`), where the page names it.
+const MENU_TEXT: u32 = 0xc4dfef;
+/// The line under a dialog's title (`.dialog-lede`).
+const LEDE: u32 = 0xc4dbee;
+/// A form field's label line, its height, its inner padding, and the room a select keeps
+/// at its right for the chevron (`.network-fields` select and input).
+const FIELD_LABEL: f32 = 13.0;
+const FIELD_HEIGHT: f32 = 42.0;
+const FIELD_PADDING: f32 = 12.0;
+const CHEVRON_ROOM: f32 = 32.0;
+/// A team card's header down to the hairline over its first player, a player's row, and
+/// what the card keeps under its last row (`.network-team`, `.roster-player`).
+const TEAM_HEADER: f32 = 44.0;
+const ROSTER_ROW: f32 = 30.0;
+const TEAM_FOOT: f32 = 4.0;
+/// A team card's coloured top border and its corner radius.
+const TEAM_STRIPE: f32 = 3.0;
+const TEAM_RADIUS: f32 = 10.0;
+/// LAST ROUND's header line and each player's row (`#network-scoreboard`).
+const SCORE_HEADER: f32 = 20.0;
+const SCORE_ROW: f32 = 31.0;
+/// The joining well (`.room-status`): its least height, padding, ring, and the sweep's
+/// share of the track and its time across (`.startup-track`).
+const STATUS_WELL: f32 = 48.0;
+const STATUS_PADDING: f32 = 12.0;
+const STATUS_RING: f32 = 9.0;
+const SWEEP_SHARE: f32 = 0.38;
+const SWEEP_SECONDS: f64 = 1.4;
 /// Whether the room's socket is live, being (re)connected, or has given up, with the
 /// engine's words for the connection dialog.
 #[derive(Clone, Debug, PartialEq)]
@@ -55,6 +102,9 @@ pub struct RoomMenu {
     editing_rules: bool,
     editing_choice: bool,
     controls_open: bool,
+    /// MINUTES as typed, while the field has the keyboard; it applies when the field
+    /// lets go, as the page's input applies on `change`.
+    minutes_draft: Option<String>,
     /// A one-line answer in the room menu, such as a full team.
     pub notice: String,
     /// Seconds left on "Code copied".
@@ -71,7 +121,7 @@ impl RoomMenu {
             room: room.to_owned(),
             joining: true,
             creating,
-            status: "Connecting to room…".into(),
+            status: CONNECTING_STATUS.into(),
             lobby: None,
             text: MenuText::default(),
             player_id: String::new(),
@@ -85,6 +135,7 @@ impl RoomMenu {
             editing_rules: false,
             editing_choice: false,
             controls_open: false,
+            minutes_draft: None,
             notice: String::new(),
             copied: 0.0,
             copying: None,
@@ -161,9 +212,16 @@ impl RoomMenu {
         self.mine().map(|player| player.team)
     }
 
-    /// Connection progress: live, or the dialog that says the socket is down.
+    /// Connection progress: live, or the dialog that says the socket is down. While the
+    /// room still loads, a held seat means the arena is what is left: the client says
+    /// "Connected" before the arena's state arrives and again once it compiled, and the
+    /// joining card says the arena is preparing until the room can show it.
     pub fn status(&mut self, text: &str, dialog: Option<ConnectionDialog>) {
-        self.status = text.to_owned();
+        self.status = if self.joining && dialog.is_none() {
+            PREPARING_STATUS.to_owned()
+        } else {
+            text.to_owned()
+        };
         self.link = dialog.map_or(Link::Live, Link::Connecting);
     }
 
@@ -233,7 +291,7 @@ fn room_dialog(context: &egui::Context, id: &str, width: f32, build: impl FnOnce
                 origin,
                 vec2(width, context.content_rect().height() - 80.0),
             )));
-            body.spacing_mut().item_spacing = vec2(10.0, 10.0);
+            body.spacing_mut().item_spacing = vec2(ROW_GAP, ROOM_GAP);
             body.style_mut().override_font_id = Some(FontId::proportional(14.0));
             egui::ScrollArea::vertical()
                 .id_salt(id)
@@ -250,16 +308,20 @@ fn room_dialog(context: &egui::Context, id: &str, width: f32, build: impl FnOnce
     );
 }
 
-fn paragraph(ui: &mut Ui, text: &str, color: Color32) {
+/// A centred word under the actions (`.network-note`).
+fn note(ui: &mut Ui, text: &str) {
+    let width = ui.available_width();
     let galley = paint::wrapped(
         ui.painter(),
         text,
-        FontId::proportional(13.0),
-        color,
-        ui.available_width(),
+        FontId::proportional(12.0),
+        hex(0x9fbcd2),
+        width,
     );
-    let (rect, _) = ui.allocate_exact_size(galley.size(), Sense::hover());
-    ui.painter().galley(rect.min, galley, color);
+    let (rect, _) = ui.allocate_exact_size(vec2(width, galley.size().y), Sense::hover());
+    let left = rect.center().x - galley.size().x / 2.0;
+    ui.painter()
+        .galley(pos2(left, rect.top()), galley, hex(0x9fbcd2));
 }
 
 fn text_button(ui: &mut Ui, text: &str) -> egui::Response {
@@ -309,18 +371,114 @@ fn text_button_at(ui: &mut Ui, right: f32, top: f32, text: &str, id: &str) -> bo
     response.clicked()
 }
 
-fn room_heading(ui: &mut Ui, room: &str, title: &str, color: Color32) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 76.0), Sense::hover());
-    paint::eyebrow(ui.painter(), rect.min, &format!("ROOM {room}"));
+/// Where a room dialog's head put its eyebrow line and its title's line, for what
+/// stands beside them: the invite button and the final score.
+struct Head {
+    eyebrow: Rect,
+    title: Rect,
+}
+
+/// A room dialog's head (`.dialog-head`): ROOM and its code, the title, and the lines
+/// under it, `HEAD_GAP` apart. `invite` makes the eyebrow line as tall as the invite
+/// button that stands beside it (`.dialog-eyebrow` aligns their baselines).
+fn room_head(
+    ui: &mut Ui,
+    room: &str,
+    title: &str,
+    invite: bool,
+    lines: &[(&str, Color32)],
+) -> Head {
+    let width = ui.available_width();
+    let painter = ui.painter().clone();
+    let galleys: Vec<_> = lines
+        .iter()
+        .filter(|(text, _)| !text.is_empty())
+        .map(|&(text, color)| lede(&painter, text, color, width))
+        .collect();
+    let eyebrow_line = if invite {
+        TEXT_BUTTON_HEIGHT
+    } else {
+        EYEBROW_LINE
+    };
+    let height = eyebrow_line
+        + HEAD_GAP
+        + TITLE_LINE
+        + galleys
+            .iter()
+            .map(|galley| HEAD_GAP + galley.size().y)
+            .sum::<f32>();
+    let (rect, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
+    let eyebrow = Rect::from_min_size(rect.min, vec2(width, eyebrow_line));
+    room_eyebrow(&painter, pos2(eyebrow.left(), eyebrow.center().y), room);
+    let title_line = Rect::from_min_size(
+        pos2(rect.left(), eyebrow.bottom() + HEAD_GAP),
+        vec2(width, TITLE_LINE),
+    );
+    // The display face's capitals sit a point under the middle of its line.
     paint::shadowed(
-        ui.painter(),
-        rect.min + vec2(0.0, 22.0),
-        Align2::LEFT_TOP,
+        &painter,
+        pos2(title_line.left(), title_line.center().y + 1.0),
+        Align2::LEFT_CENTER,
         title,
         display_font(50.0),
-        color,
+        Color32::WHITE,
         1.0,
     );
+    let mut top = title_line.bottom();
+    for galley in galleys {
+        top += HEAD_GAP;
+        let size = galley.size();
+        painter.galley(pos2(rect.left(), top), galley, TEXT);
+        top += size.y;
+    }
+    Head {
+        eyebrow,
+        title: title_line,
+    }
+}
+
+/// ROOM in the label blue and the code in the menu's text colour (`.dialog-eyebrow b`),
+/// on the line through `left_center`.
+fn room_eyebrow(painter: &Painter, left_center: Pos2, room: &str) {
+    // The code ends where it would in the line as one text: a laid-out text drops the
+    // space after ROOM.
+    let line = paint::text_width(painter, &format!("ROOM {room}"), bold_font(12.0), 2.4);
+    let code = paint::text_width(painter, room, bold_font(12.0), 2.4);
+    paint::text(
+        painter,
+        left_center,
+        Align2::LEFT_CENTER,
+        "ROOM",
+        bold_font(12.0),
+        TEXT_LABEL,
+        2.4,
+    );
+    paint::text(
+        painter,
+        pos2(left_center.x + line - code, left_center.y),
+        Align2::LEFT_CENTER,
+        room,
+        bold_font(12.0),
+        hex(MENU_TEXT),
+        2.4,
+    );
+}
+
+/// A line of the head under the title (`.dialog-lede`: 13 px at 1.5), wrapped to `width`.
+fn lede(painter: &Painter, text: &str, color: Color32, width: f32) -> std::sync::Arc<egui::Galley> {
+    let mut job = LayoutJob::default();
+    job.append(
+        text,
+        0.0,
+        TextFormat {
+            font_id: FontId::proportional(13.0),
+            color,
+            line_height: Some(LEDE_LINE),
+            ..Default::default()
+        },
+    );
+    job.wrap.max_width = width;
+    painter.layout_job(job)
 }
 
 fn action(ui: &mut Ui, art: &Art, label: &str, style: ButtonStyle, width: f32) -> bool {
@@ -375,44 +533,154 @@ pub fn draw(
     actions
 }
 
-/// Battle Setup's place while the room connects and compiles its arena.
+/// Battle Setup's place while the room connects and compiles its arena: its backdrop, as
+/// the arena stays out of sight until the room can show it, and a card with Battle
+/// Setup's status well (`join-screen.ts`: "Joining room …", then what it waits for).
+/// The card has its size from the first frame, so the room's first frame shows it.
 fn joining(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut Vec<Action>) {
-    room_dialog(context, "joining", 480.0, |ui| {
-        room_heading(
-            ui,
-            &menu.room,
-            if menu.creating {
+    const WIDTH: f32 = 480.0;
+    const PADDING: [f32; 3] = [28.0, 24.0, 24.0];
+    const BUTTON: f32 = 48.0;
+    super::backdrop::backdrop(context, art);
+    let [side, top, bottom] = PADDING;
+    let width = menus::phone_width(context, WIDTH);
+    let height = top
+        + EYEBROW_LINE
+        + HEAD_GAP
+        + TITLE_LINE
+        + ROOM_GAP
+        + STATUS_WELL
+        + ROOM_GAP
+        + BUTTON
+        + bottom;
+    let card = Rect::from_center_size(context.content_rect().center(), vec2(width, height));
+    let layer = LayerId::new(Order::Foreground, Id::unique("joining"));
+    // An area new to egui lays out unseen for a frame and then fades in; this one's size
+    // is known, so it starts sized and shows at once.
+    if egui::AreaState::load(context, layer.id).is_none() {
+        context.memory_mut(|memory| {
+            memory.areas_mut().set_state(
+                layer,
+                egui::AreaState {
+                    pivot_pos: Some(card.min),
+                    pivot: Align2::LEFT_TOP,
+                    size: Some(card.size()),
+                    interactable: true,
+                    last_became_visible_at: None,
+                },
+            );
+        });
+    }
+    egui::Area::new(layer.id)
+        .order(Order::Foreground)
+        .fixed_pos(card.min)
+        .constrain(false)
+        .fade_in(false)
+        .show(context, |ui| {
+            ui.painter().extend(paint::plate_shapes(card, 14.0, None));
+            let content =
+                Rect::from_min_max(card.min + vec2(side, top), card.max - vec2(side, bottom));
+            let mut body = ui.new_child(egui::UiBuilder::new().max_rect(content));
+            body.spacing_mut().item_spacing = vec2(ROW_GAP, ROOM_GAP);
+            let title = if menu.creating {
                 "CREATING ROOM"
             } else {
                 "JOINING ROOM"
-            },
-            Color32::WHITE,
-        );
-        paragraph(ui, &menu.status, TEXT_DIM);
-        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 6.0), Sense::hover());
-        ui.painter().rect_filled(rect, 3, hexa(0x020812, 0.8));
-        let offset = ui.input(|input| input.time as f32 * 0.35).fract();
-        let width = rect.width() * 0.3;
-        let left = rect.left() + offset * (rect.width() - width);
-        ui.painter().rect_filled(
-            Rect::from_min_size(pos2(left, rect.top()), vec2(width, rect.height())),
-            3,
-            GOLD,
-        );
-        ui.ctx().request_repaint();
-        let width = ui.available_width();
-        if action(ui, art, "CANCEL", ButtonStyle::Secondary, width) {
-            actions.push(Action::RoomLeave);
-        }
-    });
+            };
+            room_head(&mut body, &menu.room, title, false, &[]);
+            let (well, _) =
+                body.allocate_exact_size(vec2(body.available_width(), STATUS_WELL), Sense::hover());
+            let verb = if menu.creating { "Creating" } else { "Joining" };
+            let time = body.input(|input| input.time);
+            status_well(
+                body.painter(),
+                well,
+                &format!("{verb} room {}", menu.room),
+                &menu.status,
+                time,
+            );
+            body.ctx().request_repaint();
+            let width = body.available_width();
+            if action(&mut body, art, "CANCEL", ButtonStyle::Secondary, width) {
+                actions.push(Action::RoomLeave);
+            }
+            ui.allocate_rect(card, Sense::hover());
+        });
+}
+
+/// Battle Setup's status well while a room loads (`.room-status[data-state="loading"]`):
+/// a turning gold ring, what is happening over what it waits for, and a gold sweep
+/// along its foot.
+fn status_well(painter: &Painter, rect: Rect, message: &str, hint: &str, time: f64) {
+    painter.rect_filled(rect, 10, hex(0x0a1a33));
+    painter.rect_stroke(
+        rect,
+        10,
+        Stroke::new(1.0, hexa(0x9fd0ff, 0.08)),
+        StrokeKind::Inside,
+    );
+    let center = pos2(rect.left() + STATUS_PADDING + 10.0, rect.center().y);
+    let ring = Stroke::new(3.5, hexa(0xffcf38, 0.15));
+    painter.circle_stroke(center, STATUS_RING - 1.75, ring);
+    // A quarter of the ring, once round every 0.9 s (`room-scan`).
+    let start = (time / 0.9).fract() as f32 * std::f32::consts::TAU - std::f32::consts::FRAC_PI_2;
+    let arc: Vec<Pos2> = (0..=12)
+        .map(|step| {
+            let angle = start + step as f32 / 12.0 * std::f32::consts::FRAC_PI_2;
+            center + vec2(angle.cos(), angle.sin()) * (STATUS_RING - 1.75)
+        })
+        .collect();
+    painter.add(Shape::line(arc, Stroke::new(3.5, GOLD)));
+    let left = center.x + 10.0 + 10.0;
+    let copy_width = rect.right() - STATUS_PADDING - left;
+    paint::text_fit(
+        painter,
+        pos2(left, rect.center().y - 1.0),
+        Align2::LEFT_BOTTOM,
+        message,
+        FontId::proportional(12.5),
+        hex(0xe6f1fb),
+        0.0,
+        copy_width,
+    );
+    paint::text_fit(
+        painter,
+        pos2(left, rect.center().y),
+        Align2::LEFT_TOP,
+        hint,
+        FontId::proportional(12.0),
+        TEXT_DIM,
+        0.0,
+        copy_width,
+    );
+    // The sweep: 38 % of the track, from just off its left end to past its right one,
+    // easing in and out (`startup-sweep`), cut off at the track's ends.
+    let track = Rect::from_min_max(
+        pos2(rect.left() + STATUS_PADDING, rect.bottom() - 2.0),
+        pos2(rect.right() - STATUS_PADDING, rect.bottom()),
+    );
+    let phase = ((time / SWEEP_SECONDS).fract()) as f32;
+    let eased = phase * phase * (3.0 - 2.0 * phase);
+    let sweep = track.width() * SWEEP_SHARE;
+    let x = track.left() - sweep + eased * sweep * 4.65;
+    let clipped = painter.with_clip_rect(track.intersect(painter.clip_rect()));
+    clipped.add(paint::hgradient(
+        Rect::from_min_size(pos2(x, track.top()), vec2(sweep, track.height())),
+        &[(0.0, Color32::TRANSPARENT), (0.5, GOLD), (1.0, GOLD_HOT)],
+    ));
 }
 
 /// The connection dropped (reconnecting by itself) or ended (the way back that fits).
 fn connection(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut Vec<Action>) {
     room_dialog(context, "connection", 480.0, |ui| match &menu.link {
         Link::Connecting(dialog) => {
-            room_heading(ui, &menu.room, dialog.title, Color32::WHITE);
-            paragraph(ui, &dialog.message, hex(0xc4dbee));
+            room_head(
+                ui,
+                &menu.room,
+                dialog.title,
+                false,
+                &[(&dialog.message, hex(LEDE))],
+            );
             ui.add(egui::Spinner::new().color(GOLD));
             let width = ui.available_width();
             if action(ui, art, "LEAVE ROOM", ButtonStyle::Secondary, width) {
@@ -420,9 +688,15 @@ fn connection(context: &egui::Context, menu: &RoomMenu, art: &Art, actions: &mut
             }
         }
         Link::Ended(ending) => {
-            room_heading(ui, &menu.room, ending.title, Color32::WHITE);
-            paragraph(ui, &ending.text, hex(0xc4dbee));
+            room_head(
+                ui,
+                &menu.room,
+                ending.title,
+                false,
+                &[(&ending.text, hex(LEDE))],
+            );
             let width = ui.available_width();
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
             if let Some(retry) = ending.retry
                 && action(ui, art, retry, ButtonStyle::Primary, width)
             {
@@ -472,8 +746,13 @@ fn room_menu(
     // where they say who the battle waits for.
     let phone = crate::touch::phone();
     room_dialog(context, "room", 560.0, |ui| {
-        let header_origin = ui.cursor().min;
-        room_heading(ui, &menu.room, text.title, Color32::WHITE);
+        let head = room_head(
+            ui,
+            &menu.room,
+            text.title,
+            true,
+            &[(&text.hint, hex(LEDE)), (&menu.notice, GOLD)],
+        );
         let copy = if menu.copied > 0.0 {
             "Link copied"
         } else {
@@ -481,8 +760,8 @@ fn room_menu(
         };
         if text_button_at(
             ui,
-            header_origin.x + ui.available_width(),
-            header_origin.y,
+            head.eyebrow.right(),
+            head.eyebrow.top(),
             copy,
             "copy room invite",
         ) {
@@ -490,81 +769,72 @@ fn room_menu(
             menu.copying = Some(links::copy_text(ui.ctx(), link));
             menu.copy_answered();
         }
+        // The final score stands at the end of the title's line, centred on it.
         if lobby.phase == RoomPhase::Results
             && let Some(outcome) = &menu.outcome
         {
-            room_scores(
-                ui.painter(),
-                pos2(
-                    header_origin.x + ui.available_width(),
-                    header_origin.y + 46.0,
-                ),
-                outcome.scores,
-            );
-        }
-        paragraph(ui, &text.hint, hex(0xc4dbee));
-        if !menu.notice.is_empty() {
-            paragraph(ui, &menu.notice, GOLD);
+            room_scores(ui.painter(), head.title.right_center(), outcome.scores);
         }
         if playing {
             summary(ui, &text.summary);
         }
         if lobby.phase == RoomPhase::Results {
-            scoreboard(ui, &lobby, &menu.player_id);
+            ui.scope(|ui| scoreboard(ui, &lobby, &menu.player_id));
         }
         if !phone || lobby.phase == RoomPhase::Lobby {
             roster(ui, &lobby, &menu.player_id, playing);
         }
         if !playing && !phone {
-            ui.add_space(4.0);
-            ui.separator();
-            next_battle(ui, menu, &lobby, host, view.debug, actions);
+            ui.scope(|ui| next_battle(ui, menu, &lobby, host, view.debug, actions));
         }
-        ui.add_space(6.0);
         let width = ui.available_width();
-        if host && !playing {
-            let label = if lobby.phase == RoomPhase::Results {
-                "PLAY AGAIN"
-            } else {
-                "START BATTLE"
-            };
-            if action(ui, art, label, ButtonStyle::Primary, width) {
-                actions.push(Action::RoomStart);
-            }
-        }
-        if playing && action(ui, art, "RESUME", ButtonStyle::Primary, width) {
-            actions.push(Action::Resume);
-        }
-        ui.horizontal(|ui| {
-            let half = if host && playing {
-                (width - 10.0) / 2.0
-            } else {
-                width
-            };
-            if host && playing && action(ui, art, "END BATTLE", ButtonStyle::Danger, half) {
-                actions.push(Action::RoomEnd);
-            }
-            if action(
-                ui,
-                art,
-                if playing {
-                    "LEAVE ROOM"
+        // The main action has a row to itself and the rest share the next, `ROW_GAP`
+        // apart (`.network-actions`); the last player's note follows as closely.
+        ui.scope(|ui| {
+            ui.spacing_mut().item_spacing.y = ROW_GAP;
+            if host && !playing {
+                let label = if lobby.phase == RoomPhase::Results {
+                    "PLAY AGAIN"
                 } else {
-                    "BATTLE SETUP"
-                },
-                ButtonStyle::Secondary,
-                half,
-            ) {
-                actions.push(Action::RoomLeave);
+                    "START BATTLE"
+                };
+                if action(ui, art, label, ButtonStyle::Primary, width) {
+                    actions.push(Action::RoomStart);
+                }
+            }
+            if playing && action(ui, art, "RESUME", ButtonStyle::Primary, width) {
+                actions.push(Action::Resume);
+            }
+            ui.horizontal(|ui| {
+                let half = if host && playing {
+                    (width - ROW_GAP) / 2.0
+                } else {
+                    width
+                };
+                if host && playing && action(ui, art, "END BATTLE", ButtonStyle::Danger, half) {
+                    actions.push(Action::RoomEnd);
+                }
+                if action(
+                    ui,
+                    art,
+                    if playing {
+                        "LEAVE ROOM"
+                    } else {
+                        "BATTLE SETUP"
+                    },
+                    ButtonStyle::Secondary,
+                    half,
+                ) {
+                    actions.push(Action::RoomLeave);
+                }
+            });
+            if alone {
+                note(
+                    ui,
+                    "You're the last player here, so leaving closes the room.",
+                );
             }
         });
-        if alone {
-            paragraph(
-                ui,
-                "You're the last player here, so leaving closes the room.",
-                hex(0x9fbcd2),
-            );
-        }
         ui.horizontal(|ui| {
             if text_button(ui, "Settings").clicked() {
                 actions.push(Action::OpenSettings);
@@ -714,7 +984,7 @@ fn summary_at(painter: &egui::Painter, origin: egui::Pos2, chips: &[String]) {
 }
 
 /// NEXT BATTLE: the rules as text, which the host unfolds to change, and the player's
-/// own team and tank.
+/// own team and tank, under a hairline and `ROW_GAP` apart (`.network-next`).
 fn next_battle(
     ui: &mut egui::Ui,
     menu: &mut RoomMenu,
@@ -723,19 +993,31 @@ fn next_battle(
     debug: bool,
     actions: &mut Vec<Action>,
 ) {
+    /// The hairline over NEXT BATTLE and the space under it (`padding-top`).
+    const RULE_ROOM: f32 = 15.0;
+    const LABEL_LINE: f32 = 13.0;
     let settings = &lobby.settings;
     let extra = map_option_for(settings.map_mode).extra;
-    let (label, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::hover());
+    let width = ui.available_width();
+    let (rule, _) = ui.allocate_exact_size(vec2(width, RULE_ROOM), Sense::hover());
+    ui.painter().line_segment(
+        [rule.left_top(), rule.right_top()],
+        Stroke::new(1.0, hexa(0x9fd0ff, 0.09)),
+    );
+    // The rule's padding stands in for the gap under it.
+    ui.add_space(-ROOM_GAP);
+    ui.spacing_mut().item_spacing.y = ROW_GAP;
+    let (label, _) = ui.allocate_exact_size(vec2(width, LABEL_LINE), Sense::hover());
     paint::text(
         ui.painter(),
-        label.min,
-        Align2::LEFT_TOP,
+        pos2(label.left(), label.center().y),
+        Align2::LEFT_CENTER,
         "NEXT BATTLE",
         bold_font(10.5),
         TEXT_LABEL,
         2.5,
     );
-    let (rules_line, _) = ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+    let (rules_line, _) = ui.allocate_exact_size(vec2(width, TEXT_BUTTON_HEIGHT), Sense::hover());
     summary_at(ui.painter(), rules_line.min, &menu.text.summary);
     if host {
         let label = if menu.editing_rules {
@@ -756,47 +1038,37 @@ fn next_battle(
     if host && menu.editing_rules {
         let current: RoomSettings = *settings;
         let mut rules = current;
-        ui.columns(3, |columns| {
-            form_label(&mut columns[0], "MAP");
-            let width = columns[0].available_width();
-            egui::ComboBox::from_id_salt("room map")
-                .width(width)
-                .selected_text(map_option_for(rules.map_mode).name)
-                .show_ui(&mut columns[0], |ui| {
-                    // The extra levels with the debug tools, or while the room plays one.
-                    for option in MAP_OPTIONS
-                        .iter()
-                        .filter(|map| debug || extra || !map.extra)
-                    {
-                        ui.selectable_value(&mut rules.map_mode, option.id, option.name);
-                    }
-                });
-            form_label(&mut columns[1], "BOTS");
-            // `None`: humans only.
-            let mut bots: Option<Difficulty> = (!rules.humans_only).then_some(rules.difficulty);
-            let width = columns[1].available_width();
-            egui::ComboBox::from_id_salt("room bots")
-                .width(width)
-                .selected_text(bots.map_or("None", difficulty_name))
-                .show_ui(&mut columns[1], |ui| {
-                    for option in &DIFFICULTY_OPTIONS {
-                        ui.selectable_value(&mut bots, Some(option.difficulty), option.name);
-                    }
-                    ui.selectable_value(&mut bots, None, "None");
-                });
-            rules.humans_only = bots.is_none();
-            if let Some(difficulty) = bots {
-                rules.difficulty = difficulty;
+        let [map, bots, minutes] = field_columns::<3>(ui);
+        // The extra levels with the debug tools, or while the room plays one.
+        let maps = MAP_OPTIONS
+            .iter()
+            .filter(|map| debug || extra || !map.extra);
+        select_field(ui, map, "MAP", map_option_for(rules.map_mode).name, |ui| {
+            for option in maps {
+                ui.selectable_value(&mut rules.map_mode, option.id, option.name);
             }
-            form_label(&mut columns[2], "MINUTES");
-            let width = columns[2].available_width();
-            columns[2].add_sized(
-                [width, 42.0],
-                egui::DragValue::new(&mut rules.round_minutes)
-                    .range(1..=MAX_ROUND_MINUTES)
-                    .speed(1),
-            );
         });
+        // `None`: humans only.
+        let mut picked_bots: Option<Difficulty> = (!rules.humans_only).then_some(rules.difficulty);
+        select_field(
+            ui,
+            bots,
+            "BOTS",
+            picked_bots.map_or("None", difficulty_name),
+            |ui| {
+                for option in &DIFFICULTY_OPTIONS {
+                    ui.selectable_value(&mut picked_bots, Some(option.difficulty), option.name);
+                }
+                ui.selectable_value(&mut picked_bots, None, "None");
+            },
+        );
+        rules.humans_only = picked_bots.is_none();
+        if let Some(difficulty) = picked_bots {
+            rules.difficulty = difficulty;
+        }
+        if let Some(round_minutes) = minutes_field(ui, minutes, menu, rules.round_minutes) {
+            rules.round_minutes = round_minutes;
+        }
         if rules != current {
             actions.push(Action::RoomRules(rules));
         }
@@ -805,14 +1077,14 @@ fn next_battle(
     if let Some(mine) = menu.mine().cloned() {
         let tank_name = title_case(vehicle(mine.kind).name);
         let (choice_line, _) =
-            ui.allocate_exact_size(vec2(ui.available_width(), 28.0), Sense::hover());
+            ui.allocate_exact_size(vec2(width, TEXT_BUTTON_HEIGHT), Sense::hover());
         let label = paint::text(
             ui.painter(),
             pos2(choice_line.left(), choice_line.center().y),
             Align2::LEFT_CENTER,
             "You:",
             FontId::proportional(13.0),
-            hex(0xc4dfef),
+            hex(MENU_TEXT),
             0.0,
         );
         paint::text(
@@ -843,31 +1115,20 @@ fn next_battle(
             let kind = mine.kind;
             let mut picked_team = team;
             let mut picked_kind = kind;
-            ui.columns(2, |columns| {
-                form_label(&mut columns[0], "TEAM");
-                let width = columns[0].available_width();
-                egui::ComboBox::from_id_salt("player team")
-                    .width(width)
-                    .selected_text(team_word(mine.team))
-                    .show_ui(&mut columns[0], |ui| {
-                        for (choice, label) in [
-                            (None, "Auto · fewer humans"),
-                            (Some(Team::Blue), "Blue"),
-                            (Some(Team::Red), "Red"),
-                        ] {
-                            ui.selectable_value(&mut picked_team, choice, label);
-                        }
-                    });
-                form_label(&mut columns[1], "TANK");
-                let width = columns[1].available_width();
-                egui::ComboBox::from_id_salt("player tank")
-                    .width(width)
-                    .selected_text(&tank_name)
-                    .show_ui(&mut columns[1], |ui| {
-                        for tank in &TANK_CARDS {
-                            ui.selectable_value(&mut picked_kind, tank.kind, tank.name());
-                        }
-                    });
+            let [team_column, tank_column] = field_columns::<2>(ui);
+            select_field(ui, team_column, "TEAM", team_word(mine.team), |ui| {
+                for (choice, label) in [
+                    (None, "Auto · fewer humans"),
+                    (Some(Team::Blue), "Blue"),
+                    (Some(Team::Red), "Red"),
+                ] {
+                    ui.selectable_value(&mut picked_team, choice, label);
+                }
+            });
+            select_field(ui, tank_column, "TANK", &tank_option(kind), |ui| {
+                for tank in &TANK_CARDS {
+                    ui.selectable_value(&mut picked_kind, tank.kind, tank_option(tank.kind));
+                }
             });
             if picked_team != team || picked_kind != kind {
                 actions.push(Action::RoomChoose {
@@ -879,39 +1140,188 @@ fn next_battle(
     }
 }
 
-fn form_label(ui: &mut Ui, label: &str) {
-    let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::hover());
+/// A tank as the room menu's TANK field names it: its name and its class
+/// (`network-ui.ts`: "Bruiser · balanced tank").
+fn tank_option(kind: VehicleKind) -> String {
+    let class = TANK_CARDS
+        .iter()
+        .find(|card| card.kind == kind)
+        .map_or_else(String::new, |card| card.class.to_lowercase());
+    format!("{} · {class}", title_case(vehicle(kind).name))
+}
+
+/// A row of `N` equal fields `ROW_GAP` apart (`.network-fields`), each a label over its
+/// well; takes the row's room and returns each field's column.
+fn field_columns<const N: usize>(ui: &mut Ui) -> [Rect; N] {
+    let width = ui.available_width();
+    let (row, _) = ui.allocate_exact_size(
+        vec2(width, FIELD_LABEL + HEAD_GAP + FIELD_HEIGHT),
+        Sense::hover(),
+    );
+    let column = (width - ROW_GAP * (N as f32 - 1.0)) / N as f32;
+    std::array::from_fn(|index| {
+        Rect::from_min_size(
+            pos2(row.left() + index as f32 * (column + ROW_GAP), row.top()),
+            vec2(column, row.height()),
+        )
+    })
+}
+
+/// A field's label at the top of its column; returns the well under it.
+fn field_label(painter: &Painter, column: Rect, label: &str) -> Rect {
     paint::text(
-        ui.painter(),
-        rect.min,
-        Align2::LEFT_TOP,
+        painter,
+        pos2(column.left(), column.top() + FIELD_LABEL / 2.0),
+        Align2::LEFT_CENTER,
         label,
         bold_font(10.5),
         TEXT_LABEL,
         2.5,
     );
-    ui.spacing_mut().interact_size.y = 42.0;
-    ui.spacing_mut().button_padding = vec2(12.0, 6.0);
-    ui.visuals_mut().widgets.inactive.bg_fill = hexa(0x050d1c, 0.8);
-    ui.visuals_mut().widgets.inactive.weak_bg_fill = hexa(0x050d1c, 0.8);
-    ui.visuals_mut().widgets.inactive.bg_stroke = Stroke::new(1.0, hexa(0x9fd0ff, 0.2));
-    ui.visuals_mut().widgets.inactive.corner_radius = 9.into();
+    Rect::from_min_size(
+        pos2(column.left(), column.bottom() - FIELD_HEIGHT),
+        vec2(column.width(), FIELD_HEIGHT),
+    )
 }
 
-/// LAST ROUND: everyone's kills and deaths, the best first.
+/// A field's sunk well: the menu's dark glass, a hairline, and a shadow inside its top
+/// edge (`box-shadow: inset 0 2px 6px`).
+fn field_well(painter: &Painter, rect: Rect, hovered: bool) {
+    painter.rect_filled(rect, 9, hexa(0x050d1c, 0.8));
+    painter.add(paint::rounded_vgradient(
+        Rect::from_min_size(rect.min, vec2(rect.width(), 8.0)),
+        [9.0, 9.0, 0.0, 0.0],
+        &[(0.0, hexa(0x000000, 0.45)), (1.0, Color32::TRANSPARENT)],
+    ));
+    let edge = if hovered {
+        hexa(0x9fd0ff, 0.45)
+    } else {
+        hexa(0x9fd0ff, 0.2)
+    };
+    painter.rect_stroke(rect, 9, Stroke::new(1.0, edge), StrokeKind::Inside);
+}
+
+/// A select (`.network-menu select`): the choice in bold on the left and a gold chevron
+/// on the right; a click opens `options` under it.
+fn select_field(
+    ui: &mut Ui,
+    column: Rect,
+    label: &str,
+    value: &str,
+    options: impl FnOnce(&mut Ui),
+) {
+    let rect = field_label(ui.painter(), column, label);
+    let response = ui
+        .interact(rect, Id::unique(("room field", label)), Sense::click())
+        .on_hover_cursor(egui::CursorIcon::PointingHand);
+    response.widget_info(|| {
+        let mut info =
+            egui::WidgetInfo::labeled(egui::accesskit::Role::ComboBox, true, title_case(label));
+        info.current_text_value = Some(value.to_owned());
+        info
+    });
+    let painter = ui.painter();
+    field_well(painter, rect, response.hovered());
+    paint::text_fit(
+        painter,
+        pos2(rect.left() + FIELD_PADDING, rect.center().y),
+        Align2::LEFT_CENTER,
+        value,
+        bold_font(14.0),
+        hex(0xf5faff),
+        0.0,
+        rect.width() - FIELD_PADDING - CHEVRON_ROOM,
+    );
+    // The page's chevron: a 12 × 8 stroke whose right end is `FIELD_PADDING` in.
+    let tip = pos2(rect.right() - FIELD_PADDING - 6.0, rect.center().y + 2.5);
+    painter.add(Shape::line(
+        vec![tip + vec2(-5.0, -5.0), tip, tip + vec2(5.0, -5.0)],
+        Stroke::new(2.0, GOLD),
+    ));
+    egui::Popup::menu(&response).width(rect.width()).show(|ui| {
+        ui.style_mut().override_font_id = Some(bold_font(14.0));
+        options(ui);
+    });
+}
+
+/// MINUTES (`.network-fields input`): typed in place and applied when the field lets
+/// go, if it holds a whole number of minutes a room allows; `None` until then.
+fn minutes_field(ui: &mut Ui, column: Rect, menu: &mut RoomMenu, minutes: u32) -> Option<u32> {
+    let rect = field_label(ui.painter(), column, "MINUTES");
+    let hovered = ui.rect_contains_pointer(rect);
+    field_well(ui.painter(), rect, hovered);
+    let text = menu
+        .minutes_draft
+        .get_or_insert_with(|| minutes.to_string());
+    let inner = rect.shrink2(vec2(FIELD_PADDING, 0.0));
+    let response = ui.put(
+        inner,
+        egui::TextEdit::singleline(text)
+            .frame(egui::Frame::NONE)
+            .margin(egui::Margin::ZERO)
+            .font(bold_font(14.0))
+            .text_color(hex(0xf5faff))
+            .align(Align2::LEFT_CENTER)
+            .min_size(inner.size())
+            .desired_width(inner.width()),
+    );
+    let typed = text.trim().parse::<u32>().ok();
+    if response.lost_focus() {
+        menu.minutes_draft = None;
+        return typed.filter(|value| (1..=MAX_ROUND_MINUTES).contains(value));
+    }
+    // Away from the keyboard the field shows the room's own length.
+    if !response.has_focus() {
+        menu.minutes_draft = None;
+    }
+    None
+}
+
+/// LAST ROUND: everyone's kills and deaths, the best first, in a full-width table whose
+/// columns share the width as the page's automatic table layout does: each as wide as
+/// its widest content, and the spare width in proportion to that.
 fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
+    /// A row's name after its team's bar and padding (`td:first-child`).
+    const NAME_INSET: f32 = 12.0;
     let mut rows = lobby.scoreboard.clone();
     rows.sort_by(|a, b| b.kills.cmp(&a.kills).then(a.deaths.cmp(&b.deaths)));
     let width = ui.available_width();
-    let (head, _) = ui.allocate_exact_size(vec2(width, 20.0), Sense::hover());
+    let painter = ui.painter().clone();
+    let head_width = |label: &str| paint::text_width(&painter, label, bold_font(10.0), 1.5);
+    let number_width = |value: u32| {
+        paint::text_width(
+            &painter,
+            &value.to_string(),
+            FontId::proportional(13.0),
+            0.0,
+        )
+    };
+    let columns = [
+        rows.iter()
+            .map(|row| NAME_INSET + paint::text_width(&painter, &row.name, bold_font(13.0), 0.0))
+            .fold(head_width("LAST ROUND"), f32::max),
+        rows.iter()
+            .map(|row| number_width(row.kills))
+            .fold(head_width("KILLS"), f32::max),
+        rows.iter()
+            .map(|row| number_width(row.deaths))
+            .fold(head_width("DEATHS"), f32::max),
+    ];
+    let share = width / columns.iter().sum::<f32>().max(1.0);
+    let kills_right = (columns[0] + columns[1]) * share;
+    // The header and the rows are one table.
+    ui.spacing_mut().item_spacing.y = 0.0;
+    let (head, _) = ui.allocate_exact_size(vec2(width, SCORE_HEADER), Sense::hover());
+    // The labels sit on the header's text line, its padding under them.
+    let label_y = head.top() + 7.0;
     for (label, x, align) in [
         ("LAST ROUND", head.left(), Align2::LEFT_CENTER),
-        ("KILLS", head.right() - 65.0, Align2::RIGHT_CENTER),
+        ("KILLS", head.left() + kills_right, Align2::RIGHT_CENTER),
         ("DEATHS", head.right(), Align2::RIGHT_CENTER),
     ] {
         paint::text(
-            ui.painter(),
-            pos2(x, head.center().y),
+            &painter,
+            pos2(x, label_y),
             align,
             label,
             bold_font(10.0),
@@ -925,40 +1335,40 @@ fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
             for row in &rows {
-                let (rect, _) = ui.allocate_exact_size(vec2(width, 30.0), Sense::hover());
-                ui.painter().line_segment(
+                let (rect, _) = ui.allocate_exact_size(vec2(width, SCORE_ROW), Sense::hover());
+                let painter = ui.painter();
+                painter.line_segment(
                     [rect.left_top(), rect.right_top()],
                     Stroke::new(1.0, hexa(0x9fd0ff, 0.09)),
                 );
-                let team = if row.team == Team::Blue {
-                    hex(0x74c4ff)
-                } else {
-                    hex(0xff8592)
-                };
-                ui.painter().rect_filled(
+                painter.rect_filled(
                     Rect::from_min_size(rect.min, vec2(3.0, rect.height())),
                     0,
-                    team,
+                    team_color(row.team),
                 );
                 let color = if row.player_id == player_id {
                     GOLD
                 } else {
-                    hex(0xc4dfef)
+                    TEXT
                 };
+                let y = rect.center().y;
                 paint::text_fit(
-                    ui.painter(),
-                    pos2(rect.left() + 12.0, rect.center().y),
+                    painter,
+                    pos2(rect.left() + NAME_INSET, y),
                     Align2::LEFT_CENTER,
                     &row.name,
                     bold_font(13.0),
                     color,
                     0.0,
-                    width - 150.0,
+                    columns[0] * share - NAME_INSET,
                 );
-                for (value, x) in [(row.kills, rect.right() - 65.0), (row.deaths, rect.right())] {
+                for (value, x) in [
+                    (row.kills, rect.left() + kills_right),
+                    (row.deaths, rect.right()),
+                ] {
                     paint::text(
-                        ui.painter(),
-                        pos2(x, rect.center().y),
+                        painter,
+                        pos2(x, y),
                         Align2::RIGHT_CENTER,
                         &value.to_string(),
                         FontId::proportional(13.0),
@@ -970,6 +1380,55 @@ fn scoreboard(ui: &mut Ui, lobby: &Lobby, player_id: &str) {
         });
 }
 
+/// A team's colour in the room menu (`--blue`, `--red`).
+fn team_color(team: Team) -> Color32 {
+    if team == Team::Blue {
+        hex(0x74c4ff)
+    } else {
+        hex(0xff8592)
+    }
+}
+
+/// A team card's top border (`border-top: 3px` under a 10 px radius): full width along
+/// the top and thinning to nothing down each rounded corner, as the page's border bends
+/// with the card's corners.
+fn team_stripe(painter: &Painter, rect: Rect, color: Color32) {
+    const ARC_STEPS: usize = 8;
+    let radius = TEAM_RADIUS;
+    let inner = radius - TEAM_STRIPE;
+    // Both corners turn about the same centres: the outer edge on a circle, the inner
+    // on an ellipse as tall as the radius less the border.
+    let corner = |center: Pos2, angle: f32| {
+        let (sin, cos) = angle.sin_cos();
+        (
+            center + vec2(cos, sin) * radius,
+            center + vec2(cos * radius, sin * inner),
+        )
+    };
+    let left = pos2(rect.left() + radius, rect.top() + radius);
+    let right = pos2(rect.right() - radius, rect.top() + radius);
+    let mut edges = Vec::with_capacity(2 * ARC_STEPS + 2);
+    for step in 0..=ARC_STEPS {
+        let t = step as f32 / ARC_STEPS as f32;
+        edges.push(corner(left, std::f32::consts::PI * (1.0 + 0.5 * t)));
+    }
+    for step in 0..=ARC_STEPS {
+        let t = step as f32 / ARC_STEPS as f32;
+        edges.push(corner(right, std::f32::consts::PI * (1.5 + 0.5 * t)));
+    }
+    let mut mesh = Mesh::default();
+    for (index, (outer, inner)) in edges.into_iter().enumerate() {
+        mesh.colored_vertex(outer, color);
+        mesh.colored_vertex(inner, color);
+        if index > 0 {
+            let base = (index as u32 - 1) * 2;
+            mesh.add_triangle(base, base + 1, base + 2);
+            mesh.add_triangle(base + 1, base + 3, base + 2);
+        }
+    }
+    painter.add(Shape::mesh(mesh));
+}
+
 /// Both teams' players, with the seats bots or nobody fill.
 fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
     // An extra level brings its own roster (`teamTanks`), unless only humans play.
@@ -978,7 +1437,7 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
         .filter(|_| !lobby.settings.humans_only)
         .map_or(TEAM_SLOTS, |tanks| tanks as usize);
     let width = ui.available_width();
-    let column_width = (width - 10.0) / 2.0;
+    let column_width = (width - ROW_GAP) / 2.0;
     let teams = [Team::Blue, Team::Red].map(|team| {
         lobby
             .players
@@ -993,41 +1452,29 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
     } else {
         "bot"
     };
-    let height = 49.0 + longest as f32 * 30.0;
+    let height = TEAM_HEADER + longest as f32 * ROSTER_ROW + TEAM_FOOT;
     let (whole, _) = ui.allocate_exact_size(vec2(width, height), Sense::hover());
     for (side, (name, members)) in TEAM_NAMES.iter().zip(&teams).enumerate() {
         let open = team_tanks.saturating_sub(members.len()) as u32;
         let fill = count_line(open, empty_seat);
         let rect = Rect::from_min_size(
-            whole.min + vec2(side as f32 * (column_width + 10.0), 0.0),
+            whole.min + vec2(side as f32 * (column_width + ROW_GAP), 0.0),
             vec2(column_width, height),
         );
         let painter = ui.painter();
-        let color = if side == 0 {
-            hex(0x74c4ff)
-        } else {
-            hex(0xff8592)
-        };
-        painter.rect_filled(rect, 10, hexa(0x050d1c, 0.8));
+        let color = team_color([Team::Blue, Team::Red][side]);
+        painter.rect_filled(rect, TEAM_RADIUS, hexa(0x050d1c, 0.8));
         painter.add(paint::rounded_vgradient(
             Rect::from_min_size(rect.min, vec2(rect.width(), 46.0)),
-            [10.0, 10.0, 0.0, 0.0],
+            [TEAM_RADIUS, TEAM_RADIUS, 0.0, 0.0],
             &[(0.0, paint::fade(color, 0.14)), (1.0, Color32::TRANSPARENT)],
         ));
-        painter.add(paint::rounded_vgradient(
-            Rect::from_min_size(rect.min, vec2(rect.width(), 7.0)),
-            [10.0, 10.0, 0.0, 0.0],
-            &[
-                (0.0, color),
-                (0.42, color),
-                (0.43, Color32::TRANSPARENT),
-                (1.0, Color32::TRANSPARENT),
-            ],
-        ));
+        team_stripe(painter, rect, color);
+        // The header's name and its seats share a baseline (`align-items: baseline`).
         paint::text(
             painter,
-            rect.min + vec2(12.0, 12.0),
-            Align2::LEFT_TOP,
+            pos2(rect.left() + 12.0, rect.top() + 25.0),
+            Align2::LEFT_CENTER,
             &format!("{name} TEAM"),
             display_font(20.0),
             color,
@@ -1035,7 +1482,7 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
         );
         paint::text(
             painter,
-            pos2(rect.right() - 12.0, rect.top() + 24.0),
+            pos2(rect.right() - 12.0, rect.top() + 28.0),
             Align2::RIGHT_CENTER,
             &fill,
             FontId::proportional(12.0),
@@ -1043,7 +1490,7 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
             0.0,
         );
         for (index, player) in members.iter().enumerate() {
-            let top = rect.top() + 38.0 + index as f32 * 30.0;
+            let top = rect.top() + TEAM_HEADER + index as f32 * ROSTER_ROW;
             painter.line_segment(
                 [
                     pos2(rect.left() + 12.0, top),
@@ -1051,7 +1498,7 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
                 ],
                 Stroke::new(1.0, hexa(0x9fd0ff, 0.09)),
             );
-            let y = top + 15.0;
+            let y = top + ROSTER_ROW / 2.0;
             let alpha = if player.connected { 1.0 } else { 0.55 };
             let tags: Vec<&str> = [
                 (player.player_id == player_id).then_some("YOU"),
@@ -1077,13 +1524,14 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
                 Align2::LEFT_CENTER,
                 &player.name,
                 bold_font(14.0),
-                paint::fade(hex(0xc4dfef), alpha),
+                paint::fade(TEXT, alpha),
                 0.0,
                 (name_right - rect.left() - 12.0).max(30.0),
             );
+            // The smaller tags share the name's baseline, so they sit a little lower.
             paint::text(
                 painter,
-                pos2(name.right() + 8.0, y),
+                pos2(name.right() + 8.0, y + 1.5),
                 Align2::LEFT_CENTER,
                 &tags,
                 bold_font(10.0),
@@ -1104,7 +1552,7 @@ fn roster(ui: &mut Ui, lobby: &Lobby, player_id: &str, playing: bool) {
                     Align2::RIGHT_CENTER,
                     &player.kills.to_string(),
                     bold_font(14.0),
-                    paint::fade(hex(0xc4dfef), alpha),
+                    paint::fade(TEXT, alpha),
                     0.0,
                 );
             }
@@ -1304,7 +1752,6 @@ pub fn hud_phase(menu: &RoomMenu) -> MatchPhase {
 #[cfg(test)]
 pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
     use sloppy_core::net::client::EndCause;
-    use sloppy_core::sim::VehicleKind;
     use sloppy_web::Shell;
     use sloppy_web::room_text;
     let players: Vec<Player> = [
@@ -1379,7 +1826,7 @@ pub(super) fn snapshot_menu(name: &str) -> RoomMenu {
     match name {
         "room-joining" => {
             menu.joining = true;
-            menu.status = "Shaders loaded: 31 of 40".into();
+            menu.status = PREPARING_STATUS.into();
         }
         "room-reconnecting" => {
             menu.link = Link::Connecting(ConnectionDialog {
@@ -1512,6 +1959,43 @@ mod tests {
             }])
             .0
         }
+    }
+
+    #[test]
+    fn a_join_says_the_arena_is_preparing_until_the_room_shows() {
+        let mut menu = RoomMenu::new("KQ7M2XHP", false);
+        assert_eq!(menu.status, CONNECTING_STATUS);
+        let dialog = ConnectionDialog {
+            title: "CONNECTING",
+            message: "Connecting to the room…".into(),
+        };
+        menu.status("Connecting to the room…", Some(dialog));
+        assert_eq!(menu.status, "Connecting to the room…");
+        // The seat, the arena's compile and its end all read as the arena preparing.
+        for text in ["Connected", "Preparing the arena…", "Connected"] {
+            menu.status(text, None);
+            assert_eq!(menu.status, PREPARING_STATUS, "after {text}");
+            assert_eq!(menu.link, Link::Live);
+        }
+        menu.joining = false;
+        menu.status("Connected", None);
+        assert_eq!(menu.status, "Connected");
+    }
+
+    #[test]
+    fn the_joining_card_shows_on_its_first_frame() {
+        let mut screen = Screen::new("room-joining");
+        screen.context = egui::Context::default();
+        super::super::theme::install(&screen.context);
+        let (_, output) = screen.frame(Vec::new());
+        assert!(
+            output
+                .shapes
+                .iter()
+                .any(|shape| text_center(&shape.shape, "CANCEL").is_some()),
+            "the first frame draws the card"
+        );
+        assert_eq!(screen.click("CANCEL"), [Action::RoomLeave]);
     }
 
     #[test]
