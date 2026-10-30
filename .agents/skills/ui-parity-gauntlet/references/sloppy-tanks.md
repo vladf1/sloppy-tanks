@@ -1,8 +1,22 @@
 # Sloppy Tanks workflow
 
 Resolve paths from the current Git checkout instead of assuming a historical
-worktree or a developer's home directory. The default reference is
-`https://sloppy-tanks.fridman.me/` unless the user selects another build.
+worktree or a developer's home directory. The default reference is the frozen
+pre-migration web page: the production build (`pnpm run build`) of `90423be0`, the last
+main commit with the TypeScript/DOM page shell, which production served until PR 125
+replaced it with the egui shell. `scripts/desktop-ui-capture.mjs` serves it from
+`artifacts/performance/web-shell/baseline-main/dist` and checks its `/health` commit;
+create it once per checkout:
+
+```sh
+git worktree add --detach artifacts/performance/web-shell/baseline-main 90423be0
+(cd artifacts/performance/web-shell/baseline-main && pnpm install && pnpm run build)
+```
+
+`--reference-dist <dist>` selects another copy of that build and `--reference <url>`
+another served page, when the user selects one. Production
+(`https://sloppy-tanks.fridman.me/`) serves the egui shell since PR 125 and is no
+reference: the capture instruments DOM UI classes that page no longer has.
 
 ## Find the existing harness
 
@@ -11,14 +25,15 @@ Read `AGENTS.md`, `README.md` and the Desktop UI gauntlet section of
 `check:desktop-ui`. If missing, inspect existing worktrees/branches containing the
 harness before recreating it or claiming it is available on main.
 
-The native shell is `crates/desktop` (winit + egui + wgpu/Metal), driven by the same
-Rust game as the web shell. Primary owners:
+The egui shell is `crates/desktop` (winit + egui + wgpu: Metal natively, WebGPU or
+WebGL2 as the page). Primary owners:
 
-- Native screens: `crates/desktop/src/ui/`; native minimum window size: `app.rs`.
-- Web appearance: `src/style.css`, `src/game/ui*.ts`, `settings-dialog.ts`,
-  `round-recap.ts`, `nerd-stats.ts`, `src/net/network-ui.ts`, `multiplayer.css`.
+- Egui screens: `crates/desktop/src/ui/`; native minimum window size: `app.rs`.
+- Reference appearance, in the reference worktree (or `git show 90423be0:<path>`):
+  `src/style.css`, `src/game/ui*.ts`, `settings-dialog.ts`, `round-recap.ts`,
+  `nerd-stats.ts`, `src/net/network-ui.ts`, `multiplayer.css`.
 - Native fixtures and GPU capture: `crates/desktop/src/ui/snapshots.rs`.
-- Production fixture rendering: `scripts/desktop-ui-capture.mjs`.
+- Reference fixture rendering: `scripts/desktop-ui-capture.mjs`.
 - Randomized A/B sheets and HTML: `scripts/desktop-ui-report.mjs`.
 - Builds, tests, frozen references and source-fingerprint checks:
   `scripts/desktop-ui-gauntlet.mjs`.
@@ -30,8 +45,8 @@ layout system. Preserve native Fullscreen, Quit and room-code lookup behavior.
 
 ## Run a campaign
 
-Use a new evidence root for a new campaign so its first round captures the requested
-current production build. Subsequent rounds reuse that campaign's frozen reference.
+Use a new evidence root for a new campaign so its first round captures the reference
+build. Subsequent rounds reuse that campaign's frozen reference.
 For example, choose an unused descriptive campaign name:
 
 ```sh
@@ -43,13 +58,12 @@ pnpm run check:desktop-ui -- --out artifacts/performance/desktop-ui/parity-audit
 ```
 
 The runner preserves immutable reference directories and rejects fixture drift.
-`--refresh-reference` fetches the live URL again; it does not replay an archived
-build. Use it for an intentional update to the reference, with a new campaign when
-the build changes. To repair fixtures during a frozen campaign, inspect whether
-the original build can be replayed from verified immutable assets and adapt the
-capture mechanism if needed. Save corrected captures separately with the original
-build/asset hashes. If replay is unavailable, record that blocker rather than
-silently comparing against a newer deployment.
+`--refresh-reference` captures the reference again: with the default frozen build that
+replays the same build for changed fixtures, so a fixture repair keeps the reference's
+identity (`capture.json` records its health and asset hashes). A `--reference <url>`
+build changes when its host deploys: start a new campaign then. If the frozen build
+cannot be served or its health commit differs, record that blocker rather than
+comparing against another build.
 
 The runner runs desktop tests, generates GPU snapshots and A/B reports, and
 writes `round.json` with status `needs-independent-review`. Record the independent
@@ -87,12 +101,12 @@ pause/controls, Settings, results, room host/guest/editing/connection states, an
 both Stats for nerds panels. Expand the inventory when the current app adds states;
 do not treat a historical scenario count as the completeness bar.
 
-The capture script exposes production UI constructors only in locally intercepted
-responses. Do not replace production CSS/markup with local source and call it a
-production reference. Minified-module signatures can drift: repair the adapter
-against actual served code, fail clearly when discovery breaks, and document any
-instrumentation. Do not alter production or create rooms on its servers for fixture
-screenshots.
+The capture script exposes the reference build's UI constructors only in locally
+intercepted responses. Do not replace its CSS/markup with other source and call it the
+reference. Its minified-module signatures are fixed with the build; when fixtures
+change shape, repair the adapter's calls against that build's code, fail clearly when
+discovery breaks, and document any instrumentation. Do not create rooms on any
+server for fixture screenshots.
 
 Known comparison traps:
 
@@ -102,7 +116,7 @@ Known comparison traps:
   to the captured build's content version, preserving incompatible/full-room cases.
 - Stats for nerds fixtures carry the page's own rows (`nerd_rows` for `Shell::Page`),
   written from the readings and rates the native panel shows.
-- Set room results before applying the final lobby when the production renderer
+- Set room results before applying the final lobby when the reference renderer
   computes its heading during `lobby()`. Supply death cause for room respawn.
 - First person uses a null viewer point for edge damage feedback and an active eye
   button. Directional damage can make a symmetric health rim look asymmetric.

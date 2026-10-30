@@ -1,13 +1,60 @@
-// Manual visual evidence for the native shell against a pinned production web build.
-// Native fixtures and pictures come from ui::snapshots; production's own UI class
-// renders the identical fixtures. Only local response copies expose the class.
+// Manual visual evidence for the egui shell against the frozen pre-migration web page:
+// the TypeScript/DOM shell's production build of `REFERENCE_COMMIT`, which production
+// served until the egui shell replaced it (PR 125). Native fixtures and pictures come
+// from ui::snapshots; that build's own UI classes render the identical fixtures. Only
+// local response copies expose the classes.
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { existsSync } from "node:fs";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { extname, resolve, sep } from "node:path";
 import { launchChrome } from "./browser-helpers.mjs";
 
-/** Wait until the production page's Battle Setup is ready to start a round. */
+/** The last main commit with the TypeScript page shell; its `pnpm run build` is the
+ * reference `dist`. */
+const REFERENCE_COMMIT = "90423be0";
+/** Where the gauntlet expects that build: a detached worktree of the commit, built. */
+const REFERENCE_DIST = "artifacts/performance/web-shell/baseline-main/dist";
+const TYPES = {
+  ".html": "text/html; charset=utf-8",
+  ".js": "text/javascript",
+  ".css": "text/css",
+  ".json": "application/json",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".png": "image/png",
+  ".mp3": "audio/mpeg",
+  ".wasm": "application/wasm",
+  ".webmanifest": "application/manifest+json",
+};
+
+/** Serve a production `dist` at the `/sloppy-tanks/` base it was built for. */
+async function serveDist(dist) {
+  const base = "/sloppy-tanks/";
+  const server = createServer(async (request, response) => {
+    const path = decodeURIComponent(new URL(request.url, "http://localhost").pathname);
+    let file = resolve(dist, path.slice(base.length));
+    if (!path.startsWith(base) || !(file + sep).startsWith(dist + sep)) {
+      response.writeHead(404).end();
+      return;
+    }
+    if (existsSync(file) && (await stat(file)).isDirectory()) file = resolve(file, "index.html");
+    if (!existsSync(file)) {
+      response.writeHead(404).end();
+      return;
+    }
+    const type = TYPES[extname(file)] ?? "application/octet-stream";
+    response.writeHead(200, { "Content-Type": type }).end(await readFile(file));
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  return {
+    url: `http://127.0.0.1:${server.address().port}${base}`,
+    close: () => new Promise((done) => server.close(done)),
+  };
+}
+
+/** Wait until the reference page's Battle Setup is ready to start a round. */
 function menuReady(page, options) {
   return page.waitForFunction(
     () => document.querySelector("#startup-overlay")?.dataset.state === "ready",
@@ -23,7 +70,16 @@ const option = (name, fallback) => {
 };
 const native = resolve(option("--native", "artifacts/performance/desktop-ui/native"));
 const output = resolve(option("--out", "artifacts/performance/desktop-ui/reference"));
-const reference = option("--reference", "https://sloppy-tanks.fridman.me/");
+// `--reference <url>` captures another served copy of the page instead of the build.
+const dist = option("--reference", undefined)
+  ? undefined
+  : resolve(option("--reference-dist", REFERENCE_DIST));
+assert.ok(
+  !dist || existsSync(resolve(dist, "index.html")),
+  `No reference build at ${dist}. Build it once:\n` +
+    `  git worktree add --detach artifacts/performance/web-shell/baseline-main ${REFERENCE_COMMIT}\n` +
+    `  cd artifacts/performance/web-shell/baseline-main && pnpm install && pnpm run build`,
+);
 await mkdir(output, { recursive: true });
 const fixtures = await Promise.all(
   (await readdir(native))
@@ -33,6 +89,8 @@ const fixtures = await Promise.all(
 );
 assert.ok(fixtures.length, "Capture native snapshots first; see scripts/README.md");
 const [width, height] = fixtures[0].size;
+const served = dist && (await serveDist(dist));
+const reference = served ? served.url : option("--reference");
 const browser = await launchChrome();
 const errors = [];
 const sources = [];
@@ -77,7 +135,7 @@ try {
   const client = html.match(/import\("([^"\s]*\/client-[^"\s]+\.js)"\)/)?.[1];
   const browserModule = html.match(/import\("([^"\s]*\/room-browser-[^"\s]+\.js)"\)/)?.[1];
   const clientCss = html.match(/"([^"\s]*\/client-[^"\s]+\.css)"/)?.[1];
-  assert.ok(client && clientCss && browserModule, "Find production multiplayer assets");
+  assert.ok(client && clientCss && browserModule, "Find the reference's multiplayer assets");
   await page.evaluate(
     async ([client, rooms]) => {
       await import(client);
@@ -92,9 +150,13 @@ try {
     url: new URL(clientCss, reference).href,
     sha256: createHash("sha256").update(css).digest("hex"),
   });
-  const healthResponse = await page.request.get(new URL("health", reference).href);
-  assert.ok(healthResponse.ok(), "Production build metadata must be available");
+  const healthResponse = await page.request.get(new URL("health/", reference).href);
+  assert.ok(healthResponse.ok(), "The reference build's metadata must be available");
   const health = await healthResponse.json();
+  assert.ok(
+    !dist || health.commit.startsWith(REFERENCE_COMMIT),
+    `${dist} was built from ${health.commit}, not the reference ${REFERENCE_COMMIT}`,
+  );
   await page.evaluate(async () => {
     await document.fonts.ready;
     await Promise.all([...document.images].map((image) => image.decode()));
@@ -108,14 +170,14 @@ try {
   });
   assert.equal(await page.evaluate(() => typeof window.__gauntletUI), "function");
   assert.equal(await page.evaluate(() => typeof window.__gauntletNetworkUI), "function");
-  assert.equal(modules.size, 1, "Find exactly one production HUD/stats module");
+  assert.equal(modules.size, 1, "Find exactly one reference HUD/stats module");
   const moduleUrl = [...modules][0];
   await page.evaluate(async (url) => {
     // Stats for nerds lays out the engine's rows, which the fixtures carry.
     const found = Object.values(await import(url)).filter(
       (value) => typeof value === "function" && value.prototype?.frame && value.prototype?.refresh,
     );
-    if (found.length !== 1) throw new Error("Production UI exports changed; update capture");
+    if (found.length !== 1) throw new Error("Reference UI exports changed; update capture");
     window.__gauntletNerd = found[0];
   }, moduleUrl);
 
@@ -333,11 +395,11 @@ try {
     resolve(output, "capture.json"),
     JSON.stringify(
       {
-        reference,
+        reference: dist ? { dist, commit: REFERENCE_COMMIT } : reference,
         health,
         viewport: { width, height, scale: fixtures[0].scale },
         instrumentation:
-          "Production JavaScript exposes UI constructor; both shells receive native test fixtures. Animation is disabled; arena is a flat stand-in. Production files are unchanged.",
+          "The reference build's JavaScript exposes its UI constructors; both shells receive native test fixtures. Animation is disabled; arena is a flat stand-in. The reference files are unchanged.",
         sources,
         screens,
         errors,
@@ -346,7 +408,8 @@ try {
       2,
     ),
   );
-  assert.deepEqual(errors, [], "Production capture reported JavaScript errors");
+  assert.deepEqual(errors, [], "The reference capture reported JavaScript errors");
 } finally {
   await browser.close();
+  await served?.close();
 }
