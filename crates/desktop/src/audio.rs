@@ -56,7 +56,7 @@ impl Audio {
             ..Default::default()
         };
         let manager = AudioManager::<DefaultBackend>::new(settings)
-            .map_err(|error| eprintln!("No sound: {error}"))
+            .map_err(|error| report!("No sound: {error}"))
             .ok()?;
         Some(Self {
             manager,
@@ -106,7 +106,7 @@ fn decode(sound: Sound) -> Option<StaticSoundData> {
     let path = format!("audio/{}.mp3", sound.name());
     let bytes = crate::assets::file(&path)?;
     StaticSoundData::from_cursor(Cursor::new(bytes))
-        .map_err(|error| eprintln!("Cannot decode {path}: {error}"))
+        .map_err(|error| report!("Cannot decode {path}: {error}"))
         .ok()
 }
 

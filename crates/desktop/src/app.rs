@@ -61,7 +61,7 @@ const READY_STATUS: &str = "Ready when you are.";
 pub struct Options {
     /// `--debug`: extra levels in Battle Setup.
     pub debug: bool,
-    /// `--frame-log`: frame rate and frame parts on stderr each second.
+    /// `--frame-log`: frame rate and frame parts on stderr (a page's console) each second.
     pub frame_log: bool,
     /// `--autoplay`: the player's tank drives itself and the round starts once the
     /// arena is ready, for unattended frame-rate runs.
@@ -197,10 +197,9 @@ async fn single_player(shell: Shell) -> Option<Mode> {
 /// build hands over to its WebGL2 one (`index.html` loads that for `?webgl`), as the
 /// page's engine fell back before; otherwise the page's loading view says why.
 fn startup_failed(error: &str) {
-    eprintln!("Sloppy Tanks could not start: {error}");
+    report!("Sloppy Tanks could not start: {error}");
     #[cfg(target_arch = "wasm32")]
     {
-        web_sys::console::error_1(&format!("Sloppy Tanks could not start: {error}").into());
         if cfg!(not(feature = "webgl"))
             && let Some(location) = web_sys::window().map(|window| window.location())
             && let Ok(url) = location.href().and_then(|href| web_sys::Url::new(&href))
@@ -905,7 +904,7 @@ impl Session {
                 self.prefs.tank = kind;
                 self.prefs.save();
                 if let Err(error) = self.game.respawn_in(kind) {
-                    eprintln!("{}", engine_error(error));
+                    report!("{}", engine_error(error));
                 }
                 self.prepared_options = self.wanted_options();
             }
@@ -1215,7 +1214,7 @@ impl Session {
                 self.prepare()
             };
             if let Err(error) = step {
-                eprintln!("The game stopped: {error}");
+                report!("The game stopped: {error}");
                 // A page offers a reload over the shell's own words.
                 crate::page::failed(&format!("The renderer stopped: {error}"));
                 self.failure = Some(error);

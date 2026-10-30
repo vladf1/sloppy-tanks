@@ -7,6 +7,17 @@
 // A Windows release build opens no console window.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
 
+/// Say what went wrong where a developer looks: on stderr natively, on the console in a
+/// page, whose stderr goes nowhere.
+macro_rules! report {
+    ($($argument:tt)*) => {{
+        #[cfg(not(target_arch = "wasm32"))]
+        eprintln!($($argument)*);
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::error_1(&format!($($argument)*).into());
+    }};
+}
+
 mod app;
 mod assets;
 mod audio;

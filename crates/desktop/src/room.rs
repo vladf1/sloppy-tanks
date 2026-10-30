@@ -179,14 +179,14 @@ impl RoomSession {
         let mut game = match created {
             Ok(game) => game,
             Err(error) => {
-                eprintln!("The room's renderer could not start: {error}");
+                report!("The room's renderer could not start: {error}");
                 return Err(Box::new((shell, ARENA_FAILED.into())));
             }
         };
         let overlay = match Overlay::new(window.clone(), game.renderer()) {
             Ok(overlay) => overlay,
             Err(error) => {
-                eprintln!("The room's menus could not draw: {error}");
+                report!("The room's menus could not draw: {error}");
                 return Err(Box::new((shell, ARENA_FAILED.into())));
             }
         };
@@ -414,7 +414,7 @@ impl RoomSession {
             }
             RoomNotice::Prepare => self.preparing = true,
             RoomNotice::ArenaFailed(error) => {
-                eprintln!("Multiplayer graphics failed: {error}");
+                report!("Multiplayer graphics failed: {error}");
                 self.leave_to_setup(ARENA_FAILED.into());
             }
             RoomNotice::BaselineShown => {}
@@ -573,7 +573,7 @@ impl RoomSession {
                     self.prefs.tank = kind;
                     self.prefs.save();
                 }
-                Err(error) => eprintln!("Invalid room choice: {}", engine_error(error)),
+                Err(error) => report!("Invalid room choice: {}", engine_error(error)),
             },
             Action::RoomRules(rules) => self.game.set_rules(rules, now),
             Action::SelectAmmo(slot) => {
@@ -681,7 +681,7 @@ impl RoomSession {
             match baked {
                 Ok(pixels) => {
                     if let Err(error) = self.game.supply_pixels(&key, &pixels) {
-                        eprintln!("{}", engine_error(error));
+                        report!("{}", engine_error(error));
                     }
                 }
                 Err(_) => self.game.release_texture_bake(&key),
@@ -740,7 +740,7 @@ impl RoomSession {
 
     /// The renderer stopped: give up the connection, and the engine says so.
     fn fail(&mut self, error: &str) {
-        eprintln!("The room stopped: {error}");
+        report!("The room stopped: {error}");
         crate::page::failed(&format!("The renderer stopped: {error}"));
         self.stopped = true;
         self.input.controls.clear();
