@@ -19,10 +19,9 @@ test("the Pages build, the traffic bots, the pilots and the startup scripts use 
     read("../.github/workflows/deploy.yml").match(/directory-url: (\S+)/)?.[1],
     DIRECTORY_URL,
   );
-  assert.equal(
-    read("../bots/wrangler.jsonc").match(/"DIRECTORY_URL": "([^"]+)"/)?.[1],
-    DIRECTORY_URL,
-  );
+  for (const config of ["wrangler.jsonc", "pilots.wrangler.jsonc"]) {
+    assert.equal(read(`../bots/${config}`).match(/"DIRECTORY_URL": "([^"]+)"/)?.[1], DIRECTORY_URL);
+  }
   assert.equal(
     read("../crates/pilot/src/command_line.rs").match(/DEFAULT_DIRECTORY: &str = "([^"]+)"/)?.[1],
     DIRECTORY_URL,

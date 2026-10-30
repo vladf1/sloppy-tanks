@@ -68,7 +68,7 @@ server ──binary snapshots──▶ NetworkClient ──RenderState (displaye
   view delay, hit offset, shells drawn hitting that the host flew past, prediction
   corrections, late batches).
 - `src/fleet.rs` and `src/abi.rs`: the pilots behind JSON calls, exported from Wasm with
-  no imports, for the bots Worker (`bots/pilot-engine.ts`).
+  no imports, for the pilots Worker (`bots/pilot-engine.ts`, `bots/pilots-worker.ts`).
 - `src/command_line.rs` and `src/native/`: the command line (tokio, tokio-tungstenite and
   rustls with the server's pure-Rust crypto, a directory lookup over hyper).
 
@@ -89,10 +89,12 @@ time is up (`--minutes`, 10 by default), on Ctrl-C, or once every connection has
 the pilots send `leave` and their reports print as JSON (`--report FILE` writes them to a
 file).
 
-From Cloudflare regions, through the bots Worker (see `bots/README.md`):
+From Cloudflare regions, through the bots control page (**Mode: Pilots**) or its
+command line (see `bots/README.md`). The pilots run in their own Worker, which the
+control page reaches over a service binding:
 
 ```sh
-pnpm run bots:deploy                                     # builds the Wasm engine, then deploys
+pnpm run pilots:deploy                                   # builds the Wasm engine, then deploys
 pnpm run bots -- start wnam 2 --room ABCD2345 --hunt vlad
 pnpm run bots -- start weur 3 --brain --host --map harbor
 pnpm run bots -- status
@@ -101,8 +103,8 @@ pnpm run bots -- status
 **Content versions:** pilots are game code. `pnpm run pilot` and `pnpm run pilot:build`
 stamp `SLOPPY_CONTENT_VERSION` as the browser build and the server do. A server whose
 content version differs refuses the pilots with "Game updated". Run or deploy them from the
-commit the target server runs. The bots Worker reports a mismatch as a region error naming
-both versions.
+commit the target server runs. The pilots Worker reports a mismatch as a region error
+naming both versions.
 
 ## Tests
 

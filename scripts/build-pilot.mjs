@@ -1,12 +1,12 @@
 // Build the pilot engine for the bots Worker: `sloppy-pilot`'s library as Wasm (the
 // `pilot` profile in Cargo.toml: release without LTO, which builds far faster) into the
-// ignored `bots/generated/sloppy_pilot.wasm`, which `bots/worker.ts` imports and
-// `pnpm run bots:deploy` bundles. The module imports nothing (`crates/pilot/src/abi.rs`),
+// ignored `bots/generated/sloppy_pilot.wasm`, which `bots/pilots-worker.ts` imports and
+// `pnpm run pilots:deploy` bundles. The module imports nothing (`crates/pilot/src/abi.rs`),
 // so it needs no wasm-bindgen glue.
 //
 // Like the browser engine it is stamped with the content version (`SLOPPY_CONTENT_VERSION`)
 // its joins send: a game server whose `/health` reports another one refuses the pilots,
-// so deploy the Worker from the commit the servers it should play on run.
+// so deploy the pilots Worker from the commit the servers it should play on run.
 //
 // In CI it bypasses Kache (`KACHE_DISABLED`): the server job's Kache store is sized for
 // the server build (150 MiB), and the engine's wasm32 objects (about 1 GB) overflowed it,

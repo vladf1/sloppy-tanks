@@ -214,8 +214,8 @@ tank's present), and your tank's prediction corrections by cause. Render include
 join a room through the game's own network client and fight with the bot brain. A pilot
 can hunt a player you name or escort them. Run them from this machine
 (`pnpm run pilot -- --room CODE --hunt NAME`, see [crates/pilot](crates/pilot/README.md)),
-or from Cloudflare regions through the bots Worker
-(`pnpm run bots -- start wnam 2 --room CODE --hunt NAME`, see [bots](bots/README.md)), to
+or from Cloudflare regions through the bots control page (**Mode: Pilots**) or
+`pnpm run bots -- start wnam 2 --room CODE --hunt NAME` (see [bots](bots/README.md)), to
 feel the room from there. Each reports its RTT, view delay, fire-to-flash time and hits.
 
 Single-player downloads no multiplayer page code and opens no game-server connection.

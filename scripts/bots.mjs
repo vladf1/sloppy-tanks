@@ -1,4 +1,4 @@
-// Operator CLI for the traffic-bot Worker and its pilots. See bots/README.md.
+// Operator CLI for the bots Worker: load bots and pilots. See bots/README.md.
 import { parseArgs } from "node:util";
 
 const endpoint = (
@@ -42,13 +42,16 @@ async function api(path, body) {
 }
 const TEAMS = ["blue", "red"];
 function printPilots(region) {
-  const squad = region.pilots;
+  const squad = region.squad ?? { pilots: [] };
   const minutes = Math.max(0, Math.round((region.config.stopAt - Date.now()) / 60_000));
   const brain = region.config.brain;
   console.log(
-    `${region.region} colo=${region.colo ?? "?"} pilots ${brain.mission} (${brain.skill} ${brain.kind}) ` +
+    `pilots ${region.region} colo=${region.colo ?? "?"} ${brain.mission} (${brain.skill} ${brain.kind}) ` +
       `room=${squad.room ?? "choosing"} engine=${squad.contentVersion ?? "?"}, stops in ${minutes} min` +
-      (squad.lastError ? `\n  error: ${squad.lastError}` : ""),
+      [region.lastError, squad.lastError]
+        .filter(Boolean)
+        .map((error) => `\n  error: ${error}`)
+        .join(""),
   );
   for (const pilot of squad.pilots) {
     const report = pilot.report;
@@ -69,19 +72,17 @@ function printPilots(region) {
   }
 }
 function print(status) {
-  if (!status.regions.length) {
-    console.log(`No bots running (target ${status.server}).`);
+  const pilotRegions = status.pilots.regions ?? [];
+  if (status.pilots.error) console.log(`Pilots: ${status.pilots.error}`);
+  if (!status.regions.length && !pilotRegions.length) {
+    console.log(`Nothing running (target ${status.server}).`);
     return;
   }
   for (const region of status.regions) {
-    if (region.pilots) {
-      printPilots(region);
-      continue;
-    }
     const connected = region.bots.filter((bot) => bot.connected).length;
     const minutes = Math.max(0, Math.round((region.config.stopAt - Date.now()) / 60_000));
     console.log(
-      `${region.region} colo=${region.colo ?? "?"} ${connected}/${region.config.bots} connected, ` +
+      `bots ${region.region} colo=${region.colo ?? "?"} ${connected}/${region.config.bots} connected, ` +
         `rooms=[${region.rooms.join(",")}] in=${(region.bytesInPerSecond / 1024).toFixed(1)} KiB/s ` +
         `out=${(region.bytesOutPerSecond / 1024).toFixed(1)} KiB/s, stops in ${minutes} min` +
         (region.lastError ? `\n  error: ${region.lastError}` : ""),
@@ -94,6 +95,7 @@ function print(status) {
       );
     }
   }
+  pilotRegions.forEach(printPilots);
 }
 
 switch (command) {
@@ -124,13 +126,16 @@ switch (command) {
           }
         : {}),
     });
-    console.log(`Started ${result.config.bots} ${brain ? "pilots" : "bots"} in ${region}.`);
+    const count = brain ? result.config.pilots : result.config.bots;
+    console.log(`Started ${count} ${brain ? "pilots" : "bots"} in ${region}.`);
     print(await api("status"));
     break;
   }
-  case "stop":
-    console.log(`Stopped: ${(await api("stop", rest[0] ? { region: rest[0] } : {})).stopped}`);
+  case "stop": {
+    const result = await api("stop", rest[0] ? { region: rest[0] } : {});
+    console.log(`Stopped: ${result.stopped}${result.pilots ? " (load bots and pilots)" : ""}`);
     break;
+  }
   case "status":
     print(await api("status"));
     break;

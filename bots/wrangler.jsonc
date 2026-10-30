@@ -5,6 +5,8 @@
   "durable_objects": { "bindings": [{ "name": "SWARM", "class_name": "BotSwarm" }] },
   "migrations": [{ "tag": "v1", "new_sqlite_classes": ["BotSwarm"] }],
   "observability": { "enabled": true },
+  // Pilot runs go to the pilots Worker (bots/pilots.wrangler.jsonc), deployed separately.
+  "services": [{ "binding": "PILOTS", "service": "sloppy-tanks-pilots" }],
   "vars": {
     // The server directory (DIRECTORY_URL in scripts/servers.mjs; a test keeps the two
     // equal) and the environment whose servers the bots play on.

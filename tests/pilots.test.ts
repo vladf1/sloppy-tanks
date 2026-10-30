@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
 import { PilotEngine, type PilotSetup } from "../bots/pilot-engine";
 import { PilotSeat, type Connect, type PilotHost } from "../bots/pilot-seat";
+import { readBrain } from "../bots/pilot-squad";
 import { randomRoomCode } from "../bots/bot-player";
 
 // The bots Worker's pilot engine against the real multiplayer server: `pnpm run
@@ -212,4 +213,26 @@ test("the engine refuses a bad setup and answers for pilots it does not have", (
   // No pilot has this handle: the engine answers instead of trapping.
   assert.deepEqual(engine.tick(999, 0).actions, []);
   assert.equal(engine.report(999, 0), null);
+});
+
+test("pilot start requests are checked before the pilots Worker runs them", () => {
+  assert.deepEqual(readBrain({ mission: "hunt:vlad", skill: "hard", kind: "heavy" }), {
+    mission: "hunt:vlad",
+    skill: "hard",
+    kind: "heavy",
+    style: undefined,
+    map: "village",
+  });
+  assert.equal(readBrain({}).mission, "skirmish");
+  assert.equal(readBrain({ mission: "escort:vlad", style: "sniper" }).style, "sniper");
+  for (const bad of [
+    { mission: "escort" },
+    { mission: "dance" },
+    { skill: "expert" },
+    { kind: "humvee" },
+    { style: "pacifist" },
+    { map: "moon" },
+  ]) {
+    assert.throws(() => readBrain(bad), Error, JSON.stringify(bad));
+  }
 });

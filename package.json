@@ -73,7 +73,8 @@
     "check:multiplayer": "node scripts/multiplayer-check.mjs",
     "server:check:players": "node --import tsx scripts/multiplayer-player-check.mjs",
     "bots": "node scripts/bots.mjs",
-    "bots:deploy": "node scripts/build-pilot.mjs && wrangler deploy --config bots/wrangler.jsonc",
+    "bots:deploy": "wrangler deploy --config bots/wrangler.jsonc",
+    "pilots:deploy": "node scripts/build-pilot.mjs && wrangler deploy --config bots/pilots.wrangler.jsonc",
     "pilot": "node scripts/pilot.mjs",
     "pilot:build": "node scripts/build-pilot.mjs",
     "directory:deploy": "wrangler deploy --config directory/wrangler.jsonc"

@@ -1,3 +1,10 @@
+/**
+ * The bots Worker: the control page and API for every run, and the load bots' swarms.
+ * Pilot runs (`brain: true`) go to the pilots Worker (`pilots-worker.ts`) over the
+ * `PILOTS` service binding, so the two deploy separately: the pilots are game code that
+ * must match the servers' content version, the load bots are not.
+ */
+
 import { DurableObject } from "cloudflare:workers";
 import {
   BOT_NAME_PREFIX,
@@ -10,16 +17,29 @@ import {
   type ServerInfo,
 } from "./bot-player";
 import { controlPage } from "./control-page";
-import type { Connect } from "./pilot-seat";
-import { PilotSquad, readBrain, type PilotBrain } from "./pilot-squad";
-// Built by scripts/build-pilot.mjs, which `pnpm run bots:deploy` runs first.
-import pilotModule from "./generated/sloppy_pilot.wasm";
+import {
+  CONNECT_TIMEOUT_MS,
+  DEFAULT_MINUTES,
+  MAINTAIN_MS,
+  MAX_MINUTES,
+  REGIONS,
+  WATCHDOG_MS,
+  currentColo,
+  directoryList,
+  environment,
+  integer,
+  json,
+  region,
+  roomCode,
+  type DirectoryEnv,
+  type Environment,
+  type Region,
+} from "./regions";
 
-interface Env {
+interface Env extends DirectoryEnv {
   SWARM: DurableObjectNamespace<BotSwarm>;
-  /** The server directory, whose SERVER_ENVIRONMENT servers the bots play on. */
-  DIRECTORY_URL: string;
-  SERVER_ENVIRONMENT: string;
+  /** The pilots Worker (`pilots.wrangler.jsonc`); missing until it is deployed. */
+  PILOTS?: Fetcher;
 }
 
 /** A game server as the directory lists it, with the room fields the bots read. */
@@ -30,31 +50,10 @@ interface ListedServer {
   rooms: (RoomListingSummary & { mapMode: string })[];
 }
 
-/** The directory environments a run may play on; the Worker's own by default. */
-const ENVIRONMENTS = ["production", "dev"] as const;
-const directoryList = (env: Env, environment?: string) =>
-  `${env.DIRECTORY_URL}/servers?environment=${environment ?? env.SERVER_ENVIRONMENT}`;
-
-/** Durable Object location hints; each region runs at most one swarm object. */
-const REGIONS = ["wnam", "enam", "sam", "weur", "eeur", "apac", "oc", "afr", "me"] as const;
-type Region = (typeof REGIONS)[number];
 const MAX_BOTS_PER_REGION = 32;
-// Each pilot runs a copy of the arena's physics and the browser's client in the region's
-// one Wasm instance; a room has eight seats anyway.
-const MAX_PILOTS_PER_REGION = 8;
-// Pilots play at about the frame rate of a slow browser tab; their input goes out at 20 Hz.
-const PILOT_TICK_MS = 33;
-const DEFAULT_MINUTES = 5;
-// Every running bot keeps its Durable Object awake and billed for wall time, so runs always end.
-const MAX_MINUTES = 6 * 60;
 const TICK_MS = 25;
-// Directory polls and joins share the server's per-IP limits (120 listings, 60 joins a minute).
-const MAINTAIN_MS = 10_000;
 const MAX_JOINS_PER_PASS = 8;
-// The alarm restarts bots after a runtime restart evicts the in-memory sockets.
-const WATCHDOG_MS = 30_000;
 const BLOCKED_ROOM_MS = 60_000;
-const CONNECT_TIMEOUT_MS = 10_000;
 
 interface SwarmConfig {
   region: Region;
@@ -65,10 +64,8 @@ interface SwarmConfig {
   /** When no listed room has space, create a bot room instead of waiting for people. */
   host: boolean;
   perRoom: number;
-  /** Pilots instead of traffic bots: `bots` players run by the bot brain. */
-  brain?: PilotBrain;
   /** The directory environment to play on, when not the Worker's own. */
-  environment?: (typeof ENVIRONMENTS)[number];
+  environment?: Environment;
 }
 interface Seat {
   bot: BotPlayer;
@@ -77,32 +74,41 @@ interface Seat {
   connecting: boolean;
 }
 
-function json(value: unknown, status = 200): Response {
-  return Response.json(value, { status, headers: { "Cache-Control": "no-store" } });
-}
 function swarm(env: Env, region: Region): DurableObjectStub<BotSwarm> {
   // The hint only takes effect when the object is first created, so every lookup passes it.
   return env.SWARM.get(env.SWARM.idFromName("swarm-" + region), { locationHint: region });
 }
-function region(value: unknown): Region {
-  const found = REGIONS.find((item) => item === value);
-  if (!found) {
-    throw new Error("region must be one of " + REGIONS.join(", "));
+/** A request to the pilots Worker. Its answer is JSON, or becomes a JSON error that says
+ * why there is none (not deployed, or not running beside `wrangler dev`). */
+async function pilots(env: Env, path: string, body?: unknown): Promise<Response> {
+  const missing = "The pilots Worker is not reachable: deploy it (pnpm run pilots:deploy)";
+  if (!env.PILOTS) {
+    return json({ error: missing }, 503);
   }
-  return found;
+  try {
+    const response = await env.PILOTS.fetch(`https://pilots/${path}`, {
+      method: body === undefined ? "GET" : "POST",
+      headers: { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+    });
+    const text = await response.text();
+    try {
+      return json(JSON.parse(text), response.status);
+    } catch {
+      return json({ error: `${missing}. It answered ${response.status}: ${text}` }, 502);
+    }
+  } catch (error) {
+    return json({ error: `${missing}. ${error instanceof Error ? error.message : error}` }, 502);
+  }
 }
-function integer(
-  value: unknown,
-  fallback: number,
-  min: number,
-  max: number,
-  label: string,
-): number {
-  const number = value === undefined || value === "" ? fallback : Number(value);
-  if (!Number.isInteger(number) || number < min || number > max) {
-    throw new Error(`${label} must be an integer from ${min} to ${max}`);
-  }
-  return number;
+
+/** The pilots Worker's running regions, or why they could not be read. */
+async function pilotStatus(env: Env): Promise<{ regions: unknown[] } | { error: string }> {
+  const answer = (await (await pilots(env, "status")).json()) as {
+    regions?: unknown[];
+    error?: string;
+  };
+  return answer.regions ? { regions: answer.regions } : { error: answer.error ?? "No answer" };
 }
 
 export default {
@@ -118,48 +124,45 @@ export default {
     }
     try {
       if (url.pathname === "/api/status" && request.method === "GET") {
-        const regions = await Promise.all(REGIONS.map((name) => swarm(env, name).status()));
+        const [regions, pilotRegions] = await Promise.all([
+          Promise.all(REGIONS.map((name) => swarm(env, name).status())),
+          pilotStatus(env),
+        ]);
         return json({
           server: directoryList(env),
           regions: regions.filter((item) => item.running),
+          pilots: pilotRegions,
         });
       }
       if (request.method !== "POST") {
         return json({ error: "Not found" }, 404);
       }
       const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
+      if (url.pathname === "/api/start" && body.brain === true) {
+        // The pilots Worker checks the request itself.
+        return pilots(env, "start", body);
+      }
       if (url.pathname === "/api/start") {
         const now = Date.now();
-        const room = body.room ? String(body.room).toUpperCase() : undefined;
-        if (room !== undefined && !/^[A-Z2-9]{8}$/.test(room)) {
-          throw new Error("room must be an 8-character room code");
-        }
-        const brain = body.brain === true ? readBrain(body) : undefined;
-        const environment =
-          body.environment === undefined
-            ? undefined
-            : ENVIRONMENTS.find((name) => name === body.environment);
-        if (body.environment !== undefined && !environment) {
-          throw new Error("environment must be one of " + ENVIRONMENTS.join(", "));
-        }
         const config: SwarmConfig = {
           region: region(body.region),
-          bots: brain
-            ? integer(body.bots, 1, 1, MAX_PILOTS_PER_REGION, "pilots")
-            : integer(body.bots, 1, 1, MAX_BOTS_PER_REGION, "bots"),
+          bots: integer(body.bots, 1, 1, MAX_BOTS_PER_REGION, "bots"),
           stopAt: now + integer(body.minutes, DEFAULT_MINUTES, 1, MAX_MINUTES, "minutes") * 60_000,
-          room,
+          room: roomCode(body.room),
           host: body.host === true,
           perRoom: integer(body.perRoom, 1, 1, ROOM_SEATS, "perRoom"),
-          brain,
-          environment,
+          environment: environment(body.environment),
         };
         return json(await swarm(env, config.region).start(config));
       }
       if (url.pathname === "/api/stop") {
+        // Stopping a region stops both its load bots and its pilots.
         const targets = body.region === undefined ? [...REGIONS] : [region(body.region)];
         await Promise.all(targets.map((name) => swarm(env, name).stop()));
-        return json({ stopped: targets });
+        const stoppedPilots = (
+          await pilots(env, "stop", body.region === undefined ? {} : { region: body.region })
+        ).ok;
+        return json({ stopped: targets, pilots: stoppedPilots });
       }
       return json({ error: "Not found" }, 404);
     } catch (error) {
@@ -168,33 +171,10 @@ export default {
   },
 } satisfies ExportedHandler<Env>;
 
-/** A pilot's socket: Workers open WebSockets through fetch, so a wss: address goes as https:. */
-const connectPilot: Connect = async (url, events) => {
-  // The signal stays bound to the upgraded socket, so the timeout must end with the handshake.
-  const abort = new AbortController();
-  const timeout = setTimeout(() => abort.abort(), CONNECT_TIMEOUT_MS);
-  const response = await fetch(url.replace(/^ws/, "http"), {
-    headers: { Upgrade: "websocket" },
-    signal: abort.signal,
-  }).finally(() => clearTimeout(timeout));
-  const socket = response.webSocket;
-  if (!socket) {
-    throw new Error(`The room refused the pilot: ${response.status} ${await response.text()}`);
-  }
-  socket.binaryType = "arraybuffer";
-  socket.accept();
-  socket.addEventListener("message", (event) => events.message(event.data as string | ArrayBuffer));
-  socket.addEventListener("close", (event) => events.close(event.code));
-  socket.addEventListener("error", () => events.close(1006));
-  return socket;
-};
-
 /** Runs one region's bots. Its outbound sockets keep it awake only while a run is configured. */
 export class BotSwarm extends DurableObject<Env> {
   private config?: SwarmConfig;
   private seats: Seat[] = [];
-  /** The run's pilots, when it runs pilots rather than traffic bots. */
-  private squad?: PilotSquad;
   private timer?: ReturnType<typeof setInterval>;
   private server?: ServerInfo;
   /** The WebSocket address of the server the swarm plays on, from the directory. */
@@ -280,17 +260,12 @@ export class BotSwarm extends DurableObject<Env> {
       bytesInPerSecond: Math.round(bytesIn / elapsed),
       bytesOutPerSecond: Math.round(bytesOut / elapsed),
       bots,
-      pilots: this.squad?.summary() ?? null,
     };
   }
 
   private run(): void {
     const config = this.config;
     if (!config) {
-      return;
-    }
-    if (config.brain) {
-      this.runPilots(config, config.brain);
       return;
     }
     if (!this.seats.length) {
@@ -318,37 +293,11 @@ export class BotSwarm extends DurableObject<Env> {
         void this.maintain(now);
       }
     }, TICK_MS);
-    this.requestColo();
-  }
-
-  /** Pilots tick every frame and look for their room every few seconds. */
-  private runPilots(config: SwarmConfig, brain: PilotBrain): void {
-    this.squad ??= new PilotSquad(
-      { region: config.region, pilots: config.bots, room: config.room, host: config.host, brain },
-      pilotModule,
-      connectPilot,
-    );
-    this.timer ??= setInterval(() => {
-      const now = Date.now();
-      if (!this.config || now >= this.config.stopAt) {
-        void this.stop();
-        return;
-      }
-      this.squad?.tick();
-      if (now - this.lastMaintainMs >= MAINTAIN_MS) {
-        void this.maintain(now);
-      }
-    }, PILOT_TICK_MS);
-    this.requestColo();
-  }
-
-  private requestColo(): void {
     if (!this.coloRequested) {
       // Location hints are best-effort; report where the swarm actually runs.
       this.coloRequested = true;
-      void fetch("https://cloudflare.com/cdn-cgi/trace")
-        .then((response) => response.text())
-        .then((text) => (this.colo = /^colo=(\w+)$/m.exec(text)?.[1]))
+      void currentColo()
+        .then((colo) => (this.colo = colo))
         .catch(() => (this.coloRequested = false));
     }
   }
@@ -356,19 +305,6 @@ export class BotSwarm extends DurableObject<Env> {
   /** Assigns idle bots to rooms: their previous seat, the configured room, open rooms, or a new room. */
   private async maintain(now: number): Promise<void> {
     if (this.maintaining || !this.config) {
-      return;
-    }
-    if (this.squad) {
-      this.maintaining = true;
-      this.lastMaintainMs = now;
-      try {
-        this.squad.maintain(await this.listServers());
-        this.lastError = undefined;
-      } catch (error) {
-        this.lastError = error instanceof Error ? error.message : String(error);
-      } finally {
-        this.maintaining = false;
-      }
       return;
     }
     this.maintaining = true;
@@ -566,8 +502,6 @@ export class BotSwarm extends DurableObject<Env> {
   private release(): void {
     clearInterval(this.timer ?? null);
     this.timer = undefined;
-    this.squad?.stop();
-    this.squad = undefined;
     for (const seat of this.seats) {
       this.disconnect(seat);
     }
