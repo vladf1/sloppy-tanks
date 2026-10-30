@@ -267,6 +267,10 @@
       [data-shell="failed"] #boot-retry {
         order: 2;
       }
+      /* Its `display` would otherwise show it while the game still loads. */
+      #boot-retry[hidden] {
+        display: none;
+      }
       [data-shell="failed"] #boot-bar {
         width: 100%;
         background: #ffb2a7;

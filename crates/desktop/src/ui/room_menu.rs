@@ -1032,6 +1032,17 @@ fn next_battle(
             label,
             "change room rules",
         ) {
+            // Done lets go of MINUTES as a blur would: hidden from this frame on, the
+            // field could not apply a length typed into it.
+            if menu.editing_rules
+                && let Some(round_minutes) = take_minutes_draft(menu)
+                && round_minutes != settings.round_minutes
+            {
+                actions.push(Action::RoomRules(RoomSettings {
+                    round_minutes,
+                    ..*settings
+                }));
+            }
             menu.editing_rules = !menu.editing_rules;
         }
     }
@@ -1265,16 +1276,21 @@ fn minutes_field(ui: &mut Ui, column: Rect, menu: &mut RoomMenu, minutes: u32) -
             .min_size(inner.size())
             .desired_width(inner.width()),
     );
-    let typed = text.trim().parse::<u32>().ok();
     if response.lost_focus() {
-        menu.minutes_draft = None;
-        return typed.filter(|value| (1..=MAX_ROUND_MINUTES).contains(value));
+        return take_minutes_draft(menu);
     }
     // Away from the keyboard the field shows the room's own length.
     if !response.has_focus() {
         menu.minutes_draft = None;
     }
     None
+}
+
+/// The length typed into MINUTES, if it is a whole number of minutes a room allows; the
+/// field shows the room's own length again either way.
+fn take_minutes_draft(menu: &mut RoomMenu) -> Option<u32> {
+    let typed = menu.minutes_draft.take()?.trim().parse::<u32>().ok();
+    typed.filter(|value| (1..=MAX_ROUND_MINUTES).contains(value))
 }
 
 /// LAST ROUND: everyone's kills and deaths, the best first, in a full-width table whose
@@ -1935,6 +1951,39 @@ mod tests {
             (actions, output)
         }
 
+        /// Where a frame draws `label`.
+        fn menu_text_center(&mut self, label: &str) -> egui::Pos2 {
+            let (_, output) = self.frame(Vec::new());
+            output
+                .shapes
+                .iter()
+                .find_map(|shape| text_center(&shape.shape, label))
+                .unwrap_or_else(|| panic!("{label} is visible"))
+        }
+
+        /// Press and let go at `point`; the actions of both frames.
+        fn tap(&mut self, point: egui::Pos2) -> Vec<Action> {
+            let (mut actions, _) = self.frame(vec![
+                egui::Event::PointerMoved(point),
+                egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed: true,
+                    modifiers: egui::Modifiers::default(),
+                },
+            ]);
+            actions.extend(
+                self.frame(vec![egui::Event::PointerButton {
+                    pos: point,
+                    button: egui::PointerButton::Primary,
+                    pressed: false,
+                    modifiers: egui::Modifiers::default(),
+                }])
+                .0,
+            );
+            actions
+        }
+
         fn click(&mut self, label: &str) -> Vec<Action> {
             let (_, output) = self.frame(Vec::new());
             let point = output
@@ -2037,6 +2086,44 @@ mod tests {
         assert!(!screen.menu.editing_rules);
         assert!(screen.click("Controls").is_empty());
         assert!(screen.menu.controls_open);
+    }
+
+    #[test]
+    fn done_applies_a_round_length_still_being_typed() {
+        let mut screen = Screen::new("room-lobby");
+        screen.click("Change rules");
+        let minutes = screen.menu_text_center("20");
+        screen.tap(minutes);
+        let mut typing = vec![egui::Event::Key {
+            key: egui::Key::End,
+            physical_key: None,
+            pressed: true,
+            repeat: false,
+            modifiers: egui::Modifiers::default(),
+        }];
+        for _ in 0..2 {
+            typing.push(egui::Event::Key {
+                key: egui::Key::Backspace,
+                physical_key: None,
+                pressed: true,
+                repeat: false,
+                modifiers: egui::Modifiers::default(),
+            });
+        }
+        typing.push(egui::Event::Text("15".into()));
+        screen.frame(typing);
+        // Straight to Done, whose frames may or may not still show the field.
+        let done = screen.menu_text_center("Done");
+        let actions = screen.tap(done);
+        let lengths: Vec<u32> = actions
+            .iter()
+            .filter_map(|action| match action {
+                Action::RoomRules(rules) => Some(rules.round_minutes),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(lengths, [15], "{actions:?}");
+        assert!(!screen.menu.editing_rules);
     }
 
     #[test]

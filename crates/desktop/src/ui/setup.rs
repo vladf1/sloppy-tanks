@@ -1814,6 +1814,8 @@ fn sheet(
 const OVERLAY_PADDING: f32 = 24.0;
 const NARROW_OVERLAY_PADDING: f32 = 12.0;
 const FIT_MARGIN: f32 = 50.0;
+/// The least height a stacked sheet is scaled to fit, however short the window.
+const MIN_FIT_ROOM: f32 = 120.0;
 /// The stacked layout's widest (`.menu.start`).
 const STACK_MAX_WIDTH: f32 = 1040.0;
 /// Windows this short leave out the logo's row and the key strip (`max-height: 770px`).
@@ -2634,7 +2636,9 @@ fn stacked_setup(
     }
     // As `fitPanels`: lay out at the window's width; where that is too tall, scale it to
     // fit and lay it out again as wide as the scaled window allows.
-    let room = screen.height() - FIT_MARGIN;
+    // A window barely taller than the margin still gets a sheet it can show, never a
+    // zero or negative scale.
+    let room = (screen.height() - FIT_MARGIN).max(MIN_FIT_ROOM);
     let container = screen.width() - 2.0 * OVERLAY_PADDING;
     let first = stack_layout(
         &measure,
