@@ -5,7 +5,7 @@
 // scripts/README.md stay separate. SLOPPY_WEBGL=1 plays every check on the WebGL2 build.
 import { spawnSync } from "node:child_process";
 
-const checks = ["shell-check.mjs", "webgl-check.mjs", "fixtures-check.mjs"];
+const checks = ["shell-check.mjs", "webgl-check.mjs", "firefox-check.mjs", "fixtures-check.mjs"];
 
 const failed = [];
 for (const script of checks) {
