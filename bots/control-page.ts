@@ -8,6 +8,7 @@ export const controlPage = `<!doctype html>
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex">
 <title>Bots and Pilots · Sloppy Tanks</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 48 48' fill='%234a6a2a'%3E%3Crect x='6' y='28' width='36' height='10' rx='5' opacity='.45'/%3E%3Crect x='9' y='22' width='30' height='9' rx='3'/%3E%3Crect x='15' y='15' width='15' height='9' rx='3'/%3E%3Crect x='28' y='17.5' width='15' height='3.5' rx='1.75'/%3E%3C/svg%3E">
 <style>
   :root {
     color-scheme: light dark;
