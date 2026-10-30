@@ -232,10 +232,17 @@ impl TouchLayout {
     /// The room between the stick and the mine button (or the screen's edge) that the
     /// tank panel takes.
     pub fn panel_span(&self, right: f32) -> (f32, f32) {
-        let end = self.mine.map_or(right, |mine| mine.x - MINE_RADIUS - 12.0);
-        (self.stick.right() + 12.0, end)
+        let end = self
+            .mine
+            .map_or(right, |mine| mine.x - MINE_RADIUS - PANEL_MINE_GAP);
+        (self.stick.right() + PANEL_STICK_GAP, end)
     }
 }
+
+/// The tank panel's distance from the drive stick and from the mine button
+/// (`.touch-enabled .bottom`).
+const PANEL_STICK_GAP: f32 = 12.0;
+const PANEL_MINE_GAP: f32 = 16.0;
 
 /// The phone's row of keys over the arena: one key's side, a thumb's gap between keys
 /// that stand apart, and their distance from the top and the sides.

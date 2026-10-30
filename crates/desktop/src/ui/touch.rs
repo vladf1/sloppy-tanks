@@ -30,6 +30,9 @@ const HINT_PULSE: f64 = 1.6;
 /// The fire hint's top on a phone held upright: under the top row of keys and the kill
 /// feed's first row.
 const PHONE_UPRIGHT_HINT_TOP: f32 = 102.0;
+/// The fire hint's top on a tablet whose score takes the top-left corner: under the
+/// score and its YOUR TEAM tab.
+const CORNER_SCORE_HINT_TOP: f32 = 106.0;
 
 /// What the touch controls show this frame.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -302,12 +305,15 @@ fn zoom_key(painter: &Painter, center: Pos2, label: &str) {
 }
 
 /// How to aim and fire: a tag in the top-left corner, the one corner no HUD and no
-/// thumb uses, with a target ring that breathes. A phone's tighter corner has the tag
-/// level with its score; held upright, where the zoom pair takes that corner, under it.
+/// thumb uses, with a target ring that breathes; under the score where a narrow tablet's
+/// score takes that corner. A phone's tighter corner has the tag level with its score;
+/// held upright, where the zoom pair takes that corner, under it.
 fn fire_hint(context: &egui::Context, painter: &Painter, opacity: f32) {
     let viewport = context.viewport_rect();
     let content = context.content_rect();
-    let (left, top) = if !crate::touch::phone() {
+    let (left, top) = if super::hud::score_in_corner(context) {
+        (24.0, CORNER_SCORE_HINT_TOP)
+    } else if !crate::touch::phone() {
         (24.0, 14.0)
     } else if viewport.height() > viewport.width() {
         (10.0, PHONE_UPRIGHT_HINT_TOP)

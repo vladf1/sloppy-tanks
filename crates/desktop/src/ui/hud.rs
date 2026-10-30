@@ -12,8 +12,8 @@ use super::icons::Art;
 use super::paint::{self, fade, hex, hexa, mix};
 use super::theme::{self, GOLD, GOLD_HOT, bold_font, display_font};
 use super::{Action, DAMAGE_RING_SECONDS, HIT_FLASH_SECONDS, ToastTone, UiState, View};
-use sloppy_core::sim::{GameMode, MatchPhase, Team};
-use sloppy_web::catalog::AMMO_OPTIONS;
+use sloppy_core::sim::{GameMode, MatchPhase, Team, Weapon};
+use sloppy_web::catalog::{AMMO_OPTIONS, AmmoOption};
 use sloppy_web::feedback::CRITICAL_HULL;
 use sloppy_web::feedback::cause_icon;
 use sloppy_web::hud::{EffectKind, Hud, HudHuman, HullTone, Objective};
@@ -31,6 +31,63 @@ const PHONE_TOAST_MARGIN: f32 = 48.0;
 /// The narrowest gap between the drive stick and the mine button, as a share of the
 /// tank panel's width, that the panel sits in on a touch screen.
 const MIN_PANEL_GAP_SHARE: f32 = 0.75;
+/// The toolbar's distance from the top edge.
+const TOOLBAR_TOP: f32 = 14.0;
+/// A tablet's score sits this far from the top edge, level with the corner buttons, and
+/// as far from the left edge where it takes the corner; its toolbar keeps as far from
+/// the right edge.
+const TABLET_MARGIN: f32 = 14.0;
+/// At this width and narrower a tablet's score plates slim their padding and the clock
+/// its minimum, so the score and the taller corner buttons never meet; at the second,
+/// the score moves to the top-left corner and the buttons keep the top row beside it.
+const TABLET_SLIM_SCORE_WIDTH: f32 = 1100.0;
+const TABLET_CORNER_SCORE_WIDTH: f32 = 850.0;
+/// The rounding of a tablet's score plates at their outer ends.
+const TABLET_SCORE_CORNER: f32 = 10.0;
+/// Big screens draw the score, the toolbar, the kill feed and the tank panel larger, so
+/// their type holds its size against the arena: the screen's smallest size for each
+/// zoom, the largest first (desktop only: touch screens lay their HUD out round the
+/// thumbs).
+const BIG_SCREEN_ZOOMS: [(Vec2, f32); 2] = [
+    (Vec2::new(2400.0, 1300.0), 1.5),
+    (Vec2::new(1800.0, 1000.0), 1.2),
+];
+
+/// The big-screen zoom on a screen of `size`.
+fn big_screen_zoom(size: Vec2) -> f32 {
+    if crate::touch::screen() {
+        return 1.0;
+    }
+    BIG_SCREEN_ZOOMS
+        .iter()
+        .find(|(least, _)| size.x >= least.x && size.y >= least.y)
+        .map_or(1.0, |&(_, zoom)| zoom)
+}
+
+/// Draw `layer` at `fit` about `anchor` (a part shrunk to fit a small screen), then at
+/// the big-screen `zoom` about `screen_anchor`, the point of the screen's edge the part
+/// keeps its distance from.
+fn place_layer(
+    context: &egui::Context,
+    layer: LayerId,
+    anchor: Pos2,
+    fit: f32,
+    screen_anchor: Pos2,
+    zoom: f32,
+) {
+    let about = |point: Pos2, scale: f32| {
+        egui::emath::TSTransform::new(point.to_vec2() * (1.0 - scale), scale)
+    };
+    context.set_transform_layer(layer, about(screen_anchor, zoom) * about(anchor, fit));
+}
+
+/// Whether a tablet's score sits in the top-left corner: centred, it would meet the
+/// corner buttons.
+pub(super) fn score_in_corner(context: &egui::Context) -> bool {
+    crate::touch::screen()
+        && !crate::touch::phone()
+        && context.viewport_rect().width() <= TABLET_CORNER_SCORE_WIDTH
+}
 
 /// The painter under every HUD area: shades, feed, toast and hit feedback.
 fn backdrop(context: &egui::Context) -> Painter {
@@ -116,30 +173,72 @@ pub fn hud(
         return;
     }
     // The score bar shrinks to the screen's width; where the toolbar would cover it, the
-    // toolbar and the feed move under it.
+    // toolbar and the feed move under it. Positions are the parts' own: the big-screen
+    // zoom scales them about the top edge alike, so only the widths need it here.
+    let zoom = big_screen_zoom(context.viewport_rect().size());
     let score_layer = LayerId::new(Order::Middle, Id::unique("score bar"));
     let mut score_painter = context.layer_painter(score_layer);
     score_painter.set_clip_rect(paint::shrunk_clip(screen));
     let score = score_bar(&score_painter, screen, &hud, view.room);
     let fit = ((screen.width() - 2.0 * EDGE) / score.width()).min(1.0);
-    paint::shrink_about(context, score_layer, score.center_top(), fit);
-    let score_right = score.center().x + score.width() * fit / 2.0;
+    let (score_anchor, score_right) = if score_in_corner(context) {
+        (score.left_top(), score.left() + score.width() * fit)
+    } else {
+        (
+            score.center_top(),
+            score.center().x + score.width() * fit * zoom / 2.0,
+        )
+    };
+    place_layer(
+        context,
+        score_layer,
+        score_anchor,
+        fit,
+        screen.center_top(),
+        zoom,
+    );
     let tools = toolbar_size();
-    let stacked = score_right + STACK_GAP > screen.right() - EDGE - tools.x;
+    let stacked =
+        score_right + STACK_GAP * zoom > screen.right() - (toolbar_edge() + tools.x) * zoom;
     let toolbar_top = if stacked {
         score.top() + score.height() * fit + STACK_GAP
     } else {
-        screen.top() + 14.0
+        screen.top() + TOOLBAR_TOP
     };
     let feed_top = if stacked {
         toolbar_top + tools.y + STACK_GAP
     } else {
         screen.top() + FEED_TOP
     };
-    kill_feed(&painter, art, screen, feed_top, state);
+    // The feed shares the backdrop, under the damage ring's edge glow; zoomed, it takes a
+    // layer of its own over the backdrop.
+    let feed_painter = if zoom > 1.0 {
+        let layer = LayerId::new(Order::Middle, Id::unique("kill feed"));
+        place_layer(
+            context,
+            layer,
+            screen.right_top(),
+            1.0,
+            screen.right_top(),
+            zoom,
+        );
+        paint::full_screen(context, layer)
+    } else {
+        painter.clone()
+    };
+    kill_feed(&feed_painter, art, screen, feed_top, state);
     if playing {
         toast(&painter, screen, state);
-        toolbar(context, art, screen, toolbar_top, state, view, actions);
+        toolbar(
+            context,
+            art,
+            screen,
+            toolbar_top,
+            zoom,
+            state,
+            view,
+            actions,
+        );
         if human.alive {
             damage_ring(&painter, screen, state);
             if state.cockpit && state.aim_hint {
@@ -153,7 +252,9 @@ pub fn hud(
     // The respawn card rises into place over a third of a second.
     let rise = context.animate_bool_with_time(Id::unique("respawn rise"), !human.alive, 0.32);
     if human.alive {
-        tank_panel(context, art, screen, state, &hud, playing, time, actions);
+        tank_panel(
+            context, art, screen, state, &hud, playing, time, zoom, actions,
+        );
     } else if playing && !view.room {
         // A room draws its own respawn card: tanks are chosen between battles there.
         super::respawn::card(context, art, screen, state, &hud, view, rise, actions);
@@ -578,20 +679,33 @@ fn team_plate(x: f32, width: f32, height: f32, left_side: bool) -> Vec<Pos2> {
 }
 
 /// The score hangs from the top edge: two team plates cut toward the clock between
-/// them, each with a bar filling toward the score limit; your side carries gold.
+/// them, each with a bar filling toward the score limit; your side carries gold. A
+/// tablet's (`.touch-enabled .scoreboard`) sits level with the corner buttons, its plates
+/// rounded at their outer ends; it slims on a narrower screen and takes the top-left
+/// corner on a narrower one still.
 /// The score bar; returns where it is.
 fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
     let solo = hud.game_mode == GameMode::Solo;
     let match_state = &hud.match_state;
     let no_limit = room || solo || hud.endless_match;
     let height = if room { 55.0 } else { 62.0 };
-    let top = screen.top();
+    // The phone edition draws its own score.
+    let tablet = crate::touch::screen();
+    let viewport = painter.ctx().viewport_rect();
+    let slim = tablet && viewport.width() <= TABLET_SLIM_SCORE_WIDTH;
+    let top = if tablet {
+        screen.top() + TABLET_MARGIN
+    } else {
+        screen.top()
+    };
+    // Each plate's name keeps from its outer end, its score from the clock.
+    let (label_inset, score_inset) = if slim { (18.0, 14.0) } else { (24.0, 18.0) };
     let label_font = bold_font(14.0);
     let score_font = display_font(38.0);
     let plate_width = |label: &str, score: &str| {
         let label = paint::text_width(painter, label, label_font.clone(), 1.6);
         let score = paint::text_width(painter, score, score_font.clone(), 0.0);
-        (label + score + 10.0 + 42.0).max(156.0)
+        (label + score + 10.0 + (label_inset + score_inset)).max(156.0)
     };
     let labels = if solo {
         ["KILLS".to_owned(), String::new()]
@@ -611,7 +725,8 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
         .map(|objective| objective.to_string())
         .unwrap_or_default();
     let objective_width = paint::text_width(painter, &objective, bold_font(13.0), 1.2);
-    let clock_width = (objective_width + 24.0).max(136.0) + if solo { 12.0 } else { 0.0 };
+    let clock_least = if slim { 96.0 } else { 136.0 };
+    let clock_width = (objective_width + 24.0).max(clock_least) + if solo { 12.0 } else { 0.0 };
     let widths = [
         plate_width(&labels[0], &scores[0]),
         if solo {
@@ -621,7 +736,11 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
         },
     ];
     let total = widths[0] + clock_width + widths[1];
-    let left = screen.center().x - total / 2.0;
+    let left = if score_in_corner(painter.ctx()) {
+        (viewport.left() + TABLET_MARGIN).max(screen.left())
+    } else {
+        screen.center().x - total / 2.0
+    };
     let shift = vec2(0.0, top);
     for team in 0..if solo { 1 } else { 2 } {
         let width = widths[team];
@@ -630,54 +749,93 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
         } else {
             left + widths[0] + clock_width
         };
-        let mut outline = team_plate(x, width, height, team == 0);
-        outline.iter_mut().for_each(|point| *point += shift);
         let (light, deep) = if team == 0 {
             (hex(0x2f8ff2), hex(0x1252b0))
         } else {
             (hex(0xff5367), hex(0xb01b33))
         };
-        painter.add(paint::gradient_polygon(&outline, light, deep));
-        // The glossy top half.
-        let mut gloss = team_plate(x, width, height * 0.46, team == 0);
-        if team == 0 {
-            gloss[3].x = x + 16.0 * 0.46;
-        } else {
-            gloss[2].x = x + width - 16.0 * 0.46;
-        }
-        gloss.iter_mut().for_each(|point| *point += shift);
-        painter.add(paint::gradient_polygon(
-            &gloss,
-            hexa(0xffffff, 0.2),
-            hexa(0xffffff, 0.0),
-        ));
         let yours = !room && !solo && team == hud.human_team.index();
-        if yours {
-            painter.add(paint::gradient_polygon(
-                &[
-                    pos2(x, top + 3.0),
-                    pos2(x + width, top + 3.0),
-                    pos2(x + width, top + 16.0),
-                    pos2(x, top + 16.0),
-                ],
-                hexa(0xffcf38, 0.4),
-                hexa(0xffcf38, 0.0),
+        // A tablet's plate rounds its outer end where the desktop's is cut toward the
+        // clock; the gloss over its top half and your side's gold rim follow the corner.
+        let outer = |corners: [f32; 4]| {
+            if team == 0 {
+                corners
+            } else {
+                [corners[1], corners[0], corners[3], corners[2]]
+            }
+        };
+        if tablet {
+            let corner = TABLET_SCORE_CORNER;
+            let plate = Rect::from_min_size(pos2(x, top), vec2(width, height));
+            painter.add(paint::rounded_vgradient(
+                plate,
+                outer([corner, 0.0, corner, 0.0]),
+                &[(0.0, light), (1.0, deep)],
             ));
-            painter.rect_filled(Rect::from_min_size(pos2(x, top), vec2(width, 3.0)), 0, GOLD);
+            painter.add(paint::rounded_vgradient(
+                Rect::from_min_size(plate.min, vec2(width, height * 0.46)),
+                outer([corner, 0.0, 0.0, 0.0]),
+                &[(0.0, hexa(0xffffff, 0.2)), (1.0, hexa(0xffffff, 0.0))],
+            ));
+            if yours {
+                // Deep enough that the band keeps the corner's full rounding.
+                let band = 24.0;
+                painter.add(paint::rounded_vgradient(
+                    Rect::from_min_size(plate.min, vec2(width, band)),
+                    outer([corner, 0.0, 0.0, 0.0]),
+                    &[
+                        (0.0, GOLD),
+                        (3.0 / band, GOLD),
+                        (3.5 / band, hexa(0xffcf38, 0.4)),
+                        (16.0 / band, hexa(0xffcf38, 0.0)),
+                        (1.0, hexa(0xffcf38, 0.0)),
+                    ],
+                ));
+            }
+        } else {
+            let mut outline = team_plate(x, width, height, team == 0);
+            outline.iter_mut().for_each(|point| *point += shift);
+            painter.add(paint::gradient_polygon(&outline, light, deep));
+            // The glossy top half.
+            let mut gloss = team_plate(x, width, height * 0.46, team == 0);
+            if team == 0 {
+                gloss[3].x = x + 16.0 * 0.46;
+            } else {
+                gloss[2].x = x + width - 16.0 * 0.46;
+            }
+            gloss.iter_mut().for_each(|point| *point += shift);
+            painter.add(paint::gradient_polygon(
+                &gloss,
+                hexa(0xffffff, 0.2),
+                hexa(0xffffff, 0.0),
+            ));
+            if yours {
+                painter.add(paint::gradient_polygon(
+                    &[
+                        pos2(x, top + 3.0),
+                        pos2(x + width, top + 3.0),
+                        pos2(x + width, top + 16.0),
+                        pos2(x, top + 16.0),
+                    ],
+                    hexa(0xffcf38, 0.4),
+                    hexa(0xffcf38, 0.0),
+                ));
+                painter.rect_filled(Rect::from_min_size(pos2(x, top), vec2(width, 3.0)), 0, GOLD);
+            }
         }
         let middle = top + height / 2.0 - 2.0;
         let (label_pos, label_align, score_pos, score_align) = if team == 0 {
             (
-                pos2(x + 24.0, middle),
+                pos2(x + label_inset, middle),
                 Align2::LEFT_CENTER,
-                pos2(x + width - 18.0, middle),
+                pos2(x + width - score_inset, middle),
                 Align2::RIGHT_CENTER,
             )
         } else {
             (
-                pos2(x + width - 24.0, middle),
+                pos2(x + width - label_inset, middle),
                 Align2::RIGHT_CENTER,
-                pos2(x + 18.0, middle),
+                pos2(x + score_inset, middle),
                 Align2::LEFT_CENTER,
             )
         };
@@ -820,9 +978,22 @@ fn score_bar(painter: &Painter, screen: Rect, hud: &Hud, room: bool) -> Rect {
 }
 
 /// The corner toolbar: first person, fullscreen, pause and settings on one plate.
-/// Thumb-sized on a touch screen.
-fn toolbar_button() -> f32 {
-    if crate::touch::screen() { 46.0 } else { 38.0 }
+/// Thumb-sized on a touch screen (`.touch-enabled .hud-actions button`).
+fn toolbar_button() -> Vec2 {
+    if crate::touch::screen() {
+        vec2(48.0, 46.0)
+    } else {
+        Vec2::splat(38.0)
+    }
+}
+
+/// The toolbar's distance from the right edge.
+fn toolbar_edge() -> f32 {
+    if crate::touch::screen() {
+        TABLET_MARGIN
+    } else {
+        EDGE
+    }
 }
 
 /// The toolbar's plate: first person, fullscreen (not in the iPad app), pause and
@@ -833,18 +1004,30 @@ fn toolbar_size() -> Vec2 {
     } else {
         3.0
     };
-    vec2(toolbar_button() * count + 6.0, toolbar_button() + 6.0)
+    let button = toolbar_button();
+    vec2(button.x * count + 6.0, button.y + 6.0)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn toolbar(
     context: &egui::Context,
     art: &Art,
     screen: Rect,
     top: f32,
+    zoom: f32,
     state: &mut UiState,
     view: &View,
     actions: &mut Vec<Action>,
 ) {
+    let id = Id::unique("hud toolbar");
+    place_layer(
+        context,
+        LayerId::new(Order::Middle, id),
+        screen.right_top(),
+        1.0,
+        screen.right_top(),
+        zoom,
+    );
     if state.settings_draft.is_some() {
         return;
     }
@@ -873,8 +1056,8 @@ fn toolbar(
     .flatten()
     .collect();
     let size = toolbar_size();
-    let origin = pos2(screen.right() - EDGE - size.x, top);
-    egui::Area::new(Id::unique("hud toolbar"))
+    let origin = pos2(screen.right() - toolbar_edge() - size.x, top);
+    egui::Area::new(id)
         .fixed_pos(origin)
         .order(Order::Middle)
         .show(context, |ui| {
@@ -883,8 +1066,8 @@ fn toolbar(
             paint::plate(&painter, rect, 9.0, None);
             for (index, (icon, tip, action)) in buttons.into_iter().enumerate() {
                 let cell = Rect::from_min_size(
-                    rect.min + vec2(3.0 + index as f32 * button, 3.0),
-                    Vec2::splat(button),
+                    rect.min + vec2(3.0 + index as f32 * button.x, 3.0),
+                    button,
                 );
                 let response = ui
                     .interact(cell, Id::unique(("hud tool", index)), Sense::click())
@@ -1167,37 +1350,68 @@ const SLOT_GAP: f32 = 4.0;
 const MINE_WIDTH: f32 = 42.0;
 const COMPASS_WIDTH: f32 = 68.0;
 const PANEL_HEIGHT: f32 = 65.4;
-/// A round's key on a touch screen: wide enough for a thumb.
-const TOUCH_SLOT_WIDTH: f32 = 52.0;
+/// A touch screen's panel (`.touch-enabled .bottom`): its foot's distance from the
+/// screen's bottom, and the widest the column between the thumbs that it centres in.
+const TOUCH_PANEL_BOTTOM: f32 = 22.0;
+const TOUCH_PANEL_COLUMN: f32 = 460.0;
+/// A touch screen's status line: its height (the hull number's), the gap between its
+/// parts, the hull bar's narrowest and half the name's line, which it centres.
+const TOUCH_LINE_HEIGHT: f32 = 26.0;
+const TOUCH_LINE_GAP: f32 = 12.0;
+const TOUCH_HULL_BAR: f32 = 130.0;
+const TOUCH_NAME_HALF: f32 = 8.0;
+/// Inside a touch key: the padding and border above and below its content, its icons,
+/// and its count's type (the loaded round's, in its top-right corner, a step larger:
+/// that count's right end's inset and its middle's depth).
+const TOUCH_KEY_TOP: f32 = 7.0;
+const TOUCH_KEY_BOTTOM: f32 = 6.0;
+const TOUCH_KEY_ICON: f32 = 22.0;
+const TOUCH_COUNT_SIZE: f32 = 13.0;
+const TOUCH_LOADED_COUNT_SIZE: f32 = 15.0;
+const TOUCH_COUNT_INSET: f32 = 8.0;
+const TOUCH_COUNT_MIDDLE: f32 = 18.5;
+/// The gap between the tank's name and its rank.
+const RANK_GAP: f32 = 7.0;
 
-/// The width of a round's key in the rack: the loaded one names itself.
+/// The hull number's type, and how far under the readout's middle its foot and the
+/// maximum's sit, so the two share a baseline.
+struct ReadoutType {
+    size: f32,
+    number_drop: f32,
+    max_drop: f32,
+}
+
+const DESKTOP_READOUT: ReadoutType = ReadoutType {
+    size: 32.0,
+    number_drop: 13.0,
+    max_drop: 11.0,
+};
+/// A touch screen's readout is a step smaller, on one line with the name and the bar,
+/// its number centred on the hull icon.
+const TOUCH_READOUT: ReadoutType = ReadoutType {
+    size: 26.0,
+    number_drop: 16.0,
+    max_drop: 15.0,
+};
+/// The hull number's distance from the readout's left end, past the hull icon; the
+/// maximum's type, its letter spacing and its gap after the number.
+const READOUT_NUMBER_LEFT: f32 = 24.0;
+const READOUT_MAX_SIZE: f32 = 21.0;
+const READOUT_MAX_SPACING: f32 = 0.5;
+const READOUT_MAX_GAP: f32 = 5.0;
+
+/// The width of a round's key in the desktop rack: the loaded one names itself.
 fn slot_width(selected: bool) -> f32 {
     if selected {
         SELECTED_SLOT_WIDTH
-    } else if crate::touch::screen() {
-        TOUCH_SLOT_WIDTH
     } else {
         SLOT_WIDTH
     }
 }
 
-/// The tank panel: hull on the left, the ammunition rack and the mine socket on the
-/// right, on an armour plate tinted by your team; power-up tabs stand on its top
-/// edge, the ammunition notice above its left end, and in first person the hull
-/// compass joins its right edge.
-#[allow(clippy::too_many_arguments)]
-fn tank_panel(
-    context: &egui::Context,
-    art: &Art,
-    screen: Rect,
-    state: &UiState,
-    hud: &Hud,
-    playing: bool,
-    time: f64,
-    actions: &mut Vec<Action>,
-) {
-    let human = &hud.human;
-    let strip_width = AMMO_OPTIONS
+/// The desktop rack's width: every round's key and the gaps between them.
+fn desktop_rack_width(human: &HudHuman) -> f32 {
+    AMMO_OPTIONS
         .iter()
         .map(|option| {
             slot_width(
@@ -1208,57 +1422,224 @@ fn tank_panel(
             )
         })
         .sum::<f32>()
-        + SLOT_GAP * (AMMO_OPTIONS.len() - 1) as f32;
-    // A touch screen has its own mine button.
-    let socket = if crate::touch::screen() {
-        0.0
-    } else {
-        10.0 + 10.0 + MINE_WIDTH
-    };
+        + SLOT_GAP * (AMMO_OPTIONS.len() - 1) as f32
+}
+
+/// A touch screen's tank panel (`.touch-enabled .combat-status` and the media queries
+/// that tighten it): the tank's name and rank, the hull number and the bar on one line,
+/// and under it the rack, its keys spread across the panel's width.
+#[derive(Clone, Copy)]
+struct TouchPanel {
+    /// Inside the plate: left, top, right, bottom.
+    padding: [f32; 4],
+    /// Between the status line and the rack.
+    row_gap: f32,
+    /// Whether the tank's name and rank show: a narrow or short screen leaves them out.
+    label: bool,
+    /// The rack's narrowest: a wide screen's keys keep a thumb's width.
+    min_rack: f32,
+    rack: TouchRack,
+}
+
+/// A touch screen's rack (`.touch-enabled .ammo-strip`).
+#[derive(Clone, Copy)]
+struct TouchRack {
+    key_height: f32,
+    gap: f32,
+    /// A key's side padding and border, which it keeps however narrow: the keys share
+    /// out the rest.
+    key_frame: f32,
+    /// The loaded round's name.
+    name_size: f32,
+    name_spacing: f32,
+}
+
+/// How a touch screen's status line shares the panel's width: the name and rank with
+/// the gap after them (nothing where they do not show), the hull readout, and the bar,
+/// which takes what is left.
+struct StatusLine {
+    width: f32,
+    label: f32,
+    readout: f32,
+    bar: f32,
+}
+
+impl TouchPanel {
+    /// The panel on a screen of `size`: `touch-controls.css`'s rules in their order.
+    fn on(size: Vec2) -> Self {
+        let mut panel = Self {
+            padding: [13.0, 9.0, 10.0, 9.0],
+            row_gap: 8.0,
+            label: true,
+            min_rack: 380.0,
+            rack: TouchRack {
+                key_height: 54.0,
+                gap: 4.0,
+                key_frame: 10.0,
+                name_size: 12.0,
+                name_spacing: 0.3,
+            },
+        };
+        // An upright tablet's rack shares the gap between the thumbs: its keys narrow
+        // with it and the loaded round's name takes a tighter setting.
+        if size.x <= 900.0 {
+            panel.min_rack = 0.0;
+            panel.rack.key_frame = 6.0;
+            panel.rack.name_size = 11.0;
+            panel.rack.name_spacing = 0.0;
+        }
+        // A narrow or short screen tightens the panel to fit beside the stick.
+        if size.x <= 760.0 || size.y <= 600.0 {
+            panel.padding = [5.0; 4];
+            panel.label = false;
+            panel.min_rack = 0.0;
+            panel.rack.gap = 2.0;
+            panel.rack.key_height = 48.0;
+            panel.rack.name_size = 11.0;
+            panel.rack.name_spacing = 0.0;
+        }
+        if size.y >= size.x && size.x >= 700.0 {
+            panel.padding = [6.0; 4];
+            panel.row_gap = 4.0;
+            panel.rack.gap = 3.0;
+        }
+        panel
+    }
+
+    /// How the status line shares the panel's width. The readout keeps a full hull's
+    /// width, so the panel holds its size as the hull drains.
+    fn line(&self, painter: &Painter, human: &HudHuman) -> StatusLine {
+        let label = if self.label {
+            tank_label_width(painter, human) + TOUCH_LINE_GAP
+        } else {
+            0.0
+        };
+        let full = format!("{}", human.max_hp.round());
+        let readout = READOUT_NUMBER_LEFT
+            + paint::text_width(painter, &full, display_font(TOUCH_READOUT.size), 0.0)
+            + READOUT_MAX_GAP
+            + paint::text_width(
+                painter,
+                &format!("/ {full}"),
+                display_font(READOUT_MAX_SIZE),
+                READOUT_MAX_SPACING,
+            );
+        let width = (label + readout + TOUCH_LINE_GAP + TOUCH_HULL_BAR).max(self.min_rack);
+        StatusLine {
+            width,
+            label,
+            readout,
+            bar: width - label - readout - TOUCH_LINE_GAP,
+        }
+    }
+
+    fn plate_size(&self, line: &StatusLine) -> Vec2 {
+        let [left, top, right, bottom] = self.padding;
+        vec2(
+            left + line.width + right,
+            top + TOUCH_LINE_HEIGHT + self.row_gap + self.rack.key_height + bottom,
+        )
+    }
+}
+
+impl TouchRack {
+    /// The keys' widths across `width`: equal shares, the standard shell's two, so the
+    /// rack reads as the round in hand plus the four that crates bring.
+    fn key_widths(&self, width: f32) -> [f32; AMMO_OPTIONS.len()] {
+        let shares = |option: &AmmoOption| {
+            if option.weapon == Weapon::Standard {
+                2.0
+            } else {
+                1.0
+            }
+        };
+        let keys = AMMO_OPTIONS.len() as f32;
+        let share = (width - self.gap * (keys - 1.0) - self.key_frame * keys)
+            / AMMO_OPTIONS.iter().map(shares).sum::<f32>();
+        AMMO_OPTIONS.map(|option| self.key_frame + share.max(0.0) * shares(&option))
+    }
+}
+
+/// The tank panel on an armour plate tinted by your team: hull on the left, the
+/// ammunition rack and the mine socket on the right; a touch screen's ([`TouchPanel`])
+/// has its own mine button. Power-up tabs stand on its top edge, the ammunition
+/// notice above its left end, and in first person the hull compass joins its right
+/// edge.
+#[allow(clippy::too_many_arguments)]
+fn tank_panel(
+    context: &egui::Context,
+    art: &Art,
+    screen: Rect,
+    state: &UiState,
+    hud: &Hud,
+    playing: bool,
+    time: f64,
+    zoom: f32,
+    actions: &mut Vec<Action>,
+) {
+    let human = &hud.human;
+    let id = Id::unique("tank panel");
+    let layer = LayerId::new(Order::Middle, id);
+    let touch = crate::touch::screen().then(|| {
+        let panel = TouchPanel::on(context.viewport_rect().size());
+        let line = panel.line(&context.layer_painter(layer), human);
+        (panel, line)
+    });
+    let strip_width = desktop_rack_width(human);
+    let socket = 10.0 + 10.0 + MINE_WIDTH;
     let inner = vec2(
         STATUS_WIDTH + 10.0 + 10.0 + strip_width + socket,
         PANEL_HEIGHT,
     );
     let padding = [14.0, 10.0, 11.0, 10.0];
-    let plate_size = vec2(
-        inner.x + padding[0] + padding[2],
-        inner.y + padding[1] + padding[3],
-    );
+    let plate_size = match &touch {
+        Some((panel, line)) => panel.plate_size(line),
+        None => vec2(
+            inner.x + padding[0] + padding[2],
+            inner.y + padding[1] + padding[3],
+        ),
+    };
     let compass = state.cockpit;
     let size = plate_size + vec2(if compass { COMPASS_WIDTH } else { 0.0 }, 0.0);
-    // Where its bottom-left corner sits and the width it has. On a touch screen it sits
-    // between the drive stick and the mine button, so it never covers the arena's middle
-    // or sits under a thumb; where that gap is too narrow for it (a phone held upright)
-    // it stands over the controls at the screen's width.
-    let (corner, room) = if crate::touch::screen() {
+    // Where its bottom-left corner sits, the width it has and, on a touch screen, the
+    // column the ammunition notice keeps to (its left end and width). There it sits
+    // between the drive stick and the mine button, centred in that gap, so it never
+    // covers the arena's middle or sits under a thumb; where that gap is too narrow for
+    // it it stands over the controls at the screen's width.
+    let (corner, room, notice_column) = if touch.is_some() {
         let layout = crate::touch::TouchLayout::of(context);
         let (from, to) = layout.panel_span(screen.right() - EDGE);
         if to - from >= size.x * MIN_PANEL_GAP_SHARE {
-            let left = (from + (to - from - size.x) / 2.0).max(from);
-            (pos2(left, screen.bottom() - EDGE), to - from)
+            let middle = (from + to) / 2.0;
+            let column = (to - from).min(TOUCH_PANEL_COLUMN);
+            let bottom =
+                (context.viewport_rect().bottom() - TOUCH_PANEL_BOTTOM).min(screen.bottom());
+            let left = (middle - size.x / 2.0).max(from);
+            (
+                pos2(left, bottom),
+                to - from,
+                Some((middle - column / 2.0, column)),
+            )
         } else {
             let top = layout.stick.top().min(layout.zoom_in.top());
             (
                 pos2(screen.left() + EDGE, top - STACK_GAP),
                 screen.width() - 2.0 * EDGE,
+                Some((screen.left() + EDGE, screen.width() - 2.0 * EDGE)),
             )
         }
     } else {
         (
             pos2(screen.left() + EDGE, screen.bottom() - EDGE),
             screen.width() - 2.0 * EDGE,
+            None,
         )
     };
     let origin = corner - vec2(0.0, size.y);
     // A narrow screen (a phone) shows the whole panel smaller, its corner in place.
     let fit = (room / size.x).min(1.0);
-    paint::shrink_about(
-        context,
-        LayerId::new(Order::Middle, Id::unique("tank panel")),
-        corner,
-        fit,
-    );
-    egui::Area::new(Id::unique("tank panel"))
+    place_layer(context, layer, corner, fit, screen.left_bottom(), zoom);
+    egui::Area::new(id)
         .fixed_pos(origin)
         .order(Order::Middle)
         .show(context, |ui| {
@@ -1306,39 +1687,72 @@ fn tank_panel(
             } else {
                 paint::plate(&painter, plate_rect, 12.0, tint);
             }
-            let content = Rect::from_min_size(plate_rect.min + vec2(padding[0], padding[1]), inner);
-            hull_status(ui, &painter, art, content, state, human, playing, time);
-            let mut x = content.left() + STATUS_WIDTH + 10.0;
-            painter.line_segment(
-                [pos2(x, content.top()), pos2(x, content.bottom())],
-                Stroke::new(1.0, hexa(0xffffff, 0.09)),
-            );
-            x += 10.0;
-            let strip = Rect::from_min_size(pos2(x, content.top()), vec2(strip_width, inner.y));
-            ammo_rack(ui, &painter, art, strip, human, playing, actions);
-            if !crate::touch::screen() {
-                x = strip.right() + 10.0;
-                painter.line_segment(
-                    [pos2(x, content.top()), pos2(x, content.bottom())],
-                    Stroke::new(1.0, hexa(0xffffff, 0.09)),
-                );
-                x += 10.0;
-                mine_socket(
-                    &painter,
-                    art,
-                    Rect::from_min_size(pos2(x, content.top()), vec2(MINE_WIDTH, inner.y)),
-                    state,
-                    human,
-                );
+            match &touch {
+                Some((panel, line)) => {
+                    let [left, top, ..] = panel.padding;
+                    let status = Rect::from_min_size(
+                        plate_rect.min + vec2(left, top),
+                        vec2(line.width, TOUCH_LINE_HEIGHT),
+                    );
+                    hull_line(ui, &painter, art, status, line, state, human, playing, time);
+                    let strip = Rect::from_min_size(
+                        pos2(status.left(), status.bottom() + panel.row_gap),
+                        vec2(line.width, panel.rack.key_height),
+                    );
+                    let rack = Some(&panel.rack);
+                    ammo_rack(ui, &painter, art, strip, human, playing, rack, actions);
+                }
+                None => {
+                    let content =
+                        Rect::from_min_size(plate_rect.min + vec2(padding[0], padding[1]), inner);
+                    hull_status(ui, &painter, art, content, state, human, playing, time);
+                    let mut x = content.left() + STATUS_WIDTH + 10.0;
+                    painter.line_segment(
+                        [pos2(x, content.top()), pos2(x, content.bottom())],
+                        Stroke::new(1.0, hexa(0xffffff, 0.09)),
+                    );
+                    x += 10.0;
+                    let strip =
+                        Rect::from_min_size(pos2(x, content.top()), vec2(strip_width, inner.y));
+                    ammo_rack(ui, &painter, art, strip, human, playing, None, actions);
+                    x = strip.right() + 10.0;
+                    painter.line_segment(
+                        [pos2(x, content.top()), pos2(x, content.bottom())],
+                        Stroke::new(1.0, hexa(0xffffff, 0.09)),
+                    );
+                    x += 10.0;
+                    mine_socket(
+                        &painter,
+                        art,
+                        Rect::from_min_size(pos2(x, content.top()), vec2(MINE_WIDTH, inner.y)),
+                        state,
+                        human,
+                    );
+                }
             }
             effect_tabs(&painter, art, plate_rect, human);
             if let Some((notice, _)) = &state.ammo_notice {
-                ammo_notice(&painter, plate_rect, notice, screen);
+                let (left, width) =
+                    notice_column.unwrap_or((plate_rect.left(), screen.width() - 2.0 * EDGE));
+                ammo_notice(&painter, left, plate_rect.top(), width, notice);
             }
         });
 }
 
-/// The status column: tank and rank, the hull number and the segmented bar.
+/// A slow red pulse behind the hull's status while it is critical.
+fn critical_glow(painter: &Painter, rect: Rect, human: &HudHuman, playing: bool, time: f64) {
+    let critical = playing && human.alive && human.health_ratio < CRITICAL_HULL;
+    if critical {
+        let beat = (0.5 - 0.5 * (time / 1.6 * std::f64::consts::TAU).cos()) as f32;
+        painter.rect_filled(
+            rect.expand2(vec2(5.0, 5.0)).intersect(rect.expand(5.0)),
+            8,
+            hexa(0xff3b4a, 0.06 + 0.14 * beat),
+        );
+    }
+}
+
+/// The desktop's status column: tank and rank, the hull number and the segmented bar.
 #[allow(clippy::too_many_arguments)]
 fn hull_status(
     ui: &mut egui::Ui,
@@ -1350,35 +1764,97 @@ fn hull_status(
     playing: bool,
     time: f64,
 ) {
-    let critical = playing && human.alive && human.health_ratio < CRITICAL_HULL;
-    if critical {
-        let beat = (0.5 - 0.5 * (time / 1.6 * std::f64::consts::TAU).cos()) as f32;
-        painter.rect_filled(
-            rect.expand2(vec2(5.0, 5.0)).intersect(rect.expand(5.0)),
-            8,
-            hexa(0xff3b4a, 0.06 + 0.14 * beat),
-        );
+    critical_glow(painter, rect, human, playing, time);
+    tank_label(
+        ui,
+        painter,
+        rect.left_top(),
+        STATUS_WIDTH - 40.0,
+        rect.right() + 30.0,
+        human,
+    );
+    hull_readout(
+        painter,
+        art,
+        rect.left(),
+        rect.top() + 36.0,
+        &DESKTOP_READOUT,
+        human,
+        playing,
+        time,
+    );
+    let bar = Rect::from_min_size(
+        pos2(rect.left(), rect.bottom() - 9.0),
+        vec2(STATUS_WIDTH, 9.0),
+    );
+    hull_bar(painter, bar, state, human);
+}
+
+/// A touch screen's status line: the tank's name and rank, the hull readout and the
+/// bar, each centred on the line.
+#[allow(clippy::too_many_arguments)]
+fn hull_line(
+    ui: &mut egui::Ui,
+    painter: &Painter,
+    art: &Art,
+    rect: Rect,
+    line: &StatusLine,
+    state: &UiState,
+    human: &HudHuman,
+    playing: bool,
+    time: f64,
+) {
+    critical_glow(painter, rect, human, playing, time);
+    let middle = rect.center().y;
+    if line.label > 0.0 {
+        let name = pos2(rect.left(), middle - TOUCH_NAME_HALF);
+        tank_label(ui, painter, name, f32::INFINITY, f32::INFINITY, human);
     }
-    let ramp = hex(human.hull_ramp);
-    let tone = human.hull_tone;
-    // The tank's name and its rank.
+    let readout = rect.left() + line.label;
+    hull_readout(
+        painter,
+        art,
+        readout,
+        middle,
+        &TOUCH_READOUT,
+        human,
+        playing,
+        time,
+    );
+    let bar = Rect::from_min_size(
+        pos2(readout + line.readout + TOUCH_LINE_GAP, middle - 4.5),
+        vec2(line.bar, 9.0),
+    );
+    hull_bar(painter, bar, state, human);
+}
+
+/// The tank's name from `top_left`, cut to `name_width`, and its rank's pill after it,
+/// ending by `pill_end` at the latest.
+fn tank_label(
+    ui: &mut egui::Ui,
+    painter: &Painter,
+    top_left: Pos2,
+    name_width: f32,
+    pill_end: f32,
+    human: &HudHuman,
+) {
     let name = human.vehicle_name.to_uppercase();
     let name_rect = paint::text_fit(
         painter,
-        rect.left_top(),
+        top_left,
         Align2::LEFT_TOP,
         &name,
         bold_font(13.0),
         Color32::WHITE,
         1.4,
-        STATUS_WIDTH - 40.0,
+        name_width,
     );
     let rank = human.rank_name.to_uppercase();
     let rank_width = paint::text_width(painter, &rank, bold_font(12.0), 0.8) + 12.0;
     let rank_rect = Rect::from_min_size(
-        pos2(name_rect.right() + 7.0, rect.top() - 1.0),
+        pos2(name_rect.right() + RANK_GAP, top_left.y - 1.0),
         vec2(
-            rank_width.min(rect.right() - name_rect.right() - 7.0 + 30.0),
+            rank_width.min(pill_end - name_rect.right() - RANK_GAP),
             17.0,
         ),
     );
@@ -1406,12 +1882,37 @@ fn hull_status(
     );
     ui.interact(rank_rect, Id::unique("rank"), Sense::hover())
         .on_hover_text(human.rank_title);
-    // The hull readout: its icon, the number in the ramp's colour and the maximum.
-    let readout_y = rect.top() + 36.0;
+}
+
+/// The width the tank's name and its rank's pill take.
+fn tank_label_width(painter: &Painter, human: &HudHuman) -> f32 {
+    let name = human.vehicle_name.to_uppercase();
+    let rank = human.rank_name.to_uppercase();
+    paint::text_width(painter, &name, bold_font(13.0), 1.4)
+        + RANK_GAP
+        + paint::text_width(painter, &rank, bold_font(12.0), 0.8)
+        + 12.0
+}
+
+/// The hull readout from `left`, centred on `middle`: its icon, the number in the
+/// ramp's colour and the maximum.
+#[allow(clippy::too_many_arguments)]
+fn hull_readout(
+    painter: &Painter,
+    art: &Art,
+    left: f32,
+    middle: f32,
+    kind: &ReadoutType,
+    human: &HudHuman,
+    playing: bool,
+    time: f64,
+) {
+    let ramp = hex(human.hull_ramp);
+    let tone = human.hull_tone;
     art.icon(
         painter,
         "hull",
-        Rect::from_center_size(pos2(rect.left() + 10.0, readout_y), Vec2::splat(20.0)),
+        Rect::from_center_size(pos2(left + 10.0, middle), Vec2::splat(20.0)),
         ramp,
     );
     let mut number_color = if tone == HullTone::Healthy {
@@ -1426,27 +1927,27 @@ fn hull_status(
     let hp = format!("{}", human.hp.max(0.0).ceil());
     let number = paint::shadowed(
         painter,
-        pos2(rect.left() + 24.0, readout_y + 13.0),
+        pos2(left + READOUT_NUMBER_LEFT, middle + kind.number_drop),
         Align2::LEFT_BOTTOM,
         &hp,
-        display_font(32.0),
+        display_font(kind.size),
         number_color,
         0.0,
     );
     paint::shadowed(
         painter,
-        pos2(number.right() + 5.0, readout_y + 11.0),
+        pos2(number.right() + READOUT_MAX_GAP, middle + kind.max_drop),
         Align2::LEFT_BOTTOM,
         &format!("/ {}", human.max_hp.round()),
-        display_font(21.0),
+        display_font(READOUT_MAX_SIZE),
         hex(0xb9cadd),
-        0.5,
+        READOUT_MAX_SPACING,
     );
-    // The segmented bar: the fill drops at once; a ghost trails it to show the chunk.
-    let bar = Rect::from_min_size(
-        pos2(rect.left(), rect.bottom() - 9.0),
-        vec2(STATUS_WIDTH, 9.0),
-    );
+}
+
+/// The segmented hull bar: the fill drops at once; a ghost trails it to show the chunk.
+fn hull_bar(painter: &Painter, bar: Rect, state: &UiState, human: &HudHuman) {
+    let ramp = hex(human.hull_ramp);
     painter.rect_filled(bar, 3, hex(0x030913));
     let share = human.health_ratio.clamp(0.0, 1.0) as f32;
     let ghost = state.hull_ghost.clamp(0.0, 1.0) as f32;
@@ -1480,8 +1981,73 @@ fn hull_status(
     }
 }
 
+/// An ∞'s width, height and stroke as shares of its type's size, its path's inside
+/// the stroke; and how far under the digits' middle it sits, on the type's maths axis.
+const INFINITY_WIDTH: f32 = 0.62;
+const INFINITY_HEIGHT: f32 = 0.37;
+const INFINITY_STROKE: f32 = 0.05;
+const INFINITY_DROP: f32 = 1.0;
+
+/// A round's count in type of `size` at `pos`: its number, or for an unlimited round a
+/// thin ∞, as the display face (which has none) falls back to a light text face's.
+fn count_mark(
+    painter: &Painter,
+    pos: Pos2,
+    align: Align2,
+    count: Option<f64>,
+    size: f32,
+    color: Color32,
+) {
+    let Some(count) = count else {
+        const STEPS: usize = 48;
+        let half = vec2(INFINITY_WIDTH, INFINITY_HEIGHT) * size / 2.0;
+        let outer = (INFINITY_WIDTH + INFINITY_STROKE) * size;
+        let center = align.anchor_size(pos, vec2(outer, 0.0)).center() + vec2(0.0, INFINITY_DROP);
+        let points = (0..STEPS)
+            .map(|step| {
+                let turn = step as f32 / STEPS as f32 * std::f32::consts::TAU;
+                center + vec2(half.x * turn.cos(), half.y * (2.0 * turn).sin())
+            })
+            .collect();
+        painter.add(Shape::closed_line(
+            points,
+            Stroke::new(INFINITY_STROKE * size, Color32::WHITE),
+        ));
+        return;
+    };
+    paint::shadowed(
+        painter,
+        pos,
+        align,
+        &format!("{count}"),
+        display_font(size),
+        color,
+        0.0,
+    );
+}
+
+/// Ghost sockets side by side share the rack's one channel, split by a hairline that
+/// curves round the key's rounded edge.
+fn ghost_seam(painter: &Painter, key: Rect) {
+    let seam = painter.with_clip_rect(Rect::from_min_max(
+        pos2(key.left() - 1.5, key.top()),
+        pos2(key.left() + 4.0, key.bottom()),
+    ));
+    seam.rect_stroke(
+        Rect::from_min_max(
+            pos2(key.left() - 1.0, key.top() + 1.5),
+            pos2(key.right() - 4.0, key.bottom() - 1.5),
+        ),
+        7,
+        Stroke::new(1.0, hexa(0xffffff, 0.07)),
+        StrokeKind::Inside,
+    );
+}
+
 /// The rack: every round keeps its slot and key; the loaded round's slot is wide and
-/// names it, a round not carried is a dim ghost in the channel.
+/// names it, a round not carried is a dim ghost in the channel. A touch screen's keys
+/// (`touch`) share out the rack's width and name no keyboard keys.
+#[allow(clippy::too_many_arguments)]
 fn ammo_rack(
     ui: &mut egui::Ui,
     painter: &Painter,
@@ -1489,19 +2055,23 @@ fn ammo_rack(
     strip: Rect,
     human: &HudHuman,
     playing: bool,
+    touch: Option<&TouchRack>,
     actions: &mut Vec<Action>,
 ) {
     painter.rect_filled(strip, 8, hexa(0x020812, 0.35));
+    let touch_widths = touch.map(|rack| rack.key_widths(strip.width()));
+    let gap = touch.map_or(SLOT_GAP, |rack| rack.gap);
     let mut x = strip.left();
+    let mut after_ghost = false;
     for (index, option) in AMMO_OPTIONS.iter().enumerate() {
         let (weapon, label, name) = (option.weapon.as_str(), option.label(), option.name);
         let slot = human.ammo.iter().find(|slot| slot.weapon == option.weapon);
         let selected = slot.is_some_and(|slot| slot.selected);
         let available = slot.is_some_and(|slot| slot.available);
         let count = slot.and_then(|slot| slot.count);
-        let width = slot_width(selected);
+        let width = touch_widths.map_or_else(|| slot_width(selected), |widths| widths[index]);
         let rect = Rect::from_min_size(pos2(x, strip.top()), vec2(width, strip.height()));
-        x += width + SLOT_GAP;
+        x += width + gap;
         let color = hex(option.color());
         let count_text = match count {
             None => "unlimited".to_owned(),
@@ -1513,15 +2083,25 @@ fn ammo_rack(
         let usable = playing && human.alive && available;
         paint::labelled_choice(&response, usable, selected, name);
         if !available {
+            if touch.is_some() && after_ghost {
+                ghost_seam(painter, rect);
+            }
+            after_ghost = true;
             // A ghost of what a crate would load.
+            let ghost = if touch.is_some() {
+                TOUCH_KEY_ICON
+            } else {
+                20.0
+            };
             art.icon(
                 painter,
                 weapon,
-                Rect::from_center_size(rect.center(), Vec2::splat(20.0)),
+                Rect::from_center_size(rect.center(), Vec2::splat(ghost)),
                 fade(hex(0x8195ad), 0.38),
             );
             continue;
         }
+        after_ghost = false;
         let radius = CornerRadius::same(8);
         painter.rect_filled(rect, radius, hex(0x081427));
         if selected {
@@ -1553,8 +2133,9 @@ fn ammo_rack(
             vec2(rect.width() - 6.0, if selected { 3.0 } else { 2.0 }),
         );
         painter.rect_filled(stripe, 1, if selected { color } else { fade(color, 0.7) });
-        let count_font_size = if selected { 20.0 } else { 14.0 };
-        if selected {
+        if let Some(rack) = touch {
+            touch_key_face(painter, art, rect, rack, option, selected, count, color);
+        } else if selected {
             art.icon(
                 painter,
                 weapon,
@@ -1562,25 +2143,14 @@ fn ammo_rack(
                 color,
             );
             let count_pos = pos2(rect.right() - 9.0, rect.top() + 26.0);
-            match count {
-                None => art.icon(
-                    painter,
-                    "infinity",
-                    Rect::from_center_size(count_pos - vec2(12.0, 0.0), Vec2::splat(24.0)),
-                    Color32::WHITE,
-                ),
-                Some(count) => {
-                    paint::shadowed(
-                        painter,
-                        count_pos,
-                        Align2::RIGHT_CENTER,
-                        &format!("{count}"),
-                        display_font(count_font_size),
-                        Color32::WHITE,
-                        0.0,
-                    );
-                }
-            }
+            count_mark(
+                painter,
+                count_pos,
+                Align2::RIGHT_CENTER,
+                count,
+                20.0,
+                Color32::WHITE,
+            );
             paint::text_fit(
                 painter,
                 pos2(rect.left() + 9.0, rect.bottom() - 6.0),
@@ -1592,56 +2162,104 @@ fn ammo_rack(
                 rect.width() - 14.0,
             );
         } else {
-            // The key at the top, the icon and the count under it; a touch screen has
-            // no keys, so its icon rises into their place.
-            if !crate::touch::screen() {
-                let key = format!("{}", index + 1);
-                let key_rect = Rect::from_center_size(
-                    pos2(rect.center().x, rect.top() + 11.0),
-                    vec2(16.0, 15.0),
-                );
-                painter.rect_filled(key_rect, 3, hexa(0xffffff, 0.12));
-                paint::text(
-                    painter,
-                    key_rect.center(),
-                    Align2::CENTER_CENTER,
-                    &key,
-                    bold_font(12.0),
-                    hex(0xf2f7fc),
-                    0.0,
-                );
-            }
-            let icon_y = rect.top() + if crate::touch::screen() { 24.0 } else { 33.0 };
+            // The key at the top, the icon and the count under it.
+            let key = format!("{}", index + 1);
+            let key_rect =
+                Rect::from_center_size(pos2(rect.center().x, rect.top() + 11.0), vec2(16.0, 15.0));
+            painter.rect_filled(key_rect, 3, hexa(0xffffff, 0.12));
+            paint::text(
+                painter,
+                key_rect.center(),
+                Align2::CENTER_CENTER,
+                &key,
+                bold_font(12.0),
+                hex(0xf2f7fc),
+                0.0,
+            );
             art.icon(
                 painter,
                 weapon,
-                Rect::from_center_size(pos2(rect.center().x, icon_y), Vec2::splat(20.0)),
+                Rect::from_center_size(pos2(rect.center().x, rect.top() + 33.0), Vec2::splat(20.0)),
                 color,
             );
             let count_pos = pos2(rect.center().x, rect.bottom() - 10.0);
-            match count {
-                None => art.icon(
-                    painter,
-                    "infinity",
-                    Rect::from_center_size(count_pos, Vec2::splat(18.0)),
-                    Color32::WHITE,
-                ),
-                Some(count) => {
-                    paint::shadowed(
-                        painter,
-                        count_pos,
-                        Align2::CENTER_CENTER,
-                        &format!("{count}"),
-                        display_font(count_font_size),
-                        theme::TEXT,
-                        0.0,
-                    );
-                }
-            }
+            count_mark(
+                painter,
+                count_pos,
+                Align2::CENTER_CENTER,
+                count,
+                14.0,
+                theme::TEXT,
+            );
         }
         if usable && response.clicked() {
             actions.push(Action::SelectAmmo(index as u8 + 1));
         }
+    }
+}
+
+/// A touch key's face (`.touch-enabled .ammo-slot`): the round's icon in the middle of
+/// its upper part; the loaded round names itself under it, its count in the key's
+/// corner, and every other round shows its count under its icon.
+#[allow(clippy::too_many_arguments)]
+fn touch_key_face(
+    painter: &Painter,
+    art: &Art,
+    rect: Rect,
+    rack: &TouchRack,
+    option: &AmmoOption,
+    selected: bool,
+    count: Option<f64>,
+    color: Color32,
+) {
+    let top = rect.top() + TOUCH_KEY_TOP;
+    let bottom = rect.bottom() - TOUCH_KEY_BOTTOM;
+    // The line under the icon: the loaded round's name, or another's count.
+    let foot = if selected {
+        rack.name_size * 1.15
+    } else {
+        TOUCH_COUNT_SIZE
+    };
+    art.icon(
+        painter,
+        option.weapon.as_str(),
+        Rect::from_center_size(
+            pos2(rect.center().x, (top + bottom - foot) / 2.0),
+            Vec2::splat(TOUCH_KEY_ICON),
+        ),
+        color,
+    );
+    if selected {
+        count_mark(
+            painter,
+            pos2(
+                rect.right() - TOUCH_COUNT_INSET,
+                rect.top() + TOUCH_COUNT_MIDDLE,
+            ),
+            Align2::RIGHT_CENTER,
+            count,
+            TOUCH_LOADED_COUNT_SIZE,
+            Color32::WHITE,
+        );
+        paint::text_fit(
+            painter,
+            pos2(rect.center().x, bottom),
+            Align2::CENTER_BOTTOM,
+            option.label(),
+            bold_font(rack.name_size),
+            color,
+            rack.name_spacing,
+            rect.width() - rack.key_frame,
+        );
+    } else {
+        count_mark(
+            painter,
+            pos2(rect.center().x, bottom - TOUCH_COUNT_SIZE / 2.0),
+            Align2::CENTER_CENTER,
+            count,
+            TOUCH_COUNT_SIZE,
+            theme::TEXT,
+        );
     }
 }
 
@@ -1800,13 +2418,14 @@ fn effect_tabs(painter: &Painter, art: &Art, plate: Rect, human: &HudHuman) {
     }
 }
 
-/// The ammunition notice above the panel's left end.
-fn ammo_notice(painter: &Painter, plate: Rect, notice: &str, screen: Rect) {
+/// The ammunition notice over the panel whose top is `plate_top`, from `left` and at
+/// most the `room` of its column wide.
+fn ammo_notice(painter: &Painter, left: f32, plate_top: f32, room: f32, notice: &str) {
     let font = bold_font(12.0);
-    let max = (screen.width() - 2.0 * EDGE).min(600.0) - 24.0;
+    let max = room.min(600.0) - 24.0;
     let galley = paint::galley(painter, notice, font, GOLD_HOT, 0.0, max);
     let size = galley.size() + vec2(23.0, 14.0);
-    let rect = Rect::from_min_size(pos2(plate.left(), plate.top() - 42.0 - size.y), size);
+    let rect = Rect::from_min_size(pos2(left, plate_top - 42.0 - size.y), size);
     painter.rect_filled(rect.translate(vec2(0.0, 4.0)), 8, hexa(0, 0.3));
     painter.add(paint::vgradient(
         rect,
@@ -1832,9 +2451,15 @@ fn ammo_notice(painter: &Painter, plate: Rect, notice: &str, screen: Rect) {
 }
 
 /// The cockpit's hull compass: a top-down hull turned against the turret's straight up,
-/// with the key back to the overhead view at its foot.
+/// with the key back to the overhead view at its foot. A touch screen has the eye button
+/// instead of the key, and its dial sits in the segment's middle.
 fn compass_dial(painter: &Painter, rect: Rect, hull_angle: f64) {
-    let center = pos2(rect.center().x - 2.0, rect.top() + 8.0 + 20.0);
+    let middle = if crate::touch::screen() {
+        rect.center().y
+    } else {
+        rect.top() + 8.0 + 20.0
+    };
+    let center = pos2(rect.center().x - 2.0, middle);
     painter.circle_filled(center, 20.0, hexa(0x050d1c, 0.6));
     painter.circle_stroke(center, 13.5, Stroke::new(1.0, hexa(0x9fd0ff, 0.19)));
     let angle = hull_angle as f32;
