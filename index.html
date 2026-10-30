@@ -72,9 +72,11 @@
           opacity 0.25s,
           display 0.25s allow-discrete;
       }
+      /* It fades out over the game, which takes the taps and clicks meanwhile. */
       [data-shell="ready"] #boot {
         display: none;
         opacity: 0;
+        pointer-events: none;
       }
       .boot-brand {
         display: grid;
