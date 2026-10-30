@@ -39,6 +39,8 @@ pub struct State {
     pub phase: &'static str,
     pub alive: bool,
     pub first_person: bool,
+    /// First person waits for a click to lock the cursor again (the cockpit says so).
+    pub aim_hint: bool,
     /// Battle Setup's Multiplayer tab shows.
     pub multiplayer_tab: bool,
     /// The arena for Battle Setup's choices is ready (GO starts at once).
@@ -51,6 +53,12 @@ pub struct State {
     pub touch_controls: bool,
     /// The touch screen layout is on.
     pub touch_screen: bool,
+    /// Where the touch controls sit on a touch screen (they are painted, not widgets).
+    pub touch_layout: Option<TouchControls>,
+    /// The drive stick's push (x right, z down) while a finger holds it.
+    pub stick_push: Option<[f64; 2]>,
+    /// A finger on the arena aims and fires.
+    pub arena_finger: bool,
     /// The shell stopped and shows why.
     pub failure: Option<String>,
     /// The renderer's own error (`Game::error`).
@@ -65,6 +73,48 @@ pub struct State {
     pub parts: Option<Value>,
     /// The engine's JSON a `frame(extras)` asked for.
     pub extras: serde_json::Map<String, Value>,
+}
+
+/// A rectangle on screen, in CSS pixels.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+pub struct Area {
+    pub x: f32,
+    pub y: f32,
+    pub width: f32,
+    pub height: f32,
+}
+
+impl From<egui::Rect> for Area {
+    fn from(rect: egui::Rect) -> Self {
+        Self {
+            x: rect.left(),
+            y: rect.top(),
+            width: rect.width(),
+            height: rect.height(),
+        }
+    }
+}
+
+/// The touch controls' places (`touch::TouchLayout`).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TouchControls {
+    pub stick: Area,
+    /// The mine button's centre, where the edition has one.
+    pub mine: Option<[f32; 2]>,
+    pub zoom_in: Area,
+    pub zoom_out: Area,
+}
+
+impl From<&crate::touch::TouchLayout> for TouchControls {
+    fn from(layout: &crate::touch::TouchLayout) -> Self {
+        Self {
+            stick: layout.stick.into(),
+            mine: layout.mine.map(|mine| [mine.x, mine.y]),
+            zoom_in: layout.zoom_in.into(),
+            zoom_out: layout.zoom_out.into(),
+        }
+    }
 }
 
 /// A labelled widget on screen.

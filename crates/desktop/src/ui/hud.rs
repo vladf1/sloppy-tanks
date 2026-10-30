@@ -142,6 +142,9 @@ pub fn hud(
         toolbar(context, art, screen, toolbar_top, state, view, actions);
         if human.alive {
             damage_ring(&painter, screen, state);
+            if state.cockpit && state.aim_hint {
+                aim_hint(&painter, screen);
+            }
         }
     }
     if let Some(touch) = state.touch.filter(|_| playing && human.alive) {
@@ -155,6 +158,35 @@ pub fn hud(
         // A room draws its own respawn card: tanks are chosen between battles there.
         super::respawn::card(context, art, screen, state, &hud, view, rise, actions);
     }
+}
+
+/// Under the sight while Esc has freed the cursor (`#cockpit .aim-hint`): how to take
+/// it back, and how to reach the menu.
+fn aim_hint(painter: &Painter, screen: Rect) {
+    let font = bold_font(13.0);
+    let label = "Click to aim · Esc for menu";
+    let spacing = 13.0 * 0.04;
+    let width = paint::text_width(painter, label, font.clone(), spacing) + 28.0;
+    let pill = Rect::from_min_size(
+        pos2(screen.center().x - width / 2.0, screen.center().y + 48.0),
+        vec2(width, 29.0),
+    );
+    painter.rect(
+        pill,
+        CornerRadius::same(15),
+        hexa(0x0b1830, 0.85),
+        Stroke::new(1.0, hexa(0xbfe2ff, 0.33)),
+        StrokeKind::Inside,
+    );
+    paint::text(
+        painter,
+        pill.center(),
+        Align2::CENTER_CENTER,
+        label,
+        font,
+        hex(0xf0e9ce),
+        spacing,
+    );
 }
 
 /// The phone's HUD (`.phone #hud`): only what a small screen carries over the arena.

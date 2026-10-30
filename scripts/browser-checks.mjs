@@ -10,6 +10,11 @@ import { hasServerBinary, serverBinary } from "./browser-helpers.mjs";
 
 const checks = [
   { script: "shell-check.mjs" },
+  { script: "round-check.mjs" },
+  { script: "first-person-check.mjs" },
+  { script: "input-check.mjs" },
+  { script: "touch-check.mjs" },
+  { script: "phone-check.mjs" },
   { script: "webgl-check.mjs" },
   { script: "firefox-check.mjs" },
   { script: "text-fields-check.mjs" },

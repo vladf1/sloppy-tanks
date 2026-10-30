@@ -152,7 +152,8 @@ its labelled widgets (egui's AccessKit tree, in CSS pixels) through `window.slop
 input at those coordinates. A new clickable widget names itself (`paint::labelled`,
 `paint::labelled_choice`) so checks can find it. `pnpm run check:browser` runs the
 checks and the engine fixtures (`scripts/README.md`). Keep them passing: fix or delete a
-check that no longer matches the game rather than leaving it broken. Checks launch headless Chrome
+check that no longer matches the game rather than leaving it broken. Checks launch headless
+Chrome
 through the shared `headless` flag so they never pop windows over the user's desktop;
 only `SLOPPY_HEADED=1` opens a visible window.
 
