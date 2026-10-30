@@ -274,6 +274,7 @@ impl RoomSession {
             && !self.occluded
             && !self.minimized;
         self.input.hold_pointer(&self.window, wanted);
+        self.ui.aim_hint = self.input.aim_waits_for_click();
     }
 
     /// Give the window back: the room's renderer and overlay go, the rest stays.

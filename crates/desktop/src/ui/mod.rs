@@ -145,6 +145,9 @@ pub struct UiState {
     pub nerd_sections: std::collections::BTreeMap<&'static str, bool>,
     /// First person is on (the cockpit compass shows).
     pub cockpit: bool,
+    /// First person waits for a click on the arena to lock the cursor again (Esc freed
+    /// it): the cockpit says how to take it back.
+    pub aim_hint: bool,
     /// The hull's clockwise screen angle (the compass).
     pub hull_angle: f64,
     /// The player's tank on screen (NDC, y up), for the damage ring.

@@ -10,10 +10,11 @@ use winit::event::{ElementState, Touch, TouchPhase, WindowEvent};
 use winit::keyboard::{KeyCode, ModifiersState, PhysicalKey};
 use winit::window::Window;
 
-use crate::app::{css_size, grab_pointer};
+use crate::app::{css_size, now_ms};
 use crate::hardware_keys::HardwareKeys;
 use crate::input::{Controls, Shortcut, TouchInput};
 use crate::overlay::Overlay;
+use crate::pointer_lock::{self, PointerLock};
 use crate::touch::{Fingers, Play};
 use crate::ui::touch::TouchView;
 
@@ -42,8 +43,10 @@ pub enum Request {
 pub struct WindowInput {
     pub controls: Controls,
     modifiers: ModifiersState,
-    /// The cursor is locked for first person's mouse look.
-    pub cursor_grabbed: bool,
+    /// The cursor lock for first person's mouse look.
+    pointer: PointerLock,
+    /// Where the cursor last moved to, in points.
+    cursor: Option<egui::Pos2>,
     /// Which fingers the menus own, on a touch screen.
     fingers: Fingers,
     /// The last press was a finger's: with touch play, a finger turns the first-person
@@ -84,7 +87,8 @@ impl WindowInput {
             self.finger_last = false;
         }
         let keys_to_menus = !battle.keys || overlay.typing();
-        let consumed = overlay.event(event, !self.cursor_grabbed, keys_to_menus);
+        let locked = self.pointer.held();
+        let consumed = overlay.event(event, !locked, keys_to_menus);
         match event {
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.modifiers = modifiers.state();
@@ -96,25 +100,51 @@ impl WindowInput {
             }
             WindowEvent::KeyboardInput { event, .. } => {
                 if let PhysicalKey::Code(code) = event.physical_key {
-                    return self.key(overlay, code, event.state, event.repeat, battle.playing);
+                    return self.key(
+                        window,
+                        overlay,
+                        code,
+                        event.state,
+                        event.repeat,
+                        battle.playing,
+                    );
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
                 let (width, height, scale) = css_size(window);
                 self.controls
                     .aim_at((position.x, position.y), (width * scale, height * scale));
+                self.cursor = Some(egui::pos2(
+                    (position.x / scale) as f32,
+                    (position.y / scale) as f32,
+                ));
             }
             // A turned phone or a browser's bars changed the screen under the fingers:
             // the stick and the shot let go until they press again (`resized`).
             WindowEvent::Resized(_) => self.controls.touch = TouchInput::default(),
-            // A press on a menu or the HUD's buttons is not a shot; a release always
-            // reaches the controls, so fire never sticks.
+            // A press on a menu or the HUD's buttons is not a shot, nor is the click on
+            // the arena that takes a freed cursor back; a release always reaches the
+            // controls, so fire never sticks. egui learns where the cursor is at its next
+            // frame, so a cursor that jumped onto a button since is found by its place.
             WindowEvent::MouseInput { state, button, .. }
                 if *state == ElementState::Released
                     || (battle.playing
-                        && (self.cursor_grabbed || !(consumed || overlay.wants_pointer()))) =>
+                        && (locked
+                            || !(consumed
+                                || overlay.wants_pointer()
+                                || self.cursor.is_some_and(|cursor| {
+                                    crate::touch::over_ui(&overlay.context, cursor)
+                                })))) =>
             {
-                self.controls.button(*button, *state);
+                if *state == ElementState::Pressed
+                    && !locked
+                    && let Some(grab) = self.pointer.press(battle.playing, now_ms())
+                {
+                    // Within the press, which a browser wants before it locks again.
+                    self.grab(window, grab);
+                } else {
+                    self.controls.button(*button, *state);
+                }
             }
             WindowEvent::MouseWheel { delta, .. } if !overlay.wants_pointer() && battle.wheel => {
                 self.controls
@@ -137,13 +167,15 @@ impl WindowInput {
         };
         self.controls.set_command(command);
         keys.into_iter()
-            .filter_map(|(code, state)| self.key(overlay, code, state, false, playing))
+            .filter_map(|(code, state)| self.key(window, overlay, code, state, false, playing))
             .collect()
     }
 
-    /// A key went down or up. `playing` gates the ammo keys.
+    /// A key went down or up. `playing` gates the ammo keys. Esc with the cursor locked
+    /// only frees it (`pointer_lock.rs`).
     fn key(
         &mut self,
+        window: &Window,
         overlay: &Overlay,
         code: KeyCode,
         state: ElementState,
@@ -158,9 +190,14 @@ impl WindowInput {
         if code == KeyCode::KeyQ && self.modifiers.super_key() {
             return Some(Request::Quit);
         }
-        self.controls
-            .key(code, state, repeat, playing)
-            .map(Request::Shortcut)
+        let shortcut = self.controls.key(code, state, repeat, playing)?;
+        if shortcut == Shortcut::Escape
+            && let Some(grab) = self.pointer.escape(now_ms())
+        {
+            self.grab(window, grab);
+            return None;
+        }
+        Some(Request::Shortcut(shortcut))
     }
 
     /// Hand a finger to the touch controls or the menus; true when egui should see it.
@@ -198,11 +235,40 @@ impl WindowInput {
         })
     }
 
-    /// Lock the cursor while first person steers with the mouse, or let it go. With
-    /// touch play a finger turns the view, which a lock would freeze, until a mouse
-    /// presses again.
+    /// Lock the cursor while first person steers with the mouse (`wanted`), or let it
+    /// go; a room keeps asking while its player is down.
     pub fn hold_pointer(&mut self, window: &Window, wanted: bool) {
+        self.hold_pointer_steering(window, wanted, true);
+    }
+
+    /// [`Self::hold_pointer`] for a player who can act only while `steering`: a death
+    /// keeps a held lock but asks for none, so a cursor Esc freed picks the next tank.
+    /// With touch play a finger turns the view, which a lock would freeze, until a mouse
+    /// presses again.
+    pub fn hold_pointer_steering(&mut self, window: &Window, wanted: bool, steering: bool) {
         let finger_looks = self.finger_last && crate::touch::screen();
-        grab_pointer(window, wanted && !finger_looks, &mut self.cursor_grabbed);
+        let browser = pointer_lock::browser_locked(window);
+        if let Some(grab) = self
+            .pointer
+            .frame(wanted && !finger_looks, steering, browser, now_ms())
+        {
+            self.grab(window, grab);
+        }
+    }
+
+    /// The cursor is locked: raw mouse travel turns the first-person view.
+    pub fn pointer_locked(&self) -> bool {
+        self.pointer.held()
+    }
+
+    /// First person waits for a click on the arena to lock the cursor again.
+    pub fn aim_waits_for_click(&self) -> bool {
+        self.pointer.waits_for_click()
+    }
+
+    fn grab(&mut self, window: &Window, grab: pointer_lock::Grab) {
+        if !pointer_lock::apply(window, grab) {
+            self.pointer.refused();
+        }
     }
 }

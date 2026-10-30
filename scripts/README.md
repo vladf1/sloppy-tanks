@@ -79,16 +79,32 @@ node scripts/desktop-ui-report.mjs artifacts/performance/desktop-ui/native artif
 ## Browser checks
 
 The game page is the desktop crate's egui shell (`index.html`, `pnpm run wasm`), drawn on
-one canvas, so no check drives its menus through the DOM. What remains in a browser are the
-engine fixtures: start `pnpm run dev` and pass the URL it prints. Checks drive installed
-Google Chrome headless with an isolated profile, so no window takes focus; set
-`SLOPPY_HEADED=1` to watch one in a visible window. Each exits non-zero on failure and
-writes screenshots and results to the ignored `artifacts/performance/`. Shared setup lives
-in `browser-helpers.mjs` (`launchChrome()`, `launchGame()`, `collectErrors()`).
+one canvas, so no check drives it through the DOM: a check opens the page with
+`?automation` and reads the shell's state and labelled widgets from `window.sloppyShell`
+(`crates/desktop/src/automation.rs`), then plays it with real mouse, keyboard and CDP touch
+input at those coordinates. Start `pnpm run dev` and pass the URL it prints. Checks drive
+installed Google Chrome headless with an isolated profile, so no window takes focus; set
+`SLOPPY_HEADED=1` to watch one in a visible window, and `SLOPPY_WEBGL=1` to play the
+page's WebGL2 build. Each exits non-zero on failure and writes screenshots to the ignored
+`artifacts/performance/<check>/`. Shared setup lives in `browser-helpers.mjs`
+(`launchGame()`, `openShell()`, `untilState()`, `clickWidget()`, `fingers()`,
+`tapWidget()`, `shellDebug()`); `pnpm run check:browser` runs them all
+(`browser-checks.mjs`).
 
 ```sh
-SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/fixtures-check.mjs
+SLOPPY_URL=http://127.0.0.1:5173/sloppy-tanks/ node scripts/round-check.mjs
 ```
+
+| Check                    | Plays                                                                                                                                                   |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shell-check.mjs`        | Battle Setup's choices, GO, drive, fire, zoom, V, pause, Settings, the report, a second round with the same bodies                                      |
+| `round-check.mjs`        | Every map's start at its spawns, Solo Assault, overview, a collapse, both reports, PLAY AGAIN; bodies and Wasm memory over resets                       |
+| `first-person-check.mjs` | V and the HUD's view button, pointer lock, mouse look per CSS pixel at 1x/2x (and as Safari), Esc twice, the retaking click, death and the respawn pick |
+| `input-check.mjs`        | WASD/arrows, Space, ammo keys and wheel, Shift+wheel zoom, a right-click mine, blur, a hidden page, fullscreen, clicks at 2x and 1.5x                   |
+| `touch-check.mjs`        | A tablet's stick, arena fire, two fingers, mine, zoom keys, pause; Touch controls Auto/On/Off; a touch laptop                                           |
+| `phone-check.mjs`        | The phone edition upright and sideways: Battle Setup's few choices, play by touch, pause, the report; `?phone`                                          |
+| `webgl-check.mjs`        | The backend choice: WebGPU, `?webgl`, the fallbacks to WebGL2 and the failure view                                                                      |
+| `fixtures-check.mjs`     | The engine fixtures below                                                                                                                               |
 
 The dev server serves interactive fixtures, listed on the dev site's
 `/test-pages.html` (allowlist in `dev-site.ts`): `tests/*.browser.html` and

@@ -526,14 +526,15 @@ impl ApplicationHandler for App {
         let DeviceEvent::MouseMotion { delta } = event else {
             return;
         };
-        let input = match &mut self.mode {
-            Some(Mode::Single(session)) => &mut session.input,
-            Some(Mode::Room(room)) => &mut room.input,
+        let (input, window) = match &mut self.mode {
+            Some(Mode::Single(session)) => (&mut session.input, &session.window),
+            Some(Mode::Room(room)) => (&mut room.input, &room.window),
             Some(Mode::Starting(_)) | None => return,
         };
-        if input.cursor_grabbed {
-            // Like the page's `movementX`: macOS reports points, Windows raw counts.
-            input.controls.look(delta.0);
+        if input.pointer_locked() {
+            input
+                .controls
+                .look(crate::pointer_lock::look_travel(window, delta.0));
         }
     }
 
@@ -1121,7 +1122,8 @@ impl Session {
         Ok(())
     }
 
-    /// Grab the cursor while first person steers, so the mouse turns the view.
+    /// Grab the cursor while first person steers, so the mouse turns the view; a death
+    /// keeps it (`pointer_lock.rs`).
     fn hold_pointer(&mut self) {
         let wanted = self.in_round
             && self.first_person
@@ -1129,23 +1131,31 @@ impl Session {
             && self.ui.settings_draft.is_none()
             && self.window.has_focus()
             && !self.hidden();
-        self.input.hold_pointer(&self.window, wanted);
+        self.input
+            .hold_pointer_steering(&self.window, wanted, self.alive);
+        self.ui.aim_hint = self.input.aim_waits_for_click();
     }
 
     /// What a check reads of this frame (`automation.rs`).
     fn automation_state(&mut self) -> automation::State {
+        let touch = self.input.controls.touch;
         automation::State {
             engine: "single",
             in_round: self.in_round,
             phase: automation::phase_name(self.phase),
             alive: self.alive,
             first_person: self.first_person,
+            aim_hint: self.ui.aim_hint,
             multiplayer_tab: self.ui.rooms.multiplayer,
             ready: self.ui.ready,
             status: self.ui.status.clone(),
             settings: self.ui.settings_draft.is_some(),
             touch_controls: self.ui.touch.is_some(),
             touch_screen: crate::touch::screen(),
+            touch_layout: crate::touch::screen()
+                .then(|| (&crate::touch::TouchLayout::of(&self.overlay.context)).into()),
+            stick_push: touch.drive.map(|_| [touch.push.0, touch.push.1]),
+            arena_finger: touch.arena.is_some(),
             failure: self.failure.clone(),
             error: self.game.error(),
             prefs: serde_json::to_value(&self.prefs).unwrap_or_default(),
@@ -1289,27 +1299,6 @@ impl Session {
             self.apply(action);
         }
         quit
-    }
-}
-
-/// Capture the cursor while first person steers (so the mouse turns the view), or
-/// give it back.
-pub fn grab_pointer(window: &Window, wanted: bool, grabbed: &mut bool) {
-    if wanted == *grabbed {
-        return;
-    }
-    if wanted {
-        let captured = window
-            .set_cursor_grab(CursorGrabMode::Locked)
-            .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
-        if captured.is_ok() {
-            window.set_cursor_visible(false);
-            *grabbed = true;
-        }
-    } else {
-        let _ = window.set_cursor_grab(CursorGrabMode::None);
-        window.set_cursor_visible(true);
-        *grabbed = false;
     }
 }
 

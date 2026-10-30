@@ -26,6 +26,9 @@ export function launchChrome() {
   });
 }
 
+/** Chrome's touch emulation warns of its own touch events, which cannot be cancelled. */
+const TOUCH_EMULATION = /Ignored attempt to cancel a touch\w+ event with cancelable=false/;
+
 /**
  * Collect a page's uncaught errors in `errors`, each after `prefix`. `consoleErrors` also
  * collects console.error output (shader compilation failures are only reported there).
@@ -39,21 +42,34 @@ export function collectErrors(page, errors, { consoleErrors = false, prefix = ""
   page.on("console", (message) => {
     // Fixture pages have no icon; Chrome's automatic favicon request is not an error.
     if (message.type() !== "error" || message.location().url.endsWith("/favicon.ico")) return;
+    if (TOUCH_EMULATION.test(message.text())) return;
     errors.push(prefix + message.text());
   });
 }
 
 /**
- * Launch installed Chrome (`launchChrome`) with one desktop context and page. Errors from
- * every page in the context are collected in `errors` (`collectErrors`).
- * @param {{ viewport?: { width: number, height: number }, consoleErrors?: boolean }} [options]
+ * Launch installed Chrome (`launchChrome`) with one context and page, a desktop's unless
+ * the device options say otherwise (`hasTouch` and `isMobile` make a touch screen with a
+ * coarse pointer). Errors from every page in the context are collected in `errors`
+ * (`collectErrors`).
+ * @param {{ viewport?: { width: number, height: number }, consoleErrors?: boolean,
+ *   deviceScaleFactor?: number, hasTouch?: boolean, isMobile?: boolean }} [options]
  */
 export async function launchGame({
   viewport = { width: 1600, height: 900 },
   consoleErrors = false,
+  deviceScaleFactor = 1,
+  hasTouch = false,
+  isMobile = false,
 } = {}) {
   const browser = await launchChrome();
-  const context = await browser.newContext({ viewport, screen: viewport, deviceScaleFactor: 1 });
+  const context = await browser.newContext({
+    viewport,
+    screen: viewport,
+    deviceScaleFactor,
+    hasTouch,
+    isMobile,
+  });
   const errors = [];
   context.on("page", (page) => collectErrors(page, errors, { consoleErrors }));
   const page = await context.newPage();
@@ -123,6 +139,22 @@ export async function findWidget(page, label) {
 }
 
 /**
+ * The widget labelled `label` once a frame lists it (an egui area that has just opened
+ * lists its widgets a frame later).
+ * @param {import("playwright").Page} page
+ * @param {string | RegExp} label
+ */
+export async function untilWidget(page, label, { timeout = 15000 } = {}) {
+  const start = Date.now();
+  for (;;) {
+    const widget = await findWidget(page, label);
+    if (widget) return widget;
+    if (Date.now() - start > timeout) throw new Error(`no widget ${label} on screen`);
+    await nextFrame(page);
+  }
+}
+
+/**
  * Click the middle of the widget labelled `label` with the real mouse, at its CSS
  * coordinates, once a frame shows it, and wait for the frame that takes the click.
  * Returns the widget.
@@ -162,4 +194,69 @@ export function shellDebug(page, name, ...args) {
     ([command, rest]) => window.sloppyShell.debug(command, ...rest),
     [name, args],
   );
+}
+
+/**
+ * Fingers on a touch page (`hasTouch`) through CDP, as a touch screen sends them: a start
+ * or move carries every finger down, an end the one that lifts. Once one has lifted the
+ * others hold still and lift last. Each waits for the shell's next frame.
+ * @param {import("playwright").Page} page
+ */
+export async function fingers(page) {
+  const session = await page.context().newCDPSession(page);
+  const down = new Map();
+  // CDP ends its touch sequence at a touchEnd although fingers stay down: they can still
+  // lift together (an empty touchEnd) but no longer move or lift one by one.
+  let lifted = false;
+  const send = async (type, touchPoints) => {
+    await session.send("Input.dispatchTouchEvent", { type, touchPoints });
+    await nextFrame(page);
+  };
+  const point = (id, x, y) => ({ id, x, y, radiusX: 4, radiusY: 4, force: 1 });
+  return {
+    start(id, x, y) {
+      down.set(id, point(id, x, y));
+      return send("touchStart", [...down.values()]);
+    },
+    move(id, x, y) {
+      if (lifted) throw new Error("CDP moves no finger after another lifted");
+      down.set(id, point(id, x, y));
+      return send("touchMove", [...down.values()]);
+    },
+    end(id) {
+      const finger = down.get(id);
+      down.delete(id);
+      if (!lifted) {
+        lifted = down.size > 0;
+        return send("touchEnd", [finger]);
+      }
+      if (down.size > 0) throw new Error("CDP lifts the rest only together");
+      lifted = false;
+      return send("touchEnd", []);
+    },
+    async tap(id, x, y) {
+      await this.start(id, x, y);
+      await this.end(id);
+    },
+  };
+}
+
+/**
+ * Tap the middle of the widget labelled `label` with a finger (`fingers`) once a frame
+ * shows it enabled. Returns the widget.
+ * @param {import("playwright").Page} page
+ * @param {Awaited<ReturnType<typeof fingers>>} touch
+ * @param {string | RegExp} label
+ */
+export async function tapWidget(page, touch, label, { timeout = 15000 } = {}) {
+  const start = Date.now();
+  for (;;) {
+    const widget = await findWidget(page, label);
+    if (widget?.enabled) {
+      await touch.tap(90, widget.x + widget.width / 2, widget.y + widget.height / 2);
+      return widget;
+    }
+    if (Date.now() - start > timeout) throw new Error(`no enabled widget ${label} to tap`);
+    await nextFrame(page);
+  }
 }

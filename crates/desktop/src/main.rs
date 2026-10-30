@@ -32,6 +32,7 @@ mod ios;
 mod links;
 mod overlay;
 mod page;
+mod pointer_lock;
 mod preferences;
 mod room;
 mod room_api;
