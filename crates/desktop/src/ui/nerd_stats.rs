@@ -31,12 +31,23 @@ fn section_open(state: &UiState, section: &str) -> bool {
 /// same, but a touch screen may have no keyboard.
 pub fn link(context: &egui::Context, state: &mut UiState) {
     let screen = context.content_rect();
-    let font = egui::FontId::proportional(12.0);
+    // A phone's is a tiny "nerds" held in from the screen's rounded corner
+    // (`.phone #nerd-stats`: 16 px and the toggle's 14 px padding from the right, 4 and
+    // 12 from the foot).
+    let (text, size, right, bottom) = if crate::touch::phone() {
+        ("nerds", 10.0, 30.0, 16.0)
+    } else {
+        ("nerd stats", 12.0, 13.0, 10.0)
+    };
+    let font = egui::FontId::proportional(size);
     let painter = context.layer_painter(egui::LayerId::background());
-    let width = paint::text_width(&painter, "nerd stats", font.clone(), 0.0);
+    let width = paint::text_width(&painter, text, font.clone(), 0.0);
     let label = Rect::from_min_size(
-        pos2(screen.right() - 13.0 - width, screen.bottom() - 10.0 - 14.0),
-        vec2(width, 14.0),
+        pos2(
+            screen.right() - right - width,
+            screen.bottom() - bottom - (size + 2.0),
+        ),
+        vec2(width, size + 2.0),
     );
     // The page's 5px padding, and a little more for a finger.
     let target = label.expand(if crate::touch::screen() { 10.0 } else { 5.0 });
@@ -53,7 +64,7 @@ pub fn link(context: &egui::Context, state: &mut UiState) {
                 ui.painter(),
                 label.left_center(),
                 Align2::LEFT_CENTER,
-                "nerd stats",
+                text,
                 font,
                 hexa(0xffffff, if response.hovered() { 0.9 } else { 0.65 }),
                 0.0,

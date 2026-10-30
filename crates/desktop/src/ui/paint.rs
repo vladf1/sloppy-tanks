@@ -450,9 +450,15 @@ pub fn text_width(painter: &Painter, text: &str, font: FontId, spacing: f32) -> 
 
 /// A key cap (`kbd`) centred at `center`; returns its rect.
 pub fn kbd(painter: &Painter, center: Pos2, label: &str, size: f32) -> Rect {
-    let font = bold_font(size);
     let width = kbd_width(painter, label, size);
     let rect = Rect::from_center_size(center, vec2(width, size * 1.3 + 10.0));
+    kbd_in(painter, rect, label, size);
+    rect
+}
+
+/// A key cap filling `rect`, for a key smaller than `kbd`'s (the first-person dial's).
+pub fn kbd_in(painter: &Painter, rect: Rect, label: &str, size: f32) {
+    let font = bold_font(size);
     painter.rect_filled(rect.translate(vec2(0.0, 1.0)), 4, hex(0x050c18));
     painter.add(rounded_vgradient(
         rect.shrink(0.5),
@@ -474,7 +480,6 @@ pub fn kbd(painter: &Painter, center: Pos2, label: &str, size: f32) -> Rect {
         Color32::WHITE,
         0.4,
     );
-    rect
 }
 
 /// The width a key cap for `label` takes.

@@ -2547,6 +2547,10 @@ fn ammo_notice(painter: &Painter, left: f32, plate_top: f32, room: f32, notice: 
     painter.galley(rect.min + vec2(12.0, 7.0), galley, GOLD_HOT);
 }
 
+/// The first-person dial's V key (`.compass-key`: 12 px type on a 15 px line, a pixel
+/// of padding and its border).
+const COMPASS_KEY: Vec2 = vec2(26.0, 18.0);
+
 /// The cockpit's hull compass: a top-down hull turned against the turret's straight up,
 /// with the key back to the overhead view at its foot. A touch screen has the eye button
 /// instead of the key, and its dial sits in the segment's middle.
@@ -2597,7 +2601,11 @@ fn compass_dial(painter: &Painter, rect: Rect, hull_angle: f64) {
     painter.circle_filled(center, 5.5, GOLD);
     // The key that leaves first person; a touch screen has the eye button instead.
     if !crate::touch::screen() {
-        paint::kbd(painter, pos2(center.x, rect.bottom() - 13.0), "V", 12.0);
+        let key = Rect::from_center_size(
+            pos2(center.x, rect.bottom() - COMPASS_KEY.y / 2.0),
+            COMPASS_KEY,
+        );
+        paint::kbd_in(painter, key, "V", 12.0);
     }
 }
 

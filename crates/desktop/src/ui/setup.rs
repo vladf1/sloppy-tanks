@@ -289,6 +289,13 @@ pub(super) fn choice_frame(painter: &Painter, rect: Rect, selected: bool, hovere
     }
 }
 
+/// Until it is chosen a card shows its scene layer at part strength (`.choice-card::before`,
+/// 55%, or 80% hovered): the card's own fill over it at the rest makes the same blend.
+fn dim_unchosen_scene(clip: &Painter, rect: Rect, hovered: bool) {
+    let strength = if hovered { 0.8 } else { 0.55 };
+    clip.rect_filled(rect, 10, fade(card_fill(hovered), 1.0 - strength));
+}
+
 /// An unchosen card's fill (`--card`, `--card-hover`).
 fn card_fill(hovered: bool) -> Color32 {
     if hovered {
@@ -404,11 +411,8 @@ fn map_card(
             ));
         }
     }
-    // Until it is chosen the card shows its scene layer at part strength: the card's own
-    // fill over it at the rest makes the same blend.
     if !selected {
-        let strength = if hovered { 0.8 } else { 0.55 };
-        clip.rect_filled(rect, 10, fade(card_fill(hovered), 1.0 - strength));
+        dim_unchosen_scene(&clip, rect, hovered);
     }
     let text_width = rect.width() - 24.0;
     // A phone's short cards held sideways have room for the name alone, in the card's
@@ -2867,6 +2871,8 @@ fn go_button(
 /// and the room it keeps between rows and inside the tray.
 const PHONE_MARGIN: f32 = 8.0;
 const PHONE_PADDING: f32 = 12.0;
+/// An upright phone's sheet padding: top, sides and bottom (`.phone .menu.start`).
+const PHONE_UPRIGHT_PADDING: [f32; 3] = [14.0, 16.0, 30.0];
 const PHONE_GAP: f32 = 8.0;
 const PHONE_TRAY_PADDING: f32 = 10.0;
 /// Its rows: a section heading, the play tabs, the battle formats' least and most height
@@ -2874,7 +2880,7 @@ const PHONE_TRAY_PADDING: f32 = 10.0;
 /// takes the display face.
 const PHONE_LABEL: f32 = 26.0;
 const PHONE_TABS: f32 = 50.0;
-const PHONE_FORMATS: (f32, f32) = (50.0, 72.0);
+const PHONE_FORMATS: (f32, f32) = (50.0, 53.0);
 const PHONE_UPRIGHT_GO: f32 = 64.0;
 /// Held sideways, the last row: the formats' (or the room's status) well, as tall as a
 /// format key and its padding (`.phone .start .battle-choice .choice-card`), and beside it
@@ -2896,7 +2902,7 @@ const PHONE_TIP: f32 = 18.0;
 /// alone, at most the page's: the name over a 42 px picture). Upright the least fits an
 /// iPhone's Safari with its bars (393×659).
 const PHONE_UPRIGHT_TANK: (f32, f32) = (110.0, 200.0);
-const PHONE_UPRIGHT_MAP: (f32, f32) = (48.0, 76.0);
+const PHONE_UPRIGHT_MAP: (f32, f32) = (48.0, 64.0);
 const PHONE_SIDEWAYS_TANK: (f32, f32) = (56.0, 72.0);
 const PHONE_SIDEWAYS_MAP: (f32, f32) = (40.0, 48.0);
 /// A phone's tank card at least this tall stands its labels over the tank.
@@ -2957,8 +2963,12 @@ fn phone_setup(
         .iter()
         .filter(|map| view.debug || !map.extra())
         .collect();
-    let inset = PHONE_MARGIN + PHONE_PADDING;
-    let width = screen.width() - 2.0 * inset;
+    let [pad_top, pad_side, pad_bottom] = if upright {
+        PHONE_UPRIGHT_PADDING
+    } else {
+        [PHONE_PADDING; 3]
+    };
+    let width = screen.width() - 2.0 * (PHONE_MARGIN + pad_side);
     // Upright GO is the last row; sideways the formats' well is, GO beside it.
     let action_row = if upright {
         PHONE_UPRIGHT_GO
@@ -2984,7 +2994,7 @@ fn phone_setup(
     } else {
         0.0
     };
-    let fixed = 2.0 * inset + PHONE_TABS - 1.0
+    let fixed = 2.0 * PHONE_MARGIN + pad_top + pad_bottom + PHONE_TABS - 1.0
         + tip
         + 2.0 * PHONE_TRAY_PADDING
         + 2.0 * (PHONE_LABEL + PHONE_GAP)
@@ -3036,8 +3046,8 @@ fn phone_setup(
                     )
                     .shrink(PHONE_MARGIN);
                     sheet_glass(&painter, sheet);
-                    let left = sheet.left() + PHONE_PADDING;
-                    let mut y = sheet.top() + PHONE_PADDING;
+                    let left = sheet.left() + pad_side;
+                    let mut y = sheet.top() + pad_top;
                     let cells = |y: f32, left: f32, width: f32, count: usize, height: f32| {
                         let cell = (width - CARD_GAP * (count - 1) as f32) / count as f32;
                         (0..count).map(move |index| {
@@ -3139,7 +3149,7 @@ fn phone_setup(
                     y += PHONE_TABS - 1.0;
                     let tray_rect = Rect::from_min_max(
                         pos2(left, y),
-                        pos2(left + width, sheet.bottom() - PHONE_PADDING),
+                        pos2(left + width, sheet.bottom() - pad_bottom),
                     );
                     tray(&painter, tray_rect, true, true);
                     let inner = tray_rect.shrink(PHONE_TRAY_PADDING);
@@ -3460,6 +3470,12 @@ fn phone_tank_card(
 /// GO, and at the left held sideways.
 fn format_key(painter: &Painter, rect: Rect, battle: &BattleFormat, selected: bool, upright: bool) {
     choice_frame(painter, rect, selected, false);
+    // The phone keeps the posters' scene washes, only without their art.
+    let clip = painter.with_clip_rect(rect.shrink(1.0));
+    battle_scene(&clip, rect, battle.mode == GameMode::Team);
+    if !selected {
+        dim_unchosen_scene(&clip, rect, false);
+    }
     let (at, align) = if upright {
         (rect.center(), Align2::CENTER_CENTER)
     } else {

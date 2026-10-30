@@ -24,6 +24,9 @@ use sloppy_web::recap::RoundRecap;
 const RESULTS_WIDTH: f32 = 1080.0;
 const STACKED_BOARD_SCREEN: f32 = 960.0;
 const PAIRED_TILES_SCREEN: f32 = 760.0;
+/// The ENDED EARLY tag's height (`.early-tag`: 13 px type on a 1.2 line and its
+/// padding).
+const EARLY_TAG_HEIGHT: f32 = 22.6;
 /// The gap between the viewer's round and the boards (`.results-body.with-board`).
 const BODY_GAP: f32 = 18.0;
 /// The banner's cut corner, as the plate's.
@@ -275,8 +278,14 @@ pub fn results(
             let inset_top = if compact { 14.0 } else { 22.0 };
             let inset_bottom = if compact { 12.0 } else { 18.0 };
             let title_size = if compact { 56.0 } else { 72.0 };
-            let eyebrow_height = if ended_early && !solo { 26.0 } else { 15.0 };
-            let title_top = origin.y + inset_top + eyebrow_height + 6.0;
+            let eyebrow_height = if ended_early && !solo {
+                EARLY_TAG_HEIGHT
+            } else {
+                15.0
+            };
+            // Anton sets its capitals lower in the line than Impact's 0.95 line box
+            // (`.dialog-title h2`), so the title rises by a tenth of its size.
+            let title_top = origin.y + inset_top + eyebrow_height + 6.0 - title_size * 0.1;
             let title_height = title_size * 0.95;
             let lede_top = title_top + title_height + 18.0;
             let lede_galley = paint::wrapped(painter, &lede, bold_font(14.0), hex(0xe7f1fb), width);
@@ -318,7 +327,7 @@ pub fn results(
                     pos2(eyebrow_rect.right() + 14.0, origin.y + inset_top),
                     vec2(
                         paint::text_width(painter, "ENDED EARLY", bold_font(13.0), 1.6) + 20.0,
-                        26.0,
+                        EARLY_TAG_HEIGHT,
                     ),
                 );
                 painter.add(paint::rounded_vgradient(

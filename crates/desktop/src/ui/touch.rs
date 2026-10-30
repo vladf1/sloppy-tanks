@@ -235,7 +235,8 @@ fn stick(painter: &Painter, layout: &TouchLayout, input: &TouchInput) {
             if held {
                 hexa(0xffffff, 0.7)
             } else {
-                hexa(0xdff0ff, 0.4)
+                // A phone's smaller ring is a touch firmer at the rim.
+                hexa(0xdff0ff, if phone { 0.55 } else { 0.4 })
             },
         ),
     );

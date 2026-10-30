@@ -27,7 +27,9 @@ pub const DIALOG_PADDING: [f32; 3] = [30.0, 26.0, 28.0];
 /// The narrowest a dialog lays out; a narrower or shorter screen (a phone) shows it
 /// smaller instead, with the margin around it.
 const MIN_DIALOG_WIDTH: f32 = 560.0;
-const DIALOG_MARGIN: f32 = 16.0;
+/// The page's padding round a dialog (`#overlay`), and a phone's (`.phone #overlay`).
+const DIALOG_MARGIN: f32 = 24.0;
+const PHONE_DIALOG_MARGIN: f32 = 8.0;
 /// A phone's pause dialog: its width and padding, and its buttons' height.
 const PHONE_PAUSE_WIDTH: f32 = 420.0;
 const PHONE_PAUSE_PADDING: [f32; 3] = [22.0, 22.0, 22.0];
@@ -109,7 +111,7 @@ pub(super) fn dialog_with_padding(
     build: impl FnOnce(&mut Ui, &Painter, Pos2, f32) -> f32,
 ) {
     let screen = context.content_rect();
-    let room = screen.shrink(DIALOG_MARGIN).size();
+    let room = screen.shrink(dialog_margin()).size();
     let width = width.min(room.x.max(MIN_DIALOG_WIDTH));
     let shown = egui::Area::new(Id::unique(id))
         .anchor(Align2::CENTER_CENTER, [0.0, 0.0])
@@ -136,7 +138,15 @@ pub(super) fn dialog_with_padding(
 
 /// The room a dialog has on screen, inside the margin round it.
 fn dialog_room(context: &egui::Context) -> Vec2 {
-    context.content_rect().shrink(DIALOG_MARGIN).size()
+    context.content_rect().shrink(dialog_margin()).size()
+}
+
+fn dialog_margin() -> f32 {
+    if crate::touch::phone() {
+        PHONE_DIALOG_MARGIN
+    } else {
+        DIALOG_MARGIN
+    }
 }
 
 /// A phone's dialog `width`, narrowed to fit the screen, as `max-width` narrows the page's:
