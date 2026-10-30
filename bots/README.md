@@ -47,10 +47,12 @@ pnpm run bots -- status
 pnpm run bots -- stop apac              # or no region to stop all
 ```
 
-The root URL serves a control page with the same actions; its **Mode** picks load bots
-or pilots. There is no authentication: anyone with the URL can start and stop bots,
-bounded by the 32-bot, 8-pilot and 6-hour limits per region. `stop` stops a region's
-load bots and pilots together.
+The root URL serves a control page (`control-page.ts`, plain HTML, CSS and script) with
+the same actions: a form whose **What to run** picks load bots or pilots and which says
+what it will start, and a card per running region with its own **Stop region**. There
+is no authentication: anyone with the URL can start and stop bots, bounded by the
+32-bot, 8-pilot and 6-hour limits per region. `stop` stops a region's load bots and
+pilots together.
 
 Local development: run both Workers in one session,
 `pnpm exec wrangler dev -c bots/wrangler.jsonc -c bots/pilots.wrangler.jsonc` (after
@@ -60,7 +62,7 @@ The bots Worker alone runs load bots and reports the pilots Worker as unreachabl
 
 ## Pilots
 
-With `--brain` (or **Mode: Pilots** on the control page), a region runs up to 8 pilots:
+With `--brain` (or **Pilots** on the control page), a region runs up to 8 pilots:
 players driven by the bot brain through the browser's own network client
 ([crates/pilot](../crates/pilot/README.md)), compiled to Wasm
 (`bots/generated/sloppy_pilot.wasm`, built by `pnpm run pilot:build`). They run in the

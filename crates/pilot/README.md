@@ -89,7 +89,7 @@ time is up (`--minutes`, 10 by default), on Ctrl-C, or once every connection has
 the pilots send `leave` and their reports print as JSON (`--report FILE` writes them to a
 file).
 
-From Cloudflare regions, through the bots control page (**Mode: Pilots**) or its
+From Cloudflare regions, through the bots control page (**Pilots**) or its
 command line (see `bots/README.md`). The pilots run in their own Worker, which the
 control page reaches over a service binding:
 
