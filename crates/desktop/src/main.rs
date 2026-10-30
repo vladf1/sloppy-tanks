@@ -18,6 +18,7 @@ mod input;
 #[cfg(target_os = "ios")]
 mod ios;
 mod overlay;
+mod page;
 mod preferences;
 mod room;
 mod room_api;
@@ -43,7 +44,17 @@ fn main() {
     }
     #[cfg(target_arch = "wasm32")]
     {
-        console_error_panic_hook::set_once();
+        // A bake worker runs this module too (`bakes.rs`), only to bake.
+        if web_sys::window().is_none() {
+            console_error_panic_hook::set_once();
+            return;
+        }
+        // A panic stops the game (a release build aborts): the console has the details,
+        // and the page says so in place of the game.
+        std::panic::set_hook(Box::new(|info| {
+            console_error_panic_hook::hook(info);
+            page::failed(&format!("The game stopped: {info}"));
+        }));
         touch::detect();
     }
     let arguments = arguments();

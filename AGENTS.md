@@ -50,7 +50,8 @@ the server:
   (`sloppy-render`'s `native` feature), egui menus and HUD, and the same `Game`
   and `NetGame` (`sloppy-web`'s `native` feature). Built for wasm32
   (`pnpm run wasm`, into the ignored `src/generated/shell/`) it is the web page:
-  `index.html` only starts it, on the browser's WebGPU. It passes and
+  `index.html` only starts it, on the browser's WebGPU, behind a loading view that
+  learns how it goes from `page.rs` (`data-shell`, `sloppy:*` marks). It passes and
   reads their values typed (the second `impl` block of `game.rs` and `net_game.rs`),
   never their JSON (`crates/web/tests/fixtures/page-json.json` pins that byte for
   byte), and only lays out and plays what they produce. Game rules stay out of the

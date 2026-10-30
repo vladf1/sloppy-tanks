@@ -604,12 +604,17 @@ impl RoomSession {
             }
         }
         if let Some(bake) = &self.bake
-            && let Some(pixels) = bake.finished()
+            && let Some(baked) = bake.finished()
         {
             let key = bake.key.clone();
             self.bake = None;
-            if let Err(error) = self.game.supply_pixels(&key, &pixels) {
-                eprintln!("{}", engine_error(error));
+            match baked {
+                Ok(pixels) => {
+                    if let Err(error) = self.game.supply_pixels(&key, &pixels) {
+                        eprintln!("{}", engine_error(error));
+                    }
+                }
+                Err(_) => self.game.release_texture_bake(&key),
             }
         }
         let status = self.game.prepare(PREPARE_BUDGET, now);
@@ -666,6 +671,7 @@ impl RoomSession {
     /// The renderer stopped: give up the connection, and the engine says so.
     fn fail(&mut self, error: &str) {
         eprintln!("The room stopped: {error}");
+        crate::page::failed(&format!("The renderer stopped: {error}"));
         self.stopped = true;
         self.input.controls.clear();
         self.game.renderer_failed();
@@ -730,6 +736,9 @@ impl RoomSession {
         });
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
+        if self.frame_shown {
+            crate::page::frame_presented();
+        }
         self.hidden_changed();
         for action in actions {
             quit |= self.apply(action);

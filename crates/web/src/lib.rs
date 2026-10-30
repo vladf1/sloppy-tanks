@@ -69,9 +69,9 @@ pub use net_game::{NetConfig, NetGame};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
 pub use page::clock_start;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
-pub use page::{CameraPreferences, ViewConfig};
+pub use page::{BakedPixels, PageError, now_ms};
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
-pub use page::{PageError, now_ms};
+pub use page::{CameraPreferences, ViewConfig};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
 pub use records::set_records_file;
 

@@ -24,7 +24,7 @@
         margin: 0;
         height: 100%;
         overflow: hidden;
-        background: #0a1527;
+        background: #070f1d;
       }
       /* winit appends the shell's canvas; it fills the page and takes the keys. On a
          touch screen fingers drive the game: no scrolling, zooming, selection, callout
@@ -40,22 +40,343 @@
         -webkit-touch-callout: none;
         -webkit-tap-highlight-color: transparent;
       }
+      /* The loading view, painted with the page's first bytes and kept over the canvas
+         until the shell has shown its first frame (`data-shell` on the root,
+         crates/desktop/src/page.rs): Battle Setup's dusk sky and the logo, with what is
+         loading and, when it fails, why. */
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 34px;
+        padding: 24px;
+        color: #f4f9ff;
+        font:
+          13px/1.45 system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        background:
+          radial-gradient(ellipse 80% 80% at 50% 50%, transparent 55%, #02050bcc 100%),
+          radial-gradient(ellipse 55% 30% at 50% 66%, #ffb35c55, transparent 70%),
+          radial-gradient(ellipse 90% 45% at 50% 70%, #ff7a3d2e, transparent 75%),
+          radial-gradient(ellipse 70% 60% at 50% 0%, #1d3f7a66, transparent 70%),
+          linear-gradient(#060c1a, #0f2347 42%, #2a3d6b 60%, #5a4a6a 70%, #1a2338 78%, #070f1d);
+        transition:
+          opacity 0.25s,
+          display 0.25s allow-discrete;
+      }
+      [data-shell="ready"] #boot {
+        display: none;
+        opacity: 0;
+      }
+      .boot-brand {
+        display: grid;
+        justify-items: center;
+        color: #fff;
+        font:
+          400 clamp(32px, 9vw, 44px) / 0.82 Impact,
+          Haettenschweiler,
+          "Arial Narrow Bold",
+          sans-serif;
+        letter-spacing: 0.5px;
+        text-shadow:
+          0 3px 0 #0b1a30,
+          0 6px 18px #000a;
+        transform: rotate(-4deg) skewX(-6deg);
+      }
+      .boot-brand b {
+        font-weight: 400;
+      }
+      .boot-brand b:last-child {
+        color: #ffcf38;
+        font-size: 1.52em;
+        text-shadow:
+          0 3px 0 #7a4a0a,
+          0 6px 22px #ff9d1c55;
+      }
+      .boot-card {
+        box-sizing: border-box;
+        width: min(380px, calc(100vw - 48px));
+        padding: 13px 16px 14px;
+        border: 1px solid #8bb9dc29;
+        border-radius: 10px;
+        background: #0b1d36e6;
+      }
+      .boot-card p {
+        margin: 0;
+      }
+      #boot-status {
+        position: relative;
+        padding-left: 16px;
+        color: #ffcf38;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.4px;
+        font-variant-numeric: tabular-nums;
+      }
+      #boot-status::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: calc(0.725em - 4px);
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 0 3px #ffcf3826;
+      }
+      .boot-track {
+        height: 4px;
+        margin-top: 10px;
+        overflow: hidden;
+        border-radius: 4px;
+        background: #88b9dc1a;
+      }
+      #boot-bar {
+        display: block;
+        width: 38%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, transparent, #ffcf38, #ffe58a);
+        box-shadow: 0 0 10px #ffcf3899;
+        animation: boot-sweep 1.4s ease-in-out infinite;
+      }
+      #boot[data-progress] #boot-bar {
+        background: linear-gradient(90deg, #ffcf38, #ffe58a);
+        animation: none;
+        transition: width 0.15s;
+      }
+      @keyframes boot-sweep {
+        from {
+          transform: translateX(-100%);
+        }
+        to {
+          transform: translateX(365%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-bar {
+          width: 100%;
+          opacity: 0.65;
+          animation: none;
+        }
+      }
+      .boot-card .boot-more {
+        margin-top: 10px;
+        color: #a9c0d8;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      #boot-note {
+        max-height: 30vh;
+        overflow-y: auto;
+        color: #f4f9ff;
+      }
+      #boot-retry {
+        margin-top: 14px;
+        padding: 9px 26px;
+        border: 0;
+        border-radius: 8px;
+        color: #2a1600;
+        background: linear-gradient(180deg, #ffe58a, #ffcf38 45%, #ff9d1c);
+        font:
+          400 17px/1 Impact,
+          Haettenschweiler,
+          "Arial Narrow Bold",
+          sans-serif;
+        letter-spacing: 1px;
+        cursor: pointer;
+      }
+      #boot-retry:focus-visible {
+        outline: 2px solid #ffe58a;
+        outline-offset: 2px;
+      }
+      [data-shell="failed"] #boot-status {
+        color: #ffb2a7;
+      }
+      [data-shell="failed"] #boot-status::before {
+        box-shadow: 0 0 0 3px #ffb2a720;
+      }
+      [data-shell="failed"] .boot-track {
+        display: none;
+      }
     </style>
   </head>
   <body>
-    <noscript>This game needs JavaScript enabled to load the arena.</noscript>
+    <div id="boot">
+      <div class="boot-brand" aria-hidden="true"><b>SLOPPY</b><b>TANKS</b></div>
+      <div class="boot-card" role="status">
+        <p id="boot-status">Loading the game…</p>
+        <div class="boot-track"><span id="boot-bar"></span></div>
+        <p id="boot-note" class="boot-more" hidden></p>
+        <p id="boot-hint" class="boot-more" hidden></p>
+        <noscript><p class="boot-more">This game needs JavaScript enabled.</p></noscript>
+        <button id="boot-retry" type="button" hidden>RETRY</button>
+      </div>
+    </div>
     <!-- The desktop app's egui shell built for the page (`pnpm run wasm`): on WebGPU, or
          its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it;
-         the WebGPU build reloads with it when its engine cannot start after all).
-         It fetches the textures from the site beside this page. -->
+         the WebGPU build reloads with it when its engine cannot start after all). Only
+         the chosen build's glue and binary download; the binary streams into its
+         instance while the loading view counts its bytes. The shell then fetches the
+         textures from the site beside this page and tells the page how it goes
+         (crates/desktop/src/page.rs). Marks for the measurements: `sloppy:boot`,
+         `sloppy:downloaded` and `sloppy:shell-started` here, then the shell's. -->
     <script type="module">
-      const forceWebgl = new URLSearchParams(location.search).has("webgl");
-      const adapter =
-        !forceWebgl && navigator.gpu && (await navigator.gpu.requestAdapter().catch(() => null));
-      const { default: init } = adapter
-        ? await import("/src/generated/shell/sloppy-tanks.js")
-        : await import("/src/generated/shell-webgl/sloppy-tanks-webgl.js");
-      init();
+      import webgpuBinary from "/src/generated/shell/sloppy-tanks_bg.wasm?url";
+      import webglBinary from "/src/generated/shell-webgl/sloppy-tanks-webgl_bg.wasm?url";
+
+      performance.mark("sloppy:boot");
+      const root = document.documentElement;
+      const view = document.getElementById("boot");
+      const status = document.getElementById("boot-status");
+      const bar = document.getElementById("boot-bar");
+      const note = document.getElementById("boot-note");
+      const hint = document.getElementById("boot-hint");
+      const retry = document.getElementById("boot-retry");
+      retry.addEventListener("click", () => location.reload());
+
+      /** Loading that says nothing new for this long offers a retry. */
+      const STALL_MS = 20000;
+      let stall;
+      const show = (element, text) => {
+        element.textContent = text;
+        element.hidden = !text;
+      };
+      let failed = false;
+      const say = (line) => {
+        if (failed) return;
+        status.textContent = line;
+        clearTimeout(stall);
+        stall = setTimeout(() => {
+          if (!root.dataset.shell) {
+            show(hint, "This is taking longer than usual.");
+            retry.hidden = false;
+          }
+        }, STALL_MS);
+      };
+
+      const OFFLINE = "Check your connection, then try again.";
+      const OLD_BROWSER = "Update your browser, or try another one.";
+      const GRAPHICS = /\b(WebGPU|WebGL) (adapter|device|canvas|window) unavailable/;
+      /** Say why the game cannot go on, with a retry; the first reason stands. */
+      const fail = (reason, help) => {
+        if (failed) return;
+        failed = true;
+        clearTimeout(stall);
+        root.dataset.shell = "failed";
+        status.textContent = performance.getEntriesByName("sloppy:first-frame").length
+          ? "Sloppy Tanks stopped"
+          : "Sloppy Tanks could not start";
+        status.parentElement.setAttribute("role", "alert");
+        show(note, reason);
+        const graphics =
+          "Turn on hardware acceleration in your browser's settings, or try another browser.";
+        show(hint, help ?? (GRAPHICS.test(reason) ? graphics : "Reload to try again."));
+        retry.hidden = false;
+        retry.focus();
+      };
+      const message = (error) => (error instanceof Error ? error.message : String(error));
+      // The shell's own word (a panic, no graphics), or a trap that stopped it without
+      // one (out of memory).
+      addEventListener("sloppy:failed", (event) => fail(String(event.detail)));
+      const trapped = (error) => {
+        if (error instanceof WebAssembly.RuntimeError) fail(`The game stopped: ${error.message}`);
+      };
+      addEventListener("error", (event) => trapped(event.error));
+      addEventListener("unhandledrejection", (event) => trapped(event.reason));
+
+      /** Fetch `url` and count its `bytes` in the loading view as the response streams;
+       * `complete` settles on whether every byte came. */
+      const download = async (url, bytes) => {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+        // A compressed response's length is not what it delivers (vite.config.ts).
+        const total =
+          bytes ||
+          (!response.headers.has("content-encoding") &&
+            Number(response.headers.get("content-length"))) ||
+          0;
+        const megabytes = (count) => (count / 1e6).toFixed(1);
+        const of = total ? ` of ${megabytes(total)}` : "";
+        if (total) view.dataset.progress = "";
+        const reader = response.clone().body.getReader();
+        const complete = (async () => {
+          let received = 0;
+          for (let chunk; !(chunk = await reader.read()).done;) {
+            received += chunk.value.byteLength;
+            say(`Downloading the game… ${megabytes(received)}${of} MB`);
+            if (total) bar.style.width = `${Math.min(100, (100 * received) / total)}%`;
+          }
+          performance.mark("sloppy:downloaded");
+          delete view.dataset.progress;
+          bar.style.width = "";
+          say("Starting the engine…");
+          return received >= total;
+        })().catch(() => false);
+        return { response, complete };
+      };
+
+      // The shell bakes generated textures in workers that run its module (bakes.rs).
+      window.sloppyBakeWorker = () =>
+        new Worker(new URL("/src/bake-worker.ts", import.meta.url), { type: "module" });
+
+      if (typeof WebAssembly !== "object") {
+        fail("This browser cannot run WebAssembly.", OLD_BROWSER);
+      } else {
+        say("Loading the game…");
+        const forceWebgl = new URLSearchParams(location.search).has("webgl");
+        const adapter =
+          !forceWebgl && navigator.gpu && (await navigator.gpu.requestAdapter().catch(() => null));
+        const [webgpuBytes, webglBytes] = (
+          document.querySelector('meta[name="sloppy-shell-bytes"]')?.content ?? ""
+        )
+          .split(",")
+          .map(Number);
+        const glue = adapter
+          ? import("/src/generated/shell/sloppy-tanks.js")
+          : import("/src/generated/shell-webgl/sloppy-tanks-webgl.js");
+        const binary = adapter
+          ? download(webgpuBinary, webgpuBytes)
+          : download(webglBinary, webglBytes);
+        let init, response, complete;
+        try {
+          [{ default: init }, { response, complete }] = await Promise.all([
+            glue.catch((error) => {
+              throw new Error(`The game's code did not load: ${message(error)}`);
+            }),
+            binary.catch((error) => {
+              throw new Error(`The game did not download: ${message(error)}`);
+            }),
+          ]);
+        } catch (error) {
+          fail(message(error), OFFLINE);
+        }
+        if (init) {
+          try {
+            await init({ module_or_path: response });
+            performance.mark("sloppy:shell-started");
+          } catch (error) {
+            if (!(await complete)) {
+              console.error(error);
+              fail("The game did not download completely.", OFFLINE);
+            } else if (error instanceof WebAssembly.CompileError) {
+              fail(`This browser cannot run the game: ${error.message}`, OLD_BROWSER);
+            } else if (error instanceof WebAssembly.RuntimeError) {
+              trapped(error);
+            } else {
+              // An exception in its start, or a binary from another build (a stale cache).
+              fail(`The game could not start: ${message(error)}`);
+            }
+          }
+        }
+      }
     </script>
   </body>
 </html>

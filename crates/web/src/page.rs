@@ -61,6 +61,13 @@ pub type PageError = JsValue;
 #[cfg(not(target_arch = "wasm32"))]
 pub type PageError = String;
 
+/// A shell's baked RGBA rows (`Game::supply_pixels`): on the page a JS array, filled by
+/// its bake workers, so the pixels never enter this instance's heap.
+#[cfg(target_arch = "wasm32")]
+pub type BakedPixels = js_sys::Uint8Array;
+#[cfg(not(target_arch = "wasm32"))]
+pub type BakedPixels = [u8];
+
 #[cfg(target_arch = "wasm32")]
 pub fn js_error(message: impl Into<String>) -> PageError {
     js_sys::Error::new(&message.into()).into()

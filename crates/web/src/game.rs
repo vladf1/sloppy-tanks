@@ -99,8 +99,9 @@ use crate::frame_slot::{self, phase_code};
 use crate::hud::{EffectTimers, Hud, Loading, Scoreboard, simulation_hud};
 use crate::nerd_rows::{GameStats, SceneStats, StatsSection, game_sections};
 use crate::page::{
-    CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED, PageError,
-    PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result, queue_event,
+    BakedPixels, CameraPreferences, CanvasSize, Graphics, HUD_UPDATE_EVERY_FRAMES, PREPARED,
+    PageError, PageView, ViewConfig, aim, create_view, js_error, now_ms, parse, prepare_result,
+    queue_event,
 };
 use crate::recap::{RoundRecap, round_recap};
 use crate::sounds::SoundPlanner;
@@ -853,10 +854,8 @@ impl Game {
 /// The calls above that cross the boundary as JSON or packed numbers, typed for a Rust
 /// shell (the desktop app); the page's getters serialize these same values.
 impl Game {
-    /// The pixels of a claimed bake, baked on the shell's threads.
-    pub fn supply_pixels(&mut self, key: &str, rgba: &[u8]) -> Result<bool, PageError> {
-        #[cfg(target_arch = "wasm32")]
-        let rgba = &js_sys::Uint8Array::from(rgba);
+    /// The pixels of a claimed bake, baked on the shell's threads or the page's workers.
+    pub fn supply_pixels(&mut self, key: &str, rgba: &BakedPixels) -> Result<bool, PageError> {
         self.view.supply_texture(key, rgba).map_err(js_error)
     }
 

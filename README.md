@@ -44,7 +44,10 @@ Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. The pa
 (`index.html`) is the desktop app's egui shell (`crates/desktop`) built for wasm32: Vite
 serves its release Wasm from `src/generated/shell/`; it does not compile Rust, so run
 `pnpm run wasm` again after changing a crate. The page's query reads as the app's command
-line: `?debug` is `--debug`.
+line: `?debug` is `--debug`. Until the shell shows its first frame, the page's own loading
+view shows the download and, when the game cannot start, why, with a retry; the shell
+reports to it and to measurements through `crates/desktop/src/page.rs` (the root's
+`data-shell` and `sloppy:*` performance marks).
 
 Rendering needs WebGPU (HTTPS or localhost, and a supporting browser and GPU).
 
