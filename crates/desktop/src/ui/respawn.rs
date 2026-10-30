@@ -15,6 +15,11 @@ use super::theme::{GOLD, GOLD_HOT, bold_font, display_font};
 use super::{Action, UiState, View};
 
 /// The card's widest, and the room it keeps from the screen's bottom edge.
+/// The heading over the respawn card's tank choice and the line that follows it.
+const CHOICE_TITLE: &str = "CHOOSE YOUR NEXT TANK";
+const CHOICE_LINE: &str = "It rolls out when the timer ends";
+const CHOICE_LINE_FONT: egui::FontId = egui::FontId::proportional(12.0);
+const CHOICE_LINE_GAP: f32 = 12.0;
 const CARD_WIDTH: f32 = 720.0;
 const BOTTOM_ROOM: f32 = 48.0;
 /// The score bar's room above the card, which a short screen (a phone on its side)
@@ -44,7 +49,13 @@ pub fn card(
     let width = (screen.width() - 48.0).min(CARD_WIDTH);
     let head_height = 96.0;
     let cards_height = 170.0;
-    let height = 14.0 + head_height + 12.0 + 40.0 + cards_height + 16.0;
+    // The line under the choice's heading goes beside it where both fit, as on the page.
+    let font_painter = context.layer_painter(LayerId::background());
+    let choice_width = paint::text_width(&font_painter, CHOICE_TITLE, bold_font(14.0), 1.6);
+    let line_width = paint::text_width(&font_painter, CHOICE_LINE, CHOICE_LINE_FONT, 0.0);
+    let line_beside = 18.0 + choice_width + CHOICE_LINE_GAP + line_width + 18.0 <= width;
+    let choice_head = if line_beside { 28.0 } else { 40.0 };
+    let height = 14.0 + head_height + 12.0 + choice_head + cards_height + 16.0;
     let origin = pos2(
         screen.center().x - width / 2.0,
         screen.bottom() - BOTTOM_ROOM - height + (1.0 - rise) * 24.0,
@@ -113,25 +124,33 @@ pub fn card(
             );
             // The choice of the next tank.
             let mut y = head.bottom() + 12.0;
-            paint::text(
+            let title = paint::text(
                 &painter,
                 pos2(rect.left() + 18.0, y),
                 Align2::LEFT_TOP,
-                "CHOOSE YOUR NEXT TANK",
+                CHOICE_TITLE,
                 bold_font(14.0),
                 hex(0xeef5fc),
                 1.6,
             );
+            let (line_at, line_align) = if line_beside {
+                (
+                    pos2(title.right() + CHOICE_LINE_GAP, title.center().y),
+                    Align2::LEFT_CENTER,
+                )
+            } else {
+                (pos2(rect.left() + 18.0, y + 19.0), Align2::LEFT_TOP)
+            };
             paint::text(
                 &painter,
-                pos2(rect.left() + 18.0, y + 19.0),
-                Align2::LEFT_TOP,
-                "It rolls out when the timer ends",
-                egui::FontId::proportional(12.0),
+                line_at,
+                line_align,
+                CHOICE_LINE,
+                CHOICE_LINE_FONT,
                 hex(0xa9c0d8),
                 0.0,
             );
-            y += 40.0;
+            y += choice_head;
             let gap = 10.0;
             let card_width = (width - 36.0 - 2.0 * gap) / 3.0;
             let team = if hud.game_mode == GameMode::Solo {

@@ -1139,7 +1139,9 @@ pub fn settings(
                 &mut draft.graphics,
             );
             y += 50.0 + under;
-            if crate::app::offers_fullscreen() {
+            // A page goes fullscreen only from a press (the HUD's button), so it keeps
+            // no fullscreen choice, as the old page kept none.
+            if crate::app::offers_fullscreen() && cfg!(not(target_arch = "wasm32")) {
                 setting_label(
                     painter,
                     pos2(origin.x, y),
@@ -1245,7 +1247,7 @@ pub fn settings(
                     draft.tank_speed = 1.0;
                     draft.bullet_speed = 1.0;
                 }
-                y += 26.0;
+                y += 34.0;
                 for (name, note, value, id) in [
                     (
                         "Tank base speed",
