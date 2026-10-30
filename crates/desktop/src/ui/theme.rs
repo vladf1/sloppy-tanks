@@ -207,6 +207,9 @@ pub fn install(context: &egui::Context) {
     visuals.widgets.hovered.weak_bg_fill = BLUE_DEEP;
     visuals.widgets.active.weak_bg_fill = GOLD_DEEP;
     visuals.hyperlink_color = TEXT_LABEL;
+    // A hand over every button, as the page's `button { cursor: pointer }`; the painted
+    // ones show it through `paint::labelled`.
+    visuals.interact_cursor = Some(egui::CursorIcon::PointingHand);
     style.spacing.button_padding = egui::vec2(12.0, 6.0);
     style.spacing.item_spacing = egui::vec2(8.0, 8.0);
     context.set_global_style(style);

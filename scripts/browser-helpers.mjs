@@ -133,7 +133,7 @@ export function nextFrame(page, extras = []) {
         const stopped = () => {
           if (root.dataset.shell !== "failed") return false;
           reject(
-            new Error(`the shell stopped: ${document.getElementById("boot-note")?.textContent}`),
+            new Error(`the shell stopped: ${document.getElementById("boot-note")?.dataset.detail}`),
           );
           return true;
         };

@@ -596,10 +596,12 @@ pub enum ButtonStyle {
 }
 
 /// Name a painted button for assistive technology and the page's checks, which find
-/// it by `label` in egui's AccessKit tree (`automation.rs`).
+/// it by `label` in egui's AccessKit tree (`automation.rs`), and show the hand over it
+/// while it can be clicked.
 pub fn labelled(response: &Response, enabled: bool, label: &str) {
     response
         .widget_info(|| egui::WidgetInfo::labeled(egui::accesskit::Role::Button, enabled, label));
+    point_at(response, enabled);
 }
 
 /// A card, tab or switch that is on or off, named like [`labelled`].
@@ -607,6 +609,15 @@ pub fn labelled_choice(response: &Response, enabled: bool, selected: bool, label
     response.widget_info(|| {
         egui::WidgetInfo::selected(egui::accesskit::Role::Button, enabled, selected, label)
     });
+    point_at(response, enabled);
+}
+
+/// The hand over a widget the pointer can click (`button { cursor: pointer }`); a
+/// caller may still show another cursor after (a locked card's).
+fn point_at(response: &Response, enabled: bool) {
+    if enabled && response.sense.senses_click() && response.hovered() {
+        response.ctx.set_cursor_icon(egui::CursorIcon::PointingHand);
+    }
 }
 
 /// The type on a button: a dialog's bold capitals (`.primary`, 15 px with 1.5 px between
@@ -724,9 +735,10 @@ fn lettered_button(
             0.0
         },
     ));
+    let glint = (style == ButtonStyle::Primary).then(|| glint_progress(ui, &response, hovered));
     let painter = ui.painter();
     let ink = match style {
-        ButtonStyle::Primary => hex(0x1a2233),
+        ButtonStyle::Primary => brighten(hex(0x1a2233), hovered),
         ButtonStyle::Secondary => {
             if hovered {
                 Color32::WHITE
@@ -738,30 +750,39 @@ fn lettered_button(
     };
     match style {
         ButtonStyle::Primary => {
-            if hovered {
-                painter.rect_filled(rect.expand(3.0), 12, hexa(0xffb21c, 0.25));
-            }
-            painter.rect_filled(rect, 10, hex(0xf4a91a));
-            let top = if enabled {
-                hex(0xffe46e)
+            let glow = if pressed {
+                PRIMARY_GLOW_PRESSED
+            } else if hovered {
+                PRIMARY_GLOW_HOVER
             } else {
-                hex(0x9a8a50)
+                PRIMARY_GLOW
             };
-            let middle = if enabled { GOLD } else { hex(0x8c7a3c) };
-            let bottom = if enabled {
-                hex(0xf4a91a)
+            painter.add(glow.as_shape(rect, 10));
+            let (top, middle, bottom) = if enabled {
+                (hex(0xffe46e), GOLD, hex(0xf4a91a))
             } else {
-                hex(0x6e5a24)
+                (hex(0x9a8a50), hex(0x8c7a3c), hex(0x6e5a24))
             };
+            let [top, middle, bottom, ledge] =
+                [top, middle, bottom, hex(0xc97d0e)].map(|color| brighten(color, hovered));
+            painter.rect_filled(rect, 10, bottom);
+            // `inset 0 1px #fff9` over the top and `inset 0 -3px #c97d0e` (1 px pressed)
+            // under the foot, each meeting the gradient over half a pixel.
+            let height = rect.height().max(1.0);
+            let highlight = mix(top, Color32::WHITE, 0.6);
+            let ledge_top = 1.0 - if pressed { 1.0 } else { 3.0 } / height;
+            let edge = 0.5 / height;
             painter.add(rounded_vgradient(
                 rect,
                 [10.0; 4],
                 &[
-                    (0.0, top),
+                    (0.0, highlight),
+                    (1.0 / height, highlight),
+                    (1.0 / height + edge, top),
                     (0.48, middle),
-                    (0.91, bottom),
-                    (0.92, hex(0xc97d0e)),
-                    (1.0, hex(0xc97d0e)),
+                    (ledge_top - edge, bottom),
+                    (ledge_top, ledge),
+                    (1.0, ledge),
                 ],
             ));
         }
@@ -799,7 +820,132 @@ fn lettered_button(
         ink,
         spacing,
     );
+    if let Some(Some(progress)) = glint {
+        painter.add(glint_shape(rect, 10.0, progress));
+    }
     response
+}
+
+/// The gold button's warm glow (`.primary`'s outer `box-shadow`): at rest, under the
+/// pointer and pressed. egui fades a blur linearly, so each is half again the CSS blur.
+const PRIMARY_GLOW: egui::epaint::Shadow = egui::epaint::Shadow {
+    offset: [0, 8],
+    blur: 36,
+    spread: 0,
+    color: Color32::from_rgba_unmultiplied_const(0xff, 0xb2, 0x1c, 0x33),
+};
+const PRIMARY_GLOW_HOVER: egui::epaint::Shadow = egui::epaint::Shadow {
+    offset: [0, 10],
+    blur: 45,
+    spread: 0,
+    color: Color32::from_rgba_unmultiplied_const(0xff, 0xb2, 0x1c, 0x66),
+};
+const PRIMARY_GLOW_PRESSED: egui::epaint::Shadow = egui::epaint::Shadow {
+    offset: [0, 4],
+    blur: 18,
+    spread: 0,
+    color: Color32::from_rgba_unmultiplied_const(0xff, 0xb2, 0x1c, 0x44),
+};
+/// The gold under the pointer (`filter: brightness(1.07)`).
+const PRIMARY_HOVER_BRIGHTNESS: f32 = 1.07;
+/// The glint's one sweep across a gold button the pointer came onto (`.primary::after`,
+/// `transition: transform 0.6s ease`).
+const GLINT_SECONDS: f64 = 0.6;
+/// The glint band: its width and its start and end left edges, as shares of the
+/// button's width (`left: -40%; width: 30%`, moved from `-120%` to `560%` of itself),
+/// its lean (`skewX(-20deg)`) and its brightest white (`#ffffff8c`).
+const GLINT_WIDTH: f32 = 0.3;
+const GLINT_FROM: f32 = -0.4 - 1.2 * GLINT_WIDTH;
+const GLINT_TO: f32 = -0.4 + 5.6 * GLINT_WIDTH;
+const GLINT_LEAN: f32 = 0.364;
+const GLINT_PEAK: f32 = 0x8c as f32 / 255.0;
+
+/// `color` brightened like the gold under the pointer, when `hovered`.
+fn brighten(color: Color32, hovered: bool) -> Color32 {
+    if !hovered {
+        return color;
+    }
+    let [r, g, b, a] = color.to_srgba_unmultiplied();
+    let up = |channel: u8| (f32::from(channel) * PRIMARY_HOVER_BRIGHTNESS).min(255.0) as u8;
+    Color32::from_rgba_unmultiplied(up(r), up(g), up(b), a)
+}
+
+/// How far the glint has crossed a gold button (0 to 1) since the pointer came onto it,
+/// while it is crossing; `None` once it has gone or off the button. The sweep runs once
+/// per arrival, at one fixed rate.
+fn glint_progress(ui: &Ui, response: &Response, hovered: bool) -> Option<f32> {
+    let id = response.id.with("glint");
+    let context = ui.ctx();
+    if !hovered {
+        context.data_mut(|data| data.remove::<f64>(id));
+        return None;
+    }
+    let now = ui.input(|input| input.time);
+    let start = context.data_mut(|data| *data.get_temp_mut_or(id, now));
+    let progress = (now - start) / GLINT_SECONDS;
+    if progress >= 1.0 {
+        return None;
+    }
+    context.request_repaint();
+    Some(egui::emath::easing::quadratic_out(progress as f32))
+}
+
+/// The glint `progress` of the way across `rect` (corners rounded by `radius`): a band of
+/// white leaning right, brightest at its middle, drawn in thin columns cut to the
+/// rounded face as `overflow: hidden` cuts it.
+fn glint_shape(rect: Rect, radius: f32, progress: f32) -> Shape {
+    const COLUMN: f32 = 2.0;
+    let width = rect.width();
+    let band = width * GLINT_WIDTH;
+    let left = width * (GLINT_FROM + (GLINT_TO - GLINT_FROM) * progress);
+    let lean = GLINT_LEAN * rect.height() / 2.0;
+    // The band's white at `x` across the unleant band (0 to `band` from its left edge).
+    let white = |x: f32| {
+        let share = (x - left) / band;
+        if (0.0..=1.0).contains(&share) {
+            GLINT_PEAK * (1.0 - (share * 2.0 - 1.0).abs())
+        } else {
+            0.0
+        }
+    };
+    let radius = radius.min(width / 2.0).min(rect.height() / 2.0);
+    let inset = |depth: f32| {
+        if depth >= radius {
+            0.0
+        } else {
+            radius
+                - (radius * radius - (radius - depth) * (radius - depth))
+                    .max(0.0)
+                    .sqrt()
+        }
+    };
+    let from = (left - lean).max(0.0);
+    let to = (left + band + lean).min(width);
+    let mut mesh = Mesh::default();
+    let mut x = from;
+    while x < to + COLUMN {
+        let x_clamped = x.min(to);
+        let cut = inset(x_clamped.min(width - x_clamped));
+        // The band leans right, so its top row is the band's unleant self further left.
+        let top = pos2(rect.left() + x_clamped, rect.top() + cut);
+        let bottom = pos2(rect.left() + x_clamped, rect.bottom() - cut);
+        let lean_at = |y: f32| GLINT_LEAN * (y - rect.center().y);
+        mesh.colored_vertex(top, fade(Color32::WHITE, white(x_clamped + lean_at(top.y))));
+        mesh.colored_vertex(
+            bottom,
+            fade(Color32::WHITE, white(x_clamped + lean_at(bottom.y))),
+        );
+        let count = mesh.vertices.len() as u32;
+        if count >= 4 {
+            mesh.add_triangle(count - 4, count - 3, count - 2);
+            mesh.add_triangle(count - 3, count - 1, count - 2);
+        }
+        if x_clamped >= to {
+            break;
+        }
+        x += COLUMN;
+    }
+    Shape::mesh(mesh)
 }
 
 /// The dialogs' corner X (`.dialog-close`): a small steel key, a faint fill in a
