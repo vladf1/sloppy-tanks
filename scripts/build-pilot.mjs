@@ -8,6 +8,11 @@
 // its joins send: a game server whose `/health` reports another one refuses the pilots,
 // so deploy the Worker from the commit the servers it should play on run.
 //
+// In CI it bypasses Kache (`KACHE_DISABLED`): the server job's Kache store is sized for
+// the server build (150 MiB), and the engine's wasm32 objects (about 1 GB) overflowed it,
+// so a background GC ran during the store's save and the save failed. rust-cache keeps
+// the engine's dependencies in `target/` there instead.
+//
 // Cargo runs from the repository root so `.cargo/config.toml` (SIMD) applies.
 import { spawn } from "node:child_process";
 import { copyFile, mkdir, stat } from "node:fs/promises";
@@ -32,7 +37,15 @@ await new Promise((resolve, reject) => {
       "sloppy-pilot",
       "--lib",
     ],
-    { cwd: root, stdio: "inherit", env: { ...process.env, SLOPPY_CONTENT_VERSION: version } },
+    {
+      cwd: root,
+      stdio: "inherit",
+      env: {
+        ...process.env,
+        SLOPPY_CONTENT_VERSION: version,
+        ...(process.env.CI ? { KACHE_DISABLED: "1" } : {}),
+      },
+    },
   );
   child.on("error", (error) =>
     reject(
