@@ -59,11 +59,13 @@ console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = [
   "AbortSignal",
   "BinaryType",
+  "Clipboard",
   "CloseEvent",
   "console",
   "Document",
   "Element",
   "Event",
+  "History",
   "HtmlCanvasElement",
   "HtmlElement",
   "Location",

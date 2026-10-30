@@ -60,6 +60,13 @@ impl<T: Send + 'static> Background<T> {
         Self(answer)
     }
 
+    /// An answer known already.
+    pub fn ready(answer: T) -> Self {
+        let (sender, receiver) = channel();
+        let _ = sender.send(answer);
+        Self(receiver)
+    }
+
     /// The answer once it has come; disconnected when the work ended without one.
     pub fn answer(&self) -> Result<T, TryRecvError> {
         self.0.try_recv()

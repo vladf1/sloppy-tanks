@@ -1,7 +1,8 @@
 //! Battle Setup's Multiplayer tab (`src/net/room-browser.ts`, the room panel of
 //! `battle-setup.html`): the open rooms the server directory lists, polled every few
 //! seconds while the tab shows, a new room's rules, the player's name and team, and
-//! CREATE ROOM or JOIN ROOM. A room code typed in stands in for the browser's invite link.
+//! CREATE ROOM or JOIN ROOM. A room code typed in finds its room as an invite link
+//! (`?room=`, `links.rs`) does.
 
 use std::time::Duration;
 
@@ -16,7 +17,8 @@ use super::icons::Art;
 use super::paint::{self, ButtonStyle, fade, hex, hexa, mix};
 use super::theme::{GOLD, bold_font, display_font};
 use super::{Action, View};
-use crate::directory::{self, DEFAULT_DIRECTORY, DirectoryRequest};
+use crate::directory::{self, DirectoryRequest};
+use crate::links::{self, Place};
 use crate::preferences::Preferences;
 use crate::room_api::{RoomSelection, player_name, preferred_player_name};
 use sloppy_core::net::protocol::{
@@ -33,6 +35,32 @@ use sloppy_web::battle_report::duration;
 const REFRESH: Duration = Duration::from_secs(5);
 /// Minutes one press of the length stepper moves.
 const LENGTH_STEP: i32 = 5;
+
+/// The tab's words where a page and the app differ: a page invites with its link and
+/// takes a new game version by loading again (`battle-setup.html`, `room-browser.ts`); a
+/// friend types the app's room code, and the app itself must be updated.
+struct Words {
+    invite_card: &'static str,
+    invite_hint: &'static str,
+    outdated_prompt: &'static str,
+    outdated_row: &'static str,
+}
+
+const WORDS: Words = if cfg!(target_arch = "wasm32") {
+    Words {
+        invite_card: "Invite friends with its link",
+        invite_hint: "Share its link to invite friends.",
+        outdated_prompt: "Reload for updated game",
+        outdated_row: "Reload for updated game",
+    }
+} else {
+    Words {
+        invite_card: "Invite friends with its room code",
+        invite_hint: "Copy its code in the room to invite friends.",
+        outdated_prompt: "Update Sloppy Tanks to play online",
+        outdated_row: "Update the game to join",
+    }
+};
 
 /// Where the room list stands.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -76,13 +104,19 @@ pub struct RoomsState {
     linked_room: Option<String>,
     /// Shown instead of the usual prompt until the player picks a room.
     notice: String,
+    /// Why the player came back from a room: the notice's first line while the room's
+    /// link waits, above what the directory says of the room (the page's `link.notice`).
+    return_notice: String,
+    /// The tab the page's address names: `None` until the player switches, as the address
+    /// a link or a room left stays until then (`rememberPlayMode`).
+    addressed: Option<bool>,
 }
 
 impl Default for RoomsState {
     fn default() -> Self {
         Self {
             multiplayer: false,
-            directory: DEFAULT_DIRECTORY.to_owned(),
+            directory: directory::default_directory(),
             request: None,
             next_poll: None,
             list: ServerList::default(),
@@ -96,6 +130,8 @@ impl Default for RoomsState {
             link: None,
             linked_room: None,
             notice: String::new(),
+            return_notice: String::new(),
+            addressed: None,
         }
     }
 }
@@ -131,12 +167,32 @@ impl RoomsState {
         self.link = (!room.is_empty()).then(|| room.to_owned());
         self.linked_room.clone_from(&self.link);
         self.notice = notice.to_owned();
+        self.return_notice = notice.to_owned();
         self.next_poll = None;
     }
 
-    /// Select the room with `code` once the directory lists it (the page's invite link).
+    /// Open on the tab as a link asks (`initialPlayMode`): `?multiplayer`, or an invite
+    /// link's `room`, selected once the directory lists it (`linkedRoom`).
+    pub fn open_link(&mut self, room: Option<&str>) {
+        self.returned_from(room.unwrap_or_default(), "");
+    }
+
+    /// Keep the page's address on the tab showing, so that a reload opens it again.
+    pub fn remember_tab(&mut self) {
+        if *self.addressed.get_or_insert(self.multiplayer) != self.multiplayer {
+            self.addressed = Some(self.multiplayer);
+            links::show(if self.multiplayer {
+                Place::Multiplayer
+            } else {
+                Place::Single
+            });
+        }
+    }
+
+    /// Select the room with `code` once the directory lists it (a typed code).
     fn find_room(&mut self, code: String) {
         self.notice.clear();
+        self.return_notice.clear();
         self.link = Some(code);
         self.linked_room.clone_from(&self.link);
         self.follow_link();
@@ -206,7 +262,7 @@ impl RoomsState {
         if listing.is_some() {
             self.link = None;
         }
-        let reason = match listing {
+        let state = match listing {
             Some(room) if room.joinable() => {
                 self.selected = link.clone();
                 None
@@ -216,11 +272,11 @@ impl RoomsState {
                 "Room {link} isn't open. Choose another room or create one."
             )),
         };
-        if let Some(reason) = reason {
-            self.notice = if self.notice.is_empty() || self.notice.starts_with("Room ") {
-                reason
+        if let Some(state) = state {
+            self.notice = if self.return_notice.is_empty() {
+                state
             } else {
-                format!("{}\n{reason}", self.notice)
+                format!("{}\n{state}", self.return_notice)
             };
         }
     }
@@ -255,13 +311,13 @@ impl RoomsState {
                 "Hit JOIN ROOM to play.".into(),
             ),
             _ if self.list.new_room_server().is_none() => (
-                "Update Sloppy Tanks to play online".into(),
+                WORDS.outdated_prompt.into(),
                 "The game server runs another version.".into(),
             ),
             _ => (
                 "Ready to create a room".into(),
                 if self.list.rooms.is_empty() {
-                    "Copy its code in the room to invite friends.".into()
+                    WORDS.invite_hint.into()
                 } else {
                     "Or pick an open room to join.".into()
                 },
@@ -308,7 +364,7 @@ fn room_lines(room: &HostedRoom) -> (String, String) {
         detail += &format!(" · {} reconnecting", room.reserved - room.players);
     }
     if room.content_version != sloppy_core::net::protocol::CONTENT_VERSION {
-        detail += " · Update the game to join";
+        detail += &format!(" · {}", WORDS.outdated_row);
     } else if room.reserved >= ROOM_SEATS {
         detail += " · Full";
     }
@@ -604,25 +660,33 @@ pub fn multiplayer(
     painter.circle_filled(dot, 4.5, dot_color);
     let copy_left = status_well.left() + 42.0;
     let copy_width = status_well.right() - copy_left - 12.0;
-    let (message_y, hint_y) = if hint.is_empty() {
-        (status_well.center().y, 0.0)
+    // Two rows at most: a notice's last two lines (why the player came back, then the
+    // linked room's state, as the page's well wrapped them), or a line and its hint.
+    let lines: Vec<&str> = message.lines().collect();
+    let shown = &lines[lines
+        .len()
+        .saturating_sub(if hint.is_empty() { 2 } else { 1 })..];
+    let first_y = if shown.len() + usize::from(!hint.is_empty()) > 1 {
+        status_well.top() + 22.0
     } else {
-        (status_well.top() + 22.0, status_well.top() + 39.0)
+        status_well.center().y
     };
-    paint::text_fit(
-        &painter,
-        pos2(copy_left, message_y),
-        Align2::LEFT_CENTER,
-        message.lines().last().unwrap_or_default(),
-        egui::FontId::proportional(12.5),
-        hex(0xe6f1fb),
-        0.0,
-        copy_width,
-    );
+    for (row, line) in shown.iter().enumerate() {
+        paint::text_fit(
+            &painter,
+            pos2(copy_left, first_y + row as f32 * 17.0),
+            Align2::LEFT_CENTER,
+            line,
+            egui::FontId::proportional(12.5),
+            hex(0xe6f1fb),
+            0.0,
+            copy_width,
+        );
+    }
     if !hint.is_empty() {
         paint::text_fit(
             &painter,
-            pos2(copy_left, hint_y),
+            pos2(copy_left, status_well.top() + 39.0),
             Align2::LEFT_CENTER,
             &hint,
             egui::FontId::proportional(12.0),
@@ -798,7 +862,7 @@ fn new_room_card(ui: &mut egui::Ui, state: &mut RoomsState, map: MapId, new_room
         &painter,
         pos2(new_room.left() + 38.0, new_room.top() + 35.0),
         Align2::LEFT_CENTER,
-        &format!("Up to {ROOM_SEATS} players · Invite friends with its room code"),
+        &format!("Up to {ROOM_SEATS} players · {}", WORDS.invite_card),
         egui::FontId::proportional(12.0),
         hex(SMALL_INK),
         0.0,
@@ -1149,6 +1213,43 @@ mod tests {
         // The debug tools list every room.
         state.listed(answer(), true, now);
         assert_eq!(rooms(&state).len(), 3);
+    }
+
+    /// Back from a room that closed, the notice says why and then what the directory says
+    /// of the room, on every refresh while its link waits; before, each refresh added the
+    /// room's line again.
+    #[test]
+    fn a_closed_room_names_why_and_its_state_once_per_refresh() {
+        let mut state = answered(Vec::new());
+        state.returned_from("ABCDEFGH", "The room was closed.");
+        let gone = "Room ABCDEFGH isn't open. Choose another room or create one.";
+        for _ in 0..3 {
+            state.listed(Ok(answered(Vec::new()).list), false, Instant::now());
+            assert_eq!(state.notice, format!("The room was closed.\n{gone}"));
+        }
+        // A link from another page names the room alone.
+        let mut linked = answered(Vec::new());
+        linked.open_link(Some("ABCDEFGH"));
+        assert!(linked.multiplayer);
+        linked.listed(Ok(answered(Vec::new()).list), false, Instant::now());
+        assert_eq!(linked.notice, gone);
+        // A room that is listed but full says so under the reason.
+        let mut full = answered(Vec::new());
+        full.returned_from("ABCDEFGH", "This room is full.");
+        let mut listed = listing("ABCDEFGH", MapId::Harbor);
+        listed.reserved = ROOM_SEATS;
+        full.listed(
+            Ok(ServerList {
+                rooms: vec![listed],
+                ..answered(Vec::new()).list
+            }),
+            false,
+            Instant::now(),
+        );
+        assert_eq!(
+            full.notice,
+            "This room is full.\nRoom ABCDEFGH can't take another player right now."
+        );
     }
 
     #[test]

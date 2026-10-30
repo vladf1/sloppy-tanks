@@ -1111,9 +1111,10 @@ fn sheet(
                     );
                 }
                 let shown_map = room_map.unwrap_or(options.map_mode);
+                // A linked room's extra level shows even where it is not offered.
                 let maps: Vec<&MapCard> = MAP_CARDS
                     .iter()
-                    .filter(|map| view.debug || !map.extra())
+                    .filter(|map| view.debug || !map.extra() || room_map == Some(map.id))
                     .collect();
                 let map_well =
                     Rect::from_min_max(pos2(inner.left(), 235.0), pos2(inner.right(), 317.0));
@@ -1329,9 +1330,11 @@ fn compact_setup(
     let human_team = state.hud.as_ref().map_or(Team::Blue, |hud| hud.human_team);
     let options = prefs.game_options(human_team, view.debug);
     let multiplayer = state.rooms.multiplayer;
+    // A linked room's extra level shows even where it is not offered.
+    let room_map = state.rooms.selected_map().filter(|_| multiplayer);
     let maps: Vec<&MapCard> = MAP_CARDS
         .iter()
-        .filter(|map| view.debug || !map.extra())
+        .filter(|map| view.debug || !map.extra() || room_map == Some(map.id))
         .collect();
     let map_rows = maps.len().div_ceil(3);
     let width = (screen.width() - 2.0 * COMPACT_MARGIN).min(COMPACT_WIDTH);
@@ -1438,7 +1441,6 @@ fn compact_setup(
                     // MAP: an open room chosen on the Multiplayer tab shows its own.
                     paint::section_label(&painter, pos2(inner.left(), y), "MAP");
                     y += label;
-                    let room_map = state.rooms.selected_map().filter(|_| multiplayer);
                     let shown_map = room_map.unwrap_or(options.map_mode);
                     for chunk in maps.chunks(3) {
                         for (map, rect) in chunk.iter().zip(cells(y, 3, COMPACT_MAP_HEIGHT)) {

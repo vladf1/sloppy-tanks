@@ -15,6 +15,7 @@ use std::time::Duration;
 
 use sloppy_core::net::client::POLL_MS;
 use sloppy_core::sim::game_options::GameOptions;
+use sloppy_core::sim::map_options::{MapId, is_extra_level};
 use sloppy_core::sim::speed_tuning::SpeedSetting;
 use sloppy_core::sim::{MatchPhase, SimEventType, Team};
 use sloppy_render::gpu::RenderTarget;
@@ -32,9 +33,10 @@ use crate::audio::Audio;
 use crate::bakes::{self, Bake};
 use crate::frame_log::{FrameLog, FrameParts};
 use crate::input::Shortcut;
+use crate::links::{self, Place};
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
-use crate::room::{RoomSession, SavedSeats};
+use crate::room::{NetworkTools, RoomSession, SavedSeats};
 use crate::room_api::RoomSelection;
 use crate::tasks::Task;
 use crate::touch::Play;
@@ -54,7 +56,7 @@ const HIDDEN_RECHECK: Duration = Duration::from_millis(100);
 /// Battle Setup's status once the arena is ready.
 const READY_STATUS: &str = "Ready when you are.";
 
-/// Command-line choices.
+/// Command-line choices, a page's link's included (`main.rs`).
 pub struct Options {
     /// `--debug`: extra levels in Battle Setup.
     pub debug: bool,
@@ -65,6 +67,16 @@ pub struct Options {
     pub autoplay: bool,
     /// `--directory <url>`: the server directory to list rooms from.
     pub directory: Option<String>,
+    /// `--map <id>`: Battle Setup's map in place of the saved one, an extra level only
+    /// where extra levels are offered (`initialGameOptions`).
+    pub map: Option<MapId>,
+    /// `--multiplayer`: Battle Setup opens on its Multiplayer tab.
+    pub multiplayer: bool,
+    /// `--room <CODE>`, an invite link: the Multiplayer tab, with the room selected once
+    /// the directory lists it.
+    pub room: Option<String>,
+    /// The development network tools every room this run joins takes.
+    pub network: NetworkTools,
 }
 
 /// Which engine has the window.
@@ -107,7 +119,8 @@ impl App {
                 Some(selection) => {
                     let shell = session.into_shell();
                     crate::surface_layers::release(&shell.window);
-                    self.launch(join_room(shell, selection))
+                    links::show(Place::Room(&selection.room));
+                    self.launch(join_room(shell, selection, self.options.network.clone()))
                 }
                 None => {
                     self.mode = Some(Mode::Single(session));
@@ -119,6 +132,11 @@ impl App {
                     let code = room.room().to_owned();
                     let mut shell = room.into_shell();
                     crate::surface_layers::release(&shell.window);
+                    // A room left on purpose leaves the Multiplayer tab; one that ended
+                    // keeps its address, and a reload selects it again.
+                    if notice.is_empty() {
+                        links::show(Place::Multiplayer);
+                    }
                     shell.rooms.returned_from(&code, &notice);
                     self.launch(single_player(shell))
                 }
@@ -217,10 +235,12 @@ fn user_agent() -> String {
         .unwrap_or_default()
 }
 
-/// The room Battle Setup chose; Battle Setup again, saying why, when it fails.
-async fn join_room(shell: Shell, selection: RoomSelection) -> Option<Mode> {
+/// The room Battle Setup chose, with `network`'s tools; Battle Setup again with the room
+/// selected, saying why, when it fails.
+async fn join_room(shell: Shell, selection: RoomSelection, network: NetworkTools) -> Option<Mode> {
     let window = shell.window.clone();
-    match RoomSession::new(shell, selection).await {
+    let code = selection.room.clone();
+    match RoomSession::new(shell, selection, network).await {
         Ok(room) => {
             window.request_redraw();
             Some(Mode::Room(Box::new(room)))
@@ -228,7 +248,7 @@ async fn join_room(shell: Shell, selection: RoomSelection) -> Option<Mode> {
         Err(failed) => {
             let (mut shell, notice) = *failed;
             crate::surface_layers::release(&shell.window);
-            shell.rooms.returned_from("", &notice);
+            shell.rooms.returned_from(&code, &notice);
             single_player(shell).await
         }
     }
@@ -357,7 +377,12 @@ pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
         } else {
             DeviceClass::Desktop
         },
-        shell: sloppy_web::Shell::Desktop,
+        // A page words what only a page does (RELOAD, "in this browser") as the page did.
+        shell: if cfg!(target_arch = "wasm32") {
+            sloppy_web::Shell::Page
+        } else {
+            sloppy_web::Shell::Desktop
+        },
         // A page in WebKit holds the GPU's backlog to two frames itself.
         #[cfg(target_arch = "wasm32")]
         frames_in_flight: sloppy_web::frame_clock::browser_frames_in_flight(&user_agent()),
@@ -595,7 +620,13 @@ impl ApplicationHandler for App {
 impl Session {
     /// The window and the shell around it, from the saved choices and `options`.
     fn shell(event_loop: &ActiveEventLoop, options: &Options) -> Result<Shell, String> {
-        let prefs = Preferences::load();
+        let mut prefs = Preferences::load();
+        // A link's map wins over the saved one while it is offered.
+        if let Some(map) = options.map
+            && (options.debug || prefs.debug || !is_extra_level(map))
+        {
+            prefs.map = map;
+        }
         let window = Arc::new(
             event_loop
                 .create_window(window_attributes(&prefs))
@@ -610,6 +641,9 @@ impl Session {
         if let Some(directory) = &options.directory {
             rooms.directory.clone_from(directory);
         }
+        if options.multiplayer || options.room.is_some() {
+            rooms.open_link(options.room.as_deref());
+        }
         Ok(Shell {
             window,
             prefs,
@@ -617,7 +651,7 @@ impl Session {
             debug: options.debug,
             build: build_line(),
             rooms,
-            seats: SavedSeats::new(),
+            seats: SavedSeats::default(),
             frame_log: options.frame_log,
             autoplay: options.autoplay,
         })
@@ -919,6 +953,7 @@ impl Session {
             | Action::RoomLeave
             | Action::RoomRejoin
             | Action::RoomSetup(_)
+            | Action::Reload
             | Action::RoomChoose { .. }
             | Action::RoomRules(_) => {}
         }

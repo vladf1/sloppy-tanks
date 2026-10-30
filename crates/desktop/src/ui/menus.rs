@@ -1178,7 +1178,11 @@ pub fn failure(context: &egui::Context, message: &str) {
             painter,
             origin + vec2(0.0, 82.0 + height),
             Align2::LEFT_TOP,
-            "Restart Sloppy Tanks to play again.",
+            if cfg!(target_arch = "wasm32") {
+                "Reload the page to play again."
+            } else {
+                "Restart Sloppy Tanks to play again."
+            },
             bold_font(14.0),
             Color32::WHITE,
             0.2,

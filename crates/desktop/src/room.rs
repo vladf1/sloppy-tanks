@@ -4,6 +4,7 @@
 //! engine frame per redraw. Leaving hands the window back to single player through
 //! [`Shell`].
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -37,9 +38,71 @@ const PREPARE_BUDGET: u32 = 4;
 /// Why a room that could not load sends the player back to Battle Setup.
 const ARENA_FAILED: &str = "The arena could not load. Try again, or play single player.";
 
-/// Seats the server issued, kept for this run by server and room (the page's
-/// `sessionStorage`).
-pub type SavedSeats = HashMap<String, SavedSeat>;
+/// Seats the server issued, by server and room: natively for this run, in a page in its
+/// `sessionStorage` under the old page's keys, so that a reload, which returns to Battle
+/// Setup with the room selected, joins it again on the same seat.
+#[derive(Default)]
+pub struct SavedSeats {
+    #[cfg(not(target_arch = "wasm32"))]
+    seats: HashMap<String, SavedSeat>,
+}
+
+impl SavedSeats {
+    pub fn get(&self, selection: &RoomSelection) -> Option<SavedSeat> {
+        let key = seat_key(selection);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.seats.get(&key).cloned()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let text = session_storage()?.get_item(&key).ok()??;
+            serde_json::from_str(&text).ok()
+        }
+    }
+
+    /// Keep `seat`; a page without storage keeps it for no reload.
+    fn save(&mut self, selection: &RoomSelection, seat: SavedSeat) {
+        let key = seat_key(selection);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.seats.insert(key, seat);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(storage) = session_storage() {
+            let text = serde_json::json!({"token": seat.token, "roomEpoch": seat.room_epoch});
+            let _ = storage.set_item(&key, &text.to_string());
+        }
+    }
+
+    fn forget(&mut self, selection: &RoomSelection) {
+        let key = seat_key(selection);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.seats.remove(&key);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(storage) = session_storage() {
+            let _ = storage.remove_item(&key);
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn session_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.session_storage().ok().flatten()
+}
+
+/// The development network parameters (`?latency=&jitter=&stall=`, `?dodge=0`,
+/// `?shooter=0`) every room a run joins takes, as `NetConfig` reads them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NetworkTools {
+    pub latency: Option<String>,
+    pub jitter: Option<String>,
+    pub stall: Option<String>,
+    pub dodge: Option<String>,
+    pub shooter: Option<String>,
+}
 
 pub struct RoomSession {
     pub window: Arc<Window>,
@@ -86,16 +149,24 @@ pub struct RoomSession {
 }
 
 impl RoomSession {
-    /// Join `selection`'s room on the window `shell` holds. The window's surface must be
-    /// free (single player's renderer dropped). On failure the shell comes back with the
-    /// reason to show on Battle Setup.
-    pub async fn new(shell: Shell, selection: RoomSelection) -> Result<Self, Box<(Shell, String)>> {
+    /// Join `selection`'s room on the window `shell` holds, with `network`'s tools. The
+    /// window's surface must be free (single player's renderer dropped). On failure the
+    /// shell comes back with the reason to show on Battle Setup.
+    pub async fn new(
+        shell: Shell,
+        selection: RoomSelection,
+        network: NetworkTools,
+    ) -> Result<Self, Box<(Shell, String)>> {
         let window = shell.window.clone();
         let config = NetConfig {
             server: selection.server.clone(),
             room: selection.room.clone(),
-            saved_seat: shell.seats.get(&seat_key(&selection)).cloned(),
-            ..NetConfig::default()
+            saved_seat: shell.seats.get(&selection),
+            latency: network.latency,
+            jitter: network.jitter,
+            stall: network.stall,
+            dodge: network.dodge,
+            shooter: network.shooter,
         };
         let view = view_config(&window, &shell.prefs);
         let created = match render_target(&window) {
@@ -298,17 +369,13 @@ impl RoomSession {
             ClientAction::Send { socket, text } => self.sockets.send(*socket, text.clone()),
             ClientAction::CloseSocket { socket } => self.sockets.close(*socket),
             ClientAction::SaveSeat { token, room_epoch } => {
-                self.seats.insert(
-                    seat_key(&self.selection),
-                    SavedSeat {
-                        token: token.clone(),
-                        room_epoch: room_epoch.clone(),
-                    },
-                );
+                let seat = SavedSeat {
+                    token: token.clone(),
+                    room_epoch: room_epoch.clone(),
+                };
+                self.seats.save(&self.selection, seat);
             }
-            ClientAction::ForgetSeat => {
-                self.seats.remove(&seat_key(&self.selection));
-            }
+            ClientAction::ForgetSeat => self.seats.forget(&self.selection),
         }
     }
 
@@ -498,6 +565,8 @@ impl RoomSession {
             // The engine's next status puts up RECONNECTING.
             Action::RoomRejoin => self.game.rejoin(now),
             Action::RoomSetup(notice) => self.leave_to_setup(notice),
+            // The address still names the room: the new page opens Battle Setup with it.
+            Action::Reload => crate::links::reload(),
             Action::RoomChoose { team, kind } => match self.game.choose_seat(team, kind, now) {
                 Ok(()) => {
                     self.prefs.tank = kind;
@@ -738,7 +807,44 @@ impl RoomSession {
     }
 }
 
-/// Where a seat is kept: one per server and room, as the page keys `sessionStorage`.
+/// Where a seat is kept: one per server and room, as the old page keyed `sessionStorage`.
 fn seat_key(selection: &RoomSelection) -> String {
-    format!("{}:{}", selection.server, selection.room)
+    format!("sloppy-seat:{}:{}", selection.server, selection.room)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn selection(server: &str, room: &str) -> RoomSelection {
+        RoomSelection {
+            room: room.into(),
+            server: server.into(),
+            choice: sloppy_core::net::protocol::JoinChoice {
+                name: "Driver".into(),
+                kind: sloppy_core::sim::VehicleKind::Balanced,
+                team: None,
+                create: None,
+                existing_room: Some(true),
+            },
+        }
+    }
+
+    /// A seat is the server's and the room's: the same code on another server is another
+    /// room. The key is the old page's, so a tab that reloads into this page keeps it.
+    #[test]
+    fn a_seat_is_kept_per_server_and_room() {
+        let mut seats = SavedSeats::default();
+        let room = selection("wss://one.example", "ABCD2345");
+        assert_eq!(seat_key(&room), "sloppy-seat:wss://one.example:ABCD2345");
+        let seat = SavedSeat {
+            token: "t".repeat(16),
+            room_epoch: "e1".into(),
+        };
+        seats.save(&room, seat.clone());
+        assert_eq!(seats.get(&room), Some(seat));
+        assert_eq!(seats.get(&selection("wss://two.example", "ABCD2345")), None);
+        seats.forget(&room);
+        assert_eq!(seats.get(&room), None);
+    }
 }
