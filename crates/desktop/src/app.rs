@@ -45,8 +45,11 @@ use crate::ui::rooms::RoomsState;
 use crate::ui::{self, Action, UiState};
 use crate::window_input::{Battle, Request, WindowInput};
 
-/// Pipelines created per preparation step; the menu redraws between steps.
+/// Pipelines created per preparation step.
 const PREPARE_BUDGET: u32 = 4;
+/// Milliseconds of a redraw that preparation steps may take before the menu paints;
+/// a step that is the arena's scenery or a native pipeline compile can overrun it.
+const PREPARE_SLICE_MS: f64 = 8.0;
 /// The window's first size, in points.
 #[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
 const WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1280.0, 800.0);
@@ -1031,15 +1034,17 @@ impl Session {
         self.refresh_hud();
     }
 
-    /// One step of preparing the wanted arena behind Battle Setup.
+    /// A slice of a redraw spent preparing the wanted arena behind Battle Setup: steps
+    /// that build it or create pipelines follow each other until the slice is spent;
+    /// one that only waits (for textures, background compiles, the GPU) ends it.
     fn prepare(&mut self) -> Result<(), String> {
         if !self.menu_shown {
             return Ok(());
         }
         let wanted = self.wanted_options();
         if wanted != self.prepared_options {
-            // The rebuild holds this thread for a moment: the player's new choice, or
-            // GO's LOADING…, shows first, as the page waits for a paint.
+            // The rebuild's first step holds this thread for a moment: the player's new
+            // choice, or GO's LOADING…, shows first, as the page waits for a paint.
             if self.options_shown.as_ref() != Some(&wanted) {
                 self.options_shown = Some(wanted);
                 return Ok(());
@@ -1055,6 +1060,20 @@ impl Session {
             }
             return Ok(());
         }
+        let until = now_ms() + PREPARE_SLICE_MS;
+        loop {
+            let building = self.game.building_arena();
+            let status = self.prepare_step()?;
+            let progressed = building || status.compiled > 0;
+            if status.ready || !progressed || now_ms() >= until {
+                return Ok(());
+            }
+        }
+    }
+
+    /// One `prepare` step, with the page's bake of a generated texture started or its
+    /// pixels handed over first.
+    fn prepare_step(&mut self) -> Result<PrepareStatus, String> {
         if self.bake.is_none()
             && let Some(key) = self.game.claim_texture_bake()
         {
@@ -1092,7 +1111,7 @@ impl Session {
                 self.ui.progress = line.progress();
             }
         }
-        Ok(())
+        Ok(status)
     }
 
     /// One engine frame of the round; its events and HUD reach the screens.

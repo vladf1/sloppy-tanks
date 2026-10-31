@@ -1794,8 +1794,23 @@ impl Renderer {
 
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
+        let pending = self.prepare_pending_scenery(root);
+        self.add_pending_scenery(pending, lifetime)
+    }
+
+    /// The CPU half of [`Self::add_scenery`], as [`Self::prepare_pending_model`] is of
+    /// `add_model`: a caller building an arena over frames uploads it in a later one.
+    pub fn prepare_pending_scenery(&mut self, root: &Node) -> PendingModel {
         let prepared = prepare_scenery(root, &mut self.interner);
-        let model = self.register(prepared, lifetime, true, false);
+        let merge = self.merge_for(&prepared, true);
+        PendingModel { prepared, merge }
+    }
+
+    /// Upload scenery [`Self::prepare_pending_scenery`] prepared, as `add_scenery`
+    /// would have.
+    pub fn add_pending_scenery(&mut self, pending: PendingModel, lifetime: Lifetime) -> InstanceId {
+        let PendingModel { prepared, merge } = pending;
+        let model = self.register_merged(prepared, merge, lifetime, true, false);
         let id = self
             .add_instance(model, Mat4::IDENTITY, lifetime)
             .expect("model just registered");

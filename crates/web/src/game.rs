@@ -32,8 +32,9 @@
 //!   play as an endless team battle) and needs `prepare_step` again. Returns
 //!   whether it rebuilt.
 //! - `prepare_step(budget) -> Float64Array [compiled, remaining, texturesPending,
-//!   done, gpuPending]`: creates up to `budget` pipelines per call as their
-//!   background compiles finish; once nothing remains and textures have loaded it
+//!   done, gpuPending]`: while an arena that `set_options` or `restart` began is
+//!   building, builds a piece of it per call; then creates up to `budget` pipelines
+//!   per call as their background compiles finish; once nothing remains and textures have loaded it
 //!   warms every variant, then draws the first frames and reports `done = 1`.
 //!   `gpuPending = 1` while only the GPU is working (background compiles or the
 //!   warm-up): poll on a short timer then rather than a task.
@@ -264,10 +265,9 @@ pub struct Game {
     auto_rounds: bool,
     completed_rounds: u32,
     frame_index: u64,
-    /// Warmed and first frames drawn; false while pipelines compile.
+    /// Warmed and first frames drawn; false while the arena builds and its pipelines
+    /// compile.
     prepared: bool,
-    /// The arena's view is still to be built (`GameConfig::defer_arena`).
-    arena_due: bool,
     /// Pipelines created since the arena began preparing, and Battle Setup's line for
     /// the latest step.
     prepare_compiled: u32,
@@ -351,6 +351,8 @@ impl Game {
         if self.sim.match_state.phase == MatchPhase::Results {
             self.sim.reset(None);
             self.reset_view();
+        } else if self.view.building() {
+            self.finish_view();
         }
         self.commands.clear();
         self.sim.start();
@@ -384,12 +386,13 @@ impl Game {
         }
     }
 
-    /// A fresh world behind Battle Setup (phase `ready`); prepare again.
+    /// A fresh world behind Battle Setup (phase `ready`); prepare again, which builds
+    /// its arena.
     pub fn restart(&mut self) {
         self.commands.clear();
         self.sim.reset(None);
         self.options = game_choices(&self.sim);
-        self.reset_view();
+        self.begin_view();
     }
 
     /// END BATTLE from the pause menu.
@@ -922,7 +925,6 @@ impl Game {
             completed_rounds: 0,
             frame_index: 0,
             prepared: true,
-            arena_due: config.defer_arena,
             prepare_compiled: 0,
             loading: None,
             events: Vec::new(),
@@ -939,15 +941,15 @@ impl Game {
         };
         game.canvas.apply(&mut game.view);
         if config.defer_arena {
-            game.prepared = false;
+            game.begin_view();
         } else {
             game.reset_view();
         }
         Ok(game)
     }
 
-    /// Apply Battle Setup choices; rebuilds the arena when they changed and returns
-    /// whether it did.
+    /// Apply Battle Setup choices; when they changed, begins rebuilding the arena
+    /// (`prepare` builds it) and returns true.
     pub fn set_game_options(&mut self, options: &GameOptions) -> bool {
         let options = *options;
         if options == self.options && game_choices(&self.sim) == options {
@@ -957,20 +959,26 @@ impl Game {
         options_setup(&options).apply(&mut self.sim);
         self.sim.reset(None);
         self.commands.clear();
-        self.reset_view();
+        self.begin_view();
         true
     }
 
+    /// The arena's views are still being built, a piece a `prepare` step.
+    pub fn building_arena(&self) -> bool {
+        self.view.building()
+    }
+
     /// Compile up to `budget` pipelines; once nothing remains, warm every variant and
-    /// draw the first frames.
+    /// draw the first frames. While the arena is still building, a step builds one
+    /// piece of it instead.
     pub fn prepare(&mut self, budget: u32) -> Result<PrepareStatus, PageError> {
         if self.prepared {
             return Ok(PREPARED);
         }
-        if self.arena_due {
-            // The arena alone fills this step, under the shell's "Building the arena…";
-            // its pipelines compile from the next.
-            self.reset_view();
+        if self.view.building() {
+            // Under the shell's "Building the arena…"; its pipelines compile once it
+            // is built.
+            self.build_piece();
             return Ok(PrepareStatus {
                 compiled: 0,
                 remaining: 1,
@@ -1182,14 +1190,34 @@ impl Game {
         }
     }
 
-    /// Rebuild the presentation for the simulation's current world and begin
+    /// Rebuild the presentation for the simulation's current world at once and begin
     /// preparing it.
     fn reset_view(&mut self) {
-        self.arena_due = false;
+        self.begin_view();
+        self.finish_view();
+    }
+
+    /// Finish building an arena [`Self::begin_view`] began, at once: a round starting
+    /// or drawing must not wait for the steps.
+    fn finish_view(&mut self) {
+        while !self.build_piece() {}
+    }
+
+    /// Build the arena's next piece; true once it is built. The simulation then learns
+    /// what the camera placed on the viewer sees, where its wrecks may linger.
+    fn build_piece(&mut self) -> bool {
+        let built = self.view.build_step(&self.state);
+        if built {
+            self.sim.set_wreck_view(Some(self.view.wreck_view()));
+        }
+        built
+    }
+
+    /// Begin rebuilding the presentation for the simulation's current world; `prepare`
+    /// steps build it a piece at a time, then prepare it.
+    fn begin_view(&mut self) {
         self.fill_state();
-        self.view.reset(&self.state);
-        self.sim.set_wreck_view(Some(self.view.wreck_view()));
-        self.view.begin_prepare(&self.state);
+        self.view.begin_build(&self.state);
         self.prepared = false;
         self.prepare_compiled = 0;
         self.loading = None;
