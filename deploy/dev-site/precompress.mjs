@@ -2,8 +2,9 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { brotliCompress, gzip, constants } from "node:zlib";
 
-// Quality 11 is about 4% smaller than 10 for the engines but takes twice as long.
-const BROTLI_QUALITY = 10;
+// Quality 11 makes the shell's binary 4% (82 KB) smaller than 10 does, for about six
+// more seconds of the deploy; a browser decodes either as fast.
+const BROTLI_QUALITY = 11;
 
 const brotliCompressAsync = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
