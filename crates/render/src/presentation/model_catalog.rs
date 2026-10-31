@@ -281,12 +281,7 @@ fn is_water(node: &Node) -> bool {
 /// `buildScenery(theme)`: the theme's scenery, split for drawing. `None` for
 /// extra levels, which show plain pads and floors instead.
 pub fn scenery(theme: Theme) -> Option<SceneryModel> {
-    let map_theme = match theme {
-        Theme::Village => core_models::MapTheme::Village,
-        Theme::Harbor => core_models::MapTheme::Harbor,
-        Theme::Quarry => core_models::MapTheme::Quarry,
-        Theme::Custom => return None,
-    };
+    let map_theme = theme.map_theme()?;
     let mut scenery = build_scenery(map_theme);
     scenery.update(0.0);
     let source = scenery.root();

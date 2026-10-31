@@ -1356,6 +1356,17 @@ impl Renderer {
         self.textures.set_generated(name, image);
     }
 
+    /// Fetch the texture files of `paths` not yet loaded ahead of the models that will
+    /// ask for them ([`TextureStore::prefetch`]).
+    pub fn prefetch_textures(&mut self, paths: &[&'static str]) {
+        self.textures.prefetch(paths);
+    }
+
+    /// Report what the last prefetch missed ([`TextureStore::end_prefetch`]).
+    pub fn end_texture_prefetch(&mut self) {
+        self.textures.end_prefetch();
+    }
+
     /// Textures still loading; wait for 0 before the warm-up frame.
     pub fn textures_pending(&self) -> usize {
         self.textures.pending()

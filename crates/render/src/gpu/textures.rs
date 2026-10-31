@@ -200,9 +200,10 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 // `<img>` itself was as slow there and premultiplied alpha in WebKit; WebKit decoded
 // `createImageBitmap(blob)` on the main thread, one file after another. A worker's
 // bitmap has the same texels, and WebKit uploads it in about two thirds of the time
-// a bitmap of an `<img>` took. The page does not start them early: begun beside the
-// binary they took its bandwidth, and begun once it had downloaded they arrived before
-// the arena needed them on all but slow links.
+// a bitmap of an `<img>` took. The page does not start them beside the binary, whose
+// bandwidth they took; an arena's build fetches its files as it begins
+// (`prefetchTexture`), after Battle Setup's first frame, and the decode takes the
+// fetched blob.
 //
 // A built game page names its runtime files by content hash, so browsers keep them for
 // good: its manifest (`globalThis.sloppyAssets`, from `scripts/hashed-assets.ts`) maps a
@@ -213,11 +214,14 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
   return globalThis.sloppyAssets?.[path] ?? base + path;
 }
 
-const DECODER = `onmessage = async ({ data: { id, url, flip } }) => {
+const DECODER = `const download = async (url) => {
+  const response = await fetch(url);
+  if (!response.ok) throw new Error(response.status + " " + response.statusText);
+  return response.blob();
+};
+onmessage = async ({ data: { id, url, file, flip } }) => {
   try {
-    const response = await fetch(url);
-    if (!response.ok) throw new Error(response.status + " " + response.statusText);
-    const bitmap = await createImageBitmap(await response.blob(), {
+    const bitmap = await createImageBitmap(file ?? (await download(url)), {
       premultiplyAlpha: "none",
       colorSpaceConversion: "none",
       ...(flip ? { imageOrientation: "flipY" } : {}),
@@ -253,14 +257,32 @@ function decoder() {
   return entry;
 }
 
+// Files fetched ahead of their decode, by absolute URL, until a decode takes them.
+const fetched = new Map();
+
+export function prefetchTexture(url) {
+  const href = new URL(url, document.baseURI).href;
+  if (fetched.has(href)) return;
+  const file = fetch(href).then((response) => (response.ok ? response.blob() : null));
+  // A failed fetch leaves the decode to fetch the file itself and report why.
+  fetched.set(href, file.catch(() => null));
+}
+
 export function textureBitmap(url, flip) {
+  // The worker's base is its blob URL, so it fetches an absolute one.
+  const href = new URL(url, document.baseURI).href;
+  const early = fetched.get(href);
+  fetched.delete(href);
   return new Promise((resolve, reject) => {
-    const id = nextId++;
-    const entry = decoder();
-    entry.pending++;
-    waiting.set(id, { resolve, reject });
-    // The worker's base is its blob URL, so it fetches an absolute one.
-    entry.worker.postMessage({ id, url: new URL(url, document.baseURI).href, flip });
+    const decode = (file) => {
+      const id = nextId++;
+      const entry = decoder();
+      entry.pending++;
+      waiting.set(id, { resolve, reject });
+      entry.worker.postMessage({ id, url: href, file, flip });
+    };
+    if (early) early.then(decode);
+    else decode(null);
   });
 }"#)]
 extern "C" {
@@ -268,6 +290,8 @@ extern "C" {
     fn asset_url(base: &str, path: &str) -> String;
     #[wasm_bindgen(js_name = textureBitmap)]
     fn texture_bitmap(url: &str, flip: bool) -> js_sys::Promise;
+    #[wasm_bindgen(js_name = prefetchTexture)]
+    fn prefetch_texture(url: &str);
 }
 
 #[cfg(target_arch = "wasm32")]
@@ -284,6 +308,11 @@ pub struct TextureStore {
     /// Requested textures that a bake draws (`effects::bakes`), until it has.
     bakes: Vec<TextureKey>,
     samplers: HashMap<SamplerKey, Sampler>,
+    /// Files [`Self::prefetch`] fetched that no request has taken yet.
+    prefetched: Vec<&'static str>,
+    /// Files first requested since the last prefetch that it did not fetch, while
+    /// counting ([`Self::take_prefetch_misses`] stops).
+    unlisted: Option<Vec<&'static str>>,
     uploader: Uploader,
     asset_base: String,
     /// Bumped whenever a texture becomes ready, so materials rebuild bind groups.
@@ -299,6 +328,8 @@ impl TextureStore {
             generated: HashMap::new(),
             bakes: Vec::new(),
             samplers: HashMap::new(),
+            prefetched: Vec::new(),
+            unlisted: None,
             uploader: Uploader::new(gpu),
             asset_base,
             generation: 0,
@@ -306,11 +337,59 @@ impl TextureStore {
         }
     }
 
+    /// Fetch the files of `paths` this store has not loaded, ahead of the requests
+    /// that decode them, and count the files requested from now on that it did not.
+    pub fn prefetch(&mut self, paths: &[&'static str]) {
+        for &path in paths {
+            if self.prefetched.contains(&path) || self.has_file(path) {
+                continue;
+            }
+            #[cfg(target_arch = "wasm32")]
+            prefetch_texture(&asset_url(&self.asset_base, path));
+            self.prefetched.push(path);
+        }
+        self.unlisted = Some(Vec::new());
+    }
+
+    /// Stop counting, and report the files the last [`Self::prefetch`] fetched that
+    /// nothing requested (downloaded for nothing) and those requested since that it
+    /// left out (fetched late): its list has gone stale.
+    pub fn end_prefetch(&mut self) {
+        let unused = std::mem::take(&mut self.prefetched);
+        let unlisted = self.unlisted.take().unwrap_or_default();
+        if unused.is_empty() && unlisted.is_empty() {
+            return;
+        }
+        let message = format!(
+            "The arena's texture prefetch is stale: fetched but unused {unused:?}, used but not \
+             fetched {unlisted:?} (round_texture_files)"
+        );
+        #[cfg(target_arch = "wasm32")]
+        web_sys::console::error_1(&message.into());
+        #[cfg(not(target_arch = "wasm32"))]
+        eprintln!("{message}");
+    }
+
+    fn has_file(&self, path: &str) -> bool {
+        self.entries
+            .keys()
+            .any(|key| matches!(key.source, TextureSource::File(file) if file == path))
+    }
+
     /// Start loading a texture if it is new.
     pub fn request(&mut self, texture: &TextureRef) {
         let key = TextureKey::of(texture);
         if self.entries.contains_key(&key) {
             return;
+        }
+        if let TextureSource::File(path) = key.source {
+            if let Some(index) = self.prefetched.iter().position(|&file| file == path) {
+                self.prefetched.swap_remove(index);
+            } else if !self.has_file(path)
+                && let Some(unlisted) = &mut self.unlisted
+            {
+                unlisted.push(path);
+            }
         }
         self.entries.insert(
             key.clone(),

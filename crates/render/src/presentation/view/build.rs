@@ -5,6 +5,7 @@
 //! [`Presentation::begin_prepare`] take the same steps at once, in the same order, so
 //! an arena comes out the same either way.
 
+use sloppy_core::models::round_texture_files;
 use sloppy_core::sim::render_state::RenderCover;
 use sloppy_core::sim::timber_layout::{TimberWall, timber_parts};
 use sloppy_core::sim::{CoverKind, PickupKind, RenderState, Team, VehicleKind};
@@ -13,6 +14,7 @@ use super::{
     CoverPlan, DEBRIS_SHAPES, HousePreparation, Lifetime, PendingScenery, Preparation,
     Presentation, SAMPLE_WRECK, SceneryModel, cover_damage_stage, model_catalog, timber_part_model,
 };
+use crate::presentation::theme::Theme;
 
 /// What building the round's views has still to do, in order.
 #[derive(Default)]
@@ -83,6 +85,12 @@ impl Presentation {
         self.sample_models.clear();
         self.renderer.reset_round();
         self.show_floors(state);
+        // The round's texture files download from now, not as each model that draws
+        // them is registered: the scenery's come only after its model, a build's
+        // costliest piece.
+        if let Some(theme) = Theme::from_name(&state.map_theme).map_theme() {
+            self.renderer.prefetch_textures(&round_texture_files(theme));
+        }
         self.build = BuildStage::SceneryModel;
     }
 
@@ -163,6 +171,7 @@ impl Presentation {
             }
             BuildStage::Pipelines => {
                 self.renderer.request_pipelines();
+                self.renderer.end_texture_prefetch();
                 BuildStage::Done
             }
         };
