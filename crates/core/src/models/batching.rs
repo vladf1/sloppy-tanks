@@ -12,29 +12,13 @@ use glam::DVec3;
 use super::model_primitives::shadowed;
 use crate::geometry::math::{compose, hex_to_linear};
 use crate::geometry::{Mesh, merge_geometries};
-use crate::scene::{Color, Effect, Material, Node, Shading, Side, TextureRef};
+use crate::scene::{Color, Effect, Material, Node, Shading};
 
-/// The material fields `vertexMaterial` keyed its shared white clones by. Fields
-/// outside the key come from the first material that created the clone, as in
-/// the TypeScript.
-#[derive(Clone, Debug, PartialEq)]
-struct VertexMaterialKey {
-    metalness: f32,
-    roughness: f32,
-    tone_mapped: bool,
-    emissive: Color,
-    emissive_intensity: f32,
-    side: Side,
-    flat_shading: bool,
-    depth_test: bool,
-    depth_write: bool,
-    map: Option<TextureRef>,
-    bump_map: Option<TextureRef>,
-    bump_scale: f32,
-    polygon_offset: Option<(f32, f32)>,
-}
-
-static VERTEX_MATERIALS: Mutex<Vec<(VertexMaterialKey, Arc<Material>)>> = Mutex::new(Vec::new());
+/// The shared white clones: one per distinct painted material. They were keyed by
+/// some of its fields, the others coming from whichever material asked first, so a
+/// clone could depend on the order models were built in (scenery before or after
+/// another map's covers), which the page's geometry cache must not.
+static VERTEX_MATERIALS: Mutex<Vec<Arc<Material>>> = Mutex::new(Vec::new());
 
 /// Whether a material's paint can be baked into vertex colors: opaque standard
 /// surfaces without per-pixel alpha, vertex colors, an emissive map or custom
@@ -65,37 +49,22 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
     if !is_paintable(source) {
         return source.clone();
     }
-    let key = vertex_key(source);
-    let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
-    if let Some((_, material)) = materials.iter().find(|(k, _)| *k == key) {
-        return material.clone();
-    }
-    let material = Arc::new(painted(source));
-    materials.push((key, material.clone()));
-    material
+    shared_vertex_material(Arc::new(painted(source)))
 }
 
-fn vertex_key(source: &Material) -> VertexMaterialKey {
-    VertexMaterialKey {
-        metalness: source.metalness,
-        roughness: source.roughness,
-        tone_mapped: source.tone_mapped,
-        emissive: source.emissive,
-        emissive_intensity: source.emissive_intensity,
-        side: source.side,
-        flat_shading: source.flat_shading,
-        depth_test: source.depth_test,
-        depth_write: source.depth_write,
-        map: source.map.clone(),
-        bump_map: source.bump_map.clone(),
-        bump_scale: source.bump_scale,
-        polygon_offset: source.polygon_offset,
+/// The shared vertex material equal to `material`, which becomes it if none is.
+fn shared_vertex_material(material: Arc<Material>) -> Arc<Material> {
+    let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
+    if let Some(held) = materials.iter().find(|held| **held == material) {
+        return held.clone();
     }
+    materials.push(material.clone());
+    material
 }
 
 /// Each shared vertex material's address (`shared_values::VERTEX_MATERIALS`).
 pub(super) fn each_vertex_material(visit: &mut dyn FnMut(usize)) {
-    for (_, material) in VERTEX_MATERIALS
+    for material in VERTEX_MATERIALS
         .lock()
         .expect("vertex material cache")
         .iter()
@@ -105,15 +74,9 @@ pub(super) fn each_vertex_material(visit: &mut dyn FnMut(usize)) {
 }
 
 /// The vertex material to use for one a model read back from the geometry cache
-/// brings: the shared one of its key, else this one, shared from now on.
+/// brings: the shared one equal to it, else this one, shared from now on.
 pub(super) fn adopt_vertex_material(material: Arc<Material>) -> Arc<Material> {
-    let key = vertex_key(&material);
-    let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
-    if let Some((_, held)) = materials.iter().find(|(k, _)| *k == key) {
-        return held.clone();
-    }
-    materials.push((key, material.clone()));
-    material
+    shared_vertex_material(material)
 }
 
 /// A mesh part and the paint to bake into its vertices, if its batch uses a
