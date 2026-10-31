@@ -21,6 +21,11 @@
 //! instance.exports.build(0);
 //! console.log(performance.now() - start);
 //! ```
+//!
+//! `pin(workload)` returns the `model_pins` hash of the same builds in Wasm (0-2
+//! the themes' scenery, 3 the vehicles and wrecks, 5 the village's covers at every
+//! damage stage), to compare a change's Wasm output with its parent's (export it
+//! too: `--export=build --export=pin`).
 
 use sloppy_core::models::{
     CoverShape, MapTheme, TreeDetail, WreckPart, batch, build_scenery, cover_model, tank_model,
@@ -68,6 +73,20 @@ pub extern "C" fn build(workload: u32) {
                 std::hint::black_box(&root);
             }
         }
+    }
+}
+
+#[path = "../tests/integration/model_pin_hash.rs"]
+mod model_pin_hash;
+
+#[unsafe(no_mangle)]
+pub extern "C" fn pin(workload: u32) -> u64 {
+    match workload {
+        0 => model_pin_hash::scenery_pin(MapTheme::Village),
+        1 => model_pin_hash::scenery_pin(MapTheme::Harbor),
+        2 => model_pin_hash::scenery_pin(MapTheme::Quarry),
+        3 => model_pin_hash::vehicles_pin(),
+        _ => model_pin_hash::covers_pin(MapId::Village),
     }
 }
 
