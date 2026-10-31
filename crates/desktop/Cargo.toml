@@ -25,7 +25,6 @@ serde_json.workspace = true
 winit = "0.30"
 egui = "0.37"
 egui-winit = { version = "0.37", default-features = false, features = ["links"] }
-kira = { version = "0.12", default-features = false, features = ["cpal", "mp3"] }
 # `Instant` that the browser has too (std's natively).
 web-time = "1"
 
@@ -41,6 +40,8 @@ tokio-tungstenite = { version = "0.30", default-features = false, features = ["c
 futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
 ureq = { version = "3", default-features = false, features = ["rustls", "json"] }
 dirs = "6"
+# Sound; a page plays it with Web Audio (`audio/web.rs`).
+kira = { version = "0.12", default-features = false, features = ["cpal", "mp3"] }
 # The menu's tank previews and the window icon; a page decodes them with the browser.
 image = { version = "0.25", default-features = false, features = ["webp", "png"] }
 
@@ -57,6 +58,14 @@ js-sys.workspace = true
 console_error_panic_hook.workspace = true
 web-sys = { workspace = true, features = [
   "AbortSignal",
+  "AudioBuffer",
+  "AudioBufferSourceNode",
+  "AudioContext",
+  "AudioDestinationNode",
+  "AudioNode",
+  "AudioParam",
+  "AudioScheduledSourceNode",
+  "BaseAudioContext",
   "BinaryType",
   "Clipboard",
   "ClipboardEvent",
@@ -73,6 +82,7 @@ web-sys = { workspace = true, features = [
   "ErrorEvent",
   "Event",
   "FocusEvent",
+  "GainNode",
   "History",
   "HtmlCanvasElement",
   "HtmlElement",
@@ -89,6 +99,7 @@ web-sys = { workspace = true, features = [
   "RequestInit",
   "Response",
   "Screen",
+  "StereoPannerNode",
   "Storage",
   "Url",
   "UrlSearchParams",
