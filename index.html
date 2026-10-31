@@ -297,8 +297,8 @@
          the WebGPU build reloads with it when its engine cannot start after all). Only
          the chosen build's glue and binary download; the binary streams into its
          instance while the loading view counts its bytes, and the files the shell takes
-         from the page download beside it. The shell then fetches the textures from the
-         site beside this page and tells the page how it goes
+         from the page and the arena's textures download beside it. The shell fetches
+         any other texture from the site beside this page and tells the page how it goes
          (crates/desktop/src/page.rs). Marks for the measurements: `sloppy:boot`,
          `sloppy:downloaded` and `sloppy:shell-started` here, then the shell's. -->
     <script type="module">
@@ -467,6 +467,100 @@
             console.warn(`${path} did not download: ${message(error)}`),
           );
         }
+      }
+
+      /** Battle Setup's map as the shell picks it (`Session::shell`): the link's while it
+       * is offered, else the saved one (crates/desktop/src/preferences.rs), whose record
+       * wins over the old page's key. */
+      function startingMap() {
+        const query = new URLSearchParams(location.search);
+        let saved = {};
+        try {
+          const record = localStorage.getItem("sloppy-shell-settings");
+          saved = record ? JSON.parse(record) : { map: localStorage.getItem("sloppy-map") };
+        } catch {}
+        const linked = query.get("map");
+        if (linked && (!EXTRA_LEVELS.includes(linked) || query.has("debug") || saved?.debug)) {
+          return linked;
+        }
+        return saved?.map ?? "village";
+      }
+      const EXTRA_LEVELS = ["stress-test", "superstress"];
+
+      /** The texture files `map`'s arena draws first: its tanks, pickups and wrecks, then
+       * its scenery (crates/core/src/models). */
+      function arenaTextures(map) {
+        const buildings = ["village", ...EXTRA_LEVELS].includes(map);
+        return [
+          "textures/pickups/atlas.webp",
+          "textures/tanks/armor-camo.webp",
+          "textures/tanks/armor-wear.webp",
+          // The wrecks' burnt paint, and the bark and rings of loose logs.
+          "textures/tanks/armor-scorch.webp",
+          "textures/trees/bark.webp",
+          "textures/trees/rings.webp",
+          // Every ground but the harbor's concrete quay: roads, yards and quarry grit.
+          ...(map === "harbor" ? [] : ["textures/ground/packed-dirt.webp"]),
+          "textures/houses/siding.webp",
+          "textures/walls/weathered-concrete.webp",
+          "textures/barrels/painted-drum.webp",
+          ...(map === "village"
+            ? [
+                "textures/ground/dry-grass.webp",
+                "textures/ground/village-ground.webp",
+                // Crowns draw from the tree atlas; trunks and stumps from their own bark.
+                "textures/trees/atlas.webp",
+                "textures/water/normals.webp",
+                "textures/trees/birch.webp",
+                "textures/wood/timber.webp",
+              ]
+            : []),
+          ...(map === "harbor"
+            ? [
+                "textures/harbor/dock.webp",
+                "textures/harbor/steel.webp",
+                "textures/water/normals.webp",
+                "textures/harbor/container.webp",
+                "textures/harbor/container-ribbed.webp",
+                "textures/wood/timber.webp",
+              ]
+            : []),
+          ...(map === "quarry"
+            ? [
+                "textures/quarry/sandstone.webp",
+                "textures/harbor/steel.webp",
+                "textures/wood/timber.webp",
+              ]
+            : []),
+          ...(EXTRA_LEVELS.includes(map)
+            ? ["textures/ground/dry-grass.webp", "textures/wood/timber.webp"]
+            : []),
+          ...(buildings
+            ? [
+                "textures/houses/shingles.webp",
+                "textures/houses/clapboard.webp",
+                "textures/houses/brick.webp",
+                "textures/houses/stone.webp",
+              ]
+            : []),
+        ];
+      }
+
+      // The arena's textures download and decode beside the binary, off the main thread,
+      // rather than once the arena asks for them; the renderer takes each over by its URL
+      // (`textureImage` in crates/render/src/gpu/textures.rs) and decodes any other itself.
+      // From script rather than <link rel=preload>: WebKit never handed a preload
+      // response to a later request, so it downloaded every texture twice.
+      const images = (globalThis.sloppyTextureImages = new Map());
+      for (const path of arenaTextures(startingMap())) {
+        const url = assets[path];
+        if (!url || images.has(url)) continue;
+        const image = new Image();
+        image.src = url;
+        const decoded = image.decode().then(() => image);
+        // The renderer decodes a texture again if its early decode failed.
+        decoded.catch(() => {});
+        images.set(url, decoded);
       }
 
       // The shell bakes generated textures in workers that run its module (bakes.rs).
