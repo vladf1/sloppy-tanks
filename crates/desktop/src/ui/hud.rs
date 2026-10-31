@@ -1491,18 +1491,25 @@ const TOUCH_COUNT_MIDDLE: f32 = 18.5;
 /// The gap between the tank's name and its rank.
 const RANK_GAP: f32 = 7.0;
 
-/// The hull number's type, and how far under the readout's middle its foot and the
-/// maximum's sit, so the two share a baseline.
+/// The hull number's type, how far under the readout's middle its foot and the
+/// maximum's sit, so the two share a baseline, the number's distance from the readout's
+/// left end, past the hull icon, and how far above the middle the icon's centre sits.
 struct ReadoutType {
     size: f32,
     number_drop: f32,
     max_drop: f32,
+    number_left: f32,
+    icon_rise: f32,
 }
 
+/// Measured on the page's Impact readout (`.hull-readout`): the digits end 10.5 px over
+/// the hull bar and 26 px from the icon's left, the icon centred on their middle.
 const DESKTOP_READOUT: ReadoutType = ReadoutType {
     size: 32.0,
-    number_drop: 13.0,
-    max_drop: 11.0,
+    number_drop: 16.5,
+    max_drop: 14.0,
+    number_left: 26.0,
+    icon_rise: 2.5,
 };
 /// A touch screen's readout is a step smaller, on one line with the name and the bar,
 /// its number centred on the hull icon.
@@ -1510,10 +1517,10 @@ const TOUCH_READOUT: ReadoutType = ReadoutType {
     size: 26.0,
     number_drop: 16.0,
     max_drop: 15.0,
+    number_left: 24.0,
+    icon_rise: 0.0,
 };
-/// The hull number's distance from the readout's left end, past the hull icon; the
-/// maximum's type, its letter spacing and its gap after the number.
-const READOUT_NUMBER_LEFT: f32 = 24.0;
+/// The maximum's type, its letter spacing and its gap after the number.
 const READOUT_MAX_SIZE: f32 = 21.0;
 const READOUT_MAX_SPACING: f32 = 0.5;
 const READOUT_MAX_GAP: f32 = 5.0;
@@ -1633,7 +1640,7 @@ impl TouchPanel {
             0.0
         };
         let full = format!("{}", human.max_hp.round());
-        let readout = READOUT_NUMBER_LEFT
+        let readout = TOUCH_READOUT.number_left
             + paint::text_width(painter, &full, display_font(TOUCH_READOUT.size), 0.0)
             + READOUT_MAX_GAP
             + paint::text_width(
@@ -2030,7 +2037,10 @@ fn hull_readout(
     art.icon(
         painter,
         "hull",
-        Rect::from_center_size(pos2(left + 10.0, middle), Vec2::splat(20.0)),
+        Rect::from_center_size(
+            pos2(left + 10.0, middle - kind.icon_rise),
+            Vec2::splat(20.0),
+        ),
         ramp,
     );
     let mut number_color = if tone == HullTone::Healthy {
@@ -2045,7 +2055,7 @@ fn hull_readout(
     let hp = format!("{}", human.hp.max(0.0).ceil());
     let number = paint::shadowed(
         painter,
-        pos2(left + READOUT_NUMBER_LEFT, middle + kind.number_drop),
+        pos2(left + kind.number_left, middle + kind.number_drop),
         Align2::LEFT_BOTTOM,
         &hp,
         display_font(kind.size),
