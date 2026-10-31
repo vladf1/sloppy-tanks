@@ -13,7 +13,7 @@ import { gameServers } from "./servers.mjs";
  * such as a local one, and SLOPPY_PAGE_URL the page beside it. */
 const HEALTH_TIMEOUT_MS = 10_000;
 const PRODUCTION_PAGE_URL = "https://sloppytanks.com/";
-const DEV_PAGE_URL = "https://sloppy-tanks-dev.fridman.me/";
+const DEV_PAGE_URL = "https://dev.sloppytanks.com/";
 const dev = process.argv.includes("--dev");
 // The address players use, as they reach it.
 const endpoint = process.env.SLOPPY_SERVER_URL ?? (await gameServers(dev))[0].url;

@@ -306,6 +306,21 @@ extern "C" {
     fn image_data_bitmap(image: &ImageData) -> js_sys::Promise;
 }
 
+#[cfg(all(target_arch = "wasm32", not(feature = "webgl")))]
+#[wasm_bindgen(inline_js = r#"export function uploadsImageData() {
+  return !/\bFirefox\//.test(navigator.userAgent);
+}
+
+export function imageDataBitmap(image) {
+  return createImageBitmap(image, { premultiplyAlpha: "none", colorSpaceConversion: "none" });
+}"#)]
+extern "C" {
+    #[wasm_bindgen(js_name = uploadsImageData)]
+    fn uploads_image_data() -> bool;
+    #[wasm_bindgen(js_name = imageDataBitmap)]
+    fn image_data_bitmap(image: &ImageData) -> js_sys::Promise;
+}
+
 #[cfg(target_arch = "wasm32")]
 async fn fetch_bitmap(url: &str, flip_y: bool) -> Result<web_sys::ImageBitmap, JsValue> {
     JsFuture::from(texture_bitmap(url, flip_y && FLIP_BITMAPS_ON_DECODE))

@@ -232,17 +232,15 @@ mod tests {
 
     #[test]
     fn parses_the_put_target_as_given() {
-        let url = DirectoryUrl::parse(
-            "https://sloppy-tanks-directory.fridman.me/servers?environment=dev",
-        )
-        .unwrap();
+        let url = DirectoryUrl::parse("https://directory.sloppytanks.com/servers?environment=dev")
+            .unwrap();
         assert!(url.tls);
         assert_eq!(
             (url.host.as_str(), url.port, url.authority.as_str()),
             (
-                "sloppy-tanks-directory.fridman.me",
+                "directory.sloppytanks.com",
                 443,
-                "sloppy-tanks-directory.fridman.me"
+                "directory.sloppytanks.com"
             )
         );
         assert_eq!(url.path_and_query, "/servers?environment=dev");

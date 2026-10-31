@@ -16,7 +16,7 @@ export const SERVER_IMAGE = "ghcr.io/vladf1/sloppy-tanks-server";
 /** The server directory (directory/worker.ts): each machine pushes its rooms there, and the
  * pages of its site read every server's rooms from there, each under its environment, the
  * role (production or dev). */
-export const DIRECTORY_URL = "https://sloppy-tanks-directory.fridman.me";
+export const DIRECTORY_URL = "https://directory.sloppytanks.com";
 
 /**
  * accept-new trusts a fresh machine's host key on first contact, so a new one needs no

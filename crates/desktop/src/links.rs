@@ -84,7 +84,7 @@ pub fn query_for(query: &str, place: Place) -> String {
 #[cfg(not(target_arch = "wasm32"))]
 fn web_site() -> &'static str {
     if crate::directory::ENVIRONMENT == "dev" {
-        "https://sloppy-tanks-dev.fridman.me/"
+        "https://dev.sloppytanks.com/"
     } else {
         "https://sloppytanks.com/"
     }

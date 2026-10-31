@@ -156,7 +156,7 @@ pnpm run format         # Prettier for tests, scripts, tools and docs; cargo fmt
 `?autoplay` assigns bot controls to the player slot for the first single-player round.
 
 Multiplayer is available on the [production site](https://sloppytanks.com/?multiplayer)
-and the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer), each with its own
+and the [dev site](https://dev.sloppytanks.com/?multiplayer), each with its own
 game server. Battle Setup's tank and map choices sit above its two tabs,
 **Single player** and **Multiplayer**, and stay put when you switch: the tank you
 pick is the one you drive online, and the map is the one a new room plays.
@@ -337,7 +337,7 @@ the Vite dev server keep the default `/sloppy-tanks/` base.
 
 The page holds no server address, only the server directory's (production's, unless the
 shell's build names another in `SLOPPY_DIRECTORY_URL`). The directory is a Cloudflare
-Worker (`directory/`, published with `pnpm run directory:deploy`) that every game server
+Worker at <https://directory.sloppytanks.com> (`directory/`, published with `pnpm run directory:deploy`) that every game server
 pushes its rooms to; the page lists every server's rooms from it and connects to the
 server that hosts the chosen room, or for a new room the one with the fewest rooms. A
 machine pushes its rooms to the directory under its environment (production or dev),
@@ -395,15 +395,13 @@ the same checkout's server image as its `:dev` tag, which those servers check ev
 seconds and switch to by themselves, and waits for them, so client and server versions
 match; production multiplayer is never affected.
 
-The dev game is at <https://sloppy-tanks-dev.fridman.me/> (also
-<https://dev.sloppytanks.com/>) and the directory of
-browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.
+The dev game is at <https://dev.sloppytanks.com/> and the directory of
+browser test pages is at <https://dev.sloppytanks.com/test-pages.html>.
 The provider URL is <https://sloppy-tanks-dev.vova145.workers.dev/>. Its `/health`
 reports the same build details as production's, including whether local changes were present.
 The build goes to `dist-dev/` with the `/` base; production builds and deployments
-stay separate. The hostnames are the Worker's custom domains: Wrangler keeps their DNS
-records in the fridman.me and sloppytanks.com Cloudflare zones, and all other records
-stay as they are.
+stay separate. The hostname is the Worker's custom domain: Wrangler keeps its DNS
+record in the sloppytanks.com Cloudflare zone, and all other records stay as they are.
 
 The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
 `/assets/`, where every file has a content-hashed name, so a returning visit requests

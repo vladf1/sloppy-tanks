@@ -18,7 +18,7 @@ const deployments = [
   {
     id: "cloudflare-workers",
     name: "Cloudflare Workers (dev site)",
-    origin: "https://sloppy-tanks-dev.fridman.me",
+    origin: "https://dev.sloppytanks.com",
   },
 ];
 

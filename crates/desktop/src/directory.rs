@@ -18,7 +18,7 @@ const BUILD_DIRECTORY: Option<&str> = match option_env!("SLOPPY_DIRECTORY_URL") 
     Some(url) if !url.is_empty() => Some(url),
     _ => None,
 };
-const PRODUCTION_DIRECTORY: &str = "https://sloppy-tanks-directory.fridman.me";
+const PRODUCTION_DIRECTORY: &str = "https://directory.sloppytanks.com";
 /// A game server on this machine (`pnpm run server:dev`), which is its own directory.
 const LOCAL_SERVER: &str = "http://127.0.0.1:8787";
 /// The environment whose servers the app lists: production's, unless the build names
