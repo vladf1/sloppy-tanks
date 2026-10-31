@@ -119,29 +119,42 @@ pub struct CanvasSize {
 }
 
 impl CanvasSize {
-    /// Drawing-buffer pixels per CSS pixel: the device ratio capped at
-    /// `CAMERA.max_pixel_ratio`, or 1 when `exact`.
+    /// The 3D scene's render pixels per CSS pixel at full render scale: the device
+    /// ratio capped at `CAMERA.max_pixel_ratio`, or 1 when `exact`. The quality
+    /// controller scales down from it.
     pub fn pixel_ratio(&self) -> f64 {
+        self.capped(CAMERA.max_pixel_ratio)
+    }
+
+    /// Drawing-buffer pixels per CSS pixel: the device ratio capped at
+    /// `CAMERA.max_canvas_pixel_ratio`, or 1 when `exact`.
+    pub fn canvas_ratio(&self) -> f64 {
+        self.capped(CAMERA.max_canvas_pixel_ratio)
+    }
+
+    fn capped(&self, max: f64) -> f64 {
         if self.exact {
             1.0
         } else {
-            self.device_pixel_ratio.min(CAMERA.max_pixel_ratio)
+            self.device_pixel_ratio.min(max)
         }
     }
 
     /// The renderer's blur behind a dialog in drawing-buffer pixels (`on`), or none.
     pub fn backdrop_blur(&self, on: bool) -> f32 {
         if on {
-            BACKDROP_BLUR_CSS_PX * self.pixel_ratio() as f32
+            BACKDROP_BLUR_CSS_PX * self.canvas_ratio() as f32
         } else {
             0.0
         }
     }
 
     pub fn apply(&self, view: &mut Presentation) {
-        let ratio = self.pixel_ratio();
+        let ratio = self.canvas_ratio();
         let width = (f64::from(self.css.x) * ratio).round().max(1.0) as u32;
         let height = (f64::from(self.css.y) * ratio).round().max(1.0) as u32;
+        view.renderer
+            .set_scene_cap((self.pixel_ratio() / ratio) as f32);
         view.resize(width, height);
         view.css_height = f64::from(self.css.y);
     }

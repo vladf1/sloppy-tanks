@@ -10,7 +10,13 @@ pub struct Camera {
     pub default_zoom: f64,
     pub min_zoom: f64,
     pub max_zoom: f64,
+    /// The 3D scene's most render pixels per CSS pixel; the output pass upsamples it
+    /// to the canvas.
     pub max_pixel_ratio: f64,
+    /// The canvas's most drawing-buffer pixels per CSS pixel. Menus and HUD draw at
+    /// it: a canvas at the scene's ratio left the browser stretching their text and
+    /// edges on a 2x screen.
+    pub max_canvas_pixel_ratio: f64,
 }
 
 pub const CAMERA: Camera = Camera {
@@ -21,6 +27,7 @@ pub const CAMERA: Camera = Camera {
     min_zoom: 17.0,
     max_zoom: 52.0,
     max_pixel_ratio: 1.5,
+    max_canvas_pixel_ratio: 2.0,
 };
 
 /// How the camera reacts to the battle; the overhead camera itself stays fixed on

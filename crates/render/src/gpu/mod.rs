@@ -432,14 +432,18 @@ struct OutputUniform {
 /// `saturate()`).
 pub const BACKDROP_BLUR_CSS_PX: f32 = 2.0;
 const BACKDROP_SATURATION: f32 = 0.9;
+/// The widest backdrop blur, in canvas pixels, whose taps read every texel pair.
+const BACKDROP_EXACT_SIGMA: f32 = 3.0;
 
 /// The backdrop blur's weights for one of its separable passes (`backdrop_blur` in
 /// `output.wgsl`): the centre texel's, and for each of the bilinear taps either side
 /// the distance in texels and weight of the texel pair it reads, so two texels cost
-/// one tap. Four pairs reach eight texels, over 2.8 standard deviations of the widest
-/// blur the canvas's pixel ratio gives (`CAMERA.max_pixel_ratio` 1.5: 3 pixels); the
-/// weights sum to one.
+/// one tap. Four pairs reach eight texels, over 2.8 standard deviations of a blur up
+/// to [`BACKDROP_EXACT_SIGMA`]; a wider one (a 2x canvas: 4 pixels) spreads the same
+/// taps over a coarser grid, which a blur hides. The weights sum to one.
 fn backdrop_kernel(sigma: f32) -> ([f32; 4], [f32; 4], [f32; 4]) {
+    let stride = (sigma / BACKDROP_EXACT_SIGMA).max(1.0);
+    let sigma = sigma / stride;
     let gaussian = |x: f32| (-0.5 * (x / sigma).powi(2)).exp();
     let mut offsets = [0.0; 4];
     let mut weights = [0.0; 4];
@@ -447,7 +451,7 @@ fn backdrop_kernel(sigma: f32) -> ([f32; 4], [f32; 4], [f32; 4]) {
         let near = (2 * pair + 1) as f32;
         let (a, b) = (gaussian(near), gaussian(near + 1.0));
         *weight = a + b;
-        *offset = (near * a + (near + 1.0) * b) / (a + b);
+        *offset = stride * (near * a + (near + 1.0) * b) / (a + b);
     }
     let total = 1.0 + 2.0 * weights.iter().sum::<f32>();
     let centre = 1.0 / total;
@@ -1000,6 +1004,8 @@ pub struct Renderer {
     features: TierFeatures,
     /// Scene pixels per canvas pixel along each axis; the output pass upsamples.
     render_scale: f32,
+    /// The scene's size at full render scale against the canvas's (`set_scene_cap`).
+    scene_cap: f32,
     /// The sun shadow map edge the arena asked for, before the tier's cap.
     requested_shadow_size: u32,
     /// A development multiplier on the scene's size, to make the GPU the bottleneck
@@ -1124,6 +1130,7 @@ impl Renderer {
             tier: Tier::High,
             features: Tier::High.features(),
             render_scale: 1.0,
+            scene_cap: 1.0,
             requested_shadow_size: sun_shadow.map_size,
             scene_load: 1.0,
             pacing_reset_due: false,
@@ -1153,9 +1160,16 @@ impl Renderer {
         self.frame.scene_size()
     }
 
+    /// Draw the scene at most `cap` scene pixels per canvas pixel at full render scale
+    /// (the scene's pixel ratio over the canvas's): the menus over it need a sharper
+    /// canvas than the scene is worth. Takes effect at the next resize.
+    pub fn set_scene_cap(&mut self, cap: f32) {
+        self.scene_cap = cap.clamp(0.05, 1.0);
+    }
+
     /// The scene's size for a canvas of `canvas` pixels at the render scale.
     fn scene_size_for(&self, canvas: (u32, u32)) -> (u32, u32) {
-        let scale = f64::from(self.render_scale * self.scene_load);
+        let scale = f64::from(self.scene_cap * self.render_scale * self.scene_load);
         let side = |pixels: u32| ((f64::from(pixels) * scale).round() as u32).max(1);
         (side(canvas.0), side(canvas.1))
     }

@@ -198,11 +198,18 @@ impl Overlay {
             entry.before_pass(&self.context, self.input.egui_input_mut());
         }
         let mut input = self.input.take_egui_input(&self.window);
-        let (width, height, _) = crate::app::css_size(&self.window);
+        let (width, height, scale) = crate::app::css_size(&self.window);
         input.screen_rect = Some(egui::Rect::from_min_size(
             egui::Pos2::ZERO,
             egui::vec2(width as f32, height as f32),
         ));
+        // Rasterise text and shapes at the canvas's ratio, which a 3x phone's caps, so
+        // nothing is drawn finer only to be shrunk.
+        let canvas_ratio =
+            scale.min(sloppy_render::presentation::view_settings::CAMERA.max_canvas_pixel_ratio);
+        if let Some(viewport) = input.viewports.get_mut(&input.viewport_id) {
+            viewport.native_pixels_per_point = Some(canvas_ratio as f32);
+        }
         let mut output = self.context.run_pass(input, build);
         if let Some(update) = output.platform_output.accesskit_update.take() {
             crate::automation::seen(&self.context, &update);
