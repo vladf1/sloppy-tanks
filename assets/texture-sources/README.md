@@ -37,6 +37,13 @@ the channels). It is baked from the arena layout in Rust and stored losslessly; 
 `node --import tsx scripts/generate-village-ground.ts` after changing the layout,
 roads, cottages or fields.
 
+## Home Screen icons
+
+`public/icons/` (`apple-touch-icon.png`, `icon-192.png`, `icon-512.png`) are drawn by
+`pnpm run generate:app-icons`: Chrome renders the favicon's tank on the menu's navy, and
+[oxipng](https://github.com/shssoichiro/oxipng) (`brew install oxipng`) then recompresses
+them losslessly. Keep them PNG: iOS takes only a PNG Home Screen icon.
+
 ## macOS app icon
 
 `assets/desktop/mac-app.icns` is generated from the existing `public/icons/icon-512.png`
