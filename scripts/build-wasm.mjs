@@ -35,12 +35,14 @@
 // server must share (`SLOPPY_CONTENT_VERSION`): multiplayer joins send it. The shell
 // also carries the release and commit Battle Setup shows, as the desktop app does, and
 // its content version goes to `src/generated/shell/content-version` for the page's
-// `/health` (`scripts/page-health.ts`).
+// `/health` (`scripts/page-health.ts`). The page's geometry cache keys its files by
+// `SLOPPY_GEOMETRY_VERSION` (`geometryVersion`), which changes only with the models.
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { contentVersion } from "./content-version.mjs";
+import { contentVersion, geometryVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -89,6 +91,7 @@ const commit = capture("git", ["rev-parse", "--short", "HEAD"]) || "unknown";
 const dirty = capture("git", ["status", "--porcelain"]) !== "";
 const stamps = {
   SLOPPY_CONTENT_VERSION: version,
+  SLOPPY_GEOMETRY_VERSION: await geometryVersion(profile),
   SLOPPY_RELEASE: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
   SLOPPY_COMMIT: dirty ? `${commit}-dirty` : commit,
 };
@@ -155,7 +158,42 @@ const builds = process.argv.includes("--labs")
         : webglGlue
           ? [SHELL]
           : [SHELL, SHELL_WEBGL];
+// Shader tables ------------------------------------------------------------------------
+// The page's shell draws shader variants the build generated rather than assembling them
+// (crates/render/src/shader/tables.rs): before it builds, the native `shader-tables`
+// generator writes every variant either backend can ask for into `src/generated/shaders/`,
+// which index.html fetches beside the binary. It writes only the tables of the backends
+// this run builds, so another backend's binary keeps the tables it was built with, and runs
+// again only once Cargo rebuilt it, which a change to the renderer's sources does (about
+// 3 s).
+const SHADER_TABLES = "src/generated/shaders";
+
+async function shaderTables(backends) {
+  await run("cargo", ["build", "--locked", "-p", "sloppy-render", "--features", "shader-tables"]);
+  const target = process.env.CARGO_TARGET_DIR ?? "target";
+  const generator = `${target}/debug/shader-tables${process.platform === "win32" ? ".exe" : ""}`;
+  const at = (path) => resolve(root, path);
+  const built = String(statSync(at(generator)).mtimeMs);
+  // Each backend's stamp names the generator that wrote its tables.
+  const stamp = (backend) => at(`${SHADER_TABLES}/${backend}.generator`);
+  const stale = backends.filter(
+    (backend) =>
+      !existsSync(at(`${SHADER_TABLES}/${backend}.json`)) ||
+      !existsSync(stamp(backend)) ||
+      readFileSync(stamp(backend), "utf8") !== built,
+  );
+  if (stale.length === 0) return;
+  await run(at(generator), [SHADER_TABLES, ...stale]);
+  for (const backend of stale) await writeFile(stamp(backend), built);
+}
+// ---------------------------------------------------------------------------------------
+
 try {
+  const backends = [
+    ...(builds.includes(SHELL) ? ["webgpu"] : []),
+    ...(builds.includes(SHELL_WEBGL) ? ["webgl"] : []),
+  ];
+  if (backends.length > 0) await shaderTables(backends);
   for (const target of builds) {
     await build(target);
   }

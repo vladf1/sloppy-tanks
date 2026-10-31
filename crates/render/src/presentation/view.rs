@@ -37,6 +37,7 @@ use sloppy_core::sim::{
 use super::PRESENTATION_EFFECTS;
 use super::camera_rig::{CameraRig, ViewerPose};
 use super::generated::{GeneratedTextures, SOIL_ROWS_PER_STEP};
+use super::geometry_cache;
 use super::house_prep::{
     HousePreparation, PREPARE_BUDGET_MS, PREPARE_STEPS, Prepared, release_spent_houses,
 };
@@ -1048,11 +1049,16 @@ pub struct Presentation {
     live: std::collections::HashSet<u32>,
     /// What building the round's views has still to do (`build.rs`).
     build: build::BuildStage,
+    /// When a build stepped over frames began, while it may wait for the page to read
+    /// its theme's cached scenery (`geometry_cache::reading`); `None` builds at once.
+    cache_wait_since: Option<f64>,
     preparation: Preparation,
 }
 
 impl Presentation {
     pub fn new(mut renderer: Renderer, seed: u64) -> Self {
+        // Before anything measures or builds a vehicle (the effects take muzzles).
+        geometry_cache::offer_vehicles();
         for effect in PRESENTATION_EFFECTS {
             renderer.register_effect(effect);
         }
@@ -1126,6 +1132,7 @@ impl Presentation {
             textures: GeneratedTextures::default(),
             live: std::collections::HashSet::new(),
             build: build::BuildStage::Done,
+            cache_wait_since: None,
             preparation: Preparation::default(),
         };
         presentation
@@ -1234,6 +1241,7 @@ impl Presentation {
     /// do this while the rest loads; `reset` reuses it.
     pub fn build_scenery(&mut self, theme_name: &str) {
         if let Some((key, model)) = self.scenery_model(theme_name) {
+            geometry_cache::encode_step();
             let pending = self.prepare_scenery(key, model);
             self.upload_scenery(pending);
         }
@@ -1252,10 +1260,13 @@ impl Presentation {
 
     /// Draw a theme's scenery model's generated textures and batch its static parts
     /// for upload.
-    fn prepare_scenery(&mut self, key: &'static str, model: SceneryModel) -> PendingScenery {
+    fn prepare_scenery(&mut self, key: &'static str, mut model: SceneryModel) -> PendingScenery {
         self.textures
             .request_scenery(&mut self.renderer, &model.root);
-        let statics = self.renderer.prepare_pending_scenery(&model.root);
+        // The batches take the static parts' source meshes (`prepare_pending_scenery`).
+        let statics = self
+            .renderer
+            .prepare_pending_scenery(std::mem::take(&mut model.root));
         PendingScenery {
             key,
             model,
@@ -1453,6 +1464,11 @@ impl Presentation {
     /// page, so their source geometry goes, leaving room in the Wasm heap for what a
     /// battle builds.
     pub fn prebuild_step(&mut self) -> bool {
+        // The page's cache takes the models built for this arena first, now that it is
+        // ready.
+        if geometry_cache::write_step() {
+            return true;
+        }
         if self.library.complete {
             return false;
         }
@@ -1462,6 +1478,7 @@ impl Presentation {
             self.library.wreck(&mut self.renderer, kind, team, part);
             return true;
         }
+        geometry_cache::write_vehicles();
         release_tank_models();
         self.library.complete = true;
         false

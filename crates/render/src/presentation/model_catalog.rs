@@ -4,7 +4,8 @@
 //! - [`cover_model`] ← `models::cover_model(cover, Full, stage)`, batched like
 //!   `physicalCoverModel` in `presentation.ts`; trees list their shedding boughs
 //!   ([`TreeParts`]).
-//! - [`scenery`] ← `models::build_scenery(theme)`, split into what bakes static,
+//! - [`scenery`] ← `models::build_scenery(theme)` (or the page's cached copy,
+//!   `geometry_cache`), split into what bakes static,
 //!   the parts [`Scenery::update`] animates (movers), the water surface the
 //!   renderer draws with its planar reflection, and the chimney smoke that
 //!   `VillageScenery::set_covers` refills each round.
@@ -15,7 +16,7 @@ use glam::{DMat4, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
     self as core_models, CHIMNEY_SMOKE_NODE, CoverShape, Scenery, SmokeCover, TreeDetail,
-    WATERWHEEL, batch, branch_drop_stage, build_scenery, cover_damage_stage, tree_part,
+    WATERWHEEL, batch, branch_drop_stage, cover_damage_stage, tree_part,
 };
 use sloppy_core::scene::{Effect, Node};
 use sloppy_core::sim::CoverKind;
@@ -173,6 +174,8 @@ pub struct SceneryModel {
     /// The village chimney smoke: an instanced wisp quad (see
     /// [`smoke_instances`]).
     pub smoke: Option<Node>,
+    /// Read back from the page's geometry cache rather than built.
+    pub read_back: bool,
 }
 
 /// An animated scenery subtree, found by its child-index path from the root.
@@ -282,7 +285,7 @@ fn is_water(node: &Node) -> bool {
 /// extra levels, which show plain pads and floors instead.
 pub fn scenery(theme: Theme) -> Option<SceneryModel> {
     let map_theme = theme.map_theme()?;
-    let mut scenery = build_scenery(map_theme);
+    let (mut scenery, read_back) = super::geometry_cache::scenery(map_theme);
     scenery.update(0.0);
     let source = scenery.root();
     let mut root = source.clone();
@@ -334,6 +337,7 @@ pub fn scenery(theme: Theme) -> Option<SceneryModel> {
         movers,
         water,
         smoke,
+        read_back,
     })
 }
 

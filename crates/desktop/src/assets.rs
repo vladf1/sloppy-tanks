@@ -98,6 +98,40 @@ extern "C" {
     fn decode_image(bytes: &js_sys::Uint8Array) -> js_sys::Promise;
 }
 
+/// The pixels of a decoded image, read from the browser's buffer a band at a time: the
+/// image's only copy in the Wasm heap is the result (`ImageData::data` would add a
+/// second, and a 1920×800 preview's two copies grew the heap's peak by 12 MB when they
+/// landed beside an arena's build).
+#[cfg(target_arch = "wasm32")]
+fn color_image(image: &web_sys::ImageData) -> Option<egui::ColorImage> {
+    use wasm_bindgen::JsCast;
+    /// Bytes copied in at a time.
+    const BAND: u32 = 64 * 1024;
+    let size = [image.width() as usize, image.height() as usize];
+    let data: js_sys::Uint8ClampedArray = js_sys::Reflect::get(image, &"data".into())
+        .ok()?
+        .dyn_into()
+        .ok()?;
+    let mut pixels = Vec::with_capacity(size[0] * size[1]);
+    let mut band = vec![0; BAND as usize];
+    let length = data.length();
+    let mut start = 0;
+    while start < length {
+        let end = (start + BAND).min(length);
+        let bytes = &mut band[..(end - start) as usize];
+        data.subarray(start, end).copy_to(bytes);
+        pixels.extend(
+            bytes
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|&[r, g, b, a]| egui::Color32::from_rgba_unmultiplied(r, g, b, a)),
+        );
+        start = end;
+    }
+    (pixels.len() == size[0] * size[1]).then(|| egui::ColorImage::new(size, pixels))
+}
+
 /// Decode the image file `bytes` with the browser; `context` repaints once it has.
 #[cfg(target_arch = "wasm32")]
 pub fn decode(bytes: &[u8], context: &egui::Context) -> Decoding {
@@ -111,10 +145,7 @@ pub fn decode(bytes: &[u8], context: &egui::Context) -> Decoding {
             .await
             .ok()
             .and_then(|value| value.dyn_into::<web_sys::ImageData>().ok())
-            .map(|image| {
-                let size = [image.width() as usize, image.height() as usize];
-                egui::ColorImage::from_rgba_unmultiplied(size, &image.data())
-            });
+            .and_then(|image| color_image(&image));
         *slot.borrow_mut() = Some(decoded);
         context.request_repaint();
     });

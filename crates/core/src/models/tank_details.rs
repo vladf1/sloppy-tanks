@@ -68,7 +68,7 @@ pub(super) enum Assembly {
     Marking(Team, u8),
 }
 
-static KITS: Cache<(VehicleKind, Assembly), KitMeshes> = Cache::new();
+static KITS: Cache<(VehicleKind, Assembly), KitMeshes> = Cache::new("tank_details::KITS");
 
 /// The merged meshes of one assembly, built once per chassis and shared by both
 /// teams and every round.

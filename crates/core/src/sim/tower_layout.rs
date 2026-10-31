@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::types::FragmentShape;
+use super::kinds::FragmentShape;
 
 pub struct TowerBase {
     pub offset: f64,

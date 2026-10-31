@@ -27,7 +27,7 @@ use super::tank_surfaces::{
 use super::{Team, VehicleKind, part};
 use crate::geometry::{Attribute, CylinderGeometry, Mesh, VERTEX_ALPHA, ring_geometry};
 use crate::scene::{Material, Node, Shading};
-use crate::sim::data::vehicle;
+use crate::sim::model_data::vehicle_scale;
 
 #[path = "tank_running_gear.rs"]
 mod running_gear;
@@ -75,7 +75,8 @@ const HUMVEE_GRIME: Grime = Grime {
     dust_top: 0.8,
 };
 
-static MODELS: Cache<(VehicleKind, Team, bool), Node> = Cache::new();
+const MODELS_STORE: &str = "tank_model::MODELS";
+static MODELS: Cache<(VehicleKind, Team, bool), Node> = Cache::new(MODELS_STORE);
 
 /// The turret-ring well's wall: an open cylinder turned inside out. Reversed
 /// triangles and normals face the wall inward, so it draws with ordinary
@@ -113,7 +114,61 @@ pub fn tank_model(kind: VehicleKind, team: Team) -> Arc<Node> {
 /// [`tank_model`] builds its model again.
 pub fn release_tank_models() {
     MODELS.clear();
+    super::shared_values::forget(MODELS_STORE);
     release_vehicle_weathering();
+}
+
+/// Every distinct vehicle model's key, in the order a cached group holds them.
+fn tank_model_keys() -> Vec<(VehicleKind, Team, bool)> {
+    let mut keys = Vec::new();
+    for kind in VehicleKind::ALL {
+        for team in [Team::Blue, Team::Red] {
+            for open_turret_ring in [false, true] {
+                // The Humvee's two variants are one model.
+                if !(open_turret_ring && kind == VehicleKind::Humvee) {
+                    keys.push((kind, team, open_turret_ring));
+                }
+            }
+        }
+    }
+    keys
+}
+
+/// How many vehicle models are built.
+pub fn built_tank_model_count() -> usize {
+    tank_model_keys()
+        .iter()
+        .filter(|key| MODELS.get(key).is_some())
+        .count()
+}
+
+/// Every vehicle model as one group, children in a fixed order, once all are built:
+/// what a page's geometry cache keeps, written in one piece so the models' shared
+/// meshes stay shared.
+pub fn built_tank_models() -> Option<Node> {
+    let mut group = Node::group("vehicles");
+    for key in tank_model_keys() {
+        group.children.push((*MODELS.get(&key)?).clone());
+    }
+    Some(group)
+}
+
+/// Hand [`tank_model_variant`] the models of a [`built_tank_models`] group read back
+/// from a page's geometry cache: each is returned instead of built from now on,
+/// unless it is built already. False for a group of another shape.
+pub fn offer_tank_models(group: Node) -> bool {
+    let keys = tank_model_keys();
+    if group.children.len() != keys.len() {
+        return false;
+    }
+    for (key, model) in keys.into_iter().zip(group.children) {
+        super::shared_values::adopt(
+            MODELS_STORE,
+            super::shared_values::key_hash(&key),
+            Arc::new(model),
+        );
+    }
+    true
 }
 
 /// `tankModel(kind, team, false, openTurretRing)`: `open_turret_ring` cuts the ring
@@ -148,7 +203,7 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
             },
         };
         apply_vehicle_livery(&mut root, &livery);
-        root.scale = DVec3::splat(vehicle(kind).scale);
+        root.scale = DVec3::splat(vehicle_scale(kind));
         root
     })
 }
@@ -164,7 +219,8 @@ const TURRET_OCCLUSION_ORDER: i32 = -3;
 
 /// Unlit black, blended over the deck by the mesh's vertex alpha.
 fn occlusion_material() -> Arc<Material> {
-    static MATERIAL: std::sync::OnceLock<Arc<Material>> = std::sync::OnceLock::new();
+    static MATERIAL: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("tank_model::MATERIAL");
     MATERIAL
         .get_or_init(|| {
             Arc::new(Material {
@@ -192,7 +248,7 @@ const TURRET_OCCLUSION_DARKNESS: f32 = 0.82;
 const TURRET_OCCLUSION_MITRE: f64 = 1.6;
 
 fn turret_occlusion(c: &Chassis) -> Node {
-    static MESHES: Cache<VehicleKind, Mesh> = Cache::new();
+    static MESHES: Cache<VehicleKind, Mesh> = Cache::new("tank_model::MESHES");
     let mesh = MESHES.get_or_insert(c.kind, || turret_occlusion_mesh(c));
     let mut node = Node::mesh(mesh, occlusion_material());
     if let Some(drawable) = &mut node.drawable {

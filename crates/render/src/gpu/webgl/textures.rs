@@ -13,7 +13,8 @@ use super::programs::{Linking, Program};
 use super::{Frame, MaterialBinding};
 use crate::effects::bakes::TextureBake;
 use crate::gpu::textures::{Pixels, SamplerKey, TextureKey};
-use crate::shader::MIPMAP_WGSL;
+use crate::shader::FixedShader;
+use crate::shader::tables::page::fixed_program;
 
 pub type TextureView = glow::Texture;
 pub type Sampler = glow::Sampler;
@@ -108,7 +109,8 @@ pub struct Uploader {
 impl Uploader {
     /// Starts linking the mip blit; [`Self::ready`] reports once it has.
     pub fn new(gpu: &Gpu) -> Self {
-        let blit = Linking::start(gpu, "mipmap", MIPMAP_WGSL, "vs_blit", Some("fs_blit"));
+        let program = fixed_program(FixedShader::Mipmap, "vs_blit", Some("fs_blit"));
+        let blit = Linking::start(gpu, "mipmap", program);
         let placeholder = storage(gpu, glow::RGBA8, 1, 1, 1);
         gpu.set_flip_y(false);
         unsafe {
@@ -139,13 +141,8 @@ impl Uploader {
     /// for (`webgpu/textures.rs` `Uploader::ready_to_bake`).
     pub fn ready_to_bake(&mut self, gpu: &Gpu, bake: &'static TextureBake) -> bool {
         let state = self.bakes.entry(bake.key).or_insert_with(|| {
-            Blit::Linking(Linking::start(
-                gpu,
-                bake.key,
-                &bake.source(),
-                "vs_bake",
-                Some("fs_bake"),
-            ))
+            let program = fixed_program(FixedShader::Bake(bake.key), "vs_bake", Some("fs_bake"));
+            Blit::Linking(Linking::start(gpu, bake.key, program))
         });
         if let Blit::Linking(linking) = state
             && linking.done(gpu)

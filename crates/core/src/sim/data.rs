@@ -1,9 +1,10 @@
 //! Gameplay balance uses metres, seconds, radians and hit points unless stated otherwise.
 
+pub use super::model_data::{ARENA, TEAM_COLORS};
+use super::model_data::vehicle_scale;
 use super::types::{PickupKind, VehicleKind, Weapon};
 
 pub const STEP: f64 = 1.0 / 60.0;
-pub const ARENA: f64 = 60.0;
 pub const ROUND_TIME: f64 = 300.0;
 pub const SOLO_TIME: f64 = 600.0;
 pub const SCORE_LIMIT: u32 = 100;
@@ -63,26 +64,39 @@ const fn vehicle_stats(
     }
 }
 
-// Comparable game sizes; Bruiser anchors the fleet at 1.95 units wide.
 const SCOUT: VehicleStats = vehicle_stats(
     "SKIPPER",
     80.0,
     1.24,
     1.0,
-    (3.59 / 2.3) * (1.95 / 3.66),
+    vehicle_scale(VehicleKind::Scout),
     Weapon::Standard,
 );
 const BALANCED: VehicleStats =
-    vehicle_stats("BRUISER", 100.0, 1.0, 1.45, 1.95 / 2.42, Weapon::Standard);
+    vehicle_stats(
+    "BRUISER",
+    100.0,
+    1.0,
+    1.45,
+    vehicle_scale(VehicleKind::Balanced),
+    Weapon::Standard,
+);
 const HEAVY: VehicleStats = vehicle_stats(
     "BIG RIG",
     140.0,
     0.76,
     2.5,
-    (3.5 / 2.5) * (1.95 / 3.66) * 1.15,
+    vehicle_scale(VehicleKind::Heavy),
     Weapon::Standard,
 );
-const HUMVEE: VehicleStats = vehicle_stats("HUNTER", 35.0, 1.52, 0.72, 0.9, Weapon::Tow);
+const HUMVEE: VehicleStats = vehicle_stats(
+    "HUNTER",
+    35.0,
+    1.52,
+    0.72,
+    vehicle_scale(VehicleKind::Humvee),
+    Weapon::Tow,
+);
 
 pub const fn vehicle(kind: VehicleKind) -> &'static VehicleStats {
     match kind {
@@ -262,7 +276,6 @@ pub const fn pickup(kind: PickupKind) -> PickupStats {
     }
 }
 
-pub const TEAM_COLORS: [u32; 2] = [0x008cff, 0xff303e];
 pub const TEAM_NAMES: [&str; 2] = ["BLUE", "RED"];
 
 /// Collision groups as the physics engine's packed 32-bit value: memberships in the high

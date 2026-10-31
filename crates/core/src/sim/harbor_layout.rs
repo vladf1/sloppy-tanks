@@ -2,8 +2,8 @@
 //! stay clear.
 
 use super::arena::{CoverDef, boundary_walls};
-use super::data::ARENA;
-use super::types::CoverKind;
+use super::kinds::CoverKind;
+use super::model_data::ARENA;
 
 pub fn harbor_layout() -> Vec<CoverDef> {
     let mut covers = Vec::new();

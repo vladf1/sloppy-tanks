@@ -20,8 +20,9 @@ webgl = ["sloppy-render/webgl"]
 # `Game`, `NetGame`, `WireView` and their methods exported to JavaScript, for the engine
 # build the fixtures, the game preview and the Node checks load (`wasm:engine`). The
 # page's shell calls them from Rust and leaves them out: they were about 37 KB of its
-# Wasm with Brotli and 12 KB of its glue.
-js-api = []
+# Wasm with Brotli and 12 KB of its glue. The pages that load the engine have no shader
+# tables (`sloppy-render`'s `shader/tables.rs`), so it assembles its shaders itself.
+js-api = ["sloppy-render/specializer"]
 # The development labs (`RenderLab`, `EffectsLab`) for tools/*-lab.html. Production
 # builds leave them out; `pnpm run wasm -- --labs` builds them.
 labs = ["js-api"]

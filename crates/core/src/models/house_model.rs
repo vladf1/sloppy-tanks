@@ -385,8 +385,8 @@ fn add_cottage(
     }
 }
 
-static GRIMED: Cache<(u32, bool), Material> = Cache::new();
-static WEATHERED_SHINGLES: Cache<u32, Material> = Cache::new();
+static GRIMED: Cache<(u32, bool), Material> = Cache::new("house_model::GRIMED");
+static WEATHERED_SHINGLES: Cache<u32, Material> = Cache::new("house_model::WEATHERED_SHINGLES");
 
 /// A standing cottage's walls, weathered darker toward the plinth where rain
 /// splashes and soil climbs: the siding material taking vertex colours that fall
@@ -441,7 +441,7 @@ fn satin(color: u32) -> Arc<Material> {
     material(color, SATIN.0, SATIN.1)
 }
 
-static OCTAHEDRON: Cache<(), Mesh> = Cache::new();
+static OCTAHEDRON: Cache<(), Mesh> = Cache::new("house_model::OCTAHEDRON");
 
 /// `house(group, c)`: the village cottage for a cover box at a damage stage, its
 /// type chosen from its position and marked by the shells that hit it.

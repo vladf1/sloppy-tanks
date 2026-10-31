@@ -51,9 +51,9 @@ const POST: f64 = 0.24;
 /// The livery sits this far proud of the ribs so it never fights them for depth.
 const LIVERY_LIFT: f64 = 0.012;
 
-static PAINT: Cache<u32, Material> = Cache::new();
-static PANELS: Cache<[u64; 6], Mesh> = Cache::new();
-static WEAR_BOXES: Cache<[u64; 4], Mesh> = Cache::new();
+static PAINT: Cache<u32, Material> = Cache::new("harbor_models::PAINT");
+static PANELS: Cache<[u64; 6], Mesh> = Cache::new("harbor_models::PANELS");
+static WEAR_BOXES: Cache<[u64; 4], Mesh> = Cache::new("harbor_models::WEAR_BOXES");
 
 /// Container paint: the wear tile multiplied by the container's color.
 fn container_paint(color: u32) -> Arc<Material> {
@@ -79,7 +79,7 @@ pub(super) const CONTAINER_ROUGHNESS: f32 = 0.58;
 /// color. The color is baked into the part's vertex colors, so every container
 /// shares the one material as plain container paint did.
 fn in_cover_paint(mut part: Node, color: u32) -> Node {
-    static TINTED: Cache<(usize, u32), Mesh> = Cache::new();
+    static TINTED: Cache<(usize, u32), Mesh> = Cache::private();
     if let Some(drawable) = &mut part.drawable {
         let source = drawable.mesh.clone();
         // The source meshes are cached for good, so their addresses are stable keys.
@@ -96,7 +96,8 @@ fn in_cover_paint(mut part: Node, color: u32) -> Node {
 
 /// The livery decals of every container: the browser-drawn logo sheet.
 fn livery_paint() -> Arc<Material> {
-    static LIVERY: std::sync::OnceLock<Arc<Material>> = std::sync::OnceLock::new();
+    static LIVERY: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("harbor_models::LIVERY");
     LIVERY
         .get_or_init(|| {
             Arc::new(Material {
@@ -211,7 +212,7 @@ fn wear_box(w: f64, h: f64, d: f64, height: f64, floor: f64, color: u32) -> Node
 /// A stowed box's walls: [`wear_box`] in the ribbed paint, whose tile carries the
 /// pressed corrugation and the rails a flat box lacks.
 fn stowed_box(w: f64, h: f64, d: f64, height: f64, color: u32) -> Node {
-    static RIBBED: Cache<u32, Material> = Cache::new();
+    static RIBBED: Cache<u32, Material> = Cache::new("harbor_models::RIBBED");
     let paint = RIBBED.get_or_insert(color, || Material {
         map: Some(TextureRef {
             wrap: Wrap::Repeat,

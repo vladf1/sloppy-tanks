@@ -10,6 +10,8 @@ const brotliCompressAsync = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
 const assetDirectory = new URL("../../dist-dev/assets/", import.meta.url);
 const wasmFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".wasm"));
+// The shader tables (src/generated/shaders/).
+const tableFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".json"));
 const fontFiles = (await readdir(new URL("fonts/", assetDirectory)))
   .filter((name) => name.endsWith(".ttc"))
   .map((name) => `fonts/${name}`);
@@ -20,7 +22,7 @@ if (wasmFiles.length === 0 || fontFiles.length === 0) {
 
 // The files compress at once on zlib's thread pool, so the wait is the largest one's.
 await Promise.all(
-  [...wasmFiles, ...fontFiles].map(async (file) => {
+  [...wasmFiles, ...tableFiles, ...fontFiles].map(async (file) => {
     const original = await readFile(new URL(file, assetDirectory));
     const [brotli, gzipped] = await Promise.all([
       brotliCompressAsync(original, {

@@ -14,6 +14,7 @@ use super::{
     CoverPlan, DEBRIS_SHAPES, HousePreparation, Lifetime, PendingScenery, Preparation,
     Presentation, SAMPLE_WRECK, SceneryModel, cover_damage_stage, model_catalog, timber_part_model,
 };
+use crate::presentation::geometry_cache;
 use crate::presentation::theme::Theme;
 
 /// What building the round's views has still to do, in order.
@@ -92,6 +93,19 @@ impl Presentation {
             self.renderer.prefetch_textures(&round_texture_files(theme));
         }
         self.build = BuildStage::SceneryModel;
+        self.cache_wait_since = Some(geometry_cache::now());
+    }
+
+    /// Whether to leave the scenery model for a later step: the page is reading the
+    /// theme's cached scenery, and has not kept this build waiting long.
+    fn awaiting_cached_scenery(&self, state: &RenderState) -> bool {
+        let (Some(since), Some(theme)) = (
+            self.cache_wait_since,
+            Theme::from_name(&state.map_theme).map_theme(),
+        ) else {
+            return false;
+        };
+        geometry_cache::reading(theme, geometry_cache::now() - since)
     }
 
     /// Build the next piece of the round [`Self::begin_build`] began, each a few
@@ -100,10 +114,27 @@ impl Presentation {
     pub fn build_step(&mut self, state: &RenderState) -> bool {
         self.build = match std::mem::take(&mut self.build) {
             BuildStage::Done => BuildStage::Done,
+            BuildStage::SceneryModel if self.awaiting_cached_scenery(state) => {
+                BuildStage::SceneryModel
+            }
             BuildStage::SceneryModel => match self.scenery_model(&state.map_theme) {
+                // Read back in a few milliseconds, a scenery is batched and uploaded in
+                // the same task, still shorter than building one: its source meshes and
+                // their batches never stay in the heap across a frame, where whatever
+                // else lands then (a decoded preview, the simulation's world) would grow
+                // the heap's peak on top of them.
+                Some((key, model)) if model.read_back => {
+                    let pending = self.prepare_scenery(key, model);
+                    self.upload_scenery(pending);
+                    BuildStage::SceneryPipelines
+                }
                 Some(model) => BuildStage::SceneryBatches(Box::new(model)),
                 None => BuildStage::Theme,
             },
+            // A built scenery goes to the page's cache in a step of its own.
+            BuildStage::SceneryBatches(model) if geometry_cache::encode_step() => {
+                BuildStage::SceneryBatches(model)
+            }
             BuildStage::SceneryBatches(model) => {
                 let (key, model) = *model;
                 BuildStage::SceneryUpload(Box::new(self.prepare_scenery(key, model)))
@@ -186,6 +217,8 @@ impl Presentation {
     /// Rebuild every entity view for a new round (`reset()`) at once.
     pub fn reset(&mut self, state: &RenderState) {
         self.begin_build(state);
+        // At once: the page's read cannot finish while this loop runs.
+        self.cache_wait_since = None;
         while !matches!(self.build, BuildStage::Library) {
             self.build_step(state);
         }

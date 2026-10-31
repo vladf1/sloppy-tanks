@@ -285,12 +285,15 @@ impl Finish {
 
 /// The shared material of a finish.
 fn finish_material(finish: Finish) -> Arc<Material> {
-    static METAL: OnceLock<Arc<Material>> = OnceLock::new();
-    static WORN_METAL: OnceLock<Arc<Material>> = OnceLock::new();
-    static MATTE: OnceLock<Arc<Material>> = OnceLock::new();
+    static METAL: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("tank_surfaces::METAL");
+    static WORN_METAL: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("tank_surfaces::WORN_METAL");
+    static MATTE: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("tank_surfaces::MATTE");
     match finish {
         Finish::Paint { paint, trim, matte } => {
-            static PAINTS: Cache<(u32, u32, bool), Material> = Cache::new();
+            static PAINTS: Cache<(u32, u32, bool), Material> = Cache::new("tank_surfaces::PAINTS");
             let roughness = if matte {
                 MATTE_PAINT_ROUGHNESS
             } else {
@@ -349,7 +352,7 @@ fn paint_params(paint: u32, trim: u32) -> Vec<f32> {
 /// The running gear's material: its own vertex colors and finish with the paint
 /// effect's fill, so wheels and links read in the hull's shadow.
 fn gear_material(source: &Material) -> Arc<Material> {
-    static GEAR: Cache<(u32, u32), Material> = Cache::new();
+    static GEAR: Cache<(u32, u32), Material> = Cache::new("tank_surfaces::GEAR");
     GEAR.get_or_insert(
         (source.metalness.to_bits(), source.roughness.to_bits()),
         || {
@@ -378,7 +381,7 @@ const BELT_ROUGHNESS: f32 = 0.6;
 /// from the belt's UVs and scrolls them `links_per_unit` links per model unit of
 /// the tank's travel (fed per instance), with the running gear's fill.
 pub fn track_belt_material(links_per_unit: f64) -> Arc<Material> {
-    static BELTS: Cache<u64, Material> = Cache::new();
+    static BELTS: Cache<u64, Material> = Cache::new("tank_surfaces::BELTS");
     BELTS.get_or_insert(links_per_unit.to_bits(), || {
         let mut params = vec![0.0; 16];
         params[0] = links_per_unit as f32;
@@ -398,7 +401,7 @@ pub fn track_belt_material(links_per_unit: f64) -> Arc<Material> {
 /// Window and sight glass in `tint` (sRGB): the paint effect's glass mode, a dark
 /// tint that mirrors the sky toward grazing angles.
 pub fn vehicle_glass(tint: u32) -> Arc<Material> {
-    static GLASS: Cache<u32, Material> = Cache::new();
+    static GLASS: Cache<u32, Material> = Cache::new("tank_surfaces::GLASS");
     GLASS.get_or_insert(tint, || {
         let mut params = vec![0.0; 16];
         for (i, c) in hex_to_linear(tint).into_iter().enumerate() {
@@ -429,7 +432,7 @@ pub fn sooted_glass(material: &Material) -> Option<Arc<Material>> {
 
 /// The recognition material of a team's signal color: matte cloth.
 fn signal_material(color: u32) -> Arc<Material> {
-    static SIGNALS: Cache<u32, Material> = Cache::new();
+    static SIGNALS: Cache<u32, Material> = Cache::new("tank_surfaces::SIGNALS");
     SIGNALS.get_or_insert(color, || Material {
         emissive: Color(color),
         emissive_intensity: SIGNAL_GLOW,
@@ -462,7 +465,8 @@ pub fn unpaint(mesh: &mut Mesh, material: &Material) {
 /// The scorched material of a wreck's burnt paint: the scorch tile over a
 /// vertex-colored ash base, on the paint's UVs.
 pub fn scorched_paint_material() -> Arc<Material> {
-    static SCORCHED: OnceLock<Arc<Material>> = OnceLock::new();
+    static SCORCHED: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("tank_surfaces::SCORCHED");
     SCORCHED
         .get_or_init(|| {
             let scorch = TextureRef {
@@ -487,7 +491,8 @@ const EMBER_GLOW_INTENSITY: f32 = 2.6;
 
 /// The shared material of smouldering embers.
 pub fn ember_material() -> Arc<Material> {
-    static EMBERS: OnceLock<Arc<Material>> = OnceLock::new();
+    static EMBERS: crate::models::shared_values::SharedOnce<Material> =
+        crate::models::shared_values::SharedOnce::new("tank_surfaces::EMBERS");
     EMBERS
         .get_or_init(|| {
             Arc::new(Material {

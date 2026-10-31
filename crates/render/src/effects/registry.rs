@@ -477,6 +477,29 @@ impl EffectRegistry {
         id.checked_sub(1)
             .and_then(|index| self.effects.get(index as usize))
     }
+
+    /// A hash of what its effects give the variants' code: each one's id, name, hooks
+    /// and how it shares them. The generated shader tables carry the fingerprint of the
+    /// registry they were generated for (`shader/tables.rs`); a page whose registry
+    /// differs would draw other effects' code.
+    pub fn fingerprint(&self) -> u64 {
+        use crate::shader::tables::{FNV_OFFSET, fnv};
+        self.effects.iter().fold(FNV_OFFSET, |hash, effect| {
+            let [own, shared] = effect.hooks();
+            let flags = [own, shared]
+                .into_iter()
+                .flat_map(|hooks| [hooks.vertex, hooks.world, hooks.clip, hooks.surface])
+                .chain([
+                    effect.has_shared_vertex(),
+                    effect.has_shared_surface(),
+                    effect.shared_unlit,
+                ])
+                .map(u8::from)
+                .collect::<Vec<_>>();
+            let hash = fnv(hash, effect.name.as_bytes());
+            fnv(fnv(hash, &[0]), &flags)
+        })
+    }
 }
 
 #[cfg(test)]
@@ -552,5 +575,46 @@ mod tests {
                 scope.spawn(move || validate_effect(registry, id));
             }
         });
+    }
+
+    /// A build without the specializer embeds only the lines of each WGSL file that
+    /// declare a hook (`build.rs`), so it finds the same hooks only if every shared
+    /// snippet, which counts by being non-empty, declares one: its fingerprint then
+    /// matches the shader tables generated with the whole text.
+    #[test]
+    fn every_shared_snippet_declares_a_hook() {
+        let hooks = [
+            "fn effect_vertex(",
+            "fn effect_world(",
+            "fn effect_clip(",
+            "fn effect_surface(",
+        ];
+        let declares = |code: &str| hooks.iter().any(|hook| code.contains(hook));
+        for effect in BUILTIN_EFFECTS.iter().chain(&PRESENTATION_EFFECTS) {
+            for shared in [effect.shared_vertex, effect.shared_surface] {
+                assert_eq!(!shared.is_empty(), declares(shared), "{}", effect.name);
+            }
+        }
+    }
+
+    /// The fingerprint changes with the effects a registry holds and their order.
+    #[test]
+    fn the_fingerprint_follows_the_registry() {
+        let builtin = EffectRegistry::default();
+        let mut page = EffectRegistry::default();
+        for effect in PRESENTATION_EFFECTS {
+            page.register(effect);
+        }
+        assert_ne!(builtin.fingerprint(), page.fingerprint());
+        let mut again = EffectRegistry::default();
+        for effect in PRESENTATION_EFFECTS {
+            again.register(effect);
+        }
+        assert_eq!(again.fingerprint(), page.fingerprint());
+        let mut reversed = EffectRegistry::default();
+        for effect in PRESENTATION_EFFECTS.into_iter().rev() {
+            reversed.register(effect);
+        }
+        assert_ne!(reversed.fingerprint(), page.fingerprint());
     }
 }

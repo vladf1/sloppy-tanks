@@ -10,36 +10,35 @@
 //! shared hooks of effects (`EffectDefinition::shared_vertex` and `shared_surface`)
 //! are uniform branches, and the side a material draws follows from the pipeline's
 //! culling.
+//!
+//! Where a variant's WGSL comes from depends on the build. With the `specializer`
+//! feature (the desktop apps, the engine build, the native tests) [`assembly`] puts it
+//! together from the templates when a pipeline first asks for it. The page's shell
+//! instead draws the variants the build generated for every key its backend can ask
+//! for, GLSL for the WebGL build, which the page fetches beside the binary
+//! ([`tables`]): it carries neither the specializer nor the WGSL, nor, on WebGL, naga.
 
 use bytemuck::{Pod, Zeroable};
 use sloppy_core::scene::{Blending, Effect, Material, Shading, Side, TextureRef};
 
 use crate::color::hex_to_linear;
-use crate::effects::{EffectDefinition, EffectRegistry};
+use crate::effects::EffectRegistry;
 use crate::material::shadow_side;
 
+#[cfg(any(test, feature = "specializer"))]
+pub mod assembly;
+#[cfg(any(test, feature = "specializer"))]
 mod specialize;
+pub mod tables;
 
-pub const COMMON_WGSL: &str = wgsl!("shaders/common.wgsl");
-pub const MATERIAL_WGSL: &str = wgsl!("shaders/material.wgsl");
-pub const STANDARD_WGSL: &str = wgsl!(
-    "shaders/surface_io.wgsl",
-    "shaders/surface_vertex.wgsl",
-    "shaders/standard.wgsl"
-);
-pub const SHADOW_WGSL: &str = wgsl!(
-    "shaders/surface_io.wgsl",
-    "shaders/surface_vertex.wgsl",
-    "shaders/shadow.wgsl"
-);
-pub const WATER_WGSL: &str = wgsl!("shaders/water.wgsl");
-pub const OUTPUT_WGSL: &str = wgsl!("shaders/output.wgsl");
-pub const SKY_WGSL: &str = wgsl!("shaders/sky.wgsl");
-/// Screen-space ambient occlusion, without its depth binding (`occlusion_source`).
-pub const OCCLUSION_WGSL: &str = wgsl!("shaders/occlusion.wgsl");
-pub const MIPMAP_WGSL: &str = wgsl!("shaders/mipmap.wgsl");
-pub const SHADOW_MERGED_WGSL: &str = wgsl!("shaders/shadow_merged.wgsl");
-pub const SHADOW_CUTOUT_WGSL: &str = wgsl!("shaders/surface_io.wgsl", "shaders/shadow_cutout.wgsl");
+#[cfg(any(test, feature = "specializer"))]
+pub use assembly::*;
+#[cfg(all(
+    target_arch = "wasm32",
+    not(any(test, feature = "specializer")),
+    not(feature = "webgl")
+))]
+pub use tables::page::{fixed_stages, variant_stages};
 
 /// Where the vertex stage reads instance records (`InstanceStore`): each
 /// source defines the frame group's binding 5 and `instance_at`.
@@ -58,37 +57,52 @@ impl InstanceSource {
     } else {
         Self::Storage
     };
+}
 
-    fn wgsl(self) -> &'static str {
+/// The shaders every arena compiles whatever its materials: the output and post
+/// passes, sky, occlusion and merged shadow casters (`FixedPipelines`), the water, the
+/// mip blit and the texture bakes, by the template each comes from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum FixedShader {
+    /// The output pass and bloom (`output.wgsl`), whose fragment stage also blurs the
+    /// occlusion and the dialog backdrop.
+    Output,
+    Sky,
+    Occlusion,
+    ShadowMerged,
+    /// The merged alpha-tested casters.
+    ShadowCutout,
+    Water,
+    Mipmap,
+    /// A texture bake, by its generated-texture key (`effects::bakes`).
+    Bake(&'static str),
+}
+
+impl FixedShader {
+    /// Its name in the generated tables (`tables::fixed_key`).
+    pub fn name(self) -> &'static str {
         match self {
-            Self::Storage => wgsl!("shaders/instances_storage.wgsl"),
-            Self::Texture => wgsl!("shaders/instances_texture.wgsl"),
+            Self::Output => "output",
+            Self::Sky => "sky",
+            Self::Occlusion => "occlusion",
+            Self::ShadowMerged => "shadow-merged",
+            Self::ShadowCutout => "shadow-cutout",
+            Self::Water => "water",
+            Self::Mipmap => "mipmap",
+            Self::Bake(key) => key,
         }
     }
 }
 
-/// The frame group's bindings of every shader but the output pass.
-const FRAME_BINDINGS_WGSL: &str = wgsl!("shaders/frame_bindings.wgsl");
-
-/// `LITE`: true on the WebGL2 build (the texture source), whose weaker devices get
-/// cheaper shadow filters, sky noise and occlusion. Folded like a variant flag
-/// (`lite_flag`), so each build's shaders carry only their own filter.
-fn lite_wgsl(source: InstanceSource) -> String {
-    let (name, lite) = lite_flag(source);
-    format!("const {name}: bool = {lite};\n")
-}
-
-fn lite_flag(source: InstanceSource) -> (&'static str, bool) {
-    ("LITE", source == InstanceSource::Texture)
-}
-
-/// The frame declarations and bindings with this build's instance records.
-fn frame_wgsl(source: InstanceSource) -> String {
-    format!(
-        "{}{COMMON_WGSL}{FRAME_BINDINGS_WGSL}{}",
-        lite_wgsl(source),
-        source.wgsl()
-    )
+/// Depth texels per ambient occlusion texel along each axis, which the occlusion
+/// shader is built with: WebGPU's occlusion reads its own half-size depth pass, the
+/// WebGL build the full-size copy its resolve blits. Each backend asserts that its
+/// target sizes agree.
+pub const fn occlusion_scale(source: InstanceSource) -> u32 {
+    match source {
+        InstanceSource::Storage => 2,
+        InstanceSource::Texture => 4,
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
@@ -378,186 +392,6 @@ impl PipelineKey {
     }
 }
 
-/// The vertex inputs of every surface and shadow variant. The effect varyings
-/// `extra0`/`extra1` start at zero (`material.wgsl` `effect_input`).
-const VERTEX_INPUT_WGSL: &str = "struct VertexIn {
-    @location(0) position: vec3f,
-    @location(1) normal: vec3f,
-    @location(2) uv: vec2f,
-    @location(3) color: vec4f,
-}
-fn vertex_extra0(input: VertexIn) -> vec4f { return vec4f(0.0); }
-fn vertex_extra1(input: VertexIn) -> vec4f { return vec4f(0.0); }
-";
-
-/// The variant constants the templates branch on. The shadow pass's fragment stage
-/// tests the alpha and dithers a fading caster at run time (`shadow.wgsl`), so every
-/// caster with one shares it, except where `SHADOW_SURFACE`: an alpha-tested caster
-/// whose effect shades the surface that the test reads.
-fn flags(key: &ShaderKey, effect: Option<&EffectDefinition>) -> [(&'static str, bool); 6] {
-    [
-        ("LIT", key.lit),
-        ("ALPHA_TEST", key.alpha_test),
-        ("ALPHA_TO_COVERAGE", key.alpha_to_coverage),
-        ("SHADOW_FADE", key.shadow_fade),
-        ("RECEIVE_SHADOW", key.receive_shadow),
-        (
-            "SHADOW_SURFACE",
-            key.pass == Pass::Shadow && key.alpha_test && effect.is_some_and(|e| e.has_surface()),
-        ),
-    ]
-}
-
-/// The complete WGSL for a surface or shadow variant, reduced to the code its flags
-/// enable (`specialize.rs`).
-pub fn shader_source(key: &ShaderKey, effects: &EffectRegistry) -> String {
-    shader_source_for(key, effects, InstanceSource::BUILD)
-}
-
-fn shader_source_for(key: &ShaderKey, effects: &EffectRegistry, source: InstanceSource) -> String {
-    let effect = effects.get(key.effect);
-    let flags = flags(key, effect);
-    let mut code = String::with_capacity(24 * 1024);
-    for (name, value) in flags {
-        code += &format!("const {name}: bool = {value};\n");
-    }
-    code += VERTEX_INPUT_WGSL;
-    code += &frame_wgsl(source);
-    code += MATERIAL_WGSL;
-    if let Some(effect) = effect {
-        code += effect.wgsl;
-        code += "\n";
-        code += effect.entry;
-    }
-    code += &vertex_hooks(effect, effects);
-    code += &surface_hook(key, effect, effects, source);
-    code += match key.pass {
-        Pass::Main => STANDARD_WGSL,
-        Pass::Shadow => SHADOW_WGSL,
-    };
-    let mut folded = flags.to_vec();
-    folded.push(lite_flag(source));
-    specialize::specialize(&code, &folded)
-}
-
-/// The vertex-stage hooks: name, parameters and the arguments that pass them on.
-const VERTEX_HOOKS: [(&str, &str, &str); 3] = [
-    ("effect_vertex", "v: ptr<function, EffectVertex>", "v"),
-    (
-        "effect_world",
-        "w: ptr<function, EffectWorld>, v: EffectVertex",
-        "w, v",
-    ),
-    (
-        "effect_clip",
-        "clip: ptr<function, vec4f>, w: EffectWorld, v: EffectVertex",
-        "clip, w, v",
-    ),
-];
-
-/// A hook `name(params)` that runs each of `branches` (none: a no-op).
-fn dispatch_hook(name: &str, params: &str, branches: &[String]) -> String {
-    if branches.is_empty() {
-        return format!("fn {name}({params}) {{}}\n");
-    }
-    format!(
-        "fn {name}({params}) {{\n    let effect = material.features.y;\n    {}\n}}\n",
-        branches.join(" else ")
-    )
-}
-
-/// The variant's `effect_vertex`, `effect_world` and `effect_clip` that its effect
-/// does not define itself. A variant of an effect with shared vertex hooks
-/// (`EffectDefinition::shared_vertex`) takes every one of them, each run where the
-/// material names its effect (`MaterialUniform::features`), so all those effects'
-/// surfaces have one vertex stage and their casters another. Every other variant
-/// takes none: the material read and the branches cost WebKit about 1% of the main
-/// view's GPU time when every plain draw ran them.
-fn vertex_hooks(effect: Option<&EffectDefinition>, effects: &EffectRegistry) -> String {
-    let mut code = String::new();
-    let mut branches: [Vec<String>; 3] = Default::default();
-    // An effect's own vertex hooks never sit beside shared ones (`registry.rs`).
-    let own = effect
-        .filter(|e| e.has_own_vertex_hooks())
-        .map(|e| [e.has_vertex(), e.has_world(), e.has_clip()]);
-    if own.is_none() && effect.is_some_and(|e| e.has_shared_vertex()) {
-        for (id, shared) in effects.sharing_hooks() {
-            let mut hooks = shared.shared_vertex.to_string();
-            for ((hook, _, args), branches) in VERTEX_HOOKS.iter().zip(&mut branches) {
-                let name = format!("shared_{}_{id}", &hook["effect_".len()..]);
-                let definition = format!("fn {hook}(");
-                if hooks.contains(&definition) {
-                    hooks = hooks.replace(&definition, &format!("fn {name}("));
-                    branches.push(format!(
-                        "if effect == {id}u {{\n        {name}({args});\n    }}"
-                    ));
-                }
-            }
-            code += &hooks;
-            code += "\n";
-        }
-    }
-    let defined = own.unwrap_or_default();
-    for (((hook, params, _), branches), defined) in VERTEX_HOOKS.iter().zip(&branches).zip(defined)
-    {
-        if !defined {
-            code += &dispatch_hook(hook, params, branches);
-        }
-    }
-    code
-}
-
-/// The variant's `effect_surface` unless its effect defines one of its own. A lit
-/// WebGPU surface variant takes every lit shared hook
-/// (`EffectDefinition::shared_surface`), each run where the material names its effect
-/// (`MaterialUniform::features`), so the lit materials of those effects and of none
-/// draw with the same fragment stage; an unlit variant of an effect with an unlit
-/// shared hook (`shared_unlit`) takes every such hook, so those effects share one
-/// stage; any other variant takes its effect's shared hook as its own. The WebGL
-/// build shares none: its translation paid for the branches in every lit pixel (1% of
-/// a Tesla-size village frame), and its weaker devices count frames, not compiles.
-fn surface_hook(
-    key: &ShaderKey,
-    effect: Option<&EffectDefinition>,
-    effects: &EffectRegistry,
-    source: InstanceSource,
-) -> String {
-    const NONE: &str = "fn effect_surface(s: ptr<function, Surface>, f: EffectFragment) {}\n";
-    if effect.is_some_and(|e| e.has_own_surface()) {
-        return String::new();
-    }
-    // A variant whose effect shares its hook with the other kind keeps it as its own,
-    // and plain unlit variants none: the branches changed the bits of their blended
-    // pixels, which the output's haze test turned into visible steps.
-    let dispatches = if key.lit {
-        effect.is_none_or(|e| !e.has_shared_surface() || e.shares_surface_with(true))
-    } else {
-        effect.is_some_and(|e| e.shares_surface_with(false))
-    };
-    if key.pass == Pass::Main && dispatches && source == InstanceSource::Storage {
-        let mut hooks = String::new();
-        let mut branches = Vec::new();
-        for (id, shared) in effects.sharing_hooks() {
-            if shared.shares_surface_with(key.lit) {
-                let name = format!("shared_surface_{id}");
-                hooks += &shared
-                    .shared_surface
-                    .replace("fn effect_surface(", &format!("fn {name}("));
-                hooks += "\n";
-                branches.push(format!(
-                    "if effect == {id}u {{\n        {name}(s, f);\n    }}"
-                ));
-            }
-        }
-        let params = "s: ptr<function, Surface>, f: EffectFragment";
-        return hooks + &dispatch_hook("effect_surface", params, &branches);
-    }
-    match effect.filter(|e| e.has_shared_surface()) {
-        Some(shared) => format!("{}\n", shared.shared_surface),
-        None => NONE.into(),
-    }
-}
-
 /// One pipeline's stages as the WebGPU backend compiles them: each stage its own
 /// module holding only its entry point and the code that reaches
 /// (`specialize::entry_point_source`), so variants whose stage code is the same give
@@ -568,137 +402,13 @@ pub struct StageSources {
     pub fragment: Option<String>,
 }
 
-impl StageSources {
-    /// The stages of `code` for `vertex_entry` and, if any, `fragment_entry`.
-    pub fn of(code: &str, vertex_entry: &str, fragment_entry: Option<&str>) -> Self {
-        let entries: Vec<&str> = std::iter::once(vertex_entry)
-            .chain(fragment_entry)
-            .collect();
-        let mut stages = specialize::entry_point_sources(code, &entries).into_iter();
-        Self {
-            vertex: stages.next().expect("a vertex stage"),
-            fragment: stages.next(),
-        }
-    }
-
-    /// A surface or shadow variant's stages.
-    pub fn variant(key: &ShaderKey, effects: &EffectRegistry) -> Self {
-        let (vertex, fragment) = key.entry_points();
-        Self::of(&shader_source(key, effects), vertex, fragment)
-    }
-}
-
-/// The merged shadow-caster shader (`shadow_merge.rs`).
-pub fn shadow_merged_source() -> String {
-    fixed_source(SHADOW_MERGED_WGSL, InstanceSource::BUILD)
-}
-
-/// The merged alpha-tested shadow-caster shader.
-pub fn shadow_cutout_source() -> String {
-    fixed_source(SHADOW_CUTOUT_WGSL, InstanceSource::BUILD)
-}
-
-/// The WebGPU stages of the merged alpha-tested casters: their own vertex stage and
-/// the fragment stage every per-part caster with one shares (`shadow.wgsl`), the
-/// same text as theirs, so WebKit compiles it once for both.
-pub fn shadow_cutout_stages() -> StageSources {
-    let caster = ShaderKey {
-        pass: Pass::Shadow,
-        alpha_test: true,
-        ..ShaderKey::default()
-    };
-    StageSources {
-        vertex: specialize::entry_point_source(&shadow_cutout_source(), "vs_shadow_cutout"),
-        fragment: StageSources::variant(&caster, &EffectRegistry::default()).fragment,
-    }
-}
-
-/// The water shader: frame declarations plus the water template.
-pub fn water_source() -> String {
-    fixed_source(WATER_WGSL, InstanceSource::BUILD)
-}
-
-/// The sky shader: frame declarations plus the sky template.
-pub fn sky_source() -> String {
-    fixed_source(SKY_WGSL, InstanceSource::BUILD)
-}
-
-/// The ambient occlusion shader, `scale` depth texels per occlusion texel along each
-/// axis. WebGPU reads the depth texture of its own depth pass (`depth_pass`); WebGL2
-/// reads the full-size single-sample copy its resolve blits, as floats, and probes six
-/// points rather than eight on its weaker devices.
-pub fn occlusion_source(depth_pass: bool, scale: u32) -> String {
-    let depth = if depth_pass {
-        "@group(0) @binding(0) var depth: texture_depth_2d;\n\
-         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0); }\n\
-         const SAMPLES: i32 = 8;\n"
-    } else {
-        "@group(0) @binding(0) var depth: texture_2d<f32>;\n\
-         fn load_depth(pixel: vec2i) -> f32 { return textureLoad(depth, pixel, 0).r; }\n\
-         const SAMPLES: i32 = 6;\n"
-    };
-    let scale = format!("const OCCLUSION_SCALE: i32 = {scale};\n");
-    specialize::specialize(&format!("{depth}{scale}{OCCLUSION_WGSL}"), &[])
-}
-
-/// The full-screen triangle every texture bake draws (`effects::bakes`), and the uv
-/// its fragment stage shades: 0..1 across the target, v increasing down its rows.
-const BAKE_WGSL: &str = "struct BakeOut {
-    @builtin(position) position: vec4f,
-    @location(0) uv: vec2f,
-}
-@vertex
-fn vs_bake(@builtin(vertex_index) index: u32) -> BakeOut {
-    let uv = vec2f(f32((index << 1u) & 2u), f32(index & 2u));
-    var out: BakeOut;
-    out.position = vec4f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0, 0.0, 1.0);
-    out.uv = uv;
-    return out;
-}
-";
-
-/// A texture bake's complete WGSL from the code defining its `fs_bake`, reduced to
-/// what its entry points reach.
-pub fn bake_source(fragment: &str) -> String {
-    specialize::specialize(&format!("{BAKE_WGSL}{fragment}"), &[])
-}
-
-/// The same for a bake that reads a material (`TextureBake::source`): with a surface
-/// shader's frame and material declarations ahead of its code.
-pub fn bake_source_with_material(fragment: &str, instances: InstanceSource) -> String {
-    let code = format!(
-        "{VERTEX_INPUT_WGSL}{}{MATERIAL_WGSL}{BAKE_WGSL}{fragment}",
-        frame_wgsl(instances)
-    );
-    specialize::specialize(&code, &[lite_flag(instances)])
-}
-
-/// The output and bloom shader, its loops unrolled like every other shader's. The
-/// output pass reads the main view's `Frame` for the haze it adds (`haze_inscatter`).
-pub fn output_source() -> String {
-    output_source_for(InstanceSource::BUILD)
-}
-
-fn output_source_for(source: InstanceSource) -> String {
-    specialize::specialize(
-        &format!("{}{COMMON_WGSL}{OUTPUT_WGSL}", lite_wgsl(source)),
-        &[lite_flag(source)],
-    )
-}
-
-fn fixed_source(template: &str, source: InstanceSource) -> String {
-    specialize::specialize(
-        &format!("{}{template}", frame_wgsl(source)),
-        &[lite_flag(source)],
-    )
-}
-
 /// The GLSL ES 3.00 the WebGL backend compiles, translated from the WGSL with naga
 /// the way wgpu's GL backend did: clip-space Y flipped and depth mapped to GL's
 /// -1..1 (`ADJUST_COORDINATE_SPACE`), so offscreen targets hold rows in WebGPU's
 /// order and store WebGPU's depth, and a point size written for every vertex.
-#[cfg(any(test, feature = "webgl"))]
+#[cfg(any(test, feature = "webgl", feature = "shader-tables"))]
 pub mod glsl {
+    #[cfg(any(test, feature = "shader-tables"))]
     use naga::back::glsl;
 
     /// A WGSL `(group, binding)`.
@@ -768,8 +478,21 @@ pub mod glsl {
         }
     }
 
-    /// One translated stage and what it declares, by WGSL binding: ES 3.00 has no
+    /// A program's GLSL stages and what they declare, by WGSL binding: ES 3.00 has no
     /// `layout(binding)`, so the backend binds uniform blocks and samplers by name.
+    #[derive(Clone, Debug, Default, PartialEq, Eq)]
+    pub struct Program {
+        pub vertex: String,
+        /// None for a depth-only caster.
+        pub fragment: Option<String>,
+        /// Uniform block names (they differ per stage).
+        pub blocks: Vec<(String, Binding)>,
+        /// Sampler uniform names, by the binding of the texture they read.
+        pub samplers: Vec<(String, Binding)>,
+    }
+
+    /// One translated stage and what it declares, by WGSL binding.
+    #[cfg(any(test, feature = "shader-tables"))]
     pub struct Stage {
         pub source: String,
         /// Uniform block names (they differ per stage).
@@ -779,6 +502,7 @@ pub mod glsl {
     }
 
     /// Translate the entry points `entries` of one WGSL module, in order.
+    #[cfg(any(test, feature = "shader-tables"))]
     pub fn translate(label: &str, wgsl: &str, entries: &[&str]) -> Result<Vec<Stage>, String> {
         let module = naga::front::wgsl::parse_str(wgsl)
             .map_err(|error| format!("{label}: {}", error.emit_to_string(wgsl)))?;

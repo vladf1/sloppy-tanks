@@ -16,6 +16,7 @@
 use sloppy_core::models::{VILLAGE_GROUND_BAKE as VILLAGE_GROUND_KEY, effects_scenery};
 
 use super::registry::{HARBOR_APRON_WGSL, MEADOW_WGSL, VILLAGE_GROUND};
+#[cfg(any(test, feature = "specializer"))]
 use crate::shader::InstanceSource;
 
 /// One bake: the generated-texture key it answers, its size in texels and the WGSL
@@ -35,10 +36,12 @@ pub struct TextureBake {
 
 impl TextureBake {
     /// Its complete WGSL for this build, entry points `vs_bake` and `fs_bake`.
+    #[cfg(any(test, feature = "specializer"))]
     pub fn source(&self) -> String {
         self.source_for(InstanceSource::BUILD)
     }
 
+    #[cfg(any(test, feature = "specializer"))]
     pub(crate) fn source_for(&self, instances: InstanceSource) -> String {
         let fragment = self.wgsl.concat();
         if self.source.is_some() {

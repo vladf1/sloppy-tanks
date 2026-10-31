@@ -126,7 +126,7 @@ whether Kache was on when reporting build times.
 
 ```sh
 pnpm run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests
-pnpm run wasm                         # the page (the egui shell) into src/generated/shell/; rerun after Rust/WGSL edits
+pnpm run wasm                         # the page (the egui shell) and its shader tables into src/generated/; rerun after Rust/WGSL edits
 pnpm run wasm:fast                    # the same, built for compile time: for checking how a change looks
 pnpm run wasm:engine                  # the sloppy-web engine for the fixtures, game preview and WireView
 cargo test --workspace --exclude sloppy-desktop --test integration navigation::   # one area of the core tests (add --release for seeded matches)
@@ -282,6 +282,38 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   mesh store keeps only a `Weak`, so a model registered once (the wrecks, themed
   scenery) must not also sit in a cache or a retained tree. Check a map's
   `WebAssembly.Memory` size after loading it when changing scenery or upload paths.
+- The page keeps the generated vehicle models and each theme's scenery across visits
+  (`presentation/geometry_cache.rs`, `src/geometry-cache.ts`, `scene_codec`): what
+  the core builders return, read back bit for bit with the same `Arc` sharing, so the
+  draws and GPU resources match a built model's (`geometry-cache-check.mjs`). Its
+  files are keyed by the geometry version (`geometryVersion` in
+  `scripts/content-version.mjs`, stamped as `SLOPPY_GEOMETRY_VERSION`) and the
+  graphics backend. The key hashes exactly the sources a `--cfg sloppy_geometry_only`
+  build of sloppy-core compiles (read from its dep-info), which holds only the cached
+  builders (`build_scenery`, `tank_model_variant`), the codec and what they reach;
+  everything else is inside `beyond_geometry!` (`crates/core/src/lib.rs`). Add to it
+  sloppy-core's manifest and resolved crates, the compiler, the profiles and target
+  flags and the page's build profile; a gameplay change keeps players' caches. The
+  vehicles give the simulation its hitboxes, so the key must stay complete: a model
+  that comes to reach outside the set fails `pnpm run rust:geometry` (part of
+  `check:rust-lint`), and that check refuses a set that grows back into the simulation,
+  the balance (`sim::data`; models read `sim::model_data`) or `net`; cut the edge
+  instead (models take their enums from `sim::kinds`, not `sim::types`). Builders may
+  read no state other code sets beyond their own keyed stores, and a store's value
+  depends only on its key (the vertex materials are keyed by the whole painted
+  material, so the order models build in cannot change one). A change to the file
+  layout bumps `scene_codec::FORMAT_VERSION`. A builder's process-wide store of
+  shared meshes or materials is a named `Cache` or `SharedOnce` (`Cache::private()`
+  when keyed by addresses), never a bare static, or models built after a read-back
+  stop sharing with it (`scene_codec::fresh_processes_share_alike` counts them). The
+  shell writes a built scenery at the build's next step, while its tree lives anyway
+  (kept until the arena was ready, it raised the heap's peak by 12 MB), and the page
+  stores files only once the arena is ready. A read-back scenery is batched and
+  uploaded in the task that reads it: left across a frame, its meshes and batches
+  sat under whatever landed then (a decoded preview, the simulation's world), and a
+  cached visit's heap peaked higher than a built one's, whose freed temporaries
+  leave room. Compare heaps of warm visits (`geometry-cache-check.mjs`): a first
+  visit's downloads move where its allocations land by several MB.
 - Meshes have no GPU buffers of their own: they share vertex and index pages
   (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
   in the vertex page, so every draw passes `base_vertex` 0 (WebGL2 has none) and a
@@ -309,7 +341,8 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   `Frame`, `Pipelines`, `PageBuffers`, `MaterialBinding`, `InstanceStore`,
   `Uploader`) whose GPU objects free themselves on drop. Keep shared logic out of
   the backends and add no trait or wgpu-like layer between them. The WebGL backend
-  translates the same WGSL with naga (`shader::glsl`) and sets GL state only
+  draws the GLSL ES the build translated from the same WGSL with naga (`shader::glsl`,
+  `shader/tables.rs`) and sets GL state only
   through its cache (`gpu/webgl/context.rs`), except the shell's egui overlay, which
   draws with its own glow handle after the output pass, before `Gl::reclaim` resets the
   cache to its first record; uploads go through
@@ -329,8 +362,18 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   such as a cache or batching: its devices are the weaker ones. Keep both
   building: `pnpm run rust:clippy` lints both.
   Shaders are handwritten WGSL; custom model effects register
-  an `EffectDefinition`. The native `shader`/`registry` tests validate every
-  variant with naga and translate it to WebGL's GLSL ES 3.00, but a browser can
+  an `EffectDefinition`. The specializer (`shader/assembly.rs`, the `specializer`
+  feature) assembles each variant from the templates; the desktop apps and the engine
+  build run it when a pipeline first asks, but the page's shell carries neither it nor
+  the WGSL nor naga: `pnpm run wasm` first runs the native `shader-tables` generator,
+  which writes every variant the page's registry can produce, stages split and WebGL's
+  translated, into `src/generated/shaders/`, and `index.html` fetches its backend's
+  file beside the binary (`shader/tables.rs`). A new effect, key flag or fixed shader
+  must be reachable there (`generate::variant_keys`, `fixed_stage_list`); the page
+  stops with an error on a key the tables lack or on tables from other sources or
+  another registry. The native `shader`/`registry` tests validate every
+  variant with naga and translate it to WebGL's GLSL ES 3.00 and pin the tables to the
+  specializer byte for byte, but a browser can
   still reject a pipeline: inspect console
   and GPU errors (`Game.error()`) as well as screenshots. Compute derivatives
   (`fwidth`, `dpdx`) before non-uniform branches, and match sRGB formats and

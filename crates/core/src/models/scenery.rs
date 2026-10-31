@@ -13,8 +13,9 @@ use std::sync::Arc;
 use crate::geometry::{Path, RingGeometry, Shape, plane_geometry_segments, shape_geometry};
 use crate::scene::{Material, Node};
 use crate::sim::arena::spawn_positions;
-use crate::sim::data::ARENA;
-use crate::sim::types::{Team, Vec2};
+use crate::sim::kinds::Team;
+use crate::sim::math::Vec2;
+use crate::sim::model_data::ARENA;
 use glam::DVec3;
 
 use super::batching::{batch, paint_mesh};
@@ -49,6 +50,16 @@ pub fn build_scenery(theme: MapTheme) -> Scenery {
 }
 
 impl Scenery {
+    /// A theme's scenery around a root [`build_scenery`] built before (read back from
+    /// a page's geometry cache, `scene_codec`).
+    pub fn from_root(theme: MapTheme, root: Node) -> Scenery {
+        match theme {
+            MapTheme::Village => Scenery::Village(Box::new(VillageScenery::from_root(root))),
+            MapTheme::Harbor => Scenery::Harbor(Box::new(HarborScenery { root })),
+            MapTheme::Quarry => Scenery::Quarry(Box::new(root)),
+        }
+    }
+
     pub fn root(&self) -> &Node {
         match self {
             Scenery::Village(scenery) => &scenery.root,

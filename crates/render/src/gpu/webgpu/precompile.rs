@@ -23,7 +23,7 @@
 //! the arena prepares behind the loading screen, so the precompiler there only keeps
 //! the same interface ([`native`]).
 
-use crate::shader::StageSources;
+use crate::shader::{FixedShader, StageSources, fixed_stages};
 
 #[cfg(target_arch = "wasm32")]
 mod browser;
@@ -90,9 +90,9 @@ pub struct PipelineSpec {
 }
 
 impl PipelineSpec {
-    /// The stages of the module `code` that this pipeline runs.
-    pub fn stages(&self, code: &str) -> StageSources {
-        StageSources::of(code, self.vertex_entry, self.fragment_entry)
+    /// The stages of fixed shader `shader` that this pipeline runs.
+    pub fn stages(&self, shader: FixedShader) -> StageSources {
+        fixed_stages(shader, self.vertex_entry, self.fragment_entry)
     }
 
     /// The wgpu pipeline: the one [`Precompiler`] compiled from this spec if

@@ -1,4 +1,5 @@
-//! GL programs from the WGSL variants, and pipelines: a program plus the
+//! GL programs of the variants, from the GLSL the build translated from their WGSL
+//! (`shader/tables.rs`), and pipelines: a program plus the
 //! fixed-function state ([`Raster`]) a `PipelineKey` adds. Keys that differ only in
 //! that state share one program, so a variant compiles once however many blend,
 //! depth or culling setups draw with it. Both are cached for the page's lifetime,
@@ -19,17 +20,16 @@ use super::context::{Gpu, Raster};
 use crate::effects::EffectRegistry;
 use crate::gpu::{FixedPipelines, OCCLUSION_DOWNSCALE, SHADOW_MERGED_SIDES};
 use crate::shader::glsl::{self, Binding, block_point, texture_unit};
+use crate::shader::tables::page::{fixed_program, variant_program};
 use crate::shader::{
-    BlendMode, PipelineKey, ShaderKey, occlusion_source, output_source, shader_source,
-    shadow_cutout_source, shadow_merged_source, sky_source, water_source,
+    BlendMode, FixedShader, InstanceSource, PipelineKey, ShaderKey, occlusion_scale,
 };
 
 /// The fragment stage of programs whose WGSL has none (depth-only casters).
 const EMPTY_FRAGMENT: &str = "#version 300 es\nvoid main(void) {}\n";
 
-/// Stands in for a program whose WGSL failed to translate, after the failure went to
-/// the error slot: it draws nothing.
-const FAILED_VERTEX: &str = "#version 300 es\nvoid main(void) { gl_Position = vec4(0.0); }\n";
+// The occlusion shader was built for the copy of the depth it reads.
+const _: () = assert!(OCCLUSION_DOWNSCALE == occlusion_scale(InstanceSource::Texture));
 
 /// The uniform naga adds to `gl_InstanceID` for WGSL's `instance_index`
 /// (`naga::back::glsl::FIRST_INSTANCE_BINDING`): WebGL2 has no base instance.
@@ -72,37 +72,18 @@ pub(super) struct Linking {
 }
 
 impl Linking {
-    /// Translate `wgsl` and start compiling its `vertex` and `fragment` entry points.
-    pub(super) fn start(
-        gpu: &Gpu,
-        label: &str,
-        wgsl: &str,
-        vertex: &str,
-        fragment: Option<&str>,
-    ) -> Self {
-        let entries: Vec<&str> = [Some(vertex), fragment].into_iter().flatten().collect();
-        let (sources, blocks, samplers) = match glsl::translate(label, wgsl, &entries) {
-            Ok(stages) => {
-                let mut blocks = Vec::new();
-                let mut samplers = Vec::new();
-                let mut sources = Vec::new();
-                for stage in stages {
-                    blocks.extend(stage.blocks);
-                    samplers.extend(stage.samplers);
-                    sources.push(stage.source);
-                }
-                if sources.len() < 2 {
-                    sources.push(EMPTY_FRAGMENT.to_owned());
-                }
-                (sources, blocks, samplers)
-            }
-            Err(error) => {
-                gpu.error
-                    .set(format!("WebGL shader translation failed: {error}"));
-                let sources = vec![FAILED_VERTEX.to_owned(), EMPTY_FRAGMENT.to_owned()];
-                (sources, Vec::new(), Vec::new())
-            }
-        };
+    /// Start compiling `program`, the GLSL the build translated (`shader/tables.rs`).
+    pub(super) fn start(gpu: &Gpu, label: &str, program: glsl::Program) -> Self {
+        let glsl::Program {
+            vertex,
+            fragment,
+            blocks,
+            samplers,
+        } = program;
+        let sources = [
+            vertex,
+            fragment.unwrap_or_else(|| EMPTY_FRAGMENT.to_owned()),
+        ];
         let gl = &gpu.gl;
         unsafe {
             let program = gpu.created(gl.create_program(), "program");
@@ -244,30 +225,34 @@ impl Pipelines {
     /// programs; they are used once linked ([`Self::fixed_ready`]) while the page
     /// builds the arena.
     pub fn new(gpu: &Gpu) -> Self {
-        let output = output_source();
+        let fixed = |label, shader, vertex, fragment| {
+            Linking::start(gpu, label, fixed_program(shader, vertex, fragment))
+        };
         let jobs = [
-            Linking::start(gpu, "output", &output, "vs_fullscreen", Some("fs_output")),
-            Linking::start(gpu, "sky", &sky_source(), "vs_sky", Some("fs_sky")),
+            fixed(
+                "output",
+                FixedShader::Output,
+                "vs_fullscreen",
+                Some("fs_output"),
+            ),
+            fixed("sky", FixedShader::Sky, "vs_sky", Some("fs_sky")),
             // Each pass draws as its own instance index (`BloomPass`).
-            Linking::start(gpu, "bloom", &output, "vs_post", Some("fs_bloom")),
-            Linking::start(
-                gpu,
+            fixed("bloom", FixedShader::Output, "vs_post", Some("fs_bloom")),
+            fixed(
                 "ambient occlusion",
-                &occlusion_source(false, OCCLUSION_DOWNSCALE),
+                FixedShader::Occlusion,
                 "vs_occlusion",
                 Some("fs_occlusion"),
             ),
-            Linking::start(
-                gpu,
+            fixed(
                 "shadow merged",
-                &shadow_merged_source(),
+                FixedShader::ShadowMerged,
                 "vs_shadow_merged",
                 None,
             ),
-            Linking::start(
-                gpu,
+            fixed(
                 "shadow cutout",
-                &shadow_cutout_source(),
+                FixedShader::ShadowCutout,
                 "vs_shadow_cutout",
                 Some("fs_shadow_cutout"),
             ),
@@ -289,14 +274,8 @@ impl Pipelines {
     /// an arena has water.
     pub fn start_water(&mut self, gpu: &Gpu) {
         if self.water.is_none() && self.water_job.is_none() {
-            let source = water_source();
-            self.water_job = Some(Linking::start(
-                gpu,
-                "water",
-                &source,
-                "vs_water",
-                Some("fs_water"),
-            ));
+            let program = fixed_program(FixedShader::Water, "vs_water", Some("fs_water"));
+            self.water_job = Some(Linking::start(gpu, "water", program));
         }
     }
 
@@ -447,10 +426,8 @@ impl Pipelines {
         if self.by_shader.contains_key(&shader) || self.linking.contains_key(&shader) {
             return;
         }
-        let (vertex, fragment) = shader.entry_points();
-        let source = shader_source(&shader, effects);
         let label = format!("{:?} {}", shader.pass, shader.effect);
-        let job = Linking::start(gpu, &label, &source, vertex, fragment);
+        let job = Linking::start(gpu, &label, variant_program(&shader, effects));
         self.linking.insert(shader, job);
     }
 

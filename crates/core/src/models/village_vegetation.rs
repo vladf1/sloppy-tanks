@@ -17,8 +17,8 @@ use crate::geometry::math::{compose, hex_to_linear, quat_from_euler, quat_from_e
 use crate::geometry::{Attribute, Mesh};
 use crate::scene::{Effect, Instance, Material, Node, Side};
 use crate::sim::arena::{PICKUP_LAYOUT, arena_layout, spawn_positions};
-use crate::sim::data::ARENA;
-use crate::sim::types::{CoverKind, Team};
+use crate::sim::kinds::{CoverKind, Team};
+use crate::sim::model_data::ARENA;
 
 use super::effects_scenery::{MEADOW_SWAY, WIND_ORIGIN};
 use super::ground_surfaces::village_ground_bake;
