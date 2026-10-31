@@ -201,8 +201,8 @@ const DRIFT_BANK: f64 = 0.15;
 const DRIFT_OPACITY: f32 = 0.56;
 const DRIFT_COLOR: [f32; 3] = [0.2, 0.16, 0.11];
 
-static SHARED: Cache<u8, Mesh> = Cache::new();
-static MATERIALS: Cache<u8, Material> = Cache::new();
+static SHARED: Cache<u8, Mesh> = Cache::new("pickup_visuals::SHARED");
+static MATERIALS: Cache<u8, Material> = Cache::new("pickup_visuals::MATERIALS");
 
 /// How a face takes its paint: its own UVs into a region of a cell, or (for faces
 /// looking up) projected from above over a rectangle (x0, z0, x1, z1): in item

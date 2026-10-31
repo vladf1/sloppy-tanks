@@ -35,6 +35,7 @@
 
 mod batching;
 mod model_primitives;
+pub mod shared_values;
 
 // Vehicles.
 mod humvee_model;
@@ -103,7 +104,10 @@ pub use model_primitives::{DEFAULT_BOX_RADIUS, TEAM_COLORS, cylinder_part, paint
 // Vehicles.
 pub use humvee_model::HUMVEE_BODY_LENGTH_SCALE;
 pub use tank_dimensions::{TankDimensions, tank_dimensions};
-pub use tank_model::{release_tank_models, tank_model, tank_model_variant};
+pub use tank_model::{
+    built_tank_model_count, built_tank_models, offer_tank_models, release_tank_models, tank_model,
+    tank_model_variant,
+};
 pub use tank_surfaces::{TRACK_BELT_PERIOD, VEHICLE_PAINT_EFFECT, armor_wear_texture};
 pub use wreck_model::{WreckPart, WreckVent, wreck_model, wreck_vents};
 

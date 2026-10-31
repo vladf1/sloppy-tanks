@@ -47,10 +47,12 @@ const PAINT_ROUGHNESS: f32 = 0.84;
 const PAD_METALNESS: f32 = 0.55;
 const PAD_ROUGHNESS: f32 = 0.5;
 
-static MATERIALS: Cache<(HarborSurface, u32), Material> = Cache::new();
-static GEOMETRIES: Cache<(HarborSurface, [u64; 3]), Mesh> = Cache::new();
-static APRON_MATERIALS: Cache<(ApronMode, u32), Material> = Cache::new();
-static MARKINGS: Cache<([u64; 3], u32), Mesh> = Cache::new();
+static MATERIALS: Cache<(HarborSurface, u32), Material> = Cache::new("harbor_surfaces::MATERIALS");
+static GEOMETRIES: Cache<(HarborSurface, [u64; 3]), Mesh> =
+    Cache::new("harbor_surfaces::GEOMETRIES");
+static APRON_MATERIALS: Cache<(ApronMode, u32), Material> =
+    Cache::new("harbor_surfaces::APRON_MATERIALS");
+static MARKINGS: Cache<([u64; 3], u32), Mesh> = Cache::new("harbor_surfaces::MARKINGS");
 
 /// The ground's baked wear (linear data, clamped at the edge of its square).
 fn apron_wear() -> TextureRef {
@@ -308,7 +310,7 @@ fn chamfered_cap(length: f64, depth: f64, bottom: f64, top: f64, along_x: bool) 
 /// stains and paint are the apron effect's ([`ApronMode::Parapet`]); the collider
 /// stays the cover's own box.
 pub fn harbor_parapet(w: f64, h: f64, d: f64) -> Node {
-    static PARAPETS: Cache<[u64; 3], Mesh> = Cache::new();
+    static PARAPETS: Cache<[u64; 3], Mesh> = Cache::new("harbor_surfaces::PARAPETS");
     let mesh = PARAPETS.get_or_insert([w, h, d].map(f64::to_bits), || {
         let along_x = w > d;
         let mut body = box_geometry(w, h - PARAPET_CAP, d);
@@ -383,7 +385,7 @@ fn visible_faces(mesh: Mesh, [w, h, d]: [f64; 3]) -> Mesh {
 /// A painted lane arrow flat on the apron, pointing along +z from its centre: a
 /// shaft and a head, 3.4 m long. Vertex-colored like [`marking`].
 pub fn arrow_marking(color: u32) -> Node {
-    static ARROWS: Cache<u32, Mesh> = Cache::new();
+    static ARROWS: Cache<u32, Mesh> = Cache::new("harbor_surfaces::ARROWS");
     let mesh = ARROWS.get_or_insert(color, || {
         let (shaft, head, length, head_length) = (0.14, 0.55, 3.4, 1.2);
         let (tail, neck, tip) = (-length / 2.0, length / 2.0 - head_length, length / 2.0);

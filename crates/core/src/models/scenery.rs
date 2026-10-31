@@ -49,6 +49,16 @@ pub fn build_scenery(theme: MapTheme) -> Scenery {
 }
 
 impl Scenery {
+    /// A theme's scenery around a root [`build_scenery`] built before (read back from
+    /// a page's geometry cache, `scene_codec`).
+    pub fn from_root(theme: MapTheme, root: Node) -> Scenery {
+        match theme {
+            MapTheme::Village => Scenery::Village(Box::new(VillageScenery::from_root(root))),
+            MapTheme::Harbor => Scenery::Harbor(Box::new(HarborScenery { root })),
+            MapTheme::Quarry => Scenery::Quarry(Box::new(root)),
+        }
+    }
+
     pub fn root(&self) -> &Node {
         match self {
             Scenery::Village(scenery) => &scenery.root,

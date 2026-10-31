@@ -65,7 +65,18 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
     if !is_paintable(source) {
         return source.clone();
     }
-    let key = VertexMaterialKey {
+    let key = vertex_key(source);
+    let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
+    if let Some((_, material)) = materials.iter().find(|(k, _)| *k == key) {
+        return material.clone();
+    }
+    let material = Arc::new(painted(source));
+    materials.push((key, material.clone()));
+    material
+}
+
+fn vertex_key(source: &Material) -> VertexMaterialKey {
+    VertexMaterialKey {
         metalness: source.metalness,
         roughness: source.roughness,
         tone_mapped: source.tone_mapped,
@@ -79,12 +90,28 @@ pub fn vertex_material(source: &Arc<Material>) -> Arc<Material> {
         bump_map: source.bump_map.clone(),
         bump_scale: source.bump_scale,
         polygon_offset: source.polygon_offset,
-    };
-    let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
-    if let Some((_, material)) = materials.iter().find(|(k, _)| *k == key) {
-        return material.clone();
     }
-    let material = Arc::new(painted(source));
+}
+
+/// Each shared vertex material's address (`shared_values::VERTEX_MATERIALS`).
+pub(super) fn each_vertex_material(visit: &mut dyn FnMut(usize)) {
+    for (_, material) in VERTEX_MATERIALS
+        .lock()
+        .expect("vertex material cache")
+        .iter()
+    {
+        visit(Arc::as_ptr(material) as usize);
+    }
+}
+
+/// The vertex material to use for one a model read back from the geometry cache
+/// brings: the shared one of its key, else this one, shared from now on.
+pub(super) fn adopt_vertex_material(material: Arc<Material>) -> Arc<Material> {
+    let key = vertex_key(&material);
+    let mut materials = VERTEX_MATERIALS.lock().expect("vertex material cache");
+    if let Some((_, held)) = materials.iter().find(|(k, _)| *k == key) {
+        return held.clone();
+    }
     materials.push((key, material.clone()));
     material
 }

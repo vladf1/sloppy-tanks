@@ -282,6 +282,19 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   mesh store keeps only a `Weak`, so a model registered once (the wrecks, themed
   scenery) must not also sit in a cache or a retained tree. Check a map's
   `WebAssembly.Memory` size after loading it when changing scenery or upload paths.
+- The page keeps the generated vehicle models and each theme's scenery across visits
+  (`presentation/geometry_cache.rs`, `src/geometry-cache.ts`, `scene_codec`): what
+  the core builders return, read back bit for bit with the same `Arc` sharing, so the
+  draws and GPU resources match a built model's (`geometry-cache-check.mjs`). Its
+  files are keyed by the content version and graphics backend, so a model must depend
+  on nothing outside `crates/core` (or that input joins the key), and a change to the
+  file layout bumps `scene_codec::FORMAT_VERSION`. A builder's process-wide store of
+  shared meshes or materials is a named `Cache` or `SharedOnce` (`Cache::private()`
+  when keyed by addresses), never a bare static, or models built after a read-back
+  stop sharing with it (`scene_codec::fresh_processes_share_alike` counts them). The
+  shell writes a built scenery at the build's next step, while its tree lives anyway
+  (kept until the arena was ready, it raised the heap's peak by 12 MB), and the page
+  stores files only once the arena is ready.
 - Meshes have no GPU buffers of their own: they share vertex and index pages
   (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
   in the vertex page, so every draw passes `base_vertex` 0 (WebGL2 has none) and a

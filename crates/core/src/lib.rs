@@ -10,4 +10,5 @@ pub mod geometry;
 pub mod models;
 pub mod net;
 pub mod scene;
+pub mod scene_codec;
 pub mod sim;

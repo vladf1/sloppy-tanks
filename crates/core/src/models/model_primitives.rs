@@ -9,6 +9,7 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use glam::{DMat4, DVec3};
 
+use super::shared_values;
 use crate::geometry::math::{compose, decompose, normalize, quat_from_unit_vectors};
 use crate::geometry::{Mesh, box_geometry, cylinder_geometry, rounded_box_geometry};
 use crate::scene::{Color, Material, Node};
@@ -26,30 +27,60 @@ pub const CYLINDER_METALNESS: f64 = 0.2;
 const TEAM_EMISSIVE_INTENSITY: f32 = 0.04;
 
 /// A process-wide cache of shared values keyed by their construction parameters.
+/// Named caches are listed in `shared_values`, so a model the page's geometry cache
+/// reads back shares their values as a built one would.
 pub(crate) struct Cache<K, V> {
+    /// Unique among the shared stores, or empty for a cache keyed by addresses,
+    /// which no other run can match.
+    name: &'static str,
     entries: OnceLock<Mutex<HashMap<K, Arc<V>>>>,
 }
 
-impl<K: std::hash::Hash + Eq, V> Cache<K, V> {
-    pub(crate) const fn new() -> Self {
+impl<K: std::hash::Hash + Eq + Send + 'static, V: Send + Sync + 'static> Cache<K, V> {
+    pub(crate) const fn new(name: &'static str) -> Self {
         Self {
+            name,
             entries: OnceLock::new(),
         }
     }
 
-    pub(crate) fn get_or_insert(&self, key: K, build: impl FnOnce() -> V) -> Arc<V> {
-        let entries = self.entries.get_or_init(|| Mutex::new(HashMap::new()));
+    /// A cache keyed by addresses: never listed, never refilled from a file.
+    pub(crate) const fn private() -> Self {
+        Self::new("")
+    }
+
+    pub(crate) fn get_or_insert(&'static self, key: K, build: impl FnOnce() -> V) -> Arc<V> {
+        let entries = self.entries.get_or_init(|| {
+            if !self.name.is_empty() {
+                shared_values::register(self);
+            }
+            Mutex::new(HashMap::new())
+        });
         if let Some(value) = entries.lock().expect("cache lock").get(&key) {
             return value.clone();
         }
+        // A value the geometry cache read back for this key stands in for building it.
+        let read_back = (!self.name.is_empty())
+            .then(|| shared_values::take(self.name, shared_values::key_hash(&key)))
+            .flatten();
         // Build outside the lock: builders may use other caches (or this one).
-        let value = Arc::new(build());
+        let value = read_back.unwrap_or_else(|| Arc::new(build()));
         entries
             .lock()
             .expect("cache lock")
             .entry(key)
             .or_insert(value)
             .clone()
+    }
+
+    /// The value under `key`, if built.
+    pub(crate) fn get(&self, key: &K) -> Option<Arc<V>> {
+        self.entries
+            .get()?
+            .lock()
+            .expect("cache lock")
+            .get(key)
+            .cloned()
     }
 
     /// Drop every entry; values still held elsewhere live on, and a later
@@ -61,9 +92,33 @@ impl<K: std::hash::Hash + Eq, V> Cache<K, V> {
     }
 }
 
-static MATERIALS: Cache<(u32, u64, u64), Material> = Cache::new();
-static BOXES: Cache<[u64; 4], Mesh> = Cache::new();
-static CYLINDERS: Cache<(u64, u64, u32), Mesh> = Cache::new();
+impl<K: std::hash::Hash + Eq + Send + 'static, V: Send + Sync + 'static> shared_values::SharedStore
+    for Cache<K, V>
+{
+    fn name(&self) -> &'static str {
+        self.name
+    }
+
+    fn each(&self, visit: &mut dyn FnMut(u64, usize)) {
+        if let Some(entries) = self.entries.get() {
+            for (key, value) in entries.lock().expect("cache lock").iter() {
+                visit(shared_values::key_hash(key), Arc::as_ptr(value) as usize);
+            }
+        }
+    }
+
+    fn find(&self, key: u64) -> Option<Box<dyn std::any::Any>> {
+        let entries = self.entries.get()?.lock().expect("cache lock");
+        entries
+            .iter()
+            .find(|(held, _)| shared_values::key_hash(*held) == key)
+            .map(|(_, value)| Box::new(value.clone()) as Box<dyn std::any::Any>)
+    }
+}
+
+static MATERIALS: Cache<(u32, u64, u64), Material> = Cache::new("model_primitives::MATERIALS");
+static BOXES: Cache<[u64; 4], Mesh> = Cache::new("model_primitives::BOXES");
+static CYLINDERS: Cache<(u64, u64, u32), Mesh> = Cache::new("model_primitives::CYLINDERS");
 
 /// `material(color, metalness, roughness)`: a shared MeshStandardMaterial. Team
 /// colors also glow with their own color.

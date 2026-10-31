@@ -179,7 +179,7 @@ impl TreeSurface {
 }
 
 /// The atlas material, swaying like foliage or (background trees) still.
-static ATLAS_SURFACES: Cache<bool, Material> = Cache::new();
+static ATLAS_SURFACES: Cache<bool, Material> = Cache::new("tree_models::ATLAS_SURFACES");
 
 fn atlas_surface(sway: bool) -> Arc<Material> {
     ATLAS_SURFACES.get_or_insert(sway, || {
@@ -244,8 +244,9 @@ fn into_atlas(node: &mut Node, sway: bool) {
 
 /// Shared tree materials by surface, color, whether foliage sways and whether
 /// vertex colours carry the tint (background trees).
-static SURFACES: Cache<(TreeSurface, u32, bool, bool), Material> = Cache::new();
-static GEOMETRY: Cache<TreeGeometry, Mesh> = Cache::new();
+static SURFACES: Cache<(TreeSurface, u32, bool, bool), Material> =
+    Cache::new("tree_models::SURFACES");
+static GEOMETRY: Cache<TreeGeometry, Mesh> = Cache::new("tree_models::GEOMETRY");
 
 /// `surface(kind, color)`: shared textured tree materials. Foliage cards are
 /// alpha-tested, drawn from both sides with alpha to coverage and shaded by their
@@ -1322,7 +1323,7 @@ pub fn branch_drop_stage(node: &Node) -> Option<u32> {
     }
 }
 
-static TRUNK_FRAGMENT: Cache<(), Node> = Cache::new();
+static TRUNK_FRAGMENT: Cache<(), Node> = Cache::new("tree_models::TRUNK_FRAGMENT");
 
 /// `trunkFragment()`: the instanced physical trunk section, a tapered cylinder with
 /// bark on its side and end grain on its caps. Three.js drew it as one geometry with

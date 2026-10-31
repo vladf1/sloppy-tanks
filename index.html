@@ -305,8 +305,11 @@
     <script type="module">
       import webgpuBinary from "/src/generated/shell/sloppy-tanks_bg.wasm?url";
       import webglBinary from "/src/generated/shell-webgl/sloppy-tanks-webgl_bg.wasm?url";
+      import { startGeometryCache } from "/src/geometry-cache.ts";
 
       performance.mark("sloppy:boot");
+      // A returning visit's cached vehicles and scenery read meanwhile (geometry-cache.ts).
+      startGeometryCache();
       const root = document.documentElement;
       const view = document.getElementById("boot");
       const status = document.getElementById("boot-status");

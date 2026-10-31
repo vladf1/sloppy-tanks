@@ -44,9 +44,15 @@ impl VillageScenery {
             root.children.push(village_landmarks());
             root.children.push(approach_details());
             settle_paint(&mut root);
-            let wheel = node_path(&root, WATERWHEEL);
-            Self { root, wheel }
+            Self::from_root(root)
         })
+    }
+
+    /// The scenery around a root built before (read back from a page's geometry
+    /// cache).
+    pub fn from_root(root: Node) -> Self {
+        let wheel = node_path(&root, WATERWHEEL);
+        Self { root, wheel }
     }
 
     /// `update(time)`: turn the waterwheel. The creek, meadow sway and smoke read
