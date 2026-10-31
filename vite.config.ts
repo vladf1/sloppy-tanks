@@ -1,25 +1,93 @@
-import { defineConfig } from "vite";
+import { defineConfig, type Plugin, type Rolldown } from "vite";
+import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { baseRedirect } from "./scripts/base-redirect.ts";
+import { hashedAssets } from "./scripts/hashed-assets.ts";
 import { pageHealth } from "./scripts/page-health.ts";
-import { startupHtml } from "./scripts/startup-html.ts";
 
 const base = process.env.DEPLOY_BASE || "/sloppy-tanks/";
+const gamePage = fileURLToPath(new URL("./index.html", import.meta.url));
 
-/** The inline <head> script: `window.sloppyGraphics` and `window.sloppyEngineBinary`
- * (declared in src/engine.ts). */
-function engineDownloadScript(webgpuUrl: string, webglUrl: string): string {
-  return [
-    "(()=>{",
-    "const g=/[?&]webgl(=|&|$)/.test(location.search)?null:navigator.gpu;",
-    "const a=new AbortController();",
-    `const w=g&&fetch(${JSON.stringify(webgpuUrl)},{signal:a.signal});`,
-    'const api=g?g.requestAdapter().then(d=>d?"webgpu":"webgl",()=>"webgl"):Promise.resolve("webgl");',
-    `const b=api.then(k=>k==="webgpu"?w:(a.abort(),fetch(${JSON.stringify(webglUrl)})));`,
-    "w&&w.catch(()=>{});b.catch(()=>{});",
-    "window.sloppyGraphics=api;window.sloppyEngineBinary=b;",
-    "})();",
-  ].join("");
+/** The shell binaries `index.html` may download, WebGPU first. */
+const SHELL_BINARIES = [
+  "src/generated/shell/sloppy-tanks_bg.wasm",
+  "src/generated/shell-webgl/sloppy-tanks-webgl_bg.wasm",
+];
+
+/**
+ * The shell binaries' sizes in bytes, as `<meta name="sloppy-shell-bytes">`, for the
+ * game page's download progress (`index.html`): GitHub Pages sends them compressed, so
+ * a response's length is not what it delivers. Read at every transform, so the dev
+ * server follows `pnpm run wasm`; 0 for a binary not built.
+ */
+function shellSizes(): Plugin {
+  const size = (file: string) => {
+    try {
+      return statSync(fileURLToPath(new URL(file, import.meta.url))).size;
+    } catch {
+      return 0;
+    }
+  };
+  return {
+    name: "shell-sizes",
+    transformIndexHtml(_html, context) {
+      if (context.filename !== gamePage) return [];
+      return [
+        {
+          tag: "meta",
+          attrs: { name: "sloppy-shell-bytes", content: SHELL_BINARIES.map(size).join(",") },
+          injectTo: "head",
+        },
+      ];
+    },
+  };
+}
+
+/**
+ * The game page's boot script (`index.html`) stays in the built page instead of a chunk
+ * of its own, so a first visit starts the shell's and the fonts' downloads a round trip
+ * sooner. Its imports, relative to the chunk's folder, become absolute.
+ */
+function inlineBootScript(): Plugin {
+  let base = "/";
+  return {
+    name: "inline-boot-script",
+    apply: "build",
+    enforce: "post",
+    configResolved(config) {
+      base = config.base;
+    },
+    // After Vite has finished the chunks (it settles their preload calls last).
+    generateBundle: {
+      order: "post",
+      handler: (_options, bundle) => inlineBootChunk(bundle, base),
+    },
+  };
+}
+
+/** Move the game page's boot chunk into its `<script>` (`inlineBootScript`). */
+function inlineBootChunk(bundle: Rolldown.OutputBundle, base: string) {
+  const page = bundle["index.html"];
+  if (page?.type !== "asset") return;
+  const html = String(page.source);
+  const tag = html.match(/<script type="module" crossorigin src="([^"]+)"><\/script>/);
+  const entry = Object.values(bundle).find(
+    (file) => file.type === "chunk" && tag?.[1] === base + file.fileName,
+  );
+  if (!tag || entry?.type !== "chunk") throw new Error("index.html has no boot chunk");
+  for (const file of Object.values(bundle)) {
+    if (file.type === "chunk" && file.imports.includes(entry.fileName)) {
+      throw new Error(`${file.fileName} imports the boot chunk`);
+    }
+  }
+  const folder = entry.fileName.slice(0, entry.fileName.lastIndexOf("/") + 1);
+  let code = entry.code;
+  for (const file of [...entry.imports, ...entry.dynamicImports]) {
+    code = code.replaceAll(`./${file.slice(folder.length)}`, base + file);
+  }
+  const script = `<script type="module">${code.replaceAll("</script", "<\\/script")}</script>`;
+  page.source = html.replace(tag[0], () => script);
+  delete bundle[entry.fileName];
 }
 
 export default defineConfig({
@@ -28,8 +96,10 @@ export default defineConfig({
   server: { port: Number(process.env.PORT) || undefined },
   plugins: [
     baseRedirect(base),
-    startupHtml(base),
     pageHealth(),
+    shellSizes(),
+    hashedAssets(),
+    inlineBootScript(),
     {
       // Vite content-hashes every file in /assets/, so the site's Worker
       // (deploy/site/) may let browsers cache those for good; HTML and unversioned
@@ -43,57 +113,16 @@ export default defineConfig({
         });
       },
     },
-    {
-      // Start the engine binary's one real request in <head>, in parallel with the
-      // inline menu and the engine's JavaScript; src/engine.ts takes it over. Safari
-      // never hands a <link rel=preload as=fetch> response to a later fetch(), so a
-      // preload link would download the binary twice there. The script also picks the
-      // build, as src/engine.ts does: WebGPU when the browser has an adapter, else the
-      // WebGL fallback. Waiting for the adapter would delay the common case, so a
-      // browser with `navigator.gpu` starts the WebGPU download at once and aborts it
-      // if no adapter comes.
-      name: "engine-download",
-      transformIndexHtml: {
-        order: "post",
-        handler(_html, context) {
-          // By the source each binary was built from: the dev build also bundles the
-          // labs engine (src/generated/engine-labs/engine_bg.wasm) for its test pages,
-          // whose file name looks just like the game's.
-          const emitted = (source: string) => {
-            const files = Object.values(context.bundle ?? {}).filter(
-              (output) =>
-                output.type === "asset" &&
-                output.originalFileNames.some((name) => name.endsWith(source)),
-            );
-            if (files.length > 1) {
-              throw new Error(`More than one bundled ${source}`);
-            }
-            return files[0]?.fileName;
-          };
-          const webgpu = emitted("src/generated/engine/engine_bg.wasm");
-          const webgl = emitted("src/generated/engine-webgl/engine-webgl_bg.wasm");
-          return webgpu && webgl && context.filename.endsWith("index.html")
-            ? [
-                {
-                  tag: "script",
-                  children: engineDownloadScript(`${base}${webgpu}`, `${base}${webgl}`),
-                  injectTo: "head",
-                },
-              ]
-            : [];
-        },
-      },
-    },
   ],
+  // The bake worker (src/bake-worker.ts) imports the page's glue on demand.
+  worker: { format: "es" },
   build: {
+    // The pages' dynamic imports have no dependencies to preload, so the preload helper
+    // and its polyfill would only add to the game page's boot script.
+    modulePreload: false,
     rolldownOptions: {
       input: {
-        main: fileURLToPath(new URL("./index.html", import.meta.url)),
-      },
-      output: {
-        codeSplitting: {
-          groups: [{ name: "vendor", test: /[\\/]node_modules[\\/]/ }],
-        },
+        main: gamePage,
       },
     },
   },

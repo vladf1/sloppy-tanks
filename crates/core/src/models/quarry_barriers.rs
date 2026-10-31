@@ -26,9 +26,9 @@ const TOOTH_BUMP_SCALE: f32 = 0.055;
 /// Every tooth texture tile covers this many metres.
 const TOOTH_UV_METRES: f64 = 1.4;
 
-static TEETH: Cache<([u64; 3], usize), Mesh> = Cache::new();
-static TOOTH_MATERIAL: Cache<(), Material> = Cache::new();
-static LIFTING_ARCH: Cache<(), Mesh> = Cache::new();
+static TEETH: Cache<([u64; 3], usize), Mesh> = Cache::new("quarry_barriers::TEETH");
+static TOOTH_MATERIAL: Cache<(), Material> = Cache::new("quarry_barriers::TOOTH_MATERIAL");
+static LIFTING_ARCH: Cache<(), Mesh> = Cache::new("quarry_barriers::LIFTING_ARCH");
 
 /// The concrete wall material with vertex colors and deeper relief.
 fn tooth_material() -> Arc<Material> {
@@ -196,7 +196,7 @@ const BLOCK_TINTS: [[f32; 3]; 6] = [
 const FACE_SHADE: f32 = 0.82;
 const FOOT_SHADE: f32 = 0.7;
 
-static BLOCK_WALLS: Cache<[u64; 3], Mesh> = Cache::new();
+static BLOCK_WALLS: Cache<[u64; 3], Mesh> = Cache::new("quarry_barriers::BLOCK_WALLS");
 
 /// `quarry` boundary wall: a line of big quarried sandstone blocks along the
 /// wall's footprint (`w` x `d`, base at 0), in the rock cover's own sandstone,

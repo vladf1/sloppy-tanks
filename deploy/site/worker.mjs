@@ -1,12 +1,21 @@
-// The site's Worker, for the dev site and production. Static assets serve everything except the engine binaries,
-// which `run_worker_first` routes here: Cloudflare compresses those on every request,
-// so precompress.mjs stores Brotli and gzip copies at deploy time and this script sends
-// the one the client accepts.
+// The site's Worker, for the dev site and production. Static assets serve everything
+// except the engine binaries, the shell's font collection and its shader tables, which
+// `run_worker_first` routes here: Cloudflare compresses those on every request (the
+// tables 32-45% larger than Brotli-11), so precompress.mjs stores Brotli and gzip copies
+// at deploy time and this script sends the one the client accepts.
+
+/** The precompressed files, by extension, with the type each is served as. */
+const contentTypes = {
+  ".wasm": "application/wasm",
+  ".ttc": "font/collection",
+  ".json": "application/json",
+};
 
 export default {
   async fetch(request, env) {
     const path = new URL(request.url).pathname;
-    if (!path.startsWith("/assets/") || !path.endsWith(".wasm")) {
+    const contentType = contentTypes[path.slice(path.lastIndexOf("."))];
+    if (!path.startsWith("/assets/") || contentType === undefined) {
       return env.ASSETS.fetch(request);
     }
 
@@ -15,9 +24,9 @@ export default {
       return env.ASSETS.fetch(request);
     }
 
-    response.headers.set("Content-Type", "application/wasm");
+    response.headers.set("Content-Type", contentType);
     response.headers.set("Cache-Control", "public, max-age=31536000, immutable, no-transform");
-    response.headers.set("X-Sloppy-Wasm-Delivery", "precompressed");
+    response.headers.set("X-Sloppy-Delivery", "precompressed");
     return response;
   },
 };

@@ -4,6 +4,7 @@
 //! `creek_distance` and `valley_height` are also the ground queries of the meadow
 //! and the footbridge approach's stepping stones.
 
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::sync::{Arc, OnceLock};
 
@@ -84,12 +85,16 @@ fn creek() -> &'static Creek {
                 )
             })
             .collect();
-        Creek {
+        let creek = Creek {
             curve,
             points,
             segments,
             chunks,
-        }
+        };
+        // creek_distance searches whole chunks.
+        assert_eq!(creek.segments.len(), creek.chunks.len() * CREEK_CHUNK);
+        assert_eq!(creek.chunks.len(), CREEK_DIVISIONS as usize / CREEK_CHUNK);
+        creek
     })
 }
 
@@ -102,15 +107,24 @@ pub fn creek_at(t: f64) -> (DVec3, DVec3) {
 /// `creekDistance(x, z)`: horizontal distance to the creek's centreline.
 pub fn creek_distance(x: f64, z: f64) -> f64 {
     let creek = creek();
-    let mut nearest = f64::INFINITY;
-    // Chunks whose bounds lie farther than the nearest segment so far are skipped.
-    for (chunk, &[x0, z0, x1, z1]) in creek.segments.chunks(CREEK_CHUNK).zip(&creek.chunks) {
+    let mut bounds = [0.0; CREEK_DIVISIONS as usize / CREEK_CHUNK];
+    let (mut closest, mut closest_bound) = (0, f64::INFINITY);
+    for (index, (bound, &[x0, z0, x1, z1])) in bounds.iter_mut().zip(&creek.chunks).enumerate() {
         let bx = (x0 - x).max(x - x1).max(0.0);
         let bz = (z0 - z).max(z - z1).max(0.0);
-        if bx * bx + bz * bz >= nearest {
-            continue;
+        *bound = bx * bx + bz * bz;
+        if *bound < closest_bound {
+            (closest, closest_bound) = (index, *bound);
         }
-        for &[sx, sz, dx, dz, inverse] in chunk {
+    }
+    // The chunk whose bounds lie nearest first, so the nearest segment so far is
+    // close from the start; then every chunk whose bounds lie nearer than it, in
+    // order (a segment never lies nearer than its chunk's bounds, so the skipped
+    // ones hold none nearer).
+    let mut nearest = f64::INFINITY;
+    let mut search = |chunk: usize| {
+        let segments = &creek.segments[chunk * CREEK_CHUNK..(chunk + 1) * CREEK_CHUNK];
+        for &[sx, sz, dx, dz, inverse] in segments {
             let ax = x - sx;
             let az = z - sz;
             let t = 1.0f64.min(0.0f64.max((ax * dx + az * dz) * inverse));
@@ -118,8 +132,15 @@ pub fn creek_distance(x: f64, z: f64) -> f64 {
             let ez = az - dz * t;
             nearest = nearest.min(ex * ex + ez * ez);
         }
+        nearest
+    };
+    let mut nearest_so_far = search(closest);
+    for (chunk, &bound) in bounds.iter().enumerate() {
+        if chunk != closest && bound < nearest_so_far {
+            nearest_so_far = search(chunk);
+        }
     }
-    nearest.sqrt()
+    nearest_so_far.sqrt()
 }
 
 /// `valleyHeight(x, z)`: the valley floor, rising into hills beyond the arena and
@@ -154,11 +175,7 @@ fn glacis(x: f64, z: f64, edge: f64) -> f64 {
     if edge >= toe {
         return 0.0;
     }
-    let level = LEVEL_FOOTINGS
-        .iter()
-        .map(|&[cx, cz, radius]| smoothstep((x - cx).hypot(z - cz), radius, radius + 10.0))
-        .fold(1.0, f64::min);
-    (1.0 - smoothstep(edge, foot, toe)) * GLACIS_RISE * level
+    (1.0 - smoothstep(edge, foot, toe)) * GLACIS_RISE * footing_level(x, z)
 }
 
 /// Landmarks set at fixed heights on the valley floor (x, z, radius in metres):
@@ -170,6 +187,25 @@ const LEVEL_FOOTINGS: [[f64; 3]; 4] = [
     [-68.0, -24.0, 8.0],
 ];
 
+/// How far the valley floor's rolls and banks reach at (x, z) under the
+/// [`LEVEL_FOOTINGS`]: 0 on a footing, rising to 1 ten metres beyond it.
+fn footing_level(x: f64, z: f64) -> f64 {
+    LEVEL_FOOTINGS
+        .iter()
+        .map(|&[cx, cz, radius]| {
+            let (dx, dz) = (x - cx, z - cz);
+            let reach = radius + 10.0;
+            // Clearly beyond the ramp the smoothstep is exactly 1, which leaves the
+            // minimum alone: skip its hypot (a slow libm call in the page), keeping a
+            // margin far wider than either's rounding.
+            if dx * dx + dz * dz > reach * reach * (1.0 + 1e-9) {
+                return 1.0;
+            }
+            smoothstep(dx.hypot(dz), radius, reach)
+        })
+        .fold(1.0, f64::min)
+}
+
 /// Knolls and swales rolling the valley floor beyond the wall, a metre or two
 /// high: level at the wall's foot, along the creek and under the landmarks of
 /// [`LEVEL_FOOTINGS`], so nothing set on the old floor floats or sinks.
@@ -178,10 +214,7 @@ fn knolls(x: f64, z: f64, edge: f64, river: f64) -> f64 {
     if reach <= 0.0 {
         return 0.0;
     }
-    let level = LEVEL_FOOTINGS
-        .iter()
-        .map(|&[cx, cz, radius]| smoothstep((x - cx).hypot(z - cz), radius, radius + 10.0))
-        .fold(1.0, f64::min);
+    let level = footing_level(x, z);
     let rolls = (lattice_noise(x * 0.045 + 3.1, z * 0.045 - 7.7) - 0.5) * 3.8
         + (lattice_noise(x * 0.11 - 2.0, z * 0.11 + 5.0) - 0.5) * 1.1;
     reach * level * rolls
@@ -224,17 +257,73 @@ const RANGES_HALF: f64 = 300.0;
 /// Grid spacing of the distant ranges in metres.
 const RANGES_CELL: f64 = 6.0;
 
+/// Lattice corners [`lattice_corner`] keeps along each axis while the village
+/// builds, centred on 0: every octave the valley samples lands within it.
+const LATTICE_SPAN: usize = 128;
+
+thread_local! {
+    /// The values of the lattice corners met so far, NaN until computed, while
+    /// [`with_lattice_corners`] runs.
+    static LATTICE_CORNERS: RefCell<Option<Vec<f64>>> = const { RefCell::new(None) };
+}
+
+/// Run `build` keeping [`lattice_noise`]'s corner values: each is the sine of a
+/// large argument (slow in the page's own libm), and the valley terrain, the
+/// ridge, the ranges and everything set on them sample a few thousand corners
+/// hundreds of thousands of times. A corner's value is the same whenever it is
+/// asked for; they are dropped when `build` returns.
+pub(super) fn with_lattice_corners<T>(build: impl FnOnce() -> T) -> T {
+    LATTICE_CORNERS.set(Some(vec![f64::NAN; LATTICE_SPAN * LATTICE_SPAN]));
+    let built = build();
+    LATTICE_CORNERS.set(None);
+    built
+}
+
+/// The value of [`lattice_noise`]'s lattice at corner (ix, iz) (whole numbers).
+fn lattice_hash(ix: f64, iz: f64) -> f64 {
+    let h = (ix * 127.1 + iz * 311.7).sin() * 43758.5453;
+    h - h.floor()
+}
+
+/// The values of the lattice corners (ix, iz), (ix + 1, iz), (ix, iz + 1) and
+/// (ix + 1, iz + 1), from the kept ones while [`with_lattice_corners`] runs.
+fn lattice_cell(ix: f64, iz: f64) -> [f64; 4] {
+    let corners = [
+        (ix, iz),
+        (ix + 1.0, iz),
+        (ix, iz + 1.0),
+        (ix + 1.0, iz + 1.0),
+    ];
+    LATTICE_CORNERS.with_borrow_mut(|kept| {
+        let half = (LATTICE_SPAN / 2) as f64;
+        let span = LATTICE_SPAN as f64;
+        let (i, j) = (ix + half, iz + half);
+        match kept {
+            Some(kept) if i >= 0.0 && j >= 0.0 && i + 1.0 < span && j + 1.0 < span => {
+                let base = j as usize * LATTICE_SPAN + i as usize;
+                let at = [base, base + 1, base + LATTICE_SPAN, base + LATTICE_SPAN + 1];
+                [0, 1, 2, 3].map(|k| {
+                    let value = &mut kept[at[k]];
+                    if value.is_nan() {
+                        let (cx, cz) = corners[k];
+                        *value = lattice_hash(cx, cz);
+                    }
+                    *value
+                })
+            }
+            _ => corners.map(|(cx, cz)| lattice_hash(cx, cz)),
+        }
+    })
+}
+
 /// A smooth lattice noise in [0, 1] for the distant ranges' shapes and colours.
 fn lattice_noise(x: f64, z: f64) -> f64 {
-    let hash = |ix: f64, iz: f64| {
-        let h = (ix * 127.1 + iz * 311.7).sin() * 43758.5453;
-        h - h.floor()
-    };
     let (ix, iz) = (x.floor(), z.floor());
     let (fx, fz) = (x - ix, z - iz);
     let (ux, uz) = (fx * fx * (3.0 - 2.0 * fx), fz * fz * (3.0 - 2.0 * fz));
-    let a = lerp(hash(ix, iz), hash(ix + 1.0, iz), ux);
-    let b = lerp(hash(ix, iz + 1.0), hash(ix + 1.0, iz + 1.0), ux);
+    let [c00, c10, c01, c11] = lattice_cell(ix, iz);
+    let a = lerp(c00, c10, ux);
+    let b = lerp(c01, c11, ux);
     lerp(a, b, uz)
 }
 
@@ -265,11 +354,21 @@ fn far_rise(x: f64, z: f64) -> f64 {
 /// Slope colours of the mountains: forest below, scree and rock above it, snow
 /// on the peaks, each band broken by noise so no contour line shows.
 fn range_color(x: f64, y: f64, z: f64) -> [f64; 3] {
+    // Linear once rather than for each of the ridge's and ranges' vertices.
+    static BANDS: OnceLock<[[f64; 3]; 6]> = OnceLock::new();
+    let [
+        dark_forest,
+        light_forest,
+        meadow,
+        dark_rock,
+        light_rock,
+        snow,
+    ] = *BANDS.get_or_init(|| {
+        [0x3f5f3b, 0x56774a, 0x6f9150, 0x7d8682, 0x9a9a8e, 0xeef1ea].map(hex_to_linear)
+    });
     let n = lattice_noise(x * 0.09, z * 0.09);
-    let forest = lerp_color(hex_to_linear(0x3f5f3b), hex_to_linear(0x56774a), n);
-    let meadow = hex_to_linear(0x6f9150);
-    let rock = lerp_color(hex_to_linear(0x7d8682), hex_to_linear(0x9a9a8e), n);
-    let snow = hex_to_linear(0xeef1ea);
+    let forest = lerp_color(dark_forest, light_forest, n);
+    let rock = lerp_color(dark_rock, light_rock, n);
     let mut color = lerp_color(meadow, forest, smoothstep(y, 4.0, 12.0));
     let treeline = 30.0 + n * 10.0;
     color = lerp_color(color, rock, smoothstep(y, treeline, treeline + 8.0));
@@ -402,85 +501,151 @@ const VALLEY_SEGMENTS: u32 = 112;
 /// Height of a triangulated height grid at (x, z), exactly as its mesh draws it:
 /// cells of `cell` metres from `origin`, split along the diagonal from their
 /// (low x, high z) corner to their (high x, low z) corner like `PlaneGeometry`
-/// and [`far_ranges`].
+/// and [`far_ranges`]. `corner(i, j)` is the height of the grid's corner `i`
+/// cells along x and `j` along z.
 fn grid_surface(
     x: f64,
     z: f64,
     origin: [f64; 2],
     cell: [f64; 2],
-    height: impl Fn(f64, f64) -> f64,
+    mut corner: impl FnMut(f64, f64) -> f64,
 ) -> f64 {
     let (gx, gz) = ((x - origin[0]) / cell[0], (z - origin[1]) / cell[1]);
     let (ix, iz) = (gx.floor(), gz.floor());
     let (u, v) = (gx - ix, gz - iz);
-    let corner = |i: f64, j: f64| {
-        height(
-            origin[0] + (ix + i) * cell[0],
-            origin[1] + (iz + j) * cell[1],
-        )
-    };
-    let (b, d) = (corner(0.0, 1.0), corner(1.0, 0.0));
+    let (b, d) = (corner(ix, iz + 1.0), corner(ix + 1.0, iz));
     if u + v <= 1.0 {
-        let a = corner(0.0, 0.0);
+        let a = corner(ix, iz);
         a + (d - a) * u + (b - a) * v
     } else {
-        let c = corner(1.0, 1.0);
+        let c = corner(ix + 1.0, iz + 1.0);
         c + (b - c) * (1.0 - u) + (d - c) * (1.0 - v)
     }
 }
 
-/// The drawn ground under the backdrop at (x, z): the highest of the valley
-/// terrain, the northern ridge and the distant ranges where each lies, as their
-/// meshes interpolate it (a tree planted on the true height would hang off a
-/// crest the mesh cuts across).
-pub fn backdrop_ground(x: f64, z: f64) -> f64 {
-    let mut ground = f64::NEG_INFINITY;
-    if x.abs() < VALLEY_HALF && z.abs() < VALLEY_HALF {
-        let cell = VALLEY_HALF * 2.0 / f64::from(VALLEY_SEGMENTS);
-        ground = ground.max(grid_surface(
-            x,
-            z,
-            [-VALLEY_HALF; 2],
-            [cell; 2],
-            valley_height,
-        ));
-    }
-    let [width, depth] = RIDGE_SIZE;
-    if x.abs() < width / 2.0 && (z - RIDGE_Z).abs() < depth / 2.0 {
-        let cell = [
-            width / f64::from(RIDGE_SEGMENTS[0]),
-            depth / f64::from(RIDGE_SEGMENTS[1]),
-        ];
-        ground = ground.max(grid_surface(
-            x,
-            z,
-            [-width / 2.0, RIDGE_Z - depth / 2.0],
-            cell,
-            |x, z| valley_height(x, z) + mountain_rise(x, z),
-        ));
-    }
-    if ground == f64::NEG_INFINITY || x.abs() > VALLEY_HALF - 8.0 || z.abs() > VALLEY_HALF - 8.0 {
-        let far = grid_surface(x, z, [-RANGES_HALF; 2], [RANGES_CELL; 2], |x, z| {
-            valley_height(x, z) + mountain_rise(x, z) + far_rise(x, z)
-        });
-        ground = ground.max(far - if ground > f64::NEG_INFINITY { 1.5 } else { 0.0 });
-    }
-    ground
+/// One height grid of the backdrop, its corner heights kept once computed.
+struct CornerGrid {
+    origin: [f64; 2],
+    cell: [f64; 2],
+    /// Corners along x (cells + 1); rows run along z.
+    columns: usize,
+    heights: Vec<Option<f64>>,
+    height: fn(f64, f64) -> f64,
 }
 
-/// Where a trunk can stand on the backdrop: the lowest drawn ground around its
-/// base, a little deeper, so it never hangs over a slope; `None` on faces too
-/// steep for a tree.
-fn trunk_footing(x: f64, z: f64) -> Option<f64> {
-    let reach = 1.1;
-    let around = [(reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)]
-        .map(|(dx, dz)| backdrop_ground(x + dx, z + dz));
-    let low = around.iter().copied().fold(backdrop_ground(x, z), f64::min);
-    let high = around.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-    let slope = (high - low) / (reach * 2.0);
-    // Trees keep to ground they could root in; on a slope the trunk sinks
-    // deeper, so its downhill side never shows daylight under it.
-    (slope < MAX_TREE_SLOPE).then_some(low - 0.3 - slope * 0.5)
+impl CornerGrid {
+    fn new(origin: [f64; 2], cell: [f64; 2], cells: [u32; 2], height: fn(f64, f64) -> f64) -> Self {
+        let columns = cells[0] as usize + 1;
+        Self {
+            origin,
+            cell,
+            columns,
+            heights: vec![None; columns * (cells[1] as usize + 1)],
+            height,
+        }
+    }
+
+    /// [`grid_surface`] of this grid: a corner's height is the same whenever it is
+    /// asked for, so each is computed once.
+    fn surface(&mut self, x: f64, z: f64) -> f64 {
+        let (origin, cell, columns, height) = (self.origin, self.cell, self.columns, self.height);
+        let heights = &mut self.heights;
+        grid_surface(x, z, origin, cell, |i, j| {
+            let at = |i: f64, j: f64| height(origin[0] + i * cell[0], origin[1] + j * cell[1]);
+            let index = (i >= 0.0 && j >= 0.0 && i < columns as f64)
+                .then(|| j as usize * columns + i as usize)
+                .filter(|&index| index < heights.len());
+            match index {
+                Some(index) => *heights[index].get_or_insert_with(|| at(i, j)),
+                None => at(i, j),
+            }
+        })
+    }
+}
+
+fn ridge_height(x: f64, z: f64) -> f64 {
+    valley_height(x, z) + mountain_rise(x, z)
+}
+
+fn far_height(x: f64, z: f64) -> f64 {
+    valley_height(x, z) + mountain_rise(x, z) + far_rise(x, z)
+}
+
+/// The drawn ground under the backdrop: the valley terrain, the northern ridge
+/// and the distant ranges as their meshes interpolate them. The forest asks for
+/// it five times round every trunk, and neighbouring trees share cells, so the
+/// grids keep the corner heights they have computed.
+struct BackdropGround {
+    valley: CornerGrid,
+    ridge: CornerGrid,
+    far: CornerGrid,
+}
+
+impl BackdropGround {
+    fn new() -> Self {
+        let valley_cell = VALLEY_HALF * 2.0 / f64::from(VALLEY_SEGMENTS);
+        let [width, depth] = RIDGE_SIZE;
+        let ranges_cells = (RANGES_HALF * 2.0 / RANGES_CELL) as u32;
+        Self {
+            valley: CornerGrid::new(
+                [-VALLEY_HALF; 2],
+                [valley_cell; 2],
+                [VALLEY_SEGMENTS; 2],
+                valley_height,
+            ),
+            ridge: CornerGrid::new(
+                [-width / 2.0, RIDGE_Z - depth / 2.0],
+                [
+                    width / f64::from(RIDGE_SEGMENTS[0]),
+                    depth / f64::from(RIDGE_SEGMENTS[1]),
+                ],
+                RIDGE_SEGMENTS,
+                ridge_height,
+            ),
+            far: CornerGrid::new(
+                [-RANGES_HALF; 2],
+                [RANGES_CELL; 2],
+                [ranges_cells; 2],
+                far_height,
+            ),
+        }
+    }
+
+    /// The drawn ground at (x, z): the highest of the valley terrain, the
+    /// northern ridge and the distant ranges where each lies, as their meshes
+    /// interpolate it (a tree planted on the true height would hang off a crest
+    /// the mesh cuts across).
+    fn at(&mut self, x: f64, z: f64) -> f64 {
+        let mut ground = f64::NEG_INFINITY;
+        if x.abs() < VALLEY_HALF && z.abs() < VALLEY_HALF {
+            ground = ground.max(self.valley.surface(x, z));
+        }
+        let [width, depth] = RIDGE_SIZE;
+        if x.abs() < width / 2.0 && (z - RIDGE_Z).abs() < depth / 2.0 {
+            ground = ground.max(self.ridge.surface(x, z));
+        }
+        if ground == f64::NEG_INFINITY || x.abs() > VALLEY_HALF - 8.0 || z.abs() > VALLEY_HALF - 8.0
+        {
+            let far = self.far.surface(x, z);
+            ground = ground.max(far - if ground > f64::NEG_INFINITY { 1.5 } else { 0.0 });
+        }
+        ground
+    }
+
+    /// Where a trunk can stand on the backdrop: the lowest drawn ground around its
+    /// base, a little deeper, so it never hangs over a slope; `None` on faces too
+    /// steep for a tree.
+    fn trunk_footing(&mut self, x: f64, z: f64) -> Option<f64> {
+        let reach = 1.1;
+        let around = [(reach, 0.0), (-reach, 0.0), (0.0, reach), (0.0, -reach)]
+            .map(|(dx, dz)| self.at(x + dx, z + dz));
+        let low = around.iter().copied().fold(self.at(x, z), f64::min);
+        let high = around.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+        let slope = (high - low) / (reach * 2.0);
+        // Trees keep to ground they could root in; on a slope the trunk sinks
+        // deeper, so its downhill side never shows daylight under it.
+        (slope < MAX_TREE_SLOPE).then_some(low - 0.3 - slope * 0.5)
+    }
 }
 
 /// The steepest backdrop ground a tree grows on (rise over run).
@@ -510,14 +675,21 @@ fn nudge_for_family(x: f64, z: f64, h: f64, want: impl Fn(u32) -> bool) -> (f64,
 const FOREST_SECTORS: f64 = 8.0;
 
 /// The background forest, one group of trees per batching cell.
-#[derive(Default)]
 struct Forest {
     cells: BTreeMap<(i64, i64), Node>,
+    ground: BackdropGround,
 }
 
 impl Forest {
+    fn new() -> Self {
+        Self {
+            cells: BTreeMap::new(),
+            ground: BackdropGround::new(),
+        }
+    }
+
     fn plant(&mut self, shape: TreeShape) -> bool {
-        let Some(footing) = trunk_footing(shape.x, shape.z) else {
+        let Some(footing) = self.ground.trunk_footing(shape.x, shape.z) else {
             return false;
         };
         let distant = shape.x.abs().max(shape.z.abs()) > DISTANT_TREES;
@@ -633,7 +805,7 @@ fn grove(
 
 fn backdrop(group: &mut Node) {
     let mut rng = Random::new(8274.0);
-    let mut forest = Forest::default();
+    let mut forest = Forest::new();
     let mut rocks = Node::group("");
     let stone = Arc::new(icosahedron_geometry(1.0, 0));
     let stone_materials = [0x879087, 0xa4aa92, 0x717f76].map(|color| {
@@ -668,7 +840,7 @@ fn backdrop(group: &mut Node) {
         rock.set_rotation_euler(pitch, yaw, 0.0);
         // On the drawn ground: the coarse terrain mesh cuts below `valley_height`
         // across the steep creek bank, where a stone set on the true height hovers.
-        put(&mut rocks, rock, x, backdrop_ground(x, z) + size * 0.06, z);
+        put(&mut rocks, rock, x, forest.ground.at(x, z) + size * 0.06, z);
     }
     // The forest grows in groves of every age, so the hills read as woods with
     // clearings and depth rather than ranks of one tree. Mountain groves are all
@@ -818,3 +990,59 @@ const TREELINE: [[f64; 4]; 18] = [
     [-74.0, 30.0, 3.0, 2.0],
     [73.0, -30.0, 3.0, 2.0],
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `creek_distance` as the TypeScript port searched it: chunks in order, each
+    /// skipped when its bounds lie no nearer than the nearest segment so far.
+    fn creek_distance_in_order(x: f64, z: f64) -> f64 {
+        let creek = creek();
+        let mut nearest = f64::INFINITY;
+        for (chunk, &[x0, z0, x1, z1]) in creek.segments.chunks(CREEK_CHUNK).zip(&creek.chunks) {
+            let bx = (x0 - x).max(x - x1).max(0.0);
+            let bz = (z0 - z).max(z - z1).max(0.0);
+            if bx * bx + bz * bz >= nearest {
+                continue;
+            }
+            for &[sx, sz, dx, dz, inverse] in chunk {
+                let ax = x - sx;
+                let az = z - sz;
+                let t = 1.0f64.min(0.0f64.max((ax * dx + az * dz) * inverse));
+                let ex = ax - dx * t;
+                let ez = az - dz * t;
+                nearest = nearest.min(ex * ex + ez * ez);
+            }
+        }
+        nearest.sqrt()
+    }
+
+    /// Searching the nearest chunk first finds the very same distance: over the
+    /// valley's and the ranges' grids, the creek's own samples and random points.
+    #[test]
+    fn nearest_chunk_first_finds_the_same_distance() {
+        let mut points = Vec::new();
+        for j in 0..=100 {
+            for i in 0..=100 {
+                points.push((-300.0 + f64::from(i) * 6.0, -300.0 + f64::from(j) * 6.0));
+            }
+        }
+        for p in &creek().points {
+            for offset in [0.0, 0.5, -3.0, 7.25] {
+                points.push((p.x + offset, p.z - offset));
+            }
+        }
+        let mut rng = Random::new(5.0);
+        for _ in 0..20_000 {
+            points.push((rng.range(-320.0, 320.0), rng.range(-320.0, 320.0)));
+        }
+        for (x, z) in points {
+            assert_eq!(
+                creek_distance(x, z).to_bits(),
+                creek_distance_in_order(x, z).to_bits(),
+                "({x}, {z})"
+            );
+        }
+    }
+}

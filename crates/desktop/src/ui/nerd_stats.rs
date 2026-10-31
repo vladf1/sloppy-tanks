@@ -31,15 +31,26 @@ fn section_open(state: &UiState, section: &str) -> bool {
 /// same, but a touch screen may have no keyboard.
 pub fn link(context: &egui::Context, state: &mut UiState) {
     let screen = context.content_rect();
-    let font = egui::FontId::proportional(12.0);
+    // A phone's is a tiny "nerds" held in from the screen's rounded corner
+    // (`.phone #nerd-stats`: 16 px and the toggle's 14 px padding from the right, 4 and
+    // 12 from the foot).
+    let (text, size, right, bottom) = if crate::touch::phone() {
+        ("nerds", 10.0, 30.0, 16.0)
+    } else {
+        ("nerd stats", 12.0, 13.0, 10.0)
+    };
+    let font = egui::FontId::proportional(size);
     let painter = context.layer_painter(egui::LayerId::background());
-    let width = paint::text_width(&painter, "nerd stats", font.clone(), 0.0);
+    let width = paint::text_width(&painter, text, font.clone(), 0.0);
     let label = Rect::from_min_size(
-        pos2(screen.right() - 13.0 - width, screen.bottom() - 10.0 - 14.0),
-        vec2(width, 14.0),
+        pos2(
+            screen.right() - right - width,
+            screen.bottom() - bottom - (size + 2.0),
+        ),
+        vec2(width, size + 2.0),
     );
     // The page's 5px padding, and a little more for a finger.
-    let target = label.expand(if crate::TOUCH { 10.0 } else { 5.0 });
+    let target = label.expand(if crate::touch::screen() { 10.0 } else { 5.0 });
     egui::Area::new(Id::unique("nerd stats link"))
         .order(Order::Foreground)
         .fixed_pos(target.min)
@@ -48,11 +59,12 @@ pub fn link(context: &egui::Context, state: &mut UiState) {
                 .allocate_exact_size(target.size(), Sense::click())
                 .1
                 .on_hover_text("Stats for Nerds (N)");
+            paint::labelled(&response, true, "Stats for Nerds");
             paint::shadowed(
                 ui.painter(),
                 label.left_center(),
                 Align2::LEFT_CENTER,
-                "nerd stats",
+                text,
                 font,
                 hexa(0xffffff, if response.hovered() { 0.9 } else { 0.65 }),
                 0.0,
@@ -72,6 +84,14 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
     let font_painter = context.layer_painter(egui::LayerId::background());
     let character_width = paint::text_width(&font_painter, "0", row_font.clone(), 0.0);
     let panel_width = (PANEL_COLUMNS * character_width + 24.0).min(screen.width() - 16.0);
+    // Values start one space past the widest label, measured, since a page has no
+    // monospace face to pad labels in.
+    let value_column = list
+        .iter()
+        .flat_map(|section| &section.rows)
+        .map(|row| paint::text_width(&font_painter, row.label, row_font.clone(), 0.0))
+        .fold(0.0, f32::max)
+        + paint::text_width(&font_painter, "0", row_font.clone(), 0.0);
     let rows: f32 = list
         .iter()
         .map(|section| {
@@ -96,11 +116,12 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
         .show(context, |ui| {
             let rect = Rect::from_min_size(ui.cursor().min, vec2(panel_width, height));
             let painter = ui.painter().clone();
-            painter.add(paint::rounded_vgradient(
+            paint::rounded_vgradient(
+                &painter,
                 rect,
                 [12.0; 4],
                 &[(0.0, hexa(0x11264a, 0.94)), (1.0, hexa(0x08142a, 0.95))],
-            ));
+            );
             painter.rect_stroke(
                 rect,
                 12,
@@ -130,6 +151,7 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
             let response = ui
                 .interact(close, Id::unique("nerd stats close"), Sense::click())
                 .on_hover_text("Hide (N)");
+            paint::labelled(&response, true, "Hide Stats for Nerds");
             if response.hovered() {
                 painter.rect_filled(close, 6, hexa(0xffffff, 0.12));
             }
@@ -162,6 +184,7 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
                         let open = section_open(state, section.title);
                         let (head, response) =
                             ui.allocate_exact_size(vec2(width, SECTION_HEAD), Sense::click());
+                        paint::labelled_choice(&response, true, open, section.title);
                         let painter = ui.painter();
                         let x = head.left() + 5.0;
                         let tip = pos2(x + 4.0, head.center().y);
@@ -202,15 +225,18 @@ pub fn panel(context: &egui::Context, state: &mut UiState) {
                         for row in &section.rows {
                             let (line, response) =
                                 ui.allocate_exact_size(vec2(width, ROW_HEIGHT), Sense::hover());
-                            paint::text(
-                                ui.painter(),
-                                pos2(line.left() + 5.0, line.center().y),
-                                Align2::LEFT_CENTER,
-                                &format!("{:20} {}", row.label, row.value),
-                                row_font.clone(),
-                                hex(0xe6eef8),
-                                0.0,
-                            );
+                            for (x, text) in [(0.0, row.label), (value_column, row.value.as_str())]
+                            {
+                                paint::text(
+                                    ui.painter(),
+                                    pos2(line.left() + 5.0 + x, line.center().y),
+                                    Align2::LEFT_CENTER,
+                                    text,
+                                    row_font.clone(),
+                                    hex(0xe6eef8),
+                                    0.0,
+                                );
+                            }
                             response.on_hover_text(row.hint.as_ref());
                         }
                     }

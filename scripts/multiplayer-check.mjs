@@ -1,422 +1,508 @@
+// Two players in a room on a local game server, each in its own headless Chrome context,
+// through the page's canvas: one creates the room in a browser without Pointer Lock, as
+// iPadOS Safari is (its address names it, its seat waits in sessionStorage), copies the
+// invite link and the other joins by it; both drive and see each other move, and the
+// battle polls no room list. The development delay slows the round trips; a socket drop
+// shows the reconnect dialog and recovers the seat. The second leaves for Battle Setup's
+// Multiplayer tab, comes back by typing the code, and a reload takes its reserved seat
+// again rather than a third. The host ends the battle and plays again. A server crash
+// shows CONNECTION LOST and reconnects to the restarted server, and a graceful stop
+// shows ROOM CLOSED with the way back to Battle Setup. A directory that lists a server of
+// another content version shows its room as not joinable and offers no new room.
+//
+// The check starts and stops its own server (`SLOPPY_SERVER_BIN`, default the build of
+// `node scripts/build-server.mjs`) on a free port; SLOPPY_WEBGL=1 plays it on WebGL2.
 import assert from "node:assert/strict";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdirSync, writeFileSync } from "node:fs";
+import http from "node:http";
+import { setTimeout as wait } from "node:timers/promises";
 import {
-  center,
-  click,
-  collectErrors,
+  DEAD_SOCKET,
+  clickWidget,
+  findWidget,
+  freePort,
   gameUrl,
+  installProbes,
   launchChrome,
-  localDirectory,
-  setTouchMode,
-  touchScreen,
+  nextFrame,
+  openAddress,
+  openShell,
+  roomListing,
+  shellDebug,
+  startGameServer,
+  untilState,
 } from "./browser-helpers.mjs";
-import {
-  checkMultiplayerMenu,
-  openMultiplayerTab,
-  recordRoomFrames,
-} from "./multiplayer-helpers.mjs";
 
-const output = "artifacts/performance/multiplayer/browser";
-await mkdir(output, { recursive: true });
-const url = new URL(gameUrl);
-if (process.env.SLOPPY_SERVER)
-  url.searchParams.set("directory", localDirectory(process.env.SLOPPY_SERVER));
-for (const [env, key] of [
-  ["SLOPPY_LATENCY", "latency"],
-  ["SLOPPY_JITTER", "jitter"],
-  ["SLOPPY_STALL", "stall"],
-]) {
-  if (process.env[env]) url.searchParams.set(key, process.env[env]);
-}
-/** The client refreshes unchanged input about once per second. */
+const out = "artifacts/performance/multiplayer-check";
+mkdirSync(out, { recursive: true });
+/** A room's arena compiles before its battle shows; a cold start takes a while. */
+const ROOM_TIMEOUT_MS = 90_000;
+/** How long the staged network drop refuses new sockets. */
+const DROP_MS = 4000;
+/** How far a tank must have driven in the other player's view. */
+const DRIVEN_M = 0.5;
+/** The client refreshes unchanged input about once a second; this window sees 5-8. */
 const IDLE_WINDOW_MS = 6500;
-/** How soon a changed input must go out: a frame or two, plus any message the dev delay's
- * stalls (`SLOPPY_STALL`) hold back. */
-const PROMPT_MS = 150 + Number(process.env.SLOPPY_STALL ?? 0);
+/** How soon a changed input must go out: a frame or two, and the check's own round trip. */
+const PROMPT_MS = 200;
+/** Console errors a staged outage causes: refused sockets and directory polls. */
+const OUTAGE_NOISE = [/WebSocket connection to .* failed/, /ERR_CONNECTION_REFUSED/];
+
+const server = await startGameServer();
 const browser = await launchChrome();
-const errors = [],
-  pages = [],
-  frames = new Map(),
-  observations = {};
-const state = (page) =>
-  page.evaluate(() => {
-    const game = window.sloppyMultiplayer;
-    return {
-      tick: game.mirror.tick,
-      player: game.connection.playerId,
-      control: game.control,
-      position: game.display?.viewer.position,
-      phase: game.display?.match.phase,
-      round: game.connection.roundId,
-      tanks: game.display?.tanks.map((tank) => ({
-        id: tank.id,
-        life: tank.life,
-        alive: tank.alive,
-        position: tank.position,
-      })),
-    };
+const errors = [];
+/** Console lines the staged outages caused, kept for the record rather than failed on. */
+const noise = [];
+let outage = false;
+const observations = {};
+const distance = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
+const query = (page) => new URL(page.url()).searchParams;
+
+/**
+ * A player in a fresh context, its errors collected under `name`. Without `pointerLock`
+ * the browser has no Pointer Lock API at all, as iPadOS Safari has none.
+ */
+async function player(name, { pointerLock = true } = {}) {
+  const context = await browser.newContext({
+    viewport: { width: 1280, height: 800 },
+    deviceScaleFactor: 1,
   });
-/** The room link the host shares once Battle Setup has created the room. */
-let roomLink = "";
-async function openPlayer() {
-  const context = await browser.newContext({ viewport: { width: 1100, height: 780 } });
-  const page = await context.newPage();
-  pages.push(page);
-  // Several visible players on one test machine must keep receiving animation frames.
-  await page.addInitScript(() => {
-    Object.defineProperty(document, "hidden", {
-      configurable: true,
-      get: () => window.fixtureHidden ?? false,
+  await context.grantPermissions(["clipboard-read", "clipboard-write"], {
+    origin: new URL(gameUrl).origin,
+  });
+  await installProbes(context);
+  if (!pointerLock) {
+    await context.addInitScript(() => {
+      delete Element.prototype.requestPointerLock;
+      delete Document.prototype.exitPointerLock;
+      delete Document.prototype.pointerLockElement;
     });
+  }
+  const page = await context.newPage();
+  page.on("pageerror", (error) => errors.push(`${name}: ${error.message}`));
+  page.on("console", (message) => {
+    if (message.type() !== "error") return;
+    const text = message.text();
+    const expected =
+      text.includes(DEAD_SOCKET) || (outage && OUTAGE_NOISE.some((pattern) => pattern.test(text)));
+    (expected ? noise : errors).push(`${name}: ${text}`);
   });
-  collectErrors(page, errors, { consoleErrors: true });
-  frames.set(page, recordRoomFrames(page, errors));
+  page.shot = (shot) => page.screenshot({ path: `${out}/${name}-${shot}.png` });
+  // Room list requests: Battle Setup's Multiplayer tab polls, a battle must not.
+  page.listRequests = 0;
+  page.on("request", (request) => {
+    if (new URL(request.url()).pathname === "/servers") page.listRequests += 1;
+  });
   return page;
 }
-/** Name and team on Battle Setup, then a physical click on `action`. */
-async function enter(page, name, team, action) {
-  await page.locator("#player-name").fill(name);
-  await page.locator(`input[name="playerTeam"][value="${team}"]`).check();
-  await click(page, action);
-  await page.waitForFunction(() => window.sloppyMultiplayer?.connection.connected);
-  // `SLOPPY_URL=...?webgl` plays the rooms on the WebGL engine; it must load nothing else.
-  if (url.searchParams.has("webgl")) {
-    const binaries = await page.evaluate(() =>
-      performance
-        .getEntriesByType("resource")
-        .map((entry) => entry.name)
-        // Vite's `?import&url` modules of both engines only name their URLs.
-        .filter((name) => name.includes(".wasm") && !name.includes("?import")),
-    );
-    assert.ok(
-      binaries.some((name) => name.includes("engine-webgl")) &&
-        !binaries.some((name) => /\/engine\/engine_bg/.test(name)),
-      `the room plays on the WebGL engine: ${binaries.join(", ")}`,
-    );
-  }
-}
-/** The host creates a humans-only room on Battle Setup; its battle starts at once. */
-async function create(name, team) {
-  const page = await openPlayer();
-  // Opening on the multiplayer tab builds no single-player arena, so the room loads in place.
-  const setup = new URL(url);
-  setup.searchParams.set("multiplayer", "");
-  await page.goto(setup.href);
-  await openMultiplayerTab(page);
-  await enter(page, name, team, "#create-room");
-  roomLink = page.url();
-  assert.match(roomLink, /[?&]room=/, "The room page carries its shareable link");
-  if (url.searchParams.has("webgl")) {
-    const link = new URL(roomLink);
-    link.searchParams.set("webgl", "");
-    roomLink = link.href;
-  }
-  return page;
-}
-/** Friends open the room link: Battle Setup selects the room, then they join. */
-async function join(name, team) {
-  const page = await openPlayer();
-  await page.goto(roomLink);
-  await page.locator("#join-room:enabled").waitFor();
-  assert.equal(
-    await page.locator('input[name="room-choice"]:checked').inputValue(),
-    new URL(roomLink).searchParams.get("room"),
-    "The room link selects its room",
-  );
-  await enter(page, name, team, "#join-room");
-  return page;
-}
-/** Waits until the page drives its own tank in a round with `tanks` tanks. */
-function playing(page, tanks, round = 1) {
-  return page.waitForFunction(
-    ({ tanks, round }) => {
-      const game = window.sloppyMultiplayer;
-      return (
-        game?.view &&
-        game.control?.driver === "human" &&
-        game.control.controlEpoch >= 2 &&
-        game.display?.match.phase === "playing" &&
-        game.connection.roundId === round &&
-        game.display.tanks.length === tanks
-      );
-    },
-    { tanks, round },
-    { timeout: 60000 },
-  );
-}
-const driver = (page, value) =>
-  page.waitForFunction((value) => window.sloppyMultiplayer.control.driver === value, value);
-try {
-  const alice = await create("Alice <b>literal</b>", 0);
-  await playing(alice, 1);
-  const bob = await join("Bob", 1);
-  await Promise.all(pages.map((page) => playing(page, 2)));
-  const aliceFrames = frames.get(alice);
-  assert.match(await alice.locator("#network-roster").innerText(), /Alice <b>literal<\/b>/);
-  assert.equal(
-    await alice.locator("#network-roster .roster-name b").count(),
-    0,
-    "Names are literal text",
-  );
 
-  // Humans-only is the host's setting; during a battle everyone reads the rules as text.
+/** The room's battle, with the room's own socket live and its arena shown. */
+function inRoom(page, test = () => true, what = "the room's battle") {
+  return untilState(
+    page,
+    (state) =>
+      state.engine === "room" &&
+      !state.room.joining &&
+      state.room.link === "Live" &&
+      state.room.phase === "Playing" &&
+      test(state),
+    { extras: ["debug"], timeout: ROOM_TIMEOUT_MS, what },
+  );
+}
+
+/** Battle Setup's Multiplayer tab once its list shows `room` chosen. */
+function roomChosen(page, room) {
+  return untilState(
+    page,
+    async (state) =>
+      state.engine === "single" && state.multiplayerTab && (await findWidget(page, room))?.selected,
+    { what: `Battle Setup with room ${room} chosen` },
+  );
+}
+
+/** Leave the room from its menu, for Battle Setup's Multiplayer tab. */
+async function leave(page) {
+  await page.keyboard.press("Escape");
+  await clickWidget(page, "LEAVE ROOM");
+  await untilState(page, (state) => state.engine === "single" && state.multiplayerTab, {
+    what: "Battle Setup after leaving",
+  });
+}
+
+const tank = (state, id) => state.extras.debug.display.tanks.find((tank) => tank.id === id);
+const seatKey = (room) => `sloppy-seat:${server.url}:${room}`;
+const seat = (page, room) =>
+  page.evaluate((key) => JSON.parse(sessionStorage.getItem(key) ?? "null"), seatKey(room));
+const openSockets = (page) => page.evaluate(() => window.sloppyProbes.openSockets());
+const pageTime = (page) => page.evaluate(() => performance.now());
+/** The room `input` messages `page` sent from `since` (its own clock) on. */
+const inputsSince = (page, since) =>
+  page.evaluate((since) => window.sloppyProbes.inputs.filter((input) => input.at >= since), since);
+
+/** Until the server lists `room` as `test` wants it. */
+async function listed(room, test, what) {
+  const start = Date.now();
+  for (;;) {
+    const listing = await roomListing(server.directory, room).catch(() => undefined);
+    if (test(listing)) return listing;
+    assert.ok(Date.now() - start < 20000, `${what}: ${JSON.stringify(listing)}`);
+    await wait(250);
+  }
+}
+
+/** Neither page reports a renderer error. */
+async function noRendererErrors(pages, when) {
   for (const page of pages) {
-    assert.match(await page.locator("#network-summary").textContent(), /No bots/);
-    assert.equal(await page.locator("#host-settings").isVisible(), false);
+    assert.equal((await nextFrame(page)).error, null, `renderer errors ${when}`);
   }
-  assert.match(await bob.locator("#network-roster").innerText(), /open seats/);
+}
 
-  // Unchanged input is refreshed slowly and never mistaken for an absent player.
-  await alice.waitForTimeout(2000);
-  const idleStart = aliceFrames.inputs.length,
-    idlePings = aliceFrames.pings,
-    idleEpoch = aliceFrames.control.controlEpoch;
-  await alice.waitForTimeout(IDLE_WINDOW_MS);
-  observations.idle = {
-    inputs: aliceFrames.inputs.length - idleStart,
-    pings: aliceFrames.pings - idlePings,
-    milliseconds: IDLE_WINDOW_MS,
-    ack: aliceFrames.ack,
-    lastSeq: aliceFrames.inputs.at(-1)?.seq,
+try {
+  // A creates a humans-only room on the Blue team; its battle starts at once.
+  const a = await player("a", { pointerLock: false });
+  await openShell(a, `directory=${server.directory}&multiplayer`);
+  await untilState(a, (state) => state.multiplayerTab, { what: "the Multiplayer tab" });
+  await clickWidget(a, "Blue");
+  await clickWidget(a, "CREATE ROOM");
+  let aState = await inRoom(a);
+  const room = aState.room.code;
+  assert.match(room, /^[A-Z0-9]{8}$/);
+  assert.equal(query(a).get("room"), room, "the address names the room");
+  assert.equal(query(a).has("multiplayer"), false, "the room replaces the tab in the address");
+  const aSeat = await seat(a, room);
+  assert.ok(
+    aSeat?.token && aSeat.roomEpoch,
+    `A's seat in sessionStorage: ${JSON.stringify(aSeat)}`,
+  );
+  assert.equal(aState.room.players, 1);
+  assert.equal(await openSockets(a), 1, "one socket for the room");
+  const rows = (await nextFrame(a, ["nerd"])).extras.nerd.flatMap((section) => section.rows ?? []);
+  observations.graphics = rows.find((row) => row.label === "Graphics API")?.value;
+  assert.equal(observations.graphics, process.env.SLOPPY_WEBGL ? "WebGL" : "WebGPU");
+  const aPolls = a.listRequests;
+  await a.shot("created");
+
+  // The room menu copies the page's own address as the invite link; the rules stay
+  // locked during the battle.
+  await a.keyboard.press("Escape");
+  await untilState(a, async (state) => state.room.menuOpen && (await findWidget(a, "RESUME")), {
+    what: "the room menu",
+  });
+  assert.equal(await findWidget(a, "Change rules"), undefined, "the rules lock during play");
+  await clickWidget(a, "Copy invite link");
+  await untilState(a, async () => Boolean(await findWidget(a, "Link copied")), {
+    what: "Link copied",
+  });
+  const invite = await a.evaluate(() => navigator.clipboard.readText());
+  assert.equal(invite, a.url(), "the invite link is the room's address");
+  await a.shot("menu");
+  await clickWidget(a, "RESUME");
+  await inRoom(a, (state) => !state.room.menuOpen);
+
+  // B opens the invite link, its code in lower case: Battle Setup with the room chosen.
+  const b = await player("b");
+  await openAddress(b, invite.replace(room, room.toLowerCase()));
+  await roomChosen(b, room);
+  assert.ok(await findWidget(b, "JOIN ROOM"), "JOIN ROOM is offered for the linked room");
+  await b.shot("invite-opened");
+  await clickWidget(b, "Red");
+  await clickWidget(b, "JOIN ROOM");
+  let bState = await inRoom(b, (state) => state.room.players === 2, "B in the room with A");
+  aState = await inRoom(a, (state) => state.room.players === 2, "A sees B join");
+  assert.equal(query(b).get("room"), room, "B's address names the room");
+  const aTank = aState.extras.debug.control.tankId;
+  const bTank = bState.extras.debug.control.tankId;
+  assert.notEqual(aTank, bTank);
+  assert.equal(tank(aState, aTank).team, 0, "A plays Blue");
+  assert.equal(tank(aState, bTank).team, 1, "B plays Red");
+
+  // Unchanged input is refreshed about once a second, and the idle player keeps its tank.
+  await wait(2000);
+  const idleControl = (await nextFrame(a, ["debug"])).extras.debug.control;
+  let since = await pageTime(a);
+  await wait(IDLE_WINDOW_MS);
+  observations.idleInputs = (await inputsSince(a, since)).length;
+  assert.ok(
+    observations.idleInputs >= 5 && observations.idleInputs <= 8,
+    `unchanged input about once a second: ${observations.idleInputs} in ${IDLE_WINDOW_MS} ms`,
+  );
+  const control = (await nextFrame(a, ["debug"])).extras.debug.control;
+  assert.equal(control.driver, "human", "the idle player keeps its tank");
+  assert.equal(control.controlEpoch, idleControl.controlEpoch, "no takeover while idle");
+
+  // Both drive; each sees the other's tank move. Held keys keep input coming, and the
+  // release goes out at once.
+  aState = await nextFrame(a, ["debug"]);
+  bState = await nextFrame(b, ["debug"]);
+  const before = { a: aState, b: bState };
+  since = await pageTime(a);
+  await a.keyboard.down("KeyW");
+  await b.keyboard.down("KeyW");
+  await wait(1500);
+  const released = await pageTime(a);
+  await a.keyboard.up("KeyW");
+  await b.keyboard.up("KeyW");
+  await wait(500);
+  const driving = await inputsSince(a, since);
+  observations.drivingInputs = driving.filter((input) => input.at < released).length;
+  assert.ok(observations.drivingInputs >= 8, `held W sends input: ${observations.drivingInputs}`);
+  const neutral = driving.find(
+    (input) => input.at >= released && input.moveX === 0 && input.moveZ === 0,
+  );
+  observations.releaseMs = neutral && Math.round(neutral.at - released);
+  assert.ok(
+    neutral && neutral.at - released < PROMPT_MS,
+    `W's release sent: ${observations.releaseMs} ms`,
+  );
+  aState = await nextFrame(a, ["debug"]);
+  bState = await nextFrame(b, ["debug"]);
+  observations.driven = {
+    aSeenByB: distance(tank(before.b, aTank).position, tank(bState, aTank).position),
+    bSeenByA: distance(tank(before.a, bTank).position, tank(aState, bTank).position),
   };
   assert.ok(
-    observations.idle.inputs >= 5 && observations.idle.inputs <= 8,
-    `Unchanged idle input is sent about once per second (${observations.idle.inputs})`,
-  );
-  assert.equal(aliceFrames.control.driver, "human", "Idle player keeps control past the watchdog");
-  assert.equal(aliceFrames.control.controlEpoch, idleEpoch, "No takeover/resume cycle when idle");
-  assert.ok(aliceFrames.ack >= aliceFrames.inputs.at(-2).seq, "Idle input is acknowledged");
-
-  observations.before = await Promise.all(pages.map(state));
-  await alice.evaluate(() => {
-    const game = window.sloppyMultiplayer,
-      start = { ...game.display.viewer.position };
-    const audit = (window.responseAudit = {});
-    window.addEventListener(
-      "keydown",
-      () => {
-        audit.moveStart = performance.now();
-      },
-      { once: true },
-    );
-    window.addEventListener(
-      "pointerdown",
-      () => {
-        audit.fireStart = performance.now();
-      },
-      { once: true },
-    );
-    // Displayed events reach presentation in the engine; the page reports each one.
-    const tankId = game.control.tankId;
-    game.onEvent = (value) => {
-      if (value.type === "shot" && value.id === tankId && audit.fireStart && !audit.shotMs)
-        audit.shotMs = performance.now() - audit.fireStart;
-    };
-    const observe = () => {
-      if (
-        audit.moveStart &&
-        !audit.moveMs &&
-        Math.hypot(
-          game.display.viewer.position.x - start.x,
-          game.display.viewer.position.z - start.z,
-        ) > 0.02
-      )
-        audit.moveMs = performance.now() - audit.moveStart;
-      if (!audit.moveMs) requestAnimationFrame(observe);
-    };
-    requestAnimationFrame(observe);
-  });
-  const moveStart = aliceFrames.inputs.length;
-  await alice.keyboard.down("d");
-  await bob.keyboard.down("a");
-  await alice.waitForTimeout(1200);
-  await alice.keyboard.up("d");
-  await bob.keyboard.up("a");
-  await alice.waitForTimeout(PROMPT_MS);
-  observations.after = await Promise.all(pages.map(state));
-  observations.movingInputs = aliceFrames.inputs.length - moveStart;
-  assert.ok(observations.movingInputs >= 8, "Held movement keeps the active input cadence");
-  assert.equal(aliceFrames.inputs.at(-1).moveX, 0, "Release sends neutral input promptly");
-  assert.notEqual(observations.before[0].control.tankId, observations.before[1].control.tankId);
-  for (let i = 0; i < 2; i++)
-    assert.ok(
-      Math.hypot(
-        observations.after[i].position.x - observations.before[i].position.x,
-        observations.after[i].position.z - observations.before[i].position.z,
-      ) > 0.5,
-      "Each player's movement reaches the server",
-    );
-
-  const aimStart = aliceFrames.inputs.length;
-  await alice.mouse.move(600, 260);
-  await alice.waitForTimeout(PROMPT_MS);
-  assert.ok(aliceFrames.inputs.length > aimStart, "Aim change wakes input sending");
-  await alice.mouse.down();
-  await alice.waitForTimeout(1500);
-  await alice.mouse.up();
-  await alice.waitForTimeout(PROMPT_MS);
-  assert.ok(
-    aliceFrames.inputs.slice(aimStart).filter((input) => input.fire).length >= 5,
-    "Held fire is renewed before its lease expires",
-  );
-  assert.ok(!aliceFrames.inputs.at(-1).fire, "Fire release reaches the server");
-  observations.response = await alice.evaluate(() => window.responseAudit);
-  assert.ok(
-    observations.response.moveMs > 0 && observations.response.moveMs < 1000,
-    "Bounded input-to-visible movement",
+    observations.driven.aSeenByB > DRIVEN_M,
+    `B sees A drive: ${observations.driven.aSeenByB}`,
   );
   assert.ok(
-    observations.response.shotMs > 0 && observations.response.shotMs < 1000,
-    "Bounded button-to-visible shot effect",
+    observations.driven.bSeenByA > DRIVEN_M,
+    `A sees B drive: ${observations.driven.bSeenByA}`,
   );
-  const mineStart = aliceFrames.inputs.length;
-  await alice.mouse.click(600, 260, { button: "right" });
-  await alice.waitForFunction(() => window.sloppyMultiplayer.display.viewer.mineCooldown > 0);
-  assert.equal(
-    aliceFrames.inputs
-      .slice(mineStart)
-      .flatMap((input) => input.actions ?? [])
-      .filter((action) => action.type === "mine").length,
-    1,
-    "A mine click is sent once",
-  );
-  await Promise.all(pages.map((page, i) => page.screenshot({ path: `${output}/player-${i}.png` })));
+  await a.shot("driven");
+  await b.shot("driven");
 
-  // Without fill bots, a menu or hidden tab leaves the tank idle rather than bot-driven.
-  const epochBeforeMenu = aliceFrames.control.controlEpoch;
-  await click(alice, "#pause");
-  await driver(alice, "idle");
-  await checkMultiplayerMenu(alice);
-  await alice.screenshot({ path: `${output}/menu.png` });
-  assert.match(await alice.locator("#network-hint").innerText(), /idle and vulnerable/);
-  assert.equal(await alice.locator("#room-bots").isVisible(), false, "Rules lock during play");
-  const pausedTick = (await state(alice)).tick;
-  await alice.waitForTimeout(350);
-  assert.ok((await state(bob)).tick > pausedTick, "Other player's game continues during menu");
-  await click(alice, "#network-resume");
-  await driver(alice, "human");
-  assert.ok(aliceFrames.control.controlEpoch > epochBeforeMenu, "Resume starts a new epoch");
-  await bob.evaluate(() => {
-    window.fixtureHidden = true;
-    document.dispatchEvent(new Event("visibilitychange"));
+  // Aim wakes input; held fire is renewed and its release sent; a mine click goes once.
+  since = await pageTime(a);
+  await a.mouse.move(900, 300);
+  await wait(PROMPT_MS);
+  assert.ok((await inputsSince(a, since)).length > 0, "an aim change sends input");
+  since = await pageTime(a);
+  await a.mouse.down();
+  await wait(1500);
+  await a.mouse.up();
+  await wait(PROMPT_MS);
+  const firing = await inputsSince(a, since);
+  observations.firingInputs = firing.filter((input) => input.fire).length;
+  assert.ok(observations.firingInputs >= 5, `held fire renewed: ${observations.firingInputs}`);
+  assert.equal(firing.at(-1).fire, false, "the fire button's release sent");
+  since = await pageTime(a);
+  await a.mouse.click(900, 300, { button: "right" });
+  await wait(1000);
+  const mines = (await inputsSince(a, since)).reduce((sum, input) => sum + input.mines, 0);
+  assert.equal(mines, 1, "a mine click is sent once");
+
+  // The development delay (`?latency`, a round trip's milliseconds) reaches B's pings.
+  await shellDebug(b, "latency", 200, 0, 0);
+  bState = await untilState(b, (state) => state.extras.debug.connection.rtt > 180, {
+    extras: ["debug"],
+    timeout: 20000,
+    what: "a slow round trip",
   });
-  await driver(bob, "idle");
-  await bob.evaluate(() => {
-    window.fixtureHidden = false;
-    document.dispatchEvent(new Event("visibilitychange"));
+  observations.delayedRtt = bState.extras.debug.connection.rtt;
+  await shellDebug(b, "latency", 0, 0, 0);
+  bState = await untilState(b, (state) => state.extras.debug.connection.rtt < 100, {
+    extras: ["debug"],
+    timeout: 20000,
+    what: "the round trip back to normal",
   });
-  await driver(bob, "human");
-  const old = await state(bob);
-  // A reload opens Battle Setup with the room selected; joining again keeps the seat.
-  await bob.reload();
-  await bob.locator("#join-room:enabled").waitFor();
-  await click(bob, "#join-room");
-  await playing(bob, 2);
-  observations.reconnected = await state(bob);
-  assert.equal(observations.reconnected.player, old.player);
-  assert.equal(observations.reconnected.control.tankId, old.control.tankId);
-  assert.ok(observations.reconnected.control.controlEpoch > old.control.controlEpoch);
 
-  // A late joiner gets a seat in the running round; leaving frees it at once.
-  const carol = await join("Carol", 1);
-  await Promise.all(pages.map((page) => playing(page, 3)));
-  await carol.locator("#pause").click();
-  await carol.locator("#leave-room").click();
-  await carol.locator("#room-list").waitFor();
-  await Promise.all([alice, bob].map((page) => playing(page, 2)));
-  await carol.context().close();
-  pages.pop();
+  // A network drop: CONNECTION LOST while the client retries, then the same seat.
+  const bPlayer = bState.extras.debug.connection.playerId;
+  await b.evaluate((ms) => window.sloppyProbes.dropSockets(ms), DROP_MS);
+  await untilState(b, (state) => /CONNECTION LOST/.test(state.room.link), {
+    what: "the reconnect dialog",
+  });
+  await untilState(b, () => findWidget(b, "LEAVE ROOM"), {
+    timeout: 5000,
+    what: "the reconnect dialog's LEAVE ROOM",
+  });
+  await b.shot("reconnecting");
+  bState = await inRoom(b, () => true, "B back after the drop");
+  assert.equal(bState.extras.debug.connection.playerId, bPlayer, "the drop keeps B's seat");
+  await inRoom(a, (state) => state.room.players === 2, "A sees B back");
 
-  await alice.locator("#pause").click();
-  await alice.locator("#network-end").click();
-  await Promise.all(
-    pages.map((page) => page.locator("#network-scoreboard tbody tr").first().waitFor()),
+  assert.equal(a.listRequests, aPolls, "no room list requests during A's battle");
+
+  // B leaves on purpose: the Multiplayer tab, the room gone from the address, no socket.
+  await leave(b);
+  assert.equal(query(b).has("room"), false, "leaving drops the room from the address");
+  assert.equal(query(b).has("multiplayer"), true, "leaving keeps the Multiplayer tab");
+  await untilState(b, async () => (await openSockets(b)) === 0, { what: "B's socket closed" });
+  await inRoom(a, (state) => state.room.players === 1, "A alone again");
+  await b.shot("left");
+
+  // B comes back by typing the room's code.
+  await clickWidget(b, "Room code");
+  await b.keyboard.type(room.toLowerCase());
+  await untilState(
+    b,
+    async () => (await findWidget(b, "Room code"))?.value === room.toLowerCase(),
+    {
+      what: "the typed code",
+    },
   );
-  await alice.screenshot({ path: `${output}/results.png` });
-  // The rules stay folded until the host asks to change them; guests only read them.
-  // Choosing bots again restores fill bots next round.
-  assert.equal(await alice.locator("#host-settings").isVisible(), false);
-  assert.equal(await bob.locator("#change-rules").isVisible(), false);
-  await click(alice, "#change-rules");
-  await alice.locator("#room-bots").selectOption("normal");
-  await bob.waitForFunction(() =>
-    document.querySelector("#network-summary").textContent.includes("Normal bots"),
+  await clickWidget(b, "FIND");
+  await roomChosen(b, room);
+  await clickWidget(b, "JOIN ROOM");
+  bState = await inRoom(b, (state) => state.room.players === 2, "B in by the typed code");
+  await inRoom(a, (state) => state.room.players === 2, "A sees B again");
+
+  // A reload opens Battle Setup with the room chosen, its seat held; joining takes it.
+  const seatBefore = await seat(b, room);
+  const playerBefore = bState.extras.debug.connection.playerId;
+  await openAddress(b, { reload: true });
+  await roomChosen(b, room);
+  assert.equal(query(b).get("room"), room, "the reload keeps the room's address");
+  assert.deepEqual(await seat(b, room), seatBefore, "the seat survives the reload");
+  const held = await listed(room, (listing) => listing?.reserved === 2, "the seat held");
+  observations.reloadHeld = held;
+  await b.shot("reloaded");
+  await clickWidget(b, "JOIN ROOM");
+  bState = await inRoom(b, (state) => state.room.players === 2, "B back after the reload");
+  assert.equal(bState.extras.debug.connection.playerId, playerBefore, "the reserved seat retaken");
+  observations.rejoined = await listed(
+    room,
+    (listing) => listing?.players === 2,
+    "both players connected",
   );
-  await alice.locator("#room-map").selectOption("harbor");
-  await alice.locator("#start-match").click();
-  await Promise.all(pages.map((page) => playing(page, 12, 2)));
-  observations.nextRound = await Promise.all(pages.map(state));
-  assert.ok(observations.nextRound.every((view) => view.tanks.length === 12));
-  const beforeDrop = await state(bob);
-  await bob.evaluate(() => window.sloppyMultiplayer.connection.socket.close());
-  // The drop replaces the room menu with a dialog that says what happened.
-  await bob.locator(".network-connection").waitFor();
-  assert.equal(await bob.locator("#connection-title").innerText(), "CONNECTION LOST");
-  assert.equal(await bob.locator(".network-menu").isVisible(), false);
-  await bob.waitForFunction(
-    (epoch) =>
-      window.sloppyMultiplayer.connection.connected &&
-      window.sloppyMultiplayer.control?.controlEpoch > epoch &&
-      window.sloppyMultiplayer.control.driver === "human",
-    beforeDrop.control.controlEpoch,
+  assert.equal(observations.rejoined.reserved, 2, "a reload takes no third seat");
+  await noRendererErrors([a, b], "in the room");
+
+  // The host ends the battle: both see the results, then PLAY AGAIN starts round two.
+  await a.keyboard.press("Escape");
+  await clickWidget(a, "END BATTLE");
+  for (const page of [a, b]) {
+    await untilState(page, (state) => state.room.phase === "Results", { what: "the results" });
+  }
+  await a.shot("results");
+  await clickWidget(a, "PLAY AGAIN");
+  for (const page of [a, b]) {
+    const next = await inRoom(
+      page,
+      (state) => state.extras.debug.connection.roundId === 2 && state.room.players === 2,
+      "the second battle",
+    );
+    assert.equal(next.room.menuOpen, false, "the second battle starts with the menu closed");
+  }
+
+  // A crash: CONNECTION LOST while the clients retry. The restarted server holds no
+  // seats, so the creator's reconnect hosts a fresh lobby there; a player who came by the
+  // link and reconnects first finds no room and is told it ended, one who comes after the
+  // creator joins the fresh lobby (`MatchHost::join`), so B may end either way.
+  const epoch = (await nextFrame(a, ["debug"])).extras.debug.connection.roomEpoch;
+  outage = true;
+  await server.stop("SIGKILL");
+  for (const page of [a, b]) {
+    await untilState(page, (state) => /CONNECTION LOST/.test(state.room.link), {
+      what: "CONNECTION LOST after the crash",
+    });
+  }
+  await a.shot("server-down");
+  await server.start();
+  aState = await untilState(
+    a,
+    (state) => state.room.link === "Live" && state.extras.debug.connection.roomEpoch !== epoch,
+    { extras: ["debug"], timeout: 40000, what: "A in the restarted server's room" },
   );
-  assert.equal((await state(bob)).player, beforeDrop.player, "Automatic reconnect retains seat");
-  assert.equal(await bob.locator(".network-connection").isVisible(), false);
-  // Settings mid-battle hand the tank to a bot; closing them takes it back.
-  await setTouchMode(bob, "on");
-  await bob.locator(".touch-controls").waitFor({ state: "visible" });
-  await driver(bob, "human");
-  const { touch, tap } = await touchScreen(bob);
-  // Touch plays as on phones: drive with the stick, aim and fire with a finger on the
-  // arena, tap the mine button.
-  const drive = await center(bob, ".touch-drive"),
-    mine = await center(bob, ".touch-mine"),
-    arena = await bob.locator("#game").boundingBox();
-  const target = { x: arena.x + arena.width * 0.7, y: arena.y + arena.height * 0.35 };
-  await touch("touchStart", 1, drive.x, drive.y);
-  await touch("touchMove", 1, drive.x - 55, drive.y);
-  await touch("touchStart", 2, target.x, target.y);
-  await touch("touchMove", 2, target.x + 1, target.y);
-  await tap(3, mine);
-  await bob.waitForFunction(() => window.sloppyMultiplayer.display.viewer.mineCooldown > 0);
-  assert.equal(await bob.evaluate(() => window.sloppyMultiplayer.controls.touch.fire), true);
-  await bob.screenshot({ path: `${output}/touch.png` });
-  await touch("touchEnd", 1);
-  await touch("touchEnd", 2);
-  assert.equal(await bob.evaluate(() => window.sloppyMultiplayer.controls.touch.fire), false);
-  // First person in a room: ◎ takes no pointer lock (it would freeze the finger), and
-  // the drive stick's sideways push turns the view.
-  const view = () => bob.evaluate(() => window.sloppyMultiplayer.view);
-  const toggle = await center(bob, "#view-mode");
-  await tap(4, toggle);
-  await bob.waitForFunction(() => window.sloppyMultiplayer.view.firstPerson);
-  assert.equal(await bob.evaluate(() => document.pointerLockElement), null);
-  const yaw = (await view()).yaw;
-  await touch("touchStart", 1, drive.x, drive.y);
-  await touch("touchMove", 1, drive.x + 60, drive.y);
-  await bob.waitForTimeout(800);
-  const turned = (await view()).yaw;
-  await touch("touchEnd", 1);
-  assert.ok(Math.abs(turned - yaw) > 0.8, `the stick turns the view in a room: ${yaw} → ${turned}`);
-  await tap(4, toggle);
-  await bob.waitForFunction(() => !window.sloppyMultiplayer.view.firstPerson);
-  assert.deepEqual(errors, []);
-  console.log(JSON.stringify({ idle: observations.idle, response: observations.response }));
+  assert.equal(aState.room.phase, "Lobby", "the restarted server's room is a fresh lobby");
+  bState = await untilState(
+    b,
+    (state) => state.room.link === "Live" || /ROOM CLOSED/.test(state.room.link),
+    { timeout: 40000, what: "B in the fresh lobby or told the room ended" },
+  );
+  observations.bAfterRestart =
+    bState.room.link === "Live" ? "joined the fresh lobby" : "told the room ended";
+  outage = false;
+  await a.shot("restarted");
+  await clickWidget(a, "START BATTLE");
+  await inRoom(a, () => true, "a battle on the restarted server");
+  observations.restarted = await listed(room, (listing) => listing, "the room again");
+  await noRendererErrors([a], "after the restart");
+
+  // A deploy's graceful stop ends the room: ROOM CLOSED, and the way back to Battle Setup.
+  outage = true;
+  await server.stop("SIGTERM");
+  for (const page of [a, b]) {
+    await untilState(page, (state) => /ROOM CLOSED/.test(state.room.link), {
+      what: "ROOM CLOSED",
+    });
+  }
+  await untilState(a, () => findWidget(a, "BATTLE SETUP"), { what: "ROOM CLOSED's way back" });
+  assert.equal(await findWidget(a, "TRY AGAIN"), undefined, "a closed room offers no retry");
+  await a.shot("room-closed");
+  await clickWidget(a, "BATTLE SETUP");
+  await untilState(a, (state) => state.engine === "single" && state.multiplayerTab, {
+    what: "Battle Setup after the room closed",
+  });
+  assert.equal(query(a).get("room"), room, "a closed room keeps its address");
+  await a.shot("back-from-closed-room");
+  await b.context().close();
+
+  // A directory listing a server of another content version: its room cannot be chosen
+  // and no new room can be made there.
+  const directoryPort = await freePort();
+  const outdated = { server: `ws://127.0.0.1:${directoryPort}`, room: "OLDR2345" };
+  const directory = http.createServer((_, response) => {
+    response.writeHead(200, {
+      "content-type": "application/json",
+      "access-control-allow-origin": "*",
+    });
+    response.end(
+      JSON.stringify({
+        servers: [
+          {
+            url: outdated.server,
+            protocol: 7,
+            contentVersion: "older-game",
+            rooms: [
+              {
+                room: outdated.room,
+                contentVersion: "older-game",
+                mapMode: "harbor",
+                difficulty: "normal",
+                humansOnly: true,
+                roundMinutes: 10,
+                players: 2,
+                reserved: 2,
+                phase: "playing",
+                roundId: 3,
+                time: 200,
+                scores: [4, 6],
+              },
+            ],
+          },
+        ],
+      }),
+    );
+  });
+  await new Promise((resolve) => directory.listen(directoryPort, "127.0.0.1", resolve));
+  try {
+    for (const link of ["multiplayer", `room=${outdated.room}`]) {
+      await openShell(a, `directory=http://127.0.0.1:${directoryPort}&${link}`);
+      await untilState(a, () => findWidget(a, outdated.room), { what: "the outdated room" });
+      const row = await findWidget(a, outdated.room);
+      assert.equal(row.enabled, false, `${link}: the outdated room cannot be chosen`);
+      assert.equal(row.selected, false, `${link}: the outdated room is not chosen`);
+      assert.equal(await findWidget(a, "JOIN ROOM"), undefined, `${link}: no JOIN ROOM`);
+      const create = await findWidget(a, "CREATE ROOM");
+      assert.equal(create?.enabled, false, `${link}: no new room on an outdated server`);
+      await a.shot(`outdated-${link.split("=")[0]}`);
+    }
+  } finally {
+    directory.close();
+  }
+  outage = false;
+
+  assert.deepEqual(errors, [], "page and console errors");
+  console.log(JSON.stringify({ room, ...observations, outageNoise: noise.length }));
   console.log(
-    "Two-browser multiplayer: create on Battle Setup, join by room link, humans-only sync, idle input, movement, fire, mine, idle menu and hidden tab, reload, late join and leave, results, restored bots on another map, automatic reconnect, and real multi-touch (stick, arena fire, mine, first-person turning) passed.",
+    "multiplayer-check: create, invite link, join by link and by code, both drive, delay, " +
+      "drop and reconnect, leave, reload seat, results and a second battle, crash and " +
+      "restart, room closed and an outdated server passed",
   );
 } finally {
-  for (const [i, page] of pages.entries()) {
-    await page.screenshot({ path: `${output}/final-${i}.png` }).catch(() => {});
-    observations[`final${i}`] = await state(page).catch(() => null);
-    observations[`text${i}`] = await page
-      .locator("body")
-      .innerText()
-      .catch(() => null);
-  }
-  await writeFile(
-    `${output}/result.json`,
-    JSON.stringify({ url: url.href, errors, observations }, null, 2),
-  );
+  writeFileSync(`${out}/result.json`, JSON.stringify({ observations, errors, noise }, null, 2));
+  writeFileSync(`${out}/server.log`, server.logs());
   await browser.close();
+  await server.stop();
 }

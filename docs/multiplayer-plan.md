@@ -70,7 +70,7 @@ records them for two scripted players in a room with bots under each dev transpo
 
 Wire regression ceilings are 160 KB per full baseline and 128 KB per burst frame for the seeded map/destruction fixtures, with a provisional 512 KB/s per-client sustained budget for the manual player load check. These are message-size ceilings with wide headroom (binary baselines and frames are about a tenth of the former JSON), not measured throughput guarantees or billing limits. Keep byte measurements and all outliers in ignored artifacts.
 
-Run `pnpm run check`, `pnpm run check:browser`, `pnpm run check:multiplayer-loading`, `pnpm run check:multiplayer`, and the [player harness](../crates/server/README.md); room lifecycle, reconnect and expiry are deterministic tests in `pnpm run test:rust`. The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`. Long hosted runs and measurements remain outside CI.
+Run `pnpm run check` and the [player harness](../crates/server/README.md), and play a room in two pages (the page's browser checks went with the TypeScript shell); room lifecycle, reconnect and expiry are deterministic tests in `pnpm run test:rust`. The fresh seeded validation comparison must stay equal apart from timing. Raw results, retained failures, screenshots and comparisons belong under ignored `artifacts/performance/multiplayer/`. Long hosted runs and measurements remain outside CI.
 
 ## Hosting assumptions
 
@@ -83,8 +83,9 @@ Run `pnpm run check`, `pnpm run check:browser`, `pnpm run check:multiplayer-load
 
 `crates/core/src/net/mod.rs` maps the modules: the transport-free room host (`MatchHost`),
 the wire format and replication, and the client state machine. The page binds the client
-through `NetGame` (`crates/web/src/net_game.rs`); `src/net/client.ts` only adapts sockets,
-timers, storage and the DOM. The [server guide](../crates/server/README.md) covers the
+through `NetGame` (`crates/web/src/net_game.rs`); the shell's `crates/desktop/src/room.rs`
+only adapts sockets (`sockets.rs` natively, `sockets_web.rs` in a page), timers and its
+menus. The [server guide](../crates/server/README.md) covers the
 server process.
 
 Local single-player adapts its `Simulation` to the same read-only presentation boundary. The network mirror does not construct or step a gameplay simulation or mutate physics bodies for interpolation. Keep menu actions and simulation-specific diagnostics outside that read-only contract. Reuse persistent entity views or bounded buffers to avoid introducing a full scene allocation on every frame.

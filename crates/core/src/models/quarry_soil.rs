@@ -10,10 +10,10 @@ use std::sync::OnceLock;
 
 use crate::geometry::math::{js_hypot2, lerp, smoothstep};
 use crate::sim::arena::spawn_positions;
-use crate::sim::data::ARENA;
+use crate::sim::kinds::{CoverKind, Team};
 use crate::sim::math::{Random, Vec2};
+use crate::sim::model_data::ARENA;
 use crate::sim::quarry_layout::quarry_layout;
-use crate::sim::types::{CoverKind, Team};
 
 use super::quarry_terrain::QUARRY_BANK_TOP;
 

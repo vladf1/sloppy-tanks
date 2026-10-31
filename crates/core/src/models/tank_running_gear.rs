@@ -461,7 +461,7 @@ const BELT_INNER_EDGE: f64 = 3.0;
 /// into the next face's code.
 const BELT_V_MARGIN: f64 = 0.02;
 
-static BELTS: Cache<([u64; 4], [i64; 2]), Mesh> = Cache::new();
+static BELTS: Cache<([u64; 4], [i64; 2]), Mesh> = Cache::new("tank_running_gear::BELTS");
 
 /// The belt mesh of one side in hull space (y, z; x about the track centre line):
 /// u counts links along the loop (a whole number of them round it, each
@@ -600,7 +600,7 @@ fn track_material() -> Arc<Material> {
 // ---------------------------------------------------------------------------
 // Wheels.
 
-static WHEELS: Cache<([u64; 2], u32), Mesh> = Cache::new();
+static WHEELS: Cache<([u64; 2], u32), Mesh> = Cache::new("tank_running_gear::WHEELS");
 
 /// A twin road wheel about the x axis with its outer face at x = 0 and the pair
 /// reaching back to -`width`, vertex-colored and drawn with the track: a raised
@@ -634,7 +634,7 @@ fn wheel_mesh(radius: f64, width: f64, paint: u32) -> Arc<Mesh> {
     })
 }
 
-static ROLLERS: Cache<[u64; 2], Mesh> = Cache::new();
+static ROLLERS: Cache<[u64; 2], Mesh> = Cache::new("tank_running_gear::ROLLERS");
 
 /// A return roller: a short steel drum with a flat cap, outer face at x = 0.
 fn roller_mesh(radius: f64, width: f64) -> Arc<Mesh> {
@@ -650,7 +650,7 @@ fn roller_mesh(radius: f64, width: f64) -> Arc<Mesh> {
     })
 }
 
-static SPROCKETS: Cache<([u64; 2], u32), Mesh> = Cache::new();
+static SPROCKETS: Cache<([u64; 2], u32), Mesh> = Cache::new("tank_running_gear::SPROCKETS");
 
 /// The drive sprocket about the x axis, outer face at x = 0: a bolted hub boss
 /// proud of a flat web whose teeth stop just inside the links' running surface at
@@ -879,7 +879,7 @@ fn skirt(hull: &mut Node, c: &Chassis, gear: &GearLayout, path: &BeltPath, side:
 const INSIGNIA_HEIGHT: f64 = 0.34;
 const INSIGNIA_PROUD: f64 = 0.003;
 
-static INSIGNIA: Cache<(Team, [u64; 2]), Mesh> = Cache::new();
+static INSIGNIA: Cache<(Team, [u64; 2]), Mesh> = Cache::new("tank_running_gear::INSIGNIA");
 
 /// A team's insignia painted on a skirt, `height` tall, facing out along x on
 /// `side`: a diamond for blue, an upright triangle for red. A small tactical
@@ -940,7 +940,7 @@ fn modular_panels(
 const SKIRT_LIP_HEIGHT: f64 = 0.04;
 const SKIRT_LIP_PROUD: f64 = 0.009;
 
-static PANELS: Cache<[u64; 5], Mesh> = Cache::new();
+static PANELS: Cache<[u64; 5], Mesh> = Cache::new("tank_running_gear::PANELS");
 
 /// A skirt panel: a slab from its outer face at x = 0 inward by its thickness
 /// (toward -`side`), y from 0 to `height`, z from 0 to its length, with the lower
@@ -993,7 +993,8 @@ fn panel_mesh(panel: &Panel, height: f64, side: f64) -> Arc<Mesh> {
     })
 }
 
-static BOLT: std::sync::OnceLock<Arc<Mesh>> = std::sync::OnceLock::new();
+static BOLT: crate::models::shared_values::SharedOnce<Mesh> =
+    crate::models::shared_values::SharedOnce::new("tank_running_gear::BOLT");
 
 /// A low bolt head standing out of a +x face at x = 0.
 fn bolt_mesh() -> Arc<Mesh> {
@@ -1005,7 +1006,7 @@ fn bolt_mesh() -> Arc<Mesh> {
     .clone()
 }
 
-static BLOCKS: Cache<[u64; 3], Mesh> = Cache::new();
+static BLOCKS: Cache<[u64; 3], Mesh> = Cache::new("tank_running_gear::BLOCKS");
 
 /// Type 99 add-on armour: a 2 x 2 grid of bolted-on blocks over a front panel.
 fn armour_blocks(

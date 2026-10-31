@@ -12,15 +12,20 @@ crate-type = ["cdylib", "rlib"]
 doctest = false
 
 [features]
-default = ["webgpu"]
+# A browser build names its graphics backend (`scripts/build-wasm.mjs`): `webgpu`, or
+# `webgl` for the WebGL2 engine. Neither is a default, so the native tests and the
+# desktop app's `native` compile no browser backend.
 webgpu = ["sloppy-render/webgpu"]
-# The WebGL2 fallback engine (`pnpm run wasm` builds it with
-# `--no-default-features --features webgl`); the page loads it only where WebGPU
-# is unavailable.
 webgl = ["sloppy-render/webgl"]
+# `Game`, `NetGame`, `WireView` and their methods exported to JavaScript, for the engine
+# build the fixtures, the game preview and the Node checks load (`wasm:engine`). The
+# page's shell calls them from Rust and leaves them out: they were about 37 KB of its
+# Wasm with Brotli and 12 KB of its glue. The pages that load the engine have no shader
+# tables (`sloppy-render`'s `shader/tables.rs`), so it assembles its shaders itself.
+js-api = ["sloppy-render/specializer"]
 # The development labs (`RenderLab`, `EffectsLab`) for tools/*-lab.html. Production
 # builds leave them out; `pnpm run wasm -- --labs` builds them.
-labs = []
+labs = ["js-api"]
 # `Game` and `NetGame` as plain Rust for the desktop shell (`crates/desktop`), drawing
 # with the renderer's native wgpu.
 native = ["sloppy-render/native"]

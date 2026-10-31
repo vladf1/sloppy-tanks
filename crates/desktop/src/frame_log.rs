@@ -1,7 +1,7 @@
 //! `--frame-log`: once a second, the frame rate and where a frame's time went, on
-//! stderr. Evidence for frame-rate work, not a player feature.
+//! stderr (the console in a page). Evidence for frame-rate work, not a player feature.
 
-use std::time::Instant;
+use web_time::Instant;
 
 /// One second's frames.
 pub struct FrameLog {
@@ -69,7 +69,7 @@ impl FrameLog {
         let elapsed = (now - self.start).as_secs_f64();
         if elapsed >= 1.0 {
             let frames = f64::from(self.frames);
-            eprintln!(
+            let line = format!(
                 "fps {:.1} longest {:.1} ms | engine {:.2} (sim {:.2} render {:.2}) overlay {:.2} present {:.2} gpu {} ms | canvas {}x{} scene {}x{}",
                 frames / elapsed,
                 self.longest_ms,
@@ -84,6 +84,11 @@ impl FrameLog {
                 scene.0,
                 scene.1,
             );
+            #[cfg(not(target_arch = "wasm32"))]
+            eprintln!("{line}");
+            // A page's stderr goes nowhere.
+            #[cfg(target_arch = "wasm32")]
+            web_sys::console::log_1(&line.into());
             *self = Self {
                 last: self.last,
                 ..Self::new()

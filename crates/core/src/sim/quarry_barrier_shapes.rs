@@ -2,8 +2,8 @@
 
 use std::f64::consts::PI;
 
+use super::kinds::CoverKind;
 use super::math::js_round;
-use super::types::CoverKind;
 
 pub const DRAGON_TOOTH_SCALE: f64 = 0.9;
 pub const DRAGON_TOOTH_MASS: f64 =

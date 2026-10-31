@@ -222,3 +222,20 @@ fn rock_footing_adds_no_draw() {
     let footing = sandstone_footing(14.0, 8.0, 37);
     assert!(footing.drawable.is_none() && footing.children.is_empty());
 }
+
+/// A page fetches these files as an arena's build begins, before the scenery model
+/// that draws them is built, so they must be exactly what it draws.
+#[test]
+fn scenery_texture_files_are_what_each_scenery_draws() {
+    for theme in [MapTheme::Village, MapTheme::Harbor, MapTheme::Quarry] {
+        let drawn: BTreeSet<&str> = node_textures(build_scenery(theme).root())
+            .into_iter()
+            .filter_map(|source| match source {
+                TextureSource::File(path) => Some(path),
+                TextureSource::Generated(_) => None,
+            })
+            .collect();
+        let listed: BTreeSet<&str> = scenery_texture_files(theme).iter().copied().collect();
+        assert_eq!(drawn, listed, "{theme:?}");
+    }
+}

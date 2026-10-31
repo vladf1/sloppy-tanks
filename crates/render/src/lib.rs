@@ -10,9 +10,19 @@
 
 /// The WGSL file at each path under `src/`, one after another, embedded without
 /// comments or blank lines (`build.rs`): the shader text the binary carries.
+#[cfg(any(test, feature = "specializer"))]
 macro_rules! wgsl {
     ($($path:literal),+ $(,)?) => {
         concat!($(include_str!(concat!(env!("OUT_DIR"), "/wgsl/", $path))),+)
+    };
+}
+
+/// Without the specializer, only the lines of those files that declare an effect hook
+/// (`build.rs`): the binary draws the generated variants (`shader/tables.rs`).
+#[cfg(not(any(test, feature = "specializer")))]
+macro_rules! wgsl {
+    ($($path:literal),+ $(,)?) => {
+        concat!($(include_str!(concat!(env!("OUT_DIR"), "/wgsl-hooks/", $path))),+)
     };
 }
 
@@ -34,11 +44,17 @@ pub mod target_memory;
 
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub mod gpu;
-#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+/// Natively, and for the desktop shell in a page, where it finds none (a page cannot
+/// read the system's font files).
+#[cfg(any(feature = "native", target_arch = "wasm32"))]
 pub mod system_fonts;
 
-/// The wgpu the native renderer draws with, for the shell's overlay.
-#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+/// The wgpu the renderer draws with, for the desktop shell's overlay (natively and in
+/// the browser).
+#[cfg(any(
+    all(not(target_arch = "wasm32"), feature = "native"),
+    all(target_arch = "wasm32", not(feature = "webgl"))
+))]
 pub use wgpu;
 
 #[cfg(all(

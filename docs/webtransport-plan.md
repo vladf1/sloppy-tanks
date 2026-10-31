@@ -115,7 +115,7 @@ WebSocket compression covers one hop, and the bridge's loopback socket negotiate
 
 - Core client (`crates/core/src/net/client.rs`): `ClientAction::OpenSocket` gains a `transport`; a datagram send action and a `socket_datagram` input join the socket calls. The fallback policy lives here, so the page and the apps share it: try WebTransport when the server offers it and the platform has it, fall back to WebSocket after 3 s or on failure, and remember the choice per server for the page session.
 - Server: `RoomSocket::tcp()` (`crates/server/src/session.rs`) becomes a transport-neutral `path()`: `TCP_INFO` for WebSockets, the bridge's figures for WebTransport. `SocketHandle` gains a datagram send. The monitor and dashboard split sockets, traffic and loss by transport.
-- Page: `src/net/transport.ts` adapts `WebSocket` and `WebTransport` to the same open, send, close and buffered-bytes shape. It feature-detects `createWritable()`, asks for `congestionControl: "low-latency"` and reads `maxDatagramSize`. Add it to the import allowlist and update `crates/web/tests/fixtures/page-json.json` for the new actions.
+- Page: the shell's page sockets (`crates/desktop/src/sockets_web.rs`) adapt `WebSocket` and `WebTransport` to the same open, send, close and buffered-bytes shape. They feature-detect `createWritable()`, ask for `congestionControl: "low-latency"` and read `maxDatagramSize`. Update `crates/web/tests/fixtures/page-json.json` for the new actions.
 - Listings: a server whose machine runs the bridge says so in `/servers` (a setting in `server.env`), and the directory (`directory/listing.ts`) gives its `https://` address beside the `wss://` one, from the same nip.io name.
 
 ### Phase 2: the bridge with today's protocol, dev site only

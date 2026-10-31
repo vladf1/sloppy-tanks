@@ -9,11 +9,12 @@
 // `?t=<seconds>` (default 4) runs the script to that time and freezes it;
 // `?live` loops it. `?theme=quarry|harbor` switches dust colors and effects.
 import type { EffectsLab } from "../src/generated/engine-labs/engine.js";
-import type { VehicleKind, Weapon } from "../src/game/engine-api";
 import { compareImages, loadReference, pixels } from "./lab-references";
 import { fail, loadLabsEngine, prepareLab } from "./labs-engine";
 
 type Vec3 = [number, number, number];
+type Weapon = "standard" | "spread" | "rocket" | "ricochet" | "piercing" | "tow";
+type VehicleKind = "scout" | "balanced" | "heavy" | "humvee";
 /** A simulation event as the engine reads it (`SimEvent`, camelCase JSON). */
 type SimEvent = { type: string; x: number; z: number } & Record<string, unknown>;
 interface RenderShot {

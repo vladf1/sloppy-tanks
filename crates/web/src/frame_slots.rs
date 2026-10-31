@@ -1,7 +1,7 @@
-//! The packed results of `Game.frame` and `NetGame.frame`, slot by slot. The page reads
-//! them by index (`src/game/engine-api.ts`, `src/net/client.ts`), the desktop by name.
-//! They build for every target, unlike the game types, so the page catalog test pins
-//! the page's copies to them.
+//! The packed results of `Game.frame` and `NetGame.frame`, slot by slot. The game
+//! preview reads them by index (`tools/engine-tables.ts`), the shell by name. They build
+//! for every target, unlike the game types, so a test pins the preview's copy to them
+//! (`ts_copies_tests.rs`).
 
 /// Slots of `Game.frame`'s result.
 pub mod frame_slot {

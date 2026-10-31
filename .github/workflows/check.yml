@@ -14,11 +14,11 @@ on:
         type: string
         default: ""
       directory-url:
-        description: VITE_DIRECTORY_URL for the production build.
+        description: SLOPPY_DIRECTORY_URL for the production build.
         type: string
         default: ""
       server-environment:
-        description: VITE_SERVER_ENVIRONMENT, whose servers the production build lists.
+        description: SLOPPY_SERVER_ENVIRONMENT, whose servers the production build lists.
         type: string
         default: ""
       build-number:
@@ -53,8 +53,8 @@ jobs:
       - run: pnpm run check:site
         env:
           DEPLOY_BASE: ${{ inputs.deploy-base }}
-          VITE_DIRECTORY_URL: ${{ inputs.directory-url }}
-          VITE_SERVER_ENVIRONMENT: ${{ inputs.server-environment }}
+          SLOPPY_DIRECTORY_URL: ${{ inputs.directory-url }}
+          SLOPPY_SERVER_ENVIRONMENT: ${{ inputs.server-environment }}
           SLOPPY_BUILD_NUMBER: ${{ inputs.build-number }}
       # The build the deploy workflow publishes.
       - if: inputs.deploy-base

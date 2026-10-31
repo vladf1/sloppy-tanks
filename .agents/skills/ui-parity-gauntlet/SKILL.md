@@ -1,13 +1,15 @@
 ---
 name: ui-parity-gauntlet
-description: Match Sloppy Tanks native UI to the production web app through repeated capture, implementation and independent visual critique. Use for web-to-desktop UI parity, faithful UI ports or a visual gauntlet loop in this repository; not open-ended redesign or generic code review.
+description: Match the Sloppy Tanks egui shell (the desktop app and, since PR 125, the web page) to the frozen pre-migration web page through repeated capture, implementation and independent visual critique. Use for UI parity with the former web interface, faithful UI ports or a visual gauntlet loop in this repository; not open-ended redesign or generic code review.
 ---
 
 # UI Parity Gauntlet
 
-Run the work in the current session. Default to the production web app at
-`https://sloppytanks.com/` and the native shell in `crates/desktop`.
-Use the selected interface as the acceptance
+Run the work in the current session. Default to the frozen pre-migration web page
+(the TypeScript/DOM shell's production build of `90423be0`, built locally; see
+[the project workflow](references/sloppy-tanks.md)) and the egui shell in
+`crates/desktop`. The live site is no reference any more: it serves the egui shell
+itself. Use the selected interface as the acceptance
 reference: **faithful reproduction**, not a contest to make a different design
 look better. Default to execution unless the user asks only for a plan or prompt.
 

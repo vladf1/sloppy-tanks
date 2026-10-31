@@ -2,8 +2,9 @@ import { readdir, readFile, writeFile } from "node:fs/promises";
 import { promisify } from "node:util";
 import { brotliCompress, gzip, constants } from "node:zlib";
 
-// Quality 11 is about 4% smaller than 10 for the engines but takes twice as long.
-const BROTLI_QUALITY = 10;
+// Quality 11 makes the shell's binary 4% (82 KB) smaller than 10 does, for about six
+// more seconds of the deploy; a browser decodes either as fast.
+const BROTLI_QUALITY = 11;
 
 const brotliCompressAsync = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
@@ -14,14 +15,19 @@ if (!build) {
 }
 const assetDirectory = new URL(`../../${build}/assets/`, import.meta.url);
 const wasmFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".wasm"));
+// The shader tables (src/generated/shaders/).
+const tableFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".json"));
+const fontFiles = (await readdir(new URL("fonts/", assetDirectory)))
+  .filter((name) => name.endsWith(".ttc"))
+  .map((name) => `fonts/${name}`);
 
-if (wasmFiles.length === 0) {
+if (wasmFiles.length === 0 || fontFiles.length === 0) {
   throw new Error(`Build ${build} before preparing Worker assets`);
 }
 
-// The engines compress at once on zlib's thread pool, so the wait is the largest file's.
+// The files compress at once on zlib's thread pool, so the wait is the largest one's.
 await Promise.all(
-  wasmFiles.map(async (file) => {
+  [...wasmFiles, ...tableFiles, ...fontFiles].map(async (file) => {
     const original = await readFile(new URL(file, assetDirectory));
     const [brotli, gzipped] = await Promise.all([
       brotliCompressAsync(original, {

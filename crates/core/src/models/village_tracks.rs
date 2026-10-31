@@ -21,7 +21,7 @@ use super::village_ground::{ARENA_PLAN_HALF, GROUND_PLAN_SIZE, SHORTCUTS, hash, 
 use super::village_roads::village_roads;
 use crate::geometry::math::smoothstep;
 use crate::sim::arena::arena_layout;
-use crate::sim::types::CoverKind;
+use crate::sim::kinds::CoverKind;
 
 /// Metres from a tread's centreline over which the proximity ramp falls to 0.
 pub const TREAD_REACH: f64 = 1.0;

@@ -225,10 +225,11 @@ const PAINT_LEFT: f64 = 0.35;
 fn burn_paint(mesh: &mut Mesh) {
     let ash = hex_to_linear(ASH);
     let normals = mesh.normals.clone();
+    let mut blotches = ValueNoise::new();
     for (i, color) in mesh.colors.iter_mut().enumerate() {
         let p = DVec3::from(mesh.positions[i].map(f64::from)) * SCORCH_FREQUENCY;
         let up = normals.get(i).map_or(0.0, |n| f64::from(n[1]).max(0.0));
-        let left = PAINT_LEFT * (1.0 - up) * smooth01((value_noise(p) - 0.35) / 0.3);
+        let left = PAINT_LEFT * (1.0 - up) * smooth01((blotches.at(p) - 0.35) / 0.3);
         for c in 0..3 {
             let paint = f64::from(color[c]) * 0.7;
             color[c] = (ash[c] + (paint - ash[c]) * left) as f32;
@@ -253,11 +254,12 @@ fn scorch(mesh: &mut Mesh) {
     let soot = hex_to_linear(SOOT);
     let rust = hex_to_linear(RUST);
     let normals = mesh.normals.clone();
+    let (mut blotches, mut rust_patches) = (ValueNoise::new(), ValueNoise::new());
     for (i, color) in mesh.colors.iter_mut().enumerate() {
         let p = DVec3::from(mesh.positions[i].map(f64::from)) * SCORCH_FREQUENCY;
         let up = normals.get(i).map_or(0.0, |n| f64::from(n[1]).max(0.0));
-        let blotch = value_noise(p);
-        let rusty = smooth01((value_noise(p * 1.7 + DVec3::splat(19.3)) - 0.58) / 0.12);
+        let blotch = blotches.at(p);
+        let rusty = smooth01((rust_patches.at(p * 1.7 + DVec3::splat(19.3)) - 0.58) / 0.12);
         let burnt = (SOOT_MIN + SOOT_BLOTCH * blotch + SOOT_TOP * up).min(0.95);
         for c in 0..3 {
             let paint = f64::from(color[c]);
@@ -272,25 +274,55 @@ fn smooth01(x: f64) -> f64 {
     t * t * (3.0 - 2.0 * t)
 }
 
-/// Smooth 3D value noise in [0, 1] on a unit lattice.
-fn value_noise(p: DVec3) -> f64 {
-    let cell = p.floor();
-    let f = p - cell;
-    let s = f * f * (DVec3::splat(3.0) - 2.0 * f);
-    let corner = |dx: f64, dy: f64, dz: f64| {
-        let q = cell + DVec3::new(dx, dy, dz);
-        let mut h = (q.x as i64).wrapping_mul(73_856_093)
-            ^ (q.y as i64).wrapping_mul(19_349_663)
-            ^ (q.z as i64).wrapping_mul(83_492_791);
-        h = (h ^ (h >> 13)).wrapping_mul(0x5bd1_e995);
-        (h ^ (h >> 15)).rem_euclid(1000) as f64 / 999.0
-    };
-    let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
-    let x00 = lerp(corner(0.0, 0.0, 0.0), corner(1.0, 0.0, 0.0), s.x);
-    let x10 = lerp(corner(0.0, 1.0, 0.0), corner(1.0, 1.0, 0.0), s.x);
-    let x01 = lerp(corner(0.0, 0.0, 1.0), corner(1.0, 0.0, 1.0), s.x);
-    let x11 = lerp(corner(0.0, 1.0, 1.0), corner(1.0, 1.0, 1.0), s.x);
-    lerp(lerp(x00, x10, s.y), lerp(x01, x11, s.y), s.z)
+/// Smooth 3D value noise in [0, 1] on a unit lattice. It keeps the corner values
+/// of the last cell it sampled: a batched wreck lists its vertices triangle by
+/// triangle, part by part, so runs of them fall in one cell (the lattice is about
+/// 0.4 m) and hashing its eight corners for every vertex was most of a wreck's
+/// build.
+struct ValueNoise {
+    cell: DVec3,
+    /// The cell's corners, x fastest, then y, then z.
+    corners: [f64; 8],
+}
+
+impl ValueNoise {
+    fn new() -> Self {
+        Self {
+            cell: DVec3::NAN,
+            corners: [0.0; 8],
+        }
+    }
+
+    fn at(&mut self, p: DVec3) -> f64 {
+        let cell = p.floor();
+        let f = p - cell;
+        let s = f * f * (DVec3::splat(3.0) - 2.0 * f);
+        // NaN never equals itself, so the first sample (and any NaN cell) hashes.
+        if cell != self.cell {
+            self.cell = cell;
+            self.corners = [0, 1, 2, 3, 4, 5, 6, 7].map(|k| {
+                lattice_value(
+                    cell + DVec3::new(f64::from(k & 1), f64::from(k >> 1 & 1), f64::from(k >> 2)),
+                )
+            });
+        }
+        let c = self.corners;
+        let lerp = |a: f64, b: f64, t: f64| a + (b - a) * t;
+        let x00 = lerp(c[0], c[1], s.x);
+        let x10 = lerp(c[2], c[3], s.x);
+        let x01 = lerp(c[4], c[5], s.x);
+        let x11 = lerp(c[6], c[7], s.x);
+        lerp(lerp(x00, x10, s.y), lerp(x01, x11, s.y), s.z)
+    }
+}
+
+/// The noise's value at a lattice corner.
+fn lattice_value(q: DVec3) -> f64 {
+    let mut h = (q.x as i64).wrapping_mul(73_856_093)
+        ^ (q.y as i64).wrapping_mul(19_349_663)
+        ^ (q.z as i64).wrapping_mul(83_492_791);
+    h = (h ^ (h >> 13)).wrapping_mul(0x5bd1_e995);
+    (h ^ (h >> 15)).rem_euclid(1000) as f64 / 999.0
 }
 
 /// Every mesh in the tree, in traversal order, with its parent's world transform

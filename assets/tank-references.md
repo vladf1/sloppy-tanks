@@ -1,6 +1,6 @@
 # Tank silhouette references
 
-The game uses original simplified geometry in `src/game/models.ts`, inspired by these real vehicle families and online model references. No third-party model files or textures were imported.
+The game uses original simplified geometry in `crates/core/src/models/` (`tank_model.rs` and its kit, `humvee_model.rs`), inspired by these real vehicle families and online model references. No third-party model files or textures were imported.
 
 - Skipper: M10 Booker-inspired welded angular turret, enclosed bustle, modular side skirts, modern sight housing and muzzle brake. Replaces the former T-72 dome and fuel drums while retaining Skipper’s compact game footprint. [US Army reference photographs](https://www.army.mil/article/275419/army_takes_delivery_of_first_m10_booker_combat_vehicle).
 - Bruiser: M1A2 Abrams-style angular turret with long rear bustle, open stowage basket, seven wheels and smooth side skirts. [Abrams model](https://sketchfab.com/3d-models/m1a2-abrams-c85846177bfc4018b6a8f3b40754655c), [artist's rendered views](https://www.behance.net/gallery/37661357/M1A2-Abrams-Tank-3D-Model).

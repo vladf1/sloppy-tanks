@@ -124,7 +124,7 @@ pub(super) struct Palette {
     pub roof: u32,
 }
 
-static TEXTURED: Cache<(&'static str, u32), Material> = Cache::new();
+static TEXTURED: Cache<(&'static str, u32), Material> = Cache::new("building_kit::TEXTURED");
 
 /// A textured finish tinted `color`; batching bakes the tint into vertex colours,
 /// so every building shares one material per texture.
