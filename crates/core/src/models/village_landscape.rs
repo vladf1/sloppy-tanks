@@ -154,11 +154,7 @@ fn glacis(x: f64, z: f64, edge: f64) -> f64 {
     if edge >= toe {
         return 0.0;
     }
-    let level = LEVEL_FOOTINGS
-        .iter()
-        .map(|&[cx, cz, radius]| smoothstep((x - cx).hypot(z - cz), radius, radius + 10.0))
-        .fold(1.0, f64::min);
-    (1.0 - smoothstep(edge, foot, toe)) * GLACIS_RISE * level
+    (1.0 - smoothstep(edge, foot, toe)) * GLACIS_RISE * footing_level(x, z)
 }
 
 /// Landmarks set at fixed heights on the valley floor (x, z, radius in metres):
@@ -170,6 +166,25 @@ const LEVEL_FOOTINGS: [[f64; 3]; 4] = [
     [-68.0, -24.0, 8.0],
 ];
 
+/// How far the valley floor's rolls and banks reach at (x, z) under the
+/// [`LEVEL_FOOTINGS`]: 0 on a footing, rising to 1 ten metres beyond it.
+fn footing_level(x: f64, z: f64) -> f64 {
+    LEVEL_FOOTINGS
+        .iter()
+        .map(|&[cx, cz, radius]| {
+            let (dx, dz) = (x - cx, z - cz);
+            let reach = radius + 10.0;
+            // Clearly beyond the ramp the smoothstep is exactly 1, which leaves the
+            // minimum alone: skip its hypot (a slow libm call in the page), keeping a
+            // margin far wider than either's rounding.
+            if dx * dx + dz * dz > reach * reach * (1.0 + 1e-9) {
+                return 1.0;
+            }
+            smoothstep(dx.hypot(dz), radius, reach)
+        })
+        .fold(1.0, f64::min)
+}
+
 /// Knolls and swales rolling the valley floor beyond the wall, a metre or two
 /// high: level at the wall's foot, along the creek and under the landmarks of
 /// [`LEVEL_FOOTINGS`], so nothing set on the old floor floats or sinks.
@@ -178,10 +193,7 @@ fn knolls(x: f64, z: f64, edge: f64, river: f64) -> f64 {
     if reach <= 0.0 {
         return 0.0;
     }
-    let level = LEVEL_FOOTINGS
-        .iter()
-        .map(|&[cx, cz, radius]| smoothstep((x - cx).hypot(z - cz), radius, radius + 10.0))
-        .fold(1.0, f64::min);
+    let level = footing_level(x, z);
     let rolls = (lattice_noise(x * 0.045 + 3.1, z * 0.045 - 7.7) - 0.5) * 3.8
         + (lattice_noise(x * 0.11 - 2.0, z * 0.11 + 5.0) - 0.5) * 1.1;
     reach * level * rolls
