@@ -1,0 +1,11 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "sloppy-tanks-redirect",
+  "account_id": "b49a59dfb5edf913223ad13eeab8d740",
+  "compatibility_date": "2026-10-17",
+  "main": "redirect.mjs",
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": [{ "pattern": "www.sloppytanks.com", "custom_domain": true }],
+  "vars": { "SITE_ORIGIN": "https://sloppytanks.com" },
+}

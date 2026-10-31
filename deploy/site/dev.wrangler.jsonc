@@ -6,7 +6,10 @@
   "main": "worker.mjs",
   "workers_dev": true,
   "preview_urls": false,
-  "routes": [{ "pattern": "sloppy-tanks-dev.fridman.me", "custom_domain": true }],
+  "routes": [
+    { "pattern": "sloppy-tanks-dev.fridman.me", "custom_domain": true },
+    { "pattern": "dev.sloppytanks.com", "custom_domain": true },
+  ],
   "assets": {
     "directory": "../../dist-dev",
     "binding": "ASSETS",

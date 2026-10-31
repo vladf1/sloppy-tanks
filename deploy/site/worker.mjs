@@ -1,8 +1,8 @@
-// The dev site's Worker. Static assets serve everything except the engine binaries, the
-// shell's font collection and its shader tables, which `run_worker_first` routes here:
-// Cloudflare compresses those on every request (the tables 32-45% larger than Brotli-11),
-// so precompress.mjs stores Brotli and gzip copies at deploy time and this script sends
-// the one the client accepts.
+// The site's Worker, for the dev site and production. Static assets serve everything
+// except the engine binaries, the shell's font collection and its shader tables, which
+// `run_worker_first` routes here: Cloudflare compresses those on every request (the
+// tables 32-45% larger than Brotli-11), so precompress.mjs stores Brotli and gzip copies
+// at deploy time and this script sends the one the client accepts.
 
 /** The precompressed files, by extension, with the type each is served as. */
 const contentTypes = {

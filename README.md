@@ -382,7 +382,7 @@ visitors download none of them again until it changes. Hosts should serve the Wa
 Cloudflare Worker. Run `pnpm exec wrangler login` first (or provide an API token that
 can deploy Workers and their custom domains), and log Docker in to ghcr.io once with a
 token that can write packages (`crates/server/README.md` shows how with `gh`). The
-Worker's account, name and domain come from `deploy/dev-site/wrangler.jsonc`,
+Worker's account, name and domain come from `deploy/site/dev.wrangler.jsonc`,
 independent of the local Git branch. No Git commit or push is required.
 `pnpm run build:dev` builds without publishing.
 The dev build connects the **Multiplayer** tab to the dev servers, which list themselves in
@@ -403,10 +403,10 @@ record in fridman.me's Cloudflare zone, and all other records stay as they are.
 The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
 `/assets/`, where every file has a content-hashed name, so a returning visit requests
 only the page itself; `noindex` everywhere). Only the Wasm binaries, the shell's fonts
-and its shader tables run its script, `deploy/dev-site/worker.mjs`. Cloudflare compresses
+and its shader tables run its script, `deploy/site/worker.mjs`. Cloudflare compresses
 static assets as it serves them, which gives a multi-megabyte binary a later first byte
 and a larger file than Brotli at quality 11. So `deploy:dev` first writes Brotli-11 and
 gzip copies beside each `.wasm`, shader table and the font collection
-(`deploy/dev-site/precompress.mjs`, about ten seconds), and the script sends the one the
+(`deploy/site/precompress.mjs`, about ten seconds), and the script sends the one the
 client accepts, marked `no-transform`.
 Range requests, and clients that accept neither, get the original file.

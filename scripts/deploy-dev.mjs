@@ -21,12 +21,12 @@ run("node", ["scripts/server.mjs", "publish", "--dev"]);
 
 const build = `${info.commit}${info.dirty ? ", local changes" : ""}`;
 console.log(`Publishing dev build ${info.builtAt} (${build})`);
-run("node", ["deploy/dev-site/precompress.mjs"]);
+run("node", ["deploy/site/precompress.mjs", "dist-dev"]);
 // Fixed destination: the Worker's account, name and domain come from its config.
 run("wrangler", [
   "deploy",
   "--config",
-  "deploy/dev-site/wrangler.jsonc",
+  "deploy/site/dev.wrangler.jsonc",
   "--message",
   `Dev build ${info.builtAt} (${build})`,
 ]);

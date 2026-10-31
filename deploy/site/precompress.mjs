@@ -8,7 +8,12 @@ const BROTLI_QUALITY = 11;
 
 const brotliCompressAsync = promisify(brotliCompress);
 const gzipAsync = promisify(gzip);
-const assetDirectory = new URL("../../dist-dev/assets/", import.meta.url);
+// The build to prepare, relative to the repository: dist-dev or dist.
+const build = process.argv[2];
+if (!build) {
+  throw new Error("Usage: node deploy/site/precompress.mjs <build directory>");
+}
+const assetDirectory = new URL(`../../${build}/assets/`, import.meta.url);
 const wasmFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".wasm"));
 // The shader tables (src/generated/shaders/).
 const tableFiles = (await readdir(assetDirectory)).filter((name) => name.endsWith(".json"));
@@ -17,7 +22,7 @@ const fontFiles = (await readdir(new URL("fonts/", assetDirectory)))
   .map((name) => `fonts/${name}`);
 
 if (wasmFiles.length === 0 || fontFiles.length === 0) {
-  throw new Error("Build dist-dev before preparing Worker assets");
+  throw new Error(`Build ${build} before preparing Worker assets`);
 }
 
 // The files compress at once on zlib's thread pool, so the wait is the largest one's.
