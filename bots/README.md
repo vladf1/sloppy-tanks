@@ -1,15 +1,21 @@
-# Traffic bots
+# Load bots and pilots
 
-Network-load players for the multiplayer server. A bot joins through the public
-room protocol like a browser tab but never reads the map: it drives in random
-directions, sweeps its turret, fires, and sometimes drops mines or switches
-ammunition. Bots are named `bot-<region>-<n>` and occupy real seats.
+Load bots put network load on the multiplayer server, and [pilots](#pilots) actually
+play. A load bot joins through the public room protocol like a browser tab but never
+reads the map: it drives in random directions, sweeps its turret, fires, and sometimes
+drops mines or switches ammunition. Load bots are named `bot-<region>-<n>`, pilots
+`pilot-<region>-<n>`, and both occupy real seats. One control page and API start and
+stop both; each region can run load bots and pilots at the same time.
 
-The `sloppy-tanks-bots` Worker (`https://sloppy-tanks-bots.vova145.workers.dev`)
-plays on production's game servers, which it finds in the server directory
+The `sloppy-tanks-bots` Worker (`https://sloppy-tanks-bots.vova145.workers.dev`,
+`worker.ts`) serves the control page and API and runs the load bots. It hands pilot runs
+to the `sloppy-tanks-pilots` Worker (`pilots-worker.ts`, `pilots.wrangler.jsonc`) over a
+service binding; that Worker has no public address and deploys on its own. The load bots
+play on production's game servers, which they find in the server directory
 (`DIRECTORY_URL` and `SERVER_ENVIRONMENT` in `wrangler.jsonc`): each swarm takes the
-least busy one and joins or creates rooms on standard maps there. It is separate from the game server and both Pages
-sites, and runs on Cloudflare so bots can connect from many regions.
+least busy one and joins or creates rooms on standard maps there. Both Workers are
+separate from the game server and both Pages sites, and run on Cloudflare so bots can
+connect from many regions.
 
 ## How they live
 
@@ -34,20 +40,74 @@ immediately.
 ## Use
 
 ```sh
-bun run bots:deploy                    # deploy after changing bot code
+bun run bots:deploy                    # deploy after changing the load bots or control page
 bun run bots -- start weur 4 --host    # --minutes 5 --room CODE --per-room 1
 bun run bots -- start apac 2           # join whatever rooms are open
 bun run bots -- status
 bun run bots -- stop apac              # or no region to stop all
 ```
 
-The root URL serves a control page with the same actions. There is no
-authentication: anyone with the URL can start and stop bots, bounded by the
-32-bot and 6-hour limits per region. Cloudflare commands install the pinned Wrangler
-tools on demand and run Wrangler with Node; normal installs and `bun run bots` do
-not need them (see [deployment tools](../tools/deploy/README.md)). Local development:
-`bun run wrangler dev --config bots/wrangler.jsonc` with `DIRECTORY_URL` overridden to a
-local server (`http://127.0.0.1:8787`), which lists itself.
+The root URL serves a control page (`control-page.ts`, plain HTML, CSS and script) with
+the same actions: a form whose **What to run** picks load bots or pilots and which says
+what it will start, and a card per running region with its own **Stop region**. There
+is no authentication: anyone with the URL can start and stop bots, bounded by the
+32-bot, 8-pilot and 6-hour limits per region. `stop` stops a region's load bots and
+pilots together.
+Cloudflare commands install the pinned Wrangler tools on demand and run Wrangler with
+Node; normal installs and `bun run bots` do not need them (see
+[deployment tools](../tools/deploy/README.md)).
+
+Local development: run both Workers in one session,
+`bun run wrangler dev -c bots/wrangler.jsonc -c bots/pilots.wrangler.jsonc` (after
+`bun run pilot:build`), with `DIRECTORY_URL=http://127.0.0.1:8787` in `bots/.dev.vars`
+(ignored by Git; both configs read it) so they find a local server, which lists itself.
+The bots Worker alone runs load bots and reports the pilots Worker as unreachable.
+
+## Pilots
+
+With `--brain` (or **Pilots** on the control page), a region runs up to 8 pilots:
+players driven by the bot brain through the browser's own network client
+([crates/pilot](../crates/pilot/README.md)), compiled to Wasm
+(`bots/generated/sloppy_pilot.wasm`, built by `bun run pilot:build`). They run in the
+pilots Worker, which `bun run pilots:deploy` builds and deploys. Deploy it before the
+bots Worker the first time, since the bots Worker binds to it. The pilots see the room
+with the region's latency, so they test how the game feels from there: hit
+registration, prediction and lag compensation.
+
+```sh
+bun run pilots:deploy                                        # build the engine and deploy
+bun run bots -- start wnam 2 --room ABCD2345 --hunt vlad     # hunt vlad in that room
+bun run bots -- start weur 1 --room ABCD2345 --escort vlad   # fight beside vlad
+bun run bots -- start apac 3 --brain --host --map harbor     # make a room, play there
+bun run bots -- start enam 4 --brain                         # join the fullest room with 4 free seats
+bun run bots -- start wnam 2 --room ABCD2345 --hunt vlad --skill hard --kind heavy --env dev
+```
+
+- **Room.** All of a region's pilots play one room: the `--room` code (on the server the
+  directory lists it on), a new room (`--host`, on `--map`) whose first pilot creates it
+  and hosts it, or else the fullest open standard room with a seat for every pilot.
+- **Missions.** `--hunt NAME` takes the other side from NAME and comes after them.
+  `--mission hunt` goes after the nearest player on the other team. `--escort NAME` takes
+  NAME's side and follows them. Plain `--brain` plays `skirmish`. Pilots switch sides by
+  themselves: a team choice between battles, or leave and rejoin during one.
+- **Status.** `status` and the control page show each pilot's phase, team, K/D, hits on
+  and from players, RTT, view delay, fire-to-flash time, hit offset, prediction
+  corrections and phantom hits (shells drawn hitting that the server flew past).
+- **Recovery.** A pilot whose connection gave up rejoins after 15 seconds, taking back a
+  seat the server still holds. A room that ended or refuses the pilots makes the region
+  choose again; one that turns a pilot away while another plays there (a full room) only
+  makes that pilot try again later. A Rust panic traps the Wasm instance: the region
+  starts a new one and every pilot takes its seat back (`restarts` in the status).
+- **Content version.** The engine is game code, stamped with the checkout's content
+  version. A server running another version refuses its pilots, and the region reports
+  both versions. Deploy the pilots Worker (`bun run pilots:deploy`) from the commit the
+  target server runs; the load bots have no such tie, and redeploying one Worker leaves
+  the other's runs alone. `--env dev` (`environment` in the API, **Servers** on the page)
+  plays on the dev server's rooms instead of the Workers' `SERVER_ENVIRONMENT`, for load
+  bots and pilots alike.
+- **Cost.** A pilot runs the browser client's hull prediction and a model of the arena
+  every frame (30 a second). Measured in Node, a pilot takes about 60–80 ms of CPU per
+  second of play, and 8 pilots about half a core and 18 MiB of Wasm memory.
 
 ## Cost
 
