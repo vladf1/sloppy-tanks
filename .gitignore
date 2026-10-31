@@ -7,3 +7,6 @@ dist-dev/
 bots/.dev.vars
 /target/
 src/generated/
+
+# The pilot engine scripts/build-pilot.mjs builds for the bots Worker.
+bots/generated/

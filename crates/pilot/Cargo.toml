@@ -1,0 +1,41 @@
+[package]
+name = "sloppy-pilot"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+description = "Pilots: headless players that join rooms over the network like a browser tab and fight with the bot brain"
+
+[lib]
+# The cdylib is the bots Worker's engine (`scripts/build-pilot.mjs` builds it for
+# wasm32); its exports (`src/abi.rs`) exist only on that target.
+crate-type = ["cdylib", "rlib"]
+# The crate has no doc examples, so `cargo test` skips the empty rustdoc pass.
+doctest = false
+
+# The native command line: pilots on this machine's network (`pnpm run pilot -- …`).
+[[bin]]
+name = "sloppy-pilot"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+sloppy-core.workspace = true
+rapier3d.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+# Sockets, TLS and the directory request for the command line. TLS uses the server's
+# pure-Rust crypto provider, so Linux builds need no C toolchain for ring.
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tokio.workspace = true
+tokio-tungstenite = { version = "0.30", default-features = false, features = ["connect", "handshake", "rustls-tls-webpki-roots"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+hyper.workspace = true
+hyper-util.workspace = true
+http-body-util.workspace = true
+bytes.workspace = true
+rustls.workspace = true
+rustls-rustcrypto.workspace = true
+tokio-rustls.workspace = true
+webpki-roots.workspace = true

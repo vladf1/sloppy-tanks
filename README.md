@@ -113,7 +113,7 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
 pnpm run wasm           # release WebGPU engine and its glue into src/generated/engine/
 pnpm run wasm:all       # both engines, the WebGL2 one into src/generated/engine-webgl/
-pnpm test               # page shell, import boundary and traffic-bot tests (needs pnpm run server:build)
+pnpm test               # page shell, import boundary, traffic-bot and pilot tests (needs pnpm run server:build and pilot:build)
 pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace, without the desktop app)
 pnpm run validate       # ten seeded full matches and reset checks
 pnpm run build          # production output in dist/ (builds the Wasm first)
@@ -131,6 +131,7 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 | `crates/web`      | Wasm          | The wasm-bindgen API: `Game` (single player) and `NetGame` (a room page)                 |
 | `crates/server`   | native        | The multiplayer server: HTTP, WebSocket rooms, limits, monitor and dashboard             |
 | `crates/desktop`  | macOS/Windows | The desktop app: a native window on wgpu (Metal, Direct3D 12), egui menus, HUD           |
+| `crates/pilot`    | native + Wasm | Pilots: headless players that join rooms over the network and play with the bot brain    |
 | `src/`            | browser       | The page shell: menus, HUD, input, touch controls, audio and the room page               |
 
 | Area                           | Starting points                                                                                                               |
@@ -208,6 +209,14 @@ server's impact was from a tank you hit as your screen drew it (the server judge
 your shells where you saw the targets, up to 200 ms back), how far the shells that hit
 you were drawn from your tank just before they struck (enemy shells close in on your
 tank's present), and your tank's prediction corrections by cause. Render includes GPU geometries and textures.
+
+**Pilots** stand in for other people when you try multiplayer: headless players that
+join a room through the game's own network client and fight with the bot brain. A pilot
+can hunt a player you name or escort them. Run them from this machine
+(`pnpm run pilot -- --room CODE --hunt NAME`, see [crates/pilot](crates/pilot/README.md)),
+or from Cloudflare regions through the bots control page (**Mode: Pilots**) or
+`pnpm run bots -- start wnam 2 --room CODE --hunt NAME` (see [bots](bots/README.md)), to
+feel the room from there. Each reports its RTT, view delay, fire-to-flash time and hits.
 
 Single-player downloads no multiplayer page code and opens no game-server connection.
 Multiplayer loads its client and UI only on entry and does not run browser physics.

@@ -45,6 +45,14 @@ the server:
   (`nerd_rows.rs`), the room menu's text (`room_text.rs`) and Battle Setup's
   display tables (`catalog.rs`).
 - `crates/server` (native): the multiplayer server ([guide](crates/server/README.md)).
+- `crates/pilot` (native and Wasm): pilots ([guide](crates/pilot/README.md)), players that
+  join a room through `NetworkClient` and play with the bot brain on a never-stepped
+  `Simulation` refilled from the displayed scene. It drives the core's public API and
+  changes no game rule. Its command line is `pnpm run pilot`, and its Wasm engine runs in
+  the pilots Worker (`bots/pilots-worker.ts`, `pnpm run pilots:deploy`), which the bots
+  Worker's control page reaches over a service binding. Like the page and the server it
+  is stamped with the content version, so it plays only on servers built from the same
+  core.
 - `src/` is the TypeScript page shell only: menus, HUD, input gathering, touch
   controls, audio and the room page's DOM. It lays out and plays what `sloppy-web`
   produces and derives none of it. Game rules, simulation, rendering, effects and
@@ -515,9 +523,10 @@ offline.
   which directories changed.
   Change the machines only through the Vultr startup scripts
   (`deploy/server/cloud-init/`), `deploy/server/` and the `server:*` scripts described
-  in `crates/server/README.md`. The traffic bots in `bots/` are a Cloudflare Worker that
+  in `crates/server/README.md`. The load bots in `bots/` are a Cloudflare Worker that
   plays on the production servers the directory lists;
-  `pnpm run bots:deploy` publishes them separately.
+  `pnpm run bots:deploy` publishes them separately, and `pnpm run pilots:deploy` the
+  pilots Worker beside them.
 - Keep `dist-dev/` excluded from Git, formatting, and lint discovery.
 - `scripts/dev-site.ts` is the explicit allowlist for `/test-pages.html`. Add
   suitable HTML entries there and smoke-test their deployed assets and
