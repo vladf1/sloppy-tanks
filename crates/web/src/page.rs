@@ -7,7 +7,7 @@ use glam::Vec2;
 use serde::{Deserialize, Deserializer};
 use serde_json::{Value, json};
 use sloppy_core::sim::{SimEvent, SimEventType};
-use sloppy_render::gpu::{BACKDROP_BLUR_CSS_PX, GpuCanvas, Renderer};
+use sloppy_render::gpu::{BACKDROP_BLUR_CSS_PX, RenderTarget, Renderer};
 use sloppy_render::presentation::camera_rig::CameraRig;
 use sloppy_render::presentation::input::InputFrame;
 use sloppy_render::presentation::view_settings::CAMERA;
@@ -357,32 +357,20 @@ pub struct PageView {
     pub shell: Shell,
 }
 
-/// A seed for an unseeded game, as [`create_view`] draws one. A shell that shows Battle
-/// Setup before the engine draws it first, to show the team it gives the player
-/// (`initial_game_options`), and passes it in the view's configuration.
-pub fn random_seed() -> f64 {
-    (random() * 1e9).floor()
-}
-
-/// The renderer on the `opened` canvas (`GpuCanvas::open`, or what the page's menu drew
-/// on) and its presentation with the saved camera preferences, the canvas size to apply,
-/// the graphics quality, the seed (random when `config` has none) and the frame pacing.
-/// Rejects when the renderer cannot start.
-pub async fn create_view(opened: GpuCanvas, config: ViewConfig) -> Result<PageView, PageError> {
-    let seed = config.seed.unwrap_or_else(random_seed);
+/// The renderer on `canvas` and its presentation with the saved camera preferences, the
+/// canvas size to apply, the graphics quality, the seed (random when `config` has none)
+/// and the frame pacing. Rejects when the renderer cannot start.
+pub async fn create_view(canvas: RenderTarget, config: ViewConfig) -> Result<PageView, PageError> {
+    let seed = config.seed.unwrap_or_else(|| (random() * 1e9).floor());
     #[cfg(target_arch = "wasm32")]
-    let client = (
-        opened.element().client_width(),
-        opened.element().client_height(),
-    );
+    let client = (canvas.client_width(), canvas.client_height());
     // A window's size natively is in device pixels.
     #[cfg(not(target_arch = "wasm32"))]
     let client = {
         let ratio = config.pixel_ratio.unwrap_or(1.0);
-        let (width, height) = opened.size();
         (
-            (f64::from(width) / ratio) as i32,
-            (f64::from(height) / ratio) as i32,
+            (f64::from(canvas.width) / ratio) as i32,
+            (f64::from(canvas.height) / ratio) as i32,
         )
     };
     let size = CanvasSize {
@@ -394,7 +382,9 @@ pub async fn create_view(opened: GpuCanvas, config: ViewConfig) -> Result<PageVi
         exact: false,
     };
     let msaa = multisampled(config.device, config.graphics);
-    let mut renderer = Renderer::on(opened, config.asset_base, msaa).map_err(js_error)?;
+    let mut renderer = Renderer::new(canvas, config.asset_base, msaa)
+        .await
+        .map_err(js_error)?;
     let graphics = Graphics::new(
         &mut renderer,
         config.graphics,

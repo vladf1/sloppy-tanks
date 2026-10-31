@@ -108,7 +108,7 @@ use crate::page::{
 use crate::room_notices::RoomNotice;
 use crate::room_text::RoomText;
 use crate::stats::{frame_readings, presentation_stats, renderer_readings};
-use sloppy_render::gpu::{GpuCanvas, RenderTarget};
+use sloppy_render::gpu::RenderTarget;
 
 /// Notices waiting for `take_notices`; a hidden HUD must not grow this without bound.
 const MAX_PENDING_NOTICES: usize = 256;
@@ -683,19 +683,6 @@ impl NetGame {
         if !is_room_code(&config.room) {
             return Err(js_error("Invalid room code"));
         }
-        let opened = GpuCanvas::open(canvas).await.map_err(js_error)?;
-        Self::create_on(opened, view_config, config).await
-    }
-
-    /// `create_with` on a device and canvas the page's menu opened and drew on first.
-    pub async fn create_on(
-        opened: GpuCanvas,
-        view_config: ViewConfig,
-        config: NetConfig,
-    ) -> Result<NetGame, PageError> {
-        if !is_room_code(&config.room) {
-            return Err(js_error("Invalid room code"));
-        }
         let PageView {
             view,
             canvas,
@@ -703,7 +690,7 @@ impl NetGame {
             seed,
             pacing,
             shell,
-        } = create_view(opened, view_config).await?;
+        } = create_view(canvas, view_config).await?;
         let client = NetworkClient::new(ClientConfig {
             server_url: config.server.clone(),
             room: config.room.clone(),

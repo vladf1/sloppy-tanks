@@ -31,14 +31,6 @@
 // Setup: rustup's wasm32-unknown-unknown target and `wasm-bindgen-cli` 0.2.129,
 // matching the `wasm-bindgen` crate pin.
 //
-// The game page's binary comes in two halves (`scripts/split-wasm.mjs`): each shell build
-// is the `split` feature's page, built once more as `menu-only` to find what Battle Setup
-// reaches, then split with Binaryen's wasm-split (`scripts/binaryen.mjs` fetches it) into
-// `<name>_bg.wasm`, the menu half the glue loads, and `<name>_engine.wasm`, which
-// `index.html` loads behind it. Shell builds keep their function names until the split
-// (wasm-split strips them), and the keep list and the halves' symbol maps stay in
-// `<dir>/split/` for reading a stack trace.
-//
 // Like the server build, the Wasm is stamped with the content version clients and the
 // server must share (`SLOPPY_CONTENT_VERSION`): multiplayer joins send it. The shell
 // also carries the release and commit Battle Setup shows, as the desktop app does, and
@@ -51,7 +43,6 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
-import { splitShell } from "./split-wasm.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const version = await contentVersion();
@@ -59,16 +50,14 @@ const version = await contentVersion();
 const SHELL = {
   package: "sloppy-desktop",
   binary: "sloppy-tanks",
-  features: ["--features", "webgpu,split"],
-  menuFeatures: ["--features", "webgpu,menu-only"],
+  features: ["--features", "webgpu"],
   dir: "src/generated/shell",
   outName: "sloppy-tanks",
 };
 const SHELL_WEBGL = {
   package: "sloppy-desktop",
   binary: "sloppy-tanks",
-  features: ["--features", "webgl,split"],
-  menuFeatures: ["--features", "webgl,menu-only"],
+  features: ["--features", "webgl"],
   targetDir: "target/webgl",
   dir: "src/generated/shell-webgl",
   outName: "sloppy-tanks-webgl",
@@ -103,9 +92,6 @@ const stamps = {
   SLOPPY_CONTENT_VERSION: version,
   SLOPPY_RELEASE: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
   SLOPPY_COMMIT: dirty ? `${commit}-dirty` : commit,
-  // Function names for the split (wasm-bindgen drops them from the other builds). Every
-  // build sets it, so the builds sharing a target directory share their dependencies.
-  [`CARGO_PROFILE_${profile.toUpperCase().replaceAll("-", "_")}_STRIP`]: "false",
 };
 
 /** Run `command` from the repository root; rejects unless it succeeds. */
@@ -130,63 +116,34 @@ function run(command, args) {
 }
 
 /** Build `package` with `features` in `targetDir`, then write the glue of its `binary`
- * as `outName` in `dir`. With `menuFeatures` (a shell) it first builds the menu alone and
- * then splits the binary into its menu and engine halves. */
-async function build({
-  package: name,
-  binary,
-  features,
-  menuFeatures,
-  targetDir = "target",
-  dir,
-  outName,
-}) {
-  const cargo = (features) =>
-    run("cargo", [
-      "build",
-      "--locked",
-      "--profile",
-      profile,
-      "--target",
-      "wasm32-unknown-unknown",
-      "--target-dir",
-      targetDir,
-      "-p",
-      name,
-      ...features,
-    ]);
-  const wasm = `${targetDir}/wasm32-unknown-unknown/${profile}/${binary}.wasm`;
-  const bindgen = (dir, flags = []) =>
-    run("wasm-bindgen", [
-      wasm,
-      "--target",
-      "web",
-      "--out-dir",
-      dir,
-      "--out-name",
-      outName,
-      ...flags,
-    ]);
-  // The menu-only build's functions, by the names wasm-bindgen demangles as it does the
-  // full build's.
-  const menuDir = `${targetDir}/wasm32-unknown-unknown/${profile}/menu-only`;
-  const menuOnly = `${menuDir}/${outName}_bg.wasm`;
-  if (menuFeatures) {
-    await cargo(menuFeatures);
-    await bindgen(menuDir);
-  }
-  await cargo(features);
-  await bindgen(dir, menuFeatures ? [] : ["--remove-name-section"]);
-  if (menuFeatures) {
-    const { kept, total } = await splitShell({ dir, outName, menuOnly });
-    console.log(`${outName}: the menu half keeps ${kept} of ${total} functions`);
-  }
+ * as `outName` in `dir`. */
+async function build({ package: name, binary, features, targetDir = "target", dir, outName }) {
+  await run("cargo", [
+    "build",
+    "--locked",
+    "--profile",
+    profile,
+    "--target",
+    "wasm32-unknown-unknown",
+    "--target-dir",
+    targetDir,
+    "-p",
+    name,
+    ...features,
+  ]);
+  await run("wasm-bindgen", [
+    `${targetDir}/wasm32-unknown-unknown/${profile}/${binary}.wasm`,
+    "--target",
+    "web",
+    "--out-dir",
+    dir,
+    "--out-name",
+    outName,
+  ]);
 }
 
 const webglGlue = existsSync(
-  fileURLToPath(
-    new URL(`../${SHELL_WEBGL.dir}/${SHELL_WEBGL.outName}_engine.wasm`, import.meta.url),
-  ),
+  fileURLToPath(new URL(`../${SHELL_WEBGL.dir}/${SHELL_WEBGL.outName}.js`, import.meta.url)),
 );
 const builds = process.argv.includes("--labs")
   ? [LABS]

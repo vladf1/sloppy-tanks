@@ -16,12 +16,6 @@ path = "src/main.rs"
 # with egui_glow. The native app needs neither: it draws with wgpu on Metal or Direct3D 12.
 webgpu = ["sloppy-web/webgpu", "dep:egui-wgpu"]
 webgl = ["sloppy-web/webgl", "dep:egui_glow"]
-# The page in two halves (`split.rs`, `menu.rs`): Battle Setup from the menu half of the
-# binary while the engine half downloads. `scripts/build-wasm.mjs` builds the page with
-# it and splits the binary with binaryen's wasm-split; `menu-only` builds the menu alone,
-# never handing over, to find what the menu half must hold. Web only.
-split = []
-menu-only = ["split", "sloppy-web/menu-only"]
 
 [dependencies]
 sloppy-core.workspace = true

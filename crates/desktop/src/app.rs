@@ -19,7 +19,7 @@ use sloppy_core::sim::map_options::{MapId, is_extra_level};
 use sloppy_core::sim::maps::MAPS;
 use sloppy_core::sim::speed_tuning::SpeedSetting;
 use sloppy_core::sim::{MatchPhase, SimEventType, Team};
-use sloppy_render::gpu::{GpuCanvas, RenderTarget};
+use sloppy_render::gpu::RenderTarget;
 use sloppy_render::presentation::PrepareStatus;
 use sloppy_render::presentation::generated::theme_bakes;
 use sloppy_render::quality::DeviceClass;
@@ -61,8 +61,6 @@ const MIN_WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::n
 const HIDDEN_RECHECK: Duration = Duration::from_millis(100);
 /// Battle Setup's status once the arena is ready.
 const READY_STATUS: &str = "Ready when you are.";
-/// Battle Setup's status once GO waits for the arena.
-pub const PREPARING_STATUS: &str = "Preparing your arena…";
 
 /// Command-line choices, a page's link's included (`main.rs`).
 pub struct Options {
@@ -120,23 +118,6 @@ impl App {
             options,
             mode: None,
         }
-    }
-
-    /// The app on the window the page's menu showed (`split.rs`), once the engine half of
-    /// the page's binary has arrived: single player, or the room the menu's JOIN chose.
-    #[cfg(all(target_arch = "wasm32", feature = "split"))]
-    pub fn adopt(options: Options, shell: Shell, room: Option<RoomSelection>) -> Self {
-        let mut app = Self::new(options);
-        // The engine starts on the event loop; a failure shows when it has.
-        let _ = match room {
-            Some(selection) => {
-                links::show(Place::Room(&selection.room));
-                let network = app.options.network.clone();
-                app.launch(join_room(shell, selection, network))
-            }
-            None => app.launch(single_player(shell)),
-        };
-        app
     }
 
     /// Hand the window to the other engine when the one playing asks: a room Battle
@@ -223,7 +204,7 @@ async fn single_player(shell: Shell) -> Option<Mode> {
 /// offer a WebGPU adapter and still fail to make the engine's device, so a page's WebGPU
 /// build hands over to its WebGL2 one (`index.html` loads that for `?webgl`), as the
 /// page's engine fell back before; otherwise the page's loading view says why.
-pub fn startup_failed(error: &str) {
+fn startup_failed(error: &str) {
     report!("Sloppy Tanks could not start: {error}");
     #[cfg(target_arch = "wasm32")]
     {
@@ -284,18 +265,6 @@ pub struct Shell {
     pub autoplay: bool,
     /// `--seed`, for the first single-player arena only.
     pub seed: Option<f64>,
-    /// What the page's menu drew Battle Setup with, for the first engine only.
-    pub carried: Option<Carried>,
-}
-
-/// What the page's menu (`menu.rs`) hands the first engine: the device and canvas it drew
-/// Battle Setup on, its egui context and its screens' state. The engine's renderer takes
-/// over the canvas, so the page asks for one device and shows no blank frame, and Battle
-/// Setup carries on as the player left it (an open dialog, a typed name, GO pressed).
-pub struct Carried {
-    pub canvas: GpuCanvas,
-    pub overlay: Overlay,
-    pub ui: UiState,
 }
 
 /// The release line Battle Setup shows.
@@ -678,13 +647,6 @@ impl ApplicationHandler for App {
     }
 }
 
-/// The window and the shell around it, from the saved choices and `options`, for the
-/// page's menu (`split.rs`), which opens it before the app starts.
-#[cfg(all(target_arch = "wasm32", feature = "split"))]
-pub fn new_shell(event_loop: &ActiveEventLoop, options: &Options) -> Result<Shell, String> {
-    Session::shell(event_loop, options)
-}
-
 impl Session {
     /// The window and the shell around it, from the saved choices and `options`.
     fn shell(event_loop: &ActiveEventLoop, options: &Options) -> Result<Shell, String> {
@@ -723,7 +685,6 @@ impl Session {
             frame_log: options.frame_log,
             autoplay: options.autoplay,
             seed: options.seed,
-            carried: None,
         })
     }
 
@@ -740,8 +701,8 @@ impl Session {
             frame_log,
             autoplay,
             seed,
-            carried,
         } = shell;
+        let target = render_target(&window)?;
         // The team is the seed's to draw.
         let extra_levels = debug || prefs.debug;
         let options = prefs.game_options(Team::Blue, extra_levels);
@@ -759,38 +720,14 @@ impl Session {
             seed,
             ..view_config(&window, &prefs)
         };
-        // The page's menu hands over the canvas it drew Battle Setup on, with its screens.
-        let (mut game, overlay, ui) = match carried {
-            Some(Carried {
-                canvas,
-                overlay,
-                ui,
-            }) => {
-                let game = Game::create_on(canvas, view, config).await;
-                (game.map_err(engine_error)?, Some(overlay), ui)
-            }
-            None => {
-                let target = render_target(&window)?;
-                let game = Game::create_with(target, view, config).await;
-                (game.map_err(engine_error)?, None, UiState::default())
-            }
-        };
+        let mut game = Game::create_with(target, view, config)
+            .await
+            .map_err(engine_error)?;
         let hud = game.hud().into_owned();
         game.set_speed_scale(SpeedSetting::TankSpeed, prefs.tank_speed);
         game.set_speed_scale(SpeedSetting::BulletSpeed, prefs.bullet_speed);
-        let overlay = match overlay {
-            Some(mut overlay) => {
-                overlay.take_over(game.renderer());
-                overlay
-            }
-            None => Overlay::new(window.clone(), game.renderer())?,
-        };
+        let overlay = Overlay::new(window.clone(), game.renderer())?;
         let human_team = hud.human_team;
-        let status = if ui.starting {
-            PREPARING_STATUS
-        } else {
-            "Building the arena…"
-        };
         let mut session = Self {
             human_team,
             window,
@@ -799,9 +736,9 @@ impl Session {
             input: WindowInput::default(),
             ui: UiState {
                 hud: Some(hud),
-                status: status.into(),
+                status: "Building the arena…".into(),
                 rooms,
-                ..ui
+                ..UiState::default()
             },
             audio,
             bake: None,
@@ -828,8 +765,7 @@ impl Session {
             pending_room: None,
             prefs,
         };
-        // GO pressed on the page's menu, or `--autoplay`: the round starts once the arena is.
-        session.ui.starting |= autoplay;
+        session.ui.starting = autoplay;
         session.preparation.restart();
         Ok(session)
     }
@@ -849,7 +785,6 @@ impl Session {
             frame_log: self.frame_log.is_some(),
             autoplay: false,
             seed: None,
-            carried: None,
         }
     }
 
@@ -992,7 +927,7 @@ impl Session {
                     self.begin_round();
                 } else {
                     self.ui.starting = true;
-                    self.ui.status = PREPARING_STATUS.into();
+                    self.ui.status = "Preparing your arena…".into();
                     self.ui.progress = None;
                 }
             }
@@ -1351,7 +1286,6 @@ impl Session {
             failure: self.failure.clone(),
             error: self.game.error(),
             prefs: serde_json::to_value(&self.prefs).unwrap_or_default(),
-            team: Some(automation::team_name(self.human_team)),
             parts: Some(serde_json::json!({
                 "engine": self.parts.engine,
                 "sim": self.parts.sim,

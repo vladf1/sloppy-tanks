@@ -19,7 +19,7 @@ use winit::event::WindowEvent;
 use winit::window::Window;
 
 use crate::app::{
-    Carried, Shell, css_size, engine_error, now_ms, render_target, set_fullscreen, view_config,
+    Shell, css_size, engine_error, now_ms, render_target, set_fullscreen, view_config,
 };
 use crate::audio::Audio;
 use crate::automation::{self, Command, Extra};
@@ -170,27 +170,11 @@ impl RoomSession {
             shooter: network.shooter,
         };
         let view = view_config(&window, &shell.prefs);
-        // JOIN pressed on the page's menu: the room takes over the canvas it drew on.
-        let mut shell = shell;
-        let carried = shell.carried.take();
-        let (created, carried) = match carried {
-            Some(Carried {
-                canvas,
-                overlay,
-                ui,
-            }) => {
-                let game = NetGame::create_on(canvas, view, config).await;
-                (game.map_err(engine_error), Some((overlay, ui)))
-            }
-            None => {
-                let game = match render_target(&window) {
-                    Ok(target) => NetGame::create_with(target, view, config)
-                        .await
-                        .map_err(engine_error),
-                    Err(error) => Err(error),
-                };
-                (game, None)
-            }
+        let created = match render_target(&window) {
+            Ok(target) => NetGame::create_with(target, view, config)
+                .await
+                .map_err(engine_error),
+            Err(error) => Err(error),
         };
         let mut game = match created {
             Ok(game) => game,
@@ -199,19 +183,12 @@ impl RoomSession {
                 return Err(Box::new((shell, ARENA_FAILED.into())));
             }
         };
-        // The menu's screens give way to the room's; its egui context and art carry on.
-        let (overlay, art) = match carried {
-            Some((mut overlay, ui)) => {
-                overlay.take_over(game.renderer());
-                (overlay, ui.art)
+        let overlay = match Overlay::new(window.clone(), game.renderer()) {
+            Ok(overlay) => overlay,
+            Err(error) => {
+                report!("The room's menus could not draw: {error}");
+                return Err(Box::new((shell, ARENA_FAILED.into())));
             }
-            None => match Overlay::new(window.clone(), game.renderer()) {
-                Ok(overlay) => (overlay, None),
-                Err(error) => {
-                    report!("The room's menus could not draw: {error}");
-                    return Err(Box::new((shell, ARENA_FAILED.into())));
-                }
-            },
         };
         let now = now_ms();
         game.join(selection.choice.clone(), now);
@@ -235,7 +212,6 @@ impl RoomSession {
             audio,
             ui: UiState {
                 rooms,
-                art,
                 ..UiState::default()
             },
             menu: RoomMenu::new(&selection.room, selection.choice.create.is_some()),
@@ -324,7 +300,6 @@ impl RoomSession {
             frame_log: false,
             autoplay: false,
             seed: None,
-            carried: None,
         }
     }
 

@@ -47,30 +47,8 @@ pub struct RenderTarget {
     pub height: u32,
 }
 
-/// The device and the canvas (natively the window's surface) configured for it: what a
-/// renderer starts on. The page opens it before the engine half of its binary has
-/// arrived and draws Battle Setup on it; the renderer then takes it over
-/// (`Renderer::on`), so the page asks for one device and the canvas keeps the menu's
-/// last frame until the engine's first.
-pub struct GpuCanvas {
-    pub device: wgpu::Device,
-    pub queue: wgpu::Queue,
-    canvas: Canvas,
-    /// The adapter's features and largest 2D texture edge.
-    features: wgpu::Features,
-    max_texture: u32,
-    error: ErrorSlot,
-    /// The page's canvas element, which the surface consumed.
-    #[cfg(target_arch = "wasm32")]
-    element: web_sys::HtmlCanvasElement,
-    /// The window took the last frame; a covered window takes none.
-    shown: bool,
-}
-
-impl GpuCanvas {
-    /// Ask for the adapter and device and configure `target` for them. Fails when the
-    /// build's graphics API is unavailable.
-    pub async fn open(target: RenderTarget) -> Result<Self, String> {
+impl Gpu {
+    pub async fn new(target: RenderTarget, msaa: bool) -> Result<(Self, Canvas), String> {
         let api = GRAPHICS_API;
         let instance = wgpu::Instance::new(wgpu::InstanceDescriptor {
             backends: BACKENDS,
@@ -98,6 +76,7 @@ impl GpuCanvas {
             })
             .await
             .map_err(|error| format!("{api} adapter unavailable: {error}"))?;
+        let bloom_format = bloom_format(adapter.features());
         // WebGPU's defaults, but no more inter-stage variables than the adapter has:
         // the iOS simulator's Metal offers 15 of the 16, and the shaders fit in 15.
         // Browsers, Macs and iPads offer at least 16, so they get the defaults.
@@ -117,8 +96,6 @@ impl GpuCanvas {
             })
             .await
             .map_err(|error| format!("{api} device unavailable: {error}"))?;
-        #[cfg(target_arch = "wasm32")]
-        let element = target.clone();
         #[cfg(target_arch = "wasm32")]
         let surface = instance
             .create_surface(wgpu::SurfaceTarget::Canvas(target))
@@ -144,130 +121,19 @@ impl GpuCanvas {
         config.format = config.format.remove_srgb_suffix();
         config.alpha_mode = wgpu::CompositeAlphaMode::Opaque;
         surface.configure(&device, &config);
-        Ok(Self {
-            device,
-            queue,
-            canvas: Canvas { surface, config },
-            features: adapter.features(),
-            max_texture: adapter.limits().max_texture_dimension_2d,
-            error,
-            #[cfg(target_arch = "wasm32")]
-            element,
-            shown: true,
-        })
-    }
-
-    /// The canvas's texture format, which an overlay draws in.
-    pub fn surface_format(&self) -> wgpu::TextureFormat {
-        self.canvas.config.format
-    }
-
-    /// The page's canvas element.
-    #[cfg(target_arch = "wasm32")]
-    pub fn element(&self) -> &web_sys::HtmlCanvasElement {
-        &self.element
-    }
-
-    /// The drawing buffer's size in device pixels.
-    pub fn size(&self) -> (u32, u32) {
-        (self.canvas.config.width, self.canvas.config.height)
-    }
-
-    /// Size the drawing buffer to `size` device pixels, as the renderer's frame does.
-    pub fn resize(&mut self, (width, height): (u32, u32)) {
-        let fit = |side: u32| side.clamp(1, self.max_texture);
-        let size = (fit(width), fit(height));
-        let config = &mut self.canvas.config;
-        if (config.width, config.height) != size {
-            (config.width, config.height) = size;
-            self.canvas.surface.configure(&self.device, config);
-        }
-    }
-
-    /// Whether the window took the last frame; a covered window takes none.
-    pub fn frame_shown(&self) -> bool {
-        self.shown
-    }
-
-    /// The first error the device reported, if any.
-    pub fn error(&self) -> Option<String> {
-        self.error.get()
-    }
-
-    /// Show a frame cleared to `clear` with `overlay` (the menus) drawn over it with the
-    /// device, the queue and the frame's view, as the renderer shows one before any
-    /// scene (`Frame::present`).
-    pub fn present(
-        &mut self,
-        clear: wgpu::Color,
-        overlay: impl FnOnce(&wgpu::Device, &wgpu::Queue, &wgpu::TextureView),
-    ) {
-        let output = match self.canvas.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(texture)
-            | wgpu::CurrentSurfaceTexture::Suboptimal(texture) => texture,
-            wgpu::CurrentSurfaceTexture::Outdated => {
-                self.canvas
-                    .surface
-                    .configure(&self.device, &self.canvas.config);
-                return;
-            }
-            wgpu::CurrentSurfaceTexture::Occluded => {
-                self.shown = false;
-                return;
-            }
-            wgpu::CurrentSurfaceTexture::Timeout => return,
-            error => {
-                self.error.set(format!("Window unavailable: {error:?}"));
-                return;
-            }
-        };
-        let view = output.texture.create_view(&Default::default());
-        let mut encoder = self.device.create_command_encoder(&Default::default());
-        encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("blank window"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-                view: &view,
-                depth_slice: None,
-                resolve_target: None,
-                ops: wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(clear),
-                    store: wgpu::StoreOp::Store,
-                },
-            })],
-            ..Default::default()
-        });
-        self.queue.submit([encoder.finish()]);
-        overlay(&self.device, &self.queue, &view);
-        self.queue.present(output);
-        self.shown = true;
-    }
-}
-
-impl Gpu {
-    /// The renderer's device on `opened`, multisampled when `msaa` (fixed for its life).
-    pub fn on(opened: GpuCanvas, msaa: bool) -> Result<(Self, Canvas), String> {
-        let GpuCanvas {
-            device,
-            queue,
-            canvas,
-            features,
-            max_texture,
-            error,
-            ..
-        } = opened;
         let samples = if msaa { SAMPLE_COUNT } else { 1 };
         let gpu = Self {
             layouts: Rc::new(Layouts::new(&device)),
-            canvas_format: canvas.config.format,
-            bloom_format: bloom_format(features),
+            canvas_format: config.format,
+            bloom_format,
             samples,
-            adapter_max_texture: max_texture,
+            adapter_max_texture: adapter.limits().max_texture_dimension_2d,
             transient: transient_usage(),
             device,
             queue,
             error,
         };
-        Ok((gpu, canvas))
+        Ok((gpu, Canvas { surface, config }))
     }
 }
 

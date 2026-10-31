@@ -6,9 +6,6 @@
 
 // A Windows release build opens no console window.
 #![cfg_attr(all(windows, not(debug_assertions)), windows_subsystem = "windows")]
-// The menu-only build (`split.rs`) exists to find what the menu half reaches; the engine
-// it leaves out is dead code there by design.
-#![cfg_attr(feature = "menu-only", allow(dead_code, unused))]
 
 /// Say what went wrong where a developer looks: on stderr natively, on the console in a
 /// page, whose stderr goes nowhere.
@@ -33,8 +30,6 @@ mod input;
 #[cfg(target_os = "ios")]
 mod ios;
 mod links;
-#[cfg(all(target_arch = "wasm32", feature = "split"))]
-mod menu;
 mod overlay;
 mod page;
 mod pointer_lock;
@@ -43,8 +38,6 @@ mod room;
 mod room_api;
 #[cfg_attr(target_arch = "wasm32", path = "sockets_web.rs")]
 mod sockets;
-#[cfg(all(target_arch = "wasm32", feature = "split"))]
-mod split;
 mod surface_layers;
 mod tasks;
 mod text_entry;
@@ -92,7 +85,8 @@ fn main() {
     }
     let options = options(&arguments, links::development());
     let event_loop = winit::event_loop::EventLoop::new().expect("an event loop");
-    run(event_loop, options);
+    let app = app::App::new(options);
+    run(event_loop, app);
 }
 
 /// The command line; in a page its query, `?debug&directory=<url>` reading as
@@ -150,26 +144,17 @@ fn options(arguments: &[String], development: bool) -> app::Options {
 
 /// Run the app until it quits.
 #[cfg(not(target_arch = "wasm32"))]
-fn run(event_loop: winit::event_loop::EventLoop<()>, options: app::Options) {
-    let mut app = app::App::new(options);
+fn run(event_loop: winit::event_loop::EventLoop<()>, mut app: app::App) {
     if let Err(error) = event_loop.run_app(&mut app) {
         eprintln!("Sloppy Tanks stopped: {error}");
     }
 }
 
 /// Hand the app to the page's event loop; `main` returns at once.
-#[cfg(all(target_arch = "wasm32", not(feature = "split")))]
-fn run(event_loop: winit::event_loop::EventLoop<()>, options: app::Options) {
+#[cfg(target_arch = "wasm32")]
+fn run(event_loop: winit::event_loop::EventLoop<()>, app: app::App) {
     use winit::platform::web::EventLoopExtWebSys;
-    event_loop.spawn_app(app::App::new(options));
-}
-
-/// A page split in two (`split.rs`): Battle Setup from the menu half, then the app once
-/// the engine half has arrived. `main` returns at once.
-#[cfg(all(target_arch = "wasm32", feature = "split"))]
-fn run(event_loop: winit::event_loop::EventLoop<()>, options: app::Options) {
-    use winit::platform::web::EventLoopExtWebSys;
-    event_loop.spawn_app(split::Page::new(options));
+    event_loop.spawn_app(app);
 }
 
 #[cfg(test)]

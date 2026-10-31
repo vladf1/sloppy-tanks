@@ -8,13 +8,10 @@ import { pageHealth } from "./scripts/page-health.ts";
 const base = process.env.DEPLOY_BASE || "/sloppy-tanks/";
 const gamePage = fileURLToPath(new URL("./index.html", import.meta.url));
 
-/** The shell binaries `index.html` may download, WebGPU first, each its menu half and
- * then its engine half (`scripts/split-wasm.mjs`). */
+/** The shell binaries `index.html` may download, WebGPU first. */
 const SHELL_BINARIES = [
   "src/generated/shell/sloppy-tanks_bg.wasm",
-  "src/generated/shell/sloppy-tanks_engine.wasm",
   "src/generated/shell-webgl/sloppy-tanks-webgl_bg.wasm",
-  "src/generated/shell-webgl/sloppy-tanks-webgl_engine.wasm",
 ];
 
 /**

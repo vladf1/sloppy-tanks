@@ -372,39 +372,6 @@ impl UiState {
 
 /// Draw every screen for this frame and return what the player chose.
 pub fn draw(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Action> {
-    draw_with(
-        context,
-        state,
-        view,
-        |context, state, art, view, actions| match view.phase {
-            MatchPhase::Paused => menus::pause(context, state, art, view, actions),
-            MatchPhase::Results => recap::results(context, state, art, view, actions),
-            MatchPhase::Playing | MatchPhase::Ready => hud::hud(context, state, art, view, actions),
-        },
-    )
-}
-
-/// Battle Setup and Settings only: the page's menu (`menu.rs`) draws these before the
-/// engine half of its binary arrives, and must not reach the battle's screens, which
-/// would carry them into the menu half.
-#[cfg_attr(
-    not(all(target_arch = "wasm32", feature = "split")),
-    expect(
-        dead_code,
-        reason = "only the page's split build shows Battle Setup alone"
-    )
-)]
-pub fn draw_setup(context: &egui::Context, state: &mut UiState, view: &View) -> Vec<Action> {
-    draw_with(context, state, view, |_, _, _, _, _| {})
-}
-
-/// The screens for this frame, `battle` drawing a round's.
-fn draw_with(
-    context: &egui::Context,
-    state: &mut UiState,
-    view: &View,
-    battle: impl FnOnce(&egui::Context, &mut UiState, &icons::Art, &View, &mut Vec<Action>),
-) -> Vec<Action> {
     let mut actions = Vec::new();
     let mut art = state.art.take().unwrap_or_else(|| icons::Art::new(context));
     art.refresh(context);
@@ -412,7 +379,13 @@ fn draw_with(
         setup::battle_setup(context, state, &art, view, &mut actions);
         state.rooms.remember_tab();
     } else {
-        battle(context, state, &art, view, &mut actions);
+        match view.phase {
+            MatchPhase::Paused => menus::pause(context, state, &art, view, &mut actions),
+            MatchPhase::Results => recap::results(context, state, &art, view, &mut actions),
+            MatchPhase::Playing | MatchPhase::Ready => {
+                hud::hud(context, state, &art, view, &mut actions);
+            }
+        }
     }
     if state.settings_draft.is_some() {
         menus::settings(context, state, &art, view, &mut actions);

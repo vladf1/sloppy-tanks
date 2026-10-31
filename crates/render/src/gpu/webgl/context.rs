@@ -122,97 +122,24 @@ fn context_options() -> js_sys::Object {
     options
 }
 
-/// The canvas's WebGL2 context, asked for as the renderer wants it: what a renderer
-/// starts on. The page opens it before the engine half of its binary has arrived and
-/// draws Battle Setup on it; the renderer then takes it over (`Renderer::on`). A canvas
-/// has one WebGL2 context, so the menu must ask for it with the renderer's options.
-pub struct GpuCanvas {
-    canvas: web_sys::HtmlCanvasElement,
-    raw: web_sys::WebGl2RenderingContext,
-}
-
-impl GpuCanvas {
-    /// Ask `canvas` for its WebGL2 context. Fails when WebGL2 is unavailable.
-    pub async fn open(canvas: web_sys::HtmlCanvasElement) -> Result<Self, String> {
-        let unavailable = |reason: &str| format!("{GRAPHICS_API} canvas unavailable: {reason}");
-        let raw = canvas
-            .get_context_with_context_options("webgl2", &context_options())
-            .map_err(|_| unavailable("WebGL2 context creation failed"))?
-            .ok_or_else(|| unavailable("WebGL2 is not supported"))?
-            .dyn_into()
-            .map_err(|_| unavailable("not a WebGL2 context"))?;
-        Ok(Self { canvas, raw })
-    }
-
-    /// The context, for the menu's overlay to draw with.
-    pub fn webgl_context(&self) -> web_sys::WebGl2RenderingContext {
-        self.raw.clone()
-    }
-
-    /// The page's canvas element.
-    pub fn element(&self) -> &web_sys::HtmlCanvasElement {
-        &self.canvas
-    }
-
-    /// The drawing buffer's size in device pixels.
-    pub fn size(&self) -> (u32, u32) {
-        (self.canvas.width().max(1), self.canvas.height().max(1))
-    }
-
-    /// Size the drawing buffer to `size` device pixels, as the renderer's frame does.
-    pub fn resize(&mut self, (width, height): (u32, u32)) {
-        let max = self
-            .raw
-            .get_parameter(glow::MAX_TEXTURE_SIZE)
-            .ok()
-            .and_then(|size| size.as_f64())
-            .map_or(1, |size| size.max(1.0) as u32);
-        let size = (width.clamp(1, max), height.clamp(1, max));
-        if self.size() != size {
-            self.canvas.set_width(size.0);
-            self.canvas.set_height(size.1);
-        }
-    }
-
-    /// A WebGL canvas takes every frame.
-    pub fn frame_shown(&self) -> bool {
-        true
-    }
-
-    /// The context's loss, the only error before a renderer.
-    pub fn error(&self) -> Option<String> {
-        self.raw
-            .is_context_lost()
-            .then(|| "GPU device lost: the WebGL context was lost. Reload to restart.".into())
-    }
-
-    /// Show a frame cleared to `clear` with `overlay` (the menus) drawn over it at the
-    /// drawing buffer's size, as the renderer shows one before any scene.
-    pub fn present(&mut self, [red, green, blue]: [f32; 3], overlay: impl FnOnce((u32, u32))) {
-        let size = self.size();
-        let raw = &self.raw;
-        raw.bind_framebuffer(glow::FRAMEBUFFER, None);
-        raw.viewport(0, 0, size.0 as i32, size.1 as i32);
-        raw.disable(glow::SCISSOR_TEST);
-        raw.color_mask(true, true, true, true);
-        raw.clear_color(red, green, blue, 1.0);
-        raw.clear(glow::COLOR_BUFFER_BIT);
-        overlay(size);
-    }
-}
-
 impl Gpu {
     /// The largest texture and renderbuffer edge.
     pub fn max_texture_size(&self) -> u32 {
         self.max_size
     }
 
-    /// The renderer's context on `opened`, multisampled when `msaa` (fixed for its
-    /// life). Whatever the menu left bound is reset to the cache's first record.
-    pub fn on(opened: GpuCanvas, msaa: bool) -> Result<(Self, Canvas), String> {
-        let GpuCanvas { canvas, raw } = opened;
+    pub async fn new(
+        canvas: web_sys::HtmlCanvasElement,
+        msaa: bool,
+    ) -> Result<(Self, Canvas), String> {
         let api = GRAPHICS_API;
         let unavailable = |reason: &str| format!("{api} canvas unavailable: {reason}");
+        let raw: web_sys::WebGl2RenderingContext = canvas
+            .get_context_with_context_options("webgl2", &context_options())
+            .map_err(|_| unavailable("WebGL2 context creation failed"))?
+            .ok_or_else(|| unavailable("WebGL2 is not supported"))?
+            .dyn_into()
+            .map_err(|_| unavailable("not a WebGL2 context"))?;
         let gl = glow::Context::from_webgl2_context(raw.clone());
         let extensions = gl.supported_extensions();
         // The HDR targets are RGBA16F renderbuffers and textures drawn into, which

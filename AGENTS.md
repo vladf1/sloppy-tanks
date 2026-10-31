@@ -59,14 +59,7 @@ the server:
   and `NetGame` (`sloppy-web`'s `native` feature). Built for wasm32
   (`pnpm run wasm`, into the ignored `src/generated/shell/`) it is the web page:
   `index.html` only starts it, on the browser's WebGPU, behind a loading view that
-  learns how it goes from `page.rs` (`data-shell`, `sloppy:*` marks). The page's binary
-  comes in two halves (`split` feature, `scripts/split-wasm.mjs` with Binaryen's
-  wasm-split): Battle Setup and Settings run from the menu half (`menu.rs`) while the
-  engine half downloads, on the device and canvas the renderer then takes over, and
-  `split.rs` hands the window, egui context and screens to the app once it arrives. The
-  menu half holds what a `menu-only` build reaches; menu code that calls into the
-  engine throws before it arrives (`scripts/split-check.mjs`), so keep engine calls out
-  of Battle Setup and Settings (the team comes from the seed the menu draws). It passes and
+  learns how it goes from `page.rs` (`data-shell`, `sloppy:*` marks). It passes and
   reads their values typed (the second `impl` block of `game.rs` and `net_game.rs`),
   never their JSON (`crates/web/tests/fixtures/page-json.json` pins that byte for
   byte), and only lays out and plays what they produce. Game rules stay out of the
@@ -115,8 +108,7 @@ Use Node.js 24 LTS, pnpm 11 or newer and Rust through rustup; if `pnpm`
 is missing, install it with `brew install pnpm`. `rust-toolchain.toml` pins
 Rust with rustfmt, clippy and the `wasm32-unknown-unknown` and
 `x86_64-unknown-linux-musl` targets; the wasm-bindgen CLI must be 0.2.129, the
-crate pin. The page's build fetches its own Binaryen (`scripts/binaryen.mjs`, once,
-into the user cache; `SLOPPY_BINARYEN` names one offline). Put rustup's cargo before Homebrew's:
+crate pin. Put rustup's cargo before Homebrew's:
 `export PATH=/opt/homebrew/opt/rustup/bin:$HOME/.cargo/bin:$PATH`. `devEngines` in `package.json` pins the exact pnpm
 version, which pnpm 11+ switches to by itself, and makes npm (including `npx`)
 refuse to run; `engines.pnpm` rejects older pnpm, which ignores the pin. Run

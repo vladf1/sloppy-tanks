@@ -24,7 +24,7 @@ use wasm_bindgen::closure::Closure;
 use wasm_bindgen::{JsCast, JsValue};
 use wgpu::util::DeviceExt;
 
-pub use context::{Canvas, Gpu, GpuCanvas, RenderTarget};
+pub use context::{Canvas, Gpu, RenderTarget};
 pub use instance_store::InstanceStore;
 pub use pipelines::Pipelines;
 pub use resources::{MaterialBinding, PageBuffers};
