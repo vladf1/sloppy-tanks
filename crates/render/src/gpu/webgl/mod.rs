@@ -15,7 +15,7 @@ mod programs;
 mod resources;
 mod textures;
 
-pub use context::{Canvas, Gpu};
+pub use context::{Canvas, Gpu, GpuCanvas};
 
 /// What the renderer draws into: the page's canvas.
 pub type RenderTarget = web_sys::HtmlCanvasElement;

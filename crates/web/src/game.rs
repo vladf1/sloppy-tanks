@@ -107,7 +107,7 @@ use crate::page::{
 use crate::recap::{RoundRecap, round_recap};
 use crate::sounds::SoundPlanner;
 use crate::stats::{frame_readings, presentation_stats, renderer_readings};
-use sloppy_render::gpu::RenderTarget;
+use sloppy_render::gpu::{GpuCanvas, RenderTarget};
 
 use glam::Vec2;
 use serde::de::DeserializeOwned;
@@ -881,6 +881,16 @@ impl Game {
         view_config: ViewConfig,
         config: GameConfig,
     ) -> Result<Game, PageError> {
+        let opened = GpuCanvas::open(canvas).await.map_err(js_error)?;
+        Self::create_on(opened, view_config, config).await
+    }
+
+    /// `create_with` on a device and canvas the page's menu opened and drew on first.
+    pub async fn create_on(
+        opened: GpuCanvas,
+        view_config: ViewConfig,
+        config: GameConfig,
+    ) -> Result<Game, PageError> {
         let PageView {
             mut view,
             canvas,
@@ -888,7 +898,7 @@ impl Game {
             seed,
             pacing,
             shell,
-        } = create_view(canvas, view_config).await?;
+        } = create_view(opened, view_config).await?;
         let mut options =
             initial_game_options(seed, config.map, config.extra_levels, config.difficulty);
         if let Some(kind) = config.human_kind {
