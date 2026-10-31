@@ -1,9 +1,9 @@
 //! Dusty Dig: a broad east/west crossing, sheltered outer loops and two crate-plugged rock cuts.
 
 use super::arena::{CoverDef, boundary_walls};
-use super::data::ARENA;
+use super::kinds::CoverKind;
+use super::model_data::ARENA;
 use super::quarry_barrier_shapes::DRAGON_TOOTH_SCALE;
-use super::types::CoverKind;
 
 const STONE: u32 = 0xd2bd99;
 

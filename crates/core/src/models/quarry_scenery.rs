@@ -12,9 +12,10 @@ use crate::geometry::math::{js_round, smoothstep};
 use crate::geometry::{Attribute, Mesh, VERTEX_ALPHA, cylinder_geometry, merge_geometries};
 use crate::scene::{Material, Node};
 use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
-use crate::sim::data::ARENA;
+use crate::sim::kinds::Team;
 use crate::sim::math::Random;
-use crate::sim::types::{Team, Vec2};
+use crate::sim::math::Vec2;
+use crate::sim::model_data::ARENA;
 
 use super::batching::batch;
 use super::concrete_surfaces::concrete_wall;

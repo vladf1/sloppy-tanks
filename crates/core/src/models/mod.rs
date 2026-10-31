@@ -183,9 +183,9 @@ pub mod part {
 }
 
 /// The side a vehicle, flag or spawn pad belongs to; indexes [`TEAM_COLORS`].
-pub use crate::sim::types::Team;
+pub use crate::sim::kinds::Team;
 
-pub use crate::sim::types::VehicleKind;
+pub use crate::sim::kinds::VehicleKind;
 
 #[cfg(test)]
 mod tests;

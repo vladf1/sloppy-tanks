@@ -27,7 +27,7 @@ use super::tank_surfaces::{
 use super::{Team, VehicleKind, part};
 use crate::geometry::{Attribute, CylinderGeometry, Mesh, VERTEX_ALPHA, ring_geometry};
 use crate::scene::{Material, Node, Shading};
-use crate::sim::data::vehicle;
+use crate::sim::model_data::vehicle_scale;
 
 #[path = "tank_running_gear.rs"]
 mod running_gear;
@@ -203,7 +203,7 @@ pub fn tank_model_variant(kind: VehicleKind, team: Team, open_turret_ring: bool)
             },
         };
         apply_vehicle_livery(&mut root, &livery);
-        root.scale = DVec3::splat(vehicle(kind).scale);
+        root.scale = DVec3::splat(vehicle_scale(kind));
         root
     })
 }

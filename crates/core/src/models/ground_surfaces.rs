@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use crate::geometry::Mesh;
 use crate::scene::{Effect, Material, TextureRef, Wrap};
-use crate::sim::data::ARENA;
+use crate::sim::model_data::ARENA;
 
 use super::effects_scenery::MEADOW_SWAY;
 use super::village_ground::{VILLAGE_GROUND_BAKE, VILLAGE_GROUND_TEXTURE};

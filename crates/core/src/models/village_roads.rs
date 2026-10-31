@@ -1,7 +1,7 @@
 //! Port of `village-roads.ts`: the Pine Village road strips, shared by the ground
 //! shader and surface effects (track dust) so their boundaries stay aligned.
 
-use crate::sim::data::ARENA;
+use crate::sim::model_data::ARENA;
 
 /// How far inside a road edge the solid dirt starts, in metres: the ground shader
 /// frays the edge into grass for about this far.

@@ -24,8 +24,9 @@ use super::model_primitives::{
     put, rotated, shadow_receiver,
 };
 use crate::sim::arena::{BOUNDARY_THICKNESS, spawn_positions};
-use crate::sim::data::ARENA;
-use crate::sim::types::{Team, Vec2};
+use crate::sim::kinds::Team;
+use crate::sim::math::Vec2;
+use crate::sim::model_data::ARENA;
 
 /// Index of the fleet among [`HarborScenery::root`]'s children; the beacons are
 /// the last child.

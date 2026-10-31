@@ -36,7 +36,7 @@ use super::village_roads::village_roads;
 use super::village_tracks::bake_tracks;
 use crate::geometry::math::smoothstep;
 use crate::sim::arena::{CoverDef, PICKUP_LAYOUT, arena_layout};
-use crate::sim::types::CoverKind;
+use crate::sim::kinds::CoverKind;
 
 /// The baked plan the village ground samples.
 pub const VILLAGE_GROUND_TEXTURE: &str = "textures/ground/village-ground.webp";

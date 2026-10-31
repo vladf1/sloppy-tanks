@@ -14,7 +14,7 @@ use crate::geometry::math::{compose, decompose, normalize, quat_from_unit_vector
 use crate::geometry::{Mesh, box_geometry, cylinder_geometry, rounded_box_geometry};
 use crate::scene::{Color, Material, Node};
 
-pub use crate::sim::data::TEAM_COLORS;
+pub use crate::sim::model_data::TEAM_COLORS;
 
 /// Default metalness and roughness of `material()`.
 pub const DEFAULT_METALNESS: f64 = 0.05;
