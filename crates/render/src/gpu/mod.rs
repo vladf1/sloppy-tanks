@@ -1810,14 +1810,20 @@ impl Renderer {
 
     /// Bake static scenery (world transforms as authored) into batches.
     pub fn add_scenery(&mut self, root: &Node, lifetime: Lifetime) -> InstanceId {
-        let pending = self.prepare_pending_scenery(root);
+        let prepared = prepare_scenery(root, &mut self.interner);
+        let merge = self.merge_for(&prepared, true);
+        let pending = PendingModel { prepared, merge };
         self.add_pending_scenery(pending, lifetime)
     }
 
     /// The CPU half of [`Self::add_scenery`], as [`Self::prepare_pending_model`] is of
     /// `add_model`: a caller building an arena over frames uploads it in a later one.
-    pub fn prepare_pending_scenery(&mut self, root: &Node) -> PendingModel {
-        let prepared = prepare_scenery(root, &mut self.interner);
+    /// It takes the scenery: its meshes go once the batches hold their copies, before
+    /// the shadow merge copies the casters again, so a theme's 20 MB of source
+    /// geometry and every merge of it never all sit in the Wasm heap at once.
+    pub fn prepare_pending_scenery(&mut self, root: Node) -> PendingModel {
+        let prepared = prepare_scenery(&root, &mut self.interner);
+        drop(root);
         let merge = self.merge_for(&prepared, true);
         PendingModel { prepared, merge }
     }

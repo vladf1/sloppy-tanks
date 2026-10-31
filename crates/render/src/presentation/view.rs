@@ -1260,10 +1260,13 @@ impl Presentation {
 
     /// Draw a theme's scenery model's generated textures and batch its static parts
     /// for upload.
-    fn prepare_scenery(&mut self, key: &'static str, model: SceneryModel) -> PendingScenery {
+    fn prepare_scenery(&mut self, key: &'static str, mut model: SceneryModel) -> PendingScenery {
         self.textures
             .request_scenery(&mut self.renderer, &model.root);
-        let statics = self.renderer.prepare_pending_scenery(&model.root);
+        // The batches take the static parts' source meshes (`prepare_pending_scenery`).
+        let statics = self
+            .renderer
+            .prepare_pending_scenery(std::mem::take(&mut model.root));
         PendingScenery {
             key,
             model,
