@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 
 /** The release version players and `/health` see: `MAJOR.MINOR.PATCH.BUILD`, such as
  * `1.1.0.628`. The first three parts are `version` in package.json, bumped by hand; the
- * build is the Pages workflow's run number, which only main's deploys pass. Pull request
+ * build is the deploy workflow's run number, which only main's deploys pass. Pull request
  * and local builds have no build number and report the three parts alone.
  *
  * The build number orders releases, so it is a version part rather than SemVer build

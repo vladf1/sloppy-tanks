@@ -1,4 +1,4 @@
-name: Build and deploy to GitHub Pages
+name: Build and deploy
 
 on:
   push:
@@ -9,11 +9,11 @@ permissions:
   contents: read
 
 concurrency:
-  group: pages
+  group: production
   cancel-in-progress: false
 
 jobs:
-  # The whole quality gate (check.yml), whose site job also builds the Pages artifact
+  # The whole quality gate (check.yml), whose site job also builds the site
   # in parallel with the Rust jobs. Running it on main also saves the Cargo caches
   # that pull requests restore.
   check:
@@ -23,8 +23,7 @@ jobs:
       contents: read
       packages: write
     with:
-      # The repository's Pages custom domain, sloppy-tanks.fridman.me, serves the site at
-      # its root; fridman.me/sloppy-tanks/ redirects there.
+      # sloppytanks.com serves the site at its root.
       deploy-base: /
       # The server directory and its production servers (DIRECTORY_URL in
       # scripts/servers.mjs; a test keeps the two equal). Game changes on main need the
@@ -36,24 +35,10 @@ jobs:
       # GitHub increments on every run (a re-run keeps it).
       build-number: ${{ github.run_number }}
 
+  # The production Worker at sloppytanks.com, hosted like the dev site: precompressed
+  # engines and immutable /assets/. The redirect Worker sends www.sloppytanks.com and
+  # the old sloppy-tanks.fridman.me there.
   deploy:
-    needs: check
-    runs-on: ubuntu-24.04
-    permissions:
-      pages: write
-      id-token: write
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    steps:
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v5
-
-  # The production Worker at sloppytanks.com, which serves the same build as Pages with
-  # the dev site's hosting: precompressed engines and immutable /assets/. The redirect
-  # Worker sends www.sloppytanks.com there.
-  deploy-worker:
     needs: check
     runs-on: ubuntu-24.04
     steps:

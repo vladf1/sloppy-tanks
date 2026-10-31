@@ -86,7 +86,7 @@ fn web_site() -> &'static str {
     if crate::directory::ENVIRONMENT == "dev" {
         "https://sloppy-tanks-dev.fridman.me/"
     } else {
-        "https://sloppy-tanks.fridman.me/"
+        "https://sloppytanks.com/"
     }
 }
 
@@ -251,7 +251,7 @@ mod tests {
     #[test]
     fn the_app_invites_to_the_web_version() {
         let link = invite_link("ABCD2345");
-        assert!(link.starts_with("https://sloppy-tanks"), "{link}");
-        assert!(link.ends_with(".fridman.me/?room=ABCD2345"), "{link}");
+        assert_eq!(link, format!("{}?room=ABCD2345", web_site()));
+        assert!(web_site().starts_with("https://"), "{link}");
     }
 }

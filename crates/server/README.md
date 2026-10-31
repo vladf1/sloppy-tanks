@@ -159,15 +159,15 @@ The `server` job in `.github/workflows/check.yml` builds the binary once, runs t
 page-shell tests against it, then builds the image and pushes it to
 `ghcr.io/vladf1/sloppy-tanks-server` (a public package) as:
 
-| Tag             | Moved by                                   | Meaning                                       |
-| --------------- | ------------------------------------------ | --------------------------------------------- |
-| `<serverBuild>` | main's first build of it                   | One image per server build (`/health`'s hash) |
-| `pr-<number>`   | each pull request push                     | That pull request's latest server             |
-| `main`, `sha-…` | each push to `main`                        | Main's latest server, and per commit          |
-| `production`    | the Pages workflow, after the site deploys | What production should run                    |
+| Tag             | Moved by                                    | Meaning                                       |
+| --------------- | ------------------------------------------- | --------------------------------------------- |
+| `<serverBuild>` | main's first build of it                    | One image per server build (`/health`'s hash) |
+| `pr-<number>`   | each pull request push                      | That pull request's latest server             |
+| `main`, `sha-…` | each push to `main`                         | Main's latest server, and per commit          |
+| `production`    | the deploy workflow, after the site deploys | What production should run                    |
 
 A commit that leaves the server build alone (page, renderer or docs changes) only
-retags the existing image. Main's builds pass the Pages workflow's run number, which
+retags the existing image. Main's builds pass the deploy workflow's run number, which
 completes the release version (`1.1.0.628`, `scripts/release-version.mjs`) the image
 records as a label and as `SLOPPY_RELEASE` for `/health` and the dashboard. When main
 first ships a server build a pull request already built, it restamps that image's

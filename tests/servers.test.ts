@@ -14,7 +14,7 @@ test("a machine is reached over SSH at its address and checked through its nip.i
   assert.throws(() => serverMachine("dev", "45-63-56-58.nip.io"), /Not an IPv4 address/);
 });
 
-test("the Pages build, the traffic bots, the pilots and the startup scripts use one server directory", () => {
+test("the production build, the traffic bots, the pilots and the startup scripts use one server directory", () => {
   assert.equal(
     read("../.github/workflows/deploy.yml").match(/directory-url: (\S+)/)?.[1],
     DIRECTORY_URL,

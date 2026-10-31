@@ -522,9 +522,10 @@ offline.
   beside the Wasm for the shell (`crates/desktop/src/assets.rs`), which the native
   apps embed instead. Do not embed files in the page's Wasm, which downloads again
   with every release, nor fetch a runtime file by its plain path from the game page.
-- Production is GitHub Pages at the custom domain `sloppy-tanks.fridman.me`; its
-  workflow builds with `DEPLOY_BASE=/`, and `fridman.me/sloppy-tanks/` redirects
-  there. Local builds and the dev server keep the default `/sloppy-tanks/` base.
+- Production is the Cloudflare Worker `sloppy-tanks` at `sloppytanks.com`, hosted
+  like the dev site (`deploy/site/`); main's deploy workflow builds it with
+  `DEPLOY_BASE=/`, and a redirect Worker sends `www.sloppytanks.com` and the old
+  `sloppy-tanks.fridman.me` there. Local builds and the dev server keep the default `/sloppy-tanks/` base.
   The workflow runs the same parallel jobs as the pull-request check
   (`.github/workflows/check.yml`, each running one of the scripts
   `pnpm run check` chains), so a lint/type/build/test failure blocks the
@@ -544,7 +545,7 @@ offline.
   to the dedicated Cloudflare Worker `sloppy-tanks-dev` (setup and URLs in
   `README.md`). It publishes current local files, including uncommitted
   changes. Use this when asked to publish the dev site. Do not publish it to
-  production or change the production GitHub Pages workflow, and never upload
+  production or change the production deploy workflow, and never upload
   the repository directory.
 - `deploy:dev` first publishes the dev site's own multiplayer server
   (`scripts/server.mjs publish --dev`: it pushes the checkout's image as
@@ -558,7 +559,7 @@ offline.
   `node scripts/content-version.mjs`); `crates/render`, `crates/web` and the page
   shell are outside it. Each machine runs its server as a container image under
   Podman, behind Caddy's own container: CI pushes one image per server build and,
-  after the Pages deploy, moves `:production` to main's. Production then needs
+  after the site deploy, moves `:production` to main's. Production then needs
   `pnpm run server:update` only where auto-update is off (it is on by default;
   `server:status` shows it); ask before running it.
   `pnpm run server:deploy` from `main` is the SSH fallback when CI or the
@@ -590,7 +591,7 @@ offline.
   Setup shows one build line (release version and commit); build time and the rest
   belong in `/health` (`scripts/page-health.ts`, on production too).
 - The release version is `MAJOR.MINOR.PATCH.BUILD` (`scripts/release-version.mjs`):
-  `version` in package.json, bumped by hand, plus the Pages workflow's
+  `version` in package.json, bumped by hand, plus the deploy workflow's
   `github.run_number`, so only main's deploys have the fourth part. `/health` reports
   it as `version`, beside `protocol`, the number clients and the traffic bots read. The server image carries the release of the first main build that
   shipped its server build; later builds only retag it, so the VPS does not restart

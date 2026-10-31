@@ -15,7 +15,7 @@ git worktree add --detach artifacts/performance/web-shell/baseline-main 90423be0
 
 `--reference-dist <dist>` selects another copy of that build and `--reference <url>`
 another served page, when the user selects one. Production
-(`https://sloppy-tanks.fridman.me/`) serves the egui shell since PR 125 and is no
+(`https://sloppytanks.com/`) serves the egui shell since PR 125 and is no
 reference: the capture instruments DOM UI classes that page no longer has.
 
 ## Find the existing harness
