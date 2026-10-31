@@ -118,6 +118,16 @@ impl Presentation {
                 BuildStage::SceneryModel
             }
             BuildStage::SceneryModel => match self.scenery_model(&state.map_theme) {
+                // Read back in a few milliseconds, a scenery is batched and uploaded in
+                // the same task, still shorter than building one: its source meshes and
+                // their batches never stay in the heap across a frame, where whatever
+                // else lands then (a decoded preview, the simulation's world) would grow
+                // the heap's peak on top of them.
+                Some((key, model)) if model.read_back => {
+                    let pending = self.prepare_scenery(key, model);
+                    self.upload_scenery(pending);
+                    BuildStage::SceneryPipelines
+                }
                 Some(model) => BuildStage::SceneryBatches(Box::new(model)),
                 None => BuildStage::Theme,
             },

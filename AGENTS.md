@@ -302,7 +302,12 @@ sampled with `ps` over fresh browsers, is a separate measurement.
   stop sharing with it (`scene_codec::fresh_processes_share_alike` counts them). The
   shell writes a built scenery at the build's next step, while its tree lives anyway
   (kept until the arena was ready, it raised the heap's peak by 12 MB), and the page
-  stores files only once the arena is ready.
+  stores files only once the arena is ready. A read-back scenery is batched and
+  uploaded in the task that reads it: left across a frame, its meshes and batches
+  sat under whatever landed then (a decoded preview, the simulation's world), and a
+  cached visit's heap peaked higher than a built one's, whose freed temporaries
+  leave room. Compare heaps of warm visits (`geometry-cache-check.mjs`): a first
+  visit's downloads move where its allocations land by several MB.
 - Meshes have no GPU buffers of their own: they share vertex and index pages
   (`crates/render/src/mesh_pages.rs`, `MeshStore`), their indices written absolute
   in the vertex page, so every draw passes `base_vertex` 0 (WebGL2 has none) and a
