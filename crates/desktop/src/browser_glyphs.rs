@@ -49,6 +49,8 @@ extern "C" {
     fn measure_text(this: &Context2d, text: &str) -> web_sys::TextMetrics;
     #[wasm_bindgen(method, js_name = clearRect)]
     fn clear_rect(this: &Context2d, x: f64, y: f64, width: f64, height: f64);
+    #[wasm_bindgen(method, js_name = setTransform)]
+    fn set_transform(this: &Context2d, a: f64, b: f64, c: f64, d: f64, e: f64, f: f64);
     #[wasm_bindgen(method, js_name = fillText)]
     fn fill_text(this: &Context2d, text: &str, x: f64, y: f64);
     #[wasm_bindgen(method, js_name = getImageData)]
@@ -76,6 +78,7 @@ extern "C" {
 
 struct Rasterizer {
     context: Context2d,
+    window: web_sys::Window,
     /// The font the context has, so a run of one size sets it once.
     font: String,
     performance: Option<web_sys::Performance>,
@@ -177,10 +180,12 @@ impl Rasterizer {
         context.set_text_baseline("alphabetic");
         let stats = js_sys::Object::new();
         js_sys::Reflect::set(&js_sys::global(), &"sloppyGlyphs".into(), &stats).ok()?;
+        let window = web_sys::window()?;
         Some(Self {
             context,
             font: String::new(),
-            performance: web_sys::window().and_then(|window| window.performance()),
+            performance: window.performance(),
+            window,
             stats,
             count: 0,
             milliseconds: 0.0,
@@ -203,24 +208,46 @@ impl Rasterizer {
         if egui::epaint::text::has_emoji_presentation(request.cluster) {
             return None;
         }
-        let font = format!("{weight} {}px {stack}", request.font_size_px);
+        // The font in CSS pixels, drawn scaled to the device's: a size picks its optical
+        // size (San Francisco's Text or Display cut, with their tracking) by CSS pixels,
+        // as the DOM page's text did, not by the physical pixels egui asks for.
+        let scale = self.window.device_pixel_ratio().max(1.0);
+        let font = format!(
+            "{weight} {}px {stack}",
+            f64::from(request.font_size_px) / scale
+        );
         if font != self.font {
             self.context.set_font(&font);
-            self.context.set_fill_style("#fff");
+            // The sizes asked for, for measurements (`sloppyGlyphs.sizes`).
+            let size = format!("{weight}/{}", request.font_size_px);
+            let sizes = js_sys::Reflect::get(&self.stats, &"sizes".into())
+                .ok()
+                .and_then(|sizes| sizes.dyn_into::<js_sys::Array>().ok())
+                .unwrap_or_else(|| {
+                    let sizes = js_sys::Array::new();
+                    let _ = js_sys::Reflect::set(&self.stats, &"sizes".into(), &sizes);
+                    sizes
+                });
+            if !sizes.includes(&size.as_str().into(), 0) {
+                sizes.push(&size.into());
+            }
             self.font = font;
         }
         let metrics = self.context.measure_text(request.cluster);
-        let advance_px = metrics.width() as f32;
+        let advance_px = (metrics.width() * scale) as f32;
         let x = f64::from(request.subpixel_offset_px);
-        let left = (x - metrics.actual_bounding_box_left()).floor() as i32 - PADDING_PX;
-        let right = (x + metrics.actual_bounding_box_right()).ceil() as i32 + PADDING_PX;
-        let top = (-metrics.actual_bounding_box_ascent()).floor() as i32 - PADDING_PX;
-        let bottom = metrics.actual_bounding_box_descent().ceil() as i32 + PADDING_PX;
+        let ink_left = metrics.actual_bounding_box_left() * scale;
+        let ink_right = metrics.actual_bounding_box_right() * scale;
+        let ink_up = metrics.actual_bounding_box_ascent() * scale;
+        let ink_down = metrics.actual_bounding_box_descent() * scale;
+        let left = (x - ink_left).floor() as i32 - PADDING_PX;
+        let right = (x + ink_right).ceil() as i32 + PADDING_PX;
+        let top = (-ink_up).floor() as i32 - PADDING_PX;
+        let bottom = ink_down.ceil() as i32 + PADDING_PX;
         let width = right - left;
         let height = bottom - top;
         // A space has no ink, but egui still needs a bitmap to take its advance.
-        let inked = metrics.actual_bounding_box_left() + metrics.actual_bounding_box_right() > 0.0
-            && metrics.actual_bounding_box_ascent() + metrics.actual_bounding_box_descent() > 0.0;
+        let inked = ink_left + ink_right > 0.0 && ink_up + ink_down > 0.0;
         if !inked || width <= 0 || height <= 0 {
             return Some(RasterizedGlyph {
                 bitmap: GlyphBitmap {
@@ -238,12 +265,14 @@ impl Rasterizer {
             canvas.set_height(canvas.height().max(height as u32));
             self.context.set_text_baseline("alphabetic");
             self.context.set_font(&self.font);
-            self.context.set_fill_style("#fff");
         }
+        self.context.set_transform(1.0, 0.0, 0.0, 1.0, 0.0, 0.0);
         self.context
             .clear_rect(0.0, 0.0, f64::from(width), f64::from(height));
+        self.context.set_fill_style("#fff");
         self.context
-            .fill_text(request.cluster, x - f64::from(left), -f64::from(top));
+            .set_transform(scale, 0.0, 0.0, scale, x - f64::from(left), -f64::from(top));
+        self.context.fill_text(request.cluster, 0.0, 0.0);
         let data = self.context.get_image_data(0, 0, width, height).data().0;
         let pixels = data
             .as_chunks::<4>()
