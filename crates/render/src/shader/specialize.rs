@@ -26,8 +26,9 @@ use std::collections::HashMap;
 pub fn specialize(code: &str, flags: &[(&str, bool)]) -> String {
     let code = strip_comments(code);
     let code = fold_flag_branches(&code, flags);
-    let code = unroll_loops(&code);
-    let mut code = prune_functions(&code);
+    // Pruned first, the loops of functions no entry point reaches are not unrolled.
+    let code = prune_functions(&code);
+    let mut code = unroll_loops(&code);
     for (name, value) in flags {
         let declaration = format!("const {name}: bool = {value};\n");
         if let Some(at) = code.find(&declaration) {
@@ -583,6 +584,11 @@ fn identifiers(text: &str) -> impl Iterator<Item = &str> {
 /// the same code share one compile only when their modules are the same text: the
 /// vertex stage of most surface variants is, once their fragment code is gone.
 pub fn entry_point_source(code: &str, entry: &str) -> String {
+    entry_point_sources(code, &[entry]).remove(0)
+}
+
+/// [`entry_point_source`] for each of `entries`, reading `code` once.
+pub fn entry_point_sources(code: &str, entries: &[&str]) -> Vec<String> {
     let code = strip_comments(code);
     let (items, tail) = module_items(&code);
     let mut by_name: HashMap<&str, usize> = HashMap::new();
@@ -591,35 +597,40 @@ pub fn entry_point_source(code: &str, entry: &str) -> String {
             by_name.insert(name, index);
         }
     }
-    let mut kept: Vec<bool> = items
+    entries
         .iter()
-        .map(|item| item.name.is_none() || (item.entry && item.name == Some(entry)))
-        .collect();
-    assert!(
-        items
-            .iter()
-            .any(|item| item.entry && item.name == Some(entry)),
-        "no entry point {entry}"
-    );
-    let mut pending: Vec<usize> = (0..items.len()).filter(|&i| kept[i]).collect();
-    while let Some(index) = pending.pop() {
-        for word in identifiers(items[index].text) {
-            if let Some(&used) = by_name.get(word)
-                && !items[used].entry
-                && !std::mem::replace(&mut kept[used], true)
-            {
-                pending.push(used);
+        .map(|&entry| {
+            let mut kept: Vec<bool> = items
+                .iter()
+                .map(|item| item.name.is_none() || (item.entry && item.name == Some(entry)))
+                .collect();
+            assert!(
+                items
+                    .iter()
+                    .any(|item| item.entry && item.name == Some(entry)),
+                "no entry point {entry}"
+            );
+            let mut pending: Vec<usize> = (0..items.len()).filter(|&i| kept[i]).collect();
+            while let Some(index) = pending.pop() {
+                for word in identifiers(items[index].text) {
+                    if let Some(&used) = by_name.get(word)
+                        && !items[used].entry
+                        && !std::mem::replace(&mut kept[used], true)
+                    {
+                        pending.push(used);
+                    }
+                }
             }
-        }
-    }
-    let mut out = String::with_capacity(code.len());
-    for (item, kept) in items.iter().zip(kept) {
-        if kept {
-            out.push_str(item.text);
-        }
-    }
-    out.push_str(tail);
-    out
+            let mut out = String::with_capacity(code.len());
+            for (item, kept) in items.iter().zip(kept) {
+                if kept {
+                    out.push_str(item.text);
+                }
+            }
+            out.push_str(tail);
+            out
+        })
+        .collect()
 }
 
 #[cfg(test)]
