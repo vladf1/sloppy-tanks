@@ -127,6 +127,7 @@ whether Kache was on when reporting build times.
 ```sh
 pnpm run check                        # CI gate: format, Wasm/Vite build, lint, types, clippy, server, all tests
 pnpm run wasm                         # the page (the egui shell) into src/generated/shell/; rerun after Rust/WGSL edits
+pnpm run wasm:fast                    # the same, built for compile time: for checking how a change looks
 pnpm run wasm:engine                  # the sloppy-web engine for the fixtures, game preview and WireView
 cargo test --workspace --exclude sloppy-desktop --test integration navigation::   # one area of the core tests (add --release for seeded matches)
 node --import tsx --test tests/foo.test.ts    # focused Node test
@@ -140,7 +141,17 @@ pnpm run dev                          # browser work; use the printed URL
 `artifacts/performance/simulation-results.json`. `pnpm run build` creates
 `dist/`; it is a build output, not a place to edit source behavior. Vite and
 `tsc` import the generated glue, so build it before them; `build`, `build:dev` and
-`check` build the shell and the engine (`pnpm run wasm:all`). Keep
+`check` build the shell and the engine (`pnpm run wasm:all`).
+
+Pick the build for what you are checking. While iterating on how something looks or
+behaves (layout, text, a menu, a shader's colours), build only what you will open, as
+fast as it builds: `pnpm run wasm:fast` (`--fast` works with every `build-wasm.mjs`
+mode), then `DEPLOY_BASE=/ pnpm exec vite build --outDir <dir>` with the default config,
+and lint the other graphics backend with clippy rather than building it. After a shell
+edit that took about 4 s against 52 for release, for a binary 70% larger that renders a
+little slower. Timing, frame rates, Wasm size and anything published use the optimized
+release build (`pnpm run wasm`, `wasm:all`, `build:dev`), which every deploy and CI
+build already is. Keep
 `--workspace --exclude sloppy-desktop` on focused cargo commands, as `test:rust` and `rust:clippy` have it: `-p sloppy-core` alone, or the
 desktop crate's features, resolve different dependency features and compile Rapier
 and its stack a second time. Linux CI leaves `sloppy-desktop` out, since its window,

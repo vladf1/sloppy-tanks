@@ -117,6 +117,7 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 ```sh
 pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
 pnpm run wasm           # the page: the egui shell's release Wasm and glue into src/generated/shell/
+pnpm run wasm:fast      # the same built for compile time, to check how a change looks (never to time or deploy)
 pnpm run wasm:engine    # the sloppy-web engine into src/generated/engine/ (fixtures, game preview, WireView)
 pnpm run wasm:all       # both
 pnpm test               # script, directory, traffic-bot and pilot tests (needs pnpm run server:build and pilot:build)

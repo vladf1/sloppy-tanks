@@ -19,6 +19,10 @@
 // `sloppy-web`) into `src/generated/engine-labs/`, so a lab build never replaces the
 // engine the fixtures load.
 //
+// `--fast` builds any of these with the `wasm-fast` Cargo profile instead of release:
+// minutes faster after an edit, but larger and slower, so it is for checking how a change
+// looks, never for timing, measuring or deploying (Cargo.toml says more).
+//
 // Every build names its graphics backend (`webgpu` or `webgl`): none is a crate default.
 // The shell lists the servers of `SLOPPY_SERVER_ENVIRONMENT` (production unless set;
 // `build:dev` sets `dev`) from `SLOPPY_DIRECTORY_URL`, both read when it compiles.
@@ -78,6 +82,9 @@ function capture(command, args) {
   return result.status === 0 ? result.stdout.trim() : "";
 }
 
+const fast = process.argv.includes("--fast");
+const profile = fast ? "wasm-fast" : "release";
+
 const commit = capture("git", ["rev-parse", "--short", "HEAD"]) || "unknown";
 const dirty = capture("git", ["status", "--porcelain"]) !== "";
 const stamps = {
@@ -113,7 +120,8 @@ async function build({ package: name, binary, features, targetDir = "target", di
   await run("cargo", [
     "build",
     "--locked",
-    "--release",
+    "--profile",
+    profile,
     "--target",
     "wasm32-unknown-unknown",
     "--target-dir",
@@ -123,7 +131,7 @@ async function build({ package: name, binary, features, targetDir = "target", di
     ...features,
   ]);
   await run("wasm-bindgen", [
-    `${targetDir}/wasm32-unknown-unknown/release/${binary}.wasm`,
+    `${targetDir}/wasm32-unknown-unknown/${profile}/${binary}.wasm`,
     "--target",
     "web",
     "--out-dir",
