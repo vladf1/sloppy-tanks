@@ -109,6 +109,10 @@ export function startGeometryCache(): void {
     if (name.startsWith("scenery-") && memory.theme !== name) {
       memory.theme = name;
       remember(memory);
+      // The last theme's file, read for nothing: its bytes go.
+      for (const [other, state] of files) {
+        if (other.startsWith("scenery-") && state instanceof ArrayBuffer) files.set(other, null);
+      }
     }
     if (!memory.stored) {
       files.set(name, null);

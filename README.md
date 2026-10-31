@@ -58,6 +58,8 @@ and `sloppy:*` performance marks).
 
 The page draws with WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU) and with WebGL2 otherwise; `?webgl` forces WebGL2. It downloads only the build it plays.
 
+A returning visit reads the vehicle models and its map's scenery from the browser's IndexedDB instead of generating them again (a release that changes no model keeps them); `?geometry-cache=off` neither reads nor stores them, for comparing the two.
+
 To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
 
 ## Play
