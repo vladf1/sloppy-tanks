@@ -447,10 +447,8 @@ fn room_menu(
             copy,
             "copy room invite",
         ) {
-            ui.ctx().copy_text(format!(
-                "https://sloppytanks.com/?room={}",
-                menu.room
-            ));
+            ui.ctx()
+                .copy_text(format!("https://sloppytanks.com/?room={}", menu.room));
             menu.copied = COPIED_SECONDS;
             menu.notice = "Invite link copied. Send it to your friends.".into();
         }
