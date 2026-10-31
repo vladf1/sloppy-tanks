@@ -196,10 +196,10 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 // Texture files decode in an image element (`HTMLImageElement.decode`), which every
 // browser does off the main thread: WebKit decoded `createImageBitmap(blob)` on it, one
 // file after another, about 80 ms of a village start once the arena was built. The
-// bitmap made from the decoded image has the same texels. The game page starts the
-// arena's decodes before the engine loads (`arenaTextures` in index.html) and leaves
-// them in a map by URL; the store takes each over once, so every browser downloads a
-// file once. A URL the page did not start, or whose early
+// bitmap made from the decoded image has the same texels. The single-player page
+// starts the scene's decodes before the engine loads (`startTextureDownloads` in
+// src/main.ts) and leaves them in a map by URL; the store takes each over once, so
+// every browser downloads a file once. A URL the page did not start, or whose early
 // decode failed, is decoded here.
 //
 // A built game page names its runtime files by content hash, so browsers keep them for
