@@ -85,12 +85,16 @@ fn creek() -> &'static Creek {
                 )
             })
             .collect();
-        Creek {
+        let creek = Creek {
             curve,
             points,
             segments,
             chunks,
-        }
+        };
+        // creek_distance searches whole chunks.
+        assert_eq!(creek.segments.len(), creek.chunks.len() * CREEK_CHUNK);
+        assert_eq!(creek.chunks.len(), CREEK_DIVISIONS as usize / CREEK_CHUNK);
+        creek
     })
 }
 
@@ -103,15 +107,24 @@ pub fn creek_at(t: f64) -> (DVec3, DVec3) {
 /// `creekDistance(x, z)`: horizontal distance to the creek's centreline.
 pub fn creek_distance(x: f64, z: f64) -> f64 {
     let creek = creek();
-    let mut nearest = f64::INFINITY;
-    // Chunks whose bounds lie farther than the nearest segment so far are skipped.
-    for (chunk, &[x0, z0, x1, z1]) in creek.segments.chunks(CREEK_CHUNK).zip(&creek.chunks) {
+    let mut bounds = [0.0; CREEK_DIVISIONS as usize / CREEK_CHUNK];
+    let (mut closest, mut closest_bound) = (0, f64::INFINITY);
+    for (index, (bound, &[x0, z0, x1, z1])) in bounds.iter_mut().zip(&creek.chunks).enumerate() {
         let bx = (x0 - x).max(x - x1).max(0.0);
         let bz = (z0 - z).max(z - z1).max(0.0);
-        if bx * bx + bz * bz >= nearest {
-            continue;
+        *bound = bx * bx + bz * bz;
+        if *bound < closest_bound {
+            (closest, closest_bound) = (index, *bound);
         }
-        for &[sx, sz, dx, dz, inverse] in chunk {
+    }
+    // The chunk whose bounds lie nearest first, so the nearest segment so far is
+    // close from the start; then every chunk whose bounds lie nearer than it, in
+    // order (a segment never lies nearer than its chunk's bounds, so the skipped
+    // ones hold none nearer).
+    let mut nearest = f64::INFINITY;
+    let mut search = |chunk: usize| {
+        let segments = &creek.segments[chunk * CREEK_CHUNK..(chunk + 1) * CREEK_CHUNK];
+        for &[sx, sz, dx, dz, inverse] in segments {
             let ax = x - sx;
             let az = z - sz;
             let t = 1.0f64.min(0.0f64.max((ax * dx + az * dz) * inverse));
@@ -119,8 +132,15 @@ pub fn creek_distance(x: f64, z: f64) -> f64 {
             let ez = az - dz * t;
             nearest = nearest.min(ex * ex + ez * ez);
         }
+        nearest
+    };
+    let mut nearest_so_far = search(closest);
+    for (chunk, &bound) in bounds.iter().enumerate() {
+        if chunk != closest && bound < nearest_so_far {
+            nearest_so_far = search(chunk);
+        }
     }
-    nearest.sqrt()
+    nearest_so_far.sqrt()
 }
 
 /// `valleyHeight(x, z)`: the valley floor, rising into hills beyond the arena and
@@ -956,3 +976,59 @@ const TREELINE: [[f64; 4]; 18] = [
     [-74.0, 30.0, 3.0, 2.0],
     [73.0, -30.0, 3.0, 2.0],
 ];
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// `creek_distance` as the TypeScript port searched it: chunks in order, each
+    /// skipped when its bounds lie no nearer than the nearest segment so far.
+    fn creek_distance_in_order(x: f64, z: f64) -> f64 {
+        let creek = creek();
+        let mut nearest = f64::INFINITY;
+        for (chunk, &[x0, z0, x1, z1]) in creek.segments.chunks(CREEK_CHUNK).zip(&creek.chunks) {
+            let bx = (x0 - x).max(x - x1).max(0.0);
+            let bz = (z0 - z).max(z - z1).max(0.0);
+            if bx * bx + bz * bz >= nearest {
+                continue;
+            }
+            for &[sx, sz, dx, dz, inverse] in chunk {
+                let ax = x - sx;
+                let az = z - sz;
+                let t = 1.0f64.min(0.0f64.max((ax * dx + az * dz) * inverse));
+                let ex = ax - dx * t;
+                let ez = az - dz * t;
+                nearest = nearest.min(ex * ex + ez * ez);
+            }
+        }
+        nearest.sqrt()
+    }
+
+    /// Searching the nearest chunk first finds the very same distance: over the
+    /// valley's and the ranges' grids, the creek's own samples and random points.
+    #[test]
+    fn nearest_chunk_first_finds_the_same_distance() {
+        let mut points = Vec::new();
+        for j in 0..=100 {
+            for i in 0..=100 {
+                points.push((-300.0 + f64::from(i) * 6.0, -300.0 + f64::from(j) * 6.0));
+            }
+        }
+        for p in &creek().points {
+            for offset in [0.0, 0.5, -3.0, 7.25] {
+                points.push((p.x + offset, p.z - offset));
+            }
+        }
+        let mut rng = Random::new(5.0);
+        for _ in 0..20_000 {
+            points.push((rng.range(-320.0, 320.0), rng.range(-320.0, 320.0)));
+        }
+        for (x, z) in points {
+            assert_eq!(
+                creek_distance(x, z).to_bits(),
+                creek_distance_in_order(x, z).to_bits(),
+                "({x}, {z})"
+            );
+        }
+    }
+}
