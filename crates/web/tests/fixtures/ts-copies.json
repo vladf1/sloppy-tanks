@@ -1,0 +1,45 @@
+{
+  "frameSlots": {
+    "clearInput": 5,
+    "events": 4,
+    "humanAlive": 1,
+    "phase": 0
+  },
+  "inputSlots": {
+    "ammoSlot": 8,
+    "ammoStep": 9,
+    "down": 1,
+    "fire": 6,
+    "left": 2,
+    "length": 17,
+    "lookPixels": 13,
+    "mine": 7,
+    "pointerX": 10,
+    "pointerY": 11,
+    "right": 3,
+    "stickTurn": 12,
+    "toggleView": 15,
+    "touchMoveX": 4,
+    "touchMoveZ": 5,
+    "up": 0,
+    "wheelAmmo": 16,
+    "zoom": 14
+  },
+  "phases": {
+    "paused": 2,
+    "playing": 1,
+    "ready": 0,
+    "results": 3
+  },
+  "rooms": {
+    "codeCharacters": "23456789ABCDEFGHIJKLMNOPQRSTUVWXYZ",
+    "codeLength": 8,
+    "difficulties": ["easy", "normal", "hard"],
+    "mapModes": ["village", "harbor", "quarry", "stress-test", "superstress"],
+    "maxContentVersionLength": 128,
+    "maxListedRooms": 256,
+    "maxRoundMinutes": 99,
+    "phases": ["lobby", "playing", "results"],
+    "seats": 8
+  }
+}

@@ -571,9 +571,13 @@ pub struct StageSources {
 impl StageSources {
     /// The stages of `code` for `vertex_entry` and, if any, `fragment_entry`.
     pub fn of(code: &str, vertex_entry: &str, fragment_entry: Option<&str>) -> Self {
+        let entries: Vec<&str> = std::iter::once(vertex_entry)
+            .chain(fragment_entry)
+            .collect();
+        let mut stages = specialize::entry_point_sources(code, &entries).into_iter();
         Self {
-            vertex: specialize::entry_point_source(code, vertex_entry),
-            fragment: fragment_entry.map(|entry| specialize::entry_point_source(code, entry)),
+            vertex: stages.next().expect("a vertex stage"),
+            fragment: stages.next(),
         }
     }
 

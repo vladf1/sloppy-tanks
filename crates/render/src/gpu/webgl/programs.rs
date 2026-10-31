@@ -414,6 +414,11 @@ impl Pipelines {
                 program: bloom,
                 raster: Raster::PLAIN,
             },
+            // Drawn as `BloomPass::BackdropRows` and `BackdropColumns`.
+            backdrop: Pipeline {
+                program: bloom,
+                raster: Raster::PLAIN,
+            },
             shadow_merged,
         });
     }

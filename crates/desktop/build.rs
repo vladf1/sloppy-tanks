@@ -1,6 +1,9 @@
 //! Embeds the game's runtime files from `public/` (textures, sounds, the menu's tank
-//! previews and the icon) as a sorted table `src/assets.rs` looks paths up in, on
-//! Windows gives the executable its icon, and on iOS a Mac-sized main-thread stack.
+//! previews and the icon) in the native apps as a sorted table `src/assets.rs` looks
+//! paths up in, on Windows gives the executable its icon, and on iOS a Mac-sized
+//! main-thread stack. A page embeds none: its files have content-hashed names that
+//! browsers keep across releases, where the Wasm downloads again with each one, and
+//! `index.html` fetches them beside the Wasm (`scripts/hashed-assets.ts`).
 
 use std::fmt::Write;
 use std::path::{Path, PathBuf};
@@ -25,12 +28,8 @@ fn collect(directory: &Path, files: &mut Vec<PathBuf>) {
     }
 }
 
-fn main() {
-    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets it"));
-    let public = manifest
-        .join("../../public")
-        .canonicalize()
-        .expect("public/ exists");
+/// Write the table of `EMBEDDED`'s files to `OUT_DIR/assets.rs`.
+fn embed(public: &Path, out: &Path) {
     let mut files = Vec::new();
     for folder in EMBEDDED {
         let directory = public.join(folder);
@@ -40,7 +39,7 @@ fn main() {
     let mut entries: Vec<(String, PathBuf)> = files
         .into_iter()
         .map(|path| {
-            let relative = path.strip_prefix(&public).expect("under public/");
+            let relative = path.strip_prefix(public).expect("under public/");
             let key = relative
                 .components()
                 .map(|part| part.as_os_str().to_string_lossy())
@@ -60,8 +59,22 @@ fn main() {
         .expect("writing a String");
     }
     table.push_str("];\n");
-    let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it"));
     std::fs::write(out.join("assets.rs"), table).expect("OUT_DIR is writable");
+}
+
+fn main() {
+    let manifest = PathBuf::from(std::env::var("CARGO_MANIFEST_DIR").expect("cargo sets it"));
+    let public = manifest
+        .join("../../public")
+        .canonicalize()
+        .expect("public/ exists");
+    let out = PathBuf::from(std::env::var("OUT_DIR").expect("cargo sets it"));
+    let page = std::env::var("CARGO_CFG_TARGET_ARCH").as_deref() == Ok("wasm32");
+    // Otherwise Cargo reruns this for any change in the package, a page's build too.
+    println!("cargo:rerun-if-changed=build.rs");
+    if !page {
+        embed(&public, &out);
+    }
 
     // iOS gives an app's main thread a 1 MB stack where macOS gives 8 MB, and the
     // engine's start-up (`Session::start` through `Game::create` to `Presentation::new`)
@@ -69,6 +82,10 @@ fn main() {
     // launch. Its executable asks for the Mac's main-thread stack instead.
     if std::env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("ios") {
         println!("cargo:rustc-link-arg-bins=-Wl,-stack_size,0x800000");
+    }
+    // Wasm gives its one stack 1 MB, which the shell's start-up overflowed the same way.
+    if page {
+        println!("cargo:rustc-link-arg-bins=-zstack-size=0x800000");
     }
 
     // The executable's icon, from the web app's, at each size Windows draws it (taskbar,

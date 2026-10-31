@@ -2,9 +2,7 @@
 // canvas, arranged and drawn through its dev fixture hooks (`Game.debug_*`,
 // `crates/web/src/game/debug.rs`). Fixtures with a verdict write it to `#result`
 // starting with PASS or FAIL, which `scripts/fixtures-check.mjs` reads.
-import { createGame, type Game } from "../src/engine";
-import type { GameOptions } from "../src/game/game-options";
-import { nextPrepareStep } from "../src/game/task-yield";
+import { createGame, prepareArena, type Game } from "../tools/game-engine";
 
 /** Pipelines compiled per preparation step; the page stays responsive between steps. */
 const PREPARE_BUDGET = 8;
@@ -25,21 +23,17 @@ export async function fixtureGame(canvas: HTMLCanvasElement, config: FixtureConf
     ...config,
   });
   addEventListener("resize", () => game.resize(innerWidth, innerHeight, 1, false));
-  await prepare(game);
+  await prepareArena(game, PREPARE_BUDGET);
   return game;
 }
 
-/** Compile the arena's pipelines and wait for its textures, yielding between steps. */
-async function prepare(game: Game): Promise<void> {
-  let gpuPending = false;
-  for (;;) {
-    await nextPrepareStep(gpuPending);
-    const [, , , done, pending] = game.prepare_step(PREPARE_BUDGET);
-    if (done) {
-      return;
-    }
-    gpuPending = pending === 1;
-  }
+/** Battle Setup's choices (`Game.set_options`). */
+interface GameOptions {
+  humanKind: string;
+  humanTeam: 0 | 1;
+  gameMode: "team" | "solo";
+  mapMode: string;
+  difficulty: string;
 }
 
 /** Battle Setup's choices as the engine holds them. */
@@ -60,7 +54,7 @@ export async function choose(game: Game, changes: Partial<GameOptions>): Promise
   if (!game.set_options(JSON.stringify({ ...options(game), ...changes }))) {
     game.restart();
   }
-  await prepare(game);
+  await prepareArena(game, PREPARE_BUDGET);
 }
 
 export interface Vec3Pose {

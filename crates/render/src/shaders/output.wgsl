@@ -9,7 +9,8 @@
 // sharpens edges and encodes sRGB with a little dither against sky banding, into
 // the (non-sRGB) canvas texture. Where the scene rendered smaller than the canvas
 // (the dynamic render scale, `quality.rs`) it upsamples it on the way. With
-// everything neutral it is Three's plain ACES output.
+// everything neutral it is Three's plain ACES output. Behind a dialog its picture is
+// blurred and desaturated on the way to the canvas (`backdrop_blur`).
 
 struct Output {
     // x exposure; the top-down canvas row of a fragment is y + z × its framebuffer
@@ -42,6 +43,13 @@ struct Output {
     // The filmic curve (`filmic`): x its toe power (0 for ACES), y its shoulder, zw
     // its b and c terms.
     curve: vec4f,
+    // The dialog backdrop's blur (`backdrop_blur`): x the centre texel's weight, 0
+    // while no dialog blurs the arena; y the saturation after it.
+    backdrop: vec4f,
+    // Its bilinear taps either side of the centre, each reading two texels: their
+    // distances in texels and their weights.
+    backdrop_offsets: vec4f,
+    backdrop_weights: vec4f,
 }
 
 @group(0) @binding(0) var source: texture_2d<f32>;
@@ -181,9 +189,31 @@ fn bloom_up(input: PostOut) -> vec4f {
     return vec4f(color / 16.0, 1.0);
 }
 
-// The bloom chain's passes and the occlusion's blur share one fragment stage, told
-// apart by the pass drawn (`gpu::BloomPass`): WebKit compiles every distinct stage at first use, about 90 ms
-// apiece on a cold start however small, and the pass is the same for a whole draw.
+// The weights CSS's `saturate()` mixes toward (the filter effects matrix).
+const CSS_SATURATE_LUMINANCE: vec3f = vec3f(0.213, 0.715, 0.072);
+
+// The arena behind a dialog, as the page's `backdrop-filter: blur(2px) saturate(0.9)`
+// drew it: one pass of a separable Gaussian along `axis` over the output pass's
+// finished picture, in the canvas's format and size. The centre texel and four
+// bilinear taps either side, each reading two texels in the ratio of their weights
+// (`gpu::backdrop_kernel`). Source and target are the same size, so a fragment reads
+// about its own pixel on either backend, whichever way its rows run.
+fn backdrop_blur(input: PostOut, axis: vec2f) -> vec3f {
+    let size = vec2f(textureDimensions(source));
+    let uv = input.clip.xy / size;
+    let texel = axis / size;
+    var color = tap(uv) * output.backdrop.x;
+    for (var i = 0; i < 4; i++) {
+        let offset = texel * output.backdrop_offsets[i];
+        color += (tap(uv - offset) + tap(uv + offset)) * output.backdrop_weights[i];
+    }
+    return color;
+}
+
+// The bloom chain's passes, the occlusion's blur and the dialog backdrop's blur share
+// one fragment stage, told apart by the pass drawn (`gpu::BloomPass`): WebKit
+// compiles every distinct stage at first use, about 90 ms apiece on a cold start
+// however small, and the pass is the same for a whole draw.
 @fragment
 fn fs_bloom(input: PostOut) -> @location(0) vec4f {
     let drawn = u32(input.bloom_pass + 0.5);
@@ -195,6 +225,14 @@ fn fs_bloom(input: PostOut) -> @location(0) vec4f {
     }
     if drawn == 3u {
         return occlusion_blur(input);
+    }
+    if drawn == 4u {
+        return vec4f(backdrop_blur(input, vec2f(1.0, 0.0)), 1.0);
+    }
+    if drawn == 5u {
+        let blurred = backdrop_blur(input, vec2f(0.0, 1.0));
+        let grey = vec3f(dot(blurred, CSS_SATURATE_LUMINANCE));
+        return vec4f(mix(grey, blurred, output.backdrop.y), 1.0);
     }
     return bloom_up(input);
 }

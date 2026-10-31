@@ -9,6 +9,8 @@
 //!   renderer draws with its planar reflection, and the chimney smoke that
 //!   `VillageScenery::set_covers` refills each round.
 
+use std::collections::HashMap;
+
 use glam::{DMat4, DVec3};
 use sloppy_core::geometry::Mesh;
 use sloppy_core::models::{
@@ -66,6 +68,28 @@ impl TreeParts {
 /// What distinguishes covers that look alike: every builder input except where
 /// the model stands. Builders seeded by position contribute their seed or
 /// variant, so identical drums, containers, hedgehogs and walls share one model.
+/// The order a round's covers are added in, by index: first the static covers with a
+/// look of their own, which join one combined model (a joint each) so their shadows
+/// merge into a couple of draws, then the rest, each its own instance (covers sharing a
+/// look stay instanced, movable ones move). A lone static cover with a look of its own
+/// is not worth a combined model: it leads the rest instead.
+pub fn cover_order(covers: &[RenderCover]) -> (Vec<usize>, Vec<usize>) {
+    let stage = |cover: &RenderCover| cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
+    let mut looks: HashMap<String, usize> = HashMap::new();
+    for cover in covers.iter().filter(|cover| cover.motion.is_none()) {
+        *looks.entry(cover_key(cover, stage(cover))).or_default() += 1;
+    }
+    let (mut combined, mut own): (Vec<usize>, Vec<usize>) = (0..covers.len()).partition(|&index| {
+        let cover = &covers[index];
+        cover.motion.is_none() && looks[&cover_key(cover, stage(cover))] == 1
+    });
+    if combined.len() < 2 {
+        combined.append(&mut own);
+        own = std::mem::take(&mut combined);
+    }
+    (combined, own)
+}
+
 pub fn cover_key(cover: &RenderCover, stage: u32) -> String {
     let placement = match cover.kind {
         CoverKind::Drum
@@ -257,12 +281,7 @@ fn is_water(node: &Node) -> bool {
 /// `buildScenery(theme)`: the theme's scenery, split for drawing. `None` for
 /// extra levels, which show plain pads and floors instead.
 pub fn scenery(theme: Theme) -> Option<SceneryModel> {
-    let map_theme = match theme {
-        Theme::Village => core_models::MapTheme::Village,
-        Theme::Harbor => core_models::MapTheme::Harbor,
-        Theme::Quarry => core_models::MapTheme::Quarry,
-        Theme::Custom => return None,
-    };
+    let map_theme = theme.map_theme()?;
     let mut scenery = build_scenery(map_theme);
     scenery.update(0.0);
     let source = scenery.root();
@@ -497,6 +516,31 @@ mod tests {
         let village = shared_scenery(Theme::Village);
         let smoke = village.scenery.root().find(CHIMNEY_SMOKE_NODE);
         assert!(smoke.is_some_and(|smoke| smoke.drawable.is_some()));
+    }
+
+    #[test]
+    fn covers_with_looks_of_their_own_combine_first() {
+        let drum = |x: f64| RenderCover {
+            kind: CoverKind::Drum,
+            x,
+            w: 1.2,
+            h: 1.6,
+            d: 1.2,
+            ..RenderCover::default()
+        };
+        let house = |x: f64| RenderCover {
+            kind: CoverKind::House,
+            ..drum(x)
+        };
+        let movable = |x: f64| RenderCover {
+            motion: Some(Default::default()),
+            ..house(x)
+        };
+        let covers = [drum(0.0), house(1.0), movable(2.0), drum(3.0), house(4.0)];
+        assert_eq!(cover_order(&covers), (vec![1, 4], vec![0, 2, 3]));
+        // One cover of its own look leads the rest, in order.
+        let covers = [drum(0.0), house(1.0), drum(3.0)];
+        assert_eq!(cover_order(&covers), (vec![], vec![1, 0, 2]));
     }
 
     #[test]

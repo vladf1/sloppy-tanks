@@ -9,7 +9,7 @@ import {
   parseEnvironment,
   type ListedServer,
 } from "../directory/listing";
-import type { RoomListing } from "../src/net/room-listing";
+import type { RoomListing } from "../directory/room-listing";
 
 const read = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 

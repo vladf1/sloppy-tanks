@@ -27,20 +27,21 @@ pub mod room_text;
 pub mod sounds;
 
 #[cfg(test)]
-mod page_catalog_tests;
-#[cfg(test)]
 mod page_json_tests;
+#[cfg(test)]
+mod ts_copies_tests;
 
-/// Which shell draws the game. The two say a few things differently on purpose ("in this
-/// browser" or "on this computer", RELOAD or BATTLE SETUP); everything else they show
-/// is the same text from this crate.
+/// Where the game runs, for the few things a page and the app say differently on purpose
+/// ("in this browser" or "on this computer", RELOAD or BATTLE SETUP); everything else
+/// they show is the same text from this crate.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Shell {
-    /// The browser page (`src/`).
+    /// A browser page: the egui shell built for wasm32 (`crates/desktop`), or the
+    /// engine's fixture pages.
     #[default]
     Page,
-    /// The desktop app (`crates/desktop`).
+    /// The native app (`crates/desktop`) on macOS, Windows or iPad.
     Desktop,
 }
 
@@ -68,22 +69,24 @@ pub use game::{Game, GameConfig};
 pub use lab::RenderLab;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub use net_game::{NetConfig, NetGame};
+#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
+pub use page::clock_start;
+#[cfg(any(target_arch = "wasm32", feature = "native"))]
+pub use page::{BakedPixels, PageError, now_ms};
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub use page::{CameraPreferences, ViewConfig};
-#[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
-pub use page::{PageError, clock_start};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
 pub use records::set_records_file;
 
 /// One connection's binary room messages as the JSON protocol sent them (see
 /// `sloppy_core::net::wire_view`), for the Node checks that follow a room's state
 /// (`scripts/state-mirror.mjs`). The page itself never needs it.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 #[wasm_bindgen::prelude::wasm_bindgen]
 #[derive(Default)]
 pub struct WireView(sloppy_core::net::wire_view::WireView);
 
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 #[wasm_bindgen::prelude::wasm_bindgen]
 impl WireView {
     #[wasm_bindgen::prelude::wasm_bindgen(constructor)]
@@ -103,7 +106,7 @@ impl WireView {
 /// The generated textures the arena of Battle Setup map `map` will have the page bake
 /// (`bake_texture` keys). The page may start them as soon as the engine has loaded,
 /// before the arena is built and claims them (`Game::claim_texture_bake`).
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", feature = "js-api"))]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn map_texture_bakes(map: &str) -> Vec<String> {
     use sloppy_core::sim::map_options::MapId;

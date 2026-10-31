@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import type { Plugin } from "vite";
 import { protocolVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
@@ -15,7 +15,7 @@ import { releaseVersion } from "./release-version.mjs";
 // a string value carries a style element that keeps it. Browsers show it as `""`.
 const PRESERVE_FORMATTING = "<style>body{white-space:pre;font-family:monospace}</style>";
 
-export interface PageBuild {
+interface PageBuild {
   /** `1.1.0.628` on main, with the Pages workflow's run number (`SLOPPY_BUILD_NUMBER`). */
   release: string;
   commit: string;
@@ -23,7 +23,7 @@ export interface PageBuild {
 }
 
 /** What this checkout builds: its release version and commit. */
-export function pageBuild(): PageBuild {
+function pageBuild(): PageBuild {
   const git = (...args: string[]) => execFileSync("git", args, { encoding: "utf8" }).trim();
   return {
     release: releaseVersion(process.env.SLOPPY_BUILD_NUMBER),
@@ -32,18 +32,12 @@ export function pageBuild(): PageBuild {
   };
 }
 
-/** Battle Setup's footer line: `v1.1.0.628 · 696497f`, `+` marking local changes. */
-export function buildLabel({ release, commit, dirty }: PageBuild): string {
-  return `v${release} · ${commit}${dirty ? "+" : ""}`;
-}
-
 /** The page's `/health` body; `builtAt` is when the build ran or the dev server started. */
 async function healthBody(builtAt: string): Promise<string> {
-  // The hash the Wasm build stamped into this engine, not one recomputed from the
+  // The hash the Wasm build stamped into the shell, not one recomputed from the
   // sources, which may have changed since `pnpm run wasm`.
-  const contentVersion = /CONTENT_VERSION = "([0-9a-f]+)"/.exec(
-    readFileSync("src/generated/engine/content-version.js", "utf8"),
-  )?.[1];
+  const stamp = "src/generated/shell/content-version";
+  const contentVersion = existsSync(stamp) ? readFileSync(stamp, "utf8").trim() : "";
   if (!contentVersion) {
     throw new Error("No content version stamp: run `pnpm run wasm` first");
   }

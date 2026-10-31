@@ -25,7 +25,7 @@ use sloppy_core::sim::render_state::{RenderCover, RenderFragment, RenderTank};
 use sloppy_core::sim::simulation::WreckView;
 use sloppy_core::sim::simulation_rules::FRAGMENT_CAPACITY;
 use sloppy_core::sim::tank_dimensions::{tank_hull, tank_visual_muzzle};
-use sloppy_core::sim::timber_layout::{TimberPart, TimberWall, timber_parts};
+use sloppy_core::sim::timber_layout::TimberPart;
 use sloppy_core::sim::tower_layout::TowerPiece;
 use sloppy_core::sim::tree_proportions::tree_proportions;
 use sloppy_core::sim::veterancy::rank_index;
@@ -44,7 +44,9 @@ use super::house_rest::SettledShards;
 use super::hud::{
     BAR_FADE_RATE, BarTrail, approach, bar_scale, health_bar_state, protection_meters, spawn_pulse,
 };
-use super::model_catalog::{self, CoverModel, SceneryMover, SceneryWater, TreeParts, cover_key};
+use super::model_catalog::{
+    self, CoverModel, SceneryModel, SceneryMover, SceneryWater, TreeParts, cover_key,
+};
 use super::models::{self as own, joint};
 use super::posing::{JointBasis, dvec3, euler_yxz, joint_world, lerp, quat, vec3};
 use super::preparation::Preparation;
@@ -69,6 +71,7 @@ use crate::gpu::{
     SunShadow, WaterSettings,
 };
 
+mod build;
 mod inspect;
 
 /// A dead tank's model hides; the live model rides this far below the body.
@@ -882,6 +885,40 @@ struct FallingBranch {
     sink: f32,
 }
 
+/// A round's covers being added, in `cover_order`, and the models of the combined
+/// model's covers built so far. A combined cover that changes its look later moves out
+/// to its own model.
+struct CoverPlan {
+    /// The static covers with a look of their own, by index into the round's covers.
+    combined: Vec<usize>,
+    /// The rest, each its own instance, added after the combined model.
+    own: Vec<usize>,
+    /// The combined model's root and each built cover's index, damage stage, model
+    /// and tree parts.
+    root: Node,
+    built: Vec<(usize, u32, Arc<Node>, Option<TreeParts>)>,
+}
+
+impl CoverPlan {
+    fn of(covers: &[RenderCover]) -> Self {
+        let (combined, own) = model_catalog::cover_order(covers);
+        Self {
+            built: Vec::with_capacity(combined.len()),
+            combined,
+            own,
+            root: Node::group("static-covers"),
+        }
+    }
+}
+
+/// A theme's scenery model whose static parts are batched for upload
+/// ([`Presentation::prepare_scenery`]) but not uploaded yet.
+struct PendingScenery {
+    key: &'static str,
+    model: SceneryModel,
+    statics: PendingModel,
+}
+
 struct SceneryView {
     /// The live core scenery that `update(time)` animates.
     scenery: sloppy_core::models::Scenery,
@@ -1009,6 +1046,8 @@ pub struct Presentation {
     textures: GeneratedTextures,
     /// Ids present this frame, for dropping views of departed entities.
     live: std::collections::HashSet<u32>,
+    /// What building the round's views has still to do (`build.rs`).
+    build: build::BuildStage,
     preparation: Preparation,
 }
 
@@ -1086,6 +1125,7 @@ impl Presentation {
             random,
             textures: GeneratedTextures::default(),
             live: std::collections::HashSet::new(),
+            build: build::BuildStage::Done,
             preparation: Preparation::default(),
         };
         presentation
@@ -1193,17 +1233,45 @@ impl Presentation {
     /// Build a theme's cached scenery. It needs no physics world, so startup can
     /// do this while the rest loads; `reset` reuses it.
     pub fn build_scenery(&mut self, theme_name: &str) {
-        let theme = Theme::from_name(theme_name);
-        let key = theme.name();
-        if self.scenery.contains_key(key) {
-            return;
+        if let Some((key, model)) = self.scenery_model(theme_name) {
+            let pending = self.prepare_scenery(key, model);
+            self.upload_scenery(pending);
         }
-        let Some(model) = model_catalog::scenery(theme) else {
-            return;
-        };
+    }
+
+    /// The model of a theme's scenery to register, unless it is cached or the theme
+    /// has none: the costliest part of [`Self::build_scenery`], which a build step
+    /// takes alone.
+    fn scenery_model(&self, theme_name: &str) -> Option<(&'static str, SceneryModel)> {
+        let theme = Theme::from_name(theme_name);
+        if self.scenery.contains_key(theme.name()) {
+            return None;
+        }
+        model_catalog::scenery(theme).map(|model| (theme.name(), model))
+    }
+
+    /// Draw a theme's scenery model's generated textures and batch its static parts
+    /// for upload.
+    fn prepare_scenery(&mut self, key: &'static str, model: SceneryModel) -> PendingScenery {
         self.textures
             .request_scenery(&mut self.renderer, &model.root);
-        let statics = self.renderer.add_scenery(&model.root, Lifetime::Shared);
+        let statics = self.renderer.prepare_pending_scenery(&model.root);
+        PendingScenery {
+            key,
+            model,
+            statics,
+        }
+    }
+
+    /// Upload a theme's prepared scenery and keep it under the theme's key for its
+    /// rounds.
+    fn upload_scenery(&mut self, pending: PendingScenery) {
+        let PendingScenery {
+            key,
+            model,
+            statics,
+        } = pending;
+        let statics = self.renderer.add_pending_scenery(statics, Lifetime::Shared);
         self.renderer.set_visible(statics, false);
         let movers = model
             .movers
@@ -1268,9 +1336,9 @@ impl Presentation {
         })
     }
 
-    fn apply_theme(&mut self, state: &RenderState) {
-        let theme = Theme::from_name(&state.map_theme);
-        let custom = theme == Theme::Custom;
+    /// An extra level's pads and floors, shown alone (the themes' hide).
+    fn show_floors(&mut self, state: &RenderState) {
+        let custom = Theme::from_name(&state.map_theme) == Theme::Custom;
         let pads = custom.then(|| self.custom_pads(state.map_scale));
         for &id in self.pads.values() {
             self.renderer.set_visible(id, Some(id) == pads);
@@ -1286,7 +1354,11 @@ impl Presentation {
             self.renderer
                 .set_visible(id, Some(id) == floor || Some(id) == outer);
         }
-        self.build_scenery(&state.map_theme);
+    }
+
+    /// Show the theme's scenery (built by now), water and light.
+    fn show_theme(&mut self, state: &RenderState) {
+        let theme = Theme::from_name(&state.map_theme);
         for (&key, view) in &mut self.scenery {
             let shown = key == theme.name();
             self.renderer.set_visible(view.statics, shown);
@@ -1330,111 +1402,11 @@ impl Presentation {
         });
     }
 
-    /// Rebuild every entity view for a new round (`reset()`).
-    pub fn reset(&mut self, state: &RenderState) {
-        self.rig.snap_seat = true;
-        if let Some(viewer) = state.viewer() {
-            self.rig.first_person.yaw = viewer.aim;
-        }
-        // The old round's views go before its renderer resources: cover models hold
-        // their source meshes, which `reset_round` can then free at once, before this
-        // round and a new theme upload into the mesh pages they leave.
-        self.tanks.clear();
-        self.covers.clear();
-        self.cover_models.clear();
-        self.cover_looks.clear();
-        self.fragments.clear();
-        self.shared_debris.clear();
-        self.house_pieces.clear();
-        // Its models are the round's, which `reset_round` frees.
-        self.house_prep = HousePreparation::default();
-        // Round models go with the round.
-        self.settled.clear();
-        self.pickups.clear();
-        self.supply_pieces.clear();
-        self.mines.clear();
-        self.branches.clear();
-        self.sample_models.clear();
-        self.renderer.reset_round();
-        self.apply_theme(state);
-        self.rig.settle();
-        self.hit_confirm_until = 0.0;
-        self.player_was_alive = false;
-        self.effects.reset(&mut self.renderer);
-        self.add_covers(&state.covers);
-        self.queue_debris(&state.covers);
-        for tank in &state.tanks {
-            self.add_tank(tank);
-        }
-        for pickup in &state.pickups {
-            self.add_pickup(pickup.id, pickup.kind, pickup.x, pickup.z);
-        }
-        self.update_camera(state, 1.0, 0.0, false);
-    }
-
     // -------------------------------------------------------------- prepare
-
-    /// Register one model per first-use look this round can show (the wrecks' looks,
-    /// damaged cargo and timber stages, timber beams, mines, pickup glows, debris
-    /// pieces), so `prepare_step` compiles their pipelines before combat instead of
-    /// mid-fight. Of the wrecks only the sample is built now (`wreck_library`); the page
-    /// builds the rest once the arena is ready ([`Self::prebuild_step`]).
-    pub fn begin_prepare(&mut self, state: &RenderState) {
-        self.preparation = Preparation::default();
-        for kind in VehicleKind::ALL {
-            for team in [Team::Blue, Team::Red] {
-                self.library.tank(&mut self.renderer, kind, team);
-                self.library.bar(&mut self.renderer, team);
-                self.library.mine(&mut self.renderer, team);
-            }
-        }
-        let (kind, team, part) = SAMPLE_WRECK;
-        self.library.wreck(&mut self.renderer, kind, team, part);
-        for kind in PickupKind::ALL {
-            self.library.pickup(&mut self.renderer, kind);
-        }
-        for shape in DEBRIS_SHAPES {
-            self.library.debris(&mut self.renderer, shape);
-        }
-        self.library.pickup_pad(&mut self.renderer);
-        let mut seen = std::collections::HashSet::new();
-        for cover in &state.covers {
-            for health in [0.6, 0.3, 0.1] {
-                let hp = cover.max_hp * health;
-                let stage = cover_damage_stage(cover.kind, hp, cover.max_hp);
-                if stage > 0 && seen.insert(format!("{:?}/{stage}", cover.kind)) {
-                    let damaged = RenderCover {
-                        hp,
-                        ..cover.clone()
-                    };
-                    let model = model_catalog::cover_model(&damaged, stage);
-                    self.sample_models
-                        .push(self.renderer.add_model(&model.root, Lifetime::Round));
-                }
-            }
-            if cover.kind == CoverKind::Timber && seen.insert("timber-parts".into()) {
-                let wall = TimberWall {
-                    x: cover.x,
-                    z: cover.z,
-                    w: cover.w,
-                    h: cover.h,
-                    d: cover.d,
-                    color: cover.color,
-                    hits: &cover.timber_hits,
-                    join: cover.timber_join,
-                };
-                for part in timber_parts(&wall, 0) {
-                    let node = timber_part_model(&part);
-                    self.sample_models
-                        .push(self.renderer.add_model(&node, Lifetime::Round));
-                }
-            }
-            // Falling crowns and boughs reuse the live tree's materials, whose
-            // faded variants every movable model registers up front.
-        }
-        // The arena's whole look is registered: its pipelines compile from here on.
-        self.renderer.request_pipelines();
-    }
+    //
+    // A round's views and the looks its preparation compiles are built in steps
+    // (`begin_build`, `build_step`; `reset` and `begin_prepare` take them at once):
+    // `build.rs`.
 
     /// Create up to `budget` pipelines whose background compile has finished and queue
     /// the rest; yield to the page between calls. Once nothing remains and textures
@@ -1784,39 +1756,29 @@ impl Presentation {
         })
     }
 
-    fn add_covers(&mut self, covers: &[RenderCover]) {
-        let stage = |cover: &RenderCover| cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
-        let mut looks: HashMap<String, usize> = HashMap::new();
-        for cover in covers.iter().filter(|cover| cover.motion.is_none()) {
-            *looks.entry(cover_key(cover, stage(cover))).or_default() += 1;
-        }
-        let (combined, own): (Vec<&RenderCover>, Vec<&RenderCover>) =
-            covers.iter().partition(|cover| {
-                cover.motion.is_none() && looks[&cover_key(cover, stage(cover))] == 1
-            });
-        if combined.len() > 1 {
-            self.add_combined_covers(&combined);
-        } else {
-            for cover in &combined {
-                self.add_cover(cover);
-            }
-        }
-        for cover in own {
-            self.add_cover(cover);
-        }
+    /// Build the next of `plan`'s combined covers' models into its root; false once
+    /// every one is built.
+    fn build_combined_cover(&mut self, plan: &mut CoverPlan, covers: &[RenderCover]) -> bool {
+        let Some(&index) = plan.combined.get(plan.built.len()) else {
+            return false;
+        };
+        let cover = &covers[index];
+        let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
+        let CoverModel { root: model, tree } = model_catalog::cover_model(cover, stage);
+        self.textures.request_scenery(&mut self.renderer, &model);
+        let mut joint = Node::group(combined_joint(cover.id));
+        joint.children.push(model.clone());
+        plan.root.children.push(joint);
+        plan.built.push((index, stage, Arc::new(model), tree));
+        true
     }
 
-    fn add_combined_covers(&mut self, covers: &[&RenderCover]) {
-        let mut root = Node::group("static-covers");
-        let mut built = Vec::with_capacity(covers.len());
-        for cover in covers {
-            let stage = cover_damage_stage(cover.kind, cover.hp, cover.max_hp);
-            let CoverModel { root: model, tree } = model_catalog::cover_model(cover, stage);
-            self.textures.request_scenery(&mut self.renderer, &model);
-            let mut joint = Node::group(combined_joint(cover.id));
-            joint.children.push(model.clone());
-            root.children.push(joint);
-            built.push((*cover, stage, Arc::new(model), tree));
+    /// The combined model of `plan`'s covers, once each is built
+    /// ([`Self::build_combined_cover`]), and their views.
+    fn add_combined_covers(&mut self, plan: CoverPlan, covers: &[RenderCover]) {
+        let CoverPlan { root, built, .. } = plan;
+        if built.is_empty() {
+            return;
         }
         // Each cover joint only ever shows or hides (a cover that changes its look
         // moves out to its own model), so their parts merge across covers.
@@ -1825,7 +1787,8 @@ impl Presentation {
             .renderer
             .add_instance(model, Mat4::IDENTITY, Lifetime::Round)
             .expect("combined cover model");
-        for (cover, stage, source, tree) in built {
+        for (index, stage, source, tree) in built {
+            let cover = &covers[index];
             let nodes = self.renderer.model_nodes(model);
             let name = combined_joint(cover.id);
             let joint = joint_index(&self.renderer, model, &name);

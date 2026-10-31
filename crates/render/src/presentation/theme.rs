@@ -7,6 +7,7 @@
 
 use glam::Vec3;
 use sloppy_core::sim::data::ARENA;
+use sloppy_core::sim::maps::MapTheme;
 
 use crate::camera::ShadowCamera;
 
@@ -46,6 +47,16 @@ impl Theme {
             "harbor" => Theme::Harbor,
             "quarry" => Theme::Quarry,
             _ => Theme::Custom,
+        }
+    }
+
+    /// The core's theme, which an extra level's yard has none of.
+    pub fn map_theme(self) -> Option<MapTheme> {
+        match self {
+            Theme::Village => Some(MapTheme::Village),
+            Theme::Harbor => Some(MapTheme::Harbor),
+            Theme::Quarry => Some(MapTheme::Quarry),
+            Theme::Custom => None,
         }
     }
 

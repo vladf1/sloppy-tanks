@@ -4,6 +4,7 @@
 //! engine frame per redraw. Leaving hands the window back to single player through
 //! [`Shell`].
 
+#[cfg(not(target_arch = "wasm32"))]
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -11,23 +12,24 @@ use sloppy_core::net::client::{ClientAction, POLL_MS, SavedSeat};
 use sloppy_core::net::protocol::RoomPhase;
 use sloppy_core::sim::Team;
 use sloppy_core::sim::map_options::map_option_for;
-use sloppy_render::gpu::RenderTarget;
-use sloppy_render::wgpu;
 use sloppy_web::hud::Hud;
 use sloppy_web::room_notices::RoomNotice;
 use sloppy_web::{NetConfig, NetGame, net_frame_slot as slot};
 use winit::event::WindowEvent;
 use winit::window::Window;
 
-use crate::app::{Shell, css_size, drawable_size, now_ms, set_fullscreen, view_config};
+use crate::app::{
+    Shell, css_size, engine_error, now_ms, render_target, set_fullscreen, view_config,
+};
 use crate::audio::Audio;
+use crate::automation::{self, Command, Extra};
 use crate::bakes::{self, Bake};
 use crate::input::Shortcut;
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
 use crate::room_api::RoomSelection;
 use crate::sockets::{SocketEvent, Sockets};
-use crate::touch::Play;
+use crate::touch::{Play, Showing};
 use crate::ui::room_menu::{self, RoomMenu};
 use crate::ui::{self, Action, UiState};
 use crate::window_input::{Battle, Request, WindowInput};
@@ -37,9 +39,71 @@ const PREPARE_BUDGET: u32 = 4;
 /// Why a room that could not load sends the player back to Battle Setup.
 const ARENA_FAILED: &str = "The arena could not load. Try again, or play single player.";
 
-/// Seats the server issued, kept for this run by server and room (the page's
-/// `sessionStorage`).
-pub type SavedSeats = HashMap<String, SavedSeat>;
+/// Seats the server issued, by server and room: natively for this run, in a page in its
+/// `sessionStorage` under the old page's keys, so that a reload, which returns to Battle
+/// Setup with the room selected, joins it again on the same seat.
+#[derive(Default)]
+pub struct SavedSeats {
+    #[cfg(not(target_arch = "wasm32"))]
+    seats: HashMap<String, SavedSeat>,
+}
+
+impl SavedSeats {
+    pub fn get(&self, selection: &RoomSelection) -> Option<SavedSeat> {
+        let key = seat_key(selection);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.seats.get(&key).cloned()
+        }
+        #[cfg(target_arch = "wasm32")]
+        {
+            let text = session_storage()?.get_item(&key).ok()??;
+            serde_json::from_str(&text).ok()
+        }
+    }
+
+    /// Keep `seat`; a page without storage keeps it for no reload.
+    fn save(&mut self, selection: &RoomSelection, seat: SavedSeat) {
+        let key = seat_key(selection);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.seats.insert(key, seat);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(storage) = session_storage() {
+            let text = serde_json::json!({"token": seat.token, "roomEpoch": seat.room_epoch});
+            let _ = storage.set_item(&key, &text.to_string());
+        }
+    }
+
+    fn forget(&mut self, selection: &RoomSelection) {
+        let key = seat_key(selection);
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            self.seats.remove(&key);
+        }
+        #[cfg(target_arch = "wasm32")]
+        if let Some(storage) = session_storage() {
+            let _ = storage.remove_item(&key);
+        }
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+fn session_storage() -> Option<web_sys::Storage> {
+    web_sys::window()?.session_storage().ok().flatten()
+}
+
+/// The development network parameters (`?latency=&jitter=&stall=`, `?dodge=0`,
+/// `?shooter=0`) every room a run joins takes, as `NetConfig` reads them.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NetworkTools {
+    pub latency: Option<String>,
+    pub jitter: Option<String>,
+    pub stall: Option<String>,
+    pub dodge: Option<String>,
+    pub shooter: Option<String>,
+}
 
 pub struct RoomSession {
     pub window: Arc<Window>,
@@ -86,34 +150,48 @@ pub struct RoomSession {
 }
 
 impl RoomSession {
-    /// Join `selection`'s room on the window `shell` holds. The window's surface must be
-    /// free (single player's renderer dropped). On failure the shell comes back with the
-    /// reason to show on Battle Setup.
-    pub fn new(shell: Shell, selection: RoomSelection) -> Result<Self, Box<(Shell, String)>> {
+    /// Join `selection`'s room on the window `shell` holds, with `network`'s tools. The
+    /// window's surface must be free (single player's renderer dropped). On failure the
+    /// shell comes back with the reason to show on Battle Setup.
+    pub async fn new(
+        shell: Shell,
+        selection: RoomSelection,
+        network: NetworkTools,
+    ) -> Result<Self, Box<(Shell, String)>> {
         let window = shell.window.clone();
-        let size = drawable_size(&window);
         let config = NetConfig {
             server: selection.server.clone(),
             room: selection.room.clone(),
-            saved_seat: shell.seats.get(&seat_key(&selection)).cloned(),
-            ..NetConfig::default()
-        };
-        let target = RenderTarget {
-            window: wgpu::SurfaceTarget::from(window.clone()),
-            width: size.width,
-            height: size.height,
+            saved_seat: shell.seats.get(&selection),
+            latency: network.latency,
+            jitter: network.jitter,
+            stall: network.stall,
+            dodge: network.dodge,
+            shooter: network.shooter,
         };
         let view = view_config(&window, &shell.prefs);
-        let mut game = match pollster::block_on(NetGame::create_with(target, view, config)) {
+        let created = match render_target(&window) {
+            Ok(target) => NetGame::create_with(target, view, config)
+                .await
+                .map_err(engine_error),
+            Err(error) => Err(error),
+        };
+        let mut game = match created {
             Ok(game) => game,
             Err(error) => {
-                eprintln!("The room's renderer could not start: {error}");
+                report!("The room's renderer could not start: {error}");
+                return Err(Box::new((shell, ARENA_FAILED.into())));
+            }
+        };
+        let overlay = match Overlay::new(window.clone(), game.renderer()) {
+            Ok(overlay) => overlay,
+            Err(error) => {
+                report!("The room's menus could not draw: {error}");
                 return Err(Box::new((shell, ARENA_FAILED.into())));
             }
         };
         let now = now_ms();
         game.join(selection.choice.clone(), now);
-        let overlay = Overlay::new(window.clone(), game.renderer());
         let Shell {
             prefs,
             audio,
@@ -196,6 +274,7 @@ impl RoomSession {
             && !self.occluded
             && !self.minimized;
         self.input.hold_pointer(&self.window, wanted);
+        self.ui.aim_hint = self.input.aim_waits_for_click();
     }
 
     /// Give the window back: the room's renderer and overlay go, the rest stays.
@@ -220,6 +299,7 @@ impl RoomSession {
             seats,
             frame_log: false,
             autoplay: false,
+            seed: None,
         }
     }
 
@@ -292,17 +372,13 @@ impl RoomSession {
             ClientAction::Send { socket, text } => self.sockets.send(*socket, text.clone()),
             ClientAction::CloseSocket { socket } => self.sockets.close(*socket),
             ClientAction::SaveSeat { token, room_epoch } => {
-                self.seats.insert(
-                    seat_key(&self.selection),
-                    SavedSeat {
-                        token: token.clone(),
-                        room_epoch: room_epoch.clone(),
-                    },
-                );
+                let seat = SavedSeat {
+                    token: token.clone(),
+                    room_epoch: room_epoch.clone(),
+                };
+                self.seats.save(&self.selection, seat);
             }
-            ClientAction::ForgetSeat => {
-                self.seats.remove(&seat_key(&self.selection));
-            }
+            ClientAction::ForgetSeat => self.seats.forget(&self.selection),
         }
     }
 
@@ -340,7 +416,7 @@ impl RoomSession {
             }
             RoomNotice::Prepare => self.preparing = true,
             RoomNotice::ArenaFailed(error) => {
-                eprintln!("Multiplayer graphics failed: {error}");
+                report!("Multiplayer graphics failed: {error}");
                 self.leave_to_setup(ARENA_FAILED.into());
             }
             RoomNotice::BaselineShown => {}
@@ -402,16 +478,26 @@ impl RoomSession {
             wheel: in_battle,
             touch: Play::live(
                 &self.overlay.context,
-                self.touch_live(),
+                self.touch_showing(),
                 self.first_person,
                 self.ui.hud.as_ref(),
             ),
         }
     }
 
-    /// Whether the touch controls show: the player can act, with no dialog open.
-    fn touch_live(&self) -> bool {
-        self.game.active_input() && self.ui.settings_draft.is_none()
+    /// Which touch controls show with no dialog open: all of them while the player can
+    /// act, the zoom pair alone while the tank is a wreck in the battle.
+    fn touch_showing(&self) -> Showing {
+        let wrecked = self.ui.hud.as_ref().is_some_and(|hud| !hud.human.alive);
+        if self.ui.settings_draft.is_some() {
+            Showing::Nothing
+        } else if self.game.active_input() {
+            Showing::All
+        } else if self.menu.in_battle() && !self.menu.joining && wrecked {
+            Showing::Zoom
+        } else {
+            Showing::Nothing
+        }
     }
 
     /// Do what input asked; true when the app should quit.
@@ -453,7 +539,7 @@ impl RoomSession {
         }
     }
 
-    fn resize(&mut self) {
+    pub fn resize(&mut self) {
         let (width, height, scale) = css_size(&self.window);
         self.game.resize(width, height, scale);
     }
@@ -492,12 +578,14 @@ impl RoomSession {
             // The engine's next status puts up RECONNECTING.
             Action::RoomRejoin => self.game.rejoin(now),
             Action::RoomSetup(notice) => self.leave_to_setup(notice),
+            // The address still names the room: the new page opens Battle Setup with it.
+            Action::Reload => crate::links::reload(),
             Action::RoomChoose { team, kind } => match self.game.choose_seat(team, kind, now) {
                 Ok(()) => {
                     self.prefs.tank = kind;
                     self.prefs.save();
                 }
-                Err(error) => eprintln!("Invalid room choice: {error}"),
+                Err(error) => report!("Invalid room choice: {}", engine_error(error)),
             },
             Action::RoomRules(rules) => self.game.set_rules(rules, now),
             Action::SelectAmmo(slot) => {
@@ -598,20 +686,23 @@ impl RoomSession {
             }
         }
         if let Some(bake) = &self.bake
-            && let Some(pixels) = bake.finished()
+            && let Some(baked) = bake.finished()
         {
             let key = bake.key.clone();
             self.bake = None;
-            if let Err(error) = self.game.supply_texture(&key, &pixels) {
-                eprintln!("{error}");
+            match baked {
+                Ok(pixels) => {
+                    if let Err(error) = self.game.supply_pixels(&key, &pixels) {
+                        report!("{}", engine_error(error));
+                    }
+                }
+                Err(_) => self.game.release_texture_bake(&key),
             }
         }
         let status = self.game.prepare(PREPARE_BUDGET, now);
         if status.ready {
             self.preparing = false;
             self.prebuilding = true;
-        } else if self.menu.joining && (status.compiled > 0 || status.remaining > 0) {
-            self.menu.status = "Preparing the arena…".into();
         }
         self.pump();
     }
@@ -620,7 +711,7 @@ impl RoomSession {
     fn frame(&mut self, now: f64) -> Result<(), String> {
         let input = self.input.take_input(self.first_person);
         let camera_input = input.zoom != 0.0 || input.toggle_view;
-        let result = self.game.frame(now, &input.pack())?;
+        let result = self.game.frame(now, &input.pack()).map_err(engine_error)?;
         if let Some(error) = self.game.error() {
             return Err(error);
         }
@@ -659,18 +750,68 @@ impl RoomSession {
 
     /// The renderer stopped: give up the connection, and the engine says so.
     fn fail(&mut self, error: &str) {
-        eprintln!("The room stopped: {error}");
+        report!("The room stopped: {error}");
+        crate::page::failed(&format!("The renderer stopped: {error}"));
         self.stopped = true;
         self.input.controls.clear();
         self.game.renderer_failed();
         self.pump();
     }
 
+    /// What a check reads of this frame (`automation.rs`).
+    fn automation_state(&mut self, now: f64) -> automation::State {
+        let menu = &self.menu;
+        automation::State {
+            engine: "room",
+            in_round: true,
+            phase: automation::phase_name(room_menu::hud_phase(menu)),
+            alive: self.ui.hud.as_ref().is_none_or(|hud| hud.human.alive),
+            first_person: self.first_person,
+            settings: self.ui.settings_draft.is_some(),
+            touch_controls: self.ui.touch.is_some_and(|touch| touch.acting),
+            touch_screen: crate::touch::screen(),
+            failure: self.stopped.then(|| "The renderer stopped.".into()),
+            error: self.game.error(),
+            prefs: serde_json::to_value(&self.prefs).unwrap_or_default(),
+            room: Some(serde_json::json!({
+                "code": menu.room,
+                "phase": format!("{:?}", menu.phase()),
+                "link": format!("{:?}", menu.link),
+                "menuOpen": menu.menu_open,
+                "joining": menu.joining,
+                "status": menu.status,
+                "players": menu.lobby.as_ref().map(|lobby| lobby.players.len()),
+                "polledAt": self.last_poll,
+                "now": now,
+            })),
+            ..automation::State::default()
+        }
+    }
+
+    /// Run a check's debug command: a room's engine takes only the network tools.
+    fn command(&mut self, command: &Command) -> Result<serde_json::Value, String> {
+        match *command {
+            Command::Latency {
+                latency,
+                jitter,
+                stall,
+            } => {
+                self.game.set_transport_delay(latency, jitter, stall);
+                Ok(serde_json::Value::Null)
+            }
+            ref other => Err(format!("a room cannot run {other:?}")),
+        }
+    }
+
     /// Run a frame and show it; true when the player chose to quit.
     fn redraw(&mut self) -> bool {
-        let now = now_ms();
+        let now = automation::now();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        for pending in automation::take_commands() {
+            let answer = self.command(&pending.command);
+            pending.answer(answer);
+        }
         let playing = self.battle().playing;
         let mut quit = false;
         for request in self
@@ -707,7 +848,9 @@ impl RoomSession {
             self.ui.stats = Some(self.game.nerd_stats(now));
         }
         self.hold_pointer();
-        self.ui.touch = self.input.touch_view(self.touch_live(), self.first_person);
+        self.ui.touch = self
+            .input
+            .touch_view(self.touch_showing(), self.first_person);
         let view = ui::View {
             in_round: true,
             phase: room_menu::hud_phase(&self.menu),
@@ -722,8 +865,28 @@ impl RoomSession {
         let painted = self.overlay.run(|context| {
             actions = room_menu::draw(context, menu, ui_state, &view, frame_dt);
         });
+        // The room's menus dim the arena, which the page also blurred behind them.
+        let dialog =
+            self.menu.joining || !self.menu.in_battle() || self.ui.settings_draft.is_some();
+        self.game.set_backdrop_blur(dialog);
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
+        if self.frame_shown {
+            crate::page::frame_presented();
+            if automation::enabled() {
+                let state = self.automation_state(now);
+                let game = &mut self.game;
+                automation::presented(state, |extra| {
+                    let json = match extra {
+                        Extra::Hud => game.hud_json(),
+                        Extra::Stats => game.stats_json(now),
+                        Extra::Nerd => game.nerd_stats_json(now),
+                        Extra::Debug | Extra::Snapshot => game.debug_json(),
+                    };
+                    serde_json::from_str(&json).unwrap_or_default()
+                });
+            }
+        }
         self.hidden_changed();
         for action in actions {
             quit |= self.apply(action);
@@ -732,7 +895,44 @@ impl RoomSession {
     }
 }
 
-/// Where a seat is kept: one per server and room, as the page keys `sessionStorage`.
+/// Where a seat is kept: one per server and room, as the old page keyed `sessionStorage`.
 fn seat_key(selection: &RoomSelection) -> String {
-    format!("{}:{}", selection.server, selection.room)
+    format!("sloppy-seat:{}:{}", selection.server, selection.room)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn selection(server: &str, room: &str) -> RoomSelection {
+        RoomSelection {
+            room: room.into(),
+            server: server.into(),
+            choice: sloppy_core::net::protocol::JoinChoice {
+                name: "Driver".into(),
+                kind: sloppy_core::sim::VehicleKind::Balanced,
+                team: None,
+                create: None,
+                existing_room: Some(true),
+            },
+        }
+    }
+
+    /// A seat is the server's and the room's: the same code on another server is another
+    /// room. The key is the old page's, so a tab that reloads into this page keeps it.
+    #[test]
+    fn a_seat_is_kept_per_server_and_room() {
+        let mut seats = SavedSeats::default();
+        let room = selection("wss://one.example", "ABCD2345");
+        assert_eq!(seat_key(&room), "sloppy-seat:wss://one.example:ABCD2345");
+        let seat = SavedSeat {
+            token: "t".repeat(16),
+            room_epoch: "e1".into(),
+        };
+        seats.save(&room, seat.clone());
+        assert_eq!(seats.get(&room), Some(seat));
+        assert_eq!(seats.get(&selection("wss://two.example", "ABCD2345")), None);
+        seats.forget(&room);
+        assert_eq!(seats.get(&room), None);
+    }
 }

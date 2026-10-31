@@ -3,12 +3,14 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta
+      name="description"
+      content="A tank game with destructible cover, team battles and solo survival."
+    />
     <meta name="theme-color" content="#0d1b2a" />
     <link rel="icon" href="/favicon.svg" />
     <!-- Added to a Home Screen, the game opens as an app of its own, without the browser's
-         address bar. The manifest's relative URLs follow whatever base the site has. The
-         status bar keeps its own strip: under a translucent one, iOS 27 leaves the app a
-         status bar's height short at the bottom. -->
+         address bar. The manifest's relative URLs follow whatever base the site has. -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" />
     <meta name="mobile-web-app-capable" content="yes" />
@@ -16,40 +18,536 @@
     <meta name="apple-mobile-web-app-title" content="Sloppy Tanks" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black" />
     <title>Sloppy Tanks · Little tanks. Big mess.</title>
-    <!-- Phones play the limited touch edition (src/game/phone-mode.ts). The screen's
-         shorter side, not the viewport, so rotating the phone keeps the same mode. A
-         phone's page never zooms: a stray double tap or pinch would leave the thumb
-         controls off screen with no button to undo it. An iPhone's browser cannot hide
-         its own bars for a page, so Battle Setup suggests the Home Screen instead. -->
-    <script>
-      {
-        const homeScreenApp =
-          navigator.standalone || matchMedia("(display-mode: standalone)").matches;
-        if (homeScreenApp) {
-          document.documentElement.classList.add("home-screen-app");
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: #070f1d;
+      }
+      /* winit appends the shell's canvas; it fills the page and takes the keys. On a
+         touch screen fingers drive the game: no scrolling, zooming, selection, callout
+         or tap flash. Its height follows a phone browser's bars as they show and hide
+         (`dvh`), so the drive stick never sits under them. */
+      canvas {
+        display: block;
+        width: 100vw;
+        height: 100vh;
+        height: 100dvh;
+        outline: none;
+        touch-action: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+        -webkit-tap-highlight-color: transparent;
+      }
+      /* The loading view, painted with the page's first bytes and kept over the canvas
+         until the shell has shown its first frame (`data-shell` on the root,
+         crates/desktop/src/page.rs): Battle Setup's dusk sky and the logo, with what is
+         loading and, when it fails, why. */
+      #boot {
+        position: fixed;
+        inset: 0;
+        z-index: 1;
+        display: grid;
+        place-content: center;
+        justify-items: center;
+        gap: 34px;
+        padding: 24px;
+        color: #f4f9ff;
+        font:
+          13px/1.45 system-ui,
+          -apple-system,
+          "Segoe UI",
+          Roboto,
+          sans-serif;
+        background:
+          radial-gradient(ellipse 80% 80% at 50% 50%, transparent 55%, #02050bcc 100%),
+          radial-gradient(ellipse 55% 30% at 50% 66%, #ffb35c55, transparent 70%),
+          radial-gradient(ellipse 90% 45% at 50% 70%, #ff7a3d2e, transparent 75%),
+          radial-gradient(ellipse 70% 60% at 50% 0%, #1d3f7a66, transparent 70%),
+          linear-gradient(#060c1a, #0f2347 42%, #2a3d6b 60%, #5a4a6a 70%, #1a2338 78%, #070f1d);
+        transition:
+          opacity 0.25s,
+          display 0.25s allow-discrete;
+      }
+      /* Its sky fades out over the game, which takes the taps and clicks meanwhile; the
+         logo and the card go at once, or they would ghost over Battle Setup. */
+      [data-shell="ready"] #boot {
+        display: none;
+        opacity: 0;
+        pointer-events: none;
+      }
+      [data-shell="ready"] #boot > * {
+        visibility: hidden;
+      }
+      .boot-brand {
+        display: grid;
+        justify-items: center;
+        color: #fff;
+        font:
+          400 clamp(32px, 9vw, 44px) / 0.82 Impact,
+          Haettenschweiler,
+          "Arial Narrow Bold",
+          sans-serif;
+        letter-spacing: 0.5px;
+        text-shadow:
+          0 3px 0 #0b1a30,
+          0 6px 18px #000a;
+        transform: rotate(-4deg) skewX(-6deg);
+      }
+      .boot-brand b {
+        font-weight: 400;
+      }
+      .boot-brand b:last-child {
+        color: #ffcf38;
+        font-size: 1.52em;
+        text-shadow:
+          0 3px 0 #7a4a0a,
+          0 6px 22px #ff9d1c55;
+      }
+      .boot-card {
+        display: flex;
+        flex-direction: column;
+        box-sizing: border-box;
+        width: min(380px, calc(100vw - 48px));
+        padding: 13px 16px 14px;
+        border: 1px solid #8bb9dc29;
+        border-radius: 10px;
+        background: #0b1d36e6;
+      }
+      .boot-card p {
+        margin: 0;
+      }
+      #boot-status {
+        position: relative;
+        padding-left: 16px;
+        color: #ffcf38;
+        font-size: 12px;
+        font-weight: 800;
+        letter-spacing: 0.4px;
+        font-variant-numeric: tabular-nums;
+      }
+      #boot-status::before {
+        content: "";
+        position: absolute;
+        left: 0;
+        top: calc(0.725em - 4px);
+        width: 8px;
+        height: 8px;
+        border-radius: 50%;
+        background: currentColor;
+        box-shadow: 0 0 0 3px #ffcf3826;
+      }
+      .boot-track {
+        height: 4px;
+        margin-top: 10px;
+        overflow: hidden;
+        border-radius: 4px;
+        background: #88b9dc1a;
+      }
+      #boot-bar {
+        display: block;
+        width: 38%;
+        height: 100%;
+        border-radius: inherit;
+        background: linear-gradient(90deg, transparent, #ffcf38, #ffe58a);
+        box-shadow: 0 0 10px #ffcf3899;
+        animation: boot-sweep 1.4s ease-in-out infinite;
+      }
+      #boot[data-progress] #boot-bar {
+        background: linear-gradient(90deg, #ffcf38, #ffe58a);
+        animation: none;
+        transition: width 0.15s;
+      }
+      @keyframes boot-sweep {
+        from {
+          transform: translateX(-100%);
         }
-        if (
-          new URLSearchParams(location.search).has("phone") ||
-          (matchMedia("(pointer: coarse)").matches && Math.min(screen.width, screen.height) < 600)
-        ) {
-          document.documentElement.classList.add("phone");
-          if (/iPhone|iPod/.test(navigator.userAgent) && !homeScreenApp) {
-            document.documentElement.classList.add("offer-home-screen");
+        to {
+          transform: translateX(365%);
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        #boot-bar {
+          width: 100%;
+          opacity: 0.65;
+          animation: none;
+        }
+      }
+      .boot-card .boot-more {
+        margin-top: 10px;
+        color: #a9c0d8;
+        font-size: 12px;
+        overflow-wrap: anywhere;
+        white-space: pre-wrap;
+      }
+      #boot-note {
+        max-height: 30vh;
+        overflow-y: auto;
+        color: #f4f9ff;
+      }
+      /* The game's gold action (`.primary`, as Battle Setup's TRY AGAIN): a lit slab with
+         a ledge under it and a warm glow, brighter and lifted under the pointer, a glint
+         crossing it once, pressed down onto a thinner ledge. */
+      #boot-retry {
+        position: relative;
+        display: block;
+        width: 100%;
+        min-height: 62px;
+        margin-top: 14px;
+        padding: 8px 24px;
+        overflow: hidden;
+        border: 0;
+        border-radius: 12px;
+        color: #1a2233;
+        background: linear-gradient(180deg, #ffe46e 0%, #ffcf38 48%, #f4a91a 100%);
+        box-shadow:
+          inset 0 1px #fff9,
+          inset 0 -3px #c97d0e,
+          0 8px 24px #ffb21c33;
+        text-shadow: 0 1px #fff6;
+        font:
+          400 16px/1 Impact,
+          Haettenschweiler,
+          "Arial Narrow Bold",
+          sans-serif;
+        letter-spacing: 4px;
+        cursor: pointer;
+        transition:
+          filter 0.12s,
+          transform 0.12s,
+          box-shadow 0.12s;
+      }
+      #boot-retry::after {
+        content: "";
+        position: absolute;
+        top: 0;
+        bottom: 0;
+        left: -40%;
+        width: 30%;
+        background: linear-gradient(90deg, transparent, #ffffff8c, transparent);
+        transform: skewX(-20deg) translateX(-120%);
+        pointer-events: none;
+      }
+      #boot-retry:hover {
+        filter: brightness(1.07);
+        box-shadow:
+          inset 0 1px #fff9,
+          inset 0 -3px #c97d0e,
+          0 10px 30px #ffb21c66;
+        transform: translateY(-1px);
+      }
+      #boot-retry:hover::after {
+        transform: skewX(-20deg) translateX(560%);
+        transition: transform 0.6s ease;
+      }
+      #boot-retry:active {
+        transform: translateY(1px);
+        box-shadow:
+          inset 0 1px #fff9,
+          inset 0 -1px #c97d0e,
+          0 4px 12px #ffb21c44;
+      }
+      #boot-retry:focus-visible {
+        outline: 3px solid #fff;
+        outline-offset: 3px;
+      }
+      [data-shell="failed"] #boot-status {
+        color: #ffb2a7;
+      }
+      [data-shell="failed"] #boot-status::before {
+        box-shadow: 0 0 0 3px #ffb2a720;
+      }
+      /* The track stays, under the words and filled with the failure's colour. */
+      [data-shell="failed"] .boot-track {
+        order: 1;
+      }
+      [data-shell="failed"] #boot-retry {
+        order: 2;
+      }
+      /* Its `display` would otherwise show it while the game still loads. */
+      #boot-retry[hidden] {
+        display: none;
+      }
+      [data-shell="failed"] #boot-bar {
+        width: 100%;
+        background: #ffb2a7;
+        box-shadow: none;
+        opacity: 1;
+        animation: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="boot">
+      <div class="boot-brand" aria-hidden="true"><b>SLOPPY</b><b>TANKS</b></div>
+      <div class="boot-card" role="status">
+        <p id="boot-status">Loading game…</p>
+        <div class="boot-track"><span id="boot-bar"></span></div>
+        <p id="boot-note" class="boot-more" hidden></p>
+        <p id="boot-hint" class="boot-more" hidden></p>
+        <noscript><p class="boot-more">This game needs JavaScript enabled.</p></noscript>
+        <button id="boot-retry" type="button" hidden>TRY AGAIN</button>
+      </div>
+    </div>
+    <!-- The desktop app's egui shell built for the page (`pnpm run wasm`): on WebGPU, or
+         its WebGL2 build where the browser gives no WebGPU adapter (`?webgl` forces it;
+         the WebGPU build reloads with it when its engine cannot start after all). Only
+         the chosen build's glue and binary download (a browser with WebGPU starts on
+         that build while it looks for an adapter); the binary streams into its
+         instance while the loading view counts its bytes, and the files the shell takes
+         from the page download beside it. The shell then fetches the textures from the
+         site beside this page and tells the page how it goes
+         (crates/desktop/src/page.rs). Marks for the measurements: `sloppy:boot`,
+         `sloppy:downloaded` and `sloppy:shell-started` here, then the shell's. -->
+    <script type="module">
+      import webgpuBinary from "/src/generated/shell/sloppy-tanks_bg.wasm?url";
+      import webglBinary from "/src/generated/shell-webgl/sloppy-tanks-webgl_bg.wasm?url";
+
+      performance.mark("sloppy:boot");
+      const root = document.documentElement;
+      const view = document.getElementById("boot");
+      const status = document.getElementById("boot-status");
+      const bar = document.getElementById("boot-bar");
+      const note = document.getElementById("boot-note");
+      const hint = document.getElementById("boot-hint");
+      const retry = document.getElementById("boot-retry");
+      retry.addEventListener("click", () => location.reload());
+
+      /** Loading that says nothing new for this long offers a retry. */
+      const STALL_MS = 20000;
+      let stall;
+      const show = (element, text) => {
+        element.textContent = text;
+        element.hidden = !text;
+      };
+      let failed = false;
+      const say = (line) => {
+        if (failed) return;
+        status.textContent = line;
+        clearTimeout(stall);
+        stall = setTimeout(() => {
+          if (!root.dataset.shell) {
+            show(hint, "This is taking longer than usual.");
+            retry.hidden = false;
           }
-          document
-            .querySelector('meta[name="viewport"]')
-            .setAttribute(
-              "content",
-              "width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover",
-            );
+        }, STALL_MS);
+      };
+
+      const OFFLINE = "Check your connection, then try again.";
+      const OLD_BROWSER = "Update your browser, or try another one.";
+      const GRAPHICS = /\b(WebGPU|WebGL) (adapter|device|canvas|window) unavailable/;
+      const UNLOADED = "The arena could not load. Please try again.";
+      /** Say why the game cannot go on, with a retry; the first reason stands. A `detail`
+       * the player cannot act on (a browser's own error) goes to the console and to
+       * `#boot-note`'s `data-detail` for the checks, with `headline` (or the usual
+       * heading) and no `reason` shown in its place. */
+      const fail = (reason, help, { headline, detail } = {}) => {
+        if (failed) return;
+        failed = true;
+        clearTimeout(stall);
+        root.dataset.shell = "failed";
+        if (detail) console.error(detail);
+        note.dataset.detail = detail ?? reason;
+        status.textContent =
+          headline ??
+          (performance.getEntriesByName("sloppy:first-frame").length
+            ? "Sloppy Tanks stopped"
+            : "Sloppy Tanks could not start");
+        status.parentElement.setAttribute("role", "alert");
+        show(note, reason);
+        delete view.dataset.progress;
+        bar.style.width = "";
+        const graphics =
+          "Turn on hardware acceleration in your browser's settings, or try another browser.";
+        show(hint, help ?? (GRAPHICS.test(reason) ? graphics : "Reload to try again."));
+        retry.hidden = false;
+        // Enter retries, without a ring that would read as the button being chosen.
+        retry.focus({ focusVisible: false });
+      };
+      /** The game's code or binary did not arrive: production's words, the detail kept. */
+      const unloaded = (detail) => fail("", OFFLINE, { headline: UNLOADED, detail });
+      const message = (error) => (error instanceof Error ? error.message : String(error));
+      // The shell's own word (a panic, no graphics), or a trap that stopped it without
+      // one (out of memory). So does a browser error thrown through the shell's Wasm
+      // frames (`wasm-function[n]` in every engine's stack): it skips Rust's cleanup and
+      // leaves the shell mid-event, drawing no further frame.
+      addEventListener("sloppy:failed", (event) => fail(String(event.detail)));
+      const THROUGH_WASM = /wasm-function\[/;
+      const trapped = (error) => {
+        if (
+          error instanceof WebAssembly.RuntimeError ||
+          (error instanceof Error && THROUGH_WASM.test(error.stack ?? ""))
+        ) {
+          fail(`The game stopped: ${error.message}`);
+        }
+      };
+      addEventListener("error", (event) => trapped(event.error));
+      addEventListener("unhandledrejection", (event) => trapped(event.reason));
+
+      /** Fetch `url` and count its `bytes` in the loading view as the response streams;
+       * `complete` settles on whether every byte came. `signal` drops it. */
+      const download = async (url, bytes, signal) => {
+        const response = await fetch(url, { signal });
+        if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+        // A compressed response's length is not what it delivers (vite.config.ts).
+        const total =
+          bytes ||
+          (!response.headers.has("content-encoding") &&
+            Number(response.headers.get("content-length"))) ||
+          0;
+        const megabytes = (count) => (count / 1e6).toFixed(1);
+        const of = total ? ` of ${megabytes(total)}` : "";
+        if (total) view.dataset.progress = "";
+        const reader = response.clone().body.getReader();
+        const complete = (async () => {
+          let received = 0;
+          for (let chunk; !(chunk = await reader.read()).done;) {
+            received += chunk.value.byteLength;
+            say(`Downloading the game… ${megabytes(received)}${of} MB`);
+            if (total) bar.style.width = `${Math.min(100, (100 * received) / total)}%`;
+          }
+          performance.mark("sloppy:downloaded");
+          delete view.dataset.progress;
+          bar.style.width = "";
+          say("Starting the engine…");
+          return received >= total;
+        })().catch(() => false);
+        return { response, complete };
+      };
+
+      // Safari starts an AudioContext made outside a gesture suspended, and the shell makes
+      // its sound on the frame after GO (audio.rs): resume each on the player's next press,
+      // as the old page's Howler did.
+      const AudioContext = window.AudioContext ?? window.webkitAudioContext;
+      if (AudioContext) {
+        const contexts = [];
+        window.AudioContext = class extends AudioContext {
+          constructor(...options) {
+            super(...options);
+            contexts.push(this);
+          }
+        };
+        const resume = () => {
+          for (const context of contexts) if (context.state === "suspended") context.resume();
+        };
+        for (const type of ["pointerdown", "pointerup", "keydown", "touchend"]) {
+          addEventListener(type, resume, { capture: true });
+        }
+      }
+
+      // The runtime files under content-hashed names that browsers keep across releases
+      // (scripts/hashed-assets.ts): the renderer resolves texture paths through
+      // `sloppyAssets`. The fonts, sounds and Battle Setup's previews download beside the
+      // binary, which downloads again with every release, into `sloppyFiles` for the
+      // shell (crates/desktop/src/assets.rs): each its download, then its bytes, or null
+      // once it failed. The fonts must be there before the shell starts; the previews
+      // and sounds may come late, so they leave the bandwidth to the binary.
+      const assets = (globalThis.sloppyAssets = JSON.parse(
+        document.getElementById("sloppy-assets")?.textContent || "{}",
+      ));
+      const files = (globalThis.sloppyFiles = {});
+      const fetchFile = async (path, priority) => {
+        try {
+          const response = await fetch(assets[path], { priority });
+          if (!response.ok) throw new Error(`HTTP ${response.status} for ${assets[path]}`);
+          files[path] = new Uint8Array(await response.arrayBuffer());
+        } catch (error) {
+          files[path] = null;
+          throw error;
+        }
+      };
+      const fonts = [];
+      for (const path of Object.keys(assets)) {
+        if (path.startsWith("fonts/")) {
+          fonts.push((files[path] = fetchFile(path, "high")));
+        } else if (/^(audio|previews)\//.test(path)) {
+          files[path] = fetchFile(path, "low").catch((error) =>
+            console.warn(`${path} did not download: ${message(error)}`),
+          );
+        }
+      }
+
+      // The shell bakes generated textures in workers that run its module (bakes.rs),
+      // with the glue the page loaded (`glueUrl`, set once it has).
+      let glueUrl;
+      window.sloppyBakeWorker = () => {
+        const worker = new Worker(new URL("/src/bake-worker.ts", import.meta.url), {
+          type: "module",
+        });
+        worker.postMessage({ glue: glueUrl });
+        return worker;
+      };
+
+      if (typeof WebAssembly !== "object") {
+        fail("This browser cannot run WebAssembly.", OLD_BROWSER);
+      } else {
+        say("Loading game…");
+        const forceWebgl = new URLSearchParams(location.search).has("webgl");
+        const [webgpuBytes, webglBytes] = (
+          document.querySelector('meta[name="sloppy-shell-bytes"]')?.content ?? ""
+        )
+          .split(",")
+          .map(Number);
+        const webglBuild = () => [
+          import("/src/shell-glue-webgl.ts"),
+          download(webglBinary, webglBytes),
+        ];
+        // A browser with WebGPU nearly always gives an adapter, but asking takes a while
+        // (a cold WebKit spends 75 ms starting its GPU process at the first read of
+        // `navigator.gpu`), so the WebGPU build downloads meanwhile and gives way to the
+        // WebGL build only when no adapter comes. `in` does not read the property.
+        let glue, binary;
+        if (!forceWebgl && "gpu" in navigator) {
+          const dropped = new AbortController();
+          glue = import("/src/shell-glue.ts");
+          binary = download(webgpuBinary, webgpuBytes, dropped.signal);
+          if (!(await navigator.gpu.requestAdapter().catch(() => null))) {
+            dropped.abort();
+            for (const unused of [glue, binary]) unused.catch(() => {});
+            [glue, binary] = webglBuild();
+          }
+        } else {
+          [glue, binary] = webglBuild();
+        }
+        let init, response, complete;
+        try {
+          [{ default: init, glueUrl }, { response, complete }] = await Promise.all([
+            glue.catch((error) => {
+              throw new Error(`The game's code did not load: ${message(error)}`);
+            }),
+            binary.catch((error) => {
+              throw new Error(`The game did not download: ${message(error)}`);
+            }),
+            Promise.all(fonts).catch((error) => {
+              throw new Error(`The game's fonts did not download: ${message(error)}`);
+            }),
+          ]);
+        } catch (error) {
+          unloaded(message(error));
+        }
+        if (init) {
+          try {
+            await init({ module_or_path: response });
+            performance.mark("sloppy:shell-started");
+          } catch (error) {
+            if (!(await complete)) {
+              unloaded(`The game did not download completely: ${message(error)}`);
+            } else if (error instanceof WebAssembly.CompileError) {
+              fail("This browser cannot run the game.", OLD_BROWSER, {
+                detail: `This browser cannot run the game: ${error.message}`,
+              });
+            } else if (error instanceof WebAssembly.RuntimeError) {
+              trapped(error);
+            } else {
+              // An exception in its start, or a binary from another build (a stale cache).
+              fail("", undefined, { detail: `The game could not start: ${message(error)}` });
+            }
+          }
         }
       }
     </script>
-    <!-- Inline startup styles are generated by Vite. -->
-  </head>
-  <body>
-    <div id="app"><!-- battle-setup --></div>
-    <noscript>This game needs JavaScript enabled to load the arena.</noscript>
-    <!-- startup-script -->
   </body>
 </html>

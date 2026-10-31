@@ -1,6 +1,6 @@
 # Sloppy Tanks
 
-A browser tank game with destructible cover, team battles and solo survival. The engine is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom renderer draws handwritten WGSL through WebGPU (`wgpu`), or WebGL2 (`glow`) where WebGPU is unavailable, and a TypeScript page shell handles menus, input and Howler audio. Multiplayer rooms run the same Rust simulation in a native Rust server.
+A browser tank game with destructible cover, team battles and solo survival. The game is Rust compiled to WebAssembly: the simulation runs on Rapier, a custom renderer draws handwritten WGSL through WebGPU (`wgpu`), or WebGL2 where the browser has no WebGPU, and the desktop app's egui shell, built for the page, draws the menus and HUD and plays the sound. Multiplayer rooms run the same Rust simulation in a native Rust server.
 
 ## Run
 
@@ -11,7 +11,7 @@ brew install node pnpm rustup   # once per machine
 rustup toolchain install        # in the checkout: the toolchain rust-toolchain.toml pins
 cargo install wasm-bindgen-cli --version 0.2.129 --locked
 pnpm install                    # once per checkout or worktree, and after dependency changes
-pnpm run wasm                   # build the engine; rerun after Rust or WGSL edits
+pnpm run wasm                   # build the page's Wasm; rerun after Rust or WGSL edits
 pnpm run dev
 ```
 
@@ -40,14 +40,23 @@ compiling it again, at the cost of about a second per rebuild within one tree.
 Bypass it for one command with `KACHE_DISABLED=1`; `kache explain` says why a crate
 missed the cache.
 
-Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. Vite
-serves the release Wasm from `src/generated/engine/` (and the WebGL2 build from
-`src/generated/engine-webgl/`); it does not compile Rust,
-so run `pnpm run wasm` again after changing a crate. That rebuilds the WebGPU engine
-only (the WebGL2 one too when it is missing or the engine's API changed); run
-`pnpm run wasm:webgl` before trying `?webgl` after an edit.
+Open the URL Vite prints, normally `http://127.0.0.1:5173/sloppy-tanks/`. The page
+(`index.html`) is the desktop app's egui shell (`crates/desktop`) built for wasm32: Vite
+serves its release Wasm from `src/generated/shell/`; it does not compile Rust, so run
+`pnpm run wasm` again after changing a crate. The page's query reads as the app's command
+line: `?debug` is `--debug`. `?map=<id>` picks Battle Setup's map (an extra level only
+with `?debug`), `?multiplayer` opens its Multiplayer tab and `?room=<CODE>`, an invite
+link, opens the tab with that room selected. The address then follows the tab and the
+room, so a reload comes back there, and JOIN ROOM takes back a seat the room still holds.
+A page on this machine lists the local game server (`pnpm run server:dev`) unless the
+build names a directory; there and on the dev site, `?directory=<url>` names another, and
+rooms take the network tools `?latency=`, `?jitter=`, `?stall=` (milliseconds), `?dodge=0`
+and `?shooter=0`. Until the shell shows its first frame, the page's own loading view
+shows the download and, when the game cannot start, why, with a retry; the shell reports
+to it and to measurements through `crates/desktop/src/page.rs` (the root's `data-shell`
+and `sloppy:*` performance marks).
 
-Rendering uses WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU). Elsewhere the page loads a separate WebGL2 build of the engine instead; WebGPU browsers never download it. Add `?webgl` to the URL to try the WebGL2 build on any browser. **Stats for nerds** (on a page opened with `?debug`) shows the graphics API in use and rendering diagnostics.
+The page draws with WebGPU where the browser offers it (HTTPS or localhost, and a supporting browser and GPU) and with WebGL2 otherwise; `?webgl` forces WebGL2. It downloads only the build it plays.
 
 To try a build on a phone or tablet, `pnpm run tunnel` builds the game and prints a temporary `https://….trycloudflare.com/sloppy-tanks/` link (needs `brew install cloudflared`; see [docs/cloudflare-tunnel.md](docs/cloudflare-tunnel.md)). Anyone with the link can open it while the command runs; restart it after changing the source.
 
@@ -69,16 +78,12 @@ The overhead/first-person view and overhead zoom are remembered too, and shared
 between single player and multiplayer. Playing an extra level or an online team
 battle keeps your preferred single-player mode for the next standard map.
 
-Map links accept `?map=village`, `?map=harbor` or `?map=quarry`.
-
 Opening the game with `?debug` adds two stress levels, marked **EXTRA**, to
 the map dropdowns: **Stress Grid** (30 tanks among 75 destructibles) and
 **Scrap Yard** (30 tanks in a compact yard whose cover rebuilds). In single player
 they are an endless 15 v 15 team battle with your chosen tank; online they follow
 the room's rules. Players are nearly invulnerable on both, and pickups are ten
-times stronger. Rooms on these levels appear in the room list only on such a page;
-their room links work for anyone. `?debug&map=superstress` links straight to
-one.
+times stronger. Rooms on these levels appear in the room list only on such a page.
 
 | Control            | Action                                                   |
 | ------------------ | -------------------------------------------------------- |
@@ -91,7 +96,7 @@ one.
 | Shift + scroll     | Zoom                                                     |
 | V / ◎ button       | Toggle the first-person view from the turret             |
 | Escape / Pause     | Pause                                                    |
-| ⚙ button           | Settings: touch controls, sound, graphics, battle speeds |
+| ⚙ button           | Settings: sound, graphics, battle speeds                 |
 
 Settings' **Graphics: Auto / High / Medium / Low** is saved like the other choices. Auto keeps the frame rate smooth: desktops start with the full picture, while tablets and phones start on Medium at one rendered pixel per CSS pixel without multisampling. As the frames allow, Auto lowers or raises the 3D scene's resolution in small steps and the quality tier with it. High is the full picture; Medium drops ambient occlusion and fine ground and cloud detail; Low also drops bloom and halves the shadow map. A fixed tier draws at full resolution and never adapts, and High also keeps multisampling on a tablet after a reload. Stats for nerds (`?debug`, then N) shows the tier, the render scale and the GPU's frame time.
 
@@ -99,9 +104,9 @@ In first person the camera sits on your turret: the mouse turns it (click the ar
 
 Losing focus clears held input, while a hidden page pauses the round. Standard ammunition is unlimited; collect crates for special ammunition. Power-ups provide rapid fire, speed, shields, repairs and automatic laser defense. Enemy hull damage and kills earn Veteran, Elite and Heroic ranks; death resets rank progress. Timber and cargo break apart, drums explode, and destroyed cover opens routes. Allied tanks block shells without losing hull health or shields; rockets detonate on contact, with their existing self-damage rule. Bots hold fire when an ally blocks a firing lane, including spread pellets.
 
-On iPads, car screens and other touchscreens, touch controls appear automatically: the same scheme as the phone edition, with the full game. Drag the stick in the bottom-left corner to drive (shorter drags move slower), and touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. Tap ✹ in the bottom-right corner to drop one mine, tap an ammo slot in the weapon strip between them to select it, and use − / + to zoom. The mine button shows its cooldown. Open Settings with the gear in the top right corner to choose **Touch controls: Auto / On / Off**; the preference is saved. Landscape gives the clearest view, and portrait is supported. The joystick UI and its styles load only when touch controls are enabled; desktop Auto and Off skip their downloads and hidden UI updates.
+On iPads, car screens and other touchscreens, touch controls appear automatically (in the [iPad app](#ipad) too): drag the stick in the bottom-left corner to drive (shorter drags move slower), and touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. Tap ✹ in the bottom-right corner to drop one mine, tap an ammo slot in the weapon strip between them to select it, and use − / + to zoom. The mine button shows its cooldown. In a page, Settings' **Touch controls: Auto / On / Off** is saved: Auto shows them where the browser reports a touchscreen and from the first touch on a touch laptop, and Off keeps the keyboard and mouse whatever touches the screen. The desktop app plays with a keyboard and mouse.
 
-Phones (a touchscreen whose shorter side is under 600 px, or any device with `?phone`) get a limited edition: Battle Setup offers only the tank, the map, the two tabs and the battle format (Team Battle or Solo Assault), single-player bots are always Easy, and the arena shows nothing but the drive stick, a small scoreboard, − / + zoom in the top-left corner, the first-person ◎ and pause buttons in the top-right, and the mid-screen notices. Touch the arena to aim and fire: the turret turns toward your finger and fires until it lifts, and the finger can stay down and slide. In first person (◎, remembered on the phone), the drive stick turns instead of strafing: push it sideways to turn the view (the tank follows when driving) and forward or back to drive; touching the arena fires, and dragging that finger fine-tunes the aim. The gun sight and hull compass show. Phones start with a farther camera until you zoom (the zoom is remembered), draw no overhead aiming reticle, and neither zoom the page nor show the long-press magnifier. Multiplayer on a phone is one button with no room list: it joins the busiest open room (one whose battle is under way first), showing that room's map, or creates a room on the chosen map with bots filling the teams; a room link joins that room. In a room the menu keeps only the room code, what is happening, the results and the actions: room rules, team and tank changes need a larger screen. There is no mine button, ammo strip or Settings on a phone.
+Phones (a touchscreen whose shorter side is under 600 px, or any device with `?phone`) get a limited edition: Battle Setup offers only the tank, the map, the two tabs and the battle format (Team Battle or Solo Assault), single-player bots are always Easy, and the arena shows nothing but the drive stick, a small scoreboard, − / + zoom, the first-person ◎ and pause keys along the top, and the mid-screen notices. Touch the arena to aim and fire. In first person the drive stick's sideways push turns the view, and the hull compass shows over a small hull plate. Phones start with a farther camera until you zoom (the zoom is remembered) and draw no overhead aiming reticle. Multiplayer on a phone is one button with no room list: it joins the busiest open room (one whose battle is under way first), showing that room's map, or creates a room on the chosen map with Easy bots filling the teams. In a room the menu keeps only the room, what is happening, the results and the actions: room rules, team and tank changes need a larger screen. There is no mine button or ammo strip on a phone, and Settings opens from the pause menu. In an iPhone's browser Battle Setup suggests adding the game to the Home Screen, which gives it the whole screen.
 
 Team-only HUNTER Humvees make hit-and-run TOW attacks. They prefer isolated targets, plan an escape before firing, and withdraw behind cover (or open distance when no cover is available). After reloading and a short pause, they approach from a different position. They remain lightly armored and do not escort the player. They stop for 0.9 seconds to aim and stay exposed for 0.65 seconds after launch; a TOW deals 75 base damage. Most Humvee kills erupt in a fireball and tumble as a whole vehicle; roughly one in five instead leaves a quietly smoking wreck with a small hop.
 
@@ -111,18 +116,19 @@ Choose **END BATTLE** from the pause menu to finish early and see your current s
 
 ```sh
 pnpm run check          # the CI gate: formatting, Wasm and Vite builds, lint, types, clippy, server, all tests
-pnpm run wasm           # release WebGPU engine and its glue into src/generated/engine/
-pnpm run wasm:all       # both engines, the WebGL2 one into src/generated/engine-webgl/
-pnpm test               # page shell, import boundary, traffic-bot and pilot tests (needs pnpm run server:build and pilot:build)
+pnpm run wasm           # the page: the egui shell's release Wasm and glue into src/generated/shell/
+pnpm run wasm:fast      # the same built for compile time, to check how a change looks (never to time or deploy)
+pnpm run wasm:engine    # the sloppy-web engine into src/generated/engine/ (fixtures, game preview, WireView)
+pnpm run wasm:all       # both
+pnpm test               # script, directory, traffic-bot and pilot tests (needs pnpm run server:build and pilot:build)
 pnpm run test:rust      # simulation, net, renderer and server tests (cargo test --workspace, without the desktop app)
 pnpm run validate       # ten seeded full matches and reset checks
 pnpm run build          # production output in dist/ (builds the Wasm first)
 pnpm run lint:fix       # safe ESLint fixes
-pnpm run format         # Prettier for source, tests, scripts, styles and docs; cargo fmt for Rust
-pnpm run check:browser  # browser checks against a running dev server (set SLOPPY_URL)
+pnpm run format         # Prettier for tests, scripts, tools and docs; cargo fmt for Rust
 ```
 
-[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser checks and performance measurements. The engine was ported from the TypeScript game at `35afd91` (in Git history) and differs from it on purpose in Rapier 0.36's contact response, zlib-rs level 2 WebSocket compression, square cargo fittings on the three moored harbor ships and ownerless damage sent as `owner: 0`.
+[AGENTS.md](AGENTS.md) is the development guide: code conventions and the simulation, determinism and rendering rules. [scripts/README.md](scripts/README.md) lists the browser fixtures and performance measurements. The engine was ported from the TypeScript game at `35afd91` (in Git history) and differs from it on purpose in Rapier 0.36's contact response, zlib-rs level 2 WebSocket compression, square cargo fittings on the three moored harbor ships and ownerless damage sent as `owner: 0`.
 
 | Crate / directory | Target        | Owns                                                                                     |
 | ----------------- | ------------- | ---------------------------------------------------------------------------------------- |
@@ -130,26 +136,25 @@ pnpm run check:browser  # browser checks against a running dev server (set SLOPP
 | `crates/render`   | Wasm          | The WebGPU/WebGL2 renderer, WGSL shaders, presentation, effects and cameras              |
 | `crates/web`      | Wasm          | The wasm-bindgen API: `Game` (single player) and `NetGame` (a room page)                 |
 | `crates/server`   | native        | The multiplayer server: HTTP, WebSocket rooms, limits, monitor and dashboard             |
-| `crates/desktop`  | macOS/Windows | The desktop app: a native window on wgpu (Metal, Direct3D 12), egui menus, HUD           |
+| `crates/desktop`  | native + Wasm | The app and the page: a window on wgpu (Metal, Direct3D 12, WebGPU), egui menus, HUD     |
 | `crates/pilot`    | native + Wasm | Pilots: headless players that join rooms over the network and play with the bot brain    |
-| `src/`            | browser       | The page shell: menus, HUD, input, touch controls, audio and the room page               |
 
 | Area                           | Starting points                                                                                                               |
 | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------- |
-| Startup and game loop          | `src/main.ts`, `src/game.ts`, `crates/web/src/game.rs`                                                                        |
+| Startup and game loop          | `crates/desktop/src/{main,app}.rs`, `crates/web/src/game.rs`                                                                  |
 | Simulation and match lifecycle | `crates/core/src/sim/simulation.rs`, `crates/core/src/sim/match_state.rs`                                                     |
 | Driving, weapons and damage    | `crates/core/src/sim/{tank_driving,weapons,projectiles,damage}.rs`                                                            |
 | Bots and navigation            | `crates/core/src/sim/{ai,bot_strategy,bot_movement,navigation}.rs`                                                            |
 | Maps and scenery               | `crates/core/src/sim/maps.rs`, `crates/core/src/models/scenery.rs`, `crates/render/src/presentation/{model_catalog,theme}.rs` |
 | Models and materials           | `crates/core/src/models/{tank_model,cover_model}.rs`, `crates/render/src/{model,material,shader}.rs`                          |
 | Balance and progression        | `crates/core/src/sim/{data,combat_rules,difficulty,veterancy}.rs`                                                             |
-| Multiplayer                    | `crates/core/src/net/`, `crates/web/src/net_game.rs`, `src/net/client.ts`, `crates/server/`                                   |
-| Controls, UI and sound         | `src/game/controls.ts`, `src/game/ui.ts`, `src/game/audio.ts`                                                                 |
+| Multiplayer                    | `crates/core/src/net/`, `crates/web/src/net_game.rs`, `crates/desktop/src/room.rs`, `crates/server/`                          |
+| Controls, UI and sound         | `crates/desktop/src/{input,audio}.rs`, `crates/desktop/src/ui/`                                                               |
 
-The development build exposes `window.sloppy` for diagnostics; `?tweak` opens the development-only zoom panel. `?autoplay` assigns bot controls to the player slot.
+`?autoplay` assigns bot controls to the player slot for the first single-player round.
 
-Multiplayer is available on the [production site](https://sloppy-tanks.fridman.me/?multiplayer)
-and the [dev site](https://sloppy-tanks-dev.fridman.me/?multiplayer), each with its own
+Multiplayer is available on the [production site](https://sloppy-tanks.fridman.me/)
+and the [dev site](https://sloppy-tanks-dev.fridman.me/), each with its own
 game server. Battle Setup's tank and map choices sit above its two tabs,
 **Single player** and **Multiplayer**, and stay put when you switch: the tank you
 pick is the one you drive online, and the map is the one a new room plays.
@@ -159,14 +164,8 @@ is prefilled; first-time players get a random bot name they can edit. **Auto**
 picks the team with fewer human seats (including reconnect reservations); choosing
 Blue or Red repaints the tank previews. The button where single player has **GO!**
 reads **Create room** for the new room, which starts playing immediately, or
-**Join room** once you choose an open room. Battle
-Setup stays up with the room's progress while the arena loads and draws its first
-frames, then the battle replaces it; a page that has already built a single-player
-arena reloads into the room behind the same setup.
-Friends can join later through the list or a link from **Copy invite link** in the
-in-game menu: a room link opens Battle Setup with that room selected. Reloading a
-room page, or a join that gives up, returns there too, with the reason shown in the
-room list; joining again keeps a seat that is still reserved.
+**Join room** once you choose an open room. Friends can join later through the list
+or by typing the room's code; joining again keeps a seat that is still reserved.
 Listings show human player counts, map, bot mode, round time and score.
 
 The online HUD shows power-up time remaining, highlights critically low hull,
@@ -218,8 +217,6 @@ or from Cloudflare regions through the bots control page (**Mode: Pilots**) or
 `pnpm run bots -- start wnam 2 --room CODE --hunt NAME` (see [bots](bots/README.md)), to
 feel the room from there. Each reports its RTT, view delay, fire-to-flash time and hits.
 
-Single-player downloads no multiplayer page code and opens no game-server connection.
-Multiplayer loads its client and UI only on entry and does not run browser physics.
 The [plan](docs/multiplayer-plan.md) records remaining playtest gates and the
 [server guide](crates/server/README.md) describes local development and deployment.
 
@@ -333,14 +330,15 @@ fridman.me's Cloudflare zone). The old
 address <https://fridman.me/sloppy-tanks/> redirects there. Local `pnpm run build` and
 the Vite dev server keep the default `/sloppy-tanks/` base.
 
-The workflow sets `VITE_DIRECTORY_URL` to the production server directory, so the page
-holds no server address. The directory is a Cloudflare Worker (`directory/`, published with
-`pnpm run directory:deploy`) that every game server pushes its rooms to; the page lists
-every server's rooms from it and connects to the server that hosts the chosen room, or for
-a new room the one with the fewest rooms. A machine pushes its rooms to the directory
-under its environment (production or dev), which its startup script
-(`deploy/server/cloud-init/`) writes as `DIRECTORY_URL` and `SERVER_ENVIRONMENT`; the build names the page's as
-`VITE_SERVER_ENVIRONMENT`. The workflow does not deploy the server, but after the site deploys it
+The page holds no server address, only the server directory's (production's, unless the
+shell's build names another in `SLOPPY_DIRECTORY_URL`). The directory is a Cloudflare
+Worker (`directory/`, published with `pnpm run directory:deploy`) that every game server
+pushes its rooms to; the page lists every server's rooms from it and connects to the
+server that hosts the chosen room, or for a new room the one with the fewest rooms. A
+machine pushes its rooms to the directory under its environment (production or dev),
+which its startup script (`deploy/server/cloud-init/`) writes as `DIRECTORY_URL` and
+`SERVER_ENVIRONMENT`; the shell lists the environment its build names in
+`SLOPPY_SERVER_ENVIRONMENT`: production's, and `dev` for the dev site (`build:dev`). The workflow does not deploy the server, but after the site deploys it
 points the server's container image tag `:production` at the commit's image; the dev
 site uses a separate server on its own machine (below). A
 client only plays on a server built from the same shared sources: the `crates/core`
@@ -361,12 +359,17 @@ page's when later commits left the server unchanged. After merging changes to an
 production site are asked to reload and cannot join. Server-only changes
 (`crates/server`, its dependencies and build settings) keep clients compatible but
 still need that update to take effect; client-only files (`crates/render`,
-`crates/web`, the page shell) never do. See `crates/server/README.md` for the
+`crates/web`, `crates/desktop`) never do. See `crates/server/README.md` for the
 updater, auto-update and the SSH fallback.
 
-`DEPLOY_BASE` controls both Vite asset URLs and the engine download.
-
-The build separates the interactive menu from the engine and audio. Battle Setup appears immediately with a progress strip while the engine, textures and hidden arena prepare. Pressing GO early changes the button to WAIT and confirms that the round will start automatically; there is no need to keep clicking. The arena's shaders and first frame are prepared before combat starts. GO reuses the prepared arena when its choices still match, or prepares the newly selected map while keeping the menu visible. Independent image downloads, device setup and GPU pipeline compilation overlap where possible. The engine (Rust simulation and WebGPU renderer) is one WebAssembly file, emitted as a separate hashed asset and requested from the page's head so it downloads while the menu loads. A second file holds the WebGL2 build, which the head script requests instead only when the browser gives no WebGPU adapter. Hosts should serve it as `application/wasm` with gzip or Brotli compression.
+`DEPLOY_BASE` controls the Vite asset URLs. The page is one WebAssembly file (the shell,
+with the engine and menus), emitted as a hashed asset, beside the textures it fetches and
+the fonts, sounds and tank previews `index.html` downloads with it. Those files keep
+their plain paths under `public/` for the tools and fixtures, and the build also emits
+each under a content-hashed name in `assets/`, with a manifest in the game page that
+the page and renderer resolve them through (`scripts/hashed-assets.ts`), so returning
+visitors download none of them again until it changes. Hosts should serve the Wasm as
+`application/wasm` with gzip or Brotli compression.
 
 ### Local dev deployment
 
@@ -378,16 +381,12 @@ token that can write packages (`crates/server/README.md` shows how with `gh`). T
 Worker's account, name and domain come from `deploy/dev-site/wrangler.jsonc`,
 independent of the local Git branch. No Git commit or push is required.
 `pnpm run build:dev` builds without publishing.
-The dev build connects the **Multiplayer** tab to the dev directory, where the dev
-multiplayer servers list themselves. They run on their own machines, each at its nip.io
+The dev build connects the **Multiplayer** tab to the dev servers, which list themselves in
+the directory under the dev environment. They run on their own machines, each at its nip.io
 name (`wss://1-2-3-4.nip.io`, dashboard at `/dashboard`). `deploy:dev` first pushes
 the same checkout's server image as its `:dev` tag, which those servers check every 10
 seconds and switch to by themselves, and waits for them, so client and server versions
-match; production multiplayer is never affected. Unlike production, the
-dev site keeps the development network tools: a room page takes `?latency=`, `?jitter=`
-and `?stall=` (milliseconds of simulated transport delay), `&latencySlider` shows sliders
-that change them mid-battle, and `?dodge=0` / `?shooter=0` turn off the fairness options for
-comparison.
+match; production multiplayer is never affected.
 
 The dev game is at <https://sloppy-tanks-dev.fridman.me/> and the directory of
 browser test pages is at <https://sloppy-tanks-dev.fridman.me/test-pages.html>.
@@ -398,10 +397,11 @@ stay separate. The hostname is the Worker's custom domain: Wrangler keeps its DN
 record in fridman.me's Cloudflare zone, and all other records stay as they are.
 
 The Worker serves `dist-dev/` as static assets with the build's `_headers` (immutable
-`/assets/`, `noindex` everywhere). Only the engine binaries run its script,
-`deploy/dev-site/worker.mjs`. Cloudflare compresses static assets as it serves them,
-which gives the 3.7 MB engine a later first byte and a larger file than Brotli at
-quality 10. So `deploy:dev` first writes Brotli-10 and gzip copies beside each `.wasm`
-(`deploy/dev-site/precompress.mjs`, a few seconds), and the script sends the one the
-client accepts, marked `no-transform`. Range requests, and clients that accept neither, get the
-original file.
+`/assets/`, where every file has a content-hashed name, so a returning visit requests
+only the page itself; `noindex` everywhere). Only the Wasm binaries and the shell's
+fonts run its script, `deploy/dev-site/worker.mjs`. Cloudflare compresses static assets
+as it serves them, which gives a multi-megabyte binary a later first byte and a larger
+file than Brotli at quality 11. So `deploy:dev` first writes Brotli-11 and gzip copies
+beside each `.wasm` and the font collection (`deploy/dev-site/precompress.mjs`, about
+ten seconds), and the script sends the one the client accepts, marked `no-transform`.
+Range requests, and clients that accept neither, get the original file.

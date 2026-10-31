@@ -6,68 +6,105 @@
 //! One engine owns the window's surface at a time: single player's `Game` behind Battle
 //! Setup ([`Session`]), or a multiplayer room's `NetGame` ([`RoomSession`]). Joining a
 //! room drops the game and its renderer first and keeps the rest of the shell
-//! ([`Shell`]); leaving the room does the reverse.
+//! ([`Shell`]); leaving the room does the reverse. An engine starts as a [`Task`]:
+//! natively at once, in a page once the browser has given it a GPU device.
 
+use std::future::Future;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use sloppy_core::net::client::POLL_MS;
 use sloppy_core::sim::game_options::GameOptions;
+use sloppy_core::sim::map_options::{MapId, is_extra_level};
+use sloppy_core::sim::maps::MAPS;
 use sloppy_core::sim::speed_tuning::SpeedSetting;
 use sloppy_core::sim::{MatchPhase, SimEventType, Team};
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::presentation::PrepareStatus;
+use sloppy_render::presentation::generated::theme_bakes;
 use sloppy_render::quality::DeviceClass;
-use sloppy_render::wgpu;
 use sloppy_web::hud::Loading;
-use sloppy_web::{Game, GameConfig, ViewConfig, frame_slot};
+use sloppy_web::{Game, GameConfig, PageError, ViewConfig, frame_slot};
+use web_time::Instant;
 use winit::application::ApplicationHandler;
 use winit::event::{DeviceEvent, DeviceId, WindowEvent};
 use winit::event_loop::{ActiveEventLoop, ControlFlow};
-use winit::window::{CursorGrabMode, Fullscreen, Window, WindowAttributes, WindowId};
+use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::audio::Audio;
-use crate::bakes::{self, Bake};
+use crate::automation::{self, Command, Extra};
+use crate::bakes::{self, Bake, Pixels};
 use crate::frame_log::{FrameLog, FrameParts};
 use crate::input::Shortcut;
+use crate::links::{self, Place};
 use crate::overlay::Overlay;
 use crate::preferences::Preferences;
-use crate::room::{RoomSession, SavedSeats};
+use crate::room::{NetworkTools, RoomSession, SavedSeats};
 use crate::room_api::RoomSelection;
-use crate::touch::Play;
+use crate::tasks::Task;
+use crate::touch::{Play, Showing};
 use crate::ui::rooms::RoomsState;
 use crate::ui::{self, Action, UiState};
 use crate::window_input::{Battle, Request, WindowInput};
 
-/// Pipelines created per preparation step; the menu redraws between steps.
+/// Pipelines created per preparation step.
 const PREPARE_BUDGET: u32 = 4;
+/// Milliseconds of a redraw that preparation steps may take before the menu paints;
+/// a step that is the arena's scenery or a native pipeline compile can overrun it.
+const PREPARE_SLICE_MS: f64 = 8.0;
 /// The window's first size, in points.
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
 const WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1280.0, 800.0);
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
 const MIN_WINDOW_SIZE: winit::dpi::LogicalSize<f64> = winit::dpi::LogicalSize::new(1100.0, 720.0);
 /// How often a window that takes no frames tries again.
 const HIDDEN_RECHECK: Duration = Duration::from_millis(100);
 /// Battle Setup's status once the arena is ready.
 const READY_STATUS: &str = "Ready when you are.";
 
-/// Command-line choices.
+/// Command-line choices, a page's link's included (`main.rs`).
 pub struct Options {
     /// `--debug`: extra levels in Battle Setup.
     pub debug: bool,
-    /// `--frame-log`: frame rate and frame parts on stderr each second.
+    /// `--frame-log`: frame rate and frame parts on stderr (a page's console) each second.
     pub frame_log: bool,
     /// `--autoplay`: the player's tank drives itself and the round starts once the
     /// arena is ready, for unattended frame-rate runs.
     pub autoplay: bool,
     /// `--directory <url>`: the server directory to list rooms from.
     pub directory: Option<String>,
+    /// `--map <id>`: Battle Setup's map in place of the saved one, an extra level only
+    /// where extra levels are offered (`initialGameOptions`).
+    pub map: Option<MapId>,
+    /// `--multiplayer`: Battle Setup opens on its Multiplayer tab.
+    pub multiplayer: bool,
+    /// `--room <CODE>`, an invite link: the Multiplayer tab, with the room selected once
+    /// the directory lists it.
+    pub room: Option<String>,
+    /// The development network tools every room this run joins takes.
+    pub network: NetworkTools,
+    /// `--seed <n>`: the first single-player arena's seed in place of a random one, for
+    /// measurements that compare builds on the same match.
+    pub seed: Option<f64>,
 }
 
 /// Which engine has the window.
 enum Mode {
     Single(Box<Session>),
     Room(Box<RoomSession>),
+    /// The next engine is starting; none when it could not.
+    Starting(Task<Option<Mode>>),
+}
+
+impl Mode {
+    /// The window's size may have changed while the engine started.
+    fn resize(&mut self) {
+        match self {
+            Mode::Single(session) => session.resize(),
+            Mode::Room(room) => room.resize(),
+            Mode::Starting(_) => {}
+        }
+    }
 }
 
 pub struct App {
@@ -86,50 +123,128 @@ impl App {
     /// Hand the window to the other engine when the one playing asks: a room Battle
     /// Setup chose, or Battle Setup after a room. False when no engine could start.
     fn switch_engine(&mut self) -> bool {
-        let wants_room =
-            matches!(&self.mode, Some(Mode::Single(session)) if session.pending_room.is_some());
-        let wants_setup = matches!(&self.mode, Some(Mode::Room(room)) if room.exit.is_some());
-        if !wants_room && !wants_setup {
-            return true;
-        }
-        let shell = match self.mode.take() {
-            Some(Mode::Single(mut session)) => {
-                let selection = session.pending_room.take();
-                let shell = session.into_shell();
-                crate::surface_layers::release(&shell.window);
-                match selection.map(|selection| RoomSession::new(shell, selection)) {
-                    Some(Ok(room)) => {
-                        self.mode = Some(Mode::Room(Box::new(room)));
-                        return true;
-                    }
-                    Some(Err(failed)) => {
-                        let (mut shell, notice) = *failed;
-                        crate::surface_layers::release(&shell.window);
-                        shell.rooms.returned_from("", &notice);
-                        shell
-                    }
-                    None => return false,
+        match self.mode.take() {
+            Some(Mode::Single(mut session)) => match session.pending_room.take() {
+                Some(selection) => {
+                    let shell = session.into_shell();
+                    crate::surface_layers::release(&shell.window);
+                    links::show(Place::Room(&selection.room));
+                    self.launch(join_room(shell, selection, self.options.network.clone()))
                 }
+                None => {
+                    self.mode = Some(Mode::Single(session));
+                    true
+                }
+            },
+            Some(Mode::Room(mut room)) => match room.exit.take() {
+                Some(notice) => {
+                    let code = room.room().to_owned();
+                    let mut shell = room.into_shell();
+                    crate::surface_layers::release(&shell.window);
+                    // A room left on purpose leaves the Multiplayer tab; one that ended
+                    // keeps its address, and a reload selects it again.
+                    if notice.is_empty() {
+                        links::show(Place::Multiplayer);
+                    }
+                    shell.rooms.returned_from(&code, &notice);
+                    self.launch(single_player(shell))
+                }
+                None => {
+                    self.mode = Some(Mode::Room(room));
+                    true
+                }
+            },
+            mode => {
+                self.mode = mode;
+                self.started()
             }
-            Some(Mode::Room(mut room)) => {
-                let notice = room.exit.take().unwrap_or_default();
-                let code = room.room().to_owned();
-                let mut shell = room.into_shell();
-                crate::surface_layers::release(&shell.window);
-                shell.rooms.returned_from(&code, &notice);
-                shell
-            }
-            None => return false,
+        }
+    }
+
+    /// Start the next engine on the window; false when none could start.
+    fn launch(&mut self, engine: impl Future<Output = Option<Mode>> + 'static) -> bool {
+        self.mode = Some(Mode::Starting(Task::on_main_thread(engine)));
+        self.started()
+    }
+
+    /// Hand the window to the engine that was starting, once it has; false when none
+    /// could start.
+    fn started(&mut self) -> bool {
+        let Some(Mode::Starting(task)) = &self.mode else {
+            return true;
         };
-        match Session::start(shell) {
-            Ok(session) => {
-                self.mode = Some(Mode::Single(Box::new(session)));
+        match task.take() {
+            None => true,
+            Some(None) => false,
+            Some(Some(mut mode)) => {
+                mode.resize();
+                self.mode = Some(mode);
                 true
             }
-            Err(error) => {
-                eprintln!("Sloppy Tanks could not start: {error}");
-                false
+        }
+    }
+}
+
+/// Single player on the shell's window; none when it could not start.
+async fn single_player(shell: Shell) -> Option<Mode> {
+    let window = shell.window.clone();
+    let session = Session::start(shell).await;
+    // A page waits for no event: the first frame wakes it.
+    window.request_redraw();
+    match session {
+        Ok(session) => Some(Mode::Single(Box::new(session))),
+        Err(error) => {
+            startup_failed(&error);
+            None
+        }
+    }
+}
+
+/// No engine could start: natively the app ends, saying why on stderr. A browser can
+/// offer a WebGPU adapter and still fail to make the engine's device, so a page's WebGPU
+/// build hands over to its WebGL2 one (`index.html` loads that for `?webgl`), as the
+/// page's engine fell back before; otherwise the page's loading view says why.
+fn startup_failed(error: &str) {
+    report!("Sloppy Tanks could not start: {error}");
+    #[cfg(target_arch = "wasm32")]
+    {
+        if cfg!(not(feature = "webgl"))
+            && let Some(location) = web_sys::window().map(|window| window.location())
+            && let Ok(url) = location.href().and_then(|href| web_sys::Url::new(&href))
+            && !url.search_params().has("webgl")
+        {
+            url.search_params().append("webgl", "");
+            if location.replace(&url.href()).is_ok() {
+                return;
             }
+        }
+        crate::page::failed(error);
+    }
+}
+
+/// The page's browser, by its user agent string.
+#[cfg(target_arch = "wasm32")]
+fn user_agent() -> String {
+    web_sys::window()
+        .and_then(|window| window.navigator().user_agent().ok())
+        .unwrap_or_default()
+}
+
+/// The room Battle Setup chose, with `network`'s tools; Battle Setup again with the room
+/// selected, saying why, when it fails.
+async fn join_room(shell: Shell, selection: RoomSelection, network: NetworkTools) -> Option<Mode> {
+    let window = shell.window.clone();
+    let code = selection.room.clone();
+    match RoomSession::new(shell, selection, network).await {
+        Ok(room) => {
+            window.request_redraw();
+            Some(Mode::Room(Box::new(room)))
+        }
+        Err(failed) => {
+            let (mut shell, notice) = *failed;
+            crate::surface_layers::release(&shell.window);
+            shell.rooms.returned_from(&code, &notice);
+            single_player(shell).await
         }
     }
 }
@@ -148,6 +263,8 @@ pub struct Shell {
     pub frame_log: bool,
     /// `--autoplay`, for the first single-player round only.
     pub autoplay: bool,
+    /// `--seed`, for the first single-player arena only.
+    pub seed: Option<f64>,
 }
 
 /// The release line Battle Setup shows.
@@ -171,17 +288,33 @@ pub fn drawable_size(window: &Window) -> winit::dpi::PhysicalSize<u32> {
 }
 
 /// The window's size in points and its pixels per point, as the engines' `resize`
-/// takes them (the page's CSS size and device pixel ratio).
+/// takes them (the page's CSS size and device pixel ratio). In a page it is the canvas's
+/// CSS box: under an emulated pixel ratio (DevTools' devices, Playwright) the browser
+/// reports the canvas's device pixels as CSS pixels, so winit's size is off by that ratio
+/// while its pointer positions are not.
 pub fn css_size(window: &Window) -> (f64, f64, f64) {
     let scale = window.scale_factor();
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::WindowExtWebSys;
+        if let Some(canvas) = window.canvas() {
+            let (width, height) = (canvas.client_width(), canvas.client_height());
+            return (f64::from(width), f64::from(height), scale);
+        }
+    }
     let logical = drawable_size(window).to_logical::<f64>(scale);
     (logical.width, logical.height, scale)
 }
 
-/// Fill the screen or give the window back, as `prefs` say, and keep the choice. An
-/// iPad app always fills the screen.
+/// Whether the player may choose fullscreen: not in the iPad app, which always fills the
+/// screen, nor in the phone edition, whose top row keeps only its few keys.
+pub fn offers_fullscreen() -> bool {
+    !cfg!(target_os = "ios") && !crate::touch::phone()
+}
+
+/// Fill the screen or give the window back, as `prefs` say, and keep the choice.
 pub fn set_fullscreen(window: &Window, prefs: &mut Preferences, fullscreen: bool) {
-    if crate::TOUCH {
+    if !offers_fullscreen() {
         return;
     }
     window.set_fullscreen(fullscreen.then_some(Fullscreen::Borderless(None)));
@@ -191,30 +324,73 @@ pub fn set_fullscreen(window: &Window, prefs: &mut Preferences, fullscreen: bool
 
 /// The engine's clock, in milliseconds (the origin `Game` and `NetGame` read too).
 pub fn now_ms() -> f64 {
-    sloppy_web::clock_start().elapsed().as_secs_f64() * 1000.0
+    sloppy_web::now_ms()
 }
+
+/// An engine's error in words: natively its message, in a page a JS `Error`'s.
+pub fn engine_error(error: PageError) -> String {
+    #[cfg(target_arch = "wasm32")]
+    {
+        js_sys::Error::from(error).message().into()
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        error
+    }
+}
+
+/// What an engine draws into: the window natively, its canvas in a page.
+pub fn render_target(window: &Arc<Window>) -> Result<RenderTarget, String> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let size = drawable_size(window);
+        Ok(RenderTarget {
+            window: sloppy_render::wgpu::SurfaceTarget::from(window.clone()),
+            width: size.width,
+            height: size.height,
+        })
+    }
+    #[cfg(target_arch = "wasm32")]
+    {
+        use winit::platform::web::WindowExtWebSys;
+        window
+            .canvas()
+            .ok_or_else(|| "The page has no canvas".to_owned())
+    }
+}
+
+/// A phone's overhead camera starts this far out until the player zooms
+/// (`startingCamera`): its small screen shows more of the arena than the default's.
+const PHONE_ZOOM: f64 = 40.0;
 
 /// The view configuration both engines take for `window`, with the player's camera
 /// and graphics choices.
 pub fn view_config(window: &Window, prefs: &Preferences) -> ViewConfig {
     let (width, height, scale) = css_size(window);
+    let device = crate::touch::device();
     ViewConfig {
         css_width: Some(width),
         css_height: Some(height),
         pixel_ratio: Some(scale),
         first_person: prefs.first_person,
-        zoom: prefs.zoom,
-        // Touch screens draw no overhead reticle (`startingCamera`): a finger aims
+        zoom: prefs
+            .zoom
+            .or((device == DeviceClass::Phone).then_some(PHONE_ZOOM)),
+        // Touch devices draw no overhead reticle (`startingCamera`): a finger aims
         // where it is, so the mark sat under it and stuck where it lifted.
-        hide_reticle: crate::TOUCH,
+        hide_reticle: device != DeviceClass::Desktop,
         graphics: prefs.graphics,
-        // A tablet starts a tier lower and draws single-sampled (`quality.rs`).
-        device: if crate::TOUCH {
-            DeviceClass::Tablet
+        // Tablets and phones start a tier lower and draw single-sampled (`quality.rs`).
+        device,
+        // A page words what only a page does (RELOAD, "in this browser") as the page did.
+        shell: if cfg!(target_arch = "wasm32") {
+            sloppy_web::Shell::Page
         } else {
-            DeviceClass::Desktop
+            sloppy_web::Shell::Desktop
         },
-        shell: sloppy_web::Shell::Desktop,
+        // A page in WebKit holds the GPU's backlog to two frames itself.
+        #[cfg(target_arch = "wasm32")]
+        frames_in_flight: sloppy_web::frame_clock::browser_frames_in_flight(&user_agent()),
         ..ViewConfig::default()
     }
 }
@@ -270,6 +446,24 @@ impl Preparation {
     }
 }
 
+/// A generated texture's bake (`bakes.rs`), started for the chosen map as soon as
+/// Battle Setup shows rather than once its arena, built behind it, claims the bake.
+struct TextureBake {
+    bake: Bake,
+    /// The engine handed this bake out (`claim_texture_bake`) and waits for its pixels.
+    claimed: bool,
+    /// What came back before the claim.
+    pixels: Option<Result<Pixels, String>>,
+}
+
+/// The generated textures `map`'s arena has the shell bake (`theme_bakes`).
+fn map_bakes(map: MapId) -> &'static [&'static str] {
+    MAPS.iter()
+        .find(|candidate| candidate.id == map)
+        .and_then(|candidate| candidate.theme)
+        .map_or(&[], |theme| theme_bakes(theme.as_str()))
+}
+
 /// The window, its game and everything around it.
 struct Session {
     window: Arc<Window>,
@@ -279,7 +473,10 @@ struct Session {
     prefs: Preferences,
     ui: UiState,
     audio: Option<Audio>,
-    bake: Option<Bake>,
+    bake: Option<TextureBake>,
+    /// Generated textures the shell has started baking: the engine keeps each once it
+    /// has it, so a map that comes back does not bake it again.
+    bakes_started: Vec<String>,
     debug: bool,
     build: String,
     /// The team the engine drew for the player (`initial_game_options`).
@@ -300,6 +497,9 @@ struct Session {
     minimized: bool,
     /// The window took the last frame.
     frame_shown: bool,
+    /// Battle Setup has been presented once: the arena, which the engine leaves to its
+    /// first preparation step, builds only after it, so the menu shows first.
+    menu_shown: bool,
     last_frame: f64,
     /// Seconds the HUD's state has advanced since its last refresh.
     hud_dt: f64,
@@ -319,12 +519,15 @@ impl ApplicationHandler for App {
         if self.mode.is_some() {
             return;
         }
-        match Session::new(event_loop, &self.options) {
-            Ok(session) => self.mode = Some(Mode::Single(Box::new(session))),
+        let started = match Session::shell(event_loop, &self.options) {
+            Ok(shell) => self.launch(single_player(shell)),
             Err(error) => {
-                eprintln!("Sloppy Tanks could not start: {error}");
-                event_loop.exit();
+                startup_failed(&error);
+                false
             }
+        };
+        if !started {
+            event_loop.exit();
         }
     }
 
@@ -334,10 +537,14 @@ impl ApplicationHandler for App {
         _window: WindowId,
         event: WindowEvent,
     ) {
+        if !self.started() {
+            event_loop.exit();
+            return;
+        }
         let quit = match &mut self.mode {
             Some(Mode::Single(session)) => session.window_event(&event),
             Some(Mode::Room(room)) => room.window_event(&event),
-            None => return,
+            Some(Mode::Starting(_)) | None => return,
         };
         if quit || !self.switch_engine() {
             event_loop.exit();
@@ -353,14 +560,15 @@ impl ApplicationHandler for App {
         let DeviceEvent::MouseMotion { delta } = event else {
             return;
         };
-        let input = match &mut self.mode {
-            Some(Mode::Single(session)) => &mut session.input,
-            Some(Mode::Room(room)) => &mut room.input,
-            None => return,
+        let (input, window) = match &mut self.mode {
+            Some(Mode::Single(session)) => (&mut session.input, &session.window),
+            Some(Mode::Room(room)) => (&mut room.input, &room.window),
+            Some(Mode::Starting(_)) | None => return,
         };
-        if input.cursor_grabbed {
-            // Like the page's `movementX`: macOS reports points, Windows raw counts.
-            input.controls.look(delta.0);
+        if input.pointer_locked() {
+            input
+                .controls
+                .look(crate::pointer_lock::look_travel(window, delta.0));
         }
     }
 
@@ -371,7 +579,7 @@ impl ApplicationHandler for App {
         match &self.mode {
             Some(Mode::Single(session)) => session.window.request_redraw(),
             Some(Mode::Room(room)) => room.window.request_redraw(),
-            None => {}
+            Some(Mode::Starting(_)) | None => {}
         }
     }
 
@@ -386,7 +594,7 @@ impl ApplicationHandler for App {
                 }
             }
             Some(Mode::Room(room)) => room.input.controls.clear(),
-            None => {}
+            Some(Mode::Starting(_)) | None => {}
         }
     }
 
@@ -399,6 +607,10 @@ impl ApplicationHandler for App {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        if !self.started() {
+            event_loop.exit();
+            return;
+        }
         match &mut self.mode {
             // A hidden window draws nothing: macOS does not pace a covered Metal layer
             // to the display, so it would spin hundreds of frames a second unseen.
@@ -429,14 +641,22 @@ impl ApplicationHandler for App {
                     event_loop.exit();
                 }
             }
-            None => {}
+            // The starting engine wakes the loop when it is ready.
+            Some(Mode::Starting(_)) | None => event_loop.set_control_flow(ControlFlow::Wait),
         }
     }
 }
 
 impl Session {
-    fn new(event_loop: &ActiveEventLoop, options: &Options) -> Result<Self, String> {
-        let prefs = Preferences::load();
+    /// The window and the shell around it, from the saved choices and `options`.
+    fn shell(event_loop: &ActiveEventLoop, options: &Options) -> Result<Shell, String> {
+        let mut prefs = Preferences::load();
+        // A link's map wins over the saved one while it is offered.
+        if let Some(map) = options.map
+            && (options.debug || prefs.debug || !is_extra_level(map))
+        {
+            prefs.map = map;
+        }
         let window = Arc::new(
             event_loop
                 .create_window(window_attributes(&prefs))
@@ -451,21 +671,25 @@ impl Session {
         if let Some(directory) = &options.directory {
             rooms.directory.clone_from(directory);
         }
-        Self::start(Shell {
+        if options.multiplayer || options.room.is_some() {
+            rooms.open_link(options.room.as_deref());
+        }
+        Ok(Shell {
             window,
             prefs,
             audio: None,
             debug: options.debug,
             build: build_line(),
             rooms,
-            seats: SavedSeats::new(),
+            seats: SavedSeats::default(),
             frame_log: options.frame_log,
             autoplay: options.autoplay,
+            seed: options.seed,
         })
     }
 
     /// Single player on the shell's window: the arena prepares behind Battle Setup.
-    fn start(shell: Shell) -> Result<Self, String> {
+    async fn start(shell: Shell) -> Result<Self, String> {
         let Shell {
             window,
             prefs,
@@ -476,13 +700,9 @@ impl Session {
             seats,
             frame_log,
             autoplay,
+            seed,
         } = shell;
-        let size = drawable_size(&window);
-        let target = RenderTarget {
-            window: wgpu::SurfaceTarget::from(window.clone()),
-            width: size.width,
-            height: size.height,
-        };
+        let target = render_target(&window)?;
         // The team is the seed's to draw.
         let extra_levels = debug || prefs.debug;
         let options = prefs.game_options(Team::Blue, extra_levels);
@@ -494,13 +714,19 @@ impl Session {
             human_team: None,
             game_mode: Some(options.game_mode),
             autoplay,
+            defer_arena: true,
         };
-        let view = view_config(&window, &prefs);
-        let mut game = pollster::block_on(Game::create_with(target, view, config))?;
+        let view = ViewConfig {
+            seed,
+            ..view_config(&window, &prefs)
+        };
+        let mut game = Game::create_with(target, view, config)
+            .await
+            .map_err(engine_error)?;
         let hud = game.hud().into_owned();
         game.set_speed_scale(SpeedSetting::TankSpeed, prefs.tank_speed);
         game.set_speed_scale(SpeedSetting::BulletSpeed, prefs.bullet_speed);
-        let overlay = Overlay::new(window.clone(), game.renderer());
+        let overlay = Overlay::new(window.clone(), game.renderer())?;
         let human_team = hud.human_team;
         let mut session = Self {
             human_team,
@@ -516,6 +742,7 @@ impl Session {
             },
             audio,
             bake: None,
+            bakes_started: Vec::new(),
             debug,
             build,
             prepared_options: prefs.game_options(human_team, extra_levels),
@@ -528,6 +755,7 @@ impl Session {
             occluded: false,
             minimized: false,
             frame_shown: true,
+            menu_shown: false,
             last_frame: now_ms(),
             hud_dt: 0.0,
             failure: None,
@@ -544,7 +772,7 @@ impl Session {
 
     /// Give the window up: the game, its renderer and the overlay go, the rest stays.
     fn into_shell(self) -> Shell {
-        let _ = self.window.set_cursor_grab(CursorGrabMode::None);
+        crate::pointer_lock::release(&self.window);
         self.window.set_cursor_visible(true);
         Shell {
             window: self.window,
@@ -556,6 +784,7 @@ impl Session {
             seats: self.seats,
             frame_log: self.frame_log.is_some(),
             autoplay: false,
+            seed: None,
         }
     }
 
@@ -614,19 +843,23 @@ impl Session {
             wheel: self.in_round,
             touch: Play::live(
                 &self.overlay.context,
-                self.touch_live(),
+                self.touch_showing(),
                 self.first_person,
                 self.ui.hud.as_ref(),
             ),
         }
     }
 
-    /// Whether the touch controls show: the player can act, with no dialog open.
-    fn touch_live(&self) -> bool {
-        self.in_round
-            && self.phase == MatchPhase::Playing
-            && self.alive
-            && self.ui.settings_draft.is_none()
+    /// Which touch controls show in a running battle with no dialog open: all of them
+    /// while the player can act, the zoom pair alone while the tank is a wreck.
+    fn touch_showing(&self) -> Showing {
+        if !self.in_round || self.phase != MatchPhase::Playing || self.ui.settings_draft.is_some() {
+            Showing::Nothing
+        } else if self.alive {
+            Showing::All
+        } else {
+            Showing::Zoom
+        }
     }
 
     /// Do what input asked; true when the app should quit.
@@ -682,7 +915,7 @@ impl Session {
     }
 
     /// Render at the window's size in points times its scale (the engine caps it).
-    fn resize(&mut self) {
+    pub fn resize(&mut self) {
         let (width, height, scale) = css_size(&self.window);
         self.game.resize(width, height, scale, false);
     }
@@ -727,7 +960,7 @@ impl Session {
                 self.prefs.tank = kind;
                 self.prefs.save();
                 if let Err(error) = self.game.respawn_in(kind) {
-                    eprintln!("{error}");
+                    report!("{}", engine_error(error));
                 }
                 self.prepared_options = self.wanted_options();
             }
@@ -763,6 +996,7 @@ impl Session {
             | Action::RoomLeave
             | Action::RoomRejoin
             | Action::RoomSetup(_)
+            | Action::Reload
             | Action::RoomChoose { .. }
             | Action::RoomRules(_) => {}
         }
@@ -814,6 +1048,7 @@ impl Session {
         self.input.controls.clear();
         self.hud_dt = 0.0;
         self.game.start();
+        crate::page::round_started();
         if self.audio.is_none() {
             self.audio = Audio::new();
             if let Some(audio) = &mut self.audio {
@@ -823,12 +1058,19 @@ impl Session {
         self.refresh_hud();
     }
 
-    /// One step of preparing the wanted arena behind Battle Setup.
+    /// A slice of a redraw spent preparing the wanted arena behind Battle Setup: steps
+    /// that build it or create pipelines follow each other until the slice is spent;
+    /// one that only waits (for textures, background compiles, the GPU) ends it.
     fn prepare(&mut self) -> Result<(), String> {
+        if !self.menu_shown {
+            // The bake's workers start beside the first frame.
+            self.start_bake_early();
+            return Ok(());
+        }
         let wanted = self.wanted_options();
         if wanted != self.prepared_options {
-            // The rebuild holds this thread for a moment: the player's new choice, or
-            // GO's LOADING…, shows first, as the page waits for a paint.
+            // The rebuild's first step holds this thread for a moment: the player's new
+            // choice, or GO's LOADING…, shows first, as the page waits for a paint.
             if self.options_shown.as_ref() != Some(&wanted) {
                 self.options_shown = Some(wanted);
                 return Ok(());
@@ -836,6 +1078,15 @@ impl Session {
             self.game.set_game_options(&wanted);
             self.prepared_options = wanted;
             self.preparation.restart();
+            // A bake started for the map left behind, unclaimed, can stop.
+            if let Some(bake) = &self.bake
+                && !bake.claimed
+                && !map_bakes(wanted.map_mode).contains(&bake.bake.key.as_str())
+            {
+                let key = bake.bake.key.clone();
+                self.bakes_started.retain(|started| *started != key);
+                self.bake = None;
+            }
             self.ui.hud = Some(self.game.hud().into_owned());
         }
         if !self.preparation.preparing {
@@ -844,27 +1095,89 @@ impl Session {
             }
             return Ok(());
         }
-        if self.bake.is_none()
-            && let Some(key) = self.game.claim_texture_bake()
-        {
-            self.bake = bakes::start(key.clone());
-            if self.bake.is_none() {
-                self.game.release_texture_bake(&key);
+        // A map chosen since may bake too.
+        self.start_bake_early();
+        let until = now_ms() + PREPARE_SLICE_MS;
+        loop {
+            let building = self.game.building_arena();
+            let status = self.prepare_step()?;
+            let progressed = building || status.compiled > 0;
+            if status.ready || !progressed || now_ms() >= until {
+                return Ok(());
             }
         }
-        if let Some(bake) = &self.bake
-            && let Some(pixels) = bake.finished()
-        {
-            let key = bake.key.clone();
-            self.bake = None;
-            self.game.supply_texture(&key, &pixels)?;
+    }
+
+    /// Start baking what the prepared map's arena will ask for, unless the shell has
+    /// before: the bake then runs while the arena builds.
+    fn start_bake_early(&mut self) {
+        if self.bake.is_some() {
+            return;
         }
-        let status = self.game.prepare(PREPARE_BUDGET)?;
+        let Some(&key) = map_bakes(self.prepared_options.map_mode).first() else {
+            return;
+        };
+        if self.bakes_started.iter().any(|started| started == key) {
+            return;
+        }
+        self.bakes_started.push(key.to_owned());
+        self.bake = bakes::start(key.to_owned()).map(|bake| TextureBake {
+            bake,
+            claimed: false,
+            pixels: None,
+        });
+    }
+
+    /// One `prepare` step, with the engine's claim of a generated texture's bake taken
+    /// up, or its pixels handed over, first.
+    fn prepare_step(&mut self) -> Result<PrepareStatus, String> {
+        let unclaimed = self.bake.as_ref().is_none_or(|bake| !bake.claimed);
+        if unclaimed && let Some(key) = self.game.claim_texture_bake() {
+            match &mut self.bake {
+                Some(bake) if bake.bake.key == key => bake.claimed = true,
+                // Another bake is running: the engine bakes this one itself.
+                Some(_) => self.game.release_texture_bake(&key),
+                None => {
+                    self.bakes_started.push(key.clone());
+                    match bakes::start(key.clone()) {
+                        Some(bake) => {
+                            self.bake = Some(TextureBake {
+                                bake,
+                                claimed: true,
+                                pixels: None,
+                            });
+                        }
+                        None => self.game.release_texture_bake(&key),
+                    }
+                }
+            }
+        }
+        if let Some(bake) = &mut self.bake
+            && bake.pixels.is_none()
+        {
+            bake.pixels = bake.bake.finished();
+        }
+        if let Some(TextureBake { bake, pixels, .. }) = self
+            .bake
+            .take_if(|bake| bake.claimed && bake.pixels.is_some())
+            && let Some(baked) = pixels
+        {
+            match baked {
+                Ok(pixels) => {
+                    self.game
+                        .supply_pixels(&bake.key, &pixels)
+                        .map_err(engine_error)?;
+                }
+                Err(_) => self.game.release_texture_bake(&bake.key),
+            }
+        }
+        let status = self.game.prepare(PREPARE_BUDGET).map_err(engine_error)?;
         match self.preparation.advance(&status, self.game.loading()) {
             Progress::Ready => {
                 self.ui.ready = true;
                 self.ui.status = READY_STATUS.into();
                 self.ui.progress = None;
+                crate::page::arena_ready();
             }
             Progress::Warming => {}
             Progress::Loading(line) => {
@@ -873,15 +1186,17 @@ impl Session {
                 self.ui.progress = line.progress();
             }
         }
-        Ok(())
+        Ok(status)
     }
 
     /// One engine frame of the round; its events and HUD reach the screens.
     fn battle_frame(&mut self, now: f64) -> Result<(), String> {
         let input = self.input.take_input(self.first_person);
         let zoomed = input.zoom != 0.0;
-        let result = self.game.frame(now, &input.pack())?;
-        self.parts.engine = now_ms() - now;
+        // `now` is the game's clock, which a check may hold (`automation.rs`).
+        let engine_start = now_ms();
+        let result = self.game.frame(now, &input.pack()).map_err(engine_error)?;
+        self.parts.engine = now_ms() - engine_start;
         self.parts.sim = f64::from(result.get(frame_slot::SIM_MS).copied().unwrap_or(0.0));
         self.parts.render = f64::from(result.get(frame_slot::RENDER_MS).copied().unwrap_or(0.0));
         if let Some(error) = self.game.error() {
@@ -926,7 +1241,16 @@ impl Session {
         Ok(())
     }
 
-    /// Grab the cursor while first person steers, so the mouse turns the view.
+    /// A dialog dims the arena this frame (pause, the results, Settings during a round),
+    /// which the page also blurred behind it. Battle Setup hides the arena.
+    fn dialog_over_arena(&self) -> bool {
+        self.in_round
+            && (matches!(self.phase, MatchPhase::Paused | MatchPhase::Results)
+                || self.ui.settings_draft.is_some())
+    }
+
+    /// Grab the cursor while first person steers, so the mouse turns the view; a death
+    /// keeps it (`pointer_lock.rs`).
     fn hold_pointer(&mut self) {
         let wanted = self.in_round
             && self.first_person
@@ -934,14 +1258,101 @@ impl Session {
             && self.ui.settings_draft.is_none()
             && self.window.has_focus()
             && !self.hidden();
-        self.input.hold_pointer(&self.window, wanted);
+        self.input
+            .hold_pointer_steering(&self.window, wanted, self.alive);
+        self.ui.aim_hint = self.input.aim_waits_for_click();
+    }
+
+    /// What a check reads of this frame (`automation.rs`).
+    fn automation_state(&mut self) -> automation::State {
+        let touch = self.input.controls.touch;
+        automation::State {
+            engine: "single",
+            in_round: self.in_round,
+            phase: automation::phase_name(self.phase),
+            alive: self.alive,
+            first_person: self.first_person,
+            aim_hint: self.ui.aim_hint,
+            multiplayer_tab: self.ui.rooms.multiplayer,
+            ready: self.ui.ready,
+            status: self.ui.status.clone(),
+            settings: self.ui.settings_draft.is_some(),
+            touch_controls: self.ui.touch.is_some_and(|touch| touch.acting),
+            touch_screen: crate::touch::screen(),
+            touch_layout: crate::touch::screen()
+                .then(|| (&crate::touch::TouchLayout::of(&self.overlay.context)).into()),
+            stick_push: touch.drive.map(|_| [touch.push.0, touch.push.1]),
+            arena_finger: touch.arena.is_some(),
+            failure: self.failure.clone(),
+            error: self.game.error(),
+            prefs: serde_json::to_value(&self.prefs).unwrap_or_default(),
+            parts: Some(serde_json::json!({
+                "engine": self.parts.engine,
+                "sim": self.parts.sim,
+                "render": self.parts.render,
+                "overlay": self.parts.overlay,
+                "present": self.parts.present,
+            })),
+            ..automation::State::default()
+        }
+    }
+
+    /// Run a check's debug command on the engine, as the old page's `window.sloppy` did.
+    fn command(&mut self, command: &Command) -> Result<serde_json::Value, String> {
+        use serde_json::Value;
+        if *command == Command::Start {
+            self.apply(Action::Start);
+            return Ok(Value::Null);
+        }
+        let game = &mut self.game;
+        Ok(match *command {
+            Command::Start => Value::Null,
+            Command::Autoplay(on) => game.debug_set_autoplay(on).into(),
+            Command::Overview(on) => {
+                game.debug_set_overview(on);
+                Value::Null
+            }
+            Command::AutoRounds(on) => game.debug_set_auto_rounds(on).into(),
+            Command::Zoom(zoom) => game.debug_set_zoom(zoom).into(),
+            Command::Reflections(strength) => {
+                game.debug_set_reflections(strength);
+                Value::Null
+            }
+            Command::Stress => {
+                game.debug_stress();
+                Value::Null
+            }
+            Command::Collapse => {
+                game.debug_collapse();
+                Value::Null
+            }
+            Command::GiveAmmo(count) => {
+                game.debug_give_ammo(count);
+                Value::Null
+            }
+            Command::KillHuman => {
+                game.debug_kill_human();
+                Value::Null
+            }
+            Command::Soak(seconds) => serde_json::from_str(&game.debug_soak(seconds))
+                .map_err(|error| error.to_string())?,
+            Command::Off(ref off) => {
+                game.debug_set_off(off).map_err(engine_error)?;
+                Value::Null
+            }
+            Command::Latency { .. } => return Err("single player has no connection".into()),
+        })
     }
 
     /// Run a frame and show it; true when the player chose to quit.
     fn redraw(&mut self) -> bool {
-        let now = now_ms();
+        let now = automation::now();
         let frame_dt = ((now - self.last_frame) / 1000.0).clamp(0.0, 0.1);
         self.last_frame = now;
+        for pending in automation::take_commands() {
+            let answer = self.command(&pending.command);
+            pending.answer(answer);
+        }
         let playing = self.battle().playing;
         let mut quit = false;
         for request in self
@@ -964,7 +1375,9 @@ impl Session {
                 self.prepare()
             };
             if let Err(error) = step {
-                eprintln!("The game stopped: {error}");
+                report!("The game stopped: {error}");
+                // A page offers a reload over the shell's own words.
+                crate::page::failed(&format!("The renderer stopped: {error}"));
                 self.failure = Some(error);
             }
         }
@@ -977,7 +1390,9 @@ impl Session {
             self.ui.stats = Some(self.game.nerd_stats());
         }
         self.hold_pointer();
-        self.ui.touch = self.input.touch_view(self.touch_live(), self.first_person);
+        self.ui.touch = self
+            .input
+            .touch_view(self.touch_showing(), self.first_person);
         let view = ui::View {
             in_round: self.in_round,
             phase: self.phase,
@@ -1000,9 +1415,28 @@ impl Session {
         let target = self.game.renderer().size();
         let present_start = now_ms();
         self.parts.overlay = present_start - overlay_start;
+        self.game.set_backdrop_blur(self.dialog_over_arena());
         self.overlay.present(self.game.renderer(), painted);
         self.frame_shown = self.game.renderer().frame_shown();
         self.parts.present = now_ms() - present_start;
+        if self.frame_shown {
+            self.menu_shown = true;
+            crate::page::frame_presented();
+            if automation::enabled() {
+                let state = self.automation_state();
+                let game = &mut self.game;
+                automation::presented(state, |extra| {
+                    let json = match extra {
+                        Extra::Hud => game.hud_json(),
+                        Extra::Stats => game.stats_json(),
+                        Extra::Nerd => game.nerd_stats_json(),
+                        Extra::Debug => game.debug_json(),
+                        Extra::Snapshot => game.debug_snapshot(),
+                    };
+                    serde_json::from_str(&json).unwrap_or_default()
+                });
+            }
+        }
         if let Some(log) = &mut self.frame_log {
             let scene = self.game.renderer().scene_size();
             log.frame(&self.parts, target, scene, self.game.gpu_ms());
@@ -1015,29 +1449,8 @@ impl Session {
     }
 }
 
-/// Capture the cursor while first person steers (so the mouse turns the view), or
-/// give it back.
-pub fn grab_pointer(window: &Window, wanted: bool, grabbed: &mut bool) {
-    if wanted == *grabbed {
-        return;
-    }
-    if wanted {
-        let captured = window
-            .set_cursor_grab(CursorGrabMode::Locked)
-            .or_else(|_| window.set_cursor_grab(CursorGrabMode::Confined));
-        if captured.is_ok() {
-            window.set_cursor_visible(false);
-            *grabbed = true;
-        }
-    } else {
-        let _ = window.set_cursor_grab(CursorGrabMode::None);
-        window.set_cursor_visible(true);
-        *grabbed = false;
-    }
-}
-
 /// A resizable window at its first size, or fullscreen as the player left it.
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
 fn window_attributes(prefs: &Preferences) -> WindowAttributes {
     let attributes = Window::default_attributes()
         .with_title("Sloppy Tanks")
@@ -1064,8 +1477,18 @@ fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
         .with_preferred_screen_edges_deferring_system_gestures(ScreenEdge::ALL)
 }
 
+/// A canvas filling the page (`index.html` sizes it). Fullscreen waits for the
+/// player's click: a page may not take the screen by itself.
+#[cfg(target_arch = "wasm32")]
+fn window_attributes(_prefs: &Preferences) -> WindowAttributes {
+    use winit::platform::web::WindowAttributesExtWebSys;
+    Window::default_attributes()
+        .with_title("Sloppy Tanks")
+        .with_append(true)
+}
+
 /// The window's icon (Windows and Linux show it; macOS takes the bundle's).
-#[cfg(not(target_os = "ios"))]
+#[cfg(not(any(target_os = "ios", target_arch = "wasm32")))]
 fn window_icon() -> Option<winit::window::Icon> {
     let image = image::load_from_memory(crate::assets::file("icons/icon-192.png")?).ok()?;
     let image = image.into_rgba8();

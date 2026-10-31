@@ -172,22 +172,7 @@ impl Gpu {
         };
         let width = canvas.width().max(1);
         let height = canvas.height().max(1);
-        let state = State {
-            program: None,
-            vertex_array: None,
-            array_buffer: None,
-            copy_write_buffer: None,
-            uniform_blocks: [None; block::COUNT],
-            active_unit: 0,
-            textures: [None; unit::COUNT],
-            samplers: [None; unit::COUNT],
-            draw_framebuffer: None,
-            read_framebuffer: None,
-            viewport: [0, 0, width as i32, height as i32],
-            clear_color: [0.0; 4],
-            flip_y: false,
-            raster: Raster::PLAIN,
-        };
+        let state = State::initial(width, height);
         apply_initial_state(&gl, &state);
         let gl = Gl {
             gl,
@@ -222,6 +207,44 @@ fn sample_count(raw: &web_sys::WebGl2RenderingContext) -> u32 {
         .filter(|&count| count as u32 <= SAMPLE_COUNT && depth.contains(&count))
         .max()
         .map_or(0, |count| count as u32)
+}
+
+impl State {
+    /// The cache's first record, on a canvas `width` × `height`.
+    fn initial(width: u32, height: u32) -> Self {
+        Self {
+            program: None,
+            vertex_array: None,
+            array_buffer: None,
+            copy_write_buffer: None,
+            uniform_blocks: [None; block::COUNT],
+            active_unit: 0,
+            textures: [None; unit::COUNT],
+            samplers: [None; unit::COUNT],
+            draw_framebuffer: None,
+            read_framebuffer: None,
+            viewport: [0, 0, width as i32, height as i32],
+            clear_color: [0.0; 4],
+            flip_y: false,
+            raster: Raster::PLAIN,
+        }
+    }
+}
+
+impl Gl {
+    /// The context, for another user of the canvas (the desktop shell's egui overlay).
+    pub fn raw_context(&self) -> web_sys::WebGl2RenderingContext {
+        self.raw.clone()
+    }
+
+    /// Take the context back once that other user has drawn: set it to the cache's
+    /// first record again, with WebGL's default row alignment for uploads.
+    pub fn reclaim(&self) {
+        let state = State::initial(self.canvas.width().max(1), self.canvas.height().max(1));
+        apply_initial_state(&self.gl, &state);
+        unsafe { self.gl.pixel_store_i32(glow::UNPACK_ALIGNMENT, 4) };
+        *self.state.borrow_mut() = state;
+    }
 }
 
 /// Set the context to the cache's first record, whatever earlier users of the canvas

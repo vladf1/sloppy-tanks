@@ -1,11 +1,8 @@
-import { AMMO_OPTIONS } from "../src/game/ammo-options.ts";
-
-// The few game values the offline asset generators paint with: pickup accent colors,
-// the pickup atlas layout, and the seeded stream that keeps generated textures stable;
-// ammunition labels and colors come from the HUD's `ammo-options.ts`. The game reads
-// the same values from the engine (`crates/core/src/sim/data.rs`,
-// `crates/core/src/models/pickup_visuals.rs`); change both together, then regenerate
-// the assets.
+// The few game values the offline asset generators paint with: ammunition labels and
+// colors, pickup accent colors, the pickup atlas layout, and the seeded stream that
+// keeps generated textures stable. The game reads the same values from the engine
+// (`crates/core/src/sim/data.rs`, `crates/core/src/models/pickup_visuals.rs`); change
+// both together, then regenerate the assets.
 
 /** Mulberry32, as the engine's `Random`: a fixed seed reproduces a texture exactly. */
 export class Random {
@@ -22,7 +19,12 @@ export class Random {
 }
 
 /** The limited ammunition types, in the ammo bar's order after Standard. */
-export const [, ...SPECIAL_AMMO] = AMMO_OPTIONS;
+export const SPECIAL_AMMO = [
+  { weapon: "spread", label: "SPREAD", color: 0xff38d4 },
+  { weapon: "rocket", label: "ROCKET", color: 0xff591c },
+  { weapon: "ricochet", label: "RICOCHET", color: 0xb19afc },
+  { weapon: "piercing", label: "PIERCING", color: 0x54e6dc },
+] as const;
 export type SpecialAmmo = (typeof SPECIAL_AMMO)[number]["weapon"];
 
 /** Accent colors of the pickups that are not ammunition. */

@@ -25,6 +25,8 @@ mod humvee;
 mod initial_state;
 mod laser_defense;
 mod map_layout;
+mod model_pin_hash;
+mod model_pins;
 mod modes;
 mod movable_barrels;
 mod navigation;

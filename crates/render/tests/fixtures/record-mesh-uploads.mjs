@@ -2,11 +2,12 @@
 // session, for the mesh page planner's replay test (`../mesh_pages.rs`).
 //
 // It reads them off the engine's WebGPU buffers, so it needs an engine that gave each
-// mesh buffers of its own: one from before the commit "Store meshes in shared mesh
-// pages". Serve a checkout of its parent and pass the URL:
+// mesh buffers of its own: one from before mesh pages (#57, "Draw WebGPU meshes from
+// shared pages…"). Serve a checkout of its parent, whose page is the TypeScript shell
+// this script drives through its DOM and dev-only `window.sloppy`, and pass the URL:
 //
 //   git worktree add ../before-pages \
-//     "$(git log -1 --format=%H --grep='^Store meshes in shared mesh pages$')^"
+//     "$(git log -1 --format=%H --grep='^Draw WebGPU meshes from shared pages')^"
 //   cd ../before-pages && pnpm install && pnpm run wasm && pnpm run dev
 //   SLOPPY_URL=<its URL> node crates/render/tests/fixtures/record-mesh-uploads.mjs \
 //     > crates/render/tests/fixtures/stress-mesh-uploads.txt
@@ -20,13 +21,37 @@
 // `ShadowVertex`) and "shadow merged indices". A buffer's size is padded, so the counts
 // come from the bytes written to it. Wall-clock play makes every recording a little
 // different.
-import {
-  chooseMap,
-  chosenMap,
-  gameUrl,
-  launchGame,
-  startRound,
-} from "../../../../scripts/browser-helpers.mjs";
+import { gameUrl, launchGame } from "../../../../scripts/browser-helpers.mjs";
+
+/** The old page's map: its map picker's value. */
+function chosenMap(page) {
+  return page.locator('.map-picker[data-name="mapMode"]').getAttribute("data-value");
+}
+
+/** Choose `map` on the old page's Battle Setup: its row of map cards, or the dropdown
+ * that replaces them on a `?debug` page. */
+async function chooseMap(page, map) {
+  const dropdown = page.locator('.map-picker[data-name="mapMode"] .map-picker-button');
+  if (await dropdown.isVisible()) {
+    await dropdown.click();
+    await page.locator(`#mapMode-${map}`).click();
+  } else {
+    await page.locator(`input[name="mapMode"][value="${map}"]`).click();
+  }
+  await page.waitForFunction(
+    (map) => document.querySelector('.map-picker[data-name="mapMode"]')?.dataset.value === map,
+    map,
+  );
+}
+
+/** GO on the old page's Battle Setup, until its round plays. */
+async function startRound(page) {
+  await page.locator("#start").click();
+  await page.waitForFunction(
+    () =>
+      !document.querySelector("#startup-overlay") && window.sloppy?.sim.match.phase === "playing",
+  );
+}
 
 const SEED = 12345;
 const PLAY_MS = 10_000;

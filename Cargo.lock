@@ -989,6 +989,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "egui_glow"
+version = "0.37.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "9275ca5cc35a6b7c94e0e8cedf22542f66cb0cf45ed8ab2657c78ff49fec7268"
+dependencies = [
+ "bytemuck",
+ "egui",
+ "glow",
+ "log",
+ "profiling",
+]
+
+[[package]]
 name = "either"
 version = "1.18.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3636,13 +3649,16 @@ dependencies = [
 name = "sloppy-desktop"
 version = "0.1.0"
 dependencies = [
+ "console_error_panic_hook",
  "dirs",
  "egui",
  "egui-wgpu",
  "egui-winit",
+ "egui_glow",
  "futures-util",
  "glam 0.33.11",
  "image",
+ "js-sys",
  "kira",
  "objc2 0.6.5",
  "objc2-core-foundation",
@@ -3655,6 +3671,10 @@ dependencies = [
  "tokio",
  "tokio-tungstenite",
  "ureq",
+ "wasm-bindgen",
+ "wasm-bindgen-futures",
+ "web-sys",
+ "web-time",
  "winit",
  "winresource",
 ]
