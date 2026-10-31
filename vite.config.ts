@@ -1,4 +1,4 @@
-import { defineConfig, type Plugin } from "vite";
+import { defineConfig, type Plugin, type Rolldown } from "vite";
 import { statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { baseRedirect } from "./scripts/base-redirect.ts";
@@ -43,14 +43,64 @@ function shellSizes(): Plugin {
   };
 }
 
+/**
+ * The game page's boot script (`index.html`) stays in the built page instead of a chunk
+ * of its own, so a first visit starts the shell's and the fonts' downloads a round trip
+ * sooner. Its imports, relative to the chunk's folder, become absolute.
+ */
+function inlineBootScript(): Plugin {
+  let base = "/";
+  return {
+    name: "inline-boot-script",
+    apply: "build",
+    enforce: "post",
+    configResolved(config) {
+      base = config.base;
+    },
+    // After Vite has finished the chunks (it settles their preload calls last).
+    generateBundle: {
+      order: "post",
+      handler: (_options, bundle) => inlineBootChunk(bundle, base),
+    },
+  };
+}
+
+/** Move the game page's boot chunk into its `<script>` (`inlineBootScript`). */
+function inlineBootChunk(bundle: Rolldown.OutputBundle, base: string) {
+  const page = bundle["index.html"];
+  if (page?.type !== "asset") return;
+  const html = String(page.source);
+  const tag = html.match(/<script type="module" crossorigin src="([^"]+)"><\/script>/);
+  const entry = Object.values(bundle).find(
+    (file) => file.type === "chunk" && tag?.[1] === base + file.fileName,
+  );
+  if (!tag || entry?.type !== "chunk") throw new Error("index.html has no boot chunk");
+  for (const file of Object.values(bundle)) {
+    if (file.type === "chunk" && file.imports.includes(entry.fileName)) {
+      throw new Error(`${file.fileName} imports the boot chunk`);
+    }
+  }
+  const folder = entry.fileName.slice(0, entry.fileName.lastIndexOf("/") + 1);
+  let code = entry.code;
+  for (const file of [...entry.imports, ...entry.dynamicImports]) {
+    code = code.replaceAll(`./${file.slice(folder.length)}`, base + file);
+  }
+  const script = `<script type="module">${code.replaceAll("</script", "<\\/script")}</script>`;
+  page.source = html.replace(tag[0], () => script);
+  delete bundle[entry.fileName];
+}
+
 export default defineConfig({
   base,
   // Preview launchers assign a free port through PORT; Vite does not read it itself.
   server: { port: Number(process.env.PORT) || undefined },
-  plugins: [baseRedirect(base), pageHealth(), shellSizes(), hashedAssets()],
+  plugins: [baseRedirect(base), pageHealth(), shellSizes(), hashedAssets(), inlineBootScript()],
   // The bake worker (src/bake-worker.ts) imports the page's glue on demand.
   worker: { format: "es" },
   build: {
+    // The pages' dynamic imports have no dependencies to preload, so the preload helper
+    // and its polyfill would only add to the game page's boot script.
+    modulePreload: false,
     rolldownOptions: {
       input: {
         main: gamePage,

@@ -48,10 +48,11 @@ const texturePaths = [
 ];
 /** The page's two builds of the egui shell: `index.html` imports one by the browser's
  * graphics, and its glue fetches its Wasm. A production build names them from the site's
- * base (`assets/…`), the dev site's build from the importing file (`./…`). */
+ * base (`assets/…`), the dev site's build from the importing file (`./…`). The glue is
+ * `shell-glue-*` since the boot script moved into the page, `sloppy-tanks-*` before. */
 const backends = [
-  { id: "webgpu", glue: /(?:\.\/|assets\/)sloppy-tanks-(?!webgl-)[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks_bg-[\w-]+\.wasm/ },
-  { id: "webgl", glue: /(?:\.\/|assets\/)sloppy-tanks-webgl-[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks-webgl_bg-[\w-]+\.wasm/ },
+  { id: "webgpu", glue: /(?:\.\/|assets\/)(?:shell-glue|sloppy-tanks)-(?!webgl-)[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks_bg-[\w-]+\.wasm/ },
+  { id: "webgl", glue: /(?:\.\/|assets\/)(?:shell-glue|sloppy-tanks)-webgl-[\w-]+\.js/, wasm: /(?:\.\/|assets\/)sloppy-tanks-webgl_bg-[\w-]+\.wasm/ },
 ];
 
 function curlText(url) {
@@ -78,16 +79,18 @@ function found(text, pattern, what, deployment, from) {
     : match[0].replace(/^\/+/, "");
 }
 
-/** What one page load fetches on each backend: the HTML, its module, the backend's
- * shell glue and Wasm, the favicon and the village's textures. */
+/** What one page load fetches on each backend: the HTML, its module (none where the boot
+ * script is inline), the backend's shell glue and Wasm, the favicon and the village's
+ * textures. */
 function discover(deployment) {
   const entry = urlFor(deployment, "");
   const html = curlText(entry);
-  const main = found(html, /[^"']*assets\/main-[\w-]+\.js/, "the page's module", deployment, "");
-  const mainText = curlText(urlFor(deployment, main));
+  const module = html.match(/[^"']*assets\/main-[\w-]+\.js/)?.[0].replace(/^\/+/, "");
+  const main = module ?? "";
+  const mainText = module ? curlText(urlFor(deployment, main)) : html;
   const shared = [
     { path: "", type: "html", label: "HTML entry" },
-    { path: main, type: "code", label: "Page module" },
+    ...(module ? [{ path: main, type: "code", label: "Page module" }] : []),
     { path: "favicon.svg", type: "startup", label: "Favicon" },
     ...texturePaths.map((path) => ({ path, type: "texture", label: path })),
   ];
