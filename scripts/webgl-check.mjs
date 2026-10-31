@@ -1,5 +1,5 @@
 // The page's choice of graphics backend and its fallbacks: a normal load downloads only
-// the WebGPU shell; `?webgl` and a browser without WebGPU load only the WebGL2 one, and
+// the WebGPU shell (its menu and engine halves); `?webgl` and a browser without WebGPU load only the WebGL2 one, and
 // so does an adapter that refuses all, after dropping the WebGPU shell it started on
 // while it asked (`dropped`); a device that fails after an adapter reloads once into
 // `?webgl`; and with neither backend the loading view says why, with no reload loop.
@@ -43,30 +43,33 @@ const STAGED = {
   },
 };
 
+// Each shell downloads as its menu half and its engine half (`scripts/split-wasm.mjs`).
+const WEBGPU = ["sloppy-tanks_bg", "sloppy-tanks_engine"];
+const WEBGL = ["webgl_bg", "webgl_engine"];
 const CASES = [
-  { name: "normal", stage: "normal", query: "", wasm: ["sloppy-tanks_bg"], api: "WebGPU" },
-  { name: "forced WebGL", stage: "normal", query: "webgl", wasm: ["webgl_bg"], api: "WebGL" },
-  { name: "no WebGPU", stage: "noWebgpu", query: "", wasm: ["webgl_bg"], api: "WebGL" },
+  { name: "normal", stage: "normal", query: "", wasm: WEBGPU, api: "WebGPU" },
+  { name: "forced WebGL", stage: "normal", query: "webgl", wasm: WEBGL, api: "WebGL" },
+  { name: "no WebGPU", stage: "noWebgpu", query: "", wasm: WEBGL, api: "WebGL" },
   {
     name: "no adapter",
     stage: "noAdapter",
     query: "",
-    wasm: ["webgl_bg"],
-    dropped: ["sloppy-tanks_bg"],
+    wasm: WEBGL,
+    dropped: WEBGPU,
     api: "WebGL",
   },
   {
     name: "device fails",
     stage: "deviceFails",
     query: "",
-    wasm: ["sloppy-tanks_bg", "webgl_bg"],
+    wasm: [...WEBGPU, ...WEBGL],
     api: "WebGL",
   },
   {
     name: "neither backend",
     stage: "neither",
     query: "",
-    wasm: ["sloppy-tanks_bg", "webgl_bg"],
+    wasm: [...WEBGPU, ...WEBGL],
     api: null,
   },
 ];
