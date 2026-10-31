@@ -134,9 +134,7 @@ pub fn node_pin(node: &Node) -> u64 {
 
 /// A theme's whole scenery.
 pub fn scenery_pin(theme: MapTheme) -> u64 {
-    let mut pin = Pin::new();
-    pin.node(build_scenery(theme).root());
-    pin.0
+    node_pin(build_scenery(theme).root())
 }
 
 /// Every vehicle model, with and without its turret ring cut open, and every

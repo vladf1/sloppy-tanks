@@ -391,6 +391,7 @@ pub async fn create_view(canvas: RenderTarget, config: ViewConfig) -> Result<Pag
         config.device,
         size.pixel_ratio(),
     );
+    sloppy_render::presentation::geometry_cache::await_vehicles().await;
     let mut view = Presentation::new(renderer, seed.to_bits());
     view.rig
         .restore_preferences(config.first_person, config.zoom);

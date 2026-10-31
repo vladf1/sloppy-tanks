@@ -134,6 +134,14 @@ fn tank_model_keys() -> Vec<(VehicleKind, Team, bool)> {
     keys
 }
 
+/// How many vehicle models are built.
+pub fn built_tank_model_count() -> usize {
+    tank_model_keys()
+        .iter()
+        .filter(|key| MODELS.get(key).is_some())
+        .count()
+}
+
 /// Every vehicle model as one group, children in a fixed order, once all are built:
 /// what a page's geometry cache keeps, written in one piece so the models' shared
 /// meshes stay shared.
