@@ -23,7 +23,9 @@ const pageErrors = () => errors.filter((error) => !/Failed to load resource/.tes
 let release;
 const engineHeld = new Promise((resolve) => (release = resolve));
 let engineAsked = false;
-await page.route(/_engine(-[\w-]+)?\.wasm(\?|$)/, async (route) => {
+// The binary itself: the dev server also answers the page's `?url` import of it.
+const engineHalf = (url) => /_engine(-[\w-]+)?\.wasm$/.test(url.pathname) && !url.search;
+await page.route(engineHalf, async (route) => {
   engineAsked = true;
   await engineHeld;
   await route.continue();
