@@ -21,7 +21,8 @@ use super::tank_details::{
 };
 use super::tank_kit::Coat;
 use super::tank_surfaces::{
-    Grime, HUMVEE_PAINT, Livery, apply_vehicle_livery, ember_material, vehicle_glass, vehicle_paint,
+    Grime, HUMVEE_PAINT, Livery, apply_vehicle_livery, ember_material, release_vehicle_weathering,
+    vehicle_glass, vehicle_paint,
 };
 use super::{Team, VehicleKind, part};
 use crate::geometry::{Attribute, CylinderGeometry, Mesh, VERTEX_ALPHA, ring_geometry};
@@ -112,6 +113,7 @@ pub fn tank_model(kind: VehicleKind, team: Team) -> Arc<Node> {
 /// [`tank_model`] builds its model again.
 pub fn release_tank_models() {
     MODELS.clear();
+    release_vehicle_weathering();
 }
 
 /// `tankModel(kind, team, false, openTurretRing)`: `open_turret_ring` cuts the ring

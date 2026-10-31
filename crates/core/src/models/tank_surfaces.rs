@@ -19,7 +19,8 @@
 //! few draws. Glass and lenses keep their own glossy materials.
 
 use std::collections::HashMap;
-use std::sync::{Arc, OnceLock};
+use std::hash::{BuildHasherDefault, DefaultHasher};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use glam::{DMat4, DVec3};
 
@@ -565,26 +566,121 @@ fn is_opaque_standard(material: &Material) -> bool {
 /// are already vertex-colored (tracks, tyres) keep their colors and finish, gain
 /// the grime and take the running gear's fill.
 pub fn apply_livery(root: &mut Node, livery: &Livery) {
-    apply_livery_shaded(root, livery, &MACHINE_VALUES);
+    apply_livery_shaded(root, livery, &MACHINE_VALUES, None);
 }
 
 /// [`apply_livery`] for a tank or the Humvee, with the vehicles' value hierarchy.
 pub fn apply_vehicle_livery(root: &mut Node, livery: &Livery) {
-    apply_livery_shaded(root, livery, &VEHICLE_VALUES);
+    apply_livery_shaded(root, livery, &VEHICLE_VALUES, Some(&VEHICLE_WEATHERING));
 }
 
-fn apply_livery_shaded(root: &mut Node, livery: &Livery, values: &PaintValues) {
+fn apply_livery_shaded(
+    root: &mut Node,
+    livery: &Livery,
+    values: &PaintValues,
+    shared: Option<&SharedWeathering>,
+) {
     let mut weathered_meshes = HashMap::new();
+    let mut paint = Repaint {
+        livery,
+        values,
+        weathered_meshes: &mut weathered_meshes,
+        shared,
+    };
     for child in &mut root.children {
-        repaint(
-            child,
-            DMat4::IDENTITY,
-            livery,
-            values,
-            (values.hull, None),
-            &mut weathered_meshes,
-        );
+        repaint(child, DMat4::IDENTITY, &mut paint, (values.hull, None));
     }
+}
+
+/// The weathered meshes of every vehicle built so far, by everything
+/// [`weathered`] reads: the source mesh (held, so its address stays its own), the
+/// part's world matrix, what the finish makes of it ([`WeatheredLook`]), the grime,
+/// the value lift and the soot. Both teams' vehicles are built from the same
+/// assembly meshes, and a painted mesh's weathering never reads the team's colors
+/// (its material carries them), so the second team, and a wreck's variant with the
+/// turret ring cut open, reuse the first team's meshes instead of weathering their
+/// plates again. [`release_vehicle_weathering`] lets go of them with the models.
+type SharedWeathering =
+    Mutex<HashMap<WeatheringKey, (Arc<Mesh>, Arc<Mesh>), BuildHasherDefault<DefaultHasher>>>;
+
+static VEHICLE_WEATHERING: SharedWeathering =
+    Mutex::new(HashMap::with_hasher(BuildHasherDefault::new()));
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct WeatheringKey {
+    mesh: usize,
+    world: [u64; 16],
+    look: WeatheredLook,
+    grime: [u64; 2],
+    lift: u64,
+    soot: Option<[u64; 2]>,
+}
+
+/// What a finish makes of a mesh in [`weathered`]: paint reads only which coat
+/// the part wears; other finishes their base color (or, with none, the mesh's own
+/// colors).
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum WeatheredLook {
+    Paint(Coat),
+    Plain(Option<u32>),
+}
+
+/// Drop the shared weathered meshes (see [`SharedWeathering`]) once the vehicle
+/// models are released.
+pub(super) fn release_vehicle_weathering() {
+    VEHICLE_WEATHERING
+        .lock()
+        .expect("vehicle weathering lock")
+        .clear();
+}
+
+/// [`weathered`] for `mesh`, from the shared meshes when there are any.
+fn weathered_mesh(
+    mesh: &Arc<Mesh>,
+    world: DMat4,
+    base: Option<u32>,
+    finish: Finish,
+    grime: Grime,
+    values: &PaintValues,
+    (lift, soot): (f64, Option<Soot>),
+    shared: Option<&SharedWeathering>,
+) -> Arc<Mesh> {
+    let build = || {
+        Arc::new(weathered(
+            mesh,
+            world,
+            base,
+            finish,
+            grime,
+            values,
+            (lift, soot),
+        ))
+    };
+    let Some(shared) = shared else {
+        return build();
+    };
+    let look = if finish.is_paint() {
+        WeatheredLook::Paint(coat_of(finish, base))
+    } else {
+        WeatheredLook::Plain(base)
+    };
+    let key = WeatheringKey {
+        mesh: Arc::as_ptr(mesh) as usize,
+        world: world.to_cols_array().map(f64::to_bits),
+        look,
+        grime: [grime.ground.to_bits(), grime.dust_top.to_bits()],
+        lift: lift.to_bits(),
+        soot: soot.map(|soot| [soot.from.to_bits(), soot.to.to_bits()]),
+    };
+    if let Some((_, weathered)) = shared.lock().expect("vehicle weathering lock").get(&key) {
+        return weathered.clone();
+    }
+    let weathered = build();
+    shared
+        .lock()
+        .expect("vehicle weathering lock")
+        .insert(key, (mesh.clone(), weathered.clone()));
+    weathered
 }
 
 /// A shared part mesh placed at the same height and tilt (the Humvee's four
@@ -618,14 +714,21 @@ fn weather_key(
     )
 }
 
-fn repaint(
-    node: &mut Node,
-    parent: DMat4,
-    livery: &Livery,
-    values: &PaintValues,
-    (lift, soot): (f64, Option<Soot>),
-    weathered_meshes: &mut HashMap<WeatherKey, (Arc<Mesh>, Arc<Material>)>,
-) {
+/// What [`repaint`] carries down a model.
+struct Repaint<'a> {
+    livery: &'a Livery<'a>,
+    values: &'a PaintValues,
+    weathered_meshes: &'a mut HashMap<WeatherKey, (Arc<Mesh>, Arc<Material>)>,
+    shared: Option<&'a SharedWeathering>,
+}
+
+fn repaint(node: &mut Node, parent: DMat4, paint: &mut Repaint, (lift, soot): (f64, Option<Soot>)) {
+    let Repaint {
+        livery,
+        values,
+        shared,
+        ..
+    } = *paint;
     let world = parent * node.local_matrix();
     let lift = if node.name == part::TURRET {
         values.turret
@@ -665,11 +768,12 @@ fn repaint(
                 lift,
                 soot.is_some(),
             );
-            let (mesh, material) = weathered_meshes
+            let (mesh, material) = paint
+                .weathered_meshes
                 .entry(key)
                 .or_insert_with(|| match finish {
                     Some(finish) => (
-                        Arc::new(weathered(
+                        weathered_mesh(
                             &drawable.mesh,
                             world,
                             Some(drawable.material.color.0),
@@ -677,11 +781,12 @@ fn repaint(
                             livery.grime,
                             values,
                             (lift, soot),
-                        )),
+                            shared,
+                        ),
                         finish_material(finish),
                     ),
                     None => (
-                        Arc::new(weathered(
+                        weathered_mesh(
                             &drawable.mesh,
                             world,
                             None,
@@ -689,7 +794,8 @@ fn repaint(
                             livery.grime,
                             values,
                             (1.0, soot),
-                        )),
+                            shared,
+                        ),
                         gear_material(&drawable.material),
                     ),
                 })
@@ -699,7 +805,7 @@ fn repaint(
         }
     }
     for child in &mut node.children {
-        repaint(child, world, livery, values, (lift, soot), weathered_meshes);
+        repaint(child, world, paint, (lift, soot));
     }
 }
 
@@ -816,7 +922,7 @@ fn paint_value_code(paint: bool, value: f64) -> f32 {
 /// markings' white (the code plus 1) or a lamp lens (plus 2). Markings and lenses
 /// draw in the paint's own material, so they cost no draw of their own and wear
 /// with the paint: the white flakes to the team color under it and takes the dust.
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 enum Coat {
     Paint,
     Trim,
@@ -886,14 +992,7 @@ fn weathered(
         None => (Vec::new(), Vec::new()),
     };
     let base_linear = base.map(hex_to_linear);
-    let coat = match (finish, base) {
-        (_, Some(MARKING_WHITE)) => Coat::Marking,
-        (_, Some(LAMP_LENS)) => Coat::Lamp,
-        (Finish::Paint { trim, paint, .. }, Some(base)) if base == trim && trim != paint => {
-            Coat::Trim
-        }
-        _ => Coat::Paint,
-    };
+    let coat = coat_of(finish, base);
     for (t, &(p, face)) in faces.iter().enumerate() {
         let root = plates.as_ref().map_or(t, |plates| plates.roots[t]);
         let gradient = |y: f64| match heights.get(root).copied().flatten() {
@@ -944,6 +1043,18 @@ fn weathered(
         out.set_attribute(Attribute::vertex(VERTEX_ALPHA, 1, alphas));
     }
     out
+}
+
+/// The coat a painted part of `base` color wears in `finish`.
+fn coat_of(finish: Finish, base: Option<u32>) -> Coat {
+    match (finish, base) {
+        (_, Some(MARKING_WHITE)) => Coat::Marking,
+        (_, Some(LAMP_LENS)) => Coat::Lamp,
+        (Finish::Paint { trim, paint, .. }, Some(base)) if base == trim && trim != paint => {
+            Coat::Trim
+        }
+        _ => Coat::Paint,
+    }
 }
 
 /// The stored normals of triangle `t`.
