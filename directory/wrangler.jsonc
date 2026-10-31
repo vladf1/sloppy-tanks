@@ -8,12 +8,7 @@
   // Game servers and the page reach the directory only through its custom domain.
   "workers_dev": false,
   "preview_urls": false,
-  "routes": [
-    { "pattern": "directory.sloppytanks.com", "custom_domain": true },
-    // The former address, which machines provisioned before the move and installed
-    // desktop builds still use.
-    { "pattern": "directory.sloppytanks.com", "custom_domain": true },
-  ],
+  "routes": [{ "pattern": "directory.sloppytanks.com", "custom_domain": true }],
   "durable_objects": { "bindings": [{ "name": "DIRECTORY", "class_name": "Directory" }] },
   "migrations": [
     { "tag": "v1", "new_sqlite_classes": ["ServerDirectory"] },
