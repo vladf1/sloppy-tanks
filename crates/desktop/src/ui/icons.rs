@@ -3,6 +3,7 @@
 //! textures, and Battle Setup's tank renders (`previews/tanks.webp`). Shapes rather
 //! than font glyphs, since the system's text faces lack most symbols.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 
 use egui::{Color32, ColorImage, Pos2, Rect, TextureHandle, TextureOptions, pos2, vec2};
@@ -488,34 +489,48 @@ const SHEET_CELL: [f32; 2] = [640.0, 400.0];
 /// chassis sizes stay comparable.
 const PREVIEW_SIZE: [f32; 2] = [560.0, 300.0];
 
-/// The textures the screens draw: icons by name and the tank sheet.
+/// The textures the screens draw: icons by name, each rasterized the first time a
+/// screen draws it (rasterizing all of them held Battle Setup's first frame), and the
+/// tank sheet.
 pub struct Art {
-    icons: HashMap<&'static str, TextureHandle>,
+    icons: RefCell<HashMap<&'static str, TextureHandle>>,
     tanks: Preview,
 }
 
-/// A preview image of `public/`, which a page may still be downloading: the screens
-/// draw without it meanwhile (and for good if it never comes).
+/// A preview image of `public/`, which a page may still be downloading or decoding:
+/// the screens draw without it meanwhile (and for good if it never comes).
 enum Preview {
     Shown(TextureHandle),
     Loading,
+    /// The browser decodes a page's preview off the main thread; Rust's WebP decoder
+    /// took about 90 ms of the page's first frame.
+    #[cfg(target_arch = "wasm32")]
+    Decoding(crate::assets::Decoding),
     Missing,
 }
 
-/// The preview image at `path` as an egui texture.
+/// The preview image at `path`: an egui texture natively, its decode in a page.
 fn preview(context: &egui::Context, path: &str, name: &str) -> Preview {
     let bytes = match crate::assets::load(path) {
         Asset::Ready(bytes) => bytes,
         Asset::Loading => return Preview::Loading,
         Asset::Missing => return Preview::Missing,
     };
-    let Ok(image) = image::load_from_memory(&bytes) else {
-        return Preview::Missing;
-    };
-    let image = image.into_rgba8();
-    let size = [image.width() as usize, image.height() as usize];
-    let pixels = ColorImage::from_rgba_unmultiplied(size, image.as_raw());
-    Preview::Shown(context.load_texture(name, pixels, TextureOptions::LINEAR))
+    #[cfg(target_arch = "wasm32")]
+    {
+        let _ = name;
+        Preview::Decoding(crate::assets::decode(&bytes, context))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let Ok(image) = image::load_from_memory(&bytes) else {
+            return Preview::Missing;
+        };
+        let image = image.into_rgba8();
+        let size = [image.width() as usize, image.height() as usize];
+        let pixels = ColorImage::from_rgba_unmultiplied(size, image.as_raw());
+        Preview::Shown(context.load_texture(name, pixels, TextureOptions::LINEAR))
+    }
 }
 
 const TANK_SHEET: &str = "previews/tanks.webp";
@@ -523,29 +538,47 @@ const TANK_SHEET_NAME: &str = "tank previews";
 
 impl Art {
     pub fn new(context: &egui::Context) -> Self {
-        let icons = SOURCES
-            .iter()
-            .map(|source| {
-                let image = rasterize(source);
-                let texture = context.load_texture(
-                    format!("icon {}", source.name),
-                    image,
-                    TextureOptions::LINEAR,
-                );
-                (source.name, texture)
-            })
-            .collect();
         Self {
-            icons,
+            icons: RefCell::default(),
             tanks: preview(context, TANK_SHEET, TANK_SHEET_NAME),
         }
     }
 
-    /// Take up a preview that has arrived since the last frame.
+    /// Take up a preview that has arrived or been decoded since the last frame.
     pub fn refresh(&mut self, context: &egui::Context) {
-        if matches!(self.tanks, Preview::Loading) {
-            self.tanks = preview(context, TANK_SHEET, TANK_SHEET_NAME);
+        match &self.tanks {
+            Preview::Loading => self.tanks = preview(context, TANK_SHEET, TANK_SHEET_NAME),
+            #[cfg(target_arch = "wasm32")]
+            Preview::Decoding(decoding) => {
+                if let Some(image) = decoding.take() {
+                    self.tanks = image.map_or(Preview::Missing, |image| {
+                        Preview::Shown(context.load_texture(
+                            TANK_SHEET_NAME,
+                            image,
+                            TextureOptions::LINEAR,
+                        ))
+                    });
+                }
+            }
+            Preview::Shown(_) | Preview::Missing => {}
         }
+    }
+
+    /// Icon `name`'s texture, rasterized on its first draw.
+    fn texture(&self, context: &egui::Context, name: &str) -> Option<egui::TextureId> {
+        let mut icons = self.icons.borrow_mut();
+        if let Some(texture) = icons.get(name) {
+            return Some(texture.id());
+        }
+        let source = SOURCES.iter().find(|source| source.name == name)?;
+        let texture = context.load_texture(
+            format!("icon {}", source.name),
+            rasterize(source),
+            TextureOptions::LINEAR,
+        );
+        let id = texture.id();
+        icons.insert(source.name, texture);
+        Some(id)
     }
 
     /// Paint the logo with its layout box's top-left at `origin`, as the page places
@@ -563,9 +596,9 @@ impl Art {
 
     /// Paint icon `name` into `rect`, tinted (white keeps a coloured icon's colours).
     pub fn icon(&self, painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
-        if let Some(texture) = self.icons.get(name) {
+        if let Some(texture) = self.texture(painter.ctx(), name) {
             painter.image(
-                texture.id(),
+                texture,
                 rect,
                 Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0)),
                 tint,
@@ -575,8 +608,8 @@ impl Art {
 
     /// Paint icon `name` mirrored left to right.
     pub fn icon_flipped(&self, painter: &egui::Painter, name: &str, rect: Rect, tint: Color32) {
-        if let Some(texture) = self.icons.get(name) {
-            let mut mesh = egui::Mesh::with_texture(texture.id());
+        if let Some(texture) = self.texture(painter.ctx(), name) {
+            let mut mesh = egui::Mesh::with_texture(texture);
             mesh.add_rect_with_uv(
                 rect,
                 Rect::from_min_max(pos2(1.0, 0.0), pos2(0.0, 1.0)),

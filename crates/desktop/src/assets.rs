@@ -66,6 +66,61 @@ pub fn load(path: &str) -> Asset {
     }
 }
 
+/// An image file the browser decodes off the main thread (`createImageBitmap`), then
+/// hands over as pixels: its result once there, `None` if it failed.
+#[cfg(target_arch = "wasm32")]
+pub struct Decoding(std::rc::Rc<std::cell::RefCell<Option<Option<egui::ColorImage>>>>);
+
+#[cfg(target_arch = "wasm32")]
+impl Decoding {
+    /// The decoded image (or `None` for a failed decode) once the browser has it.
+    pub fn take(&self) -> Option<Option<egui::ColorImage>> {
+        self.0.borrow_mut().take()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+#[wasm_bindgen::prelude::wasm_bindgen(inline_js = "export async function decodeImage(bytes) {
+  const bitmap = await createImageBitmap(new Blob([bytes]), {
+    premultiplyAlpha: 'none',
+    colorSpaceConversion: 'none',
+  });
+  const canvas = typeof OffscreenCanvas === 'function'
+    ? new OffscreenCanvas(bitmap.width, bitmap.height)
+    : Object.assign(document.createElement('canvas'), { width: bitmap.width, height: bitmap.height });
+  const context = canvas.getContext('2d');
+  context.drawImage(bitmap, 0, 0);
+  bitmap.close();
+  return context.getImageData(0, 0, canvas.width, canvas.height);
+}")]
+extern "C" {
+    #[wasm_bindgen(js_name = decodeImage)]
+    fn decode_image(bytes: &js_sys::Uint8Array) -> js_sys::Promise;
+}
+
+/// Decode the image file `bytes` with the browser; `context` repaints once it has.
+#[cfg(target_arch = "wasm32")]
+pub fn decode(bytes: &[u8], context: &egui::Context) -> Decoding {
+    use wasm_bindgen::JsCast;
+    let decoding = Decoding(std::rc::Rc::default());
+    let slot = std::rc::Rc::clone(&decoding.0);
+    let context = context.clone();
+    let promise = decode_image(&js_sys::Uint8Array::from(bytes));
+    wasm_bindgen_futures::spawn_local(async move {
+        let decoded = wasm_bindgen_futures::JsFuture::from(promise)
+            .await
+            .ok()
+            .and_then(|value| value.dyn_into::<web_sys::ImageData>().ok())
+            .map(|image| {
+                let size = [image.width() as usize, image.height() as usize];
+                egui::ColorImage::from_rgba_unmultiplied(size, &image.data())
+            });
+        *slot.borrow_mut() = Some(decoded);
+        context.request_repaint();
+    });
+    decoding
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
