@@ -196,11 +196,9 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
 // Texture files decode in an image element (`HTMLImageElement.decode`), which every
 // browser does off the main thread: WebKit decoded `createImageBitmap(blob)` on it, one
 // file after another, about 80 ms of a village start once the arena was built. The
-// bitmap made from the decoded image has the same texels. The single-player page
-// starts the scene's decodes before the engine loads (`startTextureDownloads` in
-// src/main.ts) and leaves them in a map by URL; the store takes each over once, so
-// every browser downloads a file once. A URL the page did not start, or whose early
-// decode failed, is decoded here.
+// bitmap made from the decoded image has the same texels. The page does not start them
+// early: begun beside the binary they took its bandwidth, and begun once it had
+// downloaded they arrived before the arena needed them on all but slow links.
 //
 // A built game page names its runtime files by content hash, so browsers keep them for
 // good: its manifest (`globalThis.sloppyAssets`, from `scripts/hashed-assets.ts`) maps a
@@ -211,15 +209,9 @@ const FLIP_BITMAPS_ON_DECODE: bool = cfg!(feature = "webgl");
   return globalThis.sloppyAssets?.[path] ?? base + path;
 }
 export function textureImage(url) {
-  const images = globalThis.sloppyTextureImages;
-  const early = images?.get(url);
-  images?.delete(url);
-  const decode = () => {
-    const image = new Image();
-    image.src = url;
-    return image.decode().then(() => image);
-  };
-  return early ? early.catch(decode) : decode();
+  const image = new Image();
+  image.src = url;
+  return image.decode().then(() => image);
 }")]
 extern "C" {
     #[wasm_bindgen(js_name = assetUrl)]
