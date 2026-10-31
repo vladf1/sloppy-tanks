@@ -16,10 +16,12 @@ use std::time::Duration;
 use sloppy_core::net::client::POLL_MS;
 use sloppy_core::sim::game_options::GameOptions;
 use sloppy_core::sim::map_options::{MapId, is_extra_level};
+use sloppy_core::sim::maps::MAPS;
 use sloppy_core::sim::speed_tuning::SpeedSetting;
 use sloppy_core::sim::{MatchPhase, SimEventType, Team};
 use sloppy_render::gpu::RenderTarget;
 use sloppy_render::presentation::PrepareStatus;
+use sloppy_render::presentation::generated::theme_bakes;
 use sloppy_render::quality::DeviceClass;
 use sloppy_web::hud::Loading;
 use sloppy_web::{Game, GameConfig, PageError, ViewConfig, frame_slot};
@@ -31,7 +33,7 @@ use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
 
 use crate::audio::Audio;
 use crate::automation::{self, Command, Extra};
-use crate::bakes::{self, Bake};
+use crate::bakes::{self, Bake, Pixels};
 use crate::frame_log::{FrameLog, FrameParts};
 use crate::input::Shortcut;
 use crate::links::{self, Place};
@@ -444,6 +446,24 @@ impl Preparation {
     }
 }
 
+/// A generated texture's bake (`bakes.rs`), started for the chosen map as soon as
+/// Battle Setup shows rather than once its arena, built behind it, claims the bake.
+struct TextureBake {
+    bake: Bake,
+    /// The engine handed this bake out (`claim_texture_bake`) and waits for its pixels.
+    claimed: bool,
+    /// What came back before the claim.
+    pixels: Option<Result<Pixels, String>>,
+}
+
+/// The generated textures `map`'s arena has the shell bake (`theme_bakes`).
+fn map_bakes(map: MapId) -> &'static [&'static str] {
+    MAPS.iter()
+        .find(|candidate| candidate.id == map)
+        .and_then(|candidate| candidate.theme)
+        .map_or(&[], |theme| theme_bakes(theme.as_str()))
+}
+
 /// The window, its game and everything around it.
 struct Session {
     window: Arc<Window>,
@@ -453,7 +473,10 @@ struct Session {
     prefs: Preferences,
     ui: UiState,
     audio: Option<Audio>,
-    bake: Option<Bake>,
+    bake: Option<TextureBake>,
+    /// Generated textures the shell has started baking: the engine keeps each once it
+    /// has it, so a map that comes back does not bake it again.
+    bakes_started: Vec<String>,
     debug: bool,
     build: String,
     /// The team the engine drew for the player (`initial_game_options`).
@@ -719,6 +742,7 @@ impl Session {
             },
             audio,
             bake: None,
+            bakes_started: Vec::new(),
             debug,
             build,
             prepared_options: prefs.game_options(human_team, extra_levels),
@@ -1039,6 +1063,8 @@ impl Session {
     /// one that only waits (for textures, background compiles, the GPU) ends it.
     fn prepare(&mut self) -> Result<(), String> {
         if !self.menu_shown {
+            // The bake's workers start beside the first frame.
+            self.start_bake_early();
             return Ok(());
         }
         let wanted = self.wanted_options();
@@ -1052,6 +1078,15 @@ impl Session {
             self.game.set_game_options(&wanted);
             self.prepared_options = wanted;
             self.preparation.restart();
+            // A bake started for the map left behind, unclaimed, can stop.
+            if let Some(bake) = &self.bake
+                && !bake.claimed
+                && !map_bakes(wanted.map_mode).contains(&bake.bake.key.as_str())
+            {
+                let key = bake.bake.key.clone();
+                self.bakes_started.retain(|started| *started != key);
+                self.bake = None;
+            }
             self.ui.hud = Some(self.game.hud().into_owned());
         }
         if !self.preparation.preparing {
@@ -1060,6 +1095,8 @@ impl Session {
             }
             return Ok(());
         }
+        // A map chosen since may bake too.
+        self.start_bake_early();
         let until = now_ms() + PREPARE_SLICE_MS;
         loop {
             let building = self.game.building_arena();
@@ -1071,29 +1108,67 @@ impl Session {
         }
     }
 
-    /// One `prepare` step, with the page's bake of a generated texture started or its
-    /// pixels handed over first.
+    /// Start baking what the prepared map's arena will ask for, unless the shell has
+    /// before: the bake then runs while the arena builds.
+    fn start_bake_early(&mut self) {
+        if self.bake.is_some() {
+            return;
+        }
+        let Some(&key) = map_bakes(self.prepared_options.map_mode).first() else {
+            return;
+        };
+        if self.bakes_started.iter().any(|started| started == key) {
+            return;
+        }
+        self.bakes_started.push(key.to_owned());
+        self.bake = bakes::start(key.to_owned()).map(|bake| TextureBake {
+            bake,
+            claimed: false,
+            pixels: None,
+        });
+    }
+
+    /// One `prepare` step, with the engine's claim of a generated texture's bake taken
+    /// up, or its pixels handed over, first.
     fn prepare_step(&mut self) -> Result<PrepareStatus, String> {
-        if self.bake.is_none()
-            && let Some(key) = self.game.claim_texture_bake()
-        {
-            self.bake = bakes::start(key.clone());
-            if self.bake.is_none() {
-                self.game.release_texture_bake(&key);
+        let unclaimed = self.bake.as_ref().is_none_or(|bake| !bake.claimed);
+        if unclaimed && let Some(key) = self.game.claim_texture_bake() {
+            match &mut self.bake {
+                Some(bake) if bake.bake.key == key => bake.claimed = true,
+                // Another bake is running: the engine bakes this one itself.
+                Some(_) => self.game.release_texture_bake(&key),
+                None => {
+                    self.bakes_started.push(key.clone());
+                    match bakes::start(key.clone()) {
+                        Some(bake) => {
+                            self.bake = Some(TextureBake {
+                                bake,
+                                claimed: true,
+                                pixels: None,
+                            });
+                        }
+                        None => self.game.release_texture_bake(&key),
+                    }
+                }
             }
         }
-        if let Some(bake) = &self.bake
-            && let Some(baked) = bake.finished()
+        if let Some(bake) = &mut self.bake
+            && bake.pixels.is_none()
         {
-            let key = bake.key.clone();
-            self.bake = None;
+            bake.pixels = bake.bake.finished();
+        }
+        if let Some(TextureBake { bake, pixels, .. }) = self
+            .bake
+            .take_if(|bake| bake.claimed && bake.pixels.is_some())
+            && let Some(baked) = pixels
+        {
             match baked {
                 Ok(pixels) => {
                     self.game
-                        .supply_pixels(&key, &pixels)
+                        .supply_pixels(&bake.key, &pixels)
                         .map_err(engine_error)?;
                 }
-                Err(_) => self.game.release_texture_bake(&key),
+                Err(_) => self.game.release_texture_bake(&bake.key),
             }
         }
         let status = self.game.prepare(PREPARE_BUDGET).map_err(engine_error)?;
