@@ -72,7 +72,7 @@ pub use net_game::{NetConfig, NetGame};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
 pub use page::clock_start;
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
-pub use page::{BakedPixels, PageError, now_ms};
+pub use page::{BakedPixels, PageError, now_ms, random_seed};
 #[cfg(any(target_arch = "wasm32", feature = "native"))]
 pub use page::{CameraPreferences, ViewConfig};
 #[cfg(all(not(target_arch = "wasm32"), feature = "native"))]
@@ -126,7 +126,7 @@ pub fn map_texture_bakes(map: &str) -> Vec<String> {
 /// RGBA8, for the page's bake workers: further instances of this module that run only
 /// this call, off the main thread (`Game::claim_texture_bake`). `None` for a key
 /// the engine does not bake.
-#[cfg(target_arch = "wasm32")]
+#[cfg(all(target_arch = "wasm32", not(feature = "menu-only")))]
 #[wasm_bindgen::prelude::wasm_bindgen]
 pub fn bake_texture(key: &str, band: u32, bands: u32) -> Option<js_sys::Uint8Array> {
     use sloppy_core::models::effects_scenery::QUARRY_SOIL_TEXTURE;
