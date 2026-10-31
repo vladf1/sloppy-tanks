@@ -203,6 +203,9 @@ pub fn install(context: &egui::Context) {
     let mut style = (*context.global_style()).clone();
     let visuals = &mut style.visuals;
     *visuals = egui::Visuals::dark();
+    // Glyph coverage as rasterised: the dark theme's boost thickened light text past
+    // the page's.
+    visuals.text_options.color_transfer_function = egui::epaint::FontColorTransferFunction::Off;
     visuals.override_text_color = Some(TEXT);
     visuals.panel_fill = PLATE;
     visuals.window_fill = PLATE;
