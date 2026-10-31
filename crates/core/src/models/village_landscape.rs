@@ -280,36 +280,50 @@ pub(super) fn with_lattice_corners<T>(build: impl FnOnce() -> T) -> T {
 }
 
 /// The value of [`lattice_noise`]'s lattice at corner (ix, iz) (whole numbers).
-fn lattice_corner(ix: f64, iz: f64) -> f64 {
-    let hash = || {
-        let h = (ix * 127.1 + iz * 311.7).sin() * 43758.5453;
-        h - h.floor()
-    };
-    LATTICE_CORNERS.with_borrow_mut(|corners| {
+fn lattice_hash(ix: f64, iz: f64) -> f64 {
+    let h = (ix * 127.1 + iz * 311.7).sin() * 43758.5453;
+    h - h.floor()
+}
+
+/// The values of the lattice corners (ix, iz), (ix + 1, iz), (ix, iz + 1) and
+/// (ix + 1, iz + 1), from the kept ones while [`with_lattice_corners`] runs.
+fn lattice_cell(ix: f64, iz: f64) -> [f64; 4] {
+    let corners = [
+        (ix, iz),
+        (ix + 1.0, iz),
+        (ix, iz + 1.0),
+        (ix + 1.0, iz + 1.0),
+    ];
+    LATTICE_CORNERS.with_borrow_mut(|kept| {
         let half = (LATTICE_SPAN / 2) as f64;
-        let (i, j) = (ix + half, iz + half);
         let span = LATTICE_SPAN as f64;
-        match corners {
-            Some(corners) if (0.0..span).contains(&i) && (0.0..span).contains(&j) => {
-                let value = &mut corners[j as usize * LATTICE_SPAN + i as usize];
-                if value.is_nan() {
-                    *value = hash();
-                }
-                *value
+        let (i, j) = (ix + half, iz + half);
+        match kept {
+            Some(kept) if i >= 0.0 && j >= 0.0 && i + 1.0 < span && j + 1.0 < span => {
+                let base = j as usize * LATTICE_SPAN + i as usize;
+                let at = [base, base + 1, base + LATTICE_SPAN, base + LATTICE_SPAN + 1];
+                [0, 1, 2, 3].map(|k| {
+                    let value = &mut kept[at[k]];
+                    if value.is_nan() {
+                        let (cx, cz) = corners[k];
+                        *value = lattice_hash(cx, cz);
+                    }
+                    *value
+                })
             }
-            _ => hash(),
+            _ => corners.map(|(cx, cz)| lattice_hash(cx, cz)),
         }
     })
 }
 
 /// A smooth lattice noise in [0, 1] for the distant ranges' shapes and colours.
 fn lattice_noise(x: f64, z: f64) -> f64 {
-    let hash = lattice_corner;
     let (ix, iz) = (x.floor(), z.floor());
     let (fx, fz) = (x - ix, z - iz);
     let (ux, uz) = (fx * fx * (3.0 - 2.0 * fx), fz * fz * (3.0 - 2.0 * fz));
-    let a = lerp(hash(ix, iz), hash(ix + 1.0, iz), ux);
-    let b = lerp(hash(ix, iz + 1.0), hash(ix + 1.0, iz + 1.0), ux);
+    let [c00, c10, c01, c11] = lattice_cell(ix, iz);
+    let a = lerp(c00, c10, ux);
+    let b = lerp(c01, c11, ux);
     lerp(a, b, uz)
 }
 
