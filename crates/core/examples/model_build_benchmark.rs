@@ -4,24 +4,25 @@
 //! one workload once; the report gives the minimum and median of the samples.
 //!
 //! `cargo run -p sloppy-core --release --example model_build_benchmark -- [runs] [workload...]`
-//! (runs defaults to 15; workloads: village harbor quarry vehicles village-covers
+//! (runs defaults to 15; workloads: village harbor quarry tanks vehicles village-covers
 //! harbor-covers quarry-covers).
 
 use std::process::Command;
 use std::time::Instant;
 
 use sloppy_core::models::{
-    CoverShape, MapTheme, TreeDetail, WreckPart, batch, build_scenery, cover_model, tank_model,
-    wreck_model,
+    CoverShape, MapTheme, TreeDetail, WreckPart, batch, build_scenery, cover_model,
+    release_tank_models, tank_model, wreck_model,
 };
 use sloppy_core::sim::map_options::MapId;
 use sloppy_core::sim::types::{Team, VehicleKind};
 use sloppy_core::sim::{RenderState, Simulation};
 
-const WORKLOADS: [&str; 7] = [
+const WORKLOADS: [&str; 8] = [
     "village",
     "harbor",
     "quarry",
+    "tanks",
     "vehicles",
     "village-covers",
     "harbor-covers",
@@ -49,6 +50,15 @@ fn sample(workload: &str) -> f64 {
         "village" => Box::new(|| drop(std::hint::black_box(build_scenery(MapTheme::Village)))),
         "harbor" => Box::new(|| drop(std::hint::black_box(build_scenery(MapTheme::Harbor)))),
         "quarry" => Box::new(|| drop(std::hint::black_box(build_scenery(MapTheme::Quarry)))),
+        // The live vehicle models alone (released first, for --repeat).
+        "tanks" => Box::new(|| {
+            release_tank_models();
+            for kind in VehicleKind::ALL {
+                for team in [Team::Blue, Team::Red] {
+                    std::hint::black_box(tank_model(kind, team));
+                }
+            }
+        }),
         "vehicles" => Box::new(|| {
             for kind in VehicleKind::ALL {
                 for team in [Team::Blue, Team::Red] {
@@ -81,6 +91,16 @@ fn main() {
         && flag == "--sample"
     {
         println!("{}", sample(workload));
+        return;
+    }
+    // For a sampling profiler: one workload again and again in this process (warm
+    // caches after the first).
+    if let [flag, workload, count] = args.as_slice()
+        && flag == "--repeat"
+    {
+        let count: usize = count.parse().expect("a count");
+        let total: f64 = (0..count).map(|_| sample(workload)).sum();
+        println!("{:.2} ms per build", total / count as f64);
         return;
     }
     let runs: usize = args.first().and_then(|a| a.parse().ok()).unwrap_or(15);

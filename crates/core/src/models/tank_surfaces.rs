@@ -1016,6 +1016,34 @@ struct Segment {
     a: DVec3,
     b: DVec3,
     border: Border,
+    /// Its bounds, widened by [`SEGMENT_REACH`].
+    low: DVec3,
+    high: DVec3,
+}
+
+/// How far past a segment's bounds [`border_lines`] looks for corners on it: twice
+/// the tolerance that puts a corner on it, so a corner beyond its widened bounds
+/// lies farther than the tolerance from it whatever the rounding.
+const SEGMENT_REACH: f64 = 2.0 * POINT_TOLERANCE;
+
+impl Segment {
+    fn new(a: DVec3, b: DVec3, border: Border) -> Self {
+        Self {
+            a,
+            b,
+            border,
+            low: a.min(b) - SEGMENT_REACH,
+            high: a.max(b) + SEGMENT_REACH,
+        }
+    }
+
+    /// Whether any of `corners` might lie on the segment: false only when every
+    /// corner is beyond the widened bounds.
+    fn reaches(&self, corners: &[DVec3; 3]) -> bool {
+        let low = corners[0].min(corners[1]).min(corners[2]);
+        let high = corners[0].max(corners[1]).max(corners[2]);
+        low.cmple(self.high).all() && high.cmpge(self.low).all()
+    }
 }
 
 /// A border line a triangle touches: its unit normal into the plate and offset
@@ -1175,7 +1203,7 @@ fn plate_edges(faces: &[([DVec3; 3], DVec3)], flat: &[bool], plates: &Plates) ->
                 border = Border::Recess;
             }
             if border != Border::Plain {
-                sides[roots[t]].push(Segment { a, b, border });
+                sides[roots[t]].push(Segment::new(a, b, border));
             }
         }
     }
@@ -1230,6 +1258,10 @@ fn border_lines(face: &([DVec3; 3], DVec3), segments: &[Segment]) -> Vec<Line> {
     let centroid = (p[0] + p[1] + p[2]) / 3.0;
     let mut lines: Vec<Line> = Vec::new();
     for segment in segments {
+        // A segment no corner comes near touches none of them: skipped below.
+        if !segment.reaches(&p) {
+            continue;
+        }
         let along = segment.b - segment.a;
         let length = along.length();
         if length < 1e-6 {
