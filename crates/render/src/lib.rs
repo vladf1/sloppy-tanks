@@ -10,9 +10,19 @@
 
 /// The WGSL file at each path under `src/`, one after another, embedded without
 /// comments or blank lines (`build.rs`): the shader text the binary carries.
+#[cfg(any(test, feature = "specializer"))]
 macro_rules! wgsl {
     ($($path:literal),+ $(,)?) => {
         concat!($(include_str!(concat!(env!("OUT_DIR"), "/wgsl/", $path))),+)
+    };
+}
+
+/// Without the specializer, only the lines of those files that declare an effect hook
+/// (`build.rs`): the binary draws the generated variants (`shader/tables.rs`).
+#[cfg(not(any(test, feature = "specializer")))]
+macro_rules! wgsl {
+    ($($path:literal),+ $(,)?) => {
+        concat!($(include_str!(concat!(env!("OUT_DIR"), "/wgsl-hooks/", $path))),+)
     };
 }
 

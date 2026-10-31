@@ -37,8 +37,9 @@
 // its content version goes to `src/generated/shell/content-version` for the page's
 // `/health` (`scripts/page-health.ts`).
 import { spawn, spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
+import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { contentVersion } from "./content-version.mjs";
 import { releaseVersion } from "./release-version.mjs";
@@ -155,7 +156,32 @@ const builds = process.argv.includes("--labs")
         : webglGlue
           ? [SHELL]
           : [SHELL, SHELL_WEBGL];
+// Shader tables ------------------------------------------------------------------------
+// The page's shell draws shader variants the build generated rather than assembling them
+// (crates/render/src/shader/tables.rs): before it builds, the native `shader-tables`
+// generator writes every variant either backend can ask for into `src/generated/shaders/`,
+// which index.html fetches beside the binary. It runs again only once Cargo rebuilt it,
+// which a change to the renderer's sources does (about 3 s).
+const SHADER_TABLES = "src/generated/shaders";
+
+async function shaderTables() {
+  await run("cargo", ["build", "--locked", "-p", "sloppy-render", "--features", "shader-tables"]);
+  const target = process.env.CARGO_TARGET_DIR ?? "target";
+  const generator = `${target}/debug/shader-tables${process.platform === "win32" ? ".exe" : ""}`;
+  const at = (path) => resolve(root, path);
+  const stamp = at(`${SHADER_TABLES}/generator`);
+  const built = String(statSync(at(generator)).mtimeMs);
+  const current = ["webgpu.json", "webgl.json", "generator"].every((file) =>
+    existsSync(at(`${SHADER_TABLES}/${file}`)),
+  );
+  if (current && readFileSync(stamp, "utf8") === built) return;
+  await run(at(generator), [SHADER_TABLES]);
+  await writeFile(stamp, built);
+}
+// ---------------------------------------------------------------------------------------
+
 try {
+  if (builds.includes(SHELL) || builds.includes(SHELL_WEBGL)) await shaderTables();
   for (const target of builds) {
     await build(target);
   }

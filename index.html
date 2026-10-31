@@ -305,6 +305,8 @@
     <script type="module">
       import webgpuBinary from "/src/generated/shell/sloppy-tanks_bg.wasm?url";
       import webglBinary from "/src/generated/shell-webgl/sloppy-tanks-webgl_bg.wasm?url";
+      import webgpuShaders from "/src/generated/shaders/webgpu.json?url";
+      import webglShaders from "/src/generated/shaders/webgl.json?url";
       import { startGeometryCache } from "/src/geometry-cache.ts";
 
       performance.mark("sloppy:boot");
@@ -473,6 +475,15 @@
         }
       }
 
+      // The shader stages the chosen build draws, generated with it (pnpm run wasm,
+      // crates/render/src/shader/tables.rs): they download beside the binary and stay
+      // here as `sloppyShaders`, from which the renderer reads one stage at a time.
+      const shaderTables = async (url) => {
+        const response = await fetch(url);
+        if (!response.ok) throw new Error(`HTTP ${response.status} for ${url}`);
+        return response.json();
+      };
+
       // The shell bakes generated textures in workers that run its module (bakes.rs),
       // with the glue the page loaded (`glueUrl`, set once it has).
       let glueUrl;
@@ -497,23 +508,25 @@
         const webglBuild = () => [
           import("/src/shell-glue-webgl.ts"),
           download(webglBinary, webglBytes),
+          shaderTables(webglShaders),
         ];
         // A browser with WebGPU nearly always gives an adapter, but asking takes a while
         // (a cold WebKit spends 75 ms starting its GPU process at the first read of
         // `navigator.gpu`), so the WebGPU build downloads meanwhile and gives way to the
         // WebGL build only when no adapter comes. `in` does not read the property.
-        let glue, binary;
+        let glue, binary, shaders;
         if (!forceWebgl && "gpu" in navigator) {
           const dropped = new AbortController();
           glue = import("/src/shell-glue.ts");
           binary = download(webgpuBinary, webgpuBytes, dropped.signal);
+          shaders = shaderTables(webgpuShaders);
           if (!(await navigator.gpu.requestAdapter().catch(() => null))) {
             dropped.abort();
-            for (const unused of [glue, binary]) unused.catch(() => {});
-            [glue, binary] = webglBuild();
+            for (const unused of [glue, binary, shaders]) unused.catch(() => {});
+            [glue, binary, shaders] = webglBuild();
           }
         } else {
-          [glue, binary] = webglBuild();
+          [glue, binary, shaders] = webglBuild();
         }
         let init, response, complete;
         try {
@@ -527,7 +540,11 @@
             Promise.all(fonts).catch((error) => {
               throw new Error(`The game's fonts did not download: ${message(error)}`);
             }),
+            shaders.catch((error) => {
+              throw new Error(`The game's shaders did not download: ${message(error)}`);
+            }),
           ]);
+          globalThis.sloppyShaders = await shaders;
         } catch (error) {
           unloaded(message(error));
         }
